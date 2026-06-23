@@ -1,0 +1,30 @@
+{
+  "table": "Table 6: I2C Status Byte",
+  "source": "Ag105 Datasheet V1.1 November 2021, Silvertel",
+  "description": "The Ag105 always returns the status byte prior to any requested field value upon a read request.",
+  "bits": [
+    {
+      "bit": "0-2",
+      "name": "GENSTAT",
+      "type": "enum",
+      "values": [
+        { "b2": 0, "b1": 0, "b0": 0, "meaning": "Battery Disconnect" },
+        { "b2": 0, "b1": 0, "b0": 1, "meaning": "Low Power" },
+        { "b2": 0, "b1": 1, "b0": 0, "meaning": "Charging" },
+        { "b2": 0, "b1": 1, "b0": 1, "meaning": "Fully Charged" },
+        { "b2": 1, "b1": 0, "b0": 0, "meaning": "Bring-Up Charge" },
+        { "b2": 1, "b1": 0, "b0": 1, "meaning": "OC/Regulation Error" },
+        { "b2": 1, "b1": 1, "b0": 0, "meaning": "Thermal Shutdown" },
+        { "b2": 1, "b1": 1, "b0": 1, "meaning": "Timeout Error" }
+      ]
+    },
+    { "bit": "3", "name": "MPPT EN/DIS", "type": "flag", "meaning": "Max power point tracking enabled" },
+    { "bit": "4", "name": "Power Tracking", "type": "flag", "meaning": "Charge profile is tracking the input power" },
+    { "bit": "5", "name": "Constant Voltage", "type": "flag", "meaning": "Ag105 is in constant voltage mode" },
+    { "bit": "6", "name": "Constant Current", "type": "flag", "meaning": "Ag105 is in constant current mode" },
+    { "bit": "7", "name": "Thermal Limiting", "type": "flag", "meaning": "Charge profile is limited due to battery temperature" }
+  ],
+  "notes": [
+    "The Thermal Shutdown row's middle bit renders as a stylized 'v' in the datasheet (OCR/print artifact); the correct value is binary 1 1 0."
+  ]
+}

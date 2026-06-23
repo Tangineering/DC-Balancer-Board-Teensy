@@ -1,0 +1,19 @@
+{
+  "table": "Table 4: Charge Current Select",
+  "source": "Ag105 Datasheet V1.1 November 2021, Silvertel",
+  "description": "Constant current charge rate, set by resistor RCS between CS and Vin- pins, or via I2C. If no resistor is fitted, the Ag105 defaults to 1000mA charge current.",
+  "options": [
+    { "charge_current_ma": 100, "charge_cutoff_current_ma": 10, "rcs": "0", "i2c_field_value": 12 },
+    { "charge_current_ma": 150, "charge_cutoff_current_ma": 15, "rcs": "1.8k", "i2c_field_value": 11 },
+    { "charge_current_ma": 200, "charge_cutoff_current_ma": 20, "rcs": "3.9k", "i2c_field_value": 10 },
+    { "charge_current_ma": 250, "charge_cutoff_current_ma": 25, "rcs": "6.8k", "i2c_field_value": 9 },
+    { "charge_current_ma": 500, "charge_cutoff_current_ma": 50, "rcs": "10k", "i2c_field_value": 8 },
+    { "charge_current_ma": 750, "charge_cutoff_current_ma": 75, "rcs": "15k", "i2c_field_value": 7 },
+    { "charge_current_ma": 1000, "charge_cutoff_current_ma": 100, "rcs": "20k", "i2c_field_value": 6 },
+    { "charge_current_ma": 1250, "charge_cutoff_current_ma": 125, "rcs": "24k", "i2c_field_value": 5 },
+    { "charge_current_ma": 1500, "charge_cutoff_current_ma": 150, "rcs": "39k", "i2c_field_value": 4 },
+    { "charge_current_ma": 1750, "charge_cutoff_current_ma": 175, "rcs": "62k", "i2c_field_value": 3 },
+    { "charge_current_ma": 2000, "charge_cutoff_current_ma": 200, "rcs": "100k", "i2c_field_value": 2 },
+    { "charge_current_ma": 2500, "charge_cutoff_current_ma": 250, "rcs": "200k", "i2c_field_value": 1 }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "table": "Table 3: Charge Voltage Select",
+  "source": "Ag105 Datasheet V1.1 November 2021, Silvertel",
+  "description": "Charge voltage per cell, set by resistor RVS between VS and Vin- pins, or via I2C. If no resistor is fitted, the Ag105 defaults to 4.2V charge voltage.",
+  "options": [
+    { "series_cells": 1, "charge_voltage_v": 3.9, "usable_capacity_pct": "75", "rvs": "200k", "i2c_field_value": 1 },
+    { "series_cells": 1, "charge_voltage_v": 4.0, "usable_capacity_pct": "~80", "rvs": "100k", "i2c_field_value": 2 },
+    { "series_cells": 1, "charge_voltage_v": 4.1, "usable_capacity_pct": "~90", "rvs": "62k", "i2c_field_value": 3 },
+    { "series_cells": 1, "charge_voltage_v": 4.2, "usable_capacity_pct": "100", "rvs": "39k", "i2c_field_value": 4 },
+    { "series_cells": 2, "charge_voltage_v": 7.8, "usable_capacity_pct": "75", "rvs": "24k", "i2c_field_value": 5 },
+    { "series_cells": 2, "charge_voltage_v": 8.0, "usable_capacity_pct": "~80", "rvs": "20k", "i2c_field_value": 6 },
+    { "series_cells": 2, "charge_voltage_v": 8.2, "usable_capacity_pct": "~90", "rvs": "15k", "i2c_field_value": 7 },
+    { "series_cells": 2, "charge_voltage_v": 8.4, "usable_capacity_pct": "100", "rvs": "10k", "i2c_field_value": 8 },
+    { "series_cells": 3, "charge_voltage_v": 11.7, "usable_capacity_pct": "75", "rvs": "6.8k", "i2c_field_value": 9 },
+    { "series_cells": 3, "charge_voltage_v": 12.0, "usable_capacity_pct": "~80", "rvs": "3.9k", "i2c_field_value": 10 },
+    { "series_cells": 3, "charge_voltage_v": 12.3, "usable_capacity_pct": "~90", "rvs": "1.8k", "i2c_field_value": 11 },
+    { "series_cells": 3, "charge_voltage_v": 12.6, "usable_capacity_pct": "100", "rvs": "0", "i2c_field_value": 12 }
+  ]
+}

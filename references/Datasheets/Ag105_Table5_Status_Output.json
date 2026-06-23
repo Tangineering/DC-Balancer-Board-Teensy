@@ -1,0 +1,16 @@
+{
+  "table": "Table 5: Status Output",
+  "source": "Ag105 Datasheet V1.1 November 2021, Silvertel",
+  "description": "STAT pin output behavior for each status mode.",
+  "pulse_note": "All pulses are 200ms 'Logic 1' followed by a 200ms 'Logic 0', with a period (dependent on configuration and error state) of >= 1.2 seconds between sets of pulses.",
+  "modes": [
+    { "mode": 0, "status_mode": "Charging", "stat_output": "Steady State 'Logic 1'" },
+    { "mode": 1, "status_mode": "Fully Charged", "stat_output": "50% 'Logic 1', period: 2s" },
+    { "mode": 2, "status_mode": "Disconnected Battery Error", "stat_output": "1 Pulse" },
+    { "mode": 3, "status_mode": "Battery Temperature Error", "stat_output": "2 Pulses" },
+    { "mode": 4, "status_mode": "OC/Regulation Error", "stat_output": "3 Pulses" },
+    { "mode": 5, "status_mode": "Timeout Error", "stat_output": "4 Pulses" },
+    { "mode": 6, "status_mode": "Major Battery Fault", "stat_output": "5 Pulses" },
+    { "mode": 7, "status_mode": "Input Voltage Removed", "stat_output": "Steady State 'Logic 0'" }
+  ]
+}

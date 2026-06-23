@@ -1,0 +1,136 @@
+{
+  "table": "Table 7: I2C Parameters",
+  "source": "Ag105 Datasheet V1.1 November 2021, Silvertel",
+  "fields": [
+    {
+      "field_id": "0x00",
+      "description": "Charge Current Setting",
+      "access": "Read+Write",
+      "default_value": "0x00",
+      "range": "0x00 - 0x0C",
+      "function_description": "0: external resistor setting; 1-12: charge current profile (2.5A - 0.1A)",
+      "approximate_scaling_factor": null,
+      "stored_in_eprom": "yes"
+    },
+    {
+      "field_id": "0x01",
+      "description": "Battery Voltage Setting",
+      "access": "Read+Write",
+      "default_value": "0x00",
+      "range": "0x00 - 0x0C",
+      "function_description": "0: external resistor setting; 1-12: selects the charge voltage (3.9 - 12.6)",
+      "approximate_scaling_factor": null,
+      "stored_in_eprom": "yes"
+    },
+    {
+      "field_id": "0x02",
+      "description": "MPPT Voltage",
+      "access": "Read+Write",
+      "default_value": "0xFF",
+      "range": "0x00 - 0xFF",
+      "function_description": "0-250: sets the MPPT voltage between 11-33V; >=251: external resistor",
+      "approximate_scaling_factor": 0.088,
+      "stored_in_eprom": "yes"
+    },
+    {
+      "field_id": "0x03",
+      "description": "Timeout",
+      "access": "Read+Write",
+      "default_value": "0x00",
+      "range": "0x00 - 0xFF",
+      "function_description": "0: No timeout; 1-254: sets the timeout time in 3 minute increments",
+      "approximate_scaling_factor": null,
+      "stored_in_eprom": "yes"
+    },
+    {
+      "field_id": "0x04",
+      "description": "Recovery Time",
+      "access": "Read+Write",
+      "default_value": "0x00",
+      "range": "0x00 - 0xFF",
+      "function_description": "0: No error recovery; 1-254: sets the major error recovery time in 3 minute increments",
+      "approximate_scaling_factor": null,
+      "stored_in_eprom": "yes"
+    },
+    {
+      "field_id": "0x05",
+      "description": "Measured Battery Voltage",
+      "access": "read",
+      "default_value": "N/A",
+      "range": "0x00 - 0xFF",
+      "function_description": "Measured battery voltage (fixed multiplier can be used to convert to real Value)",
+      "approximate_scaling_factor": 0.064,
+      "stored_in_eprom": "-"
+    },
+    {
+      "field_id": "0x06",
+      "description": "Measured Charge Current",
+      "access": "read",
+      "default_value": "N/A",
+      "range": "0x00 - 0xFF",
+      "function_description": "Measured charge current (fixed multiplier can be used to convert to real Value)",
+      "approximate_scaling_factor": 0.011,
+      "stored_in_eprom": "-"
+    },
+    {
+      "field_id": "0x07",
+      "description": "Measured Input Voltage",
+      "access": "read",
+      "default_value": "N/A",
+      "range": "0x00 - 0xFF",
+      "function_description": "Measured supply voltage (fixed multiplier can be used to convert to real Value)",
+      "approximate_scaling_factor": 0.141,
+      "stored_in_eprom": "-"
+    },
+    {
+      "field_id": "0x0A",
+      "description": "Extended JEITA Profile",
+      "access": "Read+Write",
+      "default_value": "0x00",
+      "range": "0x00 - 0x01",
+      "function_description": "Enables charging up to 60C battery temperatures",
+      "approximate_scaling_factor": null,
+      "stored_in_eprom": "yes"
+    },
+    {
+      "field_id": "0xFD",
+      "description": "Major Firmware Version",
+      "access": "read",
+      "default_value": "N/A",
+      "range": "0x00 - 0xFF",
+      "function_description": "Returns a char that represents the major firmware version of the Ag105",
+      "approximate_scaling_factor": null,
+      "stored_in_eprom": "fixed"
+    },
+    {
+      "field_id": "0xFE",
+      "description": "Minor Firmware Version",
+      "access": "read",
+      "default_value": "N/A",
+      "range": "0x00 - 0xFF",
+      "function_description": "Returns a char that represents the minor firmware version of the Ag105",
+      "approximate_scaling_factor": null,
+      "stored_in_eprom": "fixed"
+    },
+    {
+      "field_id": "0xE5",
+      "description": "Change I2C Address",
+      "access": "Read+Write",
+      "default_value": "0x30",
+      "range": "0x01 - 0x7F",
+      "function_description": "Can be used to change the Ag105 I2C address",
+      "approximate_scaling_factor": null,
+      "stored_in_eprom": "yes"
+    },
+    {
+      "field_id": "0xE6",
+      "description": "Reset Memory",
+      "access": "Write",
+      "default_value": "N/A",
+      "range": "-",
+      "function_description": "Writing to this field resets all settings to default",
+      "approximate_scaling_factor": null,
+      "stored_in_eprom": "-"
+    }
+  ]
+}

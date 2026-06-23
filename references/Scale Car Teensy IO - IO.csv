@@ -1,0 +1,31 @@
+Pin Number,Input/Output,Functionality,Assignment,Code Name,Notes
+0,Comminication,UART,RX,RX,Used for VESC
+1,Comminication,UART,TX,TX,Used for VESC
+2,Input,Interrupt,Encoder-A,ENC_A,
+3,Output,Digital,FC regulator enable,FC_REG_ENABLE,
+4,Output,Digital,BT regulator enable,BT_REG_ENABLE,
+5,Output,Digital,Charger MPPT disable,MPPT_DISABLE,
+6,Input,Digital,Charger status,CHARGER_STAT,
+7,Output,Digital,Enable optical sensor,ENC_ENABLE,
+8,Input,Interrupt,Encoder-B,ENC_B,
+9,Output,Digital,Cell balancing disable,CBAL_DISABLE,
+11,Communication,SPI,MOSI,MOSI,Used for MDAC
+12,Communication,SPI,MISO,MISO,Used for MDAC
+13,Communication,SPI,SCK,SCK,Used for MDAC
+18,Communication,I2C,SDA,SDA,Used for battery charger
+19,Communication,I2C,SCL,SCL,Used for battery charger
+24,Input,Analog,Fuel cell voltage measurement,FC_VOLTAGE,
+25,Input,Analog,Battery voltage measurement,BT_VOLTAGE,
+26,Input,Analog,Bus voltage measurement,BUS_VOLTAGE,
+27,Output,Digital,Fuel cell bus enable,FC_BUS_ENABLE,Allow fuel cell regulator to contribute to Vbus
+28,Output,Digital,Battery bus enable,BT_BUS_ENABLE,Allow battery regulator to contribute to Vbus
+29,Output,Digital,Motor power enable,MOT_PWR_ENABLE,Allow power to flow to VESC / motor
+30,Output,Digital,Regen charging enable,REGEN_ENABLE,Allow regen power to flow to the battery charger
+31,Output,Digital,Fuel cell charging enable,FC_CHARGE_ENABLE,Allow Vbus (fuel cell) to flow to the battery charger. BT_BUS_ENABLE and REGEN_ENABLE *must* be turned off before this is turned on
+32,Output,Digital,Battery sequencing enable,BT_SEQUENCE_ENABLE,"Must initialize in off state, turn on once system is powered up and does not need to be turned off after"
+36,Communication,SPI,CS-MDAC-FC,CS_MDAC_FC,Used for MDAC
+37,Communication,SPI,CS-MDAC-BT,CS_MDAC_BT,Used for MDAC
+38,Input,Analog,Charger input voltage measurement,CHG_VOLTAGE,
+39,Input,Analog,Regen node voltage,RGN_VOLTAGE,
+40,Input,Analog,Fuel cell current measurement,FC_CURRENT,
+41,Input,Analog,Battery current measurement,BT_CURRENT,
