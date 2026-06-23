@@ -2,7 +2,19 @@
   "permissions": {
     "allow": [
       "Skill(code-review)",
-      "Skill(code-review:*)"
+      "Skill(code-review:*)",
+      "Bash(python -c ' *)",
+      "Bash(py -c \"import openpyxl; print\\('ok'\\)\")",
+      "Bash(command -v unzip)",
+      "Bash(rm -rf /tmp/xlsx_x)",
+      "Bash(mkdir -p /tmp/xlsx_x)",
+      "Bash(unzip -o -q references/FCHEV_Signal_Table_2026-06-23A.xlsx -d /tmp/xlsx_x)",
+      "Read(//tmp/**)",
+      "Bash(rm -rf .xlsx_tmp)",
+      "Bash(mkdir -p .xlsx_tmp)",
+      "Bash(unzip -o -q references/FCHEV_Signal_Table_2026-06-23A.xlsx -d .xlsx_tmp)",
+      "Bash(sed -i \"s#/tmp/xlsx_x/xl/#.xlsx_tmp/xl/#\" /tmp/parse.js)",
+      "Bash(node /tmp/parse.js)"
     ]
   }
 }
