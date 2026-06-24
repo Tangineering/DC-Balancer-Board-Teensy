@@ -26,6 +26,15 @@
  *    Pi decodes off/CC/CV/fault from it. switch_state and all following fields shift +1; checksum
  *    span now bytes 1–56. (The old v1 charger_status — dropped in v2 — is thus restored to its
  *    historic offset, now carrying the Ag105's richer status rather than the BQ25690's.)
+ *  - VBUS controlled bring-up (post-bench-failure): a State-98 hot-plug of a running boost onto
+ *    the discharged 470µF bus (schematic sheet 4) destroyed the BT boost. The RT1987 datasheet
+ *    (back-to-back FETs, CSS=5.6nF soft-start, start-up SCP) shows the real culprit was the shared
+ *    9V test rail browning out, not raw inrush. Fixes: boosts now default OFF in setup();
+ *    doState0() brings the bus up gently (bus switches FIRST, settle, THEN boosts) and gates
+ *    State 0→1 on V_bus reaching V_BUS_CHARGED_THRESH (timeout → FAULT_INIT_FAIL). doState3()
+ *    (Finish) no longer drains the bus — it leaves the boosts + bus switches ON so the bus stays
+ *    armed and Idle→Run never re-hot-plugs (only State 99 tears the bus down). State 98 adds a
+ *    hot-plug guard on '1'/'2' and a 'G' safe-bring-up command. No telemetry layout change.
  */
 
 #include <VescUart.h>
@@ -111,12 +120,28 @@ EthernetUDP Udp;
 #define LIMIT_V_BATT_MIN 6.2f   // V — 2S LiPo cutoff (2 × 3.1V)
 // Source: user-confirmed: 17.5V nominal bus; TPS61288 HW OVP triggers at 19V
 #define LIMIT_V_BUS_MAX  18.5f  // V — 1V SW margin below 19V HW OVP
-#define LIMIT_V_BATT_MAX  8.6f  // V — 2S LiPo max (4.3V/cell × 2 + 0.2V margin)
+//#define LIMIT_V_BATT_MAX  8.6f  // V — 2S LiPo max (4.3V/cell × 2 + 0.2V margin)
+#define LIMIT_V_BATT_MAX 10.0f  // TEMP for using 9V battery for testing
 #define LIMIT_V_FC_MIN    6.0f  // V — H-20 minimum
 #define LIMIT_I_BT_MAX    6.0f  // A — INA253A1, BT boost path
 #define LIMIT_V_BUS_MIN  12.0f  // V — minimum VBUS during State 2
 #define LIMIT_V_RGN_MAX  28.0f  // V — regen node spike ceiling
 #define LIMIT_V_CHG_MAX  24.0f  // V — charger input max
+
+// ── VBUS controlled bring-up (State 0) ───────────────────────────────────────
+// The VBUS node carries a 470µF bulk cap (schematic sheet 4, EEE-FN1V471UP). Connecting a
+// boost that is ALREADY running at ~17.5V onto a discharged 0V bus forces a large charge
+// transient: the RT1987 (CSS=5.6nF → ~1.17ms soft-start) cannot ramp 470µF that fast, so it
+// SCP-current-limit-clamps and auto-retries in bursts, drawing heavy current. On the bench the
+// BT boost shares its 9V source with the logic 5V reg, so that burst browned out the Teensy and
+// destroyed the BT boost. Fix: bring the bus up via the boosts' own soft-start from a low
+// voltage — enable the bus switches FIRST (at ~Vbatt, gentle), THEN enable the boosts so they
+// ramp the bus + their outputs up together. Never hot-plug a running boost onto a dead bus.
+#define V_BUS_CHARGED_THRESH 15.0f   // V — bus considered "up" (TODO(calibrate): ~0.85×17.5V)
+#define BUS_SETTLE_MS         5u     // ms — RT1987 soft-start (~1.17ms) + margin (TODO(calibrate))
+#define BUS_CHARGE_TIMEOUT_MS 800u   // ms — max for boosts to reach V_BUS_CHARGED_THRESH; else
+                                     //      FAULT_INIT_FAIL (dead boost / failed switch / no source).
+                                     //      TODO(calibrate)
 
 // ── Error code enum ───────────────────────────────────────────────────────────
 // Latching primary cause; set once by triggerFault() on first State-99 entry.
@@ -351,6 +376,8 @@ void doState98();
 void doState99();
 void doEncoderA();
 void doEncoderB();
+void bringUpBus();
+bool busHotPlugUnsafe(int regPin);
 void motorControl();
 void powerBalance();
 void chargingControl();
@@ -381,8 +408,11 @@ void setup() {
     pinMode(ENC_A,   INPUT);
     pinMode(ENC_B,   INPUT);
     pinMode(ENC_ENABLE,    OUTPUT);
-    pinMode(FC_REG_ENABLE, OUTPUT);
-    pinMode(BT_REG_ENABLE, OUTPUT);
+    // Boost regulators default OFF. They are enabled by doState0() AFTER the bus switches, so the
+    // boosts soft-start the 470µF bus from a low voltage (gentle) instead of being hot-plugged onto
+    // a discharged bus at full output. See the "VBUS controlled bring-up" note above.
+    pinMode(FC_REG_ENABLE, OUTPUT); digitalWrite(FC_REG_ENABLE, LOW);
+    pinMode(BT_REG_ENABLE, OUTPUT); digitalWrite(BT_REG_ENABLE, LOW);
     pinMode(CS_MDAC_FC,    OUTPUT);
     pinMode(CS_MDAC_BT,    OUTPUT);
     pinMode(CHARGER_STAT,  INPUT);
@@ -410,8 +440,8 @@ void setup() {
 
     digitalWrite(CS_MDAC_FC,    HIGH);
     digitalWrite(CS_MDAC_BT,    HIGH);
-    digitalWrite(BT_REG_ENABLE, HIGH);
-    digitalWrite(FC_REG_ENABLE, HIGH);
+    // FC_REG_ENABLE / BT_REG_ENABLE intentionally left LOW here — doState0() enables them after
+    // the bus switches so the bus is charged via boost soft-start, not a hot-plug step.
     digitalWrite(ENC_ENABLE,    LOW);
 
     attachInterrupt(digitalPinToInterrupt(ENC_A), doEncoderA, CHANGE);
@@ -582,6 +612,7 @@ void detectFaults() {
     // Mirrors the existing FAULT_UV_BUS State-2 gate. Source: boot-lock review.
     if (mainState == 2 && V_batt < LIMIT_V_BATT_MIN) triggerFault(FAULT_UV_BATT, ERR_UV_BATT);
 #endif
+
     if (V_bus  > LIMIT_V_BUS_MAX)  triggerFault(FAULT_OV_BUS,  ERR_OV_BUS);
 
 #if !BENCH_TEST
@@ -594,6 +625,7 @@ void detectFaults() {
 
     // -- New fault checks --------------------------------------------------------
     if (V_batt > LIMIT_V_BATT_MAX)  triggerFault(FAULT_OV_BATT, ERR_OV_BATT);
+
 #if !BENCH_TEST
     // UV_FC gated to Run (State 2) for the same boot-ramp reason as UV_BATT above.
     if (mainState == 2 && V_fc < LIMIT_V_FC_MIN) triggerFault(FAULT_UV_FC, ERR_UV_FC);
@@ -782,33 +814,75 @@ void sendTelemetry() {
 // STATE MACHINE
 // ═════════════════════════════════════════════════════════════════════════════
 void doState0() {
-    // 1. FC/BT boost regulators are already HIGH from setup() — confirm
-    digitalWrite(FC_REG_ENABLE, HIGH);
-    digitalWrite(BT_REG_ENABLE, HIGH);
+    // INIT — controlled VBUS bring-up, then gate on the bus actually coming up.
+    //
+    // Implemented as a NON-BLOCKING phase machine (same pattern as doState3/doState99) so
+    // detectFaults() keeps sampling throughout the bring-up window.
+    //
+    // Ordering is safety-critical (see "VBUS controlled bring-up" note near the limits):
+    //   Phase 0: boosts are OFF (from setup). Enable the bus switches FIRST. With the boosts off,
+    //            each boost output floats to ~Vbatt via the TPS61288 body diode, so the RT1987s
+    //            soft-start the 470µF bus from 0 → ~Vbatt — a small, SCP-limited step. No running
+    //            boost is hot-plugged onto a 0V bus.
+    //   Phase 1: after BUS_SETTLE_MS, enable the boosts. Now the bus + boost outputs are one node
+    //            and rise from ~Vbatt → 17.5V together via the boosts' own soft-start (smooth,
+    //            steady current — not the peaky SCP-retry bursts of a hot-plug). Do the rest of
+    //            init here too.
+    //   Phase 2: wait for V_bus to reach V_BUS_CHARGED_THRESH before declaring Idle. If it never
+    //            does within BUS_CHARGE_TIMEOUT_MS, raise FAULT_INIT_FAIL (dead boost / failed
+    //            switch / no source — exactly the failure that motivated this).
+    static uint8_t  phase      = 0;
+    static uint32_t phaseStart = 0;
 
-    // 2. Path switches are all LOW from setup() — leave them LOW during init
+    switch (phase) {
+        case 0:
+            // Switches first (boosts still LOW from setup).
+            digitalWrite(FC_BUS_ENABLE, HIGH);   // FC regulator → VBUS (RT1987 soft-starts the bus)
+            digitalWrite(BT_BUS_ENABLE, HIGH);   // BT regulator → VBUS
+            phaseStart = millis();
+            phase = 1;
+            break;
 
-    // 3. Bring battery-pack sequencing switch HIGH once system is powered
-    // Must be OFF at boot; turn ON here after regulators have started.
-    digitalWrite(BT_SEQUENCE_ENABLE, HIGH);   // battery pack now sequenced in
+        case 1:
+            if (millis() - phaseStart < BUS_SETTLE_MS) break;   // let the RT1987 soft-start settle
 
-    // 4. Init MDAC droop outputs
-    initMdacOutputs();
+            // Boosts second — they ramp the (already-connected) bus up via their own soft-start.
+            digitalWrite(FC_REG_ENABLE, HIGH);
+            digitalWrite(BT_REG_ENABLE, HIGH);
 
-    // 5. Charger config is NOT done here. The Ag105 is unpowered in Init (no charger power
-    // path is open), so it cannot ACK I2C — configuring it here would always fail. Instead,
-    // pollAg105() lazily configures it the first time it is powered + settled (see §3/§5).
-    ag105Configured = false;
+            // Battery-pack sequencing switch: OFF at boot, ON now that the system is powered.
+            digitalWrite(BT_SEQUENCE_ENABLE, HIGH);
 
-    // 6. Init VESC
-    initEsc();
+            initMdacOutputs();
 
-    digitalWrite(CS_MDAC_FC, HIGH);
-    digitalWrite(CS_MDAC_BT, HIGH);
-    digitalWrite(ENC_ENABLE, HIGH);
+            // Charger config is NOT done here. The Ag105 is unpowered in Init (no charger power
+            // path is open), so it cannot ACK I2C — configuring it here would always fail. Instead,
+            // pollAg105() lazily configures it the first time it is powered + settled (see §3/§5).
+            ag105Configured = false;
 
-    Serial.println("State 0 -> State 1 (IDLE)");
-    mainState = 1;
+            initEsc();
+
+            digitalWrite(CS_MDAC_FC, HIGH);
+            digitalWrite(CS_MDAC_BT, HIGH);
+            digitalWrite(ENC_ENABLE, HIGH);
+
+            phaseStart = millis();
+            phase = 2;
+            break;
+
+        case 2:
+            if (V_bus >= V_BUS_CHARGED_THRESH) {
+                Serial.println("State 0 -> State 1 (IDLE)");
+                phase = 0;                       // reset for a future re-init (after power cycle)
+                mainState = 1;
+            } else if (millis() - phaseStart > BUS_CHARGE_TIMEOUT_MS) {
+                // Bus never came up: a boost/switch is dead or no source is present.
+                Serial.println("State 0: VBUS failed to reach charge threshold -> FAULT_INIT_FAIL");
+                phase = 0;
+                triggerFault(FAULT_INIT_FAIL, ERR_INIT_FAIL);
+            }
+            break;
+    }
 }
 
 void doState1() {
@@ -870,54 +944,31 @@ void doState2() {
 }
 
 void doState3() {
-    // FINISH — two-phase safe shutdown; back-feed hazard ordering applies.
-    // The two energy sources (VBUS caps and motor/drivetrain) cannot be bled simultaneously
-    // because FC_CHARGE_ENABLE and REGEN_ENABLE are mutually exclusive — done sequentially.
+    // FINISH — stop the motor and return to the charged Idle state.
     //
-    // Implemented as a NON-BLOCKING phase machine: the old blocking delay(10) calls froze the
-    // main loop, so updateSensors()/detectFaults() were blind during the highest-energy drain
-    // windows. Returning between phases keeps fault detection live the whole way down.
-    // The 10 ms inter-phase timing is preserved exactly.
-    // Note: `phase` is self-resetting to 0 on normal completion below. If a fault interrupts the
-    // sequence mid-way, control latches in State 99 and the board is only ever recovered by a
-    // power cycle (which re-inits this static), so a stale non-zero `phase` is not reachable.
-    static uint8_t  phase      = 0;
-    static uint32_t phaseStart = 0;
+    // The bus is deliberately left ENERGIZED: the boosts and FC_BUS/BT_BUS switches stay ON, so
+    // the bus remains at ~17.5V and the next Idle→Run transition never hot-plugs the 470µF bus
+    // (see "VBUS controlled bring-up" note). Only State 99 (Error) tears the bus down — and that
+    // is latched until a power cycle, which re-runs the State-0 gentle bring-up.
+    //
+    // Because the boosts stay enabled, there is NO disabled-converter back-feed hazard here, so the
+    // old two-phase cap/regen drain sequence is no longer needed. End-of-run regen harvest already
+    // happens through the regen path during Run coast-down (chargingControl()); the ~72mJ of VBUS
+    // cap energy is not worth a re-hot-plug every cycle.
+    vesc.setCurrent(0);
+    current = 0.0f;
+    digitalWrite(MOT_PWR_ENABLE, LOW);     // disconnect VESC from VBUS
+    assertFcChargeEnable(false);           // ensure FC→charger path is closed
+    digitalWrite(REGEN_ENABLE, LOW);       // ensure regen path is closed
+    digitalWrite(MPPT_DISABLE, LOW);       // inhibit MPPT (active-LOW) until next Run
+    // FC_BUS_ENABLE / BT_BUS_ENABLE and the boosts intentionally stay ON — bus remains armed.
 
-    switch (phase) {
-        case 0:
-            // Phase 1: Bleed remaining VBUS capacitor energy into the charger.
-            // Cut incoming regulator feeds first; MOT_PWR_ENABLE stays HIGH so the motor
-            // load also helps drain the caps. BT_BUS/REGEN now LOW → guard passes cleanly.
-            vesc.setCurrent(0);
-            digitalWrite(FC_BUS_ENABLE, LOW);    // disconnect FC regulator from VBUS
-            digitalWrite(BT_BUS_ENABLE, LOW);    // disconnect BT regulator from VBUS
-            assertFcChargeEnable(true);          // drain remaining VBUS cap energy into Ag105
-            phaseStart = millis();
-            phase = 1;
-            break;
-        case 1:
-            if (millis() - phaseStart < 10) break;   // TODO(calibrate): VBUS capacitor drain time
-            // Phase 2: Bleed motor / drivetrain regen energy.
-            // FC_CHARGE must close before REGEN can open (mutual-exclusion rule).
-            assertFcChargeEnable(false);         // close FC→charger path
-            digitalWrite(REGEN_ENABLE, HIGH);    // open regen → charger path
-            digitalWrite(MOT_PWR_ENABLE, LOW);   // cut motor from VBUS; regen bleeds through REGEN
-            phaseStart = millis();
-            phase = 2;
-            break;
-        case 2:
-            if (millis() - phaseStart < 10) break;   // TODO(calibrate): regen current decay time
-            digitalWrite(REGEN_ENABLE, LOW);     // close regen path
-            digitalWrite(MPPT_DISABLE, LOW);     // inhibit MPPT (active-LOW: LOW = inhibit)
-            // Clear the wheel-speed averaging buffers so the next run starts fresh (drive cycles
-            // are short, but stale timestamps from this run would corrupt the first velocity samples).
-            wheelSpeedResetPending = true;
-            Serial.println("State 3 -> State 1 (IDLE)");
-            phase = 0;                           // reset for next entry into Finish
-            mainState = 1;
-            break;
-    }
+    // Clear the wheel-speed averaging buffers so the next run starts fresh (stale timestamps from
+    // this run would corrupt the first velocity samples).
+    wheelSpeedResetPending = true;
+
+    Serial.println("State 3 -> State 1 (IDLE)");
+    mainState = 1;
 }
 
 void doState99() {
@@ -1004,12 +1055,14 @@ void doState99() {
 void printTestHelp() {
     Serial.println("=== State 98 TEST commands ===");
     Serial.println("  F - toggle FC_REG_ENABLE     B - toggle BT_REG_ENABLE");
-    Serial.println("  1 - toggle FC_BUS_ENABLE     2 - toggle BT_BUS_ENABLE");
+    Serial.println("  1 - toggle FC_BUS_ENABLE*    2 - toggle BT_BUS_ENABLE*");
     Serial.println("  3 - toggle MOT_PWR_ENABLE    4 - toggle REGEN_ENABLE");
     Serial.println("  5 - toggle FC_CHARGE_ENABLE  6 - toggle BT_SEQUENCE_ENABLE");
     Serial.println("  C - toggle CBAL_DISABLE      M - toggle MPPT_DISABLE");
-    Serial.println("  D - start/stop drive cycle   S - print status snapshot");
-    Serial.println("  I - scan I2C bus             H - show this command list");
+    Serial.println("  G - safe VBUS bring-up       D - start/stop drive cycle");
+    Serial.println("  S - print status snapshot    I - scan I2C bus");
+    Serial.println("  H - show this command list");
+    Serial.println("  * 1/2 refuse ON if the matching boost is ON and VBUS is low (use G)");
     Serial.println("  Q - exit -> State 1 (MOT_PWR_ENABLE forced LOW)");
     Serial.println("==============================");
 }
@@ -1034,14 +1087,24 @@ void doState98() {
                 Serial.print("BT_REG_ENABLE -> "); Serial.println(!cur);
                 break;
             case '1':
-                pin = FC_BUS_ENABLE; cur = digitalRead(pin);
-                digitalWrite(pin, !cur);
-                Serial.print("FC_BUS_ENABLE -> "); Serial.println(!cur);
+                // Guard: refuse to hot-plug a running FC boost onto a discharged bus (use 'G').
+                cur = digitalRead(FC_BUS_ENABLE);
+                if (!cur && busHotPlugUnsafe(FC_REG_ENABLE)) {
+                    Serial.println("REFUSED: FC boost is ON and VBUS is low — hot-plug risk. Use 'G' to bring up the bus.");
+                } else {
+                    digitalWrite(FC_BUS_ENABLE, !cur);
+                    Serial.print("FC_BUS_ENABLE -> "); Serial.println(!cur);
+                }
                 break;
             case '2':
-                pin = BT_BUS_ENABLE; cur = digitalRead(pin);
-                digitalWrite(pin, !cur);
-                Serial.print("BT_BUS_ENABLE -> "); Serial.println(!cur);
+                // Guard: refuse to hot-plug a running BT boost onto a discharged bus (use 'G').
+                cur = digitalRead(BT_BUS_ENABLE);
+                if (!cur && busHotPlugUnsafe(BT_REG_ENABLE)) {
+                    Serial.println("REFUSED: BT boost is ON and VBUS is low — hot-plug risk. Use 'G' to bring up the bus.");
+                } else {
+                    digitalWrite(BT_BUS_ENABLE, !cur);
+                    Serial.print("BT_BUS_ENABLE -> "); Serial.println(!cur);
+                }
                 break;
             case '3':
                 pin = MOT_PWR_ENABLE; cur = digitalRead(pin);
@@ -1105,6 +1168,12 @@ void doState98() {
                     safeAllSwitches();   // park path switches so a mid-phase stop leaves nothing latched
                     Serial.println("[DC] Drive cycle stopped — switches safed");
                 }
+                break;
+            case 'G':
+            case 'g':
+                Serial.println("[G] Safe VBUS bring-up: switches first, then boosts...");
+                bringUpBus();
+                Serial.print("    V_bus="); Serial.print(V_bus); Serial.println("V (send 'S' to confirm)");
                 break;
             case 'S':
             case 's':
@@ -1247,6 +1316,28 @@ void safeAllSwitches() {
     digitalWrite(FC_BUS_ENABLE,  LOW);
     digitalWrite(MOT_PWR_ENABLE, LOW);
     digitalWrite(MPPT_DISABLE,   LOW);    // inhibit MPPT (active-LOW)
+}
+
+// Safe VBUS bring-up: bus switches FIRST, then boosts (see "VBUS controlled bring-up" note and
+// doState0()). Used by the State 98 'G' command so the operator can energize the bus on the bench
+// without hot-plugging a running boost onto a discharged 470µF bus. Brief blocking settle is fine
+// here (one-shot, interactive). Does NOT gate on V_bus — caller can read it back with 'S'.
+void bringUpBus() {
+    digitalWrite(FC_REG_ENABLE, LOW);     // ensure boosts OFF first (gentle from a low voltage)
+    digitalWrite(BT_REG_ENABLE, LOW);
+    digitalWrite(FC_BUS_ENABLE, HIGH);    // switches first — RT1987s soft-start the bus to ~Vbatt
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    delay(BUS_SETTLE_MS);                  // let the RT1987 soft-start settle
+    digitalWrite(FC_REG_ENABLE, HIGH);    // boosts second — ramp the bus to 17.5V via soft-start
+    digitalWrite(BT_REG_ENABLE, HIGH);
+}
+
+// True when turning a *_BUS_ENABLE switch ON would hot-plug a RUNNING boost onto a discharged bus
+// — the exact condition that destroyed the BT boost. We can't sense the boost output directly, so
+// "boost ON (regPin HIGH) AND bus below the charged threshold" is the available proxy. Used by the
+// State 98 '1'/'2' handlers to refuse the unsafe toggle (use 'G' for a safe bring-up instead).
+bool busHotPlugUnsafe(int regPin) {
+    return digitalRead(regPin) == HIGH && V_bus < V_BUS_CHARGED_THRESH;
 }
 
 void motorControl() {

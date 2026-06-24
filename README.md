@@ -48,6 +48,15 @@ All switches default LOW at boot (fail-safe; 10 kΩ EN-to-GND bodge resistors ba
 through `assertFcChargeEnable()`, which forces `BT_BUS_ENABLE` and `REGEN_ENABLE` LOW (with an
 RT1987 turn-off settle delay) before opening the FC→charger path.
 
+**VBUS bring-up — never hot-plug a running boost onto a dead bus.** VBUS carries a 470 µF bulk
+cap. Connecting a boost that is already running at ~17.5 V onto a discharged 0 V bus forces a
+large charge transient that the RT1987 absorbs as SCP current-limit bursts — which (on the shared
+9 V bench rail) browned out the Teensy and destroyed a boost. The boots are therefore brought up
+**gently**: enable the bus switches *first* (the RT1987s soft-start the bus from a low voltage),
+then enable the boosts so their own soft-start ramps the bus to 17.5 V. This is handled in State 0
+and mirrored by the State 98 `G` command; the bus is then kept energized through Idle/Finish so a
+Run never re-hot-plugs it.
+
 ## Runtime flow
 
 Main loop execution order:
@@ -61,21 +70,29 @@ Main loop execution order:
 
 ## State machine
 
-- **State 0 (Init)**: enable FC/BT boosts, raise `BT_SEQUENCE_ENABLE`, init MDAC, configure the
-  Ag105 over I2C, init VESC, then go to Idle. **Aborts to State 99 if the Ag105 I2C config
-  fails** (does not silently demote to Idle).
-- **State 1 (Idle)**: motor current zero, `MOT_PWR_ENABLE` LOW; wait for a Run command from the
-  Pi, or `T` on USB serial to enter test mode (State 98).
+- **State 0 (Init)**: a **non-blocking phase machine** that brings VBUS up gently — enable the
+  bus switches first (`FC_BUS_ENABLE`/`BT_BUS_ENABLE`), settle, then enable the FC/BT boosts so
+  their soft-start ramps the bus (see *VBUS bring-up* above). It also raises `BT_SEQUENCE_ENABLE`,
+  inits the MDAC and VESC, then **gates the transition to Idle on `V_bus ≥ V_BUS_CHARGED_THRESH`**.
+  If the bus never reaches the threshold within `BUS_CHARGE_TIMEOUT_MS`, it raises `FAULT_INIT_FAIL`
+  → State 99 (catches a dead boost, a failed switch, or no source). The Ag105 is **not** configured
+  here — it is unpowered in Init; `pollAg105()` configures it lazily once a charger path powers it.
+- **State 1 (Idle)**: motor current zero, `MOT_PWR_ENABLE` LOW; the bus is left **energized**
+  (boosts + bus switches stay ON). Waits for a Run command from the Pi, or `T` on USB serial to
+  enter test mode (State 98).
 - **State 2 (Run)**: `MOT_PWR_ENABLE` HIGH; run `chargingControl()`, `motorControl()`,
   `powerBalance()`. `chargingControl()` owns the `REGEN`/`FC_CHARGE`/`BT_BUS` switches and the
-  `MPPT_DISABLE` line.
-- **State 3 (Finish)**: **non-blocking** two-phase safe shutdown (bleed VBUS caps → bleed
-  regen), then clears the wheel-speed buffer and returns to Idle.
+  `MPPT_DISABLE` line. The bus is already up from Init/Idle, so entering Run does not hot-plug it.
+- **State 3 (Finish)**: stops the motor and closes the motor/regen/charge paths, but **leaves the
+  boosts + bus switches ON** so the bus stays armed and the next Idle→Run never re-hot-plugs the
+  470 µF bus. Clears the wheel-speed buffer and returns to Idle. (No cap/regen drain — the
+  disabled-boost back-feed hazard doesn't apply while the boosts stay enabled.)
 - **State 98 (Test)**: USB-serial hardware exerciser (see below).
-- **State 99 (Error)**: **non-blocking** two-phase safe shutdown, then disables boosts, latched
-  until power cycle.
+- **State 99 (Error)**: **non-blocking** two-phase safe shutdown that bleeds VBUS/regen energy and
+  then disables the boosts and tears the bus down — latched until power cycle (which re-runs the
+  State-0 gentle bring-up).
 
-The State 3/99 shutdowns are phase machines gated on `millis()` (no blocking `delay()`), so
+The State 99 shutdown is a phase machine gated on `millis()` (no blocking `delay()`), so
 `detectFaults()` keeps sampling through the highest-energy drain windows.
 
 ## Charger control (Silvertel Ag105)
@@ -99,11 +116,12 @@ There is **no charge-current register to program per-mA**. Control is:
 - **Commands**: 22-byte UDP packet (sync `0xBB` + XOR checksum). Fields: timestamp, counter,
   `v_setpoint`, `power_share_setpoint`, `charge_goal`, `mode_cmd`, and a reserved `droop_enable`
   byte (parsed, not yet wired).
-- **Telemetry — protocol v3, 57 bytes** (`TELEMETRY_VERSION = 3`, sync `0xAA`, XOR over bytes
-  1–55). Carries the measured/derived signals, droop gains, a `switch_state` bitmask of the 6
-  path switches, a 16-bit `fault_flags`, the latched `error_code`, and `error_source_state`.
-  The Pi bridge parses fixed offsets and **must match this version** — see `PLAN.md` §6b for the
-  byte-by-byte layout and the block comment above `sendTelemetry()`.
+- **Telemetry — protocol v4, 58 bytes** (`TELEMETRY_VERSION = 4`, sync `0xAA`, XOR over bytes
+  1–56). Carries the measured/derived signals, droop gains, the raw Ag105 Table-6
+  `charger_status` byte (offset 51), a `switch_state` bitmask of the 6 path switches, a 16-bit
+  `fault_flags`, the latched `error_code`, and `error_source_state`. The Pi bridge parses fixed
+  offsets and **must match this version** — see `PLAN.md` §6b for the byte-by-byte layout and the
+  block comment above `sendTelemetry()`.
 
 ## Key functions
 
@@ -145,7 +163,7 @@ transitions to **State 99**.
 When any check in `detectFaults()` trips, `triggerFault()` sets that condition's bit in the
 16-bit `fault_flags`, latches the **first** cause into `error_code` (and the active state into
 `error_source_state`), forces `FAULT_ERROR` (`0x8000`), and transitions to **State 99** —
-latched until power cycle. Both `fault_flags` and `error_code` ride in the v3 telemetry packet,
+latched until power cycle. Both `fault_flags` and `error_code` ride in the v4 telemetry packet,
 so every value below is observable on the Pi. Read `error_code` for the root cause and
 `fault_flags` for everything that tripped.
 
@@ -168,7 +186,7 @@ so every value below is observable on the Pi. Read `error_code` for the root cau
 | `0x0400` | `FAULT_OV_CHG` | charger-input overvoltage | `LIMIT_V_CHG_MAX = 24.0 V` | all |
 | `0x0800` | `FAULT_I2C_CHARGER` | Ag105 I2C comms failure | — | Run/Finish |
 | `0x1000` | `FAULT_CHARGER_STAT` | Ag105 GENSTAT error (`0x05` OC/regulation, `0x06` thermal, `0x07` timeout) | — | charging states |
-| `0x2000` | `FAULT_INIT_FAIL` | init sequence failure (Ag105 config) | — | State 0 |
+| `0x2000` | `FAULT_INIT_FAIL` | init failure: VBUS failed to reach `V_BUS_CHARGED_THRESH` within `BUS_CHARGE_TIMEOUT_MS` (also legacy Ag105 config) | `V_BUS_CHARGED_THRESH` | State 0 |
 | `0x8000` | `FAULT_ERROR` | latched marker: system entered State 99 | — | set with any fault |
 
 The UV checks marked **"Gated to Run"** are deliberately suppressed outside State 2, so unramped
@@ -219,16 +237,18 @@ back over serial:
 |-----|--------|-------|
 | `F` | Toggle `FC_REG_ENABLE` (FC boost) | |
 | `B` | Toggle `BT_REG_ENABLE` (BT boost) | |
-| `1` | Toggle `FC_BUS_ENABLE` | |
-| `2` | Toggle `BT_BUS_ENABLE` | |
+| `1` | Toggle `FC_BUS_ENABLE` | **ON refused** if FC boost is ON and `V_bus` < `V_BUS_CHARGED_THRESH` (hot-plug guard — use `G`) |
+| `2` | Toggle `BT_BUS_ENABLE` | **ON refused** if BT boost is ON and `V_bus` < `V_BUS_CHARGED_THRESH` (hot-plug guard — use `G`) |
 | `3` | Toggle `MOT_PWR_ENABLE` | must be HIGH before a drive cycle (`D`) |
 | `4` | Toggle `REGEN_ENABLE` | forces `FC_CHARGE` off via `assertFcChargeEnable(false)` before going HIGH |
 | `5` | Toggle `FC_CHARGE_ENABLE` | always through the `assertFcChargeEnable()` guard |
 | `6` | Toggle `BT_SEQUENCE_ENABLE` | |
 | `C` | Toggle `CBAL_DISABLE` | HIGH = OVP bypassed (prints a warning) |
 | `M` | Toggle `MPPT_DISABLE` | HIGH = MPPT harvesting; LOW = inhibited |
+| `G` | Safe VBUS bring-up | bus switches → settle → boosts (`bringUpBus()`); the safe way to energize the bus |
 | `D` | Start/stop simulated drive cycle | requires `MOT_PWR_ENABLE` HIGH to start |
 | `S` | Print status dump (all pins, all ADCs, `I_charge`, `fault_flags`, `error_code`) | read-only |
+| `I` | Scan the I2C bus | read-only |
 | `Q` | Exit → Idle (State 1) | forces `MOT_PWR_ENABLE` LOW |
 
 ### Testing an individual component
@@ -242,7 +262,9 @@ back over serial:
 
 Mind the guarded keys: `5` (`FC_CHARGE_ENABLE`) always runs through `assertFcChargeEnable()`,
 which drives `BT_BUS_ENABLE`/`REGEN_ENABLE` LOW first; `4` (`REGEN_ENABLE`) forces `FC_CHARGE`
-off before going HIGH; and `C` (`CBAL_DISABLE` HIGH) bypasses cell OVP — use with care.
+off before going HIGH; `1`/`2` refuse to connect a source to the bus while the matching boost is
+running and the bus is discharged (use `G` to energize the bus safely first); and `C`
+(`CBAL_DISABLE` HIGH) bypasses cell OVP — use with care.
 
 ### Running the emulated drive cycle
 
@@ -279,7 +301,7 @@ cd test && make           # or: g++ -std=c++17 -Wall -Wextra -I. -I.. test_main.
 
 Mocks stub the Teensy/Arduino, Wire, SPI, VESC, and Ethernet APIs. Coverage includes scale-factor
 math, fault detection (incl. GENSTAT decode and UV boot-gating), PI convergence + anti-windup,
-command parsing, telemetry packing (57-byte layout + checksum), the Ag105 init/poll I2C
+command parsing, telemetry packing (58-byte v4 layout + checksum), the Ag105 init/poll I2C
 sequences, `assertFcChargeEnable()` ordering, `pollAg105()` state gating, `doState0()` init-fault
 handling, the State 98 drive cycle, and the wheel-speed buffer reset. Run before every flash.
 
@@ -288,6 +310,7 @@ handling, the State 98 drive cycle, and the wheel-speed buffer reset. Run before
 Items marked `TODO(calibrate)` / `TODO(verify)` in the source still need bench values, including:
 - `SCALE_V_CHG` / `SCALE_V_RGN` dividers, and confirmation of the FC/BT/BUS dividers
 - `motorConstant`, the PI gains (`Kp`, `Ki`), and `MOTOR_I_CMD_MAX` (anti-windup bound)
-- the regen-detection threshold and the State 3/99 cap-drain / regen-decay delays
+- the VBUS bring-up tunables: `V_BUS_CHARGED_THRESH`, `BUS_SETTLE_MS`, `BUS_CHARGE_TIMEOUT_MS`
+- the regen-detection threshold and the State 99 cap-drain / regen-decay delays
 - encoder counts-per-rev mapping to true vehicle speed
 - AD5443 SPI timing/word-format verification against `references/Datasheets/ad5426_5432_5443.pdf`

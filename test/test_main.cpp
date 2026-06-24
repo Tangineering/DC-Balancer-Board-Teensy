@@ -955,19 +955,15 @@ static void test_wheelspeed_reset() {
     test_group("updateWheelSpeed() reset between runs");
     reset_test_state();
 
-    // doState3 runs as a non-blocking phase machine; drive it to completion and confirm it
-    // requests a wheel-speed buffer reset, which updateWheelSpeed() then consumes.
+    // doState3 is single-pass (it leaves the bus energized; no drain phases). It requests a
+    // wheel-speed buffer reset, which updateWheelSpeed() then consumes.
     mainState = 3;
     g_mock_millis = 0;
-    doState3();                      // phase 0 → 1
-    g_mock_millis = 50;
-    doState3();                      // phase 1 → 2
-    g_mock_millis = 100;
-    doState3();                      // phase 2 → done, sets wheelSpeedResetPending, → State 1
+    doState3();                      // stop motor, return to Idle, request reset
     check(wheelSpeedResetPending == true,
           "doState3: requests wheel-speed buffer reset on completion");
     check(mainState == 1,
-          "doState3: returns to State 1 after non-blocking shutdown");
+          "doState3: returns to State 1 after shutdown");
 
     // updateWheelSpeed() consumes the request and clears the flag.
     g_mock_micros = 1000000;
@@ -976,28 +972,130 @@ static void test_wheelspeed_reset() {
           "updateWheelSpeed: consumes and clears the reset request");
 }
 
-// ─── doState0() reaches Idle with the charger unpowered ──────────────────────
+// ─── doState0() gentle bring-up reaches Idle once the bus is charged ──────────
 static void test_dostate0_reaches_idle_unpowered() {
-    test_group("doState0() reaches Idle with unpowered charger");
+    test_group("doState0() bring-up reaches Idle when bus charges");
 
-    // The charger is unpowered in Init (no power path open). doState0() no longer configures
-    // it, so even a charger that would NACK every I2C write must NOT block boot.
+    // doState0() is a non-blocking phase machine: switches first, settle, boosts, then gate on
+    // V_bus. Drive it through its phases with the bus coming up (V_bus default 18V ≥ threshold).
+    // The charger is unpowered in Init and doState0() no longer touches it, so a NACKing charger
+    // must not matter.
     reset_test_state();
     Wire.next_endtransmission_result = 1;   // any stray I2C would NACK — must not matter
     mainState = 0;
-    doState0();
-    check(mainState == 1,
-          "doState0: advances to State 1 (Idle) with charger unpowered");
-    check(error_code == ERR_NONE,
-          "doState0: no fault latched (charger init deferred)");
-    check(!(fault_flags & FAULT_INIT_FAIL),
-          "doState0: FAULT_INIT_FAIL not set at boot");
+    V_bus = 18.0f;                           // bus comes up past V_BUS_CHARGED_THRESH
+    g_mock_millis = 0;
 
-    // Clean path: still reaches Idle.
+    doState0();                              // phase 0: enable bus switches
+    check(mainState == 0,
+          "doState0: still in Init after enabling bus switches");
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && digitalRead(BT_BUS_ENABLE) == HIGH,
+          "doState0: bus switches enabled FIRST");
+    check(digitalRead(FC_REG_ENABLE) == LOW && digitalRead(BT_REG_ENABLE) == LOW,
+          "doState0: boosts NOT enabled before the bus switches (no hot-plug)");
+
+    g_mock_millis = BUS_SETTLE_MS + 1;
+    doState0();                              // phase 1: enable boosts + init
+    check(digitalRead(FC_REG_ENABLE) == HIGH && digitalRead(BT_REG_ENABLE) == HIGH,
+          "doState0: boosts enabled after the settle window");
+
+    g_mock_millis += 1;
+    doState0();                              // phase 2: V_bus ≥ threshold → Idle
+    check(mainState == 1,
+          "doState0: advances to Idle once V_bus reaches the charge threshold");
+    check(error_code == ERR_NONE && !(fault_flags & FAULT_INIT_FAIL),
+          "doState0: no fault latched on a healthy bring-up");
+}
+
+// ─── doState0() faults if the bus never charges (dead boost / no source) ──────
+static void test_dostate0_bus_charge_timeout() {
+    test_group("doState0() bus-charge timeout → FAULT_INIT_FAIL");
+
     reset_test_state();
     mainState = 0;
-    doState0();
-    check(mainState == 1, "doState0: advances to State 1 (Idle)");
+    V_bus = 5.0f;                            // bus never reaches V_BUS_CHARGED_THRESH
+    g_mock_millis = 0;
+
+    doState0();                              // phase 0
+    g_mock_millis = BUS_SETTLE_MS + 1;
+    doState0();                              // phase 1 (boosts on; start timeout clock)
+    check(mainState == 0,
+          "doState0: still in Init while the bus is below threshold");
+
+    g_mock_millis += BUS_CHARGE_TIMEOUT_MS + 1;
+    doState0();                              // phase 2: timeout
+    check(mainState == 99,
+          "doState0: latches State 99 when the bus never charges");
+    check(error_code == ERR_INIT_FAIL,
+          "doState0: ERR_INIT_FAIL latched on bus-charge timeout");
+    check((fault_flags & FAULT_INIT_FAIL) != 0,
+          "doState0: FAULT_INIT_FAIL flag set on bus-charge timeout");
+}
+
+// ─── State 98 hot-plug guard on '1'/'2' ──────────────────────────────────────
+static void test_dostate98_hotplug_guard() {
+    test_group("State 98 bus hot-plug guard ('1'/'2')");
+    reset_test_state();
+    mainState = 98;
+
+    // Boost ON + bus low → '1' ON refused (FC_BUS stays LOW): the exact failure condition.
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    g_pin_value[FC_BUS_ENABLE] = LOW;
+    V_bus = 5.0f;
+    Serial.rx_queue.push('1');
+    doState98();
+    check(digitalRead(FC_BUS_ENABLE) == LOW,
+          "doState98: '1' refused (FC boost ON + bus low) — switch stays LOW");
+
+    // Bus already charged → '1' ON allowed (no step across the ideal diode).
+    g_pin_value[FC_BUS_ENABLE] = LOW;
+    V_bus = 18.0f;
+    Serial.rx_queue.push('1');
+    doState98();
+    check(digitalRead(FC_BUS_ENABLE) == HIGH,
+          "doState98: '1' allowed when the bus is already charged");
+
+    // Boost OFF → '2' ON allowed even with a low bus (no running boost to hot-plug).
+    g_pin_value[BT_REG_ENABLE] = LOW;
+    g_pin_value[BT_BUS_ENABLE] = LOW;
+    V_bus = 5.0f;
+    Serial.rx_queue.push('2');
+    doState98();
+    check(digitalRead(BT_BUS_ENABLE) == HIGH,
+          "doState98: '2' allowed when the boost is OFF");
+
+    // Turning a switch OFF is always allowed (guard only blocks the unsafe ON).
+    g_pin_value[BT_REG_ENABLE] = HIGH;       // boost on
+    g_pin_value[BT_BUS_ENABLE] = HIGH;       // currently on
+    V_bus = 5.0f;                            // bus low
+    Serial.rx_queue.push('2');
+    doState98();
+    check(digitalRead(BT_BUS_ENABLE) == LOW,
+          "doState98: '2' OFF always allowed (guard only blocks ON)");
+}
+
+// ─── State 3 (Finish) returns to Idle with the bus left energized ────────────
+static void test_dostate3_leaves_bus_energized() {
+    test_group("doState3() leaves the bus energized");
+    reset_test_state();
+
+    // Bus came up in Init: switches + boosts ON entering Finish.
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[BT_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    g_pin_value[BT_REG_ENABLE] = HIGH;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    mainState = 3;
+
+    doState3();
+    check(mainState == 1,
+          "doState3: returns to Idle");
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && digitalRead(BT_BUS_ENABLE) == HIGH,
+          "doState3: bus switches stay ON (no re-hot-plug on next Run)");
+    check(digitalRead(FC_REG_ENABLE) == HIGH && digitalRead(BT_REG_ENABLE) == HIGH,
+          "doState3: boosts stay ON (bus remains armed)");
+    check(digitalRead(MOT_PWR_ENABLE) == LOW,
+          "doState3: motor power cut");
 }
 
 // ─── detectFaults() Ag105 GENSTAT error-state decoding ───────────────────────
@@ -1298,6 +1396,9 @@ int main() {
     test_error_code_system();
     test_i2c_fault_injection();
     test_dostate0_reaches_idle_unpowered();
+    test_dostate0_bus_charge_timeout();
+    test_dostate98_hotplug_guard();
+    test_dostate3_leaves_bus_energized();
     test_genstat_fault();
     test_uv_boot_gate();
     test_pollag105_state_gate();

@@ -191,6 +191,10 @@ Cruise/coast harvest: `REGEN_ENABLE = LOW`, use `assertFcChargeEnable(true)`.
 
 ### 2g. State 3 (Finish)
 
+> **Superseded by §12 (2026-06-24).** Finish is now single-pass and **leaves the bus energized**
+> (boosts + `FC_BUS`/`BT_BUS` stay ON) so Idle→Run never re-hot-plugs the 470 µF bus. It no longer
+> drains the VBUS caps. The sketch below is the original plan.
+
 ```
 1. vesc.setCurrent(0)
 2. digitalWrite(MOT_PWR_ENABLE, LOW)    // cut motor path before anything else
@@ -911,7 +915,8 @@ implemented in `teensy_controller.ino` unless noted.
 5. **Non-blocking State 3 and State 99 shutdowns.** The two `delay(10)` calls in each were
    replaced with `millis()`-gated phase machines (timings preserved exactly) so
    `updateSensors()`/`detectFaults()` keep running through the cap-drain and regen-bleed
-   windows — the highest-energy moments of shutdown.
+   windows — the highest-energy moments of shutdown. *(State 3 was later simplified to a
+   single-pass shutdown that leaves the bus energized — see §12; State 99 remains a phase machine.)*
 6. **State 98 drive cycle runs the real control loop.** `doState98()` now calls
    `chargingControl()` / `motorControl()` / `powerBalance()` during an active drive cycle (it
    previously only updated `v_setpoint`, so nothing was exercised). Stopping the cycle (`D`)
@@ -995,4 +1000,36 @@ normal mode, not a fault.
   `test_pollag105_settle_window_suppresses_fault`, `test_lazy_config_on_power`,
   `test_config_resets_on_power_loss`, `test_charging_control_fc_bootstrap`.
 - **All 205 host-native tests pass** (MSYS2 UCRT64 g++; no `make` on this machine — use
-  `mingw32-make` or g++ directly with `-DBENCH_TEST=0`).
+  `mingw32-make` or g++ directly with `-DBENCH_TEST=0`). *(Now **219** after the §12 additions.)*
+
+---
+
+## 12. VBUS controlled bring-up (2026-06-24)
+
+A State-98 bench mishap — enabling `BT_BUS_ENABLE` while both boosts were already running and
+VBUS sat at 0 V — destroyed the BT TPS61288 boost and browned out the Teensy. Reconciling against
+`references/Datasheets/RT1987_DS-00.pdf` + schematic sheet 4: the RT1987 has back-to-back FETs
+(full isolation when disabled) and soft-start + start-up SCP, so raw inrush should have been
+protected. VBUS carries a **470 µF** bulk cap; with `CSS = 5.6 nF` (tON ≈ 1.17 ms) a hot-plug
+makes the RT1987 SCP-clamp and burst-retry. The real culprit was the **shared 9 V test rail**
+(`VBT` feeds the BT boost *and* the LM1084 logic reg), which browned out under those bursts.
+FC-first worked because FC's source is isolated and pre-charged the bus. **Never hot-plug a
+running boost onto a discharged bus.**
+
+Changes (supersede §2g and the State-3 half of §11.5):
+- **`setup()`** leaves the boosts OFF; `doState0()` enables them *after* the bus switches.
+- **`doState0()`** is a non-blocking phase machine: bus switches first → settle (`BUS_SETTLE_MS`)
+  → boosts (their soft-start ramps the bus) → gate State 0→1 on `V_bus ≥ V_BUS_CHARGED_THRESH`,
+  with `BUS_CHARGE_TIMEOUT_MS` → `FAULT_INIT_FAIL` (dead boost / failed switch / no source).
+- **`doState3()` (Finish)** is single-pass: stop motor, close motor/regen/charge paths, **leave
+  boosts + bus switches ON** so the bus stays armed (only State 99 tears it down). No cap/regen
+  drain — the disabled-boost back-feed hazard doesn't apply while the boosts stay enabled.
+- **State 98** adds a `busHotPlugUnsafe()` guard on `1`/`2` (refuses ON when the matching boost is
+  ON and the bus is low) and a `G` command running `bringUpBus()` (switches → settle → boosts).
+- New tunables `V_BUS_CHARGED_THRESH` / `BUS_SETTLE_MS` / `BUS_CHARGE_TIMEOUT_MS` (`TODO(calibrate)`).
+  No telemetry change (reuses `FAULT_INIT_FAIL`/`ERR_INIT_FAIL`).
+
+Tests: `test_dostate0_reaches_idle_unpowered` reworked for the phase machine; new
+`test_dostate0_bus_charge_timeout`, `test_dostate98_hotplug_guard`,
+`test_dostate3_leaves_bus_energized`. **All 219 host-native tests pass** (`-DBENCH_TEST=0`).
+The BT TPS61288 has been replaced and the board is functioning again.

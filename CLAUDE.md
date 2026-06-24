@@ -433,3 +433,37 @@ earlier addendum** — notably, `doState0()` no longer configures or faults on t
   include and the Makefile `-I` were updated. **All 205 host-native tests pass** (run with
   MSYS2 UCRT64 g++: `cd test && mingw32-make`, or g++ directly — there is no `make` on this
   machine). New `AG105_SETTLE_MS` is a `TODO(calibrate)`.
+
+---
+
+## Status & session addendum (2026-06-24, VBUS controlled bring-up)
+
+A bench-test mishap drove a safety fix. In State 98 the operator enabled `BT_BUS_ENABLE` while
+both boosts were already running (~17.5 V) and VBUS sat at 0 V; the BT TPS61288 boost was
+destroyed (VIN/SW/VOUT all shorted to GND) and the Teensy browned out off USB.
+
+- **Root cause (reconciled against the new `references/Datasheets/RT1987_DS-00.pdf` + schematic
+  sheet 4).** The RT1987 has **back-to-back integrated FETs** (full VIN/VOUT isolation when
+  disabled — *no* body-diode passthrough) and **soft-start + start-up SCP that re-run on every EN
+  edge** (board `CSS = 5.6 nF` → tON ≈ 1.17 ms; POVP→GND → OVP ≈ 33 V). VBUS carries a **470 µF**
+  bulk cap, which a 1.17 ms ramp cannot charge within ISCP, so a hot-plug makes the RT1987
+  SCP-clamp and burst-retry. The real kill was the **shared 9 V test rail**: `VBT` feeds the BT
+  boost *and* the LM1084 logic reg, so the burst browned out the MCU and stressed the boost.
+  FC-first worked because FC's source is isolated and pre-charged the bus → BT then saw a ~0 V
+  step. Takeaway: **never hot-plug a running boost onto a discharged 470 µF bus.**
+- **Boosts default OFF in `setup()`.** They are enabled by `doState0()` *after* the bus switches.
+- **`doState0()` is now a non-blocking phase machine** that brings the bus up gently: bus switches
+  first (RT1987 soft-starts the bus to ~Vbatt), settle `BUS_SETTLE_MS`, then boosts (their own
+  soft-start ramps the bus to 17.5 V). State 0→1 is **gated on `V_bus ≥ V_BUS_CHARGED_THRESH`**,
+  with `BUS_CHARGE_TIMEOUT_MS` → `FAULT_INIT_FAIL` (dead boost / failed switch / no source).
+- **`doState3()` (Finish) no longer drains the bus.** It stops the motor and closes the
+  motor/regen/charge paths but **leaves the boosts + `FC_BUS`/`BT_BUS` ON**, so the bus stays
+  armed and Idle→Run never re-hot-plugs. Only **State 99** tears the bus down (latched → power
+  cycle → State-0 gentle bring-up). This drops the old two-phase cap/regen drain (the disabled-
+  boost back-feed hazard does not apply while the boosts stay enabled).
+- **State 98 guard + `G` command.** `1`/`2` refuse to turn a `*_BUS_ENABLE` ON when the matching
+  boost is ON and `V_bus` is low (`busHotPlugUnsafe()`); new `G` runs `bringUpBus()` (switches →
+  settle → boosts) for a safe manual bring-up.
+- No telemetry layout change (reuses `FAULT_INIT_FAIL`/`ERR_INIT_FAIL`). New
+  `V_BUS_CHARGED_THRESH`, `BUS_SETTLE_MS`, `BUS_CHARGE_TIMEOUT_MS` are `TODO(calibrate)`.
+  The BT TPS61288 has been replaced and the board is functioning again.
