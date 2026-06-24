@@ -132,7 +132,7 @@ static void test_ag105_constants() {
     check(AG105_REG_ICHG_MEAS == 0x06, "AG105_REG_ICHG_MEAS == 0x06 (0.011 A/count)");
     check(AG105_GENSTAT_CHARGING == 0x02, "AG105_GENSTAT_CHARGING == 0x02");
     check(AG105_GENSTAT_FULL     == 0x03, "AG105_GENSTAT_FULL == 0x03");
-    check(TELEMETRY_VERSION == 3, "TELEMETRY_VERSION == 3");
+    check(TELEMETRY_VERSION == 4, "TELEMETRY_VERSION == 4");
 }
 
 // ─── initAg105Charger() I2C write sequence ───────────────────────────────────
@@ -477,8 +477,8 @@ static void test_detect_faults() {
 }
 
 // ─── Telemetry v3 layout ─────────────────────────────────────────────────────
-static void test_telemetry_v3_layout() {
-    test_group("Telemetry v3 layout (57-byte packet)");
+static void test_telemetry_v4_layout() {
+    test_group("Telemetry v4 layout (58-byte packet)");
     reset_test_state();
 
     // Set known values
@@ -492,22 +492,27 @@ static void test_telemetry_v3_layout() {
     error_code  = ERR_NONE;
     error_source_state = 0;
     pkt_counter_T = 42;
+    ag105_status_raw = 0x4A;   // raw Ag105 Table 6 byte: GENSTAT 0b010 (Charging) + CC (bit6)
 
     // All switches LOW → switch_state should be 0
     for (int p = 27; p <= 32; p++) g_pin_value[p] = LOW;
 
     sendTelemetry();
 
-    check(Udp.last_written.size() == 57,
-          "telemetry: packet length == 57 bytes (v3)");
+    check(Udp.last_written.size() == 58,
+          "telemetry: packet length == 58 bytes (v4)");
     check(Udp.last_written[0] == 0xAA,
           "telemetry: SYNC byte 0xAA at offset 0");
 
-    // Checksum: XOR of bytes 1–55 must equal byte 56 (v3 extended span)
+    // Checksum: XOR of bytes 1–56 must equal byte 57 (v4 extended span)
     uint8_t cs = 0;
-    for (int i = 1; i < 56; i++) cs ^= Udp.last_written[i];
-    check(cs == Udp.last_written[56],
-          "telemetry: XOR checksum over bytes 1–55 matches byte 56");
+    for (int i = 1; i < 57; i++) cs ^= Udp.last_written[i];
+    check(cs == Udp.last_written[57],
+          "telemetry: XOR checksum over bytes 1–56 matches byte 57");
+
+    // charger_status at offset 51 — raw Ag105 status byte forwarded verbatim (v4)
+    check(Udp.last_written[51] == 0x4A,
+          "telemetry: charger_status (ag105_status_raw) at offset 51");
 
     // V_rgn at offset 35 (was P_motor_actual in v1)
     float read_v_rgn = 0;
@@ -533,23 +538,23 @@ static void test_telemetry_v3_layout() {
     check(fabsf(read_ps - power_share_actual) < 1e-4f,
           "telemetry: power_share_actual at offset 43");
 
-    // switch_state at offset 51 — all LOW → 0
-    check(Udp.last_written[51] == 0,
+    // switch_state at offset 52 (shifted +1 in v4) — all LOW → 0
+    check(Udp.last_written[52] == 0,
           "telemetry: switch_state == 0 when all path switches LOW");
 
-    // fault_flags at offset 52 — uint16_t LE (v3: 2 bytes)
+    // fault_flags at offset 53 — uint16_t LE (2 bytes)
     uint16_t read_flt = 0;
-    memcpy(&read_flt, &Udp.last_written[52], 2);
+    memcpy(&read_flt, &Udp.last_written[53], 2);
     check(read_flt == 0,
-          "telemetry: fault_flags (uint16_t LE) == 0 at offset 52");
+          "telemetry: fault_flags (uint16_t LE) == 0 at offset 53");
 
-    // error_code at offset 54
-    check(Udp.last_written[54] == ERR_NONE,
-          "telemetry: error_code == ERR_NONE at offset 54");
+    // error_code at offset 55
+    check(Udp.last_written[55] == ERR_NONE,
+          "telemetry: error_code == ERR_NONE at offset 55");
 
-    // error_source_state at offset 55
-    check(Udp.last_written[55] == 0,
-          "telemetry: error_source_state == 0 at offset 55");
+    // error_source_state at offset 56
+    check(Udp.last_written[56] == 0,
+          "telemetry: error_source_state == 0 at offset 56");
 
     // Re-test with a non-zero fault_flags and error_code to verify they encode correctly
     reset_test_state();
@@ -559,13 +564,13 @@ static void test_telemetry_v3_layout() {
     Udp.reset();
     sendTelemetry();
     uint16_t read_flt2 = 0;
-    memcpy(&read_flt2, &Udp.last_written[52], 2);
+    memcpy(&read_flt2, &Udp.last_written[53], 2);
     check(read_flt2 == (FAULT_OC_FC | FAULT_ERROR),
-          "telemetry: fault_flags 0x8001 correctly encoded at offset 52");
-    check(Udp.last_written[54] == ERR_OC_FC,
-          "telemetry: error_code ERR_OC_FC at offset 54");
-    check(Udp.last_written[55] == 2,
-          "telemetry: error_source_state == 2 at offset 55");
+          "telemetry: fault_flags 0x8001 correctly encoded at offset 53");
+    check(Udp.last_written[55] == ERR_OC_FC,
+          "telemetry: error_code ERR_OC_FC at offset 55");
+    check(Udp.last_written[56] == 2,
+          "telemetry: error_source_state == 2 at offset 56");
 
     // Verify switch_state bitmask when some switches are HIGH
     reset_test_state();
@@ -574,7 +579,7 @@ static void test_telemetry_v3_layout() {
     Udp.reset();
     sendTelemetry();
     uint8_t expected_sw = SW_FC_BUS | SW_MOT_PWR;
-    check(Udp.last_written[51] == expected_sw,
+    check(Udp.last_written[52] == expected_sw,
           "telemetry: switch_state bitmask correct (FC_BUS + MOT_PWR)");
 }
 
@@ -1137,7 +1142,7 @@ int main() {
     test_assert_fc_charge_enable_false();
     test_charging_control_mppt_polarity();
     test_detect_faults();
-    test_telemetry_v3_layout();
+    test_telemetry_v4_layout();
     test_command_parsing();
     test_pi_controllers();
     test_drive_cycle();

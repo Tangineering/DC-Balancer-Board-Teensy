@@ -21,6 +21,11 @@
  *  - Error code system: ErrorCode_t enum + latching error_code/error_source_state globals +
  *    central triggerFault() helper; 10 new fault conditions added (OV_BATT, UV_FC, OC_BT,
  *    UV_BUS, OV_RGN, OV_CHG, I2C_CHARGER, CHARGER_STAT, INIT_FAIL, PI_TIMEOUT).
+ *  - Telemetry bumped to protocol v4 (58 bytes): charger_status reinstated at offset 51 as the
+ *    raw Ag105 Table 6 status byte (ag105_status_raw; see Ag105_Table6_I2C_Status_Byte.json) —
+ *    Pi decodes off/CC/CV/fault from it. switch_state and all following fields shift +1; checksum
+ *    span now bytes 1–56. (The old v1 charger_status — dropped in v2 — is thus restored to its
+ *    historic offset, now carrying the Ag105's richer status rather than the BQ25690's.)
  */
 
 #include <VescUart.h>
@@ -152,10 +157,10 @@ typedef enum : uint8_t {
 #define AG105_GENSTAT_FULL      0x03   // 011 — fully charged
 
 // ── Telemetry ─────────────────────────────────────────────────────────────────
-// Protocol v3 packet is 57 bytes; Pi bridge must match this version.
-#define TELEMETRY_VERSION 3
+// Protocol v4 packet is 58 bytes; Pi bridge must match this version.
+#define TELEMETRY_VERSION 4
 
-// switch_state bitmask packed at offset 51 of the v3 telemetry packet
+// switch_state bitmask packed at offset 52 of the v4 telemetry packet
 #define SW_FC_BUS    0x01
 #define SW_BT_BUS    0x02
 #define SW_MOT_PWR   0x04
@@ -600,10 +605,10 @@ void receiveCommands() {
 }
 
 /*
- * Telemetry packet layout — protocol v3, 57 bytes
- * TELEMETRY_VERSION = 3; Pi bridge must match this layout.
- * Change from v2: fault_flags expanded to uint16_t (2 bytes, LE); error_code and
- * error_source_state appended before checksum; checksum span extended to bytes 1–55.
+ * Telemetry packet layout — protocol v4, 58 bytes
+ * TELEMETRY_VERSION = 4; Pi bridge must match this layout.
+ * Change from v3: charger_status (raw Ag105 Table 6 status byte) reinstated at offset 51;
+ * switch_state and all following fields shift +1; checksum span extended to bytes 1–56.
  *
  * Offset | Bytes | Field
  * -------|-------|-------
@@ -622,14 +627,16 @@ void receiveCommands() {
  * 43     |  4    | power_share_actual
  * 47     |  2    | fc_u16 (droop gain, Q16)
  * 49     |  2    | bt_u16 (droop gain, Q16)
- * 51     |  1    | switch_state (bitmask: SW_FC_BUS|SW_BT_BUS|SW_MOT_PWR|SW_REGEN|SW_FC_CHARGE|SW_BT_SEQ)
- * 52     |  2    | fault_flags (uint16_t LE; was 1 byte in v2)
- * 54     |  1    | error_code (ErrorCode_t; primary cause of State-99 entry)
- * 55     |  1    | error_source_state (mainState at time of first fault)
- * 56     |  1    | checksum (XOR of bytes 1–55)
+ * 51     |  1    | charger_status (raw Ag105 Table 6 byte = ag105_status_raw; Pi decodes
+ *        |       |   off / CC(bit6) / CV(bit5) / fault(GENSTAT 0x05–0x07))  [reinstated v4]
+ * 52     |  1    | switch_state (bitmask: SW_FC_BUS|SW_BT_BUS|SW_MOT_PWR|SW_REGEN|SW_FC_CHARGE|SW_BT_SEQ)
+ * 53     |  2    | fault_flags (uint16_t LE)
+ * 55     |  1    | error_code (ErrorCode_t; primary cause of State-99 entry)
+ * 56     |  1    | error_source_state (mainState at time of first fault)
+ * 57     |  1    | checksum (XOR of bytes 1–56)
  */
 void sendTelemetry() {
-    uint8_t packet[57];
+    uint8_t packet[58];
     int idx = 0;
 
     packet[idx++] = SYNC_BYTE_TX;
@@ -654,6 +661,11 @@ void sendTelemetry() {
     memcpy(&packet[idx], &fc_u16, 2); idx += 2;
     memcpy(&packet[idx], &bt_u16, 2); idx += 2;
 
+    // charger_status (offset 51): raw Ag105 Table 6 status byte, cached at 50 Hz by pollAg105().
+    // Pi decodes off/CC/CV/fault — Source: Ag105_Table6_I2C_Status_Byte.json (GENSTAT bits 0–2,
+    // CV bit 5, CC bit 6). Reinstated in v4 at its historic v1 offset.
+    packet[idx++] = ag105_status_raw;
+
     uint8_t switch_state = 0;
     if (digitalRead(FC_BUS_ENABLE))      switch_state |= SW_FC_BUS;
     if (digitalRead(BT_BUS_ENABLE))      switch_state |= SW_BT_BUS;
@@ -663,18 +675,18 @@ void sendTelemetry() {
     if (digitalRead(BT_SEQUENCE_ENABLE)) switch_state |= SW_BT_SEQ;
     packet[idx++] = switch_state;
 
-    // fault_flags as 2 bytes, little-endian (v3 change from 1 byte in v2)
+    // fault_flags as 2 bytes, little-endian
     memcpy(&packet[idx], &fault_flags, 2); idx += 2;
     packet[idx++] = error_code;
     packet[idx++] = error_source_state;
 
-    // Checksum over bytes 1–55
+    // Checksum over bytes 1–56
     uint8_t checksum = 0;
-    for (int i = 1; i < 56; i++) checksum ^= packet[i];
+    for (int i = 1; i < 57; i++) checksum ^= packet[i];
     packet[idx++] = checksum;
 
     Udp.beginPacket(pi_ip, pi_port);
-    Udp.write(packet, 57);
+    Udp.write(packet, 58);
     Udp.endPacket();
 
     pkt_counter_T++;

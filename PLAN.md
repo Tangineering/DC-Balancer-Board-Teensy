@@ -507,20 +507,25 @@ if (digitalRead(FC_CHARGE_ENABLE) &&
 }
 ```
 
-### 6b. Telemetry struct — bump to protocol v3
+### 6b. Telemetry struct — bump to protocol v4 (charger_status reinstated)
 
 Now that `I_charge` is sourced from Ag105 I2C reg 0x06 (§3e) rather than a nonexistent ADC
 channel, its **telemetry slot stays at the same offset** — the Pi parser doesn't move. The
-only fields that change meaning are `P_motor_actual` (dropped; Pi can compute V_bus × current),
-`power_share_echo` (dropped; Pi echoes its own setpoint), and `charger_status` (replaced by
-`switch_state`). The two freed float slots absorb `V_rgn` and `V_chg`.
+only fields that change meaning are `P_motor_actual` (dropped; Pi can compute V_bus × current)
+and `power_share_echo` (dropped; Pi echoes its own setpoint). The two freed float slots absorb
+`V_rgn` and `V_chg`. (`charger_status` was dropped in v2 in favour of `switch_state`, then
+**reinstated in v4** at offset 51 carrying the raw Ag105 status byte — see the v4 note below.)
 
-**v3 layout — 57 bytes, checksum span bytes 1–55:**
+**v4 layout — 58 bytes, checksum span bytes 1–56:**
 
 The v2 step (above) replaced `P_motor_actual`/`power_share_echo`/`charger_status` with
 `V_rgn`/`V_chg`/`switch_state`. v3 then widened `fault_flags` to `uint16_t` (the bitmask
 outgrew 8 bits) and appended `error_code` + `error_source_state` so the Pi can surface the
-latched root cause of a State-99 entry. This pushed the checksum from byte 53 to byte 56.
+latched root cause of a State-99 entry. **v4 reinstates `charger_status` at its historic
+offset 51** — but now carrying the **raw Ag105 Table 6 status byte** (`ag105_status_raw`),
+which is a superset of the old BQ25690 off/CC/CV/fault field: the Pi decodes CC (bit 6),
+CV (bit 5), and faults (GENSTAT `0x05`–`0x07`) directly from it. `switch_state` and all
+following fields shift +1; the checksum moves from byte 56 to byte 57.
 
 | Offset | Bytes | Field | Change |
 |--------|-------|-------|--------|
@@ -539,11 +544,12 @@ latched root cause of a State-99 entry. This pushed the checksum from byte 53 to
 | 43 | 4 | power_share_actual | — |
 | 47 | 2 | fc_u16 (droop gain) | — |
 | 49 | 2 | bt_u16 (droop gain) | — |
-| 51 | 1 | **switch_state** (was charger_status) | REPLACED (v2) — see bitmask below |
-| 52 | 2 | **fault_flags** (uint16_t LE) | WIDENED (v3, was 1 byte) |
-| 54 | 1 | **error_code** (ErrorCode_t) | NEW (v3) |
-| 55 | 1 | **error_source_state** (mainState at first fault) | NEW (v3) |
-| 56 | 1 | checksum (XOR of bytes 1–55) | span extended (v3) |
+| 51 | 1 | **charger_status** (raw Ag105 Table 6 byte = `ag105_status_raw`) | REINSTATED (v4) — see decode below |
+| 52 | 1 | **switch_state** (bitmask) | shifted +1 (v4) — see bitmask below |
+| 53 | 2 | **fault_flags** (uint16_t LE) | shifted +1 (v4); WIDENED (v3, was 1 byte) |
+| 55 | 1 | **error_code** (ErrorCode_t) | shifted +1 (v4); NEW (v3) |
+| 56 | 1 | **error_source_state** (mainState at first fault) | shifted +1 (v4); NEW (v3) |
+| 57 | 1 | checksum (XOR of bytes 1–56) | span extended (v4) |
 
 `switch_state` bitmask (bits 6-7 reserved = 0):
 ```cpp
@@ -555,12 +561,27 @@ latched root cause of a State-99 entry. This pushed the checksum from byte 53 to
 #define SW_BT_SEQ      0x20
 ```
 
-Ag105 GENSTAT is not in the packet. The Pi can infer charger state from `I_charge` > 0 or
-poll over I2C separately.
+`charger_status` (byte 51) is the raw Ag105 Table 6 status byte, forwarded verbatim from
+`ag105_status_raw` (cached at 50 Hz by `pollAg105()`; Source:
+`references/Datasheets/Ag105_Table6_I2C_Status_Byte.json`). The Pi decodes it directly:
+
+```
+bits 0–2  GENSTAT: 0=Battery Disconnect, 1=Low Power, 2=Charging, 3=Fully Charged,
+                   4=Bring-Up, 5=OC/Regulation err, 6=Thermal Shutdown, 7=Timeout err
+bit 3     MPPT enabled
+bit 4     Power Tracking
+bit 5     Constant Voltage (CV)
+bit 6     Constant Current (CC)
+bit 7     Thermal Limiting
+```
+
+This restores the old off/CC/CV/fault telemetry (off = GENSTAT 0/1; CC = bit 6; CV = bit 5;
+fault = GENSTAT 5/6/7) and supersedes it — the Pi no longer needs to infer charger state from
+`I_charge` > 0 or poll I2C separately.
 
 Add a compile-time constant (not an in-packet byte) to let the Pi detect version mismatches:
 ```cpp
-#define TELEMETRY_VERSION 3   // increment whenever the packet layout changes
+#define TELEMETRY_VERSION 4   // increment whenever the packet layout changes
 ```
 
 Document the full layout in a block comment directly above `sendTelemetry()`.
@@ -612,6 +633,9 @@ Add a block comment at the very top of `teensy_controller.ino` (before `#include
  *  - V_chg and V_rgn added as ADC inputs (pins 38, 39).
  *  - Telemetry bumped to protocol v3 (57 bytes; TELEMETRY_VERSION = 3); switch_state byte
  *    added, fault_flags widened to uint16_t, error_code + error_source_state appended.
+ *  - Telemetry bumped to protocol v4 (58 bytes; TELEMETRY_VERSION = 4); charger_status
+ *    reinstated at offset 51 as the raw Ag105 Table 6 status byte; switch_state and following
+ *    fields shifted +1; checksum span now bytes 1–56.
  *  - Back-feed hazard: REGEN_ENABLE always driven LOW before disabling TPS61288 boosts.
  */
 ```
@@ -757,7 +781,7 @@ by the mocks before the `#include`.
 | **Fault detection** | OC/UV/OV thresholds trigger correct `fault_flags` bits; switch-conflict fault fires when `FC_CHARGE_ENABLE` is HIGH with `BT_BUS_ENABLE` or `REGEN_ENABLE` HIGH |
 | **PI controllers** | `PI_Controller_Motor()` and `PI_Controller_Power()` converge given step inputs; anti-windup clamps hold; zero output at zero error |
 | **Packet parsing** | `parseCommand()` correctly populates `v_setpoint`, `power_share_target`, `charge_goal`, `droop_enable_reserved` from a known 22-byte buffer |
-| **Telemetry packing** | `sendTelemetry()` (captured via mock UDP) produces 57-byte packet; SYNC=0xAA at byte 0; XOR over bytes 1–55 matches byte 56; `V_chg`, `V_rgn`, `fault_flags` (u16), `error_code`, `error_source_state` appear at correct offsets |
+| **Telemetry packing** | `sendTelemetry()` (captured via mock UDP) produces 58-byte packet; SYNC=0xAA at byte 0; XOR over bytes 1–56 matches byte 57; `charger_status` (raw Ag105 byte) at offset 51, `V_chg`, `V_rgn`, `switch_state`, `fault_flags` (u16), `error_code`, `error_source_state` appear at correct offsets |
 | **Ag105 constants** | `AG105_ADDR == 0x30`, `AG105_VAL_2S == 0x08`, `AG105_VAL_2500MA == 0x01` |
 | **`initAg105Charger()`** | Injected I2C captures show correct write sequence: reg 0x00 ← 0x01, reg 0x01 ← 0x08 |
 | **`pollAg105()`** | Injected 2-byte I2C response (status + current byte) populates `ag105_status_raw` and `I_charge` correctly |
@@ -906,7 +930,10 @@ implemented in `teensy_controller.ino` unless noted.
 ### Documentation reconciliation
 
 10. **Telemetry version.** This document (§6b, §10b, changelog, exec table) was updated to the
-    shipped **v3 / 57-byte** layout (was incorrectly documented as v2 / 54 bytes).
+    shipped **v3 / 57-byte** layout (was incorrectly documented as v2 / 54 bytes). *(Later bumped
+    to **v4 / 58-byte**: `charger_status` reinstated at offset 51 carrying the raw Ag105 Table 6
+    status byte, so the Pi recovers the old off/CC/CV/fault telemetry — and more — directly. See
+    §6b for the layout and decode.)*
 11. **`K_sns`** in §5d / "What NOT to change" was corrected from `0.4` to **`0.1` V/A** (the
     INA253A1 part actually fitted; `0.4` is the A3 variant that was never installed).
 

@@ -250,8 +250,9 @@ label). Do **not** add code expecting a BAL-NOK input — there is no pin for it
   rails (`CHG_VOLTAGE`, `RGN_VOLTAGE`) and the new switch states. Decide what the Pi needs,
   update the packet accordingly, **recompute the byte count and checksum span**, and
   bump the protocol version. Don't silently change the layout — the Pi bridge parses fixed
-  offsets. *(Implemented: protocol **v3**, **57 bytes**, checksum over bytes 1–55. The packet
-  carries `switch_state`, a 16-bit `fault_flags`, and the latched `error_code`/
+  offsets. *(Implemented: protocol **v4**, **58 bytes**, checksum over bytes 1–56. The packet
+  carries `charger_status` (raw Ag105 Table 6 status byte at offset 51 — Pi decodes
+  off/CC/CV/fault), `switch_state`, a 16-bit `fault_flags`, and the latched `error_code`/
   `error_source_state`. Full layout in PLAN.md §6b.)*
 - **Commands:** the 22-byte command packet still works, but `droop_enable` is parsed and
   discarded. Either wire it up or note explicitly that it's reserved. If the Pi needs to
@@ -307,7 +308,7 @@ machine with `g++` — no Teensy or Arduino IDE required.
   all Teensy-specific APIs. Wire mock includes an injectable byte queue for scripted I2C
   responses; SPI mock captures written words for assertion.
 - **Coverage targets:** scale factor math, fault detection, PI controller convergence,
-  command packet parsing, telemetry packing (57-byte v3 layout + checksum), Ag105 init
+  command packet parsing, telemetry packing (58-byte v4 layout + checksum), Ag105 init
   I2C sequence, `pollAg105()` byte decoding, `assertFcChargeEnable()` ordering, drive
   cycle phase transitions, and `MPPT_DISABLE` polarity in `chargingControl()`. The review-round
   additions (PLAN.md §11) added coverage for GENSTAT decode, UV boot-gating, PI anti-windup,
@@ -357,7 +358,7 @@ old board model to the 20260622 board, so the next reader sees the hardware delt
 **The reconciliation (§§1–10) is implemented.** `teensy_controller.ino` now targets the
 20260622 board: rebuilt pin map, RT1987 power-path sequencing, Ag105 charger over I2C +
 `MPPT_DISABLE`, BQ29200 `CBAL_DISABLE`, 12-bit ADC + recomputed scales, INA253A1 `K_sns = 0.1`,
-v3/57-byte telemetry, State 98 test mode, and the host-native test suite. The changelog block at
+v4/58-byte telemetry, State 98 test mode, and the host-native test suite. The changelog block at
 the top of the `.ino` records the hardware delta.
 
 A subsequent **correctness/robustness review round** then fixed a set of bugs and latent hazards
@@ -376,6 +377,14 @@ found in that firmware. Those changes and the design decisions behind them are c
 - **Docs:** telemetry corrected to v3/57-byte across PLAN.md; `K_sns` corrected to `0.1` V/A in
   PLAN.md (the A1 part fitted, not the A3).
 
-All 176 host-native tests pass (`cd test && make`). Remaining work is bench calibration of the
+A later change then **bumped telemetry to v4 / 58 bytes**: the `charger_status` byte (dropped in
+v2) was reinstated at its historic offset 51, now carrying the **raw Ag105 Table 6 status byte**
+(`ag105_status_raw`). This restores the old off/CC/CV/fault charger telemetry — and supersedes it,
+since the Ag105 byte also exposes CC (bit 6), CV (bit 5), MPPT/Power-Tracking/Thermal-Limiting
+flags, and the full GENSTAT fault set. `switch_state` and the trailing fields shift +1; the
+checksum span is now bytes 1–56. The Pi bridge must be updated in lockstep (it parses fixed
+offsets). Layout + bit decode in PLAN.md §6b.
+
+All 177 host-native tests pass (`cd test && make`). Remaining work is bench calibration of the
 `TODO(calibrate)` / `TODO(verify)` items (dividers, `motorConstant`, PI gains, `MOTOR_I_CMD_MAX`,
 regen threshold, drain delays, AD5443 SPI verification).

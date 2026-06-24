@@ -140,15 +140,134 @@ stale timestamps.
 Faults funnel through `triggerFault()`, which latches a primary `error_code` + source state and
 transitions to **State 99**.
 
+## Fault reference
+
+When any check in `detectFaults()` trips, `triggerFault()` sets that condition's bit in the
+16-bit `fault_flags`, latches the **first** cause into `error_code` (and the active state into
+`error_source_state`), forces `FAULT_ERROR` (`0x8000`), and transitions to **State 99** —
+latched until power cycle. Both `fault_flags` and `error_code` ride in the v3 telemetry packet,
+so every value below is observable on the Pi. Read `error_code` for the root cause and
+`fault_flags` for everything that tripped.
+
+### Fault flags (`fault_flags` bitmask)
+
+`fault_flags` is an OR of these bits — more than one can be set at once:
+
+| Mask | Flag | Trigger | Limit | Gated to |
+|------|------|---------|-------|----------|
+| `0x0001` | `FAULT_OC_FC` | `I_fc` overcurrent | `LIMIT_I_FC_MAX = 3.5 A` | all |
+| `0x0002` | `FAULT_UV_BATT` | `V_batt` undervoltage | `LIMIT_V_BATT_MIN = 6.2 V` | Run |
+| `0x0004` | `FAULT_OV_BUS` | `V_bus` overvoltage | `LIMIT_V_BUS_MAX = 18.5 V` | all |
+| `0x0008` | `FAULT_SWITCH_CONFLICT` | `FC_CHARGE_ENABLE` high while `BT_BUS`/`REGEN` high | — | all |
+| `0x0010` | `FAULT_PI_TIMEOUT` | Pi watchdog expired | `PI_TIMEOUT_MS` | States 2/3 |
+| `0x0020` | `FAULT_OV_BATT` | `V_batt` overvoltage | `LIMIT_V_BATT_MAX = 8.6 V` | all |
+| `0x0040` | `FAULT_UV_FC` | `V_fc` undervoltage | `LIMIT_V_FC_MIN = 6.0 V` | Run |
+| `0x0080` | `FAULT_OC_BT` | `I_batt` overcurrent | `LIMIT_I_BT_MAX = 6.0 A` | all |
+| `0x0100` | `FAULT_UV_BUS` | `V_bus` undervoltage | `LIMIT_V_BUS_MIN = 12.0 V` | Run |
+| `0x0200` | `FAULT_OV_RGN` | regen-node overvoltage | `LIMIT_V_RGN_MAX = 28.0 V` | all |
+| `0x0400` | `FAULT_OV_CHG` | charger-input overvoltage | `LIMIT_V_CHG_MAX = 24.0 V` | all |
+| `0x0800` | `FAULT_I2C_CHARGER` | Ag105 I2C comms failure | — | Run/Finish |
+| `0x1000` | `FAULT_CHARGER_STAT` | Ag105 GENSTAT error (`0x05` OC/regulation, `0x06` thermal, `0x07` timeout) | — | charging states |
+| `0x2000` | `FAULT_INIT_FAIL` | init sequence failure (Ag105 config) | — | State 0 |
+| `0x8000` | `FAULT_ERROR` | latched marker: system entered State 99 | — | set with any fault |
+
+The UV checks marked **"Gated to Run"** are deliberately suppressed outside State 2, so unramped
+rails at boot don't latch State 99 (see Safety features above).
+
+### Error codes (`error_code` latched cause)
+
+`error_code` is the single latched primary cause — the *first* fault to fire — and is distinct
+from the multi-bit `fault_flags`. `error_source_state` records which state was active when it
+latched. Values map 1:1 to `errorCodeStr()`:
+
+| Code | Enum | String |
+|------|------|--------|
+| `0x00` | `ERR_NONE` | (none) |
+| `0x01` | `ERR_OC_FC` | FC overcurrent |
+| `0x02` | `ERR_UV_BATT` | Batt undervoltage |
+| `0x03` | `ERR_OV_BUS` | Bus overvoltage |
+| `0x04` | `ERR_SWITCH_CONFLICT` | Switch conflict |
+| `0x05` | `ERR_PI_TIMEOUT` | Pi timeout |
+| `0x06` | `ERR_OV_BATT` | Batt overvoltage |
+| `0x07` | `ERR_UV_FC` | FC undervoltage |
+| `0x08` | `ERR_OC_BT` | BT overcurrent |
+| `0x09` | `ERR_UV_BUS` | Bus undervoltage |
+| `0x0A` | `ERR_OV_RGN` | Regen overvoltage |
+| `0x0B` | `ERR_OV_CHG` | Charger input OV |
+| `0x0C` | `ERR_I2C_CHARGER` | Ag105 I2C fail |
+| `0x0D` | `ERR_CHARGER_STAT` | Ag105 STAT fault |
+| `0x0E` | `ERR_INIT_FAIL` | Init failure |
+
+**Recovery:** State 99 is latched — a fault clears only on a power cycle. Diagnose with
+`error_code` (root cause) first, then inspect the full `fault_flags` bitmask for any secondary
+conditions that tripped in the same tick.
+
 ## Test mode (State 98)
 
-Reachable from Idle via `T` on USB serial. Single-char commands toggle each boost and path
-switch (`F B 1 2 3 4 5 6 C M`), print status (`S`), run a simulated drive cycle (`D`), or exit
-(`Q`). `FC_CHARGE_ENABLE` always goes through `assertFcChargeEnable()`. The drive cycle supplies
-a pre-programmed `v_setpoint` profile and runs `motorControl()`/`powerBalance()`/
-`chargingControl()` unmodified. Stopping the cycle (`D`) flushes a zero VESC command and parks
-all path switches safe; `Q` additionally forces `MOT_PWR_ENABLE` LOW. `detectFaults()` still runs
-every tick; the Pi watchdog does not fire in this state.
+State 98 is a USB-serial hardware exerciser for bench bring-up. **Enter** it by sending `T`
+while in Idle (State 1); **exit** with `Q`, which returns to Idle and forces `MOT_PWR_ENABLE`
+LOW. The Pi watchdog is suspended in this state, but `detectFaults()` still runs every tick — a
+fault latches State 99 exactly as in normal operation. `FC_CHARGE_ENABLE` only ever moves through
+`assertFcChargeEnable()`, even here.
+
+### Serial command set
+
+All commands are single characters over USB serial; every toggle echoes the resulting pin state
+back over serial:
+
+| Key | Action | Notes |
+|-----|--------|-------|
+| `F` | Toggle `FC_REG_ENABLE` (FC boost) | |
+| `B` | Toggle `BT_REG_ENABLE` (BT boost) | |
+| `1` | Toggle `FC_BUS_ENABLE` | |
+| `2` | Toggle `BT_BUS_ENABLE` | |
+| `3` | Toggle `MOT_PWR_ENABLE` | must be HIGH before a drive cycle (`D`) |
+| `4` | Toggle `REGEN_ENABLE` | forces `FC_CHARGE` off via `assertFcChargeEnable(false)` before going HIGH |
+| `5` | Toggle `FC_CHARGE_ENABLE` | always through the `assertFcChargeEnable()` guard |
+| `6` | Toggle `BT_SEQUENCE_ENABLE` | |
+| `C` | Toggle `CBAL_DISABLE` | HIGH = OVP bypassed (prints a warning) |
+| `M` | Toggle `MPPT_DISABLE` | HIGH = MPPT harvesting; LOW = inhibited |
+| `D` | Start/stop simulated drive cycle | requires `MOT_PWR_ENABLE` HIGH to start |
+| `S` | Print status dump (all pins, all ADCs, `I_charge`, `fault_flags`, `error_code`) | read-only |
+| `Q` | Exit → Idle (State 1) | forces `MOT_PWR_ENABLE` LOW |
+
+### Testing an individual component
+
+1. Connect a USB-serial terminal and send `T` to enter test mode from Idle.
+2. Send `S` to capture a baseline snapshot of all pin states and ADC readings.
+3. Toggle the line(s) you want to exercise with the keys above; the firmware echoes each new
+   state so you can confirm the write landed.
+4. Re-send `S` to read back the effect on the relevant ADC/pin.
+5. Send `Q` to exit (this forces `MOT_PWR_ENABLE` LOW).
+
+Mind the guarded keys: `5` (`FC_CHARGE_ENABLE`) always runs through `assertFcChargeEnable()`,
+which drives `BT_BUS_ENABLE`/`REGEN_ENABLE` LOW first; `4` (`REGEN_ENABLE`) forces `FC_CHARGE`
+off before going HIGH; and `C` (`CBAL_DISABLE` HIGH) bypasses cell OVP — use with care.
+
+### Running the emulated drive cycle
+
+1. Set `MOT_PWR_ENABLE` HIGH first with key `3` — `D` aborts with an error otherwise.
+2. Press `D` to start. While active, `advanceDriveCycle()` supplies a pre-programmed
+   `v_setpoint`, and the real `chargingControl()` / `motorControl()` / `powerBalance()` run
+   unmodified, in the same call order as State 2 — only the setpoint source differs.
+3. A `[DC]` status line prints every 500 ms: `t`, `v_sp`, `v_act`, `V_bus`, `I_fc`, `I_bt`,
+   `I_chg`, and `FLT` (fault flags).
+4. Press `D` again to stop early — the firmware flushes a zero VESC command and parks all path
+   switches via `safeAllSwitches()`.
+
+The profile runs through these phases (from `DRIVE_CYCLE[]`):
+
+| Phase | Duration | `v_setpoint` | Purpose |
+|-------|----------|--------------|---------|
+| 0 Standstill | 2 s | 0.0 | verify sensors, confirm no faults |
+| 1 Ramp-up | 4 s | 0.0 → 3.0 | linear ramp; `motorControl()` live |
+| 2 Cruise | 6 s | 3.0 | steady speed; `powerBalance()` live |
+| 3 Coast-down | 3 s | 3.0 → 0.0 | linear ramp down |
+| 4 Regen hold | 3 s | −0.5 | negative setpoint (regen braking) |
+| 5 Standstill | 2 s | 0.0 | confirm `I_charge > 0` if charging |
+
+On completion `v_setpoint` returns to 0, but `MOT_PWR_ENABLE` is left as the operator set it —
+toggle it off with `3`, or exit with `Q` (which forces it LOW).
 
 ## Unit tests
 
