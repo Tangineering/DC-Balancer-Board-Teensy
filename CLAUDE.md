@@ -141,7 +141,9 @@ levels early in `setup()` and not rely on the resistors alone.
 
 Fold these into the existing state machine:
 - **State 0 (Init):** enable FC/BT boosts, bring up `BT_SEQUENCE_ENABLE`, init MDAC, init
-  Ag105 charger config over I2C (§3), init VESC. Leave motor/regen/charge paths OFF.
+  VESC. Leave motor/regen/charge paths OFF. **Ag105 charger config is NOT done here** — the
+  charger is unpowered in Init (no charger power path is open), so it cannot ACK I2C. Config
+  is deferred to `pollAg105()`, which lazily configures it once it is powered + settled (§3).
 - **State 1 (Idle):** motor current 0, `MOT_PWR_ENABLE` OFF.
 - **State 2 (Run):** `MOT_PWR_ENABLE` ON; run motor/power-balance/charging. Manage
   `REGEN_ENABLE` vs `FC_CHARGE_ENABLE` mutual exclusion here.
@@ -164,17 +166,27 @@ The board uses the **Silvertel Ag105** MPPT battery-charger module. Reconcile ag
   observe MPPT loop doesn't fight the fast regen transient) and **release it during
   cruise/coast** so the Ag105 harvests. Implement this in `chargingControl()`. **Confirmed
   from PCB schematic: `MPPT_DISABLE` is active-LOW — pulling LOW inhibits the MPPT
-  perturb-and-observe loop; pulling HIGH releases it.**
+  perturb-and-observe loop; pulling HIGH releases it.** **FC-path bootstrap:** in cruise with
+  `charge_goal > 0`, `chargingControl()` opens `FC_CHARGE_ENABLE` on *intent* (not on
+  readiness) to power and boot the charger — gating the path on `ag105IsReady()` would
+  deadlock, since the charger can't become ready until it is powered. Only the MPPT *release*
+  (`MPPT_DISABLE` HIGH) is gated on `ag105IsReady()`.
 - **The Ag105 is slow.** It is the *secondary* harvester. The TL431/BSP170P braking chopper
   is the *primary* fast clamp and is **not** under firmware control. Do not write code that
   assumes the charger absorbs regen spikes.
-- **I2C startup sequencing is mandatory.** When no external resistors are fitted the Ag105
-  defaults to **4.2 V / 1000 mA** (external-resistor-mode register value 0x00 with no RVS/RCS
-  resistors — confirmed in `Ag105_Table3_Charge_Voltage_Select.json` and
-  `Ag105_Table4_Charge_Current_Select.json`). Firmware **must** write **reg 0x01 = 0x08**
-  (2S / 8.4 V) and **reg 0x00 = 0x01** (2500 mA) over I2C in State 0 before any charging
-  is allowed, or the pack will be undercharged. I2C address is `0x30`. Both settings are
-  stored in EPROM and persist across power cycles. The Ag105 is self-powered at 3.3 V
+- **I2C config is power-gated and lazy — NOT done in State 0.** When no external resistors
+  are fitted the Ag105 defaults to **4.2 V / 1000 mA** (external-resistor-mode register value
+  0x00 with no RVS/RCS resistors — confirmed in `Ag105_Table3_Charge_Voltage_Select.json` and
+  `Ag105_Table4_Charge_Current_Select.json`), so firmware must write **reg 0x01 = 0x08**
+  (2S / 8.4 V) and **reg 0x00 = 0x01** (2500 mA) or the pack is undercharged. **Critical
+  hardware constraint:** the Ag105 only receives input power when a charger power path is
+  routed to it — `FC_CHARGE_ENABLE` HIGH, or `REGEN_ENABLE`+`MOT_PWR_ENABLE` both HIGH
+  (`chargerHasPower()`). In Init/Idle all are LOW, so the charger is **unpowered and cannot
+  ACK I2C** — configuring it in State 0 can never succeed and must never fault. Instead,
+  `pollAg105()` configures it **lazily**: the first time `chargerHasPower()` is true and the
+  `AG105_SETTLE_MS` bring-up window has elapsed and the charger ACKs, it writes the two
+  registers and sets `ag105Configured`. The flag re-arms on power loss; EPROM persistence
+  makes the re-write idempotent. I2C address is `0x30`. The Ag105 is self-powered at 3.3 V
   internally and is logic-compatible with the Teensy.
 - **Charge-current strategy:** the dominant harvest lever is running the Ag105 up to its
   **2.5 A max** rather than the default (0x00 = external resistor mode). This IS configurable:
@@ -388,3 +400,36 @@ offsets). Layout + bit decode in PLAN.md §6b.
 All 177 host-native tests pass (`cd test && make`). Remaining work is bench calibration of the
 `TODO(calibrate)` / `TODO(verify)` items (dividers, `motorConstant`, PI gains, `MOTOR_I_CMD_MAX`,
 regen threshold, drain delays, AD5443 SPI verification).
+
+---
+
+## Status & session addendum (2026-06-23, bench bring-up)
+
+Bench bring-up of the assembled board drove a set of changes. **These supersede parts of the
+earlier addendum** — notably, `doState0()` no longer configures or faults on the charger at all.
+
+- **Charger config is now power-aware and lazy (supersedes "doState0 no longer swallows a
+  charger-init fault").** The Ag105 is unpowered until a charger power path is open
+  (`chargerHasPower()` = `FC_CHARGE_ENABLE || (REGEN_ENABLE && MOT_PWR_ENABLE)`), so it cannot
+  ACK I2C in Init — a State-0 config could never succeed on hardware. `doState0()` no longer
+  calls `initAg105Charger()`. Instead `pollAg105()` lazily writes the config the first time the
+  charger is powered, past the `AG105_SETTLE_MS` bring-up window, and ACKing; tracked by
+  `ag105Configured` (re-arms on power loss; EPROM makes the re-write idempotent).
+  `initAg105Charger()` now returns `bool` and raises no fault itself.
+- **Charger fault-sensing is power-gated, not just state-gated.** `pollAg105()` faults
+  (`FAULT_I2C_CHARGER` / `FAULT_INIT_FAIL`) only when `chargerHasPower() && settled &&
+  (State 2|3)`. Unpowered or within the settle window is never a fault; State 98 is excluded.
+  The `detectFaults()` GENSTAT check is unchanged (already guarded on `ag105_status_raw != 0`).
+- **`chargingControl()` FC-path deadlock fixed.** Cruise opens `FC_CHARGE_ENABLE` on intent
+  (`charge_goal > 0`) to power/boot the charger; only the MPPT release is gated on
+  `ag105IsReady()`. Without this the FC harvest path could never bootstrap.
+- **`BENCH_TEST` flag** (`#ifndef`-overridable): relaxes `detectFaults()` to overvoltage-only
+  so the board reaches Idle on the bench with unpowered rails. Defaults to `1` for bench
+  flashing; the **test suite compiles `-DBENCH_TEST=0`** (production fault behavior). Charger
+  config/faults are no longer tied to `BENCH_TEST` — power-gating handles bench safety.
+  Also: `USE_ETHERNET` flag + `networkUp` guard so the UDP functions no-op (don't hard-fault)
+  when Ethernet isn't initialized; State-98 `I` I2C-scan command; State-99 1 Hz error print.
+- **Test suite path fixed:** the `.ino` now lives in `teensy_controller/`; `test_main.cpp`
+  include and the Makefile `-I` were updated. **All 205 host-native tests pass** (run with
+  MSYS2 UCRT64 g++: `cd test && mingw32-make`, or g++ directly — there is no `make` on this
+  machine). New `AG105_SETTLE_MS` is a `TODO(calibrate)`.

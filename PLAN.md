@@ -142,7 +142,8 @@ void assertFcChargeEnable(bool enable) {
 2. All path switches LOW                         (done in setup(); verify they are still LOW)
 3. BT_SEQUENCE_ENABLE = HIGH                    (NEW — battery pack now sequenced in)
 4. initMdacOutputs()
-5. initAg105Charger()                           (replaces initBatteryCharger())
+5. (charger config deferred — see §12; the Ag105 is unpowered in Init and is configured
+   lazily by pollAg105() once a power path opens. doState0() no longer calls initAg105Charger.)
 6. initEsc()
 7. → State 1
 ```
@@ -947,3 +948,51 @@ implemented in `teensy_controller.ino` unless noted.
 - `doState3()`'s static `phase` is not defensively reset on abnormal entry: a fault mid-shutdown
   latches State 99 and the board is only recovered by a power cycle (which re-inits the static),
   so a stale `phase` is unreachable. A comment documents this.
+
+---
+
+## §12 — Bench bring-up round (2026-06-23)
+
+Bench bring-up of the assembled board. **Supersedes parts of §11** — most importantly, the
+charger is no longer configured or faulted in `doState0()`.
+
+### Root cause
+The Ag105 only has input power when a charger power path is routed to it:
+`chargerHasPower()` = `FC_CHARGE_ENABLE || (REGEN_ENABLE && MOT_PWR_ENABLE)`. In Init/Idle all
+are LOW, so the charger is unpowered and NACKs I2C — the old State-0 `initAg105Charger()` could
+never succeed on real hardware (it faulted to State 99 every boot). An unpowered charger is a
+normal mode, not a fault.
+
+### Changes
+1. **Deferred + lazy charger config.** `doState0()` no longer calls `initAg105Charger()`.
+   `initAg105Charger()` now returns `bool` (no internal fault). `pollAg105()` tracks the power
+   edge, waits `AG105_SETTLE_MS` (`TODO(calibrate)`) for bring-up, then on the first ACK writes
+   reg 0x00=0x01 / reg 0x01=0x08 and sets `ag105Configured` (re-arms on power loss; EPROM makes
+   it idempotent).
+2. **Power-based fault gating (supersedes §11.4 state-gating).** `pollAg105()` raises
+   `FAULT_I2C_CHARGER` / `FAULT_INIT_FAIL` only when `chargerHasPower() && settled &&
+   (State 2|3)`. Unpowered/settling never faults; State 98 excluded. `detectFaults()` GENSTAT
+   check unchanged (still guarded on `ag105_status_raw != 0`).
+3. **`chargingControl()` FC-path deadlock fix.** Cruise opens `FC_CHARGE_ENABLE` on intent
+   (`charge_goal > 0`) to power/boot the charger; only the MPPT release is gated on
+   `ag105IsReady()`. Previously the path was gated on readiness, which could never be reached
+   because the charger was never powered.
+4. **`BENCH_TEST` made `#ifndef`-overridable; tests compile `-DBENCH_TEST=0`.** The flag relaxes
+   `detectFaults()` to overvoltage-only for bench bring-up with unpowered rails (default `1` on
+   hardware). Charger config/faults are no longer tied to `BENCH_TEST` (power-gating covers it).
+   Also added: `USE_ETHERNET`/`networkUp` UDP guard, State-98 `I` I2C scan, State-99 1 Hz error
+   print, State-1 `S` sensor stream.
+
+### Tests
+- Test harness `#include` path + Makefile `-I` fixed for the `.ino`'s move into
+  `teensy_controller/`. `reset_test_state()` resets `ag105Configured/ag105HadPower/
+  ag105PowerOnMs` and sets `networkUp = true`.
+- Updated: `test_init_ag105_charger` (bool return), `test_i2c_fault_injection`,
+  `test_dostate0_init_fault` → `test_dostate0_reaches_idle_unpowered`,
+  `test_pollag105_state_gate` (Run half now powers+settles), `test_charging_control_mppt_polarity`
+  sub-test D (FC_CHARGE HIGH on intent).
+- New: `test_charger_has_power`, `test_pollag105_unpowered_never_faults`,
+  `test_pollag105_settle_window_suppresses_fault`, `test_lazy_config_on_power`,
+  `test_config_resets_on_power_loss`, `test_charging_control_fc_bootstrap`.
+- **All 205 host-native tests pass** (MSYS2 UCRT64 g++; no `make` on this machine — use
+  `mingw32-make` or g++ directly with `-DBENCH_TEST=0`).

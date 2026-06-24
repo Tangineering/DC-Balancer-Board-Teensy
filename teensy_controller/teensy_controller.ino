@@ -156,6 +156,12 @@ typedef enum : uint8_t {
 #define AG105_GENSTAT_CHARGING  0x02   // 010 — actively charging
 #define AG105_GENSTAT_FULL      0x03   // 011 — fully charged
 
+// Power-up settling: the Ag105 is unpowered until a charger power path is routed to it
+// (FC_CHARGE_ENABLE, or REGEN_ENABLE+MOT_PWR_ENABLE). After input power first appears the
+// module needs time to boot (Bring-Up state) before its I2C is trustworthy. Until this
+// window elapses, an I2C NACK is treated as "still booting", not a fault.
+#define AG105_SETTLE_MS 500u   // TODO(calibrate): Ag105 bring-up time before I2C is trusted
+
 // ── Telemetry ─────────────────────────────────────────────────────────────────
 // Protocol v4 packet is 58 bytes; Pi bridge must match this version.
 #define TELEMETRY_VERSION 4
@@ -220,6 +226,10 @@ float droop_gain_FC_actual  = 0;
 float droop_gain_BT_actual  = 0;
 
 uint8_t  ag105_status_raw  = 0;        // last raw Table 6 status byte; cached at 50 Hz by pollAg105()
+// Ag105 charger power/config tracking (see chargerHasPower() and pollAg105()).
+bool     ag105Configured   = false;    // true once 0x00/0x01 written this powered session
+bool     ag105HadPower     = false;    // power on/off edge detector for the settle timer
+uint32_t ag105PowerOnMs    = 0;        // millis() when input power was first observed (settle base)
 uint16_t fault_flags       = 0;        // bitmask of active fault conditions (see FAULT_* defines)
 uint8_t  error_code        = ERR_NONE; // primary cause of State-99 entry — latches on first fault
 uint8_t  error_source_state = 0;       // mainState at time of first fault (for diagnosis)
@@ -247,6 +257,24 @@ constexpr float ENCODER_COUNTS_PER_REV = 1024.0f;
 // Set by State 3 (Finish) to clear updateWheelSpeed()'s averaging buffers between runs, so a
 // new run's first velocity samples are not computed against stale timestamps from the prior run.
 bool wheelSpeedResetPending = false;
+
+// ── Bench/debug config ──────────────────────────────────────────────────────────
+// BENCH_TEST relaxes the firmware so the board can reach Idle on the bench without
+// the power rails connected:
+//   - detectFaults() runs ONLY the overvoltage checks (OV_BUS/OV_BATT/OV_RGN/OV_CHG);
+//     all overcurrent, undervoltage, switch-conflict and charger-STAT checks are skipped.
+// OV checks are kept because they are the genuine destroy-the-hardware faults and a
+// floating ADC reads LOW, not high, so they won't false-trip with rails unpowered.
+// (Charger init no longer needs BENCH_TEST: an unpowered Ag105 is handled by the power
+// gating in pollAg105(), so it never blocks boot in either build.)
+// Set to 0 for normal operation.
+// Overridable via -DBENCH_TEST=0 so the host test suite compiles the production fault
+// behavior (the test/Makefile passes -DBENCH_TEST=0). Note: charger config/faults are no
+// longer gated by BENCH_TEST — they are power-gated in pollAg105(), so they stay correct
+// in either build.
+#ifndef BENCH_TEST
+#define BENCH_TEST 1
+#endif
 
 // ── Network config ────────────────────────────────────────────────────────────
 // Set to 0 for bench testing without Ethernet/Pi (USB-serial only); 1 for normal
@@ -301,9 +329,10 @@ void initMdacSpiPins();
 void initChargerI2cPins();
 void initMdacOutputs();
 void initEsc();
-void initAg105Charger();
+bool initAg105Charger();
 void pollAg105();
 bool ag105IsReady();
+bool chargerHasPower();
 void updateSensors();
 void updateWheelSpeed();
 void computeDerivedSignals();
@@ -312,6 +341,8 @@ void checkPiWatchdog();
 void receiveCommands();
 void sendTelemetry();
 void printToTerminal();
+void scanI2C();
+void printTestHelp();
 void doState0();
 void doState1();
 void doState2();
@@ -464,6 +495,8 @@ void printSensors() {
     Serial.println("--- Charger ---");
     Serial.print("ag105_status_raw=0x"); Serial.print(ag105_status_raw, HEX);
     Serial.print("  CHARGER_STAT=");     Serial.println(digitalRead(CHARGER_STAT));
+    Serial.print("powered=");            Serial.print(chargerHasPower());
+    Serial.print("  configured=");       Serial.println(ag105Configured);
     Serial.println("======================");
 }
 
@@ -538,22 +571,30 @@ void detectFaults() {
     fault_flags = 0;  // clear; re-evaluate all threshold conditions this tick
 
     // -- Existing fault checks (preserve original priority order) ----------------
+    // Under BENCH_TEST, only the overvoltage checks below run (the real destroy-the-board
+    // faults); overcurrent / undervoltage / switch-conflict / charger-STAT are skipped so a
+    // bench board with unpowered rails doesn't latch State 99. Source: bench-test guard.
+#if !BENCH_TEST
     if (I_fc   > LIMIT_I_FC_MAX)   triggerFault(FAULT_OC_FC,   ERR_OC_FC);
     // UV checks only fire in Run (State 2): sources are not guaranteed ramped/sequenced in
     // Init/Idle, and V_batt/V_fc read ~0 before the regulators stabilise. Firing UV here would
     // latch State 99 on the very first tick of every boot (V_fc/V_batt init to 0 < limits).
     // Mirrors the existing FAULT_UV_BUS State-2 gate. Source: boot-lock review.
     if (mainState == 2 && V_batt < LIMIT_V_BATT_MIN) triggerFault(FAULT_UV_BATT, ERR_UV_BATT);
+#endif
     if (V_bus  > LIMIT_V_BUS_MAX)  triggerFault(FAULT_OV_BUS,  ERR_OV_BUS);
 
+#if !BENCH_TEST
     // Belt-and-suspenders: assertFcChargeEnable() guard prevents this, but catch it regardless
     if (digitalRead(FC_CHARGE_ENABLE) &&
         (digitalRead(BT_BUS_ENABLE) || digitalRead(REGEN_ENABLE))) {
         triggerFault(FAULT_SWITCH_CONFLICT, ERR_SWITCH_CONFLICT);
     }
+#endif
 
     // -- New fault checks --------------------------------------------------------
     if (V_batt > LIMIT_V_BATT_MAX)  triggerFault(FAULT_OV_BATT, ERR_OV_BATT);
+#if !BENCH_TEST
     // UV_FC gated to Run (State 2) for the same boot-ramp reason as UV_BATT above.
     if (mainState == 2 && V_fc < LIMIT_V_FC_MIN) triggerFault(FAULT_UV_FC, ERR_UV_FC);
     if (I_batt > LIMIT_I_BT_MAX)    triggerFault(FAULT_OC_BT,   ERR_OC_BT);
@@ -561,10 +602,12 @@ void detectFaults() {
     // Bus UV only meaningful during State 2 (run); low bus during idle/shutdown is normal
     if (mainState == 2 && V_bus < LIMIT_V_BUS_MIN)
         triggerFault(FAULT_UV_BUS, ERR_UV_BUS);
+#endif
 
     if (V_rgn > LIMIT_V_RGN_MAX)    triggerFault(FAULT_OV_RGN, ERR_OV_RGN);
     if (V_chg > LIMIT_V_CHG_MAX)    triggerFault(FAULT_OV_CHG, ERR_OV_CHG);
 
+#if !BENCH_TEST
     // Ag105 GENSTAT occupies bits [2:0] ONLY — bit 3 is the MPPT EN/DIS flag, not GENSTAT,
     // so the mask must be 0x07 (matching ag105IsReady()), not 0x0F. Error states per Table 6:
     //   0x05 = OC/Regulation Error, 0x06 = Thermal Shutdown, 0x07 = Timeout Error.
@@ -575,6 +618,7 @@ void detectFaults() {
     if (ag105_status_raw != 0 &&
         (genstat == 0x05 || genstat == 0x06 || genstat == 0x07))
         triggerFault(FAULT_CHARGER_STAT, ERR_CHARGER_STAT);
+#endif
 
     if (fault_flags) {
         Serial.print("[FAULT] flags=0x"); Serial.print(fault_flags, HEX);
@@ -751,12 +795,10 @@ void doState0() {
     // 4. Init MDAC droop outputs
     initMdacOutputs();
 
-    // 5. Configure Ag105 charger over I2C before any charging is allowed
-    initAg105Charger();
-    // If the I2C config failed, initAg105Charger() called triggerFault() → mainState=99.
-    // Do NOT fall through to the unconditional "mainState = 1" below, which would silently
-    // demote the latched error to Idle and run with a misconfigured charger.
-    if (mainState == 99) return;
+    // 5. Charger config is NOT done here. The Ag105 is unpowered in Init (no charger power
+    // path is open), so it cannot ACK I2C — configuring it here would always fail. Instead,
+    // pollAg105() lazily configures it the first time it is powered + settled (see §3/§5).
+    ag105Configured = false;
 
     // 6. Init VESC
     initEsc();
@@ -784,6 +826,7 @@ void doState1() {
         char c = (char)Serial.read();
         if (c == 'T' || c == 't') {
             Serial.println("State 1 -> State 98 (TEST)");
+            printTestHelp();
             mainState = 98;
             return;
         }
@@ -888,6 +931,18 @@ void doState99() {
     static uint8_t  phase      = 0;
     static uint32_t phaseStart = 0;
 
+    // Always-on 1 Hz error report — keeps printing the latched cause for as long as
+    // the board sits in State 99, so the fault is visible even if the entry message
+    // scrolled off the serial monitor.
+    static uint32_t lastErrPrint = 0;
+    if (millis() - lastErrPrint >= 1000) {
+        lastErrPrint = millis();
+        Serial.print("[STATE 99] error_code=0x"); Serial.print(error_code, HEX);
+        Serial.print(" (");                       Serial.print(errorCodeStr(error_code));
+        Serial.print(")  fault_flags=0x");        Serial.print(fault_flags, HEX);
+        Serial.print("  from state ");            Serial.println(error_source_state);
+    }
+
     switch (phase) {
         case 0:
             vesc.setCurrent(0);
@@ -935,12 +990,29 @@ void doState99() {
 //   5 — toggle FC_CHARGE_ENABLE     6 — toggle BT_SEQUENCE_ENABLE
 //   C — toggle CBAL_DISABLE         M — toggle MPPT_DISABLE
 //   D — start/stop drive cycle      S — print status snapshot
+//   I — scan I2C bus (lists ACKing addresses; Ag105 expected at 0x30)
+//   H/? — print this command list
 //   Q — exit → State 1 (MOT_PWR_ENABLE forced LOW)
 //
 // Safety rules still apply:
 //   - FC_CHARGE_ENABLE always goes through assertFcChargeEnable() guard
 //   - detectFaults() runs every loop tick; faults latch State 99 as normal
 //   - Pi watchdog does not fire in State 98 (checkPiWatchdog() guards on mainState)
+
+// Prints the State 98 command menu. Kept in sync with the command table above and the
+// switch() in doState98(). Called on entry to test mode (and reachable via 'H'/'?').
+void printTestHelp() {
+    Serial.println("=== State 98 TEST commands ===");
+    Serial.println("  F - toggle FC_REG_ENABLE     B - toggle BT_REG_ENABLE");
+    Serial.println("  1 - toggle FC_BUS_ENABLE     2 - toggle BT_BUS_ENABLE");
+    Serial.println("  3 - toggle MOT_PWR_ENABLE    4 - toggle REGEN_ENABLE");
+    Serial.println("  5 - toggle FC_CHARGE_ENABLE  6 - toggle BT_SEQUENCE_ENABLE");
+    Serial.println("  C - toggle CBAL_DISABLE      M - toggle MPPT_DISABLE");
+    Serial.println("  D - start/stop drive cycle   S - print status snapshot");
+    Serial.println("  I - scan I2C bus             H - show this command list");
+    Serial.println("  Q - exit -> State 1 (MOT_PWR_ENABLE forced LOW)");
+    Serial.println("==============================");
+}
 
 void doState98() {
     if (Serial.available()) {
@@ -1038,6 +1110,15 @@ void doState98() {
             case 's':
                 printTestStatus();
                 break;
+            case 'I':
+            case 'i':
+                scanI2C();
+                break;
+            case 'H':
+            case 'h':
+            case '?':
+                printTestHelp();
+                break;
             case 'Q':
             case 'q':
                 driveCycleActive = false;
@@ -1115,6 +1196,8 @@ void printTestStatus() {
     Serial.print("CBAL_DISABLE:       "); Serial.println(digitalRead(CBAL_DISABLE));
     Serial.print("MPPT_DISABLE:       "); Serial.println(digitalRead(MPPT_DISABLE));
     Serial.print("CHARGER_STAT:       "); Serial.println(digitalRead(CHARGER_STAT));
+    Serial.print("charger_powered:    "); Serial.println(chargerHasPower());
+    Serial.print("ag105Configured:    "); Serial.println(ag105Configured);
     Serial.println("--- ADC ---");
     Serial.print("V_fc=");   Serial.print(V_fc,   3); Serial.print("V  ");
     Serial.print("V_batt="); Serial.print(V_batt, 3); Serial.print("V  ");
@@ -1268,18 +1351,18 @@ void chargingControl() {
         digitalWrite(MPPT_DISABLE, LOW);     // inhibit MPPT during regen (active-LOW)
         digitalWrite(BT_BUS_ENABLE, HIGH);   // BT continues contributing to VBUS during regen
     } else {
-        // Cruise/coast: close regen path, enable MPPT harvest via FC path if charger is ready.
+        // Cruise/coast: close regen path and harvest via the FC→charger path.
         digitalWrite(REGEN_ENABLE, LOW);
-        if (chargerReady) {
-            // assertFcChargeEnable(true) drives BT_BUS_ENABLE LOW (with settling delay) then
-            // opens FC→charger path. This is the only place BT_BUS_ENABLE goes LOW in Run.
-            assertFcChargeEnable(true);
-            digitalWrite(MPPT_DISABLE, HIGH);   // release MPPT loop — Ag105 harvests (active-LOW: HIGH = enabled)
-        } else {
-            assertFcChargeEnable(false);
-            digitalWrite(MPPT_DISABLE, LOW);    // inhibit MPPT — charger not ready (active-LOW)
-            digitalWrite(BT_BUS_ENABLE, HIGH);  // BT back on bus; FC_CHARGE not active
-        }
+        // Open FC_CHARGE on INTENT (charge_goal>0), not on readiness. The Ag105 has NO input
+        // power until this path is open, so gating the path on chargerReady would deadlock:
+        // it can never become ready because it is never powered. assertFcChargeEnable(true)
+        // still drives BT_BUS_ENABLE/REGEN_ENABLE LOW with the 100µs settle, so the
+        // mutual-exclusion hazard is preserved. This is the only place BT_BUS_ENABLE goes LOW
+        // in Run.
+        assertFcChargeEnable(true);
+        // Release the slow perturb-and-observe MPPT loop ONLY once the charger reports ready,
+        // so it doesn't run during bring-up (active-LOW: HIGH = enabled, LOW = inhibited).
+        digitalWrite(MPPT_DISABLE, chargerReady ? HIGH : LOW);
     }
 }
 
@@ -1288,37 +1371,74 @@ void chargingControl() {
 // Ag105 I2C HELPERS
 // ═════════════════════════════════════════════════════════════════════════════
 
-void initAg105Charger() {
+// I2C bus scanner — probes addresses 0x01–0x7E and prints any that ACK their address.
+// Bench diagnostic for the State-98 'I' command: confirms the Ag105 is alive at 0x30
+// (AG105_ADDR). A NACK on every address means no pull-ups, the device is unpowered, or
+// SDA/SCL are mis-wired. Uses beginTransmission()/endTransmission() only — endTransmission()
+// returning 0 means the slave ACKed its address; no data is written, so this is non-intrusive.
+void scanI2C() {
+    Serial.println("=== I2C scan (0x01-0x7E) ===");
+    uint8_t found = 0;
+    for (uint8_t addr = 0x01; addr <= 0x7E; addr++) {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0) {
+            Serial.print("  device at 0x");
+            if (addr < 0x10) Serial.print('0');
+            Serial.print(addr, HEX);
+            if (addr == AG105_ADDR) Serial.print("  <- Ag105 (expected)");
+            Serial.println();
+            found++;
+        }
+    }
+    Serial.print(found ? "Scan complete: " : "Scan complete: no devices found");
+    if (found) { Serial.print(found); Serial.println(" device(s)"); }
+    else       { Serial.println(" (check pull-ups / power / SDA=18 SCL=19)"); }
+    Serial.println("============================");
+}
+
+// Writes the Ag105 charge-current and battery-voltage profiles over I2C. Returns true if
+// both writes ACKed, false on any NACK/bus error. Does NOT raise faults — the caller
+// (pollAg105) decides whether a failure is a fault based on power/settle/state. Only called
+// once the charger is confirmed powered + settled, so a NACK here is a genuine config failure.
+// Settings persist in the Ag105 EPROM across power cycles, so re-writing is idempotent.
+bool initAg105Charger() {
     // Power-on defaults: reg 0x00 = 0x00 (ext-resistor mode → no RCS → 1000mA),
     //                    reg 0x01 = 0x00 (ext-resistor mode → no RVS → 4.2V / 1S).
     // Write explicit 2.5A current and 2S/8.4V voltage configs before any charging is allowed.
-    // Both settings are stored in EPROM; re-writing each boot ensures correct config
-    // regardless of prior state. MPPT_DISABLE is LOW (inhibited) during init.
 
     // Set charge current to 2.5A (highest profile)
     // Source: Ag105_Table7_I2C_Parameters.json field 0x00; Ag105_Table4_Charge_Current_Select.json
     Wire.beginTransmission(AG105_ADDR);
     Wire.write(AG105_REG_ICHG_CFG);
     Wire.write(AG105_VAL_2500MA);   // 0x01 = 2.5A; termination at 250mA (C/10)
-    if (Wire.endTransmission() != 0) {
-        triggerFault(FAULT_INIT_FAIL, ERR_INIT_FAIL);
-        return;   // abort remaining config; State 99 will handle shutdown
-    }
+    if (Wire.endTransmission() != 0) return false;
 
     // Set battery voltage to 2S / 8.4V (100% capacity profile)
     // Source: Ag105_Table3_Charge_Voltage_Select.json — i2c_field_value 8 = 8.4V
     Wire.beginTransmission(AG105_ADDR);
     Wire.write(AG105_REG_VBATT_CFG);
     Wire.write(AG105_VAL_2S);       // 0x08
-    if (Wire.endTransmission() != 0) {
-        triggerFault(FAULT_INIT_FAIL, ERR_INIT_FAIL);
-        return;
-    }
+    if (Wire.endTransmission() != 0) return false;
 
-    // Leave MPPT_DISABLE LOW (inhibited, active-LOW) until State 2 (chargingControl manages it)
+    return true;
 }
 
 void pollAg105() {
+    // Power-aware service: tracks when the charger has input power, lazily configures it once
+    // it has booted, polls measured current/status, and faults only when the charger genuinely
+    // should be responding. Called at ~50 Hz from loop() in every state.
+    bool powered = chargerHasPower();
+    if (powered && !ag105HadPower) ag105PowerOnMs = millis();  // power edge → start settle timer
+    if (!powered) ag105Configured = false;                     // re-arm config for next power session
+    ag105HadPower = powered;
+
+    // The charger only responds reliably after it has powered up and finished bring-up.
+    bool settled = powered && (millis() - ag105PowerOnMs >= AG105_SETTLE_MS);
+    // Fault only when the charger genuinely should respond: powered, past the settle window,
+    // and in an operational state. State 98 (manual test) is intentionally excluded — the
+    // operator may drive FC_CHARGE_ENABLE HIGH without expecting the charger to ACK.
+    bool faultArmed = settled && (mainState == 2 || mainState == 3);
+
     // Read measured charge current — Source: Ag105_Table7_I2C_Parameters.json field 0x06
     // I2C read protocol: Ag105 always prepends the Table 6 status byte before any data byte.
     // For a 1-byte field, Wire.requestFrom must request 2 bytes: first is status, second is data.
@@ -1328,12 +1448,19 @@ void pollAg105() {
     if (Wire.requestFrom((uint8_t)AG105_ADDR, (uint8_t)2) == 2) {
         ag105_status_raw = Wire.read();      // Table 6 status byte (always first)
         I_charge = Wire.read() * 0.011f;    // A; scale: 0.011 A/count (Table 7 field 0x06)
+
+        // Lazy configuration: the charger is now powered, settled, and ACKing. Write the
+        // 2.5A / 2S-8.4V profile once per power session (EPROM persists; re-write idempotent).
+        if (settled && !ag105Configured) {
+            if (initAg105Charger()) ag105Configured = true;
+            else if (faultArmed)    triggerFault(FAULT_INIT_FAIL, ERR_INIT_FAIL);
+        }
     } else {
         // NAK or bus error. Mark charger data stale so ag105IsReady() returns false (safe).
-        // Only latch State 99 when charging is actually relevant (Run/Finish). In Init/Idle/
-        // Test, a missing or still-powering-up charger must not lock the whole system in 99.
+        // Unpowered or still-settling → not a fault (normal). Only a powered+settled charger
+        // that goes silent in an operational state latches State 99.
         ag105_status_raw = 0;
-        if (mainState == 2 || mainState == 3)
+        if (faultArmed)
             triggerFault(FAULT_I2C_CHARGER, ERR_I2C_CHARGER);
     }
 }
@@ -1342,6 +1469,15 @@ inline bool ag105IsReady() {
     // Returns true when the Ag105 is actively charging or fully charged.
     uint8_t genstat = ag105_status_raw & 0x07;   // bits 0–2; Source: Ag105_Table6_I2C_Status_Byte.json
     return (genstat == AG105_GENSTAT_CHARGING || genstat == AG105_GENSTAT_FULL);
+}
+
+// True when a power path is routing input power to the Ag105. The charger is unpowered
+// (and cannot ACK I2C) unless FC_CHARGE_ENABLE is HIGH, or REGEN_ENABLE and MOT_PWR_ENABLE
+// are both HIGH. An unpowered charger is a NORMAL operating mode (e.g. Init/Idle), so its
+// I2C silence must never be treated as a fault. Source: 20260622 board power-path design.
+inline bool chargerHasPower() {
+    return digitalRead(FC_CHARGE_ENABLE) ||
+           (digitalRead(REGEN_ENABLE) && digitalRead(MOT_PWR_ENABLE));
 }
 
 

@@ -15,7 +15,7 @@
 // NativeEthernetUdp.h (included by the .ino) defines: using EthernetUDP = MockEthernetUDP
 
 // ── 2. Include the firmware under test ───────────────────────────────────────
-#include "../teensy_controller.ino"
+#include "../teensy_controller/teensy_controller.ino"
 
 // ── 3. Test infrastructure ───────────────────────────────────────────────────
 #include <cstdio>
@@ -59,6 +59,9 @@ static void reset_test_state() {
     droop_gain_FC_actual = 0;
     droop_gain_BT_actual = 0;
     ag105_status_raw     = 0;
+    ag105Configured      = false;
+    ag105HadPower        = false;
+    ag105PowerOnMs       = 0;
     fault_flags          = 0;
     error_code           = ERR_NONE;
     error_source_state   = 0;
@@ -79,6 +82,7 @@ static void reset_test_state() {
     mainState   = 0;
 
     // .ino network/watchdog
+    networkUp        = true;   // UDP "up" so sendTelemetry/receiveCommands run (they no-op when false)
     pkt_counter_T    = 0;
     last_rx_ms       = 0;
     pi_ever_connected = false;
@@ -88,6 +92,16 @@ static void reset_test_state() {
     driveCyclePhaseIdx   = 0;
     driveCyclePhaseStart = 0;
     driveCycleStatusLast = 0;
+}
+
+// Put the Ag105 into the "powered + settled" condition (a charger power path open and the
+// boot settle window elapsed) — the precondition for lazy config and armed I2C faults in
+// pollAg105(). Sets the power state directly so callers don't need an extra priming poll.
+static void make_charger_powered_settled() {
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;   // path A powers the charger
+    ag105HadPower  = true;                   // already powered → no fresh edge
+    ag105PowerOnMs = 1000;
+    g_mock_millis  = 1000 + AG105_SETTLE_MS; // past the settle window
 }
 
 // ── 4. Tests ─────────────────────────────────────────────────────────────────
@@ -140,8 +154,9 @@ static void test_init_ag105_charger() {
     test_group("initAg105Charger() I2C sequence");
     reset_test_state();
 
-    initAg105Charger();
+    bool ok = initAg105Charger();
 
+    check(ok, "initAg105Charger: returns true when both writes ACK");
     check(Wire.write_log.size() == 2,
           "initAg105Charger: exactly 2 I2C config writes");
 
@@ -327,7 +342,8 @@ static void test_charging_control_mppt_polarity() {
     check(g_pin_value[REGEN_ENABLE]     == LOW,
           "chargingControl: REGEN_ENABLE LOW during cruise");
 
-    // Sub-test D: cruise but charger NOT ready → MPPT inhibited, FC_CHARGE LOW
+    // Sub-test D: cruise but charger NOT ready → FC_CHARGE opens on intent (to power the
+    // charger and break the bootstrap deadlock), but MPPT stays inhibited until ready.
     reset_test_state();
     charge_goal = 1.0f;
     current     = 0.5f;
@@ -338,8 +354,8 @@ static void test_charging_control_mppt_polarity() {
     chargingControl();
     check(g_pin_value[MPPT_DISABLE]    == LOW,
           "chargingControl: MPPT_DISABLE LOW when charger not ready");
-    check(g_pin_value[FC_CHARGE_ENABLE] == LOW,
-          "chargingControl: FC_CHARGE_ENABLE LOW when charger not ready");
+    check(g_pin_value[FC_CHARGE_ENABLE] == HIGH,
+          "chargingControl: FC_CHARGE_ENABLE HIGH on intent even when charger not ready (bootstrap)");
 }
 
 // ─── detectFaults() ──────────────────────────────────────────────────────────
@@ -862,46 +878,36 @@ static void test_error_code_system() {
 static void test_i2c_fault_injection() {
     test_group("I2C fault injection");
 
-    // initAg105Charger: first write NAK → FAULT_INIT_FAIL
+    // initAg105Charger now returns bool and raises NO fault itself (the caller decides).
+    // First write NAK → returns false, no fault, state unchanged.
     reset_test_state();
     Wire.next_endtransmission_result = 1;   // first endTransmission returns error
     mainState = 0;
-    initAg105Charger();
-    check(fault_flags & FAULT_INIT_FAIL,
-          "initAg105Charger: FAULT_INIT_FAIL set when first I2C write NAKs");
-    check(error_code == ERR_INIT_FAIL,
-          "initAg105Charger: error_code == ERR_INIT_FAIL");
-    check(mainState == 99,
-          "initAg105Charger: mainState → 99 on I2C failure");
+    bool r = initAg105Charger();
+    check(!r, "initAg105Charger: returns false when first I2C write NAKs");
+    check(fault_flags == 0, "initAg105Charger: raises no fault itself on NACK");
+    check(mainState == 0, "initAg105Charger: does not change state on NACK");
 
-    // initAg105Charger: second write NAK → FAULT_INIT_FAIL
+    // Both writes succeed → returns true, 2 writes logged.
     reset_test_state();
-    Wire.write_log.clear();
-    // First write succeeds (result=0 by default after reset), second fails
-    Wire.next_endtransmission_result = 0;   // first: success
-    // Manually set to fail only the second call by using a counter approach:
-    // Actually the mock auto-clears next_endtransmission_result after one use.
-    // To fail the second write, we need to simulate it differently.
-    // The simplest: call initAg105Charger with a fresh Wire that will fail on 2nd call.
-    // Since we can't queue multiple return values easily, test the observable effect:
-    // if the first write succeeds and we verify the second write was attempted:
     mainState = 0;
-    initAg105Charger();
-    // Both writes succeed (no failure injected) — verify 2 writes happened
+    r = initAg105Charger();
+    check(r, "initAg105Charger: returns true when both writes succeed");
     check(Wire.write_log.size() == 2,
           "initAg105Charger: 2 writes when both succeed");
 
-    // pollAg105: requestFrom returns 0 → FAULT_I2C_CHARGER
+    // pollAg105: requestFrom returns 0 with charger powered+settled in Run → FAULT_I2C_CHARGER
     reset_test_state();
+    make_charger_powered_settled();
     Wire.fail_next_requestfrom = true;
     mainState = 2;
     pollAg105();
     check(fault_flags & FAULT_I2C_CHARGER,
-          "pollAg105: FAULT_I2C_CHARGER set when requestFrom returns 0");
+          "pollAg105: FAULT_I2C_CHARGER set when powered+settled charger NAKs in Run");
     check(error_code == ERR_I2C_CHARGER,
           "pollAg105: error_code == ERR_I2C_CHARGER");
     check(mainState == 99,
-          "pollAg105: mainState → 99 on I2C read failure");
+          "pollAg105: mainState → 99 on I2C read failure (powered+settled)");
 
     // pollAg105: normal read succeeds → no fault
     reset_test_state();
@@ -970,27 +976,28 @@ static void test_wheelspeed_reset() {
           "updateWheelSpeed: consumes and clears the reset request");
 }
 
-// ─── doState0() aborts on charger init failure (no demotion to Idle) ──────────
-static void test_dostate0_init_fault() {
-    test_group("doState0() init-fault handling");
+// ─── doState0() reaches Idle with the charger unpowered ──────────────────────
+static void test_dostate0_reaches_idle_unpowered() {
+    test_group("doState0() reaches Idle with unpowered charger");
 
-    // Charger I2C write NAKs → triggerFault latches State 99; doState0 must NOT fall
-    // through to its unconditional 'mainState = 1'.
+    // The charger is unpowered in Init (no power path open). doState0() no longer configures
+    // it, so even a charger that would NACK every I2C write must NOT block boot.
     reset_test_state();
-    Wire.next_endtransmission_result = 1;   // first Ag105 config write fails
-    mainState = 0;
-    doState0();
-    check(mainState == 99,
-          "doState0: stays in State 99 on charger init failure (not demoted to Idle)");
-    check(error_code == ERR_INIT_FAIL,
-          "doState0: error_code == ERR_INIT_FAIL after init fault");
-
-    // Clean init advances to State 1 as normal.
-    reset_test_state();
+    Wire.next_endtransmission_result = 1;   // any stray I2C would NACK — must not matter
     mainState = 0;
     doState0();
     check(mainState == 1,
-          "doState0: advances to State 1 (Idle) on successful init");
+          "doState0: advances to State 1 (Idle) with charger unpowered");
+    check(error_code == ERR_NONE,
+          "doState0: no fault latched (charger init deferred)");
+    check(!(fault_flags & FAULT_INIT_FAIL),
+          "doState0: FAULT_INIT_FAIL not set at boot");
+
+    // Clean path: still reaches Idle.
+    reset_test_state();
+    mainState = 0;
+    doState0();
+    check(mainState == 1, "doState0: advances to State 1 (Idle)");
 }
 
 // ─── detectFaults() Ag105 GENSTAT error-state decoding ───────────────────────
@@ -1064,13 +1071,154 @@ static void test_pollag105_state_gate() {
     check(!(fault_flags & FAULT_I2C_CHARGER), "pollAg105: no I2C fault in State 1 (Idle)");
     check(mainState == 1,                     "pollAg105: stays in Idle on I2C failure");
 
-    // Run: the fault still latches.
+    // Run with a powered+settled charger: the fault still latches.
     reset_test_state();
+    make_charger_powered_settled();
     Wire.fail_next_requestfrom = true;
     mainState = 2;
     pollAg105();
     check(fault_flags & FAULT_I2C_CHARGER, "pollAg105: I2C fault latches in State 2 (Run)");
     check(mainState == 99,                 "pollAg105: → State 99 on I2C failure in Run");
+}
+
+// ─── chargerHasPower() predicate ──────────────────────────────────────────────
+static void test_charger_has_power() {
+    test_group("chargerHasPower() predicate");
+
+    reset_test_state();
+    check(!chargerHasPower(), "chargerHasPower: false when all paths LOW");
+
+    reset_test_state();
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;
+    check(chargerHasPower(), "chargerHasPower: true when FC_CHARGE_ENABLE HIGH");
+
+    reset_test_state();
+    g_pin_value[REGEN_ENABLE] = HIGH;   // REGEN alone is not enough
+    check(!chargerHasPower(), "chargerHasPower: false when only REGEN_ENABLE HIGH");
+
+    reset_test_state();
+    g_pin_value[MOT_PWR_ENABLE] = HIGH; // MOT_PWR alone is not enough
+    check(!chargerHasPower(), "chargerHasPower: false when only MOT_PWR_ENABLE HIGH");
+
+    reset_test_state();
+    g_pin_value[REGEN_ENABLE]   = HIGH;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    check(chargerHasPower(), "chargerHasPower: true when REGEN_ENABLE + MOT_PWR_ENABLE HIGH");
+}
+
+// ─── pollAg105(): unpowered charger never faults ─────────────────────────────
+static void test_pollag105_unpowered_never_faults() {
+    test_group("pollAg105() unpowered → never faults");
+
+    reset_test_state();
+    // All power paths LOW → charger unpowered. Even in Run with a NAK, no fault.
+    Wire.fail_next_requestfrom = true;
+    mainState = 2;
+    pollAg105();
+    check(!(fault_flags & FAULT_I2C_CHARGER), "pollAg105: no fault when charger unpowered in Run");
+    check(ag105_status_raw == 0,              "pollAg105: status cleared to 0 (stale) when unpowered");
+    check(!ag105IsReady(),                    "pollAg105: not ready when unpowered");
+    check(mainState == 2,                     "pollAg105: stays in Run when unpowered NAK");
+}
+
+// ─── pollAg105(): settle window suppresses the fault ─────────────────────────
+static void test_pollag105_settle_window_suppresses_fault() {
+    test_group("pollAg105() settle window");
+
+    reset_test_state();
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;   // charger powered
+    mainState = 2;
+
+    // t = T0: power-on edge recorded; not yet settled → NAK must not fault.
+    g_mock_millis = 1000;
+    Wire.fail_next_requestfrom = true;
+    pollAg105();
+    check(!(fault_flags & FAULT_I2C_CHARGER), "pollAg105: no fault at power-on (settling)");
+    check(mainState == 2,                     "pollAg105: stays in Run during settle");
+
+    // t = T0 + SETTLE - 1: still within window → still no fault.
+    g_mock_millis = 1000 + AG105_SETTLE_MS - 1;
+    Wire.fail_next_requestfrom = true;
+    pollAg105();
+    check(!(fault_flags & FAULT_I2C_CHARGER), "pollAg105: no fault just before settle elapses");
+
+    // t = T0 + SETTLE: window elapsed → NAK now faults.
+    g_mock_millis = 1000 + AG105_SETTLE_MS;
+    Wire.fail_next_requestfrom = true;
+    pollAg105();
+    check(fault_flags & FAULT_I2C_CHARGER, "pollAg105: fault fires once settle window elapses");
+    check(mainState == 99,                 "pollAg105: → State 99 after settle");
+}
+
+// ─── pollAg105(): lazy config on first powered+settled contact ───────────────
+static void test_lazy_config_on_power() {
+    test_group("pollAg105() lazy config on power");
+
+    reset_test_state();
+    make_charger_powered_settled();
+    mainState = 1;                    // Idle — config still runs (not gated on state)
+    Wire.rx_queue.push(0x02);         // status byte (charging)
+    Wire.rx_queue.push(50);           // current count
+    pollAg105();
+    check(ag105Configured, "pollAg105: ag105Configured true after powered+settled contact");
+    check(Wire.write_log.size() == 2, "pollAg105: wrote the 2 config registers (lazy config)");
+
+    // Second poll: already configured → must NOT re-write.
+    Wire.rx_queue.push(0x02);
+    Wire.rx_queue.push(50);
+    pollAg105();
+    check(Wire.write_log.size() == 2, "pollAg105: no re-write once configured (one-shot)");
+}
+
+// ─── pollAg105(): config flag resets on power loss, reconfigures on re-power ──
+static void test_config_resets_on_power_loss() {
+    test_group("pollAg105() config resets on power loss");
+
+    reset_test_state();
+    make_charger_powered_settled();
+    mainState = 1;
+    Wire.rx_queue.push(0x02);
+    Wire.rx_queue.push(50);
+    pollAg105();
+    check(ag105Configured, "pollAg105: configured after first power session");
+
+    // Drop charger power → config flag must re-arm.
+    g_pin_value[FC_CHARGE_ENABLE] = LOW;
+    pollAg105();
+    check(!ag105Configured, "pollAg105: ag105Configured cleared when power lost");
+
+    // Re-power + settle → reconfigures (2 more writes).
+    make_charger_powered_settled();
+    Wire.rx_queue.push(0x02);
+    Wire.rx_queue.push(50);
+    pollAg105();
+    check(ag105Configured, "pollAg105: reconfigured after re-power");
+    check(Wire.write_log.size() == 4, "pollAg105: config re-written on re-power (2 + 2)");
+}
+
+// ─── chargingControl(): FC path bootstraps the charger ───────────────────────
+static void test_charging_control_fc_bootstrap() {
+    test_group("chargingControl() FC bootstrap");
+
+    // Cruise, charge intent, charger NOT ready: FC_CHARGE must open to power the charger,
+    // MPPT stays inhibited until ready.
+    reset_test_state();
+    charge_goal = 1.0f;
+    current     = 0.5f;          // cruise
+    ag105_status_raw = 0x00;     // not ready
+    chargingControl();
+    check(g_pin_value[FC_CHARGE_ENABLE] == HIGH,
+          "chargingControl: FC_CHARGE_ENABLE HIGH to power charger (bootstrap)");
+    check(g_pin_value[MPPT_DISABLE] == LOW,
+          "chargingControl: MPPT inhibited until charger ready");
+
+    // Once the charger reports ready, MPPT releases (FC path stays open).
+    ag105_status_raw = AG105_GENSTAT_CHARGING;
+    chargingControl();
+    check(g_pin_value[FC_CHARGE_ENABLE] == HIGH,
+          "chargingControl: FC_CHARGE_ENABLE stays HIGH when ready");
+    check(g_pin_value[MPPT_DISABLE] == HIGH,
+          "chargingControl: MPPT released once charger ready");
 }
 
 // ─── doState98() drive cycle drives the real control functions ────────────────
@@ -1149,10 +1297,16 @@ int main() {
     test_pi_watchdog_guard();
     test_error_code_system();
     test_i2c_fault_injection();
-    test_dostate0_init_fault();
+    test_dostate0_reaches_idle_unpowered();
     test_genstat_fault();
     test_uv_boot_gate();
     test_pollag105_state_gate();
+    test_charger_has_power();
+    test_pollag105_unpowered_never_faults();
+    test_pollag105_settle_window_suppresses_fault();
+    test_lazy_config_on_power();
+    test_config_resets_on_power_loss();
+    test_charging_control_fc_bootstrap();
     test_state98_drive_cycle_runs_controls();
     test_motor_pi_antiwindup();
     test_wheelspeed_reset();
