@@ -249,6 +249,14 @@ constexpr float ENCODER_COUNTS_PER_REV = 1024.0f;
 bool wheelSpeedResetPending = false;
 
 // ── Network config ────────────────────────────────────────────────────────────
+// Set to 0 for bench testing without Ethernet/Pi (USB-serial only); 1 for normal
+// operation. When 0, setup() skips Ethernet/UDP init and the UDP functions no-op.
+// Calling Udp.* without Udp.begin() hard-faults the Teensy into a reboot loop, so
+// the networkUp guard below must gate every UDP access.
+#define USE_ETHERNET 0
+
+bool networkUp = false;   // true only after Udp.begin() succeeds in setup()
+
 IPAddress pi_ip(192, 168, 1, 100);
 const int      pi_port    = 5000;
 const int      local_port = 5001;
@@ -378,12 +386,16 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(ENC_A), doEncoderA, CHANGE);
     attachInterrupt(digitalPinToInterrupt(ENC_B), doEncoderB, CHANGE);
 
+#if USE_ETHERNET
     byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
     IPAddress ip(192, 168, 1, 50);
-    Ethernet.begin(mac, ip);
+    Ethernet.begin(mac, ip);   // NOTE: blocks while probing the PHY if no link is present
     Udp.begin(local_port);
-
+    networkUp = true;
     Serial.println("Teensy FCHEV ready | IP=192.168.1.50 | Listening on port 5001");
+#else
+    Serial.println("Teensy FCHEV ready | BENCH MODE (no Ethernet/Pi) | USB serial only");
+#endif
 }
 
 
@@ -418,6 +430,7 @@ void loop() {
 }
 
 void printToTerminal() {
+    Serial.println("State = " + String(mainState));
     Serial.println("V_batt = " + String(V_batt));
     Serial.println("I_batt = " + String(I_batt));
     Serial.println("I_charge = " + String(I_charge) + " (Ag105 I2C reg 0x06)");
@@ -426,6 +439,32 @@ void printToTerminal() {
     Serial.println("V_bus = " + String(V_bus));
     Serial.println("V_chg = " + String(V_chg));
     Serial.println("V_rgn = " + String(V_rgn));
+}
+
+// Dump every sensor value to USB Serial. Sensors are refreshed each loop tick by
+// updateSensors()/computeDerivedSignals() before the state switch, so values are current.
+// Called throttled from doState1() (IDLE); style mirrors the State 98 status dump.
+void printSensors() {
+    Serial.println("=== Sensors (IDLE) ===");
+    Serial.println("--- Voltages (V) ---");
+    Serial.print("V_fc=");   Serial.print(V_fc,   3); Serial.print("  ");
+    Serial.print("V_batt="); Serial.print(V_batt, 3); Serial.print("  ");
+    Serial.print("V_bus=");  Serial.println(V_bus, 3);
+    Serial.print("V_chg=");  Serial.print(V_chg, 3);  Serial.print("  ");
+    Serial.print("V_rgn=");  Serial.println(V_rgn, 3);
+    Serial.println("--- Currents (A) ---");
+    Serial.print("I_fc=");     Serial.print(I_fc,   3); Serial.print("  ");
+    Serial.print("I_batt=");   Serial.println(I_batt, 3);
+    Serial.print("I_charge="); Serial.print(I_charge, 3); Serial.println("  (Ag105 I2C reg 0x06)");
+    Serial.println("--- Derived ---");
+    Serial.print("v_actual=");           Serial.print(v_actual, 3);    Serial.println(" m/s");
+    Serial.print("power_share_actual="); Serial.println(power_share_actual, 3);
+    Serial.print("P_fc=");               Serial.print(P_fc_actual, 2); Serial.print("W  ");
+    Serial.print("P_batt=");             Serial.print(P_batt_actual, 2); Serial.println("W");
+    Serial.println("--- Charger ---");
+    Serial.print("ag105_status_raw=0x"); Serial.print(ag105_status_raw, HEX);
+    Serial.print("  CHARGER_STAT=");     Serial.println(digitalRead(CHARGER_STAT));
+    Serial.println("======================");
 }
 
 
@@ -561,6 +600,7 @@ void checkPiWatchdog() {
 // UDP COMMUNICATION
 // ═════════════════════════════════════════════════════════════════════════════
 void receiveCommands() {
+    if (!networkUp) return;   // UDP socket not initialized — calling Udp.* would hard-fault
     int packetSize = Udp.parsePacket();
     if (packetSize != 22) return;
 
@@ -636,6 +676,7 @@ void receiveCommands() {
  * 57     |  1    | checksum (XOR of bytes 1–56)
  */
 void sendTelemetry() {
+    if (!networkUp) return;   // UDP socket not initialized — calling Udp.* would hard-fault
     uint8_t packet[58];
     int idx = 0;
 
@@ -734,7 +775,11 @@ void doState1() {
     digitalWrite(MOT_PWR_ENABLE, LOW);
     digitalWrite(REGEN_ENABLE,   LOW);
 
-    // Check USB Serial for test-mode entry
+    // 'S'/'s' toggles a 1 Hz sensor dump on/off while idle
+    static bool sensorStream = false;
+    static uint32_t lastSensorPrint = 0;
+
+    // Check USB Serial for commands
     if (Serial.available()) {
         char c = (char)Serial.read();
         if (c == 'T' || c == 't') {
@@ -742,6 +787,16 @@ void doState1() {
             mainState = 98;
             return;
         }
+        if (c == 'S' || c == 's') {   // toggle 1 Hz sensor stream
+            sensorStream = !sensorStream;
+            Serial.println(sensorStream ? "Sensor stream ON (1 Hz)" : "Sensor stream OFF");
+            lastSensorPrint = millis() - 1000;  // print immediately on enable
+        }
+    }
+
+    if (sensorStream && (millis() - lastSensorPrint >= 1000)) {
+        lastSensorPrint = millis();
+        printSensors();
     }
 
     if (changeToRun) {
@@ -1270,7 +1325,7 @@ void pollAg105() {
     Wire.beginTransmission(AG105_ADDR);
     Wire.write(AG105_REG_ICHG_MEAS);
     Wire.endTransmission(false);             // repeated-start (keep bus active)
-    if (Wire.requestFrom(AG105_ADDR, (uint8_t)2) == 2) {
+    if (Wire.requestFrom((uint8_t)AG105_ADDR, (uint8_t)2) == 2) {
         ag105_status_raw = Wire.read();      // Table 6 status byte (always first)
         I_charge = Wire.read() * 0.011f;    // A; scale: 0.011 A/count (Table 7 field 0x06)
     } else {
