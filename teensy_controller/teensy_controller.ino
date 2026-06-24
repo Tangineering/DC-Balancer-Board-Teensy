@@ -895,11 +895,13 @@ void doState98() {
 
         switch (cmd) {
             case 'F':
+            case 'f':
                 pin = FC_REG_ENABLE; cur = digitalRead(pin);
                 digitalWrite(pin, !cur);
                 Serial.print("FC_REG_ENABLE -> "); Serial.println(!cur);
                 break;
             case 'B':
+            case 'b':
                 pin = BT_REG_ENABLE; cur = digitalRead(pin);
                 digitalWrite(pin, !cur);
                 Serial.print("BT_REG_ENABLE -> "); Serial.println(!cur);
@@ -940,18 +942,21 @@ void doState98() {
                 Serial.print("BT_SEQUENCE_ENABLE -> "); Serial.println(!cur);
                 break;
             case 'C':
+            case 'c':
                 pin = CBAL_DISABLE; cur = digitalRead(pin);
                 digitalWrite(pin, !cur);
                 Serial.print("CBAL_DISABLE -> "); Serial.println(!cur);
                 Serial.println((!cur) ? "  WARNING: OVP bypassed" : "  OVP active");
                 break;
             case 'M':
+            case 'm':
                 pin = MPPT_DISABLE; cur = digitalRead(pin);
                 digitalWrite(pin, !cur);
                 Serial.print("MPPT_DISABLE -> "); Serial.print(!cur);
                 Serial.println((!cur) ? " (MPPT enabled/harvesting)" : " (MPPT inhibited)");
                 break;
             case 'D':
+            case 'd':
                 if (!driveCycleActive) {
                     if (!digitalRead(MOT_PWR_ENABLE)) {
                         Serial.println("ERROR: MOT_PWR_ENABLE must be HIGH before starting drive cycle (key '3')");
@@ -975,9 +980,11 @@ void doState98() {
                 }
                 break;
             case 'S':
+            case 's':
                 printTestStatus();
                 break;
             case 'Q':
+            case 'q':
                 driveCycleActive = false;
                 v_setpoint = 0.0f;
                 current = 0.0f;
@@ -1263,7 +1270,7 @@ void pollAg105() {
     Wire.beginTransmission(AG105_ADDR);
     Wire.write(AG105_REG_ICHG_MEAS);
     Wire.endTransmission(false);             // repeated-start (keep bus active)
-    if (Wire.requestFrom((uint8_t)AG105_ADDR, (uint8_t)2) == 2) {
+    if (Wire.requestFrom(AG105_ADDR, (uint8_t)2) == 2) {
         ag105_status_raw = Wire.read();      // Table 6 status byte (always first)
         I_charge = Wire.read() * 0.011f;    // A; scale: 0.011 A/count (Table 7 field 0x06)
     } else {
