@@ -1,0 +1,216 @@
+<svg viewBox="0 0 1500 1000" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <!-- bond half-arrow (power bond) -->
+    <marker id="half" markerWidth="16" markerHeight="16" refX="1" refY="8" orient="auto">
+      <path d="M1,8 L13,2" stroke="#1f3a5f" stroke-width="1.6" fill="none"/>
+    </marker>
+    <!-- full arrow (signal bond) -->
+    <marker id="sig" markerWidth="12" markerHeight="12" refX="8" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#b8860b"/>
+    </marker>
+    <style>
+      .node  { fill:#eef3fb; stroke:#1f3a5f; stroke-width:1.5; }
+      .src   { fill:#e8f6ec; stroke:#2e7d4f; stroke-width:1.5; }
+      .mech  { fill:#fbeee8; stroke:#a4502a; stroke-width:1.5; }
+      .chg   { fill:#f3ecf9; stroke:#6a3aa0; stroke-width:1.5; }
+      .jx    { fill:#fff; stroke:#1f3a5f; stroke-width:2; }
+      .lbl   { font-size:13px; fill:#16263d; }
+      .lblb  { font-size:13px; fill:#16263d; font-weight:600; }
+      .small { font-size:11px; fill:#44546a; }
+      .ef    { font-size:10.5px; fill:#7a8699; font-style:italic; }
+      .sw    { font-size:11px; fill:#9a3a3a; font-weight:600; }
+      .bond  { stroke:#1f3a5f; stroke-width:1.8; fill:none; }
+      .sigb  { stroke:#b8860b; stroke-width:1.3; fill:none; stroke-dasharray:4 3; }
+      .title { font-size:20px; fill:#16263d; font-weight:700; }
+      .cap   { font-size:12px; fill:#2e7d4f; }
+    </style>
+  </defs>
+
+  <text x="30" y="34" class="title">Scale Car DC Balancer Board — Power Bond Graph (Rev 20260622)</text>
+  <text x="30" y="54" class="small">Half-arrow = power bond (effort·flow).  Dashed gold = MCU signal bond.  0 = voltage node (common effort), 1 = series loop (common flow).</text>
+
+  <!-- ================= FUEL CELL BRANCH ================= -->
+  <rect x="30" y="90" width="120" height="48" rx="6" class="src"/>
+  <text x="90" y="110" text-anchor="middle" class="lblb">Se: Fuel Cell</text>
+  <text x="90" y="126" text-anchor="middle" class="small">~12 V→7.8 V@2.6 A</text>
+
+  <text x="165" y="106" class="small">R:R_fc,int</text>
+  <circle cx="200" cy="114" r="15" class="jx"/><text x="200" y="119" text-anchor="middle" class="lblb">1</text>
+  <text x="180" y="146" class="small">I:L_fc 2.2µH · R:DCR</text>
+
+  <rect x="250" y="92" width="92" height="44" rx="6" class="node"/>
+  <text x="296" y="112" text-anchor="middle" class="lblb">MTF</text>
+  <text x="296" y="128" text-anchor="middle" class="small">(1−D_fc) boost</text>
+
+  <circle cx="392" cy="114" r="15" class="jx"/><text x="392" y="119" text-anchor="middle" class="lblb">0</text>
+  <text x="372" y="150" class="cap">C:Cout ≈30µF</text>
+
+  <rect x="438" y="96" width="74" height="38" rx="5" class="node"/>
+  <text x="475" y="113" text-anchor="middle" class="sw">SW</text>
+  <text x="475" y="127" text-anchor="middle" class="small">FC_BUS 27</text>
+
+  <line x1="150" y1="114" x2="185" y2="114" class="bond" marker-end="url(#half)"/>
+  <line x1="215" y1="114" x2="250" y2="114" class="bond" marker-end="url(#half)"/>
+  <line x1="342" y1="114" x2="377" y2="114" class="bond" marker-end="url(#half)"/>
+  <line x1="407" y1="114" x2="438" y2="114" class="bond" marker-end="url(#half)"/>
+  <line x1="512" y1="114" x2="690" y2="114" class="bond"/>
+  <line x1="690" y1="114" x2="690" y2="392" class="bond" marker-end="url(#half)"/>
+
+  <!-- ================= BATTERY BRANCH ================= -->
+  <rect x="30" y="470" width="120" height="56" rx="6" class="src"/>
+  <text x="90" y="492" text-anchor="middle" class="lblb">Se: Battery 2S</text>
+  <text x="90" y="508" text-anchor="middle" class="small">6.0–8.4 V, 10 A</text>
+  <text x="90" y="521" text-anchor="middle" class="small">+R_int +C:Q_soc</text>
+
+  <circle cx="210" cy="498" r="16" class="jx"/><text x="210" y="503" text-anchor="middle" class="lblb">0</text>
+  <text x="178" y="466" class="small">battery terminal</text>
+
+  <line x1="150" y1="498" x2="194" y2="498" class="bond" marker-end="url(#half)"/>
+
+  <!-- logic LDO tap -->
+  <rect x="150" y="560" width="120" height="40" rx="6" class="node"/>
+  <text x="210" y="578" text-anchor="middle" class="lbl">R: Logic LDO</text>
+  <text x="210" y="592" text-anchor="middle" class="small">always-on tap</text>
+  <line x1="210" y1="514" x2="210" y2="560" class="bond" marker-end="url(#half)"/>
+
+  <!-- battery boost -->
+  <circle cx="300" cy="430" r="15" class="jx"/><text x="300" y="435" text-anchor="middle" class="lblb">1</text>
+  <text x="270" y="412" class="small">I:L_bt 2.2µH · R:DCR</text>
+  <line x1="224" y1="488" x2="288" y2="440" class="bond" marker-end="url(#half)"/>
+
+  <rect x="345" y="408" width="92" height="44" rx="6" class="node"/>
+  <text x="391" y="428" text-anchor="middle" class="lblb">MTF</text>
+  <text x="391" y="444" text-anchor="middle" class="small">(1−D_bt) boost</text>
+  <line x1="315" y1="430" x2="345" y2="430" class="bond" marker-end="url(#half)"/>
+
+  <circle cx="487" cy="430" r="15" class="jx"/><text x="487" y="435" text-anchor="middle" class="lblb">0</text>
+  <text x="467" y="466" class="cap">C:Cout</text>
+  <line x1="437" y1="430" x2="472" y2="430" class="bond" marker-end="url(#half)"/>
+
+  <rect x="538" y="412" width="74" height="38" rx="5" class="node"/>
+  <text x="575" y="429" text-anchor="middle" class="sw">SW</text>
+  <text x="575" y="443" text-anchor="middle" class="small">BT_BUS 28</text>
+  <line x1="502" y1="430" x2="538" y2="430" class="bond" marker-end="url(#half)"/>
+  <line x1="612" y1="430" x2="690" y2="430" class="bond"/>
+  <line x1="690" y1="430" x2="690" y2="392" class="bond" marker-end="url(#half)"/>
+
+  <!-- BT sequence + charge return -->
+  <rect x="250" y="640" width="120" height="40" rx="6" class="node"/>
+  <text x="310" y="658" text-anchor="middle" class="sw">SW BT_SEQ 32</text>
+  <text x="310" y="672" text-anchor="middle" class="small">charge return</text>
+  <line x1="210" y1="514" x2="210" y2="660" class="bond"/>
+  <line x1="210" y1="660" x2="250" y2="660" class="bond" marker-end="url(#half)"/>
+
+  <!-- ================= VBUS ================= -->
+  <circle cx="690" cy="392" r="22" class="jx"/><text x="690" y="398" text-anchor="middle" class="lblb">0</text>
+  <text x="690" y="338" text-anchor="middle" class="lblb">VBUS  ~17.5 V</text>
+  <text x="690" y="354" text-anchor="middle" class="cap">C:C_bus ≈30–40µF</text>
+
+  <!-- VBUS -> motor -->
+  <rect x="780" y="260" width="80" height="40" rx="5" class="node"/>
+  <text x="820" y="277" text-anchor="middle" class="sw">SW MOT</text>
+  <text x="820" y="291" text-anchor="middle" class="small">PWR 29</text>
+  <line x1="712" y1="392" x2="820" y2="392" class="bond"/>
+  <line x1="820" y1="392" x2="820" y2="300" class="bond" marker-end="url(#half)"/>
+
+  <!-- VBUS -> FC charge -->
+  <rect x="780" y="470" width="80" height="40" rx="5" class="chg"/>
+  <text x="820" y="487" text-anchor="middle" class="sw">SW FC_CHG</text>
+  <text x="820" y="501" text-anchor="middle" class="small">31 (guarded)</text>
+  <line x1="712" y1="392" x2="820" y2="392" class="bond"/>
+  <line x1="820" y1="392" x2="820" y2="470" class="bond" marker-end="url(#half)"/>
+
+  <!-- ================= MOTOR / DRIVETRAIN ================= -->
+  <circle cx="900" cy="280" r="16" class="jx"/><text x="900" y="285" text-anchor="middle" class="lblb">0</text>
+  <text x="900" y="246" text-anchor="middle" class="lblb">V-MOT / regen</text>
+  <text x="900" y="230" text-anchor="middle" class="cap">C:C_mot 470µF</text>
+  <line x1="860" y1="280" x2="884" y2="280" class="bond" marker-end="url(#half)"/>
+
+  <rect x="952" y="260" width="86" height="42" rx="6" class="mech"/>
+  <text x="995" y="278" text-anchor="middle" class="lblb">MTF</text>
+  <text x="995" y="293" text-anchor="middle" class="small">VESC (D_m)</text>
+  <line x1="916" y1="280" x2="952" y2="280" class="bond" marker-end="url(#half)"/>
+
+  <circle cx="1086" cy="281" r="15" class="jx"/><text x="1086" y="286" text-anchor="middle" class="lblb">1</text>
+  <text x="1066" y="316" class="small">R:R_a · I:L_a</text>
+  <line x1="1038" y1="281" x2="1071" y2="281" class="bond" marker-end="url(#half)"/>
+
+  <rect x="1130" y="260" width="70" height="42" rx="6" class="mech"/>
+  <text x="1165" y="278" text-anchor="middle" class="lblb">GY: kₜ</text>
+  <text x="1165" y="293" text-anchor="middle" class="small">motor</text>
+  <line x1="1101" y1="281" x2="1130" y2="281" class="bond" marker-end="url(#half)"/>
+
+  <circle cx="1248" cy="281" r="15" class="jx"/><text x="1248" y="286" text-anchor="middle" class="lblb">1</text>
+  <text x="1224" y="316" class="small">I:J_rotor · R:b</text>
+  <line x1="1200" y1="281" x2="1233" y2="281" class="bond" marker-end="url(#half)"/>
+
+  <rect x="1292" y="260" width="86" height="42" rx="6" class="mech"/>
+  <text x="1335" y="277" text-anchor="middle" class="lbl">TF: gear·r</text>
+  <text x="1335" y="291" text-anchor="middle" class="small">→ wheel</text>
+  <line x1="1263" y1="281" x2="1292" y2="281" class="bond" marker-end="url(#half)"/>
+
+  <rect x="1300" y="150" width="170" height="64" rx="6" class="mech"/>
+  <text x="1385" y="172" text-anchor="middle" class="lblb">1 : vehicle / flywheel</text>
+  <text x="1385" y="190" text-anchor="middle" class="small">I:m_veh (or J_flywheel)</text>
+  <text x="1385" y="204" text-anchor="middle" class="small">R:roll · R:aero(v²) · Se:grade</text>
+  <line x1="1335" y1="260" x2="1335" y2="214" class="bond" marker-end="url(#half)"/>
+  <text x="1352" y="240" class="ef">encoder ω → v_act</text>
+
+  <!-- ================= REGEN + CHOPPER + CHARGER ================= -->
+  <!-- regen back-flow from motor node down to charger -->
+  <rect x="836" y="360" width="128" height="40" rx="6" class="mech"/>
+  <text x="900" y="378" text-anchor="middle" class="sw">SW REGEN 30</text>
+  <text x="900" y="392" text-anchor="middle" class="small">regen→charger</text>
+  <line x1="900" y1="296" x2="900" y2="360" class="bond" marker-end="url(#half)"/>
+
+  <!-- brake chopper -->
+  <rect x="990" y="360" width="150" height="40" rx="6" class="mech"/>
+  <text x="1065" y="377" text-anchor="middle" class="lblb">MR: Brake Chopper</text>
+  <text x="1065" y="391" text-anchor="middle" class="small">TL431+47Ω · NOT MCU</text>
+  <line x1="916" y1="280" x2="990" y2="280" class="bond"/>
+  <line x1="990" y1="280" x2="990" y2="360" class="bond" marker-end="url(#half)"/>
+
+  <!-- charger input node -->
+  <circle cx="900" cy="500" r="18" class="jx"/><text x="900" y="505" text-anchor="middle" class="lblb">0</text>
+  <text x="900" y="540" text-anchor="middle" class="lblb">V-CHG</text>
+  <text x="900" y="555" text-anchor="middle" class="cap">C:CAL 470µF*</text>
+  <line x1="900" y1="400" x2="900" y2="482" class="bond" marker-end="url(#half)"/>
+  <line x1="820" y1="510" x2="882" y2="500" class="bond" marker-end="url(#half)"/>
+
+  <rect x="852" y="600" width="96" height="46" rx="6" class="chg"/>
+  <text x="900" y="620" text-anchor="middle" class="lblb">MTF: Ag105</text>
+  <text x="900" y="635" text-anchor="middle" class="small">MPPT charger</text>
+  <line x1="900" y1="518" x2="900" y2="600" class="bond" marker-end="url(#half)"/>
+
+  <!-- charge current back to battery terminal -->
+  <path d="M852,623 L370,660" class="bond" marker-end="url(#half)"/>
+  <text x="560" y="700" class="small">charge current → battery (via BT_SEQ)</text>
+
+  <!-- BQ29200 OVP -->
+  <rect x="60" y="640" width="120" height="40" rx="6" class="node"/>
+  <text x="120" y="658" text-anchor="middle" class="sw">MR BQ29200</text>
+  <text x="120" y="672" text-anchor="middle" class="small">OVP · CBAL 9</text>
+  <line x1="194" y1="498" x2="120" y2="640" class="bond"/>
+
+  <!-- ================= MCU SIGNAL LAYER ================= -->
+  <rect x="470" y="780" width="560" height="56" rx="8" class="node"/>
+  <text x="750" y="804" text-anchor="middle" class="lblb">MCU (Teensy 4.1) — signal layer (no power)</text>
+  <text x="750" y="822" text-anchor="middle" class="small">sense: i_fc,i_bt (INA253) · V_fc,V_bt,V_bus,V_chg,V_rgn · ω(enc) · I_charge,GENSTAT(I2C)</text>
+
+  <!-- a few representative signal bonds -->
+  <line x1="540" y1="780" x2="392" y2="130" class="sigb" marker-end="url(#sig)"/>
+  <text x="455" y="470" class="ef" transform="rotate(-66 455 470)">D_fc → MTF</text>
+  <line x1="560" y1="780" x2="391" y2="452" class="sigb" marker-end="url(#sig)"/>
+  <line x1="720" y1="780" x2="995" y2="302" class="sigb" marker-end="url(#sig)"/>
+  <text x="900" y="690" class="ef" transform="rotate(-60 900 690)">D_m → VESC</text>
+  <line x1="900" y1="780" x2="900" y2="646" class="sigb" marker-end="url(#sig)"/>
+  <text x="912" y="730" class="ef">MPPT_DISABLE</text>
+  <line x1="830" y1="780" x2="900" y2="518" class="sigb"/>
+
+  <!-- legend -->
+  <rect x="30" y="880" width="1440" height="96" rx="8" fill="#f7f9fc" stroke="#c4cdda"/>
+  <text x="45" y="902" class="lblb">Legend</text>
+  <text x="45" y="922" class="small">Se source · I inertia (L, mass, inertia) · C compliance (caps, SOC) · R dissipation · TF transformer · MTF modulated transformer (converters)</text>
+  <text x="45" y="940" class="small">GY gyrator (motor) · MR modulated resistor / switch (RT1987 paths, chopper, OVP) · 0 common-effort (voltage) node · 1 common-flow (series) loop</text>
+  <text x="45" y="958" class="small">Colors: green=source · blue=electrical/node · orange=mechanical · purple=charger.   * 470µF node placement (V-MOT vs charger) — see bond-graph.md §9 open question.</text>
+</svg>

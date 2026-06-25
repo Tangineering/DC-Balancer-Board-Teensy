@@ -1,0 +1,24 @@
+{
+    "Header": {
+        "Comment": "All values are metric (mm)",
+        "CreationDate": "2026-06-09T23:01:26Z",
+        "GenerationSoftware": {
+            "Application": "Fusion Electronics",
+            "Vendor": "Autodesk",
+            "Version": "9.7.0"
+        },
+        "Part": "Single"
+    },
+    "Overall": {
+        "BoardThickness": 1.6608,
+        "LayerNumber": 2,
+        "Name": {
+            "ProjectId": "Scale Car Board"
+        },
+        "Owner": "Ricardo Tan <ricky.tangineering@gmail.com>",
+        "Size": {
+            "X": 131.064,
+            "Y": 98.044
+        }
+    }
+}

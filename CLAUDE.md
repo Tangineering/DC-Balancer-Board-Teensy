@@ -467,3 +467,50 @@ destroyed (VIN/SW/VOUT all shorted to GND) and the Teensy browned out off USB.
 - No telemetry layout change (reuses `FAULT_INIT_FAIL`/`ERR_INIT_FAIL`). New
   `V_BUS_CHARGED_THRESH`, `BUS_SETTLE_MS`, `BUS_CHARGE_TIMEOUT_MS` are `TODO(calibrate)`.
   The BT TPS61288 has been replaced and the board is functioning again.
+
+### Corrected failure analysis + BENCH_TEST bypass (supersedes the inrush framing above)
+
+Bench bring-up from a **current-limited supply** (no fuel cell, `VBT` from a DC supply) repeated the
+`VBT→GND` short. Diagnosis was refined, and two earlier theories were wrong — recorded so the
+code/docs stop repeating them:
+- **Inrush is NOT the cause.** The 470 µF bulk cap is on the **V-MOT / regen node behind
+  `MOT_PWR_ENABLE`**, not on VBUS. With `MOT_PWR_ENABLE` off, VBUS carries only ~30–40 µF (the
+  RT1987 ceramics), so bus inrush is negligible — and `MOT_PWR_ENABLE` was off in the original
+  State-98 failure too.
+- **The recurring killer is the BT boost on a collapsing input.** The Teensy is **board-powered**
+  (LM1084 off `VBT`). On a supply that can't carry the logic baseline (Teensy + Ethernet PHY ≈
+  150–250 mA through the linear reg), `VBT` sags → Teensy browns out → resets → `doState0()`
+  re-enables the boost → **motorboating**. Switching with built-up inductor current on a
+  sagging/recovering rail then destroys the power stage. **Exact mechanism is UNCONFIRMED** (pending
+  a SW/VOUT scope capture): most likely a **VOUT overshoot past the 20 V SW/VOUT abs-max** — the
+  TPS61288 OVP is at 19 V (≤19.5 V), leaving only ~0.5 V margin, and the 3×22 µF output caps
+  DC-derate to ~30 µF, so an inductor-commutation spike (½·L·I² at the 15 A limit into ~30 µF) rings
+  over 20 V — and/or **transient reverse conduction**. Either way the destructive energy comes from
+  the boost's own inductor / output cap, so a **supply current limit does not bound it**. (An
+  earlier note here asserted reverse conduction specifically; the datasheet's PFM negative-current
+  blocking weakens that, so overshoot is now the leading candidate — to be settled by scope.) Same
+  class of event as the first incident (weak 9 V battery sagging under load); replacing the TPS61288
+  fixed that one, confirming the boost (not the `VBT` tantalum) is the failure point.
+- **`BENCH_TEST` bypass.** `doState0()` now wraps the bring-up in `#if BENCH_TEST`: under
+  `BENCH_TEST` (the default bench flash) it boots **straight to Idle with the power stage dark**
+  (boosts, bus switches, and `BT_SEQUENCE` all stay LOW; no `V_bus` gate) — so a soft bench supply
+  can't trigger the motorboating loop. Bring the bus up manually with the State-98 `G` command on a
+  **stiff** supply. Production (`BENCH_TEST=0`) keeps the full bring-up + gate. Source-agnostic init
+  is shared via `initControlPeripherals()`.
+- **Bench rule:** the supply must comfortably exceed the logic baseline (≥ ~0.5–1 A) or the
+  board-powered Teensy browns out; bring the bus up only on a stiff supply (the killer is the boost
+  on a collapsing input, independent of any current limit).
+- **Tests:** the suite gains a second `-DBENCH_TEST=1` build (`run_tests_bench`) covering the
+  bypass (`test_dostate0_bench_bypass`); the `-DBENCH_TEST=0` build keeps the production `doState0`
+  tests. `cd test && mingw32-make` builds and runs both.
+
+### ⚠️ OPEN HARDWARE FAULT — battery boost dies on VBUS connection (read before bench work)
+
+**Three battery-side TPS61288 boosts have now been destroyed**, each the instant `BT_BUS_ENABLE`
+(`D-BT-EN`) connects the battery boost to VBUS. The boost regulates 17.5 V fine *standalone*; the
+FC boost connects to VBUS without incident. The fault is **dynamic, hardware, and specific to the
+battery bus path** — the firmware bring-up changes above are defensive but do **not** fix it (they
+targeted the supply/sequence, which the data has since ruled out). **Do not install another boost
+or apply full current blindly.** No input current limit is proven safe (death #2 was at 120 mA).
+Full datapoints, ruled-out hypotheses, the FC-vs-BT schematic delta, safety rules, and the
+boost-removed decisive test are in **`docs/boost-bringup-debug.md`** — read it first.

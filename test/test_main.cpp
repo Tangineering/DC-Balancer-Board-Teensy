@@ -1375,11 +1375,40 @@ static void test_state98_drive_cycle_runs_controls() {
           "doState98: 'Q' exit returns to State 1");
 }
 
+#if BENCH_TEST
+// ─── doState0() BENCH_TEST bypass: boot to Idle with the power stage off ──────
+// Built only in the -DBENCH_TEST=1 pass (run_tests_bench). The -DBENCH_TEST=0 suite covers the
+// production doState0 (test_dostate0_reaches_idle_unpowered / _bus_charge_timeout).
+static void test_dostate0_bench_bypass() {
+    test_group("doState0() BENCH_TEST bypass (power stage off)");
+    reset_test_state();
+    mainState = 0;
+    V_bus = 5.0f;            // deliberately below V_BUS_CHARGED_THRESH — bypass must not gate on it
+    g_mock_millis = 0;
+
+    doState0();              // single call: bench path boots straight to Idle
+
+    check(mainState == 1,
+          "doState0/bench: boots straight to Idle in one pass");
+    check(digitalRead(FC_REG_ENABLE) == LOW && digitalRead(BT_REG_ENABLE) == LOW,
+          "doState0/bench: boosts stay OFF");
+    check(digitalRead(FC_BUS_ENABLE) == LOW && digitalRead(BT_BUS_ENABLE) == LOW,
+          "doState0/bench: bus switches stay OFF");
+    check(digitalRead(BT_SEQUENCE_ENABLE) == LOW,
+          "doState0/bench: BT_SEQUENCE stays OFF");
+    check(!(fault_flags & FAULT_INIT_FAIL) && error_code == ERR_NONE && mainState != 99,
+          "doState0/bench: never gates or faults on low V_bus");
+}
+#endif
+
 // ─── main ─────────────────────────────────────────────────────────────────────
 int main() {
     printf("teensy_controller.ino — unit tests\n");
     printf("===================================\n");
 
+#if BENCH_TEST
+    test_dostate0_bench_bypass();
+#else
     test_scale_factors();
     test_ag105_constants();
     test_init_ag105_charger();
@@ -1411,6 +1440,7 @@ int main() {
     test_state98_drive_cycle_runs_controls();
     test_motor_pi_antiwindup();
     test_wheelspeed_reset();
+#endif
 
     printf("\n===================================\n");
     printf("Results: %d passed, %d failed\n", g_tests_passed, g_tests_failed);

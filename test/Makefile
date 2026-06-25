@@ -13,19 +13,27 @@ MSYS2_UCRT64 = /c/msys64/ucrt64/bin
 
 CXX      = g++
 # -DBENCH_TEST=0 compiles the PRODUCTION fault behavior (the .ino defaults BENCH_TEST=1 for
-# bench flashing via #ifndef). The suite asserts shipped behavior, so it must build with 0.
+# bench flashing via #ifndef). The main suite asserts shipped behavior, so it must build with 0.
 CXXFLAGS = -std=c++17 -Wall -Wextra -I. -I../teensy_controller -DBENCH_TEST=0
+# Second build at -DBENCH_TEST=1 exercises the doState0() bench bypass. The full suite's test
+# functions are compiled but not called in this pass, so silence the expected unused warnings.
+CXXFLAGS_BENCH = -std=c++17 -Wall -Wextra -Wno-unused-function -I. -I../teensy_controller -DBENCH_TEST=1
+
+DEPS = mock_arduino.h mock_wire.h mock_spi.h mock_vesc.h mock_ethernet.h \
+       VescUart.h SPI.h Wire.h NativeEthernet.h NativeEthernetUdp.h \
+       ../teensy_controller/teensy_controller.ino
 
 .PHONY: all clean
 
-all: run_tests
+all: run_tests run_tests_bench
 	PATH="$(MSYS2_UCRT64):$(PATH)" ./run_tests
+	PATH="$(MSYS2_UCRT64):$(PATH)" ./run_tests_bench
 
-run_tests: test_main.cpp \
-           mock_arduino.h mock_wire.h mock_spi.h mock_vesc.h mock_ethernet.h \
-           VescUart.h SPI.h Wire.h NativeEthernet.h NativeEthernetUdp.h \
-           ../teensy_controller/teensy_controller.ino
+run_tests: test_main.cpp $(DEPS)
 	PATH="$(MSYS2_UCRT64):$(PATH)" $(CXX) $(CXXFLAGS) test_main.cpp -o run_tests
 
+run_tests_bench: test_main.cpp $(DEPS)
+	PATH="$(MSYS2_UCRT64):$(PATH)" $(CXX) $(CXXFLAGS_BENCH) test_main.cpp -o run_tests_bench
+
 clean:
-	rm -f run_tests run_tests.exe
+	rm -f run_tests run_tests.exe run_tests_bench run_tests_bench.exe

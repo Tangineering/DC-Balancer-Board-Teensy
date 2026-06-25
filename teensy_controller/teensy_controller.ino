@@ -26,15 +26,23 @@
  *    Pi decodes off/CC/CV/fault from it. switch_state and all following fields shift +1; checksum
  *    span now bytes 1–56. (The old v1 charger_status — dropped in v2 — is thus restored to its
  *    historic offset, now carrying the Ag105's richer status rather than the BQ25690's.)
- *  - VBUS controlled bring-up (post-bench-failure): a State-98 hot-plug of a running boost onto
- *    the discharged 470µF bus (schematic sheet 4) destroyed the BT boost. The RT1987 datasheet
- *    (back-to-back FETs, CSS=5.6nF soft-start, start-up SCP) shows the real culprit was the shared
- *    9V test rail browning out, not raw inrush. Fixes: boosts now default OFF in setup();
- *    doState0() brings the bus up gently (bus switches FIRST, settle, THEN boosts) and gates
- *    State 0→1 on V_bus reaching V_BUS_CHARGED_THRESH (timeout → FAULT_INIT_FAIL). doState3()
- *    (Finish) no longer drains the bus — it leaves the boosts + bus switches ON so the bus stays
- *    armed and Idle→Run never re-hot-plugs (only State 99 tears the bus down). State 98 adds a
- *    hot-plug guard on '1'/'2' and a 'G' safe-bring-up command. No telemetry layout change.
+ *  - VBUS bring-up (post-bench-failure): boosts now default OFF in setup(); doState0() brings the
+ *    bus up only with a stiff source (bus switches FIRST, settle, THEN boosts) and gates State 0→1
+ *    on V_bus reaching V_BUS_CHARGED_THRESH (timeout → FAULT_INIT_FAIL). doState3() (Finish) no
+ *    longer drains the bus — it leaves boosts + bus switches ON so Idle→Run never re-hot-plugs
+ *    (only State 99 tears the bus down). State 98 adds a hot-plug guard on '1'/'2' and a 'G'
+ *    bring-up command. No telemetry layout change.
+ *  - Corrected failure analysis (supersedes the inrush framing): the killer is NOT 470µF bus
+ *    inrush. VBUS carries only ~30–40µF; the 470µF bulk cap is on V-MOT behind MOT_PWR_ENABLE. The
+ *    real cause is enabling a BOOST on a source that can collapse: switching with built-up inductor
+ *    current on a sagging/recovering rail destroys the power stage. Exact mechanism UNCONFIRMED
+ *    (pending a SW/VOUT scope capture) — most likely a VOUT overshoot past the 20V SW/VOUT abs-max
+ *    (OVP at 19V leaves ~0.5V margin; 3×22µF output caps DC-derate to ~30µF) and/or transient
+ *    reverse conduction; either way the energy is from the boost's own L/Cout, so a supply current
+ *    limit does NOT bound it. On a board-powered Teensy this also motorboats (boost loads VBT →
+ *    brownout → reset → re-enable). So under BENCH_TEST, doState0() now boots straight to Idle with
+ *    the power stage OFF (no auto boost/bus enable, no V_bus gate); the bus is brought up manually
+ *    via 'G' on a stiff supply. Production (BENCH_TEST=0) keeps the full bring-up + gate.
  */
 
 #include <VescUart.h>
@@ -129,14 +137,24 @@ EthernetUDP Udp;
 #define LIMIT_V_CHG_MAX  24.0f  // V — charger input max
 
 // ── VBUS controlled bring-up (State 0) ───────────────────────────────────────
-// The VBUS node carries a 470µF bulk cap (schematic sheet 4, EEE-FN1V471UP). Connecting a
-// boost that is ALREADY running at ~17.5V onto a discharged 0V bus forces a large charge
-// transient: the RT1987 (CSS=5.6nF → ~1.17ms soft-start) cannot ramp 470µF that fast, so it
-// SCP-current-limit-clamps and auto-retries in bursts, drawing heavy current. On the bench the
-// BT boost shares its 9V source with the logic 5V reg, so that burst browned out the Teensy and
-// destroyed the BT boost. Fix: bring the bus up via the boosts' own soft-start from a low
-// voltage — enable the bus switches FIRST (at ~Vbatt, gentle), THEN enable the boosts so they
-// ramp the bus + their outputs up together. Never hot-plug a running boost onto a dead bus.
+// NOTE: an earlier rationale here blamed 470µF bus inrush. That was wrong — corrected:
+//   - VBUS carries only ~30–40µF (the RT1987 ceramics). The 470µF bulk cap (schematic sheet 4,
+//     EEE-FN1V471UP) sits on the V-MOT / regen node BEHIND MOT_PWR_ENABLE, so it is not on VBUS
+//     during Init. Bus inrush is negligible and was never the failure cause.
+//   - The real hazard is enabling a BOOST on a source that can COLLAPSE. The Teensy is board-
+//     powered (LM1084 off VBT). On a weak / current-limited source, the boost loads VBT, the rail
+//     sags, the Teensy browns out and re-enables the boost on reboot (motorboating). Switching with
+//     built-up inductor current on a sagging/recovering rail drives the power stage into abnormal
+//     operation and destroys it. Exact mechanism is UNCONFIRMED (pending a SW/VOUT scope capture):
+//     most likely a VOUT overshoot past the 20V SW/VOUT abs-max — OVP is at 19V, only ~0.5V of
+//     margin, and the 3×22µF output caps DC-derate to ~30µF, so an inductor-commutation spike
+//     rings over 20V — and/or transient reverse conduction. Either way the destructive energy comes
+//     from the boost's own inductor/output cap, so a SUPPLY current limit does NOT bound it. (Same
+//     class of event killed the boost in the original weak-9V-battery incident.)
+// Production (BENCH_TEST=0, stiff vehicle source) brings the bus up gently — bus switches first,
+// then the boosts' own soft-start raises the bus — and gates on V_bus to detect a dead boost / no
+// source. BENCH_TEST keeps the power stage OFF at boot (see doState0()); bring the bus up with the
+// State-98 'G' command on a stiff supply.
 #define V_BUS_CHARGED_THRESH 15.0f   // V — bus considered "up" (TODO(calibrate): ~0.85×17.5V)
 #define BUS_SETTLE_MS         5u     // ms — RT1987 soft-start (~1.17ms) + margin (TODO(calibrate))
 #define BUS_CHARGE_TIMEOUT_MS 800u   // ms — max for boosts to reach V_BUS_CHARGED_THRESH; else
@@ -408,9 +426,9 @@ void setup() {
     pinMode(ENC_A,   INPUT);
     pinMode(ENC_B,   INPUT);
     pinMode(ENC_ENABLE,    OUTPUT);
-    // Boost regulators default OFF. They are enabled by doState0() AFTER the bus switches, so the
-    // boosts soft-start the 470µF bus from a low voltage (gentle) instead of being hot-plugged onto
-    // a discharged bus at full output. See the "VBUS controlled bring-up" note above.
+    // Boost regulators default OFF. doState0() decides when to enable them: in production after the
+    // bus switches (gentle bring-up), and in BENCH_TEST never at boot (the power stage stays dark so
+    // a soft bench supply can't brown out and motorboat the boost). See "VBUS controlled bring-up".
     pinMode(FC_REG_ENABLE, OUTPUT); digitalWrite(FC_REG_ENABLE, LOW);
     pinMode(BT_REG_ENABLE, OUTPUT); digitalWrite(BT_REG_ENABLE, LOW);
     pinMode(CS_MDAC_FC,    OUTPUT);
@@ -813,31 +831,56 @@ void sendTelemetry() {
 // ═════════════════════════════════════════════════════════════════════════════
 // STATE MACHINE
 // ═════════════════════════════════════════════════════════════════════════════
+// Source-agnostic peripheral init, shared by the bench and production doState0() paths.
+static void initControlPeripherals() {
+    initMdacOutputs();
+
+    // Charger config is NOT done here. The Ag105 is unpowered in Init (no charger power path is
+    // open), so it cannot ACK I2C — configuring it here would always fail. pollAg105() lazily
+    // configures it the first time it is powered + settled (see §3/§5).
+    ag105Configured = false;
+
+    initEsc();
+
+    digitalWrite(CS_MDAC_FC, HIGH);
+    digitalWrite(CS_MDAC_BT, HIGH);
+    digitalWrite(ENC_ENABLE, HIGH);
+}
+
 void doState0() {
-    // INIT — controlled VBUS bring-up, then gate on the bus actually coming up.
+#if BENCH_TEST
+    // BENCH bring-up bypass — boot to Idle with the power stage DARK (boosts, bus switches, and
+    // BT_SEQUENCE all stay LOW from setup()), and do NOT gate on V_bus.
     //
-    // Implemented as a NON-BLOCKING phase machine (same pattern as doState3/doState99) so
-    // detectFaults() keeps sampling throughout the bring-up window.
-    //
-    // Ordering is safety-critical (see "VBUS controlled bring-up" note near the limits):
-    //   Phase 0: boosts are OFF (from setup). Enable the bus switches FIRST. With the boosts off,
-    //            each boost output floats to ~Vbatt via the TPS61288 body diode, so the RT1987s
-    //            soft-start the 470µF bus from 0 → ~Vbatt — a small, SCP-limited step. No running
-    //            boost is hot-plugged onto a 0V bus.
-    //   Phase 1: after BUS_SETTLE_MS, enable the boosts. Now the bus + boost outputs are one node
-    //            and rise from ~Vbatt → 17.5V together via the boosts' own soft-start (smooth,
-    //            steady current — not the peaky SCP-retry bursts of a hot-plug). Do the rest of
-    //            init here too.
-    //   Phase 2: wait for V_bus to reach V_BUS_CHARGED_THRESH before declaring Idle. If it never
-    //            does within BUS_CHARGE_TIMEOUT_MS, raise FAULT_INIT_FAIL (dead boost / failed
-    //            switch / no source — exactly the failure that motivated this).
+    // Why: the Teensy is board-powered (LM1084 off VBT). On a current-limited / soft bench supply
+    // that can't carry the logic baseline, enabling a boost at boot makes VBT sag, browns out the
+    // Teensy, and re-runs this on reboot — motorboating. Switching with built-up inductor current
+    // on a sagging/recovering rail then destroys the power stage (most likely a VOUT overshoot past
+    // the 20V abs-max — OVP at 19V leaves only ~0.5V margin — and/or reverse conduction; mechanism
+    // UNCONFIRMED pending a scope capture). The destructive energy is from the boost's own L/Cout,
+    // so a bench current limit does NOT protect it. Keeping the power stage off at boot avoids the
+    // whole loop. Bring the bus up manually with the State-98 'G' command on a STIFF supply.
+    // Production (BENCH_TEST=0) runs the full bring-up + gate below.
+    initControlPeripherals();
+    Serial.println("State 0 -> State 1 (IDLE) [BENCH_TEST: power stage off; bring up with 'G']");
+    mainState = 1;
+#else
+    // PRODUCTION bring-up — non-blocking phase machine (same pattern as doState3/doState99) so
+    // detectFaults() keeps sampling throughout. A stiff source is assumed present (vehicle battery
+    // / fuel cell). VBUS itself carries only ~30–40µF (the RT1987 ceramics); the 470µF bulk cap is
+    // on the V-MOT / regen node behind MOT_PWR_ENABLE, so this is NOT about bus inrush. The ordering
+    // (switches → settle → boosts) avoids any hot-plug step and lets the boosts' own soft-start
+    // raise the bus; the V_bus gate then confirms a source actually brought it up.
+    //   Phase 0: enable the bus switches (boosts still OFF from setup).
+    //   Phase 1: after BUS_SETTLE_MS, enable the boosts + BT_SEQUENCE and finish init.
+    //   Phase 2: wait for V_bus ≥ V_BUS_CHARGED_THRESH; if it never arrives within
+    //            BUS_CHARGE_TIMEOUT_MS → FAULT_INIT_FAIL (dead boost / failed switch / no source).
     static uint8_t  phase      = 0;
     static uint32_t phaseStart = 0;
 
     switch (phase) {
         case 0:
-            // Switches first (boosts still LOW from setup).
-            digitalWrite(FC_BUS_ENABLE, HIGH);   // FC regulator → VBUS (RT1987 soft-starts the bus)
+            digitalWrite(FC_BUS_ENABLE, HIGH);   // FC regulator → VBUS
             digitalWrite(BT_BUS_ENABLE, HIGH);   // BT regulator → VBUS
             phaseStart = millis();
             phase = 1;
@@ -846,25 +889,11 @@ void doState0() {
         case 1:
             if (millis() - phaseStart < BUS_SETTLE_MS) break;   // let the RT1987 soft-start settle
 
-            // Boosts second — they ramp the (already-connected) bus up via their own soft-start.
-            digitalWrite(FC_REG_ENABLE, HIGH);
+            digitalWrite(FC_REG_ENABLE, HIGH);   // boosts ramp the bus via their own soft-start
             digitalWrite(BT_REG_ENABLE, HIGH);
+            digitalWrite(BT_SEQUENCE_ENABLE, HIGH);   // battery-pack sequencing in once powered
 
-            // Battery-pack sequencing switch: OFF at boot, ON now that the system is powered.
-            digitalWrite(BT_SEQUENCE_ENABLE, HIGH);
-
-            initMdacOutputs();
-
-            // Charger config is NOT done here. The Ag105 is unpowered in Init (no charger power
-            // path is open), so it cannot ACK I2C — configuring it here would always fail. Instead,
-            // pollAg105() lazily configures it the first time it is powered + settled (see §3/§5).
-            ag105Configured = false;
-
-            initEsc();
-
-            digitalWrite(CS_MDAC_FC, HIGH);
-            digitalWrite(CS_MDAC_BT, HIGH);
-            digitalWrite(ENC_ENABLE, HIGH);
+            initControlPeripherals();
 
             phaseStart = millis();
             phase = 2;
@@ -883,6 +912,7 @@ void doState0() {
             }
             break;
     }
+#endif
 }
 
 void doState1() {
@@ -1318,10 +1348,14 @@ void safeAllSwitches() {
     digitalWrite(MPPT_DISABLE,   LOW);    // inhibit MPPT (active-LOW)
 }
 
-// Safe VBUS bring-up: bus switches FIRST, then boosts (see "VBUS controlled bring-up" note and
-// doState0()). Used by the State 98 'G' command so the operator can energize the bus on the bench
-// without hot-plugging a running boost onto a discharged 470µF bus. Brief blocking settle is fine
-// here (one-shot, interactive). Does NOT gate on V_bus — caller can read it back with 'S'.
+// VBUS bring-up: bus switches FIRST, then boosts (see "VBUS controlled bring-up" note and
+// doState0()). Used by the State 98 'G' command so the operator can energize the bus under manual
+// control — the only way to bring the bus up under BENCH_TEST, where doState0() leaves the power
+// stage off at boot. Use ONLY on a STIFF supply: enabling the boost on a source that can collapse
+// (weak/current-limited) destroys the power stage (output overshoot past the 20V abs-max and/or
+// reverse conduction; energy from the boost's own L/Cout, so a current limit does NOT protect it).
+// Brief blocking settle is fine here (one-shot, interactive). Does NOT gate on V_bus — caller can
+// read it back with 'S'.
 void bringUpBus() {
     digitalWrite(FC_REG_ENABLE, LOW);     // ensure boosts OFF first (gentle from a low voltage)
     digitalWrite(BT_REG_ENABLE, LOW);

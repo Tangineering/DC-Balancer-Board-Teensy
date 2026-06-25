@@ -1033,3 +1033,75 @@ Tests: `test_dostate0_reaches_idle_unpowered` reworked for the phase machine; ne
 `test_dostate0_bus_charge_timeout`, `test_dostate98_hotplug_guard`,
 `test_dostate3_leaves_bus_energized`. **All 219 host-native tests pass** (`-DBENCH_TEST=0`).
 The BT TPS61288 has been replaced and the board is functioning again.
+
+---
+
+## 13. Corrected failure mechanism + BENCH_TEST bypass (2026-06-24, supersedes §12's inrush framing)
+
+Bench bring-up from a **current-limited supply** repeated the `VBT→GND` short, which forced two
+corrections to §12:
+- **Inrush is NOT the cause.** The 470 µF bulk cap is on the **V-MOT/regen node behind
+  `MOT_PWR_ENABLE`**, not on VBUS. VBUS carries only ~30–40 µF (RT1987 ceramics), and
+  `MOT_PWR_ENABLE` was off in the original State-98 failure too — so there was never meaningful bus
+  inrush. (§12's "470 µF bus" / "never hot-plug" framing is wrong; the gentle ordering is still fine,
+  just not for the stated reason.)
+- **The killer is a boost on a collapsing input.** The Teensy is board-powered (LM1084 off `VBT`).
+  A soft/current-limited source sags when the boost loads it → board-powered Teensy browns out →
+  resets → `doState0()` re-enables the boost → **motorboating**. Switching with built-up inductor
+  current on a sagging/recovering rail destroys the power stage; the destructive energy is from the
+  boost's own L/Cout, so a supply current limit does **not** bound it. Same class of event as the
+  original weak-9 V-battery incident (replacing the TPS61288 fixed that, confirming the boost, not
+  the `VBT` tantalum).
+- **Exact mechanism UNCONFIRMED — pending a SW/VOUT scope capture.** Leading candidate (TPS61288
+  datasheet SLVSFP3C): a **VOUT overshoot past the 20 V SW/VOUT abs-max**. OVP is at 19 V (≤19.5 V)
+  — only ~0.5 V of margin — and the 3×22 µF output caps DC-derate to ~30 µF, so an inductor-
+  commutation spike (½·L·I² at the 15 A cycle-by-cycle limit, 2.2 µH, into ~30 µF ≈ +3 V) rings
+  over 20 V. Secondary: transient **reverse conduction** (datasheet weakens this — PFM blocks
+  negative inductor current, EN-low reverse SW leak is 1 µA — so it's the lesser candidate). The
+  scope test discriminates: SW/VOUT ringing >20 V on collapse ⇒ overshoot; clamped at 19 V but the
+  part still dies ⇒ reverse-current/thermal. **Do this only on a stiff, instrumented bench setup,
+  after the present 0.5 Ω short is repaired** — not on the current-limited supply that triggers the
+  thrash.
+
+### Hardware follow-ups (NOT in this firmware change; pending scope confirmation)
+- **VIN UVLO that pulls EN low early** (~2.5–3 V, above the part's own ~1.9 V falling UVLO) so the
+  boost stops switching *before* the rail sags into the collapse/recovery regime — reduces the
+  inductor current present at the moment of collapse. Best layer for this (firmware can't react
+  through its own brownout).
+- **Voltage-stable output bulk on VOUT-FC / VOUT-BT** (e.g. 47 µF electrolytic/tantalum, immune to
+  the ceramic DC-bias derating) to lower the overshoot magnitude. Note: even ~100–200 µF does not
+  reliably keep a 15 A commutation under 20 V given the 19 V OVP baseline, so treat this as
+  mitigation, not a cure.
+- **TVS clamp on VOUT — considered and rejected.** To protect it must clamp <20 V; to not interfere
+  it must stand off >19.5 V (OVP max). That <0.5 V window is unachievable for any real TVS
+  (clamping ratios ~1.3+): a part that clamps under 20 V would stand off below the 17.5 V operating
+  point and conduct in normal operation. So a TVS is not a viable fix here.
+- The robust system-level fix remains: **never enable the boost on a source that can collapse** —
+  which the `BENCH_TEST` bypass and the "stiff-supply-only for `G` bring-up" rule already enforce.
+
+### Update — supply-transient theories SUPERSEDED (see docs/boost-bringup-debug.md)
+
+A **third** battery boost was then destroyed by `G` (bring-up) on a **stiff ≥5 A supply**, and the
+`D-BT-EN` EXP/VOUT-to-GND ohmmeter checks came back clean. Together these **rule out** the
+supply-collapse / overshoot / reverse-conduction framing above and the EXP-short hypothesis. The
+boosts work standalone; the FC bus connection works; only the **battery bus connection
+(`BT_BUS_ENABLE` / `D-BT-EN`)** kills the boost, and it does so dynamically (no static short).
+This is an **open hardware fault localized to the battery bus path**, not a bring-up-sequence or
+supply problem — so the firmware work here, while sound defensively, does not address it. The
+live debug log, datapoints, ruled-out list, FC-vs-BT schematic delta, safety rules (no input
+current limit is proven safe — death #2 was 120 mA), and the boost-removed decisive test now live
+in **`docs/boost-bringup-debug.md`**. Treat that file as the current source of truth for the
+hardware issue.
+
+Bypass:
+- **`doState0()` wraps the bring-up in `#if BENCH_TEST`.** Under `BENCH_TEST` (default flash) it
+  boots straight to Idle with the **power stage dark** (boosts, bus switches, `BT_SEQUENCE` all LOW;
+  no `V_bus` gate); the bus is brought up manually via the State-98 `G` command on a stiff supply.
+  Production (`BENCH_TEST=0`) keeps the full bring-up + gate. Shared init → `initControlPeripherals()`.
+- **Comments/docs** corrected (`.ino` bring-up block + changelog, CLAUDE.md, README.md) to drop the
+  inrush framing.
+- **Bench rule:** supply must exceed the logic baseline (≥ ~0.5–1 A) or the Teensy browns out; bring
+  the bus up only on a stiff supply.
+
+Tests: new `test_dostate0_bench_bypass` built in a **second `-DBENCH_TEST=1` pass** (`run_tests_bench`);
+the `-DBENCH_TEST=0` build keeps the production `doState0` tests. `make` builds + runs both.

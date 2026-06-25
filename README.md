@@ -48,14 +48,21 @@ All switches default LOW at boot (fail-safe; 10 kΩ EN-to-GND bodge resistors ba
 through `assertFcChargeEnable()`, which forces `BT_BUS_ENABLE` and `REGEN_ENABLE` LOW (with an
 RT1987 turn-off settle delay) before opening the FC→charger path.
 
-**VBUS bring-up — never hot-plug a running boost onto a dead bus.** VBUS carries a 470 µF bulk
-cap. Connecting a boost that is already running at ~17.5 V onto a discharged 0 V bus forces a
-large charge transient that the RT1987 absorbs as SCP current-limit bursts — which (on the shared
-9 V bench rail) browned out the Teensy and destroyed a boost. The boots are therefore brought up
-**gently**: enable the bus switches *first* (the RT1987s soft-start the bus from a low voltage),
-then enable the boosts so their own soft-start ramps the bus to 17.5 V. This is handled in State 0
-and mirrored by the State 98 `G` command; the bus is then kept energized through Idle/Finish so a
-Run never re-hot-plugs it.
+**VBUS bring-up — only enable a boost on a stiff source.** The hazard is *not* bus inrush: VBUS
+carries only ~30–40 µF (the RT1987 ceramics); the 470 µF bulk cap is on the V-MOT/regen node behind
+`MOT_PWR_ENABLE`. The real failure mode is enabling a boost on a source that can **collapse**:
+switching with built-up inductor current on a sagging/recovering rail destroys the power stage. The
+exact mechanism is **unconfirmed pending a scope capture** — most likely a VOUT overshoot past the
+20 V SW/VOUT abs-max (the TPS61288 OVP is at 19 V, only ~0.5 V of margin, and the 3×22 µF output
+caps DC-derate to ~30 µF) and/or transient reverse conduction. Either way the destructive energy
+comes from the boost's own inductor/output cap, so *a supply current limit does not bound it*. On a
+board-powered Teensy this also motorboats: the boost loads `VBT`, the logic rail browns out, the MCU
+resets, and re-enables the boost. So in **production** (`BENCH_TEST=0`, stiff vehicle source) State 0
+brings the bus up gently (switches first, then the boosts' own soft-start) and is mirrored by the
+State 98 `G` command; the bus is then kept energized through Idle/Finish so a Run never re-hot-plugs
+it. Under **`BENCH_TEST`** State 0 keeps the power stage **off** at boot (see State 0 below). Bench
+rule: the supply must exceed the logic baseline (≥ ~0.5–1 A) or the board-powered Teensy browns out,
+and the bus may be brought up (`G`) only on a stiff supply.
 
 ## Runtime flow
 
@@ -70,13 +77,20 @@ Main loop execution order:
 
 ## State machine
 
-- **State 0 (Init)**: a **non-blocking phase machine** that brings VBUS up gently — enable the
-  bus switches first (`FC_BUS_ENABLE`/`BT_BUS_ENABLE`), settle, then enable the FC/BT boosts so
-  their soft-start ramps the bus (see *VBUS bring-up* above). It also raises `BT_SEQUENCE_ENABLE`,
-  inits the MDAC and VESC, then **gates the transition to Idle on `V_bus ≥ V_BUS_CHARGED_THRESH`**.
-  If the bus never reaches the threshold within `BUS_CHARGE_TIMEOUT_MS`, it raises `FAULT_INIT_FAIL`
-  → State 99 (catches a dead boost, a failed switch, or no source). The Ag105 is **not** configured
-  here — it is unpowered in Init; `pollAg105()` configures it lazily once a charger path powers it.
+- **State 0 (Init)**: behavior depends on the `BENCH_TEST` build flag.
+  - **Production (`BENCH_TEST=0`)**: a **non-blocking phase machine** that brings VBUS up gently —
+    bus switches first (`FC_BUS_ENABLE`/`BT_BUS_ENABLE`), settle, then the FC/BT boosts (their
+    soft-start raises the bus; see *VBUS bring-up* above). Raises `BT_SEQUENCE_ENABLE`, inits the
+    MDAC and VESC, then **gates the transition to Idle on `V_bus ≥ V_BUS_CHARGED_THRESH`**; if the
+    bus never reaches it within `BUS_CHARGE_TIMEOUT_MS`, raises `FAULT_INIT_FAIL` → State 99
+    (catches a dead boost, failed switch, or no source).
+  - **Bench (`BENCH_TEST=1`, the default flash)**: boots **straight to Idle with the power stage
+    OFF** — boosts, bus switches, and `BT_SEQUENCE` all stay LOW, and there is no `V_bus` gate. This
+    prevents enabling a boost on a soft/current-limited bench supply (which browns out the
+    board-powered Teensy and motorboats the boost to failure). Bring the bus up manually with the
+    State 98 `G` command on a stiff supply.
+  - Either way the Ag105 is **not** configured here — it is unpowered in Init; `pollAg105()`
+    configures it lazily once a charger path powers it. Shared init lives in `initControlPeripherals()`.
 - **State 1 (Idle)**: motor current zero, `MOT_PWR_ENABLE` LOW; the bus is left **energized**
   (boosts + bus switches stay ON). Waits for a Run command from the Pi, or `T` on USB serial to
   enter test mode (State 98).
