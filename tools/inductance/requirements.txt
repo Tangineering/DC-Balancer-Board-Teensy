@@ -1,0 +1,15 @@
+# Python deps for the Gerber loop-inductance estimator.
+# Deliberately minimal -- the parser/mesher are self-contained.
+numpy>=1.24            # required
+matplotlib>=3.6        # OPTIONAL: only for the L(f) plot and inspect_board --png.
+                       # Not installed in the MSYS2 UCRT64 env by default; the
+                       # table-driven workflow works fine without it (plots are
+                       # skipped with a notice). Install via:
+                       #   pacman -S mingw-w64-ucrt-x86_64-python-matplotlib
+
+# NOT required (a self-contained RS-274X/Excellon parser is bundled in gerber.py):
+#   gerbonara, pygerber, pcb-tools, shapely, scipy
+#
+# External (non-pip) dependency for the actual field solve:
+#   FastHenry  -- https://www.fastfieldsolvers.com/  (FastFieldSolvers Windows build)
+#   Put the binary on PATH, or set $FASTHENRY, or pass --fasthenry <path>.

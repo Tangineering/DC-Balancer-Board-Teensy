@@ -679,8 +679,16 @@ All commands are single uppercase characters, processed in `doState98()`:
 | `C` | Toggle `CBAL_DISABLE` (HIGH = OVP bypassed; use with caution) |
 | `M` | Toggle `MPPT_DISABLE` (HIGH = MPPT enabled; LOW = inhibited) |
 | `D` | Start/stop simulated drive cycle (§9c) |
-| `S` | Print status (all pin states, all ADC readings, `I_charge`) |
-| `Q` | Exit State 98 → State 1 |
+| `S` | Print status (all pin states, all ADC readings, `I_charge`, bench-tool state) |
+| `I` | Scan the I2C bus |
+| `G` | Safe VBUS bring-up (`bringUpBus()`: switches → settle → boosts) |
+| `P` | Set power-share setpoint (closed-loop live — prompts for a float; §9e) |
+| `O` | Set droop ratio (open-loop direct MDAC write — prompts for a float; §9e) |
+| `A` | Set manual motor **current** in A (prompts for a float; §9e) |
+| `V` | Set manual motor **velocity** in m/s (prompts for a float; §9e) |
+| `R` | Start/stop power-share profile emulator (§9e) |
+| `X` | Stop manual motor + power-share live (motor zeroed) |
+| `Q` | Exit State 98 → State 1 (forces `MOT_PWR_ENABLE` LOW) |
 
 **Safety rules still enforced in State 98:**
 - `FC_CHARGE_ENABLE` (key `5`) always goes through `assertFcChargeEnable()` — the guard
@@ -714,6 +722,54 @@ During the drive cycle:
   V_bus, I_fc, I_batt, I_charge, fault_flags.
 - Drive cycle ends after all phases complete; `v_setpoint` is set to 0 and `MOT_PWR_ENABLE`
   stays at whatever the operator left it (they must toggle it OFF manually with key `3`).
+
+### 9e. Power-share bench tools (manual motor, droop setpoint, power-share profile)
+
+These exercise the **droop / power-share controller** directly (the drive cycle exercises the
+velocity half). Numeric values are entered with a **typed key → serial prompt → next line parsed
+as a float** flow: the key sets `pendingInput` and prints a prompt; subsequent chars accumulate in
+`inputBuf` until newline, then `atof()` dispatches to the setter. This is non-blocking, so
+`detectFaults()` keeps running while the operator types (`handlePendingInputChar()`).
+
+**Manual motor (`A` / `V`).** Holds the motor at a constant command so the power-share controller
+can be characterized independent of wheel speed. Two modes (`MotorTestMode`):
+- `MOTOR_TEST_CURRENT` (`A`): `current = manualMotorCurrent; vesc.setCurrent()` — bypasses the
+  velocity PI. Clamped to `±MOTOR_I_CMD_MAX`.
+- `MOTOR_TEST_VELOCITY` (`V`): feeds `v_setpoint` and runs the existing `motorControl()` PI.
+
+`applyManualMotor()` applies the active mode each tick. `X` stops it (mode OFF, motor zeroed).
+
+**Power-share setpoint (`P` / `O`).** Two ways to set the droop:
+- `P` closed-loop live (`setPowerShareSetpointLive()`): sets `power_share_setpoint` (clamped
+  0.01–0.99) and `powerBalanceLive = true`, so `powerBalance()` runs each tick and drives the MDAC
+  from the measured `I_fc`/`I_batt` error. Needs current flowing (motor running) to update the MDAC.
+- `O` open-loop direct (`applyOpenLoopDroop()`): maps a typed droop ratio straight to the droop
+  gains (same math as `powerBalance()`) and writes `setDroopMdac()` immediately — no PI, no current
+  needed. Good for bench-calibrating the droop hardware. Clears `powerBalanceLive`.
+
+**Power-share profile emulator (`R`).** Mirrors the drive cycle, but sweeps `power_share_setpoint`
+through a phase table (`advancePowerShareProfile()`) while the motor is held at the constant
+command set by `A`/`V`, so the share-controller step response can be measured. Preconditions:
+`MOT_PWR_ENABLE` HIGH and a manual motor mode set (warns if `V_bus` is low). It deliberately does
+**not** call `chargingControl()` (unlike the drive cycle) — the regen/FC-charge paths stay static
+under operator control so the only varying input is the droop split. Default profile
+(`TODO(calibrate)`):
+
+```
+Phase   Duration   power_share_setpoint   Note
+──────────────────────────────────────────────────────────
+0         3 s       0.5                   settle at 50/50
+1         1 s       0.5 → 0.8             step toward FC-heavy
+2         4 s       0.8                   hold
+3         1 s       0.8 → 0.2             step toward BT-heavy
+4         4 s       0.2                   hold
+5         2 s       0.2 → 0.5             return to balanced
+```
+
+Status snapshot every 500 ms: setpoint, measured share `|I_fc|/(|I_fc|+|I_batt|)`, `I_fc`,
+`I_batt`, droop gains, `V_bus`, `fault_flags`. The drive cycle (`D`) and power-share profile (`R`)
+are mutually exclusive; starting one clears the other. Both `R`-stop and `Q`-exit zero the motor
+and reset the bench-tool state.
 
 ### 9d. `doState98()` skeleton
 

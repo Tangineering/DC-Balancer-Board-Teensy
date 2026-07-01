@@ -238,6 +238,7 @@ const float k_eq  = 0.45f;          // ohm
 const float motorConstant = 0.1f;   // TODO: tune this
 const float MOTOR_I_CMD_MAX = 30.0f;   // A — VESC motor current command ceiling; TODO(calibrate)
                                        // Sets the motor PI integrator anti-windup bound.
+const float MANUAL_MOTOR_V_MAX = 5.0f; // m/s — State 98 manual velocity ceiling; TODO(calibrate)
 
 // ── PI controller integrator state ────────────────────────────────────────────
 // Hoisted to file scope (control math and sampleTime gating unchanged) so the host-native
@@ -362,6 +363,58 @@ uint8_t  driveCyclePhaseIdx   = 0;
 uint32_t driveCyclePhaseStart = 0;
 uint32_t driveCycleStatusLast = 0;
 
+// ── State 98 bench tools: manual motor drive ──────────────────────────────────
+// Hold the motor at a constant command so the power-share controller can be characterized
+// independent of wheel speed. Two modes: a fixed VESC current (bypasses the velocity PI) or a
+// fixed velocity setpoint driven through the existing motorControl() PI.
+enum MotorTestMode { MOTOR_TEST_OFF, MOTOR_TEST_CURRENT, MOTOR_TEST_VELOCITY };
+MotorTestMode manualMotorMode     = MOTOR_TEST_OFF;
+float         manualMotorCurrent  = 0.0f;   // A   — used in MOTOR_TEST_CURRENT
+float         manualMotorVelocity = 0.0f;   // m/s — used in MOTOR_TEST_VELOCITY (feeds v_setpoint)
+
+// When true, doState98() runs the closed-loop powerBalance() every test tick so a manually-set
+// power_share_setpoint continuously drives the droop MDAC. Cleared by an open-loop droop write.
+bool powerBalanceLive = false;
+
+// ── State 98 bench tools: power-share profile emulator (mirrors DriveCyclePhase) ──────────────
+// Sweeps power_share_setpoint through a phase table while the motor is held at a constant command,
+// so the share-controller step response can be measured. Linear interpolation per phase, exactly
+// like the drive cycle (share_start == share_end is a hold; differing is a ramp).
+struct PowerShareProfilePhase {
+    uint32_t durationMs;
+    float    share_start;
+    float    share_end;
+};
+
+static const PowerShareProfilePhase POWER_SHARE_PROFILE[] = {
+    { 3000, 0.5f, 0.5f },   // 0: settle at 50/50
+    { 1000, 0.5f, 0.8f },   // 1: step toward FC-heavy
+    { 4000, 0.8f, 0.8f },   // 2: hold
+    { 1000, 0.8f, 0.2f },   // 3: step toward BT-heavy
+    { 4000, 0.2f, 0.2f },   // 4: hold
+    { 2000, 0.2f, 0.5f },   // 5: return to balanced
+};
+static const int POWER_SHARE_PROFILE_PHASES = 6;   // TODO(calibrate): tune steps/durations on bench
+
+bool     powerShareProfileActive     = false;
+uint8_t  powerShareProfilePhaseIdx   = 0;
+uint32_t powerShareProfilePhaseStart = 0;
+uint32_t powerShareProfileStatusLast = 0;
+
+// ── State 98 bench tools: pending numeric input (typed key → serial prompt → float line) ──────
+// Non-blocking: a value key sets pendingInput and prints a prompt; subsequent chars accumulate in
+// inputBuf until newline, then atof() dispatches to the matching setter. Keeps detectFaults() live.
+enum PendingInput {
+    PEND_NONE,
+    PEND_POWER_SHARE,
+    PEND_OPEN_DROOP,
+    PEND_MOTOR_CURRENT,
+    PEND_MOTOR_VELOCITY
+};
+PendingInput pendingInput = PEND_NONE;
+char         inputBuf[16];
+uint8_t      inputBufIdx = 0;
+
 
 // ── Forward declarations ──────────────────────────────────────────────────────
 // Arduino IDE generates these automatically; g++ (for host-native tests) does not.
@@ -406,6 +459,14 @@ void assertFcChargeEnable(bool enable);
 void safeAllSwitches();
 void printTestStatus();
 void advanceDriveCycle();
+void setPowerShareSetpointLive(float s);
+void applyOpenLoopDroop(float ratio);
+void setManualMotorCurrent(float a);
+void setManualMotorVelocity(float v);
+void applyManualMotor();
+void advancePowerShareProfile();
+void handlePendingInputChar(char c);
+bool isNumericEntryChar(char c);
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SETUP
@@ -1091,6 +1152,13 @@ void printTestHelp() {
     Serial.println("  C - toggle CBAL_DISABLE      M - toggle MPPT_DISABLE");
     Serial.println("  G - safe VBUS bring-up       D - start/stop drive cycle");
     Serial.println("  S - print status snapshot    I - scan I2C bus");
+    Serial.println("  -- bench tools (prompt for a value) --");
+    Serial.println("  P - set power-share setpoint (closed-loop live)");
+    Serial.println("  O - set droop ratio (open-loop direct MDAC write)");
+    Serial.println("  A - set manual motor current (A)");
+    Serial.println("  V - set manual motor velocity (m/s)");
+    Serial.println("  R - start/stop power-share profile (needs A or V set + MOT_PWR on)");
+    Serial.println("  X - stop manual motor + power-share live");
     Serial.println("  H - show this command list");
     Serial.println("  * 1/2 refuse ON if the matching boost is ON and VBUS is low (use G)");
     Serial.println("  Q - exit -> State 1 (MOT_PWR_ENABLE forced LOW)");
@@ -1103,6 +1171,23 @@ void doState98() {
         int  pin;
         bool cur;
 
+        // While awaiting a typed numeric value, route numeric chars (and the line terminator) to
+        // the accumulator (non-blocking; detectFaults() keeps running each main-loop tick). A
+        // non-numeric char cancels the pending entry and is then handled as a normal command key
+        // below — so e.g. pressing 'Q' at a prompt both cancels the prompt and exits.
+        bool handleAsCommand = true;
+        if (pendingInput != PEND_NONE) {
+            if (isNumericEntryChar(cmd) || cmd == '\n' || cmd == '\r') {
+                handlePendingInputChar(cmd);
+                handleAsCommand = false;
+            } else {
+                pendingInput = PEND_NONE;
+                inputBufIdx  = 0;
+                Serial.println("(input cancelled)");
+            }
+        }
+
+        if (handleAsCommand)
         switch (cmd) {
             case 'F':
             case 'f':
@@ -1181,6 +1266,7 @@ void doState98() {
                     if (!digitalRead(MOT_PWR_ENABLE)) {
                         Serial.println("ERROR: MOT_PWR_ENABLE must be HIGH before starting drive cycle (key '3')");
                     } else {
+                        powerShareProfileActive = false;   // mutually exclusive motor drivers
                         driveCycleActive     = true;
                         driveCyclePhaseIdx   = 0;
                         driveCyclePhaseStart = millis();
@@ -1213,6 +1299,62 @@ void doState98() {
             case 'i':
                 scanI2C();
                 break;
+            case 'P':
+            case 'p':
+                pendingInput = PEND_POWER_SHARE;
+                Serial.print("Enter power-share setpoint 0.01-0.99 (FC share): ");
+                break;
+            case 'O':
+            case 'o':
+                pendingInput = PEND_OPEN_DROOP;
+                Serial.print("Enter droop ratio 0.01-0.99 (open-loop, direct MDAC): ");
+                break;
+            case 'A':
+            case 'a':
+                pendingInput = PEND_MOTOR_CURRENT;
+                Serial.print("Enter manual motor current (A): ");
+                break;
+            case 'V':
+            case 'v':
+                pendingInput = PEND_MOTOR_VELOCITY;
+                Serial.print("Enter manual motor velocity (m/s): ");
+                break;
+            case 'R':
+            case 'r':
+                if (!powerShareProfileActive) {
+                    if (!digitalRead(MOT_PWR_ENABLE)) {
+                        Serial.println("ERROR: MOT_PWR_ENABLE must be HIGH before the power-share profile (key '3')");
+                    } else if (manualMotorMode == MOTOR_TEST_OFF) {
+                        Serial.println("ERROR: set a constant motor command first ('A' current or 'V' velocity)");
+                    } else {
+                        if (V_bus < V_BUS_CHARGED_THRESH) {
+                            Serial.println("WARN: VBUS is low — bring the bus up ('G') for a meaningful share measurement");
+                        }
+                        driveCycleActive            = false;   // mutually exclusive motor drivers
+                        powerShareProfileActive     = true;
+                        powerShareProfilePhaseIdx   = 0;
+                        powerShareProfilePhaseStart = millis();
+                        powerShareProfileStatusLast = millis();
+                        Serial.println("[PS] Power-share profile started — Phase 0");
+                    }
+                } else {
+                    powerShareProfileActive = false;
+                    power_share_setpoint    = 0.5f;
+                    current                 = 0.0f;
+                    vesc.setCurrent(0);
+                    manualMotorMode         = MOTOR_TEST_OFF;
+                    safeAllSwitches();   // park path switches so a mid-profile stop leaves nothing latched
+                    Serial.println("[PS] Power-share profile stopped — motor + switches safed");
+                }
+                break;
+            case 'X':
+            case 'x':
+                manualMotorMode  = MOTOR_TEST_OFF;
+                powerBalanceLive = false;
+                current          = 0.0f;
+                vesc.setCurrent(0);
+                Serial.println("Manual motor + power-share live stopped (motor zeroed)");
+                break;
             case 'H':
             case 'h':
             case '?':
@@ -1220,7 +1362,12 @@ void doState98() {
                 break;
             case 'Q':
             case 'q':
-                driveCycleActive = false;
+                driveCycleActive        = false;
+                powerShareProfileActive = false;
+                manualMotorMode         = MOTOR_TEST_OFF;
+                powerBalanceLive        = false;
+                pendingInput            = PEND_NONE;
+                inputBufIdx             = 0;
                 v_setpoint = 0.0f;
                 current = 0.0f;
                 vesc.setCurrent(0);                  // stop motor before cutting its power
@@ -1241,6 +1388,20 @@ void doState98() {
         chargingControl();
         motorControl();
         powerBalance();
+    } else if (powerShareProfileActive) {
+        // Power-share profile: sweep power_share_setpoint while the motor is held at a constant
+        // command, then let the closed-loop powerBalance() track it. Deliberately does NOT call
+        // chargingControl() (unlike the drive cycle) — the regen/FC-charge paths are left static
+        // under operator control so the only varying input is the droop split, for a clean share
+        // measurement.
+        advancePowerShareProfile();
+        applyManualMotor();
+        powerBalance();
+    } else {
+        // Standalone manual modes (no profile running): hold the motor and/or run the closed-loop
+        // share controller at the operator-set setpoint.
+        if (manualMotorMode != MOTOR_TEST_OFF) applyManualMotor();
+        if (powerBalanceLive)                  powerBalance();
     }
 }
 
@@ -1282,6 +1443,159 @@ void advanceDriveCycle() {
     }
 }
 
+// ── State 98 bench-tool helpers ───────────────────────────────────────────────────────────────
+
+// Closed-loop: set the share setpoint and let powerBalance() drive the MDAC from measured current
+// each test tick. Needs current actually flowing (motor running) for the MDAC to update.
+void setPowerShareSetpointLive(float s) {
+    power_share_setpoint = constrain(s, 0.01f, 0.99f);
+    powerBalanceLive     = true;
+}
+
+// Open-loop: map a typed droop ratio directly to the droop gains and write the MDAC immediately —
+// no PI, no current needed (good for bench-calibrating the droop hardware at a known split). Same
+// gain math as powerBalance(). Clears powerBalanceLive so the closed loop won't stomp the write.
+// NOTE: until k_eq/K_sns/A_v are bench-calibrated (TODO above), the gain k_eq/r/K_sns/A_v exceeds
+// 1.0 for ratios below ~0.9, so setDroopMdac() clamps to full scale and ratios in that range all
+// produce the same MDAC code — open-loop sweeps only become meaningful once those constants are set.
+void applyOpenLoopDroop(float ratio) {
+    float r = constrain(ratio, 0.01f, 0.99f);
+    droop_gain_FC_actual = k_eq / r           / K_sns / A_v;
+    droop_gain_BT_actual = k_eq / (1.0f - r) / K_sns / A_v;
+    setDroopMdac(droop_gain_FC_actual, droop_gain_BT_actual);
+    powerBalanceLive = false;
+}
+
+// Manual motor: fixed VESC current (bypasses the velocity PI). Clamped to the VESC current ceiling.
+void setManualMotorCurrent(float a) {
+    manualMotorCurrent = constrain(a, -MOTOR_I_CMD_MAX, MOTOR_I_CMD_MAX);
+    manualMotorMode    = MOTOR_TEST_CURRENT;
+}
+
+// Manual motor: fixed velocity setpoint driven through the existing motorControl() PI. Clamped to
+// the manual velocity ceiling (the motor PI's current anti-windup bounds the command either way).
+void setManualMotorVelocity(float v) {
+    manualMotorVelocity = constrain(v, -MANUAL_MOTOR_V_MAX, MANUAL_MOTOR_V_MAX);
+    manualMotorMode     = MOTOR_TEST_VELOCITY;
+}
+
+// Apply the active manual motor command for one tick (called from doState98()).
+void applyManualMotor() {
+    if (manualMotorMode == MOTOR_TEST_CURRENT) {
+        current = manualMotorCurrent;       // constant current, bypass velocity PI
+        vesc.setCurrent(current);
+    } else if (manualMotorMode == MOTOR_TEST_VELOCITY) {
+        v_setpoint = manualMotorVelocity;   // hold velocity setpoint; motorControl() runs the PI
+        motorControl();
+    }
+}
+
+// Power-share profile emulator: same phase-machine structure as advanceDriveCycle(), but sweeps
+// power_share_setpoint instead of v_setpoint. The motor is held constant by applyManualMotor() and
+// the droop is closed by powerBalance() in doState98(); this function only supplies the setpoint.
+void advancePowerShareProfile() {
+    if (powerShareProfilePhaseIdx >= POWER_SHARE_PROFILE_PHASES) {
+        power_share_setpoint    = 0.5f;     // return to balanced on completion
+        powerShareProfileActive = false;
+        // Halt the motor on natural completion too (symmetric with the 'R'-stop and 'Q' paths) —
+        // otherwise the still-set manualMotorMode keeps applyManualMotor() driving the motor in the
+        // standalone branch after the sweep ends.
+        manualMotorMode = MOTOR_TEST_OFF;
+        current         = 0.0f;
+        vesc.setCurrent(0);
+        Serial.println("[PS] Power-share profile complete — motor zeroed");
+        return;
+    }
+
+    uint32_t elapsed = millis() - powerShareProfilePhaseStart;
+    const PowerShareProfilePhase &ph = POWER_SHARE_PROFILE[powerShareProfilePhaseIdx];
+
+    if (elapsed >= ph.durationMs) {
+        powerShareProfilePhaseIdx++;
+        powerShareProfilePhaseStart = millis();
+        if (powerShareProfilePhaseIdx < POWER_SHARE_PROFILE_PHASES) {
+            Serial.print("[PS] Phase "); Serial.println(powerShareProfilePhaseIdx);
+        }
+        return;
+    }
+
+    // Linear interpolation of power_share_setpoint within phase
+    float t = (float)elapsed / (float)ph.durationMs;
+    power_share_setpoint = ph.share_start + t * (ph.share_end - ph.share_start);
+
+    // Status snapshot every 500 ms — setpoint vs measured share, the currents, and droop gains
+    if (millis() - powerShareProfileStatusLast >= 500) {
+        powerShareProfileStatusLast = millis();
+        float totalA = fabsf(I_fc) + fabsf(I_batt);
+        float share_act = (totalA > 1e-6f) ? (fabsf(I_fc) / totalA) : 0.0f;
+        Serial.print("[PS] t="); Serial.print(millis());
+        Serial.print(" sp="); Serial.print(power_share_setpoint, 3);
+        Serial.print(" act="); Serial.print(share_act, 3);
+        Serial.print(" I_fc="); Serial.print(I_fc, 2);
+        Serial.print(" I_bt="); Serial.print(I_batt, 2);
+        Serial.print(" gFC="); Serial.print(droop_gain_FC_actual, 3);
+        Serial.print(" gBT="); Serial.print(droop_gain_BT_actual, 3);
+        Serial.print(" V_bus="); Serial.print(V_bus, 2);
+        Serial.print(" FLT=0x"); Serial.println(fault_flags, HEX);
+    }
+}
+
+// True for chars that belong in a typed numeric value (digits, sign, point, and whitespace fillers).
+// Anything else, seen while a prompt is pending, cancels the entry (handled in doState98()).
+bool isNumericEntryChar(char c) {
+    return (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '+' || c == ' ' || c == '\t';
+}
+
+// Accumulate a typed numeric line (set up by a value command key), then dispatch on newline. Keeps
+// the input non-blocking so detectFaults() runs every tick while the operator types. Only numeric
+// chars and the line terminator reach here — doState98() filters out (and cancels on) other keys.
+void handlePendingInputChar(char c) {
+    if (c == '\n' || c == '\r') {
+        inputBuf[inputBufIdx] = '\0';
+        float val = atof(inputBuf);
+        PendingInput which = pendingInput;
+        pendingInput = PEND_NONE;
+        inputBufIdx  = 0;
+        if (inputBuf[0] == '\0') {
+            Serial.println("(no value entered — cancelled)");
+            return;
+        }
+        switch (which) {
+            case PEND_POWER_SHARE:
+                setPowerShareSetpointLive(val);
+                Serial.print("power_share_setpoint -> "); Serial.print(power_share_setpoint, 3);
+                Serial.println(" (closed-loop live)");
+                break;
+            case PEND_OPEN_DROOP:
+                applyOpenLoopDroop(val);
+                Serial.print("open-loop droop ratio -> "); Serial.print(constrain(val, 0.01f, 0.99f), 3);
+                Serial.print(" (gFC="); Serial.print(droop_gain_FC_actual, 3);
+                Serial.print(" gBT="); Serial.print(droop_gain_BT_actual, 3); Serial.println(")");
+                break;
+            case PEND_MOTOR_CURRENT:
+                setManualMotorCurrent(val);
+                if (!digitalRead(MOT_PWR_ENABLE)) {
+                    Serial.println("WARN: MOT_PWR_ENABLE is LOW — command set but motor unpowered (key '3')");
+                }
+                Serial.print("manual motor current -> "); Serial.print(manualMotorCurrent, 2);
+                Serial.println(" A");
+                break;
+            case PEND_MOTOR_VELOCITY:
+                setManualMotorVelocity(val);
+                if (!digitalRead(MOT_PWR_ENABLE)) {
+                    Serial.println("WARN: MOT_PWR_ENABLE is LOW — command set but motor unpowered (key '3')");
+                }
+                Serial.print("manual motor velocity -> "); Serial.print(manualMotorVelocity, 2);
+                Serial.println(" m/s");
+                break;
+            default:
+                break;
+        }
+    } else if (inputBufIdx < (uint8_t)(sizeof(inputBuf) - 1)) {
+        inputBuf[inputBufIdx++] = c;
+    }
+}
+
 void printTestStatus() {
     Serial.println("=== State 98 Status ===");
     Serial.print("FC_REG_ENABLE:      "); Serial.println(digitalRead(FC_REG_ENABLE));
@@ -1311,6 +1625,18 @@ void printTestStatus() {
     Serial.print(" (");             Serial.print(errorCodeStr(error_code));
     Serial.println(")");
     Serial.print("error_source_state="); Serial.println(error_source_state);
+    Serial.println("--- bench tools ---");
+    Serial.print("manualMotorMode:    ");
+    Serial.println(manualMotorMode == MOTOR_TEST_OFF      ? "OFF"
+                 : manualMotorMode == MOTOR_TEST_CURRENT  ? "CURRENT"
+                 :                                          "VELOCITY");
+    Serial.print("manual I/V cmd:     "); Serial.print(manualMotorCurrent, 2); Serial.print("A / ");
+    Serial.print(manualMotorVelocity, 2); Serial.println(" m/s");
+    Serial.print("power_share_setpt:  "); Serial.println(power_share_setpoint, 3);
+    Serial.print("powerBalanceLive:   "); Serial.println(powerBalanceLive);
+    Serial.print("droop gFC/gBT:      "); Serial.print(droop_gain_FC_actual, 3);
+    Serial.print(" / "); Serial.println(droop_gain_BT_actual, 3);
+    Serial.print("powerShareProfile:  "); Serial.println(powerShareProfileActive);
     Serial.println("=======================");
 }
 

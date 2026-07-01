@@ -1,0 +1,53 @@
+{
+  "_about": "Example config for gerber_inductance.py. Coordinates are in board mm (same frame as the Gerbers). Discover net coordinates with: python inspect_board.py <copper_layer.gbr> --pitch 0.15 --png map.png  -- then read centroids off the printed table / PNG. Replace the placeholder points below with the real forward (e.g. VBUS / BT-boost-output) and return (GND) nets for the loop you want to measure.",
+
+  "gerber_dir": "../../references/PCB Manufacturing Files",
+  "drill_file": "drill_1_64.xln",
+
+  "isolation_pitch_mm": 0.12,
+  "_isolation_note": "Fine grid used ONLY to separate nets. Must be smaller than the board's copper clearance (~0.15-0.2mm here) or distinct nets merge. The tool warns if a selected net covers >70% of its layer.",
+
+  "mesh_pitch_mm": 2.0,
+  "_mesh_note": "Coarser grid the selected net is resampled onto for FastHenry. FastHenry solve time grows ~quadratically with segment count: ~1900 segments x 9 freqs took ~15 min. PREVIEW tier: mesh_pitch ~2.0 + ndec 1 (~a few min). PRODUCTION tier: mesh_pitch ~0.6-0.8 + ndec 2 (much slower -> run in background/overnight). Check convergence by comparing two pitches (e.g. 2.0 vs 1.2); if L barely moves you have enough resolution.",
+
+  "return_margin_mm": 3.0,
+  "_return_margin_note": "The return (ground) plane is cropped to the forward net's footprint expanded by this margin (mm). Return current concentrates near the forward path, so distant plane copper is irrelevant and only bloats the mesh (it dominates the segment count). Increase if you suspect a wide return spread.",
+
+  "stackup": {
+    "copper_thickness_mm": 0.035,
+    "dielectric_thickness_mm": 1.53,
+    "_stackup_note": "1 oz copper = 0.035mm (confirmed: the board uses 1oz pours). Dielectric = copper-to-copper core: standard 1.6mm 2-layer FR4 minus 2x 0.035mm copper = 1.53mm. If the fab specifies a different finished board thickness, set dielectric = board_thickness - 2*copper_thickness."
+  },
+
+  "forward": {
+    "file": "copper_top.gbr",
+    "point": [75.115, 36.069],
+    "_point_note": "Any (x,y) that lands on the forward net's copper; the tool flood-fills the connected region from here."
+  },
+  "return": {
+    "file": "copper_bottom.gbr",
+    "point": [65.434, 49.132],
+    "_point_note": "A point on the return (ground) pour."
+  },
+
+  "terminal_a": [75.115, 36.069],
+  "terminal_b": [75.000, 36.000],
+  "_terminal_note": "Port A is on the forward net, port B on the return net, at the MEASUREMENT end (e.g. the converter output). The loop inductance is reported across A-B.",
+
+  "closure": {
+    "type": "short",
+    "points": [[75.0, 70.0]],
+    "_closure_note": "type 'short' = ideal .equiv tie between forward and return at the LOAD end (correct for a power->load->ground loop). Use type 'via' with drill-detected or explicit via points when forward and return are the SAME net stitched across two layers."
+  },
+
+  "freq": {
+    "fmin": 1e3,
+    "fmax": 1e7,
+    "ndec": 1,
+    "skin_ref_freq": 1e7,
+    "_freq_note": "ndec = points per decade. ndec 1 over 1e3-1e7 = 5 points (preview); ndec 2 = 9 points (finer, ~2x slower). Each point is a full matrix solve."
+  },
+
+  "max_filaments": 5,
+  "fasthenry_path": null
+}

@@ -92,6 +92,18 @@ static void reset_test_state() {
     driveCyclePhaseIdx   = 0;
     driveCyclePhaseStart = 0;
     driveCycleStatusLast = 0;
+
+    // .ino State 98 bench tools
+    manualMotorMode             = MOTOR_TEST_OFF;
+    manualMotorCurrent          = 0.0f;
+    manualMotorVelocity         = 0.0f;
+    powerBalanceLive            = false;
+    powerShareProfileActive     = false;
+    powerShareProfilePhaseIdx   = 0;
+    powerShareProfilePhaseStart = 0;
+    powerShareProfileStatusLast = 0;
+    pendingInput                = PEND_NONE;
+    inputBufIdx                 = 0;
 }
 
 // Put the Ag105 into the "powered + settled" condition (a charger power path open and the
@@ -1375,6 +1387,246 @@ static void test_state98_drive_cycle_runs_controls() {
           "doState98: 'Q' exit returns to State 1");
 }
 
+// ─── State 98 bench tools: manual motor (current mode) ───────────────────────
+static void test_manual_motor_current() {
+    test_group("State 98 manual motor — fixed current");
+    reset_test_state();
+
+    setManualMotorCurrent(5.0f);
+    check(manualMotorMode == MOTOR_TEST_CURRENT,
+          "manual current: mode = CURRENT");
+    check(fabsf(manualMotorCurrent - 5.0f) < 1e-4f,
+          "manual current: value stored");
+
+    // Clamp to the VESC current ceiling in both directions
+    setManualMotorCurrent(100.0f);
+    check(fabsf(manualMotorCurrent - MOTOR_I_CMD_MAX) < 1e-4f,
+          "manual current: clamped to +MOTOR_I_CMD_MAX");
+    setManualMotorCurrent(-100.0f);
+    check(fabsf(manualMotorCurrent + MOTOR_I_CMD_MAX) < 1e-4f,
+          "manual current: clamped to -MOTOR_I_CMD_MAX");
+
+    // applyManualMotor() drives `current` and the VESC directly (no velocity PI)
+    setManualMotorCurrent(5.0f);
+    vesc.reset();
+    applyManualMotor();
+    check(fabsf(current - 5.0f) < 1e-4f,
+          "manual current: applyManualMotor sets current");
+    check(!vesc.current_calls.empty() && fabsf(vesc.last_current - 5.0f) < 1e-4f,
+          "manual current: applyManualMotor flushes vesc.setCurrent(5.0)");
+}
+
+// ─── State 98 bench tools: manual motor (velocity mode) ──────────────────────
+static void test_manual_motor_velocity() {
+    test_group("State 98 manual motor — fixed velocity");
+    reset_test_state();
+
+    setManualMotorVelocity(2.0f);
+    check(manualMotorMode == MOTOR_TEST_VELOCITY,
+          "manual velocity: mode = VELOCITY");
+    check(fabsf(manualMotorVelocity - 2.0f) < 1e-4f,
+          "manual velocity: value stored");
+
+    // Clamp to the manual velocity ceiling in both directions
+    setManualMotorVelocity(100.0f);
+    check(fabsf(manualMotorVelocity - MANUAL_MOTOR_V_MAX) < 1e-4f,
+          "manual velocity: clamped to +MANUAL_MOTOR_V_MAX");
+    setManualMotorVelocity(-100.0f);
+    check(fabsf(manualMotorVelocity + MANUAL_MOTOR_V_MAX) < 1e-4f,
+          "manual velocity: clamped to -MANUAL_MOTOR_V_MAX");
+    setManualMotorVelocity(2.0f);   // restore an in-range value for the apply check below
+
+    // applyManualMotor() feeds v_setpoint and runs the existing motorControl() PI
+    v_actual = 0.0f;
+    pi_motor_accum = 0; pi_motor_lastMicros = 0;
+    g_mock_micros = 100000;   // > sampleTime so the PI updates
+    vesc.reset();
+    applyManualMotor();
+    check(fabsf(v_setpoint - 2.0f) < 1e-4f,
+          "manual velocity: applyManualMotor feeds v_setpoint");
+    check(!vesc.current_calls.empty(),
+          "manual velocity: motorControl() ran (vesc.setCurrent invoked)");
+    check(fabsf(current) > 0.0f,
+          "manual velocity: non-zero current from velocity error");
+}
+
+// ─── State 98 bench tools: open-loop droop write ─────────────────────────────
+static void test_open_loop_droop() {
+    test_group("State 98 open-loop droop (direct MDAC write)");
+    reset_test_state();
+
+    powerBalanceLive = true;     // must be cleared by an open-loop write
+    SPI.reset();
+
+    const float r = 0.95f;       // chosen so gFC stays in-range (gain ~0.94, not saturated)
+    applyOpenLoopDroop(r);
+
+    float expFC = k_eq / r          / K_sns / A_v;
+    float expBT = k_eq / (1.0f - r) / K_sns / A_v;
+    check(fabsf(droop_gain_FC_actual - expFC) < 1e-3f,
+          "open-loop droop: gFC matches k_eq/r/K_sns/A_v");
+    check(fabsf(droop_gain_BT_actual - expBT) < 1e-3f,
+          "open-loop droop: gBT matches k_eq/(1-r)/K_sns/A_v");
+
+    check(SPI.transfer_log.size() == 2,
+          "open-loop droop: two MDAC words written (FC then BT)");
+    if (SPI.transfer_log.size() == 2) {
+        uint16_t expFCcode = (uint16_t)(constrain(expFC, 0.0f, 1.0f) * MDAC_res);
+        uint16_t expBTcode = (uint16_t)(constrain(expBT, 0.0f, 1.0f) * MDAC_res);
+        check(SPI.transfer_log[0] == expFCcode,
+              "open-loop droop: FC MDAC code matches clamped gain");
+        check(SPI.transfer_log[1] == expBTcode,
+              "open-loop droop: BT MDAC code matches clamped gain");
+    }
+    check(powerBalanceLive == false,
+          "open-loop droop: clears powerBalanceLive (closed loop must not stomp it)");
+}
+
+// ─── State 98 bench tools: closed-loop power-share setpoint ───────────────────
+static void test_power_share_setpoint_live() {
+    test_group("State 98 power-share setpoint (closed-loop live)");
+    reset_test_state();
+
+    setPowerShareSetpointLive(0.7f);
+    check(fabsf(power_share_setpoint - 0.7f) < 1e-4f,
+          "power-share live: in-range value stored");
+    check(powerBalanceLive == true,
+          "power-share live: enables powerBalanceLive");
+
+    // Clamp to [0.01, 0.99]
+    setPowerShareSetpointLive(1.5f);
+    check(fabsf(power_share_setpoint - 0.99f) < 1e-4f,
+          "power-share live: clamped to 0.99");
+    setPowerShareSetpointLive(0.0f);
+    check(fabsf(power_share_setpoint - 0.01f) < 1e-4f,
+          "power-share live: clamped to 0.01");
+
+    // With current flowing, the live closed loop writes the MDAC
+    setPowerShareSetpointLive(0.7f);
+    I_fc = 2.0f; I_batt = 1.0f;
+    pi_power_accum = 0; pi_power_lastMicros = 0;
+    g_mock_micros = 100000;   // > sampleTime
+    SPI.reset();
+    powerBalance();
+    check(SPI.transfer_log.size() == 2,
+          "power-share live: powerBalance writes the MDAC when current flows");
+}
+
+// ─── State 98 bench tools: power-share profile phase machine ─────────────────
+static void test_power_share_profile() {
+    test_group("Power-share profile (advancePowerShareProfile) phase transitions");
+    reset_test_state();
+
+    powerShareProfileActive     = true;
+    powerShareProfilePhaseIdx   = 0;
+    powerShareProfilePhaseStart = 0;
+    powerShareProfileStatusLast = 0;
+    g_mock_millis = 0;
+
+    // A constant motor command is running during the sweep — completion must halt it.
+    manualMotorMode    = MOTOR_TEST_CURRENT;
+    manualMotorCurrent = 5.0f;
+    vesc.reset();
+
+    // Phase 0 (settle, 0–3000ms): setpoint holds at 0.5
+    g_mock_millis = 1500;
+    advancePowerShareProfile();
+    check(powerShareProfilePhaseIdx == 0,
+          "PS profile: still phase 0 at 1500ms");
+    check(fabsf(power_share_setpoint - 0.5f) < 0.01f,
+          "PS profile: setpoint = 0.5 during settle");
+
+    // At 3001ms: phase 0 elapses → phase 1
+    g_mock_millis = 3001;
+    advancePowerShareProfile();
+    check(powerShareProfilePhaseIdx == 1,
+          "PS profile: transitions to phase 1 at 3001ms");
+
+    // Phase 1 (ramp 0.5→0.8 over 1000ms), start now 3001; at 3001+500=3501, t=0.5 → 0.65
+    g_mock_millis = 3501;
+    advancePowerShareProfile();
+    check(powerShareProfilePhaseIdx == 1,
+          "PS profile: still in ramp phase 1 at 3501ms");
+    check(fabsf(power_share_setpoint - 0.65f) < 0.02f,
+          "PS profile: setpoint ≈ 0.65 at ramp midpoint");
+
+    // Exhaust the remaining phases, then one more call to fire completion
+    while (powerShareProfilePhaseIdx < POWER_SHARE_PROFILE_PHASES) {
+        g_mock_millis += POWER_SHARE_PROFILE[powerShareProfilePhaseIdx].durationMs + 1;
+        advancePowerShareProfile();
+    }
+    advancePowerShareProfile();
+
+    check(powerShareProfileActive == false,
+          "PS profile: deactivates after all phases complete");
+    check(fabsf(power_share_setpoint - 0.5f) < 0.01f,
+          "PS profile: setpoint reset to 0.5 (balanced) on completion");
+    check(manualMotorMode == MOTOR_TEST_OFF,
+          "PS profile: manual motor mode cleared on natural completion");
+    check(!vesc.current_calls.empty() && vesc.last_current == 0.0f,
+          "PS profile: motor zeroed (vesc.setCurrent(0)) on natural completion");
+}
+
+// ─── State 98 bench tools: profile drives motor (constant) + powerBalance ────
+static void test_power_share_profile_runs_controls() {
+    test_group("doState98() power-share profile holds motor + runs powerBalance");
+    reset_test_state();
+
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    setManualMotorCurrent(5.0f);          // constant motor command
+    powerShareProfileActive     = true;
+    powerShareProfilePhaseIdx   = 1;      // a ramp phase (setpoint varying)
+    powerShareProfilePhaseStart = 0;
+    g_mock_millis = 500;
+    g_mock_micros = 100000;               // > sampleTime so powerBalance's PI updates
+    I_fc = 2.0f; I_batt = 1.0f;           // current flowing so powerBalance writes the MDAC
+    SPI.reset();
+    vesc.reset();
+
+    doState98();
+
+    check(!vesc.current_calls.empty() && fabsf(vesc.last_current - 5.0f) < 1e-4f,
+          "PS profile: motor held at the constant manual current");
+    check(SPI.transfer_log.size() == 2,
+          "PS profile: powerBalance writes the MDAC during the sweep");
+    check(powerShareProfileActive == true,
+          "PS profile: still active mid-sweep");
+}
+
+// ─── State 98 bench tools: non-numeric input cancels a pending prompt ─────────
+static void test_pending_input_cancel() {
+    test_group("State 98 numeric prompt — non-numeric char cancels");
+    reset_test_state();
+
+    // A numeric char must NOT cancel: feed a full value and confirm it applies.
+    mainState = 98;
+    pendingInput = PEND_POWER_SHARE;
+    Serial.rx_queue.push('0');
+    Serial.rx_queue.push('.');
+    Serial.rx_queue.push('7');
+    Serial.rx_queue.push('\n');
+    for (int i = 0; i < 4; i++) doState98();
+    check(pendingInput == PEND_NONE,
+          "pending input: numeric line consumed, prompt cleared");
+    check(fabsf(power_share_setpoint - 0.7f) < 1e-4f,
+          "pending input: numeric line applied (0.7)");
+
+    // A non-numeric char cancels the pending entry AND is processed as a command key.
+    reset_test_state();
+    mainState = 98;
+    manualMotorMode    = MOTOR_TEST_CURRENT;   // 'X' should turn this OFF + zero the motor
+    manualMotorCurrent = 5.0f;
+    pendingInput = PEND_POWER_SHARE;            // a prompt is pending
+    vesc.reset();
+    Serial.rx_queue.push('X');                  // non-numeric → cancel + run as command
+    doState98();
+    check(pendingInput == PEND_NONE,
+          "pending input: non-numeric char cancels the prompt");
+    check(manualMotorMode == MOTOR_TEST_OFF && vesc.last_current == 0.0f,
+          "pending input: cancelling char ('X') is then handled as a command");
+}
+
 #if BENCH_TEST
 // ─── doState0() BENCH_TEST bypass: boot to Idle with the power stage off ──────
 // Built only in the -DBENCH_TEST=1 pass (run_tests_bench). The -DBENCH_TEST=0 suite covers the
@@ -1438,6 +1690,13 @@ int main() {
     test_config_resets_on_power_loss();
     test_charging_control_fc_bootstrap();
     test_state98_drive_cycle_runs_controls();
+    test_manual_motor_current();
+    test_manual_motor_velocity();
+    test_open_loop_droop();
+    test_power_share_setpoint_live();
+    test_power_share_profile();
+    test_power_share_profile_runs_controls();
+    test_pending_input_cancel();
     test_motor_pi_antiwindup();
     test_wheelspeed_reset();
 #endif

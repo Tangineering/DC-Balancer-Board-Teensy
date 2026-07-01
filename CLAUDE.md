@@ -365,6 +365,32 @@ old board model to the 20260622 board, so the next reader sees the hardware delt
 
 ---
 
+## Standard practice: post-implementation self-review
+
+**After completing any feature or change to the firmware, perform a self-review before
+considering the work done — do not wait to be asked.** Treat this as a required final step of
+every implementation task, the same way the test suite is.
+
+1. **Re-read the diff** you just wrote, looking specifically for:
+   - **Correctness bugs** — off-by-one, inverted polarity, wrong register/scale, missing
+     `vesc.setCurrent(0)` flushes, stale references after a rename.
+   - **Architectural issues** — asymmetric paths (e.g. a stop path that cleans up state but a
+     natural-completion path that doesn't), state that isn't reset on exit/fault, switch-sequencing
+     or back-feed hazards (§2), blocking calls that stall `detectFaults()`.
+   - **Safety** — any new code path that could leave the motor running, a boost back-fed, a switch
+     combination illegal, or the bus hot-plugged (see the bench-bring-up addenda).
+2. **Report findings** to the user grouped by severity (correctness/safety first, then
+   architecture, then doc/polish), each with a concrete recommended fix — even the minor ones.
+3. **Apply the fixes** (with the user's go-ahead), and for every behavioural fix add or extend a
+   host-native test that would have caught it.
+4. **Re-run both builds** (`-DBENCH_TEST=0` and `=1`) and confirm all tests pass before closing out.
+
+This was added after a feature round where the review caught a real asymmetry (a profile's natural
+completion left the motor running while its stop path zeroed it) plus several minor issues — none
+of which the happy-path tests flagged. The review is cheap and catches exactly this class of bug.
+
+---
+
 ## Status & session addendum (2026-06-23)
 
 **The reconciliation (§§1–10) is implemented.** `teensy_controller.ino` now targets the
