@@ -25,8 +25,9 @@ import sys
 import numpy as np
 
 import fasthenry as fh
+import model_cache
 import stl_export as stl
-from gerber_inductance import load_config, build_model
+from gerber_inductance import load_config
 
 
 def main(argv=None):
@@ -34,6 +35,9 @@ def main(argv=None):
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("config", help="JSON config (same file the solver uses)")
     ap.add_argument("--outdir", default=None, help="output dir (default ./out)")
+    ap.add_argument("--mesh-pitch", type=float, default=None,
+                    help="override the config's mesh_pitch_mm (sweep variants); "
+                         "output filenames gain a _m<pitch> suffix")
     ap.add_argument("--fine", action="store_true",
                     help="also export the isolation-pitch TRUE copper (shows meshing error)")
     ap.add_argument("--markers", action="store_true",
@@ -47,13 +51,16 @@ def main(argv=None):
     here = os.path.dirname(os.path.abspath(__file__))
     outdir = args.outdir or cfg.get("outdir") or os.path.join(here, "out")
     os.makedirs(outdir, exist_ok=True)
-    base = os.path.splitext(os.path.basename(args.config))[0]
+    stem = os.path.splitext(os.path.basename(args.config))[0]
+    pitch = args.mesh_pitch if args.mesh_pitch is not None else float(cfg["mesh_pitch_mm"])
+    # suffix the outputs only when overridden, so default behavior is unchanged
+    base = stem + (f"_m{pitch:g}" if args.mesh_pitch is not None else "")
     zs = float(args.z_scale)
     if zs != 1.0:
         print(f"WARNING: --z-scale={zs} distorts z; measurements in CAD will be wrong "
               f"in z. Use 1.0 for measurement.")
 
-    model = build_model(cfg)
+    model = model_cache.get_model(cfg, pitch, os.path.join(outdir, "meshes"), stem)
     z_fwd = model.h_di + model.t_cu
     z_ret = 0.0
 

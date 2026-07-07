@@ -100,6 +100,7 @@ def build_inp(forward: Conductor,
     seg_count = 0
     node_count = 0
     port_nodes: dict[str, str] = {}
+    filaments: dict[str, tuple[int, int]] = {}   # tag -> (nwinc, nhinc), for reporting
 
     # skin-depth-driven filament counts at the top of the sweep
     fref = skin_ref_freq if skin_ref_freq else fmax
@@ -110,6 +111,7 @@ def build_inp(forward: Conductor,
         p = cond.mask.pitch
         nhinc = _winc(cond.thickness, delta, max_filaments)
         nwinc = _winc(p, delta, max_filaments)
+        filaments[cond.tag] = (nwinc, nhinc)
 
         lines.append(f"* ---- conductor '{cond.tag}'  z={cond.z} t={cond.thickness} "
                      f"cells={len(node_js)} ----")
@@ -183,6 +185,7 @@ def build_inp(forward: Conductor,
         "nodes": node_count,
         "port_nodes": port_nodes,
         "skin_depth_mm": delta,
+        "filaments": filaments,          # tag -> (nwinc, nhinc)
     }
     return "\n".join(lines) + "\n", meta
 
@@ -253,7 +256,9 @@ def find_solver(explicit: str | None) -> tuple[str | None, str | None]:
 def run_via_com(inp_path: str, workdir: str,
                 progid: str = "FastHenry2.Document",
                 ps_script: str | None = None,
-                max_retries: int = 4) -> list[tuple[float, float, float]]:
+                max_retries: int = 4,
+                timeout_sec: int = 7200,
+                kill_stale: bool = True) -> list[tuple[float, float, float]]:
     """
     Solve a single deck `inp_path` via the FastHenry2 COM server and return
     [(freq_Hz, R_ohm, L_henry), ...] for the frequencies in the deck's `.freq`
@@ -263,13 +268,23 @@ def run_via_com(inp_path: str, workdir: str,
     wedged, recreating it in the SAME PowerShell process does not recover. So each
     retry is a FRESH PowerShell process (fresh COM apartment). The .ps1 writes the
     JSON only on a non-empty result; absence of the file means "retry".
+
+    timeout_sec: per-attempt solve watchdog. Large decks need more than the old
+        hard-coded 2 h (a 48 k-segment deck legitimately runs 4-6 h) -- callers
+        should scale this with segment count (see sweep_inductance).
+    kill_stale: pre-kill ALL FastHenry2 processes before solving (historic serial
+        behavior). MUST be False when other solves run in parallel; the bridge
+        then cleans up only its own PID.
     """
     here = os.path.dirname(os.path.abspath(__file__))
     ps_script = ps_script or os.path.join(here, "run_fasthenry_com.ps1")
     out_json = os.path.join(workdir, "fasthenry_com.json")
     inp_abs = os.path.abspath(inp_path)
     cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-           "-File", ps_script, "-Inp", inp_abs, "-Out", out_json, "-ProgId", progid]
+           "-File", ps_script, "-Inp", inp_abs, "-Out", out_json, "-ProgId", progid,
+           "-TimeoutSec", str(int(timeout_sec))]
+    if kill_stale:
+        cmd.append("-KillStale")
 
     last = ""
     for attempt in range(1, max_retries + 1):
@@ -323,7 +338,9 @@ def _rewrite_freq(deck_text: str, f: float) -> str:
 
 def run_sweep_per_freq(inp_path: str, freqs: list[float], workdir: str,
                        progid: str = "FastHenry2.Document",
-                       progress=None) -> list[tuple[float, float, float]]:
+                       progress=None,
+                       timeout_sec: int = 7200,
+                       kill_stale: bool = True) -> list[tuple[float, float, float]]:
     """
     Solve a frequency sweep as a SEQUENCE of single-frequency decks.
 
@@ -331,6 +348,10 @@ def run_sweep_per_freq(inp_path: str, freqs: list[float], workdir: str,
     empty result for some meshes) but solves single-frequency decks dependably.
     So we rewrite the deck's `.freq` line per point and solve each separately,
     assembling L(f) ourselves. Slower (no shared setup) but robust.
+
+    timeout_sec / kill_stale are passed through to run_via_com (see there).
+    Callers running several of these concurrently must give each its OWN workdir
+    (loop_pt.inp / fasthenry_com.json are fixed names) and kill_stale=False.
     """
     with open(inp_path) as fh:
         deck = fh.read()
@@ -340,7 +361,8 @@ def run_sweep_per_freq(inp_path: str, freqs: list[float], workdir: str,
         tmp = os.path.join(workdir, "loop_pt.inp")
         with open(tmp, "w") as out:
             out.write(single)
-        r = run_via_com(tmp, workdir, progid=progid)
+        r = run_via_com(tmp, workdir, progid=progid,
+                        timeout_sec=timeout_sec, kill_stale=kill_stale)
         rows.extend(r)
         if progress:
             progress(k + 1, len(freqs), r[0])

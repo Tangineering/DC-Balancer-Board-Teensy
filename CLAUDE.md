@@ -324,7 +324,10 @@ machine with `g++` — no Teensy or Arduino IDE required.
   I2C sequence, `pollAg105()` byte decoding, `assertFcChargeEnable()` ordering, drive
   cycle phase transitions, and `MPPT_DISABLE` polarity in `chargingControl()`. The review-round
   additions (PLAN.md §11) added coverage for GENSTAT decode, UV boot-gating, PI anti-windup,
-  `doState0()` init-fault handling, `pollAg105()` state gating, and the wheel-speed reset.
+  `doState0()` init-fault handling, `pollAg105()` state gating, and the wheel-speed reset. The
+  audit-round additions (PLAN.md §14) cover the live-output PI semantics, power-PI anti-windup,
+  gated-tick droop stability, the `ag105DataValid` staleness gate, and the State-98 `'2'` guard
+  and `'Q'` path-closing exit.
 - Run before every flash: `cd test && make`.
 
 See PLAN.md §10 for the full directory layout and test category table.
@@ -336,7 +339,11 @@ See PLAN.md §10 for the full directory layout and test category table.
 - The motor PI controller, power-share PI controller, and their `sampleTime` gating. *(Two
   behaviour-preserving exceptions were made in the review round, PLAN.md §11: the integrator
   state was hoisted to file scope for test resettability, and a clamp-based anti-windup bound
-  was added to the motor PI. The gains and `sampleTime` gating are unchanged.)*
+  was added to the motor PI. Two more user-approved exceptions in the audit round, PLAN.md §14:
+  the power-share PI gained the same anti-windup clamp, and both PIs now always return a live
+  output — the `sampleTime` gate applies to the integrator update only (the old 0.0f sentinel
+  chopped the motor command / slammed the droop split on sub-sampleTime ticks). The gains are
+  unchanged.)*
 - The quadrature encoder ISRs and `updateWheelSpeed()`. *(A guarded buffer-reset hook was added
   to `updateWheelSpeed()` in §11; the velocity math is unchanged.)*
 - The UDP framing approach (sync byte + XOR checksum), except for the struct-layout/length
@@ -540,3 +547,44 @@ targeted the supply/sequence, which the data has since ruled out). **Do not inst
 or apply full current blindly.** No input current limit is proven safe (death #2 was at 120 mA).
 Full datapoints, ruled-out hypotheses, the FC-vs-BT schematic delta, safety rules, and the
 boost-removed decisive test are in **`docs/boost-bringup-debug.md`** — read it first.
+
+---
+
+## Status & session addendum (2026-07-01, full-codebase audit round)
+
+A full audit against the authoritative sources verified the pin map (matches the IO CSV
+row-for-row), all Ag105 register values/scales/GENSTAT codes (match Tables 3/4/6/7), the
+telemetry v4 arithmetic, and the sequencing guards. It also found and fixed the following —
+full detail in **PLAN.md §14**:
+
+- **VESC UART fix (safety-critical, needs bench verification).** `setup()` called
+  `pinMode(RX/TX, …)` *after* `Serial1.begin()`; on Teensy 4.x that reassigns pins 0/1 from
+  LPUART6 to GPIO, silently killing all VESC communication (including the `setCurrent(0)`
+  safety flushes). The two lines are deleted — never call `pinMode()` on pins 0/1. Not
+  host-testable (mock `pinMode` is a no-op).
+- **PI live-output semantics (user-approved change to "What NOT to change" code).** Both PIs
+  returned a 0.0f sentinel on sub-`sampleTime` ticks, which chopped the motor command and
+  slammed the droop split to the 0.01 extreme. The integrator update stays `sampleTime`-gated;
+  the output is now always computed. The power-share PI also gained anti-windup (`Ki·accum`
+  clamped to ±1.0, the droop ratio's full authority). Note: during FC-charge cruise the EMS on
+  the Pi commands `power_share_setpoint ≈ 1.0` (BT is off the bus), so the share error is ~0
+  by design — the clamp is a defensive backstop.
+- **`ag105DataValid`.** GENSTAT 0x00 = Battery Disconnect is a real Table 6 status, so raw==0
+  no longer doubles as the stale marker; validity is tracked out-of-band and gates both
+  `ag105IsReady()` and the `detectFaults()` GENSTAT fault.
+- **State 98:** `'2'` refuses BT_BUS while FC_CHARGE is HIGH (the CSV's illegal combination);
+  `'Q'` now closes FC_CHARGE/REGEN on exit so a charge path can't stay latched into Idle.
+- **`LIMIT_V_BATT_MAX` left at 10.0f per user decision** (9V-battery bench testing) but it is
+  UNREACHABLE — the BT divider saturates the ADC at 8.646V, so OV_BATT cannot trip (and under
+  BENCH_TEST the OV checks are the only armed faults). Change to **8.5f** when 9V testing ends;
+  a `TODO` comment marks it.
+- **`USE_ETHERNET`** is `#ifndef`-overridable and a `#warning` fires on
+  `BENCH_TEST=0 && USE_ETHERNET=0` (production faults, no Pi link, inert watchdog); the test
+  Makefile suppresses it with `-DNO_ETH_WARNING`.
+- Stale comments corrected (SCALE_I mA/count figure, `doState99()`/`doState3()` shutdown
+  rationale vs the corrected failure analysis, `updateWheelSpeed()` unit-chain TODO).
+
+**All 283 host-native tests pass** (278 production + 5 bench build). Build caution: running
+`mingw32-make` from PowerShell can silently reuse stale binaries (the recipe's `PATH=` prefix
+doesn't resolve there) — build from an MSYS2 shell, or invoke g++ directly and check the
+executable timestamps.

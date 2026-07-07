@@ -31,7 +31,9 @@ param(
   [Parameter(Mandatory=$true)][string]$Inp,
   [Parameter(Mandatory=$true)][string]$Out,
   [string]$ProgId = 'FastHenry2.Document',
-  [int]$TimeoutSec = 7200
+  [int]$TimeoutSec = 7200,
+  [switch]$KillStale   # kill ALL FastHenry2 processes first (serial mode only --
+                       # NEVER pass this when other solves may be running in parallel)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -49,11 +51,49 @@ if ($runPath -match ' ') {
          "move the project to a space-free path.")
 }
 
-# Clear any stale/wedged instance so this process gets a clean server.
-$stale = Get-Process FastHenry2 -ErrorAction SilentlyContinue
-if ($stale) { $stale | Stop-Process -Force; Start-Sleep -Milliseconds 400 }
+# Serial mode: clear any stale/wedged instance so this process gets a clean
+# server. Parallel mode (-KillStale absent): do NOT touch other processes --
+# they may be live solves owned by sibling jobs.
+if ($KillStale) {
+  $stale = Get-Process FastHenry2 -ErrorAction SilentlyContinue
+  if ($stale) { $stale | Stop-Process -Force; Start-Sleep -Milliseconds 400 }
+}
 
-$o = New-Object -ComObject $ProgId
+# PID tracking: snapshot before creating the COM object so we can identify OUR
+# server process and, on timeout/wedge, kill only that PID (parallel-safe).
+#
+# CRITICAL under --jobs > 1: the before/after diff is only unambiguous if no
+# SIBLING is creating its FastHenry2 process at the same moment -- otherwise a
+# job can see the sibling's brand-new process in its own `$after` and later kill
+# it on cleanup, crashing the sibling with "RPC server unavailable" (0x800706BA).
+# So the create+identify window is serialized across all jobs by a NAMED SYSTEM
+# MUTEX. Only this ~0.5 s window is serialized; the long solve below runs fully
+# in parallel.
+$mtx = New-Object System.Threading.Mutex($false, 'Global\FastHenryComSpawn')
+$haveMtx = $false
+try { $haveMtx = $mtx.WaitOne(30000) } catch [System.Threading.AbandonedMutexException] { $haveMtx = $true }
+try {
+  $before = @(Get-Process FastHenry2 -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+  $o = New-Object -ComObject $ProgId
+  Start-Sleep -Milliseconds 400                      # let THIS server's process register
+  $after = @(Get-Process FastHenry2 -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+  $ownPids = @($after | Where-Object { $before -notcontains $_ })
+} finally {
+  if ($haveMtx) { $mtx.ReleaseMutex() }
+  $mtx.Dispose()
+}
+if ($ownPids.Count -eq 0) {
+  # No new process appeared: either the server is shared/multi-use (parallel
+  # UNSAFE -- the caller's preflight should have detected this) or it registered
+  # too slowly. We proceed but will not force-kill anything we can't identify.
+  Write-Output "note: could not identify a dedicated FastHenry2 process for this instance"
+} elseif ($ownPids.Count -gt 1) {
+  # Serialized create window should yield exactly one new PID. More than one means
+  # a sibling slipped in (mutex bypassed?) -- refuse to own (and thus kill) PIDs we
+  # can't attribute, to avoid cross-killing a sibling's live solve.
+  Write-Output "note: ambiguous PID attribution ($($ownPids -join ',')) -- not force-killing"
+  $ownPids = @()
+}
 try {
   Start-Sleep -Milliseconds 300                     # let the server initialise
   $ok = $o.Run($runPath)
@@ -90,4 +130,10 @@ try {
 finally {
   try { [void]$o.Quit() } catch {}
   [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($o)
+  # If OUR server process survived Quit() (wedged / mid-solve after timeout),
+  # kill it by PID -- and only it, so sibling parallel solves are untouched.
+  Start-Sleep -Milliseconds 300
+  foreach ($p in $ownPids) {
+    try { Stop-Process -Id $p -Force -Confirm:$false -ErrorAction Stop } catch {}
+  }
 }

@@ -30,6 +30,17 @@ from gerber import parse_gerber, parse_excellon
 from geometry import (CopperMask, rasterize, select_net, resample, bridge_gaps,
                       largest_component, list_nets)
 
+# Widest GND-plane clearance slot (mm) the mesher must bridge so the return plane
+# stays a single connected body at every mesh pitch. bridge_gaps closes 2*iters*
+# pitch, so iters is scaled as ceil(BRIDGE_GAP_MM/(2*pitch)). Measured empirically:
+# at <=0.15mm the FC return plane severed with the old fixed 1-iteration closing;
+# 0.6mm restores full connectivity at 0.20/0.15/0.10mm (see build_model).
+BRIDGE_GAP_MM = 0.6
+
+# If largest_component keeps a smaller fraction of the resampled copper than this,
+# the plane was severed (a meshing artifact), not merely de-speckled -> warn loudly.
+SEVERED_PLANE_FRAC = 0.90
+
 
 def load_layer(cfg, key, pitch):
     """Rasterise the copper file named by cfg[key]['file'] over the full board."""
@@ -63,15 +74,19 @@ class Model:
     h_di: float
 
 
-def build_model(cfg, verbose=True):
+def build_model(cfg, mesh_pitch=None, verbose=True):
     """
     Config -> the two meshed conductors FastHenry uses, plus the fine
     (isolation-pitch) copper and the resolved stackup/pitch parameters. Shared by
-    the solver CLI (main) and the STL mesh exporter so both build IDENTICAL
-    geometry. cfg must have gerber_dir already resolved (see load_config).
+    the solver CLIs (main, sweep_inductance) and the STL/PNG mesh exporters so
+    all build IDENTICAL geometry. cfg must have gerber_dir already resolved
+    (see load_config). mesh_pitch (mm) overrides the config's mesh_pitch_mm so
+    sweep callers don't have to mutate cfg.
     """
     iso_pitch = float(cfg.get("isolation_pitch_mm", 0.1))
-    mesh_pitch = float(cfg["mesh_pitch_mm"]) if "mesh_pitch_mm" in cfg else float(cfg["pitch_mm"])
+    if mesh_pitch is None:
+        mesh_pitch = float(cfg["mesh_pitch_mm"]) if "mesh_pitch_mm" in cfg else float(cfg["pitch_mm"])
+    mesh_pitch = float(mesh_pitch)
     stack = cfg["stackup"]
     t_cu = float(stack["copper_thickness_mm"])
     h_di = float(stack["dielectric_thickness_mm"])
@@ -101,16 +116,51 @@ def build_model(cfg, verbose=True):
 
     # Resample to the coarse mesh grid, close sub-pitch holes, keep the largest
     # connected component (a single electrical body -> the loop is closeable).
-    def _to_mesh(fine, label):
-        coarse = largest_component(bridge_gaps(resample(fine, mesh_pitch)))
-        ncomp = len(list_nets(resample(fine, mesh_pitch), min_cells=1))
+    #
+    # bridge_gaps is a morphological CLOSING: n iterations bridge interior slots
+    # up to 2*n cells wide WITHOUT growing the outer boundary. The two conductors
+    # need OPPOSITE treatment, so their coverage + closing policy differ:
+    #
+    #  * RETURN plane: a hole-riddled GND pour. Use 'any' coverage (a coarse cell
+    #    is copper if ANY fine cell is -> fills sub-pitch antipads/slots) and an
+    #    AGGRESSIVE pitch-scaled closing. A fixed 1-iteration closing bridges only
+    #    2*pitch, so at a FINE pitch the ~BRIDGE_GAP_MM clearance slots stop being
+    #    sub-pitch and SEVER the plane -- largest_component then keeps a fragment and
+    #    the return current is pinched, inflating L ~3x (seen at FC 0.15mm: 31% of the
+    #    plane dropped). Scaling iters keeps the plane whole at every pitch.
+    #
+    #  * FORWARD net: a SOLID pour the user points at (stays a single component even
+    #    with NO bridging). Use 'fraction' coverage (truer widths) and only a light
+    #    FIXED 1-iteration de-speckle. The aggressive scaled closing that the return
+    #    needs would instead FILL real via-clearance notches in the forward pour,
+    #    widening a genuine current-crowding neck and UNDER-estimating L at coarse
+    #    pitch (BT: coarse meshes read ~2.87 nH by dilating over a notch that the fine
+    #    meshes resolve as ~3.15 nH). 'fraction' + light closing preserves the notch.
+    ret_bridge_iters = max(1, math.ceil(BRIDGE_GAP_MM / (2.0 * mesh_pitch)))
+
+    def _to_mesh(fine, label, coverage, bridge_iters):
+        resampled = resample(fine, mesh_pitch, coverage=coverage)
+        closed = bridge_gaps(resampled, iters=bridge_iters) if bridge_iters > 0 else resampled
+        coarse = largest_component(closed)
+        ncomp = len(list_nets(resampled, min_cells=1))
         if verbose and ncomp > 1:
-            print(f"    {label}: coarse mesh had {ncomp} fragments -> closed + kept "
-                  f"largest ({int(coarse.mask.sum())} cells)")
+            print(f"    {label}: coarse mesh had {ncomp} fragments -> closed "
+                  f"({bridge_iters} iter, {coverage}) + kept largest "
+                  f"({int(coarse.mask.sum())} cells)")
+        # Guard: if the kept component is much smaller than the resampled copper,
+        # the plane was SEVERED (not just de-speckled) -> the loop geometry is wrong.
+        resampled_cells = int(resampled.mask.sum())
+        kept = int(coarse.mask.sum())
+        if resampled_cells and kept / resampled_cells < SEVERED_PLANE_FRAC:
+            print(f"    WARNING: {label} mesh @ {mesh_pitch}mm kept only "
+                  f"{100*kept/resampled_cells:.0f}% of the resampled copper -- the "
+                  f"plane likely severed at clearance slots (bridge_iters={bridge_iters}). "
+                  f"The result at this pitch is a MESHING ARTIFACT; raise BRIDGE_GAP_MM "
+                  f"or coarsen the pitch.")
         return coarse
 
-    fwd_net = _to_mesh(fwd_fine, "forward")
-    ret_net = _to_mesh(ret_fine, "return")
+    fwd_net = _to_mesh(fwd_fine, "forward", coverage="fraction", bridge_iters=1)
+    ret_net = _to_mesh(ret_fine, "return", coverage="any", bridge_iters=ret_bridge_iters)
     if verbose:
         print(f"    forward net area = {fwd_fine.area_mm2():.2f} mm^2  "
               f"-> mesh {int(fwd_net.mask.sum())} cells @ {mesh_pitch} mm")
@@ -121,6 +171,31 @@ def build_model(cfg, verbose=True):
     forward = fh.Conductor(mask=fwd_net, z=h_di + t_cu, thickness=t_cu, tag="f")
     ret = fh.Conductor(mask=ret_net, z=0.0, thickness=t_cu, tag="r")
     return Model(forward, ret, fwd_fine, ret_fine, mesh_pitch, iso_pitch, t_cu, h_di)
+
+
+def analytic_bound(cfg, model, shorts=None, vias=None):
+    """
+    Closed-form microstrip sanity bound for the configured loop (see README).
+    Loop length is port -> closure (where the loop turns around), NOT the small
+    A-B port gap. Effective width ~ forward area / loop length as a mean width.
+    Returns {"L": henries, "loop_len_mm": ..., "eff_w_mm": ...}. Shared by the
+    single-run CLI and sweep_inductance so both report the identical number.
+    """
+    ax, ay = cfg["terminal_a"]
+    if shorts:
+        cx, cy = shorts[0]
+    elif vias:
+        cx, cy = vias[0].x, vias[0].y
+    else:
+        cx, cy = cfg["terminal_b"]
+    mesh_pitch = model.mesh_pitch
+    loop_len = math.hypot(cx - ax, cy - ay)
+    area = model.fwd_fine.area_mm2()
+    eff_w = (area / loop_len) if loop_len > mesh_pitch else math.sqrt(max(area, 1.0))
+    L_micro = analytic.microstrip_loop_inductance(max(loop_len, mesh_pitch),
+                                                  max(eff_w, mesh_pitch),
+                                                  model.h_di + model.t_cu)
+    return {"L": L_micro, "loop_len_mm": loop_len, "eff_w_mm": eff_w}
 
 
 def main(argv=None):
@@ -204,21 +279,9 @@ def main(argv=None):
               "mesh_pitch_mm, shrink return_margin_mm, or lower freq.ndec / range. "
               "Run large solves in the background.")
 
-    # analytic sanity bound -----------------------------------------------------
-    # Loop length is port -> closure (where the loop turns around), NOT the small
-    # A-B port gap. Effective width ~ sqrt(forward area) as a rough mean width.
-    ax, ay = cfg["terminal_a"]
-    if shorts:
-        cx, cy = shorts[0]
-    elif vias:
-        cx, cy = vias[0].x, vias[0].y
-    else:
-        cx, cy = cfg["terminal_b"]
-    loop_len = math.hypot(cx - ax, cy - ay)
-    eff_w = (fwd_fine.area_mm2() / loop_len) if loop_len > mesh_pitch else math.sqrt(
-        max(fwd_fine.area_mm2(), 1.0))
-    L_micro = analytic.microstrip_loop_inductance(max(loop_len, mesh_pitch),
-                                                  max(eff_w, mesh_pitch), h_di + t_cu)
+    # analytic sanity bound (shared helper -- see analytic_bound) ----------------
+    bound = analytic_bound(cfg, model, shorts=shorts, vias=vias)
+    L_micro, loop_len, eff_w = bound["L"], bound["loop_len_mm"], bound["eff_w_mm"]
     print(f"[5] analytic sanity bound (microstrip, loop_len~{loop_len:.1f}mm, "
           f"w_eff~{eff_w:.1f}mm, h~{h_di+t_cu:.3f}mm): "
           f"L ~ {L_micro*1e9:.2f} nH  (order-of-magnitude check only)")

@@ -89,6 +89,67 @@ python gerber_inductance.py config.json --dry-run      # build deck + bound only
 Outputs (in `out/`): `loop.inp` (the FastHenry deck), `inductance_vs_freq.png`,
 and a printed `freq / R / L` table.
 
+## Sweep workflow (mesh convergence + frequency response)
+
+For thesis-grade numbers you want **two sweeps, not one solve**: L vs mesh pitch
+(is the mesh converged?) and L vs frequency (skin-effect roll-off). The `sweep`
+block in each config declares both axes explicitly — every entry is hand-typed,
+and a set may hold one entry or many:
+
+```json
+"sweep": {
+  "mesh_sizes_mm": [0.5, 0.3, 0.2, 0.15, 0.10],
+  "designated_mesh_mm": 0.2,
+  "frequencies_hz": [1, 1e3, 5e5, 1e6],
+  "designated_frequency_hz": 5e5,
+  "solver_timeout_sec": null
+}
+```
+
+**No cross-product is solved.** Two axes only: every mesh size @ the designated
+frequency (convergence), plus the designated mesh @ every frequency (frequency
+response). The designated×designated point is shared and solved once.
+
+```sh
+# 1. Solve (per side; results persist to out/<config>_results.json).
+#    Idempotent: already-solved points are skipped, so interrupted multi-hour
+#    runs resume by re-running. --force re-solves; --only mesh|freq for one axis.
+python sweep_inductance.py config_vout_fc.json --jobs 2
+python sweep_inductance.py config_vout_bt.json --jobs 2
+
+# 2. Report (cross-side tables + plots drawing from BOTH stores):
+python report_results.py config_vout_fc.json config_vout_bt.json
+
+# 3. Or regenerate EVERYTHING derived (per-pitch PNG renders + STLs + reports)
+#    from the cached meshes + stored results — never runs the solver:
+python regenerate_outputs.py config_vout_fc.json config_vout_bt.json
+```
+
+Report outputs (in `out/`): `convergence_<freq>.{csv,md,png}` and
+`freq_sweep.{csv,md,png}`. Tables are verbose (segments, cells, areas, filament
+counts, skin depth, analytic bound, solve time, timestamps); plots show
+inductance only. Missing points warn but never fail, so partial stores report.
+
+Details worth knowing:
+
+- **Results store** `out/<config>_results.json`: one record per (mesh, freq),
+  atomic append-as-you-go. Delete a record (or the file) to force a re-solve of
+  just that point; `--force` re-solves whatever the run list names.
+- **Mesh cache** `out/meshes/<config>_m<pitch>.npz`: the exact meshed geometry
+  per pitch, fingerprinted against the mask-affecting config fields (gerbers,
+  points, isolation pitch, return margin, stackup) — geometry edits auto-rebuild;
+  closure/terminal moves don't (they only pick nodes). `render_mesh.py` and
+  `export_mesh.py` accept `--mesh-pitch X` to render any cached variant (outputs
+  get an `_m<pitch>` suffix).
+- **Timeouts**: the COM watchdog auto-scales with segment count (a 48 k-segment
+  deck legitimately solves for hours; the old fixed 2 h limit killed one
+  mid-solve). Override with `sweep.solver_timeout_sec`.
+- **Parallel solves** (`--jobs N`): points run longest-first in a pool. A one-shot
+  COM preflight verifies each client gets its own FastHenry2 process (else falls
+  back to serial); parallel bridges never pre-kill FastHenry2 processes and clean
+  up only their own PID; and **at most one large deck (≥20 k segments) is in
+  flight at a time** — the big decks are memory-heavy. `--jobs 2–3` is sensible.
+
 ## Key modelling choices (and why)
 
 - **Two pitches.** Distinct nets only separate if the grid pitch is **smaller than
@@ -177,10 +238,15 @@ numbers.
 | `geometry.py` | rasterise, net flood-fill, resample, crop, list nets |
 | `fasthenry.py` | mesh → FastHenry deck, run, parse `Zc.mat` → L(f) |
 | `analytic.py` | microstrip / parallel-plate / bar closed-form bounds |
-| `gerber_inductance.py` | CLI entry point (`build_model(cfg)` builds the shared mesh) |
+| `gerber_inductance.py` | single-run CLI (`build_model(cfg)` builds the shared mesh) |
+| `sweep_inductance.py` | sweep solver: convergence + frequency axes → results store |
+| `report_results.py` | cross-config convergence + freq-sweep tables/plots |
+| `regenerate_outputs.py` | one command: rebuild all renders/STLs/reports, no solving |
+| `model_cache.py` | per-pitch meshed-geometry cache (`out/meshes/*.npz`) |
 | `inspect_board.py` | list nets + optional PNG map to find coordinates |
 | `export_mesh.py` | export the meshed conductors as STL solids for CAD |
 | `stl_export.py` | binary-STL writer + voxel/marker geometry |
+| `render_mesh.py` | PNG images of the forward/return meshes + net region with coords |
 | `selftest.py` | dependency-light test suite |
 | `config.example.json` | annotated config template |
 
@@ -202,3 +268,25 @@ are exactly `dielectric_thickness_mm` apart (the printed summary reports the gap
 so you can measure the dielectric spacing, pour extents, and loop length directly.
 `build_model(cfg)` in `gerber_inductance.py` builds the identical geometry the
 solver uses, so the STL is a faithful picture of what was solved.
+
+For 2D PNGs (no CAD needed), `render_mesh.py` writes three images per config:
+
+```sh
+python render_mesh.py config.json          # --outdir out, --margin 3.0
+```
+
+- `<config>_mesh_forward.png` / `<config>_mesh_return.png` — each coarse mesh
+  (voxel grid) with mm axes and the snapped port/closure **node** coordinates.
+  Both use the **same axes** (union of the two footprints) so they overlay 1:1.
+- `<config>_overlay.png` — forward (orange) and return (blue) meshes overlaid
+  **translucently** on those shared axes, so you can see how the VOUT pour sits over
+  the GND return.
+- `<config>_region.png` — the forward net (orange) over its surrounding copper with
+  the **actual** `terminal_a` / `terminal_b` / `closure` coordinates from the config
+  (same style as the hand-made `vout_*_region.png`).
+
+Every image draws a **thin dashed span from the port to the closure** labelled with
+the loop distance (mm), and offsets all annotations radially so they don't overlap
+(coincident `terminal_a`/`terminal_b` are merged into one "port A/B" marker). The
+mesh images label the **snapped node** distance; the overlay/region images label the
+**config-coordinate** distance.

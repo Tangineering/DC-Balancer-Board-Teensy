@@ -59,6 +59,7 @@ static void reset_test_state() {
     droop_gain_FC_actual = 0;
     droop_gain_BT_actual = 0;
     ag105_status_raw     = 0;
+    ag105DataValid       = false;
     ag105Configured      = false;
     ag105HadPower        = false;
     ag105PowerOnMs       = 0;
@@ -222,15 +223,31 @@ static void test_poll_ag105() {
     check(ag105IsReady(),
           "ag105IsReady: true when GENSTAT == FULL (0x03)");
 
-    // Inject: GENSTAT = 0x00 (startup) — should NOT be ready
+    // Poke: GENSTAT = 0x00 (Battery Disconnect) — live data (valid from the poll above), NOT ready
     ag105_status_raw = 0x00;
     check(!ag105IsReady(),
-          "ag105IsReady: false when GENSTAT == 0x00 (startup)");
+          "ag105IsReady: false when GENSTAT == 0x00 (Battery Disconnect)");
 
-    // Inject: GENSTAT = 0x01 — not charging or full, not ready
+    // Poke: GENSTAT = 0x01 — not charging or full, not ready
     ag105_status_raw = 0x01;
     check(!ag105IsReady(),
           "ag105IsReady: false when GENSTAT == 0x01");
+
+    // Failed read (NAK): validity must drop, and a stale CHARGING byte must not report ready
+    Wire.fail_next_requestfrom = true;
+    pollAg105();
+    check(!ag105DataValid,
+          "pollAg105: ag105DataValid false after failed read");
+    ag105_status_raw = AG105_GENSTAT_CHARGING;   // stale byte poked back in
+    check(!ag105IsReady(),
+          "ag105IsReady: false on stale data even if GENSTAT byte says CHARGING");
+
+    // Successful read restores validity — even for a live 0x00 (Battery Disconnect) status
+    Wire.rx_queue.push(0x00);
+    Wire.rx_queue.push(0);
+    pollAg105();
+    check(ag105DataValid,
+          "pollAg105: ag105DataValid true after successful read of status 0x00");
 }
 
 // ─── assertFcChargeEnable(true) ordering ─────────────────────────────────────
@@ -327,6 +344,7 @@ static void test_charging_control_mppt_polarity() {
     charge_goal = 1.0f;
     current     = -1.0f;   // regen braking
     ag105_status_raw = AG105_GENSTAT_CHARGING;
+    ag105DataValid   = true;
     g_pin_value[FC_CHARGE_ENABLE] = LOW;
     g_pin_value[BT_BUS_ENABLE]    = LOW;
     g_pin_value[REGEN_ENABLE]     = LOW;
@@ -343,6 +361,7 @@ static void test_charging_control_mppt_polarity() {
     charge_goal = 1.0f;
     current     = 0.5f;   // cruise
     ag105_status_raw = AG105_GENSTAT_CHARGING;
+    ag105DataValid   = true;   // live read — ag105IsReady() requires validity, not just GENSTAT
     g_pin_value[REGEN_ENABLE]     = LOW;
     g_pin_value[FC_CHARGE_ENABLE] = LOW;
     g_pin_value[BT_BUS_ENABLE]    = LOW;
@@ -684,17 +703,22 @@ static void test_pi_controllers() {
     test_group("PI controllers");
     reset_test_state();
 
-    // PI_Controller_Motor: first call returns 0 (no dt elapsed yet)
+    // PI_Controller_Motor on a sub-sampleTime tick: NO 0.0f sentinel (the old sentinel chopped
+    // the VESC command to zero between samples). Output must be live: Kp*error + Ki*accum(=0).
     g_mock_micros = 0;
     float out_initial = PI_Controller_Motor(1.0f);
-    check(out_initial == 0.0f,
-          "PI_Controller_Motor: returns 0 on first call (no dt)");
+    check(fabsf(out_initial - 1.0f) < 1e-4f,
+          "PI_Controller_Motor: live proportional output on sub-sampleTime tick (no 0 sentinel)");
+    check(pi_motor_accum == 0.0f,
+          "PI_Controller_Motor: integrator NOT updated on sub-sampleTime tick");
 
-    // After advancing time past sampleTime (50us), non-zero error produces non-zero output
+    // After advancing time past sampleTime (50us), the integrator engages too
     g_mock_micros = 100;   // 100 us > sampleTime=50
     float out_1 = PI_Controller_Motor(1.0f);
     check(out_1 > 0.0f,
           "PI_Controller_Motor: positive output for positive error after dt > sampleTime");
+    check(pi_motor_accum > 0.0f,
+          "PI_Controller_Motor: integrator updated once dt >= sampleTime");
 
     g_mock_micros = 200;
     PI_Controller_Motor(-1.0f);   // just verifies no crash; exact value depends on accumulated integral
@@ -704,8 +728,10 @@ static void test_pi_controllers() {
     reset_test_state();
     g_mock_micros = 0;
     float pout0 = PI_Controller_Power(1.0f);
-    check(pout0 == 0.0f,
-          "PI_Controller_Power: returns 0 on first call (no dt)");
+    check(fabsf(pout0 - 1.0f) < 1e-4f,
+          "PI_Controller_Power: live proportional output on sub-sampleTime tick (no 0 sentinel)");
+    check(pi_power_accum == 0.0f,
+          "PI_Controller_Power: integrator NOT updated on sub-sampleTime tick");
 
     g_mock_micros = 100;
     float pout1 = PI_Controller_Power(0.5f);
@@ -716,6 +742,60 @@ static void test_pi_controllers() {
     g_mock_micros = 200;
     PI_Controller_Power(0.0f);   // should not crash
     check(true, "PI_Controller_Power: zero error runs without crash");
+}
+
+// ─── powerBalance() on a gated tick: droop must NOT slam to the 0.01 extreme ──
+static void test_powerbalance_gated_tick_stable() {
+    test_group("powerBalance() gated-tick droop stability");
+    reset_test_state();
+
+    // Steady operating point with a real share error (setpoint 0.8, actual 0.5)
+    I_fc   = 1.0f;
+    I_batt = 1.0f;
+    power_share_setpoint = 0.8f;
+
+    g_mock_micros = 100;           // > sampleTime → PI integrates and produces the ratio
+    powerBalance();
+    float gFC_first = droop_gain_FC_actual;
+    float gBT_first = droop_gain_BT_actual;
+
+    // 10 µs later (sub-sampleTime): the old 0.0f sentinel made droopRatio clamp to 0.01 and
+    // slammed the MDAC gains for one tick. The live-output PI must hold the same gains.
+    g_mock_micros = 110;
+    powerBalance();
+    check(fabsf(droop_gain_FC_actual - gFC_first) < 1e-4f,
+          "powerBalance: FC droop gain stable across a sub-sampleTime tick");
+    check(fabsf(droop_gain_BT_actual - gBT_first) < 1e-4f,
+          "powerBalance: BT droop gain stable across a sub-sampleTime tick");
+}
+
+// ─── Power-share PI anti-windup ───────────────────────────────────────────────
+static void test_power_pi_antiwindup() {
+    test_group("Power-share PI integrator anti-windup");
+
+    const float limit = 1.0f;   // Ki == 1.0 → accum bounded to ±(1.0/Ki)
+
+    // Sustained unsatisfiable share error (e.g. one source disconnected from the bus) must
+    // not wind the integrator past the droop ratio's usable authority.
+    reset_test_state();
+    uint32_t t = 0;
+    for (int i = 0; i < 2000; i++) {
+        t += 1000;                 // 1 ms steps, all > sampleTime
+        g_mock_micros = t;
+        PI_Controller_Power(1.0f);
+    }
+    check(pi_power_accum <= limit + 1e-3f,
+          "Power PI: integrator clamped at +limit under sustained positive error");
+
+    reset_test_state();
+    t = 0;
+    for (int i = 0; i < 2000; i++) {
+        t += 1000;
+        g_mock_micros = t;
+        PI_Controller_Power(-1.0f);
+    }
+    check(pi_power_accum >= -limit - 1e-3f,
+          "Power PI: integrator clamped at -limit under sustained negative error");
 }
 
 // ─── Drive cycle phase transitions ───────────────────────────────────────────
@@ -1086,6 +1166,55 @@ static void test_dostate98_hotplug_guard() {
           "doState98: '2' OFF always allowed (guard only blocks ON)");
 }
 
+// ─── State 98 '2' mutual-exclusion guard (BT_BUS while FC_CHARGE is HIGH) ─────
+static void test_dostate98_bt_bus_fc_charge_guard() {
+    test_group("State 98 '2' refuses BT_BUS while FC_CHARGE_ENABLE is HIGH");
+    reset_test_state();
+    mainState = 98;
+
+    // FC_CHARGE HIGH → '2' ON refused (the IO CSV's illegal combination).
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;
+    g_pin_value[BT_BUS_ENABLE]    = LOW;
+    g_pin_value[BT_REG_ENABLE]    = LOW;   // boost off, so the hot-plug guard is not the blocker
+    V_bus = 18.0f;
+    Serial.rx_queue.push('2');
+    doState98();
+    check(digitalRead(BT_BUS_ENABLE) == LOW,
+          "doState98: '2' refused while FC_CHARGE_ENABLE HIGH — BT_BUS stays LOW");
+
+    // FC_CHARGE back LOW → the same toggle is allowed.
+    g_pin_value[FC_CHARGE_ENABLE] = LOW;
+    Serial.rx_queue.push('2');
+    doState98();
+    check(digitalRead(BT_BUS_ENABLE) == HIGH,
+          "doState98: '2' allowed once FC_CHARGE_ENABLE is LOW");
+}
+
+// ─── State 98 'Q' exit closes the charge/regen paths ─────────────────────────
+static void test_dostate98_quit_closes_charge_paths() {
+    test_group("State 98 'Q' exit closes FC_CHARGE/REGEN");
+    reset_test_state();
+    mainState = 98;
+
+    // Operator left the charger powered and the regen path open, then quits.
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;
+    g_pin_value[REGEN_ENABLE]     = HIGH;
+    g_pin_value[MOT_PWR_ENABLE]   = HIGH;
+    Serial.rx_queue.push('Q');
+    doState98();
+
+    check(mainState == 1,
+          "doState98: 'Q' returns to State 1");
+    check(digitalRead(MOT_PWR_ENABLE) == LOW,
+          "doState98: 'Q' forces MOT_PWR_ENABLE LOW");
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "doState98: 'Q' closes FC_CHARGE_ENABLE (charger not left powered into Idle)");
+    check(digitalRead(REGEN_ENABLE) == LOW,
+          "doState98: 'Q' closes REGEN_ENABLE");
+    check(vesc.last_current == 0.0f,
+          "doState98: 'Q' flushes a zero VESC current before cutting motor power");
+}
+
 // ─── State 3 (Finish) returns to Idle with the bus left energized ────────────
 static void test_dostate3_leaves_bus_energized() {
     test_group("doState3() leaves the bus energized");
@@ -1114,20 +1243,23 @@ static void test_dostate3_leaves_bus_energized() {
 static void test_genstat_fault() {
     test_group("detectFaults() GENSTAT error states");
 
-    struct { uint8_t raw; bool shouldFault; const char* desc; } cases[] = {
-        { 0x05, true,  "GENSTAT=0x05 OC/Regulation Error → fault" },
-        { 0x06, true,  "GENSTAT=0x06 Thermal Shutdown → fault" },
-        { 0x07, true,  "GENSTAT=0x07 Timeout Error → fault" },
-        { 0x04, false, "GENSTAT=0x04 Bring-Up Charge (normal) → NO fault" },
-        { 0x02, false, "GENSTAT=0x02 Charging → NO fault" },
-        { 0x0A, false, "0x0A = Charging + MPPT flag (bit3) → NO fault (mask isolates 0x07)" },
-        { 0x0E, true,  "0x0E = Thermal Shutdown + MPPT flag → fault (regression vs old 0x0F mask)" },
-        { 0x00, false, "0x00 = no data yet → NO fault" },
+    struct { uint8_t raw; bool valid; bool shouldFault; const char* desc; } cases[] = {
+        { 0x05, true,  true,  "GENSTAT=0x05 OC/Regulation Error → fault" },
+        { 0x06, true,  true,  "GENSTAT=0x06 Thermal Shutdown → fault" },
+        { 0x07, true,  true,  "GENSTAT=0x07 Timeout Error → fault" },
+        { 0x04, true,  false, "GENSTAT=0x04 Bring-Up Charge (normal) → NO fault" },
+        { 0x02, true,  false, "GENSTAT=0x02 Charging → NO fault" },
+        { 0x0A, true,  false, "0x0A = Charging + MPPT flag (bit3) → NO fault (mask isolates 0x07)" },
+        { 0x0E, true,  true,  "0x0E = Thermal Shutdown + MPPT flag → fault (regression vs old 0x0F mask)" },
+        { 0x00, true,  false, "0x00 = Battery Disconnect (live read) → NO fault" },
+        { 0x00, false, false, "stale data (ag105DataValid=false) → NO fault" },
+        { 0x05, false, false, "stale error byte with ag105DataValid=false → NO fault (validity gate)" },
     };
     for (auto& c : cases) {
         reset_test_state();
         V_batt = 7.0f; V_bus = 18.0f; I_fc = 0; V_fc = 10.0f;
         ag105_status_raw = c.raw;
+        ag105DataValid   = c.valid;
         mainState = 2;
         detectFaults();
         bool faulted = (fault_flags & FAULT_CHARGER_STAT) != 0;
@@ -1322,8 +1454,9 @@ static void test_charging_control_fc_bootstrap() {
     check(g_pin_value[MPPT_DISABLE] == LOW,
           "chargingControl: MPPT inhibited until charger ready");
 
-    // Once the charger reports ready, MPPT releases (FC path stays open).
+    // Once the charger reports ready (live read), MPPT releases (FC path stays open).
     ag105_status_raw = AG105_GENSTAT_CHARGING;
+    ag105DataValid   = true;   // ag105IsReady() requires a live read, not just the GENSTAT byte
     chargingControl();
     check(g_pin_value[FC_CHARGE_ENABLE] == HIGH,
           "chargingControl: FC_CHARGE_ENABLE stays HIGH when ready");
@@ -1679,6 +1812,8 @@ int main() {
     test_dostate0_reaches_idle_unpowered();
     test_dostate0_bus_charge_timeout();
     test_dostate98_hotplug_guard();
+    test_dostate98_bt_bus_fc_charge_guard();
+    test_dostate98_quit_closes_charge_paths();
     test_dostate3_leaves_bus_energized();
     test_genstat_fault();
     test_uv_boot_gate();
@@ -1698,6 +1833,8 @@ int main() {
     test_power_share_profile_runs_controls();
     test_pending_input_cancel();
     test_motor_pi_antiwindup();
+    test_power_pi_antiwindup();
+    test_powerbalance_gated_tick_stable();
     test_wheelspeed_reset();
 #endif
 

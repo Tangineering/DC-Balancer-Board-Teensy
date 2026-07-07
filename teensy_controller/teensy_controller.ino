@@ -43,6 +43,16 @@
  *    brownout → reset → re-enable). So under BENCH_TEST, doState0() now boots straight to Idle with
  *    the power stage OFF (no auto boost/bus enable, no V_bus gate); the bus is brought up manually
  *    via 'G' on a stiff supply. Production (BENCH_TEST=0) keeps the full bring-up + gate.
+ *  - Audit round (2026-07-01): removed pinMode(RX/TX) after Serial1 init (was reverting the pad
+ *    mux to GPIO and killing the VESC UART on Teensy 4.x); PI controllers now always return a
+ *    live output (integrator still gated to sampleTime; the old 0.0f sentinel chopped the motor
+ *    command / slammed the droop split on sub-sampleTime ticks); power-share PI gained anti-windup
+ *    (±1.0 integral authority — EMS sets share setpoint ≈ 1.0 during FC-charge cruise, so the
+ *    clamp is a defensive backstop); ag105DataValid flag distinguishes a stale status byte from
+ *    GENSTAT 0x00 = Battery Disconnect; State 98: '2' refuses BT_BUS while FC_CHARGE is HIGH,
+ *    'Q' closes FC_CHARGE/REGEN on exit; USE_ETHERNET now #ifndef-overridable with a #warning on
+ *    the production-without-Ethernet combination. LIMIT_V_BATT_MAX flagged: 10.0f is above the
+ *    8.646V divider ceiling and can never trip — change to 8.5f after 9V-battery bench testing.
  */
 
 #include <VescUart.h>
@@ -103,7 +113,7 @@ EthernetUDP Udp;
 #define SCALE_V_RGN   (ADC_VREF * (78.7f + 10.0f) / 10.0f / ADC_MAX)
 
 // Current scale: INA253A1, K_sns=0.1 V/A, unipolar 0-ref; Source: INA253A1IPWR.pdf
-#define SCALE_I  (ADC_VREF / ADC_MAX / K_sns)   // 12-bit, Vref=3.3V → ~2.015 mA/count
+#define SCALE_I  (ADC_VREF / ADC_MAX / K_sns)   // 12-bit, Vref=3.3V, K_sns=0.1 → ~8.06 mA/count
 
 // ── Fault bitmask constants (uint16_t) ────────────────────────────────────────
 #define FAULT_OC_FC           0x0001  // I_fc overcurrent
@@ -129,7 +139,11 @@ EthernetUDP Udp;
 // Source: user-confirmed: 17.5V nominal bus; TPS61288 HW OVP triggers at 19V
 #define LIMIT_V_BUS_MAX  18.5f  // V — 1V SW margin below 19V HW OVP
 //#define LIMIT_V_BATT_MAX  8.6f  // V — 2S LiPo max (4.3V/cell × 2 + 0.2V margin)
-#define LIMIT_V_BATT_MAX 10.0f  // TEMP for using 9V battery for testing
+// TODO: change to 8.5f. The BT divider (16.2k/10k, BOM-confirmed) saturates the ADC at
+// 3.3*2.62 = 8.646V, so 10.0 can NEVER trip (OV_BATT is currently dead — and under BENCH_TEST
+// the OV checks are the only armed faults). Even the old 8.6f left only ~22 ADC counts of
+// headroom below the ceiling. 8.5V gives real margin while still protecting a 2S pack.
+#define LIMIT_V_BATT_MAX 10.0f  // TEMP for using 9V battery for testing (unreachable — see above)
 #define LIMIT_V_FC_MIN    6.0f  // V — H-20 minimum
 #define LIMIT_I_BT_MAX    6.0f  // A — INA253A1, BT boost path
 #define LIMIT_V_BUS_MIN  12.0f  // V — minimum VBUS during State 2
@@ -270,6 +284,10 @@ float droop_gain_FC_actual  = 0;
 float droop_gain_BT_actual  = 0;
 
 uint8_t  ag105_status_raw  = 0;        // last raw Table 6 status byte; cached at 50 Hz by pollAg105()
+bool     ag105DataValid    = false;    // true while ag105_status_raw/I_charge reflect a successful
+                                       // read this power session. Needed because GENSTAT 0x00 is a
+                                       // REAL status (Battery Disconnect, Table 6) — a raw value of
+                                       // 0 cannot double as the "stale/no data" marker.
 // Ag105 charger power/config tracking (see chargerHasPower() and pollAg105()).
 bool     ag105Configured   = false;    // true once 0x00/0x01 written this powered session
 bool     ag105HadPower     = false;    // power on/off edge detector for the settle timer
@@ -325,7 +343,19 @@ bool wheelSpeedResetPending = false;
 // operation. When 0, setup() skips Ethernet/UDP init and the UDP functions no-op.
 // Calling Udp.* without Udp.begin() hard-faults the Teensy into a reboot loop, so
 // the networkUp guard below must gate every UDP access.
+// Overridable via -DUSE_ETHERNET=1 (same pattern as BENCH_TEST).
+#ifndef USE_ETHERNET
 #define USE_ETHERNET 0
+#endif
+
+// BENCH_TEST and USE_ETHERNET are independent flags, so it is possible to build "production
+// faults, no Pi link" by mistake: with USE_ETHERNET=0 the Pi never connects, pi_ever_connected
+// stays false, and the Pi watchdog is permanently inert. Warn so a vehicle flash can't ship
+// that combination silently. (The host test suite passes -DNO_ETH_WARNING: it deliberately
+// tests production fault behavior with mocked-out networking.)
+#if !BENCH_TEST && !USE_ETHERNET && !defined(NO_ETH_WARNING)
+#warning "Production build (BENCH_TEST=0) with USE_ETHERNET=0: no Pi link, Pi watchdog inert. Set USE_ETHERNET=1 for vehicle flashes."
+#endif
 
 bool networkUp = false;   // true only after Udp.begin() succeeds in setup()
 
@@ -482,8 +512,9 @@ void setup() {
     initMdacSpiPins();
     initChargerI2cPins();
 
-    pinMode(RX,      INPUT);
-    pinMode(TX,      OUTPUT);
+    // Pins 0/1 (RX/TX) are owned by Serial1 — initEscUartPins() already configured their pad
+    // mux for LPUART6. Do NOT call pinMode() on them: on Teensy 4.x pinMode() reassigns the
+    // pad to GPIO, which silently disconnects the UART and kills all VESC communication.
     pinMode(ENC_A,   INPUT);
     pinMode(ENC_B,   INPUT);
     pinMode(ENC_ENABLE,    OUTPUT);
@@ -723,10 +754,11 @@ void detectFaults() {
     // so the mask must be 0x07 (matching ag105IsReady()), not 0x0F. Error states per Table 6:
     //   0x05 = OC/Regulation Error, 0x06 = Thermal Shutdown, 0x07 = Timeout Error.
     // 0x04 (Bring-Up Charge) is a NORMAL transient for a deeply-discharged pack and must NOT
-    // fault. ag105_status_raw is refreshed at 50 Hz by pollAg105(); 0x00 = no data yet (ignore).
+    // fault. Gated on ag105DataValid (not raw != 0): GENSTAT 0x00 is a real status (Battery
+    // Disconnect), so validity is tracked out-of-band by pollAg105() at 50 Hz.
     // Source: Ag105_Table6_I2C_Status_Byte.json
     uint8_t genstat = ag105_status_raw & 0x07;
-    if (ag105_status_raw != 0 &&
+    if (ag105DataValid &&
         (genstat == 0x05 || genstat == 0x06 || genstat == 0x07))
         triggerFault(FAULT_CHARGER_STAT, ERR_CHARGER_STAT);
 #endif
@@ -1038,9 +1070,10 @@ void doState3() {
     // FINISH — stop the motor and return to the charged Idle state.
     //
     // The bus is deliberately left ENERGIZED: the boosts and FC_BUS/BT_BUS switches stay ON, so
-    // the bus remains at ~17.5V and the next Idle→Run transition never hot-plugs the 470µF bus
-    // (see "VBUS controlled bring-up" note). Only State 99 (Error) tears the bus down — and that
-    // is latched until a power cycle, which re-runs the State-0 gentle bring-up.
+    // the bus remains at ~17.5V and the next Idle→Run transition never re-hot-plugs the bus
+    // (see "VBUS controlled bring-up" note; VBUS itself carries only the ~30–40µF RT1987
+    // ceramics — the 470µF bulk cap is on V-MOT). Only State 99 (Error) tears the bus down —
+    // and that is latched until a power cycle, which re-runs the State-0 gentle bring-up.
     //
     // Because the boosts stay enabled, there is NO disabled-converter back-feed hazard here, so the
     // old two-phase cap/regen drain sequence is no longer needed. End-of-run regen harvest already
@@ -1063,13 +1096,20 @@ void doState3() {
 }
 
 void doState99() {
-    // ERROR — two-phase safe shutdown; latched until power cycle.
-    // Same Phase 1→2 ordering as State 3 (bleed VBUS caps, then bleed regen/motor energy)
-    // before disabling boost regulators. A disabled TPS61288 has a body-diode passthrough;
-    // all regen paths must be closed before the boosts are disabled.
-    // Non-blocking phase machine (same back-feed ordering as State 3). The old delay(10)
-    // calls blinded detectFaults() during the drain windows; returning between phases keeps
-    // fault sampling live. phase 3 = fully latched (nothing further until power cycle).
+    // ERROR — non-blocking phased safe shutdown; latched until power cycle.
+    // Phase 0 routes residual VBUS energy into the charger (only the ~30–40µF of RT1987
+    // ceramics — the 470µF bulk cap is on the V-MOT/regen node, NOT on VBUS; see the
+    // corrected "VBUS controlled bring-up" note). Phase 1 bleeds the V-MOT/regen node
+    // (470µF cap + motor back-EMF) into the charger through REGEN_ENABLE. Phase 2 closes
+    // every path and disables the boosts LAST, so no energized path ever points into a
+    // disabled converter (regen-into-disabled-boost hazard, CLAUDE.md §2).
+    // Note on phase 1: chargerHasPower() deliberately does not count the REGEN-HIGH /
+    // MOT_PWR-LOW combination — it tracks *sustained* input power routed from VBUS, while
+    // this drain relies on the V-MOT node's *stored* energy reaching the charger through
+    // the regen switch. The disagreement is intentional, not a topology error.
+    // Returning between phases (instead of the old delay(10)) keeps detectFaults() sampling
+    // live through the drain windows. phase 3 = fully latched (nothing further until power
+    // cycle).
     static uint8_t  phase      = 0;
     static uint32_t phaseStart = 0;
 
@@ -1160,7 +1200,8 @@ void printTestHelp() {
     Serial.println("  R - start/stop power-share profile (needs A or V set + MOT_PWR on)");
     Serial.println("  X - stop manual motor + power-share live");
     Serial.println("  H - show this command list");
-    Serial.println("  * 1/2 refuse ON if the matching boost is ON and VBUS is low (use G)");
+    Serial.println("  * 1/2 refuse ON if the matching boost is ON and VBUS is low (use G);");
+    Serial.println("    2 also refuses while FC_CHARGE_ENABLE is HIGH (illegal combination)");
     Serial.println("  Q - exit -> State 1 (MOT_PWR_ENABLE forced LOW)");
     Serial.println("==============================");
 }
@@ -1212,9 +1253,14 @@ void doState98() {
                 }
                 break;
             case '2':
-                // Guard: refuse to hot-plug a running BT boost onto a discharged bus (use 'G').
+                // Guards: (a) BT_BUS+FC_CHARGE is the illegal combination from the IO CSV —
+                // refuse rather than auto-resolve so the operator stays aware of the path state
+                // ('5' via assertFcChargeEnable() is the sanctioned way to swap the paths);
+                // (b) refuse to hot-plug a running BT boost onto a discharged bus (use 'G').
                 cur = digitalRead(BT_BUS_ENABLE);
-                if (!cur && busHotPlugUnsafe(BT_REG_ENABLE)) {
+                if (!cur && digitalRead(FC_CHARGE_ENABLE)) {
+                    Serial.println("REFUSED: FC_CHARGE_ENABLE is HIGH — BT_BUS+FC_CHARGE is illegal. Turn FC_CHARGE off first ('5').");
+                } else if (!cur && busHotPlugUnsafe(BT_REG_ENABLE)) {
                     Serial.println("REFUSED: BT boost is ON and VBUS is low — hot-plug risk. Use 'G' to bring up the bus.");
                 } else {
                     digitalWrite(BT_BUS_ENABLE, !cur);
@@ -1372,6 +1418,13 @@ void doState98() {
                 current = 0.0f;
                 vesc.setCurrent(0);                  // stop motor before cutting its power
                 digitalWrite(MOT_PWR_ENABLE, LOW);   // forced LOW on exit (per spec)
+                // Close the charge/regen paths too — doState1() re-clears MOT_PWR/REGEN each
+                // tick but never touches FC_CHARGE, so an operator-latched FC_CHARGE would
+                // otherwise keep the charger powered through Idle indefinitely (and under
+                // BENCH_TEST the switch-conflict fault that would catch a lingering illegal
+                // combination is compiled out).
+                assertFcChargeEnable(false);
+                digitalWrite(REGEN_ENABLE, LOW);
                 Serial.println("State 98 -> State 1 (IDLE)");
                 mainState = 1;
                 return;
@@ -1710,18 +1763,23 @@ float PI_Controller_Motor(float error) {
     const float Kp = 1.0f;
     const float Ki = 1.0f;
 
+    // The integrator updates at most once per sampleTime window, but the output is ALWAYS
+    // computed live. The old form returned a 0.0f sentinel on sub-sampleTime ticks — and since
+    // motorControl() runs every loop tick, that sentinel chopped the VESC current command to
+    // zero between samples. (Same fix applied to PI_Controller_Power, where the sentinel
+    // slammed the droop split to the 0.01 extreme on gated ticks.)
     uint32_t now = micros();
     uint32_t dtMicros = now - pi_motor_lastMicros;
-    if (dtMicros < (uint32_t)sampleTime) return 0.0f;
-    pi_motor_lastMicros = now;
-
-    pi_motor_accum += error * dtMicros * 1e-6f;
-    // Anti-windup: clamp the integrator so a sustained error (stalled setpoint, or a VESC that
-    // saturates at MOTOR_I_CMD_MAX) cannot wind pi_motor_accum up without bound. The bound is the
-    // torque equivalent of the motor current ceiling (output = torque; current = torque/motorConstant),
-    // divided by Ki so the integral term Ki*accum stays within ±(MOTOR_I_CMD_MAX * motorConstant).
-    const float integMax = (MOTOR_I_CMD_MAX * motorConstant) / Ki;
-    pi_motor_accum = constrain(pi_motor_accum, -integMax, integMax);
+    if (dtMicros >= (uint32_t)sampleTime) {
+        pi_motor_lastMicros = now;
+        pi_motor_accum += error * dtMicros * 1e-6f;
+        // Anti-windup: clamp the integrator so a sustained error (stalled setpoint, or a VESC that
+        // saturates at MOTOR_I_CMD_MAX) cannot wind pi_motor_accum up without bound. The bound is the
+        // torque equivalent of the motor current ceiling (output = torque; current = torque/motorConstant),
+        // divided by Ki so the integral term Ki*accum stays within ±(MOTOR_I_CMD_MAX * motorConstant).
+        const float integMax = (MOTOR_I_CMD_MAX * motorConstant) / Ki;
+        pi_motor_accum = constrain(pi_motor_accum, -integMax, integMax);
+    }
     return Kp * error + Ki * pi_motor_accum;
 }
 
@@ -1744,12 +1802,24 @@ float PI_Controller_Power(float error) {
     const float Kp = 1.0f;
     const float Ki = 1.0f;
 
+    // Same structure as PI_Controller_Motor: integrate once per sampleTime window, always
+    // return a live output (no 0.0f sentinel — see comment there).
     uint32_t now = micros();
     uint32_t dtMicros = now - pi_power_lastMicros;
-    if (dtMicros < (uint32_t)sampleTime) return 0.0f;
-    pi_power_lastMicros = now;
-
-    pi_power_accum += error * dtMicros * 1e-6f;
+    if (dtMicros >= (uint32_t)sampleTime) {
+        pi_power_lastMicros = now;
+        pi_power_accum += error * dtMicros * 1e-6f;
+        // Anti-windup: the output is a droop ratio, clamped to [0.01, 0.99] downstream in
+        // powerBalance(), so integral authority beyond ±1.0 is unusable — clamp Ki*accum to
+        // ±1.0. This matters when the share error can't converge (e.g. a source disconnected
+        // from the bus): without the clamp the integrator winds up for the whole episode and
+        // slams the split on recovery. Note: during FC-charge cruise (BT_BUS_ENABLE LOW) the
+        // EMS on the Pi commands power_share_setpoint ≈ 1.0 to match the FC-only bus, so the
+        // share error is ~0 there by design — this clamp is the defensive backstop for
+        // off-nominal cases, not the primary mechanism.
+        const float integMax = 1.0f / Ki;
+        pi_power_accum = constrain(pi_power_accum, -integMax, integMax);
+    }
     return Kp * error + Ki * pi_power_accum;
 }
 
@@ -1880,7 +1950,10 @@ void pollAg105() {
     // should be responding. Called at ~50 Hz from loop() in every state.
     bool powered = chargerHasPower();
     if (powered && !ag105HadPower) ag105PowerOnMs = millis();  // power edge → start settle timer
-    if (!powered) ag105Configured = false;                     // re-arm config for next power session
+    if (!powered) {
+        ag105Configured = false;    // re-arm config for next power session
+        ag105DataValid  = false;    // cached status/current no longer reflect a live charger
+    }
     ag105HadPower = powered;
 
     // The charger only responds reliably after it has powered up and finished bring-up.
@@ -1898,6 +1971,7 @@ void pollAg105() {
     Wire.endTransmission(false);             // repeated-start (keep bus active)
     if (Wire.requestFrom((uint8_t)AG105_ADDR, (uint8_t)2) == 2) {
         ag105_status_raw = Wire.read();      // Table 6 status byte (always first)
+        ag105DataValid   = true;             // raw byte is live — even if it is 0x00 (Battery Disconnect)
         I_charge = Wire.read() * 0.011f;    // A; scale: 0.011 A/count (Table 7 field 0x06)
 
         // Lazy configuration: the charger is now powered, settled, and ACKing. Write the
@@ -1907,9 +1981,13 @@ void pollAg105() {
             else if (faultArmed)    triggerFault(FAULT_INIT_FAIL, ERR_INIT_FAIL);
         }
     } else {
-        // NAK or bus error. Mark charger data stale so ag105IsReady() returns false (safe).
+        // NAK or bus error. Mark charger data stale via ag105DataValid (NOT by zeroing the raw
+        // byte — 0x00 is a real Table 6 status) so ag105IsReady() returns false (safe) and the
+        // GENSTAT fault check in detectFaults() ignores the stale byte. ag105_status_raw is
+        // still zeroed for telemetry: the Pi reads offset 51 == 0x00 as "no charger data".
         // Unpowered or still-settling → not a fault (normal). Only a powered+settled charger
         // that goes silent in an operational state latches State 99.
+        ag105DataValid   = false;
         ag105_status_raw = 0;
         if (faultArmed)
             triggerFault(FAULT_I2C_CHARGER, ERR_I2C_CHARGER);
@@ -1917,9 +1995,11 @@ void pollAg105() {
 }
 
 inline bool ag105IsReady() {
-    // Returns true when the Ag105 is actively charging or fully charged.
+    // Returns true when the Ag105 is actively charging or fully charged, based on a LIVE
+    // status read (ag105DataValid) — a stale cached byte must never report ready.
     uint8_t genstat = ag105_status_raw & 0x07;   // bits 0–2; Source: Ag105_Table6_I2C_Status_Byte.json
-    return (genstat == AG105_GENSTAT_CHARGING || genstat == AG105_GENSTAT_FULL);
+    return ag105DataValid &&
+           (genstat == AG105_GENSTAT_CHARGING || genstat == AG105_GENSTAT_FULL);
 }
 
 // True when a power path is routing input power to the Ag105. The charger is unpowered
@@ -2010,6 +2090,12 @@ void updateWheelSpeed() {
     int   dx    = pos - posArr[(index + 1) % arraySize];
 
     if (dtSec < 1e-6f) return;
+    // TODO(calibrate): unit chain. rpm*radius/60 yields rev/s × inch, NOT m/s (missing 2π and
+    // inch→m = 0.0254), and flyWheelRadius = 1 is a placeholder — yet v_setpoint from the Pi is
+    // meant as m/s. Fold 2π·0.0254 into the constant when calibrating, BEFORE tuning the motor
+    // PI gains, or the gains will bake in the unit mismatch. Also note timeArr[] is int holding
+    // micros(): it wraps after ~35.8 min of uptime and corrupts dt for one buffer pass.
+    // (Velocity math itself intentionally unchanged per CLAUDE.md "what NOT to change".)
     float flyWheelSpeedRpm = (dx / ENCODER_COUNTS_PER_REV) * (60.0f / dtSec);
     v_actual = flyWheelSpeedRpm * flyWheelRadius / 60.0f;
 }

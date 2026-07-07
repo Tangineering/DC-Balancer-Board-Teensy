@@ -1,48 +1,68 @@
 {
   "_about": "FC boost-regulator OUTPUT loop: from boost VOUT (REG-FC pin 13) to its nearest output cap (C4A-FC pad 1, VOUT-FC), return through the continuous bottom GND plane. Mirror of config_vout_bt.json on the fuel-cell side. Coordinates in board mm, from the PnP file + the VOUT-FC net flood-fill (see out/vout_fc_region.png and out/fc_gnd_region.png).",
-
   "gerber_dir": "../../references/PCB Manufacturing Files",
   "drill_file": "drill_1_64.xln",
-
   "isolation_pitch_mm": 0.1,
   "mesh_pitch_mm": 0.3,
   "return_margin_mm": 4.0,
-
   "stackup": {
     "copper_thickness_mm": 0.035,
     "dielectric_thickness_mm": 1.53
   },
-
   "forward": {
     "file": "copper_top.gbr",
-    "point": [45.0, 88.0],
+    "point": [
+      45.0,
+      88.0
+    ],
     "_note": "A point on the VOUT-FC pour (orange in out/vout_fc_region.png)."
   },
   "return": {
     "file": "copper_bottom.gbr",
-    "point": [42.0, 86.0],
+    "point": [
+      42.0,
+      86.0
+    ],
     "_note": "A point on the continuous bottom GND plane (confirmed present under the FC loop; the small slots are bottom-trace clearances the mesher bridges)."
   },
-
-  "terminal_a": [44.6, 87.8],
-  "terminal_b": [44.6, 87.8],
+  "terminal_a": [
+    44.6,
+    87.8
+  ],
+  "terminal_b": [
+    44.6,
+    87.8
+  ],
   "_terminal_note": "Port at the boost OUTPUT pin EDGE (REG-FC VOUT, where copper exits the IC = closest external point): A on VOUT-FC, B on the GND plane directly beneath. This excludes the IC's internal pin and measures the external PCB loop only.",
-
   "closure": {
     "type": "short",
-    "points": [[46.482, 92.153]],
-    "_note": "Cap C4A-FC GND PIN (upper pad, R2.715x1.165 flash at 46.482,92.153). The loop returns through the cap's ground pad to the bottom GND plane (present beneath), NOT beneath the VOUT pad. Here the GND pad sits on a TOP GND pour that vias to the plane at the x=44.20 column (~2.3mm away); the ideal short ties VOUT to the plane beneath the GND pad, approximating that. VOUT pad is at (46.482,89.203)."
+    "points": [
+      [
+        46.482,
+        89.203
+      ]
+    ],
+    "_note": "ALT CLOSURE (sensitivity study): cap C4A-FC VOUT PAD at (46.482,89.203) instead of the GND pad (46.482,92.153). Baseline config is config_vout_fc.json."
   },
-
-  "freq": { "fmin": 1e3, "fmax": 1e7, "ndec": 1, "extra": [5e5],
-            "_note": "extra includes 500kHz = the regulator switching frequency. Used by the legacy single-run gerber_inductance.py only; sweep_inductance.py uses `sweep`." },
-
+  "freq": {
+    "fmin": 1000.0,
+    "fmax": 10000000.0,
+    "ndec": 1,
+    "extra": [
+      500000.0
+    ],
+    "_note": "extra includes 500kHz = the regulator switching frequency. Used by the legacy single-run gerber_inductance.py only; sweep_inductance.py uses `sweep`."
+  },
   "sweep": {
-    "_note": "sweep_inductance.py solves two axes (NOT the cross-product): every mesh_sizes_mm @ designated_frequency_hz (convergence), plus designated_mesh_mm @ every frequencies_hz (frequency response). 5e5 = the regulator switching frequency. solver_timeout_sec null -> auto-scaled from segment count.",
-    "mesh_sizes_mm": [0.5, 0.3, 0.2, 0.15],
+    "_note": "Closure-sensitivity study: single point (designated mesh @ 500kHz) with the ALT (VOUT-pad) closure. Compare L against the baseline config.",
+    "mesh_sizes_mm": [
+      0.3
+    ],
     "designated_mesh_mm": 0.3,
-    "frequencies_hz": [1, 1e3, 5e5, 1e6],
-    "designated_frequency_hz": 5e5,
+    "frequencies_hz": [
+      500000.0
+    ],
+    "designated_frequency_hz": 500000.0,
     "solver_timeout_sec": null
   }
 }

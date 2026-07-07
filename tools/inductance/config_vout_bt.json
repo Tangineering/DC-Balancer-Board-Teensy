@@ -5,8 +5,8 @@
   "drill_file": "drill_1_64.xln",
 
   "isolation_pitch_mm": 0.1,
-  "mesh_pitch_mm": 0.5,
-  "return_margin_mm": 2.0,
+  "mesh_pitch_mm": 0.3,
+  "return_margin_mm": 4.0,
 
   "stackup": {
     "copper_thickness_mm": 0.035,
@@ -30,10 +30,19 @@
 
   "closure": {
     "type": "short",
-    "points": [[43.27, 29.87]],
-    "_note": "Cap C4A-BT pad 1: VOUT-BT shorts to the GND plane through the cap. This is the loop turnaround."
+    "points": [[44.704, 31.955]],
+    "_note": "Cap C4A-BT GND PIN (upper pad, R2.715x1.165 flash at 44.704,31.955). The loop returns through the cap's ground pad to the bottom GND plane (present beneath), NOT beneath the VOUT pad. GND stitching vias flank at (42.42,33.02)/(46.74,33.27). VOUT pad is at (44.704,29.005). NOTE: this is still an ideal short -> it captures the loop geometry but not the GND via's own inductance."
   },
 
   "freq": { "fmin": 1e3, "fmax": 1e7, "ndec": 1, "extra": [5e5],
-            "_note": "extra includes 500kHz = the regulator switching frequency." }
+            "_note": "extra includes 500kHz = the regulator switching frequency. Used by the legacy single-run gerber_inductance.py only; sweep_inductance.py uses `sweep`." },
+
+  "sweep": {
+    "_note": "sweep_inductance.py solves two axes (NOT the cross-product): every mesh_sizes_mm @ designated_frequency_hz (convergence), plus designated_mesh_mm @ every frequencies_hz (frequency response). 5e5 = the regulator switching frequency. solver_timeout_sec null -> auto-scaled from segment count.",
+    "mesh_sizes_mm": [0.5, 0.3, 0.2, 0.15, 0.11, 0.10],
+    "designated_mesh_mm": 0.2,
+    "frequencies_hz": [1, 1e3, 5e5, 1e6],
+    "designated_frequency_hz": 5e5,
+    "solver_timeout_sec": null
+  }
 }

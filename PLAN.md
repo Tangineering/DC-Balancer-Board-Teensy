@@ -840,7 +840,7 @@ by the mocks before the `#include`.
 |----------|-------|
 | **Scale factor math** | `SCALE_V_FC`, `SCALE_V_BATT`, `SCALE_V_BUS`, `SCALE_V_CHG`, `SCALE_V_RGN`, `SCALE_I` produce correct Volts/Amps from known ADC counts |
 | **Fault detection** | OC/UV/OV thresholds trigger correct `fault_flags` bits; switch-conflict fault fires when `FC_CHARGE_ENABLE` is HIGH with `BT_BUS_ENABLE` or `REGEN_ENABLE` HIGH |
-| **PI controllers** | `PI_Controller_Motor()` and `PI_Controller_Power()` converge given step inputs; anti-windup clamps hold; zero output at zero error |
+| **PI controllers** | `PI_Controller_Motor()` and `PI_Controller_Power()` converge given step inputs; anti-windup clamps hold on BOTH PIs (§14); live output on sub-sampleTime ticks — no 0.0f sentinel (§14) |
 | **Packet parsing** | `parseCommand()` correctly populates `v_setpoint`, `power_share_target`, `charge_goal`, `droop_enable_reserved` from a known 22-byte buffer |
 | **Telemetry packing** | `sendTelemetry()` (captured via mock UDP) produces 58-byte packet; SYNC=0xAA at byte 0; XOR over bytes 1–56 matches byte 57; `charger_status` (raw Ag105 byte) at offset 51, `V_chg`, `V_rgn`, `switch_state`, `fault_flags` (u16), `error_code`, `error_source_state` appear at correct offsets |
 | **Ag105 constants** | `AG105_ADDR == 0x30`, `AG105_VAL_2S == 0x08`, `AG105_VAL_2500MA == 0x01` |
@@ -932,7 +932,11 @@ No Teensy hardware or Arduino IDE needed. Tests should be run locally before eac
 - `PI_Controller_Motor()`, `PI_Controller_Power()`, `motorControl()`, `powerBalance()` control
   math. The drive cycle (§9c) only sets `v_setpoint`. (Two surgical, behaviour-preserving
   exceptions were made during the review round — see §11: the integrator state was hoisted to
-  file scope so tests can reset it, and a clamp-based anti-windup bound was added to the motor PI.)
+  file scope so tests can reset it, and a clamp-based anti-windup bound was added to the motor PI.
+  The audit round, §14, added two more user-approved exceptions: the power-share PI gained the
+  same anti-windup clamp, and both PIs now always return a live output — the `sampleTime` gate
+  applies to the integrator update only, since the old 0.0f sentinel chopped the motor command
+  and slammed the droop split on sub-sampleTime ticks.)
 - `doEncoderA()`, `doEncoderB()`, `updateWheelSpeed()` algorithm (a guarded buffer-reset hook
   was added to `updateWheelSpeed()` in §11 — the velocity math is unchanged).
 - UDP sync bytes, packet counter, XOR checksum algorithm.
@@ -1033,7 +1037,8 @@ normal mode, not a fault.
 2. **Power-based fault gating (supersedes §11.4 state-gating).** `pollAg105()` raises
    `FAULT_I2C_CHARGER` / `FAULT_INIT_FAIL` only when `chargerHasPower() && settled &&
    (State 2|3)`. Unpowered/settling never faults; State 98 excluded. `detectFaults()` GENSTAT
-   check unchanged (still guarded on `ag105_status_raw != 0`).
+   check unchanged at the time (guarded on `ag105_status_raw != 0`; §14 later replaced that
+   guard with the out-of-band `ag105DataValid` flag — GENSTAT 0x00 is a real status).
 3. **`chargingControl()` FC-path deadlock fix.** Cruise opens `FC_CHARGE_ENABLE` on intent
    (`charge_goal > 0`) to power/boot the charger; only the MPPT release is gated on
    `ag105IsReady()`. Previously the path was gated on readiness, which could never be reached
@@ -1161,3 +1166,70 @@ Bypass:
 
 Tests: new `test_dostate0_bench_bypass` built in a **second `-DBENCH_TEST=1` pass** (`run_tests_bench`);
 the `-DBENCH_TEST=0` build keeps the production `doState0` tests. `make` builds + runs both.
+
+---
+
+## 14. Full-codebase audit round (2026-07-01)
+
+A full audit against the authoritative sources (IO CSV, BOM, Ag105 JSON tables) verified the pin
+map, Ag105 register values, telemetry v4 arithmetic, and sequencing guards as clean, and surfaced
+the following issues, all fixed (user-approved where they touched "What NOT to change" code):
+
+### Correctness / safety fixes
+1. **`setup()` was killing the VESC UART.** `pinMode(RX, INPUT)` / `pinMode(TX, OUTPUT)` ran
+   *after* `Serial1.begin()`; on Teensy 4.x `pinMode()` reassigns the pad mux from LPUART6 to
+   GPIO, silently disconnecting the UART — every `vesc.setCurrent()` (including the safety
+   zero-flushes) went nowhere. The two lines are deleted; a comment forbids touching pins 0/1
+   after Serial1 init. Not host-testable (the mock `pinMode` is a no-op) — verify on bench.
+2. **PI 0.0f sentinel removed (both PIs).** On sub-`sampleTime` ticks the PIs returned 0.0f;
+   `motorControl()` runs every loop tick, so the sentinel chopped the VESC command to zero, and
+   `powerBalance()` mapped it to droopRatio 0.01 → extreme MDAC gains for that tick. The
+   integrator update remains gated to `sampleTime`; the output `Kp·e + Ki·accum` is now always
+   computed live.
+3. **Power-share PI anti-windup.** `pi_power_accum` clamped so `Ki·accum` stays within ±1.0
+   (the droop ratio's full [0.01, 0.99] authority). Defensive: during FC-charge cruise
+   (`BT_BUS_ENABLE` LOW) the EMS on the Pi commands `power_share_setpoint ≈ 1.0` to match the
+   FC-only bus, so the share error is ~0 by design; the clamp covers off-nominal episodes
+   (source loss, sensor dropout) that previously wound the integrator unbounded.
+4. **`ag105DataValid` flag.** GENSTAT 0x00 is a *real* Table 6 status (Battery Disconnect), so
+   `ag105_status_raw == 0` can't double as the "stale" marker. Validity is now tracked
+   out-of-band: set on a successful read, cleared on NAK or power loss. `ag105IsReady()` and the
+   `detectFaults()` GENSTAT check both gate on it (a stale error byte can no longer fault; a
+   stale CHARGING byte can no longer report ready). Telemetry offset 51 still sends 0x00 when
+   stale — the Pi's decode is unchanged.
+5. **State 98 `'2'` mutual-exclusion guard.** `'2'` now refuses to raise `BT_BUS_ENABLE` while
+   `FC_CHARGE_ENABLE` is HIGH (the IO CSV's illegal combination — previously creatable in test
+   mode, and invisible under `BENCH_TEST` where the switch-conflict fault is compiled out).
+6. **State 98 `'Q'` closes the charge paths.** Exit now runs `assertFcChargeEnable(false)` +
+   `REGEN_ENABLE` LOW in addition to `MOT_PWR_ENABLE` LOW — `doState1()` never touches
+   FC_CHARGE, so an operator-latched charge path used to keep the charger powered through Idle.
+
+### Flagged, deliberately NOT changed
+- **`LIMIT_V_BATT_MAX = 10.0f` can never trip**: the BT divider (16.2k/10k) saturates the ADC at
+  8.646 V. Kept at 10.0 for 9V-battery bench testing per user decision; a `TODO` comment says to
+  change it to **8.5f** (real margin below the divider ceiling) when that testing ends. Note the
+  old 8.6f value was also unusable (~22 counts below saturation).
+- `updateWheelSpeed()` unit chain (rev/s × inch, not m/s) and the `int` `timeArr` micros wrap
+  (~35.8 min) — documented as `TODO(calibrate)` comments; velocity math left unchanged.
+
+### Build / docs
+- `USE_ETHERNET` is now `#ifndef`-overridable, and a `#warning` fires on the
+  `BENCH_TEST=0 && USE_ETHERNET=0` combination (production faults with no Pi link and an inert
+  watchdog). The test Makefile passes `-DNO_ETH_WARNING` (it builds that combination on purpose).
+- Stale comments fixed: `SCALE_I` "~2.015 mA/count" → ~8.06 (the 2.015 figure was the never-fitted
+  A3's); `doState99()` header rewritten to the corrected failure analysis (no TPS61288 body-diode
+  claim; 470 µF is on V-MOT, and the phase-1 REGEN/MOT_PWR combination is stored-energy drain,
+  intentionally not counted by `chargerHasPower()`); `doState3()` "470 µF bus" line corrected.
+
+### Tests
+- Updated: `test_pi_controllers` (live-output semantics + integrator-gating checks),
+  `test_genstat_fault` (validity-gated cases incl. stale-error-byte and live-0x00),
+  `test_poll_ag105` (validity lifecycle: NAK → invalid → stale-ready refused → re-valid),
+  `test_charging_control_mppt_polarity` / `test_charging_control_fc_bootstrap`
+  (`ag105DataValid = true` where readiness is expected).
+- New: `test_power_pi_antiwindup`, `test_powerbalance_gated_tick_stable`,
+  `test_dostate98_bt_bus_fc_charge_guard`, `test_dostate98_quit_closes_charge_paths`.
+- **All 283 host-native tests pass** (278 in the `-DBENCH_TEST=0` build + 5 in the
+  `-DBENCH_TEST=1` build). Caution: invoking `mingw32-make` from PowerShell can silently reuse
+  stale binaries (the recipe's `PATH=` prefix doesn't resolve there) — build from an MSYS2 shell,
+  or run g++ directly and check the executables' timestamps.

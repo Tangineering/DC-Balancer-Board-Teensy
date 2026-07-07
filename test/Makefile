@@ -14,10 +14,12 @@ MSYS2_UCRT64 = /c/msys64/ucrt64/bin
 CXX      = g++
 # -DBENCH_TEST=0 compiles the PRODUCTION fault behavior (the .ino defaults BENCH_TEST=1 for
 # bench flashing via #ifndef). The main suite asserts shipped behavior, so it must build with 0.
-CXXFLAGS = -std=c++17 -Wall -Wextra -I. -I../teensy_controller -DBENCH_TEST=0
+# -DNO_ETH_WARNING: the .ino warns on BENCH_TEST=0 + USE_ETHERNET=0 (a mis-flash hazard on real
+# hardware); the test suite builds that combination deliberately (mocked networking), so suppress.
+CXXFLAGS = -std=c++17 -Wall -Wextra -I. -I../teensy_controller -DBENCH_TEST=0 -DNO_ETH_WARNING
 # Second build at -DBENCH_TEST=1 exercises the doState0() bench bypass. The full suite's test
 # functions are compiled but not called in this pass, so silence the expected unused warnings.
-CXXFLAGS_BENCH = -std=c++17 -Wall -Wextra -Wno-unused-function -I. -I../teensy_controller -DBENCH_TEST=1
+CXXFLAGS_BENCH = -std=c++17 -Wall -Wextra -Wno-unused-function -I. -I../teensy_controller -DBENCH_TEST=1 -DNO_ETH_WARNING
 
 DEPS = mock_arduino.h mock_wire.h mock_spi.h mock_vesc.h mock_ethernet.h \
        VescUart.h SPI.h Wire.h NativeEthernet.h NativeEthernetUdp.h \
