@@ -1,35 +1,25 @@
 # Battery boost (TPS61288) repeated-failure debug log
 
-**Status:** LEADING HYPOTHESIS (pending scope) — **a BT-channel layout asymmetry causes a
-destructive SW overshoot when the boost drives the bus**. FOUR battery-side TPS61288 boosts
-destroyed, each the moment the battery boost actively drives VBUS. The schematic is **symmetric**
-(every boost-stage part matches FC; only `RC` differed, now reverted; `R1` is the irrelevant ADC
-sense divider). So the difference is **physical/layout in the BT channel** — by elimination, the
-robust conclusion. Leading specific mechanism: the **output-capacitor hot loop**. All power nets are
-**polygon pours** (trace-length figures are irrelevant), so the metric that matters is the **Cout
-distance to the IC output pin**, measured directly by the operator: **FC = 40 mil, BT = 240 mil
-(6× farther)**. BT's larger hot loop has higher inductance → SW/VOUT rings past the **20 V abs-max**
-(only ~0.5–1.5 V over the 17.5 V rail) under the di/dt of driving the bus → sync-rect FET fails short
-(`VIN`–`SW`–`VOUT`→GND). (The SW node itself is a wide pour, 1.6× longer on BT — a minor contributor.
-An earlier Gerber trace-length figure of "17.45 mm / 2.2×" was **inflated/wrong** — it excluded the
-pours; superseded.) Fits Death 1 (original un-reworked boost — it's the copper), FC always surviving,
-the `RC` swap not helping, death at 120 mA (energy is internal ½·L·di², no input limit bounds it),
-and the clean DC injection (no di/dt → no ring). **Confidence is now reasonably strong (6× on the
-dominant dimension), but confirm with one scope capture** of the SW node on bus-connect before
-trusting it; if BT doesn't ring past 20 V, suspect a return-path/via or manufacturing defect instead.
-Board-level fix: **add output ceramic right at the IC VOUT/PGND** to collapse the BT hot loop to
-FC-like (± SW snubber). Firmware cannot fix this. No spare boosts remain. This document is the
-cold-start reference — read it before touching the bench.
+**Status: FIX VALIDATED (2026-07-07)** — root cause was the **BT output-cap hot loop** (Cout 240 mil
+from the IC output vs FC's 40 mil). **Bodging 10 µF + 0.1 µF directly at the BT boost output
+collapsed the hot loop, and the new BT TPS61288 has now survived FOUR consecutive `G` bus
+bring-ups** — the exact sequence that killed Death 4 — regulating the bus at 17.7 V (scope captures
+in `references/scope_captures/`). This was a controlled single-variable test: same conditions as
+Death 4 except the caps. History: four boosts destroyed on bus-connect; schematic proven symmetric
+(only `RC` differed, since reverted; `R1` is the irrelevant ADC sense divider) → cause physical/
+layout by elimination → hot-loop mechanism (larger BT loop L rings SW/VOUT past the **20 V abs-max**,
+only ~0.5–1.5 V over the 17.5 V rail; energy is internal ½·L·di², so no input current limit bounds
+it — Death 2 died at 120 mA). **Remaining:** a high-bandwidth margin check (10× probe, ground
+spring, SW edge at steady state) before heavy load testing — the validation captures were 1×-probe/
+low-BW, so residual ring margin is unquantified — and placing Cout at the IC on any respin. This
+document is the cold-start reference — read it before touching the bench.
 
-**One-line summary:** A *known-good* boost regulates 17.5 V fine standalone on the BT pad, then dies
-the instant it drives the bus — same as three before it, and now with the loop compensation (`RC`)
-matched to the always-working FC channel. So it is **not** wiring, **not** a short, **not** the
-supply, **not** the bring-up sequence, **not** `RC`. With `RC` matched and the only other catalogued
-"delta" (`R1`) now known to be the **input-voltage ADC sense divider — not a boost-loop component
-at all** — the two boost power stages/loops are, on paper, **identical**. Yet FC lives and BT dies.
-The cause is therefore **not a compensation/design value**; it is something **physical** in the BT
-channel — damaged output caps, a layout/pad/via defect, an *uncatalogued* component difference, or
-the `BT_SEQUENCE` tie — that only bites when the boost actively switches into the bus.
+**One-line summary (how it was solved):** boost fine standalone; bus path proven clean without the
+boost; boost dies driving the bus; FC identical on paper but survives → elimination left only a
+**physical BT-channel difference**. The measured one: BT's output caps sit **240 mil** from the IC
+output vs FC's **40 mil** → ~2.7× hot-loop inductance → SW/VOUT overshoot past the 20 V abs-max
+under bus-drive di/dt. **Fix: 10 µF + 0.1 µF bodged at the BT boost output — four surviving `G`
+bring-ups where every unmodified attempt died.**
 
 **Key implication (Death 1):** the very first death was the *original, never-reworked* BT boost. So
 the BT channel was hostile to a boost **before any rework** — pointing at an original manufacturing
@@ -75,13 +65,18 @@ This doc uses the correct names above.
 | **Death 4** | DC supply, **8.2 V / 200 mA limit** on BT input (board-powered), no FC | `RC-BT` reverted to **61.2 kΩ**; **known-good FC TPS61288 moved to BT pad** (regulated 17.5 V standalone after reflow); sent `G` (gentle, bus pre-charged ~7.7 V via body diode) | Draw **immediately pegged 200 mA CC**, voltage collapsed; **BT boost fried** (`VBT`↔GND short) |
 
 Other confirmed conditions:
-- `BT_SEQUENCE_ENABLE` (battery → charger) was **ON in all FOUR deaths** — never once isolated OFF.
+- `BT_SEQUENCE_ENABLE` (battery → charger): **ON in deaths 1–3** (as reported at the time).
+  **Death 4: UNCERTAIN, likely OFF** — the operator initially logged it ON but later recalled it was
+  off; under the BENCH_TEST firmware used for Death 4, the power stage (including `BT_SEQUENCE`)
+  boots LOW and `G` does not touch it, so OFF is the more likely state unless manually toggled.
+  (Moot for causation either way: the 2026-07-07 surviving runs also had it OFF, so the only delta
+  vs Death 4 is the added output caps.)
 - In death 1 the FC boost was **already disconnected** when BT was connected (not a paralleling fight).
 - Post-mortem each time: `VBT → GND` short (the dead boost: VIN–SW–VOUT fused to GND).
 - **Death 4 conditions** (most controlled yet): `FC_BUS_ENABLE`, `MOT_PWR_ENABLE`, `REGEN_ENABLE`,
-  `FC_CHARGE_ENABLE` all OFF; `BT_SEQUENCE_ENABLE` ON; `BT_BUS_ENABLE` brought up by `G` in sequence
-  with `BT_REG_ENABLE`. `G` energizes the bus switches **first**, so the bus was pre-charged to
-  ~7.7 V (boost body diode) before the boost soft-started — **not** a 0 V hot-plug.
+  `FC_CHARGE_ENABLE` all OFF; `BT_SEQUENCE_ENABLE` likely OFF (see above); `BT_BUS_ENABLE` brought up
+  by `G` in sequence with `BT_REG_ENABLE`. `G` energizes the bus switches **first**, so the bus was
+  pre-charged to ~7.7 V (boost body diode) before the boost soft-started — **not** a 0 V hot-plug.
 - **Death 4 is the decisive datapoint:** the boost was the FC channel's *proven-good* part. It lived
   on the FC pad, died on the BT pad. **Pad/channel, not part.**
 
@@ -109,6 +104,58 @@ ideal-diode paths OR cleanly, no fight, no instability. This further confirms th
 even with `D-BT-EN` carrying current alongside a live FC source on the bus; **only the BT boost
 itself is implicated.**
 
+### ⭐ FIX VALIDATION — BT boost survives bus-connect with hot-loop caps (PASS, 2026-07-07)
+
+**Configuration:** new BT TPS61288 installed; **10 µF + 0.1 µF ceramics bodged directly at the BT
+boost output** (collapsing the 240 mil Cout hot loop to ~FC-like); `RC-BT` = 61.2 kΩ; **9 V battery
+on the BT input** (≈8.3 V under light load — the scope captures' pre-charge level);
+`FC_BUS`/`MOT_PWR`/`REGEN`/`FC_CHARGE` OFF; `BT_SEQUENCE` OFF. **Same as Death 4 except the caps —
+a controlled single-variable test.**
+
+**Result: survived FOUR consecutive `G` bring-ups**, regulating the bus at **17.7 V**. Scope
+captures (each a separate run) in `references/scope_captures/`:
+1. `1-VOUT.jpg` — VOUT: 8.3 V body-diode pre-charge → soft-start ramp to 17.7 V in ~1.36 ms; one
+   aborted first ramp (collapse to ~8 V, ~1.3 ms pause, automatic re-soft-start) then clean
+   regulation. **A protection-retry that previous boosts did not survive — now it recovers.**
+2. `2-VBUS.jpg` — VBUS: 0 → 8.3 V step (`D-BT-EN` closes, pre-charge) → ramp to 17.7 V, flat and
+   clean for the rest of the capture (no hiccup on this run).
+3. `3-SW.jpg` — SW envelope: two soft-start "wedges" (the aborted + successful ramps), PFM sleep
+   gaps, then steady burst switching. No visible destructive ring.
+4. `4-SW zoomed in.jpg` — the "~75 kHz initial oscillations" are **normal PFM pulse-skipping** at
+   the start of soft-start (discrete pulses, rep rate ramping ~25→75 kHz as the current command
+   rises) — not an instability, not the parasitic ring.
+
+**Notes:** (a) See "Startup hiccup explained" below — the aborted first ramp is a benign,
+deterministic VIN-UVLO retry caused by the 9 V battery source, not a board defect. (b) All captures
+were **1× probe (~10 MHz BW), 50 MSa/s** — the estimated 100–200 MHz hot-loop ring is invisible at
+this bandwidth. Survival is the evidence here; the **high-BW margin check is still owed** before
+heavy load testing (see Next steps).
+
+#### Startup hiccup explained (aborted first soft-start on every cold `G`)
+
+Observed on every cold bring-up: VOUT ramps to 17.7 V, holds ~1.5 ms, collapses to ≈ VIN, waits
+~1.3 ms, re-runs soft-start, then regulates indefinitely. Chain of evidence:
+- TPS61288 datasheet §8.3: a fresh soft-start requires the SS cap to reset, which happens **only on
+  EN low or UVLO** (OVP just pauses switching with 600 mV hysteresis near 19 V — cannot produce a
+  collapse to 8 V; the part has no hiccup-SCP feature).
+- Firmware never toggles the enable, and a Teensy brownout-reset would park all enables LOW
+  (no auto-retry) — so the observed silicon-only retry proves EN stayed HIGH → the reset was
+  **VIN UVLO** (falling ~1.9 V, rising ~2.3 V).
+- Cause: the **9 V battery source + constant-power boost load**. The first ramp charges local + bus
+  caps (~12–15 W input demand); a PP3 at ~2 Ω IR can deliver at most V²/4R ≈ 10 W — beyond the
+  max-power point the sag runs away (boost draws more as VIN falls) and VBT crashes to UVLO. The
+  battery rebounds in ~1 ms (IR drop vanishes at zero load) → rising UVLO → soft-start re-runs.
+- **The retry always succeeds** because VBUS stays parked behind `D-BT-EN`'s reverse blocking
+  (capture 2: no VBUS dip) → the second ramp charges only the local caps, ~half the power, on the
+  stable side of the max-power boundary. Hence deterministic first-fails/second-sticks.
+- **Bench artifact, benign, invisible to the bus.** The production 2S pack (~50–100 mΩ) sags ~0.2 V
+  at this draw — no hiccup in the car. Historical rhyme: this source-collapse is the same "weak 9 V
+  battery" event from the Death-1 era — it once killed boosts via the bad hot loop; with the caps
+  fitted it is a self-healing retry. Confirm (optional): scope VBT + VOUT on one `G` (expect VBT
+  diving to ~2 V at the collapse), or use a stiff ≥3 A supply → single clean ramp expected.
+  **Do not load-test from the 9 V battery** — repeated deep UVLO-cycling is the historical stress
+  pattern, and the battery can't source load tests anyway.
+
 ---
 
 ## Ruled OUT (with evidence)
@@ -125,10 +172,9 @@ itself is implicated.**
   Do not rely on any input current limit to protect a boost (see Safety below).
 - **A dynamic low-impedance fault / short in the BT→VBUS path** — NO. The boost-removed path test
   (above) drove the node to 17.5 V at ~0 current. The path is clean.
-- **Charger / `BT_SEQUENCE` static load** — effectively ruled out by the path test (~0 current with
-  the path energized). (Caveat: the DC test has no switching ripple, so a charger interaction that
-  needs the boost's switching can't be 100% excluded — but it's now low-probability. `BT_SEQUENCE`
-  has nonetheless never been tested OFF — see Next steps.)
+- **Charger / `BT_SEQUENCE` involvement** — ruled out. The DC path test showed ~0 static load, and
+  `BT_SEQUENCE` state is now known to be a non-variable: likely OFF in Death 4 and OFF in the
+  surviving 2026-07-07 runs — the death/survival difference was the caps, not this switch.
 - **`RC-BT` compensation delta (was the leading hypothesis)** — REFUTED by Death 4. `RC-BT` reverted
   to 61.2 kΩ (matched to FC) and the boost still died on bus-connect. Compensation `RC` is not the
   (sole) cause.
@@ -140,7 +186,11 @@ itself is implicated.**
   it also regulated 17.5 V standalone on the BT pad after reflow. It died only when driving the bus
   **from the BT channel**.
 
-## LEADING HYPOTHESIS: BT output-cap hot-loop inductance → destructive SW overshoot driving the bus
+## ROOT CAUSE (validated by intervention): BT output-cap hot-loop inductance → destructive SW overshoot driving the bus
+
+*(Written as the leading hypothesis; validated 2026-07-07 by the fix test above — adding 10 µF +
+0.1 µF at the BT boost output was the single changed variable between Death 4 and four consecutive
+survivals. The high-BW ring measurement is still owed to quantify remaining margin.)*
 
 **A known-good boost lives on the FC pad and dies on the BT pad.** Schematic proven symmetric
 (below) → the difference is the **PCB layout** (solid by elimination). The leading specific feature
@@ -204,12 +254,7 @@ Every boost-stage part matches FC↔BT, value-for-value and part-for-part:
 | `R1` (NOT a boost part) | 27.4 kΩ | 16.2 kΩ | **input-V ADC sense divider** (`FC_VOLTAGE`/`BT_VOLTAGE`); firmware scales each (`SCALE_V_FC`/`SCALE_V_BATT`). Different by design, irrelevant to the death. |
 
 **Conclusion: the boost schematics are identical.** The cause is therefore NOT a component/comp
-value — it is the **PCB layout** (see ROOT CAUSE above: BT `VSW` 2.2× longer).
-
-**Secondary checks (lower priority, do while reworking the BT channel):** measure the BT output caps
-(3 × 22 µF) for cracks/lost capacitance; inspect the BT switch-node/output joints and vias; the
-`BT_SEQUENCE` tie was on in all four deaths but the DC path test was clean, so it's low-probability.
-None of these displaces the measured `VSW` layout asymmetry as the prime cause.
+value — it is the **PCB layout** (see ROOT CAUSE above: the BT output-cap hot loop, 240 vs 40 mil).
 
 ---
 
@@ -220,42 +265,39 @@ None of these displaces the measured `VSW` layout asymmetry as the prime cause.
   or reverse/overshoot) is not bounded by the input limit.
 - **Power the Teensy/logic from a SEPARATE supply** for any bench test, so a boost-input current
   limit can't re-trigger the death-2 brownout/motorboating of the board-powered logic.
-- **Do not install another TPS61288 until (a) the full FC-vs-BT channel + layout diff is done,
-  (b) the BT boost-stage passives/caps are verified against FC, and (c) you can SCOPE the next
-  attempt.** Four boosts have died without a single scope capture of the failure — do not spend a
-  fifth blind. (The BT bus path itself is already proven clean; `R1` is the ADC sense divider, not a
-  suspect.)
+- **Any future BT boost install must keep the hot-loop caps** (10 µF + 0.1 µF at the IC output, or
+  a respun layout with Cout at the IC). Installing a boost on the *unmodified* BT channel is a known
+  kill — four died that way. Scope every first bring-up after a hardware change.
 
 ---
 
-## Next steps (leading cause = BT output-cap hot loop; confirm, then fix at board level)
+## Next steps (fix validated — quantify margin, then escalate load)
 
-We are out of TPS61288s and have killed four without ever capturing a scope trace. **The next boost
-must not be spent blind.**
+The caps are in, the boost survives `G` bring-ups (×4). Remaining work, in order:
 
-**1. Confirm the mechanism with ONE scoped boost (order several).**
-- Logic on a **separate, stiff** supply (never board-powered for the bring-up).
-- **Scope `VSW-BT`/`VOUT-BT` from t=0**, single-shot armed past ~18 V, fast manual kill ready.
-  Expectation: a **>20 V spike / ring** at the bus-connect current step, exceeding the 20 V abs-max.
-  No input current limit is protective (energy is internal ½·L·di²) — scope + fast cutoff is the net.
-- Capture `VSW-FC`/`VOUT-FC` on the working FC channel as the clean reference (smaller, faster-damped).
+**1. High-bandwidth margin check (before heavy load testing).** The validation captures were 1×
+probe (~10 MHz) at 50 MSa/s — the estimated 100–200 MHz hot-loop ring is invisible in them.
+Re-measure: **10× probe, full scope bandwidth, ground spring** on the BT SW pin, steady state under
+some load, single-shot armed ~18.5 V. If the peak is comfortably < ~19 V → done, no snubber. If it
+kisses 19+ → size an RC snubber (SW→GND, ~5–10 Ω + a few hundred pF from the measured ring
+frequency) and refit.
 
-**2. Board-level fix (firmware can't help) — collapse the BT hot loop first.**
-- **Add a ceramic output cap (e.g. 1–4.7 µF, ≥25 V) bodged RIGHT at the BT IC `VOUT`/`PGND` pins**
-  — pull Cout from 240 mil back to FC-like (~40 mil). This is the direct fix for the measured 6×
-  hot-loop asymmetry and the first thing to try.
-- **± RC snubber across the BT SW node** (SW→GND, a few hundred pF + ~1–10 Ω, value from the scoped
-  ring frequency) to damp residual overshoot.
-- **Respin the BT channel** to place the output caps tight to the IC like FC (proper fix); also widen
-  the `VBUS-BT` run.
-- Re-derate switching current / lower bus-connect di/dt as an interim de-risk.
+**2. Startup hiccup — explained (see the note under Fix Validation).** The aborted first soft-start
+on every cold `G` is a VIN-UVLO retry caused by the 9 V battery source collapsing under the
+constant-power ramp load; benign, self-healing, invisible on VBUS. Optional confirmation: scope
+VBT + VOUT on one `G` (expect a VBT dive to ~2 V), or repeat on a stiff ≥3 A supply (expect one
+clean ramp). Use a stiff supply or real pack for all further testing.
 
-**3. While reworking, knock out the cheap secondary checks:** measure the BT output caps for
-cracks/lost capacitance; reflow/inspect the BT IC `VOUT`/`PGND` joints and vias; optionally run the
-no-boost DC-injection test with `BT_SEQUENCE` OFF to close that loose end.
+**3. Escalate load stepwise, scope armed on the first attempt of each:** repeated cold `G` cycles →
+`MOT_PWR_ENABLE` (V-MOT 470 µF pre-charge) → dual-source with FC → motor load → regen events.
 
-**Decisive confirmation:** a new boost on the BT channel **with a cap added at the IC VOUT/PGND**
-that now survives the bus connect, scope showing the overshoot pulled under 20 V, closes this out.
+**4. Board respin items (the permanent fix):** move the BT output caps to the IC `VOUT`/`PGND`
+(≤ ~40 mil, mirror FC); keep the bodge caps as the reference implementation. Consider also matching
+the FC/BT `VSW` pour geometry and widening `VBUS-BT` while in there.
+
+**5. Housekeeping:** update the in-code comments that say "mechanism unconfirmed, pending scope" —
+the mechanism is now validated by intervention (hot-loop caps). Keep `RC-BT` = 61.2 kΩ unless the
+deep-discharge case is re-analyzed properly with the bus load included.
 
 ---
 
@@ -264,12 +306,11 @@ that now survives the bus connect, scope showing the overshoot pulled under 20 V
 The firmware changes made across these sessions (boosts default OFF; `doState0()` gentle bring-up
 + V_bus gate; `BENCH_TEST` bypass that boots to Idle with the power stage off; State-98 `G`
 bring-up + `1`/`2` hot-plug guard; Finish leaves bus energized) are **defensive and still
-reasonable**, but they target the *bring-up sequence / supply* — which the data shows is **not**
-the root cause. **The leading hypothesis is a BT-channel layout asymmetry (output-cap hot loop, and
-to a lesser degree the SW pour) causing a destructive SW overshoot, pending scope confirmation;
-firmware cannot fix it — it needs an SW snubber / added local `Cout` near the IC / a BT-channel
-respin.** The
-in-code comments are deliberately framed as "mechanism unconfirmed, pending scope" — treat this
-doc as the authoritative, current understanding.
+reasonable**, but they target the *bring-up sequence / supply* — which the data shows was **not**
+the root cause. **The root cause was the BT output-cap hot-loop layout, fixed in hardware
+(10 µF + 0.1 µF at the BT boost output, validated 2026-07-07); firmware was never the problem.**
+The in-code comments still say "mechanism unconfirmed, pending scope" — update them to reference
+the validated hot-loop fix (Next steps §5). Treat this doc as the authoritative, current
+understanding.
 
 All 219 (production) + 5 (bench) host-native tests pass: `cd test && mingw32-make`.

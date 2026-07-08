@@ -232,14 +232,19 @@ def freq_report(sides, outdir):
         return
     plt = _plt()
     fig, ax = plt.subplots(figsize=(7.6, 4.8))
+    ax.margins(y=0.18)      # headroom so below-trace labels clear the axis spine
     for (label, m_des, pts), style in zip(series, SERIES_STYLE * 8):
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
         ax.semilogx(xs, ys, ls="-", lw=2, ms=8,
                     label=f"{label} @ {m_des:g} mm mesh", **style)
-        for x, y in pts:
+        # Alternate labels above/below the trace: adjacent points on the log axis
+        # (e.g. 500 kHz and 1 MHz) otherwise collide into one unreadable string.
+        for k, (x, y) in enumerate(pts):
+            above = (k % 2 == 0)
             ax.annotate(f"{y:.3f}", (x, y), textcoords="offset points",
-                        xytext=(0, 9), ha="center", fontsize=8, color=style["color"])
+                        xytext=(0, 9 if above else -16), ha="center",
+                        fontsize=8, color=style["color"])
     ax.set_xlabel("frequency [Hz]")
     ax.set_ylabel("loop inductance [nH]")
     ax.set_title("Loop inductance vs frequency (designated mesh per side)")

@@ -537,16 +537,17 @@ code/docs stop repeating them:
   bypass (`test_dostate0_bench_bypass`); the `-DBENCH_TEST=0` build keeps the production `doState0`
   tests. `cd test && mingw32-make` builds and runs both.
 
-### ⚠️ OPEN HARDWARE FAULT — battery boost dies on VBUS connection (read before bench work)
+### ✅ RESOLVED (2026-07-07) — battery boost VBUS-connect deaths: hot-loop layout, fixed with caps
 
-**Three battery-side TPS61288 boosts have now been destroyed**, each the instant `BT_BUS_ENABLE`
-(`D-BT-EN`) connects the battery boost to VBUS. The boost regulates 17.5 V fine *standalone*; the
-FC boost connects to VBUS without incident. The fault is **dynamic, hardware, and specific to the
-battery bus path** — the firmware bring-up changes above are defensive but do **not** fix it (they
-targeted the supply/sequence, which the data has since ruled out). **Do not install another boost
-or apply full current blindly.** No input current limit is proven safe (death #2 was at 120 mA).
-Full datapoints, ruled-out hypotheses, the FC-vs-BT schematic delta, safety rules, and the
-boost-removed decisive test are in **`docs/boost-bringup-debug.md`** — read it first.
+Four battery-side TPS61288 boosts were destroyed on `BT_BUS_ENABLE` bus-connect. **Root cause: the
+BT channel's output caps sit 240 mil from the IC output (FC: 40 mil) → ~2.7× output-cap hot-loop
+inductance → SW/VOUT overshoot past the 20 V abs-max when driving the bus.** Fix: **10 µF + 0.1 µF
+ceramics bodged directly at the BT boost output** — validated by four consecutive surviving `G`
+bring-ups under Death-4 conditions (single-variable test; scope captures in
+`references/scope_captures/`). **Any future BT boost install must keep these caps** (or a respun
+layout with Cout at the IC). Still owed: a high-bandwidth (10× probe) SW-ring margin check before
+heavy load testing, and the respin item. Full history, datapoints, and remaining steps in
+**`docs/boost-bringup-debug.md`**.
 
 ---
 

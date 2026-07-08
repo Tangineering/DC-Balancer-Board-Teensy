@@ -33,16 +33,19 @@
  *    (only State 99 tears the bus down). State 98 adds a hot-plug guard on '1'/'2' and a 'G'
  *    bring-up command. No telemetry layout change.
  *  - Corrected failure analysis (supersedes the inrush framing): the killer is NOT 470µF bus
- *    inrush. VBUS carries only ~30–40µF; the 470µF bulk cap is on V-MOT behind MOT_PWR_ENABLE. The
- *    real cause is enabling a BOOST on a source that can collapse: switching with built-up inductor
- *    current on a sagging/recovering rail destroys the power stage. Exact mechanism UNCONFIRMED
- *    (pending a SW/VOUT scope capture) — most likely a VOUT overshoot past the 20V SW/VOUT abs-max
- *    (OVP at 19V leaves ~0.5V margin; 3×22µF output caps DC-derate to ~30µF) and/or transient
- *    reverse conduction; either way the energy is from the boost's own L/Cout, so a supply current
- *    limit does NOT bound it. On a board-powered Teensy this also motorboats (boost loads VBT →
- *    brownout → reset → re-enable). So under BENCH_TEST, doState0() now boots straight to Idle with
- *    the power stage OFF (no auto boost/bus enable, no V_bus gate); the bus is brought up manually
- *    via 'G' on a stiff supply. Production (BENCH_TEST=0) keeps the full bring-up + gate.
+ *    inrush. VBUS carries only ~30–40µF; the 470µF bulk cap is on V-MOT behind MOT_PWR_ENABLE.
+ *    ROOT CAUSE FOUND & FIXED (2026-07-07, hardware): the BT channel's output caps sit 240 mil
+ *    from the IC output pin (FC: 40 mil) → ~2.7× output-cap hot-loop inductance → SW/VOUT
+ *    overshoot past the 20V abs-max when the boost drives the bus (OVP at 19V leaves ~0.5V
+ *    margin; energy is the boost's own ½·L·di², so a supply current limit does NOT bound it —
+ *    one boost died at 120mA input limit). Fixed by bodging 10µF + 0.1µF directly at the BT
+ *    boost output; validated by four consecutive surviving 'G' bring-ups under the exact
+ *    conditions that killed boost #4 (see docs/boost-bringup-debug.md, the authoritative record).
+ *    The supply-collapse/motorboating framing described a real aggravator on a board-powered
+ *    Teensy (boost loads VBT → brownout → reset → re-enable) but was not the root cause. Under
+ *    BENCH_TEST, doState0() still boots straight to Idle with the power stage OFF (no auto
+ *    boost/bus enable, no V_bus gate); the bus is brought up manually via 'G'. Production
+ *    (BENCH_TEST=0) keeps the full bring-up + gate. These defensive behaviors are kept.
  *  - Audit round (2026-07-01): removed pinMode(RX/TX) after Serial1 init (was reverting the pad
  *    mux to GPIO and killing the VESC UART on Teensy 4.x); PI controllers now always return a
  *    live output (integrator still gated to sampleTime; the old 0.0f sentinel chopped the motor
@@ -155,16 +158,19 @@ EthernetUDP Udp;
 //   - VBUS carries only ~30–40µF (the RT1987 ceramics). The 470µF bulk cap (schematic sheet 4,
 //     EEE-FN1V471UP) sits on the V-MOT / regen node BEHIND MOT_PWR_ENABLE, so it is not on VBUS
 //     during Init. Bus inrush is negligible and was never the failure cause.
-//   - The real hazard is enabling a BOOST on a source that can COLLAPSE. The Teensy is board-
-//     powered (LM1084 off VBT). On a weak / current-limited source, the boost loads VBT, the rail
-//     sags, the Teensy browns out and re-enables the boost on reboot (motorboating). Switching with
-//     built-up inductor current on a sagging/recovering rail drives the power stage into abnormal
-//     operation and destroys it. Exact mechanism is UNCONFIRMED (pending a SW/VOUT scope capture):
-//     most likely a VOUT overshoot past the 20V SW/VOUT abs-max — OVP is at 19V, only ~0.5V of
-//     margin, and the 3×22µF output caps DC-derate to ~30µF, so an inductor-commutation spike
-//     rings over 20V — and/or transient reverse conduction. Either way the destructive energy comes
-//     from the boost's own inductor/output cap, so a SUPPLY current limit does NOT bound it. (Same
-//     class of event killed the boost in the original weak-9V-battery incident.)
+//   - ROOT CAUSE (validated 2026-07-07, hardware — see docs/boost-bringup-debug.md): the BT
+//     channel's output caps sit 240 mil from the TPS61288 output pin (FC channel: 40 mil) →
+//     ~2.7× output-cap hot-loop inductance → SW/VOUT overshoot past the 20V abs-max when the
+//     boost drives the bus (OVP at 19V leaves only ~0.5V margin). The energy is the boost's own
+//     ½·L·di², so a SUPPLY current limit does NOT bound it (one boost died at a 120mA limit).
+//     Fixed by bodging 10µF + 0.1µF directly at the BT boost output; validated by four
+//     consecutive surviving 'G' bring-ups under previously-fatal conditions. Any BT boost rework
+//     MUST keep these caps (or a respun layout with Cout at the IC).
+//   - Secondary hazard (real, but an aggravator — not the root cause): enabling a boost on a
+//     source that can COLLAPSE. The Teensy is board-powered (LM1084 off VBT); on a weak /
+//     current-limited source the boost loads VBT, the rail sags, the Teensy browns out and
+//     re-enables the boost on reboot (motorboating). The bring-up sequencing below defends
+//     against this.
 // Production (BENCH_TEST=0, stiff vehicle source) brings the bus up gently — bus switches first,
 // then the boosts' own soft-start raises the bus — and gates on V_bus to detect a dead boost / no
 // source. BENCH_TEST keeps the power stage OFF at boot (see doState0()); bring the bus up with the
@@ -947,12 +953,14 @@ void doState0() {
     //
     // Why: the Teensy is board-powered (LM1084 off VBT). On a current-limited / soft bench supply
     // that can't carry the logic baseline, enabling a boost at boot makes VBT sag, browns out the
-    // Teensy, and re-runs this on reboot — motorboating. Switching with built-up inductor current
-    // on a sagging/recovering rail then destroys the power stage (most likely a VOUT overshoot past
-    // the 20V abs-max — OVP at 19V leaves only ~0.5V margin — and/or reverse conduction; mechanism
-    // UNCONFIRMED pending a scope capture). The destructive energy is from the boost's own L/Cout,
-    // so a bench current limit does NOT protect it. Keeping the power stage off at boot avoids the
-    // whole loop. Bring the bus up manually with the State-98 'G' command on a STIFF supply.
+    // Teensy, and re-runs this on reboot — motorboating. That was an aggravator; the ROOT CAUSE of
+    // the boost deaths was the BT output-cap hot-loop layout (Cout 240 mil from the IC vs FC's
+    // 40 mil → SW/VOUT overshoot past the 20V abs-max), found and fixed in hardware 2026-07-07 by
+    // bodging 10µF + 0.1µF at the BT boost output (validated: four surviving 'G' bring-ups; see
+    // docs/boost-bringup-debug.md). The destructive energy is the boost's own ½·L·di², so a bench
+    // current limit does NOT protect it (one boost died at 120mA). Keeping the power stage off at
+    // boot still avoids the brownout/motorboating loop on a soft supply. Bring the bus up manually
+    // with the State-98 'G' command on a STIFF supply.
     // Production (BENCH_TEST=0) runs the full bring-up + gate below.
     initControlPeripherals();
     Serial.println("State 0 -> State 1 (IDLE) [BENCH_TEST: power stage off; bring up with 'G']");
@@ -1730,9 +1738,11 @@ void safeAllSwitches() {
 // VBUS bring-up: bus switches FIRST, then boosts (see "VBUS controlled bring-up" note and
 // doState0()). Used by the State 98 'G' command so the operator can energize the bus under manual
 // control — the only way to bring the bus up under BENCH_TEST, where doState0() leaves the power
-// stage off at boot. Use ONLY on a STIFF supply: enabling the boost on a source that can collapse
-// (weak/current-limited) destroys the power stage (output overshoot past the 20V abs-max and/or
-// reverse conduction; energy from the boost's own L/Cout, so a current limit does NOT protect it).
+// stage off at boot. The historical BT-boost deaths on this sequence were the output-cap hot-loop
+// layout (fixed in hardware 2026-07-07 — 10µF + 0.1µF at the BT boost output; validated by four
+// surviving 'G' bring-ups; see docs/boost-bringup-debug.md). Still use a STIFF supply: a source
+// that collapses under the ~1.5–2A soft-start draw sags VBT and browns out the board-powered
+// Teensy (motorboating), and no supply current limit bounds the boost's internal ½·L·di² energy.
 // Brief blocking settle is fine here (one-shot, interactive). Does NOT gate on V_bus — caller can
 // read it back with 'S'.
 void bringUpBus() {
@@ -1745,10 +1755,13 @@ void bringUpBus() {
     digitalWrite(BT_REG_ENABLE, HIGH);
 }
 
-// True when turning a *_BUS_ENABLE switch ON would hot-plug a RUNNING boost onto a discharged bus
-// — the exact condition that destroyed the BT boost. We can't sense the boost output directly, so
-// "boost ON (regPin HIGH) AND bus below the charged threshold" is the available proxy. Used by the
-// State 98 '1'/'2' handlers to refuse the unsafe toggle (use 'G' for a safe bring-up instead).
+// True when turning a *_BUS_ENABLE switch ON would hot-plug a RUNNING boost onto a discharged bus.
+// (Historical note: this was once believed to be what killed the BT boosts; the validated root
+// cause was the BT output-cap hot loop, fixed in hardware — see docs/boost-bringup-debug.md. The
+// guard is kept as cheap defense: a hot-plug step is still a needless load transient.) We can't
+// sense the boost output directly, so "boost ON (regPin HIGH) AND bus below the charged threshold"
+// is the available proxy. Used by the State 98 '1'/'2' handlers to refuse the unsafe toggle (use
+// 'G' for a safe bring-up instead).
 bool busHotPlugUnsafe(int regPin) {
     return digitalRead(regPin) == HIGH && V_bus < V_BUS_CHARGED_THRESH;
 }
