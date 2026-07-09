@@ -1083,6 +1083,8 @@ static void test_dostate0_reaches_idle_unpowered() {
           "doState0: still in Init after enabling bus switches");
     check(digitalRead(FC_BUS_ENABLE) == HIGH && digitalRead(BT_BUS_ENABLE) == HIGH,
           "doState0: bus switches enabled FIRST");
+    check(digitalRead(MOT_PWR_ENABLE) == HIGH,
+          "doState0: MOT_PWR pre-charged with the bus switches (before boosts) — no full-bus hot-plug");
     check(digitalRead(FC_REG_ENABLE) == LOW && digitalRead(BT_REG_ENABLE) == LOW,
           "doState0: boosts NOT enabled before the bus switches (no hot-plug)");
 
@@ -1235,8 +1237,110 @@ static void test_dostate3_leaves_bus_energized() {
           "doState3: bus switches stay ON (no re-hot-plug on next Run)");
     check(digitalRead(FC_REG_ENABLE) == HIGH && digitalRead(BT_REG_ENABLE) == HIGH,
           "doState3: boosts stay ON (bus remains armed)");
+    // Death-5 change: the motor node is left ENERGIZED (like the bus) so Idle→Run never re-hot-plugs
+    // the 470µF+VESC stack. The motor is held stopped by the zero VESC command, not by cutting power.
+    check(digitalRead(MOT_PWR_ENABLE) == HIGH,
+          "doState3: motor node stays energized (no re-hot-plug on next Run)");
+    check(vesc.last_current == 0.0f,
+          "doState3: motor commanded to zero (held stopped without cutting MOT_PWR)");
+}
+
+// ─── Motor-node pre-charge hot-plug guard (Death 5) ──────────────────────────
+static void test_mot_pwr_hotplug_guard() {
+    test_group("MOT_PWR hot-plug guard (motPwrHotPlugUnsafe/assertMotPwrEnable/doState2)");
+
+    // motPwrHotPlugUnsafe(): true only when the bus is up AND the motor node lags it by > margin.
+    reset_test_state();
+    V_bus = 18.0f; V_rgn = 0.0f;             // bus up, motor node discharged
+    check(motPwrHotPlugUnsafe() == true,
+          "unsafe: bus energized + motor node discharged → hot-plug");
+    V_rgn = 18.0f;                            // motor node tracks the bus (pre-charged)
+    check(motPwrHotPlugUnsafe() == false,
+          "safe: motor node pre-charged (V_rgn ≈ V_bus)");
+    V_bus = 5.0f; V_rgn = 0.0f;               // low-voltage bring-up window (bus not yet up)
+    check(motPwrHotPlugUnsafe() == false,
+          "safe: bus below charged threshold → low-voltage pre-charge allowed");
+
+    // assertMotPwrEnable(): OFF always allowed; ON idempotent; ON refused when unsafe; ON allowed safe.
+    reset_test_state();
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    check(assertMotPwrEnable(false) == true && digitalRead(MOT_PWR_ENABLE) == LOW,
+          "assert: OFF always succeeds");
+    g_pin_value[MOT_PWR_ENABLE] = HIGH; V_bus = 18.0f; V_rgn = 0.0f;
+    check(assertMotPwrEnable(true) == true && digitalRead(MOT_PWR_ENABLE) == HIGH,
+          "assert: already-ON is idempotent (never re-checks the guard)");
+    g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 18.0f; V_rgn = 0.0f;
+    check(assertMotPwrEnable(true) == false && digitalRead(MOT_PWR_ENABLE) == LOW,
+          "assert: ON refused when it would hot-plug (stays LOW)");
+    g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 18.0f; V_rgn = 17.0f;
+    check(assertMotPwrEnable(true) == true && digitalRead(MOT_PWR_ENABLE) == HIGH,
+          "assert: ON allowed when the motor node is already charged");
+    g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 5.0f; V_rgn = 0.0f;
+    check(assertMotPwrEnable(true) == true && digitalRead(MOT_PWR_ENABLE) == HIGH,
+          "assert: ON allowed during low-voltage bring-up (pre-charge)");
+
+    // doState2(): normal case — motor node already energized → runs, no fault.
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH; V_bus = 18.0f; V_rgn = 18.0f;
+    doState2();
+    check(mainState == 2 && !(fault_flags & FAULT_MOT_HOTPLUG),
+          "doState2: pre-charged motor node → runs normally, no fault");
+    check(digitalRead(MOT_PWR_ENABLE) == HIGH,
+          "doState2: MOT_PWR stays energized");
+
+    // doState2(): abnormal case — motor node discharged at full bus → refuse + fault (no hot-plug).
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 18.0f; V_rgn = 0.0f;
+    doState2();
     check(digitalRead(MOT_PWR_ENABLE) == LOW,
-          "doState3: motor power cut");
+          "doState2: refuses the hot-plug (MOT_PWR stays LOW)");
+    check(mainState == 99 && error_code == ERR_MOT_HOTPLUG,
+          "doState2: latches State 99 with ERR_MOT_HOTPLUG instead of hot-plugging");
+    check((fault_flags & FAULT_MOT_HOTPLUG) != 0,
+          "doState2: FAULT_MOT_HOTPLUG flag set");
+}
+
+// ─── State 98 '3' motor-node hot-plug guard ──────────────────────────────────
+static void test_dostate98_mot_pwr_guard() {
+    test_group("State 98 '3' refuses the motor-node hot-plug");
+    reset_test_state();
+    mainState = 98;
+
+    // Motor node discharged + bus up → '3' ON refused (MOT_PWR stays LOW).
+    g_pin_value[MOT_PWR_ENABLE] = LOW;
+    V_bus = 18.0f; V_rgn = 0.0f;
+    Serial.rx_queue.push('3');
+    doState98();
+    check(digitalRead(MOT_PWR_ENABLE) == LOW,
+          "doState98: '3' refused (motor node discharged, bus up) — stays LOW");
+
+    // Motor node pre-charged → '3' ON allowed.
+    g_pin_value[MOT_PWR_ENABLE] = LOW;
+    V_bus = 18.0f; V_rgn = 17.0f;
+    Serial.rx_queue.push('3');
+    doState98();
+    check(digitalRead(MOT_PWR_ENABLE) == HIGH,
+          "doState98: '3' allowed when the motor node is pre-charged");
+
+    // Turning OFF is always allowed.
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    V_bus = 18.0f; V_rgn = 0.0f;
+    Serial.rx_queue.push('3');
+    doState98();
+    check(digitalRead(MOT_PWR_ENABLE) == LOW,
+          "doState98: '3' OFF always allowed (guard only blocks ON)");
+}
+
+// ─── V_BUS_NOMINAL parameterization preserves current thresholds ─────────────
+static void test_bus_voltage_scaling() {
+    test_group("V_BUS_NOMINAL-derived thresholds (17.5V nominal, pre-retune)");
+    // The parameterization must not change live behavior until the hardware FB retune.
+    check(fabsf(LIMIT_V_BUS_MAX - 18.5f) < 1e-4f,
+          "LIMIT_V_BUS_MAX = V_BUS_NOMINAL + 1.0 = 18.5 (unchanged at 17.5V nominal)");
+    check(fabsf(V_BUS_CHARGED_THRESH - 15.0f) < 1e-4f,
+          "V_BUS_CHARGED_THRESH = V_BUS_NOMINAL - 2.5 = 15.0 (unchanged at 17.5V nominal)");
 }
 
 // ─── detectFaults() Ag105 GENSTAT error-state decoding ───────────────────────
@@ -1779,6 +1883,8 @@ static void test_dostate0_bench_bypass() {
           "doState0/bench: boosts stay OFF");
     check(digitalRead(FC_BUS_ENABLE) == LOW && digitalRead(BT_BUS_ENABLE) == LOW,
           "doState0/bench: bus switches stay OFF");
+    check(digitalRead(MOT_PWR_ENABLE) == LOW,
+          "doState0/bench: motor node NOT pre-charged (power stage dark until 'G')");
     check(digitalRead(BT_SEQUENCE_ENABLE) == LOW,
           "doState0/bench: BT_SEQUENCE stays OFF");
     check(!(fault_flags & FAULT_INIT_FAIL) && error_code == ERR_NONE && mainState != 99,
@@ -1815,6 +1921,9 @@ int main() {
     test_dostate98_bt_bus_fc_charge_guard();
     test_dostate98_quit_closes_charge_paths();
     test_dostate3_leaves_bus_energized();
+    test_mot_pwr_hotplug_guard();
+    test_dostate98_mot_pwr_guard();
+    test_bus_voltage_scaling();
     test_genstat_fault();
     test_uv_boot_gate();
     test_pollag105_state_gate();

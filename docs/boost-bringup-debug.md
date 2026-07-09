@@ -1,17 +1,20 @@
 # Battery boost (TPS61288) repeated-failure debug log
 
-**Status: FIX VALIDATED (2026-07-07)** — root cause was the **BT output-cap hot loop** (Cout 240 mil
-from the IC output vs FC's 40 mil). **Bodging 10 µF + 0.1 µF directly at the BT boost output
-collapsed the hot loop, and the new BT TPS61288 has now survived FOUR consecutive `G` bus
-bring-ups** — the exact sequence that killed Death 4 — regulating the bus at 17.7 V (scope captures
-in `references/scope_captures/`). This was a controlled single-variable test: same conditions as
-Death 4 except the caps. History: four boosts destroyed on bus-connect; schematic proven symmetric
-(only `RC` differed, since reverted; `R1` is the irrelevant ADC sense divider) → cause physical/
-layout by elimination → hot-loop mechanism (larger BT loop L rings SW/VOUT past the **20 V abs-max**,
-only ~0.5–1.5 V over the 17.5 V rail; energy is internal ½·L·di², so no input current limit bounds
-it — Death 2 died at 120 mA). **Remaining:** a high-bandwidth margin check (10× probe, ground
-spring, SW edge at steady state) before heavy load testing — the validation captures were 1×-probe/
-low-BW, so residual ring margin is unquantified — and placing Cout at the IC on any respin. This
+**Status (2026-07-08): BT hot-loop fix VALIDATED, but a FIFTH death (the FC boost this time) shows
+the overshoot mechanism is CURRENT-SCALED and system-wide.** The BT fix (10 µF + 0.1 µF at the BT
+boost output, collapsing its 240 mil hot loop) held: four surviving `G` bring-ups, and both boosts
+now drive the bus and the 470 µF motor node off 9 V batteries. **But closing `MOT_PWR_ENABLE` onto
+an attached VESC with a stiff source killed the FC boost** (Death 5 — same `VFC`→GND VIN–SW–VOUT
+signature). Unified picture: SW/VOUT ring amplitude scales with commutated current. BT's 6×-worse
+hot loop died at light bus-connect currents (Deaths 1–4, fixed); at the **15 A-class currents of a
+motor-node hot-plug** (D-MT-EN's ~1.17 ms soft-start cannot charge 470 µF + VESC input caps →
+RT1987 SCP burst-retry → repetitive full-current load-dumps on the boosts), even FC's good 40 mil
+layout rings past the **20 V abs-max** — but only when the source is stiff enough to deliver the
+current (9 V batteries sag/UVLO first, which is why battery runs survive and DC-supply runs kill).
+A stiff-supply `G` also overshoots to ~19 V at bring-up (bus OV fault) — the margin above 17.5 V is
+razor-thin everywhere. **Plan: drop the bus to 16 V nominal (headroom), NEVER hot-plug the motor
+node at full bus (pre-charge sequencing — firmware), bodge FC's output like BT's, and do the
+high-BW ring measurement before further load work.** See "Death 5 / motor-node round". This
 document is the cold-start reference — read it before touching the bench.
 
 **One-line summary (how it was solved):** boost fine standalone; bus path proven clean without the
@@ -155,6 +158,53 @@ Observed on every cold bring-up: VOUT ramps to 17.7 V, holds ~1.5 ms, collapses 
   diving to ~2 V at the collapse), or use a stiff ≥3 A supply → single clean ramp expected.
   **Do not load-test from the 9 V battery** — repeated deep UVLO-cycling is the historical stress
   pattern, and the battery can't source load tests anyway.
+
+### ☠️ Death 5 (FC boost) + motor-node hot-plug round (2026-07-08)
+
+| Config | Action | Result |
+|---|---|---|
+| Both sources = 9 V batteries; BT bodge caps fitted | `G` bring-up, then `MOT_PWR_ENABLE` onto the bare 470 µF motor node | **Works** — both boosts on the bus, motor node charged |
+| Either source = stiff DC supply | `G` bring-up | **Bus overvoltage fault at ~19 V** (soft-start hand-off overshoot; on batteries the sag/UVLO-hiccup masks it) |
+| Two 9 V batteries; **VESC attached** to motor node | `MOT_PWR_ENABLE` at full bus | **Teensy browned out / USB disconnected** (board-powered logic; batteries collapsed under the inrush). Boosts survived. |
+| BT = 9 V battery, FC = **stiff DC supply**; VESC attached | `MOT_PWR_ENABLE` at full bus | **FC boost DIED** — `VFC`→GND short (same VIN–SW–VOUT signature as Deaths 1–4); supply drew 5 A after death |
+
+**Mechanism.** Closing `D-MT-EN` at full bus onto a discharged motor node (470 µF + the VESC's own
+input capacitance, likely another several hundred µF–mF) is the *same hot-plug sin* as the original
+VBUS incident, one node downstream: the RT1987's ~1.17 ms soft-start cannot charge that stack →
+**SCP burst-retry**, each burst yanking VBUS down and slamming the boosts to their 15 A cycle
+limit, then load-dumping them mid-burst. SW ring amplitude scales with the commutated current — at
+15 A-class events even FC's tight 40 mil hot loop rings past the 20 V abs-max. **The kill requires
+a stiff source**: 9 V batteries collapse to UVLO before lethal current flows (→ brownout chaos, no
+deaths); the DC supply delivers it (→ Death 5 on the FC side, while BT on its sagging battery
+survived). This retroactively explains the source-dependence across all five deaths.
+
+**Actions:**
+1. **✅ IMPLEMENTED (firmware, 2026-07-08) — motor-node pre-charge sequencing.** Never close
+   `MOT_PWR_ENABLE` at full bus onto a discharged motor node. `doState0()` phase 0 and `bringUpBus()`
+   ('G') now raise `MOT_PWR` **with the bus switches, before the boosts ramp**, so the boost
+   soft-start charges the 470µF+VESC stack from ~Vbatt together. The node then stays energized
+   through Idle/Run (`doState1()`/`doState3()` no longer force it LOW — the motor is held stopped by
+   `vesc.setCurrent(0)`), torn down only in State 99, so no Idle→Run ever re-hot-plugs it. New
+   `motPwrHotPlugUnsafe()` (V_bus up AND `V_rgn` lagging by > `MOT_HOTPLUG_MARGIN`, from pin 39) +
+   `assertMotPwrEnable()` guard: `doState2()` faults (`FAULT_MOT_HOTPLUG`/`ERR_MOT_HOTPLUG`, new)
+   rather than hot-plug; State 98 '3' refuses it. **Design-posture change to flag:** the VESC is now
+   powered in Idle (contra CLAUDE.md §2 "MOT_PWR OFF in Idle") — the motor is held off by the zero
+   command, not by cutting power. Bench TODO: confirm `RGN_VOLTAGE` reads the V-MOT node and
+   calibrate `MOT_HOTPLUG_MARGIN`. 298+6 host tests pass.
+2. **Drop the bus to 16 V nominal** (operator decision). **Firmware side prepared:** `V_BUS_NOMINAL`
+   (17.5f) now parameterizes `LIMIT_V_BUS_MAX` (= nom+1) and `V_BUS_CHARGED_THRESH` (= nom−2.5);
+   values unchanged at 17.5 until the **hardware FB/injection retune** — then flip `V_BUS_NOMINAL` →
+   16.0f (one line). Turns the ~19 V bring-up overshoot into ~17.5 V peak (no OVP fault) and doubles
+   abs-max headroom (2.5 → 4 V). Shunt/chopper trip → 20 V is acceptable for the regen node (D-MT-EN
+   blocks reverse, so the regen node cannot back-feed the boosts; the shunt bound is the charger
+   input / cap ratings, not the boost abs-max) — but a cleaner ladder is nominal 16 < FW fault ~17.5
+   < shunt ~18.5 < OVP 19 < abs-max 20 if the divider allows.
+3. **Bodge 10 µF + 0.1 µF at the FC boost output too** when replacing the dead FC part — same
+   insurance, trivially cheap.
+4. **High-BW ring measurement is now blocking, not optional**: 10× probe + ground spring on SW,
+   measure the ring at a controlled load step before any further VESC/load testing — 16 V of
+   nominal only helps if the ring at working currents fits in the 4 V of headroom it buys.
+5. FC TPS61288 needs replacement (Death 5 post-mortem: `VFC`↔GND short).
 
 ---
 

@@ -56,6 +56,18 @@
  *    'Q' closes FC_CHARGE/REGEN on exit; USE_ETHERNET now #ifndef-overridable with a #warning on
  *    the production-without-Ethernet combination. LIMIT_V_BATT_MAX flagged: 10.0f is above the
  *    8.646V divider ceiling and can never trip — change to 8.5f after 9V-battery bench testing.
+ *  - Motor-node pre-charge sequencing (Death 5, 2026-07-08; docs/boost-bringup-debug.md). Closing
+ *    MOT_PWR_ENABLE at full bus onto the discharged 470µF+VESC V-MOT node hot-plugged the boosts and
+ *    killed the FC boost. Fix: pre-charge the motor node during the low-voltage bring-up (doState0()
+ *    phase 0 + bringUpBus() now raise MOT_PWR with the bus switches, before the boosts ramp), then
+ *    keep it energized through Idle/Run (torn down only in State 99) so no Idle→Run re-hot-plugs it.
+ *    New motPwrHotPlugUnsafe()/assertMotPwrEnable() guard (mirrors busHotPlugUnsafe) gates the
+ *    full-bus ON: doState2() faults (FAULT_MOT_HOTPLUG/ERR_MOT_HOTPLUG, new) rather than hot-plug;
+ *    State 98 '3' refuses it. doState1()/doState3() no longer force MOT_PWR LOW — the motor is held
+ *    stopped by vesc.setCurrent(0), a deliberate change from the old "motor isolated in Idle" intent.
+ *    Bus voltage parameterized on V_BUS_NOMINAL (17.5f; TODO → 16.0f after the boost FB retune for
+ *    SW abs-max headroom) — LIMIT_V_BUS_MAX / V_BUS_CHARGED_THRESH derive from it (current values
+ *    unchanged).
  */
 
 #include <VescUart.h>
@@ -133,14 +145,22 @@ EthernetUDP Udp;
 #define FAULT_I2C_CHARGER     0x0800  // Ag105 I2C comms failure
 #define FAULT_CHARGER_STAT    0x1000  // Ag105 GENSTAT error condition
 #define FAULT_INIT_FAIL       0x2000  // Init sequence failure (State 0)
-// bit 14 reserved
+#define FAULT_MOT_HOTPLUG     0x4000  // MOT_PWR_ENABLE refused: motor node not pre-charged at full bus
 #define FAULT_ERROR           0x8000  // Latched: system is in or has entered State 99
 
 // ── Safety limits ─────────────────────────────────────────────────────────────
 #define LIMIT_I_FC_MAX   3.5f   // A — H-20 max; Source: H-20 datasheet
 #define LIMIT_V_BATT_MIN 6.2f   // V — 2S LiPo cutoff (2 × 3.1V)
-// Source: user-confirmed: 17.5V nominal bus; TPS61288 HW OVP triggers at 19V
-#define LIMIT_V_BUS_MAX  18.5f  // V — 1V SW margin below 19V HW OVP
+// Nominal regulated bus voltage — set by the boost FB network in HARDWARE; the firmware thresholds
+// below derive from it. Death-5 headroom plan (docs/boost-bringup-debug.md): drop to 16.0f once the
+// FB network is retuned. That widens the SW/VOUT abs-max headroom (20V-16V = 4V vs 2.5V) and stops
+// the ~19V soft-start-hand-off bring-up overshoot from tripping OV_BUS on a stiff supply. DO NOT set
+// this below the voltage the hardware actually regulates, or OV_BUS trips immediately (the boost
+// still makes ~17.5V until the FB retune — this is a prepared constant, not a live change).
+#define V_BUS_NOMINAL    17.5f  // TODO(hardware-retune): → 16.0f when the boost FB network is retuned
+// Source: user-confirmed TPS61288 HW OVP at 19V. FW OV fault sits 1V above nominal (17.5→18.5,
+// 16.0→17.0), still below the 19V HW OVP so firmware catches a sustained overvoltage first.
+#define LIMIT_V_BUS_MAX  (V_BUS_NOMINAL + 1.0f)
 //#define LIMIT_V_BATT_MAX  8.6f  // V — 2S LiPo max (4.3V/cell × 2 + 0.2V margin)
 // TODO: change to 8.5f. The BT divider (16.2k/10k, BOM-confirmed) saturates the ADC at
 // 3.3*2.62 = 8.646V, so 10.0 can NEVER trip (OV_BATT is currently dead — and under BENCH_TEST
@@ -175,11 +195,19 @@ EthernetUDP Udp;
 // then the boosts' own soft-start raises the bus — and gates on V_bus to detect a dead boost / no
 // source. BENCH_TEST keeps the power stage OFF at boot (see doState0()); bring the bus up with the
 // State-98 'G' command on a stiff supply.
-#define V_BUS_CHARGED_THRESH 15.0f   // V — bus considered "up" (TODO(calibrate): ~0.85×17.5V)
+#define V_BUS_CHARGED_THRESH (V_BUS_NOMINAL - 2.5f)  // V — bus considered "up" (17.5→15.0; 16.0→13.5)
 #define BUS_SETTLE_MS         5u     // ms — RT1987 soft-start (~1.17ms) + margin (TODO(calibrate))
 #define BUS_CHARGE_TIMEOUT_MS 800u   // ms — max for boosts to reach V_BUS_CHARGED_THRESH; else
                                      //      FAULT_INIT_FAIL (dead boost / failed switch / no source).
                                      //      TODO(calibrate)
+
+// Motor-node (V-MOT/regen) pre-charge guard — see motPwrHotPlugUnsafe() / Death 5
+// (docs/boost-bringup-debug.md). The V-MOT node carries the 470µF bulk cap + the VESC's own input
+// capacitance. Closing D-MT-EN onto it at full bus is a boost-killing hot-plug (RT1987 soft-start
+// can't charge that stack → SCP burst-retry → 15A load-dumps ring the boost SW past 20V abs-max).
+// It must instead be pre-charged during the low-voltage bring-up. V_rgn may lag V_bus by up to this
+// margin and still count as "pre-charged" (safe to keep/turn D-MT-EN ON).
+#define MOT_HOTPLUG_MARGIN    3.0f   // V — TODO(calibrate) from the observed pre-charged V_rgn gap
 
 // ── Error code enum ───────────────────────────────────────────────────────────
 // Latching primary cause; set once by triggerFault() on first State-99 entry.
@@ -199,6 +227,7 @@ typedef enum : uint8_t {
     ERR_I2C_CHARGER     = 0x0C,  // Ag105 I2C comms failure
     ERR_CHARGER_STAT    = 0x0D,  // Ag105 GENSTAT error
     ERR_INIT_FAIL       = 0x0E,  // Init sequence failure
+    ERR_MOT_HOTPLUG     = 0x0F,  // MOT_PWR_ENABLE refused at full bus (motor node not pre-charged)
 } ErrorCode_t;
 
 // ── Ag105 MPPT charger I2C constants ─────────────────────────────────────────
@@ -492,6 +521,8 @@ float PI_Controller_Motor(float error);
 float PI_Controller_Power(float error);
 void setDroopMdac(float fc_gain, float bt_gain);
 void assertFcChargeEnable(bool enable);
+bool motPwrHotPlugUnsafe();
+bool assertMotPwrEnable(bool enable);
 void safeAllSwitches();
 void printTestStatus();
 void advanceDriveCycle();
@@ -702,6 +733,7 @@ const char* errorCodeStr(uint8_t code) {
         case ERR_I2C_CHARGER:     return "Ag105 I2C fail";
         case ERR_CHARGER_STAT:    return "Ag105 STAT fault";
         case ERR_INIT_FAIL:       return "Init failure";
+        case ERR_MOT_HOTPLUG:     return "Motor hot-plug refused";
         default:                  return "Unknown";
     }
 }
@@ -972,7 +1004,12 @@ void doState0() {
     // on the V-MOT / regen node behind MOT_PWR_ENABLE, so this is NOT about bus inrush. The ordering
     // (switches → settle → boosts) avoids any hot-plug step and lets the boosts' own soft-start
     // raise the bus; the V_bus gate then confirms a source actually brought it up.
-    //   Phase 0: enable the bus switches (boosts still OFF from setup).
+    //   Phase 0: enable the bus switches AND MOT_PWR (boosts still OFF from setup). Closing
+    //            MOT_PWR (D-MT-EN) here — while everything is at ~Vbatt and the boosts are OFF —
+    //            pre-charges the 470µF V-MOT node + the VESC input caps as part of the same slow
+    //            soft-start ramp, instead of hot-plugging that stack at full bus later (Death 5;
+    //            see motPwrHotPlugUnsafe()). The motor node then stays energized through Idle/Run
+    //            (torn down only in State 99), so no Run entry ever re-hot-plugs it.
     //   Phase 1: after BUS_SETTLE_MS, enable the boosts + BT_SEQUENCE and finish init.
     //   Phase 2: wait for V_bus ≥ V_BUS_CHARGED_THRESH; if it never arrives within
     //            BUS_CHARGE_TIMEOUT_MS → FAULT_INIT_FAIL (dead boost / failed switch / no source).
@@ -981,8 +1018,9 @@ void doState0() {
 
     switch (phase) {
         case 0:
-            digitalWrite(FC_BUS_ENABLE, HIGH);   // FC regulator → VBUS
-            digitalWrite(BT_BUS_ENABLE, HIGH);   // BT regulator → VBUS
+            digitalWrite(FC_BUS_ENABLE,  HIGH);  // FC regulator → VBUS
+            digitalWrite(BT_BUS_ENABLE,  HIGH);  // BT regulator → VBUS
+            digitalWrite(MOT_PWR_ENABLE, HIGH);  // VBUS → V-MOT: pre-charge the 470µF+VESC at low V
             phaseStart = millis();
             phase = 1;
             break;
@@ -1017,9 +1055,14 @@ void doState0() {
 }
 
 void doState1() {
-    // IDLE — belt-and-suspenders: ensure motor and regen paths are OFF
+    // IDLE — motor commanded to zero; regen path closed.
+    // NOTE (Death-5 sequencing change, 2026-07-08): MOT_PWR_ENABLE is intentionally NOT forced LOW
+    // here. The V-MOT/VESC node is pre-charged during the State-0 bring-up and must stay energized
+    // (like the bus) so the Idle→Run transition never re-hot-plugs it (that hot-plug killed the FC
+    // boost). The motor is held stopped by vesc.setCurrent(0) every Idle tick — NOT by cutting
+    // MOT_PWR. (Under BENCH_TEST the power stage boots dark, so MOT_PWR is simply LOW here until a
+    // 'G' bring-up energizes it.) Only State 99 tears the motor node down.
     vesc.setCurrent(0);
-    digitalWrite(MOT_PWR_ENABLE, LOW);
     digitalWrite(REGEN_ENABLE,   LOW);
 
     // 'S'/'s' toggles a 1 Hz sensor dump on/off while idle
@@ -1061,7 +1104,16 @@ void doState2() {
     // BT_BUS_ENABLE HIGH in all non-FC-charge paths and lets assertFcChargeEnable(true)
     // pull it LOW (with the required settling delay) before opening the FC→charger path.
     digitalWrite(FC_BUS_ENABLE, HIGH);    // FC regulator → VBUS always on in Run
-    digitalWrite(MOT_PWR_ENABLE, HIGH);   // VBUS → VESC/motor always on in Run
+
+    // VBUS → VESC/motor. Normally already HIGH (pre-charged in State 0, kept on through Idle), so
+    // this is an idempotent no-op. The guard only bites if the motor node is somehow LOW while the
+    // bus is up — that would be a boost-killing hot-plug (Death 5), so refuse and fault instead of
+    // slamming D-MT-EN closed onto a discharged 470µF+VESC stack at full bus.
+    if (!assertMotPwrEnable(true)) {
+        Serial.println("State 2: MOT_PWR hot-plug refused (motor node not pre-charged) -> FAULT");
+        triggerFault(FAULT_MOT_HOTPLUG, ERR_MOT_HOTPLUG);
+        return;
+    }
 
     chargingControl();   // power path state committed before motor/droop outputs change
     motorControl();
@@ -1087,13 +1139,17 @@ void doState3() {
     // old two-phase cap/regen drain sequence is no longer needed. End-of-run regen harvest already
     // happens through the regen path during Run coast-down (chargingControl()); the ~72mJ of VBUS
     // cap energy is not worth a re-hot-plug every cycle.
+    //
+    // MOT_PWR_ENABLE (Death-5 change, 2026-07-08): the V-MOT/VESC node is ALSO left energized, for
+    // the same reason the bus is — cutting it here would force a full-bus re-hot-plug of the
+    // 470µF+VESC stack on the next Idle→Run (the event that killed the FC boost). The motor is held
+    // stopped by vesc.setCurrent(0), not by cutting MOT_PWR. Only State 99 tears the motor node down.
     vesc.setCurrent(0);
     current = 0.0f;
-    digitalWrite(MOT_PWR_ENABLE, LOW);     // disconnect VESC from VBUS
     assertFcChargeEnable(false);           // ensure FC→charger path is closed
     digitalWrite(REGEN_ENABLE, LOW);       // ensure regen path is closed
     digitalWrite(MPPT_DISABLE, LOW);       // inhibit MPPT (active-LOW) until next Run
-    // FC_BUS_ENABLE / BT_BUS_ENABLE and the boosts intentionally stay ON — bus remains armed.
+    // FC_BUS / BT_BUS / MOT_PWR and the boosts intentionally stay ON — bus + motor node remain armed.
 
     // Clear the wheel-speed averaging buffers so the next run starts fresh (stale timestamps from
     // this run would corrupt the first velocity samples).
@@ -1276,9 +1332,16 @@ void doState98() {
                 }
                 break;
             case '3':
-                pin = MOT_PWR_ENABLE; cur = digitalRead(pin);
-                digitalWrite(pin, !cur);
-                Serial.print("MOT_PWR_ENABLE -> "); Serial.println(!cur);
+                // MOT_PWR via the hot-plug guard: OFF always allowed; ON refused if it would
+                // hot-plug the discharged 470µF+VESC motor node at full bus (Death 5). Use 'G' to
+                // energize the motor node safely (pre-charge during the low-voltage bring-up).
+                cur = digitalRead(MOT_PWR_ENABLE);
+                if (!cur && motPwrHotPlugUnsafe()) {
+                    Serial.println("REFUSED: motor node not pre-charged and VBUS is up — hot-plug risk. Use 'G' to bring up bus+motor together.");
+                } else {
+                    assertMotPwrEnable(!cur);
+                    Serial.print("MOT_PWR_ENABLE -> "); Serial.println(!cur);
+                }
                 break;
             case '4':
                 // REGEN_ENABLE: assertFcChargeEnable(false) required before going HIGH
@@ -1748,10 +1811,13 @@ void safeAllSwitches() {
 void bringUpBus() {
     digitalWrite(FC_REG_ENABLE, LOW);     // ensure boosts OFF first (gentle from a low voltage)
     digitalWrite(BT_REG_ENABLE, LOW);
-    digitalWrite(FC_BUS_ENABLE, HIGH);    // switches first — RT1987s soft-start the bus to ~Vbatt
-    digitalWrite(BT_BUS_ENABLE, HIGH);
+    digitalWrite(FC_BUS_ENABLE,  HIGH);   // switches first — RT1987s soft-start the bus to ~Vbatt
+    digitalWrite(BT_BUS_ENABLE,  HIGH);
+    digitalWrite(MOT_PWR_ENABLE, HIGH);   // pre-charge the V-MOT/VESC node (470µF) at low V too, so
+                                          // the boosts ramp the whole stack together — never a
+                                          // full-bus hot-plug of the motor node (Death 5).
     delay(BUS_SETTLE_MS);                  // let the RT1987 soft-start settle
-    digitalWrite(FC_REG_ENABLE, HIGH);    // boosts second — ramp the bus to 17.5V via soft-start
+    digitalWrite(FC_REG_ENABLE, HIGH);    // boosts second — ramp bus + motor node via soft-start
     digitalWrite(BT_REG_ENABLE, HIGH);
 }
 
@@ -1764,6 +1830,31 @@ void bringUpBus() {
 // 'G' for a safe bring-up instead).
 bool busHotPlugUnsafe(int regPin) {
     return digitalRead(regPin) == HIGH && V_bus < V_BUS_CHARGED_THRESH;
+}
+
+// True when closing MOT_PWR_ENABLE (D-MT-EN: VBUS → V-MOT/VESC) would hot-plug the boosts into a
+// discharged motor node at full bus. The V-MOT/regen node carries the 470µF bulk cap + the VESC's
+// own input capacitance; at full bus the RT1987 soft-start cannot charge that stack → it SCP-burst-
+// retries, each burst yanking VBUS down and slamming the boosts to their 15A cycle limit, then
+// load-dumping them — the SW ring exceeds the 20V abs-max and kills a boost (Death 5, FC boost,
+// 2026-07-08; docs/boost-bringup-debug.md). Pre-charge the node during the low-voltage bring-up
+// instead (doState0()/bringUpBus()). Proxy: bus energized AND the motor node (V_rgn, pin 39) lagging
+// it by more than MOT_HOTPLUG_MARGIN. Once pre-charged, V_rgn tracks V_bus so this reads false.
+bool motPwrHotPlugUnsafe() {
+    return V_bus >= V_BUS_CHARGED_THRESH && V_rgn < (V_bus - MOT_HOTPLUG_MARGIN);
+}
+
+// Guarded control of MOT_PWR_ENABLE. Turning OFF is always allowed. Turning ON is idempotent when
+// already ON (so a properly pre-charged node is never re-evaluated), and otherwise REFUSED when it
+// would hot-plug (motPwrHotPlugUnsafe()). The only sanctioned way to bring the node from discharged
+// to connected is the low-voltage pre-charge in doState0()/bringUpBus(), where V_bus is still low so
+// the guard passes. Returns false iff an ON was refused.
+bool assertMotPwrEnable(bool enable) {
+    if (!enable) { digitalWrite(MOT_PWR_ENABLE, LOW); return true; }
+    if (digitalRead(MOT_PWR_ENABLE) == HIGH) return true;   // already on — idempotent, no re-check
+    if (motPwrHotPlugUnsafe()) return false;                 // refuse the full-bus hot-plug
+    digitalWrite(MOT_PWR_ENABLE, HIGH);
+    return true;
 }
 
 void motorControl() {

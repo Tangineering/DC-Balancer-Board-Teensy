@@ -118,8 +118,15 @@ rules from the IO CSV `Notes` column and the project design notes — **do not d
   if not, then enable.
 - **`FC_BUS_ENABLE` (27) / `BT_BUS_ENABLE` (28):** gate each source's contribution to VBUS.
   These replace the implicit "both regulators always on" assumption.
-- **`MOT_PWR_ENABLE` (29):** gates VBUS → VESC. Should be OFF in Init/Idle/Error and only ON
-  in Run.
+- **`MOT_PWR_ENABLE` (29):** gates VBUS → V-MOT/VESC. **SUPERSEDED (Death 5, 2026-07-08, see
+  `docs/boost-bringup-debug.md`):** the original rule "OFF in Init/Idle/Error, only ON in Run" is no
+  longer followed. Closing this at full bus onto the discharged 470µF+VESC node hot-plugs and kills a
+  boost, so the node is instead **pre-charged during the low-voltage bring-up and kept energized
+  through Idle/Run** (torn down only in State 99). The motor is held stopped in Idle by
+  `vesc.setCurrent(0)`, not by cutting `MOT_PWR`. Turning it ON is gated by `assertMotPwrEnable()` /
+  `motPwrHotPlugUnsafe()` so a discharged-node full-bus hot-plug can never happen (it faults
+  `ERR_MOT_HOTPLUG` instead). **Trade-off:** the VESC is powered in Idle (lost hardware motor
+  isolation) — acceptable because the alternative destroys boosts.
 - **`REGEN_ENABLE` (30):** gates regen energy to the charger. Mutually exclusive with
   `FC_CHARGE_ENABLE` (see above).
 
@@ -545,8 +552,12 @@ inductance → SW/VOUT overshoot past the 20 V abs-max when driving the bus.** F
 ceramics bodged directly at the BT boost output** — validated by four consecutive surviving `G`
 bring-ups under Death-4 conditions (single-variable test; scope captures in
 `references/scope_captures/`). **Any future BT boost install must keep these caps** (or a respun
-layout with Cout at the IC). Still owed: a high-bandwidth (10× probe) SW-ring margin check before
-heavy load testing, and the respin item. Full history, datapoints, and remaining steps in
+layout with Cout at the IC). **Update 2026-07-08 — Death 5 (FC boost):** the overshoot mechanism is
+current-scaled and system-wide. Closing `MOT_PWR_ENABLE` at full bus onto an attached VESC (RT1987
+soft-start can't charge 470 µF + VESC caps → SCP burst-retry → 15 A load-dumps) killed the FC boost
+from a stiff supply; 9 V batteries sag/UVLO before lethal current, which is why battery runs
+survive. Plan: 16 V nominal bus, motor-node pre-charge sequencing (firmware), FC output bodge caps,
+high-BW SW-ring margin check (now blocking). Full history, datapoints, and remaining steps in
 **`docs/boost-bringup-debug.md`**.
 
 ---
