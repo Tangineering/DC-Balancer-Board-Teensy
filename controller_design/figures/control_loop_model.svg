@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1020 440" font-family="Georgia, 'Times New Roman', serif" font-size="14">
+  <defs>
+    <marker id="arr" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto">
+      <path d="M0,0 L9,4 L0,8 z" fill="#111"/>
+    </marker>
+  </defs>
+  <rect width="1020" height="440" fill="#ffffff"/>
+  <text x="510" y="28" text-anchor="middle" font-size="17" font-weight="bold">Power-share loop: linearized SISO design model</text>
+
+  <!-- reference in -->
+  <line x1="20" y1="140" x2="90" y2="140" stroke="#111" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="52" y="130" text-anchor="middle" font-style="italic">&#945;_req</text>
+  <text x="52" y="162" text-anchor="middle" font-size="12">(EMS, &#8804;50 Hz)</text>
+
+  <!-- error sum -->
+  <circle cx="105" cy="140" r="14" fill="none" stroke="#111" stroke-width="1.6"/>
+  <text x="97" y="132" font-size="13">+</text>
+  <text x="93" y="163" font-size="13">&#8722;</text>
+
+  <line x1="119" y1="140" x2="165" y2="140" stroke="#111" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="142" y="130" text-anchor="middle" font-style="italic">e</text>
+
+  <!-- controller -->
+  <rect x="165" y="105" width="180" height="70" fill="none" stroke="#111" stroke-width="1.8"/>
+  <text x="255" y="132" text-anchor="middle" font-weight="bold">G_C  (H&#8734; / Youla-H)</text>
+  <text x="255" y="152" text-anchor="middle">discrete, T_s = 1 ms</text>
+  <text x="255" y="168" text-anchor="middle" font-size="12">clamp r &#8712; [0.15, 0.85] + anti-windup</text>
+
+  <line x1="345" y1="140" x2="393" y2="140" stroke="#111" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="369" y="130" text-anchor="middle" font-style="italic">r</text>
+
+  <!-- plant group -->
+  <rect x="393" y="60" width="465" height="130" fill="none" stroke="#111" stroke-width="1.2" stroke-dasharray="6,4"/>
+  <text x="626" y="52" text-anchor="middle" font-size="13" font-style="italic">plant G_P(s) = K&#183;e^(&#8722;T_d s) / [(&#964;_r s+1)(&#964;_f s+1)] ,&#160; K = 1 nominal</text>
+
+  <rect x="405" y="105" width="120" height="70" fill="none" stroke="#111" stroke-width="1.6"/>
+  <text x="465" y="133" text-anchor="middle">ZOH + latency</text>
+  <text x="465" y="153" text-anchor="middle" font-style="italic">e^(&#8722;T_d s)</text>
+
+  <line x1="525" y1="140" x2="553" y2="140" stroke="#111" stroke-width="1.6" marker-end="url(#arr)"/>
+
+  <rect x="553" y="105" width="150" height="70" fill="none" stroke="#111" stroke-width="1.6"/>
+  <text x="628" y="126" text-anchor="middle">MDAC mapping +</text>
+  <text x="628" y="144" text-anchor="middle">droop statics</text>
+  <text x="628" y="166" text-anchor="middle" font-style="italic">&#945; = r&#160;&#160;(gain K &#8776; 1)</text>
+
+  <line x1="703" y1="140" x2="731" y2="140" stroke="#111" stroke-width="1.6" marker-end="url(#arr)"/>
+
+  <rect x="731" y="105" width="115" height="70" fill="none" stroke="#111" stroke-width="1.6"/>
+  <text x="788" y="130" text-anchor="middle">converter lag</text>
+  <text x="788" y="152" text-anchor="middle" font-style="italic">1/(&#964;_r s + 1)</text>
+
+  <!-- disturbance sum -->
+  <line x1="846" y1="140" x2="890" y2="140" stroke="#111" stroke-width="1.6" marker-end="url(#arr)"/>
+  <circle cx="904" cy="140" r="14" fill="none" stroke="#111" stroke-width="1.6"/>
+  <text x="896" y="132" font-size="13">+</text>
+  <text x="912" y="122" font-size="13">+</text>
+  <line x1="904" y1="75" x2="904" y2="126" stroke="#111" stroke-width="1.4" marker-end="url(#arr)"/>
+  <text x="904" y="66" text-anchor="middle" font-style="italic">d = &#916;V_0&#183;r(1&#8722;r)/(k_d&#183;I_tot)</text>
+
+  <line x1="918" y1="140" x2="985" y2="140" stroke="#111" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="955" y="130" text-anchor="middle" font-style="italic">&#945;_act</text>
+
+  <!-- feedback path with sensor noise -->
+  <line x1="965" y1="140" x2="965" y2="290" stroke="#111" stroke-width="1.4"/>
+  <line x1="965" y1="290" x2="700" y2="290" stroke="#111" stroke-width="1.4" marker-end="url(#arr)"/>
+
+  <rect x="530" y="255" width="170" height="70" fill="none" stroke="#111" stroke-width="1.6"/>
+  <text x="615" y="280" text-anchor="middle">sensor: INA253 + ADC</text>
+  <text x="615" y="300" text-anchor="middle" font-size="12">prefilter 1/(&#964;_f s+1), 200 Hz</text>
+  <text x="615" y="316" text-anchor="middle" font-size="12">&#945;&#770; = |I_FC| / (|I_FC|+|I_BT|)</text>
+
+  <circle cx="480" cy="290" r="14" fill="none" stroke="#111" stroke-width="1.6"/>
+  <text x="472" y="282" font-size="13">+</text>
+  <text x="488" y="272" font-size="13">+</text>
+  <line x1="530" y1="290" x2="494" y2="290" stroke="#111" stroke-width="1.4" marker-end="url(#arr)"/>
+  <line x1="480" y1="235" x2="480" y2="276" stroke="#111" stroke-width="1.4" marker-end="url(#arr)"/>
+  <text x="480" y="226" text-anchor="middle" font-style="italic">n  (&#963; &#8733; 1/I_tot: 8.06 mA/LSB)</text>
+
+  <line x1="466" y1="290" x2="105" y2="290" stroke="#111" stroke-width="1.4"/>
+  <line x1="105" y1="290" x2="105" y2="154" stroke="#111" stroke-width="1.4" marker-end="url(#arr)"/>
+
+  <!-- exogenous inputs note -->
+  <rect x="40" y="345" width="940" height="70" fill="none" stroke="#111" stroke-width="1.2" stroke-dasharray="6,4"/>
+  <text x="510" y="368" text-anchor="middle">Exogenous inputs: &#916;V_0 (no-load setpoint mismatch, &#177;0.40 V budget, &#8776;DC) and I_tot (load current, VESC / drive dynamics &#8804;10 Hz) enter through d;</text>
+  <text x="510" y="388" text-anchor="middle">both are rejected at DC by enforcing T(0) = 1 (Youla-H). Nominal parameters: T_d = 1.0 ms, &#964;_r = 100 &#956;s, &#964;_f = 0.8 ms, k_d = 0.30 &#8486;.</text>
+  <text x="510" y="408" text-anchor="middle" font-size="13">Model validity: both sources on-bus and conducting; loop frozen when I_tot &#8776; 0 or BT_BUS_ENABLE low. See system_model.md &#167;3, &#167;6.</text>
+</svg>

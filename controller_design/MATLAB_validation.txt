@@ -1,0 +1,24 @@
+MATLAB cross-validation of the shipped Youla-H share controller
+generated: 13-Jul-2026 09:38:50
+
+A. synthesis: hinfsyn gamma_opt = 0.6553   (Python: 0.6532, diff +0.3%)
+   T_H(0) = 0.99996378          (Python: 0.99996423)
+   T_YH(0) = 1.000017465  (= 1 up to minreal tolerance; the SHIPPED controller's
+   exact-integrator DC check is section C's closed-loop DC gain)
+   kI = 110.429 (Python 111.930), crossover = 109.4 rad/s (Python 109.9), M2 = 0.796 (Python 0.798)
+
+B. parsed C:\Life Ops\School\Thesis\DC-Balancer-Board-Teensy\controller_design\..\teensy_controller\share_controller_coeffs.h:
+   Ts = 0.001 s, kI = 111.9296, filt A = 0.286505, 3 SOS section(s)
+   kI shipped vs MATLAB-synthesized: 111.930 vs 110.429 (+1.36%)
+   max rel. freq-response deviation, shipped vs MATLAB-synthesized: 9.49%
+   (< ~10% expected: order reduction 21->3 + two independent gamma iterations;
+   the closed-loop agreement in section C is the meaningful comparison)
+
+C. shipped-controller validation battery (discrete, Ts = 0.001 s)
+   corners: 30/30 stable; worst ||S||inf = 1.768 (M2 = 0.566) at K=1.45 Td=2.0ms taur=300us
+   (Python worst-corner discrete ||S||inf was 1.867 on its 60-corner grid incl. tau_f variants)
+   nominal margins: GM = 18.5 dB, PM = 74.0 deg at 110.6 rad/s, delay margin = 11.68 ms
+   step: 2% settle = 25 ms (Python: 22 ms), overshoot = 0.0%, DC gain = 1.000000001
+   ramp: tracking error at t = 6 s: 4.27e-04 (Python: 4.47e-04)
+
+VERDICT: PASS — all 30 corners stable, worst ||S||inf = 1.768, exact DC tracking.

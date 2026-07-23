@@ -68,6 +68,26 @@
  *    Bus voltage parameterized on V_BUS_NOMINAL (17.5f; TODO → 16.0f after the boost FB retune for
  *    SW abs-max headroom) — LIMIT_V_BUS_MAX / V_BUS_CHARGED_THRESH derive from it (current values
  *    unchanged).
+ *  - Droop MDAC mapping fixed (2026-07-10; controller_design/system_model.md §4). The old
+ *    k_eq/r/K_sns/A_v gain omitted the FB injection attenuation RD1/Rinj = 237k/53.6k = 4.42
+ *    and, with k_eq = 0.45, commanded g > 1 for all r < 0.896 — setDroopMdac() clamped both
+ *    channels to full scale, so the achieved split was stuck near 0.5 and the share loop saw a
+ *    zero-gain plant. New mapping: g = K_DROOP/(RE_MAX·r) with RE_MAX = K_sns·A_v·RD1/RINJ =
+ *    2.220 Ω (schematic sheets 1–2) and K_DROOP = 0.33 Ω (TODO(calibrate)); ratio clamped to
+ *    [DROOP_R_MIN, DROOP_R_MAX] = [0.15, 0.85] so g ≤ 1 with margin. k_eq removed.
+ *  - 16V bus retune EXECUTED (2026-07-11, hardware bodge): RD1 changed 237k → 215k on both
+ *    boost FB networks (schematic still shows 237k) → V0 = 15.91V no-load. V_BUS_NOMINAL set
+ *    to 16.0f (LIMIT_V_BUS_MAX → 17.0, V_BUS_CHARGED_THRESH → 13.5 derive automatically);
+ *    RD1_OVER_RINJ → 215/53.6 (RE_MAX = 2.014 Ω), K_DROOP 0.33 → 0.30 (new hard bound
+ *    RE_MAX·0.15 = 0.302 Ω). Also RC-BT bodged 27.4k → 61.2k (2026-07-10) to match FC —
+ *    converter-loop analysis in controller_design/system_model.md §6e.
+ *  - State 98 VESC read-back (2026-07-23): 'E' one-shot (getFWversion() + getVescValues() dump,
+ *    incl. live mc_fault_code via vescFaultStr()) and 'W' watch (~2 Hz poll flagging fault-code
+ *    changes). First reads the firmware ever makes from the VESC — previously write-only
+ *    (setCurrent()). Diagnostic aid for the 0.1 A → fault bench issue; USB-serial only, no
+ *    telemetry/protocol change. Reads block ≤100 ms on Serial1 and are State-98-only. The 'W'
+ *    poll is auto-suppressed while a drive cycle / power-share profile runs so those keep
+ *    production-identical motorControl()/powerBalance() timing (resumes when the run stops).
  */
 
 #include <VescUart.h>
@@ -75,6 +95,7 @@
 #include <Wire.h>
 #include <NativeEthernet.h>
 #include <NativeEthernetUdp.h>
+#include "share_controller.h"   // Youla-H power-share controller (generated coeffs)
 
 VescUart vesc;
 EthernetUDP Udp;
@@ -152,12 +173,11 @@ EthernetUDP Udp;
 #define LIMIT_I_FC_MAX   3.5f   // A — H-20 max; Source: H-20 datasheet
 #define LIMIT_V_BATT_MIN 6.2f   // V — 2S LiPo cutoff (2 × 3.1V)
 // Nominal regulated bus voltage — set by the boost FB network in HARDWARE; the firmware thresholds
-// below derive from it. Death-5 headroom plan (docs/boost-bringup-debug.md): drop to 16.0f once the
-// FB network is retuned. That widens the SW/VOUT abs-max headroom (20V-16V = 4V vs 2.5V) and stops
-// the ~19V soft-start-hand-off bring-up overshoot from tripping OV_BUS on a stiff supply. DO NOT set
-// this below the voltage the hardware actually regulates, or OV_BUS trips immediately (the boost
-// still makes ~17.5V until the FB retune — this is a prepared constant, not a live change).
-#define V_BUS_NOMINAL    17.5f  // TODO(hardware-retune): → 16.0f when the boost FB network is retuned
+// below derive from it. Death-5 headroom plan (docs/boost-bringup-debug.md) EXECUTED 2026-07-11:
+// RD1 bodged 237k → 215k on BOTH channels (schematic not yet updated), so the no-load setpoint is
+// V0 = 0.6·(1 + 215/10 + 215/53.6) = 15.91V ≈ 16V. This widens the SW/VOUT abs-max headroom
+// (20V − 16V = 4V vs 2.5V) and keeps the bring-up soft-start overshoot clear of OV_BUS.
+#define V_BUS_NOMINAL    16.0f  // matches the RD1 = 215k FB network (V0 = 15.91V no-load)
 // Source: user-confirmed TPS61288 HW OVP at 19V. FW OV fault sits 1V above nominal (17.5→18.5,
 // 16.0→17.0), still below the 19V HW OVP so firmware catches a sustained overvoltage first.
 #define LIMIT_V_BUS_MAX  (V_BUS_NOMINAL + 1.0f)
@@ -281,8 +301,21 @@ const float flyWheelRadius = 1;     // inch
 // built with A1 parts, so K_sns = 0.1 V/A is used. Update to 0.4 if the board is re-spun
 // with INA253A3IPWR. Source: INA253A1IPWR.pdf Device Comparison Table.
 const float K_sns = 0.1f;           // V/A — INA253A1 gain (A3 = 0.4 V/A; see note above)
-const float A_v   = 5.02f;          // static gain
-const float k_eq  = 0.45f;          // ohm
+const float A_v   = 5.02f;          // OPA197 gain = 1 + 40.2k/10k (schematic ROP1/ROP2)
+// Droop injection chain (controller_design/system_model.md §2/§4; schematic sheets 1–2):
+// the MDAC output is attenuated into the boost FB node by RD1/RINJ, so the realized droop
+// resistance per channel is Re(g) = K_sns·A_v·(RD1/RINJ)·g ≤ RE_MAX. The share mapping
+// R_F = K_DROOP/r, R_B = K_DROOP/(1−r) gives a unity-gain plant (α = r nominal) and requires
+// g = K_DROOP/(RE_MAX·r) ≤ 1 → K_DROOP ≤ RE_MAX·DROOP_R_MIN (hard bound 0.3329 Ω at 0.15).
+const float RD1_OVER_RINJ = 215.0f / 53.6f;         // FB divider top / injection resistor
+                                    // RD1 bodged 237k → 215k (16V bus retune, 2026-07-11;
+                                    // schematic still shows 237k)
+const float RE_MAX  = K_sns * A_v * RD1_OVER_RINJ;  // 2.014 Ω — max electronic droop
+const float K_DROOP = 0.30f;        // ohm — design droop scale k_d; TODO(calibrate): bench
+                                    // decision, see controller_design/system_model.md §9.
+                                    // Hard bound RE_MAX·DROOP_R_MIN = 0.302 Ω
+const float DROOP_R_MIN = 0.15f;    // usable droop-ratio span for g ≤ 1 at K_DROOP = 0.30
+const float DROOP_R_MAX = 0.85f;
 
 const float motorConstant = 0.1f;   // TODO: tune this
 const float MOTOR_I_CMD_MAX = 30.0f;   // A — VESC motor current command ceiling; TODO(calibrate)
@@ -310,7 +343,7 @@ float I_batt            = 0;
 float I_charge          = 0;   // sourced from Ag105 I2C reg 0x06 via pollAg105() at 50 Hz
 float V_fc              = 0;
 float V_batt            = 0;
-float V_bus             = 18.0f;
+float V_bus             = 16.0f;   // init at nominal so a pre-ADC detectFaults() tick can't trip OV
 float V_chg             = 0;   // charger input voltage (pin 38, ADC)
 float V_rgn             = 0;   // regen-node voltage    (pin 39, ADC)
 
@@ -383,6 +416,16 @@ bool wheelSpeedResetPending = false;
 #define USE_ETHERNET 0
 #endif
 
+// ── Power-share controller selection ─────────────────────────────────────────
+// 1 (default): the Youla-H robust controller (share_controller.h; coefficients
+// generated by controller_design/synthesize_controller.py — see
+// controller_design/controller_synthesis.md for the design record).
+// 0: the legacy PI (PI_Controller_Power) — kept as a bench fallback / A-B
+// comparison path; both are compiled either way.
+#ifndef USE_YOULA_SHARE_CONTROLLER
+#define USE_YOULA_SHARE_CONTROLLER 1
+#endif
+
 // BENCH_TEST and USE_ETHERNET are independent flags, so it is possible to build "production
 // faults, no Pi link" by mistake: with USE_ETHERNET=0 the Pi never connects, pi_ever_connected
 // stays false, and the Pi watchdog is permanently inert. Warn so a vehicle flash can't ship
@@ -440,6 +483,19 @@ float         manualMotorVelocity = 0.0f;   // m/s — used in MOTOR_TEST_VELOCI
 // When true, doState98() runs the closed-loop powerBalance() every test tick so a manually-set
 // power_share_setpoint continuously drives the droop MDAC. Cleared by an open-loop droop write.
 bool powerBalanceLive = false;
+
+// ── State 98 bench tools: VESC read-back ('E' one-shot / 'W' watch) ────────────────────────────
+// The firmware is otherwise write-only to the VESC (setCurrent()); these are the only reads.
+// getFWversion()/getVescValues() BLOCK up to the VescUart _TIMEOUT (100 ms) waiting on Serial1,
+// so they stretch the main-loop tick (delaying detectFaults()). That is acceptable ONLY in State
+// 98 (interactive bench) — never call these from Run/Idle. 'W' polls at ~2 Hz and flags any
+// change in the VESC's live fault code, to catch a transient fault the moment a command trips it.
+// The poll is auto-suppressed while a drive cycle / power-share profile is active so those runs
+// keep production-identical control-loop timing (pollVescWatch()); it resumes when the run stops.
+bool     vescWatchActive = false;
+uint32_t lastVescWatchMs = 0;
+uint8_t  lastVescFault   = 0;
+const uint32_t VESC_WATCH_PERIOD_MS = 500;   // ~2 Hz
 
 // ── State 98 bench tools: power-share profile emulator (mirrors DriveCyclePhase) ──────────────
 // Sweeps power_share_setpoint through a phase table while the motor is held at a constant command,
@@ -519,6 +575,7 @@ void powerBalance();
 void chargingControl();
 float PI_Controller_Motor(float error);
 float PI_Controller_Power(float error);
+float youlaController_Power(float setpoint, float alphaRaw);
 void setDroopMdac(float fc_gain, float bt_gain);
 void assertFcChargeEnable(bool enable);
 bool motPwrHotPlugUnsafe();
@@ -534,6 +591,9 @@ void applyManualMotor();
 void advancePowerShareProfile();
 void handlePendingInputChar(char c);
 bool isNumericEntryChar(char c);
+const char* vescFaultStr(uint8_t code);
+void queryVescInfo();
+void pollVescWatch();
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SETUP
@@ -1130,7 +1190,7 @@ void doState3() {
     // FINISH — stop the motor and return to the charged Idle state.
     //
     // The bus is deliberately left ENERGIZED: the boosts and FC_BUS/BT_BUS switches stay ON, so
-    // the bus remains at ~17.5V and the next Idle→Run transition never re-hot-plugs the bus
+    // the bus remains at ~16V (nominal) and the next Idle→Run transition never re-hot-plugs the bus
     // (see "VBUS controlled bring-up" note; VBUS itself carries only the ~30–40µF RT1987
     // ceramics — the 470µF bulk cap is on V-MOT). Only State 99 (Error) tears the bus down —
     // and that is latched until a power cycle, which re-runs the State-0 gentle bring-up.
@@ -1256,6 +1316,7 @@ void printTestHelp() {
     Serial.println("  C - toggle CBAL_DISABLE      M - toggle MPPT_DISABLE");
     Serial.println("  G - safe VBUS bring-up       D - start/stop drive cycle");
     Serial.println("  S - print status snapshot    I - scan I2C bus");
+    Serial.println("  E - read VESC FW+telemetry   W - toggle VESC watch (~2Hz, flags faults)");
     Serial.println("  -- bench tools (prompt for a value) --");
     Serial.println("  P - set power-share setpoint (closed-loop live)");
     Serial.println("  O - set droop ratio (open-loop direct MDAC write)");
@@ -1389,6 +1450,8 @@ void doState98() {
                         driveCyclePhaseStart = millis();
                         driveCycleStatusLast = millis();
                         Serial.println("[DC] Drive cycle started — Phase 0: Standstill");
+                        if (vescWatchActive)
+                            Serial.println("[DC] VESC watch paused during the run (production-identical timing); resumes on stop");
                     }
                 } else {
                     driveCycleActive = false;
@@ -1416,6 +1479,21 @@ void doState98() {
             case 'i':
                 scanI2C();
                 break;
+            case 'E':
+            case 'e':
+                queryVescInfo();   // one-shot VESC FW version + telemetry + fault code
+                break;
+            case 'W':
+            case 'w':
+                vescWatchActive = !vescWatchActive;
+                if (vescWatchActive) {
+                    lastVescWatchMs = millis();
+                    lastVescFault   = 0;
+                    Serial.println("VESC watch ON (~2 Hz; flags fault-code changes)");
+                } else {
+                    Serial.println("VESC watch OFF");
+                }
+                break;
             case 'P':
             case 'p':
                 pendingInput = PEND_POWER_SHARE;
@@ -1424,7 +1502,7 @@ void doState98() {
             case 'O':
             case 'o':
                 pendingInput = PEND_OPEN_DROOP;
-                Serial.print("Enter droop ratio 0.01-0.99 (open-loop, direct MDAC): ");
+                Serial.print("Enter droop ratio 0.15-0.85 (open-loop, direct MDAC): ");
                 break;
             case 'A':
             case 'a':
@@ -1453,6 +1531,8 @@ void doState98() {
                         powerShareProfilePhaseStart = millis();
                         powerShareProfileStatusLast = millis();
                         Serial.println("[PS] Power-share profile started — Phase 0");
+                        if (vescWatchActive)
+                            Serial.println("[PS] VESC watch paused during the run (production-identical timing); resumes on stop");
                     }
                 } else {
                     powerShareProfileActive = false;
@@ -1483,6 +1563,7 @@ void doState98() {
                 powerShareProfileActive = false;
                 manualMotorMode         = MOTOR_TEST_OFF;
                 powerBalanceLive        = false;
+                vescWatchActive         = false;   // stop the blocking poll from running outside State 98
                 pendingInput            = PEND_NONE;
                 inputBufIdx             = 0;
                 v_setpoint = 0.0f;
@@ -1527,6 +1608,10 @@ void doState98() {
         if (manualMotorMode != MOTOR_TEST_OFF) applyManualMotor();
         if (powerBalanceLive)                  powerBalance();
     }
+
+    // VESC read-back watch: runs regardless of which motor driver (if any) is active, so a fault
+    // can be caught whether it trips under the drive cycle, the share profile, or a manual command.
+    pollVescWatch();
 }
 
 void advanceDriveCycle() {
@@ -1569,6 +1654,112 @@ void advanceDriveCycle() {
 
 // ── State 98 bench-tool helpers ───────────────────────────────────────────────────────────────
 
+// Human-readable name for a VESC mc_fault_code. Table transcribed verbatim from the vendored
+// VescUart datatypes.h:124-153 (FW 5.x-era ordering). The blink count on the VESC's red LED
+// equals this code number, but the ordering is firmware-version dependent — always cross-check
+// the FW version ('E' command) before trusting a name here. Codes 0-27; anything else -> UNKNOWN.
+const char* vescFaultStr(uint8_t code) {
+    switch (code) {
+        case 0:  return "NONE";
+        case 1:  return "OVER_VOLTAGE";
+        case 2:  return "UNDER_VOLTAGE";
+        case 3:  return "DRV";
+        case 4:  return "ABS_OVER_CURRENT";
+        case 5:  return "OVER_TEMP_FET";
+        case 6:  return "OVER_TEMP_MOTOR";
+        case 7:  return "GATE_DRIVER_OVER_VOLTAGE";
+        case 8:  return "GATE_DRIVER_UNDER_VOLTAGE";
+        case 9:  return "MCU_UNDER_VOLTAGE";
+        case 10: return "BOOTING_FROM_WATCHDOG_RESET";
+        case 11: return "ENCODER_SPI";
+        case 12: return "ENCODER_SINCOS_BELOW_MIN_AMPLITUDE";
+        case 13: return "ENCODER_SINCOS_ABOVE_MAX_AMPLITUDE";
+        case 14: return "FLASH_CORRUPTION";
+        case 15: return "HIGH_OFFSET_CURRENT_SENSOR_1";
+        case 16: return "HIGH_OFFSET_CURRENT_SENSOR_2";
+        case 17: return "HIGH_OFFSET_CURRENT_SENSOR_3";
+        case 18: return "UNBALANCED_CURRENTS";
+        case 19: return "BRK";
+        case 20: return "RESOLVER_LOT";
+        case 21: return "RESOLVER_DOS";
+        case 22: return "RESOLVER_LOS";
+        case 23: return "FLASH_CORRUPTION_APP_CFG";
+        case 24: return "FLASH_CORRUPTION_MC_CFG";
+        case 25: return "ENCODER_NO_MAGNET";
+        case 26: return "ENCODER_MAGNET_TOO_STRONG";
+        case 27: return "PHASE_FILTER";
+        default: return "UNKNOWN";
+    }
+}
+
+// 'E' one-shot: read the VESC firmware version and a full telemetry snapshot over UART and dump
+// them to USB Serial. This is the firmware's only positive verification that the VESC UART link
+// works at all (setCurrent() is fire-and-forget — a "working" motor command proves nothing about
+// the return path). Blocks up to ~200 ms total (two reads × 100 ms _TIMEOUT) if the VESC is
+// silent; State-98-only, so tolerable. Prints (int)data.error so it compiles against both the
+// real mc_fault_code enum and the host mock's uint8_t.
+void queryVescInfo() {
+    Serial.println("=== VESC info ===");
+    if (vesc.getFWversion()) {
+        Serial.print("VESC FW: "); Serial.print(vesc.fw_version.major);
+        Serial.print("."); Serial.println(vesc.fw_version.minor);
+    } else {
+        Serial.println("VESC FW: no response — check VESC power, RX/TX wiring, baud 115200, App Cfg = UART");
+    }
+    if (vesc.getVescValues()) {
+        Serial.print("inpVoltage:      "); Serial.print(vesc.data.inpVoltage, 2);      Serial.println(" V");
+        Serial.print("avgMotorCurrent: "); Serial.print(vesc.data.avgMotorCurrent, 2); Serial.println(" A");
+        Serial.print("avgInputCurrent: "); Serial.print(vesc.data.avgInputCurrent, 2); Serial.println(" A");
+        Serial.print("dutyCycleNow:    "); Serial.println(vesc.data.dutyCycleNow, 3);
+        Serial.print("rpm:             "); Serial.println(vesc.data.rpm, 0);
+        Serial.print("tempMosfet:      "); Serial.print(vesc.data.tempMosfet, 1);      Serial.println(" C");
+        Serial.print("tempMotor:       "); Serial.print(vesc.data.tempMotor, 1);       Serial.println(" C");
+        Serial.print("tachometer:      "); Serial.println(vesc.data.tachometer);
+        Serial.print("tachometerAbs:   "); Serial.println(vesc.data.tachometerAbs);
+        Serial.print("vesc id:         "); Serial.println(vesc.data.id);
+        uint8_t flt = (uint8_t)(int)vesc.data.error;
+        Serial.print("fault:           "); Serial.print(flt);
+        Serial.print(" ("); Serial.print(vescFaultStr(flt)); Serial.println(")");
+    } else {
+        Serial.println("values: no response — VESC unpowered or UART link down");
+    }
+    Serial.println("=================");
+}
+
+// 'W' watch tick: poll the VESC at VESC_WATCH_PERIOD_MS and print a compact line, loudly flagging
+// any change in the live fault code (so a transient fault tripped by a motor command is caught the
+// moment it happens). Called every doState98() tick; no-op unless the watch is active and the
+// period has elapsed. Same blocking caveat as queryVescInfo().
+void pollVescWatch() {
+    if (!vescWatchActive) return;
+    // Suppress the blocking poll while a timed profile is running so motorControl()/powerBalance()
+    // execute with production-identical loop timing — the ~100 ms getVescValues() stall would
+    // otherwise perturb the drive cycle / power-share step response. The watch resumes
+    // automatically when the profile stops; the VESC latches faults, so a fault raised during the
+    // run is still reported by the first poll afterward (elapsed > period → immediate) or via 'E'.
+    if (driveCycleActive || powerShareProfileActive) return;
+    if (millis() - lastVescWatchMs < VESC_WATCH_PERIOD_MS) return;
+    lastVescWatchMs = millis();
+
+    if (!vesc.getVescValues()) {
+        Serial.println("[VW] no response");
+        return;
+    }
+    uint8_t flt = (uint8_t)(int)vesc.data.error;
+    Serial.print("[VW] V=");    Serial.print(vesc.data.inpVoltage, 2);
+    Serial.print(" Imot=");     Serial.print(vesc.data.avgMotorCurrent, 2);
+    Serial.print(" Iin=");      Serial.print(vesc.data.avgInputCurrent, 2);
+    Serial.print(" duty=");     Serial.print(vesc.data.dutyCycleNow, 3);
+    Serial.print(" rpm=");      Serial.print(vesc.data.rpm, 0);
+    Serial.print(" flt=");      Serial.print(flt);
+    Serial.print("(");          Serial.print(vescFaultStr(flt)); Serial.println(")");
+    if (flt != lastVescFault) {
+        Serial.print("*** VESC FAULT -> "); Serial.print(flt);
+        Serial.print(" ("); Serial.print(vescFaultStr(flt)); Serial.println(")");
+        lastVescFault = flt;
+    }
+}
+
 // Closed-loop: set the share setpoint and let powerBalance() drive the MDAC from measured current
 // each test tick. Needs current actually flowing (motor running) for the MDAC to update.
 void setPowerShareSetpointLive(float s) {
@@ -1579,13 +1770,11 @@ void setPowerShareSetpointLive(float s) {
 // Open-loop: map a typed droop ratio directly to the droop gains and write the MDAC immediately —
 // no PI, no current needed (good for bench-calibrating the droop hardware at a known split). Same
 // gain math as powerBalance(). Clears powerBalanceLive so the closed loop won't stomp the write.
-// NOTE: until k_eq/K_sns/A_v are bench-calibrated (TODO above), the gain k_eq/r/K_sns/A_v exceeds
-// 1.0 for ratios below ~0.9, so setDroopMdac() clamps to full scale and ratios in that range all
-// produce the same MDAC code — open-loop sweeps only become meaningful once those constants are set.
+// This is the §9 (system_model.md) calibration entry point: sweep r, log I_fc/I_batt, fit ΔV0.
 void applyOpenLoopDroop(float ratio) {
-    float r = constrain(ratio, 0.01f, 0.99f);
-    droop_gain_FC_actual = k_eq / r           / K_sns / A_v;
-    droop_gain_BT_actual = k_eq / (1.0f - r) / K_sns / A_v;
+    float r = constrain(ratio, DROOP_R_MIN, DROOP_R_MAX);
+    droop_gain_FC_actual = K_DROOP / (RE_MAX * r);
+    droop_gain_BT_actual = K_DROOP / (RE_MAX * (1.0f - r));
     setDroopMdac(droop_gain_FC_actual, droop_gain_BT_actual);
     powerBalanceLive = false;
 }
@@ -1692,7 +1881,7 @@ void handlePendingInputChar(char c) {
                 break;
             case PEND_OPEN_DROOP:
                 applyOpenLoopDroop(val);
-                Serial.print("open-loop droop ratio -> "); Serial.print(constrain(val, 0.01f, 0.99f), 3);
+                Serial.print("open-loop droop ratio -> "); Serial.print(constrain(val, DROOP_R_MIN, DROOP_R_MAX), 3);
                 Serial.print(" (gFC="); Serial.print(droop_gain_FC_actual, 3);
                 Serial.print(" gBT="); Serial.print(droop_gain_BT_actual, 3); Serial.println(")");
                 break;
@@ -1893,13 +2082,44 @@ void powerBalance() {
 
     float power_share_actual_local = fabsf(I_fc) / totalA;
     float shareError = power_share_setpoint - power_share_actual_local;
+#if USE_YOULA_SHARE_CONTROLLER
+    // already clamped + anti-windup; filters the measurement internally
+    float droopRatio = youlaController_Power(power_share_setpoint, power_share_actual_local);
+    (void)shareError;
+#else
     float droopRatio = PI_Controller_Power(shareError);
+#endif
 
-    droopRatio = constrain(droopRatio, 0.01f, 0.99f);
+    // Clamp to the span where both MDAC gains stay ≤ 1 (g = K_DROOP/(RE_MAX·r); see the
+    // K_DROOP block comment). The old [0.01, 0.99] clamp commanded g > 1 over most of the
+    // range and pinned both MDACs at full scale (zero-gain plant). (No-op for the Youla
+    // controller, which clamps internally with back-calculation anti-windup.)
+    droopRatio = constrain(droopRatio, DROOP_R_MIN, DROOP_R_MAX);
 
-    droop_gain_FC_actual = k_eq / droopRatio           / K_sns / A_v;
-    droop_gain_BT_actual = k_eq / (1.0f - droopRatio) / K_sns / A_v;
+    droop_gain_FC_actual = K_DROOP / (RE_MAX * droopRatio);
+    droop_gain_BT_actual = K_DROOP / (RE_MAX * (1.0f - droopRatio));
     setDroopMdac(droop_gain_FC_actual, droop_gain_BT_actual);
+}
+
+// ── Youla-H share controller wrapper ─────────────────────────────────────────
+// Gates shareControllerStep() (share_controller.h) to its design cadence
+// SHARE_CTRL_TS_US and holds the output between updates — powerBalance() runs
+// every loop tick, but the difference equations must advance exactly once per
+// Ts (the ZOH + latency is part of the design plant, system_model.md §6c).
+// The measured share is prefiltered (200 Hz, part of the design plant); the
+// setpoint is NOT filtered, so EMS commands are tracked unsmoothed.
+// State is file-scope for host-test resettability (same pattern as the PIs).
+float    shareCtrl_heldOut    = 0.5f;   // balanced split until the first update
+uint32_t shareCtrl_lastMicros = 0;
+
+float youlaController_Power(float setpoint, float alphaRaw) {
+    uint32_t now = micros();
+    if ((uint32_t)(now - shareCtrl_lastMicros) >= (uint32_t)SHARE_CTRL_TS_US) {
+        shareCtrl_lastMicros = now;
+        float e = setpoint - shareControllerFilterMeas(alphaRaw);
+        shareCtrl_heldOut = shareControllerStep(e, DROOP_R_MIN, DROOP_R_MAX);
+    }
+    return shareCtrl_heldOut;
 }
 
 float PI_Controller_Power(float error) {
@@ -1913,7 +2133,7 @@ float PI_Controller_Power(float error) {
     if (dtMicros >= (uint32_t)sampleTime) {
         pi_power_lastMicros = now;
         pi_power_accum += error * dtMicros * 1e-6f;
-        // Anti-windup: the output is a droop ratio, clamped to [0.01, 0.99] downstream in
+        // Anti-windup: the output is a droop ratio, clamped to [DROOP_R_MIN, DROOP_R_MAX] downstream in
         // powerBalance(), so integral authority beyond ±1.0 is unusable — clamp Ki*accum to
         // ±1.0. This matters when the share error can't converge (e.g. a source disconnected
         // from the bus): without the clamp the integrator winds up for the whole episode and
@@ -2144,8 +2364,9 @@ void initEscUartPins() {
 }
 
 void initMdacOutputs() {
-    setDroopMdac(k_eq / 0.5f / K_sns / A_v,
-                 k_eq / 0.5f / K_sns / A_v);
+    // Balanced 50/50 split at boot: g = K_DROOP/(RE_MAX·0.5) on both channels
+    setDroopMdac(K_DROOP / (RE_MAX * 0.5f),
+                 K_DROOP / (RE_MAX * 0.5f));
 }
 
 void initEsc() {

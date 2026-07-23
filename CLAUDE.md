@@ -600,3 +600,66 @@ full detail in **PLAN.md §14**:
 `mingw32-make` from PowerShell can silently reuse stale binaries (the recipe's `PATH=` prefix
 doesn't resolve there) — build from an MSYS2 shell, or invoke g++ directly and check the
 executable timestamps.
+
+---
+
+## Status & session addendum (2026-07-10, robust power-share controller)
+
+The droop power-share loop got a full model → H∞/Youla-H design → firmware round, recorded in
+**`controller_design/`** (`system_model.md` = plant + parameter source of truth,
+`controller_synthesis.md` = design record; both thesis-ready). User-approved exception to the
+"don't change the PI controllers" rule for the power-share loop only.
+
+- **Droop MDAC mapping bug FIXED (firmware).** The old `k_eq/r/K_sns/A_v` gain omitted the FB
+  injection attenuation `RD1/Rinj = 237k/53.6k = 4.42`; with `k_eq = 0.45`, `g > 1` for all
+  `r < 0.896`, so both MDACs sat clamped at full scale and the share loop saw a **zero-gain
+  plant**. New mapping `g = K_DROOP/(RE_MAX·r)` with `RE_MAX = K_sns·A_v·RD1/RINJ = 2.220 Ω`,
+  `K_DROOP = 0.33 Ω` (TODO(calibrate); hard bound 0.3329), ratio span
+  `[DROOP_R_MIN, DROOP_R_MAX] = [0.15, 0.85]` (the old 0.01/0.99 clamps are gone from the droop
+  path). `k_eq` removed.
+- **Power-share PI replaced by a Youla-H robust controller** (`USE_YOULA_SHARE_CONTROLLER`,
+  default 1; PI kept compiled as the 0-fallback). Runtime in `teensy_controller/share_controller.h`
+  (3 DF2T biquads + trapezoidal integrator, back-calculation anti-windup, 200 Hz measured-share
+  prefilter); coefficients **GENERATED** into `share_controller_coeffs.h` by
+  `controller_design/synthesize_controller.py` — never hand-edit; regenerate after bench
+  calibration (recalibration loop: `controller_synthesis.md` §7). Wrapper
+  `youlaController_Power(setpoint, alphaRaw)` gates updates to 1 kHz and holds output between
+  ticks. Design numbers: γ = 0.686, T(0) = 1 exact, all 60 plant-corner closed loops stable,
+  delay margin 11.7 ms, worst-corner discrete ‖S‖∞ 1.87 (legacy PI: 26.9).
+- **Python toolchain:** no MATLAB/slycot on this machine — H∞ synthesis implemented from scratch
+  in `controller_design/hinf_synthesis.py` (Hamiltonian/Schur Riccati, DGKF central controller,
+  self-tested against scipy; every controller a-posteriori gate-checked ‖Tzw‖∞ ≤ γ). Env:
+  `uv venv` + `uv pip install numpy scipy matplotlib` (system pythons are externally managed —
+  use uv, not pip/pacman). `droop_plant.m` mirrors the design for MATLAB cross-check.
+- **Tests: 316 production + 6 bench pass** (`-I../controller_design` added to the Makefile; the
+  C++ controller is replay-verified against generated Python reference vectors incl. a saturated
+  episode).
+- Remaining: bench calibration items in `system_model.md` §9 (ΔV0, τr/Td step test, k_d
+  decision, TPS61288 Vref = 0.6 V verification), then regenerate coefficients.
+
+### Hardware bodge record (2026-07-10): BT compensator R_C 27.4k → 61.2k
+
+`RC-BT` (TPS61288 COMP network, battery boost) was changed post-manufacturing from the
+schematic's 27.4 kΩ to **61.2 kΩ to match the FC channel** — the schematic (2026-06-22) still
+shows 27.4 k. Effect: both boost voltage loops now cross at ~4–19 kHz (symmetric lags, the
+assumption behind the shared τ_r in the share-loop plant; analysis in
+`controller_design/system_model.md` §6e, from TPS61288 DS §9.2.2.5). Margins (with the
+2026-07-10 system decision to keep the battery at **7.4–8.4 V**): the DS f_c ≤ f_RHPZ/5
+guideline holds for BT per-channel currents up to 4.0 A at worst-case cap derating (5.3 A
+counting the bodge caps) — ≥ 30 % margin over the vehicle's ≤ ~3 A/channel; the deep-discharge
+caution is retired by the operating floor (confirmation ringing check: bench manual CAL-3
+step 5 at 7.4 V). Enforce the floor eventually via LIMIT_V_BATT_MIN. Any future BT boost
+rework must keep this resistor value (or revert knowingly).
+
+### Full-order TPS61288 validation model (2026-07-11)
+
+Added `controller_design/full_order_validation.md` + `tps61288_full_model.py` +
+`full_order_model.m` (MATLAB mirror): an independently-built full-order small-signal model
+(complete TPS61288 DS §9.2.2.5 dynamics — both channels' gm-amp compensators, Norton power
+stages with RHP/ESR zeros, droop-injection FB network, bus coupling, INA sense; 11 states)
+that **empirically validates** the simplified §6d design plant. Result: < 4% nominal / < 6%
+envelope (432 operating points) in-band deviation, closed loop with the shipped controller
+432/432 stable, worst ‖S‖∞ 1.24 (better than the simplified corner family's 1.87), step
+overlay < 0.001 share. The simplified model, synthesized controller, coefficients, firmware,
+and tests are ALL UNCHANGED — this is additive validation only. Re-run `tps61288_full_model.py`
+last in the recalibration loop (it re-parses share_controller_coeffs.h).

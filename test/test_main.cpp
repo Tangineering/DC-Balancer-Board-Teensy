@@ -52,7 +52,7 @@ static void reset_test_state() {
     v_actual = 0;     current = 0;      targetMotorTorque = 0;
     P_fc_actual = 0;  P_batt_actual = 0;
     I_fc = 0;         I_batt = 0;       I_charge = 0;
-    V_fc = 10.0f;     V_batt = 7.0f;   V_bus = 18.0f;  // above UV_FC/UV_BATT limits
+    V_fc = 10.0f;     V_batt = 7.0f;   V_bus = 16.0f;  // nominal (16V bus), above UV limits, below OV
     V_chg = 0;        V_rgn = 0;
 
     power_share_actual   = 0;
@@ -70,6 +70,11 @@ static void reset_test_state() {
     // PI integrator state (hoisted to file scope so it can be reset between cases)
     pi_motor_accum = 0;  pi_motor_lastMicros = 0;
     pi_power_accum = 0;  pi_power_lastMicros = 0;
+
+    // Youla-H share controller state (share_controller.h + wrapper)
+    shareControllerReset();
+    shareCtrl_heldOut    = 0.5f;
+    shareCtrl_lastMicros = 0;
 
     // .ino command globals
     v_setpoint           = 0;
@@ -396,7 +401,7 @@ static void test_detect_faults() {
     // OC_FC — verify fault bit, error_code latch, and state transition
     reset_test_state();
     I_fc = LIMIT_I_FC_MAX + 0.1f;
-    V_batt = 7.0f; V_bus = 18.0f;
+    V_batt = 7.0f; V_bus = 16.0f;
     mainState = 1;
     detectFaults();
     check(fault_flags & FAULT_OC_FC,
@@ -411,7 +416,7 @@ static void test_detect_faults() {
     // UV_BATT
     reset_test_state();
     V_batt = LIMIT_V_BATT_MIN - 0.1f;
-    V_bus = 18.0f; I_fc = 0;
+    V_bus = 16.0f; I_fc = 0;
     mainState = 2;
     detectFaults();
     check(fault_flags & FAULT_UV_BATT,
@@ -435,7 +440,7 @@ static void test_detect_faults() {
 
     // Switch conflict: FC_CHARGE_ENABLE + BT_BUS_ENABLE both HIGH
     reset_test_state();
-    V_batt = 7.0f; V_bus = 18.0f; I_fc = 0;
+    V_batt = 7.0f; V_bus = 16.0f; I_fc = 0;
     g_pin_value[FC_CHARGE_ENABLE] = HIGH;
     g_pin_value[BT_BUS_ENABLE]    = HIGH;
     g_pin_value[REGEN_ENABLE]     = LOW;
@@ -448,7 +453,7 @@ static void test_detect_faults() {
 
     // Switch conflict: FC_CHARGE_ENABLE + REGEN_ENABLE both HIGH
     reset_test_state();
-    V_batt = 7.0f; V_bus = 18.0f; I_fc = 0;
+    V_batt = 7.0f; V_bus = 16.0f; I_fc = 0;
     g_pin_value[FC_CHARGE_ENABLE] = HIGH;
     g_pin_value[BT_BUS_ENABLE]    = LOW;
     g_pin_value[REGEN_ENABLE]     = HIGH;
@@ -459,7 +464,7 @@ static void test_detect_faults() {
 
     // OV_BATT
     reset_test_state();
-    V_batt = LIMIT_V_BATT_MAX + 0.1f; V_bus = 17.5f; I_fc = 0;
+    V_batt = LIMIT_V_BATT_MAX + 0.1f; V_bus = 16.0f; I_fc = 0;
     mainState = 1;
     detectFaults();
     check(fault_flags & FAULT_OV_BATT,
@@ -469,7 +474,7 @@ static void test_detect_faults() {
 
     // OV_BATT threshold — just below limit → no fault
     reset_test_state();
-    V_batt = LIMIT_V_BATT_MAX - 0.05f; V_bus = 17.5f; I_fc = 0;
+    V_batt = LIMIT_V_BATT_MAX - 0.05f; V_bus = 16.0f; I_fc = 0;
     mainState = 1;
     detectFaults();
     check(!(fault_flags & FAULT_OV_BATT),
@@ -509,7 +514,7 @@ static void test_detect_faults() {
 
     // No fault in nominal conditions
     reset_test_state();
-    I_fc = 1.0f; V_batt = 7.0f; V_bus = 17.5f;
+    I_fc = 1.0f; V_batt = 7.0f; V_bus = 16.0f;
     g_pin_value[FC_CHARGE_ENABLE] = LOW;
     g_pin_value[BT_BUS_ENABLE]    = LOW;
     g_pin_value[REGEN_ENABLE]     = LOW;
@@ -530,7 +535,7 @@ static void test_telemetry_v4_layout() {
 
     // Set known values
     v_actual = 1.0f;    V_batt = 7.5f;   I_batt = 0.5f;  I_charge = 0.11f;
-    V_fc = 12.0f;       I_fc   = 0.3f;   V_bus  = 17.5f;
+    V_fc = 12.0f;       I_fc   = 0.3f;   V_bus  = 16.0f;
     V_rgn = 5.0f;       V_chg  = 20.0f;
     power_share_actual   = 0.6f;
     droop_gain_FC_actual = 0.0f;
@@ -1069,13 +1074,13 @@ static void test_dostate0_reaches_idle_unpowered() {
     test_group("doState0() bring-up reaches Idle when bus charges");
 
     // doState0() is a non-blocking phase machine: switches first, settle, boosts, then gate on
-    // V_bus. Drive it through its phases with the bus coming up (V_bus default 18V ≥ threshold).
+    // V_bus. Drive it through its phases with the bus coming up (V_bus 16V ≥ threshold).
     // The charger is unpowered in Init and doState0() no longer touches it, so a NACKing charger
     // must not matter.
     reset_test_state();
     Wire.next_endtransmission_result = 1;   // any stray I2C would NACK — must not matter
     mainState = 0;
-    V_bus = 18.0f;                           // bus comes up past V_BUS_CHARGED_THRESH
+    V_bus = 16.0f;                           // bus comes up past V_BUS_CHARGED_THRESH
     g_mock_millis = 0;
 
     doState0();                              // phase 0: enable bus switches
@@ -1143,7 +1148,7 @@ static void test_dostate98_hotplug_guard() {
 
     // Bus already charged → '1' ON allowed (no step across the ideal diode).
     g_pin_value[FC_BUS_ENABLE] = LOW;
-    V_bus = 18.0f;
+    V_bus = 16.0f;
     Serial.rx_queue.push('1');
     doState98();
     check(digitalRead(FC_BUS_ENABLE) == HIGH,
@@ -1178,7 +1183,7 @@ static void test_dostate98_bt_bus_fc_charge_guard() {
     g_pin_value[FC_CHARGE_ENABLE] = HIGH;
     g_pin_value[BT_BUS_ENABLE]    = LOW;
     g_pin_value[BT_REG_ENABLE]    = LOW;   // boost off, so the hot-plug guard is not the blocker
-    V_bus = 18.0f;
+    V_bus = 16.0f;
     Serial.rx_queue.push('2');
     doState98();
     check(digitalRead(BT_BUS_ENABLE) == LOW,
@@ -1251,10 +1256,10 @@ static void test_mot_pwr_hotplug_guard() {
 
     // motPwrHotPlugUnsafe(): true only when the bus is up AND the motor node lags it by > margin.
     reset_test_state();
-    V_bus = 18.0f; V_rgn = 0.0f;             // bus up, motor node discharged
+    V_bus = 16.0f; V_rgn = 0.0f;             // bus up, motor node discharged
     check(motPwrHotPlugUnsafe() == true,
           "unsafe: bus energized + motor node discharged → hot-plug");
-    V_rgn = 18.0f;                            // motor node tracks the bus (pre-charged)
+    V_rgn = 16.0f;                            // motor node tracks the bus (pre-charged)
     check(motPwrHotPlugUnsafe() == false,
           "safe: motor node pre-charged (V_rgn ≈ V_bus)");
     V_bus = 5.0f; V_rgn = 0.0f;               // low-voltage bring-up window (bus not yet up)
@@ -1266,13 +1271,13 @@ static void test_mot_pwr_hotplug_guard() {
     g_pin_value[MOT_PWR_ENABLE] = HIGH;
     check(assertMotPwrEnable(false) == true && digitalRead(MOT_PWR_ENABLE) == LOW,
           "assert: OFF always succeeds");
-    g_pin_value[MOT_PWR_ENABLE] = HIGH; V_bus = 18.0f; V_rgn = 0.0f;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH; V_bus = 16.0f; V_rgn = 0.0f;
     check(assertMotPwrEnable(true) == true && digitalRead(MOT_PWR_ENABLE) == HIGH,
           "assert: already-ON is idempotent (never re-checks the guard)");
-    g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 18.0f; V_rgn = 0.0f;
+    g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 16.0f; V_rgn = 0.0f;
     check(assertMotPwrEnable(true) == false && digitalRead(MOT_PWR_ENABLE) == LOW,
           "assert: ON refused when it would hot-plug (stays LOW)");
-    g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 18.0f; V_rgn = 17.0f;
+    g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 16.0f; V_rgn = 17.0f;
     check(assertMotPwrEnable(true) == true && digitalRead(MOT_PWR_ENABLE) == HIGH,
           "assert: ON allowed when the motor node is already charged");
     g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 5.0f; V_rgn = 0.0f;
@@ -1282,7 +1287,7 @@ static void test_mot_pwr_hotplug_guard() {
     // doState2(): normal case — motor node already energized → runs, no fault.
     reset_test_state();
     mainState = 2;
-    g_pin_value[MOT_PWR_ENABLE] = HIGH; V_bus = 18.0f; V_rgn = 18.0f;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH; V_bus = 16.0f; V_rgn = 16.0f;
     doState2();
     check(mainState == 2 && !(fault_flags & FAULT_MOT_HOTPLUG),
           "doState2: pre-charged motor node → runs normally, no fault");
@@ -1292,7 +1297,7 @@ static void test_mot_pwr_hotplug_guard() {
     // doState2(): abnormal case — motor node discharged at full bus → refuse + fault (no hot-plug).
     reset_test_state();
     mainState = 2;
-    g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 18.0f; V_rgn = 0.0f;
+    g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 16.0f; V_rgn = 0.0f;
     doState2();
     check(digitalRead(MOT_PWR_ENABLE) == LOW,
           "doState2: refuses the hot-plug (MOT_PWR stays LOW)");
@@ -1310,7 +1315,7 @@ static void test_dostate98_mot_pwr_guard() {
 
     // Motor node discharged + bus up → '3' ON refused (MOT_PWR stays LOW).
     g_pin_value[MOT_PWR_ENABLE] = LOW;
-    V_bus = 18.0f; V_rgn = 0.0f;
+    V_bus = 16.0f; V_rgn = 0.0f;
     Serial.rx_queue.push('3');
     doState98();
     check(digitalRead(MOT_PWR_ENABLE) == LOW,
@@ -1318,7 +1323,7 @@ static void test_dostate98_mot_pwr_guard() {
 
     // Motor node pre-charged → '3' ON allowed.
     g_pin_value[MOT_PWR_ENABLE] = LOW;
-    V_bus = 18.0f; V_rgn = 17.0f;
+    V_bus = 16.0f; V_rgn = 17.0f;
     Serial.rx_queue.push('3');
     doState98();
     check(digitalRead(MOT_PWR_ENABLE) == HIGH,
@@ -1326,7 +1331,7 @@ static void test_dostate98_mot_pwr_guard() {
 
     // Turning OFF is always allowed.
     g_pin_value[MOT_PWR_ENABLE] = HIGH;
-    V_bus = 18.0f; V_rgn = 0.0f;
+    V_bus = 16.0f; V_rgn = 0.0f;
     Serial.rx_queue.push('3');
     doState98();
     check(digitalRead(MOT_PWR_ENABLE) == LOW,
@@ -1335,12 +1340,12 @@ static void test_dostate98_mot_pwr_guard() {
 
 // ─── V_BUS_NOMINAL parameterization preserves current thresholds ─────────────
 static void test_bus_voltage_scaling() {
-    test_group("V_BUS_NOMINAL-derived thresholds (17.5V nominal, pre-retune)");
-    // The parameterization must not change live behavior until the hardware FB retune.
-    check(fabsf(LIMIT_V_BUS_MAX - 18.5f) < 1e-4f,
-          "LIMIT_V_BUS_MAX = V_BUS_NOMINAL + 1.0 = 18.5 (unchanged at 17.5V nominal)");
-    check(fabsf(V_BUS_CHARGED_THRESH - 15.0f) < 1e-4f,
-          "V_BUS_CHARGED_THRESH = V_BUS_NOMINAL - 2.5 = 15.0 (unchanged at 17.5V nominal)");
+    test_group("V_BUS_NOMINAL-derived thresholds (16V nominal, RD1=215k retune executed)");
+    // 16V bus retune executed 2026-07-11 (RD1 bodged 237k -> 215k, V0 = 15.91V no-load).
+    check(fabsf(LIMIT_V_BUS_MAX - 17.0f) < 1e-4f,
+          "LIMIT_V_BUS_MAX = V_BUS_NOMINAL + 1.0 = 17.0 (16V nominal)");
+    check(fabsf(V_BUS_CHARGED_THRESH - 13.5f) < 1e-4f,
+          "V_BUS_CHARGED_THRESH = V_BUS_NOMINAL - 2.5 = 13.5 (16V nominal)");
 }
 
 // ─── detectFaults() Ag105 GENSTAT error-state decoding ───────────────────────
@@ -1361,7 +1366,7 @@ static void test_genstat_fault() {
     };
     for (auto& c : cases) {
         reset_test_state();
-        V_batt = 7.0f; V_bus = 18.0f; I_fc = 0; V_fc = 10.0f;
+        V_batt = 7.0f; V_bus = 16.0f; I_fc = 0; V_fc = 10.0f;
         ag105_status_raw = c.raw;
         ag105DataValid   = c.valid;
         mainState = 2;
@@ -1377,7 +1382,7 @@ static void test_uv_boot_gate() {
 
     // State 0 with un-ramped rails (V_fc = V_batt = 0) must NOT latch State 99.
     reset_test_state();
-    V_fc = 0; V_batt = 0; V_bus = 18.0f; I_fc = 0;
+    V_fc = 0; V_batt = 0; V_bus = 16.0f; I_fc = 0;
     mainState = 0;
     detectFaults();
     check(!(fault_flags & FAULT_UV_FC),   "detectFaults: no UV_FC in State 0 (boot)");
@@ -1386,20 +1391,20 @@ static void test_uv_boot_gate() {
 
     // State 1 (Idle) likewise exempt.
     reset_test_state();
-    V_fc = 0; V_batt = 0; V_bus = 18.0f; I_fc = 0;
+    V_fc = 0; V_batt = 0; V_bus = 16.0f; I_fc = 0;
     mainState = 1;
     detectFaults();
     check(mainState == 1, "detectFaults: no UV boot-lock in State 1 (Idle)");
 
     // State 2 (Run): UV checks are armed.
     reset_test_state();
-    V_fc = LIMIT_V_FC_MIN - 0.1f; V_batt = 7.0f; V_bus = 18.0f; I_fc = 0;
+    V_fc = LIMIT_V_FC_MIN - 0.1f; V_batt = 7.0f; V_bus = 16.0f; I_fc = 0;
     mainState = 2;
     detectFaults();
     check(fault_flags & FAULT_UV_FC, "detectFaults: UV_FC fires in State 2 (Run)");
 
     reset_test_state();
-    V_fc = 10.0f; V_batt = LIMIT_V_BATT_MIN - 0.1f; V_bus = 18.0f; I_fc = 0;
+    V_fc = 10.0f; V_batt = LIMIT_V_BATT_MIN - 0.1f; V_bus = 16.0f; I_fc = 0;
     mainState = 2;
     detectFaults();
     check(fault_flags & FAULT_UV_BATT, "detectFaults: UV_BATT fires in State 2 (Run)");
@@ -1624,6 +1629,151 @@ static void test_state98_drive_cycle_runs_controls() {
           "doState98: 'Q' exit returns to State 1");
 }
 
+// ─── State 98 bench tools: VESC read-back ('E' one-shot / 'W' watch) ─────────
+static void test_state98_vesc_readback() {
+    test_group("State 98 VESC read-back");
+
+    // 'E' one-shot invokes both reads (FW version + values).
+    reset_test_state();
+    mainState = 98;
+    vescWatchActive = false;
+    vesc.reset();
+    Serial.rx_queue.push('E');
+    doState98();
+    check(vesc.getFW_calls == 1 && vesc.getValues_calls == 1,
+          "'E': queries FW version and VESC values once each");
+
+    // 'E' with both reads failing must not crash and still attempts both.
+    reset_test_state();
+    mainState = 98;
+    vescWatchActive = false;
+    vesc.reset();
+    vesc.getFW_result     = false;
+    vesc.getValues_result = false;
+    Serial.rx_queue.push('E');
+    doState98();
+    check(vesc.getFW_calls == 1 && vesc.getValues_calls == 1,
+          "'E': no-response path still issues both reads without crashing");
+
+    // 'W' enables watch; enabling does NOT poll immediately (0 < period).
+    reset_test_state();
+    mainState = 98;
+    vescWatchActive = false;
+    vesc.reset();
+    g_mock_millis = 1000;
+    Serial.rx_queue.push('W');
+    doState98();
+    check(vescWatchActive && vesc.getValues_calls == 0,
+          "'W': enables watch, no poll on the enabling tick");
+
+    // After the period elapses, a bare tick polls once.
+    g_mock_millis = 1000 + VESC_WATCH_PERIOD_MS;
+    doState98();
+    check(vesc.getValues_calls == 1,
+          "watch: polls getVescValues() once period elapsed");
+
+    // A second 'W' stops further polling.
+    Serial.rx_queue.push('W');
+    doState98();                      // toggles off (does not poll while turning off)
+    int calls_after_off = vesc.getValues_calls;
+    g_mock_millis += 2 * VESC_WATCH_PERIOD_MS;
+    doState98();
+    check(!vescWatchActive && vesc.getValues_calls == calls_after_off,
+          "'W' again: stops the watch, no further polls");
+
+    // Watch period is respected: a sub-period tick does not poll.
+    reset_test_state();
+    mainState = 98;
+    vescWatchActive = false;
+    vesc.reset();
+    g_mock_millis = 1000;
+    Serial.rx_queue.push('W');
+    doState98();                      // enable at t=1000
+    g_mock_millis = 1000 + VESC_WATCH_PERIOD_MS - 1;   // just under period
+    doState98();
+    check(vesc.getValues_calls == 0,
+          "watch: does not poll before the period elapses");
+
+    // Fault-code transition is latched into lastVescFault.
+    reset_test_state();
+    mainState = 98;
+    vescWatchActive = false;
+    vesc.reset();
+    g_mock_millis = 1000;
+    Serial.rx_queue.push('W');
+    doState98();                      // enable, lastVescFault reset to 0
+    vesc.data.error = 16;             // seed a fault before the next poll
+    g_mock_millis = 1000 + VESC_WATCH_PERIOD_MS;
+    doState98();
+    check(lastVescFault == 16,
+          "watch: new fault code latched into lastVescFault");
+
+    // 'Q' exit clears the watch so the blocking poll can't run outside State 98.
+    reset_test_state();
+    mainState = 98;
+    vescWatchActive = true;           // pretend a watch was left running
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    vesc.reset();
+    Serial.rx_queue.push('Q');
+    doState98();
+    check(!vescWatchActive && mainState == 1,
+          "'Q': clears vescWatchActive on exit to State 1");
+
+    // Watch is auto-suppressed while a DRIVE CYCLE runs so motorControl()/powerBalance() keep
+    // production-identical timing (no ~100 ms getVescValues() stall), then resumes when it stops.
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    vescWatchActive = true;
+    lastVescWatchMs = 0;
+    driveCycleActive     = true;
+    driveCyclePhaseIdx   = 1;         // a valid (non-terminal) phase
+    driveCyclePhaseStart = 0;
+    driveCycleStatusLast = 0;
+    g_mock_millis = 5 * VESC_WATCH_PERIOD_MS;   // well past the watch period
+    g_mock_micros = 100000;
+    vesc.reset();
+    doState98();
+    check(vesc.getValues_calls == 0,
+          "watch: suppressed while a drive cycle is active (production timing preserved)");
+    // Stop the cycle; the watch resumes on the next elapsed tick (elapsed > period → immediate).
+    driveCycleActive = false;
+    g_mock_millis += VESC_WATCH_PERIOD_MS;
+    doState98();
+    check(vesc.getValues_calls == 1,
+          "watch: resumes once the drive cycle stops");
+
+    // Same suppression during a POWER-SHARE / energy-management load PROFILE.
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    vescWatchActive = true;
+    lastVescWatchMs = 0;
+    setManualMotorCurrent(2.0f);      // profile branch calls applyManualMotor()
+    powerShareProfileActive     = true;
+    powerShareProfilePhaseIdx   = 0;
+    powerShareProfilePhaseStart = 0;
+    powerShareProfileStatusLast = 0;
+    g_mock_millis = 5 * VESC_WATCH_PERIOD_MS;
+    g_mock_micros = 100000;
+    vesc.reset();
+    doState98();
+    check(vesc.getValues_calls == 0,
+          "watch: suppressed while a power-share profile is active");
+    powerShareProfileActive = false;
+    vescWatchActive = false;
+
+    // vescFaultStr name table (spot checks across the range + out-of-range).
+    check(strcmp(vescFaultStr(0),  "NONE") == 0,                         "vescFaultStr(0) = NONE");
+    check(strcmp(vescFaultStr(4),  "ABS_OVER_CURRENT") == 0,             "vescFaultStr(4) = ABS_OVER_CURRENT");
+    check(strcmp(vescFaultStr(11), "ENCODER_SPI") == 0,                  "vescFaultStr(11) = ENCODER_SPI");
+    check(strcmp(vescFaultStr(16), "HIGH_OFFSET_CURRENT_SENSOR_2") == 0, "vescFaultStr(16) = HIGH_OFFSET_CURRENT_SENSOR_2");
+    check(strcmp(vescFaultStr(26), "ENCODER_MAGNET_TOO_STRONG") == 0,    "vescFaultStr(26) = ENCODER_MAGNET_TOO_STRONG");
+    check(strcmp(vescFaultStr(99), "UNKNOWN") == 0,                      "vescFaultStr(99) = UNKNOWN");
+
+    vescWatchActive = false;          // don't contaminate later tests
+}
+
 // ─── State 98 bench tools: manual motor (current mode) ───────────────────────
 static void test_manual_motor_current() {
     test_group("State 98 manual motor — fixed current");
@@ -1695,15 +1845,17 @@ static void test_open_loop_droop() {
     powerBalanceLive = true;     // must be cleared by an open-loop write
     SPI.reset();
 
-    const float r = 0.95f;       // chosen so gFC stays in-range (gain ~0.94, not saturated)
+    const float r = 0.30f;       // in-span ratio: both gains well inside [0, 1]
     applyOpenLoopDroop(r);
 
-    float expFC = k_eq / r          / K_sns / A_v;
-    float expBT = k_eq / (1.0f - r) / K_sns / A_v;
+    float expFC = K_DROOP / (RE_MAX * r);
+    float expBT = K_DROOP / (RE_MAX * (1.0f - r));
     check(fabsf(droop_gain_FC_actual - expFC) < 1e-3f,
-          "open-loop droop: gFC matches k_eq/r/K_sns/A_v");
+          "open-loop droop: gFC matches K_DROOP/(RE_MAX*r)");
     check(fabsf(droop_gain_BT_actual - expBT) < 1e-3f,
-          "open-loop droop: gBT matches k_eq/(1-r)/K_sns/A_v");
+          "open-loop droop: gBT matches K_DROOP/(RE_MAX*(1-r))");
+    check(expFC <= 1.0f && expBT <= 1.0f,
+          "open-loop droop: corrected mapping keeps both gains <= 1 (no MDAC clamp)");
 
     check(SPI.transfer_log.size() == 2,
           "open-loop droop: two MDAC words written (FC then BT)");
@@ -1717,6 +1869,145 @@ static void test_open_loop_droop() {
     }
     check(powerBalanceLive == false,
           "open-loop droop: clears powerBalanceLive (closed loop must not stomp it)");
+}
+
+// ─── Youla-H share controller (share_controller.h) ───────────────────────────
+#include "reference_vectors.h"   // generated by controller_design/synthesize_controller.py
+
+// Replay the generated error sequence through the C++ implementation and compare
+// against the Python DiscreteController reference outputs (double precision).
+// Tolerance covers float32 accumulation over the 64-tick sequence.
+static void test_share_controller_reference() {
+    test_group("Youla-H controller vs Python reference vectors");
+    reset_test_state();
+
+    float worst = 0.0f;
+    for (int k = 0; k < SHARE_REF_N; k++) {
+        float u = shareControllerStep(SHARE_REF_E[k], 0.15f, 0.85f);
+        float err = fabsf(u - SHARE_REF_U[k]);
+        if (err > worst) worst = err;
+    }
+    check(worst < 5e-4f,
+          "share controller matches Python reference over 64 ticks (incl. saturation)");
+
+    // DC behavior: zero error holds the output (integrator + biquads at rest)
+    reset_test_state();
+    float u1 = shareControllerStep(0.0f, 0.15f, 0.85f);
+    float u2 = shareControllerStep(0.0f, 0.15f, 0.85f);
+    check(fabsf(u1 - 0.5f) < 1e-6f && fabsf(u2 - 0.5f) < 1e-6f,
+          "share controller: zero error -> holds balanced split r0 = 0.5");
+
+    // integral action: sustained positive error must ratchet the output upward
+    reset_test_state();
+    float prev = 0.0f;
+    bool monotone = true;
+    for (int k = 0; k < 10; k++) {
+        float u = shareControllerStep(0.05f, 0.15f, 0.85f);
+        if (k > 1 && u <= prev) monotone = false;
+        prev = u;
+    }
+    check(monotone && prev > 0.5f,
+          "share controller: sustained error integrates (output ratchets toward the rail)");
+}
+
+static void test_share_controller_antiwindup() {
+    test_group("Youla-H controller anti-windup (back-calculation)");
+    reset_test_state();
+
+    // Drive hard into the top rail for 200 ticks
+    for (int k = 0; k < 200; k++) shareControllerStep(1.0f, 0.15f, 0.85f);
+    float u_railed = shareControllerStep(1.0f, 0.15f, 0.85f);
+    check(fabsf(u_railed - 0.85f) < 1e-6f, "anti-windup: output clamped at rmax");
+
+    // Reverse the error: back-calculation means the output must leave the rail
+    // within a few ticks (a wound-up integrator would pin it for ~KI*200 ticks)
+    int ticks_to_leave = -1;
+    for (int k = 0; k < 10; k++) {
+        float u = shareControllerStep(-0.1f, 0.15f, 0.85f);
+        if (u < 0.85f - 1e-4f) { ticks_to_leave = k; break; }
+    }
+    check(ticks_to_leave >= 0 && ticks_to_leave <= 3,
+          "anti-windup: output leaves the rail within 3 ticks of error reversal");
+}
+
+static void test_youla_wrapper_gating() {
+    test_group("youlaController_Power() wrapper: Ts gating + measurement filter");
+    reset_test_state();
+
+    // sub-Ts tick: no update, held initial 0.5
+    g_mock_micros = 100;    // < SHARE_CTRL_TS_US since lastMicros = 0 (100-0 < 1000)
+    float u0 = youlaController_Power(0.8f, 0.5f);
+    check(fabsf(u0 - 0.5f) < 1e-6f,
+          "wrapper: sub-Ts call returns held output (no state advance)");
+
+    // crossing Ts: exactly one difference-equation update, on the FILTERED error
+    g_mock_micros = 1200;
+    float u1 = youlaController_Power(0.8f, 0.5f);
+    reset_test_state();
+    float alphaFilt = shareControllerFilterMeas(0.5f);   // filter starts at 0.5 -> stays 0.5
+    float uref = shareControllerStep(0.8f - alphaFilt, DROOP_R_MIN, DROOP_R_MAX);
+    check(fabsf(u1 - uref) < 1e-6f,
+          "wrapper: first Ts-crossing call equals one filtered shareControllerStep()");
+
+    // measurement filter: a step in raw alpha reaches the error only fractionally
+    // per tick (one-pole, A = exp(-Ts/tauf)); the setpoint path is NOT filtered
+    reset_test_state();
+    float f1 = shareControllerFilterMeas(0.7f);   // from 0.5 toward 0.7
+    check(f1 > 0.5f + 1e-3f && f1 < 0.7f - 1e-3f,
+          "wrapper: measured-share step is low-pass filtered (partial first tick)");
+    for (int k = 0; k < 40; k++) shareControllerFilterMeas(0.7f);
+    check(fabsf(shareCtrl_alphaFilt - 0.7f) < 1e-3f,
+          "wrapper: filter converges to the measured share");
+
+    // powerBalance() integration: the Youla path drives the corrected MDAC mapping
+    reset_test_state();
+    I_fc = 1.0f; I_batt = 1.0f; power_share_setpoint = 0.5f;
+    g_mock_micros = 2000;
+    powerBalance();
+    check(fabsf(droop_gain_FC_actual - K_DROOP / (RE_MAX * 0.5f)) < 5e-3f,
+          "wrapper: powerBalance() with zero share error writes balanced MDAC gains");
+}
+
+// ─── Droop MDAC mapping bounds (the k_eq saturation bug, fixed 2026-07-10) ────
+// The old k_eq/r/K_sns/A_v mapping commanded g > 1 for all r < 0.896, pinning both
+// MDACs at full scale. The corrected mapping g = K_DROOP/(RE_MAX*r) must keep both
+// gains <= 1 over the whole clamped authority span, and out-of-span requests must
+// clamp to [DROOP_R_MIN, DROOP_R_MAX] instead of running off the MDAC range.
+static void test_droop_mapping_bounds() {
+    test_group("Droop MDAC mapping bounds (K_DROOP/RE_MAX)");
+    reset_test_state();
+
+    // sanity on the derived constant: RE_MAX = K_sns*A_v*RD1/RINJ with the bodged
+    // RD1 = 215k (16V bus retune) = 2.014 ohm
+    check(fabsf(RE_MAX - 2.0136f) < 5e-3f,
+          "mapping: RE_MAX derives to ~2.014 ohm from the bodged RD1 = 215k");
+    check(K_DROOP <= RE_MAX * DROOP_R_MIN + 1e-6f,
+          "mapping: K_DROOP respects the hard bound RE_MAX*DROOP_R_MIN");
+
+    // sweep the full span: both gains in (0, 1]
+    for (float r = DROOP_R_MIN; r <= DROOP_R_MAX + 1e-6f; r += 0.05f) {
+        applyOpenLoopDroop(r);
+        if (droop_gain_FC_actual > 1.0f || droop_gain_BT_actual > 1.0f) {
+            check(false, "mapping: gain exceeded 1.0 inside the authority span");
+            return;
+        }
+    }
+    check(true, "mapping: g_FC and g_BT stay <= 1 over the full [R_MIN, R_MAX] span");
+
+    // out-of-span requests clamp to the span edges (not the old 0.01/0.99)
+    applyOpenLoopDroop(0.01f);
+    check(fabsf(droop_gain_FC_actual - K_DROOP / (RE_MAX * DROOP_R_MIN)) < 1e-4f,
+          "mapping: low request clamps to DROOP_R_MIN");
+    applyOpenLoopDroop(0.99f);
+    check(fabsf(droop_gain_BT_actual - K_DROOP / (RE_MAX * (1.0f - DROOP_R_MAX))) < 1e-4f,
+          "mapping: high request clamps to DROOP_R_MAX");
+
+    // symmetric split at r = 0.5: equal gains, ~0.297 each (not full-scale!)
+    applyOpenLoopDroop(0.5f);
+    check(fabsf(droop_gain_FC_actual - droop_gain_BT_actual) < 1e-6f,
+          "mapping: r=0.5 gives symmetric gains");
+    check(droop_gain_FC_actual < 0.99f,
+          "mapping: r=0.5 gains are NOT pinned at full scale (the old bug)");
 }
 
 // ─── State 98 bench tools: closed-loop power-share setpoint ───────────────────
@@ -1934,9 +2225,14 @@ int main() {
     test_config_resets_on_power_loss();
     test_charging_control_fc_bootstrap();
     test_state98_drive_cycle_runs_controls();
+    test_state98_vesc_readback();
     test_manual_motor_current();
     test_manual_motor_velocity();
     test_open_loop_droop();
+    test_droop_mapping_bounds();
+    test_share_controller_reference();
+    test_share_controller_antiwindup();
+    test_youla_wrapper_gating();
     test_power_share_setpoint_live();
     test_power_share_profile();
     test_power_share_profile_runs_controls();

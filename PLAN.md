@@ -681,6 +681,8 @@ All commands are single uppercase characters, processed in `doState98()`:
 | `D` | Start/stop simulated drive cycle (§9c) |
 | `S` | Print status (all pin states, all ADC readings, `I_charge`, bench-tool state) |
 | `I` | Scan the I2C bus |
+| `E` | Read VESC firmware version + telemetry snapshot (incl. live fault code via `vescFaultStr()`) — one-shot |
+| `W` | Toggle VESC watch: ~2 Hz `getVescValues()` poll printing a compact line and flagging any fault-code change. Auto-suppressed while a drive cycle (`D`) or power-share profile (`R`) runs so those keep production-identical control-loop timing; resumes on stop |
 | `G` | Safe VBUS bring-up (`bringUpBus()`: switches → settle → boosts) |
 | `P` | Set power-share setpoint (closed-loop live — prompts for a float; §9e) |
 | `O` | Set droop ratio (open-loop direct MDAC write — prompts for a float; §9e) |

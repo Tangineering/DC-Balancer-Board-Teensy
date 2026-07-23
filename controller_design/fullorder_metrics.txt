@@ -1,0 +1,11 @@
+Full-order TPS61288 model validation metrics (generated)
+full-plant order (nominal)      = 11 states
+DC gain d(alpha)/dr             = 0.993297
+nominal in-band deviation       = 3.86 %  (band <= 1100 rad/s)
+worst best-corner deviation     = 5.78 % at (12.0, 7.4, 1.0, 0.5, 3e-05, 0.0005, 1000000.0)
+median best-corner deviation    = 4.30 %  (432 grid points)
+discrete CL stable              = 432/432
+worst discrete ||S||inf         = 1.240 at (9.0, 7.4, 1.0, 0.5, 6.6e-05, 0.0005, 100000000.0)  (simplified: 1.867)
+nominal step overlay max |diff| = 0.0008 share
+full-model 2% settle            = 25 ms  (simplified: 22 ms)
+ramp err @ 3 s                  = 4.30e-04

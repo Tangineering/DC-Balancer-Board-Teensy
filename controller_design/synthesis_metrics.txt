@@ -1,0 +1,17 @@
+H-inf + Youla-H synthesis metrics (generated)
+gamma_opt            = 0.6532
+gamma_used           = 0.6859
+||Tzw||inf           = 0.6841
+controller order     = 7 (H-inf) -> 4 (reduced: integrator + 3)
+T_H(0)               = 0.99996423
+T_YH(0) reduced      = 1.000000000000
+S/T crossover        = 109.9 rad/s
+nominal M2           = 0.7978
+phase margin         = 73.9 deg
+delay margin         = 11.74 ms
+worst-corner M2      = 0.5905 at (K, Td, taur, tauf) = (1.45, 0.002, 0.0003, 0.0008)
+worst |z| discrete   = 1.0000
+step 2% settle       = 22 ms, overshoot = 0.0 %
+ramp err (t = 6 s)   = 4.47e-04
+discrete worst ||S||inf: youla = 1.867, legacy PI = 26.889
+kI                   = 111.929630
