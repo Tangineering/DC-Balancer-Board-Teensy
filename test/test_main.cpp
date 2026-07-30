@@ -71,6 +71,16 @@ static void reset_test_state() {
     pi_motor_accum = 0;  pi_motor_lastMicros = 0;
     pi_power_accum = 0;  pi_power_lastMicros = 0;
 
+    // Control-loop rate-limit gates: open them so a single-tick test call actually runs the
+    // controllers rather than being suppressed by a period left over from the previous case.
+    // (test_control_rate_limiting exercises the gating itself.)
+    resetControlRateLimiters();
+
+    // Velocity-chain interlock: default the runtime flag to CALIBRATED for the existing suite, so
+    // the velocity-mode and drive-cycle tests keep exercising the control paths. The refusal path
+    // is covered explicitly by test_velocity_chain_interlock().
+    velocityChainCalibratedFlag = true;
+
     // Youla-H share controller state (share_controller.h + wrapper)
     shareControllerReset();
     shareCtrl_heldOut    = 0.5f;
@@ -1538,13 +1548,133 @@ static void test_config_resets_on_power_loss() {
     pollAg105();
     check(!ag105Configured, "pollAg105: ag105Configured cleared when power lost");
 
-    // Re-power + settle → reconfigures (2 more writes).
+    // Re-power + settle → re-runs the config path and re-arms ag105Configured.
+    //
+    // BUT it must NOT write the EPROM again: the registers already hold 0x01 / 0x08 from the first
+    // session (the mock emulates the Ag105's EPROM), and initAg105Charger() now does
+    // read-verify-then-write-ONLY-if-different. So the write count stays at 2 while the config is
+    // still confirmed. This is the point of read-verify — it re-validates every power session
+    // without burning an EPROM write cycle each time.
     make_charger_powered_settled();
     Wire.rx_queue.push(0x02);
     Wire.rx_queue.push(50);
     pollAg105();
     check(ag105Configured, "pollAg105: reconfigured after re-power");
-    check(Wire.write_log.size() == 4, "pollAg105: config re-written on re-power (2 + 2)");
+    check(Wire.write_log.size() == 2,
+          "pollAg105: re-power re-verifies but does NOT re-write matching EPROM values");
+
+    // Now corrupt one register behind the firmware's back (as a real charger losing its EPROM
+    // content, or a factory-fresh part, would look) and confirm the re-write happens.
+    g_pin_value[FC_CHARGE_ENABLE] = LOW;
+    pollAg105();                                  // drop power → re-arm
+    Wire.reg_file[AG105_REG_VBATT_CFG] = 0x00;    // back to the 1S / 4.2V default
+    make_charger_powered_settled();
+    Wire.rx_queue.push(0x02);
+    Wire.rx_queue.push(50);
+    pollAg105();
+    check(ag105Configured, "pollAg105: reconfigured after a register reverted");
+    check(Wire.write_log.size() == 3,
+          "pollAg105: read-verify re-writes ONLY the register that drifted");
+    check(Wire.reg_file[AG105_REG_VBATT_CFG] == AG105_VAL_2S,
+          "pollAg105: drifted register restored to 2S / 8.4V");
+}
+
+// ─── I_charge must not go stale (design review P2-1) ─────────────────────────
+static void test_icharge_cleared_on_invalid() {
+    test_group("I_charge staleness on charger loss / I2C failure");
+
+    // Establish a good reading first.
+    reset_test_state();
+    make_charger_powered_settled();
+    mainState = 2;
+    Wire.rx_queue.push(0x02);      // GENSTAT = charging
+    Wire.rx_queue.push(100);       // 100 counts x 0.011 = 1.1 A
+    pollAg105();
+    check(I_charge > 1.0f && ag105DataValid,
+          "I_charge: good read populates a live charge current");
+
+    // Charger power removed → I_charge must clear, not linger.
+    // Turn the mock's register emulation off first: an unpowered Ag105 cannot ACK at all, and the
+    // emulator would otherwise keep answering and re-validate the data on the same tick.
+    Wire.emulate_regs             = false;
+    g_pin_value[FC_CHARGE_ENABLE] = LOW;
+    g_pin_value[REGEN_ENABLE]     = LOW;
+    pollAg105();
+    check(!ag105DataValid, "I_charge: data marked invalid when charger power is lost");
+    check(I_charge == 0.0f,
+          "I_charge: cleared on power loss (Pi never sees current next to status 0x00)");
+
+    // I2C failure while powered → also clears.
+    reset_test_state();
+    make_charger_powered_settled();
+    mainState = 1;                          // not fault-armed, so we test the clear in isolation
+    Wire.rx_queue.push(0x02);
+    Wire.rx_queue.push(100);
+    pollAg105();
+    check(I_charge > 1.0f, "I_charge: populated again before the failure case");
+    Wire.emulate_regs          = false;     // stop the mock synthesizing a reply
+    Wire.fail_next_requestfrom = true;
+    pollAg105();
+    check(ag105_status_raw == 0 && !ag105DataValid,
+          "I_charge: status invalidated on read failure");
+    check(I_charge == 0.0f, "I_charge: cleared on I2C read failure");
+}
+
+// ─── Ag105 read-verify-then-write-if-different ───────────────────────────────
+// Previously initAg105Charger() wrote both config registers blind and returned success on the ACK
+// alone. A write that ACKed but did not land left the charger at its 1S / 4.2V power-on default
+// while the firmware believed it was configured — a real 2S pack would then be charged to a 1S
+// target with no fault raised. (docs/VESC_MOTOR_INTEGRATION.md §11 asked for exactly this.)
+static void test_ag105_config_read_verify() {
+    test_group("Ag105 config read-verify");
+
+    // Factory-default charger: both registers read 0x00, so both must be written.
+    reset_test_state();
+    check(initAg105Charger() == true, "read-verify: succeeds against a default charger");
+    check(Wire.write_log.size() == 2, "read-verify: writes both registers when both differ");
+    check(Wire.reg_file[AG105_REG_ICHG_CFG]  == AG105_VAL_2500MA,
+          "read-verify: charge current register set to the 2.5 A profile");
+    check(Wire.reg_file[AG105_REG_VBATT_CFG] == AG105_VAL_2S,
+          "read-verify: battery voltage register set to 2S / 8.4 V");
+
+    // Already-correct charger (EPROM persisted): verifies, writes nothing.
+    reset_test_state();
+    Wire.reg_file[AG105_REG_ICHG_CFG]  = AG105_VAL_2500MA;
+    Wire.reg_file[AG105_REG_VBATT_CFG] = AG105_VAL_2S;
+    check(initAg105Charger() == true, "read-verify: succeeds when already configured");
+    check(Wire.write_log.empty(),
+          "read-verify: NO EPROM write when both registers already match");
+
+    // Only one register wrong → only that one is written.
+    reset_test_state();
+    Wire.reg_file[AG105_REG_ICHG_CFG]  = AG105_VAL_2500MA;
+    Wire.reg_file[AG105_REG_VBATT_CFG] = 0x00;
+    check(initAg105Charger() == true, "read-verify: succeeds with one register drifted");
+    check(Wire.write_log.size() == 1, "read-verify: writes only the drifted register");
+    check(Wire.write_log[0].reg == AG105_REG_VBATT_CFG,
+          "read-verify: the register written is the drifted one");
+
+    // A write that ACKs but does not land must be reported as FAILURE, not success.
+    // This is the exact scenario the old blind write could not detect.
+    reset_test_state();
+    Wire.emulate_regs = false;                  // reads no longer reflect writes
+    Wire.rx_queue.push(0x00); Wire.rx_queue.push(0x00);   // initial read of 0x00 → differs
+    Wire.rx_queue.push(0x00); Wire.rx_queue.push(0x00);   // verify read → STILL 0x00
+    check(initAg105Charger() == false,
+          "read-verify: an ACKed write that does not take effect is reported as failure");
+
+    // A read that cannot complete is also a failure (no silent success).
+    reset_test_state();
+    Wire.emulate_regs = false;
+    Wire.fail_next_requestfrom = true;
+    check(initAg105Charger() == false,
+          "read-verify: a failed read-back is reported as failure");
+
+    // A NAKed write is still a failure.
+    reset_test_state();
+    Wire.next_endtransmission_result = 2;       // NAK the register-pointer write
+    check(initAg105Charger() == false,
+          "read-verify: an I2C NAK is reported as failure");
 }
 
 // ─── chargingControl(): FC path bootstraps the charger ───────────────────────
@@ -1627,6 +1757,331 @@ static void test_state98_drive_cycle_runs_controls() {
           "doState98: 'Q' exit forces MOT_PWR_ENABLE LOW");
     check(mainState == 1,
           "doState98: 'Q' exit returns to State 1");
+}
+
+// ─── Velocity unit chain (rev/min → m/s) ─────────────────────────────────────
+// The regression that matters: v_actual = rpm * flyWheelRadius / 60 yielded rev/s·inch, not m/s —
+// it dropped BOTH the 2π (rad/rev) and the inch→m 0.0254. Derive the expectation from first
+// principles here (v = ω·2π·r) rather than reusing RPM_TO_MPS, so the test is independent of the
+// constant it is checking.
+static void test_wheelspeed_units() {
+    test_group("updateWheelSpeed() unit chain");
+
+    // The conversion constant itself: (2π/60)·r, radius in METRES.
+    const float expect_k = (6.28318530718f / 60.0f) * FLYWHEEL_RADIUS_M;
+    check(fabsf(RPM_TO_MPS - expect_k) < 1e-9f,
+          "units: RPM_TO_MPS == (2*pi/60) * FLYWHEEL_RADIUS_M");
+    // Guard against a regression to the old inch-based placeholder: 1 inch would give 0.0254 m.
+    check(FLYWHEEL_RADIUS_M > 0.0f && FLYWHEEL_RADIUS_M < 1.0f,
+          "units: FLYWHEEL_RADIUS_M is a plausible radius in metres (not inches, not a placeholder 1)");
+    check(fabsf(ENCODER_COUNTS_PER_REV - ENCODER_SLOTS_PER_REV * ENCODER_QUAD_DECODE) < 1e-6f,
+          "units: ENCODER_COUNTS_PER_REV == slots x quadrature decode factor");
+    check(fabsf(ENCODER_QUAD_DECODE - 2.0f) < 1e-6f,
+          "units: quadrature decode factor is x2 (doEncoderA decrements / doEncoderB increments only)");
+
+    // Drive the encoder at a known constant rate and let the averaging buffer fill.
+    // 1 count per 100 us = 10000 counts/s.
+    reset_test_state();
+    const float counts_per_sec = 10000.0f;
+    const uint32_t step_us     = 100;
+    encoderPos     = 0;
+    g_mock_micros  = 0;
+    wheelSpeedResetPending = true;
+    updateWheelSpeed();                 // consume the reset
+    for (int i = 1; i <= 400; i++) {    // > buffer depth, so the window is fully populated
+        g_mock_micros = (uint32_t)i * step_us;
+        encoderPos    = i;              // +1 count per step
+        updateWheelSpeed();
+    }
+
+    const float rev_per_sec = counts_per_sec / ENCODER_COUNTS_PER_REV;
+    const float expect_mps  = rev_per_sec * 6.28318530718f * FLYWHEEL_RADIUS_M;
+    check(fabsf(v_actual - expect_mps) < fabsf(expect_mps) * 0.01f,
+          "units: v_actual matches omega*2*pi*r for a known count rate (within 1%)");
+    // The old broken form would have produced rev/s x 1.0 — i.e. 2*pi*r times LARGER. Assert we are
+    // not that value, so a revert is caught rather than silently passing the tolerance above.
+    check(fabsf(v_actual - rev_per_sec) > fabsf(expect_mps),
+          "units: v_actual is NOT the old rev/s-times-inches value");
+
+    // Direction: a negative count slope must give an equal-magnitude negative speed.
+    reset_test_state();
+    encoderPos     = 0;
+    g_mock_micros  = 0;
+    wheelSpeedResetPending = true;
+    updateWheelSpeed();
+    for (int i = 1; i <= 400; i++) {
+        g_mock_micros = (uint32_t)i * step_us;
+        encoderPos    = -i;
+        updateWheelSpeed();
+    }
+    check(fabsf(v_actual + expect_mps) < fabsf(expect_mps) * 0.01f,
+          "units: reverse rotation gives an equal-magnitude negative v_actual");
+}
+
+// ─── Velocity-chain calibration interlock ────────────────────────────────────
+// While the two scale constants are placeholders, v_actual under-reads, so the velocity PI
+// OVER-DRIVES. commandMotorCurrent() bounds amps, not speed, so the velocity entry points must
+// refuse outright rather than rely on the current clamp.
+static void test_velocity_chain_interlock() {
+    test_group("Velocity-chain calibration interlock");
+
+    // The SHIPPED default must be uncalibrated — this is the safety default, not a convenience.
+    check(VELOCITY_CHAIN_CALIBRATED == 0,
+          "interlock: firmware ships with VELOCITY_CHAIN_CALIBRATED = 0");
+
+    // Uncalibrated: manual velocity mode refuses and leaves the motor untouched.
+    reset_test_state();
+    velocityChainCalibratedFlag = false;
+    check(velocityChainCalibrated() == false, "interlock: flag reported as uncalibrated");
+    vesc.reset();
+    setManualMotorVelocity(3.0f);
+    check(manualMotorMode == MOTOR_TEST_OFF,
+          "interlock: uncalibrated setManualMotorVelocity does NOT enter velocity mode");
+    check(manualMotorVelocity == 0.0f,
+          "interlock: uncalibrated setManualMotorVelocity stores no setpoint");
+    check(vesc.current_calls.empty(),
+          "interlock: uncalibrated setManualMotorVelocity commands no current");
+
+    // Uncalibrated: 'D' refuses to start the drive cycle.
+    reset_test_state();
+    velocityChainCalibratedFlag = false;
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;    // the OTHER precondition is satisfied
+    g_mock_millis = 1000;
+    Serial.rx_queue.push('D');
+    doState98();
+    check(driveCycleActive == false,
+          "interlock: uncalibrated 'D' refuses to start the drive cycle");
+
+    // Calibrated: both paths work again (proves the interlock is the only thing blocking them).
+    reset_test_state();                    // resets the flag to true
+    setManualMotorVelocity(3.0f);
+    check(manualMotorMode == MOTOR_TEST_VELOCITY,
+          "interlock: calibrated setManualMotorVelocity enters velocity mode");
+
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    g_mock_millis = 1000;
+    Serial.rx_queue.push('D');
+    doState98();
+    check(driveCycleActive == true,
+          "interlock: calibrated 'D' starts the drive cycle");
+
+    // Fixed-current mode is NOT gated — it does not close the velocity loop.
+    reset_test_state();
+    velocityChainCalibratedFlag = false;
+    setManualMotorCurrent(2.0f);
+    check(manualMotorMode == MOTOR_TEST_CURRENT,
+          "interlock: fixed-current mode stays available while uncalibrated");
+}
+
+// ─── Independent control-loop rate limiting ──────────────────────────────────
+// motorControl() ends in a 9-byte UART frame (781 us of wire time at 115200); calling it every tick
+// blocks the main loop — including detectFaults() — on TX backpressure. Each controller now has its
+// own period so the three cadences can be tuned separately.
+static void test_control_rate_limiting() {
+    test_group("Control-loop rate limiting");
+
+    check(MOTOR_CTRL_PERIOD_US >= 800u,
+          "rate limit: motor period clears the ~781 us UART frame floor");
+    check(CHARGING_CTRL_PERIOD_US > MOTOR_CTRL_PERIOD_US,
+          "rate limit: charging runs slower than the motor loop (Ag105 is the slow harvester)");
+
+    // A gated call runs once, then is suppressed until its period elapses.
+    reset_test_state();
+    v_setpoint = 1.0f; v_actual = 0.0f;
+    g_mock_micros = 1000000;
+    resetControlRateLimiters();
+    vesc.reset();
+    motorControlGated();
+    check(vesc.current_calls.size() == 1, "rate limit: first gated motor call runs");
+
+    motorControlGated();                     // same timestamp — must be suppressed
+    check(vesc.current_calls.size() == 1, "rate limit: immediate second motor call suppressed");
+
+    g_mock_micros += MOTOR_CTRL_PERIOD_US - 1;
+    motorControlGated();
+    check(vesc.current_calls.size() == 1, "rate limit: motor call still suppressed just under period");
+
+    g_mock_micros += 2;                      // now past the period
+    motorControlGated();
+    check(vesc.current_calls.size() == 2, "rate limit: motor call runs again after its period");
+
+    // Independence: advancing past only the power-balance period must not release the motor gate.
+    reset_test_state();
+    I_fc = 1.0f; I_batt = 1.0f;              // non-zero so powerBalance() does real work
+    v_setpoint = 1.0f; v_actual = 0.0f;
+    g_mock_micros = 2000000;
+    resetControlRateLimiters();
+    vesc.reset(); SPI.reset();
+    motorControlGated();                     // consume the motor gate
+    powerBalanceGated();                     // consume the power gate
+    const size_t motor_calls_before = vesc.current_calls.size();
+    const size_t spi_before         = SPI.transfer_log.size();
+
+    g_mock_micros += POWER_BAL_PERIOD_US;    // < MOTOR_CTRL_PERIOD_US
+    powerBalanceGated();
+    motorControlGated();
+    check(SPI.transfer_log.size() > spi_before,
+          "rate limit: powerBalance runs again on its own (shorter) period");
+    check(vesc.current_calls.size() == motor_calls_before,
+          "rate limit: motor gate independent — still suppressed at the power-balance period");
+
+    // resetControlRateLimiters() opens all three gates at once.
+    reset_test_state();
+    v_setpoint = 1.0f; v_actual = 0.0f;
+    g_mock_micros = 3000000;
+    resetControlRateLimiters();
+    vesc.reset();
+    motorControlGated();
+    check(vesc.current_calls.size() == 1, "rate limit: reset opens the motor gate immediately");
+
+    // State-98 manual CURRENT mode shares the motor gate: re-sending a constant current every tick
+    // is pure UART backpressure. It must still send often enough to beat the VESC's 1000 ms timeout.
+    reset_test_state();
+    setManualMotorCurrent(3.0f);
+    g_mock_micros = 4000000;
+    resetControlRateLimiters();
+    vesc.reset();
+    applyManualMotor();
+    check(vesc.current_calls.size() == 1, "rate limit: manual current sends on an open gate");
+    applyManualMotor();
+    check(vesc.current_calls.size() == 1, "rate limit: manual current suppressed within its period");
+    g_mock_micros += MOTOR_CTRL_PERIOD_US + 1;
+    applyManualMotor();
+    check(vesc.current_calls.size() == 2 && fabsf(vesc.last_current - 3.0f) < 1e-4f,
+          "rate limit: manual current re-sent after its period, same value");
+    check(MOTOR_CTRL_PERIOD_US < 1000000u,
+          "rate limit: motor period is well inside the VESC 1000 ms command timeout");
+
+    // Idle's zero-current keep-alive is gated for the same reason — doState1() runs continuously.
+    reset_test_state();
+    mainState = 1;
+    g_mock_micros = 5000000;
+    g_mock_millis = 5000;
+    resetControlRateLimiters();
+    vesc.reset();
+    doState1();
+    const size_t idle_first = vesc.current_calls.size();
+    check(idle_first == 1 && vesc.last_current == 0.0f,
+          "rate limit: Idle flushes zero on an open gate");
+    doState1();
+    check(vesc.current_calls.size() == idle_first,
+          "rate limit: Idle keep-alive suppressed within its period");
+    g_mock_micros += MOTOR_CTRL_PERIOD_US + 1;
+    doState1();
+    check(vesc.current_calls.size() == idle_first + 1 && vesc.last_current == 0.0f,
+          "rate limit: Idle keep-alive re-sent after its period, still zero");
+}
+
+// ─── Drive-cycle motor-output ownership (design review P0-2) ─────────────────
+// The drive cycle is one of four State-98 motor drivers. Every path INTO and OUT OF it must leave
+// exactly one owner of the VESC command. The original failure: set a manual current with 'A', start
+// 'D', then stop 'D' — the stop flushed a zero but left manualMotorMode set, so the standalone
+// branch reached later in the SAME doState98() invocation reissued the old manual current.
+static void test_drive_cycle_motor_ownership() {
+    test_group("Drive-cycle motor-output ownership");
+
+    // ── Starting a drive cycle takes exclusive ownership ──
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    setManualMotorCurrent(8.0f);            // stale manual command set before the run
+    check(manualMotorMode == MOTOR_TEST_CURRENT, "ownership: precondition — manual mode active");
+    g_mock_millis = 1000;
+    vesc.reset();
+    Serial.rx_queue.push('D');
+    doState98();
+    check(driveCycleActive == true,
+          "ownership: 'D' starts the drive cycle");
+    check(manualMotorMode == MOTOR_TEST_OFF,
+          "ownership: 'D' start clears a stale manualMotorMode");
+
+    // ── Stopping mid-cycle must not reissue the stale manual command in the same tick ──
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    // Reconstruct the exact review scenario: manual current set, then a running drive cycle.
+    manualMotorMode    = MOTOR_TEST_CURRENT;
+    manualMotorCurrent = 8.0f;
+    driveCycleActive     = true;
+    driveCyclePhaseIdx   = 1;
+    driveCyclePhaseStart = 0;
+    g_mock_millis = 2000;
+    g_mock_micros = 100000;
+    vesc.reset();
+    Serial.rx_queue.push('D');
+    doState98();
+    check(driveCycleActive == false, "ownership: 'D' stops the drive cycle");
+    check(manualMotorMode == MOTOR_TEST_OFF,
+          "ownership: 'D' stop clears manualMotorMode");
+    // THE regression: the LAST value written to the VESC in this invocation must be 0, not 8.0.
+    check(vesc.last_current == 0.0f,
+          "ownership: 'D' stop does not reissue the stale manual current in the same tick");
+    check(current == 0.0f, "ownership: 'D' stop clears `current`");
+    check(pi_motor_accum == 0.0f,
+          "ownership: 'D' stop clears the motor PI integrator (no carry-over to the next run)");
+
+    // ── Natural completion must behave identically to the explicit stop ──
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    manualMotorMode    = MOTOR_TEST_CURRENT;
+    manualMotorCurrent = 8.0f;
+    driveCycleActive     = true;
+    driveCyclePhaseIdx   = DRIVE_CYCLE_PHASES;   // past the last phase → completes on this tick
+    driveCyclePhaseStart = 0;
+    v_actual      = 3.0f;                        // flywheel still spinning down
+    pi_motor_accum = 5.0f;                       // wound up from the regen-hold phase
+    g_mock_millis = 5000;
+    g_mock_micros = 100000;
+    vesc.reset();
+    doState98();
+    check(driveCycleActive == false,
+          "ownership: drive cycle self-clears on natural completion");
+    check(manualMotorMode == MOTOR_TEST_OFF,
+          "ownership: natural completion clears manualMotorMode");
+    check(!vesc.current_calls.empty(),
+          "ownership: natural completion flushes a command (previously flushed nothing at all)");
+    // With v_actual = 3.0 still spinning, running motorControl() after completion would command
+    // Kp*(0 − 3.0) = negative current, i.e. regen from a "finished" drive cycle.
+    check(vesc.last_current == 0.0f,
+          "ownership: natural completion leaves the VESC at 0 A (no regen re-command)");
+    check(current == 0.0f && pi_motor_accum == 0.0f,
+          "ownership: natural completion clears `current` and the PI integrator");
+
+    // ── A subsequent tick must stay quiet (nothing re-owns the motor) ──
+    vesc.reset();
+    g_mock_millis = 5100;
+    doState98();
+    check(vesc.current_calls.empty() || vesc.last_current == 0.0f,
+          "ownership: tick after completion issues no non-zero command");
+
+    // ── haltMotorOutput() is the shared primitive: verify it in isolation ──
+    reset_test_state();
+    manualMotorMode     = MOTOR_TEST_VELOCITY;
+    manualMotorVelocity = 4.0f;
+    manualMotorCurrent  = 7.0f;
+    v_setpoint          = 4.0f;
+    targetMotorTorque   = 2.0f;
+    pi_motor_accum      = 9.0f;
+    current             = 7.0f;
+    vesc.reset();
+    haltMotorOutput();
+    check(manualMotorMode == MOTOR_TEST_OFF && v_setpoint == 0.0f &&
+          manualMotorCurrent == 0.0f && manualMotorVelocity == 0.0f &&
+          targetMotorTorque == 0.0f && pi_motor_accum == 0.0f && current == 0.0f,
+          "haltMotorOutput: clears every motor-output state variable");
+    check(vesc.last_current == 0.0f,
+          "haltMotorOutput: flushes vesc.setCurrent(0)");
+    // It must NOT touch the power-path switches — that policy is the caller's decision.
+    reset_test_state();
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    g_pin_value[FC_BUS_ENABLE]  = HIGH;
+    haltMotorOutput();
+    check(g_pin_value[MOT_PWR_ENABLE] == HIGH && g_pin_value[FC_BUS_ENABLE] == HIGH,
+          "haltMotorOutput: leaves power-path switches untouched");
 }
 
 // ─── State 98 bench tools: VESC read-back ('E' one-shot / 'W' watch) ─────────
@@ -1835,6 +2290,160 @@ static void test_manual_motor_velocity() {
           "manual velocity: motorControl() ran (vesc.setCurrent invoked)");
     check(fabsf(current) > 0.0f,
           "manual velocity: non-zero current from velocity error");
+}
+
+// ─── Motor current chokepoint: commandMotorCurrent() ─────────────────────────
+// Regression for the design-review P0: MOTOR_I_CMD_MAX previously bounded only the motor PI
+// INTEGRATOR, so the proportional term rode straight through to a 50 A bridge. Every path must
+// now be bounded, and non-finite must degrade to 0 A rather than serializing garbage over UART.
+static void test_motor_current_clamp() {
+    test_group("commandMotorCurrent() — final VESC command clamp");
+    reset_test_state();
+
+    // Positive / negative saturation
+    vesc.reset();
+    commandMotorCurrent(1000.0f);
+    check(fabsf(vesc.last_current - MOTOR_I_CMD_MAX) < 1e-4f,
+          "clamp: +1000 A → +MOTOR_I_CMD_MAX at the VESC");
+    check(fabsf(current - MOTOR_I_CMD_MAX) < 1e-4f,
+          "clamp: `current` mirrors the POST-clamp value, not the intent");
+
+    commandMotorCurrent(-1000.0f);
+    check(fabsf(vesc.last_current + MOTOR_I_CMD_MAX) < 1e-4f,
+          "clamp: -1000 A → -MOTOR_I_CMD_MAX at the VESC");
+
+    // In-range values pass through untouched
+    commandMotorCurrent(3.25f);
+    check(fabsf(vesc.last_current - 3.25f) < 1e-4f,
+          "clamp: in-range command passes through unmodified");
+
+    // Non-finite → 0 A (and `current` cleared, so telemetry never shows a NaN)
+    commandMotorCurrent(NAN);
+    check(vesc.last_current == 0.0f && current == 0.0f,
+          "clamp: NaN → 0 A");
+    commandMotorCurrent(3.0f);
+    commandMotorCurrent(INFINITY);
+    check(vesc.last_current == 0.0f && current == 0.0f,
+          "clamp: +Inf → 0 A");
+    commandMotorCurrent(3.0f);
+    commandMotorCurrent(-INFINITY);
+    check(vesc.last_current == 0.0f && current == 0.0f,
+          "clamp: -Inf → 0 A");
+
+    // motorControl(): the UDP velocity path. A large velocity error with the uncalibrated
+    // motorConstant = 0.1 would command error/0.1 amps — 50 A at 5 m/s — before this clamp.
+    reset_test_state();
+    v_actual   = 0.0f;
+    v_setpoint = 5.0f;
+    pi_motor_accum = 0; pi_motor_lastMicros = 0;
+    g_mock_micros  = 100000;
+    vesc.reset();
+    motorControl();
+    check(!vesc.current_calls.empty() && fabsf(vesc.last_current) <= MOTOR_I_CMD_MAX + 1e-4f,
+          "clamp: motorControl() at 5 m/s error stays within MOTOR_I_CMD_MAX");
+    check(fabsf(vesc.last_current - MOTOR_I_CMD_MAX) < 1e-4f,
+          "clamp: motorControl() saturates AT the ceiling (proportional term was unbounded)");
+
+    // State-98 manual VELOCITY path shares motorControl(), so it inherits the clamp
+    reset_test_state();
+    setManualMotorVelocity(MANUAL_MOTOR_V_MAX);
+    v_actual = -MANUAL_MOTOR_V_MAX;      // maximal error: 2 × the velocity ceiling
+    pi_motor_accum = 0; pi_motor_lastMicros = 0;
+    g_mock_micros  = 100000;
+    vesc.reset();
+    applyManualMotor();
+    check(fabsf(vesc.last_current) <= MOTOR_I_CMD_MAX + 1e-4f,
+          "clamp: State-98 manual velocity at maximal error stays within the ceiling");
+
+    // Every zero-flush routes through the chokepoint too, so it clears `current`
+    current = 12.0f;
+    vesc.reset();
+    commandMotorCurrent(0);
+    check(current == 0.0f && vesc.last_current == 0.0f,
+          "clamp: zero-flush clears `current` (no stale value left in telemetry)");
+}
+
+// ─── UDP setpoint sanitization ───────────────────────────────────────────────
+// A bit-pattern that survives the XOR checksum can still decode as NaN/Inf. NaN entering the PI
+// integrator poisons it permanently (NaN + x = NaN), so a rejected field must HOLD its prior value.
+static void test_udp_setpoint_sanitize() {
+    test_group("receiveCommands() setpoint sanitization");
+
+    // Helper: build a valid packet with the three float fields set as given
+    auto send = [](float v_sp, float ps, float cg, uint8_t mode) {
+        uint8_t pkt[22] = {};
+        pkt[0] = 0xBB;
+        uint32_t ts = 1; memcpy(&pkt[1], &ts, 4);
+        uint16_t cn = 1; memcpy(&pkt[5], &cn, 2);
+        memcpy(&pkt[7],  &v_sp, 4);
+        memcpy(&pkt[11], &ps,   4);
+        memcpy(&pkt[15], &cg,   4);
+        pkt[19] = mode;
+        pkt[20] = 0;
+        uint8_t cs = 0;
+        for (int i = 1; i < 21; i++) cs ^= pkt[i];
+        pkt[21] = cs;
+        Udp.fake_packet_size = 22;
+        memcpy(Udp.fake_packet, pkt, 22);
+        receiveCommands();
+    };
+
+    // NaN velocity: held at the previous value, not zeroed and not propagated
+    reset_test_state();
+    mainState = 1;
+    v_setpoint = 1.5f;
+    send(NAN, 0.5f, 0.0f, 0);
+    check(fabsf(v_setpoint - 1.5f) < 1e-4f,
+          "sanitize: NaN v_setpoint rejected — previous value held");
+
+    // Inf velocity: same treatment
+    reset_test_state();
+    mainState = 1;
+    v_setpoint = 1.5f;
+    send(INFINITY, 0.5f, 0.0f, 0);
+    check(fabsf(v_setpoint - 1.5f) < 1e-4f,
+          "sanitize: Inf v_setpoint rejected — previous value held");
+
+    // Absurd but finite velocity: clamped to the sanity bound, not rejected
+    reset_test_state();
+    mainState = 1;
+    send(1.0e6f, 0.5f, 0.0f, 0);
+    check(fabsf(v_setpoint - V_SETPOINT_MAX) < 1e-3f,
+          "sanitize: huge finite v_setpoint clamped to +V_SETPOINT_MAX");
+    reset_test_state();
+    mainState = 1;
+    send(-1.0e6f, 0.5f, 0.0f, 0);
+    check(fabsf(v_setpoint + V_SETPOINT_MAX) < 1e-3f,
+          "sanitize: huge negative v_setpoint clamped to -V_SETPOINT_MAX");
+
+    // power_share_setpoint is a ratio — out-of-range values clamp into [0, 1]
+    reset_test_state();
+    mainState = 1;
+    send(1.0f, 5.0f, 0.0f, 0);
+    check(fabsf(power_share_setpoint - 1.0f) < 1e-4f,
+          "sanitize: power_share_setpoint > 1 clamped to 1.0");
+    reset_test_state();
+    mainState = 1;
+    send(1.0f, -5.0f, 0.0f, 0);
+    check(fabsf(power_share_setpoint) < 1e-4f,
+          "sanitize: power_share_setpoint < 0 clamped to 0.0");
+
+    // NaN share is rejected, holding the prior value
+    reset_test_state();
+    mainState = 1;
+    power_share_setpoint = 0.4f;
+    send(1.0f, NAN, 0.0f, 0);
+    check(fabsf(power_share_setpoint - 0.4f) < 1e-4f,
+          "sanitize: NaN power_share_setpoint rejected — previous value held");
+
+    // A fully valid packet is still parsed unchanged (no regression on the happy path)
+    reset_test_state();
+    mainState = 1;
+    send(2.5f, 0.4f, 1.0f, 0);
+    check(fabsf(v_setpoint - 2.5f) < 1e-3f &&
+          fabsf(power_share_setpoint - 0.4f) < 1e-3f &&
+          fabsf(charge_goal - 1.0f) < 1e-3f,
+          "sanitize: valid packet unaffected by the guards");
 }
 
 // ─── State 98 bench tools: open-loop droop write ─────────────────────────────
@@ -2223,11 +2832,19 @@ int main() {
     test_pollag105_settle_window_suppresses_fault();
     test_lazy_config_on_power();
     test_config_resets_on_power_loss();
+    test_icharge_cleared_on_invalid();
+    test_ag105_config_read_verify();
     test_charging_control_fc_bootstrap();
     test_state98_drive_cycle_runs_controls();
     test_state98_vesc_readback();
     test_manual_motor_current();
     test_manual_motor_velocity();
+    test_motor_current_clamp();
+    test_udp_setpoint_sanitize();
+    test_drive_cycle_motor_ownership();
+    test_wheelspeed_units();
+    test_velocity_chain_interlock();
+    test_control_rate_limiting();
     test_open_loop_droop();
     test_droop_mapping_bounds();
     test_share_controller_reference();

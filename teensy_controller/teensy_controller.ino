@@ -64,7 +64,7 @@
  *    New motPwrHotPlugUnsafe()/assertMotPwrEnable() guard (mirrors busHotPlugUnsafe) gates the
  *    full-bus ON: doState2() faults (FAULT_MOT_HOTPLUG/ERR_MOT_HOTPLUG, new) rather than hot-plug;
  *    State 98 '3' refuses it. doState1()/doState3() no longer force MOT_PWR LOW — the motor is held
- *    stopped by vesc.setCurrent(0), a deliberate change from the old "motor isolated in Idle" intent.
+ *    stopped by commandMotorCurrent(0), a deliberate change from the old "motor isolated in Idle" intent.
  *    Bus voltage parameterized on V_BUS_NOMINAL (17.5f; TODO → 16.0f after the boost FB retune for
  *    SW abs-max headroom) — LIMIT_V_BUS_MAX / V_BUS_CHARGED_THRESH derive from it (current values
  *    unchanged).
@@ -88,6 +88,80 @@
  *    telemetry/protocol change. Reads block ≤100 ms on Serial1 and are State-98-only. The 'W'
  *    poll is auto-suppressed while a drive cycle / power-share profile runs so those keep
  *    production-identical motorControl()/powerBalance() timing (resumes when the run stops).
+ *  - Motor current chokepoint (2026-07-29; docs/design-review-2026-07-28.md P0-3). MOTOR_I_CMD_MAX
+ *    bounded only the motor PI INTEGRATOR — motorControl() sent PI_out/motorConstant straight to
+ *    vesc.setCurrent(), so the unbounded proportional term reached a 50 A bridge (5 m/s error at
+ *    the uncalibrated motorConstant = 0.1 → 50 A). All 11 vesc.setCurrent() call sites now route
+ *    through commandMotorCurrent(), the ONLY caller: it rejects non-finite (→ 0 A), clamps to
+ *    ±MOTOR_I_CMD_MAX, and mirrors the post-clamp value into `current` so telemetry reports what
+ *    was actually sent and a zero-flush clears it. receiveCommands() also sanitizes the three
+ *    command floats — non-finite fields hold their previous value instead of poisoning the PI
+ *    integrator, v_setpoint clamps to ±V_SETPOINT_MAX (new), power_share_setpoint to [0,1].
+ *    No telemetry layout change.
+ *  - Motor-output ownership (2026-07-29; docs/design-review-2026-07-28.md P0-2). State 98's four
+ *    motor drivers released the motor inconsistently. Set a manual current with 'A', start 'D',
+ *    then stop 'D': the stop flushed a zero but left manualMotorMode set, so the standalone branch
+ *    reached later in the SAME doState98() invocation reissued the stale manual current. Natural
+ *    completion never flushed a zero at all, and the caller still ran motorControl() in the
+ *    completion tick — with v_setpoint just zeroed and the flywheel still spinning, the error is
+ *    negative, so a "finished" drive cycle commanded regen. New haltMotorOutput() primitive
+ *    (clears manualMotorMode/v_setpoint/manual setpoints/pi_motor_accum/targetMotorTorque and
+ *    flushes 0 A) is now used by 'D' start+stop, 'R' stop, 'X', 'Q', and both profiles' natural
+ *    completion; the drive-cycle branch re-checks driveCycleActive before running the control
+ *    stack. haltMotorOutput() deliberately does NOT touch the power-path switches — the State-98
+ *    teardown-vs-pre-charge policy (review P1-1) is still open and left to callers.
+ *  - Velocity unit chain CORRECTED (2026-07-29; user-approved exception to "what NOT to change").
+ *    v_actual = rpm * flyWheelRadius / 60 yielded rev/s x inch, dropping BOTH the 2π (rad/rev) and
+ *    the inch→m 0.0254, while v_setpoint from the Pi is m/s. Now v_actual = rpm * RPM_TO_MPS with
+ *    RPM_TO_MPS = (2π/60)·FLYWHEEL_RADIUS_M (radius in METRES). Dead constants CPR = 16,
+ *    tireRadius and lastEncoderPos removed (CPR actively contradicted ENCODER_COUNTS_PER_REV);
+ *    counts/rev is now derived as ENCODER_SLOTS_PER_REV x ENCODER_QUAD_DECODE, the decode factor
+ *    being x2 (verified from the ISRs: doEncoderA only decrements, doEncoderB only increments).
+ *    The encoder is 2 x OPB829DZ through-beam optical sensors on a slotted disc (BOM line 71) — a
+ *    home-built encoder, so counts/rev has no datasheet and must be counted by hand.
+ *    IMPORTANT: the two old errors partially CANCELLED (v_actual under-read ~6.6x); correcting the
+ *    form alone makes the under-read WORSE (~32x) until the slot count is measured. Because the
+ *    loop closes on v_actual, under-reading means the PI OVER-DRIVES and the current clamp bounds
+ *    amps, not speed — so new VELOCITY_CHAIN_CALIBRATED (default 0) makes State 98 REFUSE the two
+ *    velocity entry points ('V' manual velocity, 'D' drive cycle) until both scale constants are
+ *    measured. Fixed-current tests ('A') stay available. Also: timeArr[] retyped to uint32_t and an
+ *    incorrect TODO removed — the old `int` did NOT corrupt dt across a micros() wrap.
+ *  - Source OC limits retargeted to the right NODE (2026-07-29). Verified from the schematic
+ *    netlist that the INA253 shunts sit between each boost's VOUT and VBUS (SNS-FC IS+ on VOUT-FC,
+ *    IS- on VBUS-FC), so I_fc/I_batt are BUS-side currents — but both limits had been set from
+ *    SOURCE-side datasheet ratings. LIMIT_I_FC_MAX 3.5 → 1.4 A (3.5 A bus-side referred to ~7.7 A
+ *    from an H-20 rated ~2.6 A, so FAULT_OC_FC could not protect the stack); LIMIT_I_BT_MAX
+ *    6.0 → 3.0 A (6.0 A implied ~14 A from a 10 A pack; 3.0 A is the already-validated
+ *    per-channel envelope). MOTOR_I_CMD_MAX 30 → 5.0 A for bench, from the ~67-87 W source budget
+ *    (15 A documented as the post-calibration vehicle value). The bus is NOT protected by the
+ *    motor ceiling at all — I_bus = D·I_mot/η — so bound it in the VESC (Battery Current Max).
+ *  - P_fc_actual / P_batt_actual corrected to V_bus x I (2026-07-29). They multiplied the SOURCE
+ *    terminal voltage by the BUS-side current, so they were neither input nor output power and
+ *    under-reported by ~2x. Telemetry LAYOUT unchanged, but these two VALUES change meaning — the
+ *    Pi bridge must be updated in lockstep.
+ *  - Independent control-loop rate limiting (2026-07-29). The three Run controllers were called
+ *    once per main-loop tick, uncapped. motorControl() ends in a 9-byte UART frame (781 µs of wire
+ *    time at 115200) and Teensy HardwareSerial::write() BLOCKS on a full TX FIFO, so a faster loop
+ *    stalled inside Serial1.write() — pinning the whole loop (including detectFaults()) and queuing
+ *    superseded current commands. Each controller now has its OWN period so the rates are tunable
+ *    separately: MOTOR_CTRL_PERIOD_US 2000 (500 Hz), CHARGING_CTRL_PERIOD_US 20000 (50 Hz),
+ *    POWER_BAL_PERIOD_US 1000 (1 kHz, the rate the Youla controller is designed for). Gating is on
+ *    the CALL; a skipped call is a zero-order hold. doState2() and the State-98 drive cycle use the
+ *    gated wrappers in the same order as before. The two constant-command keep-alives share the
+ *    motor gate for the same reason: doState1()'s Idle zero-flush and applyManualMotor()'s
+ *    MOTOR_TEST_CURRENT re-send both ran every tick, which is pure UART backpressure (500 Hz is far
+ *    inside the VESC's 1000 ms command timeout, and that timeout COASTS anyway). Safety flushes
+ *    (haltMotorOutput, doState3, doState99, initEsc) are deliberately NEVER gated. All three periods
+ *    are TODO(calibrate).
+ *  - Ag105 config now read-verify-then-write-if-different (2026-07-29). initAg105Charger() wrote
+ *    both registers blind and returned success on the ACK alone, so a write that ACKed but did not
+ *    land left the charger at its 1S/4.2V default while the firmware believed it was configured —
+ *    a 2S pack would then charge to a 1S target with no fault. New ag105ReadConfigReg() /
+ *    ag105WriteConfigRegVerified() read the register, skip the write when it already matches (no
+ *    EPROM wear on every power session), and re-read to prove the value landed.
+ *  - I_charge no longer goes stale (2026-07-29; review P2-1). pollAg105() cleared ag105DataValid
+ *    and ag105_status_raw on charger power loss / I2C failure but left I_charge at its last value,
+ *    so the Pi saw a positive charge current beside a 0x00 "no data" status byte.
  */
 
 #include <VescUart.h>
@@ -170,7 +244,27 @@ EthernetUDP Udp;
 #define FAULT_ERROR           0x8000  // Latched: system is in or has entered State 99
 
 // ── Safety limits ─────────────────────────────────────────────────────────────
-#define LIMIT_I_FC_MAX   3.5f   // A — H-20 max; Source: H-20 datasheet
+// ── Source overcurrent limits ────────────────────────────────────────────────
+// CRITICAL NODE NOTE (corrected 2026-07-29): I_fc and I_batt are BOOST-OUTPUT (bus-side) currents,
+// not source-input currents. Verified from the schematic netlist: SNS-FC's IS+1/2/3 sit on VOUT-FC
+// (= REG-FC's VOUT pin) and IS-1/2/3 on VBUS-FC (= D-FC-EN's VIN), so the INA253 shunt is between
+// the TPS61288 output and the RT1987 ideal-diode input. Same for SNS-BT / VOUT-BT / VBUS-BT.
+// (references/Scale_Car_Board_20260624.sch.)
+//
+// Both limits were previously set from SOURCE-side datasheet ratings and compared against these
+// BUS-side measurements, so neither fault protected its source:
+//   - LIMIT_I_FC_MAX was 3.5 A bus-side. Referred to the stack that is 3.5·16/(0.93·7.8) ≈ 7.7 A
+//     from an H-20 rated ~2.6 A — roughly 3× over. FAULT_OC_FC could not trip before the stack was
+//     abused.
+//   - LIMIT_I_BT_MAX was 6.0 A bus-side ≈ 14.1 A from a pack rated 10 A.
+// Retargeted below to bus-side equivalents of the real source ratings.
+//
+// FC: H-20 rated 20 W, 7.8 V @ 2.6 A. Bus-side equivalent at 16 V with η≈0.93:
+//     2.6 · 7.8 · 0.93 / 16 = 1.18 A. Set 1.4 A to leave headroom for η and V_fc spread.
+// TODO(verify: H-20 datasheet). The H-20 datasheet is NOT in references/ — the 20 W / 7.8 V / 2.6 A
+// figures are externally sourced (Horizon H-20 product page + manual), not from a repo artifact.
+// Confirm against the physical datasheet and re-derive before trusting FAULT_OC_FC.
+#define LIMIT_I_FC_MAX   1.4f   // A (BUS-SIDE) — H-20 2.6 A input referred through the boost
 #define LIMIT_V_BATT_MIN 6.2f   // V — 2S LiPo cutoff (2 × 3.1V)
 // Nominal regulated bus voltage — set by the boost FB network in HARDWARE; the firmware thresholds
 // below derive from it. Death-5 headroom plan (docs/boost-bringup-debug.md) EXECUTED 2026-07-11:
@@ -188,7 +282,13 @@ EthernetUDP Udp;
 // headroom below the ceiling. 8.5V gives real margin while still protecting a 2S pack.
 #define LIMIT_V_BATT_MAX 10.0f  // TEMP for using 9V battery for testing (unreachable — see above)
 #define LIMIT_V_FC_MIN    6.0f  // V — H-20 minimum
-#define LIMIT_I_BT_MAX    6.0f  // A — INA253A1, BT boost path
+// BT (BUS-SIDE — see the node note at LIMIT_I_FC_MAX). Set to the already-validated conservative
+// per-channel envelope of 3 A (controller_design/system_model.md §9; docs/design-review-2026-07-28.md
+// step 7), which is also the TPS61288 f_c ≤ f_RHPZ/5 margin point at worst-case cap derating.
+// Input-side equivalent at 7.4 V, η≈0.92: 3·16/(0.92·7.4) = 7.05 A, inside the pack's 10 A rating.
+// Raise toward 4.2 A (the pack-rating-limited value) only after the high-bandwidth SW/VOUT ring
+// capture validates the margin. TODO(calibrate).
+#define LIMIT_I_BT_MAX    3.0f  // A (BUS-SIDE) — validated per-channel envelope
 #define LIMIT_V_BUS_MIN  12.0f  // V — minimum VBUS during State 2
 #define LIMIT_V_RGN_MAX  28.0f  // V — regen node spike ceiling
 #define LIMIT_V_CHG_MAX  24.0f  // V — charger input max
@@ -290,12 +390,56 @@ typedef enum : uint8_t {
 int mainState = 0;
 
 // ── Physical constants ────────────────────────────────────────────────────────
-const int CPR = 16;
 const int MDAC_res = 4095;          // AD5443 12-bit; TODO(verify: ad5426_5432_5443.pdf §resolution)
 const int32_t sampleTime = 50;      // us
 
-const float tireRadius     = 1;     // inch
-const float flyWheelRadius = 1;     // inch
+// ── Flywheel / encoder geometry (the ONLY inputs to the v_actual scale) ───────
+// Removed here: `CPR = 16`, `tireRadius = 1` and `lastEncoderPos` — all three were dead (defined,
+// never read) and `CPR` actively contradicted ENCODER_COUNTS_PER_REV below. Two conflicting,
+// unsourced encoder-resolution constants in one file is exactly how a calibration gets guessed.
+//
+// The encoder is NOT a commercial part: the BOM fits 2 × OPB829DZ through-beam optical sensors
+// ("Optical Sensor Through-Beam 0.125in (3.18mm) Phototransistor Module", BOM line 71) plus 2 ×
+// 4.7k pull-ups (line 73), i.e. a home-built two-channel beam-interrupt encoder on a slotted disc.
+// So counts/rev is a property of the DISC and must be counted by hand — there is no datasheet.
+//
+// Decode factor is x2 per quadrature cycle, NOT x4. Verified from the ISRs: doEncoderA() only ever
+// decrements and doEncoderB() only ever increments, each gated on the other channel's "first" flag,
+// so one full A/B cycle yields exactly +2 (forward) or -2 (reverse). Hence:
+//     counts/rev = 2 x slots/rev
+#define ENCODER_QUAD_DECODE  2.0f       // counts per quadrature cycle (x2 — see above)
+// TODO(measure): count the slots on the flywheel disc, or hand-turn the flywheel exactly one
+// revolution with the board powered and read encoderPos (State-98 'S' dumps it). 512 slots is what
+// the value below implies, which is not credible behind a 3.18 mm beam gap — this number is
+// UNSOURCED and is almost certainly wrong. See docs/VESC_MOTOR_INTEGRATION.md §10.
+#define ENCODER_SLOTS_PER_REV 512.0f
+constexpr float ENCODER_COUNTS_PER_REV = ENCODER_SLOTS_PER_REV * ENCODER_QUAD_DECODE;
+
+// Flywheel effective rolling radius, in METRES. The encoder sits on the bench flywheel, which is
+// downstream of the 9.49:1 reduction and both differentials (docs/VESC_MOTOR_INTEGRATION.md §7), so
+// it turns at WHEEL speed — the gear ratio does NOT belong in this chain, and the correct radius is
+// the tire rolling radius (or the dyno roller radius, whichever the disc is coupled to).
+// 0.033 m = 66 mm OD / 2, the nominal tire OD from docs/VESC_MOTOR_INTEGRATION.md §2.
+// TODO(measure): caliper the mounted tire OD (RC rubber varies and balloons at speed), and confirm
+// whether the encoder disc turns with the wheel or with a separate dyno roller.
+#define FLYWHEEL_RADIUS_M    0.033f
+
+// Combined rev/min → m/s factor: (2π/60) · r. Precomputed so the conversion appears exactly once
+// and can be asserted directly in the unit tests. (Arduino's PI macro is not available in the host
+// test build, hence the literal 2π.)
+constexpr float TWO_PI_F      = 6.28318530718f;
+constexpr float RPM_TO_MPS    = (TWO_PI_F / 60.0f) * FLYWHEEL_RADIUS_M;
+
+// Guard: with BOTH scale inputs above still at placeholder values, closing the velocity loop
+// OVER-DRIVES. v_actual under-reads true speed, so the PI keeps adding current to reach a setpoint
+// the vehicle has already blown past; the commandMotorCurrent() ceiling bounds AMPS, not SPEED.
+// Set to 1 only after ENCODER_SLOTS_PER_REV and FLYWHEEL_RADIUS_M have been measured on the bench.
+// While 0, State 98 refuses the two velocity-mode entry points ('V' manual velocity, 'D' drive
+// cycle). Production State 2 is deliberately NOT gated — it needs a Pi commanding it and is out of
+// scope for a bench interlock — but do not run it either. See docs/design-review-2026-07-28.md.
+#ifndef VELOCITY_CHAIN_CALIBRATED
+#define VELOCITY_CHAIN_CALIBRATED 0
+#endif
 // INA253 variant mixup: the BOM calls for INA253A1IPWR (100 mV/A = 0.1 V/A), but the A3
 // variant (400 mV/A) was the intended choice for easier droop scaling. The board is already
 // built with A1 parts, so K_sns = 0.1 V/A is used. Update to 0.4 if the board is re-spun
@@ -318,9 +462,84 @@ const float DROOP_R_MIN = 0.15f;    // usable droop-ratio span for g ≤ 1 at K_
 const float DROOP_R_MAX = 0.85f;
 
 const float motorConstant = 0.1f;   // TODO: tune this
-const float MOTOR_I_CMD_MAX = 30.0f;   // A — VESC motor current command ceiling; TODO(calibrate)
-                                       // Sets the motor PI integrator anti-windup bound.
+// A — HARD ceiling on the current actually handed to the VESC. Enforced at the single chokepoint
+// commandMotorCurrent(), so EVERY path (UDP velocity, State-98 manual current/velocity, drive
+// cycle, power-share profile) is bounded by it — not just the motor PI integrator. Before this
+// chokepoint existed, motorControl() sent PI_out/motorConstant straight through: with
+// motorConstant = 0.1 an uncalibrated 5 m/s velocity error commands 50 A from the P term alone,
+// on a 50 A bridge.
+//
+// Retargeted 30.0 → 5.0 A for bench bring-up (2026-07-29), from the source power budget in
+// docs/VESC_MOTOR_INTEGRATION.md §12:
+//   - The platform ceilings at ~67 W (validated envelope) to ~87 W (source datasheet) at the bus,
+//     i.e. 4.2–5.4 A of bus current. Motor current maps to bus current as I_bus = D·I_mot/η_esc, so
+//     a 30 A motor command at high duty demands ~28 A of bus current — several times the entire
+//     source budget, and well past both boosts' validated 3 A/channel envelope.
+//   - 5.0 A: at KV 1750 that is ~27 mN·m → ~7.8 N at the wheels → ~2.0 m/s² on the ~3.2 kg
+//     effective mass, and ≤ 4.7 A of bus current even at D = 0.9 — inside already-validated
+//     territory at any duty.
+//   - Vehicle value once calibrated: 15.0 A (covers 4 m/s² at every candidate KV, under the VESC
+//     Six EDU's 50 A burst / 25 A continuous rating). TODO(calibrate).
+// NOTE the bus is NOT protected by this ceiling at all — I_bus depends on duty. Bound it in the
+// VESC itself (Battery Current Max ≈ 4.2 A, Regen ≈ 1.5 A); see §4 of the integration doc.
+const float MOTOR_I_CMD_MAX = 5.0f;
 const float MANUAL_MOTOR_V_MAX = 5.0f; // m/s — State 98 manual velocity ceiling; TODO(calibrate)
+// m/s — sanity bound on the Pi's v_setpoint. Not a performance limit: it exists so a corrupt or
+// mis-scaled UDP field cannot drive an enormous velocity error into the motor PI. A 1/10-scale car
+// tops out well under this. TODO(calibrate) once the velocity unit chain is fixed.
+const float V_SETPOINT_MAX = 20.0f;
+
+// ── Control-loop rate limiting ────────────────────────────────────────────────
+// The three Run-state control functions used to be called once per main-loop tick, uncapped. Two
+// reasons that is wrong:
+//
+//  1. motorControl() ends in a VescUart setCurrent() frame: 9 bytes at 115200 8N1 = 781 µs of wire
+//     time. Teensy 4.x HardwareSerial::write() BLOCKS once the TX FIFO fills, so any main loop
+//     faster than ~781 µs stalls inside Serial1.write() — silently pinning the whole loop (including
+//     detectFaults()) to ~1.28 kHz and queuing up to ~7 already-superseded current commands
+//     (~5.5 ms of command latency) in the FIFO.
+//  2. chargingControl() and powerBalance() have no reason to run at the motor rate. The Ag105 is
+//     explicitly the SLOW secondary harvester (CLAUDE.md §3) and the droop MDAC write is an SPI
+//     transaction; running them flat-out just burns loop time that detectFaults() wants.
+//
+// Each function therefore gets its OWN independent period, so the rates can be tuned separately.
+// The gate is on the CALL, not inside the functions: the PI integrators already gate their own
+// state updates on sampleTime and always return a live output, so a skipped call simply holds the
+// last commanded value — which is the correct zero-order-hold behaviour for all three.
+//
+// TODO(calibrate): these are first-cut values chosen to sit clear of the UART floor and to leave
+// detectFaults() headroom, NOT measured. Profile the real loop period on hardware (State-98 'S'
+// reports it) and revisit. Raising MOTOR_CTRL_PERIOD_US below ~800 µs re-introduces the UART
+// backpressure described above.
+#define MOTOR_CTRL_PERIOD_US    2000u   // 500 Hz — well clear of the ~781 µs UART frame floor
+#define CHARGING_CTRL_PERIOD_US 20000u  //  50 Hz — matches the Ag105 I2C poll cadence
+#define POWER_BAL_PERIOD_US     1000u   //  1 kHz — the rate youlaController_Power() is designed for
+
+// Returns true (and advances `last`) when `period` has elapsed. Unsigned wrap-safe.
+static inline bool rateLimitDue(uint32_t &last, uint32_t period) {
+    uint32_t now = micros();
+    if ((uint32_t)(now - last) < period) return false;
+    last = now;
+    return true;
+}
+
+// Separate timestamp per controller so the three cadences are genuinely independent.
+uint32_t rl_motor_last    = 0;
+uint32_t rl_charging_last = 0;
+uint32_t rl_power_last    = 0;
+
+// Reset all three gates so the next tick runs every controller immediately. Called on entry to a
+// state or profile that starts driving, so the first control action isn't delayed by up to a full
+// period left over from a previous run.
+void resetControlRateLimiters() {
+    uint32_t now = micros();
+    rl_motor_last    = now - MOTOR_CTRL_PERIOD_US;
+    rl_charging_last = now - CHARGING_CTRL_PERIOD_US;
+    rl_power_last    = now - POWER_BAL_PERIOD_US;
+}
+
+// (The rate-gated wrappers motorControlGated()/chargingControlGated()/powerBalanceGated() are
+// defined next to motorControl(), where the controllers themselves are in scope.)
 
 // ── PI controller integrator state ────────────────────────────────────────────
 // Hoisted to file scope (control math and sampleTime gating unchanged) so the host-native
@@ -380,10 +599,10 @@ volatile byte BfirstUp   = 0;
 volatile byte AfirstDown = 0;
 volatile byte BfirstDown = 0;
 volatile int  encoderPos     = 0;
-volatile int  lastEncoderPos = 0;
 volatile byte pinA_read      = 0;
 volatile byte pinB_read      = 0;
-constexpr float ENCODER_COUNTS_PER_REV = 1024.0f;
+// ENCODER_COUNTS_PER_REV now lives with the rest of the flywheel/encoder geometry in the physical
+// constants block, derived from ENCODER_SLOTS_PER_REV x ENCODER_QUAD_DECODE.
 // Set by State 3 (Finish) to clear updateWheelSpeed()'s averaging buffers between runs, so a
 // new run's first velocity samples are not computed against stale timestamps from the prior run.
 bool wheelSpeedResetPending = false;
@@ -547,6 +766,8 @@ void initChargerI2cPins();
 void initMdacOutputs();
 void initEsc();
 bool initAg105Charger();
+bool ag105ReadConfigReg(uint8_t reg, uint8_t &out);
+bool ag105WriteConfigRegVerified(uint8_t reg, uint8_t want);
 void pollAg105();
 bool ag105IsReady();
 bool chargerHasPower();
@@ -570,7 +791,12 @@ void doEncoderA();
 void doEncoderB();
 void bringUpBus();
 bool busHotPlugUnsafe(int regPin);
+void commandMotorCurrent(float amps);
 void motorControl();
+void motorControlGated();
+void chargingControlGated();
+void powerBalanceGated();
+void resetControlRateLimiters();
 void powerBalance();
 void chargingControl();
 float PI_Controller_Motor(float error);
@@ -588,6 +814,9 @@ void applyOpenLoopDroop(float ratio);
 void setManualMotorCurrent(float a);
 void setManualMotorVelocity(float v);
 void applyManualMotor();
+void haltMotorOutput();
+bool velocityChainCalibrated();
+void printVelocityChainRefusal(const char *what);
 void advancePowerShareProfile();
 void handlePendingInputChar(char c);
 bool isNumericEntryChar(char c);
@@ -761,8 +990,25 @@ void computeDerivedSignals() {
     if (totalA > 1e-6f) {
         power_share_actual = fabsf(I_fc) / totalA;
     }
-    P_fc_actual   = V_fc   * I_fc;
-    P_batt_actual = V_batt * I_batt;
+    // Per-channel power DELIVERED TO THE BUS.
+    //
+    // Corrected 2026-07-29. These used to read `V_fc * I_fc` and `V_batt * I_batt`, mixing the
+    // SOURCE-side terminal voltage with the BUS-side current: the INA253 shunts sit between each
+    // boost's VOUT and VBUS (SNS-FC IS+ on VOUT-FC / IS- on VBUS-FC — see the node note at
+    // LIMIT_I_FC_MAX), so I_fc/I_batt are boost-OUTPUT currents. The old product was neither input
+    // power nor output power, and under-reported by V_bus/V_source ≈ 2× on both channels.
+    //
+    // Both are now V_bus × I_channel = true power onto the bus, which is also the quantity the
+    // power-share split is defined over, so P_fc_actual + P_batt_actual is the bus power and
+    // P_fc_actual / (P_fc_actual + P_batt_actual) is the share the EMS commands.
+    //
+    // PI-BRIDGE NOTE: the telemetry LAYOUT is unchanged (same offsets, same v4 protocol) but these
+    // two VALUES now read roughly 2× higher and mean something different. Any Pi-side logging,
+    // efficiency calculation, or EMS model that consumed them must be updated in lockstep.
+    // To recover source-side INPUT power the board would need input-current sense, which it does
+    // not have — estimate it as P_bus/η if needed.
+    P_fc_actual   = V_bus * I_fc;
+    P_batt_actual = V_bus * I_batt;
 }
 
 // Sets fault bit, latches primary error_code on first call, and transitions to State 99.
@@ -909,9 +1155,19 @@ void receiveCommands() {
     uint16_t pkt_counter_Pi;
     memcpy(&pkt_counter_Pi, &buffer[idx], 2); idx += 2;
 
-    memcpy(&v_setpoint,           &buffer[idx], 4); idx += 4;
-    memcpy(&power_share_setpoint, &buffer[idx], 4); idx += 4;
-    memcpy(&charge_goal,          &buffer[idx], 4); idx += 4;
+    // Sanitize the three floats before they reach a controller. The XOR checksum catches most
+    // corruption but not all of it, and a bit-pattern that survives it can still decode as NaN/Inf
+    // — which would propagate through the motor PI integrator (poisoning it permanently, since
+    // NaN + anything = NaN) and into the droop mapping. A rejected field HOLDS its previous value
+    // rather than defaulting, so one bad packet degrades to "no update" instead of a step command.
+    float v_sp_rx, share_sp_rx, charge_rx;
+    memcpy(&v_sp_rx,    &buffer[idx], 4); idx += 4;
+    memcpy(&share_sp_rx, &buffer[idx], 4); idx += 4;
+    memcpy(&charge_rx,  &buffer[idx], 4); idx += 4;
+
+    if (isfinite(v_sp_rx))     v_setpoint           = constrain(v_sp_rx, -V_SETPOINT_MAX, V_SETPOINT_MAX);
+    if (isfinite(share_sp_rx)) power_share_setpoint = constrain(share_sp_rx, 0.0f, 1.0f);
+    if (isfinite(charge_rx))   charge_goal          = charge_rx;
 
     mode_cmd = buffer[idx++];
     uint8_t droop_enable_reserved = buffer[idx++];   // reserved — not yet wired to hardware
@@ -1119,10 +1375,15 @@ void doState1() {
     // NOTE (Death-5 sequencing change, 2026-07-08): MOT_PWR_ENABLE is intentionally NOT forced LOW
     // here. The V-MOT/VESC node is pre-charged during the State-0 bring-up and must stay energized
     // (like the bus) so the Idle→Run transition never re-hot-plugs it (that hot-plug killed the FC
-    // boost). The motor is held stopped by vesc.setCurrent(0) every Idle tick — NOT by cutting
+    // boost). The motor is held stopped by commandMotorCurrent(0) every Idle tick — NOT by cutting
     // MOT_PWR. (Under BENCH_TEST the power stage boots dark, so MOT_PWR is simply LOW here until a
     // 'G' bring-up energizes it.) Only State 99 tears the motor node down.
-    vesc.setCurrent(0);
+    // Rate-gated at the motor period. Idle runs continuously, and an ungated zero-current frame
+    // every tick is 9 bytes of UART per tick — the same backpressure that pins the main loop (and
+    // detectFaults()) described in the "Control-loop rate limiting" block. 500 Hz keeps the command
+    // comfortably fed against the VESC's 1000 ms timeout, and the timeout's own behaviour is to
+    // COAST anyway, which for a stopped motor is what a zero command achieves.
+    if (rateLimitDue(rl_motor_last, MOTOR_CTRL_PERIOD_US)) commandMotorCurrent(0);
     digitalWrite(REGEN_ENABLE,   LOW);
 
     // 'S'/'s' toggles a 1 Hz sensor dump on/off while idle
@@ -1153,6 +1414,9 @@ void doState1() {
     if (changeToRun) {
         changeToRun = false;
         Serial.println("State 1 -> State 2 (RUN)");
+        // Clear the control rate-limit gates so Run's first tick executes all three controllers
+        // immediately rather than waiting out a stale period from a previous run.
+        resetControlRateLimiters();
         mainState = 2;
     }
 }
@@ -1175,9 +1439,15 @@ void doState2() {
         return;
     }
 
-    chargingControl();   // power path state committed before motor/droop outputs change
-    motorControl();
-    powerBalance();
+    // Rate-gated (2026-07-29). Call ORDER is unchanged and still matters: the power-path state is
+    // committed before the motor/droop outputs change. Each has its own independent period, so
+    // chargingControl() no longer runs at the motor rate and motorControl() no longer blocks the
+    // loop on UART backpressure. NOTE the pre-existing one-tick lag is unchanged: chargingControl()
+    // decides the regen path from `current` as set by the PREVIOUS motorControl() call — with
+    // separate periods that lag is now up to one chargingControl() period rather than one tick.
+    chargingControlGated();   // power path state committed before motor/droop outputs change
+    motorControlGated();
+    powerBalanceGated();
 
     if (changeToFin) {
         changeToFin = false;
@@ -1203,8 +1473,8 @@ void doState3() {
     // MOT_PWR_ENABLE (Death-5 change, 2026-07-08): the V-MOT/VESC node is ALSO left energized, for
     // the same reason the bus is — cutting it here would force a full-bus re-hot-plug of the
     // 470µF+VESC stack on the next Idle→Run (the event that killed the FC boost). The motor is held
-    // stopped by vesc.setCurrent(0), not by cutting MOT_PWR. Only State 99 tears the motor node down.
-    vesc.setCurrent(0);
+    // stopped by commandMotorCurrent(0), not by cutting MOT_PWR. Only State 99 tears the motor node down.
+    commandMotorCurrent(0);
     current = 0.0f;
     assertFcChargeEnable(false);           // ensure FC→charger path is closed
     digitalWrite(REGEN_ENABLE, LOW);       // ensure regen path is closed
@@ -1251,7 +1521,7 @@ void doState99() {
 
     switch (phase) {
         case 0:
-            vesc.setCurrent(0);
+            commandMotorCurrent(0);
             // Phase 1: Bleed VBUS capacitor energy into charger
             digitalWrite(FC_BUS_ENABLE, LOW);    // disconnect FC regulator from VBUS
             digitalWrite(BT_BUS_ENABLE, LOW);    // disconnect BT regulator from VBUS
@@ -1441,10 +1711,17 @@ void doState98() {
             case 'D':
             case 'd':
                 if (!driveCycleActive) {
-                    if (!digitalRead(MOT_PWR_ENABLE)) {
+                    if (!velocityChainCalibrated()) {
+                        printVelocityChainRefusal("drive cycle");
+                    } else if (!digitalRead(MOT_PWR_ENABLE)) {
                         Serial.println("ERROR: MOT_PWR_ENABLE must be HIGH before starting drive cycle (key '3')");
                     } else {
                         powerShareProfileActive = false;   // mutually exclusive motor drivers
+                        // Take exclusive ownership of the motor output. Without this, a manual
+                        // current set with 'A' before 'D' survives the whole run and re-asserts
+                        // itself the instant the drive cycle ends.
+                        haltMotorOutput();
+                        resetControlRateLimiters();   // first tick drives immediately
                         driveCycleActive     = true;
                         driveCyclePhaseIdx   = 0;
                         driveCyclePhaseStart = millis();
@@ -1455,14 +1732,14 @@ void doState98() {
                     }
                 } else {
                     driveCycleActive = false;
-                    v_setpoint = 0.0f;
-                    // Drive cycle now drives the VESC (motorControl runs while active), so the
-                    // control block won't execute next tick — flush a zero command immediately
-                    // or the motor keeps spinning at the last commanded current.
-                    current = 0.0f;
-                    vesc.setCurrent(0);
+                    // Drive cycle drives the VESC (motorControl runs while active), so the control
+                    // block won't execute next tick — flush a zero command immediately or the motor
+                    // keeps spinning at the last commanded current. haltMotorOutput() also clears
+                    // manualMotorMode, so the standalone branch reached later in THIS SAME
+                    // invocation cannot reissue a pre-drive-cycle manual command.
+                    haltMotorOutput();
                     safeAllSwitches();   // park path switches so a mid-phase stop leaves nothing latched
-                    Serial.println("[DC] Drive cycle stopped — switches safed");
+                    Serial.println("[DC] Drive cycle stopped — motor + switches safed");
                 }
                 break;
             case 'G':
@@ -1526,6 +1803,7 @@ void doState98() {
                             Serial.println("WARN: VBUS is low — bring the bus up ('G') for a meaningful share measurement");
                         }
                         driveCycleActive            = false;   // mutually exclusive motor drivers
+                        resetControlRateLimiters();   // first tick drives immediately
                         powerShareProfileActive     = true;
                         powerShareProfilePhaseIdx   = 0;
                         powerShareProfilePhaseStart = millis();
@@ -1537,19 +1815,15 @@ void doState98() {
                 } else {
                     powerShareProfileActive = false;
                     power_share_setpoint    = 0.5f;
-                    current                 = 0.0f;
-                    vesc.setCurrent(0);
-                    manualMotorMode         = MOTOR_TEST_OFF;
+                    haltMotorOutput();
                     safeAllSwitches();   // park path switches so a mid-profile stop leaves nothing latched
                     Serial.println("[PS] Power-share profile stopped — motor + switches safed");
                 }
                 break;
             case 'X':
             case 'x':
-                manualMotorMode  = MOTOR_TEST_OFF;
+                haltMotorOutput();
                 powerBalanceLive = false;
-                current          = 0.0f;
-                vesc.setCurrent(0);
                 Serial.println("Manual motor + power-share live stopped (motor zeroed)");
                 break;
             case 'H':
@@ -1561,14 +1835,11 @@ void doState98() {
             case 'q':
                 driveCycleActive        = false;
                 powerShareProfileActive = false;
-                manualMotorMode         = MOTOR_TEST_OFF;
                 powerBalanceLive        = false;
                 vescWatchActive         = false;   // stop the blocking poll from running outside State 98
                 pendingInput            = PEND_NONE;
                 inputBufIdx             = 0;
-                v_setpoint = 0.0f;
-                current = 0.0f;
-                vesc.setCurrent(0);                  // stop motor before cutting its power
+                haltMotorOutput();                 // stop motor before cutting its power
                 digitalWrite(MOT_PWR_ENABLE, LOW);   // forced LOW on exit (per spec)
                 // Close the charge/regen paths too — doState1() re-clears MOT_PWR/REGEN each
                 // tick but never touches FC_CHARGE, so an operator-latched FC_CHARGE would
@@ -1590,9 +1861,17 @@ void doState98() {
         // execute unmodified so the exerciser drives the VESC, droop MDACs, and charger paths
         // exactly as State 2 would. Same call order as doState2(). (CLAUDE.md §8.)
         advanceDriveCycle();
-        chargingControl();
-        motorControl();
-        powerBalance();
+        // advanceDriveCycle() clears driveCycleActive on natural completion and zeroes the motor
+        // itself. Re-checking the flag keeps motorControl() from running in that same tick and
+        // undoing the flush: the error would be (0 − v_actual), i.e. NEGATIVE while the flywheel
+        // is still spinning down, so the "completed" drive cycle would command regen current.
+        if (driveCycleActive) {
+            // Same rate gating and same call order as doState2(), so the exerciser keeps
+            // production-identical timing (CLAUDE.md §8).
+            chargingControlGated();
+            motorControlGated();
+            powerBalanceGated();
+        }
     } else if (powerShareProfileActive) {
         // Power-share profile: sweep power_share_setpoint while the motor is held at a constant
         // command, then let the closed-loop powerBalance() track it. Deliberately does NOT call
@@ -1601,12 +1880,16 @@ void doState98() {
         // measurement.
         advancePowerShareProfile();
         applyManualMotor();
-        powerBalance();
+        powerBalanceGated();
     } else {
         // Standalone manual modes (no profile running): hold the motor and/or run the closed-loop
-        // share controller at the operator-set setpoint.
+        // share controller at the operator-set setpoint. applyManualMotor() is NOT rate-gated in
+        // MOTOR_TEST_CURRENT: it re-sends a CONSTANT operator-set current, and the VESC's own
+        // command timeout (1000 ms, and it COASTS rather than brakes on expiry) means the bench
+        // needs a steady keep-alive. Its velocity branch calls motorControl() directly, which is
+        // acceptable because velocity mode is gated off entirely until the chain is calibrated.
         if (manualMotorMode != MOTOR_TEST_OFF) applyManualMotor();
-        if (powerBalanceLive)                  powerBalance();
+        if (powerBalanceLive)                  powerBalanceGated();
     }
 
     // VESC read-back watch: runs regardless of which motor driver (if any) is active, so a fault
@@ -1616,9 +1899,13 @@ void doState98() {
 
 void advanceDriveCycle() {
     if (driveCyclePhaseIdx >= DRIVE_CYCLE_PHASES) {
-        v_setpoint       = 0.0f;
         driveCycleActive = false;
-        Serial.println("[DC] Drive cycle complete");
+        // Natural completion must release the motor exactly as the 'D' stop path does. Previously
+        // it only cleared v_setpoint + the active flag: no zero was ever flushed, and any
+        // manualMotorMode set before the run resumed driving the motor on the next tick.
+        // (design-review-2026-07-28.md P0-2 — symmetric with advancePowerShareProfile().)
+        haltMotorOutput();
+        Serial.println("[DC] Drive cycle complete — motor zeroed");
         return;
     }
 
@@ -1785,21 +2072,80 @@ void setManualMotorCurrent(float a) {
     manualMotorMode    = MOTOR_TEST_CURRENT;
 }
 
+// ── Velocity-chain calibration interlock ─────────────────────────────────────
+// The velocity loop closes on v_actual, whose scale depends on two constants that are still
+// placeholders (ENCODER_SLOTS_PER_REV, FLYWHEEL_RADIUS_M). An under-reading v_actual makes the PI
+// OVER-DRIVE — it keeps adding current chasing a setpoint the flywheel has already passed — and
+// commandMotorCurrent() bounds amps, not speed. So the two State-98 entry points that close the
+// velocity loop ('V' manual velocity, 'D' drive cycle) refuse until the scale is measured.
+// Set -DVELOCITY_CHAIN_CALIBRATED=1 once ENCODER_SLOTS_PER_REV and FLYWHEEL_RADIUS_M are measured.
+// Seeded from the compile-time macro but kept as a runtime flag so the host tests can exercise BOTH
+// the refusal path and the calibrated path in one build (a compile-time-only gate would leave one of
+// the two branches untested in every build).
+bool velocityChainCalibratedFlag = (VELOCITY_CHAIN_CALIBRATED != 0);
+
+bool velocityChainCalibrated() {
+    return velocityChainCalibratedFlag;
+}
+
+void printVelocityChainRefusal(const char *what) {
+    Serial.print("REFUSED: ");
+    Serial.print(what);
+    Serial.println(" needs a calibrated velocity chain.");
+    Serial.println("  v_actual scale is still a placeholder (ENCODER_SLOTS_PER_REV, FLYWHEEL_RADIUS_M).");
+    Serial.println("  An under-reading v_actual makes the velocity PI OVER-DRIVE; the current clamp");
+    Serial.println("  bounds amps, not speed. Measure both, then rebuild with");
+    Serial.println("  -DVELOCITY_CHAIN_CALIBRATED=1. Use 'A' (fixed current) for motor tests instead.");
+}
+
 // Manual motor: fixed velocity setpoint driven through the existing motorControl() PI. Clamped to
 // the manual velocity ceiling (the motor PI's current anti-windup bounds the command either way).
+// Refuses outright while the velocity chain is uncalibrated — see velocityChainCalibrated().
 void setManualMotorVelocity(float v) {
+    if (!velocityChainCalibrated()) {
+        printVelocityChainRefusal("manual velocity mode");
+        return;
+    }
     manualMotorVelocity = constrain(v, -MANUAL_MOTOR_V_MAX, MANUAL_MOTOR_V_MAX);
     manualMotorMode     = MOTOR_TEST_VELOCITY;
+}
+
+// ── Motor output ownership ───────────────────────────────────────────────────
+// Single primitive for "no one is driving the motor any more". State 98 has four motor drivers
+// (manual current, manual velocity, drive cycle, power-share profile) and they used to release the
+// motor inconsistently: the drive cycle's stop path zeroed the VESC but left manualMotorMode set,
+// so control fell through to the standalone branch IN THE SAME TICK and applyManualMotor() reissued
+// the pre-drive-cycle manual current. Natural completion was worse — it never flushed a zero at all.
+// (design-review-2026-07-28.md P0-2.)
+//
+// Clearing pi_motor_accum matters as much as the zero flush: a drive cycle ends with the integrator
+// wound up from the regen-hold phase, and carrying that into the next run means the first
+// motorControl() tick commands a large current from stale history rather than from live error.
+// This deliberately does NOT touch the power-path switches — that policy question (whether a test
+// exit retains the Death-5 motor-node pre-charge or drains it) is separate and unresolved; callers
+// decide, exactly as before.
+void haltMotorOutput() {
+    manualMotorMode     = MOTOR_TEST_OFF;
+    v_setpoint          = 0.0f;
+    manualMotorCurrent  = 0.0f;
+    manualMotorVelocity = 0.0f;
+    pi_motor_accum      = 0.0f;
+    targetMotorTorque   = 0.0f;
+    commandMotorCurrent(0);          // also clears `current`
 }
 
 // Apply the active manual motor command for one tick (called from doState98()).
 void applyManualMotor() {
     if (manualMotorMode == MOTOR_TEST_CURRENT) {
-        current = manualMotorCurrent;       // constant current, bypass velocity PI
-        vesc.setCurrent(current);
+        // Rate-gated on the SAME period as motorControl(). Re-sending a constant current every tick
+        // blocks the loop on UART TX backpressure for no benefit; 500 Hz is far more often than the
+        // VESC's 1000 ms command timeout needs to stay fed. Uses rl_motor_last so manual current and
+        // motorControl() can never both write in one tick.
+        if (rateLimitDue(rl_motor_last, MOTOR_CTRL_PERIOD_US))
+            commandMotorCurrent(manualMotorCurrent);   // constant current, bypass velocity PI
     } else if (manualMotorMode == MOTOR_TEST_VELOCITY) {
         v_setpoint = manualMotorVelocity;   // hold velocity setpoint; motorControl() runs the PI
-        motorControl();
+        motorControlGated();
     }
 }
 
@@ -1813,9 +2159,7 @@ void advancePowerShareProfile() {
         // Halt the motor on natural completion too (symmetric with the 'R'-stop and 'Q' paths) —
         // otherwise the still-set manualMotorMode keeps applyManualMotor() driving the motor in the
         // standalone branch after the sweep ends.
-        manualMotorMode = MOTOR_TEST_OFF;
-        current         = 0.0f;
-        vesc.setCurrent(0);
+        haltMotorOutput();
         Serial.println("[PS] Power-share profile complete — motor zeroed");
         return;
     }
@@ -2046,11 +2390,39 @@ bool assertMotPwrEnable(bool enable) {
     return true;
 }
 
-void motorControl() {
-    targetMotorTorque = PI_Controller_Motor(v_setpoint - v_actual);
-    current = targetMotorTorque / motorConstant;
+// ── Motor current chokepoint ─────────────────────────────────────────────────
+// THE ONLY place in the firmware that calls vesc.setCurrent(). Every motor command — UDP velocity
+// (motorControl), State-98 manual current, State-98 manual velocity, the drive cycle, the
+// power-share profile, and all the safety zero-flushes — routes through here so the ceiling is
+// unbypassable.
+//
+// Two guarantees:
+//   1. Non-finite in → 0 A out. motorConstant and the velocity unit chain are both uncalibrated
+//      TODOs; a NaN/Inf reaching COMM_SET_CURRENT serializes as a garbage int32 the VESC would
+//      act on. Commanding 0 is the only safe interpretation of "I don't know what to command".
+//   2. |amps| ≤ MOTOR_I_CMD_MAX. The PI integrator anti-windup bound alone did NOT bound the
+//      command: the proportional term is added after it, so a large velocity error passed straight
+//      through to a 50 A bridge.
+// `current` mirrors what was actually sent (post-clamp), so telemetry and the State-98 status dump
+// report the real command rather than the pre-clamp intent, and a zero-flush clears it rather than
+// leaving a stale value visible to the Pi.
+void commandMotorCurrent(float amps) {
+    if (!isfinite(amps)) amps = 0.0f;
+    current = constrain(amps, -MOTOR_I_CMD_MAX, MOTOR_I_CMD_MAX);
     vesc.setCurrent(current);
 }
+
+void motorControl() {
+    targetMotorTorque = PI_Controller_Motor(v_setpoint - v_actual);
+    commandMotorCurrent(targetMotorTorque / motorConstant);
+}
+
+// Rate-gated wrappers — see the "Control-loop rate limiting" block for the periods and rationale.
+// A skipped call is a zero-order hold: the VESC latches the last setCurrent(), the MDACs hold their
+// last written codes, and the PI integrators keep their own sampleTime gating, so nothing decays.
+void motorControlGated()    { if (rateLimitDue(rl_motor_last,    MOTOR_CTRL_PERIOD_US))    motorControl(); }
+void chargingControlGated() { if (rateLimitDue(rl_charging_last, CHARGING_CTRL_PERIOD_US)) chargingControl(); }
+void powerBalanceGated()    { if (rateLimitDue(rl_power_last,    POWER_BAL_PERIOD_US))     powerBalance(); }
 
 float PI_Controller_Motor(float error) {
     const float Kp = 1.0f;
@@ -2246,24 +2618,61 @@ void scanI2C() {
 // (pollAg105) decides whether a failure is a fault based on power/settle/state. Only called
 // once the charger is confirmed powered + settled, so a NACK here is a genuine config failure.
 // Settings persist in the Ag105 EPROM across power cycles, so re-writing is idempotent.
+// Read one Ag105 config register back. The Ag105 ALWAYS prepends the Table 6 status byte before
+// data, so a 1-byte field needs a 2-byte request: [status][data]. Returns false on any I2C failure
+// or short read; on success `out` holds the data byte.
+// Source: Ag105_Table7_I2C_Parameters.json (register map), Ag105_Table6_I2C_Status_Byte.json.
+bool ag105ReadConfigReg(uint8_t reg, uint8_t &out) {
+    Wire.beginTransmission(AG105_ADDR);
+    Wire.write(reg);
+    // Full STOP before the read, deliberately matching pollAg105()'s register-read sequence rather
+    // than using a repeated start. pollAg105() is the pattern that has been exercised against this
+    // part; a repeated start is more textbook-correct but is not what this device has been shown to
+    // accept, and this is not the place to introduce an untested I2C variation.
+    if (Wire.endTransmission() != 0) return false;
+    if (Wire.requestFrom((uint8_t)AG105_ADDR, (uint8_t)2) != 2) return false;
+    (void)Wire.read();          // status byte (Table 6) — discarded here
+    out = (uint8_t)Wire.read(); // the register value
+    return true;
+}
+
+// Write one config register only if it does not already hold the wanted value.
+// Rationale: these registers live in EPROM. A blind write every powered session burns write cycles
+// for no reason, and — more importantly — a blind write gives NO evidence it took effect. The
+// previous version wrote both registers unconditionally and returned success on ACK alone, so a
+// write that ACKed but did not land left the charger at its 1S/4.2V default while the firmware
+// believed it was configured — a real 2S pack would then be charged to a 1S target with no fault.
+// docs/VESC_MOTOR_INTEGRATION.md §11 asks for exactly this read-verify-then-write-if-different.
+// Returns false if the register cannot be read, cannot be written, or still reads wrong after the
+// write.
+bool ag105WriteConfigRegVerified(uint8_t reg, uint8_t want) {
+    uint8_t got = 0;
+    if (!ag105ReadConfigReg(reg, got)) return false;
+    if (got == want) return true;              // already correct — no EPROM write
+
+    Wire.beginTransmission(AG105_ADDR);
+    Wire.write(reg);
+    Wire.write(want);
+    if (Wire.endTransmission() != 0) return false;
+
+    // Verify: prove the value actually landed rather than trusting the ACK.
+    if (!ag105ReadConfigReg(reg, got)) return false;
+    return got == want;
+}
+
 bool initAg105Charger() {
     // Power-on defaults: reg 0x00 = 0x00 (ext-resistor mode → no RCS → 1000mA),
     //                    reg 0x01 = 0x00 (ext-resistor mode → no RVS → 4.2V / 1S).
     // Write explicit 2.5A current and 2S/8.4V voltage configs before any charging is allowed.
+    // Both go through read-verify-then-write-if-different (see ag105WriteConfigRegVerified).
 
-    // Set charge current to 2.5A (highest profile)
+    // Charge current 2.5A (highest profile); termination at 250mA (C/10)
     // Source: Ag105_Table7_I2C_Parameters.json field 0x00; Ag105_Table4_Charge_Current_Select.json
-    Wire.beginTransmission(AG105_ADDR);
-    Wire.write(AG105_REG_ICHG_CFG);
-    Wire.write(AG105_VAL_2500MA);   // 0x01 = 2.5A; termination at 250mA (C/10)
-    if (Wire.endTransmission() != 0) return false;
+    if (!ag105WriteConfigRegVerified(AG105_REG_ICHG_CFG, AG105_VAL_2500MA)) return false;
 
-    // Set battery voltage to 2S / 8.4V (100% capacity profile)
+    // Battery voltage 2S / 8.4V (100% capacity profile)
     // Source: Ag105_Table3_Charge_Voltage_Select.json — i2c_field_value 8 = 8.4V
-    Wire.beginTransmission(AG105_ADDR);
-    Wire.write(AG105_REG_VBATT_CFG);
-    Wire.write(AG105_VAL_2S);       // 0x08
-    if (Wire.endTransmission() != 0) return false;
+    if (!ag105WriteConfigRegVerified(AG105_REG_VBATT_CFG, AG105_VAL_2S)) return false;
 
     return true;
 }
@@ -2277,6 +2686,11 @@ void pollAg105() {
     if (!powered) {
         ag105Configured = false;    // re-arm config for next power session
         ag105DataValid  = false;    // cached status/current no longer reflect a live charger
+        // Clear the measured charge current too. Without this, sendTelemetry() kept shipping the
+        // last good value forever: the Pi would see charger_status = 0x00 ("no charger data")
+        // alongside a positive, plausible-looking I_charge while the charger was unpowered.
+        // (docs/design-review-2026-07-28.md P2-1.)
+        I_charge        = 0.0f;
     }
     ag105HadPower = powered;
 
@@ -2313,6 +2727,7 @@ void pollAg105() {
         // that goes silent in an operational state latches State 99.
         ag105DataValid   = false;
         ag105_status_raw = 0;
+        I_charge         = 0.0f;   // never leave a stale current next to a "no data" status byte
         if (faultArmed)
             triggerFault(FAULT_I2C_CHARGER, ERR_I2C_CHARGER);
     }
@@ -2370,7 +2785,7 @@ void initMdacOutputs() {
 }
 
 void initEsc() {
-    vesc.setCurrent(0);
+    commandMotorCurrent(0);
 }
 
 
@@ -2381,10 +2796,18 @@ void updateWheelSpeed() {
     static uint32_t lastMicros = 0;
     static int32_t  index      = 0;
 
+    // averagingTime/sampleTime must not exceed the hard-coded buffer depth — changing either
+    // constant used to silently overflow both arrays. static_assert makes that a build error.
     const int averagingTime = 10000;
+    const int BUF_DEPTH = 200;
+    static_assert(10000 / 50 <= 200, "posArr/timeArr too small for averagingTime/sampleTime");
     const int arraySize = (int)ceil((float)averagingTime / sampleTime);
-    static int posArr[200]  = {0};
-    static int timeArr[200] = {0};
+    static int      posArr[BUF_DEPTH]  = {0};
+    // uint32_t, matching micros(). The previous `int` was NOT a bug (the subtraction below promotes
+    // it back to uint32_t bit-preservingly, so dt stays correct across both the 2^31 and 2^32
+    // wraps) — an earlier TODO here wrongly claimed the wrap corrupted dt. Typed correctly now so
+    // nobody "fixes" the non-bug.
+    static uint32_t timeArr[BUF_DEPTH] = {0};
 
     // Requested by State 3 between runs: drop stale timestamps/positions so the next run's
     // first samples don't measure velocity against the previous run's buffer contents.
@@ -2410,19 +2833,30 @@ void updateWheelSpeed() {
     if (index < arraySize - 1) index++;
     else index = 0;
 
-    int   dt    = now - timeArr[(index + 1) % arraySize];
-    float dtSec = dt * 1e-6f;
-    int   dx    = pos - posArr[(index + 1) % arraySize];
+    // The slot at (index+1) was written arraySize-2 iterations ago (posArr[index] is written, THEN
+    // index is incremented, THEN this reads index+1), so the window is 198 samples, not 200 — i.e.
+    // averagingTime is nominal only. Harmless because dt is measured rather than assumed.
+    uint32_t dt    = now - timeArr[(index + 1) % arraySize];
+    float    dtSec = dt * 1e-6f;
+    int      dx    = pos - posArr[(index + 1) % arraySize];
 
     if (dtSec < 1e-6f) return;
-    // TODO(calibrate): unit chain. rpm*radius/60 yields rev/s × inch, NOT m/s (missing 2π and
-    // inch→m = 0.0254), and flyWheelRadius = 1 is a placeholder — yet v_setpoint from the Pi is
-    // meant as m/s. Fold 2π·0.0254 into the constant when calibrating, BEFORE tuning the motor
-    // PI gains, or the gains will bake in the unit mismatch. Also note timeArr[] is int holding
-    // micros(): it wraps after ~35.8 min of uptime and corrupts dt for one buffer pass.
-    // (Velocity math itself intentionally unchanged per CLAUDE.md "what NOT to change".)
+
+    // ── Unit chain (CORRECTED 2026-07-29; user-approved exception to CLAUDE.md "what NOT to
+    //    change"). The old line was:
+    //        v_actual = flyWheelSpeedRpm * flyWheelRadius / 60.0f;      // flyWheelRadius = 1 "inch"
+    //    That yields rev/s × inch, NOT m/s — it dropped the 2π (rad/rev) AND the inch→m 0.0254,
+    //    while v_setpoint from the Pi is m/s. Correct conversion for a wheel/roller of radius r:
+    //        v [m/s] = ω [rev/s] · 2π · r [m] = rpm · (2π/60) · r_m
+    //
+    //    NOTE the two errors used to partially CANCEL: with ENCODER_COUNTS_PER_REV over-stated and
+    //    the radius factor over-stated, v_actual under-read ~6.6×. Correcting only the form makes
+    //    the under-read WORSE (~32×) until ENCODER_SLOTS_PER_REV is measured. Because the loop
+    //    closes on v_actual, under-reading means the PI OVER-DRIVES — so VELOCITY_CHAIN_CALIBRATED
+    //    gates the State-98 velocity entry points until both scale inputs are measured. Fix the
+    //    scale BEFORE tuning the motor PI gains, or the gains bake in the mismatch.
     float flyWheelSpeedRpm = (dx / ENCODER_COUNTS_PER_REV) * (60.0f / dtSec);
-    v_actual = flyWheelSpeedRpm * flyWheelRadius / 60.0f;
+    v_actual = flyWheelSpeedRpm * RPM_TO_MPS;
 }
 
 
