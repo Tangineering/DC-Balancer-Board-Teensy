@@ -334,7 +334,13 @@ machine with `g++` — no Teensy or Arduino IDE required.
   `doState0()` init-fault handling, `pollAg105()` state gating, and the wheel-speed reset. The
   audit-round additions (PLAN.md §14) cover the live-output PI semantics, power-PI anti-windup,
   gated-tick droop stability, the `ag105DataValid` staleness gate, and the State-98 `'2'` guard
-  and `'Q'` path-closing exit.
+  and `'Q'` path-closing exit. The State-98 trapezoidal current profile (PLAN.md §9f) is covered
+  too: the `MOT_PWR_ENABLE` refusal, the full `'T'` prompt chain through ramp-up/hold/ramp-down and
+  natural completion, the `±MOTOR_I_CMD_MAX` clamp (both signs) and negative-peak braking/regen
+  entry, degenerate-input chain cancellation (zero peak, negative hold, non-positive rate),
+  non-numeric mid-chain cancellation, the `'T'`-stop and `'Q'`-exit paths (motor zeroed, path
+  switches deliberately left as-is on `'T'`-stop), mutual exclusion with the drive cycle and
+  power-share profile, and `pollVescWatch()` suppression.
 - Run before every flash: `cd test && make`.
 
 See PLAN.md §10 for the full directory layout and test category table.

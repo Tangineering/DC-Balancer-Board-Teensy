@@ -120,6 +120,19 @@ static void reset_test_state() {
     powerShareProfileStatusLast = 0;
     pendingInput                = PEND_NONE;
     inputBufIdx                 = 0;
+
+    // .ino State 98 bench tools — trapezoidal current profile
+    trapProfileActive = false;
+    trapPhase         = TRAP_RAMP_UP;
+    trapImax          = 0.0f;
+    trapHoldMs        = 0;
+    trapRateAps       = 0.0f;
+    trapRampMs        = 0;
+    trapStartMs       = 0;
+    trapStatusLast    = 0;
+    trapCmdA          = 0.0f;
+    trapPendImax      = 0.0f;
+    trapPendHoldMs    = 0;
 }
 
 // Put the Ag105 into the "powered + settled" condition (a charger power path open and the
@@ -2764,6 +2777,401 @@ static void test_pending_input_cancel() {
           "pending input: cancelling char ('X') is then handled as a command");
 }
 
+// Feed a whole line (chars + '\n') through doState98(), ONE doState98() call per character —
+// doState98() reads only one Serial byte per invocation (mirrors how PEND_TRAP_IMAX/HOLD/RATE are
+// typed by an operator across ticks; see test_pending_input_cancel's push-then-loop pattern).
+static void feed_serial_line(const char* s) {
+    for (const char* p = s; *p; ++p) {
+        Serial.rx_queue.push(*p);
+        doState98();
+    }
+    Serial.rx_queue.push('\n');
+    doState98();
+}
+
+// ─── State 98 bench tools: trapezoidal current profile ('T') ─────────────────
+static void test_trap_refused_without_mot_pwr() {
+    test_group("Trapezoid profile ('T') refused when MOT_PWR_ENABLE is LOW");
+    reset_test_state();
+
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = LOW;
+    Serial.rx_queue.push('T');
+    doState98();
+
+    check(pendingInput == PEND_NONE,
+          "trap: 'T' with MOT_PWR LOW does not arm the Imax prompt");
+    check(trapProfileActive == false,
+          "trap: 'T' with MOT_PWR LOW does not start a profile");
+}
+
+static void test_trap_happy_path() {
+    test_group("Trapezoid profile — full 'T' entry + ramp/hold/ramp-down + natural completion");
+    reset_test_state();
+
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    g_mock_millis = 0;
+    g_mock_micros = 0;
+
+    Serial.rx_queue.push('T');
+    doState98();
+    check(pendingInput == PEND_TRAP_IMAX,
+          "trap: 'T' arms the Imax prompt");
+
+    feed_serial_line("5");
+    doState98();
+    check(pendingInput == PEND_TRAP_HOLD,
+          "trap: peak value accepted, hold prompt armed");
+
+    feed_serial_line("2");
+    doState98();
+    check(pendingInput == PEND_TRAP_RATE,
+          "trap: hold value accepted, rate prompt armed");
+
+    // Arm the other two motor drivers right before the profile actually starts, so this test
+    // isolates the "starting the profile clears them" behaviour (they don't get a chance to run
+    // and self-clear across the earlier prompt ticks).
+    driveCycleActive        = true;
+    powerShareProfileActive = true;
+    g_mock_millis = 1000;   // startTrapProfile() stamps trapStartMs from millis()
+    feed_serial_line("10");
+    doState98();
+
+    check(trapProfileActive == true,
+          "trap: rate value accepted — profile starts");
+    check(driveCycleActive == false && powerShareProfileActive == false,
+          "trap: starting the profile clears the other two motor drivers");
+    check(fabsf(trapImax - 5.0f) < 1e-4f && trapHoldMs == 2000 && fabsf(trapRateAps - 10.0f) < 1e-4f,
+          "trap: staged values committed (Imax=5A, hold=2000ms, rate=10A/s)");
+    // rampMs = |5|/10 * 1000 = 500ms
+    check(trapRampMs == 500,
+          "trap: ramp duration derived as |Imax|/rate");
+
+    // ── Ramp-up: at t=250ms (half the 500ms ramp), cmd should be ~half of Imax.
+    g_mock_millis = 1000 + 250;
+    g_mock_micros = 1000000;   // clear of the 2ms motor rate gate
+    vesc.reset();
+    advanceTrapProfile();
+    check(fabsf(trapCmdA - 2.5f) < 0.05f,
+          "trap: ramp-up commanded current tracks rate*t at the midpoint (~2.5A)");
+    check(trapPhase == TRAP_RAMP_UP, "trap: phase is RAMP_UP mid-ramp");
+
+    // Another ramp-up sample point closer to the end (t=450ms of 500ms ramp).
+    g_mock_millis = 1000 + 450;
+    g_mock_micros = 2000000;
+    advanceTrapProfile();
+    check(fabsf(trapCmdA - 4.5f) < 0.05f,
+          "trap: ramp-up commanded current tracks rate*t near the end (~4.5A)");
+
+    // ── Hold: elapsed in [500, 2500)ms → I_max
+    g_mock_millis = 1000 + 500 + 1000;   // mid-hold
+    g_mock_micros = 3000000;
+    advanceTrapProfile();
+    check(fabsf(trapCmdA - 5.0f) < 1e-3f,
+          "trap: hold phase holds at Imax");
+    check(trapPhase == TRAP_HOLD, "trap: phase is HOLD");
+
+    // ── Ramp-down: tHoldEnd = 500+2000 = 2500ms; at 2500+250=2750ms (half the down-ramp), ~half Imax.
+    g_mock_millis = 1000 + 2750;
+    g_mock_micros = 4000000;
+    advanceTrapProfile();
+    check(fabsf(trapCmdA - 2.5f) < 0.05f,
+          "trap: ramp-down commanded current decreases (~2.5A at down-ramp midpoint)");
+    check(trapPhase == TRAP_RAMP_DOWN, "trap: phase is RAMP_DOWN");
+
+    // ── Natural completion: tEnd = 2500+500 = 3000ms.
+    g_mock_millis = 1000 + 3000;
+    g_mock_micros = 5000000;
+    vesc.reset();
+    advanceTrapProfile();
+    check(trapProfileActive == false,
+          "trap: profile deactivates on natural completion");
+    check(!vesc.current_calls.empty() && vesc.last_current == 0.0f,
+          "trap: natural completion flushes vesc.setCurrent(0)");
+    check(manualMotorMode == MOTOR_TEST_OFF,
+          "trap: natural completion clears manualMotorMode (haltMotorOutput symmetry)");
+}
+
+static void test_trap_peak_clamp_and_negative() {
+    test_group("Trapezoid profile — peak clamped to +/-MOTOR_I_CMD_MAX; negative peak accepted");
+    reset_test_state();
+
+    // Positive peak beyond the clamp is saturated to MOTOR_I_CMD_MAX.
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    g_mock_millis = 0;
+    Serial.rx_queue.push('T');
+    doState98();
+    feed_serial_line("999");   // way beyond MOTOR_I_CMD_MAX
+    doState98();
+    feed_serial_line("0");
+    doState98();
+    feed_serial_line("10");
+    doState98();
+    check(trapProfileActive == true && fabsf(trapImax - MOTOR_I_CMD_MAX) < 1e-4f,
+          "trap: peak clamped to +MOTOR_I_CMD_MAX");
+
+    // Negative peak is accepted (braking/regen test) and ramps negative.
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    g_mock_millis = 0;
+    Serial.rx_queue.push('T');
+    doState98();
+    feed_serial_line("-3");
+    doState98();
+    feed_serial_line("0");
+    doState98();
+    g_mock_millis = 1000;
+    feed_serial_line("6");   // rate 6A/s -> rampMs = |−3|/6*1000 = 500ms
+    doState98();
+    check(trapProfileActive == true && fabsf(trapImax + 3.0f) < 1e-4f,
+          "trap: negative peak accepted and stored signed");
+
+    g_mock_millis = 1000 + 250;   // half the 500ms ramp
+    g_mock_micros = 1000000;
+    advanceTrapProfile();
+    check(trapCmdA < 0.0f && fabsf(trapCmdA + 1.5f) < 0.05f,
+          "trap: negative peak ramps toward a negative commanded current (~-1.5A at midpoint)");
+
+    // Negative peak beyond the clamp saturates to -MOTOR_I_CMD_MAX.
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    g_mock_millis = 0;
+    Serial.rx_queue.push('T');
+    doState98();
+    feed_serial_line("-999");
+    doState98();
+    feed_serial_line("0");
+    doState98();
+    feed_serial_line("10");
+    doState98();
+    check(trapProfileActive == true && fabsf(trapImax + MOTOR_I_CMD_MAX) < 1e-4f,
+          "trap: negative peak clamped to -MOTOR_I_CMD_MAX");
+}
+
+static void test_trap_degenerate_inputs_refused() {
+    test_group("Trapezoid profile — degenerate inputs refused, chain cancelled");
+    reset_test_state();
+
+    // Zero peak (below the 1e-3 threshold) refuses at step 1 and cancels the chain.
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    Serial.rx_queue.push('T');
+    doState98();
+    feed_serial_line("0");
+    doState98();
+    check(pendingInput == PEND_NONE && trapProfileActive == false,
+          "trap: zero peak refused, chain cancelled (no hold prompt armed)");
+    check(fabsf(trapPendImax) < 1e-9f,
+          "trap: zero-peak rejection clears the staged Imax");
+
+    // Negative hold time refuses at step 2 and cancels the chain.
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    Serial.rx_queue.push('T');
+    doState98();
+    feed_serial_line("5");
+    doState98();
+    feed_serial_line("-1");
+    doState98();
+    check(pendingInput == PEND_NONE && trapProfileActive == false,
+          "trap: negative hold refused, chain cancelled (no rate prompt armed)");
+    check(trapPendHoldMs == 0,
+          "trap: negative-hold rejection clears the staged hold");
+
+    // Zero/negative rate refuses at step 3 and cancels the chain.
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    Serial.rx_queue.push('T');
+    doState98();
+    feed_serial_line("5");
+    doState98();
+    feed_serial_line("0");
+    doState98();
+    feed_serial_line("0");   // rate == 0, must be > 0
+    doState98();
+    check(pendingInput == PEND_NONE && trapProfileActive == false,
+          "trap: zero rate refused, profile does not start");
+
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    Serial.rx_queue.push('T');
+    doState98();
+    feed_serial_line("5");
+    doState98();
+    feed_serial_line("0");
+    doState98();
+    feed_serial_line("-1");   // negative rate
+    doState98();
+    check(pendingInput == PEND_NONE && trapProfileActive == false,
+          "trap: negative rate refused, profile does not start");
+}
+
+static void test_trap_nonnumeric_cancels_chain() {
+    test_group("Trapezoid profile — non-numeric key mid-chain cancels the pending entry");
+    reset_test_state();
+
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    Serial.rx_queue.push('T');
+    doState98();
+    feed_serial_line("5");
+    doState98();
+    check(pendingInput == PEND_TRAP_HOLD, "trap: mid-chain, hold prompt armed");
+
+    // A non-numeric key (not part of a numeric entry) cancels the prompt AND the staged values.
+    Serial.rx_queue.push('X');
+    doState98();
+    check(pendingInput == PEND_NONE,
+          "trap: non-numeric key clears the pending prompt");
+    check(inputBufIdx == 0,
+          "trap: non-numeric key clears the input buffer");
+    check(fabsf(trapPendImax) < 1e-9f && trapPendHoldMs == 0,
+          "trap: non-numeric key clears the staged trapezoid values");
+    check(trapProfileActive == false,
+          "trap: non-numeric mid-chain cancel never starts a profile");
+}
+
+static void test_trap_stop_toggle() {
+    test_group("Trapezoid profile — 'T' while running stops it (switches left as-is)");
+    reset_test_state();
+
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE]   = HIGH;
+    g_pin_value[REGEN_ENABLE]     = HIGH;   // set so we can confirm it's untouched
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;
+    trapProfileActive = true;
+    trapImax = 3.0f; trapCmdA = 2.0f;
+    manualMotorMode = MOTOR_TEST_CURRENT;   // haltMotorOutput() should clear this
+    vesc.reset();
+
+    Serial.rx_queue.push('T');
+    doState98();
+
+    check(trapProfileActive == false,
+          "trap: 'T' toggles a running profile off");
+    check(fabsf(trapCmdA) < 1e-9f,
+          "trap: 'T' stop zeroes trapCmdA");
+    check(!vesc.current_calls.empty() && vesc.last_current == 0.0f,
+          "trap: 'T' stop flushes vesc.setCurrent(0)");
+    check(manualMotorMode == MOTOR_TEST_OFF,
+          "trap: 'T' stop clears manualMotorMode via haltMotorOutput()");
+    // Documented design choice: unlike 'D'/'R', 'T' does NOT call safeAllSwitches() — the
+    // operator's configured power paths are an input to the test, not state to be reset.
+    check(g_pin_value[REGEN_ENABLE] == HIGH && g_pin_value[FC_CHARGE_ENABLE] == HIGH,
+          "trap: 'T' stop leaves path switches untouched (REGEN/FC_CHARGE still HIGH)");
+    check(g_pin_value[MOT_PWR_ENABLE] == HIGH,
+          "trap: 'T' stop leaves MOT_PWR_ENABLE untouched");
+}
+
+// ─── 'X' universal stop: cancels ANY running profile, not just the manual modes ───────────────
+static void test_universal_stop_x() {
+    test_group("'X' universal stop — cancels any running profile + manual motor");
+
+    // Trapezoid running: X stops it, motor zeroed, switches deliberately NOT parked (mirrors the
+    // 'T' stop path's documented design choice).
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE]   = HIGH;
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;
+    trapProfileActive = true;
+    trapImax = 3.0f; trapCmdA = 2.0f;
+    vesc.reset();
+    Serial.rx_queue.push('X');
+    doState98();
+    check(trapProfileActive == false, "X: cancels a running trapezoid profile");
+    check(fabsf(trapCmdA) < 1e-9f, "X: zeroes trapCmdA");
+    check(!vesc.current_calls.empty() && vesc.last_current == 0.0f,
+          "X: flushes vesc.setCurrent(0) with a trapezoid running");
+    check(g_pin_value[MOT_PWR_ENABLE] == HIGH && g_pin_value[FC_CHARGE_ENABLE] == HIGH,
+          "X: trapezoid stop leaves path switches untouched (T semantics)");
+
+    // Drive cycle running: X stops it AND parks the switches (mirrors the 'D' stop path).
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    g_pin_value[REGEN_ENABLE]   = HIGH;
+    driveCycleActive = true;
+    vesc.reset();
+    Serial.rx_queue.push('X');
+    doState98();
+    check(driveCycleActive == false, "X: cancels a running drive cycle");
+    check(!vesc.current_calls.empty() && vesc.last_current == 0.0f,
+          "X: flushes vesc.setCurrent(0) with a drive cycle running");
+    check(g_pin_value[REGEN_ENABLE] == LOW,
+          "X: drive-cycle stop parks the path switches (safeAllSwitches, D semantics)");
+
+    // Power-share profile running: X stops it, parks switches, resets the setpoint like 'R' stop.
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    powerShareProfileActive = true;
+    power_share_setpoint    = 0.8f;
+    manualMotorMode         = MOTOR_TEST_CURRENT;
+    vesc.reset();
+    Serial.rx_queue.push('X');
+    doState98();
+    check(powerShareProfileActive == false, "X: cancels a running power-share profile");
+    check(fabsf(power_share_setpoint - 0.5f) < 1e-6f,
+          "X: share-profile stop resets power_share_setpoint to 0.5 (R semantics)");
+    check(manualMotorMode == MOTOR_TEST_OFF, "X: clears manualMotorMode");
+    check(powerBalanceLive == false, "X: clears powerBalanceLive");
+}
+
+static void test_trap_q_exit_clears_state() {
+    test_group("Trapezoid profile — 'Q' during a run clears trapProfileActive and staging");
+    reset_test_state();
+
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    trapProfileActive = true;
+    trapImax = 4.0f; trapCmdA = 1.0f;
+    trapPendImax = 2.0f; trapPendHoldMs = 500;   // simulate a half-entered NEXT chain lingering
+    vesc.reset();
+
+    Serial.rx_queue.push('Q');
+    doState98();
+
+    check(trapProfileActive == false,
+          "trap: 'Q' exit clears trapProfileActive");
+    check(fabsf(trapCmdA) < 1e-9f,
+          "trap: 'Q' exit zeroes trapCmdA");
+    check(fabsf(trapPendImax) < 1e-9f && trapPendHoldMs == 0,
+          "trap: 'Q' exit clears any staged (pending) trapezoid values too");
+    check(mainState == 1,
+          "trap: 'Q' exit returns to State 1");
+    check(!vesc.current_calls.empty() && vesc.last_current == 0.0f,
+          "trap: 'Q' exit flushes vesc.setCurrent(0)");
+}
+
+static void test_trap_vescwatch_suppressed() {
+    test_group("Trapezoid profile — pollVescWatch() suppressed while trapProfileActive");
+    reset_test_state();
+
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    trapProfileActive = true;
+    trapImax = 1.0f; trapRateAps = 1.0f; trapRampMs = 1000; trapHoldMs = 0;
+    trapPhase = TRAP_RAMP_UP;
+    trapStartMs = 0;
+    vescWatchActive = true;
+    lastVescWatchMs = 0;
+    g_mock_millis = VESC_WATCH_PERIOD_MS + 1;   // period elapsed — would poll if not suppressed
+    g_mock_micros = 1000000;
+    vesc.reset();
+
+    doState98();
+
+    check(vesc.getValues_calls == 0,
+          "trap: pollVescWatch() does not call getVescValues() while trapProfileActive");
+}
+
 #if BENCH_TEST
 // ─── doState0() BENCH_TEST bypass: boot to Idle with the power stage off ──────
 // Built only in the -DBENCH_TEST=1 pass (run_tests_bench). The -DBENCH_TEST=0 suite covers the
@@ -2854,6 +3262,15 @@ int main() {
     test_power_share_profile();
     test_power_share_profile_runs_controls();
     test_pending_input_cancel();
+    test_trap_refused_without_mot_pwr();
+    test_trap_happy_path();
+    test_trap_peak_clamp_and_negative();
+    test_trap_degenerate_inputs_refused();
+    test_trap_nonnumeric_cancels_chain();
+    test_trap_stop_toggle();
+    test_universal_stop_x();
+    test_trap_q_exit_clears_state();
+    test_trap_vescwatch_suppressed();
     test_motor_pi_antiwindup();
     test_power_pi_antiwindup();
     test_powerbalance_gated_tick_stable();

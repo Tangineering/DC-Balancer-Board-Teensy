@@ -689,7 +689,8 @@ All commands are single uppercase characters, processed in `doState98()`:
 | `A` | Set manual motor **current** in A (prompts for a float; §9e) |
 | `V` | Set manual motor **velocity** in m/s (prompts for a float; §9e) |
 | `R` | Start/stop power-share profile emulator (§9e) |
-| `X` | Stop manual motor + power-share live (motor zeroed) |
+| `T` | Start/stop trapezoidal motor-current profile (prompts peak A / hold s / rate A/s; direct `commandMotorCurrent()` — no velocity-chain calibration needed) (§9f) |
+| `X` | Universal stop: cancel any running profile (`D`/`R`/`T`) + manual motor + power-share live (motor zeroed; switches parked only if `D`/`R` was running, mirroring their own stop paths) |
 | `Q` | Exit State 98 → State 1 (forces `MOT_PWR_ENABLE` LOW) |
 
 **Safety rules still enforced in State 98:**
@@ -771,7 +772,60 @@ Phase   Duration   power_share_setpoint   Note
 Status snapshot every 500 ms: setpoint, measured share `|I_fc|/(|I_fc|+|I_batt|)`, `I_fc`,
 `I_batt`, droop gains, `V_bus`, `fault_flags`. The drive cycle (`D`) and power-share profile (`R`)
 are mutually exclusive; starting one clears the other. Both `R`-stop and `Q`-exit zero the motor
-and reset the bench-tool state.
+and reset the bench-tool state. `X` is the universal stop: it cancels whichever profile is
+running (`D`/`R`/`T`) plus the manual modes and the live share loop, mirroring each profile's own
+stop semantics (switches parked for `D`/`R`, left as-is for `T`).
+
+### 9f. Trapezoidal motor-current profile (`T`)
+
+A fourth motor driver (alongside manual current/velocity, the drive cycle, and the power-share
+profile), mutually exclusive with the drive cycle (`D`) and the power-share profile
+(`R`) — starting it clears both of the others and takes exclusive motor ownership via
+`haltMotorOutput()`. Unlike the drive cycle it drives `commandMotorCurrent()` directly, bypassing
+the velocity PI entirely, so it does **not** require `velocityChainCalibrated()`.
+
+`T` requires `MOT_PWR_ENABLE` HIGH (same refusal style as `D`/`R`); it then arms a 3-value chained
+prompt (`PEND_TRAP_IMAX` → `PEND_TRAP_HOLD` → `PEND_TRAP_RATE`), each step range-checked before
+arming the next:
+- **Peak current (A, +/-`MOTOR_I_CMD_MAX`)** — negative values are allowed by design (a
+  braking/regen torque test) and clamped to `±MOTOR_I_CMD_MAX`. Refused if `|peak| < 1e-3` (a
+  zero peak is a no-op and would produce a 0 ms ramp).
+- **Hold time at peak (s, >= 0)** — 0 is legal (pure up/down triangle, no plateau).
+- **Ramp rate (A/s, > 0)** — refused if <= 0 (it is a divisor for the ramp duration).
+
+Any rejection cancels the whole chain (`cancelTrapEntry()`), not just the failed step — the
+operator always restarts from a clean `T`. Ramp duration is derived as `|peak| / rate`, floored at
+1 ms. The profile is a symmetric trapezoid (same rate up and down):
+
+```
+Phase        Duration            I_cmd
+──────────────────────────────────────────────────
+Ramp-up      |peak|/rate         0 → peak (linear)
+Hold         operator-set        peak
+Ramp-down    |peak|/rate         peak → 0 (linear)
+```
+
+`advanceTrapProfile()` runs the same structure as `advanceDriveCycle()`/`advancePowerShareProfile()`
+but issues the commanded current itself (rate-gated on `rl_motor_last`/`MOTOR_CTRL_PERIOD_US`, the
+same gate `motorControl()`/`applyManualMotor()` use, so two writers can never collide in one tick).
+`powerBalanceGated()` runs alongside so the FC/BT share can be watched while the motor current
+ramps; `chargingControl()` deliberately does **not** run — the charge/regen paths stay static under
+operator control, same rationale as the power-share profile. Natural completion (elapsed >= ramp +
+hold + ramp) flushes a zero and clears `manualMotorMode` exactly as the `T`-stop path does
+(`haltMotorOutput()` symmetry — see design-review-2026-07-28.md P0-2).
+
+**Unlike `D`/`R`, stopping (`T` again, or natural completion) does NOT call `safeAllSwitches()`.**
+The trapezoid never touches a path switch, so the operator's configured power paths are an input
+to the test, not state to reset — tearing them down on every stop would drop the Death-5 motor-node
+pre-charge and force a full `G` bring-up between back-to-back runs. Only the motor is zeroed. `Q`
+still forces everything closed on exit as usual (`trapProfileActive` cleared, staging cancelled,
+`MOT_PWR_ENABLE` forced LOW).
+
+The VESC watch (`W`) is auto-suppressed while `trapProfileActive`, same as for `D`/`R`, so the
+production control-loop timing isn't perturbed by the ~100 ms blocking `getVescValues()` poll.
+
+Status snapshot every 500 ms: elapsed time, phase, `I_cmd`, `I_fc`, `I_batt`, `V_bus`,
+`fault_flags`.
 
 ### 9d. `doState98()` skeleton
 
