@@ -760,28 +760,29 @@ uint32_t  trapStartMs       = 0;      // millis() at t=0 of the ramp-up
 uint32_t  trapStatusLast    = 0;
 float     trapCmdA          = 0.0f;   // last commanded current (status print / test visibility)
 
-// Staging for the 3-step chained prompt (I_max → hold → rate). Kept SEPARATE from the live
-// trap* values above so a cancelled or rejected entry can never disturb a profile that is
-// already running (e.g. operator hits 'T' twice, then aborts the second entry with a letter key).
-float     trapPendImax   = 0.0f;
-uint32_t  trapPendHoldMs = 0;
+// Trapezoid current ceiling. Deliberately NOT MOTOR_I_CMD_MAX: that 5 A figure is a source-power
+// budget on the velocity-PI paths, but setCurrent() commands the VESC's three-PHASE motor current,
+// which does not map 1:1 onto bus draw (I_bus ≈ D·I_mot/η) — and on the bench the VESC may be fed
+// from a separate supply entirely. The only hard bound that always applies is the ESC hardware
+// itself: VESC Six EDU 25 A continuous (50 A burst). Bound the profile there, not at the budget.
+const float TRAP_I_ABS_MAX = 25.0f;   // A — VESC Six EDU continuous rating
 
 // ── State 98 bench tools: pending numeric input (typed key → serial prompt → float line) ──────
 // Non-blocking: a value key sets pendingInput and prints a prompt; subsequent chars accumulate in
 // inputBuf until newline, then atof() dispatches to the matching setter. Keeps detectFaults() live.
-// PEND_TRAP_* are a CHAIN: each newline dispatch validates its value and arms the next prompt.
+// PEND_TRAP_PARAMS takes all THREE values on one line ("<Imax> <hold_s> <rate>") — a per-value
+// prompt chain broke on line-based terminals: "T\n" cancelled at the empty first prompt, and the
+// digits typed afterwards ('2' for the hold time, say) fell through as switch-toggle commands.
 enum PendingInput {
     PEND_NONE,
     PEND_POWER_SHARE,
     PEND_OPEN_DROOP,
     PEND_MOTOR_CURRENT,
     PEND_MOTOR_VELOCITY,
-    PEND_TRAP_IMAX,
-    PEND_TRAP_HOLD,
-    PEND_TRAP_RATE
+    PEND_TRAP_PARAMS
 };
 PendingInput pendingInput = PEND_NONE;
-char         inputBuf[16];
+char         inputBuf[32];   // sized for the 3-value trapezoid line (e.g. "-12.5 10 0.25")
 uint8_t      inputBufIdx = 0;
 
 
@@ -849,7 +850,8 @@ void printVelocityChainRefusal(const char *what);
 void advancePowerShareProfile();
 void startTrapProfile(float imax, uint32_t holdMs, float rateAps);
 void advanceTrapProfile();
-void cancelTrapEntry();
+void parseTrapParamsLine(const char* line);
+void commandMotorCurrentLimited(float amps, float absMax);
 const char* trapPhaseStr(TrapPhase p);
 void handlePendingInputChar(char c);
 bool isNumericEntryChar(char c);
@@ -1627,8 +1629,9 @@ void printTestHelp() {
     Serial.println("  A - set manual motor current (A)");
     Serial.println("  V - set manual motor velocity (m/s)");
     Serial.println("  R - start/stop power-share profile (needs A or V set + MOT_PWR on)");
-    Serial.println("  T - start/stop trapezoidal current profile (prompts Imax/hold/rate;");
-    Serial.println("      direct VESC current — no velocity-chain calibration needed)");
+    Serial.println("  T <Imax A> <hold s> <rate A/s> - start trapezoidal current profile");
+    Serial.println("      (one line, e.g. \"T 6 5 0.5\"; 'T' alone while running stops it;");
+    Serial.println("      direct VESC phase current — no velocity-chain calibration needed)");
     Serial.println("  X - universal stop: cancel any running profile + manual motor + share live");
     Serial.println("  H - show this command list");
     Serial.println("  * 1/2 refuse ON if the matching boost is ON and VBUS is low (use G);");
@@ -1655,10 +1658,6 @@ void doState98() {
             } else {
                 pendingInput = PEND_NONE;
                 inputBufIdx  = 0;
-                // Drop any half-entered trapezoid parameters too, so a later 'T' can never start a
-                // profile from a mix of this aborted entry's values and the next one's. No-op for
-                // the single-value prompts, and never touches a RUNNING profile (staged vars only).
-                cancelTrapEntry();
                 Serial.println("(input cancelled)");
             }
         }
@@ -1865,21 +1864,21 @@ void doState98() {
                 // 'T' is free inside State 98 (the 'T' that ENTERS test mode is consumed by
                 // doState1(), so there is no conflict). Toggle semantics mirror 'D'/'R'.
                 if (!trapProfileActive) {
-                    // Same refusal style/rationale as 'D'/'R': the profile drives real current, so
-                    // the motor must already be powered. Note we deliberately do NOT check
-                    // velocityChainCalibrated() — this mode bypasses the velocity PI entirely
-                    // (commandMotorCurrent() direct), which is exactly why it is safe uncalibrated.
+                    // Single-line entry: everything after the 'T' on the same line ("T 6 5 0.5")
+                    // accumulates into inputBuf (space is a numeric-entry char) and is parsed as
+                    // <Imax A> <hold s> <rate A/s> on the newline. No MOT_PWR_ENABLE gate: the VESC
+                    // may be bench-powered from a separate supply, and if MOT_PWR is genuinely the
+                    // only source, an unpowered VESC simply does nothing — a WARN suffices (same
+                    // policy as 'A'). Also deliberately no velocityChainCalibrated() check — this
+                    // mode bypasses the velocity PI entirely, which is exactly why it is safe
+                    // uncalibrated.
                     if (!digitalRead(MOT_PWR_ENABLE)) {
-                        Serial.println("ERROR: MOT_PWR_ENABLE must be HIGH before the trapezoid profile (key '3')");
-                    } else {
-                        // Arm the 3-value chained prompt. Nothing is committed and no motor
-                        // ownership is taken until the third value validates (startTrapProfile()).
-                        cancelTrapEntry();   // discard any stale staging from an aborted entry
-                        pendingInput = PEND_TRAP_IMAX;
-                        Serial.print("Enter trapezoid PEAK current (A, +/-");
-                        Serial.print(MOTOR_I_CMD_MAX, 1);
-                        Serial.print("; negative = braking/regen test): ");
+                        Serial.println("WARN: MOT_PWR_ENABLE is LOW — profile will run, but the motor is unpowered unless the VESC has its own supply (key '3')");
                     }
+                    pendingInput = PEND_TRAP_PARAMS;
+                    Serial.print("Trapezoid <Imax A> <hold s> <rate A/s> (|Imax| <= ");
+                    Serial.print(TRAP_I_ABS_MAX, 0);
+                    Serial.print(", negative = braking/regen): ");
                 } else {
                     trapProfileActive = false;
                     trapCmdA          = 0.0f;
@@ -1940,9 +1939,8 @@ void doState98() {
                 trapCmdA                = 0.0f;
                 powerBalanceLive        = false;
                 vescWatchActive         = false;   // stop the blocking poll from running outside State 98
-                pendingInput            = PEND_NONE;
+                pendingInput            = PEND_NONE;   // also drops a half-typed trapezoid line
                 inputBufIdx             = 0;
-                cancelTrapEntry();                 // clear any half-entered trapezoid parameters
                 haltMotorOutput();                 // stop motor before cutting its power
                 digitalWrite(MOT_PWR_ENABLE, LOW);   // forced LOW on exit (per spec)
                 // Close the charge/regen paths too — doState1() re-clears MOT_PWR/REGEN each
@@ -2318,11 +2316,52 @@ void advancePowerShareProfile() {
 }
 
 // ── Trapezoidal motor-current profile ('T') ──────────────────────────────────────────────────
-// Discard the staged (not yet committed) prompt values. Touches ONLY the trapPend* staging, never
-// the live trap* state, so it is safe to call from any cancel path while a profile is running.
-void cancelTrapEntry() {
-    trapPendImax   = 0.0f;
-    trapPendHoldMs = 0;
+// Parse the single-line parameter entry "<Imax A> <hold s> <rate A/s>" (e.g. "6 5 0.5", typically
+// typed as one line "T 6 5 0.5") and start the profile if all three validate. Any failure rejects
+// the WHOLE line — no partial parameter set can ever be committed. strtof() consumes leading
+// whitespace itself, so the leftover " 6 5 0.5" after the 'T' key parses cleanly.
+void parseTrapParamsLine(const char* line) {
+    char* end = nullptr;
+    float imax = strtof(line, &end);
+    if (end == line) {
+        Serial.println("ERROR: expected \"<Imax A> <hold s> <rate A/s>\" (e.g. T 6 5 0.5) — trapezoid cancelled");
+        return;
+    }
+    const char* p    = end;
+    float       hold = strtof(p, &end);
+    if (end == p) {
+        Serial.println("ERROR: missing hold time — usage \"T <Imax A> <hold s> <rate A/s>\" — trapezoid cancelled");
+        return;
+    }
+    p          = end;
+    float rate = strtof(p, &end);
+    if (end == p) {
+        Serial.println("ERROR: missing ramp rate — usage \"T <Imax A> <hold s> <rate A/s>\" — trapezoid cancelled");
+        return;
+    }
+
+    // Negative peaks are ALLOWED by design: a negative command is a braking/regen torque test,
+    // which is exactly the load case the regen/charger path needs exercised. Bounded by the ESC's
+    // hardware rating (TRAP_I_ABS_MAX), NOT MOTOR_I_CMD_MAX — see the constant's rationale.
+    imax = constrain(imax, -TRAP_I_ABS_MAX, TRAP_I_ABS_MAX);
+    if (fabsf(imax) < 1e-3f) {
+        // Zero peak would make the whole profile a no-op AND give a 0 ms ramp; refuse rather than
+        // silently run a null test.
+        Serial.println("ERROR: peak current must be non-zero — trapezoid cancelled");
+        return;
+    }
+    if (hold < 0.0f) {
+        Serial.println("ERROR: hold time must be >= 0 s — trapezoid cancelled");
+        return;
+    }
+    if (rate <= 0.0f) {
+        // Rate is a divisor for the ramp duration — 0/negative is not just meaningless but
+        // arithmetically unsafe, so it is refused outright.
+        Serial.println("ERROR: ramp rate must be > 0 A/s — trapezoid cancelled");
+        return;
+    }
+
+    startTrapProfile(imax, (uint32_t)(hold * 1000.0f + 0.5f), rate);   // hold 0 is legal: triangle
 }
 
 const char* trapPhaseStr(TrapPhase p) {
@@ -2335,18 +2374,10 @@ const char* trapPhaseStr(TrapPhase p) {
 }
 
 // Commit the three validated operator values and take exclusive ownership of the motor output.
-// Called only from the PEND_TRAP_RATE dispatch (all three values already range-checked there).
+// Called only from parseTrapParamsLine() (all three values already range-checked there). No
+// MOT_PWR_ENABLE gate — the VESC may be powered from a separate bench supply; if MOT_PWR really
+// is its only source, an unpowered VESC just ignores the commands (the 'T' handler warns).
 void startTrapProfile(float imax, uint32_t holdMs, float rateAps) {
-    // Defensive re-check of the 'T' precondition: the prompt chain is non-blocking, so in principle
-    // the power state could have changed between arming the prompt and the final newline. (In
-    // practice '3' typed at a prompt lands in the numeric buffer rather than toggling MOT_PWR, but
-    // relying on that coupling would be fragile.)
-    if (!digitalRead(MOT_PWR_ENABLE)) {
-        Serial.println("ERROR: MOT_PWR_ENABLE went LOW — trapezoid cancelled (key '3')");
-        cancelTrapEntry();
-        return;
-    }
-
     // Exclusive motor ownership, same discipline as the 'D' start path: clear the other two motor
     // drivers, flush a zero + clear the manual modes and the PI integrator (haltMotorOutput()), then
     // reset the rate limiters so the very first profile tick drives immediately rather than waiting
@@ -2362,7 +2393,7 @@ void startTrapProfile(float imax, uint32_t holdMs, float rateAps) {
     trapRateAps = rateAps;
     // Ramp duration from |I_max| / rate. Floored at 1 ms: a very steep rate can round to 0 ms, and
     // the phase interpolation below divides by trapRampMs. A 1 ms ramp is effectively a step, which
-    // is a legitimate (if aggressive) operator request — the ±MOTOR_I_CMD_MAX clamp still bounds it.
+    // is a legitimate (if aggressive) operator request — the ±TRAP_I_ABS_MAX clamp still bounds it.
     uint32_t rampMs = (uint32_t)((fabsf(imax) / rateAps) * 1000.0f + 0.5f);
     trapRampMs      = (rampMs == 0) ? 1u : rampMs;
 
@@ -2371,7 +2402,6 @@ void startTrapProfile(float imax, uint32_t holdMs, float rateAps) {
     trapStartMs       = millis();
     trapStatusLast    = millis();
     trapProfileActive = true;
-    cancelTrapEntry();   // staging consumed
 
     Serial.print("[TP] Trapezoid started — Imax="); Serial.print(trapImax, 2);
     Serial.print("A rate=");  Serial.print(trapRateAps, 2);
@@ -2428,7 +2458,7 @@ void advanceTrapProfile() {
     // one tick, and 500 Hz re-sends keep the VESC's 1000 ms command timeout fed (on expiry it
     // COASTS rather than brakes, which would silently truncate the profile).
     if (rateLimitDue(rl_motor_last, MOTOR_CTRL_PERIOD_US))
-        commandMotorCurrent(cmd);
+        commandMotorCurrentLimited(cmd, TRAP_I_ABS_MAX);   // ESC-rating ceiling, not the 5 A budget
 
     // Status snapshot every 500 ms — same cadence/style as the other two profiles.
     if (millis() - trapStatusLast >= 500) {
@@ -2460,10 +2490,6 @@ void handlePendingInputChar(char c) {
         pendingInput = PEND_NONE;
         inputBufIdx  = 0;
         if (inputBuf[0] == '\0') {
-            // Bare newline aborts the entry — and, for the multi-step trapezoid prompt, the whole
-            // chain. Drop the staged values so a later 'T' can't inherit them (staging only; a
-            // running profile is untouched).
-            cancelTrapEntry();
             Serial.println("(no value entered — cancelled)");
             return;
         }
@@ -2495,50 +2521,9 @@ void handlePendingInputChar(char c) {
                 Serial.print("manual motor velocity -> "); Serial.print(manualMotorVelocity, 2);
                 Serial.println(" m/s");
                 break;
-            // ── Trapezoid chain: each step validates, then arms the next prompt. Any rejection
-            // cancels the whole chain (staging cleared) rather than re-prompting, so the operator
-            // always restarts from a known-clean 'T' — no chance of a half-updated parameter set.
-            case PEND_TRAP_IMAX: {
-                // Negative peaks are ALLOWED by design: a negative command is a braking/regen
-                // torque test, which is exactly the load case the regen/charger path needs
-                // exercised. Clamped to the same ±MOTOR_I_CMD_MAX chokepoint that
-                // commandMotorCurrent() enforces, so the profile can never out-command it.
-                float ip = constrain(val, -MOTOR_I_CMD_MAX, MOTOR_I_CMD_MAX);
-                if (fabsf(ip) < 1e-3f) {
-                    // Zero peak would make the whole profile a no-op AND give a 0 ms ramp; refuse
-                    // rather than silently run a null test.
-                    Serial.println("ERROR: peak current must be non-zero — trapezoid cancelled");
-                    cancelTrapEntry();
-                    break;
-                }
-                trapPendImax = ip;
-                Serial.print("  peak = "); Serial.print(trapPendImax, 2); Serial.println(" A");
-                pendingInput = PEND_TRAP_HOLD;
-                Serial.print("Enter time at peak (s, >= 0): ");
-                break;
-            }
-            case PEND_TRAP_HOLD: {
-                if (val < 0.0f) {
-                    Serial.println("ERROR: hold time must be >= 0 — trapezoid cancelled");
-                    cancelTrapEntry();
-                    break;
-                }
-                trapPendHoldMs = (uint32_t)(val * 1000.0f + 0.5f);   // 0 is legal: pure up/down peak
-                Serial.print("  hold = "); Serial.print(trapPendHoldMs); Serial.println(" ms");
-                pendingInput = PEND_TRAP_RATE;
-                Serial.print("Enter ramp rate (A/s, > 0): ");
-                break;
-            }
-            case PEND_TRAP_RATE:
-                if (val <= 0.0f) {
-                    // Rate is a divisor for the ramp duration — 0/negative is not just meaningless
-                    // but arithmetically unsafe, so it is refused outright.
-                    Serial.println("ERROR: ramp rate must be > 0 A/s — trapezoid cancelled");
-                    cancelTrapEntry();
-                    break;
-                }
-                Serial.print("  rate = "); Serial.print(val, 2); Serial.println(" A/s");
-                startTrapProfile(trapPendImax, trapPendHoldMs, val);
+            case PEND_TRAP_PARAMS:
+                // All three values on one line; `val` (atof of the whole buffer) is ignored.
+                parseTrapParamsLine(inputBuf);
                 break;
             default:
                 break;
@@ -2711,8 +2696,17 @@ bool assertMotPwrEnable(bool enable) {
 // report the real command rather than the pre-clamp intent, and a zero-flush clears it rather than
 // leaving a stale value visible to the Pi.
 void commandMotorCurrent(float amps) {
+    commandMotorCurrentLimited(amps, MOTOR_I_CMD_MAX);
+}
+
+// Same chokepoint guarantees (non-finite → 0 A; `current` mirrors the post-clamp send) with a
+// caller-chosen ceiling. Exists for the State-98 trapezoid, whose ceiling is the ESC hardware
+// rating (TRAP_I_ABS_MAX) rather than the velocity-path source budget (MOTOR_I_CMD_MAX) — phase
+// current does not map 1:1 onto bus draw, and on the bench the VESC may have its own supply.
+// Every vesc.setCurrent() in the firmware still funnels through here (P0-3 discipline intact).
+void commandMotorCurrentLimited(float amps, float absMax) {
     if (!isfinite(amps)) amps = 0.0f;
-    current = constrain(amps, -MOTOR_I_CMD_MAX, MOTOR_I_CMD_MAX);
+    current = constrain(amps, -absMax, absMax);
     vesc.setCurrent(current);
 }
 

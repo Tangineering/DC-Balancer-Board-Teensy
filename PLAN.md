@@ -689,7 +689,7 @@ All commands are single uppercase characters, processed in `doState98()`:
 | `A` | Set manual motor **current** in A (prompts for a float; §9e) |
 | `V` | Set manual motor **velocity** in m/s (prompts for a float; §9e) |
 | `R` | Start/stop power-share profile emulator (§9e) |
-| `T` | Start/stop trapezoidal motor-current profile (prompts peak A / hold s / rate A/s; direct `commandMotorCurrent()` — no velocity-chain calibration needed) (§9f) |
+| `T <Imax> <hold> <rate>` | Start trapezoidal motor-current profile — all three values on one line (peak A / hold s / rate A/s, e.g. `T 6 5 0.5`); bare `T` while running stops it; direct phase-current command, no velocity-chain calibration and no `MOT_PWR_ENABLE` gate (§9f) |
 | `X` | Universal stop: cancel any running profile (`D`/`R`/`T`) + manual motor + power-share live (motor zeroed; switches parked only if `D`/`R` was running, mirroring their own stop paths) |
 | `Q` | Exit State 98 → State 1 (forces `MOT_PWR_ENABLE` LOW) |
 
@@ -784,17 +784,25 @@ profile), mutually exclusive with the drive cycle (`D`) and the power-share prof
 `haltMotorOutput()`. Unlike the drive cycle it drives `commandMotorCurrent()` directly, bypassing
 the velocity PI entirely, so it does **not** require `velocityChainCalibrated()`.
 
-`T` requires `MOT_PWR_ENABLE` HIGH (same refusal style as `D`/`R`); it then arms a 3-value chained
-prompt (`PEND_TRAP_IMAX` → `PEND_TRAP_HOLD` → `PEND_TRAP_RATE`), each step range-checked before
-arming the next:
-- **Peak current (A, +/-`MOTOR_I_CMD_MAX`)** — negative values are allowed by design (a
-  braking/regen torque test) and clamped to `±MOTOR_I_CMD_MAX`. Refused if `|peak| < 1e-3` (a
-  zero peak is a no-op and would produce a 0 ms ramp).
+All three parameters are typed on ONE line with the command: **`T <Imax A> <hold s> <rate A/s>`**
+(e.g. `T 6 5 0.5` = 6 A peak, 5 s plateau, 0.5 A/s ramps). The chars after the `T` accumulate
+under `PEND_TRAP_PARAMS` and `parseTrapParamsLine()` parses them on the newline. (An earlier
+per-value prompt chain broke on line-based terminals: `T`+Enter cancelled at the empty first
+prompt, and the digits typed afterwards fell through as switch-toggle commands.) `T` does **not**
+gate on `MOT_PWR_ENABLE` — the VESC may be bench-powered from a separate supply; if `MOT_PWR`
+really is its only source an unpowered VESC just does nothing, so the handler only WARNs.
+Validation (any failure rejects the whole line — no partial parameter set):
+- **Peak current (A, ±`TRAP_I_ABS_MAX` = 25 A, the VESC Six EDU continuous rating)** — negative
+  values are allowed by design (a braking/regen torque test). Deliberately NOT bounded by
+  `MOTOR_I_CMD_MAX` (5 A): that is a source-power budget on the velocity-PI paths, but
+  `setCurrent()` commands the VESC's three-PHASE motor current, which does not map 1:1 onto bus
+  draw (`I_bus ≈ D·I_mot/η`). The send goes through `commandMotorCurrentLimited()` with the
+  25 A ceiling (the P0-3 chokepoint guarantees — non-finite → 0 A, `current` mirror — are kept).
+  Refused if `|peak| < 1e-3` (a zero peak is a no-op and would produce a 0 ms ramp).
 - **Hold time at peak (s, >= 0)** — 0 is legal (pure up/down triangle, no plateau).
 - **Ramp rate (A/s, > 0)** — refused if <= 0 (it is a divisor for the ramp duration).
 
-Any rejection cancels the whole chain (`cancelTrapEntry()`), not just the failed step — the
-operator always restarts from a clean `T`. Ramp duration is derived as `|peak| / rate`, floored at
+Ramp duration is derived as `|peak| / rate`, floored at
 1 ms. The profile is a symmetric trapezoid (same rate up and down):
 
 ```
@@ -818,8 +826,8 @@ hold + ramp) flushes a zero and clears `manualMotorMode` exactly as the `T`-stop
 The trapezoid never touches a path switch, so the operator's configured power paths are an input
 to the test, not state to reset — tearing them down on every stop would drop the Death-5 motor-node
 pre-charge and force a full `G` bring-up between back-to-back runs. Only the motor is zeroed. `Q`
-still forces everything closed on exit as usual (`trapProfileActive` cleared, staging cancelled,
-`MOT_PWR_ENABLE` forced LOW).
+still forces everything closed on exit as usual (`trapProfileActive` cleared, any half-typed
+parameter line dropped, `MOT_PWR_ENABLE` forced LOW).
 
 The VESC watch (`W`) is auto-suppressed while `trapProfileActive`, same as for `D`/`R`, so the
 production control-loop timing isn't perturbed by the ~100 ms blocking `getVescValues()` poll.

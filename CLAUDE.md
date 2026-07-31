@@ -335,12 +335,14 @@ machine with `g++` — no Teensy or Arduino IDE required.
   audit-round additions (PLAN.md §14) cover the live-output PI semantics, power-PI anti-windup,
   gated-tick droop stability, the `ag105DataValid` staleness gate, and the State-98 `'2'` guard
   and `'Q'` path-closing exit. The State-98 trapezoidal current profile (PLAN.md §9f) is covered
-  too: the `MOT_PWR_ENABLE` refusal, the full `'T'` prompt chain through ramp-up/hold/ramp-down and
-  natural completion, the `±MOTOR_I_CMD_MAX` clamp (both signs) and negative-peak braking/regen
-  entry, degenerate-input chain cancellation (zero peak, negative hold, non-positive rate),
-  non-numeric mid-chain cancellation, the `'T'`-stop and `'Q'`-exit paths (motor zeroed, path
-  switches deliberately left as-is on `'T'`-stop), mutual exclusion with the drive cycle and
-  power-share profile, and `pollVescWatch()` suppression.
+  too: the single-line `"T <Imax> <hold> <rate>"` entry through ramp-up/hold/ramp-down and
+  natural completion, start with `MOT_PWR_ENABLE` LOW (warn-only, no gate), the `±TRAP_I_ABS_MAX`
+  clamp (both signs) with peaks above `MOTOR_I_CMD_MAX` accepted and actually reaching the VESC,
+  negative-peak braking/regen entry, degenerate-line rejection (zero peak, negative hold,
+  non-positive rate, incomplete line, bare `T`+newline), non-numeric mid-line cancellation, the
+  `'T'`-stop and `'Q'`-exit paths (motor zeroed, path switches deliberately left as-is on
+  `'T'`-stop), mutual exclusion with the drive cycle and power-share profile, `'X'` universal
+  stop across all three profiles, and `pollVescWatch()` suppression.
 - Run before every flash: `cd test && make`.
 
 See PLAN.md §10 for the full directory layout and test category table.
