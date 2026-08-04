@@ -1363,8 +1363,10 @@ static void test_dostate98_mot_pwr_guard() {
 static void test_bus_voltage_scaling() {
     test_group("V_BUS_NOMINAL-derived thresholds (16V nominal, RD1=215k retune executed)");
     // 16V bus retune executed 2026-07-11 (RD1 bodged 237k -> 215k, V0 = 15.91V no-load).
-    check(fabsf(LIMIT_V_BUS_MAX - 17.0f) < 1e-4f,
-          "LIMIT_V_BUS_MAX = V_BUS_NOMINAL + 1.0 = 17.0 (16V nominal)");
+    // Margin raised +1.0 -> +1.5 (operator decision 2026-07-31): the G bring-up's RT1987
+    // re-strike load-dump overshoot parks the bus at ~17.4V and was tripping OV_BUS.
+    check(fabsf(LIMIT_V_BUS_MAX - 17.5f) < 1e-4f,
+          "LIMIT_V_BUS_MAX = V_BUS_NOMINAL + 1.5 = 17.5 (16V nominal)");
     check(fabsf(V_BUS_CHARGED_THRESH - 13.5f) < 1e-4f,
           "V_BUS_CHARGED_THRESH = V_BUS_NOMINAL - 2.5 = 13.5 (16V nominal)");
 }

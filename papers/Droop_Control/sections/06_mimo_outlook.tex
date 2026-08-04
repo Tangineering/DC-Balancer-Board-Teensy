@@ -1,0 +1,56 @@
+%=================================================================
+% Section 6 — MIMO controller comparison (PLACEHOLDER — analysis not yet performed)
+%=================================================================
+\section{Toward a Combined MIMO Power--Drive Controller}
+\label{sec:mimo}
+
+% NOTE: This entire section is a placeholder. The analysis has NOT been performed.
+% The purpose of including it in the plan is to (a) reserve the narrative slot,
+% (b) define exactly what the comparison must contain so the future work is scoped,
+% and (c) let reviewers of the outline see where the paper is headed.
+
+The architecture presented so far treats the power-share loop (droop ratio $r$,
+Section~\ref{sec:robust}) and the drive loop (motor current command from the velocity
+controller) as decoupled SISO problems. In reality the two loops are coupled through the
+bus: a drive transient changes the total load current, which both channels' droop
+resistances convert into a share disturbance, while a share transient modulates the bus
+voltage seen by the motor drive.
+% NOTE: author to sharpen the physical coupling argument — the cross-coupling terms are
+% visible in the full-order model (Section \ref{sec:robust}) as the bus-node interaction.
+
+\subsection{Planned Comparison}
+% TODO(analysis): none of the following exists yet. Planned scope:
+\begin{itemize}
+    \item Augment the share plant with the drive dynamics (VESC current loop approximated
+          as a first-order lag + delay; motor/vehicle mechanical mode) to form a
+          $2\times 2$ MIMO plant: inputs (droop ratio command, motor current command),
+          outputs (measured share, wheel speed).
+    \item Quantify the off-diagonal coupling (RGA / $\sigma$-plots) to establish whether
+          the decentralized design is actually justified or merely convenient.
+    \item Synthesize a MIMO $H_\infty$ controller on the same weight philosophy as
+          Section~\ref{sec:robust} and compare against the decentralized pair on:
+          worst-corner $\|S\|_\infty$, drive-transient share excursion, and regen-event
+          bus excursion.
+    \item Assess implementation cost on the Teensy 4.1 (state count vs.\ the current
+          three-biquad realization at 1~kHz).
+\end{itemize}
+
+% FIGURE PLACEHOLDER
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox{0.9\linewidth}{\centering\vspace{2cm} TODO(figure): $2\times2$ MIMO block
+    diagram — droop/share loop and drive loop with cross-coupling paths highlighted
+    \vspace{2cm}}}
+    \caption{Planned MIMO structure combining the power-share and drive loops.
+    \textit{(Placeholder --- analysis not yet performed.)}}
+    \label{fig:mimo_block}
+\end{figure}
+
+% PLANNING NOTES
+% - Be explicit in the submitted paper that this is future work / outlook, OR perform the
+%   RGA + synthesis before submission and promote it to a results section. Decide based on
+%   page budget and thesis timeline.
+% - The full-order 11-state model already contains the bus coupling; extending it with the
+%   VESC lag is the cheapest path to the MIMO plant.
+% - The EMS on the Pi commands share ≈ 1.0 during FC-charge cruise — the MIMO analysis
+%   should include that operating point since the share loop is near an authority limit.

@@ -272,9 +272,15 @@ EthernetUDP Udp;
 // V0 = 0.6·(1 + 215/10 + 215/53.6) = 15.91V ≈ 16V. This widens the SW/VOUT abs-max headroom
 // (20V − 16V = 4V vs 2.5V) and keeps the bring-up soft-start overshoot clear of OV_BUS.
 #define V_BUS_NOMINAL    16.0f  // matches the RD1 = 215k FB network (V0 = 15.91V no-load)
-// Source: user-confirmed TPS61288 HW OVP at 19V. FW OV fault sits 1V above nominal (17.5→18.5,
-// 16.0→17.0), still below the 19V HW OVP so firmware catches a sustained overvoltage first.
-#define LIMIT_V_BUS_MAX  (V_BUS_NOMINAL + 1.0f)
+// Source: user-confirmed TPS61288 HW OVP at 19V. FW OV fault sits 1.5V above nominal (16.0 →
+// 17.5), still below the 19V HW OVP so firmware catches a sustained overvoltage first, and
+// matches the Death-5 ladder (nominal 16 < FW 17.5 < OVP 19 < abs-max 20). Raised from +1.0
+// (operator decision, 2026-07-31): the `G` bring-up's RT1987 re-strike load-dump overshoot
+// parks the unloaded bus at 16.0+1.4 ≈ 17.4V for ~50–400ms (no load to bleed it; a boost can't
+// sink), which tripped OV_BUS on ~80% of bring-ups. INTERIM: peaks were observed reaching
+// 17.5, so marginal trips remain possible; the real fix is stopping the RT1987 SCP-cycling —
+// see docs/boost-bringup-debug.md (2026-07-31 entry).
+#define LIMIT_V_BUS_MAX  (V_BUS_NOMINAL + 1.5f)
 //#define LIMIT_V_BATT_MAX  8.6f  // V — 2S LiPo max (4.3V/cell × 2 + 0.2V margin)
 // TODO: change to 8.5f. The BT divider (16.2k/10k, BOM-confirmed) saturates the ADC at
 // 3.3*2.62 = 8.646V, so 10.0 can NEVER trip (OV_BATT is currently dead — and under BENCH_TEST

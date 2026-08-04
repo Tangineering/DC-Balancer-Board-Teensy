@@ -1,0 +1,693 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (MiKTeX 26.5) (preloaded format=pdflatex.fmt)
+ restricted \write18 enabled.
+entering extended mode
+(droop_control.tex
+LaTeX2e <2026-06-01>
+L3 programming layer <2026-06-18>
+(Definitions/mdpi.cls
+Document Class: Definitions/mdpi 3/24/2025 MDPI paper class
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/base\article.cls
+Document Class: article 2025/01/22 v1.4n Standard LaTeX document class
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/base\size10.clo))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/base\fontenc.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/base\inputenc.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/tools\calc.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/tools\indentfirst.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/fancyhdr\fancyhdr.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/graphics\graphicx.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/graphics\keyval.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/graphics\graphics.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/graphics\trig.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/graphics-cfg\graphics.c
+fg)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/graphics-def\pdftex.def
+)))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/epstopdf-pkg\epstopdf.s
+ty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/infwarerr\infwarerr.s
+ty) (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/grfext\grfext.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/kvdefinekeys\kvdefine
+keys.sty))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/kvoptions\kvoptions.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/ltxcmds\ltxcmds.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/kvsetkeys\kvsetkeys.sty
+))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pdftexcmds\pdftexcmds
+.sty (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/iftex\iftex.sty)
+)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/epstopdf-pkg\epstopdf-b
+ase.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/00miktex\epstopdf-sys.c
+fg)))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/lastpage\lastpage.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/lastpage\lastpage2e.sty
+
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/lastpage\lastpagemodern
+.sty) 
+)) (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/base\ifthen.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/float\float.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/amsmath\amsmath.sty
+For additional information on amsmath, use the `?' option.
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/amsmath\amstext.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/amsmath\amsgen.sty))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/amsmath\amsbsy.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/amsmath\amsopn.sty))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/amsfonts\amssymb.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/amsfonts\amsfonts.sty))
+ (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/lineno\lineno.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/etoolbox\etoolbox.sty))
+ (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/setspace\setspace.sty)
+ (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/enumitem\enumitem.sty)
+ (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/psnfss\mathpazo.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/booktabs\booktabs.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/titlesec\titlesec.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/tabto-ltx\tabto.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/xcolor\xcolor.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/graphics-cfg\color.cfg)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/graphics\mathcolor.ltx)
+) (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/colortbl\colortbl.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/tools\array.sty)
+new hooks used!!
+) (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/soul\soul.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/soul\soul-ori.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/etexcmds\etexcmds.sty
+))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/multirow\multirow.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/microtype\microtype.sty
+
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/microtype\microtype-pdf
+tex.def)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/microtype\microtype.cfg
+))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/pgf/frontendlayer\tikz.
+sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/pgf/basiclayer\pgf.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/pgf/utilities\pgfrcs.st
+y
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/utilities\pgfutil
+-common.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/utilities\pgfutil
+-latex.def)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/utilities\pgfrcs.
+code.tex
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf\pgf.revision.tex)
+))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/pgf/basiclayer\pgfcore.
+sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/pgf/systemlayer\pgfsys.
+sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/systemlayer\pgfsy
+s.code.tex
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/utilities\pgfkeys
+.code.tex
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/utilities\pgfkeys
+libraryfiltered.code.tex))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/systemlayer\pgf.c
+fg)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/systemlayer\pgfsy
+s-pdftex.def
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/systemlayer\pgfsy
+s-common-pdf.def)))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/systemlayer\pgfsy
+ssoftpath.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/systemlayer\pgfsy
+sprotocol.code.tex))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+e.code.tex
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/math\pgfmath.code
+.tex
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/math\pgfmathutil.
+code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/math\pgfmathparse
+r.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/math\pgfmathfunct
+ions.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/math\pgfmathfunct
+ions.basic.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/math\pgfmathfunct
+ions.trigonometric.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/math\pgfmathfunct
+ions.random.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/math\pgfmathfunct
+ions.comparison.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/math\pgfmathfunct
+ions.base.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/math\pgfmathfunct
+ions.round.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/math\pgfmathfunct
+ions.misc.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/math\pgfmathfunct
+ions.integerarithmetics.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/math\pgfmathcalc.
+code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/math\pgfmathfloat
+.code.tex))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/math\pgfint.code.
+tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+epoints.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+epathconstruct.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+epathusage.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+escopes.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+egraphicstate.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+etransformations.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+equick.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+eobjects.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+epathprocessing.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+earrows.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+eshade.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+eimage.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+eexternal.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+elayers.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+etransparency.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+epatterns.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/basiclayer\pgfcor
+erdf.code.tex)))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/modules\pgfmodule
+shapes.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/modules\pgfmodule
+plot.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/pgf/compatibility\pgfco
+mp-version-0-65.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/pgf/compatibility\pgfco
+mp-version-1-18.sty))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/pgf/utilities\pgffor.st
+y
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/pgf/utilities\pgfkeys.s
+ty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/utilities\pgfkeys
+.code.tex))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/pgf/math\pgfmath.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/math\pgfmath.code
+.tex))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/utilities\pgffor.
+code.tex))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/frontendlayer/tik
+z\tikz.code.tex
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/libraries\pgflibr
+aryplothandlers.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/modules\pgfmodule
+matrix.code.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pgf/frontendlayer/tik
+z/libraries\tikzlibrarytopaths.code.tex)))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/refcount\refcount.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/changepage\changepage.s
+ty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/frankenstein\attrib.sty
+
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/frankenstein\moredefs.s
+ty)) (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/was\upgreek.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/tools\tabularx.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/pbox\pbox.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/ragged2e\ragged2e.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/tocloft\tocloft.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/marginnote\marginnote.s
+ty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/marginfix\marginfix.sty
+)
+==> First Aid for marginfix.sty applied!
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/enotez\enotez.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/l3kernel\expl3.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/l3backend\l3backend-pdf
+tex.def))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/l3packages/xparse\xpars
+e.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/l3packages/l3keys2e\l3k
+eys2e.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/l3packages/xtemplate\xt
+emplate.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/translations\translatio
+ns.sty))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/xstring\xstring.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/xstring\xstring.tex))
+ (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/subfig\subfig.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/caption\caption.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/caption\caption3.sty)))
+ (Definitions/journalnames.tex)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/amscls\amsthm.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/natbib\natbib.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/koma-script\scrextend.s
+ty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/koma-script\scrkbase.st
+y
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/koma-script\scrbase.sty
+
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/koma-script\scrlfile.st
+y
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/koma-script\scrlfile-ho
+ok.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/koma-script\scrlogo.sty
+))))))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/geometry\geometry.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/iftex\ifvtex.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/geometry\geometry.cfg))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/newfloat\newfloat.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/seqsplit\seqsplit.sty))
+ (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/siunitx\siunitx.sty)
+
+Package array Warning: Column C is already defined on input line 16.
+
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/hyperref\hyperref.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/pdfescape\pdfescape.s
+ty) (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/hycolor\hycolor.sty
+) (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/hyperref\nameref.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/gettitlestring\gettit
+lestring.sty))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/stringenc\stringenc.s
+ty) (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/hyperref\pd1enc.def
+) (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/intcalc\intcalc.sty
+) (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/hyperref\puenc.def)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/url\url.sty)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/bitset\bitset.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/bigintcalc\bigintcalc
+.sty)))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/hyperref\hpdftex.def
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/rerunfilecheck\rerunfil
+echeck.sty
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/generic/uniquecounter\uniquec
+ounter.sty)))
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/cleveref\cleveref.sty)
+==> First Aid for cleveref.sty applied!
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/psnfss\t1ppl.fd)
+(droop_control.aux)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/context/base/mkii\supp-pdf.mk
+ii
+[Loading MPS to PDF converter (version 2006.09.02).]
+) (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/microtype\mt-ppl.cfg)
+
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/translations/dicts\tran
+slations-basic-dictionary-english.trsl)
+*geometry* detected driver: pdftex
+(droop_control.out) (droop_control.out)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/psnfss\ts1ppl.fd)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/psnfss\ot1ppl.fd)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/psnfss\omlzplm.fd)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/psnfss\omszplm.fd)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/psnfss\omxzplm.fd)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/microtype\mt-msa.cfg)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/microtype\mt-msb.cfg)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/psnfss\ot1zplm.fd)
+(C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/microtype\mt-eur.cfg)
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 72.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `subscript' on input line 72.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\infty' on input line 72.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 72.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 72.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\gamma' on input line 72.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 72.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 72.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `subscript' on input line 72.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\infty' on input line 72.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 72.
+
+(sections/01_introduction.tex
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 20.0pt, for example:
+(fancyhdr)                \setlength{\headheight}{20.0pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-8.0pt}.
+
+[1{C:/Users/ricky/AppData/Local/MiKTeX/fonts/map/pdftex/pdftex.map}{C:/Users/ri
+cky/AppData/Local/Programs/MiKTeX/fonts/enc/dvips/base/8r.enc} <./Definitions/l
+ogo-mdpi-eps-converted-to.pdf> <./Definitions/logo-orcid.pdf>]
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[2]
+Overfull \hbox (2.13272pt too wide) in paragraph at lines 274--274
+ []|\T1/ppl/b/n/10 (-20) Hardware| 
+
+Overfull \hbox (9.19849pt too wide) in paragraph at lines 274--274
+ []|\T1/ppl/b/n/10 (-20) Robustness 
+
+Overfull \hbox (21.7225pt too wide) in paragraph at lines 274--274
+ []|\T1/ppl/b/n/10 (-20) controllability| 
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[3]) (sections/02_droop_design.tex
+
+pdfTeX warning: pdflatex.exe (file ./Figures/droop_signal_chain.pdf): PDF inclu
+sion: found PDF version <1.7>, but at most version <1.5> allowed
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[4]
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[5 <./Figures/droop_signal_chain.pdf>]
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[6]
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[7]
+
+pdfTeX warning: pdflatex.exe (file ./Figures/control_loop_model.pdf): PDF inclu
+sion: found PDF version <1.7>, but at most version <1.5> allowed
+) (sections/03_robust_controller.tex
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[8 <./Figures/control_loop_model.pdf>]
+Overfull \hbox (81.27693pt too wide) in paragraph at lines 128--138
+[][] 
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[9]
+Overfull \hbox (270.77208pt too wide) in paragraph at lines 229--238
+[][] 
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[10]
+Overfull \hbox (28.25743pt too wide) in paragraph at lines 263--277
+[][] 
+
+
+pdfTeX warning: pdflatex.exe (file ./Figures/loopshapes_youla_h.pdf): PDF inclu
+sion: found PDF version <1.7>, but at most version <1.5> allowed
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[11]
+
+pdfTeX warning: pdflatex.exe (file ./Figures/controller_bode.pdf): PDF inclusio
+n: found PDF version <1.7>, but at most version <1.5> allowed
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[12 <./Figures/loopshapes_youla_h.pdf>]
+Overfull \hbox (175.50252pt too wide) in paragraph at lines 376--389
+[][] 
+
+
+pdfTeX warning: pdflatex.exe (file ./Figures/timedomain_step_ramp.pdf): PDF inc
+lusion: found PDF version <1.7>, but at most version <1.5> allowed
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[13 <./Figures/controller_bode.pdf>]
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[14 <./Figures/timedomain_step_ramp.pdf>]
+Overfull \hbox (52.49603pt too wide) in paragraph at lines 448--461
+[][] 
+
+
+pdfTeX warning: pdflatex.exe (file ./Figures/fullorder_bode_overlay.pdf): PDF i
+nclusion: found PDF version <1.7>, but at most version <1.5> allowed
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[15]
+
+pdfTeX warning: pdflatex.exe (file ./Figures/fullorder_envelope.pdf): PDF inclu
+sion: found PDF version <1.7>, but at most version <1.5> allowed
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[16 <./Figures/fullorder_bode_overlay.pdf>]
+
+pdfTeX warning: pdflatex.exe (file ./Figures/fullorder_step_overlay.pdf): PDF i
+nclusion: found PDF version <1.7>, but at most version <1.5> allowed
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[17 <./Figures/fullorder_envelope.pdf> <./Figures/fullorder_step_overlay.pdf
+
+pdfTeX warning: pdflatex.exe (file ./Figures/fullorder_step_overlay.pdf): PDF i
+nclusion: multiple pdfs with page group included in a single page
+>]) (sections/04_board_design.tex
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[18]
+Overfull \hbox (2.53468pt too wide) in paragraph at lines 64--73
+\T1/ppl/m/n/10 (-20) cell bus power (\T1/cmtt/m/n/10 FC_CHARGE_ENABLE\T1/ppl/m/
+n/10 (-20) ) or re-gen power (\T1/cmtt/m/n/10 REGEN_ENABLE \T1/ppl/m/n/10 (-20)
+ + \T1/cmtt/m/n/10 MOT_PWR_ENABLE\T1/ppl/m/n/10 (-20) )
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[19]
+Overfull \hbox (13.82166pt too wide) in paragraph at lines 216--223
+\T1/cmtt/m/n/10 BT_SEQUENCE_ENABLE \T1/ppl/m/n/10 (-20) ini-tial-izes off and i
+s latched on once dur-ing bring-up; \T1/cmtt/m/n/10 FC_CHARGE_ENABLE
+
+Overfull \hbox (54.47173pt too wide) in paragraph at lines 247--263
+ [] 
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[20]
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[21]) (sections/05_bringup_debugging.tex
+Overfull \hbox (158.29028pt too wide) in paragraph at lines 51--62
+ [] 
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[22]
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[23]
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[24]
+Underfull \hbox (badness 1603) in paragraph at lines 317--318
+[]|\T1/ppl/m/n/10 (+20) A firmware map-ping omit-ted the feedback-
+
+Underfull \hbox (badness 1173) in paragraph at lines 317--318
+\T1/ppl/m/n/10 (+20) pre-sent-ing the share loop a zero-gain plant.
+
+Underfull \hbox (badness 10000) in paragraph at lines 318--318
+[]|\T1/ppl/m/n/10 (+20) Compensation-resistor
+
+Underfull \hbox (badness 10000) in paragraph at lines 318--319
+[]|\T1/ppl/m/n/10 (+20) The ob-vi-ous mit-i-ga-tion for load-dump
+
+Underfull \hbox (badness 10000) in paragraph at lines 318--319
+\T1/ppl/m/n/10 (+20) overshoot---raising the boost crossover---is
+
+Underfull \hbox (badness 1694) in paragraph at lines 318--319
+\T1/ppl/m/n/10 (+20) plant model, so a uni-lat-eral change would
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[25]
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[26]
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[27]
+Overfull \hbox (6.79999pt too wide) in paragraph at lines 398--401
+ [][] 
+) (sections/06_mimo_outlook.tex
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[28]) (sections/07_conclusions.tex) (sections/99_references.tex
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[29])
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
+[30] 
+enddocument/afterlastpage (AED): lastpage setting LastPage.
+(droop_control.aux) )
+(see the transcript file for additional information) <C:\Users\ricky\AppData\Lo
+cal\MiKTeX\fonts/pk/ljfour/jknappen/ec/dpi600\ectt1000.pk> <C:\Users\ricky\AppD
+ata\Local\MiKTeX\fonts/pk/ljfour/jknappen/ec/dpi375\ecss0800.pk><C:/Users/ricky
+/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmex10.pfb><C:/Us
+ers/ricky/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmmi10.p
+fb><C:/Users/ricky/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm
+/cmr10.pfb><C:/Users/ricky/AppData/Local/Programs/MiKTeX/fonts/type1/public/ams
+fonts/cm/cmsy10.pfb><C:/Users/ricky/AppData/Local/Programs/MiKTeX/fonts/type1/p
+ublic/mathpazo/fplmb.pfb><C:/Users/ricky/AppData/Local/Programs/MiKTeX/fonts/ty
+pe1/public/mathpazo/fplmr.pfb><C:/Users/ricky/AppData/Local/Programs/MiKTeX/fon
+ts/type1/public/mathpazo/fplmri.pfb><C:/Users/ricky/AppData/Local/Programs/MiKT
+eX/fonts/type1/public/amsfonts/symbols/msam10.pfb><C:/Users/ricky/AppData/Local
+/Programs/MiKTeX/fonts/type1/urw/palatino/uplb8a.pfb><C:/Users/ricky/AppData/Lo
+cal/Programs/MiKTeX/fonts/type1/urw/palatino/uplr8a.pfb><C:/Users/ricky/AppData
+/Local/Programs/MiKTeX/fonts/type1/urw/palatino/uplri8a.pfb>
+Output written on droop_control.pdf (30 pages, 1070345 bytes).
+Transcript written on droop_control.log.

@@ -1,0 +1,472 @@
+% ============================================================================
+%  SECTION: Bring-Up Failures, Modeling-Driven Diagnosis, and Fixes
+%  Status: MOCK PROSE / PLANNING DRAFT. Numbers are traceable to
+%  docs/boost-bringup-debug.md and tools/inductance/ results, but several are
+%  flagged UNCONFIRMED in the source log and must not be hardened into claims
+%  before the owed bench measurements land.
+% ============================================================================
+
+\section{Bring-Up Failures, Modeling-Driven Diagnosis, and Fixes}
+\label{sec:bringup}
+
+% NOTE: framing paragraph. The reviewer's likely reaction to a "we broke five
+% converters" section is "why is this in a control paper?" -- answer that in the
+% first sentence, not the last. The thesis-level claim is that the droop
+% architecture was never implicated, and that establishing that required a
+% modeling campaign of the same character as the control synthesis itself.
+
+The power-sharing controller developed in Section~\ref{sec:synthesis} was designed
+against a small-signal plant that presumes a functioning pair of boost converters
+delivering current into a common DC bus. Reaching that operating point on hardware
+proved substantially harder than reaching it in simulation: five TPS61288 boost
+stages were destroyed over a six-week bring-up campaign, none of them while the
+droop loop was closed. This section reports that campaign because its outcome is
+methodologically relevant rather than merely anecdotal. Two of the three root
+causes were identified only after building quantitative models---a Gerber-derived
+parasitic-inductance extraction and a soft-start charge-transfer timing model---and
+both models resolved questions that no amount of additional bench iteration had
+resolved in four prior attempts. We also report the hypotheses that were wrong,
+and the evidence that superseded them, because the discarded hypotheses were each
+individually plausible and are each individually the standard textbook answer.
+
+% ------------------------------------------------------------------
+\subsection{Chronology of the Converter Failures}
+\label{sec:bringup:chronology}
+
+% NOTE: keep this table close to the original log's Failure Datapoints table.
+% The key rhetorical move is that the *variance* across deaths is what kills
+% each hypothesis -- 120 mA and 5 A both fatal, battery and bench supply both
+% fatal, original and reworked parts both fatal.
+
+All five failures shared an identical post-mortem signature: the converter's input,
+switch, and output nodes fused to ground ($V_\mathrm{BT}\!\rightarrow\!\mathrm{GND}$
+or $V_\mathrm{FC}\!\rightarrow\!\mathrm{GND}$ short), consistent with destruction of
+the synchronous-rectifier FET. Table~\ref{tab:deaths} summarizes the conditions.
+
+\begin{table}[H]
+\caption{Converter failure events during bring-up. Deaths 1--4 are battery-channel;
+Death~5 is fuel-cell-channel.\label{tab:deaths}}
+\begin{adjustwidth}{-\extralength}{0cm}
+\centering
+\begin{tabular}{clll}
+\toprule
+\textbf{\#} & \textbf{Source} & \textbf{Action} & \textbf{Outcome} \\
+\midrule
+1 & Two \SI{9}{\volt} batteries & Enable BT$\rightarrow$bus ideal-diode switch & BT boost destroyed (original, never-reworked part) \\
+2 & Bench supply, \SI{120}{\milli\ampere} limit & Firmware bring-up: switches, then boosts & Supply collapsed into current limit; BT boost destroyed \\
+3 & Bench supply, $\geq$\SI{5}{\ampere} & Manual bring-up command & \SIrange{5}{7}{\ampere} with collapsed rail; BT boost destroyed \\
+4 & Bench supply, \SI{8.2}{\volt}/\SI{200}{\milli\ampere} & Known-good FC part transplanted to BT pad & Immediate current-limit peg; BT boost destroyed \\
+5 & FC from stiff bench supply, VESC attached & Close motor-node switch at full bus & FC boost destroyed \\
+\bottomrule
+\end{tabular}
+\end{adjustwidth}
+\end{table}
+
+% NOTE: this paragraph is the "honest scientific narrative" the section is
+% supposed to deliver. Do not soften it in revision -- the superseded
+% hypotheses are the most transferable content here.
+
+Four hypotheses were advanced and subsequently rejected. \emph{(i) Capacitive
+inrush.} The obvious explanation for a converter dying at the instant it is
+connected to a bus is inrush into bulk capacitance. This was refuted
+topologically: the \SI{470}{\micro\farad} bulk capacitor sits on the motor node
+\emph{behind} a separate ideal-diode switch, not on the shared bus, and that
+switch was open in every one of Deaths~1--4. The bus itself carries only the
+\SIrange{30}{40}{\micro\farad} of ceramics distributed across the ideal-diode
+controllers. \emph{(ii) Source collapse and restart cycling.} Because the logic
+rail is derived from the battery input through a linear regulator, a soft source
+sags under converter load, browns out the microcontroller, and provokes a
+re-enable cycle---a genuine failure mode observed on the bench. It was rejected as
+\emph{the} cause because Death~3 occurred from a stiff $\geq$\SI{5}{\ampere}
+supply that never collapsed, and Death~2 occurred at \SI{120}{\milli\ampere},
+where the deliverable input energy is orders of magnitude below the destruction
+energy. \emph{(iii) Reverse conduction through the disabled converter.} An early
+design note asserted that a disabled boost presents a body-diode path through
+which regenerative energy back-feeds the synchronous rectifier. Reading the
+RT1987 ideal-diode datasheet retired this: the part uses back-to-back integrated
+FETs and provides full isolation when disabled. The claim survived in the design
+documentation for several weeks after it was falsified, and propagated into
+firmware sequencing comments---a documentation-hygiene failure worth reporting.
+\emph{(iv) Compensation-network mismatch.} The battery channel's compensation
+resistor differed from the fuel-cell channel's; matching them was the intervention
+in Death~4, which still destroyed the part.
+
+Death~4 is the decisive experiment. A converter that had been \emph{proven good}
+regulating on the fuel-cell pad was transplanted to the battery pad, verified to
+regulate standalone, and then destroyed on its first bus connection. Combined with
+three non-destructive control experiments---driving the bus node directly from a
+supply with the converter removed (clean, $\approx$\SI{0}{\ampere}); driving the
+bus from the fuel-cell converter (clean); and OR-ing a live bus against a supply
+through the battery-side ideal diode (clean)---the fault was localized to the
+\emph{battery channel's physical copper}, with the schematic confirmed identical
+part-for-part. That conclusion, however, was reached by elimination, and
+elimination does not produce a mechanism. Producing one required the modeling
+described next.
+
+% ------------------------------------------------------------------
+\subsection{Parasitic-Inductance Extraction from Fabrication Gerbers}
+\label{sec:bringup:inductance}
+
+% NOTE: this is the subsection most likely to interest an Energies reviewer,
+% because it is a reusable method rather than a board-specific war story.
+% Consider promoting it to its own top-level section if the paper runs long
+% in the control chapters.
+
+The surviving hypothesis was that the battery channel's output-capacitor
+commutation loop---the ``hot loop'' carrying the discontinuous current pulse when
+the synchronous rectifier commutates---enclosed enough area to ring the switch node
+past the device's \SI{20}{\volt} absolute-maximum rating under bus-drive
+$\mathrm{d}i/\mathrm{d}t$, with only \SIrange{0.5}{1.5}{\volt} of nominal headroom
+available. Physical measurement on the assembled board found the battery channel's
+output ceramics placed \SI{240}{mil} from the converter output pin against
+\SI{40}{mil} on the fuel-cell channel. A placement ratio, however, is not an
+inductance ratio: all power nets on this board are polygon pours, so conductor
+\emph{length} is a poor proxy and an earlier trace-length-based estimate was later
+withdrawn as an artifact of a parser that excluded the pours.
+
+We therefore built a dedicated extraction tool
+(\texttt{tools/inductance/}) that computes loop inductance directly from the
+fabrication data, with no manual geometry re-entry:
+
+\begin{enumerate}
+\item \textbf{Gerber and Excellon parsing.} A self-contained RS-274X and drill
+parser converts the manufacturing files into copper polygons and hole locations,
+so the extracted geometry is the geometry that was actually fabricated.
+\item \textbf{Net isolation by flood fill.} Gerbers carry no net names; the forward
+net (a converter-output pour) and the return net (the ground pour on the opposite
+layer) are selected by coordinate and flood-filled at a fine isolation pitch, then
+resampled to a coarser meshing pitch. Plane-clearance slots are morphologically
+bridged so the return plane remains a single connected body at every pitch, with a
+severed-plane detector that flags meshing artifacts.
+\item \textbf{PEEC solution.} The meshed forward and return conductors are emitted
+as a uniform-mesh FastHenry deck at their true stackup separation, with an explicit
+port and an explicit loop closure at the load, and solved for
+$L(f) = \operatorname{Im}\{Z_\mathrm{port}(f)\}/2\pi f$ over DC to \SI{1}{\mega\hertz}.
+\item \textbf{Independent bound.} A closed-form microstrip estimate is computed from
+the same mesh as a sanity check on the numerical result.
+\end{enumerate}
+
+% NOTE: emphasize the sweep design -- it is not a cross product, and that is a
+% defensible methodological choice worth one sentence in a journal paper.
+
+Because a PEEC result is only as trustworthy as its discretization, the tool solves
+two orthogonal sweeps rather than a cross product: a \emph{mesh-convergence} axis
+(all mesh pitches at one designated frequency) and a \emph{frequency} axis (all
+frequencies at the converged pitch), sharing the designated point. Solutions are
+persisted per-point to an append-as-you-go store, making multi-hour runs
+interruptible and idempotent.
+
+The result is given in Table~\ref{tab:Lsweep}. At the converged mesh, the
+battery-channel output loop extracts to \SI{3.48}{\nano\henry} at DC falling to
+\SI{3.15}{\nano\henry} at \SI{1}{\mega\hertz} (skin effect), against
+\SI{1.54}{\nano\henry} and \SI{1.46}{\nano\henry} for the fuel-cell channel---a
+ratio of $2.2\times$ at \SI{1}{\mega\hertz}. The two channels' extracted loop
+\emph{lengths} (\SI{9.69}{\milli\meter} versus \SI{4.74}{\milli\meter}) and
+effective widths (\SI{5.91}{\milli\meter} versus \SI{12.47}{\milli\meter}) show the
+asymmetry is both a longer and a narrower return path.
+
+% TODO(verify): CLAUDE.md and the debug log quote "~2.7x"; the current
+% freq_sweep store gives 2.16x @ 1 MHz / 2.26x @ DC. The 2.7 figure predates a
+% change in the loop-closure definition (pre-2026-07-01 L numbers are stale).
+% Decide ONE number for the paper, cite the store that produced it, and delete
+% the other everywhere. Do not publish both.
+
+\begin{table}[H]
+\caption{Extracted output-loop inductance, converged mesh.\label{tab:Lsweep}}
+\begin{adjustwidth}{-\extralength}{0cm}
+\centering
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Channel} & \textbf{Mesh (mm)} & $L$ \textbf{(DC)} & $L$ \textbf{(\SI{1}{\mega\hertz})} & \textbf{Loop len.} & \textbf{Eff. width} \\
+\midrule
+Fuel cell & 0.3 & \SI{1.538}{\nano\henry} & \SI{1.456}{\nano\henry} & \SI{4.74}{\milli\meter} & \SI{12.47}{\milli\meter} \\
+Battery   & 0.2 & \SI{3.480}{\nano\henry} & \SI{3.149}{\nano\henry} & \SI{9.69}{\milli\meter} & \SI{5.91}{\milli\meter} \\
+\bottomrule
+\end{tabular}
+\end{adjustwidth}
+\end{table}
+
+% NOTE: the fix + validation. The single-variable framing is the strongest
+% claim in this whole section; state the controls explicitly.
+
+The indicated remedy is a board-level one---firmware cannot reduce a loop
+inductance. Ceramic capacitors of \SI{10}{\micro\farad} and \SI{0.1}{\micro\farad}
+were bodged directly at the battery converter's output pins, collapsing the
+\SI{240}{mil} loop to approximately the fuel-cell channel's geometry. The
+validation was deliberately single-variable: an otherwise exact repetition of the
+Death~4 configuration, differing only in the added capacitors. Where every
+unmodified attempt had destroyed a converter, the modified channel survived
+\emph{four consecutive} bring-ups, regulating the bus normally
+(Figures~\ref{fig:scope-vout}--\ref{fig:scope-sw}).
+
+% NOTE: this caveat is load-bearing for honesty. Do not cut it in editing.
+Two limitations qualify this result. First, all validation captures were taken at
+$1\times$ probe bandwidth ($\approx$\SI{10}{\mega\hertz}, \SI{50}{MSa/s}); the
+hypothesized \SIrange{100}{200}{\mega\hertz} hot-loop ring is invisible at that
+bandwidth. \emph{Survival is the evidence, not the waveform}, and a high-bandwidth
+switch-node margin measurement remains owed. Second, the extraction models one
+user-selected loop at a time and is not a full-board three-dimensional solve; it
+supports a comparative claim between two nominally identical channels far better
+than it supports an absolute ring-amplitude prediction.
+
+% ------------------------------------------------------------------
+\subsection{Soft-Start and Protection Timing in the Ideal-Diode Path}
+\label{sec:bringup:softstart}
+
+% NOTE: this is the subsection to sell to a *control* audience. Frame it as two
+% independently designed loops (a fixed-timing open-loop charge ramp and a
+% closed-loop voltage regulator) coupled through a node neither one models.
+
+The hot-loop fix held for the battery channel, but a fifth converter---this time
+on the fuel-cell side, with good layout---was destroyed while closing the motor-node
+switch onto an attached motor controller. This failure has a different character
+and is, in our view, the more generalizable one, because it arises from the
+\emph{interaction of two independently designed control loops} rather than from a
+layout defect.
+
+The bus-to-motor path is gated by an RT1987 ideal-diode controller whose inrush
+behavior is set by an open-loop soft-start ramp: a fixed external capacitance
+($C_\mathrm{SS}=\SI{5.6}{\nano\farad}$) sets a turn-on time of order
+\SI{1.1}{\milli\second}, during which a start-up short-circuit protection (SCP)
+foldback current limit is armed with a \SI{250}{\micro\second} continuous-clamp
+timer and a \SI{64}{\milli\second} retry interval. The ramp time is a designed
+constant; it does not adapt to the load it is charging. Downstream sits the motor
+node---\SI{470}{\micro\farad} of bulk capacitance plus the motor controller's own
+(unmeasured) input capacitance, a total measured near \SI{590}{\micro\farad} on the
+bare board. The charge demand of that node over the fixed ramp,
+$I \approx 0.8\,C\,V/t_\mathrm{ON}$, lands in the same amperes-class range as the
+applicable foldback limit. The ideal diode's protection therefore engages or nearly
+engages on connection, and each clamp-and-release cycle presents the upstream boost
+converters with a large, abrupt load step followed by an equally abrupt load dump.
+
+% NOTE: the control-theoretic reading. This is the sentence the section exists for.
+Neither loop is misdesigned in isolation. The ideal diode's soft start is a
+correct open-loop inrush limiter for a bounded load capacitance; the boost's
+voltage loop is a correctly compensated regulator with a \SIrange{4}{19}{\kilo\hertz}
+crossover. The hazard lives in their coupling: the load-dump transient at the end
+of a clamp interval occurs on a timescale comparable to the boost's loop latency,
+so the boost error amplifier is left wound up delivering current into a suddenly
+unloaded output. The resulting overshoot is then \emph{peak-held} by the ideal
+diode itself, which cannot sink current---the switch behaves as a peak detector on
+the bus, and the rail parks above nominal until leakage discharges it.
+Measured parks of \SIrange{0.65}{0.72}{\volt} (centre-to-centre) above the
+regulation point were observed, sufficient to trip the firmware bus overvoltage
+fault on roughly \SI{80}{\percent} of bring-up attempts once the bus nominal was
+retuned downward. At the \SI{15}{\ampere}-class currents of a full-bus motor-node
+connection, the same event scaled past the converter's absolute-maximum rating and
+destroyed it---but only from a stiff source, since a battery source sags into
+undervoltage lockout before lethal current flows. This source dependence
+retroactively explains the otherwise puzzling pattern across all five failures.
+
+% TODO(verify): the log flags the *specific* clamp/cut identification as
+% UNCONFIRMED and partially superseded -- the deepest observed event is now
+% believed to be a soft-start that COMPLETED (1.77 ms conduction, current
+% tapering as delta-V goes to zero) rather than a timer cut, and a smaller
+% earlier event violates charge conservation by 14-300x and may be a rectified
+% ring artifact of the unipolar current sensor. Write this subsection so that
+% the *architectural* claim (fixed-ramp open-loop soft start vs. closed-loop
+% regulator, coupled through an unmodeled capacitive node) survives regardless
+% of which micro-mechanism wins at the bench. Do NOT publish the micro-mechanism
+% as settled.
+
+Two remedies follow directly, and are complementary. The firmware remedy is
+\emph{sequencing}: never close the motor-node switch at full bus voltage. The
+bring-up now raises the motor-node switch together with the bus switches
+\emph{before} the boost converters ramp, so the converters' own soft start charges
+the entire downstream stack from a low initial voltage in one coordinated ramp; the
+node is then kept energized through idle and run states, with the motor held
+stopped by a zero current command rather than by removing power. A guard predicate
+faults rather than permitting a hot connection if the bus and motor-node
+measurements indicate the node is discharged. This trades away hardware motor
+isolation in idle---a deliberate and documented posture change. The hardware remedy
+is to size the ideal diode's soft-start capacitance to the load it actually
+charges: increasing $C_\mathrm{SS}$ from \SI{5.6}{\nano\farad} to
+\SI{100}{\nano\farad} extends the ramp to tens of milliseconds and reduces the
+connect demand to a few hundred milliamperes, restoring roughly an order of
+magnitude of margin. A subsequent datasheet reconciliation also revealed that the
+firmware's inter-phase settle delay had been sized from the soft-start time while
+omitting the controller's \SI{8}{\milli\second} turn-on \emph{delay}, so the
+intended coordinated ramp was not in fact executing; the current recommendation is
+to replace the fixed delay with an ADC-confirmed pre-charge gate and timeout rather
+than any tuned constant.
+
+% ------------------------------------------------------------------
+\subsection{Relationship to the Droop Architecture}
+\label{sec:bringup:droop-relevance}
+
+% NOTE: reviewers WILL ask whether droop caused any of this. Answer per-issue,
+% in a table, and concede the one place where droop has genuine collateral
+% (R_C is load-bearing for the share plant).
+
+It is important to state precisely which of these hazards the droop power-sharing
+architecture created, and which it merely inherited. Table~\ref{tab:droop-relevance}
+gives the attribution.
+
+\begin{table}[H]
+\caption{Attribution of each bring-up hazard to architecture-specific versus generic causes.\label{tab:droop-relevance}}
+\begin{adjustwidth}{-\extralength}{0cm}
+\centering
+\begin{tabular}{p{4.2cm}lp{7.5cm}}
+\toprule
+\textbf{Hazard} & \textbf{Attribution} & \textbf{Basis} \\
+\midrule
+Output hot-loop overshoot (Deaths 1--4) & Generic & A single-channel boost driving any capacitive bus exhibits it. The droop injection network was inactive (DACs unwritten) in every failure; the asymmetry is fabrication layout, present before any control code ran. \\
+Motor-node hot-plug load dump (Death 5) & Generic multi-converter & Arises from an ideal-diode soft-start versus a downstream capacitive node; identical in a single-source system with the same power-path switching. \\
+Ideal-diode peak-hold overvoltage parking & Generic & A consequence of non-sinking sources behind unidirectional switches; independent of how current is shared between them. \\
+Source-collapse restart cycling & Generic (bench) & An artifact of deriving logic power from a converter input rail on a soft supply. \\
+Droop-injection gain mapping error & \textbf{Droop-specific} & A firmware mapping omitted the feedback-injection attenuation, saturating both DACs and presenting the share loop a zero-gain plant. Non-destructive, but it invalidated all share-loop bench data taken before it was found (Section~\ref{sec:droop:bug}). \\
+Compensation-resistor lever & \textbf{Coupled} & The obvious mitigation for load-dump overshoot---raising the boost crossover---is constrained because the compensation resistor sets the response time constant of the share-loop plant model, so a unilateral change would invalidate the synthesized controller. \\
+\bottomrule
+\end{tabular}
+\end{adjustwidth}
+\end{table}
+
+The summary judgement is that the destructive failures were \emph{multi-converter
+power-path bring-up hazards}, not droop-control hazards: they occurred with the
+sharing loop open, with the modulating DACs at their reset state, and on a
+single-channel basis. The droop architecture's genuine contribution to the campaign
+was a non-destructive but consequential one---a gain-mapping error that silently
+opened the share loop---and a constraint on the remedy space, in that the
+compensation network is shared between the local voltage loop and the outer sharing
+plant and cannot be retuned for transient margin without re-synthesizing the
+controller. That coupling is, we would argue, the transferable control-level lesson:
+in a droop-shared converter pair, the per-converter compensation network is no longer
+a purely local design variable.
+
+% ------------------------------------------------------------------
+\subsection{Figures}
+\label{sec:bringup:figures}
+
+% NOTE: all placeholders. Scope JPGs exist under references/scope_captures/ and
+% need re-export at publication resolution with cursors legible; the two drawn
+% figures do not exist yet.
+
+\begin{figure}[H]
+\centering
+% \includegraphics[width=0.8\textwidth]{Figures/scope-vout-validation.pdf}
+\fbox{\parbox[c][4cm][c]{0.8\textwidth}{\centering PLACEHOLDER --- source:
+\texttt{references/scope\_captures/1-VOUT.jpg}}}
+\caption{Battery-converter output during a validated bring-up with hot-loop
+capacitors fitted: body-diode pre-charge, one aborted soft-start attempt with
+automatic retry, then clean regulation. The retry is a benign source-sag
+undervoltage event, and is the same class of event that destroyed converters
+before the fix.\label{fig:scope-vout}}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+% \includegraphics[width=0.8\textwidth]{Figures/scope-triple.pdf}
+\fbox{\parbox[c][4cm][c]{0.8\textwidth}{\centering PLACEHOLDER --- source:
+\texttt{references/scope\_captures/5-Vout yellow-Vmot blue-Ibat purple.jpg}}}
+\caption{Three-channel capture through a bring-up: converter output, bus voltage,
+and current-sense output. The wide current hump is the downstream node charging
+through a soft start that completes; the subsequent output park is the peak-held
+overshoot.\label{fig:scope-triple}}
+% TODO: cursor values in the raw capture are readable only at full resolution;
+% re-export and annotate. Confirm the axis scaling caption (5 V/div, 5 A/div,
+% 2 ms/div) against the instrument, not the log.
+\end{figure}
+
+\begin{figure}[H]
+\centering
+% \includegraphics[width=0.7\textwidth]{Figures/scope-sw-zoom.pdf}
+\fbox{\parbox[c][3.5cm][c]{0.7\textwidth}{\centering PLACEHOLDER --- source:
+\texttt{references/scope\_captures/3-SW.jpg}, \texttt{4-SW zoomed in.jpg}}}
+\caption{Switch-node envelope during soft start. The initial discrete pulses are
+normal pulse-frequency-modulation skipping, not instability. Note the bandwidth
+limitation discussed in Section~\ref{sec:bringup:inductance}.\label{fig:scope-sw}}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+% \includegraphics[width=0.8\textwidth]{Figures/inductance-sweep.pdf}
+\fbox{\parbox[c][5cm][c]{0.8\textwidth}{\centering PLACEHOLDER --- generate from
+\texttt{tools/inductance} frequency-sweep store}}
+\caption{Extracted loop inductance versus frequency for both converter output
+loops, with the mesh-convergence axis inset and the closed-form microstrip bound
+shown for reference.\label{fig:Lsweep}}
+% TODO: two-panel figure. (a) L(f) DC-1 MHz, both channels. (b) L vs mesh pitch
+% at the designated frequency, showing convergence. Overlay the analytic bound
+% as a dashed line -- it sits well below the solved value (0.64 vs 1.54 nH FC;
+% 2.37 vs 3.48 nH BT) and that gap needs one sentence of explanation in the
+% caption, since a reviewer will otherwise read it as a validation failure.
+\end{figure}
+
+\begin{figure}[H]
+\centering
+% \includegraphics[width=\textwidth]{Figures/fault-tree.pdf}
+\fbox{\parbox[c][6cm][c]{\textwidth}{\centering PLACEHOLDER --- to be drawn}}
+\caption{Campaign timeline and fault tree. Upper band: chronological failure and
+intervention events. Lower band: hypothesis tree, with each branch annotated by the
+experiment that refuted or confirmed it.\label{fig:faulttree}}
+% TODO: draw in TikZ so it stays vector and editable. Suggested structure --
+% root "converter destroyed on bus connect"; first-level branches: part defect,
+% supply/source, bus path fault, firmware sequencing, channel layout; each leaf
+% carrying its refuting experiment. Mark the surviving branch and the point at
+% which Death 5 forced a second, independent root cause to be opened.
+\end{figure}
+
+
+% ============================================================================
+% PLANNING NOTES
+% ============================================================================
+%
+% PURPOSE OF THIS SECTION IN THE PAPER
+% - Serves the "systems modeling" half of the thesis claim. The control chapters
+%   show a model-based synthesis; this chapter shows model-based *diagnosis*.
+%   Both leaned on building a quantitative model when iteration had stalled.
+% - Secondary purpose: pre-empt the reviewer question "did your droop scheme
+%   destroy your hardware?" The attribution table answers it explicitly and
+%   concedes the one real coupling (compensation network shared between local
+%   and sharing loops).
+%
+% OPEN ITEMS BEFORE THIS SECTION CAN BE SUBMITTED
+% 1. INDUCTANCE RATIO DISCREPANCY. Project docs quote ~2.7x; the current results
+%    store gives 2.16x @ 1 MHz. The discrepancy is a loop-closure definition
+%    change (pre-2026-07-01 numbers are stale per project memory). Re-run the
+%    sweep with the current closure on both configs, pick one number, and purge
+%    the other from the paper, CLAUDE.md, and the debug log simultaneously.
+% 2. ANALYTIC-BOUND GAP. The closed-form bound is ~2.4x below the solved value on
+%    both channels. Consistent bias, so it does not threaten the comparative
+%    claim, but a reviewer will ask. Either explain (bound neglects return-path
+%    spreading / via inductance) or drop the bound from the figure entirely.
+% 3. HIGH-BANDWIDTH RING MEASUREMENT IS STILL OWED. The entire hot-loop mechanism
+%    rests on an inferred 100-200 MHz ring that has never been observed -- every
+%    capture to date is ~10 MHz bandwidth. Until a 10x probe with a ground spring
+%    captures the switch node at a controlled load step, the mechanism is
+%    "consistent with all evidence", not "measured". Language throughout this
+%    section must reflect that. Currently it does; keep it that way.
+% 4. DEATH-5 MICRO-MECHANISM IS IN FLUX. The debug log has superseded its own
+%    SCP-cut interpretation once already (a capture showed the soft start
+%    completing rather than being cut). The architectural framing used here is
+%    robust to that, but check the log's current state immediately before
+%    submission and re-verify every number quoted in that subsection.
+% 5. VESC INPUT CAPACITANCE IS UNMEASURED anywhere in the project. It appears in
+%    the C_SS sizing argument as an unbounded term. Measure it, or drop the
+%    quantitative margin claim to a qualitative one.
+% 6. Deaths 1-4 count as "four battery-side boosts" in the summary doc but the
+%    combined narrative with Death 5 makes five total. Make sure the abstract and
+%    intro use the same count.
+%
+% STRUCTURAL DECISIONS TO REVISIT
+% - The extraction-tool subsection may deserve promotion to its own methods
+%   section or even a standalone short paper -- it is a reusable Gerber-to-PEEC
+%   pipeline and is the most novel artifact here. Decide after the control
+%   chapters are drafted and total length is known.
+% - Consider moving the deaths table to an appendix and keeping only the
+%   narrative, if Energies page pressure bites. The fault tree figure can carry
+%   the chronology.
+% - Tone check: the failure narrative is deliberately unflattering. That is the
+%   point (superseded-hypothesis reporting is the contribution), but the
+%   introduction to the chapter must frame it as method, not confession, or a
+%   reviewer will read it as inexperience.
+%
+% CITATIONS TO ADD
+% - TPS61288 datasheet (abs-max, OVP thresholds, compensation guidance §9.2.2.5)
+% - RT1987 datasheet (tD_ON, soft-start timing, SCP foldback)
+% - INA253 datasheet (unipolar sensing -- relevant to the half-rectified ring
+%   caveat if that caveat survives into the final draft)
+% - FastHenry / FastFieldSolvers, and a PEEC reference (Ruehli) for the method
+% - A hot-loop layout reference (TI app notes on buck/boost layout) to
+%   support the "Cout distance is the metric, not trace length" claim
+% ============================================================================

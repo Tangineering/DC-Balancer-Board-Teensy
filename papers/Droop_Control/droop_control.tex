@@ -1,0 +1,103 @@
+%=================================================================
+% Droop Control paper — planning / mock-up draft
+% Target: MDPI Energies (research article)
+%
+% PURPOSE OF THIS FILE: This is a structural mock-up to plan the paper and
+% organize figures from the modeling/bring-up work. All prose marked with
+% "% NOTE" is placeholder argumentation to be rewritten by the author.
+% Sections live in sections/*.tex and are \input below.
+%=================================================================
+\documentclass[energies,article,submit,pdftex,oneauthor]{Definitions/mdpi}
+
+% ---- Extra packages required by the section drafts ----
+% mdpi.cls already loads amsmath, graphicx, booktabs, float, adjustbox/changepage.
+\usepackage{siunitx}   % \SI, \num, \SIrange used throughout sections 3-5
+\usepackage{tabularx}
+\newcolumntype{C}{>{\centering\arraybackslash}X} % centered X column for the comparison table
+
+% MDPI internal commands - do not modify
+\firstpage{1}
+\makeatletter
+\setcounter{page}{\@firstpage}
+\makeatother
+\pubvolume{1}
+\issuenum{1}
+\articlenumber{0}
+\pubyear{2026}
+\copyrightyear{2026}
+\datereceived{ }
+\daterevised{ }
+\dateaccepted{ }
+\datepublished{ }
+\hreflink{https://doi.org/}
+
+% Full title of the paper (Capitalized)
+\Title{Controllable Power Sharing in a Hybrid Fuel-Cell/Battery Vehicle Using Droop Control of Off-the-Shelf Boost Regulators with a Robust Outer-Loop Share Controller}
+% NOTE: working title — alternatives to consider:
+% - "Robust Droop-Based Power Sharing with Commercial Regulator ICs for Hybrid Energy Systems"
+% - "A Droop-Injection Architecture for Controllable Power Sharing Using Off-the-Shelf DC-DC Converters"
+
+% MDPI internal command: Title for citation in the left column
+\TitleCitation{Controllable Power Sharing Using Droop Control of Off-the-Shelf Boost Regulators}
+
+\newcommand{\orcidauthorA}{0000-0000-0000-000X} % TODO: author ORCID
+
+\Author{Ricky Tang $^{1}$\orcidA{}} % TODO: confirm author list / co-authors (advisor?)
+\AuthorNames{Ricky Tang}
+\isAPAStyle{%
+       \AuthorCitation{Tang, R.}
+         }{%
+        \isChicagoStyle{%
+        \AuthorCitation{Tang, Ricky.}
+        }{
+        \AuthorCitation{Tang, R.}
+        }
+}
+
+\address{%
+$^{1}$ \quad Affiliation; ricky.tangineering@gmail.com} % TODO: university affiliation
+
+\corres{Correspondence: ricky.tangineering@gmail.com}
+
+% Abstract (Do not insert blank lines, i.e. \\)
+\abstract{% NOTE: ~200 words, structured but unheaded. Mock-up:
+(1) Background: Multi-source DC power systems (hybrid fuel-cell/battery vehicles, DC microgrids) require controllable power sharing between sources, but custom power-electronics solutions are costly; droop control implemented on commercial regulator ICs offers a low-cost alternative if its accuracy and robustness limitations can be managed.
+(2) Methods: We present a droop-injection architecture in which the feedback nodes of two off-the-shelf boost converters (TI TPS61288) are perturbed by multiplying DACs driven from shunt current sense, yielding an electronically commanded droop resistance; an outer power-share loop is closed by a robust $H_\infty$/Youla-parameterized controller synthesized against a 60-corner uncertain plant family.
+(3) Results: The synthesized controller achieves $\gamma = 0.686$, exact DC tracking, 11.7~ms delay margin, and worst-corner discrete sensitivity peak of 1.87 versus 26.9 for a nominally tuned PI; an independent 11-state full-order converter model validates the design plant to within 6\% in-band over 432 operating points. Hardware bring-up failures (five converter losses) were diagnosed via parasitic-inductance modeling and ideal-diode soft-start timing analysis, and are shown to be generic multi-converter hazards rather than consequences of the droop architecture.
+(4) Conclusions: Droop injection on commercial ICs plus robust outer-loop synthesis provides accurate, tolerance-immune power sharing without custom power stages.}
+
+\keyword{droop control; power sharing; DC microgrid; hybrid vehicle; fuel cell; robust control; $H_\infty$ synthesis; Youla parameterization; boost converter; power path management}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{document}
+
+% ---------------- Section files ----------------
+\input{sections/01_introduction}        % Introduction + related work + method comparison table
+\input{sections/02_droop_design}        % Droop ethos, gain calculations, PCB design constraints
+\input{sections/03_robust_controller}   % Plant modeling, H-inf/Youla synthesis, validation
+\input{sections/04_board_design}        % Balancer board, droop hardware chain, power pathing
+\input{sections/05_bringup_debugging}   % Boost failures, inductance modeling tool, RT1987 soft-start
+\input{sections/06_mimo_outlook}        % PLACEHOLDER: combined power-balance + drive MIMO controller
+\input{sections/07_conclusions}
+
+% ---------------- Back matter ----------------
+\vspace{6pt}
+
+\authorcontributions{Conceptualization, methodology, hardware, software, validation, writing: R.T. % TODO
+}
+
+\funding{This research received no external funding. % TODO: confirm
+}
+
+\dataavailability{The controller synthesis toolchain, plant models, and firmware are available from the author. % TODO: decide on repository release (GitHub/Zenodo DOI) — Energies encourages open data.
+}
+
+\conflictsofinterest{The author declares no conflicts of interest.}
+
+%=====================================
+% References — mock list lives with Section 1's draft for now.
+% TODO: migrate to a .bib file + \bibliography once the reference set stabilizes.
+%=====================================
+\input{sections/99_references}
+
+\end{document}

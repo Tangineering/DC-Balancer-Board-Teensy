@@ -1,0 +1,289 @@
+% ============================================================================
+% Section 1 — Introduction + Related Work (mock-up)
+% References for the \cite keys live in sections/99_references.tex
+% ============================================================================
+% PLANNING NOTES — key arguments the author must develop
+% ============================================================================
+% A1. FRAMING: The scale-vehicle hybrid (fuel cell + battery on a shared DC bus)
+%     is a *miniature DC microgrid*. This lets us import the whole droop /
+%     current-sharing literature wholesale, and is the justification for
+%     submitting to Energies rather than a vehicles venue. Say this explicitly
+%     in the first paragraph of the Introduction.
+%
+% A2. THE GAP (this is the paper's actual novelty — hammer it):
+%     Nearly all droop-sharing literature assumes a *custom-designed* converter
+%     whose inner current/voltage loop is authored by the researcher (DSP/FPGA
+%     PWM generation, full state access). Practical builders of small hybrid
+%     systems instead use monolithic, internally-compensated boost ICs
+%     (TPS61288 class) where the control loop is inaccessible — the only exposed
+%     node is the FB divider. The literature is essentially silent on how to get
+%     *commanded, continuously variable* power sharing out of such parts.
+%     => Claim: droop realized by MDAC perturbation of the FB node of an
+%     off-the-shelf boost IC. Cost/effort of a custom converter avoided;
+%     controllability of a centralized scheme retained.
+%
+% A3. WHY NOT JUST DO IT IN SOFTWARE / COMMUNICATION:
+%     Argue that the FC and battery branches are physically separate sources;
+%     a comms-based master-slave scheme adds a link, a single point of
+%     failure, and latency inside the fast current loop. Droop keeps the fast
+%     sharing action analog and local; the slow outer loop only *biases* it.
+%     This is the hierarchical-control argument (Guerrero et al.).
+%
+% A4. WHY ROBUST CONTROL RATHER THAN A PI:
+%     The plant seen by the outer share loop is *not* well known: it is the
+%     product of (i) IC-internal compensation the vendor only publishes
+%     approximately, (ii) INA sense-gain and divider tolerance, (iii) a
+%     bus-voltage-dependent and load-current-dependent operating point, and
+%     (iv) a droop-injection network with its own attenuation. State the
+%     parameter uncertainty box quantitatively (cite the plant model section)
+%     and argue this is exactly the setting an H-inf / Youla design addresses,
+%     whereas a hand-tuned PI is only valid at one corner.
+%     -> Back with the concrete result: worst-corner ||S||_inf 1.87 vs 26.9,
+%     all plant corners stable, delay margin ~11.7 ms. MOVE THESE NUMBERS
+%     to the Results section but *promise* them in the Introduction.
+%
+% A5. HONEST LIMITATIONS to pre-empt reviewers (state in Intro, revisit in
+%     Discussion): droop trades bus-voltage regulation for sharing accuracy;
+%     the MDAC path adds an extra tolerance stack; the approach is bounded by
+%     the boost IC's own stability (RHP zero, compensation) so it does not
+%     generalize to arbitrary converters without a per-part plant model.
+%
+% A6. CONTRIBUTION LIST (end of Introduction, 4 bullets — keep parallel):
+%     (1) an FB-injection droop mechanism for internally-compensated boost ICs;
+%     (2) a small-signal plant model of the two-converter droop-sharing loop
+%         including injection attenuation and sense chain, validated against a
+%         full-order model;
+%     (3) a robust (H-inf/Youla) outer share controller with a documented
+%         synthesis and gate-check procedure;
+%     (4) experimental validation on a scale fuel-cell/battery vehicle.
+%
+% A7. TODO(author): decide whether to cite the scale-vehicle / RC-testbed
+%     literature at all. If a suitable "hardware-in-the-loop scale testbed"
+%     reference exists, add it to justify scale validation as scientifically
+%     meaningful. Currently no such citation is included.
+%
+% A8. TODO(verify): every \bibitem in 99_references.tex was checked to exist
+%     and carries a DOI or stable URL, but several carry % TODO(verify) marks
+%     for author list / volume — re-check against Crossref before submission;
+%     MDPI copy-edits references against Crossref.
+% ============================================================================
+
+\section{Introduction}
+\label{sec:intro}
+
+% NOTE: Paragraph 1 should establish the application context and assert the
+% microgrid framing (A1). Keep it short; do not oversell hydrogen.
+Hybridizing a fuel cell with a battery is the standard remedy for the fuel
+cell's poor transient response and its intolerance of load steps and reverse
+current. In such a powertrain both sources feed a common DC link through
+dedicated converters, and the question of how instantaneous load current is
+apportioned between them becomes a control problem in its own right. Structurally
+this is the same problem studied under the heading of DC microgrids, where
+multiple dissimilar sources share a bus through parallel-connected
+converters~\cite{dragicevic2016part1,dragicevic2016part2,gao2018primary}.
+
+% NOTE: Paragraph 2 introduces droop as the incumbent decentralized answer and
+% states its two well-known weaknesses (voltage deviation, sharing error under
+% line/parameter mismatch). This sets up why an outer loop is needed at all.
+The conventional answer is droop control: each converter deliberately reduces
+its output voltage in proportion to its output current, so that a virtual output
+resistance sets the sharing ratio without any communication between
+units~\cite{guerrero2011hierarchical,tah2016adaptive}. Droop is attractive because
+it is local, fast and inherently redundant, but it is well documented that it
+trades bus-voltage regulation against sharing accuracy, and that mismatched line
+and converter parameters corrupt the achieved split~\cite{anand2013distributed,lu2014adaptive}.
+A large body of work therefore adds a secondary or distributed layer that trims
+the droop coefficients or the voltage
+references~\cite{nasirian2015cooperative,tucci2018plugandplay,kumar2020distributed}.
+
+% NOTE: Paragraph 3 is the pivot — the hardware-realization gap (A2). This is
+% the paragraph the whole paper hangs on. Author should be blunt: existing
+% droop work presumes a converter you designed yourself.
+Almost without exception, that literature presumes a converter whose inner loop
+the designer owns: modulation is generated in a DSP or FPGA, and the droop term
+is simply added to a software voltage reference. Practitioners building small
+hybrid systems rarely enjoy that freedom. Power stages are increasingly bought as
+monolithic, internally-compensated regulator ICs, in which the control loop is
+sealed and the only user-accessible node is the feedback divider. For such parts
+the standard droop recipe has no point of entry, and designers fall back on
+fixed resistive droop, on a hard master--slave split, or on abandoning
+controllable sharing altogether.
+
+% NOTE: Paragraph 4 states the proposed mechanism concretely. Do NOT get into
+% circuit values here — forward-reference the hardware section.
+This paper shows that controllable droop can nevertheless be obtained from such
+a device. A multiplying digital-to-analogue converter (MDAC) injects a
+current-proportional perturbation into the feedback node of each off-the-shelf
+boost regulator, synthesizing a commanded, continuously variable output
+resistance in analogue hardware. The fast sharing action remains local to each
+converter; a slow digital outer loop merely commands the droop ratio, and hence
+the steady-state power split, between the fuel-cell and battery branches.
+
+% NOTE: Paragraph 5 motivates the robust outer controller (A4). Emphasize
+% *why the plant is uncertain*, not just that robust control is fashionable.
+Because the resulting plant is assembled from an IC whose internal compensation
+is only approximately published, a sense amplifier and divider network with
+finite tolerance, and an operating point that moves with bus voltage and load,
+its parameters are known only within a box rather than exactly. This is precisely
+the setting for robust synthesis, and $\mathcal{H}_\infty$ and related methods
+have already been applied to microgrid voltage and sharing
+loops~\cite{sedhom2019hinf,hosseinzadeh2024robust,mirjafari2022robust}. We
+accordingly design the outer share controller by $\mathcal{H}_\infty$/Youla
+synthesis over the parameter corners rather than by tuning a PI at nominal.
+
+% NOTE: Paragraph 6 = contributions. Use A6. Keep the four items parallel.
+The contributions of this work are: (i) a feedback-injection droop mechanism
+that gives commanded power sharing from internally-compensated, off-the-shelf
+boost regulators; (ii) a small-signal model of the two-converter droop-sharing
+loop that accounts for the injection attenuation and the current-sense chain,
+validated against an independently constructed full-order model; (iii) a robust
+outer share controller with a documented synthesis and verification procedure;
+and (iv) experimental validation on a scale fuel-cell/battery vehicle.
+
+% NOTE: Paragraph 7 = roadmap. Author fills in once section numbering is final.
+The remainder of the paper is organized as follows. Section~\ref{sec:related}
+reviews power-sharing methods and positions the proposed approach.
+Section~\ref{sec:droop} develops the droop design and gain selection;
+Section~\ref{sec:robust} the robust share controller; Section~\ref{sec:board-design}
+the board and power-path hardware; Section~\ref{sec:bringup} the bring-up
+diagnosis; Section~\ref{sec:mimo} the MIMO outlook.
+
+\section{Related Work}
+\label{sec:related}
+
+\subsection{Droop Control and Its Refinements}
+
+% NOTE: Establish the canonical V-I droop / virtual resistance formulation and
+% its known limits. Cite the two survey papers so a reviewer sees breadth.
+Conventional voltage--current droop emulates a series resistance $R_d$ at each
+converter output, so that $v_o = V^\ast - R_d i_o$. Sharing accuracy improves
+with larger $R_d$ while bus regulation degrades, a tension that is the
+starting point of most subsequent work~\cite{dragicevic2016part1,gao2018primary}.
+Virtual-resistance implementations move this behaviour into the controller rather
+than dissipating it, and adaptive schemes vary $R_d$ online according to
+converter rating, state of charge or measured sharing
+error~\cite{tah2016adaptive,lu2014adaptive,khorsandi2024adaptive}.
+
+% NOTE: Second paragraph should cover the secondary/distributed correction
+% layer, and make the point that these schemes reintroduce communication —
+% which is the wedge for our comparison table.
+Because purely local droop cannot remove the steady-state voltage deviation, a
+secondary layer is usually added. Distributed and consensus-based schemes
+exchange voltage and current estimates over a sparse communication graph to
+restore the bus and equalize per-unit currents
+simultaneously~\cite{nasirian2015cooperative,anand2013distributed,kumar2020distributed},
+and plug-and-play designs provide stability guarantees that are independent of
+the network topology~\cite{tucci2018plugandplay}. These methods achieve excellent
+accuracy at the cost of a communication link and its associated latency and
+failure modes.
+
+\subsection{Alternatives to Droop}
+
+% NOTE: This subsection must be genuinely fair to the alternatives — reviewers
+% punish strawmanning. Cover master-slave, average current sharing, DC bus
+% signaling, MPC. Each gets one or two sentences plus a citation.
+Active current-sharing methods predate the microgrid framing. Master--slave and
+average-current-sharing architectures for paralleled supply modules were
+classified early and remain the industrial default where the modules are
+identical and co-located~\cite{luo1999classification,panov2008stability}. They
+give near-exact sharing but require a dedicated share bus and degrade poorly
+when the master fails.
+
+DC bus signaling dispenses with an explicit link by encoding mode transitions in
+the bus voltage itself, so that each unit infers the system state
+locally~\cite{schonberger2006dbs,panda2021dbs}. The method is elegant for
+coarse mode arbitration but does not deliver a continuously commandable split.
+
+Optimization-based supervision, particularly model predictive control, has been
+applied extensively to fuel-cell hybrid powertrains to schedule the source split
+against fuel economy and degradation
+objectives~\cite{vermillion2011mpc,hu2021mpcreview,zhou2022mpc}. Such strategies
+operate above the converter loops: they decide \emph{what} the split should be, and
+still require an actuation mechanism to enforce it. The present work is
+complementary rather than competing, and in fact supplies exactly that
+mechanism.
+
+\subsection{Power Sharing in Fuel-Cell Hybrid Vehicles}
+
+% NOTE: Ground the work in the FC/battery application; make the frequency-
+% separation argument (FC slow, battery fast) since it explains why the share
+% setpoint is slow-moving and why a slow robust outer loop suffices.
+In fuel-cell hybrids the split is not arbitrary: the stack must be protected
+from fast transients, which are absorbed by the battery or a supercapacitor,
+while the stack carries the slow-moving mean
+demand~\cite{thounthong2007control,garcia2016statemachine,li2022dcbusregulation}.
+This frequency separation is usually enforced by filtering the demand signal or
+by a rule-based supervisor. Droop achieves the same separation as a structural
+property when the branches are given different output impedances, which is one
+reason droop-based energy management has been reported for fuel-cell
+tramways and hybrid buses~\cite{garcia2016statemachine,li2022dcbusregulation}.
+
+\subsection{Robust Control of Sharing Loops}
+
+% NOTE: Short subsection. Point is: robust methods exist for microgrid loops but
+% are applied to custom converters with accessible states; nobody applies them
+% to a droop loop whose actuator is an MDAC on a commercial IC's FB pin.
+Robust synthesis has been used to certify microgrid loops against parameter
+drift, constant-power-load negative impedance and communication
+delay~\cite{sedhom2019hinf,hosseinzadeh2024robust,mirjafari2022robust}. These
+results confirm the value of a worst-case formulation, but they are invariably
+applied to converters whose internal dynamics are designed alongside the
+controller. Applying the same discipline to a loop whose actuator is an MDAC
+perturbing the feedback pin of a commercial regulator, and whose plant gain
+therefore inherits vendor tolerances, appears not to have been reported.
+
+\subsection{Positioning}
+
+% NOTE: Refer to the table explicitly and state the one-line thesis of the paper.
+Table~\ref{tab:comparison} summarizes the trade-offs. The proposed approach
+occupies a cell that the existing methods do not: it retains the commandability
+of a centralized scheme and the robustness of a droop scheme, while requiring
+neither a custom power stage nor a communication link inside the fast loop.
+
+% ---------------------------------------------------------------------------
+% Comparison table
+% ---------------------------------------------------------------------------
+\begin{table}[H]
+\caption{Comparison of DC power-sharing methods against the criteria relevant to
+a low-cost hybrid powertrain. Ratings are qualitative:
+\textbullet\textbullet\textbullet{} = favourable,
+\textbullet{} = unfavourable.}
+\label{tab:comparison}
+\newcommand{\rgood}{\textbullet\textbullet\textbullet}
+\newcommand{\rmid}{\textbullet\textbullet}
+\newcommand{\rbad}{\textbullet}
+\begin{adjustwidth}{-\extralength}{0cm}
+\begin{tabularx}{\fulllength}{lCCCCCl}
+\toprule
+\textbf{Method} & \textbf{Hardware} & \textbf{Comms} & \textbf{Split} &
+\textbf{Robustness to} & \textbf{Off-the-shelf} & \textbf{Refs} \\
+ & \textbf{cost} & \textbf{required} & \textbf{controllability} &
+\textbf{converter tol.} & \textbf{ICs usable} & \\
+\midrule
+Fixed resistive droop        & \rgood & none    & \rbad  & \rbad  & \rgood & \cite{dragicevic2016part1,gao2018primary} \\
+Virtual-resistance droop     & \rmid  & none    & \rmid  & \rmid  & \rbad  & \cite{tah2016adaptive,lu2014adaptive} \\
+Adaptive / consensus droop   & \rmid  & sparse  & \rgood & \rgood & \rbad  & \cite{nasirian2015cooperative,anand2013distributed,kumar2020distributed} \\
+Master--slave current share  & \rbad  & share bus & \rgood & \rmid & \rbad  & \cite{luo1999classification} \\
+Average current sharing      & \rbad  & share bus & \rmid & \rmid  & \rbad  & \cite{luo1999classification,panov2008stability} \\
+DC bus signaling             & \rgood & none    & \rbad  & \rmid  & \rmid  & \cite{schonberger2006dbs,panda2021dbs} \\
+Supervisory MPC / EMS        & \rmid  & to supervisor & \rgood & n/a $^{a}$ & n/a $^{a}$ & \cite{vermillion2011mpc,hu2021mpcreview,zhou2022mpc} \\
+\midrule
+\textbf{This work:} MDAC feedback-injection droop
+                             & \rgood & none $^{b}$ & \rgood & \rgood $^{c}$ & \rgood & --- \\
+\bottomrule
+\end{tabularx}
+\end{adjustwidth}
+\noindent{\footnotesize
+$^{a}$ Supervisory strategies presuppose an underlying actuation mechanism and
+are therefore complementary to, not substitutes for, the rows above.
+$^{b}$ No communication inside the fast sharing loop; a low-rate link carries
+only the share setpoint.
+$^{c}$ By construction of the robust outer controller over the parameter
+corners; see Section~\ref{sec:robust}.}
+\end{table}
+
+% NOTE(author): the table uses MDPI's adjustwidth/tabularx macros from the
+% Energies class (\fulllength, \extralength, column type C). The agent draft
+% used threeparttable-style \tablenotes, which the MDPI class does NOT load —
+% replaced here with plain footnote markers. Verify column type C compiles;
+% if not, define \newcolumntype{C}{>{\centering\arraybackslash}X}.

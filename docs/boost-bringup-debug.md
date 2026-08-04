@@ -51,8 +51,10 @@ This doc uses the correct names above.
 - The **470 µF bulk cap is on V-MOT / regen, behind `MOT_PWR_ENABLE`** — NOT on VBUS. It was
   off (`MOT_PWR_ENABLE` low) in every failure. **Bus inrush is not the issue.**
 - Each boost output (`VBUS-FC` / `VBUS-BT`) has **3 × 22 µF** (DC-derates to ~30 µF at 17.5 V).
-- Boost: **TPS61288**, L = 2.2 µH, 15 A cycle-by-cycle switch limit, OVP 19 V (≤19.5 V),
-  SW/VOUT abs-max 20 V, ~3 ms soft-start. (Datasheet: `references/Datasheets/TPS61288LRQQR.pdf`)
+- Boost: **TPS61288**, L = 2.2 µH, 15 A cycle-by-cycle switch limit, OVP **18.3 min / 19 typ /
+  19.5 V max** (§7.5; corrected 2026-08-03 — the old "19 V (≤19.5 V)" shorthand omitted the
+  min), **recommended VOUT max 18 V** (§7.3), SW/VOUT abs-max 20 V, ~3 ms soft-start.
+  (Datasheet: `references/Datasheets/TPS61288LRQQR.pdf`)
 
 ---
 
@@ -65,7 +67,7 @@ This doc uses the correct names above.
 | **Death 1** | 9 V batteries | FC already disconnected from VBUS; enabled `BT_BUS_ENABLE` | **BT boost fried** |
 | **Death 2** | DC supply, **120 mA** limit, BT input only, no FC | Old FW: State-0 turned bus switches on, then boosts | Supply collapsed into CC at 120 mA; **BT boost fried** |
 | **Death 3** | DC supply, **full (≥5 A)**, BT input only, no FC | New FW (BENCH_TEST): booted to Idle fine, sensors OK; sent `G` (bring-up) | Supply hit **5–7 A with collapsed voltage**; **BT boost fried** |
-| **Death 4** | DC supply, **8.2 V / 200 mA limit** on BT input (board-powered), no FC | `RC-BT` reverted to **61.2 kΩ**; **known-good FC TPS61288 moved to BT pad** (regulated 17.5 V standalone after reflow); sent `G` (gentle, bus pre-charged ~7.7 V via body diode) | Draw **immediately pegged 200 mA CC**, voltage collapsed; **BT boost fried** (`VBT`↔GND short) |
+| **Death 4** | DC supply, **8.2 V / 200 mA limit** on BT input (board-powered), no FC | `RC-BT` reverted to **61.2 kΩ**; **known-good FC TPS61288 moved to BT pad** (regulated 17.5 V standalone after reflow); sent `G` (gentle; bus pre-charged ~7.7 V through the **enabled** `D-BT-EN`, sourced from the body-diode-held boost output — mechanism name corrected 2026-08-03, review BOOST-R1-F6; measured in `2-VBUS.jpg`) | Draw **immediately pegged 200 mA CC**, voltage collapsed; **BT boost fried** (`VBT`↔GND short) |
 
 Other confirmed conditions:
 - `BT_SEQUENCE_ENABLE` (battery → charger): **ON in deaths 1–3** (as reported at the time).
@@ -76,10 +78,19 @@ Other confirmed conditions:
   vs Death 4 is the added output caps.)
 - In death 1 the FC boost was **already disconnected** when BT was connected (not a paralleling fight).
 - Post-mortem each time: `VBT → GND` short (the dead boost: VIN–SW–VOUT fused to GND).
-- **Death 4 conditions** (most controlled yet): `FC_BUS_ENABLE`, `MOT_PWR_ENABLE`, `REGEN_ENABLE`,
-  `FC_CHARGE_ENABLE` all OFF; `BT_SEQUENCE_ENABLE` likely OFF (see above); `BT_BUS_ENABLE` brought up
-  by `G` in sequence with `BT_REG_ENABLE`. `G` energizes the bus switches **first**, so the bus was
-  pre-charged to ~7.7 V (boost body diode) before the boost soft-started — **not** a 0 V hot-plug.
+- **Death 4 conditions** (most controlled yet): `MOT_PWR_ENABLE`, `REGEN_ENABLE`,
+  `FC_CHARGE_ENABLE` all OFF; `FC_BUS_ENABLE` **ON** (raised by `G` unconditionally —
+  record corrected 2026-08-03, review BOOST-R1-F6; harmless: FC boost dark and unsourced,
+  RT1987 reverse-blocks → no bus contribution); `BT_SEQUENCE_ENABLE` likely OFF (see above);
+  `BT_BUS_ENABLE` brought up by `G` in sequence with `BT_REG_ENABLE`. `G` energizes the bus
+  switches **first**, so the bus was pre-charged to ~7.7 V before the boost soft-started —
+  **not** a 0 V hot-plug. *Mechanism corrected 2026-08-03 (review F6):* the **source** of the
+  7.7 V is the boost's HS body diode holding VOUT ≈ VIN, but the **path to the bus** is the
+  enabled `D-BT-EN` conducting (a *disabled* RT1987 has back-to-back FETs and no passive
+  path). Under the 200 mA CC limit the connect was supply-limited, not ISCP-limited: 40 µF to
+  7.7 V at 0.2 A = 1.5 ms, inside `BUS_SETTLE_MS` = 5 ms. **This pre-charge holds only for
+  the pre-2026-07-08 `bringUpBus()`, which left `MOT_PWR_ENABLE` LOW** — see the 2026-08-01
+  dual-channel entry for why the bus no longer retains it.
 - **Death 4 is the decisive datapoint:** the boost was the FC channel's *proven-good* part. It lived
   on the FC pad, died on the BT pad. **Pad/channel, not part.**
 
@@ -120,8 +131,17 @@ captures (each a separate run) in `references/scope_captures/`:
 1. `1-VOUT.jpg` — VOUT: 8.3 V body-diode pre-charge → soft-start ramp to 17.7 V in ~1.36 ms; one
    aborted first ramp (collapse to ~8 V, ~1.3 ms pause, automatic re-soft-start) then clean
    regulation. **A protection-retry that previous boosts did not survive — now it recovers.**
-2. `2-VBUS.jpg` — VBUS: 0 → 8.3 V step (`D-BT-EN` closes, pre-charge) → ramp to 17.7 V, flat and
-   clean for the rest of the capture (no hiccup on this run).
+2. `2-VBUS.jpg` — VBUS: **true 0 V** (trace on the CH1 ground marker) → **8.3 V step at
+   ~1.3 ms before the boost ramp** → ramp to 17.7 V, flat for the rest of the capture.
+   *(Caption corrected 2026-08-03, review BOOST-R1-F6: the step is the **enabled** `D-BT-EN`
+   conducting at low voltage ~3.7 ms after its EN — not a passive body-diode path. It
+   completed because the only load behind the switch in this firmware generation was the
+   ~40 µF bus ceramics (`MOT_PWR_ENABLE` still LOW pre-Death-5): 0.33 mC at the ~7.5 A
+   foldback ≈ 44 µs ≪ the 250 µs SCP window. Note the connect edge measures ~0.12 ms vs a
+   ~554 µs gate-ramp prediction — plausibly already an ISCP-clamped amps-class event
+   [UNCONFIRMED, review N5]. Also: the flat post-ramp VBUS does NOT establish "no hiccup this
+   run" — VBUS is blind to a VOUT hiccup behind D-BT-EN's reverse blocking, per the
+   "Startup hiccup explained" note.)*
 3. `3-SW.jpg` — SW envelope: two soft-start "wedges" (the aborted + successful ramps), PFM sleep
    gaps, then steady burst switching. No visible destructive ring.
 4. `4-SW zoomed in.jpg` — the "~75 kHz initial oscillations" are **normal PFM pulse-skipping** at
@@ -206,7 +226,837 @@ survived). This retroactively explains the source-dependence across all five dea
    nominal only helps if the ring at working currents fits in the 4 V of headroom it buys.
 5. FC TPS61288 needs replacement (Death 5 post-mortem: `VFC`↔GND short).
 
+### Recurring FAULT_OV_BUS on `G` — nondestructive; BT boost still regulating at pre-retune ~17.4 V (2026-07-31)
+
+**Context:** the 16 V bus retune (Death-5 action 2) was executed as a hardware bodge on
+2026-07-11 — RD1 changed 237 k → 215 k **on both boost FB networks** per the firmware changelog,
+expected V0 = 15.91 V no-load — and firmware followed (`V_BUS_NOMINAL = 16.0f`, so
+`LIMIT_V_BUS_MAX = 17.0 V`, no longer 18.5).
+
+**Configuration:** battery-side-only DC supply (no FC source); BENCH_TEST build; State-98 `G`
+bring-up. Nondestructive — hardware survives repeated attempts.
+
+**Observed:**
+- ~80 % of `G` attempts latch **0x8004 = `FAULT_ERROR | FAULT_OV_BUS`** essentially immediately;
+  ~20 % come up without fault.
+- Scope, BT boost VOUT: body-diode pre-charge ~3.8 V → soft-start ramp to **17.4 V in ~1.32 ms**,
+  then flat **regulation at 17.4 V** (one brief deep transient dip with fast recovery — consistent
+  with an RT1987 downstream-cap hand-off, benign with the bodge caps fitted). Captures currently
+  chat-only; file into `references/scope_captures/` (pending).
+- Scope, VBUS: never seen above what the operator believed the OV limit to be. **The paradox is
+  resolved by the stale limit assumption:** the firmware limit is now **17.0 V**, not 18.5 — a bus
+  tracking a 17.4 V boost through the RT1987 (~0 V drop) *is* over the current limit even though it
+  never approaches 18.5 V.
+
+**Diagnosis (leading, UNCONFIRMED):** the BT boost is regulating at the **old 237 k setpoint**
+(design 17.5 V; measured 17.4 V here, 17.7 V in the 2026-07-07 validation), not the retuned
+15.91 V — i.e. **the RD1 215 k bodge is electrically absent on the BT channel** (never applied
+to BT, wrong value, or lifted/cold joint). The arithmetic fits: ΔV0 = Vref·ΔRD1/RD2 ≈ +1.5 V
+over 15.91 V ≈ 17.4 V. Firmware then does exactly what it should: 17.4 V > `LIMIT_V_BUS_MAX`
+(17.0) → `FAULT_OV_BUS` → State-99 teardown. The 80/20 intermittency is the bus sitting *at* the
+threshold: whether a given attempt trips depends on the ramp hand-off transient and where the
+ADC samples land (divider tolerance / noise), not on any real state difference.
+**Settling measurement:** board unpowered, ohm RD1 on the BT FB network (expect 215 k; 237 k
+confirms); or measure each boost's no-load VOUT standalone — FC at ~15.9 V with BT at ~17.4 V is
+conclusive.
+
+**Safety implication if confirmed:** the abs-max headroom the 16 V retune was supposed to buy
+(4 V to the 20 V SW/VOUT abs-max) is **absent on the BT channel** — it still runs at ~17.4 V
+nominal (~2.6 V headroom), on the channel with the worst hot-loop history. Fixing the bodge is
+hardware-protective, not just fault-silencing. Do **not** paper over it by raising
+`LIMIT_V_BUS_MAX`.
+
+#### UPDATE (2026-07-31, same day) — RD1 theory REFUTED; revised diagnosis: parked load-dump overshoot, peak-held by the ideal diode
+
+The settling measurements were done and **refute the missing-RD1-bodge diagnosis above**:
+- **Standalone (bus switches open), each boost regulates 15.9 V** — the retuned FB network is
+  correct and effective on both channels.
+- **OPA197 output reads 0 V at no load** — the injection pedestal is at its design point; the
+  FB/injection network is exonerated entirely.
+- (RD1/RD2/RINJ could not be ohmed reliably in-circuit — readings drift, likely cap charging —
+  but the standalone V0 makes the resistor values moot.)
+- **MDACs are inactive in this test** (no SPI-driven droop), so the injection chain contributes
+  only its static op-amp-at-0V pedestal (included in the 15.91 V design V0). Droop therefore
+  explains NOTHING here — neither the level of the first flat (it is plain V0 regulation, not
+  droop-depressed) nor the post-dip level. Any overshoot must come from converter/load-transient
+  dynamics.
+- Additional observation: the ramp → dropout → recovery-overshoot signature **only occurs
+  bus-connected**; the overshoot reaches 17.2–17.5 V. Standalone bring-up is a single clean ramp
+  to 15.9 V, every time.
+
+**Revised leading mechanism (UNCONFIRMED, pending dual-channel capture):** a **load-dump
+overshoot that gets peak-held on the unloaded bus** by the RT1987:
+1. `G` closes the RT1987s at ~4 V pre-charge, then the boost ramps. The bus/motor-node charging
+   demand through the RT1987 exceeds its SCP during or just after the ramp → the RT1987
+   disconnects; the boost regulates its local caps at the true V0 ≈ 15.9–16 V (the first flat
+   level — previously misread as the anomaly's "before" state; it is in fact correct regulation).
+2. The RT1987 auto-retries: the re-strike connects the still-lower bus node → inrush surge →
+   the deep Vout dip in the capture.
+3. The surge terminates abruptly (node caught up, or SCP cuts again) with the boost's error amp
+   railed from the dip → the converter keeps delivering amps into now-unloaded local caps for
+   the voltage-loop latency (~50–250 µs at the 4–19 kHz crossover) → **Vout overshoots V0 by
+   ~1.3–1.6 V** (≈100 µC into ~50–80 µF — easily available).
+4. **The RT1987 is an ideal diode, i.e. a peak detector:** it charges the near-unloaded bus
+   (~40 µF, only divider/quiescent load, ~mA) up to the overshoot peak and then blocks reverse.
+   Both nodes then decay at only ~50–100 V/s, so the 17.2–17.5 V peak **parks for tens of ms** —
+   ample for `detectFaults()` to sample `V_bus` > 17.0 → `FAULT_OV_BUS` (0x8004). A boost cannot
+   sink current, so nothing pulls it back down. *[Decay rate SUPERSEDED 2026-08-03 (review
+   BOOST-R1-N1): capture-5 metrology measures ~113 V/s (VESC quiescent + dividers on the
+   ~590 µF attached node) — the rail spends only ~1.5 ms above 17.0 V per event. The peak-hold
+   mechanism stands; the "tens to hundreds of ms" duration does not.]*
+5. The ~80/20 intermittency is the peak amplitude/timing sitting marginally about the 17.0 V
+   limit. Nondestructive because 17.5 V is well under the 19 V OVP / 20 V abs-max.
+
+Why standalone never shows it: no downstream caps → no RT1987 SCP/re-strike events → no load
+dump → no overshoot. Why the earlier VBUS capture looked benign: a parked 17.2 V at 5 V/div is
+easy to misread, and the operator's assumed limit was the stale 18.5 V.
+
+**Supporting capture (same day, 5 ms/div, BT VOUT on `G`):** pre-charge flat → soft-start ramp
+to **regulation at 16.0 V** (cursor-measured; in-circuit regulation is correct, small notch on
+the ramp shoulder = first, mild event) → flat 16.0 V for ~9 ms → a **second, deeper dip** →
+recovery **overshooting to 17.4 V (ΔY = 1.4 V cursor-measured)** and **parking flat with no
+visible decay for the remaining ≥15 ms** of the capture. Matches the predicted signature:
+discrete re-strike events, regulation between them, load-dump overshoot parking after the deep
+event. Decay math says the park is effectively indefinite on firmware timescales: the only
+loads are the dividers (~70 µA FB-side on ~76 µF local → ~1 V/s; ~310 µA BUS-V divider on
+~40 µF bus → ~8 V/s), so falling from 17.4 below the 17.0 limit takes ~50–400 ms — dozens to
+hundreds of `detectFaults()` samples. *[Divider-only decay math SUPERSEDED 2026-08-03 (review
+BOOST-R1-N1): the motor node + VESC are attached during `G` (MOT_PWR raised with the bus
+switches), so the real load is ~38 mA on ~590 µF → measured ~113 V/s, ~1.5 ms above 17.0 V.]*
+Plausible event identification (UNCONFIRMED): first event
+= D-BT-EN charging the small bus caps; second = D-MT-EN re-strike into the 470 µF motor node
+(the RT1987's ~1.17 ms CSS soft-start cannot carry that charge → SCP → retry ~ms later).
+*[Second-event identification SUPERSEDED 2026-08-03: capture-5 metrology shows the deep dip is
+the D-BT-EN soft-start COMPLETING into bus+motor node — see the corrected capture-5 subsection.]*
+
+**Settling measurement (remaining):** dual-channel single-shot on `G` — BT VOUT + VBUS (expect
+VBUS stepping at each re-strike, then peak-parking at the overshoot), and a second run with VBT
+on ch2 to rule supply sag in/out. A stiff supply is NOT expected to fix this (the dump is
+RT1987-inrush-driven, not source-sag-driven) — that itself is a discriminating prediction. If
+the second event is D-MT-EN, a capture with the motor path left open (`G` modified or MOT
+refused) should show only the first, mild event and no parked overshoot.
+
+#### Datasheet reconciliation (2026-08-01, RT1987 DS §17.1–17.6) — firmware timing bug CONFIRMED; SCP-cut link NOT confirmed (retitled 2026-08-03, review BOOST-R1-F5: the original "mechanism CONFIRMED on paper" overclaimed — capture 5 later falsified the SCP-cut link, see below)
+
+Reading `references/Datasheets/RT1987_DS-00.pdf` closes the loop quantitatively:
+
+- **`tD_ON` = 8 ms (typ)** from EN rising to VOUT reaching 10% — the RT1987 does NOT begin
+  conducting for ~8 ms after enable. **`BUS_SETTLE_MS` = 5 ms is therefore too short: the
+  boosts ramp at t = 5 ms while every RT1987 is still in its turn-on delay.** The
+  "pre-charge the stack at low voltage, ramp everything together" design (Death-5 fix)
+  never actually executes — the switches connect ~3 ms *after* the boost is already at
+  16 V, i.e. a full-ΔV connect into discharged nodes, exactly what the sequencing was
+  meant to prevent. (The old comment "RT1987 soft-start ≈ 1.17 ms + margin" sized the
+  settle from `tON` and missed `tD_ON` entirely.)
+- **Start-up SCP is a foldback current limit + a 250 µs *continuous-clamp* timer** (§17.5):
+  the limit starts at 2.5 A (VOUT < 2 V) and rises inversely with VIN−VOUT; **the timer
+  resets whenever the current drops below the limit**; on trip, auto-retry after
+  `tSCP_RST` = 64 ms. *(Corrected 2026-08-03, review BOOST-R1-F5: the 2.5 A figure applies
+  only at ΔV ≥ 26 V — unreachable on a ≤17 V bus. Interpolating the EC points (2.5 A @ ≥26 V,
+  7 A @ 10 V, 8.5 A @ ≤5 V) gives ≈5.3 A at ΔV = 16 V, rising to 8.5 A as the bus catches
+  up.)* At CSS = 5.6 nF, `tON`(16 V) ≈ 1.07 ms → connect demand for the measured ~590 µF
+  bus+motor node ≈ 0.8·C·V/tON ≈ **7 A vs the ~5.3 A applicable limit → the connect is
+  protection-MARGINAL at ramp start — NOT a guaranteed trip** (superseding this bullet's
+  original "guaranteed, every time"). Capture 5 in fact shows a connect that **completed**:
+  1.77 ms of continuous conduction (7.1× the timer), no cut, no 64 ms retry, current
+  terminating exactly as ΔV → 0 — it survived because the boost sagged (realised ramp
+  9.5 kV/s, not 15), keeping the drawn 5–6.9 A under the rising foldback limit. The DS's
+  one-liner still applies: *"Large output capacitors may require a longer soft-start time."*
+- **SCP is disabled once soft-start completes** — a fully-enhanced RT1987 passes the boost
+  ramp current (4–9 A, well under 8 A cont/20 A peak) with no protection involvement. So a
+  *completed* low-voltage soft-start makes the subsequent boost ramp safe by design.
+- **Timeline now fully explains the long capture:** switch ENs at t = −5 ms → boost ramp
+  at t = 0 (unloaded → clean 1.3 ms rise to 16.0) → D-BT-EN conducts at t ≈ +3 ms
+  (8 ms after EN; 40 µF bus caps → ~0.6 A → the small notch) → bus valid re-arms D-MT-EN
+  (VIN-good) → its own ~8 ms delay → **t ≈ +11 ms: D-MT-EN soft-starts into the discharged
+  470 µF+VESC node at full ΔV → foldback clamp → 250 µs timer → cut** (the deep dip's end
+  = load dump → boost overshoot parks at 17.4) → next retry at +64 ms, outside the
+  capture window (hence no third event). Observed second-dip spacing ~9 ms vs predicted
+  ~11 ms — within typ-value scatter. *[Deep-dip portion of this timeline SUPERSEDED
+  2026-08-03 (review BOOST-R1-F5): capture-5 metrology shows the deep dip IS the bus+motor
+  node charging through a soft-start that COMPLETES (VBUS ramps 0.9 → 16.85 V during it; no
+  cut, no retry). The tD_ON arithmetic and the dip-#1 timing stand.]*
+- **CSS sizing (§17.3, corrected 2026-08-03, review BOOST-R1-F2):** `tON = VIN/35 ×
+  (CSS/0.0023 − 100)` µs (CSS in nF); tON is the DS-defined 10–90 % time, so demand
+  `I = 0.8·C·VIN/tON` and the full 0→VIN charge takes tON/0.8. CSS = **100 nF →
+  tON(16 V) = 19.8 ms** (full ramp 24.8 ms) → **0.65 A per mF** of node capacitance.
+  **Measured node (capture 5, bare board, no VESC input caps counted separately):
+  ∫I dt ≈ 7.4–9.3 mC ÷ ~16 V ≈ 0.4–0.6 mF → 0.3–0.4 A demand — a 6–8× margin to the
+  2.5 A ramp-start clamp.** Bounds, not guarantees: ISCP and tON are both **typ-only**
+  (EC: no min/max), and 2.5 A is the *typ initial value* at VOUT < 2 V, not a minimum.
+  Demand reaches 1 A at C ≈ 1.55 mF and the ramp-start typ at C ≈ 3.87 mF (worst-case
+  CSS −10 % tol −15 % X7R drift: 1.16 / 2.90 mF). **Open qualification: the VESC Six
+  EDU's input capacitance is unmeasured anywhere in this project** — it would have to add
+  > 2.3 mF to break the bound; measure it before using guarantee language. Dissipation:
+  ½CV² = 64–77 mJ at the measured node (128 mJ at 1 mF), P_peak = 2×P_avg ≈ 5–10 W over
+  ~25 ms; **NOT datasheet-qualified** — §17.2 defers SOA to "example calculations and SOA
+  curves" in Application Information, and §18 contains neither (verified). A θJC-only
+  estimate puts ΔTJ ≈ 30 °C at the measured node — comfortable vs OTP 140 °C — but this
+  is an inference, not a spec. *(This bullet's original "SCP never engages in any
+  scenario" and "SOA-class, acceptable" are superseded as overclaims.)*
+
+**Conclusions (rewritten 2026-08-03 per review BOOST-R1-F1/F2/N4):**
+(1) **The open-loop settle is REJECTED at any fixed value** (superseding the original
+"≈ 20 ms"). Measured chain from switch EN (capture 5, lower bounds — taken with the boost
+already delivering ~8 A): tD_ON expiry/first attempt at **8.1 ms** (vs 8 ms typ ✓), silent
+retry, D-BT-EN conduction at **17.7 ms**, VBUS full at **18.5 ms**, motor-node charge
+complete at **19.3 ms** — leaving ~0.7 ms (3.5 %) margin on a typ-only/no-max spec; with
+the boosts OFF (the fix's own scenario) the pre-charge takes longer or SCP-trips into the
+64 ms retry; and with 100 nF CSS fitted a fixed delay would need ~33 ms. **Gate boost
+enable on V_bus AND V_rgn ADCs confirming the pre-charge landed, with a timeout →
+`FAULT_INIT_FAIL`** (the `BUS_CHARGE_TIMEOUT_MS` pattern). The gate needs its own
+low-voltage thresholds — `V_BUS_CHARGED_THRESH` (13.5 V) is a post-boost constant; the
+pre-charge plateau is only ~3.4–8 V (both ADCs resolve it: 4.55 / 7.15 mV/count). The
+chain is NOT 8+8 ms serial: D-MT-EN's tD_ON does not re-run when its VIN rises with EN
+already high (bench + DS §17.2).
+(2) a CSS increase on D-MT-EN (5.6 nF → ~100 nF) cuts the connect demand to **0.3–0.4 A on
+the measured 0.4–0.6 mF node (6–8× margin)** — the strongest hardware lever, and
+self-limiting for C_node ≲ 2.9 mF (worst-case CSS) — **not unconditionally**; qualify the
+VESC-attached capacitance first. Belt and suspenders: do both. Neither is implemented yet.
+
+#### Dual-channel capture (2026-08-01, 2 ms/div: CH1 = BT VOUT, CH3 = VBUS) — theory refined
+
+**Confirmed (direct capture):**
+- **VBUS sits at ~0 V (≤0.9 V measured) through the entire boost ramp and for ~10+ ms after**
+  — direct proof the RT1987s are not conducting during the ramp (`tD_ON` ≫ `BUS_SETTLE_MS`),
+  and a **correction to a long-standing assumption: there is no PASSIVE (body-diode) path
+  that pre-charges the bus.** The disabled RT1987's back-to-back FETs fully isolate; the
+  ~3.8 V "pre-charge" seen on earlier captures is the boost's LOCAL output node upstream of
+  the switch. **Scope of this correction (added 2026-08-03, review BOOST-R1-F6 — does NOT
+  supersede the 2026-07-07 record):** the bus *can* still be pre-charged through an
+  **enabled** switch conducting at low voltage, and `2-VBUS.jpg` measures exactly that
+  (0 → 8.3 V step before the boost ramp). What changed is the configuration, not the
+  physics: the post-Death-5 `bringUpBus()` also enables `D-MT-EN`, hanging 470 µF + the
+  VESC behind the bus at a pre-charge level (~3.4–3.8 V) straddling D-MT-EN's 3.0–3.35 V
+  rising VIN-UVLO, so the low-voltage connect no longer completes and is drained back —
+  hence VBUS ≈ 0 here. **Under current firmware timing, assume every bus connect is a
+  full-ΔV (≈16 V) connect.**
+- **VBUS then ramps 0 → ~16.5 V in ~1.5–2 ms** — a textbook RT1987 soft-start signature,
+  matching the CSS = 5.6 nF `tON` math. This is D-BT-EN's (first successful) soft-start,
+  observed ~12 ms after the boost ramp ≈ 17 ms after switch EN (timing convention
+  normalised 2026-08-03: quote times from the boost-ramp fiducial; the 8 ms `tD_ON` is
+  typ-only with no max — size any firmware delay from measurement, not typ).
+- **The deep dip fires exactly as VBUS completes its ramp.** *[Its SCP-cut interpretation
+  ("clamp ending in the 250 µs-timer cut; the cut is the load dump") is SUPERSEDED
+  2026-08-03 (review BOOST-R1-F5): capture-5 metrology shows 1.77 ms of continuous
+  conduction terminating as ΔV → 0 — the soft-start COMPLETES; the release at convergence
+  is the unload. Park readings here (ΔY = 1.4 V cursor) are edge-to-edge over-reads;
+  centre-to-centre parks are +0.65–0.72 V — see the metrology conventions.]*
+
+**Inferred (SS-pin unconfirmed — see bench matrix item 3):**
+- Since D-MT-EN acts within ~1 ms of bus-good (no fresh 8 ms delay) but shows soft-start
+  behaviour, its `tD_ON` does not re-run after a VIN-UVLO cycle but its soft-start does.
+
+**Revised/open:**
+- The small first dip (~3 ms after ramp, ~8 ms after EN) is **NOT D-BT-EN connecting** — VBUS
+  doesn't move at it. In this run the park to 17.4 V happened at THIS event (before the bus
+  ever rose); in the 5 ms/div run the park happened at the deep dip instead. Identity
+  UNCONFIRMED (possibly internal turn-on/charge-pump activity at `tD_ON` expiry, or an
+  aborted first attempt); a ~0.5 A × ~150 µs unload is enough to park +1.4 V given the boost
+  cannot sink. Run-to-run, whichever unload event catches the loop wound parks the rail.
+- **New caveat for the firmware-only fix:** even with a correct (≥ ~20 ms measured) settle,
+  the low-voltage pre-charge the bus reaches is only ~Vsupply − 0.5 V(body) − 35 mV ≈ 3.4–3.8 V
+  on this bench — **right at D-MT-EN's VIN UVLO (3.0–3.35 V rising)**. Below it, D-MT-EN
+  never pre-charges the motor node and the full-ΔV connect just happens later. On a 2S pack
+  (~7.9 V) the margin is comfortable; on low bench supplies it is not. The CSS fix is immune
+  to this corner too — further weight on doing both.
+
+#### Research round (2026-08-01) — dip #1 candidates, overshoot arithmetic, compensation verdict
+
+Three research passes (RT1987 startup behaviour; boost-side artifacts; compensation assessment
+vs TI SLVA452/TPS61288 DS §9.2.2.5) produced the following. No RT1987 field literature exists
+(part is Sept-2024-new; no errata/forums) — bench measurement will out-produce further search.
+
+**Overshoot arithmetic (scope corrected 2026-08-03, review BOOST-R1-F3/F8 — retained as a
+model bound, WITHDRAWN as clamp-current evidence).** In its *linear regime* the gm-amp loop
+gives unload overshoot `ΔV = ΔI·V_OUT/[R_C(1−D)·V_REF·G_EA·K_COMP]` — independent of C_OUT
+**in that regime only** (adding C_O at fixed R_C lowers f_c proportionally; the 2026-07-07
+bodge-cap non-observation is uninformative either way: +10 µF on ~106 µF predicts a 0.13 V
+change, inside the ±0.15 V run-to-run scatter). At the capture's own operating point —
+V_IN ≈ 8.2–8.7 V, read off CH1's 8.0 V body-diode pre-ramp (the original 0.24 V/A end
+assumed V_IN = 12 V, which the 2S battery channel never sees) — the coefficient is
+**0.32–0.35 V/A**. Direct measurement supersedes all back-calculation: the shunt shows
+**6.3–7.2 A** released (see the corrected triple-channel entry), and the *centre-to-centre*
+parks are **+0.65–0.72 V** (the 1.4–1.5 V cursor ΔY over-reads edge-to-edge across trace
+thickness), giving an empirical **0.10–0.19 V/A that BOTH candidate models over-predict**
+(linear 0.32–0.35; EA-slew ~0.6–0.7). **The overshoot mechanism is OPEN** — settled by one
+COMP-pin probe through a `G` — and with it the question of whether added C_OUT is a real
+mitigation (slew regime: park ∝ 1/C_node → yes; linear regime → no). The earlier "0.5 A
+predicts only ~0.17 V" remark survives as order-of-magnitude only.
+
+**Dip #1 combined ranking:**
+1. **Shared-VBT logic load step** (Teensy+PHY behind the LM1084 on the same rail): line
+   transient → loop winds → park on recovery. One story for the whole signature; precedent for
+   unloaded-TPS610xx park on TI E2E (TPS61088, secondary source). Weakness: dip #1 appears
+   phase-locked ~8 ms after EN (≈ tD_ON), which a logic load step shouldn't be.
+2. **RT1987 aborted first soft-start attempt (foldback clamp, 250 µs timer):** onset timing
+   perfect, width fits, and the new ΔV/ΔI math *supports* an amps-class event — but the
+   observed ~4–9 ms silent retry contradicts the specified 64 ms `tSCP_RST` (unexplained by
+   anything found; would be reportable to Richtek if confirmed).
+3. **RT1987 internal bias/charge-pump brownout at the tD_ON hand-off** (aborts before the FET
+   engages): explains the flat bus perfectly, retry unconstrained by the 64 ms spec — but every
+   documented ideal-diode bias current is µA–20 mA class, far below an amps event.
+
+**Ruled out:** RT1987 quiescent draw (650–780 µA — 1000× too small), TPS61288 PFM/burst ripple
+(documented mV-class), OVP on either part (thresholds 18.3–19.5 V / 23–33 V untouched), TRCB
+chatter (diode strongly forward-biased throughout).
+
+**Discriminating bench matrix (in value order):**
+1. **✅ DONE (2026-08-01): INA253 current output (`BT-CURR`) vs boost VOUT + VBUS, through both
+   dips.** Result: **~700–900 mV peak on the INA253A1 (100 mV/A) = 7–9 A peak through the
+   shunt, on BOTH dips.** Dip #1 is a real amps-class conduction event from the boost into the
+   switch stack — **candidate 1 (shared-VBT logic load step) REFUTED** (the shunt would read
+   ~0) and **candidate 3 (internal bias draw) refuted as the load** (µA–mA class). **Dip #1 =
+   D-BT-EN's first turn-on attempt conducting hard and being cut short.** What cuts it remains
+   open: a true SCP-timer trip predicts the 64 ms retry (contradicted by the observed ~4–9 ms
+   silent retry), so either an undocumented abort path (bias collapse under gate-drive load?)
+   or an SCP variant with fast retry — the SS-pin/FLTB probe (item 3) still discriminates, and
+   the anomaly is Richtek-reportable. *(Foldback comparison re-sited 2026-08-03, review
+   BOOST-R1-F3: only dip #1 sees the high-ΔV condition — its 7.2 A vs the ~2.5 A ramp-start
+   typ is the genuine spec exceedance. The deep dip fires at bus-top where the 8.5 A-typ
+   value applies and the measured 7.8 A band-top is a match, not an anomaly.)*
+   **Charge bookkeeping constraint — HARDENED 2026-08-03 (review BOOST-R1-N3):** capture-5
+   metrology bounds VBUS motion at dip #1 to **≤0.023 V (≤4 µC)** while 0.6–1.3 mC left the
+   boost — a **14–300× charge-conservation violation** that excludes every delivered-charge
+   mechanism (real SCP clamp, UVLO race). Surviving candidates: an **oscillatory/ring event
+   half-rectified by the unipolar INA253A1** (REF = GND — it cannot render the negative
+   half-cycles, so the one-sided trace is not evidence against a ring), or a **CH2
+   common-mode artifact** during the multi-volt step (the 4.4 V VOUT dip is real either way).
+   **Stress note:** every `G` currently puts 7–9 A load-dump events through the boost, shunt,
+   and RT1987 — survivable (validated by many nondestructive repeats) but the same event
+   family as the death history. Minimize gratuitous `G` cycles until the CSS fix is in.
+2. **Separate logic supply + VBT on ch2** — no longer needed for dip #1 (cand. 1 refuted);
+   still good bench hygiene.
+3. **RT1987 SS pin (+ FLTB)** — identifies the CUT path
+   (real SCP trip w/ anomalous retry vs pre-/mid-attempt internal abort).
+4. **Zoomed 20–50 µs/div single-shot on dip #1** (trigger CH2 rising edge) — now the TOP
+   bench priority (2026-08-03): separates a flat DC clamp from a rectified ring envelope,
+   yields true pulse width/charge, and shows any VBUS motion in the same shot. Supersedes the
+   original "VBUS at 1–2 V/div" item — capture 5 already bounds VBUS motion at ≤0.1 V.
+
+**Compensation verdict: DO NOT change the TPS61288 compensation now** *(scope corrected
+2026-08-03, review BOOST-R1-F8)*. The R_C lever stays rejected on measured grounds: f_c =
+13.5 kHz vs f_RHPZ/5 = 16.6 kHz at the BT derated-C_O corner leaves only a 1.23× legal
+increase (worth ≤0.4 V), and R_C is load-bearing for the Youla-H share plant (τ_r ∝ 1/f_c).
+Bandwidth cannot shorten a park behind a peak-holding ideal diode. **Corrections:** (a) the
+original "more C_OUT does NOT help (ΔV independent of C_OUT)" was a *linear-regime-only*
+result — in the EA-slew regime the park is ∝ 1/C_node, so added C_OUT is a real ~1:1
+mitigation *if* that regime is confirmed (COMP-pin probe decides; see the corrected
+mechanism discussion). The bodge-cap non-observation cannot discriminate (predicted effect
+0.13 V < the ±0.15 V scatter). Park *duration above the OV limit* actually falls with
+C_node. (b) the C_C lever (2 nF → 1 nF, doubles EA slew) carries **NO share-plant
+collateral** — DS Eq. 12 contains no C_C (recomputed: f_c moves <0.1 %, τ_r <0.1 µs; real
+cost is 5–11° of a 76–79° phase margin, gate on a bench load-step ringing check) — the
+original "same re-synthesis collateral" dismissal was wrong. Both cap levers are **open
+secondary mitigations**, behind CSS, which uniquely removes the events. (c) "CSS dominates
+5–10×" holds if CSS keeps the loop linear (ΔV ≈ 0.24–0.39 V at 1 A); if a shallower dip
+still rails the EA it is 2–2.5× — either way it dominates.
+
+#### Capture 5 filed + re-read at full resolution (2026-08-03) — two corrections, one new alternative
+
+`references/scope_captures/5-Vout yellow-Vmot blue-Ibat purple.jpg` (CH1 Vout 5 V/div, CH3
+VBUS 5 V/div, CH2 INA253A1 500 mV/div = 5 A/div, 2 ms/div). Re-reading against the earlier
+chat-photo transcriptions:
+
+- **This run parks at 17.5 V (cursor Y1 = 16.0, Y2 = 17.5, ΔY = 1.5 V)** — not 17.4/1.4.
+  Confirmed run-to-run park range 17.2–17.5 V, i.e. up to exactly the new `LIMIT_V_BUS_MAX`;
+  marginal trips remain expected even at +1.5.
+- **The deep-dip current event is a WIDE hump, not a cut-short clamp:** ~7–10 A sustained for
+  ~1 ms+. Integrated charge ≈ 8–10 mC ≈ 470 µF·17 V + bus caps ≈ 8.7 mC — **the motor-node
+  charge actually COMPLETES around the deep-dip event in this run.** This weakens the "SCP
+  250 µs timer cut = the load dump" detail (a completed charge naturally terminates its own
+  current, which can also be the release that parks the rail). Park mechanism (wound loop +
+  no sink + ideal-diode peak-hold) unaffected.
+- **~~During the deep dip, VBUS appears to HOLD near top~~ — REFUTED by pixel metrology
+  (2026-08-03, review BOOST-R1-F5): VBUS does the OPPOSITE.** It sits at ~0.9 V for the full
+  12 ms before the deep dip and **ramps monotonically 0.91 → 16.85 V DURING it**, meeting
+  VOUT as VOUT sags to a 9.68 V floor; afterwards VBUS peak-holds (~16.5 V) while VOUT parks
+  and decays. The deep dip is a **capacitive charge transfer into the bus + V-MOT node
+  through a soft-start that COMPLETES** (conduction 1.77 ms = 7.1× the SCP timer; current
+  tapers, τ ≈ 124 µs, as ΔV → 0; no cut, no 64 ms retry; measured node ≈ 590 µF = 470 µF +
+  VESC + bus, consistent with `bringUpBus()` raising MOT_PWR with the switches). **The
+  VIN-UVLO-hiccup alternative floated here is RETIRED:** the 9.68 V VOUT floor is *above*
+  the 8.10 V input-passthrough level with 5–7 A still flowing out — a UVLO'd, non-switching
+  converter can do neither. What the floor *does* show: the source (VBT supply + boost) was
+  the binding current constraint for ~1.8 ms — the boost is driven into sag/current-limit on
+  every `G` (Death-5-class stress, repeated). Residual question (VBT sag vs the boost's own
+  15 A limit): **VBT on a spare channel through one `G`** still discriminates.
+- **Dip #1 bookkeeping sharpened:** the coincident INA needle is ~7–10 A but narrow; even
+  100 µs at that current is ~1 mC, which has no DC destination that matches VBUS staying flat
+  (40 µF would jump ~19 V+). Either the needle is far narrower than the photo suggests, or
+  the event is substantially **oscillatory (ring envelope through the shunt, net charge ≈ 0)**.
+  UNCONFIRMED; zoomed single-shot on dip #1 would settle it.
+
+**Plan refinements surfaced (open operator decisions — REVISED 2026-08-03 per review
+BOOST-R1-F7/F9/N1):**
+- **Windowed OV — the 18.0 V variant is WITHDRAWN** (review F7): the threshold is a firmware
+  *reading*, and the reading is uncalibrated. The divider is ±0.1 % thin-film (BOM ERA-3AEB
+  parts → only ±30 mV), but the ADC references the Teensy's 3.3 V rail with no calibration
+  (~±2 %, dominant): worst-case reading→true multiplier ≈ 1.026, so a reading of "18.0" can
+  be a true **18.47 V** — above the TPS61288 OVP *min* (18.3 V) and its **recommended VOUT
+  max (18 V, §7.3 — a rung the original ladder omitted)**. Highest tolerance-legal window =
+  **17.5 V**. Corrected ladder: 16 nom / 17.0 FW armed / 17.5 FW windowed / 18 rec-max /
+  18.3–19.5 OVP / 20 abs-max. **Caveat: no legal window rides out the observed parks**
+  (cursor peaks reach 17.5), so a 17.0/17.5 window's only real value is restoring the tight
+  detector outside bring-up. Preconditions if implemented: ADC calibration + raw-count
+  logging first (see TODO below); specified arming/hard-expiry/re-arm/State-99 interaction;
+  the CSS fix (park ≤ ~0.7 V) clears a 17.0 blanket outright and makes any window moot.
+- **Persistence filter REVIVED** (review N1 — supersedes "a short persistence filter would
+  NOT ride it out"): measured park decay is **~113 V/s** (VESC quiescent + dividers on the
+  ~590 µF attached node), so the rail spends only **~1.5 ms above 17.0 V** per event — a
+  2–3-sample filter rides it out. Cheapest firmware mitigation on the menu; gate on one
+  decay-confirmation run and a test that it cannot mask a genuine sustained overvoltage.
+- **Optional bleed on VBUS — largely OBSOLETED by the measured decay** (review F9): the node
+  already self-discharges in ~ms. If fitted anyway (2.7 kΩ 0.5 W ≈ 6 mA): decay figures
+  depend on the node model (bus-only 40 µF: 2.5–7.5 ms for 0.4–1.2 V; bus+local ~76–120 µF:
+  5–22 ms); it dissipates **95–113 mW continuously through Idle/Run/Finish** (`doState3()`
+  leaves the bus energized); and share-loop immunity comes from quantization (6.4 mA ≈
+  0.8 ADC LSB at `SCALE_I` ≈ 8.06 mA/count), NOT from `powerBalance()`'s 1 µA gate (a
+  divide-by-zero guard, not a filter).
+- **TODO (review F10/N2):** `V_bus` here is a scope-cursor quantity; `analogRead(BUS_VOLTAGE)`
+  is unfiltered with an assumed 3.3 V reference (±0.26 V at 17.5 V). Before citing any
+  firmware-reported voltage as precise, log raw BUS ADC counts + timestamps around `G` and
+  calibrate at 16.0/17.5 V against a DMM. One such run also settles the observed node
+  discrepancy: capture-5's VBUS (the ADC's node) peaked at **16.85 V — below the then-armed
+  17.0 limit — while the 17.5 V cursor sat on the boost-local node**; whether the trips fire
+  on real bus voltage, calibration error, or node identity is open until then.
+
+#### Triple-channel capture with INA253 current (2026-08-02, amplitudes corrected 2026-08-03) — dip #1 IS an RT1987-side conduction event
+
+Capture: CH1 BT VOUT (5 V/div), CH3 VBUS (5 V/div), CH2 INA253A1 output (500 mV/div,
+0.1 V/A → 5 A/div), all probes 1×; filed as
+`references/scope_captures/5-Vout yellow-Vmot blue-Ibat purple.jpg`. **Both dips coincide with
+real forward current pulses through the BT output shunt, peak ≈ 7–9 A each.** *(Amplitude
+provenance note, 2026-08-03: an earlier version of this entry recorded "1.5–1.9 A" — a
+transcription artifact from an abandoned working branch (division count with the 5 A/div factor
+dropped), corrected by the operator. Photometric re-read of the filed capture — pixel scale
+calibrated two independent ways agreeing to 0.6 %, CH2 zero verified against its ground marker:
+**dip #1 needle 7.2 ± 0.4 A** (FWHM ≈ 180 µs as rendered, charge ~0.6–1.2 mC); **deep-dip hump
+6.3 A ripple-band centre / 7.8 A band top**, FWHM ≈ 1.4 ms, **∫I dt ≈ 7.4 mC** (envelope
+5.1–9.6 mC) vs ~8.7 mC to fill 470 µF + bus — the motor-node charge substantially (~85 %)
+completes.)* Park cursor this run: 16.0 → **17.5 V (ΔY = 1.5 V)** — parking exactly AT the
+interim OV limit, explaining the residual marginal trips.
+
+**Consequences (rewritten 2026-08-03 with the corrected amplitudes):**
+- **Shared-VBT/logic-rail candidate is DEAD** (it predicted ~zero shunt current), and with it
+  the boost-internal artifact candidates. Dip #1 is definitively a downstream (RT1987-side)
+  conduction event — the boost delivered ~7 A toward D-BT-EN's VIN at the tD_ON mark.
+- **Overshoot mechanism (linear vs EA-slew-limited): OPEN.** At the corrected amplitude the
+  measured park (1.5 V from a 6.3 A hump-centre release) is bracketed by BOTH models: the
+  linear coefficient at the capture's own VIN ≈ 8.2–8.7 V (read off CH1's 8.0 V body-diode
+  pre-ramp) is 0.32–0.35 V/A → predicts 2.0–2.2 V (over by ~1.4×); the EA-slew model
+  (COMP railed by the multi-volt dip — the 5.9 V sag refers 223 mV onto FB, 2× the 111 mV
+  linear knee — then 20 µA into C_C = 2 nF → 10 V/ms slew-down) predicts
+  I_dump·t_slew/C_node ≈ 1.2–2.0 V with the motor node attached (~510 µF). Neither is
+  excluded; the park amplitude alone cannot discriminate. **Settling measurement: one COMP-pin
+  probe through a `G`** (does COMP rail?). Which model applies decides whether added C_OUT is
+  a real mitigation (slew regime: park ∝ 1/C_node → yes; linear regime: C_OUT-independent →
+  no); see the review-corrected compensation verdict above.
+- **Safety corollary (rescaled with the corrected numbers):** at the linear 0.32–0.35 V/A,
+  reaching the 19 V OVP band needs a ~9–10 A dump and the 20 V abs-max ~12 A — the observed
+  7–8 A dumps sit uncomfortably close to the former. Capping the dump < 1 A via CSS bounds the
+  park ≤ ~0.35 V (linear) / ~0.3–0.7 V (slew) — categorically safe under either model.
+- **Compensation verdict UNCHANGED as a design decision (CSS first)** — but per the 2026-08-03
+  review round: the C_C lever (2 nF → 1 nF) carries NO share-plant collateral (DS Eq. 12
+  contains no C_C; recomputed f_c moves < 0.1 %, τ_r < 0.1 µs; cost is 5–11° of a 76–79°
+  phase margin), and added C_OUT helps if-and-only-if the slew regime is confirmed. Both stay
+  open as testable secondary mitigations behind CSS, which uniquely removes the events.
+- **Measured clamp currents (7.2 A needle / 6.3 A hump centre) sit WITHIN the RT1987's typ
+  foldback band** (2.5–8.5 A curve): the deep dip fires at bus-top where the 8.5 A-typ value
+  applies (measured band top 7.8 A ✓). **Dip #1 at 7.2 A vs the ~2.5 A ramp-start typ for its
+  high-ΔV condition genuinely exceeds spec — Richtek-reportable.** Take 6.3–7.2 A (band
+  centre – needle peak) as this unit's empirical dump amplitude; peaks to 9 A on band-top
+  readings.
+- **Dip #1 charge-destination puzzle — UVLO race REFUTED (2026-08-03, review BOOST-R1-F5/N3):**
+  ~0.6–1.3 mC left the boost while VBUS moved **≤0.023 V (≤4 µC)** — a 14–300×
+  charge-conservation violation. The UVLO-race sub-hypothesis needed the bus to pop
+  0.91 → 3.35 V (86 px on the capture; measured ≤2 px) — dead, along with every other
+  delivered-charge mechanism. **Surviving candidates: (a) an oscillatory/ring event
+  half-rectified by the unipolar INA253A1** (REF = GND — it cannot render negative
+  half-cycles, so the one-sided trace does not exclude a ring), **or (b) a CH2 common-mode
+  artifact** during the multi-volt step (the 4.4 V VOUT dip is real either way; the 7.8 A
+  amplitude need not be). Discriminator: **zoomed 20–50 µs/div single-shot, trigger CH2
+  rising** — top bench priority; the SS-pin/FLTB probe remains complementary.
+- **Park metrology note (2026-08-03, review N6):** the 16.0/17.5 cursor pair reads
+  edge-to-edge across ~0.2 V-thick traces and over-states the step. Trace-centre parks are
+  **+0.72 V (dip #1) and +0.65 V (deep dip)** above the immediately-preceding level, decaying
+  at ~44–113 V/s. Both dips parked the rail in this run (the "whichever event catches the
+  loop" framing becomes "both, amplitude set by the release current").
+
+#### Capture 6 — dip #1 zoomed single-shot (2026-08-03; `6-dip 1 zoomed in.jpg`) — ring hypothesis DEAD; conservation violation sharpened to a two-way fork
+
+Settings (per metrology conventions): 50 µs/div, 500 MSa/s, BW Full, all probes 1×; CH1 Vout
+5 V/div; CH2 INA253A1 500 mV/div = 5 A/div; CH3 VBUS 5 V/div; cursors Y1 = 16.0 / Y2 = 17.5 V.
+
+**Measured:** CH2: single **smooth unipolar lobe**, peak 1.4 div × 5 A/div = **6.9 A**, width
+≈ 2 div ≈ **100 µs** (smooth ~60 µs + small hashy tail), **∫I dt ≈ 0.25–0.4 mC**. CH1: V-dip
+1.15 div × 5 V/div = **5.75 V deep** (floor ≈ 10.3 V), ~100–150 µs, recovery parking on the
+17.5 V cursor (**+1.5 V park from a ~7 A/60 µs release ≈ 0.21 V/A** — new datapoint for the
+open linear-vs-slew question). CH3: **flat** — conclusive at this timebase/sample rate.
+
+**Conclusions:**
+- **Ring/net-zero hypothesis DEAD** (was a surviving candidate from review BOOST-R1-N3): any
+  ≥100 kHz oscillation resolves at 500 MSa/s; the lobe is smooth and one-sided.
+- Earlier width/charge (180 µs / 0.6–1.2 mC) were photo-exaggerated → **~60–100 µs / ~0.3 mC**.
+- **Source-side bookkeeping CLOSES:** local bank (~35–50 µF derated) × 5.75 V = 0.2–0.3 mC ≈
+  the lobe charge — the dip IS the local caps delivering the lobe.
+- **Destination-side violation stands** (bus absorbs ≤0.05 mC at generous bounds). Surviving
+  fork, exactly two: **(a) the RT1987 internally sank ~7 A from VIN for ~60 µs during the
+  aborted turn-on** (VIN→GND through the part — undocumented, ~10,000× its spec'd 650 µA IQ;
+  Richtek-reportable if confirmed), or **(b) common-cause artifact pair** — the boost briefly
+  reverse-conducts ~0.3 mC into VBT (a path bypassing the output shunt) causing the dip, while
+  the INA253 lobe is a common-mode transient artifact of the 5.75 V/50 µs step that
+  coincidentally mirrors it. (a) keeps the measurement honest but breaks the datasheet;
+  (b) keeps the datasheet but needs a coincidence.
+- **Discriminator (one run): VBT on the spare channel at this zoom.** (b) predicts a visible
+  upward VBT blip (~0.3 mC into the input bank) coincident with the dip; (a) predicts
+  flat-or-sag. Same acquisition also answers the deep-dip source-limiting question.
+
+#### Capture 7 + the 400 mV pre-charge test (2026-08-03; `7- dip 1 zoomed in-5Vrail yellow-Vbt blue-Ibat purple.jpg`) — dip-1 cut mechanism IDENTIFIED (VIN-UVLO abort, documented); bench pre-charge functionally IMPOSSIBLE at 5.6 nF CSS
+
+**New steady-state datapoint (operator):** boost disabled (VOUT = 8.4 V body-diode-held from
+VBT), `BT_BUS_ENABLE` on → **the bus rises to only ~400 mV**, never toward 8.4 V. The
+low-voltage pre-charge does not merely arrive late — it does not happen.
+
+**Capture 7** (50 µs/div, 500 MSa/s; CH1 **5 V logic rail** 2 V/div *(channel attribution
+corrected by operator 2026-08-03 — originally logged as VOUT; file renamed to match; VOUT was
+unmonitored this run and is taken to behave per capture 6)*; CH2 INA253A1 500 mV/div =
+5 A/div; CH3 **VBT** 2 V/div; cursors Y2 = 8.60 / Y1 = 3.40, ΔY = 5.20 V): coincident with
+the ~8 A dip-1 lobe, **VBT collapses 8.6 → 3.4 V for ~150–200 µs**, then recovers.
+**The 5 V logic rail sags ~1 V (to ~4.3–4.6 V) during the event** — consistent with the
+LM1084 (dropout ~1.3 V) fully in dropout at VBT = 3.4 V and the rail riding its output caps
+under the ~200 mA logic load; it snaps back on VBT recovery (the scope trigger was CH1
+falling through 4.16 V, i.e. the rail sag itself). Teensy 3.3 V regulation survives at
+4.3 V input, but with <1 V margin: **each dip-1 event brings the board-powered MCU within
+one deeper/longer event of a brownout — measured confirmation that the separate-logic-supply
+bench rule is load-bearing** (a mid-bring-up MCU reset is the motorboating precursor from
+the death history).
+
+**Conclusions:**
+- **Dip-1 cut mechanism IDENTIFIED — VIN-UVLO abort, a documented behaviour (§17.1), not an
+  undocumented internal path.** The turn-on inrush collapses the current-limited source; the
+  RT1987's VIN (≈ VBT − body drop ≈ 2.9 V at the floor) crosses its falling UVLO (~2.93 V) →
+  path disabled → source recovers → re-enable. **The ~9.5 ms "anomalous silent retry"
+  dissolves:** a UVLO cycle re-runs the enable sequence, and UVLO-recovery + tD_ON (8 ms typ)
+  matches the gap. *(Residual tension, UNCONFIRMED: D-MT-EN was observed conducting <1 ms
+  after first-VIN-application — apparently skipping tD_ON — while D-BT-EN re-runs it after a
+  UVLO cycle. First-application vs UVLO-cycle re-arm may differ; SS-pin probe would settle.)*
+- **The capture-6 fork RESOLVES: the current is real.** An INA253 CM artifact cannot collapse
+  a power supply, and the boost-reverse-conduction variant would push VBT *up*, not crash it
+  5.2 V. Both artifact readings are dead. The charge-destination puzzle (bus flat in capture
+  6) remains, narrowed to through-flow or abort-time discharge — next probes: **motor-node
+  voltage (V_rgn / State-98 `S`) during the disabled-boost retry loop**, and the bus at fine
+  vertical scale (per-retry sawtooth?).
+- **The Death-5 pre-charge sequencing has NEVER functioned on the bench, and cannot, at
+  CSS = 5.6 nF on a current-limited supply:** attempt → ~8 A inrush → source collapse → UVLO
+  abort → ~10 ms retry loop → bus parked at leakage-level mV. This supersedes the framing of
+  the timing bug as the sole obstacle (the 5 ms/tD_ON bug is real but not sufficient to fix).
+  On a stiff 2S pack (~50–100 mΩ → ~0.5–0.8 V sag at 8 A) the pre-charge is *expected* to
+  complete even at 5.6 nF — UNCONFIRMED, bench-verify before relying on it.
+- **Fix ordering consequence: the CSS bodge must PRECEDE the ADC-gated settle.** At 100 nF
+  the pre-charge attempt inrush is ~26 mA-class (0.8·40 µF·8.4 V / 10.4 ms) — no source on
+  this bench collapses at that draw, the UVLO-abort loop cannot start, and the pre-charge
+  completes on any supply → the gate then passes and is meaningful. With 5.6 nF still
+  fitted, the gate would (correctly) refuse every bench bring-up. Verification once CSS is
+  fitted is trivial: boost off, `BT_BUS_ENABLE` on → bus must climb to ~VBT − 0.5 V.
+- **Safety note:** each dip-1 event yanks VBT to ~3.4 V for ~150 µs — below the LM1084's
+  dropout for the board-powered logic. The standing separate-logic-supply bench rule is
+  load-bearing here, not optional.
+
+**INTERIM MITIGATION APPLIED (operator decision, 2026-07-31):** `LIMIT_V_BUS_MAX` raised from
+`V_BUS_NOMINAL + 1.0` (17.0 V) to **`+ 1.5` (17.5 V)** so marginal bring-ups proceed. This
+matches the Death-5 ladder (nominal 16 < FW 17.5 < OVP 19 < abs-max 20) and keeps firmware
+first in the protection order. Caveats: observed peaks reach "even 17.5 V", so occasional trips
+remain possible; and the limit change treats the symptom — the RT1987 SCP re-strike cycling
+(and its repetitive load-dumps on the boost) still happens on every `G`. **Root-fix candidates
+(open design decision):** slow the D-MT-EN soft-start so it can carry the 470 µF charge without
+SCP-tripping (larger CSS — hardware, one cap), stage the node charge in firmware, or a
+bring-up grace window on `FAULT_OV_BUS`. *(The original "park lasts ~50–400 ms, so a short
+persistence filter would NOT ride it out" is SUPERSEDED 2026-08-03, review BOOST-R1-N1:
+measured decay ~113 V/s → ~1.5 ms above 17.0 V → a 2–3-sample persistence filter IS viable.)*
+
+#### ⭐ FIX VALIDATION (partial) — Capture 8: first `G` with CSS = 100 nF (2026-08-03; `8-Vout yellow-Vmot blue-Ibat purple.jpg`)
+
+**Single variable changed:** CSS 5.6 nF → **100 nF** (operator; fitted on **`D-BT-EN` ONLY**,
+operator-confirmed 2026-08-03 — **`D-MT-EN` remains at 5.6 nF**). Same bench config otherwise
+(current-limited supply on VBT, State-98 `G`). No VESC attached this run; FC side unpowered.
+
+**Scope state:** 5 ms/div, delay 26.5 ms, 10 MSa/s, trigger Edge CH1 rising (DC); CH1 BT VOUT
+5 V/div 1×; CH2 INA253A1 500 mV/div 1× = 5 A/div (BW setting not recorded); CH3 VBUS 5 V/div 1×.
+Cursors X1 = −0.2 ms (VOUT ramp start) → X2 = 28.1 ms (bus ramp complete), ΔX = 28.3 ms;
+Y1 = 15.9 V (standalone regulation) / Y2 = 17.5 V.
+
+**Measured timeline** (t = 0 at boost enable / VOUT ramp):
+- t < 0: VOUT ≈ 8 V (VBT body-diode passthrough), VBUS ≈ 0.9 V, I ≈ 0.
+- t ≈ 0: VOUT ramps to **15.9 V** (Y1 cursor on it — the 16 V retune's standalone level, again).
+- t ≈ 18.4 ms: **one** conduction event — CH2 spike ≈ 1.4 div × 5 A/div ≈ **7 A**, width sub-ms
+  (photo-limited; ≲ 1 ms → ∫I dt ≈ 2–6 mC envelope); VOUT notches to ≈ 10 V and recovers with a
+  brief pop grazing ~17.5 V; VBUS steps fast 0.9 → ≈ 11 V (± 1 V trace-centre).
+- t ≈ 18.4 → 28.1 ms: VBUS **ramps linearly ~0.6 V/ms** to ≈ 16.2–16.4 V. No visible CH2 current —
+  implied 590 µF × 0.6 V/ms ≈ **0.35–0.4 A** (< 0.1 div at this scale, consistent).
+  *(superseded 2026-08-03: topology operator-confirmed — 470 µF is on V-MOT; the bus-side node
+  here was ~40 µF and the ramp current correspondingly ~24 mA, equally invisible at 5 A/div;
+  the C-derived current figures in this entry are assumption-dependent, see the capture-9
+  retraction note)*
+- t > 28.1 ms (~30 ms of record): both traces **flat**. VOUT trace-centre ≈ **17.0 ± 0.3 V**
+  (clearly ~+1 V above its own pre-event 15.9 V level, and now *below* the 17.5 cursor);
+  VBUS ≈ **16.2 ± 0.3 V**.
+
+**Validated:**
+- **Timing formula and single-shot sequence:** ΔX 28.3 ms vs predicted tD_ON (8 ms typ) +
+  tON(16 V, 100 nF) = 19.8 ms → **27.8 ms, a 1.8 % match**. Also evidence the RT1987 ran its full
+  enable sequence from the **boost-enable/VIN-step instant**, not from switch-EN 5 ms earlier
+  (that would predict 22.8 ms from trigger) — feeds the open tD_ON re-arm question; mechanism of
+  the restart UNCONFIRMED.
+- **The UVLO-abort retry loop is GONE:** one event, no dip-1/deep-dip pair, no ~9.5 ms retry
+  signature, run completes. (VBT was unmonitored this run — supply survival is inferred from the
+  absent retry structure, not measured.)
+- **The rail no longer parks at/above the limit:** post-event VOUT ≈ 17.0 V trace-centre vs
+  17.2–17.5 V pre-fix — under the interim 17.5 V `LIMIT_V_BUS_MAX`, and the ADC's node (VBUS)
+  ends ≈ 16.2 V, well clear. Expected outcome: no `FAULT_OV_BUS` — **CONFIRMED (operator,
+  2026-08-03): no `FAULT_OV_BUS` trip, > 4 consecutive clean `G`s — fix validated for the
+  no-VESC bench config.**
+
+**NOT as predicted (model revisions):**
+- **The ~26 mA gentle-connect prediction is DEAD.** The linear-gate-ramp inrush model
+  (0.8·C·V/tON) predicted tens of mA; observed is a **two-phase connect**: conduction onset
+  (~53 % into the gate ramp, where gate ≈ V_bus + Vth) dumps ~**2/3 of the node charge
+  (0.9 → 11 V ≈ 6 mC) at foldback-class ~7 A in ≲ 1 ms**, and only the top ~5 V rides the
+  gate-ramp at ~0.4 A. Reading (UNCONFIRMED): at onset the FET's current capability outruns the
+  bus, the foldback SCP (~7 A mid-ΔV, matching the curve) governs until the source catches the
+  gate, then the ramp governs. CSS therefore bounds the *duration/handoff point*, not the onset
+  current. Consequence: the pre-charge verification (boost off, `BT_BUS_ENABLE` on) may still
+  draw a foldback-class ~0.3 mC/40 µs surge at 8.4 V rather than 26 mA — the "no source collapses
+  at 26 mA" rationale is weakened, though the far smaller charge should still be benign. Verify
+  before relying on it.
+- **Anomalous post-connect steady state (top open item):** VOUT − VBUS ≈ **0.5–0.9 V forward
+  differential, flat for 30+ ms**. This fits *neither* standing model: a fully-enhanced RT1987
+  should drop mV, and a parked (unregulated) node should decay at ~113 V/s — neither trace
+  decays. VOUT sitting ~1 V above its standalone regulation point while *supplying* the bus node
+  suggests either a pixel-read error (± 0.3 V bounds don't cover 0.7 V), a not-fully-enhanced
+  diode regime, or a real regulation-point shift when bus-connected. **Settling measurement:
+  DMM VOUT and VBUS after one `G`** (10 s), before restoring the 17.0 V limit — if VOUT really
+  regulates ≈ 17.0 V bus-connected, a 17.0 blanket limit would re-trip on regulation, not parks.
+  **RESOLVED (operator DMM, 2026-08-03): VOUT regulates 15.9 V in steady state — no
+  regulation-point shift exists. The scope-window ~17.0 V was a slowly-decaying park (the
+  boost-local node behind a barely/non-conducting diode leaks only through dividers, ~V/s
+  class — cf. the same slow-park behavior in capture 9), and the 0.5–0.9 V differential was
+  that decaying transient, not a standing regime. The 17.0 V limit restoration is unblocked
+  from the regulation angle (still gated on review TODO N2, ADC node identity/calibration).**
+
+**Consequences for the plan:**
+- Fixed-settle firmware is now *measured* to need ≥ ~28–33 ms (review F1/N4's prediction
+  confirmed in-family) — the **ADC-gated settle is unblocked and remains the only correct
+  variant**; implement per the standing plan (CSS is fitted).
+- Death-5-class stress per `G` is reduced (sub-ms at ~7 A vs 1.8 ms at 6–8 A, park −0.4 V) but
+  **not eliminated** — the onset surge persists. If further reduction is wanted, the levers are
+  the ones already open: pre-charge sequencing that actually completes (raises the onset point),
+  C_C/C_OUT secondaries pending the COMP probe.
+
+#### Capture 9 — VESC attached: SCP-cut + 64 ms retry observed for the first time; ~18 V park on the unmonitored boost node (2026-08-03; `9-Vout yellow-Vmot blue-Ibat purple-VESC.jpg`)
+
+**Single variable changed vs capture 8: VESC attached at the motor output.** Config: `D-BT-EN`
+CSS = 100 nF, **`D-MT-EN` still 5.6 nF**, VBT from a bench DC supply at 8.4 V, FC side
+unpowered, State-98 `G`.
+
+**Scope state:** 10 ms/div, delay 57.0 ms, 2.5 MSa/s, trigger Edge CH1 rising (DC); CH1 BT VOUT
+5 V/div 1×; CH2 INA253A1 500 mV/div 1× = 5 A/div, DC coupling, **BW Limit Full** (menu captured
+on-screen); CH3 VBUS 5 V/div 1×. Y cursors 15.9/17.5 V; X cursors carried over from capture 8
+(not aligned to this run's events).
+
+**Measured timeline** (t = 0 at boost enable / VOUT ramp):
+- t < 0: VOUT ≈ 8 V (VBT passthrough), VBUS ≈ 1.4 V (± 0.5), I ≈ 0.
+- t ≈ 0: VOUT ramps to 15.9 V (on the Y1 cursor).
+- t ≈ 18 ms: **dip 1 — D-BT-EN conduction onset, same ~18 ms mark as capture 8, but this time
+  it ABORTS.** CH2 spike ≈ 2 div × 5 A/div ≈ **10 A** (operator live read; photo-consistent),
+  width unresolvable at this timebase (≲ 1 ms). VBUS steps only ~1.4 → **~3.9 V** and stops.
+  VOUT transient peaks ≈ **18 V** (operator live read; photo shows the excursion to
+  ≈ 17.9–18.1 V), then parks ≈ 17.2 V decaying at only ~3 V/s.
+- t ≈ 18 → 83 ms: dead gap, **~65 ms** (pixel read 64.5 ms): VBUS holds ~3.6–3.9 V, no current,
+  parked VOUT slowly decaying.
+- t ≈ 83 ms: **dip 2 — retry conducts and COMPLETES.** ~10 A lobe, ~1–2 ms wide
+  (∫I dt ≈ 10–20 mC envelope); VBUS ramps 4 → ~15 V in ~2–3 ms; VOUT notches and recovers to
+  ≈ 15.9–16.3 V with "acceptable overshoot" (operator). Bring-up succeeds; no OV trip reported.
+
+**Conclusions:**
+- **First clean observation of the RT1987 SCP-cut/retry fingerprint.** The ~65 ms gap ≈
+  tSCP_RST = 64 ms (typ). With the VESC attached, D-BT-EN's onset surge trips SCP and latches
+  off; the retry from the ~4 V pre-charged bus completes. (Contrast review BOOST-R1-F5:
+  capture-5's deep dip was NOT a cut — both readings stand; SCP cuts happen when the node is
+  big enough.)
+- **The cut-release park confirms the empirical release coefficient:** 15.9 V + 10 A ×
+  0.21 V/A = **18.0 V** — matching the observed ~18 V peak. Cut-release at full clamp current
+  is the worst-case park; taper-release (dip 2) parks small. Consistent across captures
+  5/6/8/9. (Still does not discriminate linear vs EA-slew — review F3 stays OPEN.)
+- **Protection gap (safety-relevant):** the 18 V excursion lives on the **boost-local node
+  behind the cut diode**; VBUS — the node `analogRead(BUS_VOLTAGE)` watches — sat at 4 V
+  throughout. **`FAULT_OV_BUS` cannot see this event class.** Firmware cannot protect the boost
+  from cut-release parks; only hardware can (CSS, bodge caps, possibly C_C). 18 V = TPS61288
+  recommended-VOUT max, 0.3 V under the OVP-min band — operator's "unacceptably high" is
+  correct.
+- **470 µF topology now LOAD-BEARING and IN QUESTION.** The corrected failure analysis
+  (2026-06-24) recorded the 470 µF on V-MOT *behind* `MOT_PWR_ENABLE` with VBUS carrying only
+  ~30–40 µF. The operator's staged-bring-up proposal (below) places it **on VBUS proper**.
+  Charge bookkeeping now leans the operator's way: (a) capture-8's onset step (0.9 → 11 V at
+  ~7 A, sub-ms) and ramp current (~0.35–0.4 A at 0.6 V/ms) both fit a **~510 µF bus-side
+  node**, not 40 µF (40 µF predicts a ~60 µs onset and ~24 mA ramp); (b) capture-9's dip-1
+  charge (10 A × ~150 µs ≈ 1.5 mC ≈ 510 µF × 2.5 V) balances with 470 µF on the bus, while
+  40 µF gives ~0.1 mC — a 10× deficit of the same N3 class; (c) D-MT-EN cannot have been
+  conducting pre-dip-1 (its VIN = VBUS ≈ 1.4 V < RT1987 UVLO 3.0–3.35 V rising), so the extra
+  capacitance was not the motor node. UNCONFIRMED — **settle by board/schematic inspection:
+  which side of D-MT-EN does the 470 µF electrolytic sit on?** Every staged-bring-up design
+  decision keys off this. **RESOLVED (operator confirmation, 2026-08-03): the 470 µF sits on
+  V-MOT downstream of `D-MT-EN` — the 2026-06-24 record stands; the bus-side lean above is
+  RETRACTED.** The retraction is a metrology lesson: the 'measurements' behind the lean were
+  circular — spike widths are unresolvable at 5–10 ms/div (a 60 µs and a 700 µs event render
+  identically as a thin vertical line), and the ramp current was inferred FROM an assumed node
+  capacitance (40 µF at ~24 mA fits the captures exactly as well as 510 µF at ~0.4 A).
+  Assumption-derived currents must not be cited as evidence of node size.
+- **Why capture 8 was clean and capture 9 cut:** the single variable is the VESC. If the
+  470 µF is bus-side, capture-8's D-MT connect saw a near-empty node (invisible — consistent
+  with no second event in capture 8) and capture-9's larger effective node behind/at the
+  connect pushed the onset past the SCP threshold. Exact path of the VESC capacitance into
+  dip 1 is UNCONFIRMED pending the topology check and a V-MOT-probed run. **SUPERSEDED by the
+  confirmed topology:** at dip-1 time BOTH captures had the same ~40 µF bus-side node (D-MT-EN
+  cannot conduct below its VIN UVLO), so capacitance does not explain the difference.
+  Reconciled reading (UNCONFIRMED): the cut/complete split tracks the onset peak against the
+  RT1987's low-VOUT foldback limit (8.5 A typ @ ≤5 V) — capture 9's ~10 A exceeded it
+  (start-up SCP cut), capture 8's ~7 A rode under it. Why the onset peak varied run-to-run
+  with identical bus-side C is itself open (supply state / gate-race variation). Also open:
+  capture-8's motor-node (470 µF) connect is not visible in-window — consistent with a warm
+  (still-charged from a prior `G`) motor node or a post-window D-MT retry completion.
+- **First in-system VESC capacitance bound (partially discharges review F2's 'unmeasured'
+  item):** dip-2's ∫I dt ≈ 10–20 mC over the ~15 V motor-node charge requires the motor node +
+  VESC to have charged through `D-BT-EN` during dip 2 (D-MT conducting by then) →
+  **C_VESC ≈ 0.2–0.9 mF** (wide envelope; proper measurement still wanted). Corollary puzzle:
+  with `MOT_PWR` HIGH and VBUS ≈ 3.9 V (above D-MT's UVLO) the bus HELD through the 65 ms gap
+  instead of collapsing into the discharged ~1 mF VESC node — consistent with D-MT itself
+  start-up-SCP-cutting each attempt (µs-scale, invisible at this timebase) and running its own
+  64 ms retry loop. UNCONFIRMED; a V-MOT-probed `G` settles it.
+
+**Operator proposal (2026-08-03, open design decision — staged bring-up):** remove
+`MOT_PWR_ENABLE` from the initial `G` phase; charge VBUS (and its 470 µF, if bus-resident) to
+regulation first, then enable `D-MT-EN` so the charged bus + boost source the VESC-node
+connect. Assessment (pre-implementation): direction endorsed — it is the recorded "stage the
+node charge in firmware" lever, and capture 9 accidentally demonstrated the principle (dip-2
+retry from a pre-charged bus completed with acceptable overshoot). Prerequisites before
+implementation: (1) ~~settle the 470 µF location~~ RESOLVED: V-MOT side (operator,
+2026-08-03) — so phase 1 charges only the ~40 µF bus (trivially benign) and **phase 2 is the
+full ~1–1.5 mF event (470 µF + VESC), sourced by the boost through `D-BT-EN` plus the 40 µF
+bus — the 470 µF cannot 'assist'; it is part of the phase-2 load.** The empirical precedent
+for phase 2 is exactly capture-9's dip 2 (same event class: charged bus + boost sourcing the
+big node at ~10 A for ~2 ms, completed, acceptable overshoot); (2) **fit 100 nF on `D-MT-EN` first** — at
+5.6 nF, closing MOT_PWR at full bus onto the discharged VESC node is the literal Death-5
+event; (3) the firmware inversion is real: `motPwrHotPlugUnsafe()` / `assertMotPwrEnable()`
+exist precisely to refuse what phase 2 would deliberately do, and CLAUDE.md §2's low-V
+pre-charge doctrine would be superseded — coordinated rework of the guard semantics,
+`doState0()` phases, State-98 `G`, and docs; (4) phase-2 first runs scope-armed — SCP
+cut/retry during phase 2 remains possible even at 100 nF (capture 9 proves 100 nF does not
+prevent cuts on a big node), and any cut-release park is invisible to firmware (see protection
+gap above). Operator-floated hardware alternatives, assessed: a manual VESC-wire switch is
+unnecessary (the staged sequence achieves the same isolation via D-MT in firmware); **bodging
+extra capacitance onto VBUS is recommended AGAINST** — it would convert the now-benign
+phase-1 connect back into a dip-1-class SCP-cut candidate with the ~18 V park, to provide an
+assist the boost already supplies. Remaining hardware prerequisite: 100 nF on `D-MT-EN` only.
+
+#### Operator correction (2026-08-03): CH3 in captures 5–9 was V-MOT, not VBUS — global reconciliation
+
+**The cyan/CH3 trace in captures 5, 6, 8, 9 (and the dual-channel capture) was probing V-MOT**
+— the motor node downstream of `D-MT-EN` (470 µF bulk; + VESC in capture 9) — **not VBUS.**
+(Capture 7's CH3 was VBT; unaffected.) VBUS proper — the ~40 µF node between the source
+switches and `D-MT-EN`, and the node `analogRead(BUS_VOLTAGE)` actually watches — **was never
+scoped in this entire investigation.** Files renamed `…Vbus blue…` → `…Vmot blue…`; per-entry
+claims below are superseded in place with pointers here. This is the third channel-attribution
+error of the investigation (after the current-scale slip and the capture-7 5 V-rail mixup):
+the metrology lesson is to verify the channel↔net mapping against the physical probe points at
+capture time, not from memory.
+
+**What the correction RESOLVES:**
+- **Review N3 (dip-1 charge-conservation violation, 14–300×): RESOLVED — probe-node
+  misattribution.** The ~0.3 mC that "vanished" went into the unmonitored 40 µF VBUS:
+  0.3 mC / 40 µF ≈ 7.5 V, charging the real bus toward ~8 V before the VIN-UVLO abort cut it.
+  Conservation closes exactly. Both fork candidates die — the undocumented-internal-sink
+  hypothesis (and with it the Richtek-reportable framing; the dip-1 clamp comparison must also
+  be re-read against the switch's true output node, VBUS proper at low V, where the 8.5 A typ
+  band applies and 7.2 A is within spec) and the CH2 common-mode-artifact hypothesis (already
+  killed by capture 7).
+- **Review N2 (OV-trip node discrepancy): the anomaly DISSOLVES.** "VBUS peaked 16.85 V, below
+  the then-armed 17.0 limit, while trips fired" — that 16.85 V was V-MOT. VBUS proper couples
+  to the parked VOUT through the conducting `D-BT-EN`, so **the ADC was reading the parks
+  correctly all along**; the historic ~80 % trip rate at the 17.0 limit is fully explained,
+  and the interim 17.5 limit's clean captures 8/9 are consistent (parks ≤ ~17.2 trace-centre).
+  The F10 calibration/raw-count TODO stands on its own merits; the node-identity mystery is
+  closed. Note the ADC node itself remains unscoped — one VBUS-probed `G` would close the loop
+  entirely.
+- **A unified SCP-cut rule now covers every capture: a cut occurs iff the current actually
+  rides the foldback clamp for > 250 µs (the documented continuous-clamp timer).** Capture-5
+  deep dip: 6.3 A < the ~8.5 A low-V clamp → never clamped → 1.77 ms conduction, no cut ✓.
+  Capture-8 onset: ~7 A < clamp → no cut ✓. Capture-9 dip-1: ~10 A at clamp for ≈ 250 µs
+  (≈ 1 mF VESC-node × 2.5 V ≈ 2.5 mC ≈ 10 A × 250 µs — bookkeeping closes) → timer cut +
+  64 ms retry ✓. The larger VESC node is what lets the current build to the clamp before ΔV
+  collapses; no run-to-run mystery remains. This SUPERSEDES the previous round's "onset peak
+  vs start-up SCP" speculation and dissolves the "bus held 3.9 V through the gap" corollary
+  puzzle (the 3.9 V node WAS the VESC node) and the "D-MT self-SCP retry loop" speculation.
+
+**Per-capture re-read:**
+- **Capture 5 / dual-channel:** "VBUS ramps monotonically 0.91 → 16.85 V DURING the deep dip"
+  → **V-MOT ramps**: the deep dip is the **motor-node (470 µF) charge through the full chain**
+  (boost → D-BT → VBUS → D-MT), with D-MT the completing element. F5's mechanism conclusion
+  (soft-start completing, taper release at ΔV→0, no cut) is intact; the charge arithmetic
+  sharpens to exact (∫ ≈ 7.4 mC ≈ 470 µF × 16 V).
+- **Capture 6:** "CH3 VBUS flat" → V-MOT flat (not yet connected); the destination-side
+  "violation" was an artifact of watching the wrong node — see N3 resolution above. The
+  two-way fork bullet is CLOSED.
+- **Capture 8:** the cyan step-then-ramp was the **combined ~510 µF bus + motor node**
+  charging through `D-BT-EN`'s 100 nF-gated ramp, with **D-MT transparent** — it conducts as
+  soon as VIN arrives, consistent with (and strengthening) capture-7's residual-tension
+  observation that tD_ON apparently runs from EN while VIN-starved. The earlier "~510 µF node"
+  inference was numerically CORRECT; only its bus-side topology conclusion was wrong (the
+  probe sat on the motor node). The "warm motor node / post-window retry" speculation dies —
+  the motor node visibly charged in-window.
+- **Capture 9:** dip-1 charged bus + (transparent D-MT) motor+VESC node; cut per the unified
+  rule above. Dip-2 and the C_VESC ≈ 0.2–0.9 mF bound survive unchanged (the probed node IS
+  the VESC node — attribution now clean).
+
+**What SURVIVES unchanged:** F5's taper-release mechanism; the 0.21 V/A empirical park
+coefficient and the ~18 V cut-release park; the CSS timing validation (28.3 ms); the SCP-cut +
+64 ms retry identification; capture-8's fix validation (no trip, > 4 clean `G`s); the VIN-UVLO
+dip-1 abort (capture 7) — whose source-side bookkeeping now closes too.
+
+**Protection gap, sharpened:** firmware **sees taper-parks** (VBUS tracks parked VOUT through
+conducting D-BT — those were our historic trips) but **is blind to cut-release parks** (D-BT
+open → the 18 V excursion lived only on the boost-local node). `FAULT_OV_BUS` is a real
+detector for the common case and blind to the worst case; the hardware fixes carry the worst
+case.
+
+**Staged-bring-up proposal: conclusions unchanged, rationale cleaner.** D-MT's transparency is
+precisely why the whole ~0.5–1.4 mF chain charges as one `D-BT` event today; holding `MOT_PWR`
+LOW in phase 1 genuinely shrinks phase 1 to the ~40 µF bus. Phase 2 (D-MT at 100 nF connecting
+470 µF + VESC from the charged bus + boost) now has TWO empirical precedents: capture-5's deep
+dip (completed at 6.3 A, no cut, park ≤ ~0.7 V — at 5.6 nF!) and capture-9's dip-2. Cut risk
+in phase 2 exists iff the connect current rides the clamp > 250 µs — scope-armed first runs
+stand.
+
 ---
+
+## Scope-metrology conventions (adopted 2026-08-03, review BOOST-R1-N6)
+
+Two transcription errors survived into this log during the OV investigation (a 3.9× current
+unit slip and an inverted VBUS reading). These rules exist so that class of error cannot recur:
+
+1. **Record scope currents/voltages as `<divisions> div × <scale> = <value>`**, never as a
+   bare engineering value. For current channels also record: probe attenuation, coupling,
+   **bandwidth-limit setting**, the zero-reference used (channel ground marker or baseline
+   cursor) and its agreement with the quiescent trace.
+2. **Quote trace-centre levels.** A cursor pair placed edge-to-edge across two ~0.2 V-thick
+   traces over-reads a step by ~0.3–0.4 V.
+3. **Report both a peak and an ∫I dt with an uncertainty envelope** for any current event;
+   for a chopped/rippled trace give the band centre and band top.
+4. **File the capture before building conclusions on it**; screen-read numbers are
+   provisional until re-read photometrically against on-screen references. Write the probed
+   net into the filename and file a one-line scope-state transcription with it.
+5. **Sections append in chronological order**, and any later correction to an earlier entry
+   gets an explicit "supersedes §X" pointer at the superseded text.
 
 ## Ruled OUT (with evidence)
 
@@ -229,8 +1079,11 @@ survived). This retroactively explains the source-dependence across all five dea
   to 61.2 kΩ (matched to FC) and the boost still died on bus-connect. Compensation `RC` is not the
   (sole) cause.
 - **0 V hot-plug / bring-up sequence** — REFUTED. Death 4 used `G`, which energizes the bus switches
-  first, so the boost soft-started into a bus pre-charged to ~7.7 V. Gentle, pre-charged bring-up
-  still kills it.
+  first, so the boost soft-started into a bus pre-charged to ~7.7 V **through the enabled
+  `D-BT-EN`** (mechanism name corrected 2026-08-03, review BOOST-R1-F6; measured in
+  `2-VBUS.jpg`). Gentle, pre-charged bring-up still kills it. **This refutation applies to the
+  pre-2026-07-08 sequencing only** — it is not a claim that the bus pre-charges under the
+  current `bringUpBus()` (it does not; see the 2026-08-01 dual-channel entry).
 - **The boost part itself / desolder damage** — REFUTED by Death 4. The part that died was the FC
   channel's *known-good* TPS61288, which had just regulated 17.5 V and driven the bus on the FC pad;
   it also regulated 17.5 V standalone on the BT pad after reflow. It died only when driving the bus
@@ -324,6 +1177,12 @@ value — it is the **PCB layout** (see ROOT CAUSE above: the BT output-cap hot 
 ## Next steps (fix validated — quantify margin, then escalate load)
 
 The caps are in, the boost survives `G` bring-ups (×4). Remaining work, in order:
+
+**0. Verify/redo the BT RD1 215 k bodge (2026-07-31 — blocks all `G` work).** The recurring
+`FAULT_OV_BUS` datapoint above says the BT boost still regulates at ~17.4 V, i.e. the 16 V retune
+never took effect on the BT FB network. Ohm RD1-BT unpowered (expect 215 k) or compare no-load
+VOUT FC vs BT; rework the bodge if it reads 237 k. File the 2026-07-31 scope captures into
+`references/scope_captures/` while at it.
 
 **1. High-bandwidth margin check (before heavy load testing).** The validation captures were 1×
 probe (~10 MHz) at 50 MSa/s — the estimated 100–200 MHz hot-loop ring is invisible in them.

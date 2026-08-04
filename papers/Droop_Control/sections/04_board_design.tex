@@ -1,0 +1,381 @@
+% =====================================================================
+% Section: Balancer Board Design and Droop Implementation Hardware
+% Mock / planning-stage prose. Numeric values from CLAUDE.md, the IO CSV,
+% and the BOM (rev 20260622); re-verify against the schematic PDF before
+% publishing, especially anything flagged TODO(calibrate) in firmware.
+% NOTE(orchestrator): bus nominal is quoted as 17.5 V below (rev-20260622
+% design value). The 2026-07-08 plan / 2026-07-11 retune moved nominal to
+% 16 V — reconcile with Section \ref{sec:droop} (which uses the 16 V-retune
+% constants, V_0 = 15.91 V) before submission. One bus voltage, everywhere.
+% =====================================================================
+
+\section{Balancer Board Design and Droop Implementation Hardware}
+\label{sec:board-design}
+
+% NOTE(author): Open with the system-level framing: this is a purpose-built
+% PCB (not an off-the-shelf BMS/charge-controller stack) because droop
+% power sharing between two dissimilar sources needs an analog injection
+% point that commercial boost modules don't expose. Argue that hardware
+% co-design is a contribution in itself, not just a testbed.
+
+\subsection{Overall Architecture}
+\label{sec:board-architecture}
+
+The balancer board (revision 20260622) implements a two-source,
+bidirectional power-pathing architecture for a hybrid fuel-cell/battery
+scale-model vehicle. Two independently regulated sources are combined onto
+a common DC bus: a hydrogen fuel cell and a 2S lithium battery pack, each
+boosted to the nominal bus voltage by an independent
+TPS61288 synchronous boost converter (FC channel and BT channel). The two
+boost outputs are not simply diode-ORed onto the bus; each is gated onto
+the bus through a dedicated RT1987 ideal-diode power-path switch, so the
+firmware -- not the analog hardware alone -- decides when each source is
+allowed to contribute current.
+
+% NOTE(author): Emphasize *why* ideal-diode switches instead of passive
+% Schottky ORing: (1) negligible forward drop vs. a discrete diode at
+% several amps, (2) true reverse-current blocking (no body-diode
+% passthrough) so a disabled channel cannot be back-fed, which matters
+% once regen braking is introduced, and (3) they are digitally
+% controllable, which is the enabling feature for the sequencing state
+% machine in Section~\ref{sec:power-pathing}.
+
+Downstream of the bus, power flows through a further ideal-diode switch to
+the VESC motor controller and the drive motor (\texttt{MOT\_PWR\_ENABLE}).
+The motor is also the vehicle's regenerative braking source: during
+deceleration the VESC can source current back onto the DC bus. This
+current is intentionally \emph{not} routed back through the boost
+converters -- doing so would require running a TPS61288 in reverse outside
+its intended operating envelope and risks the back-feed hazard discussed
+in Section~\ref{sec:power-pathing}. Instead, regenerated energy is routed
+through a dedicated \texttt{REGEN\_ENABLE} path to the on-board battery
+charger.
+
+Battery charging is handled by two cooperating circuits with very
+different bandwidths:
+
+\begin{itemize}
+  \item A \textbf{TL431/BSP170P shunt (chopper) clamp} is the
+    \emph{fast}, board-local protection element. It is a fixed analog
+    circuit (TL431 reference, BSP170P shunt MOSFET, dump resistor) with
+    \emph{no firmware involvement} -- it exists to absorb the leading edge
+    of a regen transient before any slower control loop can react, and to
+    bound bus overvoltage independent of MCU state.
+  \item A \textbf{Silvertel Ag105 MPPT module} is the \emph{secondary},
+    slow harvester. It receives either fuel-cell bus power
+    (\texttt{FC\_CHARGE\_ENABLE}) or regen power
+    (\texttt{REGEN\_ENABLE}~+~\texttt{MOT\_PWR\_ENABLE}) and trickles it
+    into the 2S pack under its own perturb-and-observe MPPT loop. Firmware
+    controls it coarsely, through an active-low \texttt{MPPT\_DISABLE}
+    GPIO and a two-register I\textsuperscript{2}C configuration write
+    (voltage/current profile selection), not through a fast current-command
+    interface.
+\end{itemize}
+
+% NOTE(author): This two-tier framing (fast passive clamp + slow active
+% MPPT) is a good place to cite classic references on hybrid energy
+% storage system power split (fast/slow filtering, e.g. supercapacitor
+% + battery literature) even though the board doesn't literally have a
+% supercapacitor -- the chopper is functionally the same kind of fast
+% element.
+
+A Teensy 4.1 (ARM Cortex-M7, \SI{600}{\mega\hertz}) is the sole controller
+on the board. It executes the droop power-share control loop, the motor
+current loop (talking to the VESC over UART), the sequencing state
+machine for the ideal-diode switches, and the balancer/charger
+supervisory logic, and exposes telemetry/command framing over UDP to a
+Raspberry Pi bridge. A BQ29200 provides hardware-independent
+overvoltage protection (OVP) on the individual battery cells; its
+balance-enable pin is hardwired inactive, and only its OVP disable
+(\texttt{CBAL\_DISABLE}) is under firmware control.
+
+\subsection{Droop Implementation Hardware Chain}
+\label{sec:droop-hardware}
+
+% NOTE(author): This is the core novelty subsection -- spend the most
+% care here. Argue explicitly that analog droop injection at the
+% converter feedback node, commanded digitally by the MCU, is what lets
+% a single control loop trade off "how much power-share authority do I
+% have" against "how fast can I move it" without touching the boost
+% converter's own fast voltage loop compensation.
+% NOTE(orchestrator): the derivation/values live in Section \ref{sec:droop};
+% keep this subsection qualitative (board-resource framing) to avoid
+% duplication.
+
+Each boost channel implements current-mode droop by perturbing its own
+voltage-feedback divider in proportion to measured output current, so
+that as a channel's current rises, its regulated bus voltage target sags
+slightly -- the classical mechanism by which multiple sources sharing one
+bus settle to a current split without a fast communication link between
+them. On this board, the droop \emph{coefficient} is not fixed in
+resistor value; it is a \emph{digitally commandable gain}, which is the
+key hardware enabler for a closed-loop, MCU-mediated power-share
+controller rather than a purely passive droop network. The signal chain
+per channel is:
+
+\begin{enumerate}
+  \item \textbf{Current sense -- INA253A1IPWR.} A bidirectional,
+    integrated-shunt current-sense amplifier sits at each boost channel's
+    output, converting channel current to a ground-referenced analog
+    voltage. The board specified the A3 variant (\SI{0.4}{\volt\per\ampere})
+    but the A1 variant (\SI{0.1}{\volt\per\ampere}) was fitted by
+    procurement error; firmware compensates with the corrected gain
+    ($K_\text{sns} = \SI{0.1}{\volt\per\ampere}$).
+  \item \textbf{Buffer/scale -- OPA197.} A rail-to-rail op-amp buffers and
+    scales the sense voltage before it is (a) read back by the Teensy ADC
+    for telemetry and share-error computation, and (b) used as the
+    injection driver downstream of the MDAC.
+  \item \textbf{Digitally-controlled attenuation -- AD5443 multiplying
+    DAC.} A 12-bit MDAC (SPI, one per channel, independent chip-selects
+    \texttt{CS\_MDAC\_FC} / \texttt{CS\_MDAC\_BT}) sits in the injection
+    path and acts as a firmware-programmable attenuation
+    element. This is what turns "droop coefficient" from a soldered
+    resistor value into a run-time variable the power-share controller
+    can command directly.
+  \item \textbf{Feedback injection network.} The MDAC output is summed
+    into each boost converter's own voltage-feedback divider through a
+    dedicated injection resistor, so the converter's regulation setpoint
+    is pulled down in proportion to (measured current) $\times$ (MDAC
+    code), closing the droop loop at the analog level while the MCU sets
+    only the gain.
+\end{enumerate}
+
+% NOTE(author): This is a good spot to state the board-level resource
+% cost of droop as a design requirement, to motivate why this couldn't be
+% bolted onto an off-the-shelf boost eval board: it needs (a) an isolated
+% current-sense tap at each converter's output *before* the ideal-diode
+% switch (so sensed current reflects only that channel's own contribution,
+% not bus-shared current), (b) two independent SPI chip-selects plus a
+% shared SPI bus (MOSI/MISO/SCK) reserved on the MCU, (c) two ADC channels
+% per source (voltage division check + current sense) reserved out of the
+% Teensy 4.1's analog pins, and (d) op-amp output headroom -- note that the
+% OPA197 on this board is bodged to run from the 5 V rail rather than
+% 3.3 V, which the droop-code-to-voltage mapping must account for.
+
+Because the injection network taps into the converter's own compensated
+feedback loop, the achievable droop range is bounded by the converter's
+loop dynamics, not just by the MDAC's 12-bit resolution -- this is the
+link between the board-level hardware described here and the plant model
+used in the controller synthesis (Section~\ref{sec:robust}). The MCU-side
+resource cost of this scheme is deliberately modest: one shared SPI bus,
+two chip selects, two ADC channels per source for sense readback, and no
+dedicated timer/PWM hardware -- the droop actuation is fully absorbed by
+the analog injection network, leaving the MCU free to run the share
+controller as a periodic software loop rather than a hardware peripheral.
+
+\subsection{Power-Pathing: Ideal-Diode Switches and Sequencing}
+\label{sec:power-pathing}
+
+% NOTE(author): This subsection should read as a safety-case argument,
+% not just a feature list -- the reviewer should come away understanding
+% that the switch topology exists *because* naive "always-on" boost
+% paralleling is unsafe with a bidirectional (regen) load, and that the
+% sequencing rules are a direct, derivable consequence of that hazard,
+% not arbitrary firmware policy.
+
+Six RT1987 ideal-diode power-path switches, each independently controlled
+by a Teensy GPIO, gate every power path on the board:
+
+\begin{center}
+\begin{tabular}{ll}
+\texttt{FC\_BUS\_ENABLE} & FC boost $\rightarrow$ bus \\
+\texttt{BT\_BUS\_ENABLE} & BT boost $\rightarrow$ bus \\
+\texttt{MOT\_PWR\_ENABLE} & bus $\rightarrow$ VESC/motor node \\
+\texttt{REGEN\_ENABLE} & regen node $\rightarrow$ charger \\
+\texttt{FC\_CHARGE\_ENABLE} & bus (FC) $\rightarrow$ charger \\
+\texttt{BT\_SEQUENCE\_ENABLE} & battery pack sequencing \\
+\end{tabular}
+\end{center}
+
+This is a deliberate departure from a simpler "both boosts always
+paralleled on the bus" design. Two hazards drive the sequencing
+constraints:
+
+\begin{itemize}
+  \item \textbf{Back-feed / disabled-converter stress.} A converter that
+    is disabled but still electrically connected to an energized bus can
+    see reverse current or overshoot stress it was not designed for.
+    Consequently, whenever the firmware brings a path up or down, the
+    switch ordering is chosen so a regen or charge path is never left
+    pointed at a converter that is not actively driving that node.
+  \item \textbf{Hot-plug onto a discharged bulk capacitance.} Closing an
+    ideal-diode switch onto a large discharged capacitor (the bus and,
+    behind \texttt{MOT\_PWR\_ENABLE}, a \SI{470}{\micro\farad} node plus
+    the VESC's own input capacitance) presents a near-short to the
+    source side for the duration of the switch's soft-start ramp. If that
+    ramp cannot supply the inrush within the switch's short-circuit
+    protection window, the switch enters a burst-retry limit cycle, and
+    the resulting repeated high-current transients have -- empirically,
+    on this board -- destroyed boost converters (Section~\ref{sec:bringup}).
+    This is why bus and motor-node bring-up is staged (switches first,
+    allowed to settle, \emph{then} boosts; the motor node is pre-charged
+    before \texttt{MOT\_PWR\_ENABLE} is closed) rather than done in one
+    step.
+\end{itemize}
+
+The explicit rule set (mirrored in the firmware's power-path sequencing
+guard) is: \texttt{BT\_SEQUENCE\_ENABLE} initializes off and is latched on
+once during bring-up; \texttt{FC\_CHARGE\_ENABLE} requires
+\texttt{BT\_BUS\_ENABLE} and \texttt{REGEN\_ENABLE} to both be low before
+it is asserted (charger input path and regen path are mutually
+exclusive); and \texttt{MOT\_PWR\_ENABLE} is only asserted onto a
+pre-charged, sufficiently energized bus.
+
+As a defense-in-depth measure independent of firmware correctness, every
+enable net carries a \SI{10}{\kilo\ohm} pull-down to ground, so that
+during MCU reset or any high-impedance boot window, every switch defaults
+open (off) rather than floating into an undefined, possibly-closed state.
+
+% NOTE(author): Good place to reference the incident log
+% (docs/boost-bringup-debug.md) qualitatively -- "bench bring-up
+% experience confirmed this hazard is not merely theoretical" -- the
+% condensed version is Section \ref{sec:bringup}.
+
+\subsection{Major Components}
+\label{sec:bom-table}
+
+% NOTE(author): Trim/reorder rows to taste; this table is meant to be a
+% quick-reference companion, not a full BOM reproduction.
+
+\begin{table}[H]
+\centering
+\caption{Major active components on the balancer board (rev.\ 20260622)
+and their role in the droop / power-pathing architecture.}
+\label{tab:major-ics}
+\begin{adjustwidth}{-\extralength}{0cm}
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Component} & \textbf{Part} & \textbf{Role} \\
+\midrule
+FC / BT boost regulator & TI TPS61288 & Per-source boost to the DC bus, hosts droop injection \\
+Ideal-diode power-path switch ($\times$6) & Richtek RT1987 & Digitally gated, reverse-blocking power path \\
+Current-sense amplifier & TI INA253A1IPWR & Per-channel forward-current sense ($K_\text{sns}=0.1$\,V/A) \\
+Droop MDAC & Analog Devices AD5443 & 12-bit, SPI-programmable droop-injection gain \\
+MDAC output buffer & TI OPA197 & Rail-to-rail output driving injection network \\
+Battery charger / MPPT & Silvertel Ag105 & Secondary harvester, I$^2$C config + \texttt{MPPT\_DISABLE} GPIO \\
+Fast regen clamp & TI TL431 + Infineon BSP170P & Passive, board-local overvoltage / regen shunt \\
+Cell OVP & TI BQ29200 & 2S cell overvoltage protection, \texttt{CBAL\_DISABLE} controlled \\
+MCU & NXP i.MX RT1062 (Teensy 4.1) & Droop, sequencing, motor-loop, and telemetry controller \\
+Motor controller & VESC (external) & UART motor current control, regen source \\
+\bottomrule
+\end{tabular}
+\end{adjustwidth}
+\end{table}
+
+\subsection{Figures}
+\label{sec:board-figures}
+
+% NOTE(author): All three figures below are placeholders. Each TODO
+% specifies exactly what the figure must communicate so a figure drawn
+% later (in draw.io / KiCad / a photo) can be dropped in without
+% re-deriving intent from scratch.
+
+\begin{figure}[H]
+  \centering
+  % TODO: Draw a system block diagram showing:
+  %   - Two source blocks: "Fuel Cell" and "2S Battery Pack"
+  %   - FC boost (TPS61288) and BT boost (TPS61288) blocks downstream of
+  %     each source, each annotated with its droop injection loop
+  %     (INA253 -> OPA197 -> AD5443 -> feedback divider, drawn as a small
+  %     closed loop back into the boost block, NOT as a separate top-level
+  %     block, to show it's a local analog loop the MCU only sets the gain
+  %     for)
+  %   - FC_BUS_ENABLE / BT_BUS_ENABLE ideal-diode switches between each
+  %     boost and a single "DC Bus" node
+  %   - MOT_PWR_ENABLE switch from DC Bus to a "VESC + Motor" block
+  %   - A regen arrow from "VESC + Motor" back toward the bus/regen node,
+  %     clearly distinguished (dashed or colored) from the forward power
+  %     flow arrows
+  %   - REGEN_ENABLE and FC_CHARGE_ENABLE switches both feeding into the
+  %     "Ag105 MPPT Charger" block, with a note that they are mutually
+  %     exclusive
+  %   - TL431/BSP170P "Fast Chopper Clamp" block shown directly on the
+  %     regen node, NOT gated by any switch, to visually distinguish it
+  %     from the firmware-controlled slow path
+  %   - BQ29200 block on the battery pack with CBAL_DISABLE line from MCU
+  %   - Single "Teensy 4.1" MCU block with lines fanning out to every
+  %     enable/sense signal, labeled with the Code Names from the IO map
+  \fbox{\parbox[c][5cm][c]{0.9\linewidth}{\centering PLACEHOLDER --- system
+  block diagram; see TODO comment in source for required content}}
+  \caption{Block diagram of the balancer board power and control
+    architecture. \emph{[Placeholder -- diagram to be produced from the
+    schematic.]}}
+  \label{fig:block-diagram}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  % TODO: Draw a power-path topology diagram (distinct from the block
+  % diagram above -- this one should look like a simplified schematic /
+  % single-line power diagram, not a signal-flow block diagram) showing:
+  %   - Every RT1987 ideal-diode switch drawn as its actual topology
+  %     symbol (or a diode-with-a-gate-control glyph), not a generic box
+  %   - The six enable signals labeled at their respective switches using
+  %     the exact Code Names
+  %   - The 470uF bulk capacitor drawn explicitly at the motor/regen node
+  %     to visually justify the hot-plug/pre-charge discussion
+  %   - Hazard call-outs: (1) "back-feed risk" arrow at any
+  %     switch-disabled-converter junction, (2) "inrush / hot-plug risk"
+  %     bracket over the motor-node capacitance
+  %   - A small inset legend distinguishing: always-open-by-default paths,
+  %     latch-on-once paths (BT_SEQUENCE_ENABLE), and mutually-exclusive
+  %     path pairs (FC_CHARGE_ENABLE vs. REGEN_ENABLE/BT_BUS_ENABLE)
+  \fbox{\parbox[c][5cm][c]{0.9\linewidth}{\centering PLACEHOLDER ---
+  power-path topology diagram; see TODO comment in source}}
+  \caption{Power-path topology showing the six RT1987 ideal-diode
+    switches, their sequencing constraints, and the hazard points that
+    motivate them. \emph{[Placeholder -- to be produced from the
+    schematic.]}}
+  \label{fig:power-path-topology}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  % TODO: Insert an annotated photo of the assembled board (rev 20260622)
+  % once bench bring-up is far enough along to have a clean, populated
+  % board shot (not mid-bodge). Annotate with call-out labels for:
+  %   - FC and BT boost regulator sections
+  %   - The RT1987 switch cluster
+  %   - The Ag105 charger module footprint
+  %   - The TL431/BSP170P chopper components
+  %   - The BQ29200 balancer
+  %   - The MDAC/OPA197 droop injection section
+  %   - The Teensy 4.1 header location
+  % If any bodge components (BT/FC output caps, RC-BT resistor swap,
+  % RD1 215k) are visible/relevant, annotate them and note in the caption
+  % that the photo reflects the as-bodged, not as-designed, board.
+  \fbox{\parbox[c][5cm][c]{0.9\linewidth}{\centering PLACEHOLDER ---
+  annotated board photo; see TODO comment in source}}
+  \caption{Assembled balancer board (rev.\ 20260622), annotated.
+    \emph{[Placeholder -- photo pending final bench assembly.]}}
+  \label{fig:board-photo}
+\end{figure}
+
+% =====================================================================
+% PLANNING NOTES
+%
+% 1. Numeric provenance: bus voltage, K_sns (0.1 V/A, INA253A1 variant
+%    mixup), and the six enable-pin names are taken verbatim from
+%    CLAUDE.md / the IO CSV / the BOM as of rev 20260622. Several firmware
+%    constants referenced implicitly here (LIMIT_V_BUS_MAX, divider
+%    scale factors, AG105_SETTLE_MS, BUS_SETTLE_MS) are still
+%    TODO(calibrate) in the firmware itself -- do NOT state specific
+%    values for those in the paper body until bench calibration lands.
+%
+% 2. BUS VOLTAGE INCONSISTENCY: this draft's original prose said 17.5 V;
+%    the 2026-07-11 retune moved nominal to ~16 V (V_0 = 15.91 V in
+%    Sec. \ref{sec:droop}). The explicit voltage has been removed from the
+%    prose here; pick one number project-wide before submission.
+%
+% 3. The "hardware bodge" history (BT compensator resistor swap, output-
+%    cap bodges, corrected failure analysis) is NOT in this section's
+%    prose — it lives in Section \ref{sec:bringup}.
+%
+% 4. Unit macros: this section uses siunitx (\SI) and booktabs — both are
+%    loaded via the main file preamble additions; verify they don't clash
+%    with mdpi.cls.
+%
+% 5. Cross-check the component table part numbers/roles against the full
+%    BOM CSV before submission (draft was built from BOM rows 1-102).
+% =====================================================================

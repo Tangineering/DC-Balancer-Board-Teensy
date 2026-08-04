@@ -1,0 +1,304 @@
+\relax 
+\providecommand*\new@tpo@label[2]{}
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\bibstyle{Definitions/mdpi}
+\citation{dragicevic2016part1,dragicevic2016part2,gao2018primary}
+\citation{guerrero2011hierarchical,tah2016adaptive}
+\citation{anand2013distributed,lu2014adaptive}
+\citation{nasirian2015cooperative,tucci2018plugandplay,kumar2020distributed}
+\def\@LN@column{1}
+\newmarginnote{note.1.1}{{1}{10945661sp}}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
+\newlabel{sec:intro}{{1}{1}{Introduction}{section.1}{}}
+\newlabel{sec:intro@cref}{{[section][1][]1}{[1][1][]1}{}{}{}}
+\citation{sedhom2019hinf,hosseinzadeh2024robust,mirjafari2022robust}
+\citation{dragicevic2016part1,gao2018primary}
+\citation{tah2016adaptive,lu2014adaptive,khorsandi2024adaptive}
+\citation{nasirian2015cooperative,anand2013distributed,kumar2020distributed}
+\citation{tucci2018plugandplay}
+\citation{luo1999classification,panov2008stability}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Related Work}{2}{section.2}\protected@file@percent }
+\newlabel{sec:related}{{2}{2}{Related Work}{section.2}{}}
+\newlabel{sec:related@cref}{{[section][2][]2}{[1][2][]2}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Droop Control and Its Refinements}{2}{subsection.2.1}\protected@file@percent }
+\citation{schonberger2006dbs,panda2021dbs}
+\citation{vermillion2011mpc,hu2021mpcreview,zhou2022mpc}
+\citation{thounthong2007control,garcia2016statemachine,li2022dcbusregulation}
+\citation{garcia2016statemachine,li2022dcbusregulation}
+\citation{sedhom2019hinf,hosseinzadeh2024robust,mirjafari2022robust}
+\citation{dragicevic2016part1,gao2018primary}
+\citation{tah2016adaptive,lu2014adaptive}
+\citation{nasirian2015cooperative,anand2013distributed,kumar2020distributed}
+\citation{luo1999classification}
+\citation{luo1999classification,panov2008stability}
+\citation{schonberger2006dbs,panda2021dbs}
+\citation{vermillion2011mpc,hu2021mpcreview,zhou2022mpc}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Alternatives to Droop}{3}{subsection.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Power Sharing in Fuel-Cell Hybrid Vehicles}{3}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Robust Control of Sharing Loops}{3}{subsection.2.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.5}Positioning}{3}{subsection.2.5}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Comparison of DC power-sharing methods against the criteria relevant to a low-cost hybrid powertrain. Ratings are qualitative: \textbullet \textbullet \textbullet {} = favourable, \textbullet {} = unfavourable.}}{4}{table.caption.1}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{tab:comparison}{{1}{4}{Comparison of DC power-sharing methods against the criteria relevant to a low-cost hybrid powertrain. Ratings are qualitative: \textbullet \textbullet \textbullet {} = favourable, \textbullet {} = unfavourable}{table.caption.1}{}}
+\newlabel{tab:comparison@cref}{{[table][1][]1}{[1][3][]4}{}{}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Droop Control Design and Gain Selection}{4}{section.3}\protected@file@percent }
+\newlabel{sec:droop}{{3}{4}{Droop Control Design and Gain Selection}{section.3}{}}
+\newlabel{sec:droop@cref}{{[section][3][]3}{[1][4][]4}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Design Ethos: Power Sharing Without a Custom Power Stage}{4}{subsection.3.1}\protected@file@percent }
+\newlabel{sec:droop:ethos}{{3.1}{4}{Design Ethos: Power Sharing Without a Custom Power Stage}{subsection.3.1}{}}
+\newlabel{sec:droop:ethos@cref}{{[subsection][1][3]3.1}{[1][4][]4}{}{}{}}
+\def\@LN@column{1}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Per-channel droop signal chain. The channel output current is sensed by the INA253A1 ($K_{sns}=0.1$\,V/A), scaled by the AD5443 MDAC (gain $g \in [0,4095/4096]$, written over SPI), amplified by the OPA197 ($A_v = 5.02$), and injected through $R_{inj}=53.6$\,k$\Omega $ into the TPS61288 feedback node ($R_{D1}=215$\,k$\Omega $, $R_{D2}=10$\,k$\Omega $). The converter is unmodified; the entire droop mechanism is an additive perturbation of its feedback divider.}}{5}{figure.caption.2}\protected@file@percent }
+\newlabel{fig:droop-chain}{{1}{5}{Per-channel droop signal chain. The channel output current is sensed by the INA253A1 ($K_{sns}=0.1$\,V/A), scaled by the AD5443 MDAC (gain $g \in [0,4095/4096]$, written over SPI), amplified by the OPA197 ($A_v = 5.02$), and injected through $R_{inj}=53.6$\,k$\Omega $ into the TPS61288 feedback node ($R_{D1}=215$\,k$\Omega $, $R_{D2}=10$\,k$\Omega $). The converter is unmodified; the entire droop mechanism is an additive perturbation of its feedback divider}{figure.caption.2}{}}
+\newlabel{fig:droop-chain@cref}{{[figure][1][]1}{[1][4][]5}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Droop Equations and the Actuator Mapping}{5}{subsection.3.2}\protected@file@percent }
+\newlabel{sec:droop:equations}{{3.2}{5}{Droop Equations and the Actuator Mapping}{subsection.3.2}{}}
+\newlabel{sec:droop:equations@cref}{{[subsection][2][3]3.2}{[1][5][]5}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.2.1}Effective output resistance}{5}{subsubsection.3.2.1}\protected@file@percent }
+\newlabel{eq:fb-kcl}{{1}{5}{Effective output resistance}{equation.1}{}}
+\newlabel{eq:fb-kcl@cref}{{[equation][1][]1}{[1][5][]5}{}{}{}}
+\newlabel{eq:thevenin}{{2}{5}{Effective output resistance}{equation.2}{}}
+\newlabel{eq:thevenin@cref}{{[equation][2][]2}{[1][5][]5}{}{}{}}
+\newlabel{eq:re}{{3}{5}{Effective output resistance}{equation.3}{}}
+\newlabel{eq:re@cref}{{[equation][3][]3}{[1][5][]5}{}{}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.2.2}Two sources in parallel}{6}{subsubsection.3.2.2}\protected@file@percent }
+\newlabel{eq:ratio-map}{{10}{6}{Two sources in parallel}{equation.10}{}}
+\newlabel{eq:ratio-map@cref}{{[equation][10][]10}{[1][6][]6}{}{}{}}
+\newlabel{eq:share}{{11}{6}{Two sources in parallel}{equation.11}{}}
+\newlabel{eq:share@cref}{{[equation][11][]11}{[1][6][]6}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.2.3}The actuator mapping --- and a design lesson}{6}{subsubsection.3.2.3}\protected@file@percent }
+\newlabel{sec:droop:bug}{{3.2.3}{6}{The actuator mapping --- and a design lesson}{subsubsection.3.2.3}{}}
+\newlabel{sec:droop:bug@cref}{{[subsubsection][3][3,2]3.2.3}{[1][6][]6}{}{}{}}
+\newlabel{eq:g-map}{{12}{6}{The actuator mapping --- and a design lesson}{equation.12}{}}
+\newlabel{eq:g-map@cref}{{[equation][12][]12}{[1][6][]6}{}{}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Gain Selection and the PCB Constraints It Imposed}{7}{subsection.3.3}\protected@file@percent }
+\newlabel{sec:droop:gains}{{3.3}{7}{Gain Selection and the PCB Constraints It Imposed}{subsection.3.3}{}}
+\newlabel{sec:droop:gains@cref}{{[subsection][3][3]3.3}{[1][6][]7}{}{}{}}
+\@writefile{toc}{\contentsline {paragraph}{\numberline {3.3.0.1}Constraint 1: MDAC saturation sets the ratio span.}{7}{paragraph.3.3.0.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Droop-scale bound versus commanded ratio span, at $R_{e,max}=2.014\ \Omega $. The middle row is the shipped design point.}}{7}{table.caption.3}\protected@file@percent }
+\newlabel{tab:kd-tradeoff}{{2}{7}{Droop-scale bound versus commanded ratio span, at $R_{e,max}=2.014\ \Omega $. The middle row is the shipped design point}{table.caption.3}{}}
+\newlabel{tab:kd-tradeoff@cref}{{[table][2][]2}{[1][7][]7}{}{}{}}
+\@writefile{toc}{\contentsline {paragraph}{\numberline {3.3.0.2}Constraint 2: the injection resistor sets $R_{e,max}$ \emph  {and} the bus setpoint simultaneously.}{7}{paragraph.3.3.0.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{\numberline {3.3.0.3}Constraint 3: sense gain versus op-amp headroom.}{7}{paragraph.3.3.0.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{\numberline {3.3.0.4}Constraint 4: the clamps are the anti-windup boundary.}{7}{paragraph.3.3.0.4}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Linearised SISO share-control loop. The controller commands the droop ratio $r$; the actuator mapping $g=k_d/(R_{e,max}r)$ and its clamp to $[0.15,0.85]$ form the saturation element. The plant reduces to a near-unity static gain in series with the converter lag $\tau _r$, the measurement prefilter $\tau _f$, and the dominant loop delay $T_d$. Setpoint mismatch $\Delta V_0$ enters as the additive output disturbance $d = \Delta V_0 r(1-r)/(k_d I_{tot})$; current-sense quantisation enters as output noise $n$ with variance scaling as $1/I_{tot}$.}}{8}{figure.caption.4}\protected@file@percent }
+\newlabel{fig:control-loop}{{2}{8}{Linearised SISO share-control loop. The controller commands the droop ratio $r$; the actuator mapping $g=k_d/(R_{e,max}r)$ and its clamp to $[0.15,0.85]$ form the saturation element. The plant reduces to a near-unity static gain in series with the converter lag $\tau _r$, the measurement prefilter $\tau _f$, and the dominant loop delay $T_d$. Setpoint mismatch $\Delta V_0$ enters as the additive output disturbance $d = \Delta V_0 r(1-r)/(k_d I_{tot})$; current-sense quantisation enters as output noise $n$ with variance scaling as $1/I_{tot}$}{figure.caption.4}{}}
+\newlabel{fig:control-loop@cref}{{[figure][2][]2}{[1][8][]8}{}{}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Robust Power-Share Controller Design}{8}{section.4}\protected@file@percent }
+\newlabel{sec:robust}{{4}{8}{Robust Power-Share Controller Design}{section.4}{}}
+\newlabel{sec:robust@cref}{{[section][4][]4}{[1][8][]8}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Plant Model of the Droop-Controlled Share Loop}{8}{subsection.4.1}\protected@file@percent }
+\newlabel{sec:share-plant}{{4.1}{8}{Plant Model of the Droop-Controlled Share Loop}{subsection.4.1}{}}
+\newlabel{sec:share-plant@cref}{{[subsection][1][4]4.1}{[1][8][]8}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.1}Per-channel programmable output resistance}{8}{subsubsection.4.1.1}\protected@file@percent }
+\newlabel{eq:Re-robust}{{13}{8}{Per-channel programmable output resistance}{equation.13}{}}
+\newlabel{eq:Re-robust@cref}{{[equation][13][]13}{[1][8][]8}{}{}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.2}Two channels in parallel: the static share law}{9}{subsubsection.4.1.2}\protected@file@percent }
+\newlabel{eq:share-static}{{14}{9}{Two channels in parallel: the static share law}{equation.14}{}}
+\newlabel{eq:share-static@cref}{{[equation][14][]14}{[1][9][]9}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.3}Dynamics and the design plant}{9}{subsubsection.4.1.3}\protected@file@percent }
+\newlabel{eq:design-plant}{{15}{9}{Dynamics and the design plant}{equation.15}{}}
+\newlabel{eq:design-plant@cref}{{[equation][15][]15}{[1][9][]9}{}{}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Design-plant parameters and uncertainty ranges.}}{9}{table.caption.5}\protected@file@percent }
+\newlabel{tab:plant-params}{{3}{9}{Design-plant parameters and uncertainty ranges}{table.caption.5}{}}
+\newlabel{tab:plant-params@cref}{{[table][3][]3}{[1][9][]9}{}{}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Why Robustness, and Not Tuning, Is the Issue}{10}{subsection.4.2}\protected@file@percent }
+\newlabel{sec:why-robust}{{4.2}{10}{Why Robustness, and Not Tuning, Is the Issue}{subsection.4.2}{}}
+\newlabel{sec:why-robust@cref}{{[subsection][2][4]4.2}{[1][10][]10}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}$\mathcal  {H}_\infty $ Synthesis and Youla-H Gain Adjustment}{10}{subsection.4.3}\protected@file@percent }
+\newlabel{sec:synthesis}{{4.3}{10}{\texorpdfstring {$\mathcal {H}_\infty $}{H-infinity} Synthesis and Youla-H Gain Adjustment}{subsection.4.3}{}}
+\newlabel{sec:synthesis@cref}{{[subsection][3][4]4.3}{[1][10][]10}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.1}Mixed-sensitivity problem and weight selection}{10}{subsubsection.4.3.1}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Synthesis weights and their design intent.}}{11}{table.caption.6}\protected@file@percent }
+\newlabel{tab:weights}{{4}{11}{Synthesis weights and their design intent}{table.caption.6}{}}
+\newlabel{tab:weights@cref}{{[table][4][]4}{[1][10][]11}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.2}Synthesis result and the $T(0)=1$ step}{11}{subsubsection.4.3.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Synthesis outcome (nominal plant).}}{11}{table.caption.7}\protected@file@percent }
+\newlabel{tab:synth-results}{{5}{11}{Synthesis outcome (nominal plant)}{table.caption.7}{}}
+\newlabel{tab:synth-results@cref}{{[table][5][]5}{[1][11][]11}{}{}{}}
+\def\@LN@column{1}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Achieved sensitivity $S$, complementary sensitivity $T$ and control sensitivity $Y$ of the Youla-H design, plotted against the inverse weights $1/W_p$, $1/W_d$, $1/W_u$. All three lie inside their templates, consistent with $\gamma _{opt}=\num {0.6532}$.}}{12}{figure.caption.8}\protected@file@percent }
+\newlabel{fig:loopshapes}{{3}{12}{Achieved sensitivity $S$, complementary sensitivity $T$ and control sensitivity $Y$ of the Youla-H design, plotted against the inverse weights $1/W_p$, $1/W_d$, $1/W_u$. All three lie inside their templates, consistent with $\gamma _{opt}=\num {0.6532}$}{figure.caption.8}{}}
+\newlabel{fig:loopshapes@cref}{{[figure][3][]3}{[1][11][]12}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.3}Order reduction, discretisation, and firmware realisation}{12}{subsubsection.4.3.3}\protected@file@percent }
+\newlabel{eq:ctrl-impl}{{16}{12}{Order reduction, discretisation, and firmware realisation}{equation.16}{}}
+\newlabel{eq:ctrl-impl@cref}{{[equation][16][]16}{[1][12][]12}{}{}{}}
+\def\@LN@column{1}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Controller frequency response at each stage of the realisation: the raw $\mathcal  {H}_\infty $ controller, the Youla-H adjusted controller, the reduced form, and the discretised implementation. The exact integrator introduced by the Youla-H step is visible as the diverging low-frequency branch that the raw $\mathcal  {H}_\infty $ controller lacks.}}{13}{figure.caption.9}\protected@file@percent }
+\newlabel{fig:ctrl-bode}{{4}{13}{Controller frequency response at each stage of the realisation: the raw $\mathcal {H}_\infty $ controller, the Youla-H adjusted controller, the reduced form, and the discretised implementation. The exact integrator introduced by the Youla-H step is visible as the diverging low-frequency branch that the raw $\mathcal {H}_\infty $ controller lacks}{figure.caption.9}{}}
+\newlabel{fig:ctrl-bode@cref}{{[figure][4][]4}{[1][12][]13}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}Validation}{13}{subsection.4.4}\protected@file@percent }
+\newlabel{sec:validation}{{4.4}{13}{Validation}{subsection.4.4}{}}
+\newlabel{sec:validation@cref}{{[subsection][4][4]4.4}{[1][13][]13}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.1}Corner sweeps and time-domain behaviour}{13}{subsubsection.4.4.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Validation summary. All entries generated by the synthesis pipeline.}}{13}{table.caption.10}\protected@file@percent }
+\newlabel{tab:validation}{{6}{13}{Validation summary. All entries generated by the synthesis pipeline}{table.caption.10}{}}
+\newlabel{tab:validation@cref}{{[table][6][]6}{[1][13][]13}{}{}{}}
+\def\@LN@column{1}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Discrete-time closed-loop response of the implemented controller: share step $0.5\to 0.7$ (left) and ramp reference at \SI {0.05}{\per \second } (right). The ramp panel is the practical expression of $T(0)=1$: the tracking error decays to \num {4.5e-4} instead of settling to a constant offset.}}{14}{figure.caption.11}\protected@file@percent }
+\newlabel{fig:timedomain}{{5}{14}{Discrete-time closed-loop response of the implemented controller: share step $0.5\to 0.7$ (left) and ramp reference at \SI {0.05}{\per \second } (right). The ramp panel is the practical expression of $T(0)=1$: the tracking error decays to \num {4.5e-4} instead of settling to a constant offset}{figure.caption.11}{}}
+\newlabel{fig:timedomain@cref}{{[figure][5][]5}{[1][13][]14}{}{}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Open-loop verification of the static share law, Eq.~\eqref  {eq:share-static}, from the independent numerical model: commanded ratio $r$, achieved share $\alpha $, and bus voltage. With matched channels ($\Delta V_0 = 0$) the share tracks $r$ instantaneously; the companion mismatch case ($\alpha = \num {0.48}$ at $r = \num {0.40}$) shows the open-loop offset that only integral action can remove.}}{14}{figure.caption.12}\protected@file@percent }
+\newlabel{fig:step-openloop}{{6}{14}{Open-loop verification of the static share law, Eq.~\eqref {eq:share-static}, from the independent numerical model: commanded ratio $r$, achieved share $\alpha $, and bus voltage. With matched channels ($\Delta V_0 = 0$) the share tracks $r$ instantaneously; the companion mismatch case ($\alpha = \num {0.48}$ at $r = \num {0.40}$) shows the open-loop offset that only integral action can remove}{figure.caption.12}{}}
+\newlabel{fig:step-openloop@cref}{{[figure][6][]6}{[1][14][]14}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.2}Full-order cross-validation}{14}{subsubsection.4.4.2}\protected@file@percent }
+\newlabel{sec:fullorder}{{4.4.2}{14}{Full-order cross-validation}{subsubsection.4.4.2}{}}
+\newlabel{sec:fullorder@cref}{{[subsubsection][2][4,4]4.4.2}{[1][14][]14}{}{}{}}
+\def\@LN@column{1}
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Full-order versus simplified plant, and closed-loop equivalence with the shipped controller.}}{15}{table.caption.13}\protected@file@percent }
+\newlabel{tab:fullorder}{{7}{15}{Full-order versus simplified plant, and closed-loop equivalence with the shipped controller}{table.caption.13}{}}
+\newlabel{tab:fullorder@cref}{{[table][7][]7}{[1][15][]15}{}{}{}}
+\def\@LN@column{1}
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Nominal open-loop frequency response of the 11-state full-order model overlaid on the two-state-plus-delay design plant. The traces are visually indistinguishable through the design band ($\omega \le \SI {1100}{\radian \per \second }$, max deviation \SI {3.86}{\percent }) and separate only beyond $\approx \SI {e4}{\radian \per \second }$, where the share-loop gain is far below unity.}}{16}{figure.caption.14}\protected@file@percent }
+\newlabel{fig:fo-bode}{{7}{16}{Nominal open-loop frequency response of the 11-state full-order model overlaid on the two-state-plus-delay design plant. The traces are visually indistinguishable through the design band ($\omega \le \SI {1100}{\radian \per \second }$, max deviation \SI {3.86}{\percent }) and separate only beyond $\approx \SI {e4}{\radian \per \second }$, where the share-loop gain is far below unity}{figure.caption.14}{}}
+\newlabel{fig:fo-bode@cref}{{[figure][7][]7}{[1][15][]16}{}{}{}}
+\def\@LN@column{1}
+\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces Envelope study: 432 full-order operating points against the simplified corner family. The corner family bounds the full-order family with margin, which is the condition for the synthesis uncertainty set to be valid.}}{17}{figure.caption.15}\protected@file@percent }
+\newlabel{fig:fo-envelope}{{8}{17}{Envelope study: 432 full-order operating points against the simplified corner family. The corner family bounds the full-order family with margin, which is the condition for the synthesis uncertainty set to be valid}{figure.caption.15}{}}
+\newlabel{fig:fo-envelope@cref}{{[figure][8][]8}{[1][16][]17}{}{}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {9}{\ignorespaces Closed-loop step response of the shipped controller on the full-order plant overlaid on the design prediction. Maximum divergence is \num {0.0008} share.}}{17}{figure.caption.16}\protected@file@percent }
+\newlabel{fig:fo-step}{{9}{17}{Closed-loop step response of the shipped controller on the full-order plant overlaid on the design prediction. Maximum divergence is \num {0.0008} share}{figure.caption.16}{}}
+\newlabel{fig:fo-step@cref}{{[figure][9][]9}{[1][17][]17}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.3}Independent toolchain cross-check}{17}{subsubsection.4.4.3}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces Independent toolbox cross-check of the shipped controller.}}{18}{table.caption.17}\protected@file@percent }
+\newlabel{tab:matlab}{{8}{18}{Independent toolbox cross-check of the shipped controller}{table.caption.17}{}}
+\newlabel{tab:matlab@cref}{{[table][8][]8}{[1][17][]18}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.5}Limitations}{18}{subsection.4.5}\protected@file@percent }
+\newlabel{sec:share-limitations}{{4.5}{18}{Limitations}{subsection.4.5}{}}
+\newlabel{sec:share-limitations@cref}{{[subsection][5][4]4.5}{[1][18][]18}{}{}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Balancer Board Design and Droop Implementation Hardware}{18}{section.5}\protected@file@percent }
+\newlabel{sec:board-design}{{5}{18}{Balancer Board Design and Droop Implementation Hardware}{section.5}{}}
+\newlabel{sec:board-design@cref}{{[section][5][]5}{[1][18][]18}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Overall Architecture}{18}{subsection.5.1}\protected@file@percent }
+\newlabel{sec:board-architecture}{{5.1}{18}{Overall Architecture}{subsection.5.1}{}}
+\newlabel{sec:board-architecture@cref}{{[subsection][1][5]5.1}{[1][18][]18}{}{}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Droop Implementation Hardware Chain}{19}{subsection.5.2}\protected@file@percent }
+\newlabel{sec:droop-hardware}{{5.2}{19}{Droop Implementation Hardware Chain}{subsection.5.2}{}}
+\newlabel{sec:droop-hardware@cref}{{[subsection][2][5]5.2}{[1][19][]19}{}{}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Power-Pathing: Ideal-Diode Switches and Sequencing}{20}{subsection.5.3}\protected@file@percent }
+\newlabel{sec:power-pathing}{{5.3}{20}{Power-Pathing: Ideal-Diode Switches and Sequencing}{subsection.5.3}{}}
+\newlabel{sec:power-pathing@cref}{{[subsection][3][5]5.3}{[1][20][]20}{}{}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Major Components}{21}{subsection.5.4}\protected@file@percent }
+\newlabel{sec:bom-table}{{5.4}{21}{Major Components}{subsection.5.4}{}}
+\newlabel{sec:bom-table@cref}{{[subsection][4][5]5.4}{[1][20][]21}{}{}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces Major active components on the balancer board (rev.\ 20260622) and their role in the droop / power-pathing architecture.}}{21}{table.caption.18}\protected@file@percent }
+\newlabel{tab:major-ics}{{9}{21}{Major active components on the balancer board (rev.\ 20260622) and their role in the droop / power-pathing architecture}{table.caption.18}{}}
+\newlabel{tab:major-ics@cref}{{[table][9][]9}{[1][20][]21}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}Figures}{21}{subsection.5.5}\protected@file@percent }
+\newlabel{sec:board-figures}{{5.5}{21}{Figures}{subsection.5.5}{}}
+\newlabel{sec:board-figures@cref}{{[subsection][5][5]5.5}{[1][21][]21}{}{}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {10}{\ignorespaces Block diagram of the balancer board power and control architecture. \emph  {[Placeholder -- diagram to be produced from the schematic.]}}}{21}{figure.caption.19}\protected@file@percent }
+\newlabel{fig:block-diagram}{{10}{21}{Block diagram of the balancer board power and control architecture. \emph {[Placeholder -- diagram to be produced from the schematic.]}}{figure.caption.19}{}}
+\newlabel{fig:block-diagram@cref}{{[figure][10][]10}{[1][21][]21}{}{}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {11}{\ignorespaces Power-path topology showing the six RT1987 ideal-diode switches, their sequencing constraints, and the hazard points that motivate them. \emph  {[Placeholder -- to be produced from the schematic.]}}}{21}{figure.caption.20}\protected@file@percent }
+\newlabel{fig:power-path-topology}{{11}{21}{Power-path topology showing the six RT1987 ideal-diode switches, their sequencing constraints, and the hazard points that motivate them. \emph {[Placeholder -- to be produced from the schematic.]}}{figure.caption.20}{}}
+\newlabel{fig:power-path-topology@cref}{{[figure][11][]11}{[1][21][]21}{}{}{}}
+\def\@LN@column{1}
+\@writefile{lof}{\contentsline {figure}{\numberline {12}{\ignorespaces Assembled balancer board (rev.\ 20260622), annotated. \emph  {[Placeholder -- photo pending final bench assembly.]}}}{22}{figure.caption.21}\protected@file@percent }
+\newlabel{fig:board-photo}{{12}{22}{Assembled balancer board (rev.\ 20260622), annotated. \emph {[Placeholder -- photo pending final bench assembly.]}}{figure.caption.21}{}}
+\newlabel{fig:board-photo@cref}{{[figure][12][]12}{[1][21][]22}{}{}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {6}Bring-Up Failures, Modeling-Driven Diagnosis, and Fixes}{22}{section.6}\protected@file@percent }
+\newlabel{sec:bringup}{{6}{22}{Bring-Up Failures, Modeling-Driven Diagnosis, and Fixes}{section.6}{}}
+\newlabel{sec:bringup@cref}{{[section][6][]6}{[1][22][]22}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Chronology of the Converter Failures}{22}{subsection.6.1}\protected@file@percent }
+\newlabel{sec:bringup:chronology}{{6.1}{22}{Chronology of the Converter Failures}{subsection.6.1}{}}
+\newlabel{sec:bringup:chronology@cref}{{[subsection][1][6]6.1}{[1][22][]22}{}{}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Converter failure events during bring-up. Deaths 1--4 are battery-channel; Death~5 is fuel-cell-channel.}}{22}{table.caption.22}\protected@file@percent }
+\newlabel{tab:deaths}{{10}{22}{Converter failure events during bring-up. Deaths 1--4 are battery-channel; Death~5 is fuel-cell-channel}{table.caption.22}{}}
+\newlabel{tab:deaths@cref}{{[table][10][]10}{[1][22][]22}{}{}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Parasitic-Inductance Extraction from Fabrication Gerbers}{23}{subsection.6.2}\protected@file@percent }
+\newlabel{sec:bringup:inductance}{{6.2}{23}{Parasitic-Inductance Extraction from Fabrication Gerbers}{subsection.6.2}{}}
+\newlabel{sec:bringup:inductance@cref}{{[subsection][2][6]6.2}{[1][23][]23}{}{}{}}
+\def\@LN@column{1}
+\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces Extracted output-loop inductance, converged mesh.}}{24}{table.caption.23}\protected@file@percent }
+\newlabel{tab:Lsweep}{{11}{24}{Extracted output-loop inductance, converged mesh}{table.caption.23}{}}
+\newlabel{tab:Lsweep@cref}{{[table][11][]11}{[1][24][]24}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Soft-Start and Protection Timing in the Ideal-Diode Path}{24}{subsection.6.3}\protected@file@percent }
+\newlabel{sec:bringup:softstart}{{6.3}{24}{Soft-Start and Protection Timing in the Ideal-Diode Path}{subsection.6.3}{}}
+\newlabel{sec:bringup:softstart@cref}{{[subsection][3][6]6.3}{[1][24][]24}{}{}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}Relationship to the Droop Architecture}{25}{subsection.6.4}\protected@file@percent }
+\newlabel{sec:bringup:droop-relevance}{{6.4}{25}{Relationship to the Droop Architecture}{subsection.6.4}{}}
+\newlabel{sec:bringup:droop-relevance@cref}{{[subsection][4][6]6.4}{[1][25][]25}{}{}{}}
+\def\@LN@column{1}
+\@writefile{lot}{\contentsline {table}{\numberline {12}{\ignorespaces Attribution of each bring-up hazard to architecture-specific versus generic causes.}}{26}{table.caption.24}\protected@file@percent }
+\newlabel{tab:droop-relevance}{{12}{26}{Attribution of each bring-up hazard to architecture-specific versus generic causes}{table.caption.24}{}}
+\newlabel{tab:droop-relevance@cref}{{[table][12][]12}{[1][25][]26}{}{}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.5}Figures}{27}{subsection.6.5}\protected@file@percent }
+\newlabel{sec:bringup:figures}{{6.5}{27}{Figures}{subsection.6.5}{}}
+\newlabel{sec:bringup:figures@cref}{{[subsection][5][6]6.5}{[1][26][]27}{}{}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {13}{\ignorespaces Battery-converter output during a validated bring-up with hot-loop capacitors fitted: body-diode pre-charge, one aborted soft-start attempt with automatic retry, then clean regulation. The retry is a benign source-sag undervoltage event, and is the same class of event that destroyed converters before the fix.}}{27}{figure.caption.25}\protected@file@percent }
+\newlabel{fig:scope-vout}{{13}{27}{Battery-converter output during a validated bring-up with hot-loop capacitors fitted: body-diode pre-charge, one aborted soft-start attempt with automatic retry, then clean regulation. The retry is a benign source-sag undervoltage event, and is the same class of event that destroyed converters before the fix}{figure.caption.25}{}}
+\newlabel{fig:scope-vout@cref}{{[figure][13][]13}{[1][26][]27}{}{}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {14}{\ignorespaces Three-channel capture through a bring-up: converter output, bus voltage, and current-sense output. The wide current hump is the downstream node charging through a soft start that completes; the subsequent output park is the peak-held overshoot.}}{27}{figure.caption.26}\protected@file@percent }
+\newlabel{fig:scope-triple}{{14}{27}{Three-channel capture through a bring-up: converter output, bus voltage, and current-sense output. The wide current hump is the downstream node charging through a soft start that completes; the subsequent output park is the peak-held overshoot}{figure.caption.26}{}}
+\newlabel{fig:scope-triple@cref}{{[figure][14][]14}{[1][27][]27}{}{}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {15}{\ignorespaces Switch-node envelope during soft start. The initial discrete pulses are normal pulse-frequency-modulation skipping, not instability. Note the bandwidth limitation discussed in Section~\ref {sec:bringup:inductance}.}}{27}{figure.caption.27}\protected@file@percent }
+\newlabel{fig:scope-sw}{{15}{27}{Switch-node envelope during soft start. The initial discrete pulses are normal pulse-frequency-modulation skipping, not instability. Note the bandwidth limitation discussed in Section~\ref {sec:bringup:inductance}}{figure.caption.27}{}}
+\newlabel{fig:scope-sw@cref}{{[figure][15][]15}{[1][27][]27}{}{}{}}
+\def\@LN@column{1}
+\@writefile{lof}{\contentsline {figure}{\numberline {16}{\ignorespaces Extracted loop inductance versus frequency for both converter output loops, with the mesh-convergence axis inset and the closed-form microstrip bound shown for reference.}}{28}{figure.caption.28}\protected@file@percent }
+\newlabel{fig:Lsweep}{{16}{28}{Extracted loop inductance versus frequency for both converter output loops, with the mesh-convergence axis inset and the closed-form microstrip bound shown for reference}{figure.caption.28}{}}
+\newlabel{fig:Lsweep@cref}{{[figure][16][]16}{[1][27][]28}{}{}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {17}{\ignorespaces Campaign timeline and fault tree. Upper band: chronological failure and intervention events. Lower band: hypothesis tree, with each branch annotated by the experiment that refuted or confirmed it.}}{28}{figure.caption.29}\protected@file@percent }
+\newlabel{fig:faulttree}{{17}{28}{Campaign timeline and fault tree. Upper band: chronological failure and intervention events. Lower band: hypothesis tree, with each branch annotated by the experiment that refuted or confirmed it}{figure.caption.29}{}}
+\newlabel{fig:faulttree@cref}{{[figure][17][]17}{[1][28][]28}{}{}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {7}Toward a Combined MIMO Power--Drive Controller}{28}{section.7}\protected@file@percent }
+\newlabel{sec:mimo}{{7}{28}{Toward a Combined MIMO Power--Drive Controller}{section.7}{}}
+\newlabel{sec:mimo@cref}{{[section][7][]7}{[1][28][]28}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}Planned Comparison}{28}{subsection.7.1}\protected@file@percent }
+\bibcite{dragicevic2016part1}{{1}{}{{}}{{}}}
+\bibcite{dragicevic2016part2}{{2}{}{{}}{{}}}
+\bibcite{gao2018primary}{{3}{}{{}}{{}}}
+\bibcite{guerrero2011hierarchical}{{4}{}{{}}{{}}}
+\bibcite{anand2013distributed}{{5}{}{{}}{{}}}
+\bibcite{lu2014adaptive}{{6}{}{{}}{{}}}
+\bibcite{tah2016adaptive}{{7}{}{{}}{{}}}
+\bibcite{nasirian2015cooperative}{{8}{}{{}}{{}}}
+\bibcite{tucci2018plugandplay}{{9}{}{{}}{{}}}
+\def\@LN@column{1}
+\@writefile{lof}{\contentsline {figure}{\numberline {18}{\ignorespaces Planned MIMO structure combining the power-share and drive loops. \textit  {(Placeholder --- analysis not yet performed.)}}}{29}{figure.caption.30}\protected@file@percent }
+\newlabel{fig:mimo_block}{{18}{29}{Planned MIMO structure combining the power-share and drive loops. \textit {(Placeholder --- analysis not yet performed.)}}{figure.caption.30}{}}
+\newlabel{fig:mimo_block@cref}{{[figure][18][]18}{[1][28][]29}{}{}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {8}Conclusions}{29}{section.8}\protected@file@percent }
+\newlabel{sec:conclusions}{{8}{29}{Conclusions}{section.8}{}}
+\newlabel{sec:conclusions@cref}{{[section][8][]8}{[1][29][]29}{}{}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {9}}{29}{section.9}\protected@file@percent }
+\bibcite{kumar2020distributed}{{10}{}{{}}{{}}}
+\bibcite{khorsandi2024adaptive}{{11}{}{{}}{{}}}
+\bibcite{luo1999classification}{{12}{}{{}}{{}}}
+\bibcite{panov2008stability}{{13}{}{{}}{{}}}
+\bibcite{schonberger2006dbs}{{14}{}{{}}{{}}}
+\bibcite{panda2021dbs}{{15}{}{{}}{{}}}
+\bibcite{vermillion2011mpc}{{16}{}{{}}{{}}}
+\bibcite{hu2021mpcreview}{{17}{}{{}}{{}}}
+\bibcite{zhou2022mpc}{{18}{}{{}}{{}}}
+\bibcite{thounthong2007control}{{19}{}{{}}{{}}}
+\bibcite{garcia2016statemachine}{{20}{}{{}}{{}}}
+\bibcite{li2022dcbusregulation}{{21}{}{{}}{{}}}
+\bibcite{sedhom2019hinf}{{22}{}{{}}{{}}}
+\bibcite{hosseinzadeh2024robust}{{23}{}{{}}{{}}}
+\bibcite{mirjafari2022robust}{{24}{}{{}}{{}}}
+\providecommand\NAT@force@numbers{}\NAT@force@numbers
+\def\@LN@column{1}
+\newlabel{LastPage}{{8}{30}{Conclusions}{page.30}{}}
+\gdef\lastpage@lastpage{30}
+\gdef\lastpage@lastpageHy{30}
+\gdef \@abspage@last{30}
