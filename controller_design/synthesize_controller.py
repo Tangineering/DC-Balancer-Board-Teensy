@@ -183,6 +183,13 @@ def to_sos(num, den):
     zs, ps = pair(list(z)), pair(list(p))
     while len(zs) < len(ps):
         zs.append(np.array([1.0]))
+    # pad SYMMETRICALLY: when the numerator factors into more sections than the
+    # denominator (e.g. 4 real zeros vs 2 real poles + 1 complex pair), zip()
+    # would silently drop a zero section and the cascade != the transfer
+    # function (bug found 2026-08-04 during the controller_design_MIMO Phase-3
+    # work; latent here since the shipped design is 3z/3p).
+    while len(ps) < len(zs):
+        ps.append(np.array([1.0]))
     sos = []
     for zi, pi in zip(zs, ps):
         b = np.concatenate([zi, np.zeros(3 - len(zi))]) if len(zi) < 3 else zi
@@ -190,6 +197,21 @@ def to_sos(num, den):
         sos.append((b, a))
     sos[0] = (sos[0][0]*k, sos[0][1])
     return sos
+
+# regression check for the zero-section-drop bug: 4 real zeros (-> 4 first-order
+# zero sections from pair()) vs 2 real poles + 1 complex pair (-> 3 sections).
+# Before the symmetric padding fix, the 4th zero section was silently dropped.
+_rt_num = np.poly([0.9, -0.8, 0.5, -0.4])
+_rt_den = np.poly([0.3, -0.2, 0.5 + 0.3j, 0.5 - 0.3j]).real
+_rt_sos = to_sos(_rt_num, _rt_den)
+_rt_z = np.exp(1j*np.linspace(0.05, 3.0, 60))
+_rt_cascade = np.ones_like(_rt_z)
+for _b, _a in _rt_sos:
+    _rt_cascade *= np.polyval(_b, _rt_z)/np.polyval(_a, _rt_z)
+gate("to_sos regression: more zero sections than pole sections",
+     np.allclose(_rt_cascade, np.polyval(_rt_num, _rt_z)/np.polyval(_rt_den, _rt_z),
+                 rtol=1e-9),
+     f"{len(_rt_sos)} sections")
 
 sos = to_sos(numz, denz)
 print(f"\ndiscrete remainder: order {len(denz)-1}, {len(sos)} SOS section(s)")

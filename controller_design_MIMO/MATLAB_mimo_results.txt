@@ -1,0 +1,36 @@
+MATLAB cross-validation of the MIMO H-inf / Youla-H controller
+generated: 04-Aug-2026 23:55:37
+
+A. design plant DC gain:
+   MATLAB  [ 1.000000 -0.027573;  0.000000  3.708521]
+   Python  [ 1.000000 -0.027573;  0.000000  3.708521]   max abs dev = 2.23e-09
+
+B. hinfsyn gamma = 1.0851
+   Python Riccati bisection = 0.8977 (optimistic: Y=0 makes rho(XY)<g^2
+   vacuous), Python a-posteriori shipped level = 1.6456.  Expect the
+   MATLAB gamma between the two; large deviation = investigate.
+   ||M - I||_2 = 9.631e-05 (Python: 1.75e-4), cond(Gs(0)Y_H(0)) = 1.0000
+   T(0) via Gs*Y_YH = [ 1.000000000  0.000000000; -0.000000000  1.000000000]  (target I)
+
+C. parsed C:\Life Ops\School\Thesis\DC-Balancer-Board-Teensy\controller_design_MIMO\mimo_controller_coeffs.h: NX = 7, Ts = 0.002 s
+   nominal loop: stable = 1
+   sigma(S_o) = 1.2623 (Python 1.2287), |S11| = 1.2623 (1.2114), |S22| = 1.2457 (1.2285)
+   ||T_alpha<-vref|| = 1.109e-02 (Python 1.314e-03)
+   T(0) = [ 1.000000000 -0.000000000; -0.000000000  1.000000000]  (target I)
+   a-posteriori ||Tzw||inf (shipped, continuous) = 1.6457 (Python 1.6456)
+
+D. corner battery: 576/576 stable; worst sigma(S_o) = 1.9443 at dV0=-0.4 Td=2.0ms tr=300us tf=0.8ms Kv=2.0 pf=2.0 tv=5.0ms tdv=4ms
+   (Python Tier-2 worst over the FULL OP grid was 1.8754; this sweep is the
+   nominal OP only, so expect a value at or below that.)
+
+E. share excursion: dV0=+0.4: 0.00636 (Python 0.00667), dV0=-0.4: 0.01900 (Python 0.01935)
+   peak |i_cmd|:    dV0=+0.4: 1.179 A (Python 1.179), dV0=-0.4: 1.176 A (Python 1.176)
+
+  [PASS] plant DC gain
+  [PASS] all corners stable
+  [PASS] T(0)=I
+  [PASS] nominal sigma(S_o) 5%
+  [PASS] a-posteriori gamma 5%
+  [PASS] transient excursions 25%
+
+VERDICT: PASS — MATLAB independently confirms the Python MIMO design.

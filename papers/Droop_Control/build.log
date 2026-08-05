@@ -305,47 +305,35 @@ slations-basic-dictionary-english.trsl)
 (C:\Users\ricky\AppData\Local\Programs\MiKTeX\tex/latex/microtype\mt-eur.cfg)
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 72.
+(hyperref)                removing `math shift' on input line 66.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `subscript' on input line 72.
+(hyperref)                removing `subscript' on input line 66.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\infty' on input line 72.
+(hyperref)                removing `\infty' on input line 66.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 72.
+(hyperref)                removing `math shift' on input line 66.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 72.
+(hyperref)                removing `math shift' on input line 66.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\gamma' on input line 72.
+(hyperref)                removing `subscript' on input line 66.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 72.
+(hyperref)                removing `\infty' on input line 66.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 72.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `subscript' on input line 72.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\infty' on input line 72.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 72.
+(hyperref)                removing `math shift' on input line 66.
 
 (sections/01_introduction.tex
 
@@ -689,5 +677,5 @@ eX/fonts/type1/public/amsfonts/symbols/msam10.pfb><C:/Users/ricky/AppData/Local
 /Programs/MiKTeX/fonts/type1/urw/palatino/uplb8a.pfb><C:/Users/ricky/AppData/Lo
 cal/Programs/MiKTeX/fonts/type1/urw/palatino/uplr8a.pfb><C:/Users/ricky/AppData
 /Local/Programs/MiKTeX/fonts/type1/urw/palatino/uplri8a.pfb>
-Output written on droop_control.pdf (30 pages, 1070345 bytes).
+Output written on droop_control.pdf (30 pages, 1069167 bytes).
 Transcript written on droop_control.log.

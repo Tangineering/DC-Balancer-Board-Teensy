@@ -1,0 +1,428 @@
+*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=*** SUPERSEDED (2026-08-04) ***
+This log validates the +-5 A (MOTOR_I_CMD_MAX = 5 A) MIMO controller and was
+renamed from MATLAB_mimo_results.txt when the design was recalibrated to +-20 A
+(Du = diag(0.35, 20.0)).  It is KEPT for traceability, not as a current result.
+Re-run mimo_crosscheck.m to produce a current MATLAB_mimo_results.txt.
+=
+
+MATLAB cross-validation of the MIMO H-inf / Youla-H controller
+generated: 04-Aug-2026 16:38:07
+
+A. design plant DC gain:
+   MATLAB  [ 1.000000 -0.027573;  0.000000  3.708521]
+   Python  [ 1.000000 -0.027573;  0.000000  3.708521]   max abs dev = 2.23e-09
+
+B. hinfsyn gamma = 1.8276
+   Python Riccati bisection = 1.1917 (optimistic: Y=0 makes rho(XY)<g^2
+   vacuous), Python a-posteriori shipped level = 1.8168.  Expect the
+   MATLAB gamma between the two; large deviation = investigate.
+   ||M - I||_2 = 1.758e-04 (Python: 1.75e-4), cond(Gs(0)Y_H(0)) = 1.0001
+   T(0) via Gs*Y_YH = [ 1.000000000 -0.000000000; -0.000000000  1.000000000]  (target I)
+
+C. parsed C:\Life Ops\School\Thesis\DC-Balancer-Board-Teensy\controller_design_MIMO\mimo_controller_coeffs.h: NX = 5, Ts = 0.002 s
+   nominal loop: stable = 1
+   sigma(S_o) = 1.2596 (Python 1.2095), |S11| = 1.2595 (1.2094), |S22| = 1.1218 (1.1079)
+   ||T_alpha<-vref|| = 9.185e-03 (Python 8.776e-04)
+   T(0) = [ 1.000000000 -0.000000000;  0.000000000  1.000000000]  (target I)
+   a-posteriori ||Tzw||inf (shipped, continuous) = 1.8175 (Python 1.8168)
+
+D. corner battery: 576/576 stable; worst sigma(S_o) = 2.0345 at dV0=-0.4 Td=2.0ms tr=300us tf=0.8ms Kv=2.0 pf=2.0 tv=0.5ms tdv=4ms
+   (Python Tier-2 worst over the FULL OP grid was 1.9153; this sweep is the
+   nominal OP only, so expect a value at or below that.)
+
+E. share excursion: dV0=+0.4: 0.01023 (Python 0.01062), dV0=-0.4: 0.03037 (Python 0.03096)
+   peak |i_cmd|:    dV0=+0.4: 1.326 A (Python 1.326), dV0=-0.4: 1.317 A (Python 1.317)
+
+  [PASS] plant DC gain
+  [PASS] all corners stable
+  [PASS] T(0)=I
+  [PASS] nominal sigma(S_o) 5%
+  [PASS] a-posteriori gamma 5%
+  [PASS] transient excursions 25%
+
+VERDICT: PASS — MATLAB independently confirms the Python MIMO design.

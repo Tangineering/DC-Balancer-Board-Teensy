@@ -1,0 +1,172 @@
+MIMO H-inf + Youla-H synthesis metrics (generated)
+==============================================================
+
+[design point]
+operating point      = I_tot0 2.0 A, r0 0.5, dV0 0.2 V, v0 2.0 m/s
+plant                = 8 states, 2x2, strictly proper
+De                   = diag(0.05, 0.5)
+Du                   = diag(0.35, 20.0)
+cond(Gs(0))          = 21.3090
+Gs(0)[0,1] (coupling)= -11.029067
+
+[synthesis]
+gamma_riccati        = 0.89769   (DGKF bisection; OPTIMISTIC in MIMO, see synth_refined)
+gamma_achieved       = 1.64563   (a-posteriori refined, the honest level)
+||Tzw||inf           = 1.64573
+isolated SISO gammas = share 0.57596, drive 1.64295
+plan's 2nd-order drive weight would give gamma_drive = 1.21637 (structurally unmeetable, see weight iterations)
+weight iterations:
+    it.0  share: shipped set (lf 1e4@40, Wd 0.5/250/40, Wu 0.3/600/20)
+        gamma_share = 0.5760  -- kept unchanged
+    it.1  drive: plan/papers set (2nd-order lf 1e4@24, Wd 0.5/60/40, Wu 0.3/300/20)
+        gamma_drive = 1.2164  -- DOMINATES; 2nd-order S weight demands s^2 roll-in of S below its corner, but only ONE integrator is available in the loop below the drive plant pole (0.122 rad/s). Gain sweeps (Wp DC 1e4..4, Wd break 60..250, Wu DC 0.3..0.04) never brought it below 1.3 -- a structural, not a gain, problem.
+    it.2  drive: first-order strictly-proper Wp at the SAME 24 rad/s, Wd/Wu left at the plan's values
+        gamma_drive = 0.9451  -- ONLY the weight FAMILY changed; the papers' bandwidth and the plan's Wd/Wu are kept.  Tier-2 worst sigma(S_o) = 2.17 with this set: FAILS the < 2.0 gate at the (K_v = 2, pole_factor = 0.5, tau_v = 5 ms, Td_v = 4 ms) drive corner.
+    it.3a drive: Wu DC 0.3 -> 0.15, break 300 -> 600 rad/s -- TRIED AND REJECTED
+        gamma_drive = 0.8349 (BETTER gamma) but WORSE robustness: nominal sigma(S_o) 1.23 -> 1.92 and Tier-2 worst 2.17 -> 2.41.  The extra nominal bandwidth (16 -> 22 rad/s) is wasted anyway -- the motor-current clamp rate-limits the channel (see §8.4).  Rejected: for this plant a LOWER gamma buys a MORE aggressive controller, and the binding constraint is corner robustness, not nominal performance.
+    it.3b drive: Wu DC 0.3 -> 0.5, break 300 -> 200 rad/s (FINAL)
+        gamma_drive = 1.6429 (worse gamma, deliberately).  The drive channel's STRUCTURAL gain uncertainty is K_v in {0.5, 1, 2} times a pole_factor of {0.5, 2}, i.e. a ~4x gain spread -- far wider than the share channel's K in [0.55, 1.45].  A heavier control-effort penalty is the correct way to buy the matching robustness margin.  The break moves 300 -> 200 rad/s because the drive transport delay budget is Td_v in [1, 4] ms (250-1000 rad/s): controller effort must be rolled off BELOW the worst-case delay's phase crossover, not at it.  Result: Tier-2 worst sigma(S_o) 2.08 -> 1.92 (gate passes), waived K-out-of-envelope worst 13.9 -> 10.8, at the cost of ~60 ms of small-signal drive settling and gamma 1.49 -> 1.82.  NOTE: an earlier pass appeared to pass this gate at Wu DC 0.4 only because the balanced truncation was selected at a loose 2e-2 tolerance and the 3-state truncation error happened to DAMP the worst corner.  The selection tolerance was tightened to 1e-2 so the shipped controller is a faithful reduction and the corner result is a property of the DESIGN, not of a lucky truncation.
+    it.5  drive: Wu break 200 -> 18 rad/s (FINAL, +-20 A clamp round 2026-08-04)
+        gamma_drive = 1.6429.  MOTOR_I_CMD_MAX 5 -> 20 A rescales Du[1,1] 5 -> 20, so the SAME Wu penalizes 4x more physical current: the effort penalty silently weakened 4x.  Re-running the unchanged weight set gave gamma_MIMO 1.0821 (vs 1.8168 at +-5 A) but 61 of 4992 Tier-1 corners UNSTABLE, Tier-2 worst sigma(S_o) 2.97, and an INFINITE (unstable) K-out-of-envelope waived corner -- i.e. the synthesis spent the whole 4x on aggression.  The effort penalty therefore had to be restored.  An EXACT restoration (Wu_new = 4*Wu_old) is NOT representable in the makeweight(dc, wc, hf) family -- it requires dc = 2.0 > 1, which makes the weight's a-coefficient imaginary (hinf_mimo.makeweight: a = wc*sqrt((1-hf^2)/(dc^2-1))) and the Riccati solve NaNs.  (It is also worth stating plainly: the exact 4x weight would reproduce the +-5 A controller EXACTLY, since scaling Du and Wu by the same factor is a similarity of the scaled problem.)  The break frequency is the available knob.  Sweep actually run (dc, break) -> (gamma_MIMO, Tier-1 unstable, Tier-2 worst):  (0.5,200) -> (1.08, 61, 2.97) FAIL;  (0.5,100) -> (1.16, 0, 2.74) FAIL;  (0.5,50) -> (1.30, 0, 2.37) FAIL;  (0.9,50) -> (1.32, 0, 2.44) FAIL;  (0.9,25) -> (1.42, 0, 2.19) FAIL;  (0.5,25) -> (1.51, 0, 2.01) FAIL;  (0.95,15) -> (1.48, 0, 2.11) FAIL;  (0.9,18) -> (1.50, 0, 2.06) FAIL;  (0.9,14) -> (1.56, 0, 1.97) pass;  (0.9,12) -> (1.61, 0, 1.91) pass;  (0.8,15) -> (1.62, 0, 1.90) pass;  (0.5,18) -> (1.65, 0, 1.88) pass  <- CHOSEN;  (0.6,16) -> (1.67, 0, 1.85) pass;  (0.5,12) -> (1.83, 0, 1.74) pass.  (0.5, 18) is the setting that clears the < 2.0 Tier-2 gate with ~6 % margin while moving only ONE knob (the DC gain stays at its it.3b value of 0.5) and keeping the break as close as possible to the Wp corner (24 rad/s) -- pushing it further down buys Tier-2 margin but puts Wu and Wp in direct contention over the same decade.  Net vs the +-5 A design (gamma 1.8168, Tier-2 worst 1.9153, waived K-out-of-envelope worst 10.8): see it.4 and the corner tables below.
+    it.4  MIMO synthesis with the final block-diagonal set
+        gamma_achieved = 1.6456 (vs SISO drive 1.6429, SISO share 0.5760)
+H-inf controller ord = 14
+||Y_ARE||max         = 1.045e-14  (D21 = I degeneracy cross-check)
+
+[Youla-H DC correction]
+cond(Gs(0) Y_H(0))   = 1.0001e+00
+||M - I||_2          = 1.5681e-04
+M                    = [[1.000071, 0.000000], [-0.000000, 1.000157]]
+KI                   = [[7.992467, 0.164550], [0.000078, 0.103186]]
+rank(KI) / cond(KI)  = 2 / 7.7491e+01
+||T(0) - I||_max     = 6.533e-10
+
+[reduction]
+Gc_YH raw order      = 30
+remainder order      = 28 -> 7
+total controller ord = 9 (2 integrator + 7)
+HSV                  = [0.45055 0.04112 0.01808 0.00592 0.00462 0.00092 0.00063 0.00013 0.00012 0.00003]
+reduced-vs-full dev  = 1.8843e-03 (rel sigma, w in [1e-1, 1e4])
+
+[controller structure]
+|K11|max / |K12|max  = 79.92467 / 1.71671  (ratio 0.02148)
+|K22|max / |K21|max  = 1.33454 / 9.928e-04  (ratio 7.439e-04)
+
+[nominal performance]
+||S_o||inf nominal   = 1.2287
+||T_o||inf nominal   = 1.0001
+share step 2% settle = 44 ms   (0.05 share, final 0.050000)
+drive step 2% settle = 150 ms   (0.05 m/s small-signal, final 0.050000, peak 1.18 A)
+drive 0.5 m/s step   = 150 ms   (large-signal; NOT actuator-limited at +-20 A -- peak is inside the clamp, cf. 15750 ms at +-5 A, final 0.500000, peak 11.79 A)
+drive accel limit    = 9.043 m/s^2 (1.3338 N/A)
+drive->share excurs. = 0.00028 (small) / 0.00277 (0.5 m/s slew)
+
+[corner batteries]
+Tier-1 feasible      = 4992 corners (768 infeasible skipped)
+Tier-1 unstable      = 0
+Tier-1 worst Re(p)   = -1.1999e-01
+Tier-2 corners       = 208 (168 gated, 40 waived)
+Tier-2 worst sigma(S_o) [gated]  = 1.8754 at I_tot0 2.0, r0 0.3, dV0 -0.4, Td 0.002, taur 0.0003, tauf 0.0008, K_v 2.0, pf 0.5
+Tier-2 FC-cruise    worst sigma(S_o) = 1.7471  [stability-only waiver]
+Tier-2 K-out-of-envelope worst sigma(S_o) = 4.9334  [stability-only waiver]
+Tier-2 worst incl. waived        = 4.9334
+
+[cross-validation vs 15-state truth model]
+stable at nominal    = True
+||S_o|| truth/design = 1.2286 / 1.2287 (0.0 % apart)
+
+[discretization]
+Ts                   = 2.0 ms (500 Hz, single rate)
+modal transform cond = 7.2352e+00
+modal-vs-Tustin dev  = 7.896e-16
+nominal discrete |z| = 0.999756
+Tier-1 discrete worst|z| = 0.999760 (0 unstable of 4992)
+
+[implementation]
+float32 replay error = 5.518e-06 (gate 5e-4, N = 64)
+saturated ref steps  = 11
+cond(Du^-1) (AW map) = 57.1429
+AW rail recovery     = 0 ticks (0.0 ms)
+MAC/tick             = 97 (48500 MAC/s @ 500 Hz)
+shipped SISO share   = 18 MAC/tick (18000 MAC/s @ 1 kHz)
+coefficients / state = 101 floats (404 B) / 44 B
+core issue fraction  = 0.00808 %
+
+[diagonal-plant sanity, dV0 = 0]
+SISO gammas          = share 0.57596, drive 1.64295
+MIMO gamma (diag)    = 1.64187 (0.07 % vs max SISO)
+
+[gate table]
+  info  plant DC condition number (scaled)   (cond = 21.309)
+  PASS  scaled plant is strictly proper
+  PASS  scaled plant DC gains are O(1)   (|diag| = [  7.      148.34086], max|G| = 148.341)
+  PASS  coupling present at the design OP (dV0 = +0.2 V)   (Gs(0)[0,1] = -11.02907)
+  PASS  G21 = 0 structurally   (0.00e+00)
+  PASS  Wu.D full rank (D12 rank condition)   (rank = 2, D = diag[20. 20.])
+  PASS  Wp strictly proper (D11 = 0)
+  PASS  a-posteriori ||Tzw||inf <= gamma_used*1.005   (1.64573 <= 1.65386)
+  PASS  gamma_MIMO >= gamma_drive_SISO (triangular-plant lower bound)   (1.6456 >= 1.6429)
+  PASS  gamma_MIMO ~= gamma_drive_SISO within 10 % (coupling is ~free)   (1.6456 vs 1.6429 (0.16 %))
+  PASS  Y-ARE degenerate (||Y|| ~ 0, D21 = I structure)   (||Y||max = 1.045e-14)
+  PASS  X-ARE solution PSD   (min eig = 3.949e-03)
+  PASS  H-inf controller stabilizes the scaled plant   (max Re(p) = -1.2192e-01)
+  info  gamma balance (MIMO achieved / max SISO)   (1.002)
+  info  channel balance   (drive gamma 1.6429 is 2.85x the share gamma 0.5760: the drive channel sets the MIMO level)
+  PASS  no single channel blows up the MIMO problem (gamma <= 3x max SISO)   (ratio = 1.002)
+  PASS  cond(Gs(0)*Y_H(0)) < 1e6   (cond = 1.0001e+00)
+  PASS  ||M - I||_2 < 0.05 (H-inf already near-integral)   (||M-I||2 = 1.568e-04)
+  PASS  exactly 2 near-origin poles in Gc_YH   (count = 2, |p| = [0.      0.      0.12192])
+  PASS  rank(KI) = 2   (rank = 2, cond = 7.749e+01)
+  PASS  stable remainder is stable   (max Re(p) = -1.219e-01)
+  PASS  ||T(0) - I||_max < 1e-9 (exact-integrator controller)   (6.533e-10)
+  PASS  reduced-vs-full controller sigma deviation < 2e-2 (in-band)   (max rel dev = 1.884e-03)
+  PASS  total controller order <= 10 states   (9 states)
+  PASS  reduced controller stabilizes the scaled nominal plant   (max Re(p) = -1.2192e-01)
+  PASS  ||T(0) - I|| preserved through reduction   (6.533e-10)
+  info  controller off-diagonal peaks (scaled)   (|K12|max = 1.7167, |K21|max = 9.9276e-04; |K11|max = 79.9247, |K22|max = 1.3345)
+  info  off-diagonal / diagonal ratio   (K12/K11 = 0.0215, K21/K22 = 7.439e-04)
+  PASS  scaled and physical closed loops have identical poles (folding check)   (max |dp| = 0.000e+00)
+  PASS  nominal worst sigma(S_o) < 2.0   (1.2287)
+  PASS  Tier-1: ALL feasible corners continuous-stable   (0 unstable of 4992; worst Re = -1.1999e-01)
+  info  Tier-1 corner counts   (4992 feasible, 768 infeasible skipped)
+  info  Tier-1 worst-pole corner   (I_tot0=0.5, r0=0.7, dV0=-0.4, share={'dV0': -0.4, 'Td': 0.0005, 'taur': 2e-05, 'tauf': 0.0008}, drive={'K_v': 0.5, 'pole_factor': 2.0, 'tau_v': 0.0005, 'Td_v': 0.001})
+  PASS  Tier-2 worst sigma(S_o) < 2.0 (non-waived corners)   (1.8754)
+  info  Tier-2 FC-cruise waived corner worst sigma(S_o)   (1.7471 (stability-only gate; dV0=-0.4, share={'dV0': -0.4, 'Td': 0.002, 'taur': 0.0003, 'tauf': 0.0008}))
+  PASS  Tier-2 FC-cruise corners STABLE (stability-only waiver)   (worst = 1.7471)
+  info  Tier-2 K-out-of-envelope waived corner worst sigma(S_o)   (4.9334 (stability-only gate; dV0=-0.4, share={'dV0': -0.4, 'Td': 0.002, 'taur': 0.0003, 'tauf': 0.0008}))
+  PASS  Tier-2 K-out-of-envelope corners STABLE (stability-only waiver)   (worst = 4.9334)
+  info  Tier-2 worst sigma(S_o) including waived corners   (4.9334)
+  PASS  final controller stabilizes the full-order truth model at nominal   (max Re(p) = -1.2192e-01)
+  info  truth-vs-design ||S_o||inf   (1.2286 vs 1.2287 (0.0 %)  [dense-sweep fallback])
+  PASS  truth-model sigma(S_o) within 20 % of the design plant   (0.0 %)
+  PASS  modal transform well-conditioned (cond < 1e4)   (7.235e+00)
+  PASS  modal realization matches the Tustin realization   (7.896e-16)
+  info  modal A (discrete)   ([[-0.986637 -0.        0.        0.        0.       -0.        0.      ]  [-0.        0.922501 -0.        0.        0.        0.       -0.      ]  [-0.        0.       -0.859151  0.07371   0.        0.        0.      ]  [ 0.        0.       -0.07371  -0.859151  0.       -0.       -0.      ]  [ 0.       -0.        0.       -0.        0.620521 -0.       -0.      ]  [-0.        0.        0.        0.        0.       -0.099523  0.239792]  [ 0.       -0.       -0.        0.       -0.       -0.239792 -0.099523]])
+  PASS  ZOH plant is strictly proper at the sample instants (D = 0)   (0.00e+00)
+  PASS  nominal discrete closed loop stable   (|z|max = 0.999756)
+  PASS  Tier-1 discrete: ALL feasible corners |z| < 1   (0 unstable of 4992; worst |z| = 0.999760)
+  info  discrete worst-|z| corner   (I_tot0=0.5, r0=0.7, dV0=-0.4, share={'dV0': -0.4, 'Td': 0.0005, 'taur': 0.0003, 'tauf': 0.0008}, drive={'K_v': 0.5, 'pole_factor': 2.0, 'tau_v': 0.0005, 'Td_v': 0.001})
+  PASS  anti-windup back-calculation map cond(Du^-1) < 1e3   (cond = 57.143)
+  info  integrator authority clamp (scaled)   (x_int in [[-1. -1.], [1. 1.]])
+  PASS  recursive trapezoidal integrator == LTI Tustin integrator   (max dev = 2.776e-17)
+  PASS  float32 replay error < 5e-4   (5.518e-06)
+  PASS  reference sequence exercises saturation   (11 saturated steps)
+  PASS  reference outputs stay inside the clamps
+  PASS  AW: drive channel actually rails on the hard reference step (>= 20 ms saturated)   (110 ms on the -20 A rail (fraction of first 800 ms = 0.14))
+  PASS  AW: comes off the rail after the reference is released   (0 ticks (0 ms))
+  PASS  AW: closed loop recovers to the released reference (v -> 0)   (max |v| tail = 3.97e-04 m/s)
+  PASS  AW: no sustained rail after recovery   (max |i| tail = 0.0000 A)
+  PASS  AW: outputs stayed clamped throughout
+  PASS  AW: share channel stayed inside [0.15, 0.85]
+  PASS  dV0 = 0 gives a diagonal plant   (|G12| = 0.00e+00, |G21| = 0.00e+00)
+  PASS  diagonal-plant MIMO gamma ~= max(SISO gammas) (5 %)   (1.64187 vs 1.64295 (0.07 %))
+  PASS  share step settles < 300 ms   (44 ms)
+  PASS  small-signal drive step stays inside the +-20 A clamp   (peak 1.18 A)
+  PASS  small-signal drive step settles < 500 ms   (150 ms)
+  info  large-step (0.5 m/s) recovery time   (2% settle 0.1 s at a 11.8 A peak -- at +-20 A this step no longer rails, so it is a linear response, not the actuator-limited slew the +-5 A design showed (16 s))
+  PASS  share DC tracking exact (T(0) = I)   (final alpha = 0.050000)
+  PASS  drive DC tracking exact, small signal (T(0) = I)   (final v = 0.050000)
+  PASS  drive DC tracking exact on the 0.5 m/s large-signal step (AW does not bias DC)   (final v = 0.500000)
+  info  drive-transient share excursion (nominal, dV0 = +0.2 V)   (0.00028 share (small step) / 0.00277 (0.5 m/s slew))
+  info  drive actuator-rate limit   (a_max ~ 9.04 m/s^2 (1.334 N/A x 20.0 A / 2.95 kg))
+  PASS  Teensy cost negligible (< 0.1 % of core issue rate)   (0.00808 %)
