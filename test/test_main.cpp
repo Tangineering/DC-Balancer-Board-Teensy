@@ -3327,15 +3327,37 @@ static void test_open_loop_droop() {
     check(SPI.transfer_log.size() == 2,
           "open-loop droop: two MDAC words written (FC then BT)");
     if (SPI.transfer_log.size() == 2) {
-        uint16_t expFCcode = (uint16_t)(constrain(expFC, 0.0f, 1.0f) * MDAC_res);
-        uint16_t expBTcode = (uint16_t)(constrain(expBT, 0.0f, 1.0f) * MDAC_res);
+        // Word = control nibble + code (ad5426_5432_5443.pdf Fig 49). The control nibble is
+        // load-bearing: a bare code is control 0000 = NOP (Table 10) and the DAC stays at zero
+        // scale — the 2026-08-07 droop-immovable bench bug.
+        uint16_t expFCcode = MDAC_CMD_LOAD_UPDATE | (uint16_t)(constrain(expFC, 0.0f, 1.0f) * MDAC_res);
+        uint16_t expBTcode = MDAC_CMD_LOAD_UPDATE | (uint16_t)(constrain(expBT, 0.0f, 1.0f) * MDAC_res);
         check(SPI.transfer_log[0] == expFCcode,
-              "open-loop droop: FC MDAC code matches clamped gain");
+              "open-loop droop: FC MDAC word = load-and-update nibble + clamped code");
         check(SPI.transfer_log[1] == expBTcode,
-              "open-loop droop: BT MDAC code matches clamped gain");
+              "open-loop droop: BT MDAC word = load-and-update nibble + clamped code");
+        check((SPI.transfer_log[0] & 0xF000u) == 0x1000u &&
+              (SPI.transfer_log[1] & 0xF000u) == 0x1000u,
+              "open-loop droop: control nibble is 0001 (0000 would be a documented NOP)");
     }
     check(powerBalanceLive == false,
           "open-loop droop: clears powerBalanceLive (closed loop must not stomp it)");
+}
+
+// ─── AD5443 boot init: standalone-mode control word ──────────────────────────
+static void test_mdac_init_standalone_mode() {
+    test_group("initMdacSpiPins(): AD5443 daisy-chain disable at boot");
+    reset_test_state();
+    SPI.reset();
+
+    initMdacSpiPins();
+    check(SPI.transfer_log.size() == 2,
+          "MDAC init: one control word per DAC (FC then BT)");
+    if (SPI.transfer_log.size() == 2) {
+        check(SPI.transfer_log[0] == MDAC_CMD_DAISY_DISABLE &&
+              SPI.transfer_log[1] == MDAC_CMD_DAISY_DISABLE,
+              "MDAC init: both words are 0x9000 (Table 10: 1001 = daisy-chain disable)");
+    }
 }
 
 // ─── Youla-H share controller (share_controller.h) ───────────────────────────
@@ -4534,6 +4556,7 @@ int main() {
     test_power_share_profile();
     test_power_share_profile_runs_controls();
     test_pending_input_cancel();
+    test_mdac_init_standalone_mode();
     test_plot_stream_format_and_rate();
     test_plot_suppresses_status_lines();
     test_plot_armed_share_profile();

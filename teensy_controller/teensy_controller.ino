@@ -178,6 +178,17 @@
  *    IN REGULATION (a discharged motor node at a regulated bus is the sanctioned connect).
  *    bringUpBus() is deleted. FAULT_OV_BUS gained a 10ms/3-sample persistence filter so a decaying
  *    bring-up park doesn't nuisance-latch. No telemetry layout change.
+ *  - AD5443 MDAC writes were documented NOPs — FIXED (2026-08-07; found on the bench: 'O'/'R'
+ *    droop sweeps could not move the share at 3 A). Verified against ad5426_5432_5443.pdf: the
+ *    16-bit word is 4 control bits + 12 data bits (Fig 49), and the bare 12-bit code this
+ *    firmware sent has control nibble 0000 = "No operation" (Table 10) — both DACs never left
+ *    their power-on zero scale, so NO droop was ever injected on either channel and the share
+ *    was pinned at the boosts' setpoint mismatch. setDroopMdac() now ORs in MDAC_CMD_LOAD_UPDATE
+ *    (0x1000) and uses SPI_MODE2 (Fig 2: SCLK idles high, data latched on falling edges — the
+ *    old MODE0 transitioned MOSI at the sample instant); initMdacSpiPins() writes the standalone-
+ *    mode control word (0x9000, Table 10) to both DACs at boot. Every MDAC write before this fix
+ *    (all sessions, both the old k_eq mapping and the corrected K_DROOP mapping) never reached
+ *    the DAC register — the droop hardware chain is bench-unvalidated below this point.
  */
 
 #include <VescUart.h>
@@ -484,7 +495,20 @@ typedef enum : uint8_t {
 int mainState = 0;
 
 // ── Physical constants ────────────────────────────────────────────────────────
-const int MDAC_res = 4095;          // AD5443 12-bit; TODO(verify: ad5426_5432_5443.pdf §resolution)
+const int MDAC_res = 4095;          // AD5443 12-bit — VERIFIED ad5426_5432_5443.pdf Table 1 + Fig 49
+
+// AD5443 SPI word format — VERIFIED against ad5426_5432_5443.pdf (Rev. H), 2026-08-07:
+// the 16-bit word is C3..C0 control + DB11..DB0 data (Fig 49). Table 10: control 0000 is
+// "No operation (power-on default)" — a bare 12-bit code in a 16-bit transfer is a documented
+// NOP, which is exactly what this firmware shipped with (found on the bench: O/R sweeps could
+// not move the share; both DACs sat at their power-on zero scale, p.1: "the internal shift
+// register and latches are filled with 0s and the DAC outputs are at zero scale"). Every MDAC
+// write must carry the load-and-update nibble.
+#define MDAC_CMD_LOAD_UPDATE   0x1000u  // C3..C0 = 0001 "Load and update" (Table 10)
+#define MDAC_CMD_DAISY_DISABLE 0x9000u  // C3..C0 = 1001 "Daisy-chain disable" (Table 10):
+                                        // datasheet Standalone Mode (p.21) — write once after
+                                        // power-on; transfers then auto-load on the 16th SCLK
+                                        // falling edge. Data bits don't care.
 const int32_t sampleTime = 50;      // us
 
 // ── Flywheel / encoder geometry (the ONLY inputs to the v_actual scale) ───────
@@ -3429,12 +3453,18 @@ float PI_Controller_Power(float error) {
 }
 
 void setDroopMdac(float fc_gain, float bt_gain) {
-    uint16_t fcCode = (uint16_t)(constrain(fc_gain, 0.0f, 1.0f) * MDAC_res);
-    uint16_t btCode = (uint16_t)(constrain(bt_gain, 0.0f, 1.0f) * MDAC_res);
+    // Word = load-and-update control nibble + 12-bit code (ad5426_5432_5443.pdf Fig 49 +
+    // Table 10 — a bare code has control 0000 = NOP and the DAC never leaves zero scale; this
+    // was the 2026-08-07 droop-immovable bench bug).
+    uint16_t fcCode = MDAC_CMD_LOAD_UPDATE | (uint16_t)(constrain(fc_gain, 0.0f, 1.0f) * MDAC_res);
+    uint16_t btCode = MDAC_CMD_LOAD_UPDATE | (uint16_t)(constrain(bt_gain, 0.0f, 1.0f) * MDAC_res);
 
-    // TODO(verify: ad5426_5432_5443.pdf §SPI interface) — SPI_MODE0, MSBFIRST, 16-bit words
-    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
-    digitalWrite(CS_MDAC_FC, LOW);
+    // SPI_MODE2 (CPOL=1, CPHA=0) — VERIFIED ad5426_5432_5443.pdf Fig 2: SCLK idles HIGH and
+    // "data is clocked into the shift register on falling clock edges" (p.20). The old
+    // SPI_MODE0 transitioned MOSI on the falling edge — i.e. exactly at the AD5443's sample
+    // instant. MSBFIRST (DB15 first, Fig 49); 1 MHz is far under the 50 MHz f_SCLK max.
+    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE2));
+    digitalWrite(CS_MDAC_FC, LOW);    // SYNC frames each 16-bit word (t8 SYNC-high min 30 ns)
     SPI.transfer16(fcCode);
     digitalWrite(CS_MDAC_FC, HIGH);
     digitalWrite(CS_MDAC_BT, LOW);
@@ -3672,6 +3702,21 @@ void initMdacSpiPins() {
     pinMode(CS_MDAC_BT, OUTPUT);
     digitalWrite(CS_MDAC_FC, HIGH);
     digitalWrite(CS_MDAC_BT, HIGH);
+
+    // Put both AD5443s in standalone mode (daisy-chain is the power-on default) — datasheet
+    // Standalone Mode section (p.21): "After power-on, write 1001 to the control word to
+    // disable daisy-chain mode." Not strictly required with our exact-16-clock frames (a
+    // daisy-chain-mode DAC still latches on the SYNC rising edge), but standalone re-arms the
+    // internal SCLK counter on every SYNC fall, so one glitched clock edge can't shift the
+    // frame forever after. Same MODE2/MSBFIRST settings as setDroopMdac().
+    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE2));
+    digitalWrite(CS_MDAC_FC, LOW);
+    SPI.transfer16(MDAC_CMD_DAISY_DISABLE);
+    digitalWrite(CS_MDAC_FC, HIGH);
+    digitalWrite(CS_MDAC_BT, LOW);
+    SPI.transfer16(MDAC_CMD_DAISY_DISABLE);
+    digitalWrite(CS_MDAC_BT, HIGH);
+    SPI.endTransaction();
 }
 
 void initChargerI2cPins() {
