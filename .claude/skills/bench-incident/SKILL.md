@@ -18,11 +18,13 @@ Read the current end of `docs/boost-bringup-debug.md` — at minimum the "Failur
 so the new entry uses the next death number, doesn't re-litigate settled points, and lands in
 the right section.
 
-**Scope-metrology rules are binding (added 2026-08-03 after two transcription errors — a
-3.9× current unit slip and an inverted channel reading — survived into the log):** follow the
+**Scope-metrology rules are binding (added 2026-08-03 after three transcription errors — a
+3.9× current unit slip, an inverted channel reading, and a five-capture probe-net
+misattribution (CH3 'VBUS' was V-MOT) — survived into the log):** follow the
 doc's "Scope-metrology conventions" section. In short: record readings as
 `<divisions> div × <scale> = <value>` with probe/coupling/BW-limit and the zero-reference
-noted; quote trace-centre levels, not edge-to-edge cursor spans; give peak AND ∫I dt with an
+noted, and verify the channel↔net mapping against the physical probe points at capture time;
+quote trace-centre levels, not edge-to-edge cursor spans; give peak AND ∫I dt with an
 envelope for current events; file the capture (net name in the filename + a one-line
 scope-state transcription) before building conclusions on it; keep sections chronological
 with explicit "supersedes §X" pointers on corrections.

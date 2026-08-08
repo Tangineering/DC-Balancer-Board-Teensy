@@ -68,9 +68,9 @@ $27\,\%$, ties on regen bus excursion, and is superior or inferior on
 drive-transient share excursion depending on the sign of an uncalibrated source-voltage mismatch
 $\Delta V_0$. Decentralized control is stable at all $4992$ feasible corners, retains a
 $2.3\times$ drive-cycle tracking advantage, and does not depend on that sign. We conclude that
-decentralization is justified rather than merely convenient, and that measuring $\Delta V_0$ on
-the bench is the single highest-value action for narrowing the remaining uncertainty. A
-secondary methodological lesson is that the actuator limit is a design node, not a datum: it
+decentralization is justified on its merits, and that measuring $\Delta V_0$ on
+the bench is the single highest-value action for narrowing the remaining uncertainty.
+Methodologically, the actuator limit functions as a design node: it
 sets the input scaling, hence the effective control-effort penalty, and hence the achievable
 robustness.}
 
@@ -103,33 +103,30 @@ loop that commands motor current through a VESC over UART, following the drive-c
 of \citep{tan2025scaling} with the post-synthesis DC correction of \citep{tan2025youlah}.
 
 Both loops were designed single-input single-output, each on its own plant, each validated only
-against its own uncertainty family. That separation was assumed rather than derived: the two
+against its own uncertainty family. That separation was assumed without derivation: the two
 loops share a bus, and every ampere the motor draws is an ampere the two sources must split.
-The question this report answers is therefore whether the decentralized design is genuinely
+This report tests whether the decentralized design is genuinely
 justified or merely convenient. Three metrics decide it --- worst-corner $\|S\|_\infty$,
 drive-transient share excursion, and regen-event bus excursion \citep{internal:droop}.
 
-A study of this shape can fail in two symmetric ways: it can be set up so that the centralized
-controller cannot be outperformed (by evaluating the decentralized pair on a diagonal plant),
-or so that it cannot outperform (by comparing on metrics that saturate the actuator). We avoid
-the first by closing \emph{both}
-controllers against the same coupled $2\times2$ plant with the same assembly routine, corner sets
-and simulator; we address the second by stating the amplitude of every excitation and flagging
-every case in which the $\pm\SI{20}{\ampere}$ motor-current clamp is active.
+Two safeguards keep the comparison from being decided by its own construction. \emph{Both}
+controllers are closed against the same coupled $2\times2$ plant with the same assembly routine,
+corner sets and simulator, so the decentralized pair is never evaluated on a diagonal plant; and
+the amplitude of every excitation is stated, with every case in which the
+$\pm\SI{20}{\ampere}$ motor-current clamp is active flagged.
 
-\paragraph{Contributions.}
+\subsection{Contributions}
 \begin{itemize}
 \item A $2\times2$ small-signal design plant for the coupled share/drive problem
       (Section~\ref{sec:model}), in which the drive-to-share coupling is \emph{derived} from the
-      static share law rather than asserted, and is reproduced endogenously to $0.032\,\%$ by an
+      static share law instead of asserted, and is reproduced endogenously to $0.032\,\%$ by an
       independent 15-state converter-level model (Appendix~\ref{app:fullorder}).
 \item The observation that the plant is structurally upper-triangular, so the relative gain array
       is the identity at every frequency and every corner and carries no information; the
       informative measure is the directional ratio $|G_{s,12}|/|G_{s,11}|$.
 \item A matrix generalization of the scalar Youla gain-tuning recipe that enforces $T(0)=I$ on a
       MIMO loop by a constant right multiplier on the Youla parameter, made \emph{structural} by
-      an exact rank-2 integrator split (Section~\ref{sec:youlah}). This is the report's
-      control-theoretic contribution.
+      an exact rank-2 integrator split (Section~\ref{sec:youlah}).
 \item A head-to-head comparison on identical terms (Section~\ref{sec:comparison}), whose result
       is that the three primary metrics give three different answers, backed by an independent
       MATLAB cross-validation of the whole chain (Appendix~\ref{app:matlab}).
@@ -188,7 +185,7 @@ with actuator limits $r\in[0.15,0.85]$ and $|i_{cmd}|\le\SI{20}{\ampere}$. Nativ
 \SI{1}{\kilo\hertz} for the share loop and \SI{500}{\hertz} for the motor loop, the latter set by
 the VESC UART frame floor of roughly \SI{781}{\micro\second}.
 
-\paragraph{The actuator limit, and why it is set where it is.}
+\subsubsection{The actuator limit}
 The motor-current clamp is a \emph{motor-side} limit, but the constraint it must respect lives on
 the \emph{bus}: the two converters can supply roughly \SIrange{67}{87}{\watt} between them. The
 two are related by the bus-current conversion $A_i \approx
@@ -198,8 +195,8 @@ $V_{bus0} = \SI{15.9}{\volt}$ --- inside that budget, and close enough to it tha
 and the converter power budget bind \emph{together} by construction. The bus-power limit is
 therefore not carried as a separate modelled constraint: at the cruise operating point it is
 approximately equivalent to the motor clamp, and away from that point it is the motor clamp that
-is quoted. The consequence for reading this report is that a clamped case is a case in which
-the powertrain as a whole is at its limit, not one in which an arbitrarily chosen number is.
+is quoted. A clamped case is therefore one in which the powertrain as a whole is at its limit, not
+one in which an arbitrarily chosen number is.
 
 \subsection{Share channel}
 
@@ -246,19 +243,19 @@ contributes \SI{0.0245}{\newton\second\per\meter} and the motor's own free-run l
 \SI{0.3352}{}, so the motor dominates the small-signal damping by $14\times$. And rolling
 resistance is Coulomb: it sets the operating-point torque (hence the coupling gains below) but
 its derivative with respect to $v$ is zero away from standstill, so it must \emph{not} appear in
-$b_{\!e\!f\!f}$. The gain uncertainty $K_v\in\{0.5,1,2\}$ is structural, not a tolerance: the
+$b_{\!e\!f\!f}$. The gain uncertainty $K_v\in\{0.5,1,2\}$ is structural in origin: the
 encoder sits downstream of the \num{9.49}:1 reduction \emph{and} the limited-slip differentials,
 so there is no fixed rotor-to-ground-speed mapping, and $k_t$ is uncalibrated because no motor
 has been selected.
 
 \subsection{Coupling}
 
-$G_{21}=0$ is a modelling \emph{result}, not an assumption. The droop ratio reaches no state that
+$G_{21}=0$ is a modelling \emph{result}: the droop ratio reaches no state that
 feeds the speed output in either the design plant or the truth model, because the VESC runs a
 current loop: at fixed $i_{cmd}$ the delivered torque is independent of $v_{bus}$ until the duty
 rail. The residual this discards is measured --- $|\Delta v_{bus}/\Delta r|$ at DC is
 \SI{0.2002}{\volt} per unit $r$, $0.44\,\%$ of the \SI{15.9}{\volt} bus over the full $r$ span
---- nowhere near duty saturation anywhere in the envelope. It would break under deep battery
+--- well below duty saturation throughout the envelope. It would break under deep battery
 discharge with a large $i_{cmd}$, or a regen event pushing the bus into overvoltage protection;
 both lie outside the linear envelope and are handled by the firmware's sequencing layer.
 
@@ -286,22 +283,22 @@ $G_{12}(0) = \SI{-2.7573e-2}{}$ share per ampere of $i_{cmd}$.
 
 Both $G_{11}$ and $G_{12}$ pass through the \emph{same} instance of the prefilter
 $1/(\tau_f s+1)$, because there is exactly one such filter in firmware, downstream of the share
-estimate; the plant is therefore assembled as explicit block state-space rather than a
+estimate; the plant is therefore assembled as explicit block state-space instead of a
 block-diagonal composition, since duplicating the filter would add a spurious state and
 misrepresent the hardware. The nominal assembly is 8 states.
 
-\paragraph{Sign uncertainty --- the central limitation of the whole study.}
+\subsubsection{Sign uncertainty of the coupling}
 Equation~\eqref{eq:dalpha} is \emph{exactly zero} at $\Delta V_0 = 0$ (matched sources: no
 coupling) and \emph{flips sign} over the $\pm\SI{0.4}{\volt}$ budget, which is an uncalibrated
 quantity. A centralized controller synthesized at one sign of $\Delta V_0$ implements a coupling
 feedforward of the wrong sign at the mirror corner. Both signs are therefore mandatory in every
-evaluation below, and either outcome is a reportable result rather than a failure.
+evaluation below.
 
 \subsection{Why the RGA is the wrong instrument}
 
 The design plant is upper triangular, so its relative gain array is the identity ---
 $\max|\mathrm{RGA}-I| = \SI{2.23e-16}{}$ across all frequencies and all cases, including
-$\Delta V_0 = \pm 0.4$. This is a property of \emph{triangularity}, not of weak coupling:
+$\Delta V_0 = \pm 0.4$. This is a property of \emph{triangularity}:
 $\mathrm{RGA}(T)=I$ for any triangular $T$ no matter how large the off-diagonal entry. The RGA is
 blind to one-way coupling and must not be used as the coupling metric here.
 
@@ -315,7 +312,7 @@ normalization: a ratio of unity means ``a full-authority motor command moves the
 a full-authority droop command does.'' At the nominal \SI{2}{\ampere} load the drive-to-share path
 is $1.57\times$ the direct path; at \SI{0.5}{\ampere} it is $25\times$ it, because
 \eqref{eq:dalpha} scales as $1/I_{tot}^2$ --- a full-authority motor transient moves the
-share by far more than a full-authority droop command can. That, not the RGA, is the number that
+share by far more than a full-authority droop command can. That figure is the number that
 motivates a centralized design.
 
 \begin{table}[H]
@@ -364,7 +361,7 @@ deliberately, since synthesizing at zero would show the controller no coupling a
 $\pm0.4$ would over-commit to one sign. The uncertainty families are 10 operating points, 24
 share corners and 24 drive corners; of the $10\times24\times24 = 5760$ Tier-1 combinations,
 \textbf{768 are infeasible} --- the unidirectional ideal-diode switches make \eqref{eq:share}
-meaningless where it puts $\alpha_0$ outside $(0,1)$ --- and are skipped and counted rather than
+meaningless where it puts $\alpha_0$ outside $(0,1)$ --- and are skipped and counted instead of
 silently linearized, leaving the \textbf{4992 feasible corners} used throughout. Synthesis and
 all frequency-domain metrics run on the scaled plant $G_s = D_e^{-1} G D_u$ with
 $D_e = \mathrm{diag}(0.05, 0.5)$ and $D_u = \mathrm{diag}(0.35, 20.0)$, giving
@@ -405,8 +402,8 @@ strictly-proper weight on $S$, a \texttt{makeweight} roll-off weight on $T$, and
 weight on $Y$. Two deviations were forced. The papers' $W_{\Delta}$ break at
 \SI{18}{\radian\per\second} sits \emph{below} the $W_p$ corner on this plant, making the two
 weights contend over the same decade, inflating $\gamma$ and collapsing the achieved crossover;
-the break was moved to $2.5\times$ the $W_p$ corner, preserving the intent. Second --- and this
-is the structural finding --- the achieved crossover lands consistently \emph{below} the $W_p$
+the break was moved to $2.5\times$ the $W_p$ corner, preserving the intent. Second, the achieved
+crossover lands consistently \emph{below} the $W_p$
 corner with $\gamma_{opt}\gg1$ throughout: \textbf{the specifications are being shaped, not met}.
 The cause is that a second-order strictly-proper $S$ weight demands two integrators in the loop
 below its corner, and the drive plant's mechanical pole at \SI{0.122}{\radian\per\second}
@@ -415,19 +412,18 @@ $\gamma$ below about $1.2$ (Appendix~\ref{app:driveweights}). $W_p$ was therefor
 \SI{50}{\radian\per\second} to land the achieved crossover near the papers'
 \SI{24}{\radian\per\second}, at $\gamma_{opt} = \num{13.03}$.
 
-A $\gamma$ of \num{13.03} means the weights are not met, not that the controller is deficient: the
+A $\gamma$ of \num{13.03} means the weights are not met; the controller itself is sound. The
 delivered loop has $\|S\|_\infty = 1.3851$ nominal, \SI{48.9}{\degree} phase margin at
 \SI{20.75}{\radian\per\second}, \SI{18.3}{\decibel} gain margin and a \SI{41.12}{\milli\second}
 delay margin, and is stable at all 72 drive corners with worst continuous
 $\|S\|_\infty = 2.4074$. The scalar Youla-H correction is tiny here ($T_H(0) = 0.99864$, a gain
 scale of \num{1.00137}) and delivers $T(0) = 1.000000000000$.
 
-The one implementation surprise is anti-windup, and it drives the cost comparison of
+Anti-windup drives the cost comparison of
 Section~\ref{sec:implementation}. The reduced controller's \emph{non-integral} branch alone has a
 DC gain of \SI{367.7}{\ampere\per\meter\per\second}, so it saturates the $\pm\SI{20}{\ampere}$
 actuator for speed errors above $e_{sat} = \SI{54.4}{\milli\meter\per\second}$ and its lag states
-wind up independently of the integrator. The failure is therefore \emph{amplitude-bounded}, and
-the boundary is worth stating as an amplitude rather than as a verdict. A step-amplitude scan of
+wind up independently of the integrator. The failure is therefore \emph{amplitude-bounded}. A step-amplitude scan of
 the integrator-only back-calculation scheme (pass: final error below
 $\SI{e-4}{\meter\per\second}$ and tail peak-to-peak below $\SI{e-5}{\meter\per\second}$) is clean
 at $0.02$, $0.05$, $0.10$ and \SI{0.20}{\meter\per\second} --- final errors of order
@@ -458,7 +454,7 @@ three-block form loop shaping.} The share block is the SISO set of Section~\ref{
 unchanged. The drive block is \emph{not} the Section~\ref{sec:siso} set --- it was iterated
 independently against the MIMO corner battery (Appendix~\ref{app:driveweights}) --- and that
 difference bounds how the two designs may be compared (Section~\ref{sec:fairness}). The binding
-constraint on this plant turns out to be corner robustness, not nominal performance, so
+constraint on this plant turns out to be corner robustness instead of nominal performance, so
 \textbf{$\gamma$ is the wrong scalar to minimize here}: the final drive block deliberately accepts
 a worse $\gamma$ than an available alternative in exchange for corner margin, paying about
 \SI{60}{\milli\second} of small-signal drive settling.
@@ -487,8 +483,8 @@ two-Riccati DGKF construction \citep{doyle1989state} (equivalently
 \citep{assadian2020neoclassical} \S15.3, Thm.~15.2, eqs.~(15.94)--(15.98), pp.~491--493). The
 same source's Remark on p.~492 --- that a control input carrying no weight breaks the $D_{12}$
 rank condition --- is why $W_u$ is non-empty on both channels: it is a solvability requirement,
-not a tuning preference. Two features of the solution matter for
-interpreting every $\gamma$ in this report. First, the measurement-equals-reference structure
+not a tuning preference. Two features of the solution bear on
+every $\gamma$ in this report. First, the measurement-equals-reference structure
 gives $D_{21} = I_2$, which makes the filter Riccati degenerate with $P_f \equiv 0$ as the
 provably stabilizing solution --- reproduced to $\SI{1.0e-14}{}$, which serves as a correctness
 check on the estimation half of the solver at no additional cost. Second, because $P_f\equiv0$ the DGKF feasibility test
@@ -498,10 +494,10 @@ $\gamma_{achieved} = \mathbf{1.64563}$ with $\|T_{zw}\|_\infty = 1.64573$. \text
 quoted in this report is an a-posteriori achieved level.} Details and formulas are in
 Appendix~\ref{app:dgkf}.
 
-Two structural checks follow as a byproduct. Because $G_{21}=0$, any MIMO controller restricted to
+Because $G_{21}=0$, any MIMO controller restricted to
 $e_1 = 0$ acts as a drive-channel SISO controller, so $\gamma_{MIMO} \ge \gamma_{drive}$
-necessarily; measured, $1.6456 \ge 1.6429$, equal to $0.16\,\%$. That confirms the machinery is
-consistent and shows \textbf{the coupling costs essentially nothing}: the centralized controller
+necessarily; measured, $1.6456 \ge 1.6429$, equal to $0.16\,\%$: \textbf{the coupling costs
+essentially nothing}, since the centralized controller
 attains the drive channel's own unconstrained optimum while also handling $G_{12}$. And at
 $\Delta V_0 = 0$ the plant is exactly diagonal, so the problem must decouple and
 $\gamma_{MIMO} = \max(\gamma_{share}, \gamma_{drive})$; measured, \num{1.64187} vs.\
@@ -515,7 +511,7 @@ low-frequency tracking, zero steady-state error and input--output decoupling
 (\citep{assadian2020neoclassical} \S12.7.1, p.~414), recognizable by
 $\bar\sigma(T) = \sigma_{\min}(T) = 1$ at low frequency; its SISO ancestor is the interpolation
 condition $G_p(0)Y(0) = T(0) = 1$ of \S3.4, eq.~(3.64), p.~113, which the matrix correction below
-generalizes. It is worth being explicit about what is being repaired and why. The Youla route of
+generalizes. The Youla route of
 \citep{assadian2020neoclassical} enforces $T(0)=1$ \emph{by construction}, as an interpolation
 condition imposed while $Y$ is shaped (\S3.5); $H_\infty$ synthesis honours no interpolation
 conditions natively, so it delivers a controller that is only approximately integral. The
@@ -553,7 +549,7 @@ only a right factor of $Y$ can be inverted against $G_s(0)Y_H(0)$ to give the id
 $M_{YH}\,Y_H$
 would give $G_s(0)M_{YH}\,Y_H(0)\ne I$ in general because matrices do not commute. Physically,
 left-multiplying would mix the controller \emph{outputs} rather than re-map its inputs, changing
-which actuator answers which error --- a different controller, not a corrected one.
+which actuator answers which error --- yielding a different controller instead of a corrected one.
 
 The realization follows the scalar case block-for-block:
 $G_{c,YH} = Y_{YH}(I - G_s Y_{YH})^{-1}$, a positive feedback of $G_s$ around $Y_{YH}$,
@@ -570,18 +566,17 @@ K_I = \begin{bmatrix} \phantom{-}7.992467 & 0.1645500 \\ 7.8\times10^{-5} & 0.10
 nearly lower triangular with a small $(1,2)$ entry and a negligible $(2,1)$ entry: the DC
 coupling correction runs drive$\,\to\,$share, matching the plant's triangularity.
 
-The correction is a small adjustment rather than a substantial repair, which is the expected
-and desirable outcome. Here
+The correction is a small adjustment rather than a substantial repair. Here
 $\mathrm{cond}(G_s(0)Y_H(0)) = 1.0001$ --- the book's low-frequency decoupling recognizer
 $K(T_y)\approx1$ (\citep{assadian2020neoclassical} \S12.8.1, p.~416) --- and
 $\|M_{YH} - I\|_2 = \SI{1.57e-4}{}$, saying the $H_\infty$
 controller was already integral to four decimals, as one expects from an $S$ weight with DC gain
-$10^4$ (a large $\|M-I\|$ would have indicated the weights, not the realization, needed work).
+$10^4$ (a large $\|M-I\|$ would have implicated the weights themselves).
 The delivered $\|T(0)-I\|_{\max}$ is $\SI{6.5e-10}{}$, preserved through reduction. The
 correction's remaining job is therefore not to \emph{create} the integrator --- $H_\infty$ already
 put a near-integrator there --- but to fix its \emph{direction}.
 
-\paragraph{Why not the direct MIMO Youla route?}
+\subsubsection{Relation to the direct MIMO Youla design route}
 The plant here is stable and square, so its Smith--McMillan structure imposes no unstable
 pole/zero interpolation constraints and the direct MIMO Youla design of
 \citep{assadian2020neoclassical} \S13.2 (pp.~422--425) applies verbatim, with the controller
@@ -594,7 +589,8 @@ by construction.
 
 \subsection{Utilization of the cross-coupling by the centralized controller}
 
-Table~\ref{tab:K-entries} settles the question, and its answer is the report's principal result.
+Table~\ref{tab:K-entries} quantifies the extent to which the centralized controller uses the
+cross-coupling.
 
 \begin{table}[H]
 \caption{Peak scaled magnitude of each controller entry, and its ratio to the diagonal term of
@@ -613,18 +609,18 @@ $K_{22}$ (drive $\leftarrow$ speed error) & 1.3345 & --- \\
 \end{table}
 
 $K_{21}\approx0$ is correct and expected: $G_{21}=0$, so there is nothing the drive actuator can
-do about a share error, and its $\SI{7.4e-4}{}$ ratio is numerical residue --- a positive check
-that the synthesis discovered the plant's triangularity by itself. $K_{12}$ at $2.15\,\%$ of
+do about a share error, and its $\SI{7.4e-4}{}$ ratio is numerical residue --- a check
+that the synthesis recovers the plant's triangularity. $K_{12}$ at $2.15\,\%$ of
 $K_{11}$ is the real coupling feedforward: the share actuator pre-empts the bus-current
 disturbance a commanded acceleration is about to create. It is small in \emph{ratio} because
-$K_{11}$ must be large (the share loop's \SI{110}{\radian\per\second} bandwidth), not because the
-term is inactive. Its magnitude is bounded by the $\Delta V_0$ sign uncertainty by construction:
+$K_{11}$ must be large (the share loop's \SI{110}{\radian\per\second} bandwidth); the
+term itself is fully active. Its magnitude is bounded by the $\Delta V_0$ sign uncertainty by construction:
 a feedforward built at $+\SI{0.2}{\volt}$ is the wrong sign at $-\SI{0.4}{\volt}$, and the
-synthesis correctly assigns it little authority.
+synthesis assigns it little authority.
 
-\textbf{The centralized controller is about $98\,\%$ decentralized by gain.} That is the most
-direct available statement that decentralized control here is justified rather than merely
-convenient --- and it comes from the centralized design itself.
+\textbf{The centralized controller is about $98\,\%$ decentralized by gain.} Decentralized
+control here is therefore justified on its merits, on the centralized design's
+own evidence.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Implementation}
@@ -634,7 +630,7 @@ The order-30 controller $G_{c,YH}$ reduces, after the exact integrator split and
 truncation at a $10^{-2}$ margin, to \textbf{9 continuous states}: two exact integrators plus a
 seven-state remainder, with a maximum relative $\bar\sigma$ deviation of $\SI{1.88e-3}{}$ over
 $\omega\in[0.1,10^4]$ against a $2\times10^{-2}$ tolerance. The order is set by the Hankel
-spectrum, not by a target: the singular-value tail is flat here (states 6 and 7 carry
+spectrum: the singular-value tail is flat here (states 6 and 7 carry
 $\SI{9.2e-4}{}$ and $\SI{6.3e-4}{}$ against a leading \num{0.45}), so truncating at five would
 not clear the $10^{-2}$ auto-selection margin. \textbf{The selection tolerance was deliberately
 not loosened to force a smaller controller}: two float32 states cost 8 bytes and about 26 MAC
@@ -643,7 +639,7 @@ the worst corner is not a design property at all (Appendix~\ref{app:driveweights
 controller runs single-rate
 at \textbf{\SI{2}{\milli\second} (\SI{500}{\hertz})}, because it issues the motor current command
 and the VESC UART frame floor caps that channel there; the cost to the share channel is bounded
-and checked rather than assumed, since Nyquist at \SI{1571}{\radian\per\second} is still
+and checked explicitly, since Nyquist at \SI{1571}{\radian\per\second} is still
 $14\times$ the \SI{110}{\radian\per\second} share crossover --- which is what discharges the
 standing assumption that discretization has no performance effect at a reasonable sampling rate
 (\citep{assadian2020neoclassical}, p.~261) --- and the extra effective delay of at
@@ -678,13 +674,13 @@ float32 replay error (64-step, saturating) & --- & $\SI{5.52e-6}{}$ (tol.\ $\SI{
 \end{tabularx}
 \end{table}
 
-The result is mildly counter-intuitive: \textbf{the two are comparably cheap, with the
-centralized controller slightly ahead} at $0.899\times$ the decentralized MAC rate and one fewer
+\textbf{The two are comparably inexpensive, with the
+centralized controller slightly ahead}, at $0.899\times$ the decentralized MAC rate and one fewer
 state. It is ahead at all only because the decentralized baseline \emph{cannot} be a biquad
 cascade --- its drive half needs the Hanus state-space form, whose $A_d - B_d C_d/D_d$ product
 costs an extra $n^2$ per tick, and it runs one of its two halves at \SI{1}{\kilo\hertz}. A
-$10\,\%$ margin is not an argument for either architecture, and it should not be reported as one:
-the defensible statement is that \textbf{compute cost does not discriminate here}. Both figures are
+$10\,\%$ margin is not an argument for either architecture:
+\textbf{compute cost does not discriminate here}. Both figures are
 negligible on this core (under $0.1\,\%$ of a single issue slot), so \textbf{the compute cost is
 not the cost}. The genuine costs of centralization are that it moves the share loop from
 \SI{1}{\kilo\hertz} to \SI{500}{\hertz} and couples the two control tasks into one scheduling
@@ -692,8 +688,7 @@ unit; float32 coefficient sensitivity; and a matrix-valued anti-windup scheme th
 to get right than the scalar one. The UART frame floor is unchanged either way and remains the
 true bottleneck.
 
-\paragraph{The drive channel is rate-limited by the actuator, and every dynamic claim must state
-the amplitude at which that limit becomes active.}
+\subsection{Actuator rate limiting of the drive channel}
 With $K_F = k_t\eta_{dt}\varphi/r_t = \SI{1.334}{\newton\per\ampere}$ and
 $m_{\!e\!f\!f} = \SI{2.95}{\kilo\gram}$, the $\pm\SI{20}{\ampere}$ clamp bounds acceleration at
 $a_{max} = \SI{9.04}{\meter\per\second\squared}$: no reference the loop can be asked to follow is
@@ -712,7 +707,7 @@ $e_{sat} = \SI{54.4}{\milli\meter\per\second}$ of the decentralized drive half.
 \section{Comparison}
 \label{sec:comparison}
 
-\subsection{Setup and what makes it fair}
+\subsection{Setup and fairness conditions}
 \label{sec:fairness}
 
 Three controllers are compared. \texttt{dec} is the decentralized baseline,
@@ -734,7 +729,7 @@ physical-coordinate controllers recovered from the emitted float32 headers by ex
 Tustin plus the analytic $K_I/s$ integrator. All time-domain signals are small-signal deviations
 about the nominal operating point.
 
-\paragraph{A declared substitution: corner family in place of a small-gain certificate.}
+\subsubsection{Corner-family verification in place of a small-gain certificate}
 The robustness certificate of \citep{assadian2020neoclassical} is the small-gain condition
 $\bar\sigma(W_{\Delta}T_o) < 1$ against a norm-bounded multiplicative perturbation (\S14.5,
 Thm.~14.3, p.~466). This study does not use it. The dominant uncertainties here --- the
@@ -742,16 +737,16 @@ Thm.~14.3, p.~466). This study does not use it. The dominant uncertainties here 
 are parametric and structured, and wrapping them in an unstructured norm bound large enough to
 cover the $\Delta V_0$ sign flip would be so conservative that no controller would certify.
 Robustness is therefore verified by explicit evaluation over the parametric corner family.
-The consequence must be stated plainly: \textbf{$W_{\Delta}$ in this report is a shaping filter,
+\textbf{$W_{\Delta}$ in this report is a shaping filter,
 not an identified uncertainty bound}, and \textbf{no claim of $\bar\sigma(W_{\Delta}T_o) < 1$ is
 made or implied} by any $\gamma$ quoted here.
 
-One further limitation must be stated explicitly: the two designs use different weight
+A further limitation: the two designs use different weight
 \emph{families} on the drive channel (second-order at \SI{50}{\radian\per\second} for the SISO
 baseline, first-order at \SI{24}{\radian\per\second} for the MIMO) and their $\gamma$ values sit
 on different plant scalings, so \textbf{$\gamma$ is not comparable between them and is never
-quoted side by side}. The operative question --- which controller performs better on the real
-coupled plant? --- is answered by the closed-loop harness regardless.
+quoted side by side}. Which controller performs better on the real coupled plant is settled by
+the closed-loop harness regardless.
 
 \subsection{The three primary metrics give three different answers}
 
@@ -771,7 +766,7 @@ regen-event bus excursion & \SI{1.49112}{\volt} & \SI{1.47429}{\volt} & \textbf{
 \end{tabularx}
 \end{table}
 
-\paragraph{Metric 1 --- worst-corner sensitivity: a genuine centralized advantage.}
+\subsubsection{Metric 1: worst-corner sensitivity}
 At the nominal plant the centralized controller has $\|S_o\|_\infty = 1.2287$ against $1.3974$,
 and over the Tier-2 in-envelope family its worst $\bar\sigma(S_o)$ is \num{1.8754} against
 \num{2.5535}, better at \textbf{167 of 168 corners} (Figure~\ref{fig:sigma-S-both};
@@ -796,20 +791,20 @@ anywhere}.
     \label{fig:sigma-S-both}
 \end{figure}
 
-\paragraph{Metric 2 --- drive-transient share excursion: decided by the sign of $\Delta V_0$.}
-This is the most clearly resolved result in the study. At the sign of $\Delta V_0$ the centralized
+\subsubsection{Metric 2: drive-transient share excursion}
+At the sign of $\Delta V_0$ the centralized
 controller was synthesized for, it cuts the drive-induced share excursion by $62\,\%$ and settles
 faster (\SI{0.175}{\second} against \SI{0.189}{\second}) with a $43\,\%$ smaller current peak; at
 the mirrored sign it makes the excursion $11\,\%$ worse (Figure~\ref{fig:transient-small}) --- a
 downside that is now marginal rather than punitive. The
 decentralized traces are identical between the two signs --- as they must be, since a diagonal
-controller on a linear plant sees only the magnitude of the coupling, not its sign. Splitting the
+controller on a linear plant sees only the magnitude of the coupling and is blind to its sign. Splitting the
 corner statistics by sign over the 96 coupled in-envelope corners, the median cross-transfer
 ratio MIMO/dec is \textbf{0.941} when the sign matches the synthesis and \textbf{2.162} when it
 opposes, spread $0.1938$ to $4.378$; the centralized controller has the smaller cross-transfer at
 28 of 96 corners. \textbf{The $\approx2.3\times$ asymmetry between the matching and opposing
-medians is the robust statement}: the magnitude of the benefit is a modelling choice, the fact
-that it reverses with an unmeasured sign is not. The saturated large step
+medians is insensitive to the actuator span and the operating point}, where the magnitude of the
+benefit is not. The saturated large step
 ($+\SI{2}{\meter\per\second}$) splits by sign in the same way --- the centralized controller is
 $48\,\%$ better at the matching sign and $90\,\%$ worse at the opposing one --- and the
 decentralized pair reaches a droop clamp ($r = 0.85$ at $\Delta V_0 = +0.4$, $r = 0.15$ at
@@ -830,24 +825,22 @@ vehicle pole, so post-saturation recovery is slow \emph{by design}.
     \label{fig:transient-small}
 \end{figure}
 
-\paragraph{Metric 3 --- regen bus excursion: not a discriminator.}
+\subsubsection{Metric 3: regen bus excursion}
 Run against the 15-state truth model with $i_{cmd}$ railing at $-\SI{20}{\ampere}$, the bus
 excursion is \SI{1.4911}{\volt} against \SI{1.4743}{\volt}, a ratio of \num{0.989}:
-\textbf{essentially controller-independent}. The reason is worth stating precisely, because the
-obvious explanation is wrong here. The event is \emph{not} rail-dominated --- the current command
+\textbf{essentially controller-independent}. The event is \emph{not} rail-dominated --- the current command
 spends only $0.18$ to $0.34\,\%$ of the horizon on the clamp --- so ``both controllers sit on the
 same rail'' does not account for the tie. What accounts for it is that the bus excursion is set
 by the \emph{peak braking current the loop reaches}, and both controllers reach essentially the
 same peak on the same $-\SI{2}{\meter\per\second}$ demand; the droop loop, whatever its
 architecture, has no authority over a disturbance injected downstream of it on that timescale.
 This metric was proposed as an architecture discriminator \citep{internal:droop};
-\textbf{it is not one, and it should not be carried forward as one} --- it measures the
-excitation, not the controller. On the same event the centralized controller happens to be the
-better of the two on share excursion as well ($0.1448$ against $0.1747$) and recovers the bus
-faster (\SI{0.43}{\second} against \SI{0.58}{\second}), which only reinforces that the bus number
-itself is uninformative (Appendix~\ref{app:corners}).
+\textbf{it is not one} --- it measures the excitation, not the controller. On the same event the
+centralized controller is the better of the two on share excursion ($0.1448$ against $0.1747$)
+and recovers the bus faster (\SI{0.43}{\second} against \SI{0.58}{\second})
+(Appendix~\ref{app:corners}).
 
-\paragraph{The input node: $\bar\sigma(S_u)$.}
+\subsubsection{Input sensitivity $\bar\sigma(S_u)$}
 For a MIMO plant, output sensitivity does not bound input sensitivity: $S_u = (I+G_cG_p)^{-1}$
 and $S_y = (I+G_pG_c)^{-1}$ differ whenever the plant condition number differs from unity, and
 the available bound (\citep{assadian2020neoclassical} \S12.7.2, eqs.~(12.86)--(12.87), p.~416)
@@ -876,15 +869,15 @@ worst corner, peak $\bar\sigma(S_u)$ & 1.8640 @ \SI{54.6}{\radian\per\second} & 
 Both controllers keep the realized input sensitivity modest --- comparable to their output
 sensitivities rather than to the $K(G_p)$-scaled bound --- and the centralized controller is
 again the better of the two, by $11\,\%$ nominally and $21\,\%$ at the worst corner. \textbf{The
-input node raises no new concern for either architecture}, and in particular the decentralized
-baseline is not quietly paying for its output-sensitivity deficit at the actuator.
+input node raises no new concern for either architecture}; the decentralized baseline's
+output-sensitivity deficit does not appear as an additional cost at the actuator.
 
-\paragraph{Caveats.}
+\subsubsection{Caveats}
 Six qualifications bound the above, expanded in Appendix~\ref{app:corners}. (i) The
 $\Delta V_0$ sign uncertainty bounds any feedforward benefit: the entire centralized coupling
 advantage lives in \eqref{eq:dalpha}, zero at $\Delta V_0 = 0$ and sign-flipping with it. (ii)
 The $K$-out-of-envelope corners are waived; both controllers degrade badly there
-($\bar\sigma(S_o) = 4.93$ centralized against $5.77$ decentralized) --- reported rather than omitted. (iii)
+($\bar\sigma(S_o) = 4.93$ centralized against $5.77$ decentralized). (iii)
 The large steps and drive-cycle ramps still touch the clamp, so those comparisons are partly
 about anti-windup recovery rather than linear design. (iv) The Tier-2 worst-corner numbers are a
 representative subsample; the relative verdict survives, the absolute value does not. (v) In the
@@ -904,27 +897,26 @@ calibrated plant could move the verdicts, particularly the second metric.
       identically $I$ at every frequency and corner. The live path is drive to share, through
       $\partial\alpha/\partial I_{tot} = -\Delta V_0 r_0(1-r_0)/(k_d I_{tot0}^2)$, at
       $1.57\times$ the direct path at \SI{2}{\ampere} and $25\times$ it at \SI{0.5}{\ampere} on
-      the normalized plant. \textbf{The RGA
-      is the wrong instrument for this plant}, which is itself a reportable finding.
+      the normalized plant. \textbf{The RGA is the wrong instrument for this plant.}
 \item \textbf{Decentralized control is justified, not merely convenient.} It is stable at all
       4992 feasible Tier-1 corners, continuous and in the exact multirate discrete loop; it keeps
       a $2.3\times$ whole-cycle speed-tracking advantage and a $45\times$ faster recovery from
-      saturation; it pays a bounded price in worst-corner sensitivity ($2.55$ vs.\ $1.88$ on the
+      saturation; it incurs a bounded penalty in worst-corner sensitivity ($2.55$ vs.\ $1.88$ on the
       same corner set); and none of its advantages depend on an uncalibrated sign. The
       centralized controller's own gains say the same thing from the other side --- it is about
       $98\,\%$ decentralized, with a $2.15\,\%$ coupling feedforward that the synthesis
       deliberately keeps small because it cannot trust the coupling's sign.
-\item \textbf{The three primary metrics give three different answers}, and this is the result
-      rather than an inconvenience: the centralized controller is superior on worst-corner
+\item \textbf{The three primary metrics give three different answers}: the centralized
+      controller is superior on worst-corner
       sensitivity by $27\,\%$, ties on regen bus excursion (a metric that measures the
       excitation rather than the controller and should be retired), and is superior or inferior
       on the drive-transient share excursion depending on
       the sign of $\Delta V_0$ --- with a median penalty ratio $\approx2.3\times$ between the
-      opposing and matching signs. \textbf{It is no longer true that the decentralized pair is
+      opposing and matching signs. \textbf{The decentralized pair is not
       superior in every saturated large-signal case}: the large-signal share excursion splits by $\Delta V_0$ sign
       exactly as the small-signal one does. What decentralized retains outright is drive-cycle
       tracking, post-saturation recovery speed, and sign-independence.
-\item \textbf{The MIMO Youla-H $T(0)=I$ correction works and is cheap.} A constant right
+\item \textbf{The MIMO Youla-H $T(0)=I$ correction is effective and inexpensive to apply.} A constant right
       multiplier $M_{YH} = [G_s(0)Y_H(0)]^{-1}$ on the Youla parameter generalizes the scalar
       gain-tuning recipe without touching poles or zero dynamics, reduces to it exactly in the
       $1\times1$ case, and combined with an exact rank-2 integrator split makes $T(0)=I$
@@ -944,7 +936,7 @@ calibrated plant could move the verdicts, particularly the second metric.
       about an arbitrary number, and the effort weights must be re-tuned whenever it moves.
 \end{enumerate}
 
-\paragraph{Independent validation.}
+\subsection{Independent validation}
 The whole chain --- plant assembly, $H_\infty$ synthesis, the MIMO Youla-H $T(0)=I$ correction,
 the emitted coefficient header, the corner battery and the transients --- was rebuilt
 independently in MATLAB against the shipped $\pm\SI{20}{\ampere}$ design and
@@ -952,19 +944,19 @@ independently in MATLAB against the shipped $\pm\SI{20}{\ampere}$ design and
 agrees to $\SI{2.23e-9}{}$, the a-posteriori $\|T_{zw}\|_\infty$ to $0.006\,\%$
 (\num{1.6457} against \num{1.6456}), $T(0)=I$ holds exactly both in synthesis and on the
 parsed header, all 576 corners are stable, and the transient excursions agree to within
-$5\,\%$. Two limitations reported above are consequences of that cross-check rather than
-concessions made in spite of it: the Tier-2 worst-corner figure is a representative-subsample
+$5\,\%$. Two limitations reported above are consequences of that cross-check: the Tier-2
+worst-corner figure is a representative-subsample
 lower bound --- MATLAB's exhaustive sweep finds \num{1.9443} against the subsample's
 \num{1.8754}, reproduced by the Python model at \num{1.9445} --- and the cross-transfer
 improvement must be quoted on the implemented \SI{2}{\milli\second} loop
-($\SI{1.109e-2}{}$, matched exactly by both tools) rather than in continuous time.
+($\SI{1.109e-2}{}$, matched exactly by both tools) and not in continuous time.
 
-\paragraph{Future work, in priority order.}
+\subsection{Future work}
 \textbf{(1) Measure $\Delta V_0$} --- a direct reading of two no-load bus setpoints that collapses
 the sign uncertainty bounding the entire centralized advantage. Nothing else here is worth more
 per unit of bench time; a re-synthesis at the measured sign could then justify a materially larger
 feedforward. \textbf{(2) Close the drive-channel calibration}: tire radius and encoder chain first
-(cheap, blocking for everything downstream), then $k_t$ (requires selecting a motor), then
+(inexpensive to measure, blocking for everything downstream), then $k_t$ (requires selecting a motor), then
 $\tau_v$ and $T_{d,v}$ from a VESC current-step response, then the free-run current at
 \SI{16}{\volt} which sets $93\,\%$ of $b_{\!e\!f\!f}$. If calibration narrows the $K_v$ envelope,
 re-run the drive weights with a lighter effort penalty and expect a materially faster drive
@@ -1029,8 +1021,8 @@ $\bar\sigma(S_o)$ at nominal agrees to $4.1\,\%$ (1.1606 vs.\ 1.2096) against a 
 tolerance. One residual limitation: the truth-model $\|\cdot\|_\infty$ check falls back to a
 dense singular-value sweep, because the truth model mixes \SI{0.12}{\radian\per\second} vehicle
 dynamics with $\sim10^{5}\,\si{\radian\per\second}$ converter poles and the Hamiltonian bisection
-fails on that spread. A sweep is a lower bound --- the conservative direction for a ``does the
-truth model look worse'' check --- but not a proof.
+fails on that spread. A sweep is a lower bound --- the conservative direction for this
+comparison --- but not a proof.
 
 %---------------------------------------------------------------
 \section{Drive-Channel Weight Selection}
@@ -1048,8 +1040,8 @@ down to 4, the $W_{\Delta}$ break from 60 to \SI{250}{\radian\per\second} and th
 0.04 never brought $\gamma$ below about 1.2, with $\|W_p S\|$ binding at the low-frequency end.
 The papers' powertrain plant is a first-order lag whose pole is well above the weight corner, so
 the double-slope demand is served there; on SC001, with an \SI{8}{\second} mechanical time
-constant, it is not. This is a finding about the recipe's applicability domain, not a defect in
-it, and both the SISO and MIMO drive designs reach it independently.
+constant, it is not. This is a finding about the recipe's applicability domain; it is no defect in
+the recipe, and both the SISO and MIMO drive designs reach it independently.
 
 \subsection{SISO drive-channel iteration}
 
@@ -1092,21 +1084,21 @@ it.4 & $W_u$ break $\to\SI{18}{\radian\per\second}$ & $\gamma = 1.6429$ --- \tex
 \end{tabularx}
 \end{table}
 
-Iteration~3a is the counter-intuitive one: a \emph{lower} $\gamma$ bought a \emph{more
+In iteration~3a a \emph{lower} $\gamma$ produced a \emph{more
 aggressive} controller whose worst-corner sensitivity was worse. The final setting deliberately
 accepts a worse $\gamma$ for corner margin, paying about \SI{60}{\milli\second} of small-signal
 drive settling. The reason a heavy control-effort penalty is the right instrument here is
 structural: the drive channel's uncertainty is $K_v\in\{0.5,1,2\}$ times a damping factor of
 $\{0.5,2\}$, a $\approx4\times$ gain spread, against the share channel's $K\in[0.55,1.45]$; and
-the break frequency must sit \emph{below} the worst-case transport delay's phase crossover
-($T_{d,v}\in[1,4]\si{\milli\second}$, i.e.\ \SIrange{250}{1000}{\radian\per\second}), not at it.
+the break frequency must sit strictly \emph{below} the worst-case transport delay's phase crossover
+($T_{d,v}\in[1,4]\si{\milli\second}$, i.e.\ \SIrange{250}{1000}{\radian\per\second}).
 
 \begin{table}[H]
 \caption{Selection of the drive $W_u$ (DC gain, break frequency), swept against the Tier-2
 in-envelope gate $\bar\sigma(S_o) < 2.0$ and Tier-1 stability. Only the break frequency was moved
 from its it.3b value; the chosen row clears the gate with about $6\,\%$ margin while keeping the
 break as close as possible to the \SI{24}{\radian\per\second} $W_p$ corner --- pushing it lower
-buys margin but puts $W_u$ and $W_p$ in direct contention over the same decade.}
+provides margin but places $W_u$ and $W_p$ in direct contention over the same decade.}
 \label{tab:wu-sweep}
 \begin{tabularx}{\textwidth}{CCCCC}
 \toprule
@@ -1124,12 +1116,12 @@ $W_u$ DC & break [\si{\radian\per\second}] & $\gamma_{MIMO}$ & Tier-1 unstable &
 \end{tabularx}
 \end{table}
 
-A numerical note belongs with the table: the corner result is sensitive to the balanced
+The corner result is sensitive to the balanced
 truncation tolerance, since a loose tolerance can leave truncation error that happens to damp the
 worst corner. Tightening the tolerance to $10^{-2}$ makes the reduced controller a faithful
 reduction and the corner result a property of the design rather than of the reduction --- at the
-cost of two extra states (Section~\ref{sec:implementation}), which is the cheaper of the two
-prices.
+cost of two extra states (Section~\ref{sec:implementation}), which is the less expensive of the two
+options.
 
 %---------------------------------------------------------------
 \section{DGKF Implementation Details}
@@ -1145,7 +1137,7 @@ Youla transfer function. The Remark on p.~492 of the same source --- a control i
 plant without a weight violates the $D_{12}$ full-column-rank condition and renders the problem
 unsolvable --- fixes $W_u$ as mandatory on both channels.
 
-\paragraph{The $P_f$-Riccati degeneracy.}
+\subsection{The $P_f$-Riccati degeneracy}
 With measurement-equals-reference structure $D_{21} = I_2$, so
 $Q_f = B_1(I - D_{21}^\top D_{21})B_1^\top = 0$ and $A_f = A - B_1 C_2$. In the augmented plant
 $B_1$ injects only into the $W_p$ block row, so $A - B_1 C_2$ cancels that coupling exactly and is
@@ -1153,7 +1145,7 @@ block-triangular with stable diagonal blocks: $P_f = 0$ is \emph{provably} the s
 and a correct two-Riccati implementation must return it. Ours does, to $\SI{1.0e-14}{}$,
 validating the estimation half of the code path on a problem that does not otherwise exercise it.
 
-\paragraph{Consequence: the Riccati $\gamma$ is optimistic in MIMO.}
+\subsection{Optimism of the Riccati $\gamma$ in MIMO}
 Because $P_f\equiv0$, the DGKF feasibility test $\rho(P_c P_f)<\gamma^2$ is vacuous, leaving only
 ``$P_c$-Riccati solvable and positive semi-definite'' --- necessary but here not sufficient. The bisection
 reports $\gamma = 0.89769$; the central controller attains $\gamma_{achieved} = 1.64563$, with
@@ -1165,7 +1157,7 @@ confirmed independently in MATLAB, whose \texttt{hinfsyn} result landed between 
 value and the a-posteriori level exactly as the degeneracy predicts
 (Appendix~\ref{app:matlab}).
 
-\paragraph{Scaling.}
+\subsection{Scaling}
 All synthesis is performed on $G_s = D_e^{-1} G D_u$ with $D_e = \mathrm{diag}(0.05, 0.5)$ (the
 maximum acceptable share and speed errors) and $D_u = \mathrm{diag}(0.35, 20.0)$ (half the $r$
 span and the motor-current clamp), following \citep{skogestad2005multivariable}; the supporting
@@ -1173,8 +1165,8 @@ rationale is the renormalization-of-gains argument of \citep{assadian2020neoclas
 p.~159 --- a gain is only meaningful relative to the actuator limit it must respect, which is
 exactly what $D_u$ encodes. The scalings are kept \emph{outside} the emitted controller
 matrices, both so the anti-windup back-calculation map is exactly $D_u^{-1}$ and so float32
-coefficient rounding is not applied to numbers spanning two decades of physical units. One
-consequence deserves emphasis, because it is easy to miss: $D_u$ carries the actuator limit into
+coefficient rounding is not applied to numbers spanning two decades of physical units. $D_u$
+carries the actuator limit into
 the cost function, so \textbf{the control-effort weight $W_u$ penalizes a \emph{normalized} input,
 and the physical current a given $W_u$ actually penalizes scales with the clamp}. Changing the
 actuator limit therefore changes the effective effort penalty and requires re-tuning $W_u$ ---
@@ -1226,7 +1218,7 @@ loop.}
 \end{table}
 
 The worst discrete $|z| = 0.999760$ for \texttt{mimo} is the exact integrator at the sample rate,
-not a marginal design pole. The one asymmetry worth naming is that the decentralized pair's
+not a marginal design pole. The decentralized pair's
 slowest closed-loop mode is \SI{0.0040}{\radian\per\second} (a \SI{250}{\second} time constant)
 against the centralized loop's \SI{0.1198}{\radian\per\second}, a factor of 30: both are stable,
 but the decentralized pair leaves a very slow, nearly-cancelled mode that the centralized design
@@ -1297,9 +1289,9 @@ A speed-reference step is applied at $t = \SI{0.05}{\second}$. The small step
 ($\Delta v_{ref} = +\SI{0.05}{\meter\per\second}$) is fully linear --- zero time on the current
 rail --- and is the clean comparison. The large step ($+\SI{2}{\meter\per\second}$) puts the loop
 on the $\pm\SI{20}{\ampere}$ rail for $0.18$ to $0.34\,\%$ of the horizon: brief, but enough to
-make the comparison partly an anti-windup-recovery comparison rather than a purely linear one.
+make the comparison partly an anti-windup-recovery comparison and no longer a purely linear one.
 The \SI{60}{\second} horizon was chosen so the slow centralized recovery is
-measured rather than reported as a horizon artefact.
+measured outright and not reported as a horizon artefact.
 
 \begin{table}[H]
 \caption{Drive-transient share excursion. Amplitudes are deviations about
@@ -1332,7 +1324,7 @@ rail fraction & 0.00337 & 0.00337 & \textbf{0.00187} \\
 
 \subsection{Regen event on the truth model}
 
-The regen event is run against the 15-state truth model with a bus-voltage output, not the
+The regen event is run against the 15-state truth model with a bus-voltage output in place of the
 8-state design plant. $\Delta v_{ref}$ is stepped to $-\SI{2}{\meter\per\second}$
 (\SI{2}{\meter\per\second} to standstill) and $i_{cmd}$ touches the $-\SI{20}{\ampere}$ rail for
 $0.18$--$0.34\,\%$ of the horizon; the
@@ -1341,7 +1333,7 @@ carries no $\tau_f$ by convention. Horizon \SI{60}{\second}.
 
 \begin{table}[H]
 \caption{Regen event, 15-state truth model. The residual $\Delta v_{bus}$ of \SI{0.105}{\volt} is
-the new steady-state load operating point (the vehicle has stopped), not a tracking error;
+the new steady-state load operating point (the vehicle has stopped) and is no tracking error;
 recovery is therefore measured about the final value.}
 \label{tab:regen}
 \begin{tabularx}{\textwidth}{lCCC}
@@ -1366,8 +1358,8 @@ $v$ settle (2\,\%) [\si{\second}] & \textbf{0.501} & 0.501 & 22.45 \\
     Top: bus-voltage deviation. Bottom: share deviation. The bus traces are nearly
     indistinguishable, and not because the event is rail-dominated (the clamp is touched for
     well under $1\,\%$ of the evaluation horizon): the excursion is set by the peak braking
-    current both controllers reach, which is a property of the demand and of the plant, not of
-    the droop architecture.}
+    current both controllers reach, which is a property of the demand and of the plant
+    alone.}
     \label{fig:regen}
 \end{figure}
 
@@ -1379,19 +1371,19 @@ the fuel cell carries the bus and the battery charges; the share loop has no upw
 left by construction. A $+\SI{0.5}{\meter\per\second}$ drive step over a \SI{60}{\second} horizon
 shows \textbf{no windup interaction for either controller}: both use only the small downward
 authority available ($r_{min} = 0.83693$ and $0.84776$), both converge to a $\sim\SI{2e-3}{}$
-residual share error --- the authority loss itself, not a hang --- and neither shows a limit cycle
+residual share error --- a direct consequence of the authority loss, with no sign of a hang --- and neither shows a limit cycle
 (tail peak-to-peak $\le 10^{-10}$). All three anti-windup schemes behave gracefully in the
 degenerate-authority regime. The two do differ in how long they spend pinned: the decentralized
 pair holds the upper clamp for $99.6\,\%$ of the horizon against $0.4\,\%$ for the centralized
 controller, and the centralized peak share excursion is correspondingly smaller
 (\num{0.06129} against \num{0.10310}, $-41\,\%$). Since the regime is defined by \emph{having no
 upward authority}, that difference is a statement about how quickly each controller gives up on
-demanding it, not about disturbance rejection.
+demanding it, and says nothing about disturbance rejection.
 
 The \SI{30}{\second} drive-cycle profile (standstill; ramp 0 to \SI{2}{\meter\per\second} over
 \SI{5}{\second}; cruise; coast to \SI{0.5}{\meter\per\second}; hold; stop) with a
 $\Delta\alpha_{ref} = +0.2$ share step over 11--\SI{15}{\second} and a $-\SI{1.0}{\ampere}$ load
-disturbance over 22--\SI{25}{\second} is the clearest decentralized advantage in the report: the
+disturbance over 22--\SI{25}{\second} is where the decentralized advantage is largest: the
 whole-cycle RMS speed error is \SI{0.1059}{\meter\per\second} against
 \SI{0.2396}{\meter\per\second}, a factor of \num{2.3}, and the RMS share error \num{0.00475}
 against \num{0.00730}. The \emph{cruise window} shows why: the decentralized pair is at numerical
@@ -1399,7 +1391,7 @@ zero there ($\SI{2.94e-7}{\meter\per\second}$ RMS speed error) while the central
 at \SI{0.195}{\meter\per\second}, still recovering from the ramp. On the isolated load disturbance
 the decentralized pair is also better by $2.2\times$ in speed
 (\SI{0.0191}{} against \SI{0.0420}{\meter\per\second}) though nearly equal in share
-(\num{0.0091} against \num{0.0097}). One result of note: the centralized controller drives
+(\num{0.0091} against \num{0.0097}). The centralized controller drives
 the droop ratio to its \emph{lower} clamp ($r = 0.15$) during the cycle, whereas the decentralized
 pair never goes below \num{0.29} --- the cross-channel term spending droop authority in response
 to a saturated drive channel, a real cost of centralization on this plant.
@@ -1418,8 +1410,8 @@ to a saturated drive channel, a real cost of centralization on this plant.
 \item \textbf{$\Delta V_0$ sign uncertainty bounds any feedforward benefit.} The entire
       centralized coupling advantage lives in \eqref{eq:dalpha}, which is zero at
       $\Delta V_0 = 0$ and flips sign with it. Until $\Delta V_0$ is measured, the defensible
-      claim is that the centralized design buys coupling rejection at the design sign and
-      forfeits it at the mirror sign.
+      claim is that the centralized design improves coupling rejection at the design sign and
+      degrades it at the mirrored sign.
 \item \textbf{The $K$-out-of-envelope corners are waived, and both controllers degrade badly
       there} --- $\bar\sigma(S_o) = 5.77$ decentralized against $4.93$ centralized. The
       stability-only waiver is physically
@@ -1449,7 +1441,7 @@ script that independently rebuilds the plant from the documented equations, re-r
 re-runs the corner battery and the transients. \textbf{The verdict is PASS on all six criteria}
 (Table~\ref{tab:matlab}).
 
-\paragraph{Scope of the run.}
+\subsection{Scope of the run}
 The cross-check was run against the shipped design, at the $\pm\SI{20}{\ampere}$ actuator span
 ($D_u = \mathrm{diag}(0.35, 20.0)$) used throughout this report, so Table~\ref{tab:matlab}
 validates the report as it stands --- plant, synthesis, $T(0)=I$ correction, emitted
@@ -1488,7 +1480,7 @@ peak $|i_{cmd}|$ [\si{\ampere}], $\Delta V_0 = +0.4 / -0.4$ & 1.179 / 1.176 & 1.
 \end{tabularx}
 \end{table}
 
-Three rows carry interpretation. The \texttt{hinfsyn} level of \num{1.0851} lands between the
+The \texttt{hinfsyn} level of \num{1.0851} lands between the
 Python Riccati bisection (\num{0.8977}) and the a-posteriori achieved level (\num{1.6456}),
 which is precisely the behaviour the $P_f$ degeneracy of Appendix~\ref{app:dgkf} predicts: the
 bisection is optimistic because its feasibility test is vacuous, and a third implementation
@@ -1520,7 +1512,7 @@ for that row is $5\,\%$.
 \end{figure}
 
 Two methodological findings were first surfaced by the $\pm\SI{5}{\ampere}$ run and are
-reconfirmed here, which is the evidence that both are structural rather than artefacts of a
+reconfirmed here, so both are structural and no artefact of a
 particular actuator span. First, the MATLAB sweep is exhaustive at the nominal operating point,
 and it locates the worst $\bar\sigma(S_o)$ corner \emph{outside} the Python representative
 corner set: $\bar\sigma(S_o) = \num{1.9443}$ at $\Delta V_0 = -0.4$,
@@ -1535,10 +1527,10 @@ improvement is a \emph{continuous-domain} figure and must be requoted on the imp
 \SI{2}{\milli\second} loop; MATLAB obtains $\SI{1.109e-2}{}$ there, matching the implemented-loop
 row of Table~\ref{tab:sigma} exactly, which is why that table carries both rows. The two
 implementations agree everywhere they should agree, and the residual differences are
-attributable to the stated approximations rather than to tool disagreement.
+attributable to the stated approximations alone.
 
-\paragraph{Reproduction tolerance.}
-The share-channel controller is re-derived here from its documented weights rather than parsed
+\subsection{Reproduction tolerance}
+The share-channel controller is re-derived here from its documented weights instead of parsed
 from the firmware header, and the re-derivation carries a $0.67\,\%$ integrator-gain offset
 (112.679 against 111.930) attributable to solver accuracy at the $\gamma_{opt}$ anchor. The offset
 is well inside the corner family and affects no comparison in this report.
@@ -1547,8 +1539,8 @@ is well inside the corner family and affects no comparison in this report.
 \section{Anti-Windup and Discretization}
 \label{app:aw}
 
-Actuator demand is not an afterthought in this formulation: for the standard configuration
-$\hat u/\hat n = -Y$ (\citep{assadian2020neoclassical} \S3.8.2, eq.~(3.124), p.~132), i.e.\ the
+For the standard configuration
+$\hat u/\hat n = -Y$ (\citep{assadian2020neoclassical} \S3.8.2, eq.~(3.124), p.~132): the
 Youla transfer function \emph{is} the noise-to-actuator map. The $W_u$ weight acting on $Y$ in
 Table~\ref{tab:mimo-weights} is therefore a direct bound on actuator activity, and the anti-windup
 schemes below handle the residual demand that the weight does not remove.
@@ -1576,7 +1568,7 @@ The controller $G_{c,YH}$ has order 30 (14 controller $+$ 8 plant $+$ 8 from the
 interconnection); after the integrator split the stable remainder is order 28. Balanced truncation
 selects order 7 at a $10^{-2}$ margin, with a maximum relative $\bar\sigma$ deviation of
 $\SI{1.88e-3}{}$ over $\omega\in[0.1, 10^4]$ against a $2\times10^{-2}$ tolerance. Deviation is
-measured per frequency rather than against a single global scale, which would be dominated by the
+measured per frequency instead of against a single global scale, which would be dominated by the
 integrator's low-frequency magnitude and would make the check vacuous. The final continuous
 controller is 9 states: two exact integrators plus a seven-state remainder.
 

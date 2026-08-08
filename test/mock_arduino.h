@@ -7,6 +7,8 @@
 #include <vector>
 #include <queue>
 #include <string>
+#include <sstream>
+#include <type_traits>
 #include <algorithm>
 
 // ── Arduino primitive types ───────────────────────────────────────────────────
@@ -72,30 +74,71 @@ inline void interrupts()   {}
 
 // ── Mock Serial ───────────────────────────────────────────────────────────────
 // Template-based so it accepts every type the .ino passes without overload ambiguity.
+//
+// Output is CAPTURED into `tx` rather than discarded, so tests can assert on what the firmware
+// actually prints. That matters for the State-98 Serial-Plotter stream ('L'), whose whole contract
+// is the exact wire format — a wrong label or a varying field count silently produces an empty or
+// mis-legended graph in the IDE, which no state-flag assertion would catch. The formatting mirrors
+// Arduino's Print class closely enough for that purpose: floats default to 2 decimals, the second
+// argument is the decimal count for floats and the base for integers.
 struct MockSerialClass {
     std::queue<char> rx_queue;
+    std::string      tx;   // captured output; cleared by reset_test_state()
 
     void begin(long) {}
     void setRX(int)  {}
     void setTX(int)  {}
 
     // Non-template const char* overloads take precedence over templates (exact match)
-    void print  (const char* s) { (void)s; }
-    void println(const char* s) { (void)s; }
-    void println()              {}   // bare println()
+    void print  (const char* s) { tx += s; }
+    void println(const char* s) { tx += s; tx += '\n'; }
+    void println()              { tx += '\n'; }   // bare println()
 
     // Template catch-all: single argument (int, float, uint32_t, String, etc.)
-    template<typename T> void print  (T v)           { (void)v; }
-    template<typename T> void println(T v)           { (void)v; }
+    template<typename T> void print  (T v)           { tx += fmt(v); }
+    template<typename T> void println(T v)           { tx += fmt(v); tx += '\n'; }
     // Template catch-all: two arguments (value + base/precision)
-    template<typename T> void print  (T v, int opt)  { (void)v; (void)opt; }
-    template<typename T> void println(T v, int opt)  { (void)v; (void)opt; }
+    template<typename T> void print  (T v, int opt)  { tx += fmt(v, opt); }
+    template<typename T> void println(T v, int opt)  { tx += fmt(v, opt); tx += '\n'; }
 
     int  available() { return (int)rx_queue.size(); }
+    int  availableForWrite() { return 4096; }   // host always draining in tests (plotTick guard)
     int  read() {
         if (rx_queue.empty()) return -1;
         char c = rx_queue.front(); rx_queue.pop();
         return (int)c;
+    }
+
+    // Test helpers
+    void tx_clear()                        { tx.clear(); }
+    bool tx_contains(const char* s) const  { return tx.find(s) != std::string::npos; }
+    int  tx_count(const char* s) const {
+        if (!*s) return 0;
+        int n = 0;
+        for (size_t p = tx.find(s); p != std::string::npos; p = tx.find(s, p + 1)) n++;
+        return n;
+    }
+
+private:
+    template<typename T> static std::string fmt(T v) {
+        if constexpr (std::is_floating_point_v<T>) {
+            char buf[40]; snprintf(buf, sizeof(buf), "%.2f", (double)v); return buf;   // Arduino default
+        } else {
+            std::ostringstream oss; oss << v; return oss.str();
+        }
+    }
+    template<typename T> static std::string fmt(T v, int opt) {
+        if constexpr (std::is_floating_point_v<T>) {
+            char buf[64]; snprintf(buf, sizeof(buf), "%.*f", opt, (double)v); return buf;
+        } else if constexpr (std::is_integral_v<T>) {
+            std::ostringstream oss;
+            if      (opt == 16) oss << std::hex << std::uppercase << (long long)v;
+            else if (opt ==  8) oss << std::oct << (long long)v;
+            else                oss << (long long)v;
+            return oss.str();
+        } else {
+            std::ostringstream oss; oss << v; return oss.str();
+        }
     }
 };
 

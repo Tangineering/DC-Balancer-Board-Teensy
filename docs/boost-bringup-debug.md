@@ -581,6 +581,8 @@ chat-photo transcriptions:
   the binding current constraint for ~1.8 ms — the boost is driven into sag/current-limit on
   every `G` (Death-5-class stress, repeated). Residual question (VBT sag vs the boost's own
   15 A limit): **VBT on a spare channel through one `G`** still discriminates.
+  (**Channel correction 2026-08-03: this CH3 trace was V-MOT, not VBUS** — the ramp described
+  is the motor-node charge; see the global reconciliation below.)
 - **Dip #1 bookkeeping sharpened:** the coincident INA needle is ~7–10 A but narrow; even
   100 µs at that current is ~1 mC, which has no DC destination that matches VBUS staying flat
   (40 µF would jump ~19 V+). Either the needle is far narrower than the photo suggests, or
@@ -620,6 +622,8 @@ BOOST-R1-F7/F9/N1):**
   discrepancy: capture-5's VBUS (the ADC's node) peaked at **16.85 V — below the then-armed
   17.0 limit — while the 17.5 V cursor sat on the boost-local node**; whether the trips fire
   on real bus voltage, calibration error, or node identity is open until then.
+  (**N2's node-discrepancy premise dissolved 2026-08-03** — the 16.85 V trace was V-MOT; see
+  the reconciliation. The calibration/raw-count TODO stands.)
 
 #### Triple-channel capture with INA253 current (2026-08-02, amplitudes corrected 2026-08-03) — dip #1 IS an RT1987-side conduction event
 
@@ -677,6 +681,8 @@ interim OV limit, explaining the residual marginal trips.
   artifact** during the multi-volt step (the 4.4 V VOUT dip is real either way; the 7.8 A
   amplitude need not be). Discriminator: **zoomed 20–50 µs/div single-shot, trigger CH2
   rising** — top bench priority; the SS-pin/FLTB probe remains complementary.
+  (**RESOLVED 2026-08-03: CH3 was V-MOT; the charge went into the unmonitored 40 µF VBUS** —
+  see the reconciliation below.)
 - **Park metrology note (2026-08-03, review N6):** the 16.0/17.5 cursor pair reads
   edge-to-edge across ~0.2 V-thick traces and over-states the step. Trace-centre parks are
   **+0.72 V (dip #1) and +0.65 V (deep dip)** above the immediately-preceding level, decaying
@@ -707,7 +713,9 @@ open linear-vs-slew question). CH3: **flat** — conclusive at this timebase/sam
   reverse-conducts ~0.3 mC into VBT (a path bypassing the output shunt) causing the dip, while
   the INA253 lobe is a common-mode transient artifact of the 5.75 V/50 µs step that
   coincidentally mirrors it. (a) keeps the measurement honest but breaks the datasheet;
-  (b) keeps the datasheet but needs a coincidence.
+  (b) keeps the datasheet but needs a coincidence. (**CLOSED 2026-08-03: CH3 was V-MOT — the
+  charge went into the unmonitored 40 µF VBUS; both fork candidates dead.** See the
+  reconciliation.)
 - **Discriminator (one run): VBT on the spare channel at this zoom.** (b) predicts a visible
   upward VBT blip (~0.3 mC into the input bank) coincident with the dip; (a) predicts
   flat-or-sag. Same acquisition also answers the deep-dip source-limiting question.
@@ -746,7 +754,8 @@ the death history).
   5.2 V. Both artifact readings are dead. The charge-destination puzzle (bus flat in capture
   6) remains, narrowed to through-flow or abort-time discharge — next probes: **motor-node
   voltage (V_rgn / State-98 `S`) during the disabled-boost retry loop**, and the bus at fine
-  vertical scale (per-retry sawtooth?).
+  vertical scale (per-retry sawtooth?). (Fork fully closed 2026-08-03 — see the CH3 = V-MOT
+  reconciliation.)
 - **The Death-5 pre-charge sequencing has NEVER functioned on the bench, and cannot, at
   CSS = 5.6 nF on a current-limited supply:** attempt → ~8 A inrush → source collapse → UVLO
   abort → ~10 ms retry loop → bus parked at leakage-level mV. This supersedes the framing of
@@ -785,6 +794,9 @@ operator-confirmed 2026-08-03 — **`D-MT-EN` remains at 5.6 nF**). Same bench c
 5 V/div 1×; CH2 INA253A1 500 mV/div 1× = 5 A/div (BW setting not recorded); CH3 VBUS 5 V/div 1×.
 Cursors X1 = −0.2 ms (VOUT ramp start) → X2 = 28.1 ms (bus ramp complete), ΔX = 28.3 ms;
 Y1 = 15.9 V (standalone regulation) / Y2 = 17.5 V.
+
+(**Channel correction 2026-08-03: CH3 was V-MOT, not VBUS** — see the global reconciliation;
+the 'VBUS' readings in this entry are motor-node readings.)
 
 **Measured timeline** (t = 0 at boost enable / VOUT ramp):
 - t < 0: VOUT ≈ 8 V (VBT body-diode passthrough), VBUS ≈ 0.9 V, I ≈ 0.
@@ -864,6 +876,9 @@ unpowered, State-98 `G`.
 on-screen); CH3 VBUS 5 V/div 1×. Y cursors 15.9/17.5 V; X cursors carried over from capture 8
 (not aligned to this run's events).
 
+(**Channel correction 2026-08-03: CH3 was V-MOT, not VBUS** — see the global reconciliation;
+the 'VBUS' readings in this entry are motor-node readings.)
+
 **Measured timeline** (t = 0 at boost enable / VOUT ramp):
 - t < 0: VOUT ≈ 8 V (VBT passthrough), VBUS ≈ 1.4 V (± 0.5), I ≈ 0.
 - t ≈ 0: VOUT ramps to 15.9 V (on the Y1 cursor).
@@ -924,7 +939,9 @@ on-screen); CH3 VBUS 5 V/div 1×. Y cursors 15.9/17.5 V; X cursors carried over 
   (start-up SCP cut), capture 8's ~7 A rode under it. Why the onset peak varied run-to-run
   with identical bus-side C is itself open (supply state / gate-race variation). Also open:
   capture-8's motor-node (470 µF) connect is not visible in-window — consistent with a warm
-  (still-charged from a prior `G`) motor node or a post-window D-MT retry completion.
+  (still-charged from a prior `G`) motor node or a post-window D-MT retry completion. (Itself
+  superseded by the CH3 = V-MOT reconciliation: the unified >250 µs-clamp rule replaces the
+  onset-peak reading.)
 - **First in-system VESC capacitance bound (partially discharges review F2's 'unmeasured'
   item):** dip-2's ∫I dt ≈ 10–20 mC over the ~15 V motor-node charge requires the motor node +
   VESC to have charged through `D-BT-EN` during dip 2 (D-MT conducting by then) →
@@ -932,7 +949,8 @@ on-screen); CH3 VBUS 5 V/div 1×. Y cursors 15.9/17.5 V; X cursors carried over 
   with `MOT_PWR` HIGH and VBUS ≈ 3.9 V (above D-MT's UVLO) the bus HELD through the 65 ms gap
   instead of collapsing into the discharged ~1 mF VESC node — consistent with D-MT itself
   start-up-SCP-cutting each attempt (µs-scale, invisible at this timebase) and running its own
-  64 ms retry loop. UNCONFIRMED; a V-MOT-probed `G` settles it.
+  64 ms retry loop. UNCONFIRMED; a V-MOT-probed `G` settles it. (Puzzle dissolved by the
+  CH3 = V-MOT correction — the held 3.9 V node WAS the VESC node.)
 
 **Operator proposal (2026-08-03, open design decision — staged bring-up):** remove
 `MOT_PWR_ENABLE` from the initial `G` phase; charge VBUS (and its 470 µF, if bus-resident) to
@@ -1036,6 +1054,175 @@ LOW in phase 1 genuinely shrinks phase 1 to the ~40 µF bus. Phase 2 (D-MT at 10
 dip (completed at 6.3 A, no cut, park ≤ ~0.7 V — at 5.6 nF!) and capture-9's dip-2. Cut risk
 in phase 2 exists iff the connect current rides the clamp > 250 µs — scope-armed first runs
 stand.
+
+#### Firmware implemented (2026-08-03): staged bring-up + OV persistence
+
+The firmware round following the capture-9 staged-bring-up proposal is implemented in
+`teensy_controller/teensy_controller.ino` (pending host-test green + adversarial review + bench
+validation): shared non-blocking machine `busBringupTick()` (P0 bus pre-charge with MOT_PWR held
+LOW → P1 boosts → P2 dwell → P3 motor-node connect from the regulated bus, each phase ADC-gated
+with a timeout → FAULT_INIT_FAIL / FAULT_MOT_HOTPLUG), used by production `doState0()` and the
+now-automatic State-98 `G` ('X'/'Q' abort and darken the stage); the hot-plug guard inverted to
+`motPwrConnectBlocked()` (connect sanctioned ONLY from a regulated bus — supersedes the Death-5
+low-voltage pre-charge doctrine in code); `FAULT_OV_BUS` latches only after 10 ms + 3 consecutive
+over-samples (decaying parks show a truthful transient bit, no latch). `LIMIT_V_BUS_MAX` stays
+17.5 V until bench validation (operator decision). HARDWARE PREREQUISITE before any P3 run:
+100 nF CSS on `D-MT-EN`. Bench validation steps are in the plan's Verification section
+(scope-armed first `G`, ≥4 clean cycles, then optionally restore 17.0 V).
+
+#### Capture 10 — dual-source `G` with VESC: NON-CONVERGING 15.5 Hz SCP cut/retry limit cycle; motor node never charges; VESC boot-loops (2026-08-06; `10-Vbat yellow-Vmot blue-Ifc purple.jpg`)
+
+**Config (deltas vs capture 9: FC side now powered; current probe moved to the FC INA):** bench
+DC supply at **8.4 V on BOTH the battery and fuel-cell terminals**; VESC attached at the motor
+terminal; State-98 `G`. **Firmware = the capture-8/9 build (git HEAD)** — i.e. the OLD
+`bringUpBus()` that raises `MOT_PWR_ENABLE` with the bus switches at t = 0. **The staged
+bring-up implemented above was NOT flashed for this run.** CSS: `D-BT-EN` = 100 nF; **`D-MT-EN`
+(and, presumed, `D-FC-EN`) still 5.6 nF**. *(Presumption CORRECTED by operator 2026-08-07:
+**`D-FC-EN` was ALREADY 100 nF in this run** — only `D-MT-EN` was 5.6 nF. This kills candidate
+(a) below and, with capture 11's single-variable intervention, confirms `D-MT-EN` as the cutting
+switch — see capture 11.)* Non-destructive: no parts died; the loop was still running when
+captured.
+
+**Scope state:** 10 ms/div, delay 57.0 ms, 5 MSa/s / 700 kpts; trigger Edge CH2 rising, DC
+coupling, level 180 mV, Noise Reject off; **hardware counter on the trigger channel
+f = 15.5366 Hz**. CH1 VBT 5 V/div 1× DC; CH2 **FC INA253A1** 500 mV/div 1× = 5 A/div (BW setting
+not recorded); CH3 V-MOT 5 V/div 1× DC. The cursors on screen (ΔX = 30.0 ms; Y = 15.9 / 17.5 V)
+are carried over from captures 8/9 and are NOT aligned to this run's events.
+
+**Measured (steady state — the record is mid-loop; no bring-up start is in-window):**
+- CH2 (FC current): flat ≈ 0 between events, with a repeating narrow spike ≈ 1 div × 5 A/div ≈
+  **5 A photo-read**, width unresolvable at 10 ms/div (≲ 1 ms) — the true peak is photo-limited
+  and, per the prior captures' foldback behaviour, plausibly the ~8.5–10 A clamp.
+  **Period = 1/15.5366 Hz = 64.4 ms ≈ tSCP_RST = 64 ms (typ)** — the RT1987 SCP-retry
+  fingerprint, for the first time **continuous and indefinite** (operator reports sustained
+  audible clicking at this rate; two spikes in-window, spacing photo-consistent with 64 ms).
+- CH3 (V-MOT): **sawtooth ratchet, trace-centre ≈ 5.5 → ≈ 7 V (± 0.7 V, photo perspective)**:
+  a step of ≈ +1.6 V coincident with each current burst, decaying ≈ 1.3 V across each 64 ms gap.
+  The motor node never approaches the bus.
+- CH1 (VBT): ≈ 8.4 V throughout, small (≲ 1 V) level shifts correlated with the bursts; **no
+  collapse — no VIN-UVLO retry signature** (not the capture-7 supply-collapse class; the supply
+  is holding).
+- VESC (operator): blue LED **blinks** and the VESC never boots; the same VESC shows a solid
+  LED on an external supply. Clicking-noise source not identified (candidates: magnetics /
+  ceramics under the 64 ms current bursts, or the VESC itself on each boot attempt) — a benign
+  symptom either way.
+- Unmonitored this run: VBUS proper (still never scoped in this entire investigation), both
+  boost VOUTs, BT INA current.
+
+**Reading — a charge-budget limit cycle (leading mechanism; switch attribution UNCONFIRMED):**
+- Each SCP retry conducts only until the continuous-clamp timer cuts it: ~10 A × ~250 µs ≈
+  **2.5 mC** into the ~1–1.5 mF motor+VESC chain ≈ **+1.6–2.5 V per retry** — matching the
+  measured +1.6 V step (the capture-9 unified cut rule, applied per-retry).
+- Between retries the node parks at ≈ 5.5–7 V — **inside the VESC's brownout/boot-attempt
+  band** — and drains ≈ 1.3 V per 64 ms ≈ C·dV/dt ≈ **15–30 mA** (consistent with the VESC's
+  logic repeatedly attempting boot; the blinking LED is this loop made visible). Charge-in ≈
+  charge-out → **the ratchet converges to a fixed point below the bus instead of to the bus.**
+  First observed non-terminating retry loop (captures 5/8/9 all completed or aborted); the
+  qualitatively new ingredient is a *load* on the node being charged.
+- **Which switch is cutting is UNCONFIRMED.** The bursts ride the FC INA, so the **FC boost
+  sources them**. Candidates: (a) `D-FC-EN` (5.6 nF) cut/retrying into the bus+motor+VESC chain
+  with `D-MT-EN` transparent (capture-9's dip-1 event class, now on the FC switch); (b)
+  `D-MT-EN` cut/retrying from a bus held up by a source switch. Both fit the V-MOT sawtooth.
+  **(RESOLVED 2026-08-07: (b). The operator correction above removes (a)'s 5.6 nF premise —
+  `D-FC-EN` was already 100 nF — and capture 11 (single variable: `D-MT-EN` 5.6 → 100 nF)
+  converges the identical configuration, attributing the cut to `D-MT-EN` by intervention.
+  Corollary: the "17–18 V park on the sourcing FC boost every 64 ms" inference two bullets
+  down weakens — the cut was downstream of the boost, through a conducting `D-FC-EN`, so the
+  release energy lands on the VBUS node rather than an isolated boost output; consistent with
+  no OV_BUS trip having been reported despite the then-armed single-sample 17.5 V limit. Where
+  the per-retry release actually parked remains UNCONFIRMED — boost VOUTs and VBUS were
+  unmonitored.)**
+- **Why capture 9 converged and this run doesn't — open.** The added variable vs capture 9 is
+  the powered FC side, whose 5.6 nF switch reaches conduction ~20 ms before the 100 nF
+  `D-BT-EN`. *(Premise corrected 2026-08-07: `D-FC-EN` was 100 nF too, so the timing-asymmetry
+  clause is void; the dual-source diode-OR and the VESC drain band remain the live
+  candidates.)* Candidate contributors (unproven): the winning source's 64 ms retry rhythm
+  perturbing the other switch's enable/enhancement sequence (diode-OR interaction), and the
+  VESC drain band — capture 9's inter-retry park was 3.9 V, plausibly *below* the VESC's draw
+  threshold, while this run parks inside it, so capture-9's dip-2 charged a quiet node.
+  Standing tension noted: dip-2 conducted ~10 A for 1–2 ms *without* cutting, so the 250 µs
+  timer model is incomplete — whether 100 nF on `D-MT-EN` raises the charge-per-attempt enough
+  to escape the fixed point is likewise UNCONFIRMED until tried.
+- **Discriminator (one run):** spare channel on the **BT INA** (does BT ever conduct?) and/or
+  **VBUS proper** — the latter also finally closes the "ADC node never scoped" item and settles
+  (a) vs (b) directly: (b) predicts VBUS held ≈ 16 V between bursts; (a) predicts VBUS
+  sawtoothing with V-MOT.
+- Inferred, UNCONFIRMED (boost VOUTs unmonitored): each cut-release should park the sourcing
+  boost's local node at ≈ 15.9 + I × 0.21 V/A ≈ **17–18 V** per the empirical release
+  coefficient — i.e. the **un-bodged FC boost** may be taking a ~17–18 V park **every 64 ms**.
+
+**Consequences:**
+- **SAFETY — do not leave this configuration running.** Every burst is a Death-5-class SCP
+  load-dump sourced by the **FC boost, which has NO hot-loop bodge caps** — at 15.5 Hz that is
+  ~930 such events per minute, plus the inferred repeated ~17–18 V parks. The loop does not
+  self-terminate; abort promptly (`X`/`Q` or power-down). Rule added to Safety rules below.
+- **The low-V motor-node pre-charge doctrine is now bench-falsified in its target
+  configuration** (VESC attached): it neither pre-charges the node (capture 7) nor lets the
+  post-boost connect converge (this capture). This is the direct empirical case for the staged
+  bring-up implemented above. Note that under the staged machine this same physics would appear
+  in P3 and correctly **fail dark** via `MOT_CONNECT_TIMEOUT_MS` (500 ms ≈ 7 retries) →
+  `FAULT_MOT_HOTPLUG` — with the VESC drain the cycle can outlast *any* timeout, so a P3
+  timeout-fault is the *expected* outcome with a VESC attached until the charge-per-retry is
+  raised (`D-MT-EN` CSS) or one conduction charges the node past the VESC's boot band.
+- **Fix path unchanged, now ordered and blocking** (see Next steps): (1) fit **100 nF CSS on
+  `D-MT-EN`** (the standing hardware prerequisite); (2) flash the staged bring-up (after its
+  pending test/review gates); (3) scope-armed VESC-attached `G` with the discriminator channels
+  above.
+
+#### ⭐ FIX VALIDATION — Capture 11: 100 nF on ALL THREE switches converges the capture-10 configuration (2026-08-07; `11-Vout yellow-Vmot blue-Ibat purple-VESC.jpg`)
+
+**Single variable vs capture 10: `D-MT-EN` CSS 5.6 nF → 100 nF** (operator-confirmed
+2026-08-07 — `D-FC-EN` and `D-BT-EN` were already 100 nF in capture 10; all three switches now
+carry 100 nF). A true single-variable intervention, which also settles capture-10's
+switch-attribution question: **`D-MT-EN` was the cutting switch.** Same otherwise: dual bench
+DC supplies (8.4 V battery + fuel-cell terminals), VESC attached, State-98 `G` on the **OLD
+(pre-staged-bring-up) firmware** — the staged build was still not flashed.
+
+**Scope state:** 5 ms/div, delay 28.9 ms, 10 MSa/s / 700 kpts, trigger Edge CH1 rising DC; CH1
+BT VOUT 5 V/div 1×; CH2 **BT INA253A1 100 mV/div 1× = 1 A/div** (DC, BW Full — note the 5×
+finer current scale vs prior captures); CH3 V-MOT 5 V/div 1×. Cursors X1 = 0 → X2 = 43.6 ms;
+Y = 15.9 / 17.5 V.
+
+**Measured:**
+- CH1 (VOUT): steps ~8 → 15.9 V at t ≈ 0 (boost enable, on the Y1 cursor), then stays
+  15.9–16.3 V for the whole record — **no dips, no overshoot, nowhere near the 17.5 V cursor.**
+- CH3 (V-MOT): flat ~1 V until t ≈ 13 ms, then **one smooth continuous ramp ~0.5 V/ms to
+  ~16 V, completing at X2 = 43.6 ms** — no steps, no sawtooth, no retry gaps.
+- CH2 (BT current): a **broad ~0.7–1 A hump spanning the ramp** (≈ 0.7–1 div at 1 A/div), no
+  spikes. ∫I dt ≈ 0.8 A × 30 ms ≈ **24 mC** ≈ the full chain charge — implying an effective
+  motor-node+VESC capacitance ≈ 24 mC / 15 V ≈ **1.4–1.6 mF** (refines the capture-9 C_VESC
+  bound upward: VESC ≈ 0.9–1.2 mF, wide envelope; BT-side share only — the FC INA was
+  unmonitored, so total chain current may be up to ~2× if the sources split).
+- Outcome (operator): clean bring-up, no fault, "working well."
+
+**Conclusions:**
+- **The capture-10 non-converging limit cycle is RESOLVED by hardware.** With all three
+  switches at 100 nF, the same dual-source + VESC configuration that ratcheted at 15.5 Hz
+  indefinitely now completes in one ~30 ms gate-ramp-limited pass at ~1 A — no SCP cut is even
+  approached (clamp is ~8–10 A). ~930 Death-5-class events/min → zero.
+- **First observed genuinely gentle whole-chain connect.** Unlike capture 8's two-phase onset
+  (~2/3 of the charge at ~7 A), the V-MOT ramp here is gate-slew-limited end to end at ~1 A.
+  Why the source-follower regime held this time is UNCONFIRMED (candidates: the VESC-loaded
+  node's slower dV/dt keeping the FET inside the gate ramp; the D-MT 100 nF ramp governing while
+  the bus switches were already enhanced) — a nice-to-know, not a blocker.
+- **No park, no OV excursion** — consistent with no cut occurring (parks are cut-release
+  artifacts).
+- **The staged-firmware hardware prerequisite (100 nF on `D-MT-EN`) is SATISFIED**, and the
+  P0-at-100 nF behaviour the new firmware assumes (benign switch-path pre-charge) is now
+  empirically supported in-family. Remaining delta when the staged build is flashed: P0 holds
+  the boosts OFF until the bus pre-charges (capture 11 had them on 5 ms in) — expected benign,
+  first `G` scope-armed per the plan.
+- **Remaining RT1987s (D-FC-CH, D-RG-EN, D-BT-SQ) deliberately NOT bodged (operator decision,
+  2026-08-07).** Rationale: the SCP-cut class requires the clamp ridden > 250 µs ≈ > ~2 mC of
+  demanded charge — only the mF-scale motor+VESC node qualifies (confirmed by the capture-10/11
+  single-variable result). The charger-input nodes behind D-FC-CH/D-RG-EN are expected tens of
+  µF (≲ 1 mC at 16 V → completes inside the timer, no cut, at 5.6 nF); D-BT-SQ is once-per-boot,
+  input-side, stiff-pack-fed, anomaly-free, and physically inaccessible under the Ag105. Rework
+  risk to a working board outweighs the speculative benefit. **WATCH ITEM:** the charge/regen
+  paths are still bench-unexercised — scope the charger input node on the FIRST powered
+  engagement of `FC_CHARGE_ENABLE` and of `REGEN_ENABLE`; the 64 ms retry fingerprint (clicking,
+  ~15.5 Hz spikes, sawtooth) or Ag105 config/fault flapping in `pollAg105()` would mean the
+  charger input capacitance is larger than assumed → bodge that one switch then, on evidence.
 
 ---
 
@@ -1171,6 +1358,12 @@ value — it is the **PCB layout** (see ROOT CAUSE above: the BT output-cap hot 
 - **Any future BT boost install must keep the hot-loop caps** (10 µF + 0.1 µF at the IC output, or
   a respun layout with Cout at the IC). Installing a boost on the *unmodified* BT channel is a known
   kill — four died that way. Scope every first bring-up after a hardware change.
+- **Do not leave a `G` bring-up clicking (capture 10, 2026-08-06).** A sustained ~15.5 Hz
+  click/current-burst pattern is a non-converging RT1987 SCP cut/retry limit cycle: ~930
+  Death-5-class load dumps per minute on the sourcing boost (the un-bodged FC boost, in the
+  dual-source config), plus inferred ~17–18 V cut-release parks. It does NOT self-terminate —
+  abort promptly (`X`/`Q` or power-down). No VESC-attached `G` on the old (pre-staged-bring-up)
+  firmware; prerequisites first: 100 nF CSS on `D-MT-EN`, then the staged-bring-up flash.
 
 ---
 
@@ -1183,6 +1376,14 @@ The caps are in, the boost survives `G` bring-ups (×4). Remaining work, in orde
 never took effect on the BT FB network. Ohm RD1-BT unpowered (expect 215 k) or compare no-load
 VOUT FC vs BT; rework the bodge if it reads 237 k. File the 2026-07-31 scope captures into
 `references/scope_captures/` while at it.
+
+**0b. Capture-10 limit cycle (2026-08-06) — blocks all VESC-attached `G` runs.** In order:
+(1) fit **100 nF CSS on `D-MT-EN`** (standing staged-bring-up hardware prerequisite); (2) flash
+the **staged bring-up** (pending its test/review gates); (3) one scope-armed VESC-attached `G`
+with the capture-10 discriminator channels — **BT INA and/or VBUS proper** (the latter finally
+closes the "ADC node never scoped" item and settles which switch is cut/retrying). Expected
+outcomes: P3 completes (done), or times out to `FAULT_MOT_HOTPLUG` (dark, safe — then evaluate
+raising the charge-per-retry or the VESC drain question with the capture in hand).
 
 **1. High-bandwidth margin check (before heavy load testing).** The validation captures were 1×
 probe (~10 MHz) at 50 MSa/s — the estimated 100–200 MHz hot-loop ring is invisible in them.

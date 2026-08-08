@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (MiKTeX 26.5) (preloaded format=pdflatex 2026.7.22)  5 AUG 2026 00:22
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (MiKTeX 26.5) (preloaded format=pdflatex 2026.7.22)  5 AUG 2026 00:50
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -1664,13 +1664,13 @@ Package epstopdf Info: Source file: <Definitions/logo-mdpi.eps>
 i-eps-converted-to.pdf Definitions/logo-mdpi.eps>
 (epstopdf)             \includegraphics on input line 81.
 Package epstopdf Info: Output file is already uptodate.
-<Definitions/logo-mdpi-eps-converted-to.pdf, id=171, 74.2775pt x 49.18375pt>
+<Definitions/logo-mdpi-eps-converted-to.pdf, id=243, 74.2775pt x 49.18375pt>
 File: Definitions/logo-mdpi-eps-converted-to.pdf Graphic file (type pdf)
 <use Definitions/logo-mdpi-eps-converted-to.pdf>
 Package pdftex.def Info: Definitions/logo-mdpi-eps-converted-to.pdf  used on in
 put line 81.
 (pdftex.def)             Requested size: 42.96877pt x 28.45274pt.
-<Definitions/logo-orcid.pdf, id=173, 102.3825pt x 102.3825pt>
+<Definitions/logo-orcid.pdf, id=245, 102.3825pt x 102.3825pt>
 File: Definitions/logo-orcid.pdf Graphic file (type pdf)
 <use Definitions/logo-orcid.pdf>
 Package pdftex.def Info: Definitions/logo-orcid.pdf  used on input line 81.
@@ -1696,25 +1696,25 @@ LaTeX Font Info:    Font shape `U/msb/m/n' will be
 y/AppData/Local/Programs/MiKTeX/fonts/enc/dvips/base/8r.enc} <./Definitions/log
 o-mdpi-eps-converted-to.pdf> <./Definitions/logo-orcid.pdf>]
 LaTeX Font Info:    Font shape `U/msa/m/n' will be
-(Font)              scaled to size 12.50409pt on input line 139.
+(Font)              scaled to size 12.50409pt on input line 136.
 LaTeX Font Info:    Font shape `U/msa/m/n' will be
-(Font)              scaled to size 9.37807pt on input line 139.
+(Font)              scaled to size 9.37807pt on input line 136.
 LaTeX Font Info:    Font shape `U/msb/m/n' will be
-(Font)              scaled to size 12.50409pt on input line 139.
+(Font)              scaled to size 12.50409pt on input line 136.
 LaTeX Font Info:    Font shape `U/msb/m/n' will be
-(Font)              scaled to size 9.37807pt on input line 139.
+(Font)              scaled to size 9.37807pt on input line 136.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 139.
+(hyperref)                removing `math shift' on input line 136.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\times' on input line 139.
+(hyperref)                removing `\times' on input line 136.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 139.
+(hyperref)                removing `math shift' on input line 136.
 
 
 Package fancyhdr Warning: \headheight is too small (12.0pt): 
@@ -1732,7 +1732,7 @@ Package fancyhdr Warning: \headheight is too small (12.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
 
 [3]
-Overfull \hbox (0.62656pt too wide) detected at line 236
+Overfull \hbox (0.62656pt too wide) detected at line 233
 [][][][]\OML/zplm/m/it/10 G[]\OT1/zplm/m/n/10 (\OML/zplm/m/it/10 s\OT1/zplm/m/n
 /10 ) :  ^^A\OML/zplm/m/it/10 i[] \OMS/zplm/m/n/10 ! [][] [][] ! [] ! [] \OT1/z
 plm/m/n/10 [\OT1/ppl/m/n/10 N A[]\OT1/zplm/m/n/10 ] \OMS/zplm/m/n/10 ! [] ! \OM
@@ -1755,10 +1755,10 @@ Package fancyhdr Warning: \headheight is too small (12.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
 
 [5]
-<Figures/fig_coupling_sigma.pdf, id=260, 245.718pt x 260.17201pt>
+<Figures/fig_coupling_sigma.pdf, id=329, 245.718pt x 260.17201pt>
 File: Figures/fig_coupling_sigma.pdf Graphic file (type pdf)
 <use Figures/fig_coupling_sigma.pdf>
-Package pdftex.def Info: Figures/fig_coupling_sigma.pdf  used on input line 346
+Package pdftex.def Info: Figures/fig_coupling_sigma.pdf  used on input line 343
 .
 (pdftex.def)             Requested size: 394.35522pt x 417.6017pt.
 
@@ -1780,31 +1780,31 @@ Package fancyhdr Warning: \headheight is too small (12.0pt):
 [7]
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 443.
+(hyperref)                removing `math shift' on input line 439.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\times' on input line 443.
+(hyperref)                removing `\times' on input line 439.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 443.
+(hyperref)                removing `math shift' on input line 439.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 443.
+(hyperref)                removing `math shift' on input line 439.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `subscript' on input line 443.
+(hyperref)                removing `subscript' on input line 439.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\infty' on input line 443.
+(hyperref)                removing `\infty' on input line 439.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 443.
+(hyperref)                removing `math shift' on input line 439.
 
 
 Package fancyhdr Warning: \headheight is too small (12.0pt): 
@@ -1816,11 +1816,11 @@ Package fancyhdr Warning: \headheight is too small (12.0pt):
 [8]
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 510.
+(hyperref)                removing `math shift' on input line 506.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 510.
+(hyperref)                removing `math shift' on input line 506.
 
 
 Package fancyhdr Warning: \headheight is too small (12.0pt): 
@@ -1830,6 +1830,13 @@ Package fancyhdr Warning: \headheight is too small (12.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
 
 [9]
+Overfull \hbox (33.69604pt too wide) in paragraph at lines 569--578
+[]\T1/ppl/m/n/10 (-20) The cor-rec-tion is a small ad-just-ment rather than a s
+ub-stan-tial re-pair. Here $[]\OT1/zplm/m/n/10 (\OML/zplm/m/it/10 G[]\OT1/zplm/
+m/n/10 (\OT1/ppl/m/n/10 (-20) 0\OT1/zplm/m/n/10 )\OML/zplm/m/it/10 Y[]\OT1/zplm
+/m/n/10 (\OT1/ppl/m/n/10 (-20) 0\OT1/zplm/m/n/10 )) =
+ []
+
 
 Package fancyhdr Warning: \headheight is too small (12.0pt): 
 (fancyhdr)                Make it at least 24.18796pt, for example:
@@ -1846,11 +1853,26 @@ Package fancyhdr Warning: \headheight is too small (12.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
 
 [11]
-Overfull \hbox (3.87982pt too wide) in paragraph at lines 718--726
+Overfull \hbox (3.87982pt too wide) in paragraph at lines 713--721
 []\T1/ppl/m/n/10 (-20) Three con-trollers are com-pared. \T1/cmtt/m/n/10 dec \T
 1/ppl/m/n/10 (-20) is the de-cen-tral-ized base-line, $[]\OT1/zplm/m/n/10 (\OML
 /zplm/m/it/10 K[]\OT1/ppl/m/n/10 (-20) , \OML/zplm/m/it/10 K[]\OT1/zplm/m/n/10 
 )$\T1/ppl/m/n/10 (-20) ,
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 766--766
+[]|\T1/ppl/b/n/10 (+20) MIMO su-pe-rior\T1/ppl/m/n/10 (+20) ,
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 766--766
+[]|\T1/ppl/m/n/10 (+20) drive-transient
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 766--766
+\T1/ppl/m/n/10 (+20) share ex-cur-sion,
  []
 
 
@@ -1861,25 +1883,12 @@ Package fancyhdr Warning: \headheight is too small (12.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
 
 [12]
-Underfull \hbox (badness 10000) in paragraph at lines 771--771
-[]|\T1/ppl/b/n/10 (+20) MIMO su-pe-rior\T1/ppl/m/n/10 (+20) ,
- []
-
-
-Underfull \hbox (badness 10000) in paragraph at lines 771--771
-[]|\T1/ppl/m/n/10 (+20) drive-transient
- []
-
-
-Underfull \hbox (badness 10000) in paragraph at lines 771--771
-\T1/ppl/m/n/10 (+20) share ex-cur-sion,
- []
-
-<Figures/fig_sigma_S_both.pdf, id=426, 245.718pt x 187.902pt>
+<Figures/fig_sigma_S_both.pdf, id=492, 245.718pt x 187.902pt>
 File: Figures/fig_sigma_S_both.pdf Graphic file (type pdf)
 <use Figures/fig_sigma_S_both.pdf>
-Package pdftex.def Info: Figures/fig_sigma_S_both.pdf  used on input line 791.
+Package pdftex.def Info: Figures/fig_sigma_S_both.pdf  used on input line 786.
 (pdftex.def)             Requested size: 394.35522pt x 301.60123pt.
+
 
 Package fancyhdr Warning: \headheight is too small (12.0pt): 
 (fancyhdr)                Make it at least 24.18796pt, for example:
@@ -1888,11 +1897,11 @@ Package fancyhdr Warning: \headheight is too small (12.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
 
 [13]
-<Figures/fig_transient_small.pdf, id=437, 375.804pt x 274.626pt>
+<Figures/fig_transient_small.pdf, id=502, 375.804pt x 274.626pt>
 File: Figures/fig_transient_small.pdf Graphic file (type pdf)
 <use Figures/fig_transient_small.pdf>
-Package pdftex.def Info: Figures/fig_transient_small.pdf  used on input line 82
-3.
+Package pdftex.def Info: Figures/fig_transient_small.pdf  used on input line 81
+8.
 (pdftex.def)             Requested size: 394.35522pt x 288.19818pt.
 
 
@@ -1903,6 +1912,35 @@ Package fancyhdr Warning: \headheight is too small (12.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
 
 [14 <./Figures/fig_sigma_S_both.pdf>]
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 843.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\bool_gset_true:N' on input line 843.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\g__siunitx_unit_warning_\bar_bool' on inpu
+t line 843.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\msg_warning:nnnn' on input line 843.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\sigma' on input line 843.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `subscript' on input line 843.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 843.
+
 
 Package fancyhdr Warning: \headheight is too small (12.0pt): 
 (fancyhdr)                Make it at least 24.18796pt, for example:
@@ -1931,27 +1969,27 @@ pdfTeX warning (ext4): destination with the same identifier (name{equation.1})
 has been already used, duplicate ignored
 <to be read again> 
                    \relax 
-l.1008 \begin{equation}
+l.1000 \begin{equation}
                        \label{eq:emergent}
 pdfTeX warning (ext4): destination with the same identifier (name{equation.1}) 
 has been already used, duplicate ignored
 <to be read again> 
                    \relax 
-l.1008 \begin{equation}
+l.1000 \begin{equation}
                        \label{eq:emergent}
 pdfTeX warning (ext4): destination with the same identifier (name{equation.1}) 
 has been already used, duplicate ignored
 <to be read again> 
                    \relax 
-l.1008 \begin{equation}
+l.1000 \begin{equation}
                        \label{eq:emergent}
 pdfTeX warning (ext4): destination with the same identifier (name{equation.1}) 
 has been already used, duplicate ignored
 <to be read again> 
                    \relax 
-l.1008 \begin{equation}
+l.1000 \begin{equation}
                        \label{eq:emergent}
-Overfull \hbox (5.5877pt too wide) detected at line 1014
+Overfull \hbox (5.5877pt too wide) detected at line 1006
 [][][][]\OML/zplm/m/it/10 ^^N \OT1/zplm/m/n/10 = []\OT1/ppl/m/n/10 ,  \OML/zpl
 m/m/it/10 ^^Ni[] \OT1/zplm/m/n/10 = \OMS/zplm/m/n/10 ^^@[]\OT1/ppl/m/n/10 ,  \O
 ML/zplm/m/it/10 ^^Nv[] \OT1/zplm/m/n/10 = \OMS/zplm/m/n/10 ^^@\OML/zplm/m/it/10
@@ -1960,14 +1998,7 @@ MS/zplm/m/n/10 ^^@[]\OT1/ppl/m/n/10 ,
  []
 
 
-Package fancyhdr Warning: \headheight is too small (12.0pt): 
-(fancyhdr)                Make it at least 24.18796pt, for example:
-(fancyhdr)                \setlength{\headheight}{24.18796pt}.
-(fancyhdr)                You might also make \topmargin smaller:
-(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
-
-[18]
-Overfull \hbox (2.43726pt too wide) in paragraph at lines 1074--1074
+Overfull \hbox (2.43726pt too wide) in paragraph at lines 1066--1066
  []|$[]$| 
  []
 
@@ -1978,7 +2009,39 @@ Package fancyhdr Warning: \headheight is too small (12.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
 
+[18]
+
+Package fancyhdr Warning: \headheight is too small (12.0pt): 
+(fancyhdr)                Make it at least 24.18796pt, for example:
+(fancyhdr)                \setlength{\headheight}{24.18796pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
+
 [19]
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 1140.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `subscript' on input line 1140.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 1140.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 1148.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\gamma' on input line 1148.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 1148.
+
 
 Package fancyhdr Warning: \headheight is too small (12.0pt): 
 (fancyhdr)                Make it at least 24.18796pt, for example:
@@ -1995,11 +2058,11 @@ Package fancyhdr Warning: \headheight is too small (12.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
 
 [21]
-<Figures/fig_corner_scatter.pdf, id=664, 231.26399pt x 216.81pt>
+<Figures/fig_corner_scatter.pdf, id=720, 231.26399pt x 216.81pt>
 File: Figures/fig_corner_scatter.pdf Graphic file (type pdf)
 <use Figures/fig_corner_scatter.pdf>
-Package pdftex.def Info: Figures/fig_corner_scatter.pdf  used on input line 128
-5.
+Package pdftex.def Info: Figures/fig_corner_scatter.pdf  used on input line 127
+7.
 (pdftex.def)             Requested size: 394.35522pt x 369.72668pt.
 
 
@@ -2018,10 +2081,10 @@ Package fancyhdr Warning: \headheight is too small (12.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
 
 [23 <./Figures/fig_corner_scatter.pdf>]
-<Figures/fig_regen.pdf, id=733, 260.17201pt x 245.718pt>
+<Figures/fig_regen.pdf, id=789, 260.17201pt x 245.718pt>
 File: Figures/fig_regen.pdf Graphic file (type pdf)
 <use Figures/fig_regen.pdf>
-Package pdftex.def Info: Figures/fig_regen.pdf  used on input line 1363.
+Package pdftex.def Info: Figures/fig_regen.pdf  used on input line 1355.
 (pdftex.def)             Requested size: 394.35522pt x 372.46791pt.
 
 
@@ -2040,10 +2103,10 @@ Package fancyhdr Warning: \headheight is too small (12.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
 
 [25 <./Figures/fig_regen.pdf>]
-<Figures/fig_drive_cycle.pdf, id=807, 317.98799pt x 260.17201pt>
+<Figures/fig_drive_cycle.pdf, id=863, 317.98799pt x 260.17201pt>
 File: Figures/fig_drive_cycle.pdf Graphic file (type pdf)
 <use Figures/fig_drive_cycle.pdf>
-Package pdftex.def Info: Figures/fig_drive_cycle.pdf  used on input line 1408.
+Package pdftex.def Info: Figures/fig_drive_cycle.pdf  used on input line 1400.
 (pdftex.def)             Requested size: 394.35522pt x 322.66948pt.
 
 
@@ -2054,24 +2117,24 @@ Package fancyhdr Warning: \headheight is too small (12.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
 
 [26 <./Figures/fig_drive_cycle.pdf>]
-Underfull \hbox (badness 1642) in paragraph at lines 1488--1488
+Underfull \hbox (badness 1642) in paragraph at lines 1480--1480
 []|$\OMS/zplm/m/n/10 k\OML/zplm/m/it/10 T[]\OMS/zplm/m/n/10 k[]$\T1/ppl/m/n/10 
 (+20) , im-ple-mented
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 1488--1488
+Underfull \hbox (badness 10000) in paragraph at lines 1480--1480
 []|\T1/ppl/m/n/10 (+20) exhaustive-sweep worst
  []
 
 
-Underfull \hbox (badness 1590) in paragraph at lines 1488--1488
+Underfull \hbox (badness 1590) in paragraph at lines 1480--1480
 []|\T1/ppl/m/n/10 (+20) share ex-cur-sion, $\OT1/zplm/m/n/10 ^^A\OML/zplm/m/it/
 10 V[] \OT1/zplm/m/n/10 =
  []
 
 
-Underfull \hbox (badness 2096) in paragraph at lines 1488--1488
+Underfull \hbox (badness 2096) in paragraph at lines 1480--1480
 []|\T1/ppl/m/n/10 (+20) peak $\OMS/zplm/m/n/10 j\OML/zplm/m/it/10 i[]\OMS/zplm/
 m/n/10 j$ \T1/ppl/m/n/10 (+20) [$\OT1/ppl/m/n/10 (+20) A$\T1/ppl/m/n/10 (+20) ]
 , $\OT1/zplm/m/n/10 ^^A\OML/zplm/m/it/10 V[] \OT1/zplm/m/n/10 =
@@ -2085,17 +2148,17 @@ Package fancyhdr Warning: \headheight is too small (12.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
 
 [27]
-<Figures/MATLAB_mimo_sigmaS.png, id=889, 370.5042pt x 298.716pt>
+<Figures/MATLAB_mimo_sigmaS.png, id=944, 370.5042pt x 298.716pt>
 File: Figures/MATLAB_mimo_sigmaS.png Graphic file (type png)
 <use Figures/MATLAB_mimo_sigmaS.png>
-Package pdftex.def Info: Figures/MATLAB_mimo_sigmaS.png  used on input line 150
-3.
+Package pdftex.def Info: Figures/MATLAB_mimo_sigmaS.png  used on input line 149
+5.
 (pdftex.def)             Requested size: 394.35522pt x 317.94559pt.
-<Figures/MATLAB_mimo_corner_scatter.png, id=891, 356.532pt x 309.7974pt>
+<Figures/MATLAB_mimo_corner_scatter.png, id=946, 356.532pt x 309.7974pt>
 File: Figures/MATLAB_mimo_corner_scatter.png Graphic file (type png)
 <use Figures/MATLAB_mimo_corner_scatter.png>
 Package pdftex.def Info: Figures/MATLAB_mimo_corner_scatter.png  used on input 
-line 1513.
+line 1505.
 (pdftex.def)             Requested size: 394.35522pt x 342.68793pt.
 
 
@@ -2122,7 +2185,7 @@ Package fancyhdr Warning: \headheight is too small (12.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-12.18796pt}.
 
 [30]
-Underfull \hbox (badness 1178) in paragraph at lines 1680--1684
+Underfull \hbox (badness 1178) in paragraph at lines 1672--1676
 []\T1/ppl/m/n/9 (+20) Tan, R. Ro-bust Power Shar-ing Con-trol in a Hy-brid En-e
 rgy Sys-tem Us-ing Droop Con-trol. Manuscript in prepa-ra-
  []
@@ -2143,14 +2206,14 @@ L3 programming layer <2026-06-18>
  ***********
 Package rerunfilecheck Info: File `mimo_droop_drive_comparison.out' has not cha
 nged.
-(rerunfilecheck)             Checksum: F756F1F68257B2E4CB3670F97327E1BB;8350.
+(rerunfilecheck)             Checksum: 0016BF07A57CE8B0B77B3B91C8398139;12199.
  ) 
 Here is how much of TeX's memory you used:
- 38058 strings out of 467510
- 750457 string characters out of 5408794
- 1216383 words of memory out of 5000000
- 65742 multiletter control sequences out of 15000+600000
- 733993 words of font info for 687 fonts, out of 8000000 for 9000
+ 38080 strings out of 467510
+ 750824 string characters out of 5408794
+ 1216341 words of memory out of 5000000
+ 65760 multiletter control sequences out of 15000+600000
+ 734133 words of font info for 690 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
  123i,13n,121p,1026b,1281s stack positions out of 10000i,1000n,20000p,200000b,200000s
  <C:\Users\ricky\AppData\Local\MiKTeX\fonts/pk/ljfour/jknappen/ec/dpi600\ectt
@@ -2169,9 +2232,9 @@ pfb><C:/Users/ricky/AppData/Local/Programs/MiKTeX/fonts/type1/urw/palatino/uplb
 i8a.pfb><C:/Users/ricky/AppData/Local/Programs/MiKTeX/fonts/type1/urw/palatino/
 uplr8a.pfb><C:/Users/ricky/AppData/Local/Programs/MiKTeX/fonts/type1/urw/palati
 no/uplri8a.pfb>
-Output written on mimo_droop_drive_comparison.pdf (31 pages, 613398 bytes).
+Output written on mimo_droop_drive_comparison.pdf (31 pages, 618161 bytes).
 PDF statistics:
- 1077 PDF objects out of 1200 (max. 8388607)
+ 1131 PDF objects out of 1200 (max. 8388607)
  149 named destinations out of 1000 (max. 500000)
- 129407 words of extra memory for PDF output out of 154059 (max. 10000000)
+ 129551 words of extra memory for PDF output out of 154059 (max. 10000000)
 

@@ -65,9 +65,15 @@
  *    full-bus ON: doState2() faults (FAULT_MOT_HOTPLUG/ERR_MOT_HOTPLUG, new) rather than hot-plug;
  *    State 98 '3' refuses it. doState1()/doState3() no longer force MOT_PWR LOW — the motor is held
  *    stopped by commandMotorCurrent(0), a deliberate change from the old "motor isolated in Idle" intent.
- *    Bus voltage parameterized on V_BUS_NOMINAL (17.5f; TODO → 16.0f after the boost FB retune for
- *    SW abs-max headroom) — LIMIT_V_BUS_MAX / V_BUS_CHARGED_THRESH derive from it (current values
- *    unchanged).
+ *    Bus voltage parameterized on V_BUS_NOMINAL (DONE — nominal is 16.0f per the 2026-07-11 retune
+ *    bullet below) — LIMIT_V_BUS_MAX / V_BUS_CHARGED_THRESH derive from it.
+ *    SUPERSEDED 2026-08-03 (docs/boost-bringup-debug.md, datapoints 5-9): the low-voltage
+ *    motor-node pre-charge never functioned on the bench (VIN-UVLO abort loop). Replaced by the
+ *    staged bring-up (busBringupTick(), phases P0-P3): the bus is regulated ALONE first, and only
+ *    then is the motor node connected from the regulated bus via D-MT-EN's soft-start.
+ *    motPwrHotPlugUnsafe() is renamed motPwrConnectBlocked() and its predicate is INVERTED — it now
+ *    refuses the connect unless the bus IS in regulation. bringUpBus() is deleted; State-98 'G' runs
+ *    the staged machine.
  *  - Droop MDAC mapping fixed (2026-07-10; controller_design/system_model.md §4). The old
  *    k_eq/r/K_sns/A_v gain omitted the FB injection attenuation RD1/Rinj = 237k/53.6k = 4.42
  *    and, with k_eq = 0.45, commanded g > 1 for all r < 0.896 — setDroopMdac() clamped both
@@ -162,6 +168,16 @@
  *  - I_charge no longer goes stale (2026-07-29; review P2-1). pollAg105() cleared ag105DataValid
  *    and ag105_status_raw on charger power loss / I2C failure but left I_charge at its last value,
  *    so the Pi saw a positive charge current beside a 0x00 "no data" status byte.
+ *  - Staged motor-node bring-up (2026-08-03; docs/boost-bringup-debug.md datapoints 5-9;
+ *    supersedes the Death-5 low-voltage pre-charge doctrine, which never worked on the bench).
+ *    busBringupTick() now runs the bus-up sequence as a non-blocking, ADC-gated phase machine
+ *    (P0 bus pre-charge alone through the source switches / P1 boosts enabled / P2 dwell / P3
+ *    motor node connected from the regulated bus via D-MT-EN's soft-start), shared by doState0()
+ *    and the State-98 'G' command. The connect guard is inverted from the old hot-plug check:
+ *    motPwrHotPlugUnsafe() -> motPwrConnectBlocked() now refuses MOT_PWR_ENABLE unless the bus is
+ *    IN REGULATION (a discharged motor node at a regulated bus is the sanctioned connect).
+ *    bringUpBus() is deleted. FAULT_OV_BUS gained a 10ms/3-sample persistence filter so a decaying
+ *    bring-up park doesn't nuisance-latch. No telemetry layout change.
  */
 
 #include <VescUart.h>
@@ -275,12 +291,33 @@ EthernetUDP Udp;
 // Source: user-confirmed TPS61288 HW OVP at 19V. FW OV fault sits 1.5V above nominal (16.0 →
 // 17.5), still below the 19V HW OVP so firmware catches a sustained overvoltage first, and
 // matches the Death-5 ladder (nominal 16 < FW 17.5 < OVP 19 < abs-max 20). Raised from +1.0
-// (operator decision, 2026-07-31): the `G` bring-up's RT1987 re-strike load-dump overshoot
-// parks the unloaded bus at 16.0+1.4 ≈ 17.4V for ~50–400ms (no load to bleed it; a boost can't
-// sink), which tripped OV_BUS on ~80% of bring-ups. INTERIM: peaks were observed reaching
-// 17.5, so marginal trips remain possible; the real fix is stopping the RT1987 SCP-cycling —
-// see docs/boost-bringup-debug.md (2026-07-31 entry).
+// (operator decision, 2026-07-31): bring-up load-dump releases park the unloaded rail above the
+// old limit, which tripped OV_BUS on ~80% of bring-ups. Measured (2026-08-03, capture metrology):
+// parks reach ~17.0–17.2V at the ADC node and DECAY at ~44–113 V/s (≤ ~5ms above 17.0V) — the
+// earlier "~50–400ms" figure here was superseded. Restore +1.0f after the staged bring-up below
+// is bench-validated (operator decision 2026-08-03) — the OV persistence filter carries the
+// residual transients. See docs/boost-bringup-debug.md (2026-07-31 → 08-03 entries).
 #define LIMIT_V_BUS_MAX  (V_BUS_NOMINAL + 1.5f)
+// FAULT_OV_BUS persistence (2026-08-03): bring-up parks are DECAYING transients (44–113 V/s), so
+// a single over-limit ADC sample must not latch State 99. The fault latches only after the bus has
+// been continuously over-limit for OV_BUS_PERSIST_MS AND for at least OV_BUS_PERSIST_MIN_SAMPLES
+// consecutive loop ticks (the sample floor guards a stalled loop: two spikes bracketing a blocked
+// ≥10ms stretch must not read as "continuously over"). While over but not yet latched, the
+// FAULT_OV_BUS bit still shows in fault_flags/telemetry (truthful transient indication, no latch).
+// A genuine sustained overvoltage latches ~10ms late — acceptable: the TPS61288 HW OVP (19V) is
+// the fast backstop. Note firmware structurally CANNOT see cut-release parks (an SCP-cut switch
+// isolates the ADC node from the parked boost output) — hardware (CSS, output caps) owns those.
+#define OV_BUS_PERSIST_MS          10u  // ms — continuous over-limit time to latch. TODO(calibrate)
+#define OV_BUS_PERSIST_MIN_SAMPLES 3u   // consecutive over-limit loop ticks. NOTE: with
+                                        //      OV_BUS_MAX_GAP_MS=5 < PERSIST_MS=10 the gap guard
+                                        //      already forces ≥3 samples per window — this floor
+                                        //      is subsumed belt-and-suspenders (kept in case the
+                                        //      gap/persist constants are recalibrated apart)
+#define OV_BUS_MAX_GAP_MS          5u   // ms — max spacing between over-samples still counted as
+                                        //      one continuous window (review F4: three sparse
+                                        //      samples spanning a stalled stretch must not read
+                                        //      as "continuously over"). Normal loop ticks are
+                                        //      sub-ms; a gap this large restarts the window.
 //#define LIMIT_V_BATT_MAX  8.6f  // V — 2S LiPo max (4.3V/cell × 2 + 0.2V margin)
 // TODO: change to 8.5f. The BT divider (16.2k/10k, BOM-confirmed) saturates the ADC at
 // 3.3*2.62 = 8.646V, so 10.0 can NEVER trip (OV_BATT is currently dead — and under BENCH_TEST
@@ -317,23 +354,74 @@ EthernetUDP Udp;
 //     current-limited source the boost loads VBT, the rail sags, the Teensy browns out and
 //     re-enables the boost on reboot (motorboating). The bring-up sequencing below defends
 //     against this.
-// Production (BENCH_TEST=0, stiff vehicle source) brings the bus up gently — bus switches first,
-// then the boosts' own soft-start raises the bus — and gates on V_bus to detect a dead boost / no
-// source. BENCH_TEST keeps the power stage OFF at boot (see doState0()); bring the bus up with the
-// State-98 'G' command on a stiff supply.
+// STAGED BRING-UP (2026-08-03, supersedes the low-voltage motor-node pre-charge doctrine):
+// bench captures 5–9 (docs/boost-bringup-debug.md) showed that charging the whole
+// VBUS + V-MOT + VESC chain in one RT1987 connect event rides the foldback clamp >250µs with the
+// VESC attached → SCP cut + 64ms retry, with the cut-release parking the boost output at ~18V
+// (TPS61288 rec-max; INVISIBLE to the firmware ADC — the cut switch isolates the node). A connect
+// from an already-regulated bus completes acceptably (captures 5 deep-dip and 9 dip-2). The old
+// low-voltage pre-charge also never functioned on the bench (VIN-UVLO abort loop at 5.6nF CSS).
+// So the bring-up is now STAGED (shared machine busBringupTick(), used by production doState0()
+// and the State-98 'G' command): P0 pre-charge the ~40µF bus alone through the source switches
+// (MOT_PWR held LOW), P1 boosts regulate the bus, P2 dwell confirms regulation is stable, P3
+// connects the motor node (470µF + VESC) from the regulated bus via the D-MT-EN 100nF-CSS
+// soft-start. HARDWARE PREREQUISITE: 100nF CSS on D-MT-EN before P3 ever runs on the bench.
 #define V_BUS_CHARGED_THRESH (V_BUS_NOMINAL - 2.5f)  // V — bus considered "up" (17.5→15.0; 16.0→13.5)
-#define BUS_SETTLE_MS         5u     // ms — RT1987 soft-start (~1.17ms) + margin (TODO(calibrate))
 #define BUS_CHARGE_TIMEOUT_MS 800u   // ms — max for boosts to reach V_BUS_CHARGED_THRESH; else
                                      //      FAULT_INIT_FAIL (dead boost / failed switch / no source).
                                      //      TODO(calibrate)
+// P0 gate: the bus must reach the winning source (through the switch + TPS61288 body-diode path)
+// before the boosts are enabled. Measured switch connect at 100nF CSS: tD_ON 8ms + tON ~20ms at
+// 16V ≈ 28ms (capture 8, 1.8% match) — PRECHARGE_MIN_MS also forces full RT1987 *enhancement*
+// (the voltage gate alone can be met through a half-enhanced FET). V_PRECHARGE_MIN is an absolute
+// floor so a dead/absent source (V_fc/V_batt reading ~0) cannot vacuously pass the relative gate.
+#define PRECHARGE_DROP_MAX    1.5f   // V — max V_bus deficit vs max(V_fc,V_batt): switch + body
+                                     //     diode + divider tolerance. TODO(calibrate)
+#define V_PRECHARGE_MIN       5.0f   // V — absolute P0 floor (below LIMIT_V_FC_MIN and 2S cutoff).
+                                     //     TODO(calibrate)
+#define PRECHARGE_MIN_MS      40u    // ms — ≥ tD_ON(8) + tON(~20 @100nF) + margin. TODO(calibrate)
+#define PRECHARGE_TIMEOUT_MS  300u   // ms — covers one RT1987 SCP 64ms retry cycle. TODO(calibrate)
+// P2 dwell: regulation must HOLD before the motor node is offered the bus; a dip below the
+// threshold restarts the dwell, and the overall timeout bounds a restart livelock.
+#define BUS_REG_DWELL_MS      50u    // ms — continuous V_bus ≥ thresh before P3. TODO(calibrate)
+#define BUS_DWELL_TIMEOUT_MS  500u   // ms — overall P2 bound → FAULT_INIT_FAIL. TODO(calibrate)
+// P3: motor-node connect window. Covers ≥2 SCP retry cycles (64ms each) + ~30ms CSS connects —
+// capture 9's retry completed at ~83ms total.
+#define MOT_CONNECT_TIMEOUT_MS 500u  // ms — V_rgn must track V_bus by then → FAULT_MOT_HOTPLUG.
+                                     //      TODO(calibrate)
 
-// Motor-node (V-MOT/regen) pre-charge guard — see motPwrHotPlugUnsafe() / Death 5
-// (docs/boost-bringup-debug.md). The V-MOT node carries the 470µF bulk cap + the VESC's own input
-// capacitance. Closing D-MT-EN onto it at full bus is a boost-killing hot-plug (RT1987 soft-start
-// can't charge that stack → SCP burst-retry → 15A load-dumps ring the boost SW past 20V abs-max).
-// It must instead be pre-charged during the low-voltage bring-up. V_rgn may lag V_bus by up to this
-// margin and still count as "pre-charged" (safe to keep/turn D-MT-EN ON).
-#define MOT_HOTPLUG_MARGIN    3.0f   // V — TODO(calibrate) from the observed pre-charged V_rgn gap
+// Motor-node (V-MOT/regen) connect gating — see motPwrConnectBlocked(). DOCTRINE (2026-08-03,
+// inverts the Death-5 rule): MOT_PWR_ENABLE may be turned ON **only at a regulated bus** — the
+// D-MT-EN 100nF soft-start then charges the 470µF + VESC stack from the charged bus + boosts, the
+// empirically-validated connect class. Dark-bus and mid-ramp connects are refused: a node hanging
+// on the chain when the boosts later ramp recreates the SCP-cut/18V-park event (capture 9 dip-1).
+// MOT_HOTPLUG_MARGIN is the P3 COMPLETION margin: V_rgn within this of V_bus = node connected.
+#define MOT_HOTPLUG_MARGIN    3.0f   // V — TODO(calibrate) from the observed connected V_rgn gap
+
+// ── Staged bring-up machine state (shared by doState0() and State-98 'G') ─────
+// File-scope (not function-local statics) so the host test suite can reset it between cases —
+// same hoisting precedent as the PI accumulators. See busBringupStart/Tick/Abort().
+typedef enum : uint8_t { BRINGUP_IDLE = 0, BRINGUP_RUNNING, BRINGUP_DONE, BRINGUP_FAILED } BringupStatus;
+bool     bringupActive     = false;  // machine armed (busBringupStart() → DONE/FAILED/abort)
+uint8_t  bringupPhase      = 0;      // 0=P0 entry, 1=P0 gate, 2=P1 gate, 3=P2 dwell, 4=P3 entry, 5=P3 gate
+uint32_t bringupPhaseStart = 0;      // ms — current phase entry time (timeout base)
+uint32_t bringupDwellStart = 0;      // ms — P2 dwell-window start (restarts on a V_bus dip)
+
+// ── FAULT_OV_BUS persistence state ────────────────────────────────────────────
+// File-scope for test resettability. See the OV_BUS_PERSIST_* rationale above / detectFaults().
+bool     ovBusOverActive  = false;   // an over-limit window is open
+uint32_t ovBusOverSince   = 0;       // ms — window start
+uint32_t ovBusLastOverMs  = 0;       // ms — previous over-sample (gap guard, review F4)
+uint8_t  ovBusOverSamples = 0;       // consecutive over-limit loop ticks (saturating)
+uint16_t ovBusTransientCount = 0;    // windows that closed WITHOUT latching (review F5 — the
+                                     // only trace a sub-persistence park leaves; shown by 'S';
+                                     // includes windows abandoned by the gap guard)
+uint32_t ovBusPrintLastMs = 0;       // ms — last "[OV] transient" print (1 Hz rate bound: an
+                                     // alternating over/under sample stream must not print per
+                                     // window and re-create the UART storm — review round 2)
+bool     ovBusHasPrinted  = false;   // distinguishes "never printed" from a print at millis()==0
+                                     // (review round 3: a 0-sentinel would defeat the rate bound
+                                     // for boot-time windows)
 
 // ── Error code enum ───────────────────────────────────────────────────────────
 // Latching primary cause; set once by triggerFault() on first State-99 entry.
@@ -514,9 +602,9 @@ const float V_SETPOINT_MAX = 20.0f;
 // last commanded value — which is the correct zero-order-hold behaviour for all three.
 //
 // TODO(calibrate): these are first-cut values chosen to sit clear of the UART floor and to leave
-// detectFaults() headroom, NOT measured. Profile the real loop period on hardware (State-98 'S'
-// reports it) and revisit. Raising MOTOR_CTRL_PERIOD_US below ~800 µs re-introduces the UART
-// backpressure described above.
+// detectFaults() headroom, NOT measured. Profile the real loop period on hardware (no loop-period
+// instrumentation exists yet) and revisit. Raising MOTOR_CTRL_PERIOD_US below ~800 µs re-introduces
+// the UART backpressure described above.
 #define MOTOR_CTRL_PERIOD_US    2000u   // 500 Hz — well clear of the ~781 µs UART frame floor
 #define CHARGING_CTRL_PERIOD_US 20000u  //  50 Hz — matches the Ag105 I2C poll cadence
 #define POWER_BAL_PERIOD_US     1000u   //  1 kHz — the rate youlaController_Power() is designed for
@@ -773,6 +861,39 @@ float     trapCmdA          = 0.0f;   // last commanded current (status print / 
 // itself: VESC Six EDU 25 A continuous (50 A burst). Bound the profile there, not at the budget.
 const float TRAP_I_ABS_MAX = 25.0f;   // A — VESC Six EDU continuous rating
 
+// ── State 98 bench tools: serial-plotter stream ('L') ──────────────────────────────────────────
+// Emits ONE condensed, fixed-shape line per PLOT_PERIOD_MS that the Arduino IDE Serial Plotter
+// parses directly: "label:value,label:value,…". Six series, deliberately all share-loop signals
+// whose natural ranges overlap (shares 0–1, MDAC gains 0–1, per-channel currents ~0–3 A) — the
+// plotter autoscales across ALL series together, so mixing in V_bus (≈17.5) would crush the share
+// traces into a flat band at the bottom. Voltages stay on the 'S' status dump.
+//
+// The plotter also requires every line to have the SAME field count and to be numeric: any stray
+// human-readable line breaks the parse. So while plot mode is on, the three profiles' 500 ms status
+// snapshots, their phase banners, and the 'W' VESC watch line are suppressed (plotSuppressStatus()).
+// One-shot start/stop/complete notices are deliberately KEPT — a single glitched line is cheaper
+// than the operator not knowing a run ended.
+bool     plotModeActive = false;
+uint32_t plotLastMs     = 0;
+// 50 Hz. USB CDC ignores the nominal baud (Teensy enumerates as full-speed USB), so ~60 B/line at
+// 50 Hz ≈ 3 kB/s is nowhere near a bottleneck; the limit is the plotter's own redraw. Fast enough
+// to resolve the share-loop step response, which settles over hundreds of ms.
+const uint32_t PLOT_PERIOD_MS = 20;   // TODO(calibrate): raise if the IDE plotter lags on the bench
+
+// Arming delay. The IDE 2.x Serial Plotter has no send box (IDE 1.8's did) and opening it may close
+// the Serial Monitor, so the operator cannot press 'R'/'T' once they are looking at the plot. With
+// plot mode ON, those two keys therefore ARM the run instead of starting it, giving time to switch
+// windows. Nothing is printed during the countdown — the plot stream is already running, so the
+// operator sees a live baseline and then the trace move when the profile actually starts.
+enum PlotArmTarget { PLOT_ARM_NONE, PLOT_ARM_SHARE, PLOT_ARM_TRAP };
+PlotArmTarget plotArmTarget    = PLOT_ARM_NONE;
+uint32_t      plotArmDeadlineMs = 0;
+// Trapezoid parameters are validated at type-in time but must survive the arming window.
+float         plotArmTrapImax   = 0.0f;
+uint32_t      plotArmTrapHoldMs = 0;
+float         plotArmTrapRate   = 0.0f;
+const uint32_t PLOT_ARM_DELAY_MS = 5000;   // TODO(calibrate): how long the window switch really takes
+
 // ── State 98 bench tools: pending numeric input (typed key → serial prompt → float line) ──────
 // Non-blocking: a value key sets pendingInput and prints a prompt; subsequent chars accumulate in
 // inputBuf until newline, then atof() dispatches to the matching setter. Keeps detectFaults() live.
@@ -825,7 +946,9 @@ void doState98();
 void doState99();
 void doEncoderA();
 void doEncoderB();
-void bringUpBus();
+bool busBringupStart();
+BringupStatus busBringupTick(bool doInit);
+void busBringupAbort();
 bool busHotPlugUnsafe(int regPin);
 void commandMotorCurrent(float amps);
 void motorControl();
@@ -840,7 +963,7 @@ float PI_Controller_Power(float error);
 float youlaController_Power(float setpoint, float alphaRaw);
 void setDroopMdac(float fc_gain, float bt_gain);
 void assertFcChargeEnable(bool enable);
-bool motPwrHotPlugUnsafe();
+bool motPwrConnectBlocked();
 bool assertMotPwrEnable(bool enable);
 void safeAllSwitches();
 void printTestStatus();
@@ -854,6 +977,11 @@ void haltMotorOutput();
 bool velocityChainCalibrated();
 void printVelocityChainRefusal(const char *what);
 void advancePowerShareProfile();
+void startPowerShareProfile();
+void plotTick();
+void plotArmTick();
+void cancelPlotArm(const char *why);
+bool plotSuppressStatus();
 void startTrapProfile(float imax, uint32_t holdMs, float rateAps);
 void advanceTrapProfile();
 void parseTrapParamsLine(const char* line);
@@ -1108,7 +1236,58 @@ void detectFaults() {
     if (mainState == 2 && V_batt < LIMIT_V_BATT_MIN) triggerFault(FAULT_UV_BATT, ERR_UV_BATT);
 #endif
 
-    if (V_bus  > LIMIT_V_BUS_MAX)  triggerFault(FAULT_OV_BUS,  ERR_OV_BUS);
+    // FAULT_OV_BUS — time-persistence filtered (see OV_BUS_PERSIST_* rationale at the constants).
+    // Bring-up load-dump parks are decaying ~ms transients; a single over-limit sample shows the
+    // bit (truthful telemetry) but latches State 99 only after the bus has been over-limit for
+    // OV_BUS_PERSIST_MS continuous AND OV_BUS_PERSIST_MIN_SAMPLES consecutive ticks (the sample
+    // floor keeps a stalled loop from mistaking two spikes bracketing a blocked stretch for a
+    // sustained overvoltage). All other faults keep their single-sample semantics.
+    if (V_bus > LIMIT_V_BUS_MAX) {
+        fault_flags |= FAULT_OV_BUS;             // transient indication — not yet a latch
+        uint32_t nowMs = millis();
+        // A fresh window opens on the first over-sample AND whenever the spacing from the
+        // previous over-sample exceeds OV_BUS_MAX_GAP_MS (review F4): sparse samples across a
+        // stalled loop must not be credited as a continuous overvoltage.
+        if (!ovBusOverActive || (uint32_t)(nowMs - ovBusLastOverMs) > OV_BUS_MAX_GAP_MS) {
+            // A gap-abandoned window is still a real unlatched transient — count it (review
+            // round 2: the restart must not silently discard the observation).
+            if (ovBusOverActive && ovBusTransientCount < 65535u) ovBusTransientCount++;
+            ovBusOverActive  = true;
+            ovBusOverSince   = nowMs;
+            ovBusOverSamples = 0;
+        }
+        ovBusLastOverMs = nowMs;
+        if (ovBusOverSamples < 255u) ovBusOverSamples++;
+        if ((uint32_t)(nowMs - ovBusOverSince) >= OV_BUS_PERSIST_MS &&
+            ovBusOverSamples >= OV_BUS_PERSIST_MIN_SAMPLES) {
+            triggerFault(FAULT_OV_BUS, ERR_OV_BUS);
+        }
+    } else {
+        if (ovBusOverActive) {
+            // Window closed without latching — the only externally-visible trace of a
+            // sub-persistence park (review F5: the flicker bit can miss every 50Hz telemetry
+            // frame and the [FAULT] print is latch-gated). Print at most 1 Hz (review round 2:
+            // an alternating over/under sample stream closes a window every other tick — the
+            // counter absorbs the rate, the print must not).
+            if (ovBusTransientCount < 65535u) ovBusTransientCount++;
+            uint32_t nowMs = millis();
+            // Suppressed under the State-98 plot stream (the one repeating print outside the
+            // profile/watch paths — review 2026-08-07 F1): the counter still increments and is
+            // visible via 'S', so the transient is not lost, just not printed mid-plot.
+            if (!plotSuppressStatus() &&
+                (!ovBusHasPrinted || (uint32_t)(nowMs - ovBusPrintLastMs) >= 1000u)) {
+                ovBusHasPrinted  = true;
+                ovBusPrintLastMs = nowMs;
+                Serial.print("[OV] transient over-limit window(s), latest ~");
+                Serial.print(nowMs - ovBusOverSince);
+                Serial.print(" ms, no latch; total=");
+                Serial.print(ovBusTransientCount);
+                Serial.println(" (1Hz-limited report)");
+            }
+        }
+        ovBusOverActive  = false;
+        ovBusOverSamples = 0;
+    }
 
 #if !BENCH_TEST
     // Belt-and-suspenders: assertFcChargeEnable() guard prevents this, but catch it regardless
@@ -1148,7 +1327,10 @@ void detectFaults() {
         triggerFault(FAULT_CHARGER_STAT, ERR_CHARGER_STAT);
 #endif
 
-    if (fault_flags) {
+    // Print only on an actual LATCH (FAULT_ERROR is set exclusively by triggerFault()). A plain
+    // fault_flags test would print every tick of a sub-persistence OV_BUS flicker window — at a
+    // free-running loop rate that's a UART storm, which itself stalls the loop.
+    if (fault_flags & FAULT_ERROR) {
         Serial.print("[FAULT] flags=0x"); Serial.print(fault_flags, HEX);
         Serial.print(" code=0x");         Serial.print(error_code, HEX);
         Serial.print(" (");               Serial.print(errorCodeStr(error_code));
@@ -1184,7 +1366,11 @@ void receiveCommands() {
     uint8_t checksum = 0;
     for (int i = 1; i < 21; i++) checksum ^= buffer[i];
     if (checksum != buffer[21]) {
-        Serial.println("Checksum mismatch — packet dropped");
+        // Suppressed under the State-98 plot stream: with a corrupt Pi link this repeats at the
+        // packet rate and would shred the plotter parse (review 2026-08-07 F6). Rarely relevant
+        // (plotting is a USB-bench activity, usually USE_ETHERNET=0), but cheap to close.
+        if (!plotSuppressStatus())
+            Serial.println("Checksum mismatch — packet dropped");
         return;
     }
 
@@ -1355,70 +1541,37 @@ void doState0() {
     Serial.println("State 0 -> State 1 (IDLE) [BENCH_TEST: power stage off; bring up with 'G']");
     mainState = 1;
 #else
-    // PRODUCTION bring-up — non-blocking phase machine (same pattern as doState3/doState99) so
-    // detectFaults() keeps sampling throughout. A stiff source is assumed present (vehicle battery
-    // / fuel cell). VBUS itself carries only ~30–40µF (the RT1987 ceramics); the 470µF bulk cap is
-    // on the V-MOT / regen node behind MOT_PWR_ENABLE, so this is NOT about bus inrush. The ordering
-    // (switches → settle → boosts) avoids any hot-plug step and lets the boosts' own soft-start
-    // raise the bus; the V_bus gate then confirms a source actually brought it up.
-    //   Phase 0: enable the bus switches AND MOT_PWR (boosts still OFF from setup). Closing
-    //            MOT_PWR (D-MT-EN) here — while everything is at ~Vbatt and the boosts are OFF —
-    //            pre-charges the 470µF V-MOT node + the VESC input caps as part of the same slow
-    //            soft-start ramp, instead of hot-plugging that stack at full bus later (Death 5;
-    //            see motPwrHotPlugUnsafe()). The motor node then stays energized through Idle/Run
-    //            (torn down only in State 99), so no Run entry ever re-hot-plugs it.
-    //   Phase 1: after BUS_SETTLE_MS, enable the boosts + BT_SEQUENCE and finish init.
-    //   Phase 2: wait for V_bus ≥ V_BUS_CHARGED_THRESH; if it never arrives within
-    //            BUS_CHARGE_TIMEOUT_MS → FAULT_INIT_FAIL (dead boost / failed switch / no source).
-    static uint8_t  phase      = 0;
-    static uint32_t phaseStart = 0;
-
-    switch (phase) {
-        case 0:
-            digitalWrite(FC_BUS_ENABLE,  HIGH);  // FC regulator → VBUS
-            digitalWrite(BT_BUS_ENABLE,  HIGH);  // BT regulator → VBUS
-            digitalWrite(MOT_PWR_ENABLE, HIGH);  // VBUS → V-MOT: pre-charge the 470µF+VESC at low V
-            phaseStart = millis();
-            phase = 1;
-            break;
-
-        case 1:
-            if (millis() - phaseStart < BUS_SETTLE_MS) break;   // let the RT1987 soft-start settle
-
-            digitalWrite(FC_REG_ENABLE, HIGH);   // boosts ramp the bus via their own soft-start
-            digitalWrite(BT_REG_ENABLE, HIGH);
-            digitalWrite(BT_SEQUENCE_ENABLE, HIGH);   // battery-pack sequencing in once powered
-
-            initControlPeripherals();
-
-            phaseStart = millis();
-            phase = 2;
-            break;
-
-        case 2:
-            if (V_bus >= V_BUS_CHARGED_THRESH) {
-                Serial.println("State 0 -> State 1 (IDLE)");
-                phase = 0;                       // reset for a future re-init (after power cycle)
-                mainState = 1;
-            } else if (millis() - phaseStart > BUS_CHARGE_TIMEOUT_MS) {
-                // Bus never came up: a boost/switch is dead or no source is present.
-                Serial.println("State 0: VBUS failed to reach charge threshold -> FAULT_INIT_FAIL");
-                phase = 0;
-                triggerFault(FAULT_INIT_FAIL, ERR_INIT_FAIL);
-            }
-            break;
+    // PRODUCTION bring-up — the shared STAGED machine (see the "Staged bring-up" constants block
+    // and busBringupTick()). Non-blocking so detectFaults() keeps sampling throughout. A stiff
+    // source is assumed present (vehicle battery / fuel cell). Sequence: P0 pre-charge the ~40µF
+    // bus alone through the source switches with MOT_PWR held LOW → P1 boosts regulate → P2 dwell
+    // confirms stable regulation → P3 connects the motor node (470µF + VESC) from the regulated
+    // bus via D-MT-EN's 100nF-CSS soft-start (2026-08-03 doctrine — supersedes the Death-5
+    // low-voltage pre-charge, which never functioned on the bench). The motor node then stays
+    // energized through Idle/Run (torn down only in State 99). On a gate timeout the machine
+    // faults from inside busBringupTick() (FAULT_INIT_FAIL / FAULT_MOT_HOTPLUG) — load-bearing:
+    // the State-99 teardown is what extinguishes an invisible parked boost after a failed
+    // bring-up.
+    if (!bringupActive) busBringupStart();
+    BringupStatus st = busBringupTick(true);   // doInit: State 0 owns peripheral init
+    if (st == BRINGUP_DONE) {
+        Serial.println("State 0 -> State 1 (IDLE)");
+        mainState = 1;
     }
+    // BRINGUP_FAILED: busBringupTick() already latched State 99 via triggerFault().
 #endif
 }
 
 void doState1() {
     // IDLE — motor commanded to zero; regen path closed.
-    // NOTE (Death-5 sequencing change, 2026-07-08): MOT_PWR_ENABLE is intentionally NOT forced LOW
-    // here. The V-MOT/VESC node is pre-charged during the State-0 bring-up and must stay energized
-    // (like the bus) so the Idle→Run transition never re-hot-plugs it (that hot-plug killed the FC
-    // boost). The motor is held stopped by commandMotorCurrent(0) every Idle tick — NOT by cutting
-    // MOT_PWR. (Under BENCH_TEST the power stage boots dark, so MOT_PWR is simply LOW here until a
-    // 'G' bring-up energizes it.) Only State 99 tears the motor node down.
+    // NOTE (staged bring-up, 2026-08-03 — supersedes the Death-5 low-voltage pre-charge doctrine):
+    // MOT_PWR_ENABLE is intentionally NOT forced LOW here. The V-MOT/VESC node is CONNECTED in
+    // State-0 phase P3 — from the already-regulated bus, via D-MT-EN's soft-start — and must stay
+    // energized (like the bus) so the Idle→Run transition never reconnects it. The motor is held
+    // stopped by commandMotorCurrent(0) every Idle tick — NOT by cutting MOT_PWR. (Under BENCH_TEST
+    // the power stage boots dark, so MOT_PWR is simply LOW here until a 'G' bring-up energizes it.)
+    // A reconnect after teardown ('Q' / State 99) is cheap and guarded (motPwrConnectBlocked()
+    // refuses it off a non-regulated bus), so only State 99 tears the motor node down.
     // Rate-gated at the motor period. Idle runs continuously, and an ungated zero-current frame
     // every tick is 9 bytes of UART per tick — the same backpressure that pins the main loop (and
     // detectFaults()) described in the "Control-loop rate limiting" block. 500 Hz keeps the command
@@ -1470,12 +1623,15 @@ void doState2() {
     // pull it LOW (with the required settling delay) before opening the FC→charger path.
     digitalWrite(FC_BUS_ENABLE, HIGH);    // FC regulator → VBUS always on in Run
 
-    // VBUS → VESC/motor. Normally already HIGH (pre-charged in State 0, kept on through Idle), so
-    // this is an idempotent no-op. The guard only bites if the motor node is somehow LOW while the
-    // bus is up — that would be a boost-killing hot-plug (Death 5), so refuse and fault instead of
-    // slamming D-MT-EN closed onto a discharged 470µF+VESC stack at full bus.
+    // VBUS → VESC/motor. Normally already HIGH (connected in State-0 P3, kept on through Idle),
+    // so this is an idempotent no-op. Under the 2026-08-03 doctrine the guard refuses only when
+    // the bus is NOT in its regulation band — i.e. Run was entered on an unregulated bus, which
+    // is a real fault (and under BENCH_TEST the only armed catch, UV_BUS being compiled out).
+    // If the node is LOW at a REGULATED bus (rare: 'Q'-exit then Run), this now silently starts
+    // the sanctioned CSS-controlled connect (~30ms) — benign: the VESC's UVLO + 1000ms command
+    // timeout coast it through the ramp.
     if (!assertMotPwrEnable(true)) {
-        Serial.println("State 2: MOT_PWR hot-plug refused (motor node not pre-charged) -> FAULT");
+        Serial.println("State 2: MOT_PWR connect refused (bus not in regulation) -> FAULT");
         triggerFault(FAULT_MOT_HOTPLUG, ERR_MOT_HOTPLUG);
         return;
     }
@@ -1504,17 +1660,20 @@ void doState3() {
     // the bus remains at ~16V (nominal) and the next Idle→Run transition never re-hot-plugs the bus
     // (see "VBUS controlled bring-up" note; VBUS itself carries only the ~30–40µF RT1987
     // ceramics — the 470µF bulk cap is on V-MOT). Only State 99 (Error) tears the bus down —
-    // and that is latched until a power cycle, which re-runs the State-0 gentle bring-up.
+    // and that is latched until a power cycle, which re-runs the State-0 staged bring-up
+    // (busBringupTick()).
     //
     // Because the boosts stay enabled, there is NO disabled-converter back-feed hazard here, so the
     // old two-phase cap/regen drain sequence is no longer needed. End-of-run regen harvest already
     // happens through the regen path during Run coast-down (chargingControl()); the ~72mJ of VBUS
     // cap energy is not worth a re-hot-plug every cycle.
     //
-    // MOT_PWR_ENABLE (Death-5 change, 2026-07-08): the V-MOT/VESC node is ALSO left energized, for
-    // the same reason the bus is — cutting it here would force a full-bus re-hot-plug of the
-    // 470µF+VESC stack on the next Idle→Run (the event that killed the FC boost). The motor is held
-    // stopped by commandMotorCurrent(0), not by cutting MOT_PWR. Only State 99 tears the motor node down.
+    // MOT_PWR_ENABLE (staged bring-up doctrine, 2026-08-03 — supersedes the Death-5 framing): the
+    // V-MOT/VESC node is ALSO left energized, for the same reason the bus is — cutting it here
+    // would force a re-connect of the 470µF+VESC stack on the next Idle→Run. A reconnect is cheap
+    // and CSS-controlled (motPwrConnectBlocked() only permits it off a regulated bus), but there is
+    // no reason to pay for it every cycle. The motor is held stopped by commandMotorCurrent(0), not
+    // by cutting MOT_PWR. Only State 99 tears the motor node down.
     commandMotorCurrent(0);
     current = 0.0f;
     assertFcChargeEnable(false);           // ensure FC→charger path is closed
@@ -1626,7 +1785,7 @@ void printTestHelp() {
     Serial.println("  3 - toggle MOT_PWR_ENABLE    4 - toggle REGEN_ENABLE");
     Serial.println("  5 - toggle FC_CHARGE_ENABLE  6 - toggle BT_SEQUENCE_ENABLE");
     Serial.println("  C - toggle CBAL_DISABLE      M - toggle MPPT_DISABLE");
-    Serial.println("  G - safe VBUS bring-up       D - start/stop drive cycle");
+    Serial.println("  G - staged bring-up (bus->boosts->motor node; 'X' aborts)   D - start/stop drive cycle");
     Serial.println("  S - print status snapshot    I - scan I2C bus");
     Serial.println("  E - read VESC FW+telemetry   W - toggle VESC watch (~2Hz, flags faults)");
     Serial.println("  -- bench tools (prompt for a value) --");
@@ -1639,6 +1798,12 @@ void printTestHelp() {
     Serial.println("      (one line, e.g. \"T 6 5 0.5\"; 'T' alone while running stops it;");
     Serial.println("      direct VESC phase current — no velocity-chain calibration needed)");
     Serial.println("  X - universal stop: cancel any running profile + manual motor + share live");
+    Serial.println("  L - toggle Serial-Plotter stream (sp,act,gFC,gBT,ifc,ibt @50Hz)");
+    Serial.print  ("      while ON: status/phase lines suppressed; 'R'/'T' arm with a ");
+    Serial.print(PLOT_ARM_DELAY_MS);
+    Serial.println("ms delay");
+    Serial.println("      so you can switch to the plotter window before the run starts");
+    Serial.println("      ('D' is NOT armed — the plot fields are share-loop signals)");
     Serial.println("  H - show this command list");
     Serial.println("  * 1/2 refuse ON if the matching boost is ON and VBUS is low (use G);");
     Serial.println("    2 also refuses while FC_CHARGE_ENABLE is HIGH (illegal combination)");
@@ -1665,6 +1830,29 @@ void doState98() {
                 pendingInput = PEND_NONE;
                 inputBufIdx  = 0;
                 Serial.println("(input cancelled)");
+            }
+        }
+
+        // Power-path topology commands are locked out while the staged bring-up runs
+        // (adversarial review 2026-08-03, F1): a mid-phase toggle defeats the machine's
+        // sequencing — '3' during P2 would bypass the dwell, 'F'/'B' would re-arm a boost the
+        // machine assumes dark, '5' could latch the illegal BT_BUS+FC_CHARGE combination whose
+        // fault is compiled out under BENCH_TEST. 'X' (abort), 'Q' (exit, aborts too), 'S', and
+        // the read-only keys stay available.
+        if (handleAsCommand && bringupActive) {
+            switch (cmd) {
+                case '1': case '2': case '3': case '4': case '5': case '6':
+                case 'F': case 'f': case 'B': case 'b':
+                // Motor/droop writers too (review round 2, F1): an 'A'/'V' set mid-bring-up
+                // would drive a separately-powered VESC through the sequence; 'P'/'O' write the
+                // droop MDACs mid-ramp.
+                case 'A': case 'a': case 'V': case 'v':
+                case 'P': case 'p': case 'O': case 'o':
+                    Serial.println("REFUSED: staged bring-up in progress — abort with 'X' first");
+                    handleAsCommand = false;
+                    break;
+                default:
+                    break;
             }
         }
 
@@ -1708,12 +1896,12 @@ void doState98() {
                 }
                 break;
             case '3':
-                // MOT_PWR via the hot-plug guard: OFF always allowed; ON refused if it would
-                // hot-plug the discharged 470µF+VESC motor node at full bus (Death 5). Use 'G' to
-                // energize the motor node safely (pre-charge during the low-voltage bring-up).
+                // MOT_PWR via the connect guard: OFF always allowed; ON allowed only from a bus
+                // in its regulation band (the CSS-controlled connect — 2026-08-03 doctrine, see
+                // motPwrConnectBlocked()). Use 'G' for the full staged bring-up.
                 cur = digitalRead(MOT_PWR_ENABLE);
-                if (!cur && motPwrHotPlugUnsafe()) {
-                    Serial.println("REFUSED: motor node not pre-charged and VBUS is up — hot-plug risk. Use 'G' to bring up bus+motor together.");
+                if (!cur && motPwrConnectBlocked()) {
+                    Serial.println("REFUSED: bus not in regulation — motor-node connect is only sanctioned from a regulated bus. Use 'G'.");
                 } else {
                     assertMotPwrEnable(!cur);
                     Serial.print("MOT_PWR_ENABLE -> "); Serial.println(!cur);
@@ -1756,7 +1944,9 @@ void doState98() {
             case 'D':
             case 'd':
                 if (!driveCycleActive) {
-                    if (!velocityChainCalibrated()) {
+                    if (bringupActive) {
+                        Serial.println("ERROR: bring-up in progress — wait for it or abort with 'X'");
+                    } else if (!velocityChainCalibrated()) {
                         printVelocityChainRefusal("drive cycle");
                     } else if (!digitalRead(MOT_PWR_ENABLE)) {
                         Serial.println("ERROR: MOT_PWR_ENABLE must be HIGH before starting drive cycle (key '3')");
@@ -1789,9 +1979,26 @@ void doState98() {
                 break;
             case 'G':
             case 'g':
-                Serial.println("[G] Safe VBUS bring-up: switches first, then boosts...");
-                bringUpBus();
-                Serial.print("    V_bus="); Serial.print(V_bus); Serial.println("V (send 'S' to confirm)");
+                // Full staged bring-up (P0 pre-charge → P1 boosts → P2 dwell → P3 motor-node
+                // connect), non-blocking: armed here, ticked once per doState98() invocation
+                // below (outside the serial block), so it advances with no keys pressed and
+                // detectFaults() stays live. Mutually exclusive with the profiles — they drive
+                // motor/charge paths and would fight the machine's switch sequencing.
+                if (driveCycleActive || powerShareProfileActive || trapProfileActive) {
+                    Serial.println("[G] REFUSED: a profile is running — stop it first ('X')");
+                } else if (!busBringupStart()) {
+                    Serial.print("[G] already in progress (phase ");
+                    Serial.print(bringupPhase); Serial.println(")");
+                } else {
+                    // Take motor ownership (adversarial review round 2, F1): a standing manual
+                    // 'A'/'V' command would otherwise keep driving a separately-powered VESC
+                    // through the bring-up (applyManualMotor() is also suppressed below while
+                    // the machine runs, and 'A'/'V'/'P'/'O' are locked out — this clears any
+                    // pre-existing mode so it can't resume after DONE either).
+                    haltMotorOutput();
+                    powerBalanceLive = false;
+                    Serial.println("[G] Staged bring-up started (P0 bus pre-charge; 'X' aborts)");
+                }
                 break;
             case 'S':
             case 's':
@@ -1820,26 +2027,41 @@ void doState98() {
             case 'p':
                 pendingInput = PEND_POWER_SHARE;
                 Serial.print("Enter power-share setpoint 0.01-0.99 (FC share): ");
+                // Under plot mode the mid-line cursor would have the next 50 Hz plot line
+                // concatenate onto the prompt (one glitched plotter line per prompt — review
+                // 2026-08-07 F3). Terminate the line; the typed digits aren't echoed anyway.
+                if (plotModeActive) Serial.println();
                 break;
             case 'O':
             case 'o':
                 pendingInput = PEND_OPEN_DROOP;
                 Serial.print("Enter droop ratio 0.15-0.85 (open-loop, direct MDAC): ");
+                if (plotModeActive) Serial.println();   // see 'P' — plot-line concat guard
                 break;
             case 'A':
             case 'a':
                 pendingInput = PEND_MOTOR_CURRENT;
                 Serial.print("Enter manual motor current (A): ");
+                if (plotModeActive) Serial.println();   // see 'P' — plot-line concat guard
                 break;
             case 'V':
             case 'v':
                 pendingInput = PEND_MOTOR_VELOCITY;
                 Serial.print("Enter manual motor velocity (m/s): ");
+                if (plotModeActive) Serial.println();   // see 'P' — plot-line concat guard
                 break;
             case 'R':
             case 'r':
+                // A pending arm is cancelled by a second 'R', mirroring the running-profile toggle
+                // below — otherwise the only way out of a countdown would be the 'X' sledgehammer.
+                if (plotArmTarget == PLOT_ARM_SHARE) {
+                    cancelPlotArm("'R' pressed again");
+                    break;
+                }
                 if (!powerShareProfileActive) {
-                    if (!digitalRead(MOT_PWR_ENABLE)) {
+                    if (bringupActive) {
+                        Serial.println("ERROR: bring-up in progress — wait for it or abort with 'X'");
+                    } else if (!digitalRead(MOT_PWR_ENABLE)) {
                         Serial.println("ERROR: MOT_PWR_ENABLE must be HIGH before the power-share profile (key '3')");
                     } else if (manualMotorMode == MOTOR_TEST_OFF) {
                         Serial.println("ERROR: set a constant motor command first ('A' current or 'V' velocity)");
@@ -1847,15 +2069,29 @@ void doState98() {
                         if (V_bus < V_BUS_CHARGED_THRESH) {
                             Serial.println("WARN: VBUS is low — bring the bus up ('G') for a meaningful share measurement");
                         }
-                        driveCycleActive            = false;   // mutually exclusive motor drivers
-                        resetControlRateLimiters();   // first tick drives immediately
-                        powerShareProfileActive     = true;
-                        powerShareProfilePhaseIdx   = 0;
-                        powerShareProfilePhaseStart = millis();
-                        powerShareProfileStatusLast = millis();
-                        Serial.println("[PS] Power-share profile started — Phase 0");
-                        if (vescWatchActive)
-                            Serial.println("[PS] VESC watch paused during the run (production-identical timing); resumes on stop");
+                        // Plot mode defers the start so the operator can switch to the plotter
+                        // window first (see PLOT_ARM_DELAY_MS). The preconditions above are checked
+                        // NOW, at the keypress, so a refusal is seen before the window switch —
+                        // plotArmTick() only re-checks the mutual-exclusion guards.
+                        if (plotModeActive) {
+                            // Refuse to arm over a RUNNING profile (review 2026-08-07 F5): the
+                            // immediate path's documented takeover ('R' clears 'D') would here
+                            // become "arm now, plotArmTick cancels in 5 s" — same keypress,
+                            // opposite outcome. Explicit refusal beats a delayed surprise.
+                            if (driveCycleActive || trapProfileActive) {
+                                Serial.println("ERROR: another profile is running — stop it first ('X') before arming under plot mode");
+                                break;
+                            }
+                            cancelPlotArm("superseded by 'R'");   // a pending trapezoid arm must
+                                                                  // not vanish without a message
+                            plotArmTarget     = PLOT_ARM_SHARE;
+                            plotArmDeadlineMs = millis() + PLOT_ARM_DELAY_MS;
+                            Serial.print("[PLOT] Power-share profile ARMED — starts in ");
+                            Serial.print(PLOT_ARM_DELAY_MS);
+                            Serial.println("ms. Switch to the Serial Plotter now ('R' or 'X' cancels)");
+                        } else {
+                            startPowerShareProfile();
+                        }
                     }
                 } else {
                     powerShareProfileActive = false;
@@ -1869,7 +2105,16 @@ void doState98() {
             case 't':
                 // 'T' is free inside State 98 (the 'T' that ENTERS test mode is consumed by
                 // doState1(), so there is no conflict). Toggle semantics mirror 'D'/'R'.
+                // A pending plot-mode arm cancels on a second 'T', same as 'R' above.
+                if (plotArmTarget == PLOT_ARM_TRAP) {
+                    cancelPlotArm("'T' pressed again");
+                    break;
+                }
                 if (!trapProfileActive) {
+                    if (bringupActive) {
+                        Serial.println("ERROR: bring-up in progress — wait for it or abort with 'X'");
+                        break;
+                    }
                     // Single-line entry: everything after the 'T' on the same line ("T 6 5 0.5")
                     // accumulates into inputBuf (space is a numeric-entry char) and is parsed as
                     // <Imax A> <hold s> <rate A/s> on the newline. No MOT_PWR_ENABLE gate: the VESC
@@ -1885,6 +2130,7 @@ void doState98() {
                     Serial.print("Trapezoid <Imax A> <hold s> <rate A/s> (|Imax| <= ");
                     Serial.print(TRAP_I_ABS_MAX, 0);
                     Serial.print(", negative = braking/regen): ");
+                    if (plotModeActive) Serial.println();   // see 'P' — plot-line concat guard
                 } else {
                     trapProfileActive = false;
                     trapCmdA          = 0.0f;
@@ -1899,8 +2145,9 @@ void doState98() {
                     // the charge/regen paths themselves, so parking the switches restores a known
                     // state; the trapezoid never touches a path switch — the operator's configured
                     // paths are an input to the test. Tearing them down on every stop would also
-                    // drop the Death-5 motor-node pre-charge, forcing a full 'G' bring-up between
-                    // back-to-back runs. The motor is zeroed, which is the safety-relevant part.
+                    // drop the motor-node connection (staged bring-up P3), forcing a full 'G'
+                    // bring-up between back-to-back runs. The motor is zeroed, which is the
+                    // safety-relevant part.
                     Serial.println("[TP] Trapezoid stopped — motor zeroed (path switches left as-is)");
                 }
                 break;
@@ -1917,6 +2164,12 @@ void doState98() {
                 bool hadDC = driveCycleActive;
                 bool hadPS = powerShareProfileActive;
                 bool hadTP = trapProfileActive;
+                busBringupAbort();   // no-op if idle; else darkens the stage (a mid-P1 SCP-cut
+                                     // park is invisible to the ADC — merely stopping won't do)
+                // An ARMED (not yet started) profile must die here too: 'X' exists so the operator
+                // can be certain nothing will drive the motor, and a pending countdown would
+                // otherwise fire a profile seconds AFTER the stop key was pressed.
+                cancelPlotArm("universal stop");
                 driveCycleActive        = false;
                 powerShareProfileActive = false;
                 trapProfileActive       = false;
@@ -1932,6 +2185,22 @@ void doState98() {
                     : "Manual motor + power-share live stopped (motor zeroed)");
                 break;
             }
+            case 'L':
+            case 'l':
+                plotModeActive = !plotModeActive;
+                if (plotModeActive) {
+                    plotLastMs = millis() - PLOT_PERIOD_MS;   // stream on the very next tick
+                    Serial.println("[PLOT] Serial-Plotter stream ON @50Hz — sp,act,gFC,gBT,ifc,ibt");
+                    Serial.print  ("[PLOT] status/phase lines suppressed; 'R'/'T' now arm with a ");
+                    Serial.print(PLOT_ARM_DELAY_MS);
+                    Serial.println("ms delay");
+                    if (vescWatchActive)
+                        Serial.println("[PLOT] 'W' VESC watch output suppressed while plotting (faults latch; re-check after 'L')");
+                } else {
+                    cancelPlotArm("plot mode turned off");
+                    Serial.println("[PLOT] Serial-Plotter stream OFF");
+                }
+                break;
             case 'H':
             case 'h':
             case '?':
@@ -1947,6 +2216,11 @@ void doState98() {
                 vescWatchActive         = false;   // stop the blocking poll from running outside State 98
                 pendingInput            = PEND_NONE;   // also drops a half-typed trapezoid line
                 inputBufIdx             = 0;
+                cancelPlotArm("State 98 exit");     // no armed profile may survive into Idle
+                plotModeActive          = false;    // the stream is a State-98 tool only
+                busBringupAbort();                 // a mid-bring-up exit must darken the stage —
+                                                   // Idle would neither tick the gates nor see a
+                                                   // cut-park (invisible to the ADC)
                 haltMotorOutput();                 // stop motor before cutting its power
                 digitalWrite(MOT_PWR_ENABLE, LOW);   // forced LOW on exit (per spec)
                 // Close the charge/regen paths too — doState1() re-clears MOT_PWR/REGEN each
@@ -1963,6 +2237,30 @@ void doState98() {
                 break;
         }
     }
+
+    // Staged bring-up tick — OUTSIDE the serial block so the machine advances with no keys
+    // pressed (one tick per doState98() invocation, same pattern as the profile blocks below).
+    // Mutually exclusive with the profiles via the 'G'/'D'/'R'/'T' interlocks. On FAILED the
+    // machine has already latched State 99 via triggerFault(); no handling needed here.
+    if (bringupActive) {
+        if (busBringupTick(false) == BRINGUP_DONE) {   // State 98: peripherals already live
+            Serial.print("[G] Bring-up complete: V_bus=");
+            Serial.print(V_bus);
+            Serial.print("V, V_rgn=");
+            Serial.print(V_rgn);
+            Serial.println("V ('S' for full status)");
+        }
+    }
+
+    // Armed-profile tick — BEFORE the profile branches so a run that fires this tick executes
+    // immediately rather than idling one full invocation. ORDERING IS LOAD-BEARING (review
+    // 2026-08-07): busBringupTick() above can latch State 99 in this same invocation AFTER
+    // clearing bringupActive, which this tick's guard would then not see — safe only because an
+    // arm and a bring-up can never coexist past one tick ('R'/'T' are refused while
+    // bringupActive, and a 'G' pressed during a countdown cancels the arm in the same
+    // invocation, since the serial block runs before both ticks). Do not reorder these without
+    // re-deriving that argument.
+    plotArmTick();
 
     if (driveCycleActive) {
         // advanceDriveCycle() only supplies v_setpoint; the real Run-state control functions
@@ -2005,8 +2303,11 @@ void doState98() {
         // regen/FC-charge paths stay static under operator control so the only varying input is the
         // motor current.
         powerBalanceGated();
-    } else {
-        // Standalone manual modes (no profile running): hold the motor and/or run the closed-loop
+    } else if (!bringupActive) {
+        // Standalone manual modes (no profile AND no bring-up running — review round 2, F1: a
+        // standing manual command must not drive a separately-powered VESC mid-sequence; 'G'
+        // also haltMotorOutput()s on arm, so this gate is belt-and-suspenders).
+        // Hold the motor and/or run the closed-loop
         // share controller at the operator-set setpoint. applyManualMotor() is NOT rate-gated in
         // MOTOR_TEST_CURRENT: it re-sends a CONSTANT operator-set current, and the VESC's own
         // command timeout (1000 ms, and it COASTS rather than brakes on expiry) means the bench
@@ -2019,6 +2320,11 @@ void doState98() {
     // VESC read-back watch: runs regardless of which motor driver (if any) is active, so a fault
     // can be caught whether it trips under the drive cycle, the share profile, or a manual command.
     pollVescWatch();
+
+    // Serial-plotter stream — last, so each line reflects the state AFTER this tick's control
+    // action, and outside every branch so the baseline keeps streaming with no profile running
+    // (that idle baseline is what the operator watches while the arming countdown elapses).
+    plotTick();
 }
 
 void advanceDriveCycle() {
@@ -2039,7 +2345,7 @@ void advanceDriveCycle() {
     if (elapsed >= ph.durationMs) {
         driveCyclePhaseIdx++;
         driveCyclePhaseStart = millis();
-        if (driveCyclePhaseIdx < DRIVE_CYCLE_PHASES) {
+        if (driveCyclePhaseIdx < DRIVE_CYCLE_PHASES && !plotSuppressStatus()) {
             Serial.print("[DC] Phase "); Serial.println(driveCyclePhaseIdx);
         }
         return;
@@ -2049,8 +2355,8 @@ void advanceDriveCycle() {
     float t = (float)elapsed / (float)ph.durationMs;
     v_setpoint = ph.v_start + t * (ph.v_end - ph.v_start);
 
-    // Status snapshot every 500 ms
-    if (millis() - driveCycleStatusLast >= 500) {
+    // Status snapshot every 500 ms (withheld under plot mode — see plotSuppressStatus())
+    if (!plotSuppressStatus() && millis() - driveCycleStatusLast >= 500) {
         driveCycleStatusLast = millis();
         Serial.print("[DC] t="); Serial.print(millis());
         Serial.print(" v_sp="); Serial.print(v_setpoint, 2);
@@ -2064,6 +2370,104 @@ void advanceDriveCycle() {
 }
 
 // ── State 98 bench-tool helpers ───────────────────────────────────────────────────────────────
+
+// True when a human-readable periodic line must be withheld to keep the plotter stream parseable.
+// Deliberately a function, not a raw `plotModeActive` read at each call site: the suppression rule
+// is one policy in one place, so a future second consumer (a CSV logger, say) changes it once.
+bool plotSuppressStatus() {
+    return plotModeActive;
+}
+
+// One condensed plotter line. Six fields, ALWAYS six — the Arduino plotter keys its series off the
+// labels and a varying field count re-legends the graph mid-run. `act` is the same measured share
+// powerBalance() computes; with no current flowing the share is undefined and reported as 0 (same
+// convention as the '[PS]' status line), which reads as a flat trace until the motor draws.
+void plotTick() {
+    if (!plotModeActive) return;
+    if ((uint32_t)(millis() - plotLastMs) < PLOT_PERIOD_MS) return;
+    // Backpressure guard (review 2026-08-07 F4): Teensy USB-CDC write() BLOCKS when the host is
+    // enumerated but not draining (monitor closed mid-run, host hiccup). A stalled plot print
+    // would freeze the whole loop — including detectFaults() — while a profile drives the motor.
+    // Drop the sample instead; the stream self-heals when the host drains. ~80 B covers one line.
+    if (Serial.availableForWrite() < 80) return;
+    // Note: stamping millis() (not += PLOT_PERIOD_MS) means the real interval is period +
+    // loop-jitter, i.e. the stream drifts slightly slow. Fine for a plotter (no timestamps on
+    // the wire); do not use this cadence for anything that integrates over time.
+    plotLastMs = millis();
+
+    float totalA = fabsf(I_fc) + fabsf(I_batt);
+    float act    = (totalA > 1e-6f) ? (fabsf(I_fc) / totalA) : 0.0f;
+
+    Serial.print("sp:");    Serial.print(power_share_setpoint, 3);
+    Serial.print(",act:");  Serial.print(act, 3);
+    Serial.print(",gFC:");  Serial.print(droop_gain_FC_actual, 3);
+    Serial.print(",gBT:");  Serial.print(droop_gain_BT_actual, 3);
+    Serial.print(",ifc:");  Serial.print(I_fc, 3);
+    Serial.print(",ibt:");  Serial.println(I_batt, 3);
+}
+
+// Drop a pending armed start. Safe to call unconditionally (no-op when nothing is armed) so every
+// stop path can invoke it without first testing — which is exactly how 'X'/'Q' avoid the bug where
+// a countdown outlives the key that was supposed to stop everything.
+void cancelPlotArm(const char *why) {
+    if (plotArmTarget == PLOT_ARM_NONE) return;
+    plotArmTarget = PLOT_ARM_NONE;
+    Serial.print("[PLOT] Armed profile cancelled (");
+    Serial.print(why);
+    Serial.println(")");
+}
+
+// Fire an armed profile once its delay has elapsed. Re-checks the mutual-exclusion guards rather
+// than trusting the state captured at arm time: between the keypress and the deadline the operator
+// can have started a bring-up ('G') or another profile, and firing into either would stomp a
+// running sequence (startPowerShareProfile() clears driveCycleActive outright).
+void plotArmTick() {
+    if (plotArmTarget == PLOT_ARM_NONE) return;
+
+    if (bringupActive || driveCycleActive || powerShareProfileActive || trapProfileActive) {
+        cancelPlotArm("another run started during the arming delay");
+        return;
+    }
+    // The share profile's preconditions are re-checked at FIRE time, not just at the keypress: the
+    // arming window is seconds long and the operator can press '3' (MOT_PWR OFF) inside it, which
+    // would otherwise start a run against a gate that no longer holds. Not a hardware hazard (this
+    // profile touches no path switch) but a silently-bypassed precondition is exactly the class of
+    // thing that makes a bench measurement wrong without looking wrong. The trapezoid has no such
+    // gate by design (separate-VESC-supply case — see 'T'), so it fires unconditionally.
+    if (plotArmTarget == PLOT_ARM_SHARE &&
+        (!digitalRead(MOT_PWR_ENABLE) || manualMotorMode == MOTOR_TEST_OFF)) {
+        cancelPlotArm("preconditions no longer met (MOT_PWR or motor command changed)");
+        return;
+    }
+    if ((int32_t)(millis() - plotArmDeadlineMs) < 0) return;
+
+    PlotArmTarget target = plotArmTarget;
+    plotArmTarget = PLOT_ARM_NONE;   // cleared BEFORE the start call so the start path cannot re-arm
+    if (target == PLOT_ARM_SHARE) startPowerShareProfile();
+    else                          startTrapProfile(plotArmTrapImax, plotArmTrapHoldMs, plotArmTrapRate);
+}
+
+// Commit the power-share profile. Extracted from the 'R' handler so the immediate path and the
+// plot-mode armed path start the run identically — the arming delay must not become a second,
+// subtly different start sequence. Preconditions (MOT_PWR, a manual motor command) are the caller's
+// responsibility: 'R' checks them at the keypress so a refusal is seen before the window switch.
+void startPowerShareProfile() {
+    driveCycleActive            = false;   // mutually exclusive motor drivers
+    // Clear the trapezoid too (review 2026-08-07 F7, pre-existing gap in the old 'R' block):
+    // without this an 'R' during a trapezoid left trapProfileActive set but shadowed by branch
+    // precedence — the orphaned trapezoid then resumed with a huge elapsed time when the share
+    // profile stopped. Mirrors startTrapProfile()'s symmetric clears.
+    trapProfileActive           = false;
+    trapCmdA                    = 0.0f;
+    resetControlRateLimiters();   // first tick drives immediately
+    powerShareProfileActive     = true;
+    powerShareProfilePhaseIdx   = 0;
+    powerShareProfilePhaseStart = millis();
+    powerShareProfileStatusLast = millis();
+    Serial.println("[PS] Power-share profile started — Phase 0");
+    if (vescWatchActive)
+        Serial.println("[PS] VESC watch paused during the run (production-identical timing); resumes on stop");
+}
 
 // Human-readable name for a VESC mc_fault_code. Table transcribed verbatim from the vendored
 // VescUart datatypes.h:124-153 (FW 5.x-era ordering). The blink count on the VESC's red LED
@@ -2149,6 +2553,10 @@ void pollVescWatch() {
     // automatically when the profile stops; the VESC latches faults, so a fault raised during the
     // run is still reported by the first poll afterward (elapsed > period → immediate) or via 'E'.
     if (driveCycleActive || powerShareProfileActive || trapProfileActive) return;
+    // Same suppression under plot mode, for a different reason: the '[VW]' line is not numeric and
+    // would break the plotter parse. The VESC latches faults, so anything raised while plotting is
+    // still reported by the first poll after 'L' turns the stream off (or via 'E').
+    if (plotSuppressStatus()) return;
     if (millis() - lastVescWatchMs < VESC_WATCH_PERIOD_MS) return;
     lastVescWatchMs = millis();
 
@@ -2245,9 +2653,11 @@ void setManualMotorVelocity(float v) {
 // Clearing pi_motor_accum matters as much as the zero flush: a drive cycle ends with the integrator
 // wound up from the regen-hold phase, and carrying that into the next run means the first
 // motorControl() tick commands a large current from stale history rather than from live error.
-// This deliberately does NOT touch the power-path switches — that policy question (whether a test
-// exit retains the Death-5 motor-node pre-charge or drains it) is separate and unresolved; callers
-// decide, exactly as before.
+// This deliberately does NOT touch the power-path switches. The policy question (whether a test
+// exit retains the motor-node connection or drops it) is RESOLVED (2026-08-03): 'Q' darkens the
+// stage via busBringupAbort() and forces MOT_PWR_ENABLE LOW below. A reconnect from a regulated
+// bus is cheap and guarded (motPwrConnectBlocked()), so teardown-on-exit is the settled policy;
+// haltMotorOutput() itself stays switch-agnostic and leaves the choice to its callers.
 void haltMotorOutput() {
     manualMotorMode     = MOTOR_TEST_OFF;
     v_setpoint          = 0.0f;
@@ -2294,7 +2704,7 @@ void advancePowerShareProfile() {
     if (elapsed >= ph.durationMs) {
         powerShareProfilePhaseIdx++;
         powerShareProfilePhaseStart = millis();
-        if (powerShareProfilePhaseIdx < POWER_SHARE_PROFILE_PHASES) {
+        if (powerShareProfilePhaseIdx < POWER_SHARE_PROFILE_PHASES && !plotSuppressStatus()) {
             Serial.print("[PS] Phase "); Serial.println(powerShareProfilePhaseIdx);
         }
         return;
@@ -2304,8 +2714,10 @@ void advancePowerShareProfile() {
     float t = (float)elapsed / (float)ph.durationMs;
     power_share_setpoint = ph.share_start + t * (ph.share_end - ph.share_start);
 
-    // Status snapshot every 500 ms — setpoint vs measured share, the currents, and droop gains
-    if (millis() - powerShareProfileStatusLast >= 500) {
+    // Status snapshot every 500 ms — setpoint vs measured share, the currents, and droop gains.
+    // Suppressed under plot mode: the same signals stream at 50 Hz in a plotter-parseable form,
+    // and these lines would break the parse.
+    if (!plotSuppressStatus() && millis() - powerShareProfileStatusLast >= 500) {
         powerShareProfileStatusLast = millis();
         float totalA = fabsf(I_fc) + fabsf(I_batt);
         float share_act = (totalA > 1e-6f) ? (fabsf(I_fc) / totalA) : 0.0f;
@@ -2367,7 +2779,32 @@ void parseTrapParamsLine(const char* line) {
         return;
     }
 
-    startTrapProfile(imax, (uint32_t)(hold * 1000.0f + 0.5f), rate);   // hold 0 is legal: triangle
+    uint32_t holdMs = (uint32_t)(hold * 1000.0f + 0.5f);   // hold 0 is legal: triangle
+
+    // Plot mode defers the start so the operator can reach the plotter window (PLOT_ARM_DELAY_MS).
+    // Arming happens HERE rather than inside startTrapProfile() so plotArmTick() can call that
+    // function directly without re-arming itself — one start path, no recursion guard needed.
+    // All three values are already validated above, so the armed run cannot fail later.
+    if (plotModeActive) {
+        // Same running-profile refusal as the 'R' arm path (review 2026-08-07 F5).
+        if (driveCycleActive || powerShareProfileActive) {
+            Serial.println("ERROR: another profile is running — stop it first ('X') before arming under plot mode");
+            return;
+        }
+        cancelPlotArm("superseded by 'T'");   // a pending share arm must not vanish silently
+        plotArmTarget     = PLOT_ARM_TRAP;
+        plotArmDeadlineMs = millis() + PLOT_ARM_DELAY_MS;
+        plotArmTrapImax   = imax;
+        plotArmTrapHoldMs = holdMs;
+        plotArmTrapRate   = rate;
+        Serial.print("[PLOT] Trapezoid ARMED (Imax=");
+        Serial.print(imax, 2);
+        Serial.print("A) — starts in ");
+        Serial.print(PLOT_ARM_DELAY_MS);
+        Serial.println("ms. Switch to the Serial Plotter now ('T' or 'X' cancels)");
+        return;
+    }
+    startTrapProfile(imax, holdMs, rate);
 }
 
 const char* trapPhaseStr(TrapPhase p) {
@@ -2455,7 +2892,9 @@ void advanceTrapProfile() {
 
     if (newPhase != trapPhase) {
         trapPhase = newPhase;
-        Serial.print("[TP] Phase "); Serial.println(trapPhaseStr(trapPhase));
+        if (!plotSuppressStatus()) {
+            Serial.print("[TP] Phase "); Serial.println(trapPhaseStr(trapPhase));
+        }
     }
     trapCmdA = cmd;
 
@@ -2466,8 +2905,9 @@ void advanceTrapProfile() {
     if (rateLimitDue(rl_motor_last, MOTOR_CTRL_PERIOD_US))
         commandMotorCurrentLimited(cmd, TRAP_I_ABS_MAX);   // ESC-rating ceiling, not the 5 A budget
 
-    // Status snapshot every 500 ms — same cadence/style as the other two profiles.
-    if (millis() - trapStatusLast >= 500) {
+    // Status snapshot every 500 ms — same cadence/style as the other two profiles (and suppressed
+    // under plot mode for the same reason).
+    if (!plotSuppressStatus() && millis() - trapStatusLast >= 500) {
         trapStatusLast = millis();
         Serial.print("[TP] t=");    Serial.print(elapsed);
         Serial.print(" ph=");       Serial.print(trapPhaseStr(trapPhase));
@@ -2569,6 +3009,10 @@ void printTestStatus() {
     Serial.println(")");
     Serial.print("error_source_state="); Serial.println(error_source_state);
     Serial.println("--- bench tools ---");
+    Serial.print("bringup:            ");
+    if (bringupActive) { Serial.print("ACTIVE phase="); Serial.println(bringupPhase); }
+    else               { Serial.println("idle"); }
+    Serial.print("OV transients:      "); Serial.println(ovBusTransientCount);
     Serial.print("manualMotorMode:    ");
     Serial.println(manualMotorMode == MOTOR_TEST_OFF      ? "OFF"
                  : manualMotorMode == MOTOR_TEST_CURRENT  ? "CURRENT"
@@ -2580,6 +3024,16 @@ void printTestStatus() {
     Serial.print("droop gFC/gBT:      "); Serial.print(droop_gain_FC_actual, 3);
     Serial.print(" / "); Serial.println(droop_gain_BT_actual, 3);
     Serial.print("powerShareProfile:  "); Serial.println(powerShareProfileActive);
+    Serial.print("plot stream ('L'):  ");
+    Serial.println(plotModeActive ? "ON (status lines suppressed)" : "off");
+    if (plotArmTarget != PLOT_ARM_NONE) {
+        Serial.print("plot ARMED:         ");
+        Serial.print(plotArmTarget == PLOT_ARM_SHARE ? "power-share" : "trapezoid");
+        Serial.print(" in ");
+        int32_t remain = (int32_t)(plotArmDeadlineMs - millis());
+        Serial.print(remain > 0 ? remain : 0);
+        Serial.println("ms");
+    }
     Serial.print("trapProfile:        "); Serial.print(trapProfileActive);
     if (trapProfileActive) {
         Serial.print(" ph=");     Serial.print(trapPhaseStr(trapPhase));
@@ -2617,6 +3071,9 @@ void assertFcChargeEnable(bool enable) {
 // the boost regulators (FC/BT_REG) are left under explicit operator control via 'F'/'B'. With
 // the boosts still enabled there is no disabled-converter back-feed path, so LOW-ing order here
 // is not safety-critical; FC_CHARGE is still dropped through its guard for consistency.
+// Dropping MOT_PWR_ENABLE here is also fine under the staged bring-up doctrine (2026-08-03): a
+// later reconnect is refused unless the bus is in regulation (motPwrConnectBlocked()) and is
+// CSS-controlled via D-MT-EN's soft-start, so there is no hot-plug hazard from cutting it mid-test.
 void safeAllSwitches() {
     assertFcChargeEnable(false);          // close FC→charger path via the guard
     digitalWrite(REGEN_ENABLE,   LOW);
@@ -2626,27 +3083,170 @@ void safeAllSwitches() {
     digitalWrite(MPPT_DISABLE,   LOW);    // inhibit MPPT (active-LOW)
 }
 
-// VBUS bring-up: bus switches FIRST, then boosts (see "VBUS controlled bring-up" note and
-// doState0()). Used by the State 98 'G' command so the operator can energize the bus under manual
-// control — the only way to bring the bus up under BENCH_TEST, where doState0() leaves the power
-// stage off at boot. The historical BT-boost deaths on this sequence were the output-cap hot-loop
-// layout (fixed in hardware 2026-07-07 — 10µF + 0.1µF at the BT boost output; validated by four
-// surviving 'G' bring-ups; see docs/boost-bringup-debug.md). Still use a STIFF supply: a source
-// that collapses under the ~1.5–2A soft-start draw sags VBT and browns out the board-powered
-// Teensy (motorboating), and no supply current limit bounds the boost's internal ½·L·di² energy.
-// Brief blocking settle is fine here (one-shot, interactive). Does NOT gate on V_bus — caller can
-// read it back with 'S'.
-void bringUpBus() {
-    digitalWrite(FC_REG_ENABLE, LOW);     // ensure boosts OFF first (gentle from a low voltage)
-    digitalWrite(BT_REG_ENABLE, LOW);
-    digitalWrite(FC_BUS_ENABLE,  HIGH);   // switches first — RT1987s soft-start the bus to ~Vbatt
-    digitalWrite(BT_BUS_ENABLE,  HIGH);
-    digitalWrite(MOT_PWR_ENABLE, HIGH);   // pre-charge the V-MOT/VESC node (470µF) at low V too, so
-                                          // the boosts ramp the whole stack together — never a
-                                          // full-bus hot-plug of the motor node (Death 5).
-    delay(BUS_SETTLE_MS);                  // let the RT1987 soft-start settle
-    digitalWrite(FC_REG_ENABLE, HIGH);    // boosts second — ramp bus + motor node via soft-start
-    digitalWrite(BT_REG_ENABLE, HIGH);
+// ── Staged bring-up machine ──────────────────────────────────────────────────
+// Shared by production doState0() (doInit=true) and the State-98 'G' command (doInit=false —
+// peripherals are already live in State 98; re-running initControlPeripherals() there would
+// re-init the ESC/MDACs mid-session). Non-blocking: callers tick it once per loop so
+// detectFaults() keeps sampling. Sequence + rationale at the "STAGED BRING-UP" constants block;
+// bench basis in docs/boost-bringup-debug.md (captures 5–9). Still use a STIFF supply on the
+// bench: a source that collapses under the soft-start draw sags VBT and browns out the
+// board-powered Teensy (motorboating), and no supply current limit bounds the boost's internal
+// ½·L·di² energy.
+
+// Arm the machine. Returns false (no-op) if already running — callers refuse/report.
+bool busBringupStart() {
+    if (bringupActive) return false;
+    bringupActive = true;
+    bringupPhase  = 0;
+    return true;
+}
+
+// Internal: fail the bring-up. Machine state is cleared BEFORE faulting so the hardware phase
+// state can't leak into the next arm (and tests stay isolated); triggerFault() then latches
+// State 99, whose teardown extinguishes any invisible parked boost.
+static BringupStatus busBringupFail(const char* msg, uint16_t fault_bit, ErrorCode_t err) {
+    bringupActive = false;
+    bringupPhase  = 0;
+    Serial.print("[bringup] FAIL: "); Serial.println(msg);
+    triggerFault(fault_bit, err);
+    return BRINGUP_FAILED;
+}
+
+BringupStatus busBringupTick(bool doInit) {
+    if (!bringupActive) return BRINGUP_IDLE;
+
+    uint32_t now = millis();
+    switch (bringupPhase) {
+        case 0:
+            // P0 entry — start from a KNOWN-DARK power stage (adversarial review 2026-08-03,
+            // F1): a boost left enabled by a manual 'F'/'B' would otherwise be hot-plugged onto
+            // the discharged bus by the switch closes below (the exact busHotPlugUnsafe() class
+            // the '1'/'2' keys refuse), and a latched FC_CHARGE would form the illegal
+            // BT_BUS+FC_CHARGE combination (whose fault is compiled out under BENCH_TEST).
+            // Ordering: paths closed first (regen/charge), then boosts off (never leave a regen
+            // path pointed into a disabled boost), then MOT_PWR actively LOW (a hanging node
+            // would ride the P1 ramp and recreate the SCP-cut/18V-park event), then the bus
+            // switches close onto disabled boosts (body-diode pre-charge path only).
+            assertFcChargeEnable(false);
+            digitalWrite(REGEN_ENABLE,   LOW);
+            digitalWrite(FC_REG_ENABLE,  LOW);
+            digitalWrite(BT_REG_ENABLE,  LOW);
+            digitalWrite(MOT_PWR_ENABLE, LOW);
+            digitalWrite(FC_BUS_ENABLE,  HIGH);   // switches first — RT1987s soft-start the bus
+            digitalWrite(BT_BUS_ENABLE,  HIGH);   //   to ~max(V_fc, V_batt) via body-diode path
+            bringupPhaseStart = now;
+            bringupPhase = 1;
+            Serial.println("[bringup] P0: stage darkened; bus switches closed (MOT_PWR held LOW)");
+            break;
+
+        case 1: {
+            // P0 gate — bus must reach the winning source (relative gate), be above the absolute
+            // floor (a dead source reading ~0 must not vacuously pass), and the RT1987 must have
+            // had time to fully ENHANCE (~28ms measured at 100nF; voltage alone can be met
+            // through a half-enhanced FET). TIMEOUT IS CHECKED FIRST in every phase (review F2):
+            // with a free-running, uninstrumented loop a stalled tick can land past the deadline
+            // with the gate freshly true — the deadline must still win (deterministic fault, not
+            // a late accept).
+            if ((now - bringupPhaseStart) > PRECHARGE_TIMEOUT_MS) {
+                return busBringupFail("bus pre-charge never completed (switch/source dead?)",
+                                      FAULT_INIT_FAIL, ERR_INIT_FAIL);
+            }
+            float vSrc = (V_fc > V_batt) ? V_fc : V_batt;
+            bool gate = (now - bringupPhaseStart) >= PRECHARGE_MIN_MS &&
+                        V_bus >= (vSrc - PRECHARGE_DROP_MAX) &&
+                        V_bus >= V_PRECHARGE_MIN;
+            if (gate) {
+                digitalWrite(FC_REG_ENABLE, HIGH);   // boosts ramp the bus via their own soft-start
+                digitalWrite(BT_REG_ENABLE, HIGH);
+                digitalWrite(BT_SEQUENCE_ENABLE, HIGH);   // battery-pack sequencing in once powered
+                if (doInit) initControlPeripherals();
+                bringupPhaseStart = now;
+                bringupPhase = 2;
+                Serial.println("[bringup] P1: bus pre-charged; boosts enabled");
+            }
+            break;
+        }
+
+        case 2:
+            // P1 gate — boosts must bring the bus into regulation. (Timeout first — review F2.)
+            if ((now - bringupPhaseStart) > BUS_CHARGE_TIMEOUT_MS) {
+                return busBringupFail("VBUS failed to reach charge threshold (dead boost/no source)",
+                                      FAULT_INIT_FAIL, ERR_INIT_FAIL);
+            }
+            if (V_bus >= V_BUS_CHARGED_THRESH) {
+                bringupDwellStart = now;
+                bringupPhaseStart = now;
+                bringupPhase = 3;
+                Serial.println("[bringup] P2: bus in regulation band; dwell");
+            }
+            break;
+
+        case 3:
+            // P2 dwell — regulation must HOLD for BUS_REG_DWELL_MS continuous before the motor
+            // node is offered the bus; a dip restarts the dwell, the overall timeout bounds a
+            // restart livelock. (Timeout first — review F2.)
+            if ((now - bringupPhaseStart) > BUS_DWELL_TIMEOUT_MS) {
+                return busBringupFail("bus regulation would not hold through the dwell",
+                                      FAULT_INIT_FAIL, ERR_INIT_FAIL);
+            }
+            if (V_bus < V_BUS_CHARGED_THRESH) bringupDwellStart = now;
+            if ((now - bringupDwellStart) >= BUS_REG_DWELL_MS) {
+                bringupPhase = 4;
+            }
+            break;
+
+        case 4:
+            // P3 entry — connect the motor node from the regulated bus through the guard. A
+            // refusal means the bus collapsed between the dwell pass and this tick: fail
+            // deterministically rather than looping back to P2 (livelock).
+            if (!assertMotPwrEnable(true)) {
+                return busBringupFail("bus fell out of regulation before motor-node connect",
+                                      FAULT_INIT_FAIL, ERR_INIT_FAIL);
+            }
+            bringupPhaseStart = now;
+            bringupPhase = 5;
+            Serial.println("[bringup] P3: MOT_PWR closed — motor node charging");
+            break;
+
+        case 5:
+            // P3 gate — the motor node must come up to the bus (CSS soft-start ~30ms; window
+            // covers ≥2 RT1987 SCP 64ms retry cycles, cf. capture 9's ~83ms completion).
+            // (Timeout first — review F2.) The bus must ALSO still be in regulation (review F3):
+            // relative tracking alone would accept a connect that dragged the bus down with it
+            // (e.g. 16→12.5V with V_rgn at 9.5V "tracking" within margin) — that is not a healthy
+            // completion, and under BENCH_TEST the Run UV fault that would later catch it is
+            // compiled out. A sagged bus simply keeps this gate false until it recovers or the
+            // timeout faults.
+            if ((now - bringupPhaseStart) > MOT_CONNECT_TIMEOUT_MS) {
+                return busBringupFail("motor node never tracked the bus (D-MT-EN/SCP-retry stuck?)",
+                                      FAULT_MOT_HOTPLUG, ERR_MOT_HOTPLUG);
+            }
+            if (V_bus >= V_BUS_CHARGED_THRESH && V_rgn >= (V_bus - MOT_HOTPLUG_MARGIN)) {
+                bringupActive = false;
+                bringupPhase  = 0;               // self-reset for the next arm
+                Serial.println("[bringup] DONE: bus + motor node up");
+                return BRINGUP_DONE;
+            }
+            break;
+    }
+    return BRINGUP_RUNNING;
+}
+
+// Abort a running bring-up and leave the power stage DARK. Merely stopping the machine is not
+// enough: a mid-P1 SCP-cut can leave a boost parked at ~18V upstream of the (cut) switch —
+// invisible to the ADC — so the boosts and switches come down too. Ordering: motor node first
+// (isolate the regen path), then boosts, then bus switches (RT1987s block reverse, so a live bus
+// briefly facing disabled boosts has no back-feed path). Used by State-98 'X' and 'Q'.
+void busBringupAbort() {
+    if (!bringupActive) return;
+    bringupActive = false;
+    bringupPhase  = 0;
+    digitalWrite(MOT_PWR_ENABLE, LOW);
+    digitalWrite(FC_REG_ENABLE,  LOW);
+    digitalWrite(BT_REG_ENABLE,  LOW);
+    digitalWrite(FC_BUS_ENABLE,  LOW);
+    digitalWrite(BT_BUS_ENABLE,  LOW);
+    Serial.println("[bringup] ABORTED — power stage dark");
 }
 
 // True when turning a *_BUS_ENABLE switch ON would hot-plug a RUNNING boost onto a discharged bus.
@@ -2660,27 +3260,32 @@ bool busHotPlugUnsafe(int regPin) {
     return digitalRead(regPin) == HIGH && V_bus < V_BUS_CHARGED_THRESH;
 }
 
-// True when closing MOT_PWR_ENABLE (D-MT-EN: VBUS → V-MOT/VESC) would hot-plug the boosts into a
-// discharged motor node at full bus. The V-MOT/regen node carries the 470µF bulk cap + the VESC's
-// own input capacitance; at full bus the RT1987 soft-start cannot charge that stack → it SCP-burst-
-// retries, each burst yanking VBUS down and slamming the boosts to their 15A cycle limit, then
-// load-dumping them — the SW ring exceeds the 20V abs-max and kills a boost (Death 5, FC boost,
-// 2026-07-08; docs/boost-bringup-debug.md). Pre-charge the node during the low-voltage bring-up
-// instead (doState0()/bringUpBus()). Proxy: bus energized AND the motor node (V_rgn, pin 39) lagging
-// it by more than MOT_HOTPLUG_MARGIN. Once pre-charged, V_rgn tracks V_bus so this reads false.
-bool motPwrHotPlugUnsafe() {
-    return V_bus >= V_BUS_CHARGED_THRESH && V_rgn < (V_bus - MOT_HOTPLUG_MARGIN);
+// True when turning MOT_PWR_ENABLE (D-MT-EN: VBUS → V-MOT/VESC) ON must be refused. DOCTRINE
+// (2026-08-03 — INVERTS the Death-5 rule; renamed from motPwrHotPlugUnsafe(), whose predicate was
+// the exact opposite): the motor node may be connected ONLY from a bus already in its regulation
+// band. There the D-MT-EN 100nF-CSS soft-start charges the 470µF + VESC stack from the charged
+// bus + boosts — the connect class validated on the bench (captures 5 deep-dip / 9 dip-2,
+// docs/boost-bringup-debug.md). Refused otherwise: a dark- or partially-charged-bus connect
+// leaves the node hanging on the chain, and the boosts' later ramp then drives the RT1987 into
+// its foldback clamp >250µs → SCP cut + 64ms retry, with the cut-release parking the boost
+// output at ~18V — ABOVE the TPS61288 recommended max and invisible to the firmware ADC (the
+// cut switch isolates the node). Note the old "V_rgn lagging V_bus" term is gone from the
+// refusal: a discharged node at a regulated bus is precisely the sanctioned P3 connect. V_rgn
+// tracking V_bus is instead the COMPLETION criterion (busBringupTick() P3 gate).
+// HARDWARE PREREQUISITE for this doctrine: 100nF CSS fitted on D-MT-EN.
+bool motPwrConnectBlocked() {
+    return V_bus < V_BUS_CHARGED_THRESH;
 }
 
 // Guarded control of MOT_PWR_ENABLE. Turning OFF is always allowed. Turning ON is idempotent when
-// already ON (so a properly pre-charged node is never re-evaluated), and otherwise REFUSED when it
-// would hot-plug (motPwrHotPlugUnsafe()). The only sanctioned way to bring the node from discharged
-// to connected is the low-voltage pre-charge in doState0()/bringUpBus(), where V_bus is still low so
-// the guard passes. Returns false iff an ON was refused.
+// already ON, and otherwise REFUSED unless the bus is in its regulation band
+// (motPwrConnectBlocked()) — the CSS-controlled connect from a regulated bus is the only
+// sanctioned way to bring the node from discharged to connected (busBringupTick() P3, or a
+// manual State-98 '3' at a regulated bus). Returns false iff an ON was refused.
 bool assertMotPwrEnable(bool enable) {
     if (!enable) { digitalWrite(MOT_PWR_ENABLE, LOW); return true; }
     if (digitalRead(MOT_PWR_ENABLE) == HIGH) return true;   // already on — idempotent, no re-check
-    if (motPwrHotPlugUnsafe()) return false;                 // refuse the full-bus hot-plug
+    if (motPwrConnectBlocked()) return false;                // refuse: bus not in regulation
     digitalWrite(MOT_PWR_ENABLE, HIGH);
     return true;
 }

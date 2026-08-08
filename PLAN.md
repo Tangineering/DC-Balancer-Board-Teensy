@@ -683,15 +683,17 @@ All commands are single uppercase characters, processed in `doState98()`:
 | `I` | Scan the I2C bus |
 | `E` | Read VESC firmware version + telemetry snapshot (incl. live fault code via `vescFaultStr()`) — one-shot |
 | `W` | Toggle VESC watch: ~2 Hz `getVescValues()` poll printing a compact line and flagging any fault-code change. Auto-suppressed while a drive cycle (`D`) or power-share profile (`R`) runs so those keep production-identical control-loop timing; resumes on stop |
-| `G` | Safe VBUS bring-up (`bringUpBus()`: switches → settle → boosts) |
+| `G` | Staged bus bring-up (`busBringupTick()` P0–P3: bus alone → boosts → dwell → motor node; `X`/`Q` abort → stage dark) |
 | `P` | Set power-share setpoint (closed-loop live — prompts for a float; §9e) |
 | `O` | Set droop ratio (open-loop direct MDAC write — prompts for a float; §9e) |
 | `A` | Set manual motor **current** in A (prompts for a float; §9e) |
 | `V` | Set manual motor **velocity** in m/s (prompts for a float; §9e) |
 | `R` | Start/stop power-share profile emulator (§9e) |
 | `T <Imax> <hold> <rate>` | Start trapezoidal motor-current profile — all three values on one line (peak A / hold s / rate A/s, e.g. `T 6 5 0.5`); bare `T` while running stops it; direct phase-current command, no velocity-chain calibration and no `MOT_PWR_ENABLE` gate (§9f) |
-| `X` | Universal stop: cancel any running profile (`D`/`R`/`T`) + manual motor + power-share live (motor zeroed; switches parked only if `D`/`R` was running, mirroring their own stop paths) |
-| `Q` | Exit State 98 → State 1 (forces `MOT_PWR_ENABLE` LOW) |
+| `X` | Universal stop: cancel any running profile (`D`/`R`/`T`), armed plot-mode run, or bring-up + manual motor + power-share live (motor zeroed; switches parked only if `D`/`R` was running, mirroring their own stop paths) |
+| `L` | Toggle Serial-Plotter stream: 50 Hz `sp,act,gFC,gBT,ifc,ibt` line; suppresses the periodic status/phase/`[VW]` lines; `R`/`T` arm with a `PLOT_ARM_DELAY_MS` delay (see the `L` paragraph below §9e) |
+| `H` / `?` | Print the command list (`printTestHelp()`) |
+| `Q` | Exit State 98 → State 1 (forces `MOT_PWR_ENABLE` LOW; closes charge/regen paths; drops plot mode + any armed run) |
 
 **Safety rules still enforced in State 98:**
 - `FC_CHARGE_ENABLE` (key `5`) always goes through `assertFcChargeEnable()` — the guard
@@ -775,6 +777,29 @@ are mutually exclusive; starting one clears the other. Both `R`-stop and `Q`-exi
 and reset the bench-tool state. `X` is the universal stop: it cancels whichever profile is
 running (`D`/`R`/`T`) plus the manual modes and the live share loop, mirroring each profile's own
 stop semantics (switches parked for `D`/`R`, left as-is for `T`).
+
+**Serial-Plotter stream (`L`).** Toggles a condensed 50 Hz (`PLOT_PERIOD_MS`) output line the
+Arduino IDE Serial Plotter parses directly — six labelled fields, fixed shape:
+`sp:…,act:…,gFC:…,gBT:…,ifc:…,ibt:…` (setpoint, measured share, both droop gains, both channel
+currents; all naturally 0–3 so the plotter's shared autoscale keeps them readable — voltages stay
+on `S`). While ON, every periodic human-readable line that would break the plotter's parse is
+suppressed via `plotSuppressStatus()`: the three profiles' 500 ms snapshots, their phase banners,
+and the `[VW]` VESC-watch line (VESC faults latch; re-check after `L` off). One-shot
+start/stop/complete notices are kept. Because the IDE 2.x plotter has no send box (and may close
+the Serial Monitor), `R` and `T` under plot mode **arm** instead of starting: the run fires
+`PLOT_ARM_DELAY_MS` (5 s, `TODO(calibrate)`) later via `plotArmTick()`, giving time to switch
+windows. `R`'s preconditions are checked at the keypress (refusal is visible) **and** re-checked
+at fire time (a `3` during the countdown cancels the arm). Arming is refused outright while
+another profile is already running (the immediate path's takeover semantics would become a
+delayed surprise); arming the *other* profile supersedes a pending arm with an explicit cancel
+message. The arm is cancelled by: pressing the same key again, `X`, `Q` (which also drops plot
+mode — it is a State-98-only tool), turning `L` off, or any bring-up/profile starting during the
+window. While plotting, value prompts are newline-terminated and the `[OV]` transient report and
+UDP checksum-mismatch print are suppressed too (counters still increment; see `S`); `plotTick()`
+drops a sample rather than block when the USB host isn't draining. `D` is deliberately not armed — the plot
+fields are share-loop signals, not drive-cycle ones. Plot state resets on `Q` exit; tests cover
+the wire format, rate gate, suppression/restore, arm/fire/cancel paths, and the fire-time
+precondition re-check.
 
 ### 9f. Trapezoidal motor-current profile (`T`)
 

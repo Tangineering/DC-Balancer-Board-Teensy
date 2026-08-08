@@ -9,9 +9,9 @@ The suite in `test/` compiles `teensy_controller/teensy_controller.ino` natively
 Arduino/Wire/SPI/VESC/Ethernet headers. Two builds are required — they compile the same
 sources with different `BENCH_TEST` values and BOTH must pass:
 
-- `run_tests` — `-DBENCH_TEST=0` (production fault behavior; the main suite, 422 tests as
-  of 2026-07-29 — the count only grows)
-- `run_tests_bench` — `-DBENCH_TEST=1` (exercises the `doState0()` bench bypass, 6 tests)
+- `run_tests` — `-DBENCH_TEST=0` (production fault behavior; the main suite — the count only
+  grows, so trust the run output over any number written here)
+- `run_tests_bench` — `-DBENCH_TEST=1` (the `doState0()` bench bypass + bring-up subset)
 
 ## The trap this skill exists to avoid
 

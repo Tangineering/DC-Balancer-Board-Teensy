@@ -342,7 +342,10 @@ machine with `g++` — no Teensy or Arduino IDE required.
   non-positive rate, incomplete line, bare `T`+newline), non-numeric mid-line cancellation, the
   `'T'`-stop and `'Q'`-exit paths (motor zeroed, path switches deliberately left as-is on
   `'T'`-stop), mutual exclusion with the drive cycle and power-share profile, `'X'` universal
-  stop across all three profiles, and `pollVescWatch()` suppression.
+  stop across all three profiles, and `pollVescWatch()` suppression. The Serial-Plotter stream
+  (`'L'`, PLAN.md §9) is covered too: the six-field wire format and rate gate (asserted against
+  the mock Serial's captured TX), status-line suppression/restore, the `'R'`/`'T'` arm-fire-cancel
+  paths under plot mode, and the fire-time precondition re-check.
 - Run before every flash: `cd test && make`.
 
 See PLAN.md §10 for the full directory layout and test category table.
@@ -566,7 +569,14 @@ soft-start can't charge 470 µF + VESC caps → SCP burst-retry → 15 A load-du
 from a stiff supply; 9 V batteries sag/UVLO before lethal current, which is why battery runs
 survive. Plan: 16 V nominal bus, motor-node pre-charge sequencing (firmware), FC output bodge caps,
 high-BW SW-ring margin check (now blocking). Full history, datapoints, and remaining steps in
-**`docs/boost-bringup-debug.md`**.
+**`docs/boost-bringup-debug.md`**. **Update 2026-08-06 — Capture 10 (non-destructive):** a
+dual-source `G` with the VESC attached, on the old (pre-staged-bring-up) firmware, produced a
+**non-converging 15.5 Hz SCP cut/retry limit cycle** (period = RT1987 tSCP_RST 64 ms): each retry
+adds ~+1.6 V to the ~1–1.5 mF motor+VESC node, the VESC's brownout-band boot attempts drain it
+back, and the ratchet sticks at ~5.5–7 V forever — VESC LED blinks, audible clicking, ~930
+Death-5-class load dumps/min sourced by the un-bodged FC boost. The low-voltage motor-node
+pre-charge doctrine is bench-falsified with a VESC attached; VESC-attached `G` runs are blocked
+until the 100 nF `D-MT-EN` CSS bodge + staged-bring-up flash land (debug log, capture-10 entry).
 
 ---
 
@@ -671,3 +681,23 @@ envelope (432 operating points) in-band deviation, closed loop with the shipped 
 overlay < 0.001 share. The simplified model, synthesized controller, coefficients, firmware,
 and tests are ALL UNCHANGED — this is additive validation only. Re-run `tps61288_full_model.py`
 last in the recalibration loop (it re-parses share_controller_coeffs.h).
+
+---
+
+## Status & session addendum (2026-08-03, staged bring-up round)
+
+**The §2 `MOT_PWR_ENABLE` doctrine is SUPERSEDED** (second revision — the Death-5 low-voltage
+pre-charge never functioned on the bench; captures 5–9 in `docs/boost-bringup-debug.md`).
+Current doctrine: the bus (~40 µF — the 470 µF bulk is on V-MOT *behind* `MOT_PWR_ENABLE`) is
+brought up ALONE (P0, MOT_PWR held LOW), the boosts regulate it (P1), regulation must hold
+(P2), and only then is the motor node connected from the regulated bus via D-MT-EN's 100 nF-CSS
+soft-start (P3) — implemented as the shared non-blocking `busBringupTick()` machine used by
+`doState0()` and the State-98 `G` command ('X'/'Q' abort → power stage dark).
+`motPwrHotPlugUnsafe()` is renamed/inverted to `motPwrConnectBlocked()`: MOT_PWR ON is allowed
+ONLY at a regulated bus (a discharged node there is the sanctioned CSS-controlled connect;
+dark-/mid-ramp-bus connects are refused). `FAULT_OV_BUS` is persistence-filtered (10 ms + 3
+consecutive samples; decaying bring-up parks flicker the telemetry bit without latching).
+`bringUpBus()` is deleted. `LIMIT_V_BUS_MAX` stays +1.5 (17.5 V) until the staged bring-up is
+bench-validated, then optionally returns to +1.0. Hardware prerequisite for any P3 run: 100 nF
+CSS on `D-MT-EN` (fitted on `D-BT-EN` 2026-08-03, validated capture 8). RT1987 timing at
+100 nF: tD_ON 8 ms + tON ~20 ms ≈ 28 ms per connect (capture-8 measured, 1.8 % match).

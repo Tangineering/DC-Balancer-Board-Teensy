@@ -5,8 +5,9 @@
 // ── VescUart mock ─────────────────────────────────────────────────────────────
 // Stubs setSerialPort() and captures setCurrent() calls. Also mocks the read API
 // (getFWversion()/getVescValues()) used by State 98's 'E'/'W' commands: seed data/
-// fw_version and the *_result flags, then assert on the *_calls counters (the mock
-// Serial print/println are no-ops, so tests check that reads were invoked, not text).
+// fw_version and the *_result flags, then assert on the *_calls counters. (The mock
+// Serial now CAPTURES output into Serial.tx — see mock_arduino.h — but this mock never
+// writes to Serial1, so counter assertions remain the idiom for the VESC read path.)
 
 class VescUart {
 public:

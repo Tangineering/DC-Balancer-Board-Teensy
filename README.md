@@ -252,18 +252,43 @@ back over serial:
 | `F` | Toggle `FC_REG_ENABLE` (FC boost) | |
 | `B` | Toggle `BT_REG_ENABLE` (BT boost) | |
 | `1` | Toggle `FC_BUS_ENABLE` | **ON refused** if FC boost is ON and `V_bus` < `V_BUS_CHARGED_THRESH` (hot-plug guard — use `G`) |
-| `2` | Toggle `BT_BUS_ENABLE` | **ON refused** if BT boost is ON and `V_bus` < `V_BUS_CHARGED_THRESH` (hot-plug guard — use `G`) |
-| `3` | Toggle `MOT_PWR_ENABLE` | must be HIGH before a drive cycle (`D`) |
+| `2` | Toggle `BT_BUS_ENABLE` | same hot-plug guard as `1`; **also refused** while `FC_CHARGE_ENABLE` is HIGH (illegal combination) |
+| `3` | Toggle `MOT_PWR_ENABLE` | ON allowed **only at a regulated bus** (`motPwrConnectBlocked()`); must be HIGH before `D`/`R` |
 | `4` | Toggle `REGEN_ENABLE` | forces `FC_CHARGE` off via `assertFcChargeEnable(false)` before going HIGH |
 | `5` | Toggle `FC_CHARGE_ENABLE` | always through the `assertFcChargeEnable()` guard |
 | `6` | Toggle `BT_SEQUENCE_ENABLE` | |
 | `C` | Toggle `CBAL_DISABLE` | HIGH = OVP bypassed (prints a warning) |
 | `M` | Toggle `MPPT_DISABLE` | HIGH = MPPT harvesting; LOW = inhibited |
-| `G` | Safe VBUS bring-up | bus switches → settle → boosts (`bringUpBus()`); the safe way to energize the bus |
-| `D` | Start/stop simulated drive cycle | requires `MOT_PWR_ENABLE` HIGH to start |
-| `S` | Print status dump (all pins, all ADCs, `I_charge`, `fault_flags`, `error_code`) | read-only |
+| `G` | Staged bus bring-up | `busBringupTick()` phases P0–P3: bus alone → boosts → dwell → motor node; `X` aborts (stage dark) |
+| `D` | Start/stop simulated drive cycle | requires `MOT_PWR_ENABLE` HIGH and the calibrated velocity chain |
+| `S` | Print status dump (all pins, ADCs, `I_charge`, faults, bench-tool state) | read-only |
 | `I` | Scan the I2C bus | read-only |
-| `Q` | Exit → Idle (State 1) | forces `MOT_PWR_ENABLE` LOW |
+| `E` | One-shot VESC firmware + telemetry read | blocks up to ~100 ms (bench-only) |
+| `W` | Toggle VESC watch (~2 Hz `[VW]` line, flags fault changes) | auto-paused during profiles and plot mode |
+| `P` | Set power-share setpoint (prompts for a value) | closed-loop: `powerBalance()` drives the MDACs live; needs current flowing |
+| `O` | Set droop ratio 0.15–0.85 (prompts for a value) | open-loop direct MDAC write; no current needed — the calibration entry point |
+| `A` | Set manual motor current in A (prompts) | constant VESC current, bypasses the velocity PI |
+| `V` | Set manual motor velocity in m/s (prompts) | refused until the velocity chain is calibrated |
+| `R` | Start/stop power-share profile sweep | needs `A`/`V` set + `MOT_PWR_ENABLE` HIGH; stop parks switches |
+| `T <Imax> <hold s> <rate A/s>` | Start trapezoidal current profile (one line, e.g. `T 6 5 0.5`) | direct phase-current ramp; `T` alone while running stops it; switches left as-is |
+| `X` | Universal stop | cancels any profile/bring-up/armed run + manual motor + live share loop |
+| `L` | Toggle Serial-Plotter stream | 50 Hz `sp,act,gFC,gBT,ifc,ibt` line; suppresses status lines; `R`/`T` arm with a 5 s delay |
+| `H` / `?` | Print the command list | |
+| `Q` | Exit → Idle (State 1) | forces `MOT_PWR_ENABLE` LOW, closes charge/regen paths, drops plot mode |
+
+### Serial-Plotter stream (`L`)
+
+For live plotting in the Arduino IDE (Tools → Serial Plotter). `L` toggles a condensed 50 Hz
+line — `sp:…,act:…,gFC:…,gBT:…,ifc:…,ibt:…` (share setpoint, measured share, both droop gains,
+both channel currents; all naturally 0–3 so the plotter's shared autoscale keeps every trace
+readable). While ON, the periodic human-readable output that would break the plotter's parser is
+suppressed: the `[PS]`/`[DC]`/`[TP]` 500 ms snapshots, phase banners, and the `[VW]` watch line
+(VESC faults latch, so they're still reported once plotting stops). Because the IDE 2.x plotter
+has no send box, `R` and `T` under plot mode **arm** the run and fire it 5 s later — switch to
+the plotter window during the countdown. The arm cancels on the same key again, `X`, `Q`,
+turning `L` off, or any other run starting; `R`'s preconditions are re-checked at fire time.
+Arming is refused while another profile is already running, and arming the other profile
+supersedes a pending arm with an explicit cancel message.
 
 ### Testing an individual component
 
@@ -287,7 +312,7 @@ running and the bus is discharged (use `G` to energize the bus safely first); an
    `v_setpoint`, and the real `chargingControl()` / `motorControl()` / `powerBalance()` run
    unmodified, in the same call order as State 2 — only the setpoint source differs.
 3. A `[DC]` status line prints every 500 ms: `t`, `v_sp`, `v_act`, `V_bus`, `I_fc`, `I_bt`,
-   `I_chg`, and `FLT` (fault flags).
+   `I_chg`, and `FLT` (fault flags). (Suppressed while the `L` plot stream is on.)
 4. Press `D` again to stop early — the firmware flushes a zero VESC command and parks all path
    switches via `safeAllSwitches()`.
 

@@ -121,6 +121,18 @@ static void reset_test_state() {
     pendingInput                = PEND_NONE;
     inputBufIdx                 = 0;
 
+    // .ino State 98 bench tools — Serial-Plotter stream ('L') + armed start
+    plotModeActive    = false;
+    plotLastMs        = 0;
+    plotArmTarget     = PLOT_ARM_NONE;
+    plotArmDeadlineMs = 0;
+    plotArmTrapImax   = 0.0f;
+    plotArmTrapHoldMs = 0;
+    plotArmTrapRate   = 0.0f;
+    Serial.tx_clear();
+    Serial1.tx_clear();   // defensive: nothing writes to Serial1 today (VescUart mock is
+                          // counter-based), but a future mock change must not leak text
+
     // .ino State 98 bench tools — trapezoidal current profile
     trapProfileActive = false;
     trapPhase         = TRAP_RAMP_UP;
@@ -131,7 +143,26 @@ static void reset_test_state() {
     trapStartMs       = 0;
     trapStatusLast    = 0;
     trapCmdA          = 0.0f;
+
+    // .ino staged bring-up machine (busBringupStart/Tick/Abort)
+    bringupActive     = false;
+    bringupPhase      = 0;
+    bringupPhaseStart = 0;
+    bringupDwellStart = 0;
+
+    // .ino OV_BUS persistence window (detectFaults)
+    ovBusOverActive  = false;
+    ovBusOverSince   = 0;
+    ovBusOverSamples = 0;
+    ovBusLastOverMs  = 0;
+    ovBusTransientCount = 0;
+    ovBusPrintLastMs = 0;
+    ovBusHasPrinted  = false;
 }
+
+// ── Bring-up machine helpers ─────────────────────────────────────────────────
+// One State-98 tick with an EMPTY serial queue (the machine must advance on its own).
+static void state98_tick() { doState98(); }
 
 // Put the Ag105 into the "powered + settled" condition (a charger power path open and the
 // boot settle window elapsed) — the precondition for lazy config and armed I2C faults in
@@ -447,13 +478,21 @@ static void test_detect_faults() {
     check(error_code == ERR_UV_BATT,
           "detectFaults: error_code == ERR_UV_BATT");
 
-    // OV_BUS
+    // OV_BUS — now time-persistence filtered: the BIT shows on the first over-limit sample,
+    // but the LATCH needs OV_BUS_PERSIST_MS continuous AND OV_BUS_PERSIST_MIN_SAMPLES ticks.
+    // (Dedicated coverage in test_ov_bus_persistence(); this only checks the latch still works.)
     reset_test_state();
     V_batt = 7.0f; V_bus = LIMIT_V_BUS_MAX + 0.1f; I_fc = 0;
     mainState = 1;
+    g_mock_millis = 100;
     detectFaults();
     check(fault_flags & FAULT_OV_BUS,
           "detectFaults: FAULT_OV_BUS set when V_bus > LIMIT_V_BUS_MAX");
+    check(mainState == 1 && error_code == ERR_NONE,
+          "detectFaults: single over-limit sample does NOT latch (persistence filter)");
+    // Steps must be ≤ OV_BUS_MAX_GAP_MS or the gap guard restarts the window (review F4).
+    g_mock_millis = 100 + OV_BUS_MAX_GAP_MS;     detectFaults();
+    g_mock_millis = 100 + OV_BUS_PERSIST_MS;     detectFaults();
     check(mainState == 99,
           "detectFaults: mainState → 99 on OV_BUS");
     check(error_code == ERR_OV_BUS,
@@ -1090,66 +1129,843 @@ static void test_wheelspeed_reset() {
           "updateWheelSpeed: consumes and clears the reset request");
 }
 
-// ─── doState0() gentle bring-up reaches Idle once the bus is charged ──────────
+// ─── doState0() staged bring-up walks P0→P3 and reaches Idle ─────────────────
 static void test_dostate0_reaches_idle_unpowered() {
-    test_group("doState0() bring-up reaches Idle when bus charges");
+    test_group("doState0() staged bring-up (P0→P1→P2→P3) reaches Idle");
 
-    // doState0() is a non-blocking phase machine: switches first, settle, boosts, then gate on
-    // V_bus. Drive it through its phases with the bus coming up (V_bus 16V ≥ threshold).
-    // The charger is unpowered in Init and doState0() no longer touches it, so a NACKing charger
+    // Production doState0() arms and ticks the shared staged machine. Phases:
+    //   P0 entry  — MOT_PWR LOW, bus switches HIGH
+    //   P0 gate   — PRECHARGE_MIN_MS + V_bus ≥ max(V_fc,V_batt)−PRECHARGE_DROP_MAX + ≥ V_PRECHARGE_MIN
+    //   P1 gate   — V_bus ≥ V_BUS_CHARGED_THRESH
+    //   P2 dwell  — regulation holds BUS_REG_DWELL_MS continuous
+    //   P3        — MOT_PWR connect, then V_rgn tracks V_bus → DONE
+    // The charger is unpowered in Init and doState0() never touches it, so a NACKing charger
     // must not matter.
     reset_test_state();
     Wire.next_endtransmission_result = 1;   // any stray I2C would NACK — must not matter
     mainState = 0;
-    V_bus = 16.0f;                           // bus comes up past V_BUS_CHARGED_THRESH
     g_mock_millis = 0;
+    V_fc = 12.0f; V_batt = 7.0f;            // FC is the WINNING source — max() must be used
+    V_bus = 0.0f; V_rgn = 0.0f;
 
-    doState0();                              // phase 0: enable bus switches
-    check(mainState == 0,
-          "doState0: still in Init after enabling bus switches");
+    // ---- P0 entry -----------------------------------------------------------
+    doState0();
+    check(mainState == 0 && bringupActive && bringupPhase == 1,
+          "doState0/P0: machine armed, advanced to the P0 gate");
     check(digitalRead(FC_BUS_ENABLE) == HIGH && digitalRead(BT_BUS_ENABLE) == HIGH,
-          "doState0: bus switches enabled FIRST");
-    check(digitalRead(MOT_PWR_ENABLE) == HIGH,
-          "doState0: MOT_PWR pre-charged with the bus switches (before boosts) — no full-bus hot-plug");
+          "doState0/P0: bus switches closed FIRST");
+    check(digitalRead(MOT_PWR_ENABLE) == LOW,
+          "doState0/P0: MOT_PWR actively held LOW (motor node not on the chain)");
     check(digitalRead(FC_REG_ENABLE) == LOW && digitalRead(BT_REG_ENABLE) == LOW,
-          "doState0: boosts NOT enabled before the bus switches (no hot-plug)");
+          "doState0/P0: boosts NOT enabled before the bus switches (switches-before-boosts)");
 
-    g_mock_millis = BUS_SETTLE_MS + 1;
-    doState0();                              // phase 1: enable boosts + init
+    // ---- P0 gate: max(V_fc,V_batt) is the reference -------------------------
+    // 8.0V clears V_batt(7.0)−1.5 and the 5.0V floor but NOT V_fc(12.0)−1.5 = 10.5.
+    g_mock_millis = PRECHARGE_MIN_MS + 5;
+    V_bus = 8.0f;
+    doState0();
+    check(bringupPhase == 1 && digitalRead(FC_REG_ENABLE) == LOW,
+          "doState0/P0 gate: uses max(V_fc,V_batt) — a V_batt-only pass is rejected");
+
+    // Voltage now good, but rewind the clock to prove PRECHARGE_MIN_MS is enforced on its own.
+    bringupPhaseStart = g_mock_millis;       // restart the phase clock at "now"
+    V_bus = 11.0f;                           // ≥ 12.0 − 1.5 and ≥ 5.0
+    doState0();
+    check(bringupPhase == 1 && digitalRead(FC_REG_ENABLE) == LOW,
+          "doState0/P0 gate: voltage good early still waits out PRECHARGE_MIN_MS");
+
+    g_mock_millis += PRECHARGE_MIN_MS + 1;
+    doState0();
+    check(bringupPhase == 2,
+          "doState0/P0 gate: passes once both time and voltage criteria are met");
     check(digitalRead(FC_REG_ENABLE) == HIGH && digitalRead(BT_REG_ENABLE) == HIGH,
-          "doState0: boosts enabled after the settle window");
+          "doState0/P1: boosts enabled after the pre-charge");
+    check(digitalRead(BT_SEQUENCE_ENABLE) == HIGH,
+          "doState0/P1: BT_SEQUENCE_ENABLE raised with the boosts");
+    check(digitalRead(MOT_PWR_ENABLE) == LOW,
+          "doState0/P1: MOT_PWR still LOW through the boost ramp");
+    check(!SPI.transfer_log.empty(),
+          "doState0/P1: doInit=true ran initControlPeripherals (MDAC outputs written)");
 
+    // ---- P1 gate ------------------------------------------------------------
+    g_mock_millis += 10;
+    V_bus = 16.0f;                           // ≥ V_BUS_CHARGED_THRESH
+    doState0();
+    check(bringupPhase == 3,
+          "doState0/P1 gate: bus in regulation → dwell phase");
+    check(digitalRead(MOT_PWR_ENABLE) == LOW,
+          "doState0/P2: MOT_PWR still LOW during the dwell");
+
+    // ---- P2 dwell -----------------------------------------------------------
+    g_mock_millis += BUS_REG_DWELL_MS / 2;
+    doState0();
+    check(bringupPhase == 3 && mainState == 0,
+          "doState0/P2: dwell not yet complete");
+    g_mock_millis += BUS_REG_DWELL_MS;
+    doState0();
+    check(bringupPhase == 4,
+          "doState0/P2: dwell complete after BUS_REG_DWELL_MS continuous regulation");
+    check(digitalRead(MOT_PWR_ENABLE) == LOW,
+          "doState0: MOT_PWR held LOW through the whole of P0/P1/P2");
+
+    // ---- P3 -----------------------------------------------------------------
     g_mock_millis += 1;
-    doState0();                              // phase 2: V_bus ≥ threshold → Idle
+    doState0();
+    check(bringupPhase == 5 && digitalRead(MOT_PWR_ENABLE) == HIGH,
+          "doState0/P3: motor node connected from the regulated bus");
+    check(mainState == 0, "doState0/P3: not Idle until the motor node tracks the bus");
+
+    g_mock_millis += 20;
+    V_rgn = V_bus - MOT_HOTPLUG_MARGIN + 0.5f;   // node tracks the bus
+    doState0();
     check(mainState == 1,
-          "doState0: advances to Idle once V_bus reaches the charge threshold");
-    check(error_code == ERR_NONE && !(fault_flags & FAULT_INIT_FAIL),
+          "doState0: BRINGUP_DONE → Idle");
+    check(!bringupActive && bringupPhase == 0,
+          "doState0: machine self-resets on DONE");
+    check(error_code == ERR_NONE && fault_flags == 0,
           "doState0: no fault latched on a healthy bring-up");
+}
+
+// ─── doState0() P0 pre-charge timeout (dead source / switch) → FAULT_INIT_FAIL ─
+static void test_dostate0_precharge_timeout() {
+    test_group("doState0() P0 pre-charge timeout → FAULT_INIT_FAIL (vacuous-pass guard)");
+
+    // Dead board: every rail reads ~0. The RELATIVE gate (V_bus ≥ max(V_fc,V_batt) − drop) is
+    // vacuously true at 0 ≥ −1.5, so the ABSOLUTE V_PRECHARGE_MIN floor is what must stop it.
+    reset_test_state();
+    mainState = 0;
+    g_mock_millis = 0;
+    V_fc = 0.0f; V_batt = 0.0f; V_bus = 0.0f;
+
+    doState0();                              // P0 entry
+    g_mock_millis = PRECHARGE_MIN_MS + 1;
+    doState0();
+    check(mainState == 0 && bringupPhase == 1,
+          "doState0/P0: all-zero rails do NOT vacuously pass the relative gate");
+    check(digitalRead(FC_REG_ENABLE) == LOW,
+          "doState0/P0: boosts never enabled on a dead source");
+
+    g_mock_millis = PRECHARGE_TIMEOUT_MS + 1;
+    doState0();
+    check(mainState == 99 && error_code == ERR_INIT_FAIL,
+          "doState0/P0: pre-charge timeout latches State 99 / ERR_INIT_FAIL");
+    check((fault_flags & FAULT_INIT_FAIL) != 0,
+          "doState0/P0: FAULT_INIT_FAIL flag set");
+    check(!bringupActive && bringupPhase == 0,
+          "doState0/P0: machine self-resets before faulting");
 }
 
 // ─── doState0() faults if the bus never charges (dead boost / no source) ──────
 static void test_dostate0_bus_charge_timeout() {
-    test_group("doState0() bus-charge timeout → FAULT_INIT_FAIL");
+    test_group("doState0() P1 bus-charge timeout → FAULT_INIT_FAIL");
 
     reset_test_state();
     mainState = 0;
-    V_bus = 5.0f;                            // bus never reaches V_BUS_CHARGED_THRESH
     g_mock_millis = 0;
+    V_fc = 6.0f; V_batt = 6.0f;
+    V_bus = 6.0f;                            // pre-charges fine, but boosts never regulate
 
-    doState0();                              // phase 0
-    g_mock_millis = BUS_SETTLE_MS + 1;
-    doState0();                              // phase 1 (boosts on; start timeout clock)
-    check(mainState == 0,
-          "doState0: still in Init while the bus is below threshold");
+    doState0();                              // P0 entry
+    g_mock_millis = PRECHARGE_MIN_MS + 1;
+    doState0();                              // P0 gate passes → boosts on, P1 clock starts
+    check(bringupPhase == 2 && mainState == 0,
+          "doState0/P1: pre-charged, boosts on, waiting for regulation");
 
     g_mock_millis += BUS_CHARGE_TIMEOUT_MS + 1;
-    doState0();                              // phase 2: timeout
+    doState0();                              // P1 timeout
     check(mainState == 99,
           "doState0: latches State 99 when the bus never charges");
     check(error_code == ERR_INIT_FAIL,
           "doState0: ERR_INIT_FAIL latched on bus-charge timeout");
     check((fault_flags & FAULT_INIT_FAIL) != 0,
           "doState0: FAULT_INIT_FAIL flag set on bus-charge timeout");
+}
+
+// ─── P2 dwell: a dip restarts the dwell; overall timeout faults ──────────────
+static void test_bringup_dwell_dip_and_timeout() {
+    test_group("Bring-up P2 dwell: dip restarts, overall timeout → FAULT_INIT_FAIL");
+
+    // Helper walk to the dwell phase.
+    auto walk_to_dwell = []() {
+        reset_test_state();
+        mainState = 0;
+        g_mock_millis = 0;
+        V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
+        doState0();                                  // P0 entry
+        g_mock_millis = PRECHARGE_MIN_MS + 1;
+        doState0();                                  // P0 gate → boosts
+        V_bus = 16.0f;
+        g_mock_millis += 1;
+        doState0();                                  // P1 gate → dwell
+    };
+
+    // --- dip mid-dwell restarts the dwell clock ------------------------------
+    walk_to_dwell();
+    check(bringupPhase == 3, "dwell: entered P2");
+    uint32_t dwellEntry = g_mock_millis;
+
+    g_mock_millis = dwellEntry + BUS_REG_DWELL_MS - 5;
+    V_bus = 10.0f;                                    // DIP just before the dwell would complete
+    doState0();
+    check(bringupPhase == 3, "dwell: dip keeps the machine in P2");
+
+    V_bus = 16.0f;
+    g_mock_millis += 5;                               // past the ORIGINAL dwell deadline
+    doState0();
+    check(bringupPhase == 3,
+          "dwell: the dip restarted the dwell — no premature P3 at the original deadline");
+
+    g_mock_millis += BUS_REG_DWELL_MS + 1;
+    doState0();
+    check(bringupPhase == 4, "dwell: completes once regulation holds a full window post-dip");
+
+    // --- overall dwell timeout (regulation never holds) ----------------------
+    walk_to_dwell();
+    dwellEntry = g_mock_millis;
+    for (uint32_t t = 5; t <= BUS_DWELL_TIMEOUT_MS; t += BUS_REG_DWELL_MS - 5) {
+        g_mock_millis = dwellEntry + t;
+        V_bus = 10.0f;                                // below threshold → dwell keeps restarting
+        doState0();
+    }
+    check(bringupPhase == 3 && mainState == 0, "dwell: still pending just inside the timeout");
+    g_mock_millis = dwellEntry + BUS_DWELL_TIMEOUT_MS + 1;
+    doState0();
+    check(mainState == 99 && error_code == ERR_INIT_FAIL,
+          "dwell: overall BUS_DWELL_TIMEOUT_MS → FAULT_INIT_FAIL");
+    check(!bringupActive && bringupPhase == 0, "dwell: machine self-resets on the timeout");
+}
+
+// ─── P3: motor node never tracks the bus → FAULT_MOT_HOTPLUG ────────────────
+static void test_bringup_mot_connect_timeout() {
+    test_group("Bring-up P3 motor-connect timeout → FAULT_MOT_HOTPLUG");
+
+    reset_test_state();
+    mainState = 0;
+    g_mock_millis = 0;
+    V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
+    doState0();                                       // P0 entry
+    g_mock_millis = PRECHARGE_MIN_MS + 1;
+    doState0();                                       // P0 gate
+    V_bus = 16.0f;
+    g_mock_millis += 1;  doState0();                  // P1 gate → dwell
+    g_mock_millis += BUS_REG_DWELL_MS + 1; doState0();// dwell complete → P3 entry pending
+    g_mock_millis += 1;  doState0();                  // P3 entry: MOT_PWR closed
+    check(bringupPhase == 5 && digitalRead(MOT_PWR_ENABLE) == HIGH,
+          "P3: MOT_PWR closed from the regulated bus");
+
+    // V_rgn stays stuck at 0 (D-MT-EN SCP retry) → timeout.
+    g_mock_millis += MOT_CONNECT_TIMEOUT_MS / 2;
+    doState0();
+    check(mainState == 0 && bringupPhase == 5, "P3: still waiting inside the connect window");
+
+    g_mock_millis += MOT_CONNECT_TIMEOUT_MS;
+    doState0();
+    check(mainState == 99 && error_code == ERR_MOT_HOTPLUG,
+          "P3: motor node never tracks the bus → FAULT_MOT_HOTPLUG");
+    check((fault_flags & FAULT_MOT_HOTPLUG) != 0, "P3: FAULT_MOT_HOTPLUG flag set");
+    check(!bringupActive && bringupPhase == 0, "P3: machine self-resets on the timeout");
+}
+
+// ─── State-98 'G' drives the same machine (doInit=false) ─────────────────────
+static void test_dostate98_g_bringup() {
+    test_group("State 98 'G' staged bring-up");
+
+    reset_test_state();
+    mainState = 98;
+    g_mock_millis = 0;
+    V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
+
+    Serial.rx_queue.push('G');
+    doState98();                                    // arms AND ticks P0 entry in one invocation
+    check(bringupActive && bringupPhase == 1,
+          "'G': machine armed and P0 entry executed in the same invocation");
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && digitalRead(BT_BUS_ENABLE) == HIGH &&
+          digitalRead(MOT_PWR_ENABLE) == LOW,
+          "'G': bus switches closed, MOT_PWR held LOW");
+
+    // Re-'G' while running is refused and must not disturb the machine.
+    uint8_t phaseBefore = bringupPhase;
+    Serial.rx_queue.push('G');
+    doState98();
+    check(bringupActive && bringupPhase == phaseBefore,
+          "'G': re-arm while active is refused (phase unchanged)");
+
+    // The machine advances on EMPTY-queue ticks.
+    g_mock_millis = PRECHARGE_MIN_MS + 1;
+    state98_tick();
+    check(bringupPhase == 2,
+          "'G': machine advances on a doState98() tick with an EMPTY serial queue");
+    check(digitalRead(FC_REG_ENABLE) == HIGH && digitalRead(BT_REG_ENABLE) == HIGH,
+          "'G': boosts enabled at the P0 gate pass");
+    check(SPI.transfer_log.empty(),
+          "'G': doInit=false — initControlPeripherals NOT re-run (no MDAC writes)");
+
+    V_bus = 16.0f;
+    g_mock_millis += 1;                    state98_tick();   // P1 gate → dwell
+    check(bringupPhase == 3, "'G': bus in regulation → dwell");
+    g_mock_millis += BUS_REG_DWELL_MS + 1; state98_tick();   // dwell done
+    g_mock_millis += 1;                    state98_tick();   // P3 entry
+    check(bringupPhase == 5 && digitalRead(MOT_PWR_ENABLE) == HIGH,
+          "'G': motor node connected at P3");
+    V_rgn = 14.0f;
+    g_mock_millis += 5;                    state98_tick();   // P3 gate → DONE
+    check(!bringupActive && bringupPhase == 0,
+          "'G': bring-up completes and the machine self-resets");
+    check(mainState == 98 && error_code == ERR_NONE,
+          "'G': stays in State 98 with no fault");
+}
+
+// ─── State-98 bring-up interlocks: 'G' vs profiles, 'D'/'R'/'T' vs bring-up ──
+static void test_dostate98_bringup_interlocks() {
+    test_group("State 98 bring-up ↔ profile interlocks");
+
+    // 'G' refused while a profile is running.
+    reset_test_state();
+    mainState = 98;
+    driveCycleActive = true;
+    Serial.rx_queue.push('G');
+    doState98();
+    check(!bringupActive, "'G' refused while the drive cycle is active");
+
+    reset_test_state();
+    mainState = 98;
+    powerShareProfileActive = true;
+    Serial.rx_queue.push('G');
+    doState98();
+    check(!bringupActive, "'G' refused while the power-share profile is active");
+
+    reset_test_state();
+    mainState = 98;
+    trapProfileActive = true;
+    Serial.rx_queue.push('G');
+    doState98();
+    check(!bringupActive, "'G' refused while the trapezoid profile is active");
+
+    // 'D' / 'R' / 'T' refused while a bring-up is in progress.
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;    // the other preconditions are satisfied
+    manualMotorMode = MOTOR_TEST_CURRENT;
+    bringupActive = true; bringupPhase = 2;
+    Serial.rx_queue.push('D');
+    doState98();
+    check(!driveCycleActive, "'D' refused while a bring-up is in progress");
+
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    manualMotorMode = MOTOR_TEST_CURRENT;
+    bringupActive = true; bringupPhase = 2;
+    Serial.rx_queue.push('R');
+    doState98();
+    check(!powerShareProfileActive, "'R' refused while a bring-up is in progress");
+
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    bringupActive = true; bringupPhase = 2;
+    Serial.rx_queue.push('T');
+    doState98();
+    check(!trapProfileActive && pendingInput == PEND_NONE,
+          "'T' refused while a bring-up is in progress (no pending input either)");
+}
+
+// ─── 'X' / 'Q' abort a running bring-up and darken the power stage ───────────
+static void test_dostate98_bringup_abort() {
+    test_group("State 98 'X'/'Q' abort the bring-up (stage darkened)");
+
+    // Walk to mid-P1 (boosts ON, bus switches ON) then abort with 'X'.
+    auto walk_to_p1 = []() {
+        reset_test_state();
+        mainState = 98;
+        g_mock_millis = 0;
+        V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
+        Serial.rx_queue.push('G');
+        doState98();
+        g_mock_millis = PRECHARGE_MIN_MS + 1;
+        state98_tick();                  // P0 gate → boosts on, phase 2
+    };
+
+    walk_to_p1();
+    check(bringupPhase == 2 && digitalRead(FC_REG_ENABLE) == HIGH, "abort: reached mid-P1");
+    Serial.rx_queue.push('X');
+    doState98();
+    check(!bringupActive && bringupPhase == 0, "'X': bring-up aborted");
+    check(digitalRead(MOT_PWR_ENABLE) == LOW && digitalRead(FC_REG_ENABLE) == LOW &&
+          digitalRead(BT_REG_ENABLE) == LOW && digitalRead(FC_BUS_ENABLE) == LOW &&
+          digitalRead(BT_BUS_ENABLE) == LOW,
+          "'X': all five power-stage pins driven LOW (a cut-park is invisible to the ADC)");
+
+    walk_to_p1();
+    Serial.rx_queue.push('Q');
+    doState98();
+    check(!bringupActive && bringupPhase == 0, "'Q': bring-up aborted on exit");
+    check(digitalRead(MOT_PWR_ENABLE) == LOW && digitalRead(FC_REG_ENABLE) == LOW &&
+          digitalRead(BT_REG_ENABLE) == LOW && digitalRead(FC_BUS_ENABLE) == LOW &&
+          digitalRead(BT_BUS_ENABLE) == LOW,
+          "'Q': power stage darkened on a mid-bring-up exit");
+    check(mainState == 1, "'Q': returns to Idle");
+}
+
+// ─── FAULT_OV_BUS time-persistence filter ────────────────────────────────────
+static void test_ov_bus_persistence() {
+    test_group("FAULT_OV_BUS persistence filter");
+
+    const float OVER  = LIMIT_V_BUS_MAX + 0.5f;
+    const float UNDER = LIMIT_V_BUS_MAX - 0.5f;
+
+    // (1) Single over-limit sample at t=0 (the boot-tick edge): bit visible, NO latch.
+    reset_test_state();
+    mainState = 1; g_mock_millis = 0; V_bus = OVER;
+    detectFaults();
+    check((fault_flags & FAULT_OV_BUS) != 0,
+          "OV_BUS: bit set on the first over-limit sample (truthful telemetry)");
+    check(mainState == 1, "OV_BUS: single sample does not change mainState");
+    check(error_code == ERR_NONE, "OV_BUS: single sample leaves error_code ERR_NONE (t=0 edge)");
+    check(ovBusOverActive && ovBusOverSamples == 1, "OV_BUS: window opened, 1 sample counted");
+
+    // (2) Sustained over-limit across ≥ OV_BUS_PERSIST_MIN_SAMPLES ticks spanning the time window.
+    // Sample spacing must stay ≤ OV_BUS_MAX_GAP_MS or the gap guard restarts the window (F4).
+    reset_test_state();
+    mainState = 1; g_mock_millis = 1000; V_bus = OVER;
+    detectFaults();                                   // sample 1, t=0 of window
+    g_mock_millis = 1000 + OV_BUS_MAX_GAP_MS;
+    detectFaults();                                   // sample 2, time not yet met
+    check(mainState == 1, "OV_BUS: no latch before the persistence time elapses");
+    g_mock_millis = 1000 + OV_BUS_PERSIST_MS;
+    detectFaults();                                   // sample 3, time + samples met
+    check(mainState == 99 && error_code == ERR_OV_BUS,
+          "OV_BUS: latches once time AND sample floor are both satisfied");
+    check((fault_flags & FAULT_OV_BUS) != 0, "OV_BUS: flag retained through the latch");
+
+    // (3) A dip mid-window resets it — no latch even after > OV_BUS_PERSIST_MS total.
+    reset_test_state();
+    mainState = 1; g_mock_millis = 1000; V_bus = OVER;
+    detectFaults();
+    g_mock_millis = 1000 + OV_BUS_PERSIST_MS / 2; V_bus = UNDER;
+    detectFaults();
+    check(!ovBusOverActive && ovBusOverSamples == 0, "OV_BUS: below-limit sample resets the window");
+    g_mock_millis = 1000 + OV_BUS_PERSIST_MS + 1; V_bus = OVER;
+    detectFaults();
+    check(mainState == 1 && error_code == ERR_NONE,
+          "OV_BUS: a dip restarts the window — no latch at the original deadline");
+
+    // (4) Sample floor / gap guard: only two calls, 12ms apart (a stalled loop bracketing a
+    // blocked stretch). Both the sample floor AND the OV_BUS_MAX_GAP_MS guard reject it — the
+    // gap guard fires first and restarts the window, so the counter goes back to 1.
+    reset_test_state();
+    mainState = 1; g_mock_millis = 1000; V_bus = OVER;
+    detectFaults();                                   // sample 1
+    g_mock_millis = 1000 + OV_BUS_PERSIST_MS + 2;
+    detectFaults();                                   // sample 2 — gap 12ms > OV_BUS_MAX_GAP_MS
+    check(mainState == 1 && error_code == ERR_NONE,
+          "OV_BUS: sparse stalled-loop samples do not latch (aliasing guard)");
+    check(ovBusOverSamples == 1 && ovBusOverSince == g_mock_millis,
+          "OV_BUS: gap > OV_BUS_MAX_GAP_MS restarts the window (counter back to 1)");
+
+    // (5) A concurrent single-sample fault still latches immediately with an OV_BUS window open.
+    reset_test_state();
+    mainState = 1; g_mock_millis = 1000; V_bus = OVER;
+    detectFaults();
+    check(mainState == 1, "OV_BUS: window pending (no latch yet)");
+    V_rgn = LIMIT_V_RGN_MAX + 1.0f;
+    detectFaults();
+    check(mainState == 99 && error_code == ERR_OV_RGN,
+          "OV_BUS: other faults keep single-sample latching while an OV_BUS window is pending");
+    check((fault_flags & FAULT_OV_BUS) != 0 && (fault_flags & FAULT_OV_RGN) != 0,
+          "OV_BUS: both the pending OV_BUS bit and the latched fault are reported");
+}
+
+// ─── OV_BUS gap guard: sparse samples must not be credited as continuous ─────
+static void test_ov_bus_gap_guard() {
+    test_group("FAULT_OV_BUS sample-gap guard (OV_BUS_MAX_GAP_MS)");
+
+    const float OVER = LIMIT_V_BUS_MAX + 0.5f;
+
+    // Sparse: three over-samples at t = 0, 100, 101. Naive window arithmetic (since=0,
+    // samples=3, elapsed=101 ≥ 10) would latch — the gap guard must have restarted at t=100.
+    reset_test_state();
+    mainState = 1; V_bus = OVER;
+    g_mock_millis = 0;   detectFaults();
+    g_mock_millis = 100; detectFaults();
+    g_mock_millis = 101; detectFaults();
+    check(mainState == 1 && error_code == ERR_NONE,
+          "gap guard: samples at 0/100/101 do NOT latch (window restarted at the 100ms gap)");
+    check(ovBusOverSince == 100 && ovBusOverSamples == 2,
+          "gap guard: window restarted at the sparse sample, then continued");
+    // Review round 2: the ABANDONED window is a real unlatched transient and must be counted,
+    // not silently discarded by the restart.
+    check(ovBusTransientCount == 1,
+          "gap guard: the gap-abandoned window increments the transient counter");
+
+    // Continuity: 2 ms spacing all the way to 12 ms → every gap ≤ OV_BUS_MAX_GAP_MS, so the
+    // window survives and the persistence time + sample floor are both met.
+    reset_test_state();
+    mainState = 1; V_bus = OVER;
+    for (uint32_t t = 0; t <= 12; t += 2) {
+        g_mock_millis = t;
+        detectFaults();
+    }
+    check(mainState == 99 && error_code == ERR_OV_BUS,
+          "gap guard: contiguous 2ms-spaced samples across the window DO latch");
+}
+
+// ─── A gap-abandoned OV window is still counted ──────────────────────────────
+static void test_ov_bus_gap_abandoned_counted() {
+    test_group("FAULT_OV_BUS gap-abandoned window is counted (review round 2)");
+
+    const float OVER = LIMIT_V_BUS_MAX + 0.5f;
+
+    reset_test_state();
+    mainState = 1; V_bus = OVER;
+    g_mock_millis = 0;
+    detectFaults();                                   // window opens
+    check(ovBusTransientCount == 0 && ovBusOverActive,
+          "gap-abandoned: window open, nothing counted yet");
+
+    g_mock_millis = 100;
+    detectFaults();                                   // gap 100ms > OV_BUS_MAX_GAP_MS → restart
+    check(ovBusTransientCount == 1,
+          "gap-abandoned: the restart counts the abandoned window at the restart tick");
+    check(ovBusOverActive && ovBusOverSince == 100 && ovBusOverSamples == 1,
+          "gap-abandoned: a FRESH window is open after the restart");
+    check(mainState == 1 && error_code == ERR_NONE,
+          "gap-abandoned: still no latch");
+
+    // The fresh window closing normally counts a second time.
+    g_mock_millis = 102; V_bus = LIMIT_V_BUS_MAX - 0.5f;
+    detectFaults();
+    check(ovBusTransientCount == 2,
+          "gap-abandoned: the fresh window's normal close counts separately");
+}
+
+// ─── OV_BUS transient counter ────────────────────────────────────────────────
+static void test_ov_bus_transient_counter() {
+    test_group("FAULT_OV_BUS transient counter");
+
+    const float OVER  = LIMIT_V_BUS_MAX + 0.5f;
+    const float UNDER = LIMIT_V_BUS_MAX - 0.5f;
+
+    reset_test_state();
+    mainState = 1;
+    check(ovBusTransientCount == 0, "transient: counter starts at 0");
+
+    // Two over-samples 4 ms apart (sub-persistence), then back under → window closes unlatched.
+    g_mock_millis = 1000; V_bus = OVER;  detectFaults();
+    g_mock_millis = 1004;                detectFaults();
+    check(mainState == 1 && ovBusTransientCount == 0,
+          "transient: counter not incremented while the window is still open");
+    g_mock_millis = 1006; V_bus = UNDER; detectFaults();
+    check(ovBusTransientCount == 1,
+          "transient: counter increments once when a window closes WITHOUT latching");
+    check(mainState == 1 && error_code == ERR_NONE,
+          "transient: a closed sub-persistence window never latches");
+    check(!ovBusOverActive && ovBusOverSamples == 0, "transient: window state cleared on close");
+
+    // A second transient window increments again.
+    g_mock_millis = 1010; V_bus = OVER;  detectFaults();
+    g_mock_millis = 1012; V_bus = UNDER; detectFaults();
+    check(ovBusTransientCount == 2, "transient: a second window increments the counter again");
+
+    // Staying under does not keep incrementing (only a window CLOSE counts).
+    g_mock_millis = 1020; detectFaults();
+    g_mock_millis = 1030; detectFaults();
+    check(ovBusTransientCount == 2, "transient: under-limit ticks with no open window do nothing");
+
+    // Print limiter boot-edge (review round 3): a window closing at millis()==0 must count as
+    // "printed" so subsequent same-millisecond closes are rate-bounded (the old 0-sentinel
+    // re-printed on every close until millis advanced).
+    reset_test_state();
+    mainState = 1;
+    g_mock_millis = 0; V_bus = OVER;  detectFaults();
+    V_bus = UNDER;                    detectFaults();   // close at t=0 → first print
+    check(ovBusHasPrinted && ovBusPrintLastMs == 0,
+          "transient: t=0 close marks the limiter as printed (flag, not 0-sentinel)");
+    check(ovBusTransientCount == 1, "transient: t=0 close still counted");
+}
+
+// ─── P0 entry darkens the power stage before closing the bus switches ────────
+static void test_bringup_dark_start() {
+    test_group("Bring-up P0 darkens the stage first (review F1)");
+
+    // A boost left enabled by a manual 'F' and a latched FC_CHARGE must both be cleared BEFORE
+    // the bus switches close (hot-plug + illegal BT_BUS+FC_CHARGE combination respectively).
+    reset_test_state();
+    mainState = 98;
+    g_mock_millis = 0;
+    V_fc = 12.0f; V_batt = 7.0f; V_bus = 0.0f; V_rgn = 0.0f;
+    g_pin_value[FC_REG_ENABLE]    = HIGH;
+    g_pin_value[BT_REG_ENABLE]    = HIGH;
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;
+    g_pin_value[REGEN_ENABLE]     = HIGH;
+    g_pin_value[MOT_PWR_ENABLE]   = HIGH;
+
+    Serial.rx_queue.push('G');
+    doState98();                                  // arms + runs P0 entry
+
+    check(digitalRead(FC_REG_ENABLE) == LOW && digitalRead(BT_REG_ENABLE) == LOW,
+          "P0 dark-start: both boosts driven LOW before the switches close");
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "P0 dark-start: a latched FC_CHARGE is closed (no illegal BT_BUS+FC_CHARGE)");
+    check(digitalRead(REGEN_ENABLE) == LOW,
+          "P0 dark-start: REGEN path closed");
+    check(digitalRead(MOT_PWR_ENABLE) == LOW,
+          "P0 dark-start: motor node taken off the chain");
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && digitalRead(BT_BUS_ENABLE) == HIGH,
+          "P0 dark-start: bus switches closed onto a dark stage");
+
+#if !BENCH_TEST
+    // Same via the production doState0() path. (Skipped under BENCH_TEST: doState0() there is
+    // the bypass, which never runs the bring-up machine.)
+    reset_test_state();
+    mainState = 0;
+    g_mock_millis = 0;
+    V_fc = 12.0f; V_batt = 7.0f; V_bus = 0.0f;
+    g_pin_value[FC_REG_ENABLE]    = HIGH;
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;
+    doState0();
+    check(digitalRead(FC_REG_ENABLE) == LOW && digitalRead(FC_CHARGE_ENABLE) == LOW &&
+          digitalRead(FC_BUS_ENABLE) == HIGH,
+          "P0 dark-start: doState0() path darkens the stage identically");
+#endif
+}
+
+// ─── Timeout is evaluated BEFORE the gate in every phase (review F2) ─────────
+static void test_bringup_late_gate_faults() {
+    test_group("Bring-up: a gate satisfied past the deadline FAULTS (review F2)");
+
+    // --- P0: gate conditions all true, but the tick lands past PRECHARGE_TIMEOUT_MS ---------
+    reset_test_state();
+    mainState = 0;
+    g_mock_millis = 0;
+    V_fc = 12.0f; V_batt = 7.0f; V_bus = 0.0f;
+    doState0();                                            // P0 entry, phaseStart = 0
+    V_bus = 11.0f;                                         // gate voltages now satisfied
+    g_mock_millis = PRECHARGE_TIMEOUT_MS + 1;              // ...but the deadline has passed
+    doState0();
+    check(mainState == 99 && error_code == ERR_INIT_FAIL,
+          "P0: a late-but-passing gate faults instead of accepting");
+    check(digitalRead(FC_REG_ENABLE) == LOW,
+          "P0: boosts never enabled by the late gate");
+
+    // --- P1: bus reaches regulation only on a tick past BUS_CHARGE_TIMEOUT_MS ---------------
+    reset_test_state();
+    mainState = 0;
+    g_mock_millis = 0;
+    V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f;
+    doState0();                                            // P0 entry
+    g_mock_millis = PRECHARGE_MIN_MS + 1;
+    doState0();                                            // P0 gate → P1, phaseStart = 41
+    check(bringupPhase == 2, "P1: reached the bus-charge gate");
+    V_bus = 16.0f;                                         // regulation reached...
+    g_mock_millis += BUS_CHARGE_TIMEOUT_MS + 1;            // ...but too late
+    doState0();
+    check(mainState == 99 && error_code == ERR_INIT_FAIL,
+          "P1: a late-but-passing regulation gate faults instead of accepting");
+
+    // --- P3: V_rgn tracks the bus, but only past MOT_CONNECT_TIMEOUT_MS ---------------------
+    reset_test_state();
+    mainState = 0;
+    g_mock_millis = 0;
+    V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
+    doState0();                                            // P0 entry
+    g_mock_millis = PRECHARGE_MIN_MS + 1;  doState0();     // → P1
+    V_bus = 16.0f;
+    g_mock_millis += 1;                    doState0();     // → dwell
+    g_mock_millis += BUS_REG_DWELL_MS + 1; doState0();     // dwell done → phase 4
+    g_mock_millis += 1;                    doState0();     // P3 entry, phaseStart set
+    check(bringupPhase == 5, "P3: motor node connected");
+    V_rgn = 15.0f;                                         // node now tracks the bus...
+    g_mock_millis += MOT_CONNECT_TIMEOUT_MS + 1;           // ...but past the connect deadline
+    doState0();
+    check(mainState == 99 && error_code == ERR_MOT_HOTPLUG,
+          "P3: a late-but-passing connect gate faults with FAULT_MOT_HOTPLUG");
+    check(!bringupActive && bringupPhase == 0, "P3: machine self-reset on the late-gate fault");
+}
+
+// ─── P3 completion also requires the bus to still be in regulation (review F3) ─
+static void test_bringup_p3_bus_sag() {
+    test_group("Bring-up P3: a sagged bus must not complete the connect (review F3)");
+
+    reset_test_state();
+    mainState = 0;
+    g_mock_millis = 0;
+    V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
+    doState0();                                            // P0 entry
+    g_mock_millis = PRECHARGE_MIN_MS + 1;  doState0();     // → P1
+    V_bus = 16.0f;
+    g_mock_millis += 1;                    doState0();     // → dwell
+    g_mock_millis += BUS_REG_DWELL_MS + 1; doState0();     // dwell done
+    g_mock_millis += 1;                    doState0();     // P3 entry
+    check(bringupPhase == 5, "P3 sag: motor node connected from the regulated bus");
+
+    // The connect drags the bus down: V_rgn "tracks" within MOT_HOTPLUG_MARGIN, but the bus is
+    // below V_BUS_CHARGED_THRESH (13.5) — not a healthy completion.
+    V_bus = 12.5f;
+    V_rgn = V_bus - 2.0f;                                  // 10.5 — within the 3.0V margin
+    g_mock_millis += 20;
+    doState0();
+    check(bringupPhase == 5 && mainState == 0 && bringupActive,
+          "P3 sag: relative tracking alone does NOT complete on a sagged bus");
+
+    // Bus recovers → completes.
+    V_bus = 16.0f; V_rgn = 14.0f;
+    g_mock_millis += 20;
+    doState0();
+    check(mainState == 1 && !bringupActive,
+          "P3 sag: completes once the bus is back in regulation");
+    check(error_code == ERR_NONE, "P3 sag: no fault on the recovered completion");
+}
+
+// ─── 'G' takes motor ownership from a standing manual command (round 2, F1) ──
+static void test_bringup_g_takes_motor_ownership() {
+    test_group("'G' clears a standing manual motor command / droop-live");
+
+    reset_test_state();
+    mainState = 98;
+    g_mock_millis = 0;
+    V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
+
+    // Operator had set a constant current and enabled the live share controller.
+    manualMotorMode    = MOTOR_TEST_CURRENT;
+    manualMotorCurrent = 4.0f;
+    powerBalanceLive   = true;
+    vesc.reset();
+
+    Serial.rx_queue.push('G');
+    doState98();
+
+    check(bringupActive, "'G' ownership: bring-up actually armed");
+    check(manualMotorMode == MOTOR_TEST_OFF,
+          "'G' ownership: standing manual mode cleared (cannot resume after DONE)");
+    check(manualMotorCurrent == 0.0f,
+          "'G' ownership: standing manual current cleared");
+    check(!powerBalanceLive,
+          "'G' ownership: live droop/share writer disabled");
+    check(!vesc.current_calls.empty() && vesc.last_current == 0.0f,
+          "'G' ownership: a zero-current flush was sent to the VESC");
+
+    // And nothing re-commands the motor on subsequent machine ticks.
+    vesc.reset();
+    g_mock_millis = 10;
+    state98_tick();
+    check(vesc.current_calls.empty(),
+          "'G' ownership: no motor command issued on a plain bring-up tick");
+}
+
+// ─── The standalone manual/live block is suppressed while the machine runs ───
+static void test_bringup_suppresses_manual_block() {
+    test_group("Manual/live motor block suppressed during a bring-up (round 2, F1)");
+
+    reset_test_state();
+    mainState = 98;
+    g_mock_millis = 0;
+    V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
+
+    Serial.rx_queue.push('G');
+    doState98();                                   // arms (and haltMotorOutput()s)
+    check(bringupActive, "manual suppression: bring-up armed");
+
+    // Contrive the belt-and-suspenders case: a manual mode re-appears WHILE the machine runs
+    // (the 'A'/'V' lockout normally prevents this — set the globals directly).
+    manualMotorMode    = MOTOR_TEST_CURRENT;
+    manualMotorCurrent = 3.5f;
+    powerBalanceLive   = true;
+    vesc.reset();
+    SPI.reset();
+
+    g_mock_millis = 10;
+    state98_tick();                                // empty queue: machine tick only
+    check(vesc.current_calls.empty(),
+          "manual suppression: applyManualMotor() never runs while bringupActive");
+    check(SPI.transfer_log.empty(),
+          "manual suppression: powerBalanceGated() never writes the droop MDACs either");
+    check(bringupActive, "manual suppression: the machine is still running");
+
+    // Once the bring-up is aborted the manual block is live again.
+    Serial.rx_queue.push('X');
+    doState98();
+    check(!bringupActive, "manual suppression: aborted");
+    manualMotorMode    = MOTOR_TEST_CURRENT;
+    manualMotorCurrent = 3.5f;
+    vesc.reset();
+    g_mock_millis += 10;
+    state98_tick();
+    check(!vesc.current_calls.empty(),
+          "manual suppression: the manual block resumes once the machine is idle");
+}
+
+// ─── State-98 topology lockout while a bring-up is running (review F1) ───────
+static void test_dostate98_topology_lockout() {
+    test_group("State 98 topology lockout during a staged bring-up");
+
+    // Walk to mid-P1 (boosts ON via the machine, bus switches ON).
+    reset_test_state();
+    mainState = 98;
+    g_mock_millis = 0;
+    V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
+    Serial.rx_queue.push('G');
+    doState98();
+    g_mock_millis = PRECHARGE_MIN_MS + 1;
+    state98_tick();                                        // P0 gate → boosts on, phase 2
+    check(bringupActive && bringupPhase == 2, "lockout: reached mid-P1 with the machine running");
+
+    V_bus = 16.0f;   // regulated, so '3' would otherwise be ALLOWED by the connect guard
+    int motBefore  = digitalRead(MOT_PWR_ENABLE);
+    int fcRegBefore = digitalRead(FC_REG_ENABLE);
+    int fcChgBefore = digitalRead(FC_CHARGE_ENABLE);
+
+    Serial.rx_queue.push('3');
+    doState98();
+    check(digitalRead(MOT_PWR_ENABLE) == motBefore,
+          "lockout: '3' refused mid-bring-up (would bypass the dwell)");
+
+    Serial.rx_queue.push('F');
+    doState98();
+    check(digitalRead(FC_REG_ENABLE) == fcRegBefore,
+          "lockout: 'F' refused mid-bring-up (would re-arm a boost the machine owns)");
+
+    Serial.rx_queue.push('5');
+    doState98();
+    check(digitalRead(FC_CHARGE_ENABLE) == fcChgBefore,
+          "lockout: '5' refused mid-bring-up (illegal BT_BUS+FC_CHARGE)");
+
+    Serial.rx_queue.push('1');
+    doState98();
+    check(digitalRead(FC_BUS_ENABLE) == HIGH, "lockout: '1' refused (bus switch stays as the machine set it)");
+
+    check(bringupActive && bringupPhase >= 2,
+          "lockout: the machine keeps running through the refused keys");
+
+    // Motor/droop writers ('A','V','P','O') are locked out too (round 2, F2). Each normally
+    // opens a numeric-entry prompt — a refusal must leave pendingInput untouched.
+    const char writers[] = {'A', 'V', 'P', 'O'};
+    for (char w : writers) {
+        pendingInput = PEND_NONE;
+        inputBufIdx  = 0;
+        Serial.rx_queue.push(w);
+        doState98();
+        char msg[96];
+        snprintf(msg, sizeof(msg),
+                 "lockout: '%c' refused mid-bring-up (no numeric-entry prompt opened)", w);
+        check(pendingInput == PEND_NONE && inputBufIdx == 0, msg);
+    }
+    check(manualMotorMode == MOTOR_TEST_OFF && !powerBalanceLive,
+          "lockout: no motor/droop writer took effect through the refusals");
+
+    // 'S' (read-only status) still works and does not disturb the machine.
+    uint8_t phaseBefore = bringupPhase;
+    Serial.rx_queue.push('S');
+    doState98();
+    check(bringupActive && bringupPhase == phaseBefore,
+          "lockout: 'S' status dump still works and leaves the machine alone");
+
+    // 'X' still aborts.
+    Serial.rx_queue.push('X');
+    doState98();
+    check(!bringupActive && bringupPhase == 0, "lockout: 'X' still aborts the bring-up");
+    check(digitalRead(FC_REG_ENABLE) == LOW && digitalRead(FC_BUS_ENABLE) == LOW,
+          "lockout: the abort still darkens the stage");
 }
 
 // ─── State 98 hot-plug guard on '1'/'2' ──────────────────────────────────────
@@ -1271,88 +2087,117 @@ static void test_dostate3_leaves_bus_energized() {
           "doState3: motor commanded to zero (held stopped without cutting MOT_PWR)");
 }
 
-// ─── Motor-node pre-charge hot-plug guard (Death 5) ──────────────────────────
+// ─── Motor-node connect guard (2026-08-03 doctrine — INVERTS the Death-5 rule) ─
 static void test_mot_pwr_hotplug_guard() {
-    test_group("MOT_PWR hot-plug guard (motPwrHotPlugUnsafe/assertMotPwrEnable/doState2)");
+    test_group("MOT_PWR connect guard (motPwrConnectBlocked/assertMotPwrEnable/doState2)");
 
-    // motPwrHotPlugUnsafe(): true only when the bus is up AND the motor node lags it by > margin.
+    // motPwrConnectBlocked(): purely a bus-regulation test. V_rgn is NOT part of the refusal —
+    // a discharged node at a regulated bus is precisely the sanctioned CSS-controlled connect.
     reset_test_state();
-    V_bus = 16.0f; V_rgn = 0.0f;             // bus up, motor node discharged
-    check(motPwrHotPlugUnsafe() == true,
-          "unsafe: bus energized + motor node discharged → hot-plug");
-    V_rgn = 16.0f;                            // motor node tracks the bus (pre-charged)
-    check(motPwrHotPlugUnsafe() == false,
-          "safe: motor node pre-charged (V_rgn ≈ V_bus)");
-    V_bus = 5.0f; V_rgn = 0.0f;               // low-voltage bring-up window (bus not yet up)
-    check(motPwrHotPlugUnsafe() == false,
-          "safe: bus below charged threshold → low-voltage pre-charge allowed");
+    V_bus = 0.0f;  V_rgn = 0.0f;              // dark bus
+    check(motPwrConnectBlocked() == true,
+          "blocked: dark bus → connect refused");
+    V_bus = 7.0f;  V_rgn = 0.0f;              // pre-charged bus, boosts not yet regulating
+    check(motPwrConnectBlocked() == true,
+          "blocked: pre-charged/mid-ramp bus (below V_BUS_CHARGED_THRESH) → connect refused");
+    V_bus = V_BUS_CHARGED_THRESH - 0.1f;
+    check(motPwrConnectBlocked() == true,
+          "blocked: just below V_BUS_CHARGED_THRESH → connect refused");
+    V_bus = 16.0f; V_rgn = 0.0f;              // regulated bus, discharged node
+    check(motPwrConnectBlocked() == false,
+          "allowed: regulated bus + DISCHARGED node → this is the sanctioned P3 connect");
+    V_rgn = 16.0f;
+    check(motPwrConnectBlocked() == false,
+          "allowed: regulated bus + charged node (V_rgn is irrelevant to the predicate)");
 
-    // assertMotPwrEnable(): OFF always allowed; ON idempotent; ON refused when unsafe; ON allowed safe.
+    // assertMotPwrEnable(): OFF always allowed; ON idempotent; ON gated by the predicate.
     reset_test_state();
-    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH; V_bus = 16.0f;
     check(assertMotPwrEnable(false) == true && digitalRead(MOT_PWR_ENABLE) == LOW,
-          "assert: OFF always succeeds");
-    g_pin_value[MOT_PWR_ENABLE] = HIGH; V_bus = 16.0f; V_rgn = 0.0f;
+          "assert: OFF always succeeds (regulated bus)");
+    g_pin_value[MOT_PWR_ENABLE] = HIGH; V_bus = 0.0f;
+    check(assertMotPwrEnable(false) == true && digitalRead(MOT_PWR_ENABLE) == LOW,
+          "assert: OFF always succeeds (dark bus too)");
+    // Idempotent ON must NOT consult the predicate: set a blocking bus and leave the pin HIGH.
+    g_pin_value[MOT_PWR_ENABLE] = HIGH; V_bus = 0.0f; V_rgn = 0.0f;
     check(assertMotPwrEnable(true) == true && digitalRead(MOT_PWR_ENABLE) == HIGH,
-          "assert: already-ON is idempotent (never re-checks the guard)");
-    g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 16.0f; V_rgn = 0.0f;
+          "assert: already-ON is idempotent even at a dark bus (never re-checks the guard)");
+    g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 0.0f;
     check(assertMotPwrEnable(true) == false && digitalRead(MOT_PWR_ENABLE) == LOW,
-          "assert: ON refused when it would hot-plug (stays LOW)");
-    g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 16.0f; V_rgn = 17.0f;
+          "assert: ON refused at a dark bus (stays LOW)");
+    g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 7.0f;
+    check(assertMotPwrEnable(true) == false && digitalRead(MOT_PWR_ENABLE) == LOW,
+          "assert: ON refused at a pre-charged bus (stays LOW)");
+    g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 16.0f; V_rgn = 0.0f;
     check(assertMotPwrEnable(true) == true && digitalRead(MOT_PWR_ENABLE) == HIGH,
-          "assert: ON allowed when the motor node is already charged");
-    g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 5.0f; V_rgn = 0.0f;
-    check(assertMotPwrEnable(true) == true && digitalRead(MOT_PWR_ENABLE) == HIGH,
-          "assert: ON allowed during low-voltage bring-up (pre-charge)");
+          "assert: ON ALLOWED at a regulated bus with a discharged node (meaning flip)");
 
-    // doState2(): normal case — motor node already energized → runs, no fault.
+    // doState2(): motor node already energized → runs, no fault.
     reset_test_state();
     mainState = 2;
     g_pin_value[MOT_PWR_ENABLE] = HIGH; V_bus = 16.0f; V_rgn = 16.0f;
     doState2();
     check(mainState == 2 && !(fault_flags & FAULT_MOT_HOTPLUG),
-          "doState2: pre-charged motor node → runs normally, no fault");
+          "doState2: energized motor node → runs normally, no fault");
     check(digitalRead(MOT_PWR_ENABLE) == HIGH,
           "doState2: MOT_PWR stays energized");
 
-    // doState2(): abnormal case — motor node discharged at full bus → refuse + fault (no hot-plug).
+    // doState2(): node LOW at a REGULATED bus → now silently CONNECTS (sanctioned), no fault.
     reset_test_state();
     mainState = 2;
     g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 16.0f; V_rgn = 0.0f;
     doState2();
+    check(digitalRead(MOT_PWR_ENABLE) == HIGH,
+          "doState2: node LOW at a regulated bus → starts the sanctioned CSS connect");
+    check(mainState == 2 && !(fault_flags & FAULT_MOT_HOTPLUG),
+          "doState2: no fault for the sanctioned connect");
+
+    // doState2(): node LOW at an UNREGULATED bus → refuse + fault.
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[MOT_PWR_ENABLE] = LOW; V_bus = 7.0f; V_rgn = 0.0f;
+    doState2();
     check(digitalRead(MOT_PWR_ENABLE) == LOW,
-          "doState2: refuses the hot-plug (MOT_PWR stays LOW)");
+          "doState2: refuses the connect on an unregulated bus (MOT_PWR stays LOW)");
     check(mainState == 99 && error_code == ERR_MOT_HOTPLUG,
-          "doState2: latches State 99 with ERR_MOT_HOTPLUG instead of hot-plugging");
+          "doState2: latches State 99 with ERR_MOT_HOTPLUG on an unregulated-bus Run entry");
     check((fault_flags & FAULT_MOT_HOTPLUG) != 0,
           "doState2: FAULT_MOT_HOTPLUG flag set");
 }
 
-// ─── State 98 '3' motor-node hot-plug guard ──────────────────────────────────
+// ─── State 98 '3' motor-node connect guard ───────────────────────────────────
 static void test_dostate98_mot_pwr_guard() {
-    test_group("State 98 '3' refuses the motor-node hot-plug");
+    test_group("State 98 '3' motor-node connect guard (bus-regulation gated)");
     reset_test_state();
     mainState = 98;
 
-    // Motor node discharged + bus up → '3' ON refused (MOT_PWR stays LOW).
+    // Dark bus → '3' ON refused.
     g_pin_value[MOT_PWR_ENABLE] = LOW;
-    V_bus = 16.0f; V_rgn = 0.0f;
+    V_bus = 0.0f; V_rgn = 0.0f;
     Serial.rx_queue.push('3');
     doState98();
     check(digitalRead(MOT_PWR_ENABLE) == LOW,
-          "doState98: '3' refused (motor node discharged, bus up) — stays LOW");
+          "doState98: '3' refused at a dark bus — stays LOW");
 
-    // Motor node pre-charged → '3' ON allowed.
+    // Pre-charged (mid-bring-up) bus → still refused.
     g_pin_value[MOT_PWR_ENABLE] = LOW;
-    V_bus = 16.0f; V_rgn = 17.0f;
+    V_bus = 7.0f; V_rgn = 7.0f;
+    Serial.rx_queue.push('3');
+    doState98();
+    check(digitalRead(MOT_PWR_ENABLE) == LOW,
+          "doState98: '3' refused at a pre-charged bus (use 'G')");
+
+    // Regulated bus + discharged node → ALLOWED (the meaning flip).
+    g_pin_value[MOT_PWR_ENABLE] = LOW;
+    V_bus = 16.0f; V_rgn = 0.0f;
     Serial.rx_queue.push('3');
     doState98();
     check(digitalRead(MOT_PWR_ENABLE) == HIGH,
-          "doState98: '3' allowed when the motor node is pre-charged");
+          "doState98: '3' allowed from a regulated bus even with a discharged node");
 
     // Turning OFF is always allowed.
     g_pin_value[MOT_PWR_ENABLE] = HIGH;
-    V_bus = 16.0f; V_rgn = 0.0f;
+    V_bus = 0.0f; V_rgn = 0.0f;
     Serial.rx_queue.push('3');
     doState98();
     check(digitalRead(MOT_PWR_ENABLE) == LOW,
@@ -2789,6 +3634,390 @@ static void feed_serial_line(const char* s) {
     doState98();
 }
 
+// ─── State 98 bench tools: Serial-Plotter stream ('L') ───────────────────────
+// The contract under test is the WIRE FORMAT, not just a flag: the Arduino IDE plotter keys its
+// series off the "label:value" pairs and needs the same field count on every line, so a wrong
+// label or a dropped field yields an empty/mis-legended graph that no state assertion would catch.
+static void test_plot_stream_format_and_rate() {
+    test_group("Plot stream ('L'): toggle, wire format, rate gate");
+    reset_test_state();
+
+    mainState = 98;
+    g_mock_millis = 1000;
+    Serial.rx_queue.push('L');
+    doState98();
+    check(plotModeActive == true, "'L': toggles the plot stream ON");
+
+    // doState98() already ran one plotTick() (plotLastMs was back-dated so it streams immediately).
+    check(Serial.tx_contains("sp:") && Serial.tx_contains(",act:") && Serial.tx_contains(",gFC:")
+       && Serial.tx_contains(",gBT:") && Serial.tx_contains(",ifc:") && Serial.tx_contains(",ibt:"),
+          "plot: line carries all six labelled fields in order");
+
+    // Rate gate: no second line until PLOT_PERIOD_MS has elapsed.
+    Serial.tx_clear();
+    g_mock_millis += PLOT_PERIOD_MS - 1;
+    doState98();
+    check(Serial.tx_count("sp:") == 0, "plot: no line before PLOT_PERIOD_MS elapses");
+    g_mock_millis += 1;
+    doState98();
+    check(Serial.tx_count("sp:") == 1, "plot: exactly one line once the period elapses");
+
+    // The reported share is the same quantity powerBalance() closes on.
+    Serial.tx_clear();
+    I_fc = 3.0f; I_batt = 1.0f;          // |I_fc| / (|I_fc| + |I_batt|) = 0.750
+    g_mock_millis += PLOT_PERIOD_MS;
+    doState98();
+    check(Serial.tx_contains("act:0.750"), "plot: 'act' is the measured share |I_fc|/(|I_fc|+|I_batt|)");
+    check(Serial.tx_contains("ifc:3.000") && Serial.tx_contains("ibt:1.000"),
+          "plot: per-channel currents reported at 3 decimals");
+
+    // Zero current → share undefined → reported as 0 (flat trace), never NaN.
+    Serial.tx_clear();
+    I_fc = 0.0f; I_batt = 0.0f;
+    g_mock_millis += PLOT_PERIOD_MS;
+    doState98();
+    check(Serial.tx_contains("act:0.000"), "plot: zero current reports act=0, not NaN");
+
+    // 'L' again turns it off and the stream stops.
+    Serial.tx_clear();
+    Serial.rx_queue.push('L');
+    doState98();
+    check(plotModeActive == false, "'L': toggles the plot stream OFF");
+    g_mock_millis += PLOT_PERIOD_MS * 4;
+    doState98();
+    check(Serial.tx_count("sp:") == 0, "plot: no lines emitted once the stream is off");
+}
+
+static void test_plot_suppresses_status_lines() {
+    test_group("Plot stream: periodic status + phase lines suppressed");
+    reset_test_state();
+
+    // A running power-share profile normally prints a '[PS]' snapshot every 500 ms and a
+    // '[PS] Phase N' banner at each transition. Both would break the plotter parse.
+    mainState = 98;
+    g_mock_millis = 0;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    setManualMotorCurrent(3.0f);
+    plotModeActive              = true;
+    powerShareProfileActive     = true;
+    powerShareProfilePhaseIdx   = 0;
+    powerShareProfilePhaseStart = 0;
+    powerShareProfileStatusLast = 0;
+
+    Serial.tx_clear();
+    g_mock_millis = 600;                    // past the 500 ms snapshot cadence
+    advancePowerShareProfile();
+    check(!Serial.tx_contains("[PS] t="), "plot: '[PS]' status snapshot suppressed while plotting");
+
+    Serial.tx_clear();
+    g_mock_millis = 3001;                   // phase 0 → 1 transition
+    advancePowerShareProfile();
+    check(powerShareProfilePhaseIdx == 1, "plot: phase machine still advances while plotting");
+    check(!Serial.tx_contains("[PS] Phase"), "plot: '[PS] Phase' banner suppressed while plotting");
+
+    // …and the same lines DO appear with plot mode off (guards against the suppression being
+    // unconditional, which would silently gut the normal bench workflow).
+    plotModeActive              = false;
+    powerShareProfileStatusLast = 0;
+    Serial.tx_clear();
+    g_mock_millis = 4000;
+    advancePowerShareProfile();
+    check(Serial.tx_contains("[PS] t="), "plot off: '[PS]' status snapshot restored");
+
+    // The 'W' VESC watch line is non-numeric too, so it is suppressed as well.
+    reset_test_state();
+    mainState        = 98;
+    vescWatchActive  = true;
+    plotModeActive   = true;
+    lastVescWatchMs  = 0;
+    g_mock_millis    = VESC_WATCH_PERIOD_MS + 1;
+    Serial.tx_clear();
+    pollVescWatch();
+    check(!Serial.tx_contains("[VW]"), "plot: '[VW]' VESC watch line suppressed while plotting");
+    plotModeActive = false;
+    pollVescWatch();
+    check(Serial.tx_contains("[VW]"), "plot off: '[VW]' VESC watch line restored");
+}
+
+static void test_plot_armed_share_profile() {
+    test_group("Plot stream: 'R' arms the power-share profile with a start delay");
+    reset_test_state();
+
+    mainState = 98;
+    g_mock_millis = 10000;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    setManualMotorCurrent(3.0f);
+    V_bus = V_BUS_CHARGED_THRESH + 1.0f;
+    plotModeActive = true;
+
+    Serial.rx_queue.push('R');
+    doState98();
+    check(plotArmTarget == PLOT_ARM_SHARE, "'R' under plot mode: arms instead of starting");
+    check(powerShareProfileActive == false, "'R' under plot mode: profile does NOT start yet");
+
+    // Still armed just before the deadline.
+    g_mock_millis += PLOT_ARM_DELAY_MS - 1;
+    doState98();
+    check(powerShareProfileActive == false, "armed: profile still not started 1ms before the deadline");
+
+    // Fires on the deadline, and the run is set up exactly as the immediate path would.
+    g_mock_millis += 1;
+    doState98();
+    check(powerShareProfileActive == true,  "armed: profile starts once the delay elapses");
+    check(plotArmTarget == PLOT_ARM_NONE,   "armed: target cleared after firing");
+    check(powerShareProfilePhaseIdx == 0,   "armed: profile starts at phase 0");
+
+    // Without plot mode the same key starts immediately (no behaviour change to the normal path).
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    setManualMotorCurrent(3.0f);
+    Serial.rx_queue.push('R');
+    doState98();
+    check(powerShareProfileActive == true && plotArmTarget == PLOT_ARM_NONE,
+          "'R' without plot mode: starts immediately, nothing armed");
+}
+
+static void test_plot_arm_cancellation_paths() {
+    test_group("Plot stream: every stop path cancels a pending armed start");
+
+    // Helper-free setup repeated per case: arm, then exercise one cancel path.
+    struct { char key; const char* name; } cases[] = {
+        { 'R', "'R' pressed again cancels the armed share profile" },
+        { 'X', "'X' universal stop cancels the armed share profile" },
+    };
+    for (auto &c : cases) {
+        reset_test_state();
+        mainState = 98;
+        g_pin_value[MOT_PWR_ENABLE] = HIGH;
+        setManualMotorCurrent(3.0f);
+        plotModeActive = true;
+        g_mock_millis  = 5000;
+        Serial.rx_queue.push('R');
+        doState98();
+        check(plotArmTarget == PLOT_ARM_SHARE, "arm established for the cancel case");
+
+        Serial.rx_queue.push(c.key);
+        doState98();
+        check(plotArmTarget == PLOT_ARM_NONE, c.name);
+
+        // And the profile must never fire afterwards.
+        g_mock_millis += PLOT_ARM_DELAY_MS * 2;
+        doState98();
+        check(powerShareProfileActive == false, "cancelled arm never starts the profile");
+    }
+
+    // 'Q' cancels the arm AND drops plot mode (a State-98-only tool must not leak into Idle).
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    setManualMotorCurrent(3.0f);
+    plotModeActive = true;
+    Serial.rx_queue.push('R');
+    doState98();
+    Serial.rx_queue.push('Q');
+    doState98();
+    check(plotArmTarget == PLOT_ARM_NONE, "'Q': cancels the armed profile on exit");
+    check(plotModeActive == false,        "'Q': plot mode cleared on exit to Idle");
+    check(mainState == 1,                 "'Q': still exits to State 1");
+
+    // A bring-up started during the arming window cancels the arm rather than firing into it.
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    setManualMotorCurrent(3.0f);
+    plotModeActive = true;
+    g_mock_millis  = 2000;
+    Serial.rx_queue.push('R');
+    doState98();
+    check(plotArmTarget == PLOT_ARM_SHARE, "arm established before the bring-up case");
+    bringupActive = true; bringupPhase = 1;
+    plotArmTick();
+    check(plotArmTarget == PLOT_ARM_NONE,
+          "armed profile cancelled when a bring-up starts during the delay");
+    check(powerShareProfileActive == false,
+          "armed profile does not fire into a running bring-up");
+}
+
+static void test_plot_armed_trap_profile() {
+    test_group("Plot stream: 'T' arms the trapezoid with its parsed parameters");
+    reset_test_state();
+
+    mainState = 98;
+    g_mock_millis = 0;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    plotModeActive = true;
+
+    Serial.rx_queue.push('T');
+    doState98();
+    check(pendingInput == PEND_TRAP_PARAMS, "'T' under plot mode: still prompts for the parameter line");
+
+    feed_serial_line(" 6 5 0.5");
+    check(plotArmTarget == PLOT_ARM_TRAP,  "'T' under plot mode: arms after the line parses");
+    check(trapProfileActive == false,      "'T' under plot mode: trapezoid does NOT start yet");
+    check(fabsf(plotArmTrapImax - 6.0f) < 1e-3f, "armed trap: peak current stashed");
+    check(plotArmTrapHoldMs == 5000,             "armed trap: hold time stashed (ms)");
+    check(fabsf(plotArmTrapRate - 0.5f) < 1e-3f, "armed trap: ramp rate stashed");
+
+    g_mock_millis += PLOT_ARM_DELAY_MS;
+    doState98();
+    check(trapProfileActive == true, "armed trap: starts once the delay elapses");
+    check(fabsf(trapImax - 6.0f) < 1e-3f && trapHoldMs == 5000 && fabsf(trapRateAps - 0.5f) < 1e-3f,
+          "armed trap: fires with exactly the parameters that were typed");
+
+    // A second 'T' while armed cancels (toggle semantics, same as the running-profile stop).
+    reset_test_state();
+    mainState = 98;
+    plotModeActive = true;
+    Serial.rx_queue.push('T');
+    doState98();
+    feed_serial_line(" 4 1 2");
+    check(plotArmTarget == PLOT_ARM_TRAP, "armed trap established for the cancel case");
+    Serial.rx_queue.push('T');
+    doState98();
+    check(plotArmTarget == PLOT_ARM_NONE, "'T' pressed again cancels the armed trapezoid");
+    g_mock_millis += PLOT_ARM_DELAY_MS * 2;
+    doState98();
+    check(trapProfileActive == false, "cancelled armed trapezoid never starts");
+}
+
+static void test_plot_arm_respects_preconditions() {
+    test_group("Plot stream: 'R' preconditions are checked at the keypress, not after the delay");
+    reset_test_state();
+
+    // MOT_PWR LOW is a hard refusal for the share profile. Under plot mode the refusal must happen
+    // NOW (so the operator sees it before switching windows), not silently at the deadline.
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = LOW;
+    setManualMotorCurrent(3.0f);
+    plotModeActive = true;
+    Serial.rx_queue.push('R');
+    doState98();
+    check(plotArmTarget == PLOT_ARM_NONE, "'R' with MOT_PWR LOW: nothing armed under plot mode");
+    check(powerShareProfileActive == false, "'R' with MOT_PWR LOW: profile refused as normal");
+
+    // No manual motor command is the other refusal.
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    plotModeActive = true;
+    Serial.rx_queue.push('R');
+    doState98();
+    check(plotArmTarget == PLOT_ARM_NONE, "'R' with no motor command: nothing armed under plot mode");
+
+    // The gates are re-checked at FIRE time too: an operator '3' (MOT_PWR OFF) during the arming
+    // window must cancel, not silently start a run whose precondition no longer holds.
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    setManualMotorCurrent(3.0f);
+    plotModeActive = true;
+    g_mock_millis  = 1000;
+    Serial.rx_queue.push('R');
+    doState98();
+    check(plotArmTarget == PLOT_ARM_SHARE, "arm established for the fire-time re-check case");
+    g_pin_value[MOT_PWR_ENABLE] = LOW;      // MOT_PWR dropped during the countdown
+    g_mock_millis += PLOT_ARM_DELAY_MS;
+    doState98();
+    check(plotArmTarget == PLOT_ARM_NONE && powerShareProfileActive == false,
+          "armed share profile cancels (not fires) if MOT_PWR dropped during the delay");
+}
+
+// ─── Plot stream: review-round fixes (2026-08-07 F1/F2/F5/F7) ────────────────
+static void test_plot_ov_transient_print_suppressed() {
+    test_group("Plot stream: [OV] transient report suppressed while plotting (F1)");
+    reset_test_state();
+
+    // Open an over-limit window (1 sample — under the 10ms/3-sample latch bar), then close it.
+    mainState = 98;
+    plotModeActive = true;
+    g_mock_millis  = 1000;
+    V_bus = LIMIT_V_BUS_MAX + 0.5f;
+    detectFaults();
+    check(ovBusOverActive, "F1: over-limit window opened");
+    Serial.tx_clear();
+    V_bus = V_BUS_NOMINAL;
+    detectFaults();
+    check(ovBusTransientCount == 1,          "F1: transient counter still increments while plotting");
+    check(!Serial.tx_contains("[OV]"),       "F1: [OV] transient line suppressed under plot mode");
+    check(mainState == 98,                   "F1: no latch from the sub-persistence window");
+
+    // Same sequence with plot mode off must print (suppression must not be unconditional).
+    plotModeActive = false;
+    g_mock_millis += 2000;                   // clear of the 1 Hz print rate bound
+    V_bus = LIMIT_V_BUS_MAX + 0.5f;
+    detectFaults();
+    Serial.tx_clear();
+    V_bus = V_BUS_NOMINAL;
+    detectFaults();
+    check(Serial.tx_contains("[OV]"), "F1: [OV] transient line restored with plot mode off");
+}
+
+static void test_plot_arm_supersede_message() {
+    test_group("Plot stream: cross-arm supersede cancels loudly (F2)");
+    reset_test_state();
+
+    // Arm the share profile, then type a full trapezoid line: the trap arm must supersede the
+    // share arm WITH a cancel message, not overwrite it silently.
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    setManualMotorCurrent(3.0f);
+    plotModeActive = true;
+    g_mock_millis  = 1000;
+    Serial.rx_queue.push('R');
+    doState98();
+    check(plotArmTarget == PLOT_ARM_SHARE, "F2: share arm established");
+
+    Serial.tx_clear();
+    Serial.rx_queue.push('T');
+    doState98();
+    feed_serial_line(" 4 1 2");
+    check(plotArmTarget == PLOT_ARM_TRAP,             "F2: trap arm supersedes the share arm");
+    check(Serial.tx_contains("superseded by 'T'"),    "F2: supersede printed a cancel message");
+}
+
+static void test_plot_arm_refused_over_running_profile() {
+    test_group("Plot stream: arming refused while another profile runs (F5)");
+
+    // 'R' under plot mode with a drive cycle running: refuse at the keypress (the immediate
+    // path's takeover would otherwise become "arm now, cancel in 5s" — a delayed surprise).
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    setManualMotorCurrent(3.0f);
+    plotModeActive   = true;
+    driveCycleActive = true;
+    Serial.rx_queue.push('R');
+    doState98();
+    check(plotArmTarget == PLOT_ARM_NONE, "F5: 'R' arm refused while the drive cycle runs");
+
+    // Trapezoid parse path: same refusal over a running share profile.
+    reset_test_state();
+    mainState = 98;
+    plotModeActive          = true;
+    powerShareProfileActive = true;
+    Serial.rx_queue.push('T');
+    doState98();
+    feed_serial_line(" 4 1 2");
+    check(plotArmTarget == PLOT_ARM_NONE && !trapProfileActive,
+          "F5: 'T' arm refused while the share profile runs");
+}
+
+static void test_share_start_clears_trap() {
+    test_group("startPowerShareProfile() clears an active trapezoid (F7, pre-existing)");
+    reset_test_state();
+
+    // Old bug: 'R' during a trapezoid left trapProfileActive set but shadowed by branch
+    // precedence; the orphaned trapezoid resumed with a huge elapsed time when the share
+    // profile stopped.
+    trapProfileActive = true;
+    trapCmdA          = 3.5f;
+    startPowerShareProfile();
+    check(!trapProfileActive && trapCmdA == 0.0f,
+          "F7: share-profile start clears trapProfileActive + trapCmdA");
+    check(powerShareProfileActive, "F7: share profile itself started");
+}
+
 // ─── State 98 bench tools: trapezoidal current profile ('T') ─────────────────
 static void test_trap_runs_without_mot_pwr() {
     test_group("Trapezoid profile ('T') runs with MOT_PWR_ENABLE LOW (warn only, no gate)");
@@ -3217,6 +4446,23 @@ int main() {
 
 #if BENCH_TEST
     test_dostate0_bench_bypass();
+    // Review F6: tests whose code paths compile IDENTICALLY in both builds also run here, so a
+    // bench flash gets the same coverage. Excluded: the production doState0() bring-up tests
+    // (the bench bypass replaces that path entirely) and anything relying on faults compiled out
+    // under BENCH_TEST (OC/UV/switch-conflict/GENSTAT). OV_BUS and OV_RGN are armed in BOTH
+    // builds, so the OV tests belong here.
+    test_ov_bus_persistence();
+    test_ov_bus_gap_guard();
+    test_ov_bus_gap_abandoned_counted();
+    test_ov_bus_transient_counter();
+    test_dostate98_g_bringup();
+    test_dostate98_bringup_interlocks();
+    test_dostate98_bringup_abort();
+    test_dostate98_topology_lockout();
+    test_bringup_dark_start();
+    test_bringup_g_takes_motor_ownership();
+    test_bringup_suppresses_manual_block();
+    test_dostate98_mot_pwr_guard();
 #else
     test_scale_factors();
     test_ag105_constants();
@@ -3234,7 +4480,23 @@ int main() {
     test_error_code_system();
     test_i2c_fault_injection();
     test_dostate0_reaches_idle_unpowered();
+    test_dostate0_precharge_timeout();
     test_dostate0_bus_charge_timeout();
+    test_bringup_dwell_dip_and_timeout();
+    test_bringup_mot_connect_timeout();
+    test_dostate98_g_bringup();
+    test_dostate98_bringup_interlocks();
+    test_dostate98_bringup_abort();
+    test_dostate98_topology_lockout();
+    test_bringup_dark_start();
+    test_bringup_g_takes_motor_ownership();
+    test_bringup_suppresses_manual_block();
+    test_bringup_late_gate_faults();
+    test_bringup_p3_bus_sag();
+    test_ov_bus_persistence();
+    test_ov_bus_gap_guard();
+    test_ov_bus_gap_abandoned_counted();
+    test_ov_bus_transient_counter();
     test_dostate98_hotplug_guard();
     test_dostate98_bt_bus_fc_charge_guard();
     test_dostate98_quit_closes_charge_paths();
@@ -3272,6 +4534,16 @@ int main() {
     test_power_share_profile();
     test_power_share_profile_runs_controls();
     test_pending_input_cancel();
+    test_plot_stream_format_and_rate();
+    test_plot_suppresses_status_lines();
+    test_plot_armed_share_profile();
+    test_plot_arm_cancellation_paths();
+    test_plot_armed_trap_profile();
+    test_plot_arm_respects_preconditions();
+    test_plot_ov_transient_print_suppressed();
+    test_plot_arm_supersede_message();
+    test_plot_arm_refused_over_running_profile();
+    test_share_start_clears_trap();
     test_trap_runs_without_mot_pwr();
     test_trap_happy_path();
     test_trap_peak_clamp_and_negative();

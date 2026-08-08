@@ -10,7 +10,7 @@ Re-raise rule: settled items reopen only with new evidence, stated explicitly.
 | BOOST-R1-F2 | accepted (major) | CSS 100 nF fix guarantee is bounded, not "any scenario"; SOA claim unsupported | Bound ≤2.9 mF worst-case CSS; measured node 0.4–0.6 mF (6–8× margin); VESC-attached C unmeasured; RT1987 DS §18 has no SOA data |
 | BOOST-R1-F3 | settled-caveat (major defect) | Overshoot-arithmetic corners unsupported; empirical coefficient 0.10–0.19 V/A; mechanism OPEN | 12 V corner never occurs (VIN readable in-capture 8.2–8.7 V); both linear and slew models over-predict centre-to-centre parks; COMP probe decides |
 | BOOST-R1-F4 | rejected (minor residue) | "Record overstates stress 4×" — backwards | 7–9 A photometrically confirmed 3×; low figure was a rewound-chat artifact (operator ruling); residue: CH2 BW-limit + ∫I dt conventions adopted |
-| BOOST-R1-F5 | accepted (major) | Deep dip is NOT an SCP cut — it is the RT1987 soft-start completing (A1), depth set by source/converter limiting (A2); VIN-UVLO alternative also refuted | Conduction 1.77 ms (7× timer), VBUS ramps monotonically DURING the dip, terminates at ΔV→0, no 64 ms retry; VOUT floor 9.68 V > 8.1 V passthrough kills UVLO |
+| BOOST-R1-F5 | accepted (major) | Deep dip is NOT an SCP cut — it is the RT1987 soft-start completing (A1), depth set by source/converter limiting (A2); VIN-UVLO alternative also refuted | Conduction 1.77 ms (7× timer), VBUS ramps monotonically DURING the dip, terminates at ΔV→0, no 64 ms retry; VOUT floor 9.68 V > 8.1 V passthrough kills UVLO; 2026-08-03: CH3 was V-MOT — the ramp is the motor-node charge; mechanism conclusion unchanged, unified cut rule: cut ⟺ clamp ridden >250 µs |
 | BOOST-R1-F6 | accepted (minor) | Historic "body-diode pre-charge" = live D-BT-EN conduction into 40 µF-only node (pre-Death-5 firmware); "no pre-charge" scoped to current config | Pixel-proven capture identity + git archaeology; Death-4 conclusion strengthened; wording fixes only |
 | BOOST-R1-F7 | accepted (major) | 18.0 V windowed OV threshold fails the tolerance stack | Reading 18.0 → true ≤18.47 V > 18.3 V OVP min and 18 V rec-max (±2% uncalibrated ADC ref dominates ±0.1% dividers); 17.5 V is the max legal window; no window rides out the parks |
 | BOOST-R1-F8 | accepted (major) | C_OUT-independence is linear-regime-only; C_C lever has NO share-plant collateral | DS Eq. 12 has no C_C (f_c <0.1%, τ_r <0.1 µs; cost 5–11° of 76–79° PM); both cap levers re-opened as secondary mitigations; CSS-first decision unchanged |
@@ -18,8 +18,8 @@ Re-raise rule: settled items reopen only with new evidence, stated explicitly.
 | BOOST-R1-F10 | accepted (minor) | Bus ADC path unfiltered/uncalibrated (±0.26 V at 17.5 V), unrealized exposure | All precise voltages scope-sourced; TODO: raw-count logging + 3-point calibration |
 | BOOST-R1-F11 | settled-caveat (minor) | 2/8 boundary leaks real ("Confirmed:" over SS-inferred bullet; "any scenario") | Others already hedged by supersession convention; folded into F2/F5 fixes |
 | BOOST-R1-N1 | accepted (major) | Park decays ~113 V/s → ~1.5 ms above 17.0 V → persistence filter viable | Flips the doc's "persistence would NOT ride it out"; gate on one decay-confirmation run + masked-fault test |
-| BOOST-R1-N2 | accepted (major, pending one run) | OV-ADC node (VBUS 16.85 V peak) vs cursor node (boost-local 17.23 V) discrepancy | Trip margins possibly misjudged; raw-count logging run required before trusting firmware voltage limits |
-| BOOST-R1-N3 | accepted (major) | Dip #1 violates charge conservation 14–300× → only ring / CH2 CM-artifact candidates survive | Excludes SCP clamp AND UVLO race; zoomed 20–50 µs/div single-shot is the top bench priority |
+| BOOST-R1-N2 | superseded (resolved 2026-08-03) | OV-ADC node (VBUS 16.85 V peak) vs cursor node (boost-local 17.23 V) discrepancy | 16.85 V trace was V-MOT; VBUS proper tracks parked VOUT through conducting D-BT — trips were correct all along; ADC node still unscoped; calibration TODO lives on under F10 |
+| BOOST-R1-N3 | superseded (resolved 2026-08-03) | Dip #1 violates charge conservation 14–300× → only ring / CH2 CM-artifact candidates survive | CH3 probe was V-MOT, not VBUS — the ~0.3 mC charged the unmonitored 40 µF bus (≈7.5 V); conservation closes; internal-sink and CM-artifact forks both dead |
 | BOOST-R1-N4 | accepted (major, merged into F1) | Fixed settle scales with fitted CSS (~33 ms at 100 nF) | Same fix as F1 (ADC gate) |
 | BOOST-R1-N5 | accepted (minor, UNCONFIRMED) | Historic connects plausibly already ISCP-clamped amps-class events | Edge 4.5× faster than gate-ramp prediction; historical hypothesis only |
 | BOOST-R1-N6 | accepted (minor) | Scope-metrology conventions (div×scale, trace-centre, chronology, calibration chain) | Adopted into bench-incident conventions; prevents the two errors corrected this run |
@@ -58,3 +58,13 @@ Re-raise rule: settled items reopen only with new evidence, stated explicitly.
   from the dip-2 charge (bounded in-system only — a proper measurement is still wanted; large
   enough to flip the connect into cut/retry). Capture-8 validation completed: no trip,
   >4 clean `G`s (no-VESC config).
+- Operator correction 2026-08-03 (round 3): CH3 in captures 5–9 was **V-MOT, not VBUS**; VBUS
+  proper never scoped. **N3 and N2 RESOLVED** (charge went to the unmonitored 40 µF bus; trips
+  were reading real parks through conducting D-BT). Unified SCP-cut rule (clamp ridden
+  >250 µs) replaces the round-2 onset-peak speculation; capture-8's ~510 µF node inference
+  vindicated (probe was on the motor node); C_VESC bound and staged-proposal assessment
+  unchanged. Files renamed Vbus→Vmot. Third channel-attribution error — verify channel↔net at
+  the probe tips at capture time.
+- Firmware round implemented 2026-08-03 (staged bring-up P0–P3, guard inversion to
+  motPwrConnectBlocked(), OV_BUS 10ms/3-sample persistence — discharges the fix side of F1/N4
+  and N1; bench validation pending). LIMIT_V_BUS_MAX remains 17.5 V until validated.
