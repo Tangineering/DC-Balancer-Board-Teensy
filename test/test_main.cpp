@@ -145,6 +145,14 @@ static void reset_test_state() {
     trapStatusLast    = 0;
     trapCmdA          = 0.0f;
 
+    // .ino State 98 bench tools — combined drive-cycle + power-share profile ('Y')
+    combinedProfileActive = false;
+    combinedRegionIdx     = 0;
+    combinedRegionStart   = 0;
+    combinedStatusLast    = 0;
+    yProfileVmax          = Y_VMAX_DEFAULT;
+    yProfileBoundLo       = Y_BOUND_DEFAULT;
+
     // .ino staged bring-up machine (busBringupStart/Tick/Abort)
     bringupActive     = false;
     bringupPhase      = 0;
@@ -5415,6 +5423,955 @@ static void test_sdlog_counter_exhausted() {
           "SD counter: the refusal is not a latch — a run logs again once a slot is free");
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// 'Y' combined drive-cycle + power-share profile
+// ═══════════════════════════════════════════════════════════════════════════════
+// The contract under test is the REGION TABLE AS A WAVEFORM: this profile exists to excite the
+// share loop and the velocity loop simultaneously so a system identification can be fitted to the
+// result, so a wrong interpolation, a mis-scaled velocity waypoint or a clip applied on the wrong
+// side of the interpolation silently produces a run that looks fine and fits wrong. Each case
+// therefore asserts the two setpoints at named points on the table, computed here from the
+// documented region durations rather than read back from the firmware's own arithmetic.
+//
+// Region start times, cumulative from the profile start (durations from COMBINED_PROFILE[]):
+//   R0  0      R1  2000   R2  6000   R3  8000    R4  11000  R5  15000  R6  17000  R7  18500
+//   R8  22000  R9  25000  R10 27000  R11 30000   R12 31500  R13 33000  R14 35000  R15 38000
+//   end 40000 (the completion tick lands one millisecond later — see y_run_to())
+
+#define Y_R0  0u
+#define Y_R1  2000u
+#define Y_R2  6000u
+#define Y_R3  8000u
+#define Y_R4  11000u
+#define Y_R5  15000u
+#define Y_R6  17000u
+#define Y_R7  18500u
+#define Y_R8  22000u
+#define Y_R9  25000u
+#define Y_R10 27000u
+#define Y_R11 30000u
+#define Y_R12 31500u
+#define Y_R13 33000u
+#define Y_R14 35000u
+#define Y_R15 38000u
+#define Y_END 40000u
+
+static uint32_t g_y_t0 = 0;   // millis() at the moment startCombinedProfile() stamped its region 0
+
+// Start a combined run through the REAL keypress + parameter-line path (not startCombinedProfile()
+// directly), so the prompt, the parser and the preconditions are all in the loop.
+// `params` is everything after the 'Y' on the line — "" is a bare Enter, i.e. run the defaults.
+static void y_start(const char* params) {
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    velocityChainCalibratedFlag = true;
+    Serial.rx_queue.push('Y');
+    doState98();
+    feed_serial_line(params);
+    g_y_t0 = g_mock_millis;
+}
+
+// Advance to `tRel` ms after the profile start, ONE 1 ms control tick at a time. Tick granularity
+// matters: advanceCombinedProfile() re-stamps combinedRegionStart from millis() at each region
+// transition, so a coarse step would smear every subsequent region boundary by the step size and
+// the assertions below would drift off the table.
+static void y_run_to(uint32_t tRel, bool drain = false) {
+    while (g_mock_millis < g_y_t0 + tRel) {
+        g_mock_millis += 1;
+        g_mock_micros += POWER_BAL_PERIOD_US;
+        doState98();
+        if (drain) logDrainTick();
+    }
+}
+
+static bool near_f(float a, float b, float tol = 1e-4f) { return fabsf(a - b) <= tol; }
+
+// ─── 1. Parameter line: defaults, one value, two values, the warn band ──────
+static void test_y_params_and_defaults() {
+    test_group("Y combined profile — parameter line: defaults, one value, two values, warn band");
+
+    // ── Bare Enter runs the defaults. This prompt is the ONE that treats an empty line as
+    // "accept", not "cancel", so it is the case most likely to regress into a silent no-op.
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    Serial.rx_queue.push('Y');
+    doState98();
+    check(pendingInput == PEND_Y_PARAMS,
+          "Y params: 'Y' arms the single-line parameter prompt");
+    feed_serial_line("");
+    check(combinedProfileActive == true,
+          "Y params: a bare Enter starts the profile rather than cancelling the prompt");
+    check(near_f(yProfileVmax, Y_VMAX_DEFAULT) && near_f(yProfileBoundLo, Y_BOUND_DEFAULT),
+          "Y params: a bare Enter commits the documented defaults (Vmax 1.0 m/s, b 0)");
+    check(combinedRegionIdx == 0 && combinedProfileActive,
+          "Y params: the run begins at region 0");
+
+    // ── One value sets Vmax and leaves b at its default.
+    reset_test_state();
+    y_start(" 2");
+    check(combinedProfileActive == true,
+          "Y params: a single value \"Y 2\" starts the profile");
+    check(near_f(yProfileVmax, 2.0f) && near_f(yProfileBoundLo, 0.0f),
+          "Y params: one value sets Vmax and leaves the share bound at its default");
+
+    // ── Two values set both.
+    reset_test_state();
+    y_start(" 1 0.3");
+    check(combinedProfileActive == true,
+          "Y params: two values \"Y 1 0.3\" start the profile");
+    check(near_f(yProfileVmax, 1.0f) && near_f(yProfileBoundLo, 0.3f),
+          "Y params: two values commit both Vmax and the share bound");
+
+    // ── b above the warn threshold is ACCEPTED with a warning, not refused: a tight band is a
+    // legitimate way to keep a fragile bench setup off the share extremes.
+    reset_test_state();
+    y_start(" 1 0.4");
+    check(combinedProfileActive == true,
+          "Y params: b above Y_BOUND_WARN is accepted and the profile still starts");
+    check(near_f(yProfileBoundLo, 0.4f),
+          "Y params: the above-threshold bound is committed as typed");
+    check(Serial.tx_contains("WARN: b > "),
+          "Y params: a bound above Y_BOUND_WARN prints the compressed-plateau warning");
+
+    // ── At exactly the warn threshold there must be NO warning (strict >, not >=).
+    reset_test_state();
+    y_start(" 1 0.35");
+    check(combinedProfileActive == true && !Serial.tx_contains("WARN: b > "),
+          "Y params: b exactly at Y_BOUND_WARN starts without a warning (the test is strict >)");
+}
+
+// ─── 2. Every refusal path leaves State 98 idle ─────────────────────────────
+static void test_y_refusals() {
+    test_group("Y combined profile — every refusal leaves the bench idle and unlogged");
+
+    // Assert the common "nothing happened" postcondition for a refused start.
+    auto check_idle = [&](const char* what) {
+        char buf[160];
+        snprintf(buf, sizeof(buf), "Y refusal (%s): no profile starts and no log file is opened", what);
+        check(combinedProfileActive == false && logActive == false && g_sd_state.files.empty(), buf);
+    };
+
+    // ── (a) Keypress-time preconditions: the prompt is never even armed. ────
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    bringupActive = true;
+    Serial.rx_queue.push('Y');
+    doState98();
+    check(pendingInput == PEND_NONE && Serial.tx_contains("bring-up in progress"),
+          "Y refusal: 'Y' during a staged bring-up is refused at the keypress");
+    check_idle("bring-up active");
+    bringupActive = false;
+
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    velocityChainCalibratedFlag = false;
+    Serial.rx_queue.push('Y');
+    doState98();
+    check(pendingInput == PEND_NONE && Serial.tx_contains("combined profile needs a calibrated velocity chain"),
+          "Y refusal: 'Y' with an uncalibrated velocity chain is refused by name");
+    check_idle("velocity chain uncalibrated");
+
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = LOW;
+    Serial.rx_queue.push('Y');
+    doState98();
+    check(pendingInput == PEND_NONE && Serial.tx_contains("MOT_PWR_ENABLE must be HIGH"),
+          "Y refusal: 'Y' with MOT_PWR_ENABLE LOW is refused at the keypress");
+    check_idle("MOT_PWR low");
+
+    // ── (b) Parse-time validation: the prompt arms, the line is rejected whole. ──
+    reset_test_state();
+    y_start(" 0");
+    check(Serial.tx_contains("Vmax must be > 0"),
+          "Y refusal: Vmax of zero is rejected");
+    check_idle("Vmax = 0");
+
+    reset_test_state();
+    y_start(" -1");
+    check(Serial.tx_contains("Vmax must be > 0"),
+          "Y refusal: a negative Vmax is rejected");
+    check_idle("Vmax negative");
+
+    reset_test_state();
+    y_start(" 6");
+    check(Serial.tx_contains("Vmax must be <= "),
+          "Y refusal: a Vmax above MANUAL_MOTOR_V_MAX is rejected against the same ceiling 'V' uses");
+    check_idle("Vmax above MANUAL_MOTOR_V_MAX");
+
+    reset_test_state();
+    y_start(" 1 0.5");
+    check(Serial.tx_contains("share bound b must be < 0.5"),
+          "Y refusal: b = 0.5 is rejected because the band [b, 1-b] collapses to a point");
+    check_idle("b = 0.5");
+
+    reset_test_state();
+    y_start(" 1 -0.1");
+    check(Serial.tx_contains("share bound b must be >= 0"),
+          "Y refusal: a negative share bound is rejected");
+    check_idle("b negative");
+
+    reset_test_state();
+    y_start(" 1 0.3 2");
+    check(Serial.tx_contains("at most two values"),
+          "Y refusal: a third value is rejected rather than silently ignored");
+    check_idle("third value");
+
+    // ── (c) A non-numeric key cancels the pending entry outright. ───────────
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    Serial.rx_queue.push('Y');
+    doState98();
+    check(pendingInput == PEND_Y_PARAMS, "Y refusal: the parameter prompt is armed before the cancel");
+    Serial.rx_queue.push('Z');            // not a numeric-entry char
+    doState98();
+    check(pendingInput == PEND_NONE && Serial.tx_contains("(input cancelled)"),
+          "Y refusal: a non-numeric key cancels the parameter entry");
+    Serial.rx_queue.push('\n');
+    doState98();
+    check_idle("non-numeric cancel");
+}
+
+// ─── 3. Full 40 s region walk at the defaults ───────────────────────────────
+static void test_y_region_walk() {
+    test_group("Y combined profile — both setpoints track the region table across the full run");
+    reset_test_state();
+
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start("");
+    check(combinedProfileActive && near_f(yProfileVmax, 1.0f) && near_f(yProfileBoundLo, 0.0f),
+          "Y walk: the run starts at the defaults (Vmax 1.0, no share clip)");
+
+    // R0 settle: both axes flat.
+    y_run_to(1000);
+    check(combinedRegionIdx == 0 && near_f(v_setpoint, 0.0f) && near_f(power_share_setpoint, 0.5f),
+          "Y walk: R0 holds v=0 and share=0.50 while the bench settles");
+
+    // R1 solo velocity ramp 0 -> 0.6 over 4000 ms; midpoint is half way up.
+    y_run_to(Y_R1 + 2000);
+    check(combinedRegionIdx == 1 && near_f(v_setpoint, 0.3f, 1e-3f),
+          "Y walk: R1 midpoint has v_setpoint half way up the 0 -> 0.6 ramp (0.30)");
+    check(near_f(power_share_setpoint, 0.5f),
+          "Y walk: R1 leaves the share axis flat — the velocity ramp is a SOLO excitation");
+
+    // R2 buffer: velocity has arrived, share still flat.
+    y_run_to(Y_R2 + 1000);
+    check(combinedRegionIdx == 2 && near_f(v_setpoint, 0.6f) && near_f(power_share_setpoint, 0.5f),
+          "Y walk: R2 buffers at v=0.6 with the share still at 0.50");
+
+    // R3 entry: the share STEPS to 0.65 on the first tick of the region while v holds.
+    y_run_to(Y_R3 - 1);
+    check(near_f(power_share_setpoint, 0.5f),
+          "Y walk: the share is still 0.50 on the last tick before R3");
+    y_run_to(Y_R3 + 1);
+    check(combinedRegionIdx == 3 && near_f(power_share_setpoint, 0.65f, 1e-3f),
+          "Y walk: R3 steps the share to 0.65 on its first tick (a step is a start-value mismatch)");
+    check(near_f(v_setpoint, 0.6f),
+          "Y walk: R3's share step leaves the velocity axis untouched — a SOLO share excitation");
+
+    // R4: BOTH axes ramp at once (v up, s down) — the interaction test.
+    y_run_to(Y_R4 + 2000);
+    check(combinedRegionIdx == 4 && near_f(v_setpoint, 0.8f, 1e-3f),
+          "Y walk: R4 midpoint has v_setpoint mid-ramp between 0.6 and 1.0 (0.80)");
+    check(near_f(power_share_setpoint, 0.5f, 1e-3f),
+          "Y walk: R4 midpoint has the share mid-ramp between 0.65 and 0.35 (0.50) — both axes move");
+
+    // R6 brief excursion to the high share bound.
+    y_run_to(Y_R6 + 750);
+    check(combinedRegionIdx == 6 && near_f(power_share_setpoint, 1.0f),
+          "Y walk: R6 drives the share to 1.00 (all-FC) to exercise the droop clamp");
+    check(near_f(v_setpoint, 1.0f),
+          "Y walk: R6 holds the velocity at full scale through the share excursion");
+
+    // R8 entry: BOTH axes step in the SAME tick (v 1.0 -> 0.5, s 0.35 -> 0.65).
+    y_run_to(Y_R8 - 1);
+    check(near_f(v_setpoint, 1.0f) && near_f(power_share_setpoint, 0.35f, 1e-3f),
+          "Y walk: R7 ends at v=1.0 / share=0.35 on the last tick before R8");
+    y_run_to(Y_R8 + 1);
+    check(combinedRegionIdx == 8 && near_f(v_setpoint, 0.5f, 1e-3f) &&
+          near_f(power_share_setpoint, 0.65f, 1e-3f),
+          "Y walk: R8 steps BOTH axes in the same tick (v down to 0.5, share up to 0.65)");
+
+    // R10 solo share ramp 0.65 -> 0.0; midpoint is half way down.
+    y_run_to(Y_R10 + 1500);
+    check(combinedRegionIdx == 10 && near_f(power_share_setpoint, 0.325f, 1e-3f),
+          "Y walk: R10 midpoint has the share half way down the 0.65 -> 0 ramp (0.325)");
+    check(near_f(v_setpoint, 0.5f),
+          "Y walk: R10's share ramp leaves the velocity axis flat at 0.5");
+
+    // R11 brief excursion to the low share bound.
+    y_run_to(Y_R11 + 750);
+    check(combinedRegionIdx == 11 && near_f(power_share_setpoint, 0.0f),
+          "Y walk: R11 drives the share to 0.00 (all-BT) to exercise the other clamp");
+
+    // R13 solo velocity step down.
+    y_run_to(Y_R13 + 1000);
+    check(combinedRegionIdx == 13 && near_f(v_setpoint, 0.2f, 1e-3f) &&
+          near_f(power_share_setpoint, 0.5f),
+          "Y walk: R13 steps the velocity down to 0.2 with the share recovered to 0.50");
+
+    // R14 coast-down ramp 0.2 -> 0; midpoint.
+    y_run_to(Y_R14 + 1500);
+    check(combinedRegionIdx == 14 && near_f(v_setpoint, 0.1f, 1e-3f),
+          "Y walk: R14 coasts the velocity down, half way at 0.10");
+
+    // R15 -> natural completion.
+    y_run_to(Y_R15 + 1000);
+    check(combinedRegionIdx == 15 && near_f(v_setpoint, 0.0f),
+          "Y walk: R15 holds at standstill before completion");
+    vesc.reset();
+    y_run_to(Y_END + 1);
+    check(combinedProfileActive == false,
+          "Y walk: the profile deactivates on natural completion after the last region");
+    check(!vesc.current_calls.empty() && vesc.last_current == 0.0f,
+          "Y walk: natural completion flushes vesc.setCurrent(0) — the motor is not left driving");
+    check(near_f(power_share_setpoint, 0.5f),
+          "Y walk: natural completion returns the share setpoint to balanced (0.50)");
+    check(manualMotorMode == MOTOR_TEST_OFF,
+          "Y walk: natural completion clears manualMotorMode (haltMotorOutput symmetry)");
+
+    sd_drain_until_closed();
+    const std::string* f = sd_file("YP0001.BLG");
+    check(f != nullptr && f->size() > LOG_HDR_SIZE + LOG_REC_SIZE,
+          "Y walk: the run's log file exists and holds records");
+    if (f) {
+        size_t tr = f->size() - LOG_REC_SIZE;
+        check(sd_le<uint32_t>(*f, tr + 0) == 0xFFFFFFFFu &&
+              (uint8_t)(*f)[tr + 12] == LOG_CLOSE_COMPLETE,
+              "Y walk: the trailer records LOG_CLOSE_COMPLETE for a naturally-finished run");
+    }
+}
+
+// ─── 4. Share clipping is applied AFTER interpolation ───────────────────────
+// The kink is the whole point: a ramp that crosses the bound must keep its slope and then flatten.
+// Clipping the waypoints instead would shrink every slope and change the excitation the
+// identification is fitted to — a wrong answer that looks like a clean run.
+static void test_y_clip_bounds() {
+    test_group("Y combined profile — the share band clips after interpolation, producing a kink");
+    reset_test_state();
+
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start(" 1 0.3");   // band [0.30, 0.70]
+    check(combinedProfileActive && near_f(yProfileBoundLo, 0.3f),
+          "Y clip: the run starts with the share band [0.30, 0.70]");
+
+    // Intermediate plateaus sit INSIDE the band and must be untouched.
+    y_run_to(Y_R3 + 1500);
+    check(near_f(power_share_setpoint, 0.65f, 1e-3f),
+          "Y clip: R3's 0.65 plateau is inside [0.30, 0.70] and passes through unclipped");
+
+    // The bound-check excursions are the ones that flatten.
+    y_run_to(Y_R6 + 750);
+    check(near_f(power_share_setpoint, 0.7f),
+          "Y clip: R6's 1.00 excursion flattens at the upper bound 0.70");
+
+    y_run_to(Y_R8 + 1500);
+    check(near_f(power_share_setpoint, 0.65f, 1e-3f),
+          "Y clip: R8's 0.65 plateau is still unclipped after the excursion");
+
+    // R10 ramps 0.65 -> 0 over 3000 ms. It crosses 0.30 at
+    //   t = 3000 * (0.65 - 0.30) / 0.65 = 3000 * 0.538461... = 1615.4 ms.
+    // Before that the ramp runs at its full slope; after it, the value is pinned at the bound.
+    y_run_to(Y_R10 + 1000);
+    check(near_f(power_share_setpoint, 0.65f - 0.65f * (1000.0f / 3000.0f), 1e-3f),
+          "Y clip: R10 at 1000 ms is still on the un-clipped ramp slope (0.4333)");
+    y_run_to(Y_R10 + 1500);
+    check(near_f(power_share_setpoint, 0.325f, 1e-3f),
+          "Y clip: R10 at its midpoint is 0.325 — still above the bound, so still on-slope");
+    y_run_to(Y_R10 + 1600);
+    check(near_f(power_share_setpoint, 0.65f - 0.65f * (1600.0f / 3000.0f), 1e-3f) &&
+          power_share_setpoint > 0.3f,
+          "Y clip: R10 at 1600 ms is the last on-slope sample before the 1615 ms crossing");
+    y_run_to(Y_R10 + 1630);
+    check(near_f(power_share_setpoint, 0.3f),
+          "Y clip: R10 at 1630 ms has crossed the bound and is pinned at 0.30 — the kink");
+    y_run_to(Y_R10 + 2500);
+    check(near_f(power_share_setpoint, 0.3f),
+          "Y clip: R10 stays flat at 0.30 for the rest of the ramp instead of continuing down");
+
+    y_run_to(Y_R11 + 750);
+    check(near_f(power_share_setpoint, 0.3f),
+          "Y clip: R11's 0.00 excursion flattens at the lower bound 0.30");
+
+    // Velocity is NOT affected by the share band.
+    check(near_f(v_setpoint, 0.5f),
+          "Y clip: the share band never touches the velocity axis");
+
+    // ── An aggressive band eats the intermediate plateaus too — this is exactly what the
+    // Y_BOUND_WARN message warns about, so it must actually happen.
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start(" 1 0.4");   // band [0.40, 0.60]
+    y_run_to(Y_R3 + 1500);
+    check(near_f(power_share_setpoint, 0.6f),
+          "Y clip: with b=0.4 the 0.65 intermediate plateau is compressed to the 0.60 bound");
+    y_run_to(Y_R5 + 1000);
+    check(near_f(power_share_setpoint, 0.4f),
+          "Y clip: with b=0.4 the 0.35 intermediate plateau is compressed to the 0.40 bound");
+    y_run_to(Y_R6 + 750);
+    check(near_f(power_share_setpoint, 0.6f),
+          "Y clip: with b=0.4 the 1.00 excursion flattens at 0.60");
+}
+
+// ─── 5. Velocity waypoints scale with the operator Vmax ─────────────────────
+static void test_y_vmax_scaling() {
+    test_group("Y combined profile — normalised velocity waypoints scale with the operator Vmax");
+    reset_test_state();
+
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start(" 2");
+    check(near_f(yProfileVmax, 2.0f), "Y Vmax: the run committed Vmax = 2.0 m/s");
+
+    // R1's 0.6 end value, observed on R2's flat hold (the transition tick itself sets nothing).
+    y_run_to(Y_R2 + 1000);
+    check(combinedRegionIdx == 2 && near_f(v_setpoint, 1.2f, 1e-3f),
+          "Y Vmax: R1's normalised 0.6 endpoint scales to 1.2 m/s at Vmax = 2");
+    check(near_f(power_share_setpoint, 0.5f),
+          "Y Vmax: the share axis is unaffected by Vmax — it is absolute, not normalised");
+
+    // R4's 1.0 end value, observed on R5's flat hold.
+    y_run_to(Y_R5 + 1000);
+    check(combinedRegionIdx == 5 && near_f(v_setpoint, 2.0f, 1e-3f),
+          "Y Vmax: R4's normalised 1.0 endpoint scales to the full 2.0 m/s at Vmax = 2");
+    check(near_f(power_share_setpoint, 0.35f, 1e-3f),
+          "Y Vmax: R5's share plateau is the same 0.35 the defaults produce");
+
+    // R8's 0.5 step.
+    y_run_to(Y_R8 + 1500);
+    check(combinedRegionIdx == 8 && near_f(v_setpoint, 1.0f, 1e-3f),
+          "Y Vmax: R8's normalised 0.5 step scales to 1.0 m/s at Vmax = 2");
+    check(near_f(power_share_setpoint, 0.65f, 1e-3f),
+          "Y Vmax: R8's share plateau is the same 0.65 the defaults produce");
+
+    // R1 midpoint scales too (the ramp, not just the plateaus).
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start(" 2");
+    y_run_to(Y_R1 + 2000);
+    check(near_f(v_setpoint, 0.6f, 1e-3f),
+          "Y Vmax: mid-ramp values scale too — R1's midpoint is 0.3 x 2 = 0.6 m/s");
+}
+
+// ─── 6. Stop paths and mutual exclusion with the other profiles ─────────────
+static void test_y_stop_x_q_exclusion() {
+    test_group("Y combined profile — stop-toggle, 'X', 'Q' and mutual exclusion with D/R/T");
+
+    // ── (a) 'Y' again mid-run stops it: motor zeroed, switches parked, share reset. ──
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start("");
+    y_run_to(Y_R4 + 1000, /*drain=*/true);
+    check(combinedProfileActive && combinedRegionIdx == 4,
+          "Y stop: the run is mid-R4 before the stop key");
+    uint32_t recs = logRecordsWritten;
+    g_pin_value[REGEN_ENABLE] = HIGH;   // a latched path switch the stop must park
+    vesc.reset();
+    Serial.rx_queue.push('Y');
+    doState98();
+    check(combinedProfileActive == false,
+          "Y stop: the 'Y' stop-toggle clears combinedProfileActive");
+    check(!vesc.current_calls.empty() && vesc.last_current == 0.0f,
+          "Y stop: the stop flushes vesc.setCurrent(0) immediately");
+    check(digitalRead(REGEN_ENABLE) == LOW,
+          "Y stop: the stop parks the path switches (this profile sweeps the charge paths)");
+    check(near_f(power_share_setpoint, 0.5f),
+          "Y stop: the stop returns the share setpoint to balanced");
+    check(logCloseRequested == true,
+          "Y stop: the stop requests the log close without doing card I/O in the handler");
+    sd_drain_until_closed();
+    {
+        const std::string* f = sd_file("YP0001.BLG");
+        check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * recs + LOG_REC_SIZE,
+              "Y stop: the stopped run's file holds every drained record plus the trailer");
+        if (f) {
+            size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * recs;
+            check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_STOP,
+                  "Y stop: the trailer records LOG_CLOSE_STOP");
+        }
+    }
+
+    // ── (b) 'X' universal stop mid-run. ────────────────────────────────────
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start("");
+    y_run_to(Y_R6 + 500, /*drain=*/true);
+    recs = logRecordsWritten;
+    g_pin_value[REGEN_ENABLE] = HIGH;
+    vesc.reset();
+    Serial.rx_queue.push('X');
+    doState98();
+    check(combinedProfileActive == false && manualMotorMode == MOTOR_TEST_OFF,
+          "Y 'X': the universal stop cancels the combined profile and the manual modes");
+    check(!vesc.current_calls.empty() && vesc.last_current == 0.0f,
+          "Y 'X': the universal stop zeroes the motor");
+    check(digitalRead(REGEN_ENABLE) == LOW,
+          "Y 'X': hadY makes the universal stop park the switches, as it does for 'D'/'R'");
+    check(near_f(power_share_setpoint, 0.5f),
+          "Y 'X': hadY resets the share setpoint, matching the 'R' semantics");
+    sd_drain_until_closed();
+    {
+        const std::string* f = sd_file("YP0001.BLG");
+        check(f != nullptr, "Y 'X': the run's log file was written");
+        if (f) {
+            size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * recs;
+            check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_X,
+                  "Y 'X': the trailer records LOG_CLOSE_X");
+        }
+    }
+
+    // ── (c) 'Q' exit mid-run. ──────────────────────────────────────────────
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start("");
+    y_run_to(Y_R2 + 500, /*drain=*/true);
+    recs = logRecordsWritten;
+    vesc.reset();
+    Serial.rx_queue.push('Q');
+    doState98();
+    check(combinedProfileActive == false && mainState == 1,
+          "Y 'Q': the exit clears the combined profile and returns to Idle");
+    check(!vesc.current_calls.empty() && vesc.last_current == 0.0f,
+          "Y 'Q': the exit flushes vesc.setCurrent(0) before cutting motor power");
+    check(logCloseRequested == true,
+          "Y 'Q': the exit flags the log close, to be finished by the drain in loop()");
+    sd_drain_until_closed();
+    {
+        const std::string* f = sd_file("YP0001.BLG");
+        check(f != nullptr, "Y 'Q': the run's log file was written");
+        if (f) {
+            size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * recs;
+            check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_Q,
+                  "Y 'Q': the trailer records LOG_CLOSE_Q");
+        }
+    }
+
+    // ── (d) Mutual exclusion, Y killed by the others. ──────────────────────
+    reset_test_state();
+    g_mock_millis = 1000;
+    y_start("");
+    check(combinedProfileActive, "Y exclusion: a combined run is active before 'D' is pressed");
+    Serial.rx_queue.push('D');
+    doState98();
+    check(driveCycleActive == true && combinedProfileActive == false,
+          "Y exclusion: starting the drive cycle clears the combined profile");
+
+    reset_test_state();
+    g_mock_millis = 1000;
+    y_start("");
+    setManualMotorCurrent(3.0f);          // 'R' precondition
+    Serial.rx_queue.push('R');
+    doState98();
+    check(powerShareProfileActive == true && combinedProfileActive == false,
+          "Y exclusion: starting the power-share profile clears the combined profile");
+
+    // ── (e) Mutual exclusion, the others killed by Y. ──────────────────────
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    setManualMotorCurrent(3.0f);
+    Serial.rx_queue.push('R');
+    doState98();
+    check(powerShareProfileActive == true, "Y exclusion: a share profile is running before 'Y'");
+    y_start("");
+    check(combinedProfileActive == true && powerShareProfileActive == false,
+          "Y exclusion: starting the combined profile clears a running power-share profile");
+
+    reset_test_state();
+    g_mock_millis = 1000;
+    trapProfileActive = true;             // a shadowed trapezoid would resume with a huge elapsed
+    trapCmdA          = 3.5f;
+    y_start("");
+    check(combinedProfileActive == true && trapProfileActive == false && trapCmdA == 0.0f,
+          "Y exclusion: starting the combined profile clears an active trapezoid and its command");
+
+    reset_test_state();
+    g_mock_millis = 1000;
+    driveCycleActive = true;
+    y_start("");
+    check(combinedProfileActive == true && driveCycleActive == false,
+          "Y exclusion: starting the combined profile clears a running drive cycle");
+}
+
+// ─── 7. Logging: YP prefix, combined typemask, both phase bytes ─────────────
+static void test_y_logging() {
+    test_group("Y combined profile — logs under the YP prefix with both phase bytes set");
+    reset_test_state();
+
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start("");
+    check(logActive == true && std::string(logFileName) == "YP0001.BLG",
+          "Y logging: a combined run files under the YP prefix, not PS");
+
+    // Run into R3 so the sampled region index is unambiguous (non-zero, and the same on both axes).
+    y_run_to(Y_R3 + 1500, /*drain=*/true);
+    check(combinedRegionIdx == 3, "Y logging: the run is inside region 3 when the record is taken");
+    uint32_t lastIdx = logRecordsWritten - 1;
+
+    const std::string* f = sd_file("YP0001.BLG");
+    check(f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE * (lastIdx + 1),
+          "Y logging: the records reached the card");
+    if (f && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE * (lastIdx + 1)) {
+        check((uint8_t)(*f)[6] == (uint8_t)(LOG_TYPE_PS | LOG_TYPE_DC),
+              "Y logging: the header type field is the PS|DC bitmask, telling the decoder the two "
+              "phase bytes are one axis");
+        size_t rec = LOG_HDR_SIZE + LOG_REC_SIZE * lastIdx;
+        check((uint8_t)(*f)[rec + REC_OFF_PS_PHASE] == 3 &&
+              (uint8_t)(*f)[rec + REC_OFF_DC_PHASE] == 3,
+              "Y logging: the region index is written into BOTH ps_phase and dc_phase");
+        check((uint8_t)(*f)[rec + REC_OFF_TRAP_PHASE] == LOG_PHASE_NONE,
+              "Y logging: trap_phase stays 0xFF — the trapezoid is not part of this profile");
+        check(((uint8_t)(*f)[rec + REC_OFF_FLAGS] & 0x01) != 0,
+              "Y logging: flags bit0 marks the combined profile as driving powerBalance");
+        // The velocity axis is genuinely commanded here, so the record's v_sp must be non-zero.
+        check(sd_le<float>(*f, rec + REC_OFF_V_SP) > 0.0f,
+              "Y logging: the record's v_sp carries the profile's commanded velocity");
+    }
+
+    // ── Name collision: the YP prefix participates in the shared run counter. ──
+    reset_test_state();
+    g_sd_state.files["YP0007.BLG"] = "";
+    g_mock_millis = 1000;
+    y_start("");
+    check(std::string(logFileName) == "YP0008.BLG",
+          "Y logging: an existing YP0007.BLG makes the next combined run YP0008.BLG");
+
+    // ── A later PS run must not be misfiled, and must see the YP index. ────
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start("");
+    check(std::string(logFileName) == "YP0001.BLG", "Y logging: the combined run opened YP0001.BLG");
+    Serial.rx_queue.push('Y');
+    doState98();                       // stop it
+    sd_drain_until_closed();
+    setManualMotorCurrent(3.0f);
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    Serial.rx_queue.push('R');
+    doState98();
+    check(std::string(logFileName) == "PS0002.BLG",
+          "Y logging: a power-share run after a combined run files as PS and continues the shared "
+          "counter (the YP file is seen by the scan)");
+}
+
+// ─── 8. Status line, plot suppression, VESC-watch and 'G' interlocks ────────
+static void test_y_status_and_suppression() {
+    test_group("Y combined profile — [YP] status cadence, plot suppression and interlocks");
+    reset_test_state();
+
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start("");
+    Serial.tx_clear();
+    y_run_to(1000);
+    check(Serial.tx_count("[YP] t=") == 2,
+          "Y status: the [YP] snapshot prints on the 500 ms cadence (twice in the first second)");
+    check(Serial.tx_contains("[YP] t=") && Serial.tx_contains(" R") &&
+          Serial.tx_contains(" v_sp=") && Serial.tx_contains(" sp=") &&
+          Serial.tx_contains(" act=") && Serial.tx_contains(" I_fc=") &&
+          Serial.tx_contains(" I_bt=") && Serial.tx_contains(" V_bus=") &&
+          Serial.tx_contains(" FLT=0x"),
+          "Y status: the snapshot carries the region, both setpoints, the measured share, the "
+          "currents, the bus and the fault word");
+
+    // ── Plot mode suppresses it: a non-numeric line breaks the plotter parse. ──
+    plotModeActive = true;
+    plotLastMs     = g_mock_millis;
+    Serial.tx_clear();
+    y_run_to(2000);
+    check(Serial.tx_count("[YP] t=") == 0,
+          "Y status: the [YP] snapshot is suppressed while the plot stream is running");
+    check(Serial.tx_count("sp:") > 0,
+          "Y status: the plot stream itself keeps emitting while the combined profile runs");
+    check(combinedProfileActive && combinedRegionIdx > 0,
+          "Y status: the region machine keeps advancing while the status lines are suppressed");
+
+    // ── ...and it comes back when the stream is turned off. ────────────────
+    plotModeActive = false;
+    Serial.tx_clear();
+    y_run_to(3000);
+    check(Serial.tx_count("[YP] t=") >= 1,
+          "Y status: the [YP] snapshot resumes once the plot stream is off");
+
+    // ── The blocking VESC read-back poll is suppressed for production-identical timing. ──
+    vescWatchActive = true;
+    lastVescWatchMs = 0;
+    g_mock_millis  += VESC_WATCH_PERIOD_MS + 1;   // period elapsed — would poll if not suppressed
+    vesc.reset();
+    doState98();
+    check(vesc.getValues_calls == 0,
+          "Y interlock: pollVescWatch() does not run its blocking poll while the combined profile "
+          "is active");
+    vescWatchActive = false;
+
+    // ── 'G' must refuse over a running profile: it would fight the switch sequencing. ──
+    Serial.tx_clear();
+    Serial.rx_queue.push('G');
+    doState98();
+    check(Serial.tx_contains("[G] REFUSED: a profile is running") && bringupActive == false,
+          "Y interlock: 'G' refuses to arm the staged bring-up while the combined profile runs");
+
+    // ── An armed plot-mode profile must not fire into a running combined run. ──
+    plotModeActive    = true;
+    plotArmTarget     = PLOT_ARM_SHARE;
+    plotArmDeadlineMs = g_mock_millis;
+    Serial.tx_clear();
+    plotArmTick();
+    check(plotArmTarget == PLOT_ARM_NONE && powerShareProfileActive == false &&
+          combinedProfileActive == true,
+          "Y interlock: an armed plot-mode start is cancelled rather than stomping the running "
+          "combined profile");
+}
+
+// ─── 9. The combined profile must NOT run the charging manager ─────────────
+// Load-bearing omission, not tidiness: chargingControl()'s cruise branch calls
+// assertFcChargeEnable(true), whose guard drives BT_BUS_ENABLE LOW. That takes the battery off
+// the bus mid-run, so I_batt → 0 and the MEASURED share pins at 1.0 — every share datapoint after
+// that instant is garbage, on the one profile whose entire purpose is measuring the share axis.
+static void test_y_no_charging_manager() {
+    test_group("Y combined profile — the charging manager never runs (it would corrupt the share)");
+    reset_test_state();
+
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start("");
+    // A charge intent the manager WOULD act on, plus the switch state it would disturb.
+    charge_goal = 0.5f;
+    g_pin_value[BT_BUS_ENABLE]    = HIGH;
+    g_pin_value[FC_CHARGE_ENABLE] = LOW;
+    // Current actually flowing in both channels: powerBalance() deliberately no-ops when the total
+    // is zero (the measured share is undefined), so without this the droop assertion below would
+    // pass vacuously on a loop that never ran.
+    I_fc   = 2.0f;
+    I_batt = 2.0f;
+
+    // Walk several regions, well past the 50 Hz charging cadence many times over.
+    y_run_to(Y_R1 + 2000);
+    check(digitalRead(BT_BUS_ENABLE) == HIGH,
+          "Y charging: BT_BUS_ENABLE stays HIGH through R1 — the battery is never taken off the bus");
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "Y charging: FC_CHARGE_ENABLE stays LOW through R1 — the FC-charge path is never opened");
+
+    // The same tick must show the control stack IS being driven: the omission is of the CHARGING
+    // manager only, not of the motor/droop halves.
+    check(fabsf(current) > 0.01f,
+          "Y charging: the combined profile's branch does drive the motor (commanded current is "
+          "non-zero mid-ramp)");
+    check(!vesc.current_calls.empty() && fabsf(vesc.last_current) > 0.01f,
+          "Y charging: the commanded current actually reaches the VESC");
+    check(SPI.transfer_log.size() > 0,
+          "Y charging: the droop half of the stack runs too (powerBalance writes the MDACs)");
+
+    y_run_to(Y_R4 + 2000);
+    check(digitalRead(BT_BUS_ENABLE) == HIGH && digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "Y charging: the switches are still untouched deep into R4, with charge_goal set high");
+
+    y_run_to(Y_R8 + 1500);
+    check(digitalRead(BT_BUS_ENABLE) == HIGH && digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "Y charging: the charge/regen paths stay under operator control for the whole run");
+    check(combinedProfileActive && combinedRegionIdx == 8,
+          "Y charging: the profile itself ran normally the whole time");
+
+    // ── Contrast: the drive cycle's branch DOES include the charging manager. If someone later
+    // "symmetrizes" the two branches, this half of the test fails and says which way it moved.
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE]   = HIGH;
+    g_pin_value[BT_BUS_ENABLE]    = HIGH;
+    g_pin_value[FC_CHARGE_ENABLE] = LOW;
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    charge_goal = 0.5f;
+    Serial.rx_queue.push('D');
+    doState98();
+    check(driveCycleActive == true, "Y charging (contrast): the drive cycle started");
+    for (int i = 0; i < 50; i++) {          // well past CHARGING_CTRL_PERIOD_US
+        g_mock_millis += 1;
+        g_mock_micros += POWER_BAL_PERIOD_US;
+        doState98();
+    }
+    check(digitalRead(FC_CHARGE_ENABLE) == HIGH && digitalRead(BT_BUS_ENABLE) == LOW,
+          "Y charging (contrast): the DRIVE CYCLE does run chargingControl() — it opens FC_CHARGE "
+          "and drops BT_BUS, which is exactly what 'Y' must never do");
+}
+
+// ─── 10. Start-over-start takeover: the new run is logged too ──────────────
+static void test_y_takeover_logging() {
+    test_group("Y combined profile — a takeover closes the old log and opens one for the new run");
+
+    // ── (a) Y then 'D' on an IDLE card: old file finished, new run STILL LOGGED. ──
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start("");
+    y_run_to(500, /*drain=*/true);
+    check(logActive && std::string(logFileName) == "YP0001.BLG",
+          "Y takeover: the combined run is logging to YP0001.BLG before the takeover");
+    uint32_t yRecs = logRecordsWritten;
+    check(yRecs > 0, "Y takeover: the combined run drained records before the takeover");
+
+    Serial.rx_queue.push('D');
+    doState98();
+    check(driveCycleActive == true && combinedProfileActive == false,
+          "Y takeover: 'D' takes over from the combined profile");
+    check(logActive == true && std::string(logFileName) == "DC0002.BLG",
+          "Y takeover: on an idle card the takeover run IS logged, into a new DC file");
+    check(logFile.isOpen() == true,
+          "Y takeover: the new file's handle is open — the old one was finished, not leaked");
+
+    {
+        const std::string* f = sd_file("YP0001.BLG");
+        check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * yRecs + LOG_REC_SIZE,
+              "Y takeover: the superseded YP file is complete (records + trailer)");
+        if (f) {
+            size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * yRecs;
+            check(sd_le<uint32_t>(*f, tr + 0) == 0xFFFFFFFFu &&
+                  sd_le<uint32_t>(*f, tr + 4) == yRecs,
+                  "Y takeover: the superseded file carries a valid trailer with its record count");
+            check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_STOP,
+                  "Y takeover: the superseded run's close reason is LOG_CLOSE_STOP");
+        }
+    }
+
+    // The new file must actually accumulate.
+    for (int i = 0; i < 200; i++) {
+        g_mock_millis += 1;
+        g_mock_micros += POWER_BAL_PERIOD_US;
+        doState98();
+        logDrainTick();
+    }
+    {
+        const std::string* f = sd_file("DC0002.BLG");
+        check(f != nullptr && f->size() > LOG_HDR_SIZE + LOG_REC_SIZE * 100u,
+              "Y takeover: the takeover run's file accumulates records normally");
+        if (f) check((uint8_t)(*f)[6] == LOG_TYPE_DC,
+                     "Y takeover: the takeover file's header type is LOG_TYPE_DC");
+    }
+    // A3 fix, checked cheaply here: the 'D' start now clears a pending trapezoid.
+    check(trapProfileActive == false && trapCmdA == 0.0f,
+          "Y takeover: the 'D' start leaves no trapezoid state behind (A3)");
+
+    // ── (b) Y then 'R' on a BUSY card: old file finished, new run refused. ──
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start("");
+    y_run_to(500, /*drain=*/true);
+    yRecs = logRecordsWritten;
+    setManualMotorCurrent(3.0f);            // 'R' precondition
+    g_sd_state.busy_ticks = 1000000;        // opening a file here would be an unbounded stall
+    Serial.tx_clear();
+    Serial.rx_queue.push('R');
+    doState98();
+
+    check(powerShareProfileActive == true && combinedProfileActive == false,
+          "Y takeover (busy): 'R' takes over and the profile itself still runs");
+    check(Serial.tx_contains("[SD] previous log still open (card busy)"),
+          "Y takeover (busy): the refusal names the busy card as the reason this run is not logged");
+    check(logActive == false && logFile.isOpen() == false,
+          "Y takeover (busy): no new file is opened and no handle is left behind");
+    check(sd_only_log_name() == "YP0001.BLG",
+          "Y takeover (busy): only the superseded YP file exists — no second .BLG was created");
+    {
+        const std::string* f = sd_file("YP0001.BLG");
+        check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * yRecs + LOG_REC_SIZE,
+              "Y takeover (busy): the superseded file is still finished with its trailer");
+    }
+
+    // ── (c) The other direction: Y taking over a running 'R' is logged too. ──
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    setManualMotorCurrent(3.0f);
+    Serial.rx_queue.push('R');
+    doState98();
+    check(std::string(logFileName) == "PS0001.BLG",
+          "Y takeover (reverse): the share run is logging to PS0001.BLG first");
+    for (int i = 0; i < 50; i++) {
+        g_mock_millis += 1;
+        g_mock_micros += POWER_BAL_PERIOD_US;
+        doState98();
+        logDrainTick();
+    }
+    uint32_t psRecs = logRecordsWritten;
+    y_start("");
+    check(combinedProfileActive == true && powerShareProfileActive == false,
+          "Y takeover (reverse): 'Y' takes over from the running share profile");
+    check(logActive == true && std::string(logFileName) == "YP0002.BLG",
+          "Y takeover (reverse): the combined takeover run IS logged, into a new YP file");
+    {
+        const std::string* f = sd_file("PS0001.BLG");
+        check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * psRecs + LOG_REC_SIZE,
+              "Y takeover (reverse): the superseded PS file is complete");
+        if (f) check((uint8_t)(*f)[LOG_HDR_SIZE + LOG_REC_SIZE * psRecs + 12] == LOG_CLOSE_STOP,
+                     "Y takeover (reverse): the superseded PS run closes with LOG_CLOSE_STOP");
+    }
+}
+
+// ─── 11. Boundary parameters + post-run status readback ─────────────────────
+static void test_y_boundary_params() {
+    test_group("Y combined profile — Vmax boundary is inclusive, and 'S' reads back the committed pair");
+
+    // ── Exactly at the ceiling is ACCEPTED: the check is `>`, not `>=`, and it must stay that
+    // way — 'V' accepts MANUAL_MOTOR_V_MAX too, and the two paths close the identical loop.
+    reset_test_state();
+    y_start(" 5");
+    check(combinedProfileActive == true && near_f(yProfileVmax, MANUAL_MOTOR_V_MAX),
+          "Y bounds: Vmax exactly at MANUAL_MOTOR_V_MAX (5.0) is accepted");
+    check(!Serial.tx_contains("Vmax must be <= "),
+          "Y bounds: the ceiling refusal does not fire at the boundary value itself");
+
+    // ── One step above is refused.
+    reset_test_state();
+    y_start(" 5.01");
+    check(combinedProfileActive == false,
+          "Y bounds: a Vmax just above the ceiling (5.01) is refused");
+    check(Serial.tx_contains("Vmax must be <= "),
+          "Y bounds: the refusal cites the MANUAL_MOTOR_V_MAX ceiling");
+    check(g_sd_state.files.empty() && logActive == false,
+          "Y bounds: the refused start opens no log file");
+
+    // ── The committed pair must be readable AFTER the run: the 'Y' start banner scrolls away
+    // behind the 500 ms status lines, so 'S' is the only way to confirm what was actually
+    // committed rather than typed (B1).
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start(" 2 0.3");
+    check(combinedProfileActive && near_f(yProfileVmax, 2.0f) && near_f(yProfileBoundLo, 0.3f),
+          "Y status readback: the run committed Vmax 2.0 with band [0.30, 0.70]");
+    y_run_to(500);
+    Serial.rx_queue.push('Y');          // stop it — the readback must survive the run ending
+    doState98();
+    check(combinedProfileActive == false, "Y status readback: the run has ended before the readback");
+
+    Serial.tx_clear();
+    Serial.rx_queue.push('S');
+    doState98();
+    check(Serial.tx_contains("combinedProfile:"),
+          "Y status readback: 'S' prints a combinedProfile line");
+    check(Serial.tx_contains("Vmax=2.00"),
+          "Y status readback: the line reports the COMMITTED Vmax after the run ended");
+    check(Serial.tx_contains("band=[0.30, 0.70]"),
+          "Y status readback: the line reports the committed share band, both edges");
+    check(Serial.tx_contains("driveCycle:"),
+          "Y status readback: 'S' also carries the driveCycle line");
+}
+
 #if BENCH_TEST
 // ─── doState0() BENCH_TEST bypass: boot to Idle with the power stage off ──────
 // Built only in the -DBENCH_TEST=1 pass (run_tests_bench). The -DBENCH_TEST=0 suite covers the
@@ -5580,6 +6537,19 @@ int main() {
     test_sdlog_pending_close_interleave();
     test_sdlog_ring_wrap_drain();
     test_sdlog_counter_exhausted();
+
+    // ── 'Y' combined drive-cycle + power-share profile ──────────────────────
+    test_y_params_and_defaults();
+    test_y_refusals();
+    test_y_region_walk();
+    test_y_clip_bounds();
+    test_y_vmax_scaling();
+    test_y_stop_x_q_exclusion();
+    test_y_logging();
+    test_y_status_and_suppression();
+    test_y_no_charging_manager();
+    test_y_takeover_logging();
+    test_y_boundary_params();
 #endif
 
     printf("\n===================================\n");

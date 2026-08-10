@@ -311,6 +311,11 @@ requirements:
   ramp-up → cruise → coast-down → regen hold → standstill). `motorControl()`,
   `powerBalance()`, and `chargingControl()` execute unmodified; the drive cycle only supplies
   `v_setpoint`. Requires `MOT_PWR_ENABLE` to be HIGH before starting.
+- **Combined drive-cycle + power-share profile** (`Y [Vmax] [b]`, 2026-08-10): a 16-region, 40 s
+  table that sweeps `v_setpoint` (normalised × an operator `Vmax`) and `power_share_setpoint`
+  (absolute, clipped to `[b, 1−b]` *after* interpolation) together, so the two loops' cross-coupling
+  is exercised in one run; same prerequisites and control-call set as `D`, logged to `YPnnnn.BLG`
+  with the region index in both phase bytes (PLAN.md §9h).
 - **Status dump** (`S` command): print all pin states and ADC readings to USB Serial.
 - **SD-card bench logging:** `R`/`T`/`D` runs are auto-logged at 1 kHz to the built-in micro-SD;
   the `K` command prints logging status. Logging is observability-only — it never faults the
@@ -351,7 +356,9 @@ machine with `g++` — no Teensy or Arduino IDE required.
   the mock Serial's captured TX), status-line suppression/restore, the `'R'`/`'T'` arm-fire-cancel
   paths under plot mode, and the fire-time precondition re-check. SD logging coverage: lifecycle
   on every exit path incl. fault, ring-buffer overflow drop-count, no-card tolerance, record
-  schema, and the `'K'` status command.
+  schema, and the `'K'` status command. The `'Y'` combined drive-cycle + power-share profile
+  (PLAN.md §9h) is covered too: parameter parsing/clip/region walk/exit paths/`YP` logging/
+  suppression.
 - Run before every flash: `cd test && make`.
 
 See PLAN.md §10 for the full directory layout and test category table.

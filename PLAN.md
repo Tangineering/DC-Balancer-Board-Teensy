@@ -690,7 +690,8 @@ All commands are single uppercase characters, processed in `doState98()`:
 | `V` | Set manual motor **velocity** in m/s (prompts for a float; §9e) |
 | `R` | Start/stop power-share profile emulator (§9e) |
 | `T <Imax> <hold> <rate>` | Start trapezoidal motor-current profile — all three values on one line (peak A / hold s / rate A/s, e.g. `T 6 5 0.5`); bare `T` while running stops it; direct phase-current command, no velocity-chain calibration and no `MOT_PWR_ENABLE` gate (§9f) |
-| `X` | Universal stop: cancel any running profile (`D`/`R`/`T`), armed plot-mode run, or bring-up + manual motor + power-share live (motor zeroed; switches parked only if `D`/`R` was running, mirroring their own stop paths) |
+| `Y [Vmax] [b]` | Start combined drive-cycle + power-share profile — sweeps `v_setpoint` **and** `power_share_setpoint` from one 16-region table; both values optional on one line (bare `Y` runs the defaults, e.g. `Y 1 0.3`); bare `Y` while running stops it; same prerequisites as `D` (§9h) |
+| `X` | Universal stop: cancel any running profile (`D`/`R`/`T`/`Y`), armed plot-mode run, or bring-up + manual motor + power-share live (motor zeroed; switches parked only if `D`/`R`/`Y` was running, mirroring their own stop paths) |
 | `L` | Toggle Serial-Plotter stream: 50 Hz `sp,act,gFC,gBT,ifc,ibt` line; suppresses the periodic status/phase/`[VW]` lines; `R`/`T` arm with a `PLOT_ARM_DELAY_MS` delay (see the `L` paragraph below §9e) |
 | `K` | Print SD-card logging status: card present, current/last file name, record and drop counts (§9g); read-only, live even during the bring-up lockout |
 | `H` / `?` | Print the command list (`printTestHelp()`) |
@@ -870,9 +871,10 @@ contention with the MDAC SPI), auto-tied to the profile lifecycle, with the same
 discipline as everything else in the state machine.
 
 **Auto lifecycle, no manual arm.** Logging opens automatically when a profile starts —
-`startPowerShareProfile()` (`'R'`), `startTrapProfile()` (`'T'`), or the `'D'` start block — and
-closes on every exit path: natural completion (`advancePowerShareProfile()` /
-`advanceTrapProfile()` / `advanceDriveCycle()`), the matching stop-toggle (`'R'`/`'T'`/`'D'`
+`startPowerShareProfile()` (`'R'`), `startTrapProfile()` (`'T'`), `startCombinedProfile()`
+(`'Y'`), or the `'D'` start block — and closes on every exit path: natural completion
+(`advancePowerShareProfile()` / `advanceTrapProfile()` / `advanceDriveCycle()` /
+`advanceCombinedProfile()`), the matching stop-toggle (`'R'`/`'T'`/`'D'`/`'Y'`
 again), `'X'` universal stop, `'Q'` exit, and fault. There is no separate arm/disarm command —
 a card present at profile start is logged; a missing card is silently skipped (below). The
 fault path is deferred: `triggerFault()` only sets a close-request flag (no I/O in the fault
@@ -944,8 +946,8 @@ trailer, prints one warn line, and the profile continues — SD errors never cal
 `triggerFault()`; logging is observability-only.
 
 **File naming.** Profile-prefixed run counter via a directory scan: `PSnnnn.BLG` / `TPnnnn.BLG`
-/ `DCnnnn.BLG` in the card root. At open, one scan finds the max `nnnn` across all three
-prefixes and uses max+1 — stateless (no counter file to corrupt) and collision-free. The scan
+/ `DCnnnn.BLG` / `YPnnnn.BLG` (the combined `PS|DC` profile, §9h) in the card root. At open, one
+scan finds the max `nnnn` across all four prefixes and uses max+1 — stateless (no counter file to corrupt) and collision-free. The scan
 happens once at profile start, not in the control path.
 
 **Retrieval and decoding.** Primary retrieval is a card pull (no serial-dump command — that
@@ -963,6 +965,135 @@ but not implemented — it requires a USB-type rebuild and MTP_Teensy is semi-ex
 USB Serial (§9b); read-only, so it stays live during the bring-up lockout. Deliberately reports
 NO free-space figure: `freeClusterCount()` and friends walk the FAT and block for seconds on a
 real card, which is exactly the stall this module exists to avoid.
+
+### 9h. Combined drive-cycle + power-share profile (`Y`)
+
+**Why.** The `D` drive cycle sweeps velocity with the share setpoint static; the `R` profile
+sweeps the share with the motor held at a constant command. Neither exercises the
+**cross-coupling** — on the vehicle the velocity loop's changing bus draw and the share loop's
+changing droop split move at the same time, and the plant the Youla-H controller was synthesised
+against (`controller_design/system_model.md`) assumes that interaction is benign. `Y` drives both
+setpoints from one table so the coupling appears in a single 1 kHz log.
+
+**Region table (40 s, 16 regions).** Velocity waypoints are **normalised** `[0..1]` and multiplied
+by the operator's `Vmax` at runtime (one table serves any bench speed — the vehicle `Vmax` is
+still uncalibrated). Share waypoints are **absolute**. Steps happen at region **entry** (a region
+whose start value differs from the previous region's end value *is* the step); ramps interpolate
+linearly across the region; holds have start == end. The region count is derived from the array,
+never a separate constant.
+
+| # | ms | v_start | v_end | s_start | s_end | Purpose |
+|---|----|---------|-------|---------|-------|---------|
+| 0 | 2000 | 0.0 | 0.0 | 0.50 | 0.50 | settle |
+| 1 | 4000 | 0.0 | 0.6 | 0.50 | 0.50 | v ramp up (solo) |
+| 2 | 2000 | 0.6 | 0.6 | 0.50 | 0.50 | buffer |
+| 3 | 3000 | 0.6 | 0.6 | 0.65 | 0.65 | s step up (solo, intermediate) |
+| 4 | 4000 | 0.6 | 1.0 | 0.65 | 0.35 | **BOTH ramp** (v up, s down) — interaction test |
+| 5 | 2000 | 1.0 | 1.0 | 0.35 | 0.35 | buffer |
+| 6 | 1500 | 1.0 | 1.0 | 1.00 | 1.00 | s step to the hi bound (brief) |
+| 7 | 3500 | 1.0 | 1.0 | 0.35 | 0.35 | s step down (solo); long hold doubles as buffer |
+| 8 | 3000 | 0.5 | 0.5 | 0.65 | 0.65 | **BOTH step** (v down, s up) — interaction test |
+| 9 | 2000 | 0.5 | 0.5 | 0.65 | 0.65 | buffer |
+| 10 | 3000 | 0.5 | 0.5 | 0.65 | 0.00 | s ramp down to the lo bound (solo) |
+| 11 | 1500 | 0.5 | 0.5 | 0.00 | 0.00 | lo-bound check (brief) |
+| 12 | 1500 | 0.5 | 0.5 | 0.50 | 0.50 | s step up, recovery to mid |
+| 13 | 2000 | 0.2 | 0.2 | 0.50 | 0.50 | v step down (solo) |
+| 14 | 3000 | 0.2 | 0.0 | 0.50 | 0.50 | v coast-down ramp |
+| 15 | 2000 | 0.0 | 0.0 | 0.50 | 0.50 | end hold → natural completion |
+
+Each axis gets **solo** excursions (so a per-axis step response can still be fitted from the same
+run) plus **two deliberately simultaneous** regions (R4 ramp+ramp, R8 step+step) which are the
+actual interaction test. R6 and R11 are brief excursions to the share bounds (all-FC / all-BT) to
+check the droop mapping's clamp behaviour at the extremes.
+
+**Per-tick math.** `advanceCombinedProfile()` computes elapsed-in-region, interpolates both
+dimensions, then applies:
+
+```cpp
+v_setpoint           = v_norm * yProfileVmax;
+power_share_setpoint = constrain(s_abs, yProfileBoundLo, 1.0f - yProfileBoundLo);
+```
+
+**The clip is applied AFTER interpolation, deliberately.** A ramp that crosses the bound runs at
+its normal slope and then **flattens** there — that kink is intended behaviour. Pre-scaling the
+waypoints into the band would instead shrink every slope in the table and quietly alter the
+excitation the identification is fitted to.
+
+**Parameters** (`[Vmax] [b]`, both optional, one line, e.g. `Y 1 0.3`):
+- `Vmax` (m/s, default **1.0**) — must be `> 0` and `<= MANUAL_MOTOR_V_MAX` (5.0 m/s). This is
+  the **same** ceiling `setManualMotorVelocity()` (`'V'`) enforces, reused rather than reinvented:
+  `Y` closes the identical velocity loop, so a second, looser bound here would let `Y` drive a
+  setpoint `V` refuses.
+- `b` (share bound, default **0.0** = no clipping) — must satisfy `0 <= b < 0.5`. At `b = 0.5` the
+  band `[b, 1-b]` collapses to a point and the whole share axis flattens, so it is refused.
+  `b > 0.35` is **accepted with a warning**: above that the clip starts compressing the table's
+  intermediate 0.35/0.65 plateaus, not just the 0/1 bound checks, so the run no longer matches the
+  table above.
+
+A bare `Y` + newline runs the defaults — the only prompt in State 98 whose parameters are all
+optional, so `handlePendingInputChar()` dispatches `PEND_Y_PARAMS` **before** its shared
+empty-line cancel. Any validation failure rejects the whole line (no partial parameter set), and a
+third value is refused rather than ignored.
+
+**Prerequisites (identical to `D`, checked at the keypress).** Refused if a staged bring-up is
+running, if `velocityChainCalibrated()` is false (`printVelocityChainRefusal()`), or if
+`MOT_PWR_ENABLE` is LOW. They are deliberately not re-checked at parse time: while the prompt is
+pending only digits/sign/point/space reach the buffer and every other key cancels the entry, so no
+command can toggle `MOT_PWR_ENABLE` or arm a bring-up in that window.
+
+**Control stack.** The `combinedProfileActive` branch in `doState98()` runs
+`advanceCombinedProfile()` first, then — re-checking the flag, exactly as the drive-cycle branch
+does — `motorControlGated()` and `powerBalanceGated()` in that order. The re-check exists for the
+drive cycle's reason: the completion path zeroes the motor, and letting `motorControl()` run in
+the same tick would undo the flush with a negative error (`0 − v_actual`) while the flywheel spins
+down, i.e. a "completed" profile commanding regen current.
+
+**`chargingControl()` deliberately does NOT run** — the same omission as the `R` profile, and here
+it is load-bearing rather than merely tidy. `Y` sweeps `power_share_setpoint` in order to
+**measure** the share axis; with `charge_goal > 0` the cruise branch of `chargingControl()` calls
+`assertFcChargeEnable(true)`, whose guard drives `BT_BUS_ENABLE` LOW. That takes the battery off
+the bus mid-run: `I_batt → 0`, the measured share pins at 1.0, and every share datapoint after
+that instant is garbage. The regen produced by the coast-down regions (R14/R15) is absorbed by the
+hardware TL431/BSP170P braking chopper, which is not under firmware control — exactly as in the
+`R` and `T` profiles. So the charge/regen paths stay static under operator control for the whole
+run, and share experiments have `charge_goal = 0` semantics guaranteed regardless of what the Pi
+last commanded.
+
+**Exits.** Stop-toggle (`Y` again): motor zeroed (`haltMotorOutput()`), `safeAllSwitches()`,
+`power_share_setpoint = 0.5`, `logRequestClose(LOG_CLOSE_STOP)` — it sweeps the charge/regen paths
+like `D`/`R`, so a mid-region stop must leave nothing latched. Natural completion (R15 elapsed):
+motor zeroed, share back to 0.5, `LOG_CLOSE_COMPLETE`, switches left as-is (mirroring the `D`/`R`
+*natural* completions — only their stop-toggle/`X` paths park switches). `X` treats it exactly like
+`D`/`R` (parks switches, resets the share setpoint); `Q` clears the flag with the other three.
+Mutual exclusion runs both ways: starting `Y` clears `driveCycleActive`/`powerShareProfileActive`/
+`trapProfileActive`/`trapCmdA`, and the `D`/`R`/`T` start paths clear `combinedProfileActive` (an
+orphaned flag would otherwise resume with a huge elapsed time when the other profile stopped).
+`G` refuses while it runs, and `pollVescWatch()` is suppressed during it.
+
+**Plot mode.** `Y`, like `D`, is **not** arm-delayed — it starts immediately even under plot mode,
+despite being the one profile besides `R` that moves the plotted `sp` series. Arming it would mean
+a parameter line typed at the prompt fires seconds later with the velocity loop live, and unlike
+`R`/`T` its preconditions are checked at the keypress precisely because nothing that reaches the
+input buffer can invalidate them — an arming window would reopen that hole. The interaction runs
+the other way instead: an armed `R`/`T` is refused over a running `Y` and cancelled by a `Y` that
+starts during the countdown.
+
+**On a fault mid-run**, `power_share_setpoint` and `combinedProfileActive` are left stale by
+design. State 99 is latched and nothing consumes either value there; `doState99()` zeroes the
+motor and takes the boosts down on its own schedule, and the latch is only cleared by a power
+cycle, which reinitialises both. Adding cleanup to the fault path would put work in front of the
+safety transition for no observable benefit.
+
+**Logging.** Opens `logOpenForProfile(LOG_TYPE_PS | LOG_TYPE_DC)` **after** the flags/region index
+are set, so the first sample already carries region 0. That combined mask gives the file the new
+`YPnnnn.BLG` prefix (the `PS|DC` test comes first in `logNextFileName()`, and `YP` joins the
+prefix scan set so the run counter stays monotonic across all four types). `logSampleTick()` writes
+the region index into **both** `ps_phase` and `dc_phase` — the "both bytes non-0xFF at once" case
+the three independent phase bytes and the header bitmask were designed for. `trap_phase` stays
+`0xFF`. **No record-format or decoder change.**
+
+Status snapshot every 500 ms (suppressed under plot mode):
+`[YP] t=… R<idx> v_sp=… sp=… act=… I_fc=… I_bt=… V_bus=… FLT=…`
 
 ### 9d. `doState98()` skeleton
 
@@ -1046,6 +1177,7 @@ by the mocks before the `#include`.
 | **`assertFcChargeEnable(false)`** | Only `FC_CHARGE_ENABLE` goes LOW; does not disturb `BT_BUS_ENABLE` or `REGEN_ENABLE` |
 | **Drive cycle simulation** | `advanceDriveCycle()` transitions through all phases in the correct order given controlled `millis()` injection; `v_setpoint` hits expected values at each phase boundary |
 | **MPPT_DISABLE polarity** | `chargingControl()` sets `MPPT_DISABLE` LOW (inhibit) during regen and when `charge_goal ≈ 0`; HIGH (enabled) when charger is ready and no regen |
+| **Y combined profile** | parameter parsing + defaults (bare line, one value, two values), refusals (`Vmax` <= 0 / above `MANUAL_MOTOR_V_MAX`, `b` < 0 / >= 0.5, third value) and the `b > 0.35` warn-and-accept, region walk across all 16 regions, clip behaviour at both bounds incl. the post-interpolation kink, `Vmax` scaling of the normalised waypoints, stop-toggle / `'X'` / `'Q'` exits and mutual exclusion with `D`/`R`/`T`, `YP` file naming + the region index in both phase bytes, status line + plot-mode suppression |
 | **SD bench logging** | lifecycle on all exit paths (complete/stop/X/Q/fault), 1 kHz rate gate, overflow drop+count, no-card warn-once, write-error mid-run, name collision, record schema, velocity-valid flag + per-profile phase bytes, `'K'` status, plot+log independence |
 
 ### 10c. Running the tests

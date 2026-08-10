@@ -271,6 +271,7 @@ back over serial:
 | `V` | Set manual motor velocity in m/s (prompts) | refused until the velocity chain is calibrated |
 | `R` | Start/stop power-share profile sweep | needs `A`/`V` set + `MOT_PWR_ENABLE` HIGH; stop parks switches |
 | `T <Imax> <hold s> <rate A/s>` | Start trapezoidal current profile (one line, e.g. `T 6 5 0.5`) | direct phase-current ramp; `T` alone while running stops it; switches left as-is |
+| `Y [Vmax] [b]` | Start combined drive-cycle + power-share profile (one line, both args optional, e.g. `Y 1 0.3`) | sweeps velocity **and** share together; same prerequisites as `D`; `Y` alone while running stops it |
 | `X` | Universal stop | cancels any profile/bring-up/armed run + manual motor + live share loop |
 | `L` | Toggle Serial-Plotter stream | 50 Hz `sp,act,gFC,gBT,ifc,ibt` line; suppresses status lines; `R`/`T` arm with a 5 s delay |
 | `K` | Print SD-card logging status | card present, current/last file, record/drop counts; read-only |
@@ -296,19 +297,64 @@ supersedes a pending arm with an explicit cancel message.
 Logs the power-share/motor/bus signals at the full 1 kHz control cadence to the Teensy's
 built-in micro-SD — 20x finer than the 50 Hz `L` stream, needed to see the Youla-H share loop's
 actual transient. Logging starts and stops automatically with the profile lifecycle: it opens
-when `R`, `T`, or `D` starts, and closes on natural completion, the matching stop-toggle, `X`,
+when `R`, `T`, `D`, or `Y` starts, and closes on natural completion, the matching stop-toggle, `X`,
 `Q`, or a fault (the close is deferred through the fault transition so it never delays a safety
 action). There's no separate arm command — a card present at profile start is logged, a missing
 one is silently skipped. No card in the slot, a full card, or a write error never faults the
 board or blocks a profile: the firmware prints a warning and keeps running. `K` prints a
-status line — card present, current/last file name, record and drop counts — and stays live
+status line — card present, current/last file name (`PS`/`TP`/`DC`/`YP` prefix by profile type),
+record and drop counts — and stays live
 even during the bring-up lockout. It reports no free-space figure on purpose: the FAT-walking
 calls that would produce one block for seconds on a real card. Retrieve a run by pulling the card (`PSnnnn.BLG` /
-`TPnnnn.BLG` / `DCnnnn.BLG` in the root) and decode it on the laptop:
+`TPnnnn.BLG` / `DCnnnn.BLG` / `YPnnnn.BLG` in the root) and decode it on the laptop:
 
 ```
 python tools/decode_benchlog.py FILE.BLG > run.csv
 ```
+
+### Combined drive-cycle + power-share profile (`Y`)
+
+`D` moves the velocity with the share held still; `R` moves the share with the motor held still.
+`Y` moves **both at once**, which is the only way to see the cross-coupling the vehicle actually
+runs in — the velocity loop's changing bus draw against the share loop's changing droop split.
+It's a fixed 40 s, 16-region table: solo ramps and steps on each axis (so you can still fit a
+per-axis response from the same run), two deliberately simultaneous regions (a combined ramp and a
+combined step), buffers between excitations to let each transient settle, and two brief excursions
+to the share extremes (all-FC, all-BT) to check the droop clamp.
+
+Both arguments are optional and go on one line with the key:
+
+```
+Y 1 0.3
+```
+
+- **`Vmax`** (m/s, default `1.0`) scales the table's normalised velocity waypoints, so the same
+  profile works at any bench speed. Must be greater than 0 and no more than 5.0 m/s — the same
+  ceiling the `V` manual-velocity key enforces.
+- **`b`** (default `0`) clips the share setpoint to `[b, 1−b]`, for keeping a fragile setup away
+  from the share extremes. Must satisfy `0 ≤ b < 0.5` (at 0.5 the band collapses to a point and
+  the share axis flattens, so it's refused). Above 0.35 it still runs but prints a warning: the
+  clip then starts eating the table's intermediate plateaus, not just the 0/1 bound checks.
+
+The clip is applied *after* interpolation, so a ramp that crosses the bound keeps its normal slope
+and then flattens — that kink is deliberate, not a bug. A bare `Y` + Enter runs the defaults.
+
+Like `R` and `T` — and unlike `D` — `Y` does **not** run the charging manager. That's deliberate:
+`chargingControl()` would open the FC charge path mid-run, which drops the battery off the bus and
+pins the measured share at 1.0, destroying the very thing the run is measuring. Your charge and
+regen switches stay exactly where you set them, so a share experiment behaves as though
+`charge_goal` were 0 no matter what the Pi last commanded; coast-down regen is soaked up by the
+hardware braking chopper as always. `Y` also starts immediately under plot mode rather than
+arming like `R`/`T` (its prerequisites are checked at the keypress, which an arming delay would
+undermine); a pending `R`/`T` arm is refused over, and cancelled by, a running `Y`.
+
+Prerequisites are the same as `D`: no bring-up in progress, a calibrated velocity chain, and
+`MOT_PWR_ENABLE` HIGH (key `3`). Press `Y` again to stop — the motor is zeroed and the path
+switches parked, exactly as stopping `D` or `R` does. On natural completion the motor is zeroed
+and the share returns to 0.50, with the switches left as they are (matching how `D`/`R` finish).
+`X` and `Q` stop it like any other profile. Runs log automatically to `YPnnnn.BLG` (same
+`decode_benchlog.py`, no format change — the profile's region index appears in *both* the
+drive-cycle and power-share phase columns, which is how you recognize a combined run).
 
 ### Testing an individual component
 
@@ -365,7 +411,9 @@ sequences, `assertFcChargeEnable()` ordering, `pollAg105()` state gating, `doSta
 handling, the State 98 drive cycle, and the wheel-speed buffer reset. It also covers the SD-card
 bench logger: lifecycle on every profile exit path (complete/stop/`X`/`Q`/fault), the 1 kHz
 rate gate, ring-buffer overflow drop-and-count, no-card and mid-run write-error tolerance, file
-naming/collision, the 52-byte record schema, and `K` status output. Run before every flash.
+naming/collision, the 52-byte record schema, and `K` status output. The `Y` combined profile
+(parameter parsing/clip/region walk/exit paths/`YP` logging/suppression) is covered too. Run
+before every flash.
 
 ## Notes for calibration
 

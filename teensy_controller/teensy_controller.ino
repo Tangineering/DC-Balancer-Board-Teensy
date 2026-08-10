@@ -192,6 +192,17 @@
  *  - SD bench logging (2026-08-10): 1 kHz binary logging of State-98 profiles to the built-in SD
  *    (SdFat/SDIO), ring-buffered non-blocking drain in loop(), auto lifecycle with the R/T/D
  *    profiles, 'K' status command, tools/decode_benchlog.py decoder.
+ *  - Combined drive-cycle + power-share profile (2026-08-10, State-98 'Y'): a single 40 s,
+ *    16-region table that sweeps v_setpoint AND power_share_setpoint together, so the velocity
+ *    loop and the Youla-H share loop are exercised under the cross-coupling they actually see in
+ *    the vehicle (solo steps/ramps on each axis for identification, two deliberately simultaneous
+ *    regions for interaction, and brief excursions to both share bounds). Velocity waypoints are
+ *    NORMALISED (scaled by an operator Vmax, default 1.0 m/s, bounded by MANUAL_MOTOR_V_MAX);
+ *    share waypoints are ABSOLUTE and clipped to [b, 1-b] with an operator bound b (default 0).
+ *    Same prerequisites as 'D' (calibrated velocity chain + MOT_PWR_ENABLE HIGH), mutually
+ *    exclusive with D/R/T, logged to YPnnnn.BLG (LOG_TYPE_PS|LOG_TYPE_DC — both phase bytes
+ *    carry the region index, which is exactly the combined-profile case the log format was
+ *    designed for).
  */
 
 #include <VescUart.h>
@@ -898,6 +909,77 @@ float     trapCmdA          = 0.0f;   // last commanded current (status print / 
 // itself: VESC Six EDU 25 A continuous (50 A burst). Bound the profile there, not at the budget.
 const float TRAP_I_ABS_MAX = 25.0f;   // A — VESC Six EDU continuous rating
 
+// ── State 98 bench tools: combined drive-cycle + power-share profile ('Y') ────────────────────
+// The 'D' drive cycle sweeps velocity with the share setpoint static; the 'R' profile sweeps the
+// share with the motor held constant. Neither exercises the CROSS-COUPLING: on the vehicle the
+// velocity loop's changing bus draw and the share loop's changing droop split move at the same
+// time, and the plant the Youla-H controller was synthesised against (controller_design/) assumes
+// that interaction is benign. This profile drives BOTH setpoints from one 16-region table so the
+// coupling shows up in a single 1 kHz log.
+//
+// Table design (FROZEN — the region boundaries are what the identification/validation reads):
+//   - Each axis gets SOLO excursions (steps and ramps with the other axis held) so a per-axis
+//     step response can still be fitted from the same run, and TWO deliberately SIMULTANEOUS
+//     regions (R4 ramp+ramp, R8 step+step) which are the actual interaction test.
+//   - Buffer/hold regions separate the excitations so each transient settles before the next.
+//   - R6 and R11 are brief excursions to the share bounds (1.0 and 0.0), i.e. "all FC" / "all BT",
+//     to check the droop mapping's clamp behaviour at the extremes.
+//
+// Units are deliberately NOT the same on the two axes:
+//   - v_start/v_end are NORMALISED [0..1] and multiplied by the operator's yProfileVmax at
+//     runtime, so one table serves any bench speed (the vehicle Vmax is still uncalibrated).
+//   - s_start/s_end are ABSOLUTE share values, then clipped to [b, 1-b] AFTER interpolation.
+//     Post-interpolation is the point: a ramp that crosses the bound runs at its normal slope and
+//     then FLATTENS at the bound. Pre-scaling the waypoints would instead shrink the slope, which
+//     changes the excitation the identification sees. The kink is intended.
+struct CombinedProfileRegion {
+    uint32_t durationMs;
+    float    v_start;   // normalised [0..1]; x yProfileVmax at runtime
+    float    v_end;
+    float    s_start;   // absolute FC share; clipped to [b, 1-b] at runtime
+    float    s_end;
+};
+
+// Steps happen at region ENTRY (a region whose start value differs from the previous region's end
+// value IS the step); ramps interpolate across the region; holds have start == end.
+static const CombinedProfileRegion COMBINED_PROFILE[] = {
+    { 2000, 0.0f, 0.0f, 0.50f, 0.50f },   //  0: settle
+    { 4000, 0.0f, 0.6f, 0.50f, 0.50f },   //  1: v ramp up (solo)
+    { 2000, 0.6f, 0.6f, 0.50f, 0.50f },   //  2: buffer
+    { 3000, 0.6f, 0.6f, 0.65f, 0.65f },   //  3: s step up (solo, intermediate)
+    { 4000, 0.6f, 1.0f, 0.65f, 0.35f },   //  4: BOTH ramp (v up, s down) — interaction test
+    { 2000, 1.0f, 1.0f, 0.35f, 0.35f },   //  5: buffer
+    { 1500, 1.0f, 1.0f, 1.00f, 1.00f },   //  6: s step to the hi bound (brief)
+    { 3500, 1.0f, 1.0f, 0.35f, 0.35f },   //  7: s step down (solo); long hold doubles as buffer
+    { 3000, 0.5f, 0.5f, 0.65f, 0.65f },   //  8: BOTH step (v down, s up) — interaction test
+    { 2000, 0.5f, 0.5f, 0.65f, 0.65f },   //  9: buffer
+    { 3000, 0.5f, 0.5f, 0.65f, 0.00f },   // 10: s ramp down to the lo bound (solo)
+    { 1500, 0.5f, 0.5f, 0.00f, 0.00f },   // 11: lo-bound check (brief)
+    { 1500, 0.5f, 0.5f, 0.50f, 0.50f },   // 12: s step up, recovery to mid
+    { 2000, 0.2f, 0.2f, 0.50f, 0.50f },   // 13: v step down (solo)
+    { 3000, 0.2f, 0.0f, 0.50f, 0.50f },   // 14: v coast-down ramp
+    { 2000, 0.0f, 0.0f, 0.50f, 0.50f },   // 15: end hold -> natural completion
+};
+// Derived, never hand-maintained: a table edit that forgot to update a separate count constant
+// would either truncate the run or walk off the end of the array.
+static const int COMBINED_PROFILE_REGIONS =
+    (int)(sizeof(COMBINED_PROFILE) / sizeof(COMBINED_PROFILE[0]));
+
+bool     combinedProfileActive = false;
+uint8_t  combinedRegionIdx     = 0;
+uint32_t combinedRegionStart   = 0;
+uint32_t combinedStatusLast    = 0;
+// Operator parameters, committed by startCombinedProfile() and validated in
+// parseCombinedParamsLine(). Defaults are what a bare "Y<newline>" runs.
+float    yProfileVmax    = 1.0f;   // m/s — scales every normalised velocity waypoint
+float    yProfileBoundLo = 0.0f;   // share clip band: [b, 1-b]; 0 = no clipping
+const float Y_VMAX_DEFAULT  = 1.0f;   // m/s — conservative bench speed; TODO(calibrate)
+const float Y_BOUND_DEFAULT = 0.0f;   // no clip by default: run the table's full 0..1 excursions
+// Above this the clip starts eating the table's INTERMEDIATE plateaus (0.35/0.65), not just the
+// 0.0/1.0 bound checks — the run still works but stops being the profile described above, so it
+// is accepted with a warning rather than refused.
+const float Y_BOUND_WARN    = 0.35f;
+
 // ── State 98 bench tools: serial-plotter stream ('L') ──────────────────────────────────────────
 // Emits ONE condensed, fixed-shape line per PLOT_PERIOD_MS that the Arduino IDE Serial Plotter
 // parses directly: "label:value,label:value,…". Six series, deliberately all share-loop signals
@@ -922,6 +1004,14 @@ const uint32_t PLOT_PERIOD_MS = 20;   // TODO(calibrate): raise if the IDE plott
 // plot mode ON, those two keys therefore ARM the run instead of starting it, giving time to switch
 // windows. Nothing is printed during the countdown — the plot stream is already running, so the
 // operator sees a live baseline and then the trace move when the profile actually starts.
+// 'D' and 'Y' are deliberately NOT armed and start immediately under plot mode. For 'D' the plot's
+// six fields are all share-loop signals, so there is nothing to watch. 'Y' DOES move the plotted
+// 'sp' series, but arming it would mean a parameter line typed at the prompt fires seconds later
+// with the velocity loop live — and unlike 'R'/'T' its own preconditions (MOT_PWR, the calibrated
+// velocity chain) are checked at the keypress specifically because nothing that reaches the input
+// buffer can invalidate them; an arming window would reopen exactly that hole. The interaction
+// runs the other way instead: an armed 'R'/'T' is refused over a running 'Y' and cancelled by one
+// that starts during the countdown (see plotArmTick() / the 'R' arm block).
 enum PlotArmTarget { PLOT_ARM_NONE, PLOT_ARM_SHARE, PLOT_ARM_TRAP };
 PlotArmTarget plotArmTarget    = PLOT_ARM_NONE;
 uint32_t      plotArmDeadlineMs = 0;
@@ -943,7 +1033,10 @@ enum PendingInput {
     PEND_OPEN_DROOP,
     PEND_MOTOR_CURRENT,
     PEND_MOTOR_VELOCITY,
-    PEND_TRAP_PARAMS
+    PEND_TRAP_PARAMS,
+    // Combined profile: "<Vmax> <b>" on one line, BOTH optional (a bare newline runs the
+    // defaults). Same single-line discipline as PEND_TRAP_PARAMS, and for the same reason.
+    PEND_Y_PARAMS
 };
 PendingInput pendingInput = PEND_NONE;
 char         inputBuf[32];   // sized for the 3-value trapezoid line (e.g. "-12.5 10 0.25")
@@ -1022,6 +1115,9 @@ bool plotSuppressStatus();
 void startTrapProfile(float imax, uint32_t holdMs, float rateAps);
 void advanceTrapProfile();
 void parseTrapParamsLine(const char* line);
+void startCombinedProfile(float vmax, float boundLo);
+void advanceCombinedProfile();
+void parseCombinedParamsLine(const char* line);
 void commandMotorCurrentLimited(float amps, float absMax);
 const char* trapPhaseStr(TrapPhase p);
 void handlePendingInputChar(char c);
@@ -1170,7 +1266,12 @@ static void logResetBuffers() {
 // start only — never in the control path.
 // Returns false when the 4-digit counter is exhausted (see the 9999 guard at the bottom).
 static bool logNextFileName(uint8_t typeMask, char *out, size_t outLen) {
-    const char *prefix = (typeMask & LOG_TYPE_PS) ? "PS"
+    // The combined ('Y') profile sets PS|DC, so its test MUST come first — a plain
+    // (typeMask & LOG_TYPE_PS) check would file every combined run under "PS" and make the two
+    // run types indistinguishable on the card.
+    const char *prefix = ((typeMask & (LOG_TYPE_PS | LOG_TYPE_DC)) == (LOG_TYPE_PS | LOG_TYPE_DC))
+                                                  ? "YP"
+                       : (typeMask & LOG_TYPE_PS) ? "PS"
                        : (typeMask & LOG_TYPE_TP) ? "TP"
                        :                            "DC";
     uint32_t maxIdx = 0;
@@ -1186,7 +1287,8 @@ static bool logNextFileName(uint8_t typeMask, char *out, size_t outLen) {
             if (strlen(nm) != 10) continue;
             bool knownPrefix = (nm[0] == 'P' && nm[1] == 'S') ||
                                (nm[0] == 'T' && nm[1] == 'P') ||
-                               (nm[0] == 'D' && nm[1] == 'C');
+                               (nm[0] == 'D' && nm[1] == 'C') ||
+                               (nm[0] == 'Y' && nm[1] == 'P');   // combined DC+PS profile
             if (!knownPrefix) continue;
             if (strcmp(nm + 6, ".BLG") != 0) continue;
             uint32_t idx = 0;
@@ -1277,12 +1379,21 @@ void logOpenForProfile(uint8_t typeMask) {
         return;
     }
 
-    // Defensive: the three profile starts clear each other, so a live log at this point is a
-    // programming error, not an operating condition. Do NOT open a second file over it — finish
-    // the old one and skip logging this run rather than leaking the handle or splicing two runs
-    // into one file. logFinishFile() (not logRequestClose()) because a stale OPEN HANDLE with
-    // logActive/logCloseRequested already clear would make the request a no-op and leak it.
+    // A live log at this point means one profile took over from another without its stop path
+    // running (the profile starts clear each other's flags, but a direct start-over-start does not
+    // route through a stop). Never open a second file over the first — that would either leak the
+    // handle or splice two runs into one file. Finish the old file, then decide whether this run
+    // can still be logged. logFinishFile() (not logRequestClose()) because a stale OPEN HANDLE
+    // with logActive/logCloseRequested already clear would make the request a no-op and leak it.
     if (logActive || logCloseRequested || logFile.isOpen()) {
+        // Whether the NEW run can also be logged turns on the card being idle. Opening a file is
+        // not free — logNextFileName() walks the directory and preAllocate() claims 32 MB — and
+        // doing that on a card that is still stalled would be a second, unbounded stall at a
+        // profile-start KEYPRESS with the power stage live, i.e. exactly the delay to
+        // detectFaults() this module may never introduce. Idle card: finish the old file and take
+        // the new one. Busy card: finish the old file and stop there.
+        bool cardIdle = sd.card() && !sd.card()->isBusy();
+
         // Only stamp a reason if nobody has already set one. A close ALREADY REQUESTED (e.g. 'Q'
         // exit with a stalled card, then straight back into a new run) carries the real reason the
         // run ended; overwriting it with STOP would mislabel the trailer and contradicts
@@ -1290,8 +1401,15 @@ void logOpenForProfile(uint8_t typeMask) {
         // a stale open handle with the flags already clear, which genuinely is a STOP.
         if (logCloseReason == 0) logCloseReason = LOG_CLOSE_STOP;
         logFinishFile(true);
-        Serial.println("[SD] previous log still open — this run is NOT logged");
-        return;
+
+        if (!cardIdle) {
+            Serial.println("[SD] previous log still open (card busy) — this run is NOT logged");
+            return;
+        }
+        // FALL THROUGH to open a new file. A profile taking over from another directly (start
+        // over start, without the first one's stop path running) is a real bench run, and
+        // silently losing its log was the worse failure — the old file is closed and complete at
+        // this point, so the open below starts from the same clean state a normal start does.
     }
 
     char name[16];
@@ -1384,11 +1502,20 @@ void logSampleTick() {
     r.V_bus    = V_bus;
     r.I_cmd    = current;
     r.fault_flags = fault_flags;
-    r.ps_phase   = powerShareProfileActive ? powerShareProfilePhaseIdx : LOG_PHASE_NONE;
-    r.dc_phase   = driveCycleActive        ? driveCyclePhaseIdx        : LOG_PHASE_NONE;
+    // The combined ('Y') profile drives BOTH setpoints from one region index, so it writes that
+    // index into BOTH phase bytes — the exact "both bytes non-0xFF at once" case the three
+    // independent phase bytes and the header bitmask were designed for (no format change). The
+    // header's PS|DC mask is what tells the decoder the two bytes are one axis, not two.
+    r.ps_phase   = powerShareProfileActive ? powerShareProfilePhaseIdx
+                 : combinedProfileActive   ? combinedRegionIdx
+                 :                           LOG_PHASE_NONE;
+    r.dc_phase   = driveCycleActive        ? driveCyclePhaseIdx
+                 : combinedProfileActive   ? combinedRegionIdx
+                 :                           LOG_PHASE_NONE;
     r.trap_phase = trapProfileActive       ? (uint8_t)trapPhase        : LOG_PHASE_NONE;
     r.flags = 0;
-    if (powerShareProfileActive || driveCycleActive || trapProfileActive || powerBalanceLive)
+    if (powerShareProfileActive || driveCycleActive || trapProfileActive ||
+        combinedProfileActive   || powerBalanceLive)
         r.flags |= 0x01;
     if (velocityChainCalibrated())
         r.flags |= 0x02;
@@ -2291,6 +2418,7 @@ void doState99() {
 //   5 — toggle FC_CHARGE_ENABLE     6 — toggle BT_SEQUENCE_ENABLE
 //   C — toggle CBAL_DISABLE         M — toggle MPPT_DISABLE
 //   D — start/stop drive cycle      T — start/stop trapezoidal current profile
+//   Y [Vmax] [b] — start/stop combined drive-cycle + power-share profile (both args optional)
 //   S — print status snapshot
 //   K — print SD bench-logger status (card, file, record/drop counts)
 //   I — scan I2C bus (lists ACKing addresses; Ag105 expected at 0x30)
@@ -2323,14 +2451,20 @@ void printTestHelp() {
     Serial.println("  T <Imax A> <hold s> <rate A/s> - start trapezoidal current profile");
     Serial.println("      (one line, e.g. \"T 6 5 0.5\"; 'T' alone while running stops it;");
     Serial.println("      direct VESC phase current — no velocity-chain calibration needed)");
+    Serial.println("  Y [Vmax m/s] [b] - start combined drive-cycle + power-share profile");
+    Serial.println("      (one line, e.g. \"Y 1 0.3\"; both args optional — bare 'Y' runs the");
+    Serial.println("      defaults; 'Y' alone while running stops it; sweeps v_setpoint AND");
+    Serial.println("      power_share_setpoint together; needs a calibrated velocity chain +");
+    Serial.println("      MOT_PWR on, like 'D'; share clipped to [b, 1-b], 0 <= b < 0.5)");
     Serial.println("  X - universal stop: cancel any running profile + manual motor + share live");
     Serial.println("  L - toggle Serial-Plotter stream (sp,act,gFC,gBT,ifc,ibt @50Hz)");
     Serial.print  ("      while ON: status/phase lines suppressed; 'R'/'T' arm with a ");
     Serial.print(PLOT_ARM_DELAY_MS);
     Serial.println("ms delay");
     Serial.println("      so you can switch to the plotter window before the run starts");
-    Serial.println("      ('D' is NOT armed — the plot fields are share-loop signals)");
-    Serial.println("  K - SD logger status (auto-logs every R/T/D run @1kHz to PS/TP/DC####.BLG)");
+    Serial.println("      ('D' and 'Y' are NOT armed — they start immediately; an armed 'R'/'T'");
+    Serial.println("      is refused over, and cancelled by, a running 'D'/'Y')");
+    Serial.println("  K - SD logger status (auto-logs every R/T/D/Y run @1kHz to PS/TP/DC/YP####.BLG)");
     Serial.println("  H - show this command list");
     Serial.println("  * 1/2 refuse ON if the matching boost is ON and VBUS is low (use G);");
     Serial.println("    2 also refuses while FC_CHARGE_ENABLE is HIGH (illegal combination)");
@@ -2479,6 +2613,14 @@ void doState98() {
                         Serial.println("ERROR: MOT_PWR_ENABLE must be HIGH before starting drive cycle (key '3')");
                     } else {
                         powerShareProfileActive = false;   // mutually exclusive motor drivers
+                        combinedProfileActive   = false;   // ditto — 'Y' drives v_setpoint too
+                        // Clear the trapezoid too (pre-existing gap, same class as review
+                        // 2026-08-07 F7 in startPowerShareProfile()): without this a 'D' pressed
+                        // during a trapezoid left trapProfileActive set but SHADOWED by branch
+                        // precedence, and the orphaned trapezoid then resumed with a huge elapsed
+                        // time — i.e. instantly past tEnd — the moment the drive cycle stopped.
+                        trapProfileActive       = false;
+                        trapCmdA                = 0.0f;
                         // Take exclusive ownership of the motor output. Without this, a manual
                         // current set with 'A' before 'D' survives the whole run and re-asserts
                         // itself the instant the drive cycle ends.
@@ -2516,7 +2658,8 @@ void doState98() {
                 // below (outside the serial block), so it advances with no keys pressed and
                 // detectFaults() stays live. Mutually exclusive with the profiles — they drive
                 // motor/charge paths and would fight the machine's switch sequencing.
-                if (driveCycleActive || powerShareProfileActive || trapProfileActive) {
+                if (driveCycleActive || powerShareProfileActive || trapProfileActive ||
+                    combinedProfileActive) {
                     Serial.println("[G] REFUSED: a profile is running — stop it first ('X')");
                 } else if (!busBringupStart()) {
                     Serial.print("[G] already in progress (phase ");
@@ -2616,7 +2759,7 @@ void doState98() {
                             // immediate path's documented takeover ('R' clears 'D') would here
                             // become "arm now, plotArmTick cancels in 5 s" — same keypress,
                             // opposite outcome. Explicit refusal beats a delayed surprise.
-                            if (driveCycleActive || trapProfileActive) {
+                            if (driveCycleActive || trapProfileActive || combinedProfileActive) {
                                 Serial.println("ERROR: another profile is running — stop it first ('X') before arming under plot mode");
                                 break;
                             }
@@ -2691,6 +2834,55 @@ void doState98() {
                     Serial.println("[TP] Trapezoid stopped — motor zeroed (path switches left as-is)");
                 }
                 break;
+            case 'Y':
+            case 'y':
+                if (!combinedProfileActive) {
+                    // Same three preconditions as 'D' — this profile closes the velocity loop
+                    // exactly as the drive cycle does, so it inherits the drive cycle's gates
+                    // verbatim (an under-reading v_actual makes the motor PI over-drive; see
+                    // printVelocityChainRefusal()).
+                    if (bringupActive) {
+                        Serial.println("ERROR: bring-up in progress — wait for it or abort with 'X'");
+                    } else if (!velocityChainCalibrated()) {
+                        printVelocityChainRefusal("combined profile");
+                    } else if (!digitalRead(MOT_PWR_ENABLE)) {
+                        Serial.println("ERROR: MOT_PWR_ENABLE must be HIGH before starting the combined profile (key '3')");
+                    } else {
+                        // Single-line entry, same mechanism as 'T': everything after the 'Y' on
+                        // the same line ("Y 1 0.3") accumulates into inputBuf and is parsed on
+                        // the newline. BOTH values are optional — a bare "Y" + newline runs the
+                        // defaults. The preconditions above are checked HERE and deliberately not
+                        // re-checked at parse time: while the prompt is pending, only
+                        // digits/sign/point/space reach the buffer and every other key cancels
+                        // the entry outright, so no command can toggle MOT_PWR_ENABLE ('3' is
+                        // swallowed as input) or arm a bring-up ('G' cancels first) in the
+                        // window between this check and the start.
+                        pendingInput = PEND_Y_PARAMS;
+                        Serial.print("Combined profile [Vmax m/s] [share bound b] (both optional; defaults ");
+                        Serial.print(Y_VMAX_DEFAULT, 2);
+                        Serial.print(" ");
+                        Serial.print(Y_BOUND_DEFAULT, 2);
+                        Serial.print("; Vmax <= ");
+                        Serial.print(MANUAL_MOTOR_V_MAX, 1);
+                        Serial.print(", 0 <= b < 0.5): ");
+                        if (plotModeActive) Serial.println();   // see 'P' — plot-line concat guard
+                    }
+                } else {
+                    combinedProfileActive = false;
+                    power_share_setpoint  = 0.5f;   // same reset as the 'R' stop path
+                    // Flush a zero immediately: clearing the flag means the runtime branch below
+                    // won't execute next tick, and the VESC would otherwise hold the last
+                    // commanded current until its 1000 ms command timeout coasts it out.
+                    // haltMotorOutput() also clears manualMotorMode so the standalone branch
+                    // reached later in THIS SAME invocation cannot reissue a pre-profile command.
+                    haltMotorOutput();
+                    safeAllSwitches();   // park path switches — this profile runs chargingControl()
+                                         // like 'D' does, so a mid-region stop must leave nothing
+                                         // latched (same policy as the 'D'/'R' stop paths)
+                    logRequestClose(LOG_CLOSE_STOP);   // flag only; loop() drains + closes the file
+                    Serial.println("[YP] Combined profile stopped — motor + switches safed");
+                }
+                break;
             case 'X':
             case 'x': {
                 // Universal motor stop: halts the manual modes AND any running profile. Without
@@ -2704,6 +2896,8 @@ void doState98() {
                 bool hadDC = driveCycleActive;
                 bool hadPS = powerShareProfileActive;
                 bool hadTP = trapProfileActive;
+                bool hadY  = combinedProfileActive;   // parks switches like 'D'/'R' (it sweeps
+                                                      // the charge/regen paths the same way)
                 busBringupAbort();   // no-op if idle; else darkens the stage (a mid-P1 SCP-cut
                                      // park is invisible to the ADC — merely stopping won't do)
                 // An ARMED (not yet started) profile must die here too: 'X' exists so the operator
@@ -2713,15 +2907,16 @@ void doState98() {
                 driveCycleActive        = false;
                 powerShareProfileActive = false;
                 trapProfileActive       = false;
+                combinedProfileActive   = false;
                 trapCmdA                = 0.0f;
-                if (hadPS) power_share_setpoint = 0.5f;   // same reset as the 'R' stop path
+                if (hadPS || hadY) power_share_setpoint = 0.5f;   // same reset as the 'R'/'Y' stop paths
                 haltMotorOutput();
                 powerBalanceLive = false;
                 logRequestClose(LOG_CLOSE_X);   // flag only; loop() drains + closes the file
-                if (hadDC || hadPS) safeAllSwitches();
-                if (hadDC || hadPS || hadTP)
+                if (hadDC || hadPS || hadY) safeAllSwitches();
+                if (hadDC || hadPS || hadTP || hadY)
                     Serial.println("Universal stop: profile cancelled + motor zeroed");
-                Serial.println((hadDC || hadPS)
+                Serial.println((hadDC || hadPS || hadY)
                     ? "Manual motor + power-share live stopped (switches safed)"
                     : "Manual motor + power-share live stopped (motor zeroed)");
                 break;
@@ -2752,6 +2947,7 @@ void doState98() {
                 driveCycleActive        = false;
                 powerShareProfileActive = false;
                 trapProfileActive       = false;   // no motor driver survives the exit
+                combinedProfileActive   = false;
                 trapCmdA                = 0.0f;
                 powerBalanceLive        = false;
                 vescWatchActive         = false;   // stop the blocking poll from running outside State 98
@@ -2819,6 +3015,31 @@ void doState98() {
             // Same rate gating and same call order as doState2(), so the exerciser keeps
             // production-identical timing (CLAUDE.md §8).
             chargingControlGated();
+            motorControlGated();
+            powerBalanceGated();
+        }
+    } else if (combinedProfileActive) {
+        // Combined drive-cycle + power-share profile: supplies BOTH v_setpoint and
+        // power_share_setpoint from one region table, then runs the motor + droop halves of the
+        // control stack in the same order as the drive-cycle branch above (it commands velocity,
+        // so unlike 'R' it needs motorControl()). The charging manager is deliberately excluded —
+        // see the comment inside the branch.
+        advanceCombinedProfile();
+        // Re-check the flag for exactly the drive cycle's reason: advanceCombinedProfile() clears
+        // it and zeroes the motor on natural completion, and letting motorControl() run in that
+        // same tick would undo the flush with a NEGATIVE error (0 − v_actual) while the flywheel
+        // is still spinning down — i.e. a "completed" profile commanding regen current.
+        if (combinedProfileActive) {
+            // Deliberately NO chargingControl() — same omission as the power-share profile, and
+            // here it is load-bearing rather than merely tidy. This profile SWEEPS
+            // power_share_setpoint in order to MEASURE the share axis; with charge_goal > 0 the
+            // cruise branch of chargingControl() calls assertFcChargeEnable(true), whose guard
+            // drives BT_BUS_ENABLE LOW. That takes the battery off the bus mid-run: I_batt → 0,
+            // the measured share pins at 1.0, and every share datapoint after that instant is
+            // garbage. The regen that the coast-down regions (R14/R15) produce is absorbed by the
+            // hardware TL431/BSP170P braking chopper, which is not under firmware control — the
+            // same way the 'R' and 'T' profiles handle it. The charge/regen paths therefore stay
+            // static under operator control for the whole run.
             motorControlGated();
             powerBalanceGated();
         }
@@ -2976,7 +3197,8 @@ void cancelPlotArm(const char *why) {
 void plotArmTick() {
     if (plotArmTarget == PLOT_ARM_NONE) return;
 
-    if (bringupActive || driveCycleActive || powerShareProfileActive || trapProfileActive) {
+    if (bringupActive || driveCycleActive || powerShareProfileActive || trapProfileActive ||
+        combinedProfileActive) {
         cancelPlotArm("another run started during the arming delay");
         return;
     }
@@ -3011,6 +3233,8 @@ void startPowerShareProfile() {
     // profile stopped. Mirrors startTrapProfile()'s symmetric clears.
     trapProfileActive           = false;
     trapCmdA                    = 0.0f;
+    combinedProfileActive       = false;   // same rationale — a shadowed 'Y' would resume with a
+                                           // huge elapsed time when this profile stopped
     resetControlRateLimiters();   // first tick drives immediately
     powerShareProfileActive     = true;
     powerShareProfilePhaseIdx   = 0;
@@ -3107,7 +3331,8 @@ void pollVescWatch() {
     // otherwise perturb the drive cycle / power-share step response. The watch resumes
     // automatically when the profile stops; the VESC latches faults, so a fault raised during the
     // run is still reported by the first poll afterward (elapsed > period → immediate) or via 'E'.
-    if (driveCycleActive || powerShareProfileActive || trapProfileActive) return;
+    if (driveCycleActive || powerShareProfileActive || trapProfileActive ||
+        combinedProfileActive) return;
     // Same suppression under plot mode, for a different reason: the '[VW]' line is not numeric and
     // would break the plotter parse. The VESC latches faults, so anything raised while plotting is
     // still reported by the first poll after 'L' turns the stream off (or via 'E').
@@ -3343,7 +3568,7 @@ void parseTrapParamsLine(const char* line) {
     // All three values are already validated above, so the armed run cannot fail later.
     if (plotModeActive) {
         // Same running-profile refusal as the 'R' arm path (review 2026-08-07 F5).
-        if (driveCycleActive || powerShareProfileActive) {
+        if (driveCycleActive || powerShareProfileActive || combinedProfileActive) {
             Serial.println("ERROR: another profile is running — stop it first ('X') before arming under plot mode");
             return;
         }
@@ -3384,6 +3609,7 @@ void startTrapProfile(float imax, uint32_t holdMs, float rateAps) {
     // before 'T' would survive the run and re-assert itself the instant the profile ends.
     driveCycleActive        = false;
     powerShareProfileActive = false;
+    combinedProfileActive   = false;   // ditto: it drives both setpoints and must not survive
     haltMotorOutput();
     resetControlRateLimiters();
 
@@ -3479,6 +3705,174 @@ void advanceTrapProfile() {
     }
 }
 
+// ── Combined drive-cycle + power-share profile ('Y') ─────────────────────────────────────────
+// Parse the single-line parameter entry "[Vmax m/s] [share bound b]" (e.g. typed as one line
+// "Y 1 0.3"). BOTH values are optional — unlike the trapezoid, an empty line is a legitimate
+// "run the defaults" and is NOT a cancel (handlePendingInputChar() dispatches PEND_Y_PARAMS
+// before its shared empty-line cancel for exactly this reason). Any validation failure rejects
+// the WHOLE line: no partial parameter set can ever be committed.
+void parseCombinedParamsLine(const char* line) {
+    float vmax  = Y_VMAX_DEFAULT;
+    float bound = Y_BOUND_DEFAULT;
+
+    char*       end = nullptr;
+    const char* p   = line;
+    float       v   = strtof(p, &end);
+    if (end != p) {
+        vmax = v;
+        p    = end;
+        float b = strtof(p, &end);
+        if (end != p) bound = b;   // second value absent is fine — b keeps its default
+    }
+    // Whatever strtof() stopped on must be whitespace only. Only digits/sign/point/space can
+    // reach this buffer at all (isNumericEntryChar()), so the realistic case this catches is a
+    // THIRD value ("Y 1 0.3 2") — refuse rather than silently ignore it, since a third number
+    // means the operator believes this command takes a parameter it does not have.
+    while (*end == ' ' || *end == '\t') end++;
+    if (*end != '\0') {
+        Serial.println("ERROR: expected \"Y [Vmax m/s] [b]\" — at most two values (e.g. Y 1 0.3) — profile cancelled");
+        return;
+    }
+
+    if (vmax <= 0.0f) {
+        Serial.println("ERROR: Vmax must be > 0 m/s — profile cancelled");
+        return;
+    }
+    // Reuse the SAME ceiling the 'V' manual-velocity path enforces (setManualMotorVelocity()):
+    // this profile closes the identical velocity loop, so inventing a second, different bound
+    // here would let 'Y' drive a setpoint that 'V' refuses.
+    if (vmax > MANUAL_MOTOR_V_MAX) {
+        Serial.print("ERROR: Vmax must be <= ");
+        Serial.print(MANUAL_MOTOR_V_MAX, 1);
+        Serial.println(" m/s (MANUAL_MOTOR_V_MAX, the same ceiling 'V' enforces) — profile cancelled");
+        return;
+    }
+    if (bound < 0.0f) {
+        Serial.println("ERROR: share bound b must be >= 0 — profile cancelled");
+        return;
+    }
+    if (bound >= 0.5f) {
+        // At b = 0.5 the band [b, 1-b] collapses to the single point 0.5 and the whole share axis
+        // of the profile becomes a flat line — a null test, so refuse rather than run it.
+        Serial.println("ERROR: share bound b must be < 0.5 (the band [b, 1-b] collapses at 0.5) — profile cancelled");
+        return;
+    }
+    if (bound > Y_BOUND_WARN) {
+        // Accepted, not refused: a tight band is a legitimate way to keep a fragile bench setup
+        // away from the share extremes. Warn because the run no longer matches the documented
+        // region table.
+        Serial.print("WARN: b > ");
+        Serial.print(Y_BOUND_WARN, 2);
+        Serial.println(" — the clip will start compressing the intermediate 0.35/0.65 plateaus, not just the 0/1 bound checks");
+    }
+
+    startCombinedProfile(vmax, bound);
+}
+
+// Commit the two validated operator values and take exclusive ownership of the motor output.
+// Called only from parseCombinedParamsLine() (both values already range-checked there).
+// Preconditions (bring-up idle, calibrated velocity chain, MOT_PWR_ENABLE HIGH) are the 'Y'
+// handler's responsibility — they are checked at the keypress so a refusal is seen before the
+// operator types parameters, and nothing that reaches the input buffer can invalidate them.
+void startCombinedProfile(float vmax, float boundLo) {
+    // Exclusive motor ownership, same discipline as the 'D'/'R'/'T' start paths: clear every
+    // other motor driver, flush a zero + clear the manual modes and the PI integrator
+    // (haltMotorOutput()), then reset the rate limiters so the first profile tick drives
+    // immediately. Without the halt, a manual current set with 'A' before 'Y' would survive the
+    // run and re-assert itself the instant the profile ends.
+    driveCycleActive        = false;
+    powerShareProfileActive = false;
+    trapProfileActive       = false;
+    trapCmdA                = 0.0f;
+    haltMotorOutput();
+    resetControlRateLimiters();
+
+    yProfileVmax    = vmax;
+    yProfileBoundLo = boundLo;
+
+    combinedProfileActive = true;
+    combinedRegionIdx     = 0;
+    combinedRegionStart   = millis();
+    combinedStatusLast    = millis();
+    // Open the SD log AFTER the flags/region index are set, so the very first logged sample
+    // already carries region 0 in both phase bytes (not LOG_PHASE_NONE). The PS|DC mask is what
+    // gives the file its "YP" prefix and tells the decoder the two phase bytes are one axis.
+    logOpenForProfile(LOG_TYPE_PS | LOG_TYPE_DC);
+
+    Serial.print("[YP] Combined profile started — Vmax=");
+    Serial.print(yProfileVmax, 2);
+    Serial.print("m/s share band=[");
+    Serial.print(yProfileBoundLo, 2);
+    Serial.print(", ");
+    Serial.print(1.0f - yProfileBoundLo, 2);
+    Serial.print("] regions=");
+    Serial.print(COMBINED_PROFILE_REGIONS);
+    Serial.println("  (Region 0: settle; 'Y' again to stop)");
+    if (vescWatchActive)
+        Serial.println("[YP] VESC watch paused during the run (production-identical timing); resumes on stop");
+}
+
+// One profile tick. Same phase-machine structure as advanceDriveCycle()/advancePowerShareProfile(),
+// but supplies BOTH setpoints; the real control functions in doState98() do the driving.
+void advanceCombinedProfile() {
+    if (combinedRegionIdx >= COMBINED_PROFILE_REGIONS) {
+        combinedProfileActive = false;
+        power_share_setpoint  = 0.5f;   // return to balanced, as advancePowerShareProfile() does
+        // Natural completion releases the motor EXACTLY as the 'Y' stop path does — a completion
+        // path that only cleared its own flag would leave a pre-run manualMotorMode driving the
+        // motor from the standalone branch on the next tick (design-review-2026-07-28.md P0-2).
+        // Switches are deliberately left as-is here, matching the 'D'/'R' NATURAL completions
+        // (only their stop-toggle/'X' paths park them).
+        haltMotorOutput();
+        logRequestClose(LOG_CLOSE_COMPLETE);   // symmetric with the 'Y' stop path
+        Serial.println("[YP] Combined profile complete — motor zeroed, share back to 0.50");
+        return;
+    }
+
+    uint32_t elapsed = millis() - combinedRegionStart;
+    const CombinedProfileRegion &rg = COMBINED_PROFILE[combinedRegionIdx];
+
+    if (elapsed >= rg.durationMs) {
+        combinedRegionIdx++;
+        combinedRegionStart = millis();
+        if (combinedRegionIdx < COMBINED_PROFILE_REGIONS && !plotSuppressStatus()) {
+            Serial.print("[YP] Region "); Serial.println(combinedRegionIdx);
+        }
+        return;
+    }
+
+    // Linear interpolation of BOTH axes within the region. A step between regions is encoded as
+    // a start value differing from the previous region's end value, so it lands on the first tick
+    // of the new region — no special-casing here.
+    float t      = (float)elapsed / (float)rg.durationMs;
+    float v_norm = rg.v_start + t * (rg.v_end - rg.v_start);
+    float s_abs  = rg.s_start + t * (rg.s_end - rg.s_start);
+
+    v_setpoint = v_norm * yProfileVmax;
+    // Clip AFTER interpolation, never before: a ramp that crosses the bound must run at its
+    // normal slope and then FLATTEN there. Pre-scaling the waypoints into the band would change
+    // every slope in the table and quietly alter the excitation the identification is fitted to.
+    // The resulting kink is intended behaviour.
+    power_share_setpoint = constrain(s_abs, yProfileBoundLo, 1.0f - yProfileBoundLo);
+
+    // Status snapshot every 500 ms — both axes at once (withheld under plot mode, same reason as
+    // the other profiles: a non-numeric line breaks the plotter parse).
+    if (!plotSuppressStatus() && millis() - combinedStatusLast >= 500) {
+        combinedStatusLast = millis();
+        float totalA    = fabsf(I_fc) + fabsf(I_batt);
+        float share_act = (totalA > 1e-6f) ? (fabsf(I_fc) / totalA) : 0.0f;
+        Serial.print("[YP] t=");      Serial.print(millis());
+        Serial.print(" R");           Serial.print(combinedRegionIdx);
+        Serial.print(" v_sp=");       Serial.print(v_setpoint, 2);
+        Serial.print(" sp=");         Serial.print(power_share_setpoint, 3);
+        Serial.print(" act=");        Serial.print(share_act, 3);
+        Serial.print(" I_fc=");       Serial.print(I_fc, 2);
+        Serial.print(" I_bt=");       Serial.print(I_batt, 2);
+        Serial.print(" V_bus=");      Serial.print(V_bus, 2);
+        Serial.print(" FLT=0x");      Serial.println(fault_flags, HEX);
+    }
+}
+
 // True for chars that belong in a typed numeric value (digits, sign, point, and whitespace fillers).
 // Anything else, seen while a prompt is pending, cancels the entry (handled in doState98()).
 bool isNumericEntryChar(char c) {
@@ -3495,6 +3889,13 @@ void handlePendingInputChar(char c) {
         PendingInput which = pendingInput;
         pendingInput = PEND_NONE;
         inputBufIdx  = 0;
+        // The combined profile is the ONE prompt whose parameters are all optional, so a bare
+        // newline means "run the defaults" — it must be dispatched BEFORE the shared empty-line
+        // cancel below (which is right for every other prompt: none of them has a default).
+        if (which == PEND_Y_PARAMS) {
+            parseCombinedParamsLine(inputBuf);
+            return;
+        }
         if (inputBuf[0] == '\0') {
             Serial.println("(no value entered — cancelled)");
             return;
@@ -3609,6 +4010,19 @@ void printTestStatus() {
         Serial.print("A/s hold="); Serial.print(trapHoldMs); Serial.print("ms");
     }
     Serial.println();
+    Serial.print("driveCycle:         "); Serial.print(driveCycleActive);
+    if (driveCycleActive) { Serial.print(" phase="); Serial.print(driveCyclePhaseIdx); }
+    Serial.println();
+    // The 'Y' start banner scrolls away behind the 500 ms status lines, so 'S' is the only way to
+    // confirm which parameters were actually COMMITTED (as opposed to typed). Printed whenever a
+    // combined run has been started this power cycle — yProfileVmax/yProfileBoundLo hold the last
+    // committed pair after the run ends, which is exactly what a post-run readback needs.
+    Serial.print("combinedProfile:    "); Serial.print(combinedProfileActive);
+    if (combinedProfileActive) { Serial.print(" R="); Serial.print(combinedRegionIdx); }
+    Serial.print(" Vmax=");     Serial.print(yProfileVmax, 2);
+    Serial.print("m/s band=["); Serial.print(yProfileBoundLo, 2);
+    Serial.print(", ");         Serial.print(1.0f - yProfileBoundLo, 2);
+    Serial.println("]");
     Serial.println("=======================");
 }
 
