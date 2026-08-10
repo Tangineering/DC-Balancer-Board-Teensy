@@ -273,6 +273,7 @@ back over serial:
 | `T <Imax> <hold s> <rate A/s>` | Start trapezoidal current profile (one line, e.g. `T 6 5 0.5`) | direct phase-current ramp; `T` alone while running stops it; switches left as-is |
 | `X` | Universal stop | cancels any profile/bring-up/armed run + manual motor + live share loop |
 | `L` | Toggle Serial-Plotter stream | 50 Hz `sp,act,gFC,gBT,ifc,ibt` line; suppresses status lines; `R`/`T` arm with a 5 s delay |
+| `K` | Print SD-card logging status | card present, current/last file, record/drop counts; read-only |
 | `H` / `?` | Print the command list | |
 | `Q` | Exit → Idle (State 1) | forces `MOT_PWR_ENABLE` LOW, closes charge/regen paths, drops plot mode |
 
@@ -289,6 +290,25 @@ the plotter window during the countdown. The arm cancels on the same key again, 
 turning `L` off, or any other run starting; `R`'s preconditions are re-checked at fire time.
 Arming is refused while another profile is already running, and arming the other profile
 supersedes a pending arm with an explicit cancel message.
+
+### SD-card logging (`K` / automatic)
+
+Logs the power-share/motor/bus signals at the full 1 kHz control cadence to the Teensy's
+built-in micro-SD — 20x finer than the 50 Hz `L` stream, needed to see the Youla-H share loop's
+actual transient. Logging starts and stops automatically with the profile lifecycle: it opens
+when `R`, `T`, or `D` starts, and closes on natural completion, the matching stop-toggle, `X`,
+`Q`, or a fault (the close is deferred through the fault transition so it never delays a safety
+action). There's no separate arm command — a card present at profile start is logged, a missing
+one is silently skipped. No card in the slot, a full card, or a write error never faults the
+board or blocks a profile: the firmware prints a warning and keeps running. `K` prints a
+status line — card present, current/last file name, record and drop counts — and stays live
+even during the bring-up lockout. It reports no free-space figure on purpose: the FAT-walking
+calls that would produce one block for seconds on a real card. Retrieve a run by pulling the card (`PSnnnn.BLG` /
+`TPnnnn.BLG` / `DCnnnn.BLG` in the root) and decode it on the laptop:
+
+```
+python tools/decode_benchlog.py FILE.BLG > run.csv
+```
 
 ### Testing an individual component
 
@@ -342,7 +362,10 @@ Mocks stub the Teensy/Arduino, Wire, SPI, VESC, and Ethernet APIs. Coverage incl
 math, fault detection (incl. GENSTAT decode and UV boot-gating), PI convergence + anti-windup,
 command parsing, telemetry packing (58-byte v4 layout + checksum), the Ag105 init/poll I2C
 sequences, `assertFcChargeEnable()` ordering, `pollAg105()` state gating, `doState0()` init-fault
-handling, the State 98 drive cycle, and the wheel-speed buffer reset. Run before every flash.
+handling, the State 98 drive cycle, and the wheel-speed buffer reset. It also covers the SD-card
+bench logger: lifecycle on every profile exit path (complete/stop/`X`/`Q`/fault), the 1 kHz
+rate gate, ring-buffer overflow drop-and-count, no-card and mid-run write-error tolerance, file
+naming/collision, the 52-byte record schema, and `K` status output. Run before every flash.
 
 ## Notes for calibration
 

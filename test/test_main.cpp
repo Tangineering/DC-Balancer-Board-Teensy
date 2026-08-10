@@ -12,6 +12,7 @@
 #include "mock_spi.h"       // SPI mock + SPISettings
 #include "mock_vesc.h"      // VescUart class
 #include "mock_ethernet.h"  // IPAddress, Ethernet, MockEthernetUDP
+#include "mock_sd.h"        // SdFs/FsFile/SdioConfig mock (SD bench logger)
 // NativeEthernetUdp.h (included by the .ino) defines: using EthernetUDP = MockEthernetUDP
 
 // ── 2. Include the firmware under test ───────────────────────────────────────
@@ -158,6 +159,32 @@ static void reset_test_state() {
     ovBusTransientCount = 0;
     ovBusPrintLastMs = 0;
     ovBusHasPrinted  = false;
+
+    // .ino State 98 bench tools — SD data logger (logOpenForProfile/logSampleTick/logDrainTick)
+    // Note sdInitTried/sdAvailable are latches on real hardware (one probe per power cycle); the
+    // reset re-arms them so each case can choose its own card_present.
+    g_sd_state.reset();
+    sdAvailable       = false;
+    sdInitTried       = false;
+    sdWarnPrinted     = false;
+    logActive         = false;
+    logCloseRequested = false;
+    logCloseReason    = 0;
+    logCloseRequestMs = 0;
+    logRecordCount    = 0;
+    logRecordsWritten = 0;
+    logDroppedCount   = 0;
+    logLastRecordsWritten = 0;
+    logLastDropped        = 0;
+    logLastAbandoned      = 0;
+    logRingHead       = 0;
+    logRingTail       = 0;
+    logRingCount      = 0;
+    logFileName[0]    = '\0';
+    if (logFile.isOpen()) logFile.close();
+    rl_log_last       = 0;   // resetControlRateLimiters() above already back-dated it; explicit
+                             // here so the group documents every logger global it owns
+    resetControlRateLimiters();
 }
 
 // ── Bring-up machine helpers ─────────────────────────────────────────────────
@@ -4433,6 +4460,961 @@ static void test_trap_vescwatch_suppressed() {
           "trap: pollVescWatch() does not call getVescValues() while trapProfileActive");
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SD bench logging (logOpenForProfile / logSampleTick / logDrainTick / 'K')
+// ═══════════════════════════════════════════════════════════════════════════════
+// The contract under test is the ON-CARD BYTE STREAM plus the lifecycle guarantees, not just the
+// flags: the host decoder (tools/decode_benchlog.py) walks fixed-size records, so a shifted field
+// or a missing trailer silently mis-decodes an entire bench session. Every case therefore asserts
+// against g_sd_state.files (the raw capture) rather than against logRecordCount alone — which is
+// also the only honest way to check the counters, since logFinishFile() zeroes them at close.
+
+// Byte offsets of the record fields (mirrors BenchLogRecord; kept literal so a struct reordering
+// in the .ino fails these tests instead of silently following along).
+#define REC_OFF_T_US        0
+#define REC_OFF_SHARE_SP    4
+#define REC_OFF_SHARE_ACT   8
+#define REC_OFF_V_SP       12
+#define REC_OFF_V_ACT      16
+#define REC_OFF_I_FC       20
+#define REC_OFF_I_BATT     24
+#define REC_OFF_GFC        28
+#define REC_OFF_GBT        32
+#define REC_OFF_V_BUS      36
+#define REC_OFF_I_CMD      40
+#define REC_OFF_FAULTS     44
+#define REC_OFF_PS_PHASE   46
+#define REC_OFF_DC_PHASE   47
+#define REC_OFF_TRAP_PHASE 48
+#define REC_OFF_FLAGS      49
+
+#define LOG_HDR_SIZE 32u
+
+// Little-endian field read out of a captured file (the host is LE, same as the Teensy).
+template <typename T>
+static T sd_le(const std::string& b, size_t off) {
+    T v{};
+    if (off + sizeof(T) <= b.size()) memcpy(&v, b.data() + off, sizeof(T));
+    return v;
+}
+
+static const std::string* sd_file(const std::string& name) {
+    auto it = g_sd_state.files.find(name);
+    return (it == g_sd_state.files.end()) ? nullptr : &it->second;
+}
+
+// Name of the one and only .BLG the case produced; empty when there is not exactly one (so a
+// double-open regression shows up as an empty name rather than as a silently-picked first file).
+static std::string sd_only_log_name() {
+    std::string found;
+    int n = 0;
+    for (const auto& kv : g_sd_state.files) {
+        if (kv.first.size() == 10 && kv.first.compare(6, 4, ".BLG") == 0) { found = kv.first; n++; }
+    }
+    return (n == 1) ? found : std::string();
+}
+
+// Pump logDrainTick() until a pending close finishes. Deliberately does NOT advance millis():
+// LOG_CLOSE_DEADLINE_MS must stay un-expired, so a close that only completed because the deadline
+// fired would surface as a leftover ring rather than passing as a clean drain.
+static int sd_drain_until_closed(int maxTicks = 5000) {
+    int n = 0;
+    while ((logActive || logCloseRequested) && n < maxTicks) { logDrainTick(); n++; }
+    return n;
+}
+
+// One State-98 tick that also advances the 1 kHz sample clock and services the drain, i.e. what
+// loop() + doState98() do together for one millisecond of a real bench run.
+static void sd_run_ms(int ms, bool drain = true) {
+    for (int i = 0; i < ms; i++) {
+        g_mock_micros += POWER_BAL_PERIOD_US;
+        g_mock_millis += 1;
+        doState98();
+        if (drain) logDrainTick();
+    }
+}
+
+// 'R' power-share run start through the real keypress path (MOT_PWR + a standing motor command
+// are its documented preconditions).
+static void sd_start_share_run() {
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    setManualMotorCurrent(3.0f);
+    Serial.rx_queue.push('R');
+    doState98();
+}
+
+// ─── 1. Natural completion: header, records, trailer, file closed ────────────
+static void test_sdlog_lifecycle_natural_completion() {
+    test_group("SD log: 'T' run to natural completion writes a complete, closed file");
+    reset_test_state();
+
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    g_mock_millis = 0;
+    g_mock_micros = 0;
+
+    Serial.rx_queue.push('T');
+    doState98();
+    g_mock_millis = 1000;
+    feed_serial_line(" 5 0 100");   // Imax 5A, hold 0s, 100A/s → 50ms up + 50ms down = 100ms total
+    check(trapProfileActive == true,
+          "SD lifecycle: the 'T' trapezoid started, so a TP log should have been opened");
+    check(logActive == true,
+          "SD lifecycle: opening a profile log arms sampling (logActive set)");
+    check(std::string(logFileName) == "TP0001.BLG",
+          "SD lifecycle: the first trapezoid run of a session opens TP0001.BLG");
+
+    // Run the profile out. Capture the high-water record count: logFinishFile() zeroes the
+    // counters at close, so the trailer is the only place the total survives.
+    uint32_t expectedRecords = 0;
+    for (int i = 0; i < 140; i++) {
+        sd_run_ms(1);
+        if (logRecordCount > expectedRecords) expectedRecords = logRecordCount;
+    }
+    check(trapProfileActive == false,
+          "SD lifecycle: the trapezoid reached natural completion inside the run window");
+    sd_drain_until_closed();
+
+    check(expectedRecords == 100,
+          "SD lifecycle: a 100 ms profile at POWER_BAL_PERIOD_US yields exactly 100 records");
+    check(logActive == false && logCloseRequested == false,
+          "SD lifecycle: natural completion leaves the logger idle (not active, no close pending)");
+    check(logFile.isOpen() == false,
+          "SD lifecycle: the file handle is closed after the drain finishes the trailer");
+    check(g_sd_state.truncate_calls == 1,
+          "SD lifecycle: close truncates the pre-allocation exactly once");
+
+    std::string name = sd_only_log_name();
+    check(name == "TP0001.BLG",
+          "SD lifecycle: exactly one .BLG file exists on the card after the run");
+    const std::string* f = sd_file("TP0001.BLG");
+    check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * expectedRecords + LOG_REC_SIZE,
+          "SD lifecycle: file size is header + 52*N records + one 52-byte trailer");
+
+    if (f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE) {
+        check(f->compare(0, 4, "BLG1") == 0,
+              "SD lifecycle: the header opens with the 'BLG1' magic");
+        check((uint8_t)(*f)[4] == 1,
+              "SD lifecycle: the header declares format version 1");
+        check((uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE,
+              "SD lifecycle: the header declares a 52-byte record size");
+        check((uint8_t)(*f)[6] == LOG_TYPE_TP,
+              "SD lifecycle: the header profile bitmask is LOG_TYPE_TP for a 'T' run");
+
+        size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * expectedRecords;
+        check(sd_le<uint32_t>(*f, tr + 0) == 0xFFFFFFFFu,
+              "SD lifecycle: the last record carries the 0xFFFFFFFF trailer sentinel");
+        check(sd_le<uint32_t>(*f, tr + 4) == expectedRecords,
+              "SD lifecycle: the trailer's total-record count matches the records written");
+        check(sd_le<uint32_t>(*f, tr + 8) == 0u,
+              "SD lifecycle: a drained run drops no samples");
+        check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_COMPLETE,
+              "SD lifecycle: the trailer close reason is LOG_CLOSE_COMPLETE for a natural end");
+    }
+    check(Serial.tx_contains("[SD] closed: TP0001.BLG"),
+          "SD lifecycle: the close prints the one-shot '[SD] closed' summary line");
+}
+
+// ─── 2. Stop-toggle / 'X' / 'Q' all close and flush the file ─────────────────
+static void test_sdlog_lifecycle_stop_x_q() {
+    test_group("SD log: stop-toggle, 'X' and 'Q' each close the file with their own reason");
+
+    // ── (a) 'R' pressed again → LOG_CLOSE_STOP ──────────────────────────────
+    reset_test_state();
+    sd_start_share_run();
+    sd_run_ms(10);
+    uint32_t recs = logRecordCount;
+    check(recs > 0, "SD stop: the share profile logged samples before the stop key");
+    Serial.rx_queue.push('R');
+    doState98();
+    check(powerShareProfileActive == false && logActive == false && logCloseRequested == true,
+          "SD stop: the 'R' stop-toggle requests a close without doing card I/O in the handler");
+    sd_drain_until_closed();
+    {
+        const std::string* f = sd_file("PS0001.BLG");
+        check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * recs + LOG_REC_SIZE,
+              "SD stop: the stopped run's file holds every buffered record plus the trailer");
+        if (f) {
+            size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * recs;
+            check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_STOP,
+                  "SD stop: the trailer records LOG_CLOSE_STOP as the close reason");
+        }
+    }
+
+    // ── (b) 'X' universal stop → LOG_CLOSE_X ────────────────────────────────
+    reset_test_state();
+    sd_start_share_run();
+    sd_run_ms(10);
+    recs = logRecordCount;
+    Serial.rx_queue.push('X');
+    doState98();
+    check(logCloseRequested == true && logActive == false,
+          "SD 'X': the universal stop requests the log close alongside the motor stop");
+    sd_drain_until_closed();
+    {
+        const std::string* f = sd_file("PS0001.BLG");
+        check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * recs + LOG_REC_SIZE,
+              "SD 'X': the file is complete after the universal stop drains");
+        if (f) {
+            size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * recs;
+            check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_X,
+                  "SD 'X': the trailer records LOG_CLOSE_X as the close reason");
+        }
+    }
+
+    // ── (c) 'Q' exit → LOG_CLOSE_Q, and the drain COMPLETES from State 1 ────
+    // This is the reason logDrainTick() lives in loop() and not in doState98(): after 'Q' the
+    // state machine has already left test mode, so a doState98()-hosted drain would strand the
+    // file half-written with no trailer.
+    reset_test_state();
+    sd_start_share_run();
+    sd_run_ms(10, /*drain=*/false);   // leave every record in the ring, undrained
+    recs = logRecordCount;
+    check(logRingCount == recs,
+          "SD 'Q': the run's records are still buffered in the ring at the moment of exit");
+    Serial.rx_queue.push('Q');
+    doState98();
+    check(mainState == 1,
+          "SD 'Q': the exit key returns the state machine to Idle");
+    check(logCloseRequested == true && logFile.isOpen() == true,
+          "SD 'Q': the exit only flags the close — the file is still open on leaving State 98");
+    int ticks = sd_drain_until_closed();
+    check(ticks > 0 && logFile.isOpen() == false,
+          "SD 'Q': the loop-level drain finishes and closes the file from State 1, outside State 98");
+    check(mainState == 1,
+          "SD 'Q': draining the log from Idle does not disturb the state machine");
+    {
+        const std::string* f = sd_file("PS0001.BLG");
+        check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * recs + LOG_REC_SIZE,
+              "SD 'Q': every buffered record reaches the card after the exit");
+        if (f) {
+            size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * recs;
+            check(sd_le<uint32_t>(*f, tr + 4) == recs,
+                  "SD 'Q': the trailer total matches the records captured before the exit");
+            check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_Q,
+                  "SD 'Q': the trailer records LOG_CLOSE_Q as the close reason");
+        }
+    }
+}
+
+// ─── 3. Fault path: the file survives the State-99 transition ────────────────
+static void test_sdlog_lifecycle_fault_path() {
+    test_group("SD log: a fault mid-run closes the file from State 99 with the cause captured");
+    reset_test_state();
+
+    sd_start_share_run();
+    sd_run_ms(12, /*drain=*/false);
+    uint32_t recs = logRecordCount;
+    check(recs > 0 && logActive == true,
+          "SD fault: the share profile was logging when the fault is injected");
+
+    triggerFault(FAULT_OC_FC, ERR_OC_FC);
+
+    check(mainState == 99,
+          "SD fault: triggerFault() still latches State 99 with the logger attached");
+    check(error_code == ERR_OC_FC && (fault_flags & FAULT_OC_FC) && (fault_flags & FAULT_ERROR),
+          "SD fault: the error latch and fault flags are unaffected by the log close request");
+    check(logActive == false && logCloseRequested == true && logFile.isOpen() == true,
+          "SD fault: the fault path only flags the close — no card I/O happens in triggerFault()");
+
+    int ticks = sd_drain_until_closed();
+    check(ticks > 0 && logFile.isOpen() == false,
+          "SD fault: the loop-level drain finishes the file while State 99 is latched");
+    check(mainState == 99 && error_code == ERR_OC_FC,
+          "SD fault: the error stays latched in State 99 after the log is closed");
+
+    const std::string* f = sd_file("PS0001.BLG");
+    check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * recs + LOG_REC_SIZE,
+          "SD fault: the pre-fault records plus the trailer all reach the card");
+    if (f) {
+        size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * recs;
+        check(sd_le<uint32_t>(*f, tr + 4) == recs,
+              "SD fault: the trailer total matches the records captured before the fault");
+        check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_FAULT,
+              "SD fault: the trailer close reason is LOG_CLOSE_FAULT");
+        check((uint8_t)(*f)[tr + 13] == (uint8_t)ERR_OC_FC,
+              "SD fault: the trailer carries the latched error_code so the cause is in the file");
+    }
+}
+
+// ─── 4. No card: warn exactly once, never retry, profile unaffected ──────────
+static void test_sdlog_no_card() {
+    test_group("SD log: with no card the warn fires once and the profile runs identically");
+    reset_test_state();
+
+    g_sd_state.card_present = false;
+
+    sd_start_share_run();
+    check(powerShareProfileActive == true,
+          "SD no-card: the power-share profile starts normally with no card fitted");
+    check(logActive == false && sdAvailable == false && sdInitTried == true,
+          "SD no-card: the failed probe latches sdInitTried and leaves logging disarmed");
+    check(Serial.tx_count("[SD] no card") == 1,
+          "SD no-card: exactly one '[SD] no card' warning is printed at the first profile start");
+    check(g_sd_state.begin_calls == 1,
+          "SD no-card: the card is probed exactly once");
+
+    sd_run_ms(10);
+    check(logRecordCount == 0 && logRingCount == 0,
+          "SD no-card: no records are buffered while logging is disabled");
+    check(g_sd_state.files.empty(),
+          "SD no-card: nothing is written to the card");
+
+    // Stop and start a second profile: the latch must suppress both the retry and the warn.
+    Serial.rx_queue.push('R');
+    doState98();
+    Serial.tx_clear();
+    sd_start_share_run();
+    check(powerShareProfileActive == true,
+          "SD no-card: a second profile starts normally after the first no-card run");
+    check(Serial.tx_count("[SD] no card") == 0,
+          "SD no-card: the second profile start does not repeat the warning");
+    check(g_sd_state.begin_calls == 1,
+          "SD no-card: the second profile start does not re-probe the card");
+}
+
+// ─── 5. Ring overflow under a stalled card: drop-newest + counted ────────────
+static void test_sdlog_overflow_drop_count() {
+    test_group("SD log: a stalled card drops the newest samples and counts them in the trailer");
+    reset_test_state();
+
+    sd_start_share_run();
+    Serial.tx_clear();
+    g_sd_state.busy_ticks = 1000000;   // card wedged: every drain tick bails on isBusy()
+
+    // Pump more samples than the ring can hold. Nothing here may block or stall the profile —
+    // that is the whole point of the drop-newest policy.
+    sd_run_ms(1200);
+
+    check(logRingCount == LOG_RING_RECORDS,
+          "SD overflow: the ring fills to exactly its 1024-record capacity and never beyond");
+    check(logRecordCount == LOG_RING_RECORDS,
+          "SD overflow: only the records that fit the ring are counted as committed");
+    check(logDroppedCount > 0,
+          "SD overflow: samples that found the ring full are counted as dropped");
+    check(logRecordCount + logDroppedCount == 1201u,
+          "SD overflow: committed plus dropped accounts for every 1 kHz sample in the window");
+    check(powerShareProfileActive == true && mainState == 98,
+          "SD overflow: the profile keeps running through the card stall (the loop never blocks)");
+    // The 1200 ms window sits inside the profile's 3000 ms phase 0, so the proof that the phase
+    // machine kept ticking is its 500 ms status snapshot, not a phase-index change.
+    check(Serial.tx_count("[PS] t=") >= 2,
+          "SD overflow: the profile's periodic status snapshots keep printing through the stall");
+
+    uint32_t total   = logRecordCount;
+    uint32_t dropped = logDroppedCount;
+
+    g_sd_state.busy_ticks = 0;   // card recovers
+    Serial.rx_queue.push('X');
+    doState98();
+    sd_drain_until_closed();
+
+    const std::string* f = sd_file("PS0001.BLG");
+    check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * total + LOG_REC_SIZE,
+          "SD overflow: the whole ring is flushed once the card recovers");
+    if (f) {
+        size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * total;
+        check(sd_le<uint32_t>(*f, tr + 4) == total,
+              "SD overflow: the trailer total matches the committed record count");
+        check(sd_le<uint32_t>(*f, tr + 8) == dropped,
+              "SD overflow: the trailer reports the dropped-sample count so the gap is visible");
+    }
+}
+
+// ─── 6. Golden record schema: byte-exact field layout ───────────────────────
+static void test_sdlog_record_schema() {
+    test_group("SD log: one record's 52 bytes match the documented field layout exactly");
+    reset_test_state();
+
+    // Open directly (not via a profile key) so the sample below is taken from values this test
+    // owns, with no controller tick in between to overwrite them.
+    g_mock_millis = 5000;
+    g_mock_micros = 50000;
+    logOpenForProfile(LOG_TYPE_PS);
+    check(logActive == true, "SD schema: the log opened for a PS-type run");
+
+    power_share_setpoint      = 0.625f;
+    I_fc                      = 3.0f;      // share_act = 3/(3+1) = 0.75 exactly
+    I_batt                    = 1.0f;
+    v_setpoint                = 1.5f;
+    v_actual                  = 1.25f;
+    droop_gain_FC_actual      = 0.4f;
+    droop_gain_BT_actual      = 0.6f;
+    V_bus                     = 16.5f;
+    current                   = 2.25f;
+    fault_flags               = 0x0012;
+    powerShareProfileActive   = true;
+    powerShareProfilePhaseIdx = 3;
+    driveCycleActive          = false;
+    trapProfileActive         = false;
+    velocityChainCalibratedFlag = true;
+
+    g_mock_micros = 123456;
+    logSampleTick();
+    check(logRecordCount == 1 && logRingCount == 1,
+          "SD schema: exactly one record is committed to the ring");
+    logDrainTick();
+
+    const std::string* f = sd_file("PS0001.BLG");
+    check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE,
+          "SD schema: the card holds the 32-byte header followed by one 52-byte record");
+    if (f == nullptr || f->size() < LOG_HDR_SIZE + LOG_REC_SIZE) return;
+
+    // ── Header ──────────────────────────────────────────────────────────────
+    check(f->compare(0, 4, "BLG1") == 0 && (uint8_t)(*f)[4] == 1 &&
+          (uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE && (uint8_t)(*f)[6] == LOG_TYPE_PS,
+          "SD schema: the header carries magic, version 1, record size 52 and the PS type bit");
+    check(sd_le<uint32_t>(*f, 8) == 5000u && sd_le<uint32_t>(*f, 12) == 50000u,
+          "SD schema: the header timebase is the millis()/micros() pair at open");
+    check(sd_le<uint16_t>(*f, 16) == (uint16_t)(K_DROOP * 1000.0f + 0.5f),
+          "SD schema: the header stores K_DROOP in milliohms for the decoder");
+    check(f->compare(18, 14, std::string(14, '\0')) == 0,
+          "SD schema: the header's reserved tail is zero-filled out to 32 bytes");
+
+    // ── Record: build the expected 52 bytes independently, then memcmp ──────
+    uint8_t exp[LOG_REC_SIZE];
+    memset(exp, 0, sizeof(exp));
+    uint32_t t_us = 123456u;    memcpy(exp + REC_OFF_T_US,      &t_us, 4);
+    float fv;
+    fv = 0.625f;  memcpy(exp + REC_OFF_SHARE_SP,  &fv, 4);
+    fv = 0.75f;   memcpy(exp + REC_OFF_SHARE_ACT, &fv, 4);
+    fv = 1.5f;    memcpy(exp + REC_OFF_V_SP,      &fv, 4);
+    fv = 1.25f;   memcpy(exp + REC_OFF_V_ACT,     &fv, 4);
+    fv = 3.0f;    memcpy(exp + REC_OFF_I_FC,      &fv, 4);
+    fv = 1.0f;    memcpy(exp + REC_OFF_I_BATT,    &fv, 4);
+    fv = 0.4f;    memcpy(exp + REC_OFF_GFC,       &fv, 4);
+    fv = 0.6f;    memcpy(exp + REC_OFF_GBT,       &fv, 4);
+    fv = 16.5f;   memcpy(exp + REC_OFF_V_BUS,     &fv, 4);
+    fv = 2.25f;   memcpy(exp + REC_OFF_I_CMD,     &fv, 4);
+    uint16_t ff = 0x0012;       memcpy(exp + REC_OFF_FAULTS, &ff, 2);
+    exp[REC_OFF_PS_PHASE]   = 3;      // the PS profile is running, at phase 3
+    exp[REC_OFF_DC_PHASE]   = 0xFF;   // drive cycle not running
+    exp[REC_OFF_TRAP_PHASE] = 0xFF;   // trapezoid not running
+    exp[REC_OFF_FLAGS]      = 0x03;   // bit0 profile driving powerBalance, bit1 velocity chain OK
+    // exp[50..51] stay zero (pad)
+
+    check(memcmp(f->data() + LOG_HDR_SIZE, exp, LOG_REC_SIZE) == 0,
+          "SD schema: the written record is byte-identical to the expected 52-byte layout");
+
+    // Field-level checks so a failure above localises instead of just saying "bytes differ".
+    check(sd_le<uint32_t>(*f, LOG_HDR_SIZE + REC_OFF_T_US) == 123456u,
+          "SD schema: t_us at offset 0 is the micros() value at the sample");
+    check(sd_le<float>(*f, LOG_HDR_SIZE + REC_OFF_SHARE_ACT) == 0.75f,
+          "SD schema: share_act at offset 8 is |I_fc|/(|I_fc|+|I_batt|)");
+    check(sd_le<uint16_t>(*f, LOG_HDR_SIZE + REC_OFF_FAULTS) == 0x0012,
+          "SD schema: fault_flags at offset 44 is the live 16-bit fault word");
+    check((uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_PS_PHASE] == 3 &&
+          (uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_DC_PHASE] == LOG_PHASE_NONE &&
+          (uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_TRAP_PHASE] == LOG_PHASE_NONE,
+          "SD schema: the three phase bytes are independent, 0xFF for the inactive profiles");
+    check((uint8_t)(*f)[LOG_HDR_SIZE + 50] == 0 && (uint8_t)(*f)[LOG_HDR_SIZE + 51] == 0,
+          "SD schema: the two pad bytes are zero-filled");
+}
+
+// ─── 7. Write error mid-run: logging dies, the profile does not ─────────────
+static void test_sdlog_write_error_midrun() {
+    test_group("SD log: a mid-run write error disables logging without faulting the run");
+    reset_test_state();
+
+    sd_start_share_run();
+    sd_run_ms(5, /*drain=*/false);
+    check(logActive == true && logRingCount > 0,
+          "SD write error: the run is logging with records pending before the injected failure");
+
+    Serial.tx_clear();
+    g_sd_state.fail_next_write = true;
+    logDrainTick();
+
+    check(Serial.tx_count("[SD] write error") == 1,
+          "SD write error: exactly one '[SD] write error' warning is printed");
+    check(logActive == false && logCloseRequested == false && logFile.isOpen() == false,
+          "SD write error: logging is disabled and the file handle is released");
+    check(logRingCount == 0 && logRecordCount == 0,
+          "SD write error: the ring and counters are cleared so nothing bleeds into the next run");
+    check(mainState == 98 && fault_flags == 0 && error_code == ERR_NONE,
+          "SD write error: an SD failure never calls triggerFault() — no fault, still in State 98");
+    check(powerShareProfileActive == true,
+          "SD write error: the power-share profile is still running");
+
+    // The profile must keep advancing, and the warn must not repeat every tick.
+    uint8_t phaseBefore = powerShareProfilePhaseIdx;
+    Serial.tx_clear();
+    sd_run_ms(3200);
+    check(powerShareProfileActive == true && powerShareProfilePhaseIdx > phaseBefore,
+          "SD write error: the profile phase machine keeps advancing after logging is disabled");
+    check(Serial.tx_count("[SD] write error") == 0,
+          "SD write error: the warning is one-shot and does not repeat on later drain ticks");
+    check(logRecordCount == 0,
+          "SD write error: no further samples are buffered once logging is disabled");
+}
+
+// ─── 8. File-name collision: max index across all three prefixes, +1 ────────
+static void test_sdlog_name_collision() {
+    test_group("SD log: the run counter continues past existing files across all prefixes");
+
+    reset_test_state();
+    g_sd_state.files["PS0007.BLG"] = "";
+    sd_start_share_run();
+    check(std::string(logFileName) == "PS0008.BLG",
+          "SD naming: an existing PS0007.BLG makes the next power-share run PS0008.BLG");
+    check(sd_file("PS0008.BLG") != nullptr,
+          "SD naming: the new file is actually created on the card");
+
+    // The counter is shared across prefixes so one monotonic index orders a whole bench session.
+    reset_test_state();
+    g_sd_state.files["PS0007.BLG"] = "";
+    g_sd_state.files["TP0020.BLG"] = "";
+    g_sd_state.files["NOTES.TXT"]  = "";   // non-.BLG entries must be ignored by the scan
+    sd_start_share_run();
+    check(std::string(logFileName) == "PS0021.BLG",
+          "SD naming: the index is one past the maximum across ALL prefixes, not just PS");
+    check(sd_file("PS0007.BLG") != nullptr && sd_file("TP0020.BLG") != nullptr,
+          "SD naming: the pre-existing logs are left untouched");
+}
+
+// ─── 9. Sample cadence is exactly POWER_BAL_PERIOD_US ───────────────────────
+static void test_sdlog_rate_1khz() {
+    test_group("SD log: sampling lands exactly once per POWER_BAL_PERIOD_US");
+    reset_test_state();
+
+    mainState = 98;
+    g_mock_millis = 100;
+    g_mock_micros = 100000;
+    logOpenForProfile(LOG_TYPE_PS);
+    rl_log_last = g_mock_micros;   // start from a freshly-closed gate
+    check(logActive == true, "SD rate: the log is open and armed before the cadence sweep");
+
+    // Sub-period steps must produce nothing at all.
+    for (int i = 0; i < 3; i++) {
+        g_mock_micros += POWER_BAL_PERIOD_US / 4;
+        doState98();
+        check(logRecordCount == 0,
+              "SD rate: no record is taken before a full POWER_BAL_PERIOD_US has elapsed");
+    }
+    g_mock_micros += POWER_BAL_PERIOD_US / 4;   // now exactly one period since rl_log_last
+    doState98();
+    check(logRecordCount == 1,
+          "SD rate: exactly one record is taken on the tick the period completes");
+
+    // Ten more full periods, each split into four sub-period ticks: one record per period.
+    for (int p = 0; p < 10; p++) {
+        for (int i = 0; i < 4; i++) {
+            g_mock_micros += POWER_BAL_PERIOD_US / 4;
+            doState98();
+        }
+    }
+    check(logRecordCount == 11,
+          "SD rate: ten further periods yield exactly ten further records (1 kHz, no doubling)");
+
+    // A single large jump must not back-fill: the gate takes one sample, not one per period missed.
+    g_mock_micros += POWER_BAL_PERIOD_US * 50;
+    doState98();
+    check(logRecordCount == 12,
+          "SD rate: a long gap yields a single catch-up record, never a burst of back-fills");
+}
+
+// ─── 10. 'L' plot stream and SD logging run independently ───────────────────
+static void test_sdlog_plot_simultaneous() {
+    test_group("SD log: the 'L' plot stream and 1 kHz logging coexist with independent rates");
+    reset_test_state();
+
+    sd_start_share_run();          // 'R' first: under plot mode 'R' would only ARM (delayed start)
+    check(logActive == true, "SD + plot: the share profile is logging before the plotter is enabled");
+    Serial.rx_queue.push('L');
+    doState98();
+    check(plotModeActive == true && logActive == true,
+          "SD + plot: enabling the plot stream leaves the log active");
+
+    Serial.tx_clear();
+    uint32_t recsBefore = logRecordCount;
+    sd_run_ms(100);
+
+    check(logRecordCount - recsBefore == 100,
+          "SD + plot: logging still lands 100 records in 100 ms with the plotter streaming");
+    check(Serial.tx_count("sp:") == 100 / (int)PLOT_PERIOD_MS,
+          "SD + plot: the plot stream still emits exactly one line per PLOT_PERIOD_MS");
+    check(Serial.tx_count("[SD]") == 0,
+          "SD + plot: the logger prints nothing periodic, so it cannot corrupt the plotter parse");
+
+    // Closing the log must not disturb the plot stream.
+    Serial.tx_clear();
+    Serial.rx_queue.push('X');
+    doState98();
+    sd_drain_until_closed();
+    check(Serial.tx_count("[SD] closed") == 1,
+          "SD + plot: the close prints its one-shot summary exactly once");
+    check(plotModeActive == true,
+          "SD + plot: stopping the profile leaves the plot stream running");
+    Serial.tx_clear();
+    sd_run_ms(100);
+    check(Serial.tx_count("sp:") == 100 / (int)PLOT_PERIOD_MS,
+          "SD + plot: the plot cadence is unchanged after the log closed");
+}
+
+// ─── 11. 'K' status command ─────────────────────────────────────────────────
+static void test_sdlog_k_status() {
+    test_group("SD log: 'K' prints the logger status and stays live during the bring-up lockout");
+    reset_test_state();
+
+    mainState = 98;
+    Serial.tx_clear();
+    Serial.rx_queue.push('K');
+    doState98();
+    check(Serial.tx_contains("=== SD logger ==="),
+          "'K': prints the SD logger status block");
+    check(Serial.tx_contains("card:") && Serial.tx_contains("file:") &&
+          Serial.tx_contains("records:") && Serial.tx_contains("dropped:"),
+          "'K': the status block carries the card, file, record and drop fields");
+    check(Serial.tx_contains("not probed yet"),
+          "'K': before any run the card is reported as not yet probed");
+    check(g_sd_state.begin_calls == 0,
+          "'K': the status print never probes the card itself (read-only, non-blocking)");
+
+    // With a run in progress the same line must name the file and the live counts.
+    reset_test_state();
+    sd_start_share_run();
+    sd_run_ms(5);
+    Serial.tx_clear();
+    Serial.rx_queue.push('K');
+    doState98();
+    check(Serial.tx_contains("PS0001.BLG") && Serial.tx_contains("YES (sampling)"),
+          "'K': during a run the status names the open file and reports sampling active");
+
+    // Bring-up lockout: 'K' is read-only, so it must NOT be refused like the topology keys.
+    Serial.tx_clear();
+    bringupActive = true;
+    Serial.rx_queue.push('K');
+    doState98();
+    check(Serial.tx_contains("=== SD logger ==="),
+          "'K': still prints while the staged bring-up holds the topology lockout");
+    check(!Serial.tx_contains("REFUSED: staged bring-up"),
+          "'K': is not refused by the staged-bring-up lockout");
+    bringupActive = false;
+}
+
+// ─── 12. Velocity-validity flag and the three phase bytes ───────────────────
+static void test_sdlog_velocity_flag_and_phases() {
+    test_group("SD log: flags bit1 tracks the velocity chain; phase bytes track their own profile");
+
+    // ── (a) Uncalibrated velocity chain: records are still written, bit1 clear ──
+    reset_test_state();
+    velocityChainCalibratedFlag = false;
+    g_mock_millis = 10;
+    g_mock_micros = 10000;
+    logOpenForProfile(LOG_TYPE_PS);
+    g_mock_micros += POWER_BAL_PERIOD_US;
+    logSampleTick();
+    logDrainTick();
+    check(logRecordCount == 1,
+          "SD velocity: a run with an uncalibrated velocity chain still writes records");
+    {
+        const std::string* f = sd_file("PS0001.BLG");
+        check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE,
+              "SD velocity: the uncalibrated run's record reaches the card");
+        if (f) {
+            uint8_t flags = (uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_FLAGS];
+            check((flags & 0x02) == 0,
+                  "SD velocity: flags bit1 is CLEAR when velocityChainCalibrated() is false");
+        }
+    }
+
+    // Same sample with the chain calibrated → bit1 set.
+    reset_test_state();
+    velocityChainCalibratedFlag = true;
+    g_mock_millis = 10;
+    g_mock_micros = 10000;
+    logOpenForProfile(LOG_TYPE_PS);
+    g_mock_micros += POWER_BAL_PERIOD_US;
+    logSampleTick();
+    logDrainTick();
+    {
+        const std::string* f = sd_file("PS0001.BLG");
+        check(f != nullptr && ((uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_FLAGS] & 0x02) != 0,
+              "SD velocity: flags bit1 is SET when velocityChainCalibrated() is true");
+    }
+
+    // ── (b) 'D' drive cycle: dc_phase live, ps_phase/trap_phase 0xFF ────────
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    g_mock_millis = 100;
+    g_mock_micros = 100000;
+    Serial.rx_queue.push('D');
+    doState98();                       // start + first sample (dc_phase already 0)
+    check(driveCycleActive == true && logActive == true,
+          "SD phases: the 'D' drive cycle started and opened a DC log");
+    check(std::string(logFileName) == "DC0001.BLG",
+          "SD phases: a drive-cycle run opens a DC-prefixed file");
+    logDrainTick();
+    {
+        const std::string* f = sd_file("DC0001.BLG");
+        check(f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE,
+              "SD phases: the drive cycle's first record reached the card");
+        if (f && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE) {
+            check((uint8_t)(*f)[6] == LOG_TYPE_DC,
+                  "SD phases: the DC run's header type bitmask is LOG_TYPE_DC");
+            check((uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_DC_PHASE] != LOG_PHASE_NONE,
+                  "SD phases: dc_phase carries the live drive-cycle phase index during a 'D' run");
+            check((uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_PS_PHASE] == LOG_PHASE_NONE &&
+                  (uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_TRAP_PHASE] == LOG_PHASE_NONE,
+                  "SD phases: ps_phase and trap_phase are 0xFF while only the drive cycle runs");
+        }
+    }
+
+    // ── (c) 'R' power-share run: the reverse ────────────────────────────────
+    reset_test_state();
+    g_mock_millis = 100;
+    g_mock_micros = 100000;
+    sd_start_share_run();
+    check(std::string(logFileName) == "PS0001.BLG",
+          "SD phases: a power-share run opens a PS-prefixed file");
+    logDrainTick();
+    {
+        const std::string* f = sd_file("PS0001.BLG");
+        check(f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE,
+              "SD phases: the share profile's first record reached the card");
+        if (f && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE) {
+            check((uint8_t)(*f)[6] == LOG_TYPE_PS,
+                  "SD phases: the PS run's header type bitmask is LOG_TYPE_PS");
+            check((uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_PS_PHASE] != LOG_PHASE_NONE,
+                  "SD phases: ps_phase carries the live share-profile phase index during an 'R' run");
+            check((uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_DC_PHASE] == LOG_PHASE_NONE &&
+                  (uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_TRAP_PHASE] == LOG_PHASE_NONE,
+                  "SD phases: dc_phase and trap_phase are 0xFF while only the share profile runs");
+        }
+    }
+}
+
+// ─── 13. Wedged card: the close deadline abandons the ring and closes anyway ─
+// This is the C1 defect from the first-pass review: with the busy guard ahead of the deadline, a
+// permanently-busy card took the early return forever — the file never closed, logCloseRequested
+// never cleared, and every later profile start fell into the double-open branch. One dead card
+// socket silently cost the whole bench session's logging.
+static void test_sdlog_close_deadline_abandon() {
+    test_group("SD log: a wedged card hits the close deadline, abandons the ring and still closes");
+    reset_test_state();
+
+    sd_start_share_run();
+    sd_run_ms(20);                       // healthy card: these records physically reach the file
+    uint32_t written = logRecordsWritten;
+    // 21, not 20: the 'R' keypress tick itself takes the run's first sample (the log is opened
+    // before logSampleTick() runs in that same doState98() invocation).
+    check(written == 21 && logRingCount == 0,
+          "SD deadline: the healthy phase drained every buffered record to the card");
+
+    g_sd_state.busy_ticks = 1000000;     // card wedges permanently
+    sd_run_ms(30);
+    uint32_t abandoned = logRingCount;
+    check(abandoned == 30 && logRecordsWritten == written,
+          "SD deadline: samples taken during the wedge pile up in the ring, unwritten");
+
+    Serial.tx_clear();
+    Serial.rx_queue.push('X');
+    doState98();
+    check(logCloseRequested == true && logFile.isOpen() == true,
+          "SD deadline: the stop flags the close while the card is still wedged");
+
+    logDrainTick();
+    check(logCloseRequested == true && logFile.isOpen() == true,
+          "SD deadline: before the deadline elapses the drain politely waits for the card");
+
+    g_mock_millis += LOG_CLOSE_DEADLINE_MS;
+    logDrainTick();
+
+    check(logActive == false && logCloseRequested == false,
+          "SD deadline: the deadline clears both logger flags so the session is not poisoned");
+    check(logFile.isOpen() == false,
+          "SD deadline: the file handle is released even though the card never drained");
+    check(Serial.tx_contains("abandoned (card did not drain)"),
+          "SD deadline: the close line reports the abandoned records instead of claiming success");
+    check(logLastAbandoned == abandoned && logLastRecordsWritten == written,
+          "SD deadline: the 'last run' status counters preserve what was written and abandoned");
+
+    const std::string* f = sd_file("PS0001.BLG");
+    check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * written + LOG_REC_SIZE,
+          "SD deadline: the file holds exactly the records that physically drained, plus a trailer");
+    if (f) {
+        size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * written;
+        check(sd_le<uint32_t>(*f, tr + 0) == 0xFFFFFFFFu,
+              "SD deadline: the abandoned close still writes a valid trailer sentinel");
+        check(sd_le<uint32_t>(*f, tr + 4) == written,
+              "SD deadline: the trailer reports records WRITTEN, not records sampled");
+        check(sd_le<uint32_t>(*f, tr + 14) == abandoned,
+              "SD deadline: the trailer's abandoned count is the ring remainder at close");
+        check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_X,
+              "SD deadline: the original close reason survives the deadline path");
+    }
+
+    // The whole point of the fix: the next run must log normally into a NEW file.
+    g_sd_state.busy_ticks = 0;
+    Serial.tx_clear();
+    sd_start_share_run();
+    check(logActive == true && std::string(logFileName) == "PS0002.BLG",
+          "SD deadline: the next profile start opens a fresh file — the session is not poisoned");
+    check(!Serial.tx_contains("previous log still open"),
+          "SD deadline: the next run does not hit the double-open branch");
+    sd_run_ms(5);
+    check(logRecordsWritten == 6,          // 5 ticks + the 'R' keypress tick's own sample
+          "SD deadline: the new run logs and drains normally after the wedged one was abandoned");
+}
+
+// ─── 14. A profile start while a close is still pending ─────────────────────
+static void test_sdlog_pending_close_interleave() {
+    test_group("SD log: starting a run over a pending close finishes the old file, skips the new");
+    reset_test_state();
+
+    sd_start_share_run();
+    g_sd_state.busy_ticks = 1000000;     // card stalls, so the ring cannot drain
+    sd_run_ms(10);
+    uint32_t pending = logRingCount;
+    check(pending == 11 && logRecordsWritten == 0,   // 10 ticks + the 'R' keypress tick's sample
+          "SD interleave: the run's records are stuck in the ring with the card stalled");
+
+    Serial.rx_queue.push('Q');
+    doState98();
+    check(mainState == 1 && logCloseRequested == true && logFile.isOpen() == true,
+          "SD interleave: 'Q' leaves a close pending with the file still open");
+
+    // Straight back into test mode and start another run while that close is unfinished.
+    Serial.tx_clear();
+    sd_start_share_run();
+
+    check(powerShareProfileActive == true,
+          "SD interleave: the new profile itself still runs — logging is never a precondition");
+    check(Serial.tx_contains("[SD] previous log still open"),
+          "SD interleave: the double-open defence reports that this run is NOT logged");
+    check(logActive == false,
+          "SD interleave: the new run is deliberately left unlogged rather than splicing two runs");
+    check(logFile.isOpen() == false && logCloseRequested == false,
+          "SD interleave: the stale handle is finished on the spot, not leaked");
+    check(sd_only_log_name() == "PS0001.BLG",
+          "SD interleave: no second .BLG is created for the refused run");
+
+    // The old file must be complete and honest about what actually reached the card.
+    const std::string* f = sd_file("PS0001.BLG");
+    check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE,
+          "SD interleave: the old file is header + trailer only (nothing drained past the stall)");
+    if (f) {
+        size_t tr = LOG_HDR_SIZE;
+        check(sd_le<uint32_t>(*f, tr + 0) == 0xFFFFFFFFu,
+              "SD interleave: the old file is closed with a valid trailer sentinel");
+        check(sd_le<uint32_t>(*f, tr + 4) == 0u && sd_le<uint32_t>(*f, tr + 14) == pending,
+              "SD interleave: the trailer reports zero written and the whole ring abandoned");
+        check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_Q,
+              "SD interleave: the trailer keeps the ORIGINAL 'Q' close reason, not the new run's");
+    }
+
+    // With the close already finished, later drain ticks must be inert (no double trailer).
+    g_sd_state.busy_ticks = 0;
+    size_t sizeAfterClose = f ? f->size() : 0;
+    for (int i = 0; i < 20; i++) logDrainTick();
+    const std::string* f2 = sd_file("PS0001.BLG");
+    check(f2 != nullptr && f2->size() == sizeAfterClose,
+          "SD interleave: drain ticks after the close are inert — no second trailer is appended");
+    check(logFile.isOpen() == false,
+          "SD interleave: no file handle is left open once the card recovers");
+}
+
+// ─── 15. Drain across the ring wrap keeps records in logical order ──────────
+static void test_sdlog_ring_wrap_drain() {
+    test_group("SD log: a drain spanning the ring wrap writes records in logical order, no gaps");
+    reset_test_state();
+
+    g_mock_millis = 10;
+    g_mock_micros = 10000;
+    logOpenForProfile(LOG_TYPE_PS);
+    check(logActive == true, "SD wrap: the log is open before the wrap sweep");
+
+    // Stamp each record with its sequence number via share_sp (exactly representable as a float
+    // for every value used here), so the decoded file proves ORDER, not just count.
+    uint32_t seq = 0;
+    auto fill = [&](int n) {
+        for (int i = 0; i < n; i++) {
+            power_share_setpoint = (float)seq++;
+            g_mock_micros += POWER_BAL_PERIOD_US;
+            logSampleTick();
+        }
+    };
+
+    fill(900);                                  // head = 900 records, tail = 0
+    check(logRingCount == 900 && logDroppedCount == 0,
+          "SD wrap: 900 records buffer without dropping (under the 1024 capacity)");
+
+    for (int i = 0; i < 50; i++) logDrainTick();   // 9 records per tick → 450 drained
+    check(logRecordsWritten == 450 && logRingTail == 450u * LOG_REC_SIZE,
+          "SD wrap: a partial drain advances the tail off zero, leaving 450 records pending");
+
+    fill(500);                                  // head passes the physical end of logRing
+    check(logRingHead < logRingTail,
+          "SD wrap: the head has wrapped past the end of the ring, so pending data spans the wrap");
+    check(logRingCount == 950 && logDroppedCount == 0,
+          "SD wrap: the refill stays inside capacity, so no sample is dropped");
+
+    int guard = 0;
+    while (logRingCount > 0 && guard++ < 500) logDrainTick();
+    check(logRingCount == 0 && logRecordsWritten == 1400,
+          "SD wrap: draining across the wrap boundary writes every one of the 1400 records");
+    check(logRecordsWritten == logRecordCount,
+          "SD wrap: records written to the card equals records committed to the ring");
+
+    logRequestClose(LOG_CLOSE_STOP);
+    sd_drain_until_closed();
+
+    const std::string* f = sd_file("PS0001.BLG");
+    check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * 1400u + LOG_REC_SIZE,
+          "SD wrap: the file holds all 1400 records plus the trailer");
+    if (f && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE * 1400u) {
+        bool ordered = true;
+        uint32_t firstBad = 0;
+        for (uint32_t k = 0; k < 1400u; k++) {
+            float s = sd_le<float>(*f, LOG_HDR_SIZE + LOG_REC_SIZE * k + REC_OFF_SHARE_SP);
+            if (s != (float)k) { ordered = false; firstBad = k; break; }
+        }
+        if (!ordered) printf("    (first out-of-order record index: %u)\n", firstBad);
+        check(ordered,
+              "SD wrap: the decoded sequence is 0..1399 strictly increasing — no gap, no duplicate");
+        size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * 1400u;
+        check(sd_le<uint32_t>(*f, tr + 4) == 1400u && sd_le<uint32_t>(*f, tr + 14) == 0u,
+              "SD wrap: the trailer reports all 1400 written and nothing abandoned");
+    }
+}
+
+// ─── 16. Four-digit run counter exhausted ───────────────────────────────────
+// At 9999 the next name would be 11 chars ("PS10000.BLG"), invisible to the 10-char scan filter —
+// so every later run would re-derive the same name and O_TRUNC away the previous run's data.
+static void test_sdlog_counter_exhausted() {
+    test_group("SD log: an exhausted run counter refuses to log rather than overwrite a file");
+    reset_test_state();
+
+    g_sd_state.files["PS9999.BLG"] = "seeded";
+    sd_start_share_run();
+
+    check(Serial.tx_contains("[SD] run counter exhausted"),
+          "SD counter: the exhausted 4-digit counter is reported to the operator");
+    check(logActive == false && logFile.isOpen() == false,
+          "SD counter: no log is opened once the counter is exhausted");
+    check(g_sd_state.files.size() == 1 && sd_file("PS9999.BLG") != nullptr,
+          "SD counter: no new file is created and the existing PS9999.BLG is untouched");
+    check(*sd_file("PS9999.BLG") == "seeded",
+          "SD counter: the last run's data is NOT truncated away by a re-derived name");
+    check(powerShareProfileActive == true,
+          "SD counter: the profile still runs — logging is never a precondition for a bench run");
+
+    sd_run_ms(10);
+    check(logRecordCount == 0 && logRingCount == 0,
+          "SD counter: nothing is sampled while logging is disabled for the run");
+
+    // The refusal is per-open, not a latch: freeing a slot lets the next run log again.
+    g_sd_state.files.erase("PS9999.BLG");
+    Serial.rx_queue.push('R');
+    doState98();                       // stop the first run
+    Serial.tx_clear();
+    sd_start_share_run();
+    check(logActive == true && std::string(logFileName) == "PS0001.BLG",
+          "SD counter: the refusal is not a latch — a run logs again once a slot is free");
+}
+
 #if BENCH_TEST
 // ─── doState0() BENCH_TEST bypass: boot to Idle with the power stage off ──────
 // Built only in the -DBENCH_TEST=1 pass (run_tests_bench). The -DBENCH_TEST=0 suite covers the
@@ -4580,6 +5562,24 @@ int main() {
     test_power_pi_antiwindup();
     test_powerbalance_gated_tick_stable();
     test_wheelspeed_reset();
+
+    // ── SD bench logging ────────────────────────────────────────────────────
+    test_sdlog_lifecycle_natural_completion();
+    test_sdlog_lifecycle_stop_x_q();
+    test_sdlog_lifecycle_fault_path();
+    test_sdlog_no_card();
+    test_sdlog_overflow_drop_count();
+    test_sdlog_record_schema();
+    test_sdlog_write_error_midrun();
+    test_sdlog_name_collision();
+    test_sdlog_rate_1khz();
+    test_sdlog_plot_simultaneous();
+    test_sdlog_k_status();
+    test_sdlog_velocity_flag_and_phases();
+    test_sdlog_close_deadline_abandon();
+    test_sdlog_pending_close_interleave();
+    test_sdlog_ring_wrap_drain();
+    test_sdlog_counter_exhausted();
 #endif
 
     printf("\n===================================\n");

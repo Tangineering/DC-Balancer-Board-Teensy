@@ -312,6 +312,9 @@ requirements:
   `powerBalance()`, and `chargingControl()` execute unmodified; the drive cycle only supplies
   `v_setpoint`. Requires `MOT_PWR_ENABLE` to be HIGH before starting.
 - **Status dump** (`S` command): print all pin states and ADC readings to USB Serial.
+- **SD-card bench logging:** `R`/`T`/`D` runs are auto-logged at 1 kHz to the built-in micro-SD;
+  the `K` command prints logging status. Logging is observability-only — it never faults the
+  board and never blocks the main loop, with or without a card present.
 - **Exit** (`Q` command): → State 1; `MOT_PWR_ENABLE` forced LOW on exit.
 
 See PLAN.md §9 for the full command set and drive cycle phase table.
@@ -323,9 +326,10 @@ See PLAN.md §9 for the full command set and drive cycle phase table.
 A host-native test suite lives in `test/` and can be compiled and run with `make` on any
 machine with `g++` — no Teensy or Arduino IDE required.
 
-- **Mock layer:** `mock_arduino.h`, `mock_wire.h`, `mock_spi.h`, `mock_vesc.h` stub out
-  all Teensy-specific APIs. Wire mock includes an injectable byte queue for scripted I2C
-  responses; SPI mock captures written words for assertion.
+- **Mock layer:** `mock_arduino.h`, `mock_wire.h`, `mock_spi.h`, `mock_vesc.h`, `mock_sd.h`
+  stub out all Teensy-specific APIs. Wire mock includes an injectable byte queue for scripted
+  I2C responses; SPI mock captures written words for assertion; the SD mock captures each
+  file's written bytes in memory and can inject open/write failures and busy-tick stalls.
 - **Coverage targets:** scale factor math, fault detection, PI controller convergence,
   command packet parsing, telemetry packing (58-byte v4 layout + checksum), Ag105 init
   I2C sequence, `pollAg105()` byte decoding, `assertFcChargeEnable()` ordering, drive
@@ -345,7 +349,9 @@ machine with `g++` — no Teensy or Arduino IDE required.
   stop across all three profiles, and `pollVescWatch()` suppression. The Serial-Plotter stream
   (`'L'`, PLAN.md §9) is covered too: the six-field wire format and rate gate (asserted against
   the mock Serial's captured TX), status-line suppression/restore, the `'R'`/`'T'` arm-fire-cancel
-  paths under plot mode, and the fire-time precondition re-check.
+  paths under plot mode, and the fire-time precondition re-check. SD logging coverage: lifecycle
+  on every exit path incl. fault, ring-buffer overflow drop-count, no-card tolerance, record
+  schema, and the `'K'` status command.
 - Run before every flash: `cd test && make`.
 
 See PLAN.md §10 for the full directory layout and test category table.

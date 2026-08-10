@@ -692,6 +692,7 @@ All commands are single uppercase characters, processed in `doState98()`:
 | `T <Imax> <hold> <rate>` | Start trapezoidal motor-current profile — all three values on one line (peak A / hold s / rate A/s, e.g. `T 6 5 0.5`); bare `T` while running stops it; direct phase-current command, no velocity-chain calibration and no `MOT_PWR_ENABLE` gate (§9f) |
 | `X` | Universal stop: cancel any running profile (`D`/`R`/`T`), armed plot-mode run, or bring-up + manual motor + power-share live (motor zeroed; switches parked only if `D`/`R` was running, mirroring their own stop paths) |
 | `L` | Toggle Serial-Plotter stream: 50 Hz `sp,act,gFC,gBT,ifc,ibt` line; suppresses the periodic status/phase/`[VW]` lines; `R`/`T` arm with a `PLOT_ARM_DELAY_MS` delay (see the `L` paragraph below §9e) |
+| `K` | Print SD-card logging status: card present, current/last file name, record and drop counts (§9g); read-only, live even during the bring-up lockout |
 | `H` / `?` | Print the command list (`printTestHelp()`) |
 | `Q` | Exit State 98 → State 1 (forces `MOT_PWR_ENABLE` LOW; closes charge/regen paths; drops plot mode + any armed run) |
 
@@ -860,6 +861,109 @@ production control-loop timing isn't perturbed by the ~100 ms blocking `getVescV
 Status snapshot every 500 ms: elapsed time, phase, `I_cmd`, `I_fc`, `I_batt`, `V_bus`,
 `fault_flags`.
 
+### 9g. SD-card bench logging
+
+The Youla-H power-share controller runs at 1 kHz (`POWER_BAL_PERIOD_US`), but the `L`
+Serial-Plotter stream is only 50 Hz — 20x too coarse to see the share loop's actual transient.
+State 98 gains on-board logging to the Teensy 4.1's built-in micro-SD (SDIO, its own bus — no
+contention with the MDAC SPI), auto-tied to the profile lifecycle, with the same non-blocking
+discipline as everything else in the state machine.
+
+**Auto lifecycle, no manual arm.** Logging opens automatically when a profile starts —
+`startPowerShareProfile()` (`'R'`), `startTrapProfile()` (`'T'`), or the `'D'` start block — and
+closes on every exit path: natural completion (`advancePowerShareProfile()` /
+`advanceTrapProfile()` / `advanceDriveCycle()`), the matching stop-toggle (`'R'`/`'T'`/`'D'`
+again), `'X'` universal stop, `'Q'` exit, and fault. There is no separate arm/disarm command —
+a card present at profile start is logged; a missing card is silently skipped (below). The
+fault path is deferred: `triggerFault()` only sets a close-request flag (no I/O in the fault
+transition itself); the drain in `loop()` finishes writing and closes the file during State 99's
+teardown, so the safety transition is never delayed by SD I/O.
+
+**Sampling — 1 kHz.** `logSampleTick()` runs in `doState98()`'s post-serial tick section, gated
+by the same wrap-safe `rateLimitDue(rl_log_last, POWER_BAL_PERIOD_US)` mechanism the PI
+controllers use — a true 1 kHz cadence, not the drifting `millis()` restamp the `'L'` stream
+warns against. A sample is a 52-byte memcpy into a ring buffer; no formatting, no I/O on the
+sampling path.
+
+**Record layout (52 bytes, little-endian, packed):**
+
+| Field | Type | Source |
+|---|---|---|
+| `t_us` | u32 | `micros()` at sample |
+| `share_sp` | f32 | `power_share_setpoint` — power-share setpoint |
+| `share_act` | f32 | actual power share, recomputed locally with the same formula as `plotTick()` |
+| `v_sp` | f32 | `v_setpoint` — drive-cycle velocity setpoint |
+| `v_act` | f32 | `v_actual` — measured wheel velocity |
+| `I_fc`, `I_batt` | f32x2 | FC/BT channel currents |
+| `gFC`, `gBT` | f32x2 | `droop_gain_FC_actual` / `droop_gain_BT_actual` |
+| `V_bus` | f32 | bus voltage |
+| `I_cmd` | f32 | `current` (post-clamp commanded motor current) |
+| `fault_flags` | u16 | live fault bitmask |
+| `ps_phase` | u8 | `powerShareProfilePhaseIdx`, 0xFF when the PS profile isn't running |
+| `dc_phase` | u8 | `driveCyclePhaseIdx`, 0xFF when the drive cycle isn't running |
+| `trap_phase` | u8 | `trapPhase`, 0xFF when the trapezoid isn't running |
+| `flags` | u8 | bit0 = a profile / live share loop is driving the droop MDACs this tick (gFC/gBT are closed-loop output, not a static operator write); bit1 = velocity chain valid (encoder fitted + `velocityChainCalibrated()`); rest reserved |
+| pad | u8x2 | zero |
+
+`v_sp`/`v_act` are logged unconditionally (the globals always exist), but `flags` bit1 tells the
+decoder whether they mean anything — bench runs without the flywheel encoder (or with the chain
+uncalibrated) log the fields as-is with bit1 clear, and the host decoder blanks those columns
+rather than erroring. No code path requires the encoder for logging to work.
+
+The three phase bytes are independent per-profile fields (not one "active profile" byte), and
+the header's profile-type field is a bitmask (1=PS, 2=TP, 4=DC), so a future combined DC+PS
+profile needs zero format change — both phase bytes are simply non-0xFF at once.
+
+**Header (32 bytes, once per file):** magic `'B','L','G','1'`, format version (u8, =1), record
+size (u8, =52), profile type (u8 bitmask), pad, `start_millis` (u32), `start_micros` (u32),
+`K_DROOP`x1000 (u16), reserved to 32 B.
+
+**Trailer (one record with `t_us = 0xFFFFFFFF` sentinel):** total records written (u32), dropped
+count (u32), close reason (u8: 1=complete, 2=stop, 3=X, 4=Q, 5=fault), `error_code` (u8), rest
+zero. A trailer instead of a header rewrite avoids a seek-back, keeping close cheap.
+
+**Ring buffer and draining.** A static 1024-record (52 KB) ring covers roughly 1 s of coverage
+against a 250 ms pathological card stall with 4x margin. Overflow policy is drop-newest +
+count (`logDroppedCount`), never block. `logDrainTick()` runs from `loop()` (not from
+`doState98()`, so it keeps draining and can finish a deferred close in State 99 after a fault):
+if the SD card reports busy, skip the tick (the SD analogue of `plotTick()`'s
+`availableForWrite()` guard); otherwise write at most one chunk (<= 512 B) from the ring per
+loop tick — comfortably ahead of the 52 B/ms fill rate, so a stall drains down fast once it
+clears. A pending close writes the trailer, truncates the pre-allocated file to its actual
+size, and closes once the ring is empty or a 2 s drain deadline passes, whichever comes first;
+either way logging never delays or alters a safety action.
+
+**No-card tolerance.** `setup()` probes the card once at boot (with the power stage dark, so
+SdFat's multi-second init timeout can never stall the main loop with the converters live);
+`logOpenForProfile()` keeps a lazy fallback probe for callers that never ran `setup()`. The
+`[SD] no card — logging disabled` warn prints once at the first profile start, not at the probe
+(USB Serial may not be enumerated during `setup()`). Profiles run identically with or without a
+card. An open failure warns **per run** (it is a per-run condition — a full card, a bad name —
+not a latched one). A mid-run write error ends logging for that run after attempting the
+trailer, prints one warn line, and the profile continues — SD errors never call
+`triggerFault()`; logging is observability-only.
+
+**File naming.** Profile-prefixed run counter via a directory scan: `PSnnnn.BLG` / `TPnnnn.BLG`
+/ `DCnnnn.BLG` in the card root. At open, one scan finds the max `nnnn` across all three
+prefixes and uses max+1 — stateless (no counter file to corrupt) and collision-free. The scan
+happens once at profile start, not in the control path.
+
+**Retrieval and decoding.** Primary retrieval is a card pull (no serial-dump command — that
+would add a long-running Serial loop to State 98, the exact failure class the non-blocking
+discipline guards against). Decode on the laptop with:
+
+```
+python tools/decode_benchlog.py FILE.BLG > run.csv
+```
+
+MTP (mounting the card over USB without pulling it) is a possible future extension, noted here
+but not implemented — it requires a USB-type rebuild and MTP_Teensy is semi-experimental.
+
+**`'K'` status command.** Prints card present, current/last file name, and record/drop counts to
+USB Serial (§9b); read-only, so it stays live during the bring-up lockout. Deliberately reports
+NO free-space figure: `freeClusterCount()` and friends walk the FAT and block for seconds on a
+real card, which is exactly the stall this module exists to avoid.
+
 ### 9d. `doState98()` skeleton
 
 ```cpp
@@ -914,6 +1018,9 @@ test/
                         read(); injectable byte queue for scripted I2C responses
   mock_spi.h          — SPI.begin(), transfer16(); captures written words for assertion
   mock_vesc.h         — VescUart stub; controls setCurrent() call log, v_actual, current
+  mock_sd.h           — in-memory SdFat/SD mock: per-file byte capture, injectable
+                        open/write failures, busy-tick stall injection (drives the
+                        SD-logging overflow/no-card/write-error tests)
   test_main.cpp       — test runner (no framework dependency; plain assert() + pass/fail counter)
   Makefile            — native build: g++ -std=c++17 -I.. test_main.cpp -o run_tests && ./run_tests
 ```
@@ -939,6 +1046,7 @@ by the mocks before the `#include`.
 | **`assertFcChargeEnable(false)`** | Only `FC_CHARGE_ENABLE` goes LOW; does not disturb `BT_BUS_ENABLE` or `REGEN_ENABLE` |
 | **Drive cycle simulation** | `advanceDriveCycle()` transitions through all phases in the correct order given controlled `millis()` injection; `v_setpoint` hits expected values at each phase boundary |
 | **MPPT_DISABLE polarity** | `chargingControl()` sets `MPPT_DISABLE` LOW (inhibit) during regen and when `charge_goal ≈ 0`; HIGH (enabled) when charger is ready and no regen |
+| **SD bench logging** | lifecycle on all exit paths (complete/stop/X/Q/fault), 1 kHz rate gate, overflow drop+count, no-card warn-once, write-error mid-run, name collision, record schema, velocity-valid flag + per-profile phase bytes, `'K'` status, plot+log independence |
 
 ### 10c. Running the tests
 

@@ -189,6 +189,9 @@
  *    mode control word (0x9000, Table 10) to both DACs at boot. Every MDAC write before this fix
  *    (all sessions, both the old k_eq mapping and the corrected K_DROOP mapping) never reached
  *    the DAC register — the droop hardware chain is bench-unvalidated below this point.
+ *  - SD bench logging (2026-08-10): 1 kHz binary logging of State-98 profiles to the built-in SD
+ *    (SdFat/SDIO), ring-buffered non-blocking drain in loop(), auto lifecycle with the R/T/D
+ *    profiles, 'K' status command, tools/decode_benchlog.py decoder.
  */
 
 #include <VescUart.h>
@@ -196,6 +199,7 @@
 #include <Wire.h>
 #include <NativeEthernet.h>
 #include <NativeEthernetUdp.h>
+#include <SdFat.h>              // built-in micro-SD (SDIO) — State-98 bench logger, see logSampleTick()
 #include "share_controller.h"   // Youla-H power-share controller (generated coeffs)
 
 VescUart vesc;
@@ -645,6 +649,11 @@ static inline bool rateLimitDue(uint32_t &last, uint32_t period) {
 uint32_t rl_motor_last    = 0;
 uint32_t rl_charging_last = 0;
 uint32_t rl_power_last    = 0;
+// SD bench logger sample gate. Lives here (not with the logger module further down) because
+// resetControlRateLimiters() below back-dates it, and that function is defined before the module.
+// Deliberately shares POWER_BAL_PERIOD_US: the log exists to resolve the 1 kHz share loop, so a
+// sample per power-balance tick is exactly the resolution the record format is for.
+uint32_t rl_log_last      = 0;
 
 // Reset all three gates so the next tick runs every controller immediately. Called on entry to a
 // state or profile that starts driving, so the first control action isn't delayed by up to a full
@@ -654,6 +663,10 @@ void resetControlRateLimiters() {
     rl_motor_last    = now - MOTOR_CTRL_PERIOD_US;
     rl_charging_last = now - CHARGING_CTRL_PERIOD_US;
     rl_power_last    = now - POWER_BAL_PERIOD_US;
+    // Back-date the logger gate too, so a profile's FIRST control tick is also its first logged
+    // sample — otherwise the run's opening transient (the most interesting part of a step test)
+    // could fall in a leftover window of up to one full period.
+    rl_log_last      = now - POWER_BAL_PERIOD_US;
 }
 
 // (The rate-gated wrappers motorControlGated()/chargingControlGated()/powerBalanceGated() are
@@ -1016,6 +1029,472 @@ bool isNumericEntryChar(char c);
 const char* vescFaultStr(uint8_t code);
 void queryVescInfo();
 void pollVescWatch();
+void logOpenForProfile(uint8_t typeMask);
+void logRequestClose(uint8_t reason);
+void logSampleTick();
+void logDrainTick();
+void printSdStatus();
+
+// ═════════════════════════════════════════════════════════════════════════════
+// STATE 98 BENCH TOOL — SD-CARD DATA LOGGER (1 kHz binary, non-blocking)
+// ═════════════════════════════════════════════════════════════════════════════
+// Why this exists: the Youla-H share controller runs at 1 kHz, but the only other capture path
+// ('L' Serial-Plotter stream) is 50 Hz — 20x too coarse to resolve the step response the H-infinity
+// design round was for. This logs one fixed-size binary record per power-balance tick to the
+// Teensy 4.1's BUILT-IN micro-SD over SDIO (its own bus — no contention with the MDAC SPI or the
+// Ag105 I2C), for the duration of a State-98 profile run.
+//
+// NON-BLOCKING DISCIPLINE (five dead boosts say the main loop may never stall):
+//   - The control path only ever memcpy()s 52 bytes into a static ring (logSampleTick()). No I/O,
+//     no formatting, no allocation, no blocking, ever.
+//   - All card I/O happens in logDrainTick(), called from loop(): it bails immediately when the
+//     card is busy and writes at most ONE <=512 B chunk per loop tick. This is the SD analogue of
+//     plotTick()'s Serial.availableForWrite() backpressure guard.
+//   - Overflow policy is DROP-NEWEST + COUNT. The logger never waits for the card and never
+//     overwrites unwritten data; a stalled card costs samples, not loop time.
+//   - The logger NEVER calls triggerFault(). An SD failure is a lost measurement, not a hazard;
+//     conversely a fault must never be delayed by the card, so triggerFault() only sets the
+//     deferred-close flag and the drain in loop() finishes the file during State 99 teardown.
+//
+// Retrieval is by card pull; tools/decode_benchlog.py turns a .BLG into CSV.
+#define LOG_REC_SIZE        52u                 // bytes per record — static_assert'ed below
+#define LOG_RING_RECORDS    1024u               // ~1.0 s of 1 kHz coverage; covers a ~250 ms card
+                                                // stall with 4x margin (52 KB of the Teensy's 1 MB)
+#define LOG_RING_BYTES      (LOG_REC_SIZE * LOG_RING_RECORDS)
+#define LOG_CHUNK_MAX       512u                // one SD block per loop tick: >=512 B/ms drained
+                                                // against a 52 B/ms fill, so catch-up is fast
+#define LOG_PREALLOC_BYTES  (32u * 1024u * 1024u)  // ~10 min at 52 KB/s; truncate()d at close.
+                                                // Contiguous allocation keeps per-chunk latency in
+                                                // the tens of us (no FAT-chain seeks mid-run)
+#define LOG_CLOSE_DEADLINE_MS 2000u             // give up draining a wedged card and close anyway
+
+// Header profile-type field is a BITMASK, not an enum: a future combined DC+PS profile sets two
+// bits with no format change (same reason the three phase bytes are independent).
+#define LOG_TYPE_PS  0x01
+#define LOG_TYPE_TP  0x02
+#define LOG_TYPE_DC  0x04
+
+// Trailer close-reason codes (decoder-visible: why the run ended).
+#define LOG_CLOSE_COMPLETE 1   // profile ran to natural completion
+#define LOG_CLOSE_STOP     2   // operator stop-toggle ('R'/'T'/'D' pressed again)
+#define LOG_CLOSE_X        3   // universal stop
+#define LOG_CLOSE_Q        4   // State 98 exit
+#define LOG_CLOSE_FAULT    5   // triggerFault() — error_code carries the cause
+
+// One sample. Packed + fixed size so the ring is trivially indexable and the decoder can
+// struct.unpack() it directly. Little-endian native (Teensy 4.1 and the host tests are both LE).
+struct __attribute__((packed)) BenchLogRecord {
+    uint32_t t_us;         // micros() at sample — the timebase for step-response fits
+    float    share_sp;     // power_share_setpoint (FC share commanded)
+    float    share_act;    // measured share, same formula as plotTick()
+    float    v_sp;         // v_setpoint  (see flags bit1 before trusting)
+    float    v_act;        // v_actual    (see flags bit1 before trusting)
+    float    I_fc;
+    float    I_batt;
+    float    gFC;          // droop_gain_FC_actual (MDAC command)
+    float    gBT;          // droop_gain_BT_actual
+    float    V_bus;
+    float    I_cmd;        // `current` — post-clamp commanded motor current
+    uint16_t fault_flags;
+    uint8_t  ps_phase;     // running profile's phase index, 0xFF when THAT profile is not active
+    uint8_t  dc_phase;     // (three independent bytes — a combined DC+PS profile sets two at once)
+    uint8_t  trap_phase;
+    uint8_t  flags;        // bit0 = a profile / live share loop is driving the droop MDACs this
+                           //        tick (i.e. gFC/gBT are closed-loop controller output, not a
+                           //        static operator write);
+                           // bit1 = velocity chain valid (velocityChainCalibrated()) — when clear,
+                           //        v_sp/v_act are logged as-is but mean nothing and the decoder
+                           //        marks those columns invalid. Logging NEVER requires the encoder.
+    uint8_t  pad[2];       // zero
+};
+static_assert(sizeof(BenchLogRecord) == LOG_REC_SIZE, "BenchLogRecord must stay 52 bytes");
+
+#define LOG_PHASE_NONE 0xFFu   // "this profile was not running for this sample"
+
+// ── Logger module state ───────────────────────────────────────────────────────
+// DMAMEM puts the 52 KB ring in RAM2/OCRAM instead of RAM1/DTCM, which is the tight, fast memory
+// the control code and stack want. The ring is touched once per ms by a memcpy and once per loop
+// tick by the drain — it does not need DTCM latency. (Host g++ has no such attribute.)
+#ifndef DMAMEM
+#define DMAMEM
+#endif
+
+SdFs     sd;
+FsFile   logFile;
+bool     sdAvailable       = false;   // card found at the one-and-only init probe
+bool     sdInitTried       = false;   // probe latch — the card is probed ONCE per power cycle
+                                      // (in setup(), or lazily at the first profile start if
+                                      // setup() never ran, e.g. the host tests). Never retried: a
+                                      // re-probe per profile start would run SdFat's multi-second
+                                      // init timeout in the main loop with the power stage live.
+bool     sdWarnPrinted     = false;   // one-shot "no card" warn latch, SEPARATE from sdInitTried:
+                                      // the probe happens in setup() where USB Serial may not be
+                                      // enumerated yet, so the warn is deferred to the first
+                                      // profile start where the operator can actually see it.
+bool     logActive         = false;   // file open AND sampling armed
+bool     logCloseRequested = false;   // deferred close pending — drain then trailer+close
+uint8_t  logCloseReason    = 0;
+uint32_t logCloseRequestMs = 0;       // millis() at the request, for LOG_CLOSE_DEADLINE_MS
+uint32_t logRecordCount    = 0;       // records committed to the ring this file
+uint32_t logRecordsWritten = 0;       // records actually WRITTEN to the card this file. Distinct
+                                      // from logRecordCount: the deadline-abandon path closes with
+                                      // records still in the ring, and the trailer must report what
+                                      // is really in the file, not what was sampled.
+uint32_t logDroppedCount   = 0;       // samples lost to a full ring (card stall) this file
+// Last completed run's numbers, so 'K'/'S' still report something after the counters are cleared
+// at close (a status line reading rec=0 right after a run reads as "logging is broken").
+uint32_t logLastRecordsWritten = 0;
+uint32_t logLastDropped        = 0;
+uint32_t logLastAbandoned      = 0;   // records still in the ring when a wedged card forced a close
+char     logFileName[16]   = {0};     // active-or-last file name, for 'K'/'S' status
+DMAMEM uint8_t logRing[LOG_RING_BYTES];   // static ring; byte indices, whole-record granularity
+uint32_t logRingHead       = 0;       // next write offset (bytes, always a multiple of 52)
+uint32_t logRingTail       = 0;       // next drain offset  (bytes, always a multiple of 52)
+uint32_t logRingCount      = 0;       // records pending in the ring
+
+// Clear every per-file counter/index. Called at open and at close so a stale count can never
+// bleed into the next run's trailer (or the 'K' line).
+static void logResetBuffers() {
+    logRingHead    = 0;
+    logRingTail    = 0;
+    logRingCount   = 0;
+    logRecordCount = 0;
+    logRecordsWritten = 0;
+    logDroppedCount = 0;
+}
+
+// Pick the next free name: <PREFIX><NNNN>.BLG, NNNN = 1 + the max index across ALL THREE prefixes
+// so one monotonic counter orders a whole bench session regardless of profile type.
+// Deliberately ONE directory pass via openNext() rather than sd.exists() probing (which is O(N)
+// directory reads and would grow into a multi-hundred-ms stall as the card fills). Runs at profile
+// start only — never in the control path.
+// Returns false when the 4-digit counter is exhausted (see the 9999 guard at the bottom).
+static bool logNextFileName(uint8_t typeMask, char *out, size_t outLen) {
+    const char *prefix = (typeMask & LOG_TYPE_PS) ? "PS"
+                       : (typeMask & LOG_TYPE_TP) ? "TP"
+                       :                            "DC";
+    uint32_t maxIdx = 0;
+    FsFile root = sd.open("/", O_RDONLY);
+    if (root) {
+        FsFile entry;
+        char   nm[32];
+        while (entry.openNext(&root, O_RDONLY)) {
+            nm[0] = '\0';
+            entry.getName(nm, sizeof(nm));
+            entry.close();
+            // Expect exactly "XXNNNN.BLG": 2 prefix chars, 4 digits, ".BLG".
+            if (strlen(nm) != 10) continue;
+            bool knownPrefix = (nm[0] == 'P' && nm[1] == 'S') ||
+                               (nm[0] == 'T' && nm[1] == 'P') ||
+                               (nm[0] == 'D' && nm[1] == 'C');
+            if (!knownPrefix) continue;
+            if (strcmp(nm + 6, ".BLG") != 0) continue;
+            uint32_t idx = 0;
+            bool digits = true;
+            for (int i = 2; i < 6; i++) {
+                if (nm[i] < '0' || nm[i] > '9') { digits = false; break; }
+                idx = idx * 10u + (uint32_t)(nm[i] - '0');
+            }
+            if (digits && idx > maxIdx) maxIdx = idx;
+        }
+        root.close();
+    }
+    // At 9999 the next name would be 11 chars ("PS10000.BLG"), which the 10-char scan filter above
+    // can never see — so every subsequent run would re-derive 10000, re-open the SAME name with
+    // O_TRUNC, and destroy the previous run's data silently. Refuse instead.
+    if (maxIdx >= 9999u) return false;
+    snprintf(out, outLen, "%s%04lu.BLG", prefix, (unsigned long)(maxIdx + 1u));
+    return true;
+}
+
+// Finish the file: trailer record, truncate the pre-allocated tail, close, clear state.
+// `ok` false means a write already failed — the trailer is still attempted (a partial file with a
+// trailer is far easier to interpret than one without) but its result is ignored.
+static void logFinishFile(bool ok) {
+    uint32_t abandoned = logRingCount;   // records sampled but never written (wedged-card close)
+    if (logFile.isOpen()) {
+        // Trailer = one record-sized block with the t_us sentinel, so a decoder that walks
+        // fixed-size records finds it naturally — no header rewrite, hence no seek back to the
+        // start of the file at close. (Close is NOT cheap in absolute terms: truncate() below
+        // walks and releases the pre-allocated FAT chain, tens of ms. That is acceptable because
+        // close only ever runs between runs / after a fault latch, never in the control path —
+        // and truncate is a disk-space optimisation, not a correctness requirement: the decoder
+        // stops at this sentinel, so the untruncated tail would be ignored anyway.)
+        uint8_t tr[LOG_REC_SIZE];
+        memset(tr, 0, sizeof(tr));
+        uint32_t sentinel = 0xFFFFFFFFu;
+        memcpy(tr + 0,  &sentinel,          4);
+        memcpy(tr + 4,  &logRecordsWritten, 4);   // what is REALLY in the file, not what was sampled
+        memcpy(tr + 8,  &logDroppedCount,   4);
+        tr[12] = logCloseReason;
+        tr[13] = error_code;   // only meaningful for LOG_CLOSE_FAULT
+        memcpy(tr + 14, &abandoned,         4);   // sampled but never drained (deadline close)
+        logFile.write(tr, sizeof(tr));
+        logFile.truncate();    // cut the unused pre-allocation back to the write position
+        logFile.close();
+    }
+    if (ok) {
+        Serial.print("[SD] closed: ");   Serial.print(logFileName);
+        Serial.print(" ");               Serial.print(logRecordsWritten);
+        Serial.print(" records, ");      Serial.print(logDroppedCount);
+        Serial.print(" dropped");
+        if (abandoned > 0) {
+            Serial.print(", ");          Serial.print(abandoned);
+            Serial.print(" abandoned (card did not drain)");
+        }
+        Serial.println();
+    } else {
+        // Nothing latches here: logging simply ends for THIS run, and the next profile start
+        // opens a fresh file and tries again.
+        Serial.println("[SD] write error — this run's log ended");
+    }
+    logLastRecordsWritten = logRecordsWritten;   // preserved for the 'K'/'S' idle status lines
+    logLastDropped        = logDroppedCount;
+    logLastAbandoned      = abandoned;
+    logActive         = false;
+    logCloseRequested = false;
+    logCloseReason    = 0;
+    logResetBuffers();
+}
+
+// Open a file for a profile run. Called from the three profile start paths. Every failure mode
+// (no card, open error, header write error) warns ONCE and returns — the profile always runs
+// identically with or without a card; logging is never a precondition for a bench run.
+void logOpenForProfile(uint8_t typeMask) {
+    // Fallback probe. setup() normally does this with the power stage dark; this branch only fires
+    // when setup() never ran (host tests) — it must stay, but on hardware it is dead code.
+    if (!sdInitTried) {
+        sdInitTried = true;
+        sdAvailable = sd.begin(SdioConfig(FIFO_SDIO));
+    }
+    if (!sdAvailable) {
+        // Warn HERE, not at the probe: the probe happens in setup() before USB Serial is usable.
+        // One line per power cycle — a per-run repeat would be noise on a deliberately card-less run.
+        if (!sdWarnPrinted) {
+            sdWarnPrinted = true;
+            Serial.println("[SD] no card — logging disabled");
+        }
+        return;
+    }
+
+    // Defensive: the three profile starts clear each other, so a live log at this point is a
+    // programming error, not an operating condition. Do NOT open a second file over it — finish
+    // the old one and skip logging this run rather than leaking the handle or splicing two runs
+    // into one file. logFinishFile() (not logRequestClose()) because a stale OPEN HANDLE with
+    // logActive/logCloseRequested already clear would make the request a no-op and leak it.
+    if (logActive || logCloseRequested || logFile.isOpen()) {
+        // Only stamp a reason if nobody has already set one. A close ALREADY REQUESTED (e.g. 'Q'
+        // exit with a stalled card, then straight back into a new run) carries the real reason the
+        // run ended; overwriting it with STOP would mislabel the trailer and contradicts
+        // logRequestClose()'s "first requester's reason wins" discipline. Zero means we got here on
+        // a stale open handle with the flags already clear, which genuinely is a STOP.
+        if (logCloseReason == 0) logCloseReason = LOG_CLOSE_STOP;
+        logFinishFile(true);
+        Serial.println("[SD] previous log still open — this run is NOT logged");
+        return;
+    }
+
+    char name[16];
+    if (!logNextFileName(typeMask, name, sizeof(name))) {
+        Serial.println("[SD] run counter exhausted — archive the card");
+        return;
+    }
+    logFile = sd.open(name, O_WRITE | O_CREAT | O_TRUNC);
+    if (!logFile) {
+        Serial.print("[SD] open failed (");
+        Serial.print(name);
+        Serial.println(") — this run is NOT logged");
+        return;
+    }
+    logFile.preAllocate(LOG_PREALLOC_BYTES);
+
+    // 32-byte self-describing header: magic, format version, record size, profile bitmask, and the
+    // millis/micros timebase the records' t_us is relative to.
+    uint8_t hdr[32];
+    memset(hdr, 0, sizeof(hdr));
+    hdr[0] = 'B'; hdr[1] = 'L'; hdr[2] = 'G'; hdr[3] = '1';
+    hdr[4] = 1;                       // format version
+    hdr[5] = (uint8_t)LOG_REC_SIZE;
+    hdr[6] = typeMask;
+    hdr[7] = 0;                       // pad
+    uint32_t startMs = millis();
+    uint32_t startUs = micros();
+    memcpy(hdr + 8,  &startMs, 4);
+    memcpy(hdr + 12, &startUs, 4);
+    uint16_t kDroopMilli = (uint16_t)(K_DROOP * 1000.0f + 0.5f);   // droop scale in use, for the decoder
+    memcpy(hdr + 16, &kDroopMilli, 2);
+
+    logResetBuffers();
+    if (logFile.write(hdr, sizeof(hdr)) != sizeof(hdr)) {
+        // Truncate + remove, do not just close: the preAllocate() above already claimed 32 MB, and
+        // a headerless junk file of that size would both waste the card and feed the name scan
+        // above (its name counts toward maxIdx forever).
+        Serial.println("[SD] header write failed — this run is NOT logged");
+        logFile.truncate();
+        logFile.close();
+        sd.remove(name);
+        return;
+    }
+    strncpy(logFileName, name, sizeof(logFileName) - 1);
+    logFileName[sizeof(logFileName) - 1] = '\0';
+    logActive = true;
+    Serial.print("[SD] logging -> "); Serial.println(logFileName);
+}
+
+// Ask for the file to be closed. FLAG-SET ONLY — no card I/O here, so this is safe to call from
+// any exit path including triggerFault(). logDrainTick() in loop() drains the ring and writes the
+// trailer. Sampling stops immediately (logActive cleared) so the tail of the file is the run.
+void logRequestClose(uint8_t reason) {
+    if (!logActive && !logCloseRequested) return;   // nothing open — no-op, so every exit path can
+                                                    // call this unconditionally (same discipline as
+                                                    // cancelPlotArm())
+    if (logCloseRequested) return;                  // first requester's reason wins
+    logActive         = false;
+    logCloseRequested = true;
+    logCloseReason    = reason;
+    logCloseRequestMs = millis();
+}
+
+// One sample into the ring. Called from the State-98 tick spine. Cost is a rate-limit check plus a
+// 52-byte memcpy — deliberately the only logger code that runs in the control path.
+void logSampleTick() {
+    if (!logActive) return;
+    if (!rateLimitDue(rl_log_last, POWER_BAL_PERIOD_US)) return;
+
+    // Ring full (card stalled): DROP THE NEW SAMPLE and count it. Never block, never overwrite —
+    // overwriting would corrupt data already committed for writing, and blocking would stall
+    // detectFaults() behind a card.
+    if (logRingCount >= LOG_RING_RECORDS) {
+        logDroppedCount++;
+        return;
+    }
+
+    BenchLogRecord r;
+    r.t_us     = micros();
+    r.share_sp = power_share_setpoint;
+    // Same measured-share formula as plotTick(): undefined with no current flowing → 0.
+    float totalA = fabsf(I_fc) + fabsf(I_batt);
+    r.share_act = (totalA > 1e-6f) ? (fabsf(I_fc) / totalA) : 0.0f;
+    r.v_sp     = v_setpoint;
+    r.v_act    = v_actual;
+    r.I_fc     = I_fc;
+    r.I_batt   = I_batt;
+    r.gFC      = droop_gain_FC_actual;
+    r.gBT      = droop_gain_BT_actual;
+    r.V_bus    = V_bus;
+    r.I_cmd    = current;
+    r.fault_flags = fault_flags;
+    r.ps_phase   = powerShareProfileActive ? powerShareProfilePhaseIdx : LOG_PHASE_NONE;
+    r.dc_phase   = driveCycleActive        ? driveCyclePhaseIdx        : LOG_PHASE_NONE;
+    r.trap_phase = trapProfileActive       ? (uint8_t)trapPhase        : LOG_PHASE_NONE;
+    r.flags = 0;
+    if (powerShareProfileActive || driveCycleActive || trapProfileActive || powerBalanceLive)
+        r.flags |= 0x01;
+    if (velocityChainCalibrated())
+        r.flags |= 0x02;
+    r.pad[0] = 0;
+    r.pad[1] = 0;
+
+    memcpy(&logRing[logRingHead], &r, LOG_REC_SIZE);
+    logRingHead = (logRingHead + LOG_REC_SIZE) % LOG_RING_BYTES;
+    logRingCount++;
+    logRecordCount++;
+}
+
+// Drain at most one chunk per loop tick, then finish a pending close once the ring is empty.
+// Called from loop() (NOT doState98()) so the drain — and therefore the deferred close — keeps
+// running after a fault has latched State 99, without touching the teardown phase ordering.
+void logDrainTick() {
+    if (!logActive && !logCloseRequested) return;   // idle cost: one branch
+
+    // No card → there is nothing to drain and sd.card() may be null. Dereferencing it below would
+    // hard-fault, and on this board a hard fault means a reset, which means doState0() re-enabling
+    // the boosts on whatever the rails are doing — the known motorboating/boost-death loop. Clear
+    // the flags so this can never re-enter.
+    if (!sdAvailable) {
+        logActive         = false;
+        logCloseRequested = false;
+        return;
+    }
+
+    // Deadline FIRST, before the busy guard. A permanently-busy card (dead controller, bad socket)
+    // would otherwise take the early return forever: the deadline check below would never be
+    // reached, the file would never close, logCloseRequested would never clear, and every later
+    // profile start would hit the double-open branch — silent, session-wide loss of logging.
+    bool timedOut = logCloseRequested &&
+                    ((uint32_t)(millis() - logCloseRequestMs) >= LOG_CLOSE_DEADLINE_MS);
+    if (timedOut) {
+        // Abandon whatever is still in the ring (counted into the trailer) and close NOW.
+        // HONEST CAVEAT: the trailer write / truncate / close inside logFinishFile() may itself
+        // busy-wait inside SdFat on a wedged card. That is tolerable ONLY because this path runs
+        // after the run has already ended — State 99 with the switches parked, or Idle — never
+        // while a profile drives the motor. The 2 s deadline bounds how long we politely wait
+        // before accepting that risk.
+        logFinishFile(true);
+        return;
+    }
+
+    // Card busy → skip this tick entirely. This is the guarantee that logging cannot stretch the
+    // loop period: we only ever write when the card says it is ready.
+    if (sd.card()->isBusy()) return;
+
+    if (logRingCount > 0) {
+        uint32_t pending = logRingCount * LOG_REC_SIZE;
+        uint32_t toEnd   = LOG_RING_BYTES - logRingTail;     // one contiguous region per tick;
+        uint32_t chunk   = (pending < toEnd) ? pending : toEnd;   // the wrap is handled by simply
+        if (chunk > LOG_CHUNK_MAX) chunk = LOG_CHUNK_MAX;         // stopping at the ring end
+        // Keep the tail record-aligned so the ring accounting stays in whole records (the file
+        // itself is a byte stream, so a short chunk is harmless).
+        chunk = (chunk / LOG_REC_SIZE) * LOG_REC_SIZE;
+        if (chunk == 0) chunk = LOG_REC_SIZE;
+
+        if (logFile.write(&logRing[logRingTail], chunk) != chunk) {
+            // Card full / IO error mid-run: give up on logging, attempt trailer + close ONCE, warn
+            // once. Deliberately NOT a triggerFault() — a lost measurement is not a hazard, and the
+            // fault path must never be entered from the logger.
+            logFinishFile(false);
+            return;
+        }
+        logRingTail        = (logRingTail + chunk) % LOG_RING_BYTES;
+        logRingCount      -= chunk / LOG_REC_SIZE;
+        logRecordsWritten += chunk / LOG_REC_SIZE;   // what the trailer reports (see logFinishFile)
+    }
+
+    // Ring empty and a close pending → write the trailer and close. (The timed-out case was
+    // handled above, ahead of the busy guard.)
+    if (logCloseRequested && logRingCount == 0) logFinishFile(true);
+}
+
+// 'K' — SD status snapshot. Deliberately does NOT call freeClusterCount() or any other FAT-scanning
+// API: those walk the allocation table and block for SECONDS on a real card, which is exactly the
+// class of stall this whole module is built to avoid.
+void printSdStatus() {
+    Serial.println("=== SD logger ===");
+    Serial.print("card:      ");
+    Serial.println(!sdInitTried ? "not probed yet"
+                                : (sdAvailable ? "present" : "ABSENT — logging disabled"));
+    Serial.print("file:      ");
+    Serial.println(logFileName[0] ? logFileName : "(none yet)");
+    bool running = (logActive || logCloseRequested);
+    Serial.print("active:    ");
+    Serial.println(logActive ? "YES (sampling)" : (logCloseRequested ? "closing" : "no"));
+    // While a run is live these are the live counters; once closed they are cleared, so fall back
+    // to the LAST run's numbers — a status line reading rec=0 straight after a run looks broken.
+    // Field labels stay fixed either way; the "(last run)" suffix says which is being shown.
+    Serial.print("records:   ");
+    Serial.print(running ? logRecordsWritten : logLastRecordsWritten);
+    Serial.println(running ? "" : "  (last run)");
+    Serial.print("dropped:   ");
+    Serial.print(running ? logDroppedCount : logLastDropped);
+    Serial.println(running ? "" : "  (last run)");
+    if (!running && logLastAbandoned > 0) {
+        Serial.print("abandoned: "); Serial.print(logLastAbandoned);
+        Serial.println("  (last run — card did not drain)");
+    }
+    Serial.print("ring pend: "); Serial.print(logRingCount);
+    Serial.print(" / ");         Serial.println(LOG_RING_RECORDS);
+    Serial.println("=================");
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SETUP
@@ -1076,6 +1555,19 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(ENC_A), doEncoderA, CHANGE);
     attachInterrupt(digitalPinToInterrupt(ENC_B), doEncoderB, CHANGE);
 
+    // Probe the built-in SD ONCE, here — deliberately at boot rather than at the first profile
+    // start. SdFat's init can take up to ~2 s on a slow/absent card, and at a profile keypress that
+    // stall would sit in the main loop with the power stage LIVE and detectFaults() blind. Placed
+    // AFTER the pin-init block above (never before it): every path switch / boost enable must be
+    // driven to its deterministic safe level as early as possible — a slow card must not stretch
+    // the GPIO high-Z window that the 10k EN-to-GND bodge resistors only backstop. At this point
+    // the switches are explicitly LOW and nothing is enabled, so the worst case is a slow boot.
+    // The "no card" warn is NOT printed here — USB Serial may not be enumerated yet; it is deferred
+    // to the first profile start (sdWarnPrinted). logOpenForProfile() keeps a fallback probe for
+    // the host tests, which never call setup().
+    sdAvailable = sd.begin(SdioConfig(FIFO_SDIO));
+    sdInitTried = true;
+
 #if USE_ETHERNET
     byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
     IPAddress ip(192, 168, 1, 50);
@@ -1108,6 +1600,11 @@ void loop() {
         case 99:
         default: doState99(); break;
     }
+
+    // SD bench-log drain. Deliberately here and NOT in doState98(): a fault that latches State 99
+    // mid-profile must still be able to flush and close the file, and 'Q' must not lose it either.
+    // No-ops in one branch when nothing is logging. Never blocks (see the logger module header).
+    logDrainTick();
 
     // Telemetry + Ag105 poll at ~50 Hz
     static uint32_t lastSend = 0;
@@ -1213,6 +1710,10 @@ void triggerFault(uint16_t fault_bit, ErrorCode_t err) {
         error_code = err;
         error_source_state = (uint8_t)mainState;
     }
+    // Close any open bench log with the fault reason. FLAG-SET ONLY — no card I/O on the fault
+    // path; logDrainTick() in loop() flushes and closes it during State 99. error_code is latched
+    // above first, so the trailer carries the cause.
+    logRequestClose(LOG_CLOSE_FAULT);
     mainState = 99;
 }
 
@@ -1791,6 +2292,7 @@ void doState99() {
 //   C — toggle CBAL_DISABLE         M — toggle MPPT_DISABLE
 //   D — start/stop drive cycle      T — start/stop trapezoidal current profile
 //   S — print status snapshot
+//   K — print SD bench-logger status (card, file, record/drop counts)
 //   I — scan I2C bus (lists ACKing addresses; Ag105 expected at 0x30)
 //   H/? — print this command list
 //   Q — exit → State 1 (MOT_PWR_ENABLE forced LOW)
@@ -1828,6 +2330,7 @@ void printTestHelp() {
     Serial.println("ms delay");
     Serial.println("      so you can switch to the plotter window before the run starts");
     Serial.println("      ('D' is NOT armed — the plot fields are share-loop signals)");
+    Serial.println("  K - SD logger status (auto-logs every R/T/D run @1kHz to PS/TP/DC####.BLG)");
     Serial.println("  H - show this command list");
     Serial.println("  * 1/2 refuse ON if the matching boost is ON and VBUS is low (use G);");
     Serial.println("    2 also refuses while FC_CHARGE_ENABLE is HIGH (illegal combination)");
@@ -1985,6 +2488,10 @@ void doState98() {
                         driveCyclePhaseIdx   = 0;
                         driveCyclePhaseStart = millis();
                         driveCycleStatusLast = millis();
+                        // Open the SD log AFTER the flags are set, so the very first logged sample
+                        // already carries dc_phase = 0 (not LOG_PHASE_NONE). Warns and continues
+                        // if there is no card — a run is never gated on logging.
+                        logOpenForProfile(LOG_TYPE_DC);
                         Serial.println("[DC] Drive cycle started — Phase 0: Standstill");
                         if (vescWatchActive)
                             Serial.println("[DC] VESC watch paused during the run (production-identical timing); resumes on stop");
@@ -1998,6 +2505,7 @@ void doState98() {
                     // invocation cannot reissue a pre-drive-cycle manual command.
                     haltMotorOutput();
                     safeAllSwitches();   // park path switches so a mid-phase stop leaves nothing latched
+                    logRequestClose(LOG_CLOSE_STOP);   // flag only; loop() drains + closes the file
                     Serial.println("[DC] Drive cycle stopped — motor + switches safed");
                 }
                 break;
@@ -2027,6 +2535,12 @@ void doState98() {
             case 'S':
             case 's':
                 printTestStatus();
+                break;
+            case 'K':
+            case 'k':
+                // Read-only status print — deliberately NOT in the bring-up lockout list above
+                // (it touches no pin and no card FAT structure; see printSdStatus()).
+                printSdStatus();
                 break;
             case 'I':
             case 'i':
@@ -2122,6 +2636,7 @@ void doState98() {
                     power_share_setpoint    = 0.5f;
                     haltMotorOutput();
                     safeAllSwitches();   // park path switches so a mid-profile stop leaves nothing latched
+                    logRequestClose(LOG_CLOSE_STOP);   // flag only; loop() drains + closes the file
                     Serial.println("[PS] Power-share profile stopped — motor + switches safed");
                 }
                 break;
@@ -2165,6 +2680,7 @@ void doState98() {
                     // reached later in THIS SAME invocation cannot reissue a pre-profile manual
                     // command (design-review-2026-07-28.md P0-2 ownership discipline).
                     haltMotorOutput();
+                    logRequestClose(LOG_CLOSE_STOP);   // flag only; loop() drains + closes the file
                     // Deliberately NO safeAllSwitches() here (unlike 'D'/'R'). Those profiles sweep
                     // the charge/regen paths themselves, so parking the switches restores a known
                     // state; the trapezoid never touches a path switch — the operator's configured
@@ -2201,6 +2717,7 @@ void doState98() {
                 if (hadPS) power_share_setpoint = 0.5f;   // same reset as the 'R' stop path
                 haltMotorOutput();
                 powerBalanceLive = false;
+                logRequestClose(LOG_CLOSE_X);   // flag only; loop() drains + closes the file
                 if (hadDC || hadPS) safeAllSwitches();
                 if (hadDC || hadPS || hadTP)
                     Serial.println("Universal stop: profile cancelled + motor zeroed");
@@ -2242,6 +2759,9 @@ void doState98() {
                 inputBufIdx             = 0;
                 cancelPlotArm("State 98 exit");     // no armed profile may survive into Idle
                 plotModeActive          = false;    // the stream is a State-98 tool only
+                logRequestClose(LOG_CLOSE_Q);       // flag only — the file is NOT lost on exit:
+                                                    // logDrainTick() lives in loop(), so it keeps
+                                                    // draining and closes it from Idle
                 busBringupAbort();                 // a mid-bring-up exit must darken the stage —
                                                    // Idle would neither tick the gates nor see a
                                                    // cut-park (invisible to the ADC)
@@ -2341,6 +2861,12 @@ void doState98() {
         if (powerBalanceLive)                  powerBalanceGated();
     }
 
+    // SD bench log sample — AFTER the profile branches so each record reflects the state produced
+    // by THIS tick's control action (same rationale as plotTick()'s placement), and before the
+    // blocking-ish VESC watch so the 1 kHz cadence isn't skewed by a 100 ms UART timeout. Rate-gated
+    // internally on rl_log_last / POWER_BAL_PERIOD_US; a memcpy only — no card I/O here.
+    logSampleTick();
+
     // VESC read-back watch: runs regardless of which motor driver (if any) is active, so a fault
     // can be caught whether it trips under the drive cycle, the share profile, or a manual command.
     pollVescWatch();
@@ -2359,6 +2885,8 @@ void advanceDriveCycle() {
         // manualMotorMode set before the run resumed driving the motor on the next tick.
         // (design-review-2026-07-28.md P0-2 — symmetric with advancePowerShareProfile().)
         haltMotorOutput();
+        logRequestClose(LOG_CLOSE_COMPLETE);   // symmetric with the 'D' stop path — a natural
+                                               // completion must close the file too
         Serial.println("[DC] Drive cycle complete — motor zeroed");
         return;
     }
@@ -2488,6 +3016,9 @@ void startPowerShareProfile() {
     powerShareProfilePhaseIdx   = 0;
     powerShareProfilePhaseStart = millis();
     powerShareProfileStatusLast = millis();
+    // Open the SD log AFTER the flags are set so the first sample already carries ps_phase = 0.
+    // Warns and continues with no card — a run is never gated on logging.
+    logOpenForProfile(LOG_TYPE_PS);
     Serial.println("[PS] Power-share profile started — Phase 0");
     if (vescWatchActive)
         Serial.println("[PS] VESC watch paused during the run (production-identical timing); resumes on stop");
@@ -2718,6 +3249,7 @@ void advancePowerShareProfile() {
         // otherwise the still-set manualMotorMode keeps applyManualMotor() driving the motor in the
         // standalone branch after the sweep ends.
         haltMotorOutput();
+        logRequestClose(LOG_CLOSE_COMPLETE);   // symmetric with the 'R' stop path
         Serial.println("[PS] Power-share profile complete — motor zeroed");
         return;
     }
@@ -2869,6 +3401,9 @@ void startTrapProfile(float imax, uint32_t holdMs, float rateAps) {
     trapStartMs       = millis();
     trapStatusLast    = millis();
     trapProfileActive = true;
+    // Open the SD log AFTER the flags are set so the first sample already carries trap_phase.
+    // Warns and continues with no card — a run is never gated on logging.
+    logOpenForProfile(LOG_TYPE_TP);
 
     Serial.print("[TP] Trapezoid started — Imax="); Serial.print(trapImax, 2);
     Serial.print("A rate=");  Serial.print(trapRateAps, 2);
@@ -2897,6 +3432,7 @@ void advanceTrapProfile() {
         // pre-run manualMotorMode driving the motor from the standalone branch on the next tick.
         // Switches are left alone on completion for the same reason as the stop path (see 'T').
         haltMotorOutput();
+        logRequestClose(LOG_CLOSE_COMPLETE);   // symmetric with the 'T' stop path
         Serial.println("[TP] Trapezoid complete — motor zeroed (path switches left as-is)");
         return;
     }
@@ -3048,6 +3584,12 @@ void printTestStatus() {
     Serial.print("droop gFC/gBT:      "); Serial.print(droop_gain_FC_actual, 3);
     Serial.print(" / "); Serial.println(droop_gain_BT_actual, 3);
     Serial.print("powerShareProfile:  "); Serial.println(powerShareProfileActive);
+    // card=? until the probe has run (setup() probes on hardware; host tests may never call it).
+    Serial.print("SD: card=");    Serial.print(!sdInitTried ? "?" : (sdAvailable ? "Y" : "N"));
+    Serial.print(" file=");       Serial.print(logFileName[0] ? logFileName : "-");
+    Serial.print(" rec=");        Serial.print(logActive ? logRecordsWritten : logLastRecordsWritten);
+    Serial.print(" drop=");       Serial.print(logActive ? logDroppedCount : logLastDropped);
+    Serial.print(" active=");     Serial.println(logActive ? "Y" : "N");
     Serial.print("plot stream ('L'):  ");
     Serial.println(plotModeActive ? "ON (status lines suppressed)" : "off");
     if (plotArmTarget != PLOT_ARM_NONE) {
