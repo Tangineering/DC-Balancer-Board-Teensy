@@ -63,7 +63,7 @@ COLORS = {
 # No-load nominal bus voltage [V] for the reference line in bus_and_share.
 # User-specified bench value (2026-08-10); the boosts regulate the loaded bus
 # toward this and droop below it under load.
-V_BUS_NOMINAL = 15.9
+V_BUS_NOMINAL = 15.93
 
 TEXT_COLOR = "#222222"       # all titles/labels/legends (neutral, not a hue)
 ZERO_LINE_COLOR = "#8a8a8a"

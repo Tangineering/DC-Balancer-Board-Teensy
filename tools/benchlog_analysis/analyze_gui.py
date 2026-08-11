@@ -11,9 +11,14 @@ BenchLogAnalyzer.exe (see build_exe.ps1). matplotlib is forced to the
 "Agg" backend before any figures module is imported so it never tries to
 open its own GUI window alongside tkinter.
 
+The file dialog allows selecting MULTIPLE .BLG files; they are processed
+sequentially and a single combined summary is shown at the end (one log
+failing does not stop the rest). With several logs, Explorer opens on their
+common parent folder instead of one window per run.
+
 Usage:
     python analyze_gui.py                      # GUI: file dialog + popups
-    python analyze_gui.py path\\to\\FILE.BLG      # GUI, but skip the dialog
+    python analyze_gui.py A.BLG [B.BLG ...]    # GUI, but skip the dialog
     python analyze_gui.py path\\to\\FILE.BLG --no-popup
         # headless / automation: print the summary to stdout, no dialog,
         # no messageboxes, don't open Explorer. Exit 0 on success, exit 1
@@ -134,103 +139,132 @@ def _default_initialdir():
 
     Script mode: repo_root/logs if it exists, else cwd.
     Frozen mode (PyInstaller onefile exe): __file__ / sys.argv[0] point into
-    a temp extraction dir, not somewhere meaningful to the user, so instead
-    look next to the exe itself (exe_dir/logs), falling back to cwd. This is
-    a heuristic -- the user may have the exe anywhere -- but it is a much
-    more sensible default than the temp extraction directory.
+    a temp extraction dir, not somewhere meaningful to the user. The exe's
+    normal home is <repo>/tools/benchlog_analysis/dist/, so walk UP from the
+    exe directory looking for a `logs` child at each level -- that finds
+    <repo>/logs from dist/, and also covers the exe being copied next to a
+    logs folder anywhere else. Fall back to cwd.
     """
     if getattr(sys, "frozen", False):
         exe_dir = Path(sys.executable).resolve().parent
-        candidate = exe_dir / "logs"
-        return str(candidate) if candidate.is_dir() else str(Path.cwd())
+        for d in (exe_dir, *exe_dir.parents):
+            candidate = d / "logs"
+            if candidate.is_dir():
+                return str(candidate)
+        return str(Path.cwd())
 
     candidate = common.REPO_ROOT / "logs"
     return str(candidate) if candidate.is_dir() else str(Path.cwd())
 
 
+def _run_many(paths):
+    """Run run_analysis over each path sequentially.
+
+    Returns a list of (path, summary_or_None, traceback_or_None). One log
+    failing does not stop the rest -- the batch continues and the failure is
+    reported in the combined summary.
+    """
+    results = []
+    for p in paths:
+        try:
+            results.append((p, run_analysis(p), None))
+        except Exception:
+            results.append((p, None, traceback.format_exc()))
+    return results
+
+
+def _format_batch_text(results):
+    """Combined summary for a batch. Returns (text, n_failed)."""
+    blocks = []
+    n_failed = 0
+    for p, summary, err in results:
+        if summary is not None:
+            blocks.append(_format_summary_text(summary))
+        else:
+            n_failed += 1
+            last = err.strip().splitlines()[-1] if err else "unknown error"
+            blocks.append(f"{p}\nFAILED: {last}")
+    if len(results) > 1:
+        header = f"{len(results)} logs processed, {n_failed} failed\n\n"
+    else:
+        header = ""
+    return header + "\n\n".join(blocks), n_failed
+
+
+def _open_results_folder(results):
+    """Open Explorer on the batch's output: the single run dir for one log,
+    their common parent (typically logs/) for several."""
+    run_dirs = [s["run_dir"] for _, s, _ in results if s is not None]
+    if not run_dirs:
+        return
+    import os
+    if len(run_dirs) == 1:
+        os.startfile(str(run_dirs[0]))
+    else:
+        try:
+            target = Path(os.path.commonpath([str(d) for d in run_dirs]))
+        except ValueError:  # different drives
+            target = Path(run_dirs[0]).parent
+        os.startfile(str(target))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("blg", nargs="?", default=None,
-                     help="path to a .BLG file; if omitted, a file-open "
-                          "dialog is shown")
+    ap.add_argument("blg", nargs="*", default=[],
+                     help="path(s) to .BLG files, processed sequentially; "
+                          "if omitted, a multi-select file-open dialog is "
+                          "shown")
     ap.add_argument("--no-popup", action="store_true",
                      help="print the summary to stdout instead of "
                           "messageboxes, skip opening Explorer -- for "
                           "headless/automated smoke testing")
     args = ap.parse_args(argv)
 
-    blg_path = args.blg
+    blg_paths = list(args.blg)
 
-    if blg_path is None:
+    if not blg_paths:
         import tkinter as tk
-        from tkinter import filedialog, messagebox
+        from tkinter import filedialog
 
         root = tk.Tk()
         root.withdraw()
-
-        blg_path = filedialog.askopenfilename(
-            title="Select a bench log",
+        blg_paths = list(filedialog.askopenfilenames(
+            title="Select bench log(s)",
             initialdir=_default_initialdir(),
             filetypes=[("Bench logs", "*.BLG *.blg"), ("All files", "*.*")],
-        )
-        if not blg_path:
+        ))
+        root.destroy()
+        if not blg_paths:
             # User cancelled the dialog -- exit quietly, no error.
-            root.destroy()
             return 0
 
-        try:
-            summary = run_analysis(blg_path)
-        except Exception as e:
-            detail = traceback.format_exc()
-            messagebox.showerror(
-                "Bench log analysis failed",
-                f"{e}\n\n{detail}",
-            )
-            root.destroy()
-            return 1
-
-        msg = _format_summary_text(summary)
-        messagebox.showinfo("Bench log analysis complete", msg)
-        root.destroy()
-
-        import os
-        os.startfile(str(summary["run_dir"]))
-        return 0
-
-    # blg given on the command line: GUI-less unless popups were requested.
-    try:
-        summary = run_analysis(blg_path)
-    except Exception as e:
-        detail = traceback.format_exc()
-        if args.no_popup:
-            print(f"error: {e}", file=sys.stderr)
-            print(detail, file=sys.stderr)
-            return 1
-        import tkinter as tk
-        from tkinter import messagebox
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror("Bench log analysis failed", f"{e}\n\n{detail}")
-        root.destroy()
-        return 1
-
-    msg = _format_summary_text(summary)
+    results = _run_many(blg_paths)
+    msg, n_failed = _format_batch_text(results)
 
     if args.no_popup:
         print(msg)
-        return 0
+        # Full tracebacks of any failures go to stderr for debugging.
+        for p, s, err in results:
+            if s is None:
+                print(f"--- {p} ---\n{err}", file=sys.stderr)
+        return 1 if n_failed else 0
 
     import tkinter as tk
     from tkinter import messagebox
     root = tk.Tk()
     root.withdraw()
-    messagebox.showinfo("Bench log analysis complete", msg)
+    if n_failed:
+        # Append the first failure's full traceback for diagnosis.
+        first_tb = next(err for _, s, err in results if s is None)
+        messagebox.showerror("Bench log analysis: %d failed" % n_failed,
+                             f"{msg}\n\n{first_tb}")
+    else:
+        messagebox.showinfo("Bench log analysis complete", msg)
     root.destroy()
 
-    import os
-    os.startfile(str(summary["run_dir"]))
-    return 0
+    _open_results_folder(results)
+    return 1 if n_failed else 0
 
 
 def _run_guarded():

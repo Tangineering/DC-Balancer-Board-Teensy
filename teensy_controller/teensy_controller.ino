@@ -600,6 +600,17 @@ const float K_DROOP = 0.30f;        // ohm — design droop scale k_d; TODO(cali
 const float DROOP_R_MIN = 0.15f;    // usable droop-ratio span for g ≤ 1 at K_DROOP = 0.30
 const float DROOP_R_MAX = 0.85f;
 
+// A — share-loop hold threshold. Below this total measured current the share
+// ratio |I_fc|/(|I_fc|+|I_batt|) is a quotient of two near-zero ADC readings,
+// i.e. pure noise: stepping the share controller on it winds the integrator to
+// the DROOP_R_MIN clamp during every standstill and forces a share transient on
+// every launch (observed on bench, logs TP0004/TP0005 standstill epochs,
+// 2026-08-10). powerBalance() holds the controller state AND the droop MDACs
+// below this threshold. Value: bench decision 2026-08-10 (~9x the post-averaging
+// per-channel noise sigma at idle, far below the ~0.5 A/channel minimum real
+// operating current).
+const float SHARE_I_TOT_MIN_A = 0.075f;
+
 const float motorConstant = 0.1f;   // TODO: tune this
 // A — HARD ceiling on the current actually handed to the VESC. Enforced at the single chokepoint
 // commandMotorCurrent(), so EVERY path (UDP velocity, State-98 manual current/velocity, drive
@@ -851,6 +862,14 @@ float         manualMotorVelocity = 0.0f;   // m/s — used in MOTOR_TEST_VELOCI
 // power_share_setpoint continuously drives the droop MDAC. Cleared by an open-loop droop write.
 bool powerBalanceLive = false;
 
+// Share-controller channel-cutoff state (see applyShareRatio()): true while the
+// share controller has taken that channel's bus switch off the bus because the
+// commanded ratio left the physical droop band. Controller-initiated only —
+// manual '1'/'2' toggles and safeAllSwitches() clear these.
+bool  shareIsoFC = false;
+bool  shareIsoBT = false;
+const float SHARE_CUTOFF_HYST = 0.01f;  // re-entry hysteresis on the commanded ratio
+
 // ── State 98 bench tools: VESC read-back ('E' one-shot / 'W' watch) ────────────────────────────
 // The firmware is otherwise write-only to the VESC (setCurrent()); these are the only reads.
 // getFWversion()/getVescValues() BLOCK up to the VescUart _TIMEOUT (100 ms) waiting on Serial1,
@@ -1098,6 +1117,7 @@ float PI_Controller_Motor(float error);
 float PI_Controller_Power(float error);
 float youlaController_Power(float setpoint, float alphaRaw);
 void setDroopMdac(float fc_gain, float bt_gain);
+void applyShareRatio(float ratio);
 void assertFcChargeEnable(bool enable);
 bool motPwrConnectBlocked();
 bool assertMotPwrEnable(bool enable);
@@ -1681,14 +1701,17 @@ void setup() {
 
     // Teensy 4.1 ADC: select 12-bit resolution before any analogRead
     analogReadResolution(12);
-    // Hardware-average 8 samples per analogRead (Teensyduino default is 4).
-    // Bench data (logs/PS0001) shows sigma ~= 5.7 counts (~4.6 mV) of
-    // ADC/board noise on the INA253 channels, whose signals are only
-    // 6-25 counts at K_sns = 0.1 V/A -- averaging cuts that noise ~sqrt(2)x
-    // over the default with no droop-chain change. Cost: ~2x conversion
-    // time, ~10-17 us/read, well inside the 1 kHz tick budget for the 7
-    // analog channels read per tick.
-    analogReadAveraging(8);
+    // Hardware-average 16 samples per analogRead (Teensyduino default is 4).
+    // This is GLOBAL: it applies to every analogRead on both ADC modules, so
+    // all 7 analog channels -- the INA253 currents, V_bus, and the other
+    // rail dividers -- get the same averaging. Bench validation: 4 -> 8
+    // (logs PS0001 vs PS0002, matched 3 A runs) cut the INA253-channel noise
+    // by exactly the predicted sqrt(2) (sigma_share 0.065 -> 0.047),
+    // confirming the volt-domain ADC floor dominates at light load; 8 -> 16
+    // buys another ~sqrt(2). Cost: ~4x the default conversion time, still
+    // well inside the 1 kHz tick budget (at averaging=8 the logs showed
+    // missed_periods=0 with >0.6 ms of margin).
+    analogReadAveraging(16);
 
     initEscUartPins();
     initMdacSpiPins();
@@ -2596,6 +2619,7 @@ void doState98() {
                     Serial.println("REFUSED: FC boost is ON and VBUS is low — hot-plug risk. Use 'G' to bring up the bus.");
                 } else {
                     digitalWrite(FC_BUS_ENABLE, !cur);
+                    shareIsoFC = false;   // operator owns the switch now — no auto re-entry
                     Serial.print("FC_BUS_ENABLE -> "); Serial.println(!cur);
                 }
                 break;
@@ -2611,6 +2635,7 @@ void doState98() {
                     Serial.println("REFUSED: BT boost is ON and VBUS is low — hot-plug risk. Use 'G' to bring up the bus.");
                 } else {
                     digitalWrite(BT_BUS_ENABLE, !cur);
+                    shareIsoBT = false;   // operator owns the switch now — no auto re-entry
                     Serial.print("BT_BUS_ENABLE -> "); Serial.println(!cur);
                 }
                 break;
@@ -3423,7 +3448,10 @@ void pollVescWatch() {
 // Closed-loop: set the share setpoint and let powerBalance() drive the MDAC from measured current
 // each test tick. Needs current actually flowing (motor running) for the MDAC to update.
 void setPowerShareSetpointLive(float s) {
-    power_share_setpoint = constrain(s, 0.01f, 0.99f);
+    // Full [0,1] span is valid (2026-08-10): an endpoint setpoint drives the
+    // commanded ratio out of the droop band and applyShareRatio() cuts the
+    // starved channel off the bus.
+    power_share_setpoint = constrain(s, 0.0f, 1.0f);
     powerBalanceLive     = true;
 }
 
@@ -3432,10 +3460,10 @@ void setPowerShareSetpointLive(float s) {
 // gain math as powerBalance(). Clears powerBalanceLive so the closed loop won't stomp the write.
 // This is the §9 (system_model.md) calibration entry point: sweep r, log I_fc/I_batt, fit ΔV0.
 void applyOpenLoopDroop(float ratio) {
-    float r = constrain(ratio, DROOP_R_MIN, DROOP_R_MAX);
-    droop_gain_FC_actual = K_DROOP / (RE_MAX * r);
-    droop_gain_BT_actual = K_DROOP / (RE_MAX * (1.0f - r));
-    setDroopMdac(droop_gain_FC_actual, droop_gain_BT_actual);
+    // Accepts the full [0,1] span (2026-08-10): applyShareRatio() carries the
+    // droop-band clip, the out-of-band channel cutoff, and the hysteresis, so
+    // the 'O' command exercises exactly the closed loop's actuation path.
+    applyShareRatio(ratio);
     powerBalanceLive = false;
 }
 
@@ -3969,7 +3997,9 @@ void handlePendingInputChar(char c) {
                 break;
             case PEND_OPEN_DROOP:
                 applyOpenLoopDroop(val);
-                Serial.print("open-loop droop ratio -> "); Serial.print(constrain(val, DROOP_R_MIN, DROOP_R_MAX), 3);
+                Serial.print("open-loop share ratio -> "); Serial.print(constrain(val, 0.0f, 1.0f), 3);
+                if (shareIsoFC)      Serial.print(" (FC cut off the bus; BT gain held)");
+                else if (shareIsoBT) Serial.print(" (BT cut off the bus; FC gain held)");
                 Serial.print(" (gFC="); Serial.print(droop_gain_FC_actual, 3);
                 Serial.print(" gBT="); Serial.print(droop_gain_BT_actual, 3); Serial.println(")");
                 break;
@@ -4098,6 +4128,10 @@ void assertFcChargeEnable(bool enable) {
     if (enable) {
         // Cut BT contribution to VBUS first, then close regen path, then open FC→charger path
         digitalWrite(BT_BUS_ENABLE, LOW);    // disconnect BT from VBUS before routing FC → charger
+        // BT_BUS is now owned by the charge path: clear any share-controller
+        // isolation claim on it, or applyShareRatio()'s re-entry would close
+        // BT_BUS while FC_CHARGE is HIGH — the illegal switch combination.
+        shareIsoBT = false;
         digitalWrite(REGEN_ENABLE,  LOW);    // close regen path before routing FC → charger
         delayMicroseconds(100);              // RT1987 turn-off propagation — confirmed sufficient
         digitalWrite(FC_CHARGE_ENABLE, HIGH);
@@ -4122,6 +4156,11 @@ void safeAllSwitches() {
     digitalWrite(FC_BUS_ENABLE,  LOW);
     digitalWrite(MOT_PWR_ENABLE, LOW);
     digitalWrite(MPPT_DISABLE,   LOW);    // inhibit MPPT (active-LOW)
+    // The bus switches are now open by state action, not by the share
+    // controller -- clear the cutoff flags so applyShareRatio() will not
+    // "re-enter" a switch it no longer owns.
+    shareIsoFC = false;
+    shareIsoBT = false;
 }
 
 // ── Staged bring-up machine ──────────────────────────────────────────────────
@@ -4400,26 +4439,111 @@ float PI_Controller_Motor(float error) {
 
 void powerBalance() {
     float totalA = fabsf(I_fc) + fabsf(I_batt);
-    if (totalA < 1e-6f) return;
+    // Minimum-load gate (was a bare 1e-6 divide-by-zero guard): below
+    // SHARE_I_TOT_MIN_A the measured share is undefined-in-practice, so hold
+    // EVERYTHING -- no Youla/PI controller step (their integrator and filter
+    // states freeze, since youlaController_Power()/PI_Controller_Power() are
+    // simply not called), and the droop MDACs keep the last commanded split,
+    // which is the correct starting point for the next launch. On the first
+    // tick back above threshold the Youla wrapper's Ts gate has long expired,
+    // so the controller resumes immediately with the fresh measurement.
+    if (totalA < SHARE_I_TOT_MIN_A) return;
 
     float power_share_actual_local = fabsf(I_fc) / totalA;
     float shareError = power_share_setpoint - power_share_actual_local;
 #if USE_YOULA_SHARE_CONTROLLER
-    // already clamped + anti-windup; filters the measurement internally
+    // clamped to [0,1] + anti-windup; filters the measurement internally
     float droopRatio = youlaController_Power(power_share_setpoint, power_share_actual_local);
     (void)shareError;
 #else
     float droopRatio = PI_Controller_Power(shareError);
 #endif
 
-    // Clamp to the span where both MDAC gains stay ≤ 1 (g = K_DROOP/(RE_MAX·r); see the
-    // K_DROOP block comment). The old [0.01, 0.99] clamp commanded g > 1 over most of the
-    // range and pinned both MDACs at full scale (zero-gain plant). (No-op for the Youla
-    // controller, which clamps internally with back-calculation anti-windup.)
-    droopRatio = constrain(droopRatio, DROOP_R_MIN, DROOP_R_MAX);
+    // Full-span actuation (2026-08-10): commanded ratios span [0,1]; the
+    // [DROOP_R_MIN, DROOP_R_MAX] physical-droop clip, the channel cutoff for
+    // ratios outside it, and the re-entry hysteresis all live inside
+    // applyShareRatio().
+    applyShareRatio(droopRatio);
+}
 
-    droop_gain_FC_actual = K_DROOP / (RE_MAX * droopRatio);
-    droop_gain_BT_actual = K_DROOP / (RE_MAX * (1.0f - droopRatio));
+// ── Share-ratio actuation: droop mapping + channel cutoff ────────────────────
+// Commanded share ratios r ∈ [0,1] are all valid (2026-08-10 design decision).
+// The droop gain map g = K_DROOP/(RE_MAX·r) is only physical over
+// [DROOP_R_MIN, DROOP_R_MAX] (g ≤ 1); OUTSIDE that band the starved channel is
+// taken OFF THE BUS instead of clipping the split:
+//   r < DROOP_R_MIN  →  open FC_BUS_ENABLE   (FC share commanded ~zero)
+//   r > DROOP_R_MAX  →  open BT_BUS_ENABLE   (BT share commanded ~zero)
+// while the still-active channel KEEPS its previous droop gain (no MDAC writes
+// while a channel is isolated). Re-entry has SHARE_CUTOFF_HYST hysteresis so
+// a ratio dithering at the boundary cannot chatter the bus switch.
+//
+// SAFETY — isolation is via the RT1987 bus switch, NEVER the boost enable: a
+// disabled TPS61288 under an energized bus is the back-feed death mode (the
+// doState3() keep-boosts-on doctrine). The boost keeps regulating unloaded, so
+// re-entry closes a *running* regulator onto the already-charged bus — the
+// safe direction of the hot-plug rule — and is additionally refused while
+// V_bus < V_BUS_CHARGED_THRESH (same class of guard as busHotPlugUnsafe()).
+//
+// The flags record *controller-initiated* isolation only (shareIsoFC/BT,
+// defined with the State-98 globals): this function never re-closes a switch
+// the operator (State 98 '1'/'2') or a state transition opened. Manual
+// bus-switch toggles and safeAllSwitches() clear the flags.
+void applyShareRatio(float ratio) {
+    float r = constrain(ratio, 0.0f, 1.0f);
+
+    // LAST-SOURCE GUARD: a channel may be cut ONLY while the other channel's
+    // bus switch is closed — the controller must never darken the bus. This
+    // matters for the pathological-but-real case of a disconnected source:
+    // e.g. BT off the bus pins the measured share at 1.0, a mid setpoint
+    // then winds r toward 0, and an unguarded cutoff would take FC — the only
+    // live source — off the bus too (min-load hold would then freeze the
+    // whole loop with the bus dark). When the guard blocks a cutoff, fall
+    // through to the band-edge clip instead, so droop authority stays live.
+
+    // A cutoff fires only as a closed→open transition of a switch this
+    // function itself opens: if the channel is ALREADY off the bus (operator
+    // or state action), there is nothing to cut and no ownership to claim —
+    // claiming it would make the later re-entry close a switch somebody else
+    // opened (e.g. FC-charge cruise holds BT_BUS LOW; the controller must not
+    // put the battery back on the bus from a share excursion).
+
+    // FC channel cutoff / re-entry
+    if (!shareIsoFC && r < DROOP_R_MIN) {
+        if (digitalRead(FC_BUS_ENABLE) == HIGH &&
+            digitalRead(BT_BUS_ENABLE) == HIGH) {
+            digitalWrite(FC_BUS_ENABLE, LOW);
+            shareIsoFC = true;
+        }
+    } else if (shareIsoFC && r >= DROOP_R_MIN + SHARE_CUTOFF_HYST &&
+               V_bus >= V_BUS_CHARGED_THRESH) {
+        digitalWrite(FC_BUS_ENABLE, HIGH);
+        shareIsoFC = false;
+    }
+
+    // BT channel cutoff / re-entry
+    if (!shareIsoBT && r > DROOP_R_MAX) {
+        if (digitalRead(BT_BUS_ENABLE) == HIGH &&
+            digitalRead(FC_BUS_ENABLE) == HIGH) {
+            digitalWrite(BT_BUS_ENABLE, LOW);
+            shareIsoBT = true;
+        }
+    } else if (shareIsoBT && r <= DROOP_R_MAX - SHARE_CUTOFF_HYST &&
+               V_bus >= V_BUS_CHARGED_THRESH) {
+        digitalWrite(BT_BUS_ENABLE, HIGH);
+        shareIsoBT = false;
+    }
+
+    // While a channel is isolated the active one keeps its previous droop
+    // gain -- the share is forced to 0 or 1 by topology, so there is nothing
+    // for the droop split to do until both channels are back on the bus.
+    if (shareIsoFC || shareIsoBT) return;
+
+    // Both on the bus: physical-droop band clip + gain mapping. The clip is
+    // the span where both MDAC gains stay ≤ 1 (g = K_DROOP/(RE_MAX·r); see
+    // the K_DROOP block comment).
+    float rc = constrain(r, DROOP_R_MIN, DROOP_R_MAX);
+    droop_gain_FC_actual = K_DROOP / (RE_MAX * rc);
+    droop_gain_BT_actual = K_DROOP / (RE_MAX * (1.0f - rc));
     setDroopMdac(droop_gain_FC_actual, droop_gain_BT_actual);
 }
 
@@ -4439,7 +4563,13 @@ float youlaController_Power(float setpoint, float alphaRaw) {
     if ((uint32_t)(now - shareCtrl_lastMicros) >= (uint32_t)SHARE_CTRL_TS_US) {
         shareCtrl_lastMicros = now;
         float e = setpoint - shareControllerFilterMeas(alphaRaw);
-        shareCtrl_heldOut = shareControllerStep(e, DROOP_R_MIN, DROOP_R_MAX);
+        // Authority span [0,1] (2026-08-10): the controller may command the
+        // full ratio range; ratios outside [DROOP_R_MIN, DROOP_R_MAX] are
+        // realized by applyShareRatio() as a channel cutoff, not a clip. The
+        // back-calculation anti-windup bounds follow the span, so the
+        // integrator can settle at 0 or 1 for a fully-one-sided setpoint
+        // instead of winding against the old droop clip.
+        shareCtrl_heldOut = shareControllerStep(e, 0.0f, 1.0f);
     }
     return shareCtrl_heldOut;
 }

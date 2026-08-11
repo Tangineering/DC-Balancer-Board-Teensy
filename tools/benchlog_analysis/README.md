@@ -161,9 +161,13 @@ The name becomes the output filename (`<name>.png` in the run directory), and
 ## GUI and standalone exe
 
 `analyze_gui.py` is a tkinter file-picker front-end over exactly this pipeline
-— pick a `.BLG` and it ingests and renders through the same
-`ingest_log.ingest` / `make_figures.make_all` entry points, so the GUI and
-the CLI can never drift apart. `analyze_gui.py FILE.BLG --no-popup` runs the
+— pick one or **several** `.BLG` files (the dialog is multi-select, and opens
+in the repo's `logs/` folder, found by walking up from the exe's location)
+and they are processed sequentially through the same `ingest_log.ingest` /
+`make_figures.make_all` entry points, so the GUI and the CLI can never drift
+apart. One log failing does not stop the rest; a single combined summary is
+shown at the end, and Explorer opens on the run dir (one log) or the common
+parent folder (several). `analyze_gui.py FILE.BLG --no-popup` runs the
 same thing headlessly (note: the frozen `--noconsole` exe has no stdout —
 redirect it to a file to capture the summary). Unexpected crashes in the exe
 are appended to `BenchLogAnalyzer_error.log` next to the exe.

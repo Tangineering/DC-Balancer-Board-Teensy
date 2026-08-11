@@ -86,6 +86,8 @@ static void reset_test_state() {
     shareControllerReset();
     shareCtrl_heldOut    = 0.5f;
     shareCtrl_lastMicros = 0;
+    shareIsoFC = false;
+    shareIsoBT = false;
 
     // .ino command globals
     v_setpoint           = 0;
@@ -871,6 +873,199 @@ static void test_powerbalance_gated_tick_stable() {
           "powerBalance: FC droop gain stable across a sub-sampleTime tick");
     check(fabsf(droop_gain_BT_actual - gBT_first) < 1e-4f,
           "powerBalance: BT droop gain stable across a sub-sampleTime tick");
+}
+
+// ─── powerBalance() minimum-load hold (SHARE_I_TOT_MIN_A) ────────────────────
+// Below 75 mA total the share quotient is ADC noise; the controller and the
+// droop MDACs must hold so a standstill can't wind the integrator to the
+// DROOP_R_MIN clamp (bench: TP0004/TP0005 standstill epochs, 2026-08-10).
+static void test_powerbalance_min_load_hold() {
+    test_group("powerBalance() minimum-load hold");
+    reset_test_state();
+
+    // Establish a steady operating point well above the threshold.
+    I_fc   = 1.0f;
+    I_batt = 1.0f;
+    power_share_setpoint = 0.5f;
+    uint32_t t = 0;
+    for (int i = 0; i < 50; i++) {
+        t += 1000;                 // 1 ms steps — every Youla Ts elapses
+        g_mock_micros = t;
+        powerBalance();
+    }
+    float gFC_held = droop_gain_FC_actual;
+    float gBT_held = droop_gain_BT_actual;
+    float heldOut  = shareCtrl_heldOut;
+
+    // Standstill: 60 mA total (< 75 mA) with a wildly wrong apparent share
+    // (all of it on the FC channel → share would read 1.0 if stepped). Many
+    // seconds of ticks must change NOTHING.
+    I_fc   = 0.06f;
+    I_batt = 0.0f;
+    for (int i = 0; i < 3000; i++) {
+        t += 1000;
+        g_mock_micros = t;
+        powerBalance();
+    }
+    check(fabsf(droop_gain_FC_actual - gFC_held) < 1e-6f,
+          "min-load hold: FC droop gain frozen through a standstill epoch");
+    check(fabsf(droop_gain_BT_actual - gBT_held) < 1e-6f,
+          "min-load hold: BT droop gain frozen through a standstill epoch");
+    check(fabsf(shareCtrl_heldOut - heldOut) < 1e-6f,
+          "min-load hold: share controller output state frozen (no steps)");
+
+    // Back above the threshold with a real error: the controller must resume
+    // on the very first tick (the Ts gate expired long ago) and move the
+    // gains toward the new operating point.
+    I_fc   = 0.8f;
+    I_batt = 0.2f;                 // actual share 0.8, setpoint 0.5 → error
+    for (int i = 0; i < 200; i++) {
+        t += 1000;
+        g_mock_micros = t;
+        powerBalance();
+    }
+    check(fabsf(droop_gain_FC_actual - gFC_held) > 1e-3f,
+          "min-load hold: controller resumes and moves the gains once load returns");
+
+    // Boundary: just above the threshold must NOT hold (gate is strictly <).
+    reset_test_state();
+    I_fc   = 0.076f;               // 76 mA total, all FC
+    I_batt = 0.0f;
+    power_share_setpoint = 0.5f;
+    g_mock_micros = 2000;
+    powerBalance();
+    float g_before = droop_gain_FC_actual;
+    g_mock_micros = 4000;
+    powerBalance();
+    g_mock_micros = 6000;
+    powerBalance();
+    check(fabsf(droop_gain_FC_actual - g_before) > 1e-6f,
+          "min-load hold: 76 mA is above the gate — controller steps normally");
+}
+
+// ─── applyShareRatio(): full-span [0,1] actuation + channel cutoff ───────────
+// Ratios outside [DROOP_R_MIN, DROOP_R_MAX] must take the starved channel's
+// RT1987 bus switch off the bus (never the boost enable), hold the active
+// channel's droop gain, and re-enter with SHARE_CUTOFF_HYST hysteresis only
+// when the bus is charged. Controller-initiated isolation only: manual/state
+// switch actions clear the flags and are never auto-reverted.
+static void test_share_ratio_cutoff() {
+    test_group("applyShareRatio() channel cutoff");
+
+    // In-band ratio: both switches untouched, gains follow the mapping.
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    applyShareRatio(0.5f);
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && digitalRead(BT_BUS_ENABLE) == HIGH,
+          "cutoff: in-band ratio leaves both channels on the bus");
+    float gFC_mid = droop_gain_FC_actual;
+    float gBT_mid = droop_gain_BT_actual;
+
+    // r = 0: FC starved → FC_BUS opens, boost enables untouched, BT gain held.
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    digitalWrite(BT_REG_ENABLE, HIGH);
+    applyShareRatio(0.0f);
+    check(digitalRead(FC_BUS_ENABLE) == LOW,
+          "cutoff: r=0 opens FC_BUS_ENABLE");
+    check(digitalRead(FC_REG_ENABLE) == HIGH && digitalRead(BT_REG_ENABLE) == HIGH,
+          "cutoff: boost enables are NEVER touched (bus-switch isolation only)");
+    check(fabsf(droop_gain_BT_actual - gBT_mid) < 1e-6f &&
+          fabsf(droop_gain_FC_actual - gFC_mid) < 1e-6f,
+          "cutoff: droop gains held while FC is isolated");
+    check(shareIsoFC && !shareIsoBT, "cutoff: FC isolation flag set");
+
+    // Hysteresis: r just above DROOP_R_MIN but inside the hysteresis band
+    // must NOT re-enter; at DROOP_R_MIN + hyst it must.
+    applyShareRatio(DROOP_R_MIN + SHARE_CUTOFF_HYST / 2.0f);
+    check(digitalRead(FC_BUS_ENABLE) == LOW,
+          "cutoff: re-entry refused inside the hysteresis band");
+    applyShareRatio(DROOP_R_MIN + SHARE_CUTOFF_HYST);
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareIsoFC,
+          "cutoff: re-entry at DROOP_R_MIN + hysteresis closes FC back onto the bus");
+    check(fabsf(droop_gain_FC_actual - gFC_mid) > 1e-6f,
+          "cutoff: mapping resumes after re-entry (gains move again)");
+
+    // Re-entry must be refused while the bus is below the charged threshold.
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    applyShareRatio(0.0f);                       // isolate FC
+    V_bus = V_BUS_CHARGED_THRESH - 1.0f;         // bus collapses meanwhile
+    applyShareRatio(0.5f);
+    check(digitalRead(FC_BUS_ENABLE) == LOW && shareIsoFC,
+          "cutoff: re-entry refused while V_bus is below the charged threshold");
+    V_bus = 16.0f;
+    applyShareRatio(0.5f);
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareIsoFC,
+          "cutoff: re-entry proceeds once the bus is charged again");
+
+    // r = 1: symmetric BT cutoff.
+    applyShareRatio(1.0f);
+    check(digitalRead(BT_BUS_ENABLE) == LOW && shareIsoBT,
+          "cutoff: r=1 opens BT_BUS_ENABLE");
+    applyShareRatio(DROOP_R_MAX - SHARE_CUTOFF_HYST);
+    check(digitalRead(BT_BUS_ENABLE) == HIGH && !shareIsoBT,
+          "cutoff: BT re-entry at DROOP_R_MAX - hysteresis");
+
+    // safeAllSwitches() takes ownership: flags clear, and an in-band ratio
+    // afterwards must NOT re-close the state-opened switches.
+    applyShareRatio(0.0f);                       // controller isolates FC
+    safeAllSwitches();
+    check(!shareIsoFC && !shareIsoBT,
+          "cutoff: safeAllSwitches() clears the isolation flags");
+    applyShareRatio(0.5f);
+    check(digitalRead(FC_BUS_ENABLE) == LOW && digitalRead(BT_BUS_ENABLE) == LOW,
+          "cutoff: controller never re-closes switches it no longer owns");
+
+    // LAST-SOURCE GUARD: with the other channel off the bus, a cutoff must be
+    // refused (the controller may never darken the bus) and the request must
+    // fall back to the band-edge clip so droop authority stays live.
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, LOW);    // battery off the bus (e.g. FC-charge cruise)
+    V_bus = 16.0f;
+    applyShareRatio(0.0f);               // FC starved — but FC is the only live source
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareIsoFC,
+          "cutoff: last-source guard refuses to cut the only channel on the bus");
+    check(fabsf(droop_gain_FC_actual - K_DROOP / (RE_MAX * DROOP_R_MIN)) < 1e-4f,
+          "cutoff: guard-blocked request falls back to the band-edge clip");
+
+    // Ownership handoff to the charge path: if the controller had isolated BT
+    // and the charge manager then asserts FC_CHARGE (which drives BT_BUS LOW
+    // itself), the controller's claim must be dropped — its re-entry would
+    // otherwise close BT_BUS while FC_CHARGE is HIGH (illegal combination).
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    applyShareRatio(1.0f);                   // controller isolates BT
+    check(shareIsoBT, "cutoff: (setup) controller holds BT isolation");
+    assertFcChargeEnable(true);              // charge path takes BT_BUS
+    check(!shareIsoBT, "cutoff: assertFcChargeEnable(true) takes over BT ownership");
+    applyShareRatio(0.5f);                   // mid-band: must NOT re-close BT
+    check(digitalRead(BT_BUS_ENABLE) == LOW && digitalRead(FC_CHARGE_ENABLE) == HIGH,
+          "cutoff: no BT re-entry while the FC-charge path holds BT_BUS LOW");
+    assertFcChargeEnable(false);
+
+    // 'O' path: applyOpenLoopDroop() accepts the full span and drives the
+    // same cutoff (and clears powerBalanceLive).
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    powerBalanceLive = true;
+    applyOpenLoopDroop(1.0f);
+    check(digitalRead(BT_BUS_ENABLE) == LOW && !powerBalanceLive,
+          "cutoff: 'O 1.0' cuts BT off the bus and clears powerBalanceLive");
+
+    // Setpoint entry point: full [0,1] accepted (old clamp was [0.01,0.99]).
+    setPowerShareSetpointLive(0.0f);
+    check(power_share_setpoint == 0.0f, "setpoint: 0.0 accepted verbatim");
+    setPowerShareSetpointLive(1.0f);
+    check(power_share_setpoint == 1.0f, "setpoint: 1.0 accepted verbatim");
 }
 
 // ─── Power-share PI anti-windup ───────────────────────────────────────────────
@@ -3522,7 +3717,10 @@ static void test_droop_mapping_bounds() {
     }
     check(true, "mapping: g_FC and g_BT stay <= 1 over the full [R_MIN, R_MAX] span");
 
-    // out-of-span requests clamp to the span edges (not the old 0.01/0.99)
+    // out-of-span requests: with NEITHER bus switch closed (reset state), the
+    // channel cutoff is blocked by the last-source guard, so the request falls
+    // back to the band-edge clip — the pre-cutoff behavior. (The cutoff path
+    // itself is covered in test_share_ratio_cutoff.)
     applyOpenLoopDroop(0.01f);
     check(fabsf(droop_gain_FC_actual - K_DROOP / (RE_MAX * DROOP_R_MIN)) < 1e-4f,
           "mapping: low request clamps to DROOP_R_MIN");
@@ -3549,13 +3747,13 @@ static void test_power_share_setpoint_live() {
     check(powerBalanceLive == true,
           "power-share live: enables powerBalanceLive");
 
-    // Clamp to [0.01, 0.99]
+    // Clamp to [0, 1] — the full span is valid (2026-08-10 cutoff semantics)
     setPowerShareSetpointLive(1.5f);
-    check(fabsf(power_share_setpoint - 0.99f) < 1e-4f,
-          "power-share live: clamped to 0.99");
-    setPowerShareSetpointLive(0.0f);
-    check(fabsf(power_share_setpoint - 0.01f) < 1e-4f,
-          "power-share live: clamped to 0.01");
+    check(fabsf(power_share_setpoint - 1.0f) < 1e-4f,
+          "power-share live: clamped to 1.0");
+    setPowerShareSetpointLive(-0.5f);
+    check(fabsf(power_share_setpoint - 0.0f) < 1e-4f,
+          "power-share live: clamped to 0.0");
 
     // With current flowing, the live closed loop writes the MDAC
     setPowerShareSetpointLive(0.7f);
@@ -6709,6 +6907,8 @@ int main() {
     test_motor_pi_antiwindup();
     test_power_pi_antiwindup();
     test_powerbalance_gated_tick_stable();
+    test_powerbalance_min_load_hold();
+    test_share_ratio_cutoff();
     test_wheelspeed_reset();
 
     // ── SD bench logging ────────────────────────────────────────────────────
