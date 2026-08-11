@@ -1,0 +1,7 @@
+{
+  "filters": {
+    "share_act_tau_s": 0.020,
+    "I_fc_tau_s": 0.010,
+    "I_batt_tau_s": 0.010
+  }
+}

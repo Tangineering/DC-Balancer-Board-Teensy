@@ -17,24 +17,49 @@ The firmware writer lives in teensy_controller/teensy_controller.ino
 
   Trailer: a record with t_us == 0xFFFFFFFF (sentinel), reinterpreted as
     u32 sentinel, u32 records_written, u32 dropped_count, u8 close_reason
-    (1=complete, 2=stop, 3=X, 4=Q, 5=fault), u8 error_code,
+    (1=complete, 2=stop, 3=X, 4=Q, 5=fault, 6=io_error), u8 error_code,
     u32 abandoned (sampled but never drained -- wedged-card close),
     rest zero.
 
 Usage: python decode_benchlog.py FILE.BLG [-o out.csv]
 
-CSV goes to stdout (or -o); trailer stats, close reason, and a
-records-read-vs-trailer-total consistency check go to stderr. A missing
-trailer (file ends mid-record or with no sentinel) is reported as a
-truncated file (e.g. power loss mid-run) -- in that case decoding also
-stops at the first record whose t_us does not strictly increase, because
-the firmware pre-allocates 32 MB and a brownout leaves whatever stale
-card content followed the last real record. v_sp/v_act are blanked in the
-CSV when flags bit1 (velocity chain valid) is clear -- see above.
+CSV goes to stdout (or -o); trailer stats, close reason, gap statistics,
+and a records-read-vs-trailer-total consistency check go to stderr.
+
+t_us is micros() at sample, which wraps every 4294.967296 s (71.58 min); a
+run is far shorter than that but can still STRADDLE a wrap, so the guard
+compares the modular step (t_us - prev) mod 2**32 against MAX_GAP_US rather
+than requiring a raw increase. The first record whose modular step is zero
+or implausibly large is where the real data ended -- this is how a missing
+trailer (file ends mid-record or with no sentinel, e.g. power loss mid-run)
+is distinguished from stale pre-allocated card content following the last
+real record (the firmware pre-allocates 32 MB and a brownout leaves
+whatever was on the card there). A candidate trailer record is only
+accepted as a real trailer if its close_reason is one of the known values
+above; otherwise it is treated as data and falls through to the same step
+check (guards against a legitimate sample landing on t_us == 0xFFFFFFFF,
+p ~= 9.3e-6 per run).
+
+v_sp/v_act are blanked in the CSV when flags bit1 (velocity chain valid) is
+clear -- see above.
+
+Gap statistics (printed to stderr): max_interval_us is the largest modular
+step between consecutive records; missed_periods sums, over every step,
+max(round(delta_us / 1000) - 1, 0) -- i.e. how many 1 kHz control ticks
+appear to have not run at all. A missed period means the 1 kHz control tick
+itself did not run that millisecond (the log's sample gate shares the
+controllers' no-backfill rate-limiter), so gaps are control-loop-health
+events disclosed in-band by the log, not logger data loss.
+
+Importable API: decode_blg(data) -> DecodeResult parses an in-memory .BLG
+buffer without touching stdout/stderr/argv, for use by other tools (see
+tools/benchlog_analysis/). main() is a thin CLI wrapper around it that
+reproduces the exact stdout/stderr byte stream documented above.
 """
 import argparse
 import struct
 import sys
+from dataclasses import dataclass, field
 
 MAGIC = b"BLG1"
 HEADER_FMT = "<4sBBBBIIH"
@@ -42,42 +67,76 @@ HEADER_SIZE = 32
 RECORD_FMT = "<I10fHBBBB2x"
 RECORD_SIZE = 52
 TRAILER_FMT = "<IIIBBI"
-CLOSE_REASONS = {1: "complete", 2: "stop", 3: "X", 4: "Q", 5: "fault"}
+CLOSE_REASONS = {1: "complete", 2: "stop", 3: "X", 4: "Q", 5: "fault",
+                  6: "io_error"}
 CSV_FIELDS = ["share_sp", "share_act", "v_sp", "v_act", "I_fc", "I_batt",
               "gFC", "gBT", "V_bus", "I_cmd"]
+CSV_HEADER = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,V_bus,"
+              "I_cmd,fault_flags,ps_phase,dc_phase,trap_phase,flags")
+
+# 30 s: longer than any profile's worst card-stall gap (ring = 1024 rec ~=
+# 1.0 s; longest profile is the 40 s Y), and 0.70% of the 2**32 wrap, so
+# random garbage is rejected.
+MAX_GAP_US = 30_000_000
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("file", help=".BLG file to decode")
-    ap.add_argument("-o", "--output", help="CSV output path (default: stdout)")
-    args = ap.parse_args()
+@dataclass
+class DecodeResult:
+    """Result of decode_blg(). csv_rows have no trailing newline.
 
-    with open(args.file, "rb") as f:
-        data = f.read()
+    header: {version, record_size, profile_type, start_millis,
+             start_micros, k_droop_ohm}
+    trailer: None, or {records_written, dropped, close_reason (int),
+              close_reason_str, error_code, abandoned}
+    warnings: human-readable warning lines, WITHOUT the
+              "[decode_benchlog] " prefix.
+    report_lines: every "[decode_benchlog] ..." line, in the exact order
+                  the CLI prints them to stderr.
+    """
+    header: dict
+    csv_rows: list = field(default_factory=list)
+    records_read: int = 0
+    trailer: dict = None
+    warnings: list = field(default_factory=list)
+    report_lines: list = field(default_factory=list)
 
+
+def decode_blg(data):
+    """Parse an in-memory .BLG buffer (bytes) and return a DecodeResult.
+
+    Raises ValueError (with the same message text the CLI prints, minus
+    the "error: " prefix) on a short file, bad magic, bad version, or
+    unexpected record_size.
+    """
     if len(data) < HEADER_SIZE:
-        sys.exit("error: file shorter than the 32-byte header")
+        raise ValueError("file shorter than the 32-byte header")
 
     magic, version, record_size, profile_type, _pad, start_millis, \
         start_micros, k_droop_x1000 = struct.unpack_from(HEADER_FMT, data, 0)
     if magic != MAGIC:
-        sys.exit(f"error: bad magic {magic!r}, expected {MAGIC!r}")
+        raise ValueError(f"bad magic {magic!r}, expected {MAGIC!r}")
     if version != 1:
-        sys.exit(f"error: unsupported version {version}, expected 1")
+        raise ValueError(f"unsupported version {version}, expected 1")
     if record_size != RECORD_SIZE:
-        sys.exit(f"error: unexpected record_size {record_size}, expected {RECORD_SIZE}")
+        raise ValueError(f"unexpected record_size {record_size}, expected {RECORD_SIZE}")
 
-    out = open(args.output, "w", newline="") if args.output else sys.stdout
-    out.write("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,V_bus,"
-               "I_cmd,fault_flags,ps_phase,dc_phase,trap_phase,flags\n")
+    header = {
+        "version": version,
+        "record_size": record_size,
+        "profile_type": profile_type,
+        "start_millis": start_millis,
+        "start_micros": start_micros,
+        "k_droop_ohm": k_droop_x1000 / 1000.0,
+    }
 
+    csv_rows = []
     off = HEADER_SIZE
     records_read = 0
     trailer = None
     prev_t_us = None
     garbage_at = None
+    max_interval_us = 0
+    missed_periods = 0
     while off + RECORD_SIZE <= len(data):
         chunk = data[off:off + RECORD_SIZE]
         off += RECORD_SIZE
@@ -85,19 +144,32 @@ def main():
         if t_us == 0xFFFFFFFF:
             sentinel, records_written, dropped, close_reason, error_code, \
                 abandoned = struct.unpack_from(TRAILER_FMT, chunk, 0)
-            trailer = (records_written, dropped, close_reason, error_code,
-                       abandoned)
-            break
+            if close_reason in CLOSE_REASONS:
+                trailer = (records_written, dropped, close_reason,
+                           error_code, abandoned)
+                break
+            # Else: t_us == 0xFFFFFFFF but the reason byte isn't a known
+            # close reason, so this isn't a real trailer -- a legitimate
+            # sample can land on the sentinel value (p ~= 9.3e-6/run).
+            # Fall through and treat it as an ordinary data record; the
+            # step check below will reject it as garbage if it's actually
+            # stale post-brownout card content.
 
-        # Brownout guard: the firmware pre-allocates 32 MB, so a file that lost
-        # its trailer is followed by however many megabytes of stale card
-        # content -- which unpacks into perfectly plausible-looking rows. t_us
-        # is micros() at sample and therefore strictly increasing within a run
-        # (a run is far shorter than the ~71 min uint32 wrap), so the first
-        # non-increasing timestamp is where the real data ended.
-        if prev_t_us is not None and t_us <= prev_t_us:
-            garbage_at = records_read
-            break
+        # Wrap-safe bounded modular step. t_us is micros() at sample, which
+        # wraps every ~71.58 min; a run is far shorter than that but can
+        # still straddle a wrap, so a raw non-increase is not itself
+        # evidence of truncation. Compute the forward modular distance and
+        # stop only when it's zero (duplicate/stall) or implausibly large
+        # (stale pre-allocated card content following a brownout, or
+        # random garbage) -- see MAX_GAP_US above.
+        if prev_t_us is not None:
+            delta = (t_us - prev_t_us) & 0xFFFFFFFF
+            if delta == 0 or delta > MAX_GAP_US:
+                garbage_at = records_read
+                break
+            if delta > max_interval_us:
+                max_interval_us = delta
+            missed_periods += max(round(delta / 1000) - 1, 0)
         prev_t_us = t_us
 
         fields = struct.unpack_from(RECORD_FMT, chunk, 0)
@@ -114,36 +186,85 @@ def main():
                v_act_cell, "%.9g" % i_fc, "%.9g" % i_batt, "%.9g" % gfc,
                "%.9g" % gbt, "%.9g" % v_bus, "%.9g" % i_cmd, fault_flags,
                ps_cell, dc_cell, tp_cell, flags]
-        out.write(",".join(str(c) for c in row) + "\n")
+        csv_rows.append(",".join(str(c) for c in row))
         records_read += 1
 
-    if args.output:
-        out.close()
+    report_lines = []
+    warnings = []
 
-    print(f"[decode_benchlog] version={version} profile_type={profile_type} "
-          f"start_millis={start_millis} start_micros={start_micros} "
-          f"K_DROOP={k_droop_x1000 / 1000.0:.3f} ohm", file=sys.stderr)
-    print(f"[decode_benchlog] records read: {records_read}", file=sys.stderr)
+    report_lines.append(
+        f"[decode_benchlog] version={version} profile_type={profile_type} "
+        f"start_millis={start_millis} start_micros={start_micros} "
+        f"K_DROOP={k_droop_x1000 / 1000.0:.3f} ohm")
+    report_lines.append(f"[decode_benchlog] records read: {records_read}")
 
+    trailer_dict = None
     if trailer is None:
-        print("[decode_benchlog] WARNING: no trailer found -- file is "
-              "truncated (e.g. power loss mid-run)", file=sys.stderr)
+        w = ("WARNING: no trailer found -- file is truncated (e.g. power "
+             "loss mid-run)")
+        warnings.append(w)
+        report_lines.append(f"[decode_benchlog] {w}")
         if garbage_at is not None:
-            print(f"[decode_benchlog] WARNING: stopped at record "
-                  f"{garbage_at} -- t_us stopped increasing, so everything "
-                  f"past it is stale pre-allocated card content, not data",
-                  file=sys.stderr)
+            w = (f"WARNING: stopped at record {garbage_at} -- modular "
+                 f"t_us step was zero or exceeded MAX_GAP_US={MAX_GAP_US}, "
+                 f"so everything past it is stale pre-allocated card "
+                 f"content (or garbage), not data")
+            warnings.append(w)
+            report_lines.append(f"[decode_benchlog] {w}")
     else:
         records_written, dropped, close_reason, error_code, abandoned = trailer
         reason_str = CLOSE_REASONS.get(close_reason, f"unknown({close_reason})")
-        print(f"[decode_benchlog] trailer: records_written={records_written} "
-              f"dropped_count={dropped} abandoned={abandoned} "
-              f"close_reason={reason_str} error_code={error_code}",
-              file=sys.stderr)
+        trailer_dict = {
+            "records_written": records_written,
+            "dropped": dropped,
+            "close_reason": close_reason,
+            "close_reason_str": reason_str,
+            "error_code": error_code,
+            "abandoned": abandoned,
+        }
+        report_lines.append(
+            f"[decode_benchlog] trailer: records_written={records_written} "
+            f"dropped_count={dropped} abandoned={abandoned} "
+            f"close_reason={reason_str} error_code={error_code}")
         if records_written != records_read:
-            print(f"[decode_benchlog] WARNING: trailer records_written "
-                  f"({records_written}) != records actually read "
-                  f"({records_read})", file=sys.stderr)
+            w = (f"WARNING: trailer records_written ({records_written}) "
+                 f"!= records actually read ({records_read})")
+            warnings.append(w)
+            report_lines.append(f"[decode_benchlog] {w}")
+
+    report_lines.append(f"[decode_benchlog] max_interval_us={max_interval_us} "
+                         f"missed_periods={missed_periods}")
+
+    return DecodeResult(header=header, csv_rows=csv_rows,
+                         records_read=records_read, trailer=trailer_dict,
+                         warnings=warnings, report_lines=report_lines)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("file", help=".BLG file to decode")
+    ap.add_argument("-o", "--output", help="CSV output path (default: stdout)")
+    args = ap.parse_args()
+
+    try:
+        with open(args.file, "rb") as f:
+            data = f.read()
+        result = decode_blg(data)
+    except OSError as e:
+        sys.exit(f"error: {e}")
+    except ValueError as e:
+        sys.exit(f"error: {e}")
+
+    out = open(args.output, "w", newline="") if args.output else sys.stdout
+    out.write(CSV_HEADER + "\n")
+    for row in result.csv_rows:
+        out.write(row + "\n")
+    if args.output:
+        out.close()
+
+    for line in result.report_lines:
+        print(line, file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -509,6 +509,12 @@ typedef enum : uint8_t {
 // ── State machine ─────────────────────────────────────────────────────────────
 int mainState = 0;
 
+// doState99()'s teardown phase. FILE SCOPE (not function-static) so logDrainTick() can see it:
+// the SD drain must not run card I/O between the teardown phases (review 2026-08-10 FW-R1-F1).
+// State 99 is latched until a power cycle, so there is deliberately no reset path — the phase
+// only ever advances 0 -> 1 -> 2 -> 3, exactly as the old function-local static did.
+uint8_t state99Phase = 0;
+
 // ── Physical constants ────────────────────────────────────────────────────────
 const int MDAC_res = 4095;          // AD5443 12-bit — VERIFIED ad5426_5432_5443.pdf Table 1 + Fig 49
 
@@ -1147,10 +1153,14 @@ void printSdStatus();
 //     card is busy and writes at most ONE <=512 B chunk per loop tick. This is the SD analogue of
 //     plotTick()'s Serial.availableForWrite() backpressure guard.
 //   - Overflow policy is DROP-NEWEST + COUNT. The logger never waits for the card and never
-//     overwrites unwritten data; a stalled card costs samples, not loop time.
+//     overwrites unwritten data; a stalled card costs samples, not loop time — note this bounds
+//     the *sampling* path only; the drain's own write()/truncate()/close() are synchronous inside
+//     SdFat and bounded only by the card, which is why the drain is gated out of the State-99
+//     teardown.
 //   - The logger NEVER calls triggerFault(). An SD failure is a lost measurement, not a hazard;
 //     conversely a fault must never be delayed by the card, so triggerFault() only sets the
-//     deferred-close flag and the drain in loop() finishes the file during State 99 teardown.
+//     deferred-close flag and the drain in loop() finishes the file once State 99 has finished
+//     tearing down (state99Phase == 3) — never between its sequencing phases.
 //
 // Retrieval is by card pull; tools/decode_benchlog.py turns a .BLG into CSV.
 #define LOG_REC_SIZE        52u                 // bytes per record — static_assert'ed below
@@ -1176,6 +1186,7 @@ void printSdStatus();
 #define LOG_CLOSE_X        3   // universal stop
 #define LOG_CLOSE_Q        4   // State 98 exit
 #define LOG_CLOSE_FAULT    5   // triggerFault() — error_code carries the cause
+#define LOG_CLOSE_IO_ERROR 6   // mid-run write failure (card full / I/O error)
 
 // One sample. Packed + fixed size so the ring is trivially indexable and the decoder can
 // struct.unpack() it directly. Little-endian native (Teensy 4.1 and the host tests are both LE).
@@ -1264,7 +1275,9 @@ static void logResetBuffers() {
 // Deliberately ONE directory pass via openNext() rather than sd.exists() probing (which is O(N)
 // directory reads and would grow into a multi-hundred-ms stall as the card fills). Runs at profile
 // start only — never in the control path.
-// Returns false when the 4-digit counter is exhausted (see the 9999 guard at the bottom).
+// Returns false (fail-closed, no name produced) when the directory scan cannot be started or when
+// the 4-digit counter is exhausted. Both causes print their own (distinguishable) console line
+// here, at the site that knows which one it was; the caller just returns.
 static bool logNextFileName(uint8_t typeMask, char *out, size_t outLen) {
     // The combined ('Y') profile sets PS|DC, so its test MUST come first — a plain
     // (typeMask & LOG_TYPE_PS) check would file every combined run under "PS" and make the two
@@ -1276,7 +1289,14 @@ static bool logNextFileName(uint8_t typeMask, char *out, size_t outLen) {
                        :                            "DC";
     uint32_t maxIdx = 0;
     FsFile root = sd.open("/", O_RDONLY);
-    if (root) {
+    // A failed root open is NOT an empty card: falling through with maxIdx=0 would name the file
+    // <PREFIX>0001.BLG and point the create below at the OLDEST run's data — which, before the
+    // O_EXCL guard at the call site, truncated it away silently.
+    if (!root) {
+        Serial.println("[SD] directory scan failed — this run is NOT logged");
+        return false;
+    }
+    {
         FsFile entry;
         char   nm[32];
         while (entry.openNext(&root, O_RDONLY)) {
@@ -1302,9 +1322,13 @@ static bool logNextFileName(uint8_t typeMask, char *out, size_t outLen) {
         root.close();
     }
     // At 9999 the next name would be 11 chars ("PS10000.BLG"), which the 10-char scan filter above
-    // can never see — so every subsequent run would re-derive 10000, re-open the SAME name with
-    // O_TRUNC, and destroy the previous run's data silently. Refuse instead.
-    if (maxIdx >= 9999u) return false;
+    // can never see — so every subsequent run would re-derive 10000 and collide on the SAME name.
+    // (The O_EXCL create at the call site now refuses that collision too, but silently losing every
+    // run past 9999 is worth its own explicit message.) Refuse here.
+    if (maxIdx >= 9999u) {
+        Serial.println("[SD] run counter exhausted — archive the card");
+        return false;
+    }
     snprintf(out, outLen, "%s%04lu.BLG", prefix, (unsigned long)(maxIdx + 1u));
     return true;
 }
@@ -1414,16 +1438,23 @@ void logOpenForProfile(uint8_t typeMask) {
 
     char name[16];
     if (!logNextFileName(typeMask, name, sizeof(name))) {
-        Serial.println("[SD] run counter exhausted — archive the card");
+        // Fail-closed, two distinguishable causes — logNextFileName() prints whichever applies
+        // (failed directory scan / exhausted 4-digit counter) at the site that knows.
         return;
     }
-    logFile = sd.open(name, O_WRITE | O_CREAT | O_TRUNC);
+    // O_EXCL: even a wrong index from a partially-completed scan (openNext read error) cannot
+    // truncate an existing log — create fails instead and lands in the refusal below, fail-closed.
+    logFile = sd.open(name, O_WRITE | O_CREAT | O_EXCL);
     if (!logFile) {
         Serial.print("[SD] open failed (");
         Serial.print(name);
         Serial.println(") — this run is NOT logged");
         return;
     }
+    // TODO(measure): bench-measure open-path latency (name scan + preAllocate(32 MB) + header) on
+    // the card in use. preAllocate must find contiguous space — est. up to ~1 s on a fragmented
+    // FAT32 card, and 'R' is the one start with a live motor command. If measured > ~100 ms, move
+    // the preflight (scan + preAllocate) to State-98 entry.
     logFile.preAllocate(LOG_PREALLOC_BYTES);
 
     // 32-byte self-describing header: magic, format version, record size, profile bitmask, and the
@@ -1544,6 +1575,14 @@ void logDrainTick() {
         return;
     }
 
+    // No card I/O between State-99 teardown phases: write()/truncate()/close() are SYNCHRONOUS
+    // inside SdFat and isBusy() cannot bound an operation it merely precedes. The teardown's
+    // millis()-deadline dwells would otherwise stretch by the card's latency (measured: phase 1
+    // slips from 10 ms to D+1 ms for a D-ms close). Phase 3 = fully latched — which is exactly the
+    // condition logFinishFile()'s comment already assumes. Costs nothing: logActive is already
+    // false from logRequestClose(), and 20 ms << LOG_CLOSE_DEADLINE_MS.
+    if (mainState == 99 && state99Phase < 3) return;
+
     // Deadline FIRST, before the busy guard. A permanently-busy card (dead controller, bad socket)
     // would otherwise take the early return forever: the deadline check below would never be
     // reached, the file would never close, logCloseRequested would never clear, and every later
@@ -1579,6 +1618,10 @@ void logDrainTick() {
             // Card full / IO error mid-run: give up on logging, attempt trailer + close ONCE, warn
             // once. Deliberately NOT a triggerFault() — a lost measurement is not a hazard, and the
             // fault path must never be entered from the logger.
+            // Stamp the reason FIRST: logFinishFile() writes the trailer from logCloseReason, and
+            // this path is reached with it still 0 (no logRequestClose() ran) — an undocumented
+            // reason 0 in the trailer decodes as "unknown" instead of "I/O aborted".
+            logCloseReason = LOG_CLOSE_IO_ERROR;
             logFinishFile(false);
             return;
         }
@@ -1618,6 +1661,12 @@ void printSdStatus() {
         Serial.print("abandoned: "); Serial.print(logLastAbandoned);
         Serial.println("  (last run — card did not drain)");
     }
+    // Live-only: records COMMITTED TO THE RING this file (written + still pending). "records:"
+    // above counts only what reached the card, so the two disagreeing is the card falling behind.
+    // Cleared at close, hence no "(last run)" fallback — the trailer carries the closed run's total.
+    if (running) {
+        Serial.print("sampled:   "); Serial.println(logRecordCount);
+    }
     Serial.print("ring pend: "); Serial.print(logRingCount);
     Serial.print(" / ");         Serial.println(LOG_RING_RECORDS);
     Serial.println("=================");
@@ -1632,6 +1681,14 @@ void setup() {
 
     // Teensy 4.1 ADC: select 12-bit resolution before any analogRead
     analogReadResolution(12);
+    // Hardware-average 8 samples per analogRead (Teensyduino default is 4).
+    // Bench data (logs/PS0001) shows sigma ~= 5.7 counts (~4.6 mV) of
+    // ADC/board noise on the INA253 channels, whose signals are only
+    // 6-25 counts at K_sns = 0.1 V/A -- averaging cuts that noise ~sqrt(2)x
+    // over the default with no droop-chain change. Cost: ~2x conversion
+    // time, ~10-17 us/read, well inside the 1 kHz tick budget for the 7
+    // analog channels read per tick.
+    analogReadAveraging(8);
 
     initEscUartPins();
     initMdacSpiPins();
@@ -2356,7 +2413,8 @@ void doState99() {
     // Returning between phases (instead of the old delay(10)) keeps detectFaults() sampling
     // live through the drain windows. phase 3 = fully latched (nothing further until power
     // cycle).
-    static uint8_t  phase      = 0;
+    // `phase` lives at file scope (state99Phase) so logDrainTick() can gate its card I/O out of
+    // the teardown window — see the drain gate in logDrainTick().
     static uint32_t phaseStart = 0;
 
     // Always-on 1 Hz error report — keeps printing the latched cause for as long as
@@ -2371,7 +2429,7 @@ void doState99() {
         Serial.print("  from state ");            Serial.println(error_source_state);
     }
 
-    switch (phase) {
+    switch (state99Phase) {
         case 0:
             commandMotorCurrent(0);
             // Phase 1: Bleed VBUS capacitor energy into charger
@@ -2379,7 +2437,7 @@ void doState99() {
             digitalWrite(BT_BUS_ENABLE, LOW);    // disconnect BT regulator from VBUS
             assertFcChargeEnable(true);          // drain remaining VBUS cap energy into Ag105
             phaseStart = millis();
-            phase = 1;
+            state99Phase = 1;
             break;
         case 1:
             if (millis() - phaseStart < 10) break;   // TODO(calibrate): VBUS capacitor drain time
@@ -2388,7 +2446,7 @@ void doState99() {
             digitalWrite(REGEN_ENABLE, HIGH);    // open regen → charger path
             digitalWrite(MOT_PWR_ENABLE, LOW);   // cut motor from VBUS; regen bleeds through REGEN
             phaseStart = millis();
-            phase = 2;
+            state99Phase = 2;
             break;
         case 2:
             if (millis() - phaseStart < 10) break;   // TODO(calibrate): regen current decay time
@@ -2399,7 +2457,7 @@ void doState99() {
             digitalWrite(BT_REG_ENABLE, LOW);
             // BT_SEQUENCE_ENABLE stays HIGH (per design — no need to turn off again)
             // CBAL_DISABLE stays LOW (OVP protection remains active in error state)
-            phase = 3;
+            state99Phase = 3;
             break;
         case 3:
         default:
@@ -3242,6 +3300,9 @@ void startPowerShareProfile() {
     powerShareProfileStatusLast = millis();
     // Open the SD log AFTER the flags are set so the first sample already carries ps_phase = 0.
     // Warns and continues with no card — a run is never gated on logging.
+    // NOTE: 'R' is deliberately the ONLY profile start without a preceding haltMotorOutput() — a
+    // standing manual motor command ('A'/'V') is this profile's documented precondition, so its
+    // logOpenForProfile() below runs with a live motor. See the TODO(measure) at preAllocate().
     logOpenForProfile(LOG_TYPE_PS);
     Serial.println("[PS] Power-share profile started — Phase 0");
     if (vescWatchActive)

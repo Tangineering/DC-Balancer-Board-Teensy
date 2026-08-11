@@ -298,8 +298,8 @@ Logs the power-share/motor/bus signals at the full 1 kHz control cadence to the 
 built-in micro-SD — 20x finer than the 50 Hz `L` stream, needed to see the Youla-H share loop's
 actual transient. Logging starts and stops automatically with the profile lifecycle: it opens
 when `R`, `T`, `D`, or `Y` starts, and closes on natural completion, the matching stop-toggle, `X`,
-`Q`, or a fault (the close is deferred through the fault transition so it never delays a safety
-action). There's no separate arm command — a card present at profile start is logged, a missing
+`Q`, or a fault (the close is deferred out of the fault transition and held until the State-99
+teardown is latched, so it cannot lengthen a teardown dwell). There's no separate arm command — a card present at profile start is logged, a missing
 one is silently skipped. No card in the slot, a full card, or a write error never faults the
 board or blocks a profile: the firmware prints a warning and keeps running. `K` prints a
 status line — card present, current/last file name (`PS`/`TP`/`DC`/`YP` prefix by profile type),
@@ -414,6 +414,16 @@ rate gate, ring-buffer overflow drop-and-count, no-card and mid-run write-error 
 naming/collision, the 52-byte record schema, and `K` status output. The `Y` combined profile
 (parameter parsing/clip/region walk/exit paths/`YP` logging/suppression) is covered too. Run
 before every flash.
+
+`tools/decode_benchlog.py` has its own stdlib-only self-test, `tools/test_decode_benchlog.py`
+(no pytest/g++ needed): it generates synthetic `.BLG` files and asserts on the decoder's actual
+output — a wrap-straddling run decodes in full, a brownout tail is truncated at the true end,
+`close_reason` 6 (`io_error`) decodes correctly, and gap statistics (`max_interval_us`,
+`missed_periods`) come out right for a known gap. Run with:
+
+```bash
+python tools/test_decode_benchlog.py
+```
 
 ## Notes for calibration
 

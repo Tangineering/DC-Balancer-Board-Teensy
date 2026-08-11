@@ -48,6 +48,7 @@ inline void delayMicroseconds(unsigned int)  {}
 // ── Mock analog ───────────────────────────────────────────────────────────────
 inline int g_analog_pin[50] = {};   // analogRead() returns g_analog_pin[pin]
 inline void analogReadResolution(int) {}
+inline void analogReadAveraging(int) {}
 inline int  analogRead(int pin) { return (pin >= 0 && pin < 50) ? g_analog_pin[pin] : 0; }
 
 // ── Mock GPIO ─────────────────────────────────────────────────────────────────

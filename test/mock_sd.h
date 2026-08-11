@@ -31,6 +31,9 @@
 #ifndef O_TRUNC
 #define O_TRUNC  0x200
 #endif
+#ifndef O_EXCL
+#define O_EXCL   0x800
+#endif
 
 // SDIO config selector — value is irrelevant to the mock, only the type must exist.
 #define FIFO_SDIO 1
@@ -47,6 +50,10 @@ struct MockSdState {
     // ── One-shot failure injection (mock_wire style: self-clearing) ──────────
     bool fail_next_open  = false;
     bool fail_next_write = false;
+    // Mid-scan directory read error: when >= 0, openNext() enumerates this many entries and then
+    // returns false (self-resetting to -1), i.e. the partial-scan case that makes logNextFileName()
+    // derive a too-low index. Models an SdFat read failure part-way through the root directory.
+    int  fail_opennext_after_n = -1;
 
     // ── Busy emulation: isBusy() returns true and decrements while > 0 ───────
     // Drives the drain-stall / ring-overflow test.
@@ -67,6 +74,7 @@ struct MockSdState {
         begin_calls     = 0;
         fail_next_open  = false;
         fail_next_write = false;
+        fail_opennext_after_n = -1;
         busy_ticks      = 0;
         files.clear();
         last_opened.clear();
@@ -116,6 +124,12 @@ public:
     // `this` becomes the next entry; `dir` holds the iteration cursor.
     bool openNext(FsFile* dir, int /*oflag*/ = O_RDONLY) {
         if (dir == nullptr) return false;
+        // Injected mid-scan read error: stop early, then disarm so the caller's next scan is clean.
+        if (g_sd_state.fail_opennext_after_n >= 0 &&
+            dir->_dir_idx >= g_sd_state.fail_opennext_after_n) {
+            g_sd_state.fail_opennext_after_n = -1;
+            return false;
+        }
         if (dir->_dir_idx >= (int)g_sd_state.files.size()) return false;
         auto it = g_sd_state.files.begin();
         std::advance(it, dir->_dir_idx);
@@ -177,6 +191,9 @@ public:
             f._mock_open("/");
             return f;
         }
+        // O_EXCL: exclusive create — fail (closed handle) if the name already exists. This is what
+        // makes a wrong index from a failed/partial scan a refusal instead of a silent truncate.
+        if ((flags & O_EXCL) && g_sd_state.files.count(n)) return f;
         if (flags & O_TRUNC) g_sd_state.files[n].clear();
         else if (!g_sd_state.files.count(n)) g_sd_state.files[n] = "";
         g_sd_state.last_opened = n;

@@ -319,7 +319,11 @@ requirements:
 - **Status dump** (`S` command): print all pin states and ADC readings to USB Serial.
 - **SD-card bench logging:** `R`/`T`/`D` runs are auto-logged at 1 kHz to the built-in micro-SD;
   the `K` command prints logging status. Logging is observability-only — it never faults the
-  board and never blocks the main loop, with or without a card present.
+  board, and the sampling path does no card I/O. Card I/O is confined to logDrainTick() in
+  loop(), which skips a tick when the card reports busy and writes at most one 512 B chunk;
+  SdFat's write()/truncate()/close() are themselves synchronous, so the close is held off until
+  State 99 has reached its latched phase (state99Phase == 3) and can never lengthen a teardown
+  dwell.
 - **Exit** (`Q` command): → State 1; `MOT_PWR_ENABLE` forced LOW on exit.
 
 See PLAN.md §9 for the full command set and drive cycle phase table.

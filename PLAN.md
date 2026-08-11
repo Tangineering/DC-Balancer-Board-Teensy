@@ -879,13 +879,17 @@ again), `'X'` universal stop, `'Q'` exit, and fault. There is no separate arm/di
 a card present at profile start is logged; a missing card is silently skipped (below). The
 fault path is deferred: `triggerFault()` only sets a close-request flag (no I/O in the fault
 transition itself); the drain in `loop()` finishes writing and closes the file during State 99's
-teardown, so the safety transition is never delayed by SD I/O.
+teardown, so the safety transition itself does no SD I/O; the drain is additionally held off
+until `state99Phase == 3`, so the teardown's 10 ms dwells run at their intended length.
 
 **Sampling — 1 kHz.** `logSampleTick()` runs in `doState98()`'s post-serial tick section, gated
 by the same wrap-safe `rateLimitDue(rl_log_last, POWER_BAL_PERIOD_US)` mechanism the PI
-controllers use — a true 1 kHz cadence, not the drifting `millis()` restamp the `'L'` stream
-warns against. A sample is a 52-byte memcpy into a ring buffer; no formatting, no I/O on the
-sampling path.
+controllers use — one sample per elapsed `POWER_BAL_PERIOD_US`, timestamped with `micros()` per
+record (unlike the drifting `millis()` restamp the `'L'` stream warns against). The gate shares
+the controllers' no-backfill catch-up semantics: a stalled loop tick skips the control update
+AND its sample, so the log records every control update that actually ran, and loop stalls
+appear as `t_us` gaps (the decoder reports max interval / missed periods). A sample is a
+52-byte memcpy into a ring buffer; no formatting, no I/O on the sampling path.
 
 **Record layout (52 bytes, little-endian, packed):**
 
@@ -921,8 +925,9 @@ size (u8, =52), profile type (u8 bitmask), pad, `start_millis` (u32), `start_mic
 `K_DROOP`x1000 (u16), reserved to 32 B.
 
 **Trailer (one record with `t_us = 0xFFFFFFFF` sentinel):** total records written (u32), dropped
-count (u32), close reason (u8: 1=complete, 2=stop, 3=X, 4=Q, 5=fault), `error_code` (u8), rest
-zero. A trailer instead of a header rewrite avoids a seek-back, keeping close cheap.
+count (u32), close reason (u8: 1=complete, 2=stop, 3=X, 4=Q, 5=fault, 6=io_error), `error_code`
+(u8), rest zero. A trailer instead of a header rewrite avoids a seek-back, keeping close cheap.
+The write-error path below is what sets reason 6.
 
 **Ring buffer and draining.** A static 1024-record (52 KB) ring covers roughly 1 s of coverage
 against a 250 ms pathological card stall with 4x margin. Overflow policy is drop-newest +
@@ -933,7 +938,11 @@ if the SD card reports busy, skip the tick (the SD analogue of `plotTick()`'s
 loop tick — comfortably ahead of the 52 B/ms fill rate, so a stall drains down fast once it
 clears. A pending close writes the trailer, truncates the pre-allocated file to its actual
 size, and closes once the ring is empty or a 2 s drain deadline passes, whichever comes first;
-either way logging never delays or alters a safety action.
+either way the trailer/truncate/close runs only once State 99 is fully latched (or in Idle),
+never between teardown phases. The close is synchronous — `truncate()` walks the 32 MB
+pre-allocation, order tens of ms on FAT32 — so it is deliberately confined to states where every
+switch is already parked. `TODO(measure)`: `truncate()`/`close()`/`preAllocate()` durations on
+the card in use.
 
 **No-card tolerance.** `setup()` probes the card once at boot (with the power stage dark, so
 SdFat's multi-second init timeout can never stall the main loop with the converters live);
@@ -943,12 +952,20 @@ SdFat's multi-second init timeout can never stall the main loop with the convert
 card. An open failure warns **per run** (it is a per-run condition — a full card, a bad name —
 not a latched one). A mid-run write error ends logging for that run after attempting the
 trailer, prints one warn line, and the profile continues — SD errors never call
-`triggerFault()`; logging is observability-only.
+`triggerFault()`; logging is observability-only. The write-error path sets `LOG_CLOSE_IO_ERROR`
+(6) as the close reason before calling `logFinishFile(false)`, so the trailer records that the
+close was I/O-abandoned rather than a normal exit — previously this landed as an undocumented
+reason 0 (`unknown(0)` at decode time).
 
 **File naming.** Profile-prefixed run counter via a directory scan: `PSnnnn.BLG` / `TPnnnn.BLG`
 / `DCnnnn.BLG` / `YPnnnn.BLG` (the combined `PS|DC` profile, §9h) in the card root. At open, one
 scan finds the max `nnnn` across all four prefixes and uses max+1 — stateless (no counter file to corrupt) and collision-free. The scan
-happens once at profile start, not in the control path.
+happens once at profile start, not in the control path. A failed or partial directory scan
+(root-open failure, or a read error partway through `openNext()`) is a hard refusal to log for
+that run rather than a fallback to index 0 — a partial scan must never risk colliding with and
+`O_TRUNC`-ing an existing file. Creation itself uses `O_WRITE | O_CREAT | O_EXCL` (not
+`O_TRUNC`): it fails closed if the chosen name somehow already exists instead of overwriting it,
+and creation never truncates.
 
 **Retrieval and decoding.** Primary retrieval is a card pull (no serial-dump command — that
 would add a long-running Serial loop to State 98, the exact failure class the non-blocking
@@ -958,8 +975,19 @@ discipline guards against). Decode on the laptop with:
 python tools/decode_benchlog.py FILE.BLG > run.csv
 ```
 
+The decoder has its own stdlib-only self-test, `tools/test_decode_benchlog.py` (§10c) — run with
+`python tools/test_decode_benchlog.py`, no g++/pytest required.
+
 MTP (mounting the card over USB without pulling it) is a possible future extension, noted here
 but not implemented — it requires a USB-type rebuild and MTP_Teensy is semi-experimental.
+
+`TODO(measure)`, bench: (1) real-card open-path latency — `preAllocate(32 MB)` runs at the `'R'`
+keypress with a live manual motor command still in effect; if this exceeds ~100 ms on the card
+in use, preflight the directory scan + preallocation at State-98 entry instead (adjacent finding
+FW-R1-N1, docs/reviews/firmware/run-001-2026-08-10.md). (2) brownout dirent persistence — the
+firmware never calls `sync()`, so it is open whether a mid-run power loss leaves the 32 MB
+pre-allocated dirent behind or a 0-byte/absent file; one Y-run pull-the-plug datapoint settles
+it (log the result via bench-incident).
 
 **`'K'` status command.** Prints card present, current/last file name, and record/drop counts to
 USB Serial (§9b); read-only, so it stays live during the bring-up lockout. Deliberately reports
@@ -1179,6 +1207,13 @@ by the mocks before the `#include`.
 | **MPPT_DISABLE polarity** | `chargingControl()` sets `MPPT_DISABLE` LOW (inhibit) during regen and when `charge_goal ≈ 0`; HIGH (enabled) when charger is ready and no regen |
 | **Y combined profile** | parameter parsing + defaults (bare line, one value, two values), refusals (`Vmax` <= 0 / above `MANUAL_MOTOR_V_MAX`, `b` < 0 / >= 0.5, third value) and the `b > 0.35` warn-and-accept, region walk across all 16 regions, clip behaviour at both bounds incl. the post-interpolation kink, `Vmax` scaling of the normalised waypoints, stop-toggle / `'X'` / `'Q'` exits and mutual exclusion with `D`/`R`/`T`, `YP` file naming + the region index in both phase bytes, status line + plot-mode suppression |
 | **SD bench logging** | lifecycle on all exit paths (complete/stop/X/Q/fault), 1 kHz rate gate, overflow drop+count, no-card warn-once, write-error mid-run, name collision, record schema, velocity-valid flag + per-profile phase bytes, `'K'` status, plot+log independence |
+
+`tools/test_decode_benchlog.py` is a separate, stdlib-only self-test for the host-side decoder
+(`tools/decode_benchlog.py`) — not part of the C++ suite above, since the decoder is a Python
+tool with no Teensy/mock dependency. It covers the wrap-safe modular step check on a synthetic
+run whose `t_us` straddles the uint32 wrap, brownout truncation at the true end of data,
+`close_reason` 6 (`io_error`), and the gap-statistics output (`max_interval_us`,
+`missed_periods`). Run with `python tools/test_decode_benchlog.py`.
 
 ### 10c. Running the tests
 

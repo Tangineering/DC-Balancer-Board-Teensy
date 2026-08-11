@@ -1,0 +1,4 @@
+# PyInstaller outputs (build_exe.ps1) -- the exe is 40+ MB, rebuild it locally
+build/
+dist/
+__pycache__/

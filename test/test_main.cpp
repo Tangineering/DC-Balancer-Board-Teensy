@@ -159,6 +159,10 @@ static void reset_test_state() {
     bringupPhaseStart = 0;
     bringupDwellStart = 0;
 
+    // .ino doState99() teardown phase (file scope so logDrainTick() can gate on it). Latched
+    // forever on hardware, so the reset lives here rather than in any production path.
+    state99Phase = 0;
+
     // .ino OV_BUS persistence window (detectFaults)
     ovBusOverActive  = false;
     ovBusOverSince   = 0;
@@ -4531,6 +4535,22 @@ static int sd_drain_until_closed(int maxTicks = 5000) {
     return n;
 }
 
+// Same, for a close pending in State 99: the real loop() runs doState99() before logDrainTick(),
+// and since review 2026-08-10 FW-R1-F1 the drain is deliberately gated until the teardown has
+// fully latched (state99Phase == 3). Advancing millis is therefore REQUIRED here — the teardown's
+// dwells are millis()-based — but the tick budget stays far below LOG_CLOSE_DEADLINE_MS, so a
+// close that only completed because the deadline fired would still surface as a leftover ring.
+static int sd_drain_until_closed_state99(int maxTicks = 200) {
+    int n = 0;
+    while ((logActive || logCloseRequested) && n < maxTicks) {
+        doState99();
+        logDrainTick();
+        g_mock_millis += 1;
+        n++;
+    }
+    return n;
+}
+
 // One State-98 tick that also advances the 1 kHz sample clock and services the drain, i.e. what
 // loop() + doState98() do together for one millisecond of a real bench run.
 static void sd_run_ms(int ms, bool drain = true) {
@@ -4726,7 +4746,9 @@ static void test_sdlog_lifecycle_fault_path() {
     check(logActive == false && logCloseRequested == true && logFile.isOpen() == true,
           "SD fault: the fault path only flags the close — no card I/O happens in triggerFault()");
 
-    int ticks = sd_drain_until_closed();
+    // The real loop() runs doState99() alongside the drain; the drain is gated until the teardown
+    // has fully latched (FW-R1-F1), so this must pump both — see sd_drain_until_closed_state99().
+    int ticks = sd_drain_until_closed_state99();
     check(ticks > 0 && logFile.isOpen() == false,
           "SD fault: the loop-level drain finishes the file while State 99 is latched");
     check(mainState == 99 && error_code == ERR_OC_FC,
@@ -4942,6 +4964,22 @@ static void test_sdlog_write_error_midrun() {
           "SD write error: the ring and counters are cleared so nothing bleeds into the next run");
     check(mainState == 98 && fault_flags == 0 && error_code == ERR_NONE,
           "SD write error: an SD failure never calls triggerFault() — no fault, still in State 98");
+
+    // Trailer provenance (review 2026-08-10 FW-R1-F4): this path used to leave logCloseReason at 0,
+    // an undocumented value the decoder renders as "unknown(0)". fail_next_write is one-shot, so
+    // the record write failed but the trailer write itself succeeded — the trailer is on the card.
+    {
+        const std::string* f = sd_file("PS0001.BLG");
+        check(f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE,
+              "SD write error: the aborted file still carries its header and a trailer");
+        if (f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE) {
+            size_t tr = f->size() - LOG_REC_SIZE;
+            check(sd_le<uint32_t>(*f, tr + 0) == 0xFFFFFFFFu,
+                  "SD write error: the aborted file ends in the trailer sentinel");
+            check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_IO_ERROR,
+                  "SD write error: the trailer reason is LOG_CLOSE_IO_ERROR, not the undocumented 0");
+        }
+    }
     check(powerShareProfileActive == true,
           "SD write error: the power-share profile is still running");
 
@@ -5020,6 +5058,20 @@ static void test_sdlog_rate_1khz() {
     doState98();
     check(logRecordCount == 12,
           "SD rate: a long gap yields a single catch-up record, never a burst of back-fills");
+
+    // …and the gap is DISCLOSED IN-BAND: nothing is back-filled, but the per-record micros()
+    // timestamps make the missed window explicit to the decoder, so "no back-fill" can never be
+    // mistaken for "no gap". (Review 2026-08-10 FW-R1-F5: the no-backfill gate is the same
+    // rate-limiter semantics the power-balance controller uses — a missed log tick is a missed
+    // control tick — and this delta is how a reader sees it.) Records 10 and 11 are the last
+    // pre-gap and the post-gap sample; they still sit in the undrained ring.
+    {
+        uint32_t tPre = 0, tPost = 0;
+        memcpy(&tPre,  &logRing[10 * LOG_REC_SIZE], 4);
+        memcpy(&tPost, &logRing[11 * LOG_REC_SIZE], 4);
+        check((uint32_t)(tPost - tPre) == POWER_BAL_PERIOD_US * 50,
+              "SD rate: the recorded t_us delta across the gap equals the full missed window");
+    }
 }
 
 // ─── 10. 'L' plot stream and SD logging run independently ───────────────────
@@ -5421,6 +5473,145 @@ static void test_sdlog_counter_exhausted() {
     sd_start_share_run();
     check(logActive == true && std::string(logFileName) == "PS0001.BLG",
           "SD counter: the refusal is not a latch — a run logs again once a slot is free");
+}
+
+// ─── 17. The drain does no card I/O between State-99 teardown phases ─────────
+// Review 2026-08-10 FW-R1-F1: write()/truncate()/close() are SYNCHRONOUS inside SdFat and
+// isBusy() cannot bound an operation it merely precedes, so a close landing between the
+// teardown's millis()-deadline dwells stretches them by the card's latency. The gate in
+// logDrainTick() holds all card I/O until state99Phase == 3 (fully latched). This test pins
+// BOTH halves: no truncate before the boosts are off, AND the unchanged 10/20 ms milestones.
+static void test_sdlog_state99_drain_gated() {
+    test_group("SD log: the drain is gated out of the State-99 teardown until it is fully latched");
+    reset_test_state();
+
+    sd_start_share_run();
+    // Model a live bus: the boosts are on, so their going LOW marks teardown phase 2 completing.
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    g_pin_value[BT_REG_ENABLE] = HIGH;
+
+    sd_run_ms(5);
+    for (int i = 0; i < 10; i++) logDrainTick();     // empty the ring BEFORE the fault, so the
+    check(logRingCount == 0 && logActive == true,    // close has nothing left to wait for — the
+          "SD 99-gate: the ring is fully drained before the fault (the close-runs-immediately case)");
+    check(g_sd_state.truncate_calls == 0,
+          "SD 99-gate: nothing has been truncated yet — the file is still open and logging");
+
+    const uint32_t t0 = g_mock_millis;
+    triggerFault(FAULT_OC_FC, ERR_OC_FC);
+    check(mainState == 99 && logCloseRequested == true && logRingCount == 0,
+          "SD 99-gate: the fault latches State 99 with a close pending and an empty ring");
+
+    // Run loop() as the real thing does: doState99() then logDrainTick(), 1 ms per tick.
+    uint32_t motPwrLowAtMs   = 0;
+    uint32_t truncateAtMs    = 0;
+    bool     truncateWhileHot = false;   // a truncate seen while the boosts were still enabled
+    for (int i = 0; i < 40; i++) {
+        bool boostsWereHot = (digitalRead(FC_REG_ENABLE) == HIGH);
+        int  truncBefore   = g_sd_state.truncate_calls;
+        doState99();
+        logDrainTick();
+        if (g_sd_state.truncate_calls > truncBefore) {
+            if (truncateAtMs == 0) truncateAtMs = g_mock_millis;
+            if (boostsWereHot && digitalRead(FC_REG_ENABLE) == HIGH) truncateWhileHot = true;
+        }
+        if (motPwrLowAtMs == 0 && digitalRead(MOT_PWR_ENABLE) == LOW) motPwrLowAtMs = g_mock_millis;
+        g_mock_millis += 1;
+    }
+
+    check(truncateWhileHot == false,
+          "SD 99-gate: no truncate/close happens while the boosts are still enabled (phases 0-2)");
+    check(motPwrLowAtMs == t0 + 10,
+          "SD 99-gate: MOT_PWR_ENABLE still goes LOW at exactly t0+10 ms — teardown timing unchanged");
+    check(digitalRead(FC_REG_ENABLE) == LOW && digitalRead(BT_REG_ENABLE) == LOW,
+          "SD 99-gate: the teardown completes and disables both boosts");
+    check(state99Phase == 3,
+          "SD 99-gate: the teardown reaches the fully-latched phase 3");
+    check(g_sd_state.truncate_calls == 1 && truncateAtMs >= t0 + 20,
+          "SD 99-gate: the file is truncated/closed exactly once, only after the boosts are LOW");
+    check(logFile.isOpen() == false && logCloseRequested == false,
+          "SD 99-gate: the deferred close still completes — gating delays it, never drops it");
+
+    // The file itself must be complete and correctly labelled.
+    const std::string* f = sd_file("PS0001.BLG");
+    check(f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE,
+          "SD 99-gate: the log file exists with a header and at least one record");
+    if (f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE) {
+        size_t tr = f->size() - LOG_REC_SIZE;
+        check(sd_le<uint32_t>(*f, tr + 0) == 0xFFFFFFFFu,
+              "SD 99-gate: the closed file ends in the trailer sentinel");
+        check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_FAULT,
+              "SD 99-gate: the trailer close reason is LOG_CLOSE_FAULT");
+        check((uint8_t)(*f)[tr + 13] == (uint8_t)ERR_OC_FC,
+              "SD 99-gate: the trailer carries the latched error_code");
+    }
+}
+
+// ─── 18. A failed or partial directory scan never destroys an existing log ───
+// Review 2026-08-10 FW-R1-F3: a failed root open used to fall through with maxIdx = 0 and the
+// O_TRUNC create then erased <PREFIX>0001.BLG. Fixed at two layers — fail-closed scan, and
+// O_EXCL so even a wrong index cannot truncate.
+static void test_sdlog_scan_failure_preserves_files() {
+    test_group("SD log: a failed/partial directory scan refuses to log rather than overwrite");
+
+    // ── (a) Root open fails → hard refusal, existing files byte-identical ────
+    reset_test_state();
+    g_sd_state.files["PS0001.BLG"] = "OLD-RUN-DATA-DO-NOT-TOUCH";
+    g_sd_state.files["PS0002.BLG"] = "second run";
+    g_sd_state.fail_next_open = true;      // the root open in logNextFileName() is the next open
+    Serial.tx_clear();
+    sd_start_share_run();
+
+    check(sd_file("PS0001.BLG") != nullptr &&
+          *sd_file("PS0001.BLG") == "OLD-RUN-DATA-DO-NOT-TOUCH",
+          "SD scan-fail: the oldest run's bytes are UNCHANGED after the failed scan");
+    check(g_sd_state.files.size() == 2,
+          "SD scan-fail: no new file is created when the directory scan fails");
+    check(logActive == false && logFile.isOpen() == false,
+          "SD scan-fail: logging is refused (fail-closed), not started on a guessed name");
+    check(Serial.tx_contains("[SD] directory scan failed"),
+          "SD scan-fail: the refusal names the cause — a scan failure, not a counter exhaustion");
+    check(powerShareProfileActive == true,
+          "SD scan-fail: the profile still runs — logging is never a precondition");
+
+    // ── (b) Mid-scan read error → partial maxIdx, but no file is destroyed ───
+    reset_test_state();
+    for (int i = 1; i <= 5; i++) {
+        char nm[16];
+        snprintf(nm, sizeof(nm), "PS%04d.BLG", i);
+        g_sd_state.files[nm] = "run data";
+    }
+    g_sd_state.fail_opennext_after_n = 2;   // the scan sees PS0001/PS0002, then errors out
+    sd_start_share_run();
+
+    for (int i = 1; i <= 5; i++) {
+        char nm[16];
+        snprintf(nm, sizeof(nm), "PS%04d.BLG", i);
+        check(sd_file(nm) != nullptr && *sd_file(nm) == "run data",
+              "SD partial-scan: every pre-existing log survives the truncated directory walk");
+    }
+    // The partial scan derives PS0003 (max seen = 2), which exists → O_EXCL refuses the create.
+    check(logActive == false && logFile.isOpen() == false,
+          "SD partial-scan: O_EXCL turns the collision into a refusal instead of a truncate");
+    check(Serial.tx_contains("[SD] open failed"),
+          "SD partial-scan: the refused exclusive create is reported to the operator");
+    check(powerShareProfileActive == true,
+          "SD partial-scan: the profile runs regardless");
+
+    // ── (c) The mock's O_EXCL contract itself (the pin under both layers) ────
+    reset_test_state();
+    g_sd_state.files["PS0003.BLG"] = "existing";
+    {
+        FsFile f = sd.open("PS0003.BLG", O_WRITE | O_CREAT | O_EXCL);
+        check(!f.isOpen(),
+              "SD O_EXCL: an exclusive create over an existing name fails");
+        check(*sd_file("PS0003.BLG") == "existing",
+              "SD O_EXCL: the failed exclusive create leaves the file's bytes intact");
+        FsFile g = sd.open("PS0004.BLG", O_WRITE | O_CREAT | O_EXCL);
+        check(g.isOpen() && sd_file("PS0004.BLG") != nullptr,
+              "SD O_EXCL: an exclusive create of a FREE name still succeeds");
+        g.close();
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -6537,6 +6728,8 @@ int main() {
     test_sdlog_pending_close_interleave();
     test_sdlog_ring_wrap_drain();
     test_sdlog_counter_exhausted();
+    test_sdlog_state99_drain_gated();
+    test_sdlog_scan_failure_preserves_files();
 
     // ── 'Y' combined drive-cycle + power-share profile ──────────────────────
     test_y_params_and_defaults();
