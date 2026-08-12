@@ -264,7 +264,7 @@ back over serial:
 | `S` | Print status dump (all pins, ADCs, `I_charge`, faults, bench-tool state) | read-only |
 | `I` | Scan the I2C bus | read-only |
 | `E` | One-shot VESC firmware + telemetry read | blocks up to ~100 ms (bench-only) |
-| `W` | Toggle VESC watch (~2 Hz `[VW]` line, flags fault changes) | auto-paused during profiles and plot mode |
+| `U` | Toggle VESC watch (~2 Hz `[VW]` line, flags fault changes) | **rebound from `W` (2026-08-10)**; auto-paused during profiles and plot mode |
 | `P` | Set power-share setpoint (prompts for a value) | closed-loop: `powerBalance()` drives the MDACs live; needs current flowing |
 | `O` | Set droop ratio 0.15–0.85 (prompts for a value) | open-loop direct MDAC write; no current needed — the calibration entry point |
 | `A` | Set manual motor current in A (prompts) | constant VESC current, bypasses the velocity PI |
@@ -272,6 +272,7 @@ back over serial:
 | `R` | Start/stop power-share profile sweep | needs `A`/`V` set + `MOT_PWR_ENABLE` HIGH; stop parks switches |
 | `T <Imax> <hold s> <rate A/s>` | Start trapezoidal current profile (one line, e.g. `T 6 5 0.5`) | direct phase-current ramp; `T` alone while running stops it; switches left as-is |
 | `Y [Vmax] [b]` | Start combined drive-cycle + power-share profile (one line, both args optional, e.g. `Y 1 0.3`) | sweeps velocity **and** share together; same prerequisites as `D`; `Y` alone while running stops it |
+| `W [Imax] [b]` | Start combined **current** + power-share profile (one line, both args optional, e.g. `W 6 0.0`) | same table as `Y` with the motor axis in amps; no encoder needed; `W` alone while running stops it |
 | `X` | Universal stop | cancels any profile/bring-up/armed run + manual motor + live share loop |
 | `L` | Toggle Serial-Plotter stream | 50 Hz `sp,act,gFC,gBT,ifc,ibt` line; suppresses status lines; `R`/`T` arm with a 5 s delay |
 | `K` | Print SD-card logging status | card present, current/last file, record/drop counts; read-only |
@@ -297,16 +298,16 @@ supersedes a pending arm with an explicit cancel message.
 Logs the power-share/motor/bus signals at the full 1 kHz control cadence to the Teensy's
 built-in micro-SD — 20x finer than the 50 Hz `L` stream, needed to see the Youla-H share loop's
 actual transient. Logging starts and stops automatically with the profile lifecycle: it opens
-when `R`, `T`, `D`, or `Y` starts, and closes on natural completion, the matching stop-toggle, `X`,
+when `R`, `T`, `D`, `Y`, or `W` starts, and closes on natural completion, the matching stop-toggle, `X`,
 `Q`, or a fault (the close is deferred out of the fault transition and held until the State-99
 teardown is latched, so it cannot lengthen a teardown dwell). There's no separate arm command — a card present at profile start is logged, a missing
 one is silently skipped. No card in the slot, a full card, or a write error never faults the
 board or blocks a profile: the firmware prints a warning and keeps running. `K` prints a
-status line — card present, current/last file name (`PS`/`TP`/`DC`/`YP` prefix by profile type),
+status line — card present, current/last file name (`PS`/`TP`/`DC`/`YP`/`WP` prefix by profile type),
 record and drop counts — and stays live
 even during the bring-up lockout. It reports no free-space figure on purpose: the FAT-walking
 calls that would produce one block for seconds on a real card. Retrieve a run by pulling the card (`PSnnnn.BLG` /
-`TPnnnn.BLG` / `DCnnnn.BLG` / `YPnnnn.BLG` in the root) and decode it on the laptop:
+`TPnnnn.BLG` / `DCnnnn.BLG` / `YPnnnn.BLG` / `WPnnnn.BLG` in the root) and decode it on the laptop:
 
 ```
 python tools/decode_benchlog.py FILE.BLG > run.csv
@@ -352,9 +353,53 @@ Prerequisites are the same as `D`: no bring-up in progress, a calibrated velocit
 `MOT_PWR_ENABLE` HIGH (key `3`). Press `Y` again to stop — the motor is zeroed and the path
 switches parked, exactly as stopping `D` or `R` does. On natural completion the motor is zeroed
 and the share returns to 0.50, with the switches left as they are (matching how `D`/`R` finish).
-`X` and `Q` stop it like any other profile. Runs log automatically to `YPnnnn.BLG` (same
+`X` and `Q` stop it like any other profile — and note that **stopping parks all the switches, so
+the bus is dark and you need another `G` before the next run** (a natural completion doesn't).
+Runs log automatically to `YPnnnn.BLG` (same
 `decode_benchlog.py`, no format change — the profile's region index appears in *both* the
 drive-cycle and power-share phase columns, which is how you recognize a combined run).
+
+### Combined current + power-share profile (`W`)
+
+`Y` needs a calibrated encoder chain, which the bench doesn't have yet — so `W` is the combined-axis
+run you can actually do today. It's the same 16-region, 40 s table, with the motor axis
+reinterpreted as **commanded current** instead of velocity. Everything about the motor side follows
+`T`: current goes straight to the VESC, the velocity PI is never involved, no calibration is
+required, and `MOT_PWR_ENABLE` LOW is only a warning (your VESC may have its own supply).
+
+```
+W 6 0.0
+```
+
+- **`Imax`** (A, default `5.0`) scales the table's normalised motor column — at the default the
+  plateaus are 0 / 3.0 / 5.0 / 2.5 / 1.0 A. Must be greater than 0 and no more than 25 A, the same
+  ESC ceiling `T` uses; peaks above the 5 A budget are allowed, exactly as in `T`. Negative peaks
+  are refused here (the table already coasts back to zero — use `T` for a braking ramp).
+- **`b`** works exactly as in `Y`, with the same clip, the same bounds, and the same warning above
+  0.35.
+
+Stopping (`W` again) zeroes the motor, returns the share to 0.50, and parks the path switches —
+the `Y`/`R` convention rather than `T`'s, because this profile sweeps the share and therefore owns
+the source configuration during the run. **A stopped run leaves the bus dark, so you need a fresh
+`G` bring-up before the next one** (a run that finishes on its own leaves the switches alone). `X` and `Q` stop it like any other profile, and it's
+mutually exclusive with `D`, `R`, `T`, and `Y`. Runs log to `WPnnnn.BLG`; the region index lands in
+the power-share and trapezoid phase columns (`Y` uses power-share and drive-cycle), which is how
+you tell the two combined runs apart in a decoded CSV.
+
+**Note the key change:** `W` used to be the VESC watch. That moved to **`U`** ("UART watch").
+Pressing `W` never starts anything by itself — it opens a parameter prompt you can cancel — so old
+muscle memory can't launch a motor profile by accident.
+
+**Watch out: the share extremes now open a bus switch** (this applies to `Y` as well as `W`). Regions 6 and 11 push the share all the
+way to one source, and since the full-span change that no longer just clips the droop — the starved
+channel is physically taken off the bus (its RT1987 switch opens while the motor is drawing). If
+your bound `b` is below 0.15 the run will do this twice, and both profiles print a warning at start
+saying so. Do the first such run scope-armed and at low current (`W 2 0.2`). Two things follow when
+you read the log: while a channel is off the bus the share loop is open (no MDAC writes at all), so
+the R6/R11 samples are topology events rather than controller response — don't fit a plant through
+them. And if a run *finishes* with a channel still cut off, the firmware puts it back on the bus
+automatically; if it can't (bus not in regulation) it says so, and `X`, `Q`, or the next `G` clears
+it.
 
 ### Testing an individual component
 
@@ -411,8 +456,8 @@ sequences, `assertFcChargeEnable()` ordering, `pollAg105()` state gating, `doSta
 handling, the State 98 drive cycle, and the wheel-speed buffer reset. It also covers the SD-card
 bench logger: lifecycle on every profile exit path (complete/stop/`X`/`Q`/fault), the 1 kHz
 rate gate, ring-buffer overflow drop-and-count, no-card and mid-run write-error tolerance, file
-naming/collision, the 52-byte record schema, and `K` status output. The `Y` combined profile
-(parameter parsing/clip/region walk/exit paths/`YP` logging/suppression) is covered too. Run
+naming/collision, the 52-byte record schema, and `K` status output. The `Y` and `W` combined profiles
+(parameter parsing/clip/region walk/exit paths/`YP`+`WP` logging/suppression) are covered too. Run
 before every flash.
 
 `tools/decode_benchlog.py` has its own stdlib-only self-test, `tools/test_decode_benchlog.py`

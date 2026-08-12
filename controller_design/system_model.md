@@ -267,7 +267,7 @@ $$\boxed{\;G_P(s) = \frac{K\, e^{-T_d s}}{(\tau_r s + 1)(\tau_f s + 1)}\;}$$
 
 | Parameter | Nominal | Range | Physical origin |
 |---|---|---|---|
-| $K$ | 1 | $[0.75,\ 1.25]$ | mismatch gain term §3(3): holds for $r \in [0.3, 0.7]$ at $I_{tot} \ge 2$ A. At the $r$ range edges with the full ±0.4 V mismatch budget it widens to $[0.55,\ 1.45]$ — either design to the wide set, or tighten after the §9 bench measurement of $\Delta V_0$ |
+| $K$ | 1 | $[0.75,\ 1.25]$ | mismatch gain term §3(3): holds for $r \in [0.3, 0.7]$ at $I_{tot} \ge 2$ A. At the $r$ range edges with the full ±0.4 V mismatch budget it widens to $[0.55,\ 1.45]$ — either design to the wide set, or tighten after the §9 bench measurement of $\Delta V_0$. *(2026-08-11: bench-supply $\Delta V_0 = +0.05$ V would tighten this substantially, but the vehicle-source value is still unmeasured — kept at the wide set.)* |
 | $T_d$ | 1.0 ms | $[0.5,\ 2.0]$ ms | ZOH + latency at $T_s = 1$ ms |
 | $\tau_r$ | 100 µs | $[20,\ 300]$ µs | converter loop lag, lumped with INA/bus parasitics |
 | $\tau_f$ | 0.8 ms | design choice | optional 200 Hz measurement prefilter (§7); set $\tau_f = 0$ if not fitted |
@@ -374,7 +374,7 @@ consistent with the existing firmware pattern.
 | $\tau_r$ | 100 µ **TODO(calibrate: bench step test §9)** | s | TPS61288 closed-loop estimate |
 | $T_s$ | 1 m (proposed) | s | §6c |
 | ADC | 12-bit, 3.3 V, `SCALE_I` = 8.06 mA/LSB | — | firmware §5 of CLAUDE.md |
-| $\Delta V_0$ budget | ±0.40 **TODO(calibrate: measure per board)** | V | §5a tolerance RSS |
+| $\Delta V_0$ | **+0.05 measured (bench supplies, 2026-08-11)**; envelope $\lvert\Delta V_0\rvert \le 0.10$ V. Design budget was ±0.40 (§5a RSS) — measured value is 8× inside it, so the shipped controller's corner family remains valid unchanged. **Vehicle value (FC + 2S pack sources) still TODO(calibrate)** — $\Delta V_0$ is source-specific and pack-SoC-dependent. | V | CAL-1 sweep, `calibration/dv0_sweep_20260811.csv` (§9 item 1 results) |
 | INA253A1 offset, BW | — **TODO(verify: INA253A1IPWR.pdf)** | | affects light-load noise floor |
 | OPA197 output ceiling | ~4.9 (5 V rail bodge) | V | headroom check §4: not binding for $g\,I \le 9.8$ A |
 
@@ -388,6 +388,21 @@ command + `S` status dump):
    $r$ (command `O`) over $[r_{min}, r_{max}]$, log $I_{FC}, I_{BT}$ → fit
    $\alpha = r + \Delta V_0 r(1-r)/(k_d I_{tot})$ for $\Delta V_0$ and confirm slope ≈ 1.
    Repeat at 2–3 load currents. This also validates the corrected $g$ mapping (§4).
+
+   **RESULTS (2026-08-11, partial — fixed $r$, swept load):** open-loop equal gains
+   ($r = 0.5$), DC bench supplies on both channels, motor trapezoid load at
+   $I_{cmd} = 2/3/4/5$ A → $I_{tot} = 0.145/0.452/0.935/1.346$ A,
+   $\alpha = 0.834/0.535/0.526/0.533$. Through-origin LS on
+   $(1/I_{tot},\ \alpha - 0.5)$ with $k_d = 0.30$:
+   **$\Delta V_0 = +0.054$ V** (all points) / **$+0.024$ V** (excluding the
+   $I_{tot} = 0.145$ A point, residual $+0.198$ — light-load boost nonlinearity, the
+   same regime as the TP0010/TP0013 dropout limit cycle; the linear $\Delta V_0$ model
+   does not describe it). **Adopted: $\Delta V_0 = +0.05$ V, envelope ±0.10 V** (sign:
+   FC-side high). Raw data: `calibration/dv0_sweep_20260811.csv`. Caveats: bench-supply
+   sources (vehicle value TBD); single fixed $r$ — the full $r$-sweep slope check and
+   the §6 $K$-corner tightening await the vehicle-source repeat, so the $K$ corner
+   stays at its wide set for now. **Coefficient decision: measured $\Delta V_0$ is 8×
+   inside the ±0.40 design budget → shipped coefficients kept, no regeneration.**
 2. **Step response / $\tau_r$, $T_d$:** toggle $r$ between two values, capture
    $I_{FC}(t)$ on a scope from the INA253 analog outputs (`FC-CURR` node) — the
    settle gives $\tau_r$; the command-to-first-movement gives the true $T_d$.

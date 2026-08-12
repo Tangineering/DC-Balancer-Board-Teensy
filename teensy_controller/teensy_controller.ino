@@ -88,10 +88,10 @@
  *    RE_MAX·0.15 = 0.302 Ω). Also RC-BT bodged 27.4k → 61.2k (2026-07-10) to match FC —
  *    converter-loop analysis in controller_design/system_model.md §6e.
  *  - State 98 VESC read-back (2026-07-23): 'E' one-shot (getFWversion() + getVescValues() dump,
- *    incl. live mc_fault_code via vescFaultStr()) and 'W' watch (~2 Hz poll flagging fault-code
+ *    incl. live mc_fault_code via vescFaultStr()) and 'U' watch (~2 Hz poll flagging fault-code
  *    changes). First reads the firmware ever makes from the VESC — previously write-only
  *    (setCurrent()). Diagnostic aid for the 0.1 A → fault bench issue; USB-serial only, no
- *    telemetry/protocol change. Reads block ≤100 ms on Serial1 and are State-98-only. The 'W'
+ *    telemetry/protocol change. Reads block ≤100 ms on Serial1 and are State-98-only. The watch
  *    poll is auto-suppressed while a drive cycle / power-share profile runs so those keep
  *    production-identical motorControl()/powerBalance() timing (resumes when the run stops).
  *  - Motor current chokepoint (2026-07-29; docs/design-review-2026-07-28.md P0-3). MOTOR_I_CMD_MAX
@@ -192,7 +192,8 @@
  *  - SD bench logging (2026-08-10): 1 kHz binary logging of State-98 profiles to the built-in SD
  *    (SdFat/SDIO), ring-buffered non-blocking drain in loop(), auto lifecycle with the R/T/D
  *    profiles, 'K' status command, tools/decode_benchlog.py decoder.
- *  - Combined drive-cycle + power-share profile (2026-08-10, State-98 'Y'): a single 40 s,
+ *  - Combined drive-cycle + power-share profile (2026-08-10, State-98 'Y'; cutoff interaction
+ *    handled 2026-08-11): a single 40 s,
  *    16-region table that sweeps v_setpoint AND power_share_setpoint together, so the velocity
  *    loop and the Youla-H share loop are exercised under the cross-coupling they actually see in
  *    the vehicle (solo steps/ramps on each axis for identification, two deliberately simultaneous
@@ -203,6 +204,41 @@
  *    exclusive with D/R/T, logged to YPnnnn.BLG (LOG_TYPE_PS|LOG_TYPE_DC — both phase bytes
  *    carry the region index, which is exactly the combined-profile case the log format was
  *    designed for).
+ *  - Combined CURRENT + power-share profile (2026-08-10, State-98 'W'; cutoff interaction
+ *    handled 2026-08-11): the same experiment with
+ *    the motor axis moved from velocity to commanded current. It REUSES COMBINED_PROFILE[]
+ *    verbatim — the v column is reinterpreted as a normalised current scaled by an operator Imax
+ *    (default 5.0 A, ceiling TRAP_I_ABS_MAX) — and both profiles walk it through one shared
+ *    advanceComboRegion() helper so their shapes cannot diverge. Motor conventions follow 'T'
+ *    (direct commandMotorCurrentLimited(), no velocity PI, NO velocityChainCalibrated() gate,
+ *    MOT_PWR_ENABLE warn-only), which is the point: the share loop can now be exercised against a
+ *    moving motor load on an ENCODER-LESS bench. Logged to WPnnnn.BLG (LOG_TYPE_PS|LOG_TYPE_TP;
+ *    ps_phase + trap_phase carry the region index). **KEY REBINDING: the VESC watch moved from
+ *    'W' to 'U' ("UART watch")** to free the letter — an operator with muscle memory now lands on
+ *    a parameter prompt (cancellable), never on a started motor profile.
+ *  - Combined-profile x channel-cutoff interaction (2026-08-11): both combined profiles drive the
+ *    share to 1.0/0.0 in R6/R11, which under the 2026-08-10 full-span actuation OPENS a bus switch
+ *    under load. Both starts now WARN when the committed band reaches the cutoff region
+ *    (boundLo < DROOP_R_MIN), naming the motor ceiling the switch opens against and the safe
+ *    first-run command. Both NATURAL completions call restoreShareCutoffOnCompletion(), which
+ *    re-closes a still-latched channel through applyShareRatio()'s own re-entry path — without it
+ *    a completed run could leave the board single-sourced forever (no profile → powerBalance never
+ *    runs → no re-entry). Stop/'X'/'Q' needed nothing: safeAllSwitches() already clears the flags.
+ *    Also: pollVescWatch() is now suppressed during the staged bring-up.
+ *  - Trapezoid SHARE-SETPOINT SWEEP (2026-08-11, State-98 'T' with an optional list):
+ *    "T <Imax> <hold> <rate> [t,r1,...,rn]" runs ONE trapezoid per closed-loop share setpoint
+ *    r_i (max TSWEEP_MAX_RATIOS = 16), each to its OWN TPnnnn.BLG, separated by a t-second motor
+ *    cool-off dwell. It automates the 2026-08-11 hand-run sweep (TP0007-TP0013), where the
+ *    setpoint/run pairing was typed by hand and a mistyped 'P' would silently mislabel a dataset.
+ *    Sequenced by the non-blocking tsweepTick() (RUNNING -> WAIT_LOG -> COOLDOWN), which gates
+ *    the next run on the LOGGER being fully idle — logOpenForProfile() force-finishes a still-open
+ *    file and then silently skips logging on a busy card, so starting one tick early would cost a
+ *    whole run's dataset. Preconditions are re-checked at fire time (plotArmTick() discipline);
+ *    the setpoint is applied BEFORE each run opens its log so the first record carries it; and the
+ *    share loop is returned to 0.5 / powerBalanceLive=false on completion and on every cancel path
+ *    ('T' stop, 'X', 'Q', a new 'T' line, or any other profile start). Refused under plot mode.
+ *    The grammar's 4th field ends the old trailing-junk tolerance: an unparsable tail now rejects
+ *    the whole line rather than quietly running a single trapezoid.
  */
 
 #include <VescUart.h>
@@ -611,6 +647,46 @@ const float DROOP_R_MAX = 0.85f;
 // operating current).
 const float SHARE_I_TOT_MIN_A = 0.075f;
 
+// ── Share-loop limit-cycle mitigation (2026-08-11) ───────────────────────────
+// The 2026-08-11 setpoint sweep (logs TP0007–TP0013; docs/share_sweep_whitepaper)
+// found a 17–18.5 Hz minority-channel dropout limit cycle at asymmetric IN-BAND
+// setpoints (0.30, 0.85) whenever total current was low (< ~1.2 A): the droop
+// command starves the minority channel out of conduction, measured share slams to
+// 0/1, both MDACs rail antiphase, and the bus loses its source feed each cycle
+// (scope capture 12: VBUS+V-MOT sag together to 6.5 V worst-case; whether the
+// final disconnect is droop-commanded RT1987 blocking or a source-switch SCP cut
+// is still open — both are downstream of the railing, so the mitigation is the
+// same either way). Two constants parameterize the fix in powerBalance() /
+// applyShareRatio():
+//
+// A — minimum COMMANDED minority-channel current. The setpoint governor clips the
+// effective in-band share setpoint so the starved channel is never asked to carry
+// less than this (sp_eff ∈ [I_min/I_tot, 1 − I_min/I_tot], collapsing to 0.5 when
+// I_tot < 2·I_min). The linear ΔV₀ model does NOT set this floor: CAL-1 measured
+// ΔV₀ = +0.05 V (system_model.md §8/§9, calibration/dv0_sweep_20260811.csv),
+// whose feasibility bound is far below the observed cycle — the floor is the
+// EMPIRICAL light-load boost nonlinearity (same regime as CAL-1's I_tot = 0.145 A
+// outlier). Value from the sweep evidence: TP0010 cycled while the minority
+// command was < ~0.36 A and cleared above it; TP0013's chatter thinned as the
+// minority command approached ~0.26 A. 0.20 A starts conservative WITHOUT
+// forbidding the sweep's demonstrated-clean points. TODO(calibrate): refine via
+// the quasi-static dropout-boundary mapping (bench plan step 3).
+const float SHARE_MINORITY_I_MIN_A = 0.20f;
+
+// per powerBalance() tick (1 kHz) — ceiling on the commanded droop-ratio slew in
+// applyShareRatio(). Bounds the MDAC antiphase rail-to-rail slams that drive the
+// dropout/reconnect transients (and, if the SCP branch is real, trip the cut):
+// 0.02/tick walks the full [0.15, 0.85] band in 35 ms instead of one SPI write.
+// Deliberately fast enough to be invisible to normal tracking (the Youla loop's
+// closed-loop rise is slower than 35 ms full-band). TODO(calibrate): tighten
+// against the FIX-VALIDATION re-entry run if chatter persists.
+const float DROOP_RATIO_SLEW_PER_TICK = 0.02f;
+
+// Governor load filter: EMA weight per 1 kHz tick on |I_fc|+|I_batt| (~20 ms).
+// The governor bounds depend on measured current; unfiltered, ADC noise would
+// dither sp_eff and feed measurement noise straight into the setpoint.
+const float SHARE_GOV_FILT_ALPHA = 0.05f;
+
 const float motorConstant = 0.1f;   // TODO: tune this
 // A — HARD ceiling on the current actually handed to the VESC. Enforced at the single chokepoint
 // commandMotorCurrent(), so EVERY path (UDP velocity, State-98 manual current/velocity, drive
@@ -780,6 +856,16 @@ bool wheelSpeedResetPending = false;
 // behavior (the test/Makefile passes -DBENCH_TEST=0). Note: charger config/faults are no
 // longer gated by BENCH_TEST — they are power-gated in pollAg105(), so they stay correct
 // in either build.
+// ── Firmware version ─────────────────────────────────────────────────────────
+// Monotonic u16, bumped on EVERY flash-worthy behavioral change (control law,
+// pin/sequencing, scaling, logging format — not comments/docs). The ledger
+// mapping each number to its changes lives in docs/firmware-versions.md; add a
+// row there in the same commit as the bump. Stamped into every .BLG bench-log
+// header (format v2, offset 18) so logged data is attributable to the exact
+// firmware that produced it, printed at boot and in the State-98 'S' status.
+// 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
+#define FW_VERSION 3
+
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
 #endif
@@ -870,11 +956,12 @@ bool  shareIsoFC = false;
 bool  shareIsoBT = false;
 const float SHARE_CUTOFF_HYST = 0.01f;  // re-entry hysteresis on the commanded ratio
 
-// ── State 98 bench tools: VESC read-back ('E' one-shot / 'W' watch) ────────────────────────────
+// ── State 98 bench tools: VESC read-back ('E' one-shot / 'U' watch) ────────────────────────────
 // The firmware is otherwise write-only to the VESC (setCurrent()); these are the only reads.
 // getFWversion()/getVescValues() BLOCK up to the VescUart _TIMEOUT (100 ms) waiting on Serial1,
 // so they stretch the main-loop tick (delaying detectFaults()). That is acceptable ONLY in State
-// 98 (interactive bench) — never call these from Run/Idle. 'W' polls at ~2 Hz and flags any
+// 98 (interactive bench) — never call these from Run/Idle. 'U' polls at ~2 Hz and flags any
+// (the watch key was 'W' until 2026-08-10, when 'W' became the combined current profile)
 // change in the VESC's live fault code, to catch a transient fault the moment a command trips it.
 // The poll is auto-suppressed while a drive cycle / power-share profile is active so those runs
 // keep production-identical control-loop timing (pollVescWatch()); it resumes when the run stops.
@@ -934,6 +1021,39 @@ float     trapCmdA          = 0.0f;   // last commanded current (status print / 
 // itself: VESC Six EDU 25 A continuous (50 A burst). Bound the profile there, not at the budget.
 const float TRAP_I_ABS_MAX = 25.0f;   // A — VESC Six EDU continuous rating
 
+// ── State 98 bench tools: trapezoid SHARE-SETPOINT SWEEP ('T … [t,r1..rn]') ───────────────────
+// Why this exists: the 2026-08-11 share-setpoint sweep (TP0007–TP0013, whitepaper
+// docs/share_sweep_whitepaper) was run BY HAND — seven 'T' lines, each preceded by a 'P' setpoint
+// entry, with the operator eyeballing the SD status between runs and guessing a cool-off dwell.
+// That is exactly the procedure a bench tool should own: the setpoint/run pairing is the
+// experiment's independent variable, and a mistyped 'P' silently mislabels a whole dataset.
+//
+// The sweep runs ONE trapezoid per ratio, each with its OWN TPnnnn.BLG (logNextFileName() already
+// auto-allocates the index), separated by an operator dwell for motor/ESC cool-off. Deliberately
+// NOT one long log with the setpoint stepping inside it: the per-run file boundary is what makes
+// each ratio independently decodable and comparable to the hand-run TP0007–TP0013 set.
+//
+// 16 ratios is the ceiling: the hand sweep used 7, the parameter line is bounded by inputBuf, and
+// 16 runs x (run + dwell) is already a multi-minute unattended sequence on a bench where the
+// operator is expected to be watching. Also bounds the fixed-size ratio array below.
+const uint8_t TSWEEP_MAX_RATIOS = 16;
+const float   TSWEEP_DWELL_MAX_S = 3600.0f;   // 1 h — a typo like "300" is plausible, "36000" is not
+
+// Sweep state. tsweepIdx is the run CURRENTLY running (or the one just finished), 0-based, so the
+// operator-facing prints are (tsweepIdx+1)/tsweepCount. The per-run trapezoid parameters are
+// stashed here because startTrapProfile() takes them by value and the line that supplied them is
+// long gone by the time run 2 fires.
+bool     tsweepActive          = false;
+uint8_t  tsweepPhase           = 0;   // 0 = RUNNING (trapezoid live), 1 = WAIT_LOG, 2 = COOLDOWN
+uint8_t  tsweepCount           = 0;
+uint8_t  tsweepIdx             = 0;
+float    tsweepRatios[TSWEEP_MAX_RATIOS] = {0};
+uint32_t tsweepDwellMs         = 0;
+float    tsweepImax            = 0.0f;
+uint32_t tsweepHoldMs          = 0;
+float    tsweepRate            = 0.0f;
+uint32_t tsweepCooldownStartMs = 0;
+
 // ── State 98 bench tools: combined drive-cycle + power-share profile ('Y') ────────────────────
 // The 'D' drive cycle sweeps velocity with the share setpoint static; the 'R' profile sweeps the
 // share with the motor held constant. Neither exercises the CROSS-COUPLING: on the vehicle the
@@ -948,7 +1068,11 @@ const float TRAP_I_ABS_MAX = 25.0f;   // A — VESC Six EDU continuous rating
 //     regions (R4 ramp+ramp, R8 step+step) which are the actual interaction test.
 //   - Buffer/hold regions separate the excitations so each transient settles before the next.
 //   - R6 and R11 are brief excursions to the share bounds (1.0 and 0.0), i.e. "all FC" / "all BT",
-//     to check the droop mapping's clamp behaviour at the extremes.
+//     to check the CHANNEL-CUTOFF behaviour at the extremes. Since the 2026-08-10 full-span
+//     actuation change these are no longer a droop CLAMP: applyShareRatio() takes the starved
+//     channel OFF THE BUS there (an RT1987 opening under load — the TP0010 stressor class), and
+//     while a channel is isolated the share loop is OPEN (no MDAC writes). R6/R11 datapoints are
+//     therefore TOPOLOGY EVENTS, not droop-response data — do not fit a plant through them.
 //
 // Units are deliberately NOT the same on the two axes:
 //   - v_start/v_end are NORMALISED [0..1] and multiplied by the operator's yProfileVmax at
@@ -990,6 +1114,16 @@ static const CombinedProfileRegion COMBINED_PROFILE[] = {
 static const int COMBINED_PROFILE_REGIONS =
     (int)(sizeof(COMBINED_PROFILE) / sizeof(COMBINED_PROFILE[0]));
 
+// Outcome of one shared region tick (advanceComboRegion()). Both combined profiles ('Y' velocity,
+// 'W' current) run the same region machine over the same table and differ only in what they do
+// with the interpolated motor axis, so the walk itself lives in ONE function and this tells the
+// caller which of the three cases it is.
+enum ComboTickResult {
+    COMBO_TICK_DONE,       // the table is exhausted — the caller runs its completion path
+    COMBO_TICK_BOUNDARY,   // a region boundary was crossed this tick; no setpoints produced
+    COMBO_TICK_RUN         // setpoints produced (motor axis normalised, share already clipped)
+};
+
 bool     combinedProfileActive = false;
 uint8_t  combinedRegionIdx     = 0;
 uint32_t combinedRegionStart   = 0;
@@ -1005,6 +1139,36 @@ const float Y_BOUND_DEFAULT = 0.0f;   // no clip by default: run the table's ful
 // is accepted with a warning rather than refused.
 const float Y_BOUND_WARN    = 0.35f;
 
+// ── State 98 bench tools: combined CURRENT + power-share profile ('W') ────────────────────────
+// Same experiment as 'Y', with the motor axis moved from velocity to COMMANDED CURRENT. It runs
+// the SAME COMBINED_PROFILE[] table — deliberately not a copy: the two runs are only comparable
+// if their shapes are identical by construction, and a duplicated table is a shape that drifts.
+// For 'W' the v_start/v_end column is reinterpreted as a NORMALISED current, scaled by the
+// operator's wProfileImax; the share column and its post-interpolation clip are identical to 'Y'
+// (both go through the shared advanceComboRegion() helper).
+//
+// Why it exists alongside 'Y': the velocity axis needs a calibrated encoder chain
+// (velocityChainCalibrated()), which the bench does not have. 'W' follows the 'T' trapezoid's
+// motor conventions instead — direct current through commandMotorCurrentLimited(), no velocity PI,
+// no calibration gate, MOT_PWR_ENABLE warn-only — so the share loop can be exercised against a
+// realistic, moving motor load on an encoder-less bench.
+bool     wProfileActive  = false;
+uint8_t  wRegionIdx      = 0;
+uint32_t wRegionStart    = 0;
+uint32_t wStatusLast     = 0;
+float    wProfileImax    = 5.0f;   // A — scales every normalised current waypoint
+float    wProfileBoundLo = 0.0f;   // share clip band [b, 1-b]; same meaning as yProfileBoundLo
+float    wCmdA           = 0.0f;   // last commanded current (status print / test visibility,
+                                   // same role trapCmdA plays for the trapezoid)
+// 5 A is the source-power budget (MOTOR_I_CMD_MAX) — a deliberately conservative default for a
+// profile whose plateaus reach the full peak. The ceiling is TRAP_I_ABS_MAX, not MOTOR_I_CMD_MAX,
+// for exactly the reason spelled out at that constant: setCurrent() commands PHASE current, which
+// does not map 1:1 onto bus draw. TODO(calibrate).
+const float W_IMAX_DEFAULT = 5.0f;
+// The share-bound default and warn threshold are SHARED with 'Y' (Y_BOUND_DEFAULT /
+// Y_BOUND_WARN): the clip semantics are identical by spec, so a second pair of constants could
+// only ever drift apart from these.
+
 // ── State 98 bench tools: serial-plotter stream ('L') ──────────────────────────────────────────
 // Emits ONE condensed, fixed-shape line per PLOT_PERIOD_MS that the Arduino IDE Serial Plotter
 // parses directly: "label:value,label:value,…". Six series, deliberately all share-loop signals
@@ -1014,7 +1178,7 @@ const float Y_BOUND_WARN    = 0.35f;
 //
 // The plotter also requires every line to have the SAME field count and to be numeric: any stray
 // human-readable line breaks the parse. So while plot mode is on, the three profiles' 500 ms status
-// snapshots, their phase banners, and the 'W' VESC watch line are suppressed (plotSuppressStatus()).
+// snapshots, their phase banners, and the 'U' VESC watch line are suppressed (plotSuppressStatus()).
 // One-shot start/stop/complete notices are deliberately KEPT — a single glitched line is cheaper
 // than the operator not knowing a run ended.
 bool     plotModeActive = false;
@@ -1061,10 +1225,17 @@ enum PendingInput {
     PEND_TRAP_PARAMS,
     // Combined profile: "<Vmax> <b>" on one line, BOTH optional (a bare newline runs the
     // defaults). Same single-line discipline as PEND_TRAP_PARAMS, and for the same reason.
-    PEND_Y_PARAMS
+    PEND_Y_PARAMS,
+    // Combined CURRENT profile: "<Imax> <b>", same all-optional single-line discipline.
+    PEND_W_PARAMS
 };
 PendingInput pendingInput = PEND_NONE;
-char         inputBuf[32];   // sized for the 3-value trapezoid line (e.g. "-12.5 10 0.25")
+// 96 bytes (was 32, grown 2026-08-11 for the 'T' sweep list): the worst legal trapezoid line is
+// the 3 values plus a 16-ratio sweep list — "-12.5 10 0.25 [3600,0.05,0.15,…]" — which runs past
+// 32 chars at the fourth ratio. Overlong lines are still TRUNCATED (not overflowed) by the
+// bounds-checked accumulate in handlePendingInputChar(); truncation then fails the sweep-list
+// parse (a missing ']'), so a too-long line is refused outright rather than silently shortened.
+char         inputBuf[96];   // 3-value trapezoid line + optional [dwell,r1..r16] sweep list
 uint8_t      inputBufIdx = 0;
 
 
@@ -1118,6 +1289,7 @@ float PI_Controller_Power(float error);
 float youlaController_Power(float setpoint, float alphaRaw);
 void setDroopMdac(float fc_gain, float bt_gain);
 void applyShareRatio(float ratio);
+void resetShareControlState();
 void assertFcChargeEnable(bool enable);
 bool motPwrConnectBlocked();
 bool assertMotPwrEnable(bool enable);
@@ -1141,13 +1313,24 @@ bool plotSuppressStatus();
 void startTrapProfile(float imax, uint32_t holdMs, float rateAps);
 void advanceTrapProfile();
 void parseTrapParamsLine(const char* line);
+void tsweepTick();
+void tsweepCancel(const char* why);
+void tsweepFinish();
 void startCombinedProfile(float vmax, float boundLo);
 void advanceCombinedProfile();
 void parseCombinedParamsLine(const char* line);
+void startCurrentComboProfile(float imax, float boundLo);
+void advanceCurrentComboProfile();
+void parseCurrentComboParamsLine(const char* line);
+bool parseTwoOptionalFloats(const char* line, const char* usage, float &first, float &second);
+bool validateShareBound(float b);
+ComboTickResult advanceComboRegion(uint8_t &regionIdx, uint32_t &regionStart, const char *tag,
+                                   float boundLo, float &axisNormOut, float &shareOut);
 void commandMotorCurrentLimited(float amps, float absMax);
 const char* trapPhaseStr(TrapPhase p);
 void handlePendingInputChar(char c);
 bool isNumericEntryChar(char c);
+bool isSweepListChar(char c);
 const char* vescFaultStr(uint8_t code);
 void queryVescInfo();
 void pollVescWatch();
@@ -1304,6 +1487,8 @@ static bool logNextFileName(uint8_t typeMask, char *out, size_t outLen) {
     // run types indistinguishable on the card.
     const char *prefix = ((typeMask & (LOG_TYPE_PS | LOG_TYPE_DC)) == (LOG_TYPE_PS | LOG_TYPE_DC))
                                                   ? "YP"
+                       : ((typeMask & (LOG_TYPE_PS | LOG_TYPE_TP)) == (LOG_TYPE_PS | LOG_TYPE_TP))
+                                                  ? "WP"
                        : (typeMask & LOG_TYPE_PS) ? "PS"
                        : (typeMask & LOG_TYPE_TP) ? "TP"
                        :                            "DC";
@@ -1328,7 +1513,8 @@ static bool logNextFileName(uint8_t typeMask, char *out, size_t outLen) {
             bool knownPrefix = (nm[0] == 'P' && nm[1] == 'S') ||
                                (nm[0] == 'T' && nm[1] == 'P') ||
                                (nm[0] == 'D' && nm[1] == 'C') ||
-                               (nm[0] == 'Y' && nm[1] == 'P');   // combined DC+PS profile
+                               (nm[0] == 'Y' && nm[1] == 'P') ||   // combined DC+PS profile
+                               (nm[0] == 'W' && nm[1] == 'P');    // combined TP+PS profile
             if (!knownPrefix) continue;
             if (strcmp(nm + 6, ".BLG") != 0) continue;
             uint32_t idx = 0;
@@ -1482,7 +1668,7 @@ void logOpenForProfile(uint8_t typeMask) {
     uint8_t hdr[32];
     memset(hdr, 0, sizeof(hdr));
     hdr[0] = 'B'; hdr[1] = 'L'; hdr[2] = 'G'; hdr[3] = '1';
-    hdr[4] = 1;                       // format version
+    hdr[4] = 2;                       // format version (v2 adds fw_version at offset 18)
     hdr[5] = (uint8_t)LOG_REC_SIZE;
     hdr[6] = typeMask;
     hdr[7] = 0;                       // pad
@@ -1492,6 +1678,8 @@ void logOpenForProfile(uint8_t typeMask) {
     memcpy(hdr + 12, &startUs, 4);
     uint16_t kDroopMilli = (uint16_t)(K_DROOP * 1000.0f + 0.5f);   // droop scale in use, for the decoder
     memcpy(hdr + 16, &kDroopMilli, 2);
+    uint16_t fwVersion = FW_VERSION;  // which firmware produced this data (docs/firmware-versions.md)
+    memcpy(hdr + 18, &fwVersion, 2);
 
     logResetBuffers();
     if (logFile.write(hdr, sizeof(hdr)) != sizeof(hdr)) {
@@ -1559,14 +1747,17 @@ void logSampleTick() {
     // header's PS|DC mask is what tells the decoder the two bytes are one axis, not two.
     r.ps_phase   = powerShareProfileActive ? powerShareProfilePhaseIdx
                  : combinedProfileActive   ? combinedRegionIdx
+                 : wProfileActive          ? wRegionIdx
                  :                           LOG_PHASE_NONE;
     r.dc_phase   = driveCycleActive        ? driveCyclePhaseIdx
                  : combinedProfileActive   ? combinedRegionIdx
                  :                           LOG_PHASE_NONE;
-    r.trap_phase = trapProfileActive       ? (uint8_t)trapPhase        : LOG_PHASE_NONE;
+    r.trap_phase = trapProfileActive       ? (uint8_t)trapPhase
+                 : wProfileActive          ? wRegionIdx
+                 :                           LOG_PHASE_NONE;
     r.flags = 0;
     if (powerShareProfileActive || driveCycleActive || trapProfileActive ||
-        combinedProfileActive   || powerBalanceLive)
+        combinedProfileActive   || wProfileActive   || powerBalanceLive)
         r.flags |= 0x01;
     if (velocityChainCalibrated())
         r.flags |= 0x02;
@@ -1698,6 +1889,8 @@ void printSdStatus() {
 void setup() {
     Serial.begin(115200);
     Serial1.begin(115200);
+    Serial.print("[BOOT] DC balancer firmware v"); Serial.print(FW_VERSION);
+    Serial.print(" (BENCH_TEST="); Serial.print(BENCH_TEST); Serial.println(")");
 
     // Teensy 4.1 ADC: select 12-bit resolution before any analogRead
     analogReadResolution(12);
@@ -2500,6 +2693,8 @@ void doState99() {
 //   C — toggle CBAL_DISABLE         M — toggle MPPT_DISABLE
 //   D — start/stop drive cycle      T — start/stop trapezoidal current profile
 //   Y [Vmax] [b] — start/stop combined drive-cycle + power-share profile (both args optional)
+//   W [Imax] [b] — start/stop combined CURRENT + power-share profile (both args optional)
+//   U — toggle VESC watch (~2 Hz read-back; WAS 'W' before 2026-08-10)
 //   S — print status snapshot
 //   K — print SD bench-logger status (card, file, record/drop counts)
 //   I — scan I2C bus (lists ACKing addresses; Ag105 expected at 0x30)
@@ -2522,7 +2717,9 @@ void printTestHelp() {
     Serial.println("  C - toggle CBAL_DISABLE      M - toggle MPPT_DISABLE");
     Serial.println("  G - staged bring-up (bus->boosts->motor node; 'X' aborts)   D - start/stop drive cycle");
     Serial.println("  S - print status snapshot    I - scan I2C bus");
-    Serial.println("  E - read VESC FW+telemetry   W - toggle VESC watch (~2Hz, flags faults)");
+    Serial.println("  E - read VESC FW+telemetry   U - toggle VESC watch (~2Hz, flags faults)");
+    Serial.println("      ** the VESC watch MOVED from 'W' to 'U' (\"UART watch\") — 'W' is now a");
+    Serial.println("         motor profile below **");
     Serial.println("  -- bench tools (prompt for a value) --");
     Serial.println("  P - set power-share setpoint (closed-loop live)");
     Serial.println("  O - set droop ratio (open-loop direct MDAC write)");
@@ -2532,20 +2729,33 @@ void printTestHelp() {
     Serial.println("  T <Imax A> <hold s> <rate A/s> - start trapezoidal current profile");
     Serial.println("      (one line, e.g. \"T 6 5 0.5\"; 'T' alone while running stops it;");
     Serial.println("      direct VESC phase current — no velocity-chain calibration needed)");
+    Serial.println("  T <Imax> <hold> <rate> [t,r1,...,rn] - SWEEP: one run per share setpoint r_i,");
+    Serial.println("      each to its own TPnnnn.BLG, with t s of motor cool-off between runs");
+    Serial.println("      (e.g. \"T 6 3 1 [30,0,0.15,0.3,0.5,0.7,0.85,1]\"; max 16 setpoints;");
+    Serial.println("      'T'/'X'/'Q' or any other profile start cancels the rest of the sweep)");
     Serial.println("  Y [Vmax m/s] [b] - start combined drive-cycle + power-share profile");
     Serial.println("      (one line, e.g. \"Y 1 0.3\"; both args optional — bare 'Y' runs the");
     Serial.println("      defaults; 'Y' alone while running stops it; sweeps v_setpoint AND");
     Serial.println("      power_share_setpoint together; needs a calibrated velocity chain +");
     Serial.println("      MOT_PWR on, like 'D'; share clipped to [b, 1-b], 0 <= b < 0.5)");
+    Serial.println("  W [Imax A] [b] - start combined CURRENT + power-share profile  (was: VESC watch)");
+    Serial.println("      (same 16-region table as 'Y' with the motor axis in AMPS; one line,");
+    Serial.print  ("      e.g. \"W 6 0.0\"; both args optional — defaults ");
+    Serial.print(W_IMAX_DEFAULT, 1);
+    Serial.print("A / b=");
+    Serial.print(Y_BOUND_DEFAULT, 2);
+    Serial.println("; Imax <=");
+    Serial.print  ("      "); Serial.print(TRAP_I_ABS_MAX, 0);
+    Serial.println("A; NO velocity-chain calibration needed — direct VESC phase current)");
     Serial.println("  X - universal stop: cancel any running profile + manual motor + share live");
     Serial.println("  L - toggle Serial-Plotter stream (sp,act,gFC,gBT,ifc,ibt @50Hz)");
     Serial.print  ("      while ON: status/phase lines suppressed; 'R'/'T' arm with a ");
     Serial.print(PLOT_ARM_DELAY_MS);
     Serial.println("ms delay");
     Serial.println("      so you can switch to the plotter window before the run starts");
-    Serial.println("      ('D' and 'Y' are NOT armed — they start immediately; an armed 'R'/'T'");
-    Serial.println("      is refused over, and cancelled by, a running 'D'/'Y')");
-    Serial.println("  K - SD logger status (auto-logs every R/T/D/Y run @1kHz to PS/TP/DC/YP####.BLG)");
+    Serial.println("      ('D', 'Y' and 'W' are NOT armed — they start immediately; an armed");
+    Serial.println("      'R'/'T' is refused over, and cancelled by, a running 'D'/'Y'/'W')");
+    Serial.println("  K - SD logger status (auto-logs every R/T/D/Y/W run @1kHz to PS/TP/DC/YP/WP####.BLG)");
     Serial.println("  H - show this command list");
     Serial.println("  * 1/2 refuse ON if the matching boost is ON and VBUS is low (use G);");
     Serial.println("    2 also refuses while FC_CHARGE_ENABLE is HIGH (illegal combination)");
@@ -2565,7 +2775,12 @@ void doState98() {
         // below — so e.g. pressing 'Q' at a prompt both cancels the prompt and exits.
         bool handleAsCommand = true;
         if (pendingInput != PEND_NONE) {
-            if (isNumericEntryChar(cmd) || cmd == '\n' || cmd == '\r') {
+            // The trapezoid prompt additionally accepts the sweep-list punctuation '[' ',' ']'
+            // (2026-08-11). Scoped to PEND_TRAP_PARAMS on purpose: at every other prompt those
+            // keys are still meaningless, and the cancel-on-unexpected-key rule is what stops a
+            // stray keystroke from being absorbed into a value the operator can't see echoed.
+            if (isNumericEntryChar(cmd) || cmd == '\n' || cmd == '\r' ||
+                (pendingInput == PEND_TRAP_PARAMS && isSweepListChar(cmd))) {
                 handlePendingInputChar(cmd);
                 handleAsCommand = false;
             } else {
@@ -2697,6 +2912,8 @@ void doState98() {
                     } else {
                         powerShareProfileActive = false;   // mutually exclusive motor drivers
                         combinedProfileActive   = false;   // ditto — 'Y' drives v_setpoint too
+                        wProfileActive          = false;   // ditto — 'W' commands motor current
+                        wCmdA                   = 0.0f;
                         // Clear the trapezoid too (pre-existing gap, same class as review
                         // 2026-08-07 F7 in startPowerShareProfile()): without this a 'D' pressed
                         // during a trapezoid left trapProfileActive set but SHADOWED by branch
@@ -2704,11 +2921,15 @@ void doState98() {
                         // time — i.e. instantly past tEnd — the moment the drive cycle stopped.
                         trapProfileActive       = false;
                         trapCmdA                = 0.0f;
+                        // ...and any queued sweep with it: the sweep owns the share setpoint and
+                        // would fire a trapezoid into this run when its dwell expired.
+                        tsweepCancel("superseded by 'D'");
                         // Take exclusive ownership of the motor output. Without this, a manual
                         // current set with 'A' before 'D' survives the whole run and re-asserts
                         // itself the instant the drive cycle ends.
                         haltMotorOutput();
                         resetControlRateLimiters();   // first tick drives immediately
+                        resetShareControlState();     // known share-loop state per run (2026-08-11)
                         driveCycleActive     = true;
                         driveCyclePhaseIdx   = 0;
                         driveCyclePhaseStart = millis();
@@ -2742,7 +2963,7 @@ void doState98() {
                 // detectFaults() stays live. Mutually exclusive with the profiles — they drive
                 // motor/charge paths and would fight the machine's switch sequencing.
                 if (driveCycleActive || powerShareProfileActive || trapProfileActive ||
-                    combinedProfileActive) {
+                    combinedProfileActive || wProfileActive) {
                     Serial.println("[G] REFUSED: a profile is running — stop it first ('X')");
                 } else if (!busBringupStart()) {
                     Serial.print("[G] already in progress (phase ");
@@ -2776,8 +2997,14 @@ void doState98() {
             case 'e':
                 queryVescInfo();   // one-shot VESC FW version + telemetry + fault code
                 break;
-            case 'W':
-            case 'w':
+            case 'U':
+            case 'u':
+                // VESC watch. REBOUND from 'W' to 'U' ("UART watch") on 2026-08-10 so 'W' could
+                // take the combined current profile — the two shipped profiles 'D'/'R'/'T'/'Y'
+                // had already taken every other natural mnemonic. Anything documenting the old
+                // binding must say so loudly: an operator with muscle memory now starts a MOTOR
+                // PROFILE where they expected a read-only toggle, which is why the 'W' handler
+                // prompts for parameters rather than starting anything on the keypress alone.
                 vescWatchActive = !vescWatchActive;
                 if (vescWatchActive) {
                     lastVescWatchMs = millis();
@@ -2842,7 +3069,8 @@ void doState98() {
                             // immediate path's documented takeover ('R' clears 'D') would here
                             // become "arm now, plotArmTick cancels in 5 s" — same keypress,
                             // opposite outcome. Explicit refusal beats a delayed surprise.
-                            if (driveCycleActive || trapProfileActive || combinedProfileActive) {
+                            if (driveCycleActive || trapProfileActive || combinedProfileActive ||
+                                wProfileActive) {
                                 Serial.println("ERROR: another profile is running — stop it first ('X') before arming under plot mode");
                                 break;
                             }
@@ -2875,6 +3103,15 @@ void doState98() {
                     cancelPlotArm("'T' pressed again");
                     break;
                 }
+                // Between sweep runs (log-wait or cool-down: sweep queued, trapezoid idle) 'T'
+                // means "stop the sweep" — the same thing it means while a run is live. Opening
+                // the parameter prompt here instead would leave the queued sweep alive behind an
+                // innocent-looking prompt, and run k+1 would fire after the operator walked away
+                // believing it stopped (review 2026-08-11, toggle-symmetry fix).
+                if (tsweepActive && !trapProfileActive) {
+                    tsweepCancel("'T' pressed between sweep runs");
+                    break;
+                }
                 if (!trapProfileActive) {
                     if (bringupActive) {
                         Serial.println("ERROR: bring-up in progress — wait for it or abort with 'X'");
@@ -2897,6 +3134,12 @@ void doState98() {
                     Serial.print(", negative = braking/regen): ");
                     if (plotModeActive) Serial.println();   // see 'P' — plot-line concat guard
                 } else {
+                    // Stopping the RUNNING trapezoid stops the whole sweep: 'T' is the operator's
+                    // "stop this" key, and a sweep that carried on to run k+1 after it would be
+                    // the "operator thinks it stopped but it didn't" trap 'X' exists to prevent.
+                    // (Natural completion deliberately does NOT cancel — that is how the sweep
+                    // advances.)
+                    tsweepCancel("'T' stop");
                     trapProfileActive = false;
                     trapCmdA          = 0.0f;
                     // Flush a zero immediately: this branch clears the active flag, so the runtime
@@ -2959,11 +3202,62 @@ void doState98() {
                     // haltMotorOutput() also clears manualMotorMode so the standalone branch
                     // reached later in THIS SAME invocation cannot reissue a pre-profile command.
                     haltMotorOutput();
-                    safeAllSwitches();   // park path switches — this profile runs chargingControl()
-                                         // like 'D' does, so a mid-region stop must leave nothing
-                                         // latched (same policy as the 'D'/'R' stop paths)
+                    // Park the path switches (same policy as the 'D'/'R' stop paths). NOT because
+                    // this profile runs chargingControl() — it deliberately does not (see the
+                    // spine branch) — but because it SWEEPS the share across the full band, and
+                    // since 2026-08-10 that band's extremes actuate the bus switches directly
+                    // (applyShareRatio() channel cutoff). The run therefore owns the source
+                    // topology while it is live, so a mid-region stop must leave a known state.
+                    safeAllSwitches();
                     logRequestClose(LOG_CLOSE_STOP);   // flag only; loop() drains + closes the file
                     Serial.println("[YP] Combined profile stopped — motor + switches safed");
+                }
+                break;
+            case 'W':
+            case 'w':
+                // 'W' was the VESC-watch toggle until 2026-08-10; it is now the combined CURRENT
+                // profile and the watch moved to 'U'. Nothing starts on this keypress alone — it
+                // opens a parameter prompt — so an operator reaching for the old binding gets a
+                // prompt they can cancel, not a running motor.
+                if (!wProfileActive) {
+                    if (bringupActive) {
+                        Serial.println("ERROR: bring-up in progress — wait for it or abort with 'X'");
+                    } else {
+                        // 'T' conventions, NOT 'Y' conventions: no velocityChainCalibrated() gate
+                        // (this profile bypasses the velocity PI entirely, which is exactly why it
+                        // is safe on an encoder-less bench) and MOT_PWR_ENABLE is warn-only (the
+                        // VESC may be fed from a separate bench supply; if MOT_PWR really is its
+                        // only source, an unpowered VESC simply ignores the commands).
+                        if (!digitalRead(MOT_PWR_ENABLE)) {
+                            Serial.println("WARN: MOT_PWR_ENABLE is LOW — profile will run, but the motor is unpowered unless the VESC has its own supply (key '3')");
+                        }
+                        pendingInput = PEND_W_PARAMS;
+                        Serial.print("Combined current profile [Imax A] [share bound b] (both optional; defaults ");
+                        Serial.print(W_IMAX_DEFAULT, 2);
+                        Serial.print(" ");
+                        Serial.print(Y_BOUND_DEFAULT, 2);
+                        Serial.print("; Imax <= ");
+                        Serial.print(TRAP_I_ABS_MAX, 0);
+                        Serial.print(", 0 <= b < 0.5): ");
+                        if (plotModeActive) Serial.println();   // see 'P' — plot-line concat guard
+                    }
+                } else {
+                    wProfileActive       = false;
+                    wCmdA                = 0.0f;
+                    power_share_setpoint = 0.5f;   // same reset as the 'R'/'Y' stop paths
+                    // Flush a zero immediately: clearing the flag means the runtime branch below
+                    // won't execute next tick, and the VESC would otherwise hold the last
+                    // commanded current until its 1000 ms command timeout coasts it out.
+                    haltMotorOutput();
+                    // safeAllSwitches() follows the 'Y'/'R' SHARE-profile convention rather than
+                    // the 'T' trapezoid's leave-them-alone rule, even though the motor axis is
+                    // current-mode like 'T'. The deciding factor is the OTHER axis: this profile
+                    // sweeps power_share_setpoint across the full band, so the bus/source
+                    // configuration is something the run manipulates, not a static operator input
+                    // to preserve — parking it is what leaves a known state behind.
+                    safeAllSwitches();
+                    logRequestClose(LOG_CLOSE_STOP);   // flag only; loop() drains + closes the file
+                    Serial.println("[WP] Combined current profile stopped — motor + switches safed");
                 }
                 break;
             case 'X':
@@ -2976,11 +3270,18 @@ void doState98() {
                 // share profile park the path switches on stop ('D'/'R'), the trapezoid leaves
                 // them as-is (its documented design choice — see 'T'), so switches are parked
                 // only if one of the first two was running.
+                // Cancelled FIRST so its "(after run k/N)" line prints above the stop banners and
+                // so the setpoint it parks (0.5) is not re-parked twice with different reasons.
+                // Note the sweep between runs has NO profile flag set, so the switch-parking
+                // decision below is unaffected — a sweep is a trapezoid sequence and inherits the
+                // trapezoid's "switches left as-is" semantics.
+                tsweepCancel("universal stop");
                 bool hadDC = driveCycleActive;
                 bool hadPS = powerShareProfileActive;
                 bool hadTP = trapProfileActive;
                 bool hadY  = combinedProfileActive;   // parks switches like 'D'/'R' (it sweeps
                                                       // the charge/regen paths the same way)
+                bool hadW  = wProfileActive;          // ditto — its share axis moves the same way
                 busBringupAbort();   // no-op if idle; else darkens the stage (a mid-P1 SCP-cut
                                      // park is invisible to the ADC — merely stopping won't do)
                 // An ARMED (not yet started) profile must die here too: 'X' exists so the operator
@@ -2991,15 +3292,17 @@ void doState98() {
                 powerShareProfileActive = false;
                 trapProfileActive       = false;
                 combinedProfileActive   = false;
+                wProfileActive          = false;
                 trapCmdA                = 0.0f;
-                if (hadPS || hadY) power_share_setpoint = 0.5f;   // same reset as the 'R'/'Y' stop paths
+                wCmdA                   = 0.0f;
+                if (hadPS || hadY || hadW) power_share_setpoint = 0.5f;   // same reset as the 'R'/'Y'/'W' stop paths
                 haltMotorOutput();
                 powerBalanceLive = false;
                 logRequestClose(LOG_CLOSE_X);   // flag only; loop() drains + closes the file
-                if (hadDC || hadPS || hadY) safeAllSwitches();
-                if (hadDC || hadPS || hadTP || hadY)
+                if (hadDC || hadPS || hadY || hadW) safeAllSwitches();
+                if (hadDC || hadPS || hadTP || hadY || hadW)
                     Serial.println("Universal stop: profile cancelled + motor zeroed");
-                Serial.println((hadDC || hadPS || hadY)
+                Serial.println((hadDC || hadPS || hadY || hadW)
                     ? "Manual motor + power-share live stopped (switches safed)"
                     : "Manual motor + power-share live stopped (motor zeroed)");
                 break;
@@ -3014,7 +3317,7 @@ void doState98() {
                     Serial.print(PLOT_ARM_DELAY_MS);
                     Serial.println("ms delay");
                     if (vescWatchActive)
-                        Serial.println("[PLOT] 'W' VESC watch output suppressed while plotting (faults latch; re-check after 'L')");
+                        Serial.println("[PLOT] 'U' VESC watch output suppressed while plotting (faults latch; re-check after 'L')");
                 } else {
                     cancelPlotArm("plot mode turned off");
                     Serial.println("[PLOT] Serial-Plotter stream OFF");
@@ -3027,11 +3330,14 @@ void doState98() {
                 break;
             case 'Q':
             case 'q':
+                tsweepCancel("State 98 exit");   // no queued run may survive into Idle
                 driveCycleActive        = false;
                 powerShareProfileActive = false;
                 trapProfileActive       = false;   // no motor driver survives the exit
                 combinedProfileActive   = false;
+                wProfileActive          = false;
                 trapCmdA                = 0.0f;
+                wCmdA                   = 0.0f;
                 powerBalanceLive        = false;
                 vescWatchActive         = false;   // stop the blocking poll from running outside State 98
                 pendingInput            = PEND_NONE;   // also drops a half-typed trapezoid line
@@ -3085,6 +3391,14 @@ void doState98() {
     // re-deriving that argument.
     plotArmTick();
 
+    // Trapezoid sweep sequencer — immediately after the armed-profile tick and for the same
+    // reason: a run that fires this tick then executes in this same invocation instead of idling
+    // one. Ordering against plotArmTick() is not load-bearing (a sweep and a plot arm are mutually
+    // exclusive: the sweep list is refused under plot mode, and a plain 'T' line that would arm
+    // cancels any running sweep first), but keeping the two ticks adjacent keeps that argument
+    // in one place.
+    tsweepTick();
+
     if (driveCycleActive) {
         // advanceDriveCycle() only supplies v_setpoint; the real Run-state control functions
         // execute unmodified so the exerciser drives the VESC, droop MDACs, and charger paths
@@ -3126,6 +3440,27 @@ void doState98() {
             motorControlGated();
             powerBalanceGated();
         }
+    } else if (wProfileActive) {
+        // Combined CURRENT + power-share profile: walks the same region table as 'Y', but the
+        // motor axis is commanded current, so this branch mirrors the TRAPEZOID's call set —
+        // advanceCurrentComboProfile() issues the current itself (through the rate-gated
+        // commandMotorCurrentLimited() chokepoint) and only the droop loop runs alongside. No
+        // motorControlGated(): the velocity PI is never in this loop, which is what makes the
+        // profile usable on an encoder-less bench.
+        advanceCurrentComboProfile();
+        // Safe to call powerBalanceGated() unconditionally after a natural completion, for the
+        // trapezoid's reason: powerBalance() only writes the droop MDACs, never the motor output,
+        // so it cannot undo the completion's zero flush (contrast 'Y'/'D', which must re-check
+        // their flag because motorControl() would re-command).
+        //
+        // Deliberately NO chargingControl() — the same load-bearing omission as the 'Y' and 'R'
+        // branches. This profile SWEEPS power_share_setpoint in order to MEASURE the share axis;
+        // with charge_goal > 0 the cruise branch of chargingControl() calls
+        // assertFcChargeEnable(true), whose guard drives BT_BUS_ENABLE LOW. That takes the battery
+        // off the bus mid-run: I_batt → 0, the measured share pins at 1.0, and every share
+        // datapoint after that instant is garbage. Coast-down regen is absorbed by the hardware
+        // TL431/BSP170P braking chopper, which is not under firmware control.
+        powerBalanceGated();
     } else if (powerShareProfileActive) {
         // Power-share profile: sweep power_share_setpoint while the motor is held at a constant
         // command, then let the closed-loop powerBalance() track it. Deliberately does NOT call
@@ -3281,7 +3616,7 @@ void plotArmTick() {
     if (plotArmTarget == PLOT_ARM_NONE) return;
 
     if (bringupActive || driveCycleActive || powerShareProfileActive || trapProfileActive ||
-        combinedProfileActive) {
+        combinedProfileActive || wProfileActive) {
         cancelPlotArm("another run started during the arming delay");
         return;
     }
@@ -3316,9 +3651,14 @@ void startPowerShareProfile() {
     // profile stopped. Mirrors startTrapProfile()'s symmetric clears.
     trapProfileActive           = false;
     trapCmdA                    = 0.0f;
+    tsweepCancel("superseded by 'R'");     // a queued sweep would fire a trapezoid into this run
+                                           // when its dwell expired, and it owns the setpoint
     combinedProfileActive       = false;   // same rationale — a shadowed 'Y' would resume with a
                                            // huge elapsed time when this profile stopped
+    wProfileActive              = false;   // ditto for the current-mode twin
+    wCmdA                       = 0.0f;
     resetControlRateLimiters();   // first tick drives immediately
+    resetShareControlState();     // known share-loop state per run (2026-08-11)
     powerShareProfileActive     = true;
     powerShareProfilePhaseIdx   = 0;
     powerShareProfilePhaseStart = millis();
@@ -3406,7 +3746,7 @@ void queryVescInfo() {
     Serial.println("=================");
 }
 
-// 'W' watch tick: poll the VESC at VESC_WATCH_PERIOD_MS and print a compact line, loudly flagging
+// 'U' watch tick: poll the VESC at VESC_WATCH_PERIOD_MS and print a compact line, loudly flagging
 // any change in the live fault code (so a transient fault tripped by a motor command is caught the
 // moment it happens). Called every doState98() tick; no-op unless the watch is active and the
 // period has elapsed. Same blocking caveat as queryVescInfo().
@@ -3418,7 +3758,12 @@ void pollVescWatch() {
     // automatically when the profile stops; the VESC latches faults, so a fault raised during the
     // run is still reported by the first poll afterward (elapsed > period → immediate) or via 'E'.
     if (driveCycleActive || powerShareProfileActive || trapProfileActive ||
-        combinedProfileActive) return;
+        combinedProfileActive || wProfileActive) return;
+    // Same suppression during the STAGED BRING-UP (2026-08-11): busBringupTick()'s phase dwells
+    // and its V_bus regulation gates are timed off the main-loop cadence, and a ~100 ms blocking
+    // getVescValues() injected into P0-P3 both skews those windows and delays detectFaults()
+    // while the power stage is ramping — the one place in State 98 with a live, moving bus.
+    if (bringupActive) return;
     // Same suppression under plot mode, for a different reason: the '[VW]' line is not numeric and
     // would break the plotter parse. The VESC latches faults, so anything raised while plotting is
     // still reported by the first poll after 'L' turns the stream off (or via 'E').
@@ -3651,13 +3996,99 @@ void parseTrapParamsLine(const char* line) {
 
     uint32_t holdMs = (uint32_t)(hold * 1000.0f + 0.5f);   // hold 0 is legal: triangle
 
+    // ── Optional sweep list "[t,r1,…,rn]" (2026-08-11) ───────────────────────────────────────
+    // Parsed into LOCALS and only committed after the whole line validates — same all-or-nothing
+    // discipline as the three scalars above, and for the same reason: a half-accepted sweep would
+    // run the first ratio and then stop somewhere the operator never asked for.
+    //
+    // Before this field existed, anything after the third value was ignored. That tolerance is now
+    // REMOVED: with a 4th field in the grammar, silently dropping "…  [3,0.3,0.7" (a missed ']')
+    // would run a plain single trapezoid while the operator believes a 3-run sweep is under way —
+    // and they would only find out an hour later, from a card holding one file.
+    float   sweepRatios[TSWEEP_MAX_RATIOS];
+    uint8_t sweepN     = 0;
+    float   sweepDwell = 0.0f;
+    bool    haveSweep  = false;
+
+    p = end;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p == '[') {
+        p++;
+        // Dwell (seconds) first, then >= 1 comma-separated ratios.
+        sweepDwell = strtof(p, &end);
+        if (end == p) {
+            Serial.println("ERROR: sweep list must start with the dwell seconds, \"[t,r1,...]\" — trapezoid cancelled");
+            return;
+        }
+        if (!(sweepDwell >= 0.0f) || sweepDwell > TSWEEP_DWELL_MAX_S) {
+            Serial.print("ERROR: sweep dwell must be 0-");
+            Serial.print(TSWEEP_DWELL_MAX_S, 0);
+            Serial.println(" s — trapezoid cancelled");
+            return;
+        }
+        p = end;
+        while (*p == ' ' || *p == '\t') p++;
+        while (*p == ',') {
+            p++;
+            float r = strtof(p, &end);
+            if (end == p) {
+                Serial.println("ERROR: non-numeric value in the sweep list — trapezoid cancelled");
+                return;
+            }
+            // Full [0,1] span is legal here for the same reason 'P' accepts it (2026-08-10): an
+            // endpoint setpoint is a channel-CUTOFF datapoint, which is a run worth sweeping.
+            if (!(r >= 0.0f) || r > 1.0f) {
+                Serial.println("ERROR: sweep share setpoints must be 0.0-1.0 — trapezoid cancelled");
+                return;
+            }
+            if (sweepN >= TSWEEP_MAX_RATIOS) {
+                Serial.print("ERROR: sweep list holds at most ");
+                Serial.print(TSWEEP_MAX_RATIOS);
+                Serial.println(" setpoints — trapezoid cancelled");
+                return;
+            }
+            sweepRatios[sweepN++] = r;
+            p = end;
+            while (*p == ' ' || *p == '\t') p++;
+        }
+        if (sweepN == 0) {
+            Serial.println("ERROR: sweep list needs at least one share setpoint, \"[t,r1,...]\" — trapezoid cancelled");
+            return;
+        }
+        if (*p != ']') {
+            Serial.println("ERROR: sweep list is missing its closing ']' — trapezoid cancelled");
+            return;
+        }
+        p++;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p != '\0') {
+            Serial.println("ERROR: unexpected text after the sweep list — trapezoid cancelled");
+            return;
+        }
+        haveSweep = true;
+    } else if (*p != '\0') {
+        // A 4th token that is not a sweep list. Refused rather than ignored (see above).
+        Serial.println("ERROR: unexpected 4th value — usage \"T <Imax A> <hold s> <rate A/s> [t,r1,...,rn]\" — trapezoid cancelled");
+        return;
+    }
+
     // Plot mode defers the start so the operator can reach the plotter window (PLOT_ARM_DELAY_MS).
     // Arming happens HERE rather than inside startTrapProfile() so plotArmTick() can call that
     // function directly without re-arming itself — one start path, no recursion guard needed.
     // All three values are already validated above, so the armed run cannot fail later.
     if (plotModeActive) {
+        // A sweep is minutes long and fires runs from a tick, not from a keypress; the arming
+        // window's "operator is away at the plotter window" assumption and the sweep's own
+        // fire-time precondition re-checks would have to be reconciled for no benefit — the 50 Hz
+        // plot stream is not the capture path for a sweep anyway (each run has its own 1 kHz log).
+        // Refuse the combination outright rather than pick one of the two semantics silently.
+        if (haveSweep) {
+            Serial.println("ERROR: sweep list not supported under plot mode ('L') — trapezoid cancelled");
+            return;
+        }
         // Same running-profile refusal as the 'R' arm path (review 2026-08-07 F5).
-        if (driveCycleActive || powerShareProfileActive || combinedProfileActive) {
+        if (driveCycleActive || powerShareProfileActive || combinedProfileActive ||
+            wProfileActive) {
             Serial.println("ERROR: another profile is running — stop it first ('X') before arming under plot mode");
             return;
         }
@@ -3674,7 +4105,136 @@ void parseTrapParamsLine(const char* line) {
         Serial.println("ms. Switch to the Serial Plotter now ('T' or 'X' cancels)");
         return;
     }
+
+    // A newly typed 'T' line supersedes a sweep that is between runs (its trapezoid is not
+    // running, so the 'T' keypress reached the parameter prompt rather than the stop path). Done
+    // HERE, not in startTrapProfile(), because the sweep itself starts every run through that
+    // function — cancelling there would abort the sweep on its own second run.
+    tsweepCancel("superseded by a new 'T' line");
+
+    if (haveSweep) {
+        tsweepActive          = true;
+        tsweepPhase           = 0;    // the first run starts below, so we are RUNNING immediately
+        tsweepCount           = sweepN;
+        tsweepIdx             = 0;
+        tsweepDwellMs         = (uint32_t)(sweepDwell * 1000.0f + 0.5f);
+        tsweepImax            = imax;
+        tsweepHoldMs          = holdMs;
+        tsweepRate            = rate;
+        tsweepCooldownStartMs = millis();
+        for (uint8_t i = 0; i < sweepN; i++) tsweepRatios[i] = sweepRatios[i];
+
+        Serial.print("[TSWEEP] "); Serial.print(tsweepCount);
+        Serial.print(" runs, dwell "); Serial.print(sweepDwell, 1);
+        Serial.print(" s: r =");
+        for (uint8_t i = 0; i < tsweepCount; i++) {
+            Serial.print(" "); Serial.print(tsweepRatios[i], 3);
+        }
+        Serial.println();
+
+        // Setpoint BEFORE the start call: startTrapProfile() opens the SD log, and the log's very
+        // first record must already carry this run's share_sp (the same "flags before
+        // logOpenForProfile()" rule the profile start paths follow).
+        setPowerShareSetpointLive(tsweepRatios[0]);
+        startTrapProfile(tsweepImax, tsweepHoldMs, tsweepRate);
+        Serial.print("[TSWEEP] run 1/"); Serial.print(tsweepCount);
+        Serial.print(": share_sp="); Serial.println(tsweepRatios[0], 3);
+        return;
+    }
+
     startTrapProfile(imax, holdMs, rate);
+}
+
+// Sweep sequencer: one tick per doState98() invocation, alongside plotArmTick(). Non-blocking by
+// construction — the dwell is a millis() comparison and the log wait is a POLL of the logger's own
+// flags. It must never call logDrainTick() itself: that is loop()'s job and the drain is
+// deliberately gated out of the State-99 teardown (FW-R1-F1), an ordering this must not subvert.
+void tsweepTick() {
+    if (!tsweepActive) return;
+
+    if (tsweepPhase == 0) {                 // RUNNING
+        if (trapProfileActive) return;
+        // The trapezoid ended. Only a NATURAL completion can reach here: every operator/supersede
+        // stop path cancels the sweep first, so a cleared flag here means the run finished.
+        tsweepPhase = 1;
+        return;
+    }
+
+    if (tsweepPhase == 1) {                 // WAIT_LOG
+        // Gate the next run on the logger being fully idle. logOpenForProfile() force-finishes a
+        // still-open file and then SILENTLY SKIPS logging when the card is busy — starting run k+1
+        // one tick early would cost that run its entire dataset with no error anywhere.
+        if (logActive || logCloseRequested) return;
+        if ((uint8_t)(tsweepIdx + 1) >= tsweepCount) {
+            uint8_t n = tsweepCount;
+            tsweepFinish();
+            Serial.print("[TSWEEP] complete — "); Serial.print(n); Serial.println(" runs logged");
+            return;
+        }
+        tsweepPhase           = 2;
+        tsweepCooldownStartMs = millis();
+        Serial.print("[TSWEEP] cool-down "); Serial.print(tsweepDwellMs / 1000.0f, 1);
+        Serial.print(" s before run "); Serial.print(tsweepIdx + 2);
+        Serial.print("/"); Serial.println(tsweepCount);
+        return;
+    }
+
+    // COOLDOWN
+    if (millis() - tsweepCooldownStartMs < tsweepDwellMs) return;
+
+    // Fire-time precondition re-check, same discipline (and same reason) as plotArmTick(): the
+    // dwell is seconds-to-minutes long and the operator can start a bring-up or another profile
+    // inside it. Firing a trapezoid into either would stomp a running sequence.
+    if (bringupActive || driveCycleActive || powerShareProfileActive || combinedProfileActive ||
+        wProfileActive) {
+        tsweepCancel("preconditions changed during cool-down");
+        return;
+    }
+    // MOT_PWR is warn-only, exactly as the 'T' keypress treats it: the VESC may be fed from its
+    // own bench supply, and if MOT_PWR really is its only source an unpowered VESC just ignores
+    // the commands. A refusal here would abandon the sweep for a condition that is often benign.
+    if (!digitalRead(MOT_PWR_ENABLE)) {
+        Serial.println("[TSWEEP] WARN: MOT_PWR_ENABLE is LOW — next run will command an unpowered motor (key '3')");
+    }
+
+    tsweepIdx++;
+    setPowerShareSetpointLive(tsweepRatios[tsweepIdx]);   // before the start: see the start path
+    startTrapProfile(tsweepImax, tsweepHoldMs, tsweepRate);
+    tsweepPhase = 0;
+    Serial.print("[TSWEEP] run "); Serial.print(tsweepIdx + 1);
+    Serial.print("/"); Serial.print(tsweepCount);
+    Serial.print(": share_sp="); Serial.println(tsweepRatios[tsweepIdx], 3);
+}
+
+// Restore the share loop to the quiescent state the sweep found it in. The sweep is what turned
+// powerBalanceLive on (via setPowerShareSetpointLive()), so it owns turning it back off —
+// mirroring the 'R'/'X' share-profile stop convention of parking the setpoint at 0.5.
+static void tsweepRelease() {
+    tsweepActive         = false;
+    tsweepPhase          = 0;
+    tsweepIdx            = 0;
+    power_share_setpoint = 0.5f;
+    powerBalanceLive     = false;
+}
+
+void tsweepFinish() {
+    if (!tsweepActive) return;
+    tsweepRelease();
+}
+
+// Drop a running sweep. Safe to call unconditionally (no-op when none is active) so every stop
+// path can invoke it without testing first — the same discipline that keeps cancelPlotArm() from
+// leaving a countdown alive past the key that was supposed to stop everything. Deliberately does
+// NOT touch the motor or the path switches: each caller already applies its own stop semantics
+// (the trapezoid's are "motor zeroed, switches left as-is").
+void tsweepCancel(const char* why) {
+    if (!tsweepActive) return;
+    uint8_t doneRuns = tsweepIdx + 1;
+    uint8_t total    = tsweepCount;
+    tsweepRelease();
+    Serial.print("[TSWEEP] cancelled: "); Serial.print(why);
+    Serial.print(" (after run "); Serial.print(doneRuns);
+    Serial.print("/"); Serial.print(total); Serial.println(")");
 }
 
 const char* trapPhaseStr(TrapPhase p) {
@@ -3699,8 +4259,11 @@ void startTrapProfile(float imax, uint32_t holdMs, float rateAps) {
     driveCycleActive        = false;
     powerShareProfileActive = false;
     combinedProfileActive   = false;   // ditto: it drives both setpoints and must not survive
+    wProfileActive          = false;
+    wCmdA                   = 0.0f;
     haltMotorOutput();
     resetControlRateLimiters();
+    resetShareControlState();     // known share-loop state per run (2026-08-11)
 
     trapImax    = imax;
     trapHoldMs  = holdMs;
@@ -3794,6 +4357,48 @@ void advanceTrapProfile() {
     }
 }
 
+// ── Shared combined-profile helpers: cutoff warning + end-of-run restore ─────────────────────
+// S1 warning. Since the 2026-08-10 full-span actuation change, a commanded share ratio outside
+// [DROOP_R_MIN, DROOP_R_MAX] no longer clips — applyShareRatio() opens the starved channel's
+// RT1987 bus switch UNDER LOAD. Both combined profiles drive the share to 1.0 (R6) and 0.0 (R11)
+// by design, so with a bound below DROOP_R_MIN the run WILL perform two bus-switch openings while
+// the motor is drawing. That is the TP0010 stressor class and must never be a surprise: warn
+// explicitly, name the motor ceiling the switch will open against, and point at the safe first run.
+static void warnIfBandReachesCutoff(const char *tag, float boundLo, const char *safeCmd,
+                                    float motorCapA, const char *capUnitNote) {
+    if (boundLo >= DROOP_R_MIN) return;   // band stays inside the droop-clip span — no cutoff
+    Serial.print("["); Serial.print(tag);
+    Serial.print("] WARNING: share band reaches the full-span cutoff — R6/R11 will open a bus "
+                 "switch under load (up to ");
+    Serial.print(capUnitNote);
+    Serial.print(motorCapA, 1);
+    Serial.print(" A). First run: use ");
+    Serial.print(safeCmd);
+    Serial.println(", scope-armed (see TP0010).");
+}
+
+// A2 restore. A combined profile can reach its natural completion with a controller-initiated
+// cutoff still LATCHED (e.g. the run ends while the share is parked at an extreme, or the re-entry
+// hysteresis never cleared). Nothing would then put the channel back: with no profile running,
+// powerBalance() never executes, so applyShareRatio() is never called again and the board sits
+// SINGLE-SOURCED indefinitely with the bus still up. Re-close through applyShareRatio() itself
+// with a mid-band ratio rather than writing the pins here — that reuses the controller's OWN
+// re-entry path, including its V_bus >= V_BUS_CHARGED_THRESH guard and its ownership rules, so
+// this can never close a switch the controller does not own. If the bus is NOT in regulation the
+// re-entry correctly declines and the flag stays latched; the next teardown clears it
+// (safeAllSwitches() already owns that, which is why the stop/'X'/'Q' paths need nothing here).
+static void restoreShareCutoffOnCompletion(const char *tag) {
+    if (!shareIsoFC && !shareIsoBT) return;
+    applyShareRatio(0.5f);   // mid-band: unambiguously past both hysteresis thresholds
+    Serial.print("["); Serial.print(tag);
+    if (shareIsoFC || shareIsoBT) {
+        Serial.println("] NOTE: a channel is still cut off (bus not in regulation) — "
+                       "'X'/'Q' or a fresh 'G' bring-up will clear it");
+    } else {
+        Serial.println("] channel cutoff cleared on completion — both sources back on the bus");
+    }
+}
+
 // ── Combined drive-cycle + power-share profile ('Y') ─────────────────────────────────────────
 // Parse the single-line parameter entry "[Vmax m/s] [share bound b]" (e.g. typed as one line
 // "Y 1 0.3"). BOTH values are optional — unlike the trapezoid, an empty line is a legitimate
@@ -3804,24 +4409,9 @@ void parseCombinedParamsLine(const char* line) {
     float vmax  = Y_VMAX_DEFAULT;
     float bound = Y_BOUND_DEFAULT;
 
-    char*       end = nullptr;
-    const char* p   = line;
-    float       v   = strtof(p, &end);
-    if (end != p) {
-        vmax = v;
-        p    = end;
-        float b = strtof(p, &end);
-        if (end != p) bound = b;   // second value absent is fine — b keeps its default
-    }
-    // Whatever strtof() stopped on must be whitespace only. Only digits/sign/point/space can
-    // reach this buffer at all (isNumericEntryChar()), so the realistic case this catches is a
-    // THIRD value ("Y 1 0.3 2") — refuse rather than silently ignore it, since a third number
-    // means the operator believes this command takes a parameter it does not have.
-    while (*end == ' ' || *end == '\t') end++;
-    if (*end != '\0') {
-        Serial.println("ERROR: expected \"Y [Vmax m/s] [b]\" — at most two values (e.g. Y 1 0.3) — profile cancelled");
+    if (!parseTwoOptionalFloats(line, "ERROR: expected \"Y [Vmax m/s] [b]\" — at most two values (e.g. Y 1 0.3) — profile cancelled",
+                                vmax, bound))
         return;
-    }
 
     if (vmax <= 0.0f) {
         Serial.println("ERROR: Vmax must be > 0 m/s — profile cancelled");
@@ -3836,17 +4426,52 @@ void parseCombinedParamsLine(const char* line) {
         Serial.println(" m/s (MANUAL_MOTOR_V_MAX, the same ceiling 'V' enforces) — profile cancelled");
         return;
     }
-    if (bound < 0.0f) {
-        Serial.println("ERROR: share bound b must be >= 0 — profile cancelled");
-        return;
+    if (!validateShareBound(bound)) return;
+
+    startCombinedProfile(vmax, bound);
+}
+
+// ── Shared parameter-line helpers ('Y' and 'W') ──────────────────────────────────────────────
+// Extract up to two OPTIONAL floats from a typed parameter line, leaving each output at its
+// caller-seeded default when the corresponding value is absent. Returns false (having printed
+// `usage`) if anything but whitespace follows the values. Shared so the two combined profiles can
+// never acquire subtly different entry grammars.
+bool parseTwoOptionalFloats(const char* line, const char* usage, float &first, float &second) {
+    char*       end = nullptr;
+    const char* p   = line;
+    float       a   = strtof(p, &end);
+    if (end != p) {
+        first = a;
+        p     = end;
+        float b = strtof(p, &end);
+        if (end != p) second = b;   // second value absent is fine — it keeps its default
     }
-    if (bound >= 0.5f) {
+    // Whatever strtof() stopped on must be whitespace only. Only digits/sign/point/space can
+    // reach these buffers at all (isNumericEntryChar()), so the realistic case this catches is a
+    // THIRD value ("Y 1 0.3 2") — refuse rather than silently ignore it, since a third number
+    // means the operator believes the command takes a parameter it does not have.
+    while (*end == ' ' || *end == '\t') end++;
+    if (*end != '\0') {
+        Serial.println(usage);
+        return false;
+    }
+    return true;
+}
+
+// Validate the share clip bound. Identical rules for both combined profiles by spec, so the rules
+// (and their messages) live here rather than in each parser.
+bool validateShareBound(float b) {
+    if (b < 0.0f) {
+        Serial.println("ERROR: share bound b must be >= 0 — profile cancelled");
+        return false;
+    }
+    if (b >= 0.5f) {
         // At b = 0.5 the band [b, 1-b] collapses to the single point 0.5 and the whole share axis
         // of the profile becomes a flat line — a null test, so refuse rather than run it.
         Serial.println("ERROR: share bound b must be < 0.5 (the band [b, 1-b] collapses at 0.5) — profile cancelled");
-        return;
+        return false;
     }
-    if (bound > Y_BOUND_WARN) {
+    if (b > Y_BOUND_WARN) {
         // Accepted, not refused: a tight band is a legitimate way to keep a fragile bench setup
         // away from the share extremes. Warn because the run no longer matches the documented
         // region table.
@@ -3854,8 +4479,46 @@ void parseCombinedParamsLine(const char* line) {
         Serial.print(Y_BOUND_WARN, 2);
         Serial.println(" — the clip will start compressing the intermediate 0.35/0.65 plateaus, not just the 0/1 bound checks");
     }
+    return true;
+}
 
-    startCombinedProfile(vmax, bound);
+// ── Shared region walk ('Y' and 'W') ─────────────────────────────────────────────────────────
+// One tick of the COMBINED_PROFILE[] region machine: advances the index at a region boundary and,
+// on a normal tick, interpolates both axes and clips the share. Both combined profiles call this
+// so their SHAPES are identical by construction — the whole point of reusing one table would be
+// lost if each profile walked it with its own copy of the interpolation.
+// `axisNormOut` is the raw NORMALISED motor axis ([0..1] from the table); the caller scales it by
+// its own peak ('Y' → m/s, 'W' → A). `shareOut` is already clipped and ready to assign.
+ComboTickResult advanceComboRegion(uint8_t &regionIdx, uint32_t &regionStart, const char *tag,
+                                   float boundLo, float &axisNormOut, float &shareOut) {
+    if (regionIdx >= COMBINED_PROFILE_REGIONS) return COMBO_TICK_DONE;
+
+    uint32_t elapsed = millis() - regionStart;
+    const CombinedProfileRegion &rg = COMBINED_PROFILE[regionIdx];
+
+    if (elapsed >= rg.durationMs) {
+        regionIdx++;
+        regionStart = millis();
+        if (regionIdx < COMBINED_PROFILE_REGIONS && !plotSuppressStatus()) {
+            Serial.print("["); Serial.print(tag); Serial.print("] Region ");
+            Serial.println(regionIdx);
+        }
+        return COMBO_TICK_BOUNDARY;
+    }
+
+    // Linear interpolation of BOTH axes within the region. A step between regions is encoded as
+    // a start value differing from the previous region's end value, so it lands on the first tick
+    // of the new region — no special-casing here.
+    float t     = (float)elapsed / (float)rg.durationMs;
+    axisNormOut = rg.v_start + t * (rg.v_end - rg.v_start);
+    float s_abs = rg.s_start + t * (rg.s_end - rg.s_start);
+
+    // Clip AFTER interpolation, never before: a ramp that crosses the bound must run at its
+    // normal slope and then FLATTEN there. Pre-scaling the waypoints into the band would change
+    // every slope in the table and quietly alter the excitation the identification is fitted to.
+    // The resulting kink is intended behaviour.
+    shareOut = constrain(s_abs, boundLo, 1.0f - boundLo);
+    return COMBO_TICK_RUN;
 }
 
 // Commit the two validated operator values and take exclusive ownership of the motor output.
@@ -3873,8 +4536,13 @@ void startCombinedProfile(float vmax, float boundLo) {
     powerShareProfileActive = false;
     trapProfileActive       = false;
     trapCmdA                = 0.0f;
+    tsweepCancel("superseded by 'Y'");   // a queued sweep owns the share setpoint this profile
+                                         // sweeps, and would fire a run into it at dwell expiry
+    wProfileActive          = false;   // the current-mode twin — mutually exclusive both ways
+    wCmdA                   = 0.0f;
     haltMotorOutput();
     resetControlRateLimiters();
+    resetShareControlState();     // known share-loop state per run (2026-08-11)
 
     yProfileVmax    = vmax;
     yProfileBoundLo = boundLo;
@@ -3897,6 +4565,9 @@ void startCombinedProfile(float vmax, float boundLo) {
     Serial.print("] regions=");
     Serial.print(COMBINED_PROFILE_REGIONS);
     Serial.println("  (Region 0: settle; 'Y' again to stop)");
+    // Motor ceiling quoted for the cutoff warning is the velocity PI's own current clamp — the
+    // most the bus switch can be asked to open against on this profile.
+    warnIfBandReachesCutoff("YP", yProfileBoundLo, "Y 0.5 0.2", MOTOR_I_CMD_MAX, "");
     if (vescWatchActive)
         Serial.println("[YP] VESC watch paused during the run (production-identical timing); resumes on stop");
 }
@@ -3913,36 +4584,22 @@ void advanceCombinedProfile() {
         // Switches are deliberately left as-is here, matching the 'D'/'R' NATURAL completions
         // (only their stop-toggle/'X' paths park them).
         haltMotorOutput();
+        // Put a still-latched channel cutoff back on the bus BEFORE the run is declared over —
+        // otherwise nothing ever calls applyShareRatio() again (see restoreShareCutoffOnCompletion).
+        restoreShareCutoffOnCompletion("YP");
         logRequestClose(LOG_CLOSE_COMPLETE);   // symmetric with the 'Y' stop path
         Serial.println("[YP] Combined profile complete — motor zeroed, share back to 0.50");
         return;
     }
 
-    uint32_t elapsed = millis() - combinedRegionStart;
-    const CombinedProfileRegion &rg = COMBINED_PROFILE[combinedRegionIdx];
+    float v_norm = 0.0f, share = 0.0f;
+    if (advanceComboRegion(combinedRegionIdx, combinedRegionStart, "YP", yProfileBoundLo,
+                           v_norm, share) != COMBO_TICK_RUN)
+        return;   // region boundary this tick (or the table just ran out — caught at the top of
+                  // the NEXT tick by the completion block above, exactly as before the refactor)
 
-    if (elapsed >= rg.durationMs) {
-        combinedRegionIdx++;
-        combinedRegionStart = millis();
-        if (combinedRegionIdx < COMBINED_PROFILE_REGIONS && !plotSuppressStatus()) {
-            Serial.print("[YP] Region "); Serial.println(combinedRegionIdx);
-        }
-        return;
-    }
-
-    // Linear interpolation of BOTH axes within the region. A step between regions is encoded as
-    // a start value differing from the previous region's end value, so it lands on the first tick
-    // of the new region — no special-casing here.
-    float t      = (float)elapsed / (float)rg.durationMs;
-    float v_norm = rg.v_start + t * (rg.v_end - rg.v_start);
-    float s_abs  = rg.s_start + t * (rg.s_end - rg.s_start);
-
-    v_setpoint = v_norm * yProfileVmax;
-    // Clip AFTER interpolation, never before: a ramp that crosses the bound must run at its
-    // normal slope and then FLATTEN there. Pre-scaling the waypoints into the band would change
-    // every slope in the table and quietly alter the excitation the identification is fitted to.
-    // The resulting kink is intended behaviour.
-    power_share_setpoint = constrain(s_abs, yProfileBoundLo, 1.0f - yProfileBoundLo);
+    v_setpoint           = v_norm * yProfileVmax;   // normalised table value -> m/s
+    power_share_setpoint = share;                   // already clipped to [b, 1-b] by the helper
 
     // Status snapshot every 500 ms — both axes at once (withheld under plot mode, same reason as
     // the other profiles: a non-numeric line breaks the plotter parse).
@@ -3962,10 +4619,160 @@ void advanceCombinedProfile() {
     }
 }
 
+// ── Combined CURRENT + power-share profile ('W') ─────────────────────────────────────────────
+// Parse the single-line parameter entry "[Imax A] [share bound b]" (e.g. typed as one line
+// "W 6 0.0"). BOTH values are optional — a bare newline runs the defaults, same as 'Y' (and
+// unlike the trapezoid, where an empty line is a cancel).
+void parseCurrentComboParamsLine(const char* line) {
+    float imax  = W_IMAX_DEFAULT;
+    float bound = Y_BOUND_DEFAULT;   // shared bound default — see the 'W' state block
+
+    if (!parseTwoOptionalFloats(line, "ERROR: expected \"W [Imax A] [b]\" — at most two values (e.g. W 6 0.0) — profile cancelled",
+                                imax, bound))
+        return;
+
+    if (imax <= 0.0f) {
+        // Unlike the trapezoid, a NEGATIVE peak is not meaningful here: the table's motor column
+        // is a normalised magnitude with its own coast-down back to zero, so a negative peak would
+        // simply mirror the whole profile into braking rather than test anything new (use 'T' for
+        // a braking/regen ramp). Zero is a null test.
+        Serial.println("ERROR: Imax must be > 0 A — profile cancelled");
+        return;
+    }
+    // Reuse the TRAPEZOID's ceiling, not MOTOR_I_CMD_MAX: this profile commands VESC phase current
+    // directly through the same chokepoint 'T' uses, and the rationale at TRAP_I_ABS_MAX applies
+    // unchanged — the 5 A figure is a source-power budget on the velocity-PI paths, while the hard
+    // bound that always applies is the ESC's own rating. Peaks above MOTOR_I_CMD_MAX are therefore
+    // accepted here exactly as 'T' accepts them.
+    if (imax > TRAP_I_ABS_MAX) {
+        Serial.print("ERROR: Imax must be <= ");
+        Serial.print(TRAP_I_ABS_MAX, 0);
+        Serial.println(" A (TRAP_I_ABS_MAX, the VESC Six EDU continuous rating) — profile cancelled");
+        return;
+    }
+    if (!validateShareBound(bound)) return;
+
+    startCurrentComboProfile(imax, bound);
+}
+
+// Commit the two validated operator values and take exclusive ownership of the motor output.
+// Called only from parseCurrentComboParamsLine() (both values already range-checked there).
+// Deliberately NO velocityChainCalibrated() gate and no hard MOT_PWR_ENABLE gate — this profile
+// drives current directly, bypassing the velocity PI, which is exactly what makes it safe on an
+// encoder-less bench (same policy as 'T'; the 'W' handler warns about MOT_PWR).
+void startCurrentComboProfile(float imax, float boundLo) {
+    // Exclusive motor ownership, same discipline as every other profile start: clear the other
+    // motor drivers, flush a zero + clear the manual modes and the PI integrator, then reset the
+    // rate limiters so the first profile tick drives immediately.
+    driveCycleActive        = false;
+    powerShareProfileActive = false;
+    trapProfileActive       = false;
+    trapCmdA                = 0.0f;
+    combinedProfileActive   = false;   // the velocity twin — mutually exclusive both ways
+    tsweepCancel("superseded by 'W'");   // same reason as 'Y': it owns the share setpoint and
+                                         // would fire a trapezoid into this run at dwell expiry
+    haltMotorOutput();
+    resetControlRateLimiters();
+    resetShareControlState();     // known share-loop state per run (2026-08-11)
+
+    wProfileImax    = imax;
+    wProfileBoundLo = boundLo;
+
+    wProfileActive = true;
+    wRegionIdx     = 0;
+    wRegionStart   = millis();
+    wStatusLast    = millis();
+    wCmdA          = 0.0f;
+    // Open the SD log AFTER the flags/region index are set, so the very first logged sample
+    // already carries region 0 in both phase bytes. The PS|TP mask gives the file its "WP" prefix
+    // (share axis + current axis) and tells the decoder which two phase bytes carry the region.
+    logOpenForProfile(LOG_TYPE_PS | LOG_TYPE_TP);
+
+    Serial.print("[WP] Combined current profile started — Imax=");
+    Serial.print(wProfileImax, 2);
+    Serial.print("A share band=[");
+    Serial.print(wProfileBoundLo, 2);
+    Serial.print(", ");
+    Serial.print(1.0f - wProfileBoundLo, 2);
+    Serial.print("] regions=");
+    Serial.print(COMBINED_PROFILE_REGIONS);
+    Serial.println("  (Region 0: settle; 'W' again to stop)");
+    // Here the ceiling is the operator's own Imax: this profile commands phase current directly,
+    // so the switch opens against whatever peak was just committed.
+    warnIfBandReachesCutoff("WP", wProfileBoundLo, "W 2 0.2", wProfileImax, "Imax=");
+    if (vescWatchActive)
+        Serial.println("[WP] VESC watch paused during the run (production-identical timing); resumes on stop");
+}
+
+// One profile tick. Walks the SAME region table as advanceCombinedProfile() through the shared
+// helper, but scales the motor axis into amps and issues it directly — the velocity PI is never
+// in the loop (contrast 'Y', which only supplies v_setpoint for motorControl()).
+void advanceCurrentComboProfile() {
+    if (wRegionIdx >= COMBINED_PROFILE_REGIONS) {
+        wProfileActive       = false;
+        wCmdA                = 0.0f;
+        power_share_setpoint = 0.5f;   // return to balanced, as the 'Y'/'R' completions do
+        // Natural completion releases the motor EXACTLY as the 'W' stop path does — a completion
+        // path that only cleared its own flag would leave a pre-run manualMotorMode driving the
+        // motor from the standalone branch on the next tick (design-review-2026-07-28.md P0-2).
+        // Switches are left as-is here, matching the 'Y'/'D'/'R' NATURAL completions (only their
+        // stop-toggle/'X' paths park them).
+        haltMotorOutput();
+        // Same end-of-run cutoff restore as 'Y' — see restoreShareCutoffOnCompletion().
+        restoreShareCutoffOnCompletion("WP");
+        logRequestClose(LOG_CLOSE_COMPLETE);   // symmetric with the 'W' stop path
+        Serial.println("[WP] Combined current profile complete — motor zeroed, share back to 0.50");
+        return;
+    }
+
+    float i_norm = 0.0f, share = 0.0f;
+    if (advanceComboRegion(wRegionIdx, wRegionStart, "WP", wProfileBoundLo,
+                           i_norm, share) != COMBO_TICK_RUN)
+        return;   // region boundary this tick; the table running out is caught at the top of the
+                  // next tick by the completion block above
+
+    float cmd            = i_norm * wProfileImax;   // normalised table value -> A
+    wCmdA                = cmd;
+    power_share_setpoint = share;                   // already clipped to [b, 1-b] by the helper
+    // v_setpoint is deliberately NOT touched — this profile has no velocity axis at all, and
+    // writing it would leave a stale setpoint behind for whatever runs next (same as 'T').
+
+    // Rate-gated on rl_motor_last / MOTOR_CTRL_PERIOD_US and sent through the same chokepoint the
+    // trapezoid uses: the shared limiter guarantees this and motorControl() can never both write
+    // the VESC in one tick, and the 500 Hz re-sends keep the VESC's 1000 ms command timeout fed
+    // (on expiry it COASTS rather than brakes, which would silently truncate the profile).
+    if (rateLimitDue(rl_motor_last, MOTOR_CTRL_PERIOD_US))
+        commandMotorCurrentLimited(cmd, TRAP_I_ABS_MAX);   // ESC-rating ceiling, not the 5 A budget
+
+    // Status snapshot every 500 ms — both axes at once (withheld under plot mode, same reason as
+    // the other profiles: a non-numeric line breaks the plotter parse).
+    if (!plotSuppressStatus() && millis() - wStatusLast >= 500) {
+        wStatusLast = millis();
+        float totalA    = fabsf(I_fc) + fabsf(I_batt);
+        float share_act = (totalA > 1e-6f) ? (fabsf(I_fc) / totalA) : 0.0f;
+        Serial.print("[WP] t=");      Serial.print(millis());
+        Serial.print(" R");           Serial.print(wRegionIdx);
+        Serial.print(" I_cmd=");      Serial.print(wCmdA, 2);
+        Serial.print(" sp=");         Serial.print(power_share_setpoint, 3);
+        Serial.print(" act=");        Serial.print(share_act, 3);
+        Serial.print(" I_fc=");       Serial.print(I_fc, 2);
+        Serial.print(" I_bt=");       Serial.print(I_batt, 2);
+        Serial.print(" V_bus=");      Serial.print(V_bus, 2);
+        Serial.print(" FLT=0x");      Serial.println(fault_flags, HEX);
+    }
+}
+
 // True for chars that belong in a typed numeric value (digits, sign, point, and whitespace fillers).
 // Anything else, seen while a prompt is pending, cancels the entry (handled in doState98()).
 bool isNumericEntryChar(char c) {
     return (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '+' || c == ' ' || c == '\t';
+}
+
+// Punctuation of the trapezoid sweep list "[t,r1,…,rn]" (2026-08-11). Not folded into
+// isNumericEntryChar(): these three keys must keep cancelling every OTHER pending prompt, which is
+// what stops an unexpected keystroke from being silently absorbed into an un-echoed value.
+bool isSweepListChar(char c) {
+    return c == '[' || c == ']' || c == ',';
 }
 
 // Accumulate a typed numeric line (set up by a value command key), then dispatch on newline. Keeps
@@ -3983,6 +4790,10 @@ void handlePendingInputChar(char c) {
         // cancel below (which is right for every other prompt: none of them has a default).
         if (which == PEND_Y_PARAMS) {
             parseCombinedParamsLine(inputBuf);
+            return;
+        }
+        if (which == PEND_W_PARAMS) {   // same all-optional grammar as 'Y'
+            parseCurrentComboParamsLine(inputBuf);
             return;
         }
         if (inputBuf[0] == '\0') {
@@ -4033,6 +4844,7 @@ void handlePendingInputChar(char c) {
 
 void printTestStatus() {
     Serial.println("=== State 98 Status ===");
+    Serial.print("FW_VERSION:         "); Serial.println(FW_VERSION);
     Serial.print("FC_REG_ENABLE:      "); Serial.println(digitalRead(FC_REG_ENABLE));
     Serial.print("BT_REG_ENABLE:      "); Serial.println(digitalRead(BT_REG_ENABLE));
     Serial.print("FC_BUS_ENABLE:      "); Serial.println(digitalRead(FC_BUS_ENABLE));
@@ -4101,6 +4913,19 @@ void printTestStatus() {
         Serial.print("A/s hold="); Serial.print(trapHoldMs); Serial.print("ms");
     }
     Serial.println();
+    // Sweep line: between runs NOTHING else in this dump shows that more runs are queued
+    // (trapProfileActive is false and the logger is idle), which is exactly when an operator asks
+    // "is it done?".
+    Serial.print("TSWEEP:             ");
+    if (!tsweepActive) {
+        Serial.println("inactive");
+    } else {
+        Serial.print("run ");      Serial.print(tsweepIdx + 1);
+        Serial.print("/");         Serial.print(tsweepCount);
+        Serial.print(" phase ");   Serial.print(tsweepPhase);
+        Serial.print(tsweepPhase == 0 ? " (RUNNING)" : tsweepPhase == 1 ? " (WAIT_LOG)" : " (COOLDOWN)");
+        Serial.print(" dwell ");   Serial.print(tsweepDwellMs); Serial.println("ms");
+    }
     Serial.print("driveCycle:         "); Serial.print(driveCycleActive);
     if (driveCycleActive) { Serial.print(" phase="); Serial.print(driveCyclePhaseIdx); }
     Serial.println();
@@ -4113,6 +4938,18 @@ void printTestStatus() {
     Serial.print(" Vmax=");     Serial.print(yProfileVmax, 2);
     Serial.print("m/s band=["); Serial.print(yProfileBoundLo, 2);
     Serial.print(", ");         Serial.print(1.0f - yProfileBoundLo, 2);
+    Serial.println("]");
+    // Same readback rationale as the 'Y' line above: the start banner scrolls away, so 'S' is the
+    // only way to confirm the COMMITTED parameters (they hold the last committed pair after the
+    // run ends, which is exactly what a post-run readback needs).
+    Serial.print("currentCombo (W):   "); Serial.print(wProfileActive);
+    if (wProfileActive) {
+        Serial.print(" R=");     Serial.print(wRegionIdx);
+        Serial.print(" I_cmd="); Serial.print(wCmdA, 2); Serial.print("A");
+    }
+    Serial.print(" Imax=");     Serial.print(wProfileImax, 2);
+    Serial.print("A band=[");   Serial.print(wProfileBoundLo, 2);
+    Serial.print(", ");         Serial.print(1.0f - wProfileBoundLo, 2);
     Serial.println("]");
     Serial.println("=======================");
 }
@@ -4437,6 +5274,15 @@ float PI_Controller_Motor(float error) {
     return Kp * error + Ki * pi_motor_accum;
 }
 
+// Limit-cycle-mitigation state (2026-08-11). File-scope for host-test
+// resettability, same pattern as the PIs.
+//   share_govTotAFilt — governor's filtered |I_fc|+|I_batt| (see powerBalance()).
+//   droopSlew_prev    — last droop ratio actually applied to the MDACs (see
+//                       applyShareRatio()); 0.5 matches the fresh-boot MDAC
+//                       state commanded by initMdacOutputs().
+float share_govTotAFilt = 0.0f;
+float droopSlew_prev    = 0.5f;
+
 void powerBalance() {
     float totalA = fabsf(I_fc) + fabsf(I_batt);
     // Minimum-load gate (was a bare 1e-6 divide-by-zero guard): below
@@ -4449,15 +5295,62 @@ void powerBalance() {
     // so the controller resumes immediately with the fresh measurement.
     if (totalA < SHARE_I_TOT_MIN_A) return;
 
+    // Governor load estimate (filtered so ADC noise doesn't dither the bounds).
+    // Updated only on ticks that reach here — below SHARE_I_TOT_MIN_A the whole
+    // loop is frozen, so the filter correctly resumes from its pre-hold value.
+    share_govTotAFilt += SHARE_GOV_FILT_ALPHA * (totalA - share_govTotAFilt);
+
+    // ── Setpoint governor (limit-cycle mitigation, 2026-08-11) ────────────────
+    // In-band setpoints ask the droop split to hold a live minority channel at
+    // sp·I_tot (or (1−sp)·I_tot); below the light-load conduction floor that is
+    // infeasible and the loop limit-cycles chasing it (TP0010/TP0013 — see the
+    // SHARE_MINORITY_I_MIN_A block). Clip the EFFECTIVE setpoint so the commanded
+    // minority current stays ≥ SHARE_MINORITY_I_MIN_A, relaxing to no clip as
+    // load grows. OUT-OF-BAND setpoints (incl. 0.0 / 1.0) bypass the governor
+    // untouched: applyShareRatio() realizes them as a channel cutoff, the share
+    // is then forced by topology, and the sweep showed those are stable
+    // (TP0009/TP0011) — governing them would break the full-span semantics.
+    float spEff = power_share_setpoint;
+    if (spEff >= DROOP_R_MIN && spEff <= DROOP_R_MAX) {
+        float lo = 0.5f;
+        float hi = 0.5f;
+        if (share_govTotAFilt > 2.0f * SHARE_MINORITY_I_MIN_A) {
+            lo = SHARE_MINORITY_I_MIN_A / share_govTotAFilt;
+            hi = 1.0f - lo;
+        }
+        // (lo ≤ 0.5 ≤ hi by construction; at I_tot ≤ 2·I_min the achievable set
+        // collapses to the balanced split — the one asymmetry-free operating
+        // point, and the sweep's cleanest (TP0007).)
+        spEff = constrain(spEff, lo, hi);
+    }
+
     float power_share_actual_local = fabsf(I_fc) / totalA;
-    float shareError = power_share_setpoint - power_share_actual_local;
+    float shareError = spEff - power_share_actual_local;
 #if USE_YOULA_SHARE_CONTROLLER
     // clamped to [0,1] + anti-windup; filters the measurement internally
-    float droopRatio = youlaController_Power(power_share_setpoint, power_share_actual_local);
+    float droopRatio = youlaController_Power(spEff, power_share_actual_local);
     (void)shareError;
 #else
     float droopRatio = PI_Controller_Power(shareError);
 #endif
+
+    // ── Ratio slew limit (limit-cycle mitigation, 2026-08-11) ────────────────
+    // Bound the per-tick step of the CONTROLLER-commanded ratio so the MDAC
+    // pair can never slam rail-to-rail in one write — the antiphase slam is
+    // what drives the TP0010/TP0013 dropout/reconnect transients (see
+    // DROOP_RATIO_SLEW_PER_TICK). The limiter walks from droopSlew_prev, the
+    // ratio last physically applied to the MDACs by ANY path (applyShareRatio()
+    // records it), so it stays continuous across profile resets and operator
+    // 'O' jumps. Only ratios inside the droop band are slewed: an out-of-band
+    // command passes through unlimited so the channel-cutoff decision in
+    // applyShareRatio() sees the controller's true intent (the cutoff is a
+    // topology action, not an MDAC write — slewing it would only delay the
+    // hysteresis crossing while the gains sit pinned at the band edge anyway).
+    if (droopRatio >= DROOP_R_MIN && droopRatio <= DROOP_R_MAX) {
+        droopRatio = constrain(droopRatio,
+                               droopSlew_prev - DROOP_RATIO_SLEW_PER_TICK,
+                               droopSlew_prev + DROOP_RATIO_SLEW_PER_TICK);
+    }
 
     // Full-span actuation (2026-08-10): commanded ratios span [0,1]; the
     // [DROOP_R_MIN, DROOP_R_MAX] physical-droop clip, the channel cutoff for
@@ -4542,6 +5435,17 @@ void applyShareRatio(float ratio) {
     // the span where both MDAC gains stay ≤ 1 (g = K_DROOP/(RE_MAX·r); see
     // the K_DROOP block comment).
     float rc = constrain(r, DROOP_R_MIN, DROOP_R_MAX);
+
+    // Record the ratio actually applied to the MDACs (limit-cycle mitigation,
+    // 2026-08-11). The slew LIMITING lives in powerBalance() — the controller
+    // path — not here: one-shot actuation paths (the State-98 'O' open-loop
+    // command, the guard-blocked fallback above, the run-completion restore)
+    // are deliberate operator/state actions that must land exactly where
+    // commanded in a single call. This tracker is what the controller-path
+    // limiter walks from, so a direct jump (e.g. 'O 0.2') is picked up as the
+    // new starting point instead of leaving the limiter with a stale origin.
+    droopSlew_prev = rc;
+
     droop_gain_FC_actual = K_DROOP / (RE_MAX * rc);
     droop_gain_BT_actual = K_DROOP / (RE_MAX * (1.0f - rc));
     setDroopMdac(droop_gain_FC_actual, droop_gain_BT_actual);
@@ -4557,6 +5461,27 @@ void applyShareRatio(float ratio) {
 // State is file-scope for host-test resettability (same pattern as the PIs).
 float    shareCtrl_heldOut    = 0.5f;   // balanced split until the first update
 uint32_t shareCtrl_lastMicros = 0;
+
+// Reset the share-loop CONTROLLER state (Youla biquads + prefilter, held output,
+// Ts gate, governor load filter) so a profile run starts from a known state
+// instead of inheriting the previous run's — the 2026-08-11 sweep showed every
+// run's entry transient was contaminated by the prior run's final state (only
+// TP0007, fresh boot, started clean). Deliberately NOT reset:
+//   droopSlew_prev — tracks the ratio physically on the MDACs, which the
+//                    hardware holds across profiles; resetting it to mid-band
+//                    would let the first post-reset write jump the gains by the
+//                    full mid-band distance, exactly the slam the slew limiter
+//                    exists to prevent.
+//   shareIsoFC/BT  — cutoff/topology state is owned by applyShareRatio()'s
+//                    hysteresis + the run-completion restore path.
+// The Ts gate is back-dated (not zeroed) so the first governed tick steps the
+// controller immediately — same idiom as resetControlRateLimiters().
+void resetShareControlState() {
+    shareControllerReset();                 // biquads + measured-share prefilter
+    shareCtrl_heldOut    = 0.5f;
+    shareCtrl_lastMicros = micros() - (uint32_t)SHARE_CTRL_TS_US;
+    share_govTotAFilt    = 0.0f;
+}
 
 float youlaController_Power(float setpoint, float alphaRaw) {
     uint32_t now = micros();

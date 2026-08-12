@@ -88,6 +88,22 @@ static void reset_test_state() {
     shareCtrl_lastMicros = 0;
     shareIsoFC = false;
     shareIsoBT = false;
+    // .ino State-98 trapezoid SHARE-SETPOINT SWEEP ('T … [t,r1..rn]'). Cleared here rather than
+    // relying on tsweepFinish()/tsweepCancel(): a case that leaves a sweep mid-cool-down would
+    // otherwise fire a trapezoid inside the NEXT case's first doState98() tick.
+    tsweepActive          = false;
+    tsweepPhase           = 0;
+    tsweepCount           = 0;
+    tsweepIdx             = 0;
+    tsweepDwellMs         = 0;
+    tsweepImax            = 0.0f;
+    tsweepHoldMs          = 0;
+    tsweepRate            = 0.0f;
+    tsweepCooldownStartMs = 0;
+    // Limit-cycle mitigation state (2026-08-11): fresh-boot values — governor
+    // filter empty, slew tracker at the initMdacOutputs() mid-band split.
+    share_govTotAFilt = 0.0f;
+    droopSlew_prev    = 0.5f;
 
     // .ino command globals
     v_setpoint           = 0;
@@ -154,6 +170,15 @@ static void reset_test_state() {
     combinedStatusLast    = 0;
     yProfileVmax          = Y_VMAX_DEFAULT;
     yProfileBoundLo       = Y_BOUND_DEFAULT;
+
+    // .ino State 98 bench tools — combined CURRENT + power-share profile ('W')
+    wProfileActive  = false;
+    wRegionIdx      = 0;
+    wRegionStart    = 0;
+    wStatusLast     = 0;
+    wProfileImax    = W_IMAX_DEFAULT;
+    wProfileBoundLo = Y_BOUND_DEFAULT;   // shared bound default with 'Y'
+    wCmdA           = 0.0f;
 
     // .ino staged bring-up machine (busBringupStart/Tick/Abort)
     bringupActive     = false;
@@ -941,6 +966,152 @@ static void test_powerbalance_min_load_hold() {
     powerBalance();
     check(fabsf(droop_gain_FC_actual - g_before) > 1e-6f,
           "min-load hold: 76 mA is above the gate — controller steps normally");
+}
+
+// ─── Limit-cycle mitigation (2026-08-11): governor, slew limit, profile reset ─
+// The TP0010/TP0013 sweep found a 17–18.5 Hz minority-channel dropout limit
+// cycle at asymmetric IN-BAND setpoints under low total current. Mitigation:
+// powerBalance() clips the effective setpoint so the commanded minority current
+// stays ≥ SHARE_MINORITY_I_MIN_A, and slew-limits the controller-commanded
+// ratio; profile starts reset the controller state.
+static void test_share_setpoint_governor() {
+    test_group("powerBalance() setpoint governor (limit-cycle mitigation)");
+
+    // A) In-band asymmetric setpoint at low load: governed to the feasibility
+    // bound. sp=0.30 at I_tot=0.5 A → bound lo = 0.2/0.5 = 0.4; a measured
+    // share sitting exactly AT the bound is therefore zero-error, and the
+    // controller must hold — not wind toward the raw 0.30.
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.2f; I_batt = 0.3f;            // I_tot=0.5, measured share = 0.40
+    power_share_setpoint = 0.30f;
+    uint32_t t = 0;
+    for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    float slew_settled = droopSlew_prev;
+    for (int i = 0; i < 300; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(fabsf(droopSlew_prev - slew_settled) < 5e-3f,
+          "governor: in-band sp below the minority floor is clipped — zero-error at the bound, no winding");
+
+    // B) Same setpoint/share at HIGH load: bound relaxes (lo = 0.2/2.0 = 0.1),
+    // the raw setpoint applies, the −0.10 error is real → the ratio must move.
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.8f; I_batt = 1.2f;            // I_tot=2.0, measured share = 0.40
+    power_share_setpoint = 0.30f;
+    t = 0;
+    for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    // Contrast with (A): the same −0.10 apparent error is now REAL (sp_eff =
+    // 0.30), so by tick 200 the ratio has been driven well off mid-band
+    // (possibly all the way to the band edge / cutoff — that's fine, the point
+    // is that it moved, where (A) held).
+    check(droopSlew_prev < 0.45f,
+          "governor: at high load the bound relaxes and the same error drives the ratio");
+
+    // C) Collapse to the balanced split: I_tot ≤ 2·SHARE_MINORITY_I_MIN_A pins
+    // sp_eff at 0.5, so a balanced measured share is zero-error even with an
+    // asymmetric raw setpoint.
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.15f; I_batt = 0.15f;          // I_tot=0.3 < 0.4, measured 0.50
+    power_share_setpoint = 0.30f;
+    t = 0;
+    for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    float slew_bal = droopSlew_prev;
+    for (int i = 0; i < 300; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(fabsf(droopSlew_prev - slew_bal) < 5e-3f,
+          "governor: below 2x the minority floor sp_eff collapses to 0.5 (balanced = zero error)");
+
+    // D) Out-of-band setpoints BYPASS the governor: full-span semantics are the
+    // cutoff path's (sp=1.0 must still starve BT out via its bus switch even at
+    // low load — TP0009/TP0011 showed the topology-forced endpoints are stable).
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.25f; I_batt = 0.25f;          // I_tot=0.5 (governed range for in-band)
+    power_share_setpoint = 1.0f;           // out-of-band: bypass
+    t = 0;
+    for (int i = 0; i < 3000; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(digitalRead(BT_BUS_ENABLE) == LOW && shareIsoBT,
+          "governor: sp=1.0 bypasses the governor — BT cutoff still fires at low load");
+}
+
+static void test_droop_ratio_slew_limit() {
+    test_group("powerBalance() droop-ratio slew limit (limit-cycle mitigation)");
+
+    // Sustained large in-band error at high load (governor inactive): the
+    // controller wants a big ratio move; the applied ratio must walk in
+    // ≤ DROOP_RATIO_SLEW_PER_TICK steps, never slam.
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 1.6f; I_batt = 2.4f;            // I_tot=4.0, measured share = 0.40
+    power_share_setpoint = 0.60f;          // +0.20 sustained error
+    uint32_t t = 0;
+    float prev = droopSlew_prev;
+    float maxStep = 0.0f;
+    for (int i = 0; i < 100; i++) {
+        t += 1000; g_mock_micros = t;
+        powerBalance();
+        float step = fabsf(droopSlew_prev - prev);
+        if (step > maxStep) maxStep = step;
+        prev = droopSlew_prev;
+    }
+    check(maxStep <= DROOP_RATIO_SLEW_PER_TICK + 1e-5f,
+          "slew limit: no single tick moves the applied ratio by more than the per-tick ceiling");
+    check(fabsf(droopSlew_prev - 0.5f) > 0.05f,
+          "slew limit: the ratio still WALKS under a sustained error (limited, not frozen)");
+
+    // One-shot actuation paths are NOT slewed: a direct applyShareRatio() jump
+    // (operator 'O', guard fallback, completion restore) lands immediately and
+    // re-seeds the limiter's origin.
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    applyShareRatio(0.8f);
+    check(fabsf(droopSlew_prev - 0.8f) < 1e-6f,
+          "slew limit: direct applyShareRatio() jumps land in one call and re-seed the tracker");
+    applyShareRatio(0.2f);
+    check(fabsf(droop_gain_FC_actual - K_DROOP / (RE_MAX * 0.2f)) < 1e-5f,
+          "slew limit: one-shot mapping is exact (no controller-path throttling)");
+}
+
+static void test_share_state_reset_on_profile_start() {
+    test_group("resetShareControlState() at profile entry (limit-cycle mitigation)");
+
+    // Converge the controller away from mid-band, then start a trapezoid
+    // profile: the controller state must reset (held output back to 0.5,
+    // governor filter emptied) while the slew tracker keeps the ratio the
+    // MDACs physically hold — the 2026-08-11 sweep showed every run inherited
+    // the previous run's controller state (only fresh-boot TP0007 was clean).
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 3.0f; I_batt = 1.0f;            // measured 0.75, sp 0.5 → sustained error
+    power_share_setpoint = 0.5f;
+    uint32_t t = 0;
+    for (int i = 0; i < 400; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(fabsf(shareCtrl_heldOut - 0.5f) > 0.02f,
+          "profile reset: (setup) controller state is away from mid-band before the start");
+    float slew_before = droopSlew_prev;
+
+    g_mock_micros = t;
+    startTrapProfile(2.0f, 1000, 1.0f);
+    check(fabsf(shareCtrl_heldOut - 0.5f) < 1e-6f,
+          "profile reset: 'T' start resets the held controller output to the balanced split");
+    check(share_govTotAFilt == 0.0f,
+          "profile reset: the governor load filter restarts empty");
+    check(fabsf(droopSlew_prev - slew_before) < 1e-6f,
+          "profile reset: the slew tracker is NOT reset — it mirrors the ratio physically on the MDACs");
 }
 
 // ─── applyShareRatio(): full-span [0,1] actuation + channel cutoff ───────────
@@ -3176,7 +3347,7 @@ static void test_drive_cycle_motor_ownership() {
           "haltMotorOutput: leaves power-path switches untouched");
 }
 
-// ─── State 98 bench tools: VESC read-back ('E' one-shot / 'W' watch) ─────────
+// ─── State 98 bench tools: VESC read-back ('E' one-shot / 'U' watch, was 'W') ─────────
 static void test_state98_vesc_readback() {
     test_group("State 98 VESC read-back");
 
@@ -3202,16 +3373,17 @@ static void test_state98_vesc_readback() {
     check(vesc.getFW_calls == 1 && vesc.getValues_calls == 1,
           "'E': no-response path still issues both reads without crashing");
 
-    // 'W' enables watch; enabling does NOT poll immediately (0 < period).
+    // 'U' enables watch (REBOUND from 'W' on 2026-08-10 — 'W' is now the current profile).
+    // Enabling does NOT poll immediately (0 < period).
     reset_test_state();
     mainState = 98;
     vescWatchActive = false;
     vesc.reset();
     g_mock_millis = 1000;
-    Serial.rx_queue.push('W');
+    Serial.rx_queue.push('U');
     doState98();
     check(vescWatchActive && vesc.getValues_calls == 0,
-          "'W': enables watch, no poll on the enabling tick");
+          "'U': enables watch, no poll on the enabling tick");
 
     // After the period elapses, a bare tick polls once.
     g_mock_millis = 1000 + VESC_WATCH_PERIOD_MS;
@@ -3219,14 +3391,14 @@ static void test_state98_vesc_readback() {
     check(vesc.getValues_calls == 1,
           "watch: polls getVescValues() once period elapsed");
 
-    // A second 'W' stops further polling.
-    Serial.rx_queue.push('W');
+    // A second 'U' stops further polling.
+    Serial.rx_queue.push('U');
     doState98();                      // toggles off (does not poll while turning off)
     int calls_after_off = vesc.getValues_calls;
     g_mock_millis += 2 * VESC_WATCH_PERIOD_MS;
     doState98();
     check(!vescWatchActive && vesc.getValues_calls == calls_after_off,
-          "'W' again: stops the watch, no further polls");
+          "'U' again: stops the watch, no further polls");
 
     // Watch period is respected: a sub-period tick does not poll.
     reset_test_state();
@@ -3234,7 +3406,7 @@ static void test_state98_vesc_readback() {
     vescWatchActive = false;
     vesc.reset();
     g_mock_millis = 1000;
-    Serial.rx_queue.push('W');
+    Serial.rx_queue.push('U');
     doState98();                      // enable at t=1000
     g_mock_millis = 1000 + VESC_WATCH_PERIOD_MS - 1;   // just under period
     doState98();
@@ -3247,7 +3419,7 @@ static void test_state98_vesc_readback() {
     vescWatchActive = false;
     vesc.reset();
     g_mock_millis = 1000;
-    Serial.rx_queue.push('W');
+    Serial.rx_queue.push('U');
     doState98();                      // enable, lastVescFault reset to 0
     vesc.data.error = 16;             // seed a fault before the next poll
     g_mock_millis = 1000 + VESC_WATCH_PERIOD_MS;
@@ -3983,7 +4155,7 @@ static void test_plot_suppresses_status_lines() {
     advancePowerShareProfile();
     check(Serial.tx_contains("[PS] t="), "plot off: '[PS]' status snapshot restored");
 
-    // The 'W' VESC watch line is non-numeric too, so it is suppressed as well.
+    // The 'U' VESC watch line is non-numeric too, so it is suppressed as well.
     reset_test_state();
     mainState        = 98;
     vescWatchActive  = true;
@@ -4821,12 +4993,14 @@ static void test_sdlog_lifecycle_natural_completion() {
     if (f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE) {
         check(f->compare(0, 4, "BLG1") == 0,
               "SD lifecycle: the header opens with the 'BLG1' magic");
-        check((uint8_t)(*f)[4] == 1,
-              "SD lifecycle: the header declares format version 1");
+        check((uint8_t)(*f)[4] == 2,
+              "SD lifecycle: the header declares format version 2");
         check((uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE,
               "SD lifecycle: the header declares a 52-byte record size");
         check((uint8_t)(*f)[6] == LOG_TYPE_TP,
               "SD lifecycle: the header profile bitmask is LOG_TYPE_TP for a 'T' run");
+        check(sd_le<uint16_t>(*f, 18) == (uint16_t)FW_VERSION,
+              "SD lifecycle: the v2 header stamps FW_VERSION at offset 18");
 
         size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * expectedRecords;
         check(sd_le<uint32_t>(*f, tr + 0) == 0xFFFFFFFFu,
@@ -5090,14 +5264,16 @@ static void test_sdlog_record_schema() {
     if (f == nullptr || f->size() < LOG_HDR_SIZE + LOG_REC_SIZE) return;
 
     // ── Header ──────────────────────────────────────────────────────────────
-    check(f->compare(0, 4, "BLG1") == 0 && (uint8_t)(*f)[4] == 1 &&
+    check(f->compare(0, 4, "BLG1") == 0 && (uint8_t)(*f)[4] == 2 &&
           (uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE && (uint8_t)(*f)[6] == LOG_TYPE_PS,
-          "SD schema: the header carries magic, version 1, record size 52 and the PS type bit");
+          "SD schema: the header carries magic, version 2, record size 52 and the PS type bit");
     check(sd_le<uint32_t>(*f, 8) == 5000u && sd_le<uint32_t>(*f, 12) == 50000u,
           "SD schema: the header timebase is the millis()/micros() pair at open");
     check(sd_le<uint16_t>(*f, 16) == (uint16_t)(K_DROOP * 1000.0f + 0.5f),
           "SD schema: the header stores K_DROOP in milliohms for the decoder");
-    check(f->compare(18, 14, std::string(14, '\0')) == 0,
+    check(sd_le<uint16_t>(*f, 18) == (uint16_t)FW_VERSION,
+          "SD schema: the v2 header stamps FW_VERSION at offset 18");
+    check(f->compare(20, 12, std::string(12, '\0')) == 0,
           "SD schema: the header's reserved tail is zero-filled out to 32 bytes");
 
     // ── Record: build the expected 52 bytes independently, then memcmp ──────
@@ -5810,6 +5986,323 @@ static void test_sdlog_scan_failure_preserves_files() {
               "SD O_EXCL: an exclusive create of a FREE name still succeeds");
         g.close();
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 'T' trapezoid SHARE-SETPOINT SWEEP  ("T <Imax> <hold> <rate> [t,r1,…,rn]")
+// ═══════════════════════════════════════════════════════════════════════════════
+// The contract under test is an UNATTENDED SEQUENCE: the operator types one line and walks away,
+// so every failure here is silent and is only discovered from the card afterwards. Three things
+// therefore get asserted hard: (1) the grammar is all-or-nothing — a malformed list must start
+// NOTHING rather than a plain single run the operator believes is a sweep; (2) each run gets its
+// own file, which requires the next run to wait for the logger to go fully idle (an early start
+// makes logOpenForProfile() skip logging silently); (3) every operator stop path really does end
+// the sequence, since a sweep that outlives 'X' is exactly the trap 'X' exists to prevent.
+
+// Arm and type a trapezoid line through the real keypress path.
+static void tsweep_type_line(const char* line) {
+    Serial.rx_queue.push('T');
+    doState98();
+    feed_serial_line(line);
+}
+
+// Standard preconditions for a sweep case: State 98, motor node powered, clocks at a known origin.
+static void tsweep_setup() {
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    g_mock_millis = 1000;   // non-zero: a dwell comparison against a zero origin would pass by luck
+    g_mock_micros = 1000000;
+}
+
+// One refusal case: the line must leave the prompt cleared, no trapezoid, and no sweep.
+static void tsweep_check_refused(const char* line, const char* what) {
+    tsweep_setup();
+    tsweep_type_line(line);
+    doState98();
+    check(pendingInput == PEND_NONE && trapProfileActive == false && tsweepActive == false,
+          what);
+}
+
+static void test_tsweep_parsing() {
+    test_group("T sweep — grammar: a valid list arms the sequence, a malformed one starts nothing");
+
+    // ── Valid 2-ratio list ───────────────────────────────────────────────────
+    tsweep_setup();
+    tsweep_type_line(" 6 3 1 [2,0.3,0.7]");
+    check(tsweepActive == true && tsweepCount == 2 && tsweepIdx == 0,
+          "T sweep: a 2-ratio list arms a 2-run sweep starting at run 1");
+    check(tsweepDwellMs == 2000, "T sweep: the dwell seconds are committed in ms");
+    check(fabsf(tsweepRatios[0] - 0.3f) < 1e-6f && fabsf(tsweepRatios[1] - 0.7f) < 1e-6f,
+          "T sweep: the ratio list is committed in the order typed");
+    check(trapProfileActive == true && fabsf(trapImax - 6.0f) < 1e-6f && trapHoldMs == 3000,
+          "T sweep: run 1 starts immediately with the trapezoid parameters from the same line");
+    check(fabsf(power_share_setpoint - 0.3f) < 1e-6f && powerBalanceLive == true,
+          "T sweep: the FIRST ratio is applied as a live closed-loop setpoint before run 1");
+
+    // ── Single-ratio list is legal (degenerate sweep = one run at a set share) ─
+    tsweep_setup();
+    tsweep_type_line(" 6 3 1 [5,0.42]");
+    check(tsweepActive == true && tsweepCount == 1 && trapProfileActive == true,
+          "T sweep: a single-ratio list is legal (one run at one setpoint)");
+    check(fabsf(power_share_setpoint - 0.42f) < 1e-6f,
+          "T sweep: the single ratio is applied as the setpoint");
+
+    // ── Endpoints 0.0/1.0 are legal (channel-cutoff datapoints) ──────────────
+    tsweep_setup();
+    tsweep_type_line(" 6 3 1 [0,0,1]");
+    check(tsweepActive == true && tsweepCount == 2 &&
+          fabsf(tsweepRatios[0]) < 1e-6f && fabsf(tsweepRatios[1] - 1.0f) < 1e-6f,
+          "T sweep: the full [0,1] span is accepted (endpoints are cutoff datapoints)");
+
+    // ── Backward compatibility: the plain 3-value line is unchanged ──────────
+    tsweep_setup();
+    tsweep_type_line(" 6 3 1");
+    check(trapProfileActive == true && tsweepActive == false,
+          "T sweep: a plain 3-value 'T' line still starts a single NON-sweep run");
+
+    // ── Refusals: every one must start nothing at all ────────────────────────
+    tsweep_check_refused(" 6 3 1 [2,0.3,0.7",
+                         "T sweep: a missing ']' refuses the whole line");
+    tsweep_check_refused(" 6 3 1 []",
+                         "T sweep: an empty list '[]' refuses the whole line");
+    tsweep_check_refused(" 6 3 1 [2]",
+                         "T sweep: a list with a dwell but no setpoints refuses the whole line");
+    tsweep_check_refused(" 6 3 1 [2,0.3,]",
+                         "T sweep: a non-numeric (missing) list value refuses the whole line");
+    tsweep_check_refused(" 6 3 1 [2,1.5]",
+                         "T sweep: a setpoint above 1.0 refuses the whole line");
+    tsweep_check_refused(" 6 3 1 [2,-0.1]",
+                         "T sweep: a negative setpoint refuses the whole line");
+    tsweep_check_refused(" 6 3 1 [-1,0.3]",
+                         "T sweep: a negative dwell refuses the whole line");
+    tsweep_check_refused(" 6 3 1 [4000,0.3]",
+                         "T sweep: a dwell beyond TSWEEP_DWELL_MAX_S refuses the whole line");
+    tsweep_check_refused(" 6 3 1 [2,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1]",
+                         "T sweep: more than TSWEEP_MAX_RATIOS setpoints refuses the whole line");
+    tsweep_check_refused(" 6 3 1 [2,0.3] 5",
+                         "T sweep: trailing text after ']' refuses the whole line");
+    // The 4th-token rule: before the sweep existed this was silently ignored. It must NOT be —
+    // a run the operator thinks is a sweep but isn't is the failure this rule prevents.
+    tsweep_check_refused(" 6 3 1 5",
+                         "T sweep: a bare 4th value (no '[') refuses the whole line");
+
+    // ── Sweep + plot mode is refused (not silently reinterpreted) ────────────
+    tsweep_setup();
+    plotModeActive = true;
+    tsweep_type_line(" 6 3 1 [2,0.3,0.7]");
+    check(tsweepActive == false && trapProfileActive == false && plotArmTarget == PLOT_ARM_NONE,
+          "T sweep: a sweep list under plot mode is refused (no sweep, no armed run)");
+    // ...while a plain 'T' line under plot mode keeps its documented arming behaviour.
+    tsweep_setup();
+    plotModeActive = true;
+    tsweep_type_line(" 6 3 1");
+    check(plotArmTarget == PLOT_ARM_TRAP && tsweepActive == false,
+          "T sweep: a plain 'T' line under plot mode still ARMS, unchanged");
+    plotModeActive = false;
+}
+
+// Run the sweep's current trapezoid out to natural completion and let the logger drain.
+// 140 ms covers the 100 ms profile used throughout these cases plus the tick that notices the
+// completion and the handful of drain ticks that finish the file.
+static void tsweep_run_out() { sd_run_ms(140); }
+
+static void test_tsweep_end_to_end() {
+    test_group("T sweep — two runs, two files, dwell honoured between them");
+    tsweep_setup();
+
+    // 100 ms triangle (5 A at 100 A/s = 50 ms up + 50 ms down), 1 s dwell, two setpoints.
+    tsweep_type_line(" 5 0 100 [1,0.3,0.7]");
+    check(trapProfileActive == true && fabsf(power_share_setpoint - 0.3f) < 1e-6f,
+          "T sweep e2e: run 1 is live at share_sp = 0.3");
+    check(std::string(logFileName) == "TP0001.BLG",
+          "T sweep e2e: run 1 opens its own log, TP0001.BLG");
+
+    tsweep_run_out();
+    check(trapProfileActive == false && tsweepActive == true,
+          "T sweep e2e: run 1 completing does NOT end the sweep");
+    check(tsweepPhase == 2,
+          "T sweep e2e: with the log drained the sweep sits in COOLDOWN");
+    check(logActive == false && logCloseRequested == false,
+          "T sweep e2e: run 1's file is closed before the cool-down starts");
+
+    // Mid-dwell: nothing may start.
+    sd_run_ms(500);
+    check(trapProfileActive == false && sd_file("TP0002.BLG") == nullptr,
+          "T sweep e2e: no run starts while the cool-down dwell is still running");
+
+    // Past the dwell: run 2 fires with the SECOND setpoint and a NEW file. Ticked one ms at a
+    // time and stopped at the fire: run 2 is only 100 ms long, so a coarse advance would sail
+    // past its completion and assert against an already-finished sweep.
+    for (int i = 0; i < 2000 && !trapProfileActive; i++) sd_run_ms(1);
+    check(trapProfileActive == true && tsweepIdx == 1,
+          "T sweep e2e: run 2 fires once the dwell elapses");
+    check(fabsf(power_share_setpoint - 0.7f) < 1e-6f,
+          "T sweep e2e: run 2 runs at the second setpoint (0.7)");
+    check(std::string(logFileName) == "TP0002.BLG",
+          "T sweep e2e: run 2 gets its own file, TP0002.BLG");
+
+    tsweep_run_out();
+    check(tsweepActive == false,
+          "T sweep e2e: the sweep completes after the last run");
+    check(fabsf(power_share_setpoint - 0.5f) < 1e-6f && powerBalanceLive == false,
+          "T sweep e2e: completion restores the quiescent share state (0.5, loop off)");
+    sd_drain_until_closed();
+
+    // Both files must be complete, closed, and tagged as trapezoid runs.
+    for (const char* nm : {"TP0001.BLG", "TP0002.BLG"}) {
+        const std::string* f = sd_file(nm);
+        check(f != nullptr && f->size() > LOG_HDR_SIZE + LOG_REC_SIZE,
+              "T sweep e2e: each run left a populated file on the card");
+        if (f == nullptr || f->size() < LOG_HDR_SIZE + LOG_REC_SIZE) continue;
+        check((uint8_t)(*f)[6] == LOG_TYPE_TP,
+              "T sweep e2e: each sweep file carries the LOG_TYPE_TP header bitmask");
+        size_t nrec = (f->size() - LOG_HDR_SIZE) / LOG_REC_SIZE - 1;
+        size_t tr   = LOG_HDR_SIZE + LOG_REC_SIZE * nrec;
+        check(sd_le<uint32_t>(*f, tr + 0) == 0xFFFFFFFFu,
+              "T sweep e2e: each sweep file ends with the trailer sentinel");
+        check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_COMPLETE,
+              "T sweep e2e: each sweep run closes with LOG_CLOSE_COMPLETE (natural end)");
+        // The first record must already carry the run's setpoint — the whole reason the setpoint
+        // is applied BEFORE startTrapProfile() opens the log.
+        float sp0 = sd_le<float>(*f, LOG_HDR_SIZE + 4);
+        check(fabsf(sp0 - (std::string(nm) == "TP0001.BLG" ? 0.3f : 0.7f)) < 1e-6f,
+              "T sweep e2e: the file's FIRST record already carries that run's share setpoint");
+    }
+}
+
+static void test_tsweep_waits_for_log_idle() {
+    test_group("T sweep — the next run waits for the logger to go fully idle");
+    tsweep_setup();
+
+    // Dwell 0: the ONLY thing that can hold run 2 back is the logger state.
+    tsweep_type_line(" 5 0 100 [0,0.3,0.7]");
+    check(trapProfileActive == true, "T sweep log-gate: run 1 started");
+
+    // Run 1 out with the drain BLOCKED — the close request can never complete.
+    sd_run_ms(140, /*drain=*/false);
+    check(trapProfileActive == false && logCloseRequested == true,
+          "T sweep log-gate: run 1 finished with its file still closing (drain blocked)");
+    check(tsweepActive == true && tsweepPhase == 1,
+          "T sweep log-gate: the sweep parks in WAIT_LOG rather than starting run 2");
+
+    sd_run_ms(50, /*drain=*/false);
+    check(trapProfileActive == false && tsweepIdx == 0,
+          "T sweep log-gate: run 2 does NOT start while the close is pending, dwell 0 or not");
+
+    // Release the drain; the next ticks let the sweep proceed.
+    sd_drain_until_closed();
+    check(logActive == false && logCloseRequested == false,
+          "T sweep log-gate: the drain finished run 1's file");
+    sd_run_ms(3);
+    check(trapProfileActive == true && tsweepIdx == 1 &&
+          fabsf(power_share_setpoint - 0.7f) < 1e-6f,
+          "T sweep log-gate: run 2 starts on a later tick, once the logger is idle");
+    check(std::string(logFileName) == "TP0002.BLG",
+          "T sweep log-gate: run 2 still gets its own file (nothing was skipped)");
+}
+
+// Drive a sweep to its cool-down phase (run 1 complete, drained, dwell 10 s so it stays there).
+static void tsweep_into_cooldown() {
+    tsweep_setup();
+    tsweep_type_line(" 5 0 100 [10,0.3,0.7]");
+    sd_run_ms(140);
+}
+
+static void test_tsweep_cancel_paths() {
+    test_group("T sweep — every operator stop path ends the sequence");
+
+    // ── 'T' pressed mid-run-1 ────────────────────────────────────────────────
+    tsweep_setup();
+    tsweep_type_line(" 5 0 100 [1,0.3,0.7]");
+    sd_run_ms(20);   // mid-ramp
+    Serial.rx_queue.push('T');
+    doState98();
+    check(trapProfileActive == false && tsweepActive == false,
+          "T sweep cancel: 'T' mid-run stops the trapezoid AND the sweep");
+    check(fabsf(power_share_setpoint - 0.5f) < 1e-6f && powerBalanceLive == false,
+          "T sweep cancel: the 'T' stop restores the quiescent share state");
+    sd_drain_until_closed();
+    sd_run_ms(2000);   // well past the 1 s dwell that would have fired run 2
+    check(trapProfileActive == false && sd_file("TP0002.BLG") == nullptr,
+          "T sweep cancel: no queued run fires after the 'T' stop");
+
+    // ── 'T' pressed mid-cool-down (between runs) ─────────────────────────────
+    // Toggle symmetry (review 2026-08-11): with the trapezoid idle between sweep
+    // runs, 'T' must STOP the queued sweep, not open the parameter prompt and
+    // leave run k+1 armed behind it.
+    tsweep_into_cooldown();
+    Serial.rx_queue.push('T');
+    doState98();
+    check(tsweepActive == false,
+          "T sweep cancel: 'T' between runs stops the queued sweep");
+    check(pendingInput == PEND_NONE,
+          "T sweep cancel: 'T' between runs does NOT open the parameter prompt");
+    check(fabsf(power_share_setpoint - 0.5f) < 1e-6f && powerBalanceLive == false,
+          "T sweep cancel: the between-runs 'T' stop restores the quiescent share state");
+    sd_run_ms(20000);
+    check(trapProfileActive == false,
+          "T sweep cancel: no run fires after the between-runs 'T' stop");
+
+    // ── 'X' pressed mid-cool-down ────────────────────────────────────────────
+    tsweep_into_cooldown();
+    check(tsweepActive == true && tsweepPhase == 2, "T sweep cancel: (setup) sweep is cooling down");
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;   // set so we can confirm 'X' leaves it alone
+    Serial.rx_queue.push('X');
+    doState98();
+    check(tsweepActive == false,
+          "T sweep cancel: 'X' during the cool-down cancels the sweep");
+    check(fabsf(power_share_setpoint - 0.5f) < 1e-6f && powerBalanceLive == false,
+          "T sweep cancel: the 'X' cancel restores the quiescent share state");
+    // A sweep between runs has no profile flag set, so 'X' keeps the TRAPEZOID's switch semantics.
+    check(g_pin_value[MOT_PWR_ENABLE] == HIGH && g_pin_value[FC_CHARGE_ENABLE] == HIGH,
+          "T sweep cancel: 'X' on a sweep leaves the path switches as-is (trapezoid semantics)");
+    sd_run_ms(20000);
+    check(trapProfileActive == false,
+          "T sweep cancel: no run fires after 'X', dwell or not");
+
+    // ── 'Q' pressed mid-cool-down ────────────────────────────────────────────
+    tsweep_into_cooldown();
+    Serial.rx_queue.push('Q');
+    doState98();
+    check(mainState == 1, "T sweep cancel: 'Q' still exits State 98");
+    check(tsweepActive == false,
+          "T sweep cancel: 'Q' cancels the sweep — no queued run survives into Idle");
+    check(fabsf(power_share_setpoint - 0.5f) < 1e-6f && powerBalanceLive == false,
+          "T sweep cancel: the 'Q' cancel restores the quiescent share state");
+
+    // ── Another profile started mid-cool-down supersedes ─────────────────────
+    tsweep_into_cooldown();
+    setManualMotorCurrent(3.0f);   // 'R' precondition
+    Serial.rx_queue.push('R');
+    doState98();
+    check(powerShareProfileActive == true, "T sweep cancel: (setup) 'R' started");
+    check(tsweepActive == false,
+          "T sweep cancel: starting the 'R' share profile supersedes and cancels the sweep");
+    sd_run_ms(20000);
+    check(trapProfileActive == false,
+          "T sweep cancel: the superseded sweep never fires its remaining run");
+}
+
+static void test_tsweep_fire_time_preconditions() {
+    test_group("T sweep — preconditions are re-checked at FIRE time, not just at type-in");
+    tsweep_into_cooldown();
+
+    // A bring-up started inside the dwell: the sweep must abandon rather than fire a trapezoid
+    // into a running switch sequence (same rule, and same reason, as plotArmTick()).
+    // The dwell is jumped rather than ticked out so the bring-up is still ACTIVE on the fire
+    // tick: ticking it would run the bring-up machine to its own timeout first, which is a test
+    // of busBringupTick(), not of this guard.
+    g_mock_millis += 11000;
+    bringupActive = true;
+    doState98();
+    check(tsweepActive == false,
+          "T sweep fire-time: a bring-up started during the dwell cancels the sweep");
+    check(trapProfileActive == false,
+          "T sweep fire-time: the cancelled sweep does not start its queued run");
+    check(fabsf(power_share_setpoint - 0.5f) < 1e-6f && powerBalanceLive == false,
+          "T sweep fire-time: the cancel restores the quiescent share state");
+    bringupActive = false;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -6546,12 +7039,19 @@ static void test_y_no_charging_manager() {
     I_fc   = 2.0f;
     I_batt = 2.0f;
 
+    // NOTE (2026-08-10 full-span actuation): BT_BUS_ENABLE is now ALSO written by
+    // applyShareRatio()'s channel cutoff when the commanded droop ratio leaves
+    // [DROOP_R_MIN, DROOP_R_MAX]. FC_CHARGE_ENABLE is therefore the clean discriminator — only
+    // chargingControl() ever writes it — and the BT_BUS assertions below are deliberately confined
+    // to the mid-share regions, where the ratio stays inside the band and no cutoff can fire.
+    //
     // Walk several regions, well past the 50 Hz charging cadence many times over.
-    y_run_to(Y_R1 + 2000);
-    check(digitalRead(BT_BUS_ENABLE) == HIGH,
-          "Y charging: BT_BUS_ENABLE stays HIGH through R1 — the battery is never taken off the bus");
+    y_run_to(Y_R1 + 2000);   // share still 0.50 here — droop ratio well inside the band
     check(digitalRead(FC_CHARGE_ENABLE) == LOW,
           "Y charging: FC_CHARGE_ENABLE stays LOW through R1 — the FC-charge path is never opened");
+    check(digitalRead(BT_BUS_ENABLE) == HIGH,
+          "Y charging: BT_BUS_ENABLE stays HIGH in the mid-share regions — the battery is not "
+          "taken off the bus");
 
     // The same tick must show the control stack IS being driven: the omission is of the CHARGING
     // manager only, not of the motor/droop halves.
@@ -6564,12 +7064,12 @@ static void test_y_no_charging_manager() {
           "Y charging: the droop half of the stack runs too (powerBalance writes the MDACs)");
 
     y_run_to(Y_R4 + 2000);
-    check(digitalRead(BT_BUS_ENABLE) == HIGH && digitalRead(FC_CHARGE_ENABLE) == LOW,
-          "Y charging: the switches are still untouched deep into R4, with charge_goal set high");
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "Y charging: FC_CHARGE_ENABLE is still LOW deep into R4, with charge_goal set high");
 
     y_run_to(Y_R8 + 1500);
-    check(digitalRead(BT_BUS_ENABLE) == HIGH && digitalRead(FC_CHARGE_ENABLE) == LOW,
-          "Y charging: the charge/regen paths stay under operator control for the whole run");
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "Y charging: the charge path stays under operator control for the whole run");
     check(combinedProfileActive && combinedRegionIdx == 8,
           "Y charging: the profile itself ran normally the whole time");
 
@@ -6761,6 +7261,742 @@ static void test_y_boundary_params() {
           "Y status readback: 'S' also carries the driveCycle line");
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// 'W' combined commanded-current + power-share profile (the current-mode twin of 'Y')
+// ═══════════════════════════════════════════════════════════════════════════════
+// 'W' walks the SAME COMBINED_PROFILE[] table as 'Y' through the shared advanceComboRegion()
+// helper, but scales the normalised motor column into AMPS and commands it directly (no velocity
+// PI), so it is usable on an encoder-less bench. The Y_R* cumulative-time table above therefore
+// applies verbatim, and the two profiles' shapes are supposed to be identical by construction —
+// test_w_y_equivalence() is the assertion that says so.
+//
+// Motor-axis plateaus at the default Imax = 5.0 A (normalised 0 / 0.2 / 0.5 / 0.6 / 1.0):
+//   0 A, 1.0 A, 2.5 A, 3.0 A, 5.0 A.
+
+// 'W' start through the real keypress + parameter-line path. Deliberately shares g_y_t0 and
+// y_run_to() with the 'Y' helpers: both profiles walk one table, so one timebase helper serves
+// both — and the equivalence test can then drive them with literally identical stepping code.
+static void w_start(const char* params) {
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    Serial.rx_queue.push('W');
+    doState98();
+    feed_serial_line(params);
+    g_y_t0 = g_mock_millis;
+}
+
+// ─── 1. Parameter line: defaults, one value, two values, warn band, ceiling ─
+static void test_w_params_and_defaults() {
+    test_group("W current profile — parameter line: defaults, one/two values, warn band, ceiling");
+
+    // Bare Enter must ACCEPT (run the defaults), not cancel — the same all-optional grammar 'Y'
+    // has, and the same regression risk (a silent no-op looks like a dead key).
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    Serial.rx_queue.push('W');
+    doState98();
+    check(pendingInput == PEND_W_PARAMS,
+          "W params: 'W' arms the single-line parameter prompt");
+    feed_serial_line("");
+    check(wProfileActive == true,
+          "W params: a bare Enter starts the profile rather than cancelling the prompt");
+    check(near_f(wProfileImax, W_IMAX_DEFAULT) && near_f(wProfileBoundLo, Y_BOUND_DEFAULT),
+          "W params: a bare Enter commits the documented defaults (Imax 5.0 A, b 0)");
+    check(wRegionIdx == 0, "W params: the run begins at region 0");
+
+    reset_test_state();
+    w_start(" 6");
+    check(wProfileActive == true && near_f(wProfileImax, 6.0f) && near_f(wProfileBoundLo, 0.0f),
+          "W params: one value \"W 6\" sets Imax and leaves the share bound at its default");
+
+    reset_test_state();
+    w_start(" 6 0.0");
+    check(wProfileActive == true && near_f(wProfileImax, 6.0f) && near_f(wProfileBoundLo, 0.0f),
+          "W params: an explicit zero bound \"W 6 0.0\" is accepted and means no clipping");
+
+    reset_test_state();
+    w_start(" 6 0.3");
+    check(wProfileActive == true && near_f(wProfileImax, 6.0f) && near_f(wProfileBoundLo, 0.3f),
+          "W params: two values commit both Imax and the share bound");
+
+    // The share bound's warn band is shared with 'Y' (validateShareBound), so it must behave the
+    // same way here: accepted, with a warning.
+    reset_test_state();
+    w_start(" 5 0.4");
+    check(wProfileActive == true && near_f(wProfileBoundLo, 0.4f) && Serial.tx_contains("WARN: b > "),
+          "W params: a bound above Y_BOUND_WARN is accepted with the compressed-plateau warning");
+
+    reset_test_state();
+    w_start(" 5 0.35");
+    check(wProfileActive == true && !Serial.tx_contains("WARN: b > "),
+          "W params: a bound exactly at Y_BOUND_WARN starts without a warning (strict >)");
+
+    // The ceiling is the TRAPEZOID's (ESC rating), not the 5 A velocity-path budget — this
+    // profile commands phase current through the same chokepoint 'T' uses.
+    reset_test_state();
+    w_start(" 25");
+    check(wProfileActive == true && near_f(wProfileImax, TRAP_I_ABS_MAX),
+          "W params: Imax exactly at TRAP_I_ABS_MAX (25 A) is accepted — the check is strict >");
+    check(!Serial.tx_contains("Imax must be <= "),
+          "W params: the ceiling refusal does not fire at the boundary value itself");
+
+    reset_test_state();
+    w_start(" 25.01");
+    check(wProfileActive == false && Serial.tx_contains("Imax must be <= "),
+          "W params: an Imax just above TRAP_I_ABS_MAX is refused");
+
+    // A peak above MOTOR_I_CMD_MAX (the 5 A source budget) must still be accepted — same policy
+    // as 'T', and the reason the ceiling is TRAP_I_ABS_MAX in the first place.
+    reset_test_state();
+    w_start(" 10");
+    check(wProfileActive == true && near_f(wProfileImax, 10.0f),
+          "W params: a peak above MOTOR_I_CMD_MAX is accepted un-clamped, as 'T' accepts it");
+}
+
+// ─── 2. Refusals — and the two deliberate NON-refusals ─────────────────────
+static void test_w_refusals() {
+    test_group("W current profile — refusals, plus the encoder-less/unpowered cases it must ALLOW");
+
+    auto check_idle = [&](const char* what) {
+        char buf[160];
+        snprintf(buf, sizeof(buf), "W refusal (%s): no profile starts and no log file is opened", what);
+        check(wProfileActive == false && logActive == false && g_sd_state.files.empty(), buf);
+    };
+
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    bringupActive = true;
+    Serial.rx_queue.push('W');
+    doState98();
+    check(pendingInput == PEND_NONE && Serial.tx_contains("bring-up in progress"),
+          "W refusal: 'W' during a staged bring-up is refused at the keypress");
+    check_idle("bring-up active");
+    bringupActive = false;
+
+    reset_test_state();
+    w_start(" 0");
+    check(Serial.tx_contains("Imax must be > 0"), "W refusal: an Imax of zero is rejected");
+    check_idle("Imax = 0");
+
+    reset_test_state();
+    w_start(" -5");
+    check(Serial.tx_contains("Imax must be > 0"),
+          "W refusal: a negative Imax is rejected (unlike 'T', the table has no mirrored form)");
+    check_idle("Imax negative");
+
+    reset_test_state();
+    w_start(" 30");
+    check(Serial.tx_contains("Imax must be <= "),
+          "W refusal: an Imax above the ESC rating is rejected");
+    check_idle("Imax above TRAP_I_ABS_MAX");
+
+    reset_test_state();
+    w_start(" 5 0.5");
+    check(Serial.tx_contains("share bound b must be < 0.5"),
+          "W refusal: b = 0.5 is rejected — the band [b, 1-b] collapses to a point");
+    check_idle("b = 0.5");
+
+    reset_test_state();
+    w_start(" 5 -0.1");
+    check(Serial.tx_contains("share bound b must be >= 0"),
+          "W refusal: a negative share bound is rejected");
+    check_idle("b negative");
+
+    reset_test_state();
+    w_start(" 5 0.3 2");
+    check(Serial.tx_contains("at most two values"),
+          "W refusal: a third value is rejected rather than silently ignored");
+    check_idle("third value");
+
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    Serial.rx_queue.push('W');
+    doState98();
+    check(pendingInput == PEND_W_PARAMS, "W refusal: the parameter prompt is armed before the cancel");
+    Serial.rx_queue.push('Z');
+    doState98();
+    check(pendingInput == PEND_NONE && Serial.tx_contains("(input cancelled)"),
+          "W refusal: a non-numeric key cancels the parameter entry");
+    Serial.rx_queue.push('\n');
+    doState98();
+    check_idle("non-numeric cancel");
+
+    // ── The two deliberate NON-refusals. These are the entire reason 'W' exists alongside 'Y':
+    // it bypasses the velocity PI, so neither an uncalibrated encoder chain nor an unpowered
+    // MOT_PWR rail is a reason to refuse.
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = LOW;
+    Serial.rx_queue.push('W');
+    doState98();
+    check(pendingInput == PEND_W_PARAMS && Serial.tx_contains("WARN: MOT_PWR_ENABLE is LOW"),
+          "W allows: MOT_PWR_ENABLE LOW only WARNS — the VESC may have its own bench supply");
+    feed_serial_line(" 5");
+    check(wProfileActive == true,
+          "W allows: the profile starts with MOT_PWR_ENABLE LOW (no gate, same policy as 'T')");
+
+    reset_test_state();
+    velocityChainCalibratedFlag = false;   // 'Y' and 'D' would both refuse here
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    Serial.rx_queue.push('W');
+    doState98();
+    check(pendingInput == PEND_W_PARAMS && !Serial.tx_contains("needs a calibrated velocity chain"),
+          "W allows: an uncalibrated velocity chain is NOT a refusal — the velocity PI is bypassed");
+    feed_serial_line(" 5");
+    check(wProfileActive == true,
+          "W allows: the profile runs on an encoder-less bench, which is the point of 'W'");
+}
+
+// ─── 3. Full 40 s region walk at the defaults ──────────────────────────────
+static void test_w_region_walk() {
+    test_group("W current profile — commanded current and share track the shared region table");
+    reset_test_state();
+
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    w_start("");
+    check(wProfileActive && near_f(wProfileImax, 5.0f) && near_f(wProfileBoundLo, 0.0f),
+          "W walk: the run starts at the defaults (Imax 5.0 A, no share clip)");
+
+    y_run_to(1000);
+    check(wRegionIdx == 0 && near_f(wCmdA, 0.0f) && near_f(power_share_setpoint, 0.5f),
+          "W walk: R0 holds 0 A and share 0.50 while the bench settles");
+
+    // R1: current ramps 0 -> 3.0 A (normalised 0 -> 0.6 x 5 A); midpoint is half way up.
+    y_run_to(Y_R1 + 2000);
+    check(wRegionIdx == 1 && near_f(wCmdA, 1.5f, 1e-3f),
+          "W walk: R1 midpoint commands 1.5 A — half of the 0 -> 3.0 A ramp");
+    check(near_f(power_share_setpoint, 0.5f),
+          "W walk: R1 leaves the share axis flat — the current ramp is a SOLO excitation");
+    check(!vesc.current_calls.empty() && near_f(vesc.last_current, 1.5f, 0.05f),
+          "W walk: the commanded current actually reaches the VESC");
+
+    y_run_to(Y_R2 + 1000);
+    check(wRegionIdx == 2 && near_f(wCmdA, 3.0f, 1e-3f) && near_f(power_share_setpoint, 0.5f),
+          "W walk: R2 buffers at the 3.0 A plateau with the share still at 0.50");
+
+    // R3: share steps to 0.65 on the region's first tick while the current holds.
+    y_run_to(Y_R3 + 1);
+    check(wRegionIdx == 3 && near_f(power_share_setpoint, 0.65f, 1e-3f) &&
+          near_f(wCmdA, 3.0f, 1e-2f),
+          "W walk: R3 steps the share to 0.65 with the current axis untouched (SOLO share step)");
+
+    // R4: BOTH axes ramp (current up, share down) — the interaction test.
+    y_run_to(Y_R4 + 2000);
+    check(wRegionIdx == 4 && near_f(wCmdA, 4.0f, 1e-3f),
+          "W walk: R4 midpoint commands 4.0 A — mid-ramp between the 3.0 A and 5.0 A plateaus");
+    check(near_f(power_share_setpoint, 0.5f, 1e-3f),
+          "W walk: R4 midpoint has the share mid-ramp between 0.65 and 0.35 — both axes move");
+
+    y_run_to(Y_R5 + 1000);
+    check(near_f(wCmdA, 5.0f, 1e-3f) && near_f(power_share_setpoint, 0.35f, 1e-3f),
+          "W walk: R5 buffers at the full 5.0 A peak with the share at 0.35");
+
+    y_run_to(Y_R6 + 750);
+    check(wRegionIdx == 6 && near_f(power_share_setpoint, 1.0f) && near_f(wCmdA, 5.0f, 1e-3f),
+          "W walk: R6 drives the share to 1.00 (all-FC) while holding the current peak");
+
+    // R8: BOTH axes step in the same tick (current 5.0 -> 2.5 A, share 0.35 -> 0.65).
+    y_run_to(Y_R8 - 1);
+    check(near_f(wCmdA, 5.0f, 1e-2f) && near_f(power_share_setpoint, 0.35f, 1e-3f),
+          "W walk: R7 ends at 5.0 A / share 0.35 on the last tick before R8");
+    y_run_to(Y_R8 + 1);
+    check(wRegionIdx == 8 && near_f(wCmdA, 2.5f, 1e-2f) &&
+          near_f(power_share_setpoint, 0.65f, 1e-3f),
+          "W walk: R8 steps BOTH axes in the same tick (current down to 2.5 A, share up to 0.65)");
+
+    y_run_to(Y_R10 + 1500);
+    check(wRegionIdx == 10 && near_f(power_share_setpoint, 0.325f, 1e-3f) &&
+          near_f(wCmdA, 2.5f, 1e-3f),
+          "W walk: R10 midpoint has the share half way down its ramp with the current flat");
+
+    y_run_to(Y_R11 + 750);
+    check(wRegionIdx == 11 && near_f(power_share_setpoint, 0.0f),
+          "W walk: R11 drives the share to 0.00 (all-BT) to exercise the other clamp");
+
+    y_run_to(Y_R13 + 1000);
+    check(wRegionIdx == 13 && near_f(wCmdA, 1.0f, 1e-3f) &&
+          near_f(power_share_setpoint, 0.5f),
+          "W walk: R13 steps the current down to 1.0 A with the share recovered to 0.50");
+
+    y_run_to(Y_R14 + 1500);
+    check(wRegionIdx == 14 && near_f(wCmdA, 0.5f, 1e-3f),
+          "W walk: R14 coasts the current down, half way at 0.5 A");
+
+    // Natural completion.
+    y_run_to(Y_R15 + 1000);
+    check(wRegionIdx == 15 && near_f(wCmdA, 0.0f),
+          "W walk: R15 holds at zero current before completion");
+    vesc.reset();
+    y_run_to(Y_END + 1);
+    check(wProfileActive == false,
+          "W walk: the profile deactivates on natural completion after the last region");
+    check(near_f(wCmdA, 0.0f),
+          "W walk: natural completion zeroes the commanded-current mirror");
+    check(!vesc.current_calls.empty() && vesc.last_current == 0.0f,
+          "W walk: natural completion flushes vesc.setCurrent(0) — the motor is not left driving");
+    check(near_f(power_share_setpoint, 0.5f),
+          "W walk: natural completion returns the share setpoint to balanced (0.50)");
+    check(manualMotorMode == MOTOR_TEST_OFF,
+          "W walk: natural completion clears manualMotorMode (haltMotorOutput symmetry)");
+
+    sd_drain_until_closed();
+    const std::string* f = sd_file("WP0001.BLG");
+    check(f != nullptr && f->size() > LOG_HDR_SIZE + LOG_REC_SIZE,
+          "W walk: the run's log file exists and holds records");
+    if (f) {
+        size_t tr = f->size() - LOG_REC_SIZE;
+        check(sd_le<uint32_t>(*f, tr + 0) == 0xFFFFFFFFu &&
+              (uint8_t)(*f)[tr + 12] == LOG_CLOSE_COMPLETE,
+              "W walk: the trailer records LOG_CLOSE_COMPLETE for a naturally-finished run");
+    }
+}
+
+// ─── 4. Imax scaling and the shared share-clip ─────────────────────────────
+static void test_w_scaling_and_clip() {
+    test_group("W current profile — the current axis scales with Imax; the share clip is shared");
+    reset_test_state();
+
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    w_start(" 6");
+    check(near_f(wProfileImax, 6.0f), "W scaling: the run committed Imax = 6.0 A");
+
+    // R4's normalised 1.0 endpoint, observed on R5's flat hold (the transition tick sets nothing).
+    y_run_to(Y_R5 + 1000);
+    check(wRegionIdx == 5 && near_f(wCmdA, 6.0f, 1e-3f),
+          "W scaling: R4's normalised 1.0 endpoint scales to the full 6.0 A at Imax = 6");
+    check(near_f(power_share_setpoint, 0.35f, 1e-3f),
+          "W scaling: the share axis is unaffected by Imax — it is absolute, not normalised");
+
+    y_run_to(Y_R8 + 1500);
+    check(wRegionIdx == 8 && near_f(wCmdA, 3.0f, 1e-3f),
+          "W scaling: R8's normalised 0.5 step scales to 3.0 A at Imax = 6");
+    check(near_f(power_share_setpoint, 0.65f, 1e-3f),
+          "W scaling: R8's share plateau is the same 0.65 the defaults produce");
+
+    y_run_to(Y_R13 + 1000);
+    check(near_f(wCmdA, 1.2f, 1e-3f),
+          "W scaling: mid-table plateaus scale too — R13's 0.2 becomes 1.2 A");
+
+    // ── The share clip comes from the SHARED helper, so it must behave exactly as it does for
+    // 'Y': post-interpolation, with the excursions flattening at the band edge.
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    w_start(" 5 0.3");   // band [0.30, 0.70]
+    y_run_to(Y_R3 + 1500);
+    check(near_f(power_share_setpoint, 0.65f, 1e-3f),
+          "W clip: R3's 0.65 plateau is inside [0.30, 0.70] and passes through unclipped");
+    y_run_to(Y_R6 + 750);
+    check(near_f(power_share_setpoint, 0.7f),
+          "W clip: R6's 1.00 excursion flattens at the upper bound 0.70, exactly as under 'Y'");
+    y_run_to(Y_R10 + 1000);
+    check(near_f(power_share_setpoint, 0.65f - 0.65f * (1000.0f / 3000.0f), 1e-3f),
+          "W clip: R10's ramp keeps its full slope before the bound crossing (post-interp clip)");
+    y_run_to(Y_R10 + 2500);
+    check(near_f(power_share_setpoint, 0.3f),
+          "W clip: R10 pins at 0.30 after the crossing — the same kink the 'Y' profile produces");
+    y_run_to(Y_R11 + 750);
+    check(near_f(power_share_setpoint, 0.3f),
+          "W clip: R11's 0.00 excursion flattens at the lower bound 0.30");
+    check(near_f(wCmdA, 2.5f, 1e-3f),
+          "W clip: the share band never touches the current axis");
+}
+
+// ─── 5. Y/W equivalence — the shared-table guarantee ───────────────────────
+// This is the test that fails the moment the two advance paths diverge. Both profiles are
+// supposed to be the SAME waveform with a different motor unit; anything else silently makes two
+// bench runs incomparable, which is the entire reason they share one table and one helper.
+static void test_w_y_equivalence() {
+    test_group("W/Y equivalence — one region table, two motor units, identical shape");
+
+    static const uint32_t PTS[] = {
+        Y_R0 + 1000,  Y_R1 + 1000,  Y_R1 + 2000,  Y_R1 + 3000, Y_R2 + 1000,
+        Y_R3 + 1500,  Y_R4 + 1000,  Y_R4 + 2000,  Y_R4 + 3000, Y_R5 + 1000,
+        Y_R6 + 750,   Y_R7 + 1750,  Y_R8 + 1500,  Y_R9 + 1000, Y_R10 + 500,
+        Y_R10 + 1500, Y_R10 + 2500, Y_R11 + 750,  Y_R12 + 750, Y_R13 + 1000,
+        Y_R14 + 1500, Y_R15 + 1000,
+    };
+    const int NPTS = (int)(sizeof(PTS) / sizeof(PTS[0]));
+
+    const float VMAX = 2.0f;    // deliberately NOT 1.0, so a missing scale factor cannot hide
+    const float IMAX = 8.0f;
+    const float BOUND = 0.3f;   // a clipped band, so the shared clip is inside the comparison
+    float yShare[32], yAxis[32], wShare[32], wAxis[32];
+    uint8_t yRegion[32], wRegion[32];
+
+    // ── Y run ───────────────────────────────────────────────────────────────
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start(" 2 0.3");
+    check(combinedProfileActive && near_f(yProfileVmax, VMAX) && near_f(yProfileBoundLo, BOUND),
+          "W/Y equivalence: the 'Y' reference run started with Vmax 2.0 and band [0.30, 0.70]");
+    for (int i = 0; i < NPTS; i++) {
+        y_run_to(PTS[i]);
+        yShare[i]  = power_share_setpoint;
+        yAxis[i]   = v_setpoint;
+        yRegion[i] = combinedRegionIdx;
+    }
+
+    // ── W run, identical stepping code ─────────────────────────────────────
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    w_start(" 8 0.3");
+    check(wProfileActive && near_f(wProfileImax, IMAX) && near_f(wProfileBoundLo, BOUND),
+          "W/Y equivalence: the 'W' run started with Imax 8.0 A and the same band");
+    for (int i = 0; i < NPTS; i++) {
+        y_run_to(PTS[i]);
+        wShare[i]  = power_share_setpoint;
+        wAxis[i]   = wCmdA;
+        wRegion[i] = wRegionIdx;
+    }
+
+    // ── Compare ────────────────────────────────────────────────────────────
+    bool regionsMatch = true, shareMatch = true, axisMatch = true;
+    int  firstBadRegion = -1, firstBadShare = -1, firstBadAxis = -1;
+    const float scale = IMAX / VMAX;   // 4.0 — W amps per Y m/s
+    for (int i = 0; i < NPTS; i++) {
+        if (yRegion[i] != wRegion[i] && regionsMatch) { regionsMatch = false; firstBadRegion = i; }
+        if (yShare[i] != wShare[i]   && shareMatch)   { shareMatch   = false; firstBadShare  = i; }
+        if (!near_f(wAxis[i], yAxis[i] * scale, 1e-3f) && axisMatch) {
+            axisMatch = false; firstBadAxis = i;
+        }
+    }
+    if (firstBadRegion >= 0)
+        printf("    (region mismatch at point %d: Y=%u W=%u)\n",
+               firstBadRegion, yRegion[firstBadRegion], wRegion[firstBadRegion]);
+    if (firstBadShare >= 0)
+        printf("    (share mismatch at point %d: Y=%.6f W=%.6f)\n",
+               firstBadShare, (double)yShare[firstBadShare], (double)wShare[firstBadShare]);
+    if (firstBadAxis >= 0)
+        printf("    (axis mismatch at point %d: Y=%.6f x%.2f = %.6f, W=%.6f)\n",
+               firstBadAxis, (double)yAxis[firstBadAxis], (double)scale,
+               (double)(yAxis[firstBadAxis] * scale), (double)wAxis[firstBadAxis]);
+
+    check(regionsMatch,
+          "W/Y equivalence: both profiles are in the same region at all 22 sampled points");
+    check(shareMatch,
+          "W/Y equivalence: the share sequence is BIT-IDENTICAL between 'Y' and 'W' (shared "
+          "interpolation and shared post-interpolation clip)");
+    check(axisMatch,
+          "W/Y equivalence: the motor axis is the same normalised shape — W amps equal Y m/s "
+          "times Imax/Vmax at every sampled point");
+
+    // Guard against a vacuous pass: the sampled points must actually contain movement on both
+    // axes, otherwise "identical" would just mean "both constant".
+    bool axisVaries = false, shareVaries = false;
+    for (int i = 1; i < NPTS; i++) {
+        if (!near_f(yAxis[i], yAxis[0]))  axisVaries  = true;
+        if (!near_f(yShare[i], yShare[0])) shareVaries = true;
+    }
+    check(axisVaries && shareVaries,
+          "W/Y equivalence: the sampled points genuinely exercise both axes (not a flat comparison)");
+    check(near_f(wAxis[10], 8.0f, 1e-3f),
+          "W/Y equivalence: the R6 sample really is at the full 8.0 A peak, so the scale factor is "
+          "load-bearing in the comparison above");
+}
+
+// ─── 6. Stop paths and mutual exclusion ────────────────────────────────────
+static void test_w_stop_x_q_exclusion() {
+    test_group("W current profile — stop-toggle, 'X', 'Q' and mutual exclusion with D/R/T/Y");
+
+    // ── (a) 'W' again mid-run.
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    w_start("");
+    y_run_to(Y_R4 + 1000, /*drain=*/true);
+    check(wProfileActive && wRegionIdx == 4, "W stop: the run is mid-R4 before the stop key");
+    uint32_t recs = logRecordsWritten;
+    g_pin_value[REGEN_ENABLE] = HIGH;
+    vesc.reset();
+    Serial.rx_queue.push('W');
+    doState98();
+    check(wProfileActive == false && near_f(wCmdA, 0.0f),
+          "W stop: the 'W' stop-toggle clears the profile and its commanded-current mirror");
+    check(!vesc.current_calls.empty() && vesc.last_current == 0.0f,
+          "W stop: the stop flushes vesc.setCurrent(0) immediately");
+    check(digitalRead(REGEN_ENABLE) == LOW,
+          "W stop: the stop parks the path switches (the share axis manipulates the bus config)");
+    check(near_f(power_share_setpoint, 0.5f),
+          "W stop: the stop returns the share setpoint to balanced");
+    sd_drain_until_closed();
+    {
+        const std::string* f = sd_file("WP0001.BLG");
+        check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * recs + LOG_REC_SIZE,
+              "W stop: the stopped run's file holds every drained record plus the trailer");
+        if (f) check((uint8_t)(*f)[LOG_HDR_SIZE + LOG_REC_SIZE * recs + 12] == LOG_CLOSE_STOP,
+                     "W stop: the trailer records LOG_CLOSE_STOP");
+    }
+
+    // ── (b) 'X' universal stop.
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    w_start("");
+    y_run_to(Y_R6 + 500, /*drain=*/true);
+    recs = logRecordsWritten;
+    g_pin_value[REGEN_ENABLE] = HIGH;
+    vesc.reset();
+    Serial.rx_queue.push('X');
+    doState98();
+    check(wProfileActive == false && near_f(wCmdA, 0.0f) && manualMotorMode == MOTOR_TEST_OFF,
+          "W 'X': the universal stop cancels the current profile and the manual modes");
+    check(!vesc.current_calls.empty() && vesc.last_current == 0.0f,
+          "W 'X': the universal stop zeroes the motor");
+    check(digitalRead(REGEN_ENABLE) == LOW,
+          "W 'X': hadW makes the universal stop park the switches, as it does for 'D'/'R'/'Y'");
+    check(near_f(power_share_setpoint, 0.5f),
+          "W 'X': hadW resets the share setpoint, matching the 'R'/'Y' semantics");
+    sd_drain_until_closed();
+    {
+        const std::string* f = sd_file("WP0001.BLG");
+        check(f != nullptr &&
+              (uint8_t)(*f)[LOG_HDR_SIZE + LOG_REC_SIZE * recs + 12] == LOG_CLOSE_X,
+              "W 'X': the trailer records LOG_CLOSE_X");
+    }
+
+    // ── (c) 'Q' exit.
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    w_start("");
+    y_run_to(Y_R2 + 500, /*drain=*/true);
+    recs = logRecordsWritten;
+    vesc.reset();
+    Serial.rx_queue.push('Q');
+    doState98();
+    check(wProfileActive == false && near_f(wCmdA, 0.0f) && mainState == 1,
+          "W 'Q': the exit clears the current profile and returns to Idle");
+    check(!vesc.current_calls.empty() && vesc.last_current == 0.0f,
+          "W 'Q': the exit flushes vesc.setCurrent(0) before cutting motor power");
+    sd_drain_until_closed();
+    {
+        const std::string* f = sd_file("WP0001.BLG");
+        check(f != nullptr &&
+              (uint8_t)(*f)[LOG_HDR_SIZE + LOG_REC_SIZE * recs + 12] == LOG_CLOSE_Q,
+              "W 'Q': the trailer records LOG_CLOSE_Q");
+    }
+
+    // ── (d) W killed by each of the others.
+    reset_test_state(); g_mock_millis = 1000; w_start("");
+    Serial.rx_queue.push('D'); doState98();
+    check(driveCycleActive && !wProfileActive,
+          "W exclusion: starting the drive cycle clears the current profile");
+
+    reset_test_state(); g_mock_millis = 1000; w_start("");
+    setManualMotorCurrent(3.0f);
+    Serial.rx_queue.push('R'); doState98();
+    check(powerShareProfileActive && !wProfileActive,
+          "W exclusion: starting the power-share profile clears the current profile");
+
+    reset_test_state(); g_mock_millis = 1000; w_start("");
+    y_start("");
+    check(combinedProfileActive && !wProfileActive && near_f(wCmdA, 0.0f),
+          "W exclusion: starting 'Y' clears the current profile and its command mirror");
+
+    reset_test_state(); g_mock_millis = 1000; w_start("");
+    Serial.rx_queue.push('T'); doState98();
+    feed_serial_line(" 5 0 100");
+    check(trapProfileActive && !wProfileActive,
+          "W exclusion: starting the trapezoid clears the current profile");
+
+    // ── (e) The others killed by W.
+    reset_test_state(); g_mock_millis = 1000;
+    y_start("");
+    check(combinedProfileActive, "W exclusion: a 'Y' run is active before 'W'");
+    w_start("");
+    check(wProfileActive && !combinedProfileActive,
+          "W exclusion: starting 'W' clears a running 'Y' (both directions covered)");
+
+    reset_test_state(); g_mock_millis = 1000;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    setManualMotorCurrent(3.0f);
+    Serial.rx_queue.push('R'); doState98();
+    w_start("");
+    check(wProfileActive && !powerShareProfileActive,
+          "W exclusion: starting 'W' clears a running power-share profile");
+
+    reset_test_state(); g_mock_millis = 1000;
+    trapProfileActive = true; trapCmdA = 3.5f;
+    w_start("");
+    check(wProfileActive && !trapProfileActive && trapCmdA == 0.0f,
+          "W exclusion: starting 'W' clears an active trapezoid and its command");
+
+    reset_test_state(); g_mock_millis = 1000;
+    driveCycleActive = true;
+    w_start("");
+    check(wProfileActive && !driveCycleActive,
+          "W exclusion: starting 'W' clears a running drive cycle");
+}
+
+// ─── 7. Logging: WP prefix, PS|TP typemask, ps_phase + trap_phase ──────────
+static void test_w_logging() {
+    test_group("W current profile — logs under the WP prefix with the share+current phase bytes");
+    reset_test_state();
+
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    w_start("");
+    check(logActive && std::string(logFileName) == "WP0001.BLG",
+          "W logging: a current-combo run files under the WP prefix, not PS or TP");
+
+    y_run_to(Y_R3 + 1500, /*drain=*/true);
+    check(wRegionIdx == 3, "W logging: the run is inside region 3 when the record is taken");
+    uint32_t lastIdx = logRecordsWritten - 1;
+
+    const std::string* f = sd_file("WP0001.BLG");
+    check(f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE * (lastIdx + 1),
+          "W logging: the records reached the card");
+    if (f && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE * (lastIdx + 1)) {
+        check((uint8_t)(*f)[6] == (uint8_t)(LOG_TYPE_PS | LOG_TYPE_TP),
+              "W logging: the header type field is the PS|TP bitmask (share axis + current axis)");
+        size_t rec = LOG_HDR_SIZE + LOG_REC_SIZE * lastIdx;
+        check((uint8_t)(*f)[rec + REC_OFF_PS_PHASE] == 3 &&
+              (uint8_t)(*f)[rec + REC_OFF_TRAP_PHASE] == 3,
+              "W logging: the region index is written into BOTH ps_phase and trap_phase");
+        check((uint8_t)(*f)[rec + REC_OFF_DC_PHASE] == LOG_PHASE_NONE,
+              "W logging: dc_phase stays 0xFF — there is no drive-cycle axis in this profile");
+        check(((uint8_t)(*f)[rec + REC_OFF_FLAGS] & 0x01) != 0,
+              "W logging: flags bit0 marks the current profile as driving powerBalance");
+        check(sd_le<float>(*f, rec + REC_OFF_I_CMD) > 0.0f,
+              "W logging: the record's I_cmd carries the profile's commanded current");
+    }
+
+    // Name collision: WP participates in the shared run counter.
+    reset_test_state();
+    g_sd_state.files["WP0007.BLG"] = "";
+    g_mock_millis = 1000;
+    w_start("");
+    check(std::string(logFileName) == "WP0008.BLG",
+          "W logging: an existing WP0007.BLG makes the next current-combo run WP0008.BLG");
+
+    // A 'Y' run after a 'W' run must keep its own prefix and continue the shared counter — the
+    // masks overlap on LOG_TYPE_PS, so a mis-ordered prefix test would file one as the other.
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    w_start("");
+    check(std::string(logFileName) == "WP0001.BLG", "W logging: the current-combo run opened WP0001.BLG");
+    Serial.rx_queue.push('W'); doState98();   // stop it
+    sd_drain_until_closed();
+    y_start("");
+    check(std::string(logFileName) == "YP0002.BLG",
+          "W logging: a 'Y' run after a 'W' run files as YP and continues the shared counter");
+
+    // ...and the reverse order.
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start("");
+    check(std::string(logFileName) == "YP0001.BLG", "W logging: the 'Y' run opened YP0001.BLG");
+    Serial.rx_queue.push('Y'); doState98();   // stop it
+    sd_drain_until_closed();
+    w_start("");
+    check(std::string(logFileName) == "WP0002.BLG",
+          "W logging: a 'W' run after a 'Y' run files as WP — the overlapping PS bit misfiles neither");
+}
+
+// ─── 8. Status cadence, suppression, and the charging-manager omission ─────
+static void test_w_status_suppression_no_charging() {
+    test_group("W current profile — [WP] status, suppression, and no charging manager");
+    reset_test_state();
+
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    w_start("");
+    Serial.tx_clear();
+    y_run_to(1000);
+    check(Serial.tx_count("[WP] t=") == 2,
+          "W status: the [WP] snapshot prints on the 500 ms cadence (twice in the first second)");
+    check(Serial.tx_contains("[WP] t=") && Serial.tx_contains(" R") &&
+          Serial.tx_contains(" I_cmd=") && Serial.tx_contains(" sp=") &&
+          Serial.tx_contains(" act=") && Serial.tx_contains(" I_fc=") &&
+          Serial.tx_contains(" I_bt=") && Serial.tx_contains(" V_bus=") &&
+          Serial.tx_contains(" FLT=0x"),
+          "W status: the snapshot carries the region, the commanded current, both share figures, "
+          "the currents, the bus and the fault word");
+
+    plotModeActive = true;
+    plotLastMs     = g_mock_millis;
+    Serial.tx_clear();
+    y_run_to(2000);
+    check(Serial.tx_count("[WP] t=") == 0,
+          "W status: the [WP] snapshot is suppressed while the plot stream is running");
+    check(Serial.tx_count("sp:") > 0,
+          "W status: the plot stream itself keeps emitting while the current profile runs");
+    check(wProfileActive && wRegionIdx > 0,
+          "W status: the region machine keeps advancing while the status lines are suppressed");
+
+    plotModeActive = false;
+    Serial.tx_clear();
+    y_run_to(3000);
+    check(Serial.tx_count("[WP] t=") >= 1,
+          "W status: the [WP] snapshot resumes once the plot stream is off");
+
+    // Blocking VESC read-back suppressed (the watch is on 'U' since the 'W' rebinding).
+    vescWatchActive = true;
+    lastVescWatchMs = 0;
+    g_mock_millis  += VESC_WATCH_PERIOD_MS + 1;
+    vesc.reset();
+    doState98();
+    check(vesc.getValues_calls == 0,
+          "W interlock: pollVescWatch() does not run its blocking poll while 'W' is active");
+    vescWatchActive = false;
+
+    Serial.tx_clear();
+    Serial.rx_queue.push('G');
+    doState98();
+    check(Serial.tx_contains("[G] REFUSED: a profile is running") && bringupActive == false,
+          "W interlock: 'G' refuses to arm the staged bring-up while the current profile runs");
+
+    // ── The charging manager must never run: its cruise branch calls assertFcChargeEnable(true),
+    // which would take the battery off the bus mid-run and pin the MEASURED share at 1.0 — on the
+    // one axis this profile exists to measure.
+    //
+    // NOTE (2026-08-10 full-span actuation): BT_BUS_ENABLE is now ALSO written by
+    // applyShareRatio()'s channel cutoff when the commanded droop ratio leaves
+    // [DROOP_R_MIN, DROOP_R_MAX]. FC_CHARGE_ENABLE is therefore the clean discriminator — only
+    // chargingControl() ever writes it — and the BT_BUS assertion below is deliberately confined
+    // to the mid-share regions, where the ratio stays inside the band and no cutoff can fire.
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    w_start("");
+    charge_goal = 0.5f;
+    g_pin_value[BT_BUS_ENABLE]    = HIGH;
+    g_pin_value[FC_CHARGE_ENABLE] = LOW;
+    I_fc   = 2.0f;     // real current in both channels: powerBalance() no-ops at zero total
+    I_batt = 2.0f;
+
+    y_run_to(Y_R1 + 2000);   // share still 0.50 here — droop ratio well inside the band
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "W charging: FC_CHARGE_ENABLE stays LOW through R1 — the charging manager never runs");
+    check(digitalRead(BT_BUS_ENABLE) == HIGH,
+          "W charging: BT_BUS_ENABLE stays HIGH in the mid-share regions — the battery is not "
+          "taken off the bus");
+    check(fabsf(wCmdA) > 0.01f,
+          "W charging: the current axis is genuinely driving mid-R1 (1.5 A at the defaults)");
+    check(!vesc.current_calls.empty() && fabsf(vesc.last_current) > 0.01f,
+          "W charging: the commanded current actually reaches the VESC");
+    check(SPI.transfer_log.size() > 0,
+          "W charging: the droop half of the stack runs alongside (powerBalance writes the MDACs)");
+
+    y_run_to(Y_R2 + 1000);
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "W charging: FC_CHARGE_ENABLE is still LOW deep into R2 with charge_goal set high");
+    y_run_to(Y_R4 + 500);
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW && wProfileActive,
+          "W charging: the FC-charge path stays under operator control for the whole run");
+}
+
 #if BENCH_TEST
 // ─── doState0() BENCH_TEST bypass: boot to Idle with the power stage off ──────
 // Built only in the -DBENCH_TEST=1 pass (run_tests_bench). The -DBENCH_TEST=0 suite covers the
@@ -6790,6 +8026,236 @@ static void test_dostate0_bench_bypass() {
 #endif
 
 // ─── main ─────────────────────────────────────────────────────────────────────
+// ─── 9. A fault mid-'W' closes the WP file from State 99 with the cause ─────
+// Mirrors test_sdlog_lifecycle_fault_path() for the current profile: the fault transition itself
+// must do no card I/O, State 99 must latch exactly as it does without a logger attached, and the
+// deferred drain must still land a trailer carrying LOG_CLOSE_FAULT + the error code.
+static void test_w_fault_path() {
+    test_group("W current profile — a fault mid-run closes the WP log from State 99");
+    reset_test_state();
+
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    w_start("");
+    check(wProfileActive && logActive,
+          "W fault: the current profile was running and logging when the fault is injected");
+
+    y_run_to(12);
+    uint32_t recs = logRecordCount;
+    check(recs > 0, "W fault: records were captured before the fault");
+
+    triggerFault(FAULT_OC_FC, ERR_OC_FC);
+
+    check(mainState == 99,
+          "W fault: triggerFault() latches State 99 with the current profile attached");
+    check(error_code == ERR_OC_FC && (fault_flags & FAULT_OC_FC) && (fault_flags & FAULT_ERROR),
+          "W fault: the error latch and fault flags are unaffected by the log close request");
+    check(logActive == false && logCloseRequested == true && logFile.isOpen() == true,
+          "W fault: the fault path only flags the close — no card I/O in triggerFault()");
+
+    int ticks = sd_drain_until_closed_state99();
+    check(ticks > 0 && logFile.isOpen() == false,
+          "W fault: the loop-level drain finishes the file while State 99 is latched");
+    check(mainState == 99 && error_code == ERR_OC_FC,
+          "W fault: the error stays latched in State 99 after the log is closed");
+
+    const std::string* f = sd_file("WP0001.BLG");
+    check(f != nullptr,
+          "W fault: the run's file is the WP-prefixed one, not PS/TP");
+    if (f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE * recs + LOG_REC_SIZE) {
+        size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * recs;
+        check(sd_le<uint32_t>(*f, tr + 0) == 0xFFFFFFFFu,
+              "W fault: the file ends with a valid trailer sentinel");
+        check(sd_le<uint32_t>(*f, tr + 4) == recs,
+              "W fault: the trailer total matches the records captured before the fault");
+        check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_FAULT,
+              "W fault: the trailer close reason is LOG_CLOSE_FAULT");
+        check((uint8_t)(*f)[tr + 13] == (uint8_t)ERR_OC_FC,
+              "W fault: the trailer carries the latched error_code so the cause is in the file");
+    } else {
+        check(false, "W fault: the pre-fault records plus the trailer all reach the card");
+    }
+}
+
+// ─── 10. Combined profile x full-span channel cutoff ────────────────────────
+// The R6/R11 bound-touches drive the commanded ratio outside [DROOP_R_MIN, DROOP_R_MAX], where
+// applyShareRatio() opens a bus switch instead of clipping. This pins the interaction: the cutoff
+// itself, its last-source guard, its hysteresis, and — the 2026-08-11 additions — that a LATCHED
+// cutoff cannot outlive a run in either direction (natural completion re-closes it; a stop clears
+// the ownership flags through safeAllSwitches()).
+static void test_share_cutoff_profile_interaction() {
+    test_group("Combined profiles x channel cutoff: cut, last-source guard, hysteresis, end-of-run");
+
+    // ── An R6-like condition: both channels on the bus, ratio pushed past DROOP_R_MAX.
+    reset_test_state();
+    V_bus = 17.5f;                      // regulated, so re-entry is permitted
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[BT_BUS_ENABLE] = HIGH;
+    shareIsoFC = shareIsoBT = false;
+
+    applyShareRatio(DROOP_R_MAX + 0.05f);
+    check(digitalRead(BT_BUS_ENABLE) == LOW && shareIsoBT,
+          "cutoff x profile: an R6-like ratio opens exactly the starved (BT) channel");
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareIsoFC,
+          "cutoff x profile: exactly ONE switch opens — the surviving source stays on the bus");
+
+    // ── Last-source guard: with BT already cut, an R11-like ratio must NOT also cut FC.
+    applyShareRatio(DROOP_R_MIN - 0.05f);
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareIsoFC,
+          "cutoff x profile: the last-source guard blocks the second cutoff — the bus never darkens");
+    // That same call also carried BT back past its re-entry threshold (r = 0.10 is well below
+    // DROOP_R_MAX - hysteresis), so BT is on the bus again here. Re-cut it deliberately before
+    // testing the hysteresis, rather than assuming the guard step left the cutoff standing.
+    check(digitalRead(BT_BUS_ENABLE) == HIGH && !shareIsoBT,
+          "cutoff x profile: the R11-like ratio also re-entered BT on the same call");
+    applyShareRatio(DROOP_R_MAX + 0.05f);
+    check(digitalRead(BT_BUS_ENABLE) == LOW && shareIsoBT,
+          "cutoff x profile: (setup) BT is cut again for the hysteresis check");
+
+    // ── Hysteresis: returning just inside the band does not re-arm; past the hysteresis does.
+    applyShareRatio(DROOP_R_MAX - SHARE_CUTOFF_HYST / 2.0f);
+    check(digitalRead(BT_BUS_ENABLE) == LOW && shareIsoBT,
+          "cutoff x profile: a ratio dithering just inside the band does not re-close (hysteresis)");
+    applyShareRatio(DROOP_R_MAX - SHARE_CUTOFF_HYST);
+    check(digitalRead(BT_BUS_ENABLE) == HIGH && !shareIsoBT,
+          "cutoff x profile: past the hysteresis the channel re-enters and the flag clears");
+
+    // ── A2 (natural completion): a run that ENDS with a cutoff latched must put it back. Without
+    // this the board sits single-sourced forever — no profile means powerBalance() never runs, so
+    // applyShareRatio() is never called again and nothing can ever re-enter.
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    w_start("");
+    V_bus = 17.5f;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[BT_BUS_ENABLE] = HIGH;
+    applyShareRatio(DROOP_R_MAX + 0.05f);          // latch a BT cutoff mid-run
+    check(shareIsoBT && digitalRead(BT_BUS_ENABLE) == LOW,
+          "cutoff x completion: (setup) the run holds a BT cutoff when the table runs out");
+
+    wRegionIdx = COMBINED_PROFILE_REGIONS;         // force the completion path
+    Serial.tx_clear();
+    advanceCurrentComboProfile();
+    check(!wProfileActive,
+          "cutoff x completion: the profile completed normally");
+    check(!shareIsoBT && !shareIsoFC,
+          "cutoff x completion: the latched cutoff flag is cleared by the completion path");
+    check(digitalRead(BT_BUS_ENABLE) == HIGH,
+          "cutoff x completion: the owned channel is put BACK on the bus — no single-sourced latch");
+    check(Serial.tx_contains("channel cutoff cleared on completion"),
+          "cutoff x completion: the restore is announced so the operator sees the topology change");
+
+    // The same must hold for 'Y' — both completions go through the shared restore helper.
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start("");
+    V_bus = 17.5f;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[BT_BUS_ENABLE] = HIGH;
+    applyShareRatio(DROOP_R_MIN - 0.05f);          // latch an FC cutoff this time
+    check(shareIsoFC && digitalRead(FC_BUS_ENABLE) == LOW,
+          "cutoff x completion (Y): (setup) the run holds an FC cutoff");
+    combinedRegionIdx = COMBINED_PROFILE_REGIONS;
+    advanceCombinedProfile();
+    check(!combinedProfileActive && !shareIsoFC && digitalRead(FC_BUS_ENABLE) == HIGH,
+          "cutoff x completion (Y): the FC channel is re-closed and the flag cleared on completion");
+
+    // ── Re-entry must still respect the controller's own bus-regulation guard: with the bus down,
+    // the completion restore declines rather than closing a switch onto an unregulated bus.
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    w_start("");
+    V_bus = 17.5f;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[BT_BUS_ENABLE] = HIGH;
+    applyShareRatio(DROOP_R_MAX + 0.05f);
+    V_bus = 2.0f;                                   // bus collapses before the run ends
+    wRegionIdx = COMBINED_PROFILE_REGIONS;
+    Serial.tx_clear();
+    advanceCurrentComboProfile();
+    check(digitalRead(BT_BUS_ENABLE) == LOW && shareIsoBT,
+          "cutoff x completion: with the bus unregulated the restore DECLINES (no hot-plug)");
+    check(Serial.tx_contains("still cut off"),
+          "cutoff x completion: the declined restore says so rather than failing silently");
+
+    // ── A2 (stop path): a stop with a cutoff latched must clear the ownership flags, so a later
+    // re-entry after the next bring-up cannot close a switch the controller no longer owns.
+    // safeAllSwitches() already owns this; the check pins it against a future refactor.
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    w_start("");
+    V_bus = 17.5f;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[BT_BUS_ENABLE] = HIGH;
+    applyShareRatio(DROOP_R_MAX + 0.05f);
+    check(shareIsoBT, "cutoff x stop: (setup) the run holds a BT cutoff");
+    Serial.rx_queue.push('W');                      // stop-toggle
+    doState98();
+    check(!wProfileActive,
+          "cutoff x stop: the stop-toggle ended the run");
+    check(!shareIsoBT && !shareIsoFC,
+          "cutoff x stop: safeAllSwitches() clears the cutoff ownership flags on the stop path");
+    check(digitalRead(BT_BUS_ENABLE) == LOW && digitalRead(FC_BUS_ENABLE) == LOW,
+          "cutoff x stop: the stop parks BOTH bus switches — the bus is dark, 'G' is required next");
+}
+
+// ─── 11. A region-boundary tick is a zero-order hold on both profiles ───────
+// advanceComboRegion() returns COMBO_TICK_BOUNDARY on the tick that crosses into a new region and
+// produces NO setpoints. Both callers must return without commanding anything, leaving the VESC
+// (and v_setpoint) holding the last value — the ZOH the control design assumes. A boundary tick
+// that fell through to a stale or zeroed command would put a one-tick notch into every region
+// transition, which is exactly the kind of artifact a step-response fit would swallow silently.
+static void test_combo_boundary_tick_zoh() {
+    test_group("Combined profiles — a region-boundary tick commands nothing (zero-order hold)");
+
+    // ── 'W': no setCurrent() on the boundary tick.
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    w_start("");
+    y_run_to(Y_R1 + 500);                 // mid-R1, current genuinely moving
+    float heldCmd = wCmdA;
+    check(fabsf(heldCmd) > 0.01f && wRegionIdx == 1,
+          "boundary ZOH: (setup) the W profile is mid-R1 with a live commanded current");
+
+    // Land exactly on the R1→R2 boundary and take ONE tick.
+    g_mock_millis = g_y_t0 + Y_R2;
+    g_mock_micros += POWER_BAL_PERIOD_US;
+    resetControlRateLimiters();           // open the gate so a command WOULD be sent if attempted
+    vesc.reset();
+    uint8_t idxBefore = wRegionIdx;
+    advanceCurrentComboProfile();
+    check(wRegionIdx == idxBefore + 1,
+          "boundary ZOH: the boundary tick advanced the region index");
+    check(vesc.current_calls.empty(),
+          "boundary ZOH (W): the boundary tick issues NO setCurrent — the VESC holds its last value");
+    check(near_f(wCmdA, heldCmd),
+          "boundary ZOH (W): the commanded-current mirror is held, not zeroed, across the boundary");
+
+    // ── 'Y': no v_setpoint write on the boundary tick.
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000000;
+    y_start("");
+    y_run_to(Y_R1 + 500);
+    float heldV = v_setpoint;
+    check(fabsf(heldV) > 0.01f && combinedRegionIdx == 1,
+          "boundary ZOH: (setup) the Y profile is mid-R1 with a live velocity setpoint");
+
+    g_mock_millis = g_y_t0 + Y_R2;
+    g_mock_micros += POWER_BAL_PERIOD_US;
+    uint8_t yIdxBefore = combinedRegionIdx;
+    advanceCombinedProfile();
+    check(combinedRegionIdx == yIdxBefore + 1,
+          "boundary ZOH: the Y boundary tick advanced the region index");
+    check(near_f(v_setpoint, heldV),
+          "boundary ZOH (Y): v_setpoint is held across the boundary, not rewritten or zeroed");
+}
+
 int main() {
     printf("teensy_controller.ino — unit tests\n");
     printf("===================================\n");
@@ -6908,6 +8374,9 @@ int main() {
     test_power_pi_antiwindup();
     test_powerbalance_gated_tick_stable();
     test_powerbalance_min_load_hold();
+    test_share_setpoint_governor();
+    test_droop_ratio_slew_limit();
+    test_share_state_reset_on_profile_start();
     test_share_ratio_cutoff();
     test_wheelspeed_reset();
 
@@ -6931,6 +8400,13 @@ int main() {
     test_sdlog_state99_drain_gated();
     test_sdlog_scan_failure_preserves_files();
 
+    // ── 'T' trapezoid share-setpoint sweep ──────────────────────────────────
+    test_tsweep_parsing();
+    test_tsweep_end_to_end();
+    test_tsweep_waits_for_log_idle();
+    test_tsweep_cancel_paths();
+    test_tsweep_fire_time_preconditions();
+
     // ── 'Y' combined drive-cycle + power-share profile ──────────────────────
     test_y_params_and_defaults();
     test_y_refusals();
@@ -6943,6 +8419,19 @@ int main() {
     test_y_no_charging_manager();
     test_y_takeover_logging();
     test_y_boundary_params();
+
+    // ── 'W' combined commanded-current + power-share profile ────────────────
+    test_w_params_and_defaults();
+    test_w_refusals();
+    test_w_region_walk();
+    test_w_scaling_and_clip();
+    test_w_y_equivalence();
+    test_w_stop_x_q_exclusion();
+    test_w_logging();
+    test_w_status_suppression_no_charging();
+    test_w_fault_path();
+    test_share_cutoff_profile_interaction();
+    test_combo_boundary_tick_zoh();
 #endif
 
     printf("\n===================================\n");

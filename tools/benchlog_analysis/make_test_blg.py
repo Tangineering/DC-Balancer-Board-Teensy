@@ -129,9 +129,15 @@ def build_signals(seed, wrap=False):
                 dc_phase=dc_phase, trap_phase=trap_phase, flags=flags)
 
 
-def pack_header():
-    hdr = struct.pack(HEADER_FMT, MAGIC, 1, RECORD_SIZE, PROFILE_TYPE, 0,
+def pack_header(fw_version=1, header_v1=False):
+    """Format-v2 header (u16 fw_version at offset 18) by default; header_v1
+    writes the legacy v1 layout (no fw_version) for decoder back-compat
+    testing."""
+    version = 1 if header_v1 else 2
+    hdr = struct.pack(HEADER_FMT, MAGIC, version, RECORD_SIZE, PROFILE_TYPE, 0,
                        START_MILLIS, START_MICROS, K_DROOP_X1000)
+    if not header_v1:
+        hdr += struct.pack("<H", fw_version)
     hdr += b"\x00" * (HEADER_SIZE - len(hdr))
     assert len(hdr) == HEADER_SIZE
     return hdr
@@ -160,14 +166,15 @@ def pack_trailer(records_written, dropped=0, close_reason=1, error_code=0,
     return body
 
 
-def build_blg(seed, truncate, wrap=False, dropped=0):
+def build_blg(seed, truncate, wrap=False, dropped=0, fw_version=1,
+              header_v1=False):
     sig = build_signals(seed, wrap=wrap)
     n = N_SAMPLES
     if truncate:
         n = int(N_SAMPLES * 0.70)
 
     out = bytearray()
-    out += pack_header()
+    out += pack_header(fw_version=fw_version, header_v1=header_v1)
     for i in range(n):
         out += pack_record(sig, i)
 
@@ -195,10 +202,17 @@ def main():
     ap.add_argument("--truncate", action="store_true",
                      help="drop the trailer and truncate the last ~30%% of "
                           "records, to exercise the truncated-file path")
+    ap.add_argument("--fw-version", type=int, default=1,
+                     help="firmware version stamped in the v2 header "
+                          "(default 1)")
+    ap.add_argument("--header-v1", action="store_true",
+                     help="write the legacy format-v1 header (no fw_version) "
+                          "for decoder back-compat testing")
     args = ap.parse_args()
 
     data = build_blg(args.seed, args.truncate, wrap=args.wrap,
-                     dropped=args.dropped)
+                     dropped=args.dropped, fw_version=args.fw_version,
+                     header_v1=args.header_v1)
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)

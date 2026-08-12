@@ -1,0 +1,14 @@
+# CAL-1 static map / dV0 sweep, 2026-08-11 (operator: Ricky Tan)
+# Conditions: open-loop droop, equal MDAC gains (r = 0.5), share controller held.
+#   Sources: DC bench supplies on BOTH channels (VFC and VBT terminals) -> this is a
+#   bench-supply dV0, NOT the vehicle FC+2S-pack value (vehicle CAL-1 still TODO).
+#   K_DROOP = 0.30 ohm (firmware value at time of sweep). Trapezoid load via I_cmd.
+# Model: alpha = r + dV0*r*(1-r)/(k_d*I_tot); through-origin LS on (1/I_tot, alpha-r).
+# Fit: dV0 = +0.054 V (all 4 points) / +0.024 V (excluding I_cmd=2 light-load outlier,
+#   residual +0.198 - light-load boost nonlinearity, same regime as the TP0010/TP0013
+#   limit cycle). Adopted: dV0 = +0.05 V, |dV0| <= 0.10 V envelope (bench supplies).
+I_cmd_A,I_fc_A,I_bt_A,I_tot_A,alpha
+2,0.121,0.024,0.145,0.8345
+3,0.242,0.210,0.452,0.5354
+4,0.492,0.443,0.935,0.5262
+5,0.717,0.629,1.346,0.5327

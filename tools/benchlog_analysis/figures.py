@@ -120,13 +120,17 @@ def _style_axes(ax, ylabel=None, xlabel=None):
         ax.set_xlabel(xlabel, color=TEXT_COLOR, fontsize=10)
 
 
-def _legend(ax, handles=None, labels=None, loc="upper right", ncol=1):
+def _legend(ax, handles=None, labels=None, loc="upper right", ncol=1,
+            bbox_to_anchor=None):
     if handles is None:
         handles, labels = ax.get_legend_handles_labels()
     if len(handles) < 2:
         return None
+    kwargs = {}
+    if bbox_to_anchor is not None:
+        kwargs["bbox_to_anchor"] = bbox_to_anchor
     leg = ax.legend(handles, labels, loc=loc, ncol=ncol, fontsize=9,
-                    framealpha=0.9, edgecolor="#cccccc")
+                    framealpha=0.9, edgecolor="#cccccc", **kwargs)
     for text in leg.get_texts():
         text.set_color(TEXT_COLOR)
     return leg
@@ -142,6 +146,18 @@ def _run_name(cfg):
     if isinstance(cfg, dict):
         return cfg.get("_run_name", "")
     return ""
+
+
+def _r_cmd(data):
+    """Commanded share ratio reconstructed from the logged droop gains.
+
+    r_cmd = gBT/(gFC+gBT), exact from the firmware mapping
+    gFC = K_DROOP/(RE_MAX*r), gBT = K_DROOP/(RE_MAX*(1-r)) -- no calibration
+    constants needed. Ticks where both gains are zero (MDAC not yet driven)
+    yield NaN, which plots as a gap per the NaN convention.
+    """
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return data["gBT"] / (data["gFC"] + data["gBT"])
 
 
 def _finite_range(*arrays):
@@ -392,8 +408,16 @@ def error_subplots(data, cfg):
 
 
 def effort_subplots(data, cfg):
-    """Fig 4: control effort of both loops (motor current cmd, droop gains)."""
+    """Fig 4: control effort of both loops (motor current cmd, droop gains).
+
+    The bottom subplot pairs the two droop MDAC gain commands (left axis)
+    with the commanded share ratio r_cmd = gBT/(gFC+gBT) they were mapped
+    from (right axis, ownership-coloured) -- the controller output and its
+    actuation on one time base.
+    """
     t = data["t_s"]
+    r_cmd = _r_cmd(data)
+    c_cmd = COLORS["r_cmd"]
 
     fig, (ax0, ax1) = plt.subplots(2, 1, figsize=FIGSIZE_STACK2, sharex=True,
                                    constrained_layout=True)
@@ -406,14 +430,32 @@ def effort_subplots(data, cfg):
     ax0.set_title("Velocity-loop effort", color=TEXT_COLOR, fontsize=11,
                   loc="left")
 
-    ax1.plot(t, data["gFC"], color=COLORS["gFC"], linewidth=LW_RAW,
-             label="gFC")
-    ax1.plot(t, data["gBT"], color=COLORS["gBT"], linewidth=LW_RAW,
-             label="gBT")
+    h = []
+    h += ax1.plot(t, data["gFC"], color=COLORS["gFC"], linewidth=LW_RAW,
+                  label="gFC")
+    h += ax1.plot(t, data["gBT"], color=COLORS["gBT"], linewidth=LW_RAW,
+                  label="gBT")
     _style_axes(ax1, ylabel="Droop MDAC gain [−]", xlabel="Time [s]")
     ax1.set_title("Power-share-loop effort", color=TEXT_COLOR, fontsize=11,
                   loc="left")
-    _legend(ax1)
+
+    ax1r = ax1.twinx()
+    h += ax1r.plot(t, r_cmd, color=c_cmd, linewidth=LW_RAW,
+                   label="r_cmd = gBT/(gFC+gBT)")
+    ax1r.grid(False)
+    ax1r.spines["top"].set_visible(False)
+    ax1r.set_ylabel("Commanded share ratio [−]", fontsize=10)
+    # Ownership colouring, per the dual-axis convention.
+    ax1r.yaxis.label.set_color(c_cmd)
+    ax1r.tick_params(axis="y", colors=c_cmd, labelsize=9)
+    ax1r.spines["right"].set_color(c_cmd)
+    ax1r.spines["left"].set_visible(False)
+
+    # One row ABOVE the axes (right-anchored, clear of the left-side title):
+    # both y-axes autoscale their own maxima near the top, so any in-axes
+    # placement can land on a plateau of one family or the other.
+    _legend(ax1, h, [x.get_label() for x in h], loc="lower right", ncol=3,
+            bbox_to_anchor=(1.0, 1.0))
 
     ax1.set_xlim(float(t[0]), float(t[-1]))
     _suptitle(fig, _run_name(cfg), "control effort")
@@ -487,8 +529,7 @@ def share_controller(data, cfg):
 
     e_s_raw = data["share_sp"] - data["share_act"]
     e_s_filt = data["share_sp"] - share_f
-    with np.errstate(divide="ignore", invalid="ignore"):
-        r_cmd = data["gBT"] / (data["gFC"] + data["gBT"])
+    r_cmd = _r_cmd(data)
 
     c_shr = COLORS["share"]
     c_shr_f = _darker(c_shr)

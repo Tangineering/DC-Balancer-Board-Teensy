@@ -204,8 +204,32 @@ def test_decode_blg_api(tmpdir):
     res = db.decode_blg(data)
     check("api: header fields", res.header == {
         "version": 1, "record_size": RECORD_SIZE, "profile_type": 2,
-        "start_millis": 42, "start_micros": 4242, "k_droop_ohm": 0.305},
+        "start_millis": 42, "start_micros": 4242, "k_droop_ohm": 0.305,
+        "fw_version": None},
         repr(res.header))
+
+    # Format v2: fw_version parsed from offset 18 and reported.
+    data_v2 = bytearray(data)
+    data_v2[4] = 2
+    struct.pack_into("<H", data_v2, 18, 7)
+    res_v2 = db.decode_blg(bytes(data_v2))
+    check("api: v2 header parses fw_version",
+          res_v2.header["version"] == 2 and res_v2.header["fw_version"] == 7,
+          repr(res_v2.header))
+    check("api: v2 report line carries fw_version",
+          any("fw_version=7" in l for l in res_v2.report_lines),
+          repr(res_v2.report_lines[:1]))
+    check("api: v1 report line marks pre-versioning",
+          any("fw_version=pre-versioning" in l for l in res.report_lines),
+          repr(res.report_lines[:1]))
+    # An unknown future version still hard-errors.
+    data_v3 = bytearray(data)
+    data_v3[4] = 3
+    try:
+        db.decode_blg(bytes(data_v3))
+        check("api: v3 raises ValueError", False, "no exception")
+    except ValueError as e:
+        check("api: v3 raises ValueError", "unsupported version 3" in str(e))
     check("api: records_read", res.records_read == n)
     check("api: csv_rows count", len(res.csv_rows) == n)
     check("api: trailer dict", res.trailer == {

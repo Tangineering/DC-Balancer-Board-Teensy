@@ -682,7 +682,7 @@ All commands are single uppercase characters, processed in `doState98()`:
 | `S` | Print status (all pin states, all ADC readings, `I_charge`, bench-tool state) |
 | `I` | Scan the I2C bus |
 | `E` | Read VESC firmware version + telemetry snapshot (incl. live fault code via `vescFaultStr()`) — one-shot |
-| `W` | Toggle VESC watch: ~2 Hz `getVescValues()` poll printing a compact line and flagging any fault-code change. Auto-suppressed while a drive cycle (`D`) or power-share profile (`R`) runs so those keep production-identical control-loop timing; resumes on stop |
+| `U` | Toggle VESC watch: ~2 Hz `getVescValues()` poll printing a compact line and flagging any fault-code change. Auto-suppressed while any profile runs so those keep production-identical control-loop timing; resumes on stop. **Rebound from `W` on 2026-08-10** (mnemonic: "UART watch") to free `W` for the combined current profile |
 | `G` | Staged bus bring-up (`busBringupTick()` P0–P3: bus alone → boosts → dwell → motor node; `X`/`Q` abort → stage dark) |
 | `P` | Set power-share setpoint (closed-loop live — prompts for a float; §9e) |
 | `O` | Set droop ratio (open-loop direct MDAC write — prompts for a float; §9e) |
@@ -691,7 +691,8 @@ All commands are single uppercase characters, processed in `doState98()`:
 | `R` | Start/stop power-share profile emulator (§9e) |
 | `T <Imax> <hold> <rate>` | Start trapezoidal motor-current profile — all three values on one line (peak A / hold s / rate A/s, e.g. `T 6 5 0.5`); bare `T` while running stops it; direct phase-current command, no velocity-chain calibration and no `MOT_PWR_ENABLE` gate (§9f) |
 | `Y [Vmax] [b]` | Start combined drive-cycle + power-share profile — sweeps `v_setpoint` **and** `power_share_setpoint` from one 16-region table; both values optional on one line (bare `Y` runs the defaults, e.g. `Y 1 0.3`); bare `Y` while running stops it; same prerequisites as `D` (§9h) |
-| `X` | Universal stop: cancel any running profile (`D`/`R`/`T`/`Y`), armed plot-mode run, or bring-up + manual motor + power-share live (motor zeroed; switches parked only if `D`/`R`/`Y` was running, mirroring their own stop paths) |
+| `W [Imax] [b]` | Start combined **current** + power-share profile — the same 16-region table with the motor axis in amps; both values optional on one line (bare `W` runs the defaults, e.g. `W 6 0.0`); bare `W` while running stops it; `T`-style prerequisites — no velocity-chain calibration, `MOT_PWR_ENABLE` warn-only (§9i) |
+| `X` | Universal stop: cancel any running profile (`D`/`R`/`T`/`Y`/`W`), armed plot-mode run, or bring-up + manual motor + power-share live (motor zeroed; switches parked only if `D`/`R`/`Y`/`W` was running, mirroring their own stop paths) |
 | `L` | Toggle Serial-Plotter stream: 50 Hz `sp,act,gFC,gBT,ifc,ibt` line; suppresses the periodic status/phase/`[VW]` lines; `R`/`T` arm with a `PLOT_ARM_DELAY_MS` delay (see the `L` paragraph below §9e) |
 | `K` | Print SD-card logging status: card present, current/last file name, record and drop counts (§9g); read-only, live even during the bring-up lockout |
 | `H` / `?` | Print the command list (`printTestHelp()`) |
@@ -856,7 +857,7 @@ pre-charge and force a full `G` bring-up between back-to-back runs. Only the mot
 still forces everything closed on exit as usual (`trapProfileActive` cleared, any half-typed
 parameter line dropped, `MOT_PWR_ENABLE` forced LOW).
 
-The VESC watch (`W`) is auto-suppressed while `trapProfileActive`, same as for `D`/`R`, so the
+The VESC watch (`U`, rebound from `W` on 2026-08-10) is auto-suppressed while `trapProfileActive`, same as for `D`/`R`, so the
 production control-loop timing isn't perturbed by the ~100 ms blocking `getVescValues()` poll.
 
 Status snapshot every 500 ms: elapsed time, phase, `I_cmd`, `I_fc`, `I_batt`, `V_bus`,
@@ -872,10 +873,10 @@ discipline as everything else in the state machine.
 
 **Auto lifecycle, no manual arm.** Logging opens automatically when a profile starts —
 `startPowerShareProfile()` (`'R'`), `startTrapProfile()` (`'T'`), `startCombinedProfile()`
-(`'Y'`), or the `'D'` start block — and closes on every exit path: natural completion
-(`advancePowerShareProfile()` / `advanceTrapProfile()` / `advanceDriveCycle()` /
-`advanceCombinedProfile()`), the matching stop-toggle (`'R'`/`'T'`/`'D'`/`'Y'`
-again), `'X'` universal stop, `'Q'` exit, and fault. There is no separate arm/disarm command —
+(`'Y'`), `startCurrentComboProfile()` (`'W'`), or the `'D'` start block — and closes on every exit
+path: natural completion (`advancePowerShareProfile()` / `advanceTrapProfile()` /
+`advanceDriveCycle()` / `advanceCombinedProfile()` / `advanceCurrentComboProfile()`), the matching
+stop-toggle (`'R'`/`'T'`/`'D'`/`'Y'`/`'W'` again), `'X'` universal stop, `'Q'` exit, and fault. There is no separate arm/disarm command —
 a card present at profile start is logged; a missing card is silently skipped (below). The
 fault path is deferred: `triggerFault()` only sets a close-request flag (no I/O in the fault
 transition itself); the drain in `loop()` finishes writing and closes the file during State 99's
@@ -958,8 +959,9 @@ close was I/O-abandoned rather than a normal exit — previously this landed as 
 reason 0 (`unknown(0)` at decode time).
 
 **File naming.** Profile-prefixed run counter via a directory scan: `PSnnnn.BLG` / `TPnnnn.BLG`
-/ `DCnnnn.BLG` / `YPnnnn.BLG` (the combined `PS|DC` profile, §9h) in the card root. At open, one
-scan finds the max `nnnn` across all four prefixes and uses max+1 — stateless (no counter file to corrupt) and collision-free. The scan
+/ `DCnnnn.BLG` / `YPnnnn.BLG` (the combined `PS|DC` profile, §9h) / `WPnnnn.BLG` (the combined
+`PS|TP` profile, §9i) in the card root. At open, one scan finds the max `nnnn` across all five
+prefixes and uses max+1 — stateless (no counter file to corrupt) and collision-free. The scan
 happens once at profile start, not in the control path. A failed or partial directory scan
 (root-open failure, or a read error partway through `openNext()`) is a hard refusal to log for
 that run rather than a fallback to index 0 — a partial scan must never risk colliding with and
@@ -1032,7 +1034,8 @@ never a separate constant.
 Each axis gets **solo** excursions (so a per-axis step response can still be fitted from the same
 run) plus **two deliberately simultaneous** regions (R4 ramp+ramp, R8 step+step) which are the
 actual interaction test. R6 and R11 are brief excursions to the share bounds (all-FC / all-BT) to
-check the droop mapping's clamp behaviour at the extremes.
+check the **channel-cutoff behaviour** at the extremes (they were a droop *clamp* check before the
+2026-08-10 full-span actuation change — see the cutoff-interaction paragraph below).
 
 **Per-tick math.** `advanceCombinedProfile()` computes elapsed-in-region, interpolates both
 dimensions, then applies:
@@ -1106,6 +1109,8 @@ input buffer can invalidate them — an arming window would reopen that hole. Th
 the other way instead: an armed `R`/`T` is refused over a running `Y` and cancelled by a `Y` that
 starts during the countdown.
 
+**A stopped (not completed) run parks all switches** — the bus is dark afterwards and a fresh `G` bring-up is required before the next run. (A natural completion leaves the switches as they are.)
+
 **On a fault mid-run**, `power_share_setpoint` and `combinedProfileActive` are left stale by
 design. State 99 is latched and nothing consumes either value there; `doState99()` zeroes the
 motor and takes the boosts down on its own schedule, and the latch is only cleared by a power
@@ -1120,8 +1125,125 @@ the region index into **both** `ps_phase` and `dc_phase` — the "both bytes non
 the three independent phase bytes and the header bitmask were designed for. `trap_phase` stays
 `0xFF`. **No record-format or decoder change.**
 
+
+**Interaction with the full-span channel cutoff (2026-08-11).** Since the 2026-08-10 full-span
+actuation change, a commanded share ratio outside `[DROOP_R_MIN, DROOP_R_MAX]` no longer clips —
+`applyShareRatio()` takes the starved channel **off the bus** by opening its RT1987 bus switch.
+This profile drives the share to 1.0 (R6) and 0.0 (R11) by design, so **with a bound below
+`DROOP_R_MIN` the run performs two bus-switch openings under load** — the TP0010 stressor class.
+Both starts therefore print an explicit warning naming the motor ceiling the switch will open
+against and a safe low-current first command; run it scope-armed the first time.
+
+Two consequences for reading the data:
+- **While a channel is isolated the share loop is OPEN** — `applyShareRatio()` returns before any
+  MDAC write, and the still-active channel holds its previous droop gain. R6/R11 samples are
+  **topology events, not droop-response data**; do not fit a plant through them.
+- **A latched cutoff cannot outlive the run.** Natural completion calls
+  `restoreShareCutoffOnCompletion()`, which re-closes a still-owned channel through
+  `applyShareRatio()`'s own re-entry path (so its charged-bus guard and ownership rules apply
+  unchanged) and clears the flags. Without it the board would sit single-sourced indefinitely: with
+  no profile running, `powerBalance()` never executes, so nothing would ever call the controller
+  again. If the bus is not in regulation the restore correctly declines and says so. The stop /
+  `X` / `Q` paths need nothing — `safeAllSwitches()` already clears the ownership flags.
+
 Status snapshot every 500 ms (suppressed under plot mode):
 `[YP] t=… R<idx> v_sp=… sp=… act=… I_fc=… I_bt=… V_bus=… FLT=…`
+
+### 9i. Combined CURRENT + power-share profile (`W`)
+
+**Why.** `Y` (§9h) needs `velocityChainCalibrated()`, which is still 0 — `ENCODER_SLOTS_PER_REV`
+and `FLYWHEEL_RADIUS_M` are unmeasured, so on the present bench `Y` refuses outright. `W` is the
+same experiment with the motor axis moved from velocity to **commanded current**, which is exactly
+the substitution the `T` trapezoid already makes: direct phase current, velocity PI never in the
+loop, no calibration needed. It is therefore the combined-axis run that can actually be performed
+today, and it stays useful afterwards as the current-mode counterpart of `Y`.
+
+**Same table, one shared walk.** `W` reuses `COMBINED_PROFILE[]` **verbatim** — not a copy. The
+two runs are only comparable if their shapes are identical by construction, and a duplicated table
+is a shape that drifts. The `v_start`/`v_end` column is reinterpreted as a **normalised current**
+scaled by the operator's `Imax`; the share column and its post-interpolation clip are unchanged.
+Both `advanceCombinedProfile()` and `advanceCurrentComboProfile()` walk the table through one
+shared `advanceComboRegion()` helper (region advance + both interpolations + the clip), which
+returns `COMBO_TICK_DONE` / `COMBO_TICK_BOUNDARY` / `COMBO_TICK_RUN`; each caller supplies its own
+scaling, command path, completion text, and status line. The parameter grammar is shared too
+(`parseTwoOptionalFloats()`), as are the share-bound rules (`validateShareBound()`).
+
+At the default `Imax` = 5.0 A the table's motor plateaus are **0 / 3.0 / 5.0 / 2.5 / 1.0 A**
+(normalised 0 / 0.6 / 1.0 / 0.5 / 0.2), with the same ramps, buffers and simultaneous regions as
+§9h's table.
+
+**Parameters** (`[Imax] [b]`, both optional, one line, e.g. `W 6 0.0`):
+- `Imax` (A, default **5.0**) — must be `> 0` and `<= TRAP_I_ABS_MAX` (25 A). The ceiling is the
+  **trapezoid's**, reused with its rationale intact: `setCurrent()` commands PHASE current, which
+  does not map 1:1 onto bus draw, so peaks above `MOTOR_I_CMD_MAX` (5 A) are accepted here exactly
+  as `T` accepts them. Negative peaks are refused (unlike `T`): the table's motor column is a
+  normalised magnitude with its own coast-down, so a negative peak would merely mirror the whole
+  profile into braking — use `T` for a braking/regen ramp.
+- `b` — identical rules to `Y` (`0 <= b < 0.5`, warn above 0.35), enforced by the same
+  `validateShareBound()`.
+
+**Prerequisites — `T` conventions, not `Y` conventions.** Refused only if a staged bring-up is
+running. There is **no** `velocityChainCalibrated()` gate (the profile bypasses the velocity PI
+entirely, which is precisely what makes it safe uncalibrated) and `MOT_PWR_ENABLE` LOW is a
+**warning, not a refusal** (the VESC may be fed from a separate bench supply; if `MOT_PWR` really
+is its only source, an unpowered VESC simply ignores the commands).
+
+**Control stack.** The `wProfileActive` branch mirrors the **trapezoid's** call set:
+`advanceCurrentComboProfile()` (which sets `power_share_setpoint` and issues the current itself via
+`commandMotorCurrentLimited(cmd, TRAP_I_ABS_MAX)`, rate-gated on `rl_motor_last`) followed by
+`powerBalanceGated()`. No `motorControlGated()` — there is no velocity loop — and `v_setpoint` is
+never written, so no stale setpoint is left behind for whatever runs next (same as `T`).
+`chargingControl()` is omitted for the same load-bearing reason as `Y` and `R`: with
+`charge_goal > 0` its cruise branch calls `assertFcChargeEnable(true)`, which drives
+`BT_BUS_ENABLE` LOW, takes the battery off the bus, and pins the measured share at 1.0 —
+destroying the run's only measurement. Coast-down regen is absorbed by the hardware TL431/BSP170P
+chopper as always.
+
+**Exits.** Stop-toggle (`W` again): motor zeroed, `power_share_setpoint = 0.5`,
+`logRequestClose(LOG_CLOSE_STOP)`, and **`safeAllSwitches()`**. That last one follows the
+`Y`/`R` share-profile convention rather than `T`'s leave-them-alone rule even though the motor axis
+is current-mode — the deciding factor is the *other* axis: this profile sweeps the share across the
+full band, so the bus/source configuration is something the run manipulates, not a static operator
+input worth preserving. Natural completion zeroes the motor and the share and leaves switches
+as-is (matching every other profile's natural completion). `X` treats it exactly like `D`/`R`/`Y`;
+`Q` clears the flag. Mutual exclusion runs both ways against `D`/`R`/`T`/`Y`; `G` refuses while it
+runs; `pollVescWatch()` is suppressed during it; a plot-mode arm neither fires into it nor survives
+it. `W` is not itself arm-delayed (same reasoning as `Y` — see §9h's plot-mode paragraph).
+
+**A stopped (not completed) run parks all switches** — the bus is dark afterwards and a fresh `G` bring-up is required before the next run. (A natural completion leaves the switches as they are.)
+
+**Interaction with the full-span channel cutoff (2026-08-11).** Since the 2026-08-10 full-span
+actuation change, a commanded share ratio outside `[DROOP_R_MIN, DROOP_R_MAX]` no longer clips —
+`applyShareRatio()` takes the starved channel **off the bus** by opening its RT1987 bus switch.
+This profile drives the share to 1.0 (R6) and 0.0 (R11) by design, so **with a bound below
+`DROOP_R_MIN` the run performs two bus-switch openings under load** — the TP0010 stressor class.
+Both starts therefore print an explicit warning naming the motor ceiling the switch will open
+against and a safe low-current first command; run it scope-armed the first time.
+
+Two consequences for reading the data:
+- **While a channel is isolated the share loop is OPEN** — `applyShareRatio()` returns before any
+  MDAC write, and the still-active channel holds its previous droop gain. R6/R11 samples are
+  **topology events, not droop-response data**; do not fit a plant through them.
+- **A latched cutoff cannot outlive the run.** Natural completion calls
+  `restoreShareCutoffOnCompletion()`, which re-closes a still-owned channel through
+  `applyShareRatio()`'s own re-entry path (so its charged-bus guard and ownership rules apply
+  unchanged) and clears the flags. Without it the board would sit single-sourced indefinitely: with
+  no profile running, `powerBalance()` never executes, so nothing would ever call the controller
+  again. If the bus is not in regulation the restore correctly declines and says so. The stop /
+  `X` / `Q` paths need nothing — `safeAllSwitches()` already clears the ownership flags.
+
+**Key rebinding.** `W` was the VESC-watch toggle; the watch moved to **`U`** ("UART watch"). The
+`W` keypress starts nothing on its own — it opens a parameter prompt — so an operator with muscle
+memory lands on a cancellable prompt, never on a running motor.
+
+**Logging.** `logOpenForProfile(LOG_TYPE_PS | LOG_TYPE_TP)` → the new **`WPnnnn.BLG`** prefix (the
+mask-equality tests for `PS|DC` and `PS|TP` both run before the single-bit tests, and `WP` joins
+the scan prefix set). `logSampleTick()` writes the region index into **`ps_phase` and
+`trap_phase`**, leaving `dc_phase` at `0xFF` — the mirror image of `Y`'s `ps_phase`+`dc_phase`.
+No record-format or decoder change; the decoder is format-agnostic about prefixes.
+
+Status snapshot every 500 ms (suppressed under plot mode):
+`[WP] t=… R<idx> I_cmd=… sp=… act=… I_fc=… I_bt=… V_bus=… FLT=…`
 
 ### 9d. `doState98()` skeleton
 
@@ -1206,6 +1328,9 @@ by the mocks before the `#include`.
 | **Drive cycle simulation** | `advanceDriveCycle()` transitions through all phases in the correct order given controlled `millis()` injection; `v_setpoint` hits expected values at each phase boundary |
 | **MPPT_DISABLE polarity** | `chargingControl()` sets `MPPT_DISABLE` LOW (inhibit) during regen and when `charge_goal ≈ 0`; HIGH (enabled) when charger is ready and no regen |
 | **Y combined profile** | parameter parsing + defaults (bare line, one value, two values), refusals (`Vmax` <= 0 / above `MANUAL_MOTOR_V_MAX`, `b` < 0 / >= 0.5, third value) and the `b > 0.35` warn-and-accept, region walk across all 16 regions, clip behaviour at both bounds incl. the post-interpolation kink, `Vmax` scaling of the normalised waypoints, stop-toggle / `'X'` / `'Q'` exits and mutual exclusion with `D`/`R`/`T`, `YP` file naming + the region index in both phase bytes, status line + plot-mode suppression |
+| **W current combo profile** | shared-helper equivalence with `Y` (same region walk/clip), `Imax` scaling of the normalised motor column, parameter parsing + defaults and the `TRAP_I_ABS_MAX` ceiling (peaks above `MOTOR_I_CMD_MAX` accepted, negative refused), current issued through `commandMotorCurrentLimited()` with `v_setpoint` untouched, no velocity-chain gate + `MOT_PWR` warn-only, stop/`'X'`/`'Q'` exits and mutual exclusion with `D`/`R`/`T`/`Y`, `WP` naming + region index in `ps_phase`+`trap_phase`, and the `'W'`→`'U'` watch rebinding; a fault mid-run closing the `WP` file from State 99 |
+| **Combined x channel cutoff** | one switch opens at an R6-like ratio, the last-source guard blocks the second, hysteresis re-arms on return, a latched cutoff is re-closed by BOTH natural-completion paths (and declines on an unregulated bus), and the stop path clears the ownership flags via `safeAllSwitches()` |
+| **Combined boundary tick** | a `COMBO_TICK_BOUNDARY` tick commands nothing — no `setCurrent()` for `W`, no `v_setpoint` rewrite for `Y` (zero-order hold across every region transition) |
 | **SD bench logging** | lifecycle on all exit paths (complete/stop/X/Q/fault), 1 kHz rate gate, overflow drop+count, no-card warn-once, write-error mid-run, name collision, record schema, velocity-valid flag + per-profile phase bytes, `'K'` status, plot+log independence |
 
 `tools/test_decode_benchlog.py` is a separate, stdlib-only self-test for the host-side decoder

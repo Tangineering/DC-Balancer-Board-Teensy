@@ -1149,11 +1149,15 @@ are carried over from captures 8/9 and are NOT aligned to this run's events.
   sawtoothing with V-MOT.
 - Inferred, UNCONFIRMED (boost VOUTs unmonitored): each cut-release should park the sourcing
   boost's local node at ≈ 15.9 + I × 0.21 V/A ≈ **17–18 V** per the empirical release
-  coefficient — i.e. the **un-bodged FC boost** may be taking a ~17–18 V park **every 64 ms**.
+  coefficient — i.e. the FC boost may be taking a ~17–18 V park **every 64 ms**. *(Corrected
+  2026-08-11, operator: this bullet originally said "un-bodged FC boost" — the FC boost DOES
+  carry hot-loop bodge caps.)*
 
 **Consequences:**
 - **SAFETY — do not leave this configuration running.** Every burst is a Death-5-class SCP
-  load-dump sourced by the **FC boost, which has NO hot-loop bodge caps** — at 15.5 Hz that is
+  load-dump sourced by the **FC boost** *(corrected 2026-08-11, operator: this originally read
+  "which has NO hot-loop bodge caps" — the FC boost DOES carry them; the load dumps remain
+  Death-5-class stress, but with the validated overshoot mitigation fitted)* — at 15.5 Hz that is
   ~930 such events per minute, plus the inferred repeated ~17–18 V parks. The loop does not
   self-terminate; abort promptly (`X`/`Q` or power-down). Rule added to Safety rules below.
 - **The low-V motor-node pre-charge doctrine is now bench-falsified in its target
@@ -1223,6 +1227,142 @@ Y = 15.9 / 17.5 V.
   engagement of `FC_CHARGE_ENABLE` and of `REGEN_ENABLE`; the 64 ms retry fingerprint (clicking,
   ~15.5 Hz spikes, sawtooth) or Ag105 config/fault flapping in `pollAg105()` would mean the
   charger input capacitance is larger than assumed → bodge that one switch then, on evidence.
+
+### TP0010 share-sweep bus collapse — nondestructive; ~17 Hz droop/dropout limit cycle drops VBUS to 6.5 V (2026-08-11; SD log `logs/TP0010`, no scope)
+
+**Source: SD bench log only** (1 kHz-nominal logger, measured ~865 Hz effective / 1.15 ms
+median sample interval, no drops), decoded via `tools/benchlog_analysis`. No scope was armed —
+all numbers below are ADC-path readings through the firmware's `analogReadAveraging` chain, so
+sub-millisecond structure (and any SW-node overshoot) is invisible. Scope-metrology
+conventions apply to the follow-up capture, not to this entry.
+
+**Conditions:** State-98 trapezoidal profile `T 6 3 1` (I_cmd 0→6 A at 1 A/s, 3 s hold, ramp
+down), run 4 of a seven-run share-setpoint sweep (order 0.5, 0.7, 1.0, **0.3**, 0.0, 0.15,
+0.85), `share_sp = 0.30` constant, Youla share controller active, `K_DROOP = 0.300 Ω`.
+Firmware: pre-v1 (fw ledger "version 0"), `BENCH_TEST` build → **only OV faults armed; bus UV
+cannot latch**. VBUS regulating ~15.9 V no-load. Supply configuration was not recorded in the
+log (dual-source session per the sweep context; treat as unconfirmed). Share-controller state
+carries over between runs (no reset at profile entry); TP0010 inherited TP0009's
+rails-adjacent MDAC pair.
+
+**Observed (from `logs/TP0010/TP0010.csv`):**
+- t = 4.33–6.15 s (mid ramp-up, I_cmd ≈ 4.3–6.0 A, total channel current < ~1.2 A): a
+  sustained relaxation limit cycle, **median period 58–59 ms ≈ 17 Hz, ~31–44 cycles**. The
+  MDAC commands bang rail-to-rail each cycle (`gFC`/`gBT` ≈ 0.18 ↔ 0.90+), and the two boost
+  channels conduct **mutually exclusively** (both conducting in only ~0.1 % of samples;
+  `I_fc = 0` for 71 % of the window).
+- **VBUS collapses during the handoffs: 64 excursions below 15 V, minimum 6.55 V**, each dip
+  ~17–18 ms wide, with ~10–18 ms windows where *both* channels read zero current — the bus
+  riding only its ~40 µF of ceramics. Sag depth grows monotonically with the I_cmd ramp
+  (13.3 V at I_cmd = 4.4 A → 6.5 V at 6.0 A).
+- Channel current spikes to **3.2 A (FC) / 3.6 A (BT)** at the ADC (8 mA LSB; true peak
+  between samples unknown) — >2× the steady-state peak of any run in the sweep.
+- **Self-clears at t = 6.15 s** once total current exceeds ~1.2 A; the rest of the run is
+  clean (share error σ 0.011, no saturation, VBUS 15.75–15.91 V). Brief re-entry at
+  t ≈ 13.5 s on the low-current tail.
+- **Zero fault flags for the entire run** (expected: `BENCH_TEST` arms OV only). The
+  persistence-filtered `FAULT_OV_BUS` never tripped either — the excursions are all downward.
+- Milder sibling: **TP0013 (`share_sp = 0.85`)** shows the same signature at **18.5–18.7 Hz**
+  as minority-channel (BT) dropout chatter during both ramps, `I_batt` pinned at exactly 0 for
+  0.77 s / 1.36 s bands, but **no bus collapse** (only ~100 mV notches). Interior setpoints
+  (0.15, 0.5, 0.7) and the degenerate endpoints (0, 1) are clean.
+
+**Inferred mechanism (UNCONFIRMED — no scope):** a starved-minority-channel dropout limit
+cycle in the share loop at low total current. The channel commanded to carry the small
+fraction falls out of conduction entirely (droop command raises its effective source
+impedance until its RT1987 blocks), measured share slams to 0/1, the controller rails both
+MDACs, the starved channel slams back on with a large spike, repeat. What is NOT explained by
+that loop alone is the **both-channels-off 10–18 ms windows** in TP0010 — candidates:
+(a) both boosts simultaneously droop-commanded out of conduction during the crossover;
+(b) **RT1987 SCP cut/retry participation** — the 58–59 ms period is suspiciously close to the
+64 ms tSCP_RST fingerprint from captures 9/10 (15.5 Hz), and `D-FC-EN`/`D-BT-EN` carry 100 nF
+CSS since 2026-08-07, lengthening each reconnect. A single scope capture (BT INA + VBUS
+proper, trigger < 14 V) during a repeat at `share_sp = 0.3` on the ramp would discriminate:
+SCP involvement shows the cut/retry sawtooth on VBUS; pure droop dropout shows conduction
+handoffs without switch cuts.
+
+**Why it matters despite being nondestructive:** ~33 both-channels-off collapse/reconnect
+events per run with 3+ A reconnect spikes is Death-5-*family* stress (load-dump class, far
+milder per event). Both boosts carry the validated hot-loop bodge caps (operator-confirmed
+2026-08-11 — an earlier version of this entry wrongly called the FC boost un-bodged), which
+bounds the known overshoot mechanism; the repeated collapse/reconnect duty is nevertheless
+unscoped stress on the power stage. Repeat runs at `share_sp ≈ 0.3` with ramping load should
+be treated as a known stressor until scoped.
+
+**Firmware relevance:** the pending fw v1 features target this family — the
+`SHARE_I_TOT_MIN_A = 75 mA` integrator hold and `applyShareRatio()` starved-channel cutoff
+with hysteresis. But note: (1) TP0010/TP0013 misbehave at **in-band** setpoints (0.3, 0.85),
+so the v1 out-of-band cutoff logic does not directly address them; (2) the limit cycle lives
+at total currents up to ~1.2 A — **an order of magnitude above the 75 mA hold threshold** —
+so the v1 integrator hold as parameterized would NOT have suppressed it. Flagged as a
+follow-up firmware task (raise/ramp-gate the hold threshold, or rate-limit the MDAC slew),
+not bundled into this entry.
+
+#### Capture 12 — TP0010-condition repeat, scope-armed: total source-feed dropout confirmed; `D-MT-EN` ruled out as the cutting element; droop-vs-SCP NOT discriminated (2026-08-11; `12-Vbus yellow-Vmot blue-Ibat purple-P0.3.jpg`; retitled same day — the original title claimed "`D-MT-EN` SCP cut CONFIRMED", a trace misread, corrected below)
+
+**This is the discriminator capture requested by the TP0010 entry above (Next steps §0c).**
+Conditions (operator-confirmed 2026-08-11): repeat of the TP0010 configuration — State-98
+trapezoid `T 6 3 1`, share setpoint 0.30 (the filename's "P0.3" is shorthand for the setpoint,
+not the P profile), VESC attached, motor loaded. **No SD log was kept for this run** — the
+scope photo is the only record; all cross-referencing to TP0010 is by condition, not by
+synchronized timebase.
+
+**Scope state:** 20 ms/div, delay 105 ms, 2.5 MSa/s / 700 kpts, trigger Edge CH1 **falling**
+DC, level **14.0 V** (the "VBUS below 15 V" discriminator trigger — it fired). CH1 VBUS
+5 V/div 1× (offset −15.0 V); CH2 **BT INA253A1 100 mV/div 1× = 1 A/div**; CH3 V-MOT 5 V/div
+1× (offset −15.0 V). Cursors: X1 = 6.0 ms → X2 = 73.6 ms, **ΔX = 67.6 ms (14.79 Hz)**;
+Y1 = 15.9 V, Y2 = 17.5 V, **ΔY = 1.6 V**.
+
+**CORRECTION (2026-08-11, same day, operator):** the first analysis of this capture claimed
+CH1 (VBUS) held near baseline while CH3 (V-MOT) sawtoothed volts below it, and concluded
+`D-MT-EN` was SCP-cutting. That was a **trace misread** — the flat yellow feature near
+15.9 V is the horizontal Y1 *cursor*, not the CH1 trace. Operator confirmation: **the yellow
+(VBUS) and blue (V-MOT) traces overlap nearly everywhere; VBUS dips together with V-MOT**,
+with no measurable separation at this resolution. Everything below is the corrected reading;
+the original `D-MT-EN`-cut conclusion is retracted (another instance of the trace/cursor
+misread class the metrology conventions exist for — this time in analysis, not transcription).
+
+**Measured (photo re-read; provisional per metrology rules):**
+- **Event period: 67.6 ms ≈ 14.8 Hz by cursor** — in the RT1987 `tSCP_RST` neighborhood
+  (64 ms ≈ 15.5 Hz, captures 9/10) but also close to the TP0010 SD-log median (58–59 ms);
+  the period alone does not discriminate.
+- **CH1 VBUS and CH3 V-MOT, overlapping:** the two nodes move as one — repeating **slow
+  linear ramps down ~0.6–0.8 div × 5 V ≈ 3–4 V** from the ~15.9 V baseline (at least one
+  crossing the 14.0 V trigger), each ending in a sharp snap-back recovery. The Y-cursor pair
+  (15.9 → 17.5 V, ΔY = 1.6 V) brackets a **+1.6 V excursion above baseline** at recovery
+  (park-like; provisional). The deep 6.5 V floors of the TP0010 SD log are not reproduced in
+  this photo window (different execution; possibly a milder stretch of the cycle).
+- **CH2 I_batt:** per event: a quiet dropout interval → a **reconnect spike ~1 div ≈ 1 A** →
+  a noisy conduction plateau **~0.4–0.5 div ≈ 0.4–0.5 A** → dropout again, synchronized with
+  the voltage recoveries. (FC INA unmonitored, as in prior captures.)
+
+**Conclusions (corrected):**
+- **`D-MT-EN` is ruled OUT as the cutting element.** VBUS and V-MOT track each other through
+  every dip — the motor switch is conducting throughout. The original conclusion is inverted:
+  the motor path is fine; **the bus is losing its source feed**.
+- **The events are total source-feed dropout windows.** With `D-MT-EN` conducting, the bus
+  rides the combined bus + motor + VESC capacitance (~1–1.5 mF — which is exactly why the
+  decay is a slow 3–4 V over tens of ms rather than the µs collapse bare ~40 µF VBUS would
+  show). During each window neither source channel feeds the bus; a reconnect (the ~1 A BT
+  burst) then recharges the whole node. This also corroborates the TP0010 SD-log reading of
+  10–18 ms both-channels-off windows.
+- **The droop-vs-SCP discrimination is NOT settled by this capture.** Both candidates predict
+  exactly this signature at the bus: (a) the droop loop railing both MDACs antiphase pushes
+  both source channels out of conduction (voltage-driven blocking, no SCP involved); (b) a
+  source-side switch (`D-FC-EN`/`D-BT-EN`) SCP-cuts and retries on the 64 ms timer. The
+  67.6 ms period is consistent with both. What WOULD discriminate (next capture, if the
+  firmware mitigation underperforms): probe a **boost VOUT alongside VBUS** during a dropout
+  — (a) predicts the disconnected boost's VOUT parked *above* the decaying bus (RT1987
+  blocking on reverse voltage) with reconnect at the voltage crossing; (b) predicts reconnect
+  on a fixed 64 ms cadence regardless of the voltage crossing. FC INA + a synchronized SD log
+  (gain commands) would additionally settle the master/slave question.
+- **Operational hazard (revised):** the full bus — sources to VESC — sags 3–4 V ~15×/s
+  during the cycle (and per the TP0010 log can reach 6.5 V, deep into any load's UVLO
+  territory). The mitigation case (feasibility-gated integrator hold, MDAC slew limiting)
+  stands unchanged; the specific VESC-brownout-via-motor-switch-cut framing from the first
+  analysis is withdrawn along with the `D-MT-EN` claim.
+- Screen-read numbers are provisional until re-read photometrically; the entry follows the
+  metrology conventions (div × scale quoted throughout).
 
 ---
 
@@ -1360,10 +1500,22 @@ value — it is the **PCB layout** (see ROOT CAUSE above: the BT output-cap hot 
   kill — four died that way. Scope every first bring-up after a hardware change.
 - **Do not leave a `G` bring-up clicking (capture 10, 2026-08-06).** A sustained ~15.5 Hz
   click/current-burst pattern is a non-converging RT1987 SCP cut/retry limit cycle: ~930
-  Death-5-class load dumps per minute on the sourcing boost (the un-bodged FC boost, in the
-  dual-source config), plus inferred ~17–18 V cut-release parks. It does NOT self-terminate —
+  Death-5-class load dumps per minute on the sourcing boost (the FC boost, in the dual-source
+  config; correction 2026-08-11 — it carries hot-loop bodge caps, an earlier version of this
+  rule said otherwise), plus inferred ~17–18 V cut-release parks. It does NOT self-terminate —
   abort promptly (`X`/`Q` or power-down). No VESC-attached `G` on the old (pre-staged-bring-up)
   firmware; prerequisites first: 100 nF CSS on `D-MT-EN`, then the staged-bring-up flash.
+- **Treat asymmetric share setpoints (~0.3, and ~0.85) under ramping load as a known stressor
+  (TP0010, 2026-08-11).** At low total current (< ~1.2 A) the share loop can enter a ~17–18.5 Hz
+  minority-channel dropout limit cycle; at `share_sp = 0.3` it collapsed VBUS to 6.5 V ~33 times
+  with 3+ A reconnect spikes, and under `BENCH_TEST` no fault latches (OV-only). Nondestructive
+  so far, but Death-5-family stress; both boosts carry hot-loop bodge caps (operator-confirmed
+  2026-08-11), which mitigates but does not retire the concern. Capture 12 (2026-08-11,
+  corrected reading) confirmed the cycle drops the bus's *source feed* ~15×/s — the whole
+  bus+motor node sags together (3–4 V on-screen; to 6.5 V in the TP0010 log) with everything
+  downstream riding the decay — so the restriction stands until the firmware mitigation
+  lands, not merely until scoped. Interior
+  setpoints 0.15/0.5/0.7 and the endpoints 0/1 are demonstrated clean.
 
 ---
 
@@ -1384,6 +1536,26 @@ with the capture-10 discriminator channels — **BT INA and/or VBUS proper** (th
 closes the "ADC node never scoped" item and settles which switch is cut/retrying). Expected
 outcomes: P3 completes (done), or times out to `FAULT_MOT_HOTPLUG` (dark, safe — then evaluate
 raising the charge-per-retry or the VESC drain question with the capture in hand).
+
+**0c. TP0010 share-loop limit cycle (2026-08-11) — capture 12 taken: source-feed dropout
+confirmed, `D-MT-EN` ruled out, droop-vs-SCP still open; firmware mitigation is the next
+move regardless.** The scope-armed repeat landed 2026-08-11 (capture 12, above, corrected
+same day): VBUS and V-MOT sag together ~3–4 V at ~14.8 Hz — the bus loses its *source feed*
+each cycle; the motor switch conducts throughout. Whether the source disconnection is
+droop-commanded blocking or a source-switch (`D-FC-EN`/`D-BT-EN`) SCP cut is NOT yet
+discriminated — both fit the signature and the 67.6 ms period. Remaining, in order:
+(1) firmware mitigation — **IMPLEMENTED (fw v2, 2026-08-11, pending flash; ledger row in
+`docs/firmware-versions.md`)**: setpoint governor (commanded minority-channel current
+≥ `SHARE_MINORITY_I_MIN_A` = 0.20 A — empirical from the sweep; the CAL-1 ΔV0 = +0.05 V
+linear bound is far lower, so the floor is the light-load nonlinearity), droop-ratio slew
+limit (0.02/tick, controller path only), and share-controller state reset at every profile
+entry. 1261 production + 95 bench host tests pass. Both candidate mechanisms are downstream
+of the droop loop railing, so the mitigation stands without settling the discrimination.
+(2) If the mitigation underperforms, the sharper
+discriminator: **boost VOUT alongside VBUS** during a dropout — voltage-crossing reconnect
+= droop blocking; fixed 64 ms cadence reconnect = SCP — plus FC INA + a synchronized SD log
+for the master/slave question. (3) A ⭐ FIX VALIDATION re-entry of the TP0010 condition once
+the mitigation is flashed.
 
 **1. High-bandwidth margin check (before heavy load testing).** The validation captures were 1×
 probe (~10 MHz) at 50 MSa/s — the estimated 100–200 MHz hot-loop ring is invisible in them.

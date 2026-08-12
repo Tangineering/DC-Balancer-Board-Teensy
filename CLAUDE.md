@@ -316,8 +316,13 @@ requirements:
   (absolute, clipped to `[b, 1−b]` *after* interpolation) together, so the two loops' cross-coupling
   is exercised in one run; same prerequisites and control-call set as `D`, logged to `YPnnnn.BLG`
   with the region index in both phase bytes (PLAN.md §9h).
+- **Combined current + power-share profile** (`W [Imax] [b]`, 2026-08-10): the same 16-region table
+  with the motor axis reinterpreted as commanded current (both profiles share one
+  `advanceComboRegion()` walk, so their shapes cannot diverge), using `T`'s motor conventions — no
+  velocity-chain calibration, `MOT_PWR_ENABLE` warn-only — so the share loop can be exercised on an
+  encoder-less bench; logged to `WPnnnn.BLG` (PLAN.md §9i). **The VESC watch moved from `W` to `U`.**
 - **Status dump** (`S` command): print all pin states and ADC readings to USB Serial.
-- **SD-card bench logging:** `R`/`T`/`D` runs are auto-logged at 1 kHz to the built-in micro-SD;
+- **SD-card bench logging:** `R`/`T`/`D`/`Y`/`W` runs are auto-logged at 1 kHz to the built-in micro-SD;
   the `K` command prints logging status. Logging is observability-only — it never faults the
   board, and the sampling path does no card I/O. Card I/O is confined to logDrainTick() in
   loop(), which skips a tick when the card reports busy and writes at most one 512 B chunk;
@@ -362,7 +367,8 @@ machine with `g++` — no Teensy or Arduino IDE required.
   on every exit path incl. fault, ring-buffer overflow drop-count, no-card tolerance, record
   schema, and the `'K'` status command. The `'Y'` combined drive-cycle + power-share profile
   (PLAN.md §9h) is covered too: parameter parsing/clip/region walk/exit paths/`YP` logging/
-  suppression.
+  suppression — as is the `'W'` current-mode twin (PLAN.md §9i): shared-helper equivalence, `Imax`
+  scaling, the `TRAP_I_ABS_MAX` ceiling, `WP` logging, and the `'W'`->`'U'` watch rebinding.
 - Run before every flash: `cd test && make`.
 
 See PLAN.md §10 for the full directory layout and test category table.
@@ -591,7 +597,8 @@ dual-source `G` with the VESC attached, on the old (pre-staged-bring-up) firmwar
 **non-converging 15.5 Hz SCP cut/retry limit cycle** (period = RT1987 tSCP_RST 64 ms): each retry
 adds ~+1.6 V to the ~1–1.5 mF motor+VESC node, the VESC's brownout-band boot attempts drain it
 back, and the ratchet sticks at ~5.5–7 V forever — VESC LED blinks, audible clicking, ~930
-Death-5-class load dumps/min sourced by the un-bodged FC boost. The low-voltage motor-node
+Death-5-class load dumps/min sourced by the FC boost (which carries hot-loop bodge caps —
+operator correction 2026-08-11; an earlier version of this note said un-bodged). The low-voltage motor-node
 pre-charge doctrine is bench-falsified with a VESC attached; VESC-attached `G` runs are blocked
 until the 100 nF `D-MT-EN` CSS bodge + staged-bring-up flash land (debug log, capture-10 entry).
 
@@ -718,3 +725,52 @@ consecutive samples; decaying bring-up parks flicker the telemetry bit without l
 bench-validated, then optionally returns to +1.0. Hardware prerequisite for any P3 run: 100 nF
 CSS on `D-MT-EN` (fitted on `D-BT-EN` 2026-08-03, validated capture 8). RT1987 timing at
 100 nF: tD_ON 8 ms + tON ~20 ms ≈ 28 ms per connect (capture-8 measured, 1.8 % match).
+
+---
+
+## Status & session addendum (2026-08-11, share-sweep analysis + limit-cycle mitigation)
+
+The seven-run share-setpoint sweep (TP0007–TP0013, trapezoid `T 6 3 1`, fw 0) validated the
+Youla share loop across the full [0,1] span (steady-state bias < 10⁻³ everywhere) but found a
+**17–18.5 Hz minority-channel dropout limit cycle at asymmetric in-band setpoints (0.30, 0.85)
+under low total current (< ~1.2 A)** — worst case TP0010: bus collapse to 6.5 V ×64, 3.6 A
+reconnect spikes, no fault latched (BENCH_TEST arms OV only). Full analysis:
+`docs/share_sweep_whitepaper/` (thesis-ready PDF); event + scope capture 12 logged in
+`docs/boost-bringup-debug.md` (capture 12 corrected reading: total source-feed dropout,
+`D-MT-EN` ruled out, droop-blocking vs source-switch SCP still open — both downstream of the
+droop loop railing).
+
+- **CAL-1 partial (ΔV0):** bench-supply sweep at r = 0.5 → **ΔV0 = +0.05 V** (envelope
+  ±0.10 V), 8× inside the ±0.40 design budget → **shipped Youla coefficients kept, no
+  regeneration**. Data `controller_design/calibration/dv0_sweep_20260811.csv`; model rows
+  updated (system_model.md §8/§9). Vehicle-source ΔV0 still TODO(calibrate).
+- **fw v2 mitigation (pending flash; ledger `docs/firmware-versions.md`):** (a) setpoint
+  governor — effective in-band setpoint clipped so commanded minority-channel current ≥
+  `SHARE_MINORITY_I_MIN_A` = 0.20 A (empirical floor — light-load nonlinearity, NOT the ΔV0
+  linear bound; collapses to 0.5 below 2×; out-of-band setpoints incl. 0/1 bypass — the fw v1
+  cutoff path owns them); (b) `DROOP_RATIO_SLEW_PER_TICK` = 0.02 slew limit on the
+  **controller path only** (one-shot paths — operator `O`, guard fallback, completion
+  restore — land exact and re-seed `droopSlew_prev`, which tracks the ratio physically on the
+  MDACs and deliberately survives resets); (c) `resetShareControlState()` at every profile
+  start (`R`/`D`/`T`/`Y`/`W`) — runs no longer inherit the prior run's controller state
+  (the sweep's cross-run contamination). Production Run-state entry deliberately does NOT
+  reset (resumption, not experiment).
+- **Tests: 1261 production + 95 bench pass.** New coverage: governor clip/relax/collapse/
+  out-of-band-bypass, slew ceiling + walk + one-shot exactness, profile-entry reset (incl.
+  slew-tracker survival).
+- **Next bench:** ⭐ FIX VALIDATION re-entry of the TP0010 condition on fw v2 (scope-armed);
+  quasi-static dropout-boundary mapping to refine `SHARE_MINORITY_I_MIN_A`; vehicle-source
+  ΔV0. Sweep hygiene: interleave setpoint order (session drift +44 % was monotonic with run
+  order); the asymmetric-setpoint safety restriction stands until the fix validates.
+
+**Addendum (2026-08-11, later): `T` sweep extension (fw v3, pending flash).** The State-98
+trapezoid command gained an optional sweep list, `T <Imax> <hold> <rate> [t,r1,...,rn]`: one
+trapezoid per closed-loop share setpoint r_i (max 16, full [0,1] span), each to its own
+`TPnnnn.BLG`, next run gated on the SD logger being fully idle (an early start silently loses
+that run's log), separated by a t-second motor cool-off. Non-blocking `tsweepTick()`
+(RUNNING → WAIT_LOG → COOLDOWN) with fire-time precondition re-checks; every operator stop
+('T' during a run OR between runs, 'X', 'Q', a new 'T' line, any other profile start) cancels
+the whole sweep and restores share_sp = 0.5 / powerBalanceLive = false. Sweep refused under
+plot mode; the old trailing-junk tolerance after the third 'T' value is gone (whole line
+rejected); `inputBuf` 32 → 96 B. Automates the TP0007–TP0013 hand-run sweep for the fw v2
+FIX-VALIDATION re-sweep. **Tests: 1332 production + 95 bench pass.**

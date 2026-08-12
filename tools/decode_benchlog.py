@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Decode .BLG bench-log files (format version 1) into CSV.
+"""Decode .BLG bench-log files (format versions 1 and 2) into CSV.
 
 The firmware writer lives in teensy_controller/teensy_controller.ino
 (State 98 SD-card logging, see PLAN.md sec 9g). File layout:
 
-  Header (32 B, LE): magic b'BLG1', u8 version(=1), u8 record_size(=52),
+  Header (32 B, LE): magic b'BLG1', u8 version(=1|2), u8 record_size(=52),
     u8 profile_type (bitmask: 1=PS, 2=TP, 4=DC), u8 pad, u32 start_millis,
-    u32 start_micros, u16 K_DROOP_x1000 (ohms x1000), zero-padded to 32 B.
+    u32 start_micros, u16 K_DROOP_x1000 (ohms x1000), then in format v2 a
+    u16 fw_version at offset 18 (the FW_VERSION the firmware was built with,
+    see docs/firmware-versions.md; v1 files predate firmware versioning and
+    report fw_version None / "pre-versioning"), zero-padded to 32 B.
 
   Record (52 B, LE): u32 t_us, then 10x f32 (share_sp, share_act, v_sp,
     v_act, I_fc, I_batt, gFC, gBT, V_bus, I_cmd), u16 fault_flags,
@@ -115,10 +118,14 @@ def decode_blg(data):
         start_micros, k_droop_x1000 = struct.unpack_from(HEADER_FMT, data, 0)
     if magic != MAGIC:
         raise ValueError(f"bad magic {magic!r}, expected {MAGIC!r}")
-    if version != 1:
-        raise ValueError(f"unsupported version {version}, expected 1")
+    if version not in (1, 2):
+        raise ValueError(f"unsupported version {version}, expected 1 or 2")
     if record_size != RECORD_SIZE:
         raise ValueError(f"unexpected record_size {record_size}, expected {RECORD_SIZE}")
+
+    # v2 adds u16 fw_version at offset 18 (in v1 those bytes are zero pad);
+    # None marks a pre-versioning (v1) log.
+    fw_version = struct.unpack_from("<H", data, 18)[0] if version >= 2 else None
 
     header = {
         "version": version,
@@ -127,6 +134,7 @@ def decode_blg(data):
         "start_millis": start_millis,
         "start_micros": start_micros,
         "k_droop_ohm": k_droop_x1000 / 1000.0,
+        "fw_version": fw_version,
     }
 
     csv_rows = []
@@ -192,8 +200,10 @@ def decode_blg(data):
     report_lines = []
     warnings = []
 
+    fw_str = "pre-versioning" if fw_version is None else str(fw_version)
     report_lines.append(
-        f"[decode_benchlog] version={version} profile_type={profile_type} "
+        f"[decode_benchlog] version={version} fw_version={fw_str} "
+        f"profile_type={profile_type} "
         f"start_millis={start_millis} start_micros={start_micros} "
         f"K_DROOP={k_droop_x1000 / 1000.0:.3f} ohm")
     report_lines.append(f"[decode_benchlog] records read: {records_read}")
