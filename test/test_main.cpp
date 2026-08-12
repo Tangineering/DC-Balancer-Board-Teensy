@@ -88,6 +88,12 @@ static void reset_test_state() {
     shareCtrl_lastMicros = 0;
     shareIsoFC = false;
     shareIsoBT = false;
+    // Setpoint-latched channel cutoff (fw v4, 2026-08-12): the SETPOINT-owned latch is
+    // separate from shareIsoFC/BT (the topology/controller-owned flag) and must be reset
+    // independently, or a case that latched one in a prior run would start the next run
+    // frozen with no way to release (the release path itself requires an in-band setpoint).
+    shareSpCutFC = false;
+    shareSpCutBT = false;
     // .ino State-98 trapezoid SHARE-SETPOINT SWEEP ('T … [t,r1..rn]'). Cleared here rather than
     // relying on tsweepFinish()/tsweepCancel(): a case that leaves a sweep mid-cool-down would
     // otherwise fire a trapezoid inside the NEXT case's first doState98() tick.
@@ -198,6 +204,17 @@ static void reset_test_state() {
     ovBusTransientCount = 0;
     ovBusPrintLastMs = 0;
     ovBusHasPrinted  = false;
+
+    // .ino FAULT_UV_BUS arming + persistence window (fw v4, 2026-08-12; mirrors the OV_BUS
+    // block above — see the uvBus* state comment at the .ino globals for the field meanings).
+    uvBusArmed        = false;
+    uvBusUnderActive  = false;
+    uvBusUnderSince   = 0;
+    uvBusLastUnderMs  = 0;
+    uvBusUnderSamples = 0;
+    uvBusTransientCount = 0;
+    uvBusPrintLastMs  = 0;
+    uvBusHasPrinted   = false;
 
     // .ino State 98 bench tools — SD data logger (logOpenForProfile/logSampleTick/logDrainTick)
     // Note sdInitTried/sdAvailable are latches on real hardware (one probe per power cycle); the
@@ -606,24 +623,37 @@ static void test_detect_faults() {
     check(!(fault_flags & FAULT_OV_BATT),
           "detectFaults: no FAULT_OV_BATT when V_batt == LIMIT_V_BATT_MAX - 0.05");
 
-    // UV_BUS — only trips in State 2
+    // UV_BUS (fw v4, 2026-08-12) — bus-ARMED, not state-gated: the old State-2-only
+    // single-sample check is gone. Arming requires a source switch closed with V_bus having
+    // reached V_BUS_CHARGED_THRESH; with both source switches LOW (the default reset state)
+    // a low V_bus is just a dark power stage, never a fault, in ANY state.
+    // (Dedicated coverage in test_uv_bus_arming_and_persistence() / test_uv_bus_not_armed_dark()
+    // etc.; this only checks the unarmed default still holds and the latch still works.)
     reset_test_state();
     V_bus = LIMIT_V_BUS_MIN - 1.0f; V_batt = 7.0f; I_fc = 0;
     mainState = 1;
     detectFaults();
     check(!(fault_flags & FAULT_UV_BUS),
-          "detectFaults: no FAULT_UV_BUS in State 1 even when V_bus low");
+          "detectFaults: no FAULT_UV_BUS with both source switches LOW (never armed) even when V_bus low");
     check(mainState == 1,
-          "detectFaults: mainState unchanged in State 1 with low bus (not run state)");
+          "detectFaults: mainState unchanged (not armed, so nothing to latch)");
 
     reset_test_state();
-    V_bus = LIMIT_V_BUS_MIN - 1.0f; V_batt = 7.0f; I_fc = 0;
     mainState = 2;
-    detectFaults();
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;   // arming also requires a boost enabled (fw v4 S4)
+    V_batt = 7.0f; I_fc = 0;
+    V_bus = V_BUS_CHARGED_THRESH + 0.5f;
+    g_mock_millis = 0;
+    detectFaults();                                          // arms
+    V_bus = LIMIT_V_BUS_MIN - 1.0f;
+    g_mock_millis = 1000;                     detectFaults(); // sample 1
+    g_mock_millis = 1000 + UV_BUS_MAX_GAP_MS; detectFaults(); // sample 2
+    g_mock_millis = 1000 + UV_BUS_PERSIST_MS; detectFaults(); // sample 3, persistence met
     check(fault_flags & FAULT_UV_BUS,
-          "detectFaults: FAULT_UV_BUS set when V_bus low in State 2");
+          "detectFaults: FAULT_UV_BUS latches once armed and the persistence filter is satisfied");
     check(error_code == ERR_UV_BUS,
-          "detectFaults: error_code == ERR_UV_BUS from State 2");
+          "detectFaults: error_code == ERR_UV_BUS");
 
     // FAULT_ERROR sticky — once in State 99, detectFaults() preserves fault_flags
     reset_test_state();
@@ -978,24 +1008,53 @@ static void test_share_setpoint_governor() {
     test_group("powerBalance() setpoint governor (limit-cycle mitigation)");
 
     // A) In-band asymmetric setpoint at low load: governed to the feasibility
-    // bound. sp=0.30 at I_tot=0.5 A → bound lo = 0.2/0.5 = 0.4; a measured
-    // share sitting exactly AT the bound is therefore zero-error, and the
-    // controller must hold — not wind toward the raw 0.30.
+    // bound. sp=0.20 is IN-BAND (>= DROOP_R_MIN=0.15), so updateShareSetpointCutoff()'s
+    // out-of-band latch does NOT own this tick and the governor code below must actually
+    // run (the old probe sp=0.10 was < DROOP_R_MIN, so the setpoint latch silently owned it
+    // and the governor never executed — a vacuous pass; see the .ino changelog). At
+    // I_tot=1.0 A the clip bound is lo = SHARE_MINORITY_I_MIN_A/I_tot = 0.30/1.0 = 0.30
+    // (fw v4: floor raised 0.20→0.30, TP0016/TP0017 bracket).
+    //
+    // A1) Direction probe: hold the measured share at 0.25 — strictly between the raw sp
+    // (0.20) and the clip bound (0.30) — so the two candidate targets disagree in SIGN:
+    // against the correct clip (spEff=lo=0.30, measured=0.25) the error is +0.05 (ratio must
+    // rise); against an unclipped raw sp (0.20, measured=0.25) the error would be -0.05
+    // (ratio would fall). Which way the ratio actually moves proves which target the code
+    // used — a stronger check than "didn't move".
     reset_test_state();
     digitalWrite(FC_BUS_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
-    I_fc = 0.2f; I_batt = 0.3f;            // I_tot=0.5, measured share = 0.40
-    power_share_setpoint = 0.30f;
+    I_fc = 0.25f; I_batt = 0.75f;          // I_tot=1.0, measured share = 0.25
+    power_share_setpoint = 0.20f;          // in-band; below lo=0.30 -> clipped
     uint32_t t = 0;
+    float slew_start = droopSlew_prev;     // 0.5, the fresh-reset default
+    for (int i = 0; i < 500; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(droopSlew_prev > slew_start + 0.01f,
+          "governor A1: clipped sp=0.20 at I_tot=1.0A drives the ratio UP toward lo=0.30 "
+          "(an unclipped raw sp=0.20 against the same 0.25 measurement would drive it DOWN)");
+
+    // A2) Zero-error confirmation: with the measured share held exactly at lo=0.30, the
+    // clipped effective setpoint sees zero error and the ratio must hold — not wind toward
+    // the raw sp=0.20, which would be a real -0.10 error if the code failed to clip.
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.3f; I_batt = 0.7f;            // I_tot=1.0, measured share = 0.30 == lo
+    power_share_setpoint = 0.20f;
+    t = 0;
     for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
     float slew_settled = droopSlew_prev;
     for (int i = 0; i < 300; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
     check(fabsf(droopSlew_prev - slew_settled) < 5e-3f,
-          "governor: in-band sp below the minority floor is clipped — zero-error at the bound, no winding");
+          "governor A2: in-band sp=0.20 clipped to lo=0.30 is zero-error at that bound — no winding");
+    check(fabsf(SHARE_MINORITY_I_MIN_A - 0.30f) < 1e-6f,
+          "governor: SHARE_MINORITY_I_MIN_A is the fw v4 0.30 A floor (TP0016/TP0017 bracket)");
 
-    // B) Same setpoint/share at HIGH load: bound relaxes (lo = 0.2/2.0 = 0.1),
-    // the raw setpoint applies, the −0.10 error is real → the ratio must move.
+    // B) Same setpoint/share at HIGH load: bound relaxes
+    // (lo = SHARE_MINORITY_I_MIN_A/2.0 = 0.15), the raw setpoint applies, the
+    // −0.10 error is real → the ratio must move.
     reset_test_state();
     digitalWrite(FC_BUS_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, HIGH);
@@ -1011,6 +1070,47 @@ static void test_share_setpoint_governor() {
     check(droopSlew_prev < 0.45f,
           "governor: at high load the bound relaxes and the same error drives the ratio");
 
+    // E) Explicit lo-bound check at I_tot=1.5 A (fw v4), pinning the 0.30 A floor value
+    // itself rather than just "some" clip. sp=0.18 is IN-BAND (>= DROOP_R_MIN=0.15 — the old
+    // probe sp=0.05 was not, and was vacuous for the same reason as the old (A)). At
+    // I_tot=1.5 A the fw v4 floor gives lo = SHARE_MINORITY_I_MIN_A/I_tot = 0.30/1.5 = 0.20,
+    // which is ABOVE sp=0.18 (clipped); the OLD 0.20 A floor would have given
+    // lo = 0.20/1.5 = 0.1333, which is BELOW sp=0.18 (no clip at all, spEff = raw sp = 0.18).
+    // This is exactly the bracket that distinguishes the two floor values.
+    //
+    // E1) Direction probe: hold the measured share at 0.19 — strictly between the raw sp
+    // (0.18) and the fw v4 lo (0.20) — so the two candidate targets disagree in sign:
+    // correct (spEff=lo=0.20) -> error +0.01 (ratio rises); old-floor (spEff=raw sp=0.18,
+    // unclipped) -> error -0.01 (ratio would fall).
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.285f; I_batt = 1.215f;        // I_tot=1.5, measured share = 0.19
+    power_share_setpoint = 0.18f;
+    t = 0;
+    slew_start = droopSlew_prev;           // 0.5, the fresh-reset default
+    for (int i = 0; i < 800; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(droopSlew_prev > slew_start + 0.003f,
+          "governor E1: sp=0.18 at I_tot=1.5A clips to the fw v4 lo=0.20 and drives the ratio "
+          "UP (the old 0.20A floor would give lo=0.1333 < sp -> no clip -> ratio would fall)");
+
+    // E2) Zero-error confirmation at the exact fw v4 bound: a measured share of 0.20 is
+    // zero-error against the fw v4 clip and must not wind — under the old 0.1333 floor this
+    // same measurement would be a real +0.047 error (spEff=0.18) and would keep moving.
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.3f; I_batt = 1.2f;            // I_tot=1.5, measured share = 0.20 == new lo
+    power_share_setpoint = 0.18f;
+    t = 0;
+    for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    float slew_e = droopSlew_prev;
+    for (int i = 0; i < 300; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(fabsf(droopSlew_prev - slew_e) < 5e-3f,
+          "governor E2: effective lo bound at I_tot=1.5A is 0.30/1.5=0.20 (fw v4), not the old 0.1333");
+
     // C) Collapse to the balanced split: I_tot ≤ 2·SHARE_MINORITY_I_MIN_A pins
     // sp_eff at 0.5, so a balanced measured share is zero-error even with an
     // asymmetric raw setpoint.
@@ -1018,7 +1118,7 @@ static void test_share_setpoint_governor() {
     digitalWrite(FC_BUS_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
-    I_fc = 0.15f; I_batt = 0.15f;          // I_tot=0.3 < 0.4, measured 0.50
+    I_fc = 0.15f; I_batt = 0.15f;          // I_tot=0.3 < 2*0.30=0.6 (fw v4 floor), measured 0.50
     power_share_setpoint = 0.30f;
     t = 0;
     for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
@@ -1162,6 +1262,8 @@ static void test_share_ratio_cutoff() {
     reset_test_state();
     digitalWrite(FC_BUS_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, HIGH);
+    digitalWrite(FC_REG_ENABLE, HIGH);   // re-entry also requires the boost enabled (fw v4 S5)
+    digitalWrite(BT_REG_ENABLE, HIGH);
     V_bus = 16.0f;
     applyShareRatio(0.0f);                       // isolate FC
     V_bus = V_BUS_CHARGED_THRESH - 1.0f;         // bus collapses meanwhile
@@ -1237,6 +1339,563 @@ static void test_share_ratio_cutoff() {
     check(power_share_setpoint == 0.0f, "setpoint: 0.0 accepted verbatim");
     setPowerShareSetpointLive(1.0f);
     check(power_share_setpoint == 1.0f, "setpoint: 1.0 accepted verbatim");
+}
+
+// ─── Setpoint-latched channel cutoff ("one owner per setpoint", fw v4 2026-08-12) ────
+// updateShareSetpointCutoff() gives every SETPOINT exactly one owner: in-band → the
+// governor; out-of-band ([DROOP_R_MIN, DROOP_R_MAX] = [0.15, 0.85]) → this latch, which
+// freezes the WHOLE share loop (no governor, no controller step, no MDAC write) and
+// disables applyShareRatio()'s ratio-hysteresis re-entry for the latched channel. This
+// closes the two TP0037 (in-band settle, cutoff never fires)/TP0015 (standing error winds
+// past the 0.01 re-entry hysteresis, ~190 cycles/run) gaps described in the .ino changelog.
+static void test_share_setpoint_cutoff_bt_high_side() {
+    test_group("updateShareSetpointCutoff(): sp>DROOP_R_MAX latches BT, freezes the loop");
+
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;                          // charged (irrelevant to entry, only to release)
+    I_fc = 1.0f; I_batt = 0.5f;
+    power_share_setpoint = 0.87f;           // > DROOP_R_MAX = 0.85
+
+    uint32_t t = 0;
+    t += 1000; g_mock_micros = t;
+    powerBalance();                          // FIRST tick: entry fires and the loop freezes
+    check(digitalRead(BT_BUS_ENABLE) == LOW,
+          "sp-cutoff: first tick opens BT_BUS_ENABLE on the out-of-band setpoint");
+    check(shareIsoBT && shareSpCutBT,
+          "sp-cutoff: shareIsoBT (topology) and shareSpCutBT (setpoint latch) both set");
+    check(digitalRead(FC_BUS_ENABLE) == HIGH,
+          "sp-cutoff: FC (the surviving source) stays on the bus");
+    check(SPI.transfer_log.empty(),
+          "sp-cutoff: the entry tick returns before any MDAC write (updateShareSetpointCutoff "
+          "runs BEFORE the min-load gate and the controller step)");
+
+    // Standing topology-forced share error: BT is off the bus, so its measured current is
+    // truthfully ~0 and the measured share pins at 1.0 — exactly the condition that wound
+    // the old ratio-based cutoff back over its re-entry hysteresis (TP0015). Drive many
+    // ticks and confirm zero hunting: the switch never toggles and the controller state
+    // (Youla integrator + biquads, reset at the top of the test via reset_test_state())
+    // never advances, because powerBalance() returns before ever calling the controller.
+    I_fc = 1.0f; I_batt = 0.0f;
+    int transitions = 0;
+    int prevRead = digitalRead(BT_BUS_ENABLE);
+    for (int i = 0; i < 500; i++) {
+        t += 1000; g_mock_micros = t;
+        powerBalance();
+        int r = digitalRead(BT_BUS_ENABLE);
+        if (r != prevRead) transitions++;
+        prevRead = r;
+    }
+    check(transitions == 0,
+          "sp-cutoff: zero BT_BUS_ENABLE transitions over 500 ticks of standing error — no hunting");
+    check(digitalRead(BT_BUS_ENABLE) == LOW && shareIsoBT && shareSpCutBT,
+          "sp-cutoff: still latched after 500 ticks");
+    check(SPI.transfer_log.empty(),
+          "sp-cutoff: no MDAC writes at all while latched — the controller never steps");
+    check(shareCtrl_integ == 0.0f && fabsf(shareCtrl_heldOut - 0.5f) < 1e-9f,
+          "sp-cutoff: the Youla controller state never advanced from its fresh-reset values "
+          "(controller freeze, not just a frozen output)");
+}
+
+static void test_share_setpoint_cutoff_fc_low_side() {
+    test_group("updateShareSetpointCutoff(): sp<DROOP_R_MIN latches FC (TP0015 regression)");
+
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.5f; I_batt = 1.0f;
+    power_share_setpoint = 0.12f;           // < DROOP_R_MIN = 0.15
+
+    uint32_t t = 0;
+    t += 1000; g_mock_micros = t;
+    powerBalance();
+    check(digitalRead(FC_BUS_ENABLE) == LOW && shareIsoFC && shareSpCutFC,
+          "sp-cutoff (low side): first tick opens FC_BUS_ENABLE and latches");
+
+    // TP0015's actual failure mode: FC off the bus pins measured share at 0.0, sp=0.12 is a
+    // large standing error that, pre-fw-v4, wound the controller output back across
+    // SHARE_CUTOFF_HYST at ~20 Hz (~190 FC_BUS_ENABLE cycles/run). Confirm the fix: zero
+    // transitions over a run-length tick count.
+    I_fc = 0.0f; I_batt = 1.0f;
+    int transitions = 0;
+    int prevRead = digitalRead(FC_BUS_ENABLE);
+    for (int i = 0; i < 2000; i++) {          // ~2s at a 1ms tick — several TP0015 cycle periods
+        t += 1000; g_mock_micros = t;
+        powerBalance();
+        int r = digitalRead(FC_BUS_ENABLE);
+        if (r != prevRead) transitions++;
+        prevRead = r;
+    }
+    check(transitions == 0,
+          "sp-cutoff (low side): zero FC_BUS_ENABLE transitions — TP0015's ~20Hz hunting is gone");
+}
+
+static void test_share_setpoint_cutoff_release() {
+    test_group("updateShareSetpointCutoff(): release on in-band setpoint, gated on V_bus");
+
+    // Release with the bus charged: the switch re-closes, both flags clear, and
+    // resetShareControlState() ran — observable via share_govTotAFilt, which
+    // resetShareControlState() zeroes and which powerBalance() only re-populates once
+    // totalA >= SHARE_I_TOT_MIN_A. Hold the source currents at 0 on the release tick itself
+    // so the min-load gate returns immediately after release and the zeroed filter is still
+    // visible (not yet re-touched by a controller step).
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    digitalWrite(BT_REG_ENABLE, HIGH);   // release also requires the boost enabled (fw v4 S5)
+    V_bus = 16.0f;
+    power_share_setpoint = 0.87f;
+    uint32_t t = 0;
+    t += 1000; g_mock_micros = t; powerBalance();      // latch BT
+    check(shareSpCutBT, "release: (setup) BT is latched");
+    share_govTotAFilt = 0.42f;                          // dirty it so the reset is observable
+
+    power_share_setpoint = 0.5f;                        // back in-band
+    I_fc = 0.0f; I_batt = 0.0f;                          // keep this tick below SHARE_I_TOT_MIN_A
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(digitalRead(BT_BUS_ENABLE) == HIGH,
+          "release: BT_BUS_ENABLE re-closes once the setpoint returns in-band with a charged bus");
+    check(!shareIsoBT && !shareSpCutBT,
+          "release: both shareIsoBT and shareSpCutBT clear on release");
+    check(share_govTotAFilt == 0.0f,
+          "release: resetShareControlState() ran (governor filter re-zeroed, not re-populated yet)");
+
+    // Release with the bus LOW: the latch is held (retried, not abandoned) — releasing onto
+    // an unregulated bus would close a running-but-unloaded boost onto an unregulated rail,
+    // the hot-plug direction the guard exists to prevent.
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    digitalWrite(BT_REG_ENABLE, HIGH);   // release also requires the boost enabled (fw v4 S5)
+    V_bus = 16.0f;
+    power_share_setpoint = 0.87f;
+    t = 0;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(shareSpCutBT, "release/low-bus: (setup) BT latched");
+
+    power_share_setpoint = 0.5f;
+    V_bus = V_BUS_CHARGED_THRESH - 1.0f;                // bus not regulated
+    I_fc = 1.0f; I_batt = 0.0f;
+    for (int i = 0; i < 50; i++) {
+        t += 1000; g_mock_micros = t;
+        powerBalance();
+    }
+    check(digitalRead(BT_BUS_ENABLE) == LOW && shareIsoBT && shareSpCutBT,
+          "release/low-bus: stays latched/isolated while V_bus < V_BUS_CHARGED_THRESH");
+
+    V_bus = 16.0f;                                       // bus recovers
+    t += 1000; g_mock_micros = t;
+    powerBalance();
+    check(digitalRead(BT_BUS_ENABLE) == HIGH && !shareIsoBT && !shareSpCutBT,
+          "release/low-bus: releases on the first tick after V_bus recovers");
+}
+
+static void test_share_setpoint_cutoff_single_source_guard() {
+    test_group("updateShareSetpointCutoff(): last-source guard blocks a latch");
+
+    // BT is already off the bus (operator/state action, not the setpoint latch). An
+    // out-of-band low setpoint asking to cut FC — the only live source — must be refused:
+    // the entry guard requires BOTH switches HIGH. Governed control must continue on FC
+    // (droop authority stays live — mirrors applyShareRatio()'s own last-source guard).
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, LOW);       // battery already off the bus
+    V_bus = 16.0f;
+    I_fc = 1.0f; I_batt = 0.0f;
+    power_share_setpoint = 0.12f;           // < DROOP_R_MIN — would latch FC if guard-unblocked
+
+    uint32_t t = 0;
+    for (int i = 0; i < 50; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(digitalRead(FC_BUS_ENABLE) == HIGH,
+          "single-source guard: FC — the only live source — is never cut by the setpoint latch");
+    check(!shareIsoFC && !shareSpCutFC,
+          "single-source guard: no latch claimed (guard-blocked entry falls through)");
+    check(!SPI.transfer_log.empty(),
+          "single-source guard: normal governed control continues — MDAC gains are still written");
+}
+
+static void test_share_setpoint_cutoff_side_flip() {
+    test_group("updateShareSetpointCutoff(): FC latched -> BT latched never darkens the bus");
+
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    digitalWrite(FC_REG_ENABLE, HIGH);   // FC's release later in this flip needs the boost enabled (fw v4 S5)
+    V_bus = 16.0f;
+    I_fc = 0.0f; I_batt = 1.0f;
+    power_share_setpoint = 0.12f;           // latch FC low-side
+    uint32_t t = 0;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(shareSpCutFC && digitalRead(FC_BUS_ENABLE) == LOW,
+          "side flip: (setup) FC latched");
+
+    // Flip the setpoint to the opposite extreme. Release (FC) is evaluated first and — per
+    // the .ino design comment — a release tick returns without also evaluating entry, so the
+    // BT latch cannot engage on the SAME tick as the FC release: it takes one extra tick.
+    power_share_setpoint = 0.90f;
+    I_fc = 1.0f; I_batt = 0.0f;             // FC is about to be the live source again
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(!shareSpCutFC && digitalRead(FC_BUS_ENABLE) == HIGH,
+          "side flip: FC releases first (bus is charged)");
+    check(digitalRead(BT_BUS_ENABLE) == HIGH,
+          "side flip: BT does NOT latch on the same tick as the FC release");
+    check(!(digitalRead(FC_BUS_ENABLE) == LOW && digitalRead(BT_BUS_ENABLE) == LOW),
+          "side flip: the bus is never darkened (both switches LOW) at any point in the flip");
+
+    // Next tick: BT latches (setpoint is still 0.90, both switches now HIGH — entry guard
+    // satisfied).
+    I_fc = 1.0f; I_batt = 0.0f;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(shareSpCutBT && digitalRead(BT_BUS_ENABLE) == LOW,
+          "side flip: BT latches on the next tick");
+    check(digitalRead(FC_BUS_ENABLE) == HIGH,
+          "side flip: FC (the surviving source) stays on the bus through the whole flip");
+}
+
+static void test_share_setpoint_cutoff_ownership() {
+    test_group("Setpoint latch ownership: State-98 '1'/'2' and safeAllSwitches() clear it");
+
+    // State-98 '1' (operator toggles FC_BUS_ENABLE) clears a standing FC setpoint latch —
+    // otherwise the latch would keep blocking re-entry and freezing the share loop after the
+    // operator has explicitly taken the switch back (see the .ino case '1' comment).
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.0f; I_batt = 1.0f;
+    power_share_setpoint = 0.12f;
+    uint32_t t = 0;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(shareSpCutFC, "ownership: (setup) FC setpoint-latched");
+
+    mainState = 98;
+    Serial.rx_queue.push('1');
+    doState98();
+    check(!shareSpCutFC,
+          "ownership: State-98 '1' clears shareSpCutFC when it toggles FC_BUS_ENABLE");
+
+    // State-98 '2' mirrors it for BT.
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 1.0f; I_batt = 0.0f;
+    power_share_setpoint = 0.87f;
+    t = 0;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(shareSpCutBT, "ownership: (setup) BT setpoint-latched");
+
+    mainState = 98;
+    Serial.rx_queue.push('2');
+    doState98();
+    check(!shareSpCutBT,
+          "ownership: State-98 '2' clears shareSpCutBT when it toggles BT_BUS_ENABLE");
+
+    // safeAllSwitches() clears both latches unconditionally.
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    shareSpCutFC = true;
+    shareSpCutBT = true;
+    safeAllSwitches();
+    check(!shareSpCutFC && !shareSpCutBT,
+          "ownership: safeAllSwitches() clears both setpoint latches");
+}
+
+// ─── S1: self-heal — an orphaned latch (switch externally re-closed) degrades to live control,
+// never a frozen loop (fw v4 review round, 2026-08-12) ───────────────────────────────────────
+static void test_share_setpoint_self_heal() {
+    test_group("updateShareSetpointCutoff(): S1 self-heal drops an orphaned latch");
+
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 1.0f; I_batt = 0.0f;
+    power_share_setpoint = 0.87f;           // out-of-band -> latches BT
+    uint32_t t = 0;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(shareSpCutBT && digitalRead(BT_BUS_ENABLE) == LOW,
+          "(setup) BT setpoint-latched, switch open");
+
+    // Something outside the share loop re-closes the switch without going through the gated
+    // release path (e.g. chargingControl()'s charge_goal==0 re-close). Also bring the setpoint
+    // back in-band and drop V_bus BELOW the charged threshold: if this went through the normal
+    // release path (which requires V_bus >= V_BUS_CHARGED_THRESH), it would stay held — self-
+    // heal must clear it unconditionally regardless of that gate.
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    power_share_setpoint = 0.5f;
+    V_bus = V_BUS_CHARGED_THRESH - 1.0f;
+    I_fc = 0.5f; I_batt = 0.5f;
+    check(shareSpCutBT, "(setup) the latch flag is still set — now orphaned");
+
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(!shareSpCutBT && !shareIsoBT,
+          "self-heal: the next tick clears the orphaned latch unconditionally (no V_bus/boost "
+          "gate — that gate belongs to the release path, not self-heal)");
+    check(digitalRead(BT_BUS_ENABLE) == HIGH,
+          "self-heal: the externally re-closed switch stays closed — degrades to live, not frozen");
+    check(!SPI.transfer_log.empty(),
+          "self-heal: the loop is live again — the controller stepped and wrote the MDACs");
+}
+
+// ─── S1 guard: doState2()/chargingControl() no longer re-assert a switch the setpoint latch
+// owns (fw v4 review round) ───────────────────────────────────────────────────────────────────
+static void test_charging_control_skips_reassert_when_latched() {
+    test_group("chargingControl(): charge_goal==0 skips the BT_BUS re-assert while shareSpCutBT is latched (S1 guard)");
+
+    reset_test_state();
+    shareSpCutBT = true;
+    g_pin_value[BT_BUS_ENABLE] = LOW;    // the share loop's latch already holds it open
+    charge_goal = 0.0f;
+    chargingControl();
+    check(digitalRead(BT_BUS_ENABLE) == LOW,
+          "S1 guard: BT_BUS_ENABLE stays LOW — chargingControl() does not re-assert a switch the "
+          "setpoint latch owns");
+    check(digitalRead(MPPT_DISABLE) == LOW && digitalRead(FC_CHARGE_ENABLE) == LOW &&
+          digitalRead(REGEN_ENABLE) == LOW,
+          "S1 guard: the rest of the charge_goal==0 inhibit still runs normally");
+
+    // Contrast: without the latch, the same call DOES re-assert BT_BUS_ENABLE as before.
+    reset_test_state();
+    shareSpCutBT = false;
+    g_pin_value[BT_BUS_ENABLE] = LOW;
+    charge_goal = 0.0f;
+    chargingControl();
+    check(digitalRead(BT_BUS_ENABLE) == HIGH,
+          "S1 guard (contrast): without the latch chargingControl() re-asserts BT_BUS_ENABLE as normal");
+}
+
+// ─── S2: assertFcChargeEnable(true) restores a setpoint-latched FC to the bus BEFORE cutting
+// BT — never cut the last source (fw v4 review round) ────────────────────────────────────────
+static void test_assert_fc_charge_enable_clears_setpoint_latches() {
+    test_group("assertFcChargeEnable(true): restores an FC setpoint latch before cutting BT (S2)");
+
+    // FC is setpoint-latched off the bus (sp < DROOP_R_MIN); BT is the only live source.
+    reset_test_state();
+    g_pin_value[FC_BUS_ENABLE] = LOW;
+    g_pin_value[BT_BUS_ENABLE] = HIGH;
+    shareSpCutFC = true;
+    shareIsoFC   = true;
+    g_write_log.clear();
+
+    assertFcChargeEnable(true);
+
+    check(digitalRead(FC_BUS_ENABLE) == HIGH,
+          "S2: FC_BUS_ENABLE ends HIGH — restored to the bus before BT is cut");
+    check(digitalRead(BT_BUS_ENABLE) == LOW,
+          "S2: BT_BUS_ENABLE ends LOW — the charge path takes over as usual");
+    check(!shareSpCutFC && !shareIsoFC,
+          "S2: the FC setpoint latch and isolation flag are both cleared");
+    check(digitalRead(FC_CHARGE_ENABLE) == HIGH,
+          "S2: FC_CHARGE_ENABLE ends HIGH");
+
+    // Ordering: the bus is never left dark mid-restore — FC_BUS_ENABLE must go HIGH before
+    // BT_BUS_ENABLE goes LOW.
+    int fc_high_idx = -1, bt_low_idx = -1;
+    for (int i = 0; i < (int)g_write_log.size(); i++) {
+        if (fc_high_idx < 0 && g_write_log[i].pin == FC_BUS_ENABLE && g_write_log[i].value == HIGH)
+            fc_high_idx = i;
+        if (bt_low_idx < 0 && g_write_log[i].pin == BT_BUS_ENABLE && g_write_log[i].value == LOW)
+            bt_low_idx = i;
+    }
+    check(fc_high_idx >= 0 && bt_low_idx >= 0 && fc_high_idx < bt_low_idx,
+          "S2: FC_BUS_ENABLE HIGH is written before BT_BUS_ENABLE LOW — the bus is never dark");
+}
+
+// ─── Correctness-review gap (i): assertFcChargeEnable(true) must clear a GENUINE BT setpoint
+// latch (shareSpCutBT), not only the ratio-isolation flag (shareIsoBT) ──────────────────────
+static void test_assert_fc_charge_enable_clears_bt_setpoint_latch() {
+    test_group("assertFcChargeEnable(true) clears a genuine BT setpoint latch, not just shareIsoBT (gap i)");
+
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 1.0f; I_batt = 0.0f;
+    power_share_setpoint = 0.87f;          // out-of-band -> latches BT via the SETPOINT path
+    uint32_t t = 0;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(shareSpCutBT && shareIsoBT && digitalRead(BT_BUS_ENABLE) == LOW,
+          "(setup) BT is genuinely setpoint-latched, not just ratio-isolated");
+
+    assertFcChargeEnable(true);
+    check(!shareSpCutBT && !shareIsoBT,
+          "gap (i): assertFcChargeEnable(true) clears shareSpCutBT too, not only shareIsoBT");
+    check(digitalRead(BT_BUS_ENABLE) == LOW && digitalRead(FC_CHARGE_ENABLE) == HIGH,
+          "gap (i): BT_BUS_ENABLE stays LOW, now under the charge path's own ownership");
+}
+
+// ─── S5: every bus-switch re-close (setpoint release AND ratio hysteresis) also requires the
+// channel's boost to be enabled (CLAUDE.md §2 back-feed rule, fw v4 review round) ────────────
+static void test_share_setpoint_release_blocked_without_boost() {
+    test_group("updateShareSetpointCutoff(): release refused while the channel's boost is disabled (S5)");
+
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    power_share_setpoint = 0.87f;
+    uint32_t t = 0;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(shareSpCutBT, "(setup) BT latched");
+
+    // Setpoint back in-band, bus charged, but BT_REG_ENABLE is LOW (boost disabled): release
+    // must stay held/retried, never proceed — closing a live bus onto a disabled boost is the
+    // back-feed direction (CLAUDE.md §2).
+    power_share_setpoint = 0.5f;
+    digitalWrite(BT_REG_ENABLE, LOW);
+    for (int i = 0; i < 50; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(digitalRead(BT_BUS_ENABLE) == LOW && shareSpCutBT && shareIsoBT,
+          "S5: release stays held while BT_REG_ENABLE is LOW, even in-band and bus charged");
+
+    // Enable the boost: releases on the very next tick.
+    digitalWrite(BT_REG_ENABLE, HIGH);
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(digitalRead(BT_BUS_ENABLE) == HIGH && !shareSpCutBT && !shareIsoBT,
+          "S5: releases on the first tick after BT_REG_ENABLE goes HIGH");
+}
+
+static void test_share_ratio_reentry_blocked_without_boost() {
+    test_group("applyShareRatio(): ratio-hysteresis re-entry refused while the channel's boost is disabled (S5)");
+
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    applyShareRatio(0.0f);                      // isolate FC (entry doesn't need the boost)
+    check(shareIsoFC && digitalRead(FC_BUS_ENABLE) == LOW, "(setup) FC isolated by the ratio cutoff");
+
+    // FC_REG_ENABLE stays LOW: re-entry must stay refused even at a fully in-band ratio and a
+    // charged bus.
+    applyShareRatio(0.5f);
+    check(digitalRead(FC_BUS_ENABLE) == LOW && shareIsoFC,
+          "S5: re-entry refused while FC_REG_ENABLE is LOW");
+
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    applyShareRatio(0.5f);
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareIsoFC,
+          "S5: re-entry proceeds once FC_REG_ENABLE goes HIGH");
+}
+
+// ─── S6/S7: the bring-up and State-99 teardown paths clear the share-loop latches they take
+// ownership of (fw v4 review round) ───────────────────────────────────────────────────────────
+static void test_share_latches_cleared_by_bringup_p0_and_abort() {
+    test_group("Share-loop latches cleared by bring-up ownership transitions (S6)");
+
+    // busBringupTick() P0 entry.
+    reset_test_state();
+    mainState = 98;
+    g_mock_millis = 0;
+    V_fc = 12.0f; V_batt = 7.0f; V_bus = 0.0f;
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    shareSpCutFC = true; shareIsoFC = true;
+    shareSpCutBT = true; shareIsoBT = true;
+    busBringupStart();
+    busBringupTick(false);                      // P0 entry
+    check(!shareSpCutFC && !shareIsoFC && !shareSpCutBT && !shareIsoBT,
+          "S6: bring-up P0 entry clears all four share-latch flags");
+
+    // busBringupAbort().
+    reset_test_state();
+    mainState = 98;
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    bringupActive = true;
+    shareSpCutFC = true; shareIsoFC = true;
+    shareSpCutBT = true; shareIsoBT = true;
+    busBringupAbort();
+    check(!shareSpCutFC && !shareIsoFC && !shareSpCutBT && !shareIsoBT,
+          "S6: busBringupAbort() clears all four share-latch flags");
+}
+
+static void test_share_fc_latch_cleared_by_state99() {
+    test_group("doState99() phase 0 clears the FC setpoint/isolation latches (S7)");
+
+    reset_test_state();
+    mainState = 99;
+    error_code = ERR_OC_FC;
+    fault_flags = FAULT_OC_FC | FAULT_ERROR;
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    shareSpCutFC = true; shareIsoFC = true;
+    shareSpCutBT = true; shareIsoBT = true;
+    state99Phase = 0;
+    doState99();
+    check(!shareSpCutFC && !shareIsoFC,
+          "S7: doState99() phase 0 clears shareIsoFC/shareSpCutFC directly");
+    check(!shareSpCutBT && !shareIsoBT,
+          "S7: shareIsoBT/shareSpCutBT also end cleared (via the assertFcChargeEnable(true) call "
+          "phase 0 makes to drain VBUS — S2's unconditional BT clear)");
+    check(digitalRead(FC_BUS_ENABLE) == LOW && digitalRead(BT_BUS_ENABLE) == LOW,
+          "S7: (sanity) both bus switches opened by the teardown");
+}
+
+// ─── Correctness-review gap (ii): restoreShareCutoffOnCompletion() with a genuine shareSpCut
+// latch (not just shareIsoBT/FC) — flags cleared, switch re-closed given boost+bus OK ────────
+static void test_restore_share_cutoff_on_completion_setpoint_latch() {
+    test_group("restoreShareCutoffOnCompletion() with a genuine shareSpCut latch (gap ii)");
+
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    digitalWrite(BT_REG_ENABLE, HIGH);
+    V_bus = 17.5f;
+    I_fc = 1.0f; I_batt = 0.0f;
+    power_share_setpoint = 0.87f;           // out-of-band -> genuine setpoint latch on BT
+    uint32_t t = 0;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(shareSpCutBT && shareIsoBT && digitalRead(BT_BUS_ENABLE) == LOW,
+          "(setup) BT is genuinely setpoint-latched");
+
+    restoreShareCutoffOnCompletion("TEST");
+    check(!shareSpCutBT && !shareIsoBT,
+          "gap (ii): the SETPOINT latch (not just the ratio-isolation flag) is cleared");
+    check(digitalRead(BT_BUS_ENABLE) == HIGH,
+          "gap (ii): the channel is put back on the bus (boost enabled, bus charged)");
+}
+
+// ─── Correctness-review gap (iii): 'O'/applyOpenLoopDroop() cannot override a setpoint latch
+// with an in-band ratio — the switch must stay open ───────────────────────────────────────────
+static void test_open_loop_droop_respects_setpoint_latch() {
+    test_group("applyOpenLoopDroop() ('O') cannot override a setpoint latch (gap iii)");
+
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.0f; I_batt = 1.0f;
+    power_share_setpoint = 0.12f;           // out-of-band -> genuine setpoint latch on FC
+    uint32_t t = 0;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(shareSpCutFC && digitalRead(FC_BUS_ENABLE) == LOW, "(setup) FC setpoint-latched");
+
+    powerBalanceLive = true;
+    applyOpenLoopDroop(0.5f);                // in-band ratio, but the latch still owns FC_BUS
+    check(digitalRead(FC_BUS_ENABLE) == LOW,
+          "gap (iii): 'O' with an in-band ratio does NOT re-close a setpoint-latched switch");
+    check(!powerBalanceLive,
+          "gap (iii): 'O' still clears powerBalanceLive as usual");
+}
+
+// ─── Correctness-review gap (iv): resetShareControlState() resets the CONTROLLER, not the
+// setpoint/isolation latches — a latch must survive a direct call ────────────────────────────
+static void test_reset_share_control_state_leaves_latch() {
+    test_group("resetShareControlState() does not touch the setpoint/isolation latches (gap iv)");
+
+    reset_test_state();
+    shareSpCutFC = true;
+    shareIsoFC   = true;
+    shareCtrl_heldOut = 0.8f;
+    resetShareControlState();
+    check(shareSpCutFC && shareIsoFC,
+          "gap (iv): resetShareControlState() leaves the setpoint/isolation latches untouched");
+    check(fabsf(shareCtrl_heldOut - 0.5f) < 1e-6f,
+          "gap (iv): but it does reset the controller's held output to the balanced split");
 }
 
 // ─── Power-share PI anti-windup ───────────────────────────────────────────────
@@ -2087,6 +2746,279 @@ static void test_ov_bus_transient_counter() {
     check(ovBusHasPrinted && ovBusPrintLastMs == 0,
           "transient: t=0 close marks the limiter as printed (flag, not 0-sentinel)");
     check(ovBusTransientCount == 1, "transient: t=0 close still counted");
+}
+
+// ─── FAULT_UV_BUS: bus-armed + persistence-filtered (fw v4, 2026-08-12) ──────
+// Armed (not state-gated, unlike the old single-sample State-2 check it replaces) when
+// V_bus has reached V_BUS_CHARGED_THRESH with a source switch closed; disarmed the instant
+// both source switches read LOW. While armed, a V_bus < LIMIT_V_BUS_MIN sample sets the
+// telemetry bit immediately but only latches State 99 after UV_BUS_PERSIST_MS continuous AND
+// UV_BUS_PERSIST_MIN_SAMPLES consecutive ticks — same filter shape as FAULT_OV_BUS, so these
+// tests mirror test_ov_bus_persistence()/test_ov_bus_gap_guard() with the polarity flipped.
+// This block is compiled and armed in BOTH builds (deliberately outside #if !BENCH_TEST —
+// see the .ino comment at the FAULT_UV_BUS block): WP0039/TP0016 sagged the bus with zero
+// fault indication under BENCH_TEST, which is exactly the gap this rework closes.
+static void test_uv_bus_not_armed_dark() {
+    test_group("FAULT_UV_BUS: unarmed while the power stage is dark");
+
+    // Both source switches LOW, V_bus at 0 (boot/teardown darkness) — never arms regardless
+    // of how many ticks or how much time passes.
+    reset_test_state();
+    mainState = 1; V_bus = 0.0f;
+    g_pin_value[FC_BUS_ENABLE] = LOW;
+    g_pin_value[BT_BUS_ENABLE] = LOW;
+    for (uint32_t t = 0; t <= 200; t += 20) {
+        g_mock_millis = t;
+        detectFaults();
+    }
+    check(!uvBusArmed, "UV_BUS/dark: never arms with both source switches LOW");
+    check(!(fault_flags & FAULT_UV_BUS), "UV_BUS/dark: no fault bit despite V_bus=0 < LIMIT_V_BUS_MIN");
+    check(mainState == 1 && error_code == ERR_NONE, "UV_BUS/dark: no latch");
+}
+
+static void test_uv_bus_arming_and_persistence() {
+    test_group("FAULT_UV_BUS: arming and the persistence latch");
+
+    const float CHARGED = V_BUS_CHARGED_THRESH + 0.5f;
+    const float UNDER   = LIMIT_V_BUS_MIN - 1.0f;   // e.g. TP0016/WP0039-class sag
+
+    // (1) Arming: a source switch closed + a boost enabled + V_bus at/above V_BUS_CHARGED_THRESH.
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[BT_BUS_ENABLE] = LOW;
+    g_pin_value[FC_REG_ENABLE] = HIGH;   // arming also requires a boost enabled (fw v4 S4)
+    V_bus = CHARGED;
+    g_mock_millis = 0;
+    detectFaults();
+    check(uvBusArmed, "UV_BUS/arm: armed once the bus reaches V_BUS_CHARGED_THRESH with FC_BUS closed");
+    check(!(fault_flags & FAULT_UV_BUS), "UV_BUS/arm: no fault bit while V_bus is above LIMIT_V_BUS_MIN");
+
+    // (2) Sustained sag, contiguous samples (gap <= UV_BUS_MAX_GAP_MS): bit appears
+    // immediately, latch only after time AND sample-count thresholds are both met.
+    g_mock_millis = 1000; V_bus = UNDER;
+    detectFaults();                                          // sample 1, window opens
+    check((fault_flags & FAULT_UV_BUS) != 0,
+          "UV_BUS/arm: bit set on the FIRST under-limit sample (truthful telemetry)");
+    check(mainState == 2 && error_code == ERR_NONE,
+          "UV_BUS/arm: single sample does not latch");
+    g_mock_millis = 1000 + UV_BUS_MAX_GAP_MS;
+    detectFaults();                                          // sample 2, time not yet met
+    check(mainState == 2, "UV_BUS/arm: no latch before the persistence time elapses");
+    g_mock_millis = 1000 + UV_BUS_PERSIST_MS;
+    detectFaults();                                          // sample 3, time + samples met
+    check(mainState == 99 && error_code == ERR_UV_BUS,
+          "UV_BUS/arm: latches once time AND the sample floor are both satisfied");
+    check((fault_flags & FAULT_UV_BUS) != 0, "UV_BUS/arm: flag retained through the latch");
+}
+
+static void test_uv_bus_sub_persistence_dip() {
+    test_group("FAULT_UV_BUS: a sub-persistence dip flickers but does not latch");
+
+    const float CHARGED = V_BUS_CHARGED_THRESH + 0.5f;
+    const float UNDER   = LIMIT_V_BUS_MIN - 1.0f;
+
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;   // arming also requires a boost enabled (fw v4 S4)
+    V_bus = CHARGED; g_mock_millis = 0; detectFaults();
+    check(uvBusArmed, "UV_BUS/dip: (setup) armed");
+
+    // Two under-samples 2 ms apart, then straight back above the limit.
+    g_mock_millis = 1000; V_bus = UNDER; detectFaults();
+    g_mock_millis = 1002;                detectFaults();
+    check(mainState == 2 && uvBusUnderActive && uvBusUnderSamples == 2,
+          "UV_BUS/dip: window open, 2 samples, still below the persistence time");
+    g_mock_millis = 1004; V_bus = CHARGED; detectFaults();
+    check(!uvBusUnderActive && uvBusUnderSamples == 0,
+          "UV_BUS/dip: recovery closes the window");
+    check(mainState == 2 && error_code == ERR_NONE,
+          "UV_BUS/dip: a sub-persistence dip never latches");
+    check(uvBusTransientCount == 1,
+          "UV_BUS/dip: the closed window is counted as a transient (visible via 'S')");
+}
+
+static void test_uv_bus_disarm_on_teardown() {
+    test_group("FAULT_UV_BUS: disarms when both source switches open (teardown)");
+
+    const float CHARGED = V_BUS_CHARGED_THRESH + 0.5f;
+
+    reset_test_state();
+    mainState = 3;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;   // arming also requires a boost enabled (fw v4 S4)
+    V_bus = CHARGED; g_mock_millis = 0; detectFaults();
+    check(uvBusArmed, "UV_BUS/disarm: (setup) armed");
+
+    // Teardown: both switches open, bus decaying below LIMIT_V_BUS_MIN. This is the expected
+    // shape of a normal State-3/99 shutdown, not a fault — it must disarm on the SAME tick
+    // the switches open, before the low reading is ever evaluated as a fault.
+    g_pin_value[FC_BUS_ENABLE] = LOW;
+    g_pin_value[BT_BUS_ENABLE] = LOW;
+    V_bus = 5.0f;
+    g_mock_millis = 1000;
+    detectFaults();
+    check(!uvBusArmed, "UV_BUS/disarm: disarmed the instant both source switches read LOW");
+    check(!(fault_flags & FAULT_UV_BUS), "UV_BUS/disarm: no fault bit during the decay");
+    check(mainState == 3 && error_code == ERR_NONE, "UV_BUS/disarm: no latch");
+}
+
+static void test_uv_bus_bringup_immunity() {
+    test_group("FAULT_UV_BUS: immune to a bring-up ramp that never reaches V_BUS_CHARGED_THRESH");
+
+    // Source switches closed (as in a real bring-up) but V_bus ramping slowly from 0 and
+    // never reaching V_BUS_CHARGED_THRESH: must never arm, even though V_bus sits below
+    // LIMIT_V_BUS_MIN for many milliseconds — a ramping/unregulated bus is not the same
+    // population as a collapsing regulated one.
+    reset_test_state();
+    mainState = 0;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[BT_BUS_ENABLE] = HIGH;
+    const float ceiling = V_BUS_CHARGED_THRESH - 0.1f;   // stays just under the arm threshold
+    for (uint32_t t = 0; t <= 200; t += 10) {
+        V_bus = ceiling * ((float)t / 200.0f);            // 0 -> ceiling ramp
+        g_mock_millis = t;
+        detectFaults();
+    }
+    check(!uvBusArmed, "UV_BUS/bringup: never arms across a ramp that stays under V_BUS_CHARGED_THRESH");
+    check(!(fault_flags & FAULT_UV_BUS),
+          "UV_BUS/bringup: no fault bit despite V_bus < LIMIT_V_BUS_MIN for most of the ramp");
+    check(mainState == 0 && error_code == ERR_NONE, "UV_BUS/bringup: no latch");
+}
+
+static void test_uv_bus_gap_guard() {
+    test_group("FAULT_UV_BUS sample-gap guard (UV_BUS_MAX_GAP_MS)");
+
+    const float CHARGED = V_BUS_CHARGED_THRESH + 0.5f;
+    const float UNDER   = LIMIT_V_BUS_MIN - 1.0f;
+
+    // Sparse: arm, then three under-samples at t = 0, 100, 101. Naive window arithmetic
+    // (since=0, samples=3, elapsed=101 >= 10) would latch — the gap guard must restart at 100.
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;   // arming also requires a boost enabled (fw v4 S4)
+    V_bus = CHARGED; g_mock_millis = 0; detectFaults();     // arm
+    V_bus = UNDER;
+    g_mock_millis = 0;   detectFaults();
+    g_mock_millis = 100; detectFaults();
+    g_mock_millis = 101; detectFaults();
+    check(mainState == 2 && error_code == ERR_NONE,
+          "UV_BUS gap guard: samples at 0/100/101 do NOT latch (window restarted at the 100ms gap)");
+    check(uvBusUnderSince == 100 && uvBusUnderSamples == 2,
+          "UV_BUS gap guard: window restarted at the sparse sample, then continued");
+
+    // Continuity: 2 ms spacing all the way to 12 ms -> every gap <= UV_BUS_MAX_GAP_MS, so the
+    // window survives and both the persistence time and sample floor are met.
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;   // arming also requires a boost enabled (fw v4 S4)
+    V_bus = CHARGED; g_mock_millis = 0; detectFaults();     // arm
+    V_bus = UNDER;
+    for (uint32_t t = 0; t <= 12; t += 2) {
+        g_mock_millis = t;
+        detectFaults();
+    }
+    check(mainState == 99 && error_code == ERR_UV_BUS,
+          "UV_BUS gap guard: contiguous 2ms-spaced samples across the window DO latch");
+}
+
+// ─── FAULT_UV_BUS: bringupActive disarms it even with everything else satisfied (S3, fw v4
+// review round 2026-08-12) ────────────────────────────────────────────────────────────────────
+static void test_uv_bus_disarm_during_bringup() {
+    test_group("FAULT_UV_BUS: bringupActive disarms even with switches+boosts+charged bus (S3)");
+
+    const float CHARGED = V_BUS_CHARGED_THRESH + 0.5f;
+
+    reset_test_state();
+    mainState = 0;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[BT_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    g_pin_value[BT_REG_ENABLE] = HIGH;
+    bringupActive = true;
+    V_bus = CHARGED;
+    g_mock_millis = 0;
+    detectFaults();
+    check(!uvBusArmed,
+          "S3: uvBusArmed stays false while bringupActive is true, even with switches+boosts+"
+          "charged bus all otherwise satisfied — the staged bring-up owns its own sags");
+
+    bringupActive = false;
+    g_mock_millis = 10;
+    detectFaults();
+    check(uvBusArmed,
+          "S3: arms on the very tick bringupActive falls, with switches/boosts/bus already up");
+}
+
+// ─── FAULT_UV_BUS: both boosts off disarms it even with the bus switches still closed (S4,
+// the 'F'/'B' bench sequence, fw v4 review round) ─────────────────────────────────────────────
+static void test_uv_bus_disarm_both_boosts_off() {
+    test_group("FAULT_UV_BUS: disarms when both boosts are off, switches still closed (S4, 'F'/'B')");
+
+    const float CHARGED = V_BUS_CHARGED_THRESH + 0.5f;
+
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[BT_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    V_bus = CHARGED;
+    g_mock_millis = 0;
+    detectFaults();
+    check(uvBusArmed, "S4: (setup) armed with a boost enabled");
+
+    // Operator 'F'/'B': both boosts LOW, bus switches stay closed. The bus falls back to the
+    // (unregulated) source rail — expected, not a loss of source feed.
+    g_pin_value[FC_REG_ENABLE] = LOW;
+    V_bus = 8.5f;   // below LIMIT_V_BUS_MIN, the shape of the bare source rail
+    g_mock_millis = 10;
+    detectFaults();
+    check(!uvBusArmed,
+          "S4: disarmed the instant both boosts read LOW, even with the bus switches still closed");
+    check(!(fault_flags & FAULT_UV_BUS),
+          "S4: no fault bit on the sag — routine 'F'/'B' bench sequence, not a loss of source feed");
+    check(mainState == 2 && error_code == ERR_NONE, "S4: no latch");
+}
+
+// ─── FAULT_UV_BUS: disarming mid-window restarts the persistence window clean (correctness-
+// review gap v, fw v4 review round) ──────────────────────────────────────────────────────────
+static void test_uv_bus_disarm_resets_open_window() {
+    test_group("FAULT_UV_BUS: disarming with an open persistence window restarts it clean (gap v)");
+
+    const float CHARGED = V_BUS_CHARGED_THRESH + 0.5f;
+    const float UNDER   = LIMIT_V_BUS_MIN - 1.0f;
+
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    V_bus = CHARGED; g_mock_millis = 0; detectFaults();     // arm
+
+    V_bus = UNDER;
+    g_mock_millis = 10; detectFaults();      // sample 1, window opens
+    g_mock_millis = 14; detectFaults();      // sample 2 (gap=4ms <= UV_BUS_MAX_GAP_MS=5)
+    check(uvBusUnderActive && uvBusUnderSamples == 2,
+          "(setup) a 2-sample window is open, short of the persistence floor");
+
+    // Disarm mid-window (a teardown-style both-switches-open, mirroring test_uv_bus_disarm_on_teardown).
+    g_pin_value[FC_BUS_ENABLE] = LOW;
+    g_mock_millis = 16; detectFaults();
+    check(!uvBusArmed && !uvBusUnderActive && uvBusUnderSamples == 0,
+          "disarm drops the open window entirely, not just the armed flag");
+
+    // Re-arm and feed exactly one more under-sample: this must be sample 1 of a FRESH window,
+    // not sample 3 of the old (dropped) one — nowhere near latching.
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    V_bus = CHARGED; g_mock_millis = 20; detectFaults();    // re-arm
+    V_bus = UNDER;    g_mock_millis = 24; detectFaults();   // sample 1 of the NEW window
+    check(uvBusUnderActive && uvBusUnderSamples == 1,
+          "gap (v): the post-rearm window restarted at 1 sample, not carried over from the old "
+          "window's 2");
+    check(mainState == 2 && error_code == ERR_NONE,
+          "gap (v): nowhere near latching after a single fresh-window sample");
 }
 
 // ─── P0 entry darkens the power stage before closing the bus switches ────────
@@ -8023,6 +8955,38 @@ static void test_dostate0_bench_bypass() {
     check(!(fault_flags & FAULT_INIT_FAIL) && error_code == ERR_NONE && mainState != 99,
           "doState0/bench: never gates or faults on low V_bus");
 }
+
+// ─── FAULT_UV_BUS is armed under BENCH_TEST even though OC/UV_BATT are not ──
+// The whole point of the fw v4 UV_BUS rework: WP0039/TP0016 both ran under BENCH_TEST (State
+// 98) and produced zero fault indication on a genuine bus collapse. Contrast directly against
+// an overcurrent condition, which IS compiled out under BENCH_TEST (inside #if !BENCH_TEST),
+// to pin that UV_BUS's arming is deliberately outside that guard.
+static void test_uv_bus_armed_under_bench_test() {
+    test_group("FAULT_UV_BUS armed under BENCH_TEST (unlike OC/UV_BATT)");
+
+    reset_test_state();
+    mainState = 2;
+    I_fc = LIMIT_I_FC_MAX + 5.0f;    // would trip FAULT_OC_FC in the production build
+    detectFaults();
+    check(!(fault_flags & FAULT_OC_FC) && mainState == 2,
+          "UV_BUS/bench: (contrast) FAULT_OC_FC does NOT fire under BENCH_TEST");
+
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;   // arming also requires a boost enabled (fw v4 S4)
+    V_bus = V_BUS_CHARGED_THRESH + 0.5f;
+    g_mock_millis = 0;
+    detectFaults();
+    check(uvBusArmed, "UV_BUS/bench: arms under BENCH_TEST exactly as in production");
+
+    V_bus = LIMIT_V_BUS_MIN - 1.0f;
+    g_mock_millis = 1000; detectFaults();
+    g_mock_millis = 1000 + UV_BUS_MAX_GAP_MS;     detectFaults();
+    g_mock_millis = 1000 + UV_BUS_PERSIST_MS;     detectFaults();
+    check(mainState == 99 && error_code == ERR_UV_BUS,
+          "UV_BUS/bench: a sustained sag STILL latches under BENCH_TEST — the fw v3 gap this closes");
+}
 #endif
 
 // ─── main ─────────────────────────────────────────────────────────────────────
@@ -8091,6 +9055,8 @@ static void test_share_cutoff_profile_interaction() {
     V_bus = 17.5f;                      // regulated, so re-entry is permitted
     g_pin_value[FC_BUS_ENABLE] = HIGH;
     g_pin_value[BT_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;   // re-entry also requires the boost enabled (fw v4 S5)
+    g_pin_value[BT_REG_ENABLE] = HIGH;
     shareIsoFC = shareIsoBT = false;
 
     applyShareRatio(DROOP_R_MAX + 0.05f);
@@ -8130,6 +9096,7 @@ static void test_share_cutoff_profile_interaction() {
     V_bus = 17.5f;
     g_pin_value[FC_BUS_ENABLE] = HIGH;
     g_pin_value[BT_BUS_ENABLE] = HIGH;
+    g_pin_value[BT_REG_ENABLE] = HIGH;   // completion restore re-entry needs the boost enabled (fw v4 S5)
     applyShareRatio(DROOP_R_MAX + 0.05f);          // latch a BT cutoff mid-run
     check(shareIsoBT && digitalRead(BT_BUS_ENABLE) == LOW,
           "cutoff x completion: (setup) the run holds a BT cutoff when the table runs out");
@@ -8154,6 +9121,7 @@ static void test_share_cutoff_profile_interaction() {
     V_bus = 17.5f;
     g_pin_value[FC_BUS_ENABLE] = HIGH;
     g_pin_value[BT_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;   // completion restore re-entry needs the boost enabled (fw v4 S5)
     applyShareRatio(DROOP_R_MIN - 0.05f);          // latch an FC cutoff this time
     check(shareIsoFC && digitalRead(FC_BUS_ENABLE) == LOW,
           "cutoff x completion (Y): (setup) the run holds an FC cutoff");
@@ -8271,6 +9239,18 @@ int main() {
     test_ov_bus_gap_guard();
     test_ov_bus_gap_abandoned_counted();
     test_ov_bus_transient_counter();
+    // FAULT_UV_BUS (fw v4) is armed in BOTH builds too — same rationale as OV_BUS above, and
+    // the dedicated BENCH_TEST-vs-production contrast for it.
+    test_uv_bus_not_armed_dark();
+    test_uv_bus_arming_and_persistence();
+    test_uv_bus_sub_persistence_dip();
+    test_uv_bus_disarm_on_teardown();
+    test_uv_bus_bringup_immunity();
+    test_uv_bus_gap_guard();
+    test_uv_bus_disarm_during_bringup();
+    test_uv_bus_disarm_both_boosts_off();
+    test_uv_bus_disarm_resets_open_window();
+    test_uv_bus_armed_under_bench_test();
     test_dostate98_g_bringup();
     test_dostate98_bringup_interlocks();
     test_dostate98_bringup_abort();
@@ -8313,6 +9293,15 @@ int main() {
     test_ov_bus_gap_guard();
     test_ov_bus_gap_abandoned_counted();
     test_ov_bus_transient_counter();
+    test_uv_bus_not_armed_dark();
+    test_uv_bus_arming_and_persistence();
+    test_uv_bus_sub_persistence_dip();
+    test_uv_bus_disarm_on_teardown();
+    test_uv_bus_bringup_immunity();
+    test_uv_bus_gap_guard();
+    test_uv_bus_disarm_during_bringup();
+    test_uv_bus_disarm_both_boosts_off();
+    test_uv_bus_disarm_resets_open_window();
     test_dostate98_hotplug_guard();
     test_dostate98_bt_bus_fc_charge_guard();
     test_dostate98_quit_closes_charge_paths();
@@ -8378,6 +9367,23 @@ int main() {
     test_droop_ratio_slew_limit();
     test_share_state_reset_on_profile_start();
     test_share_ratio_cutoff();
+    test_share_setpoint_cutoff_bt_high_side();
+    test_share_setpoint_cutoff_fc_low_side();
+    test_share_setpoint_cutoff_release();
+    test_share_setpoint_cutoff_single_source_guard();
+    test_share_setpoint_cutoff_side_flip();
+    test_share_setpoint_cutoff_ownership();
+    test_share_setpoint_self_heal();
+    test_charging_control_skips_reassert_when_latched();
+    test_assert_fc_charge_enable_clears_setpoint_latches();
+    test_assert_fc_charge_enable_clears_bt_setpoint_latch();
+    test_share_setpoint_release_blocked_without_boost();
+    test_share_ratio_reentry_blocked_without_boost();
+    test_share_latches_cleared_by_bringup_p0_and_abort();
+    test_share_fc_latch_cleared_by_state99();
+    test_restore_share_cutoff_on_completion_setpoint_latch();
+    test_open_loop_droop_respects_setpoint_latch();
+    test_reset_share_control_state_leaves_latch();
     test_wheelspeed_reset();
 
     // ── SD bench logging ────────────────────────────────────────────────────

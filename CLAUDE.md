@@ -774,3 +774,43 @@ the whole sweep and restores share_sp = 0.5 / powerBalanceLive = false. Sweep re
 plot mode; the old trailing-junk tolerance after the third 'T' value is gone (whole line
 rejected); `inputBuf` 32 → 96 B. Automates the TP0007–TP0013 hand-run sweep for the fw v2
 FIX-VALIDATION re-sweep. **Tests: 1332 production + 95 bench pass.**
+
+---
+
+## Status & session addendum (2026-08-12, fw v4: validation-sweep findings hardened)
+
+The fw v3 validation sweep (TP0014–TP0038 25-point ladder via the automated `T` sweep, plus
+`W` runs WP0039/WP0040; whitepaper §6) validated the fw v2 mitigation across 0.18–0.85 —
+including the original failure points 0.30 and 0.85, both now clean — but found three
+boundary failures, fixed in **fw v4 (pending first flash)**:
+
+- **`SHARE_MINORITY_I_MIN_A` 0.20 → 0.30 A.** The sweep bracketed the empirical conduction
+  floor: 0.245 A commanded minority cycles (TP0016, sp 0.15, bus to 8.2 V), 0.29 A clean
+  (TP0017, sp 0.18). Collapse-to-0.5 threshold rises to 0.60 A automatically.
+- **Setpoint-latched channel cutoff (Option C).** The old design had a structural gap: the
+  governor bypassed out-of-band setpoints while the cutoff fired on the controller OUTPUT r —
+  sp 0.87 needs only r ≈ 0.84, engaged neither, and ran the cycle unmitigated at 19.5 Hz
+  (TP0037); sp 0.12 cutoff-hunted at 20 Hz via integrator re-entry (TP0015). Now an
+  out-of-band SETPOINT cuts the starved channel immediately (`shareSpCutFC/BT`,
+  `updateShareSetpointCutoff()` first in `powerBalance()`, controller frozen while latched),
+  releases only on setpoint re-entry (charged-bus + boost-enabled gated, controller reset
+  seeded from `droopSlew_prev`). Review-round hardening: external re-closers
+  (`doState2()`, `chargingControl()`) are latch-aware; an orphaned latch self-heals to live
+  control; `assertFcChargeEnable(true)` restores FC to the bus before cutting BT (never cuts
+  the last source; scoped to the share loop's own claim so the State-99 drain is unaffected);
+  bring-up P0/abort and State 99 clear the latches; all four re-close/re-entry sites also
+  require the channel's boost enabled (back-feed rule).
+- **`FAULT_UV_BUS` reworked** — armed under BENCH_TEST too (WP0039 sagged to 7.6 V through
+  89 dropout cycles with zero faults and ended in an MCU brownout; TP0016 hit 8.2 V), with
+  persistence filtering mirroring the OV filter (10 ms + 3 samples + 5 ms gap guard) and
+  bus-up arming instead of the old Run-state gate: arms at `V_BUS_CHARGED_THRESH` with a bus
+  switch closed AND a boost enabled; disarms when the stage is commanded dark, both boosts
+  are off (the routine `'F'`/`'B'` bench sequence), or the staged bring-up is active (P3's
+  sanctioned sags exceed the 1.5 V arm-to-limit margin). `LIMIT_V_BUS_MIN` stays 12.0 V
+  (TODO(calibrate): possible 14.0 tightening after the re-sweep).
+
+Process: implemented via orchestrated agents (Opus implementer → Sonnet test-writer → parallel
+Opus safety + Sonnet correctness reviews → fixes by the original agents → orchestrator final
+review); the safety review found 4 HIGHs (S1–S4 above) that the implementer and tests missed —
+all integration-surface bugs (who else writes these switches / feeds these arming terms). See
+`.claude/skills/orchestrated-feature`. **Tests: 1437 production + 133 bench pass.**

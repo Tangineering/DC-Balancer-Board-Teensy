@@ -248,6 +248,238 @@ def run_order(rows):
     print(FIGS / "fig_run_order.png")
 
 
+# ===================================================================
+# Part II: fw v3 fix-validation sweep (TP0014-TP0038, WP0039/WP0040)
+# ===================================================================
+
+VAL_SWEEP = [  # run, share_sp (session order == numeric order)
+    ("TP0014", 0.00), ("TP0015", 0.12), ("TP0016", 0.15), ("TP0017", 0.18),
+    ("TP0018", 0.20), ("TP0019", 0.225), ("TP0020", 0.25), ("TP0021", 0.30),
+    ("TP0022", 0.35), ("TP0023", 0.40), ("TP0024", 0.45), ("TP0025", 0.50),
+    ("TP0026", 0.55), ("TP0027", 0.60), ("TP0028", 0.65), ("TP0029", 0.70),
+    ("TP0030", 0.725), ("TP0031", 0.75), ("TP0032", 0.775), ("TP0033", 0.80),
+    ("TP0034", 0.82), ("TP0035", 0.84), ("TP0036", 0.85), ("TP0037", 0.87),
+    ("TP0038", 1.00),
+]
+
+
+def val_metrics():
+    rows = []
+    for run, sp in VAL_SWEEP:
+        t, d = load(run)
+        itot = d["I_fc"] + d["I_batt"]
+        hold = d["I_cmd"] >= 5.99
+        err = d["share_act"][hold] - sp
+        # Hysteretic dropout-event count: a dropout (minority < 0.02 A while
+        # total > 0.3 A) counts only when followed by genuine re-conduction
+        # (minority > 0.05 A), so ADC-noise fragmentation of a continuous
+        # clean cutoff (TP0014/TP0038) does not register as switching.
+        minority = np.minimum(d["I_fc"], d["I_batt"])
+        events = 0
+        state = "on"
+        for mi, ti in zip(minority, itot):
+            if state == "on" and mi < 0.02 and ti > 0.3:
+                state = "off"
+            elif state == "off" and mi > 0.05:
+                state = "on"
+                events += 1
+        rows.append(dict(run=run, sp=sp,
+                         err_mean=float(np.mean(err)),
+                         err_std=float(np.std(err)),
+                         events=events,
+                         vmin=float(np.min(d["V_bus"]))))
+    return rows
+
+
+def val_sweep_summary(rows):
+    sp = [r["sp"] for r in rows]
+    fig, (a0, a1, a2) = plt.subplots(1, 3, figsize=(11.5, 3.5))
+
+    a0.errorbar(sp, [r["err_mean"] for r in rows],
+                yerr=[r["err_std"] for r in rows],
+                fmt="o", color=C_SHR, ecolor="#e8a583", elinewidth=2,
+                capsize=3, ms=5, label="hold-window mean err ± 1σ")
+    a0.axhline(0, color="#8a8a8a", lw=0.8)
+    style(a0, "Share error [-]")
+    a0.set_xlabel("Share setpoint", color=C_TEXT, fontsize=10)
+    a0.set_title("Steady-state (6 A hold) tracking error", color=C_TEXT,
+                 fontsize=10)
+    for r in rows:
+        if r["run"] in ("TP0016", "TP0037", "TP0015"):
+            a0.annotate(r["run"][2:], xy=(r["sp"], r["err_std"]),
+                        xytext=(0, 5), textcoords="offset points",
+                        ha="center", fontsize=7.5, color=C_TEXT)
+    legend(a0, loc="lower left")
+
+    a1.plot(sp, [r["events"] for r in rows], "o", color=C_SHR, ms=5)
+    for r in rows:
+        if r["events"] > 10:
+            a1.annotate(f"{r['run'][2:]}", xy=(r["sp"], r["events"]),
+                        xytext=(0, 6), textcoords="offset points",
+                        ha="center", fontsize=7.5, color=C_TEXT)
+    style(a1, "Minority-dropout events [-]")
+    a1.set_xlabel("Share setpoint", color=C_TEXT, fontsize=10)
+    a1.set_title("Dropout events per run", color=C_TEXT, fontsize=10)
+
+    a2.plot(sp, [r["vmin"] for r in rows], "o", color=C_VBUS, ms=5)
+    a2.axhline(15.9, color="#8a8a8a", lw=0.8, ls="--", label="no-load bus")
+    style(a2, "Run-minimum bus voltage [V]")
+    a2.set_xlabel("Share setpoint", color=C_TEXT, fontsize=10)
+    a2.set_title("Bus collapse census", color=C_TEXT, fontsize=10)
+    for r in rows:
+        if r["vmin"] < 15.0:
+            a2.annotate(f"{r['run'][2:]}: {r['vmin']:.1f} V",
+                        xy=(r["sp"], r["vmin"]), xytext=(6, 4),
+                        textcoords="offset points", fontsize=7.5, color=C_TEXT)
+    legend(a2, loc="lower right")
+
+    fig.tight_layout()
+    fig.savefig(FIGS / "fig_valsweep_summary.png", dpi=150)
+    plt.close(fig)
+    print(FIGS / "fig_valsweep_summary.png")
+
+
+def tp0016_zoom():
+    t, d = load("TP0016")
+    m = (t >= 10.8) & (t <= 13.6)
+    fig, (a0, a1, a2) = plt.subplots(
+        3, 1, figsize=(8.5, 7.2), sharex=True,
+        gridspec_kw=dict(height_ratios=[1.2, 1, 1]))
+    a0.plot(t[m], d["I_fc"][m], color=C_IFC, lw=0.6, alpha=0.9,
+            label="I_fc (meas)")
+    a0.plot(t[m], d["I_batt"][m], color=C_IBT, lw=0.6, alpha=0.9,
+            label="I_batt (meas)")
+    style(a0, "Channel current [A]")
+    legend(a0, ncol=2, loc="upper right")
+
+    a1.plot(t[m], d["V_bus"][m], color=C_VBUS, lw=0.9, label="V_bus")
+    a1.axhline(15.0, color="#8a8a8a", lw=0.8, ls="--",
+               label="15 V excursion threshold")
+    style(a1, "Bus voltage [V]")
+    legend(a1, loc="lower left")
+
+    a2.plot(t[m], d["gFC"][m], color=C_IFC, lw=1.1, label="gFC")
+    a2.plot(t[m], d["gBT"][m], color=C_IBT, lw=1.1, label="gBT")
+    style(a2, "Droop gain cmd [-]")
+    a2.set_xlabel("Time [s]", color=C_TEXT, fontsize=10)
+    a2.set_ylim(0, 1.05)
+    legend(a2, loc="center right", ncol=2)
+
+    fig.align_ylabels()
+    fig.tight_layout()
+    fig.savefig(FIGS / "fig_tp0016_window.png", dpi=150)
+    plt.close(fig)
+    print(FIGS / "fig_tp0016_window.png")
+
+
+def tp0037_gap():
+    t, d = load("TP0037")
+    m = (t >= 6.2) & (t <= 7.2)
+    r_cmd = np.where(d["gFC"] + d["gBT"] > 0,
+                     d["gBT"] / np.maximum(d["gFC"] + d["gBT"], 1e-9), np.nan)
+    fig, (a0, a1, a2) = plt.subplots(
+        3, 1, figsize=(8.5, 7.2), sharex=True,
+        gridspec_kw=dict(height_ratios=[1.2, 1, 1]))
+    a0.plot(t[m], d["I_fc"][m], color=C_IFC, lw=0.8, label="I_fc (meas)")
+    a0.plot(t[m], d["I_batt"][m], color=C_IBT, lw=0.8, label="I_batt (meas)")
+    style(a0, "Channel current [A]")
+    legend(a0, ncol=2, loc="upper right")
+
+    a1.plot(t[m], d["share_act"][m], color=C_SHR, lw=0.6, alpha=0.6,
+            label="share (meas)")
+    a1.plot(t[m], ema(t, d["share_act"], 0.020)[m], color="#a03d13", lw=1.4,
+            label="share (filt, 20 ms)")
+    a1.axhline(0.87, color=C_SHR, lw=1.0, ls="--", label="share ref = 0.87")
+    style(a1, "Power share [FC frac]")
+    a1.set_ylim(0.3, 1.08)
+    legend(a1, loc="lower right", ncol=3)
+
+    a2.plot(t[m], r_cmd[m], color="#7a5cc4", lw=1.1,
+            label="commanded droop ratio r")
+    a2.axhline(0.85, color="#8a8a8a", lw=0.9, ls="--",
+               label="DROOP_R_MAX = 0.85 (cutoff threshold)")
+    style(a2, "Droop ratio [-]")
+    a2.set_xlabel("Time [s]", color=C_TEXT, fontsize=10)
+    a2.set_ylim(0.35, 0.95)
+    legend(a2, loc="lower right")
+
+    fig.align_ylabels()
+    fig.tight_layout()
+    fig.savefig(FIGS / "fig_tp0037_gap.png", dpi=150)
+    plt.close(fig)
+    print(FIGS / "fig_tp0037_gap.png")
+
+
+def wp0039_ratchet():
+    t, d = load("WP0039")
+    m = t >= 11.4
+    fig, (a0, a1) = plt.subplots(
+        2, 1, figsize=(8.5, 5.4), sharex=True,
+        gridspec_kw=dict(height_ratios=[1, 1.1]))
+    a0.plot(t[m], d["I_fc"][m], color=C_IFC, lw=0.6, alpha=0.9,
+            label="I_fc (meas)")
+    a0.plot(t[m], d["I_batt"][m], color=C_IBT, lw=0.6, alpha=0.9,
+            label="I_batt (meas)")
+    style(a0, "Channel current [A]")
+    legend(a0, ncol=2, loc="upper left")
+
+    a1.plot(t[m], d["V_bus"][m], color=C_VBUS, lw=0.8, label="V_bus")
+    a1.axhline(14.0, color="#8a8a8a", lw=0.8, ls="--",
+               label="14 V sag threshold")
+    style(a1, "Bus voltage [V]")
+    a1.set_xlabel("Time [s]", color=C_TEXT, fontsize=10)
+    legend(a1, loc="lower left")
+
+    fig.align_ylabels()
+    fig.tight_layout()
+    fig.savefig(FIGS / "fig_wp0039_ratchet.png", dpi=150)
+    plt.close(fig)
+    print(FIGS / "fig_wp0039_ratchet.png")
+
+
+def wp0040_governor():
+    t, d = load("WP0040")
+    itot = d["I_fc"] + d["I_batt"]
+    # Reconstruct the firmware governor law: per-tick EMA (alpha = 0.05) on
+    # total current; clip in-band setpoints to [lo, 1-lo] with
+    # lo = 0.20/filt when filt > 0.40 A, else collapse to 0.5.
+    filt = np.empty_like(itot)
+    filt[0] = 0.0
+    for i in range(1, len(itot)):
+        filt[i] = filt[i - 1] + 0.05 * (itot[i] - filt[i - 1])
+    lo = np.where(filt > 0.40, 0.20 / np.maximum(filt, 1e-6), 0.5)
+    sp_eff = np.clip(d["share_sp"], lo, 1.0 - lo)
+    live = filt > 0.15  # share ratio numerically meaningless below this
+
+    fig, (a0, a1) = plt.subplots(
+        2, 1, figsize=(8.5, 5.6), sharex=True,
+        gridspec_kw=dict(height_ratios=[1.4, 1]))
+    a0.plot(t, d["share_sp"], color="#8a8a8a", lw=1.0, ls="--",
+            label="table setpoint r*")
+    a0.plot(t[live], sp_eff[live], color="#c98a1b", lw=1.5,
+            label="governed setpoint (reconstructed)")
+    sf = ema(t, d["share_act"], 0.020)
+    a0.plot(t[live], sf[live], color=C_SHR, lw=0.9,
+            label="share (meas, filt 20 ms)")
+    style(a0, "Power share [FC frac]")
+    a0.set_ylim(0.2, 0.8)
+    legend(a0, loc="upper left", ncol=3)
+
+    a1.plot(t, itot, color="#555555", lw=0.6, alpha=0.6, label="I_tot (meas)")
+    a1.plot(t, filt, color="#111111", lw=1.3, label="I_tot (governor filter)")
+    a1.axhline(0.40, color="#8a8a8a", lw=0.8, ls="--",
+               label="collapse threshold 0.40 A")
+    style(a1, "Total current [A]")
+    a1.set_xlabel("Time [s]", color=C_TEXT, fontsize=10)
+    legend(a1, loc="upper left", ncol=2)
+
+    fig.align_ylabels()
+    fig.tight_layout()
+    fig.savefig(FIGS / "fig_wp0040_governor.png", dpi=150)
+    plt.close(fig)
+    print(FIGS / "fig_wp0040_governor.png")
+
+
 if __name__ == "__main__":
     tp0010_zoom()
     tp0013_zoom()
@@ -256,3 +488,11 @@ if __name__ == "__main__":
         print(r)
     sweep_summary(rows)
     run_order(rows)
+    vrows = val_metrics()
+    for r in vrows:
+        print(r)
+    val_sweep_summary(vrows)
+    tp0016_zoom()
+    tp0037_gap()
+    wp0039_ratchet()
+    wp0040_governor()

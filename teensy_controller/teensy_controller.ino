@@ -239,6 +239,40 @@
  *    ('T' stop, 'X', 'Q', a new 'T' line, or any other profile start). Refused under plot mode.
  *    The grammar's 4th field ends the old trailing-junk tolerance: an unparsable tail now rejects
  *    the whole line rather than quietly running a single trapezoid.
+ *  - fw v4 (2026-08-12) — three changes from the fw v3 validation sweep (logs TP0014-TP0038,
+ *    WP0039-WP0040; docs/share_sweep_whitepaper):
+ *      (a) SHARE_MINORITY_I_MIN_A 0.20 -> 0.30 A. The sweep BRACKETED the light-load conduction
+ *          floor: 0.245 A commanded minority still collapsed the bus to 8.2 V (TP0016, sp = 0.15),
+ *          0.29 A is clean (TP0017, sp = 0.18). The shipped 0.20 A sat below the entire bracket
+ *          and governed nothing at the setpoints that failed. The governor's collapse-to-0.5
+ *          threshold follows automatically (2*I_min: 0.40 -> 0.60 A).
+ *      (b) SETPOINT-LATCHED CHANNEL CUTOFF (updateShareSetpointCutoff(), "one owner per
+ *          setpoint"). The governor bypassed out-of-band SETPOINTS while the cutoff in
+ *          applyShareRatio() fired on the controller OUTPUT r, so two structural gaps existed:
+ *          sp = 0.87 settles at r ~ 0.84, IN band -> neither mitigation engaged, 19.5 Hz limit
+ *          cycle (TP0037); sp = 0.12 fired the cutoff but the standing (topology-forced) share
+ *          error wound r back over the 0.01 re-entry hysteresis -> ~190 FC_BUS_ENABLE cycles per
+ *          run at 20 Hz (TP0015). Now the SETPOINT decides: sp outside [DROOP_R_MIN, DROOP_R_MAX]
+ *          latches the starved channel off the bus (same last-source guard as the r-based cutoff;
+ *          guard-blocked -> no latch, normal governed control), FREEZES the share controller
+ *          (no governor, no step, no MDAC write - the integrator never sees the standing error),
+ *          and disables ratio-hysteresis re-entry for that channel. Release only on the setpoint
+ *          returning in-band, gated on V_bus >= V_BUS_CHARGED_THRESH, followed by
+ *          resetShareControlState(). The r-based cutoff stays as the in-band backstop.
+ *      (c) FAULT_UV_BUS reworked: armed by the BUS (V_bus >= V_BUS_CHARGED_THRESH with a source
+ *          switch closed; disarmed whenever both source switches are LOW) instead of gated on
+ *          State 2, persistence-filtered like FAULT_OV_BUS (UV_BUS_PERSIST_*), and armed under
+ *          BENCH_TEST too. WP0039 sagged the bus to 7.6 V through 89 dropout cycles with
+ *          fault_flags == 0 and ended in an MCU brownout: bus UV was structurally invisible on the
+ *          bench. LIMIT_V_BUS_MIN stays 12.0 V. No telemetry layout change (v4/58 bytes).
+ *    Review-round hardening (2026-08-12, same fw v4): the setpoint latch is now defended against
+ *    EXTERNAL re-closers — doState2()/chargingControl() no longer re-assert a latched switch, a
+ *    self-heal in updateShareSetpointCutoff() degrades an orphaned latch to live control instead
+ *    of a frozen loop, assertFcChargeEnable(true) restores FC to the bus before cutting BT (never
+ *    cut the last source), and the bring-up/State-99 paths clear the latches they take ownership
+ *    of. Every bus-switch re-close (setpoint release and ratio hysteresis) now also requires its
+ *    BOOST to be enabled (§2 back-feed rule), and FAULT_UV_BUS additionally disarms while both
+ *    boosts are off ('F'/'B' bench sequence) or a staged bring-up is running (sanctioned P3 sag).
  */
 
 #include <VescUart.h>
@@ -312,7 +346,11 @@ EthernetUDP Udp;
 #define FAULT_OV_BATT         0x0020  // V_batt overvoltage (charging protection)
 #define FAULT_UV_FC           0x0040  // V_fc undervoltage / fuel cell depleted
 #define FAULT_OC_BT           0x0080  // I_batt overcurrent (BT boost path)
-#define FAULT_UV_BUS          0x0100  // V_bus undervoltage during Run (motor stall / source loss)
+#define FAULT_UV_BUS          0x0100  // V_bus undervoltage: source-feed loss / bus collapse. ARMED by
+                                      // the bus (V_bus >= V_BUS_CHARGED_THRESH with a source switch
+                                      // closed), not by State 2; disarmed while the switches are open,
+                                      // both boosts are off, or a staged bring-up is running; latches
+                                      // only after the UV_BUS_PERSIST_* filter (2026-08-12)
 #define FAULT_OV_RGN          0x0200  // V_rgn overvoltage spike (regen node)
 #define FAULT_OV_CHG          0x0400  // V_chg charger input overvoltage
 #define FAULT_I2C_CHARGER     0x0800  // Ag105 I2C comms failure
@@ -394,7 +432,28 @@ EthernetUDP Udp;
 // Raise toward 4.2 A (the pack-rating-limited value) only after the high-bandwidth SW/VOUT ring
 // capture validates the margin. TODO(calibrate).
 #define LIMIT_I_BT_MAX    3.0f  // A (BUS-SIDE) — validated per-channel envelope
-#define LIMIT_V_BUS_MIN  12.0f  // V — minimum VBUS during State 2
+// FAULT_UV_BUS threshold. Kept at 12.0 V through the fw v4 rework (2026-08-12): the fw v3 events
+// it must catch sit FAR below it (TP0016 collapsed to 8.2 V, WP0039 sagged to 7.6 V), while normal
+// loaded operation sits FAR above it (15.6 V measured under the sweep's trapezoid load), so 12.0 V
+// separates the two populations with ~3 V of margin on both sides.
+// TODO(calibrate): consider tightening to 14.0 V after the fw v4 FIX-VALIDATION re-sweep — the
+// nearer the threshold sits to the regulated bus, the earlier a developing dropout latches, but it
+// must stay clear of the deepest legitimate loaded sag (measure it on that sweep before moving).
+#define LIMIT_V_BUS_MIN  12.0f  // V — minimum VBUS while the bus is armed (see uvBusArmed)
+// FAULT_UV_BUS persistence (2026-08-12) — MIRRORS the OV_BUS_PERSIST_* filter above, same values,
+// separate state so the two windows cannot interfere. Rationale from the fw v3 validation sweep:
+// the dropout limit cycles are fast (WP0039: 34 Hz ratchet, ~9 ms per decay excursion; TP0016:
+// 17-20 Hz), so a SINGLE-sample UV check would latch State 99 on the first shallow dip of a cycle
+// that the board rides out. The filter's job is the opposite selection: single dropout dips only
+// flicker the telemetry bit, while the DEEP sustained sags latch. WP0039's sag windows below 12 V
+// lasted up to ~10+ ms and recurred over 2.7 s, so a 10 ms window with the 5 ms gap guard latches
+// within a few cycles of a real collapse — long before the MCU brownout that actually ended
+// WP0039. TODO(calibrate) with OV_BUS_PERSIST_MS.
+#define UV_BUS_PERSIST_MS          10u  // ms — continuous under-limit time to latch
+#define UV_BUS_PERSIST_MIN_SAMPLES 3u   // consecutive under-limit loop ticks (stalled-loop floor,
+                                        //      subsumed by the gap guard — see the OV note)
+#define UV_BUS_MAX_GAP_MS          5u   // ms — same value as OV_BUS_MAX_GAP_MS: max spacing between
+                                        //      under-samples still counted as one window
 #define LIMIT_V_RGN_MAX  28.0f  // V — regen node spike ceiling
 #define LIMIT_V_CHG_MAX  24.0f  // V — charger input max
 
@@ -484,6 +543,25 @@ uint32_t ovBusPrintLastMs = 0;       // ms — last "[OV] transient" print (1 Hz
 bool     ovBusHasPrinted  = false;   // distinguishes "never printed" from a print at millis()==0
                                      // (review round 3: a 0-sentinel would defeat the rate bound
                                      // for boot-time windows)
+
+// ── FAULT_UV_BUS arming + persistence state (2026-08-12) ─────────────────────
+// File-scope for test resettability, mirroring the OV block above. ARMING replaces the old
+// mainState == 2 gate: the fw v3 validation sweep ran its collapses in State 98, where the
+// production State-2 gate (and the !BENCH_TEST guard) left the board with NO bus-UV indication at
+// all — WP0039 sagged to 7.6 V through 89 dropout cycles with fault_flags == 0 and ended in an MCU
+// brownout. The fault is now armed by the BUS ITSELF: it becomes live once the bus has actually
+// been up with a source switch closed, and disarms whenever both source switches are commanded
+// LOW (a dark power stage is the normal, non-faulty condition in a State-98 dark boot, staged
+// bring-up P0, State 3 and State 99 teardown). A bring-up ramp therefore cannot trip it either —
+// the bus has not yet reached V_BUS_CHARGED_THRESH, so nothing is armed.
+bool     uvBusArmed        = false;  // bus has been observed up with a source switch closed
+bool     uvBusUnderActive  = false;  // an under-limit window is open
+uint32_t uvBusUnderSince   = 0;      // ms — window start
+uint32_t uvBusLastUnderMs  = 0;      // ms — previous under-sample (gap guard)
+uint8_t  uvBusUnderSamples = 0;      // consecutive under-limit loop ticks (saturating)
+uint16_t uvBusTransientCount = 0;    // windows that closed WITHOUT latching (dropout dips)
+uint32_t uvBusPrintLastMs  = 0;      // ms — last "[UV] transient" print (1 Hz rate bound)
+bool     uvBusHasPrinted   = false;  // distinguishes "never printed" from a print at millis()==0
 
 // ── Error code enum ───────────────────────────────────────────────────────────
 // Latching primary cause; set once by triggerFault() on first State-99 entry.
@@ -666,12 +744,22 @@ const float SHARE_I_TOT_MIN_A = 0.075f;
 // ΔV₀ = +0.05 V (system_model.md §8/§9, calibration/dv0_sweep_20260811.csv),
 // whose feasibility bound is far below the observed cycle — the floor is the
 // EMPIRICAL light-load boost nonlinearity (same regime as CAL-1's I_tot = 0.145 A
-// outlier). Value from the sweep evidence: TP0010 cycled while the minority
-// command was < ~0.36 A and cleared above it; TP0013's chatter thinned as the
-// minority command approached ~0.26 A. 0.20 A starts conservative WITHOUT
-// forbidding the sweep's demonstrated-clean points. TODO(calibrate): refine via
-// the quasi-static dropout-boundary mapping (bench plan step 3).
-const float SHARE_MINORITY_I_MIN_A = 0.20f;
+// outlier).
+//
+// Value (RAISED 0.20 → 0.30 A, 2026-08-12): the fw v3 validation sweep
+// TP0014–TP0038 / WP0039–WP0040 (docs/share_sweep_whitepaper §6) BRACKETED the
+// conduction floor instead of bounding it from one side. TP0016 (setpoint 0.15,
+// hold I_tot = 1.63 A → commanded minority 0.245 A) still collapsed the bus to
+// 8.2 V, i.e. 0.245 A commanded minority CYCLES; TP0017 (setpoint 0.18, same
+// hold) commands 0.29 A and is CLEAN. The floor therefore lies in
+// (0.245, 0.29] A, and the shipped 0.20 A sat below the whole bracket — it
+// governed nothing at the setpoints that failed. 0.30 A sits just above the
+// clean bracket edge. The collapse-to-0.5 threshold follows automatically
+// (2·I_min: 0.40 → 0.60 A of total current before any asymmetry is allowed).
+// TODO(calibrate): refine via the quasi-static dropout-boundary mapping (bench
+// plan step 3) — the bracket is 45 mA wide and was measured at ONE total
+// current, so the floor's I_tot dependence is still unmeasured.
+const float SHARE_MINORITY_I_MIN_A = 0.30f;
 
 // per powerBalance() tick (1 kHz) — ceiling on the commanded droop-ratio slew in
 // applyShareRatio(). Bounds the MDAC antiphase rail-to-rail slams that drive the
@@ -864,7 +952,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2, offset 18) so logged data is attributable to the exact
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 3
+#define FW_VERSION 4
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -955,6 +1043,20 @@ bool powerBalanceLive = false;
 bool  shareIsoFC = false;
 bool  shareIsoBT = false;
 const float SHARE_CUTOFF_HYST = 0.01f;  // re-entry hysteresis on the commanded ratio
+
+// Setpoint-latched channel cutoff (2026-08-12, fw v4 "one owner per setpoint" —
+// see the block comment at updateShareSetpointCutoff()). True while THAT channel
+// is cut off because the COMMANDED SETPOINT is outside [DROOP_R_MIN, DROOP_R_MAX],
+// as opposed to shareIsoFC/BT, which record the topology action itself (whoever
+// commanded it). Invariants:
+//   - shareSpCutX ⇒ shareIsoX was set by the same entry (the setpoint latch is a
+//     strict subset of controller-initiated isolation), unless an operator has
+//     since taken ownership — the State-98 '1'/'2' handlers clear BOTH.
+//   - never both at once: one setpoint starves at most one channel.
+//   - while set, powerBalance() freezes the share controller entirely and
+//     applyShareRatio()'s ratio-hysteresis re-entry for that channel is disabled.
+bool  shareSpCutFC = false;
+bool  shareSpCutBT = false;
 
 // ── State 98 bench tools: VESC read-back ('E' one-shot / 'U' watch) ────────────────────────────
 // The firmware is otherwise write-only to the VESC (setCurrent()); these are the only reads.
@@ -2157,7 +2259,8 @@ void detectFaults() {
     // UV checks only fire in Run (State 2): sources are not guaranteed ramped/sequenced in
     // Init/Idle, and V_batt/V_fc read ~0 before the regulators stabilise. Firing UV here would
     // latch State 99 on the very first tick of every boot (V_fc/V_batt init to 0 < limits).
-    // Mirrors the existing FAULT_UV_BUS State-2 gate. Source: boot-lock review.
+    // Source: boot-lock review. (FAULT_UV_BUS no longer uses a State-2 gate — since 2026-08-12 it
+    // is armed by the bus itself; see the uvBusArmed block below.)
     if (mainState == 2 && V_batt < LIMIT_V_BATT_MIN) triggerFault(FAULT_UV_BATT, ERR_UV_BATT);
 #endif
 
@@ -2214,6 +2317,82 @@ void detectFaults() {
         ovBusOverSamples = 0;
     }
 
+    // FAULT_UV_BUS — bus-armed + time-persistence filtered (2026-08-12; see the UV_BUS_PERSIST_*
+    // and uvBusArmed rationale at the constants/state blocks). Deliberately OUTSIDE the
+    // !BENCH_TEST guard: the fw v3 validation sweep ran in State 98 under BENCH_TEST, where a
+    // sub-9 V bus produced zero fault indication (WP0039, TP0016). Bench collapses are exactly the
+    // events this fault exists to catch, so it is armed on the bench too. Arming, not a state
+    // gate, is what keeps a dark or ramping power stage from tripping it.
+    {
+        bool busSourceClosed = (digitalRead(FC_BUS_ENABLE) == HIGH) ||
+                               (digitalRead(BT_BUS_ENABLE) == HIGH);
+        // S4 (2026-08-12): with BOTH boosts disabled no converter can hold the bus, so a low
+        // bus is the EXPECTED condition, not a loss of source feed — same argument as the
+        // dark-switch disarm above. This is the routine bench sequence: 'F'/'B' turn the boosts
+        // off with the bus switches still closed, the bus falls back to the source rail
+        // (~8–9 V, well under LIMIT_V_BUS_MIN), and an armed UV would latch State 99 on what is
+        // a normal operator action.
+        bool boostEnabled = (digitalRead(FC_REG_ENABLE) == HIGH) ||
+                            (digitalRead(BT_REG_ENABLE) == HIGH);
+        // S3 (2026-08-12): the staged bring-up owns its own sags. Its arming threshold margin is
+        // only V_BUS_CHARGED_THRESH − LIMIT_V_BUS_MIN = 1.5 V, the documented P3 motor-node
+        // connect sags below that, and P3 runs ~30–83 ms — far past UV_BUS_PERSIST_MS — so an
+        // armed UV would latch on a SANCTIONED CSS-controlled connect. Bring-up connects are
+        // deliberate; UV coverage targets post-bring-up steady state (the WP0039/TP0016 class of
+        // collapse). busBringupTick() has its own per-phase timeouts for a bring-up that fails.
+        if (bringupActive || !busSourceClosed || !boostEnabled) {
+            // Power stage commanded dark (dark boot, bring-up P0 entry, State 3/99 teardown),
+            // boosts off, or a bring-up in progress: disarm and drop any open window.
+            uvBusArmed        = false;
+            uvBusUnderActive  = false;
+            uvBusUnderSamples = 0;
+        } else if (V_bus >= V_BUS_CHARGED_THRESH) {
+            // The bus has demonstrably come up with a source on it — from here a collapse below
+            // LIMIT_V_BUS_MIN is a real loss of source feed, not a bring-up ramp.
+            uvBusArmed = true;
+        }
+
+        if (uvBusArmed && V_bus < LIMIT_V_BUS_MIN) {
+            fault_flags |= FAULT_UV_BUS;         // transient indication — not yet a latch
+            uint32_t nowMs = millis();
+            // Window bookkeeping identical to OV: a fresh window opens on the first under-sample
+            // and whenever the spacing from the previous one exceeds UV_BUS_MAX_GAP_MS, so sparse
+            // samples across a stalled loop are not credited as one continuous sag.
+            if (!uvBusUnderActive || (uint32_t)(nowMs - uvBusLastUnderMs) > UV_BUS_MAX_GAP_MS) {
+                if (uvBusUnderActive && uvBusTransientCount < 65535u) uvBusTransientCount++;
+                uvBusUnderActive  = true;
+                uvBusUnderSince   = nowMs;
+                uvBusUnderSamples = 0;
+            }
+            uvBusLastUnderMs = nowMs;
+            if (uvBusUnderSamples < 255u) uvBusUnderSamples++;
+            if ((uint32_t)(nowMs - uvBusUnderSince) >= UV_BUS_PERSIST_MS &&
+                uvBusUnderSamples >= UV_BUS_PERSIST_MIN_SAMPLES) {
+                triggerFault(FAULT_UV_BUS, ERR_UV_BUS);
+            }
+        } else {
+            if (uvBusUnderActive) {
+                // Window closed without latching — one dropout dip of a limit cycle. Counted
+                // (visible via 'S') and printed at most 1 Hz, suppressed under the plot stream,
+                // exactly as the OV transient report.
+                if (uvBusTransientCount < 65535u) uvBusTransientCount++;
+                uint32_t nowMs = millis();
+                if (!plotSuppressStatus() &&
+                    (!uvBusHasPrinted || (uint32_t)(nowMs - uvBusPrintLastMs) >= 1000u)) {
+                    uvBusHasPrinted  = true;
+                    uvBusPrintLastMs = nowMs;
+                    Serial.print("[UV] transient under-limit window(s), latest ~");
+                    Serial.print(nowMs - uvBusUnderSince);
+                    Serial.print(" ms, no latch; total=");
+                    Serial.print(uvBusTransientCount);
+                    Serial.println(" (1Hz-limited report)");
+                }
+            }
+            uvBusUnderActive  = false;
+            uvBusUnderSamples = 0;
+        }
+    }
+
 #if !BENCH_TEST
     // Belt-and-suspenders: assertFcChargeEnable() guard prevents this, but catch it regardless
     if (digitalRead(FC_CHARGE_ENABLE) &&
@@ -2229,10 +2408,8 @@ void detectFaults() {
     // UV_FC gated to Run (State 2) for the same boot-ramp reason as UV_BATT above.
     if (mainState == 2 && V_fc < LIMIT_V_FC_MIN) triggerFault(FAULT_UV_FC, ERR_UV_FC);
     if (I_batt > LIMIT_I_BT_MAX)    triggerFault(FAULT_OC_BT,   ERR_OC_BT);
-
-    // Bus UV only meaningful during State 2 (run); low bus during idle/shutdown is normal
-    if (mainState == 2 && V_bus < LIMIT_V_BUS_MIN)
-        triggerFault(FAULT_UV_BUS, ERR_UV_BUS);
+    // (The State-2-gated single-sample bus-UV check that lived here was REPLACED 2026-08-12 by the
+    // bus-armed, persistence-filtered check above, which runs in every state and under BENCH_TEST.)
 #endif
 
     if (V_rgn > LIMIT_V_RGN_MAX)    triggerFault(FAULT_OV_RGN, ERR_OV_RGN);
@@ -2546,7 +2723,11 @@ void doState2() {
     // FC_CHARGE_ENABLE never fight on the same tick. chargingControl() drives
     // BT_BUS_ENABLE HIGH in all non-FC-charge paths and lets assertFcChargeEnable(true)
     // pull it LOW (with the required settling delay) before opening the FC→charger path.
-    digitalWrite(FC_BUS_ENABLE, HIGH);    // FC regulator → VBUS always on in Run
+    // share setpoint latch owns this switch — see updateShareSetpointCutoff() (2026-08-12):
+    // an unguarded re-assert here re-closed FC_BUS ≤20ms after the latch opened it, while the
+    // latch kept powerBalance() frozen and ratio re-entry disabled — both channels back on the
+    // bus at the band-edge ratio with every mitigation inoperative (the TP0016/TP0037 condition).
+    if (!shareSpCutFC) digitalWrite(FC_BUS_ENABLE, HIGH);    // FC regulator → VBUS always on in Run
 
     // VBUS → VESC/motor. Normally already HIGH (connected in State-0 P3, kept on through Idle),
     // so this is an idempotent no-op. Under the 2026-08-03 doctrine the guard refuses only when
@@ -2651,6 +2832,12 @@ void doState99() {
             // Phase 1: Bleed VBUS capacitor energy into charger
             digitalWrite(FC_BUS_ENABLE, LOW);    // disconnect FC regulator from VBUS
             digitalWrite(BT_BUS_ENABLE, LOW);    // disconnect BT regulator from VBUS
+            // S7 (2026-08-12): both bus switches are open by state action. assertFcChargeEnable()
+            // below clears only the BT pair, so clear the FC pair here too — the post-mortem
+            // switch/flag state reported out of State 99 must be truthful.
+            shareIsoFC   = false;
+            shareSpCutFC = false;
+            shareSpCutBT = false;
             assertFcChargeEnable(true);          // drain remaining VBUS cap energy into Ag105
             phaseStart = millis();
             state99Phase = 1;
@@ -2834,7 +3021,11 @@ void doState98() {
                     Serial.println("REFUSED: FC boost is ON and VBUS is low — hot-plug risk. Use 'G' to bring up the bus.");
                 } else {
                     digitalWrite(FC_BUS_ENABLE, !cur);
-                    shareIsoFC = false;   // operator owns the switch now — no auto re-entry
+                    shareIsoFC   = false;   // operator owns the switch now — no auto re-entry
+                    shareSpCutFC = false;   // and no setpoint latch holding it (2026-08-12):
+                                            // the latch would otherwise keep blocking re-entry
+                                            // and freezing the share loop after the operator
+                                            // has taken the switch back
                     Serial.print("FC_BUS_ENABLE -> "); Serial.println(!cur);
                 }
                 break;
@@ -2850,7 +3041,9 @@ void doState98() {
                     Serial.println("REFUSED: BT boost is ON and VBUS is low — hot-plug risk. Use 'G' to bring up the bus.");
                 } else {
                     digitalWrite(BT_BUS_ENABLE, !cur);
-                    shareIsoBT = false;   // operator owns the switch now — no auto re-entry
+                    shareIsoBT   = false;   // operator owns the switch now — no auto re-entry
+                    shareSpCutBT = false;   // and no setpoint latch holding it (2026-08-12) —
+                                            // mirror of the '1' handler above
                     Serial.print("BT_BUS_ENABLE -> "); Serial.println(!cur);
                 }
                 break;
@@ -4389,6 +4582,15 @@ static void warnIfBandReachesCutoff(const char *tag, float boundLo, const char *
 // (safeAllSwitches() already owns that, which is why the stop/'X'/'Q' paths need nothing here).
 static void restoreShareCutoffOnCompletion(const char *tag) {
     if (!shareIsoFC && !shareIsoBT) return;
+    // Drop any SETPOINT latch first (2026-08-12): the completion path's whole
+    // purpose is to put both sources back, and a run that ended at an
+    // out-of-band setpoint would otherwise have its re-entry blocked by the
+    // latch (applyShareRatio() gates re-entry on !shareSpCutX) with no governed
+    // tick left to release it — powerBalance() stops running when the run ends.
+    // If the setpoint is still out of band, the next governed tick simply
+    // re-latches through the normal entry path.
+    shareSpCutFC = false;
+    shareSpCutBT = false;
     applyShareRatio(0.5f);   // mid-band: unambiguously past both hysteresis thresholds
     Serial.print("["); Serial.print(tag);
     if (shareIsoFC || shareIsoBT) {
@@ -4877,6 +5079,13 @@ void printTestStatus() {
     if (bringupActive) { Serial.print("ACTIVE phase="); Serial.println(bringupPhase); }
     else               { Serial.println("idle"); }
     Serial.print("OV transients:      "); Serial.println(ovBusTransientCount);
+    // UV counterpart (2026-08-12): the dropout-dip counter is the only externally-visible trace of
+    // a sub-persistence bus sag, and the armed flag says whether the check is live at all.
+    Serial.print("UV transients:      "); Serial.print(uvBusTransientCount);
+    Serial.print(uvBusArmed ? "  (armed)" : "  (disarmed — bus switches LOW or bus never up)");
+    Serial.println();
+    Serial.print("share sp-cut latch: ");
+    Serial.println(shareSpCutFC ? "FC" : (shareSpCutBT ? "BT" : "none"));
     Serial.print("manualMotorMode:    ");
     Serial.println(manualMotorMode == MOTOR_TEST_OFF      ? "OFF"
                  : manualMotorMode == MOTOR_TEST_CURRENT  ? "CURRENT"
@@ -4963,12 +5172,33 @@ void printTestStatus() {
 // BT_BUS_ENABLE and REGEN_ENABLE must be LOW before FC_CHARGE_ENABLE may go HIGH.
 void assertFcChargeEnable(bool enable) {
     if (enable) {
+        // S2 ORDERING (2026-08-12) — restore FC to the bus BEFORE cutting BT. If the share
+        // setpoint latch has FC off the bus (sp < DROOP_R_MIN), BT is the ONLY live source;
+        // dropping it below would darken the bus with MOT_PWR still closed, freeze the share
+        // loop on the stale latch, and disarm FAULT_UV_BUS along with it (a dark bus disarms).
+        // The charging path is a deliberate state action and outranks the share loop's claim —
+        // the same ownership precedence as the BT-side clears below — and routing FC → charger
+        // is meaningless with FC off the bus in the first place.
+        // SCOPED to the share loop's own claim (shareSpCutFC/shareIsoFC), NOT to "FC_BUS reads
+        // LOW" generally: doState99() phase 0 opens both bus switches and then calls this
+        // function to drain VBUS into the charger, and an unscoped restore would re-energize the
+        // bus during an error teardown. Only the share loop's latch is overridden here.
+        if ((shareSpCutFC || shareIsoFC) && digitalRead(FC_BUS_ENABLE) == LOW) {
+            shareIsoFC   = false;
+            shareSpCutFC = false;
+            digitalWrite(FC_BUS_ENABLE, HIGH);
+        }
         // Cut BT contribution to VBUS first, then close regen path, then open FC→charger path
         digitalWrite(BT_BUS_ENABLE, LOW);    // disconnect BT from VBUS before routing FC → charger
         // BT_BUS is now owned by the charge path: clear any share-controller
         // isolation claim on it, or applyShareRatio()'s re-entry would close
         // BT_BUS while FC_CHARGE is HIGH — the illegal switch combination.
-        shareIsoBT = false;
+        // The setpoint latch is cleared with it (2026-08-12): a stale latch
+        // would freeze the whole share loop for as long as the charge path
+        // holds BT_BUS, and its entry guard (both switches HIGH) already
+        // prevents it from re-claiming BT_BUS while FC_CHARGE is asserted.
+        shareIsoBT   = false;
+        shareSpCutBT = false;
         digitalWrite(REGEN_ENABLE,  LOW);    // close regen path before routing FC → charger
         delayMicroseconds(100);              // RT1987 turn-off propagation — confirmed sufficient
         digitalWrite(FC_CHARGE_ENABLE, HIGH);
@@ -4995,9 +5225,13 @@ void safeAllSwitches() {
     digitalWrite(MPPT_DISABLE,   LOW);    // inhibit MPPT (active-LOW)
     // The bus switches are now open by state action, not by the share
     // controller -- clear the cutoff flags so applyShareRatio() will not
-    // "re-enter" a switch it no longer owns.
-    shareIsoFC = false;
-    shareIsoBT = false;
+    // "re-enter" a switch it no longer owns. The setpoint latches go with them
+    // (2026-08-12): they are a strict subset of the same ownership claim, and a
+    // latch surviving a teardown would freeze the share loop on the next run.
+    shareIsoFC   = false;
+    shareIsoBT   = false;
+    shareSpCutFC = false;
+    shareSpCutBT = false;
 }
 
 // ── Staged bring-up machine ──────────────────────────────────────────────────
@@ -5051,6 +5285,14 @@ BringupStatus busBringupTick(bool doInit) {
             digitalWrite(MOT_PWR_ENABLE, LOW);
             digitalWrite(FC_BUS_ENABLE,  HIGH);   // switches first — RT1987s soft-start the bus
             digitalWrite(BT_BUS_ENABLE,  HIGH);   //   to ~max(V_fc, V_batt) via body-diode path
+            // S6 (2026-08-12): the bring-up takes OWNERSHIP of the whole topology, so no share-
+            // loop isolation claim may survive it. Both switches are now closed by state action;
+            // a latch left set here would be orphaned (frozen share loop with both channels on
+            // the bus) from a nominally-safe 'G'.
+            shareIsoFC   = false;
+            shareIsoBT   = false;
+            shareSpCutFC = false;
+            shareSpCutBT = false;
             bringupPhaseStart = now;
             bringupPhase = 1;
             Serial.println("[bringup] P0: stage darkened; bus switches closed (MOT_PWR held LOW)");
@@ -5163,6 +5405,13 @@ void busBringupAbort() {
     digitalWrite(BT_REG_ENABLE,  LOW);
     digitalWrite(FC_BUS_ENABLE,  LOW);
     digitalWrite(BT_BUS_ENABLE,  LOW);
+    // S6 (2026-08-12): both switches are open by state action — the bring-up owns the topology,
+    // so clear every share-loop claim. A latch surviving the abort would freeze the share loop
+    // on the next run (same argument as safeAllSwitches()).
+    shareIsoFC   = false;
+    shareIsoBT   = false;
+    shareSpCutFC = false;
+    shareSpCutBT = false;
     Serial.println("[bringup] ABORTED — power stage dark");
 }
 
@@ -5283,7 +5532,141 @@ float PI_Controller_Motor(float error) {
 float share_govTotAFilt = 0.0f;
 float droopSlew_prev    = 0.5f;
 
+// ── Setpoint-latched channel cutoff ("one owner per setpoint", 2026-08-12) ───
+// EVIDENCE (fw v3 validation sweep TP0014–TP0038; docs/share_sweep_whitepaper):
+// before this function existed, an out-of-band *setpoint* had no owner. The
+// setpoint governor deliberately bypasses setpoints outside
+// [DROOP_R_MIN, DROOP_R_MAX], and the channel cutoff in applyShareRatio() fires
+// on the CONTROLLER OUTPUT r, not on the setpoint. Two gaps followed:
+//   - TP0037 (setpoint 0.87): the loop settles at r ≈ 0.84, which is INSIDE the
+//     droop band, so the cutoff never fired and the governor never clipped —
+//     neither mitigation engaged and the run limit-cycled at 19.5 Hz.
+//   - TP0015 (setpoint 0.12): the cutoff DID fire, but the standing share error
+//     (topology pins the measured share at the opposite rail) wound the
+//     controller output back across the SHARE_CUTOFF_HYST = 0.01 re-entry
+//     threshold, so the channel re-entered, starved, and cut again — ~190
+//     FC_BUS_ENABLE cycles per run at ~20 Hz.
+// FIX: the SETPOINT decides the cutoff, and it LATCHES. Every setpoint now has
+// exactly one owner: in-band → the governor; out-of-band → this latch. While a
+// channel is setpoint-cut the share controller is frozen (not stepped at all —
+// TP0015's hunting was integrator-driven re-entry, so the integrator must not
+// see the standing error) and the ratio-hysteresis re-entry for that channel is
+// disabled. Only a setpoint change back inside the band releases it.
+//
+// Returns true while a setpoint latch is active, i.e. the caller must freeze the
+// whole share loop this tick.
+static bool updateShareSetpointCutoff() {
+    float sp = power_share_setpoint;
+    bool  releasedThisTick = false;
+
+    // ── S1 SELF-HEAL (2026-08-12). A latch is a claim of OWNERSHIP over a bus
+    // switch, and that claim is only true while the switch is actually open. If
+    // the switch reads HIGH again, somebody else re-closed it (a state action,
+    // an operator key, a re-assert path the guards above missed) — the latch is
+    // now ORPHANED, and holding it would freeze the share loop indefinitely with
+    // both channels on the bus and every mitigation inoperative. Drop the flags
+    // and fall through to normal governed control: a stale latch must degrade to
+    // LIVE control, never to a frozen loop. Deliberately no resetShareControlState()
+    // here — the controller was frozen, not diverged, and the governor should see
+    // the recovered topology immediately.
+    if (shareSpCutFC && digitalRead(FC_BUS_ENABLE) == HIGH) {
+        shareSpCutFC = false;
+        shareIsoFC   = false;
+    }
+    if (shareSpCutBT && digitalRead(BT_BUS_ENABLE) == HIGH) {
+        shareSpCutBT = false;
+        shareIsoBT   = false;
+    }
+
+    // ── Release (evaluated FIRST, so a setpoint that flips from one side of the
+    // band to the other releases this side before the other side may latch —
+    // the two latches are never set simultaneously). The re-close is subject to
+    // the same charged-bus guard as applyShareRatio()'s re-entry: closing a
+    // running-but-unloaded boost onto a bus that is NOT in regulation is the
+    // hot-plug direction. If the bus is low the latch is HELD (the loop stays
+    // frozen) and the re-close is retried on the next tick.
+    if (shareSpCutFC && sp >= DROOP_R_MIN) {
+        // S5 (2026-08-12): the boost must also be ENABLED. Closing a bus switch onto a DISABLED
+        // TPS61288 is the back-feed direction of CLAUDE.md §2 — never point a live bus at a
+        // disabled converter. If the boost is off (operator 'F', a teardown), HOLD the latch and
+        // retry next tick rather than re-closing.
+        if (V_bus >= V_BUS_CHARGED_THRESH && digitalRead(FC_REG_ENABLE) == HIGH) {
+            // Re-close FC onto a regulated bus; BT is still HIGH (the entry
+            // guard proved it), so the bus is never left unsourced mid-swap.
+            digitalWrite(FC_BUS_ENABLE, HIGH);
+            shareIsoFC       = false;   // topology claim released with the latch
+            shareSpCutFC     = false;
+            releasedThisTick = true;
+            // Restart the controller clean: it has been frozen against a
+            // topology-pinned measurement, and droopSlew_prev (untouched
+            // throughout) still holds the ratio physically on the MDACs, so the
+            // first post-release write walks from the true hardware state.
+            resetShareControlState();
+        }
+    } else if (shareSpCutBT && sp <= DROOP_R_MAX) {
+        // S5 (2026-08-12): BT boost must be enabled too — mirror of the FC branch above.
+        if (V_bus >= V_BUS_CHARGED_THRESH && digitalRead(BT_REG_ENABLE) == HIGH) {
+            // Re-close BT onto a regulated bus; FC is still HIGH (entry guard).
+            // MUTUAL EXCLUSION NOTE (2026-08-12, safety review): BT_BUS HIGH is illegal while
+            // FC_CHARGE_ENABLE is HIGH. This re-close is safe because chargingControl() runs
+            // BEFORE powerBalance() in every caller (doState2()'s gated call order, the State-98
+            // profiles' control-call set), so an FC-charge tick has already cleared shareSpCutBT
+            // via assertFcChargeEnable(true) and this branch cannot be reached with FC_CHARGE
+            // asserted. Any future caller MUST preserve that ordering.
+            digitalWrite(BT_BUS_ENABLE, HIGH);
+            shareIsoBT       = false;
+            shareSpCutBT     = false;
+            releasedThisTick = true;
+            resetShareControlState();
+        }
+    }
+
+    // A release tick returns the loop to normal control for at least one tick
+    // before the opposite latch may engage, so the freshly reset controller and
+    // the governor both see one live sample of the new topology.
+    if (releasedThisTick) return false;
+
+    // ── Entry. Only from the fully-released state (never both channels), and
+    // only as a closed→open transition this function itself performs: the
+    // LAST-SOURCE GUARD (both bus switches HIGH) is identical to the r-based
+    // cutoff's — the share loop must never darken the bus, and it must never
+    // claim ownership of a switch the operator or a state action opened. When
+    // the guard blocks, do NOT latch: fall through to normal governed control so
+    // droop authority stays live (same fallback as applyShareRatio()).
+    if (!shareSpCutFC && !shareSpCutBT) {
+        if (sp < DROOP_R_MIN) {
+            if (digitalRead(FC_BUS_ENABLE) == HIGH &&
+                digitalRead(BT_BUS_ENABLE) == HIGH) {
+                digitalWrite(FC_BUS_ENABLE, LOW);   // BT stays HIGH and keeps its
+                                                    // droop gain — the bus feed is
+                                                    // handed over, never dropped
+                shareIsoFC   = true;   // topology owner (telemetry/status truth)
+                shareSpCutFC = true;   // latched by the setpoint
+            }
+        } else if (sp > DROOP_R_MAX) {
+            if (digitalRead(BT_BUS_ENABLE) == HIGH &&
+                digitalRead(FC_BUS_ENABLE) == HIGH) {
+                digitalWrite(BT_BUS_ENABLE, LOW);   // FC stays HIGH and keeps its
+                                                    // droop gain (see above)
+                shareIsoBT   = true;
+                shareSpCutBT = true;
+            }
+        }
+    }
+
+    return shareSpCutFC || shareSpCutBT;
+}
+
 void powerBalance() {
+    // Setpoint-latched cutoff owns every out-of-band setpoint (2026-08-12). It is
+    // evaluated BEFORE the minimum-load gate and before the governor: the release
+    // path must run even at standstill, or a run that ends at an extreme setpoint
+    // would leave the board single-sourced until the next teardown. While latched
+    // the ENTIRE share loop is frozen — no governor, no controller step, no MDAC
+    // write — so the standing (topology-forced) share error can never wind the
+    // controller back over the re-entry hysteresis (TP0015).
+    if (updateShareSetpointCutoff()) return;
+
     float totalA = fabsf(I_fc) + fabsf(I_batt);
     // Minimum-load gate (was a bare 1e-6 divide-by-zero guard): below
     // SHARE_I_TOT_MIN_A the measured share is undefined-in-practice, so hold
@@ -5306,10 +5689,11 @@ void powerBalance() {
     // infeasible and the loop limit-cycles chasing it (TP0010/TP0013 — see the
     // SHARE_MINORITY_I_MIN_A block). Clip the EFFECTIVE setpoint so the commanded
     // minority current stays ≥ SHARE_MINORITY_I_MIN_A, relaxing to no clip as
-    // load grows. OUT-OF-BAND setpoints (incl. 0.0 / 1.0) bypass the governor
-    // untouched: applyShareRatio() realizes them as a channel cutoff, the share
-    // is then forced by topology, and the sweep showed those are stable
-    // (TP0009/TP0011) — governing them would break the full-span semantics.
+    // load grows. OUT-OF-BAND setpoints (incl. 0.0 / 1.0) never reach here at
+    // all: updateShareSetpointCutoff() above owns them and has already returned
+    // (2026-08-12 — "one owner per setpoint"). Governing them would break the
+    // full-span semantics, and the sweep showed the topology-forced share is
+    // stable once the loop stops fighting it (TP0009/TP0011).
     float spEff = power_share_setpoint;
     if (spEff >= DROOP_R_MIN && spEff <= DROOP_R_MAX) {
         float lo = 0.5f;
@@ -5407,8 +5791,17 @@ void applyShareRatio(float ratio) {
             digitalWrite(FC_BUS_ENABLE, LOW);
             shareIsoFC = true;
         }
-    } else if (shareIsoFC && r >= DROOP_R_MIN + SHARE_CUTOFF_HYST &&
-               V_bus >= V_BUS_CHARGED_THRESH) {
+    } else if (shareIsoFC && !shareSpCutFC &&
+               r >= DROOP_R_MIN + SHARE_CUTOFF_HYST &&
+               V_bus >= V_BUS_CHARGED_THRESH &&
+               digitalRead(FC_REG_ENABLE) == HIGH) {
+        // FC_REG_ENABLE HIGH (S5, 2026-08-12 — pre-existing gap closed in the same pass as the
+        // setpoint-latch release): re-entry must never point the energized bus at a DISABLED
+        // TPS61288 (CLAUDE.md §2 back-feed rule). Boost off → stay isolated, retry next tick.
+        // !shareSpCutFC (2026-08-12): while the SETPOINT holds the channel cut,
+        // ratio hysteresis must not re-enter it. TP0015 hunted at ~20 Hz exactly
+        // here — the standing share error wound r back over the 0.01 threshold
+        // every cycle. Release is the setpoint's job (updateShareSetpointCutoff).
         digitalWrite(FC_BUS_ENABLE, HIGH);
         shareIsoFC = false;
     }
@@ -5420,8 +5813,12 @@ void applyShareRatio(float ratio) {
             digitalWrite(BT_BUS_ENABLE, LOW);
             shareIsoBT = true;
         }
-    } else if (shareIsoBT && r <= DROOP_R_MAX - SHARE_CUTOFF_HYST &&
-               V_bus >= V_BUS_CHARGED_THRESH) {
+    } else if (shareIsoBT && !shareSpCutBT &&
+               r <= DROOP_R_MAX - SHARE_CUTOFF_HYST &&
+               V_bus >= V_BUS_CHARGED_THRESH &&
+               digitalRead(BT_REG_ENABLE) == HIGH) {
+        // !shareSpCutBT, and BT_REG_ENABLE HIGH (S5 back-feed guard) — mirror of the FC branch
+        // above (2026-08-12).
         digitalWrite(BT_BUS_ENABLE, HIGH);
         shareIsoBT = false;
     }
@@ -5474,6 +5871,13 @@ uint32_t shareCtrl_lastMicros = 0;
 //                    exists to prevent.
 //   shareIsoFC/BT  — cutoff/topology state is owned by applyShareRatio()'s
 //                    hysteresis + the run-completion restore path.
+//   shareSpCutFC/BT — the setpoint latch is owned by the SETPOINT
+//                    (updateShareSetpointCutoff(), 2026-08-12). A profile that
+//                    starts while the setpoint is out of band must keep the
+//                    channel cut; releasing it here would re-close a switch the
+//                    commanded setpoint still says must be open. This function
+//                    is itself called from the release path, so clearing the
+//                    latch here would also be self-referential.
 // The Ts gate is back-dated (not zeroed) so the first governed tick steps the
 // controller immediately — same idiom as resetControlRateLimiters().
 void resetShareControlState() {
@@ -5553,7 +5957,8 @@ void chargingControl() {
         digitalWrite(MPPT_DISABLE, LOW);   // inhibit MPPT (active-LOW: LOW = inhibit)
         assertFcChargeEnable(false);
         digitalWrite(REGEN_ENABLE, LOW);
-        digitalWrite(BT_BUS_ENABLE, HIGH); // BT contributes to VBUS when not FC-charging
+        // share setpoint latch owns this switch — see updateShareSetpointCutoff() (2026-08-12)
+        if (!shareSpCutBT) digitalWrite(BT_BUS_ENABLE, HIGH); // BT contributes to VBUS when not FC-charging
         return;
     }
 
@@ -5577,7 +5982,8 @@ void chargingControl() {
         assertFcChargeEnable(false);         // FC_CHARGE must be OFF before REGEN can go HIGH
         digitalWrite(REGEN_ENABLE, HIGH);    // open regen → charger path
         digitalWrite(MPPT_DISABLE, LOW);     // inhibit MPPT during regen (active-LOW)
-        digitalWrite(BT_BUS_ENABLE, HIGH);   // BT continues contributing to VBUS during regen
+        // share setpoint latch owns this switch — see updateShareSetpointCutoff() (2026-08-12)
+        if (!shareSpCutBT) digitalWrite(BT_BUS_ENABLE, HIGH);   // BT continues contributing to VBUS during regen
     } else {
         // Cruise/coast: close regen path and harvest via the FC→charger path.
         digitalWrite(REGEN_ENABLE, LOW);

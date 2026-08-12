@@ -16,9 +16,10 @@
 \newcommand{\code}[1]{\texttt{#1}}
 
 \title{Power-Share Setpoint Sweep under Trapezoidal Load:\\
-Bench Results and a Minority-Channel Dropout Limit Cycle}
+Bench Results, a Minority-Channel Dropout Limit Cycle,\\
+and Validation of Its Firmware Mitigation}
 \author{Ricky Tan\\ \small\texttt{rstan@ucdavis.edu}}
-\date{2026-08-11}
+\date{2026-08-11 (revised with the firmware~v3 validation sweep)}
 
 \begin{document}
 \maketitle
@@ -38,6 +39,18 @@ to a minimum of 6.55\,V on a 15.9\,V rail --- without raising any fault. This pa
 documents the sweep, characterizes the limit cycle, evaluates candidate mechanisms,
 and recommends firmware and test-procedure changes. The event is logged as a
 nondestructive datapoint in the board's bring-up failure record.
+
+A second campaign (Section~\ref{sec:validation}; \code{TP0014}--\code{TP0038},
+\code{WP0039}--\code{WP0040}, firmware~v3) validates the resulting mitigation set ---
+a minority-current setpoint governor, a droop-ratio slew limit, and per-profile state
+reset --- over a 25-point setpoint ladder and two moving-setpoint profiles. The
+limit cycle is eliminated at every governed setpoint, including the original failure
+points 0.30 and 0.85, with hold-window bias below $10^{-3}$ throughout. Three
+boundary conditions remain outside the mitigation's reach: the in-band edge setpoint
+0.15 still collapses the bus (to 8.2\,V), setpoints in the narrow window between the
+governed band and the channel-cutoff threshold (e.g.\ 0.87) run the original cycle
+unmitigated, and one moving-setpoint run ended in a brownout-terminated total-dropout
+ratchet. Parameter and structural fixes for each are identified.
 \end{abstract}
 
 \section{Test setup and data provenance}
@@ -52,6 +65,10 @@ total channel current), one value per run. Firmware is the pre-versioning build
 (``fw~0'' in the version ledger) compiled with \code{BENCH\_TEST=1}, which arms
 \emph{overvoltage faults only} --- a fact that matters in
 Section~\ref{sec:limitcycle}. The bus regulates at $\approx$15.9\,V no-load.
+Sections 1--5 cover this discovery sweep; Section~\ref{sec:validation} covers the
+follow-up validation campaign (\code{TP0014}--\code{TP0038},
+\code{WP0039}--\code{WP0040}), run on firmware~v3 with the mitigation set derived
+from the discovery analysis, under the same profile and bench conditions.
 
 Data come from the on-board SD bench logger (1\,kHz nominal; measured
 $\approx$865\,Hz effective, 1.15\,ms median sample interval). All seven captures are
@@ -330,8 +347,224 @@ asymmetric setpoints the earlier campaign never visited. (The earlier runs used
 less analog averaging; noise-level comparisons between the two groups are
 deliberately out of scope.)
 
+\section{Fix-validation sweep (firmware v3)}
+\label{sec:validation}
+
+\subsection{Mitigation set and sweep design}
+
+Following the analysis above, firmware~v2/v3 added three mitigations to the share
+loop. First, a \emph{setpoint governor} clips the effective in-band setpoint so the
+commanded minority-channel current stays at or above
+$I_\mathrm{min}=\code{SHARE\_MINORITY\_I\_MIN\_A}=0.20$\,A, computed against a
+low-pass estimate of total current; below $2I_\mathrm{min}$ of filtered total the
+effective setpoint collapses to 0.5. Setpoints outside the droop band $[0.15,0.85]$
+bypass the governor, on the design assumption that the channel-cutoff path owns
+them. Second, a \emph{droop-ratio slew limit} of 0.02 per control tick replaces the
+rail-to-rail MDAC slams of Figure~\ref{fig:tp0010win}. Third, share-controller
+state is \emph{reset at every profile start}, removing the cross-run contamination
+of Section~5.
+
+The validation campaign ran on firmware~v3 using the automated \code{T}-sweep
+extension: 25 trapezoid runs (\code{TP0014}--\code{TP0038}), identical
+\code{T 6 3 1} profile, one run per setpoint on the ladder $\{0, 0.12, 0.15, 0.18,
+0.20, 0.225, 0.25, 0.30, \ldots, 0.84, 0.85, 0.87, 1.0\}$, with dense placement at
+both band edges to map the failure boundary. Two \code{W} combined profiles
+(\code{WP0039}, \code{WP0040}) exercised the loop under a \emph{moving} setpoint
+and load. All trapezoid captures are complete with clean trailers;
+\code{WP0039} is truncated (Section~\ref{sec:wp0039}).
+
+\subsection{Result: the limit cycle is eliminated across the governed band}
+
+Figure~\ref{fig:valsummary} summarizes the ladder. Every setpoint from 0.18 to
+0.85 --- including 0.30 and 0.85, the two original failure points --- runs with zero
+dropout events, a flat bus (run minimum 15.72\,V against a 15.9\,V rail), and
+hold-window bias below $10^{-4}$ with $\sigma=0.009$--$0.017$. At the original
+severe point 0.30 (\code{TP0021}), the comparison against \code{TP0010} is: 64
+collapse events to zero; bus minimum 6.55\,V to 15.73\,V; peak reconnect current
+3.6\,A to 0.74\,A.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{fig_valsweep_summary.png}
+\caption{Validation-sweep summary, \code{TP0014}--\code{TP0038} (firmware v3).
+Left: hold-window tracking error remains unbiased at every setpoint; the three
+inflated $\sigma$ bars are the residual failure runs. Center: hysteretic
+dropout-event count --- only 0.12, 0.15, and 0.87 cycle; the deep out-of-band
+endpoints 0 and 1 are clean latched cutoffs. Right: run-minimum bus voltage;
+only \code{TP0016} (0.15) collapses the bus.}
+\label{fig:valsummary}
+\end{figure}
+
+The governor's mechanism is directly observable in the logs. In every clean
+asymmetric run the minority-channel current is pinned at 0.204--0.214\,A --- the
+0.20\,A floor held to within 5\,\% --- across a threefold span of total current,
+then released at the predicted crossover $I_\mathrm{tot}=I_\mathrm{min}/r^\ast$
+plus the load-filter lag. The collapse-to-0.5 plateau below 0.40\,A filtered total
+appears as a distinct shelf in every ramp. The slew limiter is respected exactly in
+all 27 runs (maximum per-record ratio step 0.0200) and saturates for substantial
+stretches, confirming it is load-bearing.
+
+The moving-setpoint run \code{WP0040} (Figure~\ref{fig:wp0040}) extends the
+validation to simultaneous setpoint and load steps: across all sixteen table
+regions, the measured share tracks the \emph{reconstructed governed setpoint} with
+residuals at or below $2\times10^{-3}$, including three regions where the governor
+clips a 0.65 command down to 0.54--0.57 at low current and two regions where it
+collapses a 0.30/0.65 command to 0.5. The apparent tracking ``errors'' against the
+raw table setpoint are therefore entirely commanded governor action. Region
+boundaries traverse ratio steps of up to 0.34 in about 20 slew-limited ticks with
+$\approx$0.06 overshoot and no bus disturbance beyond 0.20\,V.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{fig_wp0040_governor.png}
+\caption{\code{WP0040} (moving setpoint and load): measured share (orange) against
+the raw table setpoint (dashed) and the governed setpoint reconstructed from the
+firmware's clip law (mustard). The measured share follows the governed command
+everywhere the share is measurable; the flat 0.5 stretches at $t=25$--33\,s are the
+designed collapse below $2I_\mathrm{min}$ of filtered total current, not tracking
+failure.}
+\label{fig:wp0040}
+\end{figure}
+
+\subsection{Residual failure at the in-band boundary: \code{TP0016}, $r^\ast=0.15$}
+\label{sec:tp0016}
+
+The single in-band failure is the band-edge setpoint itself.
+\code{TP0016} ignites the limit cycle at $t=6.14$\,s --- the precise instant the
+governor releases, when total current grows past
+$I_\mathrm{min}/0.15=1.33$\,A and the commanded minority current passes down
+through 0.20\,A. Zero dropout events occur before that instant; the cycle then runs
+continuously through the hold (56 events at 19\,Hz, bus intact) and deepens through
+the ramp-down (Figure~\ref{fig:tp0016}): 44 bus excursions below 15\,V, reaching
+\textbf{8.20\,V}, with 2.4\,A reconnect spikes and simultaneous
+both-channels-at-zero windows --- the same total source-feed dropout signature as
+\code{TP0010}, at roughly three-quarters its event count and 1.6\,V shallower
+minimum.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{fig_tp0016_window.png}
+\caption{\code{TP0016} ($r^\ast=0.15$) ramp-down window. The limit cycle survives
+at the in-band boundary: mutually exclusive conduction with reconnect spikes to
+2.4\,A (top), bus collapse deepening to 8.2\,V as commanded current falls (middle),
+and the droop-gain commands cycling in antiphase --- now confined to 0.2--0.65 by the
+slew limiter rather than slamming rail-to-rail as in fw~0 (bottom).}
+\label{fig:tp0016}
+\end{figure}
+
+Two independent quantities corner this setpoint. First, the governor floor at the
+hold's 1.63\,A is $0.20/1.63=0.122$, below the setpoint --- so the governor
+correctly declines to clip, and the commanded minority current (0.245\,A) is
+evidently still inside the dropout region: the empirical conduction floor lies
+between 0.245\,A (cycles, this run) and 0.29\,A (\code{TP0017} at $r^\ast=0.18$,
+clean). $I_\mathrm{min}=0.20$\,A therefore sits \emph{on} the failure boundary
+rather than above it. Second, the commanded droop ratio in the hold tracks the
+setpoint to within 0.003 in every clean run, so $r^\ast=0.15$ parks the actuator
+directly on the \code{DROOP\_R\_MIN} rail --- \code{TP0016}'s minimum hold margin to
+the rail is $+0.0005$, inside the 0.01 cutoff re-entry hysteresis. Ignition
+coincides with the ratio touching the rail. Raising $I_\mathrm{min}$ alone
+addresses the first constraint; the second argues for narrowing the usable in-band
+span to approximately $[0.18, 0.82]$ independent of load.
+
+\subsection{The ungoverned setpoint window: \code{TP0037}, $r^\ast=0.87$}
+\label{sec:gap}
+
+\code{TP0037} exposes a structural gap between the two mitigation paths. The
+setpoint 0.87 is outside the droop band, so the governor is bypassed by design ---
+the cutoff path is assumed to own it. But the cutoff fires on the \emph{controller
+output} $r$, not on the setpoint, and the plant needs only $r\approx0.84$ to
+realize a share of 0.87: extrapolating the clean runs' hold-window ratios
+(0.770/0.790/0.810/0.821 at $r^\ast=0.80$/0.82/0.84/0.85) puts the required ratio
+just \emph{below} the 0.85 cutoff threshold. The measured ratio confirms it:
+maximum 0.789, never crossing (Figure~\ref{fig:tp0037}, bottom). Setpoint 0.87 is
+therefore governed by nothing and cut off by nothing, and it runs the original
+limit cycle unmitigated: 172 dropout--reconnect cycles at 19.5\,Hz, the BT channel
+off the bus for $\approx$70\,\% of all loaded time at every current level ---
+unlike fw~0, it does \emph{not} self-clear above 1.2\,A, because the ungoverned
+commanded minority current (0.13 of total) stays below the conduction floor at
+every point of this profile. Electrical severity stays low (bus ripple 0.33\,V,
+spikes to 1.1\,A), but the cycle is continuous. The unprotected window is
+approximately $0.85<r^\ast\lesssim0.88$, with a mirror on the low side --- where it
+is compounded by a second mechanism: at $r^\ast=0.12$ (\code{TP0015}) the
+controller output \emph{does} cross the low threshold, the cutoff opens the FC
+switch, but the standing share error then winds the ratio back over the re-entry
+hysteresis and the loop \emph{hunts} --- duty-cycling \code{FC\_BUS\_ENABLE} at
+19.8\,Hz, about 190 ideal-diode switch cycles per 13\,s run. The deep endpoints 0
+and 1 (\code{TP0014}, \code{TP0038}) latch cleanly, because there the realized
+share equals the setpoint and the error vanishes: the hysteresis never re-arms.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{fig_tp0037_gap.png}
+\caption{\code{TP0037} ($r^\ast=0.87$) during the 6\,A hold: the unmitigated limit
+cycle in the ungoverned window. The BT channel duty-cycles at 19.5\,Hz (top), the
+filtered share saws around the setpoint (middle), and the commanded droop ratio
+sawtooths between 0.45 and 0.79 --- never reaching the 0.85 cutoff threshold
+(dashed, bottom), so neither mitigation path ever engages.}
+\label{fig:tp0037}
+\end{figure}
+
+\subsection{\code{WP0039}: a brownout-terminated total-dropout ratchet}
+\label{sec:wp0039}
+
+\code{WP0039} (the first \code{W} combined profile, $I_\mathrm{max}=5$\,A) is the
+campaign's one destructive-class event. The run is quiescent for 11.8\,s --- total
+channel current 0.03--0.08\,A despite motor commands up to 3.4\,A, indicating the
+motor was not accepting load (cause unconfirmed; a VESC in its brownout band would
+fit) --- and then enters a 34\,Hz total source-feed dropout cut/retry cycle: both
+channels drop to zero simultaneously, the motor-node capacitance
+($\approx$1.6\,mF inferred from the decay slope) discharges at $\approx$465\,V/s,
+and one channel reconnects with a 1.4--3.2\,A spike (Figure~\ref{fig:wp0039}). The
+sag floor deepens monotonically from 13.9\,V to 7.6\,V over 89 cycles in 2.7\,s,
+after which the bus enters free-fall and the log truncates mid-sample with no
+trailer --- the signature of the board-powered Teensy browning out, not of an
+operator stop. No fault was latched at any point: the \code{BENCH\_TEST} build arms
+overvoltage only, so 0.87\,s of sub-14\,V bus and $\approx$90 load-dump reconnects
+were invisible to \code{detectFaults()}. This is the capture-10/-12 event class
+(total source-feed dropout ratchet) rather than the minority-channel cycle the
+governor targets. One trigger correlation deserves a scope-armed re-entry: the
+share loop sat frozen below its 75\,mA minimum-load threshold for the whole
+quiescent stretch, unfroze at $t=11.75$\,s with a large standing error, and
+traversed the droop ratio at the full slew rate ($0.734\rightarrow0.394$ in
+$\approx$40\,ms) --- the first total dropout followed within 40\,ms.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{fig_wp0039_ratchet.png}
+\caption{\code{WP0039} final 3\,s. Top: both channels drop out together and
+alternate 1.4--3.2\,A reconnect spikes at 34\,Hz. Bottom: the sag floor ratchets
+monotonically from 13.9\,V to 7.6\,V, then the bus free-falls and the log truncates
+mid-decay (no trailer) --- consistent with an MCU brownout. \code{fault\_flags}
+remained zero throughout.}
+\label{fig:wp0039}
+\end{figure}
+
+\subsection{Secondary observations from the validation campaign}
+
+\paragraph{\code{TP0026} transient.} The $r^\ast=0.55$ run shows one brief
+total-dropout burst in the ramp-down tail: three cycles at $\approx$26\,Hz over
+71\,ms at $I_\mathrm{cmd}\approx1.2$\,A, with a single bus notch to 14.67\,V. It is
+the same event class at roughly two orders of magnitude lower dose and did not
+recur at any neighboring setpoint; it is flagged for the boundary-mapping session
+rather than treated as a validation failure.
+
+\paragraph{First-write MDAC step.} \code{WP0040} booted with both MDACs at code
+zero until the share loop's first unfreeze at $t=6.05$\,s, whose first write is a
+$\approx$0.5 ratio jump that bypasses the slew limiter (it originates from the
+one-shot actuation path). Profile-entry reset does not force an MDAC write; runs
+inheriting gains from a prior run do not show the step.
+
+\paragraph{Effective sample rate.} Both campaigns log at $\approx$862--875\,Hz
+(median interval 1.15--1.16\,ms) against a 1\,kHz nominal, with the decoder
+reporting zero missed periods --- so the control tick itself, not the logger, runs
+$\approx$14\,\% slow. If confirmed, the effective slew limit is $\approx$17\,$\mathrm{s^{-1}}$
+rather than the documented 20\,$\mathrm{s^{-1}}$; the discrepancy is flagged for a
+firmware timing check.
+
 \section{Conclusions and recommended actions}
 \label{sec:conclusions}
+
+From the discovery sweep (firmware~0):
 
 \begin{enumerate}
 \item \textbf{The share controller is validated across the full setpoint span at
@@ -343,16 +576,44 @@ asymmetric setpoints under low total current}, severe at $r^\ast=0.3$ (bus to
 total source-feed dropouts (motor switch conducting, whole bus decaying together);
 droop-commanded blocking vs.\ source-switch SCP remains open but no longer gates the
 fix.
-\item \textbf{Firmware follow-ups} (flagged, not yet implemented): raise or
-ramp-gate the minimum-load integrator hold well above 75\,mA (the cycle lives up to
-$\approx$1.2\,A); consider rate-limiting MDAC slew; reset share-controller state at
-profile entry; note that bus \emph{undervoltage} is invisible under the
-\code{BENCH\_TEST} fault set.
-\item \textbf{Calibration follow-ups}: the droop authority asymmetry (FC-heavy side
-saturates first) and the $-0.03$ quantization-corrected bias at $r^\ast=0.85$ both
-feed the pending $K_\mathrm{DROOP}$ / divider calibration round.
-\item \textbf{Test-procedure follow-ups}: interleave setpoint order in future
-sweeps; treat $r^\ast\approx0.3$ ramps as a stressor until scoped.
+\end{enumerate}
+
+From the validation sweep (firmware~v3):
+
+\begin{enumerate}
+\setcounter{enumi}{2}
+\item \textbf{The mitigation set works where it applies.} All 20 in-band runs from
+$r^\ast=0.18$ to 0.85 --- the two original failure points included --- are free of
+dropout events, with unbiased tracking and a flat bus; the moving-setpoint run
+\code{WP0040} tracks the governed command with residuals $\leq2\times10^{-3}$
+through simultaneous setpoint and load steps. The governor floor is directly
+observable holding the minority channel at 0.20\,A~$\pm$5\,\%.
+\item \textbf{$I_\mathrm{min}=0.20$\,A sits on the failure boundary, not above
+it.} \code{TP0016} ignites at the exact governor release instant; the empirical
+conduction floor lies in $(0.245, 0.29)$\,A. Raise
+\code{SHARE\_MINORITY\_I\_MIN\_A} to $\approx$0.30\,A. Independently, the band-edge
+setpoint parks the actuator on the \code{DROOP\_R\_MIN} rail inside the cutoff
+hysteresis; treat the usable in-band span as $\approx[0.18, 0.82]$.
+\item \textbf{Close the governor/cutoff structural gap.} The governor bypass tests
+the \emph{setpoint} while the cutoff tests the \emph{controller output}; setpoints
+in $\approx(0.85, 0.88]$ (mirror $\approx[0.12, 0.15)$) engage neither and run the
+original cycle unmitigated (\code{TP0037}). Either extend the governor to the full
+span and let the cutoff take over only once it actually latches, or gate the bypass
+on the cutoff state (\code{shareIsoFC}/\code{shareIsoBT}) rather than on the
+setpoint. The near-band cutoff \emph{hunting} at $r^\ast=0.12$ (19.8\,Hz
+switch duty-cycling) additionally argues for latching the cutoff while the
+setpoint remains out-of-band, releasing on setpoint change rather than on the
+ratio's re-entry hysteresis.
+\item \textbf{Arm a bus-undervoltage fault on the bench.} Both \code{TP0016} and
+\code{WP0039} put the bus below 9\,V repeatedly with \code{fault\_flags}~$=0$;
+\code{WP0039} ended in an uncommanded MCU brownout. A persistence-filtered UV check
+(mirroring the existing OV filter) would have latched both runs into State~99 long
+before the ratchet deepened.
+\item \textbf{Scope-armed follow-ups}: re-enter the \code{WP0039} condition to
+test the unfreeze-slew-traverse trigger correlation and identify why the motor
+accepted no load for 11.8\,s; probe a boost output alongside VBUS during a
+\code{TP0016} hold to close the droop-blocking vs.\ SCP discrimination; check the
+$\approx$14\,\% control-tick slowdown against the firmware timing.
 \end{enumerate}
 
 \end{document}
