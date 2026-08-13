@@ -7,7 +7,13 @@ logs/NAME/ and populates it with:
   NAME.csv            -- decoded CSV (tools/decode_benchlog.py format),
                           overwritten every run.
   decode_report.txt    -- the decoder's stderr report lines, one per line,
-                          overwritten every run.
+                          overwritten every run. This is a verbatim copy of
+                          result.report_lines, so any header field the
+                          decoder's banner line reports (fw_version,
+                          and -- as of format v4 -- profile_amp/profile_b
+                          when their valid bits are set) flows through here
+                          automatically; no per-field plumbing is needed in
+                          this module.
   analysis_config.json -- filter-tau config; created from
                           common.DEFAULT_CONFIG on first ingest and NEVER
                           overwritten thereafter (see

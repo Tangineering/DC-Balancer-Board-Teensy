@@ -10,10 +10,21 @@ content, for exercising ingest_log.py / common.py end to end.
 Usage:
   python make_test_blg.py [-o logs/TEST0001.BLG] [--seed 0] [--truncate]
   python make_test_blg.py --v3 [-o logs/TEST0002.BLG] [--seed 0]
+  python make_test_blg.py --v4 [-o logs/TEST0003.BLG] [--seed 0]
+  python make_test_blg.py --v4 --profile-amp 6.0 --profile-b 0.15
 
 --v3 writes the format-v3 header/record layout (adds V_fc, V_batt, V_chg,
 V_rgn); default is the v1/v2 layout, selected as usual via --header-v1 /
 fw_version.
+
+--v4 writes the format-v4 header (record layout is unchanged from v3, so
+--v4 implies the v3 68 B record layout): header byte 7 becomes a
+param-valid flags byte (bit0=profileAmp, bit1=profileB) and bytes 20-27
+carry the two LE f32 profile parameters, per --profile-amp/--profile-b
+(both default to a valid, plausible value; pass --profile-amp-invalid /
+--profile-b-invalid to clear the corresponding valid bit and exercise the
+decoder's None-when-invalid path). Mutually exclusive with --header-v1 and
+--v3.
 
 --truncate drops the trailer and cuts off the last ~30% of records (plus a
 partial trailing record), to exercise the truncated-file / no-trailer path
@@ -150,26 +161,48 @@ def build_signals(seed, wrap=False):
                 dc_phase=dc_phase, trap_phase=trap_phase, flags=flags)
 
 
-def pack_header(fw_version=1, header_v1=False, v3=False):
+def pack_header(fw_version=1, header_v1=False, v3=False, v4=False,
+                 profile_amp=6.0, profile_b=0.15, profile_amp_valid=True,
+                 profile_b_valid=True):
     """Format-v2 header (u16 fw_version at offset 18) by default; header_v1
     writes the legacy v1 layout (no fw_version) for decoder back-compat
     testing; v3 writes the format-v3 header (record_size=68), which also
-    carries fw_version (v3 always has it, like v2)."""
-    if header_v1 and v3:
-        raise ValueError("header_v1 and v3 are mutually exclusive")
-    version = 1 if header_v1 else (3 if v3 else 2)
-    record_size = RECORD_SIZE_V3 if v3 else RECORD_SIZE
-    hdr = struct.pack(HEADER_FMT, MAGIC, version, record_size, PROFILE_TYPE, 0,
-                       START_MILLIS, START_MICROS, K_DROOP_X1000)
+    carries fw_version (v3 always has it, like v2); v4 writes the format-v4
+    header (also record_size=68 -- the record layout is unchanged from v3)
+    and additionally packs the param-valid flags byte (header offset 7) and
+    the profileAmp/profileB LE f32 fields (offsets 20/24). profile_amp/
+    profile_b are only meaningful when v4 is set; profile_amp_valid /
+    profile_b_valid gate their valid bits (set False to exercise the
+    decoder's None-when-invalid path with non-zero float bytes still
+    present, mirroring test_decode_benchlog.py's amp-only/neither-valid
+    cases)."""
+    if sum([header_v1, v3, v4]) > 1:
+        raise ValueError("header_v1, v3, and v4 are mutually exclusive")
+    version = 1 if header_v1 else (3 if v3 else (4 if v4 else 2))
+    record_size = RECORD_SIZE_V3 if (v3 or v4) else RECORD_SIZE
+    param_flags = 0
+    if v4:
+        if profile_amp_valid:
+            param_flags |= 0x01
+        if profile_b_valid:
+            param_flags |= 0x02
+    hdr = struct.pack(HEADER_FMT, MAGIC, version, record_size, PROFILE_TYPE,
+                       param_flags, START_MILLIS, START_MICROS, K_DROOP_X1000)
     if not header_v1:
         hdr += struct.pack("<H", fw_version)
     hdr += b"\x00" * (HEADER_SIZE - len(hdr))
+    hdr = bytearray(hdr)
+    if v4:
+        struct.pack_into("<ff", hdr, 20, profile_amp, profile_b)
     assert len(hdr) == HEADER_SIZE
-    return hdr
+    return bytes(hdr)
 
 
-def pack_record(sig, i, v3=False):
-    if v3:
+def pack_record(sig, i, v3=False, v4=False):
+    """Record layout is identical for v3 and v4 -- v4 only changes the
+    header (see pack_header) -- so v4 is accepted here purely for call-site
+    symmetry with build_blg() and packs the same RECORD_FMT_V3 as v3."""
+    if v3 or v4:
         rec = struct.pack(RECORD_FMT_V3, int(sig["t_us"][i]),
                            float(sig["share_sp"][i]), float(sig["share_act"][i]),
                            float(sig["v_sp"][i]), float(sig["v_act"][i]),
@@ -197,8 +230,8 @@ def pack_record(sig, i, v3=False):
 
 
 def pack_trailer(records_written, dropped=0, close_reason=1, error_code=0,
-                  abandoned=0, v3=False):
-    record_size = RECORD_SIZE_V3 if v3 else RECORD_SIZE
+                  abandoned=0, v3=False, v4=False):
+    record_size = RECORD_SIZE_V3 if (v3 or v4) else RECORD_SIZE
     body = struct.pack(TRAILER_FMT, 0xFFFFFFFF, records_written, dropped,
                         close_reason, error_code, abandoned)
     body += b"\x00" * (record_size - len(body))
@@ -207,24 +240,28 @@ def pack_trailer(records_written, dropped=0, close_reason=1, error_code=0,
 
 
 def build_blg(seed, truncate, wrap=False, dropped=0, fw_version=1,
-              header_v1=False, v3=False):
+              header_v1=False, v3=False, v4=False, profile_amp=6.0,
+              profile_b=0.15, profile_amp_valid=True, profile_b_valid=True):
     sig = build_signals(seed, wrap=wrap)
     n = N_SAMPLES
     if truncate:
         n = int(N_SAMPLES * 0.70)
-    record_size = RECORD_SIZE_V3 if v3 else RECORD_SIZE
+    record_size = RECORD_SIZE_V3 if (v3 or v4) else RECORD_SIZE
 
     out = bytearray()
-    out += pack_header(fw_version=fw_version, header_v1=header_v1, v3=v3)
+    out += pack_header(fw_version=fw_version, header_v1=header_v1, v3=v3,
+                        v4=v4, profile_amp=profile_amp, profile_b=profile_b,
+                        profile_amp_valid=profile_amp_valid,
+                        profile_b_valid=profile_b_valid)
     for i in range(n):
-        out += pack_record(sig, i, v3=v3)
+        out += pack_record(sig, i, v3=v3, v4=v4)
 
     if truncate:
         # Cut off mid-record: a partial trailing record's worth of garbage
         # bytes, and no trailer -- simulates power loss mid-write.
         out += b"\xA5" * (record_size // 2)
     else:
-        out += pack_trailer(records_written=n, dropped=dropped, v3=v3)
+        out += pack_trailer(records_written=n, dropped=dropped, v3=v3, v4=v4)
 
     return bytes(out)
 
@@ -252,15 +289,35 @@ def main():
     ap.add_argument("--v3", action="store_true",
                      help="write the format-v3 header/record layout "
                           "(adds V_fc, V_batt, V_chg, V_rgn); mutually "
-                          "exclusive with --header-v1")
+                          "exclusive with --header-v1 and --v4")
+    ap.add_argument("--v4", action="store_true",
+                     help="write the format-v4 header (profileAmp/profileB "
+                          "param-valid flags + LE f32 fields; record layout "
+                          "is the unchanged v3 68 B layout); mutually "
+                          "exclusive with --header-v1 and --v3")
+    ap.add_argument("--profile-amp", type=float, default=6.0,
+                     help="v4 only: profileAmp value to write (default 6.0)")
+    ap.add_argument("--profile-b", type=float, default=0.15,
+                     help="v4 only: profileB value to write (default 0.15)")
+    ap.add_argument("--profile-amp-invalid", action="store_true",
+                     help="v4 only: clear the profileAmp valid bit (the "
+                          "float bytes are still written, to exercise the "
+                          "decoder's None-when-invalid path against "
+                          "non-zero garbage)")
+    ap.add_argument("--profile-b-invalid", action="store_true",
+                     help="v4 only: clear the profileB valid bit (same "
+                          "rationale as --profile-amp-invalid)")
     args = ap.parse_args()
 
-    if args.header_v1 and args.v3:
-        raise SystemExit("--header-v1 and --v3 are mutually exclusive")
+    if sum([args.header_v1, args.v3, args.v4]) > 1:
+        raise SystemExit("--header-v1, --v3, and --v4 are mutually exclusive")
 
     data = build_blg(args.seed, args.truncate, wrap=args.wrap,
                      dropped=args.dropped, fw_version=args.fw_version,
-                     header_v1=args.header_v1, v3=args.v3)
+                     header_v1=args.header_v1, v3=args.v3, v4=args.v4,
+                     profile_amp=args.profile_amp, profile_b=args.profile_b,
+                     profile_amp_valid=not args.profile_amp_invalid,
+                     profile_b_valid=not args.profile_b_invalid)
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -269,7 +326,7 @@ def main():
 
     print(f"[make_test_blg] wrote {out_path} ({len(data)} bytes, "
           f"truncate={args.truncate}, wrap={args.wrap}, v3={args.v3}, "
-          f"seed={args.seed})")
+          f"v4={args.v4}, seed={args.seed})")
 
 
 if __name__ == "__main__":

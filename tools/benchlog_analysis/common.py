@@ -35,7 +35,11 @@ CSV_COLUMNS = ["t_us", "share_sp", "share_act", "v_sp", "v_act", "I_fc",
 # v3 decode_benchlog CSVs (tools/decode_benchlog.py CSV_HEADER_V3) add four
 # source/node voltage channels (V_fc, V_batt, V_chg, V_rgn) after I_cmd.
 # load_csv() accepts either layout; the extra columns are simply extra keys
-# in the returned dict -- no figure currently reads them.
+# in the returned dict -- no figure currently reads them. Format v4 changes
+# only the .BLG HEADER (adds profileAmp/profileB, surfaced via
+# decode_blg().header and the decode_report.txt banner line, not the CSV);
+# v4 CSVs are byte-identical in header/layout to v3 CSVs and are matched by
+# this same CSV_COLUMNS_V3 branch.
 CSV_COLUMNS_V3 = ["t_us", "share_sp", "share_act", "v_sp", "v_act", "I_fc",
                   "I_batt", "gFC", "gBT", "V_bus", "I_cmd", "V_fc", "V_batt",
                   "V_chg", "V_rgn", "fault_flags", "ps_phase", "dc_phase",

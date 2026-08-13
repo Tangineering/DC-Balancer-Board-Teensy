@@ -28,6 +28,25 @@ Format-v3 coverage (fw v5 round, adds V_fc/V_batt/V_chg/V_rgn):
   (i) v3 truncated-file handling (brownout path, mirrors (b)).
   (j) regression: v1/v2 decoding is byte-for-byte unchanged after adding
       v3 support.
+
+Format-v4 coverage (fw v6 round, adds header-only profileAmp/profileB;
+RECORD format unchanged from v3):
+  (k) header parse with both param-valid bits set: profile_amp/profile_b
+      decoded and reported in the banner, at both the API and CLI level.
+  (l) amp-only valid (bit0 set, bit1 clear): profile_b reports None and is
+      absent from the banner even though its raw float bytes are non-zero.
+  (m) neither valid (both bits clear): both params None, banner has no
+      profile_amp/profile_b text, version=4 still reported.
+  (n) record decode equivalence: a v4 file's records decode to the exact
+      same csv_rows/csv_header as an equivalent v3 file (record format is
+      byte-identical between v3 and v4).
+  (o) v4 record_size/version self-consistency hard error, mirroring (h)
+      for v3.
+  v1/v2/v3 regression: byte-identical CLI output (CSV + stderr report) was
+  verified separately against a real checked-in log per version
+  (logs/PS0001.BLG v1, logs/TP0041.BLG v2, logs/TP0074.BLG v3) via filecmp
+  against the pre-v4 decoder -- not re-checked here since that comparison
+  needs the pre-change decoder binary, not just this test file.
 """
 import struct
 import subprocess
@@ -114,6 +133,22 @@ def pack_record_v3(t_us, share_sp=0.5, share_act=0.5, v_sp=0.0, v_act=0.0,
                        dc_phase, trap_phase, flags)
     assert len(rec) == RECORD_SIZE_V3
     return rec
+
+
+def pack_header_v4(profile_type=1, start_millis=0, start_micros=0,
+                    k_droop_x1000=300, fw_version=1, param_flags=0x03,
+                    profile_amp=6.0, profile_b=0.15):
+    """v4 header: byte 7 (pad in v1-v3) becomes param_flags (bit0=amp
+    valid, bit1=b valid); bytes 20-23/24-27 carry the two LE f32 params.
+    Record format/size is unchanged from v3 (RECORD_SIZE_V3)."""
+    hdr = struct.pack(HEADER_FMT, MAGIC, 4, RECORD_SIZE_V3, profile_type,
+                       param_flags, start_millis, start_micros, k_droop_x1000)
+    hdr += struct.pack("<H", fw_version)
+    hdr += b"\x00" * (HEADER_SIZE - len(hdr))
+    hdr = bytearray(hdr)
+    struct.pack_into("<ff", hdr, 20, profile_amp, profile_b)
+    assert len(hdr) == HEADER_SIZE
+    return bytes(hdr)
 
 
 def run_decoder(blg_path):
@@ -243,7 +278,7 @@ def test_decode_blg_api(tmpdir):
     check("api: header fields", res.header == {
         "version": 1, "record_size": RECORD_SIZE, "profile_type": 2,
         "start_millis": 42, "start_micros": 4242, "k_droop_ohm": 0.305,
-        "fw_version": None},
+        "fw_version": None, "profile_amp": None, "profile_b": None},
         repr(res.header))
 
     # Format v2: fw_version parsed from offset 18 and reported.
@@ -385,6 +420,141 @@ def test_v3_record_size_mismatch(tmpdir):
           "unexpected record_size 52" in err and "expected 68" in err, err)
 
 
+def test_v4_header_both_valid(tmpdir):
+    """v4 header parse: both param-valid bits set -- profile_amp/profile_b
+    are decoded and reported in the banner line; record decode is the same
+    68 B v3 layout (records reuse pack_record_v3)."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    n = 20
+    data = pack_header_v4(profile_type=2, fw_version=6, param_flags=0x03,
+                           profile_amp=6.0, profile_b=0.15)
+    for i in range(n):
+        data += pack_record_v3(t_us=i * 1000, v_fc=12.5, v_batt=8.1)
+    data += pack_trailer(records_written=n, dropped=0, close_reason=1,
+                          record_size=RECORD_SIZE_V3)
+
+    res = db.decode_blg(data)
+    check("v4 both-valid: version=4", res.header["version"] == 4,
+          repr(res.header))
+    check("v4 both-valid: profile_amp decoded",
+          abs(res.header["profile_amp"] - 6.0) < 1e-5, repr(res.header))
+    check("v4 both-valid: profile_b decoded",
+          abs(res.header["profile_b"] - 0.15) < 1e-5, repr(res.header))
+    check("v4 both-valid: banner has both fields",
+          any("profile_amp=6.000" in l and "profile_b=0.150" in l
+              for l in res.report_lines),
+          repr(res.report_lines[:1]))
+    check("v4 both-valid: record decode equals v3 (20 fields, 68 B stride)",
+          len(res.csv_rows) == n and len(res.csv_rows[0].split(",")) == 20,
+          repr(res.csv_rows[:1]))
+    check("v4 both-valid: csv_header is the v3 20-column header",
+          res.csv_header == CSV_HEADER_V3, res.csv_header)
+
+    # CLI-level check too, mirroring the API check.
+    path = write_blg(tmpdir, "v4_both.BLG", data)
+    rc, out, err = run_decoder(path)
+    check("v4 both-valid CLI: exits 0", rc == 0, f"rc={rc} stderr={err}")
+    check("v4 both-valid CLI: banner has both fields",
+          "profile_amp=6.000" in err and "profile_b=0.150" in err, err)
+    check("v4 both-valid CLI: version=4 reported", "version=4" in err, err)
+
+
+def test_v4_header_amp_only(tmpdir):
+    """v4 header parse: only profile_amp valid (bit0 set, bit1 clear) --
+    profile_b must be None and absent from the banner even though its raw
+    float bytes are non-zero garbage."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    data = pack_header_v4(fw_version=6, param_flags=0x01, profile_amp=3.5,
+                           profile_b=0.99)  # profile_b bytes present but bit clear
+    data += pack_trailer(records_written=0, dropped=0, close_reason=1,
+                          record_size=RECORD_SIZE_V3)
+
+    res = db.decode_blg(data)
+    check("v4 amp-only: profile_amp decoded",
+          res.header["profile_amp"] is not None
+          and abs(res.header["profile_amp"] - 3.5) < 1e-5, repr(res.header))
+    check("v4 amp-only: profile_b is None despite non-zero bytes",
+          res.header["profile_b"] is None, repr(res.header))
+    check("v4 amp-only: banner has amp but not b",
+          any("profile_amp=3.500" in l for l in res.report_lines)
+          and not any("profile_b=" in l for l in res.report_lines),
+          repr(res.report_lines[:1]))
+
+
+def test_v4_header_neither_valid(tmpdir):
+    """v4 header parse: both bits clear -- both params report None and the
+    banner carries no profile_amp/profile_b text at all (byte-identical in
+    shape to the pre-v4 banner, just with version=4)."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    data = pack_header_v4(fw_version=6, param_flags=0x00, profile_amp=1.23,
+                           profile_b=4.56)
+    data += pack_trailer(records_written=0, dropped=0, close_reason=1,
+                          record_size=RECORD_SIZE_V3)
+
+    res = db.decode_blg(data)
+    check("v4 neither-valid: profile_amp is None",
+          res.header["profile_amp"] is None, repr(res.header))
+    check("v4 neither-valid: profile_b is None",
+          res.header["profile_b"] is None, repr(res.header))
+    check("v4 neither-valid: banner has no profile_amp/profile_b text",
+          not any("profile_amp=" in l or "profile_b=" in l
+                  for l in res.report_lines),
+          repr(res.report_lines[:1]))
+    check("v4 neither-valid: version=4 still reported",
+          any("version=4" in l for l in res.report_lines),
+          repr(res.report_lines[:1]))
+
+
+def test_v4_record_decode_matches_v3(tmpdir):
+    """v4 records decode identically to v3 records (same field values at
+    the same CSV positions) -- the record format did not change in v4."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    kwargs = dict(t_us=0, share_sp=0.4, share_act=0.42, i_fc=1.1, i_batt=0.9,
+                  v_fc=12.345, v_batt=8.05, v_chg=12.1, v_rgn=0.55)
+
+    data_v3 = pack_header_v3(fw_version=5)
+    data_v3 += pack_record_v3(**kwargs)
+    data_v3 += pack_trailer(records_written=1, dropped=0, close_reason=1,
+                             record_size=RECORD_SIZE_V3)
+
+    data_v4 = pack_header_v4(fw_version=5, param_flags=0x00)
+    data_v4 += pack_record_v3(**kwargs)
+    data_v4 += pack_trailer(records_written=1, dropped=0, close_reason=1,
+                             record_size=RECORD_SIZE_V3)
+
+    res_v3 = db.decode_blg(data_v3)
+    res_v4 = db.decode_blg(data_v4)
+    check("v4 record decode == v3 record decode (same row content)",
+          res_v3.csv_rows == res_v4.csv_rows,
+          f"v3={res_v3.csv_rows!r} v4={res_v4.csv_rows!r}")
+    check("v4 csv_header == v3 csv_header",
+          res_v3.csv_header == res_v4.csv_header)
+
+
+def test_v4_record_size_mismatch(tmpdir):
+    """A v4 header claiming the v1/v2 record_size (52, self-inconsistent
+    with version=4) is a hard error, mirroring test_v3_record_size_mismatch."""
+    data = bytearray(pack_header_v4())
+    data[5] = RECORD_SIZE  # corrupt record_size byte: 68 -> 52
+    data = bytes(data) + pack_trailer(records_written=0, dropped=0,
+                                       close_reason=1,
+                                       record_size=RECORD_SIZE_V3)
+
+    path = write_blg(tmpdir, "v4_badsize.BLG", data)
+    rc, out, err = run_decoder(path)
+    check("v4 bad record_size: decoder exits nonzero", rc != 0, f"rc={rc}")
+    check("v4 bad record_size: error names both values",
+          "unexpected record_size 52" in err and "expected 68" in err, err)
+
+
 def test_v1v2_regression(tmpdir):
     """(j) Regression: v1 and v2 CSV output is byte-for-byte unchanged by
     adding v3 support -- the 16-column header, field order, and field count
@@ -442,6 +612,11 @@ def main():
         test_v3_basic(tmpdir)
         test_v3_truncated(tmpdir)
         test_v3_record_size_mismatch(tmpdir)
+        test_v4_header_both_valid(tmpdir)
+        test_v4_header_amp_only(tmpdir)
+        test_v4_header_neither_valid(tmpdir)
+        test_v4_record_decode_matches_v3(tmpdir)
+        test_v4_record_size_mismatch(tmpdir)
         test_v1v2_regression(tmpdir)
 
     total = _passed + _failed

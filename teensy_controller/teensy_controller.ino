@@ -320,6 +320,62 @@
  *    'Y'/'W' (a bare 'T'/'D' does NOT — it never commands the share setpoint); and FAULT_UV_BUS
  *    arming requires a MATCHED source pair (bus switch + that channel's boost) instead of two
  *    independent ORs.
+ *  - fw v6 (2026-08-12) — five changes from the fw v5 validation sweep (logs TP0074–TP0094 clean,
+ *    WP0095–WP0101):
+ *      (a) LOAD-AWARE HANDOFF GUARD on the setpoint-latched cutoff entry
+ *          (SHARE_CUT_MAX_HANDOFF_A = 0.5 A). The cut transfers the doomed channel's WHOLE
+ *          current to the survivor in one tick. WP0097/WP0101 fired it at 1.3–1.5 A measured; FC
+ *          was then solo above this bench's ~2.1 A source knee and the bus collapsed in ~40 ms
+ *          (ERR_UV_BUS). The same cut at ~0 A is validated clean (TP0074/85/86/87 run-start
+ *          latches). The entry now additionally requires the DOOMED channel's |I| ≤ 0.5 A; blocked
+ *          → no latch, and the tick raises a per-tick DEFERRAL (shareCutDeferredFC/BT, review S1)
+ *          which (i) clips the closed-loop REFERENCE from the out-of-band setpoint onto the doomed
+ *          side's band edge, so the loop actively migrates load toward the survivor, and
+ *          (ii) SUPPRESSES applyShareRatio()'s r-based cutoff on that side — that cutoff has no
+ *          current guard and would otherwise execute the refused handoff a few ticks later under
+ *          the wrong ownership flag (shareIso*, invisible to the !shareSpCut*-gated re-closers →
+ *          re-close/re-cut cycling). The cut then fires once the migration has pulled the current
+ *          under the threshold.
+ *          RESIDUAL: at high total current the migration may never get there — the band edge is
+ *          the maximum droop authority available — and the loop sits at the edge running the
+ *          rail-saturated dropout cycle instead. Self-limiting, and strictly better than
+ *          collapsing the bus. Accepted until the floor-law rework.
+ *      (b) SOURCE-RAIL UV FAULT on V_fc (UV_FC_DWELL_LATCH_MS = 20 ms; reuses the bus filter's
+ *          UV_BUS_DWELL_LEAK / UV_BUS_DWELL_DT_CAP_MS shape parameters). This is the source-rail
+ *          fault fw v5 deferred, taken now that the data exists: three fw v5 runs ended in an MCU
+ *          STOP with V_fc under 5 V while V_bus still read 15.7 V — invisible to any
+ *          bus-referenced fault, and leading the bus event by ~7 ms. ARMED under BENCH_TEST and
+ *          in every state (the events happened in State 98); the old State-2-gated single-sample
+ *          check is REMOVED. Boot-lock is prevented by ARMING, not a state gate: the fault arms
+ *          only once FC_REG_ENABLE and FC_BUS_ENABLE are both HIGH (S7 matched pair) AND V_fc has
+ *          been observed at/above V_FC_ARM_THRESH (7.0 V — deliberately 1.0 V ABOVE the 6.0 V
+ *          trip limit, mirroring V_BUS_CHARGED_THRESH vs LIMIT_V_BUS_MIN, so a ramp cannot arm
+ *          the filter inside its own trip band) while so routed, so a bench with no fuel cell
+ *          (V_fc ≈ 0) never arms. Evaluated BEFORE the bus UV block so a same-tick double-cross
+ *          latches the CAUSE (ERR_UV_FC) rather than the consequence (ERR_UV_BUS). The V_batt
+ *          counterpart stays deferred (threshold blocked on the LM1084-input capture).
+ *      (c) GOVERNOR HANDOVER CONTINUITY (share_spEffPrev). Open loop feeds the RAW setpoint
+ *          forward; the first closed-loop tick handed the controller the FLOOR-CLIPPED value —
+ *          a reference step of up to 0.35 share at the 0.60 A crossing (raw 0.15 → 0.50). The
+ *          clipped target is now approached through a DROOP_RATIO_SLEW_PER_TICK-limited
+ *          reference, seeded at every controller reset/seed from the same value the controller
+ *          core is seeded with (droopSlew_prev at the OL→CL transition, 0.5 on a full reset),
+ *          band-clipped. Converged behaviour is bit-identical to fw v5 — transients only. This
+ *          wraps the REFERENCE; the Youla/PI internals are untouched.
+ *      (d) COMBINED-PROFILE TABLE rows 5/6/7 (W and Y). All five fw v5 W failures were R6-ENTRY
+ *          events, R6 being the only region combining peak load (v = 1.0) with an extreme share
+ *          (s = 1.0). The excursion is KEPT but DE-RATED: R5 ramps v down to 0.3, R6 runs s = 1.0
+ *          at 0.3·Imax (≈0.6 A total on this bench, under the source knee with margin), R7 takes
+ *          the s step-down at that low load and ramps v back to 1.0 so R8 keeps its 1.0 → 0.5
+ *          down-step. Region count, durations and the 40 s total are unchanged; rows 0–4 and
+ *          8–15 are byte-identical.
+ *      (e) BLG HEADER FORMAT v4 (hdr[4] = 4). RECORD FORMAT UNCHANGED (68 B). The header gains the
+ *          COMMITTED per-run profile parameters: hdr[7] = param-valid flags (bit0 amp, bit1 b),
+ *          float profileAmp at 20–23 (T/W Imax, Y Vmax), float profileB at 24–27 (W/Y clip bound
+ *          b); bytes 28–31 reserved zero (byte 19 is the fwVersion high byte, not reserved — the
+ *          fwVersion field is 2 bytes at 18–19). Derived inside logOpenForProfile() from typeMask
+ *          plus the already-committed profile globals, so no call site can omit them.
+ *          tools/decode_benchlog.py must be updated in lockstep.
  */
 
 #include <VescUart.h>
@@ -529,6 +585,36 @@ EthernetUDP Udp;
                                        //      fault class, and crediting an unbounded dt per tick
                                        //      would let ONE late tick latch on a sag it never
                                        //      actually observed
+// FAULT_UV_FC dwell filter (fw v6, 2026-08-12) — SOURCE-RAIL undervoltage on V_fc. This is the
+// first half of the source-rail fault the fw v5 note above DEFERRED, now taken because the fw v5
+// sweep produced the data it was waiting for: three runs (WP0096, WP0098 and one truncated
+// sibling) ended in an MCU STOP with V_fc logged BELOW 5 V while V_bus still read 15.7 V — the
+// bus was in regulation, so no bus-referenced fault could ever see it, and the old State-2-gated
+// single-sample V_fc check was compiled out under BENCH_TEST and gated out of State 98 anyway.
+// The V_fc collapse LEADS the bus event by ~7 ms in those logs, so an armed source-rail fault
+// latches first and names the true cause (ERR_UV_FC, not ERR_UV_BUS).
+// Filter SHAPE is the bus filter's, verbatim: +dt under the limit, −UV_BUS_DWELL_LEAK·dt above
+// it, per-tick dt capped at UV_BUS_DWELL_DT_CAP_MS. Those two are FILTER-SHAPE parameters (which
+// duty cycle is rejected; what one stalled tick may credit), not rail-specific quantities, so
+// they are REUSED rather than duplicated — one shape, two rails.
+// The V_batt counterpart is still deferred: its threshold is blocked on the LM1084-input capture.
+#define UV_FC_DWELL_LATCH_MS   20.0f  // ms of accumulated net under-dwell on V_fc → latch.
+                                       //      Same 20 ms as the bus: the WP0096/WP0098 excursions
+                                       //      are ~10 ms of CONTINUOUS collapse each, so a
+                                       //      repetitive pair (or one longer sag) latches, while a
+                                       //      single isolated 10 ms dip leaks away.
+                                       //      TODO(calibrate) against the fw v6 re-sweep.
+// ARMING threshold, DISTINCT from the trip limit (fw v6 correctness review C1). Arming and
+// tripping on the SAME 6.0 V leaves zero margin: a fuel-cell ramp that ticks to exactly
+// LIMIT_V_FC_MIN once would arm, then dip back under during the same ramp and latch ERR_UV_FC
+// mid-bring-up — the filter's dwell integrator cannot distinguish that from a real collapse.
+// The bus filter this block mirrors never had that problem because it arms at
+// V_BUS_CHARGED_THRESH, 3 V above LIMIT_V_BUS_MIN; this is the same pattern with the same intent.
+// Value: healthy loaded V_fc measured 7.8–8.2 V across the fw v5 bench runs, so 7.0 V arms
+// comfortably below normal operation (no run fails to arm) while sitting 1.0 V above the trip
+// limit (no ramp arms while still inside the trip band). TODO(calibrate): re-check both edges on
+// the fw v6 re-sweep, and against the vehicle fuel cell rather than the bench source.
+#define V_FC_ARM_THRESH         7.0f  // V — V_fc must be seen at/above this, while routed, to arm
 #define LIMIT_V_RGN_MAX  28.0f  // V — regen node spike ceiling
 #define LIMIT_V_CHG_MAX  24.0f  // V — charger input max
 
@@ -641,6 +727,30 @@ uint32_t uvBusLastTickMs   = 0;      // ms — previous armed evaluation, for th
 uint16_t uvBusTransientCount = 0;    // excursions that closed WITHOUT latching (dropout dips)
 uint32_t uvBusPrintLastMs  = 0;      // ms — last "[UV] transient" print (1 Hz rate bound)
 bool     uvBusHasPrinted   = false;  // distinguishes "never printed" from a print at millis()==0
+
+// ── FAULT_UV_FC arming + dwell state (fw v6, 2026-08-12) ─────────────────────
+// Mirrors the bus block above, with ONE structural difference in the ARMING term: the bus arms on
+// the bus having been observed up (V_bus ≥ V_BUS_CHARGED_THRESH) with a matched source pair,
+// whereas the FC rail arms on the FC pair being CLOSED (FC_REG_ENABLE HIGH && FC_BUS_ENABLE HIGH,
+// the same S7 matched-pair discipline) AND V_fc having been observed at/above V_FC_ARM_THRESH
+// while so routed. The "observed healthy while routed" term is what makes this safe on the
+// single-source bench that has NO fuel cell at all: V_fc reads ~0 there, the rail is never seen
+// healthy, nothing ever arms, and the fault can never boot-lock State 99 — which is precisely why
+// the superseded check needed its mainState == 2 gate.
+// Its dwell dt uses its own timestamp (fcUvLastTickMs) rather than sharing uvBusLastTickMs: the
+// two filters happen to run in the same detectFaults() pass today, but coupling their dt would
+// silently break either one if a future change moved or short-circuited the other's block.
+bool     fcUvArmed       = false;  // V_fc has been observed healthy with the FC pair closed
+bool     fcUvUnderActive = false;  // an under-limit excursion is open (counter/print bookkeeping)
+uint32_t fcUvUnderSince  = 0;      // ms — current excursion start (print only)
+float    fcUvDwellMs     = 0.0f;   // ms — leaky accumulated under-dwell (UV_FC_DWELL_LATCH_MS)
+uint32_t fcUvLastTickMs  = 0;      // ms — previous evaluation, for the dwell dt
+uint16_t fcUvTransientCount = 0;   // excursions that closed WITHOUT latching
+uint32_t fcUvLastExcursionMs = 0;  // ms — duration of the most recent CLOSED excursion. The bus
+                                   // filter exposes this through its 1 Hz print; this filter has
+                                   // no print (one repeating "[UV] transient" line per rail would
+                                   // be indistinguishable in a scrollback), so it is reported in
+                                   // the 'S' status dump instead (fw v6 review S5)
 
 // ── Error code enum ───────────────────────────────────────────────────────────
 // Latching primary cause; set once by triggerFault() on first State-99 entry.
@@ -843,6 +953,22 @@ const float SHARE_I_TOT_MIN_A = 0.075f;
 // current, so the floor's I_tot dependence is still unmeasured.
 const float SHARE_MINORITY_I_MIN_A = 0.30f;
 
+// A — LOAD CEILING on the SETPOINT-LATCHED CUTOFF ENTRY (fw v6, 2026-08-12). The cutoff opens one
+// bus switch in a single tick, which hands the doomed channel's ENTIRE instantaneous current to
+// the surviving channel as a step. That step is only free when it is small.
+// EVIDENCE (fw v5 sweep, logs WP0095–WP0101): WP0097 and WP0101 latched the BT cut with the BT
+// channel carrying 1.3–1.5 A (total ~2 A, W-profile region R6 at full Imax). The survivor (FC)
+// then had to source the whole load alone, went past this bench's ~2.1 A FC source knee, and the
+// bus collapsed in ~40 ms → ERR_UV_BUS. The SAME cut is validated CLEAN when it fires at ~0 A —
+// every run-start latch in TP0074/TP0085/TP0086/TP0087 entered at standstill with no incident.
+// So the failure discriminator is the handoff current, not the cutoff itself.
+// 0.5 A is set between the two populations (validated 0 A; failed 1.3 A) with margin on both
+// sides, and is well under the 2.1 A knee even after the survivor absorbs it.
+// TODO(calibrate): the knee is bench-source-specific (this is a lab supply, not the vehicle's
+// fuel cell), and the 0–1.3 A gap is unbracketed. Refine on the fw v6 re-sweep with the two-axis
+// (Imax × setpoint) mapping.
+const float SHARE_CUT_MAX_HANDOFF_A = 0.5f;
+
 // A — hysteresis on the CLOSED→OPEN loop-mode exit (fw v5, 2026-08-12). 2·SHARE_MINORITY_I_MIN_A
 // (0.60 A of filtered total) is the entry into closed-loop share control; the exit back to
 // open-loop is SHARE_GOV_OL_HYST_A lower (0.55 A) so a total current dithering on the threshold
@@ -1042,7 +1168,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 5
+#define FW_VERSION 6
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -1147,6 +1273,37 @@ const float SHARE_CUTOFF_HYST = 0.01f;  // re-entry hysteresis on the commanded 
 //     applyShareRatio()'s ratio-hysteresis re-entry for that channel is disabled.
 bool  shareSpCutFC = false;
 bool  shareSpCutBT = false;
+
+// Setpoint-latch DEFERRAL state (fw v6 review S1, 2026-08-12). True while this tick's setpoint
+// latch entry for that channel was blocked SOLELY by the load-aware handoff guard
+// (SHARE_CUT_MAX_HANDOFF_A) — i.e. the setpoint IS out of band and the cut IS wanted, but the
+// doomed channel is carrying too much current to hand over in one tick.
+//
+// WHY IT EXISTS: without it the deferral leaks the very cut it refused. The blocked entry returns
+// false, the loop runs closed-loop at an OUT-OF-BAND setpoint, the controller drives r out of
+// band, and applyShareRatio()'s r-based cutoff — which has NO current guard — performs the same
+// 1.3-1.5 A handoff ~10-30 ms later, claimed as shareIso* instead of shareSpCut*. That claim is
+// invisible to the external re-closers (doState2()/chargingControl() gate on !shareSpCut*), so
+// they re-close the switch, the self-heal drops the orphaned claim, and the r-cutoff re-fires:
+// TP0053-class switch cycling, in production State 2. "One owner per setpoint" — an out-of-band
+// setpoint belongs to the latch, and the r-cutoff must not preempt it with an unguarded cut.
+//
+// LIFECYCLE: PER-TICK DERIVED, not latched. Both are cleared at the top of
+// updateShareSetpointCutoff() and re-derived from that tick's guards, so there is no staleness or
+// clear-site bookkeeping to get wrong. The LAST-SOURCE guard blocking an entry does NOT set them:
+// that fall-through predates fw v6 and keeps its existing semantics (an already-single-sourced
+// bus has no handoff to defer). resetShareControlState() clears them as well, for the case where
+// the share loop stops running entirely (powerBalanceLive false) and the only remaining caller of
+// applyShareRatio() is a one-shot operator write.
+//
+// SCOPE — CLOSED-LOOP MODE ONLY (verified): the OPEN-LOOP feedforward path already returns quietly
+// for an out-of-band setpoint (fw v5 F1, "one owner per setpoint"), and the HOLD branch writes
+// nothing at all, so in open loop neither the reference clip nor the r-cutoff suppression has
+// anything to act on. A deferral raised while open loop is simply inert until the load that caused
+// it puts the loop back into closed-loop mode — which is the only mode that can drive r out of
+// band in the first place.
+bool  shareCutDeferredFC = false;
+bool  shareCutDeferredBT = false;
 
 // ── State 98 bench tools: VESC read-back ('E' one-shot / 'U' watch) ────────────────────────────
 // The firmware is otherwise write-only to the VESC (setCurrent()); these are the only reads.
@@ -1265,6 +1422,27 @@ uint32_t tsweepCooldownStartMs = 0;
 //     channel OFF THE BUS there (an RT1987 opening under load — the TP0010 stressor class), and
 //     while a channel is isolated the share loop is OPEN (no MDAC writes). R6/R11 datapoints are
 //     therefore TOPOLOGY EVENTS, not droop-response data — do not fit a plant through them.
+//   - R6 IS DE-RATED IN LOAD (fw v6, 2026-08-12) — rows 5/6/7 only; every other row is unchanged.
+//     ALL FIVE failures of the fw v5 sweep (WP0095–WP0101) were R6-ENTRY events: R6 was the one
+//     region combining PEAK motor load (v = 1.0) with an EXTREME share (s = 1.0), so the setpoint
+//     latch cut BT under ~2 A and left FC solo above its ~2.1 A source knee — bus collapse in
+//     ~40 ms, ERR_UV_BUS. The excursion is scientifically necessary and is KEPT; what is removed
+//     is the coincidence of the two extremes. R5 now ramps v down to 0.3 before the excursion,
+//     R6 runs the same s = 1.0 step at 0.3·Imax, and R7 takes the s step-down at that low load
+//     and then ramps v back to 1.0 so R8 still enters from v = 1.0 and keeps its 1.0 → 0.5
+//     down-step character. Durations and the 40 s total are untouched.
+//     TWO CONTINGENCIES on what R6 actually exercises (fw v6 review S7) — both operator-set, so
+//     read them off the run's committed parameters (now stamped in the BLG v4 header):
+//       (a) the s = 1.00 waypoint is clipped to [b, 1−b] AFTER interpolation, so the SETPOINT
+//           LATCH path is only reached when b < DROOP_R_MIN (0.15). At the b = 0.20/0.22 bounds
+//           used in the fw v5 W runs the region commands 0.80/0.78 — IN band, owned by the
+//           governor, and no latch ever fires. The load de-rating still applies (it halves the
+//           excursion current either way), but a latch-path test needs b < 0.15.
+//       (b) "the cut actually fires" holds only while 0.3·Imax leaves the doomed channel under
+//           SHARE_CUT_MAX_HANDOFF_A (0.5 A). That is Imax-CONDITIONAL: it is true at the ~2 A
+//           Imax of the fw v5 runs (0.3·Imax ≈ 0.6 A total, doomed channel well under 0.5 A) and
+//           becomes false as Imax grows, at which point the handoff guard defers the cut and the
+//           region tests the deferral path instead. Both are informative; know which one ran.
 //
 // Units are deliberately NOT the same on the two axes:
 //   - v_start/v_end are NORMALISED [0..1] and multiplied by the operator's yProfileVmax at
@@ -1289,9 +1467,9 @@ static const CombinedProfileRegion COMBINED_PROFILE[] = {
     { 2000, 0.6f, 0.6f, 0.50f, 0.50f },   //  2: buffer
     { 3000, 0.6f, 0.6f, 0.65f, 0.65f },   //  3: s step up (solo, intermediate)
     { 4000, 0.6f, 1.0f, 0.65f, 0.35f },   //  4: BOTH ramp (v up, s down) — interaction test
-    { 2000, 1.0f, 1.0f, 0.35f, 0.35f },   //  5: buffer
-    { 1500, 1.0f, 1.0f, 1.00f, 1.00f },   //  6: s step to the hi bound (brief)
-    { 3500, 1.0f, 1.0f, 0.35f, 0.35f },   //  7: s step down (solo); long hold doubles as buffer
+    { 2000, 1.0f, 0.3f, 0.35f, 0.35f },   //  5: buffer + v ramp DOWN to the excursion load (fw v6)
+    { 1500, 0.3f, 0.3f, 1.00f, 1.00f },   //  6: s step to the hi bound (brief) — at 0.3·Imax (fw v6)
+    { 3500, 0.3f, 1.0f, 0.35f, 0.35f },   //  7: s step down at LOW load, then v ramps back to 1.0
     { 3000, 0.5f, 0.5f, 0.65f, 0.65f },   //  8: BOTH step (v down, s up) — interaction test
     { 2000, 0.5f, 0.5f, 0.65f, 0.65f },   //  9: buffer
     { 3000, 0.5f, 0.5f, 0.65f, 0.00f },   // 10: s ramp down to the lo bound (solo)
@@ -1488,6 +1666,7 @@ void resetShareControllerCore(float seedRatio);
 extern float share_govTotAFilt;
 extern bool  shareClosedLoopMode;
 extern bool  shareClosedLoopRun;
+extern float share_spEffPrev;    // fw v6 effective-setpoint reference (slew-limited)
 void assertFcChargeEnable(bool enable);
 bool motPwrConnectBlocked();
 bool assertMotPwrEnable(bool enable);
@@ -1887,11 +2066,46 @@ void logOpenForProfile(uint8_t typeMask) {
     uint8_t hdr[32];
     memset(hdr, 0, sizeof(hdr));
     hdr[0] = 'B'; hdr[1] = 'L'; hdr[2] = 'G'; hdr[3] = '1';
-    hdr[4] = 3;                       // format version (v2 added fw_version at offset 18; v3 adds
-                                      // V_fc/V_batt/V_chg/V_rgn to the record → 68 B)
+    hdr[4] = 4;                       // format version (v2 added fw_version at offset 18; v3 added
+                                      // V_fc/V_batt/V_chg/V_rgn to the record → 68 B; v4 adds the
+                                      // committed per-run profile parameters below. RECORD FORMAT
+                                      // IS UNCHANGED from v3 — 68 B, same field order — so a v3
+                                      // decoder needs only the header change.)
     hdr[5] = (uint8_t)LOG_REC_SIZE;
     hdr[6] = typeMask;
-    hdr[7] = 0;                       // pad
+
+    // ── v4 profile-parameter block (bytes 7, 20–27) ──────────────────────────
+    // WHY: a decoded run's share/current traces are uninterpretable without the operator scale the
+    // run was started with. Imax/Vmax and the share clip bound b were typed at the prompt and then
+    // existed only in the scrollback; the fw v5 sweep analysis had to reconstruct them by hand.
+    //
+    // MECHANISM: derived HERE from typeMask plus the profile globals, rather than threaded through
+    // as parameters. Every start function commits its parameters to those globals BEFORE calling
+    // logOpenForProfile() (verified at all five call sites, including the 'T' sweep, whose per-run
+    // startTrapProfile() re-commits trapImax each run — the sweep's per-run r_i is a SETPOINT and
+    // deliberately does not appear here). typeMask already selects the run type for the filename
+    // prefix, so this reuses one existing discriminator instead of introducing a second one that
+    // could disagree with it; and no call site can forget to pass a value.
+    // hdr[7] bit0 = profileAmp valid, bit1 = profileB valid. A run type with no such parameter
+    // (R = power-share profile, D = drive cycle) leaves the flag 0 and the field 0.0 — the flag,
+    // not the value, is what a decoder must test.
+    uint8_t  paramFlags = 0;
+    float    profileAmp = 0.0f;   // T/W: Imax [A];  Y: Vmax [m/s]
+    float    profileB   = 0.0f;   // W/Y: committed share clip bound b
+    if ((typeMask & (LOG_TYPE_PS | LOG_TYPE_DC)) == (LOG_TYPE_PS | LOG_TYPE_DC)) {
+        profileAmp = yProfileVmax;    profileB = yProfileBoundLo;  paramFlags = 0x03;   // 'Y'
+    } else if ((typeMask & (LOG_TYPE_PS | LOG_TYPE_TP)) == (LOG_TYPE_PS | LOG_TYPE_TP)) {
+        profileAmp = wProfileImax;    profileB = wProfileBoundLo;  paramFlags = 0x03;   // 'W'
+    } else if (typeMask & LOG_TYPE_TP) {
+        profileAmp = trapImax;                                     paramFlags = 0x01;   // 'T'
+    }                                                                                   // PS/DC: 0
+    hdr[7] = paramFlags;
+    memcpy(hdr + 20, &profileAmp, 4);
+    memcpy(hdr + 24, &profileB,   4);
+    // Bytes 28–31 are the only reserved region; the memset above already zeroed them. (Byte 19 is
+    // NOT reserved — it is the high byte of the 2-byte fwVersion written at hdr+18 below, and it
+    // merely happens to read zero while FW_VERSION < 256.)
+
     uint32_t startMs = millis();
     uint32_t startUs = micros();
     memcpy(hdr + 8,  &startMs, 4);
@@ -2443,6 +2657,70 @@ void detectFaults() {
         ovBusOverSamples = 0;
     }
 
+    // FAULT_UV_FC — FC-source-rail armed + leaky-dwell filtered (fw v6, 2026-08-12; see the
+    // UV_FC_DWELL_LATCH_MS and fcUvArmed rationale at the constants/state blocks). Deliberately
+    // OUTSIDE the !BENCH_TEST guard and NOT state-gated, for the same reason as the bus block: the
+    // events it exists to catch (WP0096/WP0098 — V_fc under 5 V with the bus still at 15.7 V,
+    // ending in an MCU stop) happened in State 98 under BENCH_TEST, where the superseded
+    // State-2-gated check was compiled out entirely. ARMING, not a state gate, is what keeps an
+    // unrouted or absent fuel cell from tripping it.
+    // ORDER MATTERS (fw v6 review S3): this block runs BEFORE the bus block below. triggerFault()
+    // latches the FIRST cause only, and a source collapse propagates to the bus — in the WP0096 /
+    // WP0098 logs V_fc leads V_bus by ~7 ms, but a same-tick double-cross is possible. Evaluating
+    // the source rail first makes the latched error_code name the CAUSE (ERR_UV_FC) rather than
+    // the CONSEQUENCE (ERR_UV_BUS). Both blocks' internals are otherwise independent.
+    {
+        uint32_t nowMs = millis();
+        // MATCHED PAIR (S7 discipline): the FC rail is only load-bearing when its own boost is
+        // enabled AND its own bus switch is closed. Either open (dark stage, operator 'F', the
+        // share loop's own FC cut, State 3/99 teardown) and V_fc is simply an unrouted source —
+        // not evidence of anything. The staged bring-up owns its own sags (S3), same as the bus.
+        bool fcRouted = (digitalRead(FC_BUS_ENABLE) == HIGH) && (digitalRead(FC_REG_ENABLE) == HIGH);
+        if (bringupActive || !fcRouted) {
+            // Disarm and DUMP the dwell: a disarmed interval is not evidence of a collapse, and
+            // carrying dwell across it would let two unrelated bench sequences add into a latch.
+            fcUvArmed       = false;
+            fcUvUnderActive = false;
+            fcUvDwellMs     = 0.0f;
+        } else if (V_fc >= V_FC_ARM_THRESH) {
+            // The rail has demonstrably been healthy while routed — from here a collapse below
+            // LIMIT_V_FC_MIN is a real source failure, not a boot ramp or a missing source.
+            // ARM > TRIP by 1.0 V (C1): arming on the trip limit itself would let one sample of a
+            // ramp through 6.0 V arm the filter mid-ramp, and the next dip back under would latch.
+            fcUvArmed = true;
+        }
+
+        float dtMs = (float)(uint32_t)(nowMs - fcUvLastTickMs);
+        if (dtMs > UV_BUS_DWELL_DT_CAP_MS) dtMs = UV_BUS_DWELL_DT_CAP_MS;
+        fcUvLastTickMs = nowMs;
+
+        if (fcUvArmed && V_fc < LIMIT_V_FC_MIN) {
+            fault_flags |= FAULT_UV_FC;          // transient indication — not yet a latch
+            if (!fcUvUnderActive) {
+                fcUvUnderActive = true;
+                fcUvUnderSince  = nowMs;
+            }
+            fcUvDwellMs += dtMs;
+            if (fcUvDwellMs >= UV_FC_DWELL_LATCH_MS) {
+                triggerFault(FAULT_UV_FC, ERR_UV_FC);
+            }
+        } else {
+            if (fcUvUnderActive) {
+                // Excursion closed without latching. Counted, and its duration kept for the 'S'
+                // dump (fw v6 review S5) — no periodic print: the bus block already owns the 1 Hz
+                // "[UV] transient" line, and a second repeating source of the same string would
+                // make the two rails indistinguishable in a scrollback.
+                if (fcUvTransientCount < 65535u) fcUvTransientCount++;
+                fcUvLastExcursionMs = (uint32_t)(nowMs - fcUvUnderSince);
+            }
+            fcUvUnderActive = false;
+            if (fcUvArmed) {
+                fcUvDwellMs -= UV_BUS_DWELL_LEAK * dtMs;
+                if (fcUvDwellMs < 0.0f) fcUvDwellMs = 0.0f;
+            }
+        }
+    }
+
     // FAULT_UV_BUS — bus-armed + leaky-dwell filtered (fw v5, 2026-08-12; see the UV_BUS_DWELL_*
     // and uvBusArmed rationale at the constants/state blocks). Deliberately OUTSIDE the
     // !BENCH_TEST guard: the fw v3 validation sweep ran in State 98 under BENCH_TEST, where a
@@ -2544,8 +2822,11 @@ void detectFaults() {
     if (V_batt > LIMIT_V_BATT_MAX)  triggerFault(FAULT_OV_BATT, ERR_OV_BATT);
 
 #if !BENCH_TEST
-    // UV_FC gated to Run (State 2) for the same boot-ramp reason as UV_BATT above.
-    if (mainState == 2 && V_fc < LIMIT_V_FC_MIN) triggerFault(FAULT_UV_FC, ERR_UV_FC);
+    // (The State-2-gated single-sample V_fc check that lived here was REPLACED 2026-08-12, fw v6,
+    // by the FC-rail-armed leaky-dwell check above, which runs in every state and under
+    // BENCH_TEST. Its State-2 gate existed only to avoid boot-locking on an unramped rail; the
+    // arming term — FC pair closed AND V_fc observed healthy while routed — supersedes it and
+    // additionally covers the bench-with-no-fuel-cell case the state gate never did.)
     if (I_batt > LIMIT_I_BT_MAX)    triggerFault(FAULT_OC_BT,   ERR_OC_BT);
     // (The State-2-gated single-sample bus-UV check that lived here was REPLACED 2026-08-12 by the
     // bus-armed, persistence-filtered check above, which runs in every state and under BENCH_TEST.)
@@ -5251,6 +5532,18 @@ void printTestStatus() {
     Serial.print("  dwell="); Serial.print(uvBusDwellMs, 1);
     Serial.print("/"); Serial.print(UV_BUS_DWELL_LATCH_MS, 1); Serial.print(" ms");
     Serial.println();
+    // FC source-rail counterpart (fw v6): same three facts — transient count, armed/disarmed, live
+    // dwell. "disarmed" here most often means no fuel cell is connected at all, which is the
+    // normal single-source bench topology, so the reason text names that case first.
+    // NOTE (fw v6 review S6): in State 99 these values are FROZEN at their latch-time readings —
+    // detectFaults() keeps running, but a latched board is a post-mortem, so "armed" here means
+    // "was armed", same as the bus filter's line above.
+    Serial.print("UV_FC transients:   "); Serial.print(fcUvTransientCount);
+    Serial.print(fcUvArmed ? "  (armed)" : "  (disarmed — FC pair open, bring-up, or V_fc never seen healthy)");
+    Serial.print("  dwell="); Serial.print(fcUvDwellMs, 1);
+    Serial.print("/"); Serial.print(UV_FC_DWELL_LATCH_MS, 1); Serial.print(" ms");
+    Serial.print(", latest excursion "); Serial.print(fcUvLastExcursionMs); Serial.print(" ms");
+    Serial.println();
     Serial.print("share sp-cut latch: ");
     Serial.println(shareSpCutFC ? "FC" : (shareSpCutBT ? "BT" : "none"));
     // fw v5: which share-loop MODE is running, and the filtered total current that decides it —
@@ -5713,11 +6006,16 @@ float PI_Controller_Motor(float error) {
 //   share_actedSp     — the setpoint the loop last ACTED on (S3 review fix): a
 //                       commanded setpoint change must not be swallowed by the
 //                       HOLD branch, so it re-arms the feedforward path.
+//   share_spEffPrev   — the EFFECTIVE setpoint the closed-loop controller was
+//                       last given as its REFERENCE (fw v6). Slew-limited toward
+//                       the governor-clipped target so the OL→CL handover cannot
+//                       step the reference discontinuously; see powerBalance().
 float share_govTotAFilt = 0.0f;
 float droopSlew_prev    = 0.5f;
 bool  shareClosedLoopMode = false;
 bool  shareClosedLoopRun  = false;
 float share_actedSp       = 0.5f;
+float share_spEffPrev     = 0.5f;
 // Deadband on that comparison: the setpoint is a commanded float (Pi packet, operator 'P', a
 // profile's interpolation), never a measurement, so anything above float round-off is a real
 // command change. Kept explicit so a profile that interpolates the setpoint every tick is not
@@ -5750,6 +6048,13 @@ const float SHARE_SP_CHANGE_EPS = 1e-4f;
 static bool updateShareSetpointCutoff() {
     float sp = power_share_setpoint;
     bool  releasedThisTick = false;
+
+    // Deferral flags are PER-TICK DERIVED (fw v6 review S1): cleared here, set only by the entry
+    // block below when the handoff guard alone blocked the cut. Every early return from this
+    // function therefore leaves them false, which is correct — a latched, released, or
+    // guard-blocked-for-another-reason tick has no deferral outstanding.
+    shareCutDeferredFC = false;
+    shareCutDeferredBT = false;
 
     // ── S1 SELF-HEAL (2026-08-12). A latch is a claim of OWNERSHIP over a bus
     // switch, and that claim is only true while the switch is actually open. If
@@ -5841,23 +6146,63 @@ static bool updateShareSetpointCutoff() {
     // claim ownership of a switch the operator or a state action opened. When
     // the guard blocks, do NOT latch: fall through to normal governed control so
     // droop authority stays live (same fallback as applyShareRatio()).
+    //
+    // LOAD-AWARE HANDOFF GUARD (fw v6, 2026-08-12; SHARE_CUT_MAX_HANDOFF_A). The cut is a
+    // one-tick step transfer of the DOOMED channel's whole current onto the survivor. WP0097 /
+    // WP0101 fired it with 1.3–1.5 A on the doomed channel; the survivor was pushed past its
+    // source knee (~2.1 A on this bench) and the bus collapsed in ~40 ms (ERR_UV_BUS). The same
+    // cut at ~0 A is validated clean (TP0074/85/86/87 run-start latches). So the latch is
+    // additionally gated on the doomed channel's MEASURED current being small enough that the
+    // survivor can absorb it in one step.
+    //
+    // BLOCKED → DEFERRED, not abandoned (fw v6 review S1). The tick sets shareCutDeferredFC/BT and
+    // falls through to live governed control, and that flag does two things elsewhere:
+    //   - powerBalance() clips the controller REFERENCE from the out-of-band setpoint onto the
+    //     doomed side's band edge (DROOP_R_MIN / DROOP_R_MAX) before the governor's floor clip, so
+    //     the loop actively migrates load OFF the doomed channel toward the survivor. Without that
+    //     clip the reference stays out of band (the governor's floor clip is in-band-gated) and no
+    //     migration happens at all;
+    //   - applyShareRatio() suppresses its own r-based cutoff on that side, because that cutoff
+    //     has NO current guard and would otherwise execute the refused handoff a few ticks later
+    //     under the wrong ownership flag (see the shareCutDeferred* block comment).
+    // The cut then fires here on a later tick, once the migration has pulled the doomed channel's
+    // current under the threshold.
+    //
+    // RESIDUAL (accepted, fw v6): at high total current the migration may NEVER get the doomed
+    // channel under the threshold — the band edge is a droop command, and at the droop rail it
+    // cannot starve the channel further. The loop then sits at the band edge and runs the
+    // rail-saturated dropout cycle instead of cutting. That cycle is self-limiting and does not
+    // collapse the bus (it is the pre-latch fw v3 behaviour at an in-band setpoint), whereas the
+    // cut at 1.3-1.5 A demonstrably does. Accepted until the floor law is reworked
+    // (fraction-vs-absolute, next round).
     if (!shareSpCutFC && !shareSpCutBT) {
         if (sp < DROOP_R_MIN) {
             if (digitalRead(FC_BUS_ENABLE) == HIGH &&
                 digitalRead(BT_BUS_ENABLE) == HIGH) {
-                digitalWrite(FC_BUS_ENABLE, LOW);   // BT stays HIGH and keeps its
-                                                    // droop gain — the bus feed is
-                                                    // handed over, never dropped
-                shareIsoFC   = true;   // topology owner (telemetry/status truth)
-                shareSpCutFC = true;   // latched by the setpoint
+                if (fabsf(I_fc) <= SHARE_CUT_MAX_HANDOFF_A) {
+                    digitalWrite(FC_BUS_ENABLE, LOW);   // BT stays HIGH and keeps its
+                                                        // droop gain — the bus feed is
+                                                        // handed over, never dropped
+                    shareIsoFC   = true;   // topology owner (telemetry/status truth)
+                    shareSpCutFC = true;   // latched by the setpoint
+                } else {
+                    // Wanted, refused on load only — deferred (see above). Deliberately NOT set
+                    // when the last-source guard is what blocked: that fall-through predates
+                    // fw v6 and keeps its existing semantics.
+                    shareCutDeferredFC = true;
+                }
             }
         } else if (sp > DROOP_R_MAX) {
             if (digitalRead(BT_BUS_ENABLE) == HIGH &&
                 digitalRead(FC_BUS_ENABLE) == HIGH) {
-                digitalWrite(BT_BUS_ENABLE, LOW);   // FC stays HIGH and keeps its
-                                                    // droop gain (see above)
-                shareIsoBT   = true;
-                shareSpCutBT = true;
+                if (fabsf(I_batt) <= SHARE_CUT_MAX_HANDOFF_A) {
+                    digitalWrite(BT_BUS_ENABLE, LOW);   // FC stays HIGH and keeps its
+                                                        // droop gain (see above)
+                    shareIsoBT   = true;
+                    shareSpCutBT = true;
+                } else {
+                    shareCutDeferredBT = true;          // mirror of the FC branch
+                }
             }
         }
     }
@@ -6010,8 +6355,22 @@ void powerBalance() {
     // the collapse case is unreachable here. The open-loop mode above replaced
     // it (that fallback commanded a split below the conduction floor it was
     // enforcing, and ignited the TP0053 relay cycle).
-    float spEff = power_share_setpoint;
-    if (spEff >= DROOP_R_MIN && spEff <= DROOP_R_MAX) {
+    float spTarget = power_share_setpoint;
+
+    // DEFERRED-CUT REFERENCE CLIP (fw v6 review S1). A deferral means the setpoint is OUT of band
+    // (that is the only way to reach the latch entry) but the cut was refused on load. The
+    // governor's floor clip below is in-band-gated, so without this the reference would stay
+    // out of band, the controller would drive r out of band, and NO load migration would happen —
+    // the deferral would merely hand the unguarded r-based cutoff the job a few ticks later.
+    // Clipping onto the doomed side's band edge is the maximum droop authority that exists for
+    // starving that channel, and it feeds the floor clip below a legal in-band value.
+    // The deferral flags are per-tick derived by updateShareSetpointCutoff(), which ran at the top
+    // of this function, so they describe THIS tick.
+    if (shareCutDeferredFC || shareCutDeferredBT) {
+        spTarget = constrain(spTarget, DROOP_R_MIN, DROOP_R_MAX);
+    }
+
+    if (spTarget >= DROOP_R_MIN && spTarget <= DROOP_R_MAX) {
         float lo = SHARE_MINORITY_I_MIN_A / share_govTotAFilt;
         // Ceiling at 0.5 for the HYSTERESIS SLIVER only: closed-loop mode is held down to
         // 2·I_min − SHARE_GOV_OL_HYST_A (0.55 A), where the raw bound would be lo = 0.545 > hi =
@@ -6022,8 +6381,33 @@ void powerBalance() {
         // way out to open-loop mode. Above 0.60 A (the entry threshold) this branch never fires.
         if (lo > 0.5f) lo = 0.5f;
         float hi = 1.0f - lo;
-        spEff = constrain(spEff, lo, hi);
+        spTarget = constrain(spTarget, lo, hi);
     }
+
+    // ── Effective-setpoint slew (fw v6, 2026-08-12) ──────────────────────────
+    // The OPEN→CLOSED handover used to STEP the controller's reference: open loop feeds the RAW
+    // setpoint forward (the governor's clip is inert there — below 0.60 A the bound is
+    // lo = I_min/tot ≥ 0.5, so clipping the feedforward would either do nothing or command the
+    // very 0.5 split fw v5 deliberately deleted), while the first closed-loop tick hands the
+    // controller the FLOOR-CLIPPED value. At the 0.60 A crossing that is a discontinuity of up to
+    // 0.35 share (e.g. raw 0.15 → clipped 0.50) applied to the reference in one tick, right at the
+    // load level where the sweep's failures live.
+    // The fix wraps the REFERENCE, not the controller: share_spEffPrev walks toward the clipped
+    // target at DROOP_RATIO_SLEW_PER_TICK (the same ceiling the actuation path uses, so reference
+    // and actuation cannot disagree about how fast the split may move) and is what the controller
+    // is given. constrain() lands EXACTLY on the target once within one step, so every converged
+    // hold point is bit-identical to fw v5 — this changes handover transients only.
+    // SECOND-ORDER EFFECT (fw v6 review S4): the slew applies to the governor's FLOOR CLIP too, so
+    // inside closed-loop mode the clip is no longer instantaneous when the load DROPS. A load fall
+    // that moves the bound by the full band (0.15 → 0.85 is the extreme) takes ~35 ticks of
+    // reference walk, ~18 for a half-band move — monotonic, in the right direction, and one to two
+    // orders of magnitude shorter than a dropout-cycle period (~50-60 ms), so the floor is still
+    // reached long before the cycle it guards against could develop. Accepted deliberately: the
+    // alternative is a step in the reference, which is the failure this whole change removes.
+    share_spEffPrev = constrain(spTarget,
+                                share_spEffPrev - DROOP_RATIO_SLEW_PER_TICK,
+                                share_spEffPrev + DROOP_RATIO_SLEW_PER_TICK);
+    float spEff = share_spEffPrev;
 
     float power_share_actual_local = fabsf(I_fc) / totalA;
     float shareError = spEff - power_share_actual_local;
@@ -6101,8 +6485,21 @@ void applyShareRatio(float ratio) {
     // opened (e.g. FC-charge cruise holds BT_BUS LOW; the controller must not
     // put the battery back on the bus from a share excursion).
 
+    // DEFERRED-CUT SUPPRESSION (fw v6 review S1): while updateShareSetpointCutoff() has an
+    // outstanding deferral on a side, this function's r-based cutoff for that side is suppressed.
+    // The setpoint latch owns every out-of-band setpoint ("one owner per setpoint"), it refused
+    // this exact cut on load, and the r-based cutoff has no current guard — letting it fire would
+    // execute the refused 1.3-1.5 A handoff a few ticks later AND claim it as shareIso*, which the
+    // external re-closers cannot see (they gate on !shareSpCut*), producing re-close/re-cut
+    // cycling. The channel instead sits at its band-edge droop gain; that rail-saturated dropout
+    // cycle is the documented accepted residual.
+    // NOTE the flags are per-tick derived in updateShareSetpointCutoff(), so a ONE-SHOT caller of
+    // this function (operator 'O', the guard fallback, the completion restore) reads at most one
+    // powerBalance() tick of staleness — and reads it in the conservative direction: it may skip a
+    // cut, never perform an unguarded one.
+
     // FC channel cutoff / re-entry
-    if (!shareIsoFC && r < DROOP_R_MIN) {
+    if (!shareIsoFC && r < DROOP_R_MIN && !shareCutDeferredFC) {
         if (digitalRead(FC_BUS_ENABLE) == HIGH &&
             digitalRead(BT_BUS_ENABLE) == HIGH) {
             digitalWrite(FC_BUS_ENABLE, LOW);
@@ -6124,7 +6521,7 @@ void applyShareRatio(float ratio) {
     }
 
     // BT channel cutoff / re-entry
-    if (!shareIsoBT && r > DROOP_R_MAX) {
+    if (!shareIsoBT && r > DROOP_R_MAX && !shareCutDeferredBT) {
         if (digitalRead(BT_BUS_ENABLE) == HIGH &&
             digitalRead(FC_BUS_ENABLE) == HIGH) {
             digitalWrite(BT_BUS_ENABLE, LOW);
@@ -6219,6 +6616,16 @@ void resetShareControllerCore(float seedRatio) {
     shareCtrl_integ      = seed - SHARE_CTRL_R0;
     shareCtrl_heldOut    = seed;
     shareCtrl_lastMicros = micros() - (uint32_t)SHARE_CTRL_TS_US;
+    // fw v6: the effective-setpoint reference is seeded from the SAME value, clipped into the
+    // droop band. Every caller's seed is already the right continuity anchor:
+    //   - the OPEN→CLOSED transition seeds droopSlew_prev, which IS what the feedforward last
+    //     commanded (applyShareRatio() records the band-clipped ratio it wrote), so the reference
+    //     starts where the hardware actually sits — and if the feedforward was still slewing, this
+    //     is strictly MORE continuous than the raw setpoint would be;
+    //   - resetShareControlState() seeds 0.5, the historic fresh-start split.
+    // The band clip matters: an out-of-band seed would put the reference outside the range the
+    // governor clip can ever produce, so the first ticks would slew through dead space.
+    share_spEffPrev      = constrain(seed, DROOP_R_MIN, DROOP_R_MAX);
 }
 
 void resetShareControlState() {
@@ -6234,6 +6641,11 @@ void resetShareControlState() {
     // a converged closed loop, not to a run that has not started yet.
     shareClosedLoopMode  = false;
     shareClosedLoopRun   = false;
+    // fw v6 (review S1): drop any outstanding deferral. These are normally re-derived every
+    // powerBalance() tick, but a profile end / teardown can stop the share loop entirely, and a
+    // stale deferral would then suppress the r-based cutoff for a one-shot operator write.
+    shareCutDeferredFC   = false;
+    shareCutDeferredBT   = false;
 }
 
 float youlaController_Power(float setpoint, float alphaRaw) {

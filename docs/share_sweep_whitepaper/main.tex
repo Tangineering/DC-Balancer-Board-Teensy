@@ -19,7 +19,7 @@
 Bench Results, a Minority-Channel Dropout Limit Cycle,\\
 and Validation of Its Firmware Mitigation}
 \author{Ricky Tan\\ \small\texttt{rstan@ucdavis.edu}}
-\date{2026-08-11 (revised 2026-08-12 with the firmware~v3 and~v4 validation sweeps)}
+\date{2026-08-11 (revised 2026-08-12 with the firmware~v3, v4, and~v5 validation sweeps)}
 
 \begin{document}
 \maketitle
@@ -68,6 +68,24 @@ that a bus-referenced fault cannot see --- while their pre-death limit cycle sho
 the constant-current governor floor sits below the failure bracket at higher load.
 Structural fixes for the governor fallback, the floor law, and the fault coverage
 are identified.
+
+A fourth campaign (Section~\ref{sec:v5}; \code{TP0074}--\code{TP0094},
+\code{WP0095}--\code{WP0101}, firmware~v5) validates the redesigned low-current
+fallback and the reworked undervoltage filter. The 21-point trapezoid ladder is
+clean end to end --- the relay-cycle setpoints included --- and the leaky-dwell
+undervoltage filter latches within $\approx$20\,ms of first bus excursion. The
+\code{W}-profile share-bound excursion, however, is identified as a
+concentrated failure generator: it combines peak load with an extreme share
+command, reproducing the 18.8\,Hz minority dropout cycle in band (where the
+governor is structurally inert) and, at an unclipped command of 1.0, turning
+the setpoint-latched cutoff itself into a hazardous under-load actuation. The
+new source-rail logging shows the subsequent collapses are fuel-cell
+source-knee runaways invisible to any bus-referenced fault; the battery rail
+is healthy at the log rate through every stop, while an oscilloscope capture
+resolves a sub-millisecond battery-rail collapse to $\approx$4--5\,V,
+coincident with a current spike --- relocating the MCU-stop mechanism to a
+transient the log cannot see. A bus-versus-reference dropout
+margin, a source-rail undervoltage fault, and profile changes are recommended.
 \end{abstract}
 
 \section{Test setup and data provenance}
@@ -827,6 +845,288 @@ exists and is not logged) and consider a source-rail undervoltage fault; and
 scope \code{VBT} and the LM1084 input across an R6$\to$R7 step before further
 $b \leq 0.22$ runs.
 
+\section{Third validation sweep (firmware v5)}
+\label{sec:v5}
+
+\subsection{Mitigation set and sweep design}
+
+Firmware~v5 implements the three actions recommended in
+Section~\ref{sec:conclusions} items~9, 11, and~12. First, the governor's
+collapse-to-0.5 fallback is deleted. The loop is now bimodal on the filtered
+total current: closed-loop control engages above 0.60\,A and releases below
+0.55\,A. Below the threshold the loop runs \emph{open-loop}: if closed-loop
+control has not yet run, the raw in-band setpoint is fed forward through the
+0.02-per-tick slew limiter; otherwise the last applied ratio is held frozen.
+Out-of-band setpoints are never actuated by the feedforward. Second, the
+undervoltage persistence window is replaced by a \emph{leaky dwell integrator}:
+time under 12.0\,V accumulates at full rate (capped at 5\,ms per tick), time
+above it leaks off at 5\,\%, and 20\,ms of net dwell latches the fault. Third,
+the log format now records the four source-side rails (\code{FC\_VOLTAGE},
+\code{BT\_VOLTAGE}, \code{CHG\_VOLTAGE}, \code{RGN\_VOLTAGE}) at the full 1\,kHz
+rate, closing the instrumentation gap identified after the firmware~v4
+brownouts.
+
+The campaign comprises a 21-point trapezoid ladder
+(\code{TP0074}--\code{TP0094}, identical \code{T 6 3 1} profile) run as two
+automated batches within one boot --- setpoints 0 to 0.50 ascending, then 0.90
+down to 0.60 --- and seven \code{W} combined profiles
+(\code{WP0095}--\code{WP0101}, $I_\mathrm{max}=6$\,A) at share-clip bounds
+$b = 0.30$, 0.20, 0.15 ($\times3$), and 0 ($\times2$). The bound $b$ is not
+recorded in the log header; it is recovered here from the clipped setpoint
+itself, $b = 1 - \max(\code{share\_sp})$, a method that reproduces both
+operator-confirmed labels. Every trapezoid run completed cleanly. Five of the
+seven \code{W} runs failed at the same profile event
+(Section~\ref{sec:r6}); each failure forced a power cycle, so
+\code{WP0097}--\code{WP0101} are single-run or short fresh-boot sessions.
+
+\subsection{The trapezoid ladder is clean end to end}
+
+Figure~\ref{fig:v5summary} summarizes the ladder: 21 of 21 runs complete, zero
+fault flags in every sample, and no bus sample below 14.89\,V anywhere in the
+campaign. The firmware~v4 relay region is closed. Table~\ref{tab:v5relay}
+compares the four relay-cycle setpoints directly.
+
+\begin{table}[H]
+\centering
+\caption{The firmware~v4 relay-cycle setpoints, re-run on firmware~v5.
+Firmware~v4 columns aggregate \code{TP0053}--\code{TP0057} and \code{TP0059};
+firmware~v5 columns are \code{TP0090}--\code{TP0093}.}
+\label{tab:v5relay}
+\begin{tabular}{lcc}
+\toprule
+Metric & firmware~v4 & firmware~v5 \\
+\midrule
+Faults & \code{ERR\_UV\_BUS}, every run & none \\
+Bus minimum & 7--9\,V & 15.71--15.73\,V \\
+Exclusive-conduction fraction & $\approx$100\,\% & 0\,\% \\
+Both-channels-off gaps in hold & 7--12\,ms, repeating & none $\geq$3\,ms \\
+Commutation signature & 16--20\,Hz & no 14--24\,Hz spectral peak \\
+Hold-window share error (mean) & undefined (commutating) & $\leq 3\times10^{-5}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Tracking bias in the 6\,A hold window is below $10^{-3}$ at every in-band
+setpoint from 0.18 to 0.82. The two band-edge runs show the governor clip, not
+a tracking failure: at $r^\ast=0.15$ the floor raises the effective setpoint to
+0.169 and the measured share lands $+1.5\times10^{-3}$ from it
+($+0.020$ from the raw value); at $r^\ast=0.85$ the clip is active in the other
+direction ($-0.013$ from the raw value). The five out-of-band runs
+($r^\ast \in \{0, 0.10, 0.12, 0.88, 0.90\}$) latch a hard single-channel cut:
+the starved channel's measured current is exactly zero for the whole run, the
+controller stays frozen, and the isolated dropout-counter events in
+Figure~\ref{fig:v5summary} are threshold-crossing artifacts at the ramp edges,
+not cycling. The spectral check is negative everywhere: over every hold window
+the 14--24\,Hz band carries 4--6\,\% of the residual energy with no peak.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{fig_v5sweep_summary.png}
+\caption{Firmware~v5 trapezoid ladder (\code{TP0074}--\code{TP0094}). Left:
+hold-window tracking error versus the raw setpoint; the two outliers at 0.15
+and 0.85 are the governor clip acting as designed. Center: dropout events; the
+two nonzero counts (1 at 0.85, 2 at 0.82) are ramp-edge threshold crossings,
+with zero events inside any hold window. Right: run-minimum bus and
+battery-rail voltages; the battery rail dips lowest where the battery is the
+sole source (setpoints $\leq0.12$), reaching 5.98\,V at $r^\ast=0.12$.}
+\label{fig:v5summary}
+\end{figure}
+
+The governor's new machinery is directly observable in the logs. The open-loop
+feedforward appears as an exact 0.02-per-tick staircase that lands on the raw
+setpoint to four decimal places; each run inherits its predecessor's final
+ratio as the staircase seed, confirming that the slew tracker survives the
+per-profile state reset as designed. Every in-band run shows exactly two mode
+edges --- closed-loop entry at 0.60--0.73\,A of total current on the ramp-up,
+release to hold at 0.40--0.52\,A on the ramp-down --- with zero chatter, and
+the held ratio is frozen to numerical exactness for the remaining 2.5\,s of
+every run.
+
+Three residual observations temper the pass. First, the open-loop feedforward
+applies the \emph{raw} setpoint while closed-loop control applies the
+\emph{floor-clipped} setpoint, so the handover at 0.60\,A commands a
+discontinuous step; at $r^\ast=0.15$ the effective setpoint jumps from 0.15 to
+0.50 and roughly 0.25\,A commutates between the sources over
+$\approx$17\,ticks. No run showed any consequence, but the step is unnecessary
+--- the clip can be applied to the feedforward as well. Second, the floor
+bounds the commanded minority current only: measured minority current dips to
+0.193\,A at $r^\ast=0.15$ and 0.20--0.24\,A at 0.82--0.85, inside the old
+cycling bracket, without igniting anything. Third, the battery rail is the
+soft one ($\approx$0.9--1.0\,V/A source slope, versus $\approx$0.28\,V/A for
+the fuel-cell side), and battery-sole-source runs push it hardest:
+$r^\ast=0.12$ reached 5.98\,V and the $r^\ast=0$ repeat spent 3.6\,s below
+7.0\,V. These runs are the brownout-risk case for any higher-current session.
+
+\subsection{The R6 share-bound excursion is the \code{W}-profile failure
+generator}
+\label{sec:r6}
+
+All five \code{W} failures occur at the same profile event: entry into region
+R6 at $t\approx17.0$\,s, where the profile steps the share command to 1.00
+(clipped to $1-b$) while the motor axis remains at the full 6\,A command ---
+the only region that combines peak load with an extreme share. Nothing about
+the current command changes at the boundary; the share step alone is lethal,
+and its severity is ordered monotonically by the clipped target
+(Table~\ref{tab:v5w}).
+
+\begin{table}[H]
+\centering
+\caption{\code{W}-profile outcomes, firmware~v5, ordered by the R6 clipped
+setpoint $1-b$. Total current entering R6 is 1.8--2.0\,A in every run. ``Time
+in R6'' is from region entry to the last record.}
+\label{tab:v5w}
+\begin{tabular}{llllll}
+\toprule
+Run & $b$ & R6 target & R6 behaviour & Outcome & Time in R6 \\
+\midrule
+\code{WP0095} & 0.30 & 0.70 & converges, minority 0.54\,A & complete & (full 1.5\,s) \\
+\code{WP0100} & 0.15 & 0.85 & 18.8\,Hz dropout cycle, 28 episodes & complete & (full 1.5\,s) \\
+\code{WP0096} & 0.20 & 0.80 & dropout cycle, 4 episodes & truncation & 197\,ms \\
+\code{WP0098} & 0.15 & 0.85 & dropout cycle, 2 episodes & truncation & 86\,ms \\
+\code{WP0099} & 0.15 & 0.85 & dropout cycle, 5 episodes & truncation & 254\,ms \\
+\code{WP0097} & 0 & 1.00 & setpoint latch cuts BT under load & \code{ERR\_UV\_BUS} & 43\,ms \\
+\code{WP0101} & 0 & 1.00 & setpoint latch cuts BT under load & \code{ERR\_UV\_BUS} & 39\,ms \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Target 0.70: feasible.} \code{WP0095} converges to $r\approx0.68$
+with the battery channel at 0.54--0.68\,A and completes the region with a flat
+bus. No incipient cycling is visible at any sensitivity.
+
+\paragraph{Targets 0.80--0.85: the firmware~v4 dropout cycle, in band.} The
+setpoint is inside $[0.15, 0.85]$, so no latch fires and the closed loop stays
+live. The equilibrium it is asked for is infeasible, and the loop limit-cycles:
+the battery channel stops conducting, the controller walks the ratio back down
+at the slew ceiling, the channel reconnects, and the cycle repeats at 18.8\,Hz
+--- the period set by the 0.02-per-tick limit walking the ratio triangle
+(Figure~\ref{fig:wp0100r6}). This is the firmware~v4 pre-brownout mode, not the
+relay cycle: the fuel-cell channel conducts continuously and there are no
+both-off gaps. The governor is structurally inert here --- at 2\,A total the
+floor clips only outside $[0.15, 0.85]$, so targets 0.80 and 0.85 pass through
+unmodified --- and the channel drops out at a \emph{commanded} minority current
+of 0.55--1.04\,A, two to three times the 0.30\,A floor.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{fig_wp0100_r6.png}
+\caption{\code{WP0100} ($b=0.15$), region R6. Top: the battery channel drops
+out and reconnects 28 times at 18.8\,Hz while the fuel-cell channel carries the
+full $\approx$2\,A. Middle: the commanded droop ratio is the slew-limited
+triangle between $\approx$0.39 and $\approx$0.75. Bottom: the bus notches by
+$\approx$0.25\,V per episode but never approaches the 12\,V limit. The cycle
+self-terminates the instant R7 steps the setpoint back to 0.35.}
+\label{fig:wp0100r6}
+\end{figure}
+
+Whether a run at target 0.80--0.85 survives is decided not by the cycle itself
+but by the fuel-cell source. During each battery-off half-cycle the fuel-cell
+input carries the whole load, and the source exhibits a hard knee at
+$\approx$2.1\,A: \code{WP0100} ran 28 consecutive solo episodes at
+1.96--2.08\,A with the rail flat at 7.8\,V, while \code{WP0096},
+\code{WP0098}, and \code{WP0099} drew 2.11--2.19\,A and the rail collapsed
+within two to five episodes (Figure~\ref{fig:fcknee}). Roughly 0.1\,A of motor
+load separates the clean run from the three deaths. Once the rail falls, the
+boost demands more input current to hold the bus --- logged fuel-cell current
+spikes reach 6.1\,A as the rail passes below 5\,V --- a positive-feedback
+source-collapse runaway. Whether the knee is bench-supply current foldback or
+source droop is not distinguishable from the logs.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{fig_fc_knee.png}
+\caption{The fuel-cell source knee. \code{WP0100} (green) and \code{WP0099}
+(red) run the same $b=0.15$ profile; their solo-episode fuel-cell currents
+differ by $\approx$0.1\,A. \code{WP0100} holds 7.8\,V through 28 episodes;
+\code{WP0099}'s rail collapses on its fifth episode and the input current runs
+away.}
+\label{fig:fcknee}
+\end{figure}
+
+\paragraph{Target 1.00: the setpoint latch becomes the killer.} With $b=0$ the
+R6 command exceeds \code{DROOP\_R\_MAX}, and the setpoint-latched cutoff ---
+introduced in firmware~v4 to \emph{prevent} switch cycling --- opens the
+battery bus switch in one tick under 2\,A of load
+(Figure~\ref{fig:wp0101cut}). The battery current steps to zero in one sample
+and its rail rebounds to the unloaded 8.4\,V; the fuel-cell source, alone above
+its knee, collapses from 7.8\,V through 3.4\,V within 23\,ms; the bus falls out
+of regulation and the undervoltage fault latches. Both $b=0$ runs die this way
+in under 45\,ms --- the fastest failure in the campaign, and a direct
+demonstration that an under-load channel cut is itself a hazardous actuation
+when the surviving source cannot carry the total.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{fig_wp0101_cut.png}
+\caption{\code{WP0101} ($b=0$), R6 entry. Top: the setpoint latch cuts the
+battery channel in one sample; the fuel-cell channel steps to the full load and
+then runs away as its source collapses. Middle: the battery rail rebounds to
+its unloaded 8.4\,V --- the battery is healthy and disconnected --- while the
+fuel-cell rail falls to 2.3\,V. Bottom: the bus leaves regulation
+$\approx$15\,ms after the cut and the dwell-filtered undervoltage fault latches
+$\approx$20\,ms later.}
+\label{fig:wp0101cut}
+\end{figure}
+
+\subsection{The dwell filter is vindicated; the source rail is still
+unguarded}
+
+The reworked undervoltage filter performed exactly as designed. In both
+\code{ERR\_UV\_BUS} runs the reconstructed dwell integrator crosses 20\,ms
+within 18--21\,ms of the first sub-12\,V sample --- against 1.0--1.3\,s of
+evasion for the firmware~v4 window on the same class of waveform. No spurious
+latch occurred anywhere in the 28-run campaign.
+
+The three truncation runs, however, beat the filter by dying upstream of it.
+In \code{WP0096} and \code{WP0098} the bus had spent only 3.4\,ms below
+12.0\,V when the MCU stopped; four samples earlier it was in regulation at
+15.7\,V. The fuel-cell rail tells the real story the bus cannot: it had been
+below 7\,V for $\approx$10\,ms and below 5\,V for $\approx$3\,ms while the bus
+still read 15.7\,V. A source-rail undervoltage fault --- the action deferred
+from the firmware~v4 round --- would have latched \code{WP0098} roughly 7\,ms
+before the bus moved at all. The new rail logging also overturns the working
+hypothesis for the MCU stops: the battery rail read 8.37, 8.37, and 7.89\,V
+at the three truncation instants --- unloaded in two of them --- so a
+battery-rail brownout through the logic regulator is unsupported at the
+870\,Hz log rate. The stop mechanism is therefore unconfirmed; either a
+sub-millisecond transient invisible to the log, or a path other than the
+battery rail, stops the processor. Oscilloscope captures 13 and 14 (taken
+under the \code{WP0101} condition) corroborate the logged chronology --- the
+battery current envelope collapses in one step, the battery rail recovers
+upward to 8.4\,V, and the motor node decays 15.9 to 8.4\,V over 19.4\,ms ---
+and capture 14 additionally resolves what the log cannot: late in the decay,
+as the motor node falls through the battery-rail level, the battery rail dips
+$\approx$0.9 division below its 8.4\,V baseline at 5\,V per division ---
+to $\approx$4--5\,V --- for under a millisecond, within $\approx$2\,ms of a
+full-scale battery-current spike. A battery-rail transient of that depth is
+below the LM1084 dropout for the logic rail, and its sub-millisecond width is
+invisible at the 870\,Hz log rate --- which reconciles the healthy logged
+battery rail with the observed stops. The inferred mechanism (the collapsing
+node reaching the battery rail and drawing reconnect inrush through the source
+impedance) is unconfirmed; the settling measurement is a capture on the LM1084
+input and output through a truncation event.
+
+\subsection{The floor law, revisited with source-rail data}
+\label{sec:floorlaw}
+
+The \code{W} cluster sharpens Section~\ref{sec:conclusions} item~11 into a
+structural statement: no absolute-current floor can separate the stable region
+from the cycling region, because the boundary is not a current level.
+\code{WP0100} dropped out 28 times at a cycle-averaged operating point ---
+15.81\,V bus, 0.69\,A battery current --- that is indistinguishable, to within
+27\,mV of bus voltage, from the point \code{WP0095} held stably for the full
+region. At 0.7\,A the droop offset is only $\approx$0.23\,V, and the measured
+channel-offset envelope $\Delta V_0 = \pm0.10$\,V is 40\,\% of that authority,
+so conduction is decided by a sub-100\,mV race between the bus and the starved
+channel's effective reference. The effect is also one-sided: the fuel-cell
+channel held 0.63--0.72\,A as the minority in regions R5 and R7 of every run
+with zero dropouts, while the battery channel dropped out at 0.55--1.04\,A.
+The asymmetry implicates a channel-specific offset (the $\Delta V_0$ sign, the
+battery channel's compensator rework, or layout) rather than a symmetric
+conduction floor, and the corrected mitigation should be referred to the
+bus-versus-reference margin, not to a current constant. The two-axis sweep
+recommended previously should therefore be run per channel direction.
+
 \section{Conclusions and recommended actions}
 \label{sec:conclusions}
 
@@ -918,6 +1218,47 @@ with the bus in regulation at 15.7\,V: the source rail feeding the logic
 regulator is unobserved. Log \code{BT\_VOLTAGE}, consider a source-rail
 undervoltage fault, and scope \code{VBT}/LM1084 across the R6$\to$R7 setpoint
 step before further $b \leq 0.22$ runs.
+\end{enumerate}
+
+Items~9, 11 (in part), and~12 were implemented as firmware~v5. From the third
+validation sweep (firmware~v5):
+
+\begin{enumerate}
+\setcounter{enumi}{11}
+\item \textbf{The open-loop fallback closes the relay cycle.} The four
+firmware~v4 relay setpoints run clean --- zero exclusive conduction, no
+14--24\,Hz signature, bus flat at 15.7\,V --- and the feedforward, hold-freeze,
+and mode hysteresis are each directly observable in the logs with zero chatter.
+One tidy-up remains: apply the governor clip to the feedforward path so the
+handover at 0.60\,A does not step the effective setpoint discontinuously.
+\item \textbf{The \code{W}-profile R6 excursion is a test-design hazard and a
+finding in one.} It is the only region combining peak load with an extreme
+share command, and it generated all five failures. Do not run \code{W}/\code{Y}
+profiles with $b < 0.30$ until the region drops its motor axis; record $b$ and
+$I_\mathrm{max}$ in the log header. Separately, the $b=0$ case shows the
+setpoint-latched cutoff acting as an under-load channel cut that collapses the
+surviving source in 40\,ms --- the latch needs a load-aware guard (defer the cut,
+or ramp it, when the surviving channel cannot carry the measured total).
+\item \textbf{The floor law is structurally wrong, not miscalibrated.} The
+battery channel drops out at commanded minority currents of 0.55--1.04\,A ---
+two to three times the 0.30\,A floor --- while the fuel-cell channel holds
+0.63\,A as minority with no dropout, and 27\,mV of bus voltage separates a
+28-dropout operating point from a stable one. The boundary is a
+bus-versus-reference margin, one-sided toward the battery channel; replace the
+current constant with a reference-referred guard and run the two-axis sweep per
+channel direction.
+\item \textbf{The dwell filter is validated; the missing fault is upstream.}
+Both latching runs latch within $\approx$20\,ms of first excursion (firmware~v4:
+1.0--1.3\,s), with no spurious latch in 28 runs. The three MCU stops beat the
+filter from the source side: the fuel-cell rail sat below 5\,V while the bus
+still read 15.7\,V, and the battery rail read 7.9--8.4\,V at every truncation
+instant --- so a source-rail undervoltage fault (dwell-filtered, on the logged
+rails) is the highest-value protection now missing. Oscilloscope capture~14
+resolves a sub-millisecond battery-rail dip to $\approx$4--5\,V, coincident
+with a battery-current spike as the collapsing node reaches the battery-rail
+level --- the leading MCU-stop candidate, below the LM1084 dropout and
+invisible to the log --- pending confirmation by a capture on the LM1084
+input and output through a truncation event.
 \end{enumerate}
 
 \end{document}

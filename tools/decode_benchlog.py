@@ -1,19 +1,32 @@
 #!/usr/bin/env python3
-"""Decode .BLG bench-log files (format versions 1, 2, and 3) into CSV.
+"""Decode .BLG bench-log files (format versions 1, 2, 3, and 4) into CSV.
 
 The firmware writer lives in teensy_controller/teensy_controller.ino
 (State 98 SD-card logging, see PLAN.md sec 9g). File layout:
 
-  Header (32 B, LE): magic b'BLG1', u8 version(=1|2|3), u8 record_size
-    (=52 for v1/v2, 68 for v3), u8 profile_type (bitmask: 1=PS, 2=TP,
-    4=DC), u8 pad, u32 start_millis, u32 start_micros, u16 K_DROOP_x1000
-    (ohms x1000), then in format v2+ a u16 fw_version at offset 18 (the
-    FW_VERSION the firmware was built with, see docs/firmware-versions.md;
-    v1 files predate firmware versioning and report fw_version None /
-    "pre-versioning"), zero-padded to 32 B. The header's own record_size
-    byte is cross-checked against the size expected for its version; a
-    mismatch is a hard error (a version/record_size pair that disagrees
-    with itself means a corrupt or unrecognised file, not a new format).
+  Header (32 B, LE): magic b'BLG1', u8 version(=1|2|3|4), u8 record_size
+    (=52 for v1/v2, 68 for v3/v4), u8 profile_type (bitmask: 1=PS, 2=TP,
+    4=DC), u8 pad/param_flags (see below), u32 start_millis, u32
+    start_micros, u16 K_DROOP_x1000 (ohms x1000), then in format v2+ a u16
+    fw_version at offset 18 (the FW_VERSION the firmware was built with,
+    see docs/firmware-versions.md; v1 files predate firmware versioning
+    and report fw_version None / "pre-versioning"), zero-padded to 32 B.
+    The header's own record_size byte is cross-checked against the size
+    expected for its version; a mismatch is a hard error (a
+    version/record_size pair that disagrees with itself means a corrupt
+    or unrecognised file, not a new format).
+
+  Header, format v4 (adds two per-run profile parameters; RECORD format is
+    UNCHANGED from v3 -- v4 records are byte-identical to v3 records, still
+    68 B / RECORD_FMT_V3): the byte at offset 7 (pad in v1-v3) becomes a
+    param-valid flags byte: bit0 = profileAmp valid, bit1 = profileB valid.
+    Bytes 20-23 (LE f32) carry profileAmp (Imax for T/W profiles, Vmax for
+    Y; invalid/0.0 for R/D). Bytes 24-27 (LE f32) carry profileB (the W/Y
+    share-clip bound b; invalid/0.0 otherwise). Byte 19 and bytes 28-31 are
+    reserved zero. A value is only trusted when its valid bit is set --
+    decode_blg() reports it as None in the header dict and omits it from
+    the banner line when the bit is clear, regardless of what garbage (or
+    stale zero) sits in the float bytes.
 
   Record, format v1/v2 (52 B, LE): u32 t_us, then 10x f32 (share_sp,
     share_act, v_sp, v_act, I_fc, I_batt, gFC, gBT, V_bus, I_cmd),
@@ -68,6 +81,12 @@ p ~= 9.3e-6 per run).
 v_sp/v_act are blanked in the CSV when flags bit1 (velocity chain valid) is
 clear -- see above.
 
+Format v4 adds no CSV columns -- v4 files decode with the same 20-column
+v3 CSV layout (RECORD_INFO[4] reuses the v3 record format/csv_header). The
+new profileAmp/profileB values are header-only metadata: they are reported
+in the banner report line (see below) and exposed on DecodeResult.header,
+not written into the CSV.
+
 Gap statistics (printed to stderr): max_interval_us is the largest modular
 step between consecutive records; missed_periods sums, over every step,
 max(round(delta_us / 1000) - 1, 0) -- i.e. how many 1 kHz control ticks
@@ -82,7 +101,10 @@ tools/benchlog_analysis/). main() is a thin CLI wrapper around it that
 reproduces the exact stdout/stderr byte stream documented above. The
 result's csv_header (not the module-level CSV_HEADER constant) is the
 correct CSV header line for the decoded file's version -- v1/v2 files get
-the 16-column CSV_HEADER, v3 files get the 20-column CSV_HEADER_V3.
+the 16-column CSV_HEADER, v3/v4 files get the 20-column CSV_HEADER_V3.
+DecodeResult.header also carries "profile_amp" and "profile_b" (float or
+None -- None for v1-v3 files and for a v4 file whose corresponding valid
+bit is clear).
 """
 import argparse
 import struct
@@ -107,10 +129,13 @@ TRAILER_FMT = "<IIIBBI"
 CLOSE_REASONS = {1: "complete", 2: "stop", 3: "X", 4: "Q", 5: "fault",
                   6: "io_error"}
 
-SUPPORTED_VERSIONS = (1, 2, 3)
+SUPPORTED_VERSIONS = (1, 2, 3, 4)
 
 # Per-version record format/size and CSV header/field list. v1 and v2 share
 # a record layout; v3 appends the four new voltage channels after I_cmd.
+# v4 changes only the HEADER (adds profileAmp/profileB); its record format
+# is byte-identical to v3, so it reuses RECORD_FMT_V3/CSV_FIELDS_V3/
+# CSV_HEADER_V3 below.
 CSV_FIELDS = ["share_sp", "share_act", "v_sp", "v_act", "I_fc", "I_batt",
               "gFC", "gBT", "V_bus", "I_cmd"]
 CSV_HEADER = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,V_bus,"
@@ -130,6 +155,8 @@ RECORD_INFO = {
         "csv_header": CSV_HEADER},
     3: {"fmt": RECORD_FMT_V3, "size": RECORD_SIZE_V3,
         "csv_fields": CSV_FIELDS_V3, "csv_header": CSV_HEADER_V3},
+    4: {"fmt": RECORD_FMT_V3, "size": RECORD_SIZE_V3,
+        "csv_fields": CSV_FIELDS_V3, "csv_header": CSV_HEADER_V3},
 }
 
 # 30 s: longer than any profile's worst card-stall gap (ring = 1024 rec ~=
@@ -143,7 +170,10 @@ class DecodeResult:
     """Result of decode_blg(). csv_rows have no trailing newline.
 
     header: {version, record_size, profile_type, start_millis,
-             start_micros, k_droop_ohm}
+             start_micros, k_droop_ohm, fw_version, profile_amp, profile_b}
+             -- profile_amp/profile_b are float or None; None for v1-v3
+             files and for a v4 file whose corresponding param-valid flag
+             bit (header byte 7, bit0=amp/bit1=b) is clear.
     trailer: None, or {records_written, dropped, close_reason (int),
               close_reason_str, error_code, abandoned}
     warnings: human-readable warning lines, WITHOUT the
@@ -151,9 +181,9 @@ class DecodeResult:
     report_lines: every "[decode_benchlog] ..." line, in the exact order
                   the CLI prints them to stderr.
     csv_header: the CSV header line matching this file's version (v1/v2 ==
-                module-level CSV_HEADER, v3 == CSV_HEADER_V3) -- always use
-                this rather than the module-level CSV_HEADER constant, since
-                the constant only describes v1/v2.
+                module-level CSV_HEADER, v3/v4 == CSV_HEADER_V3) -- always
+                use this rather than the module-level CSV_HEADER constant,
+                since the constant only describes v1/v2.
     """
     header: dict
     csv_rows: list = field(default_factory=list)
@@ -174,7 +204,7 @@ def decode_blg(data):
     if len(data) < HEADER_SIZE:
         raise ValueError("file shorter than the 32-byte header")
 
-    magic, version, record_size, profile_type, _pad, start_millis, \
+    magic, version, record_size, profile_type, hdr7, start_millis, \
         start_micros, k_droop_x1000 = struct.unpack_from(HEADER_FMT, data, 0)
     if magic != MAGIC:
         raise ValueError(f"bad magic {magic!r}, expected {MAGIC!r}")
@@ -190,9 +220,24 @@ def decode_blg(data):
             f"expected {expected_record_size}")
     record_fmt = record_info["fmt"]
 
-    # v2/v3 add a u16 fw_version at offset 18 (in v1 those bytes are zero
+    # v2/v3/v4 add a u16 fw_version at offset 18 (in v1 those bytes are zero
     # pad); None marks a pre-versioning (v1) log.
     fw_version = struct.unpack_from("<H", data, 18)[0] if version >= 2 else None
+
+    # v4 repurposes header byte 7 (pad in v1-v3) as a param-valid flags byte
+    # and adds two LE f32 fields at offsets 20/24: profileAmp (bit0) and
+    # profileB (bit1). A value is trusted only when its bit is set --
+    # otherwise it's reported as None regardless of what's in the bytes
+    # (invalid/0.0 per the firmware contract, but garbage is possible too).
+    profile_amp = None
+    profile_b = None
+    if version >= 4:
+        param_flags = hdr7
+        raw_amp, raw_b = struct.unpack_from("<ff", data, 20)
+        if param_flags & 0x01:
+            profile_amp = raw_amp
+        if param_flags & 0x02:
+            profile_b = raw_b
 
     header = {
         "version": version,
@@ -202,6 +247,8 @@ def decode_blg(data):
         "start_micros": start_micros,
         "k_droop_ohm": k_droop_x1000 / 1000.0,
         "fw_version": fw_version,
+        "profile_amp": profile_amp,
+        "profile_b": profile_b,
     }
 
     csv_rows = []
@@ -248,7 +295,7 @@ def decode_blg(data):
         prev_t_us = t_us
 
         fields = struct.unpack_from(record_fmt, chunk, 0)
-        if version == 3:
+        if version in (3, 4):
             (_t, share_sp, share_act, v_sp, v_act, i_fc, i_batt, gfc, gbt,
              v_bus, i_cmd, v_fc, v_batt, v_chg, v_rgn, fault_flags, ps_phase,
              dc_phase, trap_phase, flags) = fields
@@ -265,7 +312,7 @@ def decode_blg(data):
         row = [t_us, "%.9g" % share_sp, "%.9g" % share_act, v_sp_cell,
                v_act_cell, "%.9g" % i_fc, "%.9g" % i_batt, "%.9g" % gfc,
                "%.9g" % gbt, "%.9g" % v_bus, "%.9g" % i_cmd]
-        if version == 3:
+        if version in (3, 4):
             row += ["%.9g" % v_fc, "%.9g" % v_batt, "%.9g" % v_chg,
                     "%.9g" % v_rgn]
         row += [fault_flags, ps_cell, dc_cell, tp_cell, flags]
@@ -276,11 +323,23 @@ def decode_blg(data):
     warnings = []
 
     fw_str = "pre-versioning" if fw_version is None else str(fw_version)
-    report_lines.append(
+    banner = (
         f"[decode_benchlog] version={version} fw_version={fw_str} "
         f"profile_type={profile_type} "
         f"start_millis={start_millis} start_micros={start_micros} "
         f"K_DROOP={k_droop_x1000 / 1000.0:.3f} ohm")
+    # v4 profile params are appended only when their valid bit is set, so
+    # v1-v3 banners (and a v4 file with neither bit set) are unaffected --
+    # this keeps the v1/v2/v3 report output byte-identical to pre-v4.
+    if version >= 4:
+        extra = []
+        if profile_amp is not None:
+            extra.append(f"profile_amp={profile_amp:.3f}")
+        if profile_b is not None:
+            extra.append(f"profile_b={profile_b:.3f}")
+        if extra:
+            banner += " " + " ".join(extra)
+    report_lines.append(banner)
     report_lines.append(f"[decode_benchlog] records read: {records_read}")
 
     trailer_dict = None

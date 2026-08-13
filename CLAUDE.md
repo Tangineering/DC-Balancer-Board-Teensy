@@ -856,3 +856,53 @@ brownouts (WP0072/73) with the bus in regulation — the collapsing source rail 
 - **Next bench:** flash fw v5; re-enter TP0053/TP0055 (relay region) and the WP b-ladder
   (b = 0.20/0.22) scope-armed with VBT + LM1084 input probed; two-axis floor sweep
   (Imax × setpoint) to settle fraction vs absolute; vehicle-source ΔV0 still open.
+
+---
+
+## Status & session addendum (2026-08-12, fw v6: cut-guard, source-rail UV, header v4)
+
+The fw v5 validation sweep (TP0074–TP0094 all clean incl. every fw v4 relay setpoint;
+WP0095–WP0101; whitepaper "Third validation sweep") found: the setpoint latch cutting BT under
+2 A collapses the FC source (knee ~2.1 A, positive-feedback runaway, I_fc spikes to 6.1 A) in
+~40 ms (WP0097/0101 ERR_UV_BUS); three MCU-stop truncations with V_fc < 5 V while the bus read
+15.7 V (no source-rail fault exists); capture 14 resolves a sub-ms V_bt dip to ~4–5 V (leading
+MCU-stop candidate, invisible at 870 Hz); all five W failures were R6-entry events (full Imax +
+extreme share). **fw v6 (pending first flash; ledger row has full detail):**
+
+- **Load-aware handoff guard** on the setpoint-latch entry: `SHARE_CUT_MAX_HANDOFF_A` = 0.50 A
+  (TODO(calibrate); bracket open between 0 A clean and 1.3 A fatal). Blocked → **deferred**
+  (`shareCutDeferredFC/BT`, per-tick derived + cleared in `resetShareControlState()`): the CL
+  reference is clipped onto the doomed side's band edge (migration), and `applyShareRatio()`'s
+  r-based cutoff is suppressed on that side (review S1 HIGH: without both, the unguarded r-cutoff
+  executed the same handoff ~10–30 ms later under `shareIso*`, invisible to the external
+  re-closers — TP0053-class cycling). Residual (accepted): at high load the migration may never
+  clear the guard — the loop sits at the band edge running the rail-saturated dropout cycle.
+- **Dwell-filtered `FAULT_UV_FC`** (armed under BENCH_TEST, block ABOVE the bus UV block so a
+  same-tick double-cross names the true cause): trip `LIMIT_V_FC_MIN` 6.0 V, arm
+  `V_FC_ARM_THRESH` 7.0 V (C1: arm==trip had zero margin), matched FC pair + healthy-observed
+  arming (single-source bench with V_fc≈0 can never arm → no boot-lock), reuses the
+  UV_BUS dwell shape (own `UV_FC_DWELL_LATCH_MS` 20 ms). V_batt UV still deferred (threshold
+  blocked on the LM1084 input+output capture through a truncation).
+- **Effective-setpoint slew** `share_spEffPrev` (0.02/tick on the CL reference, seeded from
+  `droopSlew_prev` via `resetShareControllerCore()`): removes the OL→CL handover reference step
+  (raw → floor-clipped, was 0.15→0.50 instant). Verified arithmetic: clipping the OL feedforward
+  instead is inert-or-harmful (in OL mode the governor bound is always ≥ 0.5) — that's why the
+  fix lives on the CL side.
+- **W/Y table R5/R6/R7**: R5 ramps v 1.0→0.3, R6 (share hi-bound excursion) runs at 0.3·Imax
+  (~0.6 A total, under the FC knee), R7 steps the share down at low load then ramps v back to
+  1.0 (preserves R8's down-step). Latch-vs-governor ownership at R6 is b-dependent (b < 0.15
+  → latch; else governor) and the "cut fires here" claim is Imax-conditional — both documented.
+- **BLG header v4** (`hdr[4]=4`, record unchanged 68 B): `hdr[7]` param-valid flags, float
+  Imax/Vmax at 20–23, float b at 24–27, derived from typeMask + committed profile globals (the
+  fw v5 failure cluster was initially mislabelled because b was unrecoverable from the log).
+  Byte 19 is fwVersion's high byte, NOT reserved (reserved = 28–31 only). Decoder/tooling
+  updated (v4 parse + banner passthrough; v1–v3 byte-identical, verified vs three checked-in
+  logs); analyzer exe rebuilt.
+- **Process:** orchestrated round (Opus firmware + Sonnet tooling implementers, independent
+  test-writer, Opus safety + Sonnet correctness reviews). Safety S1 HIGH (deferral fell through
+  to the unguarded r-cutoff) + S2–S7; correctness C1 (arm margin) + E1 (deferral mechanism had
+  zero tests — five added). **Tests: 1643 production + 175 bench + 79 tooling pass.**
+- **Next bench:** flash fw v6; scope-armed truncation re-entry with LM1084 input AND output
+  probed (settles the MCU-stop mechanism); per-channel-direction two-axis floor sweep (floor law
+  is structurally wrong — 27 mV bus-vs-reference separatrix, BT-only asymmetry); bracket
+  `SHARE_CUT_MAX_HANDOFF_A`; W/Y runs with b < 0.30 stay blocked until R6 rework is validated.

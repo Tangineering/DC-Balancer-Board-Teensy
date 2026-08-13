@@ -661,6 +661,166 @@ def wp_boundary():
     print(FIGS / "fig_wp_boundary.png")
 
 
+# ---------------------------------------------------------- fw v5 sweep (2026-08-12)
+V5_SWEEP = [  # run, share_sp — two automated T-sweep batches within one boot
+    ("TP0074", 0.00), ("TP0075", 0.10), ("TP0076", 0.12), ("TP0077", 0.15),
+    ("TP0078", 0.18), ("TP0079", 0.20), ("TP0080", 0.22), ("TP0081", 0.25),
+    ("TP0082", 0.30), ("TP0083", 0.40), ("TP0084", 0.50),
+    ("TP0085", 0.00), ("TP0086", 0.90), ("TP0087", 0.88), ("TP0088", 0.85),
+    ("TP0089", 0.82), ("TP0090", 0.80), ("TP0091", 0.78), ("TP0092", 0.75),
+    ("TP0093", 0.70), ("TP0094", 0.60),
+]
+V5_LATCHED = {"TP0074", "TP0075", "TP0076", "TP0085", "TP0086", "TP0087"}
+
+
+def v5_metrics():
+    rows = []
+    for run, sp in V5_SWEEP:
+        t, d = load(run)
+        itot = d["I_fc"] + d["I_batt"]
+        hold = d["I_cmd"] >= 5.99
+        err = d["share_act"][hold] - sp if hold.any() else np.array([np.nan])
+        minority = np.minimum(d["I_fc"], d["I_batt"])
+        events = 0
+        state = "on"
+        for mi, ti in zip(minority, itot):
+            if state == "on" and mi < 0.02 and ti > 0.3:
+                state = "off"
+            elif state == "off" and mi > 0.05:
+                state = "on"
+                events += 1
+        rows.append(dict(run=run, sp=sp,
+                         err_mean=float(np.nanmean(err)),
+                         err_std=float(np.nanstd(err)),
+                         events=events,
+                         vmin=float(np.min(d["V_bus"])),
+                         vbatt_min=float(np.min(d["V_batt"])),
+                         latched=run in V5_LATCHED))
+    return rows
+
+
+def v5_sweep_summary(rows):
+    fig, (a0, a1, a2) = plt.subplots(1, 3, figsize=(11.5, 3.5))
+
+    gov = [r for r in rows if not r["latched"]]
+    a0.errorbar([r["sp"] for r in gov], [r["err_mean"] for r in gov],
+                yerr=[r["err_std"] for r in gov],
+                fmt="o", color=C_SHR, ecolor="#e8a583", elinewidth=2,
+                capsize=3, ms=5, label="hold mean err ± 1σ (in-band runs)")
+    a0.axhline(0, color="#8a8a8a", lw=0.8)
+    style(a0, "Share error [-]")
+    a0.set_xlabel("Share setpoint", color=C_TEXT, fontsize=10)
+    a0.set_title("Steady-state (6 A hold) tracking error", color=C_TEXT,
+                 fontsize=10)
+    legend(a0, loc="lower left")
+
+    a1.plot([r["sp"] for r in rows], [r["events"] for r in rows],
+            "o", color=C_SHR, ms=5, label="all 21 runs completed")
+    style(a1, "Dropout events [-]")
+    a1.set_ylim(-0.5, 5)
+    a1.set_xlabel("Share setpoint", color=C_TEXT, fontsize=10)
+    a1.set_title("Hysteretic dropout events per run", color=C_TEXT,
+                 fontsize=10)
+    legend(a1, loc="upper left")
+
+    a2.plot([r["sp"] for r in rows], [r["vmin"] for r in rows],
+            "o", color=C_VBUS, ms=5, label="V_bus run min")
+    a2.plot([r["sp"] for r in rows], [r["vbatt_min"] for r in rows],
+            "s", color=C_IBT, ms=4, label="V_batt run min")
+    a2.axhline(15.9, color="#8a8a8a", lw=0.8, ls="--", label="no-load bus")
+    a2.axhline(12.0, color=C_VBUS, lw=0.8, ls=":", label="UV limit 12.0 V")
+    style(a2, "Run-minimum voltage [V]")
+    a2.set_xlabel("Share setpoint", color=C_TEXT, fontsize=10)
+    a2.set_title("Bus and battery-rail census", color=C_TEXT, fontsize=10)
+    legend(a2, loc="center left")
+
+    fig.tight_layout()
+    fig.savefig(FIGS / "fig_v5sweep_summary.png", dpi=150)
+    plt.close(fig)
+    print(FIGS / "fig_v5sweep_summary.png")
+
+
+def wp0100_r6():
+    t, d = load("WP0100")
+    m = (t >= 16.8) & (t <= 18.7)
+    fig, (a0, a1, a2) = plt.subplots(
+        3, 1, figsize=(8.5, 7.2), sharex=True,
+        gridspec_kw=dict(height_ratios=[1.2, 1, 1]))
+    a0.plot(t[m], d["I_fc"][m], color=C_IFC, lw=0.7, label="I_fc (meas)")
+    a0.plot(t[m], d["I_batt"][m], color=C_IBT, lw=0.7, label="I_batt (meas)")
+    style(a0, "Channel current [A]")
+    legend(a0, ncol=2, loc="upper left")
+
+    a1.plot(t[m], r_cmd(d)[m], color="#c98a1b", lw=1.1,
+            label="r_cmd (slew-limited triangle)")
+    style(a1, "Commanded droop ratio [-]")
+    legend(a1, loc="upper left")
+
+    a2.plot(t[m], d["V_bus"][m], color=C_VBUS, lw=0.9, label="V_bus")
+    a2.axhline(15.9, color="#8a8a8a", lw=0.8, ls="--", label="no-load bus")
+    style(a2, "Bus voltage [V]")
+    a2.set_xlabel("Time [s]", color=C_TEXT, fontsize=10)
+    legend(a2, loc="lower left")
+
+    fig.align_ylabels()
+    fig.tight_layout()
+    fig.savefig(FIGS / "fig_wp0100_r6.png", dpi=150)
+    plt.close(fig)
+    print(FIGS / "fig_wp0100_r6.png")
+
+
+def fc_knee():
+    fig, axes = plt.subplots(2, 1, figsize=(8.5, 5.4), sharex=True)
+    for run, lbl in (("WP0100", "WP0100 (held, 28 episodes)"),
+                     ("WP0099", "WP0099 (collapsed, episode 5)")):
+        t, d = load(run)
+        m = (t >= 16.90) & (t <= 17.30)
+        col = C_IFC if run == "WP0100" else C_VBUS
+        axes[0].plot(t[m], d["I_fc"][m], color=col, lw=0.9,
+                     label=f"I_fc {lbl}")
+        axes[1].plot(t[m], d["V_fc"][m], color=col, lw=0.9,
+                     label=f"V_fc {lbl}")
+    style(axes[0], "FC channel current [A]")
+    legend(axes[0], loc="upper left")
+    style(axes[1], "FC source rail [V]")
+    axes[1].set_xlabel("Time [s]", color=C_TEXT, fontsize=10)
+    legend(axes[1], loc="lower left")
+    fig.align_ylabels()
+    fig.tight_layout()
+    fig.savefig(FIGS / "fig_fc_knee.png", dpi=150)
+    plt.close(fig)
+    print(FIGS / "fig_fc_knee.png")
+
+
+def wp0101_cut():
+    t, d = load("WP0101")
+    m = (t >= 16.90) & (t <= 17.01)
+    fig, (a0, a1, a2) = plt.subplots(
+        3, 1, figsize=(8.5, 7.2), sharex=True,
+        gridspec_kw=dict(height_ratios=[1.2, 1, 1]))
+    a0.plot(t[m], d["I_fc"][m], color=C_IFC, lw=0.9, label="I_fc (meas)")
+    a0.plot(t[m], d["I_batt"][m], color=C_IBT, lw=0.9, label="I_batt (meas)")
+    style(a0, "Channel current [A]")
+    legend(a0, ncol=2, loc="upper left")
+
+    a1.plot(t[m], d["V_fc"][m], color=C_IFC, lw=0.9, label="V_fc")
+    a1.plot(t[m], d["V_batt"][m], color=C_IBT, lw=0.9, label="V_batt")
+    style(a1, "Source rail [V]")
+    legend(a1, loc="lower left")
+
+    a2.plot(t[m], d["V_bus"][m], color=C_VBUS, lw=0.9, label="V_bus")
+    a2.axhline(12.0, color=C_VBUS, lw=0.8, ls=":", label="UV limit 12.0 V")
+    style(a2, "Bus voltage [V]")
+    a2.set_xlabel("Time [s]", color=C_TEXT, fontsize=10)
+    legend(a2, loc="lower left")
+
+    fig.align_ylabels()
+    fig.tight_layout()
+    fig.savefig(FIGS / "fig_wp0101_cut.png", dpi=150)
+    plt.close(fig)
+    print(FIGS / "fig_wp0101_cut.png")
+
+
 if __name__ == "__main__":
     tp0010_zoom()
     tp0013_zoom()
@@ -684,3 +844,10 @@ if __name__ == "__main__":
     tp0053_relay()
     wp0072_cycle()
     wp_boundary()
+    v5rows = v5_metrics()
+    for r in v5rows:
+        print(r)
+    v5_sweep_summary(v5rows)
+    wp0100_r6()
+    fc_knee()
+    wp0101_cut()
