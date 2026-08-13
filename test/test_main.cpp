@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include <cstddef>
 
 static int g_tests_passed = 0;
 static int g_tests_failed = 0;
@@ -110,6 +111,14 @@ static void reset_test_state() {
     // filter empty, slew tracker at the initMdacOutputs() mid-band split.
     share_govTotAFilt = 0.0f;
     droopSlew_prev    = 0.5f;
+    // fw v5 governor loop-mode state: a fresh run starts open-loop (feedforward), not held.
+    shareClosedLoopMode = false;
+    shareClosedLoopRun  = false;
+    // fw v5 review round (S3): the setpoint the loop last ACTED on, used to detect a commanded
+    // setpoint change that must re-arm the feedforward path out of HOLD. Reset alongside the
+    // other loop-mode state so a case can't inherit a stale share_actedSp from a prior test's
+    // setpoint and see a spurious (or missing) "changed" edge on its own first tick.
+    share_actedSp = 0.5f;
 
     // .ino command globals
     v_setpoint           = 0;
@@ -210,8 +219,8 @@ static void reset_test_state() {
     uvBusArmed        = false;
     uvBusUnderActive  = false;
     uvBusUnderSince   = 0;
-    uvBusLastUnderMs  = 0;
-    uvBusUnderSamples = 0;
+    uvBusDwellMs      = 0.0f;
+    uvBusLastTickMs   = 0;
     uvBusTransientCount = 0;
     uvBusPrintLastMs  = 0;
     uvBusHasPrinted   = false;
@@ -627,7 +636,7 @@ static void test_detect_faults() {
     // single-sample check is gone. Arming requires a source switch closed with V_bus having
     // reached V_BUS_CHARGED_THRESH; with both source switches LOW (the default reset state)
     // a low V_bus is just a dark power stage, never a fault, in ANY state.
-    // (Dedicated coverage in test_uv_bus_arming_and_persistence() / test_uv_bus_not_armed_dark()
+    // (Dedicated coverage in test_uv_bus_dwell_relay_waveform() / test_uv_bus_not_armed_dark()
     // etc.; this only checks the unarmed default still holds and the latch still works.)
     reset_test_state();
     V_bus = LIMIT_V_BUS_MIN - 1.0f; V_batt = 7.0f; I_fc = 0;
@@ -647,11 +656,14 @@ static void test_detect_faults() {
     g_mock_millis = 0;
     detectFaults();                                          // arms
     V_bus = LIMIT_V_BUS_MIN - 1.0f;
-    g_mock_millis = 1000;                     detectFaults(); // sample 1
-    g_mock_millis = 1000 + UV_BUS_MAX_GAP_MS; detectFaults(); // sample 2
-    g_mock_millis = 1000 + UV_BUS_PERSIST_MS; detectFaults(); // sample 3, persistence met
+    // fw v5: dwell filter, not a wall-clock window. Four ticks 5ms apart each credit the full
+    // UV_BUS_DWELL_DT_CAP_MS (5ms), accumulating to UV_BUS_DWELL_LATCH_MS (20ms) on the 4th.
+    g_mock_millis = 1000; detectFaults(); // dwell=5ms
+    g_mock_millis = 1005; detectFaults(); // dwell=10ms
+    g_mock_millis = 1010; detectFaults(); // dwell=15ms
+    g_mock_millis = 1015; detectFaults(); // dwell=20ms -> latch
     check(fault_flags & FAULT_UV_BUS,
-          "detectFaults: FAULT_UV_BUS latches once armed and the persistence filter is satisfied");
+          "detectFaults: FAULT_UV_BUS latches once armed and the dwell filter is satisfied");
     check(error_code == ERR_UV_BUS,
           "detectFaults: error_code == ERR_UV_BUS");
 
@@ -914,6 +926,13 @@ static void test_powerbalance_gated_tick_stable() {
     I_fc   = 1.0f;
     I_batt = 1.0f;
     power_share_setpoint = 0.8f;
+    // fw v5: preset the governor filter above the closed-loop entry threshold so the very
+    // first tick engages the controller directly, isolating this probe (a controller-output
+    // stability property) from the open-loop warm-up ramp the governor now runs at low
+    // filtered current (share_govTotAFilt starts at 0 and would otherwise take many ticks to
+    // cross 0.60A even at a steady I_tot=2.0A, during which the OPEN-LOOP feedforward path
+    // -- which has no sub-sampleTime gate at all -- would legitimately step every call).
+    share_govTotAFilt = 2.0f;
 
     g_mock_micros = 100;           // > sampleTime → PI integrates and produces the ratio
     powerBalance();
@@ -982,11 +1001,17 @@ static void test_powerbalance_min_load_hold() {
     check(fabsf(droop_gain_FC_actual - gFC_held) > 1e-3f,
           "min-load hold: controller resumes and moves the gains once load returns");
 
-    // Boundary: just above the threshold must NOT hold (gate is strictly <).
+    // Boundary: just above the min-load threshold must NOT hold (the gate is strictly <
+    // SHARE_I_TOT_MIN_A) -- something must move. fw v5: at 76mA the filtered total can never
+    // cross the 0.60A closed-loop entry threshold (share_govTotAFilt asymptotes to totalA =
+    // 0.076A), so this boundary is PERMANENTLY open-loop territory. The probe therefore needs a
+    // setpoint OFF the droopSlew_prev default (0.5) so the feedforward walk is non-degenerate --
+    // the old probe (sp=0.5, relying on the measured-share error) tested a mechanism (reacting
+    // to measured error) that open-loop mode deliberately does not have.
     reset_test_state();
     I_fc   = 0.076f;               // 76 mA total, all FC
     I_batt = 0.0f;
-    power_share_setpoint = 0.5f;
+    power_share_setpoint = 0.30f;  // off the 0.5 seed -> the feedforward walk must move
     g_mock_micros = 2000;
     powerBalance();
     float g_before = droop_gain_FC_actual;
@@ -995,15 +1020,31 @@ static void test_powerbalance_min_load_hold() {
     g_mock_micros = 6000;
     powerBalance();
     check(fabsf(droop_gain_FC_actual - g_before) > 1e-6f,
-          "min-load hold: 76 mA is above the gate — controller steps normally");
+          "min-load hold: 76 mA is above the SHARE_I_TOT_MIN_A gate -- the open-loop feedforward "
+          "walk steps normally (not frozen by the min-load gate)");
+    check(!shareClosedLoopMode,
+          "min-load hold: 76mA can never cross the 0.60A closed-loop entry threshold -- this "
+          "boundary is permanently open-loop territory under fw v5");
 }
 
-// ─── Limit-cycle mitigation (2026-08-11): governor, slew limit, profile reset ─
-// The TP0010/TP0013 sweep found a 17–18.5 Hz minority-channel dropout limit
-// cycle at asymmetric IN-BAND setpoints under low total current. Mitigation:
-// powerBalance() clips the effective setpoint so the commanded minority current
-// stays ≥ SHARE_MINORITY_I_MIN_A, and slew-limits the controller-commanded
-// ratio; profile starts reset the controller state.
+// ─── Limit-cycle mitigation (2026-08-11, reworked fw v5 2026-08-12): governor, slew limit,
+// profile reset ────────────────────────────────────────────────────────────────────────────
+// The TP0010/TP0013 sweep found a 17–18.5 Hz minority-channel dropout limit cycle at
+// asymmetric IN-BAND setpoints under low total current. Mitigation: powerBalance() clips the
+// CLOSED-LOOP effective setpoint so the commanded minority current stays >= SHARE_MINORITY_I_MIN_A,
+// and slew-limits the controller-commanded ratio; profile starts reset the controller state.
+//
+// fw v5 (validation-sweep TP0041-TP0068): the governor's clip logic below is UNCHANGED for
+// closed-loop mode, but closed-loop mode is now only entered once share_govTotAFilt crosses
+// 2*SHARE_MINORITY_I_MIN_A (0.60A) -- below that the loop runs OPEN-LOOP (feedforward walk /
+// hold, see test_governor_openloop_* below) and the Youla/PI controller is never called at
+// all. Sections (A/A2/B/E1/E2) below test the closed-loop clip math in isolation by presetting
+// share_govTotAFilt to the target I_tot BEFORE the loop starts: this makes the very first
+// powerBalance() tick take the real entry-check code path (share_govTotAFilt > 0.60A already
+// true) straight into closed-loop mode, instead of spending ~20 ticks warming up through the
+// open-loop feedforward branch first (which would target the RAW setpoint, not the clipped
+// one, and contaminate these probes). The warm-up ramp itself, and the open-loop mechanism it
+// exercises, are covered separately by the dedicated governor open-loop tests.
 static void test_share_setpoint_governor() {
     test_group("powerBalance() setpoint governor (limit-cycle mitigation)");
 
@@ -1026,6 +1067,7 @@ static void test_share_setpoint_governor() {
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
     I_fc = 0.25f; I_batt = 0.75f;          // I_tot=1.0, measured share = 0.25
+    share_govTotAFilt = 1.0f;              // fw v5: preset so tick 1 enters closed-loop directly
     power_share_setpoint = 0.20f;          // in-band; below lo=0.30 -> clipped
     uint32_t t = 0;
     float slew_start = droopSlew_prev;     // 0.5, the fresh-reset default
@@ -1042,6 +1084,7 @@ static void test_share_setpoint_governor() {
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
     I_fc = 0.3f; I_batt = 0.7f;            // I_tot=1.0, measured share = 0.30 == lo
+    share_govTotAFilt = 1.0f;
     power_share_setpoint = 0.20f;
     t = 0;
     for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
@@ -1060,6 +1103,7 @@ static void test_share_setpoint_governor() {
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
     I_fc = 0.8f; I_batt = 1.2f;            // I_tot=2.0, measured share = 0.40
+    share_govTotAFilt = 2.0f;
     power_share_setpoint = 0.30f;
     t = 0;
     for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
@@ -1087,6 +1131,7 @@ static void test_share_setpoint_governor() {
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
     I_fc = 0.285f; I_batt = 1.215f;        // I_tot=1.5, measured share = 0.19
+    share_govTotAFilt = 1.5f;
     power_share_setpoint = 0.18f;
     t = 0;
     slew_start = droopSlew_prev;           // 0.5, the fresh-reset default
@@ -1103,6 +1148,7 @@ static void test_share_setpoint_governor() {
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
     I_fc = 0.3f; I_batt = 1.2f;            // I_tot=1.5, measured share = 0.20 == new lo
+    share_govTotAFilt = 1.5f;
     power_share_setpoint = 0.18f;
     t = 0;
     for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
@@ -1111,25 +1157,34 @@ static void test_share_setpoint_governor() {
     check(fabsf(droopSlew_prev - slew_e) < 5e-3f,
           "governor E2: effective lo bound at I_tot=1.5A is 0.30/1.5=0.20 (fw v4), not the old 0.1333");
 
-    // C) Collapse to the balanced split: I_tot ≤ 2·SHARE_MINORITY_I_MIN_A pins
-    // sp_eff at 0.5, so a balanced measured share is zero-error even with an
-    // asymmetric raw setpoint.
+    // C) fw v5: the old "collapse sp_eff to 0.5 below 2x the minority floor" mechanism is
+    // GONE — DELETED, not relocated. Below the 0.60A entry threshold, open-loop mode
+    // feedforward-walks the RAW setpoint through applyShareRatio() instead (full mechanism
+    // coverage in test_governor_openloop_feedforward_walk() below). This probe pins the
+    // NEGATIVE directly: at I_tot below the threshold, with an asymmetric raw setpoint, the
+    // ratio must converge to the RAW setpoint, not to the deleted 0.5 balanced collapse — the
+    // fw v4 version of this exact test asserted the opposite (convergence to 0.5) and would now
+    // fail, which is the point: it must fail if the deleted mechanism regresses back in.
     reset_test_state();
     digitalWrite(FC_BUS_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
-    I_fc = 0.15f; I_batt = 0.15f;          // I_tot=0.3 < 2*0.30=0.6 (fw v4 floor), measured 0.50
-    power_share_setpoint = 0.30f;
+    I_fc = 0.15f; I_batt = 0.15f;          // I_tot=0.3 < 2*0.30=0.6 -> fw v5 open-loop territory
+    power_share_setpoint = 0.30f;          // asymmetric raw setpoint
     t = 0;
-    for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
-    float slew_bal = droopSlew_prev;
     for (int i = 0; i < 300; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
-    check(fabsf(droopSlew_prev - slew_bal) < 5e-3f,
-          "governor: below 2x the minority floor sp_eff collapses to 0.5 (balanced = zero error)");
+    check(fabsf(droopSlew_prev - 0.30f) < 0.01f,
+          "governor C (fw v5): below the entry threshold the ratio converges to the RAW "
+          "setpoint 0.30 via open-loop feedforward -- NOT the deleted 0.5 collapse");
+    check(!shareClosedLoopMode,
+          "governor C (fw v5): stays open-loop throughout -- I_tot=0.3A never crosses the 0.60A "
+          "entry threshold");
 
-    // D) Out-of-band setpoints BYPASS the governor: full-span semantics are the
-    // cutoff path's (sp=1.0 must still starve BT out via its bus switch even at
-    // low load — TP0009/TP0011 showed the topology-forced endpoints are stable).
+    // D) Out-of-band setpoints BYPASS the governor entirely: full-span semantics are the
+    // cutoff path's (sp=1.0 must still starve BT out via its bus switch even at low load —
+    // TP0009/TP0011 showed the topology-forced endpoints are stable). Unaffected by fw v5: the
+    // setpoint-latch cutoff runs before either the governor or the open-loop code and returns
+    // immediately, so this test needs no changes for the mode split.
     reset_test_state();
     digitalWrite(FC_BUS_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, HIGH);
@@ -1140,6 +1195,417 @@ static void test_share_setpoint_governor() {
     for (int i = 0; i < 3000; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
     check(digitalRead(BT_BUS_ENABLE) == LOW && shareIsoBT,
           "governor: sp=1.0 bypasses the governor — BT cutoff still fires at low load");
+}
+
+// ─── fw v5: governor open-loop fallback (feedforward walk / hold) ────────────────────────────
+// EVIDENCE (fw v4 validation sweep TP0041-TP0068): the old collapse-to-0.5 fallback below
+// 2*SHARE_MINORITY_I_MIN_A IGNITED the failure it existed to prevent (TP0053 relay cycle). fw v5
+// replaces it: below the 0.60A entry threshold (hysteresis exit at 0.55A) the Youla/PI
+// controller is not called AT ALL. If the closed loop has never run this profile
+// (!shareClosedLoopRun), powerBalance() slew-limited feedforward-walks the RAW setpoint through
+// applyShareRatio(); if it HAS run (shareClosedLoopRun true, load fell away), it HOLDS the last
+// commanded ratio instead. These tests are the fw v5 replacement for the deleted "governor
+// collapses to 0.5" coverage — each must fail if the mechanism it names regresses.
+static void test_governor_openloop_feedforward_walk() {
+    test_group("fw v5 governor: open-loop feedforward walk at low current, converges to raw sp (G1/G2)");
+
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.09f; I_batt = 0.21f;           // I_tot = 0.30A, well under the 0.60A entry threshold
+    power_share_setpoint = 0.30f;           // in-band
+
+    uint32_t t = 0;
+    float start = droopSlew_prev;           // 0.5, the fresh-reset default
+    for (int i = 0; i < 5; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(!shareClosedLoopMode,
+          "G1: still open-loop after a few ticks at 0.30A (well under the 0.60A entry threshold, "
+          "which the filter can never cross since it asymptotes to totalA=0.30A)");
+    check(shareCtrl_integ == 0.0f && fabsf(shareCtrl_heldOut - 0.5f) < 1e-9f,
+          "G1: the Youla controller state never advances — powerBalance() never calls "
+          "youlaController_Power() in open-loop mode");
+    check(droopSlew_prev < start,
+          "G1: the applied ratio is already walking DOWN toward the 0.30 setpoint (feedforward "
+          "through applyShareRatio(), not held)");
+
+    // G2: given enough ticks, the walk converges exactly to the RAW setpoint — not a clipped
+    // value (the governor's minority-current clip is closed-loop-only) and not the deleted 0.5
+    // collapse.
+    for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(fabsf(droopSlew_prev - 0.30f) < 1e-6f,
+          "G2: the feedforward walk converges to the RAW setpoint 0.30 (not the deleted 0.5 "
+          "collapse, and not a clipped value)");
+    check(!shareClosedLoopMode,
+          "G2: still open-loop throughout — I_tot=0.30A never crosses the 0.60A entry threshold");
+}
+
+static void test_governor_closedloop_entry_and_response() {
+    test_group("fw v5 governor: closed-loop entry once filtered I_tot crosses 0.60A, then steps (G3)");
+
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.4f; I_batt = 1.6f;             // I_tot = 2.0A, measured share = 0.20
+    // sp == droopSlew_prev's fresh-reset default (0.5): the open-loop feedforward walk (target
+    // 0.50, start 0.50) is a degenerate no-op, isolating this probe to the closed-loop
+    // controller's own response once the mode transition happens.
+    power_share_setpoint = 0.50f;
+
+    uint32_t t = 0;
+    for (int i = 0; i < 6; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(!shareClosedLoopMode,
+          "G3: (setup) still open-loop a few ticks in — the filter hasn't crossed 0.60A yet");
+    check(fabsf(droopSlew_prev - 0.5f) < 1e-6f,
+          "G3: (setup) the open-loop walk is a no-op here (target == start == 0.5)");
+
+    for (int i = 0; i < 20; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(shareClosedLoopMode && shareClosedLoopRun,
+          "G3: closed-loop mode entered once the filtered total crosses 0.60A");
+
+    for (int i = 0; i < 400; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(droopSlew_prev > 0.55f,
+          "G3: the closed-loop controller drives the ratio UP in response to the +0.30 share "
+          "error (sp=0.50, measured=0.20) — the mode transition actually engages control, not "
+          "just a flag flip");
+}
+
+static void test_governor_closedloop_to_open_hold() {
+    test_group("fw v5 governor: closed-loop exit -> HOLD, not feedforward (G4)");
+
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+
+    // Force closed-loop entry directly (the entry mechanism itself is proven by G3): seed the
+    // governor filter above the entry threshold so the very first tick transitions.
+    share_govTotAFilt = 2.0f;
+    I_fc = 0.4f; I_batt = 1.6f;
+    power_share_setpoint = 0.70f;           // in-band, off the 0.5 seed so the controller moves
+    uint32_t t = 0;
+    for (int i = 0; i < 300; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(shareClosedLoopMode && shareClosedLoopRun, "G4: (setup) closed-loop, converged for a while");
+    float heldRatio = droopSlew_prev;
+    check(fabsf(heldRatio - 0.5f) > 0.02f, "G4: (setup) the ratio actually moved off the seed");
+
+    // Drop the load: I_tot ~0.3A, well under the exit hysteresis (0.55A).
+    I_fc = 0.09f; I_batt = 0.21f;
+    for (int i = 0; i < 400; i++) {          // enough ticks for the filter to fall below 0.55A
+        t += 1000; g_mock_micros = t; powerBalance();
+    }
+    check(!shareClosedLoopMode,
+          "G4: filtered total fell below the 0.55A exit hysteresis — back to open-loop");
+    check(shareClosedLoopRun,
+          "G4: shareClosedLoopRun stays set — this profile HAS run closed loop, so open-loop "
+          "means HOLD, not feedforward");
+
+    float postDrop = droopSlew_prev;
+
+    // Many more ticks: the ratio must stay frozen even though the raw setpoint (0.70) differs
+    // from the held ratio — a feedforward walk would visibly move it toward 0.70.
+    for (int i = 0; i < 500; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(fabsf(droopSlew_prev - postDrop) < 1e-9f,
+          "G4: HOLD — the applied ratio is frozen across many open-loop ticks, not walking "
+          "toward the (differing) raw setpoint 0.70");
+}
+
+// ─── T4 (S3, fw v5 review): a commanded setpoint change re-arms feedforward OUT of HOLD ──────
+// HOLD (G4 above) is about a load that fell away, not about ignoring commands. A changed
+// operator/EMS setpoint while parked in HOLD must take effect immediately at the NEW setpoint,
+// open-loop, rather than silently waiting for the load to return (which could be never, e.g. a
+// standstill epoch). share_actedSp is the mechanism: powerBalance() re-arms feedforward when
+// |power_share_setpoint - share_actedSp| > SHARE_SP_CHANGE_EPS, clearing shareClosedLoopRun.
+static void test_governor_hold_exit_on_setpoint_change() {
+    test_group("fw v5 governor: a changed setpoint exits HOLD and resumes feedforward at the NEW value (S3)");
+
+    // Seed HOLD directly (mode=false, run=true, a mid-band droopSlew_prev, share_actedSp
+    // matching the current setpoint) rather than reaching it by running the real closed-loop
+    // controller first: with no plant feedback in this synthetic harness, ANY sustained nonzero
+    // error can make the Youla controller's raw (pre-slew) output spike out-of-band on an early
+    // tick -- applyShareRatio()'s cutoff sees an UNSLEWED value whenever it lands outside
+    // [DROOP_R_MIN, DROOP_R_MAX] (the slew clamp only applies to already-in-band outputs, by
+    // design -- see the .ino comment at the slew-limit block), which can cut a channel and freeze
+    // droopSlew_prev for a reason unrelated to the HOLD mechanism this test targets. Seeding the
+    // state directly isolates the probe to exactly the S3 HOLD-exit logic.
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    shareClosedLoopMode = false;
+    shareClosedLoopRun  = true;
+    droopSlew_prev       = 0.65f;             // the "converged, then parked" ratio
+    share_govTotAFilt    = 0.30f;             // low, well under the 0.60A entry threshold
+    power_share_setpoint = 0.70f;
+    share_actedSp         = 0.70f;            // last acted setpoint == current: no changed-edge yet
+    I_fc = 0.09f; I_batt = 0.21f;             // I_tot=0.30A -- stays open-loop throughout
+
+    // Confirm the hold itself first: a few ticks at the SAME (unchanged) setpoint must not move
+    // the ratio -- isolates the "changed setpoint" trigger from ordinary HOLD behaviour.
+    uint32_t t = 0;
+    for (int i = 0; i < 20; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(!shareClosedLoopMode, "T4: (setup) still open-loop -- I_tot=0.30A never crosses 0.60A");
+    check(shareClosedLoopRun, "T4: (setup) shareClosedLoopRun is still true -- HOLD, not fresh feedforward");
+    check(fabsf(droopSlew_prev - 0.65f) < 1e-9f,
+          "T4: (setup) confirmed HOLD -- unchanged setpoint, ratio frozen at the seeded 0.65");
+
+    // Now command a NEW in-band setpoint, well clear of SHARE_SP_CHANGE_EPS and clear of the
+    // held ratio so the direction of any movement is unambiguous.
+    power_share_setpoint = 0.20f;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(!shareClosedLoopRun,
+          "T4: the very next tick clears shareClosedLoopRun -- the changed setpoint re-arms "
+          "feedforward instead of staying in HOLD");
+    check(droopSlew_prev < 0.65f,
+          "T4: the ratio already stepped DOWN toward the new setpoint (target 0.20 < the held "
+          "0.65) on that same tick -- not still frozen at the old held value");
+    check(droopSlew_prev >= 0.65f - DROOP_RATIO_SLEW_PER_TICK - 1e-6f,
+          "T4: that first step is slew-limited (open-loop feedforward always constrains its "
+          "target to droopSlew_prev +/- DROOP_RATIO_SLEW_PER_TICK), not a slam to 0.20");
+
+    // Run it out: must converge to the NEW setpoint via feedforward, not stay parked.
+    for (int i = 0; i < 300; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(fabsf(droopSlew_prev - 0.20f) < 1e-6f,
+          "T4: feedforward converges to the NEW setpoint 0.20 -- HOLD did not swallow the "
+          "commanded change");
+    check(!shareClosedLoopMode,
+          "T4: still open-loop throughout -- I_tot=0.30A never re-crosses the 0.60A entry "
+          "threshold from this low-current change");
+}
+
+static void test_governor_hysteresis_band() {
+    test_group("fw v5 governor: hysteresis band (0.55-0.60A) holds each mode's prior state (G5)");
+
+    // From CLOSED: seed a converged closed loop, then park the filter (and the matching load,
+    // so the filter doesn't drift) at 0.57A — inside the band — and confirm it stays closed
+    // (the controller keeps stepping).
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    shareClosedLoopMode = true;
+    shareClosedLoopRun  = true;
+    share_govTotAFilt   = 0.57f;
+    I_fc = 0.171f; I_batt = 0.399f;          // I_tot=0.57A -- matches filt, so it doesn't drift
+    power_share_setpoint = 0.70f;
+    uint32_t t = 0;
+    float integBefore = shareCtrl_integ;
+    for (int i = 0; i < 30; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(shareClosedLoopMode,
+          "G5/closed: filt=0.57A (inside the 0.55-0.60 band) stays CLOSED when already closed");
+    check(shareCtrl_integ != integBefore || fabsf(droopSlew_prev - 0.5f) > 1e-6f,
+          "G5/closed: the controller is actually stepping (integrator moved or the ratio left "
+          "the seed), not frozen, while parked in the band");
+
+    // From OPEN: fresh reset (open-loop default), park the filter (and load) at 0.57A —
+    // must stay open (feedforward walk, never enters, since entry needs STRICTLY > 0.60A).
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    share_govTotAFilt = 0.57f;
+    I_fc = 0.171f; I_batt = 0.399f;
+    power_share_setpoint = 0.70f;
+    t = 0;
+    for (int i = 0; i < 30; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(!shareClosedLoopMode,
+          "G5/open: filt=0.57A (inside the band, but not > the 0.60A entry bound) stays OPEN "
+          "when already open");
+}
+
+// ─── T7: hysteresis literal boundaries (strict inequalities, not >=/<=) ──────────────────────
+// Entry is `share_govTotAFilt > 2*SHARE_MINORITY_I_MIN_A` (strictly greater); exit is
+// `share_govTotAFilt < 2*SHARE_MINORITY_I_MIN_A - SHARE_GOV_OL_HYST_A` (strictly less). At the
+// EXACT boundary values (0.60A entering from open, 0.55A exiting from closed) neither transition
+// may fire -- an off-by-one (>= instead of >, or <= instead of <) would flip these two cases.
+static void test_governor_hysteresis_exact_boundaries() {
+    test_group("fw v5 governor: hysteresis literal boundaries (T7, strict inequalities)");
+
+    // Exactly at the entry threshold (0.60A) from OPEN: must NOT enter (entry needs STRICTLY >).
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    share_govTotAFilt = 2.0f * SHARE_MINORITY_I_MIN_A;   // exactly 0.60A
+    // I_fc alone reproduces the SAME float bit pattern as share_govTotAFilt (both derived from
+    // the identical expression), so the filter update this tick is an exact no-op -- no risk of
+    // float rounding nudging filt a few ULPs past the boundary and silently flipping the result.
+    I_fc = 2.0f * SHARE_MINORITY_I_MIN_A; I_batt = 0.0f;  // I_tot == filt, bit-exact
+    power_share_setpoint = 0.70f;
+    uint32_t t = 0;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(!shareClosedLoopMode,
+          "T7: share_govTotAFilt exactly at 2*SHARE_MINORITY_I_MIN_A (0.60A) does NOT enter -- "
+          "entry is strictly '>', not '>='");
+
+    // Exactly at the exit threshold (0.55A) from CLOSED: must NOT exit (exit needs STRICTLY <).
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    shareClosedLoopMode = true;
+    shareClosedLoopRun  = true;
+    share_govTotAFilt   = 2.0f * SHARE_MINORITY_I_MIN_A - SHARE_GOV_OL_HYST_A;   // exactly 0.55A
+    // Same bit-exact trick as the entry case above.
+    I_fc = 2.0f * SHARE_MINORITY_I_MIN_A - SHARE_GOV_OL_HYST_A; I_batt = 0.0f;
+    power_share_setpoint = 0.70f;
+    t = 0;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(shareClosedLoopMode,
+          "T7: share_govTotAFilt exactly at 2*SHARE_MINORITY_I_MIN_A - SHARE_GOV_OL_HYST_A "
+          "(0.55A) does NOT exit -- exit is strictly '<', not '<='");
+}
+
+static void test_governor_open_to_closed_continuity() {
+    test_group("fw v5 governor: open->closed transition is continuous, filt not reset (G6)");
+
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.09f; I_batt = 0.21f;            // I_tot=0.30A -- open-loop feedforward
+    power_share_setpoint = 0.20f;            // walks the ratio away from the 0.5 seed
+    uint32_t t = 0;
+    for (int i = 0; i < 30; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(!shareClosedLoopMode, "G6: (setup) still open-loop at I_tot=0.30A");
+    float heldBeforeEntry = droopSlew_prev;
+    check(fabsf(heldBeforeEntry - 0.20f) < 0.05f,
+          "G6: (setup) the feedforward walk has moved the ratio well off the 0.5 seed");
+
+    // Jump the load up — filt crosses 0.60A over the next several ticks. Track the exact tick
+    // where the mode flips and capture the ratio immediately before/after it.
+    I_fc = 0.4f; I_batt = 1.6f;
+    bool wasClosed = false, transitioned = false;
+    float beforeTransition = droopSlew_prev, afterTransition = droopSlew_prev;
+    for (int i = 0; i < 40 && !transitioned; i++) {
+        float pre = droopSlew_prev;
+        t += 1000; g_mock_micros = t; powerBalance();
+        if (!wasClosed && shareClosedLoopMode) {
+            beforeTransition = pre;
+            afterTransition  = droopSlew_prev;
+            transitioned = true;
+        }
+        wasClosed = shareClosedLoopMode;
+    }
+    check(transitioned, "G6: (setup) the load jump crossed the entry threshold within the window");
+    check(fabsf(share_govTotAFilt) > 1e-6f,
+          "G6: share_govTotAFilt was NOT reset by the transition — resetShareControllerCore() "
+          "deliberately does not touch it (zeroing it would drop straight back to open-loop the "
+          "very next tick)");
+    check(fabsf(afterTransition - beforeTransition) <= DROOP_RATIO_SLEW_PER_TICK + 1e-4f,
+          "G6: the transition tick's write lands within one slew step of the pre-transition "
+          "ratio — continuous hand-off, not a jump back to the 0.5 default");
+}
+
+static void test_governor_reset_clears_closedloop_run() {
+    test_group("fw v5 governor: resetShareControlState() clears shareClosedLoopRun (G7)");
+
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    share_govTotAFilt = 2.0f;                // force immediate closed-loop entry
+    I_fc = 0.4f; I_batt = 1.6f;
+    power_share_setpoint = 0.70f;
+    uint32_t t = 0;
+    for (int i = 0; i < 100; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(shareClosedLoopMode && shareClosedLoopRun, "G7: (setup) the loop is closed and has run");
+
+    g_mock_micros = t;
+    startTrapProfile(2.0f, 1000, 1.0f);      // resetShareControlState() at profile entry
+    check(!shareClosedLoopMode && !shareClosedLoopRun,
+          "G7: resetShareControlState() clears both fw v5 loop-mode flags at profile start");
+
+    // Post-reset at low current must feedforward-walk again, not hold — proves
+    // shareClosedLoopRun==false is what routes open-loop mode to the walk branch, not the hold
+    // branch (a stale true here would silently freeze every post-reset low-current run).
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.09f; I_batt = 0.21f;
+    power_share_setpoint = 0.25f;
+    t = 0;
+    for (int i = 0; i < 30; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(fabsf(droopSlew_prev - 0.5f) > 0.01f,
+          "G7: after a fresh reset, open-loop mode WALKS toward the setpoint (shareClosedLoopRun "
+          "false selects the feedforward branch, not the hold branch)");
+}
+
+static void test_governor_lo_clamp_sliver() {
+    test_group("fw v5 governor: lo-clamp sliver keeps the closed-loop bound at <=0.5 (G9)");
+
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    shareClosedLoopMode = true;
+    shareClosedLoopRun  = true;
+    share_govTotAFilt   = 0.58f;             // inside the hysteresis sliver (0.55, 0.60)
+    // Unclamped: lo = 0.30/0.58 = 0.517 > hi = 1-0.517 = 0.483 -- an INVERTED pair. The
+    // `if (lo > 0.5f) lo = 0.5f;` clamp must degenerate this to the balanced split (0.5)
+    // instead of Arduino constrain()'s lo>hi behaviour (which returns the raw lo, 0.517).
+    //
+    // Zero-error confirmation, not a convergence probe: this synthetic test drives I_fc/I_batt
+    // directly (no plant feedback closes the loop), so a controller fed a sustained NONZERO
+    // error only winds toward the output rail over many ticks -- it never settles. Pin the
+    // measured share EXACTLY at the correct clamped target (0.5): a correct clamp sees zero
+    // error and the ratio (already seeded at 0.5 by the fresh reset) must never move at all;
+    // a buggy unclamped implementation would see a standing +0.017 error (target 0.517) and
+    // wind visibly away from 0.5 over the run.
+    I_fc = 0.29f; I_batt = 0.29f;            // I_tot=0.58A (matches filt, no drift), measured=0.50
+    power_share_setpoint = 0.20f;            // in-band; irrelevant once clipped into the sliver
+    uint32_t t = 0;
+    for (int i = 0; i < 800; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(fabsf(droopSlew_prev - 0.5f) < 1e-4f,
+          "G9: the closed-loop clip degenerates to the balanced split 0.5 across the sliver "
+          "(zero error at the clamped bound, so the ratio never moves) -- an unclamped "
+          "implementation would see a standing error and wind away from 0.5");
+}
+
+static void test_governor_setpoint_latch_precedence_at_low_current() {
+    test_group("fw v5 governor: out-of-band setpoint latches even at low current, no feedforward (G10)");
+
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.09f; I_batt = 0.21f;            // I_tot=0.30A -- would otherwise be open-loop
+    power_share_setpoint = 0.90f;            // out-of-band (> DROOP_R_MAX=0.85)
+
+    uint32_t t = 0;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(digitalRead(BT_BUS_ENABLE) == LOW && shareIsoBT && shareSpCutBT,
+          "G10: the out-of-band setpoint latches BT off the bus even at low current");
+    check(fabsf(droopSlew_prev - 0.5f) < 1e-9f,
+          "G10: droopSlew_prev never moved -- updateShareSetpointCutoff() owns this tick and "
+          "returns before the governor/open-loop code ever runs");
+    check(SPI.transfer_log.empty(),
+          "G10: the latch-entry tick makes no MDAC write at all -- confirms the open-loop "
+          "feedforward branch never executed");
+}
+
+static void test_governor_min_load_gate_precedes_governor() {
+    test_group("fw v5 governor: SHARE_I_TOT_MIN_A gate freezes everything before the governor (G11)");
+
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.02f; I_batt = 0.03f;            // I_tot=0.05A < SHARE_I_TOT_MIN_A=0.075A
+    power_share_setpoint = 0.20f;            // in-band -- would otherwise feedforward-walk
+
+    uint32_t t = 0;
+    for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(share_govTotAFilt == 0.0f,
+          "G11: share_govTotAFilt never updates below SHARE_I_TOT_MIN_A -- the min-load gate "
+          "returns before the filter update");
+    check(fabsf(droopSlew_prev - 0.5f) < 1e-9f,
+          "G11: the ratio never moves -- the open-loop feedforward walk is also gated out below "
+          "SHARE_I_TOT_MIN_A");
+    check(!shareClosedLoopMode,
+          "G11: mode stays open -- the entry condition is never even evaluated");
 }
 
 static void test_droop_ratio_slew_limit() {
@@ -1341,6 +1807,39 @@ static void test_share_ratio_cutoff() {
     check(power_share_setpoint == 1.0f, "setpoint: 1.0 accepted verbatim");
 }
 
+// ─── T1 (S2, fw v5 review): setPowerShareSetpointLive() resets the loop-mode state ───────────
+// Without resetShareControlState() here, shareClosedLoopRun/shareClosedLoopMode/share_govTotAFilt
+// survive an 'X'/'Q'/safeAllSwitches()/bring-up/State-99 from an earlier run, so a 'P' typed at
+// low current would land in the HOLD branch and be a silent no-op (no MDAC write, ever, until
+// load happens to return) instead of feedforward-walking to the new operator-commanded setpoint.
+static void test_setpowersharesetpointlive_resets_loop_mode() {
+    test_group("setPowerShareSetpointLive() resets the fw v5 loop-mode state (S2)");
+
+    reset_test_state();
+    // Simulate the exact hazard: a PRIOR run left the loop parked in HOLD (as if the load fell
+    // away after converging closed-loop) with a stale nonzero governor filter.
+    shareClosedLoopRun  = true;
+    shareClosedLoopMode = true;
+    share_govTotAFilt   = 1.23f;
+
+    setPowerShareSetpointLive(0.6f);
+
+    check(power_share_setpoint == 0.6f,
+          "S2: the new setpoint is accepted as usual");
+    check(!shareClosedLoopMode,
+          "S2: shareClosedLoopMode is cleared -- a stale CLOSED flag would otherwise make the "
+          "very next powerBalance() tick re-evaluate the exit hysteresis instead of starting "
+          "fresh open-loop");
+    check(!shareClosedLoopRun,
+          "S2: shareClosedLoopRun is cleared -- this is the fix's whole point: a stale true here "
+          "routes a low-current 'P' straight into the HOLD branch (no MDAC write, silent no-op) "
+          "instead of feedforward-walking to the new setpoint");
+    check(share_govTotAFilt == 0.0f,
+          "S2: share_govTotAFilt is zeroed -- a stale nonzero filter could otherwise sit above "
+          "the closed-loop entry threshold and re-enter CLOSED on the very first tick instead of "
+          "giving the operator's new setpoint an open-loop tick first");
+}
+
 // ─── Setpoint-latched channel cutoff ("one owner per setpoint", fw v4 2026-08-12) ────
 // updateShareSetpointCutoff() gives every SETPOINT exactly one owner: in-band → the
 // governor; out-of-band ([DROOP_R_MIN, DROOP_R_MAX] = [0.15, 0.85]) → this latch, which
@@ -1516,6 +2015,16 @@ static void test_share_setpoint_cutoff_single_source_guard() {
           "single-source guard: normal governed control continues — MDAC gains are still written");
 }
 
+// F1 FIX CONFIRMED (2026-08-12, fw v5 review round): an earlier pass of this suite found this
+// test failing on its middle two checks — a release tick fell through into the open-loop
+// feedforward branch the SAME tick (updateShareSetpointCutoff() returns false, not true, on a
+// release) and fed the still-out-of-band opposite-side setpoint to applyShareRatio() unslewed,
+// cutting BT via the informal ratio-based path (shareIsoBT, not shareSpCutBT) before the
+// intended one-live-tick gap. That was reported as a firmware defect rather than patched. The
+// firmware now guards this explicitly: powerBalance()'s open-loop feedforward branch (F1 comment
+// there) returns quietly on `power_share_setpoint < DROOP_R_MIN || > DROOP_R_MAX` before ever
+// calling applyShareRatio(), so a release-tick out-of-band setpoint is left for the latch's own
+// entry branch on the NEXT tick instead. This test passes unmodified again.
 static void test_share_setpoint_cutoff_side_flip() {
     test_group("updateShareSetpointCutoff(): FC latched -> BT latched never darkens the bus");
 
@@ -1640,6 +2149,44 @@ static void test_share_setpoint_self_heal() {
           "self-heal: the externally re-closed switch stays closed — degrades to live, not frozen");
     check(!SPI.transfer_log.empty(),
           "self-heal: the loop is live again — the controller stepped and wrote the MDACs");
+}
+
+// ─── T3 (S1, fw v5 review): shareIso* orphan self-heal with NO setpoint latch behind it ───────
+// A DISTINCT self-heal block from test_share_setpoint_self_heal() above: that test orphans a
+// COMBINED shareSpCut*+shareIso* setpoint latch. This one exercises a RATIO-based cutoff claim
+// (shareIsoFC/BT set by applyShareRatio()'s own r<DROOP_R_MIN / r>DROOP_R_MAX branches) with NO
+// setpoint latch behind it — e.g. doState2() re-asserting FC_BUS/BT_BUS gated only on
+// !shareSpCutFC leaves the switch HIGH with shareIsoFC still set. Without this self-heal,
+// applyShareRatio() returns early ("while a channel is isolated... return") before EVERY later
+// MDAC write, silently freezing the droop split for the rest of the run even though the switch
+// is fully closed and nothing setpoint-related is holding it open.
+static void test_share_iso_orphan_self_heal_no_setpoint_latch() {
+    test_group("updateShareSetpointCutoff(): T3 shareIsoFC orphan (no shareSpCutFC) self-heals");
+
+    reset_test_state();
+    // The exact orphan shape: a ratio-based claim with the switch already externally re-closed
+    // and no setpoint latch backing it.
+    shareIsoFC   = true;
+    shareSpCutFC = false;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[BT_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    g_pin_value[BT_REG_ENABLE] = HIGH;
+    V_bus = 16.0f;
+    I_fc = 0.5f; I_batt = 0.5f;
+    power_share_setpoint = 0.5f;             // in-band -- normal governed control, not a latch
+
+    uint32_t t = 0;
+    t += 1000; g_mock_micros = t; powerBalance();
+
+    check(!shareIsoFC,
+          "T3: the orphaned shareIsoFC claim is dropped -- the switch was already HIGH, so "
+          "there was nothing left to own");
+    check(digitalRead(FC_BUS_ENABLE) == HIGH,
+          "T3: FC_BUS_ENABLE is untouched by the self-heal itself (it was already closed)");
+    check(!SPI.transfer_log.empty(),
+          "T3: the loop resumes live control on the same tick -- the MDACs are writable again, "
+          "not frozen by the now-dropped orphan claim");
 }
 
 // ─── S1 guard: doState2()/chargingControl() no longer re-assert a switch the setpoint latch
@@ -2748,16 +3295,21 @@ static void test_ov_bus_transient_counter() {
     check(ovBusTransientCount == 1, "transient: t=0 close still counted");
 }
 
-// ─── FAULT_UV_BUS: bus-armed + persistence-filtered (fw v4, 2026-08-12) ──────
+// ─── FAULT_UV_BUS: bus-armed + leaky-dwell filtered (fw v5, 2026-08-12) ──────
 // Armed (not state-gated, unlike the old single-sample State-2 check it replaces) when
 // V_bus has reached V_BUS_CHARGED_THRESH with a source switch closed; disarmed the instant
 // both source switches read LOW. While armed, a V_bus < LIMIT_V_BUS_MIN sample sets the
-// telemetry bit immediately but only latches State 99 after UV_BUS_PERSIST_MS continuous AND
-// UV_BUS_PERSIST_MIN_SAMPLES consecutive ticks — same filter shape as FAULT_OV_BUS, so these
-// tests mirror test_ov_bus_persistence()/test_ov_bus_gap_guard() with the polarity flipped.
-// This block is compiled and armed in BOTH builds (deliberately outside #if !BENCH_TEST —
-// see the .ino comment at the FAULT_UV_BUS block): WP0039/TP0016 sagged the bus with zero
-// fault indication under BENCH_TEST, which is exactly the gap this rework closes.
+// telemetry bit immediately; the LATCH decision is a leaky dwell integrator
+// (UV_BUS_DWELL_*), not a wall-clock window: under-limit ticks add min(dt,
+// UV_BUS_DWELL_DT_CAP_MS) to uvBusDwellMs, over-limit ticks subtract UV_BUS_DWELL_LEAK*dt
+// (floored at 0), and the latch fires once uvBusDwellMs >= UV_BUS_DWELL_LATCH_MS. This
+// REPLACES the fw v4 UV_BUS_PERSIST_*/UV_BUS_MAX_GAP_MS wall-clock window, which the fw v4
+// validation sweep showed is EVADED BY DUTY CYCLE (TP0053: a 9ms-under/51ms-over relay cycle
+// never persisted long enough to latch, even after 1.0-1.3s and 24 excursions) — see the
+// .ino UV_BUS_DWELL_* comment block for the full arithmetic. This block is compiled and
+// armed in BOTH builds (deliberately outside #if !BENCH_TEST — see the .ino comment at the
+// FAULT_UV_BUS block): WP0039/TP0016 sagged the bus with zero fault indication under
+// BENCH_TEST, which is exactly the gap this rework closes.
 static void test_uv_bus_not_armed_dark() {
     test_group("FAULT_UV_BUS: unarmed while the power stage is dark");
 
@@ -2776,44 +3328,16 @@ static void test_uv_bus_not_armed_dark() {
     check(mainState == 1 && error_code == ERR_NONE, "UV_BUS/dark: no latch");
 }
 
-static void test_uv_bus_arming_and_persistence() {
-    test_group("FAULT_UV_BUS: arming and the persistence latch");
-
-    const float CHARGED = V_BUS_CHARGED_THRESH + 0.5f;
-    const float UNDER   = LIMIT_V_BUS_MIN - 1.0f;   // e.g. TP0016/WP0039-class sag
-
-    // (1) Arming: a source switch closed + a boost enabled + V_bus at/above V_BUS_CHARGED_THRESH.
-    reset_test_state();
-    mainState = 2;
-    g_pin_value[FC_BUS_ENABLE] = HIGH;
-    g_pin_value[BT_BUS_ENABLE] = LOW;
-    g_pin_value[FC_REG_ENABLE] = HIGH;   // arming also requires a boost enabled (fw v4 S4)
-    V_bus = CHARGED;
-    g_mock_millis = 0;
-    detectFaults();
-    check(uvBusArmed, "UV_BUS/arm: armed once the bus reaches V_BUS_CHARGED_THRESH with FC_BUS closed");
-    check(!(fault_flags & FAULT_UV_BUS), "UV_BUS/arm: no fault bit while V_bus is above LIMIT_V_BUS_MIN");
-
-    // (2) Sustained sag, contiguous samples (gap <= UV_BUS_MAX_GAP_MS): bit appears
-    // immediately, latch only after time AND sample-count thresholds are both met.
-    g_mock_millis = 1000; V_bus = UNDER;
-    detectFaults();                                          // sample 1, window opens
-    check((fault_flags & FAULT_UV_BUS) != 0,
-          "UV_BUS/arm: bit set on the FIRST under-limit sample (truthful telemetry)");
-    check(mainState == 2 && error_code == ERR_NONE,
-          "UV_BUS/arm: single sample does not latch");
-    g_mock_millis = 1000 + UV_BUS_MAX_GAP_MS;
-    detectFaults();                                          // sample 2, time not yet met
-    check(mainState == 2, "UV_BUS/arm: no latch before the persistence time elapses");
-    g_mock_millis = 1000 + UV_BUS_PERSIST_MS;
-    detectFaults();                                          // sample 3, time + samples met
-    check(mainState == 99 && error_code == ERR_UV_BUS,
-          "UV_BUS/arm: latches once time AND the sample floor are both satisfied");
-    check((fault_flags & FAULT_UV_BUS) != 0, "UV_BUS/arm: flag retained through the latch");
-}
-
-static void test_uv_bus_sub_persistence_dip() {
-    test_group("FAULT_UV_BUS: a sub-persistence dip flickers but does not latch");
+// ─── U1: repetitive relay-cycle waveform (TP0053 class) ratchets to a latch ─────────────────
+// The fw v4 wall-clock window was EVADED by exactly this duty cycle: every 60ms period (9ms
+// under / 51ms over) closed its window before UV_BUS_PERSIST_MS elapsed and reopened from
+// zero on the next cycle, so a run could sag repeatedly for over a second with no latch. The
+// dwell integrator nets +9 - UV_BUS_DWELL_LEAK*51 = +6.45ms of dwell PER CYCLE, so it must
+// ratchet to a latch within a handful of cycles even though no single window ever persists —
+// this is the mechanism the whole fw v5 rework exists to fix, so it must actually be exercised
+// here, not just "no crash".
+static void test_uv_bus_dwell_relay_waveform() {
+    test_group("FAULT_UV_BUS: dwell ratchets across a repetitive relay cycle (fw v5, TP0053 class)");
 
     const float CHARGED = V_BUS_CHARGED_THRESH + 0.5f;
     const float UNDER   = LIMIT_V_BUS_MIN - 1.0f;
@@ -2821,22 +3345,212 @@ static void test_uv_bus_sub_persistence_dip() {
     reset_test_state();
     mainState = 2;
     g_pin_value[FC_BUS_ENABLE] = HIGH;
-    g_pin_value[FC_REG_ENABLE] = HIGH;   // arming also requires a boost enabled (fw v4 S4)
-    V_bus = CHARGED; g_mock_millis = 0; detectFaults();
-    check(uvBusArmed, "UV_BUS/dip: (setup) armed");
+    g_pin_value[FC_REG_ENABLE] = HIGH;   // arming also requires a boost enabled
+    V_bus = CHARGED; g_mock_millis = 0; detectFaults();   // arm
+    check(uvBusArmed, "UV_BUS/relay: (setup) armed");
 
-    // Two under-samples 2 ms apart, then straight back above the limit.
-    g_mock_millis = 1000; V_bus = UNDER; detectFaults();
-    g_mock_millis = 1002;                detectFaults();
-    check(mainState == 2 && uvBusUnderActive && uvBusUnderSamples == 2,
-          "UV_BUS/dip: window open, 2 samples, still below the persistence time");
-    g_mock_millis = 1004; V_bus = CHARGED; detectFaults();
-    check(!uvBusUnderActive && uvBusUnderSamples == 0,
-          "UV_BUS/dip: recovery closes the window");
+    uint32_t t = 0;
+    uint32_t latchTick = 0;
+    for (int cycle = 0; cycle < 6 && mainState != 99; cycle++) {
+        for (uint32_t i = 0; i < 9 && mainState != 99; i++) {
+            t++; g_mock_millis = t; V_bus = UNDER; detectFaults();
+        }
+        if (mainState == 99) { latchTick = t; break; }
+        for (uint32_t i = 0; i < 51 && mainState != 99; i++) {
+            t++; g_mock_millis = t; V_bus = CHARGED; detectFaults();
+        }
+        if (mainState == 99) { latchTick = t; break; }
+    }
+    check(mainState == 99 && error_code == ERR_UV_BUS,
+          "UV_BUS/relay: the repetitive 9ms/51ms duty cycle ratchets to a latch within 6 cycles "
+          "— fw v4's wall-clock window NEVER latched this waveform (TP0053 ran 1.0-1.3s / up to "
+          "24 excursions with zero fault indication)");
+    check(latchTick >= 2u * 60u,
+          "UV_BUS/relay: does not latch within the first 2 cycles alone — isolated dips leak "
+          "away, only the repetitive ratchet gets there");
+    check(latchTick <= 5u * 60u,
+          "UV_BUS/relay: latches well inside the 5-cycle budget derived from the +6.45ms/cycle "
+          "net gain arithmetic");
+}
+
+// ─── U2: sparse transients (WP0069 shape) leak away, never latch ────────────────────────────
+static void test_uv_bus_sparse_transient_no_latch() {
+    test_group("FAULT_UV_BUS: sparse transients (WP0069 shape) leak away between excursions, no latch");
+
+    const float CHARGED = V_BUS_CHARGED_THRESH + 0.5f;
+    const float UNDER   = LIMIT_V_BUS_MIN - 1.0f;
+
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    V_bus = CHARGED; g_mock_millis = 0; detectFaults();   // arm
+
+    // 9 excursions of 2ms under, 24ms apart (~210ms total, ~18ms total under-time) — the same
+    // shape as WP0069's ~19ms total under-time in <=2.3ms excursions over 208ms. Net dwell:
+    // +2 per excursion, -UV_BUS_DWELL_LEAK*24=-1.2 per gap -> net +0.8/cycle, well under the
+    // 20ms latch threshold across all 9.
+    uint32_t t = 0;
+    for (int ex = 0; ex < 9; ex++) {
+        for (int i = 0; i < 2; i++) { t++; g_mock_millis = t; V_bus = UNDER; detectFaults(); }
+        for (int i = 0; i < 24; i++) { t++; g_mock_millis = t; V_bus = CHARGED; detectFaults(); }
+    }
     check(mainState == 2 && error_code == ERR_NONE,
-          "UV_BUS/dip: a sub-persistence dip never latches");
-    check(uvBusTransientCount == 1,
-          "UV_BUS/dip: the closed window is counted as a transient (visible via 'S')");
+          "UV_BUS/sparse: 9 isolated ~2ms dips spread over ~210ms never latch — the dwell leaks "
+          "away between them");
+    check(uvBusDwellMs < UV_BUS_DWELL_LATCH_MS,
+          "UV_BUS/sparse: accumulated dwell stays below the latch threshold at the end of the run");
+    check(uvBusTransientCount == 9,
+          "UV_BUS/sparse: every one of the 9 dips is counted as a closed transient (visible via 'S')");
+}
+
+// ─── U3: continuous collapse latches at the dwell threshold, not before ─────────────────────
+static void test_uv_bus_continuous_collapse_threshold() {
+    test_group("FAULT_UV_BUS: continuous collapse latches at 20ms dwell, not at 15ms");
+
+    const float CHARGED = V_BUS_CHARGED_THRESH + 0.5f;
+    const float UNDER   = LIMIT_V_BUS_MIN - 1.0f;
+
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    V_bus = CHARGED; g_mock_millis = 0; detectFaults();   // arm
+
+    V_bus = UNDER;
+    for (uint32_t t = 1; t <= 15; t++) { g_mock_millis = t; detectFaults(); }
+    check(mainState == 2 && error_code == ERR_NONE,
+          "UV_BUS/continuous: not latched at 15ms of continuous under-dwell");
+    check(fabsf(uvBusDwellMs - 15.0f) < 1e-6f,
+          "UV_BUS/continuous: dwell tracks the elapsed continuous under-time 1:1 (each 1ms tick "
+          "is well under the 5ms dt cap)");
+
+    for (uint32_t t = 16; t <= 20; t++) { g_mock_millis = t; detectFaults(); }
+    check(mainState == 99 && error_code == ERR_UV_BUS,
+          "UV_BUS/continuous: latches once dwell reaches UV_BUS_DWELL_LATCH_MS (20ms)");
+}
+
+// ─── U4: per-tick dwell credit is capped, so a stalled loop can't insta-latch ────────────────
+static void test_uv_bus_dwell_dt_cap() {
+    test_group("FAULT_UV_BUS: per-tick dwell credit is capped at UV_BUS_DWELL_DT_CAP_MS");
+
+    const float CHARGED = V_BUS_CHARGED_THRESH + 0.5f;
+    const float UNDER   = LIMIT_V_BUS_MIN - 1.0f;
+
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    V_bus = CHARGED; g_mock_millis = 0; detectFaults();   // arm
+
+    V_bus = UNDER;
+    g_mock_millis = 500; detectFaults();     // 500ms gap since the last armed tick
+    check(fabsf(uvBusDwellMs - UV_BUS_DWELL_DT_CAP_MS) < 1e-6f,
+          "UV_BUS/cap: a stalled-loop/long gap credits at most UV_BUS_DWELL_DT_CAP_MS, not the "
+          "full 500ms elapsed");
+
+    g_mock_millis = 1000; detectFaults();    // another 500ms gap
+    check(fabsf(uvBusDwellMs - 2.0f * UV_BUS_DWELL_DT_CAP_MS) < 1e-6f,
+          "UV_BUS/cap: a second capped tick adds another 5ms — a stalled loop cannot insta-latch "
+          "off a single huge dt");
+    check(mainState == 2 && error_code == ERR_NONE,
+          "UV_BUS/cap: two capped ticks (10ms total) stay below the 20ms latch");
+}
+
+// ─── U5: leaking dwell floors at zero, never goes negative ──────────────────────────────────
+static void test_uv_bus_dwell_leak_floor() {
+    test_group("FAULT_UV_BUS: leaking dwell floors at zero, a fresh 20ms is still required after");
+
+    const float CHARGED = V_BUS_CHARGED_THRESH + 0.5f;
+    const float UNDER   = LIMIT_V_BUS_MIN - 1.0f;
+
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    V_bus = CHARGED; g_mock_millis = 0; detectFaults();   // arm
+
+    // Partial accumulation (5ms, via a large gap since the arm tick so the dt cap credits the
+    // full UV_BUS_DWELL_DT_CAP_MS), then a long over-limit stretch that would leak well past
+    // zero under naive (unfloored) arithmetic.
+    V_bus = UNDER; g_mock_millis = 1000; detectFaults();
+    check(fabsf(uvBusDwellMs - 5.0f) < 1e-6f, "UV_BUS/leak: (setup) 5ms accumulated");
+    V_bus = CHARGED;
+    for (uint32_t t = 1001; t <= 1500; t++) { g_mock_millis = t; detectFaults(); }
+    check(uvBusDwellMs == 0.0f,
+          "UV_BUS/leak: a long over-limit stretch floors dwell at exactly 0, never negative");
+
+    // A fresh 20ms continuous under-dwell from that floor must still need the FULL 20ms — no
+    // residual credit carried from the leak stretch.
+    V_bus = UNDER;
+    for (uint32_t t = 1501; t <= 1519; t++) { g_mock_millis = t; detectFaults(); }
+    check(mainState == 2 && error_code == ERR_NONE,
+          "UV_BUS/leak: 19ms accumulated from the zero floor still does not latch");
+    g_mock_millis = 1520; detectFaults();
+    check(mainState == 99 && error_code == ERR_UV_BUS,
+          "UV_BUS/leak: the 20th ms from the floor latches — confirms no negative credit was "
+          "banked during the leak stretch");
+}
+
+// ─── U6: disarm dumps the accumulated dwell, re-arm needs a full fresh 20ms ──────────────────
+static void test_uv_bus_disarm_resets_dwell() {
+    test_group("FAULT_UV_BUS: disarm (boosts off) dumps the accumulated dwell, not just the armed flag");
+
+    const float CHARGED = V_BUS_CHARGED_THRESH + 0.5f;
+    const float UNDER   = LIMIT_V_BUS_MIN - 1.0f;
+
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    V_bus = CHARGED; g_mock_millis = 0; detectFaults();   // arm
+
+    V_bus = UNDER;
+    for (uint32_t t = 1; t <= 15; t++) { g_mock_millis = t; detectFaults(); }
+    check(fabsf(uvBusDwellMs - 15.0f) < 1e-6f, "UV_BUS/disarm: (setup) 15ms accumulated");
+
+    // Disarm: both boosts off (the routine S4 'F'/'B' bench sequence) — a disarmed interval is
+    // not evidence of a collapse, so the dwell must be dumped, not just the armed flag cleared.
+    g_pin_value[FC_REG_ENABLE] = LOW;
+    g_mock_millis = 16; detectFaults();
+    check(!uvBusArmed && uvBusDwellMs == 0.0f,
+          "UV_BUS/disarm: disarming dumps the accumulated dwell to zero");
+
+    // Re-arm and confirm a fresh dwell is required from zero — no leftover credit from before
+    // the disarm (which would let two unrelated bench sequences add up into a spurious latch).
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    V_bus = CHARGED; g_mock_millis = 20; detectFaults();   // re-arm
+    V_bus = UNDER;
+    for (uint32_t t = 21; t <= 39; t++) { g_mock_millis = t; detectFaults(); }   // 19ms
+    check(mainState == 2 && error_code == ERR_NONE,
+          "UV_BUS/disarm: 19ms after re-arm does not latch (fresh dwell, not 15+19=34ms carried "
+          "over from before the disarm)");
+    g_mock_millis = 40; detectFaults();   // 20ms
+    check(mainState == 99 && error_code == ERR_UV_BUS,
+          "UV_BUS/disarm: a full fresh 20ms after re-arm does latch");
+}
+
+// ─── U7: the raw telemetry bit tracks V_bus directly, independent of the latch ──────────────
+static void test_uv_bus_raw_flag_bit() {
+    test_group("FAULT_UV_BUS: the raw telemetry bit tracks V_bus vs LIMIT_V_BUS_MIN, before any latch");
+
+    const float CHARGED = V_BUS_CHARGED_THRESH + 0.5f;
+    const float UNDER   = LIMIT_V_BUS_MIN - 1.0f;
+
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    V_bus = CHARGED; g_mock_millis = 0; detectFaults();   // arm
+    check(!(fault_flags & FAULT_UV_BUS), "UV_BUS/flag: bit clear while V_bus is above the limit");
+
+    V_bus = UNDER; g_mock_millis = 1; detectFaults();
+    check((fault_flags & FAULT_UV_BUS) != 0 && mainState == 2,
+          "UV_BUS/flag: bit sets on the very first under-limit tick, well before any latch");
+
+    V_bus = CHARGED; g_mock_millis = 2; detectFaults();
+    check(!(fault_flags & FAULT_UV_BUS),
+          "UV_BUS/flag: bit clears the instant V_bus recovers above the limit");
 }
 
 static void test_uv_bus_disarm_on_teardown() {
@@ -2887,43 +3601,14 @@ static void test_uv_bus_bringup_immunity() {
     check(mainState == 0 && error_code == ERR_NONE, "UV_BUS/bringup: no latch");
 }
 
-static void test_uv_bus_gap_guard() {
-    test_group("FAULT_UV_BUS sample-gap guard (UV_BUS_MAX_GAP_MS)");
-
-    const float CHARGED = V_BUS_CHARGED_THRESH + 0.5f;
-    const float UNDER   = LIMIT_V_BUS_MIN - 1.0f;
-
-    // Sparse: arm, then three under-samples at t = 0, 100, 101. Naive window arithmetic
-    // (since=0, samples=3, elapsed=101 >= 10) would latch — the gap guard must restart at 100.
-    reset_test_state();
-    mainState = 2;
-    g_pin_value[FC_BUS_ENABLE] = HIGH;
-    g_pin_value[FC_REG_ENABLE] = HIGH;   // arming also requires a boost enabled (fw v4 S4)
-    V_bus = CHARGED; g_mock_millis = 0; detectFaults();     // arm
-    V_bus = UNDER;
-    g_mock_millis = 0;   detectFaults();
-    g_mock_millis = 100; detectFaults();
-    g_mock_millis = 101; detectFaults();
-    check(mainState == 2 && error_code == ERR_NONE,
-          "UV_BUS gap guard: samples at 0/100/101 do NOT latch (window restarted at the 100ms gap)");
-    check(uvBusUnderSince == 100 && uvBusUnderSamples == 2,
-          "UV_BUS gap guard: window restarted at the sparse sample, then continued");
-
-    // Continuity: 2 ms spacing all the way to 12 ms -> every gap <= UV_BUS_MAX_GAP_MS, so the
-    // window survives and both the persistence time and sample floor are met.
-    reset_test_state();
-    mainState = 2;
-    g_pin_value[FC_BUS_ENABLE] = HIGH;
-    g_pin_value[FC_REG_ENABLE] = HIGH;   // arming also requires a boost enabled (fw v4 S4)
-    V_bus = CHARGED; g_mock_millis = 0; detectFaults();     // arm
-    V_bus = UNDER;
-    for (uint32_t t = 0; t <= 12; t += 2) {
-        g_mock_millis = t;
-        detectFaults();
-    }
-    check(mainState == 99 && error_code == ERR_UV_BUS,
-          "UV_BUS gap guard: contiguous 2ms-spaced samples across the window DO latch");
-}
+// NOTE: the fw v4 "sample-gap guard" test (window restarts on a >UV_BUS_MAX_GAP_MS gap) is
+// DELETED, not adapted — its entire premise (a window must restart on a gap) is exactly what
+// fw v5 fixes. The dwell integrator is deliberately gap-tolerant: it survives gaps between
+// excursions (leaking only UV_BUS_DWELL_LEAK*dt while healthy) so a repetitive cycle still
+// ratchets to a latch. That behaviour is covered by test_uv_bus_dwell_relay_waveform() (U1,
+// gaps between under-phases do NOT reset the accumulator) and contrasted against genuinely
+// isolated dips by test_uv_bus_sparse_transient_no_latch() (U2, gaps wide/rare enough to leak
+// the dwell away).
 
 // ─── FAULT_UV_BUS: bringupActive disarms it even with everything else satisfied (S3, fw v4
 // review round 2026-08-12) ────────────────────────────────────────────────────────────────────
@@ -2983,43 +3668,58 @@ static void test_uv_bus_disarm_both_boosts_off() {
     check(mainState == 2 && error_code == ERR_NONE, "S4: no latch");
 }
 
-// ─── FAULT_UV_BUS: disarming mid-window restarts the persistence window clean (correctness-
-// review gap v, fw v4 review round) ──────────────────────────────────────────────────────────
-static void test_uv_bus_disarm_resets_open_window() {
-    test_group("FAULT_UV_BUS: disarming with an open persistence window restarts it clean (gap v)");
+// ─── T5 (S7, fw v5 review): UV arming requires a MATCHED source pair, not two independent ORs ──
+// The fw v4 predicate ANDed two independent ORs (any switch closed) AND (any boost enabled), so
+// a MIXED topology -- e.g. FC_BUS closed with the FC boost OFF, while the BT boost is ON but
+// BT_BUS is open -- read as armed even though NO converter was actually feeding the bus. S7
+// requires each channel's OWN switch AND OWN boost together (fcFeeding || btFeeding, each a
+// matched AND pair). This test drives exactly that mismatched topology -- every individual term
+// of the old OR-predicate is satisfied, but no matched pair exists -- and confirms it stays
+// disarmed; then closes the matched pair and confirms it arms.
+static void test_uv_bus_matched_pair_arming() {
+    test_group("FAULT_UV_BUS: arming requires a MATCHED source pair, not mismatched OR terms (S7)");
 
     const float CHARGED = V_BUS_CHARGED_THRESH + 0.5f;
     const float UNDER   = LIMIT_V_BUS_MIN - 1.0f;
 
     reset_test_state();
     mainState = 2;
+    // Mismatched topology: FC_BUS HIGH but FC_REG LOW (FC not actually feeding), BT_REG HIGH but
+    // BT_BUS LOW (BT enabled but disconnected from the bus). Every individual OR term is
+    // satisfied (a switch is HIGH, a boost is HIGH), but neither channel forms a matched pair.
     g_pin_value[FC_BUS_ENABLE] = HIGH;
-    g_pin_value[FC_REG_ENABLE] = HIGH;
-    V_bus = CHARGED; g_mock_millis = 0; detectFaults();     // arm
+    g_pin_value[FC_REG_ENABLE] = LOW;
+    g_pin_value[BT_REG_ENABLE] = HIGH;
+    g_pin_value[BT_BUS_ENABLE] = LOW;
+    V_bus = CHARGED;
+    g_mock_millis = 0;
+    detectFaults();
+    check(!uvBusArmed,
+          "T5: the fw v4 OR-predicate's individual terms are all satisfied, but no MATCHED "
+          "source pair exists -- stays DISARMED (the S7 fix)");
 
+    // Drive the bus under the limit anyway: must never latch or even set the telemetry bit,
+    // since it never armed in the first place.
     V_bus = UNDER;
-    g_mock_millis = 10; detectFaults();      // sample 1, window opens
-    g_mock_millis = 14; detectFaults();      // sample 2 (gap=4ms <= UV_BUS_MAX_GAP_MS=5)
-    check(uvBusUnderActive && uvBusUnderSamples == 2,
-          "(setup) a 2-sample window is open, short of the persistence floor");
+    for (uint32_t t = 10; t <= 100; t += 10) { g_mock_millis = t; detectFaults(); }
+    check(!(fault_flags & FAULT_UV_BUS) && uvBusDwellMs == 0.0f,
+          "T5: no fault bit, no dwell accumulated -- an unarmed low bus is not a fault");
+    check(mainState == 2 && error_code == ERR_NONE, "T5: no latch");
 
-    // Disarm mid-window (a teardown-style both-switches-open, mirroring test_uv_bus_disarm_on_teardown).
-    g_pin_value[FC_BUS_ENABLE] = LOW;
-    g_mock_millis = 16; detectFaults();
-    check(!uvBusArmed && !uvBusUnderActive && uvBusUnderSamples == 0,
-          "disarm drops the open window entirely, not just the armed flag");
-
-    // Re-arm and feed exactly one more under-sample: this must be sample 1 of a FRESH window,
-    // not sample 3 of the old (dropped) one — nowhere near latching.
-    g_pin_value[FC_BUS_ENABLE] = HIGH;
-    V_bus = CHARGED; g_mock_millis = 20; detectFaults();    // re-arm
-    V_bus = UNDER;    g_mock_millis = 24; detectFaults();   // sample 1 of the NEW window
-    check(uvBusUnderActive && uvBusUnderSamples == 1,
-          "gap (v): the post-rearm window restarted at 1 sample, not carried over from the old "
-          "window's 2");
-    check(mainState == 2 && error_code == ERR_NONE,
-          "gap (v): nowhere near latching after a single fresh-window sample");
+    // Now close the matched pair (FC_REG HIGH, so FC_BUS+FC_REG form a real feeding channel):
+    // must arm.
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    V_bus = CHARGED;
+    g_mock_millis = 200;
+    detectFaults();
+    check(uvBusArmed,
+          "T5: closing the matched pair (FC_BUS HIGH + FC_REG HIGH together) arms it");
 }
+
+// NOTE: the fw v4 "disarm mid-window restarts it clean" test is superseded by
+// test_uv_bus_disarm_resets_dwell() (U6) above, which asserts the same disarm-drops-progress
+// property against the dwell accumulator (uvBusDwellMs) instead of the deleted sample-window
+// state (uvBusUnderSamples/uvBusLastUnderMs).
 
 // ─── P0 entry darkens the power stage before closing the bus switches ────────
 static void test_bringup_dark_start() {
@@ -5796,11 +6496,17 @@ static void test_trap_vescwatch_suppressed() {
 #define REC_OFF_GBT        32
 #define REC_OFF_V_BUS      36
 #define REC_OFF_I_CMD      40
-#define REC_OFF_FAULTS     44
-#define REC_OFF_PS_PHASE   46
-#define REC_OFF_DC_PHASE   47
-#define REC_OFF_TRAP_PHASE 48
-#define REC_OFF_FLAGS      49
+// Format v3 (fw v5, 2026-08-12): the four source/charger/regen rails, added after I_cmd.
+#define REC_OFF_V_FC       44
+#define REC_OFF_V_BATT     48
+#define REC_OFF_V_CHG      52
+#define REC_OFF_V_RGN      56
+#define REC_OFF_FAULTS     60
+#define REC_OFF_PS_PHASE   62
+#define REC_OFF_DC_PHASE   63
+#define REC_OFF_TRAP_PHASE 64
+#define REC_OFF_FLAGS      65
+// exp[66..67] are the pad bytes (LOG_REC_SIZE - 2 .. LOG_REC_SIZE - 1)
 
 #define LOG_HDR_SIZE 32u
 
@@ -5920,19 +6626,19 @@ static void test_sdlog_lifecycle_natural_completion() {
           "SD lifecycle: exactly one .BLG file exists on the card after the run");
     const std::string* f = sd_file("TP0001.BLG");
     check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * expectedRecords + LOG_REC_SIZE,
-          "SD lifecycle: file size is header + 52*N records + one 52-byte trailer");
+          "SD lifecycle: file size is header + LOG_REC_SIZE*N records + one LOG_REC_SIZE trailer");
 
     if (f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE) {
         check(f->compare(0, 4, "BLG1") == 0,
               "SD lifecycle: the header opens with the 'BLG1' magic");
-        check((uint8_t)(*f)[4] == 2,
-              "SD lifecycle: the header declares format version 2");
+        check((uint8_t)(*f)[4] == 3,
+              "SD lifecycle: the header declares format version 3 (fw v5, 68B record)");
         check((uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE,
-              "SD lifecycle: the header declares a 52-byte record size");
+              "SD lifecycle: the header declares a 68-byte record size");
         check((uint8_t)(*f)[6] == LOG_TYPE_TP,
               "SD lifecycle: the header profile bitmask is LOG_TYPE_TP for a 'T' run");
         check(sd_le<uint16_t>(*f, 18) == (uint16_t)FW_VERSION,
-              "SD lifecycle: the v2 header stamps FW_VERSION at offset 18");
+              "SD lifecycle: the header stamps FW_VERSION at offset 18");
 
         size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * expectedRecords;
         check(sd_le<uint32_t>(*f, tr + 0) == 0xFFFFFFFFu,
@@ -6156,9 +6862,9 @@ static void test_sdlog_overflow_drop_count() {
     }
 }
 
-// ─── 6. Golden record schema: byte-exact field layout ───────────────────────
+// ─── 6. Golden record schema: byte-exact field layout (format v3, fw v5) ────
 static void test_sdlog_record_schema() {
-    test_group("SD log: one record's 52 bytes match the documented field layout exactly");
+    test_group("SD log: one record's 68 bytes match the documented v3 field layout exactly");
     reset_test_state();
 
     // Open directly (not via a profile key) so the sample below is taken from values this test
@@ -6177,6 +6883,12 @@ static void test_sdlog_record_schema() {
     droop_gain_BT_actual      = 0.6f;
     V_bus                     = 16.5f;
     current                   = 2.25f;
+    // Format v3 (fw v5): distinct sentinel values for the four new rails so a swapped-offset
+    // regression shows up as a specific field mismatch, not a coincidental pass.
+    V_fc                       = 11.1f;
+    V_batt                     = 7.7f;
+    V_chg                      = 13.3f;
+    V_rgn                      = 9.9f;
     fault_flags               = 0x0012;
     powerShareProfileActive   = true;
     powerShareProfilePhaseIdx = 3;
@@ -6192,23 +6904,23 @@ static void test_sdlog_record_schema() {
 
     const std::string* f = sd_file("PS0001.BLG");
     check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE,
-          "SD schema: the card holds the 32-byte header followed by one 52-byte record");
+          "SD schema: the card holds the 32-byte header followed by one 68-byte record");
     if (f == nullptr || f->size() < LOG_HDR_SIZE + LOG_REC_SIZE) return;
 
     // ── Header ──────────────────────────────────────────────────────────────
-    check(f->compare(0, 4, "BLG1") == 0 && (uint8_t)(*f)[4] == 2 &&
+    check(f->compare(0, 4, "BLG1") == 0 && (uint8_t)(*f)[4] == 3 &&
           (uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE && (uint8_t)(*f)[6] == LOG_TYPE_PS,
-          "SD schema: the header carries magic, version 2, record size 52 and the PS type bit");
+          "SD schema: the header carries magic, version 3, record size 68 and the PS type bit");
     check(sd_le<uint32_t>(*f, 8) == 5000u && sd_le<uint32_t>(*f, 12) == 50000u,
           "SD schema: the header timebase is the millis()/micros() pair at open");
     check(sd_le<uint16_t>(*f, 16) == (uint16_t)(K_DROOP * 1000.0f + 0.5f),
           "SD schema: the header stores K_DROOP in milliohms for the decoder");
     check(sd_le<uint16_t>(*f, 18) == (uint16_t)FW_VERSION,
-          "SD schema: the v2 header stamps FW_VERSION at offset 18");
+          "SD schema: the header stamps FW_VERSION at offset 18");
     check(f->compare(20, 12, std::string(12, '\0')) == 0,
           "SD schema: the header's reserved tail is zero-filled out to 32 bytes");
 
-    // ── Record: build the expected 52 bytes independently, then memcmp ──────
+    // ── Record: build the expected 68 bytes independently, then memcmp ──────
     uint8_t exp[LOG_REC_SIZE];
     memset(exp, 0, sizeof(exp));
     uint32_t t_us = 123456u;    memcpy(exp + REC_OFF_T_US,      &t_us, 4);
@@ -6223,29 +6935,113 @@ static void test_sdlog_record_schema() {
     fv = 0.6f;    memcpy(exp + REC_OFF_GBT,       &fv, 4);
     fv = 16.5f;   memcpy(exp + REC_OFF_V_BUS,     &fv, 4);
     fv = 2.25f;   memcpy(exp + REC_OFF_I_CMD,     &fv, 4);
+    fv = 11.1f;   memcpy(exp + REC_OFF_V_FC,      &fv, 4);
+    fv = 7.7f;    memcpy(exp + REC_OFF_V_BATT,    &fv, 4);
+    fv = 13.3f;   memcpy(exp + REC_OFF_V_CHG,     &fv, 4);
+    fv = 9.9f;    memcpy(exp + REC_OFF_V_RGN,     &fv, 4);
     uint16_t ff = 0x0012;       memcpy(exp + REC_OFF_FAULTS, &ff, 2);
     exp[REC_OFF_PS_PHASE]   = 3;      // the PS profile is running, at phase 3
     exp[REC_OFF_DC_PHASE]   = 0xFF;   // drive cycle not running
     exp[REC_OFF_TRAP_PHASE] = 0xFF;   // trapezoid not running
     exp[REC_OFF_FLAGS]      = 0x03;   // bit0 profile driving powerBalance, bit1 velocity chain OK
-    // exp[50..51] stay zero (pad)
+    // exp[66..67] stay zero (pad)
 
     check(memcmp(f->data() + LOG_HDR_SIZE, exp, LOG_REC_SIZE) == 0,
-          "SD schema: the written record is byte-identical to the expected 52-byte layout");
+          "SD schema: the written record is byte-identical to the expected 68-byte v3 layout");
 
     // Field-level checks so a failure above localises instead of just saying "bytes differ".
     check(sd_le<uint32_t>(*f, LOG_HDR_SIZE + REC_OFF_T_US) == 123456u,
           "SD schema: t_us at offset 0 is the micros() value at the sample");
     check(sd_le<float>(*f, LOG_HDR_SIZE + REC_OFF_SHARE_ACT) == 0.75f,
           "SD schema: share_act at offset 8 is |I_fc|/(|I_fc|+|I_batt|)");
+    check(sd_le<float>(*f, LOG_HDR_SIZE + REC_OFF_V_FC) == 11.1f,
+          "SD schema: V_fc (format v3) lands at offset 44, straight from updateSensors()");
+    check(sd_le<float>(*f, LOG_HDR_SIZE + REC_OFF_V_BATT) == 7.7f,
+          "SD schema: V_batt (format v3) lands at offset 48");
+    check(sd_le<float>(*f, LOG_HDR_SIZE + REC_OFF_V_CHG) == 13.3f,
+          "SD schema: V_chg (format v3) lands at offset 52");
+    check(sd_le<float>(*f, LOG_HDR_SIZE + REC_OFF_V_RGN) == 9.9f,
+          "SD schema: V_rgn (format v3) lands at offset 56");
     check(sd_le<uint16_t>(*f, LOG_HDR_SIZE + REC_OFF_FAULTS) == 0x0012,
-          "SD schema: fault_flags at offset 44 is the live 16-bit fault word");
+          "SD schema: fault_flags at offset 60 (shifted +16 by the four new v3 fields) is the "
+          "live 16-bit fault word");
     check((uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_PS_PHASE] == 3 &&
           (uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_DC_PHASE] == LOG_PHASE_NONE &&
           (uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_TRAP_PHASE] == LOG_PHASE_NONE,
           "SD schema: the three phase bytes are independent, 0xFF for the inactive profiles");
-    check((uint8_t)(*f)[LOG_HDR_SIZE + 50] == 0 && (uint8_t)(*f)[LOG_HDR_SIZE + 51] == 0,
-          "SD schema: the two pad bytes are zero-filled");
+    check((uint8_t)(*f)[LOG_HDR_SIZE + 66] == 0 && (uint8_t)(*f)[LOG_HDR_SIZE + 67] == 0,
+          "SD schema: the two pad bytes (now at 66-67) are zero-filled");
+}
+
+// ─── 6b. sizeof/offsetof sanity for the v3 record (L1/L2 floor coverage) ─────
+// A direct struct-layout check, independent of the byte-stream test above: this fails if the
+// struct's field order or padding ever drifts from LOG_REC_SIZE / the documented offsets, even
+// before any record is ever written to a (mock) card.
+static void test_benchlogrecord_v3_layout() {
+    test_group("BenchLogRecord (format v3): sizeof and field offsets");
+
+    check(sizeof(BenchLogRecord) == 68, "BenchLogRecord: sizeof == 68 bytes");
+    check(LOG_REC_SIZE == 68u, "LOG_REC_SIZE == 68");
+
+    check(offsetof(BenchLogRecord, V_fc)        == 44, "offsetof(V_fc) == 44");
+    check(offsetof(BenchLogRecord, V_batt)      == 48, "offsetof(V_batt) == 48");
+    check(offsetof(BenchLogRecord, V_chg)       == 52, "offsetof(V_chg) == 52");
+    check(offsetof(BenchLogRecord, V_rgn)       == 56, "offsetof(V_rgn) == 56");
+    check(offsetof(BenchLogRecord, fault_flags) == 60, "offsetof(fault_flags) == 60 (shifted +16)");
+    check(offsetof(BenchLogRecord, ps_phase)    == 62, "offsetof(ps_phase) == 62");
+    check(offsetof(BenchLogRecord, dc_phase)    == 63, "offsetof(dc_phase) == 63");
+    check(offsetof(BenchLogRecord, trap_phase)  == 64, "offsetof(trap_phase) == 64");
+    check(offsetof(BenchLogRecord, flags)       == 65, "offsetof(flags) == 65");
+    check(offsetof(BenchLogRecord, pad)         == 66, "offsetof(pad) == 66 (2-byte tail)");
+
+    // These offsets must also match the byte-stream constants used by the on-card tests above --
+    // a mismatch here would mean the two test families are silently checking different layouts.
+    check(offsetof(BenchLogRecord, V_fc)        == REC_OFF_V_FC,   "offsetof(V_fc) == REC_OFF_V_FC");
+    check(offsetof(BenchLogRecord, V_batt)      == REC_OFF_V_BATT, "offsetof(V_batt) == REC_OFF_V_BATT");
+    check(offsetof(BenchLogRecord, V_chg)       == REC_OFF_V_CHG,  "offsetof(V_chg) == REC_OFF_V_CHG");
+    check(offsetof(BenchLogRecord, V_rgn)       == REC_OFF_V_RGN,  "offsetof(V_rgn) == REC_OFF_V_RGN");
+    check(offsetof(BenchLogRecord, fault_flags) == REC_OFF_FAULTS, "offsetof(fault_flags) == REC_OFF_FAULTS");
+}
+
+// ─── T2: log record flags bit2 (shareClosedLoopMode) / bit3 (shareClosedLoopRun) ─────────────
+// (fw v5 review, :~1985): the BenchLogRecord.flags byte gained two bits so a decoded run says
+// which law drove the droop split each tick: bit2=shareClosedLoopMode (Youla stepped this
+// tick), bit3=shareClosedLoopRun (closed loop has run at least once since the last reset). The
+// three reachable combinations decode to CLOSED / open-loop feedforward / HOLD (per the .ino
+// flags comment block at the BenchLogRecord struct); mode=1,run=0 cannot happen in practice
+// (powerBalance()'s closed-loop branch always sets both together) so is not exercised here.
+static void test_sdlog_flags_share_loop_mode_bits() {
+    test_group("SD log: record flags bit2/bit3 encode the fw v5 share-loop mode (T2)");
+
+    auto sample_flags = [](bool closedMode, bool closedRun) -> uint8_t {
+        reset_test_state();
+        g_mock_millis = 1000;
+        g_mock_micros = 1000;
+        logOpenForProfile(LOG_TYPE_PS);
+        shareClosedLoopMode = closedMode;
+        shareClosedLoopRun  = closedRun;
+        logSampleTick();
+        logDrainTick();
+        const std::string* f = sd_file("PS0001.BLG");
+        check(f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE,
+              "T2 sample: the record made it to the (mock) card");
+        if (f == nullptr || f->size() < LOG_HDR_SIZE + LOG_REC_SIZE) return 0;
+        return (uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_FLAGS];
+    };
+
+    // (a) CLOSED loop: bit2 set.
+    uint8_t flagsClosed = sample_flags(/*closedMode=*/true, /*closedRun=*/true);
+    check((flagsClosed & 0x04) != 0, "T2a: shareClosedLoopMode=true -> flags bit2 set");
+
+    // (b) OPEN-LOOP feedforward: mode=false, run=false -> bits 2 and 3 both clear.
+    uint8_t flagsFeedforward = sample_flags(/*closedMode=*/false, /*closedRun=*/false);
+    check((flagsFeedforward & 0x04) == 0 && (flagsFeedforward & 0x08) == 0,
+          "T2b: open-loop feedforward (mode=false, run=false) -> flags bits 2,3 both clear");
+
+    // (c) HOLD: mode=false, run=true -> bit3 set, bit2 clear.
+    uint8_t flagsHold = sample_flags(/*closedMode=*/false, /*closedRun=*/true);
+    check((flagsHold & 0x08) != 0 && (flagsHold & 0x04) == 0,
+          "T2c: HOLD (mode=false, run=true) -> flags bit3 set, bit2 clear");
 }
 
 // ─── 7. Write error mid-run: logging dies, the profile does not ─────────────
@@ -6707,14 +7503,16 @@ static void test_sdlog_ring_wrap_drain() {
     check(logRingCount == 900 && logDroppedCount == 0,
           "SD wrap: 900 records buffer without dropping (under the 1024 capacity)");
 
-    for (int i = 0; i < 50; i++) logDrainTick();   // 9 records per tick → 450 drained
-    check(logRecordsWritten == 450 && logRingTail == 450u * LOG_REC_SIZE,
-          "SD wrap: a partial drain advances the tail off zero, leaving 450 records pending");
+    // format v3 (fw v5): LOG_REC_SIZE=68 -> floor(512/68)=7 records per LOG_CHUNK_MAX chunk (was
+    // 9 at the old 52-byte record size). 60 ticks * 7 = 420 drained.
+    for (int i = 0; i < 60; i++) logDrainTick();   // 7 records per tick → 420 drained
+    check(logRecordsWritten == 420 && logRingTail == 420u * LOG_REC_SIZE,
+          "SD wrap: a partial drain advances the tail off zero, leaving 480 records pending");
 
     fill(500);                                  // head passes the physical end of logRing
     check(logRingHead < logRingTail,
           "SD wrap: the head has wrapped past the end of the ring, so pending data spans the wrap");
-    check(logRingCount == 950 && logDroppedCount == 0,
+    check(logRingCount == 980 && logDroppedCount == 0,
           "SD wrap: the refill stays inside capacity, so no sample is dropped");
 
     int guard = 0;
@@ -8981,9 +9779,10 @@ static void test_uv_bus_armed_under_bench_test() {
     check(uvBusArmed, "UV_BUS/bench: arms under BENCH_TEST exactly as in production");
 
     V_bus = LIMIT_V_BUS_MIN - 1.0f;
-    g_mock_millis = 1000; detectFaults();
-    g_mock_millis = 1000 + UV_BUS_MAX_GAP_MS;     detectFaults();
-    g_mock_millis = 1000 + UV_BUS_PERSIST_MS;     detectFaults();
+    g_mock_millis = 1000; detectFaults(); // dwell=5ms
+    g_mock_millis = 1005; detectFaults(); // dwell=10ms
+    g_mock_millis = 1010; detectFaults(); // dwell=15ms
+    g_mock_millis = 1015; detectFaults(); // dwell=20ms -> latch
     check(mainState == 99 && error_code == ERR_UV_BUS,
           "UV_BUS/bench: a sustained sag STILL latches under BENCH_TEST — the fw v3 gap this closes");
 }
@@ -9242,14 +10041,18 @@ int main() {
     // FAULT_UV_BUS (fw v4) is armed in BOTH builds too — same rationale as OV_BUS above, and
     // the dedicated BENCH_TEST-vs-production contrast for it.
     test_uv_bus_not_armed_dark();
-    test_uv_bus_arming_and_persistence();
-    test_uv_bus_sub_persistence_dip();
+    test_uv_bus_dwell_relay_waveform();
+    test_uv_bus_sparse_transient_no_latch();
+    test_uv_bus_continuous_collapse_threshold();
+    test_uv_bus_dwell_dt_cap();
+    test_uv_bus_dwell_leak_floor();
+    test_uv_bus_disarm_resets_dwell();
+    test_uv_bus_raw_flag_bit();
     test_uv_bus_disarm_on_teardown();
     test_uv_bus_bringup_immunity();
-    test_uv_bus_gap_guard();
     test_uv_bus_disarm_during_bringup();
     test_uv_bus_disarm_both_boosts_off();
-    test_uv_bus_disarm_resets_open_window();
+    test_uv_bus_matched_pair_arming();
     test_uv_bus_armed_under_bench_test();
     test_dostate98_g_bringup();
     test_dostate98_bringup_interlocks();
@@ -9294,14 +10097,18 @@ int main() {
     test_ov_bus_gap_abandoned_counted();
     test_ov_bus_transient_counter();
     test_uv_bus_not_armed_dark();
-    test_uv_bus_arming_and_persistence();
-    test_uv_bus_sub_persistence_dip();
+    test_uv_bus_dwell_relay_waveform();
+    test_uv_bus_sparse_transient_no_latch();
+    test_uv_bus_continuous_collapse_threshold();
+    test_uv_bus_dwell_dt_cap();
+    test_uv_bus_dwell_leak_floor();
+    test_uv_bus_disarm_resets_dwell();
+    test_uv_bus_raw_flag_bit();
     test_uv_bus_disarm_on_teardown();
     test_uv_bus_bringup_immunity();
-    test_uv_bus_gap_guard();
     test_uv_bus_disarm_during_bringup();
     test_uv_bus_disarm_both_boosts_off();
-    test_uv_bus_disarm_resets_open_window();
+    test_uv_bus_matched_pair_arming();
     test_dostate98_hotplug_guard();
     test_dostate98_bt_bus_fc_charge_guard();
     test_dostate98_quit_closes_charge_paths();
@@ -9364,9 +10171,21 @@ int main() {
     test_powerbalance_gated_tick_stable();
     test_powerbalance_min_load_hold();
     test_share_setpoint_governor();
+    test_governor_openloop_feedforward_walk();
+    test_governor_closedloop_entry_and_response();
+    test_governor_closedloop_to_open_hold();
+    test_governor_hold_exit_on_setpoint_change();
+    test_governor_hysteresis_band();
+    test_governor_hysteresis_exact_boundaries();
+    test_governor_open_to_closed_continuity();
+    test_governor_reset_clears_closedloop_run();
+    test_governor_lo_clamp_sliver();
+    test_governor_setpoint_latch_precedence_at_low_current();
+    test_governor_min_load_gate_precedes_governor();
     test_droop_ratio_slew_limit();
     test_share_state_reset_on_profile_start();
     test_share_ratio_cutoff();
+    test_setpowersharesetpointlive_resets_loop_mode();
     test_share_setpoint_cutoff_bt_high_side();
     test_share_setpoint_cutoff_fc_low_side();
     test_share_setpoint_cutoff_release();
@@ -9374,6 +10193,7 @@ int main() {
     test_share_setpoint_cutoff_side_flip();
     test_share_setpoint_cutoff_ownership();
     test_share_setpoint_self_heal();
+    test_share_iso_orphan_self_heal_no_setpoint_latch();
     test_charging_control_skips_reassert_when_latched();
     test_assert_fc_charge_enable_clears_setpoint_latches();
     test_assert_fc_charge_enable_clears_bt_setpoint_latch();
@@ -9393,6 +10213,8 @@ int main() {
     test_sdlog_no_card();
     test_sdlog_overflow_drop_count();
     test_sdlog_record_schema();
+    test_benchlogrecord_v3_layout();
+    test_sdlog_flags_share_loop_mode_bits();
     test_sdlog_write_error_midrun();
     test_sdlog_name_collision();
     test_sdlog_rate_1khz();

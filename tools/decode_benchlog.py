@@ -1,28 +1,50 @@
 #!/usr/bin/env python3
-"""Decode .BLG bench-log files (format versions 1 and 2) into CSV.
+"""Decode .BLG bench-log files (format versions 1, 2, and 3) into CSV.
 
 The firmware writer lives in teensy_controller/teensy_controller.ino
 (State 98 SD-card logging, see PLAN.md sec 9g). File layout:
 
-  Header (32 B, LE): magic b'BLG1', u8 version(=1|2), u8 record_size(=52),
-    u8 profile_type (bitmask: 1=PS, 2=TP, 4=DC), u8 pad, u32 start_millis,
-    u32 start_micros, u16 K_DROOP_x1000 (ohms x1000), then in format v2 a
-    u16 fw_version at offset 18 (the FW_VERSION the firmware was built with,
-    see docs/firmware-versions.md; v1 files predate firmware versioning and
-    report fw_version None / "pre-versioning"), zero-padded to 32 B.
+  Header (32 B, LE): magic b'BLG1', u8 version(=1|2|3), u8 record_size
+    (=52 for v1/v2, 68 for v3), u8 profile_type (bitmask: 1=PS, 2=TP,
+    4=DC), u8 pad, u32 start_millis, u32 start_micros, u16 K_DROOP_x1000
+    (ohms x1000), then in format v2+ a u16 fw_version at offset 18 (the
+    FW_VERSION the firmware was built with, see docs/firmware-versions.md;
+    v1 files predate firmware versioning and report fw_version None /
+    "pre-versioning"), zero-padded to 32 B. The header's own record_size
+    byte is cross-checked against the size expected for its version; a
+    mismatch is a hard error (a version/record_size pair that disagrees
+    with itself means a corrupt or unrecognised file, not a new format).
 
-  Record (52 B, LE): u32 t_us, then 10x f32 (share_sp, share_act, v_sp,
-    v_act, I_fc, I_batt, gFC, gBT, V_bus, I_cmd), u16 fault_flags,
-    u8 ps_phase, u8 dc_phase, u8 trap_phase, u8 flags, u8 pad[2].
-    flags bit0 = a profile / live share loop is driving the droop MDACs
-    this tick; bit1 = velocity chain valid (v_sp/v_act meaningless when
-    clear). Phase bytes are 0xFF when that profile isn't running.
+  Record, format v1/v2 (52 B, LE): u32 t_us, then 10x f32 (share_sp,
+    share_act, v_sp, v_act, I_fc, I_batt, gFC, gBT, V_bus, I_cmd),
+    u16 fault_flags, u8 ps_phase, u8 dc_phase, u8 trap_phase, u8 flags,
+    u8 pad[2]. flags bit0 = a profile / live share loop is driving the
+    droop MDACs this tick; bit1 = velocity chain valid (v_sp/v_act
+    meaningless when clear). Phase bytes are 0xFF when that profile isn't
+    running.
+
+  Record, format v3 (68 B, LE): u32 t_us, then 14x f32 (share_sp,
+    share_act, v_sp, v_act, I_fc, I_batt, gFC, gBT, V_bus, I_cmd, V_fc,
+    V_batt, V_chg, V_rgn), u16 fault_flags, u8 ps_phase, u8 dc_phase,
+    u8 trap_phase, u8 flags, u8 pad[2]. v3 appends four source/node
+    voltage channels (V_fc, V_batt, V_chg, V_rgn) after I_cmd; bit0/bit1
+    of flags are unchanged from v1/v2 (droop-drive / velocity-chain-valid).
+    v3 also defines two new flags bits describing the share loop's control
+    mode this tick: bit2 (0x04) = closed-loop control active this tick;
+    bit3 (0x08) = closed-loop has been active continuously since the last
+    share-control reset. The four combinations decode as: bit2=1 (bit3
+    irrelevant) = closed-loop; bit2=0/bit3=1 = HOLD (closed-loop was
+    active since the last reset but is not driving this tick);
+    bit2=0/bit3=0 = open-loop feedforward. The decoder passes the flags
+    byte through unchanged (raw uint) in both v1/v2 and v3 CSVs -- this is
+    a documentation-only addition, decode behaviour is identical.
 
   Trailer: a record with t_us == 0xFFFFFFFF (sentinel), reinterpreted as
     u32 sentinel, u32 records_written, u32 dropped_count, u8 close_reason
     (1=complete, 2=stop, 3=X, 4=Q, 5=fault, 6=io_error), u8 error_code,
     u32 abandoned (sampled but never drained -- wedged-card close),
-    rest zero.
+    rest zero -- padded out to the version's full record size (52 B for
+    v1/v2, 68 B for v3).
 
 Usage: python decode_benchlog.py FILE.BLG [-o out.csv]
 
@@ -57,7 +79,10 @@ events disclosed in-band by the log, not logger data loss.
 Importable API: decode_blg(data) -> DecodeResult parses an in-memory .BLG
 buffer without touching stdout/stderr/argv, for use by other tools (see
 tools/benchlog_analysis/). main() is a thin CLI wrapper around it that
-reproduces the exact stdout/stderr byte stream documented above.
+reproduces the exact stdout/stderr byte stream documented above. The
+result's csv_header (not the module-level CSV_HEADER constant) is the
+correct CSV header line for the decoded file's version -- v1/v2 files get
+the 16-column CSV_HEADER, v3 files get the 20-column CSV_HEADER_V3.
 """
 import argparse
 import struct
@@ -67,15 +92,45 @@ from dataclasses import dataclass, field
 MAGIC = b"BLG1"
 HEADER_FMT = "<4sBBBBIIH"
 HEADER_SIZE = 32
+
+# v1/v2 record layout (kept as module-level constants for back-compat with
+# any external importer that reads them directly -- they describe the
+# v1/v2 record only, now that v3 exists alongside it).
 RECORD_FMT = "<I10fHBBBB2x"
 RECORD_SIZE = 52
+
+# v3 record layout: adds V_fc, V_batt, V_chg, V_rgn (4 f32) after I_cmd.
+RECORD_FMT_V3 = "<I14fHBBBB2x"
+RECORD_SIZE_V3 = 68
+
 TRAILER_FMT = "<IIIBBI"
 CLOSE_REASONS = {1: "complete", 2: "stop", 3: "X", 4: "Q", 5: "fault",
                   6: "io_error"}
+
+SUPPORTED_VERSIONS = (1, 2, 3)
+
+# Per-version record format/size and CSV header/field list. v1 and v2 share
+# a record layout; v3 appends the four new voltage channels after I_cmd.
 CSV_FIELDS = ["share_sp", "share_act", "v_sp", "v_act", "I_fc", "I_batt",
               "gFC", "gBT", "V_bus", "I_cmd"]
 CSV_HEADER = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,V_bus,"
               "I_cmd,fault_flags,ps_phase,dc_phase,trap_phase,flags")
+
+CSV_FIELDS_V3 = ["share_sp", "share_act", "v_sp", "v_act", "I_fc", "I_batt",
+                 "gFC", "gBT", "V_bus", "I_cmd", "V_fc", "V_batt", "V_chg",
+                 "V_rgn"]
+CSV_HEADER_V3 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
+                  "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,fault_flags,ps_phase,"
+                  "dc_phase,trap_phase,flags")
+
+RECORD_INFO = {
+    1: {"fmt": RECORD_FMT, "size": RECORD_SIZE, "csv_fields": CSV_FIELDS,
+        "csv_header": CSV_HEADER},
+    2: {"fmt": RECORD_FMT, "size": RECORD_SIZE, "csv_fields": CSV_FIELDS,
+        "csv_header": CSV_HEADER},
+    3: {"fmt": RECORD_FMT_V3, "size": RECORD_SIZE_V3,
+        "csv_fields": CSV_FIELDS_V3, "csv_header": CSV_HEADER_V3},
+}
 
 # 30 s: longer than any profile's worst card-stall gap (ring = 1024 rec ~=
 # 1.0 s; longest profile is the 40 s Y), and 0.70% of the 2**32 wrap, so
@@ -95,6 +150,10 @@ class DecodeResult:
               "[decode_benchlog] " prefix.
     report_lines: every "[decode_benchlog] ..." line, in the exact order
                   the CLI prints them to stderr.
+    csv_header: the CSV header line matching this file's version (v1/v2 ==
+                module-level CSV_HEADER, v3 == CSV_HEADER_V3) -- always use
+                this rather than the module-level CSV_HEADER constant, since
+                the constant only describes v1/v2.
     """
     header: dict
     csv_rows: list = field(default_factory=list)
@@ -102,6 +161,7 @@ class DecodeResult:
     trailer: dict = None
     warnings: list = field(default_factory=list)
     report_lines: list = field(default_factory=list)
+    csv_header: str = CSV_HEADER
 
 
 def decode_blg(data):
@@ -118,13 +178,20 @@ def decode_blg(data):
         start_micros, k_droop_x1000 = struct.unpack_from(HEADER_FMT, data, 0)
     if magic != MAGIC:
         raise ValueError(f"bad magic {magic!r}, expected {MAGIC!r}")
-    if version not in (1, 2):
-        raise ValueError(f"unsupported version {version}, expected 1 or 2")
-    if record_size != RECORD_SIZE:
-        raise ValueError(f"unexpected record_size {record_size}, expected {RECORD_SIZE}")
+    if version not in SUPPORTED_VERSIONS:
+        expected = " or ".join(str(v) for v in SUPPORTED_VERSIONS)
+        raise ValueError(f"unsupported version {version}, expected {expected}")
 
-    # v2 adds u16 fw_version at offset 18 (in v1 those bytes are zero pad);
-    # None marks a pre-versioning (v1) log.
+    record_info = RECORD_INFO[version]
+    expected_record_size = record_info["size"]
+    if record_size != expected_record_size:
+        raise ValueError(
+            f"unexpected record_size {record_size} for version {version}, "
+            f"expected {expected_record_size}")
+    record_fmt = record_info["fmt"]
+
+    # v2/v3 add a u16 fw_version at offset 18 (in v1 those bytes are zero
+    # pad); None marks a pre-versioning (v1) log.
     fw_version = struct.unpack_from("<H", data, 18)[0] if version >= 2 else None
 
     header = {
@@ -145,9 +212,9 @@ def decode_blg(data):
     garbage_at = None
     max_interval_us = 0
     missed_periods = 0
-    while off + RECORD_SIZE <= len(data):
-        chunk = data[off:off + RECORD_SIZE]
-        off += RECORD_SIZE
+    while off + record_size <= len(data):
+        chunk = data[off:off + record_size]
+        off += record_size
         t_us = struct.unpack_from("<I", chunk, 0)[0]
         if t_us == 0xFFFFFFFF:
             sentinel, records_written, dropped, close_reason, error_code, \
@@ -180,10 +247,15 @@ def decode_blg(data):
             missed_periods += max(round(delta / 1000) - 1, 0)
         prev_t_us = t_us
 
-        fields = struct.unpack_from(RECORD_FMT, chunk, 0)
-        (_t, share_sp, share_act, v_sp, v_act, i_fc, i_batt, gfc, gbt,
-         v_bus, i_cmd, fault_flags, ps_phase, dc_phase, trap_phase,
-         flags) = fields
+        fields = struct.unpack_from(record_fmt, chunk, 0)
+        if version == 3:
+            (_t, share_sp, share_act, v_sp, v_act, i_fc, i_batt, gfc, gbt,
+             v_bus, i_cmd, v_fc, v_batt, v_chg, v_rgn, fault_flags, ps_phase,
+             dc_phase, trap_phase, flags) = fields
+        else:
+            (_t, share_sp, share_act, v_sp, v_act, i_fc, i_batt, gfc, gbt,
+             v_bus, i_cmd, fault_flags, ps_phase, dc_phase, trap_phase,
+             flags) = fields
         velocity_valid = bool(flags & 0x02)
         v_sp_cell = ("%.9g" % v_sp) if velocity_valid else ""
         v_act_cell = ("%.9g" % v_act) if velocity_valid else ""
@@ -192,8 +264,11 @@ def decode_blg(data):
         tp_cell = "" if trap_phase == 0xFF else trap_phase
         row = [t_us, "%.9g" % share_sp, "%.9g" % share_act, v_sp_cell,
                v_act_cell, "%.9g" % i_fc, "%.9g" % i_batt, "%.9g" % gfc,
-               "%.9g" % gbt, "%.9g" % v_bus, "%.9g" % i_cmd, fault_flags,
-               ps_cell, dc_cell, tp_cell, flags]
+               "%.9g" % gbt, "%.9g" % v_bus, "%.9g" % i_cmd]
+        if version == 3:
+            row += ["%.9g" % v_fc, "%.9g" % v_batt, "%.9g" % v_chg,
+                    "%.9g" % v_rgn]
+        row += [fault_flags, ps_cell, dc_cell, tp_cell, flags]
         csv_rows.append(",".join(str(c) for c in row))
         records_read += 1
 
@@ -247,7 +322,8 @@ def decode_blg(data):
 
     return DecodeResult(header=header, csv_rows=csv_rows,
                          records_read=records_read, trailer=trailer_dict,
-                         warnings=warnings, report_lines=report_lines)
+                         warnings=warnings, report_lines=report_lines,
+                         csv_header=record_info["csv_header"])
 
 
 def main():
@@ -267,7 +343,7 @@ def main():
         sys.exit(f"error: {e}")
 
     out = open(args.output, "w", newline="") if args.output else sys.stdout
-    out.write(CSV_HEADER + "\n")
+    out.write(result.csv_header + "\n")
     for row in result.csv_rows:
         out.write(row + "\n")
     if args.output:

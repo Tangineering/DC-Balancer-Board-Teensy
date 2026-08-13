@@ -1,0 +1,4 @@
+[decode_benchlog] version=2 fw_version=4 profile_type=2 start_millis=278751 start_micros=278751865 K_DROOP=0.300 ohm
+[decode_benchlog] records read: 13148
+[decode_benchlog] trailer: records_written=13148 dropped_count=0 abandoned=0 close_reason=complete error_code=0
+[decode_benchlog] max_interval_us=1339 missed_periods=0

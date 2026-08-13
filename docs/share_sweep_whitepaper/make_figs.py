@@ -480,6 +480,187 @@ def wp0040_governor():
     print(FIGS / "fig_wp0040_governor.png")
 
 
+# ------------------------------------------------- fw v4 sweep (TP0041-TP0068)
+V4_SWEEP = [  # run, share_sp (NOT session order: 0054-0057, 0059-0060 are
+    # single-run reboots after faults; see start_millis in decode_report.txt)
+    ("TP0041", 0.00), ("TP0042", 0.05), ("TP0043", 0.10), ("TP0044", 0.12),
+    ("TP0045", 0.15), ("TP0046", 0.17), ("TP0047", 0.20), ("TP0048", 0.25),
+    ("TP0049", 0.30), ("TP0050", 0.40), ("TP0051", 0.50), ("TP0052", 0.60),
+    ("TP0053", 0.70), ("TP0054", 0.68), ("TP0055", 0.67), ("TP0056", 0.72),
+    ("TP0057", 0.73), ("TP0058", 0.75), ("TP0059", 0.80), ("TP0060", 0.77),
+    ("TP0061", 0.78), ("TP0062", 0.79), ("TP0063", 0.81), ("TP0064", 0.83),
+    ("TP0065", 0.85), ("TP0066", 0.88), ("TP0067", 0.90), ("TP0068", 1.00),
+]
+V4_FAULTED = {"TP0053", "TP0054", "TP0055", "TP0056", "TP0057", "TP0059"}
+V4_LATCHED = {"TP0041", "TP0042", "TP0043", "TP0044",
+              "TP0066", "TP0067", "TP0068"}
+
+
+def r_cmd(d):
+    tot = d["gFC"] + d["gBT"]
+    return np.where(tot > 1e-9, d["gBT"] / np.maximum(tot, 1e-9), np.nan)
+
+
+def v4_metrics():
+    rows = []
+    for run, sp in V4_SWEEP:
+        t, d = load(run)
+        itot = d["I_fc"] + d["I_batt"]
+        hold = d["I_cmd"] >= 5.99
+        err = d["share_act"][hold] - sp if hold.any() else np.array([np.nan])
+        minority = np.minimum(d["I_fc"], d["I_batt"])
+        events = 0
+        state = "on"
+        for mi, ti in zip(minority, itot):
+            if state == "on" and mi < 0.02 and ti > 0.3:
+                state = "off"
+            elif state == "off" and mi > 0.05:
+                state = "on"
+                events += 1
+        rows.append(dict(run=run, sp=sp,
+                         err_mean=float(np.nanmean(err)),
+                         err_std=float(np.nanstd(err)),
+                         events=events,
+                         vmin=float(np.min(d["V_bus"])),
+                         faulted=run in V4_FAULTED,
+                         latched=run in V4_LATCHED))
+    return rows
+
+
+def v4_sweep_summary(rows):
+    fig, (a0, a1, a2) = plt.subplots(1, 3, figsize=(11.5, 3.5))
+
+    gov = [r for r in rows if not r["faulted"] and not r["latched"]]
+    a0.errorbar([r["sp"] for r in gov], [r["err_mean"] for r in gov],
+                yerr=[r["err_std"] for r in gov],
+                fmt="o", color=C_SHR, ecolor="#e8a583", elinewidth=2,
+                capsize=3, ms=5, label="hold mean err ± 1σ (governed runs)")
+    a0.axhline(0, color="#8a8a8a", lw=0.8)
+    style(a0, "Share error [-]")
+    a0.set_xlabel("Share setpoint", color=C_TEXT, fontsize=10)
+    a0.set_title("Steady-state (6 A hold) tracking error", color=C_TEXT,
+                 fontsize=10)
+    legend(a0, loc="lower left")
+
+    a1.plot([r["sp"] for r in rows if not r["faulted"]],
+            [r["events"] for r in rows if not r["faulted"]],
+            "o", color=C_SHR, ms=5, label="completed")
+    a1.plot([r["sp"] for r in rows if r["faulted"]],
+            [r["events"] for r in rows if r["faulted"]],
+            "x", color=C_VBUS, ms=8, mew=2, label="faulted (ERR_UV_BUS)")
+    for r in rows:
+        if r["events"] > 3:
+            a1.annotate(r["run"][2:], xy=(r["sp"], r["events"]),
+                        xytext=(0, 6), textcoords="offset points",
+                        ha="center", fontsize=7.5, color=C_TEXT)
+    style(a1, "Dropout events [-]")
+    a1.set_xlabel("Share setpoint", color=C_TEXT, fontsize=10)
+    a1.set_title("Hysteretic dropout events per run", color=C_TEXT,
+                 fontsize=10)
+    legend(a1, loc="upper left")
+
+    a2.plot([r["sp"] for r in rows if not r["faulted"]],
+            [r["vmin"] for r in rows if not r["faulted"]],
+            "o", color=C_VBUS, ms=5, label="completed")
+    a2.plot([r["sp"] for r in rows if r["faulted"]],
+            [r["vmin"] for r in rows if r["faulted"]],
+            "x", color=C_VBUS, ms=8, mew=2, label="faulted")
+    a2.axhline(15.9, color="#8a8a8a", lw=0.8, ls="--", label="no-load bus")
+    a2.axhline(12.0, color=C_VBUS, lw=0.8, ls=":", label="UV limit 12.0 V")
+    style(a2, "Run-minimum bus voltage [V]")
+    a2.set_xlabel("Share setpoint", color=C_TEXT, fontsize=10)
+    a2.set_title("Bus collapse census", color=C_TEXT, fontsize=10)
+    for r in rows:
+        if r["run"] == "TP0060":
+            a2.annotate("0060: 12.9 V", xy=(r["sp"], r["vmin"]),
+                        xytext=(6, 4), textcoords="offset points",
+                        fontsize=7.5, color=C_TEXT)
+    legend(a2, loc="lower left")
+
+    fig.tight_layout()
+    fig.savefig(FIGS / "fig_v4sweep_summary.png", dpi=150)
+    plt.close(fig)
+    print(FIGS / "fig_v4sweep_summary.png")
+
+
+def tp0053_relay():
+    t, d = load("TP0053")
+    m = (t >= 3.4) & (t <= 5.3)
+    fig, (a0, a1, a2) = plt.subplots(
+        3, 1, figsize=(8.5, 7.2), sharex=True,
+        gridspec_kw=dict(height_ratios=[1.2, 1, 1]))
+    a0.plot(t[m], d["I_fc"][m], color=C_IFC, lw=0.7, label="I_fc (meas)")
+    a0.plot(t[m], d["I_batt"][m], color=C_IBT, lw=0.7, label="I_batt (meas)")
+    style(a0, "Channel current [A]")
+    legend(a0, ncol=2, loc="upper left")
+
+    a1.plot(t[m], d["V_bus"][m], color=C_VBUS, lw=0.9, label="V_bus")
+    a1.axhline(12.0, color=C_VBUS, lw=0.8, ls=":", label="UV limit 12.0 V")
+    style(a1, "Bus voltage [V]")
+    legend(a1, loc="lower left")
+
+    a2.plot(t[m], r_cmd(d)[m], color="#c98a1b", lw=1.1,
+            label="r_cmd = gBT/(gFC+gBT)")
+    style(a2, "Commanded droop ratio [-]")
+    a2.set_xlabel("Time [s]", color=C_TEXT, fontsize=10)
+    legend(a2, loc="upper left")
+
+    fig.align_ylabels()
+    fig.tight_layout()
+    fig.savefig(FIGS / "fig_tp0053_relay.png", dpi=150)
+    plt.close(fig)
+    print(FIGS / "fig_tp0053_relay.png")
+
+
+def wp0072_cycle():
+    t, d = load("WP0072")
+    m = (t >= 17.0) & (t <= 18.48)
+    fig, (a0, a1, a2) = plt.subplots(
+        3, 1, figsize=(8.5, 7.2), sharex=True,
+        gridspec_kw=dict(height_ratios=[1.2, 1, 1]))
+    a0.plot(t[m], d["I_fc"][m], color=C_IFC, lw=0.7, label="I_fc (meas)")
+    a0.plot(t[m], d["I_batt"][m], color=C_IBT, lw=0.7, label="I_batt (meas)")
+    style(a0, "Channel current [A]")
+    legend(a0, ncol=2, loc="upper left")
+
+    a1.plot(t[m], r_cmd(d)[m], color="#c98a1b", lw=1.1,
+            label="r_cmd (slew-limited triangle)")
+    style(a1, "Commanded droop ratio [-]")
+    legend(a1, loc="upper left")
+
+    a2.plot(t[m], d["V_bus"][m], color=C_VBUS, lw=0.9, label="V_bus")
+    a2.set_ylim(11.5, 16.5)
+    a2.axhline(12.0, color=C_VBUS, lw=0.8, ls=":", label="UV limit 12.0 V")
+    style(a2, "Bus voltage [V]")
+    a2.set_xlabel("Time [s]", color=C_TEXT, fontsize=10)
+    legend(a2, loc="lower left")
+
+    fig.align_ylabels()
+    fig.tight_layout()
+    fig.savefig(FIGS / "fig_wp0072_cycle.png", dpi=150)
+    plt.close(fig)
+    print(FIGS / "fig_wp0072_cycle.png")
+
+
+def wp_boundary():
+    fig, axes = plt.subplots(2, 1, figsize=(8.5, 5.4), sharex=True)
+    for ax, run, lbl in ((axes[0], "WP0071", "WP0071 (b = 0.25, sp 0.75)"),
+                         (axes[1], "WP0073", "WP0073 (b = 0.22, sp 0.78)")):
+        t, d = load(run)
+        m = (t >= 16.6) & (t <= 18.6)
+        ax.plot(t[m], d["I_fc"][m], color=C_IFC, lw=0.7, label="I_fc")
+        ax.plot(t[m], d["I_batt"][m], color=C_IBT, lw=0.7, label="I_batt")
+        style(ax, "Channel current [A]")
+        ax.set_title(lbl, color=C_TEXT, fontsize=10)
+        legend(ax, ncol=2, loc="upper left")
+    axes[1].set_xlabel("Time [s]", color=C_TEXT, fontsize=10)
+    fig.align_ylabels()
+    fig.tight_layout()
+    fig.savefig(FIGS / "fig_wp_boundary.png", dpi=150)
+    plt.close(fig)
+    print(FIGS / "fig_wp_boundary.png")
+
+
 if __name__ == "__main__":
     tp0010_zoom()
     tp0013_zoom()
@@ -496,3 +677,10 @@ if __name__ == "__main__":
     tp0037_gap()
     wp0039_ratchet()
     wp0040_governor()
+    v4rows = v4_metrics()
+    for r in v4rows:
+        print(r)
+    v4_sweep_summary(v4rows)
+    tp0053_relay()
+    wp0072_cycle()
+    wp_boundary()

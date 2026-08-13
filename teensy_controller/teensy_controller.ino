@@ -273,6 +273,53 @@
  *    of. Every bus-switch re-close (setpoint release and ratio hysteresis) now also requires its
  *    BOOST to be enabled (§2 back-feed rule), and FAULT_UV_BUS additionally disarms while both
  *    boosts are off ('F'/'B' bench sequence) or a staged bring-up is running (sanctioned P3 sag).
+ *  - fw v5 (2026-08-12) — three changes from the fw v4 validation sweep (logs TP0041–TP0068,
+ *    WP0069–WP0073):
+ *      (a) GOVERNOR OPEN-LOOP LOW-CURRENT FALLBACK (powerBalance()). The fw v4 governor COLLAPSED
+ *          the effective setpoint to 0.5 below 2*SHARE_MINORITY_I_MIN_A — which at 0.075–0.60 A of
+ *          filtered total commands 0.038–0.30 A per channel, at or below the very 0.30 A
+ *          conduction floor the constant enforces, against ~20 mV of droop authority. That
+ *          fallback IGNITED the source-commutation relay limit cycle it existed to prevent: six
+ *          runs collapsed the bus to 7–9 V and latched ERR_UV_BUS. The loop now has two MODES,
+ *          hysteretic on the filtered total (enter closed loop above 0.60 A, fall back below
+ *          0.60 − SHARE_GOV_OL_HYST_A = 0.55 A). CLOSED-LOOP runs the Youla controller and the
+ *          (now always-relaxing) governor clip. OPEN-LOOP does not step the controller at all: it
+ *          feeds the RAW setpoint forward through the same slew limiter — the sweep showed the
+ *          commanded hold ratio tracks the setpoint within ~0.01–0.02 (whitepaper §6) — until the
+ *          closed loop has run once, and HOLDS the last applied ratio thereafter. The open→closed
+ *          transition reseeds the controller from droopSlew_prev via the new
+ *          resetShareControllerCore(), which deliberately does NOT touch share_govTotAFilt (the
+ *          mode decision variable). The collapse-to-0.5 branch is deleted as unreachable.
+ *      (b) FAULT_UV_BUS DWELL FILTER. The fw v4 wall-clock window (10 ms + 3 samples + 5 ms gap
+ *          guard) is EVADED BY DUTY CYCLE: the relay cycle's 9 ms-under / 51 ms-over period reset
+ *          the window every cycle, so runs endured 1.0–1.3 s and up to 24 excursions to 7 V before
+ *          latching. Replaced by a leaky dwell integrator (UV_BUS_DWELL_*): +dt under the limit,
+ *          −0.05·dt above it, latch at 20 ms of net dwell, per-tick dt capped at 5 ms (the
+ *          stalled-loop floor the sample count used to provide). TP0053's cycle nets +6.45 ms per
+ *          cycle → latches ≈180 ms in; WP0069's sparse ~19 ms of dips over 208 ms nets ~9.6 ms →
+ *          correctly no latch. Arming/disarming is unchanged.
+ *      (c) BENCH-LOG FORMAT v3 (68 B/record, hdr[4] = 3): the record gains V_fc, V_batt, V_chg,
+ *          V_rgn after I_cmd. Two fw v4 runs (WP0072, WP0073) ended in an MCU BROWNOUT with the
+ *          BUS in regulation — the Teensy is board-powered from V_batt through the LM1084, so the
+ *          rail that actually collapsed was unlogged. tools/decode_benchlog.py must be updated in
+ *          lockstep. DEFERRED: a source-rail UV FAULT is not added — its threshold is set from the
+ *          next brownout's logged V_batt, not from a guess.
+ *    Review-round hardening (2026-08-12, same fw v5): the HOLD branch no longer strands a
+ *    controller-initiated cutoff (an outstanding shareIsoFC/BT falls through to the feedforward
+ *    path so applyShareRatio()'s guarded re-entry keeps running) and no longer swallows a
+ *    COMMANDED setpoint change (share_actedSp re-arms the feedforward at the new setpoint);
+ *    updateShareSetpointCutoff() self-heals an ORPHANED shareIso* claim the way it already did for
+ *    shareSpCut* (doState2()'s re-assert is gated on !shareSpCutFC only, and an orphaned claim
+ *    makes applyShareRatio() bail before every MDAC write); setPowerShareSetpointLive() resets the
+ *    share-control state, so an operator 'P' after a teardown is a fresh experiment instead of a
+ *    silent no-op in HOLD; resetShareControllerCore() seeds the controller INTEGRATOR (u = R0 +
+ *    R(z)e + I(z)e, so integ = seed - R0 moves the DC operating point) rather than only the held
+ *    output, which the back-dated Ts gate made dead; the log record's flags gain bit2
+ *    (shareClosedLoopMode) and bit3 (shareClosedLoopRun) so a decoded run says which law drove the
+ *    MDACs; the 'R' and 'T'-sweep natural completions call restoreShareCutoffOnCompletion() like
+ *    'Y'/'W' (a bare 'T'/'D' does NOT — it never commands the share setpoint); and FAULT_UV_BUS
+ *    arming requires a MATCHED source pair (bus switch + that channel's boost) instead of two
+ *    independent ORs.
  */
 
 #include <VescUart.h>
@@ -350,7 +397,8 @@ EthernetUDP Udp;
                                       // the bus (V_bus >= V_BUS_CHARGED_THRESH with a source switch
                                       // closed), not by State 2; disarmed while the switches are open,
                                       // both boosts are off, or a staged bring-up is running; latches
-                                      // only after the UV_BUS_PERSIST_* filter (2026-08-12)
+                                      // only after the UV_BUS_DWELL_* leaky-integrator filter
+                                      // (2026-08-12; dwell filter fw v5)
 #define FAULT_OV_RGN          0x0200  // V_rgn overvoltage spike (regen node)
 #define FAULT_OV_CHG          0x0400  // V_chg charger input overvoltage
 #define FAULT_I2C_CHARGER     0x0800  // Ag105 I2C comms failure
@@ -440,20 +488,47 @@ EthernetUDP Udp;
 // nearer the threshold sits to the regulated bus, the earlier a developing dropout latches, but it
 // must stay clear of the deepest legitimate loaded sag (measure it on that sweep before moving).
 #define LIMIT_V_BUS_MIN  12.0f  // V — minimum VBUS while the bus is armed (see uvBusArmed)
-// FAULT_UV_BUS persistence (2026-08-12) — MIRRORS the OV_BUS_PERSIST_* filter above, same values,
-// separate state so the two windows cannot interfere. Rationale from the fw v3 validation sweep:
-// the dropout limit cycles are fast (WP0039: 34 Hz ratchet, ~9 ms per decay excursion; TP0016:
-// 17-20 Hz), so a SINGLE-sample UV check would latch State 99 on the first shallow dip of a cycle
-// that the board rides out. The filter's job is the opposite selection: single dropout dips only
-// flicker the telemetry bit, while the DEEP sustained sags latch. WP0039's sag windows below 12 V
-// lasted up to ~10+ ms and recurred over 2.7 s, so a 10 ms window with the 5 ms gap guard latches
-// within a few cycles of a real collapse — long before the MCU brownout that actually ended
-// WP0039. TODO(calibrate) with OV_BUS_PERSIST_MS.
-#define UV_BUS_PERSIST_MS          10u  // ms — continuous under-limit time to latch
-#define UV_BUS_PERSIST_MIN_SAMPLES 3u   // consecutive under-limit loop ticks (stalled-loop floor,
-                                        //      subsumed by the gap guard — see the OV note)
-#define UV_BUS_MAX_GAP_MS          5u   // ms — same value as OV_BUS_MAX_GAP_MS: max spacing between
-                                        //      under-samples still counted as one window
+// FAULT_UV_BUS dwell filter (fw v5, 2026-08-12 — REPLACES the UV_BUS_PERSIST_* wall-clock window
+// that shipped in fw v4). The fw v4 validation sweep (TP0041–TP0068, WP0069–WP0073) showed the
+// window filter is EVADED BY DUTY CYCLE: a source-commutation relay cycle spends ~9 ms under
+// 12 V and ~51 ms over it per ~60 ms period (TP0053), so every window closed before
+// UV_BUS_PERSIST_MS = 10 ms elapsed and reopened from zero on the next cycle. Runs endured
+// 1.0–1.3 s and up to 24 excursions to 7 V before anything latched — a filter tuned for a
+// CONTINUOUS sag cannot see a REPETITIVE one.
+//
+// The replacement accumulates DWELL instead of measuring a window: time under the limit is added
+// to uvBusDwellMs, time at/above it is subtracted at UV_BUS_DWELL_LEAK × dt. A repetitive cycle
+// therefore ratchets up (net gain per cycle) while isolated dips decay away, which is exactly the
+// selection the fault needs. Arithmetic against the two bounding fw v4 datasets:
+//   - TP0053 relay cycle (9 ms under / 51 ms over per 60 ms): net +9 − 0.05·51 = +6.45 ms per
+//     cycle → dwell crosses 20 ms early in the 4th under-phase, ≈180 ms after the cycle starts
+//     (fw v4 took 1.0–1.3 s). Requirement was ≤ 5 cycles.
+//   - WP0069 sparse transients (~19 ms total under-time in ≤2.3 ms excursions spread over
+//     208 ms): net ≈ 19 − 0.05·189 = 9.6 ms, below the 20 ms latch → correctly no latch, the
+//     transient counter and telemetry bit still report it.
+//   - A CONTINUOUS collapse latches in 20 ms (was 10 ms). Accepted: the old 10 ms was evadable,
+//     and 20 ms is still ~2 orders of magnitude inside the observed 1.0–1.3 s endurance.
+// DEFERRED (fw v5): a SOURCE-RAIL undervoltage fault on V_batt (the rail feeding the LM1084 logic
+// regulator) is NOT added here. Two fw v4 MCU brownouts (WP0072, WP0073) happened with the BUS in
+// regulation, so the bus UV filter cannot see them and the source rails are unlogged — the .BLG
+// v3 format below adds V_fc/V_batt/V_chg/V_rgn precisely so the next brownout sets that threshold
+// from data instead of a guess.
+#define UV_BUS_DWELL_LATCH_MS   20.0f  // ms of accumulated net under-dwell → latch. TODO(calibrate)
+#define UV_BUS_DWELL_LEAK       0.05f  // fraction of dt subtracted while at/above the limit.
+                                       //      TODO(calibrate) — sets the rejected duty cycle:
+                                       //      dwell decays only if under-time < LEAK × over-time
+#define UV_BUS_DWELL_DT_CAP_MS  5.0f   // ms — per-tick dt contribution cap. Replaces the old
+                                       //      UV_BUS_PERSIST_MIN_SAMPLES stalled-loop floor: a loop
+                                       //      that stalls (or a long-disarmed interval) can credit
+                                       //      at most 5 ms of dwell in one tick, so a latch still
+                                       //      needs >= 4 armed under-samples (fw v4 needed 3).
+                                       //      TRADE-OFF: under a BLOCKED loop the wall-clock latch
+                                       //      time is 4 ticks of whatever the loop period has
+                                       //      become - e.g. ~400 ms at a 100 ms stalled tick. That
+                                       //      is accepted: a loop stalled that badly is its own
+                                       //      fault class, and crediting an unbounded dt per tick
+                                       //      would let ONE late tick latch on a sag it never
+                                       //      actually observed
 #define LIMIT_V_RGN_MAX  28.0f  // V — regen node spike ceiling
 #define LIMIT_V_CHG_MAX  24.0f  // V — charger input max
 
@@ -550,16 +625,20 @@ bool     ovBusHasPrinted  = false;   // distinguishes "never printed" from a pri
 // production State-2 gate (and the !BENCH_TEST guard) left the board with NO bus-UV indication at
 // all — WP0039 sagged to 7.6 V through 89 dropout cycles with fault_flags == 0 and ended in an MCU
 // brownout. The fault is now armed by the BUS ITSELF: it becomes live once the bus has actually
-// been up with a source switch closed, and disarms whenever both source switches are commanded
-// LOW (a dark power stage is the normal, non-faulty condition in a State-98 dark boot, staged
-// bring-up P0, State 3 and State 99 teardown). A bring-up ramp therefore cannot trip it either —
-// the bus has not yet reached V_BUS_CHARGED_THRESH, so nothing is armed.
+// been up with a MATCHED SOURCE PAIR feeding it (bus switch closed AND that channel's boost
+// enabled — S7, fw v5 review), and disarms whenever no such pair exists (a dark power stage, or
+// boosts off with the switches still closed, are the normal non-faulty conditions in a State-98
+// dark boot, staged bring-up P0, the 'F'/'B' bench sequence, State 3 and State 99 teardown). A
+// bring-up ramp therefore cannot trip it either — the bus has not yet reached
+// V_BUS_CHARGED_THRESH, so nothing is armed.
 bool     uvBusArmed        = false;  // bus has been observed up with a source switch closed
-bool     uvBusUnderActive  = false;  // an under-limit window is open
-uint32_t uvBusUnderSince   = 0;      // ms — window start
-uint32_t uvBusLastUnderMs  = 0;      // ms — previous under-sample (gap guard)
-uint8_t  uvBusUnderSamples = 0;      // consecutive under-limit loop ticks (saturating)
-uint16_t uvBusTransientCount = 0;    // windows that closed WITHOUT latching (dropout dips)
+bool     uvBusUnderActive  = false;  // an under-limit EXCURSION is open. fw v5: this is now only
+                                     // excursion-boundary bookkeeping for the transient counter and
+                                     // the 1 Hz print — the LATCH decision is uvBusDwellMs alone
+uint32_t uvBusUnderSince   = 0;      // ms — current excursion start (print only)
+float    uvBusDwellMs      = 0.0f;   // ms — leaky accumulated under-dwell (fw v5; UV_BUS_DWELL_*)
+uint32_t uvBusLastTickMs   = 0;      // ms — previous armed evaluation, for the dwell dt
+uint16_t uvBusTransientCount = 0;    // excursions that closed WITHOUT latching (dropout dips)
 uint32_t uvBusPrintLastMs  = 0;      // ms — last "[UV] transient" print (1 Hz rate bound)
 bool     uvBusHasPrinted   = false;  // distinguishes "never printed" from a print at millis()==0
 
@@ -739,8 +818,11 @@ const float SHARE_I_TOT_MIN_A = 0.075f;
 //
 // A — minimum COMMANDED minority-channel current. The setpoint governor clips the
 // effective in-band share setpoint so the starved channel is never asked to carry
-// less than this (sp_eff ∈ [I_min/I_tot, 1 − I_min/I_tot], collapsing to 0.5 when
-// I_tot < 2·I_min). The linear ΔV₀ model does NOT set this floor: CAL-1 measured
+// less than this (sp_eff ∈ [I_min/I_tot, 1 − I_min/I_tot]). Below 2·I_min of
+// filtered total the loop leaves CLOSED-LOOP control entirely (fw v5 open-loop
+// feedforward/hold — see SHARE_GOV_OL_HYST_A below; the fw v2–v4 collapse-to-0.5
+// fallback is deleted, it ignited the TP0053 relay cycle).
+// The linear ΔV₀ model does NOT set this floor: CAL-1 measured
 // ΔV₀ = +0.05 V (system_model.md §8/§9, calibration/dv0_sweep_20260811.csv),
 // whose feasibility bound is far below the observed cycle — the floor is the
 // EMPIRICAL light-load boost nonlinearity (same regime as CAL-1's I_tot = 0.145 A
@@ -755,11 +837,19 @@ const float SHARE_I_TOT_MIN_A = 0.075f;
 // (0.245, 0.29] A, and the shipped 0.20 A sat below the whole bracket — it
 // governed nothing at the setpoints that failed. 0.30 A sits just above the
 // clean bracket edge. The collapse-to-0.5 threshold follows automatically
-// (2·I_min: 0.40 → 0.60 A of total current before any asymmetry is allowed).
+// (2·I_min: 0.40 → 0.60 A of total current before closed-loop control engages).
 // TODO(calibrate): refine via the quasi-static dropout-boundary mapping (bench
 // plan step 3) — the bracket is 45 mA wide and was measured at ONE total
 // current, so the floor's I_tot dependence is still unmeasured.
 const float SHARE_MINORITY_I_MIN_A = 0.30f;
+
+// A — hysteresis on the CLOSED→OPEN loop-mode exit (fw v5, 2026-08-12). 2·SHARE_MINORITY_I_MIN_A
+// (0.60 A of filtered total) is the entry into closed-loop share control; the exit back to
+// open-loop is SHARE_GOV_OL_HYST_A lower (0.55 A) so a total current dithering on the threshold
+// cannot chatter the two modes (each transition reseeds the controller, which is not free).
+// Value: ~8% of the threshold, well above the filtered ADC noise on |I_fc|+|I_batt| at that level.
+// TODO(calibrate) against the fw v5 re-sweep.
+const float SHARE_GOV_OL_HYST_A = 0.05f;
 
 // per powerBalance() tick (1 kHz) — ceiling on the commanded droop-ratio slew in
 // applyShareRatio(). Bounds the MDAC antiphase rail-to-rail slams that drive the
@@ -949,10 +1039,10 @@ bool wheelSpeedResetPending = false;
 // pin/sequencing, scaling, logging format — not comments/docs). The ledger
 // mapping each number to its changes lives in docs/firmware-versions.md; add a
 // row there in the same commit as the bump. Stamped into every .BLG bench-log
-// header (format v2, offset 18) so logged data is attributable to the exact
+// header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 4
+#define FW_VERSION 5
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -1392,6 +1482,12 @@ float youlaController_Power(float setpoint, float alphaRaw);
 void setDroopMdac(float fc_gain, float bt_gain);
 void applyShareRatio(float ratio);
 void resetShareControlState();
+void resetShareControllerCore(float seedRatio);
+// Share-loop state defined with powerBalance() further down, declared here so the State-98 status
+// dump (printTestStatus(), which precedes those definitions) can report the fw v5 loop mode.
+extern float share_govTotAFilt;
+extern bool  shareClosedLoopMode;
+extern bool  shareClosedLoopRun;
 void assertFcChargeEnable(bool enable);
 bool motPwrConnectBlocked();
 bool assertMotPwrEnable(bool enable);
@@ -1417,6 +1513,7 @@ void advanceTrapProfile();
 void parseTrapParamsLine(const char* line);
 void tsweepTick();
 void tsweepCancel(const char* why);
+static void restoreShareCutoffOnCompletion(const char *tag);
 void tsweepFinish();
 void startCombinedProfile(float vmax, float boundLo);
 void advanceCombinedProfile();
@@ -1452,7 +1549,7 @@ void printSdStatus();
 // Ag105 I2C), for the duration of a State-98 profile run.
 //
 // NON-BLOCKING DISCIPLINE (five dead boosts say the main loop may never stall):
-//   - The control path only ever memcpy()s 52 bytes into a static ring (logSampleTick()). No I/O,
+//   - The control path only ever memcpy()s 68 bytes into a static ring (logSampleTick()). No I/O,
 //     no formatting, no allocation, no blocking, ever.
 //   - All card I/O happens in logDrainTick(), called from loop(): it bails immediately when the
 //     card is busy and writes at most ONE <=512 B chunk per loop tick. This is the SD analogue of
@@ -1468,13 +1565,15 @@ void printSdStatus();
 //     tearing down (state99Phase == 3) — never between its sequencing phases.
 //
 // Retrieval is by card pull; tools/decode_benchlog.py turns a .BLG into CSV.
-#define LOG_REC_SIZE        52u                 // bytes per record — static_assert'ed below
+#define LOG_REC_SIZE        68u                 // bytes per record (format v3) — static_assert'ed
 #define LOG_RING_RECORDS    1024u               // ~1.0 s of 1 kHz coverage; covers a ~250 ms card
-                                                // stall with 4x margin (52 KB of the Teensy's 1 MB)
+                                                // stall with 4x margin (68 KB of the Teensy's 1 MB)
 #define LOG_RING_BYTES      (LOG_REC_SIZE * LOG_RING_RECORDS)
 #define LOG_CHUNK_MAX       512u                // one SD block per loop tick: >=512 B/ms drained
-                                                // against a 52 B/ms fill, so catch-up is fast
-#define LOG_PREALLOC_BYTES  (32u * 1024u * 1024u)  // ~10 min at 52 KB/s; truncate()d at close.
+                                                // against a 68 B/ms fill, so catch-up is fast.
+                                                // Chunks are floored to whole records below (7 x 68 =
+                                                // 476 B), so the drain accounting stays exact
+#define LOG_PREALLOC_BYTES  (32u * 1024u * 1024u)  // ~8 min at 68 KB/s; truncate()d at close.
                                                 // Contiguous allocation keeps per-chunk latency in
                                                 // the tens of us (no FAT-chain seeks mid-run)
 #define LOG_CLOSE_DEADLINE_MS 2000u             // give up draining a wedged card and close anyway
@@ -1507,24 +1606,42 @@ struct __attribute__((packed)) BenchLogRecord {
     float    gBT;          // droop_gain_BT_actual
     float    V_bus;
     float    I_cmd;        // `current` — post-clamp commanded motor current
+    // Format v3 (fw v5, 2026-08-12): the four remaining measured rails. The fw v4 sweep ended two
+    // runs (WP0072, WP0073) in an MCU BROWNOUT with the BUS still in regulation — the Teensy is
+    // board-powered from V_batt through the LM1084, so the rail that actually collapsed was never
+    // logged and no threshold for a source-rail UV fault could be set from data. All four are
+    // already refreshed every tick in updateSensors(); logging them costs 16 B/record and no new
+    // measurement work.
+    float    V_fc;
+    float    V_batt;
+    float    V_chg;        // charger input (pin 38)
+    float    V_rgn;        // regen node    (pin 39)
     uint16_t fault_flags;
     uint8_t  ps_phase;     // running profile's phase index, 0xFF when THAT profile is not active
     uint8_t  dc_phase;     // (three independent bytes — a combined DC+PS profile sets two at once)
     uint8_t  trap_phase;
     uint8_t  flags;        // bit0 = a profile / live share loop is driving the droop MDACs this
-                           //        tick (i.e. gFC/gBT are closed-loop controller output, not a
-                           //        static operator write);
-                           // bit1 = velocity chain valid (velocityChainCalibrated()) — when clear,
+                           //        tick (i.e. gFC/gBT are under loop control, not a static
+                           //        operator write). NOTE: bit0 alone no longer implies CLOSED
+                           //        loop - see bit2/bit3 (fw v5);
+                           // bit1 = velocity chain valid (velocityChainCalibrated()) - when clear,
                            //        v_sp/v_act are logged as-is but mean nothing and the decoder
-                           //        marks those columns invalid. Logging NEVER requires the encoder.
+                           //        marks those columns invalid. Logging NEVER requires the encoder;
+                           // bit2 = shareClosedLoopMode: the Youla controller is being stepped this
+                           //        tick (fw v5). Clear = OPEN-LOOP mode: either setpoint
+                           //        feedforward or a hold, distinguished by bit3;
+                           // bit3 = shareClosedLoopRun: the closed loop has run at least once since
+                           //        the last share-control reset. bit2=0,bit3=0 -> open-loop
+                           //        feedforward; bit2=0,bit3=1 -> HOLD (no MDAC write this tick);
+                           //        bit2=1 -> closed loop (fw v5).
     uint8_t  pad[2];       // zero
 };
-static_assert(sizeof(BenchLogRecord) == LOG_REC_SIZE, "BenchLogRecord must stay 52 bytes");
+static_assert(sizeof(BenchLogRecord) == LOG_REC_SIZE, "BenchLogRecord must stay 68 bytes (format v3)");
 
 #define LOG_PHASE_NONE 0xFFu   // "this profile was not running for this sample"
 
 // ── Logger module state ───────────────────────────────────────────────────────
-// DMAMEM puts the 52 KB ring in RAM2/OCRAM instead of RAM1/DTCM, which is the tight, fast memory
+// DMAMEM puts the 68 KB ring in RAM2/OCRAM instead of RAM1/DTCM, which is the tight, fast memory
 // the control code and stack want. The ring is touched once per ms by a memcpy and once per loop
 // tick by the drain — it does not need DTCM latency. (Host g++ has no such attribute.)
 #ifndef DMAMEM
@@ -1560,8 +1677,8 @@ uint32_t logLastDropped        = 0;
 uint32_t logLastAbandoned      = 0;   // records still in the ring when a wedged card forced a close
 char     logFileName[16]   = {0};     // active-or-last file name, for 'K'/'S' status
 DMAMEM uint8_t logRing[LOG_RING_BYTES];   // static ring; byte indices, whole-record granularity
-uint32_t logRingHead       = 0;       // next write offset (bytes, always a multiple of 52)
-uint32_t logRingTail       = 0;       // next drain offset  (bytes, always a multiple of 52)
+uint32_t logRingHead       = 0;       // next write offset (bytes, always a multiple of LOG_REC_SIZE)
+uint32_t logRingTail       = 0;       // next drain offset  (bytes, always a multiple of LOG_REC_SIZE)
 uint32_t logRingCount      = 0;       // records pending in the ring
 
 // Clear every per-file counter/index. Called at open and at close so a stale count can never
@@ -1770,7 +1887,8 @@ void logOpenForProfile(uint8_t typeMask) {
     uint8_t hdr[32];
     memset(hdr, 0, sizeof(hdr));
     hdr[0] = 'B'; hdr[1] = 'L'; hdr[2] = 'G'; hdr[3] = '1';
-    hdr[4] = 2;                       // format version (v2 adds fw_version at offset 18)
+    hdr[4] = 3;                       // format version (v2 added fw_version at offset 18; v3 adds
+                                      // V_fc/V_batt/V_chg/V_rgn to the record → 68 B)
     hdr[5] = (uint8_t)LOG_REC_SIZE;
     hdr[6] = typeMask;
     hdr[7] = 0;                       // pad
@@ -1815,7 +1933,7 @@ void logRequestClose(uint8_t reason) {
 }
 
 // One sample into the ring. Called from the State-98 tick spine. Cost is a rate-limit check plus a
-// 52-byte memcpy — deliberately the only logger code that runs in the control path.
+// 68-byte memcpy — deliberately the only logger code that runs in the control path.
 void logSampleTick() {
     if (!logActive) return;
     if (!rateLimitDue(rl_log_last, POWER_BAL_PERIOD_US)) return;
@@ -1842,6 +1960,11 @@ void logSampleTick() {
     r.gBT      = droop_gain_BT_actual;
     r.V_bus    = V_bus;
     r.I_cmd    = current;
+    // Format v3 (fw v5): the source/charger/regen rails, straight from updateSensors().
+    r.V_fc     = V_fc;
+    r.V_batt   = V_batt;
+    r.V_chg    = V_chg;
+    r.V_rgn    = V_rgn;
     r.fault_flags = fault_flags;
     // The combined ('Y') profile drives BOTH setpoints from one region index, so it writes that
     // index into BOTH phase bytes — the exact "both bytes non-0xFF at once" case the three
@@ -1863,6 +1986,9 @@ void logSampleTick() {
         r.flags |= 0x01;
     if (velocityChainCalibrated())
         r.flags |= 0x02;
+    // fw v5 share-loop mode, so a decoded run says WHICH law produced gFC/gBT on each tick.
+    if (shareClosedLoopMode) r.flags |= 0x04;
+    if (shareClosedLoopRun)  r.flags |= 0x08;
     r.pad[0] = 0;
     r.pad[1] = 0;
 
@@ -2317,79 +2443,92 @@ void detectFaults() {
         ovBusOverSamples = 0;
     }
 
-    // FAULT_UV_BUS — bus-armed + time-persistence filtered (2026-08-12; see the UV_BUS_PERSIST_*
+    // FAULT_UV_BUS — bus-armed + leaky-dwell filtered (fw v5, 2026-08-12; see the UV_BUS_DWELL_*
     // and uvBusArmed rationale at the constants/state blocks). Deliberately OUTSIDE the
     // !BENCH_TEST guard: the fw v3 validation sweep ran in State 98 under BENCH_TEST, where a
     // sub-9 V bus produced zero fault indication (WP0039, TP0016). Bench collapses are exactly the
     // events this fault exists to catch, so it is armed on the bench too. Arming, not a state
     // gate, is what keeps a dark or ramping power stage from tripping it.
     {
-        bool busSourceClosed = (digitalRead(FC_BUS_ENABLE) == HIGH) ||
-                               (digitalRead(BT_BUS_ENABLE) == HIGH);
-        // S4 (2026-08-12): with BOTH boosts disabled no converter can hold the bus, so a low
-        // bus is the EXPECTED condition, not a loss of source feed — same argument as the
-        // dark-switch disarm above. This is the routine bench sequence: 'F'/'B' turn the boosts
-        // off with the bus switches still closed, the bus falls back to the source rail
-        // (~8–9 V, well under LIMIT_V_BUS_MIN), and an armed UV would latch State 99 on what is
-        // a normal operator action.
-        bool boostEnabled = (digitalRead(FC_REG_ENABLE) == HIGH) ||
-                            (digitalRead(BT_REG_ENABLE) == HIGH);
+        // MATCHED SOURCE PAIR (S7, fw v5 review — supersedes the two independent ORs). A channel
+        // can only hold the bus when ITS OWN switch is closed AND ITS OWN boost is enabled. The
+        // fw v4 predicate ANDed two independent ORs, so the mixed topology "FC_BUS closed with the
+        // FC boost off, BT boost on with BT_BUS open" read as armed while NO converter was
+        // actually feeding the bus — the routine 'F' press in that topology would have latched a
+        // spurious UV. Requiring the pair also keeps the original S4 intent (both boosts off ⇒
+        // disarmed) as a strict subset.
+        bool fcFeeding = (digitalRead(FC_BUS_ENABLE) == HIGH) && (digitalRead(FC_REG_ENABLE) == HIGH);
+        bool btFeeding = (digitalRead(BT_BUS_ENABLE) == HIGH) && (digitalRead(BT_REG_ENABLE) == HIGH);
+        bool sourceFeeding = fcFeeding || btFeeding;
         // S3 (2026-08-12): the staged bring-up owns its own sags. Its arming threshold margin is
         // only V_BUS_CHARGED_THRESH − LIMIT_V_BUS_MIN = 1.5 V, the documented P3 motor-node
-        // connect sags below that, and P3 runs ~30–83 ms — far past UV_BUS_PERSIST_MS — so an
+        // connect sags below that, and P3 runs ~30–83 ms — far past UV_BUS_DWELL_LATCH_MS — so an
         // armed UV would latch on a SANCTIONED CSS-controlled connect. Bring-up connects are
         // deliberate; UV coverage targets post-bring-up steady state (the WP0039/TP0016 class of
         // collapse). busBringupTick() has its own per-phase timeouts for a bring-up that fails.
-        if (bringupActive || !busSourceClosed || !boostEnabled) {
-            // Power stage commanded dark (dark boot, bring-up P0 entry, State 3/99 teardown),
-            // boosts off, or a bring-up in progress: disarm and drop any open window.
+        uint32_t nowMs = millis();
+        if (bringupActive || !sourceFeeding) {
+            // No matched source pair (dark boot, bring-up P0 entry, State 3/99 teardown, either
+            // boost off, or a bring-up in progress): disarm, drop any open excursion, and DUMP the
+            // accumulated dwell — a disarmed interval is not evidence of a collapse, and carrying
+            // dwell across it would let two unrelated bench sequences add up into a latch.
             uvBusArmed        = false;
             uvBusUnderActive  = false;
-            uvBusUnderSamples = 0;
+            uvBusDwellMs      = 0.0f;
         } else if (V_bus >= V_BUS_CHARGED_THRESH) {
             // The bus has demonstrably come up with a source on it — from here a collapse below
             // LIMIT_V_BUS_MIN is a real loss of source feed, not a bring-up ramp.
             uvBusArmed = true;
         }
 
+        // Dwell dt. millis() resolution quantizes each tick, but the SUM over an excursion is the
+        // elapsed under-time regardless, which is all the integrator needs. The cap bounds what a
+        // single tick may credit (stalled loop, or a long disarmed gap before re-arming).
+        float dtMs = (float)(uint32_t)(nowMs - uvBusLastTickMs);
+        if (dtMs > UV_BUS_DWELL_DT_CAP_MS) dtMs = UV_BUS_DWELL_DT_CAP_MS;
+        uvBusLastTickMs = nowMs;
+
         if (uvBusArmed && V_bus < LIMIT_V_BUS_MIN) {
             fault_flags |= FAULT_UV_BUS;         // transient indication — not yet a latch
-            uint32_t nowMs = millis();
-            // Window bookkeeping identical to OV: a fresh window opens on the first under-sample
-            // and whenever the spacing from the previous one exceeds UV_BUS_MAX_GAP_MS, so sparse
-            // samples across a stalled loop are not credited as one continuous sag.
-            if (!uvBusUnderActive || (uint32_t)(nowMs - uvBusLastUnderMs) > UV_BUS_MAX_GAP_MS) {
-                if (uvBusUnderActive && uvBusTransientCount < 65535u) uvBusTransientCount++;
-                uvBusUnderActive  = true;
-                uvBusUnderSince   = nowMs;
-                uvBusUnderSamples = 0;
+            // Excursion boundary bookkeeping (transient counter + print only, fw v5): the latch is
+            // decided by the accumulated dwell below, which deliberately SURVIVES the gaps between
+            // excursions — that survival is the whole fix (TP0053's 9 ms/51 ms duty reset the fw v4
+            // window every cycle and never latched).
+            if (!uvBusUnderActive) {
+                uvBusUnderActive = true;
+                uvBusUnderSince  = nowMs;
             }
-            uvBusLastUnderMs = nowMs;
-            if (uvBusUnderSamples < 255u) uvBusUnderSamples++;
-            if ((uint32_t)(nowMs - uvBusUnderSince) >= UV_BUS_PERSIST_MS &&
-                uvBusUnderSamples >= UV_BUS_PERSIST_MIN_SAMPLES) {
+            uvBusDwellMs += dtMs;
+            if (uvBusDwellMs >= UV_BUS_DWELL_LATCH_MS) {
                 triggerFault(FAULT_UV_BUS, ERR_UV_BUS);
             }
         } else {
             if (uvBusUnderActive) {
-                // Window closed without latching — one dropout dip of a limit cycle. Counted
+                // Excursion closed without latching — one dropout dip of a limit cycle. Counted
                 // (visible via 'S') and printed at most 1 Hz, suppressed under the plot stream,
-                // exactly as the OV transient report.
+                // exactly as the OV transient report. NOTE: no dwell is cleared here; a repetitive
+                // cycle of such dips is exactly what must still ratchet to a latch.
                 if (uvBusTransientCount < 65535u) uvBusTransientCount++;
-                uint32_t nowMs = millis();
                 if (!plotSuppressStatus() &&
                     (!uvBusHasPrinted || (uint32_t)(nowMs - uvBusPrintLastMs) >= 1000u)) {
                     uvBusHasPrinted  = true;
                     uvBusPrintLastMs = nowMs;
-                    Serial.print("[UV] transient under-limit window(s), latest ~");
+                    Serial.print("[UV] transient under-limit excursion(s), latest ~");
                     Serial.print(nowMs - uvBusUnderSince);
                     Serial.print(" ms, no latch; total=");
                     Serial.print(uvBusTransientCount);
-                    Serial.println(" (1Hz-limited report)");
+                    Serial.print(", dwell=");
+                    Serial.print(uvBusDwellMs, 1);
+                    Serial.println(" ms (1Hz-limited report)");
                 }
             }
-            uvBusUnderActive  = false;
-            uvBusUnderSamples = 0;
+            uvBusUnderActive = false;
+            // Leak while the bus is healthy (and only while ARMED — a disarmed stage already had
+            // its dwell dumped above, and leaking a zero is a no-op either way).
+            if (uvBusArmed) {
+                uvBusDwellMs -= UV_BUS_DWELL_LEAK * dtMs;
+                if (uvBusDwellMs < 0.0f) uvBusDwellMs = 0.0f;
+            }
         }
     }
 
@@ -3991,6 +4130,15 @@ void setPowerShareSetpointLive(float s) {
     // starved channel off the bus.
     power_share_setpoint = constrain(s, 0.0f, 1.0f);
     powerBalanceLive     = true;
+    // S2 (2026-08-12 fw v5 review): a new operator setpoint is a FRESH EXPERIMENT, same rationale
+    // as the profile starts. Without this, shareClosedLoopRun and share_govTotAFilt survive
+    // 'X'/'Q'/safeAllSwitches()/a bring-up/State 99 from an earlier run, so a 'P' typed at low
+    // current would land in the HOLD branch and be a silent no-op, and a 'G'→'P' sequence would
+    // carry a stale load estimate into the mode decision. Callers are the operator 'P' key and the
+    // 'T' sweep's per-run setpoint (which is immediately followed by startTrapProfile(), itself a
+    // resetter) — no per-tick caller exists, so this cannot reset the controller inside a run: the
+    // profiles that interpolate the setpoint write power_share_setpoint directly.
+    resetShareControlState();
 }
 
 // Open-loop: map a typed droop ratio directly to the droop gains and write the MDAC immediately —
@@ -4101,6 +4249,11 @@ void advancePowerShareProfile() {
         // otherwise the still-set manualMotorMode keeps applyManualMotor() driving the motor in the
         // standalone branch after the sweep ends.
         haltMotorOutput();
+        // S1 (2026-08-12 fw v5 review): same end-of-run cutoff restore as 'Y'/'W'. This profile
+        // COMMANDS the share setpoint, so any controller-initiated cutoff outstanding at the end
+        // is this run's own claim to release — and nothing else will: the min-load gate stops
+        // powerBalance() before the re-entry ever runs once the motor is zeroed.
+        restoreShareCutoffOnCompletion("PS");
         logRequestClose(LOG_CLOSE_COMPLETE);   // symmetric with the 'R' stop path
         Serial.println("[PS] Power-share profile complete — motor zeroed");
         return;
@@ -4412,6 +4565,12 @@ static void tsweepRelease() {
 
 void tsweepFinish() {
     if (!tsweepActive) return;
+    // S1 (2026-08-12 fw v5 review): the sweep is the 'T' family's share-COMMANDING path (it drives
+    // setPowerShareSetpointLive() per run), so its natural completion owns any outstanding
+    // controller cutoff — restore before releasing the loop, exactly as 'Y'/'W'/'R' do. Kept in
+    // tsweepFinish() and NOT in the shared tsweepRelease(): the cancel paths ('X', 'Q', a stop
+    // key) run their own teardown, and re-closing a bus switch mid-teardown would fight it.
+    restoreShareCutoffOnCompletion("TSWEEP");
     tsweepRelease();
 }
 
@@ -4504,6 +4663,10 @@ void advanceTrapProfile() {
         // Switches are left alone on completion for the same reason as the stop path (see 'T').
         haltMotorOutput();
         logRequestClose(LOG_CLOSE_COMPLETE);   // symmetric with the 'T' stop path
+        // NOTE (S1, fw v5 review): deliberately NO restoreShareCutoffOnCompletion() here. A bare
+        // trapezoid never commands the share setpoint, so an outstanding cutoff belongs to whoever
+        // did (the sweep's tsweepFinish(), an operator 'P'), and this profile's stated contract on
+        // both its stop and completion paths is that path switches are left exactly as configured.
         Serial.println("[TP] Trapezoid complete — motor zeroed (path switches left as-is)");
         return;
     }
@@ -5080,12 +5243,25 @@ void printTestStatus() {
     else               { Serial.println("idle"); }
     Serial.print("OV transients:      "); Serial.println(ovBusTransientCount);
     // UV counterpart (2026-08-12): the dropout-dip counter is the only externally-visible trace of
-    // a sub-persistence bus sag, and the armed flag says whether the check is live at all.
+    // a bus sag that never latched, and the armed flag says whether the check is live at all.
     Serial.print("UV transients:      "); Serial.print(uvBusTransientCount);
-    Serial.print(uvBusArmed ? "  (armed)" : "  (disarmed — bus switches LOW or bus never up)");
+    Serial.print(uvBusArmed ? "  (armed)" : "  (disarmed — no matched switch+boost pair, bring-up, or bus never up)");
+    // fw v5: the leaky dwell is the actual latch state — a non-zero dwell with zero latch says a
+    // repetitive dropout cycle is being accumulated right now (UV_BUS_DWELL_LATCH_MS to go).
+    Serial.print("  dwell="); Serial.print(uvBusDwellMs, 1);
+    Serial.print("/"); Serial.print(UV_BUS_DWELL_LATCH_MS, 1); Serial.print(" ms");
     Serial.println();
     Serial.print("share sp-cut latch: ");
     Serial.println(shareSpCutFC ? "FC" : (shareSpCutBT ? "BT" : "none"));
+    // fw v5: which share-loop MODE is running, and the filtered total current that decides it —
+    // the operator needs to know whether a run's droop split came from the Youla controller or
+    // from the open-loop setpoint feedforward before reading anything into its share trace.
+    Serial.print("share loop mode:    ");
+    Serial.print(shareClosedLoopMode ? "CLOSED"
+                                     : (shareClosedLoopRun ? "OPEN (hold)" : "OPEN (feedforward)"));
+    Serial.print("  I_tot_filt="); Serial.print(share_govTotAFilt, 3);
+    Serial.print(" A, enter>"); Serial.print(2.0f * SHARE_MINORITY_I_MIN_A, 2);
+    Serial.println(" A");
     Serial.print("manualMotorMode:    ");
     Serial.println(manualMotorMode == MOTOR_TEST_OFF      ? "OFF"
                  : manualMotorMode == MOTOR_TEST_CURRENT  ? "CURRENT"
@@ -5529,8 +5705,24 @@ float PI_Controller_Motor(float error) {
 //   droopSlew_prev    — last droop ratio actually applied to the MDACs (see
 //                       applyShareRatio()); 0.5 matches the fresh-boot MDAC
 //                       state commanded by initMdacOutputs().
+//   shareClosedLoopMode — the share loop is currently running CLOSED loop (fw v5;
+//                       hysteretic on share_govTotAFilt, see powerBalance()).
+//   shareClosedLoopRun  — the closed loop has run at least once since the last
+//                       resetShareControlState(); decides whether the open-loop
+//                       mode feeds the setpoint forward or simply HOLDS.
+//   share_actedSp     — the setpoint the loop last ACTED on (S3 review fix): a
+//                       commanded setpoint change must not be swallowed by the
+//                       HOLD branch, so it re-arms the feedforward path.
 float share_govTotAFilt = 0.0f;
 float droopSlew_prev    = 0.5f;
+bool  shareClosedLoopMode = false;
+bool  shareClosedLoopRun  = false;
+float share_actedSp       = 0.5f;
+// Deadband on that comparison: the setpoint is a commanded float (Pi packet, operator 'P', a
+// profile's interpolation), never a measurement, so anything above float round-off is a real
+// command change. Kept explicit so a profile that interpolates the setpoint every tick is not
+// mistaken for noise.
+const float SHARE_SP_CHANGE_EPS = 1e-4f;
 
 // ── Setpoint-latched channel cutoff ("one owner per setpoint", 2026-08-12) ───
 // EVIDENCE (fw v3 validation sweep TP0014–TP0038; docs/share_sweep_whitepaper):
@@ -5577,6 +5769,15 @@ static bool updateShareSetpointCutoff() {
         shareSpCutBT = false;
         shareIsoBT   = false;
     }
+    // Same self-heal for a RATIO-based cutoff claim with no setpoint latch behind it (S1,
+    // 2026-08-12 fw v5 safety review). shareIsoFC/BT is equally a claim of ownership over an OPEN
+    // switch: doState2() re-asserts FC_BUS/BT_BUS gated on !shareSpCutFC only, so a re-assert can
+    // leave the switch HIGH with shareIso* still set — and applyShareRatio() returns early before
+    // EVERY MDAC write while shareIso* is set, so an orphaned claim silently freezes the droop
+    // split for the rest of the run. Drop the orphan; the cutoff re-fires through the normal
+    // entry path on the next tick if the ratio still calls for it.
+    if (shareIsoFC && digitalRead(FC_BUS_ENABLE) == HIGH) shareIsoFC = false;
+    if (shareIsoBT && digitalRead(BT_BUS_ENABLE) == HIGH) shareIsoBT = false;
 
     // ── Release (evaluated FIRST, so a setpoint that flips from one side of the
     // band to the other releases this side before the other side may latch —
@@ -5601,6 +5802,12 @@ static bool updateShareSetpointCutoff() {
             // topology-pinned measurement, and droopSlew_prev (untouched
             // throughout) still holds the ratio physically on the MDACs, so the
             // first post-release write walks from the true hardware state.
+            // fw v5 (S9): this also zeroes share_govTotAFilt, so under load the
+            // loop runs OPEN-LOOP FEEDFORWARD at the released setpoint for the
+            // ~20-40 ms the EMA needs to climb back past 2*SHARE_MINORITY_I_MIN_A
+            // - slew-limited, no controller step. Intended: the alternative is
+            // stepping a just-reset controller against a topology that changed
+            // this very tick.
             resetShareControlState();
         }
     } else if (shareSpCutBT && sp <= DROOP_R_MAX) {
@@ -5617,7 +5824,8 @@ static bool updateShareSetpointCutoff() {
             shareIsoBT       = false;
             shareSpCutBT     = false;
             releasedThisTick = true;
-            resetShareControlState();
+            resetShareControlState();   // fw v5 (S9): ~20-40 ms of open-loop
+                                        // feedforward follows - see the FC branch
         }
     }
 
@@ -5683,6 +5891,109 @@ void powerBalance() {
     // loop is frozen, so the filter correctly resumes from its pre-hold value.
     share_govTotAFilt += SHARE_GOV_FILT_ALPHA * (totalA - share_govTotAFilt);
 
+    // ── Loop-mode decision: closed loop vs open-loop feedforward (fw v5) ──────
+    // EVIDENCE (fw v4 validation sweep TP0041–TP0068): the governor's old
+    // collapse-to-0.5 fallback IGNITED the failure it existed to prevent. Below
+    // 2·SHARE_MINORITY_I_MIN_A it forced sp_eff = 0.5, which at 0.075–0.60 A of
+    // filtered total commands 0.038–0.30 A PER CHANNEL — at or below the very
+    // 0.30 A conduction floor the constant enforces — against only ~20 mV of
+    // droop authority at those currents. Six runs source-commutation relayed,
+    // collapsed the bus to 7–9 V and latched ERR_UV_BUS. A closed loop cannot
+    // be asked to hold a split it has neither the authority nor the conduction
+    // to realize, so below the threshold the controller is NOT RUN AT ALL.
+    // Hysteresis (SHARE_GOV_OL_HYST_A) keeps a total current sitting on the
+    // threshold from chattering between the two modes.
+    if (!shareClosedLoopMode) {
+        if (share_govTotAFilt > 2.0f * SHARE_MINORITY_I_MIN_A) {
+            shareClosedLoopMode = true;
+            // OPEN→CLOSED seed: restart the controller from the ratio physically
+            // on the MDACs (droopSlew_prev) so its first output continues from
+            // the held split instead of the 0.5 default — the same discipline as
+            // the setpoint-latch release, which resets the controller and lets
+            // the slew limiter walk from droopSlew_prev. Deliberately NOT
+            // resetShareControlState(): that zeroes share_govTotAFilt, which
+            // would drop the loop straight back into open-loop mode next tick.
+            resetShareControllerCore(droopSlew_prev);
+        }
+    } else if (share_govTotAFilt < 2.0f * SHARE_MINORITY_I_MIN_A - SHARE_GOV_OL_HYST_A) {
+        shareClosedLoopMode = false;
+    }
+
+    if (!shareClosedLoopMode) {
+        // ── OPEN-LOOP mode ────────────────────────────────────────────────────
+        // Case 1 — the closed loop has ALREADY run this profile: HOLD. No MDAC
+        // write at all; droopSlew_prev (maintained by applyShareRatio()) keeps
+        // the last physically-applied ratio, which is the settled split the
+        // loop converged to before the load fell away. Re-commanding anything
+        // here would slam the gains during a coast-down, the transient the slew
+        // limiter and this whole mitigation family exist to remove.
+        //
+        // PRODUCTION SEMANTICS (State 2 cruise/regen, review-traced): a cruise or
+        // regen window that drops the total below 0.55 A parks the split here.
+        // chargingControl()/doState2() may re-close BT_BUS in that window; the
+        // droop gains simply stay at the converged split until the load brings
+        // the filtered total back over 0.60 A, at which point the controller
+        // restarts seeded from that same split. Nothing re-commands the MDACs in
+        // between — by design.
+        //
+        // TWO EXCEPTIONS to the hold (S1/S3, 2026-08-12 safety review):
+        //   (a) an outstanding CONTROLLER-INITIATED cutoff (shareIsoFC/BT). The
+        //       re-entry that re-closes that switch lives in applyShareRatio(),
+        //       so a hold that never calls it strands the channel off the bus
+        //       for the rest of the run — and doState2()'s re-assert (gated on
+        //       !shareSpCutFC, not shareIsoFC) can then orphan the claim, which
+        //       makes applyShareRatio() bail before every later MDAC write. Fall
+        //       through to the feedforward path so the guarded re-entry keeps
+        //       being evaluated.
+        //   (b) a CHANGED setpoint. HOLD is about a load that fell away, not
+        //       about ignoring commands: an EMS/operator setpoint change while
+        //       parked must take effect at the NEW setpoint, open loop, rather
+        //       than wait for the load to return.
+        if (shareClosedLoopRun) {
+            bool spChanged      = fabsf(power_share_setpoint - share_actedSp) > SHARE_SP_CHANGE_EPS;
+            bool isoOutstanding = shareIsoFC || shareIsoBT;
+            if (!spChanged && !isoOutstanding) return;   // HOLD
+            // A changed setpoint re-arms the feedforward path (a still-outstanding
+            // cutoff does NOT: once it clears, the hold resumes).
+            if (spChanged) shareClosedLoopRun = false;
+        }
+
+        // Case 2 — no closed-loop authority yet this profile: FEEDFORWARD the
+        // raw setpoint. The fw v4 sweep showed the commanded hold ratio tracks
+        // the setpoint within ~0.01–0.02 across the band (whitepaper §6), so the
+        // setpoint IS the correct open-loop map; what ignited the TP0053 relay
+        // cycle was commanding an infeasible balanced 0.5 split at ~0.2 A total,
+        // not the setpoint itself. The governor's minority-current clip does not
+        // apply: with no controller running there is no loop to limit-cycle, and
+        // the operator's setpoint is honoured as typed.
+        // F1 (2026-08-12 fw v5 review): an OUT-OF-BAND setpoint is NEVER actuated here — the
+        // setpoint latch owns it ("one owner per setpoint"), and this path must not act as a
+        // second owner. The reachable case is the RELEASE tick: updateShareSetpointCutoff()
+        // returns false on a release so the loop gets one live tick, and a setpoint that flipped
+        // straight from one out-of-band side to the other (0.05 → 0.95) is still out of band on
+        // that tick. Feeding it forward would hand applyShareRatio() an unslewed extreme ratio,
+        // which fires the OPPOSITE channel's r-based cutoff immediately — defeating the one-live-
+        // tick release the fw v4 latch was built for (TP0037/TP0015), and worse, claiming the cut
+        // under shareIsoBT/FC instead of shareSpCutBT/FC. The external re-close guards
+        // (chargingControl(), doState2()) key on shareSpCut*, so an shareIso*-claimed cut can be
+        // re-closed by them and immediately re-cut here — switch cycling. Returning quietly leaves
+        // exactly one idle tick, after which the latch's own entry branch claims the new side.
+        if (power_share_setpoint < DROOP_R_MIN || power_share_setpoint > DROOP_R_MAX) return;
+
+        // Same slew constraint and the same origin as the controller path below, so mode changes
+        // are continuous on the MDACs.
+        float target = constrain(power_share_setpoint,
+                                 droopSlew_prev - DROOP_RATIO_SLEW_PER_TICK,
+                                 droopSlew_prev + DROOP_RATIO_SLEW_PER_TICK);
+        applyShareRatio(target);
+        share_actedSp = power_share_setpoint;   // this tick acted on this setpoint (S3)
+        return;
+    }
+
+    // ── CLOSED-LOOP mode ─────────────────────────────────────────────────────
+    shareClosedLoopRun = true;
+    share_actedSp      = power_share_setpoint;
+
     // ── Setpoint governor (limit-cycle mitigation, 2026-08-11) ────────────────
     // In-band setpoints ask the droop split to hold a live minority channel at
     // sp·I_tot (or (1−sp)·I_tot); below the light-load conduction floor that is
@@ -5694,17 +6005,23 @@ void powerBalance() {
     // (2026-08-12 — "one owner per setpoint"). Governing them would break the
     // full-span semantics, and the sweep showed the topology-forced share is
     // stable once the loop stops fighting it (TP0009/TP0011).
+    // fw v5: the old collapse-to-0.5 else-branch is GONE — closed-loop mode is
+    // only entered above 2·SHARE_MINORITY_I_MIN_A, so lo < 0.5 < hi always and
+    // the collapse case is unreachable here. The open-loop mode above replaced
+    // it (that fallback commanded a split below the conduction floor it was
+    // enforcing, and ignited the TP0053 relay cycle).
     float spEff = power_share_setpoint;
     if (spEff >= DROOP_R_MIN && spEff <= DROOP_R_MAX) {
-        float lo = 0.5f;
-        float hi = 0.5f;
-        if (share_govTotAFilt > 2.0f * SHARE_MINORITY_I_MIN_A) {
-            lo = SHARE_MINORITY_I_MIN_A / share_govTotAFilt;
-            hi = 1.0f - lo;
-        }
-        // (lo ≤ 0.5 ≤ hi by construction; at I_tot ≤ 2·I_min the achievable set
-        // collapses to the balanced split — the one asymmetry-free operating
-        // point, and the sweep's cleanest (TP0007).)
+        float lo = SHARE_MINORITY_I_MIN_A / share_govTotAFilt;
+        // Ceiling at 0.5 for the HYSTERESIS SLIVER only: closed-loop mode is held down to
+        // 2·I_min − SHARE_GOV_OL_HYST_A (0.55 A), where the raw bound would be lo = 0.545 > hi =
+        // 0.455 — an INVERTED pair, and constrain(x, lo, hi) with lo > hi returns lo, i.e. it
+        // would command the minority split on the WRONG side (0.25 A minority, below the floor).
+        // Clamping lo to 0.5 makes the bound degenerate to the balanced split across that 0.05 A
+        // sliver instead, which is the least-asymmetric feasible command while the loop is on its
+        // way out to open-loop mode. Above 0.60 A (the entry threshold) this branch never fires.
+        if (lo > 0.5f) lo = 0.5f;
+        float hi = 1.0f - lo;
         spEff = constrain(spEff, lo, hi);
     }
 
@@ -5880,11 +6197,43 @@ uint32_t shareCtrl_lastMicros = 0;
 //                    latch here would also be self-referential.
 // The Ts gate is back-dated (not zeroed) so the first governed tick steps the
 // controller immediately — same idiom as resetControlRateLimiters().
-void resetShareControlState() {
+// Controller-only restart (fw v5): biquads + prefilter + held output + Ts gate, with the held
+// output SEEDED to a caller-chosen ratio. Factored out of resetShareControlState() so the
+// open→closed loop-mode transition in powerBalance() can restart the controller from
+// droopSlew_prev WITHOUT zeroing share_govTotAFilt — resetting the governor filter there would
+// drop the loop straight back into open-loop mode on the next tick (the filter is the mode
+// decision variable). Nothing here touches droopSlew_prev, the MDACs, or the latches.
+void resetShareControllerCore(float seedRatio) {
+    float seed = constrain(seedRatio, 0.0f, 1.0f);
     shareControllerReset();                 // biquads + measured-share prefilter
-    shareCtrl_heldOut    = 0.5f;
+    // S5 (2026-08-12 fw v5 review): seed the INTEGRATOR, not just the held output. The controller
+    // forms u = SHARE_CTRL_R0 + R(z)·e + I(z)·e with R0 = 0.5 fixed (share_controller.h), and the
+    // Ts gate below is back-dated so the very first closed-loop tick recomputes u before
+    // shareCtrl_heldOut is ever returned — a held-output seed alone is therefore DEAD, and the
+    // first output would always be ≈0.5 regardless of where the MDACs actually sit. Offsetting the
+    // integrator state by (seed − R0) moves the controller's DC operating point to the seed, so the
+    // first output is seed + (transient terms in e) and the loop genuinely continues from the
+    // held split. Anti-windup absorbs the excess if that lands outside [0,1]. Coefficients are
+    // untouched — this only writes controller STATE, the same variable shareControllerReset()
+    // zeroes. shareCtrl_heldOut is still seeded for the (test-visible) pre-first-tick read.
+    shareCtrl_integ      = seed - SHARE_CTRL_R0;
+    shareCtrl_heldOut    = seed;
     shareCtrl_lastMicros = micros() - (uint32_t)SHARE_CTRL_TS_US;
+}
+
+void resetShareControlState() {
+    resetShareControllerCore(0.5f);         // 0.5 = the historic fresh-start state: seeding at
+                                            // SHARE_CTRL_R0 leaves the integrator at exactly 0,
+                                            // i.e. bit-identical to the pre-fw-v5 reset
     share_govTotAFilt    = 0.0f;
+    share_actedSp        = power_share_setpoint;   // no phantom "setpoint changed" on the first tick
+    // fw v5 loop-mode state: a fresh run starts in OPEN-LOOP feedforward at its commanded
+    // setpoint and only enters closed-loop control once the filtered total current earns it.
+    // shareClosedLoopRun false is what makes that first open-loop phase feed the setpoint
+    // forward rather than hold — the hold semantics belong to a load that has FALLEN AWAY from
+    // a converged closed loop, not to a run that has not started yet.
+    shareClosedLoopMode  = false;
+    shareClosedLoopRun   = false;
 }
 
 float youlaController_Power(float setpoint, float alphaRaw) {

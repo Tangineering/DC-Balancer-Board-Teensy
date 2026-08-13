@@ -814,3 +814,45 @@ Opus safety + Sonnet correctness reviews → fixes by the original agents → or
 review); the safety review found 4 HIGHs (S1–S4 above) that the implementer and tests missed —
 all integration-surface bugs (who else writes these switches / feeds these arming terms). See
 `.claude/skills/orchestrated-feature`. **Tests: 1437 production + 133 bench pass.**
+
+---
+
+## Status & session addendum (2026-08-12, fw v5: relay-cycle root fix + log v3)
+
+The fw v4 validation sweep (TP0041–TP0068, WP0069–WP0073; whitepaper §6 "Second validation
+sweep") validated the setpoint latch and the 0.30 A floor at every fw v3 failure point, but
+found (a) a **source-commutation relay cycle** at FC-heavy setpoints — ignited by the
+governor's own collapse-to-0.5 fallback in the 0.075–0.60 A window, where 0.5 commands a
+split below the floor it enforces; six ERR_UV_BUS latches with bus collapse to 7–9 V;
+(b) the UV window filter evaded for 1.0–1.3 s by the relay's 9/51 ms duty; (c) two MCU
+brownouts (WP0072/73) with the bus in regulation — the collapsing source rail is unlogged.
+**fw v5 (pending first flash; ledger row has full detail):**
+
+- **Governor open-loop fallback (user-specified design).** powerBalance() is bimodal on the
+  filtered total (closed-loop above 0.60 A, exit below 0.55 A, `SHARE_GOV_OL_HYST_A`):
+  open-loop feeds the RAW setpoint forward slew-limited until closed-loop has run once
+  (`shareClosedLoopRun`), then HOLDs the last applied ratio — with two exceptions (changed
+  setpoint → feedforward at the new setpoint; outstanding `shareIso*` → fall through so
+  applyShareRatio()'s guarded re-entry keeps evaluating). Out-of-band setpoints are never
+  actuated by the feedforward (F1 — the release tick's one-live-tick guarantee). The
+  collapse-to-0.5 branch is deleted. Constant floor 0.30 A kept per user decision
+  (predictable for the EMS); the fraction-vs-absolute floor question stays open pending the
+  two-axis sweep.
+- **UV leaky-dwell filter.** `UV_BUS_DWELL_LATCH_MS` 20 / `UV_BUS_DWELL_LEAK` 0.05 /
+  `UV_BUS_DWELL_DT_CAP_MS` 5 replace the `UV_BUS_PERSIST_*` window: TP0053-class relay
+  latches in ≈180 ms (was 1.0–1.3 s), WP0069-class sparse transients still pass. Arming now
+  requires a **matched** switch+boost pair (S7). Bus-referenced only — the source-rail UV
+  fault is deferred until logged V_batt data from the next brownout sets a threshold.
+- **BLG format v3 (68 B records).** `V_fc`/`V_batt`/`V_chg`/`V_rgn` logged after `I_cmd`;
+  flags bit2/bit3 = closed-loop-mode/closed-loop-run (HOLD decodes as bit3 without bit2).
+  `tools/decode_benchlog.py` + `benchlog_analysis` read v3 and keep v1/v2 byte-identical;
+  analyzer exe rebuilt. Pi telemetry unchanged (this is the SD bench log, not UDP).
+- **Process:** orchestrated round (parallel firmware + tooling implementers, independent
+  test-writer, two-lens reviews). Safety review: S1 HIGH (HOLD stranding a `shareIso*`
+  cutoff / doState2-orphaned claim) + S2–S9. Test-writer caught F1 (release-tick side-flip
+  feedforward firing the opposite r-cutoff unslewed, mis-claimed as `shareIso*`) — a class
+  both reviewers missed. Correctness review: no logic bugs; six coverage gaps closed (T1–T7).
+  **Tests: 1524 production + 142 bench pass.**
+- **Next bench:** flash fw v5; re-enter TP0053/TP0055 (relay region) and the WP b-ladder
+  (b = 0.20/0.22) scope-armed with VBT + LM1084 input probed; two-axis floor sweep
+  (Imax × setpoint) to settle fraction vs absolute; vehicle-source ΔV0 still open.

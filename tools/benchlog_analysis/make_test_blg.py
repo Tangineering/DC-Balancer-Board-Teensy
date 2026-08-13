@@ -2,12 +2,18 @@
 """Generate a synthetic, realistic .BLG bench log for pipeline testing.
 
 No real .BLG capture exists yet, so this writer produces one in exactly the
-format documented in tools/decode_benchlog.py's docstring (format v1, 32-B
-header, 52-B records, sentinel trailer) with plausible-looking signal
+format documented in tools/decode_benchlog.py's docstring (32-B header,
+sentinel trailer; 52-B records for format v1/v2, 68-B records with four
+extra voltage channels for format v3) with plausible-looking signal
 content, for exercising ingest_log.py / common.py end to end.
 
 Usage:
   python make_test_blg.py [-o logs/TEST0001.BLG] [--seed 0] [--truncate]
+  python make_test_blg.py --v3 [-o logs/TEST0002.BLG] [--seed 0]
+
+--v3 writes the format-v3 header/record layout (adds V_fc, V_batt, V_chg,
+V_rgn); default is the v1/v2 layout, selected as usual via --header-v1 /
+fw_version.
 
 --truncate drops the trailer and cuts off the last ~30% of records (plus a
 partial trailing record), to exercise the truncated-file / no-trailer path
@@ -24,6 +30,8 @@ HEADER_FMT = "<4sBBBBIIH"
 HEADER_SIZE = 32
 RECORD_FMT = "<I10fHBBBB2x"
 RECORD_SIZE = 52
+RECORD_FMT_V3 = "<I14fHBBBB2x"
+RECORD_SIZE_V3 = 68
 TRAILER_FMT = "<IIIBBI"
 
 DURATION_S = 40.0
@@ -95,6 +103,18 @@ def build_signals(seed, wrap=False):
     v_bus = 17.5 + rng.normal(0.0, 0.05, N_SAMPLES)
     i_cmd = np.clip(2.0 * (v_sp - v_act), -8.0, 8.0)
 
+    # v3-only source/node voltages: plausible, slowly-varying levels with
+    # noise. Computed unconditionally (cheap) but only packed into records
+    # when the v3 layout is selected.
+    v_fc = 12.5 + 0.3 * np.sin(2 * np.pi * t / 17.0) \
+        + rng.normal(0.0, 0.02, N_SAMPLES)
+    v_batt = 8.0 + 0.15 * np.sin(2 * np.pi * t / 29.0 + 0.5) \
+        + rng.normal(0.0, 0.02, N_SAMPLES)
+    v_chg = 12.0 + 0.2 * np.sin(2 * np.pi * t / 13.0 + 1.0) \
+        + rng.normal(0.0, 0.02, N_SAMPLES)
+    v_rgn = 0.5 + 0.1 * np.abs(np.sin(2 * np.pi * t / 9.0)) \
+        + rng.normal(0.0, 0.01, N_SAMPLES)
+
     fault_flags = np.zeros(N_SAMPLES, dtype=np.uint16)
 
     # ps_phase walks 0..15 over the run.
@@ -125,16 +145,21 @@ def build_signals(seed, wrap=False):
     return dict(t_us=t_us, share_sp=share_sp, share_act=share_act,
                 v_sp=v_sp, v_act=v_act, i_fc=i_fc, i_batt=i_batt,
                 gfc=gfc, gbt=gbt, v_bus=v_bus, i_cmd=i_cmd,
+                v_fc=v_fc, v_batt=v_batt, v_chg=v_chg, v_rgn=v_rgn,
                 fault_flags=fault_flags, ps_phase=ps_phase,
                 dc_phase=dc_phase, trap_phase=trap_phase, flags=flags)
 
 
-def pack_header(fw_version=1, header_v1=False):
+def pack_header(fw_version=1, header_v1=False, v3=False):
     """Format-v2 header (u16 fw_version at offset 18) by default; header_v1
     writes the legacy v1 layout (no fw_version) for decoder back-compat
-    testing."""
-    version = 1 if header_v1 else 2
-    hdr = struct.pack(HEADER_FMT, MAGIC, version, RECORD_SIZE, PROFILE_TYPE, 0,
+    testing; v3 writes the format-v3 header (record_size=68), which also
+    carries fw_version (v3 always has it, like v2)."""
+    if header_v1 and v3:
+        raise ValueError("header_v1 and v3 are mutually exclusive")
+    version = 1 if header_v1 else (3 if v3 else 2)
+    record_size = RECORD_SIZE_V3 if v3 else RECORD_SIZE
+    hdr = struct.pack(HEADER_FMT, MAGIC, version, record_size, PROFILE_TYPE, 0,
                        START_MILLIS, START_MICROS, K_DROOP_X1000)
     if not header_v1:
         hdr += struct.pack("<H", fw_version)
@@ -143,7 +168,21 @@ def pack_header(fw_version=1, header_v1=False):
     return hdr
 
 
-def pack_record(sig, i):
+def pack_record(sig, i, v3=False):
+    if v3:
+        rec = struct.pack(RECORD_FMT_V3, int(sig["t_us"][i]),
+                           float(sig["share_sp"][i]), float(sig["share_act"][i]),
+                           float(sig["v_sp"][i]), float(sig["v_act"][i]),
+                           float(sig["i_fc"][i]), float(sig["i_batt"][i]),
+                           float(sig["gfc"][i]), float(sig["gbt"][i]),
+                           float(sig["v_bus"][i]), float(sig["i_cmd"][i]),
+                           float(sig["v_fc"][i]), float(sig["v_batt"][i]),
+                           float(sig["v_chg"][i]), float(sig["v_rgn"][i]),
+                           int(sig["fault_flags"][i]), int(sig["ps_phase"][i]),
+                           int(sig["dc_phase"][i]), int(sig["trap_phase"][i]),
+                           int(sig["flags"][i]))
+        assert len(rec) == RECORD_SIZE_V3
+        return rec
     rec = struct.pack(RECORD_FMT, int(sig["t_us"][i]),
                        float(sig["share_sp"][i]), float(sig["share_act"][i]),
                        float(sig["v_sp"][i]), float(sig["v_act"][i]),
@@ -158,32 +197,34 @@ def pack_record(sig, i):
 
 
 def pack_trailer(records_written, dropped=0, close_reason=1, error_code=0,
-                  abandoned=0):
+                  abandoned=0, v3=False):
+    record_size = RECORD_SIZE_V3 if v3 else RECORD_SIZE
     body = struct.pack(TRAILER_FMT, 0xFFFFFFFF, records_written, dropped,
                         close_reason, error_code, abandoned)
-    body += b"\x00" * (RECORD_SIZE - len(body))
-    assert len(body) == RECORD_SIZE
+    body += b"\x00" * (record_size - len(body))
+    assert len(body) == record_size
     return body
 
 
 def build_blg(seed, truncate, wrap=False, dropped=0, fw_version=1,
-              header_v1=False):
+              header_v1=False, v3=False):
     sig = build_signals(seed, wrap=wrap)
     n = N_SAMPLES
     if truncate:
         n = int(N_SAMPLES * 0.70)
+    record_size = RECORD_SIZE_V3 if v3 else RECORD_SIZE
 
     out = bytearray()
-    out += pack_header(fw_version=fw_version, header_v1=header_v1)
+    out += pack_header(fw_version=fw_version, header_v1=header_v1, v3=v3)
     for i in range(n):
-        out += pack_record(sig, i)
+        out += pack_record(sig, i, v3=v3)
 
     if truncate:
         # Cut off mid-record: a partial trailing record's worth of garbage
         # bytes, and no trailer -- simulates power loss mid-write.
-        out += b"\xA5" * (RECORD_SIZE // 2)
+        out += b"\xA5" * (record_size // 2)
     else:
-        out += pack_trailer(records_written=n, dropped=dropped)
+        out += pack_trailer(records_written=n, dropped=dropped, v3=v3)
 
     return bytes(out)
 
@@ -208,11 +249,18 @@ def main():
     ap.add_argument("--header-v1", action="store_true",
                      help="write the legacy format-v1 header (no fw_version) "
                           "for decoder back-compat testing")
+    ap.add_argument("--v3", action="store_true",
+                     help="write the format-v3 header/record layout "
+                          "(adds V_fc, V_batt, V_chg, V_rgn); mutually "
+                          "exclusive with --header-v1")
     args = ap.parse_args()
+
+    if args.header_v1 and args.v3:
+        raise SystemExit("--header-v1 and --v3 are mutually exclusive")
 
     data = build_blg(args.seed, args.truncate, wrap=args.wrap,
                      dropped=args.dropped, fw_version=args.fw_version,
-                     header_v1=args.header_v1)
+                     header_v1=args.header_v1, v3=args.v3)
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -220,7 +268,8 @@ def main():
         f.write(data)
 
     print(f"[make_test_blg] wrote {out_path} ({len(data)} bytes, "
-          f"truncate={args.truncate}, wrap={args.wrap}, seed={args.seed})")
+          f"truncate={args.truncate}, wrap={args.wrap}, v3={args.v3}, "
+          f"seed={args.seed})")
 
 
 if __name__ == "__main__":

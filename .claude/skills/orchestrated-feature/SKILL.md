@@ -1,11 +1,13 @@
 ---
 name: orchestrated-feature
-description: Implement a firmware feature round through orchestrated subagents — spec with verified anchors, Opus implementer, independent Sonnet test-writer, parallel two-lens first-pass reviews (safety/sequencing + correctness/test-fidelity), fixes routed back to the original agents, then the orchestrator's own final review and test runs. Use for any multi-part change to teensy_controller.ino (new feature, fault rework, control-semantics change), especially when the user asks to "use agents", "orchestrate", or names Opus/Sonnet for the edits. Takes an argument for the planning gate — "plan-approval" (present the plan in plan mode and wait for user approval) or "direct" (plan inline and proceed immediately; the default).
+description: Implement a code feature round through orchestrated subagents — spec with verified anchors, Opus implementer, independent Sonnet test-writer, parallel two-lens first-pass reviews (firmware safety/sequencing + correctness/test-fidelity, or the data-integrity/contract lens pair for tooling), fixes routed back to the original agents, then the orchestrator's own final review and test runs. Use for any multi-part code change in this repo — teensy_controller.ino (new feature, fault rework, control-semantics change) or the Python tooling (analysis pipeline, decoder, GUI, controller-design scripts) — especially when the user asks to "use agents", "orchestrate", or names Opus/Sonnet for the edits. Takes an argument for the planning gate — "plan-approval" (present the plan in plan mode and wait for user approval) or "direct" (plan inline and proceed immediately; the default).
 ---
 
-# Orchestrated firmware feature round
+# Orchestrated feature round
 
-Multi-agent implementation pipeline for `teensy_controller/teensy_controller.ino` changes.
+Multi-agent implementation pipeline for code changes in this repo — firmware
+(`teensy_controller/teensy_controller.ino`) or Python tooling (stages written
+firmware-first; the "Non-firmware rounds" section says what swaps).
 Distilled from the fw v4 round (2026-08-12), where the pipeline caught 4 HIGH-severity
 integration bugs and one vacuous-test class that a single-pass implementation would have
 shipped, then corrected and extended against the transcripts of five earlier orchestrated

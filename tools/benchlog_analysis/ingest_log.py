@@ -65,7 +65,11 @@ def ingest(blg_path):
     csv_path = run_dir / f"{name}.csv"
     tmp = csv_path.with_suffix(".csv.tmp")
     with open(tmp, "w", newline="") as f:
-        f.write(decode_benchlog.CSV_HEADER + "\n")
+        # Use the decode result's own csv_header, not the module-level
+        # decode_benchlog.CSV_HEADER constant -- that constant only
+        # describes the v1/v2 (16-column) layout; a v3 file's header has
+        # four extra voltage columns (see decode_benchlog.CSV_HEADER_V3).
+        f.write(result.csv_header + "\n")
         for row in result.csv_rows:
             f.write(row + "\n")
     os.replace(tmp, csv_path)

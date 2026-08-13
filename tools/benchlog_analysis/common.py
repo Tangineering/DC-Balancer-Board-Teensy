@@ -32,6 +32,15 @@ CSV_COLUMNS = ["t_us", "share_sp", "share_act", "v_sp", "v_act", "I_fc",
                "I_batt", "gFC", "gBT", "V_bus", "I_cmd", "fault_flags",
                "ps_phase", "dc_phase", "trap_phase", "flags"]
 
+# v3 decode_benchlog CSVs (tools/decode_benchlog.py CSV_HEADER_V3) add four
+# source/node voltage channels (V_fc, V_batt, V_chg, V_rgn) after I_cmd.
+# load_csv() accepts either layout; the extra columns are simply extra keys
+# in the returned dict -- no figure currently reads them.
+CSV_COLUMNS_V3 = ["t_us", "share_sp", "share_act", "v_sp", "v_act", "I_fc",
+                  "I_batt", "gFC", "gBT", "V_bus", "I_cmd", "V_fc", "V_batt",
+                  "V_chg", "V_rgn", "fault_flags", "ps_phase", "dc_phase",
+                  "trap_phase", "flags"]
+
 _decoder = None
 
 
@@ -111,32 +120,40 @@ def load_or_create_config(run_dir):
 def load_csv(csv_path):
     """Parse a decode_benchlog CSV into a dict of float64 numpy arrays.
 
-    All 16 columns come back as float64 arrays; blank cells (v_sp, v_act,
-    ps_phase, dc_phase, trap_phase can all be blank per the decoder's CSV
-    format) become NaN. A derived key t_s = (t_us - t_us[0]) / 1e6 (seconds
-    since the first sample) is added.
+    Accepts either the v1/v2 (16-column, CSV_COLUMNS) or the v3 (20-column,
+    CSV_COLUMNS_V3 -- adds V_fc, V_batt, V_chg, V_rgn after I_cmd) header;
+    the matching column list is used to parse the rest of the file, so a
+    v1/v2 CSV's returned dict has exactly the same 16 keys it always has,
+    and a v3 CSV's dict additionally has the four new voltage keys. Blank
+    cells (v_sp, v_act, ps_phase, dc_phase, trap_phase can all be blank per
+    the decoder's CSV format) become NaN. A derived key
+    t_s = (t_us - t_us[0]) / 1e6 (seconds since the first sample) is added.
     """
     with open(csv_path, "r", newline="") as f:
         reader = csv.reader(f)
         header = next(reader)
         rows = list(reader)
 
-    if header != CSV_COLUMNS:
+    if header == CSV_COLUMNS:
+        columns = CSV_COLUMNS
+    elif header == CSV_COLUMNS_V3:
+        columns = CSV_COLUMNS_V3
+    else:
         raise ValueError(
             f"unexpected CSV header in {csv_path}: {header!r}, "
-            f"expected {CSV_COLUMNS!r}")
+            f"expected {CSV_COLUMNS!r} (v1/v2) or {CSV_COLUMNS_V3!r} (v3)")
 
     n = len(rows)
-    data = {col: np.full(n, np.nan, dtype=np.float64) for col in CSV_COLUMNS}
+    data = {col: np.full(n, np.nan, dtype=np.float64) for col in columns}
     for i, row in enumerate(rows):
-        if len(row) != len(CSV_COLUMNS):
+        if len(row) != len(columns):
             # A short row means a partially-written CSV (e.g. ingest was
             # interrupted mid-write); silently zipping it would leave the
             # missing columns as garbage that plots as real data.
             raise ValueError(
                 f"{csv_path}: row {i + 2} has {len(row)} cells, expected "
-                f"{len(CSV_COLUMNS)} -- partial/corrupt CSV, re-ingest the .BLG")
-        for col, cell in zip(CSV_COLUMNS, row):
+                f"{len(columns)} -- partial/corrupt CSV, re-ingest the .BLG")
+        for col, cell in zip(columns, row):
             data[col][i] = float(cell) if cell != "" else np.nan
 
     if n > 0:

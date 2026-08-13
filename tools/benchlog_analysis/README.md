@@ -83,7 +83,15 @@ deliberate velocity-invalid NaN window, which is what the figures are eyeballed
 against. `--truncate` simulates a power-loss capture (no trailer), `--wrap`
 starts the timestamps just below the 2^32 µs `micros()` rollover so the run
 straddles the wrap (both the decoder and `common.load_csv`'s elapsed-time
-reconstruction are wrap-safe).
+reconstruction are wrap-safe). `--v3` writes the format-v3 header/record
+layout instead of v1/v2 (see below).
+
+**Format v3 (fw v5):** appends four source/node voltage channels — `V_fc`,
+`V_batt`, `V_chg`, `V_rgn` — to the 52 B v1/v2 record (68 B total), inserted
+after `I_cmd` in the CSV column order. `ingest_log.py` and `common.load_csv`
+accept both layouts transparently (the CSV header line identifies which one);
+no figure currently reads the four new columns. See `tools/decode_benchlog.py`
+for the exact byte layout.
 
 ## `analysis_config.json`
 
