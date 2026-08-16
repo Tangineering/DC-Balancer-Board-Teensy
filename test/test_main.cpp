@@ -5497,13 +5497,20 @@ static void test_wheelspeed_units() {
           "units: ENCODER_COUNTS_PER_REV == slots x quadrature decode factor");
     check(fabsf(ENCODER_QUAD_DECODE - 2.0f) < 1e-6f,
           "units: quadrature decode factor is x2 (doEncoderA decrements / doEncoderB increments only)");
-    // fw v7 (2026-08-13): both scale inputs were bench-measured. Pin the exact values so a silent
-    // revert to the pre-calibration placeholders (512 slots, 0.033 m) fails a test rather than
-    // only shifting the first-principles derivation below.
-    check(fabsf(ENCODER_SLOTS_PER_REV - 60.0f) < 1e-6f,
-          "units: ENCODER_SLOTS_PER_REV == 60 (bench-measured 2026-08-13)");
-    check(fabsf(ENCODER_COUNTS_PER_REV - 120.0f) < 1e-6f,
-          "units: ENCODER_COUNTS_PER_REV == 120 (60 slots x quadrature decode)");
+    // Both scale inputs are measured. Pin the exact values so a silent revert to the
+    // pre-calibration placeholders (512 slots, 0.033 m) fails a test rather than only shifting the
+    // first-principles derivation below.
+    //
+    // fw v8 (2026-08-16): 60 -> 120 slots, counted directly on the disc. fw v7's 60 came from
+    // reading the 2026-08-13 bench figure of "120" as encoderPos COUNTS and dividing by the x2
+    // decode; it was 120 SLOTS, and the decode multiplies. The 120-slot / 240-count pair and the
+    // 60-slot / 120-count pair differ by exactly the decode factor, so a regression to fw v7's
+    // value would still satisfy the "counts == slots x decode" identity above — that is why both
+    // numbers are pinned literally here rather than only related to each other.
+    check(fabsf(ENCODER_SLOTS_PER_REV - 120.0f) < 1e-6f,
+          "units: ENCODER_SLOTS_PER_REV == 120 (slots counted on the disc, 2026-08-16)");
+    check(fabsf(ENCODER_COUNTS_PER_REV - 240.0f) < 1e-6f,
+          "units: ENCODER_COUNTS_PER_REV == 240 (120 slots x quadrature decode)");
     check(fabsf(FLYWHEEL_RADIUS_M - 0.0762f) < 1e-6f,
           "units: FLYWHEEL_RADIUS_M == 0.0762 m / 3.00 in (bench-measured 2026-08-13)");
     // fw v7 (2026-08-13, operator decision): MOTOR_I_CMD_MAX is the VESC-side phase-current
@@ -5552,11 +5559,110 @@ static void test_wheelspeed_units() {
           "units: reverse rotation gives an equal-magnitude negative v_actual");
 }
 
+// ─── Quadrature ISR decode from raw pin levels ───────────────────────────────
+// Everything above drives `encoderPos` DIRECTLY, so the whole decoder — the only code between the
+// two optical channels and the velocity loop — had zero coverage. That is the gap that let a
+// bench report of "encoder outputs a signal but v_actual stays 0.000" (2026-08-16) have no
+// firmware-side answer: the x2 decoder only counts when BOTH channels transition in the right
+// ORDER, so a dead channel and two beams that are not 90 degrees apart both produce a silent
+// encoderPos == 0. These tests pin the working decode AND the three silent-zero failure modes, and
+// assert the fw v8 per-channel edge counters still move in every one of them — that is exactly
+// what makes the 'S' dump able to tell them apart.
+static void enc_set(int a, int b) {   // set both channel levels, fire the ISRs that changed
+    int prevA = g_pin_value[ENC_A];
+    int prevB = g_pin_value[ENC_B];
+    g_pin_value[ENC_A] = a;
+    g_pin_value[ENC_B] = b;
+    if (a != prevA) doEncoderA();
+    if (b != prevB) doEncoderB();
+}
+
+static void enc_reset() {
+    reset_test_state();
+    noInterrupts();
+    encoderPos = 0;
+    AfirstUp = BfirstUp = AfirstDown = BfirstDown = 0;
+    encEdgeCountA = encEdgeCountB = 0;
+    interrupts();
+    g_pin_value[ENC_A] = 0;
+    g_pin_value[ENC_B] = 0;
+}
+
+static void test_encoder_isr_decode() {
+    test_group("quadrature ISR decode (raw pin levels)");
+
+    // ── Forward: A leads B, 00 -> 10 -> 11 -> 01 -> 00. Exactly +2 per cycle (the x2 decode
+    //    ENCODER_QUAD_DECODE asserts symbolically is verified against the ISRs here).
+    enc_reset();
+    for (int i = 0; i < 5; i++) { enc_set(1,0); enc_set(1,1); enc_set(0,1); enc_set(0,0); }
+    check(encoderPos == 10,
+          "encoder ISR: forward quadrature gives +2 counts per cycle (x2 decode)");
+    check(encEdgeCountA == 10 && encEdgeCountB == 10,
+          "encoder ISR: each channel logs 2 CHANGE edges per cycle");
+
+    // ── Reverse: B leads A, 00 -> 01 -> 11 -> 10 -> 00. Equal magnitude, opposite sign.
+    enc_reset();
+    for (int i = 0; i < 5; i++) { enc_set(0,1); enc_set(1,1); enc_set(1,0); enc_set(0,0); }
+    check(encoderPos == -10,
+          "encoder ISR: reverse quadrature gives -2 counts per cycle");
+
+    // ── FAILURE MODE 1: channel B dead (stuck LOW), A toggling.
+    //    A live-looking scope trace on A, and no counts at all. The edge counters are the only
+    //    thing that separates this from failure mode 3.
+    enc_reset();
+    for (int i = 0; i < 20; i++) { enc_set(1,0); enc_set(0,0); }
+    check(encoderPos == 0,
+          "encoder ISR: channel B stuck LOW yields ZERO counts (decoder needs both channels)");
+    check(encEdgeCountA == 40 && encEdgeCountB == 0,
+          "encoder ISR: stuck-B is diagnosable — edges A>0, edges B==0");
+
+    // ── FAILURE MODE 2: channel A dead (stuck HIGH), B toggling. Mirror of the above.
+    enc_reset();
+    g_pin_value[ENC_A] = 1;
+    for (int i = 0; i < 20; i++) { enc_set(1,1); enc_set(1,0); }
+    check(encoderPos == 0,
+          "encoder ISR: channel A stuck HIGH yields ZERO counts");
+    check(encEdgeCountA == 0 && encEdgeCountB == 40,
+          "encoder ISR: stuck-A is diagnosable — edges B>0, edges A==0");
+
+    // ── FAILURE MODE 3: both channels live but IN PHASE (beams aligned, or a whole slot pitch
+    //    apart instead of a quarter). Both edge counters climb, the "first" flags are never
+    //    satisfied, and encoderPos never moves. Indistinguishable from a healthy stationary
+    //    flywheel without the edge counters.
+    enc_reset();
+    for (int i = 0; i < 20; i++) { enc_set(1,1); enc_set(0,0); }
+    check(encoderPos == 0,
+          "encoder ISR: in-phase (non-quadrature) channels yield ZERO counts");
+    check(encEdgeCountA == 40 && encEdgeCountB == 40,
+          "encoder ISR: in-phase is diagnosable — BOTH edge counts climb while encoderPos stays 0");
+
+    // ── End to end: ISR-driven counts must reach v_actual. Ties the decoder to the velocity
+    //    chain, which no existing test did (they all wrote encoderPos by hand).
+    enc_reset();
+    g_mock_micros = 0;
+    wheelSpeedResetPending = true;
+    updateWheelSpeed();                       // consume the reset
+    for (int i = 1; i <= 400; i++) {          // one quadrature cycle (+2 counts) per 200 us
+        g_mock_micros = (uint32_t)i * 200;
+        enc_set(1,0); enc_set(1,1); enc_set(0,1); enc_set(0,0);
+        updateWheelSpeed();
+    }
+    // 2 counts / 200 us = 10000 counts/s, same rate as the unit-chain test above.
+    const float enc_expect = (10000.0f / ENCODER_COUNTS_PER_REV) * 6.28318530718f * FLYWHEEL_RADIUS_M;
+    check(fabsf(v_actual - enc_expect) < fabsf(enc_expect) * 0.01f,
+          "encoder ISR: ISR-driven counts produce the expected v_actual (within 1%)");
+    check(v_actual > 0.0f,
+          "encoder ISR: a live quadrature signal never reads v_actual == 0");
+
+    enc_reset();
+}
+
 // ─── Velocity-chain calibration interlock ────────────────────────────────────
 // Before fw v7, the two scale constants were placeholders, so v_actual under-read and the
 // velocity PI OVER-DROVE; commandMotorCurrent() bounds amps, not speed, so the velocity entry
 // points refused outright rather than rely on the current clamp. fw v7 (2026-08-13) bench-measured
-// both scale inputs (ENCODER_SLOTS_PER_REV = 60, FLYWHEEL_RADIUS_M = 0.0762 m), so the shipped
+// both scale inputs (FLYWHEEL_RADIUS_M = 0.0762 m; ENCODER_SLOTS_PER_REV corrected to 120 by a
+// direct slot count in fw v8), so the shipped
 // default flips to CALIBRATED — this is a deliberate retirement of the safety default now that the
 // scale is known, not a regression. The interlock machinery itself (flag, refusal paths, override)
 // is unchanged and stays covered below via the runtime flag.
@@ -11342,6 +11448,7 @@ int main() {
     test_udp_setpoint_sanitize();
     test_drive_cycle_motor_ownership();
     test_wheelspeed_units();
+    test_encoder_isr_decode();
     test_velocity_chain_interlock();
     test_control_rate_limiting();
     test_open_loop_droop();

@@ -594,7 +594,7 @@ two constants that genuinely gate the velocity loop were **absent from the old t
 
 | Constant | Value | Status |
 |---|---|---|
-| `ENCODER_SLOTS_PER_REV` | **60** (measured 2026-08-13) | **RESOLVED.** 120 counts per hand-turned flywheel revolution ÷ ×2 decode. See below. |
+| `ENCODER_SLOTS_PER_REV` | **120** (counted 2026-08-16) | **RESOLVED.** 120 slots counted directly on the disc → 240 counts/rev at the ×2 decode. Supersedes fw v7's 60, which read the same "120" as *counts* and divided by the decode instead of multiplying. See below. |
 | `FLYWHEEL_RADIUS_M` | **0.0762** m (measured 2026-08-13) | **RESOLVED** as a value; the disc's mechanical coupling is still `TODO(verify)` — see §10. |
 | `motorConstant` | 0.1 | **BLOCKING** for velocity mode. Not a real k_t — it is the lumped PI-output→amps gain. Calibrate *after* the two above. |
 | `MOTOR_I_CMD_MAX` | **12.0 A** (bench, fw v7 amended) | Raised 5.0 → 10.0 A by operator decision **2026-08-13**, then 10.0 → **12.0 A** on **2026-08-15** (Castle 1406 1900KV fitted, drive-controller bring-up): the §12.4 budget it came from is a *bus*-current budget, but this constant clamps VESC *phase* current (`I_bus ≈ D·I_mot/η_esc`). ⚠️ That argument assumes the §4 bus limits are configured — they are not yet. Vehicle value 15.0 A after calibration. |
@@ -642,9 +642,18 @@ the cap means anything — but per §4, even a correct cap does not bound a non-
 ## 10. Measurements required
 
 ### 🔴 Blocking firmware (do these first — they gate all velocity testing)
-- [x] **Flywheel encoder disc slot count.** ✅ **Measured 2026-08-13** by hand-turning the flywheel
-      exactly one revolution with the board powered and reading `encoderPos`: **120 counts/rev**,
-      hence **60 slots** at the ×2 decode. → `ENCODER_SLOTS_PER_REV = 60`
+- [x] **Flywheel encoder disc slot count.** ✅ **Counted directly on the disc 2026-08-16: 120
+      slots**, hence **240 counts/rev** at the ×2 decode. → `ENCODER_SLOTS_PER_REV = 120`
+      ⚠️ **Supersedes the fw v7 value of 60**, which was a transcription error rather than a
+      competing measurement. The 2026-08-13 figure of "120" was recorded here as 120 `encoderPos`
+      *counts* per hand-turned revolution and divided by the ×2 decode. It was 120 *slots*, so the
+      decode multiplies. The tell: **no build up to and including fw v7 printed `encoderPos`
+      anywhere** — not in the `'S'` dump this entry cited, not in `printSensors()`, not in
+      telemetry — so no count could have been read. Net effect: `v_actual` halves versus fw v7.
+- [ ] **Cross-check the slot count against the decoder** — hand-turn one revolution and read
+      `encoderPos` from the fw v8 `'S'` or IDLE dump; expect **240**. This closes the loop the
+      fw v7 record only claimed to have closed, and doubles as the decoder health check (a reading
+      of 0 with the edge counters climbing is a quadrature/alignment fault, not a scale error).
 - [x] **Effective rolling radius.** ✅ **Measured 2026-08-13: 0.0762 m (3.00 in).**
       → `FLYWHEEL_RADIUS_M = 0.0762`
 - [ ] **What the encoder disc is coupled to** — surface/roller speed, or wheel *angular* speed —

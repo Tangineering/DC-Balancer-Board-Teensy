@@ -920,7 +920,9 @@ detail.
   512 → 60 (120 counts per hand-turned flywheel revolution at the verified ×2 quadrature
   decode) and `FLYWHEEL_RADIUS_M` 0.033 → 0.0762 m (3.00 in, measured). Net `v_actual` scale
   change ×19.70 — fw ≤ 6 and fw 7 `v_act` BLG traces are NOT comparable (header `fwVersion`
-  disambiguates; BLG flags bit1 now sets by default). `VELOCITY_CHAIN_CALIBRATED` defaults
+  disambiguates; BLG flags bit1 now sets by default). ⚠️ **The 60 is SUPERSEDED by fw v8's
+  120** — that "120" was 120 *slots*, not counts, so the ×2 decode was applied backwards; see
+  the 2026-08-16 addendum. `VELOCITY_CHAIN_CALIBRATED` defaults
   **1**: State-98 `'V'`/`'D'`/`'Y'` velocity paths ship open; interlock machinery kept for
   overrides. Residual (S3, TODO(verify)): 0.0762 m implies surface/roller coupling — if the
   disc is angular-coupled to the wheel, `v_actual` over-reads 2.31× (conservative direction).
@@ -945,3 +947,50 @@ detail.
   step is a −3.5 m/s error → −10 A onto the regen path); `motorConstant` and the motor PI
   gains are still uncalibrated against the corrected scale — treat the first `'V'`/`'D'` run
   as gain validation, and prefer `'A'`/`'T'` (velocity-PI-free) first.
+
+---
+
+## Status & session addendum (2026-08-16, fw v8: encoder observability + slot-count correction)
+
+A bench report — `v_actual` pinned at 0.000 in the `'L'` stream while the encoder was visibly
+producing a signal — exposed a diagnosis dead end and, in resolving it, a scale error. **fw v8
+(pending first flash);** ledger row in `docs/firmware-versions.md` has full detail.
+
+- **The velocity chain had exactly ONE observable.** `updateWheelSpeed()` is correct, so
+  `v_actual == 0.000` can only mean `encoderPos` is not moving — but nothing printed `encoderPos`
+  anywhere (not the State-98 `'S'` dump, not `printSensors()`, not telemetry). The ×2 decoder in
+  `doEncoderA()`/`doEncoderB()` counts only when **both** channels transition in the right ORDER,
+  so three distinct hardware faults collapse to an identical silent zero: a dead channel; a
+  phototransistor swing that never crosses the Teensy's V_IL/V_IH (the OPB829DZ is a bare
+  phototransistor with a 4.7 kΩ pull-up — no Schmitt, so "a signal on the scope" is compatible with
+  zero interrupts); and two beams not 90° apart. Added `encEdgeCountA`/`encEdgeCountB` (volatile
+  u32, bumped at the top of each ISR, read by nothing but the dumps), an `--- Encoder ---` block in
+  the `'S'` dump, and the same line in the IDLE `printSensors()` dump. Diagnostic-only — no control
+  path reads them.
+- **`ENCODER_SLOTS_PER_REV` 60 → 120** (`ENCODER_COUNTS_PER_REV` 120 → **240**). The disc was
+  counted directly: it physically carries 120 slots. fw v7's 60 was a **transcription error, not a
+  competing measurement** — the 2026-08-13 figure of "120" was recorded as 120 `encoderPos` *counts*
+  per hand-turned revolution and divided by the ×2 decode, when it was 120 *slots* and the decode
+  multiplies. The observability gap above is the tell: no build through fw v7 could have read a
+  count. **`v_actual` and BLG `v_act` HALVE** for identical motion vs fw v7 (fw 7 and fw 8 traces
+  are not comparable; header `fwVersion` disambiguates). Chain vs fw ≤ 6: ×9.85.
+  `VELOCITY_CHAIN_CALIBRATED` stays 1 — a direct slot count is a stronger source than the figure it
+  replaces. The `FLYWHEEL_RADIUS_M` disc-coupling `TODO(verify)` is untouched.
+- **The decoder had zero test coverage** — every prior test wrote `encoderPos` by hand. 11 new
+  checks drive `doEncoderA`/`doEncoderB` from raw pin levels: forward/reverse ±2 per cycle, each of
+  the three silent-zero failure modes asserted to yield zero counts *and* to stay diagnosable
+  through the edge counters, and an ISR-driven end-to-end path to a non-zero `v_actual`. Both slot
+  and count constants are pinned literally, because 120-slot/240-count and 60-slot/120-count both
+  satisfy the "counts == slots × decode" identity. **Tests: 1663 production + 175 bench pass.**
+- **Next bench:** run the `'S'` encoder block against a hand-turned flywheel. One revolution must
+  read `encoderPos == 240` — that both closes the cross-check the fw v7 record only claimed to have
+  closed and localises the 0.000 fault (edge counters climbing with `encoderPos` stuck at 0 is a
+  quadrature/alignment fault; both counters flat is a signal-level fault, so scope against
+  V_IL/V_IH, not for presence). **Drive-direction consequence — read before any `'V'`/`'D'` run:**
+  fw v7 OVER-read `v_actual` by 2×, which shrank the velocity error and made the PI UNDER-drive.
+  Correcting it restores the true error, so **fw v8 commands up to 2× the current fw v7 would have
+  at the same `v_setpoint`** — the correction is toward truth, but the change on the bench is in
+  the more aggressive direction, into the still-open fw v7 precondition (VESC Battery Current
+  Max / Regen Max unset, §4; OC faults compiled out under `BENCH_TEST`; `MOTOR_I_CMD_MAX` 12 A).
+  `motorConstant` and the motor PI gains remain uncalibrated against any scale, so treat the first
+  `'V'`/`'D'` run as gain validation, scope-armed, and prefer `'A'`/`'T'` (velocity-PI-free) first.

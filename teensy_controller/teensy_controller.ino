@@ -380,7 +380,10 @@
  *      (a) ENCODER GEOMETRY MEASURED on the bench by the operator: hand-turning the flywheel
  *          exactly one revolution accumulates 120 encoderPos counts, so at the verified x2
  *          quadrature decode the disc carries 60 slots — ENCODER_SLOTS_PER_REV 512.0f → 60.0f
- *          (the 512 was UNSOURCED). The flywheel radius was measured directly at 0.0762 m
+ *          (the 512 was UNSOURCED). [SUPERSEDED by fw v8: that "120" was 120 SLOTS, not counts,
+ *          so the x2 decode was applied backwards — the correct value is 120 slots / 240 counts.
+ *          The x19.70 figure below is the fw 6→7 discontinuity and stays correct for fw 7 traces.]
+ *          The flywheel radius was measured directly at 0.0762 m
  *          (3.00 in) — FLYWHEEL_RADIUS_M 0.033f → 0.0762f, superseding the old nominal
  *          tire-OD/2 estimate and the reasoning that the tire radius was the right one (the
  *          encoder disc is on the FLYWHEEL). RPM_TO_MPS follows both automatically.
@@ -413,6 +416,26 @@
  *          PI's anti-windup integMax is derived from MOTOR_I_CMD_MAX and rescales automatically.
  *      No BLG record or header change (the log already carried v_sp/v_act, and flags bit1 already
  *      reported velocityChainCalibrated()), and no UDP telemetry change — still v4 / 58 bytes.
+ *  - fw v8 (2026-08-16) — encoder observability, plus the slot-count correction it uncovered.
+ *      (a) ENCODER_SLOTS_PER_REV 60.0f → 120.0f, so ENCODER_COUNTS_PER_REV 120 → 240. The disc was
+ *          COUNTED DIRECTLY and physically carries 120 slots. fw v7's 60 was a transcription
+ *          error, not a competing measurement: the 2026-08-13 figure of "120" was recorded as 120
+ *          encoderPos COUNTS and then divided by the x2 decode, when it was 120 SLOTS and the
+ *          decode should have been applied. The tell is (b) — no build through fw v7 printed
+ *          encoderPos anywhere, so no count could have been read. v_actual HALVES for identical
+ *          motion vs fw v7; fw 7 and fw 8 v_act traces are NOT comparable (header fwVersion
+ *          disambiguates). Chain vs fw ≤ 6: (1024/240) x (0.0762/0.033) = x9.85.
+ *      (b) ENCODER OBSERVABILITY. v_actual was the velocity chain's ONLY observable, and the x2
+ *          decoder counts only when BOTH channels transition in the right ORDER — so a dead
+ *          channel, a phototransistor swing that never crosses the Teensy's V_IL/V_IH, and two
+ *          beams that are not 90° apart all produce an identical, silent encoderPos == 0, none of
+ *          them distinguishable from a stationary flywheel. Added volatile encEdgeCountA/B
+ *          (incremented at the top of each ISR; read by nothing but the dumps), an '--- Encoder ---'
+ *          block in the State-98 'S' dump (ENC_ENABLE, live ENC_A/ENC_B levels, encoderPos, both
+ *          edge counts, v_actual, and the scale constants in force), and the same line in the IDLE
+ *          printSensors() dump so a hand-turn check needs no test-mode entry.
+ *      No control-path change: sequencing, faults, PI gains, droop and the charger are untouched.
+ *      No BLG record/header change and no UDP telemetry change — still v4 / 58 bytes.
  */
 
 #include <VescUart.h>
@@ -887,12 +910,25 @@ const int32_t sampleTime = 50;      // us
 // so one full A/B cycle yields exactly +2 (forward) or -2 (reverse). Hence:
 //     counts/rev = 2 x slots/rev
 #define ENCODER_QUAD_DECODE  2.0f       // counts per quadrature cycle (x2 — see above)
-// MEASURED 2026-08-13 (operator, bench): the flywheel was hand-turned exactly one revolution with
-// the board powered and encoderPos read out (State-98 'S' dumps it) — 120 counts per flywheel
-// revolution. At the verified x2 decode above that is 60 slots on the disc, which is credible
-// behind a 3.18 mm beam gap (the previous 512 was UNSOURCED and is now superseded).
+// COUNTED DIRECTLY on the disc (operator, 2026-08-16): the disc physically carries 120 slots.
+// At the x2 decode above that is ENCODER_COUNTS_PER_REV = 240 counts per flywheel revolution.
+// A physical slot count is the strongest source available for this constant — the encoder is
+// home-built, so there is no datasheet to check it against, and it needs no working decoder to
+// obtain (see the provenance note below for why that distinction matters).
+//
+// PROVENANCE (fw v8, 2026-08-16) — this SUPERSEDES the fw v7 value of 60 slots, which was a
+// transcription error, not a measurement disagreement. The 2026-08-13 bench figure of "120" was
+// recorded as 120 encoderPos COUNTS per revolution and then divided by the x2 decode to yield
+// 60 slots. It was in fact 120 SLOTS: no build up to and including fw v7 printed encoderPos
+// anywhere — not in the State-98 'S' dump the record cites, not in printSensors(), not in
+// telemetry — so the counter could not have been read, and the number can only have come from
+// counting the disc. The x2 decode must therefore be applied to it, not removed from it, which
+// is what this line now does. Net effect vs fw v7: ENCODER_COUNTS_PER_REV 120 -> 240, so
+// v_actual HALVES for identical motion (see the scale-discontinuity note in
+// docs/firmware-versions.md). fw v8 adds encoderPos + per-channel edge counters to both dumps so
+// the hand-turn cross-check can finally be run against the decoder's own output.
 // See docs/VESC_MOTOR_INTEGRATION.md §10.
-#define ENCODER_SLOTS_PER_REV 60.0f     // → ENCODER_COUNTS_PER_REV = 120 (measured)
+#define ENCODER_SLOTS_PER_REV 120.0f    // → ENCODER_COUNTS_PER_REV = 240 (slots counted on the disc)
 constexpr float ENCODER_COUNTS_PER_REV = ENCODER_SLOTS_PER_REV * ENCODER_QUAD_DECODE;
 
 // Effective rolling radius, in METRES — the radius that converts the ENCODED body's angular rate
@@ -925,8 +961,9 @@ constexpr float RPM_TO_MPS    = (TWO_PI_F / 60.0f) * FLYWHEEL_RADIUS_M;
 // While 0, State 98 refuses the two velocity-mode entry points ('V' manual velocity, 'D' drive
 // cycle). Production State 2 is deliberately NOT gated — it needs a Pi commanding it and is out of
 // scope for a bench interlock. See docs/design-review-2026-07-28.md.
-// BOTH scale inputs were bench-measured on 2026-08-13 (ENCODER_SLOTS_PER_REV = 60 from 120 counts
-// per hand-turned flywheel revolution; FLYWHEEL_RADIUS_M = 0.0762 m), so the shipped default is 1.
+// BOTH scale inputs are measured, so the shipped default is 1: ENCODER_SLOTS_PER_REV = 120 from a
+// direct slot count on the disc (2026-08-16, superseding the 60 back-derived from a mis-transcribed
+// hand-turn figure), FLYWHEEL_RADIUS_M = 0.0762 m from the bench (2026-08-13).
 // The interlock machinery is kept for anyone who overrides back to 0 — fit a new disc or a new
 // flywheel and the chain is uncalibrated again until it is re-measured.
 #ifndef VELOCITY_CHAIN_CALIBRATED
@@ -1209,6 +1246,15 @@ volatile byte BfirstDown = 0;
 volatile int  encoderPos     = 0;
 volatile byte pinA_read      = 0;
 volatile byte pinB_read      = 0;
+// Raw per-channel interrupt-edge counters (fw v8, diagnostic only — nothing reads these but the
+// 'S' dump). They exist because `v_actual == 0.000` had exactly one observable and no way to
+// localise it: the quadrature decoder below only counts when BOTH channels transition in the
+// right ORDER, so a dead channel, a channel whose swing never crosses the Teensy's logic
+// thresholds, and two beams that are not 90 degrees apart all produce an identical, silent
+// encoderPos == 0. Counting each channel's CHANGE interrupts separately separates those cases
+// before anyone touches the velocity math. NOT used by any control path.
+volatile uint32_t encEdgeCountA = 0;
+volatile uint32_t encEdgeCountB = 0;
 // ENCODER_COUNTS_PER_REV now lives with the rest of the flywheel/encoder geometry in the physical
 // constants block, derived from ENCODER_SLOTS_PER_REV x ENCODER_QUAD_DECODE.
 // Set by State 3 (Finish) to clear updateWheelSpeed()'s averaging buffers between runs, so a
@@ -1237,7 +1283,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 7
+#define FW_VERSION 8
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -2560,7 +2606,18 @@ void printSensors() {
     Serial.print("I_batt=");   Serial.println(I_batt, 3);
     Serial.print("I_charge="); Serial.print(I_charge, 3); Serial.println("  (Ag105 I2C reg 0x06)");
     Serial.println("--- Derived ---");
+    // encoderPos/edges alongside v_actual for the same reason as the State-98 block: a hand-turn
+    // check in IDLE must be able to tell "no counts" from "counts but no velocity".
     Serial.print("v_actual=");           Serial.print(v_actual, 3);    Serial.println(" m/s");
+    noInterrupts();
+    int32_t  encSnap   = encoderPos;
+    uint32_t edgeSnapA = encEdgeCountA;
+    uint32_t edgeSnapB = encEdgeCountB;
+    interrupts();
+    Serial.print("encoderPos=");         Serial.print(encSnap);
+    Serial.print("  edges A=");          Serial.print(edgeSnapA);
+    Serial.print(" B=");                 Serial.print(edgeSnapB);
+    Serial.print("  ENC_ENABLE=");       Serial.println(digitalRead(ENC_ENABLE));
     Serial.print("power_share_actual="); Serial.println(power_share_actual, 3);
     Serial.print("P_fc=");               Serial.print(P_fc_actual, 2); Serial.print("W  ");
     Serial.print("P_batt=");             Serial.print(P_batt_actual, 2); Serial.println("W");
@@ -5593,6 +5650,37 @@ void printTestStatus() {
     Serial.print("I_fc=");   Serial.print(I_fc,   3); Serial.print("A  ");
     Serial.print("I_batt="); Serial.println(I_batt, 3);
     Serial.print("I_charge="); Serial.print(I_charge, 3); Serial.println("A (Ag105 I2C)");
+    // ── Encoder (fw v8) ───────────────────────────────────────────────────────────────────────
+    // Added because `v_actual` was the ONLY encoder observable and it collapses three distinct
+    // failures into one 0.000. Read this block top-down:
+    //   ENC_ENABLE 0            -> optical sensors unpowered; nothing downstream can work.
+    //   A=/B= never change       -> the MCU sees no valid logic transitions on that channel
+    //                              (dead emitter/phototransistor, broken wire, or a phototransistor
+    //                              swing that never crosses V_IL/V_IH — a scope can show "a signal"
+    //                              the Teensy still reads as a constant level).
+    //   edges A>0, B==0 (or v/v) -> one channel is dead; the x2 decoder needs BOTH, so encoderPos
+    //                              stays 0 with a live signal on the other channel.
+    //   edges A>0, B>0, pos==0   -> both channels live but NOT in quadrature (beams aligned or a
+    //                              whole slot-pitch apart). The decoder's "first" flags are never
+    //                              satisfied, so it counts nothing.
+    //   pos moving, v_act 0.000  -> only then is the fault in updateWheelSpeed()/the scale chain.
+    // Counters are diagnostic only; nothing in the control path reads them.
+    Serial.println("--- Encoder ---");
+    Serial.print("ENC_ENABLE="); Serial.print(digitalRead(ENC_ENABLE));
+    Serial.print("  A=");        Serial.print(digitalRead(ENC_A));
+    Serial.print(" B=");         Serial.println(digitalRead(ENC_B));
+    noInterrupts();
+    int32_t  encSnap  = encoderPos;
+    uint32_t edgeSnapA = encEdgeCountA;
+    uint32_t edgeSnapB = encEdgeCountB;
+    interrupts();
+    Serial.print("encoderPos=");  Serial.print(encSnap);
+    Serial.print("  edges A=");   Serial.print(edgeSnapA);
+    Serial.print(" B=");          Serial.println(edgeSnapB);
+    Serial.print("v_actual=");    Serial.print(v_actual, 3);
+    Serial.print(" m/s  (counts/rev="); Serial.print(ENCODER_COUNTS_PER_REV, 0);
+    Serial.print(", r=");               Serial.print(FLYWHEEL_RADIUS_M, 4);
+    Serial.println(" m)");
     Serial.print("fault_flags=0x"); Serial.println(fault_flags, HEX);
     Serial.print("error_code=0x");  Serial.print(error_code, HEX);
     Serial.print(" (");             Serial.print(errorCodeStr(error_code));
@@ -7127,7 +7215,8 @@ void updateWheelSpeed() {
     //    correcting the form alone made the under-read WORSE (~32×) while ENCODER_SLOTS_PER_REV was
     //    still the unsourced 512. Because the loop closes on v_actual, under-reading means the PI
     //    OVER-DRIVES — hence the VELOCITY_CHAIN_CALIBRATED interlock on the State-98 velocity entry
-    //    points. Both scale inputs were bench-measured 2026-08-13 (120 counts/rev, r = 0.0762 m) and
+    //    points. Both scale inputs are now measured (240 counts/rev from the disc's 120 counted
+    //    slots, 2026-08-16; r = 0.0762 m, 2026-08-13) and
     //    the interlock now defaults open. Tune the motor PI gains only against this measured scale.
     float flyWheelSpeedRpm = (dx / ENCODER_COUNTS_PER_REV) * (60.0f / dtSec);
     v_actual = flyWheelSpeedRpm * RPM_TO_MPS;
@@ -7138,6 +7227,7 @@ void updateWheelSpeed() {
 // ENCODER ISRs
 // ═════════════════════════════════════════════════════════════════════════════
 void doEncoderA() {
+    encEdgeCountA++;          // diagnostic only — see the encoder globals block
     pinA_read = digitalRead(ENC_A);
     pinB_read = digitalRead(ENC_B);
 
@@ -7157,6 +7247,7 @@ void doEncoderA() {
 }
 
 void doEncoderB() {
+    encEdgeCountB++;          // diagnostic only — see the encoder globals block
     pinA_read = digitalRead(ENC_A);
     pinB_read = digitalRead(ENC_B);
 

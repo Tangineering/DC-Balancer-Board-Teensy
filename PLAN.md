@@ -1151,8 +1151,10 @@ Status snapshot every 500 ms (suppressed under plot mode):
 
 ### 9i. Combined CURRENT + power-share profile (`W`)
 
-**Why.** `Y` (§9h) needs `velocityChainCalibrated()`, which is still 0 — `ENCODER_SLOTS_PER_REV`
-and `FLYWHEEL_RADIUS_M` are unmeasured, so on the present bench `Y` refuses outright. `W` is the
+**Why.** `Y` (§9h) needs `velocityChainCalibrated()`, which was 0 when `W` was written —
+`ENCODER_SLOTS_PER_REV` and `FLYWHEEL_RADIUS_M` were unmeasured, so `Y` refused outright.
+*(Both are measured now and the flag defaults 1 from fw v7; the slot count was corrected again in
+fw v8. `W` keeps its value for the reason below: it needs no velocity chain at all.)* `W` is the
 same experiment with the motor axis moved from velocity to **commanded current**, which is exactly
 the substitution the `T` trapezoid already makes: direct phase current, velocity PI never in the
 loop, no calibration needed. It is therefore the combined-axis run that can actually be performed
