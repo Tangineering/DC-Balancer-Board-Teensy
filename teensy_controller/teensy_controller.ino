@@ -447,6 +447,32 @@
  *          printSensors() dump so a hand-turn check needs no test-mode entry.
  *      No control-path change: sequencing, faults, PI gains, droop and the charger are untouched.
  *      No BLG record/header change and no UDP telemetry change — still v4 / 58 bytes.
+ *  - fw v9 (2026-08-16) — MANUAL SD LOGGING from State 98 ('K' takes an argument).
+ *      Until now the 1 kHz bench log could only be opened by a PROFILE start (R/T/D/Y/W), so an
+ *      operator driving the car by hand ('A'/'V' plus switch toggles) had no capture path finer
+ *      than the 50 Hz 'L' stream. 'K' becomes a small line command:
+ *        "K" + newline  → printSdStatus() (unchanged behaviour, still read-only)
+ *        "K 1"          → open a MANUAL log (LOG_TYPE_MANUAL 0x08, MLnnnn.BLG) and start sampling
+ *        "K 0"          → request close of the manual log (LOG_CLOSE_STOP; loop() drains it)
+ *        anything else  → whole line rejected (the 'T' parser's no-trailing-junk discipline)
+ *      Ownership is tracked by a single flag, logManualActive, cleared at EVERY point the log
+ *      ends: logFinishFile() (the close bottleneck for profile force-finish, drain-complete,
+ *      deadline abandon and IO-error paths) and logDrainTick()'s !sdAvailable early-clear, which
+ *      is the one place the flags clear WITHOUT going through logFinishFile(). 'K 1' is refused
+ *      during the staged bring-up (logOpenForProfile() walks the directory and preAllocate()s
+ *      32 MB — a stall that must not land mid-sequence; 'K' cannot join the keypress lockout list
+ *      without also killing the read-only status path, so the guard lives at parse time), while
+ *      any profile or plot arm is pending (the profile owns the logger), and while a log is
+ *      already open or draining. A profile started over a live manual log takes the logger over
+ *      through logOpenForProfile()'s existing double-open force-finish — the desired semantics.
+ *      'X', 'Q' and triggerFault() already close whatever is open, so a manual log ends cleanly
+ *      on every existing exit path with no special case.
+ *      RECORD AND TRAILER FORMAT UNCHANGED (68 B, header v4, no new close-reason code); the
+ *      header's profile-type BITMASK simply gains bit 3, which is what the field was for.
+ *      Manual runs set no param-valid flags (hdr[7] = 0, amp/b = 0.0) — there are no committed
+ *      profile parameters to record. logSampleTick() is untouched: with no profile flags set the
+ *      phase bytes read LOG_PHASE_NONE and flags bit0 follows powerBalanceLive, which is exactly
+ *      right for a hand-driven run. No pin, sequencing, control-path or UDP telemetry change.
  */
 
 #include <VescUart.h>
@@ -936,9 +962,14 @@ const int32_t sampleTime = 50;      // us
 #define ENCODER_QUAD_DECODE  2.0f       // counts per quadrature cycle (x2 — see above)
 // COUNTED DIRECTLY on the disc (operator, 2026-08-16): the disc physically carries 120 slots.
 // At the x2 decode above that is ENCODER_COUNTS_PER_REV = 240 counts per flywheel revolution.
-// A physical slot count is the strongest source available for this constant — the encoder is
-// home-built, so there is no datasheet to check it against, and it needs no working decoder to
-// obtain (see the provenance note below for why that distinction matters).
+//
+// CROSS-CHECKED AGAINST THE DECODER (operator, 2026-08-16, fw v8): one hand-turned flywheel
+// revolution reads encoderPos == 240. Two independent sources now agree — a physical slot count
+// and the firmware's own counter — so this constant is no longer inferred from either alone. The
+// same reading independently confirms the x2 decode factor above, that both optical channels are
+// alive and genuinely in quadrature, and that the pins-14/15 bodge is correctly reconciled.
+// SCOPE: this fixes counts per flywheel REVOLUTION only. FLYWHEEL_RADIUS_M and its coupling
+// assumption are untouched by it — see the TODO(verify) on that constant below.
 //
 // PROVENANCE (fw v8, 2026-08-16) — this SUPERSEDES the fw v7 value of 60 slots, which was a
 // transcription error, not a measurement disagreement. The 2026-08-13 bench figure of "120" was
@@ -965,13 +996,18 @@ constexpr float ENCODER_COUNTS_PER_REV = ENCODER_SLOTS_PER_REV * ENCODER_QUAD_DE
 // radius is therefore the tire rolling radius (66 mm nominal OD / 2, §2). Both halves of that are
 // retired here — the wheel-angular-speed clause included, since it is what forced the tire radius.
 //
-// COUPLING ASSUMPTION the measured value implies: 0.0762 m is correct when the disc's rim runs at
-// road/surface speed (a roller or surface-speed coupling), NOT when it merely turns at wheel
-// ANGULAR speed. Those two readings differ by 0.0762/0.033 = 2.31x, so if the disc is later found
-// to be angular-coupled to the wheel, this constant is over-reading v_actual by that factor and
-// must be re-derived — the interlock below exists for exactly this class of discovery.
-// TODO(verify): confirm the disc's mechanical coupling against docs/VESC_MOTOR_INTEGRATION.md §10.
-#define FLYWHEEL_RADIUS_M    0.0762f    // m — measured flywheel radius (3.00 in)
+// COUPLING RESOLVED (operator, 2026-08-16) — this closes the TODO(verify) that stood here.
+// The encoder is coupled to the FLYWHEEL, and the flywheel's own radius IS the rolling radius, so
+// the disc rim runs at surface speed and 0.0762 m is the correct conversion. The alternative
+// reading — that the disc merely turns at wheel ANGULAR speed, which would have forced the tire
+// radius and made this constant over-read v_actual by 0.0762/0.033 = 2.31x — is retired.
+//
+// What v_actual therefore IS: flywheel SURFACE speed. Anything compared against it must be in the
+// same terms — v_setpoint from the Pi, the State-98 'V'/'D'/'Y' velocity commands, and the BLG
+// v_sp/v_act columns all share this definition. There is no separate vehicle-speed scale in this
+// firmware, and none is implied by the 9.49:1 reduction or the differentials (§7): the velocity
+// loop closes on the encoded body, and the encoded body is the flywheel.
+#define FLYWHEEL_RADIUS_M    0.0762f    // m — measured flywheel radius (3.00 in), = rolling radius
 
 // Combined rev/min → m/s factor: (2π/60) · r. Precomputed so the conversion appears exactly once
 // and can be asserted directly in the unit tests. (Arduino's PI macro is not available in the host
@@ -1307,7 +1343,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 8
+#define FW_VERSION 9
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -1741,7 +1777,11 @@ enum PendingInput {
     // defaults). Same single-line discipline as PEND_TRAP_PARAMS, and for the same reason.
     PEND_Y_PARAMS,
     // Combined CURRENT profile: "<Imax> <b>", same all-optional single-line discipline.
-    PEND_W_PARAMS
+    PEND_W_PARAMS,
+    // Manual SD logging: "1" / "0" / empty. The EMPTY line is meaningful here (it means "print
+    // status", the pre-fw-v9 behaviour of a bare 'K'), so this prompt — like the two combined
+    // ones — must be dispatched ahead of handlePendingInputChar()'s shared empty-line cancel.
+    PEND_K_PARAMS
 };
 PendingInput pendingInput = PEND_NONE;
 // 96 bytes (was 32, grown 2026-08-11 for the 'T' sweep list): the worst legal trapezoid line is
@@ -1861,6 +1901,7 @@ void logRequestClose(uint8_t reason);
 void logSampleTick();
 void logDrainTick();
 void printSdStatus();
+void parseKLogLine(const char *line);
 
 // ═════════════════════════════════════════════════════════════════════════════
 // STATE 98 BENCH TOOL — SD-CARD DATA LOGGER (1 kHz binary, non-blocking)
@@ -1906,6 +1947,8 @@ void printSdStatus();
 #define LOG_TYPE_PS  0x01
 #define LOG_TYPE_TP  0x02
 #define LOG_TYPE_DC  0x04
+#define LOG_TYPE_MANUAL 0x08   // fw v9: operator-driven run, no profile ('K 1'). Exclusive in
+                               // practice — the 'K 1' guards refuse while any profile is active.
 
 // Trailer close-reason codes (decoder-visible: why the run ended).
 #define LOG_CLOSE_COMPLETE 1   // profile ran to natural completion
@@ -1985,6 +2028,12 @@ bool     sdWarnPrinted     = false;   // one-shot "no card" warn latch, SEPARATE
                                       // profile start where the operator can actually see it.
 bool     logActive         = false;   // file open AND sampling armed
 bool     logCloseRequested = false;   // deferred close pending — drain then trailer+close
+bool     logManualActive   = false;   // fw v9: this file was opened by 'K 1', not by a profile.
+                                      // Ownership only — 'K 0' refuses to close a profile's log,
+                                      // and 'K 1' refuses to open a second one. Cleared wherever
+                                      // logActive clears: logFinishFile() (the close bottleneck)
+                                      // and logDrainTick()'s !sdAvailable early-clear, which is
+                                      // the one path that clears the flags without closing.
 uint8_t  logCloseReason    = 0;
 uint32_t logCloseRequestMs = 0;       // millis() at the request, for LOG_CLOSE_DEADLINE_MS
 uint32_t logRecordCount    = 0;       // records committed to the ring this file
@@ -2031,6 +2080,10 @@ static bool logNextFileName(uint8_t typeMask, char *out, size_t outLen) {
                                                   ? "YP"
                        : ((typeMask & (LOG_TYPE_PS | LOG_TYPE_TP)) == (LOG_TYPE_PS | LOG_TYPE_TP))
                                                   ? "WP"
+                       // Manual ('K 1') is exclusive in practice, but it is placed AFTER the two
+                       // combined-mask tests and BEFORE the single-bit ones to keep the chain's
+                       // documented "combined masks first" discipline intact.
+                       : (typeMask & LOG_TYPE_MANUAL) ? "ML"
                        : (typeMask & LOG_TYPE_PS) ? "PS"
                        : (typeMask & LOG_TYPE_TP) ? "TP"
                        :                            "DC";
@@ -2056,7 +2109,8 @@ static bool logNextFileName(uint8_t typeMask, char *out, size_t outLen) {
                                (nm[0] == 'T' && nm[1] == 'P') ||
                                (nm[0] == 'D' && nm[1] == 'C') ||
                                (nm[0] == 'Y' && nm[1] == 'P') ||   // combined DC+PS profile
-                               (nm[0] == 'W' && nm[1] == 'P');    // combined TP+PS profile
+                               (nm[0] == 'W' && nm[1] == 'P') ||   // combined TP+PS profile
+                               (nm[0] == 'M' && nm[1] == 'L');    // manual run ('K 1', fw v9)
             if (!knownPrefix) continue;
             if (strcmp(nm + 6, ".BLG") != 0) continue;
             uint32_t idx = 0;
@@ -2128,6 +2182,9 @@ static void logFinishFile(bool ok) {
     logActive         = false;
     logCloseRequested = false;
     logCloseReason    = 0;
+    logManualActive   = false;   // fw v9: the single close bottleneck — profile force-finish,
+                                 // drain-complete, deadline abandon and IO-error close all land
+                                 // here, so manual ownership can never outlive its file.
     logResetBuffers();
 }
 
@@ -2172,6 +2229,9 @@ void logOpenForProfile(uint8_t typeMask) {
         // logRequestClose()'s "first requester's reason wins" discipline. Zero means we got here on
         // a stale open handle with the flags already clear, which genuinely is a STOP.
         if (logCloseReason == 0) logCloseReason = LOG_CLOSE_STOP;
+        // fw v9: a live MANUAL log ('K 1') is finished by this branch too, and that is the
+        // intended handover — a profile start takes the logger over, and logFinishFile() drops
+        // the manual ownership flag so the new file belongs to the profile alone.
         logFinishFile(true);
 
         if (!cardIdle) {
@@ -2242,7 +2302,7 @@ void logOpenForProfile(uint8_t typeMask) {
         profileAmp = wProfileImax;    profileB = wProfileBoundLo;  paramFlags = 0x03;   // 'W'
     } else if (typeMask & LOG_TYPE_TP) {
         profileAmp = trapImax;                                     paramFlags = 0x01;   // 'T'
-    }                                                                                   // PS/DC: 0
+    }                                                                     // PS/DC/MANUAL: all 0
     hdr[7] = paramFlags;
     memcpy(hdr + 20, &profileAmp, 4);
     memcpy(hdr + 24, &profileB,   4);
@@ -2369,6 +2429,9 @@ void logDrainTick() {
     if (!sdAvailable) {
         logActive         = false;
         logCloseRequested = false;
+        logManualActive   = false;   // fw v9: the ONE path that clears the flags without calling
+                                     // logFinishFile() — clear the ownership flag here too, or a
+                                     // 'K 1' on a cardless board would latch it forever.
         return;
     }
 
@@ -2444,7 +2507,11 @@ void printSdStatus() {
     Serial.println(logFileName[0] ? logFileName : "(none yet)");
     bool running = (logActive || logCloseRequested);
     Serial.print("active:    ");
-    Serial.println(logActive ? "YES (sampling)" : (logCloseRequested ? "closing" : "no"));
+    Serial.print(logActive ? "YES (sampling)" : (logCloseRequested ? "closing" : "no"));
+    // Ownership marker (review 2026-08-16, S2): 'K 0' is refused on a profile-owned log, so the
+    // status line must let the operator tell WHOSE log is open — the filename prefix alone is an
+    // indirect tell. Only printed while a log is running; ownership of a closed file is history.
+    Serial.println(!running ? "" : (logManualActive ? "  (manual — K 0 stops)" : "  (profile-owned)"));
     // While a run is live these are the live counters; once closed they are cleared, so fall back
     // to the LAST run's numbers — a status line reading rec=0 straight after a run looks broken.
     // Field labels stay fixed either way; the "(last run)" suffix says which is being shown.
@@ -3462,7 +3529,8 @@ void doState99() {
 //   W [Imax] [b] — start/stop combined CURRENT + power-share profile (both args optional)
 //   U — toggle VESC watch (~2 Hz read-back; WAS 'W' before 2026-08-10)
 //   S — print status snapshot
-//   K — print SD bench-logger status (card, file, record/drop counts)
+//   K [1|0] — SD bench logger: empty = status (card, file, record/drop counts),
+//             1 = start a MANUAL log (MLnnnn.BLG), 0 = stop it
 //   I — scan I2C bus (lists ACKing addresses; Ag105 expected at 0x30)
 //   H/? — print this command list
 //   Q — exit → State 1 (MOT_PWR_ENABLE forced LOW)
@@ -3521,7 +3589,9 @@ void printTestHelp() {
     Serial.println("      so you can switch to the plotter window before the run starts");
     Serial.println("      ('D', 'Y' and 'W' are NOT armed — they start immediately; an armed");
     Serial.println("      'R'/'T' is refused over, and cancelled by, a running 'D'/'Y'/'W')");
-    Serial.println("  K - SD logger status (auto-logs every R/T/D/Y/W run @1kHz to PS/TP/DC/YP/WP####.BLG)");
+    Serial.println("  K [1|0] - SD logger: empty=status, 1=start manual log (ML####.BLG), 0=stop");
+    Serial.println("      (R/T/D/Y/W runs are auto-logged @1kHz to PS/TP/DC/YP/WP####.BLG;");
+    Serial.println("       a manual log is for hand-driven runs and is refused while a profile owns it)");
     Serial.println("  H - show this command list");
     Serial.println("  * 1/2 refuse ON if the matching boost is ON and VBUS is low (use G);");
     Serial.println("    2 also refuses while FC_CHARGE_ENABLE is HIGH (illegal combination)");
@@ -3757,9 +3827,14 @@ void doState98() {
                 break;
             case 'K':
             case 'k':
-                // Read-only status print — deliberately NOT in the bring-up lockout list above
-                // (it touches no pin and no card FAT structure; see printSdStatus()).
-                printSdStatus();
+                // Deliberately NOT in the bring-up lockout list above: the empty-line form is a
+                // read-only status print that touches no pin and no card FAT structure (see
+                // printSdStatus()), and locking the key out would take that away. The WRITE form
+                // ('K 1', which does open a file) is instead refused at parse time by
+                // parseKLogLine()'s own bringupActive guard.
+                pendingInput = PEND_K_PARAMS;
+                Serial.print("SD log [1=start 0=stop, empty=status]: ");
+                if (plotModeActive) Serial.println();   // see 'P' — plot-line concat guard
                 break;
             case 'I':
             case 'i':
@@ -5434,6 +5509,86 @@ void advanceCombinedProfile() {
 // Parse the single-line parameter entry "[Imax A] [share bound b]" (e.g. typed as one line
 // "W 6 0.0"). BOTH values are optional — a bare newline runs the defaults, same as 'Y' (and
 // unlike the trapezoid, where an empty line is a cancel).
+// 'K' line command (fw v9): "" = status, "1" = start a manual log, "0" = stop it. Anything else
+// rejects the WHOLE line, the same strictness the 'T' parser adopted in 2026-08-11 — a partially
+// understood logging command is worse than none, because the operator would believe a run is
+// being captured when it is not.
+//
+// This is the only logger entry point reached from a keypress that is not a profile start, so the
+// guards a profile start gets for free have to be stated here. No card I/O happens in this
+// function beyond the logOpenForProfile() call, which is the same keypress-time open every
+// profile start performs.
+void parseKLogLine(const char *line) {
+    const char *p = line;
+    while (*p == ' ') p++;
+
+    if (*p == '\0') {          // bare "K" + newline — the pre-fw-v9 behaviour, unchanged
+        printSdStatus();
+        return;
+    }
+
+    char cmd = *p++;
+    while (*p == ' ') p++;
+    if ((cmd != '0' && cmd != '1') || *p != '\0') {
+        Serial.println("ERROR: K takes 0 or 1 (or empty for status)");
+        return;
+    }
+
+    if (cmd == '1') {
+        // Opening a file is not free: logNextFileName() walks the directory and preAllocate()
+        // claims 32 MB (see the TODO(measure) there). That stall may not land inside the staged
+        // bring-up, whose phases are millis()-deadline sequenced.
+        if (bringupActive) {
+            Serial.println("REFUSED: staged bring-up in progress — bring the bus up first");
+            return;
+        }
+        // tsweepActive is checked too (safety review 2026-08-16, S1): between sweep runs
+        // (WAIT_LOG/COOLDOWN) no profile flag is set and the logger is idle, so without this
+        // term 'K 1' would be accepted — and the COOLDOWN fire-time re-check does not re-test
+        // the logger, so the next run's logOpenForProfile() would force-finish the manual file,
+        // find the card busy, and silently skip that run's log (exactly the loss the sweep's
+        // WAIT_LOG gate exists to prevent).
+        if (driveCycleActive || powerShareProfileActive || trapProfileActive ||
+            combinedProfileActive || wProfileActive || tsweepActive ||
+            plotArmTarget != PLOT_ARM_NONE) {
+            Serial.println("REFUSED: a profile owns the log — it logs automatically");
+            return;
+        }
+        if (logActive || logCloseRequested) {
+            Serial.println("REFUSED: a log is already open/closing (K 0 to stop, K for status)");
+            return;
+        }
+        logOpenForProfile(LOG_TYPE_MANUAL);
+        // The open can fail benignly (no card, directory scan, name counter exhausted, header
+        // write) and prints its own diagnostic at the site that knows which cause it was. Claim
+        // manual ownership only if a file actually opened, so a failed 'K 1' cannot leave a flag
+        // that makes a later 'K 0' claim to be closing something.
+        logManualActive = logActive;
+        if (logActive) {
+            Serial.print("[SD] manual log started: ");
+            Serial.println(logFileName);
+        }
+        return;
+    }
+
+    // cmd == '0' — request close. logRequestClose() only flags; loop()'s logDrainTick() writes
+    // the trailer and closes, which is what keeps card I/O out of the keypress path.
+    if (!logActive && !logCloseRequested) {
+        Serial.println("[SD] no log running");
+        return;
+    }
+    if (!logManualActive) {
+        Serial.println("REFUSED: the running log belongs to a profile — stop the profile instead");
+        return;
+    }
+    // LOG_CLOSE_STOP is the right existing reason (operator ended the run); no new trailer code,
+    // so the decoder's known-reason check needs no change. logManualActive deliberately stays set
+    // until logFinishFile() — the close is still draining, and the 'K 1' refusal above must keep
+    // seeing this as a manual log for the whole drain window.
+    logRequestClose(LOG_CLOSE_STOP);
+    Serial.println("[SD] manual log closing — drain completes in loop()");
+}
+
 void parseCurrentComboParamsLine(const char* line) {
     float imax  = W_IMAX_DEFAULT;
     float bound = Y_BOUND_DEFAULT;   // shared bound default — see the 'W' state block
@@ -5605,6 +5760,12 @@ void handlePendingInputChar(char c) {
         }
         if (which == PEND_W_PARAMS) {   // same all-optional grammar as 'Y'
             parseCurrentComboParamsLine(inputBuf);
+            return;
+        }
+        // 'K' likewise dispatches ahead of the empty-line cancel, but for a different reason: an
+        // empty line is not "no value entered", it is the STATUS request (the pre-fw-v9 bare 'K').
+        if (which == PEND_K_PARAMS) {
+            parseKLogLine(inputBuf);
             return;
         }
         if (inputBuf[0] == '\0') {

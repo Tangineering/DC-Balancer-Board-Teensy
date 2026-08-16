@@ -1,0 +1,2244 @@
+teensy_controller.ino — unit tests
+===================================
+
+[Scale factor math]
+  PASS: SCALE_V_FC correct (27.4+10)/10
+  PASS: SCALE_V_BATT correct (16.2+10)/10
+  PASS: SCALE_V_BUS correct (46.4+10)/10
+  PASS: SCALE_V_CHG correct (78.7+10)/10
+  PASS: SCALE_V_RGN correct (78.7+10)/10
+  PASS: SCALE_I correct (3.3/4095/0.1 — INA253A1)
+  PASS: ADC_MAX == 4095 (12-bit)
+  PASS: SCALE_V_FC * 4095 == 12.342V
+  PASS: SCALE_V_BATT * 4095 == 8.646V
+  PASS: SCALE_V_BUS * 4095 == 18.612V
+
+[Ag105 I2C constants]
+  PASS: AG105_ADDR == 0x30 (field 0xE5 default)
+  PASS: AG105_REG_ICHG_CFG == 0x00
+  PASS: AG105_VAL_2500MA == 0x01 (2.5A profile)
+  PASS: AG105_REG_VBATT_CFG == 0x01
+  PASS: AG105_VAL_2S == 0x08 (8.4V / 2S / 100% capacity)
+  PASS: AG105_REG_ICHG_MEAS == 0x06 (0.011 A/count)
+  PASS: AG105_GENSTAT_CHARGING == 0x02
+  PASS: AG105_GENSTAT_FULL == 0x03
+  PASS: TELEMETRY_VERSION == 4
+
+[initAg105Charger() I2C sequence]
+  PASS: initAg105Charger: returns true when both writes ACK
+  PASS: initAg105Charger: exactly 2 I2C config writes
+  PASS: initAg105Charger: write[0] address == 0x30 (AG105)
+  PASS: initAg105Charger: write[0] reg == 0x00 (ICHG_CFG)
+  PASS: initAg105Charger: write[0] value == 0x01 (2.5A)
+  PASS: initAg105Charger: write[1] address == 0x30 (AG105)
+  PASS: initAg105Charger: write[1] reg == 0x01 (VBATT_CFG)
+  PASS: initAg105Charger: write[1] value == 0x08 (2S / 8.4V)
+  PASS: initAg105Charger: ICHG write precedes VBATT write
+
+[pollAg105() byte decoding]
+  PASS: pollAg105: status byte captured in ag105_status_raw
+  PASS: pollAg105: I_charge = count * 0.011 A/count
+  PASS: ag105IsReady: true when GENSTAT == CHARGING (0x02)
+  PASS: ag105IsReady: true when GENSTAT == FULL (0x03)
+  PASS: ag105IsReady: false when GENSTAT == 0x00 (Battery Disconnect)
+  PASS: ag105IsReady: false when GENSTAT == 0x01
+  PASS: pollAg105: ag105DataValid false after failed read
+  PASS: ag105IsReady: false on stale data even if GENSTAT byte says CHARGING
+  PASS: pollAg105: ag105DataValid true after successful read of status 0x00
+
+[assertFcChargeEnable(true) — ordering]
+  PASS: assertFcChargeEnable(true): FC_CHARGE_ENABLE final state HIGH
+  PASS: assertFcChargeEnable(true): BT_BUS_ENABLE final state LOW
+  PASS: assertFcChargeEnable(true): REGEN_ENABLE final state LOW
+  PASS: assertFcChargeEnable(true): FC_CHARGE_ENABLE was driven HIGH
+  PASS: assertFcChargeEnable(true): BT_BUS_ENABLE driven LOW before FC_CHARGE_ENABLE HIGH
+  PASS: assertFcChargeEnable(true): REGEN_ENABLE driven LOW before FC_CHARGE_ENABLE HIGH
+
+[assertFcChargeEnable(false) — only FC_CHARGE toggled]
+  PASS: assertFcChargeEnable(false): FC_CHARGE_ENABLE driven LOW
+  PASS: assertFcChargeEnable(false): REGEN_ENABLE not disturbed
+  PASS: assertFcChargeEnable(false): BT_BUS_ENABLE not disturbed
+
+[chargingControl() MPPT_DISABLE polarity]
+  PASS: chargingControl: MPPT_DISABLE LOW when charge_goal=0 (inhibited)
+  PASS: chargingControl: FC_CHARGE_ENABLE LOW when charge_goal=0
+  PASS: chargingControl: REGEN_ENABLE LOW when charge_goal=0
+  PASS: chargingControl: MPPT_DISABLE LOW (inhibited) during regen
+  PASS: chargingControl: REGEN_ENABLE HIGH during regen
+  PASS: chargingControl: FC_CHARGE_ENABLE LOW during regen
+  PASS: chargingControl: MPPT_DISABLE HIGH (released) during cruise with charger ready
+  PASS: chargingControl: FC_CHARGE_ENABLE HIGH during cruise
+  PASS: chargingControl: REGEN_ENABLE LOW during cruise
+  PASS: chargingControl: MPPT_DISABLE LOW when charger not ready
+  PASS: chargingControl: FC_CHARGE_ENABLE HIGH on intent even when charger not ready (bootstrap)
+
+[detectFaults()]
+  PASS: detectFaults: FAULT_OC_FC set when I_fc > LIMIT_I_FC_MAX
+  PASS: detectFaults: mainState → 99 on OC_FC
+  PASS: detectFaults: error_code == ERR_OC_FC on overcurrent
+  PASS: detectFaults: error_source_state captures State 1
+  PASS: detectFaults: FAULT_UV_BATT set when V_batt < LIMIT_V_BATT_MIN
+  PASS: detectFaults: mainState → 99 on UV_BATT
+  PASS: detectFaults: error_code == ERR_UV_BATT
+  PASS: detectFaults: FAULT_OV_BUS set when V_bus > LIMIT_V_BUS_MAX
+  PASS: detectFaults: single over-limit sample does NOT latch (persistence filter)
+  PASS: detectFaults: mainState → 99 on OV_BUS
+  PASS: detectFaults: error_code == ERR_OV_BUS
+  PASS: detectFaults: FAULT_SWITCH_CONFLICT set when FC_CHARGE_ENABLE+BT_BUS_ENABLE both HIGH
+  PASS: detectFaults: error_code == ERR_SWITCH_CONFLICT
+  PASS: detectFaults: FAULT_SWITCH_CONFLICT set when FC_CHARGE_ENABLE+REGEN_ENABLE both HIGH
+  PASS: detectFaults: FAULT_OV_BATT set when V_batt > LIMIT_V_BATT_MAX
+  PASS: detectFaults: error_code == ERR_OV_BATT
+  PASS: detectFaults: no FAULT_OV_BATT when V_batt == LIMIT_V_BATT_MAX - 0.05
+  PASS: detectFaults: no FAULT_UV_BUS with both source switches LOW (never armed) even when V_bus low
+  PASS: detectFaults: mainState unchanged (not armed, so nothing to latch)
+  PASS: detectFaults: FAULT_UV_BUS latches once armed and the dwell filter is satisfied
+  PASS: detectFaults: error_code == ERR_UV_BUS
+  PASS: detectFaults: FAULT_ERROR sticky when mainState==99
+  PASS: detectFaults: FAULT_OC_FC preserved when mainState==99
+  PASS: detectFaults: error_code not overwritten in State 99
+  PASS: detectFaults: no fault in nominal conditions
+  PASS: detectFaults: mainState unchanged in nominal conditions
+  PASS: detectFaults: error_code remains ERR_NONE in nominal conditions
+
+[Telemetry v4 layout (58-byte packet)]
+  PASS: telemetry: packet length == 58 bytes (v4)
+  PASS: telemetry: SYNC byte 0xAA at offset 0
+  PASS: telemetry: XOR checksum over bytes 1–56 matches byte 57
+  PASS: telemetry: charger_status (ag105_status_raw) at offset 51
+  PASS: telemetry: V_rgn at offset 35
+  PASS: telemetry: V_chg at offset 39
+  PASS: telemetry: I_charge at offset 19
+  PASS: telemetry: power_share_actual at offset 43
+  PASS: telemetry: switch_state == 0 when all path switches LOW
+  PASS: telemetry: fault_flags (uint16_t LE) == 0 at offset 53
+  PASS: telemetry: error_code == ERR_NONE at offset 55
+  PASS: telemetry: error_source_state == 0 at offset 56
+  PASS: telemetry: fault_flags 0x8001 correctly encoded at offset 53
+  PASS: telemetry: error_code ERR_OC_FC at offset 55
+  PASS: telemetry: error_source_state == 2 at offset 56
+  PASS: telemetry: switch_state bitmask correct (FC_BUS + MOT_PWR)
+
+[receiveCommands() command packet parsing]
+  PASS: receiveCommands: v_setpoint parsed correctly
+  PASS: receiveCommands: power_share_setpoint parsed
+  PASS: receiveCommands: charge_goal parsed
+  PASS: receiveCommands: mode_cmd parsed (MODE_HYBRID=0)
+  PASS: receiveCommands: pi_ever_connected set on first packet
+  PASS: receiveCommands: changeToRun set when mode=0 and mainState=1
+  PASS: receiveCommands: packet dropped on checksum mismatch (v_setpoint unchanged)
+  PASS: receiveCommands: packet dropped when size != 22
+
+[PI controllers]
+  PASS: PI_Controller_Motor: live proportional output on sub-sampleTime tick (no 0 sentinel)
+  PASS: PI_Controller_Motor: integrator NOT updated on sub-sampleTime tick
+  PASS: PI_Controller_Motor: positive output for positive error after dt > sampleTime
+  PASS: PI_Controller_Motor: integrator updated once dt >= sampleTime
+  PASS: PI_Controller_Motor: runs without crash for negative error
+  PASS: PI_Controller_Power: live proportional output on sub-sampleTime tick (no 0 sentinel)
+  PASS: PI_Controller_Power: integrator NOT updated on sub-sampleTime tick
+  PASS: PI_Controller_Power: positive output for positive error
+  PASS: PI_Controller_Power: zero error runs without crash
+
+[Drive cycle (advanceDriveCycle) phase transitions]
+  PASS: drive cycle: still phase 0 at 1000ms
+  PASS: drive cycle: v_setpoint = 0 during standstill phase
+  PASS: drive cycle: transitions to phase 1 at 2001ms
+  PASS: drive cycle: still in phase 1 (ramp) at 4001ms
+  PASS: drive cycle: v_setpoint ≈ 1.5 at midpoint of ramp-up (t=0.5)
+  PASS: drive cycle: transitions to phase 2 (cruise) after ramp-up
+  PASS: drive cycle: v_setpoint = -0.5 during regen hold phase
+  PASS: drive cycle: driveCycleActive becomes false after all phases complete
+  PASS: drive cycle: v_setpoint reset to 0 on completion
+
+[checkPiWatchdog() state guard (States 2 and 3 only)]
+  PASS: checkPiWatchdog: no fault in State 1 even when Pi absent
+  PASS: checkPiWatchdog: no fault in State 98 even when Pi absent
+  PASS: checkPiWatchdog: fault triggered in State 2 after Pi timeout
+  PASS: checkPiWatchdog: FAULT_PI_TIMEOUT bit set in fault_flags
+  PASS: checkPiWatchdog: error_code == ERR_PI_TIMEOUT
+  PASS: checkPiWatchdog: error_source_state == 2 (was in Run)
+  PASS: checkPiWatchdog: fault triggered in State 3 after Pi timeout
+  PASS: checkPiWatchdog: FAULT_PI_TIMEOUT set from State 3
+  PASS: checkPiWatchdog: error_code == ERR_PI_TIMEOUT from State 3
+
+[Error code system (triggerFault latching)]
+  PASS: triggerFault: error_code latched to ERR_OC_FC on first call
+  PASS: triggerFault: error_source_state captured mainState==2
+  PASS: triggerFault: transitions mainState to 99
+  PASS: triggerFault: FAULT_OC_FC bit set in fault_flags
+  PASS: triggerFault: FAULT_ERROR bit set immediately
+  PASS: triggerFault: error_code remains ERR_OC_FC on second call (latch)
+  PASS: triggerFault: FAULT_UV_BATT added to fault_flags on second call
+
+[Fault bitmask constants]
+  PASS: FAULT_* constants: all distinct powers-of-two (no duplicates or non-POT)
+
+[I2C fault injection]
+  PASS: initAg105Charger: returns false when first I2C write NAKs
+  PASS: initAg105Charger: raises no fault itself on NACK
+  PASS: initAg105Charger: does not change state on NACK
+  PASS: initAg105Charger: returns true when both writes succeed
+  PASS: initAg105Charger: 2 writes when both succeed
+  PASS: pollAg105: FAULT_I2C_CHARGER set when powered+settled charger NAKs in Run
+  PASS: pollAg105: error_code == ERR_I2C_CHARGER
+  PASS: pollAg105: mainState → 99 on I2C read failure (powered+settled)
+  PASS: pollAg105: no fault transition on successful I2C read
+  PASS: pollAg105: I_charge decoded correctly after successful read
+
+[doState0() staged bring-up (P0→P1→P2→P3) reaches Idle]
+  PASS: doState0/P0: machine armed, advanced to the P0 gate
+  PASS: doState0/P0: bus switches closed FIRST
+  PASS: doState0/P0: MOT_PWR actively held LOW (motor node not on the chain)
+  PASS: doState0/P0: boosts NOT enabled before the bus switches (switches-before-boosts)
+  PASS: doState0/P0 gate: uses max(V_fc,V_batt) — a V_batt-only pass is rejected
+  PASS: doState0/P0 gate: voltage good early still waits out PRECHARGE_MIN_MS
+  PASS: doState0/P0 gate: passes once both time and voltage criteria are met
+  PASS: doState0/P1: boosts enabled after the pre-charge
+  PASS: doState0/P1: BT_SEQUENCE_ENABLE raised with the boosts
+  PASS: doState0/P1: MOT_PWR still LOW through the boost ramp
+  PASS: doState0/P1: doInit=true ran initControlPeripherals (MDAC outputs written)
+  PASS: doState0/P1 gate: bus in regulation → dwell phase
+  PASS: doState0/P2: MOT_PWR still LOW during the dwell
+  PASS: doState0/P2: dwell not yet complete
+  PASS: doState0/P2: dwell complete after BUS_REG_DWELL_MS continuous regulation
+  PASS: doState0: MOT_PWR held LOW through the whole of P0/P1/P2
+  PASS: doState0/P3: motor node connected from the regulated bus
+  PASS: doState0/P3: not Idle until the motor node tracks the bus
+  PASS: doState0: BRINGUP_DONE → Idle
+  PASS: doState0: machine self-resets on DONE
+  PASS: doState0: no fault latched on a healthy bring-up
+
+[doState0() P0 pre-charge timeout → FAULT_INIT_FAIL (vacuous-pass guard)]
+  PASS: doState0/P0: all-zero rails do NOT vacuously pass the relative gate
+  PASS: doState0/P0: boosts never enabled on a dead source
+  PASS: doState0/P0: pre-charge timeout latches State 99 / ERR_INIT_FAIL
+  PASS: doState0/P0: FAULT_INIT_FAIL flag set
+  PASS: doState0/P0: machine self-resets before faulting
+
+[doState0() P1 bus-charge timeout → FAULT_INIT_FAIL]
+  PASS: doState0/P1: pre-charged, boosts on, waiting for regulation
+  PASS: doState0: latches State 99 when the bus never charges
+  PASS: doState0: ERR_INIT_FAIL latched on bus-charge timeout
+  PASS: doState0: FAULT_INIT_FAIL flag set on bus-charge timeout
+
+[Bring-up P2 dwell: dip restarts, overall timeout → FAULT_INIT_FAIL]
+  PASS: dwell: entered P2
+  PASS: dwell: dip keeps the machine in P2
+  PASS: dwell: the dip restarted the dwell — no premature P3 at the original deadline
+  PASS: dwell: completes once regulation holds a full window post-dip
+  PASS: dwell: still pending just inside the timeout
+  PASS: dwell: overall BUS_DWELL_TIMEOUT_MS → FAULT_INIT_FAIL
+  PASS: dwell: machine self-resets on the timeout
+
+[Bring-up P3 motor-connect timeout → FAULT_MOT_HOTPLUG]
+  PASS: P3: MOT_PWR closed from the regulated bus
+  PASS: P3: still waiting inside the connect window
+  PASS: P3: motor node never tracks the bus → FAULT_MOT_HOTPLUG
+  PASS: P3: FAULT_MOT_HOTPLUG flag set
+  PASS: P3: machine self-resets on the timeout
+
+[State 98 'G' staged bring-up]
+  PASS: 'G': machine armed and P0 entry executed in the same invocation
+  PASS: 'G': bus switches closed, MOT_PWR held LOW
+  PASS: 'G': re-arm while active is refused (phase unchanged)
+  PASS: 'G': machine advances on a doState98() tick with an EMPTY serial queue
+  PASS: 'G': boosts enabled at the P0 gate pass
+  PASS: 'G': doInit=false — initControlPeripherals NOT re-run (no MDAC writes)
+  PASS: 'G': bus in regulation → dwell
+  PASS: 'G': motor node connected at P3
+  PASS: 'G': bring-up completes and the machine self-resets
+  PASS: 'G': stays in State 98 with no fault
+
+[State 98 bring-up ↔ profile interlocks]
+  PASS: 'G' refused while the drive cycle is active
+  PASS: 'G' refused while the power-share profile is active
+  PASS: 'G' refused while the trapezoid profile is active
+  PASS: 'D' refused while a bring-up is in progress
+  PASS: 'R' refused while a bring-up is in progress
+  PASS: 'T' refused while a bring-up is in progress (no pending input either)
+
+[State 98 'X'/'Q' abort the bring-up (stage darkened)]
+  PASS: abort: reached mid-P1
+  PASS: 'X': bring-up aborted
+  PASS: 'X': all five power-stage pins driven LOW (a cut-park is invisible to the ADC)
+  PASS: 'Q': bring-up aborted on exit
+  PASS: 'Q': power stage darkened on a mid-bring-up exit
+  PASS: 'Q': returns to Idle
+
+[State 98 topology lockout during a staged bring-up]
+  PASS: lockout: reached mid-P1 with the machine running
+  PASS: lockout: '3' refused mid-bring-up (would bypass the dwell)
+  PASS: lockout: 'F' refused mid-bring-up (would re-arm a boost the machine owns)
+  PASS: lockout: '5' refused mid-bring-up (illegal BT_BUS+FC_CHARGE)
+  PASS: lockout: '1' refused (bus switch stays as the machine set it)
+  PASS: lockout: the machine keeps running through the refused keys
+  PASS: lockout: 'A' refused mid-bring-up (no numeric-entry prompt opened)
+  PASS: lockout: 'V' refused mid-bring-up (no numeric-entry prompt opened)
+  PASS: lockout: 'P' refused mid-bring-up (no numeric-entry prompt opened)
+  PASS: lockout: 'O' refused mid-bring-up (no numeric-entry prompt opened)
+  PASS: lockout: no motor/droop writer took effect through the refusals
+  PASS: lockout: 'S' status dump still works and leaves the machine alone
+  PASS: lockout: 'X' still aborts the bring-up
+  PASS: lockout: the abort still darkens the stage
+
+[Bring-up P0 darkens the stage first (review F1)]
+  PASS: P0 dark-start: both boosts driven LOW before the switches close
+  PASS: P0 dark-start: a latched FC_CHARGE is closed (no illegal BT_BUS+FC_CHARGE)
+  PASS: P0 dark-start: REGEN path closed
+  PASS: P0 dark-start: motor node taken off the chain
+  PASS: P0 dark-start: bus switches closed onto a dark stage
+  PASS: P0 dark-start: doState0() path darkens the stage identically
+
+['G' clears a standing manual motor command / droop-live]
+  PASS: 'G' ownership: bring-up actually armed
+  PASS: 'G' ownership: standing manual mode cleared (cannot resume after DONE)
+  PASS: 'G' ownership: standing manual current cleared
+  PASS: 'G' ownership: live droop/share writer disabled
+  PASS: 'G' ownership: a zero-current flush was sent to the VESC
+  PASS: 'G' ownership: no motor command issued on a plain bring-up tick
+
+[Manual/live motor block suppressed during a bring-up (round 2, F1)]
+  PASS: manual suppression: bring-up armed
+  PASS: manual suppression: applyManualMotor() never runs while bringupActive
+  PASS: manual suppression: powerBalanceGated() never writes the droop MDACs either
+  PASS: manual suppression: the machine is still running
+  PASS: manual suppression: aborted
+  PASS: manual suppression: the manual block resumes once the machine is idle
+
+[Bring-up: a gate satisfied past the deadline FAULTS (review F2)]
+  PASS: P0: a late-but-passing gate faults instead of accepting
+  PASS: P0: boosts never enabled by the late gate
+  PASS: P1: reached the bus-charge gate
+  PASS: P1: a late-but-passing regulation gate faults instead of accepting
+  PASS: P3: motor node connected
+  PASS: P3: a late-but-passing connect gate faults with FAULT_MOT_HOTPLUG
+  PASS: P3: machine self-reset on the late-gate fault
+
+[Bring-up P3: a sagged bus must not complete the connect (review F3)]
+  PASS: P3 sag: motor node connected from the regulated bus
+  PASS: P3 sag: relative tracking alone does NOT complete on a sagged bus
+  PASS: P3 sag: completes once the bus is back in regulation
+  PASS: P3 sag: no fault on the recovered completion
+
+[FAULT_OV_BUS persistence filter]
+  PASS: OV_BUS: bit set on the first over-limit sample (truthful telemetry)
+  PASS: OV_BUS: single sample does not change mainState
+  PASS: OV_BUS: single sample leaves error_code ERR_NONE (t=0 edge)
+  PASS: OV_BUS: window opened, 1 sample counted
+  PASS: OV_BUS: no latch before the persistence time elapses
+  PASS: OV_BUS: latches once time AND sample floor are both satisfied
+  PASS: OV_BUS: flag retained through the latch
+  PASS: OV_BUS: below-limit sample resets the window
+  PASS: OV_BUS: a dip restarts the window — no latch at the original deadline
+  PASS: OV_BUS: sparse stalled-loop samples do not latch (aliasing guard)
+  PASS: OV_BUS: gap > OV_BUS_MAX_GAP_MS restarts the window (counter back to 1)
+  PASS: OV_BUS: window pending (no latch yet)
+  PASS: OV_BUS: other faults keep single-sample latching while an OV_BUS window is pending
+  PASS: OV_BUS: both the pending OV_BUS bit and the latched fault are reported
+
+[FAULT_OV_BUS sample-gap guard (OV_BUS_MAX_GAP_MS)]
+  PASS: gap guard: samples at 0/100/101 do NOT latch (window restarted at the 100ms gap)
+  PASS: gap guard: window restarted at the sparse sample, then continued
+  PASS: gap guard: the gap-abandoned window increments the transient counter
+  PASS: gap guard: contiguous 2ms-spaced samples across the window DO latch
+
+[FAULT_OV_BUS gap-abandoned window is counted (review round 2)]
+  PASS: gap-abandoned: window open, nothing counted yet
+  PASS: gap-abandoned: the restart counts the abandoned window at the restart tick
+  PASS: gap-abandoned: a FRESH window is open after the restart
+  PASS: gap-abandoned: still no latch
+  PASS: gap-abandoned: the fresh window's normal close counts separately
+
+[FAULT_OV_BUS transient counter]
+  PASS: transient: counter starts at 0
+  PASS: transient: counter not incremented while the window is still open
+  PASS: transient: counter increments once when a window closes WITHOUT latching
+  PASS: transient: a closed sub-persistence window never latches
+  PASS: transient: window state cleared on close
+  PASS: transient: a second window increments the counter again
+  PASS: transient: under-limit ticks with no open window do nothing
+  PASS: transient: t=0 close marks the limiter as printed (flag, not 0-sentinel)
+  PASS: transient: t=0 close still counted
+
+[FAULT_UV_BUS: unarmed while the power stage is dark]
+  PASS: UV_BUS/dark: never arms with both source switches LOW
+  PASS: UV_BUS/dark: no fault bit despite V_bus=0 < LIMIT_V_BUS_MIN
+  PASS: UV_BUS/dark: no latch
+
+[FAULT_UV_BUS: dwell ratchets across a repetitive relay cycle (fw v5, TP0053 class)]
+  PASS: UV_BUS/relay: (setup) armed
+  PASS: UV_BUS/relay: the repetitive 9ms/51ms duty cycle ratchets to a latch within 6 cycles — fw v4's wall-clock window NEVER latched this waveform (TP0053 ran 1.0-1.3s / up to 24 excursions with zero fault indication)
+  PASS: UV_BUS/relay: does not latch within the first 2 cycles alone — isolated dips leak away, only the repetitive ratchet gets there
+  PASS: UV_BUS/relay: latches well inside the 5-cycle budget derived from the +6.45ms/cycle net gain arithmetic
+
+[FAULT_UV_BUS: sparse transients (WP0069 shape) leak away between excursions, no latch]
+  PASS: UV_BUS/sparse: 9 isolated ~2ms dips spread over ~210ms never latch — the dwell leaks away between them
+  PASS: UV_BUS/sparse: accumulated dwell stays below the latch threshold at the end of the run
+  PASS: UV_BUS/sparse: every one of the 9 dips is counted as a closed transient (visible via 'S')
+
+[FAULT_UV_BUS: continuous collapse latches at 20ms dwell, not at 15ms]
+  PASS: UV_BUS/continuous: not latched at 15ms of continuous under-dwell
+  PASS: UV_BUS/continuous: dwell tracks the elapsed continuous under-time 1:1 (each 1ms tick is well under the 5ms dt cap)
+  PASS: UV_BUS/continuous: latches once dwell reaches UV_BUS_DWELL_LATCH_MS (20ms)
+
+[FAULT_UV_BUS: per-tick dwell credit is capped at UV_BUS_DWELL_DT_CAP_MS]
+  PASS: UV_BUS/cap: a stalled-loop/long gap credits at most UV_BUS_DWELL_DT_CAP_MS, not the full 500ms elapsed
+  PASS: UV_BUS/cap: a second capped tick adds another 5ms — a stalled loop cannot insta-latch off a single huge dt
+  PASS: UV_BUS/cap: two capped ticks (10ms total) stay below the 20ms latch
+
+[FAULT_UV_BUS: leaking dwell floors at zero, a fresh 20ms is still required after]
+  PASS: UV_BUS/leak: (setup) 5ms accumulated
+  PASS: UV_BUS/leak: a long over-limit stretch floors dwell at exactly 0, never negative
+  PASS: UV_BUS/leak: 19ms accumulated from the zero floor still does not latch
+  PASS: UV_BUS/leak: the 20th ms from the floor latches — confirms no negative credit was banked during the leak stretch
+
+[FAULT_UV_BUS: disarm (boosts off) dumps the accumulated dwell, not just the armed flag]
+  PASS: UV_BUS/disarm: (setup) 15ms accumulated
+  PASS: UV_BUS/disarm: disarming dumps the accumulated dwell to zero
+  PASS: UV_BUS/disarm: 19ms after re-arm does not latch (fresh dwell, not 15+19=34ms carried over from before the disarm)
+  PASS: UV_BUS/disarm: a full fresh 20ms after re-arm does latch
+
+[FAULT_UV_BUS: the raw telemetry bit tracks V_bus vs LIMIT_V_BUS_MIN, before any latch]
+  PASS: UV_BUS/flag: bit clear while V_bus is above the limit
+  PASS: UV_BUS/flag: bit sets on the very first under-limit tick, well before any latch
+  PASS: UV_BUS/flag: bit clears the instant V_bus recovers above the limit
+
+[FAULT_UV_BUS: disarms when both source switches open (teardown)]
+  PASS: UV_BUS/disarm: (setup) armed
+  PASS: UV_BUS/disarm: disarmed the instant both source switches read LOW
+  PASS: UV_BUS/disarm: no fault bit during the decay
+  PASS: UV_BUS/disarm: no latch
+
+[FAULT_UV_BUS: immune to a bring-up ramp that never reaches V_BUS_CHARGED_THRESH]
+  PASS: UV_BUS/bringup: never arms across a ramp that stays under V_BUS_CHARGED_THRESH
+  PASS: UV_BUS/bringup: no fault bit despite V_bus < LIMIT_V_BUS_MIN for most of the ramp
+  PASS: UV_BUS/bringup: no latch
+
+[FAULT_UV_BUS: bringupActive disarms even with switches+boosts+charged bus (S3)]
+  PASS: S3: uvBusArmed stays false while bringupActive is true, even with switches+boosts+charged bus all otherwise satisfied — the staged bring-up owns its own sags
+  PASS: S3: arms on the very tick bringupActive falls, with switches/boosts/bus already up
+
+[FAULT_UV_BUS: disarms when both boosts are off, switches still closed (S4, 'F'/'B')]
+  PASS: S4: (setup) armed with a boost enabled
+  PASS: S4: disarmed the instant both boosts read LOW, even with the bus switches still closed
+  PASS: S4: no fault bit on the sag — routine 'F'/'B' bench sequence, not a loss of source feed
+  PASS: S4: no latch
+
+[FAULT_UV_BUS: arming requires a MATCHED source pair, not mismatched OR terms (S7)]
+  PASS: T5: the fw v4 OR-predicate's individual terms are all satisfied, but no MATCHED source pair exists -- stays DISARMED (the S7 fix)
+  PASS: T5: no fault bit, no dwell accumulated -- an unarmed low bus is not a fault
+  PASS: T5: no latch
+  PASS: T5: closing the matched pair (FC_BUS HIGH + FC_REG HIGH together) arms it
+
+[FAULT_UV_FC: never arms with V_fc ~0 even with the FC pair closed (single-source bench)]
+  PASS: UV_FC/no-source: never arms -- V_fc was never observed >= LIMIT_V_FC_MIN
+  PASS: UV_FC/no-source: no fault bit despite V_fc=0.2 < LIMIT_V_FC_MIN for the whole run
+  PASS: UV_FC/no-source: no latch -- this is precisely the bench-with-no-fuel-cell case the arming term exists to protect
+
+[FAULT_UV_FC: arms only when the FC pair is closed AND V_fc has been observed >= V_FC_ARM_THRESH (C1)]
+  PASS: UV_FC/arm: arms once the FC pair is closed and V_fc reads >= V_FC_ARM_THRESH
+  PASS: UV_FC/arm: a healthy V_fc alone does not arm -- the FC pair must also be closed
+  PASS: UV_FC/arm (C1): V_fc = 6.5V (in [6.0, 7.0)) never arms, however long it is held there
+  PASS: UV_FC/arm (C1): unarmed, so no fault bit and no latch either, even though V_fc is already below what the OLD (pre-C1) single-threshold arm would have required
+  PASS: UV_FC/arm (C1): V_fc just under V_FC_ARM_THRESH (6.99V) does not arm
+  PASS: UV_FC/arm (C1): V_fc exactly at V_FC_ARM_THRESH (7.0V) does arm (>=, not >)
+  PASS: UV_FC/arm (C1): (setup) armed at V_FC_ARM_THRESH
+  PASS: UV_FC/arm (C1): once armed, 6.5V is still ABOVE the 6.0V trip limit -- no transient bit
+  PASS: UV_FC/arm (C1): the trip limit is still LIMIT_V_FC_MIN (6.0V), unmoved by C1 -- 5.9V sets the transient bit once armed
+
+[FAULT_UV_FC: continuous collapse latches at 20ms dwell, not before]
+  PASS: UV_FC/collapse: (setup) armed
+  PASS: UV_FC/collapse: not latched at 15ms of continuous under-dwell
+  PASS: UV_FC/collapse: dwell tracks the elapsed continuous under-time 1:1
+  PASS: UV_FC/collapse: latches once dwell reaches UV_FC_DWELL_LATCH_MS (20ms), naming the cause ERR_UV_FC (not ERR_UV_BUS -- WP0096/WP0098's V_fc collapse led the bus event by ~7ms, so the source-rail fault must latch first and name the true cause)
+
+[FAULT_UV_FC: the transient telemetry bit sets/clears independently of the latch]
+  PASS: UV_FC/flag: bit clear while V_fc is above the limit
+  PASS: UV_FC/flag: bit sets on the very first under-limit tick, well before any latch
+  PASS: UV_FC/flag: bit clears the instant V_fc recovers above the limit
+
+[FAULT_UV_FC: an intermittent under/over pattern that nets below the latch never fires]
+  PASS: UV_FC/leak: 9 isolated ~2ms dips spread over ~234ms never latch -- the dwell leaks away between them
+  PASS: UV_FC/leak: accumulated dwell stays below the latch threshold at the end of the run
+  PASS: UV_FC/leak: every one of the 9 dips is counted as a closed transient (visible via 'S')
+
+[FAULT_UV_FC: a single huge tick gap contributes at most UV_BUS_DWELL_DT_CAP_MS (5ms)]
+  PASS: UV_FC/cap: a stalled-loop/long gap credits at most 5ms, not the full 500ms elapsed
+  PASS: UV_FC/cap: a second capped tick adds another 5ms -- a stalled loop cannot insta-latch off a single huge dt
+  PASS: UV_FC/cap: two capped ticks (10ms total) stay below the 20ms latch
+
+[FAULT_UV_FC: disarm (+ dwell zeroed) when the FC pair opens, the stage is dark, or bring-up runs]
+  PASS: UV_FC/disarm(a): (setup) 15ms accumulated
+  PASS: UV_FC/disarm(a): FC_BUS_ENABLE opening disarms and dumps the accumulated dwell
+  PASS: UV_FC/disarm(b): FC_REG_ENABLE opening (boost off) disarms too, even with the bus switch still closed
+  PASS: UV_FC/disarm(c): a fully dark stage disarms and dumps the dwell
+  PASS: UV_FC/disarm(d): bringupActive keeps it disarmed even with the FC pair closed and V_fc healthy
+  PASS: UV_FC/disarm(d): arms on the very tick bringupActive falls, with the pair already closed and V_fc already healthy
+
+[State 98 bus hot-plug guard ('1'/'2')]
+  PASS: doState98: '1' refused (FC boost ON + bus low) — switch stays LOW
+  PASS: doState98: '1' allowed when the bus is already charged
+  PASS: doState98: '2' allowed when the boost is OFF
+  PASS: doState98: '2' OFF always allowed (guard only blocks ON)
+
+[State 98 '2' refuses BT_BUS while FC_CHARGE_ENABLE is HIGH]
+  PASS: doState98: '2' refused while FC_CHARGE_ENABLE HIGH — BT_BUS stays LOW
+  PASS: doState98: '2' allowed once FC_CHARGE_ENABLE is LOW
+
+[State 98 'Q' exit closes FC_CHARGE/REGEN]
+  PASS: doState98: 'Q' returns to State 1
+  PASS: doState98: 'Q' forces MOT_PWR_ENABLE LOW
+  PASS: doState98: 'Q' closes FC_CHARGE_ENABLE (charger not left powered into Idle)
+  PASS: doState98: 'Q' closes REGEN_ENABLE
+  PASS: doState98: 'Q' flushes a zero VESC current before cutting motor power
+
+[doState3() leaves the bus energized]
+  PASS: doState3: returns to Idle
+  PASS: doState3: bus switches stay ON (no re-hot-plug on next Run)
+  PASS: doState3: boosts stay ON (bus remains armed)
+  PASS: doState3: motor node stays energized (no re-hot-plug on next Run)
+  PASS: doState3: motor commanded to zero (held stopped without cutting MOT_PWR)
+
+[MOT_PWR connect guard (motPwrConnectBlocked/assertMotPwrEnable/doState2)]
+  PASS: blocked: dark bus → connect refused
+  PASS: blocked: pre-charged/mid-ramp bus (below V_BUS_CHARGED_THRESH) → connect refused
+  PASS: blocked: just below V_BUS_CHARGED_THRESH → connect refused
+  PASS: allowed: regulated bus + DISCHARGED node → this is the sanctioned P3 connect
+  PASS: allowed: regulated bus + charged node (V_rgn is irrelevant to the predicate)
+  PASS: assert: OFF always succeeds (regulated bus)
+  PASS: assert: OFF always succeeds (dark bus too)
+  PASS: assert: already-ON is idempotent even at a dark bus (never re-checks the guard)
+  PASS: assert: ON refused at a dark bus (stays LOW)
+  PASS: assert: ON refused at a pre-charged bus (stays LOW)
+  PASS: assert: ON ALLOWED at a regulated bus with a discharged node (meaning flip)
+  PASS: doState2: energized motor node → runs normally, no fault
+  PASS: doState2: MOT_PWR stays energized
+  PASS: doState2: node LOW at a regulated bus → starts the sanctioned CSS connect
+  PASS: doState2: no fault for the sanctioned connect
+  PASS: doState2: refuses the connect on an unregulated bus (MOT_PWR stays LOW)
+  PASS: doState2: latches State 99 with ERR_MOT_HOTPLUG on an unregulated-bus Run entry
+  PASS: doState2: FAULT_MOT_HOTPLUG flag set
+
+[State 98 '3' motor-node connect guard (bus-regulation gated)]
+  PASS: doState98: '3' refused at a dark bus — stays LOW
+  PASS: doState98: '3' refused at a pre-charged bus (use 'G')
+  PASS: doState98: '3' allowed from a regulated bus even with a discharged node
+  PASS: doState98: '3' OFF always allowed (guard only blocks ON)
+
+[V_BUS_NOMINAL-derived thresholds (16V nominal, RD1=215k retune executed)]
+  PASS: LIMIT_V_BUS_MAX = V_BUS_NOMINAL + 1.5 = 17.5 (16V nominal)
+  PASS: V_BUS_CHARGED_THRESH = V_BUS_NOMINAL - 2.5 = 13.5 (16V nominal)
+
+[detectFaults() GENSTAT error states]
+  PASS: GENSTAT=0x05 OC/Regulation Error → fault
+  PASS: GENSTAT=0x06 Thermal Shutdown → fault
+  PASS: GENSTAT=0x07 Timeout Error → fault
+  PASS: GENSTAT=0x04 Bring-Up Charge (normal) → NO fault
+  PASS: GENSTAT=0x02 Charging → NO fault
+  PASS: 0x0A = Charging + MPPT flag (bit3) → NO fault (mask isolates 0x07)
+  PASS: 0x0E = Thermal Shutdown + MPPT flag → fault (regression vs old 0x0F mask)
+  PASS: 0x00 = Battery Disconnect (live read) → NO fault
+  PASS: stale data (ag105DataValid=false) → NO fault
+  PASS: stale error byte with ag105DataValid=false → NO fault (validity gate)
+
+[UV_FC / UV_BATT gated to Run (boot-lock)]
+  PASS: detectFaults: no UV_FC in State 0 (boot)
+  PASS: detectFaults: no UV_BATT in State 0 (boot)
+  PASS: detectFaults: no boot-lock to State 99 in State 0
+  PASS: detectFaults: no UV boot-lock in State 1 (Idle)
+  PASS: detectFaults: (setup) FAULT_UV_FC arms once the FC pair is closed and V_fc is healthy
+  PASS: detectFaults: UV_FC fires in State 2 (Run)
+  PASS: detectFaults: UV_BATT fires in State 2 (Run)
+
+[pollAg105() I2C fault gating]
+  PASS: pollAg105: no I2C fault in State 1 (Idle)
+  PASS: pollAg105: stays in Idle on I2C failure
+  PASS: pollAg105: I2C fault latches in State 2 (Run)
+  PASS: pollAg105: → State 99 on I2C failure in Run
+
+[chargerHasPower() predicate]
+  PASS: chargerHasPower: false when all paths LOW
+  PASS: chargerHasPower: true when FC_CHARGE_ENABLE HIGH
+  PASS: chargerHasPower: false when only REGEN_ENABLE HIGH
+  PASS: chargerHasPower: false when only MOT_PWR_ENABLE HIGH
+  PASS: chargerHasPower: true when REGEN_ENABLE + MOT_PWR_ENABLE HIGH
+
+[pollAg105() unpowered → never faults]
+  PASS: pollAg105: no fault when charger unpowered in Run
+  PASS: pollAg105: status cleared to 0 (stale) when unpowered
+  PASS: pollAg105: not ready when unpowered
+  PASS: pollAg105: stays in Run when unpowered NAK
+
+[pollAg105() settle window]
+  PASS: pollAg105: no fault at power-on (settling)
+  PASS: pollAg105: stays in Run during settle
+  PASS: pollAg105: no fault just before settle elapses
+  PASS: pollAg105: fault fires once settle window elapses
+  PASS: pollAg105: → State 99 after settle
+
+[pollAg105() lazy config on power]
+  PASS: pollAg105: ag105Configured true after powered+settled contact
+  PASS: pollAg105: wrote the 2 config registers (lazy config)
+  PASS: pollAg105: no re-write once configured (one-shot)
+
+[pollAg105() config resets on power loss]
+  PASS: pollAg105: configured after first power session
+  PASS: pollAg105: ag105Configured cleared when power lost
+  PASS: pollAg105: reconfigured after re-power
+  PASS: pollAg105: re-power re-verifies but does NOT re-write matching EPROM values
+  PASS: pollAg105: reconfigured after a register reverted
+  PASS: pollAg105: read-verify re-writes ONLY the register that drifted
+  PASS: pollAg105: drifted register restored to 2S / 8.4V
+
+[I_charge staleness on charger loss / I2C failure]
+  PASS: I_charge: good read populates a live charge current
+  PASS: I_charge: data marked invalid when charger power is lost
+  PASS: I_charge: cleared on power loss (Pi never sees current next to status 0x00)
+  PASS: I_charge: populated again before the failure case
+  PASS: I_charge: status invalidated on read failure
+  PASS: I_charge: cleared on I2C read failure
+
+[Ag105 config read-verify]
+  PASS: read-verify: succeeds against a default charger
+  PASS: read-verify: writes both registers when both differ
+  PASS: read-verify: charge current register set to the 2.5 A profile
+  PASS: read-verify: battery voltage register set to 2S / 8.4 V
+  PASS: read-verify: succeeds when already configured
+  PASS: read-verify: NO EPROM write when both registers already match
+  PASS: read-verify: succeeds with one register drifted
+  PASS: read-verify: writes only the drifted register
+  PASS: read-verify: the register written is the drifted one
+  PASS: read-verify: an ACKed write that does not take effect is reported as failure
+  PASS: read-verify: a failed read-back is reported as failure
+  PASS: read-verify: an I2C NAK is reported as failure
+
+[chargingControl() FC bootstrap]
+  PASS: chargingControl: FC_CHARGE_ENABLE HIGH to power charger (bootstrap)
+  PASS: chargingControl: MPPT inhibited until charger ready
+  PASS: chargingControl: FC_CHARGE_ENABLE stays HIGH when ready
+  PASS: chargingControl: MPPT released once charger ready
+
+[doState98() drive cycle exercises control functions]
+  PASS: doState98: motorControl() runs during drive cycle (vesc.setCurrent invoked)
+  PASS: doState98: 'D' stops the drive cycle
+  PASS: doState98: 'D'-stop flushes vesc.setCurrent(0)
+  PASS: doState98: 'D'-stop safes all path switches LOW
+  PASS: doState98: 'Q' exit flushes vesc.setCurrent(0)
+  PASS: doState98: 'Q' exit forces MOT_PWR_ENABLE LOW
+  PASS: doState98: 'Q' exit returns to State 1
+
+[State 98 VESC read-back]
+  PASS: 'E': queries FW version and VESC values once each
+  PASS: 'E': no-response path still issues both reads without crashing
+  PASS: 'U': enables watch, no poll on the enabling tick
+  PASS: watch: polls getVescValues() once period elapsed
+  PASS: 'U' again: stops the watch, no further polls
+  PASS: watch: does not poll before the period elapses
+  PASS: watch: new fault code latched into lastVescFault
+  PASS: 'Q': clears vescWatchActive on exit to State 1
+  PASS: watch: suppressed while a drive cycle is active (production timing preserved)
+  PASS: watch: resumes once the drive cycle stops
+  PASS: watch: suppressed while a power-share profile is active
+  PASS: vescFaultStr(0) = NONE
+  PASS: vescFaultStr(4) = ABS_OVER_CURRENT
+  PASS: vescFaultStr(11) = ENCODER_SPI
+  PASS: vescFaultStr(16) = HIGH_OFFSET_CURRENT_SENSOR_2
+  PASS: vescFaultStr(26) = ENCODER_MAGNET_TOO_STRONG
+  PASS: vescFaultStr(99) = UNKNOWN
+
+[State 98 manual motor — fixed current]
+  PASS: manual current: mode = CURRENT
+  PASS: manual current: value stored
+  PASS: manual current: clamped to +MOTOR_I_CMD_MAX
+  PASS: manual current: clamped to -MOTOR_I_CMD_MAX
+  PASS: manual current: applyManualMotor sets current
+  PASS: manual current: applyManualMotor flushes vesc.setCurrent(5.0)
+
+[State 98 manual motor — fixed velocity]
+  PASS: manual velocity: mode = VELOCITY
+  PASS: manual velocity: value stored
+  PASS: manual velocity: clamped to +MANUAL_MOTOR_V_MAX
+  PASS: manual velocity: clamped to -MANUAL_MOTOR_V_MAX
+  PASS: manual velocity: applyManualMotor feeds v_setpoint
+  PASS: manual velocity: motorControl() ran (vesc.setCurrent invoked)
+  PASS: manual velocity: non-zero current from velocity error
+
+[commandMotorCurrent() — final VESC command clamp]
+  PASS: clamp: +1000 A → +MOTOR_I_CMD_MAX at the VESC
+  PASS: clamp: `current` mirrors the POST-clamp value, not the intent
+  PASS: clamp: -1000 A → -MOTOR_I_CMD_MAX at the VESC
+  PASS: clamp: in-range command passes through unmodified
+  PASS: clamp: NaN → 0 A
+  PASS: clamp: +Inf → 0 A
+  PASS: clamp: -Inf → 0 A
+  PASS: clamp: motorControl() at 5 m/s error stays within MOTOR_I_CMD_MAX
+  PASS: clamp: motorControl() saturates AT the ceiling (proportional term was unbounded)
+  PASS: clamp: State-98 manual velocity at maximal error stays within the ceiling
+  PASS: clamp: zero-flush clears `current` (no stale value left in telemetry)
+
+[receiveCommands() setpoint sanitization]
+  PASS: sanitize: NaN v_setpoint rejected — previous value held
+  PASS: sanitize: Inf v_setpoint rejected — previous value held
+  PASS: sanitize: huge finite v_setpoint clamped to +V_SETPOINT_MAX
+  PASS: sanitize: huge negative v_setpoint clamped to -V_SETPOINT_MAX
+  PASS: sanitize: power_share_setpoint > 1 clamped to 1.0
+  PASS: sanitize: power_share_setpoint < 0 clamped to 0.0
+  PASS: sanitize: NaN power_share_setpoint rejected — previous value held
+  PASS: sanitize: valid packet unaffected by the guards
+
+[Drive-cycle motor-output ownership]
+  PASS: ownership: precondition — manual mode active
+  PASS: ownership: 'D' starts the drive cycle
+  PASS: ownership: 'D' start clears a stale manualMotorMode
+  PASS: ownership: 'D' stops the drive cycle
+  PASS: ownership: 'D' stop clears manualMotorMode
+  PASS: ownership: 'D' stop does not reissue the stale manual current in the same tick
+  PASS: ownership: 'D' stop clears `current`
+  PASS: ownership: 'D' stop clears the motor PI integrator (no carry-over to the next run)
+  PASS: ownership: drive cycle self-clears on natural completion
+  PASS: ownership: natural completion clears manualMotorMode
+  PASS: ownership: natural completion flushes a command (previously flushed nothing at all)
+  PASS: ownership: natural completion leaves the VESC at 0 A (no regen re-command)
+  PASS: ownership: natural completion clears `current` and the PI integrator
+  PASS: ownership: tick after completion issues no non-zero command
+  PASS: haltMotorOutput: clears every motor-output state variable
+  PASS: haltMotorOutput: flushes vesc.setCurrent(0)
+  PASS: haltMotorOutput: leaves power-path switches untouched
+
+[updateWheelSpeed() unit chain]
+  PASS: units: RPM_TO_MPS == (2*pi/60) * FLYWHEEL_RADIUS_M
+  PASS: units: FLYWHEEL_RADIUS_M is a plausible radius in metres (not inches, not a placeholder 1)
+  PASS: units: ENCODER_COUNTS_PER_REV == slots x quadrature decode factor
+  PASS: units: quadrature decode factor is x2 (doEncoderA decrements / doEncoderB increments only)
+  PASS: units: ENCODER_SLOTS_PER_REV == 120 (slots counted on the disc, 2026-08-16)
+  PASS: units: ENCODER_COUNTS_PER_REV == 240 (120 slots x quadrature decode)
+  PASS: units: FLYWHEEL_RADIUS_M == 0.0762 m / 3.00 in (bench-measured 2026-08-13)
+  PASS: units: MOTOR_I_CMD_MAX == 12.0 A (VESC phase-current ceiling, 2026-08-15 operator decision)
+  PASS: units: v_actual matches omega*2*pi*r for a known count rate (within 1%)
+  PASS: units: v_actual is NOT the old rev/s-times-inches value
+  PASS: units: reverse rotation gives an equal-magnitude negative v_actual
+
+[quadrature ISR decode (raw pin levels)]
+  PASS: pins: ENC_A == 14 (bodged from 2 on 2026-08-16; IO CSV row updated)
+  PASS: pins: ENC_B == 15 (bodged from 8 on 2026-08-16; IO CSV row updated)
+  PASS: pins: ENC_ENABLE is absent (sensors hardwired to power; pin 7 undriven)
+  PASS: pins: ENC_A/ENC_B collide with no other assigned pin
+  PASS: pins: ENC_A and ENC_B are distinct
+  PASS: encoder ISR: forward quadrature gives +2 counts per cycle (x2 decode)
+  PASS: encoder ISR: each channel logs 2 CHANGE edges per cycle
+  PASS: encoder ISR: reverse quadrature gives -2 counts per cycle
+  PASS: encoder ISR: channel B stuck LOW yields ZERO counts (decoder needs both channels)
+  PASS: encoder ISR: stuck-B is diagnosable — edges A>0, edges B==0
+  PASS: encoder ISR: channel A stuck HIGH yields ZERO counts
+  PASS: encoder ISR: stuck-A is diagnosable — edges B>0, edges A==0
+  PASS: encoder ISR: in-phase (non-quadrature) channels yield ZERO counts
+  PASS: encoder ISR: in-phase is diagnosable — BOTH edge counts climb while encoderPos stays 0
+  PASS: encoder ISR: ISR-driven counts produce the expected v_actual (within 1%)
+  PASS: encoder ISR: a live quadrature signal never reads v_actual == 0
+
+[Velocity-chain calibration interlock]
+  PASS: interlock: firmware ships with VELOCITY_CHAIN_CALIBRATED = 1 (bench-measured, fw v7)
+  PASS: interlock: flag reported as uncalibrated
+  PASS: interlock: uncalibrated setManualMotorVelocity does NOT enter velocity mode
+  PASS: interlock: uncalibrated setManualMotorVelocity stores no setpoint
+  PASS: interlock: uncalibrated setManualMotorVelocity commands no current
+  PASS: interlock: uncalibrated 'D' refuses to start the drive cycle
+  PASS: interlock: calibrated setManualMotorVelocity enters velocity mode
+  PASS: interlock: calibrated 'D' starts the drive cycle
+  PASS: interlock: fixed-current mode stays available while uncalibrated
+  PASS: interlock: fw v7 default — with the flag re-seeded FROM VELOCITY_CHAIN_CALIBRATED (not the fixture's forced-true), the velocity path is still live
+  PASS: interlock: fw v7 default — with the flag re-seeded FROM VELOCITY_CHAIN_CALIBRATED, 'D' still starts the drive cycle
+
+[Control-loop rate limiting]
+  PASS: rate limit: motor period clears the ~781 us UART frame floor
+  PASS: rate limit: charging runs slower than the motor loop (Ag105 is the slow harvester)
+  PASS: rate limit: first gated motor call runs
+  PASS: rate limit: immediate second motor call suppressed
+  PASS: rate limit: motor call still suppressed just under period
+  PASS: rate limit: motor call runs again after its period
+  PASS: rate limit: powerBalance runs again on its own (shorter) period
+  PASS: rate limit: motor gate independent — still suppressed at the power-balance period
+  PASS: rate limit: reset opens the motor gate immediately
+  PASS: rate limit: manual current sends on an open gate
+  PASS: rate limit: manual current suppressed within its period
+  PASS: rate limit: manual current re-sent after its period, same value
+  PASS: rate limit: motor period is well inside the VESC 1000 ms command timeout
+  PASS: rate limit: Idle flushes zero on an open gate
+  PASS: rate limit: Idle keep-alive suppressed within its period
+  PASS: rate limit: Idle keep-alive re-sent after its period, still zero
+
+[State 98 open-loop droop (direct MDAC write)]
+  PASS: open-loop droop: gFC matches K_DROOP/(RE_MAX*r)
+  PASS: open-loop droop: gBT matches K_DROOP/(RE_MAX*(1-r))
+  PASS: open-loop droop: corrected mapping keeps both gains <= 1 (no MDAC clamp)
+  PASS: open-loop droop: two MDAC words written (FC then BT)
+  PASS: open-loop droop: FC MDAC word = load-and-update nibble + clamped code
+  PASS: open-loop droop: BT MDAC word = load-and-update nibble + clamped code
+  PASS: open-loop droop: control nibble is 0001 (0000 would be a documented NOP)
+  PASS: open-loop droop: clears powerBalanceLive (closed loop must not stomp it)
+
+[Droop MDAC mapping bounds (K_DROOP/RE_MAX)]
+  PASS: mapping: RE_MAX derives to ~2.014 ohm from the bodged RD1 = 215k
+  PASS: mapping: K_DROOP respects the hard bound RE_MAX*DROOP_R_MIN
+  PASS: mapping: g_FC and g_BT stay <= 1 over the full [R_MIN, R_MAX] span
+  PASS: mapping: low request clamps to DROOP_R_MIN
+  PASS: mapping: high request clamps to DROOP_R_MAX
+  PASS: mapping: r=0.5 gives symmetric gains
+  PASS: mapping: r=0.5 gains are NOT pinned at full scale (the old bug)
+
+[Youla-H controller vs Python reference vectors]
+  PASS: share controller matches Python reference over 64 ticks (incl. saturation)
+  PASS: share controller: zero error -> holds balanced split r0 = 0.5
+  PASS: share controller: sustained error integrates (output ratchets toward the rail)
+
+[Youla-H controller anti-windup (back-calculation)]
+  PASS: anti-windup: output clamped at rmax
+  PASS: anti-windup: output leaves the rail within 3 ticks of error reversal
+
+[youlaController_Power() wrapper: Ts gating + measurement filter]
+  PASS: wrapper: sub-Ts call returns held output (no state advance)
+  PASS: wrapper: first Ts-crossing call equals one filtered shareControllerStep()
+  PASS: wrapper: measured-share step is low-pass filtered (partial first tick)
+  PASS: wrapper: filter converges to the measured share
+  PASS: wrapper: powerBalance() with zero share error writes balanced MDAC gains
+
+[State 98 power-share setpoint (closed-loop live)]
+  PASS: power-share live: in-range value stored
+  PASS: power-share live: enables powerBalanceLive
+  PASS: power-share live: clamped to 1.0
+  PASS: power-share live: clamped to 0.0
+  PASS: power-share live: powerBalance writes the MDAC when current flows
+
+[Power-share profile (advancePowerShareProfile) phase transitions]
+  PASS: PS profile: still phase 0 at 1500ms
+  PASS: PS profile: setpoint = 0.5 during settle
+  PASS: PS profile: transitions to phase 1 at 3001ms
+  PASS: PS profile: still in ramp phase 1 at 3501ms
+  PASS: PS profile: setpoint ≈ 0.65 at ramp midpoint
+  PASS: PS profile: deactivates after all phases complete
+  PASS: PS profile: setpoint reset to 0.5 (balanced) on completion
+  PASS: PS profile: manual motor mode cleared on natural completion
+  PASS: PS profile: motor zeroed (vesc.setCurrent(0)) on natural completion
+
+[doState98() power-share profile holds motor + runs powerBalance]
+  PASS: PS profile: motor held at the constant manual current
+  PASS: PS profile: powerBalance writes the MDAC during the sweep
+  PASS: PS profile: still active mid-sweep
+
+[State 98 numeric prompt — non-numeric char cancels]
+  PASS: pending input: numeric line consumed, prompt cleared
+  PASS: pending input: numeric line applied (0.7)
+  PASS: pending input: non-numeric char cancels the prompt
+  PASS: pending input: cancelling char ('X') is then handled as a command
+
+[initMdacSpiPins(): AD5443 daisy-chain disable at boot]
+  PASS: MDAC init: one control word per DAC (FC then BT)
+  PASS: MDAC init: both words are 0x9000 (Table 10: 1001 = daisy-chain disable)
+
+[Plot stream ('L'): toggle, wire format, rate gate]
+  PASS: 'L': toggles the plot stream ON
+  PASS: plot: line carries all eight labelled fields
+  PASS: plot: the eight labelled fields appear in the documented order (share_sp, share_act, gFC, gBT, ifc, ibt, v_sp, v_act)
+  PASS: plot: no line before PLOT_PERIOD_MS elapses
+  PASS: plot: exactly one line once the period elapses
+  PASS: plot: 'share_act' is the measured share |I_fc|/(|I_fc|+|I_batt|)
+  PASS: plot: per-channel currents reported at 3 decimals
+  PASS: plot: zero current reports share_act=0, not NaN
+  PASS: plot: v_sp reports v_setpoint at 3 decimals
+  PASS: plot: v_act reports v_actual at 3 decimals
+  PASS: 'L': toggles the plot stream OFF
+  PASS: plot: no lines emitted once the stream is off
+
+[Plot stream: periodic status + phase lines suppressed]
+  PASS: plot: '[PS]' status snapshot suppressed while plotting
+  PASS: plot: phase machine still advances while plotting
+  PASS: plot: '[PS] Phase' banner suppressed while plotting
+  PASS: plot off: '[PS]' status snapshot restored
+  PASS: plot: '[VW]' VESC watch line suppressed while plotting
+  PASS: plot off: '[VW]' VESC watch line restored
+
+[Plot stream: 'R' arms the power-share profile with a start delay]
+  PASS: 'R' under plot mode: arms instead of starting
+  PASS: 'R' under plot mode: profile does NOT start yet
+  PASS: armed: profile still not started 1ms before the deadline
+  PASS: armed: profile starts once the delay elapses
+  PASS: armed: target cleared after firing
+  PASS: armed: profile starts at phase 0
+  PASS: 'R' without plot mode: starts immediately, nothing armed
+
+[Plot stream: every stop path cancels a pending armed start]
+  PASS: arm established for the cancel case
+  PASS: 'R' pressed again cancels the armed share profile
+  PASS: cancelled arm never starts the profile
+  PASS: arm established for the cancel case
+  PASS: 'X' universal stop cancels the armed share profile
+  PASS: cancelled arm never starts the profile
+  PASS: 'Q': cancels the armed profile on exit
+  PASS: 'Q': plot mode cleared on exit to Idle
+  PASS: 'Q': still exits to State 1
+  PASS: arm established before the bring-up case
+  PASS: armed profile cancelled when a bring-up starts during the delay
+  PASS: armed profile does not fire into a running bring-up
+
+[Plot stream: 'T' arms the trapezoid with its parsed parameters]
+  PASS: 'T' under plot mode: still prompts for the parameter line
+  PASS: 'T' under plot mode: arms after the line parses
+  PASS: 'T' under plot mode: trapezoid does NOT start yet
+  PASS: armed trap: peak current stashed
+  PASS: armed trap: hold time stashed (ms)
+  PASS: armed trap: ramp rate stashed
+  PASS: armed trap: starts once the delay elapses
+  PASS: armed trap: fires with exactly the parameters that were typed
+  PASS: armed trap established for the cancel case
+  PASS: 'T' pressed again cancels the armed trapezoid
+  PASS: cancelled armed trapezoid never starts
+
+[Plot stream: 'R' preconditions are checked at the keypress, not after the delay]
+  PASS: 'R' with MOT_PWR LOW: nothing armed under plot mode
+  PASS: 'R' with MOT_PWR LOW: profile refused as normal
+  PASS: 'R' with no motor command: nothing armed under plot mode
+  PASS: arm established for the fire-time re-check case
+  PASS: armed share profile cancels (not fires) if MOT_PWR dropped during the delay
+
+[Plot stream: [OV] transient report suppressed while plotting (F1)]
+  PASS: F1: over-limit window opened
+  PASS: F1: transient counter still increments while plotting
+  PASS: F1: [OV] transient line suppressed under plot mode
+  PASS: F1: no latch from the sub-persistence window
+  PASS: F1: [OV] transient line restored with plot mode off
+
+[Plot stream: cross-arm supersede cancels loudly (F2)]
+  PASS: F2: share arm established
+  PASS: F2: trap arm supersedes the share arm
+  PASS: F2: supersede printed a cancel message
+
+[Plot stream: arming refused while another profile runs (F5)]
+  PASS: F5: 'R' arm refused while the drive cycle runs
+  PASS: F5: 'T' arm refused while the share profile runs
+
+[startPowerShareProfile() clears an active trapezoid (F7, pre-existing)]
+  PASS: F7: share-profile start clears trapProfileActive + trapCmdA
+  PASS: F7: share profile itself started
+
+[Trapezoid profile ('T') runs with MOT_PWR_ENABLE LOW (warn only, no gate)]
+  PASS: trap: 'T' with MOT_PWR LOW still arms the parameter line
+  PASS: trap: profile starts with MOT_PWR LOW (no gate — separate VESC supply case)
+
+[Trapezoid profile — full 'T' entry + ramp/hold/ramp-down + natural completion]
+  PASS: trap: 'T' arms the single-line parameter entry
+  PASS: trap: single line "T 5 2 10" parses and starts the profile
+  PASS: trap: starting the profile clears the other two motor drivers
+  PASS: trap: parsed values committed (Imax=5A, hold=2000ms, rate=10A/s)
+  PASS: trap: ramp duration derived as |Imax|/rate
+  PASS: trap: ramp-up commanded current tracks rate*t at the midpoint (~2.5A)
+  PASS: trap: phase is RAMP_UP mid-ramp
+  PASS: trap: ramp-up commanded current tracks rate*t near the end (~4.5A)
+  PASS: trap: hold phase holds at Imax
+  PASS: trap: phase is HOLD
+  PASS: trap: ramp-down commanded current decreases (~2.5A at down-ramp midpoint)
+  PASS: trap: phase is RAMP_DOWN
+  PASS: trap: profile deactivates on natural completion
+  PASS: trap: natural completion flushes vesc.setCurrent(0)
+  PASS: trap: natural completion clears manualMotorMode (haltMotorOutput symmetry)
+
+[Trapezoid profile — peak bounded by TRAP_I_ABS_MAX (not MOTOR_I_CMD_MAX); negative accepted]
+  PASS: trap: 16A peak accepted un-clamped (above the 10A MOTOR_I_CMD_MAX budget)
+  PASS: trap: commanded current above MOTOR_I_CMD_MAX reaches the VESC (12A sent)
+  PASS: trap: peak clamped to +TRAP_I_ABS_MAX (ESC rating)
+  PASS: trap: negative peak accepted and stored signed
+  PASS: trap: negative peak ramps toward a negative commanded current (~-1.5A at midpoint)
+  PASS: trap: negative peak clamped to -TRAP_I_ABS_MAX
+
+[Trapezoid profile — degenerate parameter lines refused outright]
+  PASS: trap: zero peak refused — profile does not start
+  PASS: trap: negative hold refused — profile does not start
+  PASS: trap: zero rate refused — profile does not start
+  PASS: trap: negative rate refused — profile does not start
+  PASS: trap: incomplete line (2 of 3 values) refused — profile does not start
+  PASS: trap: bare "T\n" cancels cleanly (empty parameter line)
+
+[Trapezoid profile — non-numeric key mid-line cancels the pending entry]
+  PASS: trap: mid-line, parameter entry still pending
+  PASS: trap: non-numeric key clears the pending prompt
+  PASS: trap: non-numeric key clears the input buffer
+  PASS: trap: non-numeric mid-line cancel never starts a profile
+
+[Trapezoid profile — 'T' while running stops it (switches left as-is)]
+  PASS: trap: 'T' toggles a running profile off
+  PASS: trap: 'T' stop zeroes trapCmdA
+  PASS: trap: 'T' stop flushes vesc.setCurrent(0)
+  PASS: trap: 'T' stop clears manualMotorMode via haltMotorOutput()
+  PASS: trap: 'T' stop leaves path switches untouched (REGEN/FC_CHARGE still HIGH)
+  PASS: trap: 'T' stop leaves MOT_PWR_ENABLE untouched
+
+['X' universal stop — cancels any running profile + manual motor]
+  PASS: X: cancels a running trapezoid profile
+  PASS: X: zeroes trapCmdA
+  PASS: X: flushes vesc.setCurrent(0) with a trapezoid running
+  PASS: X: trapezoid stop leaves path switches untouched (T semantics)
+  PASS: X: cancels a running drive cycle
+  PASS: X: flushes vesc.setCurrent(0) with a drive cycle running
+  PASS: X: drive-cycle stop parks the path switches (safeAllSwitches, D semantics)
+  PASS: X: cancels a running power-share profile
+  PASS: X: share-profile stop resets power_share_setpoint to 0.5 (R semantics)
+  PASS: X: clears manualMotorMode
+  PASS: X: clears powerBalanceLive
+
+[Trapezoid profile — 'Q' during a run clears trapProfileActive and staging]
+  PASS: trap: 'Q' exit clears trapProfileActive
+  PASS: trap: 'Q' exit zeroes trapCmdA
+  PASS: trap: 'Q' exit drops the half-typed parameter line too
+  PASS: trap: 'Q' exit returns to State 1
+  PASS: trap: 'Q' exit flushes vesc.setCurrent(0)
+
+[Trapezoid profile — pollVescWatch() suppressed while trapProfileActive]
+  PASS: trap: pollVescWatch() does not call getVescValues() while trapProfileActive
+
+[Motor PI integrator anti-windup]
+  PASS: Motor PI: integrator clamped at +limit under sustained positive error
+  PASS: Motor PI: integrator clamped at -limit under sustained negative error
+
+[Power-share PI integrator anti-windup]
+  PASS: Power PI: integrator clamped at +limit under sustained positive error
+  PASS: Power PI: integrator clamped at -limit under sustained negative error
+
+[powerBalance() gated-tick droop stability]
+  PASS: powerBalance: FC droop gain stable across a sub-sampleTime tick
+  PASS: powerBalance: BT droop gain stable across a sub-sampleTime tick
+
+[powerBalance() minimum-load hold]
+  PASS: min-load hold: FC droop gain frozen through a standstill epoch
+  PASS: min-load hold: BT droop gain frozen through a standstill epoch
+  PASS: min-load hold: share controller output state frozen (no steps)
+  PASS: min-load hold: controller resumes and moves the gains once load returns
+  PASS: min-load hold: 76 mA is above the SHARE_I_TOT_MIN_A gate -- the open-loop feedforward walk steps normally (not frozen by the min-load gate)
+  PASS: min-load hold: 76mA can never cross the 0.60A closed-loop entry threshold -- this boundary is permanently open-loop territory under fw v5
+
+[powerBalance() setpoint governor (limit-cycle mitigation)]
+  PASS: governor A1: clipped sp=0.20 at I_tot=1.0A drives the ratio UP toward lo=0.30 (an unclipped raw sp=0.20 against the same 0.25 measurement would drive it DOWN)
+  PASS: governor A2: in-band sp=0.20 clipped to lo=0.30 is zero-error at that bound — no winding
+  PASS: governor: SHARE_MINORITY_I_MIN_A is the fw v4 0.30 A floor (TP0016/TP0017 bracket)
+  PASS: governor: at high load the bound relaxes and the same error drives the ratio
+  PASS: governor E1: sp=0.18 at I_tot=1.5A clips to the fw v4 lo=0.20 and drives the ratio UP (the old 0.20A floor would give lo=0.1333 < sp -> no clip -> ratio would fall)
+  PASS: governor E2: effective lo bound at I_tot=1.5A is 0.30/1.5=0.20 (fw v4), not the old 0.1333
+  PASS: governor C (fw v5): below the entry threshold the ratio converges to the RAW setpoint 0.30 via open-loop feedforward -- NOT the deleted 0.5 collapse
+  PASS: governor C (fw v5): stays open-loop throughout -- I_tot=0.3A never crosses the 0.60A entry threshold
+  PASS: governor: sp=1.0 bypasses the governor — BT cutoff still fires at low load
+
+[fw v5 governor: open-loop feedforward walk at low current, converges to raw sp (G1/G2)]
+  PASS: G1: still open-loop after a few ticks at 0.30A (well under the 0.60A entry threshold, which the filter can never cross since it asymptotes to totalA=0.30A)
+  PASS: G1: the Youla controller state never advances — powerBalance() never calls youlaController_Power() in open-loop mode
+  PASS: G1: the applied ratio is already walking DOWN toward the 0.30 setpoint (feedforward through applyShareRatio(), not held)
+  PASS: G2: the feedforward walk converges to the RAW setpoint 0.30 (not the deleted 0.5 collapse, and not a clipped value)
+  PASS: G2: still open-loop throughout — I_tot=0.30A never crosses the 0.60A entry threshold
+
+[fw v5 governor: closed-loop entry once filtered I_tot crosses 0.60A, then steps (G3)]
+  PASS: G3: (setup) still open-loop a few ticks in — the filter hasn't crossed 0.60A yet
+  PASS: G3: (setup) the open-loop walk is a no-op here (target == start == 0.5)
+  PASS: G3: closed-loop mode entered once the filtered total crosses 0.60A
+  PASS: G3: the closed-loop controller drives the ratio UP in response to the +0.30 share error (sp=0.50, measured=0.20) — the mode transition actually engages control, not just a flag flip
+
+[fw v5 governor: closed-loop exit -> HOLD, not feedforward (G4)]
+  PASS: G4: (setup) closed-loop, converged for a while
+  PASS: G4: (setup) the ratio actually moved off the seed
+  PASS: G4: filtered total fell below the 0.55A exit hysteresis — back to open-loop
+  PASS: G4: shareClosedLoopRun stays set — this profile HAS run closed loop, so open-loop means HOLD, not feedforward
+  PASS: G4: HOLD — the applied ratio is frozen across many open-loop ticks, not walking toward the (differing) raw setpoint 0.70
+
+[fw v5 governor: a changed setpoint exits HOLD and resumes feedforward at the NEW value (S3)]
+  PASS: T4: (setup) still open-loop -- I_tot=0.30A never crosses 0.60A
+  PASS: T4: (setup) shareClosedLoopRun is still true -- HOLD, not fresh feedforward
+  PASS: T4: (setup) confirmed HOLD -- unchanged setpoint, ratio frozen at the seeded 0.65
+  PASS: T4: the very next tick clears shareClosedLoopRun -- the changed setpoint re-arms feedforward instead of staying in HOLD
+  PASS: T4: the ratio already stepped DOWN toward the new setpoint (target 0.20 < the held 0.65) on that same tick -- not still frozen at the old held value
+  PASS: T4: that first step is slew-limited (open-loop feedforward always constrains its target to droopSlew_prev +/- DROOP_RATIO_SLEW_PER_TICK), not a slam to 0.20
+  PASS: T4: feedforward converges to the NEW setpoint 0.20 -- HOLD did not swallow the commanded change
+  PASS: T4: still open-loop throughout -- I_tot=0.30A never re-crosses the 0.60A entry threshold from this low-current change
+
+[fw v5 governor: hysteresis band (0.55-0.60A) holds each mode's prior state (G5)]
+  PASS: G5/closed: filt=0.57A (inside the 0.55-0.60 band) stays CLOSED when already closed
+  PASS: G5/closed: the controller is actually stepping (integrator moved or the ratio left the seed), not frozen, while parked in the band
+  PASS: G5/open: filt=0.57A (inside the band, but not > the 0.60A entry bound) stays OPEN when already open
+
+[fw v5 governor: hysteresis literal boundaries (T7, strict inequalities)]
+  PASS: T7: share_govTotAFilt exactly at 2*SHARE_MINORITY_I_MIN_A (0.60A) does NOT enter -- entry is strictly '>', not '>='
+  PASS: T7: share_govTotAFilt exactly at 2*SHARE_MINORITY_I_MIN_A - SHARE_GOV_OL_HYST_A (0.55A) does NOT exit -- exit is strictly '<', not '<='
+
+[fw v5 governor: open->closed transition is continuous, filt not reset (G6)]
+  PASS: G6: (setup) still open-loop at I_tot=0.30A
+  PASS: G6: (setup) the feedforward walk has moved the ratio well off the 0.5 seed
+  PASS: G6: (setup) the load jump crossed the entry threshold within the window
+  PASS: G6: share_govTotAFilt was NOT reset by the transition — resetShareControllerCore() deliberately does not touch it (zeroing it would drop straight back to open-loop the very next tick)
+  PASS: G6: the transition tick's write lands within one slew step of the pre-transition ratio — continuous hand-off, not a jump back to the 0.5 default
+
+[fw v6: share_spEffPrev seeds from droopSlew_prev at the OL->CL transition and slews toward the governor-clipped target]
+  PASS: eff-slew: (setup) still open-loop at I_tot=0.30A
+  PASS: eff-slew: (setup) the feedforward walk converged near the 0.15 setpoint
+  PASS: eff-slew: (setup) the load jump crossed the entry threshold within the window
+  PASS: eff-slew: on the transition tick, share_spEffPrev moved at most one DROOP_RATIO_SLEW_PER_TICK step away from the seed (droopSlew_prev just before the transition) -- never a jump straight to the governor-clipped target
+
+[fw v6: share_spEffPrev converges exactly to the governor-clipped target and holds (steady state == fw v5)]
+  PASS: eff-slew: share_spEffPrev converges EXACTLY to the target (0.30 is well inside the feasible band at 4.0A, so the governor clip is a no-op) -- constrain() lands bit-exact once within one slew step, matching the .ino's own convergence claim
+  PASS: eff-slew: once converged, share_spEffPrev holds steady -- no residual slew activity once at the target
+
+[fw v6: resetShareControllerCore()/resetShareControlState() re-seed share_spEffPrev]
+  PASS: eff-slew reset: resetShareControllerCore(0.70) seeds share_spEffPrev to 0.70 (in-band, unclipped)
+  PASS: eff-slew reset: an out-of-band seed (0.05) clips to DROOP_R_MIN, never left outside the band the governor clip can produce
+  PASS: eff-slew reset: an out-of-band seed (0.95) clips to DROOP_R_MAX
+  PASS: eff-slew reset: resetShareControlState() re-seeds share_spEffPrev to 0.5, the historic fresh-start split
+
+[fw v5 governor: resetShareControlState() clears shareClosedLoopRun (G7)]
+  PASS: G7: (setup) the loop is closed and has run
+  PASS: G7: resetShareControlState() clears both fw v5 loop-mode flags at profile start
+  PASS: G7: after a fresh reset, open-loop mode WALKS toward the setpoint (shareClosedLoopRun false selects the feedforward branch, not the hold branch)
+
+[fw v5 governor: lo-clamp sliver keeps the closed-loop bound at <=0.5 (G9)]
+  PASS: G9: the closed-loop clip degenerates to the balanced split 0.5 across the sliver (zero error at the clamped bound, so the ratio never moves) -- an unclamped implementation would see a standing error and wind away from 0.5
+
+[fw v5 governor: out-of-band setpoint latches even at low current, no feedforward (G10)]
+  PASS: G10: the out-of-band setpoint latches BT off the bus even at low current
+  PASS: G10: droopSlew_prev never moved -- updateShareSetpointCutoff() owns this tick and returns before the governor/open-loop code ever runs
+  PASS: G10: the latch-entry tick makes no MDAC write at all -- confirms the open-loop feedforward branch never executed
+
+[fw v5 governor: SHARE_I_TOT_MIN_A gate freezes everything before the governor (G11)]
+  PASS: G11: share_govTotAFilt never updates below SHARE_I_TOT_MIN_A -- the min-load gate returns before the filter update
+  PASS: G11: the ratio never moves -- the open-loop feedforward walk is also gated out below SHARE_I_TOT_MIN_A
+  PASS: G11: mode stays open -- the entry condition is never even evaluated
+
+[powerBalance() droop-ratio slew limit (limit-cycle mitigation)]
+  PASS: slew limit: no single tick moves the applied ratio by more than the per-tick ceiling
+  PASS: slew limit: the ratio still WALKS under a sustained error (limited, not frozen)
+  PASS: slew limit: direct applyShareRatio() jumps land in one call and re-seed the tracker
+  PASS: slew limit: one-shot mapping is exact (no controller-path throttling)
+
+[resetShareControlState() at profile entry (limit-cycle mitigation)]
+  PASS: profile reset: (setup) controller state is away from mid-band before the start
+  PASS: profile reset: 'T' start resets the held controller output to the balanced split
+  PASS: profile reset: the governor load filter restarts empty
+  PASS: profile reset: the slew tracker is NOT reset — it mirrors the ratio physically on the MDACs
+
+[applyShareRatio() channel cutoff]
+  PASS: cutoff: in-band ratio leaves both channels on the bus
+  PASS: cutoff: r=0 opens FC_BUS_ENABLE
+  PASS: cutoff: boost enables are NEVER touched (bus-switch isolation only)
+  PASS: cutoff: droop gains held while FC is isolated
+  PASS: cutoff: FC isolation flag set
+  PASS: cutoff: re-entry refused inside the hysteresis band
+  PASS: cutoff: re-entry at DROOP_R_MIN + hysteresis closes FC back onto the bus
+  PASS: cutoff: mapping resumes after re-entry (gains move again)
+  PASS: cutoff: re-entry refused while V_bus is below the charged threshold
+  PASS: cutoff: re-entry proceeds once the bus is charged again
+  PASS: cutoff: r=1 opens BT_BUS_ENABLE
+  PASS: cutoff: BT re-entry at DROOP_R_MAX - hysteresis
+  PASS: cutoff: safeAllSwitches() clears the isolation flags
+  PASS: cutoff: controller never re-closes switches it no longer owns
+  PASS: cutoff: last-source guard refuses to cut the only channel on the bus
+  PASS: cutoff: guard-blocked request falls back to the band-edge clip
+  PASS: cutoff: (setup) controller holds BT isolation
+  PASS: cutoff: assertFcChargeEnable(true) takes over BT ownership
+  PASS: cutoff: no BT re-entry while the FC-charge path holds BT_BUS LOW
+  PASS: cutoff: 'O 1.0' cuts BT off the bus and clears powerBalanceLive
+  PASS: setpoint: 0.0 accepted verbatim
+  PASS: setpoint: 1.0 accepted verbatim
+
+[setPowerShareSetpointLive() resets the fw v5 loop-mode state (S2)]
+  PASS: S2: the new setpoint is accepted as usual
+  PASS: S2: shareClosedLoopMode is cleared -- a stale CLOSED flag would otherwise make the very next powerBalance() tick re-evaluate the exit hysteresis instead of starting fresh open-loop
+  PASS: S2: shareClosedLoopRun is cleared -- this is the fix's whole point: a stale true here routes a low-current 'P' straight into the HOLD branch (no MDAC write, silent no-op) instead of feedforward-walking to the new setpoint
+  PASS: S2: share_govTotAFilt is zeroed -- a stale nonzero filter could otherwise sit above the closed-loop entry threshold and re-enter CLOSED on the very first tick instead of giving the operator's new setpoint an open-loop tick first
+
+[updateShareSetpointCutoff(): sp>DROOP_R_MAX latches BT, freezes the loop]
+  PASS: sp-cutoff: first tick opens BT_BUS_ENABLE on the out-of-band setpoint
+  PASS: sp-cutoff: shareIsoBT (topology) and shareSpCutBT (setpoint latch) both set
+  PASS: sp-cutoff: FC (the surviving source) stays on the bus
+  PASS: sp-cutoff: the entry tick returns before any MDAC write (updateShareSetpointCutoff runs BEFORE the min-load gate and the controller step)
+  PASS: sp-cutoff: zero BT_BUS_ENABLE transitions over 500 ticks of standing error — no hunting
+  PASS: sp-cutoff: still latched after 500 ticks
+  PASS: sp-cutoff: no MDAC writes at all while latched — the controller never steps
+  PASS: sp-cutoff: the Youla controller state never advanced from its fresh-reset values (controller freeze, not just a frozen output)
+
+[updateShareSetpointCutoff(): sp<DROOP_R_MIN latches FC (TP0015 regression)]
+  PASS: sp-cutoff (low side): first tick opens FC_BUS_ENABLE and latches
+  PASS: sp-cutoff (low side): zero FC_BUS_ENABLE transitions — TP0015's ~20Hz hunting is gone
+
+[updateShareSetpointCutoff(): release on in-band setpoint, gated on V_bus]
+  PASS: release: (setup) BT is latched
+  PASS: release: BT_BUS_ENABLE re-closes once the setpoint returns in-band with a charged bus
+  PASS: release: both shareIsoBT and shareSpCutBT clear on release
+  PASS: release: resetShareControlState() ran (governor filter re-zeroed, not re-populated yet)
+  PASS: release/low-bus: (setup) BT latched
+  PASS: release/low-bus: stays latched/isolated while V_bus < V_BUS_CHARGED_THRESH
+  PASS: release/low-bus: releases on the first tick after V_bus recovers
+
+[updateShareSetpointCutoff(): last-source guard blocks a latch]
+  PASS: single-source guard: FC — the only live source — is never cut by the setpoint latch
+  PASS: single-source guard: no latch claimed (guard-blocked entry falls through)
+  PASS: single-source guard: normal governed control continues — MDAC gains are still written
+
+[updateShareSetpointCutoff(): FC latched -> BT latched never darkens the bus]
+  PASS: side flip: (setup) FC latched
+  PASS: side flip: FC releases first (bus is charged)
+  PASS: side flip: BT does NOT latch on the same tick as the FC release
+  PASS: side flip: the bus is never darkened (both switches LOW) at any point in the flip
+  PASS: side flip: BT latches on the next tick
+  PASS: side flip: FC (the surviving source) stays on the bus through the whole flip
+
+[updateShareSetpointCutoff(): fw v6 handoff guard blocks the FC latch above 0.5A (I_fc)]
+  PASS: handoff guard/FC: no latch fires -- I_fc=1.0A exceeds SHARE_CUT_MAX_HANDOFF_A=0.5A
+  PASS: handoff guard/FC: FC_BUS_ENABLE stays HIGH -- the switch this tick's guard would have opened
+  PASS: handoff guard/FC: live control genuinely continues -- the controller stepped and wrote the MDACs this same tick, not just "nothing changed"
+
+[updateShareSetpointCutoff(): fw v6 handoff guard allows the FC latch at 0.1A (I_fc)]
+  PASS: handoff guard/FC allowed: I_fc=0.1A <= 0.5A -- the latch fires exactly as it did before the fw v6 guard existed
+
+[updateShareSetpointCutoff(): fw v6 handoff guard defers the cut to a later tick, then fires]
+  PASS: deferred cut: (setup) the first tick is guard-blocked, no latch yet
+  PASS: deferred cut: the latch fires on the later tick once I_fc drops to 0.1A <= 0.5A
+
+[updateShareSetpointCutoff(): fw v6 handoff guard mirrors on the BT side (I_batt)]
+  PASS: handoff guard/BT: no latch fires -- I_batt=1.0A exceeds SHARE_CUT_MAX_HANDOFF_A=0.5A
+  PASS: handoff guard/BT: BT_BUS_ENABLE stays HIGH
+  PASS: handoff guard/BT: live control continues -- an MDAC write happened this same tick
+  PASS: handoff guard/BT allowed: I_batt=0.1A <= 0.5A -- the latch fires
+
+[updateShareSetpointCutoff(): fw v6 handoff guard boundary -- exactly 0.5A is allowed (<=)]
+  PASS: handoff guard/boundary: I_fc exactly == SHARE_CUT_MAX_HANDOFF_A latches -- the guard is fabsf(I) <= threshold, not a strict less-than
+  PASS: handoff guard/boundary: one step above the guard (0.51A) does not latch -- confirms the boundary is real, not a tolerance artifact
+
+[updateShareSetpointCutoff(): the handoff guard does not gate the release path]
+  PASS: handoff guard/release: (setup) BT is latched
+  PASS: handoff guard/release: the release proceeds on the very next in-band tick despite a large standing current -- the guard is entry-only
+
+[shareCutDeferred: a sustained deferral suppresses the r-based cutoff for the whole run (S1)]
+  PASS: deferred/FC sustained: across 500 ticks of a standing out-of-band setpoint with the doomed current pinned above the guard, FC_BUS_ENABLE never opens and NEITHER shareSpCutFC NOR shareIsoFC ever sets -- proves the r-based cutoff was actually suppressed the whole time, not merely "hasn't fired yet"
+  PASS: deferred/FC sustained: the deferral flag is still standing on the final tick (the setpoint is still out of band and the doomed current is still pinned above the guard)
+  PASS: deferred/BT mirror: 200 ticks of a standing high out-of-band setpoint with the doomed BT current pinned above the guard -- BT_BUS_ENABLE never opens, neither shareSpCutBT nor shareIsoBT ever sets
+  PASS: deferred/BT mirror: the deferral flag is still standing at the end
+
+[shareCutDeferred: the controller reference clips to the doomed side's band edge, never crosses it (S1)]
+  PASS: deferred/FC clip: share_spEffPrev never crosses below DROOP_R_MIN at any sampled tick -- the deferral clip, not the raw out-of-band setpoint, is what the controller tracks
+  PASS: deferred/FC clip: share_spEffPrev converges exactly to DROOP_R_MIN (the doomed side's band edge), not to the raw setpoint 0.02
+  PASS: deferred/BT clip: share_spEffPrev never crosses above DROOP_R_MAX at any sampled tick
+  PASS: deferred/BT clip: share_spEffPrev converges exactly to DROOP_R_MAX, not to the raw setpoint 0.98
+
+[shareCutDeferred: clears the instant the doomed current drops, and the latch fires that same tick (S1)]
+  PASS: deferred/clears: (setup) the first tick defers -- guard-blocked, no latch yet
+  PASS: deferred/clears: shareCutDeferredFC is false on the tick the latch fires -- the guard no longer blocks, so the entry branch takes the LATCH path, not the deferral path (mutually exclusive within the same entry check)
+  PASS: deferred/clears: the latch fires on that SAME tick once the doomed current drops -- the out-of-band setpoint never had to change, only the current
+
+[shareCutDeferred: resetShareControlState() clears a stale deferral (S1) -- the clear site matters]
+  PASS: deferred/stale-clear: resetShareControlState() clears a stale shareCutDeferredFC
+  PASS: deferred/stale-clear: after the reset, the r-based cutoff fires normally -- confirms the flag (not something else) was what would have suppressed it
+
+[shareCutDeferred: applyShareRatio() suppresses its own r-based cutoff while the flag is set (S1, unit-level)]
+  PASS: deferred/suppression-FC: with shareCutDeferredFC set, an out-of-band-low ratio does NOT cut FC -- FC_BUS_ENABLE stays HIGH and shareIsoFC stays false
+  PASS: deferred/suppression-BT: with shareCutDeferredBT set, an out-of-band-high ratio does NOT cut BT -- BT_BUS_ENABLE stays HIGH and shareIsoBT stays false
+  PASS: deferred/suppression contrast: without the flag, the identical out-of-band ratio DOES cut FC -- the flag, not the last-source guard, was what blocked it above
+
+[Setpoint latch ownership: State-98 '1'/'2' and safeAllSwitches() clear it]
+  PASS: ownership: (setup) FC setpoint-latched
+  PASS: ownership: State-98 '1' clears shareSpCutFC when it toggles FC_BUS_ENABLE
+  PASS: ownership: (setup) BT setpoint-latched
+  PASS: ownership: State-98 '2' clears shareSpCutBT when it toggles BT_BUS_ENABLE
+  PASS: ownership: safeAllSwitches() clears both setpoint latches
+
+[updateShareSetpointCutoff(): S1 self-heal drops an orphaned latch]
+  PASS: (setup) BT setpoint-latched, switch open
+  PASS: (setup) the latch flag is still set — now orphaned
+  PASS: self-heal: the next tick clears the orphaned latch unconditionally (no V_bus/boost gate — that gate belongs to the release path, not self-heal)
+  PASS: self-heal: the externally re-closed switch stays closed — degrades to live, not frozen
+  PASS: self-heal: the loop is live again — the controller stepped and wrote the MDACs
+
+[updateShareSetpointCutoff(): T3 shareIsoFC orphan (no shareSpCutFC) self-heals]
+  PASS: T3: the orphaned shareIsoFC claim is dropped -- the switch was already HIGH, so there was nothing left to own
+  PASS: T3: FC_BUS_ENABLE is untouched by the self-heal itself (it was already closed)
+  PASS: T3: the loop resumes live control on the same tick -- the MDACs are writable again, not frozen by the now-dropped orphan claim
+
+[chargingControl(): charge_goal==0 skips the BT_BUS re-assert while shareSpCutBT is latched (S1 guard)]
+  PASS: S1 guard: BT_BUS_ENABLE stays LOW — chargingControl() does not re-assert a switch the setpoint latch owns
+  PASS: S1 guard: the rest of the charge_goal==0 inhibit still runs normally
+  PASS: S1 guard (contrast): without the latch chargingControl() re-asserts BT_BUS_ENABLE as normal
+
+[assertFcChargeEnable(true): restores an FC setpoint latch before cutting BT (S2)]
+  PASS: S2: FC_BUS_ENABLE ends HIGH — restored to the bus before BT is cut
+  PASS: S2: BT_BUS_ENABLE ends LOW — the charge path takes over as usual
+  PASS: S2: the FC setpoint latch and isolation flag are both cleared
+  PASS: S2: FC_CHARGE_ENABLE ends HIGH
+  PASS: S2: FC_BUS_ENABLE HIGH is written before BT_BUS_ENABLE LOW — the bus is never dark
+
+[assertFcChargeEnable(true) clears a genuine BT setpoint latch, not just shareIsoBT (gap i)]
+  PASS: (setup) BT is genuinely setpoint-latched, not just ratio-isolated
+  PASS: gap (i): assertFcChargeEnable(true) clears shareSpCutBT too, not only shareIsoBT
+  PASS: gap (i): BT_BUS_ENABLE stays LOW, now under the charge path's own ownership
+
+[updateShareSetpointCutoff(): release refused while the channel's boost is disabled (S5)]
+  PASS: (setup) BT latched
+  PASS: S5: release stays held while BT_REG_ENABLE is LOW, even in-band and bus charged
+  PASS: S5: releases on the first tick after BT_REG_ENABLE goes HIGH
+
+[applyShareRatio(): ratio-hysteresis re-entry refused while the channel's boost is disabled (S5)]
+  PASS: (setup) FC isolated by the ratio cutoff
+  PASS: S5: re-entry refused while FC_REG_ENABLE is LOW
+  PASS: S5: re-entry proceeds once FC_REG_ENABLE goes HIGH
+
+[Share-loop latches cleared by bring-up ownership transitions (S6)]
+  PASS: S6: bring-up P0 entry clears all four share-latch flags
+  PASS: S6: busBringupAbort() clears all four share-latch flags
+
+[doState99() phase 0 clears the FC setpoint/isolation latches (S7)]
+  PASS: S7: doState99() phase 0 clears shareIsoFC/shareSpCutFC directly
+  PASS: S7: shareIsoBT/shareSpCutBT also end cleared (via the assertFcChargeEnable(true) call phase 0 makes to drain VBUS — S2's unconditional BT clear)
+  PASS: S7: (sanity) both bus switches opened by the teardown
+
+[restoreShareCutoffOnCompletion() with a genuine shareSpCut latch (gap ii)]
+  PASS: (setup) BT is genuinely setpoint-latched
+  PASS: gap (ii): the SETPOINT latch (not just the ratio-isolation flag) is cleared
+  PASS: gap (ii): the channel is put back on the bus (boost enabled, bus charged)
+
+[applyOpenLoopDroop() ('O') cannot override a setpoint latch (gap iii)]
+  PASS: (setup) FC setpoint-latched
+  PASS: gap (iii): 'O' with an in-band ratio does NOT re-close a setpoint-latched switch
+  PASS: gap (iii): 'O' still clears powerBalanceLive as usual
+
+[resetShareControlState() does not touch the setpoint/isolation latches (gap iv)]
+  PASS: gap (iv): resetShareControlState() leaves the setpoint/isolation latches untouched
+  PASS: gap (iv): but it does reset the controller's held output to the balanced split
+
+[updateWheelSpeed() reset between runs]
+  PASS: doState3: requests wheel-speed buffer reset on completion
+  PASS: doState3: returns to State 1 after shutdown
+  PASS: updateWheelSpeed: consumes and clears the reset request
+
+[SD log: 'T' run to natural completion writes a complete, closed file]
+  PASS: SD lifecycle: the 'T' trapezoid started, so a TP log should have been opened
+  PASS: SD lifecycle: opening a profile log arms sampling (logActive set)
+  PASS: SD lifecycle: the first trapezoid run of a session opens TP0001.BLG
+  PASS: SD lifecycle: the trapezoid reached natural completion inside the run window
+  PASS: SD lifecycle: a 100 ms profile at POWER_BAL_PERIOD_US yields exactly 100 records
+  PASS: SD lifecycle: natural completion leaves the logger idle (not active, no close pending)
+  PASS: SD lifecycle: the file handle is closed after the drain finishes the trailer
+  PASS: SD lifecycle: close truncates the pre-allocation exactly once
+  PASS: SD lifecycle: exactly one .BLG file exists on the card after the run
+  PASS: SD lifecycle: file size is header + LOG_REC_SIZE*N records + one LOG_REC_SIZE trailer
+  PASS: SD lifecycle: the header opens with the 'BLG1' magic
+  PASS: SD lifecycle: the header declares format version 4 (fw v6; record format unchanged from v3 — still 68B — only the header profile-parameter block is new)
+  PASS: SD lifecycle: the header declares a 68-byte record size
+  PASS: SD lifecycle: the header profile bitmask is LOG_TYPE_TP for a 'T' run
+  PASS: SD lifecycle: the header stamps FW_VERSION at offset 18
+  PASS: SD lifecycle: v4 header paramFlags == 0x01 (amp valid, b not) for a 'T' run
+  PASS: SD lifecycle: v4 header amp field (offset 20) carries the committed Imax (5.0 A)
+  PASS: SD lifecycle: v4 header b field (offset 24) stays 0.0 for a run type with no bound
+  PASS: SD lifecycle: v4 header's trailing reserved bytes (28-31) are zero-filled
+  PASS: SD lifecycle: the last record carries the 0xFFFFFFFF trailer sentinel
+  PASS: SD lifecycle: the trailer's total-record count matches the records written
+  PASS: SD lifecycle: a drained run drops no samples
+  PASS: SD lifecycle: the trailer close reason is LOG_CLOSE_COMPLETE for a natural end
+  PASS: SD lifecycle: the close prints the one-shot '[SD] closed' summary line
+
+[SD log: stop-toggle, 'X' and 'Q' each close the file with their own reason]
+  PASS: SD stop: the share profile logged samples before the stop key
+  PASS: SD stop: the 'R' stop-toggle requests a close without doing card I/O in the handler
+  PASS: SD stop: the stopped run's file holds every buffered record plus the trailer
+  PASS: SD stop: the trailer records LOG_CLOSE_STOP as the close reason
+  PASS: SD 'X': the universal stop requests the log close alongside the motor stop
+  PASS: SD 'X': the file is complete after the universal stop drains
+  PASS: SD 'X': the trailer records LOG_CLOSE_X as the close reason
+  PASS: SD 'Q': the run's records are still buffered in the ring at the moment of exit
+  PASS: SD 'Q': the exit key returns the state machine to Idle
+  PASS: SD 'Q': the exit only flags the close — the file is still open on leaving State 98
+  PASS: SD 'Q': the loop-level drain finishes and closes the file from State 1, outside State 98
+  PASS: SD 'Q': draining the log from Idle does not disturb the state machine
+  PASS: SD 'Q': every buffered record reaches the card after the exit
+  PASS: SD 'Q': the trailer total matches the records captured before the exit
+  PASS: SD 'Q': the trailer records LOG_CLOSE_Q as the close reason
+
+[SD log: a fault mid-run closes the file from State 99 with the cause captured]
+  PASS: SD fault: the share profile was logging when the fault is injected
+  PASS: SD fault: triggerFault() still latches State 99 with the logger attached
+  PASS: SD fault: the error latch and fault flags are unaffected by the log close request
+  PASS: SD fault: the fault path only flags the close — no card I/O happens in triggerFault()
+  PASS: SD fault: the loop-level drain finishes the file while State 99 is latched
+  PASS: SD fault: the error stays latched in State 99 after the log is closed
+  PASS: SD fault: the pre-fault records plus the trailer all reach the card
+  PASS: SD fault: the trailer total matches the records captured before the fault
+  PASS: SD fault: the trailer close reason is LOG_CLOSE_FAULT
+  PASS: SD fault: the trailer carries the latched error_code so the cause is in the file
+
+[SD log: with no card the warn fires once and the profile runs identically]
+  PASS: SD no-card: the power-share profile starts normally with no card fitted
+  PASS: SD no-card: the failed probe latches sdInitTried and leaves logging disarmed
+  PASS: SD no-card: exactly one '[SD] no card' warning is printed at the first profile start
+  PASS: SD no-card: the card is probed exactly once
+  PASS: SD no-card: no records are buffered while logging is disabled
+  PASS: SD no-card: nothing is written to the card
+  PASS: SD no-card: a second profile starts normally after the first no-card run
+  PASS: SD no-card: the second profile start does not repeat the warning
+  PASS: SD no-card: the second profile start does not re-probe the card
+
+[SD log: a stalled card drops the newest samples and counts them in the trailer]
+  PASS: SD overflow: the ring fills to exactly its 1024-record capacity and never beyond
+  PASS: SD overflow: only the records that fit the ring are counted as committed
+  PASS: SD overflow: samples that found the ring full are counted as dropped
+  PASS: SD overflow: committed plus dropped accounts for every 1 kHz sample in the window
+  PASS: SD overflow: the profile keeps running through the card stall (the loop never blocks)
+  PASS: SD overflow: the profile's periodic status snapshots keep printing through the stall
+  PASS: SD overflow: the whole ring is flushed once the card recovers
+  PASS: SD overflow: the trailer total matches the committed record count
+  PASS: SD overflow: the trailer reports the dropped-sample count so the gap is visible
+
+[SD log: one record's 68 bytes match the documented v3 field layout exactly]
+  PASS: SD schema: the log opened for a PS-type run
+  PASS: SD schema: exactly one record is committed to the ring
+  PASS: SD schema: the card holds the 32-byte header followed by one 68-byte record
+  PASS: SD schema: the header carries magic, version 4, record size 68 and the PS type bit
+  PASS: SD schema: the header timebase is the millis()/micros() pair at open
+  PASS: SD schema: the header stores K_DROOP in milliohms for the decoder
+  PASS: SD schema: the header stamps FW_VERSION at offset 18
+  PASS: SD schema: bytes 20-31 are zero-filled for a PS run (paramFlags=0 -> amp/b fields unused, plus the always-reserved 28-31)
+  PASS: SD schema: v4 header paramFlags is 0x00 for a PS run (no amp/b parameter)
+  PASS: SD schema: the written record is byte-identical to the expected 68-byte v3 layout
+  PASS: SD schema: t_us at offset 0 is the micros() value at the sample
+  PASS: SD schema: share_act at offset 8 is |I_fc|/(|I_fc|+|I_batt|)
+  PASS: SD schema: V_fc (format v3) lands at offset 44, straight from updateSensors()
+  PASS: SD schema: V_batt (format v3) lands at offset 48
+  PASS: SD schema: V_chg (format v3) lands at offset 52
+  PASS: SD schema: V_rgn (format v3) lands at offset 56
+  PASS: SD schema: fault_flags at offset 60 (shifted +16 by the four new v3 fields) is the live 16-bit fault word
+  PASS: SD schema: the three phase bytes are independent, 0xFF for the inactive profiles
+  PASS: SD schema: the two pad bytes (now at 66-67) are zero-filled
+
+[SD log header v4: paramFlags/amp/b block, one case per run type (typeMask -> header)]
+  PASS: v4 hdr/W: the header was written
+  PASS: v4 hdr/W: format version 4
+  PASS: v4 hdr/W: paramFlags == 0x03 (amp AND b valid)
+  PASS: v4 hdr/W: amp field == the committed wProfileImax (7.5 A)
+  PASS: v4 hdr/W: b field == the committed wProfileBoundLo (0.22)
+  PASS: v4 hdr/Y: the header was written
+  PASS: v4 hdr/Y: format version 4
+  PASS: v4 hdr/Y: paramFlags == 0x03 (amp AND b valid)
+  PASS: v4 hdr/Y: amp field == the committed yProfileVmax (3.25 m/s)
+  PASS: v4 hdr/Y: b field == the committed yProfileBoundLo (0.18)
+  PASS: v4 hdr/T: the header was written
+  PASS: v4 hdr/T: format version 4
+  PASS: v4 hdr/T: paramFlags == 0x01 (amp only)
+  PASS: v4 hdr/T: amp field == the committed trapImax (4.4 A)
+  PASS: v4 hdr/T: b field stays 0.0 (T has no bound)
+  PASS: v4 hdr/R: the header was written
+  PASS: v4 hdr/R: format version 4
+  PASS: v4 hdr/R: paramFlags == 0x00 (no profile parameter)
+  PASS: v4 hdr/R: both amp and b fields stay 0.0
+  PASS: v4 hdr/D: the header was written
+  PASS: v4 hdr/D: format version 4
+  PASS: v4 hdr/D: paramFlags == 0x00 (no profile parameter)
+  PASS: v4 hdr/D: both amp and b fields stay 0.0
+  PASS: v4 hdr/D: byte 19 (fwVersion's high byte) reads 0 for FW_VERSION < 256, not because it is architecturally reserved
+  PASS: v4 hdr/D: the always-reserved trailing bytes (28-31) are zero
+  PASS: v4 hdr: the record-size byte is still 68 -- v4 changes the header only, not the 68-byte v3 record layout
+
+[BenchLogRecord (format v3): sizeof and field offsets]
+  PASS: BenchLogRecord: sizeof == 68 bytes
+  PASS: LOG_REC_SIZE == 68
+  PASS: offsetof(V_fc) == 44
+  PASS: offsetof(V_batt) == 48
+  PASS: offsetof(V_chg) == 52
+  PASS: offsetof(V_rgn) == 56
+  PASS: offsetof(fault_flags) == 60 (shifted +16)
+  PASS: offsetof(ps_phase) == 62
+  PASS: offsetof(dc_phase) == 63
+  PASS: offsetof(trap_phase) == 64
+  PASS: offsetof(flags) == 65
+  PASS: offsetof(pad) == 66 (2-byte tail)
+  PASS: offsetof(V_fc) == REC_OFF_V_FC
+  PASS: offsetof(V_batt) == REC_OFF_V_BATT
+  PASS: offsetof(V_chg) == REC_OFF_V_CHG
+  PASS: offsetof(V_rgn) == REC_OFF_V_RGN
+  PASS: offsetof(fault_flags) == REC_OFF_FAULTS
+
+[SD log: record flags bit2/bit3 encode the fw v5 share-loop mode (T2)]
+  PASS: T2 sample: the record made it to the (mock) card
+  PASS: T2a: shareClosedLoopMode=true -> flags bit2 set
+  PASS: T2 sample: the record made it to the (mock) card
+  PASS: T2b: open-loop feedforward (mode=false, run=false) -> flags bits 2,3 both clear
+  PASS: T2 sample: the record made it to the (mock) card
+  PASS: T2c: HOLD (mode=false, run=true) -> flags bit3 set, bit2 clear
+
+[SD log: a mid-run write error disables logging without faulting the run]
+  PASS: SD write error: the run is logging with records pending before the injected failure
+  PASS: SD write error: exactly one '[SD] write error' warning is printed
+  PASS: SD write error: logging is disabled and the file handle is released
+  PASS: SD write error: the ring and counters are cleared so nothing bleeds into the next run
+  PASS: SD write error: an SD failure never calls triggerFault() — no fault, still in State 98
+  PASS: SD write error: the aborted file still carries its header and a trailer
+  PASS: SD write error: the aborted file ends in the trailer sentinel
+  PASS: SD write error: the trailer reason is LOG_CLOSE_IO_ERROR, not the undocumented 0
+  PASS: SD write error: the power-share profile is still running
+  PASS: SD write error: the profile phase machine keeps advancing after logging is disabled
+  PASS: SD write error: the warning is one-shot and does not repeat on later drain ticks
+  PASS: SD write error: no further samples are buffered once logging is disabled
+
+[SD log: the run counter continues past existing files across all prefixes]
+  PASS: SD naming: an existing PS0007.BLG makes the next power-share run PS0008.BLG
+  PASS: SD naming: the new file is actually created on the card
+  PASS: SD naming: the index is one past the maximum across ALL prefixes, not just PS
+  PASS: SD naming: the pre-existing logs are left untouched
+
+[SD log: sampling lands exactly once per POWER_BAL_PERIOD_US]
+  PASS: SD rate: the log is open and armed before the cadence sweep
+  PASS: SD rate: no record is taken before a full POWER_BAL_PERIOD_US has elapsed
+  PASS: SD rate: no record is taken before a full POWER_BAL_PERIOD_US has elapsed
+  PASS: SD rate: no record is taken before a full POWER_BAL_PERIOD_US has elapsed
+  PASS: SD rate: exactly one record is taken on the tick the period completes
+  PASS: SD rate: ten further periods yield exactly ten further records (1 kHz, no doubling)
+  PASS: SD rate: a long gap yields a single catch-up record, never a burst of back-fills
+  PASS: SD rate: the recorded t_us delta across the gap equals the full missed window
+
+[SD log: the 'L' plot stream and 1 kHz logging coexist with independent rates]
+  PASS: SD + plot: the share profile is logging before the plotter is enabled
+  PASS: SD + plot: enabling the plot stream leaves the log active
+  PASS: SD + plot: logging still lands 100 records in 100 ms with the plotter streaming
+  PASS: SD + plot: the plot stream still emits exactly one line per PLOT_PERIOD_MS
+  PASS: SD + plot: the logger prints nothing periodic, so it cannot corrupt the plotter parse
+  PASS: SD + plot: the close prints its one-shot summary exactly once
+  PASS: SD + plot: stopping the profile leaves the plot stream running
+  PASS: SD + plot: the plot cadence is unchanged after the log closed
+
+[SD log: 'K' + empty line prints the logger status and stays live during the bring-up lockout]
+  PASS: 'K': the bare keypress opens the PEND_K_PARAMS prompt (fw v9), not an immediate print
+  PASS: 'K' + empty line: the prompt is dispatched and cleared
+  PASS: 'K' + empty line: prints the SD logger status block
+  PASS: 'K' + empty line: the status block carries the card, file, record and drop fields
+  PASS: 'K' + empty line: before any run the card is reported as not yet probed
+  PASS: 'K' + empty line: the status print never probes the card itself (read-only, non-blocking)
+  PASS: 'K' + empty line: no state changes and no file is opened by the status query
+  PASS: 'K' + empty line: during a run the status names the open file and reports sampling active
+  PASS: 'K' + empty line: a profile-owned log's status line carries the (profile-owned) marker
+  PASS: 'K' + empty line: still prints while the staged bring-up holds the topology lockout
+  PASS: 'K' + empty line: is not refused by the staged-bring-up lockout
+
+[SD log: 'K 1' opens a manual log (LOG_TYPE_MANUAL, "ML" prefix)]
+  PASS: 'K 1': opens a manual log and claims manual ownership
+  PASS: 'K 1': the first manual run of a session opens ML0001.BLG
+  PASS: 'K 1': the open prints its own one-shot confirmation naming the file
+  PASS: 'K 1': the file actually landed on the card with at least a header
+  PASS: 'K 1': header typeMask (offset 6) is LOG_TYPE_MANUAL (0x08)
+  PASS: 'K 1': header paramFlags (offset 7) is 0 — a manual run carries no profile parameter
+  PASS: 'K 1': the manual log joins the shared PS/TP/DC/YP/WP/ML counter, not a counter of its own
+
+[SD log: sampling runs while a manual log is active (LOG_PHASE_NONE, flags bit0 clear)]
+  PASS: manual sampling: the log is active before ticking the spine
+  PASS: manual sampling: 50 ms of State-98 ticks yields exactly 50 records (1 kHz gate)
+  PASS: manual sampling: the file exists on the card
+  PASS: manual sampling: all three phase bytes read LOG_PHASE_NONE — no profile is active
+  PASS: manual sampling: flags bit0 is clear — nothing is driving the droop MDACs under profile/live-share control during a hand-driven manual run
+
+[SD log: 'K 0' stops a manual log with LOG_CLOSE_STOP]
+  PASS: 'K 0' setup: the manual run logged samples before the stop
+  PASS: 'K 0': requests a close with LOG_CLOSE_STOP, flag-only (no card I/O in the handler)
+  PASS: 'K 0': prints its own one-shot confirmation
+  PASS: 'K 0': manual ownership clears once the drain finishes (logFinishFile() bottleneck)
+  PASS: 'K 0': the closed file holds every buffered record plus the trailer
+  PASS: 'K 0': the trailer records LOG_CLOSE_STOP as the close reason
+
+[SD log: 'K 1' refuses under bring-up, a running profile, or an already-open log]
+  PASS: 'K 1' refusal (bring-up): no file is opened
+  PASS: 'K 1' refusal (bring-up): names the cause
+  PASS: 'K 1' refusal (drive cycle active): no file is opened
+  PASS: 'K 1' refusal (drive cycle active): names the cause
+  PASS: 'K 1' refusal (plot-arm pending): no file is opened
+  PASS: 'K 1' refusal (plot-arm pending): names the cause
+  PASS: 'K 1' refusal (already open) setup: the first manual log is running
+  PASS: 'K 1' refusal (already open): no second file is opened — the first stays the only one
+  PASS: 'K 1' refusal (already open): names the cause
+
+[SD log: 'K 0' refuses to close a profile's log, and no-ops when nothing is running]
+  PASS: 'K 0' refusal setup: the trapezoid's own TP log is running, not manual-owned
+  PASS: 'K 0' refusal (profile-owned): the running log is left untouched
+  PASS: 'K 0' refusal (profile-owned): names the cause
+  PASS: 'K 0' no-op: state is unchanged when nothing is running
+  PASS: 'K 0' no-op: names the cause
+
+[SD log: garbage 'K' lines are rejected without opening/closing anything]
+  PASS: 'K 2' (out-of-range digit): the pending prompt is cleared
+  PASS: 'K 2' (out-of-range digit): no file is opened
+  PASS: 'K 2' (out-of-range digit): parseKLogLine() rejects the whole line
+  PASS: 'K 01' (trailing digit): the pending prompt is cleared
+  PASS: 'K 01' (trailing digit): no file is opened
+  PASS: 'K 01' (trailing digit): parseKLogLine() rejects the whole line
+  PASS: 'K -1' (negative): the pending prompt is cleared
+  PASS: 'K -1' (negative): no file is opened
+  PASS: 'K -1' (negative): parseKLogLine() rejects the whole line
+  PASS: 'K 0.5' (fractional): the pending prompt is cleared
+  PASS: 'K 0.5' (fractional): no file is opened
+  PASS: 'K 0.5' (fractional): parseKLogLine() rejects the whole line
+  PASS: 'K 1z': the letter cancels the pending prompt (generic non-numeric-key rule)
+  PASS: 'K 1z': no file is opened — the cancel fires before any 'K'-specific parsing runs
+  PASS: 'K 1z': the generic cancel message fires, not parseKLogLine()'s ERROR text
+  PASS: 'K 1z': parseKLogLine() is never reached for a non-numeric character
+
+[SD log: 'X' during a manual run closes it with LOG_CLOSE_X]
+  PASS: 'X' during manual log: requests a close with LOG_CLOSE_X
+  PASS: 'X' during manual log: ownership survives until logFinishFile() actually runs — parseKLogLine()'s 'K 1' refusal must keep seeing this as manual through the drain
+  PASS: 'X' during manual log: manual ownership clears once logFinishFile() runs
+  PASS: 'X' during manual log: the file holds every buffered record plus the trailer
+  PASS: 'X' during manual log: the trailer records LOG_CLOSE_X
+
+[SD log: 'Q' during a manual run closes it with LOG_CLOSE_Q]
+  PASS: 'Q' during manual log: the exit key returns to Idle
+  PASS: 'Q' during manual log: only flags the close on the way out — the file is still open in State 98
+  PASS: 'Q' during manual log: manual ownership survives the exit, pending the loop-level drain
+  PASS: 'Q' during manual log: the loop-level drain finishes and closes the file from Idle
+  PASS: 'Q' during manual log: manual ownership clears once the drain finishes
+  PASS: 'Q' during manual log: every buffered record reaches the card after the exit
+  PASS: 'Q' during manual log: the trailer records LOG_CLOSE_Q
+
+[SD log: a fault mid-manual-run closes the file from State 99 with LOG_CLOSE_FAULT]
+  PASS: fault during manual log setup: the manual run was logging when the fault is injected
+  PASS: fault during manual log: triggerFault() latches State 99
+  PASS: fault during manual log: the fault path only flags the close (no card I/O in triggerFault())
+  PASS: fault during manual log: manual ownership survives up to the drain
+  PASS: fault during manual log: the drain finishes the file while State 99 is latched
+  PASS: fault during manual log: manual ownership clears once the drain closes the file
+  PASS: fault during manual log: the pre-fault records plus the trailer all reach the card
+  PASS: fault during manual log: the trailer close reason is LOG_CLOSE_FAULT
+  PASS: fault during manual log: the trailer carries the latched error_code
+
+[SD log: a profile start takes over a live manual log (double-open handoff)]
+  PASS: manual takeover setup: a manual log is running before the profile starts
+  PASS: manual takeover: the trapezoid started
+  PASS: manual takeover: manual ownership is dropped by the handoff (logFinishFile() bottleneck)
+  PASS: manual takeover: a NEW file is opened for the profile, joining the shared counter (ML0001.BLG already claimed index 1)
+  PASS: manual takeover: the superseded manual file is complete (records + trailer)
+  PASS: manual takeover: the superseded manual run's close reason is LOG_CLOSE_STOP (double-open branch's stamp, same as every other profile-vs-profile takeover)
+  PASS: manual takeover: the new TP file is actively sampling
+
+[SD log: 'K 1' with no card warns and never sets manual ownership]
+  PASS: 'K 1' no-card: neither logActive nor logManualActive is set
+  PASS: 'K 1' no-card: the one-shot no-card warning fires
+  PASS: 'K 1' no-card: no file is created
+  PASS: logDrainTick() !sdAvailable path: clears logActive AND logManualActive together
+
+[SD log: 'K 1' is refused during a T-sweep's between-runs window (FW-1, review S1)]
+  PASS: tsweep x K1 setup: the sweep is parked in COOLDOWN with the logger idle — the exact window with no profile flag set that made the pre-fix 'K 1' look legal
+  PASS: tsweep x K1 setup: exactly run 1's file exists before the refused attempt
+  PASS: tsweep x K1: 'K 1' does not open a manual log during the sweep's dwell window
+  PASS: tsweep x K1: no second file appears on the card
+  PASS: tsweep x K1: refused with the same message as any other profile-owned log
+  PASS: tsweep x K1: the sweep's run 2 still fires normally after the refused 'K 1'
+  PASS: tsweep x K1: run 2 opens its own TP0002.BLG, unaffected by the refused manual attempt
+
+[SD log: 'K 1' during a manual log's own drain window is refused (already open/closing)]
+  PASS: K1-during-drain setup: 'K 0' requested the close; the drain has not run yet
+  PASS: K1-during-drain: the second-open attempt is refused; the pending close is untouched
+  PASS: K1-during-drain: names the cause
+  PASS: K1-during-drain: no second file is created while the first is still draining/closing
+  PASS: K1-during-drain cleanup: the original manual log still finishes normally
+
+[SD log: a second 'K 0' while a close is pending leaves the first reason intact]
+  PASS: K0 x2 setup: the first 'K 0' requested the close with LOG_CLOSE_STOP
+  PASS: K0 x2: the second 'K 0' does not disturb the already-latched close reason (logRequestClose()'s "first requester wins" rule)
+  PASS: K0 x2: no double-close side effect — the file handle is untouched by the repeat request
+  PASS: K0 x2: the drain still completes normally afterward
+  PASS: K0 x2: the file exists on the card
+  PASS: K0 x2: the trailer close reason is still LOG_CLOSE_STOP, not corrupted by the repeat
+
+[SD log: the 'K' prompt behaves identically under plot mode, plus its own line-terminating println (the 'P' plot-line concat guard)]
+  PASS: 'K' without plot mode: the prompt print is NOT self-terminated by a println
+  PASS: 'K' under plot mode: the prompt line is terminated by its own println (concat guard)
+  PASS: 'K' under plot mode + empty line: status still prints, unchanged by plot mode
+  PASS: 'K 1' under plot mode: still opens a manual log exactly as without plot mode
+
+[SD log: the 'active:' status line's ownership marker (FW-2, review S2)]
+  PASS: status marker: a manual log's status line carries the manual marker, not (profile-owned)
+  PASS: status marker: a profile-owned log's status line carries (profile-owned), not the manual marker
+  PASS: status marker: with nothing running, neither ownership marker is printed
+
+[SD log: flags bit1 tracks the velocity chain; phase bytes track their own profile]
+  PASS: SD velocity: a run with an uncalibrated velocity chain still writes records
+  PASS: SD velocity: the uncalibrated run's record reaches the card
+  PASS: SD velocity: flags bit1 is CLEAR when velocityChainCalibrated() is false
+  PASS: SD velocity: flags bit1 is SET when velocityChainCalibrated() is true
+  PASS: SD phases: the 'D' drive cycle started and opened a DC log
+  PASS: SD phases: a drive-cycle run opens a DC-prefixed file
+  PASS: SD phases: the drive cycle's first record reached the card
+  PASS: SD phases: the DC run's header type bitmask is LOG_TYPE_DC
+  PASS: SD phases: dc_phase carries the live drive-cycle phase index during a 'D' run
+  PASS: SD phases: ps_phase and trap_phase are 0xFF while only the drive cycle runs
+  PASS: SD phases: a power-share run opens a PS-prefixed file
+  PASS: SD phases: the share profile's first record reached the card
+  PASS: SD phases: the PS run's header type bitmask is LOG_TYPE_PS
+  PASS: SD phases: ps_phase carries the live share-profile phase index during an 'R' run
+  PASS: SD phases: dc_phase and trap_phase are 0xFF while only the share profile runs
+
+[SD log: a wedged card hits the close deadline, abandons the ring and still closes]
+  PASS: SD deadline: the healthy phase drained every buffered record to the card
+  PASS: SD deadline: samples taken during the wedge pile up in the ring, unwritten
+  PASS: SD deadline: the stop flags the close while the card is still wedged
+  PASS: SD deadline: before the deadline elapses the drain politely waits for the card
+  PASS: SD deadline: the deadline clears both logger flags so the session is not poisoned
+  PASS: SD deadline: the file handle is released even though the card never drained
+  PASS: SD deadline: the close line reports the abandoned records instead of claiming success
+  PASS: SD deadline: the 'last run' status counters preserve what was written and abandoned
+  PASS: SD deadline: the file holds exactly the records that physically drained, plus a trailer
+  PASS: SD deadline: the abandoned close still writes a valid trailer sentinel
+  PASS: SD deadline: the trailer reports records WRITTEN, not records sampled
+  PASS: SD deadline: the trailer's abandoned count is the ring remainder at close
+  PASS: SD deadline: the original close reason survives the deadline path
+  PASS: SD deadline: the next profile start opens a fresh file — the session is not poisoned
+  PASS: SD deadline: the next run does not hit the double-open branch
+  PASS: SD deadline: the new run logs and drains normally after the wedged one was abandoned
+
+[SD log: starting a run over a pending close finishes the old file, skips the new]
+  PASS: SD interleave: the run's records are stuck in the ring with the card stalled
+  PASS: SD interleave: 'Q' leaves a close pending with the file still open
+  PASS: SD interleave: the new profile itself still runs — logging is never a precondition
+  PASS: SD interleave: the double-open defence reports that this run is NOT logged
+  PASS: SD interleave: the new run is deliberately left unlogged rather than splicing two runs
+  PASS: SD interleave: the stale handle is finished on the spot, not leaked
+  PASS: SD interleave: no second .BLG is created for the refused run
+  PASS: SD interleave: the old file is header + trailer only (nothing drained past the stall)
+  PASS: SD interleave: the old file is closed with a valid trailer sentinel
+  PASS: SD interleave: the trailer reports zero written and the whole ring abandoned
+  PASS: SD interleave: the trailer keeps the ORIGINAL 'Q' close reason, not the new run's
+  PASS: SD interleave: drain ticks after the close are inert — no second trailer is appended
+  PASS: SD interleave: no file handle is left open once the card recovers
+
+[SD log: a drain spanning the ring wrap writes records in logical order, no gaps]
+  PASS: SD wrap: the log is open before the wrap sweep
+  PASS: SD wrap: 900 records buffer without dropping (under the 1024 capacity)
+  PASS: SD wrap: a partial drain advances the tail off zero, leaving 480 records pending
+  PASS: SD wrap: the head has wrapped past the end of the ring, so pending data spans the wrap
+  PASS: SD wrap: the refill stays inside capacity, so no sample is dropped
+  PASS: SD wrap: draining across the wrap boundary writes every one of the 1400 records
+  PASS: SD wrap: records written to the card equals records committed to the ring
+  PASS: SD wrap: the file holds all 1400 records plus the trailer
+  PASS: SD wrap: the decoded sequence is 0..1399 strictly increasing — no gap, no duplicate
+  PASS: SD wrap: the trailer reports all 1400 written and nothing abandoned
+
+[SD log: an exhausted run counter refuses to log rather than overwrite a file]
+  PASS: SD counter: the exhausted 4-digit counter is reported to the operator
+  PASS: SD counter: no log is opened once the counter is exhausted
+  PASS: SD counter: no new file is created and the existing PS9999.BLG is untouched
+  PASS: SD counter: the last run's data is NOT truncated away by a re-derived name
+  PASS: SD counter: the profile still runs — logging is never a precondition for a bench run
+  PASS: SD counter: nothing is sampled while logging is disabled for the run
+  PASS: SD counter: the refusal is not a latch — a run logs again once a slot is free
+
+[SD log: the drain is gated out of the State-99 teardown until it is fully latched]
+  PASS: SD 99-gate: the ring is fully drained before the fault (the close-runs-immediately case)
+  PASS: SD 99-gate: nothing has been truncated yet — the file is still open and logging
+  PASS: SD 99-gate: the fault latches State 99 with a close pending and an empty ring
+  PASS: SD 99-gate: no truncate/close happens while the boosts are still enabled (phases 0-2)
+  PASS: SD 99-gate: MOT_PWR_ENABLE still goes LOW at exactly t0+10 ms — teardown timing unchanged
+  PASS: SD 99-gate: the teardown completes and disables both boosts
+  PASS: SD 99-gate: the teardown reaches the fully-latched phase 3
+  PASS: SD 99-gate: the file is truncated/closed exactly once, only after the boosts are LOW
+  PASS: SD 99-gate: the deferred close still completes — gating delays it, never drops it
+  PASS: SD 99-gate: the log file exists with a header and at least one record
+  PASS: SD 99-gate: the closed file ends in the trailer sentinel
+  PASS: SD 99-gate: the trailer close reason is LOG_CLOSE_FAULT
+  PASS: SD 99-gate: the trailer carries the latched error_code
+
+[SD log: a failed/partial directory scan refuses to log rather than overwrite]
+  PASS: SD scan-fail: the oldest run's bytes are UNCHANGED after the failed scan
+  PASS: SD scan-fail: no new file is created when the directory scan fails
+  PASS: SD scan-fail: logging is refused (fail-closed), not started on a guessed name
+  PASS: SD scan-fail: the refusal names the cause — a scan failure, not a counter exhaustion
+  PASS: SD scan-fail: the profile still runs — logging is never a precondition
+  PASS: SD partial-scan: every pre-existing log survives the truncated directory walk
+  PASS: SD partial-scan: every pre-existing log survives the truncated directory walk
+  PASS: SD partial-scan: every pre-existing log survives the truncated directory walk
+  PASS: SD partial-scan: every pre-existing log survives the truncated directory walk
+  PASS: SD partial-scan: every pre-existing log survives the truncated directory walk
+  PASS: SD partial-scan: O_EXCL turns the collision into a refusal instead of a truncate
+  PASS: SD partial-scan: the refused exclusive create is reported to the operator
+  PASS: SD partial-scan: the profile runs regardless
+  PASS: SD O_EXCL: an exclusive create over an existing name fails
+  PASS: SD O_EXCL: the failed exclusive create leaves the file's bytes intact
+  PASS: SD O_EXCL: an exclusive create of a FREE name still succeeds
+
+[T sweep — grammar: a valid list arms the sequence, a malformed one starts nothing]
+  PASS: T sweep: a 2-ratio list arms a 2-run sweep starting at run 1
+  PASS: T sweep: the dwell seconds are committed in ms
+  PASS: T sweep: the ratio list is committed in the order typed
+  PASS: T sweep: run 1 starts immediately with the trapezoid parameters from the same line
+  PASS: T sweep: the FIRST ratio is applied as a live closed-loop setpoint before run 1
+  PASS: T sweep: a single-ratio list is legal (one run at one setpoint)
+  PASS: T sweep: the single ratio is applied as the setpoint
+  PASS: T sweep: the full [0,1] span is accepted (endpoints are cutoff datapoints)
+  PASS: T sweep: a plain 3-value 'T' line still starts a single NON-sweep run
+  PASS: T sweep: a missing ']' refuses the whole line
+  PASS: T sweep: an empty list '[]' refuses the whole line
+  PASS: T sweep: a list with a dwell but no setpoints refuses the whole line
+  PASS: T sweep: a non-numeric (missing) list value refuses the whole line
+  PASS: T sweep: a setpoint above 1.0 refuses the whole line
+  PASS: T sweep: a negative setpoint refuses the whole line
+  PASS: T sweep: a negative dwell refuses the whole line
+  PASS: T sweep: a dwell beyond TSWEEP_DWELL_MAX_S refuses the whole line
+  PASS: T sweep: more than TSWEEP_MAX_RATIOS setpoints refuses the whole line
+  PASS: T sweep: trailing text after ']' refuses the whole line
+  PASS: T sweep: a bare 4th value (no '[') refuses the whole line
+  PASS: T sweep: a sweep list under plot mode is refused (no sweep, no armed run)
+  PASS: T sweep: a plain 'T' line under plot mode still ARMS, unchanged
+
+[T sweep — two runs, two files, dwell honoured between them]
+  PASS: T sweep e2e: run 1 is live at share_sp = 0.3
+  PASS: T sweep e2e: run 1 opens its own log, TP0001.BLG
+  PASS: T sweep e2e: run 1 completing does NOT end the sweep
+  PASS: T sweep e2e: with the log drained the sweep sits in COOLDOWN
+  PASS: T sweep e2e: run 1's file is closed before the cool-down starts
+  PASS: T sweep e2e: no run starts while the cool-down dwell is still running
+  PASS: T sweep e2e: run 2 fires once the dwell elapses
+  PASS: T sweep e2e: run 2 runs at the second setpoint (0.7)
+  PASS: T sweep e2e: run 2 gets its own file, TP0002.BLG
+  PASS: T sweep e2e: the sweep completes after the last run
+  PASS: T sweep e2e: completion restores the quiescent share state (0.5, loop off)
+  PASS: T sweep e2e: each run left a populated file on the card
+  PASS: T sweep e2e: each sweep file carries the LOG_TYPE_TP header bitmask
+  PASS: T sweep e2e: each sweep file ends with the trailer sentinel
+  PASS: T sweep e2e: each sweep run closes with LOG_CLOSE_COMPLETE (natural end)
+  PASS: T sweep e2e: the file's FIRST record already carries that run's share setpoint
+  PASS: T sweep e2e: each run left a populated file on the card
+  PASS: T sweep e2e: each sweep file carries the LOG_TYPE_TP header bitmask
+  PASS: T sweep e2e: each sweep file ends with the trailer sentinel
+  PASS: T sweep e2e: each sweep run closes with LOG_CLOSE_COMPLETE (natural end)
+  PASS: T sweep e2e: the file's FIRST record already carries that run's share setpoint
+
+[T sweep — the next run waits for the logger to go fully idle]
+  PASS: T sweep log-gate: run 1 started
+  PASS: T sweep log-gate: run 1 finished with its file still closing (drain blocked)
+  PASS: T sweep log-gate: the sweep parks in WAIT_LOG rather than starting run 2
+  PASS: T sweep log-gate: run 2 does NOT start while the close is pending, dwell 0 or not
+  PASS: T sweep log-gate: the drain finished run 1's file
+  PASS: T sweep log-gate: run 2 starts on a later tick, once the logger is idle
+  PASS: T sweep log-gate: run 2 still gets its own file (nothing was skipped)
+
+[T sweep — every operator stop path ends the sequence]
+  PASS: T sweep cancel: 'T' mid-run stops the trapezoid AND the sweep
+  PASS: T sweep cancel: the 'T' stop restores the quiescent share state
+  PASS: T sweep cancel: no queued run fires after the 'T' stop
+  PASS: T sweep cancel: 'T' between runs stops the queued sweep
+  PASS: T sweep cancel: 'T' between runs does NOT open the parameter prompt
+  PASS: T sweep cancel: the between-runs 'T' stop restores the quiescent share state
+  PASS: T sweep cancel: no run fires after the between-runs 'T' stop
+  PASS: T sweep cancel: (setup) sweep is cooling down
+  PASS: T sweep cancel: 'X' during the cool-down cancels the sweep
+  PASS: T sweep cancel: the 'X' cancel restores the quiescent share state
+  PASS: T sweep cancel: 'X' on a sweep leaves the path switches as-is (trapezoid semantics)
+  PASS: T sweep cancel: no run fires after 'X', dwell or not
+  PASS: T sweep cancel: 'Q' still exits State 98
+  PASS: T sweep cancel: 'Q' cancels the sweep — no queued run survives into Idle
+  PASS: T sweep cancel: the 'Q' cancel restores the quiescent share state
+  PASS: T sweep cancel: (setup) 'R' started
+  PASS: T sweep cancel: starting the 'R' share profile supersedes and cancels the sweep
+  PASS: T sweep cancel: the superseded sweep never fires its remaining run
+
+[T sweep — preconditions are re-checked at FIRE time, not just at type-in]
+  PASS: T sweep fire-time: a bring-up started during the dwell cancels the sweep
+  PASS: T sweep fire-time: the cancelled sweep does not start its queued run
+  PASS: T sweep fire-time: the cancel restores the quiescent share state
+
+[COMBINED_PROFILE[] table structure (fw v6 R5-R7 rework)]
+  PASS: combo table: exactly 16 regions
+  PASS: combo table: total duration is 40000 ms across all 16 regions
+  PASS: combo table: R5 == {2000, 1.0, 0.3, 0.35, 0.35}
+  PASS: combo table: R6 == {1500, 0.3, 0.3, 1.00, 1.00}
+  PASS: combo table: R7 == {3500, 0.3, 1.0, 0.35, 0.35}
+  PASS: combo table: R8 == {3000, 0.5, 0.5, 0.65, 0.65} -- unchanged by the fw v6 rework
+
+[Y combined profile — parameter line: defaults, one value, two values, warn band]
+  PASS: Y params: 'Y' arms the single-line parameter prompt
+  PASS: Y params: a bare Enter starts the profile rather than cancelling the prompt
+  PASS: Y params: a bare Enter commits the documented defaults (Vmax 1.0 m/s, b 0)
+  PASS: Y params: the run begins at region 0
+  PASS: Y params: a single value "Y 2" starts the profile
+  PASS: Y params: one value sets Vmax and leaves the share bound at its default
+  PASS: Y params: two values "Y 1 0.3" start the profile
+  PASS: Y params: two values commit both Vmax and the share bound
+  PASS: Y params: b above Y_BOUND_WARN is accepted and the profile still starts
+  PASS: Y params: the above-threshold bound is committed as typed
+  PASS: Y params: a bound above Y_BOUND_WARN prints the compressed-plateau warning
+  PASS: Y params: b exactly at Y_BOUND_WARN starts without a warning (the test is strict >)
+
+[Y combined profile — every refusal leaves the bench idle and unlogged]
+  PASS: Y refusal: 'Y' during a staged bring-up is refused at the keypress
+  PASS: Y refusal (bring-up active): no profile starts and no log file is opened
+  PASS: Y refusal: 'Y' with an uncalibrated velocity chain is refused by name
+  PASS: Y refusal (velocity chain uncalibrated): no profile starts and no log file is opened
+  PASS: Y refusal: 'Y' with MOT_PWR_ENABLE LOW is refused at the keypress
+  PASS: Y refusal (MOT_PWR low): no profile starts and no log file is opened
+  PASS: Y refusal: Vmax of zero is rejected
+  PASS: Y refusal (Vmax = 0): no profile starts and no log file is opened
+  PASS: Y refusal: a negative Vmax is rejected
+  PASS: Y refusal (Vmax negative): no profile starts and no log file is opened
+  PASS: Y refusal: a Vmax above MANUAL_MOTOR_V_MAX is rejected against the same ceiling 'V' uses
+  PASS: Y refusal (Vmax above MANUAL_MOTOR_V_MAX): no profile starts and no log file is opened
+  PASS: Y refusal: b = 0.5 is rejected because the band [b, 1-b] collapses to a point
+  PASS: Y refusal (b = 0.5): no profile starts and no log file is opened
+  PASS: Y refusal: a negative share bound is rejected
+  PASS: Y refusal (b negative): no profile starts and no log file is opened
+  PASS: Y refusal: a third value is rejected rather than silently ignored
+  PASS: Y refusal (third value): no profile starts and no log file is opened
+  PASS: Y refusal: the parameter prompt is armed before the cancel
+  PASS: Y refusal: a non-numeric key cancels the parameter entry
+  PASS: Y refusal (non-numeric cancel): no profile starts and no log file is opened
+
+[Y combined profile — both setpoints track the region table across the full run]
+  PASS: Y walk: the run starts at the defaults (Vmax 1.0, no share clip)
+  PASS: Y walk: R0 holds v=0 and share=0.50 while the bench settles
+  PASS: Y walk: R1 midpoint has v_setpoint half way up the 0 -> 0.6 ramp (0.30)
+  PASS: Y walk: R1 leaves the share axis flat — the velocity ramp is a SOLO excitation
+  PASS: Y walk: R2 buffers at v=0.6 with the share still at 0.50
+  PASS: Y walk: the share is still 0.50 on the last tick before R3
+  PASS: Y walk: R3 steps the share to 0.65 on its first tick (a step is a start-value mismatch)
+  PASS: Y walk: R3's share step leaves the velocity axis untouched — a SOLO share excitation
+  PASS: Y walk: R4 midpoint has v_setpoint mid-ramp between 0.6 and 1.0 (0.80)
+  PASS: Y walk: R4 midpoint has the share mid-ramp between 0.65 and 0.35 (0.50) — both axes move
+  PASS: Y walk: R5 midpoint has v_setpoint half way down the 1.0 -> 0.3 ramp (0.65)
+  PASS: Y walk: R5 leaves the share axis flat at 0.35 while the velocity ramps down
+  PASS: Y walk: R6 drives the share to 1.00 (all-FC) to exercise the droop clamp
+  PASS: Y walk: R6 holds the velocity at the LOW-load plateau (0.3) through the share excursion (fw v6 -- this used to be full scale, 1.0)
+  PASS: Y walk: R7 ends at v~1.0 / share=0.35 on the last tick before R8 (fw v6: R7 ramps up to 1.0 rather than holding it, so this is the last-step approach, not an exact value)
+  PASS: Y walk: R8 steps BOTH axes in the same tick (v down to 0.5, share up to 0.65)
+  PASS: Y walk: R10 midpoint has the share half way down the 0.65 -> 0 ramp (0.325)
+  PASS: Y walk: R10's share ramp leaves the velocity axis flat at 0.5
+  PASS: Y walk: R11 drives the share to 0.00 (all-BT) to exercise the other clamp
+  PASS: Y walk: R13 steps the velocity down to 0.2 with the share recovered to 0.50
+  PASS: Y walk: R14 coasts the velocity down, half way at 0.10
+  PASS: Y walk: R15 holds at standstill before completion
+  PASS: Y walk: the profile deactivates on natural completion after the last region
+  PASS: Y walk: natural completion flushes vesc.setCurrent(0) — the motor is not left driving
+  PASS: Y walk: natural completion returns the share setpoint to balanced (0.50)
+  PASS: Y walk: natural completion clears manualMotorMode (haltMotorOutput symmetry)
+  PASS: Y walk: the run's log file exists and holds records
+  PASS: Y walk: the trailer records LOG_CLOSE_COMPLETE for a naturally-finished run
+
+[Y combined profile — the share band clips after interpolation, producing a kink]
+  PASS: Y clip: the run starts with the share band [0.30, 0.70]
+  PASS: Y clip: R3's 0.65 plateau is inside [0.30, 0.70] and passes through unclipped
+  PASS: Y clip: R6's 1.00 excursion flattens at the upper bound 0.70
+  PASS: Y clip: R8's 0.65 plateau is still unclipped after the excursion
+  PASS: Y clip: R10 at 1000 ms is still on the un-clipped ramp slope (0.4333)
+  PASS: Y clip: R10 at its midpoint is 0.325 — still above the bound, so still on-slope
+  PASS: Y clip: R10 at 1600 ms is the last on-slope sample before the 1615 ms crossing
+  PASS: Y clip: R10 at 1630 ms has crossed the bound and is pinned at 0.30 — the kink
+  PASS: Y clip: R10 stays flat at 0.30 for the rest of the ramp instead of continuing down
+  PASS: Y clip: R11's 0.00 excursion flattens at the lower bound 0.30
+  PASS: Y clip: the share band never touches the velocity axis
+  PASS: Y clip: with b=0.4 the 0.65 intermediate plateau is compressed to the 0.60 bound
+  PASS: Y clip: with b=0.4 the 0.35 intermediate plateau is compressed to the 0.40 bound
+  PASS: Y clip: with b=0.4 the 1.00 excursion flattens at 0.60
+
+[Y combined profile — normalised velocity waypoints scale with the operator Vmax]
+  PASS: Y Vmax: the run committed Vmax = 2.0 m/s
+  PASS: Y Vmax: R1's normalised 0.6 endpoint scales to 1.2 m/s at Vmax = 2
+  PASS: Y Vmax: the share axis is unaffected by Vmax — it is absolute, not normalised
+  PASS: Y Vmax: R5's normalised 0.65 midpoint scales to 1.3 m/s at Vmax = 2
+  PASS: Y Vmax: R5's share plateau is the same 0.35 the defaults produce
+  PASS: Y Vmax: R8's normalised 0.5 step scales to 1.0 m/s at Vmax = 2
+  PASS: Y Vmax: R8's share plateau is the same 0.65 the defaults produce
+  PASS: Y Vmax: mid-ramp values scale too — R1's midpoint is 0.3 x 2 = 0.6 m/s
+
+[Y combined profile — stop-toggle, 'X', 'Q' and mutual exclusion with D/R/T]
+  PASS: Y stop: the run is mid-R4 before the stop key
+  PASS: Y stop: the 'Y' stop-toggle clears combinedProfileActive
+  PASS: Y stop: the stop flushes vesc.setCurrent(0) immediately
+  PASS: Y stop: the stop parks the path switches (this profile sweeps the charge paths)
+  PASS: Y stop: the stop returns the share setpoint to balanced
+  PASS: Y stop: the stop requests the log close without doing card I/O in the handler
+  PASS: Y stop: the stopped run's file holds every drained record plus the trailer
+  PASS: Y stop: the trailer records LOG_CLOSE_STOP
+  PASS: Y 'X': the universal stop cancels the combined profile and the manual modes
+  PASS: Y 'X': the universal stop zeroes the motor
+  PASS: Y 'X': hadY makes the universal stop park the switches, as it does for 'D'/'R'
+  PASS: Y 'X': hadY resets the share setpoint, matching the 'R' semantics
+  PASS: Y 'X': the run's log file was written
+  PASS: Y 'X': the trailer records LOG_CLOSE_X
+  PASS: Y 'Q': the exit clears the combined profile and returns to Idle
+  PASS: Y 'Q': the exit flushes vesc.setCurrent(0) before cutting motor power
+  PASS: Y 'Q': the exit flags the log close, to be finished by the drain in loop()
+  PASS: Y 'Q': the run's log file was written
+  PASS: Y 'Q': the trailer records LOG_CLOSE_Q
+  PASS: Y exclusion: a combined run is active before 'D' is pressed
+  PASS: Y exclusion: starting the drive cycle clears the combined profile
+  PASS: Y exclusion: starting the power-share profile clears the combined profile
+  PASS: Y exclusion: a share profile is running before 'Y'
+  PASS: Y exclusion: starting the combined profile clears a running power-share profile
+  PASS: Y exclusion: starting the combined profile clears an active trapezoid and its command
+  PASS: Y exclusion: starting the combined profile clears a running drive cycle
+
+[Y combined profile — logs under the YP prefix with both phase bytes set]
+  PASS: Y logging: a combined run files under the YP prefix, not PS
+  PASS: Y logging: the run is inside region 3 when the record is taken
+  PASS: Y logging: the records reached the card
+  PASS: Y logging: the header type field is the PS|DC bitmask, telling the decoder the two phase bytes are one axis
+  PASS: Y logging: the region index is written into BOTH ps_phase and dc_phase
+  PASS: Y logging: trap_phase stays 0xFF — the trapezoid is not part of this profile
+  PASS: Y logging: flags bit0 marks the combined profile as driving powerBalance
+  PASS: Y logging: the record's v_sp carries the profile's commanded velocity
+  PASS: Y logging: an existing YP0007.BLG makes the next combined run YP0008.BLG
+  PASS: Y logging: the combined run opened YP0001.BLG
+  PASS: Y logging: a power-share run after a combined run files as PS and continues the shared counter (the YP file is seen by the scan)
+
+[Y combined profile — [YP] status cadence, plot suppression and interlocks]
+  PASS: Y status: the [YP] snapshot prints on the 500 ms cadence (twice in the first second)
+  PASS: Y status: the snapshot carries the region, both setpoints, the measured share, the currents, the bus and the fault word
+  PASS: Y status: the [YP] snapshot is suppressed while the plot stream is running
+  PASS: Y status: the plot stream itself keeps emitting while the combined profile runs
+  PASS: Y status: the region machine keeps advancing while the status lines are suppressed
+  PASS: Y status: the [YP] snapshot resumes once the plot stream is off
+  PASS: Y interlock: pollVescWatch() does not run its blocking poll while the combined profile is active
+  PASS: Y interlock: 'G' refuses to arm the staged bring-up while the combined profile runs
+  PASS: Y interlock: an armed plot-mode start is cancelled rather than stomping the running combined profile
+
+[Y combined profile — the charging manager never runs (it would corrupt the share)]
+  PASS: Y charging: FC_CHARGE_ENABLE stays LOW through R1 — the FC-charge path is never opened
+  PASS: Y charging: BT_BUS_ENABLE stays HIGH in the mid-share regions — the battery is not taken off the bus
+  PASS: Y charging: the combined profile's branch does drive the motor (commanded current is non-zero mid-ramp)
+  PASS: Y charging: the commanded current actually reaches the VESC
+  PASS: Y charging: the droop half of the stack runs too (powerBalance writes the MDACs)
+  PASS: Y charging: FC_CHARGE_ENABLE is still LOW deep into R4, with charge_goal set high
+  PASS: Y charging: the charge path stays under operator control for the whole run
+  PASS: Y charging: the profile itself ran normally the whole time
+  PASS: Y charging (contrast): the drive cycle started
+  PASS: Y charging (contrast): the DRIVE CYCLE does run chargingControl() — it opens FC_CHARGE and drops BT_BUS, which is exactly what 'Y' must never do
+
+[Y combined profile — a takeover closes the old log and opens one for the new run]
+  PASS: Y takeover: the combined run is logging to YP0001.BLG before the takeover
+  PASS: Y takeover: the combined run drained records before the takeover
+  PASS: Y takeover: 'D' takes over from the combined profile
+  PASS: Y takeover: on an idle card the takeover run IS logged, into a new DC file
+  PASS: Y takeover: the new file's handle is open — the old one was finished, not leaked
+  PASS: Y takeover: the superseded YP file is complete (records + trailer)
+  PASS: Y takeover: the superseded file carries a valid trailer with its record count
+  PASS: Y takeover: the superseded run's close reason is LOG_CLOSE_STOP
+  PASS: Y takeover: the takeover run's file accumulates records normally
+  PASS: Y takeover: the takeover file's header type is LOG_TYPE_DC
+  PASS: Y takeover: the 'D' start leaves no trapezoid state behind (A3)
+  PASS: Y takeover (busy): 'R' takes over and the profile itself still runs
+  PASS: Y takeover (busy): the refusal names the busy card as the reason this run is not logged
+  PASS: Y takeover (busy): no new file is opened and no handle is left behind
+  PASS: Y takeover (busy): only the superseded YP file exists — no second .BLG was created
+  PASS: Y takeover (busy): the superseded file is still finished with its trailer
+  PASS: Y takeover (reverse): the share run is logging to PS0001.BLG first
+  PASS: Y takeover (reverse): 'Y' takes over from the running share profile
+  PASS: Y takeover (reverse): the combined takeover run IS logged, into a new YP file
+  PASS: Y takeover (reverse): the superseded PS file is complete
+  PASS: Y takeover (reverse): the superseded PS run closes with LOG_CLOSE_STOP
+
+[Y combined profile — Vmax boundary is inclusive, and 'S' reads back the committed pair]
+  PASS: Y bounds: Vmax exactly at MANUAL_MOTOR_V_MAX (5.0) is accepted
+  PASS: Y bounds: the ceiling refusal does not fire at the boundary value itself
+  PASS: Y bounds: a Vmax just above the ceiling (5.01) is refused
+  PASS: Y bounds: the refusal cites the MANUAL_MOTOR_V_MAX ceiling
+  PASS: Y bounds: the refused start opens no log file
+  PASS: Y status readback: the run committed Vmax 2.0 with band [0.30, 0.70]
+  PASS: Y status readback: the run has ended before the readback
+  PASS: Y status readback: 'S' prints a combinedProfile line
+  PASS: Y status readback: the line reports the COMMITTED Vmax after the run ended
+  PASS: Y status readback: the line reports the committed share band, both edges
+  PASS: Y status readback: 'S' also carries the driveCycle line
+
+[W current profile — parameter line: defaults, one/two values, warn band, ceiling]
+  PASS: W params: 'W' arms the single-line parameter prompt
+  PASS: W params: a bare Enter starts the profile rather than cancelling the prompt
+  PASS: W params: a bare Enter commits the documented defaults (Imax 5.0 A, b 0)
+  PASS: W params: the run begins at region 0
+  PASS: W params: one value "W 6" sets Imax and leaves the share bound at its default
+  PASS: W params: an explicit zero bound "W 6 0.0" is accepted and means no clipping
+  PASS: W params: two values commit both Imax and the share bound
+  PASS: W params: a bound above Y_BOUND_WARN is accepted with the compressed-plateau warning
+  PASS: W params: a bound exactly at Y_BOUND_WARN starts without a warning (strict >)
+  PASS: W params: Imax exactly at TRAP_I_ABS_MAX (25 A) is accepted — the check is strict >
+  PASS: W params: the ceiling refusal does not fire at the boundary value itself
+  PASS: W params: an Imax just above TRAP_I_ABS_MAX is refused
+  PASS: W params: a peak above MOTOR_I_CMD_MAX is accepted un-clamped, as 'T' accepts it
+
+[W current profile — refusals, plus the encoder-less/unpowered cases it must ALLOW]
+  PASS: W refusal: 'W' during a staged bring-up is refused at the keypress
+  PASS: W refusal (bring-up active): no profile starts and no log file is opened
+  PASS: W refusal: an Imax of zero is rejected
+  PASS: W refusal (Imax = 0): no profile starts and no log file is opened
+  PASS: W refusal: a negative Imax is rejected (unlike 'T', the table has no mirrored form)
+  PASS: W refusal (Imax negative): no profile starts and no log file is opened
+  PASS: W refusal: an Imax above the ESC rating is rejected
+  PASS: W refusal (Imax above TRAP_I_ABS_MAX): no profile starts and no log file is opened
+  PASS: W refusal: b = 0.5 is rejected — the band [b, 1-b] collapses to a point
+  PASS: W refusal (b = 0.5): no profile starts and no log file is opened
+  PASS: W refusal: a negative share bound is rejected
+  PASS: W refusal (b negative): no profile starts and no log file is opened
+  PASS: W refusal: a third value is rejected rather than silently ignored
+  PASS: W refusal (third value): no profile starts and no log file is opened
+  PASS: W refusal: the parameter prompt is armed before the cancel
+  PASS: W refusal: a non-numeric key cancels the parameter entry
+  PASS: W refusal (non-numeric cancel): no profile starts and no log file is opened
+  PASS: W allows: MOT_PWR_ENABLE LOW only WARNS — the VESC may have its own bench supply
+  PASS: W allows: the profile starts with MOT_PWR_ENABLE LOW (no gate, same policy as 'T')
+  PASS: W allows: an uncalibrated velocity chain is NOT a refusal — the velocity PI is bypassed
+  PASS: W allows: the profile runs on an encoder-less bench, which is the point of 'W'
+
+[W current profile — commanded current and share track the shared region table]
+  PASS: W walk: the run starts at the defaults (Imax 5.0 A, no share clip)
+  PASS: W walk: R0 holds 0 A and share 0.50 while the bench settles
+  PASS: W walk: R1 midpoint commands 1.5 A — half of the 0 -> 3.0 A ramp
+  PASS: W walk: R1 leaves the share axis flat — the current ramp is a SOLO excitation
+  PASS: W walk: the commanded current actually reaches the VESC
+  PASS: W walk: R2 buffers at the 3.0 A plateau with the share still at 0.50
+  PASS: W walk: R3 steps the share to 0.65 with the current axis untouched (SOLO share step)
+  PASS: W walk: R4 midpoint commands 4.0 A — mid-ramp between the 3.0 A and 5.0 A plateaus
+  PASS: W walk: R4 midpoint has the share mid-ramp between 0.65 and 0.35 — both axes move
+  PASS: W walk: R5 midpoint commands 3.25 A — half way down the 5.0 -> 1.5 A ramp — with the share at 0.35
+  PASS: W walk: R6 drives the share to 1.00 (all-FC) while holding the LOW-load 1.5 A plateau (fw v6 -- this used to be the full 5.0 A peak)
+  PASS: W walk: R7 ends at 5.0 A / share 0.35 on the last tick before R8
+  PASS: W walk: R8 steps BOTH axes in the same tick (current down to 2.5 A, share up to 0.65)
+  PASS: W walk: R10 midpoint has the share half way down its ramp with the current flat
+  PASS: W walk: R11 drives the share to 0.00 (all-BT) to exercise the other clamp
+  PASS: W walk: R13 steps the current down to 1.0 A with the share recovered to 0.50
+  PASS: W walk: R14 coasts the current down, half way at 0.5 A
+  PASS: W walk: R15 holds at zero current before completion
+  PASS: W walk: the profile deactivates on natural completion after the last region
+  PASS: W walk: natural completion zeroes the commanded-current mirror
+  PASS: W walk: natural completion flushes vesc.setCurrent(0) — the motor is not left driving
+  PASS: W walk: natural completion returns the share setpoint to balanced (0.50)
+  PASS: W walk: natural completion clears manualMotorMode (haltMotorOutput symmetry)
+  PASS: W walk: the run's log file exists and holds records
+  PASS: W walk: the trailer records LOG_CLOSE_COMPLETE for a naturally-finished run
+
+[W current profile — the current axis scales with Imax; the share clip is shared]
+  PASS: W scaling: the run committed Imax = 6.0 A
+  PASS: W scaling: R5's normalised 0.65 midpoint scales to 3.9 A at Imax = 6
+  PASS: W scaling: the share axis is unaffected by Imax — it is absolute, not normalised
+  PASS: W scaling: R8's normalised 0.5 step scales to 3.0 A at Imax = 6
+  PASS: W scaling: R8's share plateau is the same 0.65 the defaults produce
+  PASS: W scaling: mid-table plateaus scale too — R13's 0.2 becomes 1.2 A
+  PASS: W clip: R3's 0.65 plateau is inside [0.30, 0.70] and passes through unclipped
+  PASS: W clip: R6's 1.00 excursion flattens at the upper bound 0.70, exactly as under 'Y'
+  PASS: W clip: R10's ramp keeps its full slope before the bound crossing (post-interp clip)
+  PASS: W clip: R10 pins at 0.30 after the crossing — the same kink the 'Y' profile produces
+  PASS: W clip: R11's 0.00 excursion flattens at the lower bound 0.30
+  PASS: W clip: the share band never touches the current axis
+
+[W walk: R6's hi-bound excursion at low load actually latches BT via the setpoint cutoff, releases on R7 (E2)]
+  PASS: W R6 latch: (setup) the run committed Imax=1.5A, share bound b=0.1
+  PASS: W R6 latch: (setup) R6 commits the share to 0.90 (1.00 clipped to [0.1,0.9]) -- out of band
+  PASS: W R6 latch: the setpoint cutoff actually LATCHES BT here -- the doomed channel's 0.45A measured current is under the handoff guard, so this is the fired-cut case, not the deferred one (the whole point of moving the excursion onto the low-load plateau)
+  PASS: W R6 latch: FC (the surviving source) stays on the bus
+  PASS: W R6 latch: no deferral is outstanding -- the guard passed on load, it did not block
+  PASS: W R6 latch: (setup) R7 steps the share back in-band to 0.35
+  PASS: W R6 latch: R7's in-band re-entry releases the BT setpoint latch
+  PASS: W R6 latch: BT_BUS_ENABLE re-closes on R7 re-entry
+
+[W/Y equivalence — one region table, two motor units, identical shape]
+  PASS: W/Y equivalence: the 'Y' reference run started with Vmax 2.0 and band [0.30, 0.70]
+  PASS: W/Y equivalence: the 'W' run started with Imax 8.0 A and the same band
+  PASS: W/Y equivalence: both profiles are in the same region at all 22 sampled points
+  PASS: W/Y equivalence: the share sequence is BIT-IDENTICAL between 'Y' and 'W' (shared interpolation and shared post-interpolation clip)
+  PASS: W/Y equivalence: the motor axis is the same normalised shape — W amps equal Y m/s times Imax/Vmax at every sampled point
+  PASS: W/Y equivalence: the sampled points genuinely exercise both axes (not a flat comparison)
+  PASS: W/Y equivalence: the R6 sample is at the 0.3 x Imax low-load plateau (2.4 A at Imax=8.0, fw v6), confirming the scale factor is exercised at a non-trivial value
+
+[W current profile — stop-toggle, 'X', 'Q' and mutual exclusion with D/R/T/Y]
+  PASS: W stop: the run is mid-R4 before the stop key
+  PASS: W stop: the 'W' stop-toggle clears the profile and its commanded-current mirror
+  PASS: W stop: the stop flushes vesc.setCurrent(0) immediately
+  PASS: W stop: the stop parks the path switches (the share axis manipulates the bus config)
+  PASS: W stop: the stop returns the share setpoint to balanced
+  PASS: W stop: the stopped run's file holds every drained record plus the trailer
+  PASS: W stop: the trailer records LOG_CLOSE_STOP
+  PASS: W 'X': the universal stop cancels the current profile and the manual modes
+  PASS: W 'X': the universal stop zeroes the motor
+  PASS: W 'X': hadW makes the universal stop park the switches, as it does for 'D'/'R'/'Y'
+  PASS: W 'X': hadW resets the share setpoint, matching the 'R'/'Y' semantics
+  PASS: W 'X': the trailer records LOG_CLOSE_X
+  PASS: W 'Q': the exit clears the current profile and returns to Idle
+  PASS: W 'Q': the exit flushes vesc.setCurrent(0) before cutting motor power
+  PASS: W 'Q': the trailer records LOG_CLOSE_Q
+  PASS: W exclusion: starting the drive cycle clears the current profile
+  PASS: W exclusion: starting the power-share profile clears the current profile
+  PASS: W exclusion: starting 'Y' clears the current profile and its command mirror
+  PASS: W exclusion: starting the trapezoid clears the current profile
+  PASS: W exclusion: a 'Y' run is active before 'W'
+  PASS: W exclusion: starting 'W' clears a running 'Y' (both directions covered)
+  PASS: W exclusion: starting 'W' clears a running power-share profile
+  PASS: W exclusion: starting 'W' clears an active trapezoid and its command
+  PASS: W exclusion: starting 'W' clears a running drive cycle
+
+[W current profile — logs under the WP prefix with the share+current phase bytes]
+  PASS: W logging: a current-combo run files under the WP prefix, not PS or TP
+  PASS: W logging: the run is inside region 3 when the record is taken
+  PASS: W logging: the records reached the card
+  PASS: W logging: the header type field is the PS|TP bitmask (share axis + current axis)
+  PASS: W logging: the region index is written into BOTH ps_phase and trap_phase
+  PASS: W logging: dc_phase stays 0xFF — there is no drive-cycle axis in this profile
+  PASS: W logging: flags bit0 marks the current profile as driving powerBalance
+  PASS: W logging: the record's I_cmd carries the profile's commanded current
+  PASS: W logging: an existing WP0007.BLG makes the next current-combo run WP0008.BLG
+  PASS: W logging: the current-combo run opened WP0001.BLG
+  PASS: W logging: a 'Y' run after a 'W' run files as YP and continues the shared counter
+  PASS: W logging: the 'Y' run opened YP0001.BLG
+  PASS: W logging: a 'W' run after a 'Y' run files as WP — the overlapping PS bit misfiles neither
+
+[W current profile — [WP] status, suppression, and no charging manager]
+  PASS: W status: the [WP] snapshot prints on the 500 ms cadence (twice in the first second)
+  PASS: W status: the snapshot carries the region, the commanded current, both share figures, the currents, the bus and the fault word
+  PASS: W status: the [WP] snapshot is suppressed while the plot stream is running
+  PASS: W status: the plot stream itself keeps emitting while the current profile runs
+  PASS: W status: the region machine keeps advancing while the status lines are suppressed
+  PASS: W status: the [WP] snapshot resumes once the plot stream is off
+  PASS: W interlock: pollVescWatch() does not run its blocking poll while 'W' is active
+  PASS: W interlock: 'G' refuses to arm the staged bring-up while the current profile runs
+  PASS: W charging: FC_CHARGE_ENABLE stays LOW through R1 — the charging manager never runs
+  PASS: W charging: BT_BUS_ENABLE stays HIGH in the mid-share regions — the battery is not taken off the bus
+  PASS: W charging: the current axis is genuinely driving mid-R1 (1.5 A at the defaults)
+  PASS: W charging: the commanded current actually reaches the VESC
+  PASS: W charging: the droop half of the stack runs alongside (powerBalance writes the MDACs)
+  PASS: W charging: FC_CHARGE_ENABLE is still LOW deep into R2 with charge_goal set high
+  PASS: W charging: the FC-charge path stays under operator control for the whole run
+
+[W current profile — a fault mid-run closes the WP log from State 99]
+  PASS: W fault: the current profile was running and logging when the fault is injected
+  PASS: W fault: records were captured before the fault
+  PASS: W fault: triggerFault() latches State 99 with the current profile attached
+  PASS: W fault: the error latch and fault flags are unaffected by the log close request
+  PASS: W fault: the fault path only flags the close — no card I/O in triggerFault()
+  PASS: W fault: the loop-level drain finishes the file while State 99 is latched
+  PASS: W fault: the error stays latched in State 99 after the log is closed
+  PASS: W fault: the run's file is the WP-prefixed one, not PS/TP
+  PASS: W fault: the file ends with a valid trailer sentinel
+  PASS: W fault: the trailer total matches the records captured before the fault
+  PASS: W fault: the trailer close reason is LOG_CLOSE_FAULT
+  PASS: W fault: the trailer carries the latched error_code so the cause is in the file
+
+[Combined profiles x channel cutoff: cut, last-source guard, hysteresis, end-of-run]
+  PASS: cutoff x profile: an R6-like ratio opens exactly the starved (BT) channel
+  PASS: cutoff x profile: exactly ONE switch opens — the surviving source stays on the bus
+  PASS: cutoff x profile: the last-source guard blocks the second cutoff — the bus never darkens
+  PASS: cutoff x profile: the R11-like ratio also re-entered BT on the same call
+  PASS: cutoff x profile: (setup) BT is cut again for the hysteresis check
+  PASS: cutoff x profile: a ratio dithering just inside the band does not re-close (hysteresis)
+  PASS: cutoff x profile: past the hysteresis the channel re-enters and the flag clears
+  PASS: cutoff x completion: (setup) the run holds a BT cutoff when the table runs out
+  PASS: cutoff x completion: the profile completed normally
+  PASS: cutoff x completion: the latched cutoff flag is cleared by the completion path
+  PASS: cutoff x completion: the owned channel is put BACK on the bus — no single-sourced latch
+  PASS: cutoff x completion: the restore is announced so the operator sees the topology change
+  PASS: cutoff x completion (Y): (setup) the run holds an FC cutoff
+  PASS: cutoff x completion (Y): the FC channel is re-closed and the flag cleared on completion
+  PASS: cutoff x completion: with the bus unregulated the restore DECLINES (no hot-plug)
+  PASS: cutoff x completion: the declined restore says so rather than failing silently
+  PASS: cutoff x stop: (setup) the run holds a BT cutoff
+  PASS: cutoff x stop: the stop-toggle ended the run
+  PASS: cutoff x stop: safeAllSwitches() clears the cutoff ownership flags on the stop path
+  PASS: cutoff x stop: the stop parks BOTH bus switches — the bus is dark, 'G' is required next
+
+[Combined profiles — a region-boundary tick commands nothing (zero-order hold)]
+  PASS: boundary ZOH: (setup) the W profile is mid-R1 with a live commanded current
+  PASS: boundary ZOH: the boundary tick advanced the region index
+  PASS: boundary ZOH (W): the boundary tick issues NO setCurrent — the VESC holds its last value
+  PASS: boundary ZOH (W): the commanded-current mirror is held, not zeroed, across the boundary
+  PASS: boundary ZOH: (setup) the Y profile is mid-R1 with a live velocity setpoint
+  PASS: boundary ZOH: the Y boundary tick advanced the region index
+  PASS: boundary ZOH (Y): v_setpoint is held across the boundary, not rewritten or zeroed
+
+===================================
+Results: 1777 passed, 0 failed

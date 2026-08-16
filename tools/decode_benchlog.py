@@ -6,7 +6,9 @@ The firmware writer lives in teensy_controller/teensy_controller.ino
 
   Header (32 B, LE): magic b'BLG1', u8 version(=1|2|3|4), u8 record_size
     (=52 for v1/v2, 68 for v3/v4), u8 profile_type (bitmask: 1=PS, 2=TP,
-    4=DC), u8 pad/param_flags (see below), u32 start_millis, u32
+    4=DC, 8=MANUAL -- the fw v9 operator-driven 'K 1' run, filed as
+    MLnnnn.BLG and carrying no profile parameters), u8 pad/param_flags
+    (see below), u32 start_millis, u32
     start_micros, u16 K_DROOP_x1000 (ohms x1000), then in format v2+ a u16
     fw_version at offset 18 (the FW_VERSION the firmware was built with,
     see docs/firmware-versions.md; v1 files predate firmware versioning

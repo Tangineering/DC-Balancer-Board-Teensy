@@ -595,7 +595,7 @@ two constants that genuinely gate the velocity loop were **absent from the old t
 | Constant | Value | Status |
 |---|---|---|
 | `ENCODER_SLOTS_PER_REV` | **120** (counted 2026-08-16) | **RESOLVED.** 120 slots counted directly on the disc → 240 counts/rev at the ×2 decode. Supersedes fw v7's 60, which read the same "120" as *counts* and divided by the decode instead of multiplying. See below. |
-| `FLYWHEEL_RADIUS_M` | **0.0762** m (measured 2026-08-13) | **RESOLVED** as a value; the disc's mechanical coupling is still `TODO(verify)` — see §10. |
+| `FLYWHEEL_RADIUS_M` | **0.0762** m (measured 2026-08-13) | **RESOLVED.** Value measured 2026-08-13; the disc's mechanical coupling resolved 2026-08-16 as surface/roller — the flywheel's radius is the rolling radius. `v_actual` is flywheel surface speed. See §10. |
 | `motorConstant` | 0.1 | **BLOCKING** for velocity mode. Not a real k_t — it is the lumped PI-output→amps gain. Calibrate *after* the two above. |
 | `MOTOR_I_CMD_MAX` | **12.0 A** (bench, fw v7 amended) | Raised 5.0 → 10.0 A by operator decision **2026-08-13**, then 10.0 → **12.0 A** on **2026-08-15** (Castle 1406 1900KV fitted, drive-controller bring-up): the §12.4 budget it came from is a *bus*-current budget, but this constant clamps VESC *phase* current (`I_bus ≈ D·I_mot/η_esc`). ⚠️ That argument assumes the §4 bus limits are configured — they are not yet. Vehicle value 15.0 A after calibration. |
 | `LIMIT_I_FC_MAX` | **1.4 A** (bus-side) | Set from §12.2. `TODO(verify)` — the H-20 datasheet is **not in the repo**. |
@@ -650,18 +650,31 @@ the cap means anything — but per §4, even a correct cap does not bound a non-
       decode multiplies. The tell: **no build up to and including fw v7 printed `encoderPos`
       anywhere** — not in the `'S'` dump this entry cited, not in `printSensors()`, not in
       telemetry — so no count could have been read. Net effect: `v_actual` halves versus fw v7.
-- [ ] **Cross-check the slot count against the decoder** — hand-turn one revolution and read
-      `encoderPos` from the fw v8 `'S'` or IDLE dump; expect **240**. This closes the loop the
-      fw v7 record only claimed to have closed, and doubles as the decoder health check (a reading
-      of 0 with the edge counters climbing is a quadrature/alignment fault, not a scale error).
+- [x] **Cross-check the slot count against the decoder.** ✅ **Confirmed 2026-08-16 on fw v8:** one
+      hand-turned flywheel revolution reads `encoderPos == 240`, matching 120 slots × the ×2 decode
+      exactly. This is the first time the counter itself has been read on this hardware, and it
+      confirms four things at once: the 120-slot count, the ×2 decode factor asserted from the ISRs,
+      that both channels are alive and genuinely in quadrature, and that the pins-14/15 bodge is
+      correctly reconciled. **Scope:** this fixes counts per *flywheel revolution* only. It says
+      nothing about `FLYWHEEL_RADIUS_M` or the metres-per-revolution conversion — the disc-coupling
+      item below is now closed too (next entry), but by a separate determination.
 - [x] **Effective rolling radius.** ✅ **Measured 2026-08-13: 0.0762 m (3.00 in).**
       → `FLYWHEEL_RADIUS_M = 0.0762`
-- [ ] **What the encoder disc is coupled to** — surface/roller speed, or wheel *angular* speed —
-      still `TODO(verify)`. The shipped 0.0762 m is only correct for a surface-speed coupling; if the
-      disc is angular-coupled to the wheel, `v_actual` over-reads by 0.0762/0.033 = **2.31×**.
+- [x] **What the encoder disc is coupled to.** ✅ **Resolved 2026-08-16 (operator): surface/roller
+      speed.** The encoder is coupled to the flywheel and the flywheel's own radius **is** the
+      rolling radius, so the disc rim runs at surface speed and the shipped 0.0762 m is correct. The
+      wheel-*angular*-speed alternative — which would have forced the tire radius and made
+      `v_actual` over-read by 0.0762/0.033 = 2.31× — is retired.
+      **Consequence to carry forward:** `v_actual` is flywheel **surface speed**, and `v_setpoint`,
+      the State-98 `'V'`/`'D'`/`'Y'` commands and the BLG `v_sp`/`v_act` columns are all in those
+      same terms. No separate vehicle-speed scale exists in the firmware.
 - [ ] **Tire rolling diameter with calipers** (also feeds the VESC wheel-diameter field)
-- [x] ✅ `VELOCITY_CHAIN_CALIBRATED` now defaults to **1** (fw v7). Still open: calibrate
-      `motorConstant`, and configure the §4 VESC bus-current limits before running at the 12 A ceiling.
+- [x] ✅ `VELOCITY_CHAIN_CALIBRATED` now defaults to **1** (fw v7). **The velocity SCALE chain is
+      complete as of 2026-08-16** — counts/rev, decode factor, radius and coupling are all measured
+      or resolved, and the decoder is confirmed against hardware. Still open before a velocity run:
+      calibrate `motorConstant` and the motor PI gains (never tuned against a working `v_actual` —
+      no build that could have was reading the encoder), and configure the §4 VESC bus-current
+      limits before running at the 12 A ceiling.
 
 ### 🔴 Blocking safety (from `docs/design-review-2026-07-28.md`)
 - [ ] Confirm the FC TPS61288 is not shorted and has been replaced if necessary; confirm the FC

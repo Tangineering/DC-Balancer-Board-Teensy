@@ -694,7 +694,7 @@ All commands are single uppercase characters, processed in `doState98()`:
 | `W [Imax] [b]` | Start combined **current** + power-share profile — the same 16-region table with the motor axis in amps; both values optional on one line (bare `W` runs the defaults, e.g. `W 6 0.0`); bare `W` while running stops it; `T`-style prerequisites — no velocity-chain calibration, `MOT_PWR_ENABLE` warn-only (§9i) |
 | `X` | Universal stop: cancel any running profile (`D`/`R`/`T`/`Y`/`W`), armed plot-mode run, or bring-up + manual motor + power-share live (motor zeroed; switches parked only if `D`/`R`/`Y`/`W` was running, mirroring their own stop paths) |
 | `L` | Toggle Serial-Plotter stream: 50 Hz `sp,act,gFC,gBT,ifc,ibt` line; suppresses the periodic status/phase/`[VW]` lines; `R`/`T` arm with a `PLOT_ARM_DELAY_MS` delay (see the `L` paragraph below §9e) |
-| `K` | Print SD-card logging status: card present, current/last file name, record and drop counts (§9g); read-only, live even during the bring-up lockout |
+| `K` | Single-line SD-logger command (fw v9): empty line = status (card, current/last file, record/drop counts, ownership marker — §9g; status stays live during the bring-up lockout); `K 1` = start a MANUAL log (`ML####.BLG`) for hand-driven runs; `K 0` = stop it (refused on a profile-owned log) |
 | `H` / `?` | Print the command list (`printTestHelp()`) |
 | `Q` | Exit State 98 → State 1 (forces `MOT_PWR_ENABLE` LOW; closes charge/regen paths; drops plot mode + any armed run) |
 
@@ -991,10 +991,21 @@ firmware never calls `sync()`, so it is open whether a mid-run power loss leaves
 pre-allocated dirent behind or a 0-byte/absent file; one Y-run pull-the-plug datapoint settles
 it (log the result via bench-incident).
 
-**`'K'` status command.** Prints card present, current/last file name, and record/drop counts to
-USB Serial (§9b); read-only, so it stays live during the bring-up lockout. Deliberately reports
-NO free-space figure: `freeClusterCount()` and friends walk the FAT and block for seconds on a
-real card, which is exactly the stall this module exists to avoid.
+**`'K'` status + manual logging command (fw v9).** `'K'` is a single-line command like `T`/`Y`/`W`
+(`PEND_K_PARAMS`): an empty line prints the status snapshot (card present, current/last file name,
+record and drop counts, and — while a log runs — a manual/profile ownership marker); `K 1` opens a
+MANUAL log (`LOG_TYPE_MANUAL` = 0x08, prefix `ML`, shared session counter, v4 header param flags 0)
+so the operator can drive the car by hand (`A`/`V`, switch toggles) with the 1 kHz log running;
+`K 0` requests close of a manual log (`LOG_CLOSE_STOP`; refused when the log is profile-owned).
+`K 1` is refused during the staged bring-up (the open path's directory scan + 32 MB preAllocate
+must not stall it — enforced at parse time so the status read stays live during the lockout),
+while any profile, `T` sweep, or plot-arm is pending (a profile owns the logger; the sweep term
+prevents an ML open in a sweep's between-runs window from silently costing the next run its log),
+and while a log is already open or closing. `X`/`Q`/fault close a manual log through the normal
+drain (`LOG_CLOSE_X`/`_Q`/`_FAULT`); a profile started over a live manual log force-finishes it
+via `logOpenForProfile()`'s double-open branch. The status deliberately reports NO free-space
+figure: `freeClusterCount()` and friends walk the FAT and block for seconds on a real card, which
+is exactly the stall this module exists to avoid.
 
 ### 9h. Combined drive-cycle + power-share profile (`Y`)
 
@@ -1333,7 +1344,7 @@ by the mocks before the `#include`.
 | **W current combo profile** | shared-helper equivalence with `Y` (same region walk/clip), `Imax` scaling of the normalised motor column, parameter parsing + defaults and the `TRAP_I_ABS_MAX` ceiling (peaks above `MOTOR_I_CMD_MAX` accepted, negative refused), current issued through `commandMotorCurrentLimited()` with `v_setpoint` untouched, no velocity-chain gate + `MOT_PWR` warn-only, stop/`'X'`/`'Q'` exits and mutual exclusion with `D`/`R`/`T`/`Y`, `WP` naming + region index in `ps_phase`+`trap_phase`, and the `'W'`→`'U'` watch rebinding; a fault mid-run closing the `WP` file from State 99 |
 | **Combined x channel cutoff** | one switch opens at an R6-like ratio, the last-source guard blocks the second, hysteresis re-arms on return, a latched cutoff is re-closed by BOTH natural-completion paths (and declines on an unregulated bus), and the stop path clears the ownership flags via `safeAllSwitches()` |
 | **Combined boundary tick** | a `COMBO_TICK_BOUNDARY` tick commands nothing — no `setCurrent()` for `W`, no `v_setpoint` rewrite for `Y` (zero-order hold across every region transition) |
-| **SD bench logging** | lifecycle on all exit paths (complete/stop/X/Q/fault), 1 kHz rate gate, overflow drop+count, no-card warn-once, write-error mid-run, name collision, record schema, velocity-valid flag + per-profile phase bytes, `'K'` status, plot+log independence |
+| **SD bench logging** | lifecycle on all exit paths (complete/stop/X/Q/fault), 1 kHz rate gate, overflow drop+count, no-card warn-once, write-error mid-run, name collision, record schema, velocity-valid flag + per-profile phase bytes, `'K'` status, plot+log independence, `K 1`/`K 0` manual logging (ML naming + shared counter, header typeMask/param flags, sampling content, every refusal incl. tsweep + drain window, X/Q/fault/takeover lifecycle, no-card, ownership marker) |
 
 `tools/test_decode_benchlog.py` is a separate, stdlib-only self-test for the host-side decoder
 (`tools/decode_benchlog.py`) — not part of the C++ suite above, since the decoder is a Python

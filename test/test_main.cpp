@@ -254,6 +254,7 @@ static void reset_test_state() {
     sdWarnPrinted     = false;
     logActive         = false;
     logCloseRequested = false;
+    logManualActive   = false;   // fw v9: 'K 1'/'K 0' manual-log ownership flag
     logCloseReason    = 0;
     logCloseRequestMs = 0;
     logRecordCount    = 0;
@@ -8392,23 +8393,36 @@ static void test_sdlog_plot_simultaneous() {
 }
 
 // ─── 11. 'K' status command ─────────────────────────────────────────────────
+// fw v9 fixture note: 'K' no longer prints the status block on the keypress itself — it opens
+// PEND_K_PARAMS and prompts, so an empty line ('K' + '\n') is now required to reach
+// printSdStatus() (parseKLogLine()'s "*p == '\\0'" branch). Every case below was updated to push
+// the trailing newline; this is the "existing tests sending 'K'" repair the review round flagged.
 static void test_sdlog_k_status() {
-    test_group("SD log: 'K' prints the logger status and stays live during the bring-up lockout");
+    test_group("SD log: 'K' + empty line prints the logger status and stays live during the "
+               "bring-up lockout");
     reset_test_state();
 
     mainState = 98;
     Serial.tx_clear();
     Serial.rx_queue.push('K');
     doState98();
+    check(pendingInput == PEND_K_PARAMS,
+          "'K': the bare keypress opens the PEND_K_PARAMS prompt (fw v9), not an immediate print");
+    Serial.rx_queue.push('\n');
+    doState98();
+    check(pendingInput == PEND_NONE,
+          "'K' + empty line: the prompt is dispatched and cleared");
     check(Serial.tx_contains("=== SD logger ==="),
-          "'K': prints the SD logger status block");
+          "'K' + empty line: prints the SD logger status block");
     check(Serial.tx_contains("card:") && Serial.tx_contains("file:") &&
           Serial.tx_contains("records:") && Serial.tx_contains("dropped:"),
-          "'K': the status block carries the card, file, record and drop fields");
+          "'K' + empty line: the status block carries the card, file, record and drop fields");
     check(Serial.tx_contains("not probed yet"),
-          "'K': before any run the card is reported as not yet probed");
+          "'K' + empty line: before any run the card is reported as not yet probed");
     check(g_sd_state.begin_calls == 0,
-          "'K': the status print never probes the card itself (read-only, non-blocking)");
+          "'K' + empty line: the status print never probes the card itself (read-only, non-blocking)");
+    check(logActive == false && logManualActive == false && g_sd_state.files.empty(),
+          "'K' + empty line: no state changes and no file is opened by the status query");
 
     // With a run in progress the same line must name the file and the live counts.
     reset_test_state();
@@ -8417,19 +8431,595 @@ static void test_sdlog_k_status() {
     Serial.tx_clear();
     Serial.rx_queue.push('K');
     doState98();
+    Serial.rx_queue.push('\n');
+    doState98();
     check(Serial.tx_contains("PS0001.BLG") && Serial.tx_contains("YES (sampling)"),
-          "'K': during a run the status names the open file and reports sampling active");
+          "'K' + empty line: during a run the status names the open file and reports sampling active");
+    // FW-2 (S2): the 'active:' line's ownership marker — a profile-owned log (the 'R' share run
+    // above) must read "(profile-owned)", never the manual marker.
+    check(Serial.tx_contains("(profile-owned)") && !Serial.tx_contains("(manual"),
+          "'K' + empty line: a profile-owned log's status line carries the (profile-owned) marker");
 
     // Bring-up lockout: 'K' is read-only, so it must NOT be refused like the topology keys.
     Serial.tx_clear();
     bringupActive = true;
     Serial.rx_queue.push('K');
     doState98();
+    Serial.rx_queue.push('\n');
+    doState98();
     check(Serial.tx_contains("=== SD logger ==="),
-          "'K': still prints while the staged bring-up holds the topology lockout");
+          "'K' + empty line: still prints while the staged bring-up holds the topology lockout");
     check(!Serial.tx_contains("REFUSED: staged bring-up"),
-          "'K': is not refused by the staged-bring-up lockout");
+          "'K' + empty line: is not refused by the staged-bring-up lockout");
     bringupActive = false;
+}
+
+// ─── fw v9: 'K 1' / 'K 0' manual log (LOG_TYPE_MANUAL, "ML" prefix) ──────────
+// Feed a "K <rest>" entry through the real keypress path: 'K' opens PEND_K_PARAMS (one
+// doState98() tick), then `rest` (may be "") is typed char-by-char and terminated with '\n' by
+// feed_serial_line(), exactly as an operator would type it.
+static void k_send(const char* rest) {
+    Serial.rx_queue.push('K');
+    doState98();
+    feed_serial_line(rest);
+}
+
+static void k_start_manual() {
+    k_send(" 1");
+}
+
+// ─── 11b. 'K 1' opens a manual log; joins the shared session counter ────────
+static void test_sdlog_k_manual_open() {
+    test_group("SD log: 'K 1' opens a manual log (LOG_TYPE_MANUAL, \"ML\" prefix)");
+    reset_test_state();
+
+    mainState = 98;
+    Serial.tx_clear();
+    k_start_manual();
+    check(logActive == true && logManualActive == true,
+          "'K 1': opens a manual log and claims manual ownership");
+    check(std::string(logFileName) == "ML0001.BLG",
+          "'K 1': the first manual run of a session opens ML0001.BLG");
+    check(Serial.tx_contains("[SD] manual log started: ML0001.BLG"),
+          "'K 1': the open prints its own one-shot confirmation naming the file");
+    const std::string* f = sd_file("ML0001.BLG");
+    check(f != nullptr && f->size() >= LOG_HDR_SIZE,
+          "'K 1': the file actually landed on the card with at least a header");
+    if (f) {
+        check((uint8_t)(*f)[6] == LOG_TYPE_MANUAL,
+              "'K 1': header typeMask (offset 6) is LOG_TYPE_MANUAL (0x08)");
+        check((uint8_t)(*f)[7] == 0x00,
+              "'K 1': header paramFlags (offset 7) is 0 — a manual run carries no profile parameter");
+    }
+
+    // ML joins the shared session counter — a pre-existing TP0005.BLG makes the next manual run
+    // ML0006.BLG (mirrors test_sdlog_name_collision()'s "one monotonic counter" contract).
+    reset_test_state();
+    g_sd_state.files["TP0005.BLG"] = "";
+    mainState = 98;
+    k_start_manual();
+    check(std::string(logFileName) == "ML0006.BLG",
+          "'K 1': the manual log joins the shared PS/TP/DC/YP/WP/ML counter, not a counter of its own");
+}
+
+// ─── 11c. Sampling runs while manual-logging; phase bytes/flags reflect "no profile" ──
+static void test_sdlog_k_manual_sampling() {
+    test_group("SD log: sampling runs while a manual log is active (LOG_PHASE_NONE, flags bit0 clear)");
+    reset_test_state();
+
+    mainState = 98;
+    k_start_manual();
+    check(logActive == true, "manual sampling: the log is active before ticking the spine");
+
+    uint32_t recsBefore = logRecordCount;
+    sd_run_ms(50);
+    check(logRecordCount - recsBefore == 50,
+          "manual sampling: 50 ms of State-98 ticks yields exactly 50 records (1 kHz gate)");
+
+    const std::string* f = sd_file("ML0001.BLG");
+    check(f != nullptr, "manual sampling: the file exists on the card");
+    if (f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE) {
+        size_t off = LOG_HDR_SIZE;   // first record
+        check((uint8_t)(*f)[off + REC_OFF_PS_PHASE]   == LOG_PHASE_NONE &&
+              (uint8_t)(*f)[off + REC_OFF_DC_PHASE]   == LOG_PHASE_NONE &&
+              (uint8_t)(*f)[off + REC_OFF_TRAP_PHASE] == LOG_PHASE_NONE,
+              "manual sampling: all three phase bytes read LOG_PHASE_NONE — no profile is active");
+        uint8_t flags = (uint8_t)(*f)[off + REC_OFF_FLAGS];
+        check((flags & 0x01) == 0,
+              "manual sampling: flags bit0 is clear — nothing is driving the droop MDACs under "
+              "profile/live-share control during a hand-driven manual run");
+    }
+}
+
+// ─── 11d. 'K 0' stops a manual log with LOG_CLOSE_STOP ───────────────────────
+static void test_sdlog_k_manual_stop() {
+    test_group("SD log: 'K 0' stops a manual log with LOG_CLOSE_STOP");
+    reset_test_state();
+
+    mainState = 98;
+    k_start_manual();
+    sd_run_ms(10);
+    uint32_t recs = logRecordCount;
+    check(recs > 0, "'K 0' setup: the manual run logged samples before the stop");
+
+    Serial.tx_clear();
+    k_send(" 0");
+    check(logActive == false && logCloseRequested == true && logCloseReason == LOG_CLOSE_STOP,
+          "'K 0': requests a close with LOG_CLOSE_STOP, flag-only (no card I/O in the handler)");
+    check(Serial.tx_contains("[SD] manual log closing"),
+          "'K 0': prints its own one-shot confirmation");
+
+    sd_drain_until_closed();
+    check(logManualActive == false,
+          "'K 0': manual ownership clears once the drain finishes (logFinishFile() bottleneck)");
+    const std::string* f = sd_file("ML0001.BLG");
+    check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * recs + LOG_REC_SIZE,
+          "'K 0': the closed file holds every buffered record plus the trailer");
+    if (f) {
+        size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * recs;
+        check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_STOP,
+              "'K 0': the trailer records LOG_CLOSE_STOP as the close reason");
+    }
+}
+
+// ─── 11e. 'K 1' refusals: bring-up, a running profile, an already-open log ──
+static void test_sdlog_k1_refusals() {
+    test_group("SD log: 'K 1' refuses under bring-up, a running profile, or an already-open log");
+
+    // (a) staged bring-up in progress
+    reset_test_state();
+    mainState = 98;
+    bringupActive = true;
+    Serial.tx_clear();
+    k_send(" 1");
+    check(logActive == false && logManualActive == false && g_sd_state.files.empty(),
+          "'K 1' refusal (bring-up): no file is opened");
+    check(Serial.tx_contains("REFUSED: staged bring-up in progress"),
+          "'K 1' refusal (bring-up): names the cause");
+    bringupActive = false;
+
+    // (b) a profile owns the log — two representative flags (a plain profile flag, and the
+    // plot-arm-pending case, which is refused by the same clause).
+    reset_test_state();
+    mainState = 98;
+    driveCycleActive = true;
+    Serial.tx_clear();
+    k_send(" 1");
+    check(logActive == false && logManualActive == false && g_sd_state.files.empty(),
+          "'K 1' refusal (drive cycle active): no file is opened");
+    check(Serial.tx_contains("REFUSED: a profile owns the log"),
+          "'K 1' refusal (drive cycle active): names the cause");
+    driveCycleActive = false;
+
+    reset_test_state();
+    mainState = 98;
+    g_mock_millis = 1000;
+    // The share-arm preconditions (MOT_PWR HIGH + a standing manual motor command) are RE-CHECKED
+    // every doState98() tick while armed (line ~4477) — without them the arm-tick cancels itself
+    // ("preconditions no longer met") before 'K' is ever read, and plotArmTarget silently goes back
+    // to PLOT_ARM_NONE, which would make this refusal pass for the wrong reason (no arm left to
+    // refuse against). Mirrors sd_start_share_run()'s own preconditions.
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    setManualMotorCurrent(3.0f);
+    plotArmTarget     = PLOT_ARM_SHARE;
+    // Deadline in the future — otherwise doState98()'s own arm-tick (outside the serial block)
+    // fires the armed profile on this very call before 'K' is even read, which would make the
+    // refusal test accidentally pass for the wrong reason (a live profile from firing, not the
+    // still-pending arm this case means to exercise).
+    plotArmDeadlineMs = g_mock_millis + PLOT_ARM_DELAY_MS;
+    Serial.tx_clear();
+    k_send(" 1");
+    check(logActive == false && logManualActive == false && g_sd_state.files.empty(),
+          "'K 1' refusal (plot-arm pending): no file is opened");
+    check(Serial.tx_contains("REFUSED: a profile owns the log"),
+          "'K 1' refusal (plot-arm pending): names the cause");
+    plotArmTarget = PLOT_ARM_NONE;
+
+    // (c) a log is already open (manual)
+    reset_test_state();
+    mainState = 98;
+    k_start_manual();
+    check(logActive == true, "'K 1' refusal (already open) setup: the first manual log is running");
+    Serial.tx_clear();
+    k_send(" 1");
+    check(std::string(logFileName) == "ML0001.BLG" && g_sd_state.files.size() == 1,
+          "'K 1' refusal (already open): no second file is opened — the first stays the only one");
+    check(Serial.tx_contains("REFUSED: a log is already open/closing"),
+          "'K 1' refusal (already open): names the cause");
+}
+
+// ─── 11f. 'K 0' refusals: a profile-owned log, and nothing running ──────────
+static void test_sdlog_k0_refusals() {
+    test_group("SD log: 'K 0' refuses to close a profile's log, and no-ops when nothing is running");
+
+    // (a) a profile's own log is running (a 'T' run auto-logs to TPnnnn.BLG)
+    reset_test_state();
+    mainState = 98;
+    Serial.rx_queue.push('T');
+    doState98();
+    feed_serial_line(" 5 0 100");
+    check(logActive == true && logManualActive == false,
+          "'K 0' refusal setup: the trapezoid's own TP log is running, not manual-owned");
+    Serial.tx_clear();
+    k_send(" 0");
+    check(logActive == true && logCloseRequested == false,
+          "'K 0' refusal (profile-owned): the running log is left untouched");
+    check(Serial.tx_contains("REFUSED: the running log belongs to a profile"),
+          "'K 0' refusal (profile-owned): names the cause");
+    // Clean up: stop the trapezoid so its own log closes.
+    Serial.rx_queue.push('X');
+    doState98();
+    sd_drain_until_closed();
+
+    // (b) nothing running at all
+    reset_test_state();
+    mainState = 98;
+    Serial.tx_clear();
+    k_send(" 0");
+    check(logActive == false && logCloseRequested == false,
+          "'K 0' no-op: state is unchanged when nothing is running");
+    check(Serial.tx_contains("[SD] no log running"),
+          "'K 0' no-op: names the cause");
+}
+
+// ─── 11g. Garbage 'K' lines are rejected without opening/closing anything ───
+static void test_sdlog_k_garbage_lines() {
+    test_group("SD log: garbage 'K' lines are rejected without opening/closing anything");
+
+    // Every one of these is built only from digits/'.'/'-' so the numeric-entry-char filter in
+    // doState98() lets the WHOLE line through to parseKLogLine(), which rejects it as "not exactly
+    // one 0/1 token".
+    struct Case { const char* rest; const char* label; };
+    Case cases[] = {
+        { " 2",   "'K 2' (out-of-range digit)" },
+        { " 01",  "'K 01' (trailing digit)" },
+        { " -1",  "'K -1' (negative)" },
+        { " 0.5", "'K 0.5' (fractional)" },
+    };
+    for (const auto& c : cases) {
+        reset_test_state();
+        mainState = 98;
+        Serial.tx_clear();
+        k_send(c.rest);
+        check(pendingInput == PEND_NONE,
+              (std::string(c.label) + ": the pending prompt is cleared").c_str());
+        check(logActive == false && logManualActive == false && g_sd_state.files.empty(),
+              (std::string(c.label) + ": no file is opened").c_str());
+        check(Serial.tx_contains("ERROR: K takes 0 or 1"),
+              (std::string(c.label) + ": parseKLogLine() rejects the whole line").c_str());
+    }
+
+    // A non-numeric character never reaches parseKLogLine() at all: the shared "unexpected key
+    // while a prompt is pending" rule in doState98() cancels the prompt immediately, the same as
+    // it would at any other value prompt ('A', 'V', 'T', ...). This is real firmware behaviour,
+    // not a parseKLogLine() gap — an operator who fat-fingers a letter mid-entry sees
+    // "(input cancelled)", not "ERROR: K takes 0 or 1". Deliberately uses 'z' rather than 'x'/'q':
+    // those double as the universal-stop/exit COMMAND keys and would fire as a side effect once the
+    // cancel falls through to the normal command switch.
+    reset_test_state();
+    mainState = 98;
+    Serial.tx_clear();
+    k_send(" 1z");
+    check(pendingInput == PEND_NONE,
+          "'K 1z': the letter cancels the pending prompt (generic non-numeric-key rule)");
+    check(logActive == false && logManualActive == false && g_sd_state.files.empty(),
+          "'K 1z': no file is opened — the cancel fires before any 'K'-specific parsing runs");
+    check(Serial.tx_contains("(input cancelled)"),
+          "'K 1z': the generic cancel message fires, not parseKLogLine()'s ERROR text");
+    check(!Serial.tx_contains("ERROR: K takes 0 or 1"),
+          "'K 1z': parseKLogLine() is never reached for a non-numeric character");
+}
+
+// ─── 11h. 'X' during a manual run closes it with LOG_CLOSE_X ────────────────
+static void test_sdlog_k_manual_x_close() {
+    test_group("SD log: 'X' during a manual run closes it with LOG_CLOSE_X");
+    reset_test_state();
+
+    mainState = 98;
+    k_start_manual();
+    sd_run_ms(8);
+    uint32_t recs = logRecordCount;
+
+    Serial.rx_queue.push('X');
+    doState98();
+    check(logCloseRequested == true && logActive == false && logCloseReason == LOG_CLOSE_X,
+          "'X' during manual log: requests a close with LOG_CLOSE_X");
+    check(logManualActive == true,
+          "'X' during manual log: ownership survives until logFinishFile() actually runs — "
+          "parseKLogLine()'s 'K 1' refusal must keep seeing this as manual through the drain");
+
+    sd_drain_until_closed();
+    check(logManualActive == false,
+          "'X' during manual log: manual ownership clears once logFinishFile() runs");
+    const std::string* f = sd_file("ML0001.BLG");
+    check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * recs + LOG_REC_SIZE,
+          "'X' during manual log: the file holds every buffered record plus the trailer");
+    if (f) {
+        size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * recs;
+        check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_X,
+              "'X' during manual log: the trailer records LOG_CLOSE_X");
+    }
+}
+
+// ─── 11i. 'Q' during a manual run closes it with LOG_CLOSE_Q ────────────────
+static void test_sdlog_k_manual_q_close() {
+    test_group("SD log: 'Q' during a manual run closes it with LOG_CLOSE_Q");
+    reset_test_state();
+
+    mainState = 98;
+    k_start_manual();
+    sd_run_ms(8, /*drain=*/false);
+    uint32_t recs = logRecordCount;
+
+    Serial.rx_queue.push('Q');
+    doState98();
+    check(mainState == 1, "'Q' during manual log: the exit key returns to Idle");
+    check(logCloseRequested == true && logCloseReason == LOG_CLOSE_Q && logFile.isOpen() == true,
+          "'Q' during manual log: only flags the close on the way out — the file is still open "
+          "in State 98");
+    check(logManualActive == true,
+          "'Q' during manual log: manual ownership survives the exit, pending the loop-level drain");
+
+    int ticks = sd_drain_until_closed();
+    check(ticks > 0 && logFile.isOpen() == false,
+          "'Q' during manual log: the loop-level drain finishes and closes the file from Idle");
+    check(logManualActive == false,
+          "'Q' during manual log: manual ownership clears once the drain finishes");
+    const std::string* f = sd_file("ML0001.BLG");
+    check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * recs + LOG_REC_SIZE,
+          "'Q' during manual log: every buffered record reaches the card after the exit");
+    if (f) {
+        size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * recs;
+        check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_Q,
+              "'Q' during manual log: the trailer records LOG_CLOSE_Q");
+    }
+}
+
+// ─── 11j. A fault mid-manual-run closes the file from State 99 ──────────────
+static void test_sdlog_k_manual_fault_close() {
+    test_group("SD log: a fault mid-manual-run closes the file from State 99 with LOG_CLOSE_FAULT");
+    reset_test_state();
+
+    mainState = 98;
+    k_start_manual();
+    sd_run_ms(9, /*drain=*/false);
+    uint32_t recs = logRecordCount;
+    check(recs > 0 && logActive == true,
+          "fault during manual log setup: the manual run was logging when the fault is injected");
+
+    triggerFault(FAULT_OC_FC, ERR_OC_FC);
+    check(mainState == 99, "fault during manual log: triggerFault() latches State 99");
+    check(logActive == false && logCloseRequested == true && logCloseReason == LOG_CLOSE_FAULT,
+          "fault during manual log: the fault path only flags the close (no card I/O in triggerFault())");
+    check(logManualActive == true,
+          "fault during manual log: manual ownership survives up to the drain");
+
+    int ticks = sd_drain_until_closed_state99();
+    check(ticks > 0 && logFile.isOpen() == false,
+          "fault during manual log: the drain finishes the file while State 99 is latched");
+    check(logManualActive == false,
+          "fault during manual log: manual ownership clears once the drain closes the file");
+
+    const std::string* f = sd_file("ML0001.BLG");
+    check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * recs + LOG_REC_SIZE,
+          "fault during manual log: the pre-fault records plus the trailer all reach the card");
+    if (f) {
+        size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * recs;
+        check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_FAULT,
+              "fault during manual log: the trailer close reason is LOG_CLOSE_FAULT");
+        check((uint8_t)(*f)[tr + 13] == (uint8_t)ERR_OC_FC,
+              "fault during manual log: the trailer carries the latched error_code");
+    }
+}
+
+// ─── 11k. A profile start takes over a live manual log (double-open handoff) ─
+static void test_sdlog_k_manual_takeover() {
+    test_group("SD log: a profile start takes over a live manual log (double-open handoff)");
+    reset_test_state();
+
+    mainState = 98;
+    k_start_manual();
+    sd_run_ms(6);
+    uint32_t recs = logRecordCount;
+    check(logActive == true && logManualActive == true && std::string(logFileName) == "ML0001.BLG",
+          "manual takeover setup: a manual log is running before the profile starts");
+
+    Serial.rx_queue.push('T');
+    doState98();
+    feed_serial_line(" 5 0 100");
+    check(trapProfileActive == true, "manual takeover: the trapezoid started");
+    check(logManualActive == false,
+          "manual takeover: manual ownership is dropped by the handoff (logFinishFile() bottleneck)");
+    check(logActive == true && std::string(logFileName) == "TP0002.BLG",
+          "manual takeover: a NEW file is opened for the profile, joining the shared counter "
+          "(ML0001.BLG already claimed index 1)");
+
+    const std::string* old_f = sd_file("ML0001.BLG");
+    check(old_f != nullptr && old_f->size() == LOG_HDR_SIZE + LOG_REC_SIZE * recs + LOG_REC_SIZE,
+          "manual takeover: the superseded manual file is complete (records + trailer)");
+    if (old_f) {
+        size_t tr = LOG_HDR_SIZE + LOG_REC_SIZE * recs;
+        check((uint8_t)(*old_f)[tr + 12] == LOG_CLOSE_STOP,
+              "manual takeover: the superseded manual run's close reason is LOG_CLOSE_STOP "
+              "(double-open branch's stamp, same as every other profile-vs-profile takeover)");
+    }
+
+    // The new file must actually accumulate records under the trapezoid's own logging. Stop
+    // partway through the 100 ms profile (not the full 100 ticks) — a run to natural completion
+    // closes the file and logFinishFile() zeroes logRecordCount, which would read back 0 here for
+    // the wrong reason (closed, not "never sampled").
+    for (int i = 0; i < 50; i++) {
+        g_mock_millis += 1;
+        g_mock_micros += POWER_BAL_PERIOD_US;
+        doState98();
+        logDrainTick();
+    }
+    check(trapProfileActive == true && logRecordCount > 0,
+          "manual takeover: the new TP file is actively sampling");
+}
+
+// ─── 11l. No card: 'K 1' warns and never sets manual ownership ──────────────
+static void test_sdlog_k_manual_no_card() {
+    test_group("SD log: 'K 1' with no card warns and never sets manual ownership");
+    reset_test_state();
+
+    g_sd_state.card_present = false;
+    mainState = 98;
+    Serial.tx_clear();
+    k_send(" 1");
+    check(logActive == false && logManualActive == false,
+          "'K 1' no-card: neither logActive nor logManualActive is set");
+    check(Serial.tx_contains("[SD] no card"),
+          "'K 1' no-card: the one-shot no-card warning fires");
+    check(g_sd_state.files.empty(), "'K 1' no-card: no file is created");
+
+    // Drive logDrainTick()'s !sdAvailable clear path directly: it is the ONE path that clears
+    // logActive/logCloseRequested without calling logFinishFile(), and per fw v9 it must also
+    // clear manual ownership if it was somehow left set (e.g. a card pulled mid-run) — or a later
+    // 'K 1' on the now-cardless board would see logManualActive stuck true forever.
+    reset_test_state();
+    logActive       = true;
+    logManualActive = true;
+    sdAvailable     = false;
+    logDrainTick();
+    check(logActive == false && logCloseRequested == false && logManualActive == false,
+          "logDrainTick() !sdAvailable path: clears logActive AND logManualActive together");
+}
+
+// ─── 11n. Correctness finding 1: 'K 1' during a manual log's own drain window ─
+static void test_sdlog_k1_during_manual_drain_window() {
+    test_group("SD log: 'K 1' during a manual log's own drain window is refused (already open/closing)");
+    reset_test_state();
+
+    mainState = 98;
+    k_start_manual();
+    sd_run_ms(5, /*drain=*/false);   // buffer records, keep the close undrained
+    Serial.tx_clear();
+    k_send(" 0");
+    check(logActive == false && logCloseRequested == true,
+          "K1-during-drain setup: 'K 0' requested the close; the drain has not run yet");
+
+    Serial.tx_clear();
+    k_send(" 1");
+    check(logActive == false && logCloseRequested == true,
+          "K1-during-drain: the second-open attempt is refused; the pending close is untouched");
+    check(Serial.tx_contains("REFUSED: a log is already open/closing"),
+          "K1-during-drain: names the cause");
+    check(g_sd_state.files.size() == 1,
+          "K1-during-drain: no second file is created while the first is still draining/closing");
+
+    sd_drain_until_closed();
+    check(logManualActive == false,
+          "K1-during-drain cleanup: the original manual log still finishes normally");
+}
+
+// ─── 11o. Correctness finding 2: a second 'K 0' while a close is pending ─────
+static void test_sdlog_k0_twice_first_reason_wins() {
+    test_group("SD log: a second 'K 0' while a close is pending leaves the first reason intact");
+    reset_test_state();
+
+    mainState = 98;
+    k_start_manual();
+    sd_run_ms(5, /*drain=*/false);
+    k_send(" 0");
+    check(logCloseRequested == true && logCloseReason == LOG_CLOSE_STOP,
+          "K0 x2 setup: the first 'K 0' requested the close with LOG_CLOSE_STOP");
+
+    Serial.tx_clear();
+    k_send(" 0");
+    check(logCloseRequested == true && logCloseReason == LOG_CLOSE_STOP,
+          "K0 x2: the second 'K 0' does not disturb the already-latched close reason "
+          "(logRequestClose()'s \"first requester wins\" rule)");
+    check(logFile.isOpen() == true,
+          "K0 x2: no double-close side effect — the file handle is untouched by the repeat request");
+
+    sd_drain_until_closed();
+    check(logManualActive == false && logFile.isOpen() == false,
+          "K0 x2: the drain still completes normally afterward");
+    const std::string* f = sd_file("ML0001.BLG");
+    check(f != nullptr, "K0 x2: the file exists on the card");
+    if (f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE) {
+        size_t nrec = (f->size() - LOG_HDR_SIZE) / LOG_REC_SIZE - 1;
+        size_t tr   = LOG_HDR_SIZE + LOG_REC_SIZE * nrec;
+        check((uint8_t)(*f)[tr + 12] == LOG_CLOSE_STOP,
+              "K0 x2: the trailer close reason is still LOG_CLOSE_STOP, not corrupted by the repeat");
+    }
+}
+
+// ─── 11p. Correctness finding 3: the 'K' prompt is unaffected by plot mode ──
+static void test_sdlog_k_prompt_under_plot_mode() {
+    test_group("SD log: the 'K' prompt behaves identically under plot mode, plus its own "
+               "line-terminating println (the 'P' plot-line concat guard)");
+
+    // Without plot mode: the prompt print has NO trailing newline of its own (the operator's
+    // typed digits continue the same line).
+    reset_test_state();
+    mainState = 98;
+    Serial.tx_clear();
+    Serial.rx_queue.push('K');
+    doState98();
+    check(!Serial.tx_contains("SD log [1=start 0=stop, empty=status]: \n"),
+          "'K' without plot mode: the prompt print is NOT self-terminated by a println");
+    Serial.rx_queue.push('\n');
+    doState98();
+
+    // Under plot mode: 'K' + empty line still reaches printSdStatus() unchanged, AND the prompt
+    // print gets the extra println() (case 'K': "if (plotModeActive) Serial.println();") so a
+    // suppressed/concatenated plot line can't run on into the operator's prompt.
+    reset_test_state();
+    mainState = 98;
+    plotModeActive = true;
+    Serial.tx_clear();
+    Serial.rx_queue.push('K');
+    doState98();
+    check(Serial.tx_contains("SD log [1=start 0=stop, empty=status]: \n"),
+          "'K' under plot mode: the prompt line is terminated by its own println (concat guard)");
+    Serial.rx_queue.push('\n');
+    doState98();
+    check(Serial.tx_contains("=== SD logger ==="),
+          "'K' under plot mode + empty line: status still prints, unchanged by plot mode");
+
+    // Under plot mode: 'K 1' still opens a manual log exactly as without plot mode.
+    reset_test_state();
+    mainState = 98;
+    plotModeActive = true;
+    Serial.tx_clear();
+    k_send(" 1");
+    check(logActive == true && logManualActive == true &&
+          std::string(logFileName) == "ML0001.BLG",
+          "'K 1' under plot mode: still opens a manual log exactly as without plot mode");
+    plotModeActive = false;
+}
+
+// ─── 11q. FW-2 (S2): the 'active:' ownership marker ──────────────────────────
+static void test_sdlog_k_status_ownership_marker() {
+    test_group("SD log: the 'active:' status line's ownership marker (FW-2, review S2)");
+
+    // Manual log open -> "(manual — K 0 stops)", never the profile marker.
+    reset_test_state();
+    mainState = 98;
+    k_start_manual();
+    Serial.tx_clear();
+    k_send("");
+    check(Serial.tx_contains("(manual") && !Serial.tx_contains("(profile-owned)"),
+          "status marker: a manual log's status line carries the manual marker, not (profile-owned)");
+
+    // Profile log open -> "(profile-owned)", never the manual marker.
+    reset_test_state();
+    sd_start_share_run();
+    mainState = 98;
+    Serial.tx_clear();
+    k_send("");
+    check(Serial.tx_contains("(profile-owned)") && !Serial.tx_contains("(manual"),
+          "status marker: a profile-owned log's status line carries (profile-owned), not the manual marker");
+
+    // Idle (nothing open) -> neither marker.
+    reset_test_state();
+    mainState = 98;
+    Serial.tx_clear();
+    k_send("");
+    check(!Serial.tx_contains("(manual") && !Serial.tx_contains("(profile-owned)"),
+          "status marker: with nothing running, neither ownership marker is printed");
 }
 
 // ─── 12. Velocity-validity flag and the three phase bytes ───────────────────
@@ -9114,6 +9704,41 @@ static void tsweep_into_cooldown() {
     tsweep_setup();
     tsweep_type_line(" 5 0 100 [10,0.3,0.7]");
     sd_run_ms(140);
+}
+
+// ─── FW-1 (S1): 'K 1' is refused during a T-sweep's between-runs window ─────
+// Regression for review round 2026-08-16: between sweep runs (WAIT_LOG/COOLDOWN) no profile flag
+// is set and the logger is idle, so without the tsweepActive term in parseKLogLine()'s refusal
+// list, 'K 1' would open an ML file that the next sweep run's logOpenForProfile() would then
+// force-finish — silently costing that run its log. Lives here (after tsweep_into_cooldown()) so
+// it can reuse that helper without a forward declaration.
+static void test_sdlog_k1_refused_during_tsweep() {
+    test_group("SD log: 'K 1' is refused during a T-sweep's between-runs window (FW-1, review S1)");
+
+    tsweep_into_cooldown();   // run 1 complete + drained, 10 s dwell, tsweepPhase == 2 (COOLDOWN)
+    check(tsweepActive == true && trapProfileActive == false && logActive == false,
+          "tsweep x K1 setup: the sweep is parked in COOLDOWN with the logger idle — the exact "
+          "window with no profile flag set that made the pre-fix 'K 1' look legal");
+    check(g_sd_state.files.size() == 1,   // TP0001.BLG from run 1
+          "tsweep x K1 setup: exactly run 1's file exists before the refused attempt");
+
+    Serial.tx_clear();
+    k_send(" 1");
+    check(logActive == false && logManualActive == false,
+          "tsweep x K1: 'K 1' does not open a manual log during the sweep's dwell window");
+    check(g_sd_state.files.size() == 1,
+          "tsweep x K1: no second file appears on the card");
+    check(Serial.tx_contains("REFUSED: a profile owns the log"),
+          "tsweep x K1: refused with the same message as any other profile-owned log");
+
+    // The sweep's own run 2 must still fire and log normally afterward — the refused 'K 1' must
+    // not have left any state behind that could interfere with it.
+    sd_run_ms(9000);   // most of the 10 s dwell in one coarse jump
+    for (int i = 0; i < 1000 && !trapProfileActive; i++) sd_run_ms(1);
+    check(trapProfileActive == true && tsweepIdx == 1,
+          "tsweep x K1: the sweep's run 2 still fires normally after the refused 'K 1'");
+    check(std::string(logFileName) == "TP0002.BLG",
+          "tsweep x K1: run 2 opens its own TP0002.BLG, unaffected by the refused manual attempt");
 }
 
 static void test_tsweep_cancel_paths() {
@@ -11579,6 +12204,22 @@ int main() {
     test_sdlog_rate_1khz();
     test_sdlog_plot_simultaneous();
     test_sdlog_k_status();
+    test_sdlog_k_manual_open();
+    test_sdlog_k_manual_sampling();
+    test_sdlog_k_manual_stop();
+    test_sdlog_k1_refusals();
+    test_sdlog_k0_refusals();
+    test_sdlog_k_garbage_lines();
+    test_sdlog_k_manual_x_close();
+    test_sdlog_k_manual_q_close();
+    test_sdlog_k_manual_fault_close();
+    test_sdlog_k_manual_takeover();
+    test_sdlog_k_manual_no_card();
+    test_sdlog_k1_refused_during_tsweep();
+    test_sdlog_k1_during_manual_drain_window();
+    test_sdlog_k0_twice_first_reason_wins();
+    test_sdlog_k_prompt_under_plot_mode();
+    test_sdlog_k_status_ownership_marker();
     test_sdlog_velocity_flag_and_phases();
     test_sdlog_close_deadline_abandon();
     test_sdlog_pending_close_interleave();

@@ -928,6 +928,9 @@ detail.
   **1**: State-98 `'V'`/`'D'`/`'Y'` velocity paths ship open; interlock machinery kept for
   overrides. Residual (S3, TODO(verify)): 0.0762 m implies surface/roller coupling — if the
   disc is angular-coupled to the wheel, `v_actual` over-reads 2.31× (conservative direction).
+  ⚠️ **S3 CLOSED 2026-08-16:** the coupling IS surface/roller — the encoder is coupled to the
+  flywheel and the flywheel's radius is the rolling radius, so 0.0762 m is correct and the 2.31×
+  alternative is retired. See the 2026-08-16 addendum.
 - **`MOTOR_I_CMD_MAX` 5.0 → 10.0 A (operator decision; amended 2026-08-15 → 12.0 A pre-flash,
   Castle 1406 1900KV fitted, drive-controller bring-up).** VESC-side phase-current ceiling at
   the `commandMotorCurrent()` chokepoint; also the `'A'` manual-current clamp (same constant).
@@ -991,18 +994,35 @@ end and a scale error on the way there. **fw v8 (pending first flash);** ledger 
   count. **`v_actual` and BLG `v_act` HALVE** for identical motion vs fw v7 (fw 7 and fw 8 traces
   are not comparable; header `fwVersion` disambiguates). Chain vs fw ≤ 6: ×9.85.
   `VELOCITY_CHAIN_CALIBRATED` stays 1 — a direct slot count is a stronger source than the figure it
-  replaces. The `FLYWHEEL_RADIUS_M` disc-coupling `TODO(verify)` is untouched.
+  replaces. (The `FLYWHEEL_RADIUS_M` disc-coupling `TODO(verify)` was untouched by the slot count — it was closed separately, below.)
+- **CONFIRMED ON HARDWARE (2026-08-16, fw v8): one hand-turned flywheel revolution reads
+  `encoderPos == 240`.** First time the counter has ever been read on this board. Two
+  independent sources now agree (physical slot count, firmware counter), and the same reading
+  independently confirms the ×2 decode factor, that both channels are alive and in quadrature,
+  and that the pins-14/15 bodge is correctly reconciled. That settles the chain's *angular* half.
+- **COUPLING RESOLVED (2026-08-16, operator) — surface/roller; the linear half is settled too, so
+  the velocity SCALE chain is now complete.** The encoder is coupled to the flywheel and the
+  **flywheel's own radius IS the rolling radius**, so the disc rim runs at surface speed and
+  `FLYWHEEL_RADIUS_M = 0.0762` is correct as shipped. The wheel-*angular*-speed alternative — which
+  would have forced the tire radius and made `v_actual` over-read by 2.31× — is retired, closing the
+  fw v7 S3 residual. **No constant changes; this is a determination, not a measurement.**
+  **Carry forward:** `v_actual` is flywheel **surface speed**, and `v_setpoint`, the State-98
+  `'V'`/`'D'`/`'Y'` commands and the BLG `v_sp`/`v_act` columns are all in those same terms. There is
+  no separate vehicle-speed scale in the firmware, and the 9.49:1 reduction and differentials do not
+  enter the velocity loop — it closes on the encoded body, which is the flywheel.
 - **The decoder had zero test coverage** — every prior test wrote `encoderPos` by hand. 11 new
   checks drive `doEncoderA`/`doEncoderB` from raw pin levels: forward/reverse ±2 per cycle, each of
   the three silent-zero failure modes asserted to yield zero counts *and* to stay diagnosable
   through the edge counters, and an ISR-driven end-to-end path to a non-zero `v_actual`. Both slot
   and count constants are pinned literally, because 120-slot/240-count and 60-slot/120-count both
   satisfy the "counts == slots × decode" identity. **Tests: 1663 production + 175 bench pass.**
-- **Next bench:** flash fw v8 (the board cannot produce velocity on any earlier build — the pin map is wrong on all of them), then run the `'S'` encoder block against a hand-turned flywheel. One revolution must
-  read `encoderPos == 240` — that both closes the cross-check the fw v7 record only claimed to have
-  closed and localises the 0.000 fault (edge counters climbing with `encoderPos` stuck at 0 is a
-  quadrature/alignment fault; both counters flat is a signal-level fault, so scope against
-  V_IL/V_IH, not for presence). **Drive-direction consequence — read before any `'V'`/`'D'` run:**
+- **Next bench:** the velocity SCALE chain is complete — counts/rev, decode factor, radius and
+  coupling are all settled and the decoder is hardware-confirmed. Two items remain before a velocity
+  run, both unrelated to scale: set the VESC Battery Current Max / Regen Max (§4, still open from
+  fw v7), and calibrate `motorConstant` + the motor PI gains — which have never been tuned against a
+  working `v_actual` at all, since none of the builds that could have tuned them were reading the
+  encoder. Treat the first `'V'` run as gain identification from scratch, scope-armed, and prefer
+  `'A'`/`'T'` (velocity-PI-free) first. **Drive-direction consequence — read before any `'V'`/`'D'` run:**
   fw v7 OVER-read `v_actual` by 2×, which shrank the velocity error and made the PI UNDER-drive.
   Correcting it restores the true error, so **fw v8 commands up to 2× the current fw v7 would have
   at the same `v_setpoint`** — the correction is toward truth, but the change on the bench is in
@@ -1029,3 +1049,32 @@ must preserve it or revert it knowingly.
   a wrong pin number is self-consistent everywhere else and no other test would fail.
 - Any board re-spin that restores the original routing must revert firmware, CSV, and those tests
   together.
+
+---
+
+## Status & session addendum (2026-08-16, fw v9: 'K' manual SD logging)
+
+**fw v9 (pending first flash):** the State-98 `'K'` command became a single-line command
+(`PEND_K_PARAMS`, same convention as `T`/`Y`/`W`) so the operator can log hand-driven runs:
+empty line = the old status print; **`K 1`** opens a MANUAL log (`LOG_TYPE_MANUAL` 0x08, new
+`ML####.BLG` prefix in the shared session counter, v4 header param flags 0 — no record/trailer
+format change, no UDP change); **`K 0`** closes it via `logRequestClose(LOG_CLOSE_STOP)`.
+Ownership is tracked by `logManualActive` (set only on a successful open; cleared in
+`logFinishFile()` and `logDrainTick()`'s no-card clear). `K 1` is refused during the staged
+bring-up (parse-time guard — the open path's directory scan + 32 MB preAllocate must not stall
+the bring-up machine; the status form stays out of the keypress lockout), while any profile,
+**`T` sweep**, or plot-arm is pending, and while a log is open/closing; `K 0` is refused on a
+profile-owned log. `X`/`Q`/fault close a manual log through the normal drain; a profile start
+over a live manual log force-finishes it (existing double-open branch). `logSampleTick()` is
+unchanged — manual runs sample at 1 kHz with phase bytes `LOG_PHASE_NONE`.
+
+Orchestrated round (Opus implementer, independent Sonnet test-writer, parallel Opus safety +
+Sonnet correctness reviews). Safety S1 (MED): the `K 1` guard originally missed `tsweepActive` —
+an ML open in a sweep's between-runs window would have silently cost the next sweep run its log
+(the exact loss the sweep's WAIT_LOG gate exists to prevent); fixed with the sweep term.
+Safety S2 / implementer-flagged: `printSdStatus()` now prints a "(manual — K 0 stops)" /
+"(profile-owned)" ownership marker while a log runs. Correctness review: no logic bugs; three
+coverage gaps closed (drain-window `K 1`, double `K 0`, plot-mode prompt). Decoder impact:
+docstring-only (`profile_type` bit 3 = MANUAL; the tooling passes the bitmask through raw).
+**Tests: 1777 production + 175 bench pass.** Ledger row in `docs/firmware-versions.md`;
+command/table docs in PLAN.md §9 updated.
