@@ -376,6 +376,43 @@
  *          fwVersion field is 2 bytes at 18–19). Derived inside logOpenForProfile() from typeMask
  *          plus the already-committed profile globals, so no call site can omit them.
  *          tools/decode_benchlog.py must be updated in lockstep.
+ *  - fw v7 (2026-08-13) — velocity chain CALIBRATED; the interlock opens.
+ *      (a) ENCODER GEOMETRY MEASURED on the bench by the operator: hand-turning the flywheel
+ *          exactly one revolution accumulates 120 encoderPos counts, so at the verified x2
+ *          quadrature decode the disc carries 60 slots — ENCODER_SLOTS_PER_REV 512.0f → 60.0f
+ *          (the 512 was UNSOURCED). The flywheel radius was measured directly at 0.0762 m
+ *          (3.00 in) — FLYWHEEL_RADIUS_M 0.033f → 0.0762f, superseding the old nominal
+ *          tire-OD/2 estimate and the reasoning that the tire radius was the right one (the
+ *          encoder disc is on the FLYWHEEL). RPM_TO_MPS follows both automatically.
+ *      (b) VELOCITY_CHAIN_CALIBRATED default 0 → 1. With both scale inputs measured, State 98's
+ *          two velocity entry points ('V' manual velocity, 'D' drive cycle) are open, as are the
+ *          'Y' combined profile's velocity axis and production State 2's velocity loop. The
+ *          interlock machinery (compile-time #ifndef override + the runtime
+ *          velocityChainCalibratedFlag) is retained unchanged for anyone who fits a new disc or
+ *          flywheel: the over-drive hazard it guards (an under-reading v_actual makes the PI add
+ *          current chasing a speed already passed, and commandMotorCurrent() bounds AMPS, not
+ *          SPEED) is a property of the mechanics, not of this build.
+ *      (c) 'L' SERIAL-PLOTTER STREAM: six fields → eight. 'sp'/'act' renamed to
+ *          'share_sp'/'share_act' (the labels were ambiguous once velocity joined), and v_sp
+ *          (v_setpoint) + v_act (v_actual) appended — now that v_actual is a calibrated number,
+ *          the velocity loop is worth watching live. Field order: share_sp, share_act, gFC, gBT,
+ *          ifc, ibt, v_sp, v_act. The fixed-field-count rule is unchanged (the IDE plotter
+ *          re-legends the graph if the count varies mid-run); the backpressure guard rises
+ *          80 → 110 bytes for the longer line.
+ *      (d) MOTOR_I_CMD_MAX 5.0 → 10.0 A (operator decision). The 5 A value came from the ~67–87 W
+ *          source power budget, which is a BUS-current budget — but this constant clamps what
+ *          setCurrent() sends the VESC, i.e. three-PHASE motor current, related to bus current
+ *          only through the duty ratio. Bus current is bounded where it belongs, in the VESC's own
+ *          Battery Current Max setting (≈ 4.2 A), so the source budget never bound this constant.
+ *          The old derivation is kept at the constant, marked as the previous bench value; the
+ *          15.0 A vehicle TODO(calibrate) stands. This is ALSO the State-98 manual-current ceiling
+ *          — setManualMotorCurrent() clamps to ±MOTOR_I_CMD_MAX, so 'A' now accepts ±10 A.
+ *          Unchanged and deliberately NOT following it: TRAP_I_ABS_MAX (25 A, the ESC rating, which
+ *          is what 'T'/'W' bound against), W_IMAX_DEFAULT (5 A, an independently conservative
+ *          profile default), and MANUAL_MOTOR_V_MAX (5.0 m/s — a VELOCITY, unrelated). The motor
+ *          PI's anti-windup integMax is derived from MOTOR_I_CMD_MAX and rescales automatically.
+ *      No BLG record or header change (the log already carried v_sp/v_act, and flags bit1 already
+ *      reported velocityChainCalibrated()), and no UDP telemetry change — still v4 / 58 bytes.
  */
 
 #include <VescUart.h>
@@ -850,21 +887,31 @@ const int32_t sampleTime = 50;      // us
 // so one full A/B cycle yields exactly +2 (forward) or -2 (reverse). Hence:
 //     counts/rev = 2 x slots/rev
 #define ENCODER_QUAD_DECODE  2.0f       // counts per quadrature cycle (x2 — see above)
-// TODO(measure): count the slots on the flywheel disc, or hand-turn the flywheel exactly one
-// revolution with the board powered and read encoderPos (State-98 'S' dumps it). 512 slots is what
-// the value below implies, which is not credible behind a 3.18 mm beam gap — this number is
-// UNSOURCED and is almost certainly wrong. See docs/VESC_MOTOR_INTEGRATION.md §10.
-#define ENCODER_SLOTS_PER_REV 512.0f
+// MEASURED 2026-08-13 (operator, bench): the flywheel was hand-turned exactly one revolution with
+// the board powered and encoderPos read out (State-98 'S' dumps it) — 120 counts per flywheel
+// revolution. At the verified x2 decode above that is 60 slots on the disc, which is credible
+// behind a 3.18 mm beam gap (the previous 512 was UNSOURCED and is now superseded).
+// See docs/VESC_MOTOR_INTEGRATION.md §10.
+#define ENCODER_SLOTS_PER_REV 60.0f     // → ENCODER_COUNTS_PER_REV = 120 (measured)
 constexpr float ENCODER_COUNTS_PER_REV = ENCODER_SLOTS_PER_REV * ENCODER_QUAD_DECODE;
 
-// Flywheel effective rolling radius, in METRES. The encoder sits on the bench flywheel, which is
-// downstream of the 9.49:1 reduction and both differentials (docs/VESC_MOTOR_INTEGRATION.md §7), so
-// it turns at WHEEL speed — the gear ratio does NOT belong in this chain, and the correct radius is
-// the tire rolling radius (or the dyno roller radius, whichever the disc is coupled to).
-// 0.033 m = 66 mm OD / 2, the nominal tire OD from docs/VESC_MOTOR_INTEGRATION.md §2.
-// TODO(measure): caliper the mounted tire OD (RC rubber varies and balloons at speed), and confirm
-// whether the encoder disc turns with the wheel or with a separate dyno roller.
-#define FLYWHEEL_RADIUS_M    0.033f
+// Effective rolling radius, in METRES — the radius that converts the ENCODED body's angular rate
+// into the m/s the velocity loop closes on. MEASURED 2026-08-13 (operator, bench): 0.0762 m
+// (3.00 in). This measured value is authoritative.
+//
+// It SUPERSEDES both the previous 0.033 m and the reasoning that produced it. That reasoning ran:
+// the encoder is downstream of the 9.49:1 reduction and both differentials
+// (docs/VESC_MOTOR_INTEGRATION.md §7), so the disc turns at WHEEL angular speed and the right
+// radius is therefore the tire rolling radius (66 mm nominal OD / 2, §2). Both halves of that are
+// retired here — the wheel-angular-speed clause included, since it is what forced the tire radius.
+//
+// COUPLING ASSUMPTION the measured value implies: 0.0762 m is correct when the disc's rim runs at
+// road/surface speed (a roller or surface-speed coupling), NOT when it merely turns at wheel
+// ANGULAR speed. Those two readings differ by 0.0762/0.033 = 2.31x, so if the disc is later found
+// to be angular-coupled to the wheel, this constant is over-reading v_actual by that factor and
+// must be re-derived — the interlock below exists for exactly this class of discovery.
+// TODO(verify): confirm the disc's mechanical coupling against docs/VESC_MOTOR_INTEGRATION.md §10.
+#define FLYWHEEL_RADIUS_M    0.0762f    // m — measured flywheel radius (3.00 in)
 
 // Combined rev/min → m/s factor: (2π/60) · r. Precomputed so the conversion appears exactly once
 // and can be asserted directly in the unit tests. (Arduino's PI macro is not available in the host
@@ -872,15 +919,18 @@ constexpr float ENCODER_COUNTS_PER_REV = ENCODER_SLOTS_PER_REV * ENCODER_QUAD_DE
 constexpr float TWO_PI_F      = 6.28318530718f;
 constexpr float RPM_TO_MPS    = (TWO_PI_F / 60.0f) * FLYWHEEL_RADIUS_M;
 
-// Guard: with BOTH scale inputs above still at placeholder values, closing the velocity loop
+// Guard: with either scale input above at a placeholder value, closing the velocity loop
 // OVER-DRIVES. v_actual under-reads true speed, so the PI keeps adding current to reach a setpoint
 // the vehicle has already blown past; the commandMotorCurrent() ceiling bounds AMPS, not SPEED.
-// Set to 1 only after ENCODER_SLOTS_PER_REV and FLYWHEEL_RADIUS_M have been measured on the bench.
 // While 0, State 98 refuses the two velocity-mode entry points ('V' manual velocity, 'D' drive
 // cycle). Production State 2 is deliberately NOT gated — it needs a Pi commanding it and is out of
-// scope for a bench interlock — but do not run it either. See docs/design-review-2026-07-28.md.
+// scope for a bench interlock. See docs/design-review-2026-07-28.md.
+// BOTH scale inputs were bench-measured on 2026-08-13 (ENCODER_SLOTS_PER_REV = 60 from 120 counts
+// per hand-turned flywheel revolution; FLYWHEEL_RADIUS_M = 0.0762 m), so the shipped default is 1.
+// The interlock machinery is kept for anyone who overrides back to 0 — fit a new disc or a new
+// flywheel and the chain is uncalibrated again until it is re-measured.
 #ifndef VELOCITY_CHAIN_CALIBRATED
-#define VELOCITY_CHAIN_CALIBRATED 0
+#define VELOCITY_CHAIN_CALIBRATED 1
 #endif
 // INA253 variant mixup: the BOM calls for INA253A1IPWR (100 mV/A = 0.1 V/A), but the A3
 // variant (400 mV/A) was the intended choice for easier droop scaling. The board is already
@@ -1012,7 +1062,26 @@ const float motorConstant = 0.1f;   // TODO: tune this
 //     Six EDU's 50 A burst / 25 A continuous rating). TODO(calibrate).
 // NOTE the bus is NOT protected by this ceiling at all — I_bus depends on duty. Bound it in the
 // VESC itself (Battery Current Max ≈ 4.2 A, Regen ≈ 1.5 A); see §4 of the integration doc.
-const float MOTOR_I_CMD_MAX = 5.0f;
+//
+// RAISED 5.0 → 10.0 A (2026-08-13, operator decision). The derivation above is retained as the
+// PREVIOUS bench value, not as the current one. Its 4.2–5.4 A source budget is a BUS-current
+// budget, but this constant clamps what setCurrent() sends the VESC — three-PHASE motor current,
+// which maps to bus current only through the duty ratio (I_bus ≈ D·I_mot/η_esc). So the source
+// power budget does not bind this constant, and bounding the bus is not this constant's job.
+// 10.0 A is a VESC-side phase-current ceiling. The 15.0 A vehicle TODO(calibrate) stands.
+// RAISED 10.0 → 12.0 A (2026-08-15, operator decision, with the Castle 1406 1900KV motor fitted
+// and the Youla-H drive-controller bring-up starting). Same phase-current rationale; may rise
+// again after the drive controller validates.
+//
+// ⚠ PRECONDITION, NOT A STATEMENT OF FACT (review 2026-08-13, S1). The argument above only holds
+// if the bus is bounded SOMEWHERE ELSE, and as of this writing it is not: integration-doc §4
+// records Battery Current Max and Battery Current Regen Max as "not set / not tracked". So before
+// any velocity-path run at this ceiling, configure them in VESC Tool (Battery Current Max
+// ≈ 4.2 A, Regen ≈ 1.5 A) and tick §4. Until that is done there is NO bus-current bound anywhere
+// in the system — not here (phase current, duty-dependent), not in the VESC (unset), and not in
+// this firmware on a BENCH_TEST flash, where detectFaults() is relaxed to overvoltage-only and the
+// OC checks are compiled out.
+const float MOTOR_I_CMD_MAX = 12.0f;
 const float MANUAL_MOTOR_V_MAX = 5.0f; // m/s — State 98 manual velocity ceiling; TODO(calibrate)
 // m/s — sanity bound on the Pi's v_setpoint. Not a performance limit: it exists so a corrupt or
 // mis-scaled UDP field cannot drive an enormous velocity error into the motor PI. A 1/10-scale car
@@ -1168,7 +1237,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 6
+#define FW_VERSION 7
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -1349,8 +1418,9 @@ uint32_t powerShareProfileStatusLast = 0;
 // the same rate. Drives the VESC through commandMotorCurrent() DIRECTLY — the velocity PI is never
 // in the loop, exactly like the 'A' manual-current mode. That is the point of this tool: it lets
 // the motor and the source power draw (the droop share loop runs alongside) be exercised with NO
-// dependence on the still-uncalibrated velocity chain (ENCODER_SLOTS_PER_REV, FLYWHEEL_RADIUS_M),
-// so it deliberately does NOT go through velocityChainCalibrated() the way 'D'/'V' must.
+// dependence on the velocity chain (ENCODER_SLOTS_PER_REV, FLYWHEEL_RADIUS_M) at all, so it
+// deliberately does NOT go through velocityChainCalibrated() the way 'D'/'V' must — that stays true
+// now the chain IS calibrated (fw v7), because the tool must keep working if the disc changes.
 enum TrapPhase { TRAP_RAMP_UP, TRAP_HOLD, TRAP_RAMP_DOWN };
 
 bool      trapProfileActive = false;
@@ -1363,9 +1433,9 @@ uint32_t  trapStartMs       = 0;      // millis() at t=0 of the ramp-up
 uint32_t  trapStatusLast    = 0;
 float     trapCmdA          = 0.0f;   // last commanded current (status print / test visibility)
 
-// Trapezoid current ceiling. Deliberately NOT MOTOR_I_CMD_MAX: that 5 A figure is a source-power
-// budget on the velocity-PI paths, but setCurrent() commands the VESC's three-PHASE motor current,
-// which does not map 1:1 onto bus draw (I_bus ≈ D·I_mot/η) — and on the bench the VESC may be fed
+// Trapezoid current ceiling. Deliberately NOT MOTOR_I_CMD_MAX: that figure (10 A since 2026-08-13,
+// 5 A before) bounds the velocity-PI paths, but setCurrent() commands the VESC's three-PHASE
+// motor current, which does not map 1:1 onto bus draw (I_bus ≈ D·I_mot/η) — and on the bench the VESC may be fed
 // from a separate supply entirely. The only hard bound that always applies is the ESC hardware
 // itself: VESC Six EDU 25 A continuous (50 A burst). Bound the profile there, not at the budget.
 const float TRAP_I_ABS_MAX = 25.0f;   // A — VESC Six EDU continuous rating
@@ -1530,9 +1600,11 @@ float    wProfileImax    = 5.0f;   // A — scales every normalised current wayp
 float    wProfileBoundLo = 0.0f;   // share clip band [b, 1-b]; same meaning as yProfileBoundLo
 float    wCmdA           = 0.0f;   // last commanded current (status print / test visibility,
                                    // same role trapCmdA plays for the trapezoid)
-// 5 A is the source-power budget (MOTOR_I_CMD_MAX) — a deliberately conservative default for a
-// profile whose plateaus reach the full peak. The ceiling is TRAP_I_ABS_MAX, not MOTOR_I_CMD_MAX,
-// for exactly the reason spelled out at that constant: setCurrent() commands PHASE current, which
+// 5 A: a deliberately conservative default for a profile whose plateaus reach the full peak. It was
+// originally set to match MOTOR_I_CMD_MAX's then-5 A source-power budget; that constant went to
+// 10 A on 2026-08-13 and this default deliberately did NOT follow — the conservatism is the point,
+// and nothing couples the two values. The ceiling is TRAP_I_ABS_MAX, not MOTOR_I_CMD_MAX, for
+// exactly the reason spelled out at that constant: setCurrent() commands PHASE current, which
 // does not map 1:1 onto bus draw. TODO(calibrate).
 const float W_IMAX_DEFAULT = 5.0f;
 // The share-bound default and warn threshold are SHARED with 'Y' (Y_BOUND_DEFAULT /
@@ -1541,10 +1613,11 @@ const float W_IMAX_DEFAULT = 5.0f;
 
 // ── State 98 bench tools: serial-plotter stream ('L') ──────────────────────────────────────────
 // Emits ONE condensed, fixed-shape line per PLOT_PERIOD_MS that the Arduino IDE Serial Plotter
-// parses directly: "label:value,label:value,…". Six series, deliberately all share-loop signals
-// whose natural ranges overlap (shares 0–1, MDAC gains 0–1, per-channel currents ~0–3 A) — the
-// plotter autoscales across ALL series together, so mixing in V_bus (≈17.5) would crush the share
-// traces into a flat band at the bottom. Voltages stay on the 'S' status dump.
+// parses directly: "label:value,label:value,…". Eight series whose natural ranges overlap (shares
+// 0–1, MDAC gains 0–1, per-channel currents ~0–3 A, velocities ~0–3 m/s) — the plotter autoscales
+// across ALL series together, so mixing in V_bus (≈17.5) would crush the low-amplitude traces into
+// a flat band at the bottom. Voltages stay on the 'S' status dump. The velocity pair (v_sp/v_act)
+// joined in fw v7, once the velocity chain was calibrated and v_act became a meaningful number.
 //
 // The plotter also requires every line to have the SAME field count and to be numeric: any stray
 // human-readable line breaks the parse. So while plot mode is on, the three profiles' 500 ms status
@@ -1563,12 +1636,13 @@ const uint32_t PLOT_PERIOD_MS = 20;   // TODO(calibrate): raise if the IDE plott
 // plot mode ON, those two keys therefore ARM the run instead of starting it, giving time to switch
 // windows. Nothing is printed during the countdown — the plot stream is already running, so the
 // operator sees a live baseline and then the trace move when the profile actually starts.
-// 'D' and 'Y' are deliberately NOT armed and start immediately under plot mode. For 'D' the plot's
-// six fields are all share-loop signals, so there is nothing to watch. 'Y' DOES move the plotted
-// 'sp' series, but arming it would mean a parameter line typed at the prompt fires seconds later
-// with the velocity loop live — and unlike 'R'/'T' its own preconditions (MOT_PWR, the calibrated
-// velocity chain) are checked at the keypress specifically because nothing that reaches the input
-// buffer can invalidate them; an arming window would reopen exactly that hole. The interaction
+// 'D' and 'Y' are deliberately NOT armed and start immediately under plot mode. Both DO move
+// plotted series ('D' the fw v7 v_sp/v_act pair, 'Y' those plus 'share_sp'), but arming either
+// would mean the run fires seconds after the keypress with the velocity loop live — for 'Y', a
+// parameter line typed at the prompt firing seconds later. Unlike 'R'/'T', their preconditions
+// (MOT_PWR, the calibrated velocity chain) are checked at the keypress specifically because nothing
+// that reaches the input buffer can invalidate them; an arming window would reopen exactly that
+// hole. The interaction
 // runs the other way instead: an armed 'R'/'T' is refused over a running 'Y' and cancelled by one
 // that starts during the countdown (see plotArmTick() / the 'R' arm block).
 enum PlotArmTarget { PLOT_ARM_NONE, PLOT_ARM_SHARE, PLOT_ARM_TRAP };
@@ -3355,7 +3429,7 @@ void printTestHelp() {
     Serial.print  ("      "); Serial.print(TRAP_I_ABS_MAX, 0);
     Serial.println("A; NO velocity-chain calibration needed — direct VESC phase current)");
     Serial.println("  X - universal stop: cancel any running profile + manual motor + share live");
-    Serial.println("  L - toggle Serial-Plotter stream (sp,act,gFC,gBT,ifc,ibt @50Hz)");
+    Serial.println("  L - toggle Serial-Plotter stream (share_sp,share_act,gFC,gBT,ifc,ibt,v_sp,v_act @50Hz)");
     Serial.print  ("      while ON: status/phase lines suppressed; 'R'/'T' arm with a ");
     Serial.print(PLOT_ARM_DELAY_MS);
     Serial.println("ms delay");
@@ -3737,7 +3811,7 @@ void doState98() {
                     // only source, an unpowered VESC simply does nothing — a WARN suffices (same
                     // policy as 'A'). Also deliberately no velocityChainCalibrated() check — this
                     // mode bypasses the velocity PI entirely, which is exactly why it is safe
-                    // uncalibrated.
+                    // regardless of the velocity chain's calibration state.
                     if (!digitalRead(MOT_PWR_ENABLE)) {
                         Serial.println("WARN: MOT_PWR_ENABLE is LOW — profile will run, but the motor is unpowered unless the VESC has its own supply (key '3')");
                     }
@@ -3925,7 +3999,7 @@ void doState98() {
                 plotModeActive = !plotModeActive;
                 if (plotModeActive) {
                     plotLastMs = millis() - PLOT_PERIOD_MS;   // stream on the very next tick
-                    Serial.println("[PLOT] Serial-Plotter stream ON @50Hz — sp,act,gFC,gBT,ifc,ibt");
+                    Serial.println("[PLOT] Serial-Plotter stream ON @50Hz — share_sp,share_act,gFC,gBT,ifc,ibt,v_sp,v_act");
                     Serial.print  ("[PLOT] status/phase lines suppressed; 'R'/'T' now arm with a ");
                     Serial.print(PLOT_ARM_DELAY_MS);
                     Serial.println("ms delay");
@@ -4107,8 +4181,10 @@ void doState98() {
         // share controller at the operator-set setpoint. applyManualMotor() is NOT rate-gated in
         // MOTOR_TEST_CURRENT: it re-sends a CONSTANT operator-set current, and the VESC's own
         // command timeout (1000 ms, and it COASTS rather than brakes on expiry) means the bench
-        // needs a steady keep-alive. Its velocity branch calls motorControl() directly, which is
-        // acceptable because velocity mode is gated off entirely until the chain is calibrated.
+        // needs a steady keep-alive. Its VELOCITY branch is different: it goes through
+        // motorControlGated(), so it shares rl_motor_last with every other motor writer and the two
+        // can never both write the VESC in one tick — the same shared-rate-gate discipline the
+        // profile branches above rely on.
         if (manualMotorMode != MOTOR_TEST_OFF) applyManualMotor();
         if (powerBalanceLive)                  powerBalanceGated();
     }
@@ -4182,8 +4258,8 @@ bool plotSuppressStatus() {
     return plotModeActive;
 }
 
-// One condensed plotter line. Six fields, ALWAYS six — the Arduino plotter keys its series off the
-// labels and a varying field count re-legends the graph mid-run. `act` is the same measured share
+// One condensed plotter line. Eight fields, ALWAYS eight — the Arduino plotter keys its series off
+// the labels and a varying field count re-legends the graph mid-run. `share_act` is the measured share
 // powerBalance() computes; with no current flowing the share is undefined and reported as 0 (same
 // convention as the '[PS]' status line), which reads as a flat trace until the motor draws.
 void plotTick() {
@@ -4192,8 +4268,9 @@ void plotTick() {
     // Backpressure guard (review 2026-08-07 F4): Teensy USB-CDC write() BLOCKS when the host is
     // enumerated but not draining (monitor closed mid-run, host hiccup). A stalled plot print
     // would freeze the whole loop — including detectFaults() — while a profile drives the motor.
-    // Drop the sample instead; the stream self-heals when the host drains. ~80 B covers one line.
-    if (Serial.availableForWrite() < 80) return;
+    // Drop the sample instead; the stream self-heals when the host drains. ~110 B covers one line
+    // (raised from 80 with the fw v7 v_sp/v_act fields and the longer share_sp/share_act labels).
+    if (Serial.availableForWrite() < 110) return;
     // Note: stamping millis() (not += PLOT_PERIOD_MS) means the real interval is period +
     // loop-jitter, i.e. the stream drifts slightly slow. Fine for a plotter (no timestamps on
     // the wire); do not use this cadence for anything that integrates over time.
@@ -4202,12 +4279,14 @@ void plotTick() {
     float totalA = fabsf(I_fc) + fabsf(I_batt);
     float act    = (totalA > 1e-6f) ? (fabsf(I_fc) / totalA) : 0.0f;
 
-    Serial.print("sp:");    Serial.print(power_share_setpoint, 3);
-    Serial.print(",act:");  Serial.print(act, 3);
-    Serial.print(",gFC:");  Serial.print(droop_gain_FC_actual, 3);
-    Serial.print(",gBT:");  Serial.print(droop_gain_BT_actual, 3);
-    Serial.print(",ifc:");  Serial.print(I_fc, 3);
-    Serial.print(",ibt:");  Serial.println(I_batt, 3);
+    Serial.print("share_sp:");    Serial.print(power_share_setpoint, 3);
+    Serial.print(",share_act:");  Serial.print(act, 3);
+    Serial.print(",gFC:");        Serial.print(droop_gain_FC_actual, 3);
+    Serial.print(",gBT:");        Serial.print(droop_gain_BT_actual, 3);
+    Serial.print(",ifc:");        Serial.print(I_fc, 3);
+    Serial.print(",ibt:");        Serial.print(I_batt, 3);
+    Serial.print(",v_sp:");       Serial.print(v_setpoint, 3);
+    Serial.print(",v_act:");      Serial.println(v_actual, 3);
 }
 
 // Drop a pending armed start. Safe to call unconditionally (no-op when nothing is armed) so every
@@ -4441,12 +4520,13 @@ void setManualMotorCurrent(float a) {
 }
 
 // ── Velocity-chain calibration interlock ─────────────────────────────────────
-// The velocity loop closes on v_actual, whose scale depends on two constants that are still
-// placeholders (ENCODER_SLOTS_PER_REV, FLYWHEEL_RADIUS_M). An under-reading v_actual makes the PI
-// OVER-DRIVE — it keeps adding current chasing a setpoint the flywheel has already passed — and
-// commandMotorCurrent() bounds amps, not speed. So the two State-98 entry points that close the
-// velocity loop ('V' manual velocity, 'D' drive cycle) refuse until the scale is measured.
-// Set -DVELOCITY_CHAIN_CALIBRATED=1 once ENCODER_SLOTS_PER_REV and FLYWHEEL_RADIUS_M are measured.
+// The velocity loop closes on v_actual, whose scale depends on two constants (ENCODER_SLOTS_PER_REV,
+// FLYWHEEL_RADIUS_M). Both were bench-measured on 2026-08-13, so the shipped default is CALIBRATED
+// and the two State-98 velocity entry points ('V' manual velocity, 'D' drive cycle) are open.
+// The interlock remains because an under-reading v_actual makes the PI OVER-DRIVE — it keeps adding
+// current chasing a setpoint the flywheel has already passed — and commandMotorCurrent() bounds
+// amps, not speed. Build with -DVELOCITY_CHAIN_CALIBRATED=0 (or clear the flag at runtime) if the
+// disc or flywheel is changed, and re-measure before re-enabling.
 // Seeded from the compile-time macro but kept as a runtime flag so the host tests can exercise BOTH
 // the refusal path and the calibrated path in one build (a compile-time-only gate would leave one of
 // the two branches untested in every build).
@@ -4460,7 +4540,7 @@ void printVelocityChainRefusal(const char *what) {
     Serial.print("REFUSED: ");
     Serial.print(what);
     Serial.println(" needs a calibrated velocity chain.");
-    Serial.println("  v_actual scale is still a placeholder (ENCODER_SLOTS_PER_REV, FLYWHEEL_RADIUS_M).");
+    Serial.println("  v_actual scale is unconfirmed for this build (ENCODER_SLOTS_PER_REV, FLYWHEEL_RADIUS_M).");
     Serial.println("  An under-reading v_actual makes the velocity PI OVER-DRIVE; the current clamp");
     Serial.println("  bounds amps, not speed. Measure both, then rebuild with");
     Serial.println("  -DVELOCITY_CHAIN_CALIBRATED=1. Use 'A' (fixed current) for motor tests instead.");
@@ -4978,7 +5058,7 @@ void advanceTrapProfile() {
     // one tick, and 500 Hz re-sends keep the VESC's 1000 ms command timeout fed (on expiry it
     // COASTS rather than brakes, which would silently truncate the profile).
     if (rateLimitDue(rl_motor_last, MOTOR_CTRL_PERIOD_US))
-        commandMotorCurrentLimited(cmd, TRAP_I_ABS_MAX);   // ESC-rating ceiling, not the 5 A budget
+        commandMotorCurrentLimited(cmd, TRAP_I_ABS_MAX);   // ESC-rating ceiling, not MOTOR_I_CMD_MAX
 
     // Status snapshot every 500 ms — same cadence/style as the other two profiles (and suppressed
     // under plot mode for the same reason).
@@ -5006,10 +5086,10 @@ static void warnIfBandReachesCutoff(const char *tag, float boundLo, const char *
     if (boundLo >= DROOP_R_MIN) return;   // band stays inside the droop-clip span — no cutoff
     Serial.print("["); Serial.print(tag);
     Serial.print("] WARNING: share band reaches the full-span cutoff — R6/R11 will open a bus "
-                 "switch under load (up to ");
+                 "switch under load (motor cmd up to ");
     Serial.print(capUnitNote);
     Serial.print(motorCapA, 1);
-    Serial.print(" A). First run: use ");
+    Serial.print(" A phase; bus draw is duty-dependent). First run: use ");
     Serial.print(safeCmd);
     Serial.println(", scope-armed (see TP0010).");
 }
@@ -5388,7 +5468,7 @@ void advanceCurrentComboProfile() {
     // the VESC in one tick, and the 500 Hz re-sends keep the VESC's 1000 ms command timeout fed
     // (on expiry it COASTS rather than brakes, which would silently truncate the profile).
     if (rateLimitDue(rl_motor_last, MOTOR_CTRL_PERIOD_US))
-        commandMotorCurrentLimited(cmd, TRAP_I_ABS_MAX);   // ESC-rating ceiling, not the 5 A budget
+        commandMotorCurrentLimited(cmd, TRAP_I_ABS_MAX);   // ESC-rating ceiling, not MOTOR_I_CMD_MAX
 
     // Status snapshot every 500 ms — both axes at once (withheld under plot mode, same reason as
     // the other profiles: a non-numeric line breaks the plotter parse).
@@ -5932,9 +6012,10 @@ bool assertMotPwrEnable(bool enable) {
 // unbypassable.
 //
 // Two guarantees:
-//   1. Non-finite in → 0 A out. motorConstant and the velocity unit chain are both uncalibrated
-//      TODOs; a NaN/Inf reaching COMM_SET_CURRENT serializes as a garbage int32 the VESC would
-//      act on. Commanding 0 is the only safe interpretation of "I don't know what to command".
+//   1. Non-finite in → 0 A out. motorConstant is still an uncalibrated TODO (the velocity unit
+//      chain was measured in fw v7); a NaN/Inf reaching COMM_SET_CURRENT serializes as a garbage
+//      int32 the VESC would act on. Commanding 0 is the only safe interpretation of "I don't know
+//      what to command".
 //   2. |amps| ≤ MOTOR_I_CMD_MAX. The PI integrator anti-windup bound alone did NOT bound the
 //      command: the proportional term is added after it, so a large velocity error passed straight
 //      through to a 50 A bridge.
@@ -7042,12 +7123,12 @@ void updateWheelSpeed() {
     //    while v_setpoint from the Pi is m/s. Correct conversion for a wheel/roller of radius r:
     //        v [m/s] = ω [rev/s] · 2π · r [m] = rpm · (2π/60) · r_m
     //
-    //    NOTE the two errors used to partially CANCEL: with ENCODER_COUNTS_PER_REV over-stated and
-    //    the radius factor over-stated, v_actual under-read ~6.6×. Correcting only the form makes
-    //    the under-read WORSE (~32×) until ENCODER_SLOTS_PER_REV is measured. Because the loop
-    //    closes on v_actual, under-reading means the PI OVER-DRIVES — so VELOCITY_CHAIN_CALIBRATED
-    //    gates the State-98 velocity entry points until both scale inputs are measured. Fix the
-    //    scale BEFORE tuning the motor PI gains, or the gains bake in the mismatch.
+    //    HISTORY: the two old errors used to partially CANCEL (v_actual under-read ~6.6×), and
+    //    correcting the form alone made the under-read WORSE (~32×) while ENCODER_SLOTS_PER_REV was
+    //    still the unsourced 512. Because the loop closes on v_actual, under-reading means the PI
+    //    OVER-DRIVES — hence the VELOCITY_CHAIN_CALIBRATED interlock on the State-98 velocity entry
+    //    points. Both scale inputs were bench-measured 2026-08-13 (120 counts/rev, r = 0.0762 m) and
+    //    the interlock now defaults open. Tune the motor PI gains only against this measured scale.
     float flyWheelSpeedRpm = (dx / ENCODER_COUNTS_PER_REV) * (60.0f / dtSec);
     v_actual = flyWheelSpeedRpm * RPM_TO_MPS;
 }

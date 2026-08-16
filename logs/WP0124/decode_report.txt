@@ -1,0 +1,5 @@
+[decode_benchlog] version=4 fw_version=6 profile_type=3 start_millis=2325914 start_micros=2325914507 K_DROOP=0.300 ohm profile_amp=8.000 profile_b=0.000
+[decode_benchlog] records read: 12536
+[decode_benchlog] WARNING: no trailer found -- file is truncated (e.g. power loss mid-run)
+[decode_benchlog] WARNING: stopped at record 12536 -- modular t_us step was zero or exceeded MAX_GAP_US=30000000, so everything past it is stale pre-allocated card content (or garbage), not data
+[decode_benchlog] max_interval_us=1373 missed_periods=0

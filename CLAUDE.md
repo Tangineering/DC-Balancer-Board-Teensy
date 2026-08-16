@@ -906,3 +906,42 @@ extreme share). **fw v6 (pending first flash; ledger row has full detail):**
   probed (settles the MCU-stop mechanism); per-channel-direction two-axis floor sweep (floor law
   is structurally wrong — 27 mV bus-vs-reference separatrix, BT-only asymmetry); bracket
   `SHARE_CUT_MAX_HANDOFF_A`; W/Y runs with b < 0.30 stay blocked until R6 rework is validated.
+
+---
+
+## Status & session addendum (2026-08-13, fw v7: velocity chain calibrated, 10 A ceiling)
+
+Bench measurements landed and **fw v7 (pending first flash)** opens closed-loop velocity in
+test mode. Orchestrated round (Opus implementer, independent Sonnet test-writer, parallel
+Opus safety + Sonnet correctness reviews); ledger row in `docs/firmware-versions.md` has full
+detail.
+
+- **Velocity chain calibrated (2026-08-13 bench measurement).** `ENCODER_SLOTS_PER_REV`
+  512 → 60 (120 counts per hand-turned flywheel revolution at the verified ×2 quadrature
+  decode) and `FLYWHEEL_RADIUS_M` 0.033 → 0.0762 m (3.00 in, measured). Net `v_actual` scale
+  change ×19.70 — fw ≤ 6 and fw 7 `v_act` BLG traces are NOT comparable (header `fwVersion`
+  disambiguates; BLG flags bit1 now sets by default). `VELOCITY_CHAIN_CALIBRATED` defaults
+  **1**: State-98 `'V'`/`'D'`/`'Y'` velocity paths ship open; interlock machinery kept for
+  overrides. Residual (S3, TODO(verify)): 0.0762 m implies surface/roller coupling — if the
+  disc is angular-coupled to the wheel, `v_actual` over-reads 2.31× (conservative direction).
+- **`MOTOR_I_CMD_MAX` 5.0 → 10.0 A (operator decision; amended 2026-08-15 → 12.0 A pre-flash,
+  Castle 1406 1900KV fitted, drive-controller bring-up).** VESC-side phase-current ceiling at
+  the `commandMotorCurrent()` chokepoint; also the `'A'` manual-current clamp (same constant).
+  `W_IMAX_DEFAULT` (5 A), `TRAP_I_ABS_MAX` (25 A), `MANUAL_MOTOR_V_MAX` (5 m/s) deliberately
+  unchanged; PI anti-windup `integMax` rescales symbolically. **S1 HIGH (open precondition):
+  bus current is currently bounded NOWHERE** — the VESC Battery Current Max (≈4.2 A) / Regen
+  Max (≈1.5 A) are recorded in `docs/VESC_MOTOR_INTEGRATION.md` §4 as *not set / not tracked*,
+  and a BENCH_TEST flash compiles the OC faults out. Set them in VESC Tool and tick §4 before
+  any velocity-path run at 10 A.
+- **`'L'` plot stream is 8 fields**: `sp`/`act` renamed `share_sp`/`share_act`; `v_sp`
+  (`v_setpoint`) and `v_act` (`v_actual`) appended (order: share_sp, share_act, gFC, gBT, ifc,
+  ibt, v_sp, v_act; all 3 dp). Backpressure guard 80 → 110 B (worst-case line computed 109 B).
+  No BLG or UDP layout change; no external parser of the plot labels exists.
+- **FW_VERSION 6 → 7.** Review round: S1 HIGH (precondition wording + §4 annotations) and
+  S3–S7 applied; C1 (vacuous shipped-default tests — reseeded from the macro) and C2
+  (positional 8-field order assertion) applied. **Tests: 1652 production + 175 bench pass.**
+- **Next bench:** set the VESC battery-current limits (S1) BEFORE any velocity run; first
+  velocity runs scope-armed, `'V'` small setpoints before `'D'` (the drive cycle's coast→regen
+  step is a −3.5 m/s error → −10 A onto the regen path); `motorConstant` and the motor PI
+  gains are still uncalibrated against the corrected scale — treat the first `'V'`/`'D'` run
+  as gain validation, and prefer `'A'`/`'T'` (velocity-PI-free) first.

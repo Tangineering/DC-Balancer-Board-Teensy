@@ -19,7 +19,8 @@
 Bench Results, a Minority-Channel Dropout Limit Cycle,\\
 and Validation of Its Firmware Mitigation}
 \author{Ricky Tan\\ \small\texttt{rstan@ucdavis.edu}}
-\date{2026-08-11 (revised 2026-08-12 with the firmware~v3, v4, and~v5 validation sweeps)}
+\date{2026-08-11 (revised 2026-08-13 with the firmware~v3, v4, v5, and~v6
+validation sweeps)}
 
 \begin{document}
 \maketitle
@@ -86,6 +87,26 @@ resolves a sub-millisecond battery-rail collapse to $\approx$4--5\,V,
 coincident with a current spike --- relocating the MCU-stop mechanism to a
 transient the log cannot see. A bus-versus-reference dropout
 margin, a source-rail undervoltage fault, and profile changes are recommended.
+
+A fifth campaign (Section~\ref{sec:v6}; \code{TP0102}--\code{TP0120},
+\code{WP0121}--\code{WP0124}, firmware~v6) validates the profile de-rating and
+the reference slew, and relocates the failure mode a second time. The
+share-bound excursion, now de-rated to $0.3\,I_\mathrm{max}$, carries an order of
+magnitude less current than the source knee, and all three combined-profile runs
+at 6\,A complete across the full span of the clip bound --- the bound no longer
+predicts survival. One residual remains in band: at the exact upper band edge the
+open-loop-to-closed-loop handover opens both channels for 5.9\,ms and drops the
+bus to 12.19\,V, because the governor floor demands half the total current from a
+channel carrying 61\,mA at the crossing. The slew limits the reference rate, but
+the exposure is its magnitude. The one truncation of the campaign is not
+share-mediated at all: at an $I_\mathrm{max}$ raised to 8\,A the battery rail
+collapses ohmically through a $1.35\,\Omega$ source --- four times softer than
+the fuel-cell side --- into the logic regulator's dropout region, with the share
+loop tracking to $\pm0.02$ and the bus in regulation throughout. Replaying the
+dwell filter over the campaign shows that no battery-rail undervoltage threshold
+separates that stop from healthy runs which sag lower still, which identifies the
+discriminator as a sub-millisecond transient rather than the logged operating
+point.
 \end{abstract}
 
 \section{Test setup and data provenance}
@@ -1127,6 +1148,284 @@ conduction floor, and the corrected mitigation should be referred to the
 bus-versus-reference margin, not to a current constant. The two-axis sweep
 recommended previously should therefore be run per channel direction.
 
+\section{Fourth validation sweep (firmware v6)}
+\label{sec:v6}
+
+\subsection{Mitigation set and sweep design}
+
+Firmware~v6 implements five changes derived from Section~\ref{sec:v5}. First, a
+\emph{load-aware handoff guard} conditions the setpoint-latched channel cutoff on
+the current carried by the channel about to be cut: above
+$I_\mathrm{handoff}^{\max}=0.50$\,A the cut is refused and \emph{deferred}, the
+closed-loop reference is clipped onto the band edge to migrate the load away, and
+the ratio-based cutoff is suppressed on that side. Second, a dwell-filtered
+fuel-cell undervoltage fault is added (trip 6.0\,V, arm 7.0\,V, 20\,ms dwell),
+placed above the bus undervoltage block so that a simultaneous crossing names the
+upstream cause. Third, the closed-loop reference itself is slew-limited at
+0.02 per tick, removing the step that the open-loop-to-closed-loop handover
+previously applied. Fourth, the \code{W} profile regions R5--R7 are de-rated: the
+share-bound excursion R6 now runs at $0.3\,I_\mathrm{max}$ instead of full
+command. Fifth, the log header records the per-run profile parameters
+$I_\mathrm{max}$ and the share-clip bound $b$ directly.
+
+The campaign comprises a 19-point trapezoid ladder
+(\code{TP0102}--\code{TP0120}, \code{T 6 3 1}) and four \code{W} combined
+profiles (\code{WP0121}--\code{WP0124}). The entire set is a single boot: the
+absolute log timestamps run monotonically from 66\,s to 1340\,s with no reset,
+in two automated batches separated by a 508\,s idle gap. The header change
+removes the inference step used in Section~\ref{sec:v5}: $b$ and
+$I_\mathrm{max}$ are now read directly, giving $b=0.30$, 0.20, 0.00, 0.00 and
+$I_\mathrm{max}=6$, 6, 6, \textbf{8}\,A for the four \code{W} runs. The last of
+these is the first run of the campaign at an $I_\mathrm{max}$ above 6\,A.
+
+\subsection{The targeted fixes all hold}
+
+Every firmware-v6 mechanism performed as specified, verified directly in the
+logged data.
+
+\begin{itemize}
+\item \textbf{Reference slew.} The largest sample-to-sample step in the commanded
+droop ratio across all 23 runs is 0.0200, exactly the limit, with no exceedance
+anywhere. The handover step is eliminated.
+\item \textbf{Governor floor.} Measured hold share equals
+$\max(r^\ast, 0.30\,\mathrm{A}/I_\mathrm{tot})$ to within $10^{-3}$ at every
+setpoint. Figure~\ref{fig:v6summary} (left) shows that the apparent standing bias
+at $r^\ast=0.15$ and 0.17 is entirely this clip: referred to the governed
+setpoint the error collapses to $\le2\times10^{-3}$.
+\item \textbf{Bimodal governor.} Exactly two mode transitions per governed run,
+entry at 0.65--0.75\,A and release at 0.40--0.50\,A of instantaneous total, zero
+chattering, and no stranded hold state.
+\item \textbf{Fuel-cell undervoltage fault.} Armed throughout its first flight
+with zero false trips, including in the six runs where the fuel-cell channel is
+latched off the bus.
+\end{itemize}
+
+\code{fault\_flags} is zero in every sample of all 23 runs, and the census of
+total source dropouts --- both channels dark while the pair was conducting
+immediately before --- returns \textbf{one event in nineteen ladder runs}. That
+event is \code{TP0115}, and it is the subject of Section~\ref{sec:v6edge}.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{figs/fig_v6sweep_summary.png}
+\caption{Firmware-v6 trapezoid ladder. Left: tracking error against the raw and
+the governed setpoint; the two apparently biased points are the floor clip, not
+loop error. Centre: run-minimum rails; a single bus excursion, at
+$r^\ast=r_{\max}$. Right: hold source power against run order within the boot,
+with the two repeat runs at $r^\ast=0$ ringed --- the ladder's monotonic
+$+82\,\%$ rise is session drift, not a setpoint effect.}
+\label{fig:v6summary}
+\end{figure}
+
+\subsection{The \code{W}-profile de-rating closes the firmware-v5 failure}
+
+The R5--R7 de-rating is decisive. Table~\ref{tab:v6r6} compares the share-bound
+excursion across the two firmware versions.
+
+\begin{table}[H]
+\centering
+\caption{The \code{W}-profile share-bound excursion (R6), firmware~v5 versus
+firmware~v6. Currents are measured channel totals inside the region.}
+\label{tab:v6r6}
+\begin{tabular}{llccccl}
+\toprule
+Run & fw & $b$ & R6 command & R6 $I_\mathrm{tot}$ med/max & R6 $V_\mathrm{bus}$ min & Outcome \\
+\midrule
+\code{WP0100} & v5 & 0.15 & $1.0\,I_\mathrm{max}$ & 2.01 / 2.53\,A & 15.55\,V & 28-episode dropout cycle \\
+\code{WP0101} & v5 & 0.00 & $1.0\,I_\mathrm{max}$ & 2.09 / 6.12\,A & 6.13\,V & \code{ERR\_UV\_BUS} at 36\,ms \\
+\code{WP0121} & v6 & 0.30 & $0.3\,I_\mathrm{max}$ & 0.14 / 0.38\,A & 15.92\,V & clean \\
+\code{WP0122} & v6 & 0.20 & $0.3\,I_\mathrm{max}$ & 0.16 / 0.40\,A & 15.92\,V & clean \\
+\code{WP0123} & v6 & 0.00 & $0.3\,I_\mathrm{max}$ & 0.22 / 0.50\,A & 15.87\,V & clean \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Measured total current in R6 falls by a factor of approximately 9.5, from
+2.09\,A to 0.22\,A --- substantially more than the nominal $0.3\times$ on the
+command, because the bench load is strongly nonlinear in commanded current. The
+region now runs an order of magnitude below the fuel-cell source knee identified
+in Section~\ref{sec:v5}. All three runs at $I_\mathrm{max}=6$\,A complete the
+full 40\,s profile across the entire span of $b$, against two of seven in
+firmware~v5.
+
+The consequence is that \textbf{$b$ no longer predicts survival}. In firmware~v5
+the clip bound was the whole story; here it selects only which mechanism owns
+R6, and all owners are benign at 0.2\,A. Two qualifications follow. The de-rating
+pushed R6 below the 0.60\,A closed-loop threshold, so closed-loop occupancy in
+that region is zero: R6 no longer exercises the share controller at an extreme
+command, and safety was bought by removing the interaction rather than by
+surviving it. Across the whole profile, closed-loop occupancy at
+$I_\mathrm{max}=6$\,A is only 17--20\,\%.
+
+\subsection{A residual at the band edge: \code{TP0115}, $r^\ast=0.85$}
+\label{sec:v6edge}
+
+The single dropout of the ladder occurs at $r^\ast=0.85$, exactly
+$r_{\max}=\code{DROOP\_R\_MAX}$, and it is the one place where firmware~v6 is
+worse than firmware~v5. Table~\ref{tab:v6edge} states the comparison.
+
+\begin{table}[H]
+\centering
+\caption{The band-edge setpoint on the two firmwares, same profile and same
+setpoint.}
+\label{tab:v6edge}
+\begin{tabular}{lcc}
+\toprule
+Metric & firmware~v5 (\code{TP0088}) & firmware~v6 (\code{TP0115}) \\
+\midrule
+$V_\mathrm{bus}$ minimum & 15.75\,V & 12.19\,V \\
+$V_\mathrm{batt}$ minimum & 8.01\,V & 6.17\,V \\
+Total source dropout & none & 5.9\,ms \\
+Fault latched & none & none \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Figure~\ref{fig:v6edge} resolves the event. It is not a limit cycle and not a
+measurement artifact: five consecutive samples carry both channels at hard zero
+while the bus decays monotonically at $0.31\,\mathrm{V\,ms^{-1}}$, after which
+the battery channel reconnects at 1.81\,A and pulls its own rail from 8.35\,V to
+6.17\,V. The sequence is ordered. The battery channel stops conducting one
+sample after the closed-loop mode edge; the controller, seeing a measured share
+of unity against its reference, drives the ratio down at the full slew limit;
+24\,ms later the fuel-cell channel also drops out, leaving the bus unfed.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\textwidth]{figs/fig_tp0115_handover.png}
+\caption{\code{TP0115}, $r^\ast=0.85$: a 5.9\,ms total source dropout at the
+open-loop-to-closed-loop handover. Top: both channels dark, the battery channel
+first. Centre: the commanded ratio slewing at its 0.02-per-tick limit. Bottom:
+the bus decaying to 12.19\,V and the battery rail collapsing on reconnection.
+Window 70\,ms of a 15\,s run.}
+\label{fig:v6edge}
+\end{figure}
+
+The mechanism generalises, and the ladder contains its mirror image. Both
+dropouts observed anywhere in the campaign --- \code{TP0115} at $r_{\max}$ and a
+smaller fuel-cell-only event in \code{TP0105} at $r_{\min}=0.15$, which the bus
+rode out at 15.89\,V --- occur at the open-loop-to-closed-loop handover, and both
+at an exact band edge. Every run crosses into closed loop at the same 0.6\,A
+total, where the 0.30\,A floor demands half the total current from a channel the
+open-loop feedforward has been running at 61\,mA. The discriminator is monotonic
+in setpoint: measured minority current in the 50\,ms before the crossing is
+0.061\,A at $r^\ast=0.85$, 0.072\,A at 0.83, and 0.179\,A at 0.65.
+
+Firmware~v6 slewed the reference \emph{rate}; the exposure is the reference
+\emph{magnitude}. A swing of 0.42 in commanded share, applied at 0.6\,A total, is
+enough to open both channels at once however slowly it is applied. The argument
+in Section~\ref{sec:v5} against clipping the open-loop feedforward remains sound,
+so the remaining lever is the crossing point itself: engaging closed-loop control
+at a current where the floor's clip is less violent.
+
+\subsection{\code{WP0124}: the failure mode moves to the source rail}
+
+\code{WP0124} is the first run of the campaign at $I_\mathrm{max}=8$\,A. Its log
+ends at $t=14.60$\,s of a 40\,s profile with no trailer record --- the signature
+of an MCU stop rather than any firmware path. Two things distinguish it from
+every previous truncation.
+
+First, it died in R4, not in the share-bound excursion, and \textbf{the share
+loop is a bystander}. The setpoint is 0.38, mid-band; measured share tracks it to
+$\pm0.02$; both channels conduct; the bus is flat at 15.75\,V; no latch, cutoff,
+deferral, or dropout occurs anywhere after $t=4.95$\,s; \code{fault\_flags} is
+zero and the closed-loop mode flags are set continuously to the last record.
+
+Second, and unlike every earlier stop, \textbf{the collapse is fully resolved on
+the logged timescale}. The battery rail walks down monotonically with load ---
+7.16\,V at $t=13.1$\,s, 6.55\,V at 13.9\,s, 5.99\,V at 14.5\,s, minimum
+5.54\,V --- and the walk is ohmic, not dynamic. A least-squares fit over the
+region gives
+\begin{equation}
+V_\mathrm{batt} = 8.52 - 1.35\,I_\mathrm{batt},\qquad R^2=0.982 ,
+\end{equation}
+against $V_\mathrm{fc} = 8.40 - 0.30\,I_\mathrm{fc}$ on the fuel-cell side.
+Figure~\ref{fig:v6brownout} shows both. \textbf{The bench battery source is
+approximately four times softer than the fuel-cell source}, at
+$1.01$--$1.35\,\Omega$ against $0.26$--$0.30\,\Omega$. Because the Teensy is
+board-powered through an LM1084 linear regulator fed from the battery rail,
+drawing 1.9\,A from a $1.35\,\Omega$ source walks the microcontroller's own
+supply into regulator dropout.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{figs/fig_wp0124_brownout.png}
+\caption{\code{WP0124} against its surviving twin. Left: the battery rail through
+region R4; \code{WP0123} runs the same profile and the same $b$ at
+$I_\mathrm{max}=6$\,A and bottoms at 6.93\,V, while \code{WP0124} at 8\,A enters
+the LM1084 dropout region and the log ends. Right: source stiffness measured over
+the same window.}
+\label{fig:v6brownout}
+\end{figure}
+
+The comparison with \code{WP0123} is close to controlled: same profile, same
+$b=0$, same firmware, differing only in $I_\mathrm{max}$. At matched profile time
+the 8\,A run draws 1.83 times the battery current and its rail sits 1.28\,V
+lower. The causal chain is therefore $I_\mathrm{max} \rightarrow I_\mathrm{batt}
+\rightarrow V_\mathrm{batt} \rightarrow$ logic rail, with the share loop
+uninvolved --- structurally different from the firmware-v5 stops, which were
+share-mediated fuel-cell source-knee runaways.
+
+This finding subsumes rather than contradicts the oscilloscope evidence of
+Section~\ref{sec:v5}: the direct-current operating point had already walked into
+the region where the sub-millisecond dip resolved in capture~14 lands far below
+the dropout threshold. It remains inference. Neither the regulator output nor
+the Teensy 3.3\,V rail is logged or was probed through this stop.
+
+\subsection{Why no battery-rail undervoltage threshold is proposed}
+\label{sec:v6nothresh}
+
+The obvious remedy is the battery-side counterpart of the new fuel-cell
+undervoltage fault. The data does not support one on this bench, and the reason
+is itself informative.
+
+Replaying the firmware-v6 leaky-dwell filter against the logged battery rail of
+every run in the campaign gives Figure~\ref{fig:v6thresh}. Healthy trapezoid runs
+in which the battery is the sole source sag as low as 5.75\,V and complete
+without incident, while \code{WP0124} died at 5.54\,V. A trip at 6.8\,V or 6.5\,V
+latches six healthy runs; a trip at 6.0\,V still latches \code{TP0112}; a trip at
+5.7\,V catches nothing at all, including the truncation.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{figs/fig_vbatt_threshold.png}
+\caption{The firmware-v6 leaky-dwell filter replayed against the logged battery
+rail at four candidate trip voltages. No row separates the truncation from the
+healthy runs.}
+\label{fig:v6thresh}
+\end{figure}
+
+A separation of roughly 0.2\,V across a hard survive-or-die boundary is the
+signature of a \emph{cliff} --- the regulator dropout knee --- rather than of a
+gradual margin. It follows that the logged direct-current level under-determines
+the outcome, and that the real discriminator is the sub-millisecond ripple depth
+riding on it, which is precisely what capture~14 resolves and what an 870\,Hz log
+cannot see. A threshold fitted to this data would therefore encode bench
+conditions rather than the failure mechanism. The blocking measurement is
+unchanged from Section~\ref{sec:v5}: the LM1084 input and output, probed together
+through a truncation.
+
+\subsection{Two limits on what this campaign can conclude}
+
+\textbf{The headline mechanism of firmware~v6 remains unvalidated on the bench.}
+The deferral branch of the load-aware handoff guard did not engage in any of the
+23 runs. Every setpoint latch in the campaign handed off 0.06--0.24\,A, far below
+the 0.50\,A threshold, so only the permitting branch executed.
+$I_\mathrm{handoff}^{\max}$ is still bracketed only between an observed-clean
+0\,A and an observed-fatal 1.3\,A. The de-rating has made this harder to test,
+not easier: it removed the only condition that previously produced a loaded
+out-of-band setpoint. The new fuel-cell undervoltage fault is likewise untested
+--- correct and silent, but with the rail never closer than 1.67\,V to its trip.
+
+\textbf{Session drift confounds the ladder.} The two repeat runs at $r^\ast=0$,
+914\,s apart within the same boot, differ by $+31\,\%$ in hold source power at a
+fixed setpoint, and hold power rises monotonically by $82\,\%$ across the ladder
+(Figure~\ref{fig:v6summary}, right). Because setpoint was swept monotonically
+with run order, the setpoint effect and the drift are not separable in this
+campaign. The interleaving recommended after the firmware-v2 round was not
+applied. Since the total current sets the governor's own clip threshold, the
+per-setpoint operating points are not directly comparable across the ladder.
+
 \section{Conclusions and recommended actions}
 \label{sec:conclusions}
 
@@ -1259,6 +1558,61 @@ with a battery-current spike as the collapsing node reaches the battery-rail
 level --- the leading MCU-stop candidate, below the LM1084 dropout and
 invisible to the log --- pending confirmation by a capture on the LM1084
 input and output through a truncation event.
+\end{enumerate}
+
+Items~13--15 were implemented as firmware~v6. From the fourth validation sweep
+(firmware~v6):
+
+\begin{enumerate}
+\setcounter{enumi}{15}
+\item \textbf{The profile de-rating and the reference slew are validated.} The
+share-bound excursion carries 0.22\,A instead of 2.09\,A, an order of magnitude
+below the source knee; all three combined-profile runs at $I_\mathrm{max}=6$\,A
+complete across the full span of $b$, which no longer predicts survival. The
+commanded ratio never moves faster than its 0.02-per-tick limit in any of the 23
+runs, and the governor floor is exact to $10^{-3}$. Note the cost: the de-rated
+region now runs entirely below the closed-loop threshold, so it no longer tests
+the share controller at an extreme command. If that case still needs
+characterising it needs a separate, deliberately bounded region.
+\item \textbf{Move the closed-loop engagement point, not the reference rate.} The
+one dropout of the ladder --- 5.9\,ms with both channels dark and the bus at
+12.19\,V --- occurs at the open-loop-to-closed-loop handover at the exact upper
+band edge, and its mirror appears at the lower edge. The floor demands half the
+total current from a channel carrying 61\,mA at the crossing; a 0.42 swing in
+commanded share at 0.6\,A total opens both channels however slowly it is applied.
+Raising \code{SHARE\_GOV\_OL\_HYST\_A} so closed-loop control engages where the
+clip is less violent addresses the magnitude; the firmware~v6 slew addressed only
+the rate.
+\item \textbf{Stiffen the battery source or power the logic independently.} The
+bench battery source measures $1.01$--$1.35\,\Omega$ against $0.26$--$0.30\,\Omega$
+on the fuel-cell side, and the sole truncation of the campaign is an ohmic
+collapse of that rail into the logic regulator's dropout region with the share
+loop tracking to $\pm0.02$ and the bus in regulation. On this bench
+$I_\mathrm{max}$ is bounded by the logic rail rather than by anything in the
+control law, and the bound was reached at 8\,A.
+\item \textbf{Do not fit a battery-rail undervoltage threshold to this data.}
+Replaying the dwell filter across the campaign, healthy runs sag to 5.75\,V and
+complete while the truncation died at 5.54\,V; every trip that catches the
+truncation also latches healthy runs. A 0.2\,V separation across a survive-or-die
+boundary indicates a regulator dropout cliff, so the logged operating point
+under-determines the outcome and the discriminator is the sub-millisecond ripple
+depth. The blocking measurement is unchanged: LM1084 input and output probed
+together through a truncation.
+\item \textbf{The load-aware handoff guard is still unvalidated, and the
+de-rating made it harder to test.} Its deferral branch did not engage in any of
+the 23 runs; every latch handed off 0.06--0.24\,A against a 0.50\,A threshold, so
+only the permitting branch ran. $I_\mathrm{handoff}^{\max}$ remains bracketed
+between an observed-clean 0\,A and an observed-fatal 1.3\,A. Exercising it now
+requires a deliberately constructed loaded out-of-band setpoint, since the
+de-rated excursion no longer produces one. The new fuel-cell undervoltage fault
+is likewise correct but untested, its rail never closer than 1.67\,V to trip.
+\item \textbf{Interleave the setpoint order.} The two repeat runs at $r^\ast=0$
+differ by $+31\,\%$ in hold source power within one boot, and hold power rises
+monotonically by $82\,\%$ across the ladder. Setpoint was swept monotonically
+with run order, so the setpoint effect and the session drift are not separable in
+this campaign --- and since total current sets the governor's own clip threshold,
+the per-setpoint operating points are not comparable across it. This hygiene was
+recommended after the firmware-v2 round and has still not been applied.
 \end{enumerate}
 
 \end{document}

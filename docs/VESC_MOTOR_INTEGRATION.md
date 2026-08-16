@@ -5,7 +5,10 @@
 **Hardware revision:** 20260622 (schematic / BOM / Teensy IO CSV mutually consistent)
 **Last revised:** 2026-07-29 — research round + firmware pass; see §13 for what changed.
 **Status:** VESC bringup in progress. Motor replacement decision OPEN but now *decidable* — see §8.
-Velocity-mode and drive-cycle testing are **firmware-blocked** until the encoder is measured (§9, §10).
+Velocity-mode and drive-cycle testing were firmware-blocked until the encoder was measured; both
+measurements landed **2026-08-13** and `VELOCITY_CHAIN_CALIBRATED` now defaults to **1** (§9, §10).
+**Open precondition before any velocity run:** the VESC-side bus-current limits in §4 are still
+unset — see the ⚠️ note there.
 
 ---
 
@@ -160,8 +163,8 @@ Re-running detection later and comparing against these values distinguishes "det
 | Gear Ratio | 13 / 36 = 2.77:1 | represent **9.49:1** | Default is a skateboard preset. Motor Pulley 100 / Wheel Pulley 949 gives exactly 9.49; 2 / 19 gives 9.50 (0.1% error) if fields cap at two digits. |
 | Wheel Diameter | 83 mm | **66 mm** **[measure]** | Tire OD, not rim. Caliper the actual mounted tires — RC rubber varies and balloons at speed. |
 | Max ERPM cap | not set | see the caveat below | **This is a weaker protection than previously assumed.** |
-| **Battery Current Max** | not set / not tracked | **≈4.2 A** | **NEW — this is the setting that actually protects the bus.** See §12.4. |
-| **Battery Current Regen Max** | not set / not tracked | **≈1.5 A** | Bounds regen into the bus/charger. |
+| **Battery Current Max** | **not set / not tracked — UNVERIFIED** | **≈4.2 A** | **NEW — this is the setting that actually protects the bus.** See §12.4. ⚠️ **Precondition for fw v7** (review 2026-08-13, S1): `MOTOR_I_CMD_MAX` rose to 10 A (12 A since 2026-08-15) on the argument that the bus is bounded here. It is not, yet. |
+| **Battery Current Regen Max** | **not set / not tracked — UNVERIFIED** | **≈1.5 A** | Bounds regen into the bus/charger. Same fw v7 precondition as the row above. |
 | `foc_f_zv` (Zero Vector Frequency) | 30 kHz (EDU default) | leave at 30 kHz | See the correction below — it is already at the EDU default *and* at the practical ceiling. |
 
 ### ⚠️ Correction: an ERPM cap does **not** protect against mechanical overspeed
@@ -591,10 +594,10 @@ two constants that genuinely gate the velocity loop were **absent from the old t
 
 | Constant | Value | Status |
 |---|---|---|
-| `ENCODER_SLOTS_PER_REV` | 512 (placeholder) | **BLOCKING — [measure]**. See below. |
-| `FLYWHEEL_RADIUS_M` | 0.033 (nominal from 66 mm OD) | **BLOCKING — [measure]** caliper the tire; confirm what the disc is coupled to. |
+| `ENCODER_SLOTS_PER_REV` | **60** (measured 2026-08-13) | **RESOLVED.** 120 counts per hand-turned flywheel revolution ÷ ×2 decode. See below. |
+| `FLYWHEEL_RADIUS_M` | **0.0762** m (measured 2026-08-13) | **RESOLVED** as a value; the disc's mechanical coupling is still `TODO(verify)` — see §10. |
 | `motorConstant` | 0.1 | **BLOCKING** for velocity mode. Not a real k_t — it is the lumped PI-output→amps gain. Calibrate *after* the two above. |
-| `MOTOR_I_CMD_MAX` | **5.0 A** (bench) | Set from §12.4. Vehicle value 15.0 A after calibration. |
+| `MOTOR_I_CMD_MAX` | **12.0 A** (bench, fw v7 amended) | Raised 5.0 → 10.0 A by operator decision **2026-08-13**, then 10.0 → **12.0 A** on **2026-08-15** (Castle 1406 1900KV fitted, drive-controller bring-up): the §12.4 budget it came from is a *bus*-current budget, but this constant clamps VESC *phase* current (`I_bus ≈ D·I_mot/η_esc`). ⚠️ That argument assumes the §4 bus limits are configured — they are not yet. Vehicle value 15.0 A after calibration. |
 | `LIMIT_I_FC_MAX` | **1.4 A** (bus-side) | Set from §12.2. `TODO(verify)` — the H-20 datasheet is **not in the repo**. |
 | `LIMIT_I_BT_MAX` | **3.0 A** (bus-side) | Validated per-channel envelope. Raise toward 4.2 A only after the scope-ring check. |
 | `MOTOR_CTRL_PERIOD_US` / `CHARGING_CTRL_PERIOD_US` / `POWER_BAL_PERIOD_US` | 2000 / 20000 / 1000 µs | `TODO(calibrate)` — first-cut, chosen to clear the UART floor. Profile the real loop period. |
@@ -614,16 +617,18 @@ the disc, with no datasheet. The decode factor is **×2** per quadrature cycle, 
 `v_actual`, so an under-reading feedback makes the PI **over-drive**: it keeps adding current chasing
 a setpoint the flywheel has already passed. The new `commandMotorCurrent()` ceiling bounds **amps,
 not speed**. With the old broken form the under-read was ~6.6×; with the form corrected but the slot
-count still a placeholder it is ~32×. `VELOCITY_CHAIN_CALIBRATED` (default **0**) therefore makes
-State 98 refuse `'V'` (manual velocity) and `'D'` (drive cycle) outright. Fixed-current tests (`'A'`)
-remain available. **Set the flag to 1 only after measuring both scale constants.**
+count still a placeholder it was ~32×. `VELOCITY_CHAIN_CALIBRATED` gated `'V'` (manual velocity) and
+`'D'` (drive cycle) behind that measurement. **Both scale constants were measured 2026-08-13, so the
+flag now defaults to 1 and both modes are open.** The interlock itself is retained: fit a new disc or
+flywheel and the chain is uncalibrated again — rebuild with `-DVELOCITY_CHAIN_CALIBRATED=0` until it
+is re-measured. `'T'`/`'W'` never close the velocity loop and deliberately bypass the gate either way.
 
 ### VESC-Tool-side, not firmware
 | Setting | Status |
 |---|---|
 | Motor pole count | **[measure]** or resolved by the motor swap (spec motors 2-pole; Castle/AXE 4-pole) |
 | Max ERPM cap | Blocked on pole count — **and a weak protection regardless (§4)** |
-| Battery Current Max / Regen Max | **≈4.2 A / ≈1.5 A** from §12.4. This is the real bus protection. |
+| Battery Current Max / Regen Max | **≈4.2 A / ≈1.5 A** from §12.4. This is the real bus protection — **UNVERIFIED / not yet set (§4)**; the fw v7 precondition applies. |
 | Gear ratio (9.49:1), wheel diameter (66 mm) | For VESC's own speed/distance reporting only |
 | `foc_f_zv` | Already 30 kHz by EDU default, and at the practical ceiling (§4) |
 
@@ -637,13 +642,17 @@ the cap means anything — but per §4, even a correct cap does not bound a non-
 ## 10. Measurements required
 
 ### 🔴 Blocking firmware (do these first — they gate all velocity testing)
-- [ ] **Flywheel encoder disc slot count.** Either count the slots directly, or power the board and
-      hand-turn the flywheel exactly one revolution and read `encoderPos` (State-98 `'S'` dumps it);
-      counts/rev = 2 × slots. → `ENCODER_SLOTS_PER_REV`
-- [ ] **What the encoder disc is coupled to** — the wheel/tire, or a separate dyno roller — and its
-      effective rolling radius in metres. → `FLYWHEEL_RADIUS_M`
+- [x] **Flywheel encoder disc slot count.** ✅ **Measured 2026-08-13** by hand-turning the flywheel
+      exactly one revolution with the board powered and reading `encoderPos`: **120 counts/rev**,
+      hence **60 slots** at the ×2 decode. → `ENCODER_SLOTS_PER_REV = 60`
+- [x] **Effective rolling radius.** ✅ **Measured 2026-08-13: 0.0762 m (3.00 in).**
+      → `FLYWHEEL_RADIUS_M = 0.0762`
+- [ ] **What the encoder disc is coupled to** — surface/roller speed, or wheel *angular* speed —
+      still `TODO(verify)`. The shipped 0.0762 m is only correct for a surface-speed coupling; if the
+      disc is angular-coupled to the wheel, `v_actual` over-reads by 0.0762/0.033 = **2.31×**.
 - [ ] **Tire rolling diameter with calipers** (also feeds the VESC wheel-diameter field)
-- [ ] Then set `-DVELOCITY_CHAIN_CALIBRATED=1` and calibrate `motorConstant`.
+- [x] ✅ `VELOCITY_CHAIN_CALIBRATED` now defaults to **1** (fw v7). Still open: calibrate
+      `motorConstant`, and configure the §4 VESC bus-current limits before running at the 12 A ceiling.
 
 ### 🔴 Blocking safety (from `docs/design-review-2026-07-28.md`)
 - [ ] Confirm the FC TPS61288 is not shorted and has been replaced if necessary; confirm the FC

@@ -5497,6 +5497,21 @@ static void test_wheelspeed_units() {
           "units: ENCODER_COUNTS_PER_REV == slots x quadrature decode factor");
     check(fabsf(ENCODER_QUAD_DECODE - 2.0f) < 1e-6f,
           "units: quadrature decode factor is x2 (doEncoderA decrements / doEncoderB increments only)");
+    // fw v7 (2026-08-13): both scale inputs were bench-measured. Pin the exact values so a silent
+    // revert to the pre-calibration placeholders (512 slots, 0.033 m) fails a test rather than
+    // only shifting the first-principles derivation below.
+    check(fabsf(ENCODER_SLOTS_PER_REV - 60.0f) < 1e-6f,
+          "units: ENCODER_SLOTS_PER_REV == 60 (bench-measured 2026-08-13)");
+    check(fabsf(ENCODER_COUNTS_PER_REV - 120.0f) < 1e-6f,
+          "units: ENCODER_COUNTS_PER_REV == 120 (60 slots x quadrature decode)");
+    check(fabsf(FLYWHEEL_RADIUS_M - 0.0762f) < 1e-6f,
+          "units: FLYWHEEL_RADIUS_M == 0.0762 m / 3.00 in (bench-measured 2026-08-13)");
+    // fw v7 (2026-08-13, operator decision): MOTOR_I_CMD_MAX is the VESC-side phase-current
+    // ceiling, doubled from 5.0 to 10.0 A. Bus current is bounded separately, in the VESC's own
+    // Battery Current Max setting, so this constant only ever gates phase current. Pinned here so
+    // a silent revert is caught, not just absorbed by the tests that use it symbolically.
+    check(fabsf(MOTOR_I_CMD_MAX - 12.0f) < 1e-6f,
+          "units: MOTOR_I_CMD_MAX == 12.0 A (VESC phase-current ceiling, 2026-08-15 operator decision)");
 
     // Drive the encoder at a known constant rate and let the averaging buffer fill.
     // 1 count per 100 us = 10000 counts/s.
@@ -5538,15 +5553,19 @@ static void test_wheelspeed_units() {
 }
 
 // ─── Velocity-chain calibration interlock ────────────────────────────────────
-// While the two scale constants are placeholders, v_actual under-reads, so the velocity PI
-// OVER-DRIVES. commandMotorCurrent() bounds amps, not speed, so the velocity entry points must
-// refuse outright rather than rely on the current clamp.
+// Before fw v7, the two scale constants were placeholders, so v_actual under-read and the
+// velocity PI OVER-DROVE; commandMotorCurrent() bounds amps, not speed, so the velocity entry
+// points refused outright rather than rely on the current clamp. fw v7 (2026-08-13) bench-measured
+// both scale inputs (ENCODER_SLOTS_PER_REV = 60, FLYWHEEL_RADIUS_M = 0.0762 m), so the shipped
+// default flips to CALIBRATED — this is a deliberate retirement of the safety default now that the
+// scale is known, not a regression. The interlock machinery itself (flag, refusal paths, override)
+// is unchanged and stays covered below via the runtime flag.
 static void test_velocity_chain_interlock() {
     test_group("Velocity-chain calibration interlock");
 
-    // The SHIPPED default must be uncalibrated — this is the safety default, not a convenience.
-    check(VELOCITY_CHAIN_CALIBRATED == 0,
-          "interlock: firmware ships with VELOCITY_CHAIN_CALIBRATED = 0");
+    // The SHIPPED default is now calibrated — both scale inputs were bench-measured (fw v7).
+    check(VELOCITY_CHAIN_CALIBRATED == 1,
+          "interlock: firmware ships with VELOCITY_CHAIN_CALIBRATED = 1 (bench-measured, fw v7)");
 
     // Uncalibrated: manual velocity mode refuses and leaves the motor untouched.
     reset_test_state();
@@ -5593,6 +5612,33 @@ static void test_velocity_chain_interlock() {
     setManualMotorCurrent(2.0f);
     check(manualMotorMode == MOTOR_TEST_CURRENT,
           "interlock: fixed-current mode stays available while uncalibrated");
+
+    // fw v7 end-to-end (review C1): reset_test_state() (line ~84) unconditionally forces
+    // velocityChainCalibratedFlag = true for the convenience of the rest of the suite, so on its
+    // own it cannot distinguish "the shipped macro is 1" from "the fixture always wins" — a
+    // regression of VELOCITY_CHAIN_CALIBRATED back to 0 would NOT be caught by a check that only
+    // ever runs after reset_test_state(). This differs from the direct macro check at the top of
+    // this test (which reads VELOCITY_CHAIN_CALIBRATED as a compile-time constant, so it always
+    // reflects the shipped value but proves nothing about runtime behavior). To make an
+    // end-to-end claim honestly, re-seed the runtime flag FROM the macro right here, overriding
+    // the fixture default, so these two checks fail if the macro ever regresses to 0.
+    reset_test_state();
+    velocityChainCalibratedFlag = (VELOCITY_CHAIN_CALIBRATED != 0);
+    setManualMotorVelocity(3.0f);
+    check(manualMotorMode == MOTOR_TEST_VELOCITY,
+          "interlock: fw v7 default — with the flag re-seeded FROM VELOCITY_CHAIN_CALIBRATED "
+          "(not the fixture's forced-true), the velocity path is still live");
+
+    reset_test_state();
+    velocityChainCalibratedFlag = (VELOCITY_CHAIN_CALIBRATED != 0);
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    g_mock_millis = 1000;
+    Serial.rx_queue.push('D');
+    doState98();
+    check(driveCycleActive == true,
+          "interlock: fw v7 default — with the flag re-seeded FROM VELOCITY_CHAIN_CALIBRATED, "
+          "'D' still starts the drive cycle");
 }
 
 // ─── Independent control-loop rate limiting ──────────────────────────────────
@@ -6536,25 +6582,53 @@ static void test_plot_stream_format_and_rate() {
     check(plotModeActive == true, "'L': toggles the plot stream ON");
 
     // doState98() already ran one plotTick() (plotLastMs was back-dated so it streams immediately).
-    check(Serial.tx_contains("sp:") && Serial.tx_contains(",act:") && Serial.tx_contains(",gFC:")
-       && Serial.tx_contains(",gBT:") && Serial.tx_contains(",ifc:") && Serial.tx_contains(",ibt:"),
-          "plot: line carries all six labelled fields in order");
+    // Note: "sp:" and "act:" are no longer unambiguous tokens under fw v7 -- "share_sp:"/"v_sp:"
+    // both contain "sp:" and "share_act:"/"v_act:" both contain "act:", so a bare tx_count("sp:")
+    // would silently double-count (or a bare tx_contains would pass vacuously against the wrong
+    // field). Every probe below anchors on the full label, with a leading comma for the
+    // non-first fields so it can't match inside a longer label.
+    check(Serial.tx_contains("share_sp:") && Serial.tx_contains(",share_act:") && Serial.tx_contains(",gFC:")
+       && Serial.tx_contains(",gBT:") && Serial.tx_contains(",ifc:") && Serial.tx_contains(",ibt:")
+       && Serial.tx_contains(",v_sp:") && Serial.tx_contains(",v_act:"),
+          "plot: line carries all eight labelled fields");
 
-    // Rate gate: no second line until PLOT_PERIOD_MS has elapsed.
+    // Review C2: tx_contains is substring-only, so the check above proves presence, not order --
+    // it would pass just as well if the wire swapped two fields. Assert the actual order by
+    // walking find() forward through the captured line: each label's offset must be strictly
+    // greater than the previous one's, which is only possible if they appear left-to-right in the
+    // sequence the changelog documents.
+    {
+        static const char* kPlotFieldOrder[] = {
+            "share_sp:", ",share_act:", ",gFC:", ",gBT:", ",ifc:", ",ibt:", ",v_sp:", ",v_act:"
+        };
+        size_t searchFrom = 0;
+        bool   inOrder    = true;
+        for (const char* label : kPlotFieldOrder) {
+            size_t pos = Serial.tx.find(label, searchFrom);
+            if (pos == std::string::npos) { inOrder = false; break; }
+            searchFrom = pos + 1;   // next label's offset must be strictly greater than this one
+        }
+        check(inOrder,
+              "plot: the eight labelled fields appear in the documented order "
+              "(share_sp, share_act, gFC, gBT, ifc, ibt, v_sp, v_act)");
+    }
+
+    // Rate gate: no second line until PLOT_PERIOD_MS has elapsed. "share_sp:" appears exactly once
+    // per line (unlike "sp:", which would also match "v_sp:"), so it's a valid line-count proxy.
     Serial.tx_clear();
     g_mock_millis += PLOT_PERIOD_MS - 1;
     doState98();
-    check(Serial.tx_count("sp:") == 0, "plot: no line before PLOT_PERIOD_MS elapses");
+    check(Serial.tx_count("share_sp:") == 0, "plot: no line before PLOT_PERIOD_MS elapses");
     g_mock_millis += 1;
     doState98();
-    check(Serial.tx_count("sp:") == 1, "plot: exactly one line once the period elapses");
+    check(Serial.tx_count("share_sp:") == 1, "plot: exactly one line once the period elapses");
 
     // The reported share is the same quantity powerBalance() closes on.
     Serial.tx_clear();
     I_fc = 3.0f; I_batt = 1.0f;          // |I_fc| / (|I_fc| + |I_batt|) = 0.750
     g_mock_millis += PLOT_PERIOD_MS;
     doState98();
-    check(Serial.tx_contains("act:0.750"), "plot: 'act' is the measured share |I_fc|/(|I_fc|+|I_batt|)");
+    check(Serial.tx_contains("share_act:0.750"), "plot: 'share_act' is the measured share |I_fc|/(|I_fc|+|I_batt|)");
     check(Serial.tx_contains("ifc:3.000") && Serial.tx_contains("ibt:1.000"),
           "plot: per-channel currents reported at 3 decimals");
 
@@ -6563,7 +6637,16 @@ static void test_plot_stream_format_and_rate() {
     I_fc = 0.0f; I_batt = 0.0f;
     g_mock_millis += PLOT_PERIOD_MS;
     doState98();
-    check(Serial.tx_contains("act:0.000"), "plot: zero current reports act=0, not NaN");
+    check(Serial.tx_contains("share_act:0.000"), "plot: zero current reports share_act=0, not NaN");
+
+    // fw v7: v_sp/v_act carry v_setpoint/v_actual verbatim, at 3 decimals, independent of the
+    // share fields above.
+    Serial.tx_clear();
+    v_setpoint = 2.5f; v_actual = -1.125f;
+    g_mock_millis += PLOT_PERIOD_MS;
+    doState98();
+    check(Serial.tx_contains(",v_sp:2.500"), "plot: v_sp reports v_setpoint at 3 decimals");
+    check(Serial.tx_contains(",v_act:-1.125"), "plot: v_act reports v_actual at 3 decimals");
 
     // 'L' again turns it off and the stream stops.
     Serial.tx_clear();
@@ -6572,7 +6655,7 @@ static void test_plot_stream_format_and_rate() {
     check(plotModeActive == false, "'L': toggles the plot stream OFF");
     g_mock_millis += PLOT_PERIOD_MS * 4;
     doState98();
-    check(Serial.tx_count("sp:") == 0, "plot: no lines emitted once the stream is off");
+    check(Serial.tx_count("share_sp:") == 0, "plot: no lines emitted once the stream is off");
 }
 
 static void test_plot_suppresses_status_lines() {
@@ -7008,25 +7091,28 @@ static void test_trap_peak_clamp_and_negative() {
     test_group("Trapezoid profile — peak bounded by TRAP_I_ABS_MAX (not MOTOR_I_CMD_MAX); negative accepted");
     reset_test_state();
 
-    // A peak ABOVE MOTOR_I_CMD_MAX (5A) is accepted un-clamped — phase current is not bus current,
-    // so the 5A source-budget ceiling does not apply here. Only TRAP_I_ABS_MAX (ESC rating) bounds it.
+    // A peak ABOVE MOTOR_I_CMD_MAX (10A since 2026-08-13) is accepted un-clamped — phase current is
+    // not bus current, so the source-budget ceiling does not apply here. Only TRAP_I_ABS_MAX (ESC
+    // rating, 25A) bounds it. 16A is chosen so it stays above MOTOR_I_CMD_MAX with headroom (not
+    // just equal to it, which would pass this check for the wrong reason) while staying below
+    // TRAP_I_ABS_MAX.
     mainState = 98;
     g_pin_value[MOT_PWR_ENABLE] = HIGH;
     g_mock_millis = 0;
     Serial.rx_queue.push('T');
     doState98();
     g_mock_millis = 1000;
-    feed_serial_line(" 10 0 10");   // 10A > MOTOR_I_CMD_MAX, < TRAP_I_ABS_MAX; rampMs = 1000
+    feed_serial_line(" 16 0 16");   // 16A > MOTOR_I_CMD_MAX(10), < TRAP_I_ABS_MAX(25); rampMs = 1000
     doState98();
-    check(trapProfileActive == true && fabsf(trapImax - 10.0f) < 1e-4f,
-          "trap: 10A peak accepted un-clamped (above the 5A MOTOR_I_CMD_MAX budget)");
-    // ...and the VESC actually receives >5A: mid-ramp at t=750ms → 7.5A.
+    check(trapProfileActive == true && fabsf(trapImax - 16.0f) < 1e-4f,
+          "trap: 16A peak accepted un-clamped (above the 10A MOTOR_I_CMD_MAX budget)");
+    // ...and the VESC actually receives more than MOTOR_I_CMD_MAX: mid-ramp at t=750ms → 12A.
     g_mock_millis = 1000 + 750;
     g_mock_micros = 1000000;
     vesc.reset();
     advanceTrapProfile();
-    check(!vesc.current_calls.empty() && fabsf(vesc.last_current - 7.5f) < 0.05f,
-          "trap: commanded current above MOTOR_I_CMD_MAX reaches the VESC (7.5A sent)");
+    check(!vesc.current_calls.empty() && fabsf(vesc.last_current - 12.0f) < 0.05f,
+          "trap: commanded current above MOTOR_I_CMD_MAX reaches the VESC (12A sent)");
 
     // Positive peak beyond the ESC rating saturates to +TRAP_I_ABS_MAX.
     reset_test_state();
@@ -7905,7 +7991,7 @@ static void test_sdlog_header_v4_profile_params() {
                   "v4 hdr/D: both amp and b fields stay 0.0");
             // Byte 19 is NOT architecturally reserved -- it is the high byte of the 2-byte
             // fwVersion field written at offset 18 (uint16_t). It reads 0 here only because
-            // FW_VERSION (6) fits in the low byte; the true always-reserved tail is 28-31 (see
+            // FW_VERSION (7) fits in the low byte; the true always-reserved tail is 28-31 (see
             // the offset arithmetic note in the report). Checked separately, not folded into a
             // "byte 19 is reserved" claim.
             check((uint8_t)(*f)[19] == 0,
@@ -8149,7 +8235,7 @@ static void test_sdlog_plot_simultaneous() {
 
     check(logRecordCount - recsBefore == 100,
           "SD + plot: logging still lands 100 records in 100 ms with the plotter streaming");
-    check(Serial.tx_count("sp:") == 100 / (int)PLOT_PERIOD_MS,
+    check(Serial.tx_count("share_sp:") == 100 / (int)PLOT_PERIOD_MS,
           "SD + plot: the plot stream still emits exactly one line per PLOT_PERIOD_MS");
     check(Serial.tx_count("[SD]") == 0,
           "SD + plot: the logger prints nothing periodic, so it cannot corrupt the plotter parse");
@@ -8165,7 +8251,7 @@ static void test_sdlog_plot_simultaneous() {
           "SD + plot: stopping the profile leaves the plot stream running");
     Serial.tx_clear();
     sd_run_ms(100);
-    check(Serial.tx_count("sp:") == 100 / (int)PLOT_PERIOD_MS,
+    check(Serial.tx_count("share_sp:") == 100 / (int)PLOT_PERIOD_MS,
           "SD + plot: the plot cadence is unchanged after the log closed");
 }
 
@@ -9722,7 +9808,7 @@ static void test_y_status_and_suppression() {
     y_run_to(2000);
     check(Serial.tx_count("[YP] t=") == 0,
           "Y status: the [YP] snapshot is suppressed while the plot stream is running");
-    check(Serial.tx_count("sp:") > 0,
+    check(Serial.tx_count("share_sp:") > 0,
           "Y status: the plot stream itself keeps emitting while the combined profile runs");
     check(combinedProfileActive && combinedRegionIdx > 0,
           "Y status: the region machine keeps advancing while the status lines are suppressed");
@@ -10079,8 +10165,8 @@ static void test_w_params_and_defaults() {
     check(wProfileActive == true && !Serial.tx_contains("WARN: b > "),
           "W params: a bound exactly at Y_BOUND_WARN starts without a warning (strict >)");
 
-    // The ceiling is the TRAPEZOID's (ESC rating), not the 5 A velocity-path budget — this
-    // profile commands phase current through the same chokepoint 'T' uses.
+    // The ceiling is the TRAPEZOID's (ESC rating), not the MOTOR_I_CMD_MAX (10 A) velocity-path
+    // budget — this profile commands phase current through the same chokepoint 'T' uses.
     reset_test_state();
     w_start(" 25");
     check(wProfileActive == true && near_f(wProfileImax, TRAP_I_ABS_MAX),
@@ -10093,11 +10179,12 @@ static void test_w_params_and_defaults() {
     check(wProfileActive == false && Serial.tx_contains("Imax must be <= "),
           "W params: an Imax just above TRAP_I_ABS_MAX is refused");
 
-    // A peak above MOTOR_I_CMD_MAX (the 5 A source budget) must still be accepted — same policy
-    // as 'T', and the reason the ceiling is TRAP_I_ABS_MAX in the first place.
+    // A peak above MOTOR_I_CMD_MAX (the 10 A source budget) must still be accepted — same policy
+    // as 'T', and the reason the ceiling is TRAP_I_ABS_MAX in the first place. 16 A is chosen so it
+    // is clearly above MOTOR_I_CMD_MAX (10 A) rather than merely equal to it.
     reset_test_state();
-    w_start(" 10");
-    check(wProfileActive == true && near_f(wProfileImax, 10.0f),
+    w_start(" 16");
+    check(wProfileActive == true && near_f(wProfileImax, 16.0f),
           "W params: a peak above MOTOR_I_CMD_MAX is accepted un-clamped, as 'T' accepts it");
 }
 
@@ -10739,7 +10826,7 @@ static void test_w_status_suppression_no_charging() {
     y_run_to(2000);
     check(Serial.tx_count("[WP] t=") == 0,
           "W status: the [WP] snapshot is suppressed while the plot stream is running");
-    check(Serial.tx_count("sp:") > 0,
+    check(Serial.tx_count("share_sp:") > 0,
           "W status: the plot stream itself keeps emitting while the current profile runs");
     check(wProfileActive && wRegionIdx > 0,
           "W status: the region machine keeps advancing while the status lines are suppressed");

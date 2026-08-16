@@ -821,6 +821,264 @@ def wp0101_cut():
     print(FIGS / "fig_wp0101_cut.png")
 
 
+
+
+# ---------------------------------------------------------- fw v6 sweep (2026-08-13)
+V6_SWEEP = [  # run, share setpoint — one boot, two automated T-sweep batches
+    ("TP0102", 0.00), ("TP0103", 0.10), ("TP0104", 0.12), ("TP0105", 0.15),
+    ("TP0106", 0.17), ("TP0107", 0.20), ("TP0108", 0.22), ("TP0109", 0.25),
+    ("TP0110", 0.35), ("TP0111", 0.50),
+    ("TP0112", 0.00), ("TP0113", 0.90), ("TP0114", 0.88), ("TP0115", 0.85),
+    ("TP0116", 0.83), ("TP0117", 0.80), ("TP0118", 0.78), ("TP0119", 0.75),
+    ("TP0120", 0.65),
+]
+# setpoints outside [DROOP_R_MIN, DROOP_R_MAX] = [0.15, 0.85] -> setpoint latch
+V6_LATCHED = {"TP0102", "TP0103", "TP0104", "TP0112", "TP0113", "TP0114"}
+
+
+def v6_metrics():
+    """Per-run hold metrics + a strict total-source-dropout census.
+
+    The dropout criterion is deliberately strict: BOTH channels at hard zero
+    while the motor is commanded above 1 A. A per-channel threshold test
+    chops on the 8.06 mA current-sense quantum and manufactures hundreds of
+    spurious events in the latched runs, where one channel is off by design.
+    """
+    rows = []
+    for run, sp in V6_SWEEP:
+        t, d = load(run)
+        itot = d["I_fc"] + d["I_batt"]
+        hold = d["I_cmd"] >= 5.99
+        act = d["share_act"][hold] if hold.any() else np.array([np.nan])
+        # strict: both channels dark under load
+        # A dropout is a LOSS OF CONDUCTION, so both tests are needed: the
+        # pair must go dark *and* must have been conducting immediately
+        # before. Testing darkness alone counts the trapezoid's own
+        # zero-current tails (where I_cmd is still commanded but the motor
+        # draws nothing) as multi-second "events". The census is not
+        # hold-gated: both firmware-v6 dropouts occur on the ramp, at the
+        # open-loop -> closed-loop handover, not in the constant-current hold.
+        dark = (itot < 0.10) & (d["I_cmd"] > 1.0)
+        n_ev, dur, run_on, t0 = 0, [], False, 0.0
+        for k, (tt, dk) in enumerate(zip(t, dark)):
+            if dk and not run_on:
+                # qualify the ONSET only: the pair must have been carrying
+                # real current in the samples immediately before going dark.
+                if k and np.max(itot[max(0, k - 5):k]) > 0.35:
+                    run_on, t0 = True, tt
+            elif not dk and run_on:
+                run_on = False
+                dur.append(tt - t0)
+                n_ev += 1
+        itot_hold = float(np.nanmean(itot[hold])) if hold.any() else np.nan
+        eff_sp = max(sp, 0.30 / itot_hold) if itot_hold == itot_hold else np.nan
+        rows.append(dict(
+            run=run, sp=sp, latched=run in V6_LATCHED,
+            act=float(np.nanmean(act)), act_sd=float(np.nanstd(act)),
+            itot=itot_hold, eff_sp=eff_sp,
+            events=n_ev, worst_ms=(max(dur) * 1e3 if dur else 0.0),
+            vbus=float(np.min(d["V_bus"])), vbatt=float(np.min(d["V_batt"])),
+            vfc=float(np.min(d["V_fc"])),
+            pwr=float(np.nanmean((d["V_fc"] * d["I_fc"] +
+                                  d["V_batt"] * d["I_batt"])[hold])),
+        ))
+    return rows
+
+
+def v6_sweep_summary(rows):
+    """Three panels: governed tracking vs the effective setpoint, the rail
+    census, and the session-drift confound."""
+    fig, (a0, a1, a2) = plt.subplots(1, 3, figsize=(11.5, 3.5))
+
+    gov = [r for r in rows if not r["latched"]]
+    a0.plot([r["sp"] for r in gov], [r["act"] - r["sp"] for r in gov],
+            "o", color="#bbbbbb", ms=5, label="error vs raw setpoint")
+    a0.plot([r["sp"] for r in gov], [r["act"] - r["eff_sp"] for r in gov],
+            "o", color=C_SHR, ms=5, label="error vs governed setpoint")
+    a0.axhline(0, color="#8a8a8a", lw=0.8)
+    style(a0, "Share error [-]")
+    a0.set_xlabel("Share setpoint", color=C_TEXT, fontsize=10)
+    a0.set_title("Tracking: the apparent bias is the floor clip",
+                 color=C_TEXT, fontsize=10)
+    legend(a0, loc="lower left")
+
+    a1.plot([r["sp"] for r in rows], [r["vbus"] for r in rows],
+            "o", color=C_VBUS, ms=5, label="$V_\\mathrm{bus}$ run min")
+    a1.plot([r["sp"] for r in rows], [r["vbatt"] for r in rows],
+            "s", color=C_IBT, ms=4, label="$V_\\mathrm{batt}$ run min")
+    a1.axhline(12.0, color=C_VBUS, lw=0.8, ls=":", label="bus UV limit 12.0 V")
+    a1.annotate("TP0115", xy=(0.85, 12.19), xytext=(0.60, 13.4), fontsize=8,
+                color=C_VBUS,
+                arrowprops=dict(arrowstyle="->", color=C_VBUS, lw=1.0))
+    style(a1, "Run-minimum voltage [V]")
+    a1.set_xlabel("Share setpoint", color=C_TEXT, fontsize=10)
+    a1.set_title("Rail census: one bus excursion, at $r_{\\max}$",
+                 color=C_TEXT, fontsize=10)
+    legend(a1, loc="center right")
+
+    order = list(range(len(rows)))
+    a2.plot(order, [r["pwr"] for r in rows], "o-", color=C_IFC, ms=4, lw=1.0,
+            label="hold source power")
+    for i, r in enumerate(rows):
+        if r["sp"] == 0.00:
+            a2.plot(i, r["pwr"], "o", color=C_VBUS, ms=8, mfc="none", mew=1.6)
+    a2.annotate("repeat pair,\nsame setpoint:\n+31%",
+                xy=(10, rows[10]["pwr"]), xytext=(3.2, 12.6), fontsize=8,
+                color=C_VBUS,
+                arrowprops=dict(arrowstyle="->", color=C_VBUS, lw=1.0))
+    style(a2, "Hold source power [W]")
+    a2.set_xlabel("Run order within the boot", color=C_TEXT, fontsize=10)
+    a2.set_title("Session drift confounds the ladder", color=C_TEXT,
+                 fontsize=10)
+    legend(a2, loc="upper left")
+
+    fig.tight_layout()
+    fig.savefig(FIGS / "fig_v6sweep_summary.png", dpi=150)
+    plt.close(fig)
+    print(FIGS / "fig_v6sweep_summary.png")
+
+
+def tp0115_handover():
+    """The one bus excursion of the firmware-v6 ladder: a total source
+    dropout at the open-loop -> closed-loop handover, at r* = DROOP_R_MAX."""
+    t, d = load("TP0115")
+    m = (t >= 4.415) & (t <= 4.485)
+    fig, (a0, a1, a2) = plt.subplots(
+        3, 1, figsize=(8.5, 7.2), sharex=True,
+        gridspec_kw=dict(height_ratios=[1.2, 1, 1]))
+
+    a0.plot(t[m], d["I_fc"][m], color=C_IFC, lw=1.1, label="$I_\\mathrm{fc}$")
+    a0.plot(t[m], d["I_batt"][m], color=C_IBT, lw=1.1,
+            label="$I_\\mathrm{batt}$")
+    a0.axvspan(4.4491, 4.4550, color="#f3c9c6", alpha=0.6, zorder=0)
+    a0.annotate("both dark,\n5.9 ms", xy=(4.4515, 0.30), xytext=(4.4335, 1.15),
+                fontsize=8, color=C_VBUS, ha="center",
+                arrowprops=dict(arrowstyle="->", color=C_VBUS, lw=1.0))
+    a0.annotate("BT drops out first", xy=(4.4270, 0.02), xytext=(4.4165, 1.15),
+                fontsize=8, color=C_IBT,
+                arrowprops=dict(arrowstyle="->", color=C_IBT, lw=1.0))
+    style(a0, "Channel current [A]")
+    legend(a0, ncol=2, loc="upper left")
+
+    a1.plot(t[m], r_cmd(d)[m], color="#c98a1b", lw=1.3,
+            label="$r_\\mathrm{cmd}$ (slew-limited)")
+    a1.axvline(4.4247, color="#8a8a8a", lw=0.9, ls="--")
+    a1.annotate("open loop $\\rightarrow$ closed loop", xy=(4.4255, 0.80),
+                fontsize=8, color=C_TEXT)
+    a1.axhline(0.85, color=C_VBUS, lw=0.8, ls=":", label="$r_{\\max}=0.85$")
+    style(a1, "Commanded droop ratio [-]")
+    legend(a1, loc="lower left")
+
+    a2.plot(t[m], d["V_bus"][m], color=C_VBUS, lw=1.2,
+            label="$V_\\mathrm{bus}$")
+    a2.plot(t[m], d["V_batt"][m], color=C_IBT, lw=1.0,
+            label="$V_\\mathrm{batt}$")
+    a2.axhline(12.0, color=C_VBUS, lw=0.8, ls=":", label="UV limit 12.0 V")
+    style(a2, "Voltage [V]")
+    a2.set_xlabel("Time [s]", color=C_TEXT, fontsize=10)
+    legend(a2, loc="lower left")
+
+    fig.align_ylabels()
+    fig.tight_layout()
+    fig.savefig(FIGS / "fig_tp0115_handover.png", dpi=150)
+    plt.close(fig)
+    print(FIGS / "fig_tp0115_handover.png")
+
+
+def wp0124_brownout():
+    """The Imax = 8 A truncation: an ohmic battery-rail collapse, fully
+    resolved on the logged timescale, against the surviving 6 A twin."""
+    fig, (a0, a1) = plt.subplots(1, 2, figsize=(11.0, 4.0))
+
+    for run, col, lbl in (("WP0123", C_IFC, "WP0123, $I_\\max$ = 6 A (survived)"),
+                          ("WP0124", C_VBUS, "WP0124, $I_\\max$ = 8 A (MCU stop)")):
+        t, d = load(run)
+        m = (t >= 10.0) & (t <= 15.0)
+        a0.plot(t[m], d["V_batt"][m], color=col, lw=1.0, label=lbl)
+    a0.axvline(14.571, color=C_VBUS, lw=1.0, ls="--")
+    a0.annotate("log ends\n(no trailer)", xy=(14.55, 5.75), xytext=(13.15, 5.45),
+                fontsize=8, color=C_VBUS, ha="center",
+                arrowprops=dict(arrowstyle="->", color=C_VBUS, lw=1.0))
+    a0.axhspan(5.3, 6.5, color="#f3c9c6", alpha=0.45, zorder=0)
+    a0.annotate("LM1084 dropout region", xy=(10.15, 6.28), fontsize=8,
+                color=C_VBUS)
+    style(a0, "Battery rail $V_\\mathrm{batt}$ [V]")
+    a0.set_xlabel("Profile time [s]", color=C_TEXT, fontsize=10)
+    a0.set_title("The rail that collapsed", color=C_TEXT, fontsize=10)
+    legend(a0, loc="upper right")
+
+    # ohmic fit, both sources, WP0124
+    t, d = load("WP0124")
+    m = (t >= 11.0) & (t <= 15.0)
+    for cur, volt, col, nm in (("I_batt", "V_batt", C_IBT, "battery"),
+                               ("I_fc", "V_fc", C_IFC, "fuel cell")):
+        sel = m & (d[cur] > 0.2)
+        p = np.polyfit(d[cur][sel], d[volt][sel], 1)
+        xs = np.linspace(0.2, d[cur][sel].max(), 50)
+        a1.plot(d[cur][sel], d[volt][sel], ".", color=col, ms=1.4, alpha=0.30)
+        a1.plot(xs, np.polyval(p, xs), color=col, lw=1.8,
+                label=f"{nm}: $R_\\mathrm{{src}}$ = {-p[0]:.2f} $\\Omega$")
+    style(a1, "Source rail voltage [V]")
+    a1.set_xlabel("Channel current [A]", color=C_TEXT, fontsize=10)
+    a1.set_title("Source stiffness: a $4\\times$ asymmetry", color=C_TEXT,
+                 fontsize=10)
+    legend(a1, loc="lower left")
+
+    fig.tight_layout()
+    fig.savefig(FIGS / "fig_wp0124_brownout.png", dpi=150)
+    plt.close(fig)
+    print(FIGS / "fig_wp0124_brownout.png")
+
+
+def vbatt_threshold():
+    """Why no V_batt undervoltage threshold separates the survivors from the
+    truncation on this bench: replay the firmware-v6 leaky-dwell filter."""
+    def dwell_latch(t, v, thr, latch_ms=20.0, leak=0.05, dtcap=5.0):
+        dw, prev = 0.0, t[0]
+        for tt, vv in zip(t, v):
+            dt = min((tt - prev) * 1e3, dtcap)
+            prev = tt
+            dw = dw + dt if vv < thr else dw - leak * dt
+            dw = max(dw, 0.0)
+            if dw >= latch_ms:
+                return tt
+        return None
+
+    runs = ["TP0102", "TP0103", "TP0104", "TP0105", "TP0107", "TP0111",
+            "TP0112", "TP0115", "TP0117", "TP0120",
+            "WP0121", "WP0122", "WP0123", "WP0124"]
+    thrs = [6.8, 6.5, 6.0, 5.7]
+    fig, ax = plt.subplots(figsize=(9.0, 3.8))
+    for j, thr in enumerate(thrs):
+        for i, run in enumerate(runs):
+            t, d = load(run)
+            lat = dwell_latch(t, d["V_batt"], thr)
+            healthy = run != "WP0124"
+            if lat is None:
+                continue
+            col = C_VBUS if healthy else C_IFC
+            mk = "x" if healthy else "o"
+            ax.plot(i, j, mk, color=col, ms=9, mew=2.0)
+    ax.plot([], [], "x", color=C_VBUS, ms=9, mew=2.0,
+            label="false latch on a healthy run")
+    ax.plot([], [], "o", color=C_IFC, ms=9, mew=2.0,
+            label="correct latch (WP0124, the truncation)")
+    ax.set_yticks(range(len(thrs)))
+    ax.set_yticklabels([f"{x:.1f} V" for x in thrs])
+    ax.set_xticks(range(len(runs)))
+    ax.set_xticklabels(runs, rotation=60, ha="right", fontsize=7.5)
+    ax.set_ylim(len(thrs) - 0.4, -0.6)   # higher trip voltage at the top
+    ax.set_xlim(-0.6, len(runs) - 0.4)
+    style(ax, "Candidate $V_\\mathrm{batt}$ trip")
+    ax.set_title("No threshold separates the survivors from the truncation",
+                 color=C_TEXT, fontsize=10)
+    legend(ax, loc="upper center", ncol=2)
+    fig.tight_layout()
+    fig.savefig(FIGS / "fig_vbatt_threshold.png", dpi=150)
+    plt.close(fig)
+    print(FIGS / "fig_vbatt_threshold.png")
+
+
 if __name__ == "__main__":
     tp0010_zoom()
     tp0013_zoom()
@@ -851,3 +1109,10 @@ if __name__ == "__main__":
     wp0100_r6()
     fc_knee()
     wp0101_cut()
+    v6rows = v6_metrics()
+    for r in v6rows:
+        print(r)
+    v6_sweep_summary(v6rows)
+    tp0115_handover()
+    wp0124_brownout()
+    vbatt_threshold()
