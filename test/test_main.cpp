@@ -5591,6 +5591,36 @@ static void enc_reset() {
 static void test_encoder_isr_decode() {
     test_group("quadrature ISR decode (raw pin levels)");
 
+    // ── Pin assignment. Pinned literally because a stale pin map is precisely what produced the
+    //    2026-08-16 bench report: the encoder was bodged onto pins 14/15 and the firmware kept
+    //    reading 2/8, so no interrupt ever fired and every downstream check below still "passed"
+    //    against a decoder that could not see the hardware. Nothing else in the suite would notice
+    //    — the tests drive the ISRs through these same macros, so a wrong number is self-consistent
+    //    everywhere. Authority is `references/Scale Car Teensy IO - IO.csv`; update both together.
+    check(ENC_A == 14, "pins: ENC_A == 14 (bodged from 2 on 2026-08-16; IO CSV row updated)");
+    check(ENC_B == 15, "pins: ENC_B == 15 (bodged from 8 on 2026-08-16; IO CSV row updated)");
+    // ENC_ENABLE is GONE — the sensors are hardwired to power, so pin 7 must not be driven. A
+    // re-added #define would not fail to compile anywhere; this is the only thing standing in the
+    // way of someone reinstating a write to a pin that has no net.
+    #ifdef ENC_ENABLE
+    check(false, "pins: ENC_ENABLE must not exist (sensors hardwired to power; pin 7 undriven)");
+    #else
+    check(true,  "pins: ENC_ENABLE is absent (sensors hardwired to power; pin 7 undriven)");
+    #endif
+    // The encoder pins must not collide with anything else the firmware drives. A collision would
+    // be silent: both macros would compile and both would read a real pin.
+    const int assigned[] = {
+        RX, TX, FC_REG_ENABLE, BT_REG_ENABLE, MPPT_DISABLE, CHARGER_STAT, CBAL_DISABLE,
+        MOSI, MISO, SCK, SDA, SCL, FC_VOLTAGE, BT_VOLTAGE, BUS_VOLTAGE,
+        FC_BUS_ENABLE, BT_BUS_ENABLE, MOT_PWR_ENABLE, REGEN_ENABLE, FC_CHARGE_ENABLE,
+        BT_SEQUENCE_ENABLE, CS_MDAC_FC, CS_MDAC_BT, CHG_VOLTAGE, RGN_VOLTAGE,
+        FC_CURRENT, BT_CURRENT,
+    };
+    bool enc_collision = false;
+    for (int p : assigned) if (p == ENC_A || p == ENC_B) enc_collision = true;
+    check(!enc_collision, "pins: ENC_A/ENC_B collide with no other assigned pin");
+    check(ENC_A != ENC_B, "pins: ENC_A and ENC_B are distinct");
+
     // ── Forward: A leads B, 00 -> 10 -> 11 -> 01 -> 00. Exactly +2 per cycle (the x2 decode
     //    ENCODER_QUAD_DECODE asserts symbolically is verified against the ISRs here).
     enc_reset();

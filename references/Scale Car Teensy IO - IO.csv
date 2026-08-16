@@ -1,17 +1,17 @@
 Pin Number,Input/Output,Functionality,Assignment,Code Name,Notes
 0,Comminication,UART,RX,RX,Used for VESC
 1,Comminication,UART,TX,TX,Used for VESC
-2,Input,Interrupt,Encoder-A,ENC_A,
 3,Output,Digital,FC regulator enable,FC_REG_ENABLE,
 4,Output,Digital,BT regulator enable,BT_REG_ENABLE,
 5,Output,Digital,Charger MPPT disable,MPPT_DISABLE,
 6,Input,Digital,Charger status,CHARGER_STAT,
-7,Output,Digital,Enable optical sensor,ENC_ENABLE,
-8,Input,Interrupt,Encoder-B,ENC_B,
+7,Output,Digital,Enable optical sensor,ENC_ENABLE,No longer in use
 9,Output,Digital,Cell balancing disable,CBAL_DISABLE,
 11,Communication,SPI,MOSI,MOSI,Used for MDAC
 12,Communication,SPI,MISO,MISO,Used for MDAC
 13,Communication,SPI,SCK,SCK,Used for MDAC
+14,Input,Interrupt,Encoder-A,ENC_A,
+15,Input,Interrupt,Encoder-B,ENC_B,
 18,Communication,I2C,SDA,SDA,Used for battery charger
 19,Communication,I2C,SCL,SCL,Used for battery charger
 24,Input,Analog,Fuel cell voltage measurement,FC_VOLTAGE,

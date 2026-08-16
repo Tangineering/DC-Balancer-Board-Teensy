@@ -416,7 +416,16 @@
  *          PI's anti-windup integMax is derived from MOTOR_I_CMD_MAX and rescales automatically.
  *      No BLG record or header change (the log already carried v_sp/v_act, and flags bit1 already
  *      reported velocityChainCalibrated()), and no UDP telemetry change — still v4 / 58 bytes.
- *  - fw v8 (2026-08-16) — encoder observability, plus the slot-count correction it uncovered.
+ *  - fw v8 (2026-08-16) — encoder pin move, observability, and the slot-count correction.
+ *      (0) PIN MAP: ENC_A 2 → 14, ENC_B 8 → 15, and ENC_ENABLE (7) DELETED. A hardware bodge
+ *          rerouted both encoder channels and hardwired the optical sensors to power, so there is
+ *          no enable net left; pin 7 is now undriven (no pinMode, no digitalWrite) and pins 2/8
+ *          are free. This is the ROOT CAUSE of the v_actual == 0.000 report that opened this
+ *          version: the firmware was reading two pins the encoder was no longer wired to, so no
+ *          interrupt ever fired. Teensy 4.1 pins 14/15 are A0/A1 and Serial3 TX/RX — neither
+ *          alternate function is used here, and both are interrupt-capable. The IO CSV was updated
+ *          in lockstep by the operator (pin 7 row marked "No longer in use"), so the CSV remains
+ *          the authority and this block still follows it row-for-row.
  *      (a) ENCODER_SLOTS_PER_REV 60.0f → 120.0f, so ENCODER_COUNTS_PER_REV 120 → 240. The disc was
  *          COUNTED DIRECTLY and physically carries 120 slots. fw v7's 60 was a transcription
  *          error, not a competing measurement: the 2026-08-13 figure of "120" was recorded as 120
@@ -431,7 +440,9 @@
  *          beams that are not 90° apart all produce an identical, silent encoderPos == 0, none of
  *          them distinguishable from a stationary flywheel. Added volatile encEdgeCountA/B
  *          (incremented at the top of each ISR; read by nothing but the dumps), an '--- Encoder ---'
- *          block in the State-98 'S' dump (ENC_ENABLE, live ENC_A/ENC_B levels, encoderPos, both
+ *          block in the State-98 'S' dump (live ENC_A/ENC_B levels WITH their pin numbers — this
+ *          dump is the field tool for stale-pin-map faults and must not report the wrong pins
+ *          silently — encoderPos, both
  *          edge counts, v_actual, and the scale constants in force), and the same line in the IDLE
  *          printSensors() dump so a hand-turn check needs no test-mode entry.
  *      No control-path change: sequencing, faults, PI gains, droop and the charger are untouched.
@@ -450,19 +461,32 @@ VescUart vesc;
 EthernetUDP Udp;
 
 // ── Pin definitions (source: Scale_Car_Teensy_IO__IO.csv) ────────────────────
+// A 2026-08-16 hardware bodge rerouted both encoder channels (pins 2/8 -> 14/15) and deleted the
+// sensor-enable net (pin 7, CSV row now "No longer in use"). The IO CSV was amended by the
+// operator to describe the as-built board, so this block still follows it row-for-row. See the
+// "Hardware bodge record (2026-08-16)" in CLAUDE.md; on a re-spin that reverts the bodge, revert
+// firmware and CSV together.
 #define RX                  0    // UART VESC RX
 #define TX                  1    // UART VESC TX
-#define ENC_A               2    // IN (INT) encoder A
+                                 // pin 2 — FREE (was ENC_A before the 2026-08-16 bodge)
 #define FC_REG_ENABLE       3    // OUT fuel-cell boost regulator enable
 #define BT_REG_ENABLE       4    // OUT battery boost regulator enable
 #define MPPT_DISABLE        5    // OUT Ag105 MPPT disable (active-LOW: LOW=inhibit, HIGH=enabled)
 #define CHARGER_STAT        6    // IN  Ag105 STAT pin
-#define ENC_ENABLE          7    // OUT optical encoder enable
-#define ENC_B               8    // IN (INT) encoder B
+                                 // pin 7 — FREE (was ENC_ENABLE; the optical sensors are hardwired
+                                 //          to power by the 2026-08-16 bodge, so there is no enable
+                                 //          net left to drive. Deliberately left UNDRIVEN — no
+                                 //          pinMode, no digitalWrite anywhere in this file.)
+                                 // pin 8 — FREE (was ENC_B before the 2026-08-16 bodge)
 #define CBAL_DISABLE        9    // OUT BQ29200 cell-balancer disable (LOW=OVP active, HIGH=disabled)
 #define MOSI               11    // SPI MDAC
 #define MISO               12    // SPI MDAC
 #define SCK                13    // SPI MDAC
+// Encoder channels, RELOCATED by the 2026-08-16 bodge from pins 2/8. Teensy 4.1 pins 14/15 are
+// A0/A1 and also Serial3 TX/RX; neither alternate function is used by this firmware, and both pins
+// are interrupt-capable like every Teensy 4.x digital pin, so CHANGE interrupts work unchanged.
+#define ENC_A              14    // IN (INT) encoder A  (was pin 2)
+#define ENC_B              15    // IN (INT) encoder B  (was pin 8)
 #define SDA                18    // I2C Ag105 charger
 #define SCL                19    // I2C Ag105 charger
 #define FC_VOLTAGE         24    // AIN fuel-cell voltage
@@ -2477,7 +2501,8 @@ void setup() {
     // pad to GPIO, which silently disconnects the UART and kills all VESC communication.
     pinMode(ENC_A,   INPUT);
     pinMode(ENC_B,   INPUT);
-    pinMode(ENC_ENABLE,    OUTPUT);
+    // No encoder-enable pin. The optical sensors are hardwired to power by the 2026-08-16 bodge,
+    // so pin 7 has no net and is deliberately left undriven (see the pin-definition block).
     // Boost regulators default OFF. doState0() decides when to enable them: in production after the
     // bus switches (gentle bring-up), and in BENCH_TEST never at boot (the power stage stays dark so
     // a soft bench supply can't brown out and motorboat the boost). See "VBUS controlled bring-up".
@@ -2512,7 +2537,6 @@ void setup() {
     digitalWrite(CS_MDAC_BT,    HIGH);
     // FC_REG_ENABLE / BT_REG_ENABLE intentionally left LOW here — doState0() enables them after
     // the bus switches so the bus is charged via boost soft-start, not a hot-plug step.
-    digitalWrite(ENC_ENABLE,    LOW);
 
     attachInterrupt(digitalPinToInterrupt(ENC_A), doEncoderA, CHANGE);
     attachInterrupt(digitalPinToInterrupt(ENC_B), doEncoderB, CHANGE);
@@ -2617,7 +2641,9 @@ void printSensors() {
     Serial.print("encoderPos=");         Serial.print(encSnap);
     Serial.print("  edges A=");          Serial.print(edgeSnapA);
     Serial.print(" B=");                 Serial.print(edgeSnapB);
-    Serial.print("  ENC_ENABLE=");       Serial.println(digitalRead(ENC_ENABLE));
+    Serial.print("  (pins ");            Serial.print(ENC_A);
+    Serial.print("/");                   Serial.print(ENC_B);
+    Serial.println(")");
     Serial.print("power_share_actual="); Serial.println(power_share_actual, 3);
     Serial.print("P_fc=");               Serial.print(P_fc_actual, 2); Serial.print("W  ");
     Serial.print("P_batt=");             Serial.print(P_batt_actual, 2); Serial.println("W");
@@ -3171,7 +3197,9 @@ static void initControlPeripherals() {
 
     digitalWrite(CS_MDAC_FC, HIGH);
     digitalWrite(CS_MDAC_BT, HIGH);
-    digitalWrite(ENC_ENABLE, HIGH);
+    // The encoder-enable write that used to live here is gone: the optical sensors are hardwired
+    // to power by the 2026-08-16 bodge. The encoder is therefore live from power-on, independent
+    // of state — it no longer needs State 0 to have run before counts appear.
 }
 
 void doState0() {
@@ -5652,23 +5680,27 @@ void printTestStatus() {
     Serial.print("I_charge="); Serial.print(I_charge, 3); Serial.println("A (Ag105 I2C)");
     // ── Encoder (fw v8) ───────────────────────────────────────────────────────────────────────
     // Added because `v_actual` was the ONLY encoder observable and it collapses three distinct
-    // failures into one 0.000. Read this block top-down:
-    //   ENC_ENABLE 0            -> optical sensors unpowered; nothing downstream can work.
+    // failures into one 0.000. The sensors are hardwired to power (2026-08-16 bodge), so the
+    // encoder is live from power-on and there is no enable line to check first. Read top-down:
     //   A=/B= never change       -> the MCU sees no valid logic transitions on that channel
-    //                              (dead emitter/phototransistor, broken wire, or a phototransistor
-    //                              swing that never crosses V_IL/V_IH — a scope can show "a signal"
-    //                              the Teensy still reads as a constant level).
+    //                              (dead emitter/phototransistor, broken wire, a pin still landed
+    //                              on the pre-bodge 2/8, or a phototransistor swing that never
+    //                              crosses V_IL/V_IH — a scope can show "a signal" the Teensy
+    //                              still reads as a constant level).
     //   edges A>0, B==0 (or v/v) -> one channel is dead; the x2 decoder needs BOTH, so encoderPos
     //                              stays 0 with a live signal on the other channel.
     //   edges A>0, B>0, pos==0   -> both channels live but NOT in quadrature (beams aligned or a
     //                              whole slot-pitch apart). The decoder's "first" flags are never
     //                              satisfied, so it counts nothing.
     //   pos moving, v_act 0.000  -> only then is the fault in updateWheelSpeed()/the scale chain.
-    // Counters are diagnostic only; nothing in the control path reads them.
+    // Counters are diagnostic only; nothing in the control path reads them. The pin numbers are
+    // printed because this dump is the field tool for exactly the class of fault that a stale pin
+    // map produces — it must not silently report the levels of the wrong pins.
     Serial.println("--- Encoder ---");
-    Serial.print("ENC_ENABLE="); Serial.print(digitalRead(ENC_ENABLE));
-    Serial.print("  A=");        Serial.print(digitalRead(ENC_A));
-    Serial.print(" B=");         Serial.println(digitalRead(ENC_B));
+    Serial.print("A(pin");       Serial.print(ENC_A);
+    Serial.print(")=");          Serial.print(digitalRead(ENC_A));
+    Serial.print("  B(pin");     Serial.print(ENC_B);
+    Serial.print(")=");          Serial.println(digitalRead(ENC_B));
     noInterrupts();
     int32_t  encSnap  = encoderPos;
     uint32_t edgeSnapA = encEdgeCountA;

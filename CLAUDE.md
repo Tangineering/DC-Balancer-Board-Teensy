@@ -59,17 +59,19 @@ firmware and the hardware doc share one vocabulary. Current correct mapping:
 |----|-----------|-----|----------|
 | 0  | `RX` | UART | VESC RX |
 | 1  | `TX` | UART | VESC TX |
-| 2  | `ENC_A` | IN (INT) | Encoder A |
+| ~~2~~ | — | — | *Free — was `ENC_A` before the 2026-08-16 bodge* |
 | 3  | `FC_REG_ENABLE` | OUT | Fuel-cell boost regulator enable |
 | 4  | `BT_REG_ENABLE` | OUT | Battery boost regulator enable |
 | 5  | `MPPT_DISABLE` | OUT | **Ag105 MPPT disable** (was `CHARGER_ENABLE`) |
 | 6  | `CHARGER_STAT` | IN | Ag105 STAT (was `CHARGER_OK`) |
-| 7  | `ENC_ENABLE` | OUT | Optical encoder enable |
-| 8  | `ENC_B` | IN (INT) | Encoder B |
+| ~~7~~ | ~~`ENC_ENABLE`~~ | — | *Deleted 2026-08-16 — optical sensors hardwired to power; pin undriven* |
+| ~~8~~ | — | — | *Free — was `ENC_B` before the 2026-08-16 bodge* |
 | 9  | `CBAL_DISABLE` | OUT | **Cell-balancer (BQ29200) disable** — new |
 | 11 | `MOSI` | SPI | MDAC |
 | 12 | `MISO` | SPI | MDAC |
 | 13 | `SCK` | SPI | MDAC |
+| 14 | `ENC_A` | IN (INT) | **Encoder A** — bodged from pin 2, 2026-08-16 |
+| 15 | `ENC_B` | IN (INT) | **Encoder B** — bodged from pin 8, 2026-08-16 |
 | 18 | `SDA` | I2C | Ag105 charger |
 | 19 | `SCL` | I2C | Ag105 charger |
 | 24 | `FC_VOLTAGE` | AIN | Fuel-cell voltage |
@@ -950,13 +952,27 @@ detail.
 
 ---
 
-## Status & session addendum (2026-08-16, fw v8: encoder observability + slot-count correction)
+## Status & session addendum (2026-08-16, fw v8: encoder pin move, observability, slot count)
 
 A bench report — `v_actual` pinned at 0.000 in the `'L'` stream while the encoder was visibly
-producing a signal — exposed a diagnosis dead end and, in resolving it, a scale error. **fw v8
-(pending first flash);** ledger row in `docs/firmware-versions.md` has full detail.
+producing a signal — turned out to be an unreconciled hardware bodge, and exposed a diagnosis dead
+end and a scale error on the way there. **fw v8 (pending first flash);** ledger row in
+`docs/firmware-versions.md` has full detail.
 
-- **The velocity chain had exactly ONE observable.** `updateWheelSpeed()` is correct, so
+- **ROOT CAUSE — the encoder pins had moved and the firmware had not.** Bodge work relocated
+  `ENC_A` 2 → **14** and `ENC_B` 8 → **15**, and hardwired the optical sensors to power, deleting
+  the `ENC_ENABLE` net (pin 7). The firmware was attaching `CHANGE` interrupts to two pins the
+  encoder was no longer wired to, so no ISR ever fired, `encoderPos` never moved, and `v_actual`
+  read exactly 0.000. `ENC_ENABLE` is removed entirely — pin 7 is now **undriven** (no `pinMode`,
+  no `digitalWrite` anywhere), and pins 2/8 are free. Teensy 4.1 pins 14/15 are A0/A1 and
+  Serial3 TX/RX; neither alternate function is used here and both are interrupt-capable, so the
+  ISR path is otherwise unchanged. The IO CSV was updated by the operator in lockstep (pin 7 row
+  marked "No longer in use"), so the CSV remains the authority and the firmware follows it
+  row-for-row. **Side effect worth knowing:** with the sensors hardwired, the encoder is live from
+  power-on rather than from the State-0 `initControlPeripherals()` enable write — counts now
+  appear before the bus is brought up.
+
+- **The velocity chain had exactly ONE observable**, which is why the pin move above took a bench session to find rather than a `'S'` dump. `updateWheelSpeed()` is correct, so
   `v_actual == 0.000` can only mean `encoderPos` is not moving — but nothing printed `encoderPos`
   anywhere (not the State-98 `'S'` dump, not `printSensors()`, not telemetry). The ×2 decoder in
   `doEncoderA()`/`doEncoderB()` counts only when **both** channels transition in the right ORDER,
@@ -982,7 +998,7 @@ producing a signal — exposed a diagnosis dead end and, in resolving it, a scal
   through the edge counters, and an ISR-driven end-to-end path to a non-zero `v_actual`. Both slot
   and count constants are pinned literally, because 120-slot/240-count and 60-slot/120-count both
   satisfy the "counts == slots × decode" identity. **Tests: 1663 production + 175 bench pass.**
-- **Next bench:** run the `'S'` encoder block against a hand-turned flywheel. One revolution must
+- **Next bench:** flash fw v8 (the board cannot produce velocity on any earlier build — the pin map is wrong on all of them), then run the `'S'` encoder block against a hand-turned flywheel. One revolution must
   read `encoderPos == 240` — that both closes the cross-check the fw v7 record only claimed to have
   closed and localises the 0.000 fault (edge counters climbing with `encoderPos` stuck at 0 is a
   quadrature/alignment fault; both counters flat is a signal-level fault, so scope against
@@ -994,3 +1010,22 @@ producing a signal — exposed a diagnosis dead end and, in resolving it, a scal
   Max / Regen Max unset, §4; OC faults compiled out under `BENCH_TEST`; `MOTOR_I_CMD_MAX` 12 A).
   `motorConstant` and the motor PI gains remain uncalibrated against any scale, so treat the first
   `'V'`/`'D'` run as gain validation, scope-armed, and prefer `'A'`/`'T'` (velocity-PI-free) first.
+
+### Hardware bodge record (2026-08-16): encoder rerouted to pins 14/15, ENC_ENABLE deleted
+
+Post-manufacturing rework, recorded here alongside the RC-BT compensator bodge because it is the
+same class of change — the board no longer matches the 2026-06-22 schematic and any future rework
+must preserve it or revert it knowingly.
+
+- `ENC_A` moved from Teensy **pin 2 → pin 14**; `ENC_B` from **pin 8 → pin 15**.
+- The two OPB829DZ optical sensors are **hardwired to power**. The `ENC_ENABLE` net (pin 7) no
+  longer exists; pin 7 is left **undriven** by firmware. Consequence: the encoder is live from
+  power-on, not from State 0.
+- `references/Scale Car Teensy IO - IO.csv` was amended in lockstep (rows moved to 14/15; the pin 7
+  row is kept and marked "No longer in use"). **The CSV remains authoritative** — this bodge does
+  not create a firmware/CSV divergence, unlike a bodge left unrecorded.
+- Firmware tests pin `ENC_A == 14` / `ENC_B == 15` literally and assert `ENC_ENABLE` is undefined.
+  That assertion is load-bearing: the rest of the suite drives the ISRs through the same macros, so
+  a wrong pin number is self-consistent everywhere else and no other test would fail.
+- Any board re-spin that restores the original routing must revert firmware, CSV, and those tests
+  together.

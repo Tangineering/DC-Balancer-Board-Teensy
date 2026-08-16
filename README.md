@@ -27,7 +27,8 @@ It controls:
   output buffers run from the 5 V rail (hardware bodge).
 - **I2C (`Wire`)**: Silvertel **Ag105** charger at address **0x30**.
 - **Ethernet/UDP**: command in (port 5001), telemetry out (port 5000), Teensy IP 192.168.1.50.
-- **Encoder interrupts**: wheel-speed estimation from `ENC_A`=2 / `ENC_B`=8.
+- **Encoder interrupts**: wheel-speed estimation from `ENC_A`=14 / `ENC_B`=15 (bodged from 2/8 on
+  2026-08-16; the optical sensors are hardwired to power, so there is no enable pin).
 - **ADC inputs (12-bit)**: FC/BT current (INA253A1, 0.1 V/A), FC/BT/BUS/CHG/RGN voltages.
 - **Digital outputs**: FC/BT boost enables, 6 RT1987 path switches, `MPPT_DISABLE`,
   `CBAL_DISABLE`, encoder enable.

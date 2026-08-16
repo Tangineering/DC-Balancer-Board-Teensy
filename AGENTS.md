@@ -59,17 +59,19 @@ firmware and the hardware doc share one vocabulary. Current correct mapping:
 |----|-----------|-----|----------|
 | 0  | `RX` | UART | VESC RX |
 | 1  | `TX` | UART | VESC TX |
-| 2  | `ENC_A` | IN (INT) | Encoder A |
+| ~~2~~ | — | — | *Free — was `ENC_A` before the 2026-08-16 bodge* |
 | 3  | `FC_REG_ENABLE` | OUT | Fuel-cell boost regulator enable |
 | 4  | `BT_REG_ENABLE` | OUT | Battery boost regulator enable |
 | 5  | `MPPT_DISABLE` | OUT | **Ag105 MPPT disable** (was `CHARGER_ENABLE`) |
 | 6  | `CHARGER_STAT` | IN | Ag105 STAT (was `CHARGER_OK`) |
-| 7  | `ENC_ENABLE` | OUT | Optical encoder enable |
-| 8  | `ENC_B` | IN (INT) | Encoder B |
+| ~~7~~ | ~~`ENC_ENABLE`~~ | — | *Deleted 2026-08-16 — optical sensors hardwired to power; pin undriven* |
+| ~~8~~ | — | — | *Free — was `ENC_B` before the 2026-08-16 bodge* |
 | 9  | `CBAL_DISABLE` | OUT | **Cell-balancer (BQ29200) disable** — new |
 | 11 | `MOSI` | SPI | MDAC |
 | 12 | `MISO` | SPI | MDAC |
 | 13 | `SCK` | SPI | MDAC |
+| 14 | `ENC_A` | IN (INT) | **Encoder A** — bodged from pin 2, 2026-08-16 |
+| 15 | `ENC_B` | IN (INT) | **Encoder B** — bodged from pin 8, 2026-08-16 |
 | 18 | `SDA` | I2C | Ag105 charger |
 | 19 | `SCL` | I2C | Ag105 charger |
 | 24 | `FC_VOLTAGE` | AIN | Fuel-cell voltage |
