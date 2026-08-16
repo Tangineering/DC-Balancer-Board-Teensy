@@ -473,6 +473,81 @@
  *      profile parameters to record. logSampleTick() is untouched: with no profile flags set the
  *      phase bytes read LOG_PHASE_NONE and flags bit0 follows powerBalanceLive, which is exactly
  *      right for a hand-driven run. No pin, sequencing, control-path or UDP telemetry change.
+ *  - fw v10 (2026-08-16) — YOULA-H DRIVE CONTROLLER on the velocity path.
+ *      The placeholder motor PI (Kp = Ki = 1, never tuned against a working v_actual, since no
+ *      build before fw v8 was reading the encoder at all) is replaced on the velocity path by
+ *      the robust controller synthesized in controller_design_MIMO/ against the CALIBRATED
+ *      drive plant (calibration/motor_id_20260815.md). User-directed exception to the "do not
+ *      change the PI controllers" rule, scoped to the velocity loop; the share loop is
+ *      untouched. This is the second such exception, after the 2026-07-10 share-loop round.
+ *        * NEW teensy_controller/drive_controller.h — the runtime. Hanus SELF-CONDITIONED
+ *          5-state realization, not a biquad cascade: the clamped output drives the state
+ *          update, so the FULL controller state de-winds, integrator and lag states alike.
+ *          Integrator-only back-calculation (share_controller.h's idiom) is measurably WRONG
+ *          here — the non-integral branch has 745.5 A/(m/s) of low-frequency gain and its lag
+ *          states saturate independently, leaving a −0.48 m/s standing error and a 22 mm/s
+ *          limit cycle on the 0→2 m/s step.
+ *        * State vector is DOUBLE, deliberately. The realization carries an exact integrator
+ *          and a second mode at ~0.9999 with CD entries of order 50, so a float32 recursion
+ *          diverges ~1.4e-2 A at rail RELEASE (measured, validate_drive_siso.py check 4).
+ *          Coefficients stay the shipped float32 values and are promoted per operation.
+ *        * NEW teensy_controller/drive_controller_coeffs.h — GENERATED, never hand-edited, by
+ *          controller_design_MIMO/synthesize_drive_siso.py, which now emits the firmware copy
+ *          and the study copy (drive_siso_coeffs.h) from ONE emitter so they cannot drift.
+ *        * UNITS: the controller maps velocity error [m/s] → motor current [A] directly, so
+ *          motorConstant is NOT applied on this path — the synthesis plant already carries the
+ *          k_t / r_t / m_eff chain. motorConstant survives only on the PI fallback.
+ *        * USE_YOULA_DRIVE_CONTROLLER (default 1, #ifndef-overridable) selects the law; at 0
+ *          the fw ≤ v9 PI path compiles verbatim and behaves identically. Independent of
+ *          BENCH_TEST and of velocityChainCalibrated() — the Youla path sits behind the same
+ *          'V'/'D'/'Y' calibration gates as before.
+ *        * DRIVE_CTRL_I_MAX is synthesized to equal MOTOR_I_CMD_MAX (12.0 A) so the clamp the
+ *          anti-windup conditions against is the clamp commandMotorCurrent() enforces. A future
+ *          MOTOR_I_CMD_MAX change requires RE-SYNTHESIS, not just an edit.
+ *        * Reset sites: resetDriveControlState() in haltMotorOutput() (which covers every
+ *          velocity-path profile start — 'D'/'T'/'Y'/'W' — and every stop/exit/completion
+ *          path), on the 'V' manual-velocity ENTRY EDGE only (a re-typed 'V' during a run is a
+ *          setpoint step the loop must answer from its operating point, not a restart), and on
+ *          Idle→Run. The Idle→Run reset deliberately DIVERGES from the share loop, which
+ *          resumes rather than restarts: the MDAC ratio is physically held across Idle, a motor
+ *          current is not, and Idle can last minutes while the machine coasts to a stop.
+ *        * commandMotorCurrent() remains the sole VESC writer ON THE VELOCITY PATH and
+ *          re-clamps as a redundant backstop. The 'T' trapezoid and 'W' profile still call
+ *          commandMotorCurrentLimited() directly at the TRAP_I_ABS_MAX (25 A) ESC rating —
+ *          unchanged, and outside this round's scope. No pin, sequencing, fault, BLG or UDP
+ *          telemetry change.
+ *  - fw v11 (2026-08-16) — BLG RECORD FORMAT v5: drive-controller internals in the bench log.
+ *      The first closed-loop velocity runs are imminent and the drive loop is the least
+ *      observable thing on the board: the record's I_cmd is POST-clamp, so a transient spent on
+ *      the ±MOTOR_I_CMD_MAX (12 A) rail decodes identically to one that merely asks for exactly
+ *      the limit, and the controller state that produced it appears nowhere at all. Two float32
+ *      are APPENDED at the END of the record — offsets 68–71 u_unsat [A], 72–75 drive_x0 — so
+ *      EVERY v1–v4 field keeps its offset and the record grows 68 → 76 B. Header layout is
+ *      IDENTICAL to v4; only hdr[4] (5) and hdr[5] (the record size, which decoders already read
+ *      from the header) change. Trailer unchanged. Pi UDP telemetry (v4, 58 B) UNCHANGED — this
+ *      is the SD bench log only.
+ *        * u_unsat is the PRE-clamp motor-current command; drive_x0 is the integrator state.
+ *          Youla build: driveCtrl_uUnsat (new file-scope capture in drive_controller.h, written
+ *          immediately before the clamp in driveControllerStep(), zeroed by
+ *          driveControllerReset() and hence by resetDriveControlState()) and driveCtrl_x[0],
+ *          the EXACT integrator (AD[0][0] == 1.0) — together they show the Hanus conditioning
+ *          working, or a rail episode, from the log alone. PI fallback build:
+ *          targetMotorTorque/motorConstant and pi_motor_accum, the same two roles, so an A/B
+ *          flash logs COMPARABLE signals.
+ *        * flags gains bit4 (Youla DRIVE build) and bit5 (Youla SHARE build) to disambiguate
+ *          the two. Both are compile-time constants, stamped per record anyway so a decoded run
+ *          is self-identifying without cross-referencing the firmware ledger.
+ *        * The controller runs at 500 Hz and the logger samples at 1 kHz, so the log carries
+ *          PAIRS OF IDENTICAL u_unsat/drive_x0 samples per controller tick BY DESIGN — the same
+ *          zero-order hold youlaController_Drive() applies to its output. The logger EXPOSES the
+ *          stored value and never re-evaluates the output equation (which would run against an
+ *          already-advanced state).
+ *        * The update law is UNTOUCHED. Ring math re-checked at 76 B/ms: the ring is 1024
+ *          records = 77824 B (76 KB, still DMAMEM) covering 1.024 s; the drain floors a 512 B
+ *          chunk to 6 records = 456 B, i.e. 456 B/ms drained against 76 B/ms filled (6.0x
+ *          catch-up, was 7.0x), and the 32 MB preallocation covers ~7.4 min (was ~8). No buffer
+ *          constant needed to grow. Logging stays observability-only: no faults, no card I/O in
+ *          the sampling path. No pin, sequencing, control-path or UDP change.
  */
 
 #include <VescUart.h>
@@ -482,6 +557,7 @@
 #include <NativeEthernetUdp.h>
 #include <SdFat.h>              // built-in micro-SD (SDIO) — State-98 bench logger, see logSampleTick()
 #include "share_controller.h"   // Youla-H power-share controller (generated coeffs)
+#include "drive_controller.h"   // Youla-H drive/velocity controller (generated coeffs, fw v10)
 
 VescUart vesc;
 EthernetUDP Udp;
@@ -1178,10 +1254,27 @@ const float motorConstant = 0.1f;   // TODO: tune this
 // in the system — not here (phase current, duty-dependent), not in the VESC (unset), and not in
 // this firmware on a BENCH_TEST flash, where detectFaults() is relaxed to overvoltage-only and the
 // OC checks are compiled out.
-const float MOTOR_I_CMD_MAX = 12.0f;
+// PAIRED WITH THE DRIVE CONTROLLER (fw v10): DRIVE_CTRL_I_MAX in
+// teensy_controller/drive_controller_coeffs.h must equal this value, and DRIVE_CTRL_I_MIN its
+// negation. The Youla-H drive controller's Hanus anti-windup conditions its state against its
+// OWN clamp; if that clamp differs from the one commandMotorCurrent() actually enforces, the
+// controller de-winds against a limit the actuator does not have and the windup gates in
+// synthesize_drive_siso.py no longer describe the shipped loop. Changing MOTOR_I_CMD_MAX
+// therefore requires RE-SYNTHESIS (set I_CLAMP in synthesize_drive_siso.py and regenerate),
+// not an edit here alone — the anti-windup boundary scales with the clamp, which is exactly
+// why the generated header re-states the boundary on every clamp change.
+// constexpr, not const: the static_assert below needs a constant expression, and a
+// namespace-scope `const float` is not one in C++17. Nothing else about the constant changes.
+constexpr float MOTOR_I_CMD_MAX = 12.0f;
+// Compile-time tripwire for the pairing described above. If someone edits MOTOR_I_CMD_MAX
+// without re-synthesizing (or regenerates at a different I_CLAMP), the build stops here
+// rather than shipping a controller that de-winds against a limit the actuator does not have.
+static_assert(MOTOR_I_CMD_MAX == DRIVE_CTRL_I_MAX && -MOTOR_I_CMD_MAX == DRIVE_CTRL_I_MIN,
+              "clamp pairing broken — re-synthesize drive controller "
+              "(controller_design_MIMO/synthesize_drive_siso.py, I_CLAMP)");
 const float MANUAL_MOTOR_V_MAX = 5.0f; // m/s — State 98 manual velocity ceiling; TODO(calibrate)
 // m/s — sanity bound on the Pi's v_setpoint. Not a performance limit: it exists so a corrupt or
-// mis-scaled UDP field cannot drive an enormous velocity error into the motor PI. A 1/10-scale car
+// mis-scaled UDP field cannot drive an enormous velocity error into the velocity loop. A 1/10-scale car
 // tops out well under this. TODO(calibrate) once the velocity unit chain is fixed.
 const float V_SETPOINT_MAX = 20.0f;
 
@@ -1343,7 +1436,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 9
+#define FW_VERSION 11
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -1367,6 +1460,20 @@ bool wheelSpeedResetPending = false;
 // comparison path; both are compiled either way.
 #ifndef USE_YOULA_SHARE_CONTROLLER
 #define USE_YOULA_SHARE_CONTROLLER 1
+#endif
+
+// ── Drive (velocity) controller selection ────────────────────────────────────
+// 1 (default, fw v10): the Youla-H robust drive controller (drive_controller.h;
+// coefficients generated by controller_design_MIMO/synthesize_drive_siso.py on the
+// CALIBRATED drive plant — design record in controller_design_MIMO/mimo_synthesis.md).
+// It outputs motor current in AMPS directly; motorConstant is NOT applied on that path.
+// 0: the legacy PI (PI_Controller_Motor), whose output is a notional torque divided by
+// motorConstant — kept as a bench fallback / A-B comparison path, behaviourally identical
+// to fw ≤ v9. Both are compiled either way.
+// Independent of BENCH_TEST and of velocityChainCalibrated(): this flag chooses the
+// control law, not whether the velocity path is allowed to run.
+#ifndef USE_YOULA_DRIVE_CONTROLLER
+#define USE_YOULA_DRIVE_CONTROLLER 1
 #endif
 
 // BENCH_TEST and USE_ETHERNET are independent flags, so it is possible to build "production
@@ -1416,8 +1523,8 @@ uint32_t driveCycleStatusLast = 0;
 
 // ── State 98 bench tools: manual motor drive ──────────────────────────────────
 // Hold the motor at a constant command so the power-share controller can be characterized
-// independent of wheel speed. Two modes: a fixed VESC current (bypasses the velocity PI) or a
-// fixed velocity setpoint driven through the existing motorControl() PI.
+// independent of wheel speed. Two modes: a fixed VESC current (bypasses the velocity loop) or a
+// fixed velocity setpoint driven through the existing motorControl() velocity loop.
 enum MotorTestMode { MOTOR_TEST_OFF, MOTOR_TEST_CURRENT, MOTOR_TEST_VELOCITY };
 MotorTestMode manualMotorMode     = MOTOR_TEST_OFF;
 float         manualMotorCurrent  = 0.0f;   // A   — used in MOTOR_TEST_CURRENT
@@ -1521,7 +1628,7 @@ uint32_t powerShareProfileStatusLast = 0;
 
 // ── State 98 bench tools: trapezoidal motor-current profile ('T') ─────────────────────────────
 // Operator-parameterised current ramp: 0 → I_max at a fixed A/s, hold at I_max, then I_max → 0 at
-// the same rate. Drives the VESC through commandMotorCurrent() DIRECTLY — the velocity PI is never
+// the same rate. Drives the VESC through commandMotorCurrent() DIRECTLY — the velocity loop is never
 // in the loop, exactly like the 'A' manual-current mode. That is the point of this tool: it lets
 // the motor and the source power draw (the droop share loop runs alongside) be exercised with NO
 // dependence on the velocity chain (ENCODER_SLOTS_PER_REV, FLYWHEEL_RADIUS_M) at all, so it
@@ -1695,7 +1802,7 @@ const float Y_BOUND_WARN    = 0.35f;
 //
 // Why it exists alongside 'Y': the velocity axis needs a calibrated encoder chain
 // (velocityChainCalibrated()), which the bench does not have. 'W' follows the 'T' trapezoid's
-// motor conventions instead — direct current through commandMotorCurrentLimited(), no velocity PI,
+// motor conventions instead — direct current through commandMotorCurrentLimited(), no velocity loop,
 // no calibration gate, MOT_PWR_ENABLE warn-only — so the share loop can be exercised against a
 // realistic, moving motor load on an encoder-less bench.
 bool     wProfileActive  = false;
@@ -1840,6 +1947,8 @@ void powerBalance();
 void chargingControl();
 float PI_Controller_Motor(float error);
 float PI_Controller_Power(float error);
+float youlaController_Drive(float error);   // Youla-H velocity controller wrapper (fw v10)
+void  resetDriveControlState();
 float youlaController_Power(float setpoint, float alphaRaw);
 void setDroopMdac(float fc_gain, float bt_gain);
 void applyShareRatio(float ratio);
@@ -1913,7 +2022,7 @@ void parseKLogLine(const char *line);
 // Ag105 I2C), for the duration of a State-98 profile run.
 //
 // NON-BLOCKING DISCIPLINE (five dead boosts say the main loop may never stall):
-//   - The control path only ever memcpy()s 68 bytes into a static ring (logSampleTick()). No I/O,
+//   - The control path only ever memcpy()s 76 bytes into a static ring (logSampleTick()). No I/O,
 //     no formatting, no allocation, no blocking, ever.
 //   - All card I/O happens in logDrainTick(), called from loop(): it bails immediately when the
 //     card is busy and writes at most ONE <=512 B chunk per loop tick. This is the SD analogue of
@@ -1929,15 +2038,17 @@ void parseKLogLine(const char *line);
 //     tearing down (state99Phase == 3) — never between its sequencing phases.
 //
 // Retrieval is by card pull; tools/decode_benchlog.py turns a .BLG into CSV.
-#define LOG_REC_SIZE        68u                 // bytes per record (format v3) — static_assert'ed
+#define LOG_REC_SIZE        76u                 // bytes per record (format v5) — static_assert'ed
 #define LOG_RING_RECORDS    1024u               // ~1.0 s of 1 kHz coverage; covers a ~250 ms card
-                                                // stall with 4x margin (68 KB of the Teensy's 1 MB)
+                                                // stall with 4x margin (76 KB of the Teensy's 1 MB —
+                                                // 77824 B, up from 68 KB at record format v3)
 #define LOG_RING_BYTES      (LOG_REC_SIZE * LOG_RING_RECORDS)
-#define LOG_CHUNK_MAX       512u                // one SD block per loop tick: >=512 B/ms drained
-                                                // against a 68 B/ms fill, so catch-up is fast.
-                                                // Chunks are floored to whole records below (7 x 68 =
-                                                // 476 B), so the drain accounting stays exact
-#define LOG_PREALLOC_BYTES  (32u * 1024u * 1024u)  // ~8 min at 68 KB/s; truncate()d at close.
+#define LOG_CHUNK_MAX       512u                // one SD block per loop tick: >=456 B/ms drained
+                                                // against a 76 B/ms fill (6.0x), so catch-up is
+                                                // still fast. Chunks are floored to whole records
+                                                // below (6 x 76 = 456 B), so the drain accounting
+                                                // stays exact
+#define LOG_PREALLOC_BYTES  (32u * 1024u * 1024u)  // ~7.4 min at 76 KB/s; truncate()d at close.
                                                 // Contiguous allocation keeps per-chunk latency in
                                                 // the tens of us (no FAT-chain seeks mid-run)
 #define LOG_CLOSE_DEADLINE_MS 2000u             // give up draining a wedged card and close anyway
@@ -1999,15 +2110,38 @@ struct __attribute__((packed)) BenchLogRecord {
                            // bit3 = shareClosedLoopRun: the closed loop has run at least once since
                            //        the last share-control reset. bit2=0,bit3=0 -> open-loop
                            //        feedforward; bit2=0,bit3=1 -> HOLD (no MDAC write this tick);
-                           //        bit2=1 -> closed loop (fw v5).
+                           //        bit2=1 -> closed loop (fw v5);
+                           // bit4 = this record's motor command came from the Youla DRIVE
+                           //        controller (USE_YOULA_DRIVE_CONTROLLER build). Clear = the PI
+                           //        fallback. Compile-time constant, but written PER RECORD so a
+                           //        record is self-identifying and an A/B flash pair cannot be
+                           //        confused by header inspection alone (fw v11);
+                           // bit5 = the share loop is the Youla SHARE controller
+                           //        (USE_YOULA_SHARE_CONTROLLER build); clear = the PI fallback.
+                           //        Same rationale (fw v11).
     uint8_t  pad[2];       // zero
+    // Format v5 (fw v11, 2026-08-16): drive-controller internals, APPENDED at the end so every
+    // v1–v4 field offset is unchanged and a decoder needs only the two new tail fields.
+    // WHY: the first closed-loop velocity runs are imminent and motorConstant / the PI gains have
+    // never been tuned against a working v_actual. I_cmd alone is POST-clamp, so a run that spends
+    // its transient on the ±MOTOR_I_CMD_MAX rail is indistinguishable in the log from one that
+    // merely asks for exactly the limit — and the integrator state that produced it is invisible.
+    float    u_unsat;      // [A] PRE-clamp motor-current command. Youla build: driveCtrl_uUnsat,
+                           //     the held pre-clamp u of the last driveControllerStep(). PI build:
+                           //     the PI path's pre-clamp command (targetMotorTorque/motorConstant).
+                           //     Disambiguated by flags bit4 — so an A/B flash logs comparable
+                           //     signals. Held at the 500 Hz controller cadence against the 1 kHz
+                           //     log: identical sample PAIRS are expected, not a glitch.
+    float    drive_x0;     // Youla build: driveCtrl_x[0], the EXACT-integrator state (AD[0][0] ==
+                           //     1.0), the state that windup would show up in. PI build:
+                           //     pi_motor_accum, the analogous integrator. Also bit4-disambiguated.
 };
-static_assert(sizeof(BenchLogRecord) == LOG_REC_SIZE, "BenchLogRecord must stay 68 bytes (format v3)");
+static_assert(sizeof(BenchLogRecord) == LOG_REC_SIZE, "BenchLogRecord must stay 76 bytes (format v5)");
 
 #define LOG_PHASE_NONE 0xFFu   // "this profile was not running for this sample"
 
 // ── Logger module state ───────────────────────────────────────────────────────
-// DMAMEM puts the 68 KB ring in RAM2/OCRAM instead of RAM1/DTCM, which is the tight, fast memory
+// DMAMEM puts the 76 KB ring in RAM2/OCRAM instead of RAM1/DTCM, which is the tight, fast memory
 // the control code and stack want. The ring is touched once per ms by a memcpy and once per loop
 // tick by the drain — it does not need DTCM latency. (Host g++ has no such attribute.)
 #ifndef DMAMEM
@@ -2270,11 +2404,15 @@ void logOpenForProfile(uint8_t typeMask) {
     uint8_t hdr[32];
     memset(hdr, 0, sizeof(hdr));
     hdr[0] = 'B'; hdr[1] = 'L'; hdr[2] = 'G'; hdr[3] = '1';
-    hdr[4] = 4;                       // format version (v2 added fw_version at offset 18; v3 added
-                                      // V_fc/V_batt/V_chg/V_rgn to the record → 68 B; v4 adds the
-                                      // committed per-run profile parameters below. RECORD FORMAT
-                                      // IS UNCHANGED from v3 — 68 B, same field order — so a v3
-                                      // decoder needs only the header change.)
+    hdr[4] = 5;                       // format version (v2 added fw_version at offset 18; v3 added
+                                      // V_fc/V_batt/V_chg/V_rgn to the record → 68 B; v4 added the
+                                      // committed per-run profile parameters below, with the RECORD
+                                      // unchanged from v3; v5 (fw v11) APPENDS u_unsat and
+                                      // drive_x0 to the record → 76 B and defines flags bit4/bit5.
+                                      // HEADER LAYOUT IS UNCHANGED from v4 — only hdr[4] and
+                                      // hdr[5] (the record size, which is already read from the
+                                      // header) differ, and every v1–v4 record field keeps its
+                                      // offset, so a v4 decoder needs only the two tail fields.)
     hdr[5] = (uint8_t)LOG_REC_SIZE;
     hdr[6] = typeMask;
 
@@ -2351,7 +2489,7 @@ void logRequestClose(uint8_t reason) {
 }
 
 // One sample into the ring. Called from the State-98 tick spine. Cost is a rate-limit check plus a
-// 68-byte memcpy — deliberately the only logger code that runs in the control path.
+// 76-byte memcpy — deliberately the only logger code that runs in the control path.
 void logSampleTick() {
     if (!logActive) return;
     if (!rateLimitDue(rl_log_last, POWER_BAL_PERIOD_US)) return;
@@ -2407,8 +2545,29 @@ void logSampleTick() {
     // fw v5 share-loop mode, so a decoded run says WHICH law produced gFC/gBT on each tick.
     if (shareClosedLoopMode) r.flags |= 0x04;
     if (shareClosedLoopRun)  r.flags |= 0x08;
+    // fw v11 build-identity bits. Compile-time constants, but stamped per record so a decoded
+    // run is self-identifying without cross-referencing the firmware ledger.
+#if USE_YOULA_DRIVE_CONTROLLER
+    r.flags |= 0x10;
+#endif
+#if USE_YOULA_SHARE_CONTROLLER
+    r.flags |= 0x20;
+#endif
     r.pad[0] = 0;
     r.pad[1] = 0;
+    // Format v5 (fw v11): drive-controller internals. EXPOSE the stored values — never re-run the
+    // controller's output equation here (it would evaluate against an already-advanced state, and
+    // the logger must stay a pure copy).
+#if USE_YOULA_DRIVE_CONTROLLER
+    r.u_unsat  = driveCtrl_uUnsat;        // held pre-clamp u [A] (500 Hz law vs 1 kHz log)
+    r.drive_x0 = (float)driveCtrl_x[0];   // exact-integrator state (AD[0][0] == 1.0)
+#else
+    // PI fallback: the same two roles. targetMotorTorque is the PI's last output and
+    // motorControl() divides it by motorConstant (a nonzero compile-time constant) to get the
+    // pre-clamp current commandMotorCurrent() then clamps — so this IS that pre-clamp command.
+    r.u_unsat  = targetMotorTorque / motorConstant;
+    r.drive_x0 = pi_motor_accum;
+#endif
 
     memcpy(&logRing[logRingHead], &r, LOG_REC_SIZE);
     logRingHead = (logRingHead + LOG_REC_SIZE) % LOG_RING_BYTES;
@@ -3130,8 +3289,13 @@ void receiveCommands() {
 
     // Sanitize the three floats before they reach a controller. The XOR checksum catches most
     // corruption but not all of it, and a bit-pattern that survives it can still decode as NaN/Inf
-    // — which would propagate through the motor PI integrator (poisoning it permanently, since
-    // NaN + anything = NaN) and into the droop mapping. A rejected field HOLDS its previous value
+    // — which would poison the velocity controller's state permanently, since NaN propagates
+    // through any recursion (NaN + anything = NaN). Under the shipped default that state is the
+    // Youla controller's five-double Hanus state vector, and every one of the five is reachable
+    // from the error input, so a single NaN error contaminates the whole vector on one tick and
+    // nothing but resetDriveControlState() ever clears it; on the USE_YOULA_DRIVE_CONTROLLER=0
+    // fallback it is pi_motor_accum. Either way the poison also reaches the droop mapping.
+    // A rejected field HOLDS its previous value
     // rather than defaulting, so one bad packet degrades to "no update" instead of a step command.
     float v_sp_rx, share_sp_rx, charge_rx;
     memcpy(&v_sp_rx,    &buffer[idx], 4); idx += 4;
@@ -3359,6 +3523,27 @@ void doState1() {
         // Clear the control rate-limit gates so Run's first tick executes all three controllers
         // immediately rather than waiting out a stale period from a previous run.
         resetControlRateLimiters();
+        // fw v10: reset the drive controller on Idle→Run, DELIBERATELY diverging from the
+        // share loop, which is deliberately NOT reset here (see doState2()'s note: the share
+        // loop resumes, it does not restart, because its actuator state is physically held on
+        // the MDACs across Idle). The velocity loop is the opposite case. Its states encode
+        // recent i_cmd history through an exact integrator; Idle holds the motor at
+        // vesc.setCurrent(0) with the VESC still powered, so by the time Run is re-entered the
+        // stored state describes a machine that has since coasted to a stop. Carrying it in
+        // makes the very first Run tick a live current command derived from history that is no
+        // longer true — and Run is entered on operator/Pi command, sometimes seconds or
+        // minutes after the previous Run ended. Carrying it in makes the very first Run tick a
+        // live current command derived from history that is no longer true.
+        resetDriveControlState();
+        // ...and zero the setpoint with it. The reset alone is NOT enough: doState3() (Finish)
+        // does not clear v_setpoint, so the Pi's last commanded speed survives Run→Finish→Idle.
+        // A freshly reset controller meeting a stale non-zero setpoint sees the full error on
+        // its first tick, and the non-integral branch's 745.5 A/(m/s) low-frequency gain rails
+        // the command at ±12 A within roughly 20–40 ms for any error above ~16 mm/s — i.e. Run
+        // entry would start with a full-rail current excursion the operator never asked for.
+        // Zeroing costs at most one tick of tracking: the Pi rewrites v_setpoint within one
+        // packet period, and a Run that is genuinely meant to move starts from 0 m/s anyway.
+        v_setpoint = 0.0f;
         mainState = 2;
     }
 }
@@ -3970,7 +4155,7 @@ void doState98() {
                     // may be bench-powered from a separate supply, and if MOT_PWR is genuinely the
                     // only source, an unpowered VESC simply does nothing — a WARN suffices (same
                     // policy as 'A'). Also deliberately no velocityChainCalibrated() check — this
-                    // mode bypasses the velocity PI entirely, which is exactly why it is safe
+                    // mode bypasses the velocity loop entirely, which is exactly why it is safe
                     // regardless of the velocity chain's calibration state.
                     if (!digitalRead(MOT_PWR_ENABLE)) {
                         Serial.println("WARN: MOT_PWR_ENABLE is LOW — profile will run, but the motor is unpowered unless the VESC has its own supply (key '3')");
@@ -4012,7 +4197,7 @@ void doState98() {
                 if (!combinedProfileActive) {
                     // Same three preconditions as 'D' — this profile closes the velocity loop
                     // exactly as the drive cycle does, so it inherits the drive cycle's gates
-                    // verbatim (an under-reading v_actual makes the motor PI over-drive; see
+                    // verbatim (an under-reading v_actual makes the velocity loop over-drive; see
                     // printVelocityChainRefusal()).
                     if (bringupActive) {
                         Serial.println("ERROR: bring-up in progress — wait for it or abort with 'X'");
@@ -4071,7 +4256,7 @@ void doState98() {
                         Serial.println("ERROR: bring-up in progress — wait for it or abort with 'X'");
                     } else {
                         // 'T' conventions, NOT 'Y' conventions: no velocityChainCalibrated() gate
-                        // (this profile bypasses the velocity PI entirely, which is exactly why it
+                        // (this profile bypasses the velocity loop entirely, which is exactly why it
                         // is safe on an encoder-less bench) and MOT_PWR_ENABLE is warn-only (the
                         // VESC may be fed from a separate bench supply; if MOT_PWR really is its
                         // only source, an unpowered VESC simply ignores the commands).
@@ -4292,7 +4477,7 @@ void doState98() {
         // motor axis is commanded current, so this branch mirrors the TRAPEZOID's call set —
         // advanceCurrentComboProfile() issues the current itself (through the rate-gated
         // commandMotorCurrentLimited() chokepoint) and only the droop loop runs alongside. No
-        // motorControlGated(): the velocity PI is never in this loop, which is what makes the
+        // motorControlGated(): the velocity loop is never in this profile, which is what makes the
         // profile usable on an encoder-less bench.
         advanceCurrentComboProfile();
         // Safe to call powerBalanceGated() unconditionally after a natural completion, for the
@@ -4673,10 +4858,24 @@ void applyOpenLoopDroop(float ratio) {
     powerBalanceLive = false;
 }
 
-// Manual motor: fixed VESC current (bypasses the velocity PI). Clamped to the VESC current ceiling.
+// Manual motor: fixed VESC current (bypasses the velocity loop). Clamped to the VESC current ceiling.
 void setManualMotorCurrent(float a) {
     manualMotorCurrent = constrain(a, -MOTOR_I_CMD_MAX, MOTOR_I_CMD_MAX);
     manualMotorMode    = MOTOR_TEST_CURRENT;
+    // Entering 'A' ABANDONS the velocity loop (manualMotorMode leaves MOTOR_TEST_VELOCITY and
+    // motorControl() stops being called), so the drive controller's state is stale from here on —
+    // reset it, same doctrine as every other velocity-path abandonment site.
+    // Made observable by BLG record format v5 (fw v11): u_unsat/drive_x0 are logged every tick
+    // regardless of which mode is driving the VESC, so without this a 'K'-logged 'A' run following
+    // a 'V'/'D' run would record the PREVIOUS run's frozen controller state against an unrelated
+    // I_cmd, with flags bit4 set — a decoded trace that looks like a live drive controller and is
+    // not one. Zeroed state decodes unambiguously as "the drive loop is not running".
+    // UNCONDITIONAL, deliberately diverging from setManualVelocity()'s ENTRY-EDGE reset: that one
+    // is edge-gated because a re-typed 'V' during a RUNNING velocity loop is a setpoint step the
+    // loop must answer from its operating point. In current mode the controller is never stepped,
+    // so there is no operating point to preserve and no run to disturb — a re-typed 'A' is just
+    // another fixed current. The motor is not flushed here; 'A' is itself a motor command.
+    resetDriveControlState();
 }
 
 // ── Velocity-chain calibration interlock ─────────────────────────────────────
@@ -4701,19 +4900,35 @@ void printVelocityChainRefusal(const char *what) {
     Serial.print(what);
     Serial.println(" needs a calibrated velocity chain.");
     Serial.println("  v_actual scale is unconfirmed for this build (ENCODER_SLOTS_PER_REV, FLYWHEEL_RADIUS_M).");
-    Serial.println("  An under-reading v_actual makes the velocity PI OVER-DRIVE; the current clamp");
+    Serial.println("  An under-reading v_actual makes the velocity loop OVER-DRIVE; the current clamp");
     Serial.println("  bounds amps, not speed. Measure both, then rebuild with");
     Serial.println("  -DVELOCITY_CHAIN_CALIBRATED=1. Use 'A' (fixed current) for motor tests instead.");
 }
 
-// Manual motor: fixed velocity setpoint driven through the existing motorControl() PI. Clamped to
-// the manual velocity ceiling (the motor PI's current anti-windup bounds the command either way).
+// Manual motor: fixed velocity setpoint driven through the existing motorControl() velocity loop.
+// Clamped to the manual velocity ceiling (the velocity controller's own current clamp and
+// anti-windup bound the command either way — the Hanus clamp under the shipped default, the PI's
+// integrator clamp on the USE_YOULA_DRIVE_CONTROLLER=0 fallback).
 // Refuses outright while the velocity chain is uncalibrated — see velocityChainCalibrated().
 void setManualMotorVelocity(float v) {
     if (!velocityChainCalibrated()) {
         printVelocityChainRefusal("manual velocity mode");
         return;
     }
+    // fw v10: 'V' is the one velocity-loop ENTRY that does not go through haltMotorOutput()
+    // (it is a mode change, not a profile start), so the drive controller is reset here — a
+    // 'V' typed after a 'D' run would otherwise start from that run's terminal state.
+    // Gated on the ENTRY EDGE, not on every 'V': re-typing 'V' at a new speed during a live
+    // manual-velocity run is a SETPOINT STEP, and the loop must answer it from its current
+    // operating point. Resetting there would discard that operating point and restart the
+    // transient: the first tick after a reset is DD·e alone (1.81 A per m/s of error), but the
+    // non-integral branch carries 745.5 A/(m/s) of low-frequency gain, so for any error above
+    // ~16 mm/s the loop RAILS at ±12 A within roughly 20–40 ms and then has to unwind. The
+    // machine does not gently coast — it takes a full-rail excursion in exchange for a setpoint
+    // change the running loop could have absorbed smoothly. The share loop's 'P' handler resets
+    // unconditionally because its actuator (the MDAC ratio) is physically held across the
+    // reset; a motor current is not.
+    if (manualMotorMode != MOTOR_TEST_VELOCITY) resetDriveControlState();
     manualMotorVelocity = constrain(v, -MANUAL_MOTOR_V_MAX, MANUAL_MOTOR_V_MAX);
     manualMotorMode     = MOTOR_TEST_VELOCITY;
 }
@@ -4741,6 +4956,19 @@ void haltMotorOutput() {
     manualMotorVelocity = 0.0f;
     pi_motor_accum      = 0.0f;
     targetMotorTorque   = 0.0f;
+    // fw v10: the Youla-H drive controller's state is the same class of hazard as
+    // pi_motor_accum, only larger — its 5 states encode recent i_cmd history through an exact
+    // integrator, so carrying them across a run means the first motorControl() tick of the
+    // next run commands current from the previous run's history rather than from live error.
+    // This is the SINGLE reset site for every profile start on the velocity path: 'D', 'T',
+    // 'Y' and 'W' all call haltMotorOutput() immediately before their
+    // resetShareControlState(), and every stop/exit path ('X', 'T'-stop, 'Q', natural
+    // completion) calls it too. Deliberately NOT placed alongside the two
+    // resetShareControlState() calls that have no haltMotorOutput() — the 'R' power-share
+    // profile start and the 'P' operator setpoint — because neither drives the velocity loop,
+    // and resetting there would zap a live 'V' manual-velocity run that the operator did not
+    // ask to stop.
+    resetDriveControlState();
     commandMotorCurrent(0);          // also clears `current`
 }
 
@@ -4752,9 +4980,9 @@ void applyManualMotor() {
         // VESC's 1000 ms command timeout needs to stay fed. Uses rl_motor_last so manual current and
         // motorControl() can never both write in one tick.
         if (rateLimitDue(rl_motor_last, MOTOR_CTRL_PERIOD_US))
-            commandMotorCurrent(manualMotorCurrent);   // constant current, bypass velocity PI
+            commandMotorCurrent(manualMotorCurrent);   // constant current, bypass velocity loop
     } else if (manualMotorMode == MOTOR_TEST_VELOCITY) {
-        v_setpoint = manualMotorVelocity;   // hold velocity setpoint; motorControl() runs the PI
+        v_setpoint = manualMotorVelocity;   // hold setpoint; motorControl() runs the velocity loop
         motorControlGated();
     }
 }
@@ -5451,7 +5679,7 @@ void startCombinedProfile(float vmax, float boundLo) {
     Serial.print("] regions=");
     Serial.print(COMBINED_PROFILE_REGIONS);
     Serial.println("  (Region 0: settle; 'Y' again to stop)");
-    // Motor ceiling quoted for the cutoff warning is the velocity PI's own current clamp — the
+    // Motor ceiling quoted for the cutoff warning is the velocity loop's own current clamp — the
     // most the bus switch can be asked to open against on this profile.
     warnIfBandReachesCutoff("YP", yProfileBoundLo, "Y 0.5 0.2", MOTOR_I_CMD_MAX, "");
     if (vescWatchActive)
@@ -5624,7 +5852,7 @@ void parseCurrentComboParamsLine(const char* line) {
 // Commit the two validated operator values and take exclusive ownership of the motor output.
 // Called only from parseCurrentComboParamsLine() (both values already range-checked there).
 // Deliberately NO velocityChainCalibrated() gate and no hard MOT_PWR_ENABLE gate — this profile
-// drives current directly, bypassing the velocity PI, which is exactly what makes it safe on an
+// drives current directly, bypassing the velocity loop, which is exactly what makes it safe on an
 // encoder-less bench (same policy as 'T'; the 'W' handler warns about MOT_PWR).
 void startCurrentComboProfile(float imax, float boundLo) {
     // Exclusive motor ownership, same discipline as every other profile start: clear the other
@@ -5671,7 +5899,7 @@ void startCurrentComboProfile(float imax, float boundLo) {
 }
 
 // One profile tick. Walks the SAME region table as advanceCombinedProfile() through the shared
-// helper, but scales the motor axis into amps and issues it directly — the velocity PI is never
+// helper, but scales the motor axis into amps and issues it directly — the velocity loop is never
 // in the loop (contrast 'Y', which only supplies v_setpoint for motorControl()).
 void advanceCurrentComboProfile() {
     if (wRegionIdx >= COMBINED_PROFILE_REGIONS) {
@@ -6318,9 +6546,35 @@ void commandMotorCurrentLimited(float amps, float absMax) {
     vesc.setCurrent(current);
 }
 
+// Velocity loop. Two control laws, selected at compile time by USE_YOULA_DRIVE_CONTROLLER.
+// Both consume the SAME error signal (v_setpoint − v_actual) and both terminate at the SAME
+// chokepoint (commandMotorCurrent), so every writer of v_setpoint — the UDP command handler,
+// the State-98 'V' manual velocity mode, the 'D' drive cycle and the 'Y' combined profile —
+// is unaffected by the choice, as is the rl_motor_last one-writer-per-tick discipline.
+//
+// The two paths differ in UNITS, which is the whole reason motorConstant appears on one and
+// not the other:
+//   Youla (fw v10): the controller IS the map e [m/s] → i_cmd [A]; the synthesis plant already
+//                   carries the k_t / r_t / m_eff chain. Applying motorConstant here would
+//                   rescale the loop gain by 1/motorConstant and void every synthesis gate.
+//   PI   (fw ≤ v9): PI_Controller_Motor() returns a notional torque, converted to current by
+//                   the (still uncalibrated) motorConstant. Kept verbatim as the fallback.
 void motorControl() {
+#if USE_YOULA_DRIVE_CONTROLLER
+    float i_cmd = youlaController_Drive(v_setpoint - v_actual);
+    // targetMotorTorque has no reader anywhere in the firmware today (it is not in the UDP
+    // telemetry packet, not in the BLG record, and not printed by the status dumps) — its only
+    // uses are this assignment, the zeroing in haltMotorOutput(), and the host tests' assertion
+    // that haltMotorOutput() clears it. It is nonetheless kept meaningful rather than left
+    // stale: the torque equivalent of the command actually issued, so that if a future reader
+    // is added it sees the live Youla command instead of a value frozen at the last PI-build
+    // run. This is bookkeeping only — nothing downstream consumes it.
+    targetMotorTorque = i_cmd * motorConstant;
+    commandMotorCurrent(i_cmd);
+#else
     targetMotorTorque = PI_Controller_Motor(v_setpoint - v_actual);
     commandMotorCurrent(targetMotorTorque / motorConstant);
+#endif
 }
 
 // Rate-gated wrappers — see the "Control-loop rate limiting" block for the periods and rationale.
@@ -7026,6 +7280,65 @@ float youlaController_Power(float setpoint, float alphaRaw) {
     return shareCtrl_heldOut;
 }
 
+// ── Youla-H drive controller wrapper ─────────────────────────────────────────
+// Gates driveControllerStep() (drive_controller.h) to its design cadence
+// DRIVE_CTRL_TS_US (2 ms / 500 Hz — the VESC UART frame floor the synthesis was
+// discretized at) and holds the output between updates, exactly as
+// youlaController_Power() does for the share loop.
+//
+// Every current caller reaches this through motorControlGated(), which is ALREADY gated on
+// rl_motor_last / MOTOR_CTRL_PERIOD_US — nominally the same 2 ms cadence, so in practice the
+// gate below passes on essentially every call. It is kept anyway for two reasons: it makes
+// the difference-equation cadence a property of the CONTROLLER rather than of its callers
+// (so a future ungated caller cannot silently run the recursion at loop rate and change the
+// controller's effective sample time), and it makes the held-output semantics on a skipped
+// tick explicit. If the two periods are ever deliberately separated, DRIVE_CTRL_TS_US is the
+// authority — MOTOR_CTRL_PERIOD_US must not become the SHORTER of the two without re-reading
+// this note, since that would make the ZOH the caller's rather than the controller's.
+// State is file-scope for host-test resettability (same pattern as the PIs).
+float    driveCtrl_heldOut    = 0.0f;   // 0 A until the first update
+uint32_t driveCtrl_lastMicros = 0;
+
+// Reset the velocity-loop CONTROLLER state (Hanus states, held output, Ts gate). Called
+// wherever the velocity loop is torn down or restarted from scratch — see the call sites in
+// haltMotorOutput(), setManualMotorVelocity() and the Idle→Run transition.
+//
+// The held output is zeroed rather than seeded (unlike resetShareControllerCore()'s seeded
+// restart): the share loop's output is a droop RATIO the MDACs physically hold across a
+// reset, so continuity there is a hardware fact. This controller's output is a motor CURRENT,
+// and every site that calls this has just flushed, or is about to flush, 0 A to the VESC —
+// so 0 is the physically continuous seed here, not a discontinuity.
+// The Ts gate is back-dated (not zeroed) so the first tick after a reset steps the controller
+// immediately — same idiom as resetControlRateLimiters() and resetShareControllerCore().
+void resetDriveControlState() {
+    driveControllerReset();             // Hanus state vector
+    driveCtrl_heldOut    = 0.0f;
+    driveCtrl_lastMicros = micros() - (uint32_t)DRIVE_CTRL_TS_US;
+}
+
+// Tolerance on the inner gate, subtracted from DRIVE_CTRL_TS_US. The outer gate
+// (rl_motor_last / MOTOR_CTRL_PERIOD_US) is NOMINALLY the same 2 ms period, and two gates of
+// equal period sampled from the same clock beat against each other: an outer tick arriving
+// 1 µs early leaves the inner gate one microsecond short, the update is skipped, and the
+// output holds for 4 ms instead of 2. Harmless (the design delay margin is 54 ms) but
+// nondeterministic, and it would make the controller's effective sample rate depend on jitter.
+// A 200 µs margin absorbs the beat while still bounding a hypothetical UNGATED caller to
+// 1.8 ms — which is the inner gate's only real purpose, since every caller today is already
+// gated at 2 ms. DRIVE_CTRL_TS_US remains the authority on cadence.
+#define DRIVE_CTRL_GATE_TOL_US 200u
+
+float youlaController_Drive(float error) {
+    uint32_t now = micros();
+    if ((uint32_t)(now - driveCtrl_lastMicros) >= (uint32_t)DRIVE_CTRL_TS_US - DRIVE_CTRL_GATE_TOL_US) {
+        driveCtrl_lastMicros = now;
+        // The clamp lives INSIDE driveControllerStep() (it is the anti-windup), and is the
+        // same ±MOTOR_I_CMD_MAX that commandMotorCurrent() re-applies downstream — so the
+        // downstream clamp is a redundant backstop here, never the binding limit.
+        driveCtrl_heldOut = driveControllerStep(error);
+    }
+    return driveCtrl_heldOut;
+}
+
 float PI_Controller_Power(float error) {
     const float Kp = 1.0f;
     const float Ki = 1.0f;
@@ -7406,11 +7719,20 @@ void updateWheelSpeed() {
     //
     //    HISTORY: the two old errors used to partially CANCEL (v_actual under-read ~6.6×), and
     //    correcting the form alone made the under-read WORSE (~32×) while ENCODER_SLOTS_PER_REV was
-    //    still the unsourced 512. Because the loop closes on v_actual, under-reading means the PI
-    //    OVER-DRIVES — hence the VELOCITY_CHAIN_CALIBRATED interlock on the State-98 velocity entry
-    //    points. Both scale inputs are now measured (240 counts/rev from the disc's 120 counted
-    //    slots, 2026-08-16; r = 0.0762 m, 2026-08-13) and
-    //    the interlock now defaults open. Tune the motor PI gains only against this measured scale.
+    //    still the unsourced 512. Because the loop closes on v_actual, under-reading means the
+    //    velocity loop OVER-DRIVES — hence the VELOCITY_CHAIN_CALIBRATED interlock on the State-98
+    //    velocity entry points. Both scale inputs are now measured (240 counts/rev from the disc's
+    //    120 counted slots, 2026-08-16; r = 0.0762 m, 2026-08-13) and the interlock now defaults
+    //    open.
+    //
+    //    CHANGING THIS SCALE IS A CONTROLLER CHANGE (fw v10). The shipped velocity controller is
+    //    the Youla-H design in drive_controller.h; it has NO tunable gains, so a corrected scale
+    //    cannot be absorbed by turning a knob here. v_actual is the plant OUTPUT the synthesis
+    //    plant was identified against, so rescaling it rescales the loop gain and invalidates the
+    //    synthesis gates. Re-run controller_design_MIMO/synthesize_drive_siso.py against the
+    //    corrected plant and regenerate both coefficient headers — do not attempt to compensate in
+    //    firmware. Gain TUNING applies only to the USE_YOULA_DRIVE_CONTROLLER=0 PI fallback, whose
+    //    Kp/Ki should be tuned against this measured scale if that path is ever used.
     float flyWheelSpeedRpm = (dx / ENCODER_COUNTS_PER_REV) * (60.0f / dtSec);
     v_actual = flyWheelSpeedRpm * RPM_TO_MPS;
 }

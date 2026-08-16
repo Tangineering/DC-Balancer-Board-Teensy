@@ -27,6 +27,7 @@ logs/NAME/
       tracking_overlay.png, tracking_subplots.png, error_subplots.png,
       effort_subplots.png, currents_and_share.png, share_controller.png,
       bus_and_share.png                            (overwritten every run)
+      drive_controller_conditioning.png                    (v5 logs only)
 ```
 
 **Idempotency rule:** `analysis_config.json` is written exactly once — on the
@@ -93,6 +94,19 @@ accept both layouts transparently (the CSV header line identifies which one);
 no figure currently reads the four new columns. See `tools/decode_benchlog.py`
 for the exact byte layout.
 
+**Format v5 (fw v11):** appends two more fields — `u_unsat` (drive
+controller pre-clamp output, PI-fallback builds: the PI pre-clamp command)
+and `drive_x0` (Youla drive controller integrator state x[0], PI-fallback
+builds: `pi_motor_accum`) — to the 68 B v3/v4 record (76 B total), inserted
+right after `V_rgn` in the CSV column order. `flags` gains two more raw
+pass-through bits: bit4 (0x10) = drive command came from the Youla drive
+controller this tick (clear = PI fallback); bit5 (0x20) = the share loop is
+the Youla share controller this tick (clear = PI fallback) — same
+raw-passthrough treatment as bit0-bit3, no new columns from the bits
+themselves. `common.load_csv` accepts v1/v2, v3/v4, and v5 CSVs
+transparently. `--v5` on `make_test_blg.py` writes the format-v5
+header/record layout for pipeline testing.
+
 ## `analysis_config.json`
 
 ```json
@@ -125,6 +139,7 @@ Set a τ to 0 to disable that filter.
 | `currents_and_share.png` | Channel currents `I_fc` / `I_batt` (raw + filtered) [A] on top, the resulting power share (ref, raw, filtered) below. |
 | `share_controller.png` | Power-share loop detail: share tracking (ref, raw, filtered) on top; share error (left axis) against the commanded share ratio `r_cmd = gBT/(gFC+gBT)` (right axis) below. `r_cmd` is the controller output immediately before the droop-gain mapping, reconstructed exactly from the firmware's `g = K_DROOP/(RE_MAX·r)` relation with no calibration constants needed. |
 | `bus_and_share.png` | Bus behaviour: `V_bus` with a dashed no-load nominal line (`V_BUS_NOMINAL` = 15.9 V, a constant in `figures.py`) on the left axis, total bus current `I_fc + I_batt` (raw + filtered) on the right axis; power-share tracking below. |
+| `drive_controller_conditioning.png` (v5 logs only) | Hanus-conditioning verification: `u_unsat` (drive controller pre-clamp output) against the ±12 A actuator rails on top, with intervals where `abs(u_unsat) >= 12 A` shaded as saturated; `drive_x0` (Youla drive controller integrator state) on the same time axis below, with the same saturation shading. Skipped (no PNG, noted on stderr) for pre-v5 logs, which have no `u_unsat`/`drive_x0` columns. |
 
 Style is centralised in `figures.py`: a fixed role→colour map (velocity blue,
 share orange, FC aqua, BT violet, commanded ratio green) that holds across

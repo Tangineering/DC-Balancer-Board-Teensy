@@ -7,8 +7,11 @@
 **Status:** VESC bringup in progress. Motor replacement decision OPEN but now *decidable* — see §8.
 Velocity-mode and drive-cycle testing were firmware-blocked until the encoder was measured; both
 measurements landed **2026-08-13** and `VELOCITY_CHAIN_CALIBRATED` now defaults to **1** (§9, §10).
-**Open precondition before any velocity run:** the VESC-side bus-current limits in §4 are still
-unset — see the ⚠️ note there.
+**Bus-current precondition CLOSED 2026-08-16:** the VESC-side bus-current limits in §4 are now
+set and tracked (Battery Current Max = 6.0 A forward, Battery Current Regen Max = 1.5 A). Regen
+matches §12.4. Forward does not: the bus is bounded at **1.43× the 4.2 A allowance derived in
+§12.4, and above the 5.4 A conditional ceiling whose scope validation has not happened**.
+**Outstanding action: re-derive §12.4 against 6.0 A (or lower the setting) before a vehicle run.**
 
 ---
 
@@ -163,8 +166,8 @@ Re-running detection later and comparing against these values distinguishes "det
 | Gear Ratio | 13 / 36 = 2.77:1 | represent **9.49:1** | Default is a skateboard preset. Motor Pulley 100 / Wheel Pulley 949 gives exactly 9.49; 2 / 19 gives 9.50 (0.1% error) if fields cap at two digits. |
 | Wheel Diameter | 83 mm | **66 mm** **[measure]** | Tire OD, not rim. Caliper the actual mounted tires — RC rubber varies and balloons at speed. |
 | Max ERPM cap | not set | see the caveat below | **This is a weaker protection than previously assumed.** |
-| **Battery Current Max** | **not set / not tracked — UNVERIFIED** | **≈4.2 A** | **NEW — this is the setting that actually protects the bus.** See §12.4. ⚠️ **Precondition for fw v7** (review 2026-08-13, S1): `MOTOR_I_CMD_MAX` rose to 10 A (12 A since 2026-08-15) on the argument that the bus is bounded here. It is not, yet. |
-| **Battery Current Regen Max** | **not set / not tracked — UNVERIFIED** | **≈1.5 A** | Bounds regen into the bus/charger. Same fw v7 precondition as the row above. |
+| **Battery Current Max** | **SET = 6.0 A forward (operator, 2026-08-16) — tracked** | **≈4.2 A** recommended; 6.0 A in use | **This is the setting that actually protects the bus.** See §12.4. ✅ **The fw v7 open precondition (review 2026-08-13, S1) is CLOSED** — `MOTOR_I_CMD_MAX` = 12 A now sits behind a real bus-current bound. Note the value in use is **above** the §12.4 recommendation: the bus is bounded at **1.43× the derived 4.2 A allowance, and above the 5.4 A conditional ceiling whose scope validation has not happened**. **Outstanding: re-derive §12.4 against 6.0 A (or lower the setting) before a vehicle run.** ⚠️ **Per-channel consequence:** a 6.0 A bus draw split evenly is exactly `LIMIT_I_BT_MAX` = 3.0 A/channel with **zero margin**, and an FC-heavy share setpoint puts the FC channel past `LIMIT_I_FC_MAX` = 1.4 A — and under a `BENCH_TEST` flash the OC faults are compiled out, so **nothing in firmware catches either case**. |
+| **Battery Current Regen Max** | **SET = 1.5 A (operator, 2026-08-16) — tracked** | **≈1.5 A** | Bounds regen into the bus/charger. Matches the §12.4 recommendation exactly. Same fw v7 precondition as the row above, likewise **closed**. |
 | `foc_f_zv` (Zero Vector Frequency) | 30 kHz (EDU default) | leave at 30 kHz | See the correction below — it is already at the EDU default *and* at the practical ceiling. |
 
 ### ⚠️ Correction: an ERPM cap does **not** protect against mechanical overspeed
@@ -597,7 +600,7 @@ two constants that genuinely gate the velocity loop were **absent from the old t
 | `ENCODER_SLOTS_PER_REV` | **120** (counted 2026-08-16) | **RESOLVED.** 120 slots counted directly on the disc → 240 counts/rev at the ×2 decode. Supersedes fw v7's 60, which read the same "120" as *counts* and divided by the decode instead of multiplying. See below. |
 | `FLYWHEEL_RADIUS_M` | **0.0762** m (measured 2026-08-13) | **RESOLVED.** Value measured 2026-08-13; the disc's mechanical coupling resolved 2026-08-16 as surface/roller — the flywheel's radius is the rolling radius. `v_actual` is flywheel surface speed. See §10. |
 | `motorConstant` | 0.1 | **BLOCKING** for velocity mode. Not a real k_t — it is the lumped PI-output→amps gain. Calibrate *after* the two above. |
-| `MOTOR_I_CMD_MAX` | **12.0 A** (bench, fw v7 amended) | Raised 5.0 → 10.0 A by operator decision **2026-08-13**, then 10.0 → **12.0 A** on **2026-08-15** (Castle 1406 1900KV fitted, drive-controller bring-up): the §12.4 budget it came from is a *bus*-current budget, but this constant clamps VESC *phase* current (`I_bus ≈ D·I_mot/η_esc`). ⚠️ That argument assumes the §4 bus limits are configured — they are not yet. Vehicle value 15.0 A after calibration. |
+| `MOTOR_I_CMD_MAX` | **12.0 A** (bench, fw v7 amended) | Raised 5.0 → 10.0 A by operator decision **2026-08-13**, then 10.0 → **12.0 A** on **2026-08-15** (Castle 1406 1900KV fitted, drive-controller bring-up): the §12.4 budget it came from is a *bus*-current budget, but this constant clamps VESC *phase* current (`I_bus ≈ D·I_mot/η_esc`). ✅ That argument assumes the §4 bus limits are configured; they were SET 2026-08-16 (6.0 A forward, 1.5 A regen), so the assumption now holds — but at 6.0 A, which is 1.43× the ≈4.2 A §12.4 assumed and above its scope-gated 5.4 A conditional ceiling. Vehicle value 15.0 A after calibration. |
 | `LIMIT_I_FC_MAX` | **1.4 A** (bus-side) | Set from §12.2. `TODO(verify)` — the H-20 datasheet is **not in the repo**. |
 | `LIMIT_I_BT_MAX` | **3.0 A** (bus-side) | Validated per-channel envelope. Raise toward 4.2 A only after the scope-ring check. |
 | `MOTOR_CTRL_PERIOD_US` / `CHARGING_CTRL_PERIOD_US` / `POWER_BAL_PERIOD_US` | 2000 / 20000 / 1000 µs | `TODO(calibrate)` — first-cut, chosen to clear the UART floor. Profile the real loop period. |
@@ -628,7 +631,7 @@ is re-measured. `'T'`/`'W'` never close the velocity loop and deliberately bypas
 |---|---|
 | Motor pole count | **[measure]** or resolved by the motor swap (spec motors 2-pole; Castle/AXE 4-pole) |
 | Max ERPM cap | Blocked on pole count — **and a weak protection regardless (§4)** |
-| Battery Current Max / Regen Max | **≈4.2 A / ≈1.5 A** from §12.4. This is the real bus protection — **UNVERIFIED / not yet set (§4)**; the fw v7 precondition applies. |
+| Battery Current Max / Regen Max | ✅ **SET 2026-08-16: 6.0 A forward / 1.5 A regen** (§4). This is the real bus protection, and it is now in place — the fw v7 open precondition is **closed**. Regen matches §12.4 exactly. Forward bounds the bus at **1.43× the derived 4.2 A allowance, above the 5.4 A conditional ceiling whose scope validation has not happened**. **Outstanding: re-derive §12.4 against 6.0 A (or lower the setting) before a vehicle run** — see the per-channel `LIMIT_I_BT_MAX`/`LIMIT_I_FC_MAX` note in §4. |
 | Gear ratio (9.49:1), wheel diameter (66 mm) | For VESC's own speed/distance reporting only |
 | `foc_f_zv` | Already 30 kHz by EDU default, and at the practical ceiling (§4) |
 
@@ -931,6 +934,10 @@ At high duty a 15 A motor command demands **2.6× the entire source budget**.
    (raise to 5.4 A only after the pack rating and the 3 A/channel envelope are scope-validated) and
    **Battery Current Regen Max ≈ 1.5 A**. This is exactly what the VESC's split motor/battery current
    limits exist for, and it is the only mechanism that bounds bus draw across the whole duty range.
+   ⚠️ **AS SET 2026-08-16 (operator): Battery Current Max = 6.0 A, Regen Max = 1.5 A (§4).** Regen
+   matches. Forward is **1.43× the 4.2 A derived here and above the 5.4 A conditional ceiling whose
+   scope validation has not happened** — the bus is bounded, but not at the allowance this item
+   derived. Re-derive this item against 6.0 A, or lower the setting, before a vehicle run.
 
 For reference, affordable acceleration given the source ceiling (bus→wheel 0.646):
 

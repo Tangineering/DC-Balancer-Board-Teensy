@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decode .BLG bench-log files (format versions 1, 2, 3, and 4) into CSV.
+"""Decode .BLG bench-log files (format versions 1, 2, 3, 4, and 5) into CSV.
 
 The firmware writer lives in teensy_controller/teensy_controller.ino
 (State 98 SD-card logging, see PLAN.md sec 9g). File layout:
@@ -54,6 +54,32 @@ The firmware writer lives in teensy_controller/teensy_controller.ino
     byte through unchanged (raw uint) in both v1/v2 and v3 CSVs -- this is
     a documentation-only addition, decode behaviour is identical.
 
+  Header, format v5 (fw v11): adds no header fields -- v5 is IDENTICAL to v4
+    in the header (32 B layout, same offsets, same param-valid flags byte
+    at offset 7, same profileAmp/profileB fields). Only the RECORD format
+    changes; see below. v4's `if version >= 4:` header branches (fw_version,
+    param_flags, profileAmp/profileB) already cover v5 unchanged.
+
+  Record, format v5 (76 B, LE): the existing v3/v4 68 B record (u32 t_us,
+    14x f32 channel columns, u16 fault_flags, u8 ps_phase, u8 dc_phase, u8
+    trap_phase, u8 flags, u8 pad[2]) with two little-endian f32 fields
+    APPENDED at the end (offsets 0-67 unchanged):
+      offset 68-71: u_unsat  -- drive controller pre-clamp output [A]
+                    (PI-fallback build: the PI controller's pre-clamp
+                    command instead).
+      offset 72-75: drive_x0 -- Youla drive controller integrator state
+                    x[0] (PI-fallback build: pi_motor_accum instead).
+    These two fields legitimately repeat in pairs (1 kHz sampling vs a
+    500 Hz controller tick) -- this is not a decode bug or a logging
+    artifact.
+    flags gains two new bits, in the SAME byte/offset as before (the
+    decoder passes the whole byte through raw in the CSV, exactly as it
+    does for bit0-bit3 today -- no new CSV columns from the flag bits
+    themselves): bit4 (0x10) = this tick's drive command came from the
+    Youla drive controller (clear = PI fallback); bit5 (0x20) = this
+    tick's share loop is the Youla share controller (clear = PI
+    fallback).
+
   Trailer: a record with t_us == 0xFFFFFFFF (sentinel), reinterpreted as
     u32 sentinel, u32 records_written, u32 dropped_count, u8 close_reason
     (1=complete, 2=stop, 3=X, 4=Q, 5=fault, 6=io_error), u8 error_code,
@@ -89,6 +115,12 @@ new profileAmp/profileB values are header-only metadata: they are reported
 in the banner report line (see below) and exposed on DecodeResult.header,
 not written into the CSV.
 
+Format v5 adds two CSV columns -- u_unsat and drive_x0 -- inserted right
+before fault_flags (i.e. immediately after V_rgn), giving a 22-column
+CSV_HEADER_V5. The header itself is unchanged from v4 (RECORD_INFO[5] has
+its own record fmt/size/csv_fields/csv_header but reuses v4's header
+decode path unmodified).
+
 Gap statistics (printed to stderr): max_interval_us is the largest modular
 step between consecutive records; missed_periods sums, over every step,
 max(round(delta_us / 1000) - 1, 0) -- i.e. how many 1 kHz control ticks
@@ -103,7 +135,8 @@ tools/benchlog_analysis/). main() is a thin CLI wrapper around it that
 reproduces the exact stdout/stderr byte stream documented above. The
 result's csv_header (not the module-level CSV_HEADER constant) is the
 correct CSV header line for the decoded file's version -- v1/v2 files get
-the 16-column CSV_HEADER, v3/v4 files get the 20-column CSV_HEADER_V3.
+the 16-column CSV_HEADER, v3/v4 files get the 20-column CSV_HEADER_V3, v5
+files get the 22-column CSV_HEADER_V5.
 DecodeResult.header also carries "profile_amp" and "profile_b" (float or
 None -- None for v1-v3 files and for a v4 file whose corresponding valid
 bit is clear).
@@ -127,17 +160,23 @@ RECORD_SIZE = 52
 RECORD_FMT_V3 = "<I14fHBBBB2x"
 RECORD_SIZE_V3 = 68
 
+# v5 record layout: v3/v4's 68 B record with u_unsat, drive_x0 (2 f32)
+# APPENDED at the end (offsets 0-67 unchanged) -- see the module docstring.
+RECORD_FMT_V5 = "<I14fHBBBB2xff"
+RECORD_SIZE_V5 = 76
+
 TRAILER_FMT = "<IIIBBI"
 CLOSE_REASONS = {1: "complete", 2: "stop", 3: "X", 4: "Q", 5: "fault",
                   6: "io_error"}
 
-SUPPORTED_VERSIONS = (1, 2, 3, 4)
+SUPPORTED_VERSIONS = (1, 2, 3, 4, 5)
 
 # Per-version record format/size and CSV header/field list. v1 and v2 share
 # a record layout; v3 appends the four new voltage channels after I_cmd.
 # v4 changes only the HEADER (adds profileAmp/profileB); its record format
 # is byte-identical to v3, so it reuses RECORD_FMT_V3/CSV_FIELDS_V3/
-# CSV_HEADER_V3 below.
+# CSV_HEADER_V3 below. v5 appends u_unsat, drive_x0 after the v3/v4 record
+# fields (see RECORD_FMT_V5 above); its header is unchanged from v4.
 CSV_FIELDS = ["share_sp", "share_act", "v_sp", "v_act", "I_fc", "I_batt",
               "gFC", "gBT", "V_bus", "I_cmd"]
 CSV_HEADER = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,V_bus,"
@@ -150,6 +189,13 @@ CSV_HEADER_V3 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
                   "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,fault_flags,ps_phase,"
                   "dc_phase,trap_phase,flags")
 
+CSV_FIELDS_V5 = ["share_sp", "share_act", "v_sp", "v_act", "I_fc", "I_batt",
+                 "gFC", "gBT", "V_bus", "I_cmd", "V_fc", "V_batt", "V_chg",
+                 "V_rgn", "u_unsat", "drive_x0"]
+CSV_HEADER_V5 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
+                  "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,u_unsat,drive_x0,"
+                  "fault_flags,ps_phase,dc_phase,trap_phase,flags")
+
 RECORD_INFO = {
     1: {"fmt": RECORD_FMT, "size": RECORD_SIZE, "csv_fields": CSV_FIELDS,
         "csv_header": CSV_HEADER},
@@ -159,6 +205,8 @@ RECORD_INFO = {
         "csv_fields": CSV_FIELDS_V3, "csv_header": CSV_HEADER_V3},
     4: {"fmt": RECORD_FMT_V3, "size": RECORD_SIZE_V3,
         "csv_fields": CSV_FIELDS_V3, "csv_header": CSV_HEADER_V3},
+    5: {"fmt": RECORD_FMT_V5, "size": RECORD_SIZE_V5,
+        "csv_fields": CSV_FIELDS_V5, "csv_header": CSV_HEADER_V5},
 }
 
 # 30 s: longer than any profile's worst card-stall gap (ring = 1024 rec ~=
@@ -297,7 +345,11 @@ def decode_blg(data):
         prev_t_us = t_us
 
         fields = struct.unpack_from(record_fmt, chunk, 0)
-        if version in (3, 4):
+        if version == 5:
+            (_t, share_sp, share_act, v_sp, v_act, i_fc, i_batt, gfc, gbt,
+             v_bus, i_cmd, v_fc, v_batt, v_chg, v_rgn, fault_flags, ps_phase,
+             dc_phase, trap_phase, flags, u_unsat, drive_x0) = fields
+        elif version in (3, 4):
             (_t, share_sp, share_act, v_sp, v_act, i_fc, i_batt, gfc, gbt,
              v_bus, i_cmd, v_fc, v_batt, v_chg, v_rgn, fault_flags, ps_phase,
              dc_phase, trap_phase, flags) = fields
@@ -314,9 +366,11 @@ def decode_blg(data):
         row = [t_us, "%.9g" % share_sp, "%.9g" % share_act, v_sp_cell,
                v_act_cell, "%.9g" % i_fc, "%.9g" % i_batt, "%.9g" % gfc,
                "%.9g" % gbt, "%.9g" % v_bus, "%.9g" % i_cmd]
-        if version in (3, 4):
+        if version in (3, 4, 5):
             row += ["%.9g" % v_fc, "%.9g" % v_batt, "%.9g" % v_chg,
                     "%.9g" % v_rgn]
+        if version == 5:
+            row += ["%.9g" % u_unsat, "%.9g" % drive_x0]
         row += [fault_flags, ps_cell, dc_cell, tp_cell, flags]
         csv_rows.append(",".join(str(c) for c in row))
         records_read += 1

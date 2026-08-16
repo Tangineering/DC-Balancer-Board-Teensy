@@ -15,8 +15,16 @@ stage gate-checked, non-zero exit on any failure):
   4. split_integrator_multi(k=1) + balanced truncation of the stable remainder.
   5. Margins, continuous corner sweep, Tustin at Ts = 2 ms (500 Hz motor channel),
      discrete corner sweep, clamped (+-I_CLAMP) time-domain sims.
-  6. Emit drive_siso_metrics.txt, drive_siso_coeffs.h (NOT wired into any build),
-     figures/drive_siso_step.csv.
+  6. Emit drive_siso_metrics.txt and the coefficient header in TWO places from one
+     emitter -- drive_siso_coeffs.h (study copy) and ../teensy_controller/
+     drive_controller_coeffs.h (the FIRMWARE copy, fw v10+); both carry the biquad
+     cascade and the Hanus state-space realization -- and
+     figures/drive_siso_step.csv + figures/drive_siso_replay.csv (replay reference
+     vectors for a firmware implementation of the Hanus form).
+
+Plant status: the drive channel is CALIBRATED as of 2026-08-16
+(calibration/motor_id_20260815.md).  Constants live in plant_mimo.py; this script is
+downstream of them and must be re-run whenever they move.
 
 Run:  ctrl-venv/Scripts/python.exe synthesize_drive_siso.py
 """
@@ -49,12 +57,16 @@ def gate(name, cond, detail=""):
 # 1. Design plant: G22 at the nominal OP (plan §1 / mimo_system_model.md §3)
 # ─────────────────────────────────────────────────────────────────────────────
 TS = 2.0e-3               # s, motor-channel sample period (500 Hz; UART frame floor)
-I_CLAMP = 20.0            # A, motor current clamp (firmware MOTOR_I_CMD_MAX, rev 2026-08-04)
-# Was +-5 A: a bench derating that applied the ~67-87 W BUS power budget directly at the
-# MOTOR node (a unit error).  The bus/motor conversion at the nominal OP is
-# A_i ~ 0.243 A_bus per A_mot (plant_mimo.bus_current_gains), so +-20 A motor-side is
-# ~4.9 A bus-side at cruise -- the motor clamp and the bus-power budget now bind TOGETHER.
-# Only the motor clamp is enforced in these sims (no bus-current constraint is modeled).
+I_CLAMP = 12.0            # A, motor current clamp (firmware MOTOR_I_CMD_MAX, rev 2026-08-15)
+# History: +-5 A (a bench derating that applied the ~67-87 W BUS power budget directly at
+# the MOTOR node -- a unit error), then +-20 A, now +-12 A to track the firmware constant
+# (operator decision 2026-08-15, Castle 1406 1900KV fitted).  The bus/motor conversion at
+# the MEASURED nominal OP is A_i ~ 0.092 A_bus per A_mot (plant_mimo.bus_current_gains --
+# down from 0.243 because the calibrated k_t/r_t chain lowers omega0), so +-12 A motor-side
+# is only ~1.1 A bus-side at cruise.  The motor clamp is therefore now the BINDING limit
+# and is no longer coincident with the bus-power budget.  Only the motor clamp is enforced
+# in these sims (no bus-current constraint is modeled); the bus-side limits live in the
+# VESC configuration (docs/VESC_MOTOR_INTEGRATION.md §4).
 
 OP0 = pm.nominal_op()
 P0 = pm.nominal_params()
@@ -67,13 +79,18 @@ print(f"  mechanical pole = -b_eff/m_eff = {-pm.b_eff(OP0, P0)/P0['m_eff']:.6f} 
       f"   (near-integrator)")
 print(f"  force/amp = {pm.force_per_amp(P0):.5f} N/A, b_eff = {pm.b_eff(OP0, P0):.5f} N*s/m")
 
-# NOTE (contradicts the task brief's "G(0) ~ 30"): the actual DC gain is 3.709
-# (m/s)/A, not ~30.  b_eff is DOMINATED by the motor free-run loss referred to the
-# wheel (b_motor*(phi/r_t)^2 = 0.3596 of 0.3719 N*s/m), which plant_mimo folds in
-# from VESC doc §12.3 -- the aero term alone would give a ~100x smaller b_eff and
-# a DC gain of order 100.  The 1/(m_eff s + b_eff) DC gain is 1/b_eff * F/A =
-# 1.3338/0.3597 = 3.709.  Either way the Youla-H correction factor is tiny (see §3),
-# which is the property the brief actually cares about.
+# PLANT RE-IDENTIFIED 2026-08-16 (calibration/motor_id_20260815.md).  The drive channel
+# is no longer a placeholder chain: k_t, R_m, m_eff, r_t, tau_v and the drag law are all
+# measured.  The design plant moved substantially, so this whole synthesis was re-run:
+#   G22(0)   3.7085 -> 1.4112 (m/s)/A     (x0.38: k_t x0.78, r_t x2.31, b_eff x0.89)
+#   pole    -0.1219 -> -0.0914 rad/s      (b_eff/m_eff, still a near-integrator)
+#   K_F      1.3338 -> 0.4516 N/A
+# The earlier note here recorded that b_eff was DOMINATED by a modelled motor free-run
+# loss (0.3596 of 0.3719 N*s/m).  That decomposition is RETIRED: b_eff is now a single
+# measured local slope (0.32 N*s/m at v0 = 2.0 m/s), and the measured drag curve is
+# Coulomb-dominated rather than viscous-dominated, so the loss attribution in the old
+# note was not merely imprecise, it was the wrong shape.  The Youla-H correction factor
+# remains tiny (see §3) because the plant is still a near-integrator.
 gate("G22 is strictly proper (AugPlantMIMO precondition)", np.max(np.abs(G22.D)) < 1e-14)
 gate("G22 DC gain positive (positive current -> positive speed)", G22.dcgain() > 0,
      f"G22(0) = {G22.dcgain():.4f} (m/s)/A")
@@ -88,17 +105,47 @@ gate("G22 DC gain positive (positive current -> positive speed)", G22.dcgain() >
 WC_TARGET = 24.0          # rad/s, the papers' driver-model bandwidth (the TARGET)
 # The Wp corner is placed ABOVE the target because on this plant the achieved S/T
 # crossover lands consistently below the Wp corner (the loop cannot be pushed to the
-# weight; gamma_opt >> 1 throughout, i.e. the specs are shaped, not met).  Iteration
-# ladder actually run (all with Wd break = 2.5*WC, Wu = makeweight(dc, 300, hf)):
-#   WC=24, Wu(0.3,300,20) -> gamma_opt 9.14, wc 12.3, PM 56.6, worst-corner ||S|| 1.64
-#   WC=24, Wu(0.1,300,5)  -> gamma_opt 5.60, wc 15.2, PM 46
-#   WC=40, Wu(0.3,300,20) -> gamma_opt 13.3, wc 16.9, PM 54, worst ||S|| 1.89
-#   WC=50, Wu(0.2,300,10) -> gamma_opt 13.0, wc 20.7, PM 49, worst ||S|| 2.41  <-- CHOSEN
-#   WC=60, Wu(0.1,300,5)  -> wc 24.4 but PM 42 (< 45 gate) and Y peaks at 80 A/(m/s)
-# WC = 50 is the most aggressive setting that still clears PM > 45 deg and keeps the
-# worst-corner ||S||inf under the 2.5 target, while putting the achieved crossover
-# (20.7 rad/s) in the vicinity of the papers' 24 rad/s for comparability.
-WC = 50.0                 # rad/s, Wp corner (see ladder above)
+# weight; gamma_opt >> 1 throughout, i.e. the specs are shaped, not met).
+#
+# LADDER RE-RUN 2026-08-16 on the CALIBRATED plant.  The old ladder is void: the plant
+# DC gain fell x2.6 and the pole moved, so every rung's achieved crossover and margins
+# changed and the previously CHOSEN rung (WC=50, Wu(0.2,300,10)) now lands at 14.4 rad/s
+# instead of 20.7.  Ladder actually run (Wd break = 2.5*WC, Wu = makeweight(dc, 300, hf);
+# worst ||S|| over the 24 drive corners, now with pole_factor in {0.5, 3}):
+#   WC=24, Wu(0.3 ,300,20 ) -> g_opt 20.17, wc  8.25, PM 59.4, worst ||S|| 1.451  (wc gate FAILS, < 12)
+#   WC=24, Wu(0.1 ,300, 5 ) -> g_opt 11.53, wc 10.55, PM 49.6, worst ||S|| 1.925  (wc gate FAILS, < 12)
+#   WC=30, Wu(0.1 ,300, 5 ) -> g_opt 13.77, wc 11.93, PM 48.4, worst ||S|| 2.043  (wc gate FAILS, < 12)
+#   WC=40, Wu(0.3 ,300,20 ) -> g_opt 28.84, wc 11.22, PM 57.7, worst ||S|| 1.592  (wc gate FAILS, < 12)
+#   WC=40, Wu(0.1 ,300, 5 ) -> g_opt 17.40, wc 14.13, PM 46.9, worst ||S|| 2.224
+#   WC=45, Wu(0.1 ,300, 5 ) -> g_opt 19.19, wc 15.02, PM 46.4, worst ||S|| 2.309
+#   WC=50, Wu(0.2 ,300,10 ) -> g_opt 27.47, wc 14.35, PM 53.2, worst ||S|| 1.890  (the OLD choice)
+#   WC=50, Wu(0.12,300, 6 ) -> g_opt 22.22, wc 15.49, PM 47.7, worst ||S|| 2.253
+#   WC=50, Wu(0.1 ,300, 5 ) -> g_opt 20.95, wc 15.98, PM 45.9, worst ||S|| 2.392
+#   WC=50, Wu(0.08,300, 4 ) -> g_opt 19.78, wc 16.22, PM 43.9  (PM gate FAILS)
+#   WC=55, Wu(0.15,300,7.5) -> g_opt 26.07, wc 15.98, PM 49.6, worst ||S|| 2.152  <-- CHOSEN
+#   WC=55, Wu(0.1 ,300, 5 ) -> g_opt 22.71, wc 16.73, PM 45.4, worst ||S|| 2.474
+#   WC=60, Wu(0.1 ,300, 5 ) -> g_opt 24.45, wc 17.52, PM 45.1, worst ||S|| 2.555  (over the 2.5 target)
+#   WC=60, Wu(0.05,300,2.5) -> g_opt 21.93, wc 18.07, PM 40.6  (PM gate FAILS)
+#   WC=70, Wu(0.1 ,300, 5 ) -> g_opt 27.91, wc 18.92, PM 44.4  (PM gate FAILS)
+#   WC=80, Wu(0.05,300,2.5) -> g_opt 28.74, wc 20.75, PM 40.3, worst ||S|| 3.238  (both gates FAIL)
+#
+# CHOICE, and a deliberate DEVIATION from a literal "most aggressive rung that clears the
+# gates".  That literal rule selects WC=55, Wu(0.1,300,5): wc 16.73 rad/s, PM 45.4 deg,
+# worst ||S|| 2.474.  It clears PM > 45 by 0.4 deg and the 2.5 ||S|| target by 0.026 -- on
+# a plant whose damping slope carries +-15 % and a documented thermal spread, that is not
+# a margin, it is a rounding error.  WC=55, Wu(0.15,300,7.5) buys 4.2 deg of phase margin
+# and 0.32 of worst-corner peak for 4.5 % of crossover (15.98 vs 16.73 rad/s).  The
+# aggressive rung is recorded above so the trade is auditable rather than hidden.
+#
+# The achieved crossover is now BELOW the papers' 24 rad/s (15.98 vs the old design's
+# 20.7) and the gate band's lower half.  This is the calibration's honest consequence: at
+# the measured plant gain, pushing past ~17 rad/s costs phase margin faster than the old
+# (over-estimated) plant suggested.  The clamp is not what selects the rung -- the ladder
+# is decided entirely by phase margin and worst-corner ||S||, which are linear properties
+# and see no clamp at all.  The clamp does bind the LARGE-SIGNAL response: the 0->2 m/s
+# step in §8a rails at 12 A and is inertia-limited (a_max = K_F*12/m_eff = 1.55 m/s^2),
+# which is a separate statement about actuator range, not about loop shaping.
+WC = 55.0                 # rad/s, Wp corner (see ladder above)
 WP_DC = 1e4               # S weight DC gain (integral-like low-frequency demand)
 
 Wp = strictly_proper_2nd_order_weight(WP_DC, WC)
@@ -110,11 +157,14 @@ Wp = strictly_proper_2nd_order_weight(WP_DC, WC)
 WD_WC = 2.5*WC
 Wd = makeweight(0.5, WD_WC, 40.0)
 # Wu on Y = Gc*S [A per m/s].  Y(0) is unbounded (integrator) so only the in-band /
-# HF shape matters.  dc = 0.2 allows ~5 A/(m/s) in band -- on a 0.5 m/s-scale error
-# that is ~2.5 A of proportional effort, well inside the +-20 A clamp; hf = 10 forces Y down
-# past the 300 rad/s break (papers' Y-weight break).
+# HF shape matters.  dc = 0.15 allows ~6.7 A/(m/s) in band -- on a 0.5 m/s-scale error
+# that is ~3.3 A of proportional effort, inside the +-12 A clamp; hf = 7.5 forces Y down
+# past the 300 rad/s break (papers' Y-weight break).  Loosened from the previous
+# (0.2, 300, 10) because the calibrated plant's DC gain is 2.6x smaller: the SAME speed
+# error now needs 2.6x the current, so holding the old effort weight would have cost
+# bandwidth for no physical reason.
 # D = hf != 0 => D12 full column rank (AugPlantMIMO asserts this).
-WU_DC, WU_WC, WU_HF = 0.2, 300.0, 10.0
+WU_DC, WU_WC, WU_HF = 0.15, 300.0, 7.5
 Wu = makeweight(WU_DC, WU_WC, WU_HF)
 
 print("\n= 2. Weights + H-inf (DGKF) ==")
@@ -253,13 +303,19 @@ print(f"  gain margin = {'inf' if not np.isfinite(gm_db) else f'{gm_db:.1f} dB'}
 # 6. Continuous corner robustness
 # ─────────────────────────────────────────────────────────────────────────────
 # plant_mimo parameterizes the DRIVE plant by (K_v, pole_factor, tau_v, Td_v) from
-# drive_corners() and by the OP only through b_eff(op, p) = rho*C_dA*v0 + ... i.e.
-# through v0 ALONE.  op_grid() varies (I_tot0, r0) and holds v0 = 2.0 fixed, so
-# sweeping op_grid() would repeat the SAME drive plant 10x.  DEVIATION from the
-# brief's "24 corners x feasible OPs": we sweep what actually varies, v0 in
-# {0.5, 2, 5} m/s (standstill-ish / nominal / top-speed), giving 24*3 = 72 plants.
-V0_SET = (0.5, 2.0, 5.0)
-print("\n= 6. Continuous corner sweep (24 drive corners x 3 v0) ==")
+# drive_corners().  DEVIATION from the brief's "24 corners x feasible OPs": op_grid()
+# varies (I_tot0, r0), neither of which enters G22, so sweeping it would repeat the same
+# plant 10x.
+# CHANGED 2026-08-16: the previous run also swept v0 in {0.5, 2, 5} m/s, because b_eff
+# then carried an explicit aero term rho*C_dA*v0.  The calibrated b_eff is a MEASURED
+# LOCAL SLOPE with no v0 dependence (plant_mimo.b_eff), so that sweep is now exactly
+# degenerate -- it would report 72 plants of which only 24 differ.  The speed dependence
+# it used to represent has not disappeared; it has moved into pole_factor in {0.5, 3},
+# whose upper corner is sized to cover the measured doubling of the slope below
+# ~1.5 m/s.  Sweeping a single v0 and widening the pole corner is the same coverage,
+# honestly counted.
+V0_SET = (2.0,)
+print("\n= 6. Continuous corner sweep (24 drive corners; v0 does not enter G22) ==")
 
 
 def corner_drive_plant(dc, v0):
@@ -404,12 +460,14 @@ class BiquadController:
 # DiscreteController pattern"), forced by a measured property of this design:
 #
 #   the NON-INTEGRAL branch of the Youla-H drive controller has a low-frequency gain
-#   of Gs_red(0) = <printed below> A per (m/s) of error.  With a +-I_CLAMP actuator that
-#   branch ALONE saturates at |e| > 5/Gs_red(0) ~ 0.014 m/s, so on a 2 m/s step the
-#   lag states of the biquad cascade wind up just as hard as the integrator does.
-#   Back-calculating only the integrator therefore does NOT de-wind the controller:
-#   measured with BiquadController the 0->2 m/s step leaves a 0.30 m/s standing error
-#   and an 18 mm/s peak-to-peak limit cycle (both gate failures).
+#   of Gs_red(0) = <printed below> A per (m/s) of error (745 A/(m/s) as synthesized
+#   2026-08-16).  With the +-12 A actuator that branch ALONE saturates at
+#   |e| > I_CLAMP/Gs_red(0) ~ 16 mm/s, so on a 2 m/s step the lag states of the biquad
+#   cascade wind up just as hard as the integrator does.  Back-calculating only the
+#   integrator therefore does NOT de-wind the controller: measured with BiquadController
+#   the 0->2 m/s step leaves a -0.48 m/s standing error and a 22 mm/s peak-to-peak limit
+#   cycle (both gate failures).  The inline figures here are indicative -- the values the
+#   run actually measured are printed by §8/§8c and written to drive_siso_metrics.txt.
 #
 # The sims below therefore use HANUS CONDITIONING on the state-space realization of
 # the SAME controller (self-conditioned form; Hanus/Kinnaert/Henrotte 1987):
@@ -547,8 +605,11 @@ gate("regen: no windup (saturated undershoot within 2% of the unsaturated linear
 # ─────────────────────────────────────────────────────────────────────────────
 # e_sat = I_CLAMP/|Gs_red(0)| is the error at which the NON-INTEGRAL branch alone
 # rails the actuator; above it the biquad lag states wind up and integrator-only
-# back-calculation cannot de-wind them.  Raising the clamp 5 -> 20 A quadruples
-# e_sat, so the question "is Hanus still needed?" must be re-answered, not assumed.
+# back-calculation cannot de-wind them.  e_sat scales LINEARLY with the clamp, so the
+# question "is Hanus still needed?" must be re-answered on every clamp change, not
+# assumed.  RE-RUN 2026-08-16 at the firmware's 12 A clamp (was 20 A): e_sat drops x0.6
+# from the clamp alone, and Gs_red(0) has also moved with the re-identified plant, so
+# both terms changed.  The scan below is the answer, printed rather than argued.
 E_SAT = I_CLAMP/abs(GS_DC)
 print(f"\n= 8c. integrator-only AW boundary (e_sat = I_CLAMP/|Gs_red(0)| = "
       f"{E_SAT*1e3:.1f} mm/s) ==")
@@ -582,19 +643,194 @@ with open(os.path.join(FIGDIR, "drive_siso_step.csv"), "w", encoding="utf-8") as
         f.write(f"{t:.4f},{a},{b}\n")
 
 
+# ── the SHIPPED (float32) realization ────────────────────────────────────────
+# The header emits `static const float` arrays, so what a firmware implementation
+# actually computes with is the float32 ROUNDING of the synthesis matrices, not the
+# float64 matrices themselves.  Those are not interchangeable here: the realization
+# carries an exact integrator (an eigenvalue at 1) and a second mode at ~0.9999, so a
+# ~1e-7 coefficient perturbation is integrated rather than damped.  Replaying the float64
+# matrices produced reference vectors that no implementation of this header could
+# reproduce (measured: 1.7e-2 A divergence over the regen episode).
+# Therefore: the coefficients are rounded to float32 ONCE, here; the header text and the
+# replay vectors are both generated from that single rounded set, so header, CSV and a
+# compiled Teensy constant table all hold bit-identical values.  The state RECURSION stays
+# in float64 -- that is a statement about the implementation's arithmetic, which the header
+# does not fix, and §check4 of validate_drive_siso.py measures what float32 arithmetic
+# would cost on top.
+# NOTE the synthesis and every gate above remain on the float64 matrices: rounding is an
+# emission concern, not a design concern.
+def _f32(M):
+    """Round to float32 and widen back, so subsequent arithmetic is exact in float64."""
+    return np.asarray(np.float32(np.asarray(M, dtype=float)), dtype=np.float64)
+
+
+AD_H = _f32(ctrl_d.A)
+BD_H = _f32(ctrl_d.B)
+CD_H = _f32(ctrl_d.C)
+DD_H = float(np.float32(ctrl_d.D[0, 0]))
+# AC is derived from the ALREADY-ROUNDED AD/BD/CD/DD and then rounded itself, so the
+# identity AC == AD - BD*CD/DD holds to a float32 rounding of the largest entry (~1e-6)
+# rather than to the difference of two independently-rounded quantities (~4e-6).
+AC_H = _f32(AD_H - BD_H @ CD_H/DD_H)
+_ac_resid = float(np.max(np.abs(AC_H - (AD_H - BD_H @ CD_H/DD_H))))
+print(f"\n= 8d. shipped float32 realization ==")
+print(f"  AC identity residual after rounding = {_ac_resid:.3e} "
+      f"(float32 half-ulp of max|AC| = {np.max(np.abs(AC_H)):.1f})")
+
+
+class HeaderController(ConditionedController):
+    """ConditionedController driven by the SHIPPED float32 coefficients.
+
+    Identical recursion; only the constants differ.  This is what the replay vectors are
+    generated with, and what an implementation reading drive_siso_coeffs.h reproduces.
+    """
+
+    def __init__(self, umin=-I_CLAMP, umax=I_CLAMP):
+        self.Ad, self.Bd, self.Cd, self.Dd = AD_H, BD_H, CD_H, DD_H
+        self.Ac = AC_H
+        self.x = np.zeros((AD_H.shape[0], 1))
+        self.umin, self.umax = umin, umax
+
+
+# ── replay reference vectors for the firmware round ──────────────────────────
+# The firmware implements the HANUS form, so the vectors replayed against it must be
+# generated by the Hanus recursion (not the biquad cascade -- the two agree only while
+# unsaturated, an equivalence gated in §8) and with the SHIPPED float32 coefficients
+# (HeaderController above, not ConditionedController).  Two episodes:
+#   (a) unsaturated small-signal: mixed steps + seeded noise, |u| well inside the clamp,
+#       which exercises the linear state recursion and nothing else;
+#   (b) saturated: the §8b regen 2->0 error sequence verbatim, where the clamp is active
+#       for a sustained interval, which exercises the conditioning term Bd*u/Dd.
+# FIXED SEED (20260816) so the vectors are reproducible byte for byte.
+_rng = np.random.default_rng(20260816)
+_e_small = np.concatenate([
+    np.zeros(10),
+    np.full(40, 1.0), np.full(30, -0.6), np.zeros(20),
+    np.full(35, 0.35), np.full(35, -0.25), np.zeros(30),
+])
+_e_small = _e_small + 0.15*_rng.standard_normal(_e_small.size)
+# scale so the unsaturated peak lands at ~40 % of the clamp: "well inside", with enough
+# amplitude that float32 replay error is measured against a real signal, not against noise.
+_probe = HeaderController()
+_u_probe = np.array([_probe.step(float(v), sat=False) for v in _e_small])
+_e_small = _e_small*(0.40*I_CLAMP/np.max(np.abs(_u_probe)))
+_c_small = HeaderController()
+_u_small = np.array([_c_small.step(float(v), sat=True) for v in _e_small])
+gate("replay (a) is genuinely unsaturated", np.max(np.abs(_u_small)) < I_CLAMP - 1e-9,
+     f"peak |u| = {np.max(np.abs(_u_small)):.3f} A of {I_CLAMP:.0f} A")
+
+# The regen episode's STIMULUS is the §8b closed-loop error sequence; its RESPONSE is
+# re-derived here through the shipped float32 coefficients (u2 came from the float64
+# controller, so it is not the right target for a header-replay check).
+_e_sat = r2 - y2
+_c_sat = HeaderController()
+_u_sat = np.array([_c_sat.step(float(v), sat=True) for v in _e_sat])
+gate("replay (b) is genuinely saturated", np.min(_u_sat) <= -I_CLAMP + 1e-9,
+     f"{int(np.sum(_u_sat <= -I_CLAMP + 1e-9))} samples on the rail")
+print(f"  float32-coefficient replay vs the float64 sim (regen): max |du| = "
+      f"{np.max(np.abs(_u_sat - u2)):.3e} A  -- this is the divergence the rounded "
+      f"emission removes from the reference vectors")
+
+with open(os.path.join(FIGDIR, "drive_siso_replay.csv"), "w", encoding="utf-8") as f:
+    f.write("# drive_siso_replay.csv — GENERATED by synthesize_drive_siso.py.  "
+            "DO NOT EDIT BY HAND.\n")
+    f.write(f"# Hanus-conditioned controller reference vectors, Ts = {TS*1e3:.1f} ms, "
+            f"clamp +-{I_CLAMP:.1f} A, seed 20260816.\n")
+    f.write("# Generated with the FLOAT32-ROUNDED coefficients exactly as emitted in "
+            "drive_siso_coeffs.h\n")
+    f.write("# (not the float64 synthesis matrices), because the realization contains an\n"
+            "# integrator and a mode at ~0.9999, which integrate a 1e-7 coefficient "
+            "rounding into\n"
+            "# ~1e-2 A over this episode.  The state recursion is float64: these vectors "
+            "are the\n"
+            "# target for an implementation that reads the header's floats and computes in "
+            "double.\n")
+    f.write("# episode 'small' : unsaturated small-signal (mixed steps + noise), "
+            "controller state starts at zero.\n")
+    f.write("# episode 'regen' : the 2->0 m/s regen event, clamp ACTIVE, "
+            "controller state starts at zero.\n")
+    f.write("# Replay: u_out[k] = clamp(Cd x[k] + Dd e_in[k]); "
+            "x[k+1] = Ac x[k] + Bd u_out[k]/Dd.\n")
+    # Columns are written at FULL float64 round-trip precision (%.17e), not at the
+    # header's %.9e.  e_in is the recursion's input: this realization integrates its
+    # input, so truncating the stimulus to 10 significant digits injects a perturbation
+    # that grows to ~1e-2 A over the regen episode -- larger than any implementation
+    # difference the vectors are meant to expose.  The precision here is about the
+    # STIMULUS being reproducible; the coefficients remain float32 (above).
+    f.write("episode,k,e_in,u_out\n")
+    for k, (e_, u_) in enumerate(zip(_e_small, _u_small)):
+        f.write(f"small,{k},{e_:.17e},{u_:.17e}\n")
+    for k, (e_, u_) in enumerate(zip(_e_sat, _u_sat)):
+        f.write(f"regen,{k},{e_:.17e},{u_:.17e}\n")
+print(f"  replay vectors: {len(_e_small)} unsaturated + {len(_e_sat)} saturated samples")
+
+
 def carr(v):
     return ", ".join(f"{x:.9e}f" for x in v)
 
 
-with open(os.path.join(HERE, "drive_siso_coeffs.h"), "w", encoding="utf-8") as f:
-    f.write(f"""// drive_siso_coeffs.h — GENERATED by controller_design_MIMO/synthesize_drive_siso.py
+def carr17(v):
+    """Round-trip-exact formatting.
+
+    The values are already float32 (see _f32), so a C compiler rounds this text back to
+    exactly the same float32.  The extra digits exist for the READERS of this header that
+    parse it in double precision -- the replay validator, chiefly.  %.9e is enough to
+    round-trip a float32 only if the parser targets float32; parsed as a double it lands
+    ~1e-10 away, which this integrating realization amplifies into a clamp-timing flip and
+    ~1e-2 A of apparent replay mismatch.  Measured, not hypothesised.
+    """
+    return ", ".join(f"{x:.17e}f" for x in v)
+
+
+def cmat(name, M, comment):
+    """Emit a row-major static const float array (2-D) for the firmware."""
+    M = np.atleast_2d(np.asarray(M, float))
+    rows, cols = M.shape
+    s = f"// {comment}\nstatic const float {name}[{rows}][{cols}] = {{\n"
+    for r in M:
+        s += f"    {{ {carr17(r)} }},\n"
+    return s + "};\n"
+
+
+# ── Coefficient-header emission ─────────────────────────────────────────────
+# TWO files are written from ONE emitter, so the study copy and the firmware copy can
+# never drift:
+#   controller_design_MIMO/drive_siso_coeffs.h   — study artifact (MIMO comparison)
+#   teensy_controller/drive_controller_coeffs.h  — the FIRMWARE copy, included by
+#                                                  teensy_controller/drive_controller.h
+# Only the top banner differs; every coefficient below it is byte-identical.
+
+_BANNER_STUDY = """// drive_siso_coeffs.h — GENERATED by controller_design_MIMO/synthesize_drive_siso.py
 // DO NOT EDIT BY HAND.  Regenerate after bench calibration (mimo_system_model.md §9).
 //
-// *** NOT WIRED INTO ANY FIRMWARE BUILD. ***  This is the Phase-3 DECENTRALIZED
-// BASELINE drive controller for the MIMO study (controller_design_MIMO/), emitted in
-// the shipped share-controller header format purely so the Teensy implementation cost
-// is quantified on equal terms.  No firmware source includes this file.
+// *** STUDY COPY — NOT INCLUDED BY ANY FIRMWARE SOURCE. ***  This is the Phase-3
+// DECENTRALIZED BASELINE drive controller for the MIMO study (controller_design_MIMO/),
+// emitted in the shipped share-controller header format so the Teensy implementation
+// cost is quantified on equal terms.
+// The FIRMWARE copy of these same coefficients EXISTS as of fw v10 and is written by
+// this same script to teensy_controller/drive_controller_coeffs.h; the runtime that
+// consumes it is teensy_controller/drive_controller.h (Hanus form, double states),
+// enabled by USE_YOULA_DRIVE_CONTROLLER.  Both files are emitted from one code path —
+// do not hand-edit either.
+"""
+
+_BANNER_FW = """// drive_controller_coeffs.h — GENERATED by
+// controller_design_MIMO/synthesize_drive_siso.py.  DO NOT EDIT BY HAND.
+// Regenerate after bench calibration (mimo_system_model.md §9), or after any change to
+// the motor-current clamp (MOTOR_I_CMD_MAX in teensy_controller.ino must equal
+// DRIVE_CTRL_I_MAX below — the anti-windup design depends on it).
 //
+// *** THIS IS THE FIRMWARE COPY. ***  Included by teensy_controller/drive_controller.h
+// and compiled into the Teensy build when USE_YOULA_DRIVE_CONTROLLER is 1 (fw v10+).
+// The study copy of the same coefficients is controller_design_MIMO/drive_siso_coeffs.h;
+// both are written from one emitter in the generating script, so they cannot drift.
+"""
+
+
+def _emit_coeffs(path, banner):
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(banner)
+        f.write(f"""//
 // SISO Youla-H velocity controller for the SC001 drive channel:
 //   Gc(z) = R(z) + kI*Ts/2*(z+1)/(z-1),  e = v_ref - v [m/s]  ->  i_cmd [A]
 // H-inf mixed sensitivity (gamma = {g_used:.4f}) + Youla-H DC rescale (T(0) = 1 exact),
@@ -609,31 +845,101 @@ with open(os.path.join(HERE, "drive_siso_coeffs.h"), "w", encoding="utf-8") as f
 // |e| > {I_CLAMP/abs(GS_DC)*1e3:.1f} mm/s and its lag states wind up independently of the integrator.
 // Measured on the 0->2 m/s step: integrator-only AW leaves a {_yb[-1]-2.0:+.2f} m/s standing error
 // and a {np.ptp(_yb[-250:])*1e3:.1f} mm/s limit cycle.
-// RE-CHECKED at the revised +-{I_CLAMP:.0f} A clamp (2026-08-04): raising the clamp 4x raises
-// e_sat 4x too, so integrator-only AW is now CLEAN for steps up to ~{AW_BOUNDARY[0]} m/s (final
-// error < 1e-4 m/s, no limit cycle) and only breaks from ~{AW_BOUNDARY[1]} m/s upward.  It still
-// FAILS the 0->2 m/s gate, so the Hanus form is still REQUIRED for this baseline --
-// but the failure boundary has moved from small-signal into large-transient territory.
+// RE-CHECKED at the firmware's +-{I_CLAMP:.0f} A clamp (2026-08-15 operator decision) on the
+// re-identified plant (2026-08-16 calibration): e_sat scales with the clamp, so it must be
+// re-answered on every clamp change.  Integrator-only AW is CLEAN for steps up to
+// ~{AW_BOUNDARY[0]} m/s (final error < 1e-4 m/s, no limit cycle) and breaks from ~{AW_BOUNDARY[1]} m/s upward.
+// It still FAILS the 0->2 m/s gate, so the Hanus form remains REQUIRED for this baseline.
 // A correct implementation must condition the FULL
 // controller state (Hanus self-conditioned form, used in the synthesis sims):
 //     u_unsat = Cd x + Dd e ;  u = clamp(u_unsat) ;
 //     x[k+1]  = (Ad - Bd*Cd/Dd) x + Bd*u/Dd            (Dd = {ctrl_d.D[0, 0]:.9e})
 // i.e. this baseline costs a {ctrl_d.n}-state state-space realization on the Teensy, not a
 // biquad cascade.  Recorded as a Phase-6 "Teensy implementation cost" datapoint.
+// The realization is emitted below (DRIVE_CTRL_AD/BD/CD/DD/AC); replay reference vectors
+// for a firmware implementation are in figures/drive_siso_replay.csv.
 #pragma once
 
 #define DRIVE_CTRL_TS_US   {int(TS*1e6)}      // controller update period, microseconds
 #define DRIVE_CTRL_NSOS    {len(sos)}
 static const float DRIVE_CTRL_KI = {kI:.9e}f;   // integrator gain (continuous kI, Tustin in code)
-static const float DRIVE_CTRL_I_MIN = {-I_CLAMP:.9e}f;   // A, motor current clamp (regen rail)
-static const float DRIVE_CTRL_I_MAX = {I_CLAMP:.9e}f;    // A, motor current clamp (drive rail)
+// constexpr (not plain const) so the firmware can static_assert these against its own
+// MOTOR_I_CMD_MAX: a namespace-scope `const float` is NOT a constant expression in C++17, so
+// the clamp-pairing guard would not compile against it.  Same float32 values either way.
+static constexpr float DRIVE_CTRL_I_MIN = {-I_CLAMP:.9e}f;   // A, motor current clamp (regen rail)
+static constexpr float DRIVE_CTRL_I_MAX = {I_CLAMP:.9e}f;    // A, motor current clamp (drive rail)
 
 // biquad sections: b0 b1 b2 a1 a2 (a0 = 1)
 static const float DRIVE_CTRL_SOS[DRIVE_CTRL_NSOS][5] = {{
 """)
-    for b, a in sos:
-        f.write(f"    {{ {carr(b)}, {a[1]:.9e}f, {a[2]:.9e}f }},\n")
-    f.write("};\n")
+        for b, a in sos:
+            f.write(f"    {{ {carr(b)}, {a[1]:.9e}f, {a[2]:.9e}f }},\n")
+        f.write("};\n")
+
+        # ── Hanus state-space realization (what the firmware actually runs) ──
+        _n = ctrl_d.n
+        _Dd = DD_H
+        _Ac = AC_H
+        f.write(f"""
+// ── Hanus self-conditioned state-space realization ──────────────────────────
+// This is the FULL controller Gc(z) = R(z) + kI*Ts/2*(z+1)/(z-1) realized as one
+// {_n}-state discrete system, NOT a second copy of the biquads above.  DRIVE_CTRL_SOS is
+// retained only for the unsaturated-equivalence test; the state-space form below is the
+// one to implement, because it is the only one that de-winds correctly (see the
+// anti-windup warning at the top of this file).
+//
+// Dimensions: n = {_n} states, 1 input (velocity error e [m/s]), 1 output (i_cmd [A]).
+//   AD is n x n, BD is n x 1, CD is 1 x n, DD is scalar, AC = AD - BD*CD/DD is n x n.
+// All arrays are ROW-MAJOR.
+//
+// Update law, once per DRIVE_CTRL_TS_US, with e = v_ref - v_actual [m/s]:
+//   u_unsat = sum_j CD[0][j]*x[j] + DD*e
+//   u       = clamp(u_unsat, DRIVE_CTRL_I_MIN, DRIVE_CTRL_I_MAX)     -> i_cmd [A]
+//   x_next[i] = sum_j AC[i][j]*x[j] + BD[i][0]*(u/DD)
+//   x <- x_next
+// Note the conditioning: the state update is driven by the CLAMPED u, not by e.  While
+// unsaturated this is algebraically identical to x_next = AD x + BD e (that identity is
+// what makes AD useful as a cross-check); once clamped it is what prevents windup.
+// Replay vectors for both regimes: figures/drive_siso_replay.csv.
+//
+// NUMERICAL CAUTION — read before implementing.
+// This realization contains an exact integrator (an AD eigenvalue at 1) and a second mode
+// at ~0.9999, alongside CD entries of order 50.  Perturbations are INTEGRATED, not damped,
+// so coefficient precision and arithmetic precision both matter more than usual here.
+//   * COEFFICIENTS.  The values below are the exact float32 roundings of the synthesis
+//     matrices, and figures/drive_siso_replay.csv was generated from these same rounded
+//     values.  Header, replay vectors and a compiled constant table therefore hold
+//     bit-identical coefficients.  (Emitting float64 text instead put the reference
+//     vectors 1.7e-2 A away from anything this header can reproduce.)  AC is derived from
+//     the rounded AD/BD/CD/DD and then rounded, so AC == AD - BD*CD/DD holds to
+//     {_ac_resid:.1e} — a float32 rounding of AC's largest entry, not a compounding error.
+//   * ARITHMETIC.  The replay vectors assume a float64 (double) state recursion.  Running
+//     the recursion in float32 costs a further ~1e-2 A on the saturated regen episode —
+//     measured, not estimated (validate_drive_siso.py check 4).  The divergence appears
+//     at rail RELEASE rather than by slow accumulation, so it is not bounded by shortening
+//     the run.  A float32 state recursion is NOT adequate for this controller; use double
+//     (or fixed point with equivalent headroom).
+// Replay comparisons should be toleranced on the OUTPUT (a few mA of i_cmd), never on the
+// individual states.
+#define DRIVE_CTRL_NSTATES {_n}
+static const float DRIVE_CTRL_DD = {_Dd:.17e}f;   // direct feedthrough, A per (m/s)
+
+""")
+        f.write(cmat("DRIVE_CTRL_AD", AD_H,
+                     f"AD [{_n}][{_n}] — unconditioned state matrix (cross-check only)"))
+        f.write("\n")
+        f.write(cmat("DRIVE_CTRL_BD", BD_H, f"BD [{_n}][1] — input matrix"))
+        f.write("\n")
+        f.write(cmat("DRIVE_CTRL_CD", CD_H, f"CD [1][{_n}] — output matrix"))
+        f.write("\n")
+        f.write(cmat("DRIVE_CTRL_AC", _Ac,
+                     f"AC [{_n}][{_n}] = AD - BD*CD/DD — the CONDITIONED state matrix "
+                     f"(use this one)"))
+
+
+_emit_coeffs(os.path.join(HERE, "drive_siso_coeffs.h"), _BANNER_STUDY)
+_emit_coeffs(os.path.join(HERE, os.pardir, "teensy_controller",
+                          "drive_controller_coeffs.h"), _BANNER_FW)
 
 with open(os.path.join(HERE, "drive_siso_metrics.txt"), "w", encoding="utf-8") as f:
     f.write(f"""SISO Youla-H DRIVE baseline — synthesis metrics (GENERATED by
@@ -644,9 +950,24 @@ states               = {G22.n}  (Pade(2) VESC delay + tau_v lag + 1st-order mech
 G22(0)               = {G22.dcgain():.6f} (m/s)/A
 mechanical pole      = {-pm.b_eff(OP0, P0)/P0['m_eff']:.6f} rad/s  (near-integrator)
 b_eff                = {pm.b_eff(OP0, P0):.6f} N*s/m   force/amp = {pm.force_per_amp(P0):.6f} N/A
-NOTE: G22(0) = 3.709, NOT the ~30 anticipated in the task brief — b_eff is dominated
-      by the wheel-referred motor free-run loss (0.3596 of 0.3719 N*s/m, VESC doc §12.3),
-      not by aero.  The Youla-H correction is tiny either way (see below).
+i_m0 at the OP       = {pm.bus_current_gains(OP0, P0)[2]:.4f} A   vs a measured cruise hold of
+                       4.5 +- 0.4 A: the model runs ~9 % below the band's centre and just
+                       under its lower edge, NOT inside it.  Consistent with the unmeasured
+                       eta_dt = 0.85, which scales every absolute force.  The claim this
+                       supports is a factor-of-4 correction (the retired model gave 0.973 A),
+                       not agreement to within the measurement.
+
+PLANT RE-IDENTIFIED 2026-08-16 (calibration/motor_id_20260815.md).  k_t (4.266e-3 N*m/A
+from the measured flux linkage), R_m (22.6 mOhm), m_eff (3.5 kg), r_t (0.0762 m flywheel
+rolling radius), tau_v (1.0 ms) and the drag law (b_eff 0.32 N*s/m local slope + F_c
+1.2 N Coulomb) are all MEASURED.  Effect on the design plant:
+      G22(0)  3.7085 -> {G22.dcgain():.4f} (m/s)/A      pole  -0.1219 -> {-pm.b_eff(OP0, P0)/P0['m_eff']:.4f} rad/s
+      K_F     1.3338 -> {pm.force_per_amp(P0):.4f} N/A
+The previous note here attributed b_eff to a modelled motor free-run loss (0.3596 of
+0.3719 N*s/m).  That attribution is RETIRED: the measured drag curve is Coulomb-dominated
+and concave, and pure viscous is excluded at chi^2 x1400, so the old decomposition had the
+wrong shape, not merely the wrong number.  The Youla-H correction stays tiny because the
+plant is still a near-integrator.
 
 ── weights (plan §3, drive channel; papers' philosophy, target bandwidth {WC_TARGET:g} rad/s) ──
 Wp = strictly_proper_2nd_order_weight(dc = {WP_DC:g}, wc = {WC:g} rad/s)
@@ -660,16 +981,44 @@ preserves the papers' intent (T rolled off just above crossover).
 
 DEVIATION 2 (Wp corner above the target).  On this plant the achieved S/T crossover
 lands consistently BELOW the Wp corner (gamma_opt >> 1 throughout: the specs are being
-shaped, not met).  Wp is therefore cornered at {WC:g} rad/s to land the achieved crossover
-near the papers' {WC_TARGET:g} rad/s.  Iteration ladder actually run (Wd break = 2.5*WC,
-Wu = makeweight(dc, 300, hf)):
-    WC=24, Wu(0.3,300,20) -> gamma_opt  9.14, wc 12.3, PM 56.6, worst-corner ||S|| 1.64
-    WC=24, Wu(0.1,300, 5) -> gamma_opt  5.60, wc 15.2, PM 46
-    WC=40, Wu(0.3,300,20) -> gamma_opt 13.25, wc 16.9, PM 54,   worst-corner ||S|| 1.89
-    WC=50, Wu(0.2,300,10) -> gamma_opt 13.03, wc 20.7, PM 49,   worst-corner ||S|| 2.41  <- CHOSEN
-    WC=60, Wu(0.1,300, 5) -> wc 24.4 but PM 42 (fails the >45 gate), ||Y||inf 80 A/(m/s)
-WC = 50 is the most aggressive setting that still clears PM > 45 deg and keeps the
-worst-corner ||S||inf under the 2.5 target.
+shaped, not met).  Wp is therefore cornered at {WC:g} rad/s.
+
+LADDER RE-RUN 2026-08-16 on the CALIBRATED plant.  The previous ladder is VOID: the plant
+DC gain fell x2.6 and the pole moved, so the old CHOSEN rung (WC=50, Wu(0.2,300,10)) now
+achieves 14.35 rad/s instead of 20.7.  Ladder actually run (Wd break = 2.5*WC,
+Wu = makeweight(dc, 300, hf); worst ||S|| over the 24 drive corners at pole_factor
+in {{0.5, 3}}):
+    WC=24, Wu(0.3 ,300,20 ) -> g_opt 20.17, wc  8.25, PM 59.4, worst ||S|| 1.451  (wc < 12: FAILS)
+    WC=24, Wu(0.1 ,300, 5 ) -> g_opt 11.53, wc 10.55, PM 49.6, worst ||S|| 1.925  (wc < 12: FAILS)
+    WC=30, Wu(0.1 ,300, 5 ) -> g_opt 13.77, wc 11.93, PM 48.4, worst ||S|| 2.043  (wc < 12: FAILS)
+    WC=40, Wu(0.3 ,300,20 ) -> g_opt 28.84, wc 11.22, PM 57.7, worst ||S|| 1.592  (wc < 12: FAILS)
+    WC=40, Wu(0.1 ,300, 5 ) -> g_opt 17.40, wc 14.13, PM 46.9, worst ||S|| 2.224
+    WC=45, Wu(0.1 ,300, 5 ) -> g_opt 19.19, wc 15.02, PM 46.4, worst ||S|| 2.309
+    WC=50, Wu(0.2 ,300,10 ) -> g_opt 27.47, wc 14.35, PM 53.2, worst ||S|| 1.890  (the OLD choice)
+    WC=50, Wu(0.12,300, 6 ) -> g_opt 22.22, wc 15.49, PM 47.7, worst ||S|| 2.253
+    WC=50, Wu(0.1 ,300, 5 ) -> g_opt 20.95, wc 15.98, PM 45.9, worst ||S|| 2.392
+    WC=50, Wu(0.08,300, 4 ) -> g_opt 19.78, wc 16.22, PM 43.9  (PM < 45: FAILS)
+    WC=55, Wu(0.15,300,7.5) -> g_opt 26.07, wc 15.98, PM 49.6, worst ||S|| 2.152  <- CHOSEN
+    WC=55, Wu(0.1 ,300, 5 ) -> g_opt 22.71, wc 16.73, PM 45.4, worst ||S|| 2.474
+    WC=60, Wu(0.1 ,300, 5 ) -> g_opt 24.45, wc 17.52, PM 45.1, worst ||S|| 2.555  (over the 2.5 target)
+    WC=60, Wu(0.05,300,2.5) -> g_opt 21.93, wc 18.07, PM 40.6  (PM < 45: FAILS)
+    WC=70, Wu(0.1 ,300, 5 ) -> g_opt 27.91, wc 18.92, PM 44.4  (PM < 45: FAILS)
+    WC=80, Wu(0.05,300,2.5) -> g_opt 28.74, wc 20.75, PM 40.3, worst ||S|| 3.238  (both FAIL)
+
+CHOICE (a documented deviation from a literal "most aggressive rung that clears every
+gate").  The literal rule selects WC=55, Wu(0.1,300,5): wc 16.73 rad/s, PM 45.4 deg,
+worst ||S|| 2.474 — clearing the PM gate by 0.4 deg and the 2.5 ||S|| target by 0.026.
+On a plant whose damping slope carries +-15 % and a documented thermal spread, those are
+rounding errors, not margins.  WC=55, Wu(0.15,300,7.5) buys 4.2 deg of phase margin and
+0.32 of worst-corner peak for 4.5 % of crossover.  The rejected rung is tabulated above so
+the trade is auditable.
+
+CONSEQUENCE OF THE CALIBRATION.  The achieved crossover ({wc_ach:.2f} rad/s) is now below the
+papers' {WC_TARGET:g} rad/s, where the pre-calibration design reported 20.7.  This is not a
+regression in the design; it is the correction of an over-estimated plant gain.  Pushing
+past ~17 rad/s on the measured plant costs phase margin quickly.  The rung is selected by
+PM and worst-corner ||S|| alone, both linear properties that never see the clamp; the
+clamp binds the LARGE-SIGNAL response instead (the 0->2 m/s step rails, below).
 
 ── H-inf (DGKF, hinf_mimo.hinfsyn_dgkf on AugPlantMIMO 1x1 blocks) ──
 gamma_opt            = {g_opt:.4f}
@@ -699,9 +1048,13 @@ gain margin          = {'inf' if not np.isfinite(gm_db) else f'{gm_db:.1f} dB'}
 
 ── robustness ──
 corner family        = 24 drive_corners() x v0 in {V0_SET} = {n_corner} plants
-                       (the drive plant depends on the OP ONLY through b_eff(v0);
-                        op_grid() holds v0 = 2.0 fixed, so sweeping it would repeat
-                        the same plant 10x — v0 is swept instead)
+                       (K_v in {{0.5, 1, 2}} x pole_factor in {{0.5, 3}} x tau_v in
+                        {{0.5, 5}} ms x Td_v in {{1, 4}} ms.  The calibrated b_eff is a
+                        MEASURED LOCAL SLOPE with no v0 term, so v0 no longer enters G22
+                        at all and the previous 3-point v0 sweep is exactly degenerate;
+                        the speed dependence it stood for — the slope roughly doubles
+                        below 1.5 m/s — is now carried by pole_factor's upper corner,
+                        widened 2 -> 3 for exactly that reason.)
 continuous unstable  = {n_unstable}
 worst ||S||inf cont. = {worstS:.4f} at {worstS_corner}
 discrete max |z|     = {worst_rad:.4f}
@@ -719,17 +1072,19 @@ Gs_red(0)            = {GS_DC:.1f} A/(m/s)  -- the NON-INTEGRAL branch alone sat
 shipped scheme       = integrator-only back-calculation (share_controller.h pattern).
                        Measured on the 0->2 m/s step: standing error {_yb[-1]-2.0:+.3f} m/s and a
                        {np.ptp(_yb[-250:])*1e3:.1f} mm/s limit cycle -> FAILS the sim gates.
-AW boundary re-run at the revised +-{I_CLAMP:.0f} A clamp (2026-08-04).  e_sat scales with the
-clamp, so quadrupling the actuator quadrupled it ({I_CLAMP/abs(GS_DC)*1e3:.1f} mm/s, was {5.0/abs(GS_DC)*1e3:.1f} mm/s at
-+-5 A).  Step-amplitude scan of the SHIPPED integrator-only scheme (pass = final
-error < 1e-4 m/s AND tail p-p < 1e-5 m/s):
+AW boundary RE-RUN 2026-08-16 at the firmware clamp +-{I_CLAMP:.0f} A (2026-08-15 operator
+decision; the previous run used +-20 A) and on the re-identified plant.  e_sat scales
+linearly with the clamp and inversely with Gs_red(0), and BOTH moved this round, so the
+boundary is re-measured rather than rescaled: e_sat = {I_CLAMP/abs(GS_DC)*1e3:.1f} mm/s.  Step-amplitude
+scan of the SHIPPED integrator-only scheme (pass = final error < 1e-4 m/s AND tail
+p-p < 1e-5 m/s):
 """ + "".join(
         f"    step {a:5.2f} m/s: final err {fe:+.3e} m/s, tail p-p {tp:.2e} m/s -> "
-        f"{'OK' if o else 'FAILS'}\n" for a, fe, tp, o in aw_scan) + f"""VERDICT: integrator-only AW is now CLEAN up to ~{AW_BOUNDARY[0]} m/s steps and only breaks
-from ~{AW_BOUNDARY[1]} m/s.  At +-5 A the boundary sat an order of magnitude lower, so the
-scheme failed essentially every useful transient.  It STILL fails the 0->2 m/s gate,
-so the Hanus form remains REQUIRED for this baseline -- the honest restatement is
-"needed for large transients", not "needed always".
+        f"{'OK' if o else 'FAILS'}\n" for a, fe, tp, o in aw_scan) + f"""VERDICT: integrator-only AW is CLEAN up to ~{AW_BOUNDARY[0]} m/s steps and breaks from
+~{AW_BOUNDARY[1]} m/s.  It STILL fails the 0->2 m/s gate, so the Hanus form remains REQUIRED for
+this baseline -- the honest restatement is "needed for large transients", not "needed
+always".  Note the direction of travel: lowering the clamp 20 -> 12 A lowers e_sat
+proportionally and therefore moves this boundary DOWN, toward the small-signal end.
 scheme used          = Hanus self-conditioning on the {ctrl_d.n}-state discrete realization:
                          u_unsat = Cd x + Dd e ; u = clamp(u_unsat)
                          x[k+1]  = (Ad - Bd Cd/Dd) x + Bd u/Dd,  Dd = {ctrl_d.D[0, 0]:.9e}
@@ -742,18 +1097,21 @@ Teensy cost note     = this baseline needs a {ctrl_d.n}-state state-space realiz
 step 0->2 m/s : peak i = {np.max(np.abs(u1)):.3f} A, 2% settle = {t_set1:.3f} s,
                 overshoot = {ovs1:.1f} %, final err = {y1[-1]-2.0:.2e} m/s,
                 tail p-p = {np.ptp(tail):.2e} m/s (no limit cycle)
-                NOTE: the step is ACTUATOR-LIMITED -- +-{I_CLAMP:.0f} A gives a_max = F/m =
-                {pm.force_per_amp(P0)*I_CLAMP/P0['m_eff']:.3f} m/s^2, so 0->2 m/s cannot physically take less than
-                ~{2.0/(pm.force_per_amp(P0)*I_CLAMP/P0['m_eff']):.2f} s.  The {wc_ach:.1f} rad/s design bandwidth is a SMALL-SIGNAL
-                spec; this is a large-signal event.  At the revised clamp the rail is
-                touched only briefly ({np.sum(np.abs(u1) >= I_CLAMP - 1e-9)*TS*1e3:.0f} ms) -- at +-5 A the loop sat on the rail
-                for most of the transient instead.
+                NOTE: +-{I_CLAMP:.0f} A gives a_max = K_F*I/m = {pm.force_per_amp(P0)*I_CLAMP/P0['m_eff']:.3f} m/s^2, so 0->2 m/s
+                cannot physically take less than ~{2.0/(pm.force_per_amp(P0)*I_CLAMP/P0['m_eff']):.2f} s however the loop is
+                shaped.  The {wc_ach:.1f} rad/s design bandwidth is a SMALL-SIGNAL spec; this is
+                a large-signal event.  Time on the rail this run: {np.sum(np.abs(u1) >= I_CLAMP - 1e-9)*TS*1e3:.0f} ms.
+                The calibration cuts a_max hard (K_F 1.3338 -> {pm.force_per_amp(P0):.4f} N/A and the
+                clamp 20 -> {I_CLAMP:.0f} A both push the same way), so large-signal velocity
+                moves are now inertia-limited, not loop-limited.
 regen 2->0 m/s: peak i = {neg_peak:.3f} A, on the -{I_CLAMP:.0f} A rail {on_rail*TS*1e3:.0f} ms,
                 2% settle = {t_set2:.3f} s, final v = {y2[-1]:.2e} m/s,
                 reverse excursion = {np.min(y2):.5f} m/s, tail p-p = {np.ptp(tail2):.2e} m/s
-                WINDUP GATE REDEFINED at +-{I_CLAMP:.0f} A: the old ABSOLUTE bound (excursion
-                < 0.10 m/s) was only meetable because +-5 A rail-limited the transient
-                and suppressed the loop's own linear undershoot.  The undershoot now
+                WINDUP GATE (redefined at the 2026-08-04 clamp change, retained here):
+                an ABSOLUTE excursion bound only looks meetable when the clamp is low
+                enough to rail-limit the transient and suppress the loop's own linear
+                undershoot, which makes it a measure of the clamp, not of windup.
+                The undershoot now
                 measured ({exc_sat:.4f} m/s = {abs(exc_sat)/2.0*100:.1f} %) equals the step's {ovs1:.1f} % overshoot and is
                 loop shaping, not windup.  The gate now compares the SATURATED event
                 against the SAME event with the clamp removed (linear undershoot
@@ -761,10 +1119,19 @@ regen 2->0 m/s: peak i = {neg_peak:.3f} A, on the -{I_CLAMP:.0f} A rail {on_rail
                 = {windup_excess:+.4f} m/s (negative = saturation REDUCED the excursion).
 
 ── artifacts ──
-drive_siso_coeffs.h        (shipped biquad format, DRIVE_CTRL_ prefix, NOT built)
+drive_siso_coeffs.h        (shipped biquad format + the {ctrl_d.n}-state Hanus realization
+                            AD/BD/CD/DD/AC; DRIVE_CTRL_ prefix -- study copy)
+../teensy_controller/drive_controller_coeffs.h
+                            (same content, firmware copy: included by drive_controller.h
+                            and compiled in when USE_YOULA_DRIVE_CONTROLLER is 1)
 figures/drive_siso_step.csv
+figures/drive_siso_replay.csv  ({len(_e_small)} unsaturated + {len(_e_sat)} saturated (e_in, u_out)
+                            samples from the Hanus controller, seed 20260816 — the
+                            reference vectors a firmware implementation replays against)
 """)
 
-print(f"\nartifacts: drive_siso_coeffs.h, drive_siso_metrics.txt, figures/drive_siso_step.csv")
+print(f"\nartifacts: drive_siso_coeffs.h, "
+      f"../teensy_controller/drive_controller_coeffs.h, drive_siso_metrics.txt, "
+      f"figures/drive_siso_step.csv, figures/drive_siso_replay.csv")
 print("\n" + ("ALL GATES PASSED" if not failures else "FAILURES: " + "; ".join(failures)))
 raise SystemExit(1 if failures else 0)

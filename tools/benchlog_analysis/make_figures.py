@@ -9,6 +9,14 @@ Every figure in figures.FIGURES is saved as run_dir/<figure_name>.png at
 dpi=150, overwriting silently -- re-running after a hand-edit of
 analysis_config.json is the normal workflow, so the PNGs are treated as
 derived artefacts. analysis_config.json itself is never rewritten.
+
+A builder may return None to skip itself gracefully (e.g. it needs CSV
+columns that only exist on a newer .BLG format than the one being
+rendered, such as drive_controller_conditioning's v5-only u_unsat/
+drive_x0). A skipped figure is noted on stderr, produces no PNG, and does
+not count as an error -- a stale PNG from a previous run of the SAME
+format is left in place rather than deleted, since make_all has no way to
+tell "never applicable" apart from "not regenerated this run".
 """
 import argparse
 import sys
@@ -72,6 +80,12 @@ def make_all(run_dir, data=None, cfg=None):
     saved = []
     for name, builder in figures.FIGURES:
         fig = builder(data, cfg)
+        if fig is None:
+            # Builder declined (e.g. required columns absent on this run's
+            # format version) -- not an error, just nothing to save.
+            print(f"[make_figures] skipping {name} (not applicable to this "
+                  f"log's format)", file=sys.stderr)
+            continue
         out_path = run_dir / f"{name}.png"
         try:
             fig.savefig(out_path, dpi=figures.DPI_DEFAULT)

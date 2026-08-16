@@ -1,3 +1,29 @@
+%% =====================================================================
+%  *** STALE — DO NOT TRUST A GREEN RESULT FROM THIS FILE (2026-08-16) ***
+%
+%  This script rebuilds the 2x2 plant from constants HARDCODED below, which are
+%  the PRE-CALIBRATION placeholder values.  The drive channel was calibrated on
+%  2026-08-16 (calibration/motor_id_20260815.md); plant_mimo.py now carries the
+%  measured constants and they differ substantially:
+%      k_t   5.457e-3 -> 4.266e-3 N*m/A       r_t   0.033 -> 0.0762 m
+%      m_eff 2.95     -> 3.5 kg               R_m   0.075 -> 0.0226 ohm
+%      b_eff 0.3597   -> 0.32 N*s/m (measured local slope; the aero + C_rr +
+%                                    free-run composite is RETIRED)
+%      G22(0) 3.7085  -> 1.4112 (m/s)/A       drive pole -0.1219 -> -0.0914 rad/s
+%      I_CLAMP 20 A   -> 12 A
+%
+%  The failure mode here is the dangerous one: this file validates against
+%  mimo_controller_coeffs.h and the metrics files, which are ALSO stale, so the
+%  two agree and the script reports PASS.  That agreement confirms only that the
+%  MATLAB and Python transcriptions of a RETIRED plant match each other.
+%
+%  Do not re-run this as a check on the current design.  It is superseded until
+%  the MIMO controller is re-synthesized on the calibrated plant, at which point
+%  the constants below must be updated in lockstep with plant_mimo.py.
+%  Status and scope: README.md staleness banner; mimo_system_model.md 11.
+%  The MATLAB mirror is deliberately left otherwise unmodified.
+%% =====================================================================
+
 %% mimo_crosscheck.m — MATLAB cross-validation of the MIMO H-inf / Youla-H design
 % Independently validates controller_design_MIMO's Python pipeline, mirroring
 % what controller_design/droop_plant.m does for the SISO share controller:

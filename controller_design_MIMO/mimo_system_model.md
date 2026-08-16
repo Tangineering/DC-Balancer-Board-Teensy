@@ -18,6 +18,29 @@ or refines the SISO model, the refinement is called out explicitly (§7).
 > (the §5 coupling ratios in particular, which are 4× their ±5 A values — the *physical*
 > coupling is unchanged). Superseded ±5 A values are kept alongside rather than deleted.
 
+> **Drive calibration round — 2026-08-16.** The drive channel is now MEASURED (§4.2, §9.2;
+> source `calibration/motor_id_20260815.md`), and the firmware clamp moved **20 A → 12 A**.
+> Scope of this round, stated precisely so nothing is assumed: §4.2, §4.4, §9.2, §9.3, §10
+> and the SISO drive synthesis (`synthesize_drive_siso.py`, which enforces the 12 A clamp
+> directly) are updated. **§2, §2.1, §5 and §8 are NOT.** Those sections describe the
+> *scaled* MIMO plant `Gs = De⁻¹ G Du`, and `Du(2,2)` is deliberately left at 20.0 because
+> it is the scaling the checked-in MIMO synthesis artifacts were built with; changing it
+> here without regenerating them would make the document describe a plant no artifact
+> implements. Consequence: the actuator limit stated in §2 (`|i_cmd| ≤ 20 A`), every SCALED
+> number in §2.1, §5 and §8, and every unscaled drive figure quoted inside them
+> (`A_i` = 0.2429, `G22(0)` = 3.7085, `e_sat` = 54.4 mm/s, `a_max` = 9.04 m/s²), are
+> **stale**. The unscaled truth is in §4.2 and §4.4.
+>
+> **§2.1's conclusion is REVERSED, not merely re-numbered.** That section argues the motor
+> clamp and the ≈67–87 W converter budget "bind together" at ±20 A. At the firmware's 12 A
+> and the measured `A_i` = 0.0922 A/A, the clamp corresponds to **≈1.11 A ≈ 17.6 W** at the
+> bus — roughly a quarter of the budget's lower edge. The **motor clamp is now the binding
+> limit** and the bus-power budget is not approached; the coincidence §2.1 was built on no
+> longer exists. Any downstream argument resting on it must be re-derived.
+>
+> The MIMO artifacts are frozen on the retired plant and their regeneration is a new
+> synthesis round, not a re-run — per-stage failure detail is in the `README.md` banner.
+
 **Status (Phase 1 complete).** All 12 Phase-1 gates in `validate_mimo_model.py` pass.
 Numbers quoted below are emitted by that script, not hand-copied.
 
@@ -40,7 +63,7 @@ letters for different things. **This table is binding for the whole sub-project.
 | Symbol | Meaning here | Units | Explicitly NOT | Source |
 |---|---|---|---|---|
 | `r` | **droop ratio command** — the split the firmware asks for, `r ∈ [0.15, 0.85]` | – | *not* tire radius, *not* a reference signal | firmware `DROOP_R_MIN/MAX` |
-| `r_t` | **tire radius**, 0.033 m | m | *not* the droop ratio | VESC doc §11 |
+| `r_t` | **flywheel rolling radius**, 0.0762 m | m | *not* the droop ratio; *not* a tire radius — the encoder measures the flywheel (§4.2) | measured 2026-08-13 |
 | `α` (`alpha`) | **current share** `I_FC/(I_FC+I_BT)`, the share-loop **output** | – | *never* mechanical/angular acceleration — that letter is not used for acceleration anywhere in this sub-project | `system_model.md` §3 |
 | `K` | **share-plant DC gain** `∂α/∂r` at the OP | – | *not* a controller gain, *not* motor KV | §4.1 |
 | `K_v` | **drive-channel structural gain uncertainty** multiplier | – | *not* motor KV (that is `KV_DESIGN`) | §4.2 |
@@ -187,41 +210,83 @@ See §7.3 for where the box *escapes* that envelope.
        → k_t·η_dt·φ/r_t  [N/A]  → 1/(m_eff s + b_eff) → Δv_phys → K_enc·K_v → Δv
 ```
 
+**Status: CALIBRATED (2026-08-16).** Every constant in this block is now measured. The
+authoritative record is `calibration/motor_id_20260815.md`; the values below are its
+image in `plant_mimo.py`. The pre-calibration placeholder chain (KV 1750, 66 mm tire
+radius, mass split, aero + rolling + free-run drag composite) is retired.
+
+| Constant | Calibrated value | Source |
+|---|---|---|
+| `k_t` | 4.266e-3 N·m/A | `(3/2)·p·λ`, p = 2, λ = 1.422 mWb (VESC FOC detection, Castle 1406 1900KV) |
+| `R_m` | 0.0226 Ω | VESC FOC detection |
+| `m_eff` | 3.5 kg | J = 0.0203 kg·m² at `r_t`; J/r_t² = 3.50 kg |
+| `r_t` | 0.0762 m | flywheel rolling radius, measured 2026-08-13 |
+| `b_eff` | 0.32 N·s/m ±15 % | TP0125–TP0134 ladder + ML0135 small-signal steps |
+| `F_c` | 1.2 ± 0.25 N | same, thermal spread (1.31 cold / 1.05–1.1 warm) |
+| `τ_v` | 1.0 ms | VESC sampled current step; matches KP/L = KI/R = 1004 rad/s |
+| `Td_v` | 2.0 ms | **decided**, not measured — analytic bound 0.9–2 ms |
+
+**`r_t` is a flywheel radius, not a tire radius.** The encoder is coupled to the flywheel,
+and the flywheel's own radius *is* the rolling radius (coupling resolved 2026-08-16 as
+surface/roller), so `v` throughout this model is **flywheel surface speed** — the same
+quantity the firmware's `v_actual` reports. `φ = 9.49` is the motor→flywheel reduction;
+the vehicle differentials do not enter the velocity loop.
+
 DC gain (gate **G1.2**, exact to 2.4e-16 over all OPs × 24 drive corners):
 
 ```
-G22(0) = K_enc · K_v · k_t · η_dt · φ / (r_t · b_eff)   = 3.7085 (m/s)/A  nominal
-drive pole = −b_eff/m_eff = −0.1219 rad/s               (near-integrator, as expected)
+G22(0) = K_enc · K_v · k_t · η_dt · φ / (r_t · b_eff)   = 1.4112 (m/s)/A  nominal
+K_F    = k_t · η_dt · φ / r_t                          = 0.4516 N/A
+drive pole = −b_eff/m_eff = −0.0914 rad/s               (near-integrator, as expected)
 ```
 
-The papers' powertrain form `G_P = (φ/(m·r_t))/(s + b φ²/(m r_t²))` is recovered exactly
-when `b_eff` is written shaft-referred; here it is written wheel-referred instead, which is
-the same system with the reflection folded into `b_motor·(φ/r_t)²`.
+Against the pre-calibration figures (3.7085 (m/s)/A, −0.1219 rad/s) the DC gain fell
+**×0.38** and the pole moved **toward the origin (slower) by ×0.75**. Three changes compose: `k_t` ×0.78, `r_t` ×2.31,
+`b_eff` ×0.89. The drive controller synthesis is downstream of this and was re-run
+(`synthesize_drive_siso.py`, §11).
+
+The papers' powertrain form `G_P = (φ/(m·r_t))/(s + b φ²/(m r_t²))` is recovered when
+`b_eff` is written shaft-referred; here it is written flywheel-referred instead.
 
 **`b_eff` — what is and is not in it.**
 
 ```
-b_eff = ρ·C_dA·v0            aero, = d/dv of ½ρ C_dA v²  (linearization about v0)
-      + b_motor·(φ/r_t)²     motor spinning loss, shaft → wheel referred
+b_eff = b_eff_nom · pole_factor            b_eff_nom = 0.32 N·s/m, MEASURED
 ```
 
-* At the nominal OP: aero 0.0245 + motor-spin **0.3352** = **0.3597 N·s/m**. The motor's
-  own spinning loss **dominates the small-signal damping by 14×**, which is the direct
-  small-signal consequence of the VESC doc §12.3 finding that free-run loss (not aero, not
-  rolling resistance) sets the cruise draw. `b_motor = P_freerun/ω_freerun²` = 4.053e-6
-  N·m·s/rad from the ≤2.5 A @ 16 V ≈ 40 W target at ~30 krpm.
-* **`C_rr` is Coulomb**, magnitude `C_rr·m·g` with a `sign(v)` shape. It contributes to the
-  **operating-point torque** (and therefore to `i_m0`, which sets the coupling gains in
-  §4.3) but its derivative w.r.t. `v` is zero away from `v = 0`, so it **must not** appear
-  in `b_eff`. This is commented at the definition in `plant_mimo.b_eff()`.
-* `pole_factor ∈ {0.5, 2}` is the corner knob on `b_eff` (it moves the drive pole and the
-  DC gain together, as a real damping error would).
+* `b_eff` is a **measured local slope**, `dF/dv` at `v0 = 2.0 m/s`, not a sum of modelled
+  loss terms. Two independent measurements agree: the TP0125–TP0134 steady-state ladder
+  (ten holds, 3.5–5.5 A) and the ML0135 small-signal staircase (five incremental steps
+  over 1.9–3.4 m/s, mean 0.32 ± 0.07 N·s/m). The ±15 % band is set by the 8 % disagreement
+  between the two 4.0 A repeats, not by formal fit errors.
+* **The measured drag curve is Coulomb-dominated and concave** (`F = 1.31 + 0.435·v`, or
+  equivalently `F = 1.751·v^0.30`); **pure viscous is excluded at χ² ×1400**. The previous
+  model's aero + motor-free-run composite was therefore the wrong *shape*, not merely the
+  wrong magnitude — and it predicted the cruise current a factor of 4 low (§4.4).
+* **`b_eff` carries no `v0` term.** A local slope is identified only at the speed it was
+  measured at. The known amplitude dependence — the slope roughly **doubles below
+  ~1.5 m/s** — is carried by the corner axis instead, which is why `pole_factor` was
+  **widened {0.5, 2} → {0.5, 3}**. A consequence worth stating: `v0` no longer enters `G22`
+  at all, so any sweep over `v0` in a drive-channel study is now degenerate.
+* **`F_c` (Coulomb, 1.2 N) is deliberately absent from `b_eff`.** It is `sign(v)`-shaped, so
+  it sets the operating-point torque (and therefore `i_m0`, which sets the coupling gains in
+  §4.4) but its derivative w.r.t. `v` is zero away from `v = 0`. This is commented at the
+  definition in `plant_mimo.b_eff()`.
+* **`F_c` is thermally variable**, 1.31 N cold against 1.05–1.1 N warm at identical
+  firmware and commanded current. The spread is carried as `1.2 ± 0.25 N` rather than a
+  point value, and it propagates into the coupling gain, not into the plant dynamics.
 
-**`K_v ∈ {0.5, 1, 2}` is structural, not a tolerance.** VESC doc §7: the encoder sits
-downstream of the 9.49:1 reduction *and* the limited-slip differentials, so there is **no
-fixed rotor↔ground-speed mapping**; `k_t` is uncalibrated (no motor selected); and
-`motorConstant` in firmware is explicitly *not* a `k_t`. The entire `Δi_cmd → Δv` DC gain is
-therefore uncertain by ~2× either way, and `K_v` carries that.
+**`K_v ∈ {0.5, 1, 2}` is retained, but its rationale has shrunk.** The axis was sized as
+*structural*: no fixed rotor↔ground mapping, an uncalibrated `k_t`, and an uncalibrated
+encoder chain. Two of those three are now closed — `k_t` is measured, and the encoder chain
+is calibrated end to end (240 counts/rev, hardware-confirmed 2026-08-16; `r_t` = 0.0762 m;
+surface/roller coupling resolved). What remains inside the axis is the `η_dt` = 0.85
+placeholder and the thermal spread of the drag law, which together do not justify a factor
+of 2. The axis is kept at its old width as the conservative default: narrowing it is a
+performance lever, not a correctness fix, and at the achieved drive bandwidth it costs
+nothing (the binding gates are phase margin and worst-corner ‖S‖ at `pole_factor` = 0.5,
+`K_v` = 2 — see `drive_siso_metrics.txt`). Narrowing to {0.7, 1.0, 1.4} is the documented
+next step if bandwidth is ever wanted.
 
 ### 4.3 G21 = 0 — and why that is a modelling *result*, not an assumption
 
@@ -250,16 +315,47 @@ about the OP, at fixed `V_bus0`:
 
 ```
 ΔI_bus = A_i · Δi_m + A_ω · Δω
-A_i = (k_t ω0 + 2 R_m i_m0)/(η_v V_bus0)     = 0.24292  A/A          nominal
-A_ω = (k_t i_m0)/(η_v V_bus0)                = 3.9272e-4 A/(rad/s)   nominal
-ω0  = v0 · φ / r_t = 575.2 rad/s
-i_m0 = (b_eff v0 + C_rr m g) r_t/(k_t η_dt φ) = 0.9731 A
+A_i = (k_t ω0 + 2 R_m i_m0)/(η_v V_bus0)     = 0.092210  A/A          nominal
+A_ω = (k_t i_m0)/(η_v V_bus0)                = 1.2855e-3 A/(rad/s)    nominal
+ω0  = v0 · φ / r_t = 249.1 rad/s
+i_m0 = (b_eff v0 + F_c) r_t/(k_t η_dt φ)     = 4.074 A
 ```
+
+**The operating-point current moved by a factor of 4.2, and that is the calibration's
+largest single consequence for the coupling.** The old model gave `i_m0` = 0.973 A at
+cruise; the bench holds measure **4.5 ± 0.4 A**; the calibrated model gives **4.07 A**.
+
+The agreement should be stated at its actual strength, which is *order-of-magnitude
+correction*, not *closure*: 4.07 A is ~9 % below the band's centre and **0.6 % below its
+lower edge — just outside it, not inside**. Propagating the `F_c` thermal endpoints gives a
+model envelope of 3.74 A (warm) to 4.32 A (cold), which straddles that lower edge rather
+than covering the band. The residual is consistent with the `η_dt` = 0.85 placeholder,
+which scales every absolute force and is the largest surviving drive unknown (§9.2). What
+the calibration does settle is that the old figure was wrong by a **factor of four** — the
+arithmetic consequence of a drag law with the wrong shape (§4.2) — and that the motor's bus
+draw was correspondingly under-stated.
+
+Both coupling gains move as a result, in opposite directions:
+
+* `A_ω ∝ k_t·i_m0` rises **×3.27** (`i_m0` ×4.19 against `k_t` ×0.78), from 3.93e-4 to
+  1.286e-3 A/(rad/s). Referred to ground speed, `A_ω·φ/r_t` = 0.1601 A per m/s, up ×1.42
+  from 0.1130 — the ×2.31 growth of `r_t` claws most of the gain back.
+* `A_i` **falls ×0.38**, from 0.2429 to 0.09221 A/A, because its dominant term `k_t·ω0`
+  carries `k_t` ×0.78 and `ω0` ×0.43 (the same `r_t` change, acting the other way). The
+  `2 R_m i_m0` term is now 0.184 V of the 1.247 V numerator — **14.8 %**, up from 4.5 %,
+  so `R_m` is no longer the low-sensitivity placeholder it was. It is, however, now
+  measured, so the sensitivity is harmless.
+
+Net: a given motor-current command draws **less** bus current than the old model claimed,
+while a given speed excursion draws **more**. Any conclusion in the MIMO comparison that
+rested on the ratio of the two terms must be re-derived rather than carried over.
 
 The `Δω` term is what makes the coupling **dynamic** rather than a static feedthrough — it
 routes through the vehicle mode, so the coupling inherits the near-integrator pole.
-*Caveat:* `ω0 = v0 φ/r_t` is the **design-case** rotor↔ground mapping, which §4.2 has
-already established does not hold rigidly; `K_v` stands in for it.
+*Caveat, now weaker than it was:* `ω0 = v0 φ/r_t` is the flywheel↔motor mapping through the
+9.49:1 reduction. Since the encoder measures the flywheel itself (§4.2), this mapping is a
+rigid gear ratio rather than the slip-dependent rotor↔ground mapping the earlier text
+warned about. `K_v` still stands in for the residual (`η_dt`, thermal spread).
 
 **(b) Share sensitivity.** Differentiating the static share law w.r.t. total current:
 
@@ -271,8 +367,15 @@ so `G12(s) = (∂α/∂I_tot)·[A_i·W_v(s) + A_ω·(φ/r_t)·M(s)W_v(s)] · 1/(
 `W_v` is the VESC path and `M` the vehicle mode. Nominal:
 
 ```
-∂α/∂I_tot = −4.1667e-2 share/A          G12(0) = −2.7573e-2 share per A of i_cmd
+∂α/∂I_tot = −4.1667e-2 share/A          G12(0) = −1.3256e-2 share per A of i_cmd
 ```
+
+`∂α/∂I_tot` is unchanged (it depends only on share-channel quantities, which this
+calibration did not touch). `G12(0)` **halves**, from −2.7573e-2 to −1.3256e-2 share per A
+of `i_cmd`, because the `A_i` fall outweighs the `A_ω` rise at DC. The coupling is
+therefore *weaker* than the pre-calibration model claimed — which, since the MIMO
+advantage is bounded by the coupling magnitude, is a result the comparison must inherit
+rather than an inconvenience to be absorbed.
 
 **Gate G1.3** checks `G12(0) / (dI_bus/di_cmd)|_DC` against a finite difference of the
 static α map — 5.3e-10 relative over the OP grid × share × drive corners.
@@ -488,6 +591,11 @@ Du = diag(0.35, 20.0)    [half the r span (0.85−0.15)/2, motor current clamp (
 Nominal `G(0) = [[1, −0.02757], [0, 3.7085]]` → `Gs(0) = [[7.0, −11.029], [0, 148.34]]`,
 `cond(Gs(0)) = 21.31`.
 
+> **Stale as of 2026-08-16** (see the banner in §1). On the calibrated plant the unscaled
+> nominal is `G(0) = [[1, −0.01326], [0, 1.4112]]`. This block is left as-published because
+> it documents the scaling the checked-in MIMO artifacts were synthesized with; it is
+> re-derived when those artifacts are regenerated.
+
 **`Du(2,2)` tracks the motor-current clamp** (§2.1), so the 2026-08-04 recalibration moved
 it 5.0 → 20.0. This is not cosmetic: `Wu` penalizes the *scaled* input, so the same weight
 suddenly permitted 4× more physical current. Re-running the unchanged weight set gave a
@@ -515,48 +623,75 @@ Every uncalibrated quantity, the corner axis that covers it, and where it is def
 | `τ_f` prefilter | 0.8 ms | `share_corners` τ_f ∈ {0, 0.8} ms | firmware (implemented) |
 | `VREF` = 0.6 V | – | TODO(verify: TPS61288 DS §7.5) | – |
 
-### 9.2 New — drive channel
+### 9.2 Drive channel — CALIBRATED 2026-08-16
 
-| Item | Placeholder used | Basis / status | Corner axis |
+The drive channel was the placeholder-heavy half of this model. It is now measured. Rows
+marked **MEASURED** cite `calibration/motor_id_20260815.md`, which is the source of truth;
+the remaining rows are the residual placeholder set.
+
+| Item | Value | Basis / status | Corner axis |
 |---|---|---|---|
-| **`k_t`** motor torque constant | **5.457e-3 N·m/A** (= 9.5493/1750) | **BLOCKING.** No motor selected/fitted. VESC doc §12.4 specifies KV 1600–1750; design case KV = 1750. Firmware `motorConstant` is *not* a `k_t`. | `K_v ∈ {0.5, 1, 2}` |
-| **`K_enc`** encoder chain | 1.0 | **Structural**, not a tolerance: no fixed rotor↔ground mapping (VESC doc §7) | `K_v` |
-| `J_rotor` → `M_ROT` | 0.45 kg apparent | VESC doc §12.3, "Rotor J is [measure]" | `pole_factor`, `K_v` |
-| `M_BUILT` built mass | 2.50 kg | VESC doc §12.3: estimate, range 2.5–3.2 kg; nothing in repo records it | `pole_factor` (via DC gain), `K_v` |
-| `b_eff` damping | 0.3597 N·s/m | derived (§4.2); `b_motor` from the ≤2.5 A/16 V free-run target, itself "[measure]" | `pole_factor ∈ {0.5, 2}` |
-| `C_rr` | 0.020 | user decision 1; affects `i_m0` → coupling gains only | via `K_v` on the coupling |
-| `C_dA` | 0.010 m² | user decision 1; only 6.8 % of `b_eff` | `pole_factor` |
-| `η_dt` | 0.85 | user decision 1 | `K_v` |
-| `η_v` inverter | 0.85 | TODO(calibrate) | `K_v` (coupling magnitude) |
-| **`τ_v`** VESC current-loop lag | 1 ms | TODO(identify) — FOC closed-loop lag not measured | `τ_v ∈ {0.5, 5} ms` |
-| **`Td_v`** command transport | 2 ms | TODO(identify) — UART frame floor ≈ 781 µs + ZOH | `Td_v ∈ {1, 4} ms` |
-| **`R_m`** phase resistance | **0.075 Ω** | placeholder from the 3650 spec-can dyno point "110 W / 35 A / 0.075 Ω" (VESC doc §12.4). Enters only through `2 R_m i_m0` = 0.146 V of the 3.22 V `A_i` numerator (**4.5 %**), so it is a *low-sensitivity* placeholder. | `K_v` |
+| **`k_t`** motor torque constant | **4.266e-3 N·m/A** | **MEASURED.** `(3/2)·p·λ` with p = 2, λ = 1.422 mWb from VESC FOC detection (Castle 1406 1900KV). Pole-pair count cross-checked against KV to 2.0 %. Replaces the 5.457e-3 KV-1750 placeholder. | `K_v` (now over-wide) |
+| **`R_m`** phase resistance | **0.0226 Ω** | **MEASURED** (VESC FOC detection). Replaces the 0.075 Ω spec-can placeholder. Now enters `A_i` at **14.8 %** (was 4.5 %) because `i_m0` rose ×4.2 — a higher sensitivity, but no longer a placeholder. | – |
+| **`m_eff`** equivalent inertia | **3.5 kg** | **MEASURED.** J = 0.0203 kg·m² at the flywheel; J/r_t² = 3.50 kg confirms it at `r_t`. Replaces the `M_BUILT` 2.50 + `M_ROT` 0.45 split, both of which are retired. | `pole_factor` |
+| **`r_t`** rolling radius | **0.0762 m** | **MEASURED** (3.00 in, 2026-08-13). Flywheel radius, and the coupling was resolved 2026-08-16 as surface/roller, so it is the correct rolling radius (§4.2). Replaces the 0.033 m tire figure. | – |
+| **`K_enc`** encoder chain | 1.0 | **CLOSED.** 240 counts/rev (120 slots × ×2 decode, counted and hardware-confirmed 2026-08-16) with `r_t` above fixes the chain end to end. No longer structurally uncertain. | – |
+| **`b_eff`** damping | **0.32 N·s/m ±15 %** | **MEASURED** twice, independently: TP0125–TP0134 steady-state ladder and ML0135 small-signal steps agree to 6 %. Local slope at `v0` = 2.0 m/s. | `pole_factor ∈ {0.5, 3}` |
+| **`F_c`** Coulomb drag | **1.2 ± 0.25 N** | **MEASURED**, thermally variable (1.31 N cold / 1.05–1.1 N warm). Sets `i_m0`, hence the coupling gains; contributes nothing to `b_eff`. Replaces the `C_rr·m·g` slot. | spread carried into §4.4 |
+| **`τ_v`** VESC current-loop lag | **1.0 ms** | **MEASURED** 2026-08-16 (VESC Tool sampled current step, 63 % at ≈1–1.5 ms); independently implied by the detection gains, KP/L = KI/R = 1004 rad/s. | `τ_v ∈ {0.5, 5} ms` |
+| **`Td_v`** command transport | 2.0 ms | **DECIDED, not measured** (operator, 2026-08-15). Analytic bound 0.9–2 ms (UART frame 781 µs + packet thread ≲1 ms + FOC pickup ≤70 µs), comfortably inside the corner axis; direct measurement was declined to keep a current instrument out of the motor power path. | `Td_v ∈ {1, 4} ms` |
+| `η_dt` driveline efficiency | 0.85 | **TODO(calibrate)** — the largest surviving drive placeholder. All absolute forces scale with it, so it is what keeps `K_v` alive. | `K_v` |
+| `η_v` inverter efficiency | 0.85 | **TODO(calibrate)** | `K_v` (coupling magnitude) |
 | `V_bus0` under load | 15.907 V | derived from the as-built divider; no load-line measurement | – (bounded by boost regulation) |
-| `r_t` tire radius | 0.033 m | **[measure]** — caliper the mounted tire (VESC doc §11) | `K_v` |
 | `φ` drive ratio | 9.49 | corroborated by two sources; internal reduction still `[measure]` | – |
+| `C_rr`, `C_dA`, `b_motor`, `P_freerun` | — | **RETIRED.** The aero + rolling + free-run composite is replaced by the measured lumped law. The measured curve is Coulomb-dominated and concave; pure viscous is excluded at χ² ×1400, so the composite had the wrong shape (§4.2). | – |
 
 ### 9.3 Sensitivity note
 
-Not all placeholders matter equally. `R_m` moves `A_i` by 4.5 %; `C_dA` moves `b_eff` by
-6.8 %; `k_t`, `K_enc`, `r_t`, `φ` and the mass all enter the drive DC gain **multiplicatively**
-and are jointly carried by the single `K_v ∈ {0.5, 2}` axis — which is why that axis is a
-factor of 2 rather than a percentage. The one quantity with *no* magnitude bound that
-matters more than its size is **ΔV0**, because it controls the coupling's **sign** (§4.4).
+Not all placeholders matter equally, and the ranking changed with the calibration. The two
+surviving drive placeholders are the **efficiencies**: `η_dt` scales the force constant and
+therefore the whole `Δi_cmd → Δv` DC gain, and `η_v` scales the coupling magnitude. They
+are what the `K_v` axis now carries, having previously carried `k_t`, `r_t`, the mass and
+the encoder chain as well — all of which are now measured. That is why §4.2 records the
+axis as over-wide rather than as sized-to-evidence.
+
+`R_m` moved the *other* way: it is measured now, but its influence on `A_i` tripled to
+14.8 % because `i_m0` rose ×4.2. Had it stayed a placeholder, this calibration would have
+promoted it from a low-sensitivity item to a significant one.
+
+The one quantity with *no* magnitude bound that matters more than its size is still
+**ΔV0**, because it controls the coupling's **sign** (§4.4). It is a share-channel
+quantity and is untouched by this round.
 
 ---
 
 ## 10. Bench identification priorities
 
-In dependency order (mirrors `controller_design/bench_calibration_manual.md` conventions):
+In dependency order (mirrors `controller_design/bench_calibration_manual.md` conventions).
+Items 1, 2, 4 and 6 of the original list are **DONE** as of 2026-08-16 and are struck
+below rather than deleted, so the record shows what the drive-channel calibration closed.
 
-1. **`r_t` and the encoder chain** — cheap, blocking for everything downstream (VESC doc §11).
-2. **`k_t`** — requires motor selection; blocking for the drive channel's absolute gain.
-3. **`ΔV0`** — measure the two no-load bus setpoints directly. This is the **highest-value**
-   measurement in the sub-project: it collapses the coupling sign uncertainty that bounds
-   the entire MIMO advantage (§4.4).
-4. **`τ_v`, `Td_v`** — VESC current-step response over UART.
-5. **`τ_r`, `Td`** — the existing SISO share step test (`system_model.md` §9), unchanged.
-6. **Free-run current at 16 V** — sets `b_motor`, which is 93 % of `b_eff`.
+1. **`ΔV0`** — measure the two no-load bus setpoints directly. Now the **highest-value
+   remaining** measurement in the sub-project: it collapses the coupling sign uncertainty
+   that bounds the entire MIMO advantage (§4.4), and it is the last quantity in the model
+   whose *sign* is unknown. A partial result exists on the bench supply (+0.05 V at
+   r = 0.5, `controller_design/system_model.md` §8); the **vehicle-source** measurement is
+   still open.
+2. **`η_dt`** — the largest surviving drive placeholder (0.85, assumed). All absolute
+   forces scale with it, so it is what keeps the `K_v` axis at factor-2 width. The
+   discriminating experiment already exists in the calibration record's open list: one
+   timestamped coast-down from a ≥5 A plateau, which separates `η_dt` from `m_eff` via the
+   ×1.4–1.5 residual between observed and ladder-predicted deceleration.
+3. **`τ_r`, `Td`** — the existing SISO share step test (`system_model.md` §9), unchanged.
+4. **`η_v`** — inverter efficiency; affects the coupling magnitude only.
+5. **Cold-start repeat of one ML0135 step pair** — bounds the thermal `F_c` spread from
+   below, tightening the `i_m0` band that sets the §4.4 coupling gains.
+
+*Closed by the 2026-08-16 drive calibration:* ~~`r_t` and the encoder chain~~ (measured and
+hardware-confirmed); ~~`k_t`~~ (motor fitted, flux linkage measured); ~~`τ_v`, `Td_v`~~
+(`τ_v` measured, `Td_v` decided against an analytic bound); ~~free-run current at 16 V~~
+(superseded — `b_eff` is measured directly, and the free-run decomposition it would have
+fed is retired).
 
 ---
 
@@ -564,4 +699,5 @@ In dependency order (mirrors `controller_design/bench_calibration_manual.md` con
 
 | Date | Change |
 |---|---|
+| 2026-08-16 | **Drive channel calibrated.** `k_t` 5.457e-3 → 4.266e-3 N·m/A (measured flux linkage), `R_m` 0.075 → 0.0226 Ω, `m_eff` 2.95 → 3.5 kg (`M_BUILT`/`M_ROT` split retired), `r_t` 0.033 → 0.0762 m (flywheel rolling radius; the encoder measures flywheel surface speed), `τ_v` measured at 1.0 ms, `Td_v` 2.0 ms decided against an analytic bound. The aero + `C_rr` + free-run drag composite is **retired** and replaced by a measured lumped law, `b_eff` = 0.32 N·s/m local slope at `v0` = 2.0 m/s plus `F_c` = 1.2 ± 0.25 N Coulomb; pure viscous is excluded at χ² ×1400. `pole_factor` corner widened {0.5, 2} → {0.5, 3} to cover the slope doubling below 1.5 m/s, which also absorbs the `v0` dependence `b_eff` no longer carries. Consequences: `G22(0)` 3.7085 → 1.4112 (m/s)/A, drive pole −0.1219 → −0.0914 rad/s, `i_m0` 0.973 → 4.074 A (measured 4.5 ± 0.4 A — the old figure was 4× low), `A_ω` ×3.27, `A_i` ×0.38, `G12(0)` −2.757e-2 → −1.326e-2. Sections 4.2, 4.4, 9.2, 9.3, 10 rewritten. `K_v ∈ {0.5, 1, 2}` retained but recorded as over-wide (only `η_dt`/`η_v` remain inside it). Source: `calibration/motor_id_20260815.md`. The SISO drive synthesis was re-run downstream (`synthesize_drive_siso.py`; new weight rung WC = 55, Wu(0.15, 300, 7.5), clamp 20 → 12 A); the MIMO synthesis artifacts are **not** regenerated by this round and are stale against these constants. |
 | 2026-08-04 | Phase 1: created. 2×2 design plant, 15-state truth model, 12-gate battery, all passing. Deviations from the plan spec recorded in §5 (RGA is blind to triangular coupling), §6 (no explicit `∂α̂/∂I_tot` term — it would double count; used as a gate instead), and §7.2 (OP feasibility filter added). Finding recorded in §7.3 (OP box escapes the shipped K envelope). |

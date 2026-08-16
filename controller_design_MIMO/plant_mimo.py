@@ -61,47 +61,64 @@ TAUR_NOM = 100e-6       # s     droop/bus response pole     TODO(calibrate)
 TAUF_NOM = 0.8e-3       # s     200 Hz firmware measurement prefilter (implemented)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Drive-channel constants (docs/VESC_MOTOR_INTEGRATION.md)
+# Drive-channel constants
+# CALIBRATED 2026-08-15/16 — source of truth: calibration/motor_id_20260815.md.
+# The pre-calibration placeholders (KV 1750 chain, 66 mm tire radius, M_BUILT +
+# M_ROT mass split, aero/C_rr/free-run drag composite) are RETIRED; the drive
+# channel is now a measured plant. See mimo_system_model.md §4.2 and §9.2.
 # ─────────────────────────────────────────────────────────────────────────────
-PHI     = 9.49          # -      overall drive ratio, stock gearing (VESC doc §3, corroborated)
-R_T     = 0.033         # m      tire radius from 66 mm OD   TODO(calibrate): [measure], VESC doc §11 table
-M_BUILT = 2.50          # kg     built vehicle mass estimate TODO(calibrate): VESC doc §12.3 caveat (2.5-3.2 kg)
-M_ROT   = 0.45          # kg     reflected rotor inertia as apparent mass (VESC doc §12.3)
-M_EFF   = M_BUILT + M_ROT                 # 2.95 kg nominal
-ETA_DT  = 0.85          # -      driveline efficiency (user decision 1, SC001 as-built)
+PHI     = 9.49          # -      motor -> flywheel reduction, stock gearing (VESC doc §3)
+R_T     = 0.0762        # m      flywheel ROLLING radius (3.00 in, MEASURED 2026-08-13).
+                        #        The encoder is coupled to the flywheel and the flywheel's
+                        #        own radius is the rolling radius (coupling resolved
+                        #        2026-08-16 as surface/roller), so v is flywheel SURFACE
+                        #        speed and r_t is the correct linear conversion.
+M_EFF   = 3.5           # kg     equivalent linear inertia of the flywheel assembly
+                        #        (MEASURED: J = 0.0203 kg*m^2 at r_t; J/r_t^2 = 3.50 kg)
+ETA_DT  = 0.85          # -      driveline efficiency (user decision 1)  TODO(calibrate)
 ETA_V   = 0.85          # -      VESC inverter efficiency  TODO(calibrate)
-K_ENC   = 1.0           # -      encoder speed-chain gain; STRUCTURALLY uncertain --
-                        #        no fixed rotor<->ground mapping (VESC doc §7), covered
-                        #        by the K_v in {0.5, 1, 2} corner axis.
+K_ENC   = 1.0           # -      encoder speed-chain gain. NO LONGER structurally
+                        #        unknown: 240 counts/rev (120 slots x2 decode, counted
+                        #        and hardware-confirmed 2026-08-16) and r_t above fix
+                        #        the chain end to end.  Retained as an explicit unity
+                        #        factor so the K_v corner has a place to act.
 
-# Motor torque constant. VESC doc §12.4 specifies KV = 1600-1750 (favour 1600) for
-# the as-built 16 V / 9.49:1 / 66 mm operating point; no motor is yet fitted and
-# `motorConstant` in firmware is explicitly NOT a k_t (VESC doc §11 table, BLOCKING).
-# Design case: KV = 1750 -> k_t = 60/(2*pi*KV) = 9.5493/KV.
-KV_DESIGN = 1750.0      # rpm/V  TODO(calibrate): motor not selected/fitted (VESC doc §12.4)
-K_T     = 9.5493/KV_DESIGN                # 5.457e-3 N*m/A   TODO(calibrate)
+# Motor torque constant. Castle Creations 1406 1900KV, 4-pole (p = 2 pole pairs).
+# VESC Tool FOC detection 2026-08-15: flux linkage lambda = 1.422 mWb.
+#   k_t = (3/2)*p*lambda = 1.5*2*1.422e-3 = 4.266e-3 N*m/A   (q-axis peak convention,
+#   which is the convention setCurrent() commands).
+# Cross-check: lambda_pred = 60/(sqrt(3)*2*pi*KV*p) = 1.451 mWb, 2.0 % off -> p = 2
+# confirmed.  Replaces the 5.457e-3 KV-1750 placeholder (x0.78).
+K_T     = 4.266e-3      # N*m/A  MEASURED (calibration/motor_id_20260815.md)
 
-# Motor phase resistance. The only resistance figure in the repo is the 3650 spec-can
-# dyno point "110 W max output / 35 A / 0.075 ohm" (VESC doc §12.4).
-R_M     = 0.075         # ohm    TODO(calibrate): placeholder from VESC doc §12.4 dyno spec
+# Motor phase resistance, VESC Tool FOC detection 2026-08-15.
+R_M     = 0.0226        # ohm    MEASURED (replaces the 0.075 ohm spec-can placeholder)
 
-# VESC current-loop transport + lag. UART frame floor ~781 us, motor task 500 Hz.
-TAU_V_NOM = 1.0e-3      # s      TODO(identify): FOC current-loop closed-loop lag
-TD_V_NOM  = 2.0e-3      # s      TODO(identify): command transport + ZOH
+# VESC current-loop transport + lag.
+TAU_V_NOM = 1.0e-3      # s      MEASURED 2026-08-16 (VESC Tool sampled current step,
+                        #        63 % at ~1-1.5 ms; matches KP/L = KI/R = 1004 rad/s)
+TD_V_NOM  = 2.0e-3      # s      DECIDED 2026-08-15 (analytic bound 0.9-2 ms: UART frame
+                        #        781 us + packet thread <~1 ms + FOC pickup <= 70 us).
+                        #        Not measured -- direct measurement was declined to keep
+                        #        a current instrument out of the motor power path.
 
-# Road / air load
-RHO     = 1.225         # kg/m^3 air density at ~15 C sea level
-C_DA    = 0.010         # m^2    drag area estimate (user decision 1)  TODO(calibrate)
-C_RR    = 0.020         # -      rolling resistance coeff (user decision 1)  TODO(calibrate)
-G_ACC   = 9.80665       # m/s^2
-
-# Motor spinning (free-run) loss, linearized as a viscous shaft damping. VESC doc
-# §12.3: free-run loss at 16 V is the DOMINANT cruise load (target <= 2.5 A at 16 V,
-# ~40 W) and is 3-5x the traction power at cruise. Referred to the shaft at the
-# ~30 krpm (3142 rad/s) free-run point: b_m = P/(omega^2).
-P_FREERUN = 2.5*16.0    # W      TODO(calibrate): VESC doc §12.3 target, "[measure]"
-W_FREERUN = 30e3*2*np.pi/60.0             # rad/s, ~3142
-B_MOTOR = P_FREERUN/W_FREERUN**2          # N*m*s/rad shaft-referred viscous damping
+# Longitudinal drag. MEASURED as a LUMPED law F(v) ~ F_c + b_eff*(v - v0) about the
+# design speed, replacing the aero + C_rr + motor-free-run composite (which was three
+# stacked placeholders and predicted the cruise current 4x low).
+# Evidence: the TP0125-TP0134 steady-state ladder (10 holds, 3.5-5.5 A) plus the
+# ML0135 small-signal staircase (5 incremental steps, 1.9-3.4 m/s) agree on the slope.
+B_EFF_NOM = 0.32        # N*s/m  local dF/dv at v0 = 2.0 m/s, +-15 % (MEASURED; the
+                        #        ladder fit and the small-signal steps agree to 6 %).
+                        #        The full curve is strongly concave (Stribeck-like,
+                        #        F = 1.751*v^0.30); pure viscous is excluded (chi^2 x1400).
+                        #        BELOW ~1.5 m/s the local slope roughly DOUBLES -- that
+                        #        amplitude dependence is carried by pole_factor, not by
+                        #        a v0 term (see b_eff() and mimo_system_model.md §4.2).
+F_COULOMB = 1.2         # N      Coulomb/breakaway drag term.  THERMALLY VARIABLE:
+                        #        1.31 N cold (TP ladder) vs 1.05-1.1 N warm (ML0135);
+                        #        1.2 +- 0.25 N is the adopted thermal-mean spread.
+                        #        Enters the OPERATING POINT (i_m0 -> coupling gains
+                        #        §4.4) only; its dF/dv is zero, so it is NOT in b_eff.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -129,7 +146,7 @@ def nominal_params():
         k_t=K_T, phi=PHI, r_t=R_T, m_eff=M_EFF,
         eta_dt=ETA_DT, eta_v=ETA_V, K_enc=K_ENC,
         # load / coupling
-        rho=RHO, C_dA=C_DA, C_rr=C_RR, b_motor=B_MOTOR,
+        b_eff_nom=B_EFF_NOM, F_c=F_COULOMB,
         R_m=R_M, V_bus0=V_BUS0,
         # multiplicative corner knobs (1.0 = nominal)
         K_v=1.0, pole_factor=1.0,
@@ -191,17 +208,21 @@ def op_feasible(op, p, margin=ALPHA_MARGIN):
 
 
 def b_eff(op, p):
-    """Linearized longitudinal damping at the OP, wheel-referred [N*s/m].
+    """Linearized longitudinal damping at the OP, flywheel-referred [N*s/m].
 
-        b_eff = rho*C_dA*v0            (aero, d/dv of 0.5*rho*C_dA*v^2 -> rho*C_dA*v0)
-              + b_motor*(phi/r_t)^2    (motor spinning loss, shaft -> wheel referred)
+        b_eff = b_eff_nom * pole_factor          (b_eff_nom = 0.32 N*s/m MEASURED)
 
-    C_rr is COULOMB (sign(v)-shaped, magnitude C_rr*m*g): it contributes to the
-    operating-point torque (see i_m0 below) but NOT to the small-signal slope, so
-    it must not appear here.  `pole_factor` is the drive-pole corner knob.
+    This is a MEASURED LOCAL SLOPE (dF/dv at v0 = 2.0 m/s), not a composite of
+    modelled loss terms.  It therefore carries no explicit v0 dependence: the true
+    drag curve is concave, so the slope is a function of speed, but the measurement
+    fixes it only at the design speed.  The known amplitude dependence -- the slope
+    roughly DOUBLES below ~1.5 m/s -- is carried by the pole_factor in {0.5, 3}
+    corner axis, which is the honest representation of a locally-identified slope.
+
+    F_c (Coulomb) is deliberately absent: it is sign(v)-shaped, so it sets the
+    operating-point torque (see op_motor_current) but its derivative is zero.
     """
-    b = p['rho']*p['C_dA']*op['v0'] + p['b_motor']*(p['phi']/p['r_t'])**2
-    return p['pole_factor']*b
+    return p['pole_factor']*p['b_eff_nom']
 
 
 def force_per_amp(p):
@@ -210,8 +231,21 @@ def force_per_amp(p):
 
 
 def op_motor_current(op, p):
-    """Steady-state motor current at the OP [A]: aero+spin (slope) + Coulomb C_rr."""
-    F = b_eff(op, p)*op['v0'] + p['C_rr']*p['m_eff']*G_ACC
+    """Steady-state motor current at the OP [A]: slope term + Coulomb term.
+
+        F(v0) = b_eff*v0 + F_c   ->   i_m0 = F(v0)/force_per_amp
+
+    At the nominal OP this yields i_m0 = 4.07 A.  The bench holds measure 4.5 +- 0.4 A,
+    so the model sits ~9 % below the band's centre and 0.6 % BELOW its lower edge --
+    close, but NOT inside it.  Carrying the F_c thermal endpoints through gives a model
+    envelope of 3.74 A (warm, F_c 1.05) to 4.32 A (cold, F_c 1.31), which likewise
+    straddles the band's lower edge rather than covering it.
+    The claim this supports is bounded accordingly: the calibrated model reproduces the
+    measured cruise current to within ~10 %, against the pre-calibration composite's
+    0.97 A (a factor of 4 low).  The residual is consistent with the eta_dt = 0.85
+    placeholder, which scales every absolute force and is not measured.
+    """
+    F = b_eff(op, p)*op['v0'] + p['F_c']
     return F*p['r_t']/(p['k_t']*p['eta_dt']*p['phi'])
 
 
@@ -366,6 +400,12 @@ DU = np.diag([0.35, 20.0])    # [dr span over r in [0.15,0.85] -> 0.7/2, motor A
 # and the BUS power budget bind TOGETHER, by construction.  The bus-power limit itself is
 # NOT modeled here (no bus-current constraint in the plant), so in-sim only the motor
 # clamp is enforced; it is no longer conservative w.r.t. the bus, it is coincident with it.
+# STALE vs FIRMWARE (2026-08-16): firmware MOTOR_I_CMD_MAX is now 12.0 A (2026-08-15
+# operator decision).  DU[1,1] is deliberately LEFT at 20.0 because it is the scaling
+# used by the checked-in MIMO synthesis artifacts, which this calibration round does not
+# regenerate; changing it here would silently invalidate them.  The SISO drive synthesis
+# does not use DU -- it enforces the clamp directly (synthesize_drive_siso.I_CLAMP =
+# 12.0).  Re-align DU[1,1] when the MIMO controller is next re-synthesized.
 
 
 def scaling_matrices():
@@ -421,14 +461,23 @@ def share_corners():
 def drive_corners():
     """24 drive-channel parameter corners.
 
-    K_v in {0.5, 1, 2} is STRUCTURAL: there is no fixed rotor<->ground-speed
-    mapping (VESC doc §7), and k_t / the encoder chain are both uncalibrated, so
-    the whole di_cmd -> dv DC gain is uncertain by a factor of ~2 either way.
+    K_v in {0.5, 1, 2} is RETAINED but its rationale has SHRUNK (2026-08-16): k_t
+    is now measured, and the encoder chain is calibrated end to end (240 counts/rev,
+    r_t = 0.0762 m, surface/roller coupling resolved), so the two dominant reasons
+    for a factor-2 axis are gone.  What remains inside it is the eta_dt = 0.85
+    placeholder and the thermal spread of the drag law.  Kept at {0.5, 1, 2} as the
+    conservative default -- narrowing it is a performance lever, not a correctness
+    fix, and it costs nothing at the achieved bandwidth (see mimo_system_model.md
+    §9.2 and synthesize_drive_siso.py's weight ladder).
+
     pole_factor scales b_eff (hence the drive pole and the DC gain jointly).
+    WIDENED {0.5, 2} -> {0.5, 3} (2026-08-16): b_eff is a slope identified LOCALLY
+    at v0 = 2.0 m/s, and the measured curve's slope roughly doubles below 1.5 m/s,
+    so the upper corner must cover the low-speed end of the operating range.
     """
     out = []
     for K_v in (0.5, 1.0, 2.0):
-        for pf in (0.5, 2.0):
+        for pf in (0.5, 3.0):
             for tau_v in (0.5e-3, 5.0e-3):
                 for Td_v in (1.0e-3, 4.0e-3):
                     out.append(dict(K_v=K_v, pole_factor=pf, tau_v=tau_v, Td_v=Td_v))
@@ -475,11 +524,12 @@ if __name__ == "__main__":
     print(f"design plant: {G.n} states, {G.ny}x{G.nu}")
     print(f"  V_bus0     = {V_BUS0:.4f} V     Re_max = {RE_MAX:.4f} ohm")
     print(f"  K (share)  = {share_gain_K(op, p):.6f}")
-    print(f"  b_eff      = {b_eff(op, p):.5f} N*s/m   (aero "
-          f"{p['rho']*p['C_dA']*op['v0']:.5f} + motor-spin "
-          f"{p['b_motor']*(p['phi']/p['r_t'])**2:.5f})")
+    print(f"  b_eff      = {b_eff(op, p):.5f} N*s/m   (MEASURED local slope at "
+          f"v0 = {op['v0']} m/s; F_c = {p['F_c']:.2f} N)")
     print(f"  k_t        = {K_T:.6e} N*m/A   force/amp = {force_per_amp(p):.5f} N/A")
     print(f"  i_m0       = {i_m0:.4f} A      omega0 = {w0:.1f} rad/s")
+    print(f"             (measured cruise hold 4.5 +- 0.4 A: model is ~9 % low, just "
+          f"below the band -- eta_dt placeholder)")
     print(f"  A_i        = {A_i:.6f} A/A     A_w = {A_w:.6e} A/(rad/s)")
     print(f"  dalpha/dI  = {dalpha_dItot(op, p):.6e} share/A")
     print(f"  DC gain:\n{G.dcgain_matrix()}")

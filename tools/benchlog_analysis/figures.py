@@ -58,7 +58,16 @@ COLORS = {
     "r_cmd": "#008300",      # green   - commanded share ratio (controller out)
     "V_bus": "#e34948",      # red     - bus voltage
     "I_total": "#e87ba4",    # magenta - total bus current (I_fc + I_batt)
+    "u_unsat": "#c07a1e",    # amber   - drive controller pre-clamp output
+    "drive_x0": "#7a5cc9",   # purple  - Youla drive controller x[0] state
 }
+
+# Drive controller actuator rails [A] for the Hanus-conditioning plot
+# (fw v11 velocity-loop drive controller saturation limits).
+U_UNSAT_RAIL_A = 12.0
+# Absolute tolerance for treating |u_unsat| as "at/over the rail" -- avoids
+# flagging a sample that is a float epsilon under the rail as unsaturated.
+U_UNSAT_RAIL_TOL_A = 1e-6
 
 # No-load nominal bus voltage [V] for the reference line in bus_and_share.
 # User-specified bench value (2026-08-10); the boosts regulate the loaded bus
@@ -668,6 +677,73 @@ def bus_and_share(data, cfg):
     return fig
 
 
+def drive_controller_conditioning(data, cfg):
+    """Fig 8 (v5 only): Hanus-conditioning verification for the drive loop.
+
+    Top: I_cmd (the drive controller's clamped/commanded output, already
+    plotted elsewhere) is NOT the focus here -- this figure is about the
+    controller's internal PRE-clamp output, u_unsat, overlaid against the
+    +/-U_UNSAT_RAIL_A actuator rails, with intervals where
+    abs(u_unsat) >= U_UNSAT_RAIL_A (within U_UNSAT_RAIL_TOL_A) shaded to mark
+    saturation -- the windows where the anti-windup/Hanus conditioning
+    mechanism is actively doing work. Bottom: the Youla drive controller's
+    integrator state x[0] (drive_x0) on the same time base, so state
+    behaviour during a saturation window can be read directly against it.
+
+    Returns None (no figure) when u_unsat/drive_x0 are absent from `data`
+    -- i.e. any pre-v5 CSV -- so make_all() can skip this figure gracefully
+    for older logs instead of KeyError'ing.
+    """
+    if "u_unsat" not in data or "drive_x0" not in data:
+        return None
+
+    t = data["t_s"]
+    u = data["u_unsat"]
+    x0 = data["drive_x0"]
+
+    c_u = COLORS["u_unsat"]
+    c_x0 = COLORS["drive_x0"]
+
+    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=FIGSIZE_STACK2, sharex=True,
+                                   constrained_layout=True)
+
+    ax0.axhline(0.0, color=ZERO_LINE_COLOR, linewidth=0.9, zorder=1)
+    ax0.axhline(U_UNSAT_RAIL_A, color=c_u, linestyle="--", linewidth=LW_REF,
+                zorder=ZORDER_REF, label="actuator rail (+/-%.0f A)"
+                                          % U_UNSAT_RAIL_A)
+    ax0.axhline(-U_UNSAT_RAIL_A, color=c_u, linestyle="--", linewidth=LW_REF,
+                zorder=ZORDER_REF)
+    ax0.plot(t, u, color=c_u, linewidth=LW_RAW, label="u_unsat (pre-clamp)")
+
+    saturated = np.abs(u) >= (U_UNSAT_RAIL_A - U_UNSAT_RAIL_TOL_A)
+    # fill_between's `where` mask draws one shaded span per contiguous run
+    # of True; NaN cells in u compare False in `saturated` (np.abs(NaN) is
+    # NaN, NaN >= x is False), so a logging gap simply isn't shaded rather
+    # than raising.
+    ax0.fill_between(t, 0.0, 1.0,
+                      where=saturated, color=c_u, alpha=0.12, zorder=0,
+                      transform=ax0.get_xaxis_transform(), linewidth=0,
+                      label="saturated")
+    _style_axes(ax0, ylabel="u_unsat [A]")
+    ax0.set_title("Drive controller pre-clamp output vs. actuator rails",
+                  color=TEXT_COLOR, fontsize=11, loc="left")
+    _legend(ax0)
+
+    ax1.axhline(0.0, color=ZERO_LINE_COLOR, linewidth=0.9, zorder=1)
+    ax1.plot(t, x0, color=c_x0, linewidth=LW_RAW, label="drive_x0")
+    ax1.fill_between(t, 0.0, 1.0,
+                      where=saturated, color=c_u, alpha=0.12, zorder=0,
+                      transform=ax1.get_xaxis_transform(), linewidth=0)
+    _style_axes(ax1, ylabel="drive_x0 [-]", xlabel="Time [s]")
+    ax1.set_title("Youla drive controller integrator state x[0]",
+                  color=TEXT_COLOR, fontsize=11, loc="left")
+    _legend(ax1)
+
+    ax1.set_xlim(float(t[0]), float(t[-1]))
+    _suptitle(fig, _run_name(cfg), "drive controller conditioning (u_unsat, x[0])")
+    return fig
+
+
 # --------------------------------------------------------------------------
 # Registry
 # --------------------------------------------------------------------------
@@ -677,7 +753,10 @@ def bus_and_share(data, cfg):
 #      the rest; never save or close the figure inside the builder.
 #   2. Append ("my_figure", my_figure) to FIGURES below. The name becomes the
 #      output filename (<name>.png in the run directory) -- keep it a valid
-#      bare filename.
+#      bare filename. A builder MAY return None instead of a Figure to skip
+#      itself gracefully (e.g. required columns absent on older-format
+#      data); make_figures.py treats a None return as "no PNG for this
+#      figure on this run", not an error.
 # That is the whole contract; make_figures.py picks it up automatically.
 FIGURES = [
     ("tracking_overlay", tracking_overlay),
@@ -687,4 +766,5 @@ FIGURES = [
     ("currents_and_share", currents_and_share),
     ("share_controller", share_controller),
     ("bus_and_share", bus_and_share),
+    ("drive_controller_conditioning", drive_controller_conditioning),
 ]

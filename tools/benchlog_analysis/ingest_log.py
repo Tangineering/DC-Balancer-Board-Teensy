@@ -13,7 +13,10 @@ logs/NAME/ and populates it with:
                           and -- as of format v4 -- profile_amp/profile_b
                           when their valid bits are set) flows through here
                           automatically; no per-field plumbing is needed in
-                          this module.
+                          this module. Likewise, format v5's extra CSV
+                          columns (u_unsat, drive_x0) are just more columns
+                          in result.csv_header/csv_rows -- absent from
+                          pre-v5 CSVs, present and populated for v5.
   analysis_config.json -- filter-tau config; created from
                           common.DEFAULT_CONFIG on first ingest and NEVER
                           overwritten thereafter (see

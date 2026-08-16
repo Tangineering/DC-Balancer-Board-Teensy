@@ -1078,3 +1078,95 @@ coverage gaps closed (drain-window `K 1`, double `K 0`, plot-mode prompt). Decod
 docstring-only (`profile_type` bit 3 = MANUAL; the tooling passes the bitmask through raw).
 **Tests: 1777 production + 175 bench pass.** Ledger row in `docs/firmware-versions.md`;
 command/table docs in PLAN.md §9 updated.
+
+---
+
+## Status & session addendum (2026-08-16, fw v10: Youla-H drive controller)
+
+The drive-channel calibration campaign closed (motor ID, m_eff, b_eff three-way triangulated at
+0.32 N·s/m, thermal Coulomb F_c = 1.2 ± 0.25 N, τ_v measured 1.0 ms, Td_v decided 2 ms — record:
+`controller_design_MIMO/calibration/motor_id_20260815.md`) and two orchestrated rounds followed.
+**fw v10 (pending first flash);** ledger row in `docs/firmware-versions.md` has full detail.
+
+- **Round A — model + re-synthesis.** `plant_mimo.py` carries the measured constants (k_t
+  4.266e-3, R_m 22.6 mΩ, m_eff 3.5 kg, r_t 0.0762 m flywheel rolling radius, b_eff 0.32 with
+  `pole_factor ∈ {0.5, 3}`, F_c 1.2 N; the aero/C_rr/b_motor composite is RETIRED). Nominal
+  plant: G22(0) = 1.411 (m/s)/A, pole −0.0914 rad/s, model-derived i_m0 = 4.07 A (0.6 % below
+  the measured band's lower edge — a factor-of-4 correction attributed to the unmeasured η_dt,
+  not closure). `synthesize_drive_siso.py` re-ran at **I_CLAMP = 12.0** (the fw MOTOR_I_CMD_MAX):
+  chosen rung WC=55/Wu(0.15,300,7.5) → PM 49.6°, DM 54.2 ms, crossover 16.0 rad/s, worst-corner
+  ‖S‖∞ 2.15 cont / 2.26 disc, all 24 corners stable, 22/22 gates. Replay reference vectors
+  (`figures/drive_siso_replay.csv`) are generated from the FLOAT32-ROUNDED header coefficients at
+  %.17e (review V1: double-generated vectors drift 1.7e-2 A through the near-unity mode);
+  independent validator `validate_drive_siso.py` passes 15/16 — the one "failure" is the
+  documented measurement that a float32 STATE recursion diverges ~1.4e-2 A (why the firmware
+  state is double). **The MIMO-study artifacts are frozen on the retired plant and their pipeline
+  currently fails its own gates** (compare_controllers clamp assert, synthesize_mimo 54/2,
+  compute_Su DRIFT, mimo_crosscheck.m false-green) — bannered in the README/model doc/`.m`;
+  regeneration is a future synthesis round, not a re-run.
+- **Round B — firmware.** New `teensy_controller/drive_controller.h`: Hanus self-conditioned
+  5-state realization (clamped u drives the state update — full-state anti-windup; integrator-only
+  back-calculation measurably fails here, R's LF gain is 745.5 A/(m/s)), **double state vector**,
+  float coefficients GENERATED into `teensy_controller/drive_controller_coeffs.h` by
+  `synthesize_drive_siso.py` (one emitter, two copies with the study header — never hand-edit).
+  `motorControl()` under `USE_YOULA_DRIVE_CONTROLLER` (default 1; PI verbatim at 0) sends the
+  controller's AMPS straight through `commandMotorCurrent()` — no motorConstant division on this
+  path (motorConstant is dead on the shipped build). Wrapper `youlaController_Drive()` gates the
+  recursion to DRIVE_CTRL_TS_US − 200 µs (beat tolerance vs the equal-period rl_motor gate) and
+  holds output between ticks. `resetDriveControlState()` at Idle→Run (which now also ZEROES
+  v_setpoint — a stale Pi setpoint would rail the loop in 20–40 ms), the `'V'` entry edge only
+  (a mid-run `V` is a setpoint step, deliberately not a reset), and `haltMotorOutput()` (covers
+  all profile starts and every stop/`Q`/`X`/fault path). `constexpr` MOTOR_I_CMD_MAX +
+  `static_assert` pins the clamp pairing (changing 12 A now breaks the build until re-synthesis).
+  Safety review: no HIGHs; 1 MED (stale-setpoint rail at Run entry — fixed) + 3 LOWs applied.
+  Correctness review: no logic bugs; double-state compile tripwire, v_setpoint-zeroing assert,
+  and gate-edge test added; "velocity PI" wording swept (fallback/history references kept).
+- **Tests: 2716 production + 175 bench pass** (replay-verified against the generated vectors,
+  saturated episode included, via new `controller_design_MIMO/drive_replay_vectors.h`;
+  `-I../controller_design_MIMO` added to the test Makefile).
+- **Next bench (read before any velocity run):** the fw v7 S1 precondition is still open and
+  sharper now — set the VESC Battery Current Max (≈4.2 A) / Regen Max (≈1.5 A) and tick
+  `docs/VESC_MOTOR_INTEGRATION.md` §4 BEFORE any `'V'`/`'D'`/`'Y'` run; OC faults are compiled
+  out under BENCH_TEST and the new loop rails at ±12 A within ~30 ms for |e| > ~16 mm/s. First
+  `'V'` run is the synthesis validation: compare the small-signal step against
+  `figures/drive_siso_step.csv`, scope-armed, small setpoints first.
+
+---
+
+## Status & session addendum (2026-08-16, fw v11: BLG v5 drive-controller observability)
+
+Pre-velocity-run round (operator request): the SD bench log gains the drive controller's
+internals so the Hanus conditioning is verifiable on hardware. **fw v11 (pending first flash —
+fw v10 was never flashed, so the first flash carries both);** ledger row has full detail.
+
+- **BLG RECORD FORMAT v5 (76 B, hdr[4] = 5).** Two float32 APPENDED (all v1–v4 offsets
+  unchanged): `u_unsat` at 68 (drive controller PRE-clamp output, held between 500 Hz ticks —
+  1 kHz logging duplicates it in pairs by design) and `drive_x0` at 72 (the exact-integrator
+  state x[0]). Flags gain bit4 (command from the Youla DRIVE controller) and bit5 (share loop
+  is the Youla build) so records are law-self-identifying; under a `USE_YOULA_DRIVE_CONTROLLER=0`
+  flash the fields carry the PI's pre-clamp command and `pi_motor_accum` (A/B-comparable).
+  During saturation, u_unsat hugging the rail = conditioning working; diverging beyond it =
+  windup. Header layout otherwise v4-identical; trailer block grows with the record; UDP
+  telemetry (v4/58 B) and the 'L' stream unchanged. Ring math re-verified at 76 B (6 rec/chunk,
+  6.0× catch-up, ~7.4 min preallocation; no buffer grew).
+- **Tooling:** `decode_benchlog.py` parses v5 (v1–v4 byte-identical, verified vs three
+  checked-in logs); `benchlog_analysis` gains a `drive_controller_conditioning` figure
+  (u_unsat vs I_cmd, ±12 A rails, saturated intervals shaded, x[0] subplot; skips pre-v5 logs);
+  analyzer exe rebuilt; `make_test_blg.py --v5` defaults bits 4/5 ON.
+- **Review round:** no firmware defects. D3: `setManualMotorCurrent()` ('A') now resets the
+  drive controller (unconditional — 'A' never steps the loop, so there is no operating point to
+  preserve; prevents a stale u_unsat/x0 trace with bit4 set in K-logged 'A' runs). D1/D2 (doc):
+  **the operator set the VESC limits 2026-08-16 — Battery Current Max 6.0 A fwd / 1.5 A regen
+  — closing the fw v7 S1 precondition**, but 6.0 A is 1.43× the §12.4-derived ≈4.2 A allowance
+  and above its scope-gated 5.4 A conditional ceiling; §12.4 is annotated, and re-deriving it
+  against 6.0 A (or lowering the setting) is the outstanding action before a vehicle run. Bench
+  note: 6.0 A split evenly = exactly LIMIT_I_BT_MAX 3.0 A/channel, and FC-heavy setpoints
+  exceed LIMIT_I_FC_MAX 1.4 A — with OC faults compiled out under BENCH_TEST, nothing in
+  firmware catches either.
+- **Tests: 2747 production + 175 bench pass.** New coverage: record size/offsets (append-only
+  guarantee pinned via offsetof), hdr v5, bit4/bit5, pre-clamp value plumbing (saturating +
+  unclamped), 500 Hz held-pair semantics, reset-to-zero; ring-wrap chunk math re-derived at 6
+  records/chunk.
+- **Next bench:** flash fw v11; first `'V'` run is the synthesis validation — small setpoints,
+  scope-armed, compare against `figures/drive_siso_step.csv`, and read the new conditioning
+  figure after each run.

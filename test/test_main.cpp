@@ -130,6 +130,12 @@ static void reset_test_state() {
     // can't inherit a stale seed from a prior test's OL->CL handover.
     share_spEffPrev = 0.5f;
 
+    // fw v10: Youla-H drive (velocity) controller state (drive_controller.h + wrapper). Zeroes
+    // the 5-state Hanus vector, the held output, and back-dates the Ts gate -- the same helper
+    // resetDriveControlState() the firmware itself calls at every reset site (haltMotorOutput(),
+    // setManualMotorVelocity() entry edge, Idle->Run).
+    resetDriveControlState();
+
     // .ino command globals
     v_setpoint           = 0;
     power_share_setpoint = 0.5f;
@@ -6233,19 +6239,27 @@ static void test_motor_current_clamp() {
     check(vesc.last_current == 0.0f && current == 0.0f,
           "clamp: -Inf → 0 A");
 
-    // motorControl(): the UDP velocity path. A large velocity error with the uncalibrated
-    // motorConstant = 0.1 would command error/0.1 amps — 50 A at 5 m/s — before this clamp.
+    // motorControl(): the UDP velocity path. fw v10: motorControl() defaults to the Youla-H drive
+    // controller (USE_YOULA_DRIVE_CONTROLLER), whose clamp lives INSIDE driveControllerStep() at
+    // exactly DRIVE_CTRL_I_MAX == MOTOR_I_CMD_MAX (see test_drive_controller_coeff_pinning()), so
+    // commandMotorCurrent()'s own clamp is a redundant backstop here rather than the binding
+    // limit. A single tick at 5 m/s error does NOT saturate (u = DD*e ~= 9.1 A, DD ~= 1.81) --
+    // unlike the old PI path's unbounded proportional term, this controller is designed to reach
+    // the rail only under sustained error. Drive several ticks to reach saturation, then check it.
     reset_test_state();
     v_actual   = 0.0f;
     v_setpoint = 5.0f;
-    pi_motor_accum = 0; pi_motor_lastMicros = 0;
     g_mock_micros  = 100000;
     vesc.reset();
-    motorControl();
+    for (int k = 0; k < 20; k++) {
+        g_mock_micros += (uint32_t)DRIVE_CTRL_TS_US;
+        motorControl();
+    }
     check(!vesc.current_calls.empty() && fabsf(vesc.last_current) <= MOTOR_I_CMD_MAX + 1e-4f,
           "clamp: motorControl() at 5 m/s error stays within MOTOR_I_CMD_MAX");
     check(fabsf(vesc.last_current - MOTOR_I_CMD_MAX) < 1e-4f,
-          "clamp: motorControl() saturates AT the ceiling (proportional term was unbounded)");
+          "clamp: motorControl() saturates AT the ceiling under sustained 5 m/s error "
+          "(Youla-H drive controller reaches the rail, same as the old PI's unbounded term did on tick 1)");
 
     // State-98 manual VELOCITY path shares motorControl(), so it inherits the clamp
     reset_test_state();
@@ -6501,6 +6515,340 @@ static void test_youla_wrapper_gating() {
     check(fabsf(droop_gain_FC_actual - K_DROOP / (RE_MAX * 0.5f)) < 5e-3f,
           "wrapper: powerBalance() with zero share error writes balanced MDAC gains");
 }
+
+// ─── Youla-H DRIVE (velocity) controller (drive_controller.h) — fw v10 ───────
+// Replay reference vectors: controller_design_MIMO/figures/drive_siso_replay.csv, converted to
+// controller_design_MIMO/drive_replay_vectors.h (mirrors reference_vectors.h's placement for the
+// share loop) by scratchpad/gen_drive_replay_header.py. Tolerance is on the OUTPUT u only, per
+// the header's own guidance ("never on the individual states") -- the state recursion is double
+// and the coefficients are the exact float32 roundings the CSV was generated from, so a correct
+// C++ port should track to a few mA.
+#include "drive_replay_vectors.h"   // generated from drive_siso_replay.csv
+
+static void test_drive_controller_coeff_pinning() {
+    test_group("drive_controller_coeffs.h: pinned constants (fw v10)");
+    check(DRIVE_CTRL_TS_US == 2000, "drive ctrl: DRIVE_CTRL_TS_US == 2000 (500 Hz, VESC UART floor)");
+    check(DRIVE_CTRL_NSTATES == 5, "drive ctrl: DRIVE_CTRL_NSTATES == 5 (Hanus realization)");
+    check(DRIVE_CTRL_NSOS == 2, "drive ctrl: DRIVE_CTRL_NSOS == 2 (cross-check biquads)");
+    check(fabsf(DRIVE_CTRL_I_MIN - (-12.0f)) < 1e-6f, "drive ctrl: DRIVE_CTRL_I_MIN == -12.0 A (regen rail)");
+    check(fabsf(DRIVE_CTRL_I_MAX - 12.0f) < 1e-6f, "drive ctrl: DRIVE_CTRL_I_MAX == +12.0 A (drive rail)");
+    // Tripwire: the anti-windup conditioning is only correct if the controller's own clamp
+    // equals the downstream commandMotorCurrent() ceiling. A future MOTOR_I_CMD_MAX change
+    // without re-synthesis would desync these silently -- this is the test that catches it.
+    check(fabsf(DRIVE_CTRL_I_MAX - MOTOR_I_CMD_MAX) < 1e-6f,
+          "drive ctrl: DRIVE_CTRL_I_MAX == MOTOR_I_CMD_MAX (clamp pairing the AW design depends on)");
+}
+
+// Compile-time guard: driveCtrl_x must stay DOUBLE. The regen replay's runtime gate (2e-2 A,
+// see test_drive_controller_replay_regen()) is sized around the DOCUMENTED knife-edge
+// rail-release chatter, not around a double->float state regression -- drive_controller.h's own
+// header measures that regression at ~1.4e-2 A on the saturated regen episode ("validate_drive_
+// siso.py check 4"), which sits INSIDE the 2e-2 A runtime tolerance and would NOT reliably fail
+// it. This static_assert is the tripwire that catches that regression directly, independent of
+// any runtime replay tolerance.
+#include <type_traits>
+static_assert(std::is_same<decltype(driveCtrl_x[0]), double&>::value ||
+              sizeof(driveCtrl_x[0]) == sizeof(double),
+              "driveCtrl_x must be double -- drive_controller_coeffs.h documents a ~1.4e-2 A "
+              "divergence on the saturated regen episode if the state recursion runs in float32, "
+              "and that magnitude is inside the regen replay test's 2e-2 A runtime gate");
+
+static void test_drive_controller_state_is_double() {
+    test_group("drive_controller.h: driveCtrl_x is DOUBLE (compile-time; see static_assert above)");
+    // The static_assert above already enforces this at compile time; this runtime check exists
+    // only so the guarantee shows up in the test log/count like every other coverage item.
+    check(sizeof(driveCtrl_x[0]) == sizeof(double),
+          "drive ctrl: driveCtrl_x element size == sizeof(double) (float32 regression is invisible "
+          "to the 2e-2 A regen replay gate -- see drive_controller_coeffs.h's 1.4e-2 A figure)");
+}
+
+static void test_drive_controller_ac_identity() {
+    test_group("drive_controller_coeffs.h: AC == AD - BD*CD/DD (25 entries)");
+    float worst = 0.0f;
+    for (int i = 0; i < DRIVE_CTRL_NSTATES; i++) {
+        for (int j = 0; j < DRIVE_CTRL_NSTATES; j++) {
+            float expected = DRIVE_CTRL_AD[i][j]
+                            - DRIVE_CTRL_BD[i][0] * DRIVE_CTRL_CD[0][j] / DRIVE_CTRL_DD;
+            float err = fabsf(DRIVE_CTRL_AC[i][j] - expected);
+            if (err > worst) worst = err;
+        }
+    }
+    check(worst < 2e-6f, "drive ctrl: AC == AD - BD*CD/DD within 2e-6 over all 25 entries");
+}
+
+static void test_drive_controller_replay_small() {
+    test_group("drive_controller.h replay: 'small' episode (200 samples, unsaturated)");
+    reset_test_state();
+    driveControllerReset();
+
+    float worst = 0.0f;
+    int clamped = 0;
+    for (int k = 0; k < DRIVE_REPLAY_SMALL_N; k++) {
+        float u = driveControllerStep(DRIVE_REPLAY_SMALL_E[k]);
+        float err = fabsf(u - DRIVE_REPLAY_SMALL_U[k]);
+        if (err > worst) worst = err;
+        if (u <= DRIVE_CTRL_I_MIN + 1e-6f || u >= DRIVE_CTRL_I_MAX - 1e-6f) clamped++;
+    }
+    check(worst < 1e-4f, "drive ctrl replay 'small': matches Python reference (max |du| < 1e-4 A)");
+    check(clamped == 0, "drive ctrl replay 'small': never clamps (per the reference's own claim)");
+}
+
+static void test_drive_controller_replay_regen() {
+    test_group("drive_controller.h replay: 'regen' episode (2500 samples, rails + recovers)");
+    reset_test_state();
+    driveControllerReset();
+
+    // Tolerance note (found during test-writing, deviates from the round brief's blanket 1e-4 A):
+    // an independent float64 Python re-implementation of this exact algorithm (u=clamp(Cd x+Dd e);
+    // x'=Ac x+Bd u/Dd), fed the SAME float32-rounded coefficients as this header, ALSO diverges
+    // from the CSV by ~1.0e-2 A -- entirely at one knife-edge sample (k=476, where u_unsat sits
+    // 4 mA on the wrong side of -12 A, so the reference's "released" tick reads clamped here or
+    // vice versa), with a slowly-decaying tail through ~k=1514 as the near-unity integrator mode
+    // (eigenvalue ~0.9999) carries that one-sample release-timing difference forward. This is the
+    // exact magnitude the header's own comment anticipates ("~1e-2 A... at rail RELEASE... not a
+    // slow accumulation" / "toleranced on the OUTPUT... never on the individual states") -- it is
+    // inherent chattering at the clamp boundary, not a defect in this implementation, and no
+    // bit-identical double implementation can avoid it without matching the generator's exact
+    // instruction-level rounding. Gated at 2e-2 A (2x the observed worst case) for the single worst
+    // sample; the tight 1e-4 A bound is kept as a SEPARATE outlier-count check below so a real
+    // implementation bug (wrong sign, wrong matrix, wrong formula) still fails loudly.
+    float worst = 0.0f;
+    int railed = 0;
+    int outliers1e4 = 0;
+    for (int k = 0; k < DRIVE_REPLAY_REGEN_N; k++) {
+        float u = driveControllerStep(DRIVE_REPLAY_REGEN_E[k]);
+        float err = fabsf(u - DRIVE_REPLAY_REGEN_U[k]);
+        if (err > worst) worst = err;
+        if (err > 1e-4f) outliers1e4++;
+        if (u <= DRIVE_CTRL_I_MIN + 1e-4f) railed++;
+    }
+    check(worst < 2e-2f,
+          "drive ctrl replay 'regen': matches Python reference (max |du| < 2e-2 A; see the "
+          "knife-edge rail-release note above)");
+    check(outliers1e4 > 0 && outliers1e4 < 2000,
+          "drive ctrl replay 'regen': the >1e-4 A tail is bounded (consistent with one release-tick "
+          "chatter decaying through the ~0.9999 mode, not a systematic divergence)");
+    check(railed > 50, "drive ctrl replay 'regen': a meaningful stretch rails at -12 A (anti-windup exercised)");
+
+    // Recovery: the FINAL samples must be unclamped -- the episode's whole point is that the
+    // controller leaves the rail cleanly rather than staying pinned.
+    bool finalUnclamped = true;
+    for (int k = DRIVE_REPLAY_REGEN_N - 20; k < DRIVE_REPLAY_REGEN_N; k++) {
+        if (fabsf(DRIVE_REPLAY_REGEN_U[k] - DRIVE_CTRL_I_MIN) < 1e-4f) { finalUnclamped = false; break; }
+    }
+    check(finalUnclamped, "drive ctrl replay 'regen': final 20 samples are unclamped (recovery happened)");
+}
+
+static void test_drive_controller_wrapper_gating() {
+    test_group("youlaController_Drive() wrapper: Ts gating + held output");
+    reset_test_state();
+
+    // sub-Ts tick: no state advance, held 0 A (fresh reset)
+    g_mock_micros = 100;   // < DRIVE_CTRL_TS_US (2000) since lastMicros was back-dated to -2000
+    float u0 = youlaController_Drive(5.0f);
+    // The reset back-dates lastMicros so the FIRST tick after a reset always fires; re-derive the
+    // expected value directly rather than assuming 0, then verify a genuine sub-Ts second call holds.
+    double x_snapshot[DRIVE_CTRL_NSTATES];
+    for (int i = 0; i < DRIVE_CTRL_NSTATES; i++) x_snapshot[i] = driveCtrl_x[i];
+    float held = u0;
+    g_mock_micros = 150;   // 50 us later, well under the 2000 us Ts
+    float u1 = youlaController_Drive(-5.0f);   // different error -- must NOT move the output
+    check(fabsf(u1 - held) < 1e-9f,
+          "wrapper: sub-Ts call returns the exact held output (no state advance)");
+    bool stateUnchanged = true;
+    for (int i = 0; i < DRIVE_CTRL_NSTATES; i++)
+        if (driveCtrl_x[i] != x_snapshot[i]) stateUnchanged = false;
+    check(stateUnchanged, "wrapper: sub-Ts call leaves the Hanus state vector untouched");
+
+    // crossing Ts: exactly one further difference-equation update, continuing from the state the
+    // first tick (error 5.0) left behind -- NOT from a fresh reset.
+    driveControllerReset();
+    driveControllerStep(5.0f);            // replays the priming tick at g_mock_micros=100
+    float uref = driveControllerStep(-5.0f);   // replays the Ts-crossing tick
+    reset_test_state();
+    g_mock_micros = 100;
+    youlaController_Drive(5.0f);
+    g_mock_micros = 2200;   // >= 2000 us since the tick at 100
+    float u2 = youlaController_Drive(-5.0f);
+    check(fabsf(u2 - uref) < 1e-4f,
+          "wrapper: first Ts-crossing call equals one further driveControllerStep() from prior state");
+
+    // Gate-tolerance boundary: the wrapper fires at (now - lastMicros) >= DRIVE_CTRL_TS_US -
+    // DRIVE_CTRL_GATE_TOL_US, i.e. 2000 - 200 = 1800 us, not at the bare 2000 us period. Pin the
+    // threshold exactly where the .ino documents it: 1799 us must still hold, 1800 us must update.
+    reset_test_state();
+    g_mock_micros = 0;
+    float uBase = youlaController_Drive(3.0f);   // primes the gate (reset back-dates lastMicros)
+    double xAfterBase[DRIVE_CTRL_NSTATES];
+    for (int i = 0; i < DRIVE_CTRL_NSTATES; i++) xAfterBase[i] = driveCtrl_x[i];
+
+    g_mock_micros = 1799;   // one us short of the tolerance threshold -- must still hold
+    float uHold = youlaController_Drive(-3.0f);
+    check(fabsf(uHold - uBase) < 1e-9f,
+          "wrapper: at elapsed 1799 us (< TS_US - GATE_TOL_US = 1800) the output still holds");
+    bool stateStillFrozen = true;
+    for (int i = 0; i < DRIVE_CTRL_NSTATES; i++)
+        if (driveCtrl_x[i] != xAfterBase[i]) stateStillFrozen = false;
+    check(stateStillFrozen, "wrapper: at elapsed 1799 us the Hanus state vector is still untouched");
+
+    g_mock_micros = 1800;   // exactly at the tolerance threshold -- must update
+    float uUpdate = youlaController_Drive(-3.0f);
+    check(fabsf(uUpdate - uBase) > 1e-6f,
+          "wrapper: at elapsed 1800 us (== TS_US - GATE_TOL_US) the controller updates");
+    bool stateMoved = false;
+    for (int i = 0; i < DRIVE_CTRL_NSTATES; i++)
+        if (driveCtrl_x[i] != xAfterBase[i]) stateMoved = true;
+    check(stateMoved, "wrapper: at elapsed 1800 us the Hanus state vector advances");
+}
+
+static void test_drive_controller_motor_control_youla() {
+    test_group("motorControl(): USE_YOULA_DRIVE_CONTROLLER path drives commandMotorCurrent() in AMPS");
+    reset_test_state();
+
+    v_setpoint = 1.0f;
+    v_actual   = 0.0f;
+    g_mock_micros = 3000;   // past the Ts gate (state was reset at -2000 by reset_test_state)
+    vesc.reset();
+
+    motorControl();
+
+    check(!vesc.current_calls.empty(), "motorControl(): Youla path issues a VESC current command");
+    // Save the results BEFORE the second reset_test_state() below, which would otherwise clear
+    // vesc.last_current out from under this comparison (reset_test_state() calls vesc.reset()).
+    float actualCurrent = vesc.last_current;
+    float actualTorque  = targetMotorTorque;
+
+    // Independently recompute the expected output the wrapper should have produced: reset to the
+    // same state, advance time the same way, and take one driveControllerStep() directly.
+    reset_test_state();
+    g_mock_micros = 3000;
+    float expected = driveControllerStep(1.0f - 0.0f);
+    check(fabsf(actualCurrent - expected) < 1e-4f,
+          "motorControl(): commanded current == youlaController_Drive() output, in AMPS "
+          "(NOT divided by motorConstant -- fw v10's structural difference from the PI path)");
+    check(fabsf(actualCurrent) <= MOTOR_I_CMD_MAX + 1e-4f,
+          "motorControl(): Youla output stays within +-MOTOR_I_CMD_MAX");
+
+    // targetMotorTorque is still populated (kept meaningful, not dropped) as i_cmd*motorConstant.
+    check(fabsf(actualTorque - expected * motorConstant) < 1e-4f,
+          "motorControl(): targetMotorTorque mirrors i_cmd*motorConstant (has no firmware reader, "
+          "kept for telemetry/test symmetry per the .ino's own note)");
+}
+
+static void test_drive_controller_reset_state() {
+    test_group("resetDriveControlState(): zeroes states + held output; next tick is DD*e only");
+    reset_test_state();
+
+    // Drive the controller hard into saturation so state is clearly non-zero.
+    for (int k = 0; k < 500; k++) driveControllerStep(20.0f);
+    bool anyNonZero = false;
+    for (int i = 0; i < DRIVE_CTRL_NSTATES; i++) if (driveCtrl_x[i] != 0.0) anyNonZero = true;
+    check(anyNonZero, "reset precondition: a saturated run leaves non-zero Hanus states");
+
+    resetDriveControlState();
+    bool allZero = true;
+    for (int i = 0; i < DRIVE_CTRL_NSTATES; i++) if (driveCtrl_x[i] != 0.0) allZero = false;
+    check(allZero, "resetDriveControlState(): zeroes all 5 Hanus states");
+    check(driveCtrl_heldOut == 0.0f, "resetDriveControlState(): zeroes the held output");
+
+    // Next raw driveControllerStep() call from the zeroed state must equal DD*e exactly (all
+    // states zero, so the CD*x sum vanishes and only the direct feedthrough term remains).
+    float u = driveControllerStep(2.0f);
+    check(fabsf(u - DRIVE_CTRL_DD * 2.0f) < 1e-4f,
+          "resetDriveControlState(): first post-reset output is DD*e only (states contribute 0)");
+}
+
+static void test_drive_controller_reset_sites() {
+    test_group("fw v10 drive-controller reset sites: Idle->Run, 'V' entry edge, haltMotorOutput()");
+    reset_test_state();
+
+    // (a) Idle -> Run transition resets. Wind up the controller, enter State 1, arm the
+    // transition, and tick doState1() the way the existing state-machine tests do.
+    for (int k = 0; k < 50; k++) driveControllerStep(5.0f);
+    bool woundUp = false;
+    for (int i = 0; i < DRIVE_CTRL_NSTATES; i++) if (driveCtrl_x[i] != 0.0) woundUp = true;
+    check(woundUp, "reset-site precondition: the controller is wound up before Idle->Run");
+    v_setpoint = 3.5f;   // stale nonzero setpoint left over from a prior run -- must be cleared too
+    mainState   = 1;
+    changeToRun = true;
+    g_mock_micros = 500000;
+    doState1();
+    bool allZeroA = true;
+    for (int i = 0; i < DRIVE_CTRL_NSTATES; i++) if (driveCtrl_x[i] != 0.0) allZeroA = false;
+    check(allZeroA && mainState == 2,
+          "reset-site (a): Idle->Run transition (doState1() with changeToRun) resets the drive controller");
+    // Companion safety fix (this round): doState2's entry zeroes v_setpoint alongside
+    // resetDriveControlState(), so a stale nonzero setpoint from a previous run can't feed a live
+    // current command on Run's very first tick before the Pi/operator ever sends a new one. A
+    // regression that dropped just that line (leaving the drive-controller reset alone) would not
+    // be caught by allZeroA above, so it is checked separately here.
+    check(v_setpoint == 0.0f,
+          "reset-site (a): Idle->Run transition also zeroes v_setpoint (not just the controller state)");
+
+    // (b) setManualMotorVelocity() ENTRY EDGE resets; a second call while already in
+    // MOTOR_TEST_VELOCITY mode (a live setpoint step) must NOT reset.
+    reset_test_state();
+    for (int k = 0; k < 50; k++) driveControllerStep(5.0f);
+    setManualMotorVelocity(1.0f);
+    bool allZeroB = true;
+    for (int i = 0; i < DRIVE_CTRL_NSTATES; i++) if (driveCtrl_x[i] != 0.0) allZeroB = false;
+    check(allZeroB, "reset-site (b): setManualMotorVelocity() entry edge resets the drive controller");
+
+    for (int k = 0; k < 50; k++) driveControllerStep(5.0f);   // wind up again, still in VELOCITY mode
+    bool woundUp2 = false;
+    for (int i = 0; i < DRIVE_CTRL_NSTATES; i++) if (driveCtrl_x[i] != 0.0) woundUp2 = true;
+    setManualMotorVelocity(2.0f);   // setpoint step, NOT an entry edge
+    bool stillWound = false;
+    for (int i = 0; i < DRIVE_CTRL_NSTATES; i++) if (driveCtrl_x[i] != 0.0) stillWound = true;
+    check(woundUp2 && stillWound,
+          "reset-site (b): a setpoint step during a live 'V' run does NOT reset the drive controller");
+
+    // (c) haltMotorOutput() resets.
+    reset_test_state();
+    for (int k = 0; k < 50; k++) driveControllerStep(5.0f);
+    haltMotorOutput();
+    bool allZeroC = true;
+    for (int i = 0; i < DRIVE_CTRL_NSTATES; i++) if (driveCtrl_x[i] != 0.0) allZeroC = false;
+    check(allZeroC, "reset-site (c): haltMotorOutput() resets the drive controller");
+}
+
+static void test_drive_controller_saturation_consistency() {
+    test_group("drive_controller.h: saturation stays bounded, recovers when error returns to 0");
+    reset_test_state();
+
+    // Huge error: output must saturate exactly at +12.0 A and stay bounded over 1000 ticks.
+    float u = 0.0f;
+    for (int k = 0; k < 1000; k++) {
+        u = driveControllerStep(5.0f);
+        bool boundedState = true;
+        for (int i = 0; i < DRIVE_CTRL_NSTATES; i++)
+            if (!std::isfinite(driveCtrl_x[i]) || fabsf((float)driveCtrl_x[i]) > 1.0e6f) boundedState = false;
+        check(boundedState, "saturation: Hanus states stay bounded and finite through 1000 ticks");
+        if (k > 900) break;   // one representative late-run check is enough; avoid 1000 log lines
+    }
+    check(fabsf(u - 12.0f) < 1e-4f, "saturation: output is exactly +12.0 A under a 5 m/s error");
+
+    // Error returns to 0: output must come back inside the rails within a bounded number of ticks.
+    int ticksToUnrail = -1;
+    for (int k = 0; k < 2000; k++) {
+        u = driveControllerStep(0.0f);
+        if (fabsf(u) < 12.0f - 1e-3f) { ticksToUnrail = k; break; }
+    }
+    check(ticksToUnrail >= 0 && ticksToUnrail < 2000,
+          "saturation: output returns inside the rails within a bounded number of ticks after error->0");
+}
+
+// ─── PI fallback path (USE_YOULA_DRIVE_CONTROLLER=0) — compile-only check ────
+// The main suite builds with the shipped default (flag=1, Youla). Building a second full TU at
+// flag=0 here is impractical within this Makefile (the .ino is included directly and pulls in
+// every mock/global exactly once per link unit; a third g++ invocation per test run would
+// roughly double build time for one compile-time branch that is deliberately kept byte-identical
+// to the pre-fw-v10 PI path). Flagged as a coverage gap in the round report rather than forced.
+// motorControl()'s #else branch (targetMotorTorque = PI_Controller_Motor(...); commandMotorCurrent
+// (targetMotorTorque / motorConstant)) is unchanged from the pre-fw-v10 source and PI_Controller_Motor()
+// itself is exercised directly by test_pi_controllers() above, so the arithmetic is covered --
+// only the #if/#else selection itself is not compiled both ways in one run.
+
 
 // ─── Droop MDAC mapping bounds (the k_eq saturation bug, fixed 2026-07-10) ────
 // The old k_eq/r/K_sns/A_v mapping commanded g > 1 for all r < 0.896, pinning both
@@ -7553,7 +7901,11 @@ static void test_trap_vescwatch_suppressed() {
 #define REC_OFF_DC_PHASE   63
 #define REC_OFF_TRAP_PHASE 64
 #define REC_OFF_FLAGS      65
-// exp[66..67] are the pad bytes (LOG_REC_SIZE - 2 .. LOG_REC_SIZE - 1)
+// exp[66..67] are the pad bytes
+// Format v5 (fw v11, BLG record 76 B): appended after the pad, so every offset above is
+// unchanged.
+#define REC_OFF_U_UNSAT    68
+#define REC_OFF_DRIVE_X0   72
 
 #define LOG_HDR_SIZE 32u
 
@@ -7678,11 +8030,12 @@ static void test_sdlog_lifecycle_natural_completion() {
     if (f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE) {
         check(f->compare(0, 4, "BLG1") == 0,
               "SD lifecycle: the header opens with the 'BLG1' magic");
-        check((uint8_t)(*f)[4] == 4,
-              "SD lifecycle: the header declares format version 4 (fw v6; record format "
-              "unchanged from v3 — still 68B — only the header profile-parameter block is new)");
+        check((uint8_t)(*f)[4] == 5,
+              "SD lifecycle: the header declares format version 5 (fw v11; record grew to 76B "
+              "with the appended u_unsat/drive_x0 fields — the profile-parameter block is "
+              "unchanged from v4)");
         check((uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE,
-              "SD lifecycle: the header declares a 68-byte record size");
+              "SD lifecycle: the header declares a 76-byte record size");
         check((uint8_t)(*f)[6] == LOG_TYPE_TP,
               "SD lifecycle: the header profile bitmask is LOG_TYPE_TP for a 'T' run");
         check(sd_le<uint16_t>(*f, 18) == (uint16_t)FW_VERSION,
@@ -7921,9 +8274,9 @@ static void test_sdlog_overflow_drop_count() {
     }
 }
 
-// ─── 6. Golden record schema: byte-exact field layout (format v3, fw v5) ────
+// ─── 6. Golden record schema: byte-exact field layout (format v5, fw v11) ────
 static void test_sdlog_record_schema() {
-    test_group("SD log: one record's 68 bytes match the documented v3 field layout exactly");
+    test_group("SD log: one record's 76 bytes match the documented v5 field layout exactly");
     reset_test_state();
 
     // Open directly (not via a profile key) so the sample below is taken from values this test
@@ -7963,13 +8316,13 @@ static void test_sdlog_record_schema() {
 
     const std::string* f = sd_file("PS0001.BLG");
     check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE,
-          "SD schema: the card holds the 32-byte header followed by one 68-byte record");
+          "SD schema: the card holds the 32-byte header followed by one 76-byte record");
     if (f == nullptr || f->size() < LOG_HDR_SIZE + LOG_REC_SIZE) return;
 
     // ── Header ──────────────────────────────────────────────────────────────
-    check(f->compare(0, 4, "BLG1") == 0 && (uint8_t)(*f)[4] == 4 &&
+    check(f->compare(0, 4, "BLG1") == 0 && (uint8_t)(*f)[4] == 5 &&
           (uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE && (uint8_t)(*f)[6] == LOG_TYPE_PS,
-          "SD schema: the header carries magic, version 4, record size 68 and the PS type bit");
+          "SD schema: the header carries magic, version 5, record size 76 and the PS type bit");
     check(sd_le<uint32_t>(*f, 8) == 5000u && sd_le<uint32_t>(*f, 12) == 50000u,
           "SD schema: the header timebase is the millis()/micros() pair at open");
     check(sd_le<uint16_t>(*f, 16) == (uint16_t)(K_DROOP * 1000.0f + 0.5f),
@@ -7986,7 +8339,7 @@ static void test_sdlog_record_schema() {
     check((uint8_t)(*f)[7] == 0x00,
           "SD schema: v4 header paramFlags is 0x00 for a PS run (no amp/b parameter)");
 
-    // ── Record: build the expected 68 bytes independently, then memcmp ──────
+    // ── Record: build the expected LOG_REC_SIZE (76, v5) bytes independently, then memcmp ──
     uint8_t exp[LOG_REC_SIZE];
     memset(exp, 0, sizeof(exp));
     uint32_t t_us = 123456u;    memcpy(exp + REC_OFF_T_US,      &t_us, 4);
@@ -8009,11 +8362,19 @@ static void test_sdlog_record_schema() {
     exp[REC_OFF_PS_PHASE]   = 3;      // the PS profile is running, at phase 3
     exp[REC_OFF_DC_PHASE]   = 0xFF;   // drive cycle not running
     exp[REC_OFF_TRAP_PHASE] = 0xFF;   // trapezoid not running
-    exp[REC_OFF_FLAGS]      = 0x03;   // bit0 profile driving powerBalance, bit1 velocity chain OK
+    // bit0 profile driving powerBalance, bit1 velocity chain OK, bit4/bit5 the fw v11 build-
+    // identity bits -- both set because the default build has USE_YOULA_DRIVE_CONTROLLER=1 and
+    // USE_YOULA_SHARE_CONTROLLER=1.
+    exp[REC_OFF_FLAGS]      = 0x03 | 0x10 | 0x20;
     // exp[66..67] stay zero (pad)
+    // Format v5 tail: reset_test_state() called resetDriveControlState() and no controller step
+    // has run since, so the Youla build's held pre-clamp capture and integrator state are both
+    // still exactly zero.
+    fv = 0.0f;    memcpy(exp + REC_OFF_U_UNSAT,  &fv, 4);
+    fv = 0.0f;    memcpy(exp + REC_OFF_DRIVE_X0, &fv, 4);
 
     check(memcmp(f->data() + LOG_HDR_SIZE, exp, LOG_REC_SIZE) == 0,
-          "SD schema: the written record is byte-identical to the expected 68-byte v3 layout");
+          "SD schema: the written record is byte-identical to the expected 76-byte v5 layout");
 
     // Field-level checks so a failure above localises instead of just saying "bytes differ".
     check(sd_le<uint32_t>(*f, LOG_HDR_SIZE + REC_OFF_T_US) == 123456u,
@@ -8058,7 +8419,7 @@ static void test_sdlog_header_v4_profile_params() {
         const std::string* f = sd_file("WP0001.BLG");
         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/W: the header was written");
         if (f) {
-            check((uint8_t)(*f)[4] == 4, "v4 hdr/W: format version 4");
+            check((uint8_t)(*f)[4] == 5, "v4 hdr/W: format version 5 (fw v11 BLG bump)");
             check((uint8_t)(*f)[7] == 0x03, "v4 hdr/W: paramFlags == 0x03 (amp AND b valid)");
             check(fabsf(sd_le<float>(*f, 20) - 7.5f) < 1e-6f,
                   "v4 hdr/W: amp field == the committed wProfileImax (7.5 A)");
@@ -8076,7 +8437,7 @@ static void test_sdlog_header_v4_profile_params() {
         const std::string* f = sd_file("YP0001.BLG");
         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/Y: the header was written");
         if (f) {
-            check((uint8_t)(*f)[4] == 4, "v4 hdr/Y: format version 4");
+            check((uint8_t)(*f)[4] == 5, "v4 hdr/Y: format version 5 (fw v11 BLG bump)");
             check((uint8_t)(*f)[7] == 0x03, "v4 hdr/Y: paramFlags == 0x03 (amp AND b valid)");
             check(fabsf(sd_le<float>(*f, 20) - 3.25f) < 1e-6f,
                   "v4 hdr/Y: amp field == the committed yProfileVmax (3.25 m/s)");
@@ -8093,7 +8454,7 @@ static void test_sdlog_header_v4_profile_params() {
         const std::string* f = sd_file("TP0001.BLG");
         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/T: the header was written");
         if (f) {
-            check((uint8_t)(*f)[4] == 4, "v4 hdr/T: format version 4");
+            check((uint8_t)(*f)[4] == 5, "v4 hdr/T: format version 5 (fw v11 BLG bump)");
             check((uint8_t)(*f)[7] == 0x01, "v4 hdr/T: paramFlags == 0x01 (amp only)");
             check(fabsf(sd_le<float>(*f, 20) - 4.4f) < 1e-6f,
                   "v4 hdr/T: amp field == the committed trapImax (4.4 A)");
@@ -8108,7 +8469,7 @@ static void test_sdlog_header_v4_profile_params() {
         const std::string* f = sd_file("PS0001.BLG");
         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/R: the header was written");
         if (f) {
-            check((uint8_t)(*f)[4] == 4, "v4 hdr/R: format version 4");
+            check((uint8_t)(*f)[4] == 5, "v4 hdr/R: format version 5 (fw v11 BLG bump)");
             check((uint8_t)(*f)[7] == 0x00, "v4 hdr/R: paramFlags == 0x00 (no profile parameter)");
             check(sd_le<float>(*f, 20) == 0.0f && sd_le<float>(*f, 24) == 0.0f,
                   "v4 hdr/R: both amp and b fields stay 0.0");
@@ -8122,7 +8483,7 @@ static void test_sdlog_header_v4_profile_params() {
         const std::string* f = sd_file("DC0001.BLG");
         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/D: the header was written");
         if (f) {
-            check((uint8_t)(*f)[4] == 4, "v4 hdr/D: format version 4");
+            check((uint8_t)(*f)[4] == 5, "v4 hdr/D: format version 5 (fw v11 BLG bump)");
             check((uint8_t)(*f)[7] == 0x00, "v4 hdr/D: paramFlags == 0x00 (no profile parameter)");
             check(sd_le<float>(*f, 20) == 0.0f && sd_le<float>(*f, 24) == 0.0f,
                   "v4 hdr/D: both amp and b fields stay 0.0");
@@ -8140,14 +8501,16 @@ static void test_sdlog_header_v4_profile_params() {
         }
     }
 
-    // ── Record size byte and format-unchanged claim: still 68B regardless of run type.
+    // ── Record size byte reflects the current v5 record (76B), regardless of run type. The v4
+    // header PARAMETER BLOCK (byte 7, bytes 20-27) is unchanged by the fw v11 bump -- only
+    // hdr[4] (version) and hdr[5] (record size) moved when the record grew.
     reset_test_state();
     logOpenForProfile(LOG_TYPE_PS);
     {
         const std::string* f = sd_file("PS0001.BLG");
-        check(f != nullptr && (uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE && LOG_REC_SIZE == 68u,
-              "v4 hdr: the record-size byte is still 68 -- v4 changes the header only, not the "
-              "68-byte v3 record layout");
+        check(f != nullptr && (uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE && LOG_REC_SIZE == 76u,
+              "v4/v5 hdr: the record-size byte is 76 -- the v4 parameter block is unchanged, "
+              "only hdr[4]/hdr[5] moved with the fw v11 record-size bump");
     }
 }
 
@@ -8156,10 +8519,10 @@ static void test_sdlog_header_v4_profile_params() {
 // struct's field order or padding ever drifts from LOG_REC_SIZE / the documented offsets, even
 // before any record is ever written to a (mock) card.
 static void test_benchlogrecord_v3_layout() {
-    test_group("BenchLogRecord (format v3): sizeof and field offsets");
+    test_group("BenchLogRecord (format v5, fw v11): sizeof and field offsets");
 
-    check(sizeof(BenchLogRecord) == 68, "BenchLogRecord: sizeof == 68 bytes");
-    check(LOG_REC_SIZE == 68u, "LOG_REC_SIZE == 68");
+    check(sizeof(BenchLogRecord) == 76, "BenchLogRecord: sizeof == 76 bytes (format v5)");
+    check(LOG_REC_SIZE == 76u, "LOG_REC_SIZE == 76 (format v5)");
 
     check(offsetof(BenchLogRecord, V_fc)        == 44, "offsetof(V_fc) == 44");
     check(offsetof(BenchLogRecord, V_batt)      == 48, "offsetof(V_batt) == 48");
@@ -8172,6 +8535,11 @@ static void test_benchlogrecord_v3_layout() {
     check(offsetof(BenchLogRecord, flags)       == 65, "offsetof(flags) == 65");
     check(offsetof(BenchLogRecord, pad)         == 66, "offsetof(pad) == 66 (2-byte tail)");
 
+    // Format v5 (fw v11): APPENDED after pad, so every v1-v4 offset above is unchanged and only
+    // these two new tail fields are added.
+    check(offsetof(BenchLogRecord, u_unsat)  == 68, "offsetof(u_unsat) == 68 (format v5, appended)");
+    check(offsetof(BenchLogRecord, drive_x0) == 72, "offsetof(drive_x0) == 72 (format v5, appended)");
+
     // These offsets must also match the byte-stream constants used by the on-card tests above --
     // a mismatch here would mean the two test families are silently checking different layouts.
     check(offsetof(BenchLogRecord, V_fc)        == REC_OFF_V_FC,   "offsetof(V_fc) == REC_OFF_V_FC");
@@ -8179,6 +8547,8 @@ static void test_benchlogrecord_v3_layout() {
     check(offsetof(BenchLogRecord, V_chg)       == REC_OFF_V_CHG,  "offsetof(V_chg) == REC_OFF_V_CHG");
     check(offsetof(BenchLogRecord, V_rgn)       == REC_OFF_V_RGN,  "offsetof(V_rgn) == REC_OFF_V_RGN");
     check(offsetof(BenchLogRecord, fault_flags) == REC_OFF_FAULTS, "offsetof(fault_flags) == REC_OFF_FAULTS");
+    check(offsetof(BenchLogRecord, u_unsat)     == REC_OFF_U_UNSAT,  "offsetof(u_unsat) == REC_OFF_U_UNSAT");
+    check(offsetof(BenchLogRecord, drive_x0)    == REC_OFF_DRIVE_X0, "offsetof(drive_x0) == REC_OFF_DRIVE_X0");
 }
 
 // ─── T2: log record flags bit2 (shareClosedLoopMode) / bit3 (shareClosedLoopRun) ─────────────
@@ -8221,6 +8591,211 @@ static void test_sdlog_flags_share_loop_mode_bits() {
     check((flagsHold & 0x08) != 0 && (flagsHold & 0x04) == 0,
           "T2c: HOLD (mode=false, run=true) -> flags bit3 set, bit2 clear");
 }
+
+// ─── 6c. Record flags bit4/bit5: fw v11 build-identity bits ─────────────────
+// (fw v11, BLG record format v5): bit4 = USE_YOULA_DRIVE_CONTROLLER, bit5 =
+// USE_YOULA_SHARE_CONTROLLER. Both are compile-time constants, but the .ino stamps them into
+// EVERY record so a decoded run is self-identifying without cross-referencing the firmware
+// ledger. Only the default build (both macros 1) is host-testable -- the PI-fallback branches
+// are compile-time #else arms with no runtime switch, per the task brief.
+static void test_sdlog_flags_youla_build_bits() {
+    test_group("SD log: record flags bit4/bit5 stamp the fw v11 Youla build identity");
+
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000;
+    logOpenForProfile(LOG_TYPE_PS);
+    powerShareProfileActive = true;   // so bit0 is set, matching the sanity check below
+    logSampleTick();
+    logDrainTick();
+
+    const std::string* f = sd_file("PS0001.BLG");
+    check(f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE,
+          "flags bit4/5: the record made it to the (mock) card");
+    if (f == nullptr || f->size() < LOG_HDR_SIZE + LOG_REC_SIZE) return;
+
+    uint8_t flags = (uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_FLAGS];
+#if USE_YOULA_DRIVE_CONTROLLER
+    check((flags & 0x10) != 0,
+          "flags bit4: set under the default USE_YOULA_DRIVE_CONTROLLER=1 build");
+#else
+    check((flags & 0x10) == 0,
+          "flags bit4: clear under a USE_YOULA_DRIVE_CONTROLLER=0 (PI fallback) build");
+#endif
+#if USE_YOULA_SHARE_CONTROLLER
+    check((flags & 0x20) != 0,
+          "flags bit5: set under the default USE_YOULA_SHARE_CONTROLLER=1 build");
+#else
+    check((flags & 0x20) == 0,
+          "flags bit5: clear under a USE_YOULA_SHARE_CONTROLLER=0 (PI fallback) build");
+#endif
+    // bits 0-3 are unaffected by this round -- a sanity check that the append didn't disturb
+    // the pre-existing bit-packing (bit0 set: this sample was taken with a PS profile active).
+    check((flags & 0x01) != 0, "flags bit4/5 case: bit0 (profile driving powerBalance) unaffected");
+}
+
+// ─── 6d. Format v5 value plumbing: u_unsat/drive_x0 (fw v11) ────────────────
+// (fw v11): the Youla drive controller's PRE-clamp output and integrator state are captured by
+// driveControllerStep() into the file-scope driveCtrl_uUnsat/driveCtrl_x[0], and logSampleTick()
+// copies them verbatim (default USE_YOULA_DRIVE_CONTROLLER=1 build; the PI-fallback #else arm
+// logs targetMotorTorque/motorConstant and pi_motor_accum instead -- a compile-time branch, not
+// exercised here per the task brief).
+#if USE_YOULA_DRIVE_CONTROLLER
+static void test_sdlog_record_u_unsat_drive_x0_saturating() {
+    test_group("SD log: u_unsat/drive_x0 (format v5) -- saturating error, u_unsat unclamped in the log");
+    reset_test_state();
+
+    g_mock_millis = 1000;
+    g_mock_micros = 100000;
+    logOpenForProfile(LOG_TYPE_PS);
+
+    // A large error drives the controller output well past the +-12 A actuator clamp.
+    // youlaController_Drive() is the .ino wrapper motorControl() calls; DRIVE_CTRL_TS_US has
+    // already elapsed since reset_test_state()'s resetDriveControlState() (same pattern as the
+    // existing wrapper tests around test_drive_controller_reset_state()).
+    float uClamped = youlaController_Drive(1000.0f);
+    check(fabsf(uClamped) <= DRIVE_CTRL_I_MAX + 1e-4f,
+          "u_unsat precondition: the wrapper's returned (clamped) output stays within the "
+          "actuator limit");
+    check(fabsf(driveCtrl_uUnsat) > DRIVE_CTRL_I_MAX,
+          "u_unsat precondition: the captured pre-clamp value exceeds the +-12 A actuator clamp");
+
+    // commandMotorCurrent() is what would normally populate `current` from the clamped output --
+    // mirror that assignment directly (as the existing schema test does for other fields) so the
+    // record's I_cmd reflects the POST-clamp value this test is contrasting u_unsat against.
+    current = uClamped;
+
+    logSampleTick();
+    logDrainTick();
+
+    const std::string* f = sd_file("PS0001.BLG");
+    check(f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE,
+          "u_unsat saturating: the record made it to the (mock) card");
+    if (f == nullptr || f->size() < LOG_HDR_SIZE + LOG_REC_SIZE) return;
+
+    float recIcmd    = sd_le<float>(*f, LOG_HDR_SIZE + REC_OFF_I_CMD);
+    float recUUnsat  = sd_le<float>(*f, LOG_HDR_SIZE + REC_OFF_U_UNSAT);
+    float recDriveX0 = sd_le<float>(*f, LOG_HDR_SIZE + REC_OFF_DRIVE_X0);
+
+    check(fabsf(recIcmd) <= DRIVE_CTRL_I_MAX + 1e-4f,
+          "u_unsat saturating: logged I_cmd (post-clamp) is at the +-12 A rail");
+    check(fabsf(recUUnsat) > DRIVE_CTRL_I_MAX,
+          "u_unsat saturating: logged u_unsat exceeds the clamp -- the record shows how far the "
+          "law wanted to drive, not just what the actuator allowed");
+    check(recUUnsat == driveCtrl_uUnsat,
+          "u_unsat saturating: logged u_unsat is byte-identical to driveCtrl_uUnsat");
+    check(recDriveX0 == (float)driveCtrl_x[0],
+          "u_unsat saturating: logged drive_x0 is byte-identical to (float)driveCtrl_x[0]");
+}
+
+static void test_sdlog_record_u_unsat_drive_x0_unclamped() {
+    test_group("SD log: u_unsat/drive_x0 (format v5) -- small error, u_unsat == I_cmd (never clamps)");
+    reset_test_state();
+
+    g_mock_millis = 1000;
+    g_mock_micros = 100000;
+    logOpenForProfile(LOG_TYPE_PS);
+
+    // A small error stays well inside the +-12 A rail on the first tick (DD*e only, from a
+    // freshly-reset controller), so the pre-clamp and post-clamp values coincide exactly.
+    float u = youlaController_Drive(0.01f);
+    check(fabsf(driveCtrl_uUnsat) < DRIVE_CTRL_I_MAX,
+          "u_unsat unclamped precondition: the small-error output never reaches the actuator limit");
+    check(u == driveCtrl_uUnsat,
+          "u_unsat unclamped precondition: wrapper output equals the pre-clamp capture (no clamp "
+          "was applied)");
+    current = u;
+
+    logSampleTick();
+    logDrainTick();
+
+    const std::string* f = sd_file("PS0001.BLG");
+    check(f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE,
+          "u_unsat unclamped: the record made it to the (mock) card");
+    if (f == nullptr || f->size() < LOG_HDR_SIZE + LOG_REC_SIZE) return;
+
+    float recIcmd   = sd_le<float>(*f, LOG_HDR_SIZE + REC_OFF_I_CMD);
+    float recUUnsat = sd_le<float>(*f, LOG_HDR_SIZE + REC_OFF_U_UNSAT);
+    check(recIcmd == recUUnsat,
+          "u_unsat unclamped: logged u_unsat equals logged I_cmd when the command never clamps");
+}
+
+// ─── 6e. Format v5 held-value semantics: 1 kHz log vs 500 Hz controller (fw v11) ────────────
+// driveCtrl_uUnsat/driveCtrl_x[0] are HELD between driveControllerStep() calls (the wrapper only
+// steps the controller once per DRIVE_CTRL_TS_US), so two 1 kHz log samples taken inside the same
+// 2 ms controller tick must carry IDENTICAL u_unsat/drive_x0 -- the same zero-order-hold pairing
+// already documented for gFC/gBT/I_cmd at the motor-control cadence.
+static void test_sdlog_record_u_unsat_drive_x0_held_value() {
+    test_group("SD log: u_unsat/drive_x0 (format v5) -- held identical across two samples in one controller tick");
+    reset_test_state();
+
+    g_mock_millis = 1000;
+    g_mock_micros = 100000;
+    logOpenForProfile(LOG_TYPE_PS);
+
+    youlaController_Drive(3.0f);   // one controller step; driveCtrl_uUnsat/x[0] now non-trivial
+    float uUnsatAfterStep  = driveCtrl_uUnsat;
+    float driveX0AfterStep = (float)driveCtrl_x[0];
+    check(uUnsatAfterStep != 0.0f, "held-value precondition: the controller step left a non-zero capture");
+
+    // First 1 kHz sample, same controller tick.
+    logSampleTick();
+    // Advance only 1 ms (< DRIVE_CTRL_TS_US == 2 ms), so the wrapper's Ts gate stays shut and no
+    // further driveControllerStep() runs before the second sample.
+    g_mock_micros += 1000;
+    youlaController_Drive(3.0f);   // gate closed: returns the held output, does not re-step
+    check(driveCtrl_uUnsat == uUnsatAfterStep && (float)driveCtrl_x[0] == driveX0AfterStep,
+          "held-value precondition: the sub-Ts wrapper call left the capture unchanged");
+    logSampleTick();
+    logDrainTick();
+
+    check(logRecordCount == 2, "held-value: two records were sampled");
+
+    const std::string* f = sd_file("PS0001.BLG");
+    check(f != nullptr && f->size() >= LOG_HDR_SIZE + 2u * LOG_REC_SIZE,
+          "held-value: both records made it to the (mock) card");
+    if (f == nullptr || f->size() < LOG_HDR_SIZE + 2u * LOG_REC_SIZE) return;
+
+    float u0  = sd_le<float>(*f, LOG_HDR_SIZE + 0u * LOG_REC_SIZE + REC_OFF_U_UNSAT);
+    float u1  = sd_le<float>(*f, LOG_HDR_SIZE + 1u * LOG_REC_SIZE + REC_OFF_U_UNSAT);
+    float x00 = sd_le<float>(*f, LOG_HDR_SIZE + 0u * LOG_REC_SIZE + REC_OFF_DRIVE_X0);
+    float x01 = sd_le<float>(*f, LOG_HDR_SIZE + 1u * LOG_REC_SIZE + REC_OFF_DRIVE_X0);
+
+    check(u0 == u1, "held-value: u_unsat is identical across both samples in the same controller tick");
+    check(x00 == x01, "held-value: drive_x0 is identical across both samples in the same controller tick");
+    check(u0 == uUnsatAfterStep, "held-value: the held u_unsat matches the last driveControllerStep() capture");
+}
+
+// ─── 6f. Format v5 reset semantics: u_unsat/drive_x0 zero after resetDriveControlState() ───
+static void test_sdlog_record_u_unsat_drive_x0_reset() {
+    test_group("SD log: u_unsat/drive_x0 (format v5) -- zero after resetDriveControlState()");
+    reset_test_state();
+
+    // Wind the controller up first, so a passing "zero after reset" check is not vacuous.
+    for (int k = 0; k < 50; k++) driveControllerStep(20.0f);
+    check(driveCtrl_uUnsat != 0.0f, "reset precondition: a driven controller leaves a non-zero capture");
+
+    resetDriveControlState();
+    check(driveCtrl_uUnsat == 0.0f && driveCtrl_x[0] == 0.0,
+          "reset precondition: resetDriveControlState() zeroes both the capture and the state");
+
+    g_mock_millis = 1000;
+    g_mock_micros = 100000;
+    logOpenForProfile(LOG_TYPE_PS);
+    logSampleTick();
+    logDrainTick();
+
+    const std::string* f = sd_file("PS0001.BLG");
+    check(f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE,
+          "reset: the record made it to the (mock) card");
+    if (f == nullptr || f->size() < LOG_HDR_SIZE + LOG_REC_SIZE) return;
+
+    float recUUnsat  = sd_le<float>(*f, LOG_HDR_SIZE + REC_OFF_U_UNSAT);
+    float recDriveX0 = sd_le<float>(*f, LOG_HDR_SIZE + REC_OFF_DRIVE_X0);
+    check(recUUnsat == 0.0f, "reset: logged u_unsat is 0.0 after resetDriveControlState()");
+    check(recDriveX0 == 0.0f, "reset: logged drive_x0 is 0.0 after resetDriveControlState()");
+}
+#endif // USE_YOULA_DRIVE_CONTROLLER
 
 // ─── 7. Write error mid-run: logging dies, the profile does not ─────────────
 static void test_sdlog_write_error_midrun() {
@@ -9270,9 +9845,10 @@ static void test_sdlog_ring_wrap_drain() {
     check(logRingCount == 900 && logDroppedCount == 0,
           "SD wrap: 900 records buffer without dropping (under the 1024 capacity)");
 
-    // format v3 (fw v5): LOG_REC_SIZE=68 -> floor(512/68)=7 records per LOG_CHUNK_MAX chunk (was
-    // 9 at the old 52-byte record size). 60 ticks * 7 = 420 drained.
-    for (int i = 0; i < 60; i++) logDrainTick();   // 7 records per tick → 420 drained
+    // format v5 (fw v11): LOG_REC_SIZE=76 -> floor(512/76)=6 records per LOG_CHUNK_MAX chunk (was
+    // 7 at the old 68-byte record size). 70 ticks * 6 = 420 drained -- same 420 target as before,
+    // reached with more ticks now that each chunk carries fewer records.
+    for (int i = 0; i < 70; i++) logDrainTick();   // 6 records per tick → 420 drained
     check(logRecordsWritten == 420 && logRingTail == 420u * LOG_REC_SIZE,
           "SD wrap: a partial drain advances the tail off zero, leaving 480 records pending");
 
@@ -12111,6 +12687,19 @@ int main() {
     test_share_controller_reference();
     test_share_controller_antiwindup();
     test_youla_wrapper_gating();
+
+    // ── fw v10: Youla-H drive (velocity) controller ──────────────────────────
+    test_drive_controller_coeff_pinning();
+    test_drive_controller_state_is_double();
+    test_drive_controller_ac_identity();
+    test_drive_controller_replay_small();
+    test_drive_controller_replay_regen();
+    test_drive_controller_wrapper_gating();
+    test_drive_controller_motor_control_youla();
+    test_drive_controller_reset_state();
+    test_drive_controller_reset_sites();
+    test_drive_controller_saturation_consistency();
+
     test_power_share_setpoint_live();
     test_power_share_profile();
     test_power_share_profile_runs_controls();
@@ -12199,6 +12788,13 @@ int main() {
     test_sdlog_header_v4_profile_params();
     test_benchlogrecord_v3_layout();
     test_sdlog_flags_share_loop_mode_bits();
+    test_sdlog_flags_youla_build_bits();
+#if USE_YOULA_DRIVE_CONTROLLER
+    test_sdlog_record_u_unsat_drive_x0_saturating();
+    test_sdlog_record_u_unsat_drive_x0_unclamped();
+    test_sdlog_record_u_unsat_drive_x0_held_value();
+    test_sdlog_record_u_unsat_drive_x0_reset();
+#endif
     test_sdlog_write_error_midrun();
     test_sdlog_name_collision();
     test_sdlog_rate_1khz();

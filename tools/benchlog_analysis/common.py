@@ -45,6 +45,17 @@ CSV_COLUMNS_V3 = ["t_us", "share_sp", "share_act", "v_sp", "v_act", "I_fc",
                   "V_chg", "V_rgn", "fault_flags", "ps_phase", "dc_phase",
                   "trap_phase", "flags"]
 
+# v5 decode_benchlog CSVs (tools/decode_benchlog.py CSV_HEADER_V5, fw v11)
+# add u_unsat and drive_x0 after V_rgn (i.e. right before fault_flags).
+# load_csv() accepts this layout too; a v5 CSV's returned dict has the
+# v3 keys plus these two. Pre-v5 dicts simply lack the keys -- callers that
+# want a v5-only figure to skip gracefully on older data should check for
+# the keys' presence (see figures.py's version-gated figure).
+CSV_COLUMNS_V5 = ["t_us", "share_sp", "share_act", "v_sp", "v_act", "I_fc",
+                  "I_batt", "gFC", "gBT", "V_bus", "I_cmd", "V_fc", "V_batt",
+                  "V_chg", "V_rgn", "u_unsat", "drive_x0", "fault_flags",
+                  "ps_phase", "dc_phase", "trap_phase", "flags"]
+
 _decoder = None
 
 
@@ -124,11 +135,13 @@ def load_or_create_config(run_dir):
 def load_csv(csv_path):
     """Parse a decode_benchlog CSV into a dict of float64 numpy arrays.
 
-    Accepts either the v1/v2 (16-column, CSV_COLUMNS) or the v3 (20-column,
-    CSV_COLUMNS_V3 -- adds V_fc, V_batt, V_chg, V_rgn after I_cmd) header;
-    the matching column list is used to parse the rest of the file, so a
-    v1/v2 CSV's returned dict has exactly the same 16 keys it always has,
-    and a v3 CSV's dict additionally has the four new voltage keys. Blank
+    Accepts the v1/v2 (16-column, CSV_COLUMNS), v3/v4 (20-column,
+    CSV_COLUMNS_V3 -- adds V_fc, V_batt, V_chg, V_rgn after I_cmd), or v5
+    (22-column, CSV_COLUMNS_V5 -- further adds u_unsat, drive_x0 after
+    V_rgn) header; the matching column list is used to parse the rest of
+    the file, so a v1/v2 CSV's returned dict has exactly the same 16 keys
+    it always has, a v3/v4 CSV's dict additionally has the four voltage
+    keys, and a v5 CSV's dict additionally has u_unsat/drive_x0. Blank
     cells (v_sp, v_act, ps_phase, dc_phase, trap_phase can all be blank per
     the decoder's CSV format) become NaN. A derived key
     t_s = (t_us - t_us[0]) / 1e6 (seconds since the first sample) is added.
@@ -142,10 +155,13 @@ def load_csv(csv_path):
         columns = CSV_COLUMNS
     elif header == CSV_COLUMNS_V3:
         columns = CSV_COLUMNS_V3
+    elif header == CSV_COLUMNS_V5:
+        columns = CSV_COLUMNS_V5
     else:
         raise ValueError(
             f"unexpected CSV header in {csv_path}: {header!r}, "
-            f"expected {CSV_COLUMNS!r} (v1/v2) or {CSV_COLUMNS_V3!r} (v3)")
+            f"expected {CSV_COLUMNS!r} (v1/v2), {CSV_COLUMNS_V3!r} (v3/v4), "
+            f"or {CSV_COLUMNS_V5!r} (v5)")
 
     n = len(rows)
     data = {col: np.full(n, np.nan, dtype=np.float64) for col in columns}

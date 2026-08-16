@@ -1,5 +1,21 @@
 # MIMO vs. Decentralized — Comparison Results (Phase 5)
 
+> ## ⚠ STALE — built on a retired plant (2026-08-16)
+>
+> Every number in this document was produced against the **pre-calibration** drive plant.
+> The drive channel was measured on 2026-08-16 (`calibration/motor_id_20260815.md`), moving
+> `G22(0)` 3.7085 → 1.4112 (m/s)/A, the drive pole −0.1219 → −0.0914 rad/s and `G12(0)`
+> −2.757e-2 → −1.326e-2, with the clamp 20 A → 12 A. Drive-channel and coupling figures
+> throughout are therefore stale — including the "slowest closed-loop mode 0.1219 rad/s"
+> row in the headline table, which *is* the old drive pole and moves with it.
+>
+> `compare_controllers.py` cannot regenerate this document as it stands: it hard-crashes at
+> stage 6 on a 20 A clamp assertion, and the MIMO controller it compares against no longer
+> passes its own synthesis gates on the calibrated plant. Restoring the comparison is a new
+> synthesis round, not a re-run. Scope and per-stage detail: `README.md` staleness banner.
+>
+> The document is kept as the published record of the ±20 A round.
+
 **Status:** complete. All numbers in this document are emitted by
 `compare_controllers.py` into `comparison_metrics.txt`; the metric key is quoted in every
 table. Figures are produced by `plot_mimo_results.py` from the CSVs in `figures/`.

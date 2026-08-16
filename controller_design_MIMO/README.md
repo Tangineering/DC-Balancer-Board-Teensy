@@ -33,7 +33,7 @@ this folder and how to run it.
 | — | `mimo_reference_vectors.h` **generated** | 2-in/2-out replay reference vectors. |
 | — | `drive_siso_coeffs.h` **generated (optional)** | Baseline drive controller in the shipped biquad format. |
 | — | `drive_siso_metrics.txt` / `mimo_synthesis_metrics.txt` / `comparison_metrics.txt` **generated** | Numeric summaries of each pipeline stage. |
-| — | `mimo_crosscheck.m` **done** | MATLAB cross-validation (run elsewhere; Control + Robust Control Toolbox, R2024b syntax). Rebuilds the 2×2 plant independently, re-runs hinfsyn + the MIMO Youla-H T(0)=I correction, parses `mimo_controller_coeffs.h`, and re-runs the 576-corner battery + small-signal transients. Writes `MATLAB_mimo_results.txt` + 3 PNGs — hand the .txt back to Claude to check. Plant transcription verified against `plant_mimo.py` to 8e-16. |
+| — | `mimo_crosscheck.m` **done** | MATLAB cross-validation (run elsewhere; Control + Robust Control Toolbox, R2024b syntax). Rebuilds the 2×2 plant independently, re-runs hinfsyn + the MIMO Youla-H T(0)=I correction, parses `mimo_controller_coeffs.h`, and re-runs the 576-corner battery + small-signal transients. Writes `MATLAB_mimo_results.txt` + 3 PNGs — hand the .txt back to Claude to check. **STALE (2026-08-16):** the plant constants are hardcoded in the .m file against the retired pre-calibration plant, so it now cross-checks green against equally-stale metrics. The "verified to 8e-16" agreement was a transcription check against `plant_mimo.py` **as it stood on 2026-08-04**; it says nothing about the current plant and no longer holds. |
 | — | `figures/` **done** | SVG figures + raw CSV data for the thesis. |
 
 ## Environment
@@ -60,16 +60,62 @@ ctrl-venv/Scripts/python plot_mimo_results.py                # figures
 
 ## Key results
 
-> **±20 A recalibration round — 2026-08-04.** `MOTOR_I_CMD_MAX` / `I_CLAMP` moved
+> ## ⚠ STALE — the MIMO study below is frozen on a RETIRED plant (2026-08-16)
+>
+> The drive channel was **calibrated on 2026-08-16** (`calibration/motor_id_20260815.md`,
+> `mimo_system_model.md` §4.2/§4.4/§9.2). `plant_mimo.py` now carries the measured
+> constants, so **every MIMO artifact in this directory was built against a plant that no
+> longer exists**: `G22(0)` 3.7085 → 1.4112 (m/s)/A, drive pole −0.1219 → −0.0914 rad/s,
+> `i_m0` 0.973 → 4.074 A, `G12(0)` −2.757e-2 → −1.326e-2, `A_i` 0.2429 → 0.0922. The
+> firmware clamp also moved **20 A → 12 A**.
+>
+> **What is current:** `plant_mimo.py`, `mimo_system_model.md` §4.2/§4.4/§9.2/§9.3/§10/§11,
+> `synthesize_drive_siso.py` and its artifacts (`drive_siso_coeffs.h`,
+> `drive_siso_metrics.txt`, `figures/drive_siso_step.csv`, `figures/drive_siso_replay.csv`),
+> and `validate_drive_siso.py`.
+>
+> **What is stale, and how each stage now fails** — none of these fail loudly on their own,
+> which is why they are listed:
+>
+> * `compare_controllers.py` — **hard-crashes at stage 6** on an assertion that the clamp is
+>   20 A. It cannot be run at all until the round below is done.
+> * `synthesize_mimo_controller.py` — **regresses 56/0 → 54/2 gates** on the calibrated
+>   plant. The MIMO Youla-H DC correction no longer closes. This is a **design** failure, not
+>   a stale constant: regenerating the MIMO controller is a new synthesis round (weights,
+>   scaling and the `T(0) = I` correction all need revisiting), **not** a mechanical re-run.
+> * `compute_Su.py` — flips **PASS → DRIFT**.
+> * `mimo_crosscheck.m` — hardcodes the retired plant, so it will cross-check *green* against
+>   the un-regenerated metrics. This is the most dangerous of the four: it produces a false
+>   confirmation rather than an error. A banner is at the top of that file.
+> * `mimo_comparison.md`, `mimo_synthesis.md`, `mimo_controller_coeffs.h`,
+>   `mimo_reference_vectors.h`, `mimo_synthesis_metrics.txt`, `comparison_metrics.txt`,
+>   `MATLAB_mimo_results*.txt`, and every `figures/mimo_*`/`fig_*` artifact — numerically
+>   stale.
+>
+> The artifacts are **deliberately kept, not deleted**: they are the published record of the
+> ±20 A round and the basis of the thesis comparison as it currently stands. Nothing here is
+> regenerated piecemeal.
+>
+> **Superseded conclusion (`mimo_system_model.md` §2.1).** The "±20 A makes the motor clamp
+> and the ≈67–87 W converter budget bind *together*" argument is **reversed**, not merely
+> re-numbered. At 12 A and the measured `A_i` = 0.0922 A/A, the motor clamp draws
+> **≈1.11 A ≈ 17.6 W** at the bus — a factor of ~4 below the budget. The **motor clamp is now
+> the binding limit**, and the bus-power budget is not approached at all. Any argument that
+> relied on the two coinciding must be re-derived.
+>
+> ---
+>
+> **Superseded — ±20 A recalibration round, 2026-08-04.** `MOTOR_I_CMD_MAX` / `I_CLAMP` moved
 > **5 A → 20 A** (motor-side; ≈ 4.86 A / ≈ 77 W bus-side at cruise, so the motor clamp and the
-> ≈ 67–87 W converter budget now bind together — `mimo_system_model.md` §2.1). Both controllers
-> were re-synthesized and every metric below regenerated. **The overall verdict is unchanged**
-> — the decentralized architecture stays justified — but several secondary arguments for it
-> reversed (worst-corner cross-transfer, waived-corner robustness, large-signal share
-> excursion, and the size of the implementation-cost advantage). Deltas are catalogued in
-> `mimo_comparison.md` §14; superseded ±5 A numbers are kept, not deleted. The MATLAB
-> cross-check **has been re-run at ±20 A (04-Aug-2026): VERDICT PASS** on all six criteria
-> (`MATLAB_mimo_results.txt`; the ±5 A log is `MATLAB_mimo_results_5A.txt`).
+> ≈ 67–87 W converter budget were held to bind together — `mimo_system_model.md` §2.1; **this
+> claim is reversed above**). Both controllers were re-synthesized and every metric below
+> regenerated. **The overall verdict is unchanged** — the decentralized architecture stays
+> justified — but several secondary arguments for it reversed (worst-corner cross-transfer,
+> waived-corner robustness, large-signal share excursion, and the size of the
+> implementation-cost advantage). Deltas are catalogued in `mimo_comparison.md` §14;
+> superseded ±5 A numbers are kept, not deleted. The MATLAB cross-check was re-run at ±20 A
+> (04-Aug-2026): VERDICT PASS on all six criteria (`MATLAB_mimo_results.txt`; the ±5 A log is
+> `MATLAB_mimo_results_5A.txt`) — **against the retired plant**.
 
 **Machinery.** `hinf_mimo.py` implements a general two-Riccati DGKF H∞ synthesis (dimension-
 general, self-tested against `scipy.linalg`). The SISO regression anchor gives γ_opt = 0.6505

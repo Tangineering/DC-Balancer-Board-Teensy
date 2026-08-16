@@ -16,14 +16,16 @@ CXX      = g++
 # bench flashing via #ifndef). The main suite asserts shipped behavior, so it must build with 0.
 # -DNO_ETH_WARNING: the .ino warns on BENCH_TEST=0 + USE_ETHERNET=0 (a mis-flash hazard on real
 # hardware); the test suite builds that combination deliberately (mocked networking), so suppress.
-CXXFLAGS = -std=c++17 -Wall -Wextra -I. -I../teensy_controller -I../controller_design -DBENCH_TEST=0 -DNO_ETH_WARNING
+CXXFLAGS = -std=c++17 -Wall -Wextra -I. -I../teensy_controller -I../controller_design -I../controller_design_MIMO -DBENCH_TEST=0 -DNO_ETH_WARNING
 # Second build at -DBENCH_TEST=1 exercises the doState0() bench bypass. The full suite's test
 # functions are compiled but not called in this pass, so silence the expected unused warnings.
-CXXFLAGS_BENCH = -std=c++17 -Wall -Wextra -Wno-unused-function -I. -I../teensy_controller -I../controller_design -DBENCH_TEST=1 -DNO_ETH_WARNING
+CXXFLAGS_BENCH = -std=c++17 -Wall -Wextra -Wno-unused-function -I. -I../teensy_controller -I../controller_design -I../controller_design_MIMO -DBENCH_TEST=1 -DNO_ETH_WARNING
 
 DEPS = mock_arduino.h mock_wire.h mock_spi.h mock_vesc.h mock_ethernet.h mock_sd.h \
        VescUart.h SPI.h Wire.h NativeEthernet.h NativeEthernetUdp.h SdFat.h \
-       ../teensy_controller/teensy_controller.ino
+       ../teensy_controller/teensy_controller.ino \
+       ../teensy_controller/drive_controller.h ../teensy_controller/drive_controller_coeffs.h \
+       ../controller_design_MIMO/drive_replay_vectors.h
 
 .PHONY: all clean
 
