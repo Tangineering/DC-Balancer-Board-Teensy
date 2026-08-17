@@ -954,3 +954,73 @@ All decodes clean: zero drops, zero missed periods, zero faults.
   reversal dead window ('W'/'T' reversal test); (4) repeat 'Y' with a real bus load.
   Housekeeping: `.venv_benchlog` is missing pandas (agents worked around it) - repair
   before the next log round.
+
+---
+
+## Status & session addendum (2026-08-17, fw v15: dpos-based pitch count)
+
+Operator-diagnosed, code-confirmed: the fw v13 adaptive period filter has an ABSORBING
+slow-reading poison basin at ref ~ 2T. Real edges at T fail the 0.625 low-side gate
+(T < 1.25T), are rejected without advancing the base (correct for genuine spurious edges),
+and the next edge measures 2T -> ratio 1.0 -> accepted as ONE pitch, re-anchoring the EWMA
+at 2T forever. v_actual reads exactly HALF; the drive controller doubles the real speed
+("sudden 2x speed-up", bench 2026-08-17, no log). The ENC_KBRANCH_RUN_MAX tripwire was
+structurally blind to it (every acceptance is k == 1, resetting the counter — it guarded
+only the mirror ref ~ T/2 fast basin), and a tripwire reset taken mid-miss-burst could
+SEED the basin (re-seed has no ratio gating). The ML0151 t~27.5 s "drag step-change" is a
+CANDIDATE instance (v_act "collapse" ratio 2.55/1.30 = 1.96; the round's edge-rate
+exoneration was circular — it predicted edge rate from v_act itself), though not settled:
+bus input power genuinely changed, which pure re-scaling does not explain. **fw v15
+(pending first flash; the first flash carries v10-v15):**
+
+- **Pitch count is now a decoder MEASUREMENT, not a ratio inference.** In the accepted-
+  interval path, pitches = nearest-integer(|dpos|/2) from dpos = encoderPos −
+  encPosAtLastEdge ((|dpos|+1)>>1, floor 1, UNCAPPED, shift/add only). Sound because a
+  rejected edge advances neither the time base nor the position reference, so dpos
+  accumulates across rejections in lockstep with the period. Needs no reference and no
+  speed arming (runs during seeding and below ENC_ADAPT_MAX_REF_US — the S1/S2 arming
+  rationale is ratio ambiguity, which a count does not have). Both poison basins become
+  non-stable: at ref~2T the merged 2T interval carries |dpos| = 4 -> stores/feeds T ->
+  ref walks back; at ref~T/2 the true period passes the gate as one pitch.
+- **Retired:** the ratio k = 2/3 branch, ENC_PERIOD_MAX_MULT, and the ENC_KBRANCH_RUN_MAX
+  tripwire (encKBranchRun/encRefPoisonPending + the updateWheelSpeed() consumer) — under
+  the new mechanism a run-length reset would fire during basin RECOVERY (consecutive
+  pitches == 2 acceptances) and re-seed from the corrupted stream. **Kept:** the 0.625
+  low-side gate + no-base-advance merge (and its speed arming, now governing only that
+  gate), ENC_PERIOD_MIN_US, EWMA, ring, direction handling, dpos == 0 invalidation, and
+  the ENTIRE reader side — v_act traces stay comparable with fw v12-v14.
+- **Review round (two-lens, no HIGH/MED, 3 LOWs):** S1 (accepted, strengthened) — a
+  PER-PITCH absolute floor: after the pitch division, per-pitch < ENC_PERIOD_MIN_US
+  (200 us, incl. the integer-zero case) is dropped like a glitch (no store, no EWMA, no
+  base advance). This is also the principled fast-direction backstop (per-pitch >= 200 us
+  bounds indicated speed at ~20 m/s), which is why S2's arbitrary count cap was REJECTED.
+  S3 (doc-only): the dpos == 0 branch still feeds the EWMA the raw elapsed interval,
+  biasing ref high under dither — conservative direction only. Orchestrator liveness
+  trace: persistent dpos corruption dropping every interval starves readings -> the fw v13
+  reading-age bound fires within 100 ms -> v = 0 + clean reset. Bounded, safe direction.
+- **Known residual (documented in the ISR):** a slot entirely unseen by channel A loses
+  its decoder counts too (Afirst*/Bfirst* handshake), so |dpos|/2 under-reads by one and
+  the interval stores SLOW — safe direction, EWMA-absorbed; the ratio cross-check that
+  could catch it is exactly the ambiguous mechanism that created the basins, so it is
+  deliberately not reinstated. The 0.04-0.30 m/s band and the un-Schmitted OPB829DZ edge
+  corruption still belong to the 74HC14 hardware fix — v15 is a scale-stability fix, not
+  a reason to defer the Schmitt.
+- **Diagnostics:** encLastPitches/encMultiPitchCount (volatile, ISR-written, reset by
+  encoderVelReset()) added to the State-98 'S' dump alongside ref (fw v8 observability
+  lesson). No control path reads them. No pin/sequencing/fault/UDP/BLG/coefficient change.
+- **Tests: 2913 production + 175 bench pass** (rebuilt from source, both builds). New:
+  the 2T-basin escape regression (walks the estimator into the poisoned state, asserts it
+  cannot stay locked), T/2-basin equivalent, uncapped multi-pitch counting (2/3/5),
+  rounding (|dpos| = 1, 3), unconditional application (seeding + gate-dark), spurious-
+  merge re-pin, dpos == 0 invalidation re-pin, tripwire-retirement negative (a persistent
+  miss stream now yields correct readings and NO reset), diagnostics lifecycle, S1 floor
+  (drop/boundary-at-200 us/zero-quotient), and negative-direction multi-pitch. Two
+  pre-existing tests' "spurious" stimuli switched from full quadrature cycles to A-only
+  wiggles — under dpos counting a full cycle IS real motion; the old stimulus was
+  physically wrong, not the firmware.
+- **Next bench:** unchanged order — inspect nothing further on the rig for the ML0151
+  event until a v15 run separates the hypotheses (a repeat 2x event on v15 firmware would
+  now be genuinely mechanical; v15 makes the encoder explanation impossible). Then:
+  Schmitt (74HC14 at 3.3 V), VESC reversal dead-window characterization, 'Y' with a real
+  bus load. On the first v15 'V' runs, watch encMultiPitchCount in the 'S' dump — a
+  nonzero rate quantifies the real missed-edge frequency for the first time.

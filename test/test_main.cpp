@@ -6820,6 +6820,152 @@ static void test_encoder_v15_dpos_pitch_count() {
               "(8) encoderVelReset() clears both fw v15 diagnostics");
     }
 
+    // ── (9) PER-PITCH ABSOLUTE FLOOR (fw v15 safety-review S1). After the pitches division, an
+    //     accepted-looking interval whose PER-PITCH period falls below ENC_PERIOD_MIN_US is dropped
+    //     exactly like a glitch: no ring store, no EWMA feed, no base advance, and — because the
+    //     diagnostics write moved inside the accepted branch — encLastPitches/encMultiPitchCount do
+    //     NOT update either. This is a SEPARATE floor from the raw-period absolute floor at the top
+    //     of the ISR (which only ever sees the interval BEFORE division): a large, uncapped
+    //     `pitches` can drive a raw period that easily clears the raw floor down to a per-pitch
+    //     value that does not.
+    {
+        // (9a) Drop test. ref armed at T=1000 (0.625xref = 625). Construct an accepted-looking
+        //      interval (raw period 1000, comfortably above both the raw floor and the 0.625xref
+        //      gate) with pitches=10 (dpos=20) so the per-pitch period is 1000/10=100us < 200 —
+        //      dropped by the NEW S1 floor specifically, not by either of the earlier gates.
+        float steady = enc_v15_arm_at(T);
+        uint32_t preCount   = encPeriodCount;
+        uint32_t preRefUs   = encPeriodRefUs;
+        uint32_t preRefSeed = encPeriodRefSeed;
+        uint8_t  prePitches = encLastPitches;
+        uint32_t preMulti   = encMultiPitchCount;
+        uint32_t preLastEdgeUs      = encLastEdgeUs;
+        int32_t  prePosAtLastEdge   = encPosAtLastEdge;
+
+        uint32_t tDrop = enc_v15_lastEdgeUs + T;      // raw period = T = 1000 (>=625 ratio gate, >=200 raw floor)
+        enc_fire_tap_raw(tDrop, 20);                  // pitches=(20+1)>>1=10 -> per-pitch 1000/10=100 <200
+        updateWheelSpeed();
+
+        check(fabsf(v_actual - steady) < 1e-6f,
+              "(9a) S1 drop: v_actual is UNCHANGED (the interval never reached the ring)");
+        check(encPeriodCount == preCount,
+              "(9a) S1 drop: the ring entry count is unchanged (no store)");
+        check(encPeriodRefUs == preRefUs && encPeriodRefSeed == preRefSeed,
+              "(9a) S1 drop: the EWMA reference is NOT fed (no base-reference update)");
+        check(encLastPitches == prePitches && encMultiPitchCount == preMulti,
+              "(9a) S1 drop: encLastPitches/encMultiPitchCount do NOT update — the diagnostics write "
+              "lives inside the accepted branch, which a dropped interval never reaches");
+        check(encLastEdgeUs == preLastEdgeUs && encPosAtLastEdge == prePosAtLastEdge,
+              "(9a) S1 drop: the base (encLastEdgeUs/encPosAtLastEdge) is NOT advanced — directly, "
+              "on the ISR's own bookkeeping state");
+
+        // Behavioral confirmation of the same fact: the NEXT genuine single-pitch edge must measure
+        // its period from the LAST GENUINE edge (pre-drop), not from the dropped tap's own time —
+        // i.e. it reads the correct steady value, not something skewed by the dropped tap's timing.
+        uint32_t tNext = preLastEdgeUs + T;
+        enc_cycle_fwd(tNext); updateWheelSpeed();
+        check(fabsf(v_actual - steady) < fabsf(steady) * 1e-4f,
+              "(9a) S1 drop: the next genuine edge measures from the last GENUINE edge (base did "
+              "not advance to the dropped tap) — reads the correct steady value");
+
+        // (9b) Boundary: per-pitch period exactly AT ENC_PERIOD_MIN_US is ACCEPTED; one microsecond
+        //      below is DROPPED. Uses a lower-armed reference (T2=300, 0.625xref=187) so a raw
+        //      period of ~400us clears the ratio gate comfortably while still landing exactly on
+        //      the per-pitch boundary once divided by pitches=2 — isolating the NEW S1 floor from
+        //      the raw-period gates (raw=400/399 is nowhere near either of those).
+        const uint32_t T2 = 300;
+        float steady2 = enc_v15_arm_at(T2);
+        {
+            uint32_t tAt = enc_v15_lastEdgeUs + 400;      // raw=400, pitches=2 -> per-pitch = 200 exactly
+            uint32_t preRefUs2 = encPeriodRefUs;
+            enc_fire_tap_raw(tAt, 4);
+            updateWheelSpeed();
+            // The ring was already full (cnt == ENC_PERIOD_AVG_N == 2) from arm_at()'s own two
+            // accepted periods, so an accept here does not grow the COUNT further — it replaces the
+            // oldest slot. Confirm the accept happened via the pitches diagnostic and the fact that
+            // the EWMA reference visibly moved (a dropped interval would leave it untouched, per
+            // (9a)/(9c) above).
+            check(encLastPitches == 2,
+                  "(9b) boundary: per-pitch period exactly 200us (== ENC_PERIOD_MIN_US) is ACCEPTED "
+                  "— the pitches diagnostic updates to 2");
+            check(encPeriodRefUs != preRefUs2,
+                  "(9b) boundary: the accept is confirmed by the EWMA reference moving (a dropped "
+                  "interval, per (9a)/(9c), leaves it untouched)");
+        }
+        {
+            float steady2b = enc_v15_arm_at(T2);   // fresh arm — avoid state left by the (9b) accept above
+            uint32_t preCnt2b   = encPeriodCount;
+            uint32_t prePitch2b = encLastPitches;
+            uint32_t tBelow = enc_v15_lastEdgeUs + 399;   // raw=399, pitches=2 -> per-pitch = 199 < 200
+            enc_fire_tap_raw(tBelow, 4);
+            updateWheelSpeed();
+            check(encPeriodCount == preCnt2b && encLastPitches == prePitch2b,
+                  "(9b) boundary: one microsecond below the per-pitch floor (199us) is DROPPED — no "
+                  "ring store, no diagnostic update");
+            check(fabsf(v_actual - steady2b) < 1e-6f,
+                  "(9b) boundary: v_actual is unchanged by the just-below-floor drop");
+        }
+        (void)steady2;
+
+        // (9c) Zero-quotient case: pitches > raw period, so the integer division period/pitches
+        //      truncates to exactly 0us — still caught by the SAME `period < ENC_PERIOD_MIN_US`
+        //      check (0 < 200), pinned explicitly since it is the most extreme case the floor must
+        //      cover. ref armed at T2=300 again (0.625x300=187 <= raw=200, clears the ratio gate);
+        //      pitches=250 (dpos=500) against raw=200 -> 200/250 == 0 in integer arithmetic.
+        {
+            float steady3 = enc_v15_arm_at(T2);
+            uint32_t preCnt3 = encPeriodCount;
+            uint32_t preRef3 = encPeriodRefUs;
+            uint32_t tZero = enc_v15_lastEdgeUs + 200;    // raw=200 (>= floor, >= 0.625*300=187)
+            enc_fire_tap_raw(tZero, 500);                 // pitches=(500+1)>>1=250 -> 200/250==0
+            updateWheelSpeed();
+            check(encPeriodCount == preCnt3 && encPeriodRefUs == preRef3,
+                  "(9c) zero-quotient: pitches > raw period drives period/pitches to integer 0, "
+                  "which the S1 floor drops just like any other sub-floor value — no ring store, "
+                  "no reference feed");
+            check(fabsf(v_actual - steady3) < 1e-6f,
+                  "(9c) zero-quotient: v_actual is unchanged (never reached the ring)");
+        }
+    }
+
+    // ── (10) Negative-direction multi-pitch (correctness-review coverage gap). A reverse-direction
+    //     interval with dpos=-4 over 2T must exercise posMag's NEGATIVE branch
+    //     (posMag = 0u - (uint32_t)dpos) under a genuine multi-pitch accept: pitches=2, per-pitch
+    //     period=T, encPeriodDir==-1, v_actual negative with the correct single-cycle-average
+    //     magnitude. Built from a FRESH reset (rather than on top of a forward-armed steady state)
+    //     specifically so the fw v13 S3 sign embargo — which holds a cnt<2 reading whose sign
+    //     differs from the last PUBLISHED one — does not apply (encVelHaveValid is false with
+    //     nothing published yet), keeping this test a direct, unembargoed check of the dpos sign
+    //     arithmetic itself rather than a retest of the embargo (covered elsewhere).
+    {
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        uint32_t t0 = 500;
+        enc_cycle_rev(t0); updateWheelSpeed();     // baseline tap only — establishes the base, unseeded ref
+        check(encHaveLastEdge == true, "(10) setup: the baseline tap armed encHaveLastEdge");
+        check(!encVelHaveValid, "(10) setup: nothing has published yet (embargo cannot apply)");
+
+        uint32_t t1 = t0 + 2 * T;                  // raw period = 2T, unseeded (refValid false) -> only
+                                                    // the absolute/S1 floors apply, no ratio gate
+        enc_fire_tap_raw(t1, -4);                  // dpos = -4: posMag's negative branch, pitches=2
+        updateWheelSpeed();
+
+        check(encLastPitches == 2,
+              "(10) negative multi-pitch: |dpos|=4 (dpos=-4) still counts as 2 pitches — posMag's "
+              "negative branch produces the same magnitude as the positive one");
+        check(encPeriodDir == -1,
+              "(10) negative multi-pitch: direction is REVERSE, taken from the sign of dpos");
+        check(v_actual < 0.0f,
+              "(10) negative multi-pitch: v_actual is negative (unembargoed — nothing published yet)");
+        float expectRevSingle = ENC_SLOT_PITCH_M / ((float)T * 1e-6f);   // per-pitch period stored is T
+        check(fabsf(v_actual + expectRevSingle) < fabsf(expectRevSingle) * 1e-3f,
+              "(10) negative multi-pitch: magnitude matches a single-pitch-average reading at the "
+              "correctly-divided per-pitch period T (cnt=1 ring entry, since the direction flip from "
+              "encPeriodDir==0 reset the ring to this one fresh entry)");
+    }
+
     enc_reset();
 }
 

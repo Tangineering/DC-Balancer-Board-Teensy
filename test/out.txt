@@ -894,6 +894,24 @@ teensy_controller.ino — unit tests
   PASS: (7) ...the ring is invalidated by the separate newDir==0 check, same as before fw v15
   PASS: (8) setup: a multi-pitch accept has moved both diagnostics off their reset values
   PASS: (8) encoderVelReset() clears both fw v15 diagnostics
+  PASS: (9a) S1 drop: v_actual is UNCHANGED (the interval never reached the ring)
+  PASS: (9a) S1 drop: the ring entry count is unchanged (no store)
+  PASS: (9a) S1 drop: the EWMA reference is NOT fed (no base-reference update)
+  PASS: (9a) S1 drop: encLastPitches/encMultiPitchCount do NOT update — the diagnostics write lives inside the accepted branch, which a dropped interval never reaches
+  PASS: (9a) S1 drop: the base (encLastEdgeUs/encPosAtLastEdge) is NOT advanced — directly, on the ISR's own bookkeeping state
+  PASS: (9a) S1 drop: the next genuine edge measures from the last GENUINE edge (base did not advance to the dropped tap) — reads the correct steady value
+  PASS: (9b) boundary: per-pitch period exactly 200us (== ENC_PERIOD_MIN_US) is ACCEPTED — the pitches diagnostic updates to 2
+  PASS: (9b) boundary: the accept is confirmed by the EWMA reference moving (a dropped interval, per (9a)/(9c), leaves it untouched)
+  PASS: (9b) boundary: one microsecond below the per-pitch floor (199us) is DROPPED — no ring store, no diagnostic update
+  PASS: (9b) boundary: v_actual is unchanged by the just-below-floor drop
+  PASS: (9c) zero-quotient: pitches > raw period drives period/pitches to integer 0, which the S1 floor drops just like any other sub-floor value — no ring store, no reference feed
+  PASS: (9c) zero-quotient: v_actual is unchanged (never reached the ring)
+  PASS: (10) setup: the baseline tap armed encHaveLastEdge
+  PASS: (10) setup: nothing has published yet (embargo cannot apply)
+  PASS: (10) negative multi-pitch: |dpos|=4 (dpos=-4) still counts as 2 pitches — posMag's negative branch produces the same magnitude as the positive one
+  PASS: (10) negative multi-pitch: direction is REVERSE, taken from the sign of dpos
+  PASS: (10) negative multi-pitch: v_actual is negative (unembargoed — nothing published yet)
+  PASS: (10) negative multi-pitch: magnitude matches a single-pitch-average reading at the correctly-divided per-pitch period T (cnt=1 ring entry, since the direction flip from encPeriodDir==0 reset the ring to this one fresh entry)
 
 [Velocity-chain calibration interlock]
   PASS: interlock: firmware ships with VELOCITY_CHAIN_CALIBRATED = 1 (bench-measured, fw v7)
@@ -3401,4 +3419,4 @@ teensy_controller.ino — unit tests
   PASS: boundary ZOH (Y): v_setpoint is held across the boundary, not rewritten or zeroed
 
 ===================================
-Results: 2895 passed, 0 failed
+Results: 2913 passed, 0 failed

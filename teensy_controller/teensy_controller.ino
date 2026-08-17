@@ -748,6 +748,19 @@
  *      re-seed from the same corrupted stream. Its removal also deletes the one path that injected a
  *      full-scale v = 0 step into the 544.8 A/(m/s) controller on an inference rather than a
  *      measurement.
+ *      SAFETY REVIEW S1 (accepted): because the count is uncapped, period/pitches can fall below
+ *      ENC_PERIOD_MIN_US — or reach integer ZERO when pitches > period — and a zero or tiny ring
+ *      entry INFLATES v_actual, the destabilising direction. The 200 µs absolute floor is therefore
+ *      extended from the raw interval to PER-PITCH semantics: an interval whose per-pitch period
+ *      falls under it is dropped exactly like a glitch, without advancing the base or the position
+ *      reference. One compare on the value the existing divide already produced — no extra divide.
+ *      This is also the principled fast-direction backstop (per-pitch >= 200 µs bounds the indicated
+ *      speed at the same ~20 m/s the floor always implied), which is why no arbitrary cap on the
+ *      pitch count is reintroduced (review S2 adjudicated PARTIAL: cap rejected, floor accepted).
+ *      SAFETY REVIEW S3 (accepted, documented not fixed): the dpos == 0 ambiguous branch still
+ *      advances the base and feeds the EWMA the RAW elapsed interval, which under sustained dither
+ *      may span several pitches and biases ref HIGH. Harmless here — a high ref only makes the
+ *      0.625 gate more conservative, and it cannot produce a fast reading.
  *      KEPT AS-IS: the 0.625 low-side gate and its no-base-advance merge (with its S1/S2 speed
  *      arming, now the only thing that arming governs), ENC_PERIOD_MIN_US, the EWMA, the direction
  *      handling and the dpos == 0 ring invalidation, the ring, and every reader-side semantic.
@@ -8509,7 +8522,9 @@ void doEncoderA() {
                 //     true period simply passes the low gate and is counted as one pitch.
                 //   - No cap. ENC_PERIOD_MAX_MULT is retired: a count of 5 after a long rejection
                 //     streak is a measurement, and capping it would store a per-pitch period that
-                //     is knowingly too LONG for the distance actually travelled.
+                //     is knowingly too LONG for the distance actually travelled. What bounds the
+                //     FAST direction instead is the per-pitch absolute floor below (S1), which is a
+                //     physical limit rather than an arbitrary count.
                 // Known undercount: if an entire slot is unseen by channel A (both its edges lost),
                 // the AfirstUp/BfirstUp handshake loses that pitch's counts too, so |dpos|/2 under-
                 // reads by one and the interval is stored slow. That is the safe direction (reads
@@ -8520,45 +8535,70 @@ void doEncoderA() {
                 uint32_t posMag = (dpos < 0) ? (0u - (uint32_t)dpos) : (uint32_t)dpos;
                 uint32_t pitches = (posMag + 1u) >> 1;     // nearest integer of |dpos| / 2
                 if (pitches == 0) pitches = 1;             // dpos == 0: ambiguous, handled below
-                encLastPitches = (uint8_t)((pitches > 255u) ? 255u : pitches);   // diagnostic only
-                if (pitches > 1) encMultiPitchCount++;                           // diagnostic only
 
                 // Multi-pitch intervals are stored as the MEAN PER-PITCH period, so the reader's
-                // distance = cnt x pitch stays exactly right without knowing this happened.
+                // distance = cnt x pitch stays exactly right without knowing this happened. This is
+                // the SAME divide as before — no extra one is introduced by the floor check below,
+                // which is one compare on the value this line already produced.
                 if (pitches > 1) period /= pitches;
 
-                // EWMA of accepted per-pitch periods, α = 1/4, capped so the threshold arithmetic
-                // above cannot overflow.
-                if (ref == 0) encPeriodRefUs = period;
-                else          encPeriodRefUs = ref - (ref >> 2) + (period >> 2);
-                if (encPeriodRefUs > ENC_PERIOD_REF_MAX_US) encPeriodRefUs = ENC_PERIOD_REF_MAX_US;
-                if (encPeriodRefSeed < ENC_PERIOD_REF_SEED_N) encPeriodRefSeed++;
-
-                // Direction comes from the quadrature decoder, not from this tap: the encoderPos
-                // delta across one cycle is +2 forward (both counts land in doEncoderB) and -2
-                // reverse (both land here). A zero delta means the decoder did not complete a
-                // cycle (jitter about a slot edge, or a channel fault) — not a measurable pitch,
-                // so the ring is invalidated rather than fed an ambiguous sign. (fw v15: the same
-                // dpos computed above for the pitch count supplies the sign — one subtraction.)
-                int8_t  newDir = (dpos > 0) ? 1 : ((dpos < 0) ? -1 : 0);
-                if (newDir == 0) {
-                    encPeriodCount = 0;                 // ambiguous — restart accumulation
-                    encPeriodDir   = 0;
+                // PER-PITCH ABSOLUTE FLOOR (fw v15 safety review S1). The count is uncapped, so a
+                // large `pitches` can drive the per-pitch period below ENC_PERIOD_MIN_US — or, when
+                // pitches > period, to integer ZERO. A zero or tiny ring entry INFLATES v_actual,
+                // which is the destabilising direction (reads fast → brakes harder), so the 200 µs
+                // absolute floor is extended from the raw interval to per-pitch semantics and the
+                // interval is dropped exactly like a glitch: WITHOUT advancing the base or the
+                // position reference, so the next genuine edge still spans from the last genuine
+                // one. This is also the principled fast-direction backstop, and it is why NO
+                // arbitrary cap on `pitches` is needed: requiring per-pitch >= 200 µs bounds the
+                // indicated speed at the same ~20 m/s the floor always implied, regardless of how
+                // many pitches the interval claims.
+                if (period < ENC_PERIOD_MIN_US) {
+                    // Dropped — fall through to the same no-base-advance handling as `spurious`.
                 } else {
-                    if (newDir != encPeriodDir) {
-                        encPeriodCount = 0;             // direction flip: never average across it
-                        encPeriodIdx   = 0;
-                        encPeriodDir   = newDir;
+                    encLastPitches = (uint8_t)((pitches > 255u) ? 255u : pitches); // diagnostic only
+                    if (pitches > 1) encMultiPitchCount++;                         // diagnostic only
+
+                    // EWMA of accepted per-pitch periods, α = 1/4, capped so the threshold
+                    // arithmetic above cannot overflow.
+                    if (ref == 0) encPeriodRefUs = period;
+                    else          encPeriodRefUs = ref - (ref >> 2) + (period >> 2);
+                    if (encPeriodRefUs > ENC_PERIOD_REF_MAX_US) encPeriodRefUs = ENC_PERIOD_REF_MAX_US;
+                    if (encPeriodRefSeed < ENC_PERIOD_REF_SEED_N) encPeriodRefSeed++;
+
+                    // Direction comes from the quadrature decoder, not from this tap: the encoderPos
+                    // delta across one cycle is +2 forward (both counts land in doEncoderB) and -2
+                    // reverse (both land here). A zero delta means the decoder did not complete a
+                    // cycle (jitter about a slot edge, or a channel fault) — not a measurable pitch,
+                    // so the ring is invalidated rather than fed an ambiguous sign. (fw v15: the
+                    // same dpos computed above for the pitch count supplies the sign.)
+                    // fw v15 safety review S3 (accepted, documented not fixed): this branch still
+                    // ADVANCES the base and still feeds the EWMA the RAW elapsed interval, which
+                    // under sustained dither may span more than one pitch and therefore biases ref
+                    // HIGH. Accepted: the merge path now counts pitches correctly, the reading-age
+                    // bound terminates dither holds, and a ref biased high only makes the 0.625
+                    // low-side gate MORE conservative — it cannot create a fast reading.
+                    int8_t  newDir = (dpos > 0) ? 1 : ((dpos < 0) ? -1 : 0);
+                    if (newDir == 0) {
+                        encPeriodCount = 0;             // ambiguous — restart accumulation
+                        encPeriodDir   = 0;
+                    } else {
+                        if (newDir != encPeriodDir) {
+                            encPeriodCount = 0;         // direction flip: never average across it
+                            encPeriodIdx   = 0;
+                            encPeriodDir   = newDir;
+                        }
+                        encPeriodBuf[encPeriodIdx] = period;
+                        encPeriodIdx = (uint8_t)((encPeriodIdx + 1) % ENC_PERIOD_AVG_N);
+                        if (encPeriodCount < ENC_PERIOD_AVG_N) encPeriodCount++;
                     }
-                    encPeriodBuf[encPeriodIdx] = period;
-                    encPeriodIdx = (uint8_t)((encPeriodIdx + 1) % ENC_PERIOD_AVG_N);
-                    if (encPeriodCount < ENC_PERIOD_AVG_N) encPeriodCount++;
+                    encLastEdgeUs    = nowUs;
+                    encPosAtLastEdge = pos;
                 }
-                encLastEdgeUs    = nowUs;
-                encPosAtLastEdge = pos;
             }
-            // spurious == true: optical glitch/bounce, either below the absolute
-            // ENC_PERIOD_MIN_US floor or below the adaptive 0.625 x ref floor. Dropped WITHOUT
+            // Dropped interval: optical glitch/bounce below the absolute ENC_PERIOD_MIN_US floor,
+            // below the adaptive 0.625 x ref floor, or (fw v15 S1) a PER-PITCH period under the
+            // same 200 µs absolute floor after the pitch division. Dropped WITHOUT
             // advancing the base timestamp or the position reference, so the next genuine edge
             // still measures a full pitch from the last genuine edge — which is what makes the
             // ML0145 split-pitch pair merge back into one correct period rather than being
