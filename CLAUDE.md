@@ -263,8 +263,10 @@ label). Do **not** add code expecting a BAL-NOK input — there is no pin for it
 
 - **Faults:** the regen/back-feed and sequencing hazards are now the dangerous failure
   modes. Keep existing OC/UV/OV checks but re-derive limits against the board: VBUS nominal
-  is **17.5 V**; set `LIMIT_V_BUS_MAX = 18.5f` (1V SW margin; TPS61288 HW OVP triggers at
-  19V — confirmed). Battery is **2S**; verify
+  is **16.0 V** (`V_BUS_NOMINAL = 16.0f`; measured no-load regulation 15.9 V — the RD1 = 215k
+  FB retune, 2026-07-11; the pre-retune 17.5 V figure is STALE); `LIMIT_V_BUS_MAX` derives as
+  `V_BUS_NOMINAL + 1.5f` = 17.5 V (TPS61288 HW OVP triggers at 19V — confirmed).
+  Battery is **2S**; verify
   `LIMIT_V_BATT_MIN`. Consider adding a fault for an illegal switch combination (e.g.
   `FC_CHARGE_ENABLE` high while `REGEN_ENABLE`/`BT_BUS_ENABLE` high).
 - **Telemetry struct:** it currently sends `I_charge` (no longer measured) and omits the new
@@ -888,3 +890,67 @@ re-evaluate on fw v14 runs), VESC Tool Gear Ratio setting still 9.49 (cosmetic).
 record: motor_id_20260815.md §"K_F force-axis correction (2026-08-16c)". Bench order
 unchanged from fw v13: Schmitt bodge -> edge-counter check -> 'A' ladder -> flash (first
 flash carries v10-v14) -> 'V' at 1-2 m/s scope-armed.
+
+---
+
+## Status & session addendum (2026-08-17, fw v14 first-flash log round: ML0146-151 + YP0152)
+
+First logs from the fw v14 flash (the flash carrying v10-v14), analyzed by a seven-agent
+fan-out (one per log). No firmware change came out of this round. Analysis outputs live in
+`logs/ML0146` ... `logs/YP0152`; runs: 'V' steps at 0.5/0.75/1.0/1.5/2.0 m/s (ML0146-150,
+manual 'K' logs), a 0->2.66->0 m/s stepladder (ML0151, 56 s), and the first 'Y' combined
+profile on the Youla drive controller (YP0152, Vmax 2.0, b 0.30, natural completion).
+All decodes clean: zero drops, zero missed periods, zero faults.
+
+- **K_F VALIDATED ON HARDWARE; the ML0141 gain excess is CLOSED.** Rail-acceleration check
+  (ML0151, 0.7 s continuous +12 A): a_meas/a_model = 0.968. Hold currents at every cruise
+  level 0.5-2.66 m/s across all seven logs sit at 0.89-0.92x the drag-law prediction
+  i(v) = (2.00 + 0.534 v)/0.7538 (post-drag-event branch 1.10-1.15x; both inside the
+  F_c = 2.00 +/- 0.42 N band). Incremental dv/dI at clean ladder transitions: 0.96-1.05x
+  G22(0). The old 1.8-2.7x excess reproduces nowhere. The consistent ~10 % hold-current
+  shortfall matches the still-open eta_dt = 0.85 in direction and rough scale.
+- **The controller works.** SS error <= 2 mm/s at every level (std ~0.025-0.03 m/s). Hanus
+  conditioning verified across ~90 saturation episodes (worst sustained u_unsat excursion
+  +3.4 A past the rail, clean release every time, no windup). Zero-cutoff + controller
+  reset verified on hardware in YP0152 (3951 coast ticks, I_cmd == 0 and x0 == 0
+  throughout, clean re-entry). The 2.3-2.6 Hz boxcar limit cycle is confirmed gone
+  (< 1 % band energy everywhere). Rise 0.08-0.10 s (1.3-1.6x faster than small-signal
+  design) with 13-26 % overshoot vs 4.8 % design - plant slightly stiffer than nominal,
+  consistent with the 0.89 hold ratio; watch, no action.
+- **NEW: mechanical drag step-change, ML0151 t~27.5 s** (during the 2.0->2.5 step): real
+  speed collapse 2.55->1.30 m/s, 688 ms full-rail recovery, and afterwards drag is
+  PERMANENTLY ~2.2x higher (bus input at 2.0 m/s: 4.30 -> 9.44 W). Encoder edge rates match
+  prediction on both sides, so it is physical (tire/roller contact or preload), not sensor.
+  Inspect the rig before the next run; any drag-law refit must treat the two halves
+  separately.
+- **NEW: VESC ~428 ms dead window after hard regen->drive reversal** (ML0151 t=42.0 s):
+  I_cmd +11.4 A commanded, delivered current < 50 mA, car still decelerating - the entire
+  cause of the 2.66->2.0 step's 87 % undershoot (plus four 23-26 ms instances at low
+  current). Not a firmware bug; characterize before any vehicle run.
+- **Encoder verdict unchanged, sharpened.** Above 0.307 m/s: zero rung-family corruption in
+  ~130k samples - the fw v13 adaptive filter holds; deliberate decels through 0.3 m/s
+  (ML0150/151) were clean, no S1 doubling signature. Below ~0.4 m/s (YP0152 regions 13/14):
+  sign reversals to -1.0 m/s driving full +/-12 A rails, 32 % saturation dwell. Residual
+  defect at cruise: I_cmd chatter 3.5-5.6 Hz, up to ~11-13 A pk-pk while v_act ripples only
+  ~0.03 m/s - estimator edge-jitter amplified by the ~545 A/(m/s) LF gain; current-side
+  only, not a velocity limit cycle. The Schmitt (74HC14 at 3.3 V) remains the root fix and
+  is now also the prerequisite for judging the chatter.
+- **YP0152 was NOT a cross-coupling test:** total source current (median 0.13 A) never
+  crossed the 0.60 A closed-loop entry gate, so the share loop ran open-loop feedforward
+  for 99.8 % of the run (ML0146-151 had gFC = gBT = 0 outright). Repeat 'Y' with a real bus
+  load >= 0.6 A (ideally >= 1.5 A) before drawing coupling conclusions. Bus health: V_bus
+  15.87-15.95 V the whole profile - which is nominal, see below.
+- **STALE-CONSTANT SWEEP: bus nominal is 16.0 V, not 17.5 V.** The round's one false alarm
+  ("V_bus 1.6 V below nominal") traced to this file's own Section 6, which still taught the
+  pre-retune 17.5 V / LIMIT_V_BUS_MAX 18.5f pair. The firmware has been right since the
+  2026-07-11 RD1 = 215k FB retune (V_BUS_NOMINAL 16.0f, V0 = 15.91 V no-load,
+  LIMIT_V_BUS_MAX = nominal + 1.5 = 17.5 V). Fixed in lockstep: CLAUDE.md Section 6,
+  AGENTS.md, README.md (both 18.5 V references), PLAN.md (Section 6a + resolved-questions
+  table), docs/modeling/bond-graph.md, and the two reconcile notes in
+  papers/Droop_Control/sections/04_board_design.tex (now RESOLVED at 16.0 V). Historical
+  bring-up narratives keep their as-was values. Do not reintroduce 17.5 V as nominal.
+- **Next bench, in order:** (1) inspect the tire/roller contact (the ML0151 drag event
+  moved the operating point mid-session); (2) solder the Schmitt; (3) characterize the VESC
+  reversal dead window ('W'/'T' reversal test); (4) repeat 'Y' with a real bus load.
+  Housekeeping: `.venv_benchlog` is missing pandas (agents worked around it) - repair
+  before the next log round.

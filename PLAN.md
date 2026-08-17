@@ -495,8 +495,9 @@ float V_rgn = 0;   // regen-node voltage    (pin 39, ADC)
 Keep existing `FAULT_OC_FC`, `FAULT_UV_BATT`, `FAULT_OV_BUS`. Adjust limits:
 
 ```cpp
-#define LIMIT_V_BUS_MAX  18.5f  // V — 1V above 17.5V nominal; TPS61288 HW OVP triggers at 19V
-                                 // Source: user-confirmed (17.5V nominal bus, 19V HW OVP threshold)
+#define LIMIT_V_BUS_MAX  (V_BUS_NOMINAL + 1.5f)  // = 17.5 V at the 16.0 V nominal; TPS61288 HW OVP at 19V
+                                 // Source: 2026-07-11 RD1=215k FB retune (V0 = 15.91 V no-load);
+                                 // the original 17.5V-nominal/18.5f pair is STALE (pre-retune)
 #define LIMIT_V_BATT_MIN  6.2f  // V — 2S LiPo cutoff (2 × 3.1V); keep existing
 
 // New fault: illegal switch combination
@@ -1419,7 +1420,7 @@ No Teensy hardware or Arduino IDE needed. Tests should be run locally before eac
 | `MPPT_DISABLE` GPIO polarity | Active-LOW: LOW inhibits the MPPT perturb-and-observe loop | User-confirmed from PCB schematic |
 | `CBAL_DISABLE` polarity | LOW = balancer/OVP active, HIGH = disabled; no external pull resistor on net; internal pullup needed | User-confirmed from PCB schematic |
 | CHG/RGN voltage dividers | R1=78.7kΩ, R2=10kΩ → Vmax=29.271V → SCALE=29.271/4095 | User-confirmed from PCB schematic |
-| TPS61288 HW OVP threshold | 19V (built-in). `LIMIT_V_BUS_MAX = 18.5f` (17.5V nominal + 1V SW margin) | User-confirmed; nominal bus = 17.5V |
+| TPS61288 HW OVP threshold | 19V (built-in). `LIMIT_V_BUS_MAX = V_BUS_NOMINAL + 1.5f` = 17.5V (16.0V nominal + 1.5V SW margin) | 2026-07-11 RD1=215k FB retune; nominal bus = 16.0V (15.9V measured no-load). Original 17.5V nominal is stale |
 
 ### Still open — mark `// TODO(verify: <source>)` in code
 

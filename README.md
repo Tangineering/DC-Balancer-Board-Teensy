@@ -163,7 +163,7 @@ stale timestamps.
 - FC overcurrent (`I_fc > LIMIT_I_FC_MAX`), BT overcurrent (`I_batt > LIMIT_I_BT_MAX`)
 - Battery UV/OV, FC UV — **UV checks are gated to Run (State 2)** so unramped rails at boot
   don't latch State 99
-- Bus OV (`LIMIT_V_BUS_MAX = 18.5 V`, below the 19 V TPS61288 HW OVP) and Bus UV (Run only)
+- Bus OV (`LIMIT_V_BUS_MAX = V_BUS_NOMINAL + 1.5 = 17.5 V` at the 16.0 V nominal, below the 19 V TPS61288 HW OVP) and Bus UV (Run only)
 - Regen-node and charger-input overvoltage
 - Illegal switch combination (`FC_CHARGE_ENABLE` with `BT_BUS`/`REGEN`)
 - Ag105 GENSTAT error states (OC/Regulation 0x05, Thermal Shutdown 0x06, Timeout 0x07) and I2C
@@ -190,7 +190,7 @@ so every value below is observable on the Pi. Read `error_code` for the root cau
 |------|------|---------|-------|----------|
 | `0x0001` | `FAULT_OC_FC` | `I_fc` overcurrent | `LIMIT_I_FC_MAX = 3.5 A` | all |
 | `0x0002` | `FAULT_UV_BATT` | `V_batt` undervoltage | `LIMIT_V_BATT_MIN = 6.2 V` | Run |
-| `0x0004` | `FAULT_OV_BUS` | `V_bus` overvoltage | `LIMIT_V_BUS_MAX = 18.5 V` | all |
+| `0x0004` | `FAULT_OV_BUS` | `V_bus` overvoltage | `LIMIT_V_BUS_MAX = 17.5 V` | all |
 | `0x0008` | `FAULT_SWITCH_CONFLICT` | `FC_CHARGE_ENABLE` high while `BT_BUS`/`REGEN` high | — | all |
 | `0x0010` | `FAULT_PI_TIMEOUT` | Pi watchdog expired | `PI_TIMEOUT_MS` | States 2/3 |
 | `0x0020` | `FAULT_OV_BATT` | `V_batt` overvoltage | `LIMIT_V_BATT_MAX = 8.6 V` | all |

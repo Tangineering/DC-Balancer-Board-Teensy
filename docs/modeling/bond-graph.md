@@ -135,7 +135,7 @@ Se:V_bat,oc(SOC) ─┐
 ### 4.3 VBUS node
 
 ```
-        ┌──────────── 0_VBUS  (common effort = V_bus, ≈17.5 V nominal) ───────────┐
+        ┌──────────── 0_VBUS  (common effort = V_bus, ≈16.0 V nominal) ───────────┐
  (from FC_BUS) ──►│  ‖ C:C_bus (≈30–40 µF, RT1987 ceramics)                        │
  (from BT_BUS) ──►│                                                                │
                   │── MR:SW_MOT_PWR ‹GPIO 29› ──►  0_VMOT   (motor/regen path)     │

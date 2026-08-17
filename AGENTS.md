@@ -263,8 +263,10 @@ label). Do **not** add code expecting a BAL-NOK input — there is no pin for it
 
 - **Faults:** the regen/back-feed and sequencing hazards are now the dangerous failure
   modes. Keep existing OC/UV/OV checks but re-derive limits against the board: VBUS nominal
-  is **17.5 V**; set `LIMIT_V_BUS_MAX = 18.5f` (1V SW margin; TPS61288 HW OVP triggers at
-  19V — confirmed). Battery is **2S**; verify
+  is **16.0 V** (`V_BUS_NOMINAL = 16.0f`; measured no-load regulation 15.9 V — the RD1 = 215k
+  FB retune, 2026-07-11; the pre-retune 17.5 V figure is STALE); `LIMIT_V_BUS_MAX` derives as
+  `V_BUS_NOMINAL + 1.5f` = 17.5 V (TPS61288 HW OVP triggers at 19V — confirmed).
+  Battery is **2S**; verify
   `LIMIT_V_BATT_MIN`. Consider adding a fault for an illegal switch combination (e.g.
   `FC_CHARGE_ENABLE` high while `REGEN_ENABLE`/`BT_BUS_ENABLE` high).
 - **Telemetry struct:** it currently sends `I_charge` (no longer measured) and omits the new

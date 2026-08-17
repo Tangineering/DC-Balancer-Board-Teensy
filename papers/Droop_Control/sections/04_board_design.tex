@@ -3,10 +3,10 @@
 % Mock / planning-stage prose. Numeric values from CLAUDE.md, the IO CSV,
 % and the BOM (rev 20260622); re-verify against the schematic PDF before
 % publishing, especially anything flagged TODO(calibrate) in firmware.
-% NOTE(orchestrator): bus nominal is quoted as 17.5 V below (rev-20260622
-% design value). The 2026-07-08 plan / 2026-07-11 retune moved nominal to
-% 16 V — reconcile with Section \ref{sec:droop} (which uses the 16 V-retune
-% constants, V_0 = 15.91 V) before submission. One bus voltage, everywhere.
+% NOTE(orchestrator): RESOLVED 2026-08-17 — the project-wide bus nominal is
+% 16.0 V (V_0 = 15.91 V measured no-load, 2026-07-11 RD1 = 215k FB retune).
+% The rev-20260622 17.5 V design value is stale; do not reintroduce it.
+% Section \ref{sec:droop} already uses the 16 V-retune constants.
 % =====================================================================
 
 \section{Balancer Board Design and Droop Implementation Hardware}
@@ -363,10 +363,10 @@ Motor controller & VESC (external) & UART motor current control, regen source \\
 %    TODO(calibrate) in the firmware itself -- do NOT state specific
 %    values for those in the paper body until bench calibration lands.
 %
-% 2. BUS VOLTAGE INCONSISTENCY: this draft's original prose said 17.5 V;
-%    the 2026-07-11 retune moved nominal to ~16 V (V_0 = 15.91 V in
-%    Sec. \ref{sec:droop}). The explicit voltage has been removed from the
-%    prose here; pick one number project-wide before submission.
+% 2. BUS VOLTAGE (RESOLVED 2026-08-17): the project-wide nominal is 16.0 V
+%    (V_0 = 15.91 V, 2026-07-11 retune; Sec. \ref{sec:droop} constants).
+%    The original 17.5 V prose value was stale and has been removed; when
+%    the voltage is stated here, state 16.0 V.
 %
 % 3. The "hardware bodge" history (BT compensator resistor swap, output-
 %    cap bodges, corrected failure analysis) is NOT in this section's
