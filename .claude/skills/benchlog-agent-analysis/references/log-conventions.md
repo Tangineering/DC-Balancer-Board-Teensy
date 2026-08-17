@@ -96,3 +96,22 @@ must be inferred from the last records and flagged as inferred.
   never touch any `analysis_config.json`.
 - The Read tool renders PNGs — read the figures for shape, but derive all numbers from
   the CSV.
+
+## Encoder scale-basin detection (pre-fw-v15 logs; established logs 153-162 round)
+
+- Any log whose header reads fw_version <= 14 may carry the fw v13 estimator poison
+  basin: v_act reads ~2x true (fast T/2 basin, common) or ~0.5x true (slow 2T basin).
+  In closed loop the error is INVISIBLE in v_act — the controller regulates the
+  corrupted signal onto the setpoint — so v_act-discontinuity sweeps find only the
+  ESCAPES (x0.5 or x2 sample-level steps), not the locked dwell.
+- The standard discriminator is the RAIL-ACCELERATION BOUND, which is independent of
+  v_act scale: at |I_cmd| = 12 A, a_true <= (12*0.7538 - 2.00 - 0.534*v_true)/3.5
+  ~= 2.0 m/s^2. A sustained (>=0.25 s) rail window whose fitted dv_act/dt is ~2x the
+  bound means v_act is 2x true. Apply it to every sustained rail episode; a windowed
+  ODE inversion (solve the scale s with a_meas/s = f(v_meas/s, I)) corroborates.
+- Secondary tells: hold current fits the drag law at ratio ~0.86-0.91 on the face
+  axis but ~0.96-1.04 with v halved; bus input power implying a different speed than
+  v_act; escapes clustering at drive removal or large current changes.
+- Basin entry is typically seeded during low-speed breakaway (spurious edges,
+  un-Schmitted front end); escapes occur at speed. Segment every pre-v15 log into
+  scale regimes BEFORE fitting anything; never mix regimes in one drag/gain fit.
