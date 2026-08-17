@@ -5,7 +5,9 @@ Generates synthetic .BLG files in a temp dir and runs the real decoder
 against them as a subprocess (exactly how a user invokes it), asserting on
 its stdout (CSV) and stderr (diagnostics). No pytest/unittest dependency,
 in the spirit of the C++ host-native suite (test/test_main.cpp): plain
-assert() + a PASS/FAIL counter.
+assert() + a PASS/FAIL counter (plus a separate SKIP counter for checks
+that need an optional real checked-in log file that may be absent in a
+sparse checkout -- see (t) below).
 
 Run: python tools/test_decode_benchlog.py
 Exit code 0 on all-pass, 1 on any failure.
@@ -47,6 +49,26 @@ RECORD format unchanged from v3):
   (logs/PS0001.BLG v1, logs/TP0041.BLG v2, logs/TP0074.BLG v3) via filecmp
   against the pre-v4 decoder -- not re-checked here since that comparison
   needs the pre-change decoder binary, not just this test file.
+
+Format-v6 coverage (fw v16 round, adds encoder_pos, enc_period_ref_us,
+enc_multi_pitch_count, enc_spurious_drop_count -- 92 B record; header
+unchanged from v4/v5):
+  (p) header parse: record_size=92, version=6, fw_version, profileAmp/
+      profileB carried through the same v4 header path unmodified.
+  (q) record decode: the four new fields at their documented CSV positions
+      (indices 17-20, right after u_unsat/drive_x0), and the 26-column
+      CSV_HEADER_V6.
+  (r) v6 record_size/version self-consistency hard error, mirroring (o)
+      for v4.
+  (s) v5 regression: v5 decode (header + 22-column CSV) is byte-for-byte
+      unchanged after adding v6 support.
+  (t) v5 real-log regression: logs/ML0146.BLG (a real checked-in fw v14
+      capture) decodes to CSV content byte-for-byte identical to the
+      committed logs/ML0146/ML0146.csv -- catches a future v5 regression
+      that a synthetic-only round-trip (s) would not, since (s) packs and
+      decodes with the SAME test file's assumptions about the v5 layout.
+      SKIPPED (not failed) if either file is absent, e.g. a sparse
+      checkout without logs/.
 """
 import struct
 import subprocess
@@ -56,6 +78,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 DECODER = HERE / "decode_benchlog.py"
+# tools/test_decode_benchlog.py -> tools -> repo root
+REPO_ROOT = HERE.parent
 
 MAGIC = b"BLG1"
 HEADER_FMT = "<4sBBBBIIH"
@@ -64,13 +88,26 @@ RECORD_FMT = "<I10fHBBBB2x"
 RECORD_SIZE = 52
 RECORD_FMT_V3 = "<I14fHBBBB2x"
 RECORD_SIZE_V3 = 68
+RECORD_FMT_V5 = "<I14fHBBBB2xff"
+RECORD_SIZE_V5 = 76
+RECORD_FMT_V6 = "<I14fHBBBB2xffiIII"
+RECORD_SIZE_V6 = 92
 TRAILER_FMT = "<IIIBBI"
 CSV_HEADER_V3 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
                   "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,fault_flags,ps_phase,"
                   "dc_phase,trap_phase,flags")
+CSV_HEADER_V5 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
+                  "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,u_unsat,drive_x0,"
+                  "fault_flags,ps_phase,dc_phase,trap_phase,flags")
+CSV_HEADER_V6 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
+                  "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,u_unsat,drive_x0,"
+                  "encoder_pos,enc_period_ref_us,enc_multi_pitch_count,"
+                  "enc_spurious_drop_count,fault_flags,ps_phase,dc_phase,"
+                  "trap_phase,flags")
 
 _passed = 0
 _failed = 0
+_skipped = 0
 
 
 def check(name, cond, detail=""):
@@ -81,6 +118,16 @@ def check(name, cond, detail=""):
     else:
         _failed += 1
         print(f"FAIL: {name}" + (f" -- {detail}" if detail else ""))
+
+
+def skip(name, reason):
+    """Report a test (or check) as SKIPPED -- counted separately from both
+    PASS and FAIL, so a sparse checkout without logs/ doesn't fail the
+    suite, but the skip is still visible (not silently absorbed into the
+    pass count)."""
+    global _skipped
+    _skipped += 1
+    print(f"SKIP: {name} -- {reason}")
 
 
 def pack_header(profile_type=1, start_millis=0, start_micros=0,
@@ -149,6 +196,67 @@ def pack_header_v4(profile_type=1, start_millis=0, start_micros=0,
     struct.pack_into("<ff", hdr, 20, profile_amp, profile_b)
     assert len(hdr) == HEADER_SIZE
     return bytes(hdr)
+
+
+def pack_header_v5(profile_type=1, start_millis=0, start_micros=0,
+                    k_droop_x1000=300, fw_version=1, param_flags=0x03,
+                    profile_amp=6.0, profile_b=0.15):
+    """v5 header: byte-identical to v4 (see pack_header_v4) except
+    record_size=76 (v5's own record layout)."""
+    hdr = struct.pack(HEADER_FMT, MAGIC, 5, RECORD_SIZE_V5, profile_type,
+                       param_flags, start_millis, start_micros, k_droop_x1000)
+    hdr += struct.pack("<H", fw_version)
+    hdr += b"\x00" * (HEADER_SIZE - len(hdr))
+    hdr = bytearray(hdr)
+    struct.pack_into("<ff", hdr, 20, profile_amp, profile_b)
+    assert len(hdr) == HEADER_SIZE
+    return bytes(hdr)
+
+
+def pack_record_v5(t_us, share_sp=0.5, share_act=0.5, v_sp=0.0, v_act=0.0,
+                    i_fc=0.0, i_batt=0.0, gfc=0.0, gbt=0.0, v_bus=17.5,
+                    i_cmd=0.0, v_fc=12.5, v_batt=8.0, v_chg=12.0, v_rgn=0.5,
+                    fault_flags=0, ps_phase=0xFF, dc_phase=0xFF,
+                    trap_phase=0xFF, flags=0, u_unsat=0.0, drive_x0=0.0):
+    rec = struct.pack(RECORD_FMT_V5, t_us & 0xFFFFFFFF, share_sp, share_act,
+                       v_sp, v_act, i_fc, i_batt, gfc, gbt, v_bus, i_cmd,
+                       v_fc, v_batt, v_chg, v_rgn, fault_flags, ps_phase,
+                       dc_phase, trap_phase, flags, u_unsat, drive_x0)
+    assert len(rec) == RECORD_SIZE_V5
+    return rec
+
+
+def pack_header_v6(profile_type=1, start_millis=0, start_micros=0,
+                    k_droop_x1000=300, fw_version=1, param_flags=0x03,
+                    profile_amp=6.0, profile_b=0.15):
+    """v6 header: byte-identical to v4/v5 (see pack_header_v4/v5) except
+    record_size=92 (v6's own record layout)."""
+    hdr = struct.pack(HEADER_FMT, MAGIC, 6, RECORD_SIZE_V6, profile_type,
+                       param_flags, start_millis, start_micros, k_droop_x1000)
+    hdr += struct.pack("<H", fw_version)
+    hdr += b"\x00" * (HEADER_SIZE - len(hdr))
+    hdr = bytearray(hdr)
+    struct.pack_into("<ff", hdr, 20, profile_amp, profile_b)
+    assert len(hdr) == HEADER_SIZE
+    return bytes(hdr)
+
+
+def pack_record_v6(t_us, share_sp=0.5, share_act=0.5, v_sp=0.0, v_act=0.0,
+                    i_fc=0.0, i_batt=0.0, gfc=0.0, gbt=0.0, v_bus=17.5,
+                    i_cmd=0.0, v_fc=12.5, v_batt=8.0, v_chg=12.0, v_rgn=0.5,
+                    fault_flags=0, ps_phase=0xFF, dc_phase=0xFF,
+                    trap_phase=0xFF, flags=0, u_unsat=0.0, drive_x0=0.0,
+                    encoder_pos=0, enc_period_ref_us=0,
+                    enc_multi_pitch_count=0, enc_spurious_drop_count=0):
+    rec = struct.pack(RECORD_FMT_V6, t_us & 0xFFFFFFFF, share_sp, share_act,
+                       v_sp, v_act, i_fc, i_batt, gfc, gbt, v_bus, i_cmd,
+                       v_fc, v_batt, v_chg, v_rgn, fault_flags, ps_phase,
+                       dc_phase, trap_phase, flags, u_unsat, drive_x0,
+                       encoder_pos, enc_period_ref_us & 0xFFFFFFFF,
+                       enc_multi_pitch_count & 0xFFFFFFFF,
+                       enc_spurious_drop_count & 0xFFFFFFFF)
+    assert len(rec) == RECORD_SIZE_V6
+    return rec
 
 
 def run_decoder(blg_path):
@@ -598,6 +706,179 @@ def test_v1v2_regression(tmpdir):
     check("v2 regression: fw_version=9 reported", "fw_version=9" in err, err)
 
 
+def test_v6_header_and_record(tmpdir):
+    """(p)(q) v6 header + record decode: record_size=92, version=6,
+    fw_version/profileAmp/profileB carried through the v4 header path
+    unmodified, the four new fields at their documented CSV positions
+    (indices 17-20, right after u_unsat/drive_x0), and the 26-column v6
+    CSV header."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    n = 30
+    data = pack_header_v6(profile_type=8, fw_version=16, param_flags=0x03,
+                           profile_amp=2.0, profile_b=0.30)
+    for i in range(n):
+        data += pack_record_v6(t_us=i * 1000, v_fc=12.345, v_batt=8.05,
+                                u_unsat=3.5, drive_x0=0.25,
+                                encoder_pos=1000 + i * 2,
+                                enc_period_ref_us=4200,
+                                enc_multi_pitch_count=7,
+                                enc_spurious_drop_count=12)
+    data += pack_trailer(records_written=n, dropped=0, close_reason=1,
+                          record_size=RECORD_SIZE_V6)
+
+    res = db.decode_blg(data)
+    check("v6: header version=6", res.header["version"] == 6,
+          repr(res.header))
+    check("v6: header record_size=92", res.header["record_size"] == 92,
+          repr(res.header))
+    check("v6: fw_version=16 carried through v4 header path",
+          res.header["fw_version"] == 16, repr(res.header))
+    check("v6: profile_amp/profile_b decoded (v4 header path unmodified)",
+          abs(res.header["profile_amp"] - 2.0) < 1e-5
+          and abs(res.header["profile_b"] - 0.30) < 1e-5, repr(res.header))
+    check("v6: csv_header is the 26-column v6 header",
+          res.csv_header == CSV_HEADER_V6, res.csv_header)
+    check("v6: emits all records", len(res.csv_rows) == n,
+          f"csv data rows={len(res.csv_rows)}, expected {n}")
+
+    first_fields = res.csv_rows[0].split(",")
+    check("v6: row has 26 fields", len(first_fields) == 26,
+          repr(first_fields))
+    # Column order: ...V_rgn(14),u_unsat(15),drive_x0(16),encoder_pos(17),
+    # enc_period_ref_us(18),enc_multi_pitch_count(19),
+    # enc_spurious_drop_count(20),fault_flags(21),...
+    check("v6: encoder_pos at index 17",
+          first_fields[17] == "1000", first_fields[17])
+    check("v6: enc_period_ref_us at index 18",
+          first_fields[18] == "4200", first_fields[18])
+    check("v6: enc_multi_pitch_count at index 19",
+          first_fields[19] == "7", first_fields[19])
+    check("v6: enc_spurious_drop_count at index 20",
+          first_fields[20] == "12", first_fields[20])
+
+    last_fields = res.csv_rows[-1].split(",")
+    check("v6: encoder_pos advances across records (signed count)",
+          last_fields[17] == str(1000 + 2 * (n - 1)), last_fields[17])
+
+    # CLI-level check too, mirroring the v4 both-valid CLI check.
+    path = write_blg(tmpdir, "v6.BLG", data)
+    rc, out, err = run_decoder(path)
+    check("v6 CLI: exits 0", rc == 0, f"rc={rc} stderr={err}")
+    check("v6 CLI: version=6 reported", "version=6" in err, err)
+    check("v6 CLI: records read == n", f"records read: {n}" in err, err)
+    check("v6 CLI: trailer found (close_reason=complete)",
+          "close_reason=complete" in err, err)
+
+
+def test_v6_negative_encoder_pos(tmpdir):
+    """encoder_pos is a SIGNED i32 -- a reverse-direction run must decode
+    a negative value correctly, not wrap to a huge unsigned number."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    data = pack_header_v6(fw_version=16)
+    data += pack_record_v6(t_us=0, encoder_pos=-4200)
+    data += pack_trailer(records_written=1, dropped=0, close_reason=1,
+                          record_size=RECORD_SIZE_V6)
+
+    res = db.decode_blg(data)
+    fields = res.csv_rows[0].split(",")
+    check("v6: negative encoder_pos decodes as signed",
+          fields[17] == "-4200", fields[17])
+
+
+def test_v6_record_size_mismatch(tmpdir):
+    """A v6 header claiming the v5 record_size (76, self-inconsistent with
+    version=6) is a hard error, mirroring (o)/test_v4_record_size_mismatch
+    for v4."""
+    data = bytearray(pack_header_v6())
+    data[5] = RECORD_SIZE_V5  # corrupt record_size byte: 92 -> 76
+    data = bytes(data) + pack_trailer(records_written=0, dropped=0,
+                                       close_reason=1,
+                                       record_size=RECORD_SIZE_V6)
+
+    path = write_blg(tmpdir, "v6_badsize.BLG", data)
+    rc, out, err = run_decoder(path)
+    check("v6 bad record_size: decoder exits nonzero", rc != 0, f"rc={rc}")
+    check("v6 bad record_size: error names both values",
+          "unexpected record_size 76" in err and "expected 92" in err, err)
+
+
+def test_v5_regression(tmpdir):
+    """(s) Regression: v5 header + 22-column CSV decode is byte-for-byte
+    unchanged after adding v6 support -- same header path, same
+    RECORD_FMT_V5/RECORD_SIZE_V5/CSV_HEADER_V5 as before v6 existed."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    n = 25
+    data = pack_header_v5(profile_type=4, fw_version=11, param_flags=0x03,
+                           profile_amp=1.5, profile_b=0.20)
+    for i in range(n):
+        data += pack_record_v5(t_us=i * 1000, v_fc=12.5, v_batt=8.1,
+                                u_unsat=5.0, drive_x0=0.1)
+    data += pack_trailer(records_written=n, dropped=0, close_reason=1,
+                          record_size=RECORD_SIZE_V5)
+
+    res = db.decode_blg(data)
+    check("v5 regression: version=5", res.header["version"] == 5,
+          repr(res.header))
+    check("v5 regression: record_size=76", res.header["record_size"] == 76,
+          repr(res.header))
+    check("v5 regression: csv_header is the 22-column v5 header",
+          res.csv_header == CSV_HEADER_V5, res.csv_header)
+    check("v5 regression: emits all records", len(res.csv_rows) == n,
+          f"csv data rows={len(res.csv_rows)}, expected {n}")
+    check("v5 regression: row has 22 fields (no v6 columns leaked in)",
+          len(res.csv_rows[0].split(",")) == 22,
+          repr(res.csv_rows[0].split(",")))
+
+    path = write_blg(tmpdir, "v5_regress.BLG", data)
+    rc, out, err = run_decoder(path)
+    check("v5 regression CLI: exits 0", rc == 0, f"rc={rc} stderr={err}")
+    check("v5 regression CLI: version=5 reported", "version=5" in err, err)
+
+
+def test_v5_real_log_regression(tmpdir):
+    """(t) logs/ML0146.BLG (a real checked-in fw v14 capture) decodes to
+    CSV content byte-for-byte identical to the committed
+    logs/ML0146/ML0146.csv. Unlike test_v5_regression (s), which packs and
+    decodes synthetic vectors built from this SAME test file's assumptions
+    about the v5 layout, this exercises the actual firmware-written bytes
+    against the actual previously-committed decoder output -- a v6-round
+    regression that flips a v5 field order or column position would be
+    caught here even if it happened to keep (s) self-consistent.
+
+    SKIPPED (not FAILED) if either file is absent -- the tooling must not
+    require logs/ to exist, e.g. in a sparse checkout."""
+    blg_path = REPO_ROOT / "logs" / "ML0146.BLG"
+    csv_path = REPO_ROOT / "logs" / "ML0146" / "ML0146.csv"
+    if not blg_path.is_file():
+        skip("v5 real-log regression", f"{blg_path} not present (sparse checkout?)")
+        return
+    if not csv_path.is_file():
+        skip("v5 real-log regression", f"{csv_path} not present (sparse checkout?)")
+        return
+
+    rc, out, err = run_decoder(blg_path)
+    check("v5 real-log regression: decoder exits 0", rc == 0,
+          f"rc={rc} stderr={err}")
+
+    with open(csv_path, "r", newline="") as f:
+        expected_csv = f.read()
+
+    check("v5 real-log regression: CSV content byte-for-byte identical "
+          "to logs/ML0146/ML0146.csv",
+          out == expected_csv,
+          f"produced {len(out)} bytes, expected {len(expected_csv)} bytes "
+          f"(first mismatch context omitted -- compare files directly)")
+    check("v5 real-log regression: header line is the 22-column v5 header",
+          out.splitlines()[0] == CSV_HEADER_V5 if out else False,
+          out.splitlines()[0] if out else "<empty>")
+
+
 def main():
     if not DECODER.exists():
         print(f"FAIL: decoder not found at {DECODER}")
@@ -618,9 +899,15 @@ def main():
         test_v4_record_decode_matches_v3(tmpdir)
         test_v4_record_size_mismatch(tmpdir)
         test_v1v2_regression(tmpdir)
+        test_v6_header_and_record(tmpdir)
+        test_v6_negative_encoder_pos(tmpdir)
+        test_v6_record_size_mismatch(tmpdir)
+        test_v5_regression(tmpdir)
+        test_v5_real_log_regression(tmpdir)
 
     total = _passed + _failed
-    print(f"\n{_passed}/{total} passed")
+    print(f"\n{_passed}/{total} passed" +
+          (f" ({_skipped} skipped)" if _skipped else ""))
     sys.exit(0 if _failed == 0 else 1)
 
 

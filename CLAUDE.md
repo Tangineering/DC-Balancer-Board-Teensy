@@ -1024,3 +1024,60 @@ bus input power genuinely changed, which pure re-scaling does not explain. **fw 
   Schmitt (74HC14 at 3.3 V), VESC reversal dead-window characterization, 'Y' with a real
   bus load. On the first v15 'V' runs, watch encMultiPitchCount in the 'S' dump — a
   nonzero rate quantifies the real missed-edge frequency for the first time.
+
+---
+
+## Status & session addendum (2026-08-17, fw v16: BLG record format v6 — encoder diagnostics)
+
+Follow-on to fw v15, operator-requested: the SD log gains the encoder ground truth and the
+estimator's filter state, so scale errors, basin poisoning and miss/spurious rates are
+readable offline — the fw v15 diagnosis took a bench session precisely because the log
+carried only v_act. **fw v16 (pending first flash; the first flash carries v10-v16);**
+ledger row 16 has full detail.
+
+- **BLG RECORD FORMAT v6 (92 B, hdr[4] = 6).** Four fields APPENDED (all v1-v5 offsets
+  unchanged): `encoder_pos` int32 at 76 (raw x2 quadrature count — differencing it gives an
+  estimator-free truth velocity, count x pitch/2), `enc_period_ref_us` uint32 at 80 (the
+  EWMA reference — a LEVEL, read directly, never differenced; parked at ~2T or ~T/2 IS the
+  poison signature), `enc_multi_pitch_count` uint32 at 84, `enc_spurious_drop_count`
+  uint32 at 88 (NEW ISR counter: one increment per dropped interval across all three drop
+  paths — raw floor, 0.625 gate, per-pitch floor). The two counters are CUMULATIVE —
+  decoders diff for a rate, and a NEGATIVE diff means encoderVelReset() cleared them
+  mid-run (stale timeout / reading-age bound / between-run reset), not wrap. Sampled in
+  logSampleTick()'s common section as plain volatile 32-bit reads (atomic on Cortex-M7, no
+  IRQ masking; the four values are not snapshotted as a set — one-edge skew is irrelevant
+  to trajectory-level consumption). Ring 92 KB DMAMEM, 5 rec/chunk (460 B), 5.0x catch-up,
+  ~6.1 min preallocation. offsetof static_asserts pin every tail offset; a new
+  static_assert pins LOG_REC_SIZE <= 255 (the one-byte hdr[5]). No UDP/command/sequencing/
+  controller change; 'S' dump gains `spurDrop=`.
+- **Tooling in lockstep (parallel implementer):** decode_benchlog.py parses v6 (26-column
+  CSV; v1-v5 byte-identical — now pinned by a REAL-LOG regression test that decodes
+  logs/ML0146.BLG against the committed CSV, skipping cleanly if absent); new
+  `encoder_diagnostics` figure (scale-audit overlay of the encoder_pos-derived truth
+  velocity vs v_act with >20 % deviation shading; implied speed pitch/ref vs v_act;
+  per-second counter rates with negative-diff-as-NaN); make_test_blg.py --v6 (synthetic
+  encoder_pos integrated from v_act, so the figure self-validates); analyzer exe rebuilt.
+  108/108 Python tests pass.
+- **Review round (three-lens: safety, correctness, data-integrity): no firmware HIGH/MED.**
+  Accepted: F1 (MED, tooling — the real-log v5 regression was verified manually but not
+  encoded as a test; now it is), the hdr[5] <= 255 static_assert, the prealloc arithmetic
+  (5.8 -> 6.1 min), the decoder-contract wording (only the last TWO fields are counters —
+  enc_period_ref_us is a level; the original "last three are cumulative" would have
+  invited a meaningless differencing), and an int -> int32_t field-width note. Rejected: a
+  literal hdr[5] pin (covered transitively). The safety lens confirmed the two shared-site
+  drop paths are mutually exclusive by control flow (the 0.625 gate only evaluates when
+  the raw floor passed) and that the dpos == 0 branch is an accept, not a drop —
+  correctly uncounted.
+- **Tests: 2945 production + 175 bench pass** (rebuilt from source). New coverage: v6
+  offsets/sizeof/golden record incl. negative encoder_pos sign preservation, hdr bytes,
+  logSampleTick() plumbing driven end-to-end, the spurious-drop counter driven through the
+  real ISR (each drop path +1, accepted intervals +0, exactly-once on the shared site,
+  reset clear), counter reset-visibility (the negative-diff contract), and the
+  5-records/chunk ring re-derivation.
+- **Next bench:** flash (v10-v16); the first 'V' runs now log the miss/spurious rates
+  BEFORE the Schmitt lands — keep one pre-Schmitt run as the "before" baseline, then the
+  same fields quantify exactly what the Schmitt fixed. The encoder_diagnostics figure's
+  scale-audit panel is the standing tripwire for any future 2x-family event: encoder_pos
+  is ground truth, so a v_act scale error can no longer hide. Bench order otherwise
+  unchanged: Schmitt -> VESC reversal dead-window characterization -> 'Y' with a real bus
+  load. `.venv_benchlog` still lacks pandas.

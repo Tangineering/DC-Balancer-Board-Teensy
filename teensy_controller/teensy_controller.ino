@@ -770,8 +770,47 @@
  *      cross-check that would have caught it is the very mechanism whose ambiguity created the
  *      basins, so it is deliberately not reinstated. The 0.04–0.30 m/s band and the underlying
  *      un-Schmitted OPB829DZ edge corruption still belong to the planned 74HC14 hardware fix.
+ *  - fw v16 (2026-08-17) — BLG RECORD FORMAT v6: encoder / velocity-estimator diagnostics in the
+ *      bench log. WHY: the fw v15 reference-poison basin cost a bench session to diagnose because
+ *      the log carried v_act and nothing behind it — neither the raw position that would have shown
+ *      the exact 2x scale error, nor the EWMA reference that was holding the basin. Four fields are
+ *      APPENDED at the END of the record — offsets 76–79 encoder_pos (int32, encoderPos at sample
+ *      time), 80–83 enc_period_ref_us (uint32, encPeriodRefUs), 84–87 enc_multi_pitch_count
+ *      (uint32, the fw v15 missed-edge counter), 88–91 enc_spurious_drop_count (uint32, NEW) — so
+ *      EVERY v1–v5 field keeps its offset and the record grows 76 -> 92 B. Only hdr[4] (6) and
+ *      hdr[5] (the record size, which decoders already read from the header) change; header layout,
+ *      trailer format, the flags bits, the UDP telemetry (v4, 58 B) and every command are UNCHANGED.
+ *        * encoder_pos is estimator-FREE ground truth: differencing it across a decoded run gives a
+ *          velocity that owes nothing to the ISR filter, so a scale error, a poisoned reference and
+ *          a genuine speed change become three distinguishable signatures offline instead of one
+ *          ambiguous v_act trace. This is the fw v8 observability lesson applied to the estimator.
+ *        * DECODER CONTRACT — the three uint32 fields are NOT all the same kind of quantity. The
+ *          last TWO (enc_multi_pitch_count, enc_spurious_drop_count) are CUMULATIVE counters:
+ *          diff consecutive samples to get a rate, and read a NEGATIVE diff as an
+ *          encoderVelReset() (which clears both, so they share one epoch and a reset appears as a
+ *          step to zero, not as data loss). uint32 wrap is unhandled and accepted at bench
+ *          timescales. enc_period_ref_us is NOT a counter — it is the estimator's EWMA STATE, a
+ *          LEVEL in microseconds; read it directly. Differencing it is meaningless.
+ *        * NEW COUNTER encSpuriousDropCount: one increment per interval DROPPED by any of the three
+ *          drop paths in doEncoderA()'s velocity tap (the absolute ENC_PERIOD_MIN_US floor, the
+ *          adaptive 0.625 x ref low-side gate, and the fw v15 per-pitch floor after the pitch
+ *          division). It is the SPURIOUS-edge rate, complementing enc_multi_pitch_count's MISSED-
+ *          edge rate; together they bound the optical front end's edge integrity directly, which
+ *          makes the pending 74HC14 Schmitt bodge measurable rather than merely plausible. ISR cost
+ *          is one compare plus, on the rare drop path, one increment. Also printed by the State-98
+ *          'S' dump next to ref/lastPitches/multiPitch.
+ *        * Ring math re-checked at 92 B/ms: 1024 records = 94208 B (92 KB, still DMAMEM/RAM2, which
+ *          has the headroom) covering 1.024 s; the drain floors a 512 B chunk to 5 records = 460 B,
+ *          i.e. 460 B/ms drained against 92 B/ms filled (5.0x catch-up, was 6.0x), and the 32 MB
+ *          preallocation covers ~6.1 min (was ~7.4). No buffer constant needed to grow. The trailer
+ *          block is record-sized and parameterized, so it follows automatically.
+ *        * No estimator, control-law, coefficient, pin, sequencing or fault change — the reads are
+ *          plain volatile 32-bit loads in the sampling path, taking no IRQ mask beyond what already
+ *          exists, and nothing in the control path reads the new counter. v_act traces stay
+ *          comparable with fw v12–v15.
  */
 
+#include <stddef.h>             // offsetof — pins the append-only BenchLogRecord field offsets
 #include <VescUart.h>
 #include <SPI.h>
 #include <Wire.h>
@@ -1848,6 +1887,16 @@ volatile uint8_t  encPeriodRefSeed = 0;
 volatile uint8_t  encLastPitches     = 0;
 volatile uint32_t encMultiPitchCount = 0;
 
+// Spurious-edge diagnostic (fw v16). DIAGNOSTIC ONLY — nothing in the control path reads it.
+// Counts DROPPED intervals, one increment per dropped interval, on each of the three drop paths in
+// doEncoderA()'s velocity tap: the raw ENC_PERIOD_MIN_US floor, the adaptive 0.625 x ref low-side
+// gate, and the fw v15 per-pitch floor after the pitch division. encMultiPitchCount is the
+// complementary MISSED-edge rate; together they bound the optical front end's edge integrity, which
+// is exactly what the pending Schmitt bodge is meant to fix. Logged per BLG v6 record as a
+// CUMULATIVE count — decoders diff it. uint32 wrap is unhandled and acceptable at bench timescales
+// (a sustained 10 kHz drop rate would take ~5 days to wrap).
+volatile uint32_t encSpuriousDropCount = 0;
+
 // RETIRED IN fw v15: the poisoned-reference tripwire (encKBranchRun / encRefPoisonPending,
 // ENC_KBRANCH_RUN_MAX). It counted consecutive accepted periods taking the ratio-derived k > 1
 // branch and forced an encoderVelReset() at 4. That branch no longer exists — the pitch count is
@@ -1909,7 +1958,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 15
+#define FW_VERSION 16
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -2496,7 +2545,7 @@ void parseKLogLine(const char *line);
 // Ag105 I2C), for the duration of a State-98 profile run.
 //
 // NON-BLOCKING DISCIPLINE (five dead boosts say the main loop may never stall):
-//   - The control path only ever memcpy()s 76 bytes into a static ring (logSampleTick()). No I/O,
+//   - The control path only ever memcpy()s 92 bytes into a static ring (logSampleTick()). No I/O,
 //     no formatting, no allocation, no blocking, ever.
 //   - All card I/O happens in logDrainTick(), called from loop(): it bails immediately when the
 //     card is busy and writes at most ONE <=512 B chunk per loop tick. This is the SD analogue of
@@ -2512,17 +2561,19 @@ void parseKLogLine(const char *line);
 //     tearing down (state99Phase == 3) — never between its sequencing phases.
 //
 // Retrieval is by card pull; tools/decode_benchlog.py turns a .BLG into CSV.
-#define LOG_REC_SIZE        76u                 // bytes per record (format v5) — static_assert'ed
+#define LOG_REC_SIZE        92u                 // bytes per record (format v6) — static_assert'ed
 #define LOG_RING_RECORDS    1024u               // ~1.0 s of 1 kHz coverage; covers a ~250 ms card
-                                                // stall with 4x margin (76 KB of the Teensy's 1 MB —
-                                                // 77824 B, up from 68 KB at record format v3)
+                                                // stall with 4x margin (92 KB of the Teensy's 1 MB —
+                                                // 94208 B, up from 76 KB at record format v5; still
+                                                // DMAMEM/RAM2, which has room)
 #define LOG_RING_BYTES      (LOG_REC_SIZE * LOG_RING_RECORDS)
-#define LOG_CHUNK_MAX       512u                // one SD block per loop tick: >=456 B/ms drained
-                                                // against a 76 B/ms fill (6.0x), so catch-up is
+#define LOG_CHUNK_MAX       512u                // one SD block per loop tick: >=460 B/ms drained
+                                                // against a 92 B/ms fill (5.0x), so catch-up is
                                                 // still fast. Chunks are floored to whole records
-                                                // below (6 x 76 = 456 B), so the drain accounting
+                                                // below (5 x 92 = 460 B), so the drain accounting
                                                 // stays exact
-#define LOG_PREALLOC_BYTES  (32u * 1024u * 1024u)  // ~7.4 min at 76 KB/s; truncate()d at close.
+#define LOG_PREALLOC_BYTES  (32u * 1024u * 1024u)  // ~6.1 min at 92 KB/s (33554432 / 92000 = 365 s);
+                                                // truncate()d at close.
                                                 // Contiguous allocation keeps per-chunk latency in
                                                 // the tens of us (no FAT-chain seeks mid-run)
 #define LOG_CLOSE_DEADLINE_MS 2000u             // give up draining a wedged card and close anyway
@@ -2609,13 +2660,48 @@ struct __attribute__((packed)) BenchLogRecord {
     float    drive_x0;     // Youla build: driveCtrl_x[0], the EXACT-integrator state (AD[0][0] ==
                            //     1.0), the state that windup would show up in. PI build:
                            //     pi_motor_accum, the analogous integrator. Also bit4-disambiguated.
+    // Format v6 (fw v16, 2026-08-17): encoder / velocity-estimator diagnostics, APPENDED at the
+    // end so every v1–v5 field offset is unchanged. WHY: the fw v15 reference-poison basin took a
+    // bench session to diagnose because the log carried only v_act — the raw position and the
+    // filter state that produced it were invisible offline. These four make a scale error, a
+    // poisoned reference and the miss/spurious rate directly readable from a decoded run, before
+    // and after the planned Schmitt front-end fix.
+    // DECODER CONTRACT — the three uint32 fields are NOT the same kind of quantity. The last TWO
+    // are CUMULATIVE counters: diff consecutive samples for a rate, and read a NEGATIVE diff as an
+    // encoderVelReset() (which clears both). uint32 wrap is not handled and is acceptable at bench
+    // timescales. enc_period_ref_us is NOT a counter — it is the estimator's EWMA STATE, a LEVEL in
+    // microseconds; read it directly, never differenced.
+    int32_t  encoder_pos;              // encoderPos at sample time (raw ×2 quadrature count) —
+                                       //   ground truth for v_act; differencing it gives an
+                                       //   independent, estimator-free velocity
+    uint32_t enc_period_ref_us;        // encPeriodRefUs — the EWMA per-pitch reference the ISR's
+                                       //   0.625x low-side gate is built from. A reference stuck
+                                       //   at ~2T or ~T/2 IS the poison signature
+    uint32_t enc_multi_pitch_count;    // encMultiPitchCount (fw v15) — accepted intervals spanning
+                                       //   more than one pitch, i.e. the MISSED-edge rate
+    uint32_t enc_spurious_drop_count;  // encSpuriousDropCount (fw v16) — intervals DROPPED by the
+                                       //   absolute floor, the 0.625x gate, or the per-pitch floor,
+                                       //   i.e. the SPURIOUS-edge rate. Together with the line
+                                       //   above it bounds the front end's edge integrity
 };
-static_assert(sizeof(BenchLogRecord) == LOG_REC_SIZE, "BenchLogRecord must stay 76 bytes (format v5)");
+static_assert(sizeof(BenchLogRecord) == LOG_REC_SIZE, "BenchLogRecord must stay 92 bytes (format v6)");
+// The header's record-size field is ONE byte (hdr[5] = (uint8_t)LOG_REC_SIZE). Past 255 that cast
+// truncates SILENTLY and every decoder — which reads the record stride from the header rather than
+// assuming it — would misparse the whole file instead of failing loudly. Caught at compile time.
+static_assert(LOG_REC_SIZE <= 255u, "LOG_REC_SIZE must fit in the one-byte hdr[5] record-size field");
+// Append-only guarantee: every v1–v5 field keeps its byte offset. Pinned here so a reordering
+// edit fails the build rather than silently desynchronising every existing decoder.
+static_assert(offsetof(BenchLogRecord, u_unsat)                 == 68, "v5 offset moved");
+static_assert(offsetof(BenchLogRecord, drive_x0)                == 72, "v5 offset moved");
+static_assert(offsetof(BenchLogRecord, encoder_pos)             == 76, "v6 layout");
+static_assert(offsetof(BenchLogRecord, enc_period_ref_us)       == 80, "v6 layout");
+static_assert(offsetof(BenchLogRecord, enc_multi_pitch_count)   == 84, "v6 layout");
+static_assert(offsetof(BenchLogRecord, enc_spurious_drop_count) == 88, "v6 layout");
 
 #define LOG_PHASE_NONE 0xFFu   // "this profile was not running for this sample"
 
 // ── Logger module state ───────────────────────────────────────────────────────
-// DMAMEM puts the 76 KB ring in RAM2/OCRAM instead of RAM1/DTCM, which is the tight, fast memory
+// DMAMEM puts the 92 KB ring in RAM2/OCRAM instead of RAM1/DTCM, which is the tight, fast memory
 // the control code and stack want. The ring is touched once per ms by a memcpy and once per loop
 // tick by the drain — it does not need DTCM latency. (Host g++ has no such attribute.)
 #ifndef DMAMEM
@@ -2878,15 +2964,16 @@ void logOpenForProfile(uint8_t typeMask) {
     uint8_t hdr[32];
     memset(hdr, 0, sizeof(hdr));
     hdr[0] = 'B'; hdr[1] = 'L'; hdr[2] = 'G'; hdr[3] = '1';
-    hdr[4] = 5;                       // format version (v2 added fw_version at offset 18; v3 added
+    hdr[4] = 6;                       // format version (v2 added fw_version at offset 18; v3 added
                                       // V_fc/V_batt/V_chg/V_rgn to the record → 68 B; v4 added the
                                       // committed per-run profile parameters below, with the RECORD
                                       // unchanged from v3; v5 (fw v11) APPENDS u_unsat and
-                                      // drive_x0 to the record → 76 B and defines flags bit4/bit5.
-                                      // HEADER LAYOUT IS UNCHANGED from v4 — only hdr[4] and
-                                      // hdr[5] (the record size, which is already read from the
-                                      // header) differ, and every v1–v4 record field keeps its
-                                      // offset, so a v4 decoder needs only the two tail fields.)
+                                      // drive_x0 to the record → 76 B and defines flags bit4/bit5;
+                                      // v6 (fw v16) APPENDS the four encoder/estimator diagnostics
+                                      // → 92 B. HEADER LAYOUT IS UNCHANGED from v4 — only hdr[4]
+                                      // and hdr[5] (the record size, which is already read from
+                                      // the header) differ, and every v1–v5 record field keeps its
+                                      // offset, so a v5 decoder needs only the four tail fields.)
     hdr[5] = (uint8_t)LOG_REC_SIZE;
     hdr[6] = typeMask;
 
@@ -2963,7 +3050,7 @@ void logRequestClose(uint8_t reason) {
 }
 
 // One sample into the ring. Called from the State-98 tick spine. Cost is a rate-limit check plus a
-// 76-byte memcpy — deliberately the only logger code that runs in the control path.
+// 92-byte memcpy — deliberately the only logger code that runs in the control path.
 void logSampleTick() {
     if (!logActive) return;
     if (!rateLimitDue(rl_log_last, POWER_BAL_PERIOD_US)) return;
@@ -3042,6 +3129,19 @@ void logSampleTick() {
     r.u_unsat  = targetMotorTorque / motorConstant;
     r.drive_x0 = pi_motor_accum;
 #endif
+
+    // Format v6 (fw v16): encoder / estimator diagnostics. COMMON to both build paths — these
+    // describe the sensor, not the control law. Plain volatile reads: each is a single aligned
+    // 32-bit load, atomic on the Cortex-M7, so no IRQ masking is taken in the sampling path
+    // (the 'S' dump masks only because it reads several values that must agree with each other;
+    // here a one-tick skew between independent diagnostics is harmless).
+    // encoderPos is declared `volatile int`; the record field is int32_t DELIBERATELY — the wire
+    // FORMAT pins the width at 4 bytes independently of the global's declared type, so the
+    // decoder's byte contract cannot be broken by a future change to the encoder variable.
+    r.encoder_pos             = encoderPos;
+    r.enc_period_ref_us       = encPeriodRefUs;
+    r.enc_multi_pitch_count   = encMultiPitchCount;
+    r.enc_spurious_drop_count = encSpuriousDropCount;
 
     memcpy(&logRing[logRingHead], &r, LOG_REC_SIZE);
     logRingHead = (logRingHead + LOG_REC_SIZE) % LOG_RING_BYTES;
@@ -6597,6 +6697,7 @@ void printTestStatus() {
     uint32_t perRef  = encPeriodRefUs;
     uint8_t  perPit  = encLastPitches;
     uint32_t perMul  = encMultiPitchCount;
+    uint32_t perDrop = encSpuriousDropCount;   // fw v16
     interrupts();
     Serial.print("periods=");     Serial.print(perCnt);
     Serial.print("/");            Serial.print((int)ENC_PERIOD_AVG_N);
@@ -6608,7 +6709,10 @@ void printTestStatus() {
     // being lost or rejected; ref is the EWMA the low-side gate is built from. Diagnostic only.
     Serial.print("ref=");         Serial.print(perRef);
     Serial.print("us  lastPitches="); Serial.print((int)perPit);
-    Serial.print("  multiPitch=");    Serial.println(perMul);
+    Serial.print("  multiPitch=");    Serial.print(perMul);
+    // fw v16: dropped intervals (spurious-edge rate). multiPitch counts MISSED edges, spurDrop
+    // counts SPURIOUS ones — both cumulative since the last encoderVelReset().
+    Serial.print("  spurDrop=");      Serial.println(perDrop);
     Serial.print("v_actual=");    Serial.print(v_actual, 3);
     Serial.print(" m/s  (counts/rev="); Serial.print(ENCODER_COUNTS_PER_REV, 0);
     Serial.print(", r=");               Serial.print(FLYWHEEL_RADIUS_M, 4);
@@ -8252,6 +8356,8 @@ void encoderVelReset() {
     encPeriodRefSeed    = 0;    //         ENC_PERIOD_REF_SEED_N accepted periods
     encLastPitches      = 0;    // fw v15 diagnostics (no control path reads these)
     encMultiPitchCount  = 0;
+    encSpuriousDropCount = 0;   // fw v16 diagnostic — cleared with its fw v15 siblings so both
+                                // counters share one epoch and a decoder can diff them together
     // fw v15: no tripwire state to clear — the pitch count is stateless (see the retirement note
     // at the encPeriodRefUs declarations). The pitch count itself carries no state across edges:
     // it is derived from encPosAtLastEdge, which this reset already re-anchors above.
@@ -8503,6 +8609,13 @@ void doEncoderA() {
                 // an accepted interval spans is now COUNTED from the decoder (below), not inferred
                 // from the reference. See the fw v15 block above ENC_PERIOD_REF_SEED_N.
             }
+            // fw v16 diagnostic: one increment per interval dropped by EITHER pre-division path
+            // (the absolute ENC_PERIOD_MIN_US floor, or the 0.625 x ref low-side gate). The two are
+            // mutually exclusive by construction — the gate is only evaluated when the floor passed
+            // — so a single site here counts each dropped interval exactly once, at the cost of one
+            // compare and (rarely) one increment in the ISR. The third drop path, the per-pitch
+            // floor, increments at its own branch below.
+            if (spurious) encSpuriousDropCount++;
             if (!spurious) {
                 // ── Pitch count from the decoder's own position delta (fw v15) ────────────
                 // The ×2 quadrature decode moves encoderPos by exactly 2 per full slot pitch, and
@@ -8555,6 +8668,7 @@ void doEncoderA() {
                 // many pitches the interval claims.
                 if (period < ENC_PERIOD_MIN_US) {
                     // Dropped — fall through to the same no-base-advance handling as `spurious`.
+                    encSpuriousDropCount++;   // fw v16: third drop path, counted like the other two
                 } else {
                     encLastPitches = (uint8_t)((pitches > 255u) ? 255u : pitches); // diagnostic only
                     if (pitches > 1) encMultiPitchCount++;                         // diagnostic only

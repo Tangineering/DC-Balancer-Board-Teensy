@@ -9227,6 +9227,12 @@ static void test_trap_vescwatch_suppressed() {
 // unchanged.
 #define REC_OFF_U_UNSAT    68
 #define REC_OFF_DRIVE_X0   72
+// Format v6 (fw v16, BLG record 92 B): four encoder/estimator diagnostics appended after
+// drive_x0, so every offset above (including 68/72) is unchanged.
+#define REC_OFF_ENCODER_POS         76
+#define REC_OFF_ENC_PERIOD_REF_US   80
+#define REC_OFF_ENC_MULTI_PITCH     84
+#define REC_OFF_ENC_SPUR_DROP       88
 
 #define LOG_HDR_SIZE 32u
 
@@ -9351,12 +9357,12 @@ static void test_sdlog_lifecycle_natural_completion() {
     if (f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE) {
         check(f->compare(0, 4, "BLG1") == 0,
               "SD lifecycle: the header opens with the 'BLG1' magic");
-        check((uint8_t)(*f)[4] == 5,
-              "SD lifecycle: the header declares format version 5 (fw v11; record grew to 76B "
-              "with the appended u_unsat/drive_x0 fields — the profile-parameter block is "
+        check((uint8_t)(*f)[4] == 6,
+              "SD lifecycle: the header declares format version 6 (fw v16; record grew to 92B "
+              "with the appended encoder/estimator diagnostics — the profile-parameter block is "
               "unchanged from v4)");
         check((uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE,
-              "SD lifecycle: the header declares a 76-byte record size");
+              "SD lifecycle: the header declares a 92-byte record size");
         check((uint8_t)(*f)[6] == LOG_TYPE_TP,
               "SD lifecycle: the header profile bitmask is LOG_TYPE_TP for a 'T' run");
         check(sd_le<uint16_t>(*f, 18) == (uint16_t)FW_VERSION,
@@ -9595,9 +9601,9 @@ static void test_sdlog_overflow_drop_count() {
     }
 }
 
-// ─── 6. Golden record schema: byte-exact field layout (format v5, fw v11) ────
+// ─── 6. Golden record schema: byte-exact field layout (format v6, fw v16) ────
 static void test_sdlog_record_schema() {
-    test_group("SD log: one record's 76 bytes match the documented v5 field layout exactly");
+    test_group("SD log: one record's 92 bytes match the documented v6 field layout exactly");
     reset_test_state();
 
     // Open directly (not via a profile key) so the sample below is taken from values this test
@@ -9628,6 +9634,12 @@ static void test_sdlog_record_schema() {
     driveCycleActive          = false;
     trapProfileActive         = false;
     velocityChainCalibratedFlag = true;
+    // Format v6 (fw v16): distinctive encoder/estimator diagnostic values, including a NEGATIVE
+    // encoder_pos so the golden-record memcmp also proves the int32 sign survives the byte layout.
+    encoderPos             = -12345;
+    encPeriodRefUs          = 4321u;
+    encMultiPitchCount      = 7u;
+    encSpuriousDropCount    = 9u;
 
     g_mock_micros = 123456;
     logSampleTick();
@@ -9637,13 +9649,13 @@ static void test_sdlog_record_schema() {
 
     const std::string* f = sd_file("PS0001.BLG");
     check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE,
-          "SD schema: the card holds the 32-byte header followed by one 76-byte record");
+          "SD schema: the card holds the 32-byte header followed by one 92-byte record");
     if (f == nullptr || f->size() < LOG_HDR_SIZE + LOG_REC_SIZE) return;
 
     // ── Header ──────────────────────────────────────────────────────────────
-    check(f->compare(0, 4, "BLG1") == 0 && (uint8_t)(*f)[4] == 5 &&
+    check(f->compare(0, 4, "BLG1") == 0 && (uint8_t)(*f)[4] == 6 &&
           (uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE && (uint8_t)(*f)[6] == LOG_TYPE_PS,
-          "SD schema: the header carries magic, version 5, record size 76 and the PS type bit");
+          "SD schema: the header carries magic, version 6, record size 92 and the PS type bit");
     check(sd_le<uint32_t>(*f, 8) == 5000u && sd_le<uint32_t>(*f, 12) == 50000u,
           "SD schema: the header timebase is the millis()/micros() pair at open");
     check(sd_le<uint16_t>(*f, 16) == (uint16_t)(K_DROOP * 1000.0f + 0.5f),
@@ -9660,7 +9672,7 @@ static void test_sdlog_record_schema() {
     check((uint8_t)(*f)[7] == 0x00,
           "SD schema: v4 header paramFlags is 0x00 for a PS run (no amp/b parameter)");
 
-    // ── Record: build the expected LOG_REC_SIZE (76, v5) bytes independently, then memcmp ──
+    // ── Record: build the expected LOG_REC_SIZE (92, v6) bytes independently, then memcmp ──
     uint8_t exp[LOG_REC_SIZE];
     memset(exp, 0, sizeof(exp));
     uint32_t t_us = 123456u;    memcpy(exp + REC_OFF_T_US,      &t_us, 4);
@@ -9693,9 +9705,15 @@ static void test_sdlog_record_schema() {
     // still exactly zero.
     fv = 0.0f;    memcpy(exp + REC_OFF_U_UNSAT,  &fv, 4);
     fv = 0.0f;    memcpy(exp + REC_OFF_DRIVE_X0, &fv, 4);
+    // Format v6 tail (fw v16): encoder/estimator diagnostics, appended after drive_x0. Distinctive
+    // values set above, including a NEGATIVE encoder_pos to prove int32 sign survives the layout.
+    int32_t  ep  = -12345;  memcpy(exp + REC_OFF_ENCODER_POS,       &ep,  4);
+    uint32_t pr  = 4321u;   memcpy(exp + REC_OFF_ENC_PERIOD_REF_US, &pr,  4);
+    uint32_t mp  = 7u;      memcpy(exp + REC_OFF_ENC_MULTI_PITCH,   &mp,  4);
+    uint32_t sd_ = 9u;      memcpy(exp + REC_OFF_ENC_SPUR_DROP,     &sd_, 4);
 
     check(memcmp(f->data() + LOG_HDR_SIZE, exp, LOG_REC_SIZE) == 0,
-          "SD schema: the written record is byte-identical to the expected 76-byte v5 layout");
+          "SD schema: the written record is byte-identical to the expected 92-byte v6 layout");
 
     // Field-level checks so a failure above localises instead of just saying "bytes differ".
     check(sd_le<uint32_t>(*f, LOG_HDR_SIZE + REC_OFF_T_US) == 123456u,
@@ -9719,6 +9737,14 @@ static void test_sdlog_record_schema() {
           "SD schema: the three phase bytes are independent, 0xFF for the inactive profiles");
     check((uint8_t)(*f)[LOG_HDR_SIZE + 66] == 0 && (uint8_t)(*f)[LOG_HDR_SIZE + 67] == 0,
           "SD schema: the two pad bytes (now at 66-67) are zero-filled");
+    check(sd_le<int32_t>(*f, LOG_HDR_SIZE + REC_OFF_ENCODER_POS) == -12345,
+          "SD schema (v6): encoder_pos at offset 76 is byte-identical to encoderPos, sign included");
+    check(sd_le<uint32_t>(*f, LOG_HDR_SIZE + REC_OFF_ENC_PERIOD_REF_US) == 4321u,
+          "SD schema (v6): enc_period_ref_us at offset 80 is byte-identical to encPeriodRefUs");
+    check(sd_le<uint32_t>(*f, LOG_HDR_SIZE + REC_OFF_ENC_MULTI_PITCH) == 7u,
+          "SD schema (v6): enc_multi_pitch_count at offset 84 is byte-identical to encMultiPitchCount");
+    check(sd_le<uint32_t>(*f, LOG_HDR_SIZE + REC_OFF_ENC_SPUR_DROP) == 9u,
+          "SD schema (v6): enc_spurious_drop_count at offset 88 is byte-identical to encSpuriousDropCount");
 }
 
 // ─── 6a-v4. BLG header v4: the profile-parameter block (fw v6, 2026-08-12) ──────────────────
@@ -9740,7 +9766,7 @@ static void test_sdlog_header_v4_profile_params() {
         const std::string* f = sd_file("WP0001.BLG");
         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/W: the header was written");
         if (f) {
-            check((uint8_t)(*f)[4] == 5, "v4 hdr/W: format version 5 (fw v11 BLG bump)");
+            check((uint8_t)(*f)[4] == 6, "v4 hdr/W: format version 6 (fw v16 BLG bump)");
             check((uint8_t)(*f)[7] == 0x03, "v4 hdr/W: paramFlags == 0x03 (amp AND b valid)");
             check(fabsf(sd_le<float>(*f, 20) - 7.5f) < 1e-6f,
                   "v4 hdr/W: amp field == the committed wProfileImax (7.5 A)");
@@ -9758,7 +9784,7 @@ static void test_sdlog_header_v4_profile_params() {
         const std::string* f = sd_file("YP0001.BLG");
         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/Y: the header was written");
         if (f) {
-            check((uint8_t)(*f)[4] == 5, "v4 hdr/Y: format version 5 (fw v11 BLG bump)");
+            check((uint8_t)(*f)[4] == 6, "v4 hdr/Y: format version 6 (fw v16 BLG bump)");
             check((uint8_t)(*f)[7] == 0x03, "v4 hdr/Y: paramFlags == 0x03 (amp AND b valid)");
             check(fabsf(sd_le<float>(*f, 20) - 3.25f) < 1e-6f,
                   "v4 hdr/Y: amp field == the committed yProfileVmax (3.25 m/s)");
@@ -9775,7 +9801,7 @@ static void test_sdlog_header_v4_profile_params() {
         const std::string* f = sd_file("TP0001.BLG");
         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/T: the header was written");
         if (f) {
-            check((uint8_t)(*f)[4] == 5, "v4 hdr/T: format version 5 (fw v11 BLG bump)");
+            check((uint8_t)(*f)[4] == 6, "v4 hdr/T: format version 6 (fw v16 BLG bump)");
             check((uint8_t)(*f)[7] == 0x01, "v4 hdr/T: paramFlags == 0x01 (amp only)");
             check(fabsf(sd_le<float>(*f, 20) - 4.4f) < 1e-6f,
                   "v4 hdr/T: amp field == the committed trapImax (4.4 A)");
@@ -9790,7 +9816,7 @@ static void test_sdlog_header_v4_profile_params() {
         const std::string* f = sd_file("PS0001.BLG");
         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/R: the header was written");
         if (f) {
-            check((uint8_t)(*f)[4] == 5, "v4 hdr/R: format version 5 (fw v11 BLG bump)");
+            check((uint8_t)(*f)[4] == 6, "v4 hdr/R: format version 6 (fw v16 BLG bump)");
             check((uint8_t)(*f)[7] == 0x00, "v4 hdr/R: paramFlags == 0x00 (no profile parameter)");
             check(sd_le<float>(*f, 20) == 0.0f && sd_le<float>(*f, 24) == 0.0f,
                   "v4 hdr/R: both amp and b fields stay 0.0");
@@ -9804,7 +9830,7 @@ static void test_sdlog_header_v4_profile_params() {
         const std::string* f = sd_file("DC0001.BLG");
         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/D: the header was written");
         if (f) {
-            check((uint8_t)(*f)[4] == 5, "v4 hdr/D: format version 5 (fw v11 BLG bump)");
+            check((uint8_t)(*f)[4] == 6, "v4 hdr/D: format version 6 (fw v16 BLG bump)");
             check((uint8_t)(*f)[7] == 0x00, "v4 hdr/D: paramFlags == 0x00 (no profile parameter)");
             check(sd_le<float>(*f, 20) == 0.0f && sd_le<float>(*f, 24) == 0.0f,
                   "v4 hdr/D: both amp and b fields stay 0.0");
@@ -9822,16 +9848,16 @@ static void test_sdlog_header_v4_profile_params() {
         }
     }
 
-    // ── Record size byte reflects the current v5 record (76B), regardless of run type. The v4
-    // header PARAMETER BLOCK (byte 7, bytes 20-27) is unchanged by the fw v11 bump -- only
+    // ── Record size byte reflects the current v6 record (92B), regardless of run type. The v4
+    // header PARAMETER BLOCK (byte 7, bytes 20-27) is unchanged by the fw v16 bump -- only
     // hdr[4] (version) and hdr[5] (record size) moved when the record grew.
     reset_test_state();
     logOpenForProfile(LOG_TYPE_PS);
     {
         const std::string* f = sd_file("PS0001.BLG");
-        check(f != nullptr && (uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE && LOG_REC_SIZE == 76u,
-              "v4/v5 hdr: the record-size byte is 76 -- the v4 parameter block is unchanged, "
-              "only hdr[4]/hdr[5] moved with the fw v11 record-size bump");
+        check(f != nullptr && (uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE && LOG_REC_SIZE == 92u,
+              "v4/v6 hdr: the record-size byte is 92 -- the v4 parameter block is unchanged, "
+              "only hdr[4]/hdr[5] moved with the fw v16 record-size bump");
     }
 }
 
@@ -9840,10 +9866,10 @@ static void test_sdlog_header_v4_profile_params() {
 // struct's field order or padding ever drifts from LOG_REC_SIZE / the documented offsets, even
 // before any record is ever written to a (mock) card.
 static void test_benchlogrecord_v3_layout() {
-    test_group("BenchLogRecord (format v5, fw v11): sizeof and field offsets");
+    test_group("BenchLogRecord (format v6, fw v16): sizeof and field offsets");
 
-    check(sizeof(BenchLogRecord) == 76, "BenchLogRecord: sizeof == 76 bytes (format v5)");
-    check(LOG_REC_SIZE == 76u, "LOG_REC_SIZE == 76 (format v5)");
+    check(sizeof(BenchLogRecord) == 92, "BenchLogRecord: sizeof == 92 bytes (format v6)");
+    check(LOG_REC_SIZE == 92u, "LOG_REC_SIZE == 92 (format v6)");
 
     check(offsetof(BenchLogRecord, V_fc)        == 44, "offsetof(V_fc) == 44");
     check(offsetof(BenchLogRecord, V_batt)      == 48, "offsetof(V_batt) == 48");
@@ -9861,6 +9887,14 @@ static void test_benchlogrecord_v3_layout() {
     check(offsetof(BenchLogRecord, u_unsat)  == 68, "offsetof(u_unsat) == 68 (format v5, appended)");
     check(offsetof(BenchLogRecord, drive_x0) == 72, "offsetof(drive_x0) == 72 (format v5, appended)");
 
+    // Format v6 (fw v16): APPENDED after drive_x0, so every v1-v5 offset above (68/72 included) is
+    // unchanged and only these four new tail fields are added. Mirrors the fw v11 append-only
+    // guarantee test above for the v5 bump.
+    check(offsetof(BenchLogRecord, encoder_pos)             == 76, "offsetof(encoder_pos) == 76 (format v6, appended)");
+    check(offsetof(BenchLogRecord, enc_period_ref_us)       == 80, "offsetof(enc_period_ref_us) == 80 (format v6, appended)");
+    check(offsetof(BenchLogRecord, enc_multi_pitch_count)   == 84, "offsetof(enc_multi_pitch_count) == 84 (format v6, appended)");
+    check(offsetof(BenchLogRecord, enc_spurious_drop_count) == 88, "offsetof(enc_spurious_drop_count) == 88 (format v6, appended)");
+
     // These offsets must also match the byte-stream constants used by the on-card tests above --
     // a mismatch here would mean the two test families are silently checking different layouts.
     check(offsetof(BenchLogRecord, V_fc)        == REC_OFF_V_FC,   "offsetof(V_fc) == REC_OFF_V_FC");
@@ -9870,6 +9904,14 @@ static void test_benchlogrecord_v3_layout() {
     check(offsetof(BenchLogRecord, fault_flags) == REC_OFF_FAULTS, "offsetof(fault_flags) == REC_OFF_FAULTS");
     check(offsetof(BenchLogRecord, u_unsat)     == REC_OFF_U_UNSAT,  "offsetof(u_unsat) == REC_OFF_U_UNSAT");
     check(offsetof(BenchLogRecord, drive_x0)    == REC_OFF_DRIVE_X0, "offsetof(drive_x0) == REC_OFF_DRIVE_X0");
+    check(offsetof(BenchLogRecord, encoder_pos)             == REC_OFF_ENCODER_POS,
+          "offsetof(encoder_pos) == REC_OFF_ENCODER_POS");
+    check(offsetof(BenchLogRecord, enc_period_ref_us)       == REC_OFF_ENC_PERIOD_REF_US,
+          "offsetof(enc_period_ref_us) == REC_OFF_ENC_PERIOD_REF_US");
+    check(offsetof(BenchLogRecord, enc_multi_pitch_count)   == REC_OFF_ENC_MULTI_PITCH,
+          "offsetof(enc_multi_pitch_count) == REC_OFF_ENC_MULTI_PITCH");
+    check(offsetof(BenchLogRecord, enc_spurious_drop_count) == REC_OFF_ENC_SPUR_DROP,
+          "offsetof(enc_spurious_drop_count) == REC_OFF_ENC_SPUR_DROP");
 }
 
 // ─── T2: log record flags bit2 (shareClosedLoopMode) / bit3 (shareClosedLoopRun) ─────────────
@@ -10117,6 +10159,198 @@ static void test_sdlog_record_u_unsat_drive_x0_reset() {
     check(recDriveX0 == 0.0f, "reset: logged drive_x0 is 0.0 after resetDriveControlState()");
 }
 #endif // USE_YOULA_DRIVE_CONTROLLER
+
+// ─── 6g. Format v6 (fw v16): logSampleTick() plumbing for the four encoder/estimator fields ──
+// Distinct from the golden-record byte-schema test above: this isolates JUST the v6 tail, driven
+// through logSampleTick() directly (not via a fully-populated record), and is compiled
+// unconditionally (the fill lives in logSampleTick()'s COMMON section per the .ino diff, outside
+// the USE_YOULA_DRIVE_CONTROLLER #if) so it runs in both host test builds. The negative
+// encoder_pos value is the load-bearing case: BenchLogRecord::encoder_pos is int32_t and must
+// round-trip its sign through the little-endian byte layout.
+static void test_sdlog_record_v6_encoder_fields_plumbing() {
+    test_group("SD log: v6 encoder/estimator fields (encoder_pos/enc_period_ref_us/"
+               "enc_multi_pitch_count/enc_spurious_drop_count) plumbed by logSampleTick()");
+    reset_test_state();
+
+    g_mock_millis = 2000;
+    g_mock_micros = 20000;
+    logOpenForProfile(LOG_TYPE_PS);
+    check(logActive == true, "v6 plumbing: the log opened");
+
+    encoderPos           = -777777;      // negative — the sign-preservation case
+    encPeriodRefUs        = 654321u;
+    encMultiPitchCount    = 42u;
+    encSpuriousDropCount  = 13u;
+
+    logSampleTick();
+    logDrainTick();
+
+    const std::string* f = sd_file("PS0001.BLG");
+    check(f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE,
+          "v6 plumbing: the record made it to the (mock) card");
+    if (f == nullptr || f->size() < LOG_HDR_SIZE + LOG_REC_SIZE) return;
+
+    check(sd_le<int32_t>(*f, LOG_HDR_SIZE + REC_OFF_ENCODER_POS) == -777777,
+          "v6 plumbing: encoder_pos == encoderPos, negative sign preserved through the byte layout");
+    check(sd_le<uint32_t>(*f, LOG_HDR_SIZE + REC_OFF_ENC_PERIOD_REF_US) == 654321u,
+          "v6 plumbing: enc_period_ref_us == encPeriodRefUs");
+    check(sd_le<uint32_t>(*f, LOG_HDR_SIZE + REC_OFF_ENC_MULTI_PITCH) == 42u,
+          "v6 plumbing: enc_multi_pitch_count == encMultiPitchCount");
+    check(sd_le<uint32_t>(*f, LOG_HDR_SIZE + REC_OFF_ENC_SPUR_DROP) == 13u,
+          "v6 plumbing: enc_spurious_drop_count == encSpuriousDropCount");
+
+    // Item B.4: the fill lives in logSampleTick()'s COMMON section (outside the
+    // USE_YOULA_DRIVE_CONTROLLER #if in the .ino), so this same test body running unmodified under
+    // both -DBENCH_TEST=0 and -DBENCH_TEST=1 host builds already covers both control-law build
+    // paths for these four fields; a second, PI-flavoured variant would exercise identical code.
+#if BENCH_TEST == 0
+    check(true, "v6 plumbing: production build (BENCH_TEST=0) confirms common-section population");
+#endif
+}
+
+// ─── 6h. Format v6: a mid-run encoderVelReset() is visible as a step DOWN in the next record ──
+// The decoder DIFFS consecutive samples to get a rate; a reset must show up as the counters
+// dropping back to (near) zero in the very next sampled record, not as a discontinuity that looks
+// like data loss. Pins the negative-diff-means-reset contract the tooling relies on.
+static void test_sdlog_record_v6_reset_visibility() {
+    test_group("SD log: v6 counters show a mid-run encoderVelReset() as a step down in the next record");
+    reset_test_state();
+
+    g_mock_millis = 3000;
+    g_mock_micros = 30000;
+    logOpenForProfile(LOG_TYPE_PS);
+
+    // First record: counters at some live, non-zero, elevated values.
+    encoderPos           = 5000;
+    encPeriodRefUs        = 9000u;
+    encMultiPitchCount    = 30u;
+    encSpuriousDropCount  = 20u;
+    logSampleTick();
+
+    // Mid-run reset (e.g. the stale-timeout path calling encoderVelReset()).
+    encoderVelReset();
+    check(encMultiPitchCount == 0 && encSpuriousDropCount == 0 && encPeriodRefUs == 0,
+          "v6 reset visibility precondition: encoderVelReset() clears the estimator diagnostics");
+    encoderPos = 0;   // encoderVelReset() does not itself re-zero the raw position counter; the
+                      // decode ISR does via encPosAtLastEdge -- set directly here to model the
+                      // post-reset steady state without driving the full ISR chain.
+
+    g_mock_micros += POWER_BAL_PERIOD_US;
+    logSampleTick();
+    logDrainTick();
+
+    const std::string* f = sd_file("PS0001.BLG");
+    check(f != nullptr && f->size() >= LOG_HDR_SIZE + 2u * LOG_REC_SIZE,
+          "v6 reset visibility: both records made it to the (mock) card");
+    if (f == nullptr || f->size() < LOG_HDR_SIZE + 2u * LOG_REC_SIZE) return;
+
+    uint32_t mp0 = sd_le<uint32_t>(*f, LOG_HDR_SIZE + 0u * LOG_REC_SIZE + REC_OFF_ENC_MULTI_PITCH);
+    uint32_t mp1 = sd_le<uint32_t>(*f, LOG_HDR_SIZE + 1u * LOG_REC_SIZE + REC_OFF_ENC_MULTI_PITCH);
+    uint32_t sp0 = sd_le<uint32_t>(*f, LOG_HDR_SIZE + 0u * LOG_REC_SIZE + REC_OFF_ENC_SPUR_DROP);
+    uint32_t sp1 = sd_le<uint32_t>(*f, LOG_HDR_SIZE + 1u * LOG_REC_SIZE + REC_OFF_ENC_SPUR_DROP);
+    uint32_t pr0 = sd_le<uint32_t>(*f, LOG_HDR_SIZE + 0u * LOG_REC_SIZE + REC_OFF_ENC_PERIOD_REF_US);
+    uint32_t pr1 = sd_le<uint32_t>(*f, LOG_HDR_SIZE + 1u * LOG_REC_SIZE + REC_OFF_ENC_PERIOD_REF_US);
+
+    check(mp0 == 30u && mp1 == 0u, "v6 reset visibility: enc_multi_pitch_count steps 30 -> 0 across the reset");
+    check(sp0 == 20u && sp1 == 0u, "v6 reset visibility: enc_spurious_drop_count steps 20 -> 0 across the reset");
+    check(pr0 == 9000u && pr1 == 0u, "v6 reset visibility: enc_period_ref_us steps 9000 -> 0 across the reset");
+}
+
+// ─── 6i. encSpuriousDropCount semantics, driven through the REAL ISR ────────────────────────
+// Uses the fw v15 estimator-test idioms (enc_cycle_fwd / enc_tap_ambiguous / enc_fire_tap_raw,
+// enc_v15_arm_at) rather than poking the counter directly, so this exercises doEncoderA()'s actual
+// three drop sites, not a model of them.
+static void test_encoder_spurious_drop_count() {
+    test_group("fw v16: encSpuriousDropCount (spurious-edge rate) driven through the real ISR");
+
+    const uint32_t T = 1000;
+
+    // (a) A raw-floor glitch (< ENC_PERIOD_MIN_US) increments the count by exactly 1.
+    {
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        enc_cycle_fwd(T);       updateWheelSpeed();   // baseline
+        enc_cycle_fwd(2 * T);   updateWheelSpeed();    // genuine period 1
+        uint32_t pre = encSpuriousDropCount;
+        uint32_t t_glitch = 2 * T + (ENC_PERIOD_MIN_US / 2);   // well inside the raw floor
+        enc_tap_ambiguous(t_glitch); updateWheelSpeed();
+        check(encSpuriousDropCount == pre + 1,
+              "(a) a raw-floor (<ENC_PERIOD_MIN_US) glitch increments encSpuriousDropCount by "
+              "exactly 1");
+    }
+
+    // (b) A 0.625x-ref low-side gate rejection increments the count by 1, and the SUBSEQUENT
+    //     merge into the next genuine edge does NOT increment it again (the merge is not itself a
+    //     second dropped interval — only the rejected tap was).
+    {
+        float steady = enc_v15_arm_at(T);   // arms encPeriodRefUs ~= T
+        (void)steady;
+        uint32_t pre = encSpuriousDropCount;
+        uint32_t spurious_t = enc_v15_lastEdgeUs + (uint32_t)(0.3f * (float)T);   // < 0.625*ref
+        enc_tap_ambiguous(spurious_t); updateWheelSpeed();
+        check(encSpuriousDropCount == pre + 1,
+              "(b) a 0.625xref low-side gate rejection increments encSpuriousDropCount by 1");
+        uint32_t midCount = encSpuriousDropCount;
+        uint32_t genuine_t = enc_v15_lastEdgeUs + T;   // the merge: next genuine edge after the drop
+        enc_cycle_fwd(genuine_t); updateWheelSpeed();
+        check(encSpuriousDropCount == midCount,
+              "(b) the merge into the next genuine edge does NOT increment the count a second time");
+    }
+
+    // (c) A per-pitch-floor drop (fw v15 S1 case: an accepted-looking interval whose PER-PITCH
+    //     period, after division, falls below ENC_PERIOD_MIN_US) increments the count by 1.
+    {
+        float steady = enc_v15_arm_at(T);
+        (void)steady;
+        uint32_t pre = encSpuriousDropCount;
+        uint32_t tDrop = enc_v15_lastEdgeUs + T;   // raw period T=1000 (clears both earlier gates)
+        enc_fire_tap_raw(tDrop, 20);               // pitches=10 -> per-pitch 1000/10=100 < 200
+        updateWheelSpeed();
+        check(encSpuriousDropCount == pre + 1,
+              "(c) a per-pitch-floor (fw v15 S1) drop increments encSpuriousDropCount by 1");
+    }
+
+    // (d) An accepted interval does NOT increment the count.
+    {
+        float steady = enc_v15_arm_at(T);
+        (void)steady;
+        uint32_t pre = encSpuriousDropCount;
+        uint32_t tAccept = enc_v15_lastEdgeUs + T;   // ordinary single-pitch accept
+        enc_cycle_fwd(tAccept); updateWheelSpeed();
+        check(encSpuriousDropCount == pre,
+              "(d) an accepted interval leaves encSpuriousDropCount unchanged");
+    }
+
+    // (e) Exactly-once: a single spurious edge inside one pitch raises the count by exactly 1, not
+    //     2 -- pins the claim that the raw-floor site and the 0.625x-gate site are mutually
+    //     exclusive by construction (the gate is evaluated only once the floor has already passed),
+    //     so one dropped interval is never double-counted across the two pre-division sites.
+    {
+        float steady = enc_v15_arm_at(T);
+        (void)steady;
+        uint32_t pre = encSpuriousDropCount;
+        uint32_t spurious_t = enc_v15_lastEdgeUs + (uint32_t)(0.3f * (float)T);
+        enc_tap_ambiguous(spurious_t); updateWheelSpeed();
+        check(encSpuriousDropCount == pre + 1,
+              "(e) exactly-once: one spurious edge inside one pitch raises the count by exactly 1, "
+              "not 2");
+    }
+
+    // (f) encoderVelReset() clears the count.
+    {
+        float steady = enc_v15_arm_at(T);
+        (void)steady;
+        uint32_t spurious_t = enc_v15_lastEdgeUs + (uint32_t)(0.3f * (float)T);
+        enc_tap_ambiguous(spurious_t); updateWheelSpeed();
+        check(encSpuriousDropCount > 0, "(f) setup: a live nonzero count exists before the reset");
+        encoderVelReset();
+        check(encSpuriousDropCount == 0, "(f) encoderVelReset() clears encSpuriousDropCount");
+    }
+
+    enc_reset();
+}
 
 // ─── 7. Write error mid-run: logging dies, the profile does not ─────────────
 static void test_sdlog_write_error_midrun() {
@@ -11166,10 +11400,10 @@ static void test_sdlog_ring_wrap_drain() {
     check(logRingCount == 900 && logDroppedCount == 0,
           "SD wrap: 900 records buffer without dropping (under the 1024 capacity)");
 
-    // format v5 (fw v11): LOG_REC_SIZE=76 -> floor(512/76)=6 records per LOG_CHUNK_MAX chunk (was
-    // 7 at the old 68-byte record size). 70 ticks * 6 = 420 drained -- same 420 target as before,
+    // format v6 (fw v16): LOG_REC_SIZE=92 -> floor(512/92)=5 records per LOG_CHUNK_MAX chunk (was
+    // 6 at the v5 76-byte record size). 84 ticks * 5 = 420 drained -- same 420 target as before,
     // reached with more ticks now that each chunk carries fewer records.
-    for (int i = 0; i < 70; i++) logDrainTick();   // 6 records per tick → 420 drained
+    for (int i = 0; i < 84; i++) logDrainTick();   // 5 records per tick → 420 drained
     check(logRecordsWritten == 420 && logRingTail == 420u * LOG_REC_SIZE,
           "SD wrap: a partial drain advances the tail off zero, leaving 480 records pending");
 
@@ -14122,6 +14356,9 @@ int main() {
     test_sdlog_record_u_unsat_drive_x0_held_value();
     test_sdlog_record_u_unsat_drive_x0_reset();
 #endif
+    test_sdlog_record_v6_encoder_fields_plumbing();
+    test_sdlog_record_v6_reset_visibility();
+    test_encoder_spurious_drop_count();
     test_sdlog_write_error_midrun();
     test_sdlog_name_collision();
     test_sdlog_rate_1khz();

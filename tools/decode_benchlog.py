@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decode .BLG bench-log files (format versions 1, 2, 3, 4, and 5) into CSV.
+"""Decode .BLG bench-log files (format versions 1, 2, 3, 4, 5, and 6) into CSV.
 
 The firmware writer lives in teensy_controller/teensy_controller.ino
 (State 98 SD-card logging, see PLAN.md sec 9g). File layout:
@@ -80,6 +80,31 @@ The firmware writer lives in teensy_controller/teensy_controller.ino
     tick's share loop is the Youla share controller (clear = PI
     fallback).
 
+  Header, format v6 (fw v16): adds no header fields -- v6 is IDENTICAL to
+    v4/v5 in the header (32 B layout, same offsets). Only the RECORD format
+    changes; see below. The existing `if version >= 4:` header branches
+    already cover v6 unchanged.
+
+  Record, format v6 (92 B, LE): the v5 76 B record (offsets 0-75 unchanged)
+    with four more fields APPENDED at the end:
+      offset 76-79: i32 encoder_pos -- raw quadrature-decoded encoder count
+                    (signed, direction-sensitive).
+      offset 80-83: u32 enc_period_ref_us -- edge-period estimator's
+                    reference period [us] this tick.
+      offset 84-87: u32 enc_multi_pitch_count -- CUMULATIVE counter of
+                    multi-pitch (k>1) period reinterpretations (see fw v13's
+                    adaptive-filter k-branch); diff consecutive samples to
+                    get a per-interval rate, do not read it as an
+                    instantaneous count.
+      offset 88-91: u32 enc_spurious_drop_count -- CUMULATIVE counter of
+                    dropped intervals (raw floor + the 0.625x-of-reference
+                    gate + the per-pitch floor, fw v16); also a running
+                    total, diff to rate it.
+    Both counters are firmware-side free-running u32 counts -- a diff that
+    goes negative across a sample pair means the counter wrapped, not that
+    something reversed; this decoder does not attempt unwrap correction, it
+    only exposes the raw cumulative value.
+
   Trailer: a record with t_us == 0xFFFFFFFF (sentinel), reinterpreted as
     u32 sentinel, u32 records_written, u32 dropped_count, u8 close_reason
     (1=complete, 2=stop, 3=X, 4=Q, 5=fault, 6=io_error), u8 error_code,
@@ -121,6 +146,13 @@ CSV_HEADER_V5. The header itself is unchanged from v4 (RECORD_INFO[5] has
 its own record fmt/size/csv_fields/csv_header but reuses v4's header
 decode path unmodified).
 
+Format v6 adds four more CSV columns -- encoder_pos, enc_period_ref_us,
+enc_multi_pitch_count, enc_spurious_drop_count -- APPENDED after drive_x0
+(i.e. still before fault_flags), giving a 26-column CSV_HEADER_V6. The
+header itself is unchanged from v4/v5 (RECORD_INFO[6] has its own record
+fmt/size/csv_fields/csv_header but reuses v4's header decode path
+unmodified).
+
 Gap statistics (printed to stderr): max_interval_us is the largest modular
 step between consecutive records; missed_periods sums, over every step,
 max(round(delta_us / 1000) - 1, 0) -- i.e. how many 1 kHz control ticks
@@ -136,7 +168,8 @@ reproduces the exact stdout/stderr byte stream documented above. The
 result's csv_header (not the module-level CSV_HEADER constant) is the
 correct CSV header line for the decoded file's version -- v1/v2 files get
 the 16-column CSV_HEADER, v3/v4 files get the 20-column CSV_HEADER_V3, v5
-files get the 22-column CSV_HEADER_V5.
+files get the 22-column CSV_HEADER_V5, v6 files get the 26-column
+CSV_HEADER_V6.
 DecodeResult.header also carries "profile_amp" and "profile_b" (float or
 None -- None for v1-v3 files and for a v4 file whose corresponding valid
 bit is clear).
@@ -165,11 +198,18 @@ RECORD_SIZE_V3 = 68
 RECORD_FMT_V5 = "<I14fHBBBB2xff"
 RECORD_SIZE_V5 = 76
 
+# v6 record layout: v5's 76 B record with encoder_pos (i32),
+# enc_period_ref_us (u32), enc_multi_pitch_count (u32),
+# enc_spurious_drop_count (u32) APPENDED at the end (offsets 0-75
+# unchanged) -- see the module docstring.
+RECORD_FMT_V6 = "<I14fHBBBB2xffiIII"
+RECORD_SIZE_V6 = 92
+
 TRAILER_FMT = "<IIIBBI"
 CLOSE_REASONS = {1: "complete", 2: "stop", 3: "X", 4: "Q", 5: "fault",
                   6: "io_error"}
 
-SUPPORTED_VERSIONS = (1, 2, 3, 4, 5)
+SUPPORTED_VERSIONS = (1, 2, 3, 4, 5, 6)
 
 # Per-version record format/size and CSV header/field list. v1 and v2 share
 # a record layout; v3 appends the four new voltage channels after I_cmd.
@@ -196,6 +236,17 @@ CSV_HEADER_V5 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
                   "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,u_unsat,drive_x0,"
                   "fault_flags,ps_phase,dc_phase,trap_phase,flags")
 
+CSV_FIELDS_V6 = ["share_sp", "share_act", "v_sp", "v_act", "I_fc", "I_batt",
+                 "gFC", "gBT", "V_bus", "I_cmd", "V_fc", "V_batt", "V_chg",
+                 "V_rgn", "u_unsat", "drive_x0", "encoder_pos",
+                 "enc_period_ref_us", "enc_multi_pitch_count",
+                 "enc_spurious_drop_count"]
+CSV_HEADER_V6 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
+                  "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,u_unsat,drive_x0,"
+                  "encoder_pos,enc_period_ref_us,enc_multi_pitch_count,"
+                  "enc_spurious_drop_count,fault_flags,ps_phase,dc_phase,"
+                  "trap_phase,flags")
+
 RECORD_INFO = {
     1: {"fmt": RECORD_FMT, "size": RECORD_SIZE, "csv_fields": CSV_FIELDS,
         "csv_header": CSV_HEADER},
@@ -207,6 +258,8 @@ RECORD_INFO = {
         "csv_fields": CSV_FIELDS_V3, "csv_header": CSV_HEADER_V3},
     5: {"fmt": RECORD_FMT_V5, "size": RECORD_SIZE_V5,
         "csv_fields": CSV_FIELDS_V5, "csv_header": CSV_HEADER_V5},
+    6: {"fmt": RECORD_FMT_V6, "size": RECORD_SIZE_V6,
+        "csv_fields": CSV_FIELDS_V6, "csv_header": CSV_HEADER_V6},
 }
 
 # 30 s: longer than any profile's worst card-stall gap (ring = 1024 rec ~=
@@ -345,7 +398,13 @@ def decode_blg(data):
         prev_t_us = t_us
 
         fields = struct.unpack_from(record_fmt, chunk, 0)
-        if version == 5:
+        if version == 6:
+            (_t, share_sp, share_act, v_sp, v_act, i_fc, i_batt, gfc, gbt,
+             v_bus, i_cmd, v_fc, v_batt, v_chg, v_rgn, fault_flags, ps_phase,
+             dc_phase, trap_phase, flags, u_unsat, drive_x0, encoder_pos,
+             enc_period_ref_us, enc_multi_pitch_count,
+             enc_spurious_drop_count) = fields
+        elif version == 5:
             (_t, share_sp, share_act, v_sp, v_act, i_fc, i_batt, gfc, gbt,
              v_bus, i_cmd, v_fc, v_batt, v_chg, v_rgn, fault_flags, ps_phase,
              dc_phase, trap_phase, flags, u_unsat, drive_x0) = fields
@@ -366,11 +425,14 @@ def decode_blg(data):
         row = [t_us, "%.9g" % share_sp, "%.9g" % share_act, v_sp_cell,
                v_act_cell, "%.9g" % i_fc, "%.9g" % i_batt, "%.9g" % gfc,
                "%.9g" % gbt, "%.9g" % v_bus, "%.9g" % i_cmd]
-        if version in (3, 4, 5):
+        if version in (3, 4, 5, 6):
             row += ["%.9g" % v_fc, "%.9g" % v_batt, "%.9g" % v_chg,
                     "%.9g" % v_rgn]
-        if version == 5:
+        if version in (5, 6):
             row += ["%.9g" % u_unsat, "%.9g" % drive_x0]
+        if version == 6:
+            row += [encoder_pos, enc_period_ref_us, enc_multi_pitch_count,
+                    enc_spurious_drop_count]
         row += [fault_flags, ps_cell, dc_cell, tp_cell, flags]
         csv_rows.append(",".join(str(c) for c in row))
         records_read += 1

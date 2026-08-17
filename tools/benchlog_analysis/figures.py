@@ -60,7 +60,21 @@ COLORS = {
     "I_total": "#e87ba4",    # magenta - total bus current (I_fc + I_batt)
     "u_unsat": "#c07a1e",    # amber   - drive controller pre-clamp output
     "drive_x0": "#7a5cc9",   # purple  - Youla drive controller x[0] state
+    "v_truth": "#1baf7a",    # aqua    - offline encoder-derived truth velocity
+    "v_implied": "#eb6834",  # orange  - period-implied speed (pitch/ref)
+    "multi_pitch": "#4a3aa7",  # violet - multi-pitch (missed-edge) rate
+    "spurious_drop": "#e34948",  # red  - spurious-drop (rejection) rate
 }
+
+# Encoder slot pitch [m] -- one quadrature-decoded count is half a slot
+# pitch (x2 decode); pitch itself is 2*pi*FLYWHEEL_RADIUS_M/ENCODER_SLOTS
+# = 2*pi*0.0762/120 = 3.990e-3 m (see CLAUDE.md fw v12 addendum). Used only
+# for the offline truth-velocity audit below -- not a control-path constant.
+ENCODER_PITCH_M = 3.990e-3
+
+# Deviation threshold for shading |v_act/v_truth - 1| > this fraction in the
+# encoder_diagnostics scale-audit panel.
+ENC_SCALE_DEVIATION_FRAC = 0.20
 
 # Drive controller actuator rails [A] for the Hanus-conditioning plot
 # (fw v11 velocity-loop drive controller saturation limits).
@@ -744,6 +758,170 @@ def drive_controller_conditioning(data, cfg):
     return fig
 
 
+def _encoder_truth_velocity(encoder_pos, t_s, window_s=0.050):
+    """Offline truth velocity from raw encoder_pos via a centered diff.
+
+    v[i] = (encoder_pos[hi] - encoder_pos[lo]) * (ENCODER_PITCH_M / 2) / dt
+
+    lo/hi are the samples nearest t_s[i] -/+ window_s/2 (t_s is monotonic
+    non-decreasing, so np.searchsorted locates them in O(log n)). The /2
+    accounts for the firmware's x2 quadrature decode -- encoder_pos advances
+    two counts per physical slot pitch, so one count is pitch/2 of travel.
+    NaN where the window collapses (edges of the run, or too few samples) or
+    the bracketing encoder_pos samples are themselves NaN.
+    """
+    n = t_s.shape[0]
+    v = np.full(n, np.nan, dtype=np.float64)
+    if n < 2:
+        return v
+    half = window_s / 2.0
+    lo_idx = np.searchsorted(t_s, t_s - half, side="left")
+    hi_idx = np.searchsorted(t_s, t_s + half, side="right") - 1
+    hi_idx = np.clip(hi_idx, 0, n - 1)
+    for i in range(n):
+        lo, hi = lo_idx[i], hi_idx[i]
+        if hi <= lo:
+            continue
+        p_lo, p_hi = encoder_pos[lo], encoder_pos[hi]
+        if not (np.isfinite(p_lo) and np.isfinite(p_hi)):
+            continue
+        dt = t_s[hi] - t_s[lo]
+        if dt <= 0:
+            continue
+        v[i] = (p_hi - p_lo) * (ENCODER_PITCH_M / 2.0) / dt
+    return v
+
+
+def _cumulative_rate_per_s(counts, t_s, bin_s=1.0):
+    """Per-second rate of a cumulative (monotonic non-decreasing) counter.
+
+    Bins t_s into fixed bin_s windows and returns (bin_center_s, rate) where
+    rate is the counter's increase over the bin divided by the bin's actual
+    elapsed time (handles a short/partial trailing bin correctly). A
+    negative increase (counter wrap) is reported as NaN rather than a
+    negative rate -- see the module docstring's note on wrap.
+    """
+    t_s = np.asarray(t_s, dtype=np.float64)
+    counts = np.asarray(counts, dtype=np.float64)
+    n = t_s.shape[0]
+    if n < 2:
+        return np.empty(0), np.empty(0)
+    t_end = t_s[-1]
+    n_bins = max(int(np.ceil(t_end / bin_s)), 1)
+    centers = np.empty(n_bins)
+    rates = np.full(n_bins, np.nan)
+    edges = np.arange(n_bins + 1) * bin_s
+    idx = np.searchsorted(t_s, edges)
+    idx = np.clip(idx, 0, n - 1)
+    for b in range(n_bins):
+        i0, i1 = idx[b], idx[b + 1]
+        centers[b] = 0.5 * (edges[b] + edges[b + 1])
+        if i1 <= i0:
+            continue
+        c0, c1 = counts[i0], counts[i1]
+        dt = t_s[i1] - t_s[i0]
+        if not (np.isfinite(c0) and np.isfinite(c1)) or dt <= 0:
+            continue
+        d = c1 - c0
+        rates[b] = (d / dt) if d >= 0 else np.nan
+    return centers, rates
+
+
+def encoder_diagnostics(data, cfg):
+    """Fig 9 (v6 only): encoder scale audit and edge-quality diagnostics.
+
+    Panel (a): offline truth velocity computed directly from encoder_pos
+    (centered diff, ENCODER_PITCH_M/2 per count) overlaid with the logged
+    v_act -- this is the scale audit for the online edge-period estimator.
+    Intervals where |v_act/v_truth| deviates more than
+    ENC_SCALE_DEVIATION_FRAC from 1 are shaded.
+
+    Panel (b): enc_period_ref_us converted to an implied speed
+    (pitch / period, signed by v_act's sign) plotted against v_act -- a
+    basin-poisoning event (see fw v13's k-branch) shows as roughly a 2x
+    divergence between the two traces.
+
+    Panel (c): per-second rates of the two cumulative counters
+    (enc_multi_pitch_count = missed-edge rate, enc_spurious_drop_count =
+    rejection rate), on the same time base as (a)/(b).
+
+    Returns None (no figure) when the v6 columns are absent from `data`
+    -- i.e. any pre-v6 CSV -- so make_all() can skip this figure gracefully,
+    mirroring drive_controller_conditioning's pre-v5 skip.
+    """
+    v6_cols = ("encoder_pos", "enc_period_ref_us", "enc_multi_pitch_count",
+               "enc_spurious_drop_count")
+    if not all(c in data for c in v6_cols):
+        return None
+
+    t = data["t_s"]
+    encoder_pos = data["encoder_pos"]
+    v_act = data["v_act"]
+
+    v_truth = _encoder_truth_velocity(encoder_pos, t)
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ref_s = data["enc_period_ref_us"] * 1.0e-6
+        v_implied_mag = np.where(ref_s > 0, ENCODER_PITCH_M / ref_s, np.nan)
+        sign = np.where(np.isfinite(v_act) & (v_act != 0.0),
+                         np.sign(v_act), 1.0)
+        v_implied = sign * v_implied_mag
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = v_act / v_truth
+    deviated = np.isfinite(ratio) & (
+        np.abs(ratio - 1.0) > ENC_SCALE_DEVIATION_FRAC)
+
+    c_truth = COLORS["v_truth"]
+    c_act = COLORS["velocity"]
+    c_impl = COLORS["v_implied"]
+    c_mp = COLORS["multi_pitch"]
+    c_sd = COLORS["spurious_drop"]
+
+    fig, (ax0, ax1, ax2) = plt.subplots(
+        3, 1, figsize=(10, 10.5), sharex=True, constrained_layout=True)
+
+    ax0.fill_between(t, 0.0, 1.0, where=deviated, color="#999999",
+                      alpha=0.15, zorder=0,
+                      transform=ax0.get_xaxis_transform(), linewidth=0,
+                      label="|v_act/v_truth-1| > %.0f%%"
+                            % (ENC_SCALE_DEVIATION_FRAC * 100.0))
+    ax0.plot(t, v_truth, color=c_truth, linewidth=LW_RAW,
+             label="v_truth (from encoder_pos)")
+    ax0.plot(t, v_act, color=c_act, linewidth=LW_RAW_UNDER,
+             alpha=0.75, label="v_act (logged)")
+    _style_axes(ax0, ylabel="Velocity [m/s]")
+    ax0.set_title("Scale audit: encoder-derived truth vs. logged v_act",
+                  color=TEXT_COLOR, fontsize=11, loc="left")
+    _legend(ax0)
+
+    ax1.plot(t, v_implied, color=c_impl, linewidth=LW_RAW,
+             label="v_implied = pitch / enc_period_ref_us")
+    ax1.plot(t, v_act, color=c_act, linewidth=LW_RAW_UNDER, alpha=0.75,
+             label="v_act (logged)")
+    _style_axes(ax1, ylabel="Velocity [m/s]")
+    ax1.set_title("Period-implied speed vs. v_act (basin-poisoning check)",
+                  color=TEXT_COLOR, fontsize=11, loc="left")
+    _legend(ax1)
+
+    centers_mp, rate_mp = _cumulative_rate_per_s(
+        data["enc_multi_pitch_count"], t)
+    centers_sd, rate_sd = _cumulative_rate_per_s(
+        data["enc_spurious_drop_count"], t)
+    ax2.plot(centers_mp, rate_mp, color=c_mp, linewidth=LW_RAW,
+             label="multi-pitch rate (missed-edge) [/s]")
+    ax2.plot(centers_sd, rate_sd, color=c_sd, linewidth=LW_RAW,
+             label="spurious-drop rate (rejection) [/s]")
+    _style_axes(ax2, ylabel="Rate [1/s]", xlabel="Time [s]")
+    ax2.set_title("Cumulative-counter diff rates", color=TEXT_COLOR,
+                  fontsize=11, loc="left")
+    _legend(ax2)
+
+    ax2.set_xlim(float(t[0]), float(t[-1]))
+    _suptitle(fig, _run_name(cfg), "encoder diagnostics")
+    return fig
+
+
 # --------------------------------------------------------------------------
 # Registry
 # --------------------------------------------------------------------------
@@ -767,4 +945,5 @@ FIGURES = [
     ("share_controller", share_controller),
     ("bus_and_share", bus_and_share),
     ("drive_controller_conditioning", drive_controller_conditioning),
+    ("encoder_diagnostics", encoder_diagnostics),
 ]
