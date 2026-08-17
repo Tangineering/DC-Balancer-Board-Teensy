@@ -45,6 +45,7 @@ typical excess, clean releases, ~150 saturation episodes).
 Run:  ctrl-venv/Scripts/python.exe synthesize_drive_siso.py
 """
 
+import math
 import os
 import numpy as np
 from numpy.linalg import eigvals, solve
@@ -114,13 +115,25 @@ print("             corners: " + ", ".join(
 #       speed, 11.97 ms at the 0.5 m/s validity floor.  This is phase the loop always had
 #       and the design never counted; the ML0136-0139 limit cycle is what that omission
 #       costs.  DC gain unaffected (Pade(0) = 1); phase only.
-#   (2) DRIVE GAIN RE-CENTRED on measurement, via K_v (plant_mimo.K_V_NOM = 1.25):
-#       G22(0) 1.4112 -> 1.7641 (m/s)/A.  The two end-to-end gain measurements disagree by
-#       ~2x (ramps 1.78x modelled, cruise hold 0.91x); the nominal is their geometric mean
-#       and the K_v corner axis brackets both, NARROWING from a 4.0x span to 2.2x.
+#   (2) DRIVE GAIN RE-CENTRED on measurement, via K_v (plant_mimo.K_V_NOM).
+#       The two end-to-end gain measurements disagreed by ~2x at the time.
 # Net: the narrowed gain axis pays for the added delay, and the achieved crossover is
 # RECOVERED rather than lost (15.98 rad/s, PM 51.9 deg, vs 15.98 / 49.6 last round).
 # The Youla-H correction factor remains tiny because the plant is still a near-integrator.
+#
+# ROUND 2026-08-16c -- K_F FORCE-AXIS CORRECTION (upstream, in plant_mimo.py).  The force
+# chain carried the wrong gear ratio AND the wrong radius: PHI 9.49 -> 6.86 (as-fitted 29T
+# pinion) and the force radius 0.0762 (flywheel) -> 0.033 (TIRE).  K_F 0.4516 -> 0.7538
+# N/A, x1.669.  The drag law rescales with it (b_eff 0.32 -> 0.534 N*s/m, F_c 1.2 -> 2.00 N)
+# because it was derived FROM hold currents THROUGH K_F, so i_m0 = 4.07 A is INVARIANT.
+# The old ~2x ramp-vs-cruise contradiction DISSOLVES (ratios x1.11-1.21 vs x0.905), so K_v
+# is re-centred 1.25 -> 1.00 and the corners narrow {0.85,1.25,1.85} -> {0.75,1.00,1.35}.
+# Net plant gain still rises x1.34 (K_F*K_v 0.5645 -> 0.7538) and G22(0) lands at 1.4116.
+# NO WEIGHT CHANGE WAS NEEDED: the shipped rung (WC = 60, Wu(0.25, 300, 12.5)) re-runs
+# CLEAN on the corrected plant -- every gate passes.  The ladder table below was run on the
+# PREVIOUS plant and was NOT re-run; the chosen rung's re-measured numbers are in the
+# metrics file (crossover 17.52 rad/s, PM 50.8 deg, DM 50.6 ms, worst ||S|| 2.427 cont /
+# 2.535 disc, PM@0.5 41.8 deg).  Every OTHER rung's row is therefore indicative only.
 gate("G22 is strictly proper (AugPlantMIMO precondition)", np.max(np.abs(G22.D)) < 1e-14)
 gate("G22 DC gain positive (positive current -> positive speed)", G22.dcgain() > 0,
      f"G22(0) = {G22.dcgain():.4f} (m/s)/A")
@@ -198,7 +211,7 @@ Wd = makeweight(0.5, WD_WC, 40.0)
 # that is ~2.0 A of proportional effort, well inside the +-12 A clamp; hf = 12.5 forces Y
 # down past the 300 rad/s break (papers' Y-weight break).  TIGHTENED 2026-08-16b from
 # (0.15, 300, 7.5).  The previous round loosened Wu to buy back bandwidth lost to the
-# calibrated plant's smaller DC gain; this round the gain came back up (K_v = 1.25) and
+# calibrated plant's smaller DC gain; that round the gain came back up (via K_v) and
 # the plant acquired real sensor delay, so effort must be re-restrained instead: rolling
 # the controller off harder is what keeps the 12 ms low-speed estimator corner damped.
 # The direction of this change IS the physics of the round -- delay is paid for with
@@ -846,37 +859,167 @@ gate("replay (b) reproduces open-loop from e_in alone (bit-exact)",
      np.max(np.abs(_u_chk - _u_sat)) == 0.0,
      f"max |du| = {np.max(np.abs(_u_chk - _u_sat)):.3e} A")
 
-# STIMULUS-PRECISION ROBUSTNESS GATE (new 2026-08-16b).  The original failure was
-# invisible to every existing gate: the vectors were self-consistent, so nothing measured
-# how BRITTLE that consistency was.  This gate perturbs the stimulus the way a real
-# consumer does and bounds the resulting divergence.
+# REPLAY-SENSITIVITY SUITE + DERIVED CONSUMER TOLERANCE (rewritten 2026-08-16d).
 #
-# THE BOUND IS 25 mA, NOT ZERO, AND THAT IS A PROPERTY OF THE PLANT+CONTROLLER, NOT OF THE
-# EMISSION.  Measured on the float64 §8b closed-loop sim: the regen event makes 82
-# clamp-state transitions -- during the saturated 2 -> 0 m/s transient the discrete
-# controller DITHERS across the +-12 A boundary at close to the sample rate (u alternates
-# rail / ~-4 A for the first ~50 ms).  This is genuine 2 ms-sample-rate behaviour of a
-# controller whose non-integral branch carries a 545 A/(m/s) LF gain, and the §8b gates
-# still pass around it (clean settle, no windup, quiescent tail).  But it means SOME
-# sample sits arbitrarily close to the boundary, so a perturbation of any size can flip
-# one decision, and the flip is worth ~8 A in the state update.  No emission can remove
-# that; closed-loop generation more than halved it (54 -> 13 mA) and that is the floor.
-# CONSEQUENCE FOR CONSUMERS -- this is the actionable part: the regen episode must be
-# compared at a ~50 mA output tolerance, NEVER at 1e-5.  The 'small' episode carries the
-# tight-tolerance check (it never approaches the clamp; it holds to ~1e-10 under the same
-# perturbations).  This is stated in the CSV header and in the coefficient header too.
-for _fmt, _tol in (("%.9e", 25e-3), (None, 25e-3)):
-    _cc = HeaderController()
-    if _fmt is None:
-        _seq = [float(np.float32(v)) for v in _e_sat]
-        _lbl = "float32 stimulus"
-    else:
-        _seq = [float(f"{v:.9e}") for v in _e_sat]
-        _lbl = "%.9e stimulus"
-    _uu = np.array([_cc.step(v, sat=True) for v in _seq])
-    _dev = float(np.max(np.abs(_uu - _u_sat)))
-    gate(f"replay (b) tolerant of {_lbl} truncation (< {_tol*1e3:.0f} mA)", _dev < _tol,
-         f"max |du| = {_dev*1e3:.3f} mA")
+# The vectors are self-consistent (the bit-exact gate above), so nothing about the EMISSION
+# tells a consumer how tight a comparison is achievable.  That number is a property of the
+# PLANT+CONTROLLER trajectory, not of the emission, and it must be MEASURED here and shipped
+# with the artifacts -- never hand-written into a comment, because it changes with every
+# re-synthesis.  (It did: the fw v12 coefficients' figure was inherited verbatim into the
+# K_F-corrected round and under-stated the true sensitivity by 3.5x, failing a correct C++
+# implementation at 86 mA against a stale 50 mA gate.)
+#
+# WHY THE SENSITIVITY IS NONZERO.  During the saturated 2 -> 0 m/s transient this controller
+# DITHERS across the +-I_CLAMP boundary at close to the sample rate: the non-integral branch
+# carries a ~545 A/(m/s) LF gain at a 2 ms sample period, so u alternates rail / part-rail
+# for tens of ms.  Some sample therefore sits arbitrarily close to the decision boundary
+# (measured below), and ANY perturbation -- text truncation, float32 storage, a different
+# but equally valid summation order -- can flip that one decision, which is worth ~8 A of
+# state drive through the ~0.9999 mode.  No emission removes this.  The 'small' episode
+# never approaches the clamp and carries the tight-tolerance check instead.
+#
+# THE THREE PERTURBATIONS BELOW ARE THE ONES REAL CONSUMERS APPLY, and the third is the one
+# the previous version of this block MISSED:
+#   (1) %.9e stimulus truncation   -- a reader parsing the CSV/header text at 10 sig digits.
+#   (2) float32 stimulus storage   -- drive_replay_vectors.h stores e_in as `static const
+#                                     float`, so the firmware replay sees float32 e AND a
+#                                     float32-rounded reference u.
+#   (3) SCALAR-ORDER ARITHMETIC    -- driveControllerStep() accumulates Cd.x and Ac.x with
+#                                     sequential C loops; numpy sums the same dot products
+#                                     with BLAS pairwise/FMA order.  The reassociation is
+#                                     ~1e-16 relative, but on a boundary approach measured
+#                                     in microamps it flips clamp decisions, and it DOMINATES
+#                                     (1) and (2).  Perturbing only the stimulus while
+#                                     keeping numpy's summation order measures the wrong
+#                                     thing and reports a tolerance several times too tight.
+# The shipped consumer tolerance is derived from the worst of the three with 2x headroom.
+_ac_h = np.asarray(AC_H, float)
+_bd_h = np.asarray(BD_H, float).reshape(-1)
+_cd_h = np.asarray(CD_H, float).reshape(-1)
+_n_h = _ac_h.shape[0]
+
+
+def _replay_scalar_order(e_seq, f32_out=False):
+    """Replay e_seq with SCALAR, left-to-right accumulation and a double state vector.
+
+    Byte-for-byte the arithmetic of teensy_controller/drive_controller.h
+    driveControllerStep(): output equation first, clamp, then the Hanus state update driven
+    by the clamped u.  f32_out additionally rounds the returned command to float32, which is
+    what the firmware's `float` return does.
+    """
+    x = [0.0]*_n_h
+    out = []
+    for e in e_seq:
+        u = float(DD_H)*float(e)
+        for j in range(_n_h):
+            u += _cd_h[j]*x[j]
+        u = min(float(I_CLAMP), max(-float(I_CLAMP), u))
+        uod = u/float(DD_H)
+        xn = [0.0]*_n_h
+        for i in range(_n_h):
+            acc = _bd_h[i]*uod
+            for j in range(_n_h):
+                acc += _ac_h[i][j]*x[j]
+            xn[i] = acc
+        x = xn
+        out.append(float(np.float32(u)) if f32_out else u)
+    return np.array(out)
+
+
+# Closest approach to a clamp DECISION BOUNDARY -- the physical reason a tolerance exists.
+# This is the smallest distance from the PRE-clamp output to either rail, over the whole
+# episode: the sample at which the smallest perturbation flips a decision.  (It is NOT the
+# depth into the rail -- a deeply-railed sample is insensitive, not fragile.)  The pre-clamp
+# sequence is taken from the ACTUAL trajectory, so it is regenerated with sat=True and the
+# unclamped value captured, not re-run open loop with sat=False (which would leave the
+# controller's own path and measure a different trajectory's margins).
+_c_marg = HeaderController()
+_u_pre = []
+for _v in _e_sat:
+    _u_pre.append(float((_c_marg.Cd @ _c_marg.x).item()) + _c_marg.Dd*float(_v))
+    _c_marg.step(float(_v), sat=True)
+_u_pre = np.array(_u_pre)
+_boundary_uA = float(np.min(np.minimum(np.abs(_u_pre - I_CLAMP),
+                                       np.abs(_u_pre + I_CLAMP))))*1e6
+# Clamp-state transitions in the shipped vectors themselves (NOT in the float64 sim: the
+# vectors are what consumers replay, so the count must describe them).
+_clamp_state = np.sign(np.where(np.abs(_u_sat) >= I_CLAMP - 1e-12, _u_sat, 0.0))
+_n_clamp_trans = int(np.sum(np.diff(_clamp_state) != 0))
+
+_SENS = {}   # label -> max |du| in A
+_c1 = HeaderController()
+_SENS["%.9e stimulus truncation"] = float(np.max(np.abs(
+    np.array([_c1.step(float(f"{v:.9e}"), sat=True) for v in _e_sat]) - _u_sat)))
+_c2 = HeaderController()
+_SENS["float32 stimulus storage"] = float(np.max(np.abs(
+    np.array([_c2.step(float(np.float32(v)), sat=True) for v in _e_sat]) - _u_sat)))
+# (3) is the firmware path exactly: float32 stimulus text -> float32 storage -> scalar-order
+# double recursion -> float32 return, compared against the float32-rounded reference column.
+_e_fw = [float(np.float32(float(f"{v:.9e}"))) for v in _e_sat]
+_u_ref_fw = np.array([float(np.float32(float(f"{v:.9e}"))) for v in _u_sat])
+_SENS["scalar-order arithmetic (firmware path)"] = float(np.max(np.abs(
+    _replay_scalar_order(_e_fw, f32_out=True) - _u_ref_fw)))
+# Isolate the reassociation term alone, so the report attributes it correctly.
+_SENS["scalar-order arithmetic (full-precision stimulus)"] = float(np.max(np.abs(
+    _replay_scalar_order([float(v) for v in _e_sat]) - _u_sat)))
+
+_sens_worst = max(_SENS.values())
+_sens_worst_label = max(_SENS, key=_SENS.get)
+
+
+def _round_up_tol(x, sig=2):
+    """Round a tolerance UP to `sig` significant digits, so the shipped number is quotable.
+
+    Rounding UP (never to-nearest) keeps the shipped tolerance a true upper bound on the
+    headroom multiple; two significant digits keeps it from ballooning (1 digit would turn
+    a 172 mA bound into 200 mA, which is slack nobody measured).
+    """
+    if x <= 0:
+        return 0.0
+    mag = 10.0**(math.floor(math.log10(x)) - (sig - 1))
+    return math.ceil(x/mag)*mag
+
+
+# 2x headroom over the worst measured sensitivity, rounded up to 1 sig digit.  The headroom
+# covers consumer arithmetic we do not enumerate here (a different compiler's contraction of
+# the same scalar loop, x87 excess precision, a fused multiply-add) which perturbs the same
+# boundary decisions by the same class of amount.
+REPLAY_TOL_REGEN = _round_up_tol(2.0*_sens_worst)
+REPLAY_TOL_SMALL = 1.0e-4
+print(f"  replay sensitivity ({_n_clamp_trans} clamp-state transitions in the emitted "
+      f"vectors; closest boundary approach {_boundary_uA:.1f} uA):")
+for _lbl, _dv in sorted(_SENS.items(), key=lambda kv: -kv[1]):
+    print(f"    {_lbl:52s} {_dv*1e3:8.2f} mA")
+print(f"    -> shipped consumer tolerance 'regen' = {REPLAY_TOL_REGEN*1e3:.0f} mA "
+      f"(2x worst, rounded up), 'small' = {REPLAY_TOL_SMALL*1e3:.2f} mA")
+
+# The 'small' episode must hold the TIGHT tolerance under every one of the same
+# perturbations -- that is what makes it the linear-recursion check.
+_e_small_fw = [float(np.float32(float(f"{v:.9e}"))) for v in _e_small]
+_u_small_ref_fw = np.array([float(np.float32(float(f"{v:.9e}"))) for v in _u_small])
+_small_dev = float(np.max(np.abs(
+    _replay_scalar_order(_e_small_fw, f32_out=True) - _u_small_ref_fw)))
+gate(f"replay (a) holds the tight tolerance on the firmware arithmetic path "
+     f"(< {REPLAY_TOL_SMALL*1e3:.2f} mA)", _small_dev < REPLAY_TOL_SMALL,
+     f"max |du| = {_small_dev*1e3:.2e} mA")
+gate("replay (b) firmware-path deviation is inside the shipped tolerance",
+     _SENS["scalar-order arithmetic (firmware path)"] < REPLAY_TOL_REGEN,
+     f"max |du| = {_SENS['scalar-order arithmetic (firmware path)']*1e3:.2f} mA "
+     f"< {REPLAY_TOL_REGEN*1e3:.0f} mA")
+# Sanity bound: if the sensitivity ever runs away, the episode has stopped being a
+# boundary-dither test and become a divergence, and that must not be papered over by a
+# generated tolerance.  1 A is ~8 % of the clamp span.
+gate("replay (b) sensitivity is boundary-dither class, not divergence (< 1 A)",
+     _sens_worst < 1.0,
+     f"worst = {_sens_worst*1e3:.2f} mA ({_sens_worst_label})")
+# ... and it must not GROW: a boundary flip is a transient re-convergence, so the tail of
+# the episode must be quiet even though the mid-transient is not.
+_dev_fw = np.abs(_replay_scalar_order(_e_fw, f32_out=True) - _u_ref_fw)
+_tail_dev = float(np.max(_dev_fw[-200:]))
+gate("replay (b) deviation decays into the tail (not accumulating)",
+     _tail_dev < 0.1*_sens_worst,
+     f"last 200 samples max |du| = {_tail_dev*1e3:.2f} mA vs peak "
+     f"{_sens_worst*1e3:.2f} mA")
 
 print(f"  float32-coefficient closed-loop regen vs the float64 sim: max |dv| = "
       f"{np.max(np.abs(_y_sat - y2)):.3e} m/s, on the rail "
@@ -901,25 +1044,50 @@ with open(os.path.join(FIGDIR, "drive_siso_replay.csv"), "w", encoding="utf-8") 
     f.write("# episode 'regen' : the 2->0 m/s regen event, generated CLOSED-LOOP through "
             "these same\n#                   float32 coefficients, clamp ACTIVE, "
             "controller state starts at zero.\n")
+    # *** EVERY NUMBER BELOW IS MEASURED AND INTERPOLATED, NOT WRITTEN BY HAND. ***
+    # Hand-written figures survived a re-synthesis once and understated the true
+    # sensitivity by 3.5x; do not reintroduce a literal here.
     f.write("#\n"
             "# *** COMPARISON TOLERANCES - READ BEFORE WRITING A REPLAY TEST. ***\n"
-            "#   episode 'small' : compare at 1e-5 A or tighter.  It never approaches the"
-            " clamp, so it\n"
-            "#                     is a clean test of the linear state recursion.\n"
-            "#   episode 'regen' : compare at ~50 mA.  NOT tighter - and this is not slack"
-            " for sloppy\n"
-            "#                     implementations.  During the saturated transient the"
-            " controller\n"
-            "#                     DITHERS across the +-12 A boundary (82 clamp-state"
-            " transitions in the\n"
-            "#                     float64 sim), so some sample always sits arbitrarily"
-            " close to the\n"
-            "#                     decision boundary and any perturbation can flip it, for"
-            " ~8 A of state\n"
-            "#                     drive.  Measured sensitivity of THESE vectors: 12.8 mA"
-            " to a %.9e\n"
-            "#                     stimulus truncation, 13.4 mA to a float32 one.\n"
-            "#   A float32 ARITHMETIC recursion costs ~1 A on 'regen' (validate_drive_siso"
+            "# The two 'tol' rows below are MACHINE-READABLE: tools/gen_drive_replay_header"
+            ".py turns\n"
+            "# them into DRIVE_REPLAY_<EPISODE>_TOL_A, and the firmware replay tests gate on"
+            " those\n"
+            "# macros.  Never copy these numbers into a consumer; read them.\n")
+    f.write(f"# tol,small,{REPLAY_TOL_SMALL:.17e}\n")
+    f.write(f"# tol,regen,{REPLAY_TOL_REGEN:.17e}\n")
+    f.write(f"#   episode 'small' : compare at {REPLAY_TOL_SMALL:.0e} A or tighter.  It "
+            f"never approaches the clamp, so\n"
+            f"#                     it is a clean test of the linear state recursion.  "
+            f"Measured on the\n"
+            f"#                     firmware arithmetic path (float32 stimulus + scalar-"
+            f"order double\n"
+            f"#                     recursion): {_small_dev*1e3:.2e} mA.\n")
+    f.write(f"#   episode 'regen' : compare at {REPLAY_TOL_REGEN*1e3:.0f} mA.  NOT tighter -"
+            f" and this is not slack for sloppy\n"
+            f"#                     implementations.  During the saturated transient the "
+            f"controller\n"
+            f"#                     DITHERS across the +-{I_CLAMP:.0f} A boundary "
+            f"({_n_clamp_trans} clamp-state transitions in\n"
+            f"#                     THESE vectors), and its closest approach to the decision"
+            f" boundary is\n"
+            f"#                     {_boundary_uA:.1f} uA, so any perturbation can flip one "
+            f"decision for ~8 A of\n"
+            f"#                     state drive.  Measured sensitivity of THESE vectors:\n")
+    for _lbl, _dv in sorted(_SENS.items(), key=lambda kv: -kv[1]):
+        f.write(f"#                       {_dv*1e3:8.2f} mA  {_lbl}\n")
+    f.write(f"#                     The shipped tolerance is 2x the worst of those, rounded "
+            f"up.  Note\n"
+            f"#                     the ARITHMETIC-ORDER term: a scalar C accumulation of "
+            f"the same dot\n"
+            f"#                     products is a valid implementation and is the LARGEST "
+            f"perturbation\n"
+            f"#                     here - a tolerance derived from stimulus truncation "
+            f"alone is wrong.\n"
+            f"#                     Deviation decays into the tail ({_tail_dev*1e3:.2f} mA "
+            f"over the last 200\n"
+            f"#                     samples): it is boundary dither, not divergence.\n")
+    f.write("#   A float32 ARITHMETIC recursion costs ~1 A on 'regen' (validate_drive_siso"
             " check 4).\n"
             "#   THAT one is a real inadequacy, not a boundary flip: use double.\n")
     f.write("# Replay: u_out[k] = clamp(Cd x[k] + Dd e_in[k]); "
@@ -1094,14 +1262,22 @@ static const float DRIVE_CTRL_SOS[DRIVE_CTRL_NSOS][5] = {{
 //     (or fixed point with equivalent headroom).
 // Replay comparisons should be toleranced on the OUTPUT (i_cmd), never on the individual
 // states — and the two episodes need DIFFERENT tolerances:
-//     'small' (unsaturated) : 1e-5 A or tighter.  Clean test of the linear recursion.
-//     'regen' (saturated)   : ~50 mA.  During the saturated transient this controller
-//                             dithers across the +-{I_CLAMP:.0f} A clamp boundary (82 clamp-state
-//                             transitions), so one flipped decision — which any
+//     'small' (unsaturated) : {REPLAY_TOL_SMALL:.0e} A or tighter.  Clean test of the linear recursion
+//                             (measured on the firmware arithmetic path: {_small_dev*1e3:.2e} mA).
+//     'regen' (saturated)   : {REPLAY_TOL_REGEN*1e3:.0f} mA.  During the saturated transient this controller
+//                             dithers across the +-{I_CLAMP:.0f} A clamp boundary ({_n_clamp_trans} clamp-state
+//                             transitions in the emitted vectors, closest boundary
+//                             approach {_boundary_uA:.1f} uA), so one flipped decision — which any
 //                             perturbation can cause — is worth ~8 A of state drive.
-//                             Measured: 12.8 mA sensitivity to a %.9e stimulus
-//                             truncation, 13.4 mA to a float32 one.  A tighter tolerance
-//                             fails correct implementations.
+//                             Measured worst sensitivity {_sens_worst*1e3:.2f} mA
+//                             ({_sens_worst_label});
+//                             the shipped tolerance is 2x that, rounded up.  A tighter
+//                             tolerance fails correct implementations.  NOTE the largest
+//                             perturbation is the ARITHMETIC ORDER of the dot products
+//                             (scalar C loop vs BLAS), not stimulus precision.
+// These tolerances are MEASURED per synthesis run and shipped machine-readably as
+// DRIVE_REPLAY_<EPISODE>_TOL_A in controller_design_MIMO/drive_replay_vectors.h — read
+// those macros, do not copy the numbers above into a test.
 // Full detail in the figures/drive_siso_replay.csv header.
 #define DRIVE_CTRL_NSTATES {_n}
 static const float DRIVE_CTRL_DD = {_Dd:.17e}f;   // direct feedthrough, A per (m/s)
@@ -1141,7 +1317,7 @@ i_m0 at the OP       = {pm.bus_current_gains(OP0, P0)[2]:.4f} A   vs a measured 
                        not agreement to within the measurement.
 
 VELOCITY ESTIMATOR — MODELLED FOR THE FIRST TIME, 2026-08-16b.  Element:
-      Td_est(v0) = (N_est + 1)*pitch/(2 v0),  pitch = 2*pi*r_t/120 = {pm.PITCH_M*1e3:.4f} mm, N_est = {P0['N_est']}
+      Td_est(v0) = (N_est + 1)*pitch/(2 v0),  pitch = 2*pi*R_FLY/120 = {pm.PITCH_M*1e3:.4f} mm, N_est = {P0['N_est']}
       = {TD_EST0*1e3:.3f} ms at the design speed v0 = {OP0['v0']:g} m/s
         {pm.td_est(0.5)*1e3:.2f} ms at 0.5 m/s (validity floor)   {pm.td_est(5.0)*1e3:.2f} ms at 5 m/s
 It sits on the MEASURED speed only (the bus-current coupling in the 2x2 plant taps the
@@ -1154,25 +1330,33 @@ estimator was a ~113 ms boxcar: ~56 ms group delay, {np.degrees(wc_ach*56e-3):.0
 49.6 deg phase margin.  The element was absent from the synthesis plant, so the reported
 margin was never the margin the hardware had.  This gate battery now measures it (§6b).
 
-DRIVE GAIN RE-CENTRED, 2026-08-16b, via K_v = {P0['K_v']:g} (plant_mimo.K_V_NOM):
-      G22(0)  1.4112 -> {G22.dcgain():.4f} (m/s)/A     effective K_F*K_v = {pm.force_per_amp(P0)*P0['K_v']:.4f} N/A
-The drive gain is now MEASURED end to end, twice, and the two measurements disagree:
-      ML0136-0139 +12 A ramps, startup-excluded fits: 0.186-0.204 (m/s^2)/A net
-        -> with the modelled drag added back, implied K_F = 0.805 N/A = 1.78x modelled
-      4.5 +- 0.4 A cruise hold at 2 m/s
-        -> implied K_F = 0.409 N/A = 0.91x modelled
-No single constant in this chain reconciles a factor of 2 (m_eff ~ 1.6-2.0 kg would, and
-that is consistent with the coast-down record's unexplained x1.4-1.5 residual -- an OPEN
-BENCH ITEM, not a modelling decision).  The nominal is set to the geometric mean of the
-two implied gains and the K_v corner axis brackets both, which NARROWS its span 4.0x ->
-2.2x.  eta_dt is deliberately left at 0.85: the ramps imply eta_dt >= 1.0, which is not an
-efficiency, and raising it would move i_m0 and the coupling gains that no measurement of
-this round touches.
+K_F FORCE-AXIS CORRECTION, 2026-08-16c (upstream, plant_mimo.py).  The force chain carried
+the wrong gear ratio and the wrong radius.  PHI 9.49 -> 6.86 (the as-fitted 29T pinion; the
+9.49 was a stock-gearing web figure) and the FORCE radius 0.0762 m (flywheel) -> 0.033 m
+(TIRE).  The rig is motor -> gearbox -> TIRE -> roller -> FLYWHEEL: torque acts on the
+tire, while the encoder and the inertia belong to the flywheel, so the two radii are
+different quantities and were being conflated.
+      K_F  0.4516 -> {pm.force_per_amp(P0):.4f} N/A   (x1.669)
+      b_eff 0.32 -> {pm.b_eff(OP0, P0):.3f} N*s/m,  F_c 1.2 -> 2.00 N  (the drag law was derived
+      FROM hold currents THROUGH K_F, so it rescales with it and i_m0 is INVARIANT at 4.07 A)
+      G22(0)  1.7641 -> {G22.dcgain():.4f} (m/s)/A   effective K_F*K_v = {pm.force_per_amp(P0)*P0['K_v']:.4f} N/A (x1.34)
+      mechanical pole  -0.0914 -> {-pm.b_eff(OP0, P0)/P0['m_eff']:.4f} rad/s
+THE FACTOR-OF-2 GAIN CONTRADICTION IS RESOLVED.  Recomputed in the corrected axis:
+      ML0136-0139 +12 A ramps -> implied K_F 0.836-0.914 N/A = x1.109 to x1.213
+      4.5 +- 0.4 A cruise hold -> implied K_F 0.682 N/A      = x0.905 (band x0.83-x0.99)
+The cruise-implied gain scales WITH the drag law and the ramp-implied one does not, so
+correcting K_F moves only the ramps and the two land 1.09-1.34x apart, not ~2x.  m_eff =
+3.5 kg is vindicated by the same arithmetic (the 1.6-2.4 kg inferences were F/a fits made
+through the understated force axis).  K_v = {P0['K_v']:g} is the geometric mean of the two
+evidence centres; corners {{0.85, 1.25, 1.85}} -> {{0.75, 1.00, 1.35}}, span 2.2x -> 1.8x.
+eta_dt stays 0.85: the ramp residual is now only x1.11-1.21, no longer the unphysical
+eta_dt >= 1.0, but raising it would move i_m0 and the coupling gains that nothing measures.
 
-PLANT RE-IDENTIFIED 2026-08-16 (calibration/motor_id_20260815.md).  k_t (4.266e-3 N*m/APLANT RE-IDENTIFIED 2026-08-16 (calibration/motor_id_20260815.md).  k_t (4.266e-3 N*m/A
-from the measured flux linkage), R_m (22.6 mOhm), m_eff (3.5 kg), r_t (0.0762 m flywheel
-rolling radius), tau_v (1.0 ms) and the drag law (b_eff 0.32 N*s/m local slope + F_c
-1.2 N Coulomb) are all MEASURED.  Effect on the design plant:
+PLANT RE-IDENTIFIED 2026-08-16 (calibration/motor_id_20260815.md).  k_t (4.266e-3 N*m/A
+from the measured flux linkage), R_m (22.6 mOhm), m_eff (3.5 kg), the radii (0.033 m tire
+for force, 0.0762 m flywheel for encoder/inertia), tau_v (1.0 ms) and the drag law
+(b_eff 0.534 N*s/m local slope + F_c 2.00 N Coulomb) are all MEASURED.  Effect on the
+design plant:
       G22(0)  3.7085 -> {G22.dcgain():.4f} (m/s)/A      pole  -0.1219 -> {-pm.b_eff(OP0, P0)/P0['m_eff']:.4f} rad/s
       K_F     1.3338 -> {pm.force_per_amp(P0):.4f} N/A
 The previous note here attributed b_eff to a modelled motor free-run loss (0.3596 of
@@ -1197,7 +1381,11 @@ shaped, not met).  Wp is therefore cornered at {WC:g} rad/s.
 
 LADDER RE-RUN 2026-08-16b on the ESTIMATOR plant.  The previous ladder (and the one
 before it) is VOID: the estimator delay adds phase at crossover and the K_v re-centring
-raises the plant gain 1.25x.  Ladder actually run (Wd break = 2.5*WC,
+raises the plant gain.
+NOT RE-RUN 2026-08-16c.  The K_F force-axis correction raises the nominal plant gain a
+further x1.34, so every NON-CHOSEN row below is indicative only.  The CHOSEN rung was
+re-run in full and passes every gate on the corrected plant; its re-measured numbers are
+in the margins/robustness sections below, not in the table.  Ladder as originally run (Wd break = 2.5*WC,
 Wu = makeweight(dc, 300, hf); "PM@0.5" = phase margin at the 0.5 m/s estimator corner;
 worst ||S|| over the 24 drive corners x 3 estimator speeds = 72 plants):
     WC=24, Wu(0.3 ,300,20  ) -> g_opt 17.76, wc  8.78, PM 57.8, PM@0.5 53.2, ||S|| 1.589  (wc < 12: FAILS)
@@ -1228,15 +1416,16 @@ higher crossover (WC=65/70 at Wu(0.2..0.25); WC=55 at Wu(0.15)) breaks the 2.5 t
 the rungs that break it hardest break PM as well.  The SHAPE of the ladder has changed from
 the previous round: the binding constraint is no longer phase margin alone but the
 worst-corner peak, because the worst corner is now the 0.5 m/s ESTIMATOR corner rather than
-a parameter extreme (worst ||S|| {worstS:.3f} at K_v 1.85 / pole_factor 0.5 / tau_v 5 ms /
+a parameter extreme (worst ||S|| {worstS:.3f} at K_v 1.35 / pole_factor 0.5 / tau_v 5 ms /
 Td_v 4 ms / v0 0.5 m/s).
 
-THE HEADLINE.  Adding a real 3 ms sensor delay did NOT cost bandwidth.  Achieved crossover
-{wc_ach:.2f} rad/s — identical to the previous round's 15.98 — with MORE phase margin
-({pm_deg:.1f} vs 49.6 deg) and a comparable worst corner ({worstS:.3f} vs 2.152) on a corner family
-that is now 3x larger and contains a 12 ms delay.  The gain re-centring paid for it: K_v's
-span fell 4.0x -> 2.2x, a real reduction in what the controller must tolerate, bought with
-measurement rather than with conservatism.
+THE HEADLINE.  Adding a real 3 ms sensor delay did NOT cost bandwidth, and neither did the
+x1.34 force-axis gain correction that followed it.  Achieved crossover {wc_ach:.2f} rad/s
+against the previous round's 15.98, with phase margin {pm_deg:.1f} deg (49.6 two rounds ago) and a
+comparable worst corner ({worstS:.3f}) on a corner family that is 3x larger than the
+pre-estimator one and contains a 12 ms delay.  Measurement paid for both: K_v's span fell
+4.0x -> 2.2x -> 1.8x across the two rounds, each narrowing bought with a datapoint rather
+than with conservatism.
 There is NO case for chasing bandwidth past this.  The ML0136-ML0139 limit cycle was a
 16 rad/s loop meeting ~56 ms of unmodelled lag; the fix is to model the lag and KEEP the
 bandwidth, not to raise it.  What bounds the design from above is now the 12 ms low-speed
@@ -1275,7 +1464,7 @@ gain margin          = {'inf' if not np.isfinite(gm_db) else f'{gm_db:.1f} dB'}
 
 ── robustness ──
 corner family        = {len(pm.drive_corners())} drive_corners() x v0 in {V0_SET} m/s = {n_corner} plants
-                       (K_v in {{0.85, 1.25, 1.85}} x pole_factor in {{0.5, 3}} x tau_v in
+                       (K_v in {{0.75, 1.00, 1.35}} x pole_factor in {{0.5, 3}} x tau_v in
                         {{0.5, 5}} ms x Td_v in {{1, 4}} ms, x the ESTIMATOR-DELAY axis
                         Td_est(v0) in {{11.97, 2.99, 1.20}} ms.
                         The v0 axis is REINSTATED (2026-08-16b) for a new reason: the
@@ -1284,9 +1473,10 @@ corner family        = {len(pm.drive_corners())} drive_corners() x v0 in {V0_SET
                         dependent, a 10x span across the operating range.  The drag-slope
                         speed dependence it used to stand for stays on pole_factor's
                         upper corner.
-                        K_v is RE-CENTRED, not merely re-scaled: nominal 1.25 is the
-                        geometric mean of the two disagreeing end-to-end gain measurements
-                        and the span narrows 4.0x -> 2.2x.)
+                        K_v is RE-CENTRED, not merely re-scaled: nominal {P0['K_v']:g} is
+                        the geometric mean of the two end-to-end gain measurements,
+                        recomputed 2026-08-16c in the corrected force axis, and the span
+                        narrows 2.2x -> 1.8x.)
 VALIDITY FLOOR       = v0 >= {pm.V0_VALID_MIN} m/s.  Below it Td_est grows without bound
                        (19.9 ms at 0.3 m/s, 59.8 ms at 0.1 m/s; the estimator times out and
                        reports 0 below ~{pm.V_EST_MIN} m/s) and this design is NOT gate-checked
@@ -1388,13 +1578,25 @@ figures/drive_siso_replay.csv  ({len(_e_small)} unsaturated + {len(_e_sat)} satu
                             through the float32 controller — self-consistent, but off its
                             own trajectory and therefore sitting ON the clamp boundary,
                             which made the vectors knife-edged: a consumer parsing e_in at
-                            %.9e instead of %.17e diverged 54 mA.  Closed-loop generation
-                            cuts that to 12.8 mA, and two new gates bound it.
-                            TOLERANCES: 'small' 1e-5 A, 'regen' ~50 mA.  The regen figure
-                            is irreducible, not slack — the controller makes 82 clamp-state
-                            transitions during the saturated transient (2 ms sample rate,
-                            545 A/(m/s) non-integral branch), so a boundary sample always
-                            exists and one flipped decision is ~8 A of state drive.)
+                            %.9e instead of %.17e diverged 54 mA (a HISTORICAL figure from
+                            the 2026-08-16b emission — the only hardcoded number in this
+                            block, kept because it describes a construction that no longer
+                            exists).  Closed-loop generation
+                            cuts that to {_SENS['%.9e stimulus truncation']*1e3:.2f} mA, and gates bound it.
+                            TOLERANCES (MEASURED this run, shipped machine-readably as
+                            DRIVE_REPLAY_<EPISODE>_TOL_A in drive_replay_vectors.h):
+                              'small' {REPLAY_TOL_SMALL:.0e} A  (firmware-path deviation {_small_dev*1e3:.2e} mA)
+                              'regen' {REPLAY_TOL_REGEN*1e3:.0f} mA   (2x the worst measured sensitivity,
+                                                rounded up)
+                            Regen sensitivity breakdown:
+{chr(10).join(f"                              {v*1e3:8.2f} mA  {k}" for k, v in sorted(_SENS.items(), key=lambda kv: -kv[1]))}
+                            The regen figure is irreducible, not slack — the controller
+                            makes {_n_clamp_trans} clamp-state transitions during the saturated
+                            transient (2 ms sample rate, 545 A/(m/s) non-integral branch)
+                            and approaches the decision boundary to within {_boundary_uA:.1f} uA, so a
+                            boundary sample always exists and one flipped decision is ~8 A
+                            of state drive.  Deviation decays to {_tail_dev*1e3:.2f} mA over the last
+                            200 samples: boundary dither, not divergence.)
 """)
 
 print(f"\nartifacts: drive_siso_coeffs.h, "

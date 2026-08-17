@@ -69,22 +69,52 @@ TAUF_NOM = 0.8e-3       # s     200 Hz firmware measurement prefilter (implement
 # M_ROT mass split, aero/C_rr/free-run drag composite) are RETIRED; the drive
 # channel is now a measured plant. See mimo_system_model.md §4.2 and §9.2.
 # ─────────────────────────────────────────────────────────────────────────────
-PHI     = 9.49          # -      motor -> flywheel reduction, stock gearing (VESC doc §3)
-R_T     = 0.0762        # m      flywheel ROLLING radius (3.00 in, MEASURED 2026-08-13).
+# ── FORCE-AXIS FRAME (CORRECTED 2026-08-16c -- see calibration/motor_id_20260815.md
+#    "K_F force-axis correction") ───────────────────────────────────────────────
+# The rig chain is  motor -> gear reduction PHI -> TIRE (R_TIRE) -> roller contact ->
+# FLYWHEEL (R_FLY).  Tire surface speed = flywheel surface speed = v_actual.  The two
+# radii therefore play DIFFERENT roles and must not be conflated:
+#   * R_TIRE is the FORCE conversion radius: motor torque acts through the gearbox on the
+#     tire, so wheel force = k_t*eta_dt*PHI/R_TIRE, and motor speed per (m/s) of surface
+#     speed is omega/v = PHI/R_TIRE.
+#   * R_FLY is the ENCODER / INERTIA radius: the encoder disc is the flywheel, so the slot
+#     pitch and the J/r^2 linear-inertia reduction both use R_FLY.
+# The pre-2026-08-16c model used (PHI = 9.49, r = 0.0762) for BOTH roles and understated
+# the force constant by x1.669.  See the loud note on nominal_params()['r_t'].
+PHI     = 6.86          # -      motor -> tire reduction, AS FITTED.  Traxxas 4-Tec manual
+                        #        p.24 formula (spur/pinion)*2.85 with the COUNTED 70T spur
+                        #        / 29T pinion gives 70/29*2.85 = 6.88; the manual's chart
+                        #        cell (29, 70) = 2.41 pre-transmission; operator rolling
+                        #        counts give 2.84-2.86 for the shaft/tire stage.  Adopted
+                        #        6.86.  RETIRED: 9.49 (VESC doc §3) was the STOCK-gearing
+                        #        web figure for a different pinion.  The operator's
+                        #        flywheel-vs-motor spin count of ~32 appeared to support a
+                        #        larger ratio, but it is exactly 2.02x the chain-predicted
+                        #        PHI*(R_FLY/R_TIRE) = 15.8 because VESC Tool's RPM display
+                        #        reads 2x the true mechanical speed (pole/pole-pair display
+                        #        convention).  That is a DISPLAY artifact only: the
+                        #        lambda-vs-KV cross-check (1.451 vs 1.422 mWb at p = 2)
+                        #        keeps k_t unchanged.
+R_TIRE  = 0.033         # m      tire rolling radius (1.3 in).  FORCE / omega chain.
+R_FLY   = 0.0762        # m      flywheel ROLLING radius (3.00 in, MEASURED 2026-08-13).
                         #        The encoder is coupled to the flywheel and the flywheel's
                         #        own radius is the rolling radius (coupling resolved
                         #        2026-08-16 as surface/roller), so v is flywheel SURFACE
-                        #        speed and r_t is the correct linear conversion.
+                        #        speed.  ENCODER PITCH / INERTIA chain only.
 M_EFF   = 3.5           # kg     equivalent linear inertia of the flywheel assembly
-                        #        (MEASURED: J = 0.0203 kg*m^2 at r_t; J/r_t^2 = 3.50 kg)
+                        #        (MEASURED: J = 0.0203 kg*m^2 at R_FLY; J/R_FLY^2 = 3.50 kg).
+                        #        CONFIRMED 2026-08-16c: the 1.6-2.4 kg inferences were F/a
+                        #        fits made through the understated force axis; the x1.669
+                        #        correction moves them back onto ~3.5 kg.
 ETA_DT  = 0.85          # -      driveline efficiency (user decision 1)  TODO(calibrate)
-                        #        DELIBERATELY UNCHANGED 2026-08-16b.  The ML0136-0139
-                        #        ramp fits imply a force constant ~1.78x this chain's
-                        #        (see K_V_NOM), i.e. eta_dt >= 1.0, which is unphysical --
-                        #        so the residual is NOT an efficiency and is carried by
-                        #        the K_v axis instead.  Raising eta_dt here would also
-                        #        move i_m0 and the §4.4 coupling gains, which no
-                        #        measurement of this round touches.
+                        #        UNCHANGED 2026-08-16c.  In the corrected force axis the
+                        #        ML0136-0139 ramp residual is only ~x1.11-1.21 (it was
+                        #        x1.78, which had implied the unphysical eta_dt >= 1.0), so
+                        #        the residual is now consistent with an eta_dt slightly
+                        #        above 0.85 or with nothing at all.  It is still carried on
+                        #        the K_v axis rather than folded in here, because eta_dt
+                        #        also moves i_m0 and the §4.4 coupling gains and no
+                        #        measurement of this round touches those.
 ETA_V   = 0.85          # -      VESC inverter efficiency  TODO(calibrate)
 K_ENC   = 1.0           # -      encoder speed-chain gain. NO LONGER structurally
                         #        unknown: 240 counts/rev (120 slots x2 decode, counted
@@ -93,17 +123,31 @@ K_ENC   = 1.0           # -      encoder speed-chain gain. NO LONGER structurall
                         #        factor so the K_v corner has a place to act.
 
 # Drive-channel gain residual, carried on K_v (see drive_corners() and
-# mimo_system_model.md §4.2 "the gain datapoint").  MEASURED 2026-08-16b: the ML0136-0139
-# +12 A ramps give a NET acceleration of 0.186-0.204 (m/s^2)/A (startup-excluded fits;
-# the operator's 0.158 figure is the same ML0139 ramp fitted INCLUDING its startup window
-# and is depressed by it -- reconciliation in calibration/motor_id_20260815.md).  Adding
-# back the modelled drag at the fit speeds gives an implied K_F of 0.805 N/A = 1.78x the
-# modelled 0.4516 N/A.  The measured 4.5 +- 0.4 A cruise hold pulls the OTHER way
-# (implied K_F 0.409 N/A = 0.91x).  The two disagree by a factor of ~2 and no single
-# constant in this chain reconciles them (m_eff ~ 1.6-2.0 kg would; that is an open bench
-# item, not a modelling decision).  The design plant is therefore centred on the GEOMETRIC
-# MEAN of the two implied gains and the K_v axis is widened to span both.
-K_V_NOM = 1.25          # -      sqrt(0.906 * 1.783) = 1.271, rounded to 1.25.
+# mimo_system_model.md §4.2 "the gain datapoint").  RECOMPUTED 2026-08-16c in the CORRECTED
+# force axis (K_F = k_t*eta_dt*PHI/R_TIRE = 0.7538 N/A; the retired axis gave 0.4516 N/A,
+# so every gain RATIO below is the old one divided by 1.669).
+#
+# Evidence 1 -- ML0136-0139 +12 A ramps.  NET acceleration 0.186-0.204 (m/s^2)/A
+# (startup-excluded fits; calibration/motor_id_20260815.md).  Net force per amp
+# = m_eff*a/I = 3.5*[0.186, 0.204] = [0.651, 0.714] N/A.  Adding back the CORRECTED drag
+# at the fit speeds (F = F_COULOMB + B_EFF_NOM*v, at v ~ 0.40 m/s for ML0139 and
+# v ~ 0.75 m/s for ML0137, spread over the 12 A command):
+#     ML0139: 0.651 + (2.003 + 0.534*0.40)/12 = 0.836 N/A  -> x1.109
+#     ML0137: 0.714 + (2.003 + 0.534*0.75)/12 = 0.914 N/A  -> x1.213
+# Evidence 2 -- cruise hold 4.5 +- 0.4 A at 2.0 m/s.  Corrected drag
+# F = 2.003 + 0.534*2.0 = 3.071 N  ->  K_F = 3.071/4.5 = 0.682 N/A -> x0.905
+# (band over 4.1-4.9 A: x0.831 to x0.993).
+#
+# THE OLD FACTOR-OF-2 CONTRADICTION IS GONE.  It was an artifact of the frame error: the
+# cruise-implied gain scales WITH the drag law (both were derived from hold currents
+# through K_F, so both rescale x1.669 and the ratio is invariant), while the ramp-implied
+# gain does NOT (it is m_eff*a, independent of the drag law).  Correcting K_F therefore
+# moves the ramp ratio down by 1.669 and leaves the cruise ratio put, and the two land
+# 1.09-1.34x apart instead of ~2x apart.  m_eff = 3.5 kg is vindicated by the same
+# arithmetic (see M_EFF).
+K_V_NOM = 1.00          # -      geometric mean of the two evidence centres:
+                        #        sqrt(0.905 * 1.161) = 1.025, rounded to 1.00.
+                        #        (1.161 = the ramp-band centre of x1.109 and x1.213.)
 
 
 # Motor torque constant. Castle Creations 1406 1900KV, 4-pole (p = 2 pole pairs).
@@ -148,7 +192,8 @@ TD_V_NOM  = 2.0e-3      # s      DECIDED 2026-08-15 (analytic bound 0.9-2 ms: UA
 # difference is in the >1/Td_est stopband shape, which is far above any achieved crossover.
 ENC_SLOTS = 120         # -      slots on the encoder disc (COUNTED 2026-08-16; the x2
                         #        quadrature decode gives 240 counts/rev, hardware-confirmed)
-PITCH_M = 2.0*np.pi*R_T/ENC_SLOTS      # m, 3.9898 mm of flywheel SURFACE travel per slot
+PITCH_M = 2.0*np.pi*R_FLY/ENC_SLOTS    # m, 3.9898 mm of flywheel SURFACE travel per slot
+                        #      (R_FLY, not R_TIRE: the encoder disc IS the flywheel)
 N_EST   = 2             # -      periods averaged (firmware default; configurable)
 V_EST_MIN = 0.03        # m/s    estimator timeout floor -- below this it reports 0.
                         #        The design is NOT validated below V0_VALID_MIN (see
@@ -179,16 +224,16 @@ def td_est(v0, N=N_EST, pitch=PITCH_M):
 # stacked placeholders and predicted the cruise current 4x low).
 # Evidence: the TP0125-TP0134 steady-state ladder (10 holds, 3.5-5.5 A) plus the
 # ML0135 small-signal staircase (5 incremental steps, 1.9-3.4 m/s) agree on the slope.
-B_EFF_NOM = 0.32        # N*s/m  local dF/dv at v0 = 2.0 m/s, +-15 % (MEASURED; the
+B_EFF_NOM = 0.534       # N*s/m  local dF/dv at v0 = 2.0 m/s, +-15 % (MEASURED; the
                         #        ladder fit and the small-signal steps agree to 6 %).
                         #        The full curve is strongly concave (Stribeck-like,
                         #        F = 1.751*v^0.30); pure viscous is excluded (chi^2 x1400).
                         #        BELOW ~1.5 m/s the local slope roughly DOUBLES -- that
                         #        amplitude dependence is carried by pole_factor, not by
                         #        a v0 term (see b_eff() and mimo_system_model.md §4.2).
-F_COULOMB = 1.2         # N      Coulomb/breakaway drag term.  THERMALLY VARIABLE:
-                        #        1.31 N cold (TP ladder) vs 1.05-1.1 N warm (ML0135);
-                        #        1.2 +- 0.25 N is the adopted thermal-mean spread.
+F_COULOMB = 2.00        # N      Coulomb/breakaway drag term.  THERMALLY VARIABLE:
+                        #        2.19 N cold vs 1.75-1.84 N warm; 2.00 +- 0.42 N is the
+                        #        adopted thermal-mean spread.
                         #        Enters the OPERATING POINT (i_m0 -> coupling gains
                         #        §4.4) only; its dF/dv is zero, so it is NOT in b_eff.
 
@@ -215,7 +260,12 @@ def nominal_params():
         k_d=K_D, Td=TD_NOM, taur=TAUR_NOM, tauf=TAUF_NOM,
         # drive channel
         tau_v=TAU_V_NOM, Td_v=TD_V_NOM,
-        k_t=K_T, phi=PHI, r_t=R_T, m_eff=M_EFF,
+        # !! r_t HERE IS THE **TIRE** RADIUS (R_TIRE), NOT the flywheel radius. !!
+        # Every consumer of p['r_t'] is a FORCE or omega conversion -- force_per_amp(),
+        # op_motor_current(), bus_current_gains() (omega0 = v0*phi/r_t) and design_plant()'s
+        # Aw_v -- and all of those act through the gearbox on the TIRE.  The encoder pitch
+        # and the inertia use R_FLY and take it directly, never through this dict.
+        k_t=K_T, phi=PHI, r_t=R_TIRE, m_eff=M_EFF,
         eta_dt=ETA_DT, eta_v=ETA_V, K_enc=K_ENC,
         # velocity estimator: Td_est=None => derived from the OP speed via td_est().
         # Set it explicitly only to pin a corner independently of the OP.
@@ -286,7 +336,7 @@ def op_feasible(op, p, margin=ALPHA_MARGIN):
 def b_eff(op, p):
     """Linearized longitudinal damping at the OP, flywheel-referred [N*s/m].
 
-        b_eff = b_eff_nom * pole_factor          (b_eff_nom = 0.32 N*s/m MEASURED)
+        b_eff = b_eff_nom * pole_factor       (b_eff_nom = 0.534 N*s/m MEASURED)
 
     This is a MEASURED LOCAL SLOPE (dF/dv at v0 = 2.0 m/s), not a composite of
     modelled loss terms.  It therefore carries no explicit v0 dependence: the true
@@ -311,11 +361,13 @@ def op_motor_current(op, p):
 
         F(v0) = b_eff*v0 + F_c   ->   i_m0 = F(v0)/force_per_amp
 
-    At the nominal OP this yields i_m0 = 4.07 A.  The bench holds measure 4.5 +- 0.4 A,
-    so the model sits ~9 % below the band's centre and 0.6 % BELOW its lower edge --
-    close, but NOT inside it.  Carrying the F_c thermal endpoints through gives a model
-    envelope of 3.74 A (warm, F_c 1.05) to 4.32 A (cold, F_c 1.31), which likewise
-    straddles the band's lower edge rather than covering it.
+    At the nominal OP this yields i_m0 = 4.07 A.  INVARIANT under the 2026-08-16c
+    force-axis correction: the drag law was derived FROM hold currents THROUGH K_F, so
+    F and K_F both rescale by 1.669 and their ratio does not move.  The bench holds
+    measure 4.5 +- 0.4 A, so the model sits ~9 % below the band's centre and 0.6 % BELOW
+    its lower edge -- close, but NOT inside it.  Carrying the F_c thermal endpoints
+    through gives a model envelope of 3.74 A (warm, F_c 1.75) to 4.32 A (cold, F_c 2.19),
+    which likewise straddles the band's lower edge rather than covering it.
     The claim this supports is bounded accordingly: the calibrated model reproduces the
     measured cruise current to within ~10 %, against the pre-calibration composite's
     0.97 A (a factor of 4 low).  The residual is consistent with the eta_dt = 0.85
@@ -576,15 +628,18 @@ def share_corners():
 def drive_corners():
     """24 drive-channel parameter corners.
 
-    K_v {0.5, 1, 2} -> {0.85, 1.25, 1.85}, RE-CENTRED not merely re-scaled
-    (2026-08-16b).  The axis is no longer a structural placeholder: the drive gain has
-    now been MEASURED end to end, twice, and the two measurements disagree.
-      * ML0136-0139 +12 A ramps  -> implied K_F 0.805 N/A = 1.78x modelled
-      * 4.5 +- 0.4 A cruise hold -> implied K_F 0.409 N/A = 0.91x modelled
-    The nominal is the geometric mean (K_V_NOM = 1.25) and the corners bracket both
-    endpoints.  Net effect: the span NARROWS from 4.0x to 2.2x while the nominal moves
-    onto the evidence -- so this is a robustness RELAXATION and a nominal correction at
-    the same time, and the relaxation is what pays for the estimator delay added below.
+    K_v {0.85, 1.25, 1.85} -> {0.75, 1.00, 1.35}, RE-CENTRED again (2026-08-16c) after
+    the K_F force-axis correction.  Both evidence ratios are recomputed against
+    K_F = 0.7538 N/A (see the K_V_NOM comment block for the full arithmetic):
+      * ML0136-0139 +12 A ramps  -> implied K_F 0.836-0.914 N/A = x1.109 to x1.213
+      * 4.5 +- 0.4 A cruise hold -> implied K_F 0.682 N/A      = x0.905 (band x0.83-x0.99)
+    The old factor-of-2 contradiction between the two DISSOLVES in the corrected axis, so
+    the axis no longer has to straddle it.  Nominal = geometric mean of the two centres
+    (K_V_NOM = 1.00); corners chosen to bracket both evidence BANDS with margin:
+    0.75 sits 10 % below the cruise band's low edge (0.831) and 1.35 sits 11 % above the
+    ramp band's high edge (1.213).  Net span NARROWS 2.2x -> 1.8x.  That relaxation is
+    deliberate: the nominal plant gain rises x1.34 (K_F*K_v 0.5645 -> 0.7538), and paying
+    for that with bandwidth would otherwise be paid twice.
     See mimo_system_model.md §4.2.
 
     pole_factor scales b_eff (hence the drive pole and the DC gain jointly).
@@ -598,7 +653,7 @@ def drive_corners():
     that it is deterministic given v0.
     """
     out = []
-    for K_v in (0.85, K_V_NOM, 1.85):
+    for K_v in (0.75, K_V_NOM, 1.35):
         for pf in (0.5, 3.0):
             for tau_v in (0.5e-3, 5.0e-3):
                 for Td_v in (1.0e-3, 4.0e-3):

@@ -103,6 +103,50 @@ Configured via VESC Tool over USB (desktop).
 
 ---
 
+> ### CORRECTION (2026-08-16) — the fitted drive ratio is **6.86:1**, not 9.49:1
+>
+> **Every "9.49:1" in this document describes the vehicle as delivered and is retained as
+> that historical record.** It is not the ratio fitted to the rig, and it must not be used
+> for any force, torque or speed calculation.
+>
+> The fitted pinion is **29T** against a **70T** spur, both counted by the operator. Three
+> independent sources agree on 6.86:
+>
+> | Source | Reading |
+> |---|---|
+> | Traxxas 4-Tec manual p.24 formula, (spur/pinion)×2.85, with the counted 70T/29T | 70/29 × 2.85 = **6.88** |
+> | The same manual's ratio chart, cell (29, 70) | 2.41 pre-transmission (×2.85 → 6.87) |
+> | Operator rolling counts, shaft/tire stage | 2.84–2.86 (against the formula's 2.85) |
+>
+> **6.86** is the adopted value. This closes the §10 open item "spur gear tooth count —
+> back out the internal reduction", and it also removes the §2 "unreconciled discrepancy":
+> at 6.86:1 the no-load figure is no longer the outlier the 9.49 made it.
+>
+> **Two consequences for the operator.**
+>
+> 1. **VESC Tool's own Gear Ratio setting (§4) still reads 9.49** and should be re-entered
+>    as 6.86 (or the equivalent pulley pair) if VESC's speed/distance reporting is to mean
+>    anything. That reporting is cosmetic — nothing in the firmware consumes it (§7) — so
+>    this is not a blocking change, but it is wrong as it stands.
+> 2. **VESC Tool's RPM display reads ×2 the true mechanical speed** (a pole/pole-pair
+>    display convention on this 4-pole motor). A commanded 1200 rpm is ≈600 rpm at the
+>    shaft. Any measurement taken off that display must be halved before it is compared
+>    against a mechanical count. This artifact is what made an operator flywheel-vs-motor
+>    spin count of ≈32 appear to corroborate a larger reduction, when the chain predicts
+>    6.86 × (76.2/33) = 15.8. It does **not** affect `k_t`, which is derived from the
+>    measured flux linkage and cross-checked against KV independently.
+>
+> **§7's corollary stands unchanged and is if anything reinforced:** the ratio does not
+> belong in firmware. The encoder measures the flywheel, the flywheel runs at tire surface
+> speed, and `v_actual` is that surface speed — no gear ratio enters the velocity loop.
+>
+> Full derivation, and the force-constant correction that follows from it
+> (`K_F` 0.4516 → 0.7538 N/A), are in
+> `controller_design_MIMO/calibration/motor_id_20260815.md`
+> §"K_F force-axis correction (2026-08-16c)".
+
+---
+
 ## 3. VESC unit history
 
 ### Unit #1 — RMA

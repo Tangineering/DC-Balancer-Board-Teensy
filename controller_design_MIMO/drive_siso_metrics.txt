@@ -4,10 +4,10 @@ controller_design_MIMO/synthesize_drive_siso.py; plan Phase 3 / §5 bullet 1)
 ── plant (plant_mimo.drive_plant, nominal OP/params) ──
 states               = 6  (Pade(2) VESC delay + tau_v lag + 1st-order mechanics
                        + Pade(2) VELOCITY-ESTIMATOR delay on the measured output)
-G22(0)               = 1.764051 (m/s)/A
-mechanical pole      = -0.091429 rad/s  (near-integrator)
-b_eff                = 0.320000 N*s/m   force/amp = 0.451597 N/A
-i_m0 at the OP       = 4.0744 A   vs a measured cruise hold of
+G22(0)               = 1.411590 (m/s)/A
+mechanical pole      = -0.152571 rad/s  (near-integrator)
+b_eff                = 0.534000 N*s/m   force/amp = 0.753789 N/A
+i_m0 at the OP       = 4.0701 A   vs a measured cruise hold of
                        4.5 +- 0.4 A: the model runs ~9 % below the band's centre and just
                        under its lower edge, NOT inside it.  Consistent with the unmeasured
                        eta_dt = 0.85, which scales every absolute force.  The claim this
@@ -15,7 +15,7 @@ i_m0 at the OP       = 4.0744 A   vs a measured cruise hold of
                        not agreement to within the measurement.
 
 VELOCITY ESTIMATOR — MODELLED FOR THE FIRST TIME, 2026-08-16b.  Element:
-      Td_est(v0) = (N_est + 1)*pitch/(2 v0),  pitch = 2*pi*r_t/120 = 3.9898 mm, N_est = 2
+      Td_est(v0) = (N_est + 1)*pitch/(2 v0),  pitch = 2*pi*R_FLY/120 = 3.9898 mm, N_est = 2
       = 2.992 ms at the design speed v0 = 2 m/s
         11.97 ms at 0.5 m/s (validity floor)   1.20 ms at 5 m/s
 It sits on the MEASURED speed only (the bus-current coupling in the 2x2 plant taps the
@@ -24,31 +24,39 @@ over one slot pitch each and latches once per pitch, giving a mean-value delay
 N*pitch/(2v) plus a mean latch staleness pitch/(2v).
 WHY IT IS HERE.  The first closed-loop 'V' runs (ML0136-ML0139, fw v11) limit cycled at
 2.3-2.6 Hz = 14.5-16.3 rad/s = this design's crossover, at every step size.  The shipped
-estimator was a ~113 ms boxcar: ~56 ms group delay, 51 deg at the crossover, against a
+estimator was a ~113 ms boxcar: ~56 ms group delay, 56 deg at the crossover, against a
 49.6 deg phase margin.  The element was absent from the synthesis plant, so the reported
 margin was never the margin the hardware had.  This gate battery now measures it (§6b).
 
-DRIVE GAIN RE-CENTRED, 2026-08-16b, via K_v = 1.25 (plant_mimo.K_V_NOM):
-      G22(0)  1.4112 -> 1.7641 (m/s)/A     effective K_F*K_v = 0.5645 N/A
-The drive gain is now MEASURED end to end, twice, and the two measurements disagree:
-      ML0136-0139 +12 A ramps, startup-excluded fits: 0.186-0.204 (m/s^2)/A net
-        -> with the modelled drag added back, implied K_F = 0.805 N/A = 1.78x modelled
-      4.5 +- 0.4 A cruise hold at 2 m/s
-        -> implied K_F = 0.409 N/A = 0.91x modelled
-No single constant in this chain reconciles a factor of 2 (m_eff ~ 1.6-2.0 kg would, and
-that is consistent with the coast-down record's unexplained x1.4-1.5 residual -- an OPEN
-BENCH ITEM, not a modelling decision).  The nominal is set to the geometric mean of the
-two implied gains and the K_v corner axis brackets both, which NARROWS its span 4.0x ->
-2.2x.  eta_dt is deliberately left at 0.85: the ramps imply eta_dt >= 1.0, which is not an
-efficiency, and raising it would move i_m0 and the coupling gains that no measurement of
-this round touches.
+K_F FORCE-AXIS CORRECTION, 2026-08-16c (upstream, plant_mimo.py).  The force chain carried
+the wrong gear ratio and the wrong radius.  PHI 9.49 -> 6.86 (the as-fitted 29T pinion; the
+9.49 was a stock-gearing web figure) and the FORCE radius 0.0762 m (flywheel) -> 0.033 m
+(TIRE).  The rig is motor -> gearbox -> TIRE -> roller -> FLYWHEEL: torque acts on the
+tire, while the encoder and the inertia belong to the flywheel, so the two radii are
+different quantities and were being conflated.
+      K_F  0.4516 -> 0.7538 N/A   (x1.669)
+      b_eff 0.32 -> 0.534 N*s/m,  F_c 1.2 -> 2.00 N  (the drag law was derived
+      FROM hold currents THROUGH K_F, so it rescales with it and i_m0 is INVARIANT at 4.07 A)
+      G22(0)  1.7641 -> 1.4116 (m/s)/A   effective K_F*K_v = 0.7538 N/A (x1.34)
+      mechanical pole  -0.0914 -> -0.1526 rad/s
+THE FACTOR-OF-2 GAIN CONTRADICTION IS RESOLVED.  Recomputed in the corrected axis:
+      ML0136-0139 +12 A ramps -> implied K_F 0.836-0.914 N/A = x1.109 to x1.213
+      4.5 +- 0.4 A cruise hold -> implied K_F 0.682 N/A      = x0.905 (band x0.83-x0.99)
+The cruise-implied gain scales WITH the drag law and the ramp-implied one does not, so
+correcting K_F moves only the ramps and the two land 1.09-1.34x apart, not ~2x.  m_eff =
+3.5 kg is vindicated by the same arithmetic (the 1.6-2.4 kg inferences were F/a fits made
+through the understated force axis).  K_v = 1 is the geometric mean of the two
+evidence centres; corners {0.85, 1.25, 1.85} -> {0.75, 1.00, 1.35}, span 2.2x -> 1.8x.
+eta_dt stays 0.85: the ramp residual is now only x1.11-1.21, no longer the unphysical
+eta_dt >= 1.0, but raising it would move i_m0 and the coupling gains that nothing measures.
 
-PLANT RE-IDENTIFIED 2026-08-16 (calibration/motor_id_20260815.md).  k_t (4.266e-3 N*m/APLANT RE-IDENTIFIED 2026-08-16 (calibration/motor_id_20260815.md).  k_t (4.266e-3 N*m/A
-from the measured flux linkage), R_m (22.6 mOhm), m_eff (3.5 kg), r_t (0.0762 m flywheel
-rolling radius), tau_v (1.0 ms) and the drag law (b_eff 0.32 N*s/m local slope + F_c
-1.2 N Coulomb) are all MEASURED.  Effect on the design plant:
-      G22(0)  3.7085 -> 1.7641 (m/s)/A      pole  -0.1219 -> -0.0914 rad/s
-      K_F     1.3338 -> 0.4516 N/A
+PLANT RE-IDENTIFIED 2026-08-16 (calibration/motor_id_20260815.md).  k_t (4.266e-3 N*m/A
+from the measured flux linkage), R_m (22.6 mOhm), m_eff (3.5 kg), the radii (0.033 m tire
+for force, 0.0762 m flywheel for encoder/inertia), tau_v (1.0 ms) and the drag law
+(b_eff 0.534 N*s/m local slope + F_c 2.00 N Coulomb) are all MEASURED.  Effect on the
+design plant:
+      G22(0)  3.7085 -> 1.4116 (m/s)/A      pole  -0.1219 -> -0.1526 rad/s
+      K_F     1.3338 -> 0.7538 N/A
 The previous note here attributed b_eff to a modelled motor free-run loss (0.3596 of
 0.3719 N*s/m).  That attribution is RETIRED: the measured drag curve is Coulomb-dominated
 and concave, and pure viscous is excluded at chi^2 x1400, so the old decomposition had the
@@ -71,7 +79,11 @@ shaped, not met).  Wp is therefore cornered at 60 rad/s.
 
 LADDER RE-RUN 2026-08-16b on the ESTIMATOR plant.  The previous ladder (and the one
 before it) is VOID: the estimator delay adds phase at crossover and the K_v re-centring
-raises the plant gain 1.25x.  Ladder actually run (Wd break = 2.5*WC,
+raises the plant gain.
+NOT RE-RUN 2026-08-16c.  The K_F force-axis correction raises the nominal plant gain a
+further x1.34, so every NON-CHOSEN row below is indicative only.  The CHOSEN rung was
+re-run in full and passes every gate on the corrected plant; its re-measured numbers are
+in the margins/robustness sections below, not in the table.  Ladder as originally run (Wd break = 2.5*WC,
 Wu = makeweight(dc, 300, hf); "PM@0.5" = phase margin at the 0.5 m/s estimator corner;
 worst ||S|| over the 24 drive corners x 3 estimator speeds = 72 plants):
     WC=24, Wu(0.3 ,300,20  ) -> g_opt 17.76, wc  8.78, PM 57.8, PM@0.5 53.2, ||S|| 1.589  (wc < 12: FAILS)
@@ -102,19 +114,20 @@ higher crossover (WC=65/70 at Wu(0.2..0.25); WC=55 at Wu(0.15)) breaks the 2.5 t
 the rungs that break it hardest break PM as well.  The SHAPE of the ladder has changed from
 the previous round: the binding constraint is no longer phase margin alone but the
 worst-corner peak, because the worst corner is now the 0.5 m/s ESTIMATOR corner rather than
-a parameter extreme (worst ||S|| 2.418 at K_v 1.85 / pole_factor 0.5 / tau_v 5 ms /
+a parameter extreme (worst ||S|| 2.426 at K_v 1.35 / pole_factor 0.5 / tau_v 5 ms /
 Td_v 4 ms / v0 0.5 m/s).
 
-THE HEADLINE.  Adding a real 3 ms sensor delay did NOT cost bandwidth.  Achieved crossover
-15.98 rad/s — identical to the previous round's 15.98 — with MORE phase margin
-(51.9 vs 49.6 deg) and a comparable worst corner (2.418 vs 2.152) on a corner family
-that is now 3x larger and contains a 12 ms delay.  The gain re-centring paid for it: K_v's
-span fell 4.0x -> 2.2x, a real reduction in what the controller must tolerate, bought with
-measurement rather than with conservatism.
+THE HEADLINE.  Adding a real 3 ms sensor delay did NOT cost bandwidth, and neither did the
+x1.34 force-axis gain correction that followed it.  Achieved crossover 17.52 rad/s
+against the previous round's 15.98, with phase margin 50.8 deg (49.6 two rounds ago) and a
+comparable worst corner (2.426) on a corner family that is 3x larger than the
+pre-estimator one and contains a 12 ms delay.  Measurement paid for both: K_v's span fell
+4.0x -> 2.2x -> 1.8x across the two rounds, each narrowing bought with a datapoint rather
+than with conservatism.
 There is NO case for chasing bandwidth past this.  The ML0136-ML0139 limit cycle was a
 16 rad/s loop meeting ~56 ms of unmodelled lag; the fix is to model the lag and KEEP the
 bandwidth, not to raise it.  What bounds the design from above is now the 12 ms low-speed
-corner: PM@0.5 is 43.7 deg at the chosen rung and 27-33 deg at the failing rungs.
+corner: PM@0.5 is 41.8 deg at the chosen rung and 27-33 deg at the failing rungs.
 
 CROSSOVER GATE BAND NARROWED 12-48 -> 12-30.  Nothing above 21.7 rad/s is reachable on
 this plant (and what reaches it fails PM and ||S|| badly), so the old upper bound could
@@ -122,34 +135,34 @@ never bind.  30 is still non-binding but within 1.4x of the reachable ceiling, s
 plant change that pushed the loop far past today's bandwidth would trip it.
 
 ── H-inf (DGKF, hinf_mimo.hinfsyn_dgkf on AugPlantMIMO 1x1 blocks) ──
-gamma_opt            = 31.4975
-gamma_used           = 33.0723
-||Tzw||inf           = 33.0165
+gamma_opt            = 26.5145
+gamma_used           = 27.8402
+||Tzw||inf           = 27.7940
 H-inf controller ord = 10
 
 ── Youla-H DC correction (papers' scalar recipe) ──
-T_H(0)               = 0.9967033325
-gain scale 1/T_H(0)  = 1.0033075715   (|1 - 1/T_H(0)| = 3.308e-03)
+T_H(0)               = 0.9972247516
+gain scale 1/T_H(0)  = 1.0027829719   (|1 - 1/T_H(0)| = 2.783e-03)
 Gc_YH raw order      = 32
 
 ── reduction / realization ──
-kI                   = 53.424702641   (sign gate: positive v-error -> positive current)
+kI                   = 79.043593614   (sign gate: positive v-error -> positive current)
 remainder order      = 31 -> 4
-HSV (first 8)        = [2.3395e+02 4.7924e+01 9.4535e+00 9.4309e-03 7.5665e-04 4.1931e-04 5.0206e-05 2.9333e-05]
-reduced-vs-full relerr = 1.377e-03   (gate < 2e-2)
+HSV (first 8)        = [1.9803e+02 3.9131e+01 7.6026e+00 1.0512e-02 6.5948e-04 4.8610e-04 2.3616e-04 6.0478e-05]
+reduced-vs-full relerr = 1.605e-03   (gate < 2e-2)
 T(0) reduced         = 1.000000000000   (gate |T(0)-1| < 1e-9)
 
 ── loop shape / margins (nominal, reduced controller) ──
-S/T crossover        = 15.98 rad/s   (H-inf full order: 15.98)
-||S||inf nominal     = 1.3357
-||T||inf nominal     = 1.3112
-phase margin         = 51.9 deg at 15.98 rad/s
-delay margin         = 56.68 ms   (gate > 4 ms = 2*Ts)
-gain margin          = 17.2 dB
+S/T crossover        = 17.52 rad/s   (H-inf full order: 17.52)
+||S||inf nominal     = 1.3591
+||T||inf nominal     = 1.3270
+phase margin         = 50.8 deg at 17.52 rad/s
+delay margin         = 50.62 ms   (gate > 4 ms = 2*Ts)
+gain margin          = 16.6 dB
 
 ── robustness ──
 corner family        = 24 drive_corners() x v0 in (0.5, 2.0, 5.0) m/s = 72 plants
-                       (K_v in {0.85, 1.25, 1.85} x pole_factor in {0.5, 3} x tau_v in
+                       (K_v in {0.75, 1.00, 1.35} x pole_factor in {0.5, 3} x tau_v in
                         {0.5, 5} ms x Td_v in {1, 4} ms, x the ESTIMATOR-DELAY axis
                         Td_est(v0) in {11.97, 2.99, 1.20} ms.
                         The v0 axis is REINSTATED (2026-08-16b) for a new reason: the
@@ -158,26 +171,27 @@ corner family        = 24 drive_corners() x v0 in (0.5, 2.0, 5.0) m/s = 72 plant
                         dependent, a 10x span across the operating range.  The drag-slope
                         speed dependence it used to stand for stays on pole_factor's
                         upper corner.
-                        K_v is RE-CENTRED, not merely re-scaled: nominal 1.25 is the
-                        geometric mean of the two disagreeing end-to-end gain measurements
-                        and the span narrows 4.0x -> 2.2x.)
+                        K_v is RE-CENTRED, not merely re-scaled: nominal 1 is
+                        the geometric mean of the two end-to-end gain measurements,
+                        recomputed 2026-08-16c in the corrected force axis, and the span
+                        narrows 2.2x -> 1.8x.)
 VALIDITY FLOOR       = v0 >= 0.5 m/s.  Below it Td_est grows without bound
                        (19.9 ms at 0.3 m/s, 59.8 ms at 0.1 m/s; the estimator times out and
                        reports 0 below ~0.03 m/s) and this design is NOT gate-checked
                        there.  Closing the velocity loop below the floor needs a wider delay
                        corner (paid for in bandwidth) or a gain schedule on v.
 continuous unstable  = 0
-worst ||S||inf cont. = 2.4182 at ({'K_v': 1.85, 'pole_factor': 0.5, 'tau_v': 0.005, 'Td_v': 0.004}, 0.5)
-discrete max |z|     = 0.9998
-worst ||S||inf disc. = 2.5230 at ({'K_v': 1.85, 'pole_factor': 0.5, 'tau_v': 0.005, 'Td_v': 0.004}, 0.5)
+worst ||S||inf cont. = 2.4265 at ({'K_v': 1.35, 'pole_factor': 0.5, 'tau_v': 0.005, 'Td_v': 0.004}, 0.5)
+discrete max |z|     = 0.9997
+worst ||S||inf disc. = 2.5354 at ({'K_v': 1.35, 'pole_factor': 0.5, 'tau_v': 0.005, 'Td_v': 0.004}, 0.5)
 
 ── bench-evidence gates (NEW 2026-08-16b; §6b) ──
-Td_est at design v0  = 2.992 ms, consuming 2.74 deg of phase at the achieved
-                       crossover 15.98 rad/s   (GATE < 10 deg)
+Td_est at design v0  = 2.992 ms, consuming 3.00 deg of phase at the achieved
+                       crossover 17.52 rad/s   (GATE < 10 deg)
                        For contrast, the RETIRED ~113 ms boxcar estimator's ~56 ms group
-                       delay consumed 51 deg there — more than the entire phase
+                       delay consumed 56 deg there — more than the entire phase
                        margin, which is the ML0136-ML0139 limit cycle in one number.
-0.5 m/s corner       = stable, PM = 43.7 deg at 15.98 rad/s, ||S||inf = 1.596
+0.5 m/s corner       = stable, PM = 41.8 deg at 17.52 rad/s, ||S||inf = 1.660
                        (GATE: stable AND PM > 30 deg.  30, not 45, because this is a
                         boundary of the validated envelope, not the design point.)
 
@@ -187,25 +201,25 @@ SOS sections         = 2  (discrete remainder order 4)
 clamp                = +-12.0 A
 
 ── anti-windup (DEVIATION 3, forced by a measured property of this design) ──
-Gs_red(0)            = 544.8 A/(m/s)  -- the NON-INTEGRAL branch alone saturates the
-                       +-12 A actuator for |e| > 22.0 mm/s, so its lag states wind up
+Gs_red(0)            = 459.1 A/(m/s)  -- the NON-INTEGRAL branch alone saturates the
+                       +-12 A actuator for |e| > 26.1 mm/s, so its lag states wind up
                        independently of the integrator.
 shipped scheme       = integrator-only back-calculation (share_controller.h pattern).
-                       Measured on the 0->2 m/s step: standing error -0.439 m/s and a
-                       20.5 mm/s limit cycle -> FAILS the sim gates.
+                       Measured on the 0->2 m/s step: standing error -0.265 m/s and a
+                       20.9 mm/s limit cycle -> FAILS the sim gates.
 AW boundary RE-RUN 2026-08-16 at the firmware clamp +-12 A (2026-08-15 operator
 decision; the previous run used +-20 A) and on the re-identified plant.  e_sat scales
 linearly with the clamp and inversely with Gs_red(0), and BOTH moved this round, so the
-boundary is re-measured rather than rescaled: e_sat = 22.0 mm/s.  Step-amplitude
+boundary is re-measured rather than rescaled: e_sat = 26.1 mm/s.  Step-amplitude
 scan of the SHIPPED integrator-only scheme (pass = final error < 1e-4 m/s AND tail
 p-p < 1e-5 m/s):
-    step  0.02 m/s: final err -3.075e-09 m/s, tail p-p 1.43e-10 m/s -> OK
-    step  0.05 m/s: final err -7.686e-09 m/s, tail p-p 3.58e-10 m/s -> OK
-    step  0.10 m/s: final err -1.537e-08 m/s, tail p-p 7.16e-10 m/s -> OK
-    step  0.20 m/s: final err -6.764e-03 m/s, tail p-p 3.15e-04 m/s -> FAILS
-    step  0.50 m/s: final err -4.154e-02 m/s, tail p-p 1.93e-03 m/s -> FAILS
-    step  1.00 m/s: final err -1.377e-01 m/s, tail p-p 6.41e-03 m/s -> FAILS
-    step  2.00 m/s: final err -4.392e-01 m/s, tail p-p 2.05e-02 m/s -> FAILS
+    step  0.02 m/s: final err -6.064e-09 m/s, tail p-p 4.78e-10 m/s -> OK
+    step  0.05 m/s: final err -1.516e-08 m/s, tail p-p 1.20e-09 m/s -> OK
+    step  0.10 m/s: final err -3.032e-08 m/s, tail p-p 2.39e-09 m/s -> OK
+    step  0.20 m/s: final err -2.612e-03 m/s, tail p-p 2.06e-04 m/s -> FAILS
+    step  0.50 m/s: final err -2.364e-02 m/s, tail p-p 1.87e-03 m/s -> FAILS
+    step  1.00 m/s: final err -7.957e-02 m/s, tail p-p 6.28e-03 m/s -> FAILS
+    step  2.00 m/s: final err -2.654e-01 m/s, tail p-p 2.09e-02 m/s -> FAILS
 VERDICT: integrator-only AW is CLEAN up to ~0.1 m/s steps and breaks from
 ~0.2 m/s.  It STILL fails the 0->2 m/s gate, so the Hanus form remains REQUIRED for
 this baseline -- the honest restatement is "needed for large transients", not "needed
@@ -213,43 +227,43 @@ always".  Note the direction of travel: lowering the clamp 20 -> 12 A lowers e_s
 proportionally and therefore moves this boundary DOWN, toward the small-signal end.
 scheme used          = Hanus self-conditioning on the 5-state discrete realization:
                          u_unsat = Cd x + Dd e ; u = clamp(u_unsat)
-                         x[k+1]  = (Ad - Bd Cd/Dd) x + Bd u/Dd,  Dd = 1.856237746e+00
+                         x[k+1]  = (Ad - Bd Cd/Dd) x + Bd u/Dd,  Dd = 1.704741304e+00
                        Exactly equivalent to the biquad+integrator form when unsaturated
-                       (gated: max |diff| = 4.35e-12 A over an 100-sample sequence).
+                       (gated: max |diff| = 4.37e-12 A over an 100-sample sequence).
 Teensy cost note     = this baseline needs a 5-state state-space realization, NOT the
                        shipped biquad cascade.  Phase-6 implementation-cost datapoint.
 
 ── time-domain (discrete, clamped, Hanus-conditioned) ──
-step 0->2 m/s : peak i = 12.000 A, 2% settle = 1.310 s,
-                overshoot = 3.9 %, final err = -3.23e-07 m/s,
-                tail p-p = 1.50e-08 m/s (no limit cycle)
-                NOTE: +-12 A gives a_max = K_F*K_v*I/m = 1.935 m/s^2, so 0->2 m/s
-                cannot physically take less than ~1.03 s however the loop is
-                shaped.  The 16.0 rad/s design bandwidth is a SMALL-SIGNAL spec; this is
-                a large-signal event.  Time on the rail this run: 1006 ms.
-                The calibration cut a_max hard (K_F 1.3338 -> 0.4516 N/A and the
+step 0->2 m/s : peak i = 12.000 A, 2% settle = 1.042 s,
+                overshoot = 4.8 %, final err = -6.45e-07 m/s,
+                tail p-p = 5.09e-08 m/s (no limit cycle)
+                NOTE: +-12 A gives a_max = K_F*K_v*I/m = 2.584 m/s^2, so 0->2 m/s
+                cannot physically take less than ~0.77 s however the loop is
+                shaped.  The 17.5 rad/s design bandwidth is a SMALL-SIGNAL spec; this is
+                a large-signal event.  Time on the rail this run: 752 ms.
+                The calibration cut a_max hard (K_F 1.3338 -> 0.7538 N/A and the
                 clamp 20 -> 12 A both push the same way); the 2026-08-16b gain
-                re-centring gives 1.25x of it back, but large-signal velocity moves remain
+                re-centring gives 1x of it back, but large-signal velocity moves remain
                 inertia-limited, not loop-limited.  Sanity check against the bench: at
-                K_v = 1.25 the model's NET 12 A acceleration is
-                0.133 (m/s^2)/A against the ML0136-0139 measured
-                0.186-0.204 — the design plant is still 32 % conservative on large-signal
+                K_v = 1 the model's NET 12 A acceleration is
+                0.168 (m/s^2)/A against the ML0136-0139 measured
+                0.186-0.204 — the design plant is still 14 % conservative on large-signal
                 authority.  That is deliberate: K_v's nominal is the geometric mean of the
                 ramp and cruise-hold evidence, and the ramps are the optimistic half.  It
                 is also the safe direction — it costs settling time, not stability.
-regen 2->0 m/s: peak i = -12.000 A, on the -12 A rail 1006 ms,
-                2% settle = 1.310 s, final v = 3.23e-07 m/s,
-                reverse excursion = -0.07746 m/s, tail p-p = 1.50e-08 m/s
+regen 2->0 m/s: peak i = -12.000 A, on the -12 A rail 752 ms,
+                2% settle = 1.042 s, final v = 6.43e-07 m/s,
+                reverse excursion = -0.09552 m/s, tail p-p = 5.08e-08 m/s
                 WINDUP GATE (redefined at the 2026-08-04 clamp change, retained here):
                 an ABSOLUTE excursion bound only looks meetable when the clamp is low
                 enough to rail-limit the transient and suppress the loop's own linear
                 undershoot, which makes it a measure of the clamp, not of windup.
                 The undershoot now
-                measured (-0.0775 m/s = 3.9 %) equals the step's 3.9 % overshoot and is
+                measured (-0.0955 m/s = 4.8 %) equals the step's 4.8 % overshoot and is
                 loop shaping, not windup.  The gate now compares the SATURATED event
                 against the SAME event with the clamp removed (linear undershoot
-                -0.4888 m/s): saturation must add no excursion.  Measured excess
-                = -0.4114 m/s (negative = saturation REDUCED the excursion).
+                -0.5118 m/s): saturation must add no excursion.  Measured excess
+                = -0.4163 m/s (negative = saturation REDUCED the excursion).
 
 ── artifacts ──
 drive_siso_coeffs.h        (shipped biquad format + the 5-state Hanus realization
@@ -267,10 +281,25 @@ figures/drive_siso_replay.csv  (200 unsaturated + 2500 saturated (e_in, u_out)
                             through the float32 controller — self-consistent, but off its
                             own trajectory and therefore sitting ON the clamp boundary,
                             which made the vectors knife-edged: a consumer parsing e_in at
-                            %.9e instead of %.17e diverged 54 mA.  Closed-loop generation
-                            cuts that to 12.8 mA, and two new gates bound it.
-                            TOLERANCES: 'small' 1e-5 A, 'regen' ~50 mA.  The regen figure
-                            is irreducible, not slack — the controller makes 82 clamp-state
-                            transitions during the saturated transient (2 ms sample rate,
-                            545 A/(m/s) non-integral branch), so a boundary sample always
-                            exists and one flipped decision is ~8 A of state drive.)
+                            %.9e instead of %.17e diverged 54 mA (a HISTORICAL figure from
+                            the 2026-08-16b emission — the only hardcoded number in this
+                            block, kept because it describes a construction that no longer
+                            exists).  Closed-loop generation
+                            cuts that to 17.42 mA, and gates bound it.
+                            TOLERANCES (MEASURED this run, shipped machine-readably as
+                            DRIVE_REPLAY_<EPISODE>_TOL_A in drive_replay_vectors.h):
+                              'small' 1e-04 A  (firmware-path deviation 2.38e-04 mA)
+                              'regen' 180 mA   (2x the worst measured sensitivity,
+                                                rounded up)
+                            Regen sensitivity breakdown:
+                                 86.27 mA  scalar-order arithmetic (firmware path)
+                                 67.68 mA  scalar-order arithmetic (full-precision stimulus)
+                                 19.07 mA  float32 stimulus storage
+                                 17.42 mA  %.9e stimulus truncation
+                            The regen figure is irreducible, not slack — the controller
+                            makes 74 clamp-state transitions during the saturated
+                            transient (2 ms sample rate, 545 A/(m/s) non-integral branch)
+                            and approaches the decision boundary to within 255.9 uA, so a
+                            boundary sample always exists and one flipped decision is ~8 A
+                            of state drive.  Deviation decays to 1.64 mA over the last
+                            200 samples: boundary dither, not divergence.)

@@ -5724,6 +5724,18 @@ static void enc_cycle_rev(uint32_t t_us) {   // one reverse quadrature cycle, en
     g_mock_micros = t_us; enc_set(1, 0);
     g_mock_micros = t_us; enc_set(0, 0);
 }
+// One A-RISING tap that decodes to a ZERO net position delta (dpos == 0): toggle A between 0 and 1
+// while B stays LOW throughout. B never transitions, so neither AfirstUp/BfirstUp nor
+// AfirstDown/BfirstDown ever both land, and encoderPos never advances — every A-rising edge this
+// produces hits the ISR's newDir==0 "ambiguous — restart accumulation" branch (ring invalidated,
+// encPeriodDir=0), while still updating encLastEdgeUs (so the raw-edge staleness test in (2) never
+// trips) and firing doEncoderA (so encEdgeCountA keeps climbing, as real optical jitter about a slot
+// edge would look). Used to isolate the (2b) reading-age bound from the (2) raw-edge-age bound: with
+// this tap the wheel LOOKS like it's moving (fresh edges) but no reading is ever computed.
+static void enc_tap_ambiguous(uint32_t t_us) {
+    g_mock_micros = t_us; enc_set(1, 0);   // A rises: pinA=1, pinB=0 -> timestamped A-rising tap
+    g_mock_micros = t_us; enc_set(0, 0);   // A falls: not timestamped, just resets for the next rise
+}
 
 static void test_edge_period_estimator() {
     test_group("Edge-period velocity estimator (fw v12)");
@@ -5771,7 +5783,11 @@ static void test_edge_period_estimator() {
     uint32_t t = 0; enc_cycle_fwd(t); updateWheelSpeed();          // baseline edge — no period yet
     check(v_actual == 0.0f, "(c) baseline: the first A-rising after a reset measures no period yet");
     t += P1;        enc_cycle_fwd(t); updateWheelSpeed();          // period 1 = P1 -> cnt=1
-    check(v_actual == 0.0f, "(c) warm-up: after only 1 period the ring is not yet full (N=2)");
+    // fw v13 (partial-ring reading, change C): cnt==1 is now a LIVE single-pitch reading, not a
+    // held/zeroed warm-up value — distM = 1*pitch, sumUs = P1 alone.
+    float expect_p1only = ENC_SLOT_PITCH_M / ((float)P1 * 1e-6f);
+    check(fabsf(v_actual - expect_p1only) < fabsf(expect_p1only) * 1e-4f,
+          "(c) warm-up cnt==1: v_actual is now a live single-pitch reading (distM=pitch, sumUs=P1)");
     t += P2;        enc_cycle_fwd(t); updateWheelSpeed();          // period 2 = P2 -> cnt=2, ring full
     float distM = 2.0f * ENC_SLOT_PITCH_M;
     float expect_sum = distM / ((float)(P1 + P2) * 1e-6f);
@@ -5799,10 +5815,14 @@ static void test_edge_period_estimator() {
     updateWheelSpeed();
     t = 0; enc_cycle_fwd(t); updateWheelSpeed();          // baseline
     t += P; enc_cycle_fwd(t); updateWheelSpeed();         // genuine period 1 (cnt=1, still warming)
-    check(v_actual == 0.0f, "(e) pre-glitch: ring one short of full (cnt=1)");
+    // fw v13: cnt==1 is now a live single-pitch reading rather than a held/zeroed warm-up value.
+    float expect_1pitch = ENC_SLOT_PITCH_M / ((float)P * 1e-6f);
+    check(fabsf(v_actual - expect_1pitch) < fabsf(expect_1pitch) * 1e-4f,
+          "(e) pre-glitch: ring one short of full (cnt=1) is a live single-pitch reading");
     uint32_t t_glitch = t + (ENC_PERIOD_MIN_US / 2);      // well inside the glitch floor
     enc_cycle_fwd(t_glitch); updateWheelSpeed();          // glitch — must be dropped
-    check(v_actual == 0.0f, "(e) glitch: still warming up (glitch did not count as a period)");
+    check(fabsf(v_actual - expect_1pitch) < fabsf(expect_1pitch) * 1e-4f,
+          "(e) glitch: the cnt=1 reading is UNCHANGED (glitch did not count as a period, base did not advance)");
     uint32_t t_next = t + P;                              // genuine edge, a full pitch after the LAST GENUINE edge
     enc_cycle_fwd(t_next); updateWheelSpeed();            // genuine period 2 (cnt=2, ring full)
     check(fabsf(v_actual - expect_fwd) < fabsf(expect_fwd) * 1e-4f,
@@ -5830,13 +5850,21 @@ static void test_edge_period_estimator() {
     check(v_actual > 0.0f,
           "(f) first reverse tap after a forward run is direction-ambiguous and does not flip the ring yet");
     tf += P; enc_cycle_rev(tf); updateWheelSpeed();       // rev tap #2: clean -2, flips, ring -> cnt=1
+    // fw v13 safety review S3 (sign embargo): a cnt<2 reading whose sign DIFFERS from the last
+    // PUBLISHED reading (here, the positive pre-flip steady value) is embargoed — the reader HOLDS
+    // rather than publishing the noisier single-pitch reversal. This supersedes the earlier fw v13
+    // round's "live cnt=1 reading immediately" behavior (change C alone): S3 layers a corroboration
+    // requirement (cnt>=2) on top of it specifically for sign flips. Sign-MATCHING cnt=1 readings
+    // (e.g. (c)/(e)/(i)/(g) above, all same-direction) are unaffected.
     check(fabsf(v_actual - preFlipReading) < 1e-6f,
-          "(f) direction flip: the second reverse tap invalidates the ring but HOLDS the last valid "
-          "(pre-flip, positive) reading rather than zeroing");
+          "(f) direction flip: the second reverse tap is EMBARGOED (sign differs, cnt=1) — holds "
+          "the pre-flip positive value rather than publishing");
     tf += P; enc_cycle_rev(tf); updateWheelSpeed();       // rev tap #3: clean -2, ring refills to cnt=2
-    check(v_actual < 0.0f, "(f) direction flip: after N fresh reverse periods, v_actual is negative again");
+    check(v_actual < 0.0f,
+          "(f) direction flip: at cnt=2 the embargo lifts (corroborated) — v_actual is negative");
     check(fabsf(v_actual + expect_fwd) < fabsf(expect_fwd) * 1e-4f,
-          "(f) direction flip: the recovered reverse reading matches the steady-state formula");
+          "(f) direction flip: the published reverse reading matches the steady-state formula "
+          "(2*pitch / sum of 2 periods)");
 
     // (f2) The invalidation-hold is BOUNDED by the same staleness timeout as everything else: if a
     //      hold never gets its N fresh periods (e.g. the wheel genuinely stops mid-flip), the ring
@@ -5848,12 +5876,13 @@ static void test_edge_period_estimator() {
     encoderVelReset();
     updateWheelSpeed();
     for (int i = 1; i <= 4; i++) { enc_cycle_fwd((uint32_t)i * P); updateWheelSpeed(); }
+    check(v_actual > 0.0f, "(f2) pre-flip: forward ring is live and positive");
     float f2PreFlip = v_actual;
-    check(f2PreFlip > 0.0f, "(f2) pre-flip: forward ring is live and positive");
     uint32_t tf2 = 4 * P;
     tf2 += P; enc_cycle_rev(tf2); updateWheelSpeed();     // ambiguous tap, no flip yet
-    tf2 += P; enc_cycle_rev(tf2); updateWheelSpeed();     // flips + invalidates -> HELD at f2PreFlip
-    check(fabsf(v_actual - f2PreFlip) < 1e-6f, "(f2) mid-hold: v_actual is holding the pre-flip reading");
+    tf2 += P; enc_cycle_rev(tf2); updateWheelSpeed();     // flips, cnt=1, sign differs -> EMBARGOED
+    check(fabsf(v_actual - f2PreFlip) < 1e-6f,
+          "(f2) mid-flip: the sign-embargoed cnt=1 tap HOLDS the pre-flip positive value");
     // No further edges: advance past the stale bound (last period was P = 1000us, so the absolute
     // ENC_VEL_TIMEOUT_US floor governs, same as (g)).
     g_mock_micros = tf2 + ENC_VEL_TIMEOUT_US + 1;
@@ -5861,8 +5890,10 @@ static void test_edge_period_estimator() {
     check(v_actual == 0.0f, "(f2) hold bounded by staleness: v_actual zeros once the timeout elapses");
     check(encPeriodCount == 0, "(f2) hold bounded by staleness: the ring resets (encPeriodCount == 0)");
 
-    // (f3) Three-and-only-three zeroing events: boot, encoderVelReset(), and the stale timeout.
-    //      Ring re-accumulation (covered above in (f)/(f2)) deliberately does NOT zero — it holds.
+    // (f3) FOUR-and-only-four zeroing events (fw v13 adds the reading-age bound (2b) to the
+    //      previous three: boot, encoderVelReset(), and the raw-edge stale timeout).
+    //      Ring re-accumulation (covered above in (f)/(f2)) deliberately does NOT zero — it holds
+    //      (or, since change C, produces a live partial reading).
     // -- boot: before any edge has ever been seen, v_actual reads 0.
     enc_reset();
     g_mock_micros = 0;
@@ -5886,6 +5917,30 @@ static void test_edge_period_estimator() {
     g_mock_micros = 4 * P + ENC_VEL_TIMEOUT_US + 1;
     updateWheelSpeed();
     check(v_actual == 0.0f, "(f3) stale timeout: zeros a live reading");
+    // -- reading-age bound (fw v13, (2b), the ML0140 blind-hold regression): re-establish a live
+    //    reading, then keep tapping AMBIGUOUS edges (fresh, so the raw-edge test (2) never fires)
+    //    forever. The ring stays invalid (cnt==0/dir==0) so (3) HOLDS the old reading — but only
+    //    until (2b)'s reading-age bound elapses, at which point it must zero and reset even though
+    //    edges are still arriving. This is exactly the defect the old code had: it held forever.
+    enc_reset();
+    g_mock_micros = 0;
+    encoderVelReset();
+    updateWheelSpeed();
+    for (int i = 1; i <= 4; i++) { enc_cycle_fwd((uint32_t)i * P); updateWheelSpeed(); }
+    check(v_actual > 0.0f, "(f3) reading-age setup: a live reading exists");
+    uint32_t f3ReadingAge = 4 * P;
+    // Keep tapping ambiguous edges more often than the reading-age bound, so the raw-edge test (2)
+    // never trips (edges stay fresh) — only the reading-age bound (2b) can end this.
+    uint32_t tap_dt = ENC_VEL_TIMEOUT_US / 4;
+    for (int i = 1; i <= 6; i++) {
+        f3ReadingAge += tap_dt;
+        enc_tap_ambiguous(f3ReadingAge);
+        updateWheelSpeed();
+    }
+    check(v_actual == 0.0f,
+          "(f3) reading-age bound: v_actual zeros even though fresh edges kept arriving (ML0140)");
+    check(encPeriodCount == 0,
+          "(f3) reading-age bound: the ring resets, same as the other three zeroing events");
 
     // (g) Stale timeout: advance mock time past max(1.5*lastPeriod, ENC_VEL_TIMEOUT_US) with no
     //     further edges -> v_actual == 0 and the ring restarts (next reading needs N fresh periods).
@@ -5896,8 +5951,8 @@ static void test_edge_period_estimator() {
     for (int i = 1; i <= 4; i++) { enc_cycle_fwd((uint32_t)i * P); updateWheelSpeed(); }
     check(v_actual > 0.0f, "(g) pre-timeout: ring is live");
     uint32_t lastEdge = 4 * P;
-    // last period was P (1000us); 1.5*P = 1500us < ENC_VEL_TIMEOUT_US (150000us), so the absolute
-    // floor governs here. Advance just past it.
+    // last period was P (1000us); 1.5*P = 1500us < ENC_VEL_TIMEOUT_US (fw v13: 100000us), so the
+    // absolute floor governs here. Advance just past it.
     g_mock_micros = lastEdge + ENC_VEL_TIMEOUT_US + 1;
     updateWheelSpeed();
     check(v_actual == 0.0f, "(g) stale timeout: v_actual == 0 once the timeout elapses with no edges");
@@ -5906,17 +5961,20 @@ static void test_edge_period_estimator() {
     uint32_t t2 = g_mock_micros;
     enc_cycle_fwd(t2); updateWheelSpeed();                // baseline — no period yet
     t2 += P; enc_cycle_fwd(t2); updateWheelSpeed();        // period 1 -> cnt=1
-    check(v_actual == 0.0f, "(g) post-timeout: still warming up after only 1 fresh period");
+    // fw v13 (change C): cnt==1 is a live single-pitch reading, not a zeroed warm-up value.
+    check(fabsf(v_actual - expect_1pitch) < fabsf(expect_1pitch) * 1e-4f,
+          "(g) post-timeout: 1 fresh period after the reset is a live single-pitch reading");
     t2 += P; enc_cycle_fwd(t2); updateWheelSpeed();        // period 2 -> cnt=2, ring full
     check(fabsf(v_actual - expect_fwd) < fabsf(expect_fwd) * 1e-4f,
           "(g) post-timeout: after N fresh periods the reading is correct again");
 
-    // (h) Zero-speed floor arithmetic: ENC_VEL_TIMEOUT_US (150 ms) is the absolute stale-timeout
-    //     floor, so the slowest speed the estimator can report before declaring standstill is
-    //     pitch / (150 ms) -- verify the documented ~0.0266 m/s figure directly from the constants.
+    // (h) Zero-speed floor arithmetic: ENC_VEL_TIMEOUT_US (fw v13: 100 ms, was 150 ms) is the
+    //     absolute stale-timeout floor, so the slowest speed the estimator can report before
+    //     declaring standstill is pitch / (100 ms) -- verify the documented ~0.0399 m/s figure
+    //     (3.990 mm / 100 ms) directly from the constants.
     float floor_mps = ENC_SLOT_PITCH_M / (ENC_VEL_TIMEOUT_US * 1e-6f);
-    check(fabsf(floor_mps - 0.0266f) < 0.001f,
-          "(h) zero-speed floor: pitch / ENC_VEL_TIMEOUT_US matches the documented ~0.0266 m/s figure");
+    check(fabsf(floor_mps - 0.0399f) < 0.001f,
+          "(h) zero-speed floor: pitch / ENC_VEL_TIMEOUT_US matches the documented ~0.0399 m/s figure (fw v13)");
 
     // (i) encoderVelReset() clears everything: after a live ring, calling it directly must zero
     //     v_actual (once updateWheelSpeed() next runs) and require N fresh periods again.
@@ -5934,7 +5992,9 @@ static void test_edge_period_estimator() {
     uint32_t t3 = g_mock_micros;
     enc_cycle_fwd(t3); updateWheelSpeed();                 // baseline — no period yet
     t3 += P; enc_cycle_fwd(t3); updateWheelSpeed();         // period 1 -> cnt=1
-    check(v_actual == 0.0f, "(i) encoderVelReset(): still warming up 1 period after the reset");
+    // fw v13 (change C): cnt==1 is a live single-pitch reading, not a zeroed warm-up value.
+    check(fabsf(v_actual - expect_1pitch) < fabsf(expect_1pitch) * 1e-4f,
+          "(i) encoderVelReset(): 1 period after the reset is a live single-pitch reading");
     t3 += P; enc_cycle_fwd(t3); updateWheelSpeed();         // period 2 -> cnt=2, ring full
     check(fabsf(v_actual - expect_fwd) < fabsf(expect_fwd) * 1e-4f,
           "(i) encoderVelReset(): a fresh N-period ring reads correctly again");
@@ -5959,12 +6019,511 @@ static void test_edge_period_estimator() {
     for (int i = 1; i <= 6; i++) { enc_cycle_fwd((uint32_t)i * P); updateWheelSpeed(); }
     check(v_actual > 0.0f, "(k) end-to-end: v_actual is nonzero going into motorControl()");
     velocityChainCalibratedFlag = true;
-    setManualMotorVelocity(0.0f);      // command standstill against a nonzero v_actual -> braking current
+    // fw v13: a 0.0 setpoint is now INSIDE the zero-cutoff band (V_SP_ZERO_THRESH = 0.05), which
+    // would command 0 A directly and never reach the controller — voiding this test's intent of
+    // exercising motorControl() end to end. Command just above the cutoff (0.06) instead, still
+    // far below v_actual (~3.99 m/s at P=1000us), so the loop still sees a large braking error.
+    setManualMotorVelocity(0.06f);     // command near-standstill against a nonzero v_actual -> braking current
     vesc.reset();
     g_mock_micros += MOTOR_CTRL_PERIOD_US + 1;   // clear the rl_motor_last rate gate
     applyManualMotor();                          // sets v_setpoint and runs motorControlGated()
     check(!vesc.current_calls.empty(),
           "(k) end-to-end: motorControl() issued a VESC current command from the estimator's v_actual");
+
+    enc_reset();
+}
+
+// ─── Edge-period adaptive plausibility filter (fw v13) ───────────────────────
+// Covers the ISR-side accept/reject logic added in doEncoderA() (encPeriodRefUs EWMA, the
+// ENC_PERIOD_REF_SEED_N bootstrap, the 0.625x-ref low-side spurious-merge test, and the missed-edge
+// k=2/k=3 reinterpretation bounded at ENC_PERIOD_MAX_MULT). All periods here are chosen as exact
+// multiples of the shift arithmetic (ref = 2000us, a multiple of 8) so the accept/reject boundary is
+// exact, not an approximation subject to integer rounding.
+static void test_edge_period_adaptive_filter() {
+    test_group("Edge-period adaptive plausibility filter (fw v13)");
+
+    const uint32_t Pr = 2000;   // steady per-pitch period used to arm the reference (ref = 2000us)
+
+    // Helper-local: build a fresh ring/reference with TWO ACCEPTED periods at Pr, leaving the
+    // reader with a live cnt=2 steady reading (encPeriodRefSeed==2, ref valid). It takes THREE
+    // cycles, not two: the first A-rising after a reset only establishes the timing baseline (no
+    // period is measured yet — see the (c)/(g)/(i) "baseline" notes in test_edge_period_estimator),
+    // so cycle 1 = baseline, cycle 2 = period1 (cnt=1, seed=1), cycle 3 = period2 (cnt=2, seed=2).
+    // Returns the reading and, via the out-params, the last genuine edge's own timestamp — every
+    // caller below times its next injected edge relative to THAT, not to the cycle count.
+    uint32_t armLastEdgeUs = 0;
+    auto arm_ref = [&](void) -> float {
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        enc_cycle_fwd(Pr);       updateWheelSpeed();   // baseline — no period yet
+        enc_cycle_fwd(2 * Pr);   updateWheelSpeed();   // period1 = Pr -> cnt=1, seed=1
+        enc_cycle_fwd(3 * Pr);   updateWheelSpeed();   // period2 = Pr -> cnt=2, seed=2, ref valid
+        armLastEdgeUs = 3 * Pr;
+        return v_actual;
+    };
+
+    // ── Item 1: spurious-edge merge (the ML0145 2x-family killer). At steady period Pr (filter
+    //    armed), a short edge at 0.3*Pr must be rejected AND must not advance the period base, so
+    //    the next genuine edge (a full Pr after the LAST GENUINE edge) reads the correct, unchanged
+    //    steady value rather than a doubled/halved one.
+    {
+        float steady = arm_ref();
+        check(encPeriodCount == ENC_PERIOD_AVG_N, "item1 setup: ring is full at the steady reading");
+        uint32_t spurious_t = armLastEdgeUs + (uint32_t)(0.3f * (float)Pr);   // 0.3*Pr < 0.625*Pr floor
+        enc_cycle_fwd(spurious_t); updateWheelSpeed();
+        check(fabsf(v_actual - steady) < 1e-6f,
+              "item1: a 0.3xPr edge is rejected — reading unchanged (base did not advance)");
+        uint32_t genuine_t = armLastEdgeUs + Pr;   // one full Pr AFTER THE LAST GENUINE EDGE
+        enc_cycle_fwd(genuine_t); updateWheelSpeed();
+        check(fabsf(v_actual - steady) < fabsf(steady) * 1e-4f,
+              "item1: the next genuine edge reads the correct steady value (base did not advance "
+              "to the rejected spurious edge — no 2x-family error)");
+    }
+
+    // ── Item 2: boundary bracketing the 0.625xref threshold ((ref>>1)+(ref>>3) == 1250 for
+    //    ref=2000). 0.55*ref = 1100 (< 1250) must reject; 0.65*ref = 1300 (> 1250) must accept.
+    {
+        float steady = arm_ref();
+        uint32_t reject_t = armLastEdgeUs + 1100;   // 0.55 * Pr
+        enc_cycle_fwd(reject_t); updateWheelSpeed();
+        check(fabsf(v_actual - steady) < 1e-6f,
+              "item2: 0.55xref (1100us < 1250us threshold) is rejected — reading unchanged");
+        check(encPeriodCount == ENC_PERIOD_AVG_N,
+              "item2: rejection does not touch the ring (still full)");
+    }
+    {
+        float steady = arm_ref();
+        uint32_t accept_t = armLastEdgeUs + 1300;   // 0.65 * Pr, single-pitch (not >1.5xref)
+        enc_cycle_fwd(accept_t); updateWheelSpeed();
+        float expect = (2.0f * ENC_SLOT_PITCH_M) / ((float)(Pr + 1300) * 1e-6f);
+        check(fabsf(v_actual - expect) < fabsf(expect) * 1e-4f,
+              "item2: 0.65xref (1300us > 1250us threshold) is ACCEPTED and stored literally");
+        check(fabsf(v_actual - steady) > 1e-6f,
+              "item2: the accepted 1300us period visibly changes the reading (proves it was stored)");
+    }
+
+    // ── Item 3: missed-edge reinterpretation. A period ~= 2*ref (in (1.5xref, 2.5xref]) is stored
+    //    as period/2 == ref, so the ring entry equals a normal steady period and v is UNCHANGED —
+    //    not halved, which is what a naive "accept the raw interval" implementation would produce.
+    //    Same for ~= 3*ref -> /3. A period > 3.5xref is accepted AS-IS (v reads LOW, safe direction).
+    {
+        float steady = arm_ref();
+        uint32_t k2_t = armLastEdgeUs + 2 * Pr;   // period = 2*ref = 4000us, in (3000,5000] -> k=2, /2=ref
+        enc_cycle_fwd(k2_t); updateWheelSpeed();
+        check(fabsf(v_actual - steady) < fabsf(steady) * 1e-3f,
+              "item3: a ~2xref period (missed 1 edge) is reinterpreted to store exactly ref — "
+              "v_actual is UNCHANGED, not halved");
+    }
+    {
+        float steady = arm_ref();
+        uint32_t k3_t = armLastEdgeUs + 3 * Pr;   // period = 3*ref = 6000us, in (5000,7000] -> k=3, /3=ref
+        enc_cycle_fwd(k3_t); updateWheelSpeed();
+        check(fabsf(v_actual - steady) < fabsf(steady) * 1e-3f,
+              "item3: a ~3xref period (missed 2 edges) is reinterpreted to store exactly ref — "
+              "v_actual is UNCHANGED, not a third");
+    }
+    {
+        float steady = arm_ref();
+        uint32_t k4_t = armLastEdgeUs + 4 * Pr;   // period = 4*ref = 8000us, > 3.5*ref (7000) -> as-is
+        enc_cycle_fwd(k4_t); updateWheelSpeed();
+        check(v_actual > 0.0f && fabsf(v_actual) < fabsf(steady),
+              "item3: a >3.5xref period is accepted AS-IS (literal, undivided) — v_actual reads "
+              "LOW rather than being reinterpreted (the documented safe direction)");
+    }
+
+    // ── Item 4: bootstrap. From a fresh reset, the first ENC_PERIOD_REF_SEED_N (2) periods are
+    //    accepted with ONLY the ENC_PERIOD_MIN_US floor applied — no adaptive test, since there is
+    //    no reference yet. Two wildly different early periods (25x apart) must both ingest.
+    {
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        enc_cycle_fwd(500);        updateWheelSpeed();   // baseline (no period measured yet)
+        check(encPeriodRefSeed == 0, "item4: baseline tap seeds nothing (no period measured yet)");
+        enc_cycle_fwd(500 + 500);  updateWheelSpeed();   // period1 = 500us -> accepted (>= 200 floor)
+        check(encPeriodRefSeed == 1 && encPeriodCount == 1,
+              "item4: first post-baseline period (500us) ingests unfiltered — no ref exists yet");
+        enc_cycle_fwd(500 + 500 + 25000); updateWheelSpeed();  // period2 = 25000us (50x period1)
+        check(encPeriodRefSeed == 2 && encPeriodCount == 2,
+              "item4: second period (25000us, 50x the first) STILL ingests unfiltered — the "
+              "adaptive test only arms once seed reaches ENC_PERIOD_REF_SEED_N");
+    }
+
+    // ── Item 5: the reference survives a direction flip (it is cleared only by encoderVelReset(),
+    //    never by a flip). After flipping, a spurious short period in the NEW direction must still
+    //    be rejected against the surviving (pre-flip) reference.
+    {
+        float steady = arm_ref();
+        uint32_t seedAfterArm = encPeriodRefSeed;
+        uint32_t refAfterArm  = encPeriodRefUs;
+        check(seedAfterArm >= ENC_PERIOD_REF_SEED_N, "item5 setup: reference is armed");
+
+        // Flip direction with reverse taps at period Pr each (accepted normally, same as any other
+        // genuine period — the plausibility test is direction-agnostic). fw v13 S3 sign embargo:
+        // the SECOND reverse tap (cnt=1, sign differs from the last published positive value) is
+        // embargoed and HOLDS; the flip only PUBLISHES at cnt=2, on the third tap.
+        uint32_t tf = armLastEdgeUs;
+        tf += Pr; enc_cycle_rev(tf); updateWheelSpeed();   // ambiguous tap, no flip yet
+        tf += Pr; enc_cycle_rev(tf); updateWheelSpeed();   // cnt=1, sign differs -> embargoed, holds
+        check(fabsf(v_actual - steady) < 1e-6f,
+              "item5: the cnt=1 post-flip tap is embargoed (sign differs) — holds the pre-flip value");
+        tf += Pr; enc_cycle_rev(tf); updateWheelSpeed();   // cnt=2 -> embargo lifts, publishes negative
+        check(v_actual < 0.0f, "item5: at cnt=2 the flip publishes (negative)");
+        check(encPeriodRefSeed == seedAfterArm,
+              "item5: encPeriodRefSeed is NOT reset by a direction flip (only encoderVelReset() "
+              "clears it)");
+
+        // Inject a spurious short period (0.3x the surviving reference) in the new direction.
+        float preSpuriousReading = v_actual;
+        uint32_t spurious_t = tf + (uint32_t)(0.3f * (float)Pr);
+        enc_cycle_rev(spurious_t); updateWheelSpeed();
+        check(fabsf(v_actual - preSpuriousReading) < 1e-6f,
+              "item5: a spurious short period in the NEW direction is still rejected against the "
+              "surviving pre-flip reference");
+        check(encPeriodRefUs == refAfterArm,
+              "item5: the reference value itself is untouched by the rejected spurious edge");
+    }
+
+    // ── Item 9 (constants): pin the adaptive-filter constants literally so a silent regression to
+    //    the pre-fw-v13 values (or a typo) is caught here rather than only via the derived tests
+    //    above, which would still pass at slightly different numeric neighbourhoods.
+    check(ENC_VEL_TIMEOUT_US == 100000u,
+          "constants: ENC_VEL_TIMEOUT_US == 100000 (fw v13, was 150000)");
+    check(ENC_PERIOD_REF_SEED_N == 2u,
+          "constants: ENC_PERIOD_REF_SEED_N == 2");
+    check(ENC_PERIOD_MAX_MULT == 3u,
+          "constants: ENC_PERIOD_MAX_MULT == 3");
+
+    enc_reset();
+}
+
+// ─── Partial-ring readings: sign-matching (live) vs sign-differing (embargoed) (fw v13, item 7) ──
+// Complements the (f)/(f2)/(f3) coverage inside test_edge_period_estimator(): change C (partial-
+// ring reading) and the S3 sign embargo interact — a cnt<2 reading publishes live ONLY when its
+// sign matches the last published reading; a sign DIFFERENCE at cnt<2 holds instead, and only
+// publishes once corroborated at cnt=2. This test isolates both halves explicitly.
+static void test_edge_period_partial_ring_after_flip() {
+    test_group("Partial-ring readings: sign-matching vs sign-differing (fw v13, item 7)");
+
+    const uint32_t P = 1000;
+    float expect_1pitch = ENC_SLOT_PITCH_M / ((float)P * 1e-6f);
+    float expect_2pitch = (2.0f * ENC_SLOT_PITCH_M) / (2.0f * (float)P * 1e-6f);
+
+    // ── (7a) SIGN-MATCHING cnt=1 after the ring re-accumulates (no flip): a same-direction
+    //     ambiguous-tap restart (encPeriodCount -> 0, encPeriodDir -> 0, the ISR's "jitter about a
+    //     slot edge" case) followed by ONE more genuine FORWARD period lands at cnt=1 with the SAME
+    //     sign as the last published (positive) reading — the embargo condition
+    //     (vNew sign != encVelLastValid sign) is false, so it publishes live, exactly like change C
+    //     alone (no embargo interaction).
+    enc_reset();
+    g_mock_micros = 0;
+    encoderVelReset();
+    updateWheelSpeed();
+    for (int i = 1; i <= 4; i++) { enc_cycle_fwd((uint32_t)i * P); updateWheelSpeed(); }
+    check(v_actual > 0.0f, "(7a) setup: forward ring is live and positive (published)");
+    float publishedFwd = v_actual;
+    uint32_t t = 4 * P;
+    // The FIRST ambiguous tap right after real motion still reads the PRIOR cycle's completed
+    // +2 delta (the decoder is one-cycle-lagged — see enc_tap_ambiguous()'s own note), so it does
+    // NOT yet land on dpos==0; a SECOND ambiguous tap (now genuinely frozen, since neither tap
+    // moved encoderPos) is what actually forces the ring to cnt=0/dir=0.
+    t += P; enc_tap_ambiguous(t); updateWheelSpeed();
+    t += P; enc_tap_ambiguous(t); updateWheelSpeed();
+    check(encPeriodCount == 0 && encPeriodDir == 0,
+          "(7a) ambiguous restart: the ring is genuinely at cnt=0/dir=0 after the second tap");
+    check(fabsf(v_actual - publishedFwd) < 1e-6f,
+          "(7a) ambiguous restart: cnt=0/dir=0 HOLDS (branch (3)), does not touch the sign");
+    // Resuming from a genuinely frozen baseline costs one more "wasted" tap, same as the very
+    // first A-rising after any reset (see the (c)/(g)/(i) "baseline" notes): encoderPos has not
+    // advanced yet at the moment THIS cycle's own A-rising fires (the decode always lags one
+    // cycle), so this first resumed cycle reads dpos==0 too (still ambiguous, cnt stays 0) — it is
+    // only the SECOND resumed cycle whose A-rising sees the FIRST one's now-completed +2 delta.
+    t += P; enc_cycle_fwd(t); updateWheelSpeed();   // resumed cycle #1: still ambiguous (dpos==0)
+    check(encPeriodCount == 0, "(7a) resumed cycle #1: still ambiguous (one-cycle decode lag)");
+    t += P; enc_cycle_fwd(t); updateWheelSpeed();   // resumed cycle #2: dpos==+2 -> cnt=1
+    check(v_actual > 0.0f,
+          "(7a) sign-matching cnt=1: publishes live (positive, same sign as last published)");
+    check(fabsf(v_actual - expect_1pitch) < fabsf(expect_1pitch) * 1e-4f,
+          "(7a) sign-matching cnt=1: magnitude is the single-pitch value (distM=pitch, sumUs=P)");
+    check(encPeriodCount == 1, "(7a) sign-matching cnt=1: ring holds exactly cnt=1");
+    t += P; enc_cycle_fwd(t); updateWheelSpeed();  // resumed cycle #3 -> cnt=2, N-average
+    check(fabsf(v_actual - expect_2pitch) < fabsf(expect_2pitch) * 1e-4f,
+          "(7a) after 2 periods: the N=2 average is used (matches steady-state formula)");
+    check(encPeriodCount == 2, "(7a) after 2 periods: ring is full (cnt=2)");
+
+    // ── (7b) SIGN-DIFFERING cnt=1 after a direction flip: embargoed (holds), publishes only at
+    //     cnt=2. Same mechanism as (f)/(f2)/item5, restated on its own as the item-7 partial-ring
+    //     counterpart to (7a).
+    enc_reset();
+    g_mock_micros = 0;
+    encoderVelReset();
+    updateWheelSpeed();
+    for (int i = 1; i <= 4; i++) { enc_cycle_fwd((uint32_t)i * P); updateWheelSpeed(); }
+    check(v_actual > 0.0f, "(7b) setup: forward ring is live and positive (published)");
+    float preFlip = v_actual;
+    uint32_t tb = 4 * P;
+    tb += P; enc_cycle_rev(tb); updateWheelSpeed();   // ambiguous tap, no flip yet
+    tb += P; enc_cycle_rev(tb); updateWheelSpeed();   // ONE new-direction period -> cnt=1, sign differs
+    check(fabsf(v_actual - preFlip) < 1e-6f,
+          "(7b) sign-differing cnt=1: EMBARGOED — holds the last published (positive) value");
+    check(encPeriodCount == 1, "(7b) sign-differing cnt=1: the ring itself still holds cnt=1 "
+          "underneath the embargo (only the PUBLISHED v_actual is held back)");
+    tb += P; enc_cycle_rev(tb); updateWheelSpeed();   // TWO new-direction periods -> cnt=2, publishes
+    check(v_actual < 0.0f, "(7b) after 2 new-direction periods: embargo lifts, publishes negative");
+    check(fabsf(v_actual + expect_2pitch) < fabsf(expect_2pitch) * 1e-4f,
+          "(7b) after 2 new-direction periods: the N=2 average is used (matches steady-state formula)");
+    check(encPeriodCount == 2, "(7b) after 2 new-direction periods: ring is full (cnt=2)");
+
+    enc_reset();
+}
+
+// ─── v_setpoint zero cutoff in motorControl() (fw v13, ML0144) ──────────────────────────────────
+// |v_setpoint| < V_SP_ZERO_THRESH must skip the velocity controller entirely: 0 A is commanded and
+// driveCtrl_x[0] is reset on the ENTRY EDGE only (not on every in-band tick), via
+// resetDriveControlState() — compiled into BOTH build paths. The pi_motor_accum clear is
+// PI-fallback-build-ONLY (#if !USE_YOULA_DRIVE_CONTROLLER in motorControl()); under the shipped
+// default (Youla), pi_motor_accum plays no role in this control law and the entry edge leaves it
+// untouched. Both globals are always-defined file scope state, so poking/asserting on both is safe
+// under either build, but the EXPECTED value of pi_motor_accum differs by build (guarded below).
+static void test_motor_zero_cutoff() {
+    test_group("v_setpoint zero cutoff in motorControl() (fw v13, ML0144)");
+
+    // (a) Inside the band: commandMotorCurrent(0) is issued, and the entry edge resets controller
+    //     state. A poked nonzero state survives a SECOND in-band tick (the reset is edge-only — the
+    //     controller is never stepped inside the cutoff, so nothing should touch the state again).
+    reset_test_state();
+    driveZeroCutActive = false;
+    v_setpoint = 0.03f;
+    v_actual   = 1.0f;
+    driveCtrl_x[0]  = 5.0;
+    pi_motor_accum  = 5.0f;
+    vesc.reset();
+    motorControl();
+    check(driveZeroCutActive == true, "(a) entry: driveZeroCutActive latches true inside the band");
+    check(driveCtrl_x[0] == 0.0,
+          "(a) entry: driveCtrl_x[0] is zeroed by the entry-edge resetDriveControlState()");
+#if USE_YOULA_DRIVE_CONTROLLER
+    // The pi_motor_accum clear is compiled ONLY into the !USE_YOULA_DRIVE_CONTROLLER (PI fallback)
+    // build — the Youla build's entry edge does not touch it, since pi_motor_accum plays no role
+    // in that control law. Under the shipped default (Youla), it is left exactly as poked.
+    check(pi_motor_accum == 5.0f,
+          "(a) entry (Youla build): pi_motor_accum is NOT touched — the clear is PI-build-only");
+#else
+    check(pi_motor_accum == 0.0f,
+          "(a) entry (PI build): pi_motor_accum IS zeroed by the entry-edge reset");
+#endif
+    check(vesc.last_current == 0.0f, "(a) entry: commandMotorCurrent(0) reaches the VESC");
+    check(targetMotorTorque == 0.0f, "(a) entry: targetMotorTorque is zeroed");
+
+    driveCtrl_x[0] = 7.0;   // poke again — a second in-band tick must NOT re-reset (or re-touch) it
+    vesc.reset();
+    motorControl();
+    check(driveCtrl_x[0] == 7.0,
+          "(a) second in-band tick: the poked state SURVIVES (reset is edge-only, controller never "
+          "steps inside the cutoff)");
+    check(vesc.last_current == 0.0f, "(a) second in-band tick: still commands 0 A");
+
+    // (b) Above the band: the normal controller path runs and issues a nonzero command for a
+    //     nonzero error.
+    reset_test_state();
+    driveZeroCutActive = false;
+    v_setpoint = 0.06f;
+    v_actual   = 0.0f;
+    g_mock_micros = 10000;         // clear both builds' internal Ts gates (Youla 2ms / PI sampleTime)
+    driveCtrl_lastMicros = 0;
+    pi_motor_lastMicros  = 0;
+    vesc.reset();
+    motorControl();
+    check(driveZeroCutActive == false, "(b) above the band: driveZeroCutActive is false");
+    check(fabsf(vesc.last_current) > 0.0f,
+          "(b) above the band: the controller runs and issues a nonzero current for a nonzero error");
+
+    // (c) Crossing 0.06 -> 0.03 -> 0.06: re-entry starts clean. The controller state left nonzero
+    //     by (b) above must be zeroed on the 0.03 entry edge, and the 0.06 re-entry resumes from
+    //     that clean state (no leftover from the (b) run bleeds through the cutoff).
+    v_setpoint = 0.03f;
+    motorControl();
+    check(driveZeroCutActive == true, "(c) re-entry: driveZeroCutActive latches true again");
+    check(driveCtrl_x[0] == 0.0,
+          "(c) re-entry: the (b) run's nonzero controller state is zeroed on the entry edge");
+    check(pi_motor_accum == 0.0f, "(c) re-entry: pi_motor_accum is likewise zeroed");
+
+    v_setpoint = 0.06f;
+    g_mock_micros += 10000;        // clear the Ts gate again for the resumed run
+    motorControl();
+    check(driveZeroCutActive == false, "(c) exit: driveZeroCutActive clears on the 0.06 tick");
+
+    // (d) Constant pinning: V_SP_ZERO_THRESH == 0.05 exactly, and it sits ABOVE the estimator's
+    //     reportable floor (pitch / ENC_VEL_TIMEOUT_US) — computed from the constants, not as a
+    //     literal, since the ordering (cutoff strictly above the floor) is the load-bearing fact:
+    //     it guarantees the estimator can never report a nonzero speed inside the cutoff band.
+    check(fabsf(V_SP_ZERO_THRESH - 0.05f) < 1e-6f, "(d) V_SP_ZERO_THRESH == 0.05 m/s exactly");
+    float estimator_floor = ENC_SLOT_PITCH_M / (ENC_VEL_TIMEOUT_US * 1e-6f);
+    check(V_SP_ZERO_THRESH > estimator_floor,
+          "(d) V_SP_ZERO_THRESH sits ABOVE the estimator's reportable floor (constants-derived, "
+          "not a literal comparison)");
+
+    reset_test_state();
+}
+
+// ─── fw v13 safety-fix round: arm-threshold speed gate, poisoned-ref tripwire, embargo ageing ────
+// Covers the three ISR/reader mechanisms added on top of the original fw v13 adaptive filter:
+//   (a) ENC_ADAPT_MAX_REF_US = 13000: the ENTIRE adaptive mechanism (low-side spurious gate AND
+//       the k>1 missed-edge branch) is dark once ref >= 13000us (< 0.307 m/s) — below that speed a
+//       spurious edge and a genuine hard launch are indistinguishable by period ratio (S1/S2), so
+//       the filter steps aside and leaves sub-0.3 m/s glitch rejection to the Schmitt bodge.
+//   (b) ENC_KBRANCH_RUN_MAX = 4: a poisoned reference (locked into the k=2 or k=3 basin) makes
+//       every genuine period take the missed-edge branch forever, reading a clean trace as 2x/3x
+//       fast. 4 CONSECUTIVE k>1 acceptances is treated as poisoning (rather than a genuinely bursty
+//       miss stream) and forces a full encoderVelReset() via encRefPoisonPending.
+//   (c) The S3 sign embargo's load-bearing property: an embargoed (held) reading must NOT refresh
+//       encVelLastReadingUs, or the (2b) reading-age bound could never age out a stuck embargo.
+static void test_encoder_v13_safety_round() {
+    test_group("fw v13 safety round: arm-threshold gate, poison tripwire, embargo ageing");
+
+    // ── (e) Constant pinning, first — the derived tests below are meaningless if these drift.
+    check(ENC_ADAPT_MAX_REF_US == 13000u,
+          "constants: ENC_ADAPT_MAX_REF_US == 13000 (arms the adaptive filter below ~0.307 m/s)");
+    check(ENC_KBRANCH_RUN_MAX == 4u,
+          "constants: ENC_KBRANCH_RUN_MAX == 4 (consecutive k>1 acceptances before the poison reset)");
+
+    // Helper: arm a fresh ring/reference with two accepted steady periods at `period`, leaving the
+    // reader with a live steady reading. Same 3-cycle shape as test_edge_period_adaptive_filter()'s
+    // arm_ref() (baseline, period1 -> cnt=1/seed=1, period2 -> cnt=2/seed=2).
+    uint32_t lastEdgeUs = 0;
+    auto arm_ref_at = [&](uint32_t period) -> float {
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        enc_cycle_fwd(period);       updateWheelSpeed();
+        enc_cycle_fwd(2 * period);   updateWheelSpeed();
+        enc_cycle_fwd(3 * period);   updateWheelSpeed();
+        lastEdgeUs = 3 * period;
+        return v_actual;
+    };
+
+    // ── (a) Arm-threshold bracket. ref just BELOW 13000us (12000us, ~0.332 m/s) keeps the filter
+    //     armed: a 0.3x spurious edge is rejected. ref just AT/ABOVE 13000us (14000us, ~0.285 m/s)
+    //     goes dark: the identical 0.3x injection is ACCEPTED and changes the reading — this is the
+    //     deliberate S1/S2 trade-off, not a bug (sub-0.3 m/s glitch rejection belongs to the Schmitt
+    //     bodge, not this ISR-side filter).
+    {
+        float steady = arm_ref_at(12000);
+        uint32_t spurious_t = lastEdgeUs + (uint32_t)(0.3f * 12000.0f);
+        enc_cycle_fwd(spurious_t); updateWheelSpeed();
+        check(fabsf(v_actual - steady) < 1e-6f,
+              "(a) ref just BELOW ENC_ADAPT_MAX_REF_US (12000us): filter armed, 0.3x edge rejected");
+    }
+    {
+        float steady = arm_ref_at(14000);
+        uint32_t spurious_t = lastEdgeUs + (uint32_t)(0.3f * 14000.0f);
+        enc_cycle_fwd(spurious_t); updateWheelSpeed();
+        check(fabsf(v_actual - steady) > 1e-6f,
+              "(a) ref just AT/ABOVE ENC_ADAPT_MAX_REF_US (14000us): filter DARK, 0.3x edge "
+              "ACCEPTED (documented S1/S2 trade — sub-0.3 m/s belongs to the Schmitt bodge)");
+    }
+
+    // ── (b) Poisoned-reference tripwire. Four CONSECUTIVE periods at ~2x a well-armed reference
+    //     (ref = 2000us, comfortably under ENC_ADAPT_MAX_REF_US) all take the k=2 branch. The 4th
+    //     acceptance raises encRefPoisonPending inside that same ISR call, and updateWheelSpeed()'s
+    //     very next invocation (the one immediately following, in this same tick) performs the full
+    //     reset before touching the new ring data — reporting 0 rather than the suspect reading.
+    {
+        const uint32_t ref0 = 2000;
+        float steady = arm_ref_at(ref0);
+        check(steady > 0.0f, "(b) setup: reference armed and live");
+        check(encKBranchRun == 0 && !encRefPoisonPending,
+              "(b) setup: the k-branch run counter starts clean (all setup periods were k=1)");
+        uint32_t t = lastEdgeUs;
+        for (int i = 1; i <= 4; i++) {
+            t += 2 * ref0;                 // period = 2*ref -> k=2 branch, stores period/2 = ref
+            enc_cycle_fwd(t); updateWheelSpeed();
+        }
+        check(v_actual == 0.0f,
+              "(b) poison reset: the 4th consecutive k=2 acceptance reports 0 this same tick");
+        check(encPeriodCount == 0 && encPeriodRefUs == 0 && encPeriodRefSeed == 0,
+              "(b) poison reset: the ring AND the reference are cleared (a full encoderVelReset())");
+        check(encKBranchRun == 0 && !encRefPoisonPending,
+              "(b) poison reset: the run counter and the pending flag are both cleared by the reset");
+    }
+    // 3 consecutive k=2 periods, then a k=1 period: the run counter clears WITHOUT a reset (a
+    // genuinely bursty miss stream, not a poisoned lock).
+    {
+        const uint32_t ref0 = 2000;
+        float steady = arm_ref_at(ref0);
+        (void)steady;
+        uint32_t t = lastEdgeUs;
+        for (int i = 1; i <= 3; i++) {
+            t += 2 * ref0;                 // 3x k=2 -> encKBranchRun reaches 3, still below the max
+            enc_cycle_fwd(t); updateWheelSpeed();
+        }
+        check(encKBranchRun == 3 && !encRefPoisonPending,
+              "(b) 3 consecutive k=2: run counter at 3, not yet poisoned");
+        t += ref0;                         // a normal k=1 period (== ref) clears the run counter
+        enc_cycle_fwd(t); updateWheelSpeed();
+        check(encKBranchRun == 0 && !encRefPoisonPending,
+              "(b) a k=1 period after 3 consecutive k=2s clears the run counter — no reset");
+        check(v_actual != 0.0f,
+              "(b) no reset occurred: the ring is still live (not zeroed)");
+    }
+
+    // ── (c) Embargo ageing: the load-bearing S3 property is that an EMBARGOED reading does not
+    //     refresh encVelLastReadingUs. Establish a published positive reading, then a sign-differing
+    //     cnt=1 reversal that gets embargoed (holds), and show directly that encVelLastReadingUs is
+    //     UNCHANGED by the embargoed tap. Then isolate the (2b) reading-age bound from the (2)
+    //     raw-edge-age bound: advance mock time to a point strictly between the two bounds (past the
+    //     reading-age limit, computed from the STALE published-reading timestamp, but still short of
+    //     the raw-edge limit, computed from the FRESHER embargoed tap's own edge timestamp) — only
+    //     (2b) can fire here, proving the embargoed tap's edge freshness alone is not enough to keep
+    //     the estimator alive; the READING itself has to be current.
+    {
+        const uint32_t Pc = 1000;
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        for (int i = 1; i <= 4; i++) { enc_cycle_fwd((uint32_t)i * Pc); updateWheelSpeed(); }
+        check(v_actual > 0.0f, "(c) setup: forward ring published positive");
+        uint32_t publishTime = 4 * Pc;
+
+        // The first reverse tap after a forward run is the same "partial dpos" tap seen in (f):
+        // it still reads a small delta whose SIGN matches the still-forward ring (cnt was already
+        // full), so it is NOT an embargo case at all — it is a normal (cnt>=2, bypasses the embargo
+        // entirely) republish, and it is THIS tap, not the setup above, that last stamped
+        // encVelLastReadingUs before the genuine flip. Capture it rather than assume it — the point
+        // under test is the SECOND reverse tap (the confirmed flip, cnt=1, sign differs), not this
+        // one.
+        uint32_t tc = publishTime;
+        tc += Pc; enc_cycle_rev(tc); updateWheelSpeed();   // partial-dpos tap: republishes (cnt>=2)
+        uint32_t readingUsBeforeEmbargo = encVelLastReadingUs;
+        float published = v_actual;
+
+        tc += Pc; enc_cycle_rev(tc); updateWheelSpeed();   // confirmed flip: cnt=1, sign differs -> EMBARGOED
+        check(fabsf(v_actual - published) < 1e-6f,
+              "(c) embargoed tap: v_actual still holds the last published value");
+        check(encVelLastReadingUs == readingUsBeforeEmbargo,
+              "(c) embargoed tap: encVelLastReadingUs is NOT refreshed (the load-bearing S3 detail "
+              "— an embargoed reading must not look fresh to the (2b) reading-age bound)");
+        uint32_t embargoEdgeTime = tc;   // the embargoed tap's OWN edge is fresh (encLastEdgeUs)
+
+        // Advance to (readingUsBeforeEmbargo + ENC_VEL_TIMEOUT_US + 1): past the READING-age bound
+        // (measured from the stale pre-embargo reading) but still short of the RAW-EDGE-age bound
+        // (measured from the fresher embargoEdgeTime) — the gap between the two timestamps is Pc =
+        // 1000us, well inside the 100000us timeout, so this window exists and isolates (2b) cleanly.
+        g_mock_micros = readingUsBeforeEmbargo + ENC_VEL_TIMEOUT_US + 1;
+        check((uint32_t)(g_mock_micros - embargoEdgeTime) < ENC_VEL_TIMEOUT_US,
+              "(c) test construction: the raw edge is still within its own staleness bound here");
+        updateWheelSpeed();
+        check(v_actual == 0.0f,
+              "(c) reading-age bound fires: v_actual zeros even though the last raw edge was still "
+              "within ITS OWN staleness window — only the STALE READING triggered this");
+        check(encPeriodCount == 0,
+              "(c) reading-age bound fires: the ring resets, same as any other of the four zeroing events");
+    }
 
     enc_reset();
 }
@@ -6518,15 +7077,18 @@ static void test_motor_current_clamp() {
     // controller (USE_YOULA_DRIVE_CONTROLLER), whose clamp lives INSIDE driveControllerStep() at
     // exactly DRIVE_CTRL_I_MAX == MOTOR_I_CMD_MAX (see test_drive_controller_coeff_pinning()), so
     // commandMotorCurrent()'s own clamp is a redundant backstop here rather than the binding
-    // limit. A single tick at 5 m/s error does NOT saturate (u = DD*e ~= 9.1 A, DD ~= 1.81) --
-    // unlike the old PI path's unbounded proportional term, this controller is designed to reach
-    // the rail only under sustained error. Drive several ticks to reach saturation, then check it.
+    // limit. A single tick at 5 m/s error does NOT saturate -- unlike the old PI path's unbounded
+    // proportional term, this controller is designed to reach the rail only under sustained
+    // error, and it rings through several unsaturated ticks first (fw v14 K_F-corrected
+    // coefficients: u dips as low as ~-8.4 A around tick 6 before settling). Drive enough ticks
+    // to clear that transient into stable saturation (measured stable from tick ~24 onward with
+    // these coefficients; 30 keeps margin against future re-synthesis), then check it.
     reset_test_state();
     v_actual   = 0.0f;
     v_setpoint = 5.0f;
     g_mock_micros  = 100000;
     vesc.reset();
-    for (int k = 0; k < 20; k++) {
+    for (int k = 0; k < 30; k++) {
         g_mock_micros += (uint32_t)DRIVE_CTRL_TS_US;
         motorControl();
     }
@@ -6865,7 +7427,12 @@ static void test_drive_controller_replay_small() {
         if (err > worst) worst = err;
         if (u <= DRIVE_CTRL_I_MIN + 1e-6f || u >= DRIVE_CTRL_I_MAX - 1e-6f) clamped++;
     }
-    check(worst < 1e-4f, "drive ctrl replay 'small': matches Python reference (max |du| < 1e-4 A)");
+    // Tolerance comes from the GENERATED artifact, not from a literal here: it is measured
+    // per synthesis run by synthesize_drive_siso.py and emitted into drive_replay_vectors.h
+    // by tools/gen_drive_replay_header.py. See the regen test below for why that matters.
+    check(worst < DRIVE_REPLAY_SMALL_TOL_A,
+          "drive ctrl replay 'small': matches Python reference (max |du| < the generated "
+          "DRIVE_REPLAY_SMALL_TOL_A)");
     check(clamped == 0, "drive ctrl replay 'small': never clamps (per the reference's own claim)");
 }
 
@@ -6874,25 +7441,31 @@ static void test_drive_controller_replay_regen() {
     reset_test_state();
     driveControllerReset();
 
-    // Tolerance note (updated -- the CSV's own header now documents this directly, read it before
-    // touching this test). The regen episode is generated CLOSED-LOOP through these same float32
-    // coefficients (not open-loop-replayed from a float64 error sequence, which was the earlier
-    // knife-edge mechanism this comment used to describe), and the emission is bit-exact for a
-    // full-precision reader. Despite that, during the saturated transient the controller genuinely
-    // DITHERS across the +-12 A clamp boundary (82 clamp-state transitions in the float64 sim), so
-    // some sample always sits arbitrarily close to the decision edge and ANY perturbation -- CSV
-    // text truncation, float32 vs float64 stimulus, instruction-level rounding differences between
-    // this C++ path and the generator -- can flip a clamp decision for one or more samples, each
-    // worth up to ~8 A of state drive through the ~0.9999 mode. The CSV header's own measurement:
-    // 12.8 mA sensitivity to a %.9e stimulus truncation, 13.4 mA to a float32 one. This is NOT
-    // slack for a sloppy implementation -- it is the actual, measured, physically-inherent chatter
-    // of a correct implementation replaying at finite precision.
-    //   Gate chosen: this double-state C++ path measures a worst-case |du| of ~2.1e-2 A against the
-    // regenerated vectors -- inside the CSV's ~5e-2 A guidance band but NOT bit-exact (0.0), so the
-    // tight bit-exactness gate is not achievable here and the ~5e-2 A gate is what's kept. (A
-    // float32 ARITHMETIC recursion, as opposed to a float32 STIMULUS/coefficient rounding, costs
-    // ~1 A on this episode per validate_drive_siso.py check 4 -- that remains a real inadequacy,
-    // guarded separately by the static_assert/driveCtrl_x-is-double checks below, not by this gate.)
+    // TOLERANCE IS GENERATED, NOT WRITTEN HERE -- and that is the whole point of this note.
+    //
+    // The regen episode is generated CLOSED-LOOP through the same float32 coefficients the
+    // firmware compiles, and the emission is bit-exact for a full-precision reader. Even so,
+    // during the saturated transient the controller genuinely DITHERS across the +-12 A clamp
+    // boundary, approaching a decision edge to within a few hundred microamps. ANY perturbation
+    // -- CSV text truncation, float32 storage of e_in, or merely a different (equally valid)
+    // SUMMATION ORDER for the same dot products -- can flip one clamp decision, and each flip is
+    // worth ~8 A of state drive through the ~0.9999 mode. That is inherent to the plant and
+    // controller, not slack for a sloppy implementation.
+    //
+    // driveControllerStep() accumulates Cd.x and Ac.x with sequential scalar loops; the generator
+    // sums them with numpy/BLAS. That reassociation alone is the LARGEST of the perturbations
+    // (measured 67.7 mA against 19.1 mA for float32 stimulus storage), which is exactly why the
+    // tolerance must be measured on the firmware arithmetic path rather than inferred from
+    // stimulus precision. It was previously a hardcoded 5e-2 A literal inherited from an older
+    // coefficient set; the K_F re-synthesis moved the true figure to 86 mA and the stale literal
+    // failed this correct implementation. synthesize_drive_siso.py now replays the episode
+    // through the firmware's exact arithmetic, derives the tolerance with 2x headroom, and ships
+    // it as DRIVE_REPLAY_REGEN_TOL_A. Read the macro; never re-hardcode it.
+    //   (A float32 ARITHMETIC recursion -- as opposed to float32 stimulus/coefficient rounding --
+    // costs ~1 A on this episode per validate_drive_siso.py check 4. That remains a real
+    // inadequacy, guarded by the static_assert/driveCtrl_x-is-double checks below, not by this
+    // gate; the generator's own "boundary-dither class, not divergence" gate bounds this one
+    // well under that.)
     float worst = 0.0f;
     int railed = 0;
     for (int k = 0; k < DRIVE_REPLAY_REGEN_N; k++) {
@@ -6901,9 +7474,40 @@ static void test_drive_controller_replay_regen() {
         if (err > worst) worst = err;
         if (u <= DRIVE_CTRL_I_MIN + 1e-4f) railed++;
     }
-    check(worst < 5e-2f,
-          "drive ctrl replay 'regen': matches Python reference (max |du| < 5e-2 A; inherent clamp-"
-          "boundary dither, see the tolerance note above -- NOT slack for implementation bugs)");
+    check(worst < DRIVE_REPLAY_REGEN_TOL_A,
+          "drive ctrl replay 'regen': matches Python reference (max |du| < the generated "
+          "DRIVE_REPLAY_REGEN_TOL_A; inherent clamp-boundary dither, see the tolerance note "
+          "above -- NOT slack for implementation bugs)");
+    // The generated tolerance is only meaningful as an upper bound if it stays an upper bound
+    // on a KNOWN class of deviation. Two structural guards so a future re-synthesis that turns
+    // dither into divergence cannot pass by simply shipping a larger number:
+    //   (a) the tolerance itself must stay small against the clamp span (a boundary flip is
+    //       bounded by the trajectory re-converging, not by the rail height);
+    check(DRIVE_REPLAY_REGEN_TOL_A < 0.25f*(DRIVE_CTRL_I_MAX - DRIVE_CTRL_I_MIN),
+          "drive ctrl replay 'regen': generated tolerance stays well inside the clamp span "
+          "(dither bound, not a divergence excuse)");
+    //   (a') absolute tripwire (review round, fw v14): the tolerance was consciously widened
+    //        50 -> 180 mA when the arithmetic-order mechanism was identified. A future
+    //        synthesis run needing ANOTHER ~40 % must fail here and be widened deliberately,
+    //        not ship a silently regenerated bound.
+    check(DRIVE_REPLAY_REGEN_TOL_A < 0.25f,
+          "drive ctrl replay 'regen': generated tolerance under the 0.25 A conscious-decision "
+          "tripwire (widen this literal only with an explicit dither re-characterization)");
+    //   (b) the deviation must DECAY -- the tail of the episode is long past the saturated
+    //       transient, so a correct implementation re-converges onto the reference there even
+    //       though the mid-transient does not match sample-for-sample.
+    driveControllerReset();
+    float tailWorst = 0.0f;
+    for (int k = 0; k < DRIVE_REPLAY_REGEN_N; k++) {
+        float u = driveControllerStep(DRIVE_REPLAY_REGEN_E[k]);
+        if (k >= DRIVE_REPLAY_REGEN_N - 200) {
+            float err = fabsf(u - DRIVE_REPLAY_REGEN_U[k]);
+            if (err > tailWorst) tailWorst = err;
+        }
+    }
+    check(tailWorst < 0.1f*worst,
+          "drive ctrl replay 'regen': deviation decays into the tail (< 10% of peak) -- "
+          "boundary dither re-converges, divergence would not");
     check(railed > 50, "drive ctrl replay 'regen': a meaningful stretch rails at -12 A (anti-windup exercised)");
 
     // Recovery: the FINAL samples must be unclamped -- the episode's whole point is that the
@@ -12957,6 +13561,10 @@ int main() {
     test_wheelspeed_units();
     test_encoder_isr_decode();
     test_edge_period_estimator();
+    test_edge_period_adaptive_filter();
+    test_edge_period_partial_ring_after_flip();
+    test_motor_zero_cutoff();
+    test_encoder_v13_safety_round();
     test_velocity_chain_interlock();
     test_control_rate_limiting();
     test_open_loop_droop();

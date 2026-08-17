@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """full_model_mimo.py — full-order 2-in / 2-out TRUTH model for the MIMO study.
 
+⚠️ STALE / FROZEN (see CLAUDE.md fw v12 + fw v14 addenda): this truth model predates
+the velocity-estimator element (2026-08-16b) AND the K_F force-axis correction
+(2026-08-16c, PHI 6.86 / r_t = tire 0.033 m / drag ×1.669). It reads
+plant_mimo.nominal_params() LIVE, so a re-run today mixes the new upstream constants
+with a truth structure frozen on the retired plant — its published baselines are NOT
+reproducible against current plant_mimo.py. Regeneration is a future synthesis round.
+
 COPIED from controller_design/tps61288_full_model.py @ 51b8962: the parameter
 block, `zcomp_ss()`, and the complete `full_plant()` state-space assembly (the
 11-state small-signal TPS61288 / droop / bus / INA model documented in

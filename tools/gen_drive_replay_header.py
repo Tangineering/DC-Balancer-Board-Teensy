@@ -37,10 +37,23 @@ def fmt(x: float) -> str:
 
 
 def main() -> int:
+    # Machine-readable comparison tolerances.  The synthesis script MEASURES these per run
+    # (they change with the coefficients) and writes them as "# tol,<episode>,<value>" rows
+    # in the CSV header; they are re-emitted here as macros so the replay tests gate on the
+    # generated number instead of a hand-copied one that goes stale at the next synthesis.
+    tolerances = {}     # name -> float, amps
     episodes = {}   # name -> {"e": [...], "u": [...]}
     order = []
     with open(CSV_PATH, newline="") as f:
-        reader = csv.DictReader(row for row in f if not row.lstrip().startswith("#"))
+        comment_free = []
+        for row in f:
+            if row.lstrip().startswith("#"):
+                parts = [p.strip() for p in row.lstrip().lstrip("#").strip().split(",")]
+                if len(parts) == 3 and parts[0] == "tol":
+                    tolerances[parts[1]] = float(parts[2])
+                continue
+            comment_free.append(row)
+        reader = csv.DictReader(comment_free)
         for row in reader:
             ep = row["episode"]
             if ep not in episodes:
@@ -51,6 +64,14 @@ def main() -> int:
 
     if not order:
         print("ERROR: no data rows found in", CSV_PATH, file=sys.stderr)
+        return 1
+    missing = [ep for ep in order if ep not in tolerances]
+    if missing:
+        # Hard failure, not a default: a silently-defaulted tolerance is exactly the stale
+        # constant this plumbing exists to eliminate.
+        print(f"ERROR: {CSV_PATH} carries no '# tol,<episode>,<value>' row for "
+              f"{', '.join(missing)}.  Re-run synthesize_drive_siso.py; it emits them.",
+              file=sys.stderr)
         return 1
 
     lines = []
@@ -69,6 +90,14 @@ def main() -> int:
         n = len(e_vals)
         assert n == len(u_vals)
         lines.append(f"#define DRIVE_REPLAY_{tag}_N {n}")
+        lines.append(f"// Comparison tolerance in AMPS, MEASURED by synthesize_drive_siso.py")
+        lines.append(f"// for THESE vectors (2x the worst replay sensitivity for the")
+        lines.append(f"// saturated episode; a tight linear-recursion bound for the")
+        lines.append(f"// unsaturated one).  Gate replay tests on this macro -- do NOT")
+        lines.append(f"// hand-copy the value: it is re-measured every synthesis run.")
+        lines.append(f"// Rationale and the full sensitivity breakdown are in the header of")
+        lines.append(f"// controller_design_MIMO/figures/drive_siso_replay.csv.")
+        lines.append(f"#define DRIVE_REPLAY_{tag}_TOL_A {tolerances[ep]:.9e}f")
         lines.append(f"static const float DRIVE_REPLAY_{tag}_E[DRIVE_REPLAY_{tag}_N] = {{")
         for v in e_vals:
             lines.append(f"    {fmt(v)},")

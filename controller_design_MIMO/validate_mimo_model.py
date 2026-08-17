@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """validate_mimo_model.py — Phase-1 gate battery for the MIMO plant models.
 
+⚠️ STALE / FROZEN (see CLAUDE.md fw v12 + fw v14 addenda): G1.5/G1.6 FAIL against the
+current plant_mimo.py — the truth model lacks the velocity estimator (2026-08-16b) and
+predates the K_F force-axis correction (2026-08-16c). Both this script and
+full_model_mimo.py read plant_mimo.nominal_params() LIVE, so "frozen" does NOT mean
+insulated from upstream changes; it means the gate battery's expectations are pinned
+to the retired plant. Do not chase these failures; regeneration is a future round.
+
 Gates (plan §8, phase table row 1):
   G1.0  copied full-order model is bit-identical to the published baseline
   G1.1  design_plant G11 block == the shipped SISO design plant (1e-9 rel)

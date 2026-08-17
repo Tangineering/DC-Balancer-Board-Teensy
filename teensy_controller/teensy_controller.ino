@@ -606,6 +606,113 @@
  *      NO BLG or UDP format change: v_act is the same field, carrying finer values. fw ≤ 11
  *      v_act traces are comparable in SCALE but not in DYNAMICS — they carry the 113 ms
  *      smoothing, fw 12 traces do not. No pin, sequencing or fault change.
+ *  - fw v13 (2026-08-16) — EDGE-CORRUPTION HARDENING of the fw v12 estimator, plus the v_setpoint
+ *      zero cutoff. No controller-coefficient, plant-model, telemetry or BLG-format change; no pin,
+ *      sequencing or fault change. The controller_design_MIMO/ artefacts (coefficients, plant,
+ *      m_eff, K_F) are FROZEN this round pending a separate operator investigation — the operator's
+ *      ruling is that m_eff = 3.5 kg is a floor from the flywheel inertia measurements and the
+ *      observed gain discrepancy most likely lives in K_F.
+ *      ROOT PHYSICAL CAUSE of all three estimator defects (scope capture 15,
+ *      references/scope_captures/): the OPB829DZ is a bare phototransistor with a 4.7 kΩ pull-up
+ *      and NO hysteresis, so the channels present full-swing signals with ~0.5–1 ms ANALOG edge
+ *      ramps. The Teensy input re-crosses its threshold on ramp noise, producing both extra and
+ *      swallowed edges. A SCHMITT-BUFFER HARDWARE BODGE IS THE REAL FIX and is planned separately;
+ *      everything below is the firmware backstop, and all of it remains correct and beneficial
+ *      after the Schmitt lands (the filters simply stop finding anything to reject).
+ *        * ADAPTIVE PERIOD PLAUSIBILITY (ML0145, ML0143). The fw v12 glitch floor is a FIXED
+ *          200 µs (≈20 m/s) against real bench periods of 0.8–11 ms, so it caught nothing: ML0145's
+ *          spurious A-edges split one pitch into two multi-millisecond halves and put v_act on rungs
+ *          at 1.33x and 2x true speed, reaching 100 % contamination at low speed — where the trace
+ *          looks perfectly clean while reading uniformly double. The test is now RELATIVE to an
+ *          EWMA (α = 1/4) of accepted per-pitch periods, armed after ENC_PERIOD_REF_SEED_N = 2
+ *          accepted periods. LOW SIDE: a period below 0.625 x ref is a spurious-edge artefact and is
+ *          dropped WITHOUT advancing the period base — so the next genuine edge spans the full true
+ *          pitch and the two halves MERGE. Physics bound: the per-pitch fractional period change
+ *          under acceleration is a·pitch/v², a few percent at any speed where the ring is populated,
+ *          so genuine consecutive periods cannot approach halving. HIGH SIDE (ML0143's missed edges,
+ *          ~68 events/s at 3 m/s, trimodal v_act at 1, 2/3 and 1/2 of true speed): a period near
+ *          k x ref means k pitches were traversed, so it is INTERPRETED rather than rejected — the
+ *          entry stored is period/k, the mean per-pitch period, which is the right distance/time for
+ *          an unchanged reader. k is nearest-integer against shift-built 1.5x/2.5x/3.5x midpoints
+ *          and BOUNDED at ENC_PERIOD_MAX_MULT = 3; beyond 3.5x ref the period is accepted as-is,
+ *          because genuine strong deceleration is the likelier explanation and reading slow is the
+ *          safe direction. Rejecting long periods instead would starve the ring during exactly the
+ *          decel where the loop needs a reading. ENC_PERIOD_MIN_US = 200 µs is KEPT as the absolute
+ *          floor beneath the adaptive one, and is the bootstrap's only protection for the first two
+ *          periods off standstill (documented caveat; self-correcting within a few pitches, and
+ *          capped by the reading-age bound below).
+ *          SPEED ARMING (safety review S1+S2). The whole adaptive mechanism — low-side gate AND
+ *          k > 1 reinterpretation — is armed ONLY while ref < ENC_ADAPT_MAX_REF_US = 13000 µs
+ *          (~0.307 m/s). Below that the true per-pitch ratio T(n+1)/T(n) = 1/sqrt(1 + 2·a·pitch/v²)
+ *          itself crosses both thresholds on GENUINE rail transients: it falls under the 0.625 gate
+ *          when v² < 1.667·a·pitch (v < 0.22 m/s at a = 6.96 m/s², so a hard launch would have its
+ *          TRUE edges rejected and read m x low), and it exceeds the 1.5 k = 2 midpoint when
+ *          v² < 3·a·pitch, which can drop ref into the k = 2 basin (0.40T–0.667T) where every
+ *          genuine period is then halved and RE-CONFIRMS the poison — v reading exactly 2x forever
+ *          on a clean trace, in the destabilising direction. The arm speed is set by the stricter
+ *          (decel) condition, v_arm = sqrt(3·a_max·pitch) = 0.289 m/s, with ~6 % margin.
+ *          STATED PLAINLY: the 0.04–0.30 m/s band is UNMITIGATED BY FIRMWARE, and that is where
+ *          ML0145's contamination was worst. It is not an oversight — in that band a spurious edge
+ *          and a hard-launch truth produce the SAME period ratio, so no period-ratio filter can
+ *          separate them. That band belongs to the Schmitt-buffer hardware fix.
+ *          POISONED-REFERENCE TRIPWIRE (S1 backstop): ENC_KBRANCH_RUN_MAX = 4 consecutive accepted
+ *          periods all taking the k > 1 branch raise encRefPoisonPending, and updateWheelSpeed()
+ *          performs a full encoderVelReset(). A genuinely persistent miss stream is
+ *          indistinguishable from a poisoned reference and a reset is correct for both. The reset
+ *          runs in the READER, not the ISR, because it writes reader-side hold state.
+ *          DELAY MODEL UNCHANGED: because a rejected edge never advances the base, accepted periods
+ *          still span TRUE pitches, so a clean edge stream still measures (N+1)·pitch/(2v) of
+ *          effective delay — the filter costs the plant model nothing.
+ *        * READING-AGE STALE BOUND (ML0140, ML0145). The fw v12 stale timeout was keyed to the age
+ *          of the last raw EDGE, so it could never fire in the case that mattered: under direction
+ *          dither the ISR's dpos == 0 and flip branches re-invalidated the ring faster than it
+ *          refilled while edges kept arriving fresh, and the reader held a stale — at a flip,
+ *          WRONG-SIGNED — value for 120–560 ms (ML0145 shows a 468 ms frozen hold at breakaway,
+ *          ~0.4 m/s). updateWheelSpeed() now also bounds the age of the last accepted READING (a
+ *          completed v computation) by max(1.5 x that reading's period sum, ENC_VEL_TIMEOUT_US),
+ *          zeroing v_actual and resetting the estimator when it is exceeded, regardless of the raw
+ *          edge stream. Holds SHORTER than the bound behave exactly as in fw v12. The absolute floor
+ *          drops 150 ms → 100 ms now that it is actually reachable, raising the reportable-speed
+ *          floor to 3.990 mm / 100 ms = 0.0399 m/s — deliberately kept BELOW V_SP_ZERO_THRESH.
+ *        * REVERSAL AS DATA (ML0140). A confirmed flip already stores the flipping edge's own
+ *          period, so one valid same-direction period exists immediately; fw v12 nonetheless waited
+ *          for a full ring. The reader now averages over whatever the ring holds (cnt, not a fixed
+ *          N), so a signed reading is available after the FIRST full same-type period in the new
+ *          direction and the average returns to N as the ring fills. Cost: a cnt = 1 reading is a
+ *          single-pitch measurement, N times less averaged — accepted, because a noisier reading of
+ *          the right sign beats a clean one of the wrong sign.
+ *          SIGN EMBARGO (safety review S3). A cnt = 1 reading whose SIGN differs from the last
+ *          published one is HELD, not published, until cnt >= 2 corroborates the reversal.
+ *          Sign-MATCHING cnt = 1 readings stay allowed, so the fast warm-up and the same-direction
+ *          partial-ring value are unaffected. Without this, the ML0140 dither publishes a
+ *          sign-ALTERNATING single-pitch reading at the dither rate — a stronger excitation than
+ *          the frozen hold it replaced — and, critically, each publication refreshed
+ *          encVelLastReadingUs, so the reading-age bound could never age the dither out. An
+ *          embargoed tick therefore must NOT touch encVelLastReadingUs; that is what makes the
+ *          bound terminate the dpos == 0 / dither starvation case, which the reversal fast path
+ *          alone does not.
+ *        * v_setpoint ZERO CUTOFF (ML0144). Commanding v_setpoint = 0 THROUGH the velocity loop is
+ *          closing the loop BELOW its own validity floor — the estimator reads exactly 0 under
+ *          ~0.04 m/s, so the loop wraps a 544.8 A/(m/s) controller around a deadband relay. ML0144
+ *          recorded sustained 90 %-rail ±12 A bang-bang; the same run at 1.0 m/s settled. Now
+ *          motorControl() — BOTH build paths, Youla and the PI fallback — commands 0 A and holds the
+ *          controller reset while |v_setpoint| < V_SP_ZERO_THRESH = 0.05 m/s, skipping the
+ *          controller step entirely. The reset fires on the ENTRY EDGE only, so the exit is already
+ *          clean under the existing reset semantics. This makes State 2 and the State-98 profiles
+ *          behave the way doState1() (Idle) already did — Idle commands 0 A directly rather than
+ *          regulating a zero setpoint. CONSEQUENCE: profile segments that command genuine zero speed
+ *          (DRIVE_CYCLE phases 0 and 5, and the tails of phases 1/3; COMBINED_PROFILE regions 0, 15
+ *          and the ends of 1/14) now COAST at 0 A instead of being actively regulated to a standstill
+ *          the estimator could not see anyway. Regen hold (−0.5 m/s) and every other waypoint are
+ *          above the threshold and unaffected. Safety review S4: on the PI fallback build
+ *          pi_motor_lastMicros is refreshed on EVERY cutoff tick (the accumulator clear stays
+ *          entry-edge only) — a frozen dt reference would make the first tick after the setpoint
+ *          rises integrate the whole cutoff duration and slam the integrator to integMax, turning
+ *          the cutoff into a windup source. Safety review S5: 'Y' now warns at parse time when
+ *          Vmax × 0.2 (region 13, the table's smallest non-zero waypoint) falls under the cutoff,
+ *          so a deliberately slow bench run's flat 0 A trace is not misread as a controller failure.
+ *          Safety review S6: static_asserts pin the estimator-floor < V_SP_ZERO_THRESH ordering and
+ *          tie ENC_PERIOD_LO_FRAC to the shift form it documents.
  */
 
 #include <VescUart.h>
@@ -1125,7 +1232,7 @@ constexpr float ENCODER_COUNTS_PER_REV = ENCODER_SLOTS_PER_REV * ENCODER_QUAD_DE
 // (3.00 in). This measured value is authoritative.
 //
 // It SUPERSEDES both the previous 0.033 m and the reasoning that produced it. That reasoning ran:
-// the encoder is downstream of the 9.49:1 reduction and both differentials
+// the encoder is downstream of the gear reduction and both differentials
 // (docs/VESC_MOTOR_INTEGRATION.md §7), so the disc turns at WHEEL angular speed and the right
 // radius is therefore the tire rolling radius (66 mm nominal OD / 2, §2). Both halves of that are
 // retired here — the wheel-angular-speed clause included, since it is what forced the tire radius.
@@ -1139,7 +1246,7 @@ constexpr float ENCODER_COUNTS_PER_REV = ENCODER_SLOTS_PER_REV * ENCODER_QUAD_DE
 // What v_actual therefore IS: flywheel SURFACE speed. Anything compared against it must be in the
 // same terms — v_setpoint from the Pi, the State-98 'V'/'D'/'Y' velocity commands, and the BLG
 // v_sp/v_act columns all share this definition. There is no separate vehicle-speed scale in this
-// firmware, and none is implied by the 9.49:1 reduction or the differentials (§7): the velocity
+// firmware, and none is implied by the 6.86:1 reduction or the differentials (§7): the velocity
 // loop closes on the encoded body, and the encoded body is the flywheel.
 #define FLYWHEEL_RADIUS_M    0.0762f    // m — measured flywheel radius (3.00 in), = rolling radius
 
@@ -1171,12 +1278,111 @@ constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOT
 // the following period read short and the speed read high).
 #define ENC_PERIOD_MIN_US    200u
 
+// ── Adaptive period plausibility (fw v13) ────────────────────────────────────
+// BENCH EVIDENCE. ML0145 recorded SPURIOUS A-edges under load: one true slot pitch split into two
+// short periods, putting v_act on rungs at 1.33x and 2x true speed and reaching 100 % contamination
+// at low speed, where a uniformly-2x-high trace looks perfectly clean. ML0143 recorded the opposite
+// defect — MISSED A-edges, ~68 events/s at 3 m/s, speed- and current-independent, producing a
+// trimodal v_act at 1, 2/3 and 1/2 of true speed. The ROOT physical cause (scope capture 15,
+// references/scope_captures/) is the un-Schmitted OPB829DZ output: full-swing signals with ~0.5–1 ms
+// ANALOG edge ramps, so the Teensy input re-crosses its threshold on ramp noise. A Schmitt-buffer
+// hardware bodge is the real fix and is planned separately; this block is the firmware backstop and
+// stays correct (merely inactive) once the Schmitt lands.
+//
+// WHY THE FIXED FLOOR IS USELESS HERE. ENC_PERIOD_MIN_US = 200 µs corresponds to ~20 m/s. The real
+// periods on the bench are 0.8–11 ms, so a spurious edge that halves an 8 ms pitch produces a 4 ms
+// interval — 20x above the floor, accepted, and read as double speed. The plausibility test must be
+// RELATIVE to the speed the wheel is actually running at.
+//
+// THE REFERENCE. encPeriodRefUs is an EWMA (α = 1/4, two shifts — no divide) of ACCEPTED PER-PITCH
+// periods. It survives direction flips (a period magnitude has no sign) and is cleared only by
+// encoderVelReset(). It is declared valid after ENC_PERIOD_REF_SEED_N accepted periods, so the
+// first periods out of a standstill — which have no reference — are governed by the absolute floor
+// alone (bootstrap; see the breakaway caveat below).
+//
+// SPEED ARMING (fw v13 safety review, S1+S2). The ENTIRE adaptive mechanism — the low-side gate AND
+// the k > 1 reinterpretation — is armed ONLY while ref < ENC_ADAPT_MAX_REF_US. Below that speed the
+// filter is provably unable to do its job and is provably able to do harm, so it is switched off and
+// only the 200 µs absolute floor and the reading-age bound apply. The two failure modes it avoids:
+//   S2 (the gate rejects TRUTH on a hard launch). The correct bound on the per-pitch period ratio is
+//     T(n+1)/T(n) ≈ 1 / sqrt(1 + 2·a·pitch/v²)  (constant-a over one pitch),
+//     which falls BELOW the 0.625 gate whenever v² < 1.667·a·pitch. At a = 6.96 m/s² (the measured
+//     gain band's upper end at the 12 A rail) that is v < 0.22 m/s — and at 0.1 m/s the genuine
+//     ratio is 0.265, twice past the gate. A rejected TRUE edge merges two pitches into one interval
+//     that the k logic then has no reason to split, so v reads m x LOW and drags ref UP with it.
+//   S1 (self-reinforcing poisoned reference). Symmetrically, T(n+1)/T(n) exceeds the 1.5 k = 2
+//     midpoint on genuine rail DECEL once v² < 3·a·pitch. Once ref lands inside the k = 2 basin
+//     (0.40T–0.667T), every genuine period is divided by 2 and RE-CONFIRMS the poison: v reads
+//     exactly 2x on a perfectly clean trace, indefinitely, and in the destabilising direction
+//     (reads fast → brakes harder). This is the sign-critical one.
+// The arming speed is therefore set by the decel condition, which is the stricter of the two:
+//     v_arm² = 3·a_max·pitch = 3 × 6.96 × 3.990e-3 → v_arm = 0.289 m/s → ref = pitch/v_arm = 13.8 ms.
+// ENC_ADAPT_MAX_REF_US = 13000 µs arms at 0.307 m/s, i.e. ~6 % INSIDE that bound, so the filter is
+// dark before either pathology becomes reachable.
+//   CONSEQUENCE, STATED PLAINLY: the 0.04–0.30 m/s regime is UNMITIGATED BY FIRMWARE. That is
+//   exactly where ML0145's contamination was worst, and it is not an oversight — in that band a
+//   spurious edge and a hard-launch truth produce the SAME period ratio, so no period-ratio filter
+//   can separate them. It belongs to the planned Schmitt-buffer hardware fix, which removes the
+//   spurious edges at the source instead of trying to infer them.
+//
+// LOW SIDE (spurious edges). While armed, a period below ENC_PERIOD_LO_FRAC · ref cannot be genuine:
+// per the ratio formula above, at v ≥ 0.307 m/s and a ≤ 6.96 m/s² the genuine per-pitch ratio stays
+// above 0.65, outside the gate by construction — and it approaches 1 quickly with speed (a few
+// percent per pitch at 1 m/s and above). The threshold is 0.625 (= 1/2 + 1/8, shift-only) rather
+// than a literal 0.6 so the ISR needs no multiply; the extra 2.5 % of margin is spent on the arming
+// bound above, not on the physics.
+//   Rejected exactly like the ENC_PERIOD_MIN_US glitch path: dropped WITHOUT advancing the period
+//   base or the position reference, so the NEXT genuine edge spans the full true pitch from the last
+//   genuine one — i.e. the two spurious halves MERGE back into one correct period.
+//   BREAKAWAY CAVEAT: with no valid reference (first ENC_PERIOD_REF_SEED_N periods after a reset or
+//   a standstill) only the absolute floor applies, so a spurious edge in the first pitch or two off
+//   standstill is still admitted. It is self-correcting — the EWMA seeds from whatever those periods
+//   were and the test arms within a few pitches — and the reading-age bound below caps any damage.
+//
+// HIGH SIDE (missed edges). A period near k x ref means k pitches were actually traversed. Those are
+// INTERPRETED, not rejected: the entry stored is period/k, the mean per-pitch period over that span,
+// which is the correct distance/time for the reader without touching the reader at all. Rejecting
+// them instead would starve the ring during genuine deceleration, which is exactly when the loop
+// needs a reading. k is chosen by nearest-integer against shift-derived midpoints (1.5x, 2.5x, 3.5x
+// ref), so an accepted multi-pitch entry is within ±25 % of k x ref. k is BOUNDED at
+// ENC_PERIOD_MAX_MULT = 3; anything beyond 3.5x ref is accepted AS-IS (k = 1), because at that
+// separation genuine strong deceleration is the more likely explanation than four consecutive
+// missed edges, and reading slow is the safe direction.
+// Genuine acceleration is never filtered into a frozen reading: it shortens periods by a few percent
+// per pitch, which the 0.625 gate passes, and the EWMA tracks it within ~4 pitches.
+#define ENC_PERIOD_REF_SEED_N   2u        // accepted periods before the adaptive tests arm
+#define ENC_PERIOD_LO_FRAC      0.625f    // documentation of the (ref>>1)+(ref>>3) shift form
+#define ENC_PERIOD_MAX_MULT     3u        // largest missed-edge multiple interpreted as k·pitch
+// Speed arming (S1/S2 above). The whole adaptive mechanism is dark while ref is at or above this,
+// i.e. below ~0.307 m/s. 13000 µs = pitch/0.307 m/s, ~6 % inside the v_arm = sqrt(3·a_max·pitch)
+// = 0.289 m/s bound at a_max = 6.96 m/s².
+#define ENC_ADAPT_MAX_REF_US    13000u
+// Poisoned-reference tripwire (S1 backstop). If this many CONSECUTIVE accepted periods all take the
+// k > 1 branch, the reference is assumed poisoned and the estimator is reset. 4 is chosen because a
+// genuine missed-edge stream that persistent is indistinguishable from a poisoned reference, and a
+// reset is the correct response to BOTH: it re-seeds ref from live periods and costs at most one
+// warm-up window. Random ML0143-class misses (~68/s against ~1250/s edges at 3 m/s) have a
+// vanishing chance of producing a run of 4.
+#define ENC_KBRANCH_RUN_MAX     4u
+// Ceiling on the EWMA reference, so the ISR's ref<<1 / ref+ref>>1 threshold arithmetic can never
+// overflow a uint32 and a single absurd period cannot poison the reference for long. 200 ms is
+// 2x the stale floor below, i.e. already beyond any period the estimator will ever report from.
+#define ENC_PERIOD_REF_MAX_US   200000u
+
 // Zero-speed floor. The estimator declares standstill when the time since the last accepted edge
-// exceeds max(ENC_VEL_STALE_K · last period, ENC_VEL_TIMEOUT_US). The multiplicative term is the
-// fast path — a decelerating wheel is called stopped 1.5 periods after it should have produced the
-// next edge — and the absolute floor bounds the slowest speed the estimator can report:
-// 3.990 mm / 150 ms = 0.0266 m/s. Below ~0.03 m/s v_actual reads exactly 0.
-#define ENC_VEL_TIMEOUT_US   150000u
+// exceeds max(ENC_VEL_STALE_K · last period, ENC_VEL_TIMEOUT_US) — and, since fw v13, also when the
+// time since the last accepted READING exceeds the same bound (see updateWheelSpeed() step 2b).
+// The multiplicative term is the fast path — a decelerating wheel is called stopped 1.5 periods
+// after it should have produced the next edge — and the absolute floor bounds the slowest speed the
+// estimator can report: 3.990 mm / 100 ms = 0.0399 m/s. Below ~0.04 m/s v_actual reads exactly 0.
+// fw v13 LOWERED the floor 150 ms → 100 ms. The old value was chosen when the bound could only be
+// reached by an actual absence of edges; ML0140 showed it never fired in the case that mattered
+// (edges arriving, readings not being produced), so it was effectively dead code. Now that it is
+// live on the reading path it directly bounds every hold, and 100 ms is the tightest value that
+// still leaves the reportable floor (0.0399 m/s) BELOW the v_setpoint cutoff (0.05 m/s) — the two
+// constants must keep that ordering or the loop can be asked to regulate a speed the estimator
+// cannot see.
+#define ENC_VEL_TIMEOUT_US   100000u
 #define ENC_VEL_STALE_K      1.5f
 
 // Guard: with either scale input above at a placeholder value, closing the velocity loop
@@ -1366,6 +1572,32 @@ const float MANUAL_MOTOR_V_MAX = 5.0f; // m/s — State 98 manual velocity ceili
 // tops out well under this. TODO(calibrate) once the velocity unit chain is fixed.
 const float V_SETPOINT_MAX = 20.0f;
 
+// m/s — velocity-loop ZERO CUTOFF (fw v13). Below this |v_setpoint| the velocity loop is not run
+// at all: motorControl() commands 0 A and holds the controller reset. See motorControl().
+// BENCH EVIDENCE (ML0144): commanding v_setpoint = 0 THROUGH the velocity loop is closing the loop
+// BELOW its own validity floor. The estimator's output is exactly 0 under ~0.04 m/s (a deadband,
+// not a gain — see ENC_VEL_TIMEOUT_US), so a zero setpoint puts a 544.8 A/(m/s) controller around a
+// deadband relay: ML0144 sat in sustained 90 %-rail ±12 A bang-bang, while the SAME run at
+// v_setpoint = 1.0 m/s settled cleanly.
+// VALUE. 0.05 m/s sits ABOVE the estimator's 0.0399 m/s reportable floor (so nothing inside the
+// cutoff band was ever observable to the loop in the first place) and far BELOW the 0.5 m/s slowest
+// gate-checked speed of the drive synthesis, so no validated operating point is affected.
+// constexpr, not const: the static_assert below needs a constant expression (same reason as
+// MOTOR_I_CMD_MAX above). Nothing else about the constant changes.
+constexpr float V_SP_ZERO_THRESH = 0.05f;
+
+// Compile-time tripwire on the load-bearing ordering: the cutoff band must sit ABOVE the slowest
+// speed the estimator can report, or the loop can be asked to regulate a speed that reads as an
+// exact 0 — which is the ML0144 deadband-relay condition this cutoff exists to prevent. Breaks the
+// build if either constant is edited without the other.
+static_assert(ENC_SLOT_PITCH_M / ((float)ENC_VEL_TIMEOUT_US * 1e-6f) < V_SP_ZERO_THRESH,
+              "estimator zero-speed floor must stay below V_SP_ZERO_THRESH "
+              "(see ENC_VEL_TIMEOUT_US / V_SP_ZERO_THRESH rationale)");
+// ENC_PERIOD_LO_FRAC is documentation of the ISR's (ref>>1)+(ref>>3) shift form, not an operand of
+// it — this pins the two together so the comment cannot drift from the code.
+static_assert(ENC_PERIOD_LO_FRAC == 0.5f + 0.125f,
+              "ENC_PERIOD_LO_FRAC must equal the (ref>>1)+(ref>>3) shift form it documents");
+
 // ── Control-loop rate limiting ────────────────────────────────────────────────
 // The three Run-state control functions used to be called once per main-loop tick, uncapped. Two
 // reasons that is wrong:
@@ -1512,6 +1744,28 @@ volatile bool     encHaveLastEdge = false; // false until the first A-rising edg
 volatile int32_t  encPosAtLastEdge = 0; // encoderPos at that edge — direction reference
 volatile int8_t   encPeriodDir   = 0;   // +1 / -1: rotation sense the ring's periods belong to
 
+// Adaptive plausibility reference (fw v13). EWMA of ACCEPTED per-pitch periods, α = 1/4, capped at
+// ENC_PERIOD_REF_MAX_US. Written only by the doEncoderA() tap and encoderVelReset(); the reader
+// never uses it (the accept/reject decision lives entirely in the ISR — see the ISR-cost note
+// there). encPeriodRefSeed counts accepted periods since the last reset and arms the adaptive tests
+// at ENC_PERIOD_REF_SEED_N; it does NOT reset on a direction flip, because a period magnitude is
+// direction-independent and re-seeding at every flip would disarm the tests exactly during the
+// dither that ML0140 recorded.
+volatile uint32_t encPeriodRefUs   = 0;
+volatile uint8_t  encPeriodRefSeed = 0;
+
+// Poisoned-reference tripwire (fw v13 safety review S1). Counts CONSECUTIVE accepted periods that
+// took the k > 1 missed-edge branch; reset to 0 by any accepted k == 1 period. At
+// ENC_KBRANCH_RUN_MAX the ISR raises encRefPoisonPending and updateWheelSpeed() performs the reset.
+// DEVIATION from the review's "force encoderVelReset() in the ISR": the reset also writes the
+// READER-side hold state (encVelLastValid/encVelHaveValid/encVelLastReadingUs), which no ISR
+// otherwise touches, so doing it from interrupt context would race the reader mid-computation. A
+// flag consumed by updateWheelSpeed() gives the identical effect within one main-loop tick
+// (~1.13 ms) — and in the k > 1 regime the accepted-period spacing is at least that long anyway,
+// so at most one further poisoned period can land before the reset takes effect.
+volatile uint8_t  encKBranchRun       = 0;
+volatile bool     encRefPoisonPending = false;
+
 // Held-reading state — READER-side only (updateWheelSpeed()/encoderVelReset()), never touched by
 // an ISR, hence not volatile. A mid-run ring invalidation (a direction flip, or a single noisy B
 // sample producing the ISR's ambiguous zero-delta case — plausible on the un-Schmitted OPB829DZ)
@@ -1519,10 +1773,23 @@ volatile int8_t   encPeriodDir   = 0;   // +1 / -1: rotation sense the ring's pe
 // window would inject a FULL-SCALE error step into a 544.8 A/(m/s) controller (4 ms at 2 m/s,
 // 16 ms at 0.5 m/s) — a failure class the old boxcar could not produce, because it always had a
 // position difference to divide. So a re-accumulating ring HOLDS the last valid reading instead.
-// v_actual is forced to 0 on exactly three events: boot, encoderVelReset(), and the genuine
-// stale timeout — i.e. only when the wheel is known to be stopped or the state is known-unusable.
+// v_actual is forced to 0 on exactly four events (fw v13): boot, encoderVelReset(), the genuine
+// EDGE-age stale timeout, and the fw v13 READING-age stale bound — i.e. only when the wheel is
+// known to be stopped or the state is known-unusable.
 float encVelLastValid = 0.0f;
 bool  encVelHaveValid = false;
+
+// Reading-age bound (fw v13). BENCH EVIDENCE (ML0140): under direction dither the ISR's dpos == 0
+// and direction-flip branches re-invalidated the ring FASTER THAN IT REFILLED while edges kept
+// arriving, so the hold above never ended — and the stale timeout could not end it either, because
+// it was keyed to the age of the last raw EDGE, which was always fresh. The loop held a stale (and
+// at a flip, WRONG-SIGNED) value for 120–560 ms; ML0145 shows a 468 ms frozen hold at breakaway
+// (~0.4 m/s) by the same mechanism. These two track the last ACCEPTED READING — a completed v
+// computation, not an edge — so every hold is now bounded by real wall-clock time regardless of
+// what the raw edge stream is doing. encVelLastSumUs is the period sum that produced that reading,
+// which keeps the bound speed-scaled at speed instead of always falling back on the 100 ms floor.
+uint32_t encVelLastReadingUs = 0;
+uint32_t encVelLastSumUs     = 0;
 
 // Set by State 3 (Finish) to clear the edge-period estimator between runs, so a new run's first
 // velocity samples are not computed against stale timestamps from the prior run. Consumed (and
@@ -1551,7 +1818,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 12
+#define FW_VERSION 14
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -5658,6 +5925,20 @@ void parseCombinedParamsLine(const char* line) {
     }
     if (!validateShareBound(bound)) return;
 
+    // fw v13 (safety review S5): the velocity-loop zero cutoff makes any waypoint below
+    // V_SP_ZERO_THRESH coast at 0 A instead of being regulated. The table's smallest non-zero
+    // normalised waypoint is region 13's 0.2, so at Vmax below 5 x V_SP_ZERO_THRESH that region —
+    // and the low tail of the region-14 coast-down ramp — silently become coast segments. Accepted
+    // with a warning, not refused: a deliberately slow bench run is legitimate, but the operator
+    // must not read the resulting flat 0 A trace as a controller failure.
+    if (vmax * 0.2f < V_SP_ZERO_THRESH) {
+        Serial.print("WARN: Vmax x 0.2 (region 13) = ");
+        Serial.print(vmax * 0.2f, 3);
+        Serial.print(" m/s is below V_SP_ZERO_THRESH = ");
+        Serial.print(V_SP_ZERO_THRESH, 3);
+        Serial.println(" m/s — that region will COAST at 0 A, not regulate");
+    }
+
     startCombinedProfile(vmax, bound);
 }
 
@@ -6690,7 +6971,48 @@ void commandMotorCurrentLimited(float amps, float absMax) {
 //                   rescale the loop gain by 1/motorConstant and void every synthesis gate.
 //   PI   (fw ≤ v9): PI_Controller_Motor() returns a notional torque, converted to current by
 //                   the (still uncalibrated) motorConstant. Kept verbatim as the fallback.
+// Velocity-loop ZERO CUTOFF latch (fw v13). True while |v_setpoint| < V_SP_ZERO_THRESH. File-scope
+// for host-test resettability, same pattern as the controller states. It exists ONLY so the
+// controller reset fires on the ENTRY EDGE into the cutoff rather than on every tick inside it —
+// resetting every tick would back-date the Ts gate continuously and hide any future in-cutoff logic
+// behind a permanently-fresh reset.
+bool driveZeroCutActive = false;
+
 void motorControl() {
+    // ── v_setpoint zero cutoff (fw v13, ML0144) ──────────────────────────────────────────────
+    // Below V_SP_ZERO_THRESH the velocity loop is NOT run: 0 A is commanded and the controller is
+    // held reset. Rationale in full at V_SP_ZERO_THRESH — in short, the estimator reports exactly 0
+    // below ~0.04 m/s, so a near-zero setpoint closes a 544.8 A/(m/s) loop around a deadband relay
+    // and bang-bangs on the ±12 A rails (ML0144), while the same run at 1.0 m/s settles cleanly.
+    // Consistency note: doState1() (Idle) already commands 0 A directly rather than regulating
+    // v_setpoint = 0; this makes State 2 and the State-98 profiles behave the same way.
+    // Exit needs no second reset — the controller is never stepped inside the cutoff, so it is
+    // still in the clean state the entry-edge reset left it in, with the Ts gate back-dated so the
+    // first tick after the setpoint rises steps immediately.
+    if (fabsf(v_setpoint) < V_SP_ZERO_THRESH) {
+        if (!driveZeroCutActive) {
+            driveZeroCutActive = true;
+            resetDriveControlState();
+#if !USE_YOULA_DRIVE_CONTROLLER
+            // The PI fallback's integrator is not owned by resetDriveControlState(); clear it here
+            // so both build paths enter the cutoff equally clean.
+            pi_motor_accum = 0.0f;
+#endif
+        }
+#if !USE_YOULA_DRIVE_CONTROLLER
+        // fw v13 safety review S4: the PI's dt reference must be refreshed on EVERY cutoff tick,
+        // not just the entry edge. PI_Controller_Motor() integrates (now - pi_motor_lastMicros);
+        // leaving it frozen through a long cutoff would make the first tick after the setpoint
+        // rises integrate the ENTIRE cutoff duration in one step and slam the integrator to
+        // integMax — turning the cutoff into a windup source instead of a reset.
+        pi_motor_lastMicros = micros();
+#endif
+        targetMotorTorque = 0.0f;
+        commandMotorCurrent(0.0f);
+        return;
+    }
+    driveZeroCutActive = false;
+
 #if USE_YOULA_DRIVE_CONTROLLER
     float i_cmd = youlaController_Drive(v_setpoint - v_actual);
     // targetMotorTorque has no reader anywhere in the firmware today (it is not in the UDP
@@ -7827,9 +8149,15 @@ void encoderVelReset() {
     encHaveLastEdge  = false;
     encPosAtLastEdge = encoderPos;
     encPeriodDir     = 0;
+    encPeriodRefUs      = 0;    // fw v13: adaptive reference disarms, re-seeds over the next
+    encPeriodRefSeed    = 0;    //         ENC_PERIOD_REF_SEED_N accepted periods
+    encKBranchRun       = 0;    // fw v13: poisoned-reference tripwire re-arms
+    encRefPoisonPending = false;
     encIrqRestore(irq);
-    encVelLastValid  = 0.0f;
-    encVelHaveValid  = false;
+    encVelLastValid     = 0.0f;
+    encVelHaveValid     = false;
+    encVelLastReadingUs = 0;    // fw v13: reading-age bound re-arms on the first new reading
+    encVelLastSumUs     = 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -7861,16 +8189,19 @@ void encoderVelReset() {
 //     speed, so any margin check must be run at the slowest speed the loop is expected to track.
 //   - QUANTISATION is set by the micros() timer, not by a distance ladder: the relative error is
 //     ~1 µs / period, i.e. below 0.1% above 0.2 m/s. The old 17.7 mm/s step is gone.
-//   - Below the zero-speed floor (~0.03 m/s, see ENC_VEL_TIMEOUT_US) the output is exactly 0,
+//   - Below the zero-speed floor (0.0399 m/s, see ENC_VEL_TIMEOUT_US) the output is exactly 0,
 //     which is a hard nonlinearity the plant model should treat as a deadband, not a gain. The
 //     first reading after a standstill also needs 3 A-rising edges (~N+1 pitches, ~12 mm) before
 //     it exists at all. A commanded step BELOW the design's gate-checked floor of 0.5 m/s
 //     therefore closes the loop around a deadband relay and IS EXPECTED to limit-cycle — that is
 //     a validity boundary of the design, not a defect of this estimator.
-//   - HOLD SEMANTICS: v_actual is forced to 0 on exactly three events — boot, encoderVelReset(),
-//     and the stale timeout. A ring invalidated mid-motion holds the last valid reading while it
-//     refills (see encVelLastValid). One consequence worth stating: a profile started shortly
-//     after a stop can read a held, up-to-150 ms-old true value for one tick before the timeout
+//   - HOLD SEMANTICS: v_actual is forced to 0 on exactly FOUR events (fw v13 added the third and
+//     fourth) — boot, encoderVelReset(), the EDGE-age stale timeout, and the READING-age stale
+//     bound (step 2b, which is what bounds a hold when raw edges keep arriving but readings stop).
+//     A poisoned-reference reset counts as an encoderVelReset(). A ring invalidated mid-motion
+//     holds the last valid reading while it refills (see encVelLastValid), as does an embargoed
+//     single-pitch sign flip (step 5). One consequence worth stating: a profile started shortly
+//     after a stop can read a held, up-to-100 ms-old true value for one tick before the timeout
 //     zeroes it — which is why doState3() requests an explicit encoderVelReset() between runs
 //     rather than relying on the timeout.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -7882,6 +8213,16 @@ void updateWheelSpeed() {
     }
 
     uint32_t now = micros();
+
+    // Poisoned-reference reset (fw v13 safety review S1). Raised by the ISR after
+    // ENC_KBRANCH_RUN_MAX consecutive k > 1 periods; performed here rather than in the ISR because
+    // the reset writes reader-side hold state (see encRefPoisonPending). Reports 0 for this tick —
+    // the reading it would otherwise publish is the one suspected of being 2x or 3x wrong.
+    if (encRefPoisonPending) {
+        encoderVelReset();      // clears the flag along with the ring, the ref and the hold
+        v_actual = 0.0f;
+        return;
+    }
 
     // Consistent snapshot. A brief noInterrupts() section is used rather than a sequence-counter
     // retry: the copy is ENC_PERIOD_AVG_N words plus four scalars (tens of cycles on a 600 MHz
@@ -7918,28 +8259,79 @@ void updateWheelSpeed() {
         return;
     }
 
-    // (3) RING RE-ACCUMULATING (a direction flip or the ISR's ambiguous zero-delta case cleared
-    // encPeriodCount / encPeriodDir), but edges ARE still arriving inside the stale bound — so the
-    // wheel is demonstrably moving. HOLD the last valid reading rather than reporting 0: a 0 here
-    // is a full-scale error step into the drive controller (see the encVelLastValid block). The
-    // hold is bounded by (2) at max(1.5 x last period, ENC_VEL_TIMEOUT_US), and in the ordinary
-    // case it lasts only the N edges the ring needs to refill (4 ms at 2 m/s, 16 ms at 0.5 m/s).
-    if (cnt < ENC_PERIOD_AVG_N || dir == 0) {
+    // (2b) READING-AGE BOUND (fw v13 — ML0140/ML0145). The edge-age test above cannot end a hold
+    // that is caused by the ring being re-invalidated faster than it refills: the edges are FRESH,
+    // it is the READINGS that have stopped. This bounds the age of the last completed computation
+    // by the same limit, so every hold — invalidation holds included — ends in bounded wall-clock
+    // time no matter what the raw edge stream does. Same reset action as (2): the wheel may well
+    // still be turning, but a reading this old is not usable as feedback, and 0 + a clean restart
+    // is the only defensible output. Only armed once a reading has ever existed; before that the
+    // boot/hold paths already report 0.
+    if (encVelHaveValid) {
+        uint32_t readLimit = (uint32_t)(ENC_VEL_STALE_K * (float)encVelLastSumUs);
+        if (readLimit < ENC_VEL_TIMEOUT_US) readLimit = ENC_VEL_TIMEOUT_US;
+        if ((uint32_t)(now - encVelLastReadingUs) > readLimit) {
+            v_actual = 0.0f;
+            encoderVelReset();
+            return;
+        }
+    }
+
+    // (3) NOTHING USABLE IN THE RING (no entries at all, or no direction — the ISR's ambiguous
+    // zero-delta case), but edges ARE still arriving inside the bounds above, so the wheel is
+    // demonstrably moving. HOLD the last valid reading rather than reporting 0: a 0 here is a
+    // full-scale error step into a 544.8 A/(m/s) controller (see the encVelLastValid block). The
+    // hold is now bounded by (2b) in wall-clock terms, not merely by (2).
+    if (cnt == 0 || dir == 0) {
         v_actual = encVelHaveValid ? encVelLastValid : 0.0f;
         return;
     }
 
+    // (4) REVERSAL-AS-DATA / PARTIAL RING (fw v13 — ML0140). A confirmed direction flip clears the
+    // ring but the flipping edge's own period IS stored, so one valid same-direction period exists
+    // immediately. Averaging over whatever the ring holds (cnt, not a fixed N) makes that period
+    // READABLE on the very next reader tick instead of holding a wrong-signed value for another
+    // N−1 pitches, and the average returns to the full N as the ring fills. The cost is variance:
+    // a cnt = 1 reading is a single-pitch measurement, so its timer-quantisation and any residual
+    // edge jitter are N times less averaged than the steady-state reading. That is accepted — a
+    // noisier reading of the RIGHT SIGN beats a clean reading of the wrong one. The entries are the
+    // cnt most recent slots, walked backwards from idx (the ring is not full, so a forward sweep
+    // would include stale slots).
     uint32_t sumUs = 0;
-    for (uint8_t i = 0; i < ENC_PERIOD_AVG_N; i++) sumUs += periods[i];
+    for (uint8_t i = 0; i < cnt; i++) {
+        sumUs += periods[(idx + ENC_PERIOD_AVG_N - 1 - i) % ENC_PERIOD_AVG_N];
+    }
     if (sumUs == 0) {           // cannot happen with the ENC_PERIOD_MIN_US floor; divide guard
         v_actual = encVelHaveValid ? encVelLastValid : 0.0f;
         return;
     }
 
-    float distM = (float)ENC_PERIOD_AVG_N * ENC_SLOT_PITCH_M;
-    v_actual = (dir >= 0 ? 1.0f : -1.0f) * distM / ((float)sumUs * 1e-6f);
-    encVelLastValid = v_actual;
-    encVelHaveValid = true;
+    float distM = (float)cnt * ENC_SLOT_PITCH_M;
+    float vNew  = (dir >= 0 ? 1.0f : -1.0f) * distM / ((float)sumUs * 1e-6f);
+
+    // (5) SIGN EMBARGO ON SINGLE-PITCH READINGS (fw v13 safety review S3). The cnt = 1 fast path in
+    // (4) is what makes a reversal readable immediately — but under the ML0140 dither it also lets
+    // the estimator publish a SIGN-ALTERNATING single-pitch reading at the dither rate, which is a
+    // STRONGER excitation into a 544.8 A/(m/s) controller than the frozen hold it replaced. Worse,
+    // every such publication refreshed encVelLastReadingUs, so the (2b) reading-age bound could
+    // never age out the dither at all — the exact scenario (2b) exists for.
+    // RULE: a reading whose sign DIFFERS from the last published one requires cnt >= 2, i.e. a
+    // corroborated reversal. Sign-MATCHING cnt = 1 readings stay allowed, which preserves the fast
+    // warm-up and the same-direction partial-ring value. While a sign flip is embargoed the reader
+    // HOLDS, and — this is the load-bearing half — the embargoed tick must NOT touch
+    // encVelLastReadingUs, so the hold genuinely ages and (2b) terminates the dither within the
+    // 100 ms bound. Cost: a real reversal is published one pitch later than it could have been,
+    // which at the speeds where dither occurs is a fraction of the bound it protects.
+    if (cnt < 2 && encVelHaveValid && (vNew < 0.0f) != (encVelLastValid < 0.0f)) {
+        v_actual = encVelLastValid;
+        return;
+    }
+
+    v_actual            = vNew;
+    encVelLastValid     = vNew;
+    encVelHaveValid     = true;
+    encVelLastReadingUs = now;      // fw v13: (2b)'s reference — a READING, not an edge
+    encVelLastSumUs     = sumUs;
 }
 
 
@@ -7972,8 +8364,9 @@ void doEncoderA() {
     // cycle, so each interval spans exactly one slot pitch, same edge type on the same channel
     // (which cancels the two sensors' threshold/duty asymmetry).
     // Cost: at 5 m/s the A-rising rate is v/pitch = 1.25 kHz and this tap adds one subtraction,
-    // one compare and a handful of stores — well under a microsecond per edge on a 600 MHz core,
-    // against the 800 µs edge spacing at that speed.
+    // a handful of compares and stores, plus (fw v13) the shift-only plausibility test below —
+    // well under a microsecond per edge on a 600 MHz core, against the 800 µs edge spacing at
+    // that speed. The reader side does no plausibility work at all.
     if (pinA_read == 1) {
         uint32_t nowUs = micros();
         int32_t  pos   = encoderPos;
@@ -7983,7 +8376,65 @@ void doEncoderA() {
             encHaveLastEdge  = true;
         } else {
             uint32_t period = nowUs - encLastEdgeUs;   // unsigned: correct across micros() wrap
-            if (period >= ENC_PERIOD_MIN_US) {
+
+            // ── Adaptive period plausibility (fw v13) ────────────────────────
+            // The accept/reject decision lives HERE, in the ISR, because a rejected edge must not
+            // advance the period base — and the base only exists here. The cost is bounded and
+            // shift-only in the common case: the reference is valid or it is not (one compare),
+            // and if it is, up to three compares against thresholds built from ref by shifts and
+            // adds. The ONLY divide is period/k, which runs solely on the rare missed-edge branch
+            // (k > 1) and is a single hardware UDIV on the Cortex-M7. The EWMA update is two
+            // shifts, a subtract and an add. Total added worst case is well under 100 ns at
+            // 600 MHz, against the 800 µs edge spacing at the 5 m/s ceiling.
+            uint32_t ref      = encPeriodRefUs;
+            // SPEED ARMING (S1/S2): dark below ~0.307 m/s, where a spurious edge and a hard-launch
+            // truth are indistinguishable by period ratio. See ENC_ADAPT_MAX_REF_US.
+            bool     refValid = (encPeriodRefSeed >= ENC_PERIOD_REF_SEED_N) && (ref > 0) &&
+                                (ref < ENC_ADAPT_MAX_REF_US);
+            uint32_t pitches  = 1;                     // pitches this interval actually spans
+            // Absolute floor first — it applies with or without a reference, and it is the
+            // bootstrap's only protection (see the breakaway caveat at ENC_PERIOD_LO_FRAC).
+            bool     spurious = (period < ENC_PERIOD_MIN_US);
+            if (!spurious && refValid) {
+                if (period < ((ref >> 1) + (ref >> 3))) {
+                    // < 0.625 x ref — physically impossible between two genuine consecutive
+                    // pitches (see the ENC_PERIOD_LO_FRAC rationale). Spurious edge; drop it the
+                    // same way the absolute floor drops a glitch, so the two short halves merge.
+                    spurious = true;
+                } else if (period > (ref + (ref >> 1))) {
+                    // > 1.5 x ref — one or more MISSED edges. Nearest-integer k from shift-built
+                    // midpoints, bounded at ENC_PERIOD_MAX_MULT; beyond 3.5 x ref accept as-is
+                    // (genuine strong deceleration is the likelier reading, and reading slow is
+                    // the safe direction).
+                    if      (period <= ((ref << 1) + (ref >> 1)))            pitches = 2;
+                    else if (period <= ((ref << 1) + ref + (ref >> 1)))      pitches = 3;
+                }
+            }
+            if (!spurious) {
+                // Multi-pitch intervals are stored as the MEAN PER-PITCH period, so the reader's
+                // distance = cnt x pitch stays exactly right without knowing this happened.
+                if (pitches > 1) period /= pitches;
+
+                // Poisoned-reference tripwire (S1). A genuine missed-edge stream is bursty and
+                // random; a poisoned ref (sitting in the k = 2 or k = 3 basin) makes EVERY genuine
+                // period take this branch forever, which reads exactly 2x or 3x fast on a clean
+                // trace — in the destabilising direction. A long consecutive run is treated as
+                // poisoning; the reset is the right answer for a genuinely persistent miss stream
+                // too, so no attempt is made to tell them apart.
+                if (pitches > 1) {
+                    if (encKBranchRun < ENC_KBRANCH_RUN_MAX) encKBranchRun++;
+                    if (encKBranchRun >= ENC_KBRANCH_RUN_MAX) encRefPoisonPending = true;
+                } else {
+                    encKBranchRun = 0;
+                }
+
+                // EWMA of accepted per-pitch periods, α = 1/4, capped so the threshold arithmetic
+                // above cannot overflow.
+                if (ref == 0) encPeriodRefUs = period;
+                else          encPeriodRefUs = ref - (ref >> 2) + (period >> 2);
+                if (encPeriodRefUs > ENC_PERIOD_REF_MAX_US) encPeriodRefUs = ENC_PERIOD_REF_MAX_US;
+                if (encPeriodRefSeed < ENC_PERIOD_REF_SEED_N) encPeriodRefSeed++;
+
                 // Direction comes from the quadrature decoder, not from this tap: the encoderPos
                 // delta across one cycle is +2 forward (both counts land in doEncoderB) and -2
                 // reverse (both land here). A zero delta means the decoder did not complete a
@@ -8007,9 +8458,15 @@ void doEncoderA() {
                 encLastEdgeUs    = nowUs;
                 encPosAtLastEdge = pos;
             }
-            // period < ENC_PERIOD_MIN_US: optical glitch/bounce. Dropped WITHOUT advancing the
-            // base timestamp or the position reference, so the next genuine edge still measures a
-            // full pitch from the last genuine edge.
+            // spurious == true: optical glitch/bounce, either below the absolute
+            // ENC_PERIOD_MIN_US floor or below the adaptive 0.625 x ref floor. Dropped WITHOUT
+            // advancing the base timestamp or the position reference, so the next genuine edge
+            // still measures a full pitch from the last genuine edge — which is what makes the
+            // ML0145 split-pitch pair merge back into one correct period rather than being
+            // replaced by two short ones. NOTE for the plant model: because a rejected edge never
+            // advances the base, accepted periods still span TRUE pitches, so the nominal
+            // (N+1)·pitch/(2v) estimator delay for a clean edge stream is UNCHANGED by this
+            // filter — it costs nothing on the signal the Schmitt bodge will eventually deliver.
         }
     }
 }

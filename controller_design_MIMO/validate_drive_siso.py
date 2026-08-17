@@ -95,9 +95,17 @@ SOS = np.array([[float(x) for x in re.findall(FLOAT_RE, r)] for r in sos_rows], 
 record("parse: SOS shape", SOS.shape == (NSOS, 5), f"got {SOS.shape}")
 
 # Check 1: AC == AD - BD*CD/DD
+# TOLERANCE IS SCALE-RELATIVE (corrected 2026-08-16c).  AC is emitted as float32, so the
+# identity can only hold to one float32 ulp of AC's largest entry.  The previous absolute
+# 1e-6 bound was an accident of AC's magnitude at the time: the K_F force-axis correction
+# raised the plant gain x1.34, max|AC| with it, and the residual crossed 1e-6 while the
+# realization stayed exactly as correct as before.  A fixed absolute bound on a
+# float32-rounded quantity measures the coefficient scale, not the implementation.
 AC_expected = AD - (BD @ CD) / DD
 ac_err = np.max(np.abs(AC - AC_expected))
-record("check1: AC == AD - BD*CD/DD", ac_err < 1e-6, f"max abs err = {ac_err:.3e} (tol 1e-6)")
+ac_tol = max(1e-9, float(np.spacing(np.float32(np.max(np.abs(AC))))))
+record("check1: AC == AD - BD*CD/DD", ac_err < ac_tol,
+       f"max abs err = {ac_err:.3e} (tol = 1 float32 ulp of max|AC| = {ac_tol:.3e})")
 
 # ---------------------------------------------------------------------------
 # 2. Load replay CSV, implement Hanus recursion in float64
