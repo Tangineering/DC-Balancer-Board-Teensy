@@ -1170,3 +1170,57 @@ fw v10 was never flashed, so the first flash carries both);** ledger row has ful
 - **Next bench:** flash fw v11; first `'V'` run is the synthesis validation — small setpoints,
   scope-armed, compare against `figures/drive_siso_step.csv`, and read the new conditioning
   figure after each run.
+
+---
+
+## Status & session addendum (2026-08-16, fw v12: edge-period estimator + re-synthesis)
+
+The first closed-loop `'V'` runs (ML0136–139, fw v11, steps 0.1/0.5/1.0 m/s) all limit-cycled
+rail-to-rail at 2.3–2.6 Hz — the 16 rad/s design crossover. Four-agent log analysis converged on
+the root cause: `updateWheelSpeed()`'s boxcar advanced once per main-loop tick, realizing a
+~113 ms window (~56 ms group delay = 52–58° at crossover > the whole 49.6° PM; 0.0177 m/s
+quantization), and the estimator was absent from the synthesis plant. The runs DID validate the
+Hanus anti-windup on hardware (~150 rail episodes, u_unsat hugging the rail, clean releases) and
+the DC friction model. **fw v12 (pending first flash — carries v10+v11+v12):**
+
+- **Edge-period estimator (operator-specified).** Period measured same-edge-type (A-rising to
+  A-rising) over one full slot pitch (2π·0.0762/120 = 3.990 mm) to cancel optical-sensor
+  asymmetry; `ENC_PERIOD_AVG_N` = 2 period averaging (configurable); direction from the
+  quadrature decode (Δ`encoderPos` = ±2 between A-risings; flip → ring invalidate); glitch
+  drop < 200 µs without advancing the base; stale timeout max(1.5·lastPeriod, 150 ms) → 0;
+  zero-speed floor ≈ 0.027 m/s; `PRIMASK` save/restore snapshots. **Safety-review MED-HIGH
+  fixed: ring invalidation at speed HOLDS the last valid reading** (bounded by the stale
+  timeout) instead of emitting a full-scale v=0 step into the 545 A/(m/s) controller — v_actual
+  zeroes on exactly three events (boot, `encoderVelReset()`, stale timeout). Delay now
+  (N+1)·pitch/(2v): ~3 ms at 2 m/s (was 56), ~12 ms at 0.5 m/s; quantization timer-limited.
+  `'S'` dump gains a periods/dir line (fw v8 observability lesson).
+- **Re-synthesis with the estimator in the plant** (separate Pade2 on the measured output only —
+  the §4.4 coupling taps the physical speed; G22 4→6 states; corners × v0 ∈ {0.5, 2, 5} = 72).
+  Bench gain datapoints refit (the 113 ms boxcar's ~93 ms fill dead-time explained the
+  0.158-vs-0.198 (m/s²)/A spread; both converge to 0.186–0.204): **K_v recentred 1.25, corners
+  {0.85, 1.25, 1.85}** (span narrows ×4.0 → ×2.2, which pays for the delay). Chosen rung WC=60 /
+  Wu(0.25, 300, 12.5): **crossover 15.98 rad/s (unchanged), PM 51.9°, DM 56.7 ms, worst-corner
+  ‖S‖∞ 2.42 cont / 2.52 disc, estimator phase at crossover 2.74° (was 51°), 0.5 m/s corner PM
+  43.7°**; new gates pin both. **Validity floor: the design is gate-checked for v ≥ 0.5 m/s
+  only** — below it the estimator is a deadband relay (needs ~3 edges/12 mm before a first
+  reading) and low-setpoint steps are expected to limit-cycle; the ML0136/38 0.1 m/s runs are
+  NOT covered by this fix. ⚠️ A v12 trace vs a v11 trace is two different control laws
+  (K_v, weights, KI 73.6→53.4 all changed), not just two estimators.
+- **Replay-vector hardening (test round caught it):** the regen vectors were knife-edged
+  (float64 trajectory replayed open-loop through the float32 controller chattered ON the clamp
+  boundary). Now generated closed-loop through the shipped float32 coefficients with
+  stimulus-truncation gates; consumer tolerances embedded in the artifacts (small ≤1e-4 A;
+  regen ~50 mA — the controller genuinely dithers across the ±12 A boundary during hard regen,
+  82 clamp transitions in the design sim; tighter gates fail correct implementations).
+  `tools/gen_drive_replay_header.py` is now a permanent tool (regenerate
+  `drive_replay_vectors.h` whenever the synthesis regenerates the CSV).
+- **Open items:** `m_eff` CHALLENGED — ramps vs cruise-hold gain datapoints contradict by ×2 in
+  opposite directions and m_eff ≈ 1.6–2.0 kg (vs the operator's 3.5) is the single constant
+  closing both, consistent with the coast-down residual; top bench item (re-measure J or a
+  timestamped coast-down). `validate_mimo_model.py` G1.5/G1.6 now fail (truth model lacks the
+  estimator + recentred K_v) — deferred to the MIMO regeneration round; staleness bannered.
+- **Tests: 2785 production + 175 bench pass** (11 new estimator cases incl. the hold/timeout
+  semantics and an ISR-driven end-to-end; C++ regen replay lands at 21 mA worst).
+- **Next bench:** flash; first `'V'` at **≥ 0.5 m/s** (1–2 m/s preferred), scope-armed, overlay
+  vs `figures/drive_siso_step.csv`, read the conditioning figure; expect clamp dither during
+  hard regen (not a fault). Re-derive VESC doc §12.4 against the set 6.0 A before a vehicle run.

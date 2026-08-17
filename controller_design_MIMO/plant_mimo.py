@@ -24,10 +24,12 @@ Structure (see mimo_system_model.md §3):
     The coupling passes through the SAME 1/(tauf s + 1) measurement prefilter as
     G11 (shared states -- explicit block assembly, not a parallel duplicate).
 
-State ordering (8 states nominal):
+State ordering (10 states nominal):
     x = [ x_share(3: Pade2(Td) + 1/(taur s+1)) ,
           x_drive(3: Pade2(Td_v) + 1/(tau_v s+1)) ,
           x_mech(1: 1/(m_eff s + b_eff)) ,
+          x_est(2: Pade2(Td_est(v0)) -- velocity-estimator delay, MEASUREMENT path
+                only; the coupling path G12 taps the UNDELAYED speed) ,
           x_filt(1: 1/(tauf s+1), dropped when tauf == 0) ]
 
 Every constant below cites its source. Unknowns are tagged TODO(calibrate) /
@@ -76,12 +78,33 @@ R_T     = 0.0762        # m      flywheel ROLLING radius (3.00 in, MEASURED 2026
 M_EFF   = 3.5           # kg     equivalent linear inertia of the flywheel assembly
                         #        (MEASURED: J = 0.0203 kg*m^2 at r_t; J/r_t^2 = 3.50 kg)
 ETA_DT  = 0.85          # -      driveline efficiency (user decision 1)  TODO(calibrate)
+                        #        DELIBERATELY UNCHANGED 2026-08-16b.  The ML0136-0139
+                        #        ramp fits imply a force constant ~1.78x this chain's
+                        #        (see K_V_NOM), i.e. eta_dt >= 1.0, which is unphysical --
+                        #        so the residual is NOT an efficiency and is carried by
+                        #        the K_v axis instead.  Raising eta_dt here would also
+                        #        move i_m0 and the §4.4 coupling gains, which no
+                        #        measurement of this round touches.
 ETA_V   = 0.85          # -      VESC inverter efficiency  TODO(calibrate)
 K_ENC   = 1.0           # -      encoder speed-chain gain. NO LONGER structurally
                         #        unknown: 240 counts/rev (120 slots x2 decode, counted
                         #        and hardware-confirmed 2026-08-16) and r_t above fix
                         #        the chain end to end.  Retained as an explicit unity
                         #        factor so the K_v corner has a place to act.
+
+# Drive-channel gain residual, carried on K_v (see drive_corners() and
+# mimo_system_model.md §4.2 "the gain datapoint").  MEASURED 2026-08-16b: the ML0136-0139
+# +12 A ramps give a NET acceleration of 0.186-0.204 (m/s^2)/A (startup-excluded fits;
+# the operator's 0.158 figure is the same ML0139 ramp fitted INCLUDING its startup window
+# and is depressed by it -- reconciliation in calibration/motor_id_20260815.md).  Adding
+# back the modelled drag at the fit speeds gives an implied K_F of 0.805 N/A = 1.78x the
+# modelled 0.4516 N/A.  The measured 4.5 +- 0.4 A cruise hold pulls the OTHER way
+# (implied K_F 0.409 N/A = 0.91x).  The two disagree by a factor of ~2 and no single
+# constant in this chain reconciles them (m_eff ~ 1.6-2.0 kg would; that is an open bench
+# item, not a modelling decision).  The design plant is therefore centred on the GEOMETRIC
+# MEAN of the two implied gains and the K_v axis is widened to span both.
+K_V_NOM = 1.25          # -      sqrt(0.906 * 1.783) = 1.271, rounded to 1.25.
+
 
 # Motor torque constant. Castle Creations 1406 1900KV, 4-pole (p = 2 pole pairs).
 # VESC Tool FOC detection 2026-08-15: flux linkage lambda = 1.422 mWb.
@@ -101,6 +124,55 @@ TD_V_NOM  = 2.0e-3      # s      DECIDED 2026-08-15 (analytic bound 0.9-2 ms: UA
                         #        781 us + packet thread <~1 ms + FOC pickup <= 70 us).
                         #        Not measured -- direct measurement was declined to keep
                         #        a current instrument out of the motor power path.
+
+# ── Velocity-ESTIMATOR dynamics (NEW 2026-08-16b) ───────────────────────────
+# The firmware's velocity estimate is NOT an ideal measurement and is no longer modelled
+# as one.  This element was ABSENT from the synthesis plant, and its absence is the
+# root cause of the ML0136-ML0139 closed-loop limit cycle (2.3-2.6 Hz = 14.5-16.3 rad/s =
+# the design crossover, at every step size 0.1/0.5/1.0 m/s): the shipped estimator was a
+# ~113 ms boxcar (~56 ms group delay = 52-58 deg at 16 rad/s, against a 49.6 deg design
+# phase margin), i.e. the loop was closed around a lag the design never saw.
+#
+# The REPLACEMENT estimator (firmware round, parallel to this one) is an EDGE-PERIOD
+# estimator; this is the contract it is modelled against:
+#   * the period is measured same-edge-type over one full slot pitch;
+#   * N periods are averaged (N = N_EST = 2, configurable in firmware);
+#   * the estimate is LATCHED once per pitch (zero-order hold between pitches);
+#   * below ~0.03 m/s the estimator times out and reports 0.
+# Its dynamics are therefore an averaging window of N pitches plus a one-pitch hold:
+#   averaging over the last N*pitch of travel  -> mean-value delay  N*pitch/(2v)
+#   latched once per pitch (ZOH)               -> mean hold delay     pitch/(2v)
+#   total effective transport delay Td_est(v)  = (N+1)*pitch/(2v)
+# It is VELOCITY-DEPENDENT, and that dependence is the whole point: the delay explodes at
+# low speed.  Modelled as a pure transport delay (Padé(2)), not as the exact boxcar: the
+# difference is in the >1/Td_est stopband shape, which is far above any achieved crossover.
+ENC_SLOTS = 120         # -      slots on the encoder disc (COUNTED 2026-08-16; the x2
+                        #        quadrature decode gives 240 counts/rev, hardware-confirmed)
+PITCH_M = 2.0*np.pi*R_T/ENC_SLOTS      # m, 3.9898 mm of flywheel SURFACE travel per slot
+N_EST   = 2             # -      periods averaged (firmware default; configurable)
+V_EST_MIN = 0.03        # m/s    estimator timeout floor -- below this it reports 0.
+                        #        The design is NOT validated below V0_VALID_MIN (see
+                        #        TD_EST_V0_SET); this constant only records the hard floor.
+TD_EST_V0_SET = (0.5, 2.0, 5.0)   # m/s, the estimator-delay corner axis (§4.2)
+V0_VALID_MIN  = 0.5     # m/s    VALIDITY FLOOR of the drive design.  Td_est at 0.5 m/s is
+                        #        11.97 ms; at 0.3 m/s it is 19.9 ms and at 0.1 m/s 59.8 ms
+                        #        -- i.e. below the floor the delay corner is OPEN and the
+                        #        loop is not gate-checked.  Operating there needs either a
+                        #        larger corner (bought with bandwidth) or a gain schedule.
+
+
+def td_est(v0, N=N_EST, pitch=PITCH_M):
+    """Effective velocity-estimator transport delay [s] at speed v0 [m/s].
+
+        Td_est(v) = (N + 1) * pitch / (2 v)
+
+    = N*pitch/(2v) (mean-value delay of the N-pitch averaging window)
+    + pitch/(2v)   (mean staleness of the once-per-pitch latch).
+    At N = 2, pitch = 3.9898 mm: 11.97 ms at 0.5 m/s, 2.99 ms at 2 m/s, 1.20 ms at 5 m/s.
+    """
+    v = max(float(v0), V_EST_MIN)
+    return (N + 1.0)*pitch/(2.0*v)
+
 
 # Longitudinal drag. MEASURED as a LUMPED law F(v) ~ F_c + b_eff*(v - v0) about the
 # design speed, replacing the aero + C_rr + motor-free-run composite (which was three
@@ -145,11 +217,15 @@ def nominal_params():
         tau_v=TAU_V_NOM, Td_v=TD_V_NOM,
         k_t=K_T, phi=PHI, r_t=R_T, m_eff=M_EFF,
         eta_dt=ETA_DT, eta_v=ETA_V, K_enc=K_ENC,
+        # velocity estimator: Td_est=None => derived from the OP speed via td_est().
+        # Set it explicitly only to pin a corner independently of the OP.
+        N_est=N_EST, Td_est=None,
         # load / coupling
         b_eff_nom=B_EFF_NOM, F_c=F_COULOMB,
         R_m=R_M, V_bus0=V_BUS0,
-        # multiplicative corner knobs (1.0 = nominal)
-        K_v=1.0, pole_factor=1.0,
+        # multiplicative corner knobs (pole_factor 1.0 = nominal; K_v is NOT 1.0 --
+        # see K_V_NOM, the drive gain is centred on the measured evidence)
+        K_v=K_V_NOM, pole_factor=1.0,
     )
 
 
@@ -294,11 +370,37 @@ def vehicle_mech(op, p):
     return tf2ss([1.0], [p['m_eff'], b_eff(op, p)])
 
 
+def op_td_est(op, p):
+    """Estimator delay at this (OP, params): explicit p['Td_est'] or td_est(op['v0'])."""
+    if p.get('Td_est') is not None:
+        return float(p['Td_est'])
+    return td_est(op['v0'], p.get('N_est', N_EST))
+
+
+def speed_estimator_path(op, p):
+    """dv_phys -> dv_meas: Pade2(Td_est(v0)).  2 states, D = 1 (proper, not strictly).
+
+    Placed at the MEASUREMENT end of the drive channel, which is where it physically
+    sits: it delays what the controller sees, not what the vehicle does.  That
+    distinction is invisible in the SISO loop (series elements commute) but NOT in the
+    2x2 design_plant, where the true speed dv_phys also drives the bus-current coupling
+    into the share channel -- that path must NOT be delayed (see design_plant).
+
+    A SEPARATE Pade(2) is used rather than lumping Td_est into Td_v.  Reason: the two
+    delays have different corner axes (Td_v in {1, 4} ms is an actuator-path
+    uncertainty; Td_est is a DETERMINISTIC function of speed), and at the low-speed
+    corner the total would reach 16 ms, where a single Pade(2) is a visibly poorer fit
+    than two chained ones over the crossover decade.  Cost: 2 extra states.
+    """
+    return pade2(op_td_est(op, p))
+
+
 def drive_plant(op, p):
-    """G22 alone: di_cmd -> dv (measured).  4 states."""
-    return ss_scale(ss_series(vesc_current_path(p),
-                              ss_scale(vehicle_mech(op, p), force_per_amp(p))),
-                    p['K_enc']*p['K_v'])
+    """G22 alone: di_cmd -> dv (MEASURED, i.e. through the estimator).  6 states."""
+    g = ss_series(vesc_current_path(p),
+                  ss_scale(vehicle_mech(op, p), force_per_amp(p)))
+    g = ss_series(g, speed_estimator_path(op, p))
+    return ss_scale(g, p['K_enc']*p['K_v'])
 
 
 def share_plant(op, p):
@@ -322,7 +424,9 @@ def design_plant(op=None, params=None):
     count and, more importantly, misrepresent the physics: there is exactly one
     prefilter, in firmware, downstream of the current-share estimate.
 
-    Returns a strictly-proper SS (D = 0) with 8 states (7 when tauf == 0).
+    The velocity ESTIMATOR delay (mimo_system_model.md §4.2, NEW 2026-08-16b) sits on
+    the speed OUTPUT only.
+    Returns a strictly-proper SS (D = 0) with 10 states (9 when tauf == 0).
     """
     op = dict(nominal_op() if op is None else op)
     p = dict(nominal_params() if params is None else params)
@@ -330,17 +434,19 @@ def design_plant(op=None, params=None):
     Sp = share_prefilter_path(op, p)          # 3 states, D = 0
     Dv = vesc_current_path(p)                 # 3 states, D = 0  (-> di_m)
     Mm = vehicle_mech(op, p)                  # 1 state,  D = 0  (-> dv_phys)
+    Ev = speed_estimator_path(op, p)          # 2 states, D = 1  (dv_phys -> dv_meas)
 
     assert abs(Sp.D).max() < 1e-12 and abs(Dv.D).max() < 1e-12 and abs(Mm.D).max() < 1e-12
 
-    ns, nd, nm = Sp.n, Dv.n, Mm.n
+    ns, nd, nm, ne = Sp.n, Dv.n, Mm.n, Ev.n
     tauf = p['tauf']
     nf = 1 if tauf > 0 else 0
-    n = ns + nd + nm + nf
+    n = ns + nd + nm + ne + nf
     iS = slice(0, ns)
     iD = slice(ns, ns + nd)
     iM = slice(ns + nd, ns + nd + nm)
-    iF = ns + nd + nm                         # only valid when nf == 1
+    iE = slice(ns + nd + nm, ns + nd + nm + ne)
+    iF = ns + nd + nm + ne                    # only valid when nf == 1
 
     KF = force_per_amp(p)                     # N/A
     A_i, A_w, _, _ = bus_current_gains(op, p)
@@ -365,6 +471,15 @@ def design_plant(op=None, params=None):
     A[iM, :] += Mm.B @ (KF*row_im.reshape(1, n))
     row_v = np.zeros(n); row_v[iM] = Mm.C[0]
 
+    # --- velocity estimator: x_e' = Ae x_e + Be*dv_phys ; dv_meas = Ce x_e + De*dv_phys
+    # ONLY the measured output goes through it.  The coupling row below deliberately uses
+    # the UNDELAYED dv_phys: the bus-current draw responds to the real shaft speed, not to
+    # what the firmware's estimator has got round to reporting.
+    A[iE, iE] = Ev.A
+    A[iE, :] += Ev.B @ row_v.reshape(1, n)
+    row_vm = float(Ev.D[0, 0])*row_v.copy()
+    row_vm[iE] = Ev.C[0]
+
     # --- bus current draw (the coupling source):  dI_bus = A_i*di_m + Aw_v*dv_phys
     row_Ibus = A_i*row_im + Aw_v*row_v
 
@@ -380,8 +495,8 @@ def design_plant(op=None, params=None):
     else:
         C[0, :] = row_alpha_pre
 
-    # --- speed output (encoder chain gain + K_v structural uncertainty)
-    C[1, :] = p['K_enc']*p['K_v']*row_v
+    # --- speed output (estimator output x encoder chain gain x K_v gain uncertainty)
+    C[1, :] = p['K_enc']*p['K_v']*row_vm
 
     # G21 == 0 structurally: dr (input 0) reaches no state that feeds C[1, :].
     return SS(A, B, C, np.zeros((2, 2)))
@@ -461,22 +576,29 @@ def share_corners():
 def drive_corners():
     """24 drive-channel parameter corners.
 
-    K_v in {0.5, 1, 2} is RETAINED but its rationale has SHRUNK (2026-08-16): k_t
-    is now measured, and the encoder chain is calibrated end to end (240 counts/rev,
-    r_t = 0.0762 m, surface/roller coupling resolved), so the two dominant reasons
-    for a factor-2 axis are gone.  What remains inside it is the eta_dt = 0.85
-    placeholder and the thermal spread of the drag law.  Kept at {0.5, 1, 2} as the
-    conservative default -- narrowing it is a performance lever, not a correctness
-    fix, and it costs nothing at the achieved bandwidth (see mimo_system_model.md
-    §9.2 and synthesize_drive_siso.py's weight ladder).
+    K_v {0.5, 1, 2} -> {0.85, 1.25, 1.85}, RE-CENTRED not merely re-scaled
+    (2026-08-16b).  The axis is no longer a structural placeholder: the drive gain has
+    now been MEASURED end to end, twice, and the two measurements disagree.
+      * ML0136-0139 +12 A ramps  -> implied K_F 0.805 N/A = 1.78x modelled
+      * 4.5 +- 0.4 A cruise hold -> implied K_F 0.409 N/A = 0.91x modelled
+    The nominal is the geometric mean (K_V_NOM = 1.25) and the corners bracket both
+    endpoints.  Net effect: the span NARROWS from 4.0x to 2.2x while the nominal moves
+    onto the evidence -- so this is a robustness RELAXATION and a nominal correction at
+    the same time, and the relaxation is what pays for the estimator delay added below.
+    See mimo_system_model.md §4.2.
 
     pole_factor scales b_eff (hence the drive pole and the DC gain jointly).
     WIDENED {0.5, 2} -> {0.5, 3} (2026-08-16): b_eff is a slope identified LOCALLY
     at v0 = 2.0 m/s, and the measured curve's slope roughly doubles below 1.5 m/s,
     so the upper corner must cover the low-speed end of the operating range.
+
+    NOTE: the estimator-delay axis Td_est(v0) over TD_EST_V0_SET is NOT in this list.
+    It is a function of the OPERATING SPEED, not a parameter uncertainty, so it is swept
+    by varying op['v0'] (see synthesize_drive_siso.py §6); listing it here would hide
+    that it is deterministic given v0.
     """
     out = []
-    for K_v in (0.5, 1.0, 2.0):
+    for K_v in (0.85, K_V_NOM, 1.85):
         for pf in (0.5, 3.0):
             for tau_v in (0.5e-3, 5.0e-3):
                 for Td_v in (1.0e-3, 4.0e-3):
@@ -530,7 +652,14 @@ if __name__ == "__main__":
     print(f"  i_m0       = {i_m0:.4f} A      omega0 = {w0:.1f} rad/s")
     print(f"             (measured cruise hold 4.5 +- 0.4 A: model is ~9 % low, just "
           f"below the band -- eta_dt placeholder)")
-    print(f"  A_i        = {A_i:.6f} A/A     A_w = {A_w:.6e} A/(rad/s)")
+    print(f"  K_v        = {p['K_v']:.3f} (nominal, evidence-centred)   "
+          f"G22(0) = {drive_plant(op, p).dcgain():.4f} (m/s)/A")
+    print(f"  estimator  : pitch = {PITCH_M*1e3:.4f} mm, N = {p['N_est']}, "
+          f"Td_est(v0={op['v0']}) = {op_td_est(op, p)*1e3:.3f} ms")
+    print("               Td_est corners: " + ", ".join(
+        f"{v} m/s -> {td_est(v)*1e3:.2f} ms" for v in TD_EST_V0_SET)
+        + f"   (validity floor {V0_VALID_MIN} m/s)")
+    print(f"  A_i        = {A_i:.6f} A/A    A_w = {A_w:.6e} A/(rad/s)")
     print(f"  dalpha/dI  = {dalpha_dItot(op, p):.6e} share/A")
     print(f"  DC gain:\n{G.dcgain_matrix()}")
     print(f"  poles: {np.sort_complex(G.poles())}")

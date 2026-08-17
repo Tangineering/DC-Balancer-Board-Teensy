@@ -548,6 +548,64 @@
  *          catch-up, was 7.0x), and the 32 MB preallocation covers ~7.4 min (was ~8). No buffer
  *          constant needed to grow. Logging stays observability-only: no faults, no card I/O in
  *          the sampling path. No pin, sequencing, control-path or UDP change.
+ *  - fw v12 (2026-08-16) — EDGE-PERIOD VELOCITY ESTIMATOR replaces the position-buffer boxcar.
+ *      ROOT CAUSE of the four first closed-loop 'V' runs (ML0136–ML0139) limit-cycling at the
+ *      drive controller's 16 rad/s design crossover: updateWheelSpeed() differenced encoderPos
+ *      across a ring of position/timestamp samples pushed ONCE PER MAIN-LOOP ITERATION (~1.13 ms)
+ *      over ~98 slots, i.e. a ~113 ms boxcar with ~56 ms of group delay. At 16 rad/s that is
+ *      ~51° of lag against the design's 49.6° phase margin — the entire margin, spent in a block
+ *      the synthesis plant never contained. Its quantisation was one count per window,
+ *      0.0177 m/s. Neither number appears in controller_design_MIMO/.
+ *      THE REPLACEMENT measures the PERIOD between consecutive A-RISING edges — one edge type on
+ *      one channel, so each interval spans exactly one full slot pitch (ENC_SLOT_PITCH_M =
+ *      2π·r/slots = 3.990 mm) and the two OPB829DZ sensors' threshold/duty asymmetry cancels
+ *      instead of folding into the reading as per-edge ripple. v = dir·N·pitch / Σ(last N
+ *      periods), N = ENC_PERIOD_AVG_N (configurable, default 2).
+ *        * ISR: the tap lives at the END of doEncoderA() and reuses the pin levels the
+ *          quadrature decode already read (pinA_read == 1 IS the rising edge on a CHANGE
+ *          interrupt), so it adds no digitalRead. The x2 decode, encoderPos and the
+ *          encEdgeCountA/B diagnostics are UNTOUCHED — encoderPos remains the position and
+ *          direction truth, and the estimator takes its SIGN from it (the encoderPos delta
+ *          across one cycle is +2 forward, −2 reverse). A direction flip or an ambiguous zero
+ *          delta INVALIDATES the ring rather than averaging across the flip.
+ *        * READER: updateWheelSpeed() keeps its contract (writes v_actual in m/s, same call
+ *          sites) and takes a consistent ring snapshot under a brief noInterrupts() section —
+ *          chosen over a sequence-counter retry because the copy is far shorter than the
+ *          shortest legal edge interval (200 µs), so no edge can be lost. The per-loop
+ *          sampleTime gate is gone: the computation is cheap and gating it only re-added delay.
+ *        * HOLD ON RE-ACCUMULATION: a ring invalidated mid-motion (direction flip, or the ISR's
+ *          ambiguous zero-delta case — one noisy B sample is enough on the un-Schmitted OPB829DZ)
+ *          HOLDS the last valid reading while it refills, instead of reporting 0. Reporting 0 at
+ *          speed would inject a full-scale error step into a 544.8 A/(m/s) controller for N edge
+ *          intervals (4 ms at 2 m/s, 16 ms at 0.5) — a failure class the old boxcar could not
+ *          produce, since it always had a position difference to divide. v_actual is forced to 0
+ *          on EXACTLY three events: boot, encoderVelReset(), and the stale timeout. The hold is
+ *          bounded by that timeout, which is evaluated BEFORE the ring-depth test for that reason.
+ *        * ZERO SPEED: standstill is declared when the time since the last accepted edge exceeds
+ *          max(1.5 × last period, ENC_VEL_TIMEOUT_US = 150 ms), which floors the reportable
+ *          speed at 3.990 mm / 150 ms = 0.027 m/s — below ~0.03 m/s v_actual reads exactly 0.
+ *          Boot and post-reset report 0 until N periods accumulate. All timing uses the file's
+ *          unsigned-subtraction idiom, so micros() wrap is a non-event.
+ *        * GLITCH REJECTION: intervals shorter than ENC_PERIOD_MIN_US = 200 µs (≈20 m/s, 4x the
+ *          fastest command) are optical noise on the un-Schmitted phototransistor output. They
+ *          are dropped WITHOUT advancing the period base, so the next genuine edge still spans a
+ *          full pitch.
+ *        * PLANT INTERFACE (documented in full at updateWheelSpeed(), which is the interface the
+ *          synthesis models): the reading is the average speed over the last N·pitch of travel,
+ *          latched once per pitch, so the effective delay is (N+1)·pitch/(2v) — SPEED-DEPENDENT:
+ *          ~3 ms at 2 m/s, ~12 ms at 0.5 m/s, ~48 ms at 0.125 m/s (N = 2). Quantisation is
+ *          timer-limited (<0.1% above 0.2 m/s), not the old 17.7 mm/s ladder. Worst case is at
+ *          LOW speed, so margin checks belong at the slowest tracked speed.
+ *        * DELETED: the posArr/timeArr buffers, the averagingTime/arraySize/BUF_DEPTH constants,
+ *          the static_assert on the buffer depth and the boxcar's lastMicros/index statics —
+ *          all function-local, so nothing outside updateWheelSpeed() referenced them.
+ *          wheelSpeedResetPending SURVIVES with its name and its single producer (doState3());
+ *          it now calls the new encoderVelReset(), which clears the ring, the period base, the
+ *          position reference and the direction latch. encoderVelReset() is also called on a
+ *          stale-timeout so motion never restarts against an old ring.
+ *      NO BLG or UDP format change: v_act is the same field, carrying finer values. fw ≤ 11
+ *      v_act traces are comparable in SCALE but not in DYNAMICS — they carry the 113 ms
+ *      smoothing, fw 12 traces do not. No pin, sequencing or fault change.
  */
 
 #include <VescUart.h>
@@ -1091,6 +1149,36 @@ constexpr float ENCODER_COUNTS_PER_REV = ENCODER_SLOTS_PER_REV * ENCODER_QUAD_DE
 constexpr float TWO_PI_F      = 6.28318530718f;
 constexpr float RPM_TO_MPS    = (TWO_PI_F / 60.0f) * FLYWHEEL_RADIUS_M;
 
+// ── Edge-period velocity estimator (fw v12) ──────────────────────────────────
+// Surface travel between two consecutive slots, i.e. the distance the flywheel rim covers in one
+// quadrature cycle: 2π·r / slots = 2π·0.0762 / 120 = 3.990 mm. This is the ONE length the
+// edge-period estimator measures over; it is derived from the same two measured constants as
+// RPM_TO_MPS, so the two estimators would agree in steady state.
+constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOTS_PER_REV;
+
+// Number of consecutive same-edge periods averaged: v = N·pitch / Σ(last N periods).
+// N = 2 is the shipped default — see the dynamics comment at updateWheelSpeed() for the delay
+// this costs. Raising N smooths more and delays more, both linearly.
+#ifndef ENC_PERIOD_AVG_N
+#define ENC_PERIOD_AVG_N 2
+#endif
+
+// Glitch floor. 200 µs of pitch is 3.990 mm / 200 µs = 19.95 m/s, ~4x the fastest commanded
+// speed (MANUAL_MOTOR_V_MAX = 5 m/s). Any shorter interval between two A-rising edges is optical
+// noise or contact bounce on the OPB829DZ's un-Schmitted output, not motion. Rejected samples are
+// dropped WITHOUT advancing the period base, so the next genuine edge still measures a full pitch
+// from the last genuine edge (classic debounce; advancing the base to a spurious edge would make
+// the following period read short and the speed read high).
+#define ENC_PERIOD_MIN_US    200u
+
+// Zero-speed floor. The estimator declares standstill when the time since the last accepted edge
+// exceeds max(ENC_VEL_STALE_K · last period, ENC_VEL_TIMEOUT_US). The multiplicative term is the
+// fast path — a decelerating wheel is called stopped 1.5 periods after it should have produced the
+// next edge — and the absolute floor bounds the slowest speed the estimator can report:
+// 3.990 mm / 150 ms = 0.0266 m/s. Below ~0.03 m/s v_actual reads exactly 0.
+#define ENC_VEL_TIMEOUT_US   150000u
+#define ENC_VEL_STALE_K      1.5f
+
 // Guard: with either scale input above at a placeholder value, closing the velocity loop
 // OVER-DRIVES. v_actual under-reads true speed, so the PI keeps adding current to reach a setpoint
 // the vehicle has already blown past; the commandMotorCurrent() ceiling bounds AMPS, not SPEED.
@@ -1410,8 +1498,35 @@ volatile uint32_t encEdgeCountA = 0;
 volatile uint32_t encEdgeCountB = 0;
 // ENCODER_COUNTS_PER_REV now lives with the rest of the flywheel/encoder geometry in the physical
 // constants block, derived from ENCODER_SLOTS_PER_REV x ENCODER_QUAD_DECODE.
-// Set by State 3 (Finish) to clear updateWheelSpeed()'s averaging buffers between runs, so a
-// new run's first velocity samples are not computed against stale timestamps from the prior run.
+
+// ── Edge-period velocity estimator state (fw v12) ─────────────────────────────
+// Written ONLY by doEncoderA() (on A-rising edges) and by encoderVelReset(); read by
+// updateWheelSpeed() under a brief noInterrupts() snapshot. encoderPos and the quadrature decode
+// above are untouched by this block — encoderPos remains the position/direction truth, and this
+// estimator derives its sign FROM it (see doEncoderA()).
+volatile uint32_t encPeriodBuf[ENC_PERIOD_AVG_N] = {0}; // last N same-edge periods, µs
+volatile uint8_t  encPeriodIdx   = 0;   // next write slot in the ring
+volatile uint8_t  encPeriodCount = 0;   // valid entries, saturating at ENC_PERIOD_AVG_N
+volatile uint32_t encLastEdgeUs  = 0;   // micros() at the last ACCEPTED A-rising edge
+volatile bool     encHaveLastEdge = false; // false until the first A-rising edge after a reset
+volatile int32_t  encPosAtLastEdge = 0; // encoderPos at that edge — direction reference
+volatile int8_t   encPeriodDir   = 0;   // +1 / -1: rotation sense the ring's periods belong to
+
+// Held-reading state — READER-side only (updateWheelSpeed()/encoderVelReset()), never touched by
+// an ISR, hence not volatile. A mid-run ring invalidation (a direction flip, or a single noisy B
+// sample producing the ISR's ambiguous zero-delta case — plausible on the un-Schmitted OPB829DZ)
+// re-accumulates the ring over the next ENC_PERIOD_AVG_N edges. Reporting 0 m/s during that
+// window would inject a FULL-SCALE error step into a 544.8 A/(m/s) controller (4 ms at 2 m/s,
+// 16 ms at 0.5 m/s) — a failure class the old boxcar could not produce, because it always had a
+// position difference to divide. So a re-accumulating ring HOLDS the last valid reading instead.
+// v_actual is forced to 0 on exactly three events: boot, encoderVelReset(), and the genuine
+// stale timeout — i.e. only when the wheel is known to be stopped or the state is known-unusable.
+float encVelLastValid = 0.0f;
+bool  encVelHaveValid = false;
+
+// Set by State 3 (Finish) to clear the edge-period estimator between runs, so a new run's first
+// velocity samples are not computed against stale timestamps from the prior run. Consumed (and
+// cleared) by updateWheelSpeed(), which calls encoderVelReset().
 bool wheelSpeedResetPending = false;
 
 // ── Bench/debug config ──────────────────────────────────────────────────────────
@@ -1436,7 +1551,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 11
+#define FW_VERSION 12
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -1917,6 +2032,7 @@ bool ag105IsReady();
 bool chargerHasPower();
 void updateSensors();
 void updateWheelSpeed();
+void encoderVelReset();
 void computeDerivedSignals();
 void detectFaults();
 void checkPiWatchdog();
@@ -6098,6 +6214,21 @@ void printTestStatus() {
     Serial.print("encoderPos=");  Serial.print(encSnap);
     Serial.print("  edges A=");   Serial.print(edgeSnapA);
     Serial.print(" B=");          Serial.println(edgeSnapB);
+    // Edge-period estimator state (fw v12). v_actual now has a SECOND silent-zero source beyond
+    // "no counts": a ring with fewer than ENC_PERIOD_AVG_N valid periods, or one timed out as
+    // stale. Printing the ring depth and the last period separates those from a dead channel.
+    noInterrupts();
+    uint8_t  perCnt  = encPeriodCount;
+    uint8_t  perIdx  = encPeriodIdx;
+    int8_t   perDir  = encPeriodDir;
+    uint32_t perLast = encPeriodBuf[(perIdx + ENC_PERIOD_AVG_N - 1) % ENC_PERIOD_AVG_N];
+    interrupts();
+    Serial.print("periods=");     Serial.print(perCnt);
+    Serial.print("/");            Serial.print((int)ENC_PERIOD_AVG_N);
+    Serial.print("  last=");      Serial.print(perLast);
+    Serial.print("us  dir=");     Serial.print(perDir);
+    Serial.print("  pitch=");     Serial.print(ENC_SLOT_PITCH_M * 1000.0f, 3);
+    Serial.println("mm");
     Serial.print("v_actual=");    Serial.print(v_actual, 3);
     Serial.print(" m/s  (counts/rev="); Serial.print(ENCODER_COUNTS_PER_REV, 0);
     Serial.print(", r=");               Serial.print(FLYWHEEL_RADIUS_M, 4);
@@ -7660,81 +7791,146 @@ void initEsc() {
 // ═════════════════════════════════════════════════════════════════════════════
 // WHEEL SPEED (encoder)
 // ═════════════════════════════════════════════════════════════════════════════
+// Interrupt-mask save/restore. encoderVelReset() is called both from open contexts
+// (updateWheelSpeed()'s reset request) and from inside updateWheelSpeed()'s own logic, and a bare
+// interrupts() at the end of it would UNMASK unconditionally — re-enabling interrupts inside a
+// caller that had deliberately masked them. Saving and restoring PRIMASK makes the routine
+// composable regardless of the caller's state. On the host test build the mocks are no-ops, so
+// the trivial fallback is exact.
+#if defined(__IMXRT1062__)
+static inline uint32_t encIrqSave()            { uint32_t p = __get_PRIMASK(); __disable_irq(); return p; }
+static inline void     encIrqRestore(uint32_t p) { __set_PRIMASK(p); }
+#else
+static inline uint32_t encIrqSave()            { noInterrupts(); return 0; }
+static inline void     encIrqRestore(uint32_t)  { interrupts(); }
+#endif
+
+// Clears the edge-period ring, the period base, the direction latch AND the held-reading state.
+// Safe to call from any context (it saves/restores the interrupt mask rather than unmasking).
+// After this call the estimator reports 0 m/s until ENC_PERIOD_AVG_N fresh periods accumulate —
+// this is the ONE path (besides boot and the genuine stale timeout) that discards a valid reading.
+void encoderVelReset() {
+    uint32_t irq = encIrqSave();
+    for (uint8_t i = 0; i < ENC_PERIOD_AVG_N; i++) encPeriodBuf[i] = 0;
+    encPeriodIdx     = 0;
+    encPeriodCount   = 0;
+    encLastEdgeUs    = 0;
+    encHaveLastEdge  = false;
+    encPosAtLastEdge = encoderPos;
+    encPeriodDir     = 0;
+    encIrqRestore(irq);
+    encVelLastValid  = 0.0f;
+    encVelHaveValid  = false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EDGE-PERIOD WHEEL SPEED (fw v12) — replaces the position-buffer boxcar
+//
+// WHY IT CHANGED. The old estimator differenced encoderPos across a ring of position/timestamp
+// samples pushed once per main-loop iteration. The loop runs at ~1.13 ms, and the ring spanned
+// ~98 samples, so the measurement was a ~113 ms boxcar — ~56 ms of group delay — with a
+// quantisation floor of one count per window (1 count / 113 ms = 0.0177 m/s). The drive
+// controller was synthesised at a 16 rad/s crossover with 49.6° of phase margin; 56 ms of delay
+// at 16 rad/s is 51° of lag, i.e. the whole margin. That is the mechanism behind the ML0136–139
+// limit cycle. The estimator was never part of the synthesis plant.
+//
+// WHAT IT MEASURES. The ISR timestamps ONE edge type on ONE channel (A rising), so each interval
+// spans exactly one full slot pitch, ENC_SLOT_PITCH_M = 3.990 mm of rim travel. Using one edge
+// type of one channel is deliberate: the two OPB829DZ channels have different thresholds and duty
+// cycles, and any scheme that mixes edge types folds that asymmetry straight into the velocity as
+// a per-edge ripple. Same-edge-to-same-edge cancels it exactly.
+//
+//     v = direction · (N · ENC_SLOT_PITCH_M) / Σ(last N periods),  N = ENC_PERIOD_AVG_N
+//
+// DYNAMICS FOR THE CONTROL PLANT (this is the interface the synthesis models):
+//   - The reading is the AVERAGE speed over the last N·pitch of travel, updated (latched) once
+//     per pitch. Averaging over N pitches contributes ~N·pitch/(2v) of delay; the once-per-pitch
+//     zero-order hold contributes ~pitch/(2v). Effective delay ≈ (N+1)·pitch/(2v).
+//   - It is therefore SPEED-DEPENDENT, not constant. At N = 2:
+//         2.000 m/s ->  ~3 ms      0.500 m/s -> ~12 ms      0.125 m/s -> ~48 ms
+//     Above ~0.5 m/s the delay is small against the 16 rad/s crossover; the worst case is at low
+//     speed, so any margin check must be run at the slowest speed the loop is expected to track.
+//   - QUANTISATION is set by the micros() timer, not by a distance ladder: the relative error is
+//     ~1 µs / period, i.e. below 0.1% above 0.2 m/s. The old 17.7 mm/s step is gone.
+//   - Below the zero-speed floor (~0.03 m/s, see ENC_VEL_TIMEOUT_US) the output is exactly 0,
+//     which is a hard nonlinearity the plant model should treat as a deadband, not a gain. The
+//     first reading after a standstill also needs 3 A-rising edges (~N+1 pitches, ~12 mm) before
+//     it exists at all. A commanded step BELOW the design's gate-checked floor of 0.5 m/s
+//     therefore closes the loop around a deadband relay and IS EXPECTED to limit-cycle — that is
+//     a validity boundary of the design, not a defect of this estimator.
+//   - HOLD SEMANTICS: v_actual is forced to 0 on exactly three events — boot, encoderVelReset(),
+//     and the stale timeout. A ring invalidated mid-motion holds the last valid reading while it
+//     refills (see encVelLastValid). One consequence worth stating: a profile started shortly
+//     after a stop can read a held, up-to-150 ms-old true value for one tick before the timeout
+//     zeroes it — which is why doState3() requests an explicit encoderVelReset() between runs
+//     rather than relying on the timeout.
+// ─────────────────────────────────────────────────────────────────────────────
 void updateWheelSpeed() {
-    static uint32_t lastMicros = 0;
-    static int32_t  index      = 0;
-
-    // averagingTime/sampleTime must not exceed the hard-coded buffer depth — changing either
-    // constant used to silently overflow both arrays. static_assert makes that a build error.
-    const int averagingTime = 10000;
-    const int BUF_DEPTH = 200;
-    static_assert(10000 / 50 <= 200, "posArr/timeArr too small for averagingTime/sampleTime");
-    const int arraySize = (int)ceil((float)averagingTime / sampleTime);
-    static int      posArr[BUF_DEPTH]  = {0};
-    // uint32_t, matching micros(). The previous `int` was NOT a bug (the subtraction below promotes
-    // it back to uint32_t bit-preservingly, so dt stays correct across both the 2^31 and 2^32
-    // wraps) — an earlier TODO here wrongly claimed the wrap corrupted dt. Typed correctly now so
-    // nobody "fixes" the non-bug.
-    static uint32_t timeArr[BUF_DEPTH] = {0};
-
-    // Requested by State 3 between runs: drop stale timestamps/positions so the next run's
-    // first samples don't measure velocity against the previous run's buffer contents.
+    // Requested by State 3 between runs — see wheelSpeedResetPending.
     if (wheelSpeedResetPending) {
-        memset(posArr,  0, sizeof(posArr));
-        memset(timeArr, 0, sizeof(timeArr));
-        index      = 0;
-        lastMicros = 0;
+        encoderVelReset();
         wheelSpeedResetPending = false;
     }
 
-    uint32_t now      = micros();
-    uint32_t dtMicros = now - lastMicros;
-    if (dtMicros < (uint32_t)sampleTime) return;
-    lastMicros = now;
+    uint32_t now = micros();
 
-    noInterrupts();
-    int32_t pos = encoderPos;
-    interrupts();
+    // Consistent snapshot. A brief noInterrupts() section is used rather than a sequence-counter
+    // retry: the copy is ENC_PERIOD_AVG_N words plus four scalars (tens of cycles on a 600 MHz
+    // Teensy 4.1), which is far shorter than the shortest legal edge interval (200 µs), so the
+    // masking cannot lose an encoder edge, and a retry loop would cost more code for no benefit.
+    uint32_t periods[ENC_PERIOD_AVG_N];
+    uint32_t irq = encIrqSave();
+    for (uint8_t i = 0; i < ENC_PERIOD_AVG_N; i++) periods[i] = encPeriodBuf[i];
+    uint8_t  cnt      = encPeriodCount;
+    uint8_t  idx      = encPeriodIdx;
+    uint32_t lastEdge = encLastEdgeUs;
+    bool     haveEdge = encHaveLastEdge;
+    int8_t   dir      = encPeriodDir;
+    encIrqRestore(irq);
 
-    posArr[index]  = pos;
-    timeArr[index] = now;
-    if (index < arraySize - 1) index++;
-    else index = 0;
+    // (1) BOOT / POST-RESET: no edge has been seen at all. Genuinely no information — report 0.
+    if (!haveEdge) {
+        v_actual        = 0.0f;
+        encVelHaveValid = false;
+        return;
+    }
 
-    // The slot at (index+1) was written arraySize-2 iterations ago (posArr[index] is written, THEN
-    // index is incremented, THEN this reads index+1), so the window is 198 samples, not 200 — i.e.
-    // averagingTime is nominal only. Harmless because dt is measured rather than assumed.
-    uint32_t dt    = now - timeArr[(index + 1) % arraySize];
-    float    dtSec = dt * 1e-6f;
-    int      dx    = pos - posArr[(index + 1) % arraySize];
+    // (2) STALENESS / ZERO SPEED, evaluated BEFORE the ring-depth test so the hold in (3) is
+    // bounded by this same timeout. Unsigned subtraction, so this is correct across the micros()
+    // wrap (same idiom as the rest of the file). The most recently written slot is idx-1 mod N;
+    // note the ring's CONTENTS survive an invalidation, so this bound stays speed-scaled through
+    // a re-accumulation window.
+    uint32_t lastPeriod = periods[(idx + ENC_PERIOD_AVG_N - 1) % ENC_PERIOD_AVG_N];
+    uint32_t staleLimit = (uint32_t)(ENC_VEL_STALE_K * (float)lastPeriod);
+    if (staleLimit < ENC_VEL_TIMEOUT_US) staleLimit = ENC_VEL_TIMEOUT_US;
+    if ((uint32_t)(now - lastEdge) > staleLimit) {
+        v_actual = 0.0f;
+        encoderVelReset();      // stale: also clears the held reading, so motion restarts clean
+        return;
+    }
 
-    if (dtSec < 1e-6f) return;
+    // (3) RING RE-ACCUMULATING (a direction flip or the ISR's ambiguous zero-delta case cleared
+    // encPeriodCount / encPeriodDir), but edges ARE still arriving inside the stale bound — so the
+    // wheel is demonstrably moving. HOLD the last valid reading rather than reporting 0: a 0 here
+    // is a full-scale error step into the drive controller (see the encVelLastValid block). The
+    // hold is bounded by (2) at max(1.5 x last period, ENC_VEL_TIMEOUT_US), and in the ordinary
+    // case it lasts only the N edges the ring needs to refill (4 ms at 2 m/s, 16 ms at 0.5 m/s).
+    if (cnt < ENC_PERIOD_AVG_N || dir == 0) {
+        v_actual = encVelHaveValid ? encVelLastValid : 0.0f;
+        return;
+    }
 
-    // ── Unit chain (CORRECTED 2026-07-29; user-approved exception to CLAUDE.md "what NOT to
-    //    change"). The old line was:
-    //        v_actual = flyWheelSpeedRpm * flyWheelRadius / 60.0f;      // flyWheelRadius = 1 "inch"
-    //    That yields rev/s × inch, NOT m/s — it dropped the 2π (rad/rev) AND the inch→m 0.0254,
-    //    while v_setpoint from the Pi is m/s. Correct conversion for a wheel/roller of radius r:
-    //        v [m/s] = ω [rev/s] · 2π · r [m] = rpm · (2π/60) · r_m
-    //
-    //    HISTORY: the two old errors used to partially CANCEL (v_actual under-read ~6.6×), and
-    //    correcting the form alone made the under-read WORSE (~32×) while ENCODER_SLOTS_PER_REV was
-    //    still the unsourced 512. Because the loop closes on v_actual, under-reading means the
-    //    velocity loop OVER-DRIVES — hence the VELOCITY_CHAIN_CALIBRATED interlock on the State-98
-    //    velocity entry points. Both scale inputs are now measured (240 counts/rev from the disc's
-    //    120 counted slots, 2026-08-16; r = 0.0762 m, 2026-08-13) and the interlock now defaults
-    //    open.
-    //
-    //    CHANGING THIS SCALE IS A CONTROLLER CHANGE (fw v10). The shipped velocity controller is
-    //    the Youla-H design in drive_controller.h; it has NO tunable gains, so a corrected scale
-    //    cannot be absorbed by turning a knob here. v_actual is the plant OUTPUT the synthesis
-    //    plant was identified against, so rescaling it rescales the loop gain and invalidates the
-    //    synthesis gates. Re-run controller_design_MIMO/synthesize_drive_siso.py against the
-    //    corrected plant and regenerate both coefficient headers — do not attempt to compensate in
-    //    firmware. Gain TUNING applies only to the USE_YOULA_DRIVE_CONTROLLER=0 PI fallback, whose
-    //    Kp/Ki should be tuned against this measured scale if that path is ever used.
-    float flyWheelSpeedRpm = (dx / ENCODER_COUNTS_PER_REV) * (60.0f / dtSec);
-    v_actual = flyWheelSpeedRpm * RPM_TO_MPS;
+    uint32_t sumUs = 0;
+    for (uint8_t i = 0; i < ENC_PERIOD_AVG_N; i++) sumUs += periods[i];
+    if (sumUs == 0) {           // cannot happen with the ENC_PERIOD_MIN_US floor; divide guard
+        v_actual = encVelHaveValid ? encVelLastValid : 0.0f;
+        return;
+    }
+
+    float distM = (float)ENC_PERIOD_AVG_N * ENC_SLOT_PITCH_M;
+    v_actual = (dir >= 0 ? 1.0f : -1.0f) * distM / ((float)sumUs * 1e-6f);
+    encVelLastValid = v_actual;
+    encVelHaveValid = true;
 }
 
 
@@ -7758,6 +7954,54 @@ void doEncoderA() {
         AfirstDown = 0; BfirstDown = 0;
     } else if ((pinA_read == 0) && (pinB_read == 1)) {
         AfirstDown = 1;
+    }
+
+    // ── Edge-period velocity tap (fw v12) ────────────────────────────────────
+    // Runs LAST so encoderPos already reflects this edge's decode. Only A-RISING edges are
+    // timestamped: pinA_read was just read for the decode above, so `== 1` on a CHANGE interrupt
+    // IS the rising edge — no extra digitalRead is added. One A-rising edge occurs per quadrature
+    // cycle, so each interval spans exactly one slot pitch, same edge type on the same channel
+    // (which cancels the two sensors' threshold/duty asymmetry).
+    // Cost: at 5 m/s the A-rising rate is v/pitch = 1.25 kHz and this tap adds one subtraction,
+    // one compare and a handful of stores — well under a microsecond per edge on a 600 MHz core,
+    // against the 800 µs edge spacing at that speed.
+    if (pinA_read == 1) {
+        uint32_t nowUs = micros();
+        int32_t  pos   = encoderPos;
+        if (!encHaveLastEdge) {
+            encLastEdgeUs    = nowUs;
+            encPosAtLastEdge = pos;
+            encHaveLastEdge  = true;
+        } else {
+            uint32_t period = nowUs - encLastEdgeUs;   // unsigned: correct across micros() wrap
+            if (period >= ENC_PERIOD_MIN_US) {
+                // Direction comes from the quadrature decoder, not from this tap: the encoderPos
+                // delta across one cycle is +2 forward (both counts land in doEncoderB) and -2
+                // reverse (both land here). A zero delta means the decoder did not complete a
+                // cycle (jitter about a slot edge, or a channel fault) — not a measurable pitch,
+                // so the ring is invalidated rather than fed an ambiguous sign.
+                int32_t dpos  = pos - encPosAtLastEdge;
+                int8_t  newDir = (dpos > 0) ? 1 : ((dpos < 0) ? -1 : 0);
+                if (newDir == 0) {
+                    encPeriodCount = 0;                 // ambiguous — restart accumulation
+                    encPeriodDir   = 0;
+                } else {
+                    if (newDir != encPeriodDir) {
+                        encPeriodCount = 0;             // direction flip: never average across it
+                        encPeriodIdx   = 0;
+                        encPeriodDir   = newDir;
+                    }
+                    encPeriodBuf[encPeriodIdx] = period;
+                    encPeriodIdx = (uint8_t)((encPeriodIdx + 1) % ENC_PERIOD_AVG_N);
+                    if (encPeriodCount < ENC_PERIOD_AVG_N) encPeriodCount++;
+                }
+                encLastEdgeUs    = nowUs;
+                encPosAtLastEdge = pos;
+            }
+            // period < ENC_PERIOD_MIN_US: optical glitch/bounce. Dropped WITHOUT advancing the
+            // base timestamp or the position reference, so the next genuine edge still measures a
+            // full pitch from the last genuine edge.
+        }
     }
 }
 

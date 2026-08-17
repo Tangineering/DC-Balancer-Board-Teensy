@@ -38,6 +38,35 @@ or refines the SISO model, the refinement is called out explicitly (§7).
 > limit** and the bus-power budget is not approached; the coincidence §2.1 was built on no
 > longer exists. Any downstream argument resting on it must be re-derived.
 >
+> **Velocity-estimator round — 2026-08-16b.** The drive channel changed **again**, in two
+> ways that this document's §4.2 now carries: a **velocity-estimator delay** `Td_est(v0)`
+> was added to `G22` (it was never modelled, and its omission is the root cause of the
+> ML0136–ML0139 closed-loop limit cycle), and the **drive gain was re-centred on
+> measurement** via `K_v` (nominal 1.0 → 1.25, corners {0.5, 1, 2} → {0.85, 1.25, 1.85}).
+> Scope: §4.2, §9.2, §9.3, §10, this banner and the change log, plus the SISO drive
+> synthesis (`synthesize_drive_siso.py`, re-run; new weight rung WC = 60, Wu(0.25, 300,
+> 12.5)). **§2, §2.1, §5 and §8 remain NOT updated**, for the same reason as the previous
+> round.
+>
+> **The MIMO staleness DEEPENS.** The frozen MIMO artifacts were already built on a
+> retired plant; they are now stale on a *structural* count as well, not merely on
+> parameter values — `design_plant` has grown from 8 states to 10, and `G22` from 4 to 6,
+> because the estimator delay is a new element in the loop. Regenerating them is a new
+> synthesis round, and one that must re-derive anything resting on the old state count.
+>
+> **Consequence to know about before running the Phase-1 battery: `validate_mimo_model.py`
+> G1.5/G1.6 now FAIL on the drive channel** (`G22` in-band deviation 58.9 % vs a 15 %
+> gate; `G11` 0.93 % and `G12` 0.71 % are unaffected). This is expected and is not a
+> regression in the design plant: the 15-state truth model in `full_model_mimo.py` carries
+> neither the estimator delay nor the re-centred `K_v`, so the two models are now
+> describing different drive channels. Grafting both changes into `full_model_mimo.py` is
+> part of the deferred MIMO regeneration round; until then the *drive* half of the
+> validation battery is stale, and the SISO drive design is gate-checked by
+> `synthesize_drive_siso.py` / `validate_drive_siso.py` instead.
+>
+> **The Phase-1 "all 12 gates pass" status line below therefore describes the previous
+> state of this sub-project, not the current one.**
+>
 > The MIMO artifacts are frozen on the retired plant and their regeneration is a new
 > synthesis round, not a re-run — per-stage failure detail is in the `README.md` banner.
 
@@ -203,14 +232,20 @@ five parameter corners.
 not asserted — it is exactly the image of the expression above over the operating box.
 See §7.3 for where the box *escapes* that envelope.
 
-### 4.2 G22 — drive channel (4 states)
+### 4.2 G22 — drive channel (6 states)
 
 ```
 Δi_cmd → Padé₂(e^{−Td_v s}) → 1/(τ_v s + 1) → Δi_m
-       → k_t·η_dt·φ/r_t  [N/A]  → 1/(m_eff s + b_eff) → Δv_phys → K_enc·K_v → Δv
+       → k_t·η_dt·φ/r_t  [N/A]  → 1/(m_eff s + b_eff) → Δv_phys
+       → Padé₂(e^{−Td_est(v0) s})  [velocity estimator]  → K_enc·K_v → Δv
 ```
 
-**Status: CALIBRATED (2026-08-16).** Every constant in this block is now measured. The
+`Δv_phys` is the **true** flywheel surface speed and `Δv` is what the **firmware measures**.
+The two are no longer the same signal. Only `Δv` is fed back; the drive→share coupling of
+§4.4 taps `Δv_phys`, because the motor's bus-current draw responds to the real shaft speed
+and not to what the estimator has got round to reporting.
+
+**Status: CALIBRATED (2026-08-16), estimator element ADDED (2026-08-16b).** Every constant in this block is now measured. The
 authoritative record is `calibration/motor_id_20260815.md`; the values below are its
 image in `plant_mimo.py`. The pre-calibration placeholder chain (KV 1750, 66 mm tire
 radius, mass split, aero + rolling + free-run drag composite) is retired.
@@ -287,6 +322,102 @@ performance lever, not a correctness fix, and at the achieved drive bandwidth it
 nothing (the binding gates are phase margin and worst-corner ‖S‖ at `pole_factor` = 0.5,
 `K_v` = 2 — see `drive_siso_metrics.txt`). Narrowing to {0.7, 1.0, 1.4} is the documented
 next step if bandwidth is ever wanted.
+
+
+**The velocity estimator — added 2026-08-16b, and why it was missing.**
+
+The firmware's velocity estimate was modelled as an ideal measurement. It is not one, and
+the first closed-loop `'V'` runs said so unambiguously: ML0136–ML0139 (fw v11) **limit
+cycled at 2.3–2.6 Hz = 14.5–16.3 rad/s at every step size** (0.1, 0.5, 1.0 m/s). That band
+is the drive design's crossover. The shipped estimator was a **≈113 ms boxcar** — ≈56 ms of
+group delay, **52–58° of phase at 16 rad/s, against a 49.6° design phase margin** — with a
+measured command→speed lag of 63–73 ms and 0.0177 m/s quantization. The loop was closed
+around a lag the synthesis plant did not contain, so the margin the design reported was
+never the margin the hardware had. A limit cycle at exactly the design crossover is the
+signature of that specific error, not of a gain error and not of anti-windup: anti-windup
+(Hanus) was independently confirmed working in those same runs (`u_unsat` hugged the rail
+with ≤ 0.4 A typical excess, clean releases, ≈150 saturation episodes).
+
+The **replacement** estimator (firmware round, parallel to this one) is an **edge-period**
+estimator, and this is the contract it is modelled against:
+
+* the period is measured same-edge-type over one full **slot pitch**,
+  `pitch = 2π·r_t/120 = 3.9898 mm` of flywheel surface travel;
+* **`N` = 2 periods are averaged** (configurable in firmware);
+* the estimate is **latched once per pitch** (zero-order hold in between);
+* below ≈0.03 m/s the estimator times out and reports 0.
+
+Its dynamics are an averaging window of `N` pitches plus a one-pitch hold, so:
+
+```
+Td_est(v) = N·pitch/(2v)        mean-value delay of the N-pitch averaging window
+          + pitch/(2v)          mean staleness of the once-per-pitch latch
+          = (N + 1)·pitch/(2v)
+```
+
+| `v0` [m/s] | `Td_est` [ms] | phase at 16 rad/s |
+|---|---|---|
+| 0.5 (validity floor) | 11.97 | 11.0° |
+| 2.0 (design point) | 2.99 | 2.7° |
+| 5.0 | 1.20 | 1.1° |
+| *(retired boxcar)* | *≈56* | *51°* |
+
+It is modelled as a **pure transport delay** (Padé(2)), not as the exact boxcar: the
+difference between the two lies above `1/Td_est`, far above any achievable crossover.
+
+**`Td_est` is velocity-dependent, and that is a corner axis, not a footnote.** It is
+carried by sweeping `v0` over `TD_EST_V0_SET = {0.5, 2, 5}` m/s, which takes the drive
+corner family from 24 plants to **72**. Note what this does to the previous round's
+bookkeeping: that round *dropped* the `v0` sweep as exactly degenerate, because the
+calibrated `b_eff` is a local slope with no `v0` term. `v0` now re-enters `G22` in exactly
+one place — the estimator — so the axis is reinstated, but as an **estimator-delay axis**,
+not a drag axis. The drag-slope speed dependence stays on `pole_factor`.
+
+**Validity floor: `v0 ≥ 0.5 m/s`** (`plant_mimo.V0_VALID_MIN`). `Td_est` grows without
+bound as `v → 0` — 19.9 ms at 0.3 m/s, 59.8 ms at 0.1 m/s — and **this design is not
+gate-checked below 0.5 m/s**. Closing the velocity loop below the floor requires either a
+wider delay corner, paid for in bandwidth, or a gain schedule on `v`. This is a limitation
+of the design, not a property of the vehicle.
+
+**The measured gain datapoint — `K_v` re-centred, 2026-08-16b.**
+
+The drive gain has now been measured end to end, twice, and **the two measurements
+disagree by a factor of ≈2**:
+
+| Evidence | Implied `K_F` | vs modelled 0.4516 N/A |
+|---|---|---|
+| ML0136–ML0139, +12 A ramps, startup-excluded fits: 0.186–0.204 (m/s²)/A net, drag added back | 0.805 N/A | **×1.78** |
+| 4.5 ± 0.4 A cruise hold at `v0` = 2.0 m/s | 0.409 N/A | **×0.91** |
+
+The two ramp figures reconcile with each other cleanly (see
+`calibration/motor_id_20260815.md`): they are the same measurement fitted over different
+windows, and the lower one is depressed by the retired boxcar's fill transient at the start
+of the ramp. They do **not** reconcile with the cruise hold. No single constant in the
+chain closes a factor of 2 — `η_dt` would have to exceed 1.0, which is not an efficiency —
+but **`m_eff` ≈ 1.6–2.0 kg would**, and that is independently consistent with the
+coast-down record's unexplained ×1.4–1.5 residual and with its noted alternative fit of
+`m_eff` ≈ 2.4 kg. That is logged as an **open bench item**, not resolved here: `m_eff` is a
+direct J measurement, and re-litigating it on inference would trade a measurement for an
+argument.
+
+The modelling decision, therefore:
+
+* `η_dt` stays at **0.85** and stays a `TODO(calibrate)`. Raising it would also move `i_m0`
+  and the §4.4 coupling gains, which nothing measured this round touches.
+* the residual is carried by **`K_v`**, whose nominal moves **1.0 → 1.25** (the geometric
+  mean of ×0.91 and ×1.78) and whose corners move **{0.5, 1, 2} → {0.85, 1.25, 1.85}** to
+  bracket both endpoints.
+
+```
+G22(0) = 1.4112 → 1.7641 (m/s)/A          effective K_F·K_v = 0.5645 N/A
+```
+
+This is simultaneously a **nominal correction** and a **robustness relaxation**: the `K_v`
+span narrows from ×4.0 to ×2.2. The relaxation is bought with measurement rather than
+asserted, and it is what pays for the estimator delay added above — the re-synthesized
+controller holds its 15.98 rad/s crossover with *more* phase margin than before (51.9° vs
+49.6°) on a corner family three times larger. Full ladder and gates in
+`drive_siso_metrics.txt`.
 
 ### 4.3 G21 = 0 — and why that is a modelling *result*, not an assumption
 
@@ -623,7 +754,7 @@ Every uncalibrated quantity, the corner axis that covers it, and where it is def
 | `τ_f` prefilter | 0.8 ms | `share_corners` τ_f ∈ {0, 0.8} ms | firmware (implemented) |
 | `VREF` = 0.6 V | – | TODO(verify: TPS61288 DS §7.5) | – |
 
-### 9.2 Drive channel — CALIBRATED 2026-08-16
+### 9.2 Drive channel — CALIBRATED 2026-08-16, estimator added 2026-08-16b
 
 The drive channel was the placeholder-heavy half of this model. It is now measured. Rows
 marked **MEASURED** cite `calibration/motor_id_20260815.md`, which is the source of truth;
@@ -631,15 +762,17 @@ the remaining rows are the residual placeholder set.
 
 | Item | Value | Basis / status | Corner axis |
 |---|---|---|---|
-| **`k_t`** motor torque constant | **4.266e-3 N·m/A** | **MEASURED.** `(3/2)·p·λ` with p = 2, λ = 1.422 mWb from VESC FOC detection (Castle 1406 1900KV). Pole-pair count cross-checked against KV to 2.0 %. Replaces the 5.457e-3 KV-1750 placeholder. | `K_v` (now over-wide) |
+| **`k_t`** motor torque constant | **4.266e-3 N·m/A** | **MEASURED.** `(3/2)·p·λ` with p = 2, λ = 1.422 mWb from VESC FOC detection (Castle 1406 1900KV). Pole-pair count cross-checked against KV to 2.0 %. Replaces the 5.457e-3 KV-1750 placeholder. | `K_v` |
 | **`R_m`** phase resistance | **0.0226 Ω** | **MEASURED** (VESC FOC detection). Replaces the 0.075 Ω spec-can placeholder. Now enters `A_i` at **14.8 %** (was 4.5 %) because `i_m0` rose ×4.2 — a higher sensitivity, but no longer a placeholder. | – |
-| **`m_eff`** equivalent inertia | **3.5 kg** | **MEASURED.** J = 0.0203 kg·m² at the flywheel; J/r_t² = 3.50 kg confirms it at `r_t`. Replaces the `M_BUILT` 2.50 + `M_ROT` 0.45 split, both of which are retired. | `pole_factor` |
+| **`m_eff`** equivalent inertia | **3.5 kg** | **MEASURED**, but **CHALLENGED** (2026-08-16b). J = 0.0203 kg·m² at the flywheel; J/r_t² = 3.50 kg confirms it at `r_t`. However, `m_eff` ≈ 1.6–2.0 kg is the single change that would reconcile the ramp-gain and cruise-hold measurements (§4.2), and the coast-down record's ×1.4–1.5 residual points the same way (its own alternative fit was 2.4 kg). Three inferences, one direction — but all inferences, against one direct measurement. **Open bench item; not changed here.** | `pole_factor` |
 | **`r_t`** rolling radius | **0.0762 m** | **MEASURED** (3.00 in, 2026-08-13). Flywheel radius, and the coupling was resolved 2026-08-16 as surface/roller, so it is the correct rolling radius (§4.2). Replaces the 0.033 m tire figure. | – |
 | **`K_enc`** encoder chain | 1.0 | **CLOSED.** 240 counts/rev (120 slots × ×2 decode, counted and hardware-confirmed 2026-08-16) with `r_t` above fixes the chain end to end. No longer structurally uncertain. | – |
 | **`b_eff`** damping | **0.32 N·s/m ±15 %** | **MEASURED** twice, independently: TP0125–TP0134 steady-state ladder and ML0135 small-signal steps agree to 6 %. Local slope at `v0` = 2.0 m/s. | `pole_factor ∈ {0.5, 3}` |
 | **`F_c`** Coulomb drag | **1.2 ± 0.25 N** | **MEASURED**, thermally variable (1.31 N cold / 1.05–1.1 N warm). Sets `i_m0`, hence the coupling gains; contributes nothing to `b_eff`. Replaces the `C_rr·m·g` slot. | spread carried into §4.4 |
 | **`τ_v`** VESC current-loop lag | **1.0 ms** | **MEASURED** 2026-08-16 (VESC Tool sampled current step, 63 % at ≈1–1.5 ms); independently implied by the detection gains, KP/L = KI/R = 1004 rad/s. | `τ_v ∈ {0.5, 5} ms` |
 | **`Td_v`** command transport | 2.0 ms | **DECIDED, not measured** (operator, 2026-08-15). Analytic bound 0.9–2 ms (UART frame 781 µs + packet thread ≲1 ms + FOC pickup ≤70 µs), comfortably inside the corner axis; direct measurement was declined to keep a current instrument out of the motor power path. | `Td_v ∈ {1, 4} ms` |
+| **`Td_est`** velocity-estimator delay | **(N+1)·pitch/(2·v0)** = 2.99 ms at `v0` = 2 m/s | **CONTRACT** (2026-08-16b), from the replacement edge-period estimator: `pitch` = 3.9898 mm (2π·r_t/120, `r_t` measured, 120 slots counted), `N` = 2 averaged periods, latched once per pitch. Not a fitted quantity — it is derived from the firmware design. What *is* uncertain is `N` (configurable) and the ≈0.03 m/s timeout. | `v0 ∈ {0.5, 2, 5}` m/s → `Td_est ∈ {11.97, 2.99, 1.20}` ms |
+| **`K_v`** drive-gain residual | **1.25** (was 1.0) | **RE-CENTRED ON MEASUREMENT** (2026-08-16b). Geometric mean of the two disagreeing end-to-end gain measurements (ramps ×1.78, cruise hold ×0.91). No longer a pure placeholder axis: it now has a measured centre and a measured span. | `{0.85, 1.25, 1.85}` (span ×4.0 → ×2.2) |
 | `η_dt` driveline efficiency | 0.85 | **TODO(calibrate)** — the largest surviving drive placeholder. All absolute forces scale with it, so it is what keeps `K_v` alive. | `K_v` |
 | `η_v` inverter efficiency | 0.85 | **TODO(calibrate)** | `K_v` (coupling magnitude) |
 | `V_bus0` under load | 15.907 V | derived from the as-built divider; no load-line measurement | – (bounded by boost regulation) |
@@ -654,6 +787,21 @@ therefore the whole `Δi_cmd → Δv` DC gain, and `η_v` scales the coupling ma
 are what the `K_v` axis now carries, having previously carried `k_t`, `r_t`, the mass and
 the encoder chain as well — all of which are now measured. That is why §4.2 records the
 axis as over-wide rather than as sized-to-evidence.
+
+**The ranking changed again on 2026-08-16b, and the top item is new.** The largest
+uncertainty in the drive channel is no longer an efficiency: it is the **factor-of-2
+disagreement between the ramp-gain and cruise-hold measurements** (§4.2), which is now
+carried by `K_v`'s width. Unlike `η_dt`, it cannot be closed by measuring the item itself —
+both gain measurements have been *made*; what is missing is the constant that reconciles
+them, and `m_eff` is the leading candidate. A single timestamped coast-down from a high
+plateau discriminates it, and that is the highest-value drive measurement outstanding.
+
+**`Td_est` is a new sensitivity of a different kind: it is exactly known but strongly
+speed-dependent.** Nothing about it needs measuring — it follows from the firmware contract
+and the counted slot pitch — but its 10× variation across the operating range now sets the
+worst corner of the drive design (0.5 m/s), where the previous round's worst corner was a
+parameter extreme. Lowering `N` from 2 to 1 would cut it by a third; that is a firmware
+lever on plant phase, and it is available if bandwidth is ever wanted.
 
 `R_m` moved the *other* way: it is measured now, but its influence on `A_i` tripled to
 14.8 % because `i_m0` rose ×4.2. Had it stayed a placeholder, this calibration would have
@@ -677,15 +825,29 @@ below rather than deleted, so the record shows what the drive-channel calibratio
    whose *sign* is unknown. A partial result exists on the bench supply (+0.05 V at
    r = 0.5, `controller_design/system_model.md` §8); the **vehicle-source** measurement is
    still open.
-2. **`η_dt`** — the largest surviving drive placeholder (0.85, assumed). All absolute
-   forces scale with it, so it is what keeps the `K_v` axis at factor-2 width. The
-   discriminating experiment already exists in the calibration record's open list: one
-   timestamped coast-down from a ≥5 A plateau, which separates `η_dt` from `m_eff` via the
-   ×1.4–1.5 residual between observed and ladder-predicted deceleration.
+2. **The ramp-vs-cruise gain disagreement — `m_eff` vs `η_dt`.** PROMOTED 2026-08-16b, and
+   it now outranks `η_dt` alone. Two end-to-end gain measurements disagree by ×2 (§4.2)
+   and `K_v`'s width is what absorbs it. The discriminating experiment is the one already
+   in the calibration record's open list: **one timestamped coast-down from a ≥5 A
+   plateau** (manual `K` log or a timestamped terminal capture — never the Serial Plotter
+   axis). It separates `m_eff` from `η_dt` through the ×1.4–1.5 residual between observed
+   and ladder-predicted deceleration, and `m_eff` ≈ 1.6–2.0 kg is what would reconcile all
+   three observations at once. Closing it would let `K_v` narrow further and is the
+   highest-value *drive* measurement outstanding.
 3. **`τ_r`, `Td`** — the existing SISO share step test (`system_model.md` §9), unchanged.
 4. **`η_v`** — inverter efficiency; affects the coupling magnitude only.
-5. **Cold-start repeat of one ML0135 step pair** — bounds the thermal `F_c` spread from
+5. **`N` (estimator averaging depth) — a design lever, not a measurement.** `Td_est`
+   scales as `(N+1)`, so `N` = 1 would cut the estimator's phase by a third at every
+   speed, at the cost of estimate noise. It is worth a bench comparison only if drive
+   bandwidth is ever wanted: at `N` = 2 the estimator costs 2.7° at the design point and
+   is not what limits the loop.
+6. **Cold-start repeat of one ML0135 step pair** — bounds the thermal `F_c` spread from
    below, tightening the `i_m0` band that sets the §4.4 coupling gains.
+
+*Newly OPEN as of 2026-08-16b:* the estimator's low-speed behaviour below the
+`v0` = 0.5 m/s validity floor. The design is not gate-checked there and the firmware
+estimator times out below ≈0.03 m/s; a bench sweep of small `'V'` setpoints (0.2–0.5 m/s)
+would establish whether the floor needs a gain schedule or merely a documented restriction.
 
 *Closed by the 2026-08-16 drive calibration:* ~~`r_t` and the encoder chain~~ (measured and
 hardware-confirmed); ~~`k_t`~~ (motor fitted, flux linkage measured); ~~`τ_v`, `Td_v`~~
@@ -699,5 +861,6 @@ fed is retired).
 
 | Date | Change |
 |---|---|
+| 2026-08-16b | **Velocity-estimator delay modelled; drive gain re-centred on measurement.** (a) `G22` gains `Padé₂(e^{−Td_est(v0) s})` on the MEASURED speed output, `Td_est = (N+1)·pitch/(2 v0)` with `pitch` = 3.9898 mm and `N` = 2 → 2.99 ms at the design speed, 11.97 ms at the 0.5 m/s validity floor. The element was ABSENT before, and its absence is the root cause of the ML0136–ML0139 closed-loop limit cycle (2.3–2.6 Hz = the design crossover; the retired ≈113 ms boxcar ate 52–58° against a 49.6° margin). `design_plant` 8 → 10 states, `G22` 4 → 6. The coupling path deliberately taps the UNDELAYED speed. (b) `K_v` nominal 1.0 → **1.25**, corners {0.5, 1, 2} → **{0.85, 1.25, 1.85}**: the geometric mean of the ramp-implied (×1.78) and cruise-hold-implied (×0.91) gains, bracketing both — a nominal correction and a span narrowing (×4.0 → ×2.2) at once. `η_dt` deliberately left at 0.85 (the ramps imply ≥ 1.0, which is not an efficiency; `m_eff` ≈ 1.6–2.0 kg is the reconciling candidate and is an open bench item). `G22(0)` 1.4112 → **1.7641** (m/s)/A. (c) The `v0` corner axis is REINSTATED — degenerate last round, now the estimator-delay axis — taking the drive corner family 24 → **72**; validity floor `v0 ≥ 0.5 m/s` stated explicitly. Sections 4.2, 9.2, 9.3, 10 and the banner updated. The SISO drive synthesis was re-run downstream (new rung WC = 60, Wu(0.25, 300, 12.5); crossover 15.98 rad/s HELD with PM 51.9° vs 49.6°, worst ‖S‖ 2.418 over 72 corners; two bench-evidence gates added — estimator phase at crossover < 10°, and PM > 30° at the 0.5 m/s corner). MIMO artifacts now stale STRUCTURALLY as well as numerically. |
 | 2026-08-16 | **Drive channel calibrated.** `k_t` 5.457e-3 → 4.266e-3 N·m/A (measured flux linkage), `R_m` 0.075 → 0.0226 Ω, `m_eff` 2.95 → 3.5 kg (`M_BUILT`/`M_ROT` split retired), `r_t` 0.033 → 0.0762 m (flywheel rolling radius; the encoder measures flywheel surface speed), `τ_v` measured at 1.0 ms, `Td_v` 2.0 ms decided against an analytic bound. The aero + `C_rr` + free-run drag composite is **retired** and replaced by a measured lumped law, `b_eff` = 0.32 N·s/m local slope at `v0` = 2.0 m/s plus `F_c` = 1.2 ± 0.25 N Coulomb; pure viscous is excluded at χ² ×1400. `pole_factor` corner widened {0.5, 2} → {0.5, 3} to cover the slope doubling below 1.5 m/s, which also absorbs the `v0` dependence `b_eff` no longer carries. Consequences: `G22(0)` 3.7085 → 1.4112 (m/s)/A, drive pole −0.1219 → −0.0914 rad/s, `i_m0` 0.973 → 4.074 A (measured 4.5 ± 0.4 A — the old figure was 4× low), `A_ω` ×3.27, `A_i` ×0.38, `G12(0)` −2.757e-2 → −1.326e-2. Sections 4.2, 4.4, 9.2, 9.3, 10 rewritten. `K_v ∈ {0.5, 1, 2}` retained but recorded as over-wide (only `η_dt`/`η_v` remain inside it). Source: `calibration/motor_id_20260815.md`. The SISO drive synthesis was re-run downstream (`synthesize_drive_siso.py`; new weight rung WC = 55, Wu(0.15, 300, 7.5), clamp 20 → 12 A); the MIMO synthesis artifacts are **not** regenerated by this round and are stale against these constants. |
 | 2026-08-04 | Phase 1: created. 2×2 design plant, 15-state truth model, 12-gate battery, all passing. Deviations from the plan spec recorded in §5 (RGA is blind to triangular coupling), §6 (no explicit `∂α̂/∂I_tot` term — it would double count; used as a gate instead), and §7.2 (OP feasibility filter added). Finding recorded in §7.3 (OP box escapes the shipped K envelope). |

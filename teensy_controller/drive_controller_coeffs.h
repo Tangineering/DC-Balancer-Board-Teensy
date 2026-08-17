@@ -11,7 +11,7 @@
 //
 // SISO Youla-H velocity controller for the SC001 drive channel:
 //   Gc(z) = R(z) + kI*Ts/2*(z+1)/(z-1),  e = v_ref - v [m/s]  ->  i_cmd [A]
-// H-inf mixed sensitivity (gamma = 27.3683) + Youla-H DC rescale (T(0) = 1 exact),
+// H-inf mixed sensitivity (gamma = 33.0723) + Youla-H DC rescale (T(0) = 1 exact),
 // Tustin at Ts = 2.0 ms (500 Hz motor channel; VESC UART frame floor).
 // R(z) is 2 DF2T biquad section(s); the integrator is kept separate to match the
 // shipped share-controller header layout byte for byte.
@@ -19,10 +19,10 @@
 // *** ANTI-WINDUP WARNING (differs from share_controller.h) ***
 // The shipped share controller de-winds by back-calculating ONLY the integrator.  That
 // is NOT sufficient here: the non-integral branch R has a low-frequency gain of
-// 745.5 A/(m/s), so against the +-12 A clamp the biquad cascade alone saturates for
-// |e| > 16.1 mm/s and its lag states wind up independently of the integrator.
-// Measured on the 0->2 m/s step: integrator-only AW leaves a -0.48 m/s standing error
-// and a 22.2 mm/s limit cycle.
+// 544.8 A/(m/s), so against the +-12 A clamp the biquad cascade alone saturates for
+// |e| > 22.0 mm/s and its lag states wind up independently of the integrator.
+// Measured on the 0->2 m/s step: integrator-only AW leaves a -0.44 m/s standing error
+// and a 20.5 mm/s limit cycle.
 // RE-CHECKED at the firmware's +-12 A clamp (2026-08-15 operator decision) on the
 // re-identified plant (2026-08-16 calibration): e_sat scales with the clamp, so it must be
 // re-answered on every clamp change.  Integrator-only AW is CLEAN for steps up to
@@ -31,7 +31,7 @@
 // A correct implementation must condition the FULL
 // controller state (Hanus self-conditioned form, used in the synthesis sims):
 //     u_unsat = Cd x + Dd e ;  u = clamp(u_unsat) ;
-//     x[k+1]  = (Ad - Bd*Cd/Dd) x + Bd*u/Dd            (Dd = 1.811060289e+00)
+//     x[k+1]  = (Ad - Bd*Cd/Dd) x + Bd*u/Dd            (Dd = 1.856237746e+00)
 // i.e. this baseline costs a 5-state state-space realization on the Teensy, not a
 // biquad cascade.  Recorded as a Phase-6 "Teensy implementation cost" datapoint.
 // The realization is emitted below (DRIVE_CTRL_AD/BD/CD/DD/AC); replay reference vectors
@@ -40,7 +40,7 @@
 
 #define DRIVE_CTRL_TS_US   2000      // controller update period, microseconds
 #define DRIVE_CTRL_NSOS    2
-static const float DRIVE_CTRL_KI = 7.362548774e+01f;   // integrator gain (continuous kI, Tustin in code)
+static const float DRIVE_CTRL_KI = 5.342470264e+01f;   // integrator gain (continuous kI, Tustin in code)
 // constexpr (not plain const) so the firmware can static_assert these against its own
 // MOTOR_I_CMD_MAX: a namespace-scope `const float` is NOT a constant expression in C++17, so
 // the clamp-pairing guard would not compile against it.  Same float32 values either way.
@@ -49,8 +49,8 @@ static constexpr float DRIVE_CTRL_I_MAX = 1.200000000e+01f;    // A, motor curre
 
 // biquad sections: b0 b1 b2 a1 a2 (a0 = 1)
 static const float DRIVE_CTRL_SOS[DRIVE_CTRL_NSOS][5] = {
-    { 1.737434802e+00f, 2.478356094e+00f, 7.409212920e-01f, -1.554882692e+00f, 5.984034636e-01f },
-    { 1.000000000e+00f, -1.985977210e+00f, 9.859784907e-01f, -1.997779971e+00f, 9.977801670e-01f },
+    { 1.802813043e+00f, 2.927200978e+00f, 1.124387935e+00f, -1.515410188e+00f, 5.792519523e-01f },
+    { 1.000000000e+00f, -1.153592494e+00f, 1.651601951e-01f, -1.155691949e+00f, 1.576389816e-01f },
 };
 
 // ── Hanus self-conditioned state-space realization ──────────────────────────
@@ -84,46 +84,55 @@ static const float DRIVE_CTRL_SOS[DRIVE_CTRL_NSOS][5] = {
 //     bit-identical coefficients.  (Emitting float64 text instead put the reference
 //     vectors 1.7e-2 A away from anything this header can reproduce.)  AC is derived from
 //     the rounded AD/BD/CD/DD and then rounded, so AC == AD - BD*CD/DD holds to
-//     8.6e-07 — a float32 rounding of AC's largest entry, not a compounding error.
+//     9.9e-07 — a float32 rounding of AC's largest entry, not a compounding error.
 //   * ARITHMETIC.  The replay vectors assume a float64 (double) state recursion.  Running
 //     the recursion in float32 costs a further ~1e-2 A on the saturated regen episode —
 //     measured, not estimated (validate_drive_siso.py check 4).  The divergence appears
 //     at rail RELEASE rather than by slow accumulation, so it is not bounded by shortening
 //     the run.  A float32 state recursion is NOT adequate for this controller; use double
 //     (or fixed point with equivalent headroom).
-// Replay comparisons should be toleranced on the OUTPUT (a few mA of i_cmd), never on the
-// individual states.
+// Replay comparisons should be toleranced on the OUTPUT (i_cmd), never on the individual
+// states — and the two episodes need DIFFERENT tolerances:
+//     'small' (unsaturated) : 1e-5 A or tighter.  Clean test of the linear recursion.
+//     'regen' (saturated)   : ~50 mA.  During the saturated transient this controller
+//                             dithers across the +-12 A clamp boundary (82 clamp-state
+//                             transitions), so one flipped decision — which any
+//                             perturbation can cause — is worth ~8 A of state drive.
+//                             Measured: 12.8 mA sensitivity to a %.9e stimulus
+//                             truncation, 13.4 mA to a float32 one.  A tighter tolerance
+//                             fails correct implementations.
+// Full detail in the figures/drive_siso_replay.csv header.
 #define DRIVE_CTRL_NSTATES 5
-static const float DRIVE_CTRL_DD = 1.81106030941009521e+00f;   // direct feedthrough, A per (m/s)
+static const float DRIVE_CTRL_DD = 1.85623776912689209e+00f;   // direct feedthrough, A per (m/s)
 
 // AD [5][5] — unconditioned state matrix (cross-check only)
 static const float DRIVE_CTRL_AD[5][5] = {
     { 1.00000000000000000e+00f, 0.00000000000000000e+00f, 0.00000000000000000e+00f, 0.00000000000000000e+00f, 0.00000000000000000e+00f },
-    { 0.00000000000000000e+00f, 9.96174991130828857e-01f, 1.13332681357860565e-02f, -1.07865333557128906e-02f, 4.44174611402559094e-06f },
-    { 0.00000000000000000e+00f, 1.13332681357860565e-02f, 9.29382920265197754e-01f, 1.28287851810455322e-01f, -4.02351361117325723e-05f },
-    { 0.00000000000000000e+00f, 1.07865333557128906e-02f, -1.28287866711616516e-01f, 6.27197027206420898e-01f, 3.98931326344609261e-04f },
-    { 0.00000000000000000e+00f, -4.44930628873407841e-06f, 4.03023259423207492e-05f, 3.99633165216073394e-04f, 9.99907732009887695e-01f },
+    { 0.00000000000000000e+00f, 9.95380818843841553e-01f, 1.51922004297375679e-02f, 1.43731078132987022e-02f, 3.41984821716323495e-04f },
+    { 0.00000000000000000e+00f, 1.51922050863504410e-02f, 9.07621622085571289e-01f, -1.63736358284950256e-01f, -2.77872872538864613e-03f },
+    { 0.00000000000000000e+00f, -1.43730947747826576e-02f, 1.63736417889595032e-01f, 6.08922779560089111e-01f, -2.46185101568698883e-02f },
+    { 0.00000000000000000e+00f, -3.42018407536670566e-04f, 2.77900672517716885e-03f, -2.46211402118206024e-02f, 1.59176915884017944e-01f },
 };
 
 // BD [5][1] — input matrix
 static const float DRIVE_CTRL_BD[5][1] = {
     { 1.00000000000000000e+00f },
-    { -7.05518051981925964e-02f },
-    { 1.20681062340736389e-01f },
-    { 9.56071913242340088e-02f },
-    { -4.14862115576397628e-05f },
+    { -6.54718950390815735e-02f },
+    { 1.27576366066932678e-01f },
+    { -9.60740447044372559e-02f },
+    { -2.47332011349499226e-03f },
 };
 
 // CD [1][5] — output matrix
 static const float DRIVE_CTRL_CD[1][5] = {
-    { 1.47250980138778687e-01f, -3.52759017944335938e+01f, 6.03405342102050781e+01f, -4.78035964965820312e+01f, 2.07088682800531387e-02f },
+    { 1.06849402189254761e-01f, -3.27359466552734375e+01f, 6.37881889343261719e+01f, 4.80369567871093750e+01f, 1.23653328418731689e+00f },
 };
 
 // AC [5][5] = AD - BD*CD/DD — the CONDITIONED state matrix (use this one)
 static const float DRIVE_CTRL_AC[5][5] = {
-    { 9.18693482875823975e-01f, 1.94780387878417969e+01f, -3.33177947998046875e+01f, 2.63953647613525391e+01f, -1.14346649497747421e-02f },
-    { 5.73632074519991875e-03f, -3.78035753965377808e-01f, 2.36196374893188477e+00f, -1.87302708625793457e+00f, 8.11178004369139671e-04f },
-    { -9.81215480715036392e-03f, 2.36196351051330566e+00f, -3.09144377708435059e+00f, 3.31370854377746582e+00f, -1.42018264159560204e-03f },
-    { -7.77348643168807030e-03f, 1.87302708625793457e+00f, -3.31370854377746582e+00f, 3.15078377723693848e+00f, -6.94304879289120436e-04f },
-    { 3.37309870701574255e-06f, -8.12519341707229614e-04f, 1.42253132071346045e-03f, -6.95410475600510836e-04f, 9.99908208847045898e-01f },
+    { 9.42437648773193359e-01f, 1.76356430053710938e+01f, -3.43642349243164062e+01f, -2.58786659240722656e+01f, -6.66150271892547607e-01f },
+    { 3.76871600747108459e-03f, -1.59258157014846802e-01f, 2.26508378982543945e+00f, 1.70869839191436768e+00f, 4.39561046659946442e-02f },
+    { -7.34359491616487503e-03f, 2.26508355140686035e+00f, -3.47644257545471191e+00f, -3.46524238586425781e+00f, -8.77637565135955811e-02f },
+    { 5.53024746477603912e-03f, -1.70870065689086914e+00f, 3.46524739265441895e+00f, 3.09519076347351074e+00f, 3.93812395632266998e-02f },
+    { 1.42370103276334703e-04f, -4.39606085419654846e-02f, 8.77727568149566650e-02f, 3.93850840628147125e-02f, 1.60824522376060486e-01f },
 };
