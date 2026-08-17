@@ -7798,8 +7798,17 @@ void initEsc() {
 // composable regardless of the caller's state. On the host test build the mocks are no-ops, so
 // the trivial fallback is exact.
 #if defined(__IMXRT1062__)
-static inline uint32_t encIrqSave()            { uint32_t p = __get_PRIMASK(); __disable_irq(); return p; }
-static inline void     encIrqRestore(uint32_t p) { __set_PRIMASK(p); }
+// The Teensyduino core does not ship the CMSIS __get_PRIMASK()/__set_PRIMASK() intrinsics, so
+// the PRIMASK read-modify-restore is done with the equivalent inline assembly ("mrs/msr primask",
+// the standard Cortex-M idiom). "memory" clobbers order the accesses across the barrier.
+static inline uint32_t encIrqSave() {
+    uint32_t p;
+    __asm__ volatile("mrs %0, primask\n\tcpsid i" : "=r"(p) :: "memory");
+    return p;
+}
+static inline void encIrqRestore(uint32_t p) {
+    __asm__ volatile("msr primask, %0" :: "r"(p) : "memory");
+}
 #else
 static inline uint32_t encIrqSave()            { noInterrupts(); return 0; }
 static inline void     encIrqRestore(uint32_t)  { interrupts(); }
