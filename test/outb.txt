@@ -1,0 +1,250 @@
+teensy_controller.ino — unit tests
+===================================
+
+[doState0() BENCH_TEST bypass (power stage off)]
+  PASS: doState0/bench: boots straight to Idle in one pass
+  PASS: doState0/bench: boosts stay OFF
+  PASS: doState0/bench: bus switches stay OFF
+  PASS: doState0/bench: motor node NOT pre-charged (power stage dark until 'G')
+  PASS: doState0/bench: BT_SEQUENCE stays OFF
+  PASS: doState0/bench: never gates or faults on low V_bus
+
+[FAULT_OV_BUS persistence filter]
+  PASS: OV_BUS: bit set on the first over-limit sample (truthful telemetry)
+  PASS: OV_BUS: single sample does not change mainState
+  PASS: OV_BUS: single sample leaves error_code ERR_NONE (t=0 edge)
+  PASS: OV_BUS: window opened, 1 sample counted
+  PASS: OV_BUS: no latch before the persistence time elapses
+  PASS: OV_BUS: latches once time AND sample floor are both satisfied
+  PASS: OV_BUS: flag retained through the latch
+  PASS: OV_BUS: below-limit sample resets the window
+  PASS: OV_BUS: a dip restarts the window — no latch at the original deadline
+  PASS: OV_BUS: sparse stalled-loop samples do not latch (aliasing guard)
+  PASS: OV_BUS: gap > OV_BUS_MAX_GAP_MS restarts the window (counter back to 1)
+  PASS: OV_BUS: window pending (no latch yet)
+  PASS: OV_BUS: other faults keep single-sample latching while an OV_BUS window is pending
+  PASS: OV_BUS: both the pending OV_BUS bit and the latched fault are reported
+
+[FAULT_OV_BUS sample-gap guard (OV_BUS_MAX_GAP_MS)]
+  PASS: gap guard: samples at 0/100/101 do NOT latch (window restarted at the 100ms gap)
+  PASS: gap guard: window restarted at the sparse sample, then continued
+  PASS: gap guard: the gap-abandoned window increments the transient counter
+  PASS: gap guard: contiguous 2ms-spaced samples across the window DO latch
+
+[FAULT_OV_BUS gap-abandoned window is counted (review round 2)]
+  PASS: gap-abandoned: window open, nothing counted yet
+  PASS: gap-abandoned: the restart counts the abandoned window at the restart tick
+  PASS: gap-abandoned: a FRESH window is open after the restart
+  PASS: gap-abandoned: still no latch
+  PASS: gap-abandoned: the fresh window's normal close counts separately
+
+[FAULT_OV_BUS transient counter]
+  PASS: transient: counter starts at 0
+  PASS: transient: counter not incremented while the window is still open
+  PASS: transient: counter increments once when a window closes WITHOUT latching
+  PASS: transient: a closed sub-persistence window never latches
+  PASS: transient: window state cleared on close
+  PASS: transient: a second window increments the counter again
+  PASS: transient: under-limit ticks with no open window do nothing
+  PASS: transient: t=0 close marks the limiter as printed (flag, not 0-sentinel)
+  PASS: transient: t=0 close still counted
+
+[FAULT_UV_BUS: unarmed while the power stage is dark]
+  PASS: UV_BUS/dark: never arms with both source switches LOW
+  PASS: UV_BUS/dark: no fault bit despite V_bus=0 < LIMIT_V_BUS_MIN
+  PASS: UV_BUS/dark: no latch
+
+[FAULT_UV_BUS: dwell ratchets across a repetitive relay cycle (fw v5, TP0053 class)]
+  PASS: UV_BUS/relay: (setup) armed
+  PASS: UV_BUS/relay: the repetitive 9ms/51ms duty cycle ratchets to a latch within 6 cycles — fw v4's wall-clock window NEVER latched this waveform (TP0053 ran 1.0-1.3s / up to 24 excursions with zero fault indication)
+  PASS: UV_BUS/relay: does not latch within the first 2 cycles alone — isolated dips leak away, only the repetitive ratchet gets there
+  PASS: UV_BUS/relay: latches well inside the 5-cycle budget derived from the +6.45ms/cycle net gain arithmetic
+
+[FAULT_UV_BUS: sparse transients (WP0069 shape) leak away between excursions, no latch]
+  PASS: UV_BUS/sparse: 9 isolated ~2ms dips spread over ~210ms never latch — the dwell leaks away between them
+  PASS: UV_BUS/sparse: accumulated dwell stays below the latch threshold at the end of the run
+  PASS: UV_BUS/sparse: every one of the 9 dips is counted as a closed transient (visible via 'S')
+
+[FAULT_UV_BUS: continuous collapse latches at 20ms dwell, not at 15ms]
+  PASS: UV_BUS/continuous: not latched at 15ms of continuous under-dwell
+  PASS: UV_BUS/continuous: dwell tracks the elapsed continuous under-time 1:1 (each 1ms tick is well under the 5ms dt cap)
+  PASS: UV_BUS/continuous: latches once dwell reaches UV_BUS_DWELL_LATCH_MS (20ms)
+
+[FAULT_UV_BUS: per-tick dwell credit is capped at UV_BUS_DWELL_DT_CAP_MS]
+  PASS: UV_BUS/cap: a stalled-loop/long gap credits at most UV_BUS_DWELL_DT_CAP_MS, not the full 500ms elapsed
+  PASS: UV_BUS/cap: a second capped tick adds another 5ms — a stalled loop cannot insta-latch off a single huge dt
+  PASS: UV_BUS/cap: two capped ticks (10ms total) stay below the 20ms latch
+
+[FAULT_UV_BUS: leaking dwell floors at zero, a fresh 20ms is still required after]
+  PASS: UV_BUS/leak: (setup) 5ms accumulated
+  PASS: UV_BUS/leak: a long over-limit stretch floors dwell at exactly 0, never negative
+  PASS: UV_BUS/leak: 19ms accumulated from the zero floor still does not latch
+  PASS: UV_BUS/leak: the 20th ms from the floor latches — confirms no negative credit was banked during the leak stretch
+
+[FAULT_UV_BUS: disarm (boosts off) dumps the accumulated dwell, not just the armed flag]
+  PASS: UV_BUS/disarm: (setup) 15ms accumulated
+  PASS: UV_BUS/disarm: disarming dumps the accumulated dwell to zero
+  PASS: UV_BUS/disarm: 19ms after re-arm does not latch (fresh dwell, not 15+19=34ms carried over from before the disarm)
+  PASS: UV_BUS/disarm: a full fresh 20ms after re-arm does latch
+
+[FAULT_UV_BUS: the raw telemetry bit tracks V_bus vs LIMIT_V_BUS_MIN, before any latch]
+  PASS: UV_BUS/flag: bit clear while V_bus is above the limit
+  PASS: UV_BUS/flag: bit sets on the very first under-limit tick, well before any latch
+  PASS: UV_BUS/flag: bit clears the instant V_bus recovers above the limit
+
+[FAULT_UV_BUS: disarms when both source switches open (teardown)]
+  PASS: UV_BUS/disarm: (setup) armed
+  PASS: UV_BUS/disarm: disarmed the instant both source switches read LOW
+  PASS: UV_BUS/disarm: no fault bit during the decay
+  PASS: UV_BUS/disarm: no latch
+
+[FAULT_UV_BUS: immune to a bring-up ramp that never reaches V_BUS_CHARGED_THRESH]
+  PASS: UV_BUS/bringup: never arms across a ramp that stays under V_BUS_CHARGED_THRESH
+  PASS: UV_BUS/bringup: no fault bit despite V_bus < LIMIT_V_BUS_MIN for most of the ramp
+  PASS: UV_BUS/bringup: no latch
+
+[FAULT_UV_BUS: bringupActive disarms even with switches+boosts+charged bus (S3)]
+  PASS: S3: uvBusArmed stays false while bringupActive is true, even with switches+boosts+charged bus all otherwise satisfied — the staged bring-up owns its own sags
+  PASS: S3: arms on the very tick bringupActive falls, with switches/boosts/bus already up
+
+[FAULT_UV_BUS: disarms when both boosts are off, switches still closed (S4, 'F'/'B')]
+  PASS: S4: (setup) armed with a boost enabled
+  PASS: S4: disarmed the instant both boosts read LOW, even with the bus switches still closed
+  PASS: S4: no fault bit on the sag — routine 'F'/'B' bench sequence, not a loss of source feed
+  PASS: S4: no latch
+
+[FAULT_UV_BUS: arming requires a MATCHED source pair, not mismatched OR terms (S7)]
+  PASS: T5: the fw v4 OR-predicate's individual terms are all satisfied, but no MATCHED source pair exists -- stays DISARMED (the S7 fix)
+  PASS: T5: no fault bit, no dwell accumulated -- an unarmed low bus is not a fault
+  PASS: T5: no latch
+  PASS: T5: closing the matched pair (FC_BUS HIGH + FC_REG HIGH together) arms it
+
+[FAULT_UV_BUS armed under BENCH_TEST (unlike OC/UV_BATT)]
+  PASS: UV_BUS/bench: (contrast) FAULT_OC_FC does NOT fire under BENCH_TEST
+  PASS: UV_BUS/bench: arms under BENCH_TEST exactly as in production
+  PASS: UV_BUS/bench: a sustained sag STILL latches under BENCH_TEST — the fw v3 gap this closes
+
+[FAULT_UV_FC: never arms with V_fc ~0 even with the FC pair closed (single-source bench)]
+  PASS: UV_FC/no-source: never arms -- V_fc was never observed >= LIMIT_V_FC_MIN
+  PASS: UV_FC/no-source: no fault bit despite V_fc=0.2 < LIMIT_V_FC_MIN for the whole run
+  PASS: UV_FC/no-source: no latch -- this is precisely the bench-with-no-fuel-cell case the arming term exists to protect
+
+[FAULT_UV_FC: arms only when the FC pair is closed AND V_fc has been observed >= V_FC_ARM_THRESH (C1)]
+  PASS: UV_FC/arm: arms once the FC pair is closed and V_fc reads >= V_FC_ARM_THRESH
+  PASS: UV_FC/arm: a healthy V_fc alone does not arm -- the FC pair must also be closed
+  PASS: UV_FC/arm (C1): V_fc = 6.5V (in [6.0, 7.0)) never arms, however long it is held there
+  PASS: UV_FC/arm (C1): unarmed, so no fault bit and no latch either, even though V_fc is already below what the OLD (pre-C1) single-threshold arm would have required
+  PASS: UV_FC/arm (C1): V_fc just under V_FC_ARM_THRESH (6.99V) does not arm
+  PASS: UV_FC/arm (C1): V_fc exactly at V_FC_ARM_THRESH (7.0V) does arm (>=, not >)
+  PASS: UV_FC/arm (C1): (setup) armed at V_FC_ARM_THRESH
+  PASS: UV_FC/arm (C1): once armed, 6.5V is still ABOVE the 6.0V trip limit -- no transient bit
+  PASS: UV_FC/arm (C1): the trip limit is still LIMIT_V_FC_MIN (6.0V), unmoved by C1 -- 5.9V sets the transient bit once armed
+
+[FAULT_UV_FC: continuous collapse latches at 20ms dwell, not before]
+  PASS: UV_FC/collapse: (setup) armed
+  PASS: UV_FC/collapse: not latched at 15ms of continuous under-dwell
+  PASS: UV_FC/collapse: dwell tracks the elapsed continuous under-time 1:1
+  PASS: UV_FC/collapse: latches once dwell reaches UV_FC_DWELL_LATCH_MS (20ms), naming the cause ERR_UV_FC (not ERR_UV_BUS -- WP0096/WP0098's V_fc collapse led the bus event by ~7ms, so the source-rail fault must latch first and name the true cause)
+
+[FAULT_UV_FC: the transient telemetry bit sets/clears independently of the latch]
+  PASS: UV_FC/flag: bit clear while V_fc is above the limit
+  PASS: UV_FC/flag: bit sets on the very first under-limit tick, well before any latch
+  PASS: UV_FC/flag: bit clears the instant V_fc recovers above the limit
+
+[FAULT_UV_FC: an intermittent under/over pattern that nets below the latch never fires]
+  PASS: UV_FC/leak: 9 isolated ~2ms dips spread over ~234ms never latch -- the dwell leaks away between them
+  PASS: UV_FC/leak: accumulated dwell stays below the latch threshold at the end of the run
+  PASS: UV_FC/leak: every one of the 9 dips is counted as a closed transient (visible via 'S')
+
+[FAULT_UV_FC: a single huge tick gap contributes at most UV_BUS_DWELL_DT_CAP_MS (5ms)]
+  PASS: UV_FC/cap: a stalled-loop/long gap credits at most 5ms, not the full 500ms elapsed
+  PASS: UV_FC/cap: a second capped tick adds another 5ms -- a stalled loop cannot insta-latch off a single huge dt
+  PASS: UV_FC/cap: two capped ticks (10ms total) stay below the 20ms latch
+
+[FAULT_UV_FC: disarm (+ dwell zeroed) when the FC pair opens, the stage is dark, or bring-up runs]
+  PASS: UV_FC/disarm(a): (setup) 15ms accumulated
+  PASS: UV_FC/disarm(a): FC_BUS_ENABLE opening disarms and dumps the accumulated dwell
+  PASS: UV_FC/disarm(b): FC_REG_ENABLE opening (boost off) disarms too, even with the bus switch still closed
+  PASS: UV_FC/disarm(c): a fully dark stage disarms and dumps the dwell
+  PASS: UV_FC/disarm(d): bringupActive keeps it disarmed even with the FC pair closed and V_fc healthy
+  PASS: UV_FC/disarm(d): arms on the very tick bringupActive falls, with the pair already closed and V_fc already healthy
+
+[FAULT_UV_FC armed under BENCH_TEST (WP0096/WP0098 happened in State 98 under BENCH_TEST)]
+  PASS: UV_FC/bench: arms under BENCH_TEST exactly as in production, including State 98
+  PASS: UV_FC/bench: a sustained V_fc collapse STILL latches under BENCH_TEST -- this is exactly the WP0096/WP0098 gap (V_fc under 5V, bus still in regulation, MCU stop with zero fault indication) that this check exists to close
+
+[State 98 'G' staged bring-up]
+  PASS: 'G': machine armed and P0 entry executed in the same invocation
+  PASS: 'G': bus switches closed, MOT_PWR held LOW
+  PASS: 'G': re-arm while active is refused (phase unchanged)
+  PASS: 'G': machine advances on a doState98() tick with an EMPTY serial queue
+  PASS: 'G': boosts enabled at the P0 gate pass
+  PASS: 'G': doInit=false — initControlPeripherals NOT re-run (no MDAC writes)
+  PASS: 'G': bus in regulation → dwell
+  PASS: 'G': motor node connected at P3
+  PASS: 'G': bring-up completes and the machine self-resets
+  PASS: 'G': stays in State 98 with no fault
+
+[State 98 bring-up ↔ profile interlocks]
+  PASS: 'G' refused while the drive cycle is active
+  PASS: 'G' refused while the power-share profile is active
+  PASS: 'G' refused while the trapezoid profile is active
+  PASS: 'D' refused while a bring-up is in progress
+  PASS: 'R' refused while a bring-up is in progress
+  PASS: 'T' refused while a bring-up is in progress (no pending input either)
+
+[State 98 'X'/'Q' abort the bring-up (stage darkened)]
+  PASS: abort: reached mid-P1
+  PASS: 'X': bring-up aborted
+  PASS: 'X': all five power-stage pins driven LOW (a cut-park is invisible to the ADC)
+  PASS: 'Q': bring-up aborted on exit
+  PASS: 'Q': power stage darkened on a mid-bring-up exit
+  PASS: 'Q': returns to Idle
+
+[State 98 topology lockout during a staged bring-up]
+  PASS: lockout: reached mid-P1 with the machine running
+  PASS: lockout: '3' refused mid-bring-up (would bypass the dwell)
+  PASS: lockout: 'F' refused mid-bring-up (would re-arm a boost the machine owns)
+  PASS: lockout: '5' refused mid-bring-up (illegal BT_BUS+FC_CHARGE)
+  PASS: lockout: '1' refused (bus switch stays as the machine set it)
+  PASS: lockout: the machine keeps running through the refused keys
+  PASS: lockout: 'A' refused mid-bring-up (no numeric-entry prompt opened)
+  PASS: lockout: 'V' refused mid-bring-up (no numeric-entry prompt opened)
+  PASS: lockout: 'P' refused mid-bring-up (no numeric-entry prompt opened)
+  PASS: lockout: 'O' refused mid-bring-up (no numeric-entry prompt opened)
+  PASS: lockout: no motor/droop writer took effect through the refusals
+  PASS: lockout: 'S' status dump still works and leaves the machine alone
+  PASS: lockout: 'X' still aborts the bring-up
+  PASS: lockout: the abort still darkens the stage
+
+[Bring-up P0 darkens the stage first (review F1)]
+  PASS: P0 dark-start: both boosts driven LOW before the switches close
+  PASS: P0 dark-start: a latched FC_CHARGE is closed (no illegal BT_BUS+FC_CHARGE)
+  PASS: P0 dark-start: REGEN path closed
+  PASS: P0 dark-start: motor node taken off the chain
+  PASS: P0 dark-start: bus switches closed onto a dark stage
+
+['G' clears a standing manual motor command / droop-live]
+  PASS: 'G' ownership: bring-up actually armed
+  PASS: 'G' ownership: standing manual mode cleared (cannot resume after DONE)
+  PASS: 'G' ownership: standing manual current cleared
+  PASS: 'G' ownership: live droop/share writer disabled
+  PASS: 'G' ownership: a zero-current flush was sent to the VESC
+  PASS: 'G' ownership: no motor command issued on a plain bring-up tick
+
+[Manual/live motor block suppressed during a bring-up (round 2, F1)]
+  PASS: manual suppression: bring-up armed
+  PASS: manual suppression: applyManualMotor() never runs while bringupActive
+  PASS: manual suppression: powerBalanceGated() never writes the droop MDACs either
+  PASS: manual suppression: the machine is still running
+  PASS: manual suppression: aborted
+  PASS: manual suppression: the manual block resumes once the machine is idle
+
+[State 98 '3' motor-node connect guard (bus-regulation gated)]
+  PASS: doState98: '3' refused at a dark bus — stays LOW
+  PASS: doState98: '3' refused at a pre-charged bus (use 'G')
+  PASS: doState98: '3' allowed from a regulated bus even with a discharged node
+  PASS: doState98: '3' OFF always allowed (guard only blocks ON)
+
+===================================
+Results: 175 passed, 0 failed

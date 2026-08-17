@@ -5809,6 +5809,15 @@ static void test_edge_period_estimator() {
     //     advancing the period base, so the next genuine edge still measures a full pitch from the
     //     last genuine edge (not from the glitch). Needs baseline + 1 genuine period first so the
     //     ring is one short of full (cnt=1) when the glitch/next-genuine pair is exercised.
+    //     fw v15 stimulus note: the glitch tap MUST be an A-only wiggle (enc_tap_ambiguous — no B
+    //     transition, encoderPos does not move), not a full enc_cycle_fwd(). A full cycle really
+    //     does complete a physical pitch of travel (encoderPos += 2) regardless of the ISR's
+    //     period-ratio verdict, and fw v15's pitch count is read from that same encoderPos delta —
+    //     so a "rejected" full cycle would still silently count as real motion via dpos when the
+    //     next genuine edge closes the interval (dpos would accumulate to 4, not 2), corrupting
+    //     this test's own premise. A genuine sub-floor glitch this fast physically cannot be a
+    //     completed quadrature cycle in the first place, so enc_tap_ambiguous() is the correct
+    //     stimulus, not a test compromise.
     enc_reset();
     g_mock_micros = 0;
     encoderVelReset();
@@ -5820,13 +5829,14 @@ static void test_edge_period_estimator() {
     check(fabsf(v_actual - expect_1pitch) < fabsf(expect_1pitch) * 1e-4f,
           "(e) pre-glitch: ring one short of full (cnt=1) is a live single-pitch reading");
     uint32_t t_glitch = t + (ENC_PERIOD_MIN_US / 2);      // well inside the glitch floor
-    enc_cycle_fwd(t_glitch); updateWheelSpeed();          // glitch — must be dropped
+    enc_tap_ambiguous(t_glitch); updateWheelSpeed();      // glitch — must be dropped (A-only, no dpos)
     check(fabsf(v_actual - expect_1pitch) < fabsf(expect_1pitch) * 1e-4f,
           "(e) glitch: the cnt=1 reading is UNCHANGED (glitch did not count as a period, base did not advance)");
     uint32_t t_next = t + P;                              // genuine edge, a full pitch after the LAST GENUINE edge
     enc_cycle_fwd(t_next); updateWheelSpeed();            // genuine period 2 (cnt=2, ring full)
     check(fabsf(v_actual - expect_fwd) < fabsf(expect_fwd) * 1e-4f,
-          "(e) glitch: the next genuine reading is correct (base did not advance to the glitch)");
+          "(e) glitch: the next genuine reading is correct (base did not advance to the glitch, and "
+          "fw v15's dpos-derived pitch count correctly reads 1 pitch, not 2)");
 
     // (f) Direction flip mid-ring. The quadrature decode only completes a cycle's full +-2 delta
     //     AFTER that cycle's own A-rising tap (the far edge of the same cycle fires later), so the
@@ -6033,12 +6043,16 @@ static void test_edge_period_estimator() {
     enc_reset();
 }
 
-// ─── Edge-period adaptive plausibility filter (fw v13) ───────────────────────
+// ─── Edge-period adaptive plausibility filter (fw v13; missed-edge branch superseded fw v15) ──
 // Covers the ISR-side accept/reject logic added in doEncoderA() (encPeriodRefUs EWMA, the
-// ENC_PERIOD_REF_SEED_N bootstrap, the 0.625x-ref low-side spurious-merge test, and the missed-edge
-// k=2/k=3 reinterpretation bounded at ENC_PERIOD_MAX_MULT). All periods here are chosen as exact
-// multiples of the shift arithmetic (ref = 2000us, a multiple of 8) so the accept/reject boundary is
-// exact, not an approximation subject to integer rounding.
+// ENC_PERIOD_REF_SEED_N bootstrap, and the 0.625x-ref low-side spurious-merge test). fw v13's
+// ratio-derived missed-edge k=2/k=3 reinterpretation (bounded at the now-retired
+// ENC_PERIOD_MAX_MULT) is GONE — item 3 below is rewritten for the fw v15 behavior (a period
+// spanning only ONE quadrature cycle, i.e. |dpos|=2, is stored literally, not reinterpreted, since
+// the pitch count is now read from the decoder, not inferred from the ratio). See
+// test_encoder_v15_dpos_pitch_count() for the decoder-count coverage itself. All periods here are
+// chosen as exact multiples of the shift arithmetic (ref = 2000us, a multiple of 8) so the
+// accept/reject boundary is exact, not an approximation subject to integer rounding.
 static void test_edge_period_adaptive_filter() {
     test_group("Edge-period adaptive plausibility filter (fw v13)");
 
@@ -6068,18 +6082,25 @@ static void test_edge_period_adaptive_filter() {
     //    armed), a short edge at 0.3*Pr must be rejected AND must not advance the period base, so
     //    the next genuine edge (a full Pr after the LAST GENUINE edge) reads the correct, unchanged
     //    steady value rather than a doubled/halved one.
+    //    fw v15 stimulus note: the spurious tap uses enc_tap_ambiguous() (A-only, no B transition,
+    //    encoderPos unmoved), not enc_cycle_fwd() — see the identical note at the (e) glitch test
+    //    in test_edge_period_estimator(). A REAL ML0145-style spurious A bounce does not also
+    //    fabricate a matching B transition, so it must not move encoderPos; with fw v15's pitch
+    //    count now read from that delta, a full fake cycle here would wrongly accumulate |dpos|=4
+    //    by the next genuine edge (pitches=2) instead of the documented |dpos|=2 (pitches=1).
     {
         float steady = arm_ref();
         check(encPeriodCount == ENC_PERIOD_AVG_N, "item1 setup: ring is full at the steady reading");
         uint32_t spurious_t = armLastEdgeUs + (uint32_t)(0.3f * (float)Pr);   // 0.3*Pr < 0.625*Pr floor
-        enc_cycle_fwd(spurious_t); updateWheelSpeed();
+        enc_tap_ambiguous(spurious_t); updateWheelSpeed();
         check(fabsf(v_actual - steady) < 1e-6f,
               "item1: a 0.3xPr edge is rejected — reading unchanged (base did not advance)");
         uint32_t genuine_t = armLastEdgeUs + Pr;   // one full Pr AFTER THE LAST GENUINE EDGE
         enc_cycle_fwd(genuine_t); updateWheelSpeed();
         check(fabsf(v_actual - steady) < fabsf(steady) * 1e-4f,
               "item1: the next genuine edge reads the correct steady value (base did not advance "
-              "to the rejected spurious edge — no 2x-family error)");
+              "to the rejected spurious edge, and fw v15's dpos count correctly reads 1 pitch — "
+              "no 2x-family error)");
     }
 
     // ── Item 2: boundary bracketing the 0.625xref threshold ((ref>>1)+(ref>>3) == 1250 for
@@ -6104,33 +6125,43 @@ static void test_edge_period_adaptive_filter() {
               "item2: the accepted 1300us period visibly changes the reading (proves it was stored)");
     }
 
-    // ── Item 3: missed-edge reinterpretation. A period ~= 2*ref (in (1.5xref, 2.5xref]) is stored
-    //    as period/2 == ref, so the ring entry equals a normal steady period and v is UNCHANGED —
-    //    not halved, which is what a naive "accept the raw interval" implementation would produce.
-    //    Same for ~= 3*ref -> /3. A period > 3.5xref is accepted AS-IS (v reads LOW, safe direction).
+    // ── Item 3 (SUPERSEDED fw v15): the old ratio-derived "missed-edge reinterpretation" is GONE.
+    //    A period ~2x/3x/4x ref that spans only ONE real quadrature cycle (|dpos|=2, e.g. genuine
+    //    slow motion, not a missed edge) is now stored LITERALLY — pitches = (|dpos|+1)>>1 = 1 —
+    //    so v_actual reads proportionally SLOW (1/2x, 1/3x, 1/4x), not "reinterpreted" back to the
+    //    steady value. This is the exact fix for the fw v13 ref≈2T absorbing basin (a genuine slow
+    //    single-pitch period used to get silently folded back into "unchanged", masking real
+    //    deceleration); see test_encoder_v15_dpos_pitch_count() for the actual multi-pitch
+    //    (|dpos|>2) decoder-count coverage, including the case that WOULD have used this branch.
     {
         float steady = arm_ref();
-        uint32_t k2_t = armLastEdgeUs + 2 * Pr;   // period = 2*ref = 4000us, in (3000,5000] -> k=2, /2=ref
+        uint32_t k2_t = armLastEdgeUs + 2 * Pr;   // ONE real cycle, period=2*ref, dpos=2 -> pitches=1
         enc_cycle_fwd(k2_t); updateWheelSpeed();
-        check(fabsf(v_actual - steady) < fabsf(steady) * 1e-3f,
-              "item3: a ~2xref period (missed 1 edge) is reinterpreted to store exactly ref — "
-              "v_actual is UNCHANGED, not halved");
+        float expect = (2.0f * ENC_SLOT_PITCH_M) / ((float)(Pr + 2 * Pr) * 1e-6f);
+        check(fabsf(v_actual - expect) < fabsf(expect) * 1e-4f,
+              "item3 (fw v15): a ~2xref single-cycle period is stored LITERALLY (not reinterpreted) "
+              "— v_actual reads roughly half of steady");
+        check(fabsf(v_actual - steady) > fabsf(steady) * 0.1f,
+              "item3 (fw v15): the reading visibly differs from steady (no longer folded back)");
     }
     {
         float steady = arm_ref();
-        uint32_t k3_t = armLastEdgeUs + 3 * Pr;   // period = 3*ref = 6000us, in (5000,7000] -> k=3, /3=ref
+        uint32_t k3_t = armLastEdgeUs + 3 * Pr;   // ONE real cycle, period=3*ref, dpos=2 -> pitches=1
         enc_cycle_fwd(k3_t); updateWheelSpeed();
-        check(fabsf(v_actual - steady) < fabsf(steady) * 1e-3f,
-              "item3: a ~3xref period (missed 2 edges) is reinterpreted to store exactly ref — "
-              "v_actual is UNCHANGED, not a third");
+        float expect = (2.0f * ENC_SLOT_PITCH_M) / ((float)(Pr + 3 * Pr) * 1e-6f);
+        check(fabsf(v_actual - expect) < fabsf(expect) * 1e-4f,
+              "item3 (fw v15): a ~3xref single-cycle period is likewise stored literally, not /3");
+        check(fabsf(v_actual - steady) > fabsf(steady) * 0.1f,
+              "item3 (fw v15): visibly differs from steady");
     }
     {
         float steady = arm_ref();
-        uint32_t k4_t = armLastEdgeUs + 4 * Pr;   // period = 4*ref = 8000us, > 3.5*ref (7000) -> as-is
+        uint32_t k4_t = armLastEdgeUs + 4 * Pr;   // ONE real cycle, period=4*ref, dpos=2 -> pitches=1
         enc_cycle_fwd(k4_t); updateWheelSpeed();
         check(v_actual > 0.0f && fabsf(v_actual) < fabsf(steady),
-              "item3: a >3.5xref period is accepted AS-IS (literal, undivided) — v_actual reads "
-              "LOW rather than being reinterpreted (the documented safe direction)");
+              "item3 (fw v15): a >3.5xref single-cycle period is likewise accepted AS-IS (literal, "
+              "undivided) — v_actual reads LOW, same uncapped behavior as before, now for every "
+              "multiple since there is no ratio branch left to distinguish them");
     }
 
     // ── Item 4: bootstrap. From a fresh reset, the first ENC_PERIOD_REF_SEED_N (2) periods are
@@ -6194,8 +6225,8 @@ static void test_edge_period_adaptive_filter() {
           "constants: ENC_VEL_TIMEOUT_US == 100000 (fw v13, was 150000)");
     check(ENC_PERIOD_REF_SEED_N == 2u,
           "constants: ENC_PERIOD_REF_SEED_N == 2");
-    check(ENC_PERIOD_MAX_MULT == 3u,
-          "constants: ENC_PERIOD_MAX_MULT == 3");
+    // ENC_PERIOD_MAX_MULT is RETIRED in fw v15 (the ratio-derived k branch it bounded is gone —
+    // pitch count now comes from the decoder and is uncapped). No replacement constant to pin.
 
     enc_reset();
 }
@@ -6369,26 +6400,31 @@ static void test_motor_zero_cutoff() {
     reset_test_state();
 }
 
-// ─── fw v13 safety-fix round: arm-threshold speed gate, poisoned-ref tripwire, embargo ageing ────
-// Covers the three ISR/reader mechanisms added on top of the original fw v13 adaptive filter:
-//   (a) ENC_ADAPT_MAX_REF_US = 13000: the ENTIRE adaptive mechanism (low-side spurious gate AND
-//       the k>1 missed-edge branch) is dark once ref >= 13000us (< 0.307 m/s) — below that speed a
-//       spurious edge and a genuine hard launch are indistinguishable by period ratio (S1/S2), so
-//       the filter steps aside and leaves sub-0.3 m/s glitch rejection to the Schmitt bodge.
-//   (b) ENC_KBRANCH_RUN_MAX = 4: a poisoned reference (locked into the k=2 or k=3 basin) makes
-//       every genuine period take the missed-edge branch forever, reading a clean trace as 2x/3x
-//       fast. 4 CONSECUTIVE k>1 acceptances is treated as poisoning (rather than a genuinely bursty
-//       miss stream) and forces a full encoderVelReset() via encRefPoisonPending.
+// ─── fw v13 safety-fix round: arm-threshold speed gate, embargo ageing (poison tripwire RETIRED
+//     fw v15 — see (b) below and test_encoder_v15_dpos_pitch_count() for its replacement) ────────
+// Covers the ISR/reader mechanisms added on top of the original fw v13 adaptive filter:
+//   (a) ENC_ADAPT_MAX_REF_US = 13000: the low-side spurious gate is dark once ref >= 13000us
+//       (< 0.307 m/s) — below that speed a spurious edge and a genuine hard launch are
+//       indistinguishable by period ratio (S1/S2), so the filter steps aside and leaves sub-0.3 m/s
+//       glitch rejection to the Schmitt bodge. (fw v15 narrowed the scope of what this arms to the
+//       low-side gate alone — the missed-edge branch it used to also gate is gone.)
+//   (b) RETIRED fw v15: the ENC_KBRANCH_RUN_MAX poisoned-reference tripwire (encKBranchRun /
+//       encRefPoisonPending) is gone along with the ratio branch it watched. Its actual regression
+//       target — a reference locked into an absorbing basin reading a clean trace at the wrong
+//       speed forever — is now fixed at the source (decoder pitch counting cannot lock into either
+//       basin) rather than detected and reset after the fact. This section now asserts the
+//       retirement negative: the same stimulus that used to trip the tripwire produces continuous
+//       correct readings and NO reset.
 //   (c) The S3 sign embargo's load-bearing property: an embargoed (held) reading must NOT refresh
 //       encVelLastReadingUs, or the (2b) reading-age bound could never age out a stuck embargo.
 static void test_encoder_v13_safety_round() {
-    test_group("fw v13 safety round: arm-threshold gate, poison tripwire, embargo ageing");
+    test_group("fw v13 safety round: arm-threshold gate, embargo ageing (poison tripwire retired fw v15)");
 
     // ── (e) Constant pinning, first — the derived tests below are meaningless if these drift.
     check(ENC_ADAPT_MAX_REF_US == 13000u,
-          "constants: ENC_ADAPT_MAX_REF_US == 13000 (arms the adaptive filter below ~0.307 m/s)");
-    check(ENC_KBRANCH_RUN_MAX == 4u,
-          "constants: ENC_KBRANCH_RUN_MAX == 4 (consecutive k>1 acceptances before the poison reset)");
+          "constants: ENC_ADAPT_MAX_REF_US == 13000 (arms the low-side spurious gate below ~0.307 m/s)");
+    // ENC_KBRANCH_RUN_MAX is RETIRED in fw v15 along with encKBranchRun/encRefPoisonPending — no
+    // replacement constant to pin (see (b) below).
 
     // Helper: arm a fresh ring/reference with two accepted steady periods at `period`, leaving the
     // reader with a live steady reading. Same 3-cycle shape as test_edge_period_adaptive_filter()'s
@@ -6427,48 +6463,35 @@ static void test_encoder_v13_safety_round() {
               "ACCEPTED (documented S1/S2 trade — sub-0.3 m/s belongs to the Schmitt bodge)");
     }
 
-    // ── (b) Poisoned-reference tripwire. Four CONSECUTIVE periods at ~2x a well-armed reference
-    //     (ref = 2000us, comfortably under ENC_ADAPT_MAX_REF_US) all take the k=2 branch. The 4th
-    //     acceptance raises encRefPoisonPending inside that same ISR call, and updateWheelSpeed()'s
-    //     very next invocation (the one immediately following, in this same tick) performs the full
-    //     reset before touching the new ring data — reporting 0 rather than the suspect reading.
+    // ── (b) RETIRED fw v15: poisoned-reference tripwire → retirement-negative test. Under fw v13,
+    //     four CONSECUTIVE single-cycle periods at ~2x a well-armed reference (ref = 2000us) all
+    //     took the ratio-derived k=2 branch, and the 4th acceptance forced a full encoderVelReset()
+    //     via encRefPoisonPending — reporting 0 rather than the (correct, if the car genuinely
+    //     halved speed) reading. Under fw v15 there is no ratio branch and no tripwire: each of
+    //     these periods carries dpos=2 (ONE real quadrature cycle happened), so pitches=1 and the
+    //     period is stored literally as the genuinely slower reading — this is no longer
+    //     distinguishable from ordinary deceleration, so it must NOT reset. Run well past the old
+    //     4-period threshold (8 consecutive periods) to demonstrate there is no residual run-length
+    //     limit of any kind.
     {
         const uint32_t ref0 = 2000;
         float steady = arm_ref_at(ref0);
         check(steady > 0.0f, "(b) setup: reference armed and live");
-        check(encKBranchRun == 0 && !encRefPoisonPending,
-              "(b) setup: the k-branch run counter starts clean (all setup periods were k=1)");
         uint32_t t = lastEdgeUs;
-        for (int i = 1; i <= 4; i++) {
-            t += 2 * ref0;                 // period = 2*ref -> k=2 branch, stores period/2 = ref
+        float expectSlow = (2.0f * ENC_SLOT_PITCH_M) / (2.0f * (float)(2 * ref0) * 1e-6f);
+        for (int i = 1; i <= 8; i++) {
+            t += 2 * ref0;                 // period = 2*ref, ONE real cycle -> pitches=1, literal
             enc_cycle_fwd(t); updateWheelSpeed();
+            check(v_actual != 0.0f,
+                  "(b) fw v15 retirement negative: no reset fires on this consecutive slow period "
+                  "(the tripwire that used to trip here is gone)");
         }
-        check(v_actual == 0.0f,
-              "(b) poison reset: the 4th consecutive k=2 acceptance reports 0 this same tick");
-        check(encPeriodCount == 0 && encPeriodRefUs == 0 && encPeriodRefSeed == 0,
-              "(b) poison reset: the ring AND the reference are cleared (a full encoderVelReset())");
-        check(encKBranchRun == 0 && !encRefPoisonPending,
-              "(b) poison reset: the run counter and the pending flag are both cleared by the reset");
-    }
-    // 3 consecutive k=2 periods, then a k=1 period: the run counter clears WITHOUT a reset (a
-    // genuinely bursty miss stream, not a poisoned lock).
-    {
-        const uint32_t ref0 = 2000;
-        float steady = arm_ref_at(ref0);
-        (void)steady;
-        uint32_t t = lastEdgeUs;
-        for (int i = 1; i <= 3; i++) {
-            t += 2 * ref0;                 // 3x k=2 -> encKBranchRun reaches 3, still below the max
-            enc_cycle_fwd(t); updateWheelSpeed();
-        }
-        check(encKBranchRun == 3 && !encRefPoisonPending,
-              "(b) 3 consecutive k=2: run counter at 3, not yet poisoned");
-        t += ref0;                         // a normal k=1 period (== ref) clears the run counter
-        enc_cycle_fwd(t); updateWheelSpeed();
-        check(encKBranchRun == 0 && !encRefPoisonPending,
-              "(b) a k=1 period after 3 consecutive k=2s clears the run counter — no reset");
-        check(v_actual != 0.0f,
-              "(b) no reset occurred: the ring is still live (not zeroed)");
+        check(encPeriodCount > 0 && encPeriodRefUs != 0,
+              "(b) fw v15 retirement negative: after 8 consecutive slow periods the ring and "
+              "reference are STILL LIVE (never zeroed)");
+        check(fabsf(v_actual - expectSlow) < fabsf(expectSlow) * 1e-3f,
+              "(b) fw v15 retirement negative: the reading correctly tracks the genuinely slower "
+              "speed instead of being reset to 0 or folded back to the old steady value");
     }
 
     // ── (c) Embargo ageing: the load-bearing S3 property is that an EMBARGOED reading does not
@@ -6523,6 +6546,278 @@ static void test_encoder_v13_safety_round() {
               "within ITS OWN staleness window — only the STALE READING triggered this");
         check(encPeriodCount == 0,
               "(c) reading-age bound fires: the ring resets, same as any other of the four zeroing events");
+    }
+
+    enc_reset();
+}
+
+// ─── fw v15: decoder-derived (dpos) pitch count ──────────────────────────────────────────────────
+// Covers the ISR-side change that replaced fw v13's ratio-derived missed-edge branch: pitches =
+// nearest-integer(|encoderPos delta since the last ACCEPTED edge| / 2), uncapped, and applied
+// unconditionally (no reference, no speed arming — see doEncoderA()'s dpos block and the fw v15
+// changelog entry above ENC_PERIOD_REF_SEED_N in teensy_controller.ino).
+//
+// Two stimulus techniques are used, deliberately:
+//  - Items 1/2 (basin escape) use REAL enc_cycle_fwd()/enc_cycle_rev() cycles at different time
+//    gaps — genuine slow/fast motion, exactly as CLAUDE.md specifies ("construct the ref=2T state
+//    directly ... each 2T interval spans only ONE quadrature cycle"). This is physically honest:
+//    encoderPos legitimately advances by 2 per real cycle regardless of the ISR's accept/reject
+//    verdict, so a real slow (or fast) stream naturally produces the |dpos| the basin needs.
+//  - Items 3-5 (pitch-count arithmetic itself: rounding, the uncapped ceiling, unconditional
+//    application) use a direct single-tap construction (enc_fire_tap_raw()) that pokes encoderPos
+//    to an exact offset from encPosAtLastEdge before firing one real A-rising edge. This is not a
+//    realism compromise — doEncoderA()'s dpos/pitch logic only ever reads `encoderPos` and
+//    `encPosAtLastEdge`, both ordinary (non-ISR-timing) state, so constructing an exact delta
+//    directly is a faithful way to pin the rounding/ceiling arithmetic without first having to
+//    reverse-engineer a quadrature stimulus that reproduces a given |dpos| exactly — and CLAUDE.md
+//    itself endorses direct construction for the ref-seeding case (item 5).
+static uint32_t enc_v15_lastEdgeUs = 0;
+static float enc_v15_arm_at(uint32_t period) {
+    // Local arm helper — identical 3-cycle shape to the other suites' arm_ref()/arm_ref_at(): a
+    // baseline tap, then two accepted periods at `period`, leaving a live steady reading and a
+    // fully-armed reference (encPeriodRefSeed == ENC_PERIOD_REF_SEED_N).
+    enc_reset();
+    g_mock_micros = 0;
+    encoderVelReset();
+    updateWheelSpeed();
+    enc_cycle_fwd(period);       updateWheelSpeed();
+    enc_cycle_fwd(2 * period);   updateWheelSpeed();
+    enc_cycle_fwd(3 * period);   updateWheelSpeed();
+    enc_v15_lastEdgeUs = 3 * period;
+    return v_actual;
+}
+// Direct single-tap construction: land a genuine A-rising edge at t_us whose position delta since
+// the last accepted edge is EXACTLY `dpos` (may be negative), bypassing quadrature replay. pinB is
+// forced to 0 first so doEncoderA()'s own decode branches (which run before the dpos/period tap
+// code) stay inert and do not perturb the poked encoderPos value before it is read.
+static void enc_fire_tap_raw(uint32_t t_us, int32_t dpos) {
+    g_pin_value[ENC_A] = 0;
+    g_pin_value[ENC_B] = 0;
+    encoderPos = encPosAtLastEdge + dpos;
+    g_mock_micros = t_us;
+    g_pin_value[ENC_A] = 1;
+    doEncoderA();
+}
+
+static void test_encoder_v15_dpos_pitch_count() {
+    test_group("fw v15: decoder-derived (dpos) pitch count");
+
+    const uint32_t T = 1000;   // true per-pitch period at the reference "clean" speed
+
+    // ── (1) 2T-basin escape — THE regression this round fixes. Arm the reference at ref=2T using
+    //     GENUINE slow motion (real single-pitch periods at 2T, |dpos|=2 each: a car moving at half
+    //     the eventual clean-stream speed, not a fabricated miss). Resume a CLEAN stream at T: the
+    //     first clean edge (gap T from the last accepted edge) is BELOW 0.625*ref (0.625*2T=1.25T
+    //     > T) and is rejected WITHOUT advancing the base — but the cycle is real, so encoderPos
+    //     still advances underneath the rejection. The SECOND clean edge (gap 2T from the still-
+    //     unmoved base) carries |dpos|=4 (two real cycles happened since the base), so pitches=2 and
+    //     the interval is stored as exactly T — the fix. fw v13 would have re-confirmed the 2T
+    //     basin forever here (every genuine edge divided by 1, feeding 2T back into the EWMA);
+    //     fw v15 must walk back to the true speed and CANNOT stay locked.
+    {
+        float slowSteady = enc_v15_arm_at(2 * T);
+        float expectSlow = ENC_SLOT_PITCH_M / ((float)(2 * T) * 1e-6f);
+        check(fabsf(slowSteady - expectSlow) < fabsf(expectSlow) * 1e-3f,
+              "(1) setup: ref=2T armed via genuine slow motion, reading matches the slow speed");
+        check(encPeriodRefUs > (uint32_t)(1.9 * (double)T) && encPeriodRefUs < (uint32_t)(2.1 * (double)T),
+              "(1) setup: encPeriodRefUs is armed at ~2T");
+
+        uint32_t t = enc_v15_lastEdgeUs;
+        t += T;                          // one clean-speed cycle: gap=T < 0.625*2T -> rejected
+        enc_cycle_fwd(t); updateWheelSpeed();
+        check(fabsf(v_actual - slowSteady) < 1e-6f,
+              "(1) the first clean-speed edge after the slow stream is rejected (reading unchanged, "
+              "base did not advance)");
+
+        t += T;                          // second clean-speed cycle: gap=2T from the UNMOVED base
+        enc_cycle_fwd(t); updateWheelSpeed();
+        check(encLastPitches == 2,
+              "(1) fw v15 fix: the merged 2T interval is recognized as TWO pitches (|dpos|=4)");
+        float expectClean = ENC_SLOT_PITCH_M / ((float)T * 1e-6f);
+        // The ring still holds ONE stale 2T entry from the slow-armed phase (ENC_PERIOD_AVG_N=2),
+        // so this immediate tick reads 2*pitch/(2T+T) = (2/3) x the true clean speed — already well
+        // clear of the old fw v13 basin's HALF-speed reading, not yet the fully-settled value (that
+        // is checked below once the ring itself is all-clean).
+        float expectImmediate = (2.0f * ENC_SLOT_PITCH_M) / (3.0f * (float)T * 1e-6f);
+        check(fabsf(v_actual - expectImmediate) < fabsf(expectImmediate) * 5e-2f,
+              "(1) fw v15 fix: the merged interval stores exactly T per pitch, so v_actual jumps "
+              "immediately to 2/3 of the true clean speed (the correct 2-entry ring average with "
+              "one stale 2T slot) — NOT staying at half of it as fw v13 would have");
+        check(v_actual > slowSteady * 1.2f,
+              "(1) fw v15 fix: the reading has visibly moved off the old half-speed value already");
+
+        // Resume several more clean pitches: the estimator must NOT stay locked at half speed (the
+        // fw v13 basin's defining, absorbing property) — the ring fully clears the stale 2T entry
+        // and the EWMA reference walks back to ~T; every subsequent reading matches truth tightly.
+        for (int i = 0; i < 20; i++) { t += T; enc_cycle_fwd(t); updateWheelSpeed(); }
+        check(fabsf(v_actual - expectClean) < fabsf(expectClean) * 1e-3f,
+              "(1) after several clean pitches: v_actual reads the true clean speed exactly, not "
+              "half — the basin cannot hold");
+        check(encPeriodRefUs > (uint32_t)(0.9 * (double)T) && encPeriodRefUs < (uint32_t)(1.1 * (double)T),
+              "(1) the reference itself walks back to ~T, not staying pinned at ~2T");
+    }
+
+    // ── (2) T/2 fast-basin equivalent. Arm the reference at ref=T/2 (genuine FAST motion — real
+    //     single-pitch periods at T/2, |dpos|=2 each). Resume a clean stream at T: with no ratio-
+    //     based upper interpretation left, the clean edge (period T, well above 0.625*(T/2)) is
+    //     simply accepted as ONE pitch (pitches=1) — no halving/doubling — and the ring reads
+    //     correctly on this very edge, not after any settling delay.
+    {
+        float fastSteady = enc_v15_arm_at(T / 2);
+        float expectFast = ENC_SLOT_PITCH_M / ((float)(T / 2) * 1e-6f);
+        check(fabsf(fastSteady - expectFast) < fabsf(expectFast) * 1e-3f,
+              "(2) setup: ref=T/2 armed via genuine fast motion");
+
+        uint32_t t = enc_v15_lastEdgeUs;
+        t += T;                          // clean-speed cycle: gap=T, "2x ref" but no k-branch left
+        enc_cycle_fwd(t); updateWheelSpeed();
+        check(encLastPitches == 1,
+              "(2) fw v15: a clean-speed edge after a fast-armed reference is a single real cycle "
+              "(|dpos|=2) -> pitches=1 -- no ratio-driven doubling");
+        float expectClean = (2.0f * ENC_SLOT_PITCH_M) / ((float)(T / 2 + T) * 1e-6f);   // 2-entry ring avg
+        check(fabsf(v_actual - expectClean) < fabsf(expectClean) * 1e-4f,
+              "(2) fw v15: the reading is correct immediately, not halved/doubled");
+    }
+
+    // ── (3) Multi-pitch dpos counting, uncapped. A single accepted interval whose |dpos| spans 2,
+    //     3, and (uncapped, was 3 before) 5 pitches must each store exactly the mean per-pitch
+    //     period T and report the matching pitches diagnostic. Constructed directly (see the
+    //     function-header note) so the multiplicity is pinned exactly rather than inferred from
+    //     stimulus timing.
+    {
+        float steady = enc_v15_arm_at(T);
+        uint32_t t = enc_v15_lastEdgeUs + 2 * T;      // total elapsed 2T, |dpos|=4 -> pitches=2
+        enc_fire_tap_raw(t, 4);
+        updateWheelSpeed();
+        check(encLastPitches == 2, "(3) |dpos|=4 over 2T -> pitches diagnostic reports 2");
+        check(fabsf(v_actual - steady) < fabsf(steady) * 1e-4f,
+              "(3) |dpos|=4 over 2T stores exactly T per pitch — v_actual UNCHANGED from steady");
+    }
+    {
+        float steady = enc_v15_arm_at(T);
+        uint32_t t = enc_v15_lastEdgeUs + 3 * T;      // total elapsed 3T, |dpos|=6 -> pitches=3
+        enc_fire_tap_raw(t, 6);
+        updateWheelSpeed();
+        check(encLastPitches == 3, "(3) |dpos|=6 over 3T -> pitches diagnostic reports 3");
+        check(fabsf(v_actual - steady) < fabsf(steady) * 1e-4f,
+              "(3) |dpos|=6 over 3T stores exactly T per pitch — v_actual UNCHANGED from steady");
+    }
+    {
+        float steady = enc_v15_arm_at(T);
+        uint32_t t = enc_v15_lastEdgeUs + 5 * T;      // total elapsed 5T, |dpos|=10 -> pitches=5
+        enc_fire_tap_raw(t, 10);
+        updateWheelSpeed();
+        check(encLastPitches == 5,
+              "(3) UNCAPPED: |dpos|=10 over 5T -> pitches diagnostic reports 5 (fw v13's "
+              "ENC_PERIOD_MAX_MULT=3 cap would have refused this — it is gone)");
+        check(fabsf(v_actual - steady) < fabsf(steady) * 1e-4f,
+              "(3) |dpos|=10 over 5T stores exactly T per pitch — v_actual UNCHANGED from steady");
+        check(encMultiPitchCount >= 1,
+              "(3) encMultiPitchCount has climbed on this multi-pitch accept (each enc_v15_arm_at() "
+              "call above re-zeroes it via encoderVelReset(), so this checks the single accept in "
+              "THIS block, not a cumulative count across the three separate blocks)");
+    }
+
+    // ── (4) Rounding: nearest-integer(|dpos| / 2), computed as (|dpos| + 1) >> 1.
+    {
+        float steady = enc_v15_arm_at(T);
+        (void)steady;
+        uint32_t t = enc_v15_lastEdgeUs + 2 * T;      // |dpos|=3 (one decoder count short of 2 pitches)
+        enc_fire_tap_raw(t, 3);
+        updateWheelSpeed();
+        check(encLastPitches == 2,
+              "(4) rounding: |dpos|=3 rounds UP to pitches=2 (the documented undercount-safe "
+              "direction: stores a period slightly too LONG for 2 pitches, i.e. reads slightly slow)");
+    }
+    {
+        float steady = enc_v15_arm_at(T);
+        (void)steady;
+        uint32_t t = enc_v15_lastEdgeUs + T;          // |dpos|=1 -> pitches=1, not 0
+        enc_fire_tap_raw(t, 1);
+        updateWheelSpeed();
+        check(encLastPitches == 1, "(4) rounding: |dpos|=1 rounds to pitches=1 (never 0)");
+    }
+
+    // ── (5) Unconditional application: the pitch count needs no reference and no speed arming, so
+    //     it must work identically during ref seeding (before ENC_PERIOD_REF_SEED_N accepted
+    //     periods) and while ref >= ENC_ADAPT_MAX_REF_US (the low-side gate dark).
+    {
+        // (5a) During ref seeding: the very FIRST accepted period (encPeriodRefSeed == 0 going in,
+        //      refValid == false — only the absolute floor gate applies) still gets a full,
+        //      uncapped pitch count from the decoder.
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        enc_cycle_fwd(500); updateWheelSpeed();          // baseline tap only — establishes the base
+        check(encPeriodRefSeed == 0, "(5a) setup: baseline tap seeds nothing yet");
+        uint32_t t2 = 500 + 2 * T;                       // |dpos|=4 while completely unarmed
+        enc_fire_tap_raw(t2, 4);
+        updateWheelSpeed();
+        check(encLastPitches == 2,
+              "(5a) pitch counting runs UNARMED during ref seeding (encPeriodRefSeed was 0) — no "
+              "reference or speed-arming precondition gates it");
+        check(encPeriodRefSeed == 1,
+              "(5a) the seeded reference itself is fed the per-pitch period T, not the raw 2T span");
+
+        // (5b) While ref >= ENC_ADAPT_MAX_REF_US (the low-side gate dark, i.e. below ~0.307 m/s):
+        //      pitch counting still applies in full.
+        float slow = enc_v15_arm_at(14000);   // matches the existing "dark" bracket (fw v13 (a))
+        check(encPeriodRefUs >= ENC_ADAPT_MAX_REF_US,
+              "(5b) setup: the reference is armed at/above ENC_ADAPT_MAX_REF_US (gate dark)");
+        (void)slow;
+        uint32_t t3 = enc_v15_lastEdgeUs + 2 * 14000u;   // |dpos|=4 while the low-side gate is dark
+        enc_fire_tap_raw(t3, 4);
+        updateWheelSpeed();
+        check(encLastPitches == 2,
+              "(5b) pitch counting still applies with the low-side gate dark (ref >= "
+              "ENC_ADAPT_MAX_REF_US) — the S1/S2 arming rationale never applied to it");
+    }
+
+    // ── (6) Spurious-merge unchanged (ML0145 split-pitch): re-pinned here against the pitches
+    //     diagnostic directly, complementing the stimulus-corrected item1/(e) tests elsewhere. A
+    //     genuinely spurious A-only tap (enc_tap_ambiguous — no encoderPos motion) merges into the
+    //     next genuine edge as a SINGLE pitch, not two, because the spurious tap contributed no real
+    //     decoder counts.
+    {
+        float steady = enc_v15_arm_at(T);
+        uint32_t t = enc_v15_lastEdgeUs + (uint32_t)(0.3f * (float)T);
+        enc_tap_ambiguous(t); updateWheelSpeed();
+        uint32_t t2 = enc_v15_lastEdgeUs + T;
+        enc_cycle_fwd(t2); updateWheelSpeed();
+        check(encLastPitches == 1,
+              "(6) a genuinely spurious (no-motion) tap merges into a single pitch, not two — the "
+              "spurious tap itself never advanced encoderPos");
+        check(fabsf(v_actual - steady) < fabsf(steady) * 1e-4f,
+              "(6) v_actual is unchanged from steady (no double-speed reading from the merge)");
+    }
+
+    // ── (7) dpos == 0 still invalidates the ring (ambiguous — no measurable pitch), re-pinned
+    //     post-change: the pitch-count path forces pitches to at least 1 for the divide, but the
+    //     SEPARATE newDir==0 check downstream still resets the ring rather than publishing a
+    //     fabricated reading.
+    {
+        enc_v15_arm_at(T);
+        uint32_t t = enc_v15_lastEdgeUs + T;
+        enc_fire_tap_raw(t, 0);           // dpos == 0: ambiguous
+        check(encLastPitches == 1,
+              "(7) dpos==0 still forces the pitches floor to 1 (no divide-by-zero), but...");
+        check(encPeriodCount == 0 && encPeriodDir == 0,
+              "(7) ...the ring is invalidated by the separate newDir==0 check, same as before fw v15");
+    }
+
+    // ── (8) Diagnostics: encLastPitches / encMultiPitchCount update on a multi-pitch accept and are
+    //     cleared by encoderVelReset().
+    {
+        enc_v15_arm_at(T);
+        uint32_t t = enc_v15_lastEdgeUs + 2 * T;
+        enc_fire_tap_raw(t, 4);
+        updateWheelSpeed();
+        check(encLastPitches == 2 && encMultiPitchCount >= 1,
+              "(8) setup: a multi-pitch accept has moved both diagnostics off their reset values");
+        encoderVelReset();
+        check(encLastPitches == 0 && encMultiPitchCount == 0,
+              "(8) encoderVelReset() clears both fw v15 diagnostics");
     }
 
     enc_reset();
@@ -13565,6 +13860,7 @@ int main() {
     test_edge_period_partial_ring_after_flip();
     test_motor_zero_cutoff();
     test_encoder_v13_safety_round();
+    test_encoder_v15_dpos_pitch_count();
     test_velocity_chain_interlock();
     test_control_rate_limiting();
     test_open_loop_droop();

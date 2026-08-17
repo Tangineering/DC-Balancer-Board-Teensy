@@ -655,11 +655,10 @@
  *          ML0145's contamination was worst. It is not an oversight — in that band a spurious edge
  *          and a hard-launch truth produce the SAME period ratio, so no period-ratio filter can
  *          separate them. That band belongs to the Schmitt-buffer hardware fix.
- *          POISONED-REFERENCE TRIPWIRE (S1 backstop): ENC_KBRANCH_RUN_MAX = 4 consecutive accepted
- *          periods all taking the k > 1 branch raise encRefPoisonPending, and updateWheelSpeed()
- *          performs a full encoderVelReset(). A genuinely persistent miss stream is
- *          indistinguishable from a poisoned reference and a reset is correct for both. The reset
- *          runs in the READER, not the ISR, because it writes reader-side hold state.
+ *          SUPERSEDED IN fw v15 (see the fw v15 entry below): the ratio-derived k branch and its
+ *          ENC_KBRANCH_RUN_MAX poisoned-reference tripwire are both GONE. The pitch count is read
+ *          from the decoder's position delta instead. The low-side gate, its no-base-advance merge,
+ *          the absolute floor and the speed arming of the GATE all stand as described above.
  *          DELAY MODEL UNCHANGED: because a rejected edge never advances the base, accepted periods
  *          still span TRUE pitches, so a clean edge stream still measures (N+1)·pitch/(2v) of
  *          effective delay — the filter costs the plant model nothing.
@@ -713,6 +712,51 @@
  *          so a deliberately slow bench run's flat 0 A trace is not misread as a controller failure.
  *          Safety review S6: static_asserts pin the estimator-floor < V_SP_ZERO_THRESH ordering and
  *          tie ENC_PERIOD_LO_FRAC to the shift form it documents.
+ *  - fw v15 (2026-08-17) — DPOS-BASED PITCH COUNT in the edge-period estimator ISR. The estimator's
+ *      last remaining ratio inference is replaced by a decoder measurement. No pin, sequencing,
+ *      fault, telemetry (UDP v4/58 B), BLG (record v5/76 B) or controller-coefficient change; the
+ *      entire reader side (updateWheelSpeed, holds, sign embargo, reading-age bound) is untouched,
+ *      and the estimator's delay model is unchanged, so v_act traces stay comparable with fw v12–14.
+ *      DEFECT. fw v13's adaptive filter had an ABSORBING SLOW-READING BASIN at ref ≈ 2T (T = true
+ *      per-pitch period): every genuine edge lands at 0.5 x ref, fails the 0.625 low-side gate and
+ *      is rejected WITHOUT advancing the base (correct handling for a real spurious edge); the next
+ *      genuine edge then measures 2T, i.e. ratio 1.0, and is accepted as ONE pitch; the EWMA is fed
+ *      2T and re-anchors the basin. v_actual reads exactly HALF true speed indefinitely on a clean
+ *      trace, so the drive controller sees double the speed the car is actually making. The
+ *      ENC_KBRANCH_RUN_MAX tripwire could not fire — it counted consecutive k > 1 acceptances, and
+ *      here every acceptance is k == 1, which RESET it; it guarded only the mirror ref ≈ T/2 basin.
+ *      Entry: any reset taken mid-miss-burst re-seeds ref with no ratio gating (2 accepted periods),
+ *      so it can seed straight into the basin. BENCH: an abrupt apparent 2x speed-up observed
+ *      2026-08-17; the ML0151 t ≈ 27.5 s 2.55 -> 1.30 m/s "collapse" (ratio 1.96) is a candidate
+ *      instance of the same mechanism.
+ *      FIX. pitches = nearest-integer(|Δ encoderPos| / 2), minimum 1, computed as (|Δ| + 1) >> 1 —
+ *      shift/add only, no float, and the single existing period/pitches UDIV is unchanged. It is
+ *      sound because a rejected edge advances NEITHER encLastEdgeUs NOR encPosAtLastEdge, so the
+ *      position delta accumulates across rejections in lockstep with the period: an interval that
+ *      really spans k pitches carries |Δ| ≈ 2k regardless of what the reference believes. Being a
+ *      count rather than a ratio, it needs no reference and NO SPEED ARMING — it runs during ref
+ *      seeding and below ENC_ADAPT_MAX_REF_US, where the S1/S2 arming rationale (ratio ambiguity
+ *      under hard accel/decel) simply does not apply. Both poison basins become non-stable: at
+ *      ref ≈ 2T the interval counts as 2 pitches and feeds T to the EWMA; at ref ≈ T/2 the true
+ *      period passes the gate and counts as 1 pitch, again feeding T.
+ *      REMOVED: the ratio-derived k = 2/3 branch, ENC_PERIOD_MAX_MULT (the count is uncapped — a
+ *      long rejection streak legitimately spans more than 3 pitches, and capping stores a per-pitch
+ *      period knowingly too long for the distance travelled), and the ENC_KBRANCH_RUN_MAX tripwire
+ *      with encKBranchRun / encRefPoisonPending and its updateWheelSpeed() consumer. The tripwire is
+ *      not merely unused: escaping the 2T basin produces several consecutive pitches == 2
+ *      acceptances, so a run-length reset would fire during the RECOVERY it was meant to protect and
+ *      re-seed from the same corrupted stream. Its removal also deletes the one path that injected a
+ *      full-scale v = 0 step into the 544.8 A/(m/s) controller on an inference rather than a
+ *      measurement.
+ *      KEPT AS-IS: the 0.625 low-side gate and its no-base-advance merge (with its S1/S2 speed
+ *      arming, now the only thing that arming governs), ENC_PERIOD_MIN_US, the EWMA, the direction
+ *      handling and the dpos == 0 ring invalidation, the ring, and every reader-side semantic.
+ *      KNOWN RESIDUAL: if BOTH edges of one slot are lost on channel A, the AfirstUp/BfirstUp
+ *      handshake loses that pitch's counts as well, so |Δ|/2 under-reads by one pitch and the
+ *      interval is stored SLOW. That is the safe direction and the EWMA absorbs it; the ratio
+ *      cross-check that would have caught it is the very mechanism whose ambiguity created the
+ *      basins, so it is deliberately not reinstated. The 0.04–0.30 m/s band and the underlying
+ *      un-Schmitted OPB829DZ edge corruption still belong to the planned 74HC14 hardware fix.
  */
 
 #include <VescUart.h>
@@ -1300,8 +1344,9 @@ constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOT
 // first periods out of a standstill — which have no reference — are governed by the absolute floor
 // alone (bootstrap; see the breakaway caveat below).
 //
-// SPEED ARMING (fw v13 safety review, S1+S2). The ENTIRE adaptive mechanism — the low-side gate AND
-// the k > 1 reinterpretation — is armed ONLY while ref < ENC_ADAPT_MAX_REF_US. Below that speed the
+// SPEED ARMING (fw v13 safety review, S1+S2; scope NARROWED in fw v15 — it now governs the low-side
+// gate alone, the k > 1 reinterpretation having been replaced by the decoder pitch count, which is
+// unarmed by design). The gate is armed ONLY while ref < ENC_ADAPT_MAX_REF_US. Below that speed the
 // filter is provably unable to do its job and is provably able to do harm, so it is switched off and
 // only the 200 µs absolute floor and the reading-age bound apply. The two failure modes it avoids:
 //   S2 (the gate rejects TRUTH on a hard launch). The correct bound on the per-pitch period ratio is
@@ -1315,6 +1360,10 @@ constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOT
 //     (0.40T–0.667T), every genuine period is divided by 2 and RE-CONFIRMS the poison: v reads
 //     exactly 2x on a perfectly clean trace, indefinitely, and in the destabilising direction
 //     (reads fast → brakes harder). This is the sign-critical one.
+//     fw v15 NOTE: S1 is no longer REACHABLE — no branch divides a period by an inferred k any
+//     more — but the threshold VALUE below is left at the S1-derived figure. It is the stricter of
+//     the two conditions, so it also satisfies S2, and lowering it would be a separate tuning
+//     decision with no evidence behind it.
 // The arming speed is therefore set by the decel condition, which is the stricter of the two:
 //     v_arm² = 3·a_max·pitch = 3 × 6.96 × 3.990e-3 → v_arm = 0.289 m/s → ref = pitch/v_arm = 13.8 ms.
 // ENC_ADAPT_MAX_REF_US = 13000 µs arms at 0.307 m/s, i.e. ~6 % INSIDE that bound, so the filter is
@@ -1339,31 +1388,55 @@ constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOT
 //   standstill is still admitted. It is self-correcting — the EWMA seeds from whatever those periods
 //   were and the test arms within a few pitches — and the reading-age bound below caps any damage.
 //
-// HIGH SIDE (missed edges). A period near k x ref means k pitches were actually traversed. Those are
-// INTERPRETED, not rejected: the entry stored is period/k, the mean per-pitch period over that span,
-// which is the correct distance/time for the reader without touching the reader at all. Rejecting
-// them instead would starve the ring during genuine deceleration, which is exactly when the loop
-// needs a reading. k is chosen by nearest-integer against shift-derived midpoints (1.5x, 2.5x, 3.5x
-// ref), so an accepted multi-pitch entry is within ±25 % of k x ref. k is BOUNDED at
-// ENC_PERIOD_MAX_MULT = 3; anything beyond 3.5x ref is accepted AS-IS (k = 1), because at that
-// separation genuine strong deceleration is the more likely explanation than four consecutive
-// missed edges, and reading slow is the safe direction.
+// HIGH SIDE (missed edges) — REWORKED IN fw v15. A period spanning several pitches is still
+// INTERPRETED rather than rejected (the entry stored is the mean per-pitch period, which is the
+// right distance/time for an untouched reader; rejecting instead would starve the ring during the
+// genuine deceleration where the loop most needs a reading). What changed is HOW the pitch count is
+// obtained. fw v13 inferred it from period/ref against shift-built 1.5x/2.5x/3.5x midpoints, capped
+// at 3. fw v15 COUNTS it from the quadrature decoder: pitches = nearest-integer(|Δ encoderPos| / 2),
+// minimum 1, uncapped.
+//
+// WHY THE RATIO INFERENCE HAD TO GO — the ref ≈ 2T absorbing basin. Suppose the reference lands at
+// ~2T (T = the true per-pitch period). Every genuine edge then arrives at 0.5 x ref, BELOW the 0.625
+// low-side gate, and is rejected as spurious WITHOUT advancing the base — which is the correct
+// handling for a genuine spurious edge and is what makes the ML0145 split pair merge. The next
+// genuine edge therefore measures 2T from the un-advanced base, i.e. ratio 1.0 against ref, and is
+// accepted as a SINGLE pitch. The EWMA is fed 2T, re-anchoring ref at 2T, and the state is
+// ABSORBING: v_actual reads exactly HALF true speed indefinitely on a clean trace, and the drive
+// controller sees half the speed it is actually making. The fw v13 ENC_KBRANCH_RUN_MAX tripwire
+// could not catch this — it counted consecutive k > 1 acceptances, and in this basin every
+// acceptance is k == 1, which RESET the counter. It guarded only the mirror-image ref ≈ T/2 basin.
+// Entry is cheap: any missed-edge burst that trips a reset re-seeds ref with no ratio gating at all
+// (ENC_PERIOD_REF_SEED_N = 2 accepted periods), so a reset taken mid-burst can seed straight into
+// the basin and lock when the burst ends. BENCH: an abrupt apparent 2x speed-up was observed
+// 2026-08-17, and the ML0151 t ≈ 27.5 s "speed collapse" ratio of 2.55/1.30 = 1.96 is a candidate
+// instance of the same mechanism (the drag step-change reading is not thereby retired — the two
+// explanations are separable by bus power, which did change).
+//
+// WHY THE DECODER COUNT KILLS BOTH BASINS. A rejected edge advances neither the timestamp base nor
+// encPosAtLastEdge, so |Δ encoderPos| accumulates across rejections exactly like the period does: an
+// accepted interval spanning k true pitches carries |Δ| ≈ 2k whatever the reference believes. In the
+// ref ≈ 2T basin the 2T interval now counts as TWO pitches, stores T, and feeds T to the EWMA — the
+// reference walks back to the truth instead of re-confirming itself. In the ref ≈ T/2 basin the true
+// period passes the low gate and counts as ONE pitch, again feeding T. Neither state is stable, so
+// the seed-poisoning entry path is no longer worth separate hardening.
+// This count is a MEASUREMENT, not a ratio inference, so it needs no reference and NO SPEED ARMING:
+// it runs during seeding and below ENC_ADAPT_MAX_REF_US as well. The S1/S2 arming discussion below
+// applies to the low-side gate ONLY, which is all that is left of the ratio machinery.
 // Genuine acceleration is never filtered into a frozen reading: it shortens periods by a few percent
 // per pitch, which the 0.625 gate passes, and the EWMA tracks it within ~4 pitches.
-#define ENC_PERIOD_REF_SEED_N   2u        // accepted periods before the adaptive tests arm
+#define ENC_PERIOD_REF_SEED_N   2u        // accepted periods before the low-side gate arms
 #define ENC_PERIOD_LO_FRAC      0.625f    // documentation of the (ref>>1)+(ref>>3) shift form
-#define ENC_PERIOD_MAX_MULT     3u        // largest missed-edge multiple interpreted as k·pitch
+// ENC_PERIOD_MAX_MULT (was 3) is RETIRED in fw v15 together with the ratio-derived k branch: the
+// pitch count comes from the decoder and is uncapped, because a count of 5 pitches after a long
+// rejection streak is a measurement and capping it would store a per-pitch period knowingly too
+// long for the distance actually travelled.
 // Speed arming (S1/S2 above). The whole adaptive mechanism is dark while ref is at or above this,
 // i.e. below ~0.307 m/s. 13000 µs = pitch/0.307 m/s, ~6 % inside the v_arm = sqrt(3·a_max·pitch)
 // = 0.289 m/s bound at a_max = 6.96 m/s².
 #define ENC_ADAPT_MAX_REF_US    13000u
-// Poisoned-reference tripwire (S1 backstop). If this many CONSECUTIVE accepted periods all take the
-// k > 1 branch, the reference is assumed poisoned and the estimator is reset. 4 is chosen because a
-// genuine missed-edge stream that persistent is indistinguishable from a poisoned reference, and a
-// reset is the correct response to BOTH: it re-seeds ref from live periods and costs at most one
-// warm-up window. Random ML0143-class misses (~68/s against ~1250/s edges at 3 m/s) have a
-// vanishing chance of producing a run of 4.
-#define ENC_KBRANCH_RUN_MAX     4u
+// ENC_KBRANCH_RUN_MAX (was 4) is RETIRED in fw v15 — see the declaration-site note where
+// encKBranchRun / encRefPoisonPending used to live.
 // Ceiling on the EWMA reference, so the ISR's ref<<1 / ref+ref>>1 threshold arithmetic can never
 // overflow a uint32 and a single absurd period cannot poison the reference for long. 200 ms is
 // 2x the stale floor below, i.e. already beyond any period the estimator will ever report from.
@@ -1754,17 +1827,22 @@ volatile int8_t   encPeriodDir   = 0;   // +1 / -1: rotation sense the ring's pe
 volatile uint32_t encPeriodRefUs   = 0;
 volatile uint8_t  encPeriodRefSeed = 0;
 
-// Poisoned-reference tripwire (fw v13 safety review S1). Counts CONSECUTIVE accepted periods that
-// took the k > 1 missed-edge branch; reset to 0 by any accepted k == 1 period. At
-// ENC_KBRANCH_RUN_MAX the ISR raises encRefPoisonPending and updateWheelSpeed() performs the reset.
-// DEVIATION from the review's "force encoderVelReset() in the ISR": the reset also writes the
-// READER-side hold state (encVelLastValid/encVelHaveValid/encVelLastReadingUs), which no ISR
-// otherwise touches, so doing it from interrupt context would race the reader mid-computation. A
-// flag consumed by updateWheelSpeed() gives the identical effect within one main-loop tick
-// (~1.13 ms) — and in the k > 1 regime the accepted-period spacing is at least that long anyway,
-// so at most one further poisoned period can land before the reset takes effect.
-volatile uint8_t  encKBranchRun       = 0;
-volatile bool     encRefPoisonPending = false;
+// Pitch-count diagnostics (fw v15). DIAGNOSTIC ONLY — no control path reads either, exactly like
+// encEdgeCountA/B (fw v8 observability lesson: a silent estimator defect must have a counter behind
+// it). encLastPitches is the decoder-derived pitch count of the last accepted interval;
+// encMultiPitchCount counts accepted intervals spanning more than one pitch, i.e. the rate at which
+// edges are being lost or rejected. On a clean stream the first reads 1 and the second stops rising.
+volatile uint8_t  encLastPitches     = 0;
+volatile uint32_t encMultiPitchCount = 0;
+
+// RETIRED IN fw v15: the poisoned-reference tripwire (encKBranchRun / encRefPoisonPending,
+// ENC_KBRANCH_RUN_MAX). It counted consecutive accepted periods taking the ratio-derived k > 1
+// branch and forced an encoderVelReset() at 4. That branch no longer exists — the pitch count is
+// read from the decoder's position delta — so neither poison basin can hold, and the tripwire lost
+// its subject. It is not merely unused but actively wrong under the new mechanism: escaping the
+// ref ≈ 2T basin produces several consecutive pitches == 2 acceptances, so a run-length reset
+// would fire during exactly the RECOVERY it was meant to protect, discard the ring, and re-seed
+// the reference from the same corrupted edge stream that created the basin.
 
 // Held-reading state — READER-side only (updateWheelSpeed()/encoderVelReset()), never touched by
 // an ISR, hence not volatile. A mid-run ring invalidation (a direction flip, or a single noisy B
@@ -1818,7 +1896,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 14
+#define FW_VERSION 15
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -6503,6 +6581,9 @@ void printTestStatus() {
     uint8_t  perIdx  = encPeriodIdx;
     int8_t   perDir  = encPeriodDir;
     uint32_t perLast = encPeriodBuf[(perIdx + ENC_PERIOD_AVG_N - 1) % ENC_PERIOD_AVG_N];
+    uint32_t perRef  = encPeriodRefUs;
+    uint8_t  perPit  = encLastPitches;
+    uint32_t perMul  = encMultiPitchCount;
     interrupts();
     Serial.print("periods=");     Serial.print(perCnt);
     Serial.print("/");            Serial.print((int)ENC_PERIOD_AVG_N);
@@ -6510,6 +6591,11 @@ void printTestStatus() {
     Serial.print("us  dir=");     Serial.print(perDir);
     Serial.print("  pitch=");     Serial.print(ENC_SLOT_PITCH_M * 1000.0f, 3);
     Serial.println("mm");
+    // fw v15 pitch-count diagnostics. lastPitches > 1 or a rising multiPitch count means edges are
+    // being lost or rejected; ref is the EWMA the low-side gate is built from. Diagnostic only.
+    Serial.print("ref=");         Serial.print(perRef);
+    Serial.print("us  lastPitches="); Serial.print((int)perPit);
+    Serial.print("  multiPitch=");    Serial.println(perMul);
     Serial.print("v_actual=");    Serial.print(v_actual, 3);
     Serial.print(" m/s  (counts/rev="); Serial.print(ENCODER_COUNTS_PER_REV, 0);
     Serial.print(", r=");               Serial.print(FLYWHEEL_RADIUS_M, 4);
@@ -8151,8 +8237,11 @@ void encoderVelReset() {
     encPeriodDir     = 0;
     encPeriodRefUs      = 0;    // fw v13: adaptive reference disarms, re-seeds over the next
     encPeriodRefSeed    = 0;    //         ENC_PERIOD_REF_SEED_N accepted periods
-    encKBranchRun       = 0;    // fw v13: poisoned-reference tripwire re-arms
-    encRefPoisonPending = false;
+    encLastPitches      = 0;    // fw v15 diagnostics (no control path reads these)
+    encMultiPitchCount  = 0;
+    // fw v15: no tripwire state to clear — the pitch count is stateless (see the retirement note
+    // at the encPeriodRefUs declarations). The pitch count itself carries no state across edges:
+    // it is derived from encPosAtLastEdge, which this reset already re-anchors above.
     encIrqRestore(irq);
     encVelLastValid     = 0.0f;
     encVelHaveValid     = false;
@@ -8214,15 +8303,11 @@ void updateWheelSpeed() {
 
     uint32_t now = micros();
 
-    // Poisoned-reference reset (fw v13 safety review S1). Raised by the ISR after
-    // ENC_KBRANCH_RUN_MAX consecutive k > 1 periods; performed here rather than in the ISR because
-    // the reset writes reader-side hold state (see encRefPoisonPending). Reports 0 for this tick —
-    // the reading it would otherwise publish is the one suspected of being 2x or 3x wrong.
-    if (encRefPoisonPending) {
-        encoderVelReset();      // clears the flag along with the ring, the ref and the hold
-        v_actual = 0.0f;
-        return;
-    }
+    // fw v15: the fw v13 poisoned-reference reset that stood here is RETIRED. It existed because a
+    // ratio-derived pitch count could lock the reference into a self-confirming basin; the count is
+    // now taken from the decoder's position delta, which cannot. Removing it also removes the one
+    // path that injected a full-scale v = 0 step into the 544.8 A/(m/s) controller on the basis of
+    // an inference rather than a measurement.
 
     // Consistent snapshot. A brief noInterrupts() section is used rather than a sequence-counter
     // retry: the copy is ENC_PERIOD_AVG_N words plus four scalars (tens of cycles on a 600 MHz
@@ -8391,7 +8476,6 @@ void doEncoderA() {
             // truth are indistinguishable by period ratio. See ENC_ADAPT_MAX_REF_US.
             bool     refValid = (encPeriodRefSeed >= ENC_PERIOD_REF_SEED_N) && (ref > 0) &&
                                 (ref < ENC_ADAPT_MAX_REF_US);
-            uint32_t pitches  = 1;                     // pitches this interval actually spans
             // Absolute floor first — it applies with or without a reference, and it is the
             // bootstrap's only protection (see the breakaway caveat at ENC_PERIOD_LO_FRAC).
             bool     spurious = (period < ENC_PERIOD_MIN_US);
@@ -8401,32 +8485,47 @@ void doEncoderA() {
                     // pitches (see the ENC_PERIOD_LO_FRAC rationale). Spurious edge; drop it the
                     // same way the absolute floor drops a glitch, so the two short halves merge.
                     spurious = true;
-                } else if (period > (ref + (ref >> 1))) {
-                    // > 1.5 x ref — one or more MISSED edges. Nearest-integer k from shift-built
-                    // midpoints, bounded at ENC_PERIOD_MAX_MULT; beyond 3.5 x ref accept as-is
-                    // (genuine strong deceleration is the likelier reading, and reading slow is
-                    // the safe direction).
-                    if      (period <= ((ref << 1) + (ref >> 1)))            pitches = 2;
-                    else if (period <= ((ref << 1) + ref + (ref >> 1)))      pitches = 3;
                 }
+                // fw v15: the former "> 1.5 x ref → k = 2/3" ratio branch is GONE. How many pitches
+                // an accepted interval spans is now COUNTED from the decoder (below), not inferred
+                // from the reference. See the fw v15 block above ENC_PERIOD_REF_SEED_N.
             }
             if (!spurious) {
+                // ── Pitch count from the decoder's own position delta (fw v15) ────────────
+                // The ×2 quadrature decode moves encoderPos by exactly 2 per full slot pitch, and
+                // a REJECTED edge advances neither encLastEdgeUs nor encPosAtLastEdge — so dpos
+                // accumulates across rejections in lockstep with the period measurement. An
+                // accepted interval that really spans k pitches therefore carries |dpos| ≈ 2k, and
+                // pitches = nearest-integer(|dpos|/2) = (|dpos| + 1) >> 1 is a COUNT, not a ratio
+                // inference. Consequences:
+                //   - It needs NO reference and NO speed arming. The S1/S2 arming rationale exists
+                //     because a period RATIO cannot separate a spurious edge from a hard-launch
+                //     truth; a decoder count has no such ambiguity, so this runs at every speed,
+                //     during ref seeding, and below ENC_ADAPT_MAX_REF_US.
+                //   - It kills both reference-poison basins. With ref ≈ 2T the true edge at T is
+                //     rejected by the low gate (base not advanced) and the NEXT edge measures 2T
+                //     with |dpos| = 4 → pitches = 2 → the stored and EWMA-fed value is T, so ref
+                //     walks back to the truth instead of re-confirming itself. With ref ≈ T/2 the
+                //     true period simply passes the low gate and is counted as one pitch.
+                //   - No cap. ENC_PERIOD_MAX_MULT is retired: a count of 5 after a long rejection
+                //     streak is a measurement, and capping it would store a per-pitch period that
+                //     is knowingly too LONG for the distance actually travelled.
+                // Known undercount: if an entire slot is unseen by channel A (both its edges lost),
+                // the AfirstUp/BfirstUp handshake loses that pitch's counts too, so |dpos|/2 under-
+                // reads by one and the interval is stored slow. That is the safe direction (reads
+                // low → the loop drives, it does not brake), the EWMA absorbs it, and the ratio
+                // cross-check that could have caught it is exactly the mechanism whose ambiguity
+                // created the poison basins — so it is deliberately not reinstated.
+                int32_t  dpos   = pos - encPosAtLastEdge;
+                uint32_t posMag = (dpos < 0) ? (0u - (uint32_t)dpos) : (uint32_t)dpos;
+                uint32_t pitches = (posMag + 1u) >> 1;     // nearest integer of |dpos| / 2
+                if (pitches == 0) pitches = 1;             // dpos == 0: ambiguous, handled below
+                encLastPitches = (uint8_t)((pitches > 255u) ? 255u : pitches);   // diagnostic only
+                if (pitches > 1) encMultiPitchCount++;                           // diagnostic only
+
                 // Multi-pitch intervals are stored as the MEAN PER-PITCH period, so the reader's
                 // distance = cnt x pitch stays exactly right without knowing this happened.
                 if (pitches > 1) period /= pitches;
-
-                // Poisoned-reference tripwire (S1). A genuine missed-edge stream is bursty and
-                // random; a poisoned ref (sitting in the k = 2 or k = 3 basin) makes EVERY genuine
-                // period take this branch forever, which reads exactly 2x or 3x fast on a clean
-                // trace — in the destabilising direction. A long consecutive run is treated as
-                // poisoning; the reset is the right answer for a genuinely persistent miss stream
-                // too, so no attempt is made to tell them apart.
-                if (pitches > 1) {
-                    if (encKBranchRun < ENC_KBRANCH_RUN_MAX) encKBranchRun++;
-                    if (encKBranchRun >= ENC_KBRANCH_RUN_MAX) encRefPoisonPending = true;
-                } else {
-                    encKBranchRun = 0;
-                }
 
                 // EWMA of accepted per-pitch periods, α = 1/4, capped so the threshold arithmetic
                 // above cannot overflow.
@@ -8439,8 +8538,8 @@ void doEncoderA() {
                 // delta across one cycle is +2 forward (both counts land in doEncoderB) and -2
                 // reverse (both land here). A zero delta means the decoder did not complete a
                 // cycle (jitter about a slot edge, or a channel fault) — not a measurable pitch,
-                // so the ring is invalidated rather than fed an ambiguous sign.
-                int32_t dpos  = pos - encPosAtLastEdge;
+                // so the ring is invalidated rather than fed an ambiguous sign. (fw v15: the same
+                // dpos computed above for the pitch count supplies the sign — one subtraction.)
                 int8_t  newDir = (dpos > 0) ? 1 : ((dpos < 0) ? -1 : 0);
                 if (newDir == 0) {
                     encPeriodCount = 0;                 // ambiguous — restart accumulation
