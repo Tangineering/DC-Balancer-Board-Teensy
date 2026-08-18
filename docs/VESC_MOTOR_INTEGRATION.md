@@ -214,6 +214,33 @@ Re-running detection later and comparing against these values distinguishes "det
 | **Battery Current Regen Max** | **SET = 1.5 A (operator, 2026-08-16) — tracked** | **≈1.5 A** | Bounds regen into the bus/charger. Matches the §12.4 recommendation exactly. Same fw v7 precondition as the row above, likewise **closed**. |
 | `foc_f_zv` (Zero Vector Frequency) | 30 kHz (EDU default) | leave at 30 kHz | See the correction below — it is already at the EDU default *and* at the practical ceiling. |
 
+### ⚠️ Note: the VESC-side current limits are invisible to the drive controller's anti-windup (2026-08-17)
+
+The Youla-H drive controller's Hanus conditioning (fw v10+, `teensy_controller/drive_controller.h`)
+de-winds its state against an internal actuator model: `u^r = clamp(u, ±MOTOR_I_CMD_MAX)` = ±12 A.
+The source paper (Hanus, Kinnaert & Henrotte 1987, *Automatica* 23(6):729–739 —
+`references/Conditioning_Technique_A_General_Anti-Windup_and_B.pdf`) defines `u^r` as the **actual**
+delivered control, "measured or estimated". The firmware's clamp model matches the firmware's own
+limit exactly (pinned by `static_assert`), but it does **not** see two VESC-side mechanisms that make
+the truly delivered current smaller than the modeled ±12 A:
+
+1. **The §4 bus-current limits** (Battery Current Max 6.0 A forward / Regen Max 1.5 A, set
+   2026-08-16). Whenever these bind, the VESC delivers less than commanded and the controller's
+   states condition against a current that never flowed.
+2. **The ~428 ms post-reversal dead window** (ML0151, fw v14 log round, t = 42.0 s): +11.4 A
+   commanded, < 50 mA delivered. For the whole window the conditioning believes the rail current is
+   flowing; the resulting state error is a plausible contributor to the 87 % undershoot on the
+   2.66 → 2.0 m/s step in that run.
+
+Consequence: during any interval where the VESC limits or the dead window bind, windup-like behavior
+can transiently return despite the Hanus form being correct per the paper. This is a **known,
+deliberate divergence** — closing it would mean feeding the VESC's *reported* current into the state
+recursion, injecting UART latency and estimator noise into a marginally-stable recursion (`AC` carries
+the exact-integrator mode). Do not "fix" it that way without a synthesis round. Mitigations that stay
+inside the current design: re-derive §12.4 so the bus limit and `MOTOR_I_CMD_MAX` are consistent
+(already outstanding, rows above), and characterize the reversal dead window (already in the bench
+order) so its duration can be judged against the controller's ~57 ms delay margin.
+
 ### ⚠️ Correction: an ERPM cap does **not** protect against mechanical overspeed
 
 Earlier revisions of this document proposed mitigating the Justock family's 2–3S voltage rating with

@@ -1081,3 +1081,127 @@ ledger row 16 has full detail.
   is ground truth, so a v_act scale error can no longer hide. Bench order otherwise
   unchanged: Schmitt -> VESC reversal dead-window characterization -> 'Y' with a real bus
   load. `.venv_benchlog` still lacks pandas.
+
+---
+
+## Status & session addendum (2026-08-17b, logs 153-180: fw v16 flashed; x2 ROUNDING basin found)
+
+Two analysis rounds since the fw v16 addendum. Round 1 (logs 153-162, still fw v14/BLG v5):
+the fw v13 T/2 basin corrupted v_act to ~2x TRUE in 8 of 10 runs — invisible in closed loop;
+the rail-acceleration bound (a_true <= (12*0.7538 - 2.00 - 0.534*v)/3.5 ~= 2.0 m/s^2) is the
+standard discriminator, now in the benchlog skill's log-conventions.md. ML0151's t~27.5 s
+"drag step-change" is near-certainly the same artifact. VESC regen delivery ceiling found
+(-12 A commanded, ~6 % delivered — Battery Regen Max 1.5 A is a torque clip, not a dump path;
+excess energy stays kinetic). Ag105 confirmed UNPOWERED in all State-98 runs (V_chg = 0; no
+charger path open); the sustained regen rail drove V_rgn 13.3 -> 18.1 V peak — the TL431/
+BSP170P chopper clamp — with V_bus unmoved; no V_rgn fault check exists.
+Round 2 (logs 164-180, **fw v16/BLG v6 confirmed flashed** — encoder_pos ground truth live;
+five-agent fan-out):
+
+- **The x2 basin SURVIVES fw v15, by a ROUNDING path.** A spurious mid-pitch A-edge carries
+  dpos = 1 and (|dpos|+1)>>1 rounds the half-pitch UP to a full pitch: a self-consistent
+  T/2 lock the dpos count is structurally blind to. Confirmed exactly: accepted-interval
+  rate 2.00/true slot, ref/T_true = 0.500 (ML0164, ML0168 — locked breakaway-to-stop; the
+  operator's 0.5/1.0/1.5 m/s setpoints delivered HALF). Seeding at breakaway (0.08-0.24
+  m/s, every run in the batch); escape speed-gated at ~1.0-1.6 m/s true (chatter can no
+  longer supply one mid-pitch survivor per slot). The 0.625 gate GUARDS the locked basin.
+  The pre-Schmitt front end emits ~480-560 spurious A-edges/s at cruise (~1 per true pitch;
+  20-30/pitch at breakaway) — first quantified baseline; Schmitt acceptance: < ~0.05
+  drops/pitch at breakaway. enc_multi_pitch_count ~ 0 does NOT exonerate missed edges (it
+  is structurally blind to the dominant miss mode).
+- **Mid-run v=0 injections (2 events).** YP0166 t~26.24 s: fresh readings -> encoderVelReset
+  -> v_act 0 for ~6 ms at true 1.49 m/s -> +/-12 A rail pair in 12 ms. TP0171: a reset
+  re-seeded INTO the x2 basin (recovered ~15 ms, v_sp=0). Mechanism unresolved at analysis
+  time — neither reader stale path should fire with ~1 ms-fresh readings; root cause
+  assigned to the fw v17 round.
+- **Clean-axis validations** (everything below from scale-audited segments only): drive SS
+  error <= 1 mm/s per ML0165 rung, <= 8 mm/s at a true 3.0 m/s (ML0169). Friction-
+  disturbance rejection (ML0169, the clean run of the operator's two): dF 4.2-5.0 N on a
+  3.8 N baseline; 30 % dip recovered in 0.738 s at 87 % rail — actuator-limited, correct;
+  Hanus verified through 2.2 s continuous saturation. ML0168's disturbances were on the
+  corrupted axis (true speed 0.75, not 1.5 m/s). drive_x0 "ratcheting" retired: it tracks
+  load and decays. Holds run 1.05-1.12x the drag law across all clean runs (post-ML0151
+  branch; the ML0169 9.9 A "hold" was operator hands ~half the run — momentum-balanced true
+  hold 5.03 A).
+- **First genuine closed-loop share dataset**: TP0170-0180, 11-point share_sp sweep at a
+  6 A trapezoid (Itot ~ 0.72 A at hold). sp=0.5 tracks 0.503 +/- 0.028; rails pass through
+  clean; the ~0.41/~0.59 "clip bands" are exactly the SHARE_MINORITY_I_MIN_A governor span
+  [0.30/Itot, 1-0.30/Itot] — working as designed. NOTE: a manual 'V' run NEVER steps the
+  share loop unless powerBalanceLive is armed (frozen gains != gate failure); profiles step
+  it unconditionally.
+- **TP0178 bus sag 12.15 V, no fault** (0.15 V above LIMIT_V_BUS_MIN; 10 ms < 20 ms dwell):
+  I_fc dropped to zero at the share=1.0 rail and BT's ideal diode picked up only REACTIVELY
+  after the sag — a handoff-gap hazard at the share rails. Leading trigger candidate
+  (operator disclosure): the bench supplies were SWAPPED for batches 153-180 — stiffer on
+  BT, LOOSER ON FC; a sub-ms FC-supply transient (UNCONFIRMED — census: TP0176/177 FC-only
+  43-45 % of run, zero dropouts). Entry + discriminators in docs/boost-bringup-debug.md.
+  Cross-batch caveat: V_fc/V_batt stiffness comparisons vs pre-153 logs compare different
+  supplies.
+- **Tooling trap**: encoder_diagnostics panel 2 was SELF-CONFIRMING (pitch/ref vs v_act —
+  same corrupted quantity); fix assigned to fw v17 round (T1). Counter-rate trap: divide
+  counter sums by run duration (t[-1]-t[0]), never t[-1] — the CSV t axis is
+  session-absolute.
+- **Next bench:** flash fw v17 when it lands (rounding-basin + reset-injection fixes), keep
+  one pre-Schmitt run as baseline, then Schmitt (74HC14 at 3.3 V) -> VESC regen-ceiling
+  characterization -> matched-Itot share sweep -> refit F_c/b_eff on ML0169 tail+coast.
+  `.venv_benchlog` still lacks pandas.
+
+---
+
+## Status & session addendum (2026-08-17c, fw v17: fractional-pitch ledger + TOCTOU reset fix)
+
+Orchestrated round (Opus implementer, independent Sonnet test-writer, Opus safety + Sonnet
+correctness reviews) implementing the logs 164-180 findings. **fw v17 (pending flash; fw v16
+is on the board, so this flash carries v17 alone).** Ledger row 17 has full detail. No BLG/
+UDP/command/pin/sequencing/fault/controller/coefficient change.
+
+- **Fractional-pitch ledger (kills the x2 rounding basin).** The stored per-pitch period in
+  doEncoderA() is now `period*2/|dpos|` — |dpos| is already in half-pitch units, so a
+  spurious mid-pitch edge (|dpos|=1 over T/2) stores T instead of T/2. |dpos|==2 takes an
+  arithmetic-free fast path, BYTE-IDENTICAL to fw v12-v16 (clean-stream v_act comparability
+  preserved); |dpos|=3 stores 2/3*period; still one UDIV, none in the common case; the
+  per-pitch 200 us floor applies to the fractional value; a >2^31 overflow-escape branch is
+  documented as non-conservative and unreachable (100 ms stale timeout forecloses it).
+  encLastPitches/encMultiPitchCount keep whole-pitch semantics (v6 field meaning unchanged).
+- **Mid-run v=0 injection ROOT-CAUSED: a TOCTOU race, not a semantics gap.**
+  updateWheelSpeed() latched `now = micros()` BEFORE snapshotting encLastEdgeUs; an edge
+  accepted in that window makes the unsigned age wrap to ~2^32 and unconditionally fires
+  encoderVelReset() — ~0.5 expected hits per 25 s run at cruise, matching the two observed
+  (YP0166, TP0171) with no signal precondition. Fixed with SIGNED age comparisons in both
+  stale tests (a future timestamp has age 0). The clamp's wrap-safety depends on
+  updateWheelSpeed() running unconditionally from loop() — documented at the site; any
+  future state-gating of that call must add a wrap guard.
+- **Post-reset corroboration hold (defence in depth).** A reset taken while the last
+  published |v| > ENC_VEL_CORROB_MIN_MPS (0.30 m/s) captures and HOLDS that reading instead
+  of publishing 0, until a FULL-ring reading of EITHER sign corroborates (depth-only gate —
+  safety review MED-1 removed the sign term: a full-ring opposite-sign reading is a vetted
+  genuine reversal, and holding the old sign against it would feed the loop a wrong-SIGN
+  value). Bounded at 100 ms from the reset; the two genuine stale paths disarm it. The
+  "forced to 0" contract is now THREE events (boot, edge-age stale, reading-age stale).
+  The gate is a depth/latency gate, NOT a magnitude safeguard — the magnitude defence
+  against the TP0171 re-seed is the fractional ledger. Log-trace change: a State-3 reset
+  above 0.30 m/s now holds the true coasting value up to 100 ms into Idle (control impact
+  nil; Idle commands 0 A without reading v_actual).
+- **Per-path drop counters** encDropRawFloor/encDropLowGate/encDropPitchFloor (volatile
+  diagnostics, 'S' dump only; encSpuriousDropCount stays the logged sum, BLG stays v6).
+  Tooling: encoder_diagnostics panel (b) now compares implied speed against the encoder_pos
+  TRUTH velocity (the old v_act pairing was self-confirming inside a basin).
+- **"What NOT to change" exception (explicit, matching the v12/v13/v15 precedent):** the
+  encoder velocity TAP in doEncoderA() and updateWheelSpeed()'s hold logic were modified;
+  the quadrature decode block itself is untouched and clean-stream output is bit-identical.
+- **Reviews:** safety — no HIGH, 1 MED (sign term, removed) + 4 LOWs (all applied, incl.
+  ENC_VEL_CORROB_MIN_MS -> _MPS rename); correctness — no code bugs, 1 doc-HIGH (stale
+  sign-term wording from the mid-round fix, corrected in .ino + ledger) + LOWs applied.
+  Untested-behavior list (boundary equalities, double-reset overwrite, overflow branch) is
+  in the correctness report — acceptable residuals, none control-reachable.
+- **Tests: 3007 production + 175 bench pass** (rebuilt from source, both builds, orchestrator-
+  verified). New coverage: the x2-basin regression (fails under fw v16 semantics), fractional
+  arithmetic (|dpos| 1/2/3/4 + floor), the TOCTOU race (future timestamp does NOT reset;
+  genuine stale still does), the corroboration hold state machine (arm/hold/either-sign
+  full-ring publish/timeout/low-speed no-arm/stale disarm), per-path counter sum invariant,
+  and the TP0171 reset-into-basin regression. NOTE: the test build now needs
+  `-I../controller_design_MIMO` (the test skill's command block predates it).
+- **Next bench:** flash fw v17 (alone). First runs: watch the 'S' dump per-path drop split —
+  encDropLowGate is the number the Schmitt must remove. Bench order unchanged: one
+  pre-Schmitt baseline run -> Schmitt (74HC14 at 3.3 V) -> VESC regen-ceiling
+  characterization -> matched-Itot share sweep -> F_c/b_eff refit (ML0169 tail + coast).

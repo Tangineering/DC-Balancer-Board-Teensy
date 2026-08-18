@@ -115,3 +115,35 @@ must be inferred from the last records and flagged as inferred.
 - Basin entry is typically seeded during low-speed breakaway (spurious edges,
   un-Schmitted front end); escapes occur at speed. Segment every pre-v15 log into
   scale regimes BEFORE fitting anything; never mix regimes in one drag/gain fit.
+
+## fw v15/v16 rounding basin + BLG v6 conventions (established logs 164-180 round)
+
+- **v6 schema** (92 B): v5 + `encoder_pos, enc_period_ref_us, enc_multi_pitch_count,
+  enc_spurious_drop_count` (after `drive_x0`). `encoder_pos` is GROUND TRUTH
+  (240 counts/rev; truth v = dpos x 1.995 mm / dt). `enc_period_ref_us` is a LEVEL —
+  never difference it. The two counters are cumulative; a NEGATIVE diff means
+  `encoderVelReset()` fired, not wrap.
+- **The x2 basin persists on fw v15/v16**, by a different mechanism than pre-v15: a
+  spurious mid-pitch A-edge carries dpos = 1 and `(|dpos|+1)>>1` rounds it up to a
+  full pitch — a self-consistent T/2 lock the dpos count is structurally blind to
+  (confirmed logs 164-180: accepted-interval rate exactly 2.00/true slot, ref/T =
+  0.500). Seeded at breakaway (~0.08-0.24 m/s); escape is speed-gated (~1.0-1.6 m/s
+  true), so runs cruising below the escape speed stay locked whole-run. Segment every
+  pre-Schmitt log by the encoder_pos scale audit before fitting.
+- **encoder_diagnostics panel 2 is self-confirming** — it plots pitch/ref against
+  v_act, which are the same corrupted quantity; only panel 1 (encoder_pos truth
+  overlay) is a valid basin check until the figure is fixed.
+- **Counter-rate normalization trap:** the CSV `t_us` axis is session-absolute; divide
+  counter sums by RUN DURATION (t[-1]-t[0]), never by t[-1] (this error produced fake
+  8-320/s rates and a fake declining trend in one scout pass). True pre-Schmitt
+  baseline: ~480-560 spurious drops/s at 1.9-3.0 m/s cruise (~0.7-1.2 per true pitch),
+  20-30 per pitch at breakaway; multi-pitch counter ~0 (it is structurally blind to
+  the dominant miss mode — it does NOT exonerate missed edges).
+- **A manual 'V' run never steps the share loop** unless `powerBalanceLive` was armed
+  (State-98 share-setpoint command): gains freeze and flags bits 2/3 stay 0 regardless
+  of Itot. Profile runs ('T'/'D'/'Y'/'W') call powerBalanceGated() unconditionally.
+  Do not read a frozen-gain 'V' run as a share-loop gate failure.
+- **Share governor clip bands are computable:** sp_eff is clipped to
+  [I_min/Itot_filt, 1 - I_min/Itot_filt] with SHARE_MINORITY_I_MIN_A = 0.30 A (e.g.
+  Itot 0.72 A -> [0.42, 0.58]). Measured share parking at ~0.40/~0.60 at ~0.7 A load
+  is the governor working, not a tracking failure.

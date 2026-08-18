@@ -100,7 +100,7 @@ prediction.
 
 ### `ML0149` — 1.5 m/s step, 12.3 s
 
-The cleanest single step in the set. Look at `tracking_overlay.png` for the response and
+The cleanest single step in the set. Look at `tracking_subplots.png` for the response and
 `drive_controller_conditioning.png` for the anti-windup evidence: the controller's pre-clamp
 output `u_unsat` is logged alongside the commanded current, and during saturation it hugs the
 rail rather than diverging from it. Divergence would indicate integrator windup. Across all

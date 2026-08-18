@@ -808,6 +808,41 @@
  *          plain volatile 32-bit loads in the sampling path, taking no IRQ mask beyond what already
  *          exists, and nothing in the control path reads the new counter. v_act traces stay
  *          comparable with fw v12–v15.
+ *  - fw v17 (2026-08-17) — VELOCITY-ESTIMATOR INTEGRITY: the x2 rounding basin and the mid-run
+ *      v = 0 injection. Two independent defects found in the ML0164–ML0180 batch, both of which put
+ *      a wrong velocity into a 544.8 A/(m/s) loop. No BLG format change (stays v6, 92 B), no UDP,
+ *      command, pin, sequencing, fault, controller or coefficient change.
+ *        * FRACTIONAL-PITCH LEDGER (fix A). fw v15's pitch count rounded |Δ encoderPos| to the
+ *          nearest WHOLE pitch, so a spurious mid-pitch A-edge (|Δ| = 1, a genuine half pitch)
+ *          rounded up to one pitch and a T/2 interval was stored as a full pitch — v_actual read
+ *          exactly 2x true speed, self-sustaining once the EWMA seeded at T/2. Every run in the
+ *          batch entered it at breakaway (0.08–0.24 m/s); the locked runs show an accepted-interval
+ *          rate of exactly 2.00/slot and ref/T_true = 0.500. |Δ| is already HALF-pitch units, so the
+ *          stored per-pitch period is now period x 2 / |Δ| — a ledger, not a count. |Δ| = 2 is
+ *          arithmetic-free and byte-identical to fw v12–v16, so clean-stream v_act traces stay
+ *          comparable; |Δ| = 1 stores T, |Δ| = 3 stores 2/3 x period, |Δ| = 2k stores period/k as
+ *          before. Still one UDIV per accepted interval (none in the |Δ| = 2 common case).
+ *        * MID-RUN RESET, ROOT CAUSE (fix B). updateWheelSpeed() latched `now = micros()` several
+ *          instructions BEFORE snapshotting encLastEdgeUs. An A-rising edge accepted inside that
+ *          window writes a timestamp GREATER than `now`, the unsigned age (now - lastEdge) wraps to
+ *          ~2^32, and the edge-age stale test declares a fast, healthy wheel stopped and forces a
+ *          full encoderVelReset(). Nanosecond window x ~380 accepted edges/s x 25 s runs ≈ 0.5 hits
+ *          per long run — matching YP0166 (t = 26.2398 s, +12 A then -12 A within 12 ms) and TP0171
+ *          (t = 11.844 s), both in perfectly clean edge streams with no signal precondition. Fixed
+ *          by a signed age comparison in BOTH age tests: a future timestamp has age 0.
+ *        * DEFENCE IN DEPTH. An encoderVelReset() taken while the last published |v| exceeded
+ *          ENC_VEL_CORROB_MIN_MPS = 0.30 m/s now captures that reading and HOLDS it instead of
+ *          publishing a naked 0, until a FULL-ring reading of either sign corroborates it (depth
+ *          only, no sign term — safety review MED-1: a full-ring opposite-sign reading is a
+ *          vetted genuine reversal). The magnitude defence against the TP0171 half-pitch re-seed
+ *          is the fractional-pitch ledger above, not this gate. The
+ *          hold is bounded at ENC_VEL_TIMEOUT_US (100 ms) from the reset, the same class as every
+ *          other hold in the reader. The two stale paths explicitly DISARM it, so boot, standstill
+ *          and the State-3 between-run reset zero exactly as they always did.
+ *        * PER-PATH DROP ATTRIBUTION (diagnostic). encDropRawFloor / encDropLowGate /
+ *          encDropPitchFloor split the fw v16 encSpuriousDropCount sum by cause. The sum keeps its
+ *          exact semantics and stays the only one logged, so v6 decoders are untouched; the three
+ *          new counters appear in the State-98 'S' dump only.
  */
 
 #include <stddef.h>             // offsetof — pins the append-only BenchLogRecord field offsets
@@ -1477,6 +1512,28 @@ constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOT
 // applies to the low-side gate ONLY, which is all that is left of the ratio machinery.
 // Genuine acceleration is never filtered into a frozen reading: it shortens periods by a few percent
 // per pitch, which the 0.625 gate passes, and the EWMA tracks it within ~4 pitches.
+//
+// fw v17 — THE x2 ROUNDING BASIN (supersedes the count form above, not the reasoning). The fw v15
+// count was correct in its SOURCE (the decoder) but wrong in its RESOLUTION: it rounded |Δ| to the
+// nearest WHOLE pitch, and a spurious A-rising edge landing mid-pitch carries |Δ| = 1, which rounds
+// UP to one whole pitch. A half-pitch interval of duration T/2 was therefore stored as a full pitch
+// at T/2, and v_actual read exactly 2x true speed — a SECOND doubling basin, reached by a completely
+// different route than the ref ≈ 2T one this block was written to kill, and one the decoder count
+// could not detect because it was the count itself that was lossy. It self-sustains: once the EWMA
+// seeds at T/2 the low-side gate is keyed to T/2, so the halves keep passing. Bench evidence: every
+// run in the ML0164–ML0180 batch entered it at breakaway (0.08–0.24 m/s), the locked runs
+// (ML0164/ML0168) show an accepted-interval rate of exactly 2.00 per true slot and ref/T_true =
+// 0.500 exactly, and escape happens only above ~1.0–1.6 m/s where the chatter can no longer supply
+// one surviving mid-pitch edge per slot.
+// THE FIX is to stop counting and start keeping a LEDGER. |Δ encoderPos| is already the travelled
+// distance in HALF-pitch units, so the per-pitch period is period x 2 / |Δ| — exact for |Δ| = 2
+// (unchanged, clean streams stay byte-identical), correct for |Δ| = 1 (stores 2 x period = T),
+// correct for |Δ| = 3 (1.5 pitches: 2/3 x period, where fw v15 stored period/2), and identical to
+// fw v15 for every even |Δ| = 2k. Both the basin above and this one are then non-stable, from the
+// same mechanism: the estimator only ever divides a measured time by a measured distance. Worked
+// cases and the ISR-cost accounting are at the site in doEncoderA(). encLastPitches and
+// encMultiPitchCount deliberately stay WHOLE-pitch counts — they are display/offline quantities and
+// their fw v15 meaning is preserved.
 #define ENC_PERIOD_REF_SEED_N   2u        // accepted periods before the low-side gate arms
 #define ENC_PERIOD_LO_FRAC      0.625f    // documentation of the (ref>>1)+(ref>>3) shift form
 // ENC_PERIOD_MAX_MULT (was 3) is RETIRED in fw v15 together with the ratio-derived k branch: the
@@ -1509,6 +1566,13 @@ constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOT
 // cannot see.
 #define ENC_VEL_TIMEOUT_US   100000u
 #define ENC_VEL_STALE_K      1.5f
+
+// Post-reset corroboration threshold (fw v17). A reset taken while the last published |v| exceeded
+// this arms the hold-until-corroborated path in updateWheelSpeed(); below it the reset zeroes as it
+// always did. 0.30 m/s is deliberately the same speed as the ENC_ADAPT_MAX_REF_US arming point
+// (0.307 m/s): above it the low-side gate is live and a reset genuinely discards trustworthy state,
+// below it the estimator is a deadband relay whose held value is not worth defending.
+#define ENC_VEL_CORROB_MIN_MPS   0.30f
 
 // Guard: with either scale input above at a placeholder value, closing the velocity loop
 // OVER-DRIVES. v_actual under-reads true speed, so the PI keeps adding current to reach a setpoint
@@ -1897,6 +1961,24 @@ volatile uint32_t encMultiPitchCount = 0;
 // (a sustained 10 kHz drop rate would take ~5 days to wrap).
 volatile uint32_t encSpuriousDropCount = 0;
 
+// PER-PATH DROP ATTRIBUTION (fw v17). DIAGNOSTIC ONLY — nothing in the control path reads these,
+// and NONE of them is logged: the BLG record format stays v6/92 B, and encSpuriousDropCount above
+// keeps its exact SUM semantics so v6 decoders are unaffected. They exist because the single sum
+// cannot distinguish the three very different physical faults it aggregates:
+//   encDropRawFloor   — interval below the absolute ENC_PERIOD_MIN_US floor: contact bounce or a
+//                       burst of optical chatter faster than ~20 m/s of rim travel.
+//   encDropLowGate    — interval below 0.625 x ref: a spurious edge splitting one true pitch. This
+//                       is the dominant term on the un-Schmitted OPB829DZ (~900/s at 1.5 m/s in
+//                       YP0166) and is the one the 74HC14 bodge should collapse to near zero.
+//   encDropPitchFloor — per-pitch period below the floor AFTER the fractional-pitch division: a
+//                       decoder position delta inconsistent with the elapsed time, i.e. corrupted
+//                       counts rather than corrupted edge timing.
+// Cleared by encoderVelReset() with their siblings, so all five counters share one epoch.
+// Printed by the State-98 'S' dump only.
+volatile uint32_t encDropRawFloor   = 0;
+volatile uint32_t encDropLowGate    = 0;
+volatile uint32_t encDropPitchFloor = 0;
+
 // RETIRED IN fw v15: the poisoned-reference tripwire (encKBranchRun / encRefPoisonPending,
 // ENC_KBRANCH_RUN_MAX). It counted consecutive accepted periods taking the ratio-derived k > 1
 // branch and forced an encoderVelReset() at 4. That branch no longer exists — the pitch count is
@@ -1913,9 +1995,10 @@ volatile uint32_t encSpuriousDropCount = 0;
 // window would inject a FULL-SCALE error step into a 544.8 A/(m/s) controller (4 ms at 2 m/s,
 // 16 ms at 0.5 m/s) — a failure class the old boxcar could not produce, because it always had a
 // position difference to divide. So a re-accumulating ring HOLDS the last valid reading instead.
-// v_actual is forced to 0 on exactly four events (fw v13): boot, encoderVelReset(), the genuine
-// EDGE-age stale timeout, and the fw v13 READING-age stale bound — i.e. only when the wheel is
-// known to be stopped or the state is known-unusable.
+// v_actual is forced to 0 on exactly three events (fw v17, which retired the encoderVelReset() case
+// for resets taken at speed): boot, the genuine EDGE-age stale timeout, and the fw v13 READING-age
+// stale bound — i.e. only when the wheel is known to be stopped or the state is known-unusable.
+// See encVelCorrobPending below for the at-speed reset case.
 float encVelLastValid = 0.0f;
 bool  encVelHaveValid = false;
 
@@ -1930,6 +2013,23 @@ bool  encVelHaveValid = false;
 // which keeps the bound speed-scaled at speed instead of always falling back on the 100 ms floor.
 uint32_t encVelLastReadingUs = 0;
 uint32_t encVelLastSumUs     = 0;
+
+// POST-RESET CORROBORATION (fw v17 — YP0166 / TP0171). READER-side only, never touched by an ISR.
+// A reset taken while the wheel is demonstrably moving used to publish a naked 0 m/s for as long as
+// the ring took to refill (~6 ms at 1.5 m/s in YP0166), which is a FULL-SCALE error step into a
+// 544.8 A/(m/s) controller — the drive controller answered YP0166's with +12 A followed by -12 A
+// inside 12 ms. Worse, the ring refills from an un-seeded reference, so the FIRST post-reset
+// reading is the least trustworthy one in the whole run (TP0171 re-seeded at ref = 925 µs, a
+// half-pitch artefact, before the fw v15 dpos mechanism walked it back).
+// RULE: when encoderVelReset() is called while the last published |v| exceeded
+// ENC_VEL_CORROB_MIN_MPS, it captures that reading and arms encVelCorrobPending. Until a CORROBORATED
+// reading exists (cnt >= ENC_PERIOD_AVG_N — depth ONLY, either sign; safety review MED-1) the reader
+// publishes the captured value instead of 0. The hold is bounded by ENC_VEL_TIMEOUT_US measured
+// from the reset, and is NOT armed by the two stale paths — a stale timeout means no usable edges
+// at all, so its zero is information and stays exactly as it was (see updateWheelSpeed() 2/2b).
+bool     encVelCorrobPending = false;
+float    encVelResetHold     = 0.0f;
+uint32_t encVelResetHoldUs   = 0;
 
 // Set by State 3 (Finish) to clear the edge-period estimator between runs, so a new run's first
 // velocity samples are not computed against stale timestamps from the prior run. Consumed (and
@@ -1958,7 +2058,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 16
+#define FW_VERSION 17
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -6698,6 +6798,9 @@ void printTestStatus() {
     uint8_t  perPit  = encLastPitches;
     uint32_t perMul  = encMultiPitchCount;
     uint32_t perDrop = encSpuriousDropCount;   // fw v16
+    uint32_t dropRaw = encDropRawFloor;        // fw v17 per-path attribution
+    uint32_t dropGat = encDropLowGate;
+    uint32_t dropPit = encDropPitchFloor;
     interrupts();
     Serial.print("periods=");     Serial.print(perCnt);
     Serial.print("/");            Serial.print((int)ENC_PERIOD_AVG_N);
@@ -6713,6 +6816,14 @@ void printTestStatus() {
     // fw v16: dropped intervals (spurious-edge rate). multiPitch counts MISSED edges, spurDrop
     // counts SPURIOUS ones — both cumulative since the last encoderVelReset().
     Serial.print("  spurDrop=");      Serial.println(perDrop);
+    // fw v17: the three drop paths that sum into spurDrop above, broken out. lowGate dominating is
+    // the un-Schmitted OPB829DZ chatter signature (the 74HC14 bodge should collapse it); rawFloor
+    // dominating points at bounce faster than ~20 m/s of rim travel; pitchFloor dominating means the
+    // decoder position delta disagrees with the elapsed time, i.e. corrupted counts, not timing.
+    // Not logged to the BLG (format stays v6) — spurDrop already carries the sum there.
+    Serial.print("dropRawFloor=");    Serial.print(dropRaw);
+    Serial.print("  dropLowGate=");   Serial.print(dropGat);
+    Serial.print("  dropPitchFloor="); Serial.println(dropPit);
     Serial.print("v_actual=");    Serial.print(v_actual, 3);
     Serial.print(" m/s  (counts/rev="); Serial.print(ENCODER_COUNTS_PER_REV, 0);
     Serial.print(", r=");               Serial.print(FLYWHEEL_RADIUS_M, 4);
@@ -8358,10 +8469,28 @@ void encoderVelReset() {
     encMultiPitchCount  = 0;
     encSpuriousDropCount = 0;   // fw v16 diagnostic — cleared with its fw v15 siblings so both
                                 // counters share one epoch and a decoder can diff them together
+    encDropRawFloor      = 0;   // fw v17 per-path attribution — same epoch as the sum above
+    encDropLowGate       = 0;
+    encDropPitchFloor    = 0;
     // fw v15: no tripwire state to clear — the pitch count is stateless (see the retirement note
     // at the encPeriodRefUs declarations). The pitch count itself carries no state across edges:
     // it is derived from encPosAtLastEdge, which this reset already re-anchors above.
     encIrqRestore(irq);
+    // fw v17: capture the last published reading BEFORE discarding it, if the wheel was
+    // demonstrably moving. updateWheelSpeed() then holds that value instead of publishing a naked
+    // 0 m/s into the 544.8 A/(m/s) controller until a corroborated reading replaces it (bounded by
+    // ENC_VEL_TIMEOUT_US from here — see the encVelCorrobPending block). Arming lives HERE rather
+    // than at the call sites so every present and future caller gets it uniformly; the two stale
+    // paths in updateWheelSpeed() explicitly DISARM it afterwards, because a stale timeout is the
+    // one case where the zero is information rather than an artefact.
+    if (encVelHaveValid && fabsf(encVelLastValid) > ENC_VEL_CORROB_MIN_MPS) {
+        encVelCorrobPending = true;
+        encVelResetHold     = encVelLastValid;
+        encVelResetHoldUs   = micros();
+    } else {
+        encVelCorrobPending = false;
+        encVelResetHold     = 0.0f;
+    }
     encVelLastValid     = 0.0f;
     encVelHaveValid     = false;
     encVelLastReadingUs = 0;    // fw v13: reading-age bound re-arms on the first new reading
@@ -8403,10 +8532,21 @@ void encoderVelReset() {
 //     it exists at all. A commanded step BELOW the design's gate-checked floor of 0.5 m/s
 //     therefore closes the loop around a deadband relay and IS EXPECTED to limit-cycle — that is
 //     a validity boundary of the design, not a defect of this estimator.
-//   - HOLD SEMANTICS: v_actual is forced to 0 on exactly FOUR events (fw v13 added the third and
-//     fourth) — boot, encoderVelReset(), the EDGE-age stale timeout, and the READING-age stale
-//     bound (step 2b, which is what bounds a hold when raw edges keep arriving but readings stop).
-//     A poisoned-reference reset counts as an encoderVelReset(). A ring invalidated mid-motion
+//   - HOLD SEMANTICS: v_actual is forced to 0 on exactly THREE events (fw v17 REMOVED the fourth
+//     and NARROWED the second) — boot (no edge has ever been seen), the EDGE-age stale timeout, and
+//     the READING-age stale bound (step 2b, which is what bounds a hold when raw edges keep arriving
+//     but readings stop). An encoderVelReset() taken while the last published |v| exceeded
+//     ENC_VEL_CORROB_MIN_MPS no longer zeroes at all: it captures that reading and HOLDS it until a
+//     corroborated one replaces it (step 6) or the 100 ms window in step 0 expires — see the
+//     encVelCorrobPending block for the YP0166/TP0171 evidence. A reset taken at or below that
+//     speed, and the reset the two stale paths themselves perform, still zero exactly as before,
+//     so boot and standstill are unchanged in their outcomes. The State-3 between-run reset is
+//     unchanged ONLY when the flywheel is at or below ENC_VEL_CORROB_MIN_MPS at doState3(); in
+//     the common case (flywheel still coasting above 0.30 m/s) it now ARMS the hold and
+//     v_actual/telemetry/BLG v_act carry the true pre-reset value for up to 100 ms into Idle
+//     instead of zeroing. Control impact is nil (Idle commands 0 A without reading v_actual),
+//     but the logged trace changes (fw v17 safety review LOW-2).
+//     A ring invalidated mid-motion
 //     holds the last valid reading while it refills (see encVelLastValid), as does an embargoed
 //     single-pitch sign flip (step 5). One consequence worth stating: a profile started shortly
 //     after a stop can read a held, up-to-100 ms-old true value for one tick before the timeout
@@ -8421,6 +8561,16 @@ void updateWheelSpeed() {
     }
 
     uint32_t now = micros();
+
+    // (0) POST-RESET CORROBORATION WINDOW EXPIRY (fw v17). Every hold this file grants is bounded;
+    // this one is bounded by ENC_VEL_TIMEOUT_US measured from the reset, the same 100 ms class as
+    // (2)/(2b). Signed comparison so a hold armed a few microseconds "in the future" (see the
+    // FUTURE-TIMESTAMP note in (2)) cannot expire instantly through an unsigned underflow.
+    if (encVelCorrobPending &&
+        (int32_t)(now - encVelResetHoldUs) > (int32_t)ENC_VEL_TIMEOUT_US) {
+        encVelCorrobPending = false;
+        encVelResetHold     = 0.0f;
+    }
 
     // fw v15: the fw v13 poisoned-reference reset that stood here is RETIRED. It existed because a
     // ratio-derived pitch count could lock the reference into a self-confirming basin; the count is
@@ -8444,7 +8594,11 @@ void updateWheelSpeed() {
 
     // (1) BOOT / POST-RESET: no edge has been seen at all. Genuinely no information — report 0.
     if (!haveEdge) {
-        v_actual        = 0.0f;
+        // fw v17: at true boot encVelCorrobPending is false (nothing was ever published), so this
+        // is bit-for-bit the old behaviour. After a mid-motion reset it is armed, and holding the
+        // captured value across the one-to-three ticks before the first post-reset edge arrives is
+        // what removes the naked zero entirely — (0) above bounds it at 100 ms.
+        v_actual        = encVelCorrobPending ? encVelResetHold : 0.0f;
         encVelHaveValid = false;
         return;
     }
@@ -8457,9 +8611,33 @@ void updateWheelSpeed() {
     uint32_t lastPeriod = periods[(idx + ENC_PERIOD_AVG_N - 1) % ENC_PERIOD_AVG_N];
     uint32_t staleLimit = (uint32_t)(ENC_VEL_STALE_K * (float)lastPeriod);
     if (staleLimit < ENC_VEL_TIMEOUT_US) staleLimit = ENC_VEL_TIMEOUT_US;
-    if ((uint32_t)(now - lastEdge) > staleLimit) {
+    // FUTURE-TIMESTAMP GUARD (fw v17 — ROOT CAUSE of the YP0166 / TP0171 mid-run v = 0 injections).
+    // `now` is latched by the micros() call at the top of this function; `lastEdge` is snapshotted
+    // several instructions LATER. An A-rising edge accepted inside that window writes encLastEdgeUs
+    // with a micros() value strictly GREATER than `now`, so the unsigned difference (now - lastEdge)
+    // wraps to ~2^32 and unconditionally exceeds any staleLimit — declaring a healthy, fast-turning
+    // wheel "stopped" and forcing a full encoderVelReset(). The window is only tens of nanoseconds,
+    // but the accepted-edge rate at cruise is ~380/s over 25 s runs, which puts the expected hit
+    // count at ~0.5 per long run: exactly the observed frequency, with no signal precondition,
+    // which is why the event appeared in a perfectly clean edge stream (YP0166 t = 26.2398 s,
+    // encoder_pos advancing steadily on both sides, ref = 2654 µs = the correct pitch period).
+    // The fix is a signed comparison: a timestamp in the future has age 0, never 4295 s.
+    // INVARIANT THE CLAMP DEPENDS ON (fw v17 safety review LOW-3): a genuinely-stale edge older
+    // than 2^31 µs (~35.8 min) would ALSO read negative and clamp to "fresh", defeating this
+    // timeout. That age is unreachable ONLY because updateWheelSpeed() runs unconditionally from
+    // loop() in every state, so this test fires at >= 100 ms and clears encHaveLastEdge long
+    // before the wrap. If a future round ever state-gates the updateWheelSpeed() call, this clamp
+    // must gain an explicit wrap guard at the same time.
+    int32_t edgeAge = (int32_t)(now - lastEdge);
+    if (edgeAge < 0) edgeAge = 0;
+    if ((uint32_t)edgeAge > staleLimit) {
         v_actual = 0.0f;
         encoderVelReset();      // stale: also clears the held reading, so motion restarts clean
+        // fw v17: a genuine stale timeout means no usable edges arrived for >= 100 ms, so its zero
+        // is a measurement, not an artefact — disarm the corroboration hold that encoderVelReset()
+        // just armed. This keeps the standstill/boot/State-3 zeroing cases bit-identical.
+        encVelCorrobPending = false;
+        encVelResetHold     = 0.0f;
         return;
     }
 
@@ -8474,9 +8652,16 @@ void updateWheelSpeed() {
     if (encVelHaveValid) {
         uint32_t readLimit = (uint32_t)(ENC_VEL_STALE_K * (float)encVelLastSumUs);
         if (readLimit < ENC_VEL_TIMEOUT_US) readLimit = ENC_VEL_TIMEOUT_US;
-        if ((uint32_t)(now - encVelLastReadingUs) > readLimit) {
+        // Same future-timestamp guard as (2): encVelLastReadingUs is written from a `now` latched on
+        // a previous tick, so it cannot lead this tick's `now` — but the clamp costs one compare and
+        // makes the two age tests structurally identical, which is the point.
+        int32_t readAge = (int32_t)(now - encVelLastReadingUs);
+        if (readAge < 0) readAge = 0;
+        if ((uint32_t)readAge > readLimit) {
             v_actual = 0.0f;
             encoderVelReset();
+            encVelCorrobPending = false;   // fw v17: as in (2) — a reading this old is not defended
+            encVelResetHold     = 0.0f;
             return;
         }
     }
@@ -8487,7 +8672,8 @@ void updateWheelSpeed() {
     // full-scale error step into a 544.8 A/(m/s) controller (see the encVelLastValid block). The
     // hold is now bounded by (2b) in wall-clock terms, not merely by (2).
     if (cnt == 0 || dir == 0) {
-        v_actual = encVelHaveValid ? encVelLastValid : 0.0f;
+        v_actual = encVelHaveValid ? encVelLastValid
+                                   : (encVelCorrobPending ? encVelResetHold : 0.0f);
         return;
     }
 
@@ -8506,7 +8692,8 @@ void updateWheelSpeed() {
         sumUs += periods[(idx + ENC_PERIOD_AVG_N - 1 - i) % ENC_PERIOD_AVG_N];
     }
     if (sumUs == 0) {           // cannot happen with the ENC_PERIOD_MIN_US floor; divide guard
-        v_actual = encVelHaveValid ? encVelLastValid : 0.0f;
+        v_actual = encVelHaveValid ? encVelLastValid
+                                   : (encVelCorrobPending ? encVelResetHold : 0.0f);
         return;
     }
 
@@ -8529,6 +8716,33 @@ void updateWheelSpeed() {
     if (cnt < 2 && encVelHaveValid && (vNew < 0.0f) != (encVelLastValid < 0.0f)) {
         v_actual = encVelLastValid;
         return;
+    }
+
+    // (6) POST-RESET CORROBORATION (fw v17 — YP0166 / TP0171). While the hold armed by
+    // encoderVelReset() is live, the FIRST reading after the reset is the least trustworthy in the
+    // run: the ring is partial, the EWMA reference is un-seeded (so the low-side gate is dark), and
+    // a single spurious edge therefore re-seeds straight into a half-pitch reference — TP0171
+    // re-seeded at ref = 925 µs, a 2x scale error, before the fw v15 dpos mechanism walked it back
+    // over ~15 ms. Requiring a FULL ring (cnt >= ENC_PERIOD_AVG_N) costs one extra pitch of
+    // latency before the estimator publishes again.
+    // WHAT THIS GATE IS AND IS NOT (fw v17 safety review LOW-1): it is a DEPTH gate — one extra
+    // pitch of latency so the ring and EWMA re-seed from more than a single interval. It is NOT a
+    // magnitude safeguard: a 2x-corrupted post-reset stream fills the ring with same-looking
+    // entries within ~2 pitches and would pass. The MAGNITUDE defence against the TP0171 half-pitch
+    // re-seed is the fw v17 fractional-pitch ledger in doEncoderA(), which makes those intervals
+    // store the correct per-pitch period in the first place.
+    // Depth ONLY, deliberately no sign term (safety review MED-1): a full-ring opposite-sign
+    // reading is a (5)-vetted, corroborated genuine reversal — holding the pre-reset sign against
+    // it for the rest of the 100 ms window would feed the loop a wrong-SIGN value, which is worse
+    // than the one-pitch-late truth. Partial-ring readings of either sign keep holding.
+    if (encVelCorrobPending) {
+        bool corroborated = (cnt >= ENC_PERIOD_AVG_N);
+        if (!corroborated) {
+            v_actual = encVelResetHold;
+            return;             // deliberately does NOT refresh encVelLastReadingUs — (0) bounds it
+        }
+        encVelCorrobPending = false;
+        encVelResetHold     = 0.0f;
     }
 
     v_actual            = vNew;
@@ -8598,12 +8812,14 @@ void doEncoderA() {
             // Absolute floor first — it applies with or without a reference, and it is the
             // bootstrap's only protection (see the breakaway caveat at ENC_PERIOD_LO_FRAC).
             bool     spurious = (period < ENC_PERIOD_MIN_US);
+            if (spurious) encDropRawFloor++;          // fw v17 per-path attribution (diagnostic)
             if (!spurious && refValid) {
                 if (period < ((ref >> 1) + (ref >> 3))) {
                     // < 0.625 x ref — physically impossible between two genuine consecutive
                     // pitches (see the ENC_PERIOD_LO_FRAC rationale). Spurious edge; drop it the
                     // same way the absolute floor drops a glitch, so the two short halves merge.
                     spurious = true;
+                    encDropLowGate++;                 // fw v17 per-path attribution (diagnostic)
                 }
                 // fw v15: the former "> 1.5 x ref → k = 2/3" ratio branch is GONE. How many pitches
                 // an accepted interval spans is now COUNTED from the decoder (below), not inferred
@@ -8646,14 +8862,58 @@ void doEncoderA() {
                 // created the poison basins — so it is deliberately not reinstated.
                 int32_t  dpos   = pos - encPosAtLastEdge;
                 uint32_t posMag = (dpos < 0) ? (0u - (uint32_t)dpos) : (uint32_t)dpos;
-                uint32_t pitches = (posMag + 1u) >> 1;     // nearest integer of |dpos| / 2
+                uint32_t pitches = (posMag + 1u) >> 1;     // nearest whole pitch — DIAGNOSTIC ONLY
                 if (pitches == 0) pitches = 1;             // dpos == 0: ambiguous, handled below
 
-                // Multi-pitch intervals are stored as the MEAN PER-PITCH period, so the reader's
-                // distance = cnt x pitch stays exactly right without knowing this happened. This is
-                // the SAME divide as before — no extra one is introduced by the floor check below,
-                // which is one compare on the value this line already produced.
-                if (pitches > 1) period /= pitches;
+                // ── FRACTIONAL-PITCH LEDGER (fw v17) ──────────────────────────────────────
+                // WHY THE ROUNDING HAD TO GO — the x2 rounding basin (logs ML0164/ML0168 and every
+                // other run in the 164–180 batch, all entered at breakaway, 0.08–0.24 m/s). A
+                // spurious A-rising edge arriving mid-pitch is a REAL edge to the decoder: it
+                // carries |dpos| = 1, one quadrature count since the last accepted edge. The fw v15
+                // count rounded that UP — (1 + 1) >> 1 = 1 — so a HALF-pitch interval of duration
+                // T/2 was stored as a WHOLE pitch at period T/2, and v_actual read exactly 2x true
+                // speed. The state is self-sustaining: once the EWMA seeds at T/2 the 0.625 gate is
+                // keyed to T/2, so every subsequent T/2 half passes and the occasional surviving
+                // full-T interval is the one that looks anomalous. Measured accepted-interval rate
+                // in the locked runs is exactly 2.00 per true slot, ref/T_true = 0.500 exactly, and
+                // escape only occurs above ~1.0–1.6 m/s where the chatter can no longer supply one
+                // surviving mid-pitch edge per slot.
+                // THE FIX. |dpos| is already the travelled distance in HALF-pitch units (the x2
+                // decode moves encoderPos by 2 per slot pitch), so the per-pitch period is simply
+                //     perPitch = period * 2 / |dpos|
+                // — a ledger entry, not a rounded count. Worked cases:
+                //     |dpos| = 1  (half pitch, the spurious-edge case)  -> stores 2 x period = T. ✓
+                //     |dpos| = 2  (one clean pitch)                     -> stores period, EXACTLY,
+                //                                                         with no arithmetic at all
+                //                                                         (the fast path below), so
+                //                                                         a clean stream is
+                //                                                         byte-identical to v12–v16.
+                //     |dpos| = 3  (1.5 pitches: a spurious edge after a missed one) -> 2/3 x period,
+                //                                                         which IS the correct
+                //                                                         per-pitch time. fw v15
+                //                                                         stored period/2 here.
+                //     |dpos| = 2k (k clean pitches)                     -> period/k, unchanged.
+                // The reader is UNTOUCHED: each ring entry still means "time to travel one pitch",
+                // and v = cnt x pitch / Σperiods holds exactly as before. A fractional entry simply
+                // reports the pitch-rate implied by a sub-pitch measurement.
+                // COST: still ONE UDIV per accepted interval, and none at all in the |dpos| == 2
+                // common case. The > 2^31 branch is an overflow guard for the period << 1 (it needs
+                // ~36 minutes between accepted edges to be reachable) and is mutually exclusive with
+                // the main divide, so the ISR budget is unchanged.
+                if (posMag == 2u) {
+                    // exact whole pitch — no arithmetic, bit-identical to fw v12–v16
+                } else if (posMag == 0u) {
+                    // dpos == 0: ambiguous, the raw interval is kept and the ring is invalidated
+                    // below (unchanged from fw v15, including its documented EWMA bias).
+                } else if (period > (0xFFFFFFFFu >> 1)) {
+                    // NOTE (fw v17 review LOW-2): this fallback rounds a half-pitch UP (posMag == 1
+                    // stores the raw period, i.e. reads FAST) — it is an overflow escape, NOT a
+                    // conservative path. Acceptable only because it needs ~35.8 min between
+                    // accepted edges to be reachable, which the 100 ms stale timeout forecloses.
+                    period = period / ((posMag + 1u) >> 1);   // absurdly long interval: whole-pitch
+                } else {
+                    period = (period << 1) / posMag;
+                }
 
                 // PER-PITCH ABSOLUTE FLOOR (fw v15 safety review S1). The count is uncapped, so a
                 // large `pitches` can drive the per-pitch period below ENC_PERIOD_MIN_US — or, when
@@ -8668,8 +8928,21 @@ void doEncoderA() {
                 // many pitches the interval claims.
                 if (period < ENC_PERIOD_MIN_US) {
                     // Dropped — fall through to the same no-base-advance handling as `spurious`.
+                    // fw v17: the floor is applied to the FRACTIONAL per-pitch value computed above,
+                    // which is the quantity the ring will actually hold — so the |dpos| = 1 case is
+                    // now floored at 200 µs of PER-PITCH time (T >= 200 µs), not at 200 µs of raw
+                    // half-pitch interval. The bound on indicated speed is unchanged (~20 m/s).
                     encSpuriousDropCount++;   // fw v16: third drop path, counted like the other two
+                    encDropPitchFloor++;      // fw v17 per-path attribution (diagnostic)
                 } else {
+                    // fw v17 DIAGNOSTIC SEMANTICS. The STORED period is fractional (above); these
+                    // two remain WHOLE-PITCH counts for human/offline reading, so their meaning is
+                    // unchanged from fw v15–v16 and no decoder or 'S'-dump reader has to relearn
+                    // them. encLastPitches = nearest whole pitch of the last accepted interval, so a
+                    // half-pitch (|dpos| = 1) interval still displays 1 — the fractional detail
+                    // lives in `ref`, and a ref parked near half the expected pitch period is the
+                    // signature to read. encMultiPitchCount still counts intervals spanning more
+                    // than one whole pitch, i.e. the MISSED-edge rate. Both remain diagnostic only.
                     encLastPitches = (uint8_t)((pitches > 255u) ? 255u : pitches); // diagnostic only
                     if (pitches > 1) encMultiPitchCount++;                         // diagnostic only
 

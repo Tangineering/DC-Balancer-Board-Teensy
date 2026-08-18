@@ -60,6 +60,22 @@ static void reset_test_state() {
     power_share_actual   = 0;
     droop_gain_FC_actual = 0;
     droop_gain_BT_actual = 0;
+    // fw v17: encoderVelReset() now READS encVelHaveValid/encVelLastValid at call time to decide
+    // whether to arm post-reset corroboration (encVelCorrobPending/encVelResetHold*). Before fw v17
+    // that reset was unconditional, so leftover encoder-velocity state from a PRIOR test could never
+    // change its outcome; now it can — a prior test that published a >0.30 m/s reading and left it
+    // in these globals would make the NEXT test's first encoderVelReset() call arm a corroboration
+    // hold instead of zeroing, purely as a fixture-ordering artefact. Clear the full encoder-velocity
+    // state here (mirroring what encoderVelReset() itself clears) so every test starts from the same
+    // "never published" baseline regardless of what ran before it.
+    encVelHaveValid      = false;
+    encVelLastValid      = 0.0f;
+    encVelLastReadingUs  = 0;
+    encVelLastSumUs      = 0;
+    encVelCorrobPending  = false;
+    encVelResetHold      = 0.0f;
+    encVelResetHoldUs    = 0;
+
     ag105_status_raw     = 0;
     ag105DataValid       = false;
     ag105Configured      = false;
@@ -5854,21 +5870,36 @@ static void test_edge_period_estimator() {
     updateWheelSpeed();
     for (int i = 1; i <= 4; i++) { enc_cycle_fwd((uint32_t)i * P); updateWheelSpeed(); }
     check(v_actual > 0.0f, "(f) pre-flip: forward ring is live and positive");
-    float preFlipReading = v_actual;
     uint32_t tf = 4 * P;
-    tf += P; enc_cycle_rev(tf); updateWheelSpeed();       // rev tap #1: ambiguous dpos, no flip yet
+    tf += P; enc_cycle_rev(tf); updateWheelSpeed();       // rev tap #1: dpos=+1 (still net FORWARD —
+    // see below), not a flip yet
+    // fw v17 fixture note: tap #1's own A-rising lands with |dpos| = 1 relative to the base (the
+    // base sits 2 counts behind the live encoderPos in steady state, since the base is stamped at
+    // the A-rising tap but the cycle's trailing B-transition advances encoderPos further before the
+    // NEXT tap), and the net dpos this tap measures is +1 — still SAME-SIGN as the established
+    // forward ring, so it is not a direction flip at all (dir stays +1, cnt stays at the ring depth
+    // 2, this entry just replaces the oldest slot). Under fw v16 this tap's odd |dpos|=1 rounded to
+    // whole-pitch pitches=1 and stored the RAW period unchanged, so the published reading barely
+    // moved; under fw v17 the fractional-pitch ledger stores 2x the raw period for this same
+    // half-pitch interval (the documented fix — see doEncoderA()'s FRACTIONAL-PITCH LEDGER comment),
+    // which measurably PULLS DOWN the ring average here. This is a genuine, intended v17 behavior
+    // change (a same-direction, non-embargoed publish), not the embargo mechanism under test below —
+    // capture it as the new baseline for the embargo check that follows.
     check(v_actual > 0.0f,
-          "(f) first reverse tap after a forward run is direction-ambiguous and does not flip the ring yet");
+          "(f) first reverse tap after a forward run is still net-forward (dpos=+1, same sign) — "
+          "publishes live, not embargoed (sign matches)");
+    float tap1Reading = v_actual;   // the fw v17 fractional-pitch-revised reading, NOT preFlipReading
     tf += P; enc_cycle_rev(tf); updateWheelSpeed();       // rev tap #2: clean -2, flips, ring -> cnt=1
     // fw v13 safety review S3 (sign embargo): a cnt<2 reading whose sign DIFFERS from the last
-    // PUBLISHED reading (here, the positive pre-flip steady value) is embargoed — the reader HOLDS
-    // rather than publishing the noisier single-pitch reversal. This supersedes the earlier fw v13
-    // round's "live cnt=1 reading immediately" behavior (change C alone): S3 layers a corroboration
-    // requirement (cnt>=2) on top of it specifically for sign flips. Sign-MATCHING cnt=1 readings
-    // (e.g. (c)/(e)/(i)/(g) above, all same-direction) are unaffected.
-    check(fabsf(v_actual - preFlipReading) < 1e-6f,
+    // PUBLISHED reading (here, tap1Reading — the fw v17-revised value published by tap #1 just
+    // above, not the original pre-flip steady value) is embargoed — the reader HOLDS rather than
+    // publishing the noisier single-pitch reversal. This supersedes the earlier fw v13 round's "live
+    // cnt=1 reading immediately" behavior (change C alone): S3 layers a corroboration requirement
+    // (cnt>=2) on top of it specifically for sign flips. Sign-MATCHING cnt=1 readings (e.g.
+    // (c)/(e)/(i)/(g) above, all same-direction) are unaffected.
+    check(fabsf(v_actual - tap1Reading) < 1e-6f,
           "(f) direction flip: the second reverse tap is EMBARGOED (sign differs, cnt=1) — holds "
-          "the pre-flip positive value rather than publishing");
+          "tap1Reading (the last PUBLISHED value) rather than publishing");
     tf += P; enc_cycle_rev(tf); updateWheelSpeed();       // rev tap #3: clean -2, ring refills to cnt=2
     check(v_actual < 0.0f,
           "(f) direction flip: at cnt=2 the embargo lifts (corroborated) — v_actual is negative");
@@ -5887,12 +5918,15 @@ static void test_edge_period_estimator() {
     updateWheelSpeed();
     for (int i = 1; i <= 4; i++) { enc_cycle_fwd((uint32_t)i * P); updateWheelSpeed(); }
     check(v_actual > 0.0f, "(f2) pre-flip: forward ring is live and positive");
-    float f2PreFlip = v_actual;
     uint32_t tf2 = 4 * P;
-    tf2 += P; enc_cycle_rev(tf2); updateWheelSpeed();     // ambiguous tap, no flip yet
+    tf2 += P; enc_cycle_rev(tf2); updateWheelSpeed();     // dpos=+1, same sign, not a flip yet — fw
+    // v17 fractional-pitch ledger revises this published reading (see (f) above); capture it AFTER
+    // the tap, not the pre-flip steady value, as the embargo's expected hold target.
+    float f2Tap1Reading = v_actual;
     tf2 += P; enc_cycle_rev(tf2); updateWheelSpeed();     // flips, cnt=1, sign differs -> EMBARGOED
-    check(fabsf(v_actual - f2PreFlip) < 1e-6f,
-          "(f2) mid-flip: the sign-embargoed cnt=1 tap HOLDS the pre-flip positive value");
+    check(fabsf(v_actual - f2Tap1Reading) < 1e-6f,
+          "(f2) mid-flip: the sign-embargoed cnt=1 tap HOLDS the last published (fw v17-revised) "
+          "value, not the original pre-flip steady value");
     // No further edges: advance past the stale bound (last period was P = 1000us, so the absolute
     // ENC_VEL_TIMEOUT_US floor governs, same as (g)).
     g_mock_micros = tf2 + ENC_VEL_TIMEOUT_US + 1;
@@ -5900,23 +5934,54 @@ static void test_edge_period_estimator() {
     check(v_actual == 0.0f, "(f2) hold bounded by staleness: v_actual zeros once the timeout elapses");
     check(encPeriodCount == 0, "(f2) hold bounded by staleness: the ring resets (encPeriodCount == 0)");
 
-    // (f3) FOUR-and-only-four zeroing events (fw v13 adds the reading-age bound (2b) to the
-    //      previous three: boot, encoderVelReset(), and the raw-edge stale timeout).
-    //      Ring re-accumulation (covered above in (f)/(f2)) deliberately does NOT zero — it holds
-    //      (or, since change C, produces a live partial reading).
+    // (f3) THREE-and-only-three UNCONDITIONAL zeroing events (fw v13 added the reading-age bound
+    //      (2b) to the previous two; fw v17 RETIRED encoderVelReset() from this list when the last
+    //      published |v| exceeds ENC_VEL_CORROB_MIN_MPS — see the dedicated corroboration block
+    //      below). The three that remain unconditional: boot, the raw-edge stale timeout, and the
+    //      reading-age bound. Ring re-accumulation (covered above in (f)/(f2)) deliberately does not
+    //      zero either — it holds (or produces a live partial reading).
     // -- boot: before any edge has ever been seen, v_actual reads 0.
     enc_reset();
     g_mock_micros = 0;
     encoderVelReset();
     updateWheelSpeed();
     check(v_actual == 0.0f, "(f3) boot: v_actual == 0 before any A-rising edge has ever been seen");
-    // -- encoderVelReset(): called directly against a LIVE reading, must zero it (this is the one
-    //    path documented to discard a valid reading, distinct from a mere ring re-accumulation).
+    // -- encoderVelReset() AT SPEED (fw v17 POST-RESET CORROBORATION): a reset taken while the last
+    //    published |v| exceeds ENC_VEL_CORROB_MIN_MPS (0.30 m/s) no longer zeroes at all — it captures
+    //    the reading and HOLDS it (encVelCorrobPending/encVelResetHold) until a full-ring reading
+    //    (cnt >= ENC_PERIOD_AVG_N, depth-only per the fw v17 safety-review MED-1 fix — no sign term)
+    //    corroborates it, or the ENC_VEL_TIMEOUT_US window expires. expect_fwd (~3.99 m/s) is well
+    //    above the 0.30 m/s threshold, so this is the AT-SPEED case, not the old unconditional zero.
     for (int i = 1; i <= 4; i++) { enc_cycle_fwd((uint32_t)i * P); updateWheelSpeed(); }
     check(v_actual > 0.0f, "(f3) encoderVelReset() setup: a live reading exists");
+    float f3PreResetReading = v_actual;
     encoderVelReset();
+    check(encVelCorrobPending == true,
+          "(f3) encoderVelReset() at speed (> ENC_VEL_CORROB_MIN_MPS): arms corroboration");
+    check(fabsf(encVelResetHold - f3PreResetReading) < 1e-6f,
+          "(f3) encoderVelReset() at speed: captures the pre-reset reading into encVelResetHold");
     updateWheelSpeed();
-    check(v_actual == 0.0f, "(f3) encoderVelReset(): zeros a live reading");
+    check(fabsf(v_actual - f3PreResetReading) < 1e-6f,
+          "(f3) encoderVelReset() at speed: v_actual HOLDS the pre-reset reading (fw v17), not 0");
+    check(encPeriodCount == 0 && encHaveLastEdge == false,
+          "(f3) encoderVelReset() at speed: the ring itself is still cleared underneath the hold");
+    // A depth-only-corroborated (cnt >= ENC_PERIOD_AVG_N) same-direction re-accumulation lifts the
+    // hold and publishes the fresh (correct, unrevised) steady reading.
+    uint32_t t3f = g_mock_micros;
+    enc_cycle_fwd(t3f); updateWheelSpeed();                 // baseline — no period yet, still held
+    check(fabsf(v_actual - f3PreResetReading) < 1e-6f,
+          "(f3) corroboration: baseline tap alone (cnt=0) does not lift the hold");
+    t3f += P; enc_cycle_fwd(t3f); updateWheelSpeed();       // period 1 -> cnt=1, still partial
+    check(fabsf(v_actual - f3PreResetReading) < 1e-6f,
+          "(f3) corroboration: a PARTIAL ring (cnt=1 < ENC_PERIOD_AVG_N) still holds — depth gate "
+          "not yet satisfied");
+    check(encVelCorrobPending == true, "(f3) corroboration: still pending after a partial-ring tap");
+    t3f += P; enc_cycle_fwd(t3f); updateWheelSpeed();       // period 2 -> cnt=2, ring full: corroborated
+    check(encVelCorrobPending == false,
+          "(f3) corroboration: a full-ring (cnt >= ENC_PERIOD_AVG_N) reading lifts the hold");
+    check(fabsf(v_actual - expect_fwd) < fabsf(expect_fwd) * 1e-4f,
+          "(f3) corroboration: the published reading is the correct fresh steady value, not the "
+          "held pre-reset value");
     // -- stale timeout: re-establish a live reading, then let it go stale with no further edges.
     enc_reset();
     g_mock_micros = 0;
@@ -5986,26 +6051,42 @@ static void test_edge_period_estimator() {
     check(fabsf(floor_mps - 0.0399f) < 0.001f,
           "(h) zero-speed floor: pitch / ENC_VEL_TIMEOUT_US matches the documented ~0.0399 m/s figure (fw v13)");
 
-    // (i) encoderVelReset() clears everything: after a live ring, calling it directly must zero
-    //     v_actual (once updateWheelSpeed() next runs) and require N fresh periods again.
+    // (i) encoderVelReset() clears the RING/edge-have state unconditionally, even though (fw v17) it
+    //     no longer unconditionally zeroes v_actual when the wheel was demonstrably moving at speed
+    //     — the underlying ring/edge-timestamp state is still fully torn down either way (that part
+    //     of the fw v13-era claim survives fw v17 intact); the published value's zero-vs-hold outcome
+    //     is now covered separately by (f3) above.
     enc_reset();
     g_mock_micros = 0;
     encoderVelReset();
     updateWheelSpeed();
     for (int i = 1; i <= 4; i++) { enc_cycle_fwd((uint32_t)i * P); updateWheelSpeed(); }
     check(v_actual > 0.0f, "(i) pre-reset: ring is live");
+    float iPreResetReading = v_actual;   // expect_fwd (~3.99 m/s), above ENC_VEL_CORROB_MIN_MPS
     encoderVelReset();
     check(encPeriodCount == 0 && encHaveLastEdge == false,
           "(i) encoderVelReset(): clears the ring and the edge-have flag directly");
     updateWheelSpeed();
-    check(v_actual == 0.0f, "(i) encoderVelReset(): v_actual reads 0 immediately after");
+    // fw v17: this reset was taken AT SPEED (> ENC_VEL_CORROB_MIN_MPS), so it arms post-reset
+    // corroboration and HOLDS the pre-reset reading instead of zeroing — see (f3) for the dedicated
+    // corroboration coverage. Confirm the hold here too, so this test's own narrative ("reset then
+    // read again") stays internally consistent with what it actually observes.
+    check(fabsf(v_actual - iPreResetReading) < 1e-6f,
+          "(i) encoderVelReset() at speed: v_actual HOLDS the pre-reset reading (fw v17 "
+          "corroboration), not 0 — the ring/edge state is cleared per the check above regardless");
     uint32_t t3 = g_mock_micros;
     enc_cycle_fwd(t3); updateWheelSpeed();                 // baseline — no period yet
     t3 += P; enc_cycle_fwd(t3); updateWheelSpeed();         // period 1 -> cnt=1
-    // fw v13 (change C): cnt==1 is a live single-pitch reading, not a zeroed warm-up value.
-    check(fabsf(v_actual - expect_1pitch) < fabsf(expect_1pitch) * 1e-4f,
-          "(i) encoderVelReset(): 1 period after the reset is a live single-pitch reading");
-    t3 += P; enc_cycle_fwd(t3); updateWheelSpeed();         // period 2 -> cnt=2, ring full
+    // fw v17: cnt==1 is a PARTIAL ring (< ENC_PERIOD_AVG_N) so the pending corroboration hold has
+    // not yet been lifted — it still reads the held pre-reset value, not the live single-pitch
+    // reading a fresh (never-published) start would show at this point (cf. (g)/(e) above, which
+    // begin from a state where encVelHaveValid was already false and no hold is armed).
+    check(fabsf(v_actual - iPreResetReading) < 1e-6f,
+          "(i) encoderVelReset(): 1 period after the reset is still a PARTIAL ring — the "
+          "corroboration hold has not yet lifted");
+    t3 += P; enc_cycle_fwd(t3); updateWheelSpeed();         // period 2 -> cnt=2, ring full: corroborated
+    check(encVelCorrobPending == false,
+          "(i) encoderVelReset(): a full N-period ring corroborates and lifts the hold");
     check(fabsf(v_actual - expect_fwd) < fabsf(expect_fwd) * 1e-4f,
           "(i) encoderVelReset(): a fresh N-period ring reads correctly again");
 
@@ -6188,8 +6269,8 @@ static void test_edge_period_adaptive_filter() {
     //    be rejected against the surviving (pre-flip) reference.
     {
         float steady = arm_ref();
+        (void)steady;   // superseded below by tap1Reading (fw v17 fixture note)
         uint32_t seedAfterArm = encPeriodRefSeed;
-        uint32_t refAfterArm  = encPeriodRefUs;
         check(seedAfterArm >= ENC_PERIOD_REF_SEED_N, "item5 setup: reference is armed");
 
         // Flip direction with reverse taps at period Pr each (accepted normally, same as any other
@@ -6197,15 +6278,31 @@ static void test_edge_period_adaptive_filter() {
         // the SECOND reverse tap (cnt=1, sign differs from the last published positive value) is
         // embargoed and HOLDS; the flip only PUBLISHES at cnt=2, on the third tap.
         uint32_t tf = armLastEdgeUs;
-        tf += Pr; enc_cycle_rev(tf); updateWheelSpeed();   // ambiguous tap, no flip yet
+        // fw v17 fixture note (same mechanism as (f)/(f2) in test_edge_period_estimator()): this
+        // first reverse tap's own dpos, measured from the lagged base, is +1 (still net-forward,
+        // same sign as `steady`) rather than a true flip, so it PUBLISHES — and the fw v17
+        // fractional-pitch ledger revises the stored period for this half-pitch interval (2x raw,
+        // not raw), which moves v_actual off `steady`. Capture the revised value as the embargo's
+        // expected hold target for the next (genuinely sign-differing) tap.
+        tf += Pr; enc_cycle_rev(tf); updateWheelSpeed();   // dpos=+1, same sign, no flip yet
+        float tap1Reading = v_actual;
         tf += Pr; enc_cycle_rev(tf); updateWheelSpeed();   // cnt=1, sign differs -> embargoed, holds
-        check(fabsf(v_actual - steady) < 1e-6f,
-              "item5: the cnt=1 post-flip tap is embargoed (sign differs) — holds the pre-flip value");
+        check(fabsf(v_actual - tap1Reading) < 1e-6f,
+              "item5: the cnt=1 post-flip tap is embargoed (sign differs) — holds the last "
+              "published (fw v17-revised) value, not the original pre-flip `steady`");
         tf += Pr; enc_cycle_rev(tf); updateWheelSpeed();   // cnt=2 -> embargo lifts, publishes negative
         check(v_actual < 0.0f, "item5: at cnt=2 the flip publishes (negative)");
         check(encPeriodRefSeed == seedAfterArm,
               "item5: encPeriodRefSeed is NOT reset by a direction flip (only encoderVelReset() "
               "clears it)");
+        // fw v17 fixture note: the reference has ALREADY moved off refAfterArm by this point — the
+        // three flip taps above are themselves accepted (non-dropped) intervals that legitimately
+        // feed the EWMA (the first one fractionally, per the note above), so "untouched by the
+        // flip" was never literally true even pre-fw-v17 for the FULL 3-tap flip sequence; what
+        // item5 actually verifies is that the SPURIOUS tap injected below is REJECTED and therefore
+        // does not move the reference any FURTHER. Capture the reference as it stands right after
+        // the flip (before the spurious injection) as that post-flip baseline.
+        uint32_t refAfterFlip = encPeriodRefUs;
 
         // Inject a spurious short period (0.3x the surviving reference) in the new direction.
         float preSpuriousReading = v_actual;
@@ -6214,8 +6311,10 @@ static void test_edge_period_adaptive_filter() {
         check(fabsf(v_actual - preSpuriousReading) < 1e-6f,
               "item5: a spurious short period in the NEW direction is still rejected against the "
               "surviving pre-flip reference");
-        check(encPeriodRefUs == refAfterArm,
-              "item5: the reference value itself is untouched by the rejected spurious edge");
+        check(encPeriodRefUs == refAfterFlip,
+              "item5: the reference value is untouched by the rejected spurious edge (compared "
+              "against its post-flip value — the flip's own accepted taps already moved it off "
+              "refAfterArm, which is expected and not what this assertion is about)");
     }
 
     // ── Item 9 (constants): pin the adaptive-filter constants literally so a silent regression to
@@ -6294,12 +6393,16 @@ static void test_edge_period_partial_ring_after_flip() {
     updateWheelSpeed();
     for (int i = 1; i <= 4; i++) { enc_cycle_fwd((uint32_t)i * P); updateWheelSpeed(); }
     check(v_actual > 0.0f, "(7b) setup: forward ring is live and positive (published)");
-    float preFlip = v_actual;
     uint32_t tb = 4 * P;
-    tb += P; enc_cycle_rev(tb); updateWheelSpeed();   // ambiguous tap, no flip yet
+    // fw v17 fixture note (same mechanism as (f)/(f2)/item5): the first reverse tap's own dpos is
+    // +1 (same sign, still net-forward, not a flip), and the fractional-pitch ledger revises its
+    // stored period, which moves v_actual off the pre-flip value — capture it AFTER the tap.
+    tb += P; enc_cycle_rev(tb); updateWheelSpeed();   // dpos=+1, same sign, no flip yet
+    float tap1Reading = v_actual;
     tb += P; enc_cycle_rev(tb); updateWheelSpeed();   // ONE new-direction period -> cnt=1, sign differs
-    check(fabsf(v_actual - preFlip) < 1e-6f,
-          "(7b) sign-differing cnt=1: EMBARGOED — holds the last published (positive) value");
+    check(fabsf(v_actual - tap1Reading) < 1e-6f,
+          "(7b) sign-differing cnt=1: EMBARGOED — holds the last published (fw v17-revised) value, "
+          "not the original pre-flip value");
     check(encPeriodCount == 1, "(7b) sign-differing cnt=1: the ring itself still holds cnt=1 "
           "underneath the embargo (only the PUBLISHED v_actual is held back)");
     tb += P; enc_cycle_rev(tb); updateWheelSpeed();   // TWO new-direction periods -> cnt=2, publishes
@@ -6964,6 +7067,454 @@ static void test_encoder_v15_dpos_pitch_count() {
               "(10) negative multi-pitch: magnitude matches a single-pitch-average reading at the "
               "correctly-divided per-pitch period T (cnt=1 ring entry, since the direction flip from "
               "encPeriodDir==0 reset the ring to this one fresh entry)");
+    }
+
+    enc_reset();
+}
+
+// ─── fw v17: velocity-estimator integrity (fractional-pitch ledger, TOCTOU fix, post-reset
+//     corroboration, per-path drop attribution) ────────────────────────────────────────────────────
+// Covers the four fw v17 changes documented above doEncoderA()/updateWheelSpeed() in
+// teensy_controller.ino:
+//   A. The x2 rounding basin regression itself (ML0164/168 class): a spurious mid-pitch A-rising
+//      edge every true pitch must NOT lock the estimator at half the true period.
+//   B. The fractional-pitch ledger's per-|dpos| arithmetic in isolation (2x/1x/2:3x/half, the
+//      per-pitch floor applied to the FRACTIONAL value).
+//   C. The TOCTOU future-timestamp guard in updateWheelSpeed() step (2): a snapshot timestamped
+//      after `now` must not wrap to a huge unsigned age and force a spurious reset.
+//   D. Post-reset corroboration: DEPTH-ONLY (cnt >= ENC_PERIOD_AVG_N), no sign term (safety review
+//      MED-1) — a full ring of EITHER sign lifts the hold; a partial ring of either sign does not.
+//   E. Per-path drop counters (encDropRawFloor/encDropLowGate/encDropPitchFloor) summing to
+//      encSpuriousDropCount.
+//   F. TP0171 regression: a reset taken mid-corrupted-burst at speed must not let a depth-satisfied
+//      but magnitude-corrupted stream publish a 2x reading — the fractional ledger is what defends
+//      the MAGNITUDE, the depth gate only defends against an under-seeded ring.
+static void test_encoder_v17_integrity() {
+    test_group("fw v17: velocity-estimator integrity");
+
+    const uint32_t T = 1000;   // true per-pitch period at the reference speed used throughout
+
+    // ═══ A. x2 rounding basin regression (THE fix this round exists for) ═══════════════════════
+    // Stimulus: every true pitch is split by one genuinely spurious mid-pitch A-rising edge, i.e.
+    // TWO accepted intervals of T/2 each (|dpos|=1 apiece) per true pitch, exactly the ML0164/168
+    // failure signature described in doEncoderA()'s FRACTIONAL-PITCH LEDGER comment ("measured
+    // accepted-interval rate in the locked runs is exactly 2.00 per true slot"). Constructed via
+    // enc_fire_tap_raw() (endorsed by this file's own test_encoder_v15_dpos_pitch_count() header
+    // note for isolating dpos-driven arithmetic — doEncoderA()'s tap code reads only encoderPos/
+    // encPosAtLastEdge, both ordinary non-ISR-timing state, so poking a genuine half-pitch dpos is a
+    // faithful stimulus, not a realism compromise) while still driving the ISR itself for every tap.
+    // VACUITY CHECK (mental, per the brief): under fw v16 each T/2 interval carries pitches =
+    // (1+1)>>1 = 1 and stores period/1 = T/2 UNCHANGED — i.e. every ring entry reads T/2, so
+    // v_actual = pitch/(T/2) = 2x the true speed, and the EWMA reference locks at T/2 (< 0.625x
+    // itself for the NEXT T/2 arrival, so the basin is self-confirming forever). This test would
+    // therefore FAIL under fw v16: v_actual would settle at 2x expectTrue below, not within 1% of it.
+    {
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        uint32_t t = 0;
+        int32_t  truePos = 0;
+        enc_fire_tap_raw(t, 0);   // baseline — establishes encHaveLastEdge, no period yet
+        // 20 true pitches, each split into two T/2 half-pitch accepted intervals (|dpos|=1 each).
+        // truePos tracks the PHYSICAL position continuously (it advances by 1 every half-pitch
+        // regardless of what the ISR's plausibility gates decide), and each call passes dpos
+        // RELATIVE to the current encPosAtLastEdge — exactly as a real quadrature stream would
+        // present it. This matters once the reference seeds: after ~2 accepted (fractionally-
+        // doubled, ~T) intervals, the low-side 0.625xref gate itself starts REJECTING the raw T/2
+        // taps (0.5T < 0.625T), which is a SEPARATE, complementary defence to the fractional ledger
+        // — the two half-pitch taps then simply merge back into one clean T-period accept (dpos=2,
+        // fast path). A naive "always pass dpos=1" stimulus would silently under-track true motion
+        // across those rejections and corrupt the test's own premise, which is why truePos is
+        // tracked independently and the passed dpos is always (truePos - encPosAtLastEdge).
+        for (int i = 0; i < 20; i++) {
+            t += T / 2; truePos += 1;
+            enc_fire_tap_raw(t, truePos - encPosAtLastEdge); updateWheelSpeed();   // spurious mid-pitch edge
+            t += T / 2; truePos += 1;
+            enc_fire_tap_raw(t, truePos - encPosAtLastEdge); updateWheelSpeed();   // completes the true pitch
+        }
+        float expectTrue = ENC_SLOT_PITCH_M / ((float)T * 1e-6f);
+        check(fabsf(v_actual - expectTrue) < fabsf(expectTrue) * 0.01f,
+              "A: a spurious mid-pitch edge every true pitch settles at the TRUE speed (within 1%), "
+              "not the fw v16 2x-locked basin value");
+        check(fabsf(v_actual - 2.0f * expectTrue) > fabsf(expectTrue) * 0.5f,
+              "A: v_actual is nowhere near 2x the true speed (the fw v16 basin's defining reading)");
+        // The ring itself is storing T-scale periods now, not T/2-scale — visible directly on the
+        // EWMA reference, which should have walked to ~T, not stayed pinned at ~T/2.
+        check(encPeriodRefUs > (uint32_t)(0.8f * (float)T) && encPeriodRefUs < (uint32_t)(1.2f * (float)T),
+              "A: the EWMA reference settles near the TRUE per-pitch period T, not T/2 (the basin "
+              "cannot form — each half-pitch entry is stored fractionally-doubled to ~T)");
+    }
+
+    // ═══ B. Fractional-pitch ledger arithmetic, per |dpos| ═════════════════════════════════════
+    // Single-accept isolation: a fresh baseline tap (no period, ref==0) followed by ONE accepted
+    // interval of raw period P at a given |dpos| seeds encPeriodRefUs DIRECTLY with the stored
+    // (possibly fractional) per-pitch period, since the very first accepted period always seeds the
+    // EWMA verbatim (encPeriodRefUs = period, no blending). This isolates the STORED value from the
+    // reader math entirely.
+    auto singleAccept = [&](uint32_t rawPeriod, int32_t dpos) -> uint32_t {
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        enc_fire_tap_raw(0, 0);              // baseline
+        enc_fire_tap_raw(rawPeriod, dpos);   // the single interval under test
+        updateWheelSpeed();
+        return encPeriodRefUs;
+    };
+    {
+        // |dpos| = 1: stores 2x the raw period (the half-pitch / spurious-edge case, THE fix).
+        uint32_t stored = singleAccept(500, 1);   // raw=500 (>=200 floor, ref unseeded -> gate dark)
+        check(stored == 1000u,
+              "B: |dpos|=1 stores 2x the raw elapsed period (500 -> 1000), the fw v17 fix — fw v16 "
+              "would have stored 500 unchanged");
+        check(encLastPitches == 1,
+              "B: |dpos|=1 diagnostic whole-pitch count is still 1 (diagnostics unchanged by v17)");
+    }
+    {
+        // |dpos| = 2: fast path, bit-identical to fw v12-v16 — no arithmetic at all.
+        uint32_t stored = singleAccept(1000, 2);
+        check(stored == 1000u,
+              "B: |dpos|=2 (one clean pitch) stores the raw period UNCHANGED (fast path, "
+              "bit-identical to fw v12-v16)");
+    }
+    {
+        // |dpos| = 3: 1.5 pitches -> stores 2/3 x the raw period (fw v15 stored period/2 = half here;
+        // v17's ledger is the fractionally-correct 2/3).
+        uint32_t stored = singleAccept(900, 3);   // 900*2/3 = 600 exactly
+        check(stored == 600u,
+              "B: |dpos|=3 stores 2/3 x the raw period (900 -> 600), not fw v15's period/2 (450)");
+    }
+    {
+        // |dpos| = 4: two clean pitches -> stores raw/2 (unchanged arithmetic vs fw v15/v16 — an
+        // even |dpos| always agrees between the whole-pitch and fractional forms), and the
+        // multi-pitch diagnostic counts it.
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        enc_fire_tap_raw(0, 0);
+        enc_fire_tap_raw(2000, 4);
+        updateWheelSpeed();
+        check(encPeriodRefUs == 1000u,
+              "B: |dpos|=4 (two clean pitches) stores raw/2 (2000 -> 1000), unchanged from "
+              "fw v15/v16's whole-pitch division — even |dpos| is unaffected by the fractional fix");
+        check(encLastPitches == 2 && encMultiPitchCount == 1,
+              "B: |dpos|=4 still counts as 2 whole pitches on the diagnostics (encMultiPitchCount "
+              "increments) — diagnostic semantics are unchanged by v17");
+    }
+    {
+        // Per-pitch floor applied to the FRACTIONAL value: |dpos|=3, raw=250 (clears the 200us
+        // absolute raw floor and the ref-unseeded gate) -> fractional per-pitch = 250*2/3 = 166,
+        // BELOW ENC_PERIOD_MIN_US(200) -> dropped by the NEW fractional-aware S1 floor, not by the
+        // raw-period floor (250 alone would have passed it).
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        enc_fire_tap_raw(0, 0);
+        uint32_t preRef = encPeriodRefUs, preSeed = encPeriodRefSeed, preCnt = encPeriodCount;
+        uint32_t preDropPitch = encDropPitchFloor, preDropRaw = encDropRawFloor, preDropGate = encDropLowGate;
+        enc_fire_tap_raw(250, 3);
+        updateWheelSpeed();
+        check(encPeriodRefUs == preRef && encPeriodRefSeed == preSeed && encPeriodCount == preCnt,
+              "B: fractional per-pitch floor drop: no ring store, no EWMA feed, no seed advance "
+              "(raw=250 alone clears the raw floor — only the FRACTIONAL 166us value is dropped)");
+        check(encDropPitchFloor == preDropPitch + 1,
+              "B: fractional per-pitch floor drop: encDropPitchFloor increments exactly once");
+        check(encDropRawFloor == preDropRaw && encDropLowGate == preDropGate,
+              "B: fractional per-pitch floor drop: the OTHER two drop-path counters are untouched "
+              "(this interval passed the raw floor and the (unseeded, dark) low-side gate cleanly)");
+    }
+
+    // ═══ C. TOCTOU future-timestamp guard ═══════════════════════════════════════════════════════
+    // Simulates the exact race the fw v17 fix targets: an A-rising ISR fires and stamps
+    // encLastEdgeUs with a micros() value strictly AFTER the `now` that updateWheelSpeed() already
+    // latched at its own top. Constructed directly (this is ISR-timing state, which — unlike the
+    // dpos/position state item A/B poke — has no real-ISR equivalent to drive here without an actual
+    // race condition, so direct construction is the only faithful technique) by writing
+    // encLastEdgeUs to a value strictly greater than the g_mock_micros the reader is about to see.
+    {
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        // Establish a live, valid, full ring at steady state T.
+        enc_cycle_fwd(T); updateWheelSpeed();
+        enc_cycle_fwd(2 * T); updateWheelSpeed();
+        enc_cycle_fwd(3 * T); updateWheelSpeed();
+        float steady = v_actual;
+        check(steady > 0.0f, "C: setup — steady ring is live");
+        uint32_t preCnt = encPeriodCount;
+        int8_t   preDir = encPeriodDir;
+
+        // Simulate the race: the ISR fires BETWEEN the reader's `now = micros()` latch and its
+        // encLastEdgeUs snapshot, stamping a timestamp a few microseconds ahead of what the reader
+        // is about to see. g_mock_micros stays at the reader's `now`; encLastEdgeUs is set 3us later.
+        uint32_t readerNow = g_mock_micros;
+        encLastEdgeUs = readerNow + 3;
+        updateWheelSpeed();   // reader's `now` == readerNow again (mock time did not advance)
+
+        check(v_actual == steady,
+              "C: a future-timestamped edge does NOT reset — v_actual is UNCHANGED (fw v16 would "
+              "have wrapped (now - lastEdge) to ~2^32 and force-reset here)");
+        check(encPeriodCount == preCnt && encPeriodDir == preDir,
+              "C: the ring itself is untouched — no spurious encoderVelReset() fired");
+        check(encVelHaveValid == true,
+              "C: encVelHaveValid stays true — the estimator was never actually invalidated");
+
+        // Genuine stale case, for contrast: a REAL (not future) edge age far past the timeout must
+        // still zero and reset exactly as before — the TOCTOU fix only changes the future-timestamp
+        // corner, not the ordinary stale path.
+        g_mock_micros = readerNow + ENC_VEL_TIMEOUT_US + 1;   // real elapsed time, no ISR race
+        updateWheelSpeed();
+        check(v_actual == 0.0f,
+              "C: a GENUINE stale edge age (no race) still zeroes v_actual, unchanged from fw v16");
+        check(encPeriodCount == 0,
+              "C: a GENUINE stale edge age still resets the ring, unchanged from fw v16");
+    }
+
+    // ═══ D. Post-reset corroboration — DEPTH-ONLY gate (safety-review MED-1: no sign term) ═══════
+    // encoderVelReset() taken while |last published v| > ENC_VEL_CORROB_MIN_MPS arms the hold; the
+    // reader HOLDS until a FULL ring (cnt >= ENC_PERIOD_AVG_N) of EITHER sign corroborates, or the
+    // ENC_VEL_TIMEOUT_US window expires.
+    auto establishSteady = [&]() -> float {
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        enc_cycle_fwd(T); updateWheelSpeed();
+        enc_cycle_fwd(2 * T); updateWheelSpeed();
+        enc_cycle_fwd(3 * T); updateWheelSpeed();
+        return v_actual;
+    };
+    {
+        // (i) Reset at speed: holds, does not zero.
+        float steady = establishSteady();
+        check(steady > ENC_VEL_CORROB_MIN_MPS, "D(i) setup: the steady reading exceeds the corroboration threshold");
+        encoderVelReset();
+        check(encVelCorrobPending == true && fabsf(encVelResetHold - steady) < 1e-6f,
+              "D(i): a reset at speed arms the hold and captures the pre-reset reading");
+        updateWheelSpeed();
+        check(fabsf(v_actual - steady) < 1e-6f,
+              "D(i): v_actual HOLDS the pre-reset reading immediately after the reset, not 0");
+    }
+    {
+        // (ii) DEPTH-ONLY gate: a PARTIAL ring (cnt < ENC_PERIOD_AVG_N) of EITHER sign does not
+        //      replace the hold; a FULL ring (cnt >= ENC_PERIOD_AVG_N) of EITHER sign — including
+        //      the OPPOSITE sign, per the MED-1 fix — DOES replace it.
+        // (ii-a) Partial ring, SAME sign as the hold: still holds.
+        float steady = establishSteady();
+        encoderVelReset();
+        uint32_t t0 = g_mock_micros;
+        enc_cycle_fwd(t0); updateWheelSpeed();          // baseline, cnt stays 0
+        t0 += T; enc_cycle_fwd(t0); updateWheelSpeed(); // cnt=1, same sign as hold — still partial
+        check(encPeriodCount == 1, "D(ii-a) setup: the ring is genuinely partial (cnt=1)");
+        check(fabsf(v_actual - steady) < 1e-6f,
+              "D(ii-a): a PARTIAL-ring same-sign reading does NOT replace the hold");
+        check(encVelCorrobPending == true, "D(ii-a): corroboration is still pending");
+
+        // (ii-b) Partial ring, OPPOSITE sign to the hold: still holds too — depth gate applies
+        //        regardless of sign, so an opposite-sign PARTIAL reading is exactly as embargoed as
+        //        a same-sign one.
+        float steady2 = establishSteady();
+        encoderVelReset();
+        uint32_t t1 = g_mock_micros;
+        enc_cycle_rev(t1); updateWheelSpeed();          // baseline (rev), cnt stays 0/ambiguous
+        t1 += T; enc_cycle_rev(t1); updateWheelSpeed();
+        // This tap sequence may need one more rev cycle to land cleanly on a partial reverse ring —
+        // confirm the construction before asserting on it.
+        if (encPeriodCount == 0) { t1 += T; enc_cycle_rev(t1); updateWheelSpeed(); }
+        check(encPeriodCount >= 1 && encPeriodCount < ENC_PERIOD_AVG_N,
+              "D(ii-b) setup: the ring is genuinely partial (cnt < ENC_PERIOD_AVG_N) and opposite-signed");
+        check(fabsf(v_actual - steady2) < 1e-6f,
+              "D(ii-b): a PARTIAL-ring OPPOSITE-sign reading does NOT replace the hold either — the "
+              "gate is depth-only, but depth still has to be satisfied");
+
+        // (ii-c) Full ring, OPPOSITE sign to the hold: DOES replace the hold (safety-review MED-1 —
+        //        this is the actual behavior change from the original brief's sign-vetted design).
+        float steady3 = establishSteady();
+        check(steady3 > 0.0f, "D(ii-c) setup: the hold value is positive (forward steady)");
+        encoderVelReset();
+        uint32_t t2 = g_mock_micros;
+        enc_cycle_rev(t2); updateWheelSpeed();
+        t2 += T; enc_cycle_rev(t2); updateWheelSpeed();
+        t2 += T; enc_cycle_rev(t2); updateWheelSpeed();
+        t2 += T; enc_cycle_rev(t2); updateWheelSpeed();
+        check(encPeriodCount >= ENC_PERIOD_AVG_N,
+              "D(ii-c) setup: the reverse ring has reached full depth");
+        check(encVelCorrobPending == false,
+              "D(ii-c): a FULL-ring OPPOSITE-sign reading LIFTS the hold (depth-only gate, MED-1)");
+        check(v_actual < 0.0f,
+              "D(ii-c): the published reading is the genuine (negative) reverse value, not the "
+              "held positive pre-reset value");
+    }
+    {
+        // (iii) Hold expiry: with no corroborating edges at all, the hold expires to 0 within
+        //       ENC_VEL_TIMEOUT_US of the reset (step (0) in updateWheelSpeed()).
+        float steady = establishSteady();
+        (void)steady;
+        uint32_t resetTime = g_mock_micros;
+        encoderVelReset();
+        g_mock_micros = resetTime + ENC_VEL_TIMEOUT_US - 1;
+        updateWheelSpeed();
+        check(encVelCorrobPending == true,
+              "D(iii): just BEFORE the timeout, the hold is still pending");
+        g_mock_micros = resetTime + ENC_VEL_TIMEOUT_US + 1;
+        updateWheelSpeed();
+        check(v_actual == 0.0f,
+              "D(iii): just AFTER the timeout, the hold expires and v_actual reads 0");
+        check(encVelCorrobPending == false,
+              "D(iii): the corroboration flag itself clears once the window expires");
+    }
+    {
+        // (iv) Reset at LOW speed (<= ENC_VEL_CORROB_MIN_MPS): old semantics — no hold is armed,
+        //      immediate 0, exactly like fw v16.
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        const uint32_t slowT = 200000;   // 3.99mm / 200ms = 0.01995 m/s, well under the 0.30 threshold
+        enc_cycle_fwd(slowT); updateWheelSpeed();
+        enc_cycle_fwd(2 * slowT); updateWheelSpeed();
+        enc_cycle_fwd(3 * slowT); updateWheelSpeed();
+        check(v_actual > 0.0f && v_actual <= ENC_VEL_CORROB_MIN_MPS,
+              "D(iv) setup: the steady reading is positive but AT/BELOW the corroboration threshold");
+        encoderVelReset();
+        check(encVelCorrobPending == false,
+              "D(iv): a reset at/below ENC_VEL_CORROB_MIN_MPS does NOT arm the hold");
+        updateWheelSpeed();
+        check(v_actual == 0.0f,
+              "D(iv): v_actual reads 0 immediately — unchanged from the pre-fw-v17 unconditional zero");
+    }
+    {
+        // (v) Genuine stale timeout: DISARMS the corroboration hold (its zero is information, not
+        //     an artefact — this is the documented exception carried over unchanged from the
+        //     original fw v17 spec, independent of the MED-1 depth-only change).
+        float steady = establishSteady();
+        (void)steady;
+        encoderVelReset();
+        check(encVelCorrobPending == true, "D(v) setup: the reset armed a hold");
+        g_mock_micros += ENC_VEL_TIMEOUT_US + 1;   // no further edges: the raw-edge stale path fires
+        updateWheelSpeed();
+        check(v_actual == 0.0f, "D(v): the genuine stale path zeroes v_actual");
+        check(encVelCorrobPending == false,
+              "D(v): the genuine stale path DISARMS the corroboration hold rather than leaving it "
+              "pending for the reader's own timeout to also fire on");
+    }
+
+    // ═══ E. Per-path drop-counter attribution ═══════════════════════════════════════════════════
+    {
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        check(encDropRawFloor == 0 && encDropLowGate == 0 && encDropPitchFloor == 0,
+              "E: all three per-path counters start at 0 after encoderVelReset()");
+
+        // Path 1: absolute raw floor (< ENC_PERIOD_MIN_US, applies unconditionally).
+        enc_fire_tap_raw(0, 0);                 // baseline
+        enc_fire_tap_raw(100, 2);                // raw=100us < 200us floor -> dropped
+        updateWheelSpeed();
+        check(encDropRawFloor == 1 && encDropLowGate == 0 && encDropPitchFloor == 0,
+              "E: a sub-200us raw interval increments ONLY encDropRawFloor");
+        check(encSpuriousDropCount == 1, "E: the shared sum counter also incremented once");
+
+        // Path 2: the 0.625x-ref low-side gate (needs a seeded, armed reference first).
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        uint32_t t = 0;
+        enc_fire_tap_raw(t, 0); updateWheelSpeed();
+        t += T; enc_fire_tap_raw(t, 2); updateWheelSpeed();       // seed 1
+        t += T; enc_fire_tap_raw(t, 2); updateWheelSpeed();       // seed 2 -> ref armed at T
+        uint32_t preRaw = encDropRawFloor, preGate = encDropLowGate, prePitch = encDropPitchFloor;
+        t += (uint32_t)(0.3f * (float)T);                        // 0.3xT < 0.625xT, but > 200us floor
+        enc_fire_tap_raw(t, 2); updateWheelSpeed();
+        check(encDropLowGate == preGate + 1 && encDropRawFloor == preRaw && encDropPitchFloor == prePitch,
+              "E: a sub-0.625xref interval (but above the raw floor) increments ONLY encDropLowGate");
+
+        // Path 3: the fractional per-pitch floor (raw period clears both earlier gates; only the
+        // FRACTIONAL per-pitch value is too small). Same construction as item B's floor case.
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        enc_fire_tap_raw(0, 0); updateWheelSpeed();
+        uint32_t preRaw2 = encDropRawFloor, preGate2 = encDropLowGate, prePitch2 = encDropPitchFloor;
+        enc_fire_tap_raw(250, 3); updateWheelSpeed();             // fractional 250*2/3=166 < 200
+        check(encDropPitchFloor == prePitch2 + 1 && encDropRawFloor == preRaw2 && encDropLowGate == preGate2,
+              "E: a fractional-floor drop increments ONLY encDropPitchFloor");
+        check(encSpuriousDropCount == 1,
+              "E: the shared sum counter mirrors this single drop (fresh epoch since the last reset)");
+
+        // encoderVelReset() clears all three (and the shared sum with them).
+        encoderVelReset();
+        check(encDropRawFloor == 0 && encDropLowGate == 0 && encDropPitchFloor == 0 && encSpuriousDropCount == 0,
+              "E: encoderVelReset() clears all three per-path counters together with the shared sum");
+
+        // Sum invariant across a mixed scripted sequence of all three drop types plus one genuine
+        // accept (which increments none of them).
+        enc_reset();
+        g_mock_micros = 0;
+        encoderVelReset();
+        updateWheelSpeed();
+        uint32_t tm = 0;
+        enc_fire_tap_raw(tm, 0); updateWheelSpeed();              // baseline
+        tm += 100;  enc_fire_tap_raw(tm, 2); updateWheelSpeed();  // raw floor drop (100 < 200)
+        tm += T;    enc_fire_tap_raw(tm, 2); updateWheelSpeed();  // genuine accept, seeds ref at T
+        tm += T;    enc_fire_tap_raw(tm, 2); updateWheelSpeed();  // genuine accept, ref armed at T
+        tm += (uint32_t)(0.3f * (float)T);
+        enc_fire_tap_raw(tm, 2); updateWheelSpeed();              // low-gate drop (0.3xT < 0.625xT)
+        // Pitch-floor drop, isolated from the low-gate above: encLastEdgeUs is still the last
+        // ACCEPTED edge (the low-gate drop just above did NOT advance it), so raw=680 measured from
+        // there clears both the raw floor and 0.625xref (ref ~1075us here, gate ~672us) comfortably
+        // — but at dpos=7 the FRACTIONAL per-pitch value (680*2/7 ~= 194us) is below the 200us
+        // floor, dropped only by the fractional-aware S1 floor, not the earlier two gates.
+        tm = encLastEdgeUs + 680; enc_fire_tap_raw(tm, 7); updateWheelSpeed();
+        check(encSpuriousDropCount == encDropRawFloor + encDropLowGate + encDropPitchFloor,
+              "E: the shared sum is exactly the total of the three per-path counters across a mixed "
+              "scripted sequence (1 raw + 1 gate + 1 pitch drop, plus 2 genuine accepts contributing "
+              "to none of them)");
+        check(encDropRawFloor == 1 && encDropLowGate == 1 && encDropPitchFloor == 1,
+              "E: each of the three paths fired exactly once in this scripted sequence");
+    }
+
+    // ═══ F. Reset-into-basin regression (TP0171): the depth gate alone is NOT the magnitude
+    //     defence — the fractional-pitch ledger is. A reset taken at speed, followed by a spurious
+    //     half-pitch stream that satisfies the depth gate within 2 accepted intervals, must publish
+    //     the CORRECT speed, not 2x it.
+    // ═════════════════════════════════════════════════════════════════════════════════════════════
+    {
+        float steady = establishSteady();
+        check(steady > ENC_VEL_CORROB_MIN_MPS, "F setup: pre-reset reading is above the corroboration threshold");
+        encoderVelReset();
+        check(encVelCorrobPending == true, "F setup: the reset armed the hold");
+
+        // Feed the SAME spurious half-pitch-per-true-pitch stream as item A, immediately after the
+        // reset — this is exactly the TP0171 scenario (a single spurious edge right after the reset,
+        // re-seeding the un-seeded reference at a half-pitch value).
+        uint32_t t = g_mock_micros;
+        enc_fire_tap_raw(t, 0);                          // baseline (re-)establishes encHaveLastEdge
+        int32_t truePos = encPosAtLastEdge;               // track physical position (see item A note)
+        for (int i = 0; i < 6; i++) {
+            t += T / 2; truePos += 1;
+            enc_fire_tap_raw(t, truePos - encPosAtLastEdge); updateWheelSpeed();
+            t += T / 2; truePos += 1;
+            enc_fire_tap_raw(t, truePos - encPosAtLastEdge); updateWheelSpeed();
+        }
+        check(encVelCorrobPending == false,
+              "F: the depth gate is satisfied well within 6 pitches (2 accepted intervals is enough) "
+              "— the hold DOES lift, exactly as the firmware comment warns ('a 2x-corrupted post-"
+              "reset stream fills the ring within ~2 pitches and would pass')");
+        float expectTrue = ENC_SLOT_PITCH_M / ((float)T * 1e-6f);
+        check(fabsf(v_actual - expectTrue) < fabsf(expectTrue) * 0.01f,
+              "F: the PUBLISHED post-corroboration reading is the TRUE speed (within 1%), not 2x it "
+              "— the depth gate alone would have passed a 2x-corrupted stream; it is the fractional-"
+              "pitch ledger (item A) that supplies the actual magnitude defence here");
+        check(fabsf(v_actual - 2.0f * expectTrue) > fabsf(expectTrue) * 0.5f,
+              "F: v_actual is nowhere near the 2x-corrupted TP0171 reading");
     }
 
     enc_reset();
@@ -14241,6 +14792,7 @@ int main() {
     test_motor_zero_cutoff();
     test_encoder_v13_safety_round();
     test_encoder_v15_dpos_pitch_count();
+    test_encoder_v17_integrity();
     test_velocity_chain_interlock();
     test_control_rate_limiting();
     test_open_loop_droop();

@@ -20,7 +20,8 @@ Style conventions enforced here (one place, so all figures agree):
     never drift from the config the user edited.
   * No markers (runs are ~40k points), light recessive grid behind the data,
     text in neutral dark grey (never in a series colour) -- the one exception
-    is the dual-axis ownership colouring in tracking_overlay.
+    is the dual-axis ownership colouring on twinx figures, where an axis
+    label/ticks/spine take their family's hue.
   * NaN gaps are left as gaps (matplotlib's default); nothing interpolates.
 """
 import matplotlib
@@ -57,6 +58,8 @@ COLORS = {
     "gBT": "#4a3aa7",        # violet  - BT droop MDAC gain (matches I_batt)
     "r_cmd": "#008300",      # green   - commanded share ratio (controller out)
     "V_bus": "#e34948",      # red     - bus voltage
+    "V_chg": "#0f8f95",      # teal    - charger input voltage
+    "V_rgn": "#7d6608",      # brass   - regen-node voltage
     "I_total": "#e87ba4",    # magenta - total bus current (I_fc + I_batt)
     "u_unsat": "#c07a1e",    # amber   - drive controller pre-clamp output
     "drive_x0": "#7a5cc9",   # purple  - Youla drive controller x[0] state
@@ -238,109 +241,8 @@ def _restrict_ticks(ax, axis, data_range, nbins=7):
 # Figure builders
 # --------------------------------------------------------------------------
 
-def tracking_overlay(data, cfg):
-    """Fig 1: velocity + power-share tracking on one twinx axes.
-
-    Deliberately dual-axis (user request). The two y-axes are scaled so the
-    families occupy separate horizontal bands with a gap between them --
-    velocity in the upper band, share in the lower -- so the overlay never
-    turns into spaghetti. Axis labels/ticks are coloured to their family so
-    which scale owns which trace is unambiguous. A run where one family has
-    no data at all (e.g. no velocity chain on an R/PS profile) drops the
-    dual axis entirely: the present family gets a plain plot of the whole
-    figure area.
-    """
-    t = data["t_s"]
-    tau = _tau(cfg, "share_act_tau_s")
-    share_f = common.lowpass(data["share_act"], t, tau)
-
-    c_vel = COLORS["velocity"]
-    c_shr = COLORS["share"]
-    c_shr_f = _darker(c_shr)
-
-    r_v = _finite_range(data["v_sp"], data["v_act"])
-    r_s = _finite_range(data["share_sp"], data["share_act"], share_f)
-
-    fig, ax_v = plt.subplots(figsize=FIGSIZE_SINGLE, constrained_layout=True)
-
-    if not (r_v and r_s):
-        # Single-family run: no dual axis, no banding -- just plot whichever
-        # family exists across the full figure area.
-        if r_s:
-            ax_v.plot(t, data["share_sp"], color=c_shr, linestyle="--",
-                      linewidth=LW_REF, zorder=ZORDER_REF, label="share ref")
-            ax_v.plot(t, data["share_act"], color=c_shr,
-                      linewidth=LW_RAW_UNDER, alpha=ALPHA_RAW_UNDER,
-                      label="share (meas)")
-            ax_v.plot(t, share_f, color=c_shr_f, linewidth=LW_FILT,
-                      label="share (filt, τ=%s)" % _tau_label(tau))
-            _style_axes(ax_v, ylabel="Power share [FC fraction]",
-                        xlabel="Time [s]")
-        else:
-            ax_v.plot(t, data["v_sp"], color=c_vel, linestyle="--",
-                      linewidth=LW_REF, zorder=ZORDER_REF,
-                      label="velocity ref")
-            ax_v.plot(t, data["v_act"], color=c_vel, linewidth=LW_RAW,
-                      label="velocity (meas)")
-            _style_axes(ax_v, ylabel="Velocity [m/s]", xlabel="Time [s]")
-        ax_v.set_xlim(float(t[0]), float(t[-1]))
-        _legend(ax_v)
-        _suptitle(fig, _run_name(cfg), "tracking (velocity + power share)")
-        return fig
-
-    ax_s = ax_v.twinx()
-
-    # Velocity on the left axis (upper band).
-    h = []
-    h += ax_v.plot(t, data["v_sp"], color=c_vel, linestyle="--",
-                   linewidth=LW_REF, zorder=ZORDER_REF, label="velocity ref")
-    h += ax_v.plot(t, data["v_act"], color=c_vel, linewidth=LW_RAW,
-                   label="velocity (meas)")
-
-    # Share on the right axis (lower band); raw underneath, filtered on top.
-    h += ax_s.plot(t, data["share_sp"], color=c_shr, linestyle="--",
-                   linewidth=LW_REF, zorder=ZORDER_REF, label="share ref")
-    h += ax_s.plot(t, data["share_act"], color=c_shr, linewidth=LW_RAW_UNDER,
-                   alpha=ALPHA_RAW_UNDER, label="share (meas)")
-    h += ax_s.plot(t, share_f, color=c_shr_f, linewidth=LW_FILT,
-                   label="share (filt, τ=%s)" % _tau_label(tau))
-
-    # Band separation: velocity gets the upper 0.60..0.97 of the axes height,
-    # share the lower 0.03..0.40 -> a 20%-of-height empty corridor between the
-    # families, which also hosts the combined legend. Ticks are restricted to
-    # each family's own band so the off-band part of each scale (e.g. negative
-    # "velocities" that exist nowhere in the data) is never labelled.
-    ax_v.set_ylim(*_band_limits(r_v, 0.60, 0.97))
-    _restrict_ticks(ax_v, "y", r_v)
-    ax_s.set_ylim(*_band_limits(r_s, 0.03, 0.40))
-    _restrict_ticks(ax_s, "y", r_s)
-
-    _style_axes(ax_v, ylabel="Velocity [m/s]", xlabel="Time [s]")
-    ax_s.grid(False)
-    ax_s.set_axisbelow(True)
-    for spine in ("top",):
-        ax_s.spines[spine].set_visible(False)
-    ax_s.set_ylabel("Power share [FC fraction]", fontsize=10)
-
-    # Ownership colouring (the one sanctioned exception to neutral text).
-    ax_v.yaxis.label.set_color(c_vel)
-    ax_v.tick_params(axis="y", colors=c_vel, labelsize=9)
-    ax_v.spines["left"].set_color(c_vel)
-    ax_s.yaxis.label.set_color(c_shr)
-    ax_s.tick_params(axis="y", colors=c_shr, labelsize=9)
-    ax_s.spines["right"].set_color(c_shr)
-    ax_s.spines["left"].set_visible(False)
-
-    ax_v.set_xlim(float(t[0]), float(t[-1]))
-    # Legend lives in the empty corridor between the two bands, so it cannot
-    # sit on top of either family (or on a NaN gap in one of them).
-    _legend(ax_v, h, [x.get_label() for x in h], loc="center", ncol=3)
-    _suptitle(fig, _run_name(cfg), "tracking (velocity + power share)")
-    return fig
-
-
 def tracking_subplots(data, cfg):
-    """Fig 2: the same tracking data, one loop per subplot (no scale tricks).
+    """Fig 1: velocity and power-share tracking, one loop per subplot.
 
     A run with no velocity data omits the velocity subplot entirely; the
     power-share subplot then takes up the whole figure area.
@@ -385,7 +287,7 @@ def tracking_subplots(data, cfg):
 
 
 def error_subplots(data, cfg):
-    """Fig 3: tracking error of both loops (setpoint - measured).
+    """Fig 2: tracking error of both loops (setpoint - measured).
 
     A run with no velocity data omits the velocity-error subplot entirely;
     the share-error subplot then takes up the whole figure area.
@@ -431,7 +333,7 @@ def error_subplots(data, cfg):
 
 
 def effort_subplots(data, cfg):
-    """Fig 4: control effort of both loops (motor current cmd, droop gains).
+    """Fig 3: control effort of both loops (motor current cmd, droop gains).
 
     The bottom subplot pairs the two droop MDAC gain commands (left axis)
     with the commanded share ratio r_cmd = gBT/(gFC+gBT) they were mapped
@@ -486,7 +388,7 @@ def effort_subplots(data, cfg):
 
 
 def currents_and_share(data, cfg):
-    """Fig 5: channel currents against the share they produce."""
+    """Fig 4: channel currents against the share they produce."""
     t = data["t_s"]
     tau_fc = _tau(cfg, "I_fc_tau_s")
     tau_bt = _tau(cfg, "I_batt_tau_s")
@@ -530,7 +432,7 @@ def currents_and_share(data, cfg):
 
 
 def share_controller(data, cfg):
-    """Fig 6: power-share loop detail -- tracking on top, error + commanded
+    """Fig 5: power-share loop detail -- tracking on top, error + commanded
     ratio below.
 
     The commanded share ratio r_cmd is the share controller's output
@@ -590,7 +492,7 @@ def share_controller(data, cfg):
     ax1r.spines["top"].set_visible(False)
     ax1r.set_ylabel("Commanded share ratio [−]", fontsize=10)
 
-    # Ownership colouring, per the tracking_overlay convention.
+    # Ownership colouring, per the dual-axis convention.
     ax1.yaxis.label.set_color(c_shr)
     ax1.tick_params(axis="y", colors=c_shr, labelsize=9)
     ax1.spines["left"].set_color(c_shr)
@@ -607,14 +509,16 @@ def share_controller(data, cfg):
 
 
 def bus_and_share(data, cfg):
-    """Fig 7: bus behaviour against the share driving it.
+    """Fig 6: bus behaviour against the share driving it.
 
     Top: V_bus (left axis) with a dashed no-load-nominal reference line,
     and the total bus current draw I_fc + I_batt (right axis, ownership-
-    coloured). The filtered total is the sum of the individually-filtered
-    channel currents (the filter is linear, so this matches the per-channel
-    taus exactly). Bottom: power-share tracking, so bus droop/loading can
-    be read against the share split that produced it.
+    coloured). The filtered total is the elementwise sum of the two
+    individually-filtered channel currents, each at its own tau -- it is
+    deliberately NOT a low-pass of the total at any single tau, and with
+    unequal taus (or a NaN gap in only one channel) it is not equal to
+    filtering the summed signal. Bottom: power-share tracking, so bus
+    droop/loading can be read against the share split that produced it.
     """
     t = data["t_s"]
     tau_fc = _tau(cfg, "I_fc_tau_s")
@@ -647,14 +551,16 @@ def bus_and_share(data, cfg):
     h += ax0r.plot(t, i_tot, color=c_tot, linewidth=LW_RAW_UNDER,
                    alpha=ALPHA_RAW_UNDER, label="I_fc + I_batt (meas)")
     h += ax0r.plot(t, i_tot_f, color=_darker(c_tot), linewidth=LW_FILT,
-                   label="I_fc + I_batt (filt)")
+                   label="I_fc + I_batt (filt, τ=%s/%s)"
+                         % (_tau_label(tau_fc), _tau_label(tau_bt)))
     ax0r.grid(False)
     ax0r.spines["top"].set_visible(False)
     ax0r.set_ylabel("Total bus current [A]", fontsize=10)
 
-    # Band the two families like tracking_overlay: voltage in the upper band
-    # (its range widened to always include the nominal line), current in the
-    # lower band, an empty corridor between them hosting the legend --
+    # Band the two families into separate horizontal strips: voltage in the
+    # upper band (its range widened to always include the nominal line),
+    # current in the lower band, an empty corridor between them hosting the
+    # legend --
     # otherwise the noisy raw V_bus band and the current band overprint each
     # other into an unreadable smear.
     r_bus = _finite_range(data["V_bus"], np.array([V_BUS_NOMINAL]))
@@ -688,6 +594,76 @@ def bus_and_share(data, cfg):
 
     ax1.set_xlim(float(t[0]), float(t[-1]))
     _suptitle(fig, _run_name(cfg), "bus voltage, current draw, power share")
+    return fig
+
+
+def charge_regen_and_currents(data, cfg):
+    """Fig 7 (v3+ only): charger/regen node voltages against channel currents.
+
+    Top: the two power-path node voltages V_rgn (regen node) and V_chg
+    (charger input), plotted raw -- nothing in this module filters a voltage
+    (V_bus in bus_and_share is raw too). Bottom: the two boost channel
+    currents I_fc / I_batt (raw + filtered) and their total I_fc + I_batt.
+    The filtered total is the elementwise sum of the two individually-
+    filtered channels, each at its own tau -- it is deliberately NOT a
+    low-pass of the total at any single tau, and with unequal taus (or a NaN
+    gap in only one channel) it is not equal to filtering the summed signal.
+
+    Both families get their own subplot, so there is no dual axis and no
+    banding here -- the two are read against a shared time axis only.
+
+    Returns None (no figure) when V_chg/V_rgn are absent from `data` -- i.e.
+    any pre-v3 CSV -- so make_all() can skip this figure gracefully for older
+    logs instead of KeyError'ing. I_fc/I_batt exist in every format version.
+    """
+    if "V_chg" not in data or "V_rgn" not in data:
+        return None
+
+    t = data["t_s"]
+    tau_fc = _tau(cfg, "I_fc_tau_s")
+    tau_bt = _tau(cfg, "I_batt_tau_s")
+    i_fc_f = common.lowpass(data["I_fc"], t, tau_fc)
+    i_bt_f = common.lowpass(data["I_batt"], t, tau_bt)
+    i_tot = data["I_fc"] + data["I_batt"]
+    i_tot_f = i_fc_f + i_bt_f
+
+    c_chg = COLORS["V_chg"]
+    c_rgn = COLORS["V_rgn"]
+    c_fc, c_bt, c_tot = COLORS["I_fc"], COLORS["I_batt"], COLORS["I_total"]
+
+    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=FIGSIZE_STACK2, sharex=True,
+                                   constrained_layout=True)
+
+    ax0.plot(t, data["V_rgn"], color=c_rgn, linewidth=LW_RAW,
+             label="V_rgn (regen node)")
+    ax0.plot(t, data["V_chg"], color=c_chg, linewidth=LW_RAW,
+             label="V_chg (charger input)")
+    _style_axes(ax0, ylabel="Voltage [V]")
+    ax0.set_title("Charger and regen node voltages", color=TEXT_COLOR,
+                  fontsize=11, loc="left")
+    _legend(ax0)
+
+    ax1.plot(t, data["I_fc"], color=c_fc, linewidth=LW_RAW_UNDER,
+             alpha=ALPHA_RAW_UNDER, label="I_fc (meas)")
+    ax1.plot(t, data["I_batt"], color=c_bt, linewidth=LW_RAW_UNDER,
+             alpha=ALPHA_RAW_UNDER, label="I_batt (meas)")
+    ax1.plot(t, i_tot, color=c_tot, linewidth=LW_RAW_UNDER,
+             alpha=ALPHA_RAW_UNDER, label="I_fc + I_batt (meas)")
+    ax1.plot(t, i_fc_f, color=_darker(c_fc), linewidth=LW_FILT,
+             label="I_fc (filt, τ=%s)" % _tau_label(tau_fc))
+    ax1.plot(t, i_bt_f, color=_darker(c_bt), linewidth=LW_FILT,
+             label="I_batt (filt, τ=%s)" % _tau_label(tau_bt))
+    ax1.plot(t, i_tot_f, color=_darker(c_tot), linewidth=LW_FILT,
+             label="I_fc + I_batt (filt, τ=%s/%s)"
+                   % (_tau_label(tau_fc), _tau_label(tau_bt)))
+    _style_axes(ax1, ylabel="Current [A]", xlabel="Time [s]")
+    ax1.set_title("Channel currents and total", color=TEXT_COLOR,
+                  fontsize=11, loc="left")
+    _legend(ax1, ncol=2)
+
+    ax1.set_xlim(float(t[0]), float(t[-1]))
+    _suptitle(fig, _run_name(cfg),
+              "charger/regen node voltages and channel currents")
     return fig
 
 
@@ -837,9 +813,12 @@ def encoder_diagnostics(data, cfg):
     ENC_SCALE_DEVIATION_FRAC from 1 are shaded.
 
     Panel (b): enc_period_ref_us converted to an implied speed
-    (pitch / period, signed by v_act's sign) plotted against v_act -- a
-    basin-poisoning event (see fw v13's k-branch) shows as roughly a 2x
-    divergence between the two traces.
+    (pitch / period, signed by v_act's sign) plotted against the SAME
+    encoder_pos-derived truth velocity panel (a) uses -- a reference-poisoning
+    event (the fw v13 k-branch basin, or the fw v17 x2 rounding basin) shows
+    as roughly a 2x divergence from truth. The comparison reference is truth
+    rather than v_act because v_implied and v_act are both estimator outputs
+    and agree with each other inside a basin.
 
     Panel (c): per-second rates of the two cumulative counters
     (enc_multi_pitch_count = missed-edge rate, enc_spurious_drop_count =
@@ -895,13 +874,21 @@ def encoder_diagnostics(data, cfg):
                   color=TEXT_COLOR, fontsize=11, loc="left")
     _legend(ax0)
 
+    # Panel (b) compares the reference-implied speed against the encoder_pos
+    # TRUTH velocity, not against v_act. Both v_implied and v_act are outputs
+    # of the same estimator (v_implied is its EWMA state, v_act its ring
+    # average), so plotting them against each other is self-confirming: the
+    # x2 rounding basin parks BOTH at twice the truth and the panel reads
+    # clean. encoder_pos owes nothing to the estimator, so it is the only
+    # reference that can expose a basin the estimator agrees with itself on.
     ax1.plot(t, v_implied, color=c_impl, linewidth=LW_RAW,
              label="v_implied = pitch / enc_period_ref_us")
-    ax1.plot(t, v_act, color=c_act, linewidth=LW_RAW_UNDER, alpha=0.75,
-             label="v_act (logged)")
+    ax1.plot(t, v_truth, color=c_truth, linewidth=LW_RAW_UNDER, alpha=0.75,
+             label="v_truth (from encoder_pos)")
     _style_axes(ax1, ylabel="Velocity [m/s]")
-    ax1.set_title("Period-implied speed vs. v_act (basin-poisoning check)",
-                  color=TEXT_COLOR, fontsize=11, loc="left")
+    ax1.set_title(
+        "Period-implied speed vs. encoder truth (basin-poisoning check)",
+        color=TEXT_COLOR, fontsize=11, loc="left")
     _legend(ax1)
 
     centers_mp, rate_mp = _cumulative_rate_per_s(
@@ -937,13 +924,13 @@ def encoder_diagnostics(data, cfg):
 #      figure on this run", not an error.
 # That is the whole contract; make_figures.py picks it up automatically.
 FIGURES = [
-    ("tracking_overlay", tracking_overlay),
     ("tracking_subplots", tracking_subplots),
     ("error_subplots", error_subplots),
     ("effort_subplots", effort_subplots),
     ("currents_and_share", currents_and_share),
     ("share_controller", share_controller),
     ("bus_and_share", bus_and_share),
+    ("charge_regen_and_currents", charge_regen_and_currents),
     ("drive_controller_conditioning", drive_controller_conditioning),
     ("encoder_diagnostics", encoder_diagnostics),
 ]

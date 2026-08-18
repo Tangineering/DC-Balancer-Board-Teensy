@@ -35,6 +35,30 @@
 // step size at which integrator-only AW starts to fail, is in the header block of
 // drive_controller_coeffs.h.
 //
+// Source: Hanus, Kinnaert & Henrotte, "Conditioning Technique, a General Anti-windup and
+// Bumpless Transfer Method," Automatica 23(6):729-739, 1987
+// (references/Conditioning_Technique_A_General_Anti-Windup_and_B.pdf). This implementation
+// is the paper's SELF-CONDITIONED linear form, eqs. (19a)/(20a), specialized to the
+// one-DOF error-driven SISO case (input e = w − y makes the paper's y-feedthrough term
+// B·D⁻¹·F − E vanish identically). Reconciled against the paper 2026-08-17; three known,
+// deliberate departures from its assumptions:
+//   1. u^r is a clamp MODEL, not the measured actual control the paper calls for. The
+//      static_assert pairing DRIVE_CTRL_I_MAX to MOTOR_I_CMD_MAX makes the model exact for
+//      the firmware's own limit, but VESC-side limits (Battery Current Max/Regen Max) and
+//      the ML0151 ~428 ms post-reversal dead window are invisible to it — while they bind,
+//      the states condition against current that never flowed and windup can transiently
+//      return. Documented in docs/VESC_MOTOR_INTEGRATION.md ("invisible to the drive
+//      controller's anti-windup"). Do not close this by feeding back VESC-reported current
+//      without a synthesis round (UART latency + noise into a marginally-stable recursion).
+//   2. The paper's stability condition 3 requires A − B·D⁻¹·C (our AC) asymptotically
+//      stable; ours is only MARGINALLY stable (exact-integrator structure). The synthesis
+//      substitutes an empirical gate (saturated-vs-linear excursion, windup_excess) and the
+//      double state below for the theorem.
+//   3. Mode transitions use hard resets (driveControllerReset()) instead of the paper's
+//      converged-initialization bumpless transfer — determinism over bumplessness.
+// The biproperness requirement (paper eq. 12) is why DD ≠ 0 is load-bearing: at DD → 0 the
+// u/DD conditioning becomes impossible, and the synthesis emitter owns that guarantee.
+//
 // Arithmetic precision: the state vector is DOUBLE, deliberately. The realization carries
 // an exact integrator (an eigenvalue at 1) plus a second mode at ~0.9999 alongside CD
 // entries of order 50, so perturbations are integrated rather than damped. A float32 state

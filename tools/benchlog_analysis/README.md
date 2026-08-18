@@ -24,9 +24,10 @@ logs/NAME/
       analysis_config.json   filter taus (created once, NEVER overwritten)
       |  make_figures.py     render
       v
-      tracking_overlay.png, tracking_subplots.png, error_subplots.png,
+      tracking_subplots.png, error_subplots.png,
       effort_subplots.png, currents_and_share.png, share_controller.png,
       bus_and_share.png                            (overwritten every run)
+      charge_regen_and_currents.png                       (v3+ logs only)
       drive_controller_conditioning.png                    (v5 logs only)
 ```
 
@@ -90,9 +91,10 @@ layout instead of v1/v2 (see below).
 **Format v3 (fw v5):** appends four source/node voltage channels — `V_fc`,
 `V_batt`, `V_chg`, `V_rgn` — to the 52 B v1/v2 record (68 B total), inserted
 after `I_cmd` in the CSV column order. `ingest_log.py` and `common.load_csv`
-accept both layouts transparently (the CSV header line identifies which one);
-no figure currently reads the four new columns. See `tools/decode_benchlog.py`
-for the exact byte layout.
+accept both layouts transparently (the CSV header line identifies which one).
+`charge_regen_and_currents.png` reads two of the four new columns (`V_chg`,
+`V_rgn`) and is skipped on pre-v3 logs; `V_fc` / `V_batt` are still unread by
+any figure. See `tools/decode_benchlog.py` for the exact byte layout.
 
 **Format v5 (fw v11):** appends two more fields — `u_unsat` (drive
 controller pre-clamp output, PI-fallback builds: the PI pre-clamp command)
@@ -132,13 +134,13 @@ Set a τ to 0 to disable that filter.
 
 | File | Contents |
 |------|----------|
-| `tracking_overlay.png` | Both loops on one dual-axis (twinx) plot: velocity ref+act on the left axis in the upper band, share ref+act+filtered on the right axis in the lower band, with a clear gap between the bands and the axis labels/ticks coloured to their family. |
-| `tracking_subplots.png` | The same tracking data with no scale tricks: velocity ref vs act on top, share ref vs act (raw + filtered) below, shared x. |
+| `tracking_subplots.png` | Both loops' tracking, one loop per subplot: velocity ref vs act on top, share ref vs act (raw + filtered) below, shared x. |
 | `error_subplots.png` | Tracking error of both loops: `v_sp − v_act` on top, `share_sp − share_act` (raw + filtered) below, each with a zero reference line. |
 | `effort_subplots.png` | Control effort: motor current command `I_cmd` [A] on top, droop MDAC gains `gFC` / `gBT` below. |
 | `currents_and_share.png` | Channel currents `I_fc` / `I_batt` (raw + filtered) [A] on top, the resulting power share (ref, raw, filtered) below. |
 | `share_controller.png` | Power-share loop detail: share tracking (ref, raw, filtered) on top; share error (left axis) against the commanded share ratio `r_cmd = gBT/(gFC+gBT)` (right axis) below. `r_cmd` is the controller output immediately before the droop-gain mapping, reconstructed exactly from the firmware's `g = K_DROOP/(RE_MAX·r)` relation with no calibration constants needed. |
 | `bus_and_share.png` | Bus behaviour: `V_bus` with a dashed no-load nominal line (`V_BUS_NOMINAL` = 15.9 V, a constant in `figures.py`) on the left axis, total bus current `I_fc + I_batt` (raw + filtered) on the right axis; power-share tracking below. |
+| `charge_regen_and_currents.png` (v3+ logs only) | Power-path nodes against the current they carry: the regen-node voltage `V_rgn` and the charger-input voltage `V_chg` (both raw) on top; the two boost channel currents `I_fc` / `I_batt` (raw + filtered) and their total `I_fc + I_batt` (raw + filtered) below. The filtered total is the elementwise sum of the two individually-filtered channels, each at its own τ — deliberately not a low-pass of the total at any single τ, and with unequal τ (or a NaN gap in only one channel) not equal to filtering the summed signal; the legend carries both τ values. Single-axis subplots, no banding. Skipped (no PNG, noted on stderr) for pre-v3 logs, which have no `V_chg`/`V_rgn` columns. |
 | `drive_controller_conditioning.png` (v5 logs only) | Hanus-conditioning verification: `u_unsat` (drive controller pre-clamp output) against the ±12 A actuator rails on top, with intervals where `abs(u_unsat) >= 12 A` shaded as saturated; `drive_x0` (Youla drive controller integrator state) on the same time axis below, with the same saturation shading. Skipped (no PNG, noted on stderr) for pre-v5 logs, which have no `u_unsat`/`drive_x0` columns. |
 
 Style is centralised in `figures.py`: a fixed role→colour map (velocity blue,
@@ -150,7 +152,6 @@ NaN gaps left as gaps.
 
 **Velocity-less runs** (R and PS profiles log no velocity chain, so `v_sp` /
 `v_act` are entirely blank): the velocity panels are omitted altogether —
-`tracking_overlay` becomes a plain single-axis share plot, and
 `tracking_subplots` / `error_subplots` collapse to their share subplot at full
 figure size. `share_controller` and the other share/current figures are
 unaffected.
@@ -203,6 +204,10 @@ powershell -File tools\benchlog_analysis\build_exe.ps1
 ```
 
 The exe bundles Python, numpy and matplotlib, so it runs on a bench machine
-with no Python install. Note that `figures.py` selects the headless `Agg`
+with no Python install. **Because it bundles a frozen copy of the package,
+any edit to `figures.py`, `common.py` or `make_figures.py` — adding, removing
+or renaming a figure included — requires re-running `build_exe.ps1`;** until
+you do, the exe keeps rendering the figure registry it was built against,
+so the PNG set in a run directory depends on which front-end ingested it. Note that `figures.py` selects the headless `Agg`
 matplotlib backend at import time, which is what lets the same code render
 figures inside the windowed exe.

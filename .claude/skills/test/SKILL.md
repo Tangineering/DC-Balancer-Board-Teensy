@@ -30,14 +30,19 @@ call the UCRT64 g++ directly (Bash tool, which handles the PATH for DLL resoluti
 cd test
 export PATH="/c/msys64/ucrt64/bin:$PATH"
 g++ -std=c++17 -Wall -Wextra -I. -I../teensy_controller -I../controller_design \
+    -I../controller_design_MIMO \
     -DBENCH_TEST=0 -DNO_ETH_WARNING test_main.cpp -o run_tests
 g++ -std=c++17 -Wall -Wextra -Wno-unused-function -I. -I../teensy_controller -I../controller_design \
+    -I../controller_design_MIMO \
     -DBENCH_TEST=1 -DNO_ETH_WARNING test_main.cpp -o run_tests_bench
 ./run_tests
 ./run_tests_bench
 ```
 
 Flag rationale (keep these exact — they are load-bearing):
+- `-I../controller_design_MIMO`: required since fw v10 — the suite includes
+  `drive_replay_vectors.h` (drive-controller replay vectors) from that directory; without it
+  the compile fails at `test_main.cpp`'s include.
 - `-DBENCH_TEST=0` for the main build: the `.ino` defaults `BENCH_TEST=1` via `#ifndef` for
   bench flashing; the suite asserts *production* fault behavior, so it must override to 0.
 - `-DNO_ETH_WARNING`: suppresses the deliberate `#warning` on `BENCH_TEST=0 && USE_ETHERNET=0`

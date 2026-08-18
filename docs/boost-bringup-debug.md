@@ -1364,6 +1364,50 @@ misread class the metrology conventions exist for — this time in analysis, not
 - Screen-read numbers are provisional until re-read photometrically; the entry follows the
   metrology conventions (div × scale quoted throughout).
 
+### TP0178 FC-boost dropout at the share=1.0 rail — nondestructive; VBUS sag to 12.15 V, no fault (2026-08-17; SD log `logs/TP0178`, no scope) + supply-swap disclosure
+
+**Source: SD bench log only** (BLG v6, fw v16, measured ~882 Hz effective; no scope armed —
+sub-millisecond structure is invisible; ADC-path readings throughout). Scope-metrology
+conventions apply to the follow-up capture, not to this entry.
+
+**Bench-configuration disclosure (operator, 2026-08-17), recorded here because it changes
+cross-batch interpretation:** for log batches **153–162 and 164–180** the two bench DC
+supplies were **swapped** — the stiffer supply now feeds the **battery** input, the looser
+supply the **fuel-cell** input. Consequence: any V_fc/V_batt source-stiffness comparison
+against pre-153 logs compares *different supplies*, not different channels.
+
+**Conditions:** State-98 trapezoid `T` profile, Imax 6.0 A, run 9 of the 11-point
+share-setpoint sweep TP0170–TP0180, `share_sp = 0.85` (governor-clipped ≈ 0.60 at the
+~0.72 A hold load), fw v16 `BENCH_TEST` build. In the ~22 ms before the event `share_act`
+was pinned at 1.000 — FC sourcing 100 % of I_tot (≈0.55–0.65 A), `I_batt = 0.000` (BT
+ideal diode reverse-biased), gains not railed (gFC ≈ 0.29, gBT ≈ 0.30).
+
+**Observed (from `logs/TP0178/TP0178.csv`):**
+- t ≈ 7.484 s: `I_fc` steps to 0.000 while `V_fc` steps 8.12 → 8.68 V (its unloaded
+  level) in the same sample — the boost *stopped drawing*, it was not disconnected from a
+  sagging source at the logged timescale.
+- t = 7.485–7.490 s: both channels read zero current; `V_bus` decays 15.34 → **12.149 V
+  minimum** over ~6 ms under the ~6 A motor load (`I_cmd` flat — no load-side transient).
+- t = 7.491–7.496 s: `I_batt` recovers with an overshoot (0.67 → 1.74 A) as BT's ideal
+  diode forward-biases reactively; `V_bus` back at 15.9 V. Total event ~10 ms.
+- **No fault latched:** minimum 12.149 V is 0.15 V *above* `LIMIT_V_BUS_MIN` 12.0 V, so
+  `FAULT_UV_BUS` never asserted even transiently; independently, the 10 ms episode is
+  shorter than the 20 ms UV dwell latch.
+- Census across the FC-heavy siblings: TP0176/TP0177 (`share_sp` 1.0/0.88, FC carrying
+  43–45 % of each run) show **zero** dropouts, loaded `V_fc` minimum 7.87 V. One event in
+  three FC-rail runs → rare transient, not a steady-state capability limit.
+
+**Inferred (UNCONFIRMED):** leading candidate is a sub-millisecond transient on the looser
+supply now feeding the FC input — current-limit foldback or a dip through the TPS61288
+input UVLO — cutting the boost out; the causing dip is faster than the 885 Hz log, and the
+logged `V_fc` rise to unloaded level is the *recovery* signature, not the cause. A
+second-order candidate (internal boost current-limit/hiccup event) is not excluded. The
+**architecture finding stands independent of the trigger:** at the share = 1.0 rail the
+idle channel's RT1987 provides only *reactive* backup — the bus must sag before BT picks
+up, and 12.15 V was reached from a 0.7 A source dropout under a 6 A motor draw.
+**Discriminator:** scope the FC *input* rail (supply side of the boost) during a repeat
+share = 1.0 hold — or swap the supplies back and repeat the sweep (single-variable).
+
 ---
 
 ## Scope-metrology conventions (adopted 2026-08-03, review BOOST-R1-N6)
