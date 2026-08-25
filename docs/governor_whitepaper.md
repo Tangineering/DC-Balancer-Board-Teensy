@@ -291,7 +291,7 @@ powerBalance():                       # rate-limited to POWER_BAL_PERIOD_US (1 k
 Figure 0 shows the three governing mechanisms in isolation: the loop-mode handoff on
 filtered total current, the current-dependent setpoint clamp, and the conduction-arming
 handoff. Slew limiting, the setpoint latch, the deferral path and the minimum-load gate are
-omitted here; Section 10 shows the complete tick.
+omitted here; Section 10 adds the ownership logic and Section 11 shows the complete tick.
 
 ```mermaid
 flowchart TD
@@ -320,7 +320,50 @@ asks whether the commanded split would starve the minority channel below its con
 floor. The conduction-arming handoff asks whether the channel being handed load is
 physically conducting yet, and restrains ratio motion until it is.
 
-## 10. Flow diagram
+## 10. Medium-detail flow diagram
+
+Figure 0b adds the ownership logic to Figure 0: the setpoint latch, its deferral path, and
+the minimum-load gate. Slew limiting is still omitted; Section 11 shows the complete tick.
+
+```mermaid
+flowchart TD
+    T[Tick entry] --> LAT{Setpoint latch:<br/>sp in 0.15 .. 0.85?}
+
+    subgraph OWN [Setpoint ownership]
+        LAT -->|"out of band,<br/>doomed channel &le; 0.5 A"| CUT["LATCH: open the starved<br/>channel's bus switch,<br/>freeze the entire loop"]
+        LAT -->|"out of band,<br/>doomed channel &gt; 0.5 A"| DEF["DEFER: clip reference to the<br/>band edge, migrate load off the<br/>doomed channel until &le; 0.5 A"]
+        CUT -->|"release: sp in band,<br/>V_bus &ge; 13.5 V, boost on"| REL[Full loop reset]
+    end
+
+    LAT -->|in band| G{"I_tot &ge; 0.075 A?"}
+    DEF --> G
+    REL --> G
+    G -->|"below: min-load hold,<br/>DACs keep last split"| T2[Next tick]
+    G -->|above| IN["filt = EMA of |I_fc| + |I_batt|"]
+
+    IN --> M{Loop mode<br/>hysteresis on filt}
+    M -->|"filt &gt; 0.60 A"| CLAMP
+    M -->|"filt &lt; 0.55 A"| OL["OPEN LOOP<br/>feedforward: apply sp directly<br/>(or hold last converged split)"]
+
+    subgraph CL [Closed loop]
+        CLAMP["Current-dependent clamp:<br/>lo = 0.30 A / filt<br/>sp_eff = clamp(sp, lo, 1 - lo)<br/>(deferral clips to the band<br/>edge first)"] --> STEP["Controller step:<br/>r = shareController(sp_eff)"]
+    end
+
+    OL --> COND
+    STEP --> COND
+
+    COND{Conduction arming:<br/>dark &lt; 0.15 A, live &ge; 0.20 A} -->|both live| FAST["Ratio moves freely"]
+    COND -->|either dark| SLOW["Ratio motion restrained until<br/>the dark channel conducts"]
+
+    FAST --> ACT["Apply ratio to droop DACs"]
+    SLOW --> ACT
+```
+
+While the latch holds, no other mechanism runs: the loop is frozen until release. The
+deferral is the transition into the latch, not a separate steady state; it is re-derived
+every tick and disappears either when the cut fires or when the setpoint returns in band.
+
+## 11. Flow diagram
 
 Figure 1 shows the decision flow of one governor tick. Every edge label carries the threshold
 that selects it, and every branch corresponds to a line of the Section 8 pseudocode.
@@ -407,7 +450,7 @@ stateDiagram-v2
     }
 ```
 
-## 11. Interface to the energy-management system
+## 12. Interface to the energy-management system
 
 The EMS commands `power_share_setpoint` in the 22-byte command packet. The governor may
 override that setpoint by clipping it, by refusing to act on it in hold mode, or by latching a
@@ -423,9 +466,9 @@ active channel cutoff. The effective setpoint, the loop mode, the dark/live stat
 dwell counter are **not** telemetered. They are visible only on the State-98 serial status
 dump.
 
-## 12. MATLAB and Simulink implementation
+## 13. MATLAB and Simulink implementation
 
-### 12.1 Architecture
+### 13.1 Architecture
 
 The governor is one sequential per-tick algorithm over cross-coupled persistent state. Model
 it as a **single discrete-time MATLAB Function block**, or as a plain MATLAB function with a
@@ -439,7 +482,7 @@ closely, use **1.136 ms**, the measured tick period at 880 Hz. All governor cons
 slew rates and the dwell allowance are the sensitive ones: `DROOP_RATIO_SLEW_PER_TICK` is
 0.02 per tick, which is 20 ratio units per second at 1 ms and 17.6 at 1.136 ms.
 
-### 12.2 Reference skeleton
+### 13.2 Reference skeleton
 
 ```matlab
 function [st, out] = governor_tick(st, in)
@@ -489,7 +532,7 @@ The state struct must carry exactly the fields of the Initial-state table in Sec
 `iBtFilt`, `darkFC`, `darkBT`, `dwell`, `handoffPrevRatio`, `step`. Initialize them to the
 boot column of that table; note that `darkFC` and `darkBT` start **true**.
 
-### 12.3 Interface
+### 13.3 Interface
 
 **Inputs.** The commanded setpoint `sp`; the two channel currents `I_fc` and `I_batt`; the bus
 voltage `V_bus`; the two bus-switch states; and the two boost-enable states. A simulation that
@@ -501,7 +544,7 @@ the cost of losing the release guards and the self-heal path.
 dark/live flags; and the dwell counter. The gains close the loop back into the plant model,
 and the flags exist for logging and comparison against hardware.
 
-### 12.4 Fidelity notes
+### 13.4 Fidelity notes
 
 Single-precision against double precision is irrelevant for every governor threshold, because
 each has a margin of at least 0.05 A or 0.01 ratio units. The one exception is the motion
@@ -521,10 +564,10 @@ update **every** tick, so the closed-loop reference clip reads this tick's value
 Validate against two hardware sources. The State-98 serial dump prints `share loop mode`,
 `I_tot_filt`, `share slew mode`, the two filtered magnitudes, `dwell`, `step`, the
 `share sp-cut latch`, and `droop gFC/gBT`, which together cover every internal governor state.
-Telemetry, per Section 11, supplies `power_share_actual`, the two applied gains, and the bus
+Telemetry, per Section 12, supplies `power_share_actual`, the two applied gains, and the bus
 switch bits for a longer run.
 
-## 13. Unconfirmed values
+## 14. Unconfirmed values
 
 None. Every constant in Section 2 was read verbatim from
 `teensy_controller/teensy_controller.ino` or `teensy_controller/share_controller_coeffs.h`.
