@@ -1,5 +1,22 @@
 # The Power-Share Governor
 
+## Contents
+
+1. [Scope](#1-scope)
+2. [Constants](#2-constants)
+3. [Setpoint governor clip](#3-setpoint-governor-clip)
+4. [Loop mode: open loop, closed loop](#4-loop-mode-open-loop-closed-loop)
+5. [Handover continuity and the conduction-aware slew ceiling](#5-handover-continuity-and-the-conduction-aware-slew-ceiling)
+6. [Setpoint-latched channel cutoff](#6-setpoint-latched-channel-cutoff)
+7. [Actuation: from ratio to hardware](#7-actuation-from-ratio-to-hardware)
+8. [Per-tick algorithm](#8-per-tick-algorithm)
+9. [Simplified overview diagram](#9-simplified-overview-diagram)
+10. [Medium-detail flow diagram](#10-medium-detail-flow-diagram)
+11. [Flow diagram](#11-flow-diagram)
+12. [Interface to the energy-management system](#12-interface-to-the-energy-management-system)
+13. [MATLAB and Simulink implementation](#13-matlab-and-simulink-implementation)
+14. [Unconfirmed values](#14-unconfirmed-values)
+
 ## 1. Scope
 
 This document specifies the **share-loop governor**: the supervisory logic in
@@ -382,7 +399,7 @@ every tick and disappears either when the cut fires or when the setpoint returns
 When the last-source guard blocks both the latch and the deferral, the tick falls through
 to normal governed control.
 
-## 11. Flow diagram
+## 11. Full-detail flow diagram
 
 Figure 1 shows the decision flow of one governor tick. Every edge label carries the threshold
 that selects it, and every branch corresponds to a line of the Section 8 pseudocode.
