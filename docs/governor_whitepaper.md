@@ -294,7 +294,9 @@ handoff gate (the qualitative form of the Section 5 slew ceiling). The setpoint 
 deferral path, the minimum-load gate, the numeric slew rates and the reference-slew site are
 omitted here; Section 10 adds the ownership logic and Section 11 shows the complete tick.
 When `filt` crosses neither loop-mode threshold, the existing mode persists (hysteresis); in
-the firmware the conduction test runs once per tick, before the mode decision.
+the firmware the conduction test runs once per tick, before the mode decision. In every
+diagram label, `&` joins conditions that must all hold (AND) and "or" marks alternatives
+(OR).
 
 ```mermaid
 flowchart TD
@@ -303,7 +305,7 @@ flowchart TD
     end
 
     subgraph OL [Open loop]
-        OLQ{Converged and<br/>sp unchanged?} -->|yes| HOLD["HOLD: no actuation,<br/>DACs keep last split"]
+        OLQ{Converged &<br/>sp unchanged?} -->|yes| HOLD["HOLD: no actuation,<br/>DACs keep last split"]
         OLQ -->|no| FF["Feedforward:<br/>apply sp directly"]
     end
 
@@ -338,9 +340,9 @@ summarizes.
 flowchart TD
     subgraph OWN [Setpoint ownership]
         LAT{Setpoint latch:<br/>sp in 0.15 .. 0.85?}
-        LAT -->|"out of band, neither latch set,<br/>both switches closed,<br/>doomed channel &le; 0.5 A"| LCUT["LATCH: open the starved<br/>channel's bus switch,<br/>freeze the entire loop"]
-        LAT -->|"out of band,<br/>doomed channel &gt; 0.5 A"| DEF["DEFER: clip reference to the<br/>band edge, migrate load off the<br/>doomed channel until &le; 0.5 A"]
-        LCUT -->|"release (later tick, once held):<br/>sp in band, V_bus &ge; 13.5 V, boost on"| REL["Full loop reset<br/>(zeroes filt)"]
+        LAT -->|"out of band & neither latch set<br/>& both switches closed<br/>& doomed channel &le; 0.5 A"| LCUT["LATCH: open the starved<br/>channel's bus switch,<br/>freeze the entire loop"]
+        LAT -->|"out of band<br/>& doomed channel &gt; 0.5 A"| DEF["DEFER: clip reference to the<br/>band edge, migrate load off the<br/>doomed channel until &le; 0.5 A"]
+        LCUT -->|"release (later tick, once held):<br/>sp in band & V_bus &ge; 13.5 V<br/>& boost on"| REL["Full loop reset<br/>(zeroes filt)"]
         LCUT -->|"self-heal: switch<br/>observed closed"| REL
     end
 
@@ -349,7 +351,7 @@ flowchart TD
     end
 
     subgraph OL [Open loop]
-        OLQ{Converged and<br/>sp unchanged?} -->|yes| HOLD["HOLD: no actuation,<br/>DACs keep last split"]
+        OLQ{Converged &<br/>sp unchanged?} -->|yes| HOLD["HOLD: no actuation,<br/>DACs keep last split"]
         OLQ -->|no| FF["Feedforward: apply sp directly<br/>(in-band sp only; out-of-band<br/>returns, the latch owns it)"]
     end
 
@@ -408,7 +410,7 @@ flowchart TD
     S3 --> M
 
     subgraph OPEN [Open-loop mode]
-        OL{closedLoopRun and<br/>sp unchanged and<br/>no shareIso claim?}
+        OL{closedLoopRun &<br/>sp unchanged &<br/>no shareIso claim?}
         OL -->|yes| H[HOLD: no actuation]
         OL -->|no| OB{sp in<br/>0.15 .. 0.85?}
         OB -->|out of band| RET[Return:<br/>latch owns the setpoint]
@@ -436,7 +438,7 @@ flowchart TD
     M -->|"no crossing, mode CLOSED"| CL
 
     FF --> APP[applyShareRatio]
-    APP --> CUT{r out of band<br/>and not deferred?}
+    APP --> CUT{r out of band<br/>& not deferred?}
     CUT -->|"r &lt; 0.15"| CFC[Open FC_BUS_ENABLE<br/>if both switches closed]
     CUT -->|"r &gt; 0.85"| CBT[Open BT_BUS_ENABLE<br/>if both switches closed]
     CUT -->|in band| RC["rc = clamp r to 0.15 .. 0.85<br/>droopSlew_prev = rc"]
@@ -459,10 +461,10 @@ stateDiagram-v2
         DARK --> LIVE: EMA >= 0.20 A
     }
     state "Setpoint latch, per channel" as LT {
-        FREE --> LATCHED: sp out of band, both switches closed, I_doomed <= 0.5 A
-        FREE --> DEFERRED: sp out of band, I_doomed > 0.5 A
+        FREE --> LATCHED: sp out of band & both switches closed & I_doomed <= 0.5 A
+        FREE --> DEFERRED: sp out of band & I_doomed > 0.5 A
         DEFERRED --> FREE: next tick, flag re-derived
-        LATCHED --> FREE: sp in band, V_bus >= 13.5 V, boost enabled
+        LATCHED --> FREE: sp in band & V_bus >= 13.5 V & boost enabled
         LATCHED --> FREE: self-heal, switch observed closed
     }
 ```
