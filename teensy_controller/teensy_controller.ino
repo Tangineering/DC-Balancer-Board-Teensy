@@ -910,6 +910,60 @@
  *          side regression. Side effect, re-measured: a float32 state recursion now diverges
  *          ~1.1e-5 A on the regen episode (was ~1.4e-2), because the trajectory no longer
  *          rides the clamp boundary — the state stays DOUBLE regardless.
+ *  - fw v19 (2026-08-25) — 'L' plotter encoder fields, and a CONDUCTION-AWARE handoff slew for the
+ *      share ratio. No pin, sequencing, fault, controller-coefficient, BLG (v6/92 B) or UDP
+ *      (v4/58 B) change.
+ *      (a) 'L' SERIAL-PLOTTER STREAM: eight fields → ELEVEN. Appended, in order, after v_act:
+ *          enc_pos (encoderPos, the raw x2 quadrature count), edgeA (encEdgeCountA) and edgeB
+ *          (encEdgeCountB). Operator request: watch position and raw per-channel edge counts live
+ *          while hand-rotating the wheel, which is the fastest way to separate "a channel is dead"
+ *          from "the decode is wrong" without dropping into the 'S' dump. All three are
+ *          ISR-written diagnostic volatiles already read by the 'S' dump and (encoderPos) by
+ *          logSampleTick(); no control path reads them and no new state is introduced. The
+ *          fixed-field-count rule is UNCHANGED (the IDE plotter re-legends the graph if the count
+ *          varies mid-run) — eleven now, always eleven. The backpressure guard rises 110 → 192
+ *          bytes: the itemized worst-case line is an EXACT 165 B, and an exact fit is not a guard
+ *          (one 8-character float blocks the USB-CDC write and stalls the loop), so 192 leaves one
+ *          extra character per float of headroom. The itemization is at the guard.
+ *      (b) CONDUCTION-AWARE RATIO SLEW (TP0201 mitigation). New SHARE_HANDOFF_MIN_A (0.15 A),
+ *          SHARE_HANDOFF_LIVE_A (0.20 A), DROOP_RATIO_SLEW_HANDOFF_PER_TICK (0.002/tick, 10x
+ *          slower) and SHARE_HANDOFF_DWELL_MAX_TICKS (175 ticks, ~200 ms): whenever EITHER channel
+ *          is DARK, the per-tick droop-ratio slew ceiling drops to the handoff rate at all three
+ *          in-band slew sites (open-loop feedforward walk, effective-setpoint reference slew,
+ *          closed-loop actuation slew). Evidence: TP0201
+ *          (fw v18) armed OPEN→CLOSED with FC the sole conductor (share_act ~ 1.0, I_batt
+ *          0.06-0.08 A) and walked the ratio from ~0.85 to the governor-clipped ~0.556 in ~20 ms;
+ *          FC stopped conducting (V_fc ROSE 0.66 V — the unloaded signature, which also refutes
+ *          the supply-transient hypothesis for this run) before BT's reactive RT1987 ideal diode
+ *          picked up, and the bus ran unsourced ~5.7 ms, decaying 15.86 → 12.185 V, 0.185 V above
+ *          LIMIT_V_BUS_MIN and therefore un-faulted. Converged holds with both channels conducting
+ *          are BIT-IDENTICAL (full rate; constrain() lands exactly on target).
+ *          MECHANISM DETAIL (review round): the conduction test runs on per-channel EMAs of
+ *          |I_fc|/|I_batt| at SHARE_GOV_FILT_ALPHA, not on raw ADC reads (raw would chatter the
+ *          ceiling near 0.15 A, and the governor doctrine forbids a raw measurement gating the
+ *          reference), and it is HYSTERETIC — dark below SHARE_HANDOFF_MIN_A, live again only at
+ *          SHARE_HANDOFF_LIVE_A. The slow rate is bounded by a ONCE-PER-EVENT DWELL ALLOWANCE of
+ *          SHARE_HANDOFF_DWELL_MAX_TICKS: after ~200 ms of slow ticks ON WHICH THE RATIO ACTUALLY
+ *          MOVED the FULL rate resumes even while the channel stays dark, and the allowance
+ *          re-arms only on a LIVE transition — so a persistently dark channel (light-load cruise)
+ *          cannot pin the loop slow. The MOTION GATE is not a refinement, it is what makes the
+ *          mitigation work: TP0201's pre-arm was a ~1.7 s in-band feedforward HOLD with BT dark,
+ *          so an elapsed-tick counter would have spent the entire allowance ~1.3 s before the
+ *          arming walk and run the hazardous crossing itself at the full rate. Motion is read from
+ *          droopSlew_prev, the MDAC-truth ratio. This bound MATTERS: the fw v6 review-S4 regime
+ *          (the governor floor-clip walk after a load fall) IS a dark-minority condition, so S4's
+ *          ~35-tick bound is RELAXED, to at most SHARE_HANDOFF_DWELL_MAX_TICKS of slow WALK plus a
+ *          fast remainder, once per dark event (the motion gate leaves that walk-length bound
+ *          intact — S4's hazard is the walk itself, not the elapsed time).
+ *          Bench gate: repeat the light-load dropout condition and re-validate the share sweep.
+ *          One tick, one ceiling — updateShareSlewMode() stores it and all three sites read it,
+ *          so reference and actuation cannot disagree (the fw v6 requirement).
+ *          Operator note: a setpoint-latch release with the re-closed channel still dark walks at
+ *          the handoff rate for up to ~200 ms before reverting to the full rate; that lag is the
+ *          mitigation working, not a stuck loop.
+ *          Known residual (deferred): at the handoff rate the limiter is the dominant actuator
+ *          dynamic and is invisible to youlaController_Power()'s [0,1]-only anti-windup; exposure
+ *          is bounded by the dwell cap. See updateShareSlewMode().
  */
 
 #include <stddef.h>             // offsetof — pins the append-only BenchLogRecord field offsets
@@ -1779,6 +1833,50 @@ const float SHARE_GOV_OL_HYST_A = 0.05f;
 // against the FIX-VALIDATION re-entry run if chatter persists.
 const float DROOP_RATIO_SLEW_PER_TICK = 0.02f;
 
+// ── Conduction-aware handoff slew (fw v19, TP0201 mitigation, 2026-08-25) ────
+// A — a channel carrying less than this is treated as NOT MEANINGFULLY CONDUCTING, i.e. its
+// ideal-diode switch is effectively open and any load it is commanded to take up requires an
+// ANALOG handoff (the RT1987 picks up reactively, only once the bus has already sagged below
+// that channel's source) rather than a droop redistribution between two live channels.
+// EVIDENCE — TP0201 (fw v18, 2026-08-25): the share loop armed OPEN→CLOSED while FC was the sole
+// conductor (share_act ~ 1.0, I_batt 0.06-0.08 A of trickle). Seeded at droopSlew_prev ~ 0.85, the
+// controller walked toward the governor-clipped ~0.556 at DROOP_RATIO_SLEW_PER_TICK, crossing the
+// FC→BT conduction handoff in ~20 ms. FC ceased conducting — V_fc ROSE 0.66 V, the unloaded
+// signature — before BT's diode picked up; the bus was unsourced for ~5.7 ms and decayed
+// capacitively 15.86 → 12.185 V, i.e. 0.185 V above LIMIT_V_BUS_MIN and 10 ms inside the 20 ms
+// dwell, so nothing faulted. TP0200 took the identical arming step harmlessly because BT was
+// already conducting 0.556 A. The hazard precondition is therefore not "arming" but: THE RATIO IS
+// SLEWING WHILE A CHANNEL THAT MUST PICK UP LOAD IS NOT MEANINGFULLY CONDUCTING.
+// VALUE: above TP0201's 0.08 A pre-arm trickle (which still gapped) and half of
+// SHARE_MINORITY_I_MIN_A (0.30 A, the light-load conduction floor the governor enforces), so a
+// channel the governor considers healthy is never called dark. TODO(calibrate) against a repeat
+// arming sweep once the mitigation has bench data.
+const float SHARE_HANDOFF_MIN_A = 0.15f;
+
+// per powerBalance() tick — the REDUCED ratio-slew ceiling used while either channel is dark.
+// 10x slower than DROOP_RATIO_SLEW_PER_TICK: at the ~880 Hz measured main-loop rate a 0.3-span
+// walk takes ~170 ms instead of ~17 ms, so the analog handoff has two orders of magnitude more
+// time and the commanded operating points either side of the conduction crossing stay close while
+// the diode picks up. TODO(calibrate).
+const float DROOP_RATIO_SLEW_HANDOFF_PER_TICK = 0.002f;
+
+// A — the LIVE re-entry threshold for the same conduction test. A channel is declared DARK below
+// SHARE_HANDOFF_MIN_A and returns LIVE only at or above this, so a filtered magnitude sitting on
+// the 0.15 A boundary cannot chatter the slew ceiling tick-to-tick. ~33 % above the dark
+// threshold, the same class of separation SHARE_GOV_OL_HYST_A gives the loop-mode decision, and
+// still comfortably below SHARE_MINORITY_I_MIN_A (0.30 A) so the two mechanisms do not interact.
+const float SHARE_HANDOFF_LIVE_A = 0.20f;
+
+// powerBalance() ticks — the MAXIMUM number of CONSECUTIVE ticks the reduced handoff rate may be
+// selected for one dark event. ~200 ms at the ~880 Hz measured main-loop rate, which covers a full
+// arming walk of up to 0.35 span end-to-end at 0.002/tick (0.35/0.002 = 175 ticks). Beyond the cap
+// the FULL rate is restored even though a channel is still dark, and the allowance re-arms only
+// when the conduction state returns to LIVE through the SHARE_HANDOFF_LIVE_A hysteresis — so each
+// DISTINCT dark event gets exactly one slow allowance, and a persistently dark channel (light-load
+// cruise, i.e. the fw v6 review-S4 regime) cannot pin the share loop slow indefinitely.
+// See updateShareSlewMode() for why an unbounded slow rate is NOT acceptable there.
+const int SHARE_HANDOFF_DWELL_MAX_TICKS = 175;
+
 // Governor load filter: EMA weight per 1 kHz tick on |I_fc|+|I_batt| (~20 ms).
 // The governor bounds depend on measured current; unfiltered, ADC noise would
 // dither sp_eff and feed measurement noise straight into the setpoint.
@@ -2181,7 +2279,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 18
+#define FW_VERSION 19
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -2706,6 +2804,14 @@ extern float share_govTotAFilt;
 extern bool  shareClosedLoopMode;
 extern bool  shareClosedLoopRun;
 extern float share_spEffPrev;    // fw v6 effective-setpoint reference (slew-limited)
+// fw v19 conduction-aware slew state, same reason: printTestStatus() reports the slew mode, and it
+// is defined above updateShareSlewMode().
+extern float shareHandoffIFcFilt;
+extern float shareHandoffIBtFilt;
+extern int   shareHandoffDwell;
+extern float shareSlewStepThisTick;
+const char *shareSlewModeName();
+void updateShareSlewMode();
 void assertFcChargeEnable(bool enable);
 bool motPwrConnectBlocked();
 bool assertMotPwrEnable(bool enable);
@@ -5400,7 +5506,7 @@ bool plotSuppressStatus() {
     return plotModeActive;
 }
 
-// One condensed plotter line. Eight fields, ALWAYS eight — the Arduino plotter keys its series off
+// One condensed plotter line. Eleven fields, ALWAYS eleven — the Arduino plotter keys its series off
 // the labels and a varying field count re-legends the graph mid-run. `share_act` is the measured share
 // powerBalance() computes; with no current flowing the share is undefined and reported as 0 (same
 // convention as the '[PS]' status line), which reads as a flat trace until the motor draws.
@@ -5410,9 +5516,22 @@ void plotTick() {
     // Backpressure guard (review 2026-08-07 F4): Teensy USB-CDC write() BLOCKS when the host is
     // enumerated but not draining (monitor closed mid-run, host hiccup). A stalled plot print
     // would freeze the whole loop — including detectFaults() — while a profile drives the motor.
-    // Drop the sample instead; the stream self-heals when the host drains. ~110 B covers one line
-    // (raised from 80 with the fw v7 v_sp/v_act fields and the longer share_sp/share_act labels).
-    if (Serial.availableForWrite() < 110) return;
+    // Drop the sample instead; the stream self-heals when the host drains. 192 B covers one line
+    // (80 originally; 110 with the fw v7 v_sp/v_act fields; 192 with the fw v19 encoder fields).
+    // Itemized worst case for the eleven-field line:
+    //     labels + separators                                        76 B
+    //     8 floats x 7 B ("-12.345")                                 56 B
+    //     enc_pos, int32 worst case "-2147483648"                    11 B
+    //     2 x uint32 worst case "4294967295" (10 B each)             20 B
+    //     CRLF from println()                                         2 B
+    //                                                              -----
+    //                                                               165 B  (an EXACT fit)
+    // 165 was the value first shipped in this round and is REJECTED as too tight: at 165 a single
+    // 8-character float (e.g. "-123.456" — reachable on ifc/ibt/v_sp/v_act) overruns the reserve,
+    // and Teensy USB-CDC write() then BLOCKS, which is precisely the loop stall this guard exists
+    // to prevent. 192 B leaves 27 B, i.e. ONE EXTRA CHARACTER PER FLOAT of headroom plus slack.
+    // Any future field must be added to the table above and the guard re-derived with headroom.
+    if (Serial.availableForWrite() < 192) return;
     // Note: stamping millis() (not += PLOT_PERIOD_MS) means the real interval is period +
     // loop-jitter, i.e. the stream drifts slightly slow. Fine for a plotter (no timestamps on
     // the wire); do not use this cadence for anything that integrates over time.
@@ -5428,7 +5547,15 @@ void plotTick() {
     Serial.print(",ifc:");        Serial.print(I_fc, 3);
     Serial.print(",ibt:");        Serial.print(I_batt, 3);
     Serial.print(",v_sp:");       Serial.print(v_setpoint, 3);
-    Serial.print(",v_act:");      Serial.println(v_actual, 3);
+    Serial.print(",v_act:");      Serial.print(v_actual, 3);
+    // fw v19 encoder fields (operator request: watch position and raw per-channel edge counts live
+    // while hand-rotating the wheel). All three are ISR-written diagnostic volatiles — plain single
+    // reads, atomic on Cortex-M7, the same idiom logSampleTick() uses. They are read here only;
+    // no control path consumes them, and the three values are deliberately NOT snapshotted as a
+    // set (one-edge skew between them is irrelevant at a 20 ms plot cadence).
+    Serial.print(",enc_pos:");    Serial.print((int32_t)encoderPos);
+    Serial.print(",edgeA:");      Serial.print(encEdgeCountA);
+    Serial.print(",edgeB:");      Serial.println(encEdgeCountB);
 }
 
 // Drop a pending armed start. Safe to call unconditionally (no-op when nothing is armed) so every
@@ -7006,6 +7133,21 @@ void printTestStatus() {
     Serial.print("  I_tot_filt="); Serial.print(share_govTotAFilt, 3);
     Serial.print(" A, enter>"); Serial.print(2.0f * SHARE_MINORITY_I_MIN_A, 2);
     Serial.println(" A");
+    // fw v19 (review S6): the conduction-aware slew mode. This is the ONLY observable for it — the
+    // decision runs on FILTERED per-channel magnitudes with hysteresis and a dwell counter, none of
+    // which are in the BLG record, so it cannot be reconstructed from the logged raw currents.
+    // dwell counts slow ticks WITH RATIO MOTION in the CURRENT dark event, capped at
+    // SHARE_HANDOFF_DWELL_MAX_TICKS (mode then reads CAPPED); it re-arms on a LIVE transition.
+    // A long static hold with a dark channel therefore reads HANDOFF with dwell unchanged — that
+    // is the intended reading, not a stuck counter.
+    Serial.print("share slew mode:    "); Serial.print(shareSlewModeName());
+    Serial.print("  |I_fc|f=");  Serial.print(shareHandoffIFcFilt, 3);
+    Serial.print(" |I_bt|f=");   Serial.print(shareHandoffIBtFilt, 3);
+    Serial.print(" A (dark<");   Serial.print(SHARE_HANDOFF_MIN_A, 2);
+    Serial.print(", live>=");    Serial.print(SHARE_HANDOFF_LIVE_A, 2);
+    Serial.print(")  dwell=");   Serial.print(shareHandoffDwell);
+    Serial.print("/");           Serial.print(SHARE_HANDOFF_DWELL_MAX_TICKS);
+    Serial.print("  step=");     Serial.println(shareSlewStepThisTick, 4);
     Serial.print("manualMotorMode:    ");
     Serial.println(manualMotorMode == MOTOR_TEST_OFF      ? "OFF"
                  : manualMotorMode == MOTOR_TEST_CURRENT  ? "CURRENT"
@@ -7729,6 +7871,118 @@ static bool updateShareSetpointCutoff() {
     return shareSpCutFC || shareSpCutBT;
 }
 
+// ── Conduction-aware droop-ratio slew mode (fw v19, TP0201 mitigation) ───────
+// State for updateShareSlewMode(). Seeded DARK/zero-current at boot deliberately: "dark" selects
+// the SLOWER, more conservative ceiling, so a cold start cannot begin by slamming the ratio across
+// an unknown conduction state. resetShareControlState() restores exactly this seed.
+float shareHandoffIFcFilt   = 0.0f;   // EMA of |I_fc|,   A
+float shareHandoffIBtFilt   = 0.0f;   // EMA of |I_batt|, A
+bool  shareHandoffDarkFC    = true;   // hysteretic: dark below MIN_A, live at/above LIVE_A
+bool  shareHandoffDarkBT    = true;
+int   shareHandoffDwell     = 0;      // slow ticks WITH ratio motion, this dark event (see below)
+float shareHandoffPrevRatio = 0.5f;   // droopSlew_prev as of the previous update — motion detector
+                                      // (0.5f matches droopSlew_prev's own initializer, so the
+                                      //  first tick after boot cannot read as spurious motion)
+float shareSlewStepThisTick = DROOP_RATIO_SLEW_HANDOFF_PER_TICK;   // THE tick's ceiling
+
+// Compute THIS tick's droop-ratio slew ceiling, once per powerBalance() tick (fw v19, TP0201).
+//
+// WHY A REDUCED RATE AT ALL. While a channel is not meaningfully conducting its ideal diode is
+// effectively open, so any ratio movement may be walking the load across an analog FC<->BT
+// conduction handoff that the RT1987 completes REACTIVELY — it closes only after the bus has
+// already sagged below the standby source. Slewing 10x slower keeps the commanded operating points
+// either side of the crossing close together and gives the diode two orders of magnitude more time
+// to pick up, which is exactly what TP0201's ~5.7 ms unsourced bus (15.86 -> 12.185 V) lacked.
+//
+// FILTERED, HYSTERETIC CONDUCTION TEST (review S2). The test runs on per-channel EMAs of
+// |I_fc|/|I_batt| at SHARE_GOV_FILT_ALPHA (0.05 per tick, ~20 ms — the same weight and doctrine as
+// share_govTotAFilt), not on raw ADC reads: a raw test would chatter the ceiling on ADC noise near
+// 0.15 A, and the governor doctrine is that no raw measurement gates the reference. A channel goes
+// DARK below SHARE_HANDOFF_MIN_A and returns LIVE only at SHARE_HANDOFF_LIVE_A, so the boundary
+// itself cannot dither. The filters are updated ONLY on ticks that reach here, which is correct:
+// both earlier returns in powerBalance() (the setpoint-latch cutoff and the SHARE_I_TOT_MIN_A
+// minimum-load gate) freeze the ENTIRE loop, so no slew site executes on a tick that skipped this
+// update and no stale value can ever be consumed.
+//
+// THE DWELL ALLOWANCE IS MOTION-GATED, AND THAT IS LOAD-BEARING (orchestrator final review, O1).
+// dwell counts slow ticks on which the commanded ratio ACTUALLY MOVED, not slow ticks elapsed. An
+// earlier draft counted elapsed ticks and would have DEFEATED THIS ENTIRE MITIGATION IN THE VERY
+// SCENARIO IT WAS BUILT FOR: TP0201's pre-arm was a ~1.7 s (~1500-tick) in-band feedforward HOLD at
+// sp = 0.85 with BT dark. Every one of those ticks passes the latch and minimum-load gates and
+// selects the handoff rate, so an elapsed-tick counter spends the whole 175-tick allowance ~1.3 s
+// BEFORE the closed-loop arming — and the arming walk, i.e. the hazardous conduction crossing,
+// would then run CAPPED at the full rate. Motion is detected from droopSlew_prev, the MDAC-TRUTH
+// ratio applyShareRatio() records: a delta between consecutive updateShareSlewMode() calls means a
+// slew site moved the split on the previous tick. That one-tick lag is deliberate and harmless —
+// the allowance is a budget of ~175 MOVING ticks, and starting to count from the second moving
+// tick simply makes the budget one tick more generous. A static hold now costs nothing.
+//
+// DWELL CAP, AND THE HONEST fw v6 REVIEW-S4 INTERACTION. An earlier draft of this comment claimed
+// the S4 regime and the handoff regime were disjoint. THAT CLAIM IS STRUCK — it is wrong. The
+// dropped-out half of a TP0010/TP0013 dropout cycle IS a sub-0.15 A channel, and S4's governor
+// floor-clip walk after a load fall is the same dark-minority regime, so the reduced rate applies
+// exactly where S4's ~35-tick full-band bound was load-bearing. What actually bounds the exposure
+// is SHARE_HANDOFF_DWELL_MAX_TICKS: each distinct dark event gets ONE allowance of at most 175
+// MOVING slow ticks (~200 ms of actual walking), after which the FULL rate is restored even while
+// the channel stays dark, and the allowance re-arms only on a LIVE transition. So S4's bound is
+// not preserved but RELAXED, to at most SHARE_HANDOFF_DWELL_MAX_TICKS of slow walk plus the fast
+// remainder, once per dark event — bounded and non-recurring, rather than the unbounded ~350-tick
+// slow walk the uncapped design would have allowed. The motion gate does not weaken this bound:
+// S4's hazard is precisely a slow WALK, and 175 moving ticks is the same walk-length bound
+// whether or not static holds are interleaved with it. A short slow PREFIX followed by the full rate was considered
+// and rejected: TP0201's conduction crossing sat at the END of its walk (the gains were roughly
+// equal ~24.5 ms in), so a prefix-only allowance would not have covered the very event this
+// mitigates. BENCH GATE (this relaxation is argued, not measured): repeat the light-load
+// dropout condition, and re-validate the fw v19 share sweep, before trusting either bound.
+void updateShareSlewMode() {
+    // Did a slew site actually move the split on the previous tick? droopSlew_prev is the ratio
+    // physically applied to the MDACs (applyShareRatio() records it), so a change between
+    // consecutive updates is real motion — including motion from the one-shot paths ('O', the
+    // completion restore), which is correct: those move the split too.
+    bool ratioMoved = fabsf(droopSlew_prev - shareHandoffPrevRatio) > 1e-6f;
+    shareHandoffPrevRatio = droopSlew_prev;
+
+    shareHandoffIFcFilt += SHARE_GOV_FILT_ALPHA * (fabsf(I_fc)   - shareHandoffIFcFilt);
+    shareHandoffIBtFilt += SHARE_GOV_FILT_ALPHA * (fabsf(I_batt) - shareHandoffIBtFilt);
+
+    if (shareHandoffDarkFC) { if (shareHandoffIFcFilt >= SHARE_HANDOFF_LIVE_A) shareHandoffDarkFC = false; }
+    else                    { if (shareHandoffIFcFilt <  SHARE_HANDOFF_MIN_A)  shareHandoffDarkFC = true;  }
+    if (shareHandoffDarkBT) { if (shareHandoffIBtFilt >= SHARE_HANDOFF_LIVE_A) shareHandoffDarkBT = false; }
+    else                    { if (shareHandoffIBtFilt <  SHARE_HANDOFF_MIN_A)  shareHandoffDarkBT = true;  }
+
+    if (!(shareHandoffDarkFC || shareHandoffDarkBT)) {
+        // Both channels conducting: full rate, and the dwell allowance re-arms for the NEXT dark
+        // event. This is the path every converged hold takes, so those holds stay bit-identical to
+        // fw v18 (constrain() lands exactly on target once within one step).
+        shareHandoffDwell     = 0;
+        shareSlewStepThisTick = DROOP_RATIO_SLEW_PER_TICK;
+        return;
+    }
+    if (shareHandoffDwell >= SHARE_HANDOFF_DWELL_MAX_TICKS) {
+        // Allowance spent on this dark event — full rate until the channel goes LIVE again.
+        shareSlewStepThisTick = DROOP_RATIO_SLEW_PER_TICK;
+        return;
+    }
+    // BURN ONLY ON MOTION (O1). A static hold with a dark channel selects the handoff rate but
+    // costs nothing, so the allowance is still intact when a walk finally starts — which is the
+    // whole point: in TP0201 the walk came ~1.7 s after the dark condition began. The CEILING
+    // selection below is deliberately NOT motion-gated: it must already be the handoff rate on the
+    // first moving tick, and asking "is it moving?" before allowing it to move slowly would be
+    // circular.
+    if (ratioMoved) shareHandoffDwell++;
+    shareSlewStepThisTick = DROOP_RATIO_SLEW_HANDOFF_PER_TICK;
+}
+
+// FULL / HANDOFF / CAPPED, for the State-98 'S' dump. CAPPED means the dark event's allowance is
+// SPENT (175 moving ticks used), not merely that it has been dark a long time — a long static hold
+// with a dark channel reads HANDOFF with dwell unchanged. The slew mode is NOT reconstructible from
+// the logged raw currents (filtered magnitudes + hysteresis + dwell state), so this dump line is
+// the only observable — see .claude/skills/benchlog-agent-analysis/references/log-conventions.md.
+const char *shareSlewModeName() {
+    if (!(shareHandoffDarkFC || shareHandoffDarkBT)) return "FULL";
+    return (shareHandoffDwell >= SHARE_HANDOFF_DWELL_MAX_TICKS) ? "CAPPED" : "HANDOFF";
+}
+
 void powerBalance() {
     // Setpoint-latched cutoff owns every out-of-band setpoint (2026-08-12). It is
     // evaluated BEFORE the minimum-load gate and before the governor: the release
@@ -7754,6 +8008,14 @@ void powerBalance() {
     // Updated only on ticks that reach here — below SHARE_I_TOT_MIN_A the whole
     // loop is frozen, so the filter correctly resumes from its pre-hold value.
     share_govTotAFilt += SHARE_GOV_FILT_ALPHA * (totalA - share_govTotAFilt);
+
+    // fw v19: ONE conduction-aware slew ceiling for this whole tick. Called HERE — above the
+    // open-loop feedforward branch, which returns early — so that feedforward ticks also advance
+    // the per-channel filters and the dwell counter, and so that every slew site downstream reads
+    // the SAME stored value. That single-value discipline is what makes the fw v6 requirement
+    // (reference and actuation cannot disagree about how fast the split may move) structural
+    // rather than accidental.
+    updateShareSlewMode();
 
     // ── Loop-mode decision: closed loop vs open-loop feedforward (fw v5) ──────
     // EVIDENCE (fw v4 validation sweep TP0041–TP0068): the governor's old
@@ -7846,9 +8108,14 @@ void powerBalance() {
 
         // Same slew constraint and the same origin as the controller path below, so mode changes
         // are continuous on the MDACs.
+        // fw v19: the ceiling is conduction-aware — a setpoint change while a channel is dark walks
+        // the load across the same FC<->BT conduction handoff the closed-loop path does, so this
+        // site takes the reduced rate too. It reads the value updateShareSlewMode() stored at the
+        // top of this tick; it does not recompute it.
+        const float slewStep = shareSlewStepThisTick;
         float target = constrain(power_share_setpoint,
-                                 droopSlew_prev - DROOP_RATIO_SLEW_PER_TICK,
-                                 droopSlew_prev + DROOP_RATIO_SLEW_PER_TICK);
+                                 droopSlew_prev - slewStep,
+                                 droopSlew_prev + slewStep);
         applyShareRatio(target);
         share_actedSp = power_share_setpoint;   // this tick acted on this setpoint (S3)
         return;
@@ -7857,6 +8124,12 @@ void powerBalance() {
     // ── CLOSED-LOOP mode ─────────────────────────────────────────────────────
     shareClosedLoopRun = true;
     share_actedSp      = power_share_setpoint;
+
+    // fw v19: the tick's conduction-aware slew ceiling, stored by updateShareSlewMode() above and
+    // used by BOTH the reference slew and the actuation slew below. Read once, never recomputed —
+    // the fw v6 rationale requires reference and actuation to agree about how fast the split may
+    // move, and sharing one stored value makes that agreement structural.
+    const float slewStep = shareSlewStepThisTick;
 
     // ── Setpoint governor (limit-cycle mitigation, 2026-08-11) ────────────────
     // In-band setpoints ask the droop split to hold a live minority channel at
@@ -7912,9 +8185,11 @@ void powerBalance() {
     // 0.35 share (e.g. raw 0.15 → clipped 0.50) applied to the reference in one tick, right at the
     // load level where the sweep's failures live.
     // The fix wraps the REFERENCE, not the controller: share_spEffPrev walks toward the clipped
-    // target at DROOP_RATIO_SLEW_PER_TICK (the same ceiling the actuation path uses, so reference
-    // and actuation cannot disagree about how fast the split may move) and is what the controller
-    // is given. constrain() lands EXACTLY on the target once within one step, so every converged
+    // target at the tick's conduction-aware ceiling slewStep — DROOP_RATIO_SLEW_PER_TICK normally,
+    // DROOP_RATIO_SLEW_HANDOFF_PER_TICK while a channel is dark and the dwell allowance holds (fw
+    // v19; the ceiling was unconditionally DROOP_RATIO_SLEW_PER_TICK through fw v18). It is the
+    // same value the actuation path uses, so reference and actuation cannot disagree about how
+    // fast the split may move, and is what the controller is given. constrain() lands EXACTLY on the target once within one step, so every converged
     // hold point is bit-identical to fw v5 — this changes handover transients only.
     // SECOND-ORDER EFFECT (fw v6 review S4): the slew applies to the governor's FLOOR CLIP too, so
     // inside closed-loop mode the clip is no longer instantaneous when the load DROPS. A load fall
@@ -7923,9 +8198,19 @@ void powerBalance() {
     // orders of magnitude shorter than a dropout-cycle period (~50-60 ms), so the floor is still
     // reached long before the cycle it guards against could develop. Accepted deliberately: the
     // alternative is a step in the reference, which is the failure this whole change removes.
+    // fw v19 — CORRECTION TO THE S4 PARAGRAPH ABOVE. The ceiling used here is slewStep
+    // (conduction-aware), and the S4 bound is NOT preserved: a load fall that moves the governor
+    // bound is precisely a dark-minority condition, so the ~35-tick reference walk becomes a walk
+    // at DROOP_RATIO_SLEW_HANDOFF_PER_TICK for as long as the dwell allowance lasts. What bounds
+    // it is SHARE_HANDOFF_DWELL_MAX_TICKS: at most 175 slow ticks (~200 ms) ONCE per dark event,
+    // then the full rate resumes for the remainder even while the channel stays dark. So S4's
+    // "~35 ticks, one to two orders of magnitude shorter than a ~50-60 ms dropout cycle" reads, at
+    // fw v19, as "up to ~200 ms of slow walk plus a fast remainder, non-recurring within one dark
+    // event". That relaxation is argued, not measured — see updateShareSlewMode() for the full
+    // reasoning and the required bench gate.
     share_spEffPrev = constrain(spTarget,
-                                share_spEffPrev - DROOP_RATIO_SLEW_PER_TICK,
-                                share_spEffPrev + DROOP_RATIO_SLEW_PER_TICK);
+                                share_spEffPrev - slewStep,
+                                share_spEffPrev + slewStep);
     float spEff = share_spEffPrev;
 
     float power_share_actual_local = fabsf(I_fc) / totalA;
@@ -7951,9 +8236,21 @@ void powerBalance() {
     // topology action, not an MDAC write — slewing it would only delay the
     // hysteresis crossing while the gains sit pinned at the band edge anyway).
     if (droopRatio >= DROOP_R_MIN && droopRatio <= DROOP_R_MAX) {
+        // fw v19: same conduction-aware slewStep the reference used this tick (see above) — this is
+        // the site TP0201 walked through at the full rate while BT was dark.
+        // KNOWN RESIDUAL (fw v19 review S3, DEFERRED deliberately): at the handoff rate this
+        // limiter becomes the DOMINANT actuator dynamic, and it is invisible to
+        // youlaController_Power(), whose anti-windup back-calculates only against its own [0,1]
+        // authority span — it does not know the commanded ratio is being rate-limited downstream,
+        // so its integrator can advance against a split the MDACs have not reached yet. Exposure
+        // is BOUNDED by the dwell cap (at most ~200 ms per dark event, after which the full rate
+        // resumes and the limiter stops dominating). Extending the anti-windup to see this limiter
+        // would mean editing the share controller, which is on the do-not-change list, so it is
+        // not done here. BENCH GATE: the fw v19 share-sweep re-validation is what closes this —
+        // watch for a settling overshoot after a dark-event walk.
         droopRatio = constrain(droopRatio,
-                               droopSlew_prev - DROOP_RATIO_SLEW_PER_TICK,
-                               droopSlew_prev + DROOP_RATIO_SLEW_PER_TICK);
+                               droopSlew_prev - slewStep,
+                               droopSlew_prev + slewStep);
     }
 
     // Full-span actuation (2026-08-10): commanded ratios span [0,1]; the
@@ -8165,6 +8462,23 @@ void resetShareControlState() {
     // stale deferral would then suppress the r-based cutoff for a one-shot operator write.
     shareCutDeferredFC   = false;
     shareCutDeferredBT   = false;
+    // fw v19 conduction-aware slew state. Seeded DARK with zeroed current filters and a fresh
+    // dwell allowance: "dark" selects the SLOWER ceiling, so a reset cannot leave the loop free to
+    // slam the ratio across a conduction state it has not measured yet. The filters climb out of
+    // the seed within ~20 ms (SHARE_GOV_FILT_ALPHA) once real current flows, and the hysteresis
+    // means a channel must reach SHARE_HANDOFF_LIVE_A — not merely SHARE_HANDOFF_MIN_A — to be
+    // declared live from this seed.
+    shareHandoffIFcFilt   = 0.0f;
+    shareHandoffIBtFilt   = 0.0f;
+    shareHandoffDarkFC    = true;
+    shareHandoffDarkBT    = true;
+    shareHandoffDwell     = 0;
+    shareSlewStepThisTick = DROOP_RATIO_SLEW_HANDOFF_PER_TICK;
+    // Seed the motion detector FROM droopSlew_prev, not from a literal: this function deliberately
+    // does NOT touch droopSlew_prev (the MDACs keep whatever split is physically on them across a
+    // reset — see the header comment), so a literal seed would make the first tick after a reset
+    // read as spurious motion and burn a dwell tick that nothing moved.
+    shareHandoffPrevRatio = droopSlew_prev;
 }
 
 float youlaController_Power(float setpoint, float alphaRaw) {

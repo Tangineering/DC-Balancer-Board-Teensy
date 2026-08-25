@@ -1408,6 +1408,73 @@ up, and 12.15 V was reached from a 0.7 A source dropout under a 6 A motor draw.
 **Discriminator:** scope the FC *input* rail (supply side of the boost) during a repeat
 share = 1.0 hold — or swap the supplies back and repeat the sweep (single-variable).
 
+#### RESOLUTION (2026-08-25, log `logs/TP0201`, fw v18) — the class is root-caused; mitigation ships in fw v19
+
+*Appended, not a rewrite: everything above stands as the as-recorded 2026-08-17 state, including
+the supply-transient hypothesis, which this entry refutes for TP0201 specifically.*
+
+**Root cause of the class: the share loop slews the commanded droop ratio ACROSS the FC↔BT
+conduction crossing while the channel that must pick up the load is not meaningfully conducting.**
+In TP0201 the share loop armed OPEN→CLOSED with FC as the sole conductor (`share_act` ≈ 1.0,
+`I_batt` 0.06–0.08 A of trickle). Seeded at `droopSlew_prev` ≈ 0.85, the controller walked toward
+the governor-clipped ≈ 0.556 at `DROOP_RATIO_SLEW_PER_TICK` = 0.02/tick, crossing the handoff in
+**~20 ms**. FC ceased conducting before BT's *reactive* RT1987 ideal diode forward-biased; the bus
+ran **unsourced for ~5.7 ms** and decayed capacitively **15.86 → 12.185 V** — 0.185 V above
+`LIMIT_V_BUS_MIN` and inside the 20 ms UV dwell, so again **no fault latched**. TP0200 took the
+*identical* arming step harmlessly because BT was already conducting 0.556 A, which isolates the
+variable: the hazard precondition is not the arming transition but **a slewing ratio with a dark
+standby channel**.
+
+**The supply-transient hypothesis is REFUTED for TP0201.** `V_fc` **rose** 0.66 V at the dropout —
+the unloaded signature of a boost that stopped drawing. A looser-supply foldback or an input-UVLO
+dip would present as a *sag* on that node. (TP0178's own `V_fc` 8.12 → 8.68 V step is the same
+signature; on the evidence now available the 2026-08-17 "leading candidate" above is best read as
+superseded for TP0178 as well, though TP0178 was not a share-arming run and is not formally closed
+by this entry.) The **architecture finding recorded on 2026-08-17 stands and is strengthened**: at
+or near a share rail the idle channel's RT1987 provides only reactive backup, so the bus must sag
+before it picks up.
+
+**Mitigation — conduction-aware handoff slew (firmware, fw v19).** `updateShareSlewMode()` runs
+once per `powerBalance()` tick and drops the droop-ratio slew ceiling from
+`DROOP_RATIO_SLEW_PER_TICK` = 0.02 to `DROOP_RATIO_SLEW_HANDOFF_PER_TICK` = **0.002** (10×) while
+either channel is **dark**, at all three in-band slew sites (open-loop feedforward,
+effective-setpoint reference, closed-loop actuation, which all read one stored per-tick value). A
+0.3-span walk then takes ~170 ms instead of ~17 ms, so the analog handoff has two orders of
+magnitude more time and the commanded operating points either side of the crossing stay close
+while the diode picks up. Three mechanism details matter for reading a fw v19 log:
+
+- **Filtered, hysteretic conduction test.** "Dark" is decided on per-channel EMAs of
+  `|I_fc|`/`|I_batt|` at `SHARE_GOV_FILT_ALPHA` (~20 ms), not on raw ADC reads — a raw test would
+  chatter the ceiling near the threshold. A channel goes dark below `SHARE_HANDOFF_MIN_A` =
+  **0.15 A** and returns live only at `SHARE_HANDOFF_LIVE_A` = **0.20 A**.
+- **Once-per-event, MOTION-GATED dwell cap.** The slow rate is allowed for at most
+  `SHARE_HANDOFF_DWELL_MAX_TICKS` = **175 ticks (~200 ms)** per dark event, counting only ticks on
+  which the commanded ratio **actually moved** (detected from `droopSlew_prev`, the MDAC-truth
+  ratio). After that the full rate resumes even while the channel stays dark, and the allowance
+  re-arms only on a live transition. Without the cap a persistently dark channel — light-load
+  cruise, and the fw v6 review-S4 governor floor-clip regime — would pin the share loop slow
+  indefinitely. Without the **motion gate** the mitigation would not have prevented TP0201 at all:
+  its pre-arm was a ~1.7 s (~1500-tick) in-band feedforward *hold* at sp = 0.85 with BT dark, so an
+  elapsed-tick counter spends the whole allowance ~1.3 s before the arming walk and leaves the
+  hazardous conduction crossing running at the full rate.
+- **Not reconstructible from the log.** The filtered magnitudes, the hysteresis state and the
+  dwell counter are not in the BLG record. The State-98 `'S'` dump's `share slew mode:` line
+  (FULL / HANDOFF / CAPPED) is the only observable; `CAPPED` means the allowance is spent, not that
+  the channel has been dark a long time.
+
+Converged holds with both channels conducting are bit-identical to fw v18. This is a **mitigation
+of the transient, not a removal of the reactive-diode architecture** — a hard source loss at a
+share rail still relies on the bus sagging to commutate.
+
+**Next bench (three gates; the dwell-cap trade-off is argued, not measured):** (1) repeat the
+TP0200/TP0201 arming condition with a deliberately dark standby channel under fw v19 and confirm
+the bus no longer decays below ~15 V through the handoff — scope the VBUS node, since the ~5.7 ms
+gap is at the edge of what the ~882 Hz log resolves; (2) repeat the light-load dropout condition
+(the TP0010/TP0013 class) and confirm the dwell-capped slow walk does not lengthen a dropout
+cycle; (3) re-validate the fw v19 share sweep, watching for a settling overshoot after a dark-event
+walk — at the slow rate the limiter is the dominant actuator dynamic and the share controller's
+anti-windup does not see it (documented residual, deferred).
+
 ---
 
 ## Scope-metrology conventions (adopted 2026-08-03, review BOOST-R1-N6)

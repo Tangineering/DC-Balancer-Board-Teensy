@@ -183,3 +183,26 @@ must be inferred from the last records and flagged as inferred.
   [I_min/Itot_filt, 1 - I_min/Itot_filt] with SHARE_MINORITY_I_MIN_A = 0.30 A (e.g.
   Itot 0.72 A -> [0.42, 0.58]). Measured share parking at ~0.40/~0.60 at ~0.7 A load
   is the governor working, not a tracking failure.
+
+## fw v19 conduction-aware slew mode (NOT in the log)
+
+- **The droop-ratio slew ceiling is no longer a constant, and you CANNOT reconstruct it
+  from the logged currents.** From fw v19 `updateShareSlewMode()` selects between
+  `DROOP_RATIO_SLEW_PER_TICK` (0.02/tick) and `DROOP_RATIO_SLEW_HANDOFF_PER_TICK`
+  (0.002/tick) each `powerBalance()` tick. The decision runs on **filtered** per-channel
+  magnitudes (EMA of |I_fc|/|I_batt| at SHARE_GOV_FILT_ALPHA), with **hysteresis**
+  (dark < 0.15 A, live >= 0.20 A) and a **motion-gated dwell counter** capped at
+  SHARE_HANDOFF_DWELL_MAX_TICKS = 175 ticks (~200 ms) per dark event — it counts only ticks
+  on which the commanded ratio actually moved, so a static hold with a dark channel burns
+  none of the allowance. None of the filter,
+  hysteresis or dwell state is in the BLG record, and the raw `ifc`/`ibt` columns are not
+  the quantity the test uses. **Do not infer the mode from raw currents** — a channel's raw
+  current crossing 0.15 A in a log tells you nothing about which ceiling was in force.
+- **The observable is the State-98 `'S'` dump line** `share slew mode: FULL|HANDOFF|CAPPED`
+  (with both filtered magnitudes, the dwell counter and the tick's step). If a run's share
+  behaviour hinges on the slew rate, ask for an `'S'` dump; without one, report the ceiling
+  as unknown rather than assuming the nominal rate.
+- **Expected fw v19 signature, not a defect:** a share-ratio walk that takes ~10x longer
+  than a fw v18 walk while one channel sits near zero current, reverting to the fast rate
+  after ~200 ms. Applies to arming walks, governor floor-clip walks after a load fall, and
+  setpoint-latch releases with the re-closed channel still dark.

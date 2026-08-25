@@ -102,8 +102,11 @@ struct MockSerialClass {
     template<typename T> void print  (T v, int opt)  { tx += fmt(v, opt); }
     template<typename T> void println(T v, int opt)  { tx += fmt(v, opt); tx += '\n'; }
 
+    // Backpressure override for plotTick()'s guard: -1 (default) means "host always draining"
+    // (4096 B free); a test can set this to a small value to exercise the drop/emit boundary.
+    int  availableForWriteOverride = -1;
     int  available() { return (int)rx_queue.size(); }
-    int  availableForWrite() { return 4096; }   // host always draining in tests (plotTick guard)
+    int  availableForWrite() { return availableForWriteOverride >= 0 ? availableForWriteOverride : 4096; }
     int  read() {
         if (rx_queue.empty()) return -1;
         char c = rx_queue.front(); rx_queue.pop();

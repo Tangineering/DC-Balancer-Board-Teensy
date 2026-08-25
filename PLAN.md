@@ -694,7 +694,7 @@ All commands are single uppercase characters, processed in `doState98()`:
 | `Y [Vmax] [b]` | Start combined drive-cycle + power-share profile — sweeps `v_setpoint` **and** `power_share_setpoint` from one 16-region table; both values optional on one line (bare `Y` runs the defaults, e.g. `Y 1 0.3`); bare `Y` while running stops it; same prerequisites as `D` (§9h) |
 | `W [Imax] [b]` | Start combined **current** + power-share profile — the same 16-region table with the motor axis in amps; both values optional on one line (bare `W` runs the defaults, e.g. `W 6 0.0`); bare `W` while running stops it; `T`-style prerequisites — no velocity-chain calibration, `MOT_PWR_ENABLE` warn-only (§9i) |
 | `X` | Universal stop: cancel any running profile (`D`/`R`/`T`/`Y`/`W`), armed plot-mode run, or bring-up + manual motor + power-share live (motor zeroed; switches parked only if `D`/`R`/`Y`/`W` was running, mirroring their own stop paths) |
-| `L` | Toggle Serial-Plotter stream: 50 Hz `sp,act,gFC,gBT,ifc,ibt` line; suppresses the periodic status/phase/`[VW]` lines; `R`/`T` arm with a `PLOT_ARM_DELAY_MS` delay (see the `L` paragraph below §9e) |
+| `L` | Toggle Serial-Plotter stream: 50 Hz `share_sp,share_act,gFC,gBT,ifc,ibt,v_sp,v_act,enc_pos,edgeA,edgeB` line (11 fields, fw v19); suppresses the periodic status/phase/`[VW]` lines; `R`/`T` arm with a `PLOT_ARM_DELAY_MS` delay (see the `L` paragraph below §9e) |
 | `K` | Single-line SD-logger command (fw v9): empty line = status (card, current/last file, record/drop counts, ownership marker — §9g; status stays live during the bring-up lockout); `K 1` = start a MANUAL log (`ML####.BLG`) for hand-driven runs; `K 0` = stop it (refused on a profile-owned log) |
 | `H` / `?` | Print the command list (`printTestHelp()`) |
 | `Q` | Exit State 98 → State 1 (forces `MOT_PWR_ENABLE` LOW; closes charge/regen paths; drops plot mode + any armed run) |
@@ -783,10 +783,21 @@ running (`D`/`R`/`T`) plus the manual modes and the live share loop, mirroring e
 stop semantics (switches parked for `D`/`R`, left as-is for `T`).
 
 **Serial-Plotter stream (`L`).** Toggles a condensed 50 Hz (`PLOT_PERIOD_MS`) output line the
-Arduino IDE Serial Plotter parses directly — six labelled fields, fixed shape:
-`sp:…,act:…,gFC:…,gBT:…,ifc:…,ibt:…` (setpoint, measured share, both droop gains, both channel
-currents; all naturally 0–3 so the plotter's shared autoscale keeps them readable — voltages stay
-on `S`). While ON, every periodic human-readable line that would break the plotter's parse is
+Arduino IDE Serial Plotter parses directly — **eleven** labelled fields, fixed shape (fw v19;
+six through fw v6, eight through fw v18):
+`share_sp:…,share_act:…,gFC:…,gBT:…,ifc:…,ibt:…,v_sp:…,v_act:…,enc_pos:…,edgeA:…,edgeB:…`
+(setpoint, measured share, both droop gains, both channel currents, velocity setpoint and measured
+velocity, then the raw encoder diagnostics: `encoderPos` — the ×2 quadrature count — and the
+per-channel ISR edge counters `encEdgeCountA`/`encEdgeCountB`). The first eight are naturally 0–3
+so the plotter's shared autoscale keeps them readable; the three encoder fields are unbounded
+integers and will dominate the autoscale — that is accepted, because their use case is watching a
+hand-rotated wheel, and voltages stay on `S`. The field count is **fixed** (the plotter keys its
+series off the labels and re-legends the graph if the count varies mid-run), and the
+`Serial.availableForWrite()` backpressure guard is sized for the worst-case line **with headroom**
+(192 B at fw v19; the itemized worst case is an exact 165 B, and an exact fit is not a guard — one
+8-character float would block the USB-CDC write and stall the loop). The itemization lives at the
+guard in the source; re-derive it, do not estimate, when adding a field.
+While ON, every periodic human-readable line that would break the plotter's parse is
 suppressed via `plotSuppressStatus()`: the three profiles' 500 ms snapshots, their phase banners,
 and the `[VW]` VESC-watch line (VESC faults latch; re-check after `L` off). One-shot
 start/stop/complete notices are kept. Because the IDE 2.x plotter has no send box (and may close
@@ -804,6 +815,44 @@ drops a sample rather than block when the USB host isn't draining. `D` is delibe
 fields are share-loop signals, not drive-cycle ones. Plot state resets on `Q` exit; tests cover
 the wire format, rate gate, suppression/restore, arm/fire/cancel paths, and the fire-time
 precondition re-check.
+
+**Share-governor / slew constant family (`powerBalance()`).** PLAN.md does not otherwise carry a
+consolidated list of these; the authoritative derivations live at each constant in
+`teensy_controller.ino`. Recorded here because the fw v19 additions are safety-relevant:
+
+| Constant | Value | Role |
+|---|---|---|
+| `SHARE_MINORITY_I_MIN_A` | 0.30 A | Light-load conduction floor. Closed-loop share control is entered above `2×` it (0.60 A of filtered total) and exited `SHARE_GOV_OL_HYST_A` lower; it also sets the governor's effective-setpoint floor clip. |
+| `SHARE_GOV_OL_HYST_A` | 0.05 A | Hysteresis on the CLOSED→OPEN mode exit. |
+| `DROOP_RATIO_SLEW_PER_TICK` | 0.02/tick | Nominal per-tick ceiling on the commanded droop-ratio step; bounds the antiphase MDAC slam behind the TP0010/TP0013 dropout cycles. |
+| `SHARE_HANDOFF_MIN_A` | **0.15 A** (fw v19) | DARK threshold. A channel below this is **not meaningfully conducting** — its ideal diode is effectively open, so load it is commanded to take up requires an *analog* handoff the reactive RT1987 completes only after the bus sags. Set above TP0201's 0.08 A pre-arm trickle and at half `SHARE_MINORITY_I_MIN_A`, so a channel the governor considers healthy is never called dark. Tested on a **filtered** magnitude (EMA at `SHARE_GOV_FILT_ALPHA`), never a raw ADC read. |
+| `SHARE_HANDOFF_LIVE_A` | **0.20 A** (fw v19) | LIVE re-entry threshold — hysteresis on the same test, so a filtered magnitude sitting on 0.15 A cannot chatter the ceiling. |
+| `DROOP_RATIO_SLEW_HANDOFF_PER_TICK` | **0.002/tick** (fw v19) | The reduced ceiling used while either channel is dark — 10× slower, ~170 ms for a 0.3-span walk at the ~880 Hz loop rate. |
+| `SHARE_HANDOFF_DWELL_MAX_TICKS` | **175 ticks** ≈ 200 ms (fw v19) | Maximum slew-limited ticks **on which the ratio actually moved** per dark event. Past the cap the FULL rate resumes even while the channel stays dark; the allowance re-arms only on a LIVE transition, so a persistently dark channel cannot pin the loop slow. The **motion gate is load-bearing**: TP0201's pre-arm was a ~1.7 s in-band feedforward *hold* with BT dark, so an elapsed-tick counter would have spent the whole allowance before the arming walk and run the hazardous crossing at the full rate. Motion is read from `droopSlew_prev`, the MDAC-truth ratio, with a deliberate one-tick lag. |
+
+`updateShareSlewMode()` runs **once per `powerBalance()` tick**, above the open-loop feedforward
+branch (which returns early) so feedforward ticks advance the filters and dwell counter too, and
+stores the tick's ceiling; **all three** in-band slew sites (open-loop feedforward,
+effective-setpoint reference, closed-loop actuation) read that one stored value, which makes the
+fw v6 requirement — reference and actuation cannot disagree — structural rather than accidental.
+Evidence, the honest fw v6 review-S4 interaction (S4's ~35-tick bound is **relaxed**, to at most
+`SHARE_HANDOFF_DWELL_MAX_TICKS` of slow *walk* plus a fast remainder, once per dark event — the
+motion gate leaves that walk-length bound intact, since S4's hazard is the walk itself; the earlier
+"disjointness" claim is struck), and the deferred anti-windup residual are recorded at
+`updateShareSlewMode()`, in the fw v19 changelog entry, and in `docs/boost-bringup-debug.md`
+(TP0178/TP0201 handoff-gap entry). Converged holds with both channels conducting are
+bit-identical to fw v18. State is seeded DARK at boot and by `resetShareControlState()`.
+
+**Operator note.** A setpoint-latch release with the re-closed channel still dark walks at the
+handoff rate for up to ~200 ms before reverting to the full rate. That lag is the mitigation
+working, not a stuck loop.
+
+**Observability.** The slew mode is **not** reconstructible from a bench log — the decision uses
+filtered magnitudes, hysteresis state and a dwell counter, none of which are in the BLG record.
+The State-98 `'S'` dump's `share slew mode:` line (FULL / HANDOFF / CAPPED, both filtered
+magnitudes, the dwell counter and the tick's step) is the only observable. `CAPPED` means the
+allowance is *spent*, not that the channel has been dark a long time — a long static hold with a
+dark channel reads `HANDOFF` with `dwell` unchanged.
 
 ### 9f. Trapezoidal motor-current profile (`T`)
 

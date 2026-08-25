@@ -146,6 +146,20 @@ static void reset_test_state() {
     // can't inherit a stale seed from a prior test's OL->CL handover.
     share_spEffPrev = 0.5f;
 
+    // fw v19 (review round): conduction-aware handoff-slew state, mirrors resetShareControlState()'s
+    // DARK/zeroed seed exactly. Not previously reset here (nothing referenced it pre-review), which
+    // would otherwise let one test's warmed-up filters/dwell count leak into the next test's fixture.
+    shareHandoffIFcFilt   = 0.0f;
+    shareHandoffIBtFilt   = 0.0f;
+    shareHandoffDarkFC    = true;
+    shareHandoffDarkBT    = true;
+    shareHandoffDwell     = 0;
+    shareSlewStepThisTick = DROOP_RATIO_SLEW_HANDOFF_PER_TICK;
+    // fw v19 (orchestrator O1): the motion-gate detector, seeded FROM droopSlew_prev (already 0.5
+    // above, matching resetShareControlState()'s own "seed from droopSlew_prev, not a literal"
+    // rule) so a fresh reset's first tick cannot read as spurious motion.
+    shareHandoffPrevRatio = droopSlew_prev;
+
     // fw v10: Youla-H drive (velocity) controller state (drive_controller.h + wrapper). Zeroes
     // the 5-state Hanus vector, the held output, and back-dates the Ts gate -- the same helper
     // resetDriveControlState() the firmware itself calls at every reset site (haltMotorOutput(),
@@ -196,6 +210,7 @@ static void reset_test_state() {
     plotArmTrapHoldMs = 0;
     plotArmTrapRate   = 0.0f;
     Serial.tx_clear();
+    Serial.availableForWriteOverride = -1;   // fw v19: plotTick() backpressure guard defaults open
     Serial1.tx_clear();   // defensive: nothing writes to Serial1 today (VescUart mock is
                           // counter-based), but a future mock change must not leak text
 
@@ -293,6 +308,45 @@ static void reset_test_state() {
     rl_log_last       = 0;   // resetControlRateLimiters() above already back-dated it; explicit
                              // here so the group documents every logger global it owns
     resetControlRateLimiters();
+}
+
+// ── fw v19 (safety-review round): conduction-aware handoff-slew test helpers ─────────────────
+// updateShareSlewMode() replaced the old stateless shareSlewStepPerTick(): it maintains per-
+// channel EMAs of |I_fc|/|I_batt| (dark below SHARE_HANDOFF_MIN_A=0.15A, live only at
+// SHARE_HANDOFF_LIVE_A=0.20A, hysteretic in between) plus a once-per-dark-event
+// SHARE_HANDOFF_DWELL_MAX_TICKS=175-tick allowance, storing the tick's ceiling in
+// shareSlewStepThisTick. Defined here (ahead of every test that uses them) because the DARK seed
+// (resetShareControlState()/reset_test_state() both seed both channels dark with zeroed filters)
+// means ANY test that reaches a slew site now walks slow for a handful of ticks while the EMAs
+// warm up, even at fixture currents well above SHARE_HANDOFF_MIN_A -- a single field assignment
+// no longer selects a mode.
+
+// Real-ticks updateShareSlewMode() (not the full powerBalance(), so no other share-loop state is
+// disturbed) at constant I_fc/I_batt until BOTH channels read LIVE, or gives up after maxTicks.
+// Returns the tick count to full-live (>=1), or -1 if it never got there within the budget. Used
+// both to reach a known FULL state and to MEASURE the warm-up latency itself
+// (test_share_handoff_dark_seed_warmup).
+static int tickShareHandoffUntilLive(float I_fc_val, float I_batt_val, int maxTicks) {
+    I_fc = I_fc_val; I_batt = I_batt_val;
+    for (int i = 0; i < maxTicks; i++) {
+        updateShareSlewMode();
+        if (!shareHandoffDarkFC && !shareHandoffDarkBT) return i + 1;
+    }
+    return -1;
+}
+
+// Pre-warm helper for tests whose INTENT is full-rate steady-state behaviour, not the warm-up
+// transient itself (which has its own dedicated coverage above). Drives ONLY
+// updateShareSlewMode() at the caller's fixture currents until both channels read LIVE, so the
+// test's own tick budget doesn't have to account for the DARK-seed climb-out. Asserts it actually
+// reached LIVE within a generous budget -- a fixture sitting exactly ON SHARE_HANDOFF_LIVE_A (the
+// EMA only approaches its target asymptotically and a strict ">=" boundary may never be crossed by
+// float rounding) fails loudly here instead of silently leaving the whole test at the slow rate.
+// Choose fixture currents with margin above 0.20A, not merely above the old 0.15A floor.
+static void primeShareHandoffLiveFor(float I_fc_val, float I_batt_val) {
+    int ticks = tickShareHandoffUntilLive(I_fc_val, I_batt_val, 200);
+    check(ticks > 0,
+          "pre-warm: handoff EMAs reached LIVE within budget at the fixture's own I_fc/I_batt");
 }
 
 // ── Bring-up machine helpers ─────────────────────────────────────────────────
@@ -1256,15 +1310,25 @@ static void test_governor_openloop_feedforward_walk() {
     digitalWrite(FC_BUS_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
-    I_fc = 0.09f; I_batt = 0.21f;           // I_tot = 0.30A, well under the 0.60A entry threshold
+    // fw v19 (review round) fixture note: both channels held with margin ABOVE SHARE_HANDOFF_LIVE_A
+    // (0.20A -- not merely the old 0.15A dark floor) so this test exercises the FULL-rate
+    // feedforward walk it was designed for, not the new conduction-aware handoff rate
+    // (test_share_handoff_slew_openloop_dark_channel covers the dark-channel case explicitly).
+    // Total stays under the 0.60A closed-loop entry threshold throughout. The DARK seed still
+    // means the very first ticks run slow while the EMAs climb out of zero -- pre-warm them (with
+    // the SAME currents the real loop below will use) so this test's own budget covers only the
+    // feedforward-walk behaviour it targets, not the warm-up transient (which has its own
+    // dedicated coverage in test_share_handoff_dark_seed_warmup).
+    I_fc = 0.30f; I_batt = 0.25f;           // I_tot = 0.55A, well under the 0.60A entry threshold
+    primeShareHandoffLiveFor(I_fc, I_batt);
     power_share_setpoint = 0.30f;           // in-band
 
     uint32_t t = 0;
     float start = droopSlew_prev;           // 0.5, the fresh-reset default
     for (int i = 0; i < 5; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
     check(!shareClosedLoopMode,
-          "G1: still open-loop after a few ticks at 0.30A (well under the 0.60A entry threshold, "
-          "which the filter can never cross since it asymptotes to totalA=0.30A)");
+          "G1: still open-loop after a few ticks at 0.55A (well under the 0.60A entry threshold, "
+          "which the filter can never cross since it asymptotes to totalA=0.55A)");
     check(shareCtrl_integ == 0.0f && fabsf(shareCtrl_heldOut - 0.5f) < 1e-9f,
           "G1: the Youla controller state never advances — powerBalance() never calls "
           "youlaController_Power() in open-loop mode");
@@ -1382,13 +1446,19 @@ static void test_governor_hold_exit_on_setpoint_change() {
     share_govTotAFilt    = 0.30f;             // low, well under the 0.60A entry threshold
     power_share_setpoint = 0.70f;
     share_actedSp         = 0.70f;            // last acted setpoint == current: no changed-edge yet
-    I_fc = 0.09f; I_batt = 0.21f;             // I_tot=0.30A -- stays open-loop throughout
+    // fw v19 (review round, MED-1) fixture note: was I_fc=0.09/I_batt=0.21 -- FC sat below even the
+    // old SHARE_HANDOFF_MIN_A (0.15A) dark floor while the comment below claimed the full-rate
+    // ceiling, a stale mismatch the review caught. Bumped to match siblings G1/G6/eff-slew: both
+    // channels held with margin ABOVE SHARE_HANDOFF_LIVE_A (0.20A), pre-warmed past the DARK-seed
+    // climb-out, so the slew-magnitude assertions below actually exercise the full rate they name.
+    I_fc = 0.30f; I_batt = 0.25f;             // I_tot=0.55A -- stays open-loop throughout
+    primeShareHandoffLiveFor(I_fc, I_batt);
 
     // Confirm the hold itself first: a few ticks at the SAME (unchanged) setpoint must not move
     // the ratio -- isolates the "changed setpoint" trigger from ordinary HOLD behaviour.
     uint32_t t = 0;
     for (int i = 0; i < 20; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
-    check(!shareClosedLoopMode, "T4: (setup) still open-loop -- I_tot=0.30A never crosses 0.60A");
+    check(!shareClosedLoopMode, "T4: (setup) still open-loop -- I_tot=0.55A never crosses 0.60A");
     check(shareClosedLoopRun, "T4: (setup) shareClosedLoopRun is still true -- HOLD, not fresh feedforward");
     check(fabsf(droopSlew_prev - 0.65f) < 1e-9f,
           "T4: (setup) confirmed HOLD -- unchanged setpoint, ratio frozen at the seeded 0.65");
@@ -1413,7 +1483,7 @@ static void test_governor_hold_exit_on_setpoint_change() {
           "T4: feedforward converges to the NEW setpoint 0.20 -- HOLD did not swallow the "
           "commanded change");
     check(!shareClosedLoopMode,
-          "T4: still open-loop throughout -- I_tot=0.30A never re-crosses the 0.60A entry "
+          "T4: still open-loop throughout -- I_tot=0.55A never re-crosses the 0.60A entry "
           "threshold from this low-current change");
 }
 
@@ -1507,11 +1577,17 @@ static void test_governor_open_to_closed_continuity() {
     digitalWrite(FC_BUS_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
-    I_fc = 0.09f; I_batt = 0.21f;            // I_tot=0.30A -- open-loop feedforward
+    // fw v19 (review round) fixture note: both channels held with margin ABOVE SHARE_HANDOFF_LIVE_A
+    // (0.20A) so the feedforward walk below runs at the full DROOP_RATIO_SLEW_PER_TICK rate this
+    // test's iteration budget assumes (the dark-channel handoff case is covered separately).
+    // Pre-warmed past the DARK-seed climb-out so the 30-tick budget below is spent on the walk
+    // itself, not on the EMA warming up.
+    I_fc = 0.30f; I_batt = 0.25f;            // I_tot=0.55A -- open-loop feedforward
+    primeShareHandoffLiveFor(I_fc, I_batt);
     power_share_setpoint = 0.20f;            // walks the ratio away from the 0.5 seed
     uint32_t t = 0;
     for (int i = 0; i < 30; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
-    check(!shareClosedLoopMode, "G6: (setup) still open-loop at I_tot=0.30A");
+    check(!shareClosedLoopMode, "G6: (setup) still open-loop at I_tot=0.55A");
     float heldBeforeEntry = droopSlew_prev;
     check(fabsf(heldBeforeEntry - 0.20f) < 0.05f,
           "G6: (setup) the feedforward walk has moved the ratio well off the 0.5 seed");
@@ -1557,11 +1633,15 @@ static void test_share_eff_setpoint_slew_from_seed_at_transition() {
     digitalWrite(FC_BUS_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
-    I_fc = 0.09f; I_batt = 0.21f;            // I_tot=0.30A -- open-loop feedforward
+    // fw v19 (review round) fixture note: both channels held with margin ABOVE SHARE_HANDOFF_LIVE_A
+    // (0.20A) so the feedforward walk below runs at the full DROOP_RATIO_SLEW_PER_TICK rate this
+    // test's iteration budget assumes -- pre-warmed past the DARK-seed climb-out first.
+    I_fc = 0.30f; I_batt = 0.25f;            // I_tot=0.55A -- open-loop feedforward
+    primeShareHandoffLiveFor(I_fc, I_batt);
     power_share_setpoint = 0.15f;            // in-band (== DROOP_R_MIN)
     uint32_t t = 0;
     for (int i = 0; i < 30; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
-    check(!shareClosedLoopMode, "eff-slew: (setup) still open-loop at I_tot=0.30A");
+    check(!shareClosedLoopMode, "eff-slew: (setup) still open-loop at I_tot=0.55A");
     check(fabsf(droopSlew_prev - 0.15f) < 0.01f,
           "eff-slew: (setup) the feedforward walk converged near the 0.15 setpoint");
 
@@ -1793,6 +1873,595 @@ static void test_droop_ratio_slew_limit() {
     applyShareRatio(0.2f);
     check(fabsf(droop_gain_FC_actual - K_DROOP / (RE_MAX * 0.2f)) < 1e-5f,
           "slew limit: one-shot mapping is exact (no controller-path throttling)");
+}
+
+// ─── fw v19 (safety-review round): conduction-aware handoff slew (TP0201 mitigation) ─────────
+// shareSlewStepPerTick() (a stateless pure function) is RETIRED. Its replacement,
+// updateShareSlewMode(), is STATEFUL: it runs ONCE per powerBalance() tick, maintains per-channel
+// EMAs of |I_fc|/|I_batt| with hysteresis (dark below SHARE_HANDOFF_MIN_A=0.15A, live only at
+// SHARE_HANDOFF_LIVE_A=0.20A) and a once-per-dark-event dwell allowance
+// (SHARE_HANDOFF_DWELL_MAX_TICKS=175 ticks), and stores the tick's ceiling in
+// shareSlewStepThisTick for all three slew sites to read. A single field assignment no longer
+// selects a mode -- reaching one now means either (a) driving I_fc/I_batt through real ticks of
+// updateShareSlewMode()/powerBalance() until the EMAs cross the relevant threshold, or (b)
+// directly seeding the internal state to an already-settled value CONSISTENT with the fixture
+// current that will be fed on subsequent ticks (the same "preset the filter" idiom the governor
+// tests use for share_govTotAFilt) -- never an inconsistent one-shot flip that the very next
+// updateShareSlewMode() call would immediately unwind. (tickShareHandoffUntilLive() and
+// primeShareHandoffLiveFor() are defined near reset_test_state() above, shared by every test file
+// that needs to reach LIVE.)
+
+static void test_share_handoff_mode_constants() {
+    test_group("fw v19 (review): SHARE_HANDOFF_* constants");
+    check(fabsf(SHARE_HANDOFF_MIN_A - 0.15f) < 1e-6f,
+          "constants: SHARE_HANDOFF_MIN_A pins the 0.15A dark floor");
+    check(fabsf(SHARE_HANDOFF_LIVE_A - 0.20f) < 1e-6f,
+          "constants: SHARE_HANDOFF_LIVE_A pins the 0.20A live-hysteresis ceiling");
+    check(fabsf(DROOP_RATIO_SLEW_HANDOFF_PER_TICK - 0.002f) < 1e-9f,
+          "constants: DROOP_RATIO_SLEW_HANDOFF_PER_TICK pins the 10x-slower 0.002/tick ceiling");
+    check(SHARE_HANDOFF_DWELL_MAX_TICKS == 175,
+          "constants: SHARE_HANDOFF_DWELL_MAX_TICKS pins the 175-tick (~200ms) once-per-event allowance");
+    check(fabsf(SHARE_GOV_FILT_ALPHA - 0.05f) < 1e-6f,
+          "constants: (setup) SHARE_GOV_FILT_ALPHA is the EMA weight the handoff filters share "
+          "with the governor's load filter");
+    check(FW_VERSION == 19, "pin: FW_VERSION == 19");
+}
+
+// DARK seed (item B3): resetShareControlState() (and reset_test_state()'s mirror of it) seeds
+// BOTH channels dark with zeroed filters. Even with instantaneous currents well above the live
+// threshold, the EMA has to climb out of that seed before the mode flips -- so the FIRST several
+// ticks after any reset/profile-start run at the handoff rate regardless of how much current is
+// actually flowing. This test measures and pins that warm-up latency.
+static void test_share_handoff_dark_seed_warmup() {
+    test_group("fw v19 (review): DARK seed -- warm-up latency before the EMAs earn FULL rate");
+    reset_test_state();
+
+    check(shareHandoffDarkFC && shareHandoffDarkBT,
+          "warmup: (setup) fresh reset seeds both channels DARK");
+    check(fabsf(shareHandoffIFcFilt) < 1e-9f && fabsf(shareHandoffIBtFilt) < 1e-9f,
+          "warmup: (setup) fresh reset seeds both filters at exactly 0.0");
+
+    // Both channels held at a strong, constant 1.0A -- well above SHARE_HANDOFF_LIVE_A (0.20A) --
+    // from the very first tick. Despite that, the EMA (alpha=SHARE_GOV_FILT_ALPHA=0.05) climbing
+    // from 0 needs ceil(ln(1 - 0.20/1.0) / ln(1 - 0.05)) = 5 ticks to first read >= 0.20A
+    // (filt_4 = 1*(1-0.95^4) = 0.1855 < 0.20; filt_5 = 1*(1-0.95^5) = 0.2262 >= 0.20) -- measured
+    // and pinned exactly, not just bounded, so a future filter/threshold change that silently
+    // shifts this latency is caught here rather than only in a bench log.
+    int ticksToLive = tickShareHandoffUntilLive(1.0f, 1.0f, 50);
+    check(ticksToLive == 5,
+          "warmup: exactly 5 ticks from the DARK seed to FULL at a constant 1.0A on both channels "
+          "(alpha=0.05, live threshold 0.20A)");
+
+    // Every tick strictly before that one must still be reading HANDOFF (the slow ceiling), even
+    // though the instantaneous current (1.0A) would by itself look like full conduction -- proving
+    // the warm-up gate is real, not merely "eventually converges".
+    reset_test_state();
+    I_fc = 1.0f; I_batt = 1.0f;
+    for (int i = 1; i <= 4; i++) {
+        updateShareSlewMode();
+        char msg[128];
+        snprintf(msg, sizeof(msg), "warmup: tick %d of 4 still reads the HANDOFF ceiling despite 1.0A flowing", i);
+        check(fabsf(shareSlewStepThisTick - DROOP_RATIO_SLEW_HANDOFF_PER_TICK) < 1e-9f, msg);
+        check(shareHandoffDarkFC && shareHandoffDarkBT, "warmup: still DARK before tick 5");
+    }
+    updateShareSlewMode();   // tick 5: crosses the threshold
+    check(!shareHandoffDarkFC && !shareHandoffDarkBT, "warmup: LIVE on tick 5, as measured above");
+    check(fabsf(shareSlewStepThisTick - DROOP_RATIO_SLEW_PER_TICK) < 1e-9f,
+          "warmup: tick 5 itself already reads the FULL ceiling");
+}
+
+// Hysteresis (item B): an EMA settled strictly between SHARE_HANDOFF_MIN_A (0.15) and
+// SHARE_HANDOFF_LIVE_A (0.20) must hold the PREVIOUS mode in BOTH directions -- a was-dark
+// channel stays dark, and a was-live channel stays live -- no chatter in the dead band. The
+// fixture current is set equal to the settled filt value so the EMA update this tick is
+// (numerically) a no-op, isolating the probe to the hysteresis decision alone.
+static void test_share_handoff_hysteresis_band() {
+    test_group("fw v19 (review): hysteresis band (0.15-0.20A) holds the previous mode both ways");
+    reset_test_state();
+
+    const float midBand = 0.17f;   // strictly between SHARE_HANDOFF_MIN_A and SHARE_HANDOFF_LIVE_A
+    check(midBand > SHARE_HANDOFF_MIN_A && midBand < SHARE_HANDOFF_LIVE_A,
+          "hysteresis: (setup) 0.17A is strictly inside the dead band");
+
+    // Was-DARK, EMA settles in the dead band -> stays DARK (does NOT need to reach 0.20A).
+    shareHandoffDarkFC    = true;
+    shareHandoffIFcFilt   = midBand;
+    shareHandoffDarkBT    = true;
+    shareHandoffIBtFilt   = midBand;
+    I_fc = midBand; I_batt = midBand;
+    updateShareSlewMode();
+    check(shareHandoffDarkFC && shareHandoffDarkBT,
+          "hysteresis: was-DARK at 0.17A stays DARK -- 0.17 < SHARE_HANDOFF_LIVE_A (0.20) so it "
+          "does not earn LIVE");
+
+    // Was-LIVE, EMA settles in the SAME dead band -> stays LIVE (does NOT fall to dark at 0.17A;
+    // that only happens strictly below SHARE_HANDOFF_MIN_A=0.15).
+    shareHandoffDarkFC    = false;
+    shareHandoffIFcFilt   = midBand;
+    shareHandoffDarkBT    = false;
+    shareHandoffIBtFilt   = midBand;
+    I_fc = midBand; I_batt = midBand;
+    updateShareSlewMode();
+    check(!shareHandoffDarkFC && !shareHandoffDarkBT,
+          "hysteresis: was-LIVE at 0.17A stays LIVE -- 0.17 >= SHARE_HANDOFF_MIN_A (0.15) so it "
+          "does not fall back to dark");
+
+    // Confirmed against the true boundaries too: a was-DARK channel at exactly the live threshold
+    // DOES flip, and a was-LIVE channel just under the dark threshold DOES flip -- the dead band
+    // above is bounded on both sides, not merely "somewhere works".
+    shareHandoffDarkFC = true; shareHandoffIFcFilt = SHARE_HANDOFF_LIVE_A;
+    I_fc = SHARE_HANDOFF_LIVE_A;
+    updateShareSlewMode();
+    check(!shareHandoffDarkFC, "hysteresis: was-DARK at exactly SHARE_HANDOFF_LIVE_A flips to LIVE");
+
+    shareHandoffDarkBT = false; shareHandoffIBtFilt = 0.1499f;
+    I_batt = 0.1499f;
+    updateShareSlewMode();
+    check(shareHandoffDarkBT, "hysteresis: was-LIVE just under SHARE_HANDOFF_MIN_A flips to DARK");
+}
+
+// ── Motion-gated dwell (orchestrator final review, O1, HIGH): items 1-4 ──────────────────────
+// The dwell allowance now counts slow ticks with ACTUAL RATIO MOTION, not elapsed dark ticks --
+// calling updateShareSlewMode() alone (as the pre-O1 tests above did) never touches droopSlew_prev,
+// so under the new rule it can NEVER burn the allowance; those tests would be silently vacuous
+// under the new semantics if left as elapsed-tick loops. Every test below drives REAL powerBalance()
+// ticks (open-loop feedforward, deterministic and controller-internals-free) so droopSlew_prev
+// actually moves when the test means it to move.
+
+// Item 1 (the O1 regression itself): TP0201's actual pre-arm was a ~1500-tick in-band feedforward
+// HOLD at a fixed setpoint with BT dark -- the ratio never moved because it was already parked ON
+// the setpoint. An elapsed-tick counter would have spent the whole 175-tick allowance during that
+// hold, leaving the hazardous arming WALK that followed capped at the full rate. This test parks
+// the ratio on the setpoint (a degenerate no-op, the same idiom test_governor_closedloop_entry_and_
+// response uses) for well over 175 ticks, confirms dwell stays 0 throughout, then starts a real
+// walk and confirms the allowance is intact (the walk runs at the HANDOFF ceiling, not CAPPED).
+static void test_share_handoff_tp0201_static_hold_regression() {
+    test_group("fw v19 (review, O1): TP0201 static-hold regression -- a parked ratio does not burn the dwell allowance");
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+
+    I_fc = 0.42f; I_batt = 0.08f;             // I_tot=0.50A -- open-loop; BT permanently dark
+    power_share_setpoint = droopSlew_prev;    // 0.5 == 0.5: a degenerate no-op, the ratio is
+                                               // already parked exactly ON the setpoint
+
+    uint32_t t = 0;
+    for (int i = 0; i < 300; i++) {           // well over SHARE_HANDOFF_DWELL_MAX_TICKS (175)
+        t += 1000; g_mock_micros = t;
+        powerBalance();
+    }
+    check(fabsf(droopSlew_prev - 0.5f) < 1e-9f,
+          "static hold: (setup) the ratio really did stay parked for 300 ticks -- a genuine "
+          "no-op, not merely a small move");
+    check(shareHandoffDwell == 0,
+          "static hold: dwell is STILL 0 after 300 static ticks with BT dark -- the O1 fix: a "
+          "parked ratio costs nothing, however long it holds");
+    check(strcmp(shareSlewModeName(), "HANDOFF") == 0,
+          "static hold: mode still reads HANDOFF, not CAPPED -- the allowance was never touched");
+
+    // Now start the hazardous walk: command a setpoint the feedforward must actually traverse.
+    // The allowance must still be fully intact (175 fresh moving ticks available), so the walk
+    // runs at the slow HANDOFF ceiling, exactly the mitigation TP0201 needed.
+    power_share_setpoint = 0.15f;              // DROOP_R_MIN -- a real, sustained move
+    float prev = droopSlew_prev;
+    for (int i = 0; i < 20; i++) {
+        t += 1000; g_mock_micros = t;
+        powerBalance();
+        float step = fabsf(droopSlew_prev - prev);
+        // The very first walking tick may still show 0 (motion detection has a documented
+        // one-tick lag), but every tick from the second one on must show real, HANDOFF-bounded
+        // movement -- proving the allowance is available, not spent.
+        if (i > 0) {
+            check(step > 1e-4f, "static hold: the walk is actually moving once it starts");
+            check(step <= DROOP_RATIO_SLEW_HANDOFF_PER_TICK + 1e-5f,
+                  "static hold: the walk moves at the HANDOFF ceiling (0.002/tick) -- the "
+                  "allowance was preserved through the long static prefix, not pre-spent");
+        }
+        prev = droopSlew_prev;
+    }
+}
+
+// Item 2: a SUSTAINED walk burns exactly one dwell tick per tick that actually moved the ratio
+// (one-tick lag, as documented), reaching CAPPED at the 175th moving tick -- and ticks explicitly
+// held mid-walk (setpoint parked on the current ratio for one tick) do NOT burn, proving the gate
+// is genuinely motion-based rather than merely "elapsed ticks since the last hold ended". The test
+// mirrors the firmware's own one-tick-lag rule itself (using the SAME droopSlew_prev deltas the
+// firmware reads) rather than hand-deriving an expected tick count, so it stays correct regardless
+// of exactly how many ticks the interleaved holds add.
+static void test_share_handoff_dwell_burns_only_on_motion() {
+    test_group("fw v19 (review, O1): dwell burns one-per-MOVING-tick; interleaved holds burn nothing; reaches CAPPED");
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+
+    I_fc = 0.42f; I_batt = 0.08f;              // I_tot=0.50A -- open-loop; BT permanently dark
+    power_share_setpoint = DROOP_R_MIN;        // 0.15 -- far enough (distance 0.35 from the 0.5
+                                                // seed) that convergence alone needs ~175 moving
+                                                // ticks, so injected holds cannot make it converge
+                                                // (and thus stop moving) before CAPPED is reached
+
+    uint32_t t = 0;
+    int  predictedDwell    = 0;
+    bool prevTickMoved     = false;
+    int  cappedAtTick      = -1;
+    int  holdTicksInjected = 0;
+    for (int i = 1; i <= 400 && cappedAtTick < 0; i++) {
+        // Every 10th tick is an explicit HOLD: park the setpoint exactly on the current ratio for
+        // this one tick only, so the feedforward target is a no-op and nothing moves.
+        bool  isHoldTick = (i % 10 == 0);
+        float savedSp    = power_share_setpoint;
+        if (isHoldTick) { power_share_setpoint = droopSlew_prev; holdTicksInjected++; }
+
+        float before = droopSlew_prev;
+        t += 1000; g_mock_micros = t;
+        powerBalance();
+        float after = droopSlew_prev;
+        bool movedThisTick = fabsf(after - before) > 1e-6f;
+
+        if (isHoldTick) {
+            check(!movedThisTick, "burn: (setup) the injected hold tick really is a no-op");
+        }
+        power_share_setpoint = savedSp;   // restore the walking target for the next tick
+
+        // Mirror the firmware's own rule EXACTLY (updateShareSlewMode()): this tick's dwell
+        // reflects whether the PREVIOUS tick moved the ratio, not whether this one did.
+        if (predictedDwell < SHARE_HANDOFF_DWELL_MAX_TICKS && prevTickMoved) predictedDwell++;
+        check(shareHandoffDwell == predictedDwell,
+              "burn: dwell matches the one-tick-lag motion prediction on every tick");
+        if (predictedDwell == SHARE_HANDOFF_DWELL_MAX_TICKS && cappedAtTick < 0) cappedAtTick = i;
+
+        prevTickMoved = movedThisTick;
+    }
+    check(holdTicksInjected >= 10,
+          "burn: (setup) several explicit hold ticks were actually injected into the walk");
+    check(cappedAtTick > 0,
+          "burn: CAPPED (175 moving ticks) is reached within budget despite the interleaved holds");
+    check(strcmp(shareSlewModeName(), "CAPPED") == 0,
+          "burn: mode name reads CAPPED once the 175-moving-tick allowance is spent");
+}
+
+// Item 3: resetShareControlState() seeds shareHandoffPrevRatio FROM droopSlew_prev (whatever the
+// MDACs physically hold across the reset), not a literal 0.5 -- so the first tick after a reset at
+// a non-default ratio must not misread that as a jump/motion event.
+static void test_share_handoff_reset_seed_no_spurious_motion() {
+    test_group("fw v19 (review, O1): resetShareControlState() seeds the motion detector from "
+               "droopSlew_prev -- no spurious motion on the first post-reset tick");
+    reset_test_state();
+
+    droopSlew_prev = 0.73f;   // as if the MDACs still hold a prior run's non-default split
+    resetShareControlState();
+    check(fabsf(shareHandoffPrevRatio - 0.73f) < 1e-9f,
+          "reset seed: shareHandoffPrevRatio is seeded FROM droopSlew_prev (0.73), not a literal 0.5");
+    check(shareHandoffDwell == 0 && shareHandoffDarkFC && shareHandoffDarkBT,
+          "reset seed: (setup) a fresh DARK seed with a clean dwell counter");
+
+    // droopSlew_prev is deliberately untouched by resetShareControlState() (the MDACs keep
+    // whatever split is physically on them across a reset). The first updateShareSlewMode() tick
+    // must NOT read that non-0.5 value as motion.
+    I_fc = 0.05f; I_batt = 0.05f;   // stays dark, isolates the probe to the motion gate alone
+    updateShareSlewMode();
+    check(fabsf(droopSlew_prev - 0.73f) < 1e-9f,
+          "reset seed: (setup) droopSlew_prev is still 0.73 -- nothing moved it on this bare "
+          "updateShareSlewMode() call");
+    check(shareHandoffDwell == 0,
+          "reset seed: the first tick after reset does NOT register motion -- dwell stays 0 "
+          "despite droopSlew_prev sitting at a non-0.5 value");
+}
+
+// Item 4: a ratio move made during a LIVE stretch must not "leak" into the next DARK event as
+// phantom motion. The motion detector only ever compares ONE tick back, so once the ratio has
+// genuinely stopped moving (converged onto its open-loop target), the very next dark tick reads
+// zero motion regardless of how much the ratio moved earlier in the run.
+static void test_share_handoff_live_stretch_no_stale_motion() {
+    test_group("fw v19 (review, O1): a LIVE-stretch ratio move does not leak into the next DARK "
+               "event as stale motion");
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+
+    // Both channels comfortably live (>= SHARE_HANDOFF_LIVE_A) but total held under the 0.60A
+    // closed-loop entry threshold, so this stays open-loop feedforward -- deterministic, no
+    // controller internals -- while genuinely LIVE per the handoff EMAs.
+    I_fc = 0.30f; I_batt = 0.25f;             // I_tot=0.55A
+    primeShareHandoffLiveFor(I_fc, I_batt);
+    power_share_setpoint = 0.15f;             // far from the 0.5 seed -- real, sustained motion
+
+    uint32_t t = 0;
+    bool converged = false;
+    float prev = droopSlew_prev;
+    for (int i = 0; i < 60 && !converged; i++) {
+        t += 1000; g_mock_micros = t;
+        powerBalance();
+        if (fabsf(droopSlew_prev - prev) < 1e-9f && fabsf(droopSlew_prev - 0.15f) < 1e-6f) {
+            converged = true;
+        }
+        prev = droopSlew_prev;
+    }
+    check(converged, "live stretch: (setup) the LIVE-stretch walk actually converged onto 0.15 "
+                      "within budget");
+    check(!shareHandoffDarkFC && !shareHandoffDarkBT,
+          "live stretch: (setup) both channels are still LIVE at the moment of convergence");
+
+    // Immediately (minimal gap) drop BT dark. FC's target (0.30A) stays comfortably live.
+    I_batt = 0.05f;
+    bool wentDark  = false;
+    int  darkTicks = 0;
+    for (int i = 0; i < 40 && !wentDark; i++) {
+        t += 1000; g_mock_micros = t;
+        float before = droopSlew_prev;
+        powerBalance();
+        float after = droopSlew_prev;
+        if (shareHandoffDarkBT) {
+            wentDark = true;
+            check(fabsf(after - before) < 1e-6f,
+                  "live stretch: (setup) the ratio is genuinely static once BT falls dark -- "
+                  "power_share_setpoint (0.15) already equals the converged droopSlew_prev");
+            check(shareHandoffDwell == 0,
+                  "live stretch: the FIRST tick that reads dark does NOT burn a dwell tick -- the "
+                  "earlier LIVE-stretch motion is not misread as fresh motion");
+        }
+        darkTicks++;
+    }
+    check(wentDark, "live stretch: (setup) BT actually fell dark within budget");
+
+    // Stays that way through a further stretch of genuinely static dark ticks.
+    for (int i = 0; i < 50; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(shareHandoffDwell == 0,
+          "live stretch: dwell stays 0 through a static hold following the dark transition");
+}
+
+// TP0201 regression: closed-loop mode armed with BT permanently dark (I_batt=0.08A, well under
+// SHARE_HANDOFF_MIN_A so it never approaches the dwell cap within this test's short window) and
+// FC conducting (~0.6A), commanding a setpoint step that would otherwise want a large ratio move.
+// The per-tick applied step must be bounded by the HANDOFF ceiling, not the full one --
+// TP0201's ~5.7ms unsourced bus happened at the full rate walking through exactly this kind of
+// dark-channel handoff. Real-ticked (not seeded): BT never leaves the dark asymptote at 0.08A, so
+// the DARK-seed warm-up transient covered above does not change this test's outcome -- every tick
+// (including the warm-up ones) reads HANDOFF, since "either channel dark" already covers it.
+static void test_share_handoff_slew_tp0201_regression() {
+    test_group("fw v19 (review): TP0201 regression -- closed-loop handoff slew with BT dark");
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+
+    I_fc = 0.60f; I_batt = 0.08f;            // totalA = 0.68A; BT permanently dark (< 0.15A)
+    share_govTotAFilt = 0.68f;               // preset so tick 1 enters closed-loop directly
+                                              // (share_govTotAFilt is the UNRELATED governor entry
+                                              // filter, unchanged by this round -- still valid to
+                                              // preset directly)
+    power_share_setpoint = 0.80f;            // in-band (<= DROOP_R_MAX=0.85); demands a large
+                                              // move -- governor will clip the band, but the
+                                              // reference itself is still asked well off the 0.5
+                                              // seed toward the high side
+
+    uint32_t t = 0;
+    float prev = droopSlew_prev;             // 0.5, the fresh-reset default
+    float maxStep = 0.0f;
+    for (int i = 0; i < 20; i++) {
+        t += 1000; g_mock_micros = t;
+        powerBalance();
+        float step = fabsf(droopSlew_prev - prev);
+        if (step > maxStep) maxStep = step;
+        prev = droopSlew_prev;
+    }
+    check(shareClosedLoopMode, "TP0201 regression: (setup) closed-loop mode entered on tick 1");
+    check(shareHandoffDarkBT,
+          "TP0201 regression: (setup) BT never leaves the dark asymptote at 0.08A over the run");
+    check(maxStep <= DROOP_RATIO_SLEW_HANDOFF_PER_TICK + 1e-5f,
+          "TP0201 regression: no single tick's applied ratio moves by more than the HANDOFF "
+          "ceiling (0.002) while BT is dark -- NOT the full 0.02 rate");
+    // Non-vacuous: prove the mechanism actually fired (the ratio moved), not merely "moved
+    // slowly because it happened to not move at all". (Direction is not asserted: the measured
+    // share here is |I_fc|/totalA = 0.882, already above the governor-clipped target of ~0.559,
+    // so the controller's real error drives the ratio DOWN, not up toward the raw setpoint --
+    // the point of this test is the STEP SIZE, not the sign.)
+    check(fabsf(droopSlew_prev - 0.5f) > 1e-4f,
+          "TP0201 regression: the ratio DID move off the 0.5 seed -- this is a slow walk, not a "
+          "frozen loop");
+}
+
+// Full-rate preserved when both channels conduct: converged holds are bit-identical to fw v18.
+// Real-ticked from the DARK seed -- both channels are well above SHARE_HANDOFF_LIVE_A, so they
+// warm up to FULL within a handful of ticks (per test_share_handoff_dark_seed_warmup, faster here
+// since the fixture currents are larger), and the run is long enough that the brief HANDOFF-rate
+// prefix does not change the outcome.
+static void test_share_handoff_slew_full_rate_preserved() {
+    test_group("fw v19 (review): full DROOP_RATIO_SLEW_PER_TICK rate preserved with both channels conducting");
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+
+    I_fc = 1.6f; I_batt = 2.4f;              // totalA = 4.0A, both well above SHARE_HANDOFF_LIVE_A
+    share_govTotAFilt = 4.0f;
+    power_share_setpoint = 0.60f;            // in-band, well clear of the governor's clip at 4.0A
+
+    uint32_t t = 0;
+    float prev = droopSlew_prev;
+    float maxStep = 0.0f;
+    for (int i = 0; i < 100; i++) {
+        t += 1000; g_mock_micros = t;
+        powerBalance();
+        float step = fabsf(droopSlew_prev - prev);
+        if (step > maxStep) maxStep = step;
+        prev = droopSlew_prev;
+    }
+    check(!shareHandoffDarkFC && !shareHandoffDarkBT,
+          "full rate: (setup) both channels have warmed up to LIVE well within the 100-tick run");
+    check(strcmp(shareSlewModeName(), "FULL") == 0, "full rate: mode name reads FULL once warmed up");
+    check(maxStep > DROOP_RATIO_SLEW_HANDOFF_PER_TICK,
+          "full rate: at least one tick's step exceeds the handoff ceiling -- the full rate, not "
+          "the slow one, is in effect");
+    check(maxStep <= DROOP_RATIO_SLEW_PER_TICK + 1e-5f,
+          "full rate: no tick exceeds the full 0.02 ceiling either");
+
+    // The REFERENCE (share_spEffPrev, what the closed-loop controller is fed) converges exactly
+    // to the governor-clipped target -- constrain() lands bit-exact once within one slew step,
+    // same convergence claim as fw v18 (the .ino comment at the effective-setpoint slew site).
+    // The ACTUATED ratio (droopSlew_prev) is the controller's own response to that reference and
+    // is not asserted to land on the same value here -- this synthetic harness holds I_fc/I_batt
+    // fixed regardless of droopRatio, so the controller has no physical feedback path closing it
+    // onto the setpoint (that steady-state behaviour is covered by the Youla/PI controller tests
+    // elsewhere); this test's job is only the slew RATE, not the loop's final operating point.
+    for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(fabsf(share_spEffPrev - 0.60f) < 1e-6f,
+          "full rate: the reference converges exactly to the target (0.60 is a governor no-op at "
+          "4.0A total) -- bit-identical convergence to fw v18");
+}
+
+// Single-evaluation (item B): within one closed-loop tick, share_spEffPrev's delta and
+// droopSlew_prev's delta must both be bounded by the SAME ceiling -- the one updateShareSlewMode()
+// stored in shareSlewStepThisTick for that tick, read by both sites rather than recomputed.
+static void test_share_handoff_slew_reference_actuation_agreement() {
+    test_group("fw v19 (review): reference slew and actuation slew agree on the same stored per-tick ceiling");
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+
+    I_fc = 0.60f; I_batt = 0.08f;            // BT permanently dark -> handoff ceiling every tick
+    share_govTotAFilt = 0.68f;               // enters closed-loop on tick 1
+    power_share_setpoint = 0.80f;            // in-band (<= DROOP_R_MAX=0.85)
+
+    // A few ticks in (past the DARK-seed warm-up on FC; BT stays dark throughout regardless), then
+    // probe a single tick.
+    uint32_t t = 0;
+    for (int i = 0; i < 10; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+
+    float refBefore = share_spEffPrev;
+    float actBefore = droopSlew_prev;
+    t += 1000; g_mock_micros = t;
+    powerBalance();
+    // shareSlewStepThisTick now holds exactly the ceiling THIS tick's slew sites read (it is
+    // computed once at the top of powerBalance() and not touched again until the next tick).
+    float ceilingUsed = shareSlewStepThisTick;
+    check(fabsf(ceilingUsed - DROOP_RATIO_SLEW_HANDOFF_PER_TICK) < 1e-9f,
+          "agreement: (setup) this tick's stored ceiling is the handoff rate -- BT is still dark");
+
+    float refDelta = fabsf(share_spEffPrev - refBefore);
+    float actDelta = fabsf(droopSlew_prev  - actBefore);
+    check(refDelta <= ceilingUsed + 1e-5f,
+          "agreement: the reference slew (share_spEffPrev) moved at most the stored ceiling this tick");
+    check(actDelta <= ceilingUsed + 1e-5f,
+          "agreement: the actuation slew (droopSlew_prev) moved at most the SAME stored ceiling this tick");
+}
+
+// Open-loop feedforward path also takes the conduction-aware ceiling: a setpoint change with one
+// channel permanently dark walks the applied ratio at 0.002/tick, not 0.02/tick. Real-ticked (not
+// seeded): BT's target (0.05A) never approaches SHARE_HANDOFF_MIN_A, so every tick -- including
+// FC's own DARK-seed warm-up -- reads HANDOFF, since "either channel dark" already covers it. The
+// filters DO advance while open-loop (item B): updateShareSlewMode() runs unconditionally inside
+// powerBalance() before the open/closed branch, so the mode can and does change mid-run even
+// though the share loop itself never enters closed-loop mode here.
+static void test_share_handoff_slew_openloop_dark_channel() {
+    test_group("fw v19 (review): open-loop feedforward path takes the handoff ceiling with one channel dark");
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+
+    I_fc = 0.50f; I_batt = 0.05f;            // totalA = 0.55A -- stays open-loop; BT dark (<0.15A)
+    power_share_setpoint = 0.20f;            // in-band, well off the 0.5 seed
+
+    uint32_t t = 0;
+    float prev = droopSlew_prev;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(!shareClosedLoopMode,
+          "openloop dark: (setup) stays open-loop -- totalA=0.55A never crosses 0.60A");
+    check(shareHandoffDarkFC || shareHandoffDarkBT,
+          "openloop dark: (setup) the filters DID advance on this open-loop tick -- at least one "
+          "channel still reads dark (BT, permanently)");
+    float firstStep = fabsf(droopSlew_prev - prev);
+    check(firstStep > 1e-4f, "openloop dark: the ratio actually moved on the first tick");
+    check(firstStep <= DROOP_RATIO_SLEW_HANDOFF_PER_TICK + 1e-5f,
+          "openloop dark: the first step is bounded by the handoff ceiling (0.002), not the full "
+          "rate (0.02)");
+    check(firstStep > DROOP_RATIO_SLEW_HANDOFF_PER_TICK - 1e-5f,
+          "openloop dark: the first step actually reaches the handoff ceiling (proves the slow "
+          "rate fired, not merely that it didn't exceed the fast one)");
+
+    // Run the rest of the walk to convergence and confirm no single step ever exceeds the handoff
+    // ceiling. fw v19 (review, O1): the dwell allowance is now MOTION-GATED and burns one tick per
+    // tick that actually moves the ratio -- this walk covers a distance of 0.30 (0.5 -> 0.20),
+    // needing at most ceil(0.30/DROOP_RATIO_SLEW_HANDOFF_PER_TICK)=150 moving ticks, comfortably
+    // under the 175-tick allowance, so the allowance is NEVER exhausted here and the ceiling never
+    // relaxes to FULL mid-walk (unlike the old elapsed-tick model, which would have capped this
+    // exact walk before it finished). test_share_handoff_dwell_burns_only_on_motion covers the
+    // CAPPED case itself with a walk deliberately far enough to exceed the allowance.
+    prev = droopSlew_prev;
+    float maxStep = 0.0f;
+    for (int i = 0; i < 300; i++) {
+        t += 1000; g_mock_micros = t;
+        powerBalance();
+        float step = fabsf(droopSlew_prev - prev);
+        if (step > maxStep) maxStep = step;
+        prev = droopSlew_prev;
+    }
+    check(maxStep <= DROOP_RATIO_SLEW_HANDOFF_PER_TICK + 1e-5f,
+          "openloop dark: no step over the whole walk exceeds the handoff ceiling -- the 0.30 "
+          "distance never exhausts the 175-tick moving allowance");
+    check(fabsf(droopSlew_prev - 0.20f) < 1e-6f,
+          "openloop dark: converges exactly to the raw setpoint");
+    check(strcmp(shareSlewModeName(), "HANDOFF") == 0,
+          "openloop dark: mode is still HANDOFF at the end, never CAPPED -- this walk's distance "
+          "stays within the 175-moving-tick allowance");
+}
+
+// shareSlewModeName() (item B): all three strings reachable, in the sequence a real run produces
+// them (HANDOFF from the DARK seed -> FULL once warmed up -> back to HANDOFF then CAPPED on a
+// long single dark event).
+static void test_share_slew_mode_name_all_three_reachable() {
+    test_group("fw v19 (review, O1): shareSlewModeName() -- HANDOFF, FULL, and CAPPED all reachable");
+    reset_test_state();
+
+    I_fc = 0.05f; I_batt = 0.05f;
+    updateShareSlewMode();
+    check(strcmp(shareSlewModeName(), "HANDOFF") == 0,
+          "mode name: fresh DARK seed reads HANDOFF on the very first tick");
+
+    int ticksToLive = tickShareHandoffUntilLive(1.0f, 1.0f, 50);
+    check(ticksToLive > 0, "mode name: (setup) reaches LIVE within budget");
+    check(strcmp(shareSlewModeName(), "FULL") == 0,
+          "mode name: both channels live reads FULL");
+
+    // Drop back to dark and exhaust the (freshly re-armed) dwell allowance. fw v19 (review, O1):
+    // the allowance is now MOTION-GATED, so reaching CAPPED requires an actual sustained ratio
+    // WALK, not merely elapsed dark ticks -- switch to real powerBalance() ticks (open-loop
+    // feedforward, both channels dark, a setpoint far enough that convergence alone needs more
+    // than 175 moving ticks) instead of bare updateShareSlewMode() calls, which never move
+    // droopSlew_prev at all and so could never burn the allowance under the new rule.
+    //
+    // Force a clean DARK restart of the handoff-slew filters here (rather than letting them decay
+    // from the LIVE excursion above): the LIVE phase left the EMAs sitting just above
+    // SHARE_HANDOFF_LIVE_A, and a fixture with one channel still comfortably live would spend a
+    // handful of ticks in FULL mode (0.02/tick, dwell held at 0) before both fall dark -- eating
+    // into the distance faster than the HANDOFF-rate math below assumes and making "175 moving
+    // ticks" an unreliable target. droopSlew_prev/shareHandoffPrevRatio are untouched (both still
+    // 0.5, in sync -- the LIVE phase above never actually moved the ratio), so only the
+    // conduction-filter state needs the reset.
+    shareHandoffDarkFC    = true;
+    shareHandoffDarkBT    = true;
+    shareHandoffIFcFilt   = 0.0f;
+    shareHandoffIBtFilt   = 0.0f;
+    shareHandoffDwell     = 0;
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.05f; I_batt = 0.05f;              // I_tot=0.10A -- open-loop; both permanently dark
+    power_share_setpoint = DROOP_R_MIN;        // 0.15 -- far from the current ratio, sustained walk
+    uint32_t t = 0;
+    bool reachedCapped = false;
+    for (int i = 0; i < 300 && !reachedCapped; i++) {
+        t += 1000; g_mock_micros = t;
+        powerBalance();
+        if (strcmp(shareSlewModeName(), "CAPPED") == 0) reachedCapped = true;
+    }
+    check(reachedCapped,
+          "mode name: allowance exhausted by a sustained moving walk reads CAPPED within budget");
 }
 
 static void test_share_state_reset_on_profile_start() {
@@ -9109,8 +9778,9 @@ static void test_plot_stream_format_and_rate() {
     // non-first fields so it can't match inside a longer label.
     check(Serial.tx_contains("share_sp:") && Serial.tx_contains(",share_act:") && Serial.tx_contains(",gFC:")
        && Serial.tx_contains(",gBT:") && Serial.tx_contains(",ifc:") && Serial.tx_contains(",ibt:")
-       && Serial.tx_contains(",v_sp:") && Serial.tx_contains(",v_act:"),
-          "plot: line carries all eight labelled fields");
+       && Serial.tx_contains(",v_sp:") && Serial.tx_contains(",v_act:") && Serial.tx_contains(",enc_pos:")
+       && Serial.tx_contains(",edgeA:") && Serial.tx_contains(",edgeB:"),
+          "plot: line carries all eleven labelled fields (fw v19 adds enc_pos/edgeA/edgeB)");
 
     // Review C2: tx_contains is substring-only, so the check above proves presence, not order --
     // it would pass just as well if the wire swapped two fields. Assert the actual order by
@@ -9119,7 +9789,8 @@ static void test_plot_stream_format_and_rate() {
     // sequence the changelog documents.
     {
         static const char* kPlotFieldOrder[] = {
-            "share_sp:", ",share_act:", ",gFC:", ",gBT:", ",ifc:", ",ibt:", ",v_sp:", ",v_act:"
+            "share_sp:", ",share_act:", ",gFC:", ",gBT:", ",ifc:", ",ibt:", ",v_sp:", ",v_act:",
+            ",enc_pos:", ",edgeA:", ",edgeB:"
         };
         size_t searchFrom = 0;
         bool   inOrder    = true;
@@ -9129,9 +9800,14 @@ static void test_plot_stream_format_and_rate() {
             searchFrom = pos + 1;   // next label's offset must be strictly greater than this one
         }
         check(inOrder,
-              "plot: the eight labelled fields appear in the documented order "
-              "(share_sp, share_act, gFC, gBT, ifc, ibt, v_sp, v_act)");
+              "plot: the eleven labelled fields appear in the documented order "
+              "(share_sp, share_act, gFC, gBT, ifc, ibt, v_sp, v_act, enc_pos, edgeA, edgeB)");
     }
+
+    // fw v19: edgeB must terminate the line (println, not print) — the next 'L' line should start
+    // immediately after a newline, not concatenate onto the same line.
+    check(Serial.tx.size() > 0 && Serial.tx.back() == '\n',
+          "plot: edgeB terminates the line with println() (the line ends in a newline)");
 
     // Rate gate: no second line until PLOT_PERIOD_MS has elapsed. "share_sp:" appears exactly once
     // per line (unlike "sp:", which would also match "v_sp:"), so it's a valid line-count proxy.
@@ -9168,6 +9844,19 @@ static void test_plot_stream_format_and_rate() {
     check(Serial.tx_contains(",v_sp:2.500"), "plot: v_sp reports v_setpoint at 3 decimals");
     check(Serial.tx_contains(",v_act:-1.125"), "plot: v_act reports v_actual at 3 decimals");
 
+    // fw v19: enc_pos/edgeA/edgeB carry the live ISR-written diagnostic volatiles verbatim.
+    // encoderPos is negative here specifically to prove the int32_t sign survives the print
+    // (a naive unsigned cast would instead print a huge positive number).
+    Serial.tx_clear();
+    encoderPos     = -4242;
+    encEdgeCountA  = 1001;
+    encEdgeCountB  = 998;
+    g_mock_millis += PLOT_PERIOD_MS;
+    doState98();
+    check(Serial.tx_contains(",enc_pos:-4242"), "plot: enc_pos reports encoderPos verbatim, sign preserved");
+    check(Serial.tx_contains(",edgeA:1001"), "plot: edgeA reports encEdgeCountA verbatim");
+    check(Serial.tx_contains(",edgeB:998"), "plot: edgeB reports encEdgeCountB verbatim");
+
     // 'L' again turns it off and the stream stops.
     Serial.tx_clear();
     Serial.rx_queue.push('L');
@@ -9176,6 +9865,37 @@ static void test_plot_stream_format_and_rate() {
     g_mock_millis += PLOT_PERIOD_MS * 4;
     doState98();
     check(Serial.tx_count("share_sp:") == 0, "plot: no lines emitted once the stream is off");
+}
+
+// fw v19 (review round): the backpressure guard threshold was raised again, 165 -> 192 B --
+// the 165 B "exact fit" first shipped this round was rejected because a single 8-character float
+// (e.g. "-123.456" on ifc/ibt/v_sp/v_act) would overrun it and block Teensy USB-CDC write().
+// Below 192 the whole line must be dropped (not just truncated -- plotTick() bails BEFORE
+// stamping plotLastMs or printing anything); at/above 192 it is emitted on schedule.
+static void test_plot_stream_backpressure_guard() {
+    test_group("Plot stream ('L'): fw v19 192 B backpressure guard");
+    reset_test_state();
+
+    mainState = 98;
+    g_mock_millis = 1000;
+    Serial.rx_queue.push('L');
+    doState98();
+    check(plotModeActive == true, "backpressure: (setup) 'L' toggles the plot stream ON");
+    Serial.tx_clear();
+
+    // Below the guard: the line is dropped, and plotLastMs is NOT advanced -- the next tick at
+    // the same nominal cadence still tries (and can succeed once room frees up).
+    Serial.availableForWriteOverride = 191;
+    g_mock_millis += PLOT_PERIOD_MS;
+    doState98();
+    check(Serial.tx.empty(), "backpressure: a line is dropped entirely below 192 B free");
+
+    // Free up the buffer and let the same cadence-due tick through.
+    Serial.availableForWriteOverride = 192;
+    g_mock_millis += PLOT_PERIOD_MS;
+    doState98();
+    check(Serial.tx_count("share_sp:") == 1, "backpressure: exactly one line emitted at >= 192 B free");
+    check(Serial.tx_contains(",edgeB:"), "backpressure: the emitted line still carries the fw v19 fields");
 }
 
 static void test_plot_suppresses_status_lines() {
@@ -14984,6 +15704,7 @@ int main() {
     test_pending_input_cancel();
     test_mdac_init_standalone_mode();
     test_plot_stream_format_and_rate();
+    test_plot_stream_backpressure_guard();
     test_plot_suppresses_status_lines();
     test_plot_armed_share_profile();
     test_plot_arm_cancellation_paths();
@@ -15022,6 +15743,18 @@ int main() {
     test_governor_setpoint_latch_precedence_at_low_current();
     test_governor_min_load_gate_precedes_governor();
     test_droop_ratio_slew_limit();
+    test_share_handoff_mode_constants();
+    test_share_handoff_dark_seed_warmup();
+    test_share_handoff_hysteresis_band();
+    test_share_handoff_tp0201_static_hold_regression();
+    test_share_handoff_dwell_burns_only_on_motion();
+    test_share_handoff_reset_seed_no_spurious_motion();
+    test_share_handoff_live_stretch_no_stale_motion();
+    test_share_handoff_slew_tp0201_regression();
+    test_share_handoff_slew_full_rate_preserved();
+    test_share_handoff_slew_reference_actuation_agreement();
+    test_share_handoff_slew_openloop_dark_channel();
+    test_share_slew_mode_name_all_three_reachable();
     test_share_state_reset_on_profile_start();
     test_share_ratio_cutoff();
     test_setpowersharesetpointlive_resets_loop_mode();
