@@ -114,7 +114,32 @@ def _lag(x, t, tau_s):
     return y
 
 
-def build_signals(seed, wrap=False):
+# Encoder slot pitch [m], per firmware version. The flywheel encoder DISC was
+# physically replaced 2026-08-25 (120 slots -> 90; operator hand count, 180
+# encoderPos counts/rev confirmed on the bench) and the firmware followed in
+# fw v18. The flywheel radius did not change, so only the slot count moved:
+#   fw <= 17 : 2*pi*0.0762/120 = 3.990e-3 m
+#   fw >= 18 : 2*pi*0.0762/90  = 5.3198e-3 m
+# These mirror figures.ENCODER_PITCH_M_PRE_V18 / _V18, kept as local literals
+# so this generator has no import dependency on the analysis package. The
+# synthetic encoder_pos below is built with the pitch matching the header's own
+# fw_version, so the emitted log stays self-consistent under whatever
+# --fw-version it is asked for and the scale-audit figure self-validates.
+ENC_PITCH_M_PRE_V18 = 3.990e-3
+ENC_PITCH_M_V18 = 5.3198e-3
+ENC_WHEEL_CHANGE_FW = 18
+
+
+def _pitch_for_fw(fw_version):
+    """Slot pitch [m] for the fw_version this synthetic log claims."""
+    try:
+        fw = int(fw_version)
+    except (TypeError, ValueError):
+        return ENC_PITCH_M_PRE_V18
+    return ENC_PITCH_M_V18 if fw >= ENC_WHEEL_CHANGE_FW else ENC_PITCH_M_PRE_V18
+
+
+def build_signals(seed, wrap=False, fw_version=1):
     rng = np.random.default_rng(seed)
     t = np.arange(N_SAMPLES) / RATE_HZ  # seconds since start
 
@@ -183,10 +208,10 @@ def build_signals(seed, wrap=False):
     # SELF-CONSISTENTLY with v_act via the firmware's own relationship
     # (count = 2*distance/pitch, the x2 quadrature decode), so the
     # encoder_diagnostics scale-audit figure has a truth trace that
-    # actually agrees with v_act by construction. pitch matches
-    # figures.ENCODER_PITCH_M (kept as a local literal so this generator
-    # has no import dependency on the analysis package).
-    pitch_m = 3.990e-3
+    # actually agrees with v_act by construction. The pitch is selected from
+    # the fw_version this log will claim -- see _pitch_for_fw above, and the
+    # 2026-08-25 wheel-change note with it.
+    pitch_m = _pitch_for_fw(fw_version)
     dt = np.diff(t, prepend=t[0] - (1.0 / RATE_HZ))
     encoder_pos = np.cumsum(v_act * dt * 2.0 / pitch_m).astype(np.int64)
     # Clamp to int32 range defensively (not expected to be hit at this
@@ -372,7 +397,7 @@ def build_blg(seed, truncate, wrap=False, dropped=0, fw_version=1,
     (Youla drive/share controllers active, matching the real firmware's
     default build), applied on top of the base signal's flags byte (0x03,
     minus the deliberate velocity-invalid window)."""
-    sig = build_signals(seed, wrap=wrap)
+    sig = build_signals(seed, wrap=wrap, fw_version=fw_version)
     n = N_SAMPLES
     if truncate:
         n = int(N_SAMPLES * 0.70)

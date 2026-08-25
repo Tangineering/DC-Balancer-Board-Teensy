@@ -182,7 +182,7 @@ TD_V_NOM  = 2.0e-3      # s      DECIDED 2026-08-15 (analytic bound 0.9-2 ms: UA
 #   * the period is measured same-edge-type over one full slot pitch;
 #   * N periods are averaged (N = N_EST = 2, configurable in firmware);
 #   * the estimate is LATCHED once per pitch (zero-order hold between pitches);
-#   * below ~0.03 m/s the estimator times out and reports 0.
+#   * below ~0.053 m/s the estimator times out and reports 0 (90-slot disc, 2026-08-25).
 # Its dynamics are therefore an averaging window of N pitches plus a one-pitch hold:
 #   averaging over the last N*pitch of travel  -> mean-value delay  N*pitch/(2v)
 #   latched once per pitch (ZOH)               -> mean hold delay     pitch/(2v)
@@ -190,17 +190,24 @@ TD_V_NOM  = 2.0e-3      # s      DECIDED 2026-08-15 (analytic bound 0.9-2 ms: UA
 # It is VELOCITY-DEPENDENT, and that dependence is the whole point: the delay explodes at
 # low speed.  Modelled as a pure transport delay (Padé(2)), not as the exact boxcar: the
 # difference is in the >1/Td_est stopband shape, which is far above any achieved crossover.
-ENC_SLOTS = 120         # -      slots on the encoder disc (COUNTED 2026-08-16; the x2
-                        #        quadrature decode gives 240 counts/rev, hardware-confirmed)
-PITCH_M = 2.0*np.pi*R_FLY/ENC_SLOTS    # m, 3.9898 mm of flywheel SURFACE travel per slot
+ENC_SLOTS = 90          # -      slots on the encoder disc.  WHEEL REPLACED 2026-08-25: the
+                        #        flywheel encoder disc was physically swapped, 120 slots -> 90.
+                        #        Source: operator hand count 2026-08-25, cross-checked against
+                        #        the decoder (one hand-turned revolution reads encoderPos == 180,
+                        #        i.e. 180 counts/rev at the x2 quadrature decode).  R_FLY is
+                        #        unchanged -- same flywheel, new disc.  The pitch below therefore
+                        #        widens 3.9898 -> 5.3198 mm and Td_est grows by 4/3 at every speed.
+PITCH_M = 2.0*np.pi*R_FLY/ENC_SLOTS    # m, 5.3198 mm of flywheel SURFACE travel per slot
                         #      (R_FLY, not R_TIRE: the encoder disc IS the flywheel)
 N_EST   = 2             # -      periods averaged (firmware default; configurable)
-V_EST_MIN = 0.03        # m/s    estimator timeout floor -- below this it reports 0.
+V_EST_MIN = 0.053       # m/s    estimator timeout floor -- below this it reports 0.
+                        #        = PITCH_M / ENC_VEL_TIMEOUT_US (100 ms), and it rose with the
+                        #        pitch at the 2026-08-25 wheel change (was 0.03 at 120 slots).
                         #        The design is NOT validated below V0_VALID_MIN (see
                         #        TD_EST_V0_SET); this constant only records the hard floor.
 TD_EST_V0_SET = (0.5, 2.0, 5.0)   # m/s, the estimator-delay corner axis (§4.2)
 V0_VALID_MIN  = 0.5     # m/s    VALIDITY FLOOR of the drive design.  Td_est at 0.5 m/s is
-                        #        11.97 ms; at 0.3 m/s it is 19.9 ms and at 0.1 m/s 59.8 ms
+                        #        15.96 ms; at 0.3 m/s it is 26.6 ms and at 0.1 m/s 79.8 ms
                         #        -- i.e. below the floor the delay corner is OPEN and the
                         #        loop is not gate-checked.  Operating there needs either a
                         #        larger corner (bought with bandwidth) or a gain schedule.
@@ -213,7 +220,8 @@ def td_est(v0, N=N_EST, pitch=PITCH_M):
 
     = N*pitch/(2v) (mean-value delay of the N-pitch averaging window)
     + pitch/(2v)   (mean staleness of the once-per-pitch latch).
-    At N = 2, pitch = 3.9898 mm: 11.97 ms at 0.5 m/s, 2.99 ms at 2 m/s, 1.20 ms at 5 m/s.
+    At N = 2, pitch = 5.3198 mm: 15.96 ms at 0.5 m/s, 3.99 ms at 2 m/s, 1.60 ms at 5 m/s.
+    (The 120-slot disc retired 2026-08-25 gave 11.97 / 2.99 / 1.20 ms at the same speeds.)
     """
     v = max(float(v0), V_EST_MIN)
     return (N + 1.0)*pitch/(2.0*v)

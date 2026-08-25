@@ -843,6 +843,73 @@
  *          encDropPitchFloor split the fw v16 encSpuriousDropCount sum by cause. The sum keeps its
  *          exact semantics and stays the only one logged, so v6 decoders are untouched; the three
  *          new counters appear in the State-98 'S' dump only.
+ *
+ *  - fw v18 (2026-08-25) — ENCODER WHEEL REPLACED: 120 slots -> 90 slots. The flywheel encoder disc
+ *      was physically swapped on the bench. Source: operator hand count, 2026-08-25, cross-checked
+ *      against the decoder — one hand-turned flywheel revolution reads encoderPos == 180, which
+ *      confirms both the slot count and (again) the x2 quadrature decode. FLYWHEEL_RADIUS_M is
+ *      UNCHANGED at 0.0762 m (same flywheel, new disc), so v_actual is still flywheel SURFACE speed
+ *      and the surface-speed convention is untouched. This round is a SCALE change plus the
+ *      constants that derive from the slot pitch — no control law, sequencing, fault, telemetry
+ *      (UDP v4/58 B), BLG format (v6/92 B) or command change, and no controller coefficient change
+ *      beyond the re-synthesis the new estimator delay forces.
+ *        * ENCODER_SLOTS_PER_REV 120.0f -> 90.0f, so the derived ENCODER_COUNTS_PER_REV 240 -> 180
+ *          and ENC_SLOT_PITCH_M = 2*pi*0.0762/90 = 5.3198 mm (was 3.990 mm). v_actual and the BLG
+ *          v_act column read 4/3 x their fw v17 value for identical motion: a v18 trace is NOT
+ *          comparable with a v12-v17 trace. The header fwVersion disambiguates, and the benchlog
+ *          tooling selects the pitch by fw version. VELOCITY_CHAIN_CALIBRATED stays 1 — a direct
+ *          slot count cross-checked against the decoder is the strongest source the chain has had.
+ *        * ENC_ADAPT_MAX_REF_US 13000u -> 15000u, RE-DERIVED, not retuned. The low-side gate's
+ *          arming speed is v_arm = sqrt(3*a_max*pitch) with a_max = 6.96 m/s^2 (the S1 decel
+ *          condition, the stricter of the two): sqrt(3*6.96*5.3198e-3) = 0.3333 m/s, armed ~6 %
+ *          inside that at 0.3533 m/s, ref = pitch/0.3533 = 15058 us, rounded to 15000 us (arms at
+ *          0.3546 m/s = 1.064 x v_arm). The firmware-unmitigated low-speed band therefore widens
+ *          from 0.04-0.31 m/s to 0.05-0.36 m/s; it still belongs to the 74HC14 Schmitt hardware fix.
+ *        * ENC_VEL_CORROB_MIN_MPS 0.30f -> 0.35f, tracking the arming point it is deliberately
+ *          pinned to (the fw v17 rationale is unchanged, only the speed it names moved).
+ *        * V_SP_ZERO_THRESH 0.05f -> 0.07f. The wider pitch raises the estimator's reportable
+ *          zero-speed floor (pitch / ENC_VEL_TIMEOUT_US) from 0.0399 to 0.0532 m/s, which the
+ *          existing static_assert no longer admitted against 0.05. 0.07 restores a ~24 % margin
+ *          ((threshold - floor)/threshold = (0.07 - 0.0532)/0.07 = 24.0 %),
+ *          the same class as the pairing it supersedes, and stays far below the 0.5 m/s slowest
+ *          gate-checked speed of the drive synthesis. Zero-cutoff LOGIC is unchanged.
+ *        * ENC_PERIOD_MIN_US stays 200 us; the speed it bounds rises 19.95 -> 26.6 m/s with the
+ *          pitch, which only widens the margin over MANUAL_MOTOR_V_MAX.
+ *        * Drive-controller coefficients REGENERATED (controller_design_MIMO/plant_mimo.py
+ *          ENC_SLOTS 120 -> 90, then synthesize_drive_siso.py at the SAME weight rung WC=60,
+ *          Wu(0.25, 300, 12.5) — no weight retune). The estimator transport delay is
+ *          (N+1)*pitch/(2v) and scales with the pitch, so it grew by 4/3 at every design corner;
+ *          the 0.5 m/s validity-floor corner is the binding one. A v18 'V' trace is a DIFFERENT
+ *          CONTROL LAW from a v17 one.
+ *        * ANTI-WINDUP REALIZATION CHANGED — a SAFETY fix, folded into this round because it
+ *          was found by the v18 test round and must not ship separately. drive_controller.h's
+ *          state update becomes the GENERAL Hanus conditioned form
+ *              x_next = AD*x + BD*e + L*(u - u_unsat)
+ *          with a new pole-placed coefficient DRIVE_CTRL_L, replacing the fw v10-v17 SELF-
+ *          conditioned special case L = BD/DD (x_next = AC*x + BD*u/DD).
+ *          WHY: eig(AC) are the controller's transmission ZEROS, and one sits at EXACTLY
+ *          z = -1 — structurally, because the controller is a PARALLEL sum of two TUSTIN
+ *          branches and both numerators carry (z+1) (Tustin of the integrator is
+ *          (kI*Ts/2)(z+1)/(z-1)). Zero damping at Nyquist in the saturated mode let a relay
+ *          limit cycle live against the ±12 A clamp. MEASURED on constant-error rail dwells
+ *          (e in [0.25,12.0] step 0.25, 2000 ticks, shipped float32 coeffs + double state):
+ *          fw v17 fails 14 of 48 cases (e = 8.25..11.75), fw v18-pre-fix 15 of 48, every
+ *          failure a full 24 A p-p period-4 (++--) square wave at 125 Hz. THE DEFECT SHIPPED
+ *          FROM fw v10 AND IS NOT A v18 REGRESSION — no weight rung can move a Tustin zero.
+ *          Hardware reachability: any sustained large error at the rail with no vehicle
+ *          response, e.g. the ML0151 ~428 ms VESC post-reversal dead window.
+ *          UNSATURATED BEHAVIOUR IS UNCHANGED: the conditioning term is identically zero off
+ *          the clamp, so AD/BD/CD/DD and every linear synthesis gate are untouched.
+ *          L is pole-placed by MINIMAL PERTURBATION of eig(AC): only the z = -1 mode is moved
+ *          (to +0.5); the slow positive-real modes (0.99969, 0.98399) are left alone, because
+ *          pulling them in destroys the integrator's conditioning memory (measured: -0.227 m/s
+ *          standing error + a 17.9 mm/s hunting cycle). Two NEW synthesis gates (§8e) pin this:
+ *          an oscillatory-eigenvalue margin (< 1 - 1e-3; the slow real modes are exempt and
+ *          benign) and — load-bearing — the 48-case dwell sweep. A third replay episode
+ *          'dwell' (600 ticks at e = 5.0 m/s) ships in drive_replay_vectors.h as the firmware-
+ *          side regression. Side effect, re-measured: a float32 state recursion now diverges
+ *          ~1.1e-5 A on the regen episode (was ~1.4e-2), because the trajectory no longer
+ *          rides the clamp boundary — the state stays DOUBLE regardless.
  */
 
 #include <stddef.h>             // offsetof — pins the append-only BenchLogRecord field offsets
@@ -1355,7 +1422,18 @@ const int32_t sampleTime = 50;      // us
 // docs/firmware-versions.md). fw v8 adds encoderPos + per-channel edge counters to both dumps so
 // the hand-turn cross-check can finally be run against the decoder's own output.
 // See docs/VESC_MOTOR_INTEGRATION.md §10.
-#define ENCODER_SLOTS_PER_REV 120.0f    // → ENCODER_COUNTS_PER_REV = 240 (slots counted on the disc)
+//
+// WHEEL REPLACED (fw v18, 2026-08-25) — the paragraphs above describe the PREVIOUS disc and are
+// kept because the provenance argument (count the disc, then cross-check the decoder) is what
+// justifies the value below as well. The flywheel encoder wheel was physically swapped for one
+// carrying 90 slots. Source: operator hand count, 2026-08-25, cross-checked against the decoder on
+// the bench — one hand-turned flywheel revolution reads encoderPos == 180, confirming both the slot
+// count and (again) the x2 decode. Net effect vs fw v17: ENCODER_SLOTS_PER_REV 120 -> 90, so
+// ENCODER_COUNTS_PER_REV 240 -> 180 and ENC_SLOT_PITCH_M 3.990 mm -> 5.3198 mm. v_actual therefore
+// reads 4/3 x its fw v17 value for identical motion — a v18 v_act trace is NOT comparable with a
+// v12-v17 one, and neither is comparable with a pre-v8 one. FLYWHEEL_RADIUS_M is unchanged (the
+// same flywheel, a new disc on it), so the surface-speed convention below is untouched.
+#define ENCODER_SLOTS_PER_REV 90.0f     // → ENCODER_COUNTS_PER_REV = 180 (slots counted on the disc)
 constexpr float ENCODER_COUNTS_PER_REV = ENCODER_SLOTS_PER_REV * ENCODER_QUAD_DECODE;
 
 // Effective rolling radius, in METRES — the radius that converts the ENCODED body's angular rate
@@ -1389,7 +1467,8 @@ constexpr float RPM_TO_MPS    = (TWO_PI_F / 60.0f) * FLYWHEEL_RADIUS_M;
 
 // ── Edge-period velocity estimator (fw v12) ──────────────────────────────────
 // Surface travel between two consecutive slots, i.e. the distance the flywheel rim covers in one
-// quadrature cycle: 2π·r / slots = 2π·0.0762 / 120 = 3.990 mm. This is the ONE length the
+// quadrature cycle: 2π·r / slots = 2π·0.0762 / 90 = 5.3198 mm (fw v18 90-slot disc; was 3.990 mm
+// on the 120-slot disc through fw v17). This is the ONE length the
 // edge-period estimator measures over; it is derived from the same two measured constants as
 // RPM_TO_MPS, so the two estimators would agree in steady state.
 constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOTS_PER_REV;
@@ -1401,7 +1480,7 @@ constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOT
 #define ENC_PERIOD_AVG_N 2
 #endif
 
-// Glitch floor. 200 µs of pitch is 3.990 mm / 200 µs = 19.95 m/s, ~4x the fastest commanded
+// Glitch floor. 200 µs of pitch is 5.3198 mm / 200 µs = 26.6 m/s, ~5x the fastest commanded
 // speed (MANUAL_MOTOR_V_MAX = 5 m/s). Any shorter interval between two A-rising edges is optical
 // noise or contact bounce on the OPB829DZ's un-Schmitted output, not motion. Rejected samples are
 // dropped WITHOUT advancing the period base, so the next genuine edge still measures a full pitch
@@ -1420,7 +1499,7 @@ constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOT
 // hardware bodge is the real fix and is planned separately; this block is the firmware backstop and
 // stays correct (merely inactive) once the Schmitt lands.
 //
-// WHY THE FIXED FLOOR IS USELESS HERE. ENC_PERIOD_MIN_US = 200 µs corresponds to ~20 m/s. The real
+// WHY THE FIXED FLOOR IS USELESS HERE. ENC_PERIOD_MIN_US = 200 µs corresponds to ~26.6 m/s. The real
 // periods on the bench are 0.8–11 ms, so a spurious edge that halves an 8 ms pitch produces a 4 ms
 // interval — 20x above the floor, accepted, and read as double speed. The plausibility test must be
 // RELATIVE to the speed the wheel is actually running at.
@@ -1439,8 +1518,9 @@ constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOT
 //   S2 (the gate rejects TRUTH on a hard launch). The correct bound on the per-pitch period ratio is
 //     T(n+1)/T(n) ≈ 1 / sqrt(1 + 2·a·pitch/v²)  (constant-a over one pitch),
 //     which falls BELOW the 0.625 gate whenever v² < 1.667·a·pitch. At a = 6.96 m/s² (the measured
-//     gain band's upper end at the 12 A rail) that is v < 0.22 m/s — and at 0.1 m/s the genuine
-//     ratio is 0.265, twice past the gate. A rejected TRUE edge merges two pitches into one interval
+//     gain band's upper end at the 12 A rail) and the fw v18 pitch of 5.3198 mm that is v < 0.248 m/s
+//     — and at 0.1 m/s the genuine
+//     ratio is 0.345, well past the gate. A rejected TRUE edge merges two pitches into one interval
 //     that the k logic then has no reason to split, so v reads m x LOW and drags ref UP with it.
 //   S1 (self-reinforcing poisoned reference). Symmetrically, T(n+1)/T(n) exceeds the 1.5 k = 2
 //     midpoint on genuine rail DECEL once v² < 3·a·pitch. Once ref lands inside the k = 2 basin
@@ -1452,17 +1532,18 @@ constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOT
 //     the two conditions, so it also satisfies S2, and lowering it would be a separate tuning
 //     decision with no evidence behind it.
 // The arming speed is therefore set by the decel condition, which is the stricter of the two:
-//     v_arm² = 3·a_max·pitch = 3 × 6.96 × 3.990e-3 → v_arm = 0.289 m/s → ref = pitch/v_arm = 13.8 ms.
-// ENC_ADAPT_MAX_REF_US = 13000 µs arms at 0.307 m/s, i.e. ~6 % INSIDE that bound, so the filter is
-// dark before either pathology becomes reachable.
-//   CONSEQUENCE, STATED PLAINLY: the 0.04–0.30 m/s regime is UNMITIGATED BY FIRMWARE. That is
+//     v_arm² = 3·a_max·pitch = 3 × 6.96 × 5.3198e-3 → v_arm = 0.333 m/s → ref = pitch/v_arm = 16.0 ms.
+// ENC_ADAPT_MAX_REF_US = 15000 µs arms at 0.355 m/s, i.e. ~6 % INSIDE that bound, so the filter is
+// dark before either pathology becomes reachable. (fw v18: the 90-slot disc widened the pitch, and
+// v_arm scales as sqrt(pitch), so both numbers moved — 0.289 m/s / 13000 µs were the 120-slot pair.)
+//   CONSEQUENCE, STATED PLAINLY: the 0.05–0.36 m/s regime is UNMITIGATED BY FIRMWARE. That is
 //   exactly where ML0145's contamination was worst, and it is not an oversight — in that band a
 //   spurious edge and a hard-launch truth produce the SAME period ratio, so no period-ratio filter
 //   can separate them. It belongs to the planned Schmitt-buffer hardware fix, which removes the
 //   spurious edges at the source instead of trying to infer them.
 //
 // LOW SIDE (spurious edges). While armed, a period below ENC_PERIOD_LO_FRAC · ref cannot be genuine:
-// per the ratio formula above, at v ≥ 0.307 m/s and a ≤ 6.96 m/s² the genuine per-pitch ratio stays
+// per the ratio formula above, at v ≥ 0.355 m/s and a ≤ 6.96 m/s² the genuine per-pitch ratio stays
 // above 0.65, outside the gate by construction — and it approaches 1 quickly with speed (a few
 // percent per pitch at 1 m/s and above). The threshold is 0.625 (= 1/2 + 1/8, shift-only) rather
 // than a literal 0.6 so the ISR needs no multiply; the extra 2.5 % of margin is spent on the arming
@@ -1541,9 +1622,11 @@ constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOT
 // rejection streak is a measurement and capping it would store a per-pitch period knowingly too
 // long for the distance actually travelled.
 // Speed arming (S1/S2 above). The whole adaptive mechanism is dark while ref is at or above this,
-// i.e. below ~0.307 m/s. 13000 µs = pitch/0.307 m/s, ~6 % inside the v_arm = sqrt(3·a_max·pitch)
-// = 0.289 m/s bound at a_max = 6.96 m/s².
-#define ENC_ADAPT_MAX_REF_US    13000u
+// i.e. below ~0.355 m/s. 15000 µs = pitch/0.355 m/s, ~6 % inside the v_arm = sqrt(3·a_max·pitch)
+// = 0.333 m/s bound at a_max = 6.96 m/s² and the fw v18 pitch of 5.3198 mm. (Exact re-derivation:
+// sqrt(3 × 6.96 × 5.3198e-3) = 0.3333 m/s; × 1.06 = 0.3533 m/s; pitch/0.3533 = 15058 µs, rounded
+// down to the clean 15000 µs, which arms at 0.3546 m/s = 1.064 × v_arm.)
+#define ENC_ADAPT_MAX_REF_US    15000u
 // ENC_KBRANCH_RUN_MAX (was 4) is RETIRED in fw v15 — see the declaration-site note where
 // encKBranchRun / encRefPoisonPending used to live.
 // Ceiling on the EWMA reference, so the ISR's ref<<1 / ref+ref>>1 threshold arithmetic can never
@@ -1556,12 +1639,14 @@ constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOT
 // time since the last accepted READING exceeds the same bound (see updateWheelSpeed() step 2b).
 // The multiplicative term is the fast path — a decelerating wheel is called stopped 1.5 periods
 // after it should have produced the next edge — and the absolute floor bounds the slowest speed the
-// estimator can report: 3.990 mm / 100 ms = 0.0399 m/s. Below ~0.04 m/s v_actual reads exactly 0.
+// estimator can report: 5.3198 mm / 100 ms = 0.0532 m/s. Below ~0.053 m/s v_actual reads exactly 0.
+// (fw v18: the 90-slot disc widened the pitch, so this floor rose from the 120-slot 0.0399 m/s —
+// which is why V_SP_ZERO_THRESH had to rise with it, see below.)
 // fw v13 LOWERED the floor 150 ms → 100 ms. The old value was chosen when the bound could only be
 // reached by an actual absence of edges; ML0140 showed it never fired in the case that mattered
 // (edges arriving, readings not being produced), so it was effectively dead code. Now that it is
 // live on the reading path it directly bounds every hold, and 100 ms is the tightest value that
-// still leaves the reportable floor (0.0399 m/s) BELOW the v_setpoint cutoff (0.05 m/s) — the two
+// still leaves the reportable floor (0.0532 m/s) BELOW the v_setpoint cutoff (0.07 m/s) — the two
 // constants must keep that ordering or the loop can be asked to regulate a speed the estimator
 // cannot see.
 #define ENC_VEL_TIMEOUT_US   100000u
@@ -1569,10 +1654,12 @@ constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOT
 
 // Post-reset corroboration threshold (fw v17). A reset taken while the last published |v| exceeded
 // this arms the hold-until-corroborated path in updateWheelSpeed(); below it the reset zeroes as it
-// always did. 0.30 m/s is deliberately the same speed as the ENC_ADAPT_MAX_REF_US arming point
-// (0.307 m/s): above it the low-side gate is live and a reset genuinely discards trustworthy state,
-// below it the estimator is a deadband relay whose held value is not worth defending.
-#define ENC_VEL_CORROB_MIN_MPS   0.30f
+// always did. 0.35 m/s is deliberately the same speed as the ENC_ADAPT_MAX_REF_US arming point
+// (0.355 m/s): above it the low-side gate is live and a reset genuinely discards trustworthy state,
+// below it the estimator is a deadband relay whose held value is not worth defending. (fw v18: the
+// arming point moved with the 90-slot pitch, so this threshold moved with it — 0.30 m/s was the
+// value paired with the 120-slot 0.307 m/s arming point.)
+#define ENC_VEL_CORROB_MIN_MPS   0.35f
 
 // Guard: with either scale input above at a placeholder value, closing the velocity loop
 // OVER-DRIVES. v_actual under-reads true speed, so the PI keeps adding current to reach a setpoint
@@ -1580,9 +1667,9 @@ constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOT
 // While 0, State 98 refuses the two velocity-mode entry points ('V' manual velocity, 'D' drive
 // cycle). Production State 2 is deliberately NOT gated — it needs a Pi commanding it and is out of
 // scope for a bench interlock. See docs/design-review-2026-07-28.md.
-// BOTH scale inputs are measured, so the shipped default is 1: ENCODER_SLOTS_PER_REV = 120 from a
-// direct slot count on the disc (2026-08-16, superseding the 60 back-derived from a mis-transcribed
-// hand-turn figure), FLYWHEEL_RADIUS_M = 0.0762 m from the bench (2026-08-13).
+// BOTH scale inputs are measured, so the shipped default is 1: ENCODER_SLOTS_PER_REV = 90 from a
+// direct slot count on the replacement disc (operator, 2026-08-25, cross-checked at 180 counts/rev
+// on the decoder), FLYWHEEL_RADIUS_M = 0.0762 m from the bench (2026-08-13).
 // The interlock machinery is kept for anyone who overrides back to 0 — fit a new disc or a new
 // flywheel and the chain is uncalibrated again until it is re-measured.
 #ifndef VELOCITY_CHAIN_CALIBRATED
@@ -1764,16 +1851,22 @@ const float V_SETPOINT_MAX = 20.0f;
 // m/s — velocity-loop ZERO CUTOFF (fw v13). Below this |v_setpoint| the velocity loop is not run
 // at all: motorControl() commands 0 A and holds the controller reset. See motorControl().
 // BENCH EVIDENCE (ML0144): commanding v_setpoint = 0 THROUGH the velocity loop is closing the loop
-// BELOW its own validity floor. The estimator's output is exactly 0 under ~0.04 m/s (a deadband,
-// not a gain — see ENC_VEL_TIMEOUT_US), so a zero setpoint puts a 544.8 A/(m/s) controller around a
+// BELOW its own validity floor. The estimator's output is exactly 0 under ~0.053 m/s (a deadband,
+// not a gain — see ENC_VEL_TIMEOUT_US), so a zero setpoint puts a 454.4 A/(m/s) controller (the
+// non-integral branch's LF gain Gs_red(0); source controller_design_MIMO/drive_siso_metrics.txt,
+// re-measured every synthesis run) around a
 // deadband relay: ML0144 sat in sustained 90 %-rail ±12 A bang-bang, while the SAME run at
 // v_setpoint = 1.0 m/s settled cleanly.
-// VALUE. 0.05 m/s sits ABOVE the estimator's 0.0399 m/s reportable floor (so nothing inside the
+// VALUE. 0.07 m/s sits ABOVE the estimator's 0.0532 m/s reportable floor (so nothing inside the
 // cutoff band was ever observable to the loop in the first place) and far BELOW the 0.5 m/s slowest
-// gate-checked speed of the drive synthesis, so no validated operating point is affected.
+// gate-checked speed of the drive synthesis, so no validated operating point is affected. The
+// margin, defined as (threshold - floor)/threshold, is (0.07 - 0.0532)/0.07 = 24.0 % — the same
+// class as the 0.0399-vs-0.05 pairing this supersedes ((0.05 - 0.0399)/0.05 = 20.2 %).
+// fw v18: RAISED 0.05 -> 0.07 because the 90-slot disc widened ENC_SLOT_PITCH_M and therefore
+// raised the estimator floor to 0.0532 m/s, which the static_assert below no longer admitted.
 // constexpr, not const: the static_assert below needs a constant expression (same reason as
 // MOTOR_I_CMD_MAX above). Nothing else about the constant changes.
-constexpr float V_SP_ZERO_THRESH = 0.05f;
+constexpr float V_SP_ZERO_THRESH = 0.07f;
 
 // Compile-time tripwire on the load-bearing ordering: the cutoff band must sit ABOVE the slowest
 // speed the estimator can report, or the loop can be asked to regulate a speed that reads as an
@@ -1786,6 +1879,36 @@ static_assert(ENC_SLOT_PITCH_M / ((float)ENC_VEL_TIMEOUT_US * 1e-6f) < V_SP_ZERO
 // it — this pins the two together so the comment cannot drift from the code.
 static_assert(ENC_PERIOD_LO_FRAC == 0.5f + 0.125f,
               "ENC_PERIOD_LO_FRAC must equal the (ref>>1)+(ref>>3) shift form it documents");
+
+// ── Pitch-coupled constants: compile-time tripwires (fw v18) ─────────────────
+// Three constants below are DERIVED from ENC_SLOT_PITCH_M by hand-run arithmetic, so a
+// future change to ENCODER_SLOTS_PER_REV or FLYWHEEL_RADIUS_M silently invalidates them
+// unless they are re-derived too. The fw v18 wheel swap (120 -> 90 slots) is exactly that
+// event, and it moved all three. These assertions make the coupling a build error instead
+// of a review item. (The zero-speed-floor ordering above is the fourth such coupling.)
+
+// (a) ENC_ADAPT_MAX_REF_US must arm the low-side gate ABOVE the speed at which a genuine
+//     rail deceleration can itself break the gate's ratio bound. From the fw v13 S1
+//     condition, that speed is v_arm = sqrt(3 * a_max * pitch) with a_max = 6.96 m/s².
+//     The gate arms at v_gate = pitch / ENC_ADAPT_MAX_REF_US, so the requirement is
+//         v_gate > v_arm   <=>   v_gate² > 3 * a_max * pitch
+//     Stated as the SQUARED product form because sqrtf() is not constexpr. At the fw v18
+//     pitch this is 0.35465² = 0.12578 > 3 * 6.96 * 5.3198e-3 = 0.11108, i.e. armed 6.4 %
+//     above v_arm. If this fires, re-derive ENC_ADAPT_MAX_REF_US = pitch / (1.06 * v_arm).
+constexpr float ENC_ADAPT_ARM_MPS = ENC_SLOT_PITCH_M / ((float)ENC_ADAPT_MAX_REF_US * 1e-6f);
+constexpr float ENC_ADAPT_A_MAX_MPS2 = 6.96f;   // measured 12 A rail accel, upper band edge
+static_assert(ENC_ADAPT_ARM_MPS * ENC_ADAPT_ARM_MPS
+                  > 3.0f * ENC_ADAPT_A_MAX_MPS2 * ENC_SLOT_PITCH_M,
+              "ENC_ADAPT_MAX_REF_US must arm the low-side gate above "
+              "v_arm = sqrt(3*a_max*pitch) — re-derive it against ENC_SLOT_PITCH_M");
+
+// (b) ENC_VEL_CORROB_MIN_MPS is deliberately pinned to that same arming point: above it the
+//     low-side gate is live and a reset genuinely discards trustworthy state (so the hold is
+//     worth arming); below it the estimator is a deadband relay whose held value is not.
+//     Arming the hold ABOVE the gate would defend readings the gate never vetted.
+static_assert(ENC_VEL_CORROB_MIN_MPS <= ENC_ADAPT_ARM_MPS,
+              "ENC_VEL_CORROB_MIN_MPS must not exceed the ENC_ADAPT_MAX_REF_US arming "
+              "speed — the two are pinned together by design");
 
 // ── Control-loop rate limiting ────────────────────────────────────────────────
 // The three Run-state control functions used to be called once per main-loop tick, uncapped. Two
@@ -1966,7 +2089,7 @@ volatile uint32_t encSpuriousDropCount = 0;
 // keeps its exact SUM semantics so v6 decoders are unaffected. They exist because the single sum
 // cannot distinguish the three very different physical faults it aggregates:
 //   encDropRawFloor   — interval below the absolute ENC_PERIOD_MIN_US floor: contact bounce or a
-//                       burst of optical chatter faster than ~20 m/s of rim travel.
+//                       burst of optical chatter faster than ~26.6 m/s of rim travel.
 //   encDropLowGate    — interval below 0.625 x ref: a spurious edge splitting one true pitch. This
 //                       is the dominant term on the un-Schmitted OPB829DZ (~900/s at 1.5 m/s in
 //                       YP0166) and is the one the 74HC14 bodge should collapse to near zero.
@@ -1992,7 +2115,7 @@ volatile uint32_t encDropPitchFloor = 0;
 // an ISR, hence not volatile. A mid-run ring invalidation (a direction flip, or a single noisy B
 // sample producing the ISR's ambiguous zero-delta case — plausible on the un-Schmitted OPB829DZ)
 // re-accumulates the ring over the next ENC_PERIOD_AVG_N edges. Reporting 0 m/s during that
-// window would inject a FULL-SCALE error step into a 544.8 A/(m/s) controller (4 ms at 2 m/s,
+// window would inject a FULL-SCALE error step into a 454.4 A/(m/s) controller (4 ms at 2 m/s,
 // 16 ms at 0.5 m/s) — a failure class the old boxcar could not produce, because it always had a
 // position difference to divide. So a re-accumulating ring HOLDS the last valid reading instead.
 // v_actual is forced to 0 on exactly three events (fw v17, which retired the encoderVelReset() case
@@ -2017,7 +2140,7 @@ uint32_t encVelLastSumUs     = 0;
 // POST-RESET CORROBORATION (fw v17 — YP0166 / TP0171). READER-side only, never touched by an ISR.
 // A reset taken while the wheel is demonstrably moving used to publish a naked 0 m/s for as long as
 // the ring took to refill (~6 ms at 1.5 m/s in YP0166), which is a FULL-SCALE error step into a
-// 544.8 A/(m/s) controller — the drive controller answered YP0166's with +12 A followed by -12 A
+// 454.4 A/(m/s) controller — the drive controller answered YP0166's with +12 A followed by -12 A
 // inside 12 ms. Worse, the ring refills from an un-seeded reference, so the FIRST post-reset
 // reading is the least trustworthy one in the whole run (TP0171 re-seeded at ref = 925 µs, a
 // half-pitch artefact, before the fw v15 dpos mechanism walked it back).
@@ -2058,7 +2181,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 17
+#define FW_VERSION 18
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -4212,8 +4335,8 @@ void doState1() {
         // ...and zero the setpoint with it. The reset alone is NOT enough: doState3() (Finish)
         // does not clear v_setpoint, so the Pi's last commanded speed survives Run→Finish→Idle.
         // A freshly reset controller meeting a stale non-zero setpoint sees the full error on
-        // its first tick, and the non-integral branch's 745.5 A/(m/s) low-frequency gain rails
-        // the command at ±12 A within roughly 20–40 ms for any error above ~16 mm/s — i.e. Run
+        // its first tick, and the non-integral branch's 454.4 A/(m/s) low-frequency gain rails
+        // the command at ±12 A within roughly 20–40 ms for any error above ~26 mm/s — i.e. Run
         // entry would start with a full-rail current excursion the operator never asked for.
         // Zeroing costs at most one tick of tracking: the Pi rewrites v_setpoint within one
         // packet period, and a Run that is genuinely meant to move starts from 0 m/s anyway.
@@ -5596,8 +5719,8 @@ void setManualMotorVelocity(float v) {
     // manual-velocity run is a SETPOINT STEP, and the loop must answer it from its current
     // operating point. Resetting there would discard that operating point and restart the
     // transient: the first tick after a reset is DD·e alone (1.81 A per m/s of error), but the
-    // non-integral branch carries 745.5 A/(m/s) of low-frequency gain, so for any error above
-    // ~16 mm/s the loop RAILS at ±12 A within roughly 20–40 ms and then has to unwind. The
+    // non-integral branch carries 454.4 A/(m/s) of low-frequency gain, so for any error above
+    // ~26 mm/s the loop RAILS at ±12 A within roughly 20–40 ms and then has to unwind. The
     // machine does not gently coast — it takes a full-rail excursion in exchange for a setpoint
     // change the running loop could have absorbed smoothly. The share loop's 'P' handler resets
     // unconditionally because its actuator (the MDAC ratio) is physically held across the
@@ -5605,6 +5728,19 @@ void setManualMotorVelocity(float v) {
     if (manualMotorMode != MOTOR_TEST_VELOCITY) resetDriveControlState();
     manualMotorVelocity = constrain(v, -MANUAL_MOTOR_V_MAX, MANUAL_MOTOR_V_MAX);
     manualMotorMode     = MOTOR_TEST_VELOCITY;
+    // fw v18: warn on a non-zero setpoint that lands INSIDE the zero cutoff. The command is
+    // still applied — this is not a refusal — but motorControl() will command 0 A and hold
+    // the controller reset, so the machine coasts and the operator sees no motion. Without
+    // this, a small 'V' looks like a dead velocity loop. Mirrors the 'Y' parse warning; the
+    // cutoff itself rose 0.05 -> 0.07 m/s at the fw v18 wheel swap, so setpoints that used
+    // to drive now coast.
+    if (manualMotorVelocity != 0.0f && fabsf(manualMotorVelocity) < V_SP_ZERO_THRESH) {
+        Serial.print("[WARN] |v| = ");
+        Serial.print(fabsf(manualMotorVelocity), 3);
+        Serial.print(" m/s is below V_SP_ZERO_THRESH = ");
+        Serial.print(V_SP_ZERO_THRESH, 3);
+        Serial.println(" m/s — the velocity loop will NOT run; the motor coasts at 0 A.");
+    }
 }
 
 // ── Motor output ownership ───────────────────────────────────────────────────
@@ -6818,7 +6954,7 @@ void printTestStatus() {
     Serial.print("  spurDrop=");      Serial.println(perDrop);
     // fw v17: the three drop paths that sum into spurDrop above, broken out. lowGate dominating is
     // the un-Schmitted OPB829DZ chatter signature (the 74HC14 bodge should collapse it); rawFloor
-    // dominating points at bounce faster than ~20 m/s of rim travel; pitchFloor dominating means the
+    // dominating points at bounce faster than ~26.6 m/s of rim travel; pitchFloor dominating means the
     // decoder position delta disagrees with the elapsed time, i.e. corrupted counts, not timing.
     // Not logged to the BLG (format stays v6) — spurDrop already carries the sum there.
     Serial.print("dropRawFloor=");    Serial.print(dropRaw);
@@ -7296,7 +7432,7 @@ void motorControl() {
     // ── v_setpoint zero cutoff (fw v13, ML0144) ──────────────────────────────────────────────
     // Below V_SP_ZERO_THRESH the velocity loop is NOT run: 0 A is commanded and the controller is
     // held reset. Rationale in full at V_SP_ZERO_THRESH — in short, the estimator reports exactly 0
-    // below ~0.04 m/s, so a near-zero setpoint closes a 544.8 A/(m/s) loop around a deadband relay
+    // below ~0.053 m/s, so a near-zero setpoint closes a 454.4 A/(m/s) loop around a deadband relay
     // and bang-bangs on the ±12 A rails (ML0144), while the same run at 1.0 m/s settles cleanly.
     // Consistency note: doState1() (Idle) already commands 0 A directly rather than regulating
     // v_setpoint = 0; this makes State 2 and the State-98 profiles behave the same way.
@@ -8478,7 +8614,7 @@ void encoderVelReset() {
     encIrqRestore(irq);
     // fw v17: capture the last published reading BEFORE discarding it, if the wheel was
     // demonstrably moving. updateWheelSpeed() then holds that value instead of publishing a naked
-    // 0 m/s into the 544.8 A/(m/s) controller until a corroborated reading replaces it (bounded by
+    // 0 m/s into the 454.4 A/(m/s) controller until a corroborated reading replaces it (bounded by
     // ENC_VEL_TIMEOUT_US from here — see the encVelCorrobPending block). Arming lives HERE rather
     // than at the call sites so every present and future caller gets it uniformly; the two stale
     // paths in updateWheelSpeed() explicitly DISARM it afterwards, because a stale timeout is the
@@ -8509,7 +8645,7 @@ void encoderVelReset() {
 // limit cycle. The estimator was never part of the synthesis plant.
 //
 // WHAT IT MEASURES. The ISR timestamps ONE edge type on ONE channel (A rising), so each interval
-// spans exactly one full slot pitch, ENC_SLOT_PITCH_M = 3.990 mm of rim travel. Using one edge
+// spans exactly one full slot pitch, ENC_SLOT_PITCH_M = 5.3198 mm of rim travel. Using one edge
 // type of one channel is deliberate: the two OPB829DZ channels have different thresholds and duty
 // cycles, and any scheme that mixes edge types folds that asymmetry straight into the velocity as
 // a per-edge ripple. Same-edge-to-same-edge cancels it exactly.
@@ -8526,9 +8662,10 @@ void encoderVelReset() {
 //     speed, so any margin check must be run at the slowest speed the loop is expected to track.
 //   - QUANTISATION is set by the micros() timer, not by a distance ladder: the relative error is
 //     ~1 µs / period, i.e. below 0.1% above 0.2 m/s. The old 17.7 mm/s step is gone.
-//   - Below the zero-speed floor (0.0399 m/s, see ENC_VEL_TIMEOUT_US) the output is exactly 0,
+//   - Below the zero-speed floor (0.0532 m/s, see ENC_VEL_TIMEOUT_US) the output is exactly 0,
 //     which is a hard nonlinearity the plant model should treat as a deadband, not a gain. The
-//     first reading after a standstill also needs 3 A-rising edges (~N+1 pitches, ~12 mm) before
+//     first reading after a standstill also needs 3 A-rising edges (~N+1 pitches, ~16 mm at the
+//     fw v18 5.3198 mm pitch; it was ~12 mm on the retired 120-slot wheel) before
 //     it exists at all. A commanded step BELOW the design's gate-checked floor of 0.5 m/s
 //     therefore closes the loop around a deadband relay and IS EXPECTED to limit-cycle — that is
 //     a validity boundary of the design, not a defect of this estimator.
@@ -8542,7 +8679,7 @@ void encoderVelReset() {
 //     speed, and the reset the two stale paths themselves perform, still zero exactly as before,
 //     so boot and standstill are unchanged in their outcomes. The State-3 between-run reset is
 //     unchanged ONLY when the flywheel is at or below ENC_VEL_CORROB_MIN_MPS at doState3(); in
-//     the common case (flywheel still coasting above 0.30 m/s) it now ARMS the hold and
+//     the common case (flywheel still coasting above 0.35 m/s) it now ARMS the hold and
 //     v_actual/telemetry/BLG v_act carry the true pre-reset value for up to 100 ms into Idle
 //     instead of zeroing. Control impact is nil (Idle commands 0 A without reading v_actual),
 //     but the logged trace changes (fw v17 safety review LOW-2).
@@ -8575,7 +8712,7 @@ void updateWheelSpeed() {
     // fw v15: the fw v13 poisoned-reference reset that stood here is RETIRED. It existed because a
     // ratio-derived pitch count could lock the reference into a self-confirming basin; the count is
     // now taken from the decoder's position delta, which cannot. Removing it also removes the one
-    // path that injected a full-scale v = 0 step into the 544.8 A/(m/s) controller on the basis of
+    // path that injected a full-scale v = 0 step into the 454.4 A/(m/s) controller on the basis of
     // an inference rather than a measurement.
 
     // Consistent snapshot. A brief noInterrupts() section is used rather than a sequence-counter
@@ -8669,7 +8806,7 @@ void updateWheelSpeed() {
     // (3) NOTHING USABLE IN THE RING (no entries at all, or no direction — the ISR's ambiguous
     // zero-delta case), but edges ARE still arriving inside the bounds above, so the wheel is
     // demonstrably moving. HOLD the last valid reading rather than reporting 0: a 0 here is a
-    // full-scale error step into a 544.8 A/(m/s) controller (see the encVelLastValid block). The
+    // full-scale error step into a 454.4 A/(m/s) controller (see the encVelLastValid block). The
     // hold is now bounded by (2b) in wall-clock terms, not merely by (2).
     if (cnt == 0 || dir == 0) {
         v_actual = encVelHaveValid ? encVelLastValid
@@ -8703,7 +8840,7 @@ void updateWheelSpeed() {
     // (5) SIGN EMBARGO ON SINGLE-PITCH READINGS (fw v13 safety review S3). The cnt = 1 fast path in
     // (4) is what makes a reversal readable immediately — but under the ML0140 dither it also lets
     // the estimator publish a SIGN-ALTERNATING single-pitch reading at the dither rate, which is a
-    // STRONGER excitation into a 544.8 A/(m/s) controller than the frozen hold it replaced. Worse,
+    // STRONGER excitation into a 454.4 A/(m/s) controller than the frozen hold it replaced. Worse,
     // every such publication refreshed encVelLastReadingUs, so the (2b) reading-age bound could
     // never age out the dither at all — the exact scenario (2b) exists for.
     // RULE: a reading whose sign DIFFERS from the last published one requires cnt >= 2, i.e. a
@@ -8805,7 +8942,7 @@ void doEncoderA() {
             // shifts, a subtract and an add. Total added worst case is well under 100 ns at
             // 600 MHz, against the 800 µs edge spacing at the 5 m/s ceiling.
             uint32_t ref      = encPeriodRefUs;
-            // SPEED ARMING (S1/S2): dark below ~0.307 m/s, where a spurious edge and a hard-launch
+            // SPEED ARMING (S1/S2): dark below ~0.355 m/s, where a spurious edge and a hard-launch
             // truth are indistinguishable by period ratio. See ENC_ADAPT_MAX_REF_US.
             bool     refValid = (encPeriodRefSeed >= ENC_PERIOD_REF_SEED_N) && (ref > 0) &&
                                 (ref < ENC_ADAPT_MAX_REF_US);
@@ -8924,14 +9061,14 @@ void doEncoderA() {
                 // position reference, so the next genuine edge still spans from the last genuine
                 // one. This is also the principled fast-direction backstop, and it is why NO
                 // arbitrary cap on `pitches` is needed: requiring per-pitch >= 200 µs bounds the
-                // indicated speed at the same ~20 m/s the floor always implied, regardless of how
+                // indicated speed at the same ~26.6 m/s the floor always implied, regardless of how
                 // many pitches the interval claims.
                 if (period < ENC_PERIOD_MIN_US) {
                     // Dropped — fall through to the same no-base-advance handling as `spurious`.
                     // fw v17: the floor is applied to the FRACTIONAL per-pitch value computed above,
                     // which is the quantity the ring will actually hold — so the |dpos| = 1 case is
                     // now floored at 200 µs of PER-PITCH time (T >= 200 µs), not at 200 µs of raw
-                    // half-pitch interval. The bound on indicated speed is unchanged (~20 m/s).
+                    // half-pitch interval. The bound on indicated speed is unchanged (~26.6 m/s).
                     encSpuriousDropCount++;   // fw v16: third drop path, counted like the other two
                     encDropPitchFloor++;      // fw v17 per-path attribution (diagnostic)
                 } else {

@@ -582,21 +582,156 @@ class BiquadController:
 # CONSEQUENCE FOR FIRMWARE: a Teensy implementation of this baseline needs the
 # state-space/conditioned form, not the shipped biquad+integrator AW pattern.  This
 # is noted in drive_siso_coeffs.h and is itself a Phase-6 "Teensy cost" datapoint.
-class ConditionedController:
-    """Hanus self-conditioned discrete controller with output clamp."""
+# ── ANTI-WINDUP CONDITIONING GAIN L (fw v18, 2026-08-25) ─────────────────────
+# WHY THE SELF-CONDITIONED FORM HAD TO GO -- a structural defect, found by the fw v18
+# test round's long constant-error saturation dwell and root-caused here.
+#
+# The Hanus SELF-conditioned form is the special case L = BD*DD^-1 of the general
+# conditioning law
+#     x[k+1] = AD x + BD e + L*(sat(u) - u),      u = CD x + DD e
+# (substitute e = (u - CD x)/DD and it collapses to x[k+1] = AC x + BD*sat(u)/DD, the
+# recursion shipped through fw v17).  Its SATURATED-mode matrix is therefore
+# AC = AD - BD*CD/DD, whose eigenvalues are the discrete controller's transmission ZEROS.
+#
+# Those zeros contain one at EXACTLY z = -1, and it is structural, not incidental:
+# the controller is a PARALLEL sum of two TUSTIN-discretized branches, and Tustin of the
+# integrator is (kI*Ts/2)(z+1)/(z-1) while Tustin of the strictly proper remainder carries
+# its own (z+1) factor, so
+#     Gc(z) = (z+1)*[N1(z)(z-1) + (kI*Ts/2)*D1(z)] / [D1(z)(z-1)]
+# retains (z+1) EXACTLY for any continuous controller, at any weight rung.  The saturated
+# recursion consequently has ZERO damping at Nyquist, which is the enabling condition for a
+# sustained relay oscillation against the clamp.
+# MEASURED (float32 coefficients, double state -- the shipped arithmetic), constant-error
+# dwells e in [0.25, 12.0] step 0.25, 2000 ticks, peak-to-peak over the last 200:
+#     fw v17 coefficients: 14 of 48 dwells fail (e = 8.25 .. 11.75), tail p-p = 24.0 A
+#     fw v18 coefficients: 15 of 48 dwells fail (the same band, plus e = 5.00)
+# i.e. the defect shipped from fw v10 onward and is NOT a v18 regression -- the v18
+# coefficients merely moved a basin boundary onto the e = 5 probe the tests happened to use.
+# The observed cycle is a period-4 (++--) square wave, 125 Hz at Ts = 2 ms, rail to rail.
+# It is reachable on hardware wherever a large error persists at the rail without the
+# vehicle responding -- e.g. the documented ML0151 ~428 ms VESC post-reversal dead window,
+# which drive_controller.h's departure #1 (the clamp is a MODEL, not measured current)
+# already flags as invisible to the conditioning.
+#
+# THE FIX: choose L by POLE PLACEMENT instead of accepting BD/DD, so the saturated-mode
+# matrix (AD - L*CD) is strictly stable with real margin.  Two properties make this cheap:
+#   * while UNSATURATED sat(u) - u == 0 identically, so the law is bit-identical to
+#     x[k+1] = AD x + BD e in exact arithmetic -- every linear synthesis gate, the whole
+#     corner sweep and the unsaturated replay episode are untouched by this change;
+#   * only the SATURATED trajectory moves, which is precisely what was broken.
+#
+# PLACEMENT METHOD: standard SISO observer pole placement on the dual pair, via
+# scipy.signal.place_poles(AD^T, CD^T, poles) -> K, with L = K^T, so that
+# eig(AD - L*CD) == the requested set.  (Placement acts on the FLOAT64 design matrices;
+# rounding to float32 is an emission concern, as everywhere else in this script.  The
+# GATES below are evaluated on the rounded, shipped set.)
+#
+# POLE CHOICE — MINIMAL PERTURBATION of the self-conditioned spectrum, not a free design.
+# This was arrived at empirically and the failed attempt is worth recording, because the
+# obvious choice is wrong.  Placing all five modes at a "nicely damped" set well inside the
+# disc (tried: 0.55-0.75) DOES kill the limit cycle -- the dwell sweep goes clean -- but it
+# also drags the controller's INTEGRATOR mode from z = 1 down to ~0.75 while saturated,
+# which destroys the integral memory the conditioning exists to preserve.  Measured on that
+# attempt: L[0] = 234.5, the 0->2 m/s step left a -1.13 m/s standing error, and both the
+# step and regen sims fell into a slow 89 mm/s limit cycle (six §8 gates failed).
+#
+# The self-conditioned form's saturated spectrum is not arbitrary: it is what makes the
+# conditioning BUMPLESS (while saturated the state tracks the achievable input, so release
+# is clean).  Its ONLY defect is the single mode at z = -1.  So the target here is the
+# self-conditioned spectrum eig(AC) itself, perturbed AS LITTLE AS POSSIBLE:
+#   1. any eigenvalue at or outside the unit circle is scaled radially to
+#      AW_POLE_RADIUS_MAX (a safety net -- fw v17's own -1.0000009 lands here); and
+#   2. any eigenvalue that is poorly damped near Nyquist (Re < 0 and
+#      |lambda| > AW_NYQUIST_MAX_RADIUS) is REPLACED by the real, damped
+#      AW_NYQUIST_REPLACEMENT.  This is the one that matters: it is the z = -1 mode.
+# Everything else is left EXACTLY where the self-conditioned form put it.
+#
+# SECOND FAILED ATTEMPT, recorded because it is the subtle one.  An earlier version of rule
+# 1 also pulled the two SLOW modes (~0.99970, ~0.98399) inward to 0.998, to buy a 2e-3
+# spectral-radius margin.  That is a tiny perturbation and it looks harmless.  It is not:
+# the ~0.9997 mode is the conditioning counterpart of the controller's EXACT INTEGRATOR,
+# and shortening its memory from tau ~ 6.6 s to ~ 1.0 s leaves the integrator state
+# inconsistent at rail release.  Measured: 0->2 m/s step standing error -0.227 m/s with a
+# 17.9 mm/s sustained hunting cycle; the regen sim mirrored it (six §8 gates failed).
+# Leaving those modes alone -- moving ONLY the Nyquist one -- passes every §8 gate with the
+# margins the fw v17 design had (step settle 1.034 s, final error 3.5e-08, tail 2.7e-09).
+# CONSEQUENCE, and it is a deliberate deviation from the round's brief: the saturated-mode
+# SPECTRAL RADIUS stays at ~0.99970, so a plain "max|eig| < 1 - 1e-3" gate is unachievable
+# without breaking the controller.  See gate (a) in §8e for what is gated instead and why
+# that version still catches the fw v10-v17 defect.
+AW_POLE_RADIUS_MAX = 0.99999    # safety net for modes AT or outside the circle
+AW_NYQUIST_MAX_RADIUS = 0.75    # Re<0 modes beyond this radius are the z=-1 pathology
+AW_NYQUIST_REPLACEMENT = 0.5    # real, damped: tau = Ts/-ln(0.5) = 2.9 ms
 
-    def __init__(self, cd, umin=-I_CLAMP, umax=I_CLAMP):
+
+def aw_target_poles(Ac):
+    """Minimal-perturbation saturated-mode target set, from the self-conditioned eig(Ac).
+
+    See the block above for the two projection rules and why the target is anchored on
+    eig(Ac) rather than chosen freely.
+    """
+    out = []
+    for lam in np.linalg.eigvals(np.asarray(Ac, dtype=float)):
+        if abs(lam) >= AW_POLE_RADIUS_MAX:
+            lam = lam*(AW_POLE_RADIUS_MAX/abs(lam))
+        if lam.real < 0 and abs(lam) > AW_NYQUIST_MAX_RADIUS:
+            lam = complex(AW_NYQUIST_REPLACEMENT, 0.0)
+        out.append(lam)
+    out = np.array(out)
+    # The target set must be closed under conjugation for place_poles; it is, because the
+    # projections above are applied to a real matrix's spectrum and map conjugate pairs
+    # identically.  Drop numerically-zero imaginary parts so an all-real set stays real.
+    return out.real.copy() if np.allclose(out.imag, 0.0) else out
+
+
+def conditioning_gain(Ad, Cd, poles):
+    """Anti-windup gain L placing eig(Ad - L*Cd) at `poles` (observer dual)."""
+    from scipy.signal import place_poles
+    n = Ad.shape[0]
+    res = place_poles(np.asarray(Ad, dtype=float).T,
+                      np.asarray(Cd, dtype=float).T,
+                      np.asarray(poles, dtype=float)[:n])
+    return res.gain_matrix.T.reshape(n)
+
+
+_AC_DESIGN = ctrl_d.A - ctrl_d.B @ ctrl_d.C/ctrl_d.D[0, 0]   # the fw v10-v17 saturated mode
+AW_POLES = aw_target_poles(_AC_DESIGN)
+L_DESIGN = conditioning_gain(ctrl_d.A, ctrl_d.C, AW_POLES)
+_ev_aw_design = np.linalg.eigvals(ctrl_d.A - np.outer(L_DESIGN, ctrl_d.C[0]))
+print("\n= 7b. Anti-windup conditioning gain L (fw v18) ==")
+print(f"  self-conditioned eig(AC) (fw v10-v17, the defect) = "
+      f"{np.array2string(np.sort_complex(np.linalg.eigvals(_AC_DESIGN)), precision=6)}")
+print(f"  requested saturated-mode poles = {np.array2string(AW_POLES, precision=6)}")
+print(f"  achieved   (float64 design)    = "
+      f"{np.array2string(np.sort_complex(_ev_aw_design), precision=6)}")
+print(f"  L (float64) = {np.array2string(L_DESIGN, precision=6)}")
+print(f"  max|eig(AD - L*CD)| = {np.max(np.abs(_ev_aw_design)):.9f}   "
+      f"(self-conditioned L = BD/DD gives "
+      f"{np.max(np.abs(np.linalg.eigvals(ctrl_d.A - ctrl_d.B @ ctrl_d.C/ctrl_d.D[0, 0]))):.9f}"
+      f" -- the defect)")
+
+
+class ConditionedController:
+    """Hanus-conditioned discrete controller with output clamp.
+
+    GENERAL conditioning form (fw v18): the state update is driven by the conditioning
+    error (sat(u) - u) through a POLE-PLACED gain L.  The fw v10-v17 self-conditioned
+    special case L = BD/DD is what the block above retired; see it for why.
+    While unsaturated sat(u) == u, so this reduces EXACTLY to x[k+1] = AD x + BD e.
+    """
+
+    def __init__(self, cd, umin=-I_CLAMP, umax=I_CLAMP, L=None):
         self.Ad, self.Bd = cd.A, cd.B
         self.Cd, self.Dd = cd.C, float(cd.D[0, 0])
-        assert abs(self.Dd) > 1e-9, "Hanus conditioning needs an invertible D"
-        self.Ac = self.Ad - self.Bd @ self.Cd/self.Dd
+        assert abs(self.Dd) > 1e-9, "conditioning needs an invertible D"
+        self.L = (L_DESIGN if L is None else np.asarray(L, dtype=float)).reshape(cd.n, 1)
         self.x = np.zeros((cd.n, 1))
         self.umin, self.umax = umin, umax
 
     def step(self, e, sat=True):
         uu = float((self.Cd @ self.x).item()) + self.Dd*e
         u = min(self.umax, max(self.umin, uu)) if sat else uu
-        self.x = self.Ac @ self.x + self.Bd*(u/self.Dd)
+        self.x = self.Ad @ self.x + self.Bd*e + self.L*(u - uu)
         return u
 
 
@@ -776,6 +911,11 @@ DD_H = float(np.float32(ctrl_d.D[0, 0]))
 # rather than to the difference of two independently-rounded quantities (~4e-6).
 AC_H = _f32(AD_H - BD_H @ CD_H/DD_H)
 _ac_resid = float(np.max(np.abs(AC_H - (AD_H - BD_H @ CD_H/DD_H))))
+# The SHIPPED anti-windup gain.  Rounded from the float64 placement, exactly like every
+# other coefficient, so header / replay CSV / compiled constant table hold one bit-identical
+# set.  The two gates below are evaluated on THIS rounded L against the rounded AD/CD --
+# the design-matrix placement is not evidence about what the firmware runs.
+L_H = _f32(L_DESIGN).reshape(-1)
 print(f"\n= 8d. shipped float32 realization ==")
 print(f"  AC identity residual after rounding = {_ac_resid:.3e} "
       f"(float32 half-ulp of max|AC| = {np.max(np.abs(AC_H)):.1f})")
@@ -790,9 +930,72 @@ class HeaderController(ConditionedController):
 
     def __init__(self, umin=-I_CLAMP, umax=I_CLAMP):
         self.Ad, self.Bd, self.Cd, self.Dd = AD_H, BD_H, CD_H, DD_H
-        self.Ac = AC_H
+        self.L = L_H.reshape(-1, 1)
         self.x = np.zeros((AD_H.shape[0], 1))
         self.umin, self.umax = umin, umax
+
+
+# ── §8e. SATURATED-MODE GATES (fw v18) ───────────────────────────────────────
+# Two gates, both mandatory, both on the SHIPPED float32 set.  They exist because the
+# fw v10-v17 self-conditioned realization was marginally stable in saturation (a Tustin
+# zero at exactly z = -1; full account at the L block in §7b) and NOTHING in this script
+# looked at the saturated-mode dynamics -- every gate here was either linear or a short
+# transient sim, so a sustained rail dwell was never exercised and the defect shipped for
+# eight firmware versions.
+print(f"\n= 8e. Saturated-mode stability (anti-windup conditioning) ==")
+_ev_aw = np.linalg.eigvals(AD_H - np.outer(L_H, CD_H[0]))
+_aw_rad = float(np.max(np.abs(_ev_aw)))
+AW_EIG_MARGIN = 1.0e-3      # required margin for OSCILLATORY modes -- see below
+# GATE (a), and a DELIBERATE DEVIATION from "max|eig| < 1 - 1e-3" as briefed.
+# A flat spectral-radius margin is unachievable here for a documented reason: the
+# conditioned dynamics of a controller carrying an EXACT INTEGRATOR necessarily retain a
+# slow POSITIVE-REAL mode (~0.99970 here), and forcing it inward destroys the integral
+# memory -- measured, see the second failed attempt at §7b.  But a slow positive-real mode
+# is a decaying exponential: it cannot sustain an oscillation, and it is not what broke.
+# What broke was an OSCILLATORY mode sitting on the unit circle (z = -1).  So the gate is
+# applied where the pathology lives:
+#     every eigenvalue that is NOT on the positive real axis must satisfy
+#     |lambda| < 1 - AW_EIG_MARGIN;  and no eigenvalue anywhere may reach the circle.
+# ACCEPTANCE CHECK for the gate itself: it FAILS the shipped fw v17 spectrum (-1.0000009,
+# not positive real, |lambda| = 1.0000009) and the fw v18 self-conditioned spectrum
+# (-0.9999990) -- i.e. it catches the exact defect this round found, which a plain
+# "max|eig| < 1" test does NOT (0.9999990 passes that and still limit-cycles).
+_ev_osc = [e for e in _ev_aw if not (abs(e.imag) < 1e-12 and e.real > 0.0)]
+_osc_rad = max((abs(e) for e in _ev_osc), default=0.0)
+print(f"  L (float32, shipped) = {np.array2string(L_H, precision=6)}")
+print(f"  eig(AD - L*CD) = {np.array2string(np.sort_complex(_ev_aw), precision=6)}")
+print(f"  spectral radius = {_aw_rad:.9f} (slow positive-real integrator mode -- benign)")
+print(f"  worst NON-positive-real (oscillatory) mode = {_osc_rad:.9f}  "
+      f"(gate: < {1.0 - AW_EIG_MARGIN})")
+gate(f"saturated-mode: every oscillatory eigenvalue < 1 - {AW_EIG_MARGIN:g}",
+     _osc_rad < 1.0 - AW_EIG_MARGIN and _aw_rad < 1.0,
+     f"worst oscillatory |eig| = {_osc_rad:.9f}, spectral radius = {_aw_rad:.9f}")
+
+# THE LOAD-BEARING GATE.  The eigenvalue test alone is NOT sufficient and would not have
+# caught the shipped defect: the fw v18 self-conditioned coefficients had
+# max|eig(AC)| = 0.9999990 -- strictly inside the unit circle -- and still limit-cycled
+# rail to rail, because 1e-6 of damping does not suppress a relay oscillation.  Only the
+# dwell sweep catches that, so it is the gate that matters; the eigenvalue gate is the
+# cheap explanatory companion.
+_DWELL_TICKS, _DWELL_TAIL, _DWELL_TOL = 2000, 200, 1.0e-6
+_dwell_errs = np.arange(0.25, 12.0 + 1e-9, 0.25)
+_dwell_bad, _dwell_worst = [], 0.0
+for _e in _dwell_errs:
+    _c = HeaderController()
+    _us = np.array([_c.step(float(_e), sat=True) for _ in range(_DWELL_TICKS)])
+    _pp = float(np.ptp(_us[-_DWELL_TAIL:]))
+    _dwell_worst = max(_dwell_worst, _pp)
+    if _pp > _DWELL_TOL:
+        _dwell_bad.append((round(float(_e), 2), round(_pp, 3)))
+print(f"  constant-error dwell sweep: e in [{_dwell_errs[0]:.2f}, {_dwell_errs[-1]:.2f}] "
+      f"step 0.25 ({_dwell_errs.size} cases), {_DWELL_TICKS} ticks, "
+      f"peak-to-peak over the last {_DWELL_TAIL}")
+print(f"  worst tail p-p = {_dwell_worst:.3e} A; non-settling cases: "
+      f"{_dwell_bad if _dwell_bad else 'none'}")
+gate("LOAD-BEARING: every constant-error rail dwell settles (no saturated limit cycle)",
+     _dwell_worst <= _DWELL_TOL,
+     f"worst tail p-p = {_dwell_worst:.3e} A over {_dwell_errs.size} dwells "
+     f"(tol {_DWELL_TOL:.0e} A); {len(_dwell_bad)} non-settling")
 
 
 # ── replay reference vectors for the firmware round ──────────────────────────
@@ -884,7 +1087,7 @@ gate("replay (b) reproduces open-loop from e_in alone (bit-exact)",
 #   (2) float32 stimulus storage   -- drive_replay_vectors.h stores e_in as `static const
 #                                     float`, so the firmware replay sees float32 e AND a
 #                                     float32-rounded reference u.
-#   (3) SCALAR-ORDER ARITHMETIC    -- driveControllerStep() accumulates Cd.x and Ac.x with
+#   (3) SCALAR-ORDER ARITHMETIC    -- driveControllerStep() accumulates Cd.x and Ad.x with
 #                                     sequential C loops; numpy sums the same dot products
 #                                     with BLAS pairwise/FMA order.  The reassociation is
 #                                     ~1e-16 relative, but on a boundary approach measured
@@ -893,10 +1096,11 @@ gate("replay (b) reproduces open-loop from e_in alone (bit-exact)",
 #                                     keeping numpy's summation order measures the wrong
 #                                     thing and reports a tolerance several times too tight.
 # The shipped consumer tolerance is derived from the worst of the three with 2x headroom.
-_ac_h = np.asarray(AC_H, float)
+_ad_h = np.asarray(AD_H, float)
 _bd_h = np.asarray(BD_H, float).reshape(-1)
 _cd_h = np.asarray(CD_H, float).reshape(-1)
-_n_h = _ac_h.shape[0]
+_l_h = np.asarray(L_H, float).reshape(-1)
+_n_h = _ad_h.shape[0]
 
 
 def _replay_scalar_order(e_seq, f32_out=False):
@@ -910,16 +1114,16 @@ def _replay_scalar_order(e_seq, f32_out=False):
     x = [0.0]*_n_h
     out = []
     for e in e_seq:
-        u = float(DD_H)*float(e)
+        uu = float(DD_H)*float(e)
         for j in range(_n_h):
-            u += _cd_h[j]*x[j]
-        u = min(float(I_CLAMP), max(-float(I_CLAMP), u))
-        uod = u/float(DD_H)
+            uu += _cd_h[j]*x[j]
+        u = min(float(I_CLAMP), max(-float(I_CLAMP), uu))
+        dcond = u - uu                      # conditioning error; identically 0 unsaturated
         xn = [0.0]*_n_h
         for i in range(_n_h):
-            acc = _bd_h[i]*uod
+            acc = _bd_h[i]*float(e) + _l_h[i]*dcond
             for j in range(_n_h):
-                acc += _ac_h[i][j]*x[j]
+                acc += _ad_h[i][j]*x[j]
             xn[i] = acc
         x = xn
         out.append(float(np.float32(u)) if f32_out else u)
@@ -984,14 +1188,24 @@ def _round_up_tol(x, sig=2):
 # covers consumer arithmetic we do not enumerate here (a different compiler's contraction of
 # the same scalar loop, x87 excess precision, a fused multiply-add) which perturbs the same
 # boundary decisions by the same class of amount.
-REPLAY_TOL_REGEN = _round_up_tol(2.0*_sens_worst)
 REPLAY_TOL_SMALL = 1.0e-4
+# FLOOR (fw v18).  The measured sensitivity is a property of the trajectory, and the fw v18
+# anti-windup fix made the regen trajectory dramatically better conditioned: clamp-state
+# transitions fell 60 -> 2, the closest boundary approach rose 20 uA -> 13.3 mA, and every
+# perturbation in the suite now measures ~0.  Taken literally that yields a NANOAMP
+# tolerance, which is not a usable conformance bound -- it would fail honest implementations
+# for reasons the suite does not model (a different compiler's FMA contraction, x87 excess
+# precision).  So the derived figure is floored at the linear-recursion tolerance: the
+# saturated episode can never be required to match TIGHTER than the unsaturated one, since
+# the same float32 storage and arithmetic-order effects apply to both.
+REPLAY_TOL_REGEN = max(_round_up_tol(2.0*_sens_worst), REPLAY_TOL_SMALL)
 print(f"  replay sensitivity ({_n_clamp_trans} clamp-state transitions in the emitted "
       f"vectors; closest boundary approach {_boundary_uA:.1f} uA):")
 for _lbl, _dv in sorted(_SENS.items(), key=lambda kv: -kv[1]):
     print(f"    {_lbl:52s} {_dv*1e3:8.2f} mA")
-print(f"    -> shipped consumer tolerance 'regen' = {REPLAY_TOL_REGEN*1e3:.0f} mA "
-      f"(2x worst, rounded up), 'small' = {REPLAY_TOL_SMALL*1e3:.2f} mA")
+print(f"    -> shipped consumer tolerance 'regen' = {REPLAY_TOL_REGEN*1e3:.2f} mA "
+      f"({'2x worst, rounded up' if REPLAY_TOL_REGEN > REPLAY_TOL_SMALL else 'FLOORED at the small-episode tolerance'}"
+      f"), 'small' = {REPLAY_TOL_SMALL*1e3:.2f} mA")
 
 # The 'small' episode must hold the TIGHT tolerance under every one of the same
 # perturbations -- that is what makes it the linear-recursion check.
@@ -1017,13 +1231,53 @@ gate("replay (b) sensitivity is boundary-dither class, not divergence (< 1 A)",
 _dev_fw = np.abs(_replay_scalar_order(_e_fw, f32_out=True) - _u_ref_fw)
 _tail_dev = float(np.max(_dev_fw[-200:]))
 gate("replay (b) deviation decays into the tail (not accumulating)",
-     _tail_dev < 0.1*_sens_worst,
+     _tail_dev < max(0.1*_sens_worst, REPLAY_TOL_SMALL),
      f"last 200 samples max |du| = {_tail_dev*1e3:.2f} mA vs peak "
      f"{_sens_worst*1e3:.2f} mA")
 
 print(f"  float32-coefficient closed-loop regen vs the float64 sim: max |dv| = "
       f"{np.max(np.abs(_y_sat - y2)):.3e} m/s, on the rail "
       f"{int(np.sum(_u_sat <= -I_CLAMP + 1e-9))*TS*1e3:.0f} ms")
+
+# ── replay episode (c): the RAIL DWELL (fw v18) ──────────────────────────────
+# A third episode, added with the anti-windup fix, because neither existing episode can
+# detect the defect that fix addresses.  'small' never approaches the clamp; 'regen' does
+# saturate but releases after ~0.8 s, and the fw v10-v17 limit cycle needs a LONG
+# uninterrupted dwell to establish itself.  A firmware replay test that passes 'small' and
+# 'regen' therefore proves nothing about saturated-mode stability -- which is precisely how
+# the defect shipped for eight versions.
+#
+# Construction is deliberately trivial: a CONSTANT error held for many ticks.  There is no
+# plant in the loop, so there is nothing to make it knife-edged -- a conforming
+# implementation drives to +I_CLAMP and STAYS, and the entire tail is a single repeated
+# value.  Its tolerance is correspondingly tight (the 'small' figure, not the 'regen' one):
+# no clamp-boundary dither exists to justify slack.
+# The error VALUE is one that the fw v18 self-conditioned coefficients demonstrably failed
+# (e = 5.0 was the case the test round found), so the vector is a regression test for the
+# exact reported defect, not merely a generic dwell.
+DWELL_REPLAY_E = 5.0            # m/s, constant velocity error
+DWELL_REPLAY_N = 600            # ticks (1.2 s at Ts = 2 ms) -- the fw v17/v18 cycle is
+                                # fully established within ~100 ticks
+DWELL_REPLAY_TAIL = 200         # samples that must be identical in a conforming replay
+_c_dwell = HeaderController()
+_e_dwell = np.full(DWELL_REPLAY_N, float(DWELL_REPLAY_E))
+_u_dwell = np.array([_c_dwell.step(float(v), sat=True) for v in _e_dwell])
+_dwell_tail_pp = float(np.ptp(_u_dwell[-DWELL_REPLAY_TAIL:]))
+print(f"  replay (c) rail dwell: e = {DWELL_REPLAY_E} m/s x {DWELL_REPLAY_N} ticks, "
+      f"final u = {_u_dwell[-1]:.6f} A, tail p-p = {_dwell_tail_pp:.3e} A")
+gate("replay (c) dwell reaches the rail and stays (the fw v10-v17 regression)",
+     _dwell_tail_pp <= 1e-9 and abs(_u_dwell[-1] - I_CLAMP) < 1e-9,
+     f"final u = {_u_dwell[-1]:.6f} A of {I_CLAMP:.0f} A, "
+     f"last {DWELL_REPLAY_TAIL} samples p-p = {_dwell_tail_pp:.3e} A")
+# Same firmware-arithmetic check the other two episodes get.
+_e_dwell_fw = [float(np.float32(float(f"{v:.9e}"))) for v in _e_dwell]
+_u_dwell_ref_fw = np.array([float(np.float32(float(f"{v:.9e}"))) for v in _u_dwell])
+_dwell_dev = float(np.max(np.abs(
+    _replay_scalar_order(_e_dwell_fw, f32_out=True) - _u_dwell_ref_fw)))
+REPLAY_TOL_DWELL = REPLAY_TOL_SMALL
+gate(f"replay (c) holds the tight tolerance on the firmware arithmetic path "
+     f"(< {REPLAY_TOL_DWELL*1e3:.2f} mA)", _dwell_dev < REPLAY_TOL_DWELL,
+     f"max |du| = {_dwell_dev*1e3:.2e} mA")
 
 with open(os.path.join(FIGDIR, "drive_siso_replay.csv"), "w", encoding="utf-8") as f:
     f.write("# drive_siso_replay.csv — GENERATED by synthesize_drive_siso.py.  "
@@ -1044,6 +1298,23 @@ with open(os.path.join(FIGDIR, "drive_siso_replay.csv"), "w", encoding="utf-8") 
     f.write("# episode 'regen' : the 2->0 m/s regen event, generated CLOSED-LOOP through "
             "these same\n#                   float32 coefficients, clamp ACTIVE, "
             "controller state starts at zero.\n")
+    f.write(f"# episode 'dwell' : NEW in fw v18.  A CONSTANT velocity error of "
+            f"{DWELL_REPLAY_E:.2f} m/s held for\n"
+            f"#                   {DWELL_REPLAY_N} ticks -- a long, uninterrupted dwell "
+            f"against the +{I_CLAMP:.0f} A rail.\n"
+            f"#                   This is the episode that the fw v10-v17 self-conditioned "
+            f"realization\n"
+            f"#                   FAILED: it entered a period-4, rail-to-rail (24 A p-p) "
+            f"relay limit\n"
+            f"#                   cycle instead of settling, because its saturated-mode "
+            f"matrix\n"
+            f"#                   AC = AD - BD*CD/DD carries a Tustin zero at exactly "
+            f"z = -1.  A\n"
+            f"#                   conforming implementation reaches +{I_CLAMP:.0f} A and "
+            f"STAYS there; the last\n"
+            f"#                   {DWELL_REPLAY_TAIL} samples must be identical.  Short "
+            f"episodes cannot detect this,\n"
+            f"#                   which is why the regen episode above did not.\n")
     # *** EVERY NUMBER BELOW IS MEASURED AND INTERPOLATED, NOT WRITTEN BY HAND. ***
     # Hand-written figures survived a re-synthesis once and understated the true
     # sensitivity by 3.5x; do not reintroduce a literal here.
@@ -1056,6 +1327,7 @@ with open(os.path.join(FIGDIR, "drive_siso_replay.csv"), "w", encoding="utf-8") 
             "# macros.  Never copy these numbers into a consumer; read them.\n")
     f.write(f"# tol,small,{REPLAY_TOL_SMALL:.17e}\n")
     f.write(f"# tol,regen,{REPLAY_TOL_REGEN:.17e}\n")
+    f.write(f"# tol,dwell,{REPLAY_TOL_DWELL:.17e}\n")
     f.write(f"#   episode 'small' : compare at {REPLAY_TOL_SMALL:.0e} A or tighter.  It "
             f"never approaches the clamp, so\n"
             f"#                     it is a clean test of the linear state recursion.  "
@@ -1103,7 +1375,10 @@ with open(os.path.join(FIGDIR, "drive_siso_replay.csv"), "w", encoding="utf-8") 
         f.write(f"small,{k},{e_:.17e},{u_:.17e}\n")
     for k, (e_, u_) in enumerate(zip(_e_sat, _u_sat)):
         f.write(f"regen,{k},{e_:.17e},{u_:.17e}\n")
-print(f"  replay vectors: {len(_e_small)} unsaturated + {len(_e_sat)} saturated samples")
+    for k, (e_, u_) in enumerate(zip(_e_dwell, _u_dwell)):
+        f.write(f"dwell,{k},{e_:.17e},{u_:.17e}\n")
+print(f"  replay vectors: {len(_e_small)} unsaturated + {len(_e_sat)} saturated "
+      f"+ {len(_e_dwell)} rail-dwell samples")
 
 
 def carr(v):
@@ -1192,9 +1467,26 @@ def _emit_coeffs(path, banner):
 // ~{AW_BOUNDARY[0]} m/s (final error < 1e-4 m/s, no limit cycle) and breaks from ~{AW_BOUNDARY[1]} m/s upward.
 // It still FAILS the 0->2 m/s gate, so the Hanus form remains REQUIRED for this baseline.
 // A correct implementation must condition the FULL
-// controller state (Hanus self-conditioned form, used in the synthesis sims):
+// controller state (Hanus conditioning, used in the synthesis sims):
 //     u_unsat = Cd x + Dd e ;  u = clamp(u_unsat) ;
-//     x[k+1]  = (Ad - Bd*Cd/Dd) x + Bd*u/Dd            (Dd = {ctrl_d.D[0, 0]:.9e})
+//     x[k+1]  = Ad x + Bd e + L*(u - u_unsat)          (Dd = {ctrl_d.D[0, 0]:.9e})
+//
+// *** fw v18: DO NOT USE THE SELF-CONDITIONED FORM L = Bd/Dd (i.e. AC) ***
+// fw v10-v17 shipped the special case L = Bd*Dd^-1, whose saturated-mode matrix is
+// AC = Ad - Bd*Cd/Dd.  The eigenvalues of AC are the controller's transmission ZEROS, and
+// one of them sits at EXACTLY z = -1 for a structural reason: this controller is a
+// PARALLEL sum of two TUSTIN-discretized branches, and both numerators carry a (z+1)
+// factor (the integrator's Tustin form is (kI*Ts/2)(z+1)/(z-1)), so the sum retains (z+1)
+// exactly -- at any weight rung, on any plant.  The saturated recursion therefore had ZERO
+// damping at Nyquist and could sustain a rail-to-rail relay oscillation.
+// MEASURED on constant-error dwells (e in [0.25, 12.0] step 0.25, 2000 ticks, p-p over the
+// last 200): the fw v17 coefficients fail 14 of 48 cases (e = 8.25..11.75) and the fw v18
+// coefficients fail 15 of 48, all at a full 24 A peak-to-peak, in a period-4 (++--) square
+// wave at 125 Hz.  It is reachable on hardware wherever a large error persists at the rail
+// without the vehicle responding -- e.g. the ML0151 ~428 ms VESC post-reversal dead window.
+// The fix is the general L above, pole-placed for damping; §8e gates it two ways.
+// L is emitted below as DRIVE_CTRL_L.  AC is still emitted, but ONLY as an identity
+// cross-check -- implementing with it reintroduces the defect.
 // i.e. this baseline costs a {ctrl_d.n}-state state-space realization on the Teensy, not a
 // biquad cascade.  Recorded as a Phase-6 "Teensy implementation cost" datapoint.
 // The realization is emitted below (DRIVE_CTRL_AD/BD/CD/DD/AC); replay reference vectors
@@ -1230,17 +1522,18 @@ static const float DRIVE_CTRL_SOS[DRIVE_CTRL_NSOS][5] = {{
 // anti-windup warning at the top of this file).
 //
 // Dimensions: n = {_n} states, 1 input (velocity error e [m/s]), 1 output (i_cmd [A]).
-//   AD is n x n, BD is n x 1, CD is 1 x n, DD is scalar, AC = AD - BD*CD/DD is n x n.
+//   AD is n x n, BD is n x 1, CD is 1 x n, DD is scalar, L is n x 1.
 // All arrays are ROW-MAJOR.
 //
 // Update law, once per DRIVE_CTRL_TS_US, with e = v_ref - v_actual [m/s]:
-//   u_unsat = sum_j CD[0][j]*x[j] + DD*e
-//   u       = clamp(u_unsat, DRIVE_CTRL_I_MIN, DRIVE_CTRL_I_MAX)     -> i_cmd [A]
-//   x_next[i] = sum_j AC[i][j]*x[j] + BD[i][0]*(u/DD)
+//   u_unsat   = sum_j CD[0][j]*x[j] + DD*e
+//   u         = clamp(u_unsat, DRIVE_CTRL_I_MIN, DRIVE_CTRL_I_MAX)   -> i_cmd [A]
+//   x_next[i] = sum_j AD[i][j]*x[j] + BD[i][0]*e + L[i][0]*(u - u_unsat)
 //   x <- x_next
-// Note the conditioning: the state update is driven by the CLAMPED u, not by e.  While
-// unsaturated this is algebraically identical to x_next = AD x + BD e (that identity is
-// what makes AD useful as a cross-check); once clamped it is what prevents windup.
+// Note the conditioning term L*(u - u_unsat): it is IDENTICALLY ZERO while unsaturated, so
+// the law is then exactly x_next = AD x + BD e -- the linear controller, unmodified.  Once
+// the clamp is active it de-winds every state, integrator and lag alike, with saturated-
+// mode dynamics (AD - L*CD) that are gated for damping in §8e.
 // Replay vectors for both regimes: figures/drive_siso_replay.csv.
 //
 // NUMERICAL CAUTION — read before implementing.
@@ -1254,12 +1547,17 @@ static const float DRIVE_CTRL_SOS[DRIVE_CTRL_NSOS][5] = {{
 //     vectors 1.7e-2 A away from anything this header can reproduce.)  AC is derived from
 //     the rounded AD/BD/CD/DD and then rounded, so AC == AD - BD*CD/DD holds to
 //     {_ac_resid:.1e} — a float32 rounding of AC's largest entry, not a compounding error.
-//   * ARITHMETIC.  The replay vectors assume a float64 (double) state recursion.  Running
-//     the recursion in float32 costs a further ~1e-2 A on the saturated regen episode —
-//     measured, not estimated (validate_drive_siso.py check 4).  The divergence appears
-//     at rail RELEASE rather than by slow accumulation, so it is not bounded by shortening
-//     the run.  A float32 state recursion is NOT adequate for this controller; use double
-//     (or fixed point with equivalent headroom).
+//   * ARITHMETIC.  The replay vectors assume a float64 (double) state recursion, and the
+//     firmware uses one.  RE-MEASURED at the fw v18 anti-windup change: a float32 state
+//     recursion now costs only ~1e-5 A on the saturated regen episode
+//     (validate_drive_siso.py check 4), down from the ~1e-2 A that the fw v10–v17
+//     self-conditioned form produced.  The improvement is real and has a cause — the
+//     retired form drove the trajectory along the clamp boundary, where a rounding
+//     difference flips clamp decisions, whereas the conditioned form crosses the boundary
+//     essentially once — but it is NOT a licence to drop to float32.  The realization still
+//     integrates its own rounding through the exact integrator, the margin is only ~2
+//     decades, and no gate bounds float32 behaviour on trajectories other than these two.
+//     Use double (or fixed point with equivalent headroom).
 // Replay comparisons should be toleranced on the OUTPUT (i_cmd), never on the individual
 // states — and the two episodes need DIFFERENT tolerances:
 //     'small' (unsaturated) : {REPLAY_TOL_SMALL:.0e} A or tighter.  Clean test of the linear recursion
@@ -1291,8 +1589,17 @@ static const float DRIVE_CTRL_DD = {_Dd:.17e}f;   // direct feedthrough, A per (
         f.write(cmat("DRIVE_CTRL_CD", CD_H, f"CD [1][{_n}] — output matrix"))
         f.write("\n")
         f.write(cmat("DRIVE_CTRL_AC", _Ac,
-                     f"AC [{_n}][{_n}] = AD - BD*CD/DD — the CONDITIONED state matrix "
-                     f"(use this one)"))
+                     f"AC [{_n}][{_n}] = AD - BD*CD/DD — the fw v10–v17 self-conditioned "
+                     f"state matrix. RETIRED as a runtime coefficient in fw v18 (its "
+                     f"eigenvalues are the controller's zeros, one of which is the Tustin "
+                     f"zero at z = -1 — see the ANTI-WINDUP warning above). Emitted only "
+                     f"as a cross-check of the AD/BD/CD/DD identity; DO NOT implement with it"))
+        f.write("\n")
+        f.write(cmat("DRIVE_CTRL_L", L_H.reshape(-1, 1),
+                     f"L [{_n}][1] — anti-windup CONDITIONING GAIN (fw v18). "
+                     f"USE THIS ONE: x_next = AD*x + BD*e + L*(u - u_unsat). "
+                     f"Placed so eig(AD - L*CD) = "
+                     f"{np.array2string(np.sort(AW_POLES.real), precision=6)}"))
 
 
 _emit_coeffs(os.path.join(HERE, "drive_siso_coeffs.h"), _BANNER_STUDY)
@@ -1522,15 +1829,48 @@ p-p < 1e-5 m/s):
 this baseline -- the honest restatement is "needed for large transients", not "needed
 always".  Note the direction of travel: lowering the clamp 20 -> 12 A lowers e_sat
 proportionally and therefore moves this boundary DOWN, toward the small-signal end.
-scheme used          = Hanus self-conditioning on the {ctrl_d.n}-state discrete realization:
+scheme used          = Hanus CONDITIONING (general-L form, fw v18) on the {ctrl_d.n}-state
+                       discrete realization:
                          u_unsat = Cd x + Dd e ; u = clamp(u_unsat)
-                         x[k+1]  = (Ad - Bd Cd/Dd) x + Bd u/Dd,  Dd = {ctrl_d.D[0, 0]:.9e}
+                         x[k+1]  = Ad x + Bd e + L (u - u_unsat),  Dd = {ctrl_d.D[0, 0]:.9e}
+                       The conditioning term is IDENTICALLY ZERO while unsaturated, so the
+                       law is then exactly x[k+1] = Ad x + Bd e -- the linear controller.
                        Exactly equivalent to the biquad+integrator form when unsaturated
                        (gated: max |diff| = {np.max(np.abs(_ub - _uc)):.2e} A over an 100-sample sequence).
+                       L (shipped float32)  = {np.array2string(L_H, precision=9, max_line_width=200)}
+                       eig(Ad - L Cd)       = {np.array2string(np.sort_complex(_ev_aw).real, precision=9, max_line_width=200)}
+RETIRED fw v10-v17   = the Hanus SELF-conditioned special case L = Bd/Dd, i.e.
+                         x[k+1] = (Ad - Bd Cd/Dd) x + Bd u/Dd
+                       Its saturated-mode matrix AC = Ad - Bd Cd/Dd has eigenvalues equal to
+                       the controller's transmission ZEROS, and one sits at EXACTLY z = -1:
+                       the controller is a PARALLEL sum of two TUSTIN branches and both
+                       numerators carry (z+1) (Tustin of the integrator is
+                       (kI Ts/2)(z+1)/(z-1)), so the factor survives at ANY weight rung on
+                       ANY plant.  Zero damping at Nyquist let a relay limit cycle live
+                       against the clamp: constant-error rail dwells went rail-to-rail at
+                       24 A p-p in a period-4 (++--) square wave at 125 Hz.  Measured over
+                       the sweep below: fw v17 coefficients fail 14 of 48 dwells
+                       (e = 8.25..11.75), fw v18 pre-fix 15 of 48.  The defect shipped from
+                       fw v10 and was NOT a v18 regression.
+                       eig(AC) (the defect)  = {np.array2string(np.sort_complex(np.linalg.eigvals(_AC_DESIGN)).real, precision=9, max_line_width=200)}
+saturated-mode gates = (a) every OSCILLATORY (non-positive-real) eigenvalue of (Ad - L Cd)
+                           must satisfy |lambda| < 1 - {AW_EIG_MARGIN:g}.
+                           Worst measured: {_osc_rad:.9f}.  Spectral radius {_aw_rad:.9f}
+                           (the slow positive-real integrator mode -- exempt by design: a
+                           decaying exponential cannot oscillate, and forcing it inward
+                           destroys the integrator's conditioning memory).
+                           Acceptance-checked to FAIL both retired spectra above.
+                       (b) LOAD-BEARING -- constant-error dwell sweep, e in [0.25, 12.00]
+                           step 0.25 ({_dwell_errs.size} cases), {_DWELL_TICKS} ticks, p-p over the last
+                           {_DWELL_TAIL}, through the SHIPPED float32 coefficients.
+                           Result: {_dwell_errs.size - len(_dwell_bad)}/{_dwell_errs.size} settle, worst tail p-p = {_dwell_worst:.3e} A
+                           (tol {_DWELL_TOL:.0e} A).  Gate (a) alone is NOT sufficient and would
+                           have passed the fw v18 pre-fix coefficients (max|eig(AC)| =
+                           0.9999990, strictly inside the circle, and still limit-cycling).
 Teensy cost note     = this baseline needs a {ctrl_d.n}-state state-space realization, NOT the
                        shipped biquad cascade.  Phase-6 implementation-cost datapoint.
 
-── time-domain (discrete, clamped, Hanus-conditioned) ──
+── time-domain (discrete, clamped, Hanus-conditioned general-L form) ──
 step 0->2 m/s : peak i = {np.max(np.abs(u1)):.3f} A, 2% settle = {t_set1:.3f} s,
                 overshoot = {ovs1:.1f} %, final err = {y1[-1]-2.0:.2e} m/s,
                 tail p-p = {np.ptp(tail):.2e} m/s (no limit cycle)
@@ -1564,7 +1904,9 @@ regen 2->0 m/s: peak i = {neg_peak:.3f} A, on the -{I_CLAMP:.0f} A rail {on_rail
 
 ── artifacts ──
 drive_siso_coeffs.h        (shipped biquad format + the {ctrl_d.n}-state Hanus realization
-                            AD/BD/CD/DD/AC; DRIVE_CTRL_ prefix -- study copy)
+                            AD/BD/CD/DD/L, plus AC as an identity cross-check ONLY --
+                            implementing with AC reintroduces the retired defect above;
+                            DRIVE_CTRL_ prefix -- study copy)
 ../teensy_controller/drive_controller_coeffs.h
                             (same content, firmware copy: included by drive_controller.h
                             and compiled in when USE_YOULA_DRIVE_CONTROLLER is 1)

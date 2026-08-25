@@ -793,6 +793,13 @@ class DriveD:
     def __init__(self, cd):
         self.Ad, self.Bd = cd.A, cd.B
         self.Cd, self.Dd = cd.C, float(cd.D[0, 0])
+        # NOTE (fw v18): this is the Hanus SELF-conditioned special case (L = Bd/Dd), which
+        # the SHIPPED firmware no longer uses -- eig(Ac) contains a Tustin zero at exactly
+        # z = -1, leaving the saturated mode undamped and admitting a rail-to-rail relay
+        # limit cycle. The shipped form is the general x[k+1] = Ad x + Bd e + L(sat(u) - u);
+        # see the fw v18 block in teensy_controller/drive_controller.h. This file is a FROZEN
+        # study artifact (see the staleness banner at the top) and is deliberately NOT
+        # updated -- do not copy this recursion into anything that runs.
         self.Ac = self.Ad - self.Bd @ self.Cd / self.Dd
         self.reset()
 

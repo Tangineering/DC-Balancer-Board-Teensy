@@ -40,8 +40,42 @@ must be inferred from the last records and flagged as inferred.
   the effective setpoint (clip against the conduction floor using an EMA of `I_tot`) and
   score tracking against that.
 - `v_act` is flywheel SURFACE speed (m/s); `v_sp` and profile commands share that scale.
-  Encoder: 240 counts/rev at r = 0.0762 m; fw v12+ uses the edge-period estimator
-  (timer-fine quantization, pitch 3.990 mm, delay ≈ (N+1)·pitch/(2v)); fw ≤ v11 used a
+  **Encoder geometry is PER-LOG — read `fw_version` before converting counts to metres:**
+  - fw ≤ 17: 120 slots, **240 counts/rev**, pitch **3.990 mm** (2π·0.0762/120).
+  - fw ≥ 18: 90 slots, **180 counts/rev**, pitch **5.3198 mm** (2π·0.0762/90).
+
+  The flywheel encoder DISC was physically replaced on 2026-08-25 (operator hand count:
+  90 slots, verified at 180 `encoderPos` counts/rev); the flywheel radius r = 0.0762 m and
+  the surface-speed convention did NOT change. So pre-v18 and v18+ logs were taken on
+  **physically different wheels**, and a cross-wheel `v_act` comparison is
+  physical-configuration-dependent: identical motion reads 4/3× higher on v18+ than on
+  v12–v17. Using the wrong pitch mis-scales the `encoder_pos` truth velocity by exactly
+  4/3, which is the same size as the artifacts the scale audit exists to catch — so state
+  which pitch you used in any encoder finding. (`tools/benchlog_analysis/figures.py`
+  selects the pitch from the log's own `fw_version`; a hand-rolled analysis must do the
+  same.) Note there have now been TWO wheels in the record's history, plus the fw v7→v8
+  slot-count transcription fix, so three distinct `v_act` scale eras exist.
+
+  **LOG-NUMBER BOUNDARY — `fw_version` is only a PROXY for the physical disc.** The two
+  are correlated, not identical: the firmware constant changed in the same session as the
+  swap, but a log taken on one wheel with the other wheel's firmware still flashed would be
+  mis-scaled by 4/3 with nothing in the header to reveal it. The boundary on record:
+
+  - **`ML0183` is the LAST log taken on the 120-slot thin-tooth wheel.** `ML0182` and
+    `ML0183` are pre-swap (operator-confirmed), so the `fw ≤ 17 → 3.990 mm` heuristic is
+    correct for them and no relabeling is needed.
+  - Every log numbered **above `ML0183`** should be on the 90-slot wheel. Check its
+    `fw_version` anyway.
+  - A hypothetical `fw ≤ 17` log taken on the **90-slot** wheel would be mis-scaled by the
+    heuristic. None is known to exist. If one turns up, use the explicit override —
+    `analysis_config.json`'s `"_encoder_pitch_m"` (metres), which wins over the
+    `fw_version` heuristic in `figures.py` — and **state the override in the finding**.
+  - The `encoder_diagnostics` figure stamps the pitch it used and where that value came
+    from in its bottom-right corner; a `FALLBACK` source (no `fw_version` parsed) is
+    printed in the warning colour and means the wheel was ASSUMED, not read.
+
+  fw v12+ uses the edge-period estimator (timer-fine quantization,
+  delay ≈ (N+1)·pitch/(2v) — which grew by 4/3 at v18 with the pitch); fw ≤ v11 used a
   ~113 ms boxcar with a 0.0177 m/s quantization ladder. A ladder in a v12+ trace is a
   smoking gun that the old estimator is somehow active.
 - Phase bytes (`ps_phase`, `dc_phase`, `trap_phase`) are **0-based**. Hold windows are
@@ -120,7 +154,9 @@ must be inferred from the last records and flagged as inferred.
 
 - **v6 schema** (92 B): v5 + `encoder_pos, enc_period_ref_us, enc_multi_pitch_count,
   enc_spurious_drop_count` (after `drive_x0`). `encoder_pos` is GROUND TRUTH
-  (240 counts/rev; truth v = dpos x 1.995 mm / dt). `enc_period_ref_us` is a LEVEL —
+  (truth v = dpos x (pitch/2) / dt, with the pitch taken from the log's own fw_version —
+  1.995 mm/count on fw ≤ 17's 240 counts/rev, **2.6599 mm/count on fw ≥ 18's 180
+  counts/rev**; see the encoder-geometry note above). `enc_period_ref_us` is a LEVEL —
   never difference it. The two counters are cumulative; a NEGATIVE diff means
   `encoderVelReset()` fired, not wrap.
 - **The x2 basin persists on fw v15/v16**, by a different mechanism than pre-v15: a

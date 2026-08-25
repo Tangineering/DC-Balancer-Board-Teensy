@@ -5552,10 +5552,14 @@ static void test_wheelspeed_units() {
     // 60-slot / 120-count pair differ by exactly the decode factor, so a regression to fw v7's
     // value would still satisfy the "counts == slots x decode" identity above — that is why both
     // numbers are pinned literally here rather than only related to each other.
-    check(fabsf(ENCODER_SLOTS_PER_REV - 120.0f) < 1e-6f,
-          "units: ENCODER_SLOTS_PER_REV == 120 (slots counted on the disc, 2026-08-16)");
-    check(fabsf(ENCODER_COUNTS_PER_REV - 240.0f) < 1e-6f,
-          "units: ENCODER_COUNTS_PER_REV == 240 (120 slots x quadrature decode)");
+    // fw v18 (2026-08-25): the encoder wheel itself was physically replaced, 120 -> 90 slots
+    // (operator hand count, cross-checked against a 180-count decoder reading over one hand-turned
+    // revolution). Pinned literally for the same "counts == slots x decode" reason as above — a
+    // regression to the fw v8-v17 120/240 pair would still satisfy that identity.
+    check(fabsf(ENCODER_SLOTS_PER_REV - 90.0f) < 1e-6f,
+          "units: ENCODER_SLOTS_PER_REV == 90 (encoder wheel replaced, operator hand count 2026-08-25)");
+    check(fabsf(ENCODER_COUNTS_PER_REV - 180.0f) < 1e-6f,
+          "units: ENCODER_COUNTS_PER_REV == 180 (90 slots x quadrature decode)");
     check(fabsf(FLYWHEEL_RADIUS_M - 0.0762f) < 1e-6f,
           "units: FLYWHEEL_RADIUS_M == 0.0762 m / 3.00 in (bench-measured 2026-08-13)");
     // fw v7 (2026-08-13, operator decision): MOTOR_I_CMD_MAX is the VESC-side phase-current
@@ -6045,11 +6049,12 @@ static void test_edge_period_estimator() {
 
     // (h) Zero-speed floor arithmetic: ENC_VEL_TIMEOUT_US (fw v13: 100 ms, was 150 ms) is the
     //     absolute stale-timeout floor, so the slowest speed the estimator can report before
-    //     declaring standstill is pitch / (100 ms) -- verify the documented ~0.0399 m/s figure
-    //     (3.990 mm / 100 ms) directly from the constants.
+    //     declaring standstill is pitch / (100 ms) -- verify the documented ~0.0532 m/s figure
+    //     (fw v18: 5.3198 mm / 100 ms, was ~0.0399 m/s at the 3.990 mm pitch) directly from the
+    //     constants.
     float floor_mps = ENC_SLOT_PITCH_M / (ENC_VEL_TIMEOUT_US * 1e-6f);
-    check(fabsf(floor_mps - 0.0399f) < 0.001f,
-          "(h) zero-speed floor: pitch / ENC_VEL_TIMEOUT_US matches the documented ~0.0399 m/s figure (fw v13)");
+    check(fabsf(floor_mps - 0.0532f) < 0.001f,
+          "(h) zero-speed floor: pitch / ENC_VEL_TIMEOUT_US matches the documented ~0.0532 m/s figure (fw v18)");
 
     // (i) encoderVelReset() clears the RING/edge-have state unconditionally, even though (fw v17) it
     //     no longer unconditionally zeroes v_actual when the wheel was demonstrably moving at speed
@@ -6461,10 +6466,11 @@ static void test_motor_zero_cutoff() {
     check(vesc.last_current == 0.0f, "(a) second in-band tick: still commands 0 A");
 
     // (b) Above the band: the normal controller path runs and issues a nonzero command for a
-    //     nonzero error.
+    //     nonzero error. fw v18: V_SP_ZERO_THRESH rose 0.05 -> 0.07, so 0.06 (the old "above the
+    //     band" probe) is now INSIDE the band; use 0.09, safely above the new threshold.
     reset_test_state();
     driveZeroCutActive = false;
-    v_setpoint = 0.06f;
+    v_setpoint = 0.09f;
     v_actual   = 0.0f;
     g_mock_micros = 10000;         // clear both builds' internal Ts gates (Youla 2ms / PI sampleTime)
     driveCtrl_lastMicros = 0;
@@ -6475,8 +6481,8 @@ static void test_motor_zero_cutoff() {
     check(fabsf(vesc.last_current) > 0.0f,
           "(b) above the band: the controller runs and issues a nonzero current for a nonzero error");
 
-    // (c) Crossing 0.06 -> 0.03 -> 0.06: re-entry starts clean. The controller state left nonzero
-    //     by (b) above must be zeroed on the 0.03 entry edge, and the 0.06 re-entry resumes from
+    // (c) Crossing 0.09 -> 0.03 -> 0.09: re-entry starts clean. The controller state left nonzero
+    //     by (b) above must be zeroed on the 0.03 entry edge, and the 0.09 re-entry resumes from
     //     that clean state (no leftover from the (b) run bleeds through the cutoff).
     v_setpoint = 0.03f;
     motorControl();
@@ -6485,16 +6491,34 @@ static void test_motor_zero_cutoff() {
           "(c) re-entry: the (b) run's nonzero controller state is zeroed on the entry edge");
     check(pi_motor_accum == 0.0f, "(c) re-entry: pi_motor_accum is likewise zeroed");
 
-    v_setpoint = 0.06f;
+    v_setpoint = 0.09f;
     g_mock_micros += 10000;        // clear the Ts gate again for the resumed run
     motorControl();
-    check(driveZeroCutActive == false, "(c) exit: driveZeroCutActive clears on the 0.06 tick");
+    check(driveZeroCutActive == false, "(c) exit: driveZeroCutActive clears on the 0.09 tick");
 
-    // (d) Constant pinning: V_SP_ZERO_THRESH == 0.05 exactly, and it sits ABOVE the estimator's
-    //     reportable floor (pitch / ENC_VEL_TIMEOUT_US) — computed from the constants, not as a
-    //     literal, since the ordering (cutoff strictly above the floor) is the load-bearing fact:
-    //     it guarantees the estimator can never report a nonzero speed inside the cutoff band.
-    check(fabsf(V_SP_ZERO_THRESH - 0.05f) < 1e-6f, "(d) V_SP_ZERO_THRESH == 0.05 m/s exactly");
+    // (c2) fw v18 NEW: a v_setpoint of 0.06 sits BETWEEN the old (0.05) and new (0.07) thresholds.
+    //      Under fw v17 semantics this used to regulate (above 0.05); fw v18 widens the band so it
+    //      now COASTS (0 A commanded, controller reset on the entry edge).
+    reset_test_state();
+    driveZeroCutActive = false;
+    v_setpoint = 0.06f;
+    v_actual   = 1.0f;
+    driveCtrl_x[0] = 5.0;
+    vesc.reset();
+    motorControl();
+    check(driveZeroCutActive == true,
+          "(c2) fw v18: 0.06 (between the old and new thresholds) now falls INSIDE the cutoff band");
+    check(vesc.last_current == 0.0f,
+          "(c2) fw v18: 0.06 commands 0 A under the widened threshold, where fw v17 would regulate");
+    check(driveCtrl_x[0] == 0.0, "(c2) fw v18: the entry edge still resets controller state at 0.06");
+
+    // (d) Constant pinning: V_SP_ZERO_THRESH == 0.07 exactly (fw v18: raised from 0.05 because the
+    //     90-slot disc widened ENC_SLOT_PITCH_M and pushed the estimator's floor past the old
+    //     threshold), and it sits ABOVE the estimator's reportable floor (pitch / ENC_VEL_TIMEOUT_US)
+    //     — computed from the constants, not as a literal, since the ordering (cutoff strictly above
+    //     the floor) is the load-bearing fact: it guarantees the estimator can never report a nonzero
+    //     speed inside the cutoff band.
+    check(fabsf(V_SP_ZERO_THRESH - 0.07f) < 1e-6f, "(d) V_SP_ZERO_THRESH == 0.07 m/s exactly (fw v18)");
     float estimator_floor = ENC_SLOT_PITCH_M / (ENC_VEL_TIMEOUT_US * 1e-6f);
     check(V_SP_ZERO_THRESH > estimator_floor,
           "(d) V_SP_ZERO_THRESH sits ABOVE the estimator's reportable floor (constants-derived, "
@@ -6506,8 +6530,9 @@ static void test_motor_zero_cutoff() {
 // ─── fw v13 safety-fix round: arm-threshold speed gate, embargo ageing (poison tripwire RETIRED
 //     fw v15 — see (b) below and test_encoder_v15_dpos_pitch_count() for its replacement) ────────
 // Covers the ISR/reader mechanisms added on top of the original fw v13 adaptive filter:
-//   (a) ENC_ADAPT_MAX_REF_US = 13000: the low-side spurious gate is dark once ref >= 13000us
-//       (< 0.307 m/s) — below that speed a spurious edge and a genuine hard launch are
+//   (a) ENC_ADAPT_MAX_REF_US = 15000 (fw v18, re-derived for the 90-slot pitch): the low-side
+//       spurious gate is dark once ref >= 15000us (< ~0.355 m/s) — below that speed a spurious
+//       edge and a genuine hard launch are
 //       indistinguishable by period ratio (S1/S2), so the filter steps aside and leaves sub-0.3 m/s
 //       glitch rejection to the Schmitt bodge. (fw v15 narrowed the scope of what this arms to the
 //       low-side gate alone — the missed-edge branch it used to also gate is gone.)
@@ -6524,8 +6549,9 @@ static void test_encoder_v13_safety_round() {
     test_group("fw v13 safety round: arm-threshold gate, embargo ageing (poison tripwire retired fw v15)");
 
     // ── (e) Constant pinning, first — the derived tests below are meaningless if these drift.
-    check(ENC_ADAPT_MAX_REF_US == 13000u,
-          "constants: ENC_ADAPT_MAX_REF_US == 13000 (arms the low-side spurious gate below ~0.307 m/s)");
+    check(ENC_ADAPT_MAX_REF_US == 15000u,
+          "constants: ENC_ADAPT_MAX_REF_US == 15000 (fw v18: arms the low-side spurious gate below "
+          "~0.355 m/s)");
     // ENC_KBRANCH_RUN_MAX is RETIRED in fw v15 along with encKBranchRun/encRefPoisonPending — no
     // replacement constant to pin (see (b) below).
 
@@ -6545,25 +6571,26 @@ static void test_encoder_v13_safety_round() {
         return v_actual;
     };
 
-    // ── (a) Arm-threshold bracket. ref just BELOW 13000us (12000us, ~0.332 m/s) keeps the filter
-    //     armed: a 0.3x spurious edge is rejected. ref just AT/ABOVE 13000us (14000us, ~0.285 m/s)
+    // ── (a) Arm-threshold bracket. ref just BELOW 15000us (14000us, ~0.380 m/s) keeps the filter
+    //     armed: a 0.3x spurious edge is rejected. ref just AT/ABOVE 15000us (16000us, ~0.332 m/s)
     //     goes dark: the identical 0.3x injection is ACCEPTED and changes the reading — this is the
-    //     deliberate S1/S2 trade-off, not a bug (sub-0.3 m/s glitch rejection belongs to the Schmitt
-    //     bodge, not this ISR-side filter).
-    {
-        float steady = arm_ref_at(12000);
-        uint32_t spurious_t = lastEdgeUs + (uint32_t)(0.3f * 12000.0f);
-        enc_cycle_fwd(spurious_t); updateWheelSpeed();
-        check(fabsf(v_actual - steady) < 1e-6f,
-              "(a) ref just BELOW ENC_ADAPT_MAX_REF_US (12000us): filter armed, 0.3x edge rejected");
-    }
+    //     deliberate S1/S2 trade-off, not a bug (sub-~0.355 m/s glitch rejection belongs to the
+    //     Schmitt bodge, not this ISR-side filter). (fw v18: brackets moved 12000/14000 -> 14000/16000
+    //     around the re-derived 15000us threshold.)
     {
         float steady = arm_ref_at(14000);
         uint32_t spurious_t = lastEdgeUs + (uint32_t)(0.3f * 14000.0f);
         enc_cycle_fwd(spurious_t); updateWheelSpeed();
+        check(fabsf(v_actual - steady) < 1e-6f,
+              "(a) ref just BELOW ENC_ADAPT_MAX_REF_US (14000us): filter armed, 0.3x edge rejected");
+    }
+    {
+        float steady = arm_ref_at(16000);
+        uint32_t spurious_t = lastEdgeUs + (uint32_t)(0.3f * 16000.0f);
+        enc_cycle_fwd(spurious_t); updateWheelSpeed();
         check(fabsf(v_actual - steady) > 1e-6f,
-              "(a) ref just AT/ABOVE ENC_ADAPT_MAX_REF_US (14000us): filter DARK, 0.3x edge "
-              "ACCEPTED (documented S1/S2 trade — sub-0.3 m/s belongs to the Schmitt bodge)");
+              "(a) ref just AT/ABOVE ENC_ADAPT_MAX_REF_US (16000us): filter DARK, 0.3x edge "
+              "ACCEPTED (documented S1/S2 trade — sub-~0.355 m/s belongs to the Schmitt bodge)");
     }
 
     // ── (b) RETIRED fw v15: poisoned-reference tripwire → retirement-negative test. Under fw v13,
@@ -6863,13 +6890,14 @@ static void test_encoder_v15_dpos_pitch_count() {
         check(encPeriodRefSeed == 1,
               "(5a) the seeded reference itself is fed the per-pitch period T, not the raw 2T span");
 
-        // (5b) While ref >= ENC_ADAPT_MAX_REF_US (the low-side gate dark, i.e. below ~0.307 m/s):
-        //      pitch counting still applies in full.
-        float slow = enc_v15_arm_at(14000);   // matches the existing "dark" bracket (fw v13 (a))
+        // (5b) While ref >= ENC_ADAPT_MAX_REF_US (the low-side gate dark, i.e. below ~0.355 m/s):
+        //      pitch counting still applies in full. (fw v18: 14000 -> 16000, matching the "dark"
+        //      bracket in test_encoder_v13_safety_round() (a) above the re-derived 15000us threshold.)
+        float slow = enc_v15_arm_at(16000);   // matches the existing "dark" bracket (fw v13 (a))
         check(encPeriodRefUs >= ENC_ADAPT_MAX_REF_US,
               "(5b) setup: the reference is armed at/above ENC_ADAPT_MAX_REF_US (gate dark)");
         (void)slow;
-        uint32_t t3 = enc_v15_lastEdgeUs + 2 * 14000u;   // |dpos|=4 while the low-side gate is dark
+        uint32_t t3 = enc_v15_lastEdgeUs + 2 * 16000u;   // |dpos|=4 while the low-side gate is dark
         enc_fire_tap_raw(t3, 4);
         updateWheelSpeed();
         check(encLastPitches == 2,
@@ -8366,6 +8394,22 @@ static void test_drive_controller_coeff_pinning() {
     // without re-synthesis would desync these silently -- this is the test that catches it.
     check(fabsf(DRIVE_CTRL_I_MAX - MOTOR_I_CMD_MAX) < 1e-6f,
           "drive ctrl: DRIVE_CTRL_I_MAX == MOTOR_I_CMD_MAX (clamp pairing the AW design depends on)");
+
+    // fw v18: DRIVE_CTRL_L is the general Hanus conditioning gain that replaces the defective
+    // self-conditioned L = BD/DD special case (AC, still emitted, is cross-check-only -- see the
+    // fw v18 block in drive_controller.h). If L were ever silently zeroed (e.g. a bad
+    // regeneration), the recursion x_next = AD*x + BD*e + L*(u - u_unsat) would degrade to the
+    // UNCONDITIONED linear controller with no anti-windup at all -- worse than even the defective
+    // AC form, since it would wind up on EVERY saturated mode, not just the z=-1 one. Pin that L
+    // exists, is finite, and is not the degenerate all-zero vector.
+    bool lFinite = true, lNonzero = false;
+    for (int i = 0; i < DRIVE_CTRL_NSTATES; i++) {
+        if (!std::isfinite(DRIVE_CTRL_L[i][0])) lFinite = false;
+        if (DRIVE_CTRL_L[i][0] != 0.0f) lNonzero = true;
+    }
+    check(lFinite, "drive ctrl: DRIVE_CTRL_L is finite in all 5 entries (fw v18 conditioning gain)");
+    check(lNonzero, "drive ctrl: DRIVE_CTRL_L is not the degenerate all-zero vector (a zeroed L "
+                     "silently disables anti-windup entirely)");
 }
 
 // Compile-time guard: driveCtrl_x must stay DOUBLE. The regen replay's runtime gate (5e-2 A,
@@ -8509,6 +8553,125 @@ static void test_drive_controller_replay_regen() {
         if (fabsf(DRIVE_REPLAY_REGEN_U[k] - DRIVE_CTRL_I_MIN) < 1e-4f) { finalUnclamped = false; break; }
     }
     check(finalUnclamped, "drive ctrl replay 'regen': final 20 samples are unclamped (recovery happened)");
+}
+
+static void test_drive_controller_replay_dwell() {
+    test_group("drive_controller.h replay: 'dwell' episode (600 samples, constant e=5.0, rail hold)");
+    reset_test_state();
+    driveControllerReset();
+
+    // fw v18: this episode is the regression that would have caught the fw v10-v17 general
+    // Hanus defect (AC's saturated-mode eigenvalue at z = -1, undamped under sustained
+    // saturation). It replays a constant e = 5.0 for 600 ticks; a conforming implementation
+    // (the pole-placed L conditioning gain) reaches +12 A and HOLDS there -- the reference's
+    // own last 200 samples are a single repeated value, per the changelog.
+    float worst = 0.0f;
+    for (int k = 0; k < DRIVE_REPLAY_DWELL_N; k++) {
+        float u = driveControllerStep(DRIVE_REPLAY_DWELL_E[k]);
+        float err = fabsf(u - DRIVE_REPLAY_DWELL_U[k]);
+        if (err > worst) worst = err;
+    }
+    check(worst < DRIVE_REPLAY_DWELL_TOL_A,
+          "drive ctrl replay 'dwell': matches Python reference (max |du| < the generated "
+          "DRIVE_REPLAY_DWELL_TOL_A)");
+
+    // The reference vector's own tail is a single held value -- confirm that property on the
+    // ARTIFACT (not just on the firmware's replay of it), so a future regenerated episode that
+    // silently stops holding is caught here too.
+    bool refTailHeld = true;
+    for (int k = DRIVE_REPLAY_DWELL_N - 200; k < DRIVE_REPLAY_DWELL_N; k++) {
+        if (fabsf(DRIVE_REPLAY_DWELL_U[k] - DRIVE_REPLAY_DWELL_U[DRIVE_REPLAY_DWELL_N - 1]) > 1e-6f) {
+            refTailHeld = false;
+            break;
+        }
+    }
+    check(refTailHeld,
+          "drive ctrl replay 'dwell': the reference's own last 200 samples are one repeated "
+          "value (a held rail, not a limit cycle)");
+
+    // The firmware's replay of the tail must likewise be a single held value, and it must be
+    // AT the rail (+12 A) -- this is the exact assertion that fails under the fw v10-v17
+    // self-conditioned form (see the dwell-sweep test below for the general case).
+    driveControllerReset();
+    float tail[200];
+    for (int k = 0; k < DRIVE_REPLAY_DWELL_N; k++) {
+        float u = driveControllerStep(DRIVE_REPLAY_DWELL_E[k]);
+        if (k >= DRIVE_REPLAY_DWELL_N - 200) tail[k - (DRIVE_REPLAY_DWELL_N - 200)] = u;
+    }
+    float tailMin = tail[0], tailMax = tail[0];
+    for (int i = 0; i < 200; i++) {
+        if (tail[i] < tailMin) tailMin = tail[i];
+        if (tail[i] > tailMax) tailMax = tail[i];
+    }
+    check((tailMax - tailMin) < 1e-3f,
+          "drive ctrl replay 'dwell': firmware's own last 200 samples are a single held value "
+          "(peak-to-peak < 1 mA), not a limit cycle");
+    check(fabsf(tail[199] - DRIVE_CTRL_I_MAX) < 1e-3f,
+          "drive ctrl replay 'dwell': the held tail value is the +12 A rail (DRIVE_CTRL_I_MAX)");
+}
+
+// ─── fw v18 constant-error dwell sweep (the regression the replay 'dwell' episode alone cannot
+//     generalize) ───────────────────────────────────────────────────────────────────────────────
+// The fw v10-v17 defect (AC's eigenvalue at z = -1) was NOT visible at every constant error --
+// the changelog reports fw v17 limit-cycling on 14/48 cases (e = 8.25...11.75) while e = 5.0
+// happened to converge ("stimulus luck"). A single-point probe (the old saturation-consistency
+// test, or the 'dwell' replay episode above, which is itself only e = 5.0) cannot catch a defect
+// that is stimulus-dependent. This sweeps a representative band of constant errors, runs each
+// long enough to expose a period-N limit cycle, and asserts the tail settles to ONE held value.
+static void test_drive_controller_dwell_sweep() {
+    test_group("drive_controller.h: constant-error dwell sweep (e in [0.25, 12.0]) settles to a "
+               "single held rail, no limit cycle");
+
+    // Representative subset: fine resolution through the historically-defective 8.25-11.75 band,
+    // coarser elsewhere, plus the canonical 5.0 (the old single-point probe) and the extremes.
+    static const float errors[] = {
+        0.25f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f,
+        8.25f, 8.5f, 8.75f, 9.0f, 9.25f, 9.5f, 9.75f, 10.0f, 10.25f, 10.5f,
+        10.75f, 11.0f, 11.25f, 11.5f, 11.75f, 12.0f,
+    };
+    const int NTICKS = 2000;   // long enough to expose a 125 Hz period-4 cycle many times over
+
+    for (float e : errors) {
+        reset_test_state();
+        driveControllerReset();
+        float tail[200];
+        for (int k = 0; k < NTICKS; k++) {
+            float u = driveControllerStep(e);
+            if (k >= NTICKS - 200) tail[k - (NTICKS - 200)] = u;
+        }
+        float tailMin = tail[0], tailMax = tail[0];
+        for (int i = 0; i < 200; i++) {
+            if (tail[i] < tailMin) tailMin = tail[i];
+            if (tail[i] > tailMax) tailMax = tail[i];
+        }
+        char msg[160];
+        snprintf(msg, sizeof(msg),
+                 "dwell sweep e=%.2f: tail settles to a single held value (p-p < 1 mA), no limit "
+                 "cycle", (double)e);
+        check((tailMax - tailMin) < 1e-3f, msg);
+    }
+
+    // Negative errors exercise the opposite rail through the same L conditioning; a small
+    // representative check (the sweep above already covers the defect-prone positive band).
+    for (float e : {-5.0f, -10.0f}) {
+        reset_test_state();
+        driveControllerReset();
+        float tail[200];
+        for (int k = 0; k < NTICKS; k++) {
+            float u = driveControllerStep(e);
+            if (k >= NTICKS - 200) tail[k - (NTICKS - 200)] = u;
+        }
+        float tailMin = tail[0], tailMax = tail[0];
+        for (int i = 0; i < 200; i++) {
+            if (tail[i] < tailMin) tailMin = tail[i];
+            if (tail[i] > tailMax) tailMax = tail[i];
+        }
+        char msg[160];
+        snprintf(msg, sizeof(msg),
+                 "dwell sweep e=%.2f: tail settles to a single held value (p-p < 1 mA), no limit "
+                 "cycle", (double)e);
+        check((tailMax - tailMin) < 1e-3f, msg);
+    }
 }
 
 static void test_drive_controller_wrapper_gating() {
@@ -14807,6 +14970,8 @@ int main() {
     test_drive_controller_ac_identity();
     test_drive_controller_replay_small();
     test_drive_controller_replay_regen();
+    test_drive_controller_replay_dwell();
+    test_drive_controller_dwell_sweep();
     test_drive_controller_wrapper_gating();
     test_drive_controller_motor_control_youla();
     test_drive_controller_reset_state();

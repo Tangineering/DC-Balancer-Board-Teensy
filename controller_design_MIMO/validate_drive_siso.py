@@ -86,6 +86,9 @@ AD = find_2d_array("DRIVE_CTRL_AD", NSTATES, NSTATES)
 BD = find_2d_array("DRIVE_CTRL_BD", NSTATES, 1)
 CD = find_2d_array("DRIVE_CTRL_CD", 1, NSTATES)
 AC = find_2d_array("DRIVE_CTRL_AC", NSTATES, NSTATES)
+# fw v18: the shipped anti-windup conditioning gain.  Replaces AC as the runtime
+# coefficient -- see run_hanus() for why.
+L = find_2d_array("DRIVE_CTRL_L", NSTATES, 1)
 
 # SOS block
 sos_pat = re.compile(r"DRIVE_CTRL_SOS\[DRIVE_CTRL_NSOS\]\[5\]\s*=\s*\{(.*?)\n\};", re.S)
@@ -127,13 +130,23 @@ for ep in episodes:
 
 
 def run_hanus(e_seq, dtype=np.float64):
-    Ac = AC.astype(dtype)
+    """Hanus CONDITIONED recursion, fw v18 general-L form.
+
+    x[k+1] = AD x + BD e + L*(sat(u) - u).  The fw v10-v17 self-conditioned special case
+    (L = BD/DD, i.e. x[k+1] = AC x + BD*sat(u)/DD) was retired because eig(AC) contains a
+    Tustin zero at exactly z = -1, which left the saturated mode undamped and allowed a
+    rail-to-rail relay limit cycle; see the fw v18 block in teensy_controller/
+    drive_controller.h.  AC is still validated as an identity in check1, but nothing
+    replays through it any more.
+    """
+    Ad = AD.astype(dtype)
     Bd = BD.astype(dtype)
     Cd = CD.astype(dtype)
+    Ll = L.astype(dtype)
     Dd = dtype(DD)
     imin = dtype(I_MIN)
     imax = dtype(I_MAX)
-    n = Ac.shape[0]
+    n = Ad.shape[0]
     x = np.zeros((n, 1), dtype=dtype)
     u_out = np.zeros(len(e_seq), dtype=dtype)
     clamped = np.zeros(len(e_seq), dtype=bool)
@@ -143,7 +156,7 @@ def run_hanus(e_seq, dtype=np.float64):
         u = min(max(u_unsat, imin), imax)
         clamped[i] = (u != u_unsat)
         u_out[i] = u
-        x = Ac @ x + Bd * (u / Dd)
+        x = Ad @ x + Bd * e + Ll * (u - u_unsat)
     return u_out, clamped
 
 
@@ -303,7 +316,7 @@ for k in range(NSTEPS):
     e = v_ref - v[0, 0]
     u_unsat = (CD @ xc)[0, 0] + DD * e
     u = min(max(u_unsat, I_MIN), I_MAX)
-    xc = AC @ xc + BD * (u / DD)
+    xc = AD @ xc + BD * e + L * (u - u_unsat)   # fw v18 conditioned form (see run_hanus)
     v = Ad_p @ v + Bd_p * u
     vs.append(v[0, 0])
     us.append(u)

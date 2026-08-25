@@ -19,6 +19,7 @@ format is left in place rather than deleted, since make_all has no way to
 tell "never applicable" apart from "not regenerated this run".
 """
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -45,6 +46,26 @@ def _find_csv(run_dir):
         raise ValueError(
             f"expected exactly one .csv in {run_dir}, found {len(csvs)}: {names}")
     return csvs[0]
+
+
+_FW_VERSION_RE = re.compile(r"fw_version=(\d+)")
+
+
+def _read_fw_version(run_dir):
+    """FW_VERSION from run_dir/decode_report.txt, or None.
+
+    ingest_log writes the decoder's banner verbatim; its first line carries
+    `fw_version=N` (or `fw_version=pre-versioning` on a format-v1 header, which
+    has no such field). Returns an int, or None when the report is missing,
+    unreadable, or reports no numeric version -- callers must treat None as
+    "unknown" rather than as any particular firmware.
+    """
+    try:
+        text = (Path(run_dir) / "decode_report.txt").read_text()
+    except OSError:
+        return None
+    m = _FW_VERSION_RE.search(text)
+    return int(m.group(1)) if m else None
 
 
 def make_all(run_dir, data=None, cfg=None):
@@ -76,6 +97,14 @@ def make_all(run_dir, data=None, cfg=None):
     # shallow copy, so a caller-supplied cfg is not mutated).
     cfg = dict(cfg)
     cfg.setdefault("_run_name", run_dir.name)
+    # The encoder slot pitch became a PER-LOG quantity at the 2026-08-25 wheel
+    # change (120 slots -> 90, firmware fw v18), so figures that convert
+    # encoder_pos into a distance must know which disc produced the log. The
+    # CSV carries no fw column, but ingest_log wrote the decoder's banner to
+    # decode_report.txt -- read it back here and inject it the same optional
+    # way as _run_name, so the make_all signature (a GUI contract) is unchanged
+    # and a hand-built cfg simply falls back to the pre-v18 pitch.
+    cfg.setdefault("_fw_version", _read_fw_version(run_dir))
 
     saved = []
     for name, builder in figures.FIGURES:

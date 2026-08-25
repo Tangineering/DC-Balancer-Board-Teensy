@@ -20,20 +20,49 @@
 // current, and the synthesis plant already maps di_cmd [A] → dv [m/s]. Dividing here
 // would rescale the loop gain by 1/motorConstant and invalidate every synthesis gate.
 //
-// Structure — Hanus self-conditioned state-space form, NOT a biquad cascade:
+// Structure — Hanus CONDITIONED state-space form, NOT a biquad cascade:
 //
 //   u_unsat   = Σ_j CD[0][j]·x[j] + DD·e
 //   u         = clamp(u_unsat, DRIVE_CTRL_I_MIN, DRIVE_CTRL_I_MAX)      [A]
-//   x_next[i] = Σ_j AC[i][j]·x[j] + BD[i][0]·(u / DD)
+//   x_next[i] = Σ_j AD[i][j]·x[j] + BD[i][0]·e + L[i][0]·(u − u_unsat)
 //
-// Anti-windup: the CLAMPED u drives the state update — that IS the anti-windup, and it
-// conditions the FULL controller state, not just the integrator. Do NOT "improve" this
-// into share_controller.h's integrator-only back-calculation: the non-integral branch R
-// has a low-frequency gain of 745.5 A/(m/s), so against the ±12 A clamp its lag states
-// saturate and wind up independently of the integrator (measured: a −0.48 m/s standing
-// error and a 22 mm/s limit cycle on the 0→2 m/s step). The full rationale, including the
-// step size at which integrator-only AW starts to fail, is in the header block of
-// drive_controller_coeffs.h.
+// Anti-windup: the conditioning term L·(u − u_unsat) is IDENTICALLY ZERO while unsaturated
+// — so the law is then exactly the linear controller x_next = AD·x + BD·e — and once the
+// clamp is active it de-winds the FULL controller state, not just the integrator. Do NOT
+// "improve" this into share_controller.h's integrator-only back-calculation: the
+// non-integral branch R has a low-frequency gain of 454.4 A/(m/s) (Gs_red(0), re-measured
+// per synthesis run — source: controller_design_MIMO/drive_siso_metrics.txt), so against
+// the ±12 A clamp it alone saturates for |e| > 26.4 mm/s and its lag states wind up
+// independently of the integrator (measured: a
+// −0.48 m/s standing error and a 22 mm/s limit cycle on the 0→2 m/s step). The full
+// rationale, including the step size at which integrator-only AW starts to fail, is in the
+// header block of drive_controller_coeffs.h.
+//
+// *** fw v18 — WHY L IS A COEFFICIENT AND NOT BD/DD. Read before touching this. ***
+// fw v10–v17 used the Hanus SELF-conditioned special case L = BD·DD⁻¹, which collapses the
+// update to x_next = AC·x + BD·(u/DD) with AC = AD − BD·CD/DD. That form is DEFECTIVE on
+// this controller, and structurally so:
+//   * eig(AC) are the discrete controller's transmission ZEROS, and one of them sits at
+//     EXACTLY z = −1. That is not bad luck — the controller is a PARALLEL sum of two
+//     TUSTIN-discretized branches, and both numerators carry a (z+1) factor (Tustin of the
+//     integrator is (kI·Ts/2)(z+1)/(z−1)), so the sum retains (z+1) exactly. It is there at
+//     any weight rung, on any plant, and no re-synthesis can move it.
+//   * A saturated-mode eigenvalue on the unit circle at Nyquist means ZERO damping for
+//     alternating components, which lets a sustained relay oscillation live against the
+//     clamp. MEASURED on constant-error rail dwells (e ∈ [0.25, 12.0] step 0.25, 2000
+//     ticks, float32 coefficients + double state — the shipped arithmetic): the fw v17
+//     coefficients limit-cycle on 14 of 48 cases (e = 8.25…11.75) and the fw v18 ones on
+//     15 of 48, every failure a full 24 A peak-to-peak period-4 (++−−) square wave at
+//     125 Hz. Found by the fw v18 test round's long saturation dwell; it had shipped
+//     undetected since fw v10 because every prior sim was linear or a short transient.
+//   * It is reachable on hardware, not just in a harness: any sustained large error at the
+//     rail with no vehicle response does it — e.g. the documented ML0151 ~428 ms VESC
+//     post-reversal dead window, which departure #1 below already flags as invisible here.
+// THE FIX is the general conditioning gain above, POLE-PLACED so eig(AD − L·CD) is damped;
+// synthesize_drive_siso.py §8e gates it two ways (an oscillatory-eigenvalue margin and,
+// load-bearing, the full dwell sweep). Unsaturated behaviour is unchanged in exact
+// arithmetic, so no linear synthesis gate moved. DRIVE_CTRL_AC is still emitted but is a
+// CROSS-CHECK ONLY — implementing with it reintroduces the defect.
 //
 // Source: Hanus, Kinnaert & Henrotte, "Conditioning Technique, a General Anti-windup and
 // Bumpless Transfer Method," Automatica 23(6):729-739, 1987
@@ -50,23 +79,35 @@
 //      return. Documented in docs/VESC_MOTOR_INTEGRATION.md ("invisible to the drive
 //      controller's anti-windup"). Do not close this by feeding back VESC-reported current
 //      without a synthesis round (UART latency + noise into a marginally-stable recursion).
-//   2. The paper's stability condition 3 requires A − B·D⁻¹·C (our AC) asymptotically
-//      stable; ours is only MARGINALLY stable (exact-integrator structure). The synthesis
-//      substitutes an empirical gate (saturated-vs-linear excursion, windup_excess) and the
-//      double state below for the theorem.
+//   2. The paper's stability condition 3 requires the saturated-mode matrix to be
+//      asymptotically stable. Under the paper's own self-conditioned gain (A − B·D⁻¹·C, our
+//      AC) that condition is VIOLATED here — see the fw v18 block above. fw v18 therefore
+//      leaves the paper's special case behind and pole-places L instead, which is what the
+//      condition actually asks for. It is still only satisfied in the practical sense: the
+//      conditioned dynamics of an exact integrator necessarily retain a slow positive-real
+//      mode (~0.9997), which is a decaying exponential and cannot oscillate, so the
+//      synthesis gates the OSCILLATORY modes for margin and backs that with the empirical
+//      dwell sweep plus the saturated-vs-linear excursion (windup_excess) check.
 //   3. Mode transitions use hard resets (driveControllerReset()) instead of the paper's
 //      converged-initialization bumpless transfer — determinism over bumplessness.
 // The biproperness requirement (paper eq. 12) is why DD ≠ 0 is load-bearing: at DD → 0 the
-// u/DD conditioning becomes impossible, and the synthesis emitter owns that guarantee.
+// conditioning becomes impossible, and the synthesis emitter owns that guarantee. (Note it
+// is also WHY the z = −1 zero exists: DD ≠ 0 forces the Tustin discretization that puts it
+// there, so the two are not independently negotiable — which is why the fix is L, not a
+// different discretization.)
 //
 // Arithmetic precision: the state vector is DOUBLE, deliberately. The realization carries
 // an exact integrator (an eigenvalue at 1) plus a second mode at ~0.9999 alongside CD
-// entries of order 50, so perturbations are integrated rather than damped. A float32 state
-// recursion was MEASURED to diverge by ~1.4e-2 A at rail release on the saturated regen
-// episode (validate_drive_siso.py check 4) — not a slow accumulation that a shorter run
-// bounds. The Teensy 4.1 FPU runs the ~35 double MACs per tick (5 for the output, 30 for the
-// 5x5 state update) at 500 Hz with enormous
-// margin. The COEFFICIENTS stay the shipped float32 values (the reference replay vectors
+// entries of order 50, so perturbations are integrated rather than damped.
+// RE-MEASURED at the fw v18 anti-windup change: a float32 state recursion now diverges by
+// only ~1.1e-5 A on the saturated regen episode (validate_drive_siso.py check 4), down from
+// the ~1.4e-2 A the fw v10–v17 self-conditioned form produced — that form dragged the
+// trajectory along the clamp boundary where a rounding difference flips clamp decisions,
+// while the conditioned form crosses it essentially once. The margin is nonetheless only
+// ~2 decades, nothing gates float32 on any trajectory other than the two replay episodes,
+// and the exact integrator still accumulates its own rounding — so the double state STAYS.
+// The Teensy 4.1 FPU runs the ~40 double MACs per tick (5 for the output, 30 for the 5x5
+// state update, 5 for the conditioning term) at 500 Hz with enormous margin. The COEFFICIENTS stay the shipped float32 values (the reference replay vectors
 // were generated from exactly those roundings); they are promoted to double per operation.
 //
 // Update cadence: driveControllerStep() advances the difference equations and must be
@@ -111,9 +152,15 @@ static inline float driveControllerStep(float e) {
     for (int j = 0; j < DRIVE_CTRL_NSTATES; j++)
         u += (double)DRIVE_CTRL_CD[0][j] * driveCtrl_x[j];
 
+    // The PRE-clamp output, kept in DOUBLE. fw v18 makes this load-bearing: the state
+    // update below needs (u_clamped − u_unsat), and it must be the double value. Using the
+    // float32 log capture instead would inject a ~1e-7 A rounding into the recursion, which
+    // this near-integrating realization amplifies — the same reason the state is double.
+    const double uUnsat = u;
+
     // Capture the PRE-clamp output for the bench log (observability only — see the
-    // driveCtrl_uUnsat declaration). Deliberately BEFORE the clamp below and not used by any
-    // line that follows: the update law itself is untouched by this round.
+    // driveCtrl_uUnsat declaration). Deliberately BEFORE the clamp below; the update law
+    // reads uUnsat above, never this float32 copy.
     driveCtrl_uUnsat = (float)u;
 
     // Actuator clamp. DRIVE_CTRL_I_MAX is synthesized to equal the firmware's
@@ -126,15 +173,18 @@ static inline float driveControllerStep(float e) {
     if (u > uMax)      u = uMax;
     else if (u < uMin) u = uMin;
 
-    // Self-conditioned state update, driven by the CLAMPED u. While unsaturated this is
-    // algebraically identical to x_next = AD·x + BD·e; once clamped it is what prevents
-    // windup of every state, integrator and lag alike.
-    const double uOverD = u / (double)DRIVE_CTRL_DD;
+    // Conditioned state update (fw v18). The conditioning error is EXACTLY ZERO whenever
+    // the clamp is inactive, so this is bit-for-bit x_next = AD·x + BD·e in that case — the
+    // unmodified linear controller. Once clamped, L·dCond de-winds every state, integrator
+    // and lag alike, with saturated-mode dynamics (AD − L·CD) that the synthesis gates for
+    // damping. See the fw v18 block at the top for why L is NOT BD/DD.
+    const double dCond = u - uUnsat;
     double xNext[DRIVE_CTRL_NSTATES];
     for (int i = 0; i < DRIVE_CTRL_NSTATES; i++) {
-        double acc = (double)DRIVE_CTRL_BD[i][0] * uOverD;
+        double acc = (double)DRIVE_CTRL_BD[i][0] * (double)e
+                   + (double)DRIVE_CTRL_L[i][0] * dCond;
         for (int j = 0; j < DRIVE_CTRL_NSTATES; j++)
-            acc += (double)DRIVE_CTRL_AC[i][j] * driveCtrl_x[j];
+            acc += (double)DRIVE_CTRL_AD[i][j] * driveCtrl_x[j];
         xNext[i] = acc;
     }
     for (int i = 0; i < DRIVE_CTRL_NSTATES; i++) driveCtrl_x[i] = xNext[i];

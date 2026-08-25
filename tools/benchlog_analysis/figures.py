@@ -70,10 +70,74 @@ COLORS = {
 }
 
 # Encoder slot pitch [m] -- one quadrature-decoded count is half a slot
-# pitch (x2 decode); pitch itself is 2*pi*FLYWHEEL_RADIUS_M/ENCODER_SLOTS
-# = 2*pi*0.0762/120 = 3.990e-3 m (see CLAUDE.md fw v12 addendum). Used only
-# for the offline truth-velocity audit below -- not a control-path constant.
-ENCODER_PITCH_M = 3.990e-3
+# pitch (x2 decode); pitch itself is 2*pi*FLYWHEEL_RADIUS_M/ENCODER_SLOTS.
+# Used only for the offline truth-velocity audit below -- not a control-path
+# constant.
+#
+# THE PITCH IS PER-LOG, NOT A CONSTANT. The flywheel encoder DISC was
+# physically replaced on 2026-08-25 (operator hand count: 90 slots, verified
+# at 180 encoderPos counts/rev), and the firmware followed in fw v18.
+# FLYWHEEL_RADIUS_M is unchanged (same flywheel, new disc), so only the slot
+# count moved:
+#   fw <= 17 : 120 slots, 240 counts/rev, 2*pi*0.0762/120 = 3.990e-3 m
+#   fw >= 18 :  90 slots, 180 counts/rev, 2*pi*0.0762/90  = 5.3198e-3 m
+# Applying the wrong one mis-scales the encoder_pos truth velocity by 4/3 --
+# which is exactly the size of the x2-family artifacts this audit exists to
+# catch, so it must be selected from the log's own fw_version. See
+# _encoder_pitch_m() below; a log whose fw_version is unknown falls back to
+# the pre-v18 value, matching every log on record before 2026-08-25.
+ENCODER_PITCH_M_PRE_V18 = 3.990e-3     # 120-slot disc, fw <= 17
+ENCODER_PITCH_M_V18 = 5.3198e-3        # 90-slot disc, fw >= 18
+ENCODER_WHEEL_CHANGE_FW = 18           # first fw version on the 90-slot disc
+
+# Back-compat alias: the pre-v18 value, kept so any external caller that
+# imported the old module-level constant still resolves. New code must use
+# _encoder_pitch_m(cfg).
+ENCODER_PITCH_M = ENCODER_PITCH_M_PRE_V18
+
+
+def _encoder_pitch_m(cfg):
+    """Encoder slot pitch [m] for THIS log.  Returns (pitch_m, source_str).
+
+    Resolution order:
+      1. cfg["_encoder_pitch_m"] -- an EXPLICIT override, wins over everything.
+      2. cfg["_fw_version"] -- the heuristic, injected by make_all() from the
+         log's decoded header (same optional-injection pattern as
+         cfg["_run_name"]).
+      3. the pre-v18 120-slot pitch, as a fallback.
+
+    WHY AN OVERRIDE EXISTS.  fw_version is only a PROXY for which physical disc
+    was on the flywheel.  The two are correlated because the firmware constant
+    changed in the same session as the swap, but they are not the same fact: a
+    log taken on the new 90-slot wheel with an fw <= 17 build still on the board
+    would be mis-scaled by 4/3 under rule 2, and nothing in the header could
+    reveal it.  No such log is known to exist -- ML0182/ML0183 are the newest
+    pre-swap logs and were taken on the OLD 120-slot wheel, so rule 2 is correct
+    for every log on record (see the log-number boundary in
+    .claude/skills/benchlog-agent-analysis/references/log-conventions.md).  The
+    override is the documented escape hatch if one ever turns up, or for a
+    hand-driven analysis of a wheel not covered by the heuristic: set
+    analysis_config.json's "_encoder_pitch_m" (or pass it in cfg) and state the
+    value in the finding.
+    """
+    if cfg:
+        override = cfg.get("_encoder_pitch_m")
+        if override is not None:
+            try:
+                val = float(override)
+            except (TypeError, ValueError):
+                val = None
+            if val is not None and val > 0.0:
+                return val, f"explicit override ({val*1e3:.4f} mm)"
+    fw = cfg.get("_fw_version") if cfg else None
+    try:
+        fw = int(fw)
+    except (TypeError, ValueError):
+        return (ENCODER_PITCH_M_PRE_V18,
+                "FALLBACK: no fw_version parsed, assuming the 120-slot wheel")
+    if fw >= ENCODER_WHEEL_CHANGE_FW:
+        return ENCODER_PITCH_M_V18, f"fw v{fw} -> 90-slot wheel"
+    return ENCODER_PITCH_M_PRE_V18, f"fw v{fw} -> 120-slot wheel"
 
 # Deviation threshold for shading |v_act/v_truth - 1| > this fraction in the
 # encoder_diagnostics scale-audit panel.
@@ -734,10 +798,13 @@ def drive_controller_conditioning(data, cfg):
     return fig
 
 
-def _encoder_truth_velocity(encoder_pos, t_s, window_s=0.050):
+def _encoder_truth_velocity(encoder_pos, t_s, pitch_m, window_s=0.050):
     """Offline truth velocity from raw encoder_pos via a centered diff.
 
-    v[i] = (encoder_pos[hi] - encoder_pos[lo]) * (ENCODER_PITCH_M / 2) / dt
+    v[i] = (encoder_pos[hi] - encoder_pos[lo]) * (pitch_m / 2) / dt
+
+    pitch_m is the log's own slot pitch from _encoder_pitch_m(cfg) -- it is a
+    per-log quantity since the 2026-08-25 wheel change, not a constant.
 
     lo/hi are the samples nearest t_s[i] -/+ window_s/2 (t_s is monotonic
     non-decreasing, so np.searchsorted locates them in O(log n)). The /2
@@ -764,7 +831,7 @@ def _encoder_truth_velocity(encoder_pos, t_s, window_s=0.050):
         dt = t_s[hi] - t_s[lo]
         if dt <= 0:
             continue
-        v[i] = (p_hi - p_lo) * (ENCODER_PITCH_M / 2.0) / dt
+        v[i] = (p_hi - p_lo) * (pitch_m / 2.0) / dt
     return v
 
 
@@ -807,7 +874,8 @@ def encoder_diagnostics(data, cfg):
     """Fig 9 (v6 only): encoder scale audit and edge-quality diagnostics.
 
     Panel (a): offline truth velocity computed directly from encoder_pos
-    (centered diff, ENCODER_PITCH_M/2 per count) overlaid with the logged
+    (centered diff, pitch/2 per count, pitch selected from the log's
+    fw_version by _encoder_pitch_m) overlaid with the logged
     v_act -- this is the scale audit for the online edge-period estimator.
     Intervals where |v_act/v_truth| deviates more than
     ENC_SCALE_DEVIATION_FRAC from 1 are shaded.
@@ -837,11 +905,18 @@ def encoder_diagnostics(data, cfg):
     encoder_pos = data["encoder_pos"]
     v_act = data["v_act"]
 
-    v_truth = _encoder_truth_velocity(encoder_pos, t)
+    # Per-log pitch (the encoder disc changed 2026-08-25 / fw v18).  The SOURCE is
+    # annotated on the figure: every quantity in panels (a)/(b) scales with this
+    # number, so a reader must be able to see which wheel was assumed without
+    # going back to the decode report.
+    pitch_m, pitch_src = _encoder_pitch_m(cfg)
+    pitch_is_fallback = pitch_src.startswith("FALLBACK")
+
+    v_truth = _encoder_truth_velocity(encoder_pos, t, pitch_m)
 
     with np.errstate(divide="ignore", invalid="ignore"):
         ref_s = data["enc_period_ref_us"] * 1.0e-6
-        v_implied_mag = np.where(ref_s > 0, ENCODER_PITCH_M / ref_s, np.nan)
+        v_implied_mag = np.where(ref_s > 0, pitch_m / ref_s, np.nan)
         sign = np.where(np.isfinite(v_act) & (v_act != 0.0),
                          np.sign(v_act), 1.0)
         v_implied = sign * v_implied_mag
@@ -872,6 +947,17 @@ def encoder_diagnostics(data, cfg):
     _style_axes(ax0, ylabel="Velocity [m/s]")
     ax0.set_title("Scale audit: encoder-derived truth vs. logged v_act",
                   color=TEXT_COLOR, fontsize=11, loc="left")
+    # Pitch provenance (L1), right-aligned on the panel it governs. Panels (a) and (b)
+    # both scale linearly with the pitch, so a wrong wheel assumption shifts the truth
+    # velocity by 4/3 -- the same size as the x2-family artifacts this figure exists to
+    # detect. A fallback resolution is called out in the warning colour: it means the
+    # wheel was ASSUMED, not read. Placed as an axes title rather than a figure-level
+    # text so constrained_layout reserves space for it instead of overlapping the
+    # x-axis label.
+    ax0.set_title(f"slot pitch {pitch_m*1e3:.4f} mm  [{pitch_src}]"
+                  + ("\nVERIFY THE WHEEL" if pitch_is_fallback else ""),
+                  color=(COLORS["spurious_drop"] if pitch_is_fallback else TEXT_COLOR),
+                  fontsize=8, loc="right")
     _legend(ax0)
 
     # Panel (b) compares the reference-implied speed against the encoder_pos
