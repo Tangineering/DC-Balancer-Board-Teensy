@@ -289,26 +289,33 @@ powerBalance():                       # rate-limited to POWER_BAL_PERIOD_US (1 k
 ## 9. Simplified overview diagram
 
 Figure 0 shows the three governing mechanisms in isolation: the loop-mode handoff on
-filtered total current, the current-dependent setpoint clamp, and the conduction-arming
-handoff. Slew limiting, the setpoint latch, the deferral path and the minimum-load gate are
+filtered total current, the current-dependent setpoint clamp, and the conduction-aware
+handoff gate (the qualitative form of the Section 5 slew ceiling). The setpoint latch, the
+deferral path, the minimum-load gate, the numeric slew rates and the reference-slew site are
 omitted here; Section 10 adds the ownership logic and Section 11 shows the complete tick.
+When `filt` crosses neither loop-mode threshold, the existing mode persists (hysteresis); in
+the firmware the conduction test runs once per tick, before the mode decision.
 
 ```mermaid
 flowchart TD
-    IN["Measure I_fc, I_batt<br/>filt = EMA of |I_fc| + |I_batt|"] --> M{Loop mode<br/>hysteresis on filt}
-
-    M -->|"filt &gt; 0.60 A"| CLAMP
-    M -->|"filt &lt; 0.55 A"| OL["OPEN LOOP<br/>feedforward: apply sp directly<br/>(or hold last converged split)"]
-
     subgraph CL [Closed loop]
-        CLAMP["Current-dependent clamp:<br/>lo = 0.30 A / filt<br/>sp_eff = clamp(sp, lo, 1 - lo)<br/>minority channel never commanded<br/>below 0.30 A"] --> STEP["Controller step:<br/>r = shareController(sp_eff)"]
+        CLAMP["Current-dependent clamp:<br/>lo = min(0.30 A / filt, 0.5)<br/>sp_eff = clamp(sp, lo, 1 - lo)<br/>minority channel never commanded<br/>below 0.30 A"] --> STEP["Controller step:<br/>r = shareController"]
     end
 
-    OL --> COND
+    subgraph OL [Open loop]
+        OLQ{Converged and<br/>sp unchanged?} -->|yes| HOLD["HOLD: no actuation,<br/>DACs keep last split"]
+        OLQ -->|no| FF["Feedforward:<br/>apply sp directly"]
+    end
+
+    IN["Measure I_fc, I_batt<br/>filt = EMA of |I_fc| + |I_batt|"] --> M{Loop mode<br/>hysteresis on filt<br/>no crossing: mode persists}
+    M -->|"filt &gt; 0.60 A"| CLAMP
+    M -->|"filt &lt; 0.55 A"| OLQ
+
+    FF --> COND
     STEP --> COND
 
-    COND{Conduction arming:<br/>is the channel that must<br/>pick up load conducting?<br/>dark &lt; 0.15 A, live &ge; 0.20 A} -->|both live| FAST["Ratio moves freely<br/>toward target"]
-    COND -->|either dark| SLOW["Ratio motion restrained until<br/>the dark channel conducts<br/>(analog ideal-diode pickup<br/>needs time, not a step)"]
+    COND{Conduction-aware gate:<br/>is the channel that must<br/>pick up load conducting?<br/>dark &lt; 0.15 A, live &ge; 0.20 A} -->|both live| FAST["Ratio moves at the full rate<br/>toward target"]
+    COND -->|either dark| SLOW["Ratio motion restrained until the<br/>dark channel conducts or the dwell<br/>allowance (175 moving ticks) is spent<br/>(analog ideal-diode pickup<br/>needs time, not a step)"]
 
     FAST --> ACT["Apply ratio to droop DACs"]
     SLOW --> ACT
@@ -317,43 +324,51 @@ flowchart TD
 The three mechanisms answer three distinct questions. The loop-mode handoff asks whether
 there is enough total current for closed-loop control to hold any split at all. The clamp
 asks whether the commanded split would starve the minority channel below its conduction
-floor. The conduction-arming handoff asks whether the channel being handed load is
+floor. The conduction-aware handoff gate asks whether the channel being handed load is
 physically conducting yet, and restrains ratio motion until it is.
 
 ## 10. Medium-detail flow diagram
 
 Figure 0b adds the ownership logic to Figure 0: the setpoint latch, its deferral path, and
-the minimum-load gate. Slew limiting is still omitted; Section 11 shows the complete tick.
+the minimum-load gate. The numeric slew rates are still omitted; Section 11 shows the
+complete tick, and Figure 2 gives the multi-tick state machine that the ownership subgraph
+summarizes.
 
 ```mermaid
 flowchart TD
-    T[Tick entry] --> LAT{Setpoint latch:<br/>sp in 0.15 .. 0.85?}
-
     subgraph OWN [Setpoint ownership]
-        LAT -->|"out of band,<br/>doomed channel &le; 0.5 A"| CUT["LATCH: open the starved<br/>channel's bus switch,<br/>freeze the entire loop"]
+        LAT{Setpoint latch:<br/>sp in 0.15 .. 0.85?}
+        LAT -->|"out of band, neither latch set,<br/>both switches closed,<br/>doomed channel &le; 0.5 A"| LCUT["LATCH: open the starved<br/>channel's bus switch,<br/>freeze the entire loop"]
         LAT -->|"out of band,<br/>doomed channel &gt; 0.5 A"| DEF["DEFER: clip reference to the<br/>band edge, migrate load off the<br/>doomed channel until &le; 0.5 A"]
-        CUT -->|"release: sp in band,<br/>V_bus &ge; 13.5 V, boost on"| REL[Full loop reset]
+        LCUT -->|"release (later tick, once held):<br/>sp in band, V_bus &ge; 13.5 V, boost on"| REL["Full loop reset<br/>(zeroes filt)"]
+        LCUT -->|"self-heal: switch<br/>observed closed"| REL
     end
-
-    LAT -->|in band| G{"I_tot &ge; 0.075 A?"}
-    DEF --> G
-    REL --> G
-    G -->|"below: min-load hold,<br/>DACs keep last split"| T2[Next tick]
-    G -->|above| IN["filt = EMA of |I_fc| + |I_batt|"]
-
-    IN --> M{Loop mode<br/>hysteresis on filt}
-    M -->|"filt &gt; 0.60 A"| CLAMP
-    M -->|"filt &lt; 0.55 A"| OL["OPEN LOOP<br/>feedforward: apply sp directly<br/>(or hold last converged split)"]
 
     subgraph CL [Closed loop]
-        CLAMP["Current-dependent clamp:<br/>lo = 0.30 A / filt<br/>sp_eff = clamp(sp, lo, 1 - lo)<br/>(deferral clips to the band<br/>edge first)"] --> STEP["Controller step:<br/>r = shareController(sp_eff)"]
+        CLAMP["Current-dependent clamp:<br/>lo = min(0.30 A / filt, 0.5)<br/>sp_eff = clamp(sp, lo, 1 - lo)<br/>(deferral clips to the band<br/>edge first)"] --> STEP["Controller step:<br/>r = shareController"]
     end
 
-    OL --> COND
+    subgraph OL [Open loop]
+        OLQ{Converged and<br/>sp unchanged?} -->|yes| HOLD["HOLD: no actuation,<br/>DACs keep last split"]
+        OLQ -->|no| FF["Feedforward: apply sp directly<br/>(in-band sp only; out-of-band<br/>returns, the latch owns it)"]
+    end
+
+    T[Tick entry] --> LAT
+    LAT -->|"in band<br/>(or guard blocked:<br/>live control)"| G{"I_tot &ge; 0.075 A?"}
+    DEF --> G
+    REL --> G
+    G -->|"below"| HOLDMIN["Min-load hold: filters frozen,<br/>DACs keep last split"]
+    G -->|above| IN["filt = EMA of |I_fc| + |I_batt|"]
+
+    IN --> M{Loop mode<br/>hysteresis on filt<br/>no crossing: mode persists}
+    M -->|"filt &gt; 0.60 A<br/>(entry reseeds from droopSlew_prev)"| CLAMP
+    M -->|"filt &lt; 0.55 A"| OLQ
+
+    FF --> COND
     STEP --> COND
 
-    COND{Conduction arming:<br/>dark &lt; 0.15 A, live &ge; 0.20 A} -->|both live| FAST["Ratio moves freely"]
-    COND -->|either dark| SLOW["Ratio motion restrained until<br/>the dark channel conducts"]
+    COND{Conduction-aware gate:<br/>dark &lt; 0.15 A, live &ge; 0.20 A} -->|both live| FAST["Ratio moves at the full rate<br/>toward target"]
+    COND -->|either dark| SLOW["Ratio motion restrained until the<br/>dark channel conducts or the dwell<br/>allowance (175 moving ticks) is spent"]
 
     FAST --> ACT["Apply ratio to droop DACs"]
     SLOW --> ACT
@@ -362,6 +377,8 @@ flowchart TD
 While the latch holds, no other mechanism runs: the loop is frozen until release. The
 deferral is the transition into the latch, not a separate steady state; it is re-derived
 every tick and disappears either when the cut fires or when the setpoint returns in band.
+When the last-source guard blocks both the latch and the deferral, the tick falls through
+to normal governed control.
 
 ## 11. Flow diagram
 
