@@ -286,7 +286,94 @@ powerBalance():                       # rate-limited to POWER_BAL_PERIOD_US (1 k
     applyShareRatio(r)                            # cutoff / band clip / DAC write
 ```
 
-## 9. Interface to the energy-management system
+## 9. Flow diagram
+
+Figure 1 shows the decision flow of one governor tick. Every edge label carries the threshold
+that selects it, and every branch corresponds to a line of the Section 8 pseudocode.
+
+```mermaid
+flowchart TD
+    T[Tick entry] --> L{updateShareSetpointCutoff:<br/>latch held?}
+    L -->|latched| FRZ[Loop frozen:<br/>no filter, no clip,<br/>no step, no DAC write]
+    L -->|released or none| G{I_tot &ge; SHARE_I_TOT_MIN_A?}
+    G -->|"I_tot &lt; 0.075 A"| HOLDMIN[Min-load hold:<br/>filters frozen,<br/>DACs keep last split]
+    G -->|"I_tot &ge; 0.075 A"| F[share_govTotAFilt +=<br/>0.05 &times; err]
+
+    subgraph SLEW [updateShareSlewMode: conduction-aware ceiling]
+        F --> CF[Per-channel EMAs<br/>of I_fc, I_batt at 0.05]
+        CF --> D{Either channel dark?<br/>dark &lt; 0.15 A, live &ge; 0.20 A}
+        D -->|both live| S1["step = 0.02<br/>dwell = 0"]
+        D -->|dark| DW{dwell &lt; 175?}
+        DW -->|"yes (dwell++ if ratio moved)"| S2["step = 0.002"]
+        DW -->|"no (allowance spent)"| S3["step = 0.02"]
+    end
+
+    M{Loop mode<br/>hysteresis}
+    S1 --> M
+    S2 --> M
+    S3 --> M
+
+    subgraph OPEN [Open-loop mode]
+        OL{closedLoopRun and<br/>sp unchanged and<br/>no shareIso claim?}
+        OL -->|yes| H[HOLD: no actuation]
+        OL -->|no| OB{sp in<br/>0.15 .. 0.85?}
+        OB -->|out of band| RET[Return:<br/>latch owns the setpoint]
+        OB -->|in band| FF["Feedforward slew:<br/>clamp sp to droopSlew_prev &plusmn; step"]
+    end
+
+    subgraph CLOSED [Closed-loop mode]
+        CL[closedLoopRun = true] --> DEF{Deferral flag set?}
+        DEF -->|yes| DC["Clip reference to 0.15 .. 0.85"]
+        DEF -->|no| GC
+        DC --> GC{sp_eff_target<br/>in band?}
+        GC -->|yes| CLIP["Governor clip:<br/>lo = min(0.30 / filt, 0.5)<br/>clamp to lo .. 1-lo"]
+        GC -->|no| REF
+        CLIP --> REF["Reference slew:<br/>share_spEffPrev &plusmn; step"]
+        REF --> ST[Controller step:<br/>r = shareController]
+        ST --> AS{r in 0.15 .. 0.85?}
+        AS -->|yes| ASL["Actuation slew:<br/>droopSlew_prev &plusmn; step"]
+        AS -->|no| APP
+        ASL --> APP
+    end
+
+    M -->|"filt &gt; 0.60 A: enter CLOSED,<br/>reseed from droopSlew_prev"| CL
+    M -->|"filt &lt; 0.55 A: exit to OPEN"| OL
+    M -->|"no crossing, mode OPEN"| OL
+    M -->|"no crossing, mode CLOSED"| CL
+
+    FF --> APP[applyShareRatio]
+    APP --> CUT{r out of band<br/>and not deferred?}
+    CUT -->|"r &lt; 0.15"| CFC[Open FC_BUS_ENABLE<br/>if both switches closed]
+    CUT -->|"r &gt; 0.85"| CBT[Open BT_BUS_ENABLE<br/>if both switches closed]
+    CUT -->|in band| RC["rc = clamp r to 0.15 .. 0.85<br/>droopSlew_prev = rc"]
+    CFC --> ISO[Channel isolated:<br/>no DAC write]
+    CBT --> ISO
+    RC --> MD["g_FC = K_DROOP / RE_MAX / rc<br/>g_BT = K_DROOP / RE_MAX / (1-rc)<br/>write AD5443 pair"]
+```
+
+The three hysteretic state machines the tick depends upon are shown separately in Figure 2.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    state "Loop mode" as LM {
+        OPEN --> CLOSED: filt > 0.60 A
+        CLOSED --> OPEN: filt < 0.55 A
+    }
+    state "Conduction, per channel" as CD {
+        LIVE --> DARK: EMA < 0.15 A
+        DARK --> LIVE: EMA >= 0.20 A
+    }
+    state "Setpoint latch, per channel" as LT {
+        FREE --> LATCHED: sp out of band, both switches closed, I_doomed <= 0.5 A
+        FREE --> DEFERRED: sp out of band, I_doomed > 0.5 A
+        DEFERRED --> FREE: next tick, flag re-derived
+        LATCHED --> FREE: sp in band, V_bus >= 13.5 V, boost enabled
+        LATCHED --> FREE: self-heal, switch observed closed
+    }
+```
+
+## 10. Interface to the energy-management system
 
 The EMS commands `power_share_setpoint` in the 22-byte command packet. The governor may
 override that setpoint by clipping it, by refusing to act on it in hold mode, or by latching a
@@ -302,7 +389,108 @@ active channel cutoff. The effective setpoint, the loop mode, the dark/live stat
 dwell counter are **not** telemetered. They are visible only on the State-98 serial status
 dump.
 
-## 10. Unconfirmed values
+## 11. MATLAB and Simulink implementation
+
+### 11.1 Architecture
+
+The governor is one sequential per-tick algorithm over cross-coupled persistent state. Model
+it as a **single discrete-time MATLAB Function block**, or as a plain MATLAB function with a
+persistent state struct. Do not decompose it into Simulink logic blocks: the latch, the
+deferral flag, the loop mode and the slew ceiling are read and written in a fixed order within
+one tick, and a block diagram makes that order implicit and fragile.
+
+Use a fixed sample time of **1 ms**, matching `POWER_BAL_PERIOD_US`. To match hardware more
+closely, use **1.136 ms**, the measured tick period at 880 Hz. All governor constants are
+**per tick**, not per second, so the wall-clock behaviour shifts with the chosen step. The
+slew rates and the dwell allowance are the sensitive ones: `DROOP_RATIO_SLEW_PER_TICK` is
+0.02 per tick, which is 20 ratio units per second at 1 ms and 17.6 at 1.136 ms.
+
+### 11.2 Reference skeleton
+
+```matlab
+function [st, out] = governor_tick(st, in)
+% in:  sp, I_fc, I_batt, V_bus, fcBusClosed, btBusClosed, fcRegEn, btRegEn
+% st:  persistent governor state (fields mirror the Initial-state table, §2)
+% out: r_applied, g_FC, g_BT, code_FC, code_BT, mode, latch, dark, dwell
+
+  C = governor_constants();          % the §2 table, one struct
+
+  % 1. Setpoint latch ownership (self-heal, release, entry/deferral).
+  [st, frozen] = update_setpoint_cutoff(st, in, C);
+  if frozen, out = emit(st, C); return; end
+
+  I_tot = abs(in.I_fc) + abs(in.I_batt);
+  if I_tot < C.SHARE_I_TOT_MIN_A, out = emit(st, C); return; end
+  st.govTotAFilt = st.govTotAFilt + C.ALPHA*(I_tot - st.govTotAFilt);
+
+  % 2. Conduction-aware slew ceiling (one value for the whole tick).
+  moved = abs(st.droopSlewPrev - st.handoffPrevRatio) > 1e-6;
+  st.handoffPrevRatio = st.droopSlewPrev;
+  st.iFcFilt = st.iFcFilt + C.ALPHA*(abs(in.I_fc)   - st.iFcFilt);
+  st.iBtFilt = st.iBtFilt + C.ALPHA*(abs(in.I_batt) - st.iBtFilt);
+  st.darkFC  = hyst(st.darkFC, st.iFcFilt, C.HANDOFF_MIN_A, C.HANDOFF_LIVE_A);
+  st.darkBT  = hyst(st.darkBT, st.iBtFilt, C.HANDOFF_MIN_A, C.HANDOFF_LIVE_A);
+  if ~(st.darkFC || st.darkBT)
+      st.dwell = 0;  st.step = C.SLEW_PER_TICK;
+  elseif st.dwell >= C.DWELL_MAX_TICKS
+      st.step = C.SLEW_PER_TICK;
+  else
+      if moved, st.dwell = st.dwell + 1; end
+      st.step = C.SLEW_HANDOFF_PER_TICK;
+  end
+
+  % 3. Loop-mode hysteresis, 4. open loop, 5. closed loop — see §8 pseudocode.
+  %    The closed-loop branch calls a controller stub:
+  %       r = share_controller(st, sp_eff, abs(in.I_fc)/I_tot);
+  %    Substitute a PI law, or the shipped Youla coefficients, later.
+  ...
+  st = apply_share_ratio(st, r, in, C);   % cutoff, band clip, gain map
+  out = emit(st, C);
+end
+```
+
+The state struct must carry exactly the fields of the Initial-state table in Section 2:
+`govTotAFilt`, `droopSlewPrev`, `closedLoopMode`, `closedLoopRun`, `actedSp`, `spEffPrev`,
+`spCutFC`, `spCutBT`, `isoFC`, `isoBT`, `cutDeferredFC`, `cutDeferredBT`, `iFcFilt`,
+`iBtFilt`, `darkFC`, `darkBT`, `dwell`, `handoffPrevRatio`, `step`. Initialize them to the
+boot column of that table; note that `darkFC` and `darkBT` start **true**.
+
+### 11.3 Interface
+
+**Inputs.** The commanded setpoint `sp`; the two channel currents `I_fc` and `I_batt`; the bus
+voltage `V_bus`; the two bus-switch states; and the two boost-enable states. A simulation that
+does not model the switches may assume both bus switches closed and both boosts enabled, at
+the cost of losing the release guards and the self-heal path.
+
+**Outputs.** The applied ratio `r` (equal to `droopSlewPrev` after the tick); the two gains
+`g_FC` and `g_BT`; the two DAC codes; the loop mode; the latch and deferral flags; the
+dark/live flags; and the dwell counter. The gains close the loop back into the plant model,
+and the flags exist for logging and comparison against hardware.
+
+### 11.4 Fidelity notes
+
+Single-precision against double precision is irrelevant for every governor threshold, because
+each has a margin of at least 0.05 A or 0.01 ratio units. The one exception is the motion
+gate `|droopSlew_prev − shareHandoffPrevRatio| > 1e-6`, which compares two quantities that
+differ by one slew step or by nothing at all. Reproduce that comparison literally.
+
+Reproduce the DAC truncation of Section 7 if the plant model is sensitive to droop resolution;
+otherwise treat `g` as continuous and record the omission. The truncation biases every gain
+low by up to one part in 4095.
+
+Three orderings within the tick are load-bearing and must not be rearranged. The latch update
+runs **before** the minimum-load gate, so that a release can occur at standstill. The slew
+ceiling is computed **before** the open-loop branch, so that feedforward ticks also advance the
+conduction filters and the dwell counter. The deferral flags are re-derived by the latch
+update **every** tick, so the closed-loop reference clip reads this tick's value.
+
+Validate against two hardware sources. The State-98 serial dump prints `share loop mode`,
+`I_tot_filt`, `share slew mode`, the two filtered magnitudes, `dwell`, `step`, the
+`share sp-cut latch`, and `droop gFC/gBT`, which together cover every internal governor state.
+Telemetry, per Section 10, supplies `power_share_actual`, the two applied gains, and the bus
+switch bits for a longer run.
+
+## 12. Unconfirmed values
 
 None. Every constant in Section 2 was read verbatim from
 `teensy_controller/teensy_controller.ino` or `teensy_controller/share_controller_coeffs.h`.
