@@ -286,7 +286,41 @@ powerBalance():                       # rate-limited to POWER_BAL_PERIOD_US (1 k
     applyShareRatio(r)                            # cutoff / band clip / DAC write
 ```
 
-## 9. Flow diagram
+## 9. Simplified overview diagram
+
+Figure 0 shows the three governing mechanisms in isolation: the loop-mode handoff on
+filtered total current, the current-dependent setpoint clamp, and the conduction-arming
+handoff. Slew limiting, the setpoint latch, the deferral path and the minimum-load gate are
+omitted here; Section 10 shows the complete tick.
+
+```mermaid
+flowchart TD
+    IN["Measure I_fc, I_batt<br/>filt = EMA of |I_fc| + |I_batt|"] --> M{Loop mode<br/>hysteresis on filt}
+
+    M -->|"filt &gt; 0.60 A"| CLAMP
+    M -->|"filt &lt; 0.55 A"| OL["OPEN LOOP<br/>feedforward: apply sp directly<br/>(or hold last converged split)"]
+
+    subgraph CL [Closed loop]
+        CLAMP["Current-dependent clamp:<br/>lo = 0.30 A / filt<br/>sp_eff = clamp(sp, lo, 1 - lo)<br/>minority channel never commanded<br/>below 0.30 A"] --> STEP["Controller step:<br/>r = shareController(sp_eff)"]
+    end
+
+    OL --> COND
+    STEP --> COND
+
+    COND{Conduction arming:<br/>is the channel that must<br/>pick up load conducting?<br/>dark &lt; 0.15 A, live &ge; 0.20 A} -->|both live| FAST["Ratio moves freely<br/>toward target"]
+    COND -->|either dark| SLOW["Ratio motion restrained until<br/>the dark channel conducts<br/>(analog ideal-diode pickup<br/>needs time, not a step)"]
+
+    FAST --> ACT["Apply ratio to droop DACs"]
+    SLOW --> ACT
+```
+
+The three mechanisms answer three distinct questions. The loop-mode handoff asks whether
+there is enough total current for closed-loop control to hold any split at all. The clamp
+asks whether the commanded split would starve the minority channel below its conduction
+floor. The conduction-arming handoff asks whether the channel being handed load is
+physically conducting yet, and restrains ratio motion until it is.
+
+## 10. Flow diagram
 
 Figure 1 shows the decision flow of one governor tick. Every edge label carries the threshold
 that selects it, and every branch corresponds to a line of the Section 8 pseudocode.
@@ -373,7 +407,7 @@ stateDiagram-v2
     }
 ```
 
-## 10. Interface to the energy-management system
+## 11. Interface to the energy-management system
 
 The EMS commands `power_share_setpoint` in the 22-byte command packet. The governor may
 override that setpoint by clipping it, by refusing to act on it in hold mode, or by latching a
@@ -389,9 +423,9 @@ active channel cutoff. The effective setpoint, the loop mode, the dark/live stat
 dwell counter are **not** telemetered. They are visible only on the State-98 serial status
 dump.
 
-## 11. MATLAB and Simulink implementation
+## 12. MATLAB and Simulink implementation
 
-### 11.1 Architecture
+### 12.1 Architecture
 
 The governor is one sequential per-tick algorithm over cross-coupled persistent state. Model
 it as a **single discrete-time MATLAB Function block**, or as a plain MATLAB function with a
@@ -405,7 +439,7 @@ closely, use **1.136 ms**, the measured tick period at 880 Hz. All governor cons
 slew rates and the dwell allowance are the sensitive ones: `DROOP_RATIO_SLEW_PER_TICK` is
 0.02 per tick, which is 20 ratio units per second at 1 ms and 17.6 at 1.136 ms.
 
-### 11.2 Reference skeleton
+### 12.2 Reference skeleton
 
 ```matlab
 function [st, out] = governor_tick(st, in)
@@ -455,7 +489,7 @@ The state struct must carry exactly the fields of the Initial-state table in Sec
 `iBtFilt`, `darkFC`, `darkBT`, `dwell`, `handoffPrevRatio`, `step`. Initialize them to the
 boot column of that table; note that `darkFC` and `darkBT` start **true**.
 
-### 11.3 Interface
+### 12.3 Interface
 
 **Inputs.** The commanded setpoint `sp`; the two channel currents `I_fc` and `I_batt`; the bus
 voltage `V_bus`; the two bus-switch states; and the two boost-enable states. A simulation that
@@ -467,7 +501,7 @@ the cost of losing the release guards and the self-heal path.
 dark/live flags; and the dwell counter. The gains close the loop back into the plant model,
 and the flags exist for logging and comparison against hardware.
 
-### 11.4 Fidelity notes
+### 12.4 Fidelity notes
 
 Single-precision against double precision is irrelevant for every governor threshold, because
 each has a margin of at least 0.05 A or 0.01 ratio units. The one exception is the motion
@@ -487,10 +521,10 @@ update **every** tick, so the closed-loop reference clip reads this tick's value
 Validate against two hardware sources. The State-98 serial dump prints `share loop mode`,
 `I_tot_filt`, `share slew mode`, the two filtered magnitudes, `dwell`, `step`, the
 `share sp-cut latch`, and `droop gFC/gBT`, which together cover every internal governor state.
-Telemetry, per Section 10, supplies `power_share_actual`, the two applied gains, and the bus
+Telemetry, per Section 11, supplies `power_share_actual`, the two applied gains, and the bus
 switch bits for a longer run.
 
-## 12. Unconfirmed values
+## 13. Unconfirmed values
 
 None. Every constant in Section 2 was read verbatim from
 `teensy_controller/teensy_controller.ino` or `teensy_controller/share_controller_coeffs.h`.
