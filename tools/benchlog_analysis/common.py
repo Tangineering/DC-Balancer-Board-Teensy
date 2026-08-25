@@ -72,6 +72,34 @@ CSV_COLUMNS_V6 = ["t_us", "share_sp", "share_act", "v_sp", "v_act", "I_fc",
                   "enc_spurious_drop_count", "fault_flags", "ps_phase",
                   "dc_phase", "trap_phase", "flags"]
 
+# v7 decode_benchlog CSVs (tools/decode_benchlog.py CSV_HEADER_V7, fw v20)
+# add enc_edge_count_a, enc_edge_count_b, enc_phase_ewma, enc_duty_a_ewma,
+# enc_duty_b_ewma after enc_spurious_drop_count (i.e. still before
+# fault_flags). load_csv() accepts this layout too; a v7 CSV's returned
+# dict has the v6 keys plus these five. THREE-CLASS FIELD CONTRACT for the
+# encoder-diagnostic fields:
+#   * boot-monotonic counters (enc_edge_count_a/b): diff for a rate; NEVER
+#     cleared by encoderVelReset() -- a negative diff means uint32 wrap or
+#     an MCU reset, NOT a mid-run counter clear.
+#   * reset-cleared counters (enc_multi_pitch_count,
+#     enc_spurious_drop_count): diff for a rate; a negative diff means a
+#     mid-run encoderVelReset().
+#   * levels (enc_period_ref_us, enc_phase_ewma, enc_duty_a_ewma,
+#     enc_duty_b_ewma): read directly, NEVER differenced; the three EWMA
+#     levels are cleared by encoderVelReset(). The decoder already divides
+#     the EWMA columns by 256, so they arrive as direct pitch/period
+#     fractions (healthy: phase ~0.25, duty ~0.50).
+# Pre-v7 dicts simply lack the keys -- version-gated figures check for
+# their presence (see figures.py).
+CSV_COLUMNS_V7 = ["t_us", "share_sp", "share_act", "v_sp", "v_act", "I_fc",
+                  "I_batt", "gFC", "gBT", "V_bus", "I_cmd", "V_fc", "V_batt",
+                  "V_chg", "V_rgn", "u_unsat", "drive_x0", "encoder_pos",
+                  "enc_period_ref_us", "enc_multi_pitch_count",
+                  "enc_spurious_drop_count", "enc_edge_count_a",
+                  "enc_edge_count_b", "enc_phase_ewma", "enc_duty_a_ewma",
+                  "enc_duty_b_ewma", "fault_flags", "ps_phase",
+                  "dc_phase", "trap_phase", "flags"]
+
 _decoder = None
 
 
@@ -156,11 +184,16 @@ def load_csv(csv_path):
     (22-column, CSV_COLUMNS_V5 -- further adds u_unsat, drive_x0 after
     V_rgn), or v6 (26-column, CSV_COLUMNS_V6 -- further adds encoder_pos,
     enc_period_ref_us, enc_multi_pitch_count, enc_spurious_drop_count after
-    drive_x0) header; the matching column list is used to parse the rest of
+    drive_x0), or v7 (31-column, CSV_COLUMNS_V7 -- further adds
+    enc_edge_count_a, enc_edge_count_b, enc_phase_ewma, enc_duty_a_ewma,
+    enc_duty_b_ewma after enc_spurious_drop_count)
+    header; the matching column list is used to parse the rest of
     the file, so a v1/v2 CSV's returned dict has exactly the same 16 keys
     it always has, a v3/v4 CSV's dict additionally has the four voltage
-    keys, a v5 CSV's dict additionally has u_unsat/drive_x0, and a v6 CSV's
-    dict additionally has the four encoder-diagnostic keys. Blank cells
+    keys, a v5 CSV's dict additionally has u_unsat/drive_x0, a v6 CSV's
+    dict additionally has the four encoder-diagnostic keys, and a v7 CSV's
+    dict additionally has the two per-channel edge-counter keys and the
+    three phase/duty EWMA level keys. Blank cells
     (v_sp, v_act, ps_phase, dc_phase, trap_phase can all be blank per the
     decoder's CSV format) become NaN. A derived key
     t_s = (t_us - t_us[0]) / 1e6 (seconds since the first sample) is added.
@@ -178,11 +211,14 @@ def load_csv(csv_path):
         columns = CSV_COLUMNS_V5
     elif header == CSV_COLUMNS_V6:
         columns = CSV_COLUMNS_V6
+    elif header == CSV_COLUMNS_V7:
+        columns = CSV_COLUMNS_V7
     else:
         raise ValueError(
             f"unexpected CSV header in {csv_path}: {header!r}, "
             f"expected {CSV_COLUMNS!r} (v1/v2), {CSV_COLUMNS_V3!r} (v3/v4), "
-            f"{CSV_COLUMNS_V5!r} (v5), or {CSV_COLUMNS_V6!r} (v6)")
+            f"{CSV_COLUMNS_V5!r} (v5), {CSV_COLUMNS_V6!r} (v6), or "
+            f"{CSV_COLUMNS_V7!r} (v7)")
 
     n = len(rows)
     data = {col: np.full(n, np.nan, dtype=np.float64) for col in columns}

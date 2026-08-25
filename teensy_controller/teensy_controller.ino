@@ -925,6 +925,8 @@
  *          bytes: the itemized worst-case line is an EXACT 165 B, and an exact fit is not a guard
  *          (one 8-character float blocks the USB-CDC write and stalls the loop), so 192 leaves one
  *          extra character per float of headroom. The itemization is at the guard.
+ *          (fw v20 note: the 'L' field set is unchanged, but the same two edge counters are now
+ *          also in the BLG record, so the live-only limitation described below no longer applies.)
  *      (b) CONDUCTION-AWARE RATIO SLEW (TP0201 mitigation). New SHARE_HANDOFF_MIN_A (0.15 A),
  *          SHARE_HANDOFF_LIVE_A (0.20 A), DROOP_RATIO_SLEW_HANDOFF_PER_TICK (0.002/tick, 10x
  *          slower) and SHARE_HANDOFF_DWELL_MAX_TICKS (175 ticks, ~200 ms): whenever EITHER channel
@@ -964,6 +966,104 @@
  *          Known residual (deferred): at the handoff rate the limiter is the dominant actuator
  *          dynamic and is invisible to youlaController_Power()'s [0,1]-only anti-windup; exposure
  *          is bounded by the dwell cap. See updateShareSlewMode().
+ *  - fw v20 (2026-08-25) — BENCH-LOG RECORD FORMAT v7 (106 B, hdr[4] = 7): the two raw per-channel
+ *      ISR edge counters AND three new quadrature phase / duty-asymmetry statistics are APPENDED to
+ *      the record. No pin, sequencing, fault, command, controller-coefficient or UDP (v4/58 B)
+ *      change; the header LAYOUT is unchanged (only hdr[4] and hdr[5], the record size decoders
+ *      already read from the header, differ).
+ *      (a) TWO uint32 FIELDS APPENDED, so every v1-v6 offset is unchanged: 92-95 enc_edge_count_a
+ *          (encEdgeCountA) and 96-99 enc_edge_count_b (encEdgeCountB).
+ *          WHY: the raw per-channel edge RATE is the direct before/after metric for the pending
+ *          Schmitt front-end bodge (the drop counters measure what the ESTIMATOR rejected, which is
+ *          a filtered view of the same defect), and it is the only signal that separates a DEAD
+ *          CHANNEL from a DEAD ESTIMATOR offline — edgeA rising with edgeB flat is a sensor fault,
+ *          both rising with encoder_pos flat is a decode/quadrature fault, both flat is no motion.
+ *          Until now those counts existed only LIVE, on the fw v19 'L' plot stream and the 'S' dump,
+ *          so no post-run log could be asked the question.
+ *      (b) DECODER CONTRACT, and it INVERTS the v6 one for these two fields: enc_edge_count_a/b are
+ *          cumulative like enc_multi_pitch_count / enc_spurious_drop_count, but they are
+ *          BOOT-MONOTONIC — encoderVelReset() does NOT clear them (verified: the only writes in the
+ *          firmware are the two ISR increments). A NEGATIVE diff therefore means uint32 WRAP or an
+ *          MCU reset, NOT a mid-run estimator reset, which is the OPPOSITE reading from the two
+ *          fields before them. That monotonicity is load-bearing for the 'L'/'S' consumers, so no
+ *          clear site may be added.
+ *      (c) THREE uint16 GEOMETRY LEVELS APPENDED, same v7 bump: 100-101 enc_phase_ewma,
+ *          102-103 enc_duty_a_ewma, 104-105 enc_duty_b_ewma. The record grows 92 -> 106 B.
+ *          WHAT THEY ARE: shift-based integer EWMAs (alpha = 1/4, the fw v13 reference-filter
+ *          idiom), fixed point in 1/256ths of ONE SLOT PITCH, computed entirely in the ISRs.
+ *          enc_phase_ewma is the time from the last ACCEPTED A-rising edge to the next B-rising
+ *          edge over encPeriodRefUs — the sensor pair's mount geometry. The two duty fields are
+ *          each channel's rise-to-fall high time over the same reference — the optical/threshold
+ *          health of one channel, independent of the mount. WHY BOTH: phase alone cannot tell a
+ *          mis-mounted sensor from an off-centre logic threshold on a slow phototransistor edge;
+ *          duty moves for the second and not the first. Together they replace a scope for
+ *          verifying the quarter-pitch offset UNDER ROTATION, which is the only condition that
+ *          matters and the one a static probe cannot reproduce.
+ *          EXPECTED HEALTHY ON THIS BOARD: phase 0.25 pitch (64), both duties 0.50 (128). The
+ *          90-slot wheel's sensor offset is 43 deg = 10.75 pitches (fractional part 0.75), but
+ *          the two sensors were PHYSICALLY SWAPPED when that wheel was installed, so A leads B
+ *          forward and the measured A-rise-to-B-rise fraction is the complement, 0.25. Bench
+ *          acceptance on the first spin, read from the 'S' dump: phase 0.25 +- 0.05, duties
+ *          0.50 +- 0.05 each — THE DUTY BAND IS POST-SCHMITT ONLY (safety review MED-2): under
+ *          the present un-Schmitted front end (~500 spurious edges/s at cruise, 20-30 per pitch
+ *          at breakaway) duty A is biased HIGH by construction (a chatter fall is timed from the
+ *          older accepted A-rise and still passes dt < ref) and duty B LOW (chatter rise/fall
+ *          pairs fold near-zero fractions). That is annotated, NOT filtered — a one-shot arming
+ *          filter was rejected because raw-edge visibility is the point of the tap — and the
+ *          deviation's direction is itself chatter evidence identifying the offending channel.
+ *          Phase carries no such bias: its direction and plausibility gates reject chatter-origin
+ *          samples. Drift of phase toward 0.0 or 0.5 is the ALIGNED-EDGES failure mode
+ *          this tap exists to catch (at either limit the channels leave quadrature and the
+ *          AfirstUp/BfirstUp handshake loses cycles silently — the fw v8 observability lesson).
+ *          GATES: phase is DIRECTION-GATED to encPeriodDir == +1, because a mixed-direction
+ *          average of phi is meaningless — reverse reads (1 - phi), so averaging 0.25 with 0.75
+ *          lands on exactly the fault signature. Every sample is PLAUSIBILITY-GATED at
+ *          dt < period_ref, which bounds pollution from a spurious B-edge (or an unseen fall)
+ *          injecting phi ~ 0.5. Nothing else is filtered: raw-edge visibility is the point.
+ *          A DETECTED DIRECTION CHANGE CLEARS encPhaseEwma (safety review MED-1). encPeriodDir
+ *          updates only at the next accepted A-rising interval, while B-rises fold samples
+ *          continuously — so between a physical reversal and its detection every sample folds a
+ *          reverse measurement (1 - phi = 0.75) as forward, and ML0140-class dither would park
+ *          the EWMA at ~0.5, manufacturing the exact aligned-edges fault signature. Clearing the
+ *          accumulator at both the flip and the ambiguous-direction branch confines it to samples
+ *          taken since the last confirmed direction; recovery costs one sample, since the fold
+ *          seeds directly on a zero accumulator. The duties are untouched — duty has no
+ *          handedness.
+ *          Samples are valid only once the period estimator is seeded, which is acceptable — the
+ *          measurement target is geometric and is taken at cruise. All three, and their latch
+ *          timestamps, are cleared by encoderVelReset() with encPeriodRefUs (they are normalised
+ *          by it), so a 0 reads as "no measurement yet", not "0.00 pitch".
+ *          ISR BUDGET: two timestamp latches, one subtract and one shift-EWMA per edge on top of
+ *          the edge-count increments already in flight. The ONE divide per sample is confined to
+ *          the rising/falling branches that produce a sample (~3.3 kHz worst case at the 5 m/s
+ *          ceiling on a CLEAN edge stream); the common A-rising period path gains NO division
+ *          beyond the fw v17 fractional-pitch ledger's. Pre-Schmitt chatter adds to that rate
+ *          (review LOW-1): several hundred extra divides per second at cruise and ~400/s at
+ *          breakaway, since a chatter edge reaching a duty branch usually carries dt < ref and so
+ *          passes the gate and takes the divide (only implausible intervals are shed before it).
+ *          Conclusion unchanged: even summed, this is well under 4 kHz of hardware UDIVs on a
+ *          600 MHz core.
+ *          "WHAT NOT TO CHANGE" EXCEPTION, same class as fw v15 and fw v17: this is a TAP. The
+ *          quadrature decode blocks in doEncoderA()/doEncoderB() are untouched, no control path
+ *          reads any of the three, and the velocity estimator's inputs and outputs are unchanged.
+ *      (d) DECODER CONTRACT — the record now carries THREE field classes, and mixing them up
+ *          produces plausible nonsense: LEVELS (enc_period_ref_us and the three new ones — read
+ *          directly, NEVER differenced), RESET-CLEARED CUMULATIVE COUNTERS (enc_multi_pitch_count,
+ *          enc_spurious_drop_count — negative diff = estimator reset), and BOOT-MONOTONIC
+ *          CUMULATIVE COUNTERS (enc_edge_count_a/b — negative diff = wrap or MCU reset).
+ *      (e) Ring/drain math re-derived at 106 B: 1024 records = 108544 B (106 KB, still DMAMEM/RAM2).
+ *          The ~250 ms stall rationale is stated in RECORDS (1024 samples = 1.024 s at 1 kHz) and
+ *          is therefore unaffected by the record growing. The whole-record chunk floor is
+ *          512/106 = 4 records = 424 B/tick against a 106 B/ms fill, i.e. 4.0x catch-up (down from
+ *          5.0x at v6's 92 B — 5 x 92 = 460 B — and 6.0x at v5's 76 B; still four times the fill,
+ *          and a full ring drains in
+ *          ~0.34 s). The 32 MB preallocation covers 33554432 / 106000 = 316 s (~5.3 min, down from
+ *          ~6.1). No buffer grew; LOG_RING_RECORDS, LOG_CHUNK_MAX and LOG_PREALLOC_BYTES are
+ *          unchanged, and LOG_REC_SIZE still fits the one-byte hdr[5] with 149 to spare.
+ *          logSampleTick() stays a PURE COPY — all five new fields are plain aligned volatile
+ *          reads in the build-independent diagnostics section; the pitch-fraction arithmetic is
+ *          entirely in the ISRs. All three are also surfaced in the State-98 'S' dump as pitch
+ *          fractions (value/256.0), bench-first.
  */
 
 #include <stddef.h>             // offsetof — pins the append-only BenchLogRecord field offsets
@@ -2129,13 +2229,17 @@ volatile byte BfirstDown = 0;
 volatile int  encoderPos     = 0;
 volatile byte pinA_read      = 0;
 volatile byte pinB_read      = 0;
-// Raw per-channel interrupt-edge counters (fw v8, diagnostic only — nothing reads these but the
-// 'S' dump). They exist because `v_actual == 0.000` had exactly one observable and no way to
+// Raw per-channel interrupt-edge counters (fw v8, diagnostic only — nothing in any control path
+// reads them; the consumers are the 'S' dump, the fw v19 'L' plot stream, and the fw v20 BLG v7
+// record fields enc_edge_count_a/b). They exist because `v_actual == 0.000` had exactly one observable and no way to
 // localise it: the quadrature decoder below only counts when BOTH channels transition in the
 // right ORDER, so a dead channel, a channel whose swing never crosses the Teensy's logic
 // thresholds, and two beams that are not 90 degrees apart all produce an identical, silent
 // encoderPos == 0. Counting each channel's CHANGE interrupts separately separates those cases
 // before anyone touches the velocity math. NOT used by any control path.
+// BOOT-MONOTONIC BY CONTRACT: these are the only encoder counters encoderVelReset() does NOT
+// clear, and the 'L'/'S'/BLG consumers rely on that (a negative diff means uint32 wrap or an MCU
+// reset, never an estimator reset). Do not add a clear site.
 volatile uint32_t encEdgeCountA = 0;
 volatile uint32_t encEdgeCountB = 0;
 // ENCODER_COUNTS_PER_REV now lives with the rest of the flywheel/encoder geometry in the physical
@@ -2177,14 +2281,15 @@ volatile uint32_t encMultiPitchCount = 0;
 // doEncoderA()'s velocity tap: the raw ENC_PERIOD_MIN_US floor, the adaptive 0.625 x ref low-side
 // gate, and the fw v15 per-pitch floor after the pitch division. encMultiPitchCount is the
 // complementary MISSED-edge rate; together they bound the optical front end's edge integrity, which
-// is exactly what the pending Schmitt bodge is meant to fix. Logged per BLG v6 record as a
+// is exactly what the pending Schmitt bodge is meant to fix. Logged per BLG record (since v6) as a
 // CUMULATIVE count — decoders diff it. uint32 wrap is unhandled and acceptable at bench timescales
 // (a sustained 10 kHz drop rate would take ~5 days to wrap).
 volatile uint32_t encSpuriousDropCount = 0;
 
 // PER-PATH DROP ATTRIBUTION (fw v17). DIAGNOSTIC ONLY — nothing in the control path reads these,
-// and NONE of them is logged: the BLG record format stays v6/92 B, and encSpuriousDropCount above
-// keeps its exact SUM semantics so v6 decoders are unaffected. They exist because the single sum
+// and NONE of them is logged (the BLG record carries only the sum; that was still true when the
+// format moved to v7/106 B in fw v20), and encSpuriousDropCount above keeps its exact SUM
+// semantics so v6 decoders are unaffected. They exist because the single sum
 // cannot distinguish the three very different physical faults it aggregates:
 //   encDropRawFloor   — interval below the absolute ENC_PERIOD_MIN_US floor: contact bounce or a
 //                       burst of optical chatter faster than ~26.6 m/s of rim travel.
@@ -2199,6 +2304,51 @@ volatile uint32_t encSpuriousDropCount = 0;
 volatile uint32_t encDropRawFloor   = 0;
 volatile uint32_t encDropLowGate    = 0;
 volatile uint32_t encDropPitchFloor = 0;
+
+// ── Quadrature phase / duty-asymmetry diagnostics (fw v20) ────────────────────
+// DIAGNOSTIC ONLY — no control path reads any of these. They replace a scope for the one question
+// the counters above cannot answer: is the sensor pair still mounted at the right quarter-pitch
+// offset, and is each channel's threshold still centred on its optical edge?
+// UNITS AND SEMANTICS. All three are LEVELS, not counters — fixed point in 1/256ths of one slot
+// pitch (equivalently, of one A-rising period), so 64 = 0.25 pitch and 128 = 0.50. Read them
+// directly; NEVER difference them. Each is a shift-based integer EWMA with alpha = 1/4, the same
+// idiom as the fw v13 period reference (x = x - (x >> 2) + (sample >> 2)), seeded by the first
+// accepted sample. uint16 cannot overflow, but NOT because of any explicit clamp — the bound is
+// structural: the dt < ref plausibility gate in encFoldPitchFraction() forces fp < 256, so the
+// fold can never approach 0xFFFF. If that gate is ever weakened or widened, an explicit clamp
+// must be added here — the gate is the ONLY thing preventing overflow.
+//   encPhaseEwma — INTER-CHANNEL PHASE. Time from the last accepted A-rising edge to the next
+//     B-rising edge, divided by the EWMA period reference. This is the mount geometry.
+//   encDutyAEwma / encDutyBEwma — PER-CHANNEL DUTY. Rise-to-fall high time over the same
+//     reference. This is the optical/threshold health of one channel, independent of the mount:
+//     a threshold sitting off-centre on a slow phototransistor edge, or a sensor placed at the
+//     wrong radius, moves duty away from 0.50 while leaving phase alone. Phase and duty together
+//     separate a MOUNT fault from an OPTICAL fault, which no single number does.
+// EXPECTED HEALTHY VALUES ON THIS BOARD — phase 0.25 pitch (64/256), both duties 0.50 (128/256).
+// The 90-slot wheel's sensor offset is 43 deg = 10.75 slot pitches, but the two sensors were
+// PHYSICALLY SWAPPED when that wheel was installed, so A leads B in the forward direction and the
+// measured A-rise-to-B-rise fraction is 0.25, not 0.75. See doEncoderB() for the direction
+// convention and the bench acceptance criterion.
+// COST. Two timestamp latches, one subtract and one shift-EWMA per edge, on top of the edge-count
+// increments already in flight. The ONE divide per sample is confined to the rising/falling
+// branches that produce a sample (~3.3 kHz worst case at the 5 m/s ceiling on a CLEAN stream),
+// and the common A-rising period path gains no division beyond the fw v17 fractional-pitch
+// ledger's. Review LOW-1: pre-Schmitt chatter adds several hundred divides/s at cruise and
+// ~400/s at breakaway, because a chatter edge reaching a duty branch usually carries dt < ref and
+// therefore passes the gate rather than being shed before the divide. Conclusion unchanged.
+// Cleared by encoderVelReset() together with the latch timestamps, so all three share the
+// estimator's epoch (they depend on encPeriodRefUs, which that reset also clears).
+volatile uint16_t encPhaseEwma = 0;
+volatile uint16_t encDutyAEwma = 0;
+volatile uint16_t encDutyBEwma = 0;
+// Edge-timestamp latches feeding the three statistics above. encLastARiseUs is set only on
+// ACCEPTED A-rising edges (the period-measurement base), so phase and duty A are referenced to a
+// vetted edge rather than to optical chatter; encLastBRiseUs is set on every B-rising edge,
+// because channel B has no acceptance test of its own.
+volatile uint32_t encLastARiseUs = 0;
+volatile uint32_t encLastBRiseUs = 0;
+volatile bool     encHaveARise   = false;
+volatile bool     encHaveBRise   = false;
 
 // RETIRED IN fw v15: the poisoned-reference tripwire (encKBranchRun / encRefPoisonPending,
 // ENC_KBRANCH_RUN_MAX). It counted consecutive accepted periods taking the ratio-derived k > 1
@@ -2279,7 +2429,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 19
+#define FW_VERSION 20
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -2874,7 +3024,7 @@ void parseKLogLine(const char *line);
 // Ag105 I2C), for the duration of a State-98 profile run.
 //
 // NON-BLOCKING DISCIPLINE (five dead boosts say the main loop may never stall):
-//   - The control path only ever memcpy()s 92 bytes into a static ring (logSampleTick()). No I/O,
+//   - The control path only ever memcpy()s LOG_REC_SIZE (106) bytes into a static ring (logSampleTick()). No I/O,
 //     no formatting, no allocation, no blocking, ever.
 //   - All card I/O happens in logDrainTick(), called from loop(): it bails immediately when the
 //     card is busy and writes at most ONE <=512 B chunk per loop tick. This is the SD analogue of
@@ -2890,18 +3040,23 @@ void parseKLogLine(const char *line);
 //     tearing down (state99Phase == 3) — never between its sequencing phases.
 //
 // Retrieval is by card pull; tools/decode_benchlog.py turns a .BLG into CSV.
-#define LOG_REC_SIZE        92u                 // bytes per record (format v6) — static_assert'ed
+#define LOG_REC_SIZE        106u                // bytes per record (format v7) — static_assert'ed
 #define LOG_RING_RECORDS    1024u               // ~1.0 s of 1 kHz coverage; covers a ~250 ms card
-                                                // stall with 4x margin (92 KB of the Teensy's 1 MB —
-                                                // 94208 B, up from 76 KB at record format v5; still
-                                                // DMAMEM/RAM2, which has room)
+                                                // stall with 4x margin — the STALL rationale is in
+                                                // RECORDS (1024 samples = 1.024 s at 1 kHz) and is
+                                                // therefore unchanged by the record growing (106 KB
+                                                // of the Teensy's 1 MB — 108544 B, up from 92 KB at
+                                                // record format v6; still DMAMEM/RAM2, which has room)
 #define LOG_RING_BYTES      (LOG_REC_SIZE * LOG_RING_RECORDS)
-#define LOG_CHUNK_MAX       512u                // one SD block per loop tick: >=460 B/ms drained
-                                                // against a 92 B/ms fill (5.0x), so catch-up is
-                                                // still fast. Chunks are floored to whole records
-                                                // below (5 x 92 = 460 B), so the drain accounting
-                                                // stays exact
-#define LOG_PREALLOC_BYTES  (32u * 1024u * 1024u)  // ~6.1 min at 92 KB/s (33554432 / 92000 = 365 s);
+#define LOG_CHUNK_MAX       512u                // one SD block per loop tick: >=424 B/ms drained
+                                                // against a 106 B/ms fill (4.0x, down from 5.0x at
+                                                // v6's 92 B — 5 x 92 = 460 B — and 6.0x at v5's
+                                                // 76 B), so catch-up is slower but
+                                                // still four times the fill — a full ring drains in
+                                                // ~0.34 s. Chunks are floored to whole records below
+                                                // (4 x 106 = 424 B; 512/106 = 4), so the drain
+                                                // accounting stays exact
+#define LOG_PREALLOC_BYTES  (32u * 1024u * 1024u)  // ~5.3 min at 106 KB/s (33554432 / 106000 = 316 s);
                                                 // truncate()d at close.
                                                 // Contiguous allocation keeps per-chunk latency in
                                                 // the tens of us (no FAT-chain seeks mid-run)
@@ -3012,13 +3167,55 @@ struct __attribute__((packed)) BenchLogRecord {
                                        //   absolute floor, the 0.625x gate, or the per-pitch floor,
                                        //   i.e. the SPURIOUS-edge rate. Together with the line
                                        //   above it bounds the front end's edge integrity
+    // Format v7 (fw v20, 2026-08-25): the two RAW per-channel ISR edge counters, APPENDED at the
+    // end so every v1–v6 field offset is unchanged. WHY: the v6 counters describe what the
+    // ESTIMATOR did with the edge stream (accepted, merged, dropped); these two describe the edge
+    // stream itself. That makes them the direct before/after acceptance metric for the pending
+    // Schmitt front-end fix, and the only signal that separates a DEAD CHANNEL from a DEAD
+    // ESTIMATOR offline — A rising with B flat is a sensor fault, both rising with encoder_pos flat
+    // is a decode/quadrature fault, both flat is no motion. Until fw v20 they were visible only
+    // LIVE, on the fw v19 'L' plot stream and the State-98 'S' dump.
+    // DECODER CONTRACT — these two INVERT the rule stated above for the v6 counters. They are
+    // cumulative, but they are BOOT-MONOTONIC: encoderVelReset() does NOT clear them (unlike
+    // enc_multi_pitch_count / enc_spurious_drop_count / the per-path drop counters, which share one
+    // reset epoch). The only writes anywhere in the firmware are the two ISR increments. So a
+    // NEGATIVE diff here means uint32 WRAP or an MCU RESET — NOT a mid-run estimator reset, which
+    // is exactly the opposite reading from the two fields before them. Do not add a clear site: the
+    // 'L' and 'S' consumers rely on the monotonicity.
+    uint32_t enc_edge_count_a;         // encEdgeCountA (fw v8) — every ENC_A CHANGE interrupt taken,
+                                       //   pre-decode and pre-filter
+    uint32_t enc_edge_count_b;         // encEdgeCountB (fw v8) — the same for ENC_B
+    // Quadrature phase / duty-asymmetry diagnostics (fw v20, same v7 bump). WHY: the counters
+    // above measure edge INTEGRITY; these measure edge GEOMETRY — whether the sensor pair is
+    // still at its quarter-pitch offset and whether each channel's threshold is still centred.
+    // That is the one encoder question that previously needed a scope on the bench.
+    // UNITS: fixed point, 1/256ths of one slot pitch. Divide by 256.0 for a pitch fraction.
+    // Expected healthy on this board: phase 64 (0.25), both duties 128 (0.50) — see doEncoderB().
+    // The DUTY acceptance band is post-Schmitt only (safety review MED-2): with the present
+    // un-Schmitted optical front end, duty A is biased HIGH and duty B LOW by construction, and
+    // the deviation is chatter evidence rather than a mount fault. Phase is unaffected.
+    // DECODER CONTRACT — these three are LEVELS, exactly like enc_period_ref_us, NOT counters.
+    // Read each sample directly; NEVER difference them. The record now carries THREE distinct
+    // field classes and mixing them up produces plausible nonsense:
+    //   (1) LEVELS — enc_period_ref_us, enc_phase_ewma, enc_duty_a_ewma, enc_duty_b_ewma.
+    //       Instantaneous filter state. Plot as-is.
+    //   (2) RESET-CLEARED CUMULATIVE COUNTERS — enc_multi_pitch_count, enc_spurious_drop_count.
+    //       Diff for a rate; a NEGATIVE diff is a mid-run encoderVelReset().
+    //   (3) BOOT-MONOTONIC CUMULATIVE COUNTERS — enc_edge_count_a/b. Diff for a rate; a NEGATIVE
+    //       diff is a uint32 wrap or an MCU reset, never an estimator reset.
+    // The levels here belong to the estimator's epoch: encoderVelReset() clears them with
+    // enc_period_ref_us, so each reads 0 until enough post-reset samples have been folded in.
+    // A zero is "no measurement yet", not "0.00 pitch".
+    uint16_t enc_phase_ewma;           // encPhaseEwma — A-rise to B-rise, forward direction only
+    uint16_t enc_duty_a_ewma;          // encDutyAEwma — channel A high time / period
+    uint16_t enc_duty_b_ewma;          // encDutyBEwma — channel B high time / period
 };
-static_assert(sizeof(BenchLogRecord) == LOG_REC_SIZE, "BenchLogRecord must stay 92 bytes (format v6)");
+static_assert(sizeof(BenchLogRecord) == LOG_REC_SIZE, "BenchLogRecord must stay 106 bytes (format v7)");
 // The header's record-size field is ONE byte (hdr[5] = (uint8_t)LOG_REC_SIZE). Past 255 that cast
 // truncates SILENTLY and every decoder — which reads the record stride from the header rather than
 // assuming it — would misparse the whole file instead of failing loudly. Caught at compile time.
 static_assert(LOG_REC_SIZE <= 255u, "LOG_REC_SIZE must fit in the one-byte hdr[5] record-size field");
-// Append-only guarantee: every v1–v5 field keeps its byte offset. Pinned here so a reordering
+// Append-only guarantee: every v1–v6 field keeps its byte offset. Pinned here so a reordering
 // edit fails the build rather than silently desynchronising every existing decoder.
 static_assert(offsetof(BenchLogRecord, u_unsat)                 == 68, "v5 offset moved");
 static_assert(offsetof(BenchLogRecord, drive_x0)                == 72, "v5 offset moved");
@@ -3026,11 +3223,16 @@ static_assert(offsetof(BenchLogRecord, encoder_pos)             == 76, "v6 layou
 static_assert(offsetof(BenchLogRecord, enc_period_ref_us)       == 80, "v6 layout");
 static_assert(offsetof(BenchLogRecord, enc_multi_pitch_count)   == 84, "v6 layout");
 static_assert(offsetof(BenchLogRecord, enc_spurious_drop_count) == 88, "v6 layout");
+static_assert(offsetof(BenchLogRecord, enc_edge_count_a)        == 92, "v7 layout");
+static_assert(offsetof(BenchLogRecord, enc_edge_count_b)        == 96, "v7 layout");
+static_assert(offsetof(BenchLogRecord, enc_phase_ewma)          == 100, "v7 layout");
+static_assert(offsetof(BenchLogRecord, enc_duty_a_ewma)         == 102, "v7 layout");
+static_assert(offsetof(BenchLogRecord, enc_duty_b_ewma)         == 104, "v7 layout");
 
 #define LOG_PHASE_NONE 0xFFu   // "this profile was not running for this sample"
 
 // ── Logger module state ───────────────────────────────────────────────────────
-// DMAMEM puts the 92 KB ring in RAM2/OCRAM instead of RAM1/DTCM, which is the tight, fast memory
+// DMAMEM puts the 106 KB ring in RAM2/OCRAM instead of RAM1/DTCM, which is the tight, fast memory
 // the control code and stack want. The ring is touched once per ms by a memcpy and once per loop
 // tick by the drain — it does not need DTCM latency. (Host g++ has no such attribute.)
 #ifndef DMAMEM
@@ -3293,16 +3495,19 @@ void logOpenForProfile(uint8_t typeMask) {
     uint8_t hdr[32];
     memset(hdr, 0, sizeof(hdr));
     hdr[0] = 'B'; hdr[1] = 'L'; hdr[2] = 'G'; hdr[3] = '1';
-    hdr[4] = 6;                       // format version (v2 added fw_version at offset 18; v3 added
+    hdr[4] = 7;                       // format version (v2 added fw_version at offset 18; v3 added
                                       // V_fc/V_batt/V_chg/V_rgn to the record → 68 B; v4 added the
                                       // committed per-run profile parameters below, with the RECORD
                                       // unchanged from v3; v5 (fw v11) APPENDS u_unsat and
                                       // drive_x0 to the record → 76 B and defines flags bit4/bit5;
                                       // v6 (fw v16) APPENDS the four encoder/estimator diagnostics
-                                      // → 92 B. HEADER LAYOUT IS UNCHANGED from v4 — only hdr[4]
-                                      // and hdr[5] (the record size, which is already read from
-                                      // the header) differ, and every v1–v5 record field keeps its
-                                      // offset, so a v5 decoder needs only the four tail fields.)
+                                      // → 92 B; v7 (fw v20) APPENDS the two raw per-channel ISR
+                                      // edge counters AND the three phase/duty geometry levels
+                                      // → 106 B. HEADER LAYOUT IS UNCHANGED from
+                                      // v4 — only hdr[4] and hdr[5] (the record size, which is
+                                      // already read from the header) differ, and every v1–v6
+                                      // record field keeps its offset, so a v6 decoder needs only
+                                      // the two new tail fields.)
     hdr[5] = (uint8_t)LOG_REC_SIZE;
     hdr[6] = typeMask;
 
@@ -3459,7 +3664,7 @@ void logSampleTick() {
     r.drive_x0 = pi_motor_accum;
 #endif
 
-    // Format v6 (fw v16): encoder / estimator diagnostics. COMMON to both build paths — these
+    // Format v6/v7 (fw v16/v20): encoder / estimator diagnostics. COMMON to both build paths — these
     // describe the sensor, not the control law. Plain volatile reads: each is a single aligned
     // 32-bit load, atomic on the Cortex-M7, so no IRQ masking is taken in the sampling path
     // (the 'S' dump masks only because it reads several values that must agree with each other;
@@ -3471,6 +3676,17 @@ void logSampleTick() {
     r.enc_period_ref_us       = encPeriodRefUs;
     r.enc_multi_pitch_count   = encMultiPitchCount;
     r.enc_spurious_drop_count = encSpuriousDropCount;
+    // Format v7 (fw v20): the raw per-channel edge counters. Same plain-volatile-read rationale.
+    // These two are BOOT-MONOTONIC — nothing clears them, unlike their v6 neighbours (see the
+    // struct's decoder contract).
+    r.enc_edge_count_a        = encEdgeCountA;
+    r.enc_edge_count_b        = encEdgeCountB;
+    // fw v20 phase/duty LEVELS. 16-bit aligned volatile loads, atomic on the Cortex-M7 — same
+    // no-masking rationale as the fields above, and the same "pure copy" rule: the pitch-fraction
+    // arithmetic all happens in the ISRs, never here.
+    r.enc_phase_ewma          = encPhaseEwma;
+    r.enc_duty_a_ewma         = encDutyAEwma;
+    r.enc_duty_b_ewma         = encDutyBEwma;
 
     memcpy(&logRing[logRingHead], &r, LOG_REC_SIZE);
     logRingHead = (logRingHead + LOG_REC_SIZE) % LOG_RING_BYTES;
@@ -7064,6 +7280,9 @@ void printTestStatus() {
     uint32_t dropRaw = encDropRawFloor;        // fw v17 per-path attribution
     uint32_t dropGat = encDropLowGate;
     uint32_t dropPit = encDropPitchFloor;
+    uint16_t phFp    = encPhaseEwma;           // fw v20 geometry levels (1/256ths of a pitch)
+    uint16_t dutyAFp = encDutyAEwma;
+    uint16_t dutyBFp = encDutyBEwma;
     interrupts();
     Serial.print("periods=");     Serial.print(perCnt);
     Serial.print("/");            Serial.print((int)ENC_PERIOD_AVG_N);
@@ -7083,10 +7302,31 @@ void printTestStatus() {
     // the un-Schmitted OPB829DZ chatter signature (the 74HC14 bodge should collapse it); rawFloor
     // dominating points at bounce faster than ~26.6 m/s of rim travel; pitchFloor dominating means the
     // decoder position delta disagrees with the elapsed time, i.e. corrupted counts, not timing.
-    // Not logged to the BLG (format stays v6) — spurDrop already carries the sum there.
+    // Not logged to the BLG (the per-path split is 'S'-dump only, at v7 as at v6) — spurDrop
+    // already carries the sum there.
     Serial.print("dropRawFloor=");    Serial.print(dropRaw);
     Serial.print("  dropLowGate=");   Serial.print(dropGat);
     Serial.print("  dropPitchFloor="); Serial.println(dropPit);
+    // fw v20: quadrature GEOMETRY, printed as pitch/period fractions (the stored value is fixed
+    // point in 1/256ths). This is the bench replacement for a scope on the sensor mount, and it
+    // measures under rotation, which a static probe cannot.
+    // ACCEPTANCE, first spin on the 90-slot wheel: phase 0.25 +- 0.05, both duties 0.50 +- 0.05 —
+    // but the DUTY half holds only AFTER the 74HC14 Schmitt lands (safety review MED-2). On the
+    // present un-Schmitted front end duty A reads HIGH and duty B reads LOW by construction (a
+    // chatter fall on A is timed from the older accepted rise; chatter pairs on B fold near-zero
+    // fractions). Pre-Schmitt, read the deviation and its DIRECTION as chatter evidence, not as a
+    // mount verdict. Phase is unaffected — its gates reject chatter-origin samples.
+    // Phase drifting toward 0.00 or 0.50 is the ALIGNED-EDGES failure — the channels leave
+    // quadrature, the decoder's handshake starts losing cycles, and encoderPos under-counts with
+    // no other observable. Duty off 0.50 with phase healthy points at the optical front end (an
+    // off-centre threshold on the un-Schmitted slow edge, or a sensor at the wrong radius)
+    // instead of at the mount. All three read 0.000 until the period reference has seeded and a
+    // sample has been folded in — 0.000 means "no measurement yet", not "0.00 pitch". Phase is
+    // FORWARD-ONLY (dir = +1 above); spin the wheel forward to read it.
+    Serial.print("phase=");       Serial.print(phFp / 256.0f, 3);
+    Serial.print(" pitch (exp 0.25)  dutyA="); Serial.print(dutyAFp / 256.0f, 3);
+    Serial.print("  dutyB=");     Serial.print(dutyBFp / 256.0f, 3);
+    Serial.println("  (exp 0.50)");
     Serial.print("v_actual=");    Serial.print(v_actual, 3);
     Serial.print(" m/s  (counts/rev="); Serial.print(ENCODER_COUNTS_PER_REV, 0);
     Serial.print(", r=");               Serial.print(FLYWHEEL_RADIUS_M, 4);
@@ -8922,6 +9162,13 @@ void encoderVelReset() {
     encDropRawFloor      = 0;   // fw v17 per-path attribution — same epoch as the sum above
     encDropLowGate       = 0;
     encDropPitchFloor    = 0;
+    encPhaseEwma    = 0;        // fw v20 phase/duty diagnostics — cleared here because all three
+    encDutyAEwma    = 0;        // are normalised by encPeriodRefUs, which this reset also clears:
+    encDutyBEwma    = 0;        // keeping a level computed against a retired reference would make
+    encLastARiseUs  = 0;        // the next few samples silently wrong. The latch timestamps go too,
+    encLastBRiseUs  = 0;        // so no sample can straddle the reset.
+    encHaveARise    = false;
+    encHaveBRise    = false;
     // fw v15: no tripwire state to clear — the pitch count is stateless (see the retirement note
     // at the encPeriodRefUs declarations). The pitch count itself carries no state across edges:
     // it is derived from encPosAtLastEdge, which this reset already re-anchors above.
@@ -9207,8 +9454,32 @@ void updateWheelSpeed() {
 // ═════════════════════════════════════════════════════════════════════════════
 // ENCODER ISRs
 // ═════════════════════════════════════════════════════════════════════════════
+// ── fw v20 phase/duty helper ──────────────────────────────────────────────────
+// Normalise an edge-to-edge interval to 1/256ths of the EWMA period reference and fold it into a
+// uint16 EWMA at alpha = 1/4. Returns without touching the accumulator if the sample is not
+// usable, so every caller is a single guarded call.
+// PLAUSIBILITY GATE: `dtUs < refUs` is the only filter, and it is deliberate. A spurious B-edge
+// (or a fall never seen) lands an interval of a full period or more; admitting those would drag
+// every statistic toward 0.5 and manufacture exactly the aligned-edge signature these numbers
+// exist to detect. Nothing else is filtered — raw-edge visibility is the point of the tap.
+// Overflow: refUs is capped at ENC_PERIOD_REF_MAX_US (200000) and dtUs < refUs, so dtUs * 256 is
+// at most 5.12e7 — well inside uint32.
+static inline void encFoldPitchFraction(volatile uint16_t &acc, uint32_t dtUs, uint32_t refUs) {
+    if (refUs == 0 || dtUs >= refUs) return;          // no reference yet, or implausible interval
+    uint32_t fp = (dtUs << 8) / refUs;                // 1/256ths of a pitch — the one divide
+    uint16_t a  = acc;
+    // Review LOW-3: acc == 0 doubles as the "empty" sentinel, so a legitimate sample of exactly
+    // 0/256 re-seeds instead of folding. Cosmetic and effectively unreachable — fp == 0 needs
+    // dt < ref/256, i.e. an edge pair inside ~1/256th of a pitch, which the ENC_PERIOD_MIN_US
+    // floor and the physical edge rate make unreachable on a real stream. No separate valid flag
+    // is added: it would cost a byte of ISR state to distinguish two values that both mean
+    // "no usable measurement".
+    if (a == 0) acc = (uint16_t)fp;                            // seed on the first sample
+    else        acc = (uint16_t)(a - (a >> 2) + (fp >> 2));    // alpha = 1/4, shifts only
+}
+
 void doEncoderA() {
-    encEdgeCountA++;          // diagnostic only — see the encoder globals block
+    encEdgeCountA++;         // diagnostic only — see the encoder globals block
     pinA_read = digitalRead(ENC_A);
     pinB_read = digitalRead(ENC_B);
 
@@ -9243,6 +9514,8 @@ void doEncoderA() {
             encLastEdgeUs    = nowUs;
             encPosAtLastEdge = pos;
             encHaveLastEdge  = true;
+            encLastARiseUs   = nowUs;   // fw v20: phase/duty-A reference (accepted A-rises only)
+            encHaveARise     = true;
         } else {
             uint32_t period = nowUs - encLastEdgeUs;   // unsigned: correct across micros() wrap
 
@@ -9416,15 +9689,32 @@ void doEncoderA() {
                     // HIGH. Accepted: the merge path now counts pitches correctly, the reading-age
                     // bound terminates dither holds, and a ref biased high only makes the 0.625
                     // low-side gate MORE conservative — it cannot create a fast reading.
+                    // fw v20 safety review MED-1 — NO PHASE SAMPLE MAY STRADDLE A DIRECTION
+                    // CHANGE. encPeriodDir only updates HERE, at the next accepted A-rising
+                    // interval, but B-rising edges fold phase samples continuously. So between a
+                    // physical reversal and its detection on this line, encPeriodDir still reads
+                    // +1 while the wheel runs backwards, and every B-rise in that stale window
+                    // folds a REVERSE measurement as if it were forward — reverse reads the
+                    // complement, 1 - phi = 0.75. ML0140-class direction dither alternates the two
+                    // and parks the EWMA near 0.5, which is exactly the aligned-edges FAULT
+                    // signature: a false positive telling the operator to re-mount a healthy
+                    // sensor. The cure is to discard the accumulator whenever the direction is
+                    // found to have changed or become ambiguous, so encPhaseEwma only ever
+                    // contains samples taken since the last confirmed direction. Recovery costs
+                    // one sample: the alpha = 1/4 fold seeds directly on a zero accumulator.
+                    // Both duty statistics are deliberately untouched — duty is a within-channel
+                    // high-time fraction and has no handedness, so a reversal does not corrupt it.
                     int8_t  newDir = (dpos > 0) ? 1 : ((dpos < 0) ? -1 : 0);
                     if (newDir == 0) {
                         encPeriodCount = 0;             // ambiguous — restart accumulation
                         encPeriodDir   = 0;
+                        encPhaseEwma   = 0;             // MED-1: direction unknown, samples suspect
                     } else {
                         if (newDir != encPeriodDir) {
                             encPeriodCount = 0;         // direction flip: never average across it
                             encPeriodIdx   = 0;
                             encPeriodDir   = newDir;
+                            encPhaseEwma   = 0;         // MED-1: drop the pre-flip stale window
                         }
                         encPeriodBuf[encPeriodIdx] = period;
                         encPeriodIdx = (uint8_t)((encPeriodIdx + 1) % ENC_PERIOD_AVG_N);
@@ -9432,6 +9722,10 @@ void doEncoderA() {
                     }
                     encLastEdgeUs    = nowUs;
                     encPosAtLastEdge = pos;
+                    // fw v20: the phase/duty-A reference rides the ACCEPTED base, so a rejected
+                    // (chatter) A-rise can never become the origin of a phase measurement.
+                    encLastARiseUs   = nowUs;
+                    encHaveARise     = true;
                 }
             }
             // Dropped interval: optical glitch/bounce below the absolute ENC_PERIOD_MIN_US floor,
@@ -9445,6 +9739,15 @@ void doEncoderA() {
             // (N+1)·pitch/(2v) estimator delay for a clean edge stream is UNCHANGED by this
             // filter — it costs nothing on the signal the Schmitt bodge will eventually deliver.
         }
+    } else if (encHaveARise) {
+        // ── Channel-A duty tap (fw v20) ──────────────────────────────────────────
+        // pinA_read was just read for the decode above, so `== 0` on a CHANGE interrupt IS the
+        // falling edge — no extra digitalRead. High time is measured from the last ACCEPTED
+        // A-rising edge, so duty A and the phase statistic share one origin and can be read
+        // against each other. A healthy channel reads 0.50 +- 0.05 pitch; a persistent offset
+        // means the logic threshold is sitting off-centre on the phototransistor's slow edge
+        // (the un-Schmitted front end) or the sensor is at the wrong radius.
+        encFoldPitchFraction(encDutyAEwma, micros() - encLastARiseUs, encPeriodRefUs);
     }
 }
 
@@ -9465,5 +9768,54 @@ void doEncoderB() {
         AfirstDown = 0; BfirstDown = 0;
     } else if ((pinA_read == 1) && (pinB_read == 0)) {
         BfirstDown = 1;
+    }
+
+    // ── Quadrature phase + channel-B duty tap (fw v20) ───────────────────────────
+    // Runs LAST, like doEncoderA()'s period tap, so the decode above has already settled.
+    // DIRECTION CONVENTION, and it is load-bearing. Phase is gated to ONE rotation direction:
+    // a mixed-direction EWMA of phi is meaningless, because the same geometry reads phi in
+    // reverse as (1 - phi) forward — averaging 0.25 with 0.75 lands on 0.5, which is precisely
+    // the aligned-edge FAULT signature. FORWARD is encPeriodDir == +1, the direction in which the
+    // decoder's position delta is positive (both counts land in this ISR) and in which a B-rising
+    // edge FOLLOWS the A-rising edge at phi ~ 0.25 pitch for this mount. Reverse rotation and the
+    // ambiguous dir == 0 state contribute nothing; the statistic simply stops updating.
+    // WHY 0.25 AND NOT 0.75: the 90-slot wheel's sensor pair sits at 43 deg = 10.75 slot pitches,
+    // whose fractional part is 0.75 — but the two sensors were PHYSICALLY SWAPPED when that wheel
+    // was installed, so A leads B in the forward direction and the A-rise-to-B-rise fraction is
+    // its complement, 0.25.
+    // BENCH ACCEPTANCE CRITERION (first spin on the new wheel, read from the State-98 'S' dump):
+    //   phase 0.25 +- 0.05 pitch, duty A and duty B each 0.50 +- 0.05.
+    // THE DUTY HALF OF THAT CRITERION IS VALID ONLY AFTER THE 74HC14 SCHMITT LANDS (fw v20 safety
+    // review MED-2). Under the present un-Schmitted front end (~500 spurious edges/s at cruise,
+    // 20-30 per pitch at breakaway) both duties are biased BY CONSTRUCTION, in opposite
+    // directions: duty A reads HIGH, because a chatter FALL is measured from the older accepted
+    // A-rise and still passes the dt < ref gate; duty B reads LOW, because chatter rise/fall pairs
+    // on channel B fold near-zero fractions. Neither bias is filtered out — the operator's brief
+    // pins RAW-EDGE VISIBILITY, and a one-shot arming filter was rejected for that reason. Read
+    // the deviation as chatter EVIDENCE pre-Schmitt (its direction identifies which channel is
+    // chattering), and apply the 0.50 +- 0.05 acceptance only post-Schmitt. Phase is not affected
+    // this way: its plausibility gate and direction gate reject chatter-origin samples outright.
+    // Drift of phase toward 0.0 or 0.5 is the ALIGNED-EDGES failure this tap exists to catch — at
+    // either limit the two channels stop being in quadrature, the AfirstUp/BfirstUp handshake
+    // starts losing cycles, and encoderPos under-counts silently (the fw v8 observability lesson:
+    // that failure has no other observable). Duty away from 0.50 with phase healthy points at the
+    // optical front end instead of the mount.
+    // DIAGNOSTIC ONLY — nothing in any control path reads these, and this tap writes no state the
+    // decoder or the velocity estimator reads.
+    if (pinB_read == 1) {
+        uint32_t nowUs = micros();
+        // CROSS-ISR READ (review LOW-4): this reads encLastARiseUs / encHaveARise / encPeriodDir,
+        // all written by doEncoderA(). It is safe only because both pin interrupts share EQUAL
+        // NVIC priority, so neither can nest inside the other and no partially-updated set can be
+        // observed here. Any future change to either pin's interrupt priority MUST revisit this
+        // read. Even then the exposure is bounded: a torn read yields an implausible dt, which the
+        // dt < ref gate in encFoldPitchFraction() rejects rather than folding.
+        if (encHaveARise && encPeriodDir == 1) {
+            encFoldPitchFraction(encPhaseEwma, nowUs - encLastARiseUs, encPeriodRefUs);
+        }
+        encLastBRiseUs = nowUs;   // duty-B origin; latched regardless of direction, since duty is
+        encHaveBRise   = true;    // a within-channel measurement and has no handedness
+    } else if (encHaveBRise) {
+        encFoldPitchFraction(encDutyBEwma, micros() - encLastBRiseUs, encPeriodRefUs);
     }
 }

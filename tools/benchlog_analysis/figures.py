@@ -67,7 +67,22 @@ COLORS = {
     "v_implied": "#eb6834",  # orange  - period-implied speed (pitch/ref)
     "multi_pitch": "#4a3aa7",  # violet - multi-pitch (missed-edge) rate
     "spurious_drop": "#e34948",  # red  - spurious-drop (rejection) rate
+    "edge_a": "#0f8f95",       # teal  - channel-A raw ISR edge rate (v7)
+    "edge_b": "#c07a1e",       # amber - channel-B raw ISR edge rate (v7)
+    "edge_expected": "#8a8a8a",  # grey - expected clean edge rate 2|v|/pitch
+    "phase_ewma": "#7a5cc9",   # purple - inter-channel quadrature phase (v7)
+    "duty_a": "#0f8f95",       # teal  - channel-A optical duty EWMA (v7)
+    "duty_b": "#c07a1e",       # amber - channel-B optical duty EWMA (v7)
 }
+
+# Healthy quadrature phase [pitch fraction] and half-width of the shaded
+# healthy band in the encoder_phase_duty figure. 0.25 = A leads B by a
+# quarter pitch (forward direction, the 90-slot wheel's 43 deg sensor
+# offset as installed); 0.75 is the reversed/swapped-sensor signature;
+# drift toward 0.0/0.5 is the aligned-edges failure mode.
+ENC_PHASE_HEALTHY = 0.25
+ENC_PHASE_BAND = 0.05
+ENC_DUTY_HEALTHY = 0.50
 
 # Encoder slot pitch [m] -- one quadrature-decoded count is half a slot
 # pitch (x2 decode); pitch itself is 2*pi*FLYWHEEL_RADIUS_M/ENCODER_SLOTS.
@@ -890,7 +905,18 @@ def encoder_diagnostics(data, cfg):
 
     Panel (c): per-second rates of the two cumulative counters
     (enc_multi_pitch_count = missed-edge rate, enc_spurious_drop_count =
-    rejection rate), on the same time base as (a)/(b).
+    rejection rate), on the same time base as (a)/(b). On v7 data
+    (enc_edge_count_a/enc_edge_count_b present) the panel additionally
+    carries the per-channel raw ISR edge rates and the expected clean-stream
+    rate 2*|v_truth|/pitch (2 edges per slot per channel, CHANGE
+    interrupts): the A-vs-B asymmetry and each channel's excess over the
+    expected rate are the Schmitt-fix before/after metrics. COUNTER
+    CONTRACT: unlike the two v6 counters, the edge counters are
+    BOOT-MONOTONIC -- never cleared by encoderVelReset() -- so a negative
+    per-bin diff means uint32 wrap or an MCU reset (rendered as NaN,
+    wrap/reset-suspect), never a mid-run firmware counter clear. Pre-v7
+    logs simply omit the edge-rate lines (the rest of the panel is
+    unchanged).
 
     Returns None (no figure) when the v6 columns are absent from `data`
     -- i.e. any pre-v6 CSV -- so make_all() can skip this figure gracefully,
@@ -985,6 +1011,35 @@ def encoder_diagnostics(data, cfg):
              label="multi-pitch rate (missed-edge) [/s]")
     ax2.plot(centers_sd, rate_sd, color=c_sd, linewidth=LW_RAW,
              label="spurious-drop rate (rejection) [/s]")
+
+    # v7-only: per-channel raw ISR edge rates. _cumulative_rate_per_s
+    # already renders a negative per-bin diff as NaN, which is exactly the
+    # right rendering here too -- but for a DIFFERENT reason than the v6
+    # counters: enc_edge_count_a/b are boot-monotonic (never cleared by
+    # encoderVelReset()), so a negative diff is uint32 wrap or an MCU reset
+    # (wrap/reset-suspect), never a mid-run counter clear. Rates are
+    # per-bin (counter increase / the bin's actual elapsed t_s span) --
+    # never a raw counter value divided by t[-1], since the CSV t axis is
+    # session-absolute.
+    if "enc_edge_count_a" in data and "enc_edge_count_b" in data:
+        centers_ea, rate_ea = _cumulative_rate_per_s(
+            data["enc_edge_count_a"], t)
+        centers_eb, rate_eb = _cumulative_rate_per_s(
+            data["enc_edge_count_b"], t)
+        ax2.plot(centers_ea, rate_ea, color=COLORS["edge_a"],
+                 linewidth=LW_RAW,
+                 label="edge rate A [/s] (neg diff = wrap/reset-suspect)")
+        ax2.plot(centers_eb, rate_eb, color=COLORS["edge_b"],
+                 linewidth=LW_RAW,
+                 label="edge rate B [/s] (neg diff = wrap/reset-suspect)")
+        # Expected clean-stream per-channel rate: 2 edges per slot per
+        # channel (CHANGE interrupts) -> 2*|v_truth|/pitch. The excess of
+        # each measured rate over this line is the spurious-edge metric.
+        expected = 2.0 * np.abs(v_truth) / pitch_m
+        ax2.plot(t, expected, color=COLORS["edge_expected"],
+                 linewidth=LW_RAW, linestyle="--",
+                 label="expected 2|v_truth|/pitch [/s]")
+
     _style_axes(ax2, ylabel="Rate [1/s]", xlabel="Time [s]")
     ax2.set_title("Cumulative-counter diff rates", color=TEXT_COLOR,
                   fontsize=11, loc="left")
@@ -992,6 +1047,71 @@ def encoder_diagnostics(data, cfg):
 
     ax2.set_xlim(float(t[0]), float(t[-1]))
     _suptitle(fig, _run_name(cfg), "encoder diagnostics")
+    return fig
+
+
+def encoder_phase_duty(data, cfg):
+    """Fig 10 (v7 only): quadrature phase and optical duty EWMA levels.
+
+    All three inputs are LEVELS (fw v20, 1/256 fixed point on the wire; the
+    decoder already emits direct fractions) -- read directly, never
+    differenced; cleared by encoderVelReset() (unlike the boot-monotonic
+    edge counters).
+
+    Panel (a): enc_phase_ewma [pitch fraction] with reference lines at 0.25
+    (healthy: A leads B, forward) and 0.75 (reversed/swapped-sensor
+    signature), and a shaded +/-0.05 healthy band around 0.25. Drift toward
+    0.0/0.5 is the aligned-edges failure mode. The phase EWMA is
+    direction-gated to forward rotation and plausibility-gated
+    (dt_AB < period_ref) in firmware.
+
+    Panel (b): enc_duty_a_ewma / enc_duty_b_ewma [period fraction] with a
+    0.50 reference (healthy on both channels).
+
+    Returns None (no figure) when the v7 phase/duty columns are absent --
+    any pre-v7 CSV -- mirroring encoder_diagnostics' pre-v6 skip.
+    """
+    v7_cols = ("enc_phase_ewma", "enc_duty_a_ewma", "enc_duty_b_ewma")
+    if not all(c in data for c in v7_cols):
+        return None
+
+    t = data["t_s"]
+    phase = data["enc_phase_ewma"]
+    duty_a = data["enc_duty_a_ewma"]
+    duty_b = data["enc_duty_b_ewma"]
+
+    fig, (ax0, ax1) = plt.subplots(
+        2, 1, figsize=(10, 7), sharex=True, constrained_layout=True)
+
+    ax0.axhspan(ENC_PHASE_HEALTHY - ENC_PHASE_BAND,
+                ENC_PHASE_HEALTHY + ENC_PHASE_BAND,
+                color="#1baf7a", alpha=0.10, zorder=0, linewidth=0,
+                label="healthy band 0.25 +/- %.2f" % ENC_PHASE_BAND)
+    ax0.axhline(ENC_PHASE_HEALTHY, color=ZERO_LINE_COLOR, linewidth=0.9,
+                linestyle="--", label="0.25 (healthy, A leads B fwd)")
+    ax0.axhline(0.75, color=ZERO_LINE_COLOR, linewidth=0.9, linestyle=":",
+                label="0.75 (reversed/swapped-sensor signature)")
+    ax0.plot(t, phase, color=COLORS["phase_ewma"], linewidth=LW_RAW,
+             label="enc_phase_ewma [pitch fraction]")
+    _style_axes(ax0, ylabel="Phase [pitch fraction]")
+    ax0.set_title("Quadrature phase EWMA (aligned-edges check: drift to "
+                  "0.0/0.5 is the failure mode)",
+                  color=TEXT_COLOR, fontsize=11, loc="left")
+    _legend(ax0)
+
+    ax1.axhline(ENC_DUTY_HEALTHY, color=ZERO_LINE_COLOR, linewidth=0.9,
+                linestyle="--", label="0.50 (healthy)")
+    ax1.plot(t, duty_a, color=COLORS["duty_a"], linewidth=LW_RAW,
+             label="enc_duty_a_ewma [period fraction]")
+    ax1.plot(t, duty_b, color=COLORS["duty_b"], linewidth=LW_RAW,
+             label="enc_duty_b_ewma [period fraction]")
+    _style_axes(ax1, ylabel="Duty [period fraction]", xlabel="Time [s]")
+    ax1.set_title("Per-channel optical duty EWMA", color=TEXT_COLOR,
+                  fontsize=11, loc="left")
+    _legend(ax1)
+
+    ax1.set_xlim(float(t[0]), float(t[-1]))
+    _suptitle(fig, _run_name(cfg), "encoder phase/duty")
     return fig
 
 
@@ -1019,4 +1139,5 @@ FIGURES = [
     ("charge_regen_and_currents", charge_regen_and_currents),
     ("drive_controller_conditioning", drive_controller_conditioning),
     ("encoder_diagnostics", encoder_diagnostics),
+    ("encoder_phase_duty", encoder_phase_duty),
 ]

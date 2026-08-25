@@ -1273,3 +1273,65 @@ Opus safety + Sonnet correctness reviews) shipped **fw v18 (pending flash; carri
   should now HOLD 12 A, not chatter — the BLG u_unsat trace is the verification signal.
   Then: VESC regen-ceiling characterization -> matched-Itot share sweep -> F_c/b_eff refit.
   Housekeeping: rebuild the benchlog analyzer exe; .venv_benchlog still lacks pandas/scipy.
+
+---
+
+## Status & session addendum (2026-08-25, fw v20: BLG v7 — edge counters + phase/duty geometry)
+
+Orchestrated round (Opus implementer, tooling implementer, independent Sonnet test-writer,
+parallel Opus safety + Sonnet correctness reviews). **fw v20 (pending flash; the next flash
+carries v18 + v19 + v20).** Ledger row 20 has full detail. Observability only — no pin/
+sequencing/fault/command/controller/UDP change (telemetry stays v4/58 B).
+
+- **BLG RECORD FORMAT v7 (106 B, hdr[4] = 7).** Five fields APPENDED (all v1–v6 offsets
+  unchanged): `enc_edge_count_a`/`b` (uint32 at 92/96 — raw per-channel ISR edge counts,
+  the direct Schmitt before/after metric and the offline dead-channel/dead-estimator
+  discriminator) and `enc_phase_ewma`/`enc_duty_a_ewma`/`enc_duty_b_ewma` (uint16 at
+  100/102/104 — quadrature mount-phase and per-channel optical duty, shift EWMA α = 1/4,
+  fixed-point 1/256 pitch, computed in the ISRs; replaces a scope for verifying the
+  sensor offset under rotation). Ring math re-derived: 106 KB ring, 4 rec/chunk = 424 B,
+  4.0× catch-up, prealloc ~5.3 min.
+- **THREE decoder field classes now** — mixing them up produces plausible nonsense:
+  LEVELS (`enc_period_ref_us` + the three EWMAs; read directly, never differenced; 0 =
+  "no measurement yet"); RESET-CLEARED counters (`enc_multi_pitch_count`,
+  `enc_spurious_drop_count`; negative diff = mid-run `encoderVelReset()`); BOOT-MONOTONIC
+  counters (the edge counts; NEVER cleared — negative diff = uint32 wrap or MCU reset).
+  Do not add a clear site for the edge counters ('L'/'S' consumers rely on monotonicity).
+- **Convention (operator-confirmed): healthy phase = 0.25 pitch, A leads B forward.** The
+  90-slot wheel's 43° offset = 10.75 pitches (fractional 0.75), but the sensors were
+  PHYSICALLY SWAPPED at wheel install, so the measured A-rise→B-rise fraction is the
+  complement. Phase is direction-gated (forward only) and plausibility-gated (dt < ref);
+  a confirmed direction flip CLEARS the phase EWMA (safety MED-1: the reviewer's literal
+  latch-clear fix was a provable no-op; the implementer's accumulator-clear discards the
+  stale-window contamination — under ML0140-class dither φ reads 0 = honestly unmeasured,
+  never the 0.5 aligned-edges fault signature). Duty EWMAs are NOT direction-gated or
+  flip-cleared (no handedness).
+- **Duty acceptance is post-Schmitt-only (safety MED-2, annotated not filtered):** under
+  the un-Schmitted front end duty A biases HIGH and duty B LOW by construction; the
+  one-shot arming fix was rejected to preserve raw-edge visibility. Bench acceptance,
+  first spin, 'S' dump: phase 0.25 ± 0.05; duties 0.50 ± 0.05 each POST-Schmitt (their
+  pre-Schmitt deviation direction identifies the chattering channel). Phase drift toward
+  0.0/0.5 = aligned-edges failure. Once the 74HC14 lands, the duty bias vanishing is a
+  second independent Schmitt-acceptance metric alongside the drop counters.
+- **Taps are the fw v15/v17 exception class:** quadrature decode blocks verified
+  byte-identical; the taps write no estimator/decoder input. One divide per φ/duty sample,
+  confined to the rising/falling branches; the accepted-period common path gains none.
+  uint16 overflow is bounded STRUCTURALLY by the dt < ref gate (fp < 256) — no explicit
+  clamp exists; weakening that gate requires adding one.
+- **Tooling in lockstep:** decoder parses v7 (31-column CSV; the three EWMA columns are
+  pre-divided by 256 into direct fractions), `make_test_blg.py --v7`, new
+  `encoder_phase_duty` figure (0.25 ref + ±0.05 band + 0.75 swapped-sensor signature;
+  0.50 duty ref), edgeA/edgeB rate lines in encoder_diagnostics panel (c). v1–v6 parsing
+  byte-identical (ML0146 real-log regression green). Analyzer exe STILL needs a rebuild.
+- **Tests: 3442 production + 175 bench, 135 + 174 Python — all green** (orchestrator-
+  rebuilt from source, both builds). New: v7 layout/golden/plumbing via the real ISRs,
+  boot-monotonic vs reset-cleared on one reset call, `encFoldPitchFraction()` unit
+  (seed/fold/both gates), ISR-driven φ at ¼ and ¾, flip-clear + one-sample re-seed,
+  dither never parks at 128, asymmetric duty, 'S' dump lines. Accepted residuals
+  (correctness review L1–L3): EWMA boundary at ref-cap, pre-seed early-fold numerics,
+  fractional-pitch-ledger × tap timing — none control-reachable.
+- **Next bench:** flash (v18+v19+v20); on a forward hand-spin read the 'S' dump
+  `phase=`/`dutyA=`/`dutyB=` FIRST and confirm 0.25/0.50/0.50 before trusting any
+  velocity number on the new wheel; keep one pre-Schmitt run as the edge-rate baseline.
+  Then the fw v18 order unchanged: Schmitt → VESC regen-ceiling → matched-Itot share
+  sweep → F_c/b_eff refit. Housekeeping: analyzer exe rebuild; .venv_benchlog pandas/scipy.

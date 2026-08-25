@@ -1,0 +1,182 @@
+diff --git a/tools/decode_benchlog.py b/tools/decode_benchlog.py
+index d7db117..cbcc713 100644
+--- a/tools/decode_benchlog.py
++++ b/tools/decode_benchlog.py
+@@ -1,5 +1,5 @@
+ #!/usr/bin/env python3
+-"""Decode .BLG bench-log files (format versions 1, 2, 3, 4, 5, and 6) into CSV.
++"""Decode .BLG bench-log files (format versions 1-7) into CSV.
+ 
+ The firmware writer lives in teensy_controller/teensy_controller.ino
+ (State 98 SD-card logging, see PLAN.md sec 9g). File layout:
+@@ -105,6 +105,50 @@ The firmware writer lives in teensy_controller/teensy_controller.ino
+     something reversed; this decoder does not attempt unwrap correction, it
+     only exposes the raw cumulative value.
+ 
++  Header, format v7 (fw v20): adds no header fields -- v7 is IDENTICAL to
++    v4/v5/v6 in the header (32 B layout, same offsets). Only the RECORD
++    format changes; see below. The existing `if version >= 4:` header
++    branches already cover v7 unchanged.
++
++  Record, format v7 (106 B, LE): the v6 92 B record (offsets 0-91 unchanged)
++    with five more fields APPENDED at the end:
++      offset 92-95:  u32 enc_edge_count_a -- raw channel-A ISR edge count
++                     (encEdgeCountA; CHANGE interrupts, so a clean
++                     quadrature stream produces 2 edges per slot per
++                     channel).
++      offset 96-99:  u32 enc_edge_count_b -- raw channel-B ISR edge count
++                     (encEdgeCountB).
++      offset 100-101: u16 enc_phase_ewma -- inter-channel quadrature phase
++                     EWMA, fixed-point 1/256ths of a pitch (this decoder
++                     emits value/256.0 in the CSV: a direct dimensionless
++                     pitch fraction). Healthy mount reads ~0.25 (A leads B,
++                     forward; the 90-slot wheel's 43 deg sensor offset as
++                     installed); drift toward 0.0/0.5 is the aligned-edges
++                     failure mode. Direction-gated to forward rotation and
++                     plausibility-gated (dt_AB < period_ref) in firmware.
++      offset 102-103: u16 enc_duty_a_ewma -- channel-A optical duty EWMA,
++                     same 1/256 fixed point (CSV emits value/256.0: the
++                     fraction of the period the channel is high; healthy
++                     ~0.50).
++      offset 104-105: u16 enc_duty_b_ewma -- channel-B optical duty EWMA,
++                     same encoding/CSV scaling.
++    FIELD CLASSES -- the v6/v7 encoder-diagnostic fields fall into THREE
++    distinct classes, and reading one with another class's convention is a
++    consumer bug:
++      * boot-monotonic counters (enc_edge_count_a/b): CUMULATIVE, diff
++        consecutive samples for a rate; NEVER cleared by encoderVelReset()
++        -- a negative diff means uint32 wrap or an MCU reset, NOT a mid-run
++        firmware-side clear.
++      * reset-cleared counters (enc_multi_pitch_count,
++        enc_spurious_drop_count): CUMULATIVE, diff for a rate; cleared by
++        encoderVelReset(), so a negative diff means a mid-run reset.
++      * levels (enc_period_ref_us, enc_phase_ewma, enc_duty_a_ewma,
++        enc_duty_b_ewma): read directly, NEVER differenced; the three EWMA
++        levels are cleared by encoderVelReset() (unlike the boot-monotonic
++        edge counters).
++    As with the v6 counters, this decoder does no unwrap correction on the
++    counter classes; it exposes the raw cumulative values.
++
+   Trailer: a record with t_us == 0xFFFFFFFF (sentinel), reinterpreted as
+     u32 sentinel, u32 records_written, u32 dropped_count, u8 close_reason
+     (1=complete, 2=stop, 3=X, 4=Q, 5=fault, 6=io_error), u8 error_code,
+@@ -153,6 +197,15 @@ header itself is unchanged from v4/v5 (RECORD_INFO[6] has its own record
+ fmt/size/csv_fields/csv_header but reuses v4's header decode path
+ unmodified).
+ 
++Format v7 adds five more CSV columns -- enc_edge_count_a, enc_edge_count_b,
++enc_phase_ewma, enc_duty_a_ewma, enc_duty_b_ewma -- APPENDED after
++enc_spurious_drop_count (i.e. still before fault_flags), giving a
++31-column CSV_HEADER_V7. The three EWMA columns are emitted as raw/256.0
++(direct pitch/period fractions), not as the raw fixed-point integers. The
++header itself is unchanged from v4/v5/v6 (RECORD_INFO[7] has its own
++record fmt/size/csv_fields/csv_header but reuses v4's header decode path
++unmodified).
++
+ Gap statistics (printed to stderr): max_interval_us is the largest modular
+ step between consecutive records; missed_periods sums, over every step,
+ max(round(delta_us / 1000) - 1, 0) -- i.e. how many 1 kHz control ticks
+@@ -169,7 +222,7 @@ result's csv_header (not the module-level CSV_HEADER constant) is the
+ correct CSV header line for the decoded file's version -- v1/v2 files get
+ the 16-column CSV_HEADER, v3/v4 files get the 20-column CSV_HEADER_V3, v5
+ files get the 22-column CSV_HEADER_V5, v6 files get the 26-column
+-CSV_HEADER_V6.
++CSV_HEADER_V6, and v7 files get the 31-column CSV_HEADER_V7.
+ DecodeResult.header also carries "profile_amp" and "profile_b" (float or
+ None -- None for v1-v3 files and for a v4 file whose corresponding valid
+ bit is clear).
+@@ -205,11 +258,21 @@ RECORD_SIZE_V5 = 76
+ RECORD_FMT_V6 = "<I14fHBBBB2xffiIII"
+ RECORD_SIZE_V6 = 92
+ 
++# v7 record layout: v6's 92 B record with enc_edge_count_a (u32),
++# enc_edge_count_b (u32), enc_phase_ewma (u16), enc_duty_a_ewma (u16),
++# enc_duty_b_ewma (u16) APPENDED at the end (offsets 0-91 unchanged).
++# The edge counters are boot-monotonic (never cleared by
++# encoderVelReset(), unlike the v6 counters); the three u16 EWMA fields
++# are LEVELS in 1/256 fixed point -- see the module docstring's
++# three-class field contract.
++RECORD_FMT_V7 = "<I14fHBBBB2xffiIIIIIHHH"
++RECORD_SIZE_V7 = 106
++
+ TRAILER_FMT = "<IIIBBI"
+ CLOSE_REASONS = {1: "complete", 2: "stop", 3: "X", 4: "Q", 5: "fault",
+                   6: "io_error"}
+ 
+-SUPPORTED_VERSIONS = (1, 2, 3, 4, 5, 6)
++SUPPORTED_VERSIONS = (1, 2, 3, 4, 5, 6, 7)
+ 
+ # Per-version record format/size and CSV header/field list. v1 and v2 share
+ # a record layout; v3 appends the four new voltage channels after I_cmd.
+@@ -247,6 +310,20 @@ CSV_HEADER_V6 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
+                   "enc_spurious_drop_count,fault_flags,ps_phase,dc_phase,"
+                   "trap_phase,flags")
+ 
++CSV_FIELDS_V7 = ["share_sp", "share_act", "v_sp", "v_act", "I_fc", "I_batt",
++                 "gFC", "gBT", "V_bus", "I_cmd", "V_fc", "V_batt", "V_chg",
++                 "V_rgn", "u_unsat", "drive_x0", "encoder_pos",
++                 "enc_period_ref_us", "enc_multi_pitch_count",
++                 "enc_spurious_drop_count", "enc_edge_count_a",
++                 "enc_edge_count_b", "enc_phase_ewma", "enc_duty_a_ewma",
++                 "enc_duty_b_ewma"]
++CSV_HEADER_V7 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
++                  "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,u_unsat,drive_x0,"
++                  "encoder_pos,enc_period_ref_us,enc_multi_pitch_count,"
++                  "enc_spurious_drop_count,enc_edge_count_a,enc_edge_count_b,"
++                  "enc_phase_ewma,enc_duty_a_ewma,enc_duty_b_ewma,"
++                  "fault_flags,ps_phase,dc_phase,trap_phase,flags")
++
+ RECORD_INFO = {
+     1: {"fmt": RECORD_FMT, "size": RECORD_SIZE, "csv_fields": CSV_FIELDS,
+         "csv_header": CSV_HEADER},
+@@ -260,6 +337,8 @@ RECORD_INFO = {
+         "csv_fields": CSV_FIELDS_V5, "csv_header": CSV_HEADER_V5},
+     6: {"fmt": RECORD_FMT_V6, "size": RECORD_SIZE_V6,
+         "csv_fields": CSV_FIELDS_V6, "csv_header": CSV_HEADER_V6},
++    7: {"fmt": RECORD_FMT_V7, "size": RECORD_SIZE_V7,
++        "csv_fields": CSV_FIELDS_V7, "csv_header": CSV_HEADER_V7},
+ }
+ 
+ # 30 s: longer than any profile's worst card-stall gap (ring = 1024 rec ~=
+@@ -398,7 +477,15 @@ def decode_blg(data):
+         prev_t_us = t_us
+ 
+         fields = struct.unpack_from(record_fmt, chunk, 0)
+-        if version == 6:
++        if version == 7:
++            (_t, share_sp, share_act, v_sp, v_act, i_fc, i_batt, gfc, gbt,
++             v_bus, i_cmd, v_fc, v_batt, v_chg, v_rgn, fault_flags, ps_phase,
++             dc_phase, trap_phase, flags, u_unsat, drive_x0, encoder_pos,
++             enc_period_ref_us, enc_multi_pitch_count,
++             enc_spurious_drop_count, enc_edge_count_a,
++             enc_edge_count_b, enc_phase_ewma, enc_duty_a_ewma,
++             enc_duty_b_ewma) = fields
++        elif version == 6:
+             (_t, share_sp, share_act, v_sp, v_act, i_fc, i_batt, gfc, gbt,
+              v_bus, i_cmd, v_fc, v_batt, v_chg, v_rgn, fault_flags, ps_phase,
+              dc_phase, trap_phase, flags, u_unsat, drive_x0, encoder_pos,
+@@ -425,14 +512,21 @@ def decode_blg(data):
+         row = [t_us, "%.9g" % share_sp, "%.9g" % share_act, v_sp_cell,
+                v_act_cell, "%.9g" % i_fc, "%.9g" % i_batt, "%.9g" % gfc,
+                "%.9g" % gbt, "%.9g" % v_bus, "%.9g" % i_cmd]
+-        if version in (3, 4, 5, 6):
++        if version in (3, 4, 5, 6, 7):
+             row += ["%.9g" % v_fc, "%.9g" % v_batt, "%.9g" % v_chg,
+                     "%.9g" % v_rgn]
+-        if version in (5, 6):
++        if version in (5, 6, 7):
+             row += ["%.9g" % u_unsat, "%.9g" % drive_x0]
+-        if version == 6:
++        if version in (6, 7):
+             row += [encoder_pos, enc_period_ref_us, enc_multi_pitch_count,
+                     enc_spurious_drop_count]
++        if version == 7:
++            # The three EWMA levels are 1/256 fixed point on the wire; the
++            # CSV carries the direct fractions (raw/256.0) -- see docstring.
++            row += [enc_edge_count_a, enc_edge_count_b,
++                    "%.9g" % (enc_phase_ewma / 256.0),
++                    "%.9g" % (enc_duty_a_ewma / 256.0),
++                    "%.9g" % (enc_duty_b_ewma / 256.0)]
+         row += [fault_flags, ps_cell, dc_cell, tp_cell, flags]
+         csv_rows.append(",".join(str(c) for c in row))
+         records_read += 1

@@ -1,0 +1,4 @@
+[decode_benchlog] version=6 fw_version=19 profile_type=2 start_millis=358684 start_micros=358684212 K_DROOP=0.300 ohm profile_amp=6.000
+[decode_benchlog] records read: 13107
+[decode_benchlog] trailer: records_written=13107 dropped_count=0 abandoned=0 close_reason=complete error_code=0
+[decode_benchlog] max_interval_us=1342 missed_periods=0

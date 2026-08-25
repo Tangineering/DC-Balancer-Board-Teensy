@@ -258,6 +258,24 @@ def _v6_extra(seed, t_s):
     }
 
 
+def _v7_extra(seed, t_s):
+    # Boot-monotonic per-channel edge counters (fw v20): start from non-zero
+    # boot offsets (never cleared by encoderVelReset()), slight A/B
+    # asymmetry so the edge-rate lines are distinguishable.
+    rng = np.random.default_rng(seed + 4000)
+    inc_a = rng.poisson(1.0, N).astype(np.float64)
+    inc_b = rng.poisson(0.97, N).astype(np.float64)
+    return {
+        "enc_edge_count_a": 100_000.0 + np.cumsum(inc_a),
+        "enc_edge_count_b": 100_150.0 + np.cumsum(inc_b),
+        # EWMA levels arrive from load_csv() already /256 (direct
+        # fractions): healthy phase ~0.25, duty ~0.50, with small jitter.
+        "enc_phase_ewma": 0.25 + rng.normal(0.0, 0.01, N),
+        "enc_duty_a_ewma": 0.50 + rng.normal(0.0, 0.015, N),
+        "enc_duty_b_ewma": 0.50 + rng.normal(0.0, 0.015, N),
+    }
+
+
 def make_v1v2_fixture(seed=0):
     return _base_channels(seed)
 
@@ -273,6 +291,12 @@ def make_v6_fixture(seed=2):
     data.update(_v3_extra(seed, data["t_s"]))
     data.update(_v5_extra(seed, data["t_s"]))
     data.update(_v6_extra(seed, data["t_s"]))
+    return data
+
+
+def make_v7_fixture(seed=3):
+    data = make_v6_fixture(seed)
+    data.update(_v7_extra(seed, data["t_s"]))
     return data
 
 
@@ -690,7 +714,10 @@ def test_version_gate():
 # Builders that must return None (not a Figure) on a v1/v2-shaped dict --
 # every other registered builder must return a Figure.
 NONE_ON_V1V2 = {"charge_regen_and_currents", "drive_controller_conditioning",
-                 "encoder_diagnostics"}
+                 "encoder_diagnostics", "encoder_phase_duty"}
+
+# Builders that must return None on a v6-shaped dict (v7-only columns).
+NONE_ON_V6 = {"encoder_phase_duty"}
 
 
 def test_registry_regression_v6():
@@ -702,12 +729,100 @@ def test_registry_regression_v6():
               not raised)
         if raised:
             continue
-        check(f"(d) {name}: returns a Figure on the v6 fixture "
-              f"(every column any builder needs is present)",
-              result is not None)
+        if name in NONE_ON_V6:
+            check(f"(d) {name}: returns None on v6 data (v7-gated)",
+                  result is None)
+        else:
+            check(f"(d) {name}: returns a Figure on the v6 fixture "
+                  f"(every column any pre-v7 builder needs is present)",
+                  result is not None)
         if result is not None:
             assert_figure_open(f"(d) {name} [v6]", result)
             figures.plt.close(result)
+
+
+def test_registry_regression_v7():
+    """(d) v7 fixture: every builder still returns an open Figure, and
+    encoder_diagnostics gains the per-channel edge-rate lines."""
+    cfg = _default_cfg()
+    data = make_v7_fixture()
+    for name, builder in figures.FIGURES:
+        result, raised = _call_gracefully(builder, data, cfg)
+        check(f"(d) {name}: does not raise on the v7 fixture", not raised)
+        if raised:
+            continue
+        check(f"(d) {name}: returns a Figure on the v7 fixture",
+              result is not None)
+        if result is not None:
+            assert_figure_open(f"(d) {name} [v7]", result)
+            figures.plt.close(result)
+
+
+def test_encoder_diagnostics_edge_rate_gate():
+    """The v7 edge-rate lines appear in encoder_diagnostics' counter panel
+    on v7 data and are absent (graceful skip, no raise, figure still built)
+    on v6 data -- the pre-v7 behaviour is unchanged."""
+    cfg = _default_cfg()
+
+    fig7 = figures.encoder_diagnostics(make_v7_fixture(), cfg)
+    check("edge-rate gate: v7 fixture builds a Figure", fig7 is not None)
+    if fig7 is not None:
+        labels7 = [ln.get_label() for ln in fig7.axes[2].get_lines()]
+        check("edge-rate gate: edge rate A line present on v7 data",
+              any("edge rate A" in l for l in labels7), labels7)
+        check("edge-rate gate: edge rate B line present on v7 data",
+              any("edge rate B" in l for l in labels7), labels7)
+        check("edge-rate gate: expected 2|v_truth|/pitch line present",
+              any("2|v_truth|/pitch" in l for l in labels7), labels7)
+        check("edge-rate gate: edge labels carry the wrap/reset-suspect "
+              "contract (NOT the encoderVelReset one)",
+              any("wrap/reset-suspect" in l for l in labels7), labels7)
+        figures.plt.close(fig7)
+
+    fig6 = figures.encoder_diagnostics(make_v6_fixture(), cfg)
+    check("edge-rate gate: v6 fixture still builds a Figure (no raise on "
+          "absent v7 columns)", fig6 is not None)
+    if fig6 is not None:
+        labels6 = [ln.get_label() for ln in fig6.axes[2].get_lines()]
+        check("edge-rate gate: no edge-rate lines on v6 data",
+              not any("edge rate" in l for l in labels6), labels6)
+        figures.plt.close(fig6)
+
+
+def test_encoder_phase_duty_panel():
+    """The v7 phase/duty figure: builds an open Figure on v7 data with the
+    documented reference geometry (phase trace + 0.25/0.75 reference lines
+    + the shaded healthy band; duty A/B traces + the 0.50 reference), and
+    returns None on v6/v1-v2 data (graceful skip)."""
+    cfg = _default_cfg()
+
+    fig = figures.encoder_phase_duty(make_v7_fixture(), cfg)
+    check("phase/duty: v7 fixture builds a Figure", fig is not None)
+    if fig is not None:
+        assert_figure_open("phase/duty [v7]", fig)
+        check("phase/duty: two panels", len(fig.axes) == 2, len(fig.axes))
+        labels0 = [ln.get_label() for ln in fig.axes[0].get_lines()]
+        check("phase/duty: phase trace present",
+              any("enc_phase_ewma" in l for l in labels0), labels0)
+        check("phase/duty: 0.25 healthy reference line present",
+              any("0.25" in l for l in labels0), labels0)
+        check("phase/duty: 0.75 reversed/swapped-sensor reference present",
+              any("0.75" in l for l in labels0), labels0)
+        patches = fig.axes[0].patches
+        check("phase/duty: shaded healthy band present (axhspan patch)",
+              len(patches) >= 1, len(patches))
+        labels1 = [ln.get_label() for ln in fig.axes[1].get_lines()]
+        check("phase/duty: duty A and B traces present",
+              any("enc_duty_a_ewma" in l for l in labels1)
+              and any("enc_duty_b_ewma" in l for l in labels1), labels1)
+        check("phase/duty: 0.50 duty reference present",
+              any("0.50" in l for l in labels1), labels1)
+        figures.plt.close(fig)
+
+    check("phase/duty: returns None on v6 data (v7-gated)",
+          figures.encoder_phase_duty(make_v6_fixture(), cfg) is None)
+    check("phase/duty: returns None on v1/v2 data",
+          figures.encoder_phase_duty(make_v1v2_fixture(), cfg) is None)
 
 
 def test_registry_regression_v1v2():
@@ -775,6 +890,31 @@ def test_end_to_end_v6():
                 pass
 
 
+def test_end_to_end_v7():
+    """(e) v7 end-to-end through make_test_blg --v7 + ingest + make_all:
+    encoder_diagnostics.png is produced (the v7 columns flow through the
+    decoder, load_csv, and the figure gate)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        blg_path = tmp / "TESTV7.BLG"
+        blg_path.write_bytes(
+            make_test_blg.build_blg(seed=0, truncate=False, v7=True,
+                                     fw_version=20))
+
+        run_dir = ingest_log.ingest(blg_path)
+        check("(e) v7 end-to-end: run directory inside the temp dir",
+              str(run_dir).startswith(str(tmp)), str(run_dir))
+
+        saved = make_figures.make_all(run_dir)
+        names = {p.name for p in saved}
+        check("(e) v7 end-to-end: encoder_diagnostics.png produced",
+              "encoder_diagnostics.png" in names, names)
+        check("(e) v7 end-to-end: encoder_phase_duty.png produced",
+              "encoder_phase_duty.png" in names, names)
+        check("(e) v7 end-to-end: charge_regen_and_currents.png produced",
+              "charge_regen_and_currents.png" in names, names)
+
+
 def test_end_to_end_v1v2():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -837,8 +977,12 @@ def main():
     test_bus_and_share_total_label()
     test_version_gate()
     test_registry_regression_v6()
+    test_registry_regression_v7()
+    test_encoder_diagnostics_edge_rate_gate()
+    test_encoder_phase_duty_panel()
     test_registry_regression_v1v2()
     test_end_to_end_v6()
+    test_end_to_end_v7()
     test_end_to_end_v1v2()
     test_readme_consistency()
 

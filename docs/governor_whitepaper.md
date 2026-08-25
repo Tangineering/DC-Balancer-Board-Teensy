@@ -15,7 +15,6 @@
 11. [Flow diagram](#11-flow-diagram)
 12. [Interface to the energy-management system](#12-interface-to-the-energy-management-system)
 13. [MATLAB and Simulink implementation](#13-matlab-and-simulink-implementation)
-14. [Unconfirmed values](#14-unconfirmed-values)
 
 ## 1. Scope
 
@@ -602,11 +601,3 @@ Validate against two hardware sources. The State-98 serial dump prints `share lo
 `share sp-cut latch`, and `droop gFC/gBT`, which together cover every internal governor state.
 Telemetry, per Section 12, supplies `power_share_actual`, the two applied gains, and the bus
 switch bits for a longer run.
-
-## 14. Unconfirmed values
-
-None. Every constant in Section 2 was read verbatim from
-`teensy_controller/teensy_controller.ino` or `teensy_controller/share_controller_coeffs.h`.
-Note that `K_DROOP` carries a `TODO(calibrate)` marker in the firmware itself: its value of
-0.30 Ω is a design figure, not a bench-calibrated one, and it affects the MDAC gain mapping of
-Section 7 only.

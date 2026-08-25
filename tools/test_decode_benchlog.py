@@ -69,6 +69,24 @@ unchanged from v4/v5):
       decodes with the SAME test file's assumptions about the v5 layout.
       SKIPPED (not failed) if either file is absent, e.g. a sparse
       checkout without logs/.
+
+Format-v7 coverage (fw v20 round, adds enc_edge_count_a, enc_edge_count_b
+(u32 boot-monotonic counters) and enc_phase_ewma, enc_duty_a_ewma,
+enc_duty_b_ewma (u16 1/256 fixed-point LEVELS) -- 106 B record; header
+unchanged from v4/v5/v6):
+  (u) header parse: record_size=106, version=7, fw_version/profileAmp/
+      profileB carried through the same v4 header path unmodified.
+  (v) record decode: the five new fields at their documented CSV positions
+      (indices 21-25, right after enc_spurious_drop_count), the 31-column
+      CSV_HEADER_V7, and the fixed-point /256 exactness of the three EWMA
+      level columns (fp 64 -> 0.25, fp 128 -> 0.5).
+  (w) near-wrap u32 values (e.g. 0xFFFFFFF0) decode as large unsigned
+      values, not negatives -- the counters are boot-monotonic u32s and a
+      negative DIFF across the wrap is a consumer-side concern, not a
+      decode transform.
+  (x) v7 record_size/version self-consistency hard error, mirroring (r).
+  (y) v6 regression: v6 decode (header + 26-column CSV) is unchanged after
+      adding v7 support.
 """
 import struct
 import subprocess
@@ -92,6 +110,8 @@ RECORD_FMT_V5 = "<I14fHBBBB2xff"
 RECORD_SIZE_V5 = 76
 RECORD_FMT_V6 = "<I14fHBBBB2xffiIII"
 RECORD_SIZE_V6 = 92
+RECORD_FMT_V7 = "<I14fHBBBB2xffiIIIIIHHH"
+RECORD_SIZE_V7 = 106
 TRAILER_FMT = "<IIIBBI"
 CSV_HEADER_V3 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
                   "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,fault_flags,ps_phase,"
@@ -104,6 +124,12 @@ CSV_HEADER_V6 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
                   "encoder_pos,enc_period_ref_us,enc_multi_pitch_count,"
                   "enc_spurious_drop_count,fault_flags,ps_phase,dc_phase,"
                   "trap_phase,flags")
+CSV_HEADER_V7 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
+                  "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,u_unsat,drive_x0,"
+                  "encoder_pos,enc_period_ref_us,enc_multi_pitch_count,"
+                  "enc_spurious_drop_count,enc_edge_count_a,enc_edge_count_b,"
+                  "enc_phase_ewma,enc_duty_a_ewma,enc_duty_b_ewma,"
+                  "fault_flags,ps_phase,dc_phase,trap_phase,flags")
 
 _passed = 0
 _failed = 0
@@ -256,6 +282,47 @@ def pack_record_v6(t_us, share_sp=0.5, share_act=0.5, v_sp=0.0, v_act=0.0,
                        enc_multi_pitch_count & 0xFFFFFFFF,
                        enc_spurious_drop_count & 0xFFFFFFFF)
     assert len(rec) == RECORD_SIZE_V6
+    return rec
+
+
+def pack_header_v7(profile_type=1, start_millis=0, start_micros=0,
+                    k_droop_x1000=300, fw_version=1, param_flags=0x03,
+                    profile_amp=6.0, profile_b=0.15):
+    """v7 header: byte-identical to v4/v5/v6 (see pack_header_v4) except
+    record_size=106 (v7's own record layout)."""
+    hdr = struct.pack(HEADER_FMT, MAGIC, 7, RECORD_SIZE_V7, profile_type,
+                       param_flags, start_millis, start_micros, k_droop_x1000)
+    hdr += struct.pack("<H", fw_version)
+    hdr += b"\x00" * (HEADER_SIZE - len(hdr))
+    hdr = bytearray(hdr)
+    struct.pack_into("<ff", hdr, 20, profile_amp, profile_b)
+    assert len(hdr) == HEADER_SIZE
+    return bytes(hdr)
+
+
+def pack_record_v7(t_us, share_sp=0.5, share_act=0.5, v_sp=0.0, v_act=0.0,
+                    i_fc=0.0, i_batt=0.0, gfc=0.0, gbt=0.0, v_bus=17.5,
+                    i_cmd=0.0, v_fc=12.5, v_batt=8.0, v_chg=12.0, v_rgn=0.5,
+                    fault_flags=0, ps_phase=0xFF, dc_phase=0xFF,
+                    trap_phase=0xFF, flags=0, u_unsat=0.0, drive_x0=0.0,
+                    encoder_pos=0, enc_period_ref_us=0,
+                    enc_multi_pitch_count=0, enc_spurious_drop_count=0,
+                    enc_edge_count_a=0, enc_edge_count_b=0,
+                    enc_phase_ewma=64, enc_duty_a_ewma=128,
+                    enc_duty_b_ewma=128):
+    rec = struct.pack(RECORD_FMT_V7, t_us & 0xFFFFFFFF, share_sp, share_act,
+                       v_sp, v_act, i_fc, i_batt, gfc, gbt, v_bus, i_cmd,
+                       v_fc, v_batt, v_chg, v_rgn, fault_flags, ps_phase,
+                       dc_phase, trap_phase, flags, u_unsat, drive_x0,
+                       encoder_pos, enc_period_ref_us & 0xFFFFFFFF,
+                       enc_multi_pitch_count & 0xFFFFFFFF,
+                       enc_spurious_drop_count & 0xFFFFFFFF,
+                       enc_edge_count_a & 0xFFFFFFFF,
+                       enc_edge_count_b & 0xFFFFFFFF,
+                       enc_phase_ewma & 0xFFFF,
+                       enc_duty_a_ewma & 0xFFFF,
+                       enc_duty_b_ewma & 0xFFFF)
+    assert len(rec) == RECORD_SIZE_V7
     return rec
 
 
@@ -806,6 +873,157 @@ def test_v6_record_size_mismatch(tmpdir):
           "unexpected record_size 76" in err and "expected 92" in err, err)
 
 
+def test_v7_header_and_record(tmpdir):
+    """(u)(v) v7 header + record decode: record_size=106, version=7,
+    fw_version/profileAmp/profileB carried through the v4 header path
+    unmodified, the five new fields at their documented CSV positions
+    (indices 21-25, right after enc_spurious_drop_count), the /256
+    fixed-point exactness of the three EWMA level columns, and the
+    31-column v7 CSV header."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    n = 30
+    data = pack_header_v7(profile_type=8, fw_version=20, param_flags=0x03,
+                           profile_amp=2.0, profile_b=0.30)
+    for i in range(n):
+        data += pack_record_v7(t_us=i * 1000, encoder_pos=1000 + i * 2,
+                                enc_period_ref_us=4200,
+                                enc_multi_pitch_count=7,
+                                enc_spurious_drop_count=12,
+                                enc_edge_count_a=100_000 + i * 4,
+                                enc_edge_count_b=100_150 + i * 4,
+                                enc_phase_ewma=64, enc_duty_a_ewma=128,
+                                enc_duty_b_ewma=131)
+    data += pack_trailer(records_written=n, dropped=0, close_reason=1,
+                          record_size=RECORD_SIZE_V7)
+
+    res = db.decode_blg(data)
+    check("v7: header version=7", res.header["version"] == 7,
+          repr(res.header))
+    check("v7: header record_size=106", res.header["record_size"] == 106,
+          repr(res.header))
+    check("v7: fw_version=20 carried through v4 header path",
+          res.header["fw_version"] == 20, repr(res.header))
+    check("v7: profile_amp/profile_b decoded (v4 header path unmodified)",
+          abs(res.header["profile_amp"] - 2.0) < 1e-5
+          and abs(res.header["profile_b"] - 0.30) < 1e-5, repr(res.header))
+    check("v7: csv_header is the 31-column v7 header",
+          res.csv_header == CSV_HEADER_V7, res.csv_header)
+    check("v7: emits all records", len(res.csv_rows) == n,
+          f"csv data rows={len(res.csv_rows)}, expected {n}")
+
+    first_fields = res.csv_rows[0].split(",")
+    check("v7: row has 31 fields", len(first_fields) == 31,
+          repr(first_fields))
+    # Column order: ...enc_spurious_drop_count(20),enc_edge_count_a(21),
+    # enc_edge_count_b(22),enc_phase_ewma(23),enc_duty_a_ewma(24),
+    # enc_duty_b_ewma(25),fault_flags(26),...
+    check("v7: v6 fields keep their positions (encoder_pos at 17, "
+          "enc_spurious_drop_count at 20)",
+          first_fields[17] == "1000" and first_fields[20] == "12",
+          repr(first_fields[17:21]))
+    check("v7: enc_edge_count_a at index 21",
+          first_fields[21] == "100000", first_fields[21])
+    check("v7: enc_edge_count_b at index 22",
+          first_fields[22] == "100150", first_fields[22])
+    check("v7: enc_phase_ewma at index 23 is fp64/256 = 0.25 EXACTLY",
+          first_fields[23] == "0.25", first_fields[23])
+    check("v7: enc_duty_a_ewma at index 24 is fp128/256 = 0.5 EXACTLY",
+          first_fields[24] == "0.5", first_fields[24])
+    check("v7: enc_duty_b_ewma at index 25 is fp131/256 = 0.51171875",
+          first_fields[25] == "0.51171875", first_fields[25])
+
+    last_fields = res.csv_rows[-1].split(",")
+    check("v7: edge counters advance across records (cumulative)",
+          last_fields[21] == str(100_000 + 4 * (n - 1))
+          and last_fields[22] == str(100_150 + 4 * (n - 1)),
+          repr(last_fields[21:23]))
+
+    # CLI-level check too, mirroring the v6 CLI check.
+    path = write_blg(tmpdir, "v7.BLG", data)
+    rc, out, err = run_decoder(path)
+    check("v7 CLI: exits 0", rc == 0, f"rc={rc} stderr={err}")
+    check("v7 CLI: version=7 reported", "version=7" in err, err)
+    check("v7 CLI: records read == n", f"records read: {n}" in err, err)
+    check("v7 CLI: trailer found (close_reason=complete)",
+          "close_reason=complete" in err, err)
+
+
+def test_v7_near_wrap_edge_counters(tmpdir):
+    """(w) The edge counters are boot-monotonic u32s -- a value near the
+    uint32 wrap must decode as a large UNSIGNED value (a later negative
+    DIFF is the consumer's wrap/reset signal, not a decode transform)."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    data = pack_header_v7(fw_version=20)
+    data += pack_record_v7(t_us=0, enc_edge_count_a=0xFFFFFFF0,
+                            enc_edge_count_b=0xFFFFFFFF)
+    # A post-wrap second record: counters numerically SMALLER than the
+    # first -- must still decode verbatim (no unwrap correction).
+    data += pack_record_v7(t_us=1000, enc_edge_count_a=5,
+                            enc_edge_count_b=2)
+    data += pack_trailer(records_written=2, dropped=0, close_reason=1,
+                          record_size=RECORD_SIZE_V7)
+
+    res = db.decode_blg(data)
+    f0 = res.csv_rows[0].split(",")
+    f1 = res.csv_rows[1].split(",")
+    check("v7: near-wrap enc_edge_count_a decodes unsigned",
+          f0[21] == str(0xFFFFFFF0), f0[21])
+    check("v7: max-u32 enc_edge_count_b decodes unsigned",
+          f0[22] == str(0xFFFFFFFF), f0[22])
+    check("v7: post-wrap smaller values decode verbatim (no unwrap)",
+          f1[21] == "5" and f1[22] == "2", repr(f1[21:23]))
+
+
+def test_v7_record_size_mismatch(tmpdir):
+    """(x) A v7 header claiming the v6 record_size (92, self-inconsistent
+    with version=7) is a hard error, mirroring test_v6_record_size_mismatch."""
+    data = bytearray(pack_header_v7())
+    data[5] = RECORD_SIZE_V6  # corrupt record_size byte: 106 -> 92
+    data = bytes(data) + pack_trailer(records_written=0, dropped=0,
+                                       close_reason=1,
+                                       record_size=RECORD_SIZE_V7)
+
+    path = write_blg(tmpdir, "v7_badsize.BLG", data)
+    rc, out, err = run_decoder(path)
+    check("v7 bad record_size: decoder exits nonzero", rc != 0, f"rc={rc}")
+    check("v7 bad record_size: error names both values",
+          "unexpected record_size 92" in err and "expected 106" in err, err)
+
+
+def test_v6_regression(tmpdir):
+    """(y) Regression: v6 header + 26-column CSV decode is unchanged after
+    adding v7 support -- same header path, same RECORD_FMT_V6/
+    RECORD_SIZE_V6/CSV_HEADER_V6 as before v7 existed."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    n = 25
+    data = pack_header_v6(profile_type=4, fw_version=16, param_flags=0x03,
+                           profile_amp=1.5, profile_b=0.20)
+    for i in range(n):
+        data += pack_record_v6(t_us=i * 1000, encoder_pos=42,
+                                enc_period_ref_us=5000,
+                                enc_multi_pitch_count=1,
+                                enc_spurious_drop_count=2)
+    data += pack_trailer(records_written=n, dropped=0, close_reason=1,
+                          record_size=RECORD_SIZE_V6)
+
+    res = db.decode_blg(data)
+    check("v6 regression: version=6", res.header["version"] == 6,
+          repr(res.header))
+    check("v6 regression: record_size=92", res.header["record_size"] == 92,
+          repr(res.header))
+    check("v6 regression: csv_header is the 26-column v6 header",
+          res.csv_header == CSV_HEADER_V6, res.csv_header)
+    check("v6 regression: row has 26 fields (no v7 columns leaked in)",
+          len(res.csv_rows[0].split(",")) == 26,
+          repr(res.csv_rows[0].split(",")))
+
+
 def test_v5_regression(tmpdir):
     """(s) Regression: v5 header + 22-column CSV decode is byte-for-byte
     unchanged after adding v6 support -- same header path, same
@@ -902,6 +1120,10 @@ def main():
         test_v6_header_and_record(tmpdir)
         test_v6_negative_encoder_pos(tmpdir)
         test_v6_record_size_mismatch(tmpdir)
+        test_v7_header_and_record(tmpdir)
+        test_v7_near_wrap_edge_counters(tmpdir)
+        test_v7_record_size_mismatch(tmpdir)
+        test_v6_regression(tmpdir)
         test_v5_regression(tmpdir)
         test_v5_real_log_regression(tmpdir)
 

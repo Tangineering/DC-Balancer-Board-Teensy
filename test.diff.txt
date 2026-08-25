@@ -1,0 +1,672 @@
+diff --git a/test/test_main.cpp b/test/test_main.cpp
+index b93d933..9161c8d 100644
+--- a/test/test_main.cpp
++++ b/test/test_main.cpp
+@@ -75,6 +75,13 @@ static void reset_test_state() {
+     encVelCorrobPending  = false;
+     encVelResetHold      = 0.0f;
+     encVelResetHoldUs    = 0;
++    // fw v20: encEdgeCountA/B are boot-monotonic diagnostics (encoderVelReset() deliberately does
++    // NOT clear them — see the v7 boot-monotonic contract test). Many earlier quadrature-decode
++    // tests already zero them at their own start before driving the ISR, but zeroing here too
++    // keeps order-independence for any test (e.g. the v7 golden record / plumbing tests) that
++    // reads them without first re-arming.
++    encEdgeCountA = 0;
++    encEdgeCountB = 0;
+ 
+     ag105_status_raw     = 0;
+     ag105DataValid       = false;
+@@ -1904,7 +1911,7 @@ static void test_share_handoff_mode_constants() {
+     check(fabsf(SHARE_GOV_FILT_ALPHA - 0.05f) < 1e-6f,
+           "constants: (setup) SHARE_GOV_FILT_ALPHA is the EMA weight the handoff filters share "
+           "with the governor's load filter");
+-    check(FW_VERSION == 19, "pin: FW_VERSION == 19");
++    check(FW_VERSION == 20, "pin: FW_VERSION == 20");
+ }
+ 
+ // DARK seed (item B3): resetShareControlState() (and reset_test_state()'s mirror of it) seeds
+@@ -10667,6 +10674,14 @@ static void test_trap_vescwatch_suppressed() {
+ #define REC_OFF_ENC_PERIOD_REF_US   80
+ #define REC_OFF_ENC_MULTI_PITCH     84
+ #define REC_OFF_ENC_SPUR_DROP       88
++// Format v7 (fw v20, BLG record 106 B): two raw per-channel edge counters PLUS three quadrature
++// geometry levels (phase + per-channel duty, fixed-point 1/256ths of a pitch), all appended after
++// enc_spurious_drop_count, so every offset above (including 76-91) is unchanged.
++#define REC_OFF_ENC_EDGE_A          92
++#define REC_OFF_ENC_EDGE_B          96
++#define REC_OFF_ENC_PHASE_EWMA      100
++#define REC_OFF_ENC_DUTY_A_EWMA     102
++#define REC_OFF_ENC_DUTY_B_EWMA     104
+ 
+ #define LOG_HDR_SIZE 32u
+ 
+@@ -10791,12 +10806,12 @@ static void test_sdlog_lifecycle_natural_completion() {
+     if (f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE) {
+         check(f->compare(0, 4, "BLG1") == 0,
+               "SD lifecycle: the header opens with the 'BLG1' magic");
+-        check((uint8_t)(*f)[4] == 6,
+-              "SD lifecycle: the header declares format version 6 (fw v16; record grew to 92B "
+-              "with the appended encoder/estimator diagnostics — the profile-parameter block is "
++        check((uint8_t)(*f)[4] == 7,
++              "SD lifecycle: the header declares format version 7 (fw v20; record grew to 100B "
++              "with the appended per-channel edge counters — the profile-parameter block is "
+               "unchanged from v4)");
+         check((uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE,
+-              "SD lifecycle: the header declares a 92-byte record size");
++              "SD lifecycle: the header declares a 106-byte record size");
+         check((uint8_t)(*f)[6] == LOG_TYPE_TP,
+               "SD lifecycle: the header profile bitmask is LOG_TYPE_TP for a 'T' run");
+         check(sd_le<uint16_t>(*f, 18) == (uint16_t)FW_VERSION,
+@@ -11035,9 +11050,9 @@ static void test_sdlog_overflow_drop_count() {
+     }
+ }
+ 
+-// ─── 6. Golden record schema: byte-exact field layout (format v6, fw v16) ────
++// ─── 6. Golden record schema: byte-exact field layout (format v7, fw v20) ────
+ static void test_sdlog_record_schema() {
+-    test_group("SD log: one record's 92 bytes match the documented v6 field layout exactly");
++    test_group("SD log: one record's 100 bytes match the documented v7 field layout exactly");
+     reset_test_state();
+ 
+     // Open directly (not via a profile key) so the sample below is taken from values this test
+@@ -11074,6 +11089,16 @@ static void test_sdlog_record_schema() {
+     encPeriodRefUs          = 4321u;
+     encMultiPitchCount      = 7u;
+     encSpuriousDropCount    = 9u;
++    // Format v7 (fw v20): the two raw per-channel edge counters. Sentinel values chosen above
++    // 2^31 so a signed/unsigned mishandling of these uint32 fields (unlike encoder_pos, which is
++    // genuinely signed) would show up as a mismatch rather than passing by accident.
++    encEdgeCountA           = 0xA0000005u;
++    encEdgeCountB           = 0xB0000007u;
++    // Format v7 geometry levels: distinct non-zero sentinels near the field's max (uint16), chosen
++    // to differ from each other so a swapped-offset regression shows up as a specific mismatch.
++    encPhaseEwma            = 64u;      // 0.25 pitch — the documented healthy phase
++    encDutyAEwma            = 60000u;
++    encDutyBEwma            = 61000u;
+ 
+     g_mock_micros = 123456;
+     logSampleTick();
+@@ -11083,13 +11108,13 @@ static void test_sdlog_record_schema() {
+ 
+     const std::string* f = sd_file("PS0001.BLG");
+     check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE,
+-          "SD schema: the card holds the 32-byte header followed by one 92-byte record");
++          "SD schema: the card holds the 32-byte header followed by one 106-byte record");
+     if (f == nullptr || f->size() < LOG_HDR_SIZE + LOG_REC_SIZE) return;
+ 
+     // ── Header ──────────────────────────────────────────────────────────────
+-    check(f->compare(0, 4, "BLG1") == 0 && (uint8_t)(*f)[4] == 6 &&
++    check(f->compare(0, 4, "BLG1") == 0 && (uint8_t)(*f)[4] == 7 &&
+           (uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE && (uint8_t)(*f)[6] == LOG_TYPE_PS,
+-          "SD schema: the header carries magic, version 6, record size 92 and the PS type bit");
++          "SD schema: the header carries magic, version 7, record size 100 and the PS type bit");
+     check(sd_le<uint32_t>(*f, 8) == 5000u && sd_le<uint32_t>(*f, 12) == 50000u,
+           "SD schema: the header timebase is the millis()/micros() pair at open");
+     check(sd_le<uint16_t>(*f, 16) == (uint16_t)(K_DROOP * 1000.0f + 0.5f),
+@@ -11106,7 +11131,7 @@ static void test_sdlog_record_schema() {
+     check((uint8_t)(*f)[7] == 0x00,
+           "SD schema: v4 header paramFlags is 0x00 for a PS run (no amp/b parameter)");
+ 
+-    // ── Record: build the expected LOG_REC_SIZE (92, v6) bytes independently, then memcmp ──
++    // ── Record: build the expected LOG_REC_SIZE (100, v7) bytes independently, then memcmp ──
+     uint8_t exp[LOG_REC_SIZE];
+     memset(exp, 0, sizeof(exp));
+     uint32_t t_us = 123456u;    memcpy(exp + REC_OFF_T_US,      &t_us, 4);
+@@ -11145,9 +11170,16 @@ static void test_sdlog_record_schema() {
+     uint32_t pr  = 4321u;   memcpy(exp + REC_OFF_ENC_PERIOD_REF_US, &pr,  4);
+     uint32_t mp  = 7u;      memcpy(exp + REC_OFF_ENC_MULTI_PITCH,   &mp,  4);
+     uint32_t sd_ = 9u;      memcpy(exp + REC_OFF_ENC_SPUR_DROP,     &sd_, 4);
++    // Format v7 tail (fw v20): raw per-channel edge counters, appended after
++    // enc_spurious_drop_count. Values above 2^31 pin the field as unsigned.
++    uint32_t eA  = 0xA0000005u;  memcpy(exp + REC_OFF_ENC_EDGE_A, &eA, 4);
++    uint32_t eB  = 0xB0000007u;  memcpy(exp + REC_OFF_ENC_EDGE_B, &eB, 4);
++    uint16_t phw = 64u;    memcpy(exp + REC_OFF_ENC_PHASE_EWMA,  &phw, 2);
++    uint16_t daw = 60000u; memcpy(exp + REC_OFF_ENC_DUTY_A_EWMA, &daw, 2);
++    uint16_t dbw = 61000u; memcpy(exp + REC_OFF_ENC_DUTY_B_EWMA, &dbw, 2);
+ 
+     check(memcmp(f->data() + LOG_HDR_SIZE, exp, LOG_REC_SIZE) == 0,
+-          "SD schema: the written record is byte-identical to the expected 92-byte v6 layout");
++          "SD schema: the written record is byte-identical to the expected 106-byte v7 layout");
+ 
+     // Field-level checks so a failure above localises instead of just saying "bytes differ".
+     check(sd_le<uint32_t>(*f, LOG_HDR_SIZE + REC_OFF_T_US) == 123456u,
+@@ -11179,6 +11211,18 @@ static void test_sdlog_record_schema() {
+           "SD schema (v6): enc_multi_pitch_count at offset 84 is byte-identical to encMultiPitchCount");
+     check(sd_le<uint32_t>(*f, LOG_HDR_SIZE + REC_OFF_ENC_SPUR_DROP) == 9u,
+           "SD schema (v6): enc_spurious_drop_count at offset 88 is byte-identical to encSpuriousDropCount");
++    check(sd_le<uint32_t>(*f, LOG_HDR_SIZE + REC_OFF_ENC_EDGE_A) == 0xA0000005u,
++          "SD schema (v7): enc_edge_count_a at offset 92 is byte-identical to encEdgeCountA, including "
++          "the sign bit of the raw uint32");
++    check(sd_le<uint32_t>(*f, LOG_HDR_SIZE + REC_OFF_ENC_EDGE_B) == 0xB0000007u,
++          "SD schema (v7): enc_edge_count_b at offset 96 is byte-identical to encEdgeCountB, including "
++          "the sign bit of the raw uint32");
++    check(sd_le<uint16_t>(*f, LOG_HDR_SIZE + REC_OFF_ENC_PHASE_EWMA) == 64u,
++          "SD schema (v7): enc_phase_ewma at offset 100 is byte-identical to encPhaseEwma");
++    check(sd_le<uint16_t>(*f, LOG_HDR_SIZE + REC_OFF_ENC_DUTY_A_EWMA) == 60000u,
++          "SD schema (v7): enc_duty_a_ewma at offset 102 is byte-identical to encDutyAEwma");
++    check(sd_le<uint16_t>(*f, LOG_HDR_SIZE + REC_OFF_ENC_DUTY_B_EWMA) == 61000u,
++          "SD schema (v7): enc_duty_b_ewma at offset 104 is byte-identical to encDutyBEwma");
+ }
+ 
+ // ─── 6a-v4. BLG header v4: the profile-parameter block (fw v6, 2026-08-12) ──────────────────
+@@ -11200,7 +11244,7 @@ static void test_sdlog_header_v4_profile_params() {
+         const std::string* f = sd_file("WP0001.BLG");
+         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/W: the header was written");
+         if (f) {
+-            check((uint8_t)(*f)[4] == 6, "v4 hdr/W: format version 6 (fw v16 BLG bump)");
++            check((uint8_t)(*f)[4] == 7, "v4 hdr/W: format version 7 (fw v20 BLG bump)");
+             check((uint8_t)(*f)[7] == 0x03, "v4 hdr/W: paramFlags == 0x03 (amp AND b valid)");
+             check(fabsf(sd_le<float>(*f, 20) - 7.5f) < 1e-6f,
+                   "v4 hdr/W: amp field == the committed wProfileImax (7.5 A)");
+@@ -11218,7 +11262,7 @@ static void test_sdlog_header_v4_profile_params() {
+         const std::string* f = sd_file("YP0001.BLG");
+         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/Y: the header was written");
+         if (f) {
+-            check((uint8_t)(*f)[4] == 6, "v4 hdr/Y: format version 6 (fw v16 BLG bump)");
++            check((uint8_t)(*f)[4] == 7, "v4 hdr/Y: format version 7 (fw v20 BLG bump)");
+             check((uint8_t)(*f)[7] == 0x03, "v4 hdr/Y: paramFlags == 0x03 (amp AND b valid)");
+             check(fabsf(sd_le<float>(*f, 20) - 3.25f) < 1e-6f,
+                   "v4 hdr/Y: amp field == the committed yProfileVmax (3.25 m/s)");
+@@ -11235,7 +11279,7 @@ static void test_sdlog_header_v4_profile_params() {
+         const std::string* f = sd_file("TP0001.BLG");
+         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/T: the header was written");
+         if (f) {
+-            check((uint8_t)(*f)[4] == 6, "v4 hdr/T: format version 6 (fw v16 BLG bump)");
++            check((uint8_t)(*f)[4] == 7, "v4 hdr/T: format version 7 (fw v20 BLG bump)");
+             check((uint8_t)(*f)[7] == 0x01, "v4 hdr/T: paramFlags == 0x01 (amp only)");
+             check(fabsf(sd_le<float>(*f, 20) - 4.4f) < 1e-6f,
+                   "v4 hdr/T: amp field == the committed trapImax (4.4 A)");
+@@ -11250,7 +11294,7 @@ static void test_sdlog_header_v4_profile_params() {
+         const std::string* f = sd_file("PS0001.BLG");
+         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/R: the header was written");
+         if (f) {
+-            check((uint8_t)(*f)[4] == 6, "v4 hdr/R: format version 6 (fw v16 BLG bump)");
++            check((uint8_t)(*f)[4] == 7, "v4 hdr/R: format version 7 (fw v20 BLG bump)");
+             check((uint8_t)(*f)[7] == 0x00, "v4 hdr/R: paramFlags == 0x00 (no profile parameter)");
+             check(sd_le<float>(*f, 20) == 0.0f && sd_le<float>(*f, 24) == 0.0f,
+                   "v4 hdr/R: both amp and b fields stay 0.0");
+@@ -11264,7 +11308,7 @@ static void test_sdlog_header_v4_profile_params() {
+         const std::string* f = sd_file("DC0001.BLG");
+         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/D: the header was written");
+         if (f) {
+-            check((uint8_t)(*f)[4] == 6, "v4 hdr/D: format version 6 (fw v16 BLG bump)");
++            check((uint8_t)(*f)[4] == 7, "v4 hdr/D: format version 7 (fw v20 BLG bump)");
+             check((uint8_t)(*f)[7] == 0x00, "v4 hdr/D: paramFlags == 0x00 (no profile parameter)");
+             check(sd_le<float>(*f, 20) == 0.0f && sd_le<float>(*f, 24) == 0.0f,
+                   "v4 hdr/D: both amp and b fields stay 0.0");
+@@ -11282,16 +11326,16 @@ static void test_sdlog_header_v4_profile_params() {
+         }
+     }
+ 
+-    // ── Record size byte reflects the current v6 record (92B), regardless of run type. The v4
+-    // header PARAMETER BLOCK (byte 7, bytes 20-27) is unchanged by the fw v16 bump -- only
++    // ── Record size byte reflects the current v7 record (100B), regardless of run type. The v4
++    // header PARAMETER BLOCK (byte 7, bytes 20-27) is unchanged by the fw v20 bump -- only
+     // hdr[4] (version) and hdr[5] (record size) moved when the record grew.
+     reset_test_state();
+     logOpenForProfile(LOG_TYPE_PS);
+     {
+         const std::string* f = sd_file("PS0001.BLG");
+-        check(f != nullptr && (uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE && LOG_REC_SIZE == 92u,
+-              "v4/v6 hdr: the record-size byte is 92 -- the v4 parameter block is unchanged, "
+-              "only hdr[4]/hdr[5] moved with the fw v16 record-size bump");
++        check(f != nullptr && (uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE && LOG_REC_SIZE == 106u,
++              "v4/v7 hdr: the record-size byte is 106 -- the v4 parameter block is unchanged, "
++              "only hdr[4]/hdr[5] moved with the fw v20 record-size bump");
+     }
+ }
+ 
+@@ -11300,10 +11344,10 @@ static void test_sdlog_header_v4_profile_params() {
+ // struct's field order or padding ever drifts from LOG_REC_SIZE / the documented offsets, even
+ // before any record is ever written to a (mock) card.
+ static void test_benchlogrecord_v3_layout() {
+-    test_group("BenchLogRecord (format v6, fw v16): sizeof and field offsets");
++    test_group("BenchLogRecord (format v7, fw v20): sizeof and field offsets");
+ 
+-    check(sizeof(BenchLogRecord) == 92, "BenchLogRecord: sizeof == 92 bytes (format v6)");
+-    check(LOG_REC_SIZE == 92u, "LOG_REC_SIZE == 92 (format v6)");
++    check(sizeof(BenchLogRecord) == 106, "BenchLogRecord: sizeof == 106 bytes (format v7)");
++    check(LOG_REC_SIZE == 106u, "LOG_REC_SIZE == 106 (format v7)");
+ 
+     check(offsetof(BenchLogRecord, V_fc)        == 44, "offsetof(V_fc) == 44");
+     check(offsetof(BenchLogRecord, V_batt)      == 48, "offsetof(V_batt) == 48");
+@@ -11329,6 +11373,14 @@ static void test_benchlogrecord_v3_layout() {
+     check(offsetof(BenchLogRecord, enc_multi_pitch_count)   == 84, "offsetof(enc_multi_pitch_count) == 84 (format v6, appended)");
+     check(offsetof(BenchLogRecord, enc_spurious_drop_count) == 88, "offsetof(enc_spurious_drop_count) == 88 (format v6, appended)");
+ 
++    // Format v7 (fw v20): APPENDED after enc_spurious_drop_count, so every v1-v6 offset above
++    // (76/80/84/88 included) is unchanged and only these two new tail fields are added.
++    check(offsetof(BenchLogRecord, enc_edge_count_a) == 92, "offsetof(enc_edge_count_a) == 92 (format v7, appended)");
++    check(offsetof(BenchLogRecord, enc_edge_count_b) == 96, "offsetof(enc_edge_count_b) == 96 (format v7, appended)");
++    check(offsetof(BenchLogRecord, enc_phase_ewma)   == 100, "offsetof(enc_phase_ewma) == 100 (format v7, appended)");
++    check(offsetof(BenchLogRecord, enc_duty_a_ewma)  == 102, "offsetof(enc_duty_a_ewma) == 102 (format v7, appended)");
++    check(offsetof(BenchLogRecord, enc_duty_b_ewma)  == 104, "offsetof(enc_duty_b_ewma) == 104 (format v7, appended)");
++
+     // These offsets must also match the byte-stream constants used by the on-card tests above --
+     // a mismatch here would mean the two test families are silently checking different layouts.
+     check(offsetof(BenchLogRecord, V_fc)        == REC_OFF_V_FC,   "offsetof(V_fc) == REC_OFF_V_FC");
+@@ -11346,6 +11398,16 @@ static void test_benchlogrecord_v3_layout() {
+           "offsetof(enc_multi_pitch_count) == REC_OFF_ENC_MULTI_PITCH");
+     check(offsetof(BenchLogRecord, enc_spurious_drop_count) == REC_OFF_ENC_SPUR_DROP,
+           "offsetof(enc_spurious_drop_count) == REC_OFF_ENC_SPUR_DROP");
++    check(offsetof(BenchLogRecord, enc_edge_count_a) == REC_OFF_ENC_EDGE_A,
++          "offsetof(enc_edge_count_a) == REC_OFF_ENC_EDGE_A");
++    check(offsetof(BenchLogRecord, enc_edge_count_b) == REC_OFF_ENC_EDGE_B,
++          "offsetof(enc_edge_count_b) == REC_OFF_ENC_EDGE_B");
++    check(offsetof(BenchLogRecord, enc_phase_ewma) == REC_OFF_ENC_PHASE_EWMA,
++          "offsetof(enc_phase_ewma) == REC_OFF_ENC_PHASE_EWMA");
++    check(offsetof(BenchLogRecord, enc_duty_a_ewma) == REC_OFF_ENC_DUTY_A_EWMA,
++          "offsetof(enc_duty_a_ewma) == REC_OFF_ENC_DUTY_A_EWMA");
++    check(offsetof(BenchLogRecord, enc_duty_b_ewma) == REC_OFF_ENC_DUTY_B_EWMA,
++          "offsetof(enc_duty_b_ewma) == REC_OFF_ENC_DUTY_B_EWMA");
+ }
+ 
+ // ─── T2: log record flags bit2 (shareClosedLoopMode) / bit3 (shareClosedLoopRun) ─────────────
+@@ -11690,6 +11752,380 @@ static void test_sdlog_record_v6_reset_visibility() {
+     check(pr0 == 9000u && pr1 == 0u, "v6 reset visibility: enc_period_ref_us steps 9000 -> 0 across the reset");
+ }
+ 
++// ─── 6h-v7. Format v7 (fw v20): logSampleTick() plumbing for the two edge counters, driven ──
++// through the REAL ISR (enc_set()), not by poking encEdgeCountA/B directly — so a break in
++// doEncoderA()/doEncoderB()'s edge-count bump (e.g. the fw v19 diagnostic instrumentation itself)
++// would be caught here rather than only in the ISR decode test above. Two samples straddling more
++// ISR activity prove logSampleTick() re-reads the LIVE globals each tick, not a value latched once.
++static void test_sdlog_record_v7_edge_fields_plumbing() {
++    test_group("SD log: v7 edge-counter fields (enc_edge_count_a/b) plumbed by logSampleTick(), "
++               "driven through the real ISR");
++    enc_reset();   // reset_test_state() + zeroes encoderPos/encEdgeCountA/B + the ISR "first" flags
++
++    g_mock_millis = 4000;
++    g_mock_micros = 40000;
++    logOpenForProfile(LOG_TYPE_PS);
++    check(logActive == true, "v7 plumbing: the log opened");
++
++    // Three forward quadrature cycles: 3*2 = 6 edges on each channel.
++    for (int i = 0; i < 3; i++) { enc_set(1,0); enc_set(1,1); enc_set(0,1); enc_set(0,0); }
++    check(encEdgeCountA == 6 && encEdgeCountB == 6,
++          "v7 plumbing precondition: three ISR-driven cycles leave both edge counters at 6");
++
++    logSampleTick();
++    logDrainTick();
++
++    const std::string* f = sd_file("PS0001.BLG");
++    check(f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE,
++          "v7 plumbing: the first record made it to the (mock) card");
++    if (f == nullptr || f->size() < LOG_HDR_SIZE + LOG_REC_SIZE) return;
++
++    check(sd_le<uint32_t>(*f, LOG_HDR_SIZE + REC_OFF_ENC_EDGE_A) == 6u,
++          "v7 plumbing: enc_edge_count_a in the first record == encEdgeCountA (6)");
++    check(sd_le<uint32_t>(*f, LOG_HDR_SIZE + REC_OFF_ENC_EDGE_B) == 6u,
++          "v7 plumbing: enc_edge_count_b in the first record == encEdgeCountB (6)");
++
++    // Two more forward cycles before the next sample: the record must reflect the NEW cumulative
++    // count, not the value latched at the first sample — this is what a vacuous "field left at its
++    // struct-init zero" stub would fail to reproduce.
++    for (int i = 0; i < 2; i++) { enc_set(1,0); enc_set(1,1); enc_set(0,1); enc_set(0,0); }
++    g_mock_micros += POWER_BAL_PERIOD_US;
++    logSampleTick();
++    logDrainTick();
++
++    f = sd_file("PS0001.BLG");
++    check(f != nullptr && f->size() >= LOG_HDR_SIZE + 2u * LOG_REC_SIZE,
++          "v7 plumbing: the second record made it to the (mock) card");
++    if (f == nullptr || f->size() < LOG_HDR_SIZE + 2u * LOG_REC_SIZE) return;
++
++    uint32_t eaA0 = sd_le<uint32_t>(*f, LOG_HDR_SIZE + 0u * LOG_REC_SIZE + REC_OFF_ENC_EDGE_A);
++    uint32_t eaA1 = sd_le<uint32_t>(*f, LOG_HDR_SIZE + 1u * LOG_REC_SIZE + REC_OFF_ENC_EDGE_A);
++    uint32_t eaB0 = sd_le<uint32_t>(*f, LOG_HDR_SIZE + 0u * LOG_REC_SIZE + REC_OFF_ENC_EDGE_B);
++    uint32_t eaB1 = sd_le<uint32_t>(*f, LOG_HDR_SIZE + 1u * LOG_REC_SIZE + REC_OFF_ENC_EDGE_B);
++    check(eaA0 == 6u && eaA1 == 10u, "v7 plumbing: enc_edge_count_a steps 6 -> 10 (four more real edges)");
++    check(eaB0 == 6u && eaB1 == 10u, "v7 plumbing: enc_edge_count_b steps 6 -> 10 (four more real edges)");
++    check(eaA1 == encEdgeCountA && eaB1 == encEdgeCountB,
++          "v7 plumbing: the second record's edge counts equal the live encEdgeCountA/B at the sample");
++
++    // Format v7 also appends the three quadrature-geometry LEVELS (enc_phase_ewma/enc_duty_a_ewma/
++    // enc_duty_b_ewma). These are exercised end-to-end (real ISR -> global -> record) by the
++    // dedicated test_encoder_phase_duty_isr() below; here it is enough to confirm logSampleTick()
++    // plumbs whatever the globals currently hold, using direct sentinel assignment (the same idiom
++    // the v6 plumbing test above uses for encPeriodRefUs).
++    encPhaseEwma  = 12345u;
++    encDutyAEwma  = 23456u;
++    encDutyBEwma  = 34567u;
++    g_mock_micros += POWER_BAL_PERIOD_US;
++    logSampleTick();
++    logDrainTick();
++    f = sd_file("PS0001.BLG");
++    check(f != nullptr && f->size() >= LOG_HDR_SIZE + 3u * LOG_REC_SIZE,
++          "v7 plumbing: the third record made it to the (mock) card");
++    if (f != nullptr && f->size() >= LOG_HDR_SIZE + 3u * LOG_REC_SIZE) {
++        check(sd_le<uint16_t>(*f, LOG_HDR_SIZE + 2u * LOG_REC_SIZE + REC_OFF_ENC_PHASE_EWMA) == 12345u,
++              "v7 plumbing: enc_phase_ewma == encPhaseEwma");
++        check(sd_le<uint16_t>(*f, LOG_HDR_SIZE + 2u * LOG_REC_SIZE + REC_OFF_ENC_DUTY_A_EWMA) == 23456u,
++              "v7 plumbing: enc_duty_a_ewma == encDutyAEwma");
++        check(sd_le<uint16_t>(*f, LOG_HDR_SIZE + 2u * LOG_REC_SIZE + REC_OFF_ENC_DUTY_B_EWMA) == 34567u,
++              "v7 plumbing: enc_duty_b_ewma == encDutyBEwma");
++    }
++
++    // Item B.4 (mirrors the v6 plumbing test): the fill lives in logSampleTick()'s COMMON section,
++    // so this same test body running unmodified under both host builds already covers both
++    // control-law paths for these two fields.
++#if BENCH_TEST == 0
++    check(true, "v7 plumbing: production build (BENCH_TEST=0) confirms common-section population");
++#endif
++}
++
++// ─── 6h-v7b. Boot-monotonic contract: encoderVelReset() must NOT clear encEdgeCountA/B ─────
++// This is the load-bearing distinction between the v7 edge counters and the v6 estimator
++// diagnostics (encMultiPitchCount/encSpuriousDropCount/encPeriodRefUs), which DO get cleared by
++// encoderVelReset() (pinned by the v6 reset-visibility test above). Mixing the two contracts up
++// would silently zero a diagnostic meant to survive stale-timeout/reading-age resets across a run.
++static void test_encoder_edge_counters_boot_monotonic() {
++    test_group("fw v20: encEdgeCountA/B are boot-monotonic — encoderVelReset() does not clear them");
++    reset_test_state();
++
++    encEdgeCountA        = 12345u;
++    encEdgeCountB        = 54321u;
++    encMultiPitchCount    = 7u;
++    encSpuriousDropCount  = 3u;
++    encPeriodRefUs        = 999u;
++    // fw v20: the three quadrature-geometry EWMAs are normalised by encPeriodRefUs, so they belong
++    // to the SAME reset epoch as the v6 estimator diagnostics, not to encEdgeCountA/B's boot epoch.
++    encPhaseEwma          = 111u;
++    encDutyAEwma          = 222u;
++    encDutyBEwma          = 333u;
++
++    encoderVelReset();
++
++    check(encEdgeCountA == 12345u && encEdgeCountB == 54321u,
++          "boot-monotonic: encoderVelReset() leaves encEdgeCountA/B untouched");
++    check(encMultiPitchCount == 0 && encSpuriousDropCount == 0 && encPeriodRefUs == 0,
++          "boot-monotonic (control): encoderVelReset() still clears the v6 estimator diagnostics");
++    check(encPhaseEwma == 0 && encDutyAEwma == 0 && encDutyBEwma == 0,
++          "boot-monotonic (control): encoderVelReset() also clears the v7 phase/duty EWMAs "
++          "(reset-epoch, unlike encEdgeCountA/B)");
++
++    // A second reset (e.g. a stale-timeout path firing repeatedly) must not touch them either —
++    // "not cleared once" is a weaker claim than "never cleared".
++    encoderVelReset();
++    check(encEdgeCountA == 12345u && encEdgeCountB == 54321u,
++          "boot-monotonic: a second encoderVelReset() still leaves encEdgeCountA/B untouched");
++}
++
++// ─── 6j. fw v20: encFoldPitchFraction() — the shared pitch-fraction EWMA, tested as a PURE ──
++// FUNCTION (no ISR). Direct coverage of the seed-vs-fold branch and the plausibility gate
++// (item 3/8), independent of the ISR wiring exercised by test_encoder_phase_duty_isr() below.
++static void test_enc_fold_pitch_fraction_unit() {
++    test_group("fw v20: encFoldPitchFraction() unit coverage (seed/fold branch, plausibility gate)");
++
++    // ── Seed branch: acc == 0 takes the sample directly, no blending. ────────────────────────
++    volatile uint16_t acc = 0;
++    encFoldPitchFraction(acc, 200u, 800u);   // fp = (200<<8)/800 = 64
++    check(acc == 64u, "fold: seed branch sets acc to fp exactly on the first (acc==0) sample");
++
++    // ── Fold branch: acc != 0 blends at alpha = 1/4 (shift-only), exact formula pinned. ──────
++    encFoldPitchFraction(acc, 600u, 800u);   // fp = (600<<8)/800 = 192
++    uint16_t expected = (uint16_t)(64u - (64u >> 2) + (192u >> 2));   // 64 - 16 + 48 = 96
++    check(acc == 96u && expected == 96u,
++          "fold: fold branch computes acc - (acc>>2) + (fp>>2) exactly (alpha = 1/4, shifts only)");
++
++    // ── Plausibility gate: dtUs >= refUs is rejected outright (acc unchanged). ────────────────
++    uint16_t before = acc;
++    encFoldPitchFraction(acc, 800u, 800u);   // dt == ref: rejected (the guard is dt >= ref, not >)
++    check(acc == before, "fold: dt == ref is rejected by the plausibility gate (acc unchanged)");
++    encFoldPitchFraction(acc, 900u, 800u);   // dt > ref: rejected
++    check(acc == before, "fold: dt > ref is rejected by the plausibility gate (acc unchanged)");
++
++    // ── refUs == 0 (no reference yet) is rejected regardless of dt. ──────────────────────────
++    encFoldPitchFraction(acc, 1u, 0u);
++    check(acc == before, "fold: refUs == 0 (no reference yet) is rejected (acc unchanged)");
++
++    // ── A fresh accumulator re-seeds exactly, even after prior folds (acc==0 is always "seed"). ──
++    volatile uint16_t acc2 = 0;
++    encFoldPitchFraction(acc2, 0u, 800u);    // fp = 0 -- a zero-length interval seeds to exactly 0
++    check(acc2 == 0u, "fold: a zero-length interval seeds acc to fp 0 (dt=0 passes dt<ref)");
++    encFoldPitchFraction(acc2, 400u, 800u);  // acc2 was already 0 -- this is STILL the seed branch
++    check(acc2 == 128u, "fold: acc==0 always re-seeds directly, even on a second call");
++}
++
++// ─── 6k. fw v20: quadrature phase/duty EWMA fields, driven through the REAL ISR ─────────────
++// encFoldPitchFraction() itself is unit-tested above; this exercises the INTEGRATION —
++// doEncoderA()/doEncoderB() computing dt against the LIVE encPeriodRefUs/encLastARiseUs/
++// encLastBRiseUs state and applying the forward-only direction gate on phase — which a pure
++// function test cannot reach. All timings below use a T = 1024 us pitch period (a power of two)
++// so every fp = (dt<<8)/T used is an EXACT integer (dt a multiple of 4), leaving no rounding to
++// reason about when comparing to a specific expected fp.
++static void test_encoder_phase_duty_isr() {
++    test_group("fw v20: enc_phase_ewma/enc_duty_a_ewma/enc_duty_b_ewma via the real ISR");
++
++    // ── Forward direction: phase at 0.25 pitch, PLUS both duties in the same two cycles ───────
++    // (phase 0.25 is the documented healthy mount for this board -- see doEncoderB()'s comment).
++    // enc_reset() alone only zeroes encoderPos/encEdgeCountA/B/the decode "first" flags -- it does
++    // NOT touch the estimator/geometry state (encPeriodRefUs, encPeriodDir, encHaveARise/BRise,
++    // encLastARiseUs/BRiseUs, encPhaseEwma, encDutyA/BEwma, ...), so encoderVelReset() is called
++    // too at the start of every sub-block below to give each one a truly clean estimator.
++    enc_reset();
++    encoderVelReset();
++    // Cycle 1 (baseline): the FIRST accepted A-rising edge only records encLastEdgeUs/
++    // encPosAtLastEdge/encLastARiseUs -- no ref, no direction, and encPeriodRefUs is still 0, so
++    // this cycle's own B-rise/A-fall/B-fall folds are all silently rejected by the refUs==0 gate.
++    g_mock_micros = 0;      enc_set(1,0);   // A-rise (baseline)
++    g_mock_micros = 256;    enc_set(1,1);   // B-rise: blocked (encPeriodDir == 0, not 1)
++    g_mock_micros = 512;    enc_set(0,1);   // A-fall: blocked (encPeriodRefUs == 0)
++    g_mock_micros = 768;    enc_set(0,0);   // B-fall: blocked (encPeriodRefUs == 0)
++    check(encPhaseEwma == 0 && encDutyAEwma == 0 && encDutyBEwma == 0,
++          "phase/duty ISR precondition: cycle 1 (pre-reference) touches none of the three EWMAs");
++
++    // Cycle 2: this A-rise is the SECOND accepted A-rising edge, so it both (a) computes a period
++    // of exactly T (this A-rise's timestamp minus cycle 1's) with dpos == +2 -> direction == +1
++    // (a "flip" from the initial 0, which per the fw v20 MED-1 fix also clears encPhaseEwma -- a
++    // no-op here since it is already 0), and (b) latches encLastARiseUs -- both settle BEFORE this
++    // cycle's own B-rise/A-fall/B-fall, so all three of those are the FIRST samples the gates
++    // admit (each a "seed", not a "fold" -- see the unit test above for the fold arithmetic).
++    g_mock_micros = 1024;        enc_set(1,0);   // A-rise: ref becomes T, direction becomes +1
++    check(encPeriodRefUs == 1024u && encPeriodDir == 1,
++          "phase/duty ISR precondition: cycle 2's A-rise seeds encPeriodRefUs == T and direction == +1");
++    g_mock_micros = 1024 + 256;  enc_set(1,1);   // B-rise: phase dt=256 -> fp=(256<<8)/1024=64
++    check(encPhaseEwma == 64u, "phase ISR: forward B-rise at 0.25T folds encPhaseEwma to fp 64");
++    g_mock_micros = 1024 + 300;  enc_set(0,1);   // A-fall: dutyA dt=300 -> fp=(300<<8)/1024=75
++    check(encDutyAEwma == 75u, "duty ISR: A-fall at +300us from the A-rise folds encDutyAEwma to fp 75");
++    g_mock_micros = 1024 + 700;  enc_set(0,0);   // B-fall: dutyB dt=700-256=444 -> fp=444*256/1024=111
++    check(encDutyBEwma == 111u, "duty ISR: B-fall 444us after the B-rise folds encDutyBEwma to fp 111");
++    check(encPhaseEwma == 64u && encDutyAEwma == 75u && encDutyBEwma == 111u,
++          "phase/duty ISR: all three land at DISTINCT values in the same two cycles -- proves the "
++          "three EWMAs are independent, not aliases of one computation");
++
++    // A repeated forward cycle at the SAME 0.25T phase offset must leave encPhaseEwma unchanged
++    // (the fold formula is a fixed point when fed its own current value repeatedly; direction
++    // stays +1 -> +1, no flip, so the MED-1 clear does not fire here).
++    g_mock_micros = 2048;        enc_set(1,0);
++    check(encPhaseEwma == 64u, "phase ISR: a same-direction A-rise (+1 -> +1) does not clear encPhaseEwma");
++    g_mock_micros = 2048 + 256;  enc_set(1,1);
++    check(encPhaseEwma == 64u,
++          "phase ISR: a repeated 0.25T sample keeps encPhaseEwma at fp 64 (the fold's fixed point)");
++    g_mock_micros = 2048 + 300;  enc_set(0,1);
++    g_mock_micros = 2048 + 700;  enc_set(0,0);
++
++    // ── Forward direction, phase at 0.75 pitch (the other end of the fixed-point-scale sanity) ──
++    enc_reset();
++    encoderVelReset();
++    g_mock_micros = 0;      enc_set(1,0);
++    g_mock_micros = 200;    enc_set(1,1);
++    g_mock_micros = 500;    enc_set(0,1);
++    g_mock_micros = 800;    enc_set(0,0);
++    g_mock_micros = 1024;        enc_set(1,0);   // ref == T, direction == +1
++    g_mock_micros = 1024 + 768;  enc_set(1,1);   // dt=768 -> fp=(768<<8)/1024=192
++    check(encPhaseEwma == 192u, "phase ISR: forward B-rise at 0.75T folds encPhaseEwma to fp 192");
++    g_mock_micros = 1024 + 800;  enc_set(0,1);   // A-fall must follow the B-rise it just had
++    g_mock_micros = 1024 + 900;  enc_set(0,0);
++
++    // ── Direction-flip clear (fw v20 safety review MED-1): a CONFIRMED reversal zeroes
++    // encPhaseEwma (a stale forward sample must never be averaged against a reverse one -- the
++    // aligned-edges FAULT signature parks the EWMA near 0.5, exactly what a straddled flip would
++    // manufacture), then a subsequent forward sample RE-SEEDS it directly.
++    //
++    // TIMING NOTE: every A-rise below is spaced EXACTLY 1024 us (== T) from the previous one,
++    // regardless of direction, and every cycle uses the same A-rise-relative sub-offsets
++    // (+256/+512/+768 for its own B-rise/A-fall-or-B-fall/B-fall-or-A-fall). This is deliberate,
++    // not cosmetic: the decoder's dpos-based direction call is POSITION-based, not shape-based, so
++    // a direction reversal is confirmed one full accepted interval AFTER the physical reversal —
++    // the reverse cycle's own completion (its second -1 decode, at its A-fall) lands in the NEXT
++    // interval, not the one ending at its own A-rise. Concretely: the FIRST reverse cycle's A-rise
++    // (at t=2048) nets dpos == +1 (the prior forward cycle's own +2, banked after ITS A-rise, minus
++    // this cycle's own -1) and does NOT flip direction; only the SECOND reverse cycle's A-rise (at
++    // t=3072) nets dpos == -2 and confirms the flip. This lag is real firmware behaviour (see the
++    // fw v20 MED-1 comment block in doEncoderA()), not a test artefact, and the "recovery" half
++    // below mirrors it going back to forward.
++    enc_reset();
++    encoderVelReset();
++    // Establish forward direction + a non-zero phase.
++    g_mock_micros = 0;           enc_set(1,0);   // A-rise (baseline)
++    g_mock_micros = 256;         enc_set(1,1);
++    g_mock_micros = 512;         enc_set(0,1);
++    g_mock_micros = 768;         enc_set(0,0);
++    g_mock_micros = 1024;        enc_set(1,0);   // A-rise: ref == T, direction == +1
++    g_mock_micros = 1024 + 256;  enc_set(1,1);   // B-rise: phase seeds to fp 64
++    check(encPeriodDir == 1 && encPhaseEwma == 64u,
++          "direction-flip precondition: forward direction and a non-zero phase are established");
++    g_mock_micros = 1024 + 512;  enc_set(0,1);
++    g_mock_micros = 1024 + 768;  enc_set(0,0);
++
++    // Reverse cycle 1 (A-rise at t=2048): does NOT yet flip direction -- the documented one-
++    // interval detection lag. A-rise/B-fall/A-fall are set; the B-rise (which would need to land
++    // BEFORE this A-rise, per the reverse pin order) is folded into the tail of that lag window.
++    g_mock_micros = 2048 - 256;  enc_set(0,1);   // B-rise (reverse order: precedes the A-rise)
++    g_mock_micros = 2048;        enc_set(1,1);   // A-rise: dpos == +1 -- direction NOT yet flipped
++    check(encPeriodDir == 1,
++          "direction-flip lag (documented, fw v20 MED-1 comment): the FIRST reverse cycle's A-rise "
++          "does not flip encPeriodDir -- the physical reversal is one accepted interval ahead of "
++          "its own detection by construction");
++    g_mock_micros = 2048 + 256;  enc_set(1,0);   // B-fall
++    g_mock_micros = 2048 + 512;  enc_set(0,0);   // A-fall (this cycle's own second decode)
++
++    uint16_t dutyABeforeFlip = encDutyAEwma;
++    uint16_t dutyBBeforeFlip = encDutyBEwma;
++
++    // Reverse cycle 2 (A-rise at t=3072): NOW the accepted interval nets dpos == -2 (the first
++    // reverse cycle's own completion, which lands in THIS interval) -- direction is confirmed -1
++    // here, and that is exactly where the MED-1 clear fires.
++    g_mock_micros = 3072 - 256;  enc_set(0,1);   // B-rise
++    g_mock_micros = 3072;        enc_set(1,1);   // A-rise: dpos == -2 -> direction confirmed -1
++    check(encPeriodDir == -1,
++          "direction-flip: the SECOND reverse cycle's A-rise confirms the flip to -1");
++    check(encPhaseEwma == 0u,
++          "direction-flip (MED-1): encPhaseEwma is cleared the instant the flip is confirmed, "
++          "even though no B-rise has fired since the clear -- it fires at the A-interval itself");
++    check(encDutyAEwma == dutyABeforeFlip && encDutyBEwma == dutyBBeforeFlip,
++          "direction-flip: duty A/B are untouched by the flip-confirming A-rise itself (the A-rise "
++          "event never folds either duty statistic -- only A-fall/B-fall do)");
++    g_mock_micros = 3072 + 256;  enc_set(1,0);   // B-fall: duty B keeps updating through the flip
++    check(encDutyBEwma != dutyBBeforeFlip,
++          "direction-flip: duty B keeps updating AFTER the flip too (no direction gate on duty)");
++    g_mock_micros = 3072 + 512;  enc_set(0,0);   // A-fall: duty A keeps updating through the flip
++    check(encDutyAEwma != dutyABeforeFlip,
++          "direction-flip: duty A keeps updating AFTER the flip too (no direction gate on duty A "
++          "either)");
++
++    // Recovery, mirroring the same one-interval lag going back to forward: the FIRST forward
++    // A-rise (t=4096) does not yet flip direction; the SECOND (t=5120) does, clearing
++    // encPhaseEwma again, and its own B-rise re-seeds it fresh in one sample.
++    g_mock_micros = 4096;         enc_set(1,0);   // A-rise: dpos still < 0 -- direction NOT yet
++    check(encPeriodDir == -1,
++          "direction-flip recovery lag: the FIRST forward A-rise after the reversal does not yet "
++          "flip encPeriodDir back (mirrors the same one-interval detection lag)");
++    g_mock_micros = 4096 + 256;   enc_set(1,1);
++    g_mock_micros = 4096 + 512;   enc_set(0,1);
++    g_mock_micros = 4096 + 768;   enc_set(0,0);
++
++    g_mock_micros = 5120;         enc_set(1,0);   // A-rise: dpos > 0 -> direction confirmed +1
++    check(encPeriodDir == 1,
++          "direction-flip recovery: the SECOND forward A-rise confirms the flip back to +1");
++    check(encPhaseEwma == 0u,
++          "direction-flip recovery: the confirming A-rise clears encPhaseEwma again (fresh epoch, "
++          "no stale reverse sample can survive into it)");
++    g_mock_micros = 5120 + 256;   enc_set(1,1);   // B-rise: re-seeds a fresh non-zero reading
++    check(encPhaseEwma != 0u,
++          "direction-flip recovery: the first forward B-rise after the confirmed flip re-seeds "
++          "encPhaseEwma to a fresh non-zero reading in exactly one sample");
++    g_mock_micros = 5120 + 512;   enc_set(0,1);
++    g_mock_micros = 5120 + 768;   enc_set(0,0);
++
++    // ── ML0140-class direction dither: alternating direction NEVER parks encPhaseEwma near the
++    // aligned-edges fault signature (fp 128 == 0.5) -- it is held at 0 (unmeasured) throughout,
++    // because every single flip re-triggers the MED-1 clear before a straddling sample can land.
++    enc_reset();
++    encoderVelReset();
++    g_mock_micros = 0;           enc_set(1,0);   // baseline A-rise (forward-looking)
++    g_mock_micros = 256;         enc_set(1,1);
++    g_mock_micros = 512;         enc_set(0,1);
++    g_mock_micros = 768;         enc_set(0,0);
++    uint32_t t = 1024;
++    for (int i = 0; i < 6; i++) {
++        if ((i % 2) == 0) {
++            // Forward half-cycle from the current (0,0) pin state: A-rise, B-rise, A-fall, B-fall.
++            g_mock_micros = t;        enc_set(1,0);
++            g_mock_micros = t + 256;  enc_set(1,1);
++            g_mock_micros = t + 512;  enc_set(0,1);
++            g_mock_micros = t + 768;  enc_set(0,0);
++        } else {
++            // Reverse half-cycle from (0,0): B-rise, A-rise, B-fall, A-fall.
++            g_mock_micros = t;        enc_set(0,1);
++            g_mock_micros = t + 256;  enc_set(1,1);
++            g_mock_micros = t + 512;  enc_set(1,0);
++            g_mock_micros = t + 768;  enc_set(0,0);
++        }
++        t += 1024;
++        check(encPhaseEwma != 128u,
++              "ML0140-class dither: encPhaseEwma never parks at the aligned-edges fault value (0.5)");
++    }
++    check(encPhaseEwma == 0u,
++          "ML0140-class dither: after alternating direction every cycle, encPhaseEwma settles at 0 "
++          "(unmeasured) rather than any manufactured mid-scale value");
++}
++
++// ─── 6l. fw v20: the State-98 'S' dump prints the three phase/duty geometry lines ───────────
++// Follow-on to the fw v8 observability lesson (a silent estimator/geometry defect needs a
++// human-readable counter behind it): confirms printTestStatus() actually emits the phase=/dutyA=/
++// dutyB= line this feature exists to provide, in the documented /256.0 fixed-point-to-float form,
++// rather than only the underlying globals being correct (which the tests above already cover).
++static void test_encoder_status_dump_phase_duty() {
++    test_group("fw v20: 'S' dump prints phase=/dutyA=/dutyB= (encPhaseEwma/encDutyAEwma/encDutyBEwma / 256.0)");
++    reset_test_state();
++
++    encPhaseEwma = 64u;     // 64/256 = 0.250
++    encDutyAEwma = 128u;    // 128/256 = 0.500
++    encDutyBEwma = 192u;    // 192/256 = 0.750
++
++    printTestStatus();
++
++    check(Serial.tx_contains("phase=0.250"), "'S' dump: phase= reports encPhaseEwma/256.0 (0.250)");
++    check(Serial.tx_contains("dutyA=0.500"), "'S' dump: dutyA= reports encDutyAEwma/256.0 (0.500)");
++    check(Serial.tx_contains("dutyB=0.750"), "'S' dump: dutyB= reports encDutyBEwma/256.0 (0.750)");
++}
++
+ // ─── 6i. encSpuriousDropCount semantics, driven through the REAL ISR ────────────────────────
+ // Uses the fw v15 estimator-test idioms (enc_cycle_fwd / enc_tap_ambiguous / enc_fire_tap_raw,
+ // enc_v15_arm_at) rather than poking the counter directly, so this exercises doEncoderA()'s actual
+@@ -12834,10 +13270,10 @@ static void test_sdlog_ring_wrap_drain() {
+     check(logRingCount == 900 && logDroppedCount == 0,
+           "SD wrap: 900 records buffer without dropping (under the 1024 capacity)");
+ 
+-    // format v6 (fw v16): LOG_REC_SIZE=92 -> floor(512/92)=5 records per LOG_CHUNK_MAX chunk (was
+-    // 6 at the v5 76-byte record size). 84 ticks * 5 = 420 drained -- same 420 target as before,
+-    // reached with more ticks now that each chunk carries fewer records.
+-    for (int i = 0; i < 84; i++) logDrainTick();   // 5 records per tick → 420 drained
++    // format v7 (fw v20): LOG_REC_SIZE=106 -> floor(512/106)=4 records per LOG_CHUNK_MAX chunk
++    // (was 5 at the v6 92-byte record size). 105 ticks * 4 = 420 drained -- same 420 target as
++    // before, reached with more ticks now that each chunk carries fewer records.
++    for (int i = 0; i < 105; i++) logDrainTick();   // 4 records per tick → 420 drained
+     check(logRecordsWritten == 420 && logRingTail == 420u * LOG_REC_SIZE,
+           "SD wrap: a partial drain advances the tail off zero, leaving 480 records pending");
+ 
+@@ -15808,6 +16244,11 @@ int main() {
+ #endif
+     test_sdlog_record_v6_encoder_fields_plumbing();
+     test_sdlog_record_v6_reset_visibility();
++    test_sdlog_record_v7_edge_fields_plumbing();
++    test_encoder_edge_counters_boot_monotonic();
++    test_enc_fold_pitch_fraction_unit();
++    test_encoder_phase_duty_isr();
++    test_encoder_status_dump_phase_duty();
+     test_encoder_spurious_drop_count();
+     test_sdlog_write_error_midrun();
+     test_sdlog_name_collision();

@@ -1,0 +1,473 @@
+diff --git a/tools/test_decode_benchlog.py b/tools/test_decode_benchlog.py
+index 30be515..108902f 100644
+--- a/tools/test_decode_benchlog.py
++++ b/tools/test_decode_benchlog.py
+@@ -69,6 +69,24 @@ unchanged from v4/v5):
+       decodes with the SAME test file's assumptions about the v5 layout.
+       SKIPPED (not failed) if either file is absent, e.g. a sparse
+       checkout without logs/.
++
++Format-v7 coverage (fw v20 round, adds enc_edge_count_a, enc_edge_count_b
++(u32 boot-monotonic counters) and enc_phase_ewma, enc_duty_a_ewma,
++enc_duty_b_ewma (u16 1/256 fixed-point LEVELS) -- 106 B record; header
++unchanged from v4/v5/v6):
++  (u) header parse: record_size=106, version=7, fw_version/profileAmp/
++      profileB carried through the same v4 header path unmodified.
++  (v) record decode: the five new fields at their documented CSV positions
++      (indices 21-25, right after enc_spurious_drop_count), the 31-column
++      CSV_HEADER_V7, and the fixed-point /256 exactness of the three EWMA
++      level columns (fp 64 -> 0.25, fp 128 -> 0.5).
++  (w) near-wrap u32 values (e.g. 0xFFFFFFF0) decode as large unsigned
++      values, not negatives -- the counters are boot-monotonic u32s and a
++      negative DIFF across the wrap is a consumer-side concern, not a
++      decode transform.
++  (x) v7 record_size/version self-consistency hard error, mirroring (r).
++  (y) v6 regression: v6 decode (header + 26-column CSV) is unchanged after
++      adding v7 support.
+ """
+ import struct
+ import subprocess
+@@ -92,6 +110,8 @@ RECORD_FMT_V5 = "<I14fHBBBB2xff"
+ RECORD_SIZE_V5 = 76
+ RECORD_FMT_V6 = "<I14fHBBBB2xffiIII"
+ RECORD_SIZE_V6 = 92
++RECORD_FMT_V7 = "<I14fHBBBB2xffiIIIIIHHH"
++RECORD_SIZE_V7 = 106
+ TRAILER_FMT = "<IIIBBI"
+ CSV_HEADER_V3 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
+                   "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,fault_flags,ps_phase,"
+@@ -104,6 +124,12 @@ CSV_HEADER_V6 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
+                   "encoder_pos,enc_period_ref_us,enc_multi_pitch_count,"
+                   "enc_spurious_drop_count,fault_flags,ps_phase,dc_phase,"
+                   "trap_phase,flags")
++CSV_HEADER_V7 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
++                  "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,u_unsat,drive_x0,"
++                  "encoder_pos,enc_period_ref_us,enc_multi_pitch_count,"
++                  "enc_spurious_drop_count,enc_edge_count_a,enc_edge_count_b,"
++                  "enc_phase_ewma,enc_duty_a_ewma,enc_duty_b_ewma,"
++                  "fault_flags,ps_phase,dc_phase,trap_phase,flags")
+ 
+ _passed = 0
+ _failed = 0
+@@ -259,6 +285,47 @@ def pack_record_v6(t_us, share_sp=0.5, share_act=0.5, v_sp=0.0, v_act=0.0,
+     return rec
+ 
+ 
++def pack_header_v7(profile_type=1, start_millis=0, start_micros=0,
++                    k_droop_x1000=300, fw_version=1, param_flags=0x03,
++                    profile_amp=6.0, profile_b=0.15):
++    """v7 header: byte-identical to v4/v5/v6 (see pack_header_v4) except
++    record_size=100 (v7's own record layout)."""
++    hdr = struct.pack(HEADER_FMT, MAGIC, 7, RECORD_SIZE_V7, profile_type,
++                       param_flags, start_millis, start_micros, k_droop_x1000)
++    hdr += struct.pack("<H", fw_version)
++    hdr += b"\x00" * (HEADER_SIZE - len(hdr))
++    hdr = bytearray(hdr)
++    struct.pack_into("<ff", hdr, 20, profile_amp, profile_b)
++    assert len(hdr) == HEADER_SIZE
++    return bytes(hdr)
++
++
++def pack_record_v7(t_us, share_sp=0.5, share_act=0.5, v_sp=0.0, v_act=0.0,
++                    i_fc=0.0, i_batt=0.0, gfc=0.0, gbt=0.0, v_bus=17.5,
++                    i_cmd=0.0, v_fc=12.5, v_batt=8.0, v_chg=12.0, v_rgn=0.5,
++                    fault_flags=0, ps_phase=0xFF, dc_phase=0xFF,
++                    trap_phase=0xFF, flags=0, u_unsat=0.0, drive_x0=0.0,
++                    encoder_pos=0, enc_period_ref_us=0,
++                    enc_multi_pitch_count=0, enc_spurious_drop_count=0,
++                    enc_edge_count_a=0, enc_edge_count_b=0,
++                    enc_phase_ewma=64, enc_duty_a_ewma=128,
++                    enc_duty_b_ewma=128):
++    rec = struct.pack(RECORD_FMT_V7, t_us & 0xFFFFFFFF, share_sp, share_act,
++                       v_sp, v_act, i_fc, i_batt, gfc, gbt, v_bus, i_cmd,
++                       v_fc, v_batt, v_chg, v_rgn, fault_flags, ps_phase,
++                       dc_phase, trap_phase, flags, u_unsat, drive_x0,
++                       encoder_pos, enc_period_ref_us & 0xFFFFFFFF,
++                       enc_multi_pitch_count & 0xFFFFFFFF,
++                       enc_spurious_drop_count & 0xFFFFFFFF,
++                       enc_edge_count_a & 0xFFFFFFFF,
++                       enc_edge_count_b & 0xFFFFFFFF,
++                       enc_phase_ewma & 0xFFFF,
++                       enc_duty_a_ewma & 0xFFFF,
++                       enc_duty_b_ewma & 0xFFFF)
++    assert len(rec) == RECORD_SIZE_V7
++    return rec
++
++
+ def run_decoder(blg_path):
+     proc = subprocess.run(
+         [sys.executable, str(DECODER), str(blg_path)],
+@@ -806,6 +873,157 @@ def test_v6_record_size_mismatch(tmpdir):
+           "unexpected record_size 76" in err and "expected 92" in err, err)
+ 
+ 
++def test_v7_header_and_record(tmpdir):
++    """(u)(v) v7 header + record decode: record_size=106, version=7,
++    fw_version/profileAmp/profileB carried through the v4 header path
++    unmodified, the five new fields at their documented CSV positions
++    (indices 21-25, right after enc_spurious_drop_count), the /256
++    fixed-point exactness of the three EWMA level columns, and the
++    31-column v7 CSV header."""
++    sys.path.insert(0, str(HERE))
++    import decode_benchlog as db
++
++    n = 30
++    data = pack_header_v7(profile_type=8, fw_version=20, param_flags=0x03,
++                           profile_amp=2.0, profile_b=0.30)
++    for i in range(n):
++        data += pack_record_v7(t_us=i * 1000, encoder_pos=1000 + i * 2,
++                                enc_period_ref_us=4200,
++                                enc_multi_pitch_count=7,
++                                enc_spurious_drop_count=12,
++                                enc_edge_count_a=100_000 + i * 4,
++                                enc_edge_count_b=100_150 + i * 4,
++                                enc_phase_ewma=64, enc_duty_a_ewma=128,
++                                enc_duty_b_ewma=131)
++    data += pack_trailer(records_written=n, dropped=0, close_reason=1,
++                          record_size=RECORD_SIZE_V7)
++
++    res = db.decode_blg(data)
++    check("v7: header version=7", res.header["version"] == 7,
++          repr(res.header))
++    check("v7: header record_size=106", res.header["record_size"] == 106,
++          repr(res.header))
++    check("v7: fw_version=20 carried through v4 header path",
++          res.header["fw_version"] == 20, repr(res.header))
++    check("v7: profile_amp/profile_b decoded (v4 header path unmodified)",
++          abs(res.header["profile_amp"] - 2.0) < 1e-5
++          and abs(res.header["profile_b"] - 0.30) < 1e-5, repr(res.header))
++    check("v7: csv_header is the 31-column v7 header",
++          res.csv_header == CSV_HEADER_V7, res.csv_header)
++    check("v7: emits all records", len(res.csv_rows) == n,
++          f"csv data rows={len(res.csv_rows)}, expected {n}")
++
++    first_fields = res.csv_rows[0].split(",")
++    check("v7: row has 31 fields", len(first_fields) == 31,
++          repr(first_fields))
++    # Column order: ...enc_spurious_drop_count(20),enc_edge_count_a(21),
++    # enc_edge_count_b(22),enc_phase_ewma(23),enc_duty_a_ewma(24),
++    # enc_duty_b_ewma(25),fault_flags(26),...
++    check("v7: v6 fields keep their positions (encoder_pos at 17, "
++          "enc_spurious_drop_count at 20)",
++          first_fields[17] == "1000" and first_fields[20] == "12",
++          repr(first_fields[17:21]))
++    check("v7: enc_edge_count_a at index 21",
++          first_fields[21] == "100000", first_fields[21])
++    check("v7: enc_edge_count_b at index 22",
++          first_fields[22] == "100150", first_fields[22])
++    check("v7: enc_phase_ewma at index 23 is fp64/256 = 0.25 EXACTLY",
++          first_fields[23] == "0.25", first_fields[23])
++    check("v7: enc_duty_a_ewma at index 24 is fp128/256 = 0.5 EXACTLY",
++          first_fields[24] == "0.5", first_fields[24])
++    check("v7: enc_duty_b_ewma at index 25 is fp131/256 = 0.51171875",
++          first_fields[25] == "0.51171875", first_fields[25])
++
++    last_fields = res.csv_rows[-1].split(",")
++    check("v7: edge counters advance across records (cumulative)",
++          last_fields[21] == str(100_000 + 4 * (n - 1))
++          and last_fields[22] == str(100_150 + 4 * (n - 1)),
++          repr(last_fields[21:23]))
++
++    # CLI-level check too, mirroring the v6 CLI check.
++    path = write_blg(tmpdir, "v7.BLG", data)
++    rc, out, err = run_decoder(path)
++    check("v7 CLI: exits 0", rc == 0, f"rc={rc} stderr={err}")
++    check("v7 CLI: version=7 reported", "version=7" in err, err)
++    check("v7 CLI: records read == n", f"records read: {n}" in err, err)
++    check("v7 CLI: trailer found (close_reason=complete)",
++          "close_reason=complete" in err, err)
++
++
++def test_v7_near_wrap_edge_counters(tmpdir):
++    """(w) The edge counters are boot-monotonic u32s -- a value near the
++    uint32 wrap must decode as a large UNSIGNED value (a later negative
++    DIFF is the consumer's wrap/reset signal, not a decode transform)."""
++    sys.path.insert(0, str(HERE))
++    import decode_benchlog as db
++
++    data = pack_header_v7(fw_version=20)
++    data += pack_record_v7(t_us=0, enc_edge_count_a=0xFFFFFFF0,
++                            enc_edge_count_b=0xFFFFFFFF)
++    # A post-wrap second record: counters numerically SMALLER than the
++    # first -- must still decode verbatim (no unwrap correction).
++    data += pack_record_v7(t_us=1000, enc_edge_count_a=5,
++                            enc_edge_count_b=2)
++    data += pack_trailer(records_written=2, dropped=0, close_reason=1,
++                          record_size=RECORD_SIZE_V7)
++
++    res = db.decode_blg(data)
++    f0 = res.csv_rows[0].split(",")
++    f1 = res.csv_rows[1].split(",")
++    check("v7: near-wrap enc_edge_count_a decodes unsigned",
++          f0[21] == str(0xFFFFFFF0), f0[21])
++    check("v7: max-u32 enc_edge_count_b decodes unsigned",
++          f0[22] == str(0xFFFFFFFF), f0[22])
++    check("v7: post-wrap smaller values decode verbatim (no unwrap)",
++          f1[21] == "5" and f1[22] == "2", repr(f1[21:23]))
++
++
++def test_v7_record_size_mismatch(tmpdir):
++    """(x) A v7 header claiming the v6 record_size (92, self-inconsistent
++    with version=7) is a hard error, mirroring test_v6_record_size_mismatch."""
++    data = bytearray(pack_header_v7())
++    data[5] = RECORD_SIZE_V6  # corrupt record_size byte: 106 -> 92
++    data = bytes(data) + pack_trailer(records_written=0, dropped=0,
++                                       close_reason=1,
++                                       record_size=RECORD_SIZE_V7)
++
++    path = write_blg(tmpdir, "v7_badsize.BLG", data)
++    rc, out, err = run_decoder(path)
++    check("v7 bad record_size: decoder exits nonzero", rc != 0, f"rc={rc}")
++    check("v7 bad record_size: error names both values",
++          "unexpected record_size 92" in err and "expected 106" in err, err)
++
++
++def test_v6_regression(tmpdir):
++    """(y) Regression: v6 header + 26-column CSV decode is unchanged after
++    adding v7 support -- same header path, same RECORD_FMT_V6/
++    RECORD_SIZE_V6/CSV_HEADER_V6 as before v7 existed."""
++    sys.path.insert(0, str(HERE))
++    import decode_benchlog as db
++
++    n = 25
++    data = pack_header_v6(profile_type=4, fw_version=16, param_flags=0x03,
++                           profile_amp=1.5, profile_b=0.20)
++    for i in range(n):
++        data += pack_record_v6(t_us=i * 1000, encoder_pos=42,
++                                enc_period_ref_us=5000,
++                                enc_multi_pitch_count=1,
++                                enc_spurious_drop_count=2)
++    data += pack_trailer(records_written=n, dropped=0, close_reason=1,
++                          record_size=RECORD_SIZE_V6)
++
++    res = db.decode_blg(data)
++    check("v6 regression: version=6", res.header["version"] == 6,
++          repr(res.header))
++    check("v6 regression: record_size=92", res.header["record_size"] == 92,
++          repr(res.header))
++    check("v6 regression: csv_header is the 26-column v6 header",
++          res.csv_header == CSV_HEADER_V6, res.csv_header)
++    check("v6 regression: row has 26 fields (no v7 columns leaked in)",
++          len(res.csv_rows[0].split(",")) == 26,
++          repr(res.csv_rows[0].split(",")))
++
++
+ def test_v5_regression(tmpdir):
+     """(s) Regression: v5 header + 22-column CSV decode is byte-for-byte
+     unchanged after adding v6 support -- same header path, same
+@@ -902,6 +1120,10 @@ def main():
+         test_v6_header_and_record(tmpdir)
+         test_v6_negative_encoder_pos(tmpdir)
+         test_v6_record_size_mismatch(tmpdir)
++        test_v7_header_and_record(tmpdir)
++        test_v7_near_wrap_edge_counters(tmpdir)
++        test_v7_record_size_mismatch(tmpdir)
++        test_v6_regression(tmpdir)
+         test_v5_regression(tmpdir)
+         test_v5_real_log_regression(tmpdir)
+ 
+diff --git a/tools/test_figures.py b/tools/test_figures.py
+index b102543..37d709b 100644
+--- a/tools/test_figures.py
++++ b/tools/test_figures.py
+@@ -258,6 +258,24 @@ def _v6_extra(seed, t_s):
+     }
+ 
+ 
++def _v7_extra(seed, t_s):
++    # Boot-monotonic per-channel edge counters (fw v20): start from non-zero
++    # boot offsets (never cleared by encoderVelReset()), slight A/B
++    # asymmetry so the edge-rate lines are distinguishable.
++    rng = np.random.default_rng(seed + 4000)
++    inc_a = rng.poisson(1.0, N).astype(np.float64)
++    inc_b = rng.poisson(0.97, N).astype(np.float64)
++    return {
++        "enc_edge_count_a": 100_000.0 + np.cumsum(inc_a),
++        "enc_edge_count_b": 100_150.0 + np.cumsum(inc_b),
++        # EWMA levels arrive from load_csv() already /256 (direct
++        # fractions): healthy phase ~0.25, duty ~0.50, with small jitter.
++        "enc_phase_ewma": 0.25 + rng.normal(0.0, 0.01, N),
++        "enc_duty_a_ewma": 0.50 + rng.normal(0.0, 0.015, N),
++        "enc_duty_b_ewma": 0.50 + rng.normal(0.0, 0.015, N),
++    }
++
++
+ def make_v1v2_fixture(seed=0):
+     return _base_channels(seed)
+ 
+@@ -276,6 +294,12 @@ def make_v6_fixture(seed=2):
+     return data
+ 
+ 
++def make_v7_fixture(seed=3):
++    data = make_v6_fixture(seed)
++    data.update(_v7_extra(seed, data["t_s"]))
++    return data
++
++
+ def _default_cfg():
+     return copy.deepcopy(common.DEFAULT_CONFIG)
+ 
+@@ -690,7 +714,10 @@ def test_version_gate():
+ # Builders that must return None (not a Figure) on a v1/v2-shaped dict --
+ # every other registered builder must return a Figure.
+ NONE_ON_V1V2 = {"charge_regen_and_currents", "drive_controller_conditioning",
+-                 "encoder_diagnostics"}
++                 "encoder_diagnostics", "encoder_phase_duty"}
++
++# Builders that must return None on a v6-shaped dict (v7-only columns).
++NONE_ON_V6 = {"encoder_phase_duty"}
+ 
+ 
+ def test_registry_regression_v6():
+@@ -702,14 +729,102 @@ def test_registry_regression_v6():
+               not raised)
+         if raised:
+             continue
+-        check(f"(d) {name}: returns a Figure on the v6 fixture "
+-              f"(every column any builder needs is present)",
+-              result is not None)
++        if name in NONE_ON_V6:
++            check(f"(d) {name}: returns None on v6 data (v7-gated)",
++                  result is None)
++        else:
++            check(f"(d) {name}: returns a Figure on the v6 fixture "
++                  f"(every column any pre-v7 builder needs is present)",
++                  result is not None)
+         if result is not None:
+             assert_figure_open(f"(d) {name} [v6]", result)
+             figures.plt.close(result)
+ 
+ 
++def test_registry_regression_v7():
++    """(d) v7 fixture: every builder still returns an open Figure, and
++    encoder_diagnostics gains the per-channel edge-rate lines."""
++    cfg = _default_cfg()
++    data = make_v7_fixture()
++    for name, builder in figures.FIGURES:
++        result, raised = _call_gracefully(builder, data, cfg)
++        check(f"(d) {name}: does not raise on the v7 fixture", not raised)
++        if raised:
++            continue
++        check(f"(d) {name}: returns a Figure on the v7 fixture",
++              result is not None)
++        if result is not None:
++            assert_figure_open(f"(d) {name} [v7]", result)
++            figures.plt.close(result)
++
++
++def test_encoder_diagnostics_edge_rate_gate():
++    """The v7 edge-rate lines appear in encoder_diagnostics' counter panel
++    on v7 data and are absent (graceful skip, no raise, figure still built)
++    on v6 data -- the pre-v7 behaviour is unchanged."""
++    cfg = _default_cfg()
++
++    fig7 = figures.encoder_diagnostics(make_v7_fixture(), cfg)
++    check("edge-rate gate: v7 fixture builds a Figure", fig7 is not None)
++    if fig7 is not None:
++        labels7 = [ln.get_label() for ln in fig7.axes[2].get_lines()]
++        check("edge-rate gate: edge rate A line present on v7 data",
++              any("edge rate A" in l for l in labels7), labels7)
++        check("edge-rate gate: edge rate B line present on v7 data",
++              any("edge rate B" in l for l in labels7), labels7)
++        check("edge-rate gate: expected 2|v_truth|/pitch line present",
++              any("2|v_truth|/pitch" in l for l in labels7), labels7)
++        check("edge-rate gate: edge labels carry the wrap/reset-suspect "
++              "contract (NOT the encoderVelReset one)",
++              any("wrap/reset-suspect" in l for l in labels7), labels7)
++        figures.plt.close(fig7)
++
++    fig6 = figures.encoder_diagnostics(make_v6_fixture(), cfg)
++    check("edge-rate gate: v6 fixture still builds a Figure (no raise on "
++          "absent v7 columns)", fig6 is not None)
++    if fig6 is not None:
++        labels6 = [ln.get_label() for ln in fig6.axes[2].get_lines()]
++        check("edge-rate gate: no edge-rate lines on v6 data",
++              not any("edge rate" in l for l in labels6), labels6)
++        figures.plt.close(fig6)
++
++
++def test_encoder_phase_duty_panel():
++    """The v7 phase/duty figure: builds an open Figure on v7 data with the
++    documented reference geometry (phase trace + 0.25/0.75 reference lines
++    + the shaded healthy band; duty A/B traces + the 0.50 reference), and
++    returns None on v6/v1-v2 data (graceful skip)."""
++    cfg = _default_cfg()
++
++    fig = figures.encoder_phase_duty(make_v7_fixture(), cfg)
++    check("phase/duty: v7 fixture builds a Figure", fig is not None)
++    if fig is not None:
++        assert_figure_open("phase/duty [v7]", fig)
++        check("phase/duty: two panels", len(fig.axes) == 2, len(fig.axes))
++        labels0 = [ln.get_label() for ln in fig.axes[0].get_lines()]
++        check("phase/duty: phase trace present",
++              any("enc_phase_ewma" in l for l in labels0), labels0)
++        check("phase/duty: 0.25 healthy reference line present",
++              any("0.25" in l for l in labels0), labels0)
++        check("phase/duty: 0.75 reversed/swapped-sensor reference present",
++              any("0.75" in l for l in labels0), labels0)
++        patches = fig.axes[0].patches
++        check("phase/duty: shaded healthy band present (axhspan patch)",
++              len(patches) >= 1, len(patches))
++        labels1 = [ln.get_label() for ln in fig.axes[1].get_lines()]
++        check("phase/duty: duty A and B traces present",
++              any("enc_duty_a_ewma" in l for l in labels1)
++              and any("enc_duty_b_ewma" in l for l in labels1), labels1)
++        check("phase/duty: 0.50 duty reference present",
++              any("0.50" in l for l in labels1), labels1)
++        figures.plt.close(fig)
++
++    check("phase/duty: returns None on v6 data (v7-gated)",
++          figures.encoder_phase_duty(make_v6_fixture(), cfg) is None)
++    check("phase/duty: returns None on v1/v2 data",
++          figures.encoder_phase_duty(make_v1v2_fixture(), cfg) is None)
++
++
+ def test_registry_regression_v1v2():
+     cfg = _default_cfg()
+     data = make_v1v2_fixture()
+@@ -775,6 +890,31 @@ def test_end_to_end_v6():
+                 pass
+ 
+ 
++def test_end_to_end_v7():
++    """(e) v7 end-to-end through make_test_blg --v7 + ingest + make_all:
++    encoder_diagnostics.png is produced (the v7 columns flow through the
++    decoder, load_csv, and the figure gate)."""
++    with tempfile.TemporaryDirectory() as tmp:
++        tmp = Path(tmp)
++        blg_path = tmp / "TESTV7.BLG"
++        blg_path.write_bytes(
++            make_test_blg.build_blg(seed=0, truncate=False, v7=True,
++                                     fw_version=20))
++
++        run_dir = ingest_log.ingest(blg_path)
++        check("(e) v7 end-to-end: run directory inside the temp dir",
++              str(run_dir).startswith(str(tmp)), str(run_dir))
++
++        saved = make_figures.make_all(run_dir)
++        names = {p.name for p in saved}
++        check("(e) v7 end-to-end: encoder_diagnostics.png produced",
++              "encoder_diagnostics.png" in names, names)
++        check("(e) v7 end-to-end: encoder_phase_duty.png produced",
++              "encoder_phase_duty.png" in names, names)
++        check("(e) v7 end-to-end: charge_regen_and_currents.png produced",
++              "charge_regen_and_currents.png" in names, names)
++
++
+ def test_end_to_end_v1v2():
+     with tempfile.TemporaryDirectory() as tmp:
+         tmp = Path(tmp)
+@@ -837,8 +977,12 @@ def main():
+     test_bus_and_share_total_label()
+     test_version_gate()
+     test_registry_regression_v6()
++    test_registry_regression_v7()
++    test_encoder_diagnostics_edge_rate_gate()
++    test_encoder_phase_duty_panel()
+     test_registry_regression_v1v2()
+     test_end_to_end_v6()
++    test_end_to_end_v7()
+     test_end_to_end_v1v2()
+     test_readme_consistency()
+ 

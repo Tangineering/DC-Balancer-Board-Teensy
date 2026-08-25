@@ -944,6 +944,40 @@ appear as `t_us` gaps (the decoder reports max interval / missed periods). A sam
 
 **Record layout (52 bytes, little-endian, packed):**
 
+> **Format note (current: v7, 106 B, fw v20).** The table below is the ORIGINAL v1 record and is
+> kept because every field in it still holds its v1 byte offset — the format has only ever been
+> APPENDED to. Subsequent versions: v3 (68 B) added `V_fc`/`V_batt`/`V_chg`/`V_rgn`; v4 (68 B,
+> header-only) added the committed per-run profile parameters; v5 (76 B, fw v11) added `u_unsat`
+> and `drive_x0`; v6 (92 B, fw v16) added `encoder_pos`, `enc_period_ref_us`,
+> `enc_multi_pitch_count`, `enc_spurious_drop_count`; **v7 (106 B, fw v20) added
+> `enc_edge_count_a` (offset 92), `enc_edge_count_b` (96), `enc_phase_ewma` (100),
+> `enc_duty_a_ewma` (102) and `enc_duty_b_ewma` (104)**. The header layout is unchanged from v4;
+> only `hdr[4]` (the format version, now 7) and `hdr[5]` (the record size, now 106) differ.
+> Decoders read the record stride from `hdr[5]`, never assume it.
+>
+> The two v7 **counters** are the raw per-channel ISR edge counts — the direct before/after metric
+> for the Schmitt front-end fix, and the only signal that separates a dead channel from a dead
+> estimator offline. The three v7 **levels** are quadrature geometry: shift-based integer EWMAs
+> (α = 1/4), fixed point in **1/256ths of one slot pitch**, computed in the ISRs. Phase is the
+> last accepted A-rising edge to the next B-rising edge over `encPeriodRefUs` (the sensor pair's
+> mount geometry, direction-gated to forward and plausibility-gated at `dt < period_ref`); the two
+> duties are each channel's rise-to-fall high time over the same reference (that channel's optical
+> health, independent of the mount). Expected healthy on this board: **phase 64 (0.25 pitch), both
+> duties 128 (0.50)** — the 43° sensor offset is 10.75 pitches, but the sensors were physically
+> swapped with the 90-slot wheel, so A leads B forward and the fraction is the complement. All
+> three are printed in the State-98 `'S'` dump as pitch fractions.
+>
+> **Decoder contract — three field classes, and mixing them up produces plausible nonsense:**
+> **levels** (`enc_period_ref_us`, `enc_phase_ewma`, `enc_duty_a_ewma`, `enc_duty_b_ewma`) are read
+> directly and NEVER differenced, and a 0 means "no measurement yet" rather than a real zero;
+> **reset-cleared counters** (`enc_multi_pitch_count`, `enc_spurious_drop_count`) are diffed for a
+> rate, where a negative diff is a mid-run `encoderVelReset()` — which also clears all four levels,
+> since they are normalised by `enc_period_ref_us`;
+> **boot-monotonic counters** (`enc_edge_count_a`/`_b`) are never cleared by anything, so a
+> negative diff there is a uint32 wrap or an MCU reset. The authoritative per-field layout is the
+> `BenchLogRecord` struct in `teensy_controller/teensy_controller.ino`, whose `offsetof`
+> static_asserts pin every offset.
+
 | Field | Type | Source |
 |---|---|---|
 | `t_us` | u32 | `micros()` at sample |
