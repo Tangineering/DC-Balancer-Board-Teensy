@@ -1165,6 +1165,15 @@ EthernetUDP Udp;
 #define FAULT_INIT_FAIL       0x2000  // Init sequence failure (State 0)
 #define FAULT_MOT_HOTPLUG     0x4000  // MOT_PWR_ENABLE refused: motor node not pre-charged at full bus
 #define FAULT_ERROR           0x8000  // Latched: system is in or has entered State 99
+// fw v21 HIL dead-link fault. DELIBERATE ALIAS, not a new bit: all 16 bits of the uint16_t
+// fault_flags word are already allocated above (0x0001..0x8000, no gap), and fault_flags is a
+// FIXED-WIDTH telemetry field (v4 packet offset 53) plus a BLG record field — widening it is a
+// protocol break for a HIL-only condition. FAULT_PI_TIMEOUT is the closest existing semantics
+// ("the host that feeds this board stopped talking"), and the two can never be confused in
+// practice: this bit is only ever set from the HIL_SIM sourcing path, and error_code names the
+// true cause (ERR_HIL_STALE vs ERR_PI_TIMEOUT), which is what any decoder should read.
+// If a future round frees a bit or widens the field, give this its own bit.
+#define FAULT_HIL_LINK        FAULT_PI_TIMEOUT
 
 // ── Safety limits ─────────────────────────────────────────────────────────────
 // ── Source overcurrent limits ────────────────────────────────────────────────
@@ -1474,6 +1483,9 @@ typedef enum : uint8_t {
     ERR_CHARGER_STAT    = 0x0D,  // Ag105 GENSTAT error
     ERR_INIT_FAIL       = 0x0E,  // Init sequence failure
     ERR_MOT_HOTPLUG     = 0x0F,  // MOT_PWR_ENABLE refused at full bus (motor node not pre-charged)
+    // APPENDED (fw v21) — every value above keeps its number. The Pi bridge and the BLG tooling
+    // decode error_code by value, so this enum is append-only forever.
+    ERR_HIL_STALE       = 0x10,  // HIL_SIM only: injection link dead (> HIL_ZERO_MS with no frame)
 } ErrorCode_t;
 
 // ── Ag105 MPPT charger I2C constants ─────────────────────────────────────────
@@ -2540,6 +2552,16 @@ uint16_t       pkt_counter_T = 0;
 //   30  |  4   | v_actual  [m/s]
 //   34  |  1   | XOR checksum over bytes 1..33
 //
+// NOT SIMULATED (fw v21 limitation — review LOW-4). The frame carries no charger state, so the
+// ENTIRE Ag105 path stays REAL in a HIL build: I_charge, ag105_status_raw / the GENSTAT decode,
+// ag105Configured and chargingControl()'s readiness gating all come from the physical I2C bus,
+// which in a HIL rig is unpowered (no charger power path is open, and there is no board-side
+// plant to open one). Expect I_charge == 0, ag105IsReady() false, and the charger branch of
+// chargingControl() to be effectively dead. Any HIL result that depends on charger behaviour is
+// therefore not meaningful. Extending the injection frame with the charger fields (and gating
+// pollAg105() under HIL_SIM) is the known follow-up; it is a frame-layout change, so it needs a
+// simulator update in lockstep.
+//
 // OUTPUT FRAME (Teensy -> simulator), 16 bytes, little-endian:
 //   off | size | field
 //   ----+------+---------------------------------------------------------------
@@ -2578,8 +2600,24 @@ bool           hilZeroed      = false;  // held values have been forced to safe 
 uint32_t       hilLastFrameMs = 0;      // millis() at the last accepted frame
 uint32_t       hilFramesAccepted = 0;
 uint32_t       hilFramesRejected = 0;   // bad sync / bad checksum (length mismatches never reach here)
-IPAddress      hilHostIp(0, 0, 0, 0);   // learned from the first accepted frame
+uint32_t       hilFramesForeign  = 0;   // fw v21 LOW-3: well-formed frames from a source address
+                                        // other than the LOCKED host, ignored entirely
+IPAddress      hilHostIp(0, 0, 0, 0);   // learned on the first accepted frame, and again on the
+                                        // first frame after the link goes dead (see receiveCommands)
 uint16_t       hilHostPort   = 0;
+bool           hilHostLocked = false;   // true while a host is bound; cleared when the link dies
+
+// ── UDP receive-drain instrumentation (fw v21 MED-1) ─────────────────────────
+// receiveCommands() used to consume exactly ONE datagram per loop tick. At the HIL injection rate
+// (1 kHz) that is at best break-even with the main loop, so any tick that ran long silently built
+// an unbounded backlog in the socket queue — and worse, a queued 22-byte Pi command sat behind
+// every backlogged injection frame, starving the command path. The drain below is bounded (a
+// runaway sender must never own the loop); these counters make the backlog VISIBLE instead of
+// invisible, which is the whole fw v8 observability lesson.
+#define UDP_DRAIN_MAX_PER_TICK 8
+uint8_t  udpDrainedLastTick = 0;   // datagrams consumed by the most recent receiveCommands()
+uint8_t  udpDrainedMaxTick  = 0;   // high-water mark since boot
+uint32_t udpDrainCapHits    = 0;   // ticks that hit UDP_DRAIN_MAX_PER_TICK == "backlog seen"
 
 // Mirrors of the last 16-bit words handed to the droop MDACs, written at the single
 // SPI chokepoint in setDroopMdac(). The AD5443 has no readback path, so without these
@@ -4261,6 +4299,20 @@ void updateSensors() {
             hilStale  = false;
             hilZeroed = false;
         } else {
+            if (!hilStale) {
+                // STALE ENTRY EDGE (fw v21 review MED-2). The hold keeps v_actual frozen for up to
+                // 200 ms, and a frozen v_actual is still live FEEDBACK to a drive controller whose
+                // LF gain is ~454 A/(m/s): a constant non-zero error integrates straight to the
+                // ±MOTOR_I_CMD_MAX rail, and in a mixed rig that current is commanded into a REAL
+                // VESC. So the hold is kept for the SENSOR values (zeroing them would latch a bogus
+                // UV fault on one missed 1 ms tick — see above) but the ACTUATOR is stood down.
+                // haltMotorOutput() zeroes v_setpoint/manualMotorCurrent, resets the Youla drive
+                // state and sends 0 A; it touches no power-path switch, so it is safe to call from
+                // any state (it is already the shared stop primitive for every profile/'X'/'Q'/
+                // fault path). Side effect worth knowing: a State-98 manual motor run is stopped by
+                // a link hiccup, which is the intended conservative outcome.
+                haltMotorOutput();
+            }
             hilStale = true;
             if (age > HIL_ZERO_MS && !hilZeroed) {
                 hilZeroed          = true;
@@ -4272,6 +4324,20 @@ void updateSensors() {
                 hilInject.I_fc     = 0.0f;
                 hilInject.I_batt   = 0.0f;
                 hilInject.v_actual = 0.0f;
+                // LOW-3: the link is dead, so unbind the host. The next accepted frame re-learns
+                // the source address (a restarted simulator on a new port recovers here, and only
+                // here — see receiveCommands()).
+                hilHostLocked      = false;
+                // MED-2: LATCH A FAULT AT THE ZERO STAGE, NOT THE STALE STAGE. A 50–250 ms gap is a
+                // host scheduling artefact and is recoverable — faulting on it would make an
+                // ordinary jittery simulator un-runnable. A gap past HIL_ZERO_MS is a DEAD LINK:
+                // there is no plant behind the numbers any more, and the board must stop
+                // sequencing against fiction. Without this the outcome was non-deterministic —
+                // the zeros only faulted if the UV_BUS check happened to be armed (uvBusArmed),
+                // so a dead link during Init/Idle simply idled forever on a fictional plant.
+                // Funnelled through triggerFault() like every other fault, so State 99 entry,
+                // error latching and the BLG close all behave identically.
+                triggerFault(FAULT_HIL_LINK, ERR_HIL_STALE);
             }
         }
         I_fc     = hilInject.I_fc;
@@ -4282,6 +4348,18 @@ void updateSensors() {
         V_chg    = hilInject.V_chg;
         V_rgn    = hilInject.V_rgn;
         v_actual = hilInject.v_actual;
+        // ⚠ WRAP-GUARD INVARIANT (fw v21 review MED-3). This return SKIPS updateWheelSpeed(), which
+        // fw v17 documents as being called UNCONDITIONALLY from loop() — its TOCTOU staleness clamp
+        // (`if (edgeAge < 0) edgeAge = 0;`, see the long comment in updateWheelSpeed()) relies on
+        // the >= 100 ms timeout firing long before a micros() age can wrap past 2^31 µs. Safe in
+        // THIS build only because the estimator's entire output is unread once hilHaveFrame is
+        // true: v_actual is overwritten above (we are its sole writer), and encHaveLastEdge is
+        // never consumed by anything else, so a wrapped age can only mis-clamp a value nothing
+        // reads. Also note wheelSpeedResetPending becomes a set-with-no-clear latch here (nothing
+        // clears it while the HIL path owns the return) — harmless today for the same reason.
+        // ANY future "revert to real sensors mid-run" fallback MUST restore the unconditional call
+        // (or add an explicit wrap guard) AND clear wheelSpeedResetPending before handing the
+        // estimator back control.
         return;
     }
     // No frame has EVER arrived: fall through to the real ADCs. That keeps a HIL flash readable on
@@ -4361,6 +4439,7 @@ const char* errorCodeStr(uint8_t code) {
         case ERR_CHARGER_STAT:    return "Ag105 STAT fault";
         case ERR_INIT_FAIL:       return "Init failure";
         case ERR_MOT_HOTPLUG:     return "Motor hot-plug refused";
+        case ERR_HIL_STALE:       return "HIL link dead";
         default:                  return "Unknown";
     }
 }
@@ -4660,39 +4739,11 @@ void checkPiWatchdog() {
 // ═════════════════════════════════════════════════════════════════════════════
 // UDP COMMUNICATION
 // ═════════════════════════════════════════════════════════════════════════════
-void receiveCommands() {
-    if (!networkUp) return;   // UDP socket not initialized — calling Udp.* would hard-fault
-    int packetSize = Udp.parsePacket();
-
-    // Length dispatch (fw v21). The 22-byte command path below is BYTE-IDENTICAL to fw ≤ v20 —
-    // the Pi bridge parses fixed offsets, so nothing about it may move. HIL injection frames are a
-    // different length AND a different sync byte, and every other length is dropped exactly as
-    // before (the old code's single `!= 22` return).
-    if (packetSize == HIL_INJECT_SIZE) {
-#if HIL_SIM
-        uint8_t hbuf[HIL_INJECT_SIZE];
-        Udp.read(hbuf, HIL_INJECT_SIZE);
-        HilInjectFrame f;
-        if (hilParseInjectFrame(hbuf, HIL_INJECT_SIZE, f)) {
-            hilInject        = f;
-            hilLastFrameMs   = millis();
-            hilHaveFrame     = true;
-            hilStale         = false;
-            hilZeroed        = false;
-            hilFramesAccepted++;
-            // Learn the host each frame: the simulator may be restarted on a different port.
-            hilHostIp   = Udp.remoteIP();
-            hilHostPort = Udp.remotePort();
-        } else {
-            hilFramesRejected++;
-        }
-#endif
-        // Non-HIL builds silently drop the frame (a stray HIL packet must never reach the
-        // command parser). The read is skipped; parsePacket() discards it on the next call.
-        return;
-    }
-    if (packetSize != 22) return;
-
+// Consumes and applies ONE queued 22-byte Pi command datagram. Split out of receiveCommands()
+// in fw v21 so the drain loop can dispatch several datagrams per tick without the body's early
+// `return`s aborting the whole drain. The body below is BYTE-IDENTICAL to fw ≤ v20 — the Pi
+// bridge parses fixed offsets, so nothing about it may move.
+static void processPiCommandPacket() {
     uint8_t buffer[22];
     Udp.read(buffer, 22);
 
@@ -9654,6 +9705,13 @@ void updateWheelSpeed() {
     // loop() in every state, so this test fires at >= 100 ms and clears encHaveLastEdge long
     // before the wrap. If a future round ever state-gates the updateWheelSpeed() call, this clamp
     // must gain an explicit wrap guard at the same time.
+    // AMENDMENT (fw v21): HIL_SIM=1 DOES gate this call — updateSensors() returns before reaching
+    // updateWheelSpeed() once a HIL injection frame has been accepted. That build is safe without
+    // a wrap guard for a narrower reason than the invariant above: the estimator's output is not
+    // consumed at all under HIL (v_actual is written from the injected frame, encHaveLastEdge is
+    // read by nothing else), so a wrapped age can only mis-clamp a dead value. It is NOT a
+    // precedent for state-gating the call in a build that reads v_actual from the encoder. See the
+    // mirror note at the HIL return site in updateSensors().
     int32_t edgeAge = (int32_t)(now - lastEdge);
     if (edgeAge < 0) edgeAge = 0;
     if ((uint32_t)edgeAge > staleLimit) {
