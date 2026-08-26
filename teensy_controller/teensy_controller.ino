@@ -2429,10 +2429,29 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 20
+#define FW_VERSION 21
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
+#endif
+
+// ── HIL (hardware-in-the-loop) simulation build ──────────────────────────────
+// 0 (default): normal build — every sensor value comes from the board's own ADCs
+// and the encoder estimator.
+// 1: CONTROLLER-HIL build. The real Teensy is the device under test; the PLANT is
+// simulated on a host (tools/hil_plant_sim.py) and injected over the existing UDP
+// socket as engineering-unit sensor values. updateSensors() sources V_fc/V_batt/
+// V_bus/V_chg/V_rgn/I_fc/I_batt/v_actual from the injection frame instead of the
+// hardware, and loop() streams the actuator state (state, switches, motor current
+// command, MDAC codes, fault flags) back at 1 kHz so the host can close the loop.
+// EVERYTHING ELSE — detectFaults(), the sequencing guards, both controllers, the
+// charger logic — runs completely unmodified. That is the entire point: this is a
+// fault-INJECTION rig, so there is deliberately no HIL-specific fault suppression.
+// NEVER flash a HIL_SIM=1 build onto a board attached to a live power stage: the
+// firmware's picture of the hardware is fiction, so its switch decisions are too.
+// Overridable via -DHIL_SIM=1 (same pattern as BENCH_TEST).
+#ifndef HIL_SIM
+#define HIL_SIM 0
 #endif
 
 // ── Network config ────────────────────────────────────────────────────────────
@@ -2478,6 +2497,13 @@ bool wheelSpeedResetPending = false;
 #warning "Production build (BENCH_TEST=0) with USE_ETHERNET=0: no Pi link, Pi watchdog inert. Set USE_ETHERNET=1 for vehicle flashes."
 #endif
 
+// HIL rides the SAME UDP socket as the Pi link (local_port 5001), so it cannot work
+// without the Ethernet stack compiled in. Catch the mistake at build time rather than
+// shipping a HIL flash that silently never receives an injection frame.
+#if HIL_SIM && !USE_ETHERNET
+#error "HIL_SIM=1 requires USE_ETHERNET=1 (the injection/observation frames use the UDP socket)"
+#endif
+
 bool networkUp = false;   // true only after Udp.begin() succeeds in setup()
 
 IPAddress pi_ip(192, 168, 1, 100);
@@ -2486,6 +2512,189 @@ const int      local_port = 5001;
 const uint8_t  SYNC_BYTE_TX = 0xAA;
 const uint8_t  SYNC_BYTE_RX = 0xBB;
 uint16_t       pkt_counter_T = 0;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// HIL LINK (fw v21) — frame codec + state
+// ═════════════════════════════════════════════════════════════════════════════
+// The codec below is compiled UNCONDITIONALLY (not under #if HIL_SIM) so the host
+// test suite exercises it in the ordinary production and bench builds; only the
+// WIRING — updateSensors() sourcing, the loop() sender, and receiveCommands()
+// acting on an accepted frame — is gated on HIL_SIM.
+//
+// Sync bytes are distinct from the Pi link's (TX 0xAA / RX 0xBB) so a HIL frame can
+// never be mistaken for a command packet and vice versa, even before the length
+// dispatch in receiveCommands() gets a chance to separate them.
+//
+// INJECTION FRAME (simulator -> Teensy), 35 bytes, little-endian:
+//   off | size | field
+//   ----+------+---------------------------------------------------------------
+//    0  |  1   | sync 0xB5
+//    1  |  1   | seq (uint8, wraps; echoed back in the output frame)
+//    2  |  4   | V_fc      [V]   POST-scaling engineering units — no ADC counts,
+//    6  |  4   | V_batt    [V]   no SCALE_* is applied to any of these
+//   10  |  4   | V_bus     [V]
+//   14  |  4   | V_chg     [V]
+//   18  |  4   | V_rgn     [V]
+//   22  |  4   | I_fc      [A]
+//   26  |  4   | I_batt    [A]
+//   30  |  4   | v_actual  [m/s]
+//   34  |  1   | XOR checksum over bytes 1..33
+//
+// OUTPUT FRAME (Teensy -> simulator), 16 bytes, little-endian:
+//   off | size | field
+//   ----+------+---------------------------------------------------------------
+//    0  |  1   | sync 0xB6
+//    1  |  1   | seq echo (last ACCEPTED injection seq)
+//    2  |  1   | mainState
+//    3  |  1   | switch_state bitmask (SW_* — same packing as telemetry offset 52)
+//    4  |  1   | aux pins: bit0 FC_REG_ENABLE, bit1 BT_REG_ENABLE,
+//       |      |           bit2 MPPT_DISABLE,  bit3 CBAL_DISABLE
+//    5  |  4   | current [A] — post-clamp commanded motor current
+//    9  |  2   | last MDAC code written to the FC channel (raw 16-bit SPI word)
+//   11  |  2   | last MDAC code written to the BT channel
+//   13  |  2   | fault_flags
+//   15  |  1   | XOR checksum over bytes 1..14
+#define HIL_SYNC_INJECT   0xB5u
+#define HIL_SYNC_OUTPUT   0xB6u
+#define HIL_INJECT_SIZE   35
+#define HIL_OUTPUT_SIZE   16
+#define HIL_STALE_MS      50u    // injection older than this -> hold last values, flag stale
+#define HIL_ZERO_MS       250u   // ...and older than THIS -> force safe zeros (dead link)
+#define HIL_SEND_PERIOD_MS 1u    // observation frame rate (1 kHz)
+
+// Decoded injection payload. Engineering units, exactly as the firmware's own globals.
+struct HilInjectFrame {
+    uint8_t seq;
+    float V_fc, V_batt, V_bus, V_chg, V_rgn;
+    float I_fc, I_batt;
+    float v_actual;
+};
+
+// ── HIL link state (grouped; only read/written by the HIL paths) ─────────────
+HilInjectFrame hilInject      = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+bool           hilHaveFrame   = false;  // true after the first ACCEPTED injection frame
+bool           hilStale       = false;  // last updateSensors() ran on held (not fresh) values
+bool           hilZeroed      = false;  // held values have been forced to safe zeros
+uint32_t       hilLastFrameMs = 0;      // millis() at the last accepted frame
+uint32_t       hilFramesAccepted = 0;
+uint32_t       hilFramesRejected = 0;   // bad sync / bad checksum (length mismatches never reach here)
+IPAddress      hilHostIp(0, 0, 0, 0);   // learned from the first accepted frame
+uint16_t       hilHostPort   = 0;
+
+// Mirrors of the last 16-bit words handed to the droop MDACs, written at the single
+// SPI chokepoint in setDroopMdac(). The AD5443 has no readback path, so without these
+// the commanded droop is invisible to any observer — the HIL host needs them to split
+// the simulated source currents. Diagnostic/observation only; nothing reads them back
+// into a control path.
+uint16_t mdacLastCodeFC = 0;
+uint16_t mdacLastCodeBT = 0;
+
+// Packs the six ideal-diode switch levels into the telemetry/HIL bitmask. Factored out
+// of sendTelemetry() so the two senders cannot drift apart (the v4 packet's offset-52
+// byte and the HIL output frame's byte 3 are by definition the same quantity).
+uint8_t readSwitchState() {
+    uint8_t s = 0;
+    if (digitalRead(FC_BUS_ENABLE))      s |= SW_FC_BUS;
+    if (digitalRead(BT_BUS_ENABLE))      s |= SW_BT_BUS;
+    if (digitalRead(MOT_PWR_ENABLE))     s |= SW_MOT_PWR;
+    if (digitalRead(REGEN_ENABLE))       s |= SW_REGEN;
+    if (digitalRead(FC_CHARGE_ENABLE))   s |= SW_FC_CHARGE;
+    if (digitalRead(BT_SEQUENCE_ENABLE)) s |= SW_BT_SEQ;
+    return s;
+}
+
+// Aux (non-ideal-diode) control pins the simulator needs to model the sources and the
+// charger: the two boost enables plus the two active-LOW disable lines.
+uint8_t readHilAuxState() {
+    uint8_t a = 0;
+    if (digitalRead(FC_REG_ENABLE)) a |= 0x01;
+    if (digitalRead(BT_REG_ENABLE)) a |= 0x02;
+    if (digitalRead(MPPT_DISABLE))  a |= 0x04;
+    if (digitalRead(CBAL_DISABLE))  a |= 0x08;
+    return a;
+}
+
+// XOR checksum over buf[1 .. len-2], i.e. everything between the sync byte and the
+// checksum byte itself — the same style and span convention as the v4 packets.
+uint8_t hilChecksum(const uint8_t *buf, int len) {
+    uint8_t c = 0;
+    for (int i = 1; i < len - 1; i++) c ^= buf[i];
+    return c;
+}
+
+// Validates and decodes an injection frame. Returns false (leaving `out` untouched) on
+// a wrong length, wrong sync, or checksum mismatch. Pure — no globals, no side effects
+// — so the host tests can drive it directly.
+bool hilParseInjectFrame(const uint8_t *buf, int len, HilInjectFrame &out) {
+    if (buf == NULL || len != HIL_INJECT_SIZE) return false;
+    if (buf[0] != (uint8_t)HIL_SYNC_INJECT)    return false;
+    if (hilChecksum(buf, HIL_INJECT_SIZE) != buf[HIL_INJECT_SIZE - 1]) return false;
+
+    HilInjectFrame f;
+    f.seq = buf[1];
+    int idx = 2;
+    memcpy(&f.V_fc,     &buf[idx], 4); idx += 4;
+    memcpy(&f.V_batt,   &buf[idx], 4); idx += 4;
+    memcpy(&f.V_bus,    &buf[idx], 4); idx += 4;
+    memcpy(&f.V_chg,    &buf[idx], 4); idx += 4;
+    memcpy(&f.V_rgn,    &buf[idx], 4); idx += 4;
+    memcpy(&f.I_fc,     &buf[idx], 4); idx += 4;
+    memcpy(&f.I_batt,   &buf[idx], 4); idx += 4;
+    memcpy(&f.v_actual, &buf[idx], 4); idx += 4;
+
+    // Reject NaN/Inf for the same reason receiveCommands() sanitizes the Pi floats: an
+    // XOR checksum passes plenty of bit patterns that decode as NaN, and a NaN reaching
+    // v_actual poisons the drive controller's recursion permanently. A rejected frame is
+    // simply not applied — the hold-then-zero path in updateSensors() covers the gap.
+    const float fields[8] = { f.V_fc, f.V_batt, f.V_bus, f.V_chg, f.V_rgn,
+                              f.I_fc, f.I_batt, f.v_actual };
+    for (int i = 0; i < 8; i++) {
+        if (isnan(fields[i]) || isinf(fields[i])) return false;
+    }
+
+    out = f;
+    return true;
+}
+
+// Packs the 16-byte observation frame. Pure, for the same testability reason.
+void hilPackOutputFrame(uint8_t *buf, uint8_t seqEcho, uint8_t stateByte,
+                        uint8_t switchState, uint8_t auxState, float motorCurrent,
+                        uint16_t mdacFC, uint16_t mdacBT, uint16_t faults) {
+    int idx = 0;
+    buf[idx++] = (uint8_t)HIL_SYNC_OUTPUT;
+    buf[idx++] = seqEcho;
+    buf[idx++] = stateByte;
+    buf[idx++] = switchState;
+    buf[idx++] = auxState;
+    memcpy(&buf[idx], &motorCurrent, 4); idx += 4;
+    memcpy(&buf[idx], &mdacFC, 2); idx += 2;
+    memcpy(&buf[idx], &mdacBT, 2); idx += 2;
+    memcpy(&buf[idx], &faults, 2); idx += 2;
+    buf[idx++] = hilChecksum(buf, HIL_OUTPUT_SIZE);
+}
+
+#if HIL_SIM
+// 1 kHz observation send, called from loop() (millis-gated, exactly like the 20 ms telemetry
+// block). Sends only once a host is known — before the first accepted injection frame there is
+// nowhere to send, and blindly targeting pi_ip would spray the Pi's port with HIL frames.
+// Non-blocking: one small UDP datagram, no retry, no wait.
+void hilSendTick() {
+    if (!networkUp) return;          // Udp.* before Udp.begin() hard-faults the Teensy
+    if (!hilHaveFrame) return;
+    static uint32_t hilLastSendMs = 0;
+    uint32_t now = millis();
+    if (now - hilLastSendMs < HIL_SEND_PERIOD_MS) return;
+    hilLastSendMs = now;
+
+    uint8_t frame[HIL_OUTPUT_SIZE];
+    hilPackOutputFrame(frame, hilInject.seq, (uint8_t)mainState,
+                       readSwitchState(), readHilAuxState(), current,
+                       mdacLastCodeFC, mdacLastCodeBT, fault_flags);
+    Udp.beginPacket(hilHostIp, hilHostPort);
+    Udp.write(frame, HIL_OUTPUT_SIZE);
+    Udp.endPacket();
+}
+#endif
 
 // ── Safety watchdog ───────────────────────────────────────────────────────────
 uint32_t last_rx_ms        = 0;
@@ -3822,6 +4031,17 @@ void setup() {
     Serial1.begin(115200);
     Serial.print("[BOOT] DC balancer firmware v"); Serial.print(FW_VERSION);
     Serial.print(" (BENCH_TEST="); Serial.print(BENCH_TEST); Serial.println(")");
+#if HIL_SIM
+    // Loud on purpose: in this build every sensor value is fiction supplied by a host, so the
+    // firmware's switch decisions are made against a simulated plant. Attaching it to a real
+    // power stage would sequence live hardware from imaginary measurements.
+    Serial.println("****************************************************************");
+    Serial.println("*  HIL_SIM=1 — SENSORS ARE SIMULATED (injected over UDP).      *");
+    Serial.println("*  V_fc/V_batt/V_bus/V_chg/V_rgn/I_fc/I_batt/v_actual come     *");
+    Serial.println("*  from tools/hil_plant_sim.py, NOT from this board's ADCs.    *");
+    Serial.println("*  NEVER RUN THIS BUILD WITH A LIVE POWER STAGE CONNECTED.     *");
+    Serial.println("****************************************************************");
+#endif
 
     // Teensy 4.1 ADC: select 12-bit resolution before any analogRead
     analogReadResolution(12);
@@ -3937,6 +4157,13 @@ void loop() {
     // No-ops in one branch when nothing is logging. Never blocks (see the logger module header).
     logDrainTick();
 
+#if HIL_SIM
+    // HIL observation stream at 1 kHz (fw v21). Placed after the state machine so the frame
+    // reports the switch/current state THIS tick produced, and outside the 20 ms telemetry gate
+    // because the host closes a 1 kHz plant loop on it.
+    hilSendTick();
+#endif
+
     // Telemetry + Ag105 poll at ~50 Hz
     static uint32_t lastSend = 0;
     if (millis() - lastSend > 20) {
@@ -4005,6 +4232,62 @@ void printSensors() {
 // SENSOR READING
 // ═════════════════════════════════════════════════════════════════════════════
 void updateSensors() {
+#if HIL_SIM
+    // ── HIL sensor sourcing (fw v21) ─────────────────────────────────────────────────────────
+    // The simulated plant is the sensor set. Values arrive POST-scaling, so no SCALE_* is applied
+    // — the ADC path is bypassed entirely, not re-interpreted. updateWheelSpeed() is SKIPPED (not
+    // modified): the encoder estimator is not the device under test here, and letting it run would
+    // fight us for v_actual, which under HIL we are the sole writer of. The ISRs may still fire;
+    // they only move encoderPos and the diagnostic counters, which nothing in the control path
+    // reads.
+    //
+    // TWO-STAGE HOLD-THEN-ZERO on link loss, and the staging is the whole point:
+    //   fresh (age <= HIL_STALE_MS)  -> apply the injected values;
+    //   stale (<= HIL_ZERO_MS)       -> HOLD the last values and flag hilStale. A dropped or late
+    //                                   packet is a HOST scheduling artefact, not a plant event;
+    //                                   zeroing immediately would inject a full-scale rail collapse
+    //                                   into detectFaults() and latch a bogus UV fault on nothing
+    //                                   but a missed 1 ms tick;
+    //   dead  (>  HIL_ZERO_MS)       -> force safe zeros. A genuinely dead link must NOT read as a
+    //                                   healthy plant frozen at its last good values — that would
+    //                                   let the firmware keep sequencing switches against fiction.
+    //                                   Zero volts/amps is what a disconnected board's ADCs would
+    //                                   read, so the ordinary fault logic takes it from there.
+    // detectFaults() and every controller run UNMODIFIED on whatever this produces; there is
+    // deliberately no HIL-specific fault suppression anywhere.
+    if (hilHaveFrame) {
+        uint32_t age = millis() - hilLastFrameMs;
+        if (age <= HIL_STALE_MS) {
+            hilStale  = false;
+            hilZeroed = false;
+        } else {
+            hilStale = true;
+            if (age > HIL_ZERO_MS && !hilZeroed) {
+                hilZeroed          = true;
+                hilInject.V_fc     = 0.0f;
+                hilInject.V_batt   = 0.0f;
+                hilInject.V_bus    = 0.0f;
+                hilInject.V_chg    = 0.0f;
+                hilInject.V_rgn    = 0.0f;
+                hilInject.I_fc     = 0.0f;
+                hilInject.I_batt   = 0.0f;
+                hilInject.v_actual = 0.0f;
+            }
+        }
+        I_fc     = hilInject.I_fc;
+        I_batt   = hilInject.I_batt;
+        V_fc     = hilInject.V_fc;
+        V_batt   = hilInject.V_batt;
+        V_bus    = hilInject.V_bus;
+        V_chg    = hilInject.V_chg;
+        V_rgn    = hilInject.V_rgn;
+        v_actual = hilInject.v_actual;
+        return;
+    }
+    // No frame has EVER arrived: fall through to the real ADCs. That keeps a HIL flash readable on
+    // a bench with the simulator not yet started (the values are meaningless but bounded), and it
+    // means the link coming up is a clean one-way transition.
+#endif
     updateWheelSpeed();
 
     // INA253A1: unipolar, REF1/REF2 tied to GND; senses only forward boost current
@@ -4380,6 +4663,34 @@ void checkPiWatchdog() {
 void receiveCommands() {
     if (!networkUp) return;   // UDP socket not initialized — calling Udp.* would hard-fault
     int packetSize = Udp.parsePacket();
+
+    // Length dispatch (fw v21). The 22-byte command path below is BYTE-IDENTICAL to fw ≤ v20 —
+    // the Pi bridge parses fixed offsets, so nothing about it may move. HIL injection frames are a
+    // different length AND a different sync byte, and every other length is dropped exactly as
+    // before (the old code's single `!= 22` return).
+    if (packetSize == HIL_INJECT_SIZE) {
+#if HIL_SIM
+        uint8_t hbuf[HIL_INJECT_SIZE];
+        Udp.read(hbuf, HIL_INJECT_SIZE);
+        HilInjectFrame f;
+        if (hilParseInjectFrame(hbuf, HIL_INJECT_SIZE, f)) {
+            hilInject        = f;
+            hilLastFrameMs   = millis();
+            hilHaveFrame     = true;
+            hilStale         = false;
+            hilZeroed        = false;
+            hilFramesAccepted++;
+            // Learn the host each frame: the simulator may be restarted on a different port.
+            hilHostIp   = Udp.remoteIP();
+            hilHostPort = Udp.remotePort();
+        } else {
+            hilFramesRejected++;
+        }
+#endif
+        // Non-HIL builds silently drop the frame (a stray HIL packet must never reach the
+        // command parser). The read is skipped; parsePacket() discards it on the next call.
+        return;
+    }
     if (packetSize != 22) return;
 
     uint8_t buffer[22];
@@ -4504,14 +4815,9 @@ void sendTelemetry() {
     // CV bit 5, CC bit 6). Reinstated in v4 at its historic v1 offset.
     packet[idx++] = ag105_status_raw;
 
-    uint8_t switch_state = 0;
-    if (digitalRead(FC_BUS_ENABLE))      switch_state |= SW_FC_BUS;
-    if (digitalRead(BT_BUS_ENABLE))      switch_state |= SW_BT_BUS;
-    if (digitalRead(MOT_PWR_ENABLE))     switch_state |= SW_MOT_PWR;
-    if (digitalRead(REGEN_ENABLE))       switch_state |= SW_REGEN;
-    if (digitalRead(FC_CHARGE_ENABLE))   switch_state |= SW_FC_CHARGE;
-    if (digitalRead(BT_SEQUENCE_ENABLE)) switch_state |= SW_BT_SEQ;
-    packet[idx++] = switch_state;
+    // Packing factored into readSwitchState() (fw v21) so the HIL observation frame and this
+    // packet cannot drift apart. Value and offset are unchanged — byte-identical to v4 as shipped.
+    packet[idx++] = readSwitchState();
 
     // fault_flags as 2 bytes, little-endian
     memcpy(&packet[idx], &fault_flags, 2); idx += 2;
@@ -7336,6 +7642,22 @@ void printTestStatus() {
     Serial.print(" (");             Serial.print(errorCodeStr(error_code));
     Serial.println(")");
     Serial.print("error_source_state="); Serial.println(error_source_state);
+#if HIL_SIM
+    // fw v21. Every new mechanism gets a dump line (the fw v8 observability lesson): a HIL run
+    // that silently falls back to real ADCs, or one holding stale injected values, is otherwise
+    // indistinguishable from a healthy one at the operator's end.
+    Serial.println("--- HIL ---");
+    Serial.print("link:               ");
+    if (!hilHaveFrame)      Serial.println("NO FRAME YET (reading real ADCs)");
+    else if (hilZeroed)     Serial.println("DEAD (zeroed — link lost > HIL_ZERO_MS)");
+    else if (hilStale)      Serial.println("STALE (holding last injected values)");
+    else                    Serial.println("UP");
+    Serial.print("frames acc/rej:     "); Serial.print(hilFramesAccepted);
+    Serial.print(" / ");                  Serial.println(hilFramesRejected);
+    Serial.print("last seq:           "); Serial.println(hilInject.seq);
+    Serial.print("age:                ");
+    Serial.print(hilHaveFrame ? (millis() - hilLastFrameMs) : 0u); Serial.println(" ms");
+#endif
     Serial.println("--- bench tools ---");
     Serial.print("bringup:            ");
     if (bringupActive) { Serial.print("ACTIVE phase="); Serial.println(bringupPhase); }
@@ -8827,6 +9149,12 @@ void setDroopMdac(float fc_gain, float bt_gain) {
     // was the 2026-08-07 droop-immovable bench bug).
     uint16_t fcCode = MDAC_CMD_LOAD_UPDATE | (uint16_t)(constrain(fc_gain, 0.0f, 1.0f) * MDAC_res);
     uint16_t btCode = MDAC_CMD_LOAD_UPDATE | (uint16_t)(constrain(bt_gain, 0.0f, 1.0f) * MDAC_res);
+
+    // Mirror the commanded words for observers (fw v21 HIL frame / bench diagnostics). This is
+    // the single MDAC write chokepoint, and the AD5443 has no readback, so these are the only
+    // record of what the droop network was actually told. Write-only from here.
+    mdacLastCodeFC = fcCode;
+    mdacLastCodeBT = btCode;
 
     // SPI_MODE2 (CPOL=1, CPHA=0) — VERIFIED ad5426_5432_5443.pdf Fig 2: SCLK idles HIGH and
     // "data is clocked into the shift register on falling clock edges" (p.20). The old
