@@ -3375,6 +3375,15 @@ struct __attribute__((packed)) BenchLogRecord {
                            // bit5 = the share loop is the Youla SHARE controller
                            //        (USE_YOULA_SHARE_CONTROLLER build); clear = the PI fallback.
                            //        Same rationale (fw v11).
+                           // bit6 = HIL_SIM build: EVERY sensor column in this record
+                           //        (V_*, I_*, v_act and everything derived from them) is
+                           //        SIMULATED, injected over UDP by tools/hil_plant_sim.py — not
+                           //        measured. Compile-time constant, stamped per record for the
+                           //        same reason as bit4/bit5: without it a HIL log is
+                           //        byte-indistinguishable from a real bench run and can be
+                           //        mistaken for hardware evidence (fw v21). Record size and
+                           //        header are UNCHANGED — this is a spare bit in an existing
+                           //        byte, so BLG stays v7.
     uint8_t  pad[2];       // zero
     // Format v5 (fw v11, 2026-08-16): drive-controller internals, APPENDED at the end so every
     // v1–v4 field offset is unchanged and a decoder needs only the two new tail fields.
@@ -3895,6 +3904,11 @@ void logSampleTick() {
 #if USE_YOULA_SHARE_CONTROLLER
     r.flags |= 0x20;
 #endif
+    // fw v21: HIL provenance. Same class as bit4/bit5 — a compile-time constant stamped per record
+    // so a decoded run declares that its sensor columns are simulated rather than measured.
+#if HIL_SIM
+    r.flags |= 0x40;
+#endif
     r.pad[0] = 0;
     r.pad[1] = 0;
     // Format v5 (fw v11): drive-controller internals. EXPOSE the stored values — never re-run the
@@ -4078,6 +4092,10 @@ void setup() {
     Serial.println("*  V_fc/V_batt/V_bus/V_chg/V_rgn/I_fc/I_batt/v_actual come     *");
     Serial.println("*  from tools/hil_plant_sim.py, NOT from this board's ADCs.    *");
     Serial.println("*  NEVER RUN THIS BUILD WITH A LIVE POWER STAGE CONNECTED.     *");
+    Serial.println("*  START tools/hil_plant_sim.py BEFORE POWERING THE BOARD:     *");
+    Serial.println("*  on a production (BENCH_TEST=0) flash the staged bring-up    *");
+    Serial.println("*  reads real ADCs until the first frame lands and will latch  *");
+    Serial.println("*  INIT_FAIL at ~800 ms if injection has not started.          *");
     Serial.println("****************************************************************");
 #endif
 
@@ -4229,6 +4247,10 @@ void printToTerminal() {
 // Called throttled from doState1() (IDLE); style mirrors the State 98 status dump.
 void printSensors() {
     Serial.println("=== Sensors (IDLE) ===");
+#if HIL_SIM
+    // fw v21: the rails and currents below are injected too, not just v_actual.
+    if (hilHaveFrame) Serial.println("*** HIL: all rails/currents below are INJECTED (simulated) ***");
+#endif
     Serial.println("--- Voltages (V) ---");
     Serial.print("V_fc=");   Serial.print(V_fc,   3); Serial.print("  ");
     Serial.print("V_batt="); Serial.print(V_batt, 3); Serial.print("  ");
@@ -4242,7 +4264,14 @@ void printSensors() {
     Serial.println("--- Derived ---");
     // encoderPos/edges alongside v_actual for the same reason as the State-98 block: a hand-turn
     // check in IDLE must be able to tell "no counts" from "counts but no velocity".
-    Serial.print("v_actual=");           Serial.print(v_actual, 3);    Serial.println(" m/s");
+    Serial.print("v_actual=");           Serial.print(v_actual, 3);    Serial.print(" m/s");
+#if HIL_SIM
+    // fw v21 provenance marker: under HIL the encoder counters below keep ticking from whatever is
+    // (or is not) on the shaft, while v_actual comes from the injected frame. Without this the two
+    // lines read as one coherent measurement and disagree for no visible reason.
+    if (hilHaveFrame) Serial.print("  (INJECTED)");
+#endif
+    Serial.println();
     noInterrupts();
     int32_t  encSnap   = encoderPos;
     uint32_t edgeSnapA = encEdgeCountA;
@@ -4801,6 +4830,98 @@ static void processPiCommandPacket() {
     if (mode_cmd == 4 && mainState == 2) {
         changeToFin = true;
     }
+}
+
+// BOUNDED RECEIVE DRAIN (fw v21 review MED-1).
+// Previously this consumed at most ONE datagram per loop tick. With HIL injection running at
+// 1 kHz that is at best break-even with the main loop, so a single long tick left a permanent,
+// invisible backlog: the firmware then ran on ever-staler injected values (never flagged, because
+// hilLastFrameMs was restamped by the *arrival* of an old frame), and — worse — a 22-byte Pi
+// command queued behind those frames waited a tick per backlogged frame, silently starving the
+// command path and its watchdog.
+//
+// The drain is bounded (UDP_DRAIN_MAX_PER_TICK) so a runaway or hostile sender can never own the
+// loop and stall detectFaults(). Within one drain:
+//   • every 22-byte command is dispatched in arrival order, exactly as before — commands are
+//     sequential intent (mode changes, setpoints) and must not be coalesced;
+//   • injection frames are all parsed (so accept/reject/foreign counters stay truthful) but only
+//     the LAST accepted one is committed. They are a state SNAPSHOT, not an event stream: applying
+//     the older ones would just be a burst of superseded work, and committing the newest is what
+//     "run on the freshest plant state" means.
+// Anything else is dropped unread, exactly as the old `packetSize != 22` return did.
+void receiveCommands() {
+    if (!networkUp) return;   // UDP socket not initialized — calling Udp.* would hard-fault
+
+#if HIL_SIM
+    bool           hilPending = false;   // an accepted frame is waiting to be committed
+    HilInjectFrame hilLatest = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    IPAddress      hilSrcIp(0, 0, 0, 0);
+    uint16_t       hilSrcPort = 0;
+#endif
+
+    uint8_t drained = 0;
+    int packetSize;
+    while (drained < UDP_DRAIN_MAX_PER_TICK && (packetSize = Udp.parsePacket()) > 0) {
+        drained++;
+
+        if (packetSize == HIL_INJECT_SIZE) {
+#if HIL_SIM
+            uint8_t hbuf[HIL_INJECT_SIZE];
+            Udp.read(hbuf, HIL_INJECT_SIZE);
+            HilInjectFrame f;
+            if (hilParseInjectFrame(hbuf, HIL_INJECT_SIZE, f)) {
+                IPAddress srcIp   = Udp.remoteIP();
+                uint16_t  srcPort = Udp.remotePort();
+                // HOST LOCK (fw v21 review LOW-3). The host is learned on the FIRST accepted frame
+                // and re-learned only after the link has gone dead (hilHostLocked is cleared at the
+                // zero stage in updateSensors()). While the link is up, a well-formed frame from any
+                // other source is ignored ENTIRELY — not applied, and not allowed to restamp
+                // hilLastFrameMs, which is the part that mattered: under the old learn-every-frame
+                // rule a single spoofed or stray frame both injected plant values and redirected the
+                // observation stream away from the real simulator. Counted, never silent.
+                // Consequence, accepted: a simulator restarted on a NEW port cannot take over until
+                // the link goes dead (HIL_ZERO_MS = 250 ms of silence), which is exactly the window
+                // the operator sees anyway when restarting the host.
+                // (`!(a == b)` rather than `!=`: Arduino's IPAddress defines operator== only.)
+                if (hilHostLocked && (!(srcIp == hilHostIp) || srcPort != hilHostPort)) {
+                    hilFramesForeign++;
+                } else {
+                    hilLatest   = f;
+                    hilSrcIp    = srcIp;
+                    hilSrcPort  = srcPort;
+                    hilPending  = true;
+                    hilFramesAccepted++;
+                }
+            } else {
+                hilFramesRejected++;
+            }
+#endif
+            // Non-HIL builds silently drop the frame (a stray HIL packet must never reach the
+            // command parser). The read is skipped; parsePacket() discards it on the next call.
+            continue;
+        }
+        if (packetSize != 22) continue;   // unknown length: dropped unread, as before
+
+        processPiCommandPacket();
+    }
+
+#if HIL_SIM
+    // Commit exactly one (the newest) injection frame from this drain.
+    if (hilPending) {
+        hilInject      = hilLatest;
+        hilLastFrameMs = millis();
+        hilHaveFrame   = true;
+        hilStale       = false;
+        hilZeroed      = false;
+        hilHostIp      = hilSrcIp;
+        hilHostPort    = hilSrcPort;
+        hilHostLocked  = true;
+    }
+#endif
+
+    udpDrainedLastTick = drained;
+    if (drained > udpDrainedMaxTick) udpDrainedMaxTick = drained;
+    if (drained >= UDP_DRAIN_MAX_PER_TICK) udpDrainCapHits++;
 }
 
 /*
@@ -7687,7 +7808,13 @@ void printTestStatus() {
     Serial.print("v_actual=");    Serial.print(v_actual, 3);
     Serial.print(" m/s  (counts/rev="); Serial.print(ENCODER_COUNTS_PER_REV, 0);
     Serial.print(", r=");               Serial.print(FLYWHEEL_RADIUS_M, 4);
-    Serial.println(" m)");
+    Serial.print(" m)");
+#if HIL_SIM
+    // fw v21 provenance: under HIL this number is injected, and the encoder lines printed just
+    // above it are NOT its source — they must not be read as corroborating it.
+    if (hilHaveFrame) Serial.print("  (INJECTED — not from the encoder above)");
+#endif
+    Serial.println();
     Serial.print("fault_flags=0x"); Serial.println(fault_flags, HEX);
     Serial.print("error_code=0x");  Serial.print(error_code, HEX);
     Serial.print(" (");             Serial.print(errorCodeStr(error_code));
@@ -7703,11 +7830,35 @@ void printTestStatus() {
     else if (hilZeroed)     Serial.println("DEAD (zeroed — link lost > HIL_ZERO_MS)");
     else if (hilStale)      Serial.println("STALE (holding last injected values)");
     else                    Serial.println("UP");
-    Serial.print("frames acc/rej:     "); Serial.print(hilFramesAccepted);
-    Serial.print(" / ");                  Serial.println(hilFramesRejected);
+    Serial.print("frames acc/rej/fgn: "); Serial.print(hilFramesAccepted);
+    Serial.print(" / ");                  Serial.print(hilFramesRejected);
+    // fw v21 LOW-3: frames from a source other than the locked host. Non-zero means something
+    // besides the bound simulator is transmitting on this port — they are ignored, not applied.
+    Serial.print(" / ");                  Serial.println(hilFramesForeign);
+    Serial.print("host:               ");
+    if (hilHostLocked) {
+        // Port only: the host test harness's IPAddress mock has neither a Serial formatter nor
+        // element access, and the port is the field that actually varies between simulator
+        // restarts (the address is the operator's own host). foreignFrames below is what says
+        // "someone else is transmitting", which is the diagnostic that matters here.
+        Serial.print("LOCKED, port "); Serial.println(hilHostPort);
+    } else {
+        Serial.println("unbound (next accepted frame binds)");
+    }
     Serial.print("last seq:           "); Serial.println(hilInject.seq);
     Serial.print("age:                ");
-    Serial.print(hilHaveFrame ? (millis() - hilLastFrameMs) : 0u); Serial.println(" ms");
+    // Before the first frame there is no age; printing "0 ms" read as "a frame arrived this
+    // millisecond", i.e. the healthiest possible link, in the one state where there is no link.
+    if (hilHaveFrame) { Serial.print(millis() - hilLastFrameMs); Serial.println(" ms"); }
+    else              { Serial.println("n/a (no frame yet)"); }
+    // fw v21 MED-1: UDP receive-drain backlog. drainMax at the cap with a rising capHits means the
+    // loop is not keeping up with the injection rate and frames are queueing in the socket.
+    Serial.print("udp drain (last/max/cap-hits): ");
+    Serial.print(udpDrainedLastTick); Serial.print(" / ");
+    Serial.print(udpDrainedMaxTick);  Serial.print(" / ");
+    Serial.print(udpDrainCapHits);
+    Serial.print("   (cap ");         Serial.print(UDP_DRAIN_MAX_PER_TICK);
+    Serial.println("/tick)");
 #endif
     Serial.println("--- bench tools ---");
     Serial.print("bringup:            ");

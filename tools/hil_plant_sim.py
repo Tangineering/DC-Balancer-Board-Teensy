@@ -268,11 +268,17 @@ class Plant:
         }
 
 
-def apply_scenario(plant, scenario, t, tx_enabled):
+def apply_scenario(plant, scenario, t):
     """
-    Mutate the plant / transmit gate for the active scenario at time t.
-    Returns the (possibly updated) transmit-enable flag.
+    Mutate the plant for the active scenario at time t and return this tick's
+    transmit-enable flag.
+
+    The gate is recomputed statelessly from `t` on every call (only "comm-loss"
+    ever clears it), so it is a RETURN value, not an in/out parameter — the old
+    `tx_enabled` argument was always passed True and immediately overwritten,
+    which read as if the flag were latched across ticks. It is not.
     """
+    tx_enabled = True
     if scenario == "steady":
         plant.i_aux = I_AUX_A
     elif scenario == "step-load":
@@ -340,6 +346,7 @@ def main(argv=None):
     last_status = t0
     ticks = 0
     tx_enabled = True
+    sent_seq = 0        # last seq actually transmitted (CSV column)
 
     try:
         while True:
@@ -363,7 +370,7 @@ def main(argv=None):
                     obs = decoded
                     rx_frames += 1
 
-            tx_enabled = apply_scenario(plant, args.scenario, t, True)
+            tx_enabled = apply_scenario(plant, args.scenario, t)
             sensors = plant.step(dt, obs)
 
             if tx_enabled:
@@ -377,11 +384,16 @@ def main(argv=None):
                     tx_frames += 1
                 except OSError as exc:
                     print(f"[hil] send failed: {exc}", file=sys.stderr)
+                sent_seq = seq                 # the seq actually on the wire this tick
                 seq = (seq + 1) & 0xFF
 
             if writer:
+                # Log the seq that was SENT this tick, not the already-incremented next one
+                # (the old code logged seq post-increment, so every CSV row was off by one
+                # against the frame it describes and against the firmware's seq echo).
+                # On a non-transmitting tick ("comm-loss") there is no frame: log blank.
                 writer.writerow([
-                    f"{t:.6f}", seq,
+                    f"{t:.6f}", sent_seq if tx_enabled else "",
                     f"{sensors['V_fc']:.4f}", f"{sensors['V_batt']:.4f}",
                     f"{sensors['V_bus']:.4f}", f"{sensors['V_chg']:.4f}",
                     f"{sensors['V_rgn']:.4f}", f"{sensors['I_fc']:.4f}",
