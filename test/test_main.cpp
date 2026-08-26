@@ -190,6 +190,20 @@ static void reset_test_state() {
     last_rx_ms       = 0;
     pi_ever_connected = false;
 
+    // .ino HIL link state (fw v21) — the codec is compiled unconditionally, so this state
+    // exists (and must be reset) in both non-HIL and HIL builds.
+    hilInject         = HilInjectFrame{0, 0, 0, 0, 0, 0, 0, 0, 0};
+    hilHaveFrame      = false;
+    hilStale          = false;
+    hilZeroed         = false;
+    hilLastFrameMs    = 0;
+    hilFramesAccepted = 0;
+    hilFramesRejected = 0;
+    hilHostIp         = IPAddress(0, 0, 0, 0);
+    hilHostPort       = 0;
+    mdacLastCodeFC    = 0;
+    mdacLastCodeBT    = 0;
+
     // .ino drive cycle
     driveCycleActive     = false;
     driveCyclePhaseIdx   = 0;
@@ -1911,7 +1925,7 @@ static void test_share_handoff_mode_constants() {
     check(fabsf(SHARE_GOV_FILT_ALPHA - 0.05f) < 1e-6f,
           "constants: (setup) SHARE_GOV_FILT_ALPHA is the EMA weight the handoff filters share "
           "with the governor's load filter");
-    check(FW_VERSION == 20, "pin: FW_VERSION == 20");
+    check(FW_VERSION == 21, "pin: FW_VERSION == 21");
 }
 
 // DARK seed (item B3): resetShareControlState() (and reset_test_state()'s mirror of it) seeds
