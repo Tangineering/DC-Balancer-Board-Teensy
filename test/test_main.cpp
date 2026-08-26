@@ -23,6 +23,7 @@
 #include <cstring>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 
 static int g_tests_passed = 0;
 static int g_tests_failed = 0;
@@ -988,6 +989,487 @@ static void test_command_parsing() {
     check(fabsf(v_setpoint - 99.0f) < 0.001f,
           "receiveCommands: packet dropped when size != 22");
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// HIL (hardware-in-the-loop) LINK — fw v21
+// ═════════════════════════════════════════════════════════════════════════════
+// The codec (hilChecksum/hilParseInjectFrame/hilPackOutputFrame/readSwitchState/
+// readHilAuxState) is compiled UNCONDITIONALLY, so these tests run in BOTH the
+// -DBENCH_TEST=0 and -DBENCH_TEST=1 host builds, exactly like the v4 telemetry codec
+// tests above. Only the WIRING (updateSensors() sourcing, receiveCommands() acting on
+// an accepted frame, hilSendTick()) is gated on HIL_SIM and lives in the third
+// (-DHIL_SIM=1 -DUSE_ETHERNET=1) build's tests further down.
+
+// Independent XOR-checksum helper (deliberately NOT calling hilChecksum() itself) so the
+// golden-frame fixtures below don't become circular with the checksum-correctness test.
+static uint8_t xor_checksum_span(const uint8_t* buf, int lo, int hi_exclusive) {
+    uint8_t c = 0;
+    for (int i = lo; i < hi_exclusive; i++) c ^= buf[i];
+    return c;
+}
+
+static void test_hil_checksum() {
+    test_group("HIL: hilChecksum() correctness");
+
+    uint8_t buf1[5] = {0xB5, 0x01, 0x02, 0x03, 0xFF};
+    check(hilChecksum(buf1, 5) == (uint8_t)(0x01 ^ 0x02 ^ 0x03),
+          "hilChecksum: XOR over bytes[1..len-2], excludes sync and checksum byte itself");
+
+    uint8_t buf2[6] = {0xAA, 0x11, 0x22, 0x33, 0x44, 0x00};
+    check(hilChecksum(buf2, 6) == (uint8_t)(0x11 ^ 0x22 ^ 0x33 ^ 0x44),
+          "hilChecksum: correct over a longer span");
+
+    uint8_t buf3[3] = {0xB5, 0x00, 0x00};
+    check(hilChecksum(buf3, 3) == 0x00,
+          "hilChecksum: single-byte span of 0x00 checksums to 0");
+}
+
+// Builds a golden 35-byte injection frame with an independently-computed checksum.
+static void build_golden_hil_inject_frame(uint8_t* buf, uint8_t seq,
+                                           float V_fc, float V_batt, float V_bus,
+                                           float V_chg, float V_rgn,
+                                           float I_fc, float I_batt, float v_actual) {
+    buf[0] = HIL_SYNC_INJECT;
+    buf[1] = seq;
+    int idx = 2;
+    memcpy(&buf[idx], &V_fc,     4); idx += 4;
+    memcpy(&buf[idx], &V_batt,   4); idx += 4;
+    memcpy(&buf[idx], &V_bus,    4); idx += 4;
+    memcpy(&buf[idx], &V_chg,    4); idx += 4;
+    memcpy(&buf[idx], &V_rgn,    4); idx += 4;
+    memcpy(&buf[idx], &I_fc,     4); idx += 4;
+    memcpy(&buf[idx], &I_batt,   4); idx += 4;
+    memcpy(&buf[idx], &v_actual, 4); idx += 4;
+    buf[34] = xor_checksum_span(buf, 1, 34);
+}
+
+static void test_hil_parse_accept() {
+    test_group("HIL: hilParseInjectFrame() accepts a golden frame");
+
+    uint8_t buf[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(buf, 0x7A, 10.0f, 7.4f, 16.0f, 5.0f, 13.0f, 1.25f, 2.5f, 3.0f);
+
+    HilInjectFrame out;
+    bool ok = hilParseInjectFrame(buf, HIL_INJECT_SIZE, out);
+    check(ok, "hilParseInjectFrame: golden frame accepted");
+    check(out.seq == 0x7A,                       "hilParseInjectFrame: seq decoded");
+    check(fabsf(out.V_fc     - 10.0f) < 1e-6f,    "hilParseInjectFrame: V_fc decoded");
+    check(fabsf(out.V_batt   - 7.4f)  < 1e-6f,    "hilParseInjectFrame: V_batt decoded");
+    check(fabsf(out.V_bus    - 16.0f) < 1e-6f,    "hilParseInjectFrame: V_bus decoded");
+    check(fabsf(out.V_chg    - 5.0f)  < 1e-6f,    "hilParseInjectFrame: V_chg decoded");
+    check(fabsf(out.V_rgn    - 13.0f) < 1e-6f,    "hilParseInjectFrame: V_rgn decoded");
+    check(fabsf(out.I_fc     - 1.25f) < 1e-6f,    "hilParseInjectFrame: I_fc decoded");
+    check(fabsf(out.I_batt   - 2.5f)  < 1e-6f,    "hilParseInjectFrame: I_batt decoded");
+    check(fabsf(out.v_actual - 3.0f)  < 1e-6f,    "hilParseInjectFrame: v_actual decoded");
+}
+
+static void test_hil_parse_reject_bad_sync() {
+    test_group("HIL: hilParseInjectFrame() rejects bad sync");
+    uint8_t buf[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(buf, 1, 1, 2, 3, 4, 5, 6, 7, 8);
+    buf[0] = 0x00;   // corrupt sync — checksum span (bytes 1..33) untouched so this isolates sync
+    HilInjectFrame out;
+    out.seq = 0xEE;  // sentinel — must remain untouched on rejection
+    bool ok = hilParseInjectFrame(buf, HIL_INJECT_SIZE, out);
+    check(!ok, "hilParseInjectFrame: bad sync rejected");
+    check(out.seq == 0xEE, "hilParseInjectFrame: rejected frame leaves `out` untouched (bad sync)");
+}
+
+static void test_hil_parse_reject_bad_checksum() {
+    test_group("HIL: hilParseInjectFrame() rejects bad checksum");
+    uint8_t buf[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(buf, 1, 1, 2, 3, 4, 5, 6, 7, 8);
+    buf[HIL_INJECT_SIZE - 1] ^= 0xFF;   // corrupt checksum byte only
+    HilInjectFrame out;
+    out.seq = 0xEE;
+    bool ok = hilParseInjectFrame(buf, HIL_INJECT_SIZE, out);
+    check(!ok, "hilParseInjectFrame: bad checksum rejected");
+    check(out.seq == 0xEE, "hilParseInjectFrame: rejected frame leaves `out` untouched (bad checksum)");
+}
+
+static void test_hil_parse_reject_wrong_length() {
+    test_group("HIL: hilParseInjectFrame() rejects wrong length");
+    uint8_t buf[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(buf, 1, 1, 2, 3, 4, 5, 6, 7, 8);
+    HilInjectFrame out;
+    out.seq = 0xEE;
+    check(!hilParseInjectFrame(buf, HIL_INJECT_SIZE - 1, out), "hilParseInjectFrame: short length rejected");
+    check(!hilParseInjectFrame(buf, HIL_INJECT_SIZE + 1, out), "hilParseInjectFrame: long length rejected");
+    check(!hilParseInjectFrame(NULL, HIL_INJECT_SIZE, out),    "hilParseInjectFrame: NULL buffer rejected");
+    check(out.seq == 0xEE, "hilParseInjectFrame: rejected frames leave `out` untouched (wrong length)");
+}
+
+// NaN/Inf rejection — one field at a time, at each of the 8 float offsets, both NaN and Inf.
+static void test_hil_parse_reject_nan_inf() {
+    test_group("HIL: hilParseInjectFrame() rejects NaN/Inf in any field");
+    const char* names[8] = {"V_fc", "V_batt", "V_bus", "V_chg", "V_rgn", "I_fc", "I_batt", "v_actual"};
+    float bad_values[2] = { std::nanf(""), std::numeric_limits<float>::infinity() };
+    const char* bad_names[2] = {"NaN", "Inf"};
+
+    for (int field = 0; field < 8; field++) {
+        for (int b = 0; b < 2; b++) {
+            uint8_t buf[HIL_INJECT_SIZE];
+            build_golden_hil_inject_frame(buf, 1, 1, 2, 3, 4, 5, 6, 7, 8);
+            memcpy(&buf[2 + field * 4], &bad_values[b], 4);
+            buf[34] = xor_checksum_span(buf, 1, 34);   // re-derive checksum over the poisoned bytes
+
+            HilInjectFrame out;
+            out.seq = 0xEE;
+            bool ok = hilParseInjectFrame(buf, HIL_INJECT_SIZE, out);
+            char desc[96];
+            snprintf(desc, sizeof(desc), "hilParseInjectFrame: %s in %s rejected", bad_names[b], names[field]);
+            check(!ok, desc);
+        }
+    }
+    // Also confirm a fully-clean frame with the same checksum recomputation still passes —
+    // otherwise the loop above would vacuously "pass" if the checksum re-derivation itself
+    // were broken and every frame failed on checksum instead of the NaN/Inf gate.
+    uint8_t clean[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(clean, 1, 1, 2, 3, 4, 5, 6, 7, 8);
+    HilInjectFrame out2;
+    check(hilParseInjectFrame(clean, HIL_INJECT_SIZE, out2),
+          "hilParseInjectFrame: control — the same builder produces an ACCEPTED clean frame "
+          "(the NaN/Inf rejections above are not just checksum failures)");
+}
+
+static void test_hil_pack_output_frame() {
+    test_group("HIL: hilPackOutputFrame() golden byte layout");
+    uint8_t buf[HIL_OUTPUT_SIZE] = {};
+    float motorCurrent = -4.5f;
+    uint16_t mdacFC = 0x1234, mdacBT = 0xABCD, faults = 0x8001;
+    hilPackOutputFrame(buf, 0x33, 2, 0x15, 0x0A, motorCurrent, mdacFC, mdacBT, faults);
+
+    check(buf[0] == HIL_SYNC_OUTPUT, "hilPackOutputFrame: offset 0 sync 0xB6");
+    check(buf[1] == 0x33,            "hilPackOutputFrame: offset 1 seq echo");
+    check(buf[2] == 2,               "hilPackOutputFrame: offset 2 mainState");
+    check(buf[3] == 0x15,            "hilPackOutputFrame: offset 3 switch_state");
+    check(buf[4] == 0x0A,            "hilPackOutputFrame: offset 4 aux state");
+    float read_cur = 0;
+    memcpy(&read_cur, &buf[5], 4);
+    check(fabsf(read_cur - motorCurrent) < 1e-6f, "hilPackOutputFrame: offset 5 current (float32 LE)");
+    uint16_t read_fc = 0, read_bt = 0, read_flt = 0;
+    memcpy(&read_fc,  &buf[9],  2);
+    memcpy(&read_bt,  &buf[11], 2);
+    memcpy(&read_flt, &buf[13], 2);
+    check(read_fc  == mdacFC,  "hilPackOutputFrame: offset 9 MDAC FC code");
+    check(read_bt  == mdacBT,  "hilPackOutputFrame: offset 11 MDAC BT code");
+    check(read_flt == faults,  "hilPackOutputFrame: offset 13 fault_flags");
+    check(buf[15] == xor_checksum_span(buf, 1, 15),
+          "hilPackOutputFrame: offset 15 checksum spans bytes 1..14");
+}
+
+static void test_hil_read_switch_state_matches_telemetry() {
+    test_group("HIL: readSwitchState() matches the telemetry-packed switch_state byte");
+    reset_test_state();
+    g_pin_value[FC_BUS_ENABLE]      = HIGH;
+    g_pin_value[REGEN_ENABLE]       = HIGH;
+    g_pin_value[BT_SEQUENCE_ENABLE] = HIGH;
+
+    uint8_t helper = readSwitchState();
+
+    Udp.reset();
+    sendTelemetry();
+    uint8_t telem = Udp.last_written[52];
+
+    check(helper == telem,
+          "readSwitchState(): equals telemetry offset-52 switch_state for a mixed pin pattern");
+    check(helper == (SW_FC_BUS | SW_REGEN | SW_BT_SEQ),
+          "readSwitchState(): bitmask matches the driven pins exactly");
+
+    // All-LOW control case too, so the equality isn't just an artefact of one pattern.
+    reset_test_state();
+    uint8_t helper0 = readSwitchState();
+    Udp.reset();
+    sendTelemetry();
+    check(helper0 == Udp.last_written[52] && helper0 == 0,
+          "readSwitchState(): all-LOW matches telemetry offset-52 (== 0)");
+}
+
+static void test_hil_read_aux_state() {
+    test_group("HIL: readHilAuxState() bit mapping");
+    reset_test_state();
+
+    check(readHilAuxState() == 0x00, "readHilAuxState: all LOW -> 0x00");
+
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    check(readHilAuxState() == 0x01, "readHilAuxState: FC_REG_ENABLE -> bit0");
+    g_pin_value[FC_REG_ENABLE] = LOW;
+
+    g_pin_value[BT_REG_ENABLE] = HIGH;
+    check(readHilAuxState() == 0x02, "readHilAuxState: BT_REG_ENABLE -> bit1");
+    g_pin_value[BT_REG_ENABLE] = LOW;
+
+    g_pin_value[MPPT_DISABLE] = HIGH;
+    check(readHilAuxState() == 0x04, "readHilAuxState: MPPT_DISABLE -> bit2");
+    g_pin_value[MPPT_DISABLE] = LOW;
+
+    g_pin_value[CBAL_DISABLE] = HIGH;
+    check(readHilAuxState() == 0x08, "readHilAuxState: CBAL_DISABLE -> bit3");
+    g_pin_value[CBAL_DISABLE] = LOW;
+
+    // All four together — confirms independence (no bit clobbers another).
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    g_pin_value[BT_REG_ENABLE] = HIGH;
+    g_pin_value[MPPT_DISABLE]  = HIGH;
+    g_pin_value[CBAL_DISABLE]  = HIGH;
+    check(readHilAuxState() == 0x0F, "readHilAuxState: all four HIGH -> 0x0F");
+}
+
+static void test_hil_setdroopmdac_mirrors() {
+    test_group("HIL: setDroopMdac() mirror globals track the SPI-captured words");
+    reset_test_state();
+    SPI.reset();
+    setDroopMdac(0.75f, 0.25f);
+    check(SPI.transfer_log.size() == 2, "setDroopMdac: two 16-bit SPI words written (FC then BT)");
+    check(mdacLastCodeFC == SPI.transfer_log[0],
+          "setDroopMdac: mdacLastCodeFC equals the SPI-captured FC word");
+    check(mdacLastCodeBT == SPI.transfer_log[1],
+          "setDroopMdac: mdacLastCodeBT equals the SPI-captured BT word");
+
+    // Different gains -> different codes, still tracking exactly.
+    SPI.reset();
+    setDroopMdac(0.10f, 0.90f);
+    check(mdacLastCodeFC == SPI.transfer_log[0] && mdacLastCodeBT == SPI.transfer_log[1],
+          "setDroopMdac: mirrors re-track on a second write with different gains");
+    check(mdacLastCodeFC != mdacLastCodeBT,
+          "setDroopMdac: distinct gains produce distinct mirrored codes (not a stuck/aliased mirror)");
+}
+
+// ─── Length dispatch in receiveCommands() (fw v21) ────────────────────────────
+static void test_hil_dispatch_command_packet_unchanged() {
+    test_group("HIL dispatch: 22-byte command packet still parses identically");
+    reset_test_state();
+
+    uint8_t pkt[22] = {};
+    pkt[0] = 0xBB;
+    uint32_t ts_val = 999;
+    memcpy(&pkt[1], &ts_val, 4);
+    uint16_t cnt = 3;
+    memcpy(&pkt[5], &cnt, 2);
+    float v_sp = 1.5f;
+    memcpy(&pkt[7], &v_sp, 4);
+    float ps = 0.6f;
+    memcpy(&pkt[11], &ps, 4);
+    float cg = 0.5f;
+    memcpy(&pkt[15], &cg, 4);
+    pkt[19] = 0;
+    pkt[20] = 0;
+    pkt[21] = xor_checksum_span(pkt, 1, 21);
+
+    Udp.queue_packet(pkt, 22);
+    receiveCommands();
+
+    check(fabsf(v_setpoint - 1.5f) < 0.001f,
+          "HIL dispatch: a queued 22-byte packet still parses via the command path");
+    check(fabsf(power_share_setpoint - 0.6f) < 0.001f,
+          "HIL dispatch: 22-byte power_share_setpoint parsed via the queued-packet path too");
+    check(hilFramesAccepted == 0 && hilFramesRejected == 0,
+          "HIL dispatch: a 22-byte packet never touches the HIL accept/reject counters");
+}
+
+static void test_hil_dispatch_wrong_size_dropped() {
+    test_group("HIL dispatch: a mis-sized (30-byte) packet is dropped without side effects");
+    reset_test_state();
+    v_setpoint = 42.0f;
+    uint8_t pkt[30] = {0xBB};
+    Udp.queue_packet(pkt, 30);
+    receiveCommands();
+    check(fabsf(v_setpoint - 42.0f) < 0.001f, "HIL dispatch: v_setpoint unchanged for a 30-byte packet");
+    check(!hilHaveFrame, "HIL dispatch: a 30-byte packet never sets hilHaveFrame");
+    check(hilFramesAccepted == 0 && hilFramesRejected == 0,
+          "HIL dispatch: a 30-byte packet never touches the HIL accept/reject counters");
+}
+
+#if !HIL_SIM
+static void test_hil_dispatch_35byte_dropped_in_nonhil_build() {
+    test_group("HIL dispatch: a 35-byte HIL frame is inert in a non-HIL build");
+    reset_test_state();
+    v_setpoint = 7.0f;
+    mode_cmd   = 4;
+
+    uint8_t buf[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(buf, 5, 10, 7, 16, 5, 13, 1, 2, 3);
+    Udp.queue_packet(buf, HIL_INJECT_SIZE);
+    receiveCommands();
+
+    // Nothing HIL-side happened (the wiring is compiled out under !HIL_SIM)...
+    check(!hilHaveFrame, "HIL dispatch (non-HIL build): hilHaveFrame stays false for a valid HIL frame");
+    check(hilFramesAccepted == 0 && hilFramesRejected == 0,
+          "HIL dispatch (non-HIL build): accept/reject counters never move (the increments are "
+          "inside #if HIL_SIM)");
+    // ...and nothing command-side happened either — the 35-byte length is caught and returned on
+    // before the 22-byte command path is ever reached, so a valid-looking HIL frame can never be
+    // misinterpreted as a corrupt command packet.
+    check(fabsf(v_setpoint - 7.0f) < 0.001f,
+          "HIL dispatch (non-HIL build): v_setpoint unchanged — the 35-byte frame never reaches "
+          "the 22-byte command parser");
+}
+#endif
+
+// ═════════════════════════════════════════════════════════════════════════════
+// HIL WIRING — fw v21, only compiled in the third (-DHIL_SIM=1 -DUSE_ETHERNET=1) build.
+// ═════════════════════════════════════════════════════════════════════════════
+// These exercise updateSensors()'s HIL branch and receiveCommands()'s HIL_SIM-gated
+// accept path, which do not exist as callable code in the ordinary two host builds.
+#if HIL_SIM
+
+// Injects one accepted HIL frame via the real receiveCommands() path (queues the wire
+// bytes, exactly as a live simulator would send them) and returns after the accept.
+static void injectHilFrame(uint8_t seq, float V_fc, float V_batt, float V_bus, float V_chg,
+                            float V_rgn, float I_fc, float I_batt, float v_actual) {
+    uint8_t buf[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(buf, seq, V_fc, V_batt, V_bus, V_chg, V_rgn, I_fc, I_batt, v_actual);
+    Udp.queue_packet(buf, HIL_INJECT_SIZE);
+    receiveCommands();
+}
+
+static void test_hil_wiring_dispatch_accepts_and_learns_host() {
+    test_group("HIL wiring: receiveCommands() accepts a 35-byte frame and learns the host");
+    reset_test_state();
+    networkUp = true;
+
+    uint8_t buf[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(buf, 0x09, 10, 7, 16, 5, 13, 1, 2, 3);
+    Udp.queue_packet(buf, HIL_INJECT_SIZE, IPAddress(10, 0, 0, 5), 6001);
+    receiveCommands();
+
+    check(hilHaveFrame, "HIL wiring: hilHaveFrame set after an accepted 35-byte frame");
+    check(hilFramesAccepted == 1 && hilFramesRejected == 0,
+          "HIL wiring: accept counter increments exactly once, reject counter untouched");
+    check(hilInject.seq == 0x09, "HIL wiring: hilInject carries the accepted frame's seq");
+    check(hilHostIp   == IPAddress(10, 0, 0, 5), "HIL wiring: hilHostIp learned from Udp.remoteIP()");
+    check(hilHostPort == 6001,                    "HIL wiring: hilHostPort learned from Udp.remotePort()");
+
+    // A rejected frame (bad checksum) must NOT overwrite the learned host or the accepted data.
+    uint8_t bad[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(bad, 0x0A, 99, 99, 99, 99, 99, 99, 99, 99);
+    bad[HIL_INJECT_SIZE - 1] ^= 0xFF;
+    Udp.queue_packet(bad, HIL_INJECT_SIZE, IPAddress(10, 0, 0, 9), 7000);
+    receiveCommands();
+    check(hilFramesRejected == 1, "HIL wiring: reject counter increments on a bad-checksum frame");
+    check(hilInject.seq == 0x09,  "HIL wiring: a rejected frame does not overwrite hilInject");
+    check(hilHostIp == IPAddress(10, 0, 0, 5),
+          "HIL wiring: a rejected frame does not relearn the host address");
+}
+
+static void test_hil_wiring_injection_reaches_globals() {
+    test_group("HIL wiring: injected values reach the seven rail globals and v_actual");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+
+    injectHilFrame(1, 11.1f, 7.7f, 15.5f, 4.4f, 12.2f, 0.9f, 1.1f, 2.2f);
+    updateSensors();
+
+    check(fabsf(V_fc     - 11.1f) < 1e-4f, "HIL wiring: V_fc sourced from the injection frame");
+    check(fabsf(V_batt   - 7.7f)  < 1e-4f, "HIL wiring: V_batt sourced from the injection frame");
+    check(fabsf(V_bus    - 15.5f) < 1e-4f, "HIL wiring: V_bus sourced from the injection frame");
+    check(fabsf(V_chg    - 4.4f)  < 1e-4f, "HIL wiring: V_chg sourced from the injection frame");
+    check(fabsf(V_rgn    - 12.2f) < 1e-4f, "HIL wiring: V_rgn sourced from the injection frame");
+    check(fabsf(I_fc     - 0.9f)  < 1e-4f, "HIL wiring: I_fc sourced from the injection frame");
+    check(fabsf(I_batt   - 1.1f)  < 1e-4f, "HIL wiring: I_batt sourced from the injection frame");
+    check(fabsf(v_actual - 2.2f)  < 1e-4f, "HIL wiring: v_actual sourced from the injection frame");
+}
+
+static void test_hil_wiring_updateWheelSpeed_skipped() {
+    test_group("HIL wiring: updateWheelSpeed() is skipped while an active HIL frame is live");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+
+    // Drive the encoder ISRs so a normal (non-HIL) updateSensors() call would move v_actual via
+    // updateWheelSpeed(). If the HIL branch fails to skip it, v_actual would be overwritten by
+    // the encoder estimator instead of the injected value below.
+    encoderPos = 100000;
+
+    injectHilFrame(2, 1, 1, 1, 1, 1, 1, 1, 9.99f);
+    updateSensors();
+
+    check(fabsf(v_actual - 9.99f) < 1e-4f,
+          "HIL wiring: v_actual is the injected value, not something updateWheelSpeed() computed");
+}
+
+static void test_hil_wiring_hold_before_stale_deadline() {
+    test_group("HIL wiring: values HOLD (age <= HIL_STALE_MS) — no re-send needed to stay fresh");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+
+    injectHilFrame(3, 5.0f, 5.0f, 5.0f, 5.0f, 5.0f, 5.0f, 5.0f, 5.0f);
+    updateSensors();
+    check(!hilStale && !hilZeroed, "HIL wiring: fresh right after injection");
+
+    g_mock_millis = 1000 + (HIL_STALE_MS - 1);   // still inside the fresh window
+    updateSensors();
+    check(!hilStale,  "HIL wiring: still fresh at age == HIL_STALE_MS - 1");
+    check(!hilZeroed, "HIL wiring: not zeroed at age == HIL_STALE_MS - 1");
+    check(fabsf(V_fc - 5.0f) < 1e-4f, "HIL wiring: value unchanged while fresh (no new frame arrived)");
+
+    g_mock_millis = 1000 + HIL_STALE_MS + 1;   // just past stale, well short of zero
+    updateSensors();
+    check(hilStale,   "HIL wiring: STALE flagged once age exceeds HIL_STALE_MS");
+    check(!hilZeroed, "HIL wiring: not yet zeroed (age < HIL_ZERO_MS)");
+    check(fabsf(V_fc - 5.0f) < 1e-4f,
+          "HIL wiring: value HELD at its last injected reading while merely stale (no rail collapse)");
+}
+
+static void test_hil_wiring_zero_after_dead_deadline() {
+    test_group("HIL wiring: values force to safe zero once age exceeds HIL_ZERO_MS");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+
+    injectHilFrame(4, 8.0f, 8.0f, 8.0f, 8.0f, 8.0f, 8.0f, 8.0f, 8.0f);
+    updateSensors();
+
+    g_mock_millis = 1000 + HIL_ZERO_MS + 1;
+    updateSensors();
+
+    check(hilStale,  "HIL wiring: stale flag set once past HIL_ZERO_MS too");
+    check(hilZeroed, "HIL wiring: zeroed flag set once age exceeds HIL_ZERO_MS");
+    check(V_fc == 0.0f && V_batt == 0.0f && V_bus == 0.0f && V_chg == 0.0f && V_rgn == 0.0f &&
+          I_fc == 0.0f && I_batt == 0.0f && v_actual == 0.0f,
+          "HIL wiring: all eight rail globals forced to safe zero on a dead link");
+}
+
+static void test_hil_wiring_refresh_after_link_recovery() {
+    test_group("HIL wiring: a fresh frame after a dead link clears stale/zeroed and re-applies values");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+
+    injectHilFrame(5, 6.0f, 6.0f, 6.0f, 6.0f, 6.0f, 6.0f, 6.0f, 6.0f);
+    updateSensors();
+    g_mock_millis = 1000 + HIL_ZERO_MS + 1;
+    updateSensors();
+    check(hilZeroed, "HIL wiring: (setup) link is dead/zeroed before the recovery frame");
+
+    g_mock_millis = 1000 + HIL_ZERO_MS + 2;
+    injectHilFrame(6, 13.5f, 13.5f, 13.5f, 13.5f, 13.5f, 13.5f, 13.5f, 13.5f);
+    updateSensors();
+
+    check(!hilStale && !hilZeroed, "HIL wiring: stale/zeroed cleared by the recovery frame");
+    check(fabsf(V_fc - 13.5f) < 1e-4f, "HIL wiring: fresh recovery values applied, not the stale zeros");
+    check(fabsf(v_actual - 13.5f) < 1e-4f, "HIL wiring: v_actual also refreshed on recovery");
+}
+
+static void test_hil_wiring_detectFaults_fires_on_injection() {
+    test_group("HIL wiring: detectFaults() fires on an injected overcurrent — fault injection is the point");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+    mainState = 2;   // Run — OC/UV checks are only meaningful outside Init/Idle for this rig
+
+    injectHilFrame(7, 10.0f, 7.4f, 16.0f, 5.0f, 13.0f, /*I_fc=*/LIMIT_I_FC_MAX + 0.5f, 1.0f, 0.0f);
+    updateSensors();
+    detectFaults();
+
+    check((fault_flags & FAULT_OC_FC) != 0,
+          "HIL wiring: an injected I_fc above LIMIT_I_FC_MAX trips FAULT_OC_FC through the "
+          "UNMODIFIED detectFaults() — there is deliberately no HIL-specific fault suppression");
+    check(mainState == 99, "HIL wiring: the overcurrent fault latches State 99 exactly as on real hardware");
+}
+#endif  // HIL_SIM
 
 // ─── PI controller basic behavior ────────────────────────────────────────────
 static void test_pi_controllers() {
@@ -16047,6 +16529,33 @@ int main() {
     test_detect_faults();
     test_telemetry_v4_layout();
     test_command_parsing();
+
+    // ── HIL (hardware-in-the-loop) link — fw v21 ────────────────────────────
+    test_hil_checksum();
+    test_hil_parse_accept();
+    test_hil_parse_reject_bad_sync();
+    test_hil_parse_reject_bad_checksum();
+    test_hil_parse_reject_wrong_length();
+    test_hil_parse_reject_nan_inf();
+    test_hil_pack_output_frame();
+    test_hil_read_switch_state_matches_telemetry();
+    test_hil_read_aux_state();
+    test_hil_setdroopmdac_mirrors();
+    test_hil_dispatch_command_packet_unchanged();
+    test_hil_dispatch_wrong_size_dropped();
+#if !HIL_SIM
+    test_hil_dispatch_35byte_dropped_in_nonhil_build();
+#endif
+#if HIL_SIM
+    test_hil_wiring_dispatch_accepts_and_learns_host();
+    test_hil_wiring_injection_reaches_globals();
+    test_hil_wiring_updateWheelSpeed_skipped();
+    test_hil_wiring_hold_before_stale_deadline();
+    test_hil_wiring_zero_after_dead_deadline();
+    test_hil_wiring_refresh_after_link_recovery();
+    test_hil_wiring_detectFaults_fires_on_injection();
+#endif
+
     test_pi_controllers();
     test_drive_cycle();
     test_pi_watchdog_guard();
