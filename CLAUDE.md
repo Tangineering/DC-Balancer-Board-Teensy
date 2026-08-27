@@ -1428,3 +1428,74 @@ frame was never flashed, so the injection-frame extension is a clean pre-release
 - **Next:** flash the (now 40-B-frame) fw v21 on a bare Teensy + Ethernet and run H1–H5
   (docs/HIL_MODE.md), then replay a recorded incident (ML0151) as an H6-class regression.
   Housekeeping: analyzer exe rebuild; .venv_benchlog pandas/scipy.
+
+---
+
+## Status & session addendum (2026-08-27c, HIL Updates 2026-08-26a: hi-fi electrical sim, source models, replay suite, suite runner)
+
+Orchestrated tooling round implementing the USER_NOTES.md "HIL Updates 2026-08-26a" block
+(4 research agents -> 3 Opus implementers -> Sonnet test-writer -> Opus data-integrity +
+Sonnet contract reviews -> fix round -> orchestrator final review). All on main; Python
+tooling only — FW_VERSION stays 21, wire protocol frozen (40 B inject / 16 B observe).
+
+- **K_DROOP_BUS is now MEASURED, mode-aware:** 0.074 V/A both-sources / 0.16 single-source
+  (V0 15.95; fit of TP0170-0180 excl. TP0178, ML0165, ML0169; parallel-Thevenin mode ratio
+  exactly 2; FC/BT symmetric <2 %). **OPEN FINDING: realized droop is ~4x BELOW the MDAC
+  droop-chain design value** (0.30 V/A at g=0.298, k_d=0.3) — flagged in the code comment,
+  HIL_PLANT.md §4.2 and every suite REPORT.md; do not launder.
+- **tools/hil_electrical.py (new, ~1100 lines, stdlib):** opt-in hi-fi electrical engine
+  (--electrical hifi), 6-node backward-Euler network at an adaptive substep rate (~30-40 kHz
+  measured, decoupled from the 1 kHz mechanical tick, achieved rate reported honestly).
+  RT1987 per-switch state machines (8 ms t_D_ON, CSS soft-start 100 nF FC/BT/MOT vs 5.6 nF
+  others, foldback SCP 250 us trip + 64 ms retry, 35 mV forward servo, -50 mV fast reverse
+  comparator — the TP0178/TP0201 reactive-pickup handoff gap falls out of this), droop as
+  true FB-node superposition (RE_MAX 2.014), body-diode passthrough of a disabled boost,
+  regen chopper (47 ohm, ~16.5 V TODO(calibrate)), analytic parasitic-ring events (long
+  1.538/3.480 nH FastHenry, short ~1.5 nH TODO(verify)) — NOT integrated (nH-uF ~100 MHz is
+  unintegrable in real-time Python; documented). The literal TPS61288 gm/Z_comp loop was
+  built and REPLACED (crossover at substep Nyquist diverged): channels use the repo's
+  validated reduced form; no boost-stability claims from this engine.
+- **Source models (user scope extension):** FuelCellSource + BatterySource per Yadav &
+  Assadian, Energies 2025 (references/Robust Energy Management...pdf), cited by equation.
+  FC: Nernst/Tafel/concentration + 20 ms stack RC, fitted 12.97 V OC / 0.447 ohm effective
+  at 2 A (FC_R_SERIES_RIG 0.41 ohm harness term); battery: 2S OCV(SOC) 9-point generic
+  TODO(calibrate), coulomb-counted (charge current raises SOC; Ag105 now reaches FULL with
+  CV taper at SOC>=0.995), --soc0/--capacity-ah. Both modes share one instance each.
+- **PiCommander:** the sim can now drive the firmware's 22-byte Pi command packet (layout
+  verified against .ino:4806-4852, sync 0xBB, XOR 1..20) — charging scenarios command
+  charge_goal without an operator. 7 new scenarios (charge-cruise/-regen/-fault,
+  soc-depletion, hifi-only handoff-sag/bringup/scp-inrush) in a SCENARIOS registry.
+- **tools/hil_replay_suite.py + docs/HIL_REPLAY_LOGS.md (new):** 26-entry curated replay
+  suite (15 conformance / 11 deviation) from a full 206-log census; 8 declarative check
+  kinds; fault_latched replays the firmware's own leaky UV-dwell integrator over the
+  injected V_bus and fails INCONCLUSIVE if the stimulus no longer qualifies; FW_DELTA_NOTES
+  per version; pre-v18 = different wheel + law, stability-not-trace-match. Excluded:
+  ML0182/0183 (defective-wheel diagnostics), ML0135, fw v3-v8 bulk (3 UV-collapse
+  representatives kept as deviation stimuli: TP0010/TP0053/WP0097 — modern fw must latch
+  UV where the old firmware died silent). The doc is the maintained ledger — update it
+  with every added log.
+- **tools/run_hil_suite.py (new):** runs the full 38-run plan (12 scenarios + 26 replays,
+  ~29 min), subprocess-isolated with SIGTERM-then-SIGKILL timeouts, per-run results.json
+  rewrite (Ctrl-C keeps completed runs, meta.partial rendered), REPORT.md + results.json
+  with the K_DROOP x4 finding always present. Exit 0/1/2(board unreachable)/130.
+- **Review round (2 HIGH, 6 MED, 9 LOW + 2 contract MED — all accepted, all fixed):**
+  H1 regen into an open MOT_PWR node ran the solver to ~10 kV and manufactured a FALSE
+  Death-5 over_absmax banner (fixed: bounded Norton motor stamp, 2x-absmax node_runaway
+  backstop, plausibility-gated sw_ring verdict); H2 the no-soft-start re-arm flag survived
+  an EN-low cycle, defeating foldback on exactly the hot-plug case (fixed: cleared on any
+  EN-low). M-class: retry-timer freeze across EN toggle, NaN guard + sticky numeric_fault,
+  events sidecar now streamed per-tick (SIGKILL no longer loses evidence), per-run output
+  rewrite, v_bus_offset -> v_bus_sense_offset (hi-fi sag is a SENSOR-PATH injection, not a
+  plant event — documented asymmetry, deviation from the stamp-it-real fix), soft-start
+  charge non-conservation documented. Orchestrator-applied fix: REPLAY_SUITE paths were
+  CWD-dependent (all 26 logs "missing" when run from tools/) — anchored to REPO_ROOT.
+- **Tests: 255 pytest green** (89 plant + 39 electrical + 47 replay-suite + 56 wrapper +
+  24 decoder), rebuilt and rerun by the orchestrator; --verify-logs green from any CWD.
+  Known residuals (test-writer, accepted): _drain_electrical_events() event throughput not
+  unit-testable without a live peer (wiring covered black-box); a NaN persisting across two
+  consecutive substeps restores to a NaN previous value (unreachable via any constructed
+  actuator path; sticky flag still trips); exit-code tail of run_hil_suite.main() inline.
+- **Next bench:** flash fw v21 + Ethernet, `python3 tools/run_hil_suite.py --teensy-ip <ip>`
+  for the first full HIL report; hifi handoff-sag needs on-board verification (the share
+  cut latch actually opening BT_BUS was not verifiable without hardware). Housekeeping
+  unchanged: analyzer exe rebuild; .venv_benchlog pandas/scipy.

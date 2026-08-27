@@ -42,6 +42,11 @@ import json
 import os
 import sys
 
+# Suite entry "path" values are repo-root-relative ("logs/XXXX.BLG").  Resolve
+# them against the repo root derived from this file's location, NOT the CWD —
+# invoking the module from inside tools/ used to report all 26 logs missing.
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Firmware-sourced constants.  VERIFIED against the cited sources — do not
 # change one of these without re-reading the citation.
@@ -935,7 +940,7 @@ def build_sim_argv(entry, csv_dir):
     appends them.  The CSV name is derived from the log so a batch run leaves an
     unambiguous artifact per entry."""
     csv_path = os.path.join(csv_dir, f"hil_replay_{entry['log']}.csv")
-    return ["--replay", entry["path"], "--csv", csv_path]
+    return ["--replay", os.path.join(REPO_ROOT, entry["path"]), "--csv", csv_path]
 
 
 def replay_csv_path(entry, csv_dir):
@@ -943,7 +948,7 @@ def replay_csv_path(entry, csv_dir):
     return os.path.join(csv_dir, f"hil_replay_{entry['log']}.csv")
 
 
-def verify_suite_logs(repo_root="."):
+def verify_suite_logs(repo_root=REPO_ROOT):
     """Check every entry's .BLG exists and that its header agrees with the table.
 
     Reads the header directly (magic 'BLG1', format version at byte 4, fw_version

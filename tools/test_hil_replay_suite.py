@@ -472,7 +472,10 @@ def test_build_sim_argv_has_replay_and_csv_no_transport_flags():
     entry = rs.suite_index()["ML0151"]
     argv = rs.build_sim_argv(entry, "/tmp/csvdir")
     assert "--replay" in argv
-    assert argv[argv.index("--replay") + 1] == entry["path"]
+    # Orchestrator CWD-independence fix: build_sim_argv resolves the repo-root-
+    # relative entry path against REPO_ROOT so the argv works from any CWD.
+    assert argv[argv.index("--replay") + 1] == os.path.join(rs.REPO_ROOT, entry["path"])
+    assert os.path.isfile(argv[argv.index("--replay") + 1])
     assert "--csv" in argv
     csv_arg = argv[argv.index("--csv") + 1]
     assert csv_arg == os.path.join("/tmp/csvdir", f"hil_replay_{entry['log']}.csv")
