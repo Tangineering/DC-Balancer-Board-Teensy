@@ -16,7 +16,7 @@ unmodified on the injected values.  That makes this a fault-INJECTION rig — th
 
 Wire protocol (mirrored from teensy_controller.ino, fw v21 — keep in lockstep):
 
-  Injection frame (host -> Teensy), 35 bytes, little-endian
+  Injection frame (host -> Teensy), 40 bytes, little-endian
     0  u8    sync 0xB5
     1  u8    seq (wraps)
     2  f32   V_fc      [V]
@@ -27,7 +27,13 @@ Wire protocol (mirrored from teensy_controller.ino, fw v21 — keep in lockstep)
    22  f32   I_fc      [A]
    26  f32   I_batt    [A]
    30  f32   v_actual  [m/s]
-   34  u8    XOR checksum over bytes 1..33
+   34  f32   I_charge  [A]  simulated Ag105 reg 0x06 reading, already in amps
+   38  u8    ag105_status  raw Table 6 status byte
+   39  u8    XOR checksum over bytes 1..38
+
+  (The 35-byte fw v21 layout is RETIRED — it was never flashed.  A 35-byte frame
+  no longer matches the firmware's length dispatch and is dropped unread, so an
+  old simulator against a new flash shows accepts stuck at zero.)
 
   Observation frame (Teensy -> host), 16 bytes, little-endian
     0  u8    sync 0xB6
@@ -61,7 +67,7 @@ import time
 # ─────────────────────────────────────────────────────────────────────────────
 HIL_SYNC_INJECT = 0xB5
 HIL_SYNC_OUTPUT = 0xB6
-HIL_INJECT_SIZE = 35
+HIL_INJECT_SIZE = 40
 HIL_OUTPUT_SIZE = 16
 
 TEENSY_PORT_DEFAULT = 5001          # local_port in the .ino
@@ -71,6 +77,32 @@ SW_REGEN, SW_FC_CHARGE, SW_BT_SEQ = 0x08, 0x10, 0x20
 
 AUX_FC_REG, AUX_BT_REG = 0x01, 0x02
 AUX_MPPT_DISABLE, AUX_CBAL_DISABLE = 0x04, 0x08
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ag105 Table 6 status byte — authoritative values from
+# references/Datasheets/Ag105_Table6_I2C_Status_Byte.json (Ag105 DS V1.1, Table 6).
+# Bits 0-2 are the GENSTAT enum; bits 3-7 are independent flags.
+# ─────────────────────────────────────────────────────────────────────────────
+AG105_ST_DISCONNECT = 0x00      # GENSTAT 000 — Battery Disconnect
+AG105_ST_LOW_POWER = 0x01       # GENSTAT 001 — Low Power
+AG105_ST_CHARGING = 0x02        # GENSTAT 010 — Charging
+AG105_ST_FULL = 0x03            # GENSTAT 011 — Fully Charged
+AG105_ST_BRINGUP = 0x04         # GENSTAT 100 — Bring-Up Charge
+AG105_ST_OC_ERR = 0x05          # GENSTAT 101 — OC/Regulation Error
+AG105_ST_THERMAL_SD = 0x06      # GENSTAT 110 — Thermal Shutdown
+AG105_ST_TIMEOUT_ERR = 0x07     # GENSTAT 111 — Timeout Error
+AG105_FLAG_MPPT_EN = 0x08       # bit 3 — MPPT enabled
+AG105_FLAG_PWR_TRACK = 0x10     # bit 4 — charge profile tracking input power
+AG105_FLAG_CV = 0x20            # bit 5 — constant-voltage mode
+AG105_FLAG_CC = 0x40            # bit 6 — constant-current mode
+AG105_FLAG_THERM_LIM = 0x80     # bit 7 — thermal limiting
+
+# Charger model.  The firmware configures the Ag105 for the 2.5 A profile
+# (reg 0x00 = 0x01, Ag105_Table4_Charge_Current_Select.json) into a 2S/8.4 V pack.
+AG105_I_MAX = 2.5            # A     configured charge-current ceiling
+AG105_SETTLE_S = 0.5         # s     matches AG105_SETTLE_MS in the .ino
+AG105_TAU_S = 0.4            # s     first-order ramp of the measured current
+AG105_V_IN_MIN = 8.0         # V     input rail below which the module cannot charge
 
 # MDAC word format (AD5443): control nibble 0x1 = load-and-update, then a 12-bit code.
 MDAC_CMD_LOAD_UPDATE = 0x1000
@@ -112,9 +144,11 @@ def xor_checksum(payload: bytes) -> int:
     return c
 
 
-def pack_inject(seq, v_fc, v_batt, v_bus, v_chg, v_rgn, i_fc, i_batt, v_actual) -> bytes:
+def pack_inject(seq, v_fc, v_batt, v_bus, v_chg, v_rgn, i_fc, i_batt, v_actual,
+                i_charge=0.0, ag105_status=AG105_ST_DISCONNECT) -> bytes:
     body = struct.pack(
-        "<B8f", seq & 0xFF, v_fc, v_batt, v_bus, v_chg, v_rgn, i_fc, i_batt, v_actual
+        "<B9fB", seq & 0xFF, v_fc, v_batt, v_bus, v_chg, v_rgn, i_fc, i_batt, v_actual,
+        i_charge, ag105_status & 0xFF,
     )
     return bytes([HIL_SYNC_INJECT]) + body + bytes([xor_checksum(body)])
 
@@ -171,6 +205,12 @@ class Plant:
         the codes only parametrize; proportional-to-code is a SIMPLIFICATION that
         preserves the sign and monotonicity of the share loop's authority (raise the
         FC code, get more FC current) without claiming the true gain.
+      * The Ag105 charger is modelled at the STATUS level only: input power in ->
+        settle delay -> "Charging" with a first-order current ramp toward the 2.5 A
+        configured ceiling.  There is no battery state of charge, no CV taper and no
+        MPPT perturb-and-observe loop; MPPT_DISABLE only clears the tracking flags in
+        the status byte.  The I2C transport and the config handshake are not modelled
+        at all (the firmware skips them entirely under HIL).
     """
 
     def __init__(self):
@@ -182,6 +222,10 @@ class Plant:
         self.v_rgn = 0.0
         self.i_aux = I_AUX_A
         self.v_bus_offset = 0.0   # scenario-injected bus disturbance [V]
+        # ── Ag105 charger model state ───────────────────────────────────────
+        self.i_charge = 0.0           # A   measured charge current (reg 0x06 equivalent)
+        self.chg_powered_s = 0.0      # s   time the charger input has been continuously live
+        self.ag105_status = AG105_ST_DISCONNECT
 
     def step(self, dt, obs):
         """Advance one tick against the last observation frame (None = actuators unknown)."""
@@ -256,6 +300,40 @@ class Plant:
         self.v_chg = self.v_bus if (sw & SW_FC_CHARGE) else 0.0
         self.v_rgn = self.v_bus if (sw & SW_REGEN) else 0.0
 
+        # ── Ag105 charger ────────────────────────────────────────────────────
+        # Power gating mirrors the firmware's chargerHasPower(): FC_CHARGE closed, or
+        # REGEN and MOT_PWR both closed.  The rail actually presented to the module has
+        # to be up as well — a closed switch onto a collapsed bus charges nothing.
+        chg_path = bool(sw & SW_FC_CHARGE) or (bool(sw & SW_REGEN) and bool(sw & SW_MOT_PWR))
+        v_chg_in = self.v_chg if (sw & SW_FC_CHARGE) else self.v_rgn
+        chg_powered = chg_path and v_chg_in >= AG105_V_IN_MIN
+        if chg_powered:
+            self.chg_powered_s += dt
+        else:
+            self.chg_powered_s = 0.0
+
+        if not chg_powered:
+            # Input removed: the module is dark.  0x00 is what the firmware's own failed-read
+            # path leaves behind, and it decodes as GENSTAT "Battery Disconnect".
+            self.i_charge = 0.0
+            self.ag105_status = AG105_ST_DISCONNECT
+        elif self.chg_powered_s < AG105_SETTLE_S:
+            # Bring-up window (AG105_SETTLE_MS in the .ino).  Report Bring-Up Charge with no
+            # current yet, so ag105IsReady() stays false until the module is genuinely up —
+            # which is what gates chargingControl()'s MPPT release.
+            self.i_charge = 0.0
+            self.ag105_status = AG105_ST_BRINGUP
+        else:
+            # Constant-current charging into a 2S pack, ramped first-order toward the
+            # configured 2.5 A ceiling.  No SoC model, so it never reaches Fully Charged.
+            self.i_charge += (AG105_I_MAX - self.i_charge) * (dt / AG105_TAU_S)
+            self.ag105_status = AG105_ST_CHARGING | AG105_FLAG_CC
+            # MPPT_DISABLE is ACTIVE-LOW: pin HIGH releases the tracking loop, pin LOW
+            # inhibits it.  Only the two tracking flags follow it; charging continues either
+            # way (the firmware asserts it during regen precisely so charging is not disturbed).
+            if aux & AUX_MPPT_DISABLE:
+                self.ag105_status |= AG105_FLAG_MPPT_EN | AG105_FLAG_PWR_TRACK
+
         return {
             "V_fc": v_fc,
             "V_batt": v_batt,
@@ -265,6 +343,8 @@ class Plant:
             "I_fc": self.i_fc,
             "I_batt": self.i_batt,
             "v_actual": self.v,
+            "I_charge": self.i_charge,
+            "ag105_status": self.ag105_status,
         }
 
 
@@ -334,7 +414,8 @@ def main(argv=None):
         writer = csv.writer(csv_file)
         writer.writerow([
             "t", "seq", "V_fc", "V_batt", "V_bus", "V_chg", "V_rgn", "I_fc", "I_batt",
-            "v_actual", "state", "switch", "aux", "current", "mdac_fc", "mdac_bt",
+            "v_actual", "I_charge", "ag105_status",
+            "state", "switch", "aux", "current", "mdac_fc", "mdac_bt",
             "fault_flags",
         ])
 
@@ -378,6 +459,7 @@ def main(argv=None):
                     seq, sensors["V_fc"], sensors["V_batt"], sensors["V_bus"],
                     sensors["V_chg"], sensors["V_rgn"], sensors["I_fc"],
                     sensors["I_batt"], sensors["v_actual"],
+                    sensors["I_charge"], sensors["ag105_status"],
                 )
                 try:
                     sock.sendto(frame, dest)
@@ -398,6 +480,7 @@ def main(argv=None):
                     f"{sensors['V_bus']:.4f}", f"{sensors['V_chg']:.4f}",
                     f"{sensors['V_rgn']:.4f}", f"{sensors['I_fc']:.4f}",
                     f"{sensors['I_batt']:.4f}", f"{sensors['v_actual']:.5f}",
+                    f"{sensors['I_charge']:.4f}", f"0x{sensors['ag105_status']:02X}",
                     obs["state"] if obs else "",
                     obs["switch"] if obs else "",
                     obs["aux"] if obs else "",
@@ -417,7 +500,8 @@ def main(argv=None):
                           f"sw=0x{obs['switch']:02X} aux=0x{obs['aux']:02X} "
                           f"I_cmd={obs['current']:+6.2f}A  faults=0x{obs['fault_flags']:04X} "
                           f"| v={sensors['v_actual']:5.2f} m/s V_bus={sensors['V_bus']:5.2f}V "
-                          f"I_fc={sensors['I_fc']:5.2f} I_bt={sensors['I_batt']:5.2f}")
+                          f"I_fc={sensors['I_fc']:5.2f} I_bt={sensors['I_batt']:5.2f} "
+                          f"I_chg={sensors['I_charge']:4.2f} chg=0x{sensors['ag105_status']:02X}")
                 else:
                     print(f"[hil] t={t:6.2f}s  no observation frames yet "
                           f"(tx={tx_frames}) — is the board flashed with -DHIL_SIM=1?")

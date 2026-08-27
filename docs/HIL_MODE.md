@@ -32,11 +32,13 @@ whose faults are suppressed tests nothing.
    HOST (tools/hil_plant_sim.py)                      TEENSY 4.1 (-DHIL_SIM=1)
   ┌──────────────────────────────┐                  ┌───────────────────────────────┐
   │  Plant model @ 1 kHz         │                  │  updateSensors()              │
-  │   mechanical: m_eff, K_F,    │   35 B inject    │    HIL branch: assign the 7   │
+  │   mechanical: m_eff, K_F,    │   40 B inject    │    HIL branch: assign the 7   │
   │     F_c, b_eff               │ ───────────────► │    rails + v_actual from the  │
   │   electrical: droop bus,     │   UDP :5001      │    frame (engineering units,  │
   │     source split, charger/   │   sync 0xB5      │    no SCALE_*; updateWheel-   │
-  │     regen rails              │                  │    Speed() SKIPPED)           │
+  │     regen rails, Ag105       │                  │    Speed() SKIPPED)           │
+  │     status + I_charge        │                  │  pollAg105(): HIL branch —    │
+  │                              │                  │    no I2C, values injected    │
   │                              │                  │            │                  │
   │                              │                  │            ▼                  │
   │                              │                  │  computeDerivedSignals()      │
@@ -56,14 +58,14 @@ whose faults are suppressed tests nothing.
 
 Both frames ride the **existing** UDP socket (`local_port` 5001) — the one the Pi
 bridge uses. `receiveCommands()` dispatches on packet **length**: 22 bytes is the
-Pi command packet (byte-identical to fw ≤ v20), 35 bytes is a HIL injection frame,
+Pi command packet (byte-identical to fw ≤ v20), 40 bytes is a HIL injection frame,
 everything else is dropped. The sync bytes are distinct as well (`0xAA`/`0xBB` for
 the Pi link, `0xB5`/`0xB6` for HIL), so the two protocols cannot be confused even
 before the length check.
 
 ## Frame formats
 
-### Injection frame — host → Teensy, 35 bytes, little-endian
+### Injection frame — host → Teensy, 40 bytes, little-endian
 
 | Offset | Size | Field | Units / notes |
 |--------|------|-------|---------------|
@@ -77,10 +79,18 @@ before the length check.
 | 22 | 4 | `I_fc` | A |
 | 26 | 4 | `I_batt` | A |
 | 30 | 4 | `v_actual` | m/s (flywheel surface speed, same terms as `v_setpoint`) |
-| 34 | 1 | XOR checksum | over bytes 1–33 |
+| 34 | 4 | `I_charge` | A — simulated Ag105 measured charge current (reg `0x06` equivalent, **already scaled** by 0.011 A/count) |
+| 38 | 1 | `ag105_status` | raw Table 6 status byte, exactly as an I2C read returns it (`references/Datasheets/Ag105_Table6_I2C_Status_Byte.json`) |
+| 39 | 1 | XOR checksum | over bytes 1–38 |
+
+The frame grew from 35 to 40 bytes when the charger fields were added. The 35-byte
+layout was **never flashed** (fw v21 is still pending its first flash), so there is
+deliberately no back-compat path: a 35-byte datagram no longer matches the length
+dispatch and is dropped unread, which shows up as the `'S'` dump's accept count
+stuck at zero — a loud failure rather than a half-decoded frame.
 
 Rejected if the length, the sync byte or the checksum is wrong, or if any float
-decodes as NaN/Inf (an XOR checksum passes plenty of bit patterns that do, and a
+decodes as NaN/Inf (`I_charge` included; an XOR checksum passes plenty of bit patterns that do, and a
 NaN reaching `v_actual` poisons the drive controller's recursion permanently).
 Rejections are counted and shown in the `'S'` dump.
 
@@ -223,15 +233,26 @@ Plant constants are the repo's calibrated ones (fw v14 force-axis correction —
 
 ## Limitations
 
-- **The charger path is NOT simulated.** The injection frame carries no charger
-  fields, so `I_charge`, `ag105_status_raw`/the GENSTAT decode, `ag105Configured`
-  and `chargingControl()`'s readiness gating all still come from the **real** Ag105
-  I2C bus — which in a HIL rig is unpowered (no charger power path is open, and
-  there is no board-side plant to open one). Expect `I_charge == 0`,
-  `ag105IsReady()` false and a dead charger branch. Any HIL result that depends on
-  charger behaviour is not meaningful. Extending the frame with the charger fields
-  (and gating `pollAg105()` under `HIL_SIM`) is the known follow-up; it is a
-  frame-layout change and needs a simulator update in lockstep.
+- **The charger is simulated at the STATUS level only — its I2C transport is not.**
+  What *is* exercised: `I_charge` and `ag105_status_raw` come from the injection
+  frame, and everything downstream of them runs unmodified — the GENSTAT decode and
+  `ag105IsReady()`, the `detectFaults()` GENSTAT error check (inject GENSTAT
+  `0b101`/`0b110`/`0b111` to trip it), `I_charge` in telemetry and the BLG, and
+  `chargingControl()`'s MPPT release gating. The firmware's own `chargerHasPower()`
+  power gating is still read from the **real switch pins**, so the sequencing under
+  test is the firmware's, not the host's.
+  What is **not**: while the link is up, `pollAg105()` never touches the Wire bus
+  (a HIL rig has no Ag105, so every real poll would be a NACK/timeout burning loop
+  time and feeding the UDP drain backlog). Consequently `initAg105Charger()`'s
+  read-verify-write config handshake is not simulated — `ag105Configured` is set by
+  fiat once the charger is powered and settled — and neither `ERR_I2C_CHARGER` nor
+  the charger `ERR_INIT_FAIL` path is reachable in a HIL build. Those stay
+  bench-only. Before the *first* injection frame the real I2C path still runs, the
+  same way the real ADCs do.
+  The plant-side model is deliberately thin: input power → `AG105_SETTLE_S` bring-up
+  → "Charging" with a first-order ramp toward the configured 2.5 A ceiling. No
+  battery state of charge, no CV taper, no MPPT perturb-and-observe — `MPPT_DISABLE`
+  only clears the tracking flags in the status byte.
 - **Signal-level injection, not power-HIL.** Nothing electrical is exercised: the
   ADC front ends, the dividers, the INA253s, the RT1987 turn-on behaviour and the
   boosts themselves are all bypassed. A HIL pass says the *firmware logic* is
