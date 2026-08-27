@@ -174,12 +174,17 @@ R_NODE_BLEED = 2000.0       # ohm  effective bleed on every node (dark-node deca
 V_CHOPPER_TRIP = 16.5       # V     TODO(calibrate)
 R_CHOPPER = 47.0            # ohm   47 Ω / 20 W dump resistor
 
-# Sources.
+# Sources — see the SOURCE MODELS block further down (FuelCellSource /
+# BatterySource).  These remain as the fallback/legacy scalars: V_FC_OPEN is the
+# rig's known open-circuit class and R_FC_INT the effective IR sag the source model
+# is FITTED to reproduce.
 V_FC_OPEN = 13.0            # V     H-20 fuel cell, open-circuit class
-R_FC_INT = 0.45             # ohm   TODO(verify)
-V_BT_OPEN = 8.0             # V     2S LiPo mid-charge
+R_FC_INT = 0.45             # ohm   effective bench IR sag  TODO(calibrate)
+V_BT_OPEN = 8.0             # V     2S LiPo mid-charge (SOC ~0.7 on the OCV curve)
 R_BT_INT = 0.05             # ohm   TODO(verify)
 I_AUX_A = 0.15              # A     housekeeping load on VBUS
+ETA_BOOST = 0.85            # boost efficiency, used to refer output current to the
+                            # source side (SOC bookkeeping and IR sag are INPUT-side)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Trace parasitics — FastHenry, 05_bringup_debugging.tex Table Lsweep (lines 182-183).
@@ -258,6 +263,183 @@ class NoiseConfig:
         return out
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# SOURCE MODELS — PEM fuel-cell stack and 2S LiPo pack
+#
+# Structure and parameter names follow:
+#   S. Yadav and F. Assadian, "Robust Energy Management of Fuel Cell Hybrid
+#   Electric Vehicles Using Fuzzy Logic Integrated with H-Infinity Control",
+#   Energies 2025, 18, 2107 (references/ in this repo).
+#     * Fuel cell  — §2.1: Nernst potential Eq. (3), activation Eq. (4),
+#       concentration Eq. (5), ohmic Eq. (6), terminal cell voltage Eq. (7),
+#       double-layer RC Eq. (11), stack voltage Eq. (12).  This is the
+#       Dicks-Larminie dynamic form the paper cites.
+#     * Battery    — §2.2: equivalent-circuit model, terminal voltage Eq. (13),
+#       RC-pair dynamics Eq. (14), SOC coulomb count Eq. (15), output Eq. (16),
+#       with SOC-dependent lookups Em(SOC), Rs(SOC), Rn(SOC), Cn(SOC).
+#
+# The paper's NUMERIC parameters are for a vehicle-scale stack and pack.  This rig
+# is an H-20 class ~13 V stack and a 2S RC LiPo, so the model FORM is the paper's
+# and the parameters are fitted to the rig's only known points: ~13 V open circuit,
+# the ~0.45 ohm effective bench IR sag, and LIMIT_V_FC_MIN 6.0 V / the 7.4-8.4 V
+# battery operating band (CLAUDE.md).  Every rig-specific value below is marked
+# TODO(calibrate) — none of them is measured.
+#
+# One instance of each is SHARED between the two electrical modes: Plant owns them
+# and passes them to ElectricalSim, so `--electrical simple` and `--electrical hifi`
+# integrate the SAME source state (and the same SOC) and a scenario behaves the same
+# way in both.  See docs/HIL_PLANT.md "Source models".
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ── Fuel cell (paper §2.1) ───────────────────────────────────────────────────
+FC_E_NERNST = 1.15          # V/cell  Eq. (3) at nominal partial pressures.  The
+                            # reactant-flow states Eqs. (8)-(10) are NOT modelled:
+                            # this rig has no flow instrumentation, so E is held at
+                            # the paper's Gibbs-free-energy value.  TODO(calibrate)
+FC_N_CELLS = 12             # fitted so N*Vcell(0) = 12.97 V ~ the 13 V OC class
+FC_AREA_CM2 = 3.0           # cm^2   TODO(calibrate): not measured on the H-20
+FC_TAU_S = 0.020            # s      double-layer time constant Ra*C of Eq. (11).
+                            # TODO(calibrate) — this is what makes a fast load step
+                            # sag and then recover, the TP0178 transient territory.
+FC_R_SERIES_RIG = 0.41      # ohm    rig wiring/contact resistance ADDED to the
+                            # paper's stack model.  The paper's Eq. (4)/(6) terms
+                            # give only ~0.04 ohm at this cell area, while the bench
+                            # sees ~0.45 ohm total; the balance is rig harness, not
+                            # electrochemistry.  TODO(calibrate)
+
+
+def fc_v_act(i_a, area_cm2=FC_AREA_CM2):
+    """Activation loss, paper Eq. (4): Vact = 0.0268*log((I/A + 1)/0.0027)."""
+    return 0.0268 * math.log10((max(i_a, 0.0) / area_cm2 + 1.0) / 0.0027)
+
+
+def fc_v_conc(i_a, area_cm2=FC_AREA_CM2):
+    """Concentration loss, paper Eq. (5): Vconc = -0.05*log(1 - (I/A + 1)/1500)."""
+    x = (max(i_a, 0.0) / area_cm2 + 1.0) / 1500.0
+    return -0.05 * math.log10(max(1e-6, 1.0 - min(x, 0.999999)))
+
+
+def fc_v_ohmic(i_a, area_cm2=FC_AREA_CM2):
+    """Ohmic loss, paper Eq. (6): Vohmic = (I/A + 1)*30e-5."""
+    return (max(i_a, 0.0) / area_cm2 + 1.0) * 30e-5
+
+
+class FuelCellSource:
+    """PEM stack, paper §2.1 form, fitted to the rig's H-20 class operating points.
+
+    Terminal voltage (paper Eq. (12), plus the rig harness term):
+
+        V_stack = N*(E - Va - Vohmic(I)) - R_SERIES_RIG*I
+
+    where Va is the double-layer state of Eq. (11).  The paper writes that state as
+    dVa/dt = I/(A*C) - Va/(Ra*C), whose equilibrium is the linear I*Ra/A; here the
+    equilibrium is instead the NONLINEAR activation + concentration pair of
+    Eqs. (4)-(5), so the polarization curve keeps its Tafel and concentration
+    regions while the RC branch supplies the same first-order dynamics:
+
+        dVa/dt = (Vact(I) + Vconc(I) - Va) / FC_TAU_S
+
+    Consequence, and the reason this model is here at all: a fast load step is met
+    at first with only the ohmic loss and then sags over FC_TAU_S as the activation
+    overpotential builds — the shape the TP0178 "loose FC supply" hypothesis is
+    about (docs/boost-bringup-debug.md).
+    """
+
+    def __init__(self, n_cells=FC_N_CELLS, area_cm2=FC_AREA_CM2, tau_s=FC_TAU_S,
+                 r_series=FC_R_SERIES_RIG, health=1.0):
+        self.n_cells = n_cells
+        self.area_cm2 = area_cm2
+        self.tau_s = tau_s
+        self.r_series = r_series
+        self.health = health          # 1.0 = nominal; scenarios derate the stack
+        self.v_a = fc_v_act(0.0, area_cm2) + fc_v_conc(0.0, area_cm2)
+        self.v_terminal = self.open_circuit()
+        self.i = 0.0
+
+    def open_circuit(self):
+        v_cell = FC_E_NERNST - fc_v_act(0.0, self.area_cm2) \
+            - fc_v_conc(0.0, self.area_cm2) - fc_v_ohmic(0.0, self.area_cm2)
+        return self.health * self.n_cells * v_cell
+
+    def update(self, dt, i_a):
+        """Advance the double-layer state and return the terminal voltage [V]."""
+        i_a = max(0.0, i_a)
+        self.i = i_a
+        v_eq = fc_v_act(i_a, self.area_cm2) + fc_v_conc(i_a, self.area_cm2)
+        self.v_a += (v_eq - self.v_a) * min(1.0, dt / self.tau_s)
+        v = self.n_cells * (FC_E_NERNST - self.v_a - fc_v_ohmic(i_a, self.area_cm2))
+        self.v_terminal = max(0.0, self.health * v - self.r_series * i_a)
+        return self.v_terminal
+
+
+# ── Battery (paper §2.2) ─────────────────────────────────────────────────────
+# Generic 2S LiPo OCV curve, PER CELL.  No pack characterization exists in this
+# repo, so this is a standard LiPo discharge shape, NOT a measurement of the fitted
+# pack: TODO(calibrate).  It does respect the 7.4-8.4 V operating band the
+# 2026-07-10 system decision set (CLAUDE.md "Hardware bodge record 2026-07-10").
+LIPO_OCV_SOC = (0.00, 0.05, 0.10, 0.20, 0.40, 0.60, 0.80, 0.90, 1.00)
+LIPO_OCV_V = (3.30, 3.50, 3.60, 3.70, 3.78, 3.87, 3.99, 4.06, 4.20)
+BATT_CELLS = 2              # 2S (CLAUDE.md §6)
+BATT_CAPACITY_AH = 5.0      # Ah   plausible 2S RC pack   TODO(verify)
+BATT_RS_NOM = 0.040         # ohm  Rs(SOC) mid-band       TODO(calibrate)
+BATT_R1 = 0.020             # ohm  single RC pair, Eq. (14)  TODO(calibrate)
+BATT_C1 = 200.0             # F    tau ~ 4 s                 TODO(calibrate)
+
+
+def _interp(xs, ys, x):
+    if x <= xs[0]:
+        return ys[0]
+    if x >= xs[-1]:
+        return ys[-1]
+    for k in range(1, len(xs)):
+        if x <= xs[k]:
+            f = (x - xs[k - 1]) / (xs[k] - xs[k - 1])
+            return ys[k - 1] + f * (ys[k] - ys[k - 1])
+    return ys[-1]
+
+
+class BatterySource:
+    """2S LiPo pack, paper §2.2 equivalent-circuit form.
+
+        V_T = Em(SOC) - I*Rs(SOC) - V1          (Eq. 13, one RC pair)
+        dV1/dt = I/C1 - V1/(R1*C1)              (Eq. 14)
+        SOC   -= (1/Cbatt) * integral(I dt)     (Eq. 15; I > 0 = DISCHARGE)
+
+    The sign convention is the paper's: positive current discharges, negative
+    current charges.  The Ag105's charge current therefore enters as a NEGATIVE
+    battery current, which is what makes a long `charge-cruise` run visibly raise
+    V_batt along the OCV curve.
+    """
+
+    def __init__(self, soc0=0.7, capacity_ah=BATT_CAPACITY_AH, cells=BATT_CELLS):
+        self.soc = min(1.0, max(0.0, soc0))
+        self.capacity_as = capacity_ah * 3600.0
+        self.cells = cells
+        self.v1 = 0.0
+        self.i = 0.0
+        self.v_terminal = self.ocv()
+
+    def ocv(self):
+        return self.cells * _interp(LIPO_OCV_SOC, LIPO_OCV_V, self.soc)
+
+    def rs(self):
+        # Rs(SOC): flat mid-band, rising steeply as the pack empties.  TODO(calibrate)
+        k = 1.0 if self.soc > 0.15 else (1.0 + 3.0 * (0.15 - self.soc) / 0.15)
+        return self.cells * BATT_RS_NOM * k
+
+    def update(self, dt, i_a):
+        """Advance SOC and the RC pair; return the terminal voltage [V].
+
+        `i_a` is the NET pack current: positive discharges, negative charges.
+        """
+        self.i = i_a
+        self.soc = min(1.0, max(0.0, self.soc - (i_a * dt) / self.capacity_as))
+        tau = BATT_R1 * BATT_C1
+        self.v1 += (i_a * BATT_R1 - self.v1) * min(1.0, dt / tau)
+        self.v_terminal = max(0.0, self.ocv() - i_a * self.rs() - self.v1)
+        return self.v_terminal
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Small dense linear solve (Gaussian elimination, partial pivoting).  n = 6 here,
 # so ~72 multiply-adds — cheap enough to run inside the substep loop.
@@ -331,33 +513,25 @@ class Rt1987:
             return                                   # full isolation, nothing to stamp
         if self.state == "SOFT":
             # Soft-start: the pass FET's gate is ramped so VOUT FOLLOWS a linear
-            # ramp — the switch behaves as a voltage source at the ramp value, not
-            # as a fixed current source.  It supplies whatever the load asks up to
-            # the foldback ceiling; only when the ceiling binds does it become a
-            # current source (and only THEN does the 250 us SCP blanking count).
+            # ramp toward VIN.  It is a CONTROLLED SOURCE on the output node, not a
+            # resistor to the input node — stamping it as a resistor-plus-offset
+            # referenced to the PREVIOUS v_in is what made the first version diverge
+            # (the implicit conductance term moved v_in inside the solve while the
+            # explicit offset did not, injecting a fictitious ~1400 A into the bus).
+            # So: drive n_out toward `target` through the pass resistance, and take
+            # the same current out of n_in explicitly.  The input node here is a
+            # stiff regulated boost output, so the explicit half is well behaved.
             i_fold, i_res, target = self._soft_operating_point(v_in, v_out)
+            r = RT_R_ON + self.r_series
             if i_res > i_fold:
-                # Foldback binding.  Stamped as an EQUIVALENT RESISTANCE that
-                # delivers the limit at the present differential, NOT as an ideal
-                # current source: a current source into a 30 uF node is unbounded
-                # within one substep and blew the solve up (an ideal source has no
-                # feedback path to stop it), whereas the resistive form is bounded,
-                # monotone and settles on the same operating point.
-                r = max(RT_R_ON + self.r_series, (target - v_out) / max(i_fold, 1e-6))
-                g = 1.0 / r
-            else:
-                r = RT_R_ON + self.r_series
-                g = 1.0 / r
-            if True:
-                G[self.n_in][self.n_in] += g
-                G[self.n_out][self.n_out] += g
-                G[self.n_in][self.n_out] -= g
-                G[self.n_out][self.n_in] -= g
-                # Thevenin toward the ramp value: the drop (v_in - target) is the
-                # FET's own not-yet-enhanced channel, modelled as a source offset.
-                off = (v_in - target) * g
-                J[self.n_in] += off
-                J[self.n_out] -= off
+                # Foldback binding: an EQUIVALENT RESISTANCE that delivers the limit
+                # at the present differential, not an ideal current source (an ideal
+                # source into a 30 uF node is unbounded within one substep).
+                r = max(r, (target - v_out) / max(i_fold, 1e-6))
+            g = 1.0 / r
+            G[self.n_out][self.n_out] += g
+            J[self.n_out] += g * target
+            J[self.n_in] -= min(i_fold, max(0.0, i_res))
             return
         # ON: forward branch with the 35 mV regulation offset, i = (dv - V_FWD)/R.
         r = RT_R_ON + self.r_series
@@ -541,6 +715,8 @@ class Boost:
         self.c_out = c_out
         self.v_src = 0.0
         self.v_target = 0.0
+        self.r_droop = 0.0
+        self.v_clip = None
         self.enabled = False
         self.ovp_latched = False
         self.i_out = 0.0
@@ -549,6 +725,7 @@ class Boost:
     def reset(self, v_start=0.0):
         self.v_src = v_start
         self.v_target = v_start
+        self.v_clip = None
         self.i_out = 0.0
         self.limiting = False
 
@@ -570,36 +747,56 @@ class Boost:
             self.i_out = 0.0
             return False
 
-        # Droop injection: v_op = A_v*K_sns*g*i_channel, clipped at the OPA197
-        # ceiling set by the bodged 5 V rail (CLAUDE.md §7).
-        v_op = min(V_OP_CEIL, max(0.0, A_V * K_SNS * g_code * i_ch))
-        # FB-node superposition: solve h1*v_out + h2*v_op = VREF for v_out.  With
-        # h2/h1 = R_D1/R_inj exactly, this is V0 - (R_D1/R_inj)*v_op, i.e. a droop of
-        # RE_MAX*g ohms per channel (RE_MAX = 2.014 ohm at g = 1).
-        self.v_target = (VREF - H2 * v_op) / H1
-        # A boost cannot regulate below its own input (plus the body-diode path).
-        self.v_target = max(self.v_target, v_in - V_BODY_DIODE)
-        self.v_src += (self.v_target - self.v_src) * min(1.0, dt / self.TAU_R)
+        # ── Droop as an IMPLICIT output resistance ───────────────────────────
+        # FB-node superposition: solve h1*v_out + h2*v_op = VREF with
+        # v_op = A_v*K_sns*g*i_channel.  Because h2/h1 = R_D1/R_inj exactly, the
+        # solution is
+        #     v_out = V0 - (R_D1/R_inj)*A_v*K_sns*g*i  =  V0 - RE_MAX*g*i
+        # i.e. the droop network makes the channel a Thevenin source of internal
+        # resistance R_e = RE_MAX*g (2.014 ohm at g = 1).  Stamping it AS that
+        # resistance puts the droop inside the node solve.
+        #
+        # This matters numerically as much as physically: the first version fed the
+        # measured current back explicitly into the next substep's target, and with
+        # a 23 mOhm ideal-diode link between two ~0.6 ohm droop sources the explicit
+        # loop gain is R_e/R_link ~ 26 per substep — it oscillated rail-to-rail and
+        # produced tens of thousands of spurious reverse-blocking events.  Implicit
+        # is both the correct physics and the only stable form at these substep rates.
+        self.r_droop = max(0.0, RE_MAX * g_code)
+        # OPA197 output ceiling on the bodged 5 V rail caps the achievable droop
+        # excursion at (R_D1/R_inj)*V_OP_CEIL; beyond it the droop stops growing.
+        drop_max = (R_D1 / R_INJ) * V_OP_CEIL
+        if self.r_droop * max(i_ch, 0.0) > drop_max:
+            self.v_clip = drop_max
+        else:
+            self.v_clip = None
+        # No-load regulation target, reached through the validated first-order
+        # voltage-loop lag tau_r.
+        target = max(V0_NOLOAD, v_in - V_BODY_DIODE)
+        self.v_src += (target - self.v_src) * min(1.0, dt / self.TAU_R)
         return True
 
+    def r_total(self, v_node):
+        r = self.R_OUT + (0.0 if self.v_clip is not None else self.r_droop)
+        src = self.v_src - (self.v_clip or 0.0)
+        # Output-current ceiling, again as an equivalent resistance rather than an
+        # ideal current source (see Rt1987.stamp()).
+        if (src - v_node) / r > self.I_OUT_MAX:
+            r = max(r, (src - v_node) / self.I_OUT_MAX)
+        return r, src
+
     def stamp(self, G, J, v):
-        """Thevenin source (current-limited) onto the channel's output node."""
+        """Thevenin (droop-resistance) source onto the channel's output node."""
         n = self.node
-        # Current limit as an equivalent SERIES RESISTANCE rather than an ideal
-        # current source — see the note in Rt1987.stamp() for why (an ideal source
-        # into a 30 uF node is unbounded inside one substep).
-        r = self.R_OUT
-        if self.limiting:
-            r = max(self.R_OUT, (self.v_src - v[n]) / self.I_OUT_MAX)
+        r, src = self.r_total(v[n])
         g = 1.0 / r
         G[n][n] += g
-        J[n] += g * self.v_src
+        J[n] += g * src
 
     def post_solve(self, v):
-        i = (self.v_src - v[self.node]) / self.R_OUT
-        self.i_out = min(max(i, 0.0), self.I_OUT_MAX)
-        self.limiting = i > self.I_OUT_MAX
-
+        r, src = self.r_total(v[self.node])
+        self.i_out = max(0.0, (src - v[self.node]) / r)
+        self.limiting = self.i_out >= self.I_OUT_MAX * 0.999
 
 
 class ElectricalSim:
@@ -628,7 +825,8 @@ class ElectricalSim:
     #: fraction of the mechanical tick the electrical engine may consume.
     BUDGET_FRAC = 0.65
 
-    def __init__(self, trace_config="short", noise=None, c_vesc_f=C_VESC_DEFAULT):
+    def __init__(self, trace_config="short", noise=None, c_vesc_f=C_VESC_DEFAULT,
+                 fuel_cell=None, battery=None):
         if trace_config not in TRACE_L_NH:
             raise ValueError(f"trace_config must be one of {sorted(TRACE_L_NH)}")
         self.trace_config = trace_config
@@ -665,11 +863,17 @@ class ElectricalSim:
             (SW_REGEN, "REGEN"), (SW_FC_CHARGE, "FC_CHARGE"), (SW_BT_SEQ, "BT_SEQ"),
         ]
 
+        # Source models are SHARED with Plant (one instance each, so SOC and the
+        # FC double-layer state are integrated exactly once per tick regardless of
+        # which electrical mode is active).  Defaults are created only when this
+        # engine is used standalone (tests, notebooks).
+        self.fuel_cell = fuel_cell if fuel_cell is not None else FuelCellSource()
+        self.battery = battery if battery is not None else BatterySource()
+
         self.events = []
         self.i_aux = I_AUX_A
         self.v_bus_offset = 0.0     # scenario disturbance, added to the SENSED bus
-        self.v_fc_open = V_FC_OPEN  # scenario-settable source health
-        self.v_bt_open = V_BT_OPEN
+        self.i_charge_into_pack = 0.0   # A, set by Plant: Ag105 -> pack (charging)
         self.chopper_active = False
 
         self.t = 0.0
@@ -719,10 +923,17 @@ class ElectricalSim:
     # ── one electrical substep ───────────────────────────────────────────────
     def _substep(self, h, sw, aux, i_motor, code_fc, code_bt, i_charge):
         v = self.v
-        # Source terminals with IR sag against the LAST substep's channel currents.
-        v_fc_in = max(0.0, self.v_fc_open - R_FC_INT * self.i_fc)
+        # ── Source terminals ────────────────────────────────────────────────
+        # The INA253s sense each boost's OUTPUT current; the sources see the INPUT
+        # current, so refer it back through the bus/source voltage ratio and the
+        # boost efficiency before driving the polarization / SOC models.
         bt_seq_on = bool(sw & SW_BT_SEQ)
-        v_bt_in = max(0.0, self.v_bt_open - R_BT_INT * self.i_bt) if bt_seq_on else 0.0
+        i_fc_src = self._source_current(self.i_fc, self.fuel_cell.v_terminal, v[N_BUS])
+        i_bt_src = self._source_current(self.i_bt, self.battery.v_terminal, v[N_BUS])
+        v_fc_in = self.fuel_cell.update(h, i_fc_src)
+        # Net pack current: boost draw minus whatever the Ag105 is pushing back in.
+        v_bt_term = self.battery.update(h, i_bt_src - self.i_charge_into_pack)
+        v_bt_in = v_bt_term if bt_seq_on else 0.0
 
         # Switch state machines advance first (they read the previous node solve).
         for bit, name in self._sw_map:
@@ -805,9 +1016,8 @@ class ElectricalSim:
         rails = {
             # Sensed source terminals (the firmware's FC_VOLTAGE / BT_VOLTAGE taps
             # are on the source side of each boost).
-            "V_fc": max(0.0, self.v_fc_open - R_FC_INT * self.i_fc),
-            "V_batt": max(0.0, self.v_bt_open - R_BT_INT * self.i_bt)
-                      if (sw & SW_BT_SEQ) else self.v_bt_open,
+            "V_fc": self.fuel_cell.v_terminal,
+            "V_batt": self.battery.v_terminal,
             "V_bus": max(0.0, v[N_BUS] + self.v_bus_offset),
             "V_chg": v[N_CHG],
             "V_rgn": v[N_RGN],
@@ -817,6 +1027,13 @@ class ElectricalSim:
         if self.noise is not None:
             rails = self.noise.apply(rails)
         return rails
+
+    @staticmethod
+    def _source_current(i_out, v_src, v_out):
+        """Refer a boost OUTPUT current back to its source-side input current."""
+        if i_out <= 0.0 or v_src <= 0.5:
+            return 0.0
+        return i_out * max(v_out, v_src) / (v_src * ETA_BOOST)
 
     # ── convenience for scenarios / diagnostics ──────────────────────────────
     def node_voltage(self, name):

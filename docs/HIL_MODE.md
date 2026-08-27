@@ -212,6 +212,33 @@ the modelled plant, see **Replay mode** below.) Scenarios:
 | `sag` | −5 V bus disturbance for 1 s at t = 5 s, crossing `LIMIT_V_BUS_MIN` (12.0 V) |
 | `comm-loss` | stops transmitting for 1 s at t = 5 s, then resumes |
 | `drive` | plant only; the operator drives the firmware by hand (`'V'`, `'D'`, `'Y'`) over USB |
+| `charge-cruise` | Run + cruise + `charge_goal` > 0 via the Pi command timeline — `FC_CHARGE` opens on intent, the Ag105 settles to Charging, MPPT released |
+| `charge-regen` | cruise/brake cycling with `charge_goal` > 0 — `MPPT_DISABLE` asserted during regen, `REGEN` ⇄ `FC_CHARGE` mutual exclusion visible |
+| `charge-fault` | charging established, then the charger input rail collapses at t = 20 s — the GENSTAT decode / charger-loss path |
+| `soc-depletion` | sustained battery-heavy load; `V_batt` walks down the OCV curve toward `LIMIT_V_BATT_MIN` (use `--soc0` / `--capacity-ah` to fit a bench session) |
+| `handoff-sag` **(hi-fi only)** | share driven to a rail so one source goes dark, then perturbed — the TP0178/TP0201 reactive-pickup gap |
+| `bringup` **(hi-fi only)** | from dark: the firmware's staged bring-up P0–P3 against the real RT1987 t_D(ON) + soft-start delays |
+| `scp-inrush` **(hi-fi only)** | RT1987 soft-start foldback margin on `MOT_PWR` into the top of the VESC input envelope (0.9 mF) under load |
+
+`python3 tools/hil_plant_sim.py --list-scenarios` prints this table with the engine each
+scenario needs and its default duration. Scenarios marked **hi-fi only** require
+`--electrical hifi` and are refused under the default `simple` engine rather than
+producing a meaningless trace.
+
+| Flag | Meaning |
+|---|---|
+| `--electrical {simple,hifi}` | electrical engine (default `simple` — one droop node). `hifi` selects `tools/hil_electrical.py`: TPS61288 average model, RT1987 ideal-diode state machines, a six-node ODE at an adaptive substep rate. See `docs/HIL_PLANT.md` §8. |
+| `--trace-config {long,short}` | hi-fi parasitic-inductance set: `long` = as-manufactured FastHenry extraction, `short` = post-bodge (default) |
+| `--vesc-cap-uf X` | hi-fi VESC input capacitance (envelope 200–900 µF, default 500) |
+| `--soc0 X` | initial battery state of charge, 0–1 (default 0.7) |
+| `--capacity-ah X` | battery capacity (default 5.0 Ah) |
+| `--noise` | hi-fi: apply ADC quantization (and any configured sigmas) to the injected values |
+| `--list-scenarios` | print the scenario registry and exit |
+
+Several scenarios also drive the board through the firmware's **22-byte Pi command
+packet** (mode, `v_setpoint`, `power_share_setpoint`, `charge_goal`) on the same socket —
+that is the only way `charge_goal` reaches the firmware, and it is what makes the charging
+path testable at all. See `docs/HIL_PLANT.md` §10.
 
 The simulator prints a 1 Hz status line and, at exit, the achieved tick rate and
 worst overrun. The CSV carries every tick: injected sensor values plus the decoded

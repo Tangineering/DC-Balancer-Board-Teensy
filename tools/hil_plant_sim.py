@@ -131,16 +131,45 @@ V_STICTION = 0.02    # m/s     |v| below which the Coulomb term is treated as st
 # Electrical.  V_BUS_NOMINAL and the rails below are the .ino's own constants
 # (V_BUS_NOMINAL 16.0f; LIMIT_V_BUS_MIN 12.0f; LIMIT_V_BATT_MIN 6.2f; 2S pack
 # 7.4-8.4 V; the H-20 fuel cell is a ~13 V-class source with LIMIT_V_FC_MIN 6.0f).
-V_BUS_NOMINAL = 16.0     # V
-K_DROOP_BUS = 0.35       # V/A   aggregate bus droop, source-agnostic (bench-plausible)
-V_FC_OPEN = 13.0         # V     fuel-cell open-circuit class
-R_FC_INT = 0.45          # ohm   FC internal resistance (IR sag)
-V_BT_OPEN = 8.0          # V     2S LiPo mid-charge
-R_BT_INT = 0.05          # ohm   pack + wiring resistance
+V_BUS_NOMINAL = 16.0     # V   the firmware's own constant; kept for reference
+
+# ── MEASURED bus droop ──────────────────────────────────────────────────────
+# Fit of V_bus against I_fc + I_batt over quasi-steady 200 ms blocks of TP0170-0180
+# (TP0178 EXCLUDED — that is the handoff-sag log, not a steady operating point),
+# ML0165 and ML0169, all fw v16.  Two clearly separated regimes:
+#     both sources live   0.0740 +/- 0.004 V/A
+#     exactly one live    0.1615 +/- 0.001 V/A   (FC and BT symmetric within 2 %)
+# with no-load intercepts landing in 15.943-15.957 V, hence V_BUS_DROOP_V0 = 15.95
+# rather than the firmware's nominal 16.0 (which stays above, for reference).
+#
+# OPEN FINDING, deliberately not hidden: the realized droop is ~4x BELOW the MDAC
+# droop-chain design value.  The design predicts R_e = RE_MAX*g = 2.014*0.298
+# = 0.60 ohm per channel, i.e. 0.30 V/A with both channels sharing — four times the
+# measured 0.074 V/A.  Nothing in the repo explains the discrepancy yet; the hi-fi
+# electrical engine (hil_electrical.py) reproduces the DESIGN value by construction,
+# so running the same scenario in both modes shows the gap directly.
+K_DROOP_BUS_SHARED = 0.074   # V/A  both sources live
+K_DROOP_BUS_SINGLE = 0.16    # V/A  exactly one source live
+V_BUS_DROOP_V0 = 15.95       # V    measured no-load intercept
+# Back-compatible alias: the shared-source value is the common case.
+K_DROOP_BUS = K_DROOP_BUS_SHARED
+
 ETA_BOOST = 0.85         # boost-stage efficiency, motor draw -> bus current
 I_AUX_A = 0.15           # A     fixed housekeeping load on the bus
 C_BUS_F = 470e-6         # F     bus bulk capacitance (decay when no source is closed)
 R_BUS_BLEED = 2000.0     # ohm   effective bleed across that capacitance
+
+# ── Source models ───────────────────────────────────────────────────────────
+# The fuel-cell polarization model and the battery SOC/OCV model live in
+# hil_electrical.py (SOURCE MODELS block) so BOTH electrical modes share one
+# instance of each.  See docs/HIL_PLANT.md "Source models".
+# (path insert so `python3 tools/hil_plant_sim.py` from the repo root and
+#  `from hil_plant_sim import SCENARIOS` from a sibling both resolve the module.)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hil_electrical import (                                   # noqa: E402
+    BatterySource, FuelCellSource, ElectricalSim, NoiseConfig,
+    BATT_CAPACITY_AH, C_VESC_DEFAULT,
+)
 
 
 def xor_checksum(payload: bytes) -> int:
@@ -220,7 +249,7 @@ class Plant:
         at all (the firmware skips them entirely under HIL).
     """
 
-    def __init__(self):
+    def __init__(self, electrical=None, soc0=0.7, capacity_ah=BATT_CAPACITY_AH):
         self.v = 0.0          # m/s
         self.v_bus = 0.0      # V
         self.i_fc = 0.0
@@ -229,9 +258,25 @@ class Plant:
         self.v_rgn = 0.0
         self.i_aux = I_AUX_A
         self.v_bus_offset = 0.0   # scenario-injected bus disturbance [V]
+        # ── Source models (shared by both electrical modes) ──────────────────
+        # Plant OWNS the two source objects and hands them to the hi-fi engine, so
+        # SOC and the fuel-cell double-layer state are integrated exactly once per
+        # tick whichever mode is selected.
+        self.battery = BatterySource(soc0=soc0, capacity_ah=capacity_ah)
+        self.fuel_cell = FuelCellSource()
+        # ── Optional high-fidelity electrical engine ────────────────────────
+        self.electrical = electrical
+        if electrical is not None:
+            electrical.fuel_cell = self.fuel_cell
+            electrical.battery = self.battery
         # ── Ag105 charger model state ───────────────────────────────────────
         self.i_charge = 0.0           # A   measured charge current (reg 0x06 equivalent)
         self.chg_powered_s = 0.0      # s   time the charger input has been continuously live
+        self.chg_fault = False        # scenario-driven charger-input collapse
+        # Scenario-driven extra draw on the V-MOT node, i.e. BEHIND MOT_PWR.  This is
+        # NOT i_aux (which sits on VBUS): only a load behind the switch loads the
+        # switch, which is the whole point of the `scp-inrush` margin case.
+        self.i_mot_extra = 0.0
         self.ag105_status = AG105_ST_DISCONNECT
 
     def step(self, dt, obs):
@@ -277,35 +322,70 @@ class Plant:
             i_motor = p_mech / (ETA_BOOST * self.v_bus)
         else:
             i_motor = 0.0
+        i_motor += self.i_mot_extra if mot_live else 0.0
         i_total = i_motor + self.i_aux
 
-        if fc_live or bt_live:
-            self.v_bus = V_BUS_NOMINAL - K_DROOP_BUS * i_total + self.v_bus_offset
-            # Share split by droop code ratio (see class docstring for the caveat).
-            if fc_live and bt_live:
-                denom = code_fc + code_bt
-                frac_fc = (code_fc / denom) if denom > 1e-9 else 0.5
-            elif fc_live:
-                frac_fc = 1.0
-            else:
-                frac_fc = 0.0
-            self.i_fc = i_total * frac_fc
-            self.i_batt = i_total * (1.0 - frac_fc)
+        if self.electrical is not None:
+            # ── Hi-fi delegation ────────────────────────────────────────────
+            # Only the ELECTRICAL section is delegated.  The mechanical model above
+            # and the Ag105 status logic below stay here, so a scenario behaves the
+            # same way in either mode apart from the electrical fidelity itself.
+            self.electrical.i_aux = self.i_aux
+            self.electrical.v_bus_offset = self.v_bus_offset
+            self.electrical.i_charge_into_pack = self.i_charge
+            rails = self.electrical.step(dt, {
+                "sw": sw, "aux": aux, "i_motor_a": i_motor,
+                "code_fc": code_fc, "code_bt": code_bt,
+                "i_charge_a": self.i_charge,
+            })
+            self.v_bus = rails["V_bus"]
+            self.i_fc = rails["I_fc"]
+            self.i_batt = rails["I_batt"]
+            self.v_chg = rails["V_chg"]
+            self.v_rgn = rails["V_rgn"]
+            v_fc = rails["V_fc"]
+            v_batt = rails["V_batt"]
         else:
-            # No source closed: the 470 uF bulk decays through its bleed path.
-            tau = R_BUS_BLEED * C_BUS_F
-            self.v_bus += (-self.v_bus / tau) * dt
-            self.i_fc = 0.0
-            self.i_batt = 0.0
-        self.v_bus = max(0.0, self.v_bus)
+            # ── Simple droop node ───────────────────────────────────────────
+            if fc_live or bt_live:
+                # MEASURED droop, mode-aware: the fit separates cleanly into a
+                # both-sources-live regime and a single-source regime (see the
+                # K_DROOP_BUS_* constants).  The old single source-agnostic
+                # 0.35 V/A placeholder is retired.
+                k = K_DROOP_BUS_SHARED if (fc_live and bt_live) else K_DROOP_BUS_SINGLE
+                self.v_bus = V_BUS_DROOP_V0 - k * i_total + self.v_bus_offset
+                # Share split by droop code ratio (see class docstring for the caveat).
+                if fc_live and bt_live:
+                    denom = code_fc + code_bt
+                    frac_fc = (code_fc / denom) if denom > 1e-9 else 0.5
+                elif fc_live:
+                    frac_fc = 1.0
+                else:
+                    frac_fc = 0.0
+                self.i_fc = i_total * frac_fc
+                self.i_batt = i_total * (1.0 - frac_fc)
+            else:
+                # No source closed: the 470 uF bulk decays through its bleed path.
+                tau = R_BUS_BLEED * C_BUS_F
+                self.v_bus += (-self.v_bus / tau) * dt
+                self.i_fc = 0.0
+                self.i_batt = 0.0
+            self.v_bus = max(0.0, self.v_bus)
 
-        # Source terminal voltages with IR sag.
-        v_fc = max(0.0, V_FC_OPEN - R_FC_INT * self.i_fc)
-        v_batt = max(0.0, V_BT_OPEN - R_BT_INT * self.i_batt)
+            # Source terminals from the shared source models: the fuel cell's
+            # polarization curve + double-layer lag, and the pack's OCV(SOC) with
+            # its coulomb count.  Currents are referred to the source side.
+            i_fc_src = ElectricalSim._source_current(
+                self.i_fc, self.fuel_cell.v_terminal, self.v_bus)
+            i_bt_src = ElectricalSim._source_current(
+                self.i_batt, self.battery.v_terminal, self.v_bus)
+            v_fc = self.fuel_cell.update(dt, i_fc_src)
+            # Net pack current: boost draw minus the Ag105's charge current.
+            v_batt = self.battery.update(dt, i_bt_src - self.i_charge)
 
-        # Charger input tracks the bus when its path switch is closed, else 0.
-        self.v_chg = self.v_bus if (sw & SW_FC_CHARGE) else 0.0
-        self.v_rgn = self.v_bus if (sw & SW_REGEN) else 0.0
+            # Charger input tracks the bus when its path switch is closed, else 0.
+            self.v_chg = self.v_bus if (sw & SW_FC_CHARGE) else 0.0
+            self.v_rgn = self.v_bus if (sw & SW_REGEN) else 0.0
 
         # ── Ag105 charger ────────────────────────────────────────────────────
         # Power gating mirrors the firmware's chargerHasPower(): FC_CHARGE closed, or
@@ -313,7 +393,7 @@ class Plant:
         # to be up as well — a closed switch onto a collapsed bus charges nothing.
         chg_path = bool(sw & SW_FC_CHARGE) or (bool(sw & SW_REGEN) and bool(sw & SW_MOT_PWR))
         v_chg_in = self.v_chg if (sw & SW_FC_CHARGE) else self.v_rgn
-        chg_powered = chg_path and v_chg_in >= AG105_V_IN_MIN
+        chg_powered = chg_path and v_chg_in >= AG105_V_IN_MIN and not self.chg_fault
         if chg_powered:
             self.chg_powered_s += dt
         else:
@@ -330,9 +410,21 @@ class Plant:
             # which is what gates chargingControl()'s MPPT release.
             self.i_charge = 0.0
             self.ag105_status = AG105_ST_BRINGUP
+        elif self.battery.soc >= 0.995:
+            # The pack is full.  With the SOC model in place (scope extension,
+            # 2026-08-27) the charger CAN now reach Fully Charged, which the old
+            # SoC-free model never could.  Current tapers to zero and GENSTAT
+            # reports 011 (Fully Charged) — the state the firmware's ag105IsReady()
+            # and detectFaults() GENSTAT decode both have to handle.
+            self.i_charge += (0.0 - self.i_charge) * (dt / AG105_TAU_S)
+            self.ag105_status = AG105_ST_FULL | AG105_FLAG_CV
+            if aux & AUX_MPPT_DISABLE:
+                self.ag105_status |= AG105_FLAG_MPPT_EN | AG105_FLAG_PWR_TRACK
         else:
-            # Constant-current charging into a 2S pack, ramped first-order toward the
-            # configured 2.5 A ceiling.  No SoC model, so it never reaches Fully Charged.
+            # Constant-current charging into the 2S pack, ramped first-order toward
+            # the configured 2.5 A ceiling.  The current is fed back into the pack's
+            # coulomb count (BatterySource, negative = charge), so a long
+            # `charge-cruise` run visibly walks V_batt up the OCV curve.
             self.i_charge += (AG105_I_MAX - self.i_charge) * (dt / AG105_TAU_S)
             self.ag105_status = AG105_ST_CHARGING | AG105_FLAG_CC
             # MPPT_DISABLE is ACTIVE-LOW: pin HIGH releases the tracking loop, pin LOW
@@ -352,6 +444,8 @@ class Plant:
             "v_actual": self.v,
             "I_charge": self.i_charge,
             "ag105_status": self.ag105_status,
+            # Appended (never reordered) for the CSV's new `soc` column.
+            "soc": self.battery.soc,
         }
 
 
@@ -494,6 +588,201 @@ class ReplaySource:
         return self.records[self.i][1], self.i
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# Pi COMMAND PACKET — the firmware's 22-byte command datagram
+#
+# Layout VERIFIED from teensy_controller/teensy_controller.ino
+# processPiCommandPacket(), lines 4806-4852 (and SYNC_BYTE_RX at line 2528).
+# Nothing here is guessed; the body of that function is byte-frozen because the Pi
+# bridge parses fixed offsets.
+#
+#    0   u8    sync   SYNC_BYTE_RX = 0xBB                     (.ino:2528, :4810)
+#    1   u32   timestamp                                      (.ino:4825-4826)
+#    5   u16   pkt_counter_Pi                                 (.ino:4828-4829)
+#    7   f32   v_setpoint            constrained +/-20 m/s    (.ino:4842, :4846)
+#   11   f32   power_share_setpoint  constrained [0,1]        (.ino:4843, :4847)
+#   15   f32   charge_goal                                    (.ino:4844, :4848)
+#   19   u8    mode_cmd   0=HYBRID 1=FC_ONLY 2=BATT 3=CHARGE 4=SAFE  (.ino:4850,:4857)
+#   20   u8    droop_enable — RESERVED, parsed and discarded  (.ino:4851-4852)
+#   21   u8    XOR checksum over bytes 1..20                  (.ino:4812-4814)
+#
+# The firmware's receiveCommands() drains BOTH frame types off the same socket
+# (fw v21 bounded drain loop), so these go to the same address/port as the
+# injection frames.
+# ═════════════════════════════════════════════════════════════════════════════
+SYNC_BYTE_RX = 0xBB
+PI_CMD_SIZE = 22
+
+MODE_HYBRID, MODE_FC_ONLY, MODE_BATT, MODE_CHARGE, MODE_SAFE = 0, 1, 2, 3, 4
+
+
+def pack_pi_command(timestamp_ms, counter, v_setpoint, power_share_setpoint,
+                    charge_goal, mode_cmd, droop_enable=0) -> bytes:
+    body = struct.pack("<IHfffBB", timestamp_ms & 0xFFFFFFFF, counter & 0xFFFF,
+                       v_setpoint, power_share_setpoint, charge_goal,
+                       mode_cmd & 0xFF, droop_enable & 0xFF)
+    return bytes([SYNC_BYTE_RX]) + body + bytes([xor_checksum(body)])
+
+
+class PiCommander:
+    """Plays a scenario's pi-command timeline onto the same socket as the injection
+    frames, at a fixed rate.
+
+    A timeline is a list of (t_seconds, fields) applied in order; `fields` may set
+    any of v_setpoint / power_share_setpoint / charge_goal / mode_cmd /
+    droop_enable, and unspecified fields HOLD their previous value — matching the
+    firmware, which also holds a field it rejects (.ino:4846-4848).
+
+    Rate: PI_CMD_HZ.  The firmware's Pi watchdog wants regular traffic, and a
+    command packet is what marks the link alive (`last_rx_ms`, .ino:4854), so the
+    commander keeps sending the held state even between timeline entries.
+    """
+
+    PI_CMD_HZ = 50.0
+
+    def __init__(self, timeline, rate_hz=PI_CMD_HZ):
+        self.timeline = sorted(timeline or [], key=lambda e: e[0])
+        self.period = 1.0 / rate_hz
+        self.next_tx = 0.0
+        self.idx = 0
+        self.counter = 0
+        self.sent = 0
+        self.state = {"v_setpoint": 0.0, "power_share_setpoint": 0.5,
+                      "charge_goal": 0.0, "mode_cmd": MODE_SAFE, "droop_enable": 0}
+        self.last_applied = None
+
+    def tick(self, t):
+        """Return a packet to send at time t, or None."""
+        while self.idx < len(self.timeline) and self.timeline[self.idx][0] <= t:
+            self.state.update(self.timeline[self.idx][1])
+            self.last_applied = self.timeline[self.idx]
+            self.idx += 1
+        if not self.timeline or t < self.next_tx:
+            return None
+        self.next_tx = t + self.period
+        self.counter = (self.counter + 1) & 0xFFFF
+        self.sent += 1
+        return pack_pi_command(
+            int(t * 1000.0), self.counter, self.state["v_setpoint"],
+            self.state["power_share_setpoint"], self.state["charge_goal"],
+            self.state["mode_cmd"], self.state["droop_enable"])
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SCENARIO REGISTRY
+#
+# The CLI and (by contract) tools/run_hil_suite.py consume this via
+#     from hil_plant_sim import SCENARIOS
+# apply_scenario() remains the behaviour dispatcher; this dict is metadata only.
+#
+#   electrical : "simple" | "hifi" | "any" — which engine the scenario NEEDS.
+#                A "hifi" scenario is refused under --electrical simple rather than
+#                silently producing a meaningless trace.
+#   duration_s : default --duration for this scenario
+#   pi_timeline: optional [(t, {field: value})] fed to PiCommander
+#   vesc_cap_f : optional override of the VESC input capacitance (hi-fi only)
+# ═════════════════════════════════════════════════════════════════════════════
+SCENARIOS = {
+    "steady": {
+        "description": "fixed aux load; the quiescent baseline (H1)",
+        "electrical": "any", "duration_s": 30.0,
+    },
+    "step-load": {
+        "description": "+1.2 A aux load step at t = 5 s — a bus disturbance the "
+                       "share loop must reject",
+        "electrical": "any", "duration_s": 30.0,
+    },
+    "sag": {
+        "description": "-5 V bus disturbance for 1 s at t = 5 s, crossing "
+                       "LIMIT_V_BUS_MIN (12.0 V) — the real UV path (H2)",
+        "electrical": "any", "duration_s": 30.0,
+    },
+    "comm-loss": {
+        "description": "stops transmitting for 1 s at t = 5 s — hold-then-zero (H3)",
+        "electrical": "any", "duration_s": 30.0,
+    },
+    "drive": {
+        "description": "plant only; the operator drives the firmware by hand "
+                       "('V', 'D', 'Y') over USB (H4)",
+        "electrical": "any", "duration_s": 30.0,
+    },
+    # ── Charging-path scenarios (the firmware's charging path had NO coverage) ──
+    "charge-cruise": {
+        "description": "Run state, moderate cruise, charge_goal > 0: FC_CHARGE opens "
+                       "on intent, the Ag105 settles to Charging, MPPT released",
+        "electrical": "any", "duration_s": 40.0,
+        "pi_timeline": [
+            (0.5,  {"mode_cmd": MODE_SAFE, "charge_goal": 0.0}),
+            (3.0,  {"mode_cmd": MODE_HYBRID}),            # Idle -> Run (.ino:4858)
+            (5.0,  {"v_setpoint": 1.2, "power_share_setpoint": 0.5}),
+            (8.0,  {"charge_goal": 1.0}),                 # open FC_CHARGE on INTENT
+        ],
+    },
+    "charge-regen": {
+        "description": "cruise/brake cycling with charge_goal > 0: MPPT_DISABLE "
+                       "asserted during regen, REGEN vs FC_CHARGE mutual exclusion",
+        "electrical": "any", "duration_s": 45.0,
+        "pi_timeline": [
+            (0.5,  {"mode_cmd": MODE_SAFE, "charge_goal": 0.0}),
+            (3.0,  {"mode_cmd": MODE_HYBRID}),
+            (5.0,  {"v_setpoint": 1.5, "charge_goal": 1.0}),
+            (12.0, {"v_setpoint": 0.0}),                  # brake: commanded current
+            (18.0, {"v_setpoint": 1.5}),                  # goes negative -> regen
+            (25.0, {"v_setpoint": 0.0}),
+            (31.0, {"v_setpoint": 1.5}),
+            (38.0, {"v_setpoint": 0.0}),
+        ],
+    },
+    "charge-fault": {
+        "description": "charging established, then the charger input rail collapses "
+                       "— exercises the GENSTAT decode / charger-loss path",
+        "electrical": "any", "duration_s": 40.0,
+        "pi_timeline": [
+            (0.5,  {"mode_cmd": MODE_SAFE, "charge_goal": 0.0}),
+            (3.0,  {"mode_cmd": MODE_HYBRID}),
+            (5.0,  {"v_setpoint": 1.0, "charge_goal": 1.0}),
+        ],
+    },
+    # ── Source-model scenarios ─────────────────────────────────────────────────
+    "soc-depletion": {
+        "description": "sustained battery-heavy load: V_batt walks DOWN the OCV "
+                       "curve toward LIMIT_V_BATT_MIN — the honest UV_BATT path",
+        "electrical": "any", "duration_s": 120.0,
+        "pi_timeline": [
+            (0.5,  {"mode_cmd": MODE_SAFE}),
+            (3.0,  {"mode_cmd": MODE_HYBRID}),
+            (5.0,  {"power_share_setpoint": 0.0}),   # all load onto the battery
+        ],
+    },
+    # ── Hi-fi-only scenarios ───────────────────────────────────────────────────
+    "handoff-sag": {
+        "description": "TP0178/TP0201 class: drive the share to a rail so one source "
+                       "goes dark, then perturb — the standby ideal diode picks up "
+                       "only REACTIVELY, after the bus has already sagged",
+        "electrical": "hifi", "duration_s": 40.0,
+        "pi_timeline": [
+            (0.5,  {"mode_cmd": MODE_SAFE}),
+            (3.0,  {"mode_cmd": MODE_HYBRID}),
+            (6.0,  {"v_setpoint": 1.0, "power_share_setpoint": 1.0}),   # FC-only rail
+        ],
+    },
+    "bringup": {
+        "description": "from dark: the firmware's staged bring-up (P0-P3) against the "
+                       "real RT1987 t_D(ON) + soft-start delays",
+        "electrical": "hifi", "duration_s": 30.0,
+    },
+    "scp-inrush": {
+        "description": "RT1987 soft-start foldback MARGIN case: MOT_PWR ramping into "
+                       "the high end of the VESC input envelope (0.9 mF) plus the "
+                       "470 uF local bulk, under load",
+        "electrical": "hifi", "duration_s": 30.0,
+        "vesc_cap_f": 0.9e-3,
+    },
+}
+
+SCENARIO_NAMES = list(SCENARIOS)
+
+
 def apply_scenario(plant, scenario, t):
     """
     Mutate the plant for the active scenario at time t and return this tick's
@@ -522,6 +811,46 @@ def apply_scenario(plant, scenario, t):
         # Plant only.  The operator drives the firmware by hand ('V', 'D', 'Y' ...)
         # over USB serial; this scenario just keeps the plant honest underneath.
         plant.i_aux = I_AUX_A
+    elif scenario in ("charge-cruise", "charge-regen"):
+        # Nothing to perturb: the stimulus is the pi-command timeline (mode -> Run,
+        # a cruise setpoint, charge_goal > 0).  The plant just carries the load.
+        plant.i_aux = I_AUX_A
+    elif scenario == "charge-fault":
+        # Charging is established by the timeline; at t = 20 s the charger's INPUT
+        # rail collapses (a connector, the FC path browning out).  The Ag105 goes
+        # dark -> GENSTAT "Battery Disconnect", ag105IsReady() drops, and the
+        # firmware's charger-loss handling is what is under test.
+        plant.chg_fault = t >= 20.0
+    elif scenario == "soc-depletion":
+        # A heavy sustained bus load so the coulomb count actually moves.  NOTE: at
+        # 5 Ah a 3 A draw is a ~100 min run — use --soc0 (e.g. 0.15) and/or
+        # --capacity-ah to bring it inside a bench session.  The model is honest
+        # rather than accelerated on purpose: an artificially fast SOC ramp would
+        # also fake the RC-pair and Rs(SOC) dynamics the UV path sees.
+        plant.i_aux = I_AUX_A + (3.0 if t >= 5.0 else 0.0)
+    elif scenario == "handoff-sag":
+        # The share rail is commanded by the timeline; the perturbation is a load
+        # step at t = 20 s, large enough that the FC channel alone cannot hold the
+        # bus.  Whether the standby BT diode picks up cleanly or only after a
+        # measurable unsourced gap is the whole observation (hi-fi only — the simple
+        # droop node has no ideal-diode dynamics and cannot show it).
+        plant.i_aux = I_AUX_A + (1.5 if t >= 20.0 else 0.0)
+    elif scenario == "bringup":
+        # Plant only, from dark.  The operator runs the staged bring-up ('G') and
+        # watches P0-P3 against the RT1987 delays.
+        plant.i_aux = I_AUX_A
+    elif scenario == "scp-inrush":
+        # A legitimate SCP-MARGIN case, not the Death-5 stimulus.  Death-5 was a
+        # full-bus hot-plug onto a discharged node; that exact case is no longer
+        # reproducible, because MOT_PWR carries a 100 nF CSS (~19.8 ms ramp) and the
+        # firmware pre-charges the node during bring-up (CLAUDE.md §2, Death 5).
+        # What CAN still bind the foldback is MOT_PWR ramping into the TOP of the
+        # VESC input envelope (0.9 mF + the 470 uF local bulk) while the node is
+        # already drawing: the ramp current is C*dV/dt on ~1.37 mF, and the load —
+        # which must sit BEHIND the switch, on V-MOT, not on VBUS — adds directly
+        # to it.  Close MOT_PWR after t = 8 s (bench 'M', or a Run entry) to see it.  The event log's scp_cut / sw_ring entries are the
+        # observable; an sw_ring with over_absmax True is the boost-death signature.
+        plant.i_mot_extra = 6.0 if t >= 8.0 else 0.0
     return tx_enabled
 
 
@@ -532,9 +861,29 @@ def main(argv=None):
                     help=f"board UDP port (default {TEENSY_PORT_DEFAULT})")
     ap.add_argument("--bind-port", type=int, default=0,
                     help="local UDP port to bind (0 = ephemeral; the board learns it from us)")
-    ap.add_argument("--scenario", default=None,
-                    choices=["steady", "step-load", "sag", "comm-loss", "drive"],
-                    help="simulated-plant scenario (default steady; not with --replay)")
+    ap.add_argument("--scenario", default=None, choices=SCENARIO_NAMES,
+                    help="simulated-plant scenario (default steady; not with --replay). "
+                         "Use --list-scenarios for descriptions.")
+    ap.add_argument("--list-scenarios", action="store_true",
+                    help="print the scenario registry and exit")
+    ap.add_argument("--electrical", default="simple", choices=["simple", "hifi"],
+                    help="electrical engine: 'simple' droop node (default) or 'hifi' "
+                         "(tools/hil_electrical.py — TPS61288 average model, RT1987 "
+                         "switch state machines, node ODE at an adaptive substep rate)")
+    ap.add_argument("--trace-config", default="short", choices=["long", "short"],
+                    help="hi-fi parasitic-inductance set: 'long' = as-manufactured "
+                         "FastHenry extraction (FC 1.538 nH / BT 3.480 nH), 'short' = "
+                         "post-bodge routing (default; TODO(verify) — never extracted)")
+    ap.add_argument("--vesc-cap-uf", type=float, default=None,
+                    help="hi-fi VESC input capacitance in uF (envelope 200-900, "
+                         "default 500; some scenarios override it)")
+    ap.add_argument("--soc0", type=float, default=0.7,
+                    help="initial battery state of charge, 0-1 (default 0.7)")
+    ap.add_argument("--capacity-ah", type=float, default=BATT_CAPACITY_AH,
+                    help=f"battery capacity in Ah (default {BATT_CAPACITY_AH})")
+    ap.add_argument("--noise", action="store_true",
+                    help="hi-fi: apply ADC quantization (and any configured sigmas) to "
+                         "the injected values")
     ap.add_argument("--replay", default=None, metavar="PATH.BLG",
                     help="replay a recorded bench log as injection frames "
                          "(bypasses the plant integrator; open-loop stimulus)")
@@ -548,6 +897,12 @@ def main(argv=None):
     ap.add_argument("--csv", default=None, help="write a per-tick CSV log here")
     args = ap.parse_args(argv)
 
+    if args.list_scenarios:
+        print(f"{'scenario':<16} {'engine':<7} {'dur':>6}  description")
+        for name, meta in SCENARIOS.items():
+            print(f"{name:<16} {meta['electrical']:<7} {meta['duration_s']:>5.0f}s  "
+                  f"{meta['description']}")
+        return 0
     if args.replay and args.scenario:
         ap.error("--replay and --scenario are mutually exclusive")
     if args.replay_speed <= 0.0:
@@ -555,6 +910,21 @@ def main(argv=None):
     if args.loop and not args.replay:
         ap.error("--loop only applies to --replay")
     scenario = args.scenario or "steady"
+    meta = SCENARIOS[scenario]
+    if not args.replay:
+        if meta["electrical"] == "hifi" and args.electrical != "hifi":
+            ap.error(f"scenario '{scenario}' requires --electrical hifi "
+                     f"(the simple droop node has no ideal-diode/converter dynamics, "
+                     f"so the trace it would produce is meaningless for this test)")
+        if args.duration is None:
+            args.duration = meta["duration_s"]
+    if args.electrical == "hifi" and args.replay:
+        ap.error("--electrical hifi has no effect with --replay (the plant integrator "
+                 "is bypassed); drop one of them")
+    if not 0.0 <= args.soc0 <= 1.0:
+        ap.error("--soc0 must be in [0, 1]")
+    if args.capacity_ah <= 0.0:
+        ap.error("--capacity-ah must be > 0")
 
     replay = None
     if args.replay:
@@ -585,7 +955,24 @@ def main(argv=None):
     sock.bind(("", args.bind_port))
     dest = (args.teensy_ip, args.port)
 
-    plant = Plant()
+    electrical = None
+    if args.electrical == "hifi" and not args.replay:
+        c_vesc = (args.vesc_cap_uf * 1e-6) if args.vesc_cap_uf is not None \
+            else meta.get("vesc_cap_f", C_VESC_DEFAULT)
+        electrical = ElectricalSim(
+            trace_config=args.trace_config,
+            noise=NoiseConfig() if args.noise else None,
+            c_vesc_f=c_vesc)
+        print(f"[hil] electrical=hifi trace={args.trace_config} "
+              f"C_vesc={c_vesc * 1e6:.0f} uF noise={'on' if args.noise else 'off'}")
+    plant = Plant(electrical=electrical, soc0=args.soc0,
+                  capacity_ah=args.capacity_ah)
+    commander = PiCommander(meta.get("pi_timeline")) if not args.replay else None
+    if commander and commander.timeline:
+        print(f"[hil] pi-command timeline: {len(commander.timeline)} entries, "
+              f"{PiCommander.PI_CMD_HZ:.0f} Hz")
+    pi_frames = 0
+    events_file = None
     obs = None
     seq = 0
     rx_frames = 0
@@ -608,7 +995,14 @@ def main(argv=None):
             # Existing schema kept byte-for-byte; replay APPENDS one column so a
             # replay CSV stays parseable by anything that reads the simulated
             # schema, while still naming the source record each row came from.
+            # NOTE: `soc` and the hi-fi columns are deliberately NOT added in replay
+            # mode — the plant integrator is bypassed, so they would be meaningless,
+            # and leaving them out keeps replay_rec at its established column index.
             header_row.append("replay_rec")
+        else:
+            header_row.append("soc")            # APPEND-only (scope extension)
+            if electrical is not None:
+                header_row += ["elec_substep_hz", "elec_events"]
         writer.writerow(header_row)
 
     src = f"replay={os.path.basename(args.replay)}" if replay else f"scenario={scenario}"
@@ -674,6 +1068,18 @@ def main(argv=None):
                 sent_seq = seq                 # the seq actually on the wire this tick
                 seq = (seq + 1) & 0xFF
 
+            # ── Pi command timeline ─────────────────────────────────────────
+            # Same socket, same destination: the firmware's receiveCommands()
+            # drains both frame types and dispatches by length (fw v21).
+            if commander is not None and tx_enabled:
+                pkt = commander.tick(t)
+                if pkt is not None:
+                    try:
+                        sock.sendto(pkt, dest)
+                        pi_frames += 1
+                    except OSError as exc:
+                        print(f"[hil] pi command send failed: {exc}", file=sys.stderr)
+
             if writer:
                 # Log the seq that was SENT this tick, not the already-incremented next one
                 # (the old code logged seq post-increment, so every CSV row was off by one
@@ -696,6 +1102,11 @@ def main(argv=None):
                 ]
                 if replay:
                     row.append(rec_idx)
+                else:
+                    row.append(f"{sensors.get('soc', 0.0):.5f}")
+                    if electrical is not None:
+                        row.append(f"{electrical.achieved_substep_hz:.0f}")
+                        row.append(len(electrical.events))
                 writer.writerow(row)
 
             ticks += 1
@@ -709,7 +1120,11 @@ def main(argv=None):
                           f"I_cmd={obs['current']:+6.2f}A  faults=0x{obs['fault_flags']:04X} "
                           f"| v={sensors['v_actual']:5.2f} m/s V_bus={sensors['V_bus']:5.2f}V "
                           f"I_fc={sensors['I_fc']:5.2f} I_bt={sensors['I_batt']:5.2f} "
-                          f"I_chg={sensors['I_charge']:4.2f} chg=0x{sensors['ag105_status']:02X}")
+                          f"I_chg={sensors['I_charge']:4.2f} chg=0x{sensors['ag105_status']:02X}"
+                          + (f" soc={sensors['soc'] * 100:4.1f}%" if not replay else "")
+                          + (f" | elec {electrical.achieved_substep_hz / 1e3:5.1f} kHz "
+                             f"({electrical._n_sub} sub/tick) ev={len(electrical.events)}"
+                             if electrical is not None else ""))
                 else:
                     print(f"[hil] t={t:6.2f}s  no observation frames yet "
                           f"(tx={tx_frames}) — is the board flashed with -DHIL_SIM=1?")
@@ -738,6 +1153,37 @@ def main(argv=None):
     print(f"[hil] done: {ticks} ticks in {elapsed:.2f}s -> {achieved:.1f} Hz achieved "
           f"(target {args.rate:.0f} Hz), max overrun {max_overrun * 1e3:.2f} ms")
     print(f"[hil] tx={tx_frames} frames, rx={rx_frames} frames, {rx_bad} malformed")
+    if commander is not None and commander.timeline:
+        print(f"[hil] pi commands sent: {pi_frames} "
+              f"(timeline entries applied: {commander.idx}/{len(commander.timeline)})")
+    if not replay:
+        print(f"[hil] battery: SOC {args.soc0 * 100:.1f}% -> "
+              f"{plant.battery.soc * 100:.1f}% "
+              f"({args.capacity_ah:g} Ah), V_batt {plant.battery.v_terminal:.3f} V; "
+              f"fuel cell {plant.fuel_cell.v_terminal:.3f} V at "
+              f"{plant.fuel_cell.i:.3f} A")
+    if electrical is not None:
+        summ = electrical.summary()
+        print(f"[hil] electrical(hifi): {summ['achieved_substep_hz'] / 1e3:.1f} kHz "
+              f"achieved substep rate ({summ['substeps_per_tick']} substeps/tick, "
+              f"trace={summ['trace_config']}), {summ['events']} events "
+              f"{summ['event_kinds'] or ''}")
+        over = [e for e in electrical.events
+                if e.get("kind") == "sw_ring" and e.get("over_absmax")]
+        if over:
+            print(f"[hil] *** {len(over)} switching event(s) with an estimated ring "
+                  f"peak ABOVE the 20 V abs-max — the boost-death signature; "
+                  f"worst {max(e['peak_v'] for e in over):.2f} V ***")
+        if args.csv and electrical.events:
+            path = args.csv + ".events.jsonl"
+            try:
+                import json
+                with open(path, "w", encoding="utf-8") as fh:
+                    for e in electrical.events:
+                        fh.write(json.dumps(e) + "\n")
+                print(f"[hil] {len(electrical.events)} electrical events -> {path}")
+            except OSError as exc:
+                print(f"[hil] could not write {path}: {exc}", file=sys.stderr)
     if replay:
         print(f"[hil] replay: {args.replay} at {args.replay_speed:g}x, "
               f"reached record {replay.i}/{len(replay.records) - 1}, "
