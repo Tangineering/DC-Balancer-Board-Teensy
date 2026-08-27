@@ -1386,3 +1386,45 @@ plan, limitations).
   plan in docs/HIL_MODE.md. Open follow-ups: decode_benchlog.py bit6 label, Ag105/I_charge
   injection, a --replay mode feeding decoded BLGs back as injection frames (would turn
   recorded bench incidents into regression stimuli).
+
+---
+
+## Status & session addendum (2026-08-27b, HIL follow-up rounds: plant doc, decoder bit6, charger injection, replay)
+
+Four orchestrated follow-up rounds on the fw v21 HIL mode, all on `main` (the feature branch
+was merged and work moved to main at the operator's request). FW_VERSION stays 21 — the HIL
+frame was never flashed, so the injection-frame extension is a clean pre-release bump.
+
+- **`docs/HIL_PLANT.md` (new, ~330 lines + review pass):** the plant-side deep dive — 
+  architecture, real-time loop (drift-corrected 1 kHz, why soft-RT suffices vs the 17.25 rad/s
+  crossover), mechanical/electrical models with constants-provenance tables, actuator mapping,
+  scenarios, CSV/BLG correlation, fidelity boundaries. Simulator-only tuning values
+  (V_STICTION, K_DROOP_BUS, R_BUS_BLEED, ETA_BOOST, I_AUX_A, R_FC/BT_INT, AG105_TAU_S,
+  AG105_V_IN_MIN) are honestly `TODO(verify)` — do not launder them into calibrated facts.
+- **HIL injection frame 35 → 40 B** (I_charge float32 at 34, raw Ag105 Table-6 status byte at
+  38, XOR span 1..38): under HIL_SIM with an active link, `pollAg105()` skips real I2C entirely
+  and mirrors the real path's semantics from injected values (unpowered → cleared/invalid;
+  powered → injected status + ag105DataValid; settled → configured by fiat; NO transport
+  faults; GENSTAT fault decode stays live). Stale 35-B frames drop on length with accepts
+  pinned at 0 (loud failure). The simulator gained a status-level charger model (Table-6 bytes
+  from the JSON, settle → charging ramp to 2.5 A, input-rail floor, MPPT_DISABLE tracking-bit
+  behavior). What is still NOT simulated: I2C config writes, CV taper/SoC, the MPPT loop.
+- **BLG flags bit6 in the tooling:** decode_benchlog.py exposes `header["hil_build"]` + a
+  decode-report warning; make_test_blg.py grew `--flags-bit6-on/off` (default OFF, unlike
+  bit4/5); every analysis figure gets a red "HIL_SIM LOG" banner via `_suptitle()`. The
+  PyInstaller analyzer exe STILL needs its standing rebuild to show any of this.
+- **`--replay` mode in hil_plant_sim.py:** decodes a .BLG (via decode_benchlog's API, columns
+  resolved by name at runtime) and plays it back as injection frames at wall-clock pacing
+  through the same scheduler; `--replay-speed`, `--loop`; plant integrator bypassed,
+  observation/CSV/status paths live; CSV gains an appended `replay_rec` column. OPEN-LOOP by
+  construction — the firmware's commands do not influence the replayed trajectory; BLG v1–v7
+  carry no I_charge/ag105_status so those inject as 0/0x00. Smoke-verified frame-perfect vs
+  the decoder's own CSV (synthetic 40 k-record log + ML0146 at 20×, 1000.0 Hz achieved).
+- **Tests, orchestrator-rebuilt from source:** 3535 production + 175 bench + 3662 HIL-build
+  C++; new tools/test_hil_plant_sim.py (58) + test_decode_benchlog.py pytest set = 82 pytest
+  green, decoder harness 145/145, figures suite 191/191 (needs a numpy/matplotlib venv —
+  .venv_benchlog STILL lacks pandas/scipy). Known un-covered: the sim's main() socket loop,
+  apply_scenario() internals, CSV-writer path, exact AG105_SETTLE_S boundary tick.
+- **Next:** flash the (now 40-B-frame) fw v21 on a bare Teensy + Ethernet and run H1–H5
+  (docs/HIL_MODE.md), then replay a recorded incident (ML0151) as an H6-class regression.
+  Housekeeping: analyzer exe rebuild; .venv_benchlog pandas/scipy.
