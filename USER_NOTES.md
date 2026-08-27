@@ -1,5 +1,5 @@
 # HIL Updates 2026-08-26a
-- Measure K_DROOP_BUS for the plant simulation empirically from previous logs
+- Measure K_DROOP_BUS for the plant simulation empirically from previous logs.
 - Let's add an option that can be utilized in certain scenarios to enable high-fidelity electrical simulation. 
     - The high-fidelity electrical simulation should run at the maximum frequency possible on the PC that is running it, and at a separate rate than the 1kHz mechanical plant.
     - For the high-fidelity electrical simulation, include at least:
@@ -17,4 +17,5 @@
     - Highest priority to include are those that had failures or degenerate behavior, but also incldue good runs. 
     - Ignore runs such as the manually-turned wheel logs that were for diagnosing the encoder wheel.
     - Since the firmware may differ from what was used when the log was collected, reporting on the results of these logs should value conformance to the original log only when the firmware version matches or if there is no important difference in functionality between the used and  historical firmware versions. For logs with older firmware versions, you can decide whether to omit it from the scenario suite or to include it with a desired deviation from the log that the new firmware should achieve, such as avoiding a failure mode that was previously observed.
+    - Write a document that goes over what logs were used and why. This should be upkept as new logs are added.
 - Add a wrapper script that runs all scenarios and collects the output data to package into the final HIL report.
