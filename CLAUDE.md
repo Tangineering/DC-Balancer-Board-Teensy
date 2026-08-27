@@ -1450,7 +1450,7 @@ tooling only — FW_VERSION stays 21, wire protocol frozen (40 B inject / 16 B o
   others, foldback SCP 250 us trip + 64 ms retry, 35 mV forward servo, -50 mV fast reverse
   comparator — the TP0178/TP0201 reactive-pickup handoff gap falls out of this), droop as
   true FB-node superposition (RE_MAX 2.014), body-diode passthrough of a disabled boost,
-  regen chopper (47 ohm, ~16.5 V TODO(calibrate)), analytic parasitic-ring events (long
+  regen chopper (47 ohm, clamp 18.1 V bench-calibrated 2026-08-27, 20 W dissipation check), analytic parasitic-ring events (long
   1.538/3.480 nH FastHenry, short ~1.5 nH TODO(verify)) — NOT integrated (nH-uF ~100 MHz is
   unintegrable in real-time Python; documented). The literal TPS61288 gm/Z_comp loop was
   built and REPLACED (crossover at substep Nyquist diverged): channels use the repo's

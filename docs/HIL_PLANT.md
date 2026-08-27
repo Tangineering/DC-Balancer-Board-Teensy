@@ -708,9 +708,17 @@ part's specification rather than scripted.
 The TL431 + BSP170P clamp on the regen node is autonomous — **not** under firmware
 control. Above `V_CHOPPER_TRIP` a shunt of `V_rgn / 47 Ω` conducts (47 Ω / 20 W dump
 resistor). `V_bus` is unaffected: the chopper sits behind `MOT_PWR`/`REGEN`.
-The trip **threshold itself was never measured** — `TODO(calibrate)`, set to 16.5 V;
-the *dynamics* it is fitted against are the observed 13.3 → 18.1 V peak clamping
-excursion (CLAUDE.md 2026-08-17b).
+The clamp level is **bench-calibrated at 18.1 V** (operator, 2026-08-27, from the
+observed 13.3 → 18.1 V clamping excursion, CLAUDE.md 2026-08-17b; the earlier 16.5 V
+`TODO(calibrate)` placeholder is retired).
+
+**The reason the chopper is simulated at all is the power question:** does dissipation
+in the 47 Ω dump resistor ever exceed its **20 W rating**? At the 18.1 V clamp the
+steady dissipation is `18.1²/47 ≈ 6.97 W`; the rating is only reached through
+excursions past `√(20·47) ≈ 30.7 V`. The engine computes `V_rgn²/47` per substep
+while the chopper conducts, keeps the worst value (`chopper_peak_w`, reported in
+`summary()`), and emits a `chopper_over_power` event once per excursion above
+`P_CHOPPER_MAX_W` — which `run_hil_suite.py` turns into a failing check.
 
 ### 8.7 Noise injection
 

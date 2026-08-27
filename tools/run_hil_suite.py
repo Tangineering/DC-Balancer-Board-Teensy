@@ -415,6 +415,14 @@ def judge_scenario(name, metrics, events, child):
                                     ("%.2f" % events["worst_ring_v"])
                                     if events["worst_ring_v"] is not None else "?")})
 
+    n_chop = events["kinds"].get("chopper_over_power", 0)
+    if n_chop:
+        checks.append({"name": "chopper_over_power", "passed": False,
+                       "detail": "%d excursion(s) where V_rgn^2/47 Ω exceeded the dump "
+                                 "resistor's 20 W rating (the question the chopper model "
+                                 "exists to answer — see hil_electrical.py P_CHOPPER_MAX_W)"
+                                 % n_chop})
+
     if child.get("status") != "ok":
         checks.append({"name": "child_process", "passed": False,
                        "detail": "child %s (rc=%s)" % (child.get("status"), child.get("returncode"))})

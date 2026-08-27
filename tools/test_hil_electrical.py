@@ -713,5 +713,61 @@ def test_l4_cost_init_flag_starts_false_and_first_tick_sets_it():
     assert e._cost_init is True
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Regen chopper: bench-calibrated clamp + the 20 W dissipation question
+# (operator calibration 2026-08-27: clamp observed at 18.1 V; the purpose of the
+# chopper model is checking dissipation vs the 47 Ω resistor's 20 W rating).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_chopper_constants_bench_calibrated():
+    assert he.V_CHOPPER_TRIP == pytest.approx(18.1)
+    assert he.R_CHOPPER == pytest.approx(47.0)
+    assert he.P_CHOPPER_MAX_W == pytest.approx(20.0)
+    # At the clamp level the steady dissipation is well under the rating —
+    # the rating is only reachable past sqrt(20*47) ~= 30.66 V.
+    assert (18.1 ** 2) / 47.0 == pytest.approx(6.97, abs=0.01)
+
+
+def test_chopper_peak_power_tracked_no_event_below_rating():
+    e = he.ElectricalSim()
+    # Force the regen node just above the clamp but far below the 30.7 V
+    # power-rating crossover, then run one substep directly.
+    e.v[he.N_RGN] = 20.0
+    e._substep(1e-5, 0, 0, 0.0, 0.0, 0.0, 0.0)
+    assert e.chopper_active
+    assert 0.0 < e.chopper_peak_w < he.P_CHOPPER_MAX_W
+    assert not any(ev["kind"] == "chopper_over_power" for ev in e.events)
+
+
+def test_chopper_over_power_event_once_per_excursion():
+    e = he.ElectricalSim()
+    # Start far above the rating crossover: even after one backward-Euler
+    # relaxation the solved node stays > 30.7 V, so V^2/47 > 20 W.
+    e.v[he.N_RGN] = 60.0
+    e._substep(1e-6, 0, 0, 0.0, 0.0, 0.0, 0.0)
+    over = [ev for ev in e.events if ev["kind"] == "chopper_over_power"]
+    assert len(over) == 1
+    assert over[0]["p_w"] > he.P_CHOPPER_MAX_W
+    assert over[0]["rating_w"] == pytest.approx(20.0)
+    assert e.chopper_peak_w > he.P_CHOPPER_MAX_W
+    # Still above the rating on the next substep: the once-per-excursion latch
+    # must NOT emit a second event.
+    e.v[he.N_RGN] = 60.0
+    e._substep(1e-6, 0, 0, 0.0, 0.0, 0.0, 0.0)
+    assert sum(1 for ev in e.events if ev["kind"] == "chopper_over_power") == 1
+    # Excursion ends (node back below the clamp), then a new excursion begins:
+    # a second event is correct.
+    e.v[he.N_RGN] = 5.0
+    e._substep(1e-6, 0, 0, 0.0, 0.0, 0.0, 0.0)
+    e.v[he.N_RGN] = 60.0
+    e._substep(1e-6, 0, 0, 0.0, 0.0, 0.0, 0.0)
+    assert sum(1 for ev in e.events if ev["kind"] == "chopper_over_power") == 2
+
+
+def test_chopper_peak_w_in_summary():
+    e = he.ElectricalSim()
+    assert e.summary()["chopper_peak_w"] == 0.0
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

@@ -185,10 +185,17 @@ V_NODE_RUNAWAY_MULT = 2.0   # x V_ABSMAX  hard backstop: a node past this after 
                             #      plausible physical state on this rig (H1)
 
 # Regen chopper — TL431 + BSP170P into 47 Ω / 20 W, autonomous (no firmware control).
-# Observed clamping 13.3 -> 18.1 V peak (CLAUDE.md 2026-08-17b).  The THRESHOLD itself
-# was never measured: TODO(calibrate).
-V_CHOPPER_TRIP = 16.5       # V     TODO(calibrate)
-R_CHOPPER = 47.0            # ohm   47 Ω / 20 W dump resistor
+# Clamp level CALIBRATED from bench observation (operator, 2026-08-27): sustained regen
+# drove V_rgn 13.3 -> 18.1 V with the chopper holding 18.1 V (CLAUDE.md 2026-08-17b);
+# the 16.5 V TODO(calibrate) placeholder is retired.  The point of simulating the
+# chopper is the POWER question: does dissipation in the 47 Ω dump resistor ever
+# exceed its 20 W rating?  At the 18.1 V clamp V²/R = 6.97 W steady — the rating is
+# only reachable through excursions past sqrt(20*47) ≈ 30.7 V — so the engine tracks
+# per-substep dissipation, keeps the worst value, and emits a chopper_over_power
+# event (once per excursion) if it crosses P_CHOPPER_MAX_W.
+V_CHOPPER_TRIP = 18.1       # V     bench-calibrated clamp level (see above)
+R_CHOPPER = 47.0            # ohm   47 Ω dump resistor
+P_CHOPPER_MAX_W = 20.0      # W     resistor power rating (BOM R-SHUNT, 20 W)
 
 # Sources — see the SOURCE MODELS block further down (FuelCellSource /
 # BatterySource).  These remain as the fallback/legacy scalars: V_FC_OPEN is the
@@ -956,6 +963,8 @@ class ElectricalSim:
         self.v_bus_sense_offset = 0.0
         self.i_charge_into_pack = 0.0   # A, set by Plant: Ag105 -> pack (charging)
         self.chopper_active = False
+        self.chopper_peak_w = 0.0       # W, worst instantaneous V_rgn^2/R while clamping
+        self._chopper_over = False      # once-per-excursion latch for chopper_over_power
         self.numeric_fault = False      # M2: sticky -- set once, never cleared
         self.neg_clamp_count = 0        # M2: diagnostic counter of negative-node clamps
 
@@ -1111,6 +1120,27 @@ class ElectricalSim:
             G[N_RGN][N_RGN] += 1.0 / R_CHOPPER
 
         new_v = _solve(G, J)
+        # Chopper dissipation check — THE reason the chopper is simulated at all:
+        # whether V_rgn^2 / 47 Ω ever exceeds the dump resistor's 20 W rating.
+        # Computed from the SOLVED node voltage (the clamp conductance above was
+        # stamped from the pre-solve voltage, so this is the consistent pairing).
+        if self.chopper_active and math.isfinite(new_v[N_RGN]):
+            p_chop = (new_v[N_RGN] ** 2) / R_CHOPPER
+            if p_chop > self.chopper_peak_w:
+                self.chopper_peak_w = p_chop
+            if p_chop > P_CHOPPER_MAX_W:
+                if not self._chopper_over:      # once per excursion
+                    self._chopper_over = True
+                    self.events.append({"t": self.t, "kind": "chopper_over_power",
+                                        "p_w": p_chop, "v_rgn": new_v[N_RGN],
+                                        "rating_w": P_CHOPPER_MAX_W})
+            else:
+                self._chopper_over = False
+        else:
+            # Excursion over (chopper no longer conducting): re-arm the latch here
+            # too, or an excursion that ENDS by dropping below the clamp would leave
+            # it stuck and silently swallow the next over-power event.
+            self._chopper_over = False
         prev_v = self.v
         for i in range(N_NODES):
             if not math.isfinite(new_v[i]):
@@ -1188,4 +1218,5 @@ class ElectricalSim:
             "trace_config": self.trace_config,
             "numeric_fault": self.numeric_fault,          # M2: sticky
             "neg_clamp_count": self.neg_clamp_count,      # M2: diagnostic
+            "chopper_peak_w": self.chopper_peak_w,        # worst V_rgn^2/R while clamping
         }
