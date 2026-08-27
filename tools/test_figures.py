@@ -958,6 +958,136 @@ def test_end_to_end_v1v2():
 # (f) Doc/registry consistency
 # --------------------------------------------------------------------------
 
+def test_hil_build_suptitle_banner():
+    """fw v21 flags bit6 (HIL_SIM build) provenance: figures._hil_build()
+    reads cfg["_hil_build"], and _suptitle() prepends a warning banner (in
+    a warning colour) to every figure's title when it is set -- mirrors
+    the run-name injection pattern (_run_name/cfg["_run_name"])."""
+    cfg_off = _default_cfg()
+    check("hil_build: _hil_build() is False when cfg has no _hil_build key",
+          figures._hil_build(cfg_off) is False)
+
+    cfg_on = _default_cfg()
+    cfg_on["_hil_build"] = True
+    check("hil_build: _hil_build() is True when cfg[\"_hil_build\"] is True",
+          figures._hil_build(cfg_on) is True)
+
+    data = make_v6_fixture()
+
+    fig_off = figures.tracking_subplots(data, cfg_off)
+    try:
+        title_off = fig_off._suptitle.get_text()
+        color_off = fig_off._suptitle.get_color()
+        check("hil_build: no HIL banner in the suptitle when cfg is not "
+              "HIL-flagged", "HIL_SIM" not in title_off, title_off)
+        check("hil_build: suptitle colour is the normal TEXT_COLOR when "
+              "not HIL-flagged", color_off == figures.TEXT_COLOR, color_off)
+    finally:
+        figures.plt.close(fig_off)
+
+    fig_on = figures.tracking_subplots(data, cfg_on)
+    try:
+        title_on = fig_on._suptitle.get_text()
+        color_on = fig_on._suptitle.get_color()
+        check("hil_build: HIL banner IS prepended to the suptitle when "
+              "cfg[\"_hil_build\"] is True",
+              "HIL_SIM" in title_on, title_on)
+        check("hil_build: the run name/figure description still follow "
+              "the banner (banner does not replace the normal title)",
+              "tracking" in title_on, title_on)
+        check("hil_build: suptitle colour changes (warning colour, not "
+              "TEXT_COLOR) when HIL-flagged",
+              color_on != figures.TEXT_COLOR, color_on)
+    finally:
+        figures.plt.close(fig_on)
+
+
+def test_hil_build_from_data():
+    """make_figures.hil_build_from_data() detects flags bit6 (0x40) in a
+    loaded CSV's `flags` column -- True if ANY sample has it set, False if
+    none do or the column/data is empty."""
+    data_off = make_v6_fixture()  # fixture's flags column is all-zero
+    check("hil_build_from_data: False on an all-zero flags column",
+          make_figures.hil_build_from_data(data_off) is False)
+
+    data_on = dict(data_off)
+    flags = data_off["flags"].copy()
+    flags[:] = 0.0
+    flags[7] = 0x40  # only ONE sample -- still an ANY-sample OR
+    data_on["flags"] = flags
+    check("hil_build_from_data: True when only one sample has bit6 set",
+          make_figures.hil_build_from_data(data_on) is True)
+
+    data_combined = dict(data_off)
+    flags2 = data_off["flags"].copy()
+    flags2[:] = 0x70  # bit6 combined with bit4/bit5 -- must still detect
+    data_combined["flags"] = flags2
+    check("hil_build_from_data: True when bit6 is combined with bit4/bit5",
+          make_figures.hil_build_from_data(data_combined) is True)
+
+    check("hil_build_from_data: False on a missing flags column",
+          make_figures.hil_build_from_data({}) is False)
+    check("hil_build_from_data: False on an empty flags column",
+          make_figures.hil_build_from_data(
+              {"flags": np.array([], dtype=np.float64)}) is False)
+
+
+def test_hil_build_end_to_end():
+    """(e)-style: make_test_blg --flags-bit6-on generates a v7 log whose
+    records all carry flags bit6; ingested + rendered through the real
+    driver, make_all's injected cfg["_hil_build"] must be True and every
+    saved figure's suptitle must carry the HIL banner. A companion
+    non-HIL (bit6 default OFF) log must render with no banner at all --
+    proving this is bit6-driven, not always-on."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+
+        hil_path = tmp / "TESTHIL.BLG"
+        hil_path.write_bytes(
+            make_test_blg.build_blg(seed=0, truncate=False, v7=True,
+                                     fw_version=21, flags_bit6=True))
+        run_dir_hil = ingest_log.ingest(hil_path)
+        data_hil = common.load_csv(_find_run_csv(run_dir_hil))
+        check("hil e2e: ingested v7/bit6-on CSV flags column has bit6 set "
+              "on every sample",
+              bool(np.all(data_hil["flags"].astype(np.int64) & 0x40)),
+              data_hil["flags"][:5])
+
+        cfg_hil = common.load_or_create_config(run_dir_hil)
+        cfg_hil = dict(cfg_hil)
+        cfg_hil.setdefault("_run_name", run_dir_hil.name)
+        cfg_hil.setdefault("_hil_build",
+                            make_figures.hil_build_from_data(data_hil))
+        check("hil e2e: make_all's injected _hil_build is True for the "
+              "bit6-on log", cfg_hil["_hil_build"] is True)
+
+        fig = figures.tracking_subplots(data_hil, cfg_hil)
+        check("hil e2e: a figure built with the injected cfg carries the "
+              "HIL banner", "HIL_SIM" in fig._suptitle.get_text(),
+              fig._suptitle.get_text())
+        figures.plt.close(fig)
+
+        no_hil_path = tmp / "TESTNOHIL.BLG"
+        no_hil_path.write_bytes(
+            make_test_blg.build_blg(seed=0, truncate=False, v7=True,
+                                     fw_version=20, flags_bit6=False))
+        run_dir_no_hil = ingest_log.ingest(no_hil_path)
+        data_no_hil = common.load_csv(_find_run_csv(run_dir_no_hil))
+        check("hil e2e: bit6-off log's flags column has bit6 clear on "
+              "every sample",
+              not np.any(data_no_hil["flags"].astype(np.int64) & 0x40),
+              data_no_hil["flags"][:5])
+        check("hil e2e: make_all's injected _hil_build is False for the "
+              "bit6-off log",
+              make_figures.hil_build_from_data(data_no_hil) is False)
+
+
+def _find_run_csv(run_dir):
+    csvs = list(Path(run_dir).glob("*.csv"))
+    assert len(csvs) == 1, f"expected exactly one CSV in {run_dir}: {csvs}"
+    return csvs[0]
+
+
 def test_readme_consistency():
     readme_path = REPO_ROOT / "tools" / "benchlog_analysis" / "README.md"
     if not readme_path.is_file():
@@ -984,6 +1114,9 @@ def main():
     test_end_to_end_v6()
     test_end_to_end_v7()
     test_end_to_end_v1v2()
+    test_hil_build_suptitle_banner()
+    test_hil_build_from_data()
+    test_hil_build_end_to_end()
     test_readme_consistency()
 
     total = _passed + _failed

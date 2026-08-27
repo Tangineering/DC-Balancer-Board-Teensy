@@ -202,7 +202,8 @@ python3 tools/hil_plant_sim.py \
         --csv hil_run.csv
 ```
 
-Stdlib only — no numpy. Scenarios:
+Stdlib only — no numpy. (To drive the board from a recorded bench log instead of
+the modelled plant, see **Replay mode** below.) Scenarios:
 
 | Scenario | What it does |
 |---|---|
@@ -220,6 +221,107 @@ Plant constants are the repo's calibrated ones (fw v14 force-axis correction —
 `controller_design_MIMO/calibration/motor_id_20260815.md`): `m_eff` 3.5 kg,
 `K_F` 0.7538 N/A, `F_c` 2.00 N, `b_eff` 0.534 N·s/m, `V_BUS_NOMINAL` 16.0 V,
 2S pack 7.4–8.4 V, ~13 V-class fuel cell.
+
+## Replay mode — a recorded bench log as the stimulus
+
+`--replay PATH.BLG` swaps the simulated plant for a **recorded bench run**: the
+`.BLG`'s per-sample rail voltages, source currents and velocity are streamed back
+at the board as ordinary injection frames, at true wall-clock pacing. A recorded
+incident (a UV sag, a boost-death precursor, an encoder-corruption burst) becomes a
+repeatable stimulus you can re-run against any firmware build.
+
+```
+python3 tools/hil_plant_sim.py --teensy-ip 192.168.1.50 \
+        --replay logs/TP0178.BLG --csv hil_replay_TP0178.csv
+```
+
+| Flag | Meaning |
+|---|---|
+| `--replay PATH.BLG` | replay this log; **mutually exclusive with `--scenario`** |
+| `--replay-speed X` | pacing multiplier (default `1.0` = true wall clock) |
+| `--loop` | repeat the log until `--duration` elapses (replay only) |
+| `--duration` | defaults to the log's own length ÷ `--replay-speed` |
+
+The log is decoded through `tools/decode_benchlog.py`'s `decode_blg()` (lazy
+import; a clear message and a non-zero exit if it can't be imported, read or
+parsed), so every BLG format version that decoder supports (v1–v7) replays.
+
+### ⚠️ Fidelity caveat — replay is an OPEN-LOOP stimulus
+
+**The plant integrator is bypassed. The firmware's commands do NOT influence the
+replayed trajectory.** In live simulation the loop is closed — a bigger `I_cmd`
+accelerates the modelled flywheel and comes back as a larger `v_actual`. In replay
+the trajectory is fixed history: command +12 A and `v_actual` keeps doing exactly
+what the bench did. Replay therefore validates **responses** — state transitions,
+switch sequencing, fault latching, command shape at a given operating point — and
+must never be read as a closed-loop trajectory match. Two further consequences:
+
+- The board's own `'V'`/`'D'`/`'Y'` commands cannot "drive" a replay.
+- Divergence between the replayed `I_cmd` (in the log) and the live `current` (in
+  the observation frame) is **expected**, not a defect — see the version warning
+  below.
+
+Because the record schema carries neither field, `I_charge` is replayed as **0.0 A**
+and `ag105_status` as **0x00** (GENSTAT *Battery Disconnect* — what the firmware's
+own failed-read path leaves behind). Charger-path behaviour is therefore *not*
+exercised by replay; use a live scenario for that.
+
+### Field mapping
+
+Left column = the decoder's own CSV column names; right = injection-frame fields.
+
+| BLG record field | Injection frame field | Notes |
+|---|---|---|
+| `V_fc` | `V_fc` | BLG format v3+ only; 0.0 for v1/v2 logs (warned at start) |
+| `V_batt` | `V_batt` | v3+ |
+| `V_bus` | `V_bus` | all versions |
+| `V_chg` | `V_chg` | v3+ |
+| `V_rgn` | `V_rgn` | v3+ |
+| `I_fc` | `I_fc` | all versions |
+| `I_batt` | `I_batt` | all versions |
+| `v_act` | `v_actual` | blank cell (record's velocity-valid flag clear) → 0.0 m/s |
+| — | `I_charge` | not in any BLG record version → **0.0** |
+| — | `ag105_status` | not in any BLG record version → **0x00** |
+
+Timing uses the record `t_us` axis (wrap-safe modular differencing, matching the
+decoder), replayed through the **same drift-corrected scheduler** as live
+simulation, with a zero-order hold between samples. `--rate` still sets the
+transmit tick rate (1 kHz default, which matches the 1 kHz BLG sample rate).
+
+The observation-frame receive path, the CSV log and the 1 Hz status line all run
+exactly as in live simulation. The replay CSV keeps the live schema unchanged and
+**appends one column, `replay_rec`** — the source record index each row was drawn
+from, so a replay CSV lines up against the decoded `.BLG` row-for-row while
+remaining readable by anything that parses the simulated schema.
+
+### Firmware-version warning
+
+At start-up replay prints the log's header `fw_version` and warns that control-law
+responses will differ across versions. This is not boilerplate: a v14 `'V'` trace is
+a *different control law* from a v13 one (regenerated coefficients, new `K_I`, ×1.34
+DC plant gain), fw v18 changed both the coefficients and the saturated-mode
+behaviour, and pre-v18 `v_act` was computed on a physically different encoder wheel.
+Replaying an old log against a new flash is a legitimate and useful test — just do
+not expect the commands to match the log's.
+
+### Worked example — re-running the TP0178 bus sag
+
+`TP0178` (2026-08-17b) recorded `V_bus` sagging to **12.15 V** — 0.15 V above
+`LIMIT_V_BUS_MIN` and only ~10 ms long, under the 20 ms dwell — so the firmware
+correctly did *not* fault. Replaying it verifies that judgement stays correct in the
+current build:
+
+```
+python3 tools/hil_plant_sim.py --teensy-ip 192.168.1.50 \
+        --replay logs/TP0178.BLG --csv hil_TP0178.csv
+```
+
+Expected: the injected `V_bus` column in `hil_TP0178.csv` reproduces the 12.15 V
+trough (it is the recorded one), the observation frame's `mainState` never reaches
+99, and `fault_flags` stays 0 throughout — the sag is under the dwell. Then push it
+over the line: the same run under `--scenario sag` (a −5 V, 1 s disturbance) *must*
+latch State 99 with the UV bit, which is test **H2**. Replay checks the near-miss;
+the scenario checks the trip. Both should hold on any build.
 
 ## HIL test plan
 

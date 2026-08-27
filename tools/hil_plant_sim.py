@@ -53,10 +53,17 @@ Stdlib only — socket, struct, time, argparse, csv.  No numpy.
 Usage:
     python3 tools/hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario steady \
             --duration 30 --csv hil_run.csv
+
+REPLAY MODE (--replay PATH.BLG) swaps the simulated plant for a recorded bench
+log: the .BLG's rail/current/velocity samples are streamed back at the board as
+injection frames, turning a recorded bench incident into a repeatable stimulus.
+The plant integrator is BYPASSED — replay is OPEN LOOP, the firmware's commands
+do not influence the replayed trajectory.  See docs/HIL_MODE.md "Replay mode".
 """
 
 import argparse
 import csv
+import os
 import socket
 import struct
 import sys
@@ -348,6 +355,145 @@ class Plant:
         }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Replay source — a decoded .BLG bench log played back as injection frames.
+# ─────────────────────────────────────────────────────────────────────────────
+# BLG record field  ->  injection frame field.  The names on the left are the
+# decoder's own CSV column names (tools/decode_benchlog.py CSV_FIELDS_V*), read
+# from DecodeResult.csv_header at runtime — nothing here is guessed.
+REPLAY_FIELD_MAP = [
+    ("V_fc",   "V_fc"),
+    ("V_batt", "V_batt"),
+    ("V_bus",  "V_bus"),
+    ("V_chg",  "V_chg"),
+    ("V_rgn",  "V_rgn"),
+    ("I_fc",   "I_fc"),
+    ("I_batt", "I_batt"),
+    ("v_act",  "v_actual"),
+]
+
+# The BLG record carries NO charge-current and NO Ag105 status field in any
+# format version v1-v7 (see decode_benchlog's record tables), so these two
+# injection-frame fields are replayed as zeros: I_charge = 0.0 A and
+# ag105_status = 0x00, which decodes as GENSTAT "Battery Disconnect" — exactly
+# what the firmware's own failed-read path leaves behind.
+REPLAY_I_CHARGE = 0.0
+REPLAY_AG105_STATUS = AG105_ST_DISCONNECT
+
+# t_us in a BLG is micros() at sample time and wraps every ~71.58 min; the
+# decoder already rejects records whose forward modular step is implausible, so
+# a modular difference is the correct way to rebuild a monotonic time axis.
+_U32 = 1 << 32
+
+
+def load_replay(path):
+    """Decode a .BLG into a replay source.
+
+    Returns (records, header, warnings) where records is a list of
+    (t_seconds_from_start, sensors_dict) with sensors_dict shaped exactly like
+    Plant.step()'s return value.
+    """
+    # Lazy import: the decoder is only needed in replay mode, and it lives
+    # beside this file rather than on the default path.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        from decode_benchlog import decode_blg
+    except ImportError as exc:
+        raise SystemExit(
+            f"[hil] cannot import tools/decode_benchlog.py ({exc}) — replay mode "
+            f"needs it to parse the .BLG.  Run from the repo, or put tools/ on "
+            f"PYTHONPATH.")
+
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError as exc:
+        raise SystemExit(f"[hil] cannot read {path}: {exc}")
+
+    try:
+        result = decode_blg(data)
+    except ValueError as exc:
+        raise SystemExit(f"[hil] {path} is not a decodable .BLG: {exc}")
+
+    cols = result.csv_header.split(",")
+    idx = {name: i for i, name in enumerate(cols)}
+    missing = [src for src, _ in REPLAY_FIELD_MAP if src not in idx]
+
+    records = []
+    prev_us = None
+    t_us_accum = 0
+    for row in result.csv_rows:
+        cells = row.split(",")
+        t_us = int(cells[idx["t_us"]])
+        if prev_us is None:
+            t_us_accum = 0
+        else:
+            t_us_accum += (t_us - prev_us) & (_U32 - 1)
+        prev_us = t_us
+
+        sensors = {}
+        for src, dst in REPLAY_FIELD_MAP:
+            if src in idx:
+                cell = cells[idx[src]]
+                # v_sp/v_act are blank when the record's velocity-valid flag
+                # (bit1) is clear — the firmware had no trustworthy velocity,
+                # so 0.0 m/s is the honest injection value.
+                sensors[dst] = float(cell) if cell != "" else 0.0
+            else:
+                sensors[dst] = 0.0
+        sensors["I_charge"] = REPLAY_I_CHARGE
+        sensors["ag105_status"] = REPLAY_AG105_STATUS
+        records.append((t_us_accum / 1e6, sensors))
+
+    if not records:
+        raise SystemExit(f"[hil] {path} decoded to zero records — nothing to replay")
+
+    warnings = []
+    if missing:
+        warnings.append(
+            f"format v{result.header['version']} records carry no "
+            f"{', '.join(missing)} field(s) — injected as 0.0")
+    warnings.extend(result.warnings)
+    return records, result.header, warnings
+
+
+class ReplaySource:
+    """Plays a decoded .BLG back on a wall-clock axis (zero-order hold)."""
+
+    def __init__(self, records, speed=1.0, loop=False):
+        self.records = records
+        self.speed = speed
+        self.loop = loop
+        self.span = records[-1][0]      # log duration [s] at 1.0x
+        self.i = 0
+        self.laps = 0
+        self.finished = False
+
+    def sample(self, t):
+        """Return (sensors, record_index) for wall-clock time t, or (None, None)
+        once a non-looping log has run out."""
+        if self.finished:
+            return None, None
+        tl = t * self.speed
+        if self.span > 0:
+            if tl > self.span:
+                if not self.loop:
+                    self.finished = True
+                    return None, None
+                laps = int(tl // self.span)
+                if laps != self.laps:
+                    self.laps = laps
+                    self.i = 0          # restart the scan for the new lap
+                tl -= laps * self.span
+        elif tl > 0 and not self.loop:
+            self.finished = True
+            return None, None
+        # Monotonic forward scan (zero-order hold on the most recent sample).
+        while self.i + 1 < len(self.records) and self.records[self.i + 1][0] <= tl:
+            self.i += 1
+        return self.records[self.i][1], self.i
+
+
 def apply_scenario(plant, scenario, t):
     """
     Mutate the plant for the active scenario at time t and return this tick's
@@ -386,12 +532,52 @@ def main(argv=None):
                     help=f"board UDP port (default {TEENSY_PORT_DEFAULT})")
     ap.add_argument("--bind-port", type=int, default=0,
                     help="local UDP port to bind (0 = ephemeral; the board learns it from us)")
-    ap.add_argument("--scenario", default="steady",
-                    choices=["steady", "step-load", "sag", "comm-loss", "drive"])
-    ap.add_argument("--duration", type=float, default=30.0, help="run length in seconds")
+    ap.add_argument("--scenario", default=None,
+                    choices=["steady", "step-load", "sag", "comm-loss", "drive"],
+                    help="simulated-plant scenario (default steady; not with --replay)")
+    ap.add_argument("--replay", default=None, metavar="PATH.BLG",
+                    help="replay a recorded bench log as injection frames "
+                         "(bypasses the plant integrator; open-loop stimulus)")
+    ap.add_argument("--replay-speed", type=float, default=1.0,
+                    help="replay pacing multiplier (default 1.0 = true wall clock)")
+    ap.add_argument("--loop", action="store_true",
+                    help="replay: repeat the log until --duration elapses")
+    ap.add_argument("--duration", type=float, default=None,
+                    help="run length in seconds (default 30; replay default = log length)")
     ap.add_argument("--rate", type=float, default=1000.0, help="tick rate in Hz (default 1000)")
     ap.add_argument("--csv", default=None, help="write a per-tick CSV log here")
     args = ap.parse_args(argv)
+
+    if args.replay and args.scenario:
+        ap.error("--replay and --scenario are mutually exclusive")
+    if args.replay_speed <= 0.0:
+        ap.error("--replay-speed must be > 0")
+    if args.loop and not args.replay:
+        ap.error("--loop only applies to --replay")
+    scenario = args.scenario or "steady"
+
+    replay = None
+    if args.replay:
+        records, blg_header, blg_warnings = load_replay(args.replay)
+        replay = ReplaySource(records, speed=args.replay_speed, loop=args.loop)
+        fw = blg_header.get("fw_version")
+        fw_str = "pre-versioning" if fw is None else str(fw)
+        print(f"[hil] replay {args.replay}: BLG format v{blg_header['version']}, "
+              f"fw_version={fw_str}, {len(records)} records, "
+              f"{replay.span:.3f} s of log, speed={args.replay_speed:g}x"
+              f"{', looping' if args.loop else ''}")
+        print("[hil] WARNING: replay is an OPEN-LOOP stimulus — the firmware's "
+              "commands do NOT influence the replayed trajectory.")
+        print(f"[hil] WARNING: this log was recorded under fw_version {fw_str}; "
+              "the flashed firmware's control law may differ (e.g. a v14 'V' "
+              "trace is a different control law than v13 — new coefficients and "
+              "a x1.34 DC plant gain), so responses will NOT match the log.")
+        for w in blg_warnings:
+            print(f"[hil] replay note: {w}")
+        if args.duration is None:
+            args.duration = replay.span / args.replay_speed
+    if args.duration is None:
+        args.duration = 30.0
 
     dt = 1.0 / args.rate
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -412,14 +598,21 @@ def main(argv=None):
     if args.csv:
         csv_file = open(args.csv, "w", newline="")
         writer = csv.writer(csv_file)
-        writer.writerow([
+        header_row = [
             "t", "seq", "V_fc", "V_batt", "V_bus", "V_chg", "V_rgn", "I_fc", "I_batt",
             "v_actual", "I_charge", "ag105_status",
             "state", "switch", "aux", "current", "mdac_fc", "mdac_bt",
             "fault_flags",
-        ])
+        ]
+        if replay:
+            # Existing schema kept byte-for-byte; replay APPENDS one column so a
+            # replay CSV stays parseable by anything that reads the simulated
+            # schema, while still naming the source record each row came from.
+            header_row.append("replay_rec")
+        writer.writerow(header_row)
 
-    print(f"[hil] scenario={args.scenario} dest={dest[0]}:{dest[1]} "
+    src = f"replay={os.path.basename(args.replay)}" if replay else f"scenario={scenario}"
+    print(f"[hil] {src} dest={dest[0]}:{dest[1]} "
           f"rate={args.rate:.0f} Hz duration={args.duration:.1f} s")
 
     t0 = time.monotonic()
@@ -451,8 +644,20 @@ def main(argv=None):
                     obs = decoded
                     rx_frames += 1
 
-            tx_enabled = apply_scenario(plant, args.scenario, t)
-            sensors = plant.step(dt, obs)
+            if replay:
+                # Plant integrator BYPASSED: the rails come from the log.  The
+                # observation-receive path, CSV logging and status line above/
+                # below still run — comparing the firmware's live response
+                # against the recorded bench run is the whole point.
+                tx_enabled = True
+                sensors, rec_idx = replay.sample(t)
+                if sensors is None:
+                    print(f"[hil] replay: end of log at t={t:.3f}s")
+                    break
+            else:
+                tx_enabled = apply_scenario(plant, scenario, t)
+                sensors = plant.step(dt, obs)
+                rec_idx = None
 
             if tx_enabled:
                 frame = pack_inject(
@@ -474,7 +679,7 @@ def main(argv=None):
                 # (the old code logged seq post-increment, so every CSV row was off by one
                 # against the frame it describes and against the firmware's seq echo).
                 # On a non-transmitting tick ("comm-loss") there is no frame: log blank.
-                writer.writerow([
+                row = [
                     f"{t:.6f}", sent_seq if tx_enabled else "",
                     f"{sensors['V_fc']:.4f}", f"{sensors['V_batt']:.4f}",
                     f"{sensors['V_bus']:.4f}", f"{sensors['V_chg']:.4f}",
@@ -488,7 +693,10 @@ def main(argv=None):
                     obs["mdac_fc"] if obs else "",
                     obs["mdac_bt"] if obs else "",
                     obs["fault_flags"] if obs else "",
-                ])
+                ]
+                if replay:
+                    row.append(rec_idx)
+                writer.writerow(row)
 
             ticks += 1
 
@@ -530,6 +738,10 @@ def main(argv=None):
     print(f"[hil] done: {ticks} ticks in {elapsed:.2f}s -> {achieved:.1f} Hz achieved "
           f"(target {args.rate:.0f} Hz), max overrun {max_overrun * 1e3:.2f} ms")
     print(f"[hil] tx={tx_frames} frames, rx={rx_frames} frames, {rx_bad} malformed")
+    if replay:
+        print(f"[hil] replay: {args.replay} at {args.replay_speed:g}x, "
+              f"reached record {replay.i}/{len(replay.records) - 1}, "
+              f"laps={replay.laps + 1 if args.loop else 1}")
     if args.csv:
         print(f"[hil] CSV written to {args.csv}")
     return 0

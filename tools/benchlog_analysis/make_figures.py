@@ -70,6 +70,19 @@ def _read_fw_version(run_dir):
     return int(m.group(1)) if m else None
 
 
+def hil_build_from_data(data):
+    """True if `data["flags"]` (a common.load_csv() column) has bit6 (0x40,
+    fw v21 HIL_SIM build) set on ANY sample -- computed directly from the
+    already-loaded CSV rather than re-parsing decode_report.txt, since the
+    bit is per-record and already present in `data`. False (not raised) if
+    the `flags` column is absent or empty -- callers on a pre-v5-ish or
+    zero-sample dict simply see "not a HIL log"."""
+    flags_col = data.get("flags")
+    if flags_col is None or flags_col.size == 0:
+        return False
+    return bool(np.any(np.nan_to_num(flags_col).astype(np.int64) & 0x40))
+
+
 def make_all(run_dir, data=None, cfg=None):
     """Render and save every registered figure for `run_dir`.
 
@@ -107,16 +120,11 @@ def make_all(run_dir, data=None, cfg=None):
     # way as _run_name, so the make_all signature (a GUI contract) is unchanged
     # and a hand-built cfg simply falls back to the pre-v18 pitch.
     cfg.setdefault("_fw_version", _read_fw_version(run_dir))
-    # HIL provenance (fw v21, flags bit6 0x40): computed directly from the
-    # loaded CSV's flags column rather than decode_report.txt, since it's
-    # a per-record bit already available in `data`. True if ANY record has
-    # the bit set. Every figure's suptitle (see figures._suptitle) shows a
-    # warning banner when this is set, so a HIL PNG cannot be mistaken for
-    # a real bench run -- see docs/HIL_MODE.md.
-    flags_col = data.get("flags")
-    hil_build = bool(flags_col is not None and flags_col.size and
-                      np.any(np.nan_to_num(flags_col).astype(np.int64) & 0x40))
-    cfg.setdefault("_hil_build", hil_build)
+    # HIL provenance (fw v21, flags bit6 0x40): every figure's suptitle
+    # (see figures._suptitle) shows a warning banner when this is set, so a
+    # HIL PNG cannot be mistaken for a real bench run -- see
+    # docs/HIL_MODE.md.
+    cfg.setdefault("_hil_build", hil_build_from_data(data))
 
     saved = []
     for name, builder in figures.FIGURES:
