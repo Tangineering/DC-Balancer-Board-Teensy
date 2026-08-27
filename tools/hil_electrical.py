@@ -337,11 +337,18 @@ class Rt1987:
             # current source (and only THEN does the 250 us SCP blanking count).
             i_fold, i_res, target = self._soft_operating_point(v_in, v_out)
             if i_res > i_fold:
-                J[self.n_in] -= i_fold
-                J[self.n_out] += i_fold
+                # Foldback binding.  Stamped as an EQUIVALENT RESISTANCE that
+                # delivers the limit at the present differential, NOT as an ideal
+                # current source: a current source into a 30 uF node is unbounded
+                # within one substep and blew the solve up (an ideal source has no
+                # feedback path to stop it), whereas the resistive form is bounded,
+                # monotone and settles on the same operating point.
+                r = max(RT_R_ON + self.r_series, (target - v_out) / max(i_fold, 1e-6))
+                g = 1.0 / r
             else:
                 r = RT_R_ON + self.r_series
                 g = 1.0 / r
+            if True:
                 G[self.n_in][self.n_in] += g
                 G[self.n_out][self.n_out] += g
                 G[self.n_in][self.n_out] -= g
@@ -405,6 +412,16 @@ class Rt1987:
                 self.t_retry = max(0.0, self.t_retry - dt)
                 if self.t_retry > 0.0:
                     return
+            if self._restart_no_ss:
+                # Reverse-blocked, not powered down: the RT1987 re-arms WITHOUT a
+                # new t_D(ON) + soft-start cycle as soon as it is forward again.
+                # This is exactly the reactive standby-diode pickup that produces
+                # the TP0178/TP0201 handoff gap, so it must not be turned into an
+                # 8 ms restart.
+                if (v_in - v_out) > RT_V_FWD:
+                    self._restart_no_ss = False
+                    self._goto("ON")
+                return
             self._goto("TD_ON")
         elif self.state == "TD_ON":
             if self.t_state >= RT_TD_ON_S:
@@ -436,13 +453,6 @@ class Rt1987:
                 self.t_state = 0.0
                 self.t_retry = 0.0
                 self._restart_no_ss = True
-
-        # A reverse-blocked switch re-arms straight into ON (no soft-start) — this
-        # is what makes the handoff pickup REACTIVE and fast once the bus has sagged.
-        if self.state == "OFF" and getattr(self, "_restart_no_ss", False) \
-                and self.t_retry <= 0.0 and en and powered and (v_in - v_out) > RT_V_FWD:
-            self._restart_no_ss = False
-            self._goto("ON")
 
     def _goto(self, state, v_out=0.0):
         if state == "SOFT":
@@ -575,23 +585,20 @@ class Boost:
     def stamp(self, G, J, v):
         """Thevenin source (current-limited) onto the channel's output node."""
         n = self.node
+        # Current limit as an equivalent SERIES RESISTANCE rather than an ideal
+        # current source — see the note in Rt1987.stamp() for why (an ideal source
+        # into a 30 uF node is unbounded inside one substep).
+        r = self.R_OUT
         if self.limiting:
-            # Ride the current limit as a fixed source until the node voltage rises
-            # far enough that the resistive branch is back inside the ceiling.
-            J[n] += self.I_OUT_MAX
-        else:
-            g = 1.0 / self.R_OUT
-            G[n][n] += g
-            J[n] += g * self.v_src
+            r = max(self.R_OUT, (self.v_src - v[n]) / self.I_OUT_MAX)
+        g = 1.0 / r
+        G[n][n] += g
+        J[n] += g * self.v_src
 
     def post_solve(self, v):
         i = (self.v_src - v[self.node]) / self.R_OUT
-        if self.limiting:
-            self.i_out = self.I_OUT_MAX
-            self.limiting = i > self.I_OUT_MAX
-        else:
-            self.i_out = min(i, self.I_OUT_MAX)
-            self.limiting = i > self.I_OUT_MAX
+        self.i_out = min(max(i, 0.0), self.I_OUT_MAX)
+        self.limiting = i > self.I_OUT_MAX
 
 
 
