@@ -242,34 +242,81 @@ LSB_V_CHG = _ADC_VREF * (78.7 + 10.0) / 10.0 / _ADC_MAX    # ~7.15 mV/count
 LSB_V_RGN = LSB_V_CHG                                      # same divider
 LSB_I = _ADC_VREF / _ADC_MAX / K_SNS                       # 8.06 mA/count
 
-INA_ZERO_OFFSET_A = 0.02    # A  10s-of-mA class zero offset, clipped at 0.
-                            # TODO(verify): no measured per-part offset in the repo.
+INA_ZERO_OFFSET_A = 0.02    # A  MEASURED (2026-08-27, per-log minimum mean with the bus
+                            # live, 201 logs): I_fc +0.0199 A median (~2.5 counts) —
+                            # this default is the FC-CHANNEL figure.  I_batt shows NO
+                            # measurable positive offset (+0.0002 A median; clipped at
+                            # 0, so a small negative offset cannot be excluded).  The
+                            # two fitted parts are ASYMMETRIC — NoiseConfig defaults to
+                            # a per-channel dict {"I_fc": 0.020, "I_batt": 0.0}.
 
 
 class NoiseConfig:
     """Additive noise applied to the INJECTED values (never to internal states).
 
     Quantization is real and computed from the firmware's scale constants.  The
-    gaussian sigmas default to ZERO: no measured per-rail noise figure exists
-    anywhere in this repo, so a non-zero default would be invention.  The
-    `suggested()` classmethod offers plausible values for deliberate use.
+    gaussian sigmas default to ZERO (a noise-free run stays deterministic); the
+    `suggested()` classmethod carries the per-rail sigmas MEASURED from the
+    bench-log corpus (2026-08-27).  `ina_zero_offset` is a per-channel dict —
+    the two fitted INA253A1s measured ASYMMETRIC (see INA_ZERO_OFFSET_A); a
+    plain float is accepted for back-compat and applied to both channels.
     """
 
-    def __init__(self, quantize=True, sigma=None, ina_zero_offset=INA_ZERO_OFFSET_A,
+    def __init__(self, quantize=True, sigma=None, ina_zero_offset=None,
                  seed=None):
         self.quantize = quantize
         self.sigma = dict(sigma or {})
-        self.ina_zero_offset = ina_zero_offset
+        if ina_zero_offset is None:
+            # Measured defaults (2026-08-27): FC channel +20 mA, BT channel none.
+            self.ina_zero_offset = {"I_fc": INA_ZERO_OFFSET_A, "I_batt": 0.0}
+        elif isinstance(ina_zero_offset, dict):
+            self.ina_zero_offset = dict(ina_zero_offset)
+        else:
+            self.ina_zero_offset = {"I_fc": float(ina_zero_offset),
+                                    "I_batt": float(ina_zero_offset)}
         import random
         self._rng = random.Random(seed)
 
     @classmethod
     def suggested(cls, **kw):
-        """A non-zero sigma set, ALL TODO(verify) — order-of-magnitude guesses only."""
+        """Per-rail gaussian sigmas MEASURED from the bench-log corpus (2026-08-27).
+
+        Method: all 206 logs/*.BLG, 1 s windows detrended with a 75 ms moving
+        mean, residual std over quiescent plateaus only (moving-mean p-p gate),
+        bus-live (V_bus > 10 V) so unpowered 0-count windows are excluded.
+        Values are the ADDITIVE (pre-quantization) component
+        sqrt(sd^2 - LSB^2/12), since apply() quantizes AFTER adding noise.
+        Residuals are white (|lag-1 acf| < 0.06) in every channel.
+
+          V_fc   0.019  -- 6.3 LSB, gaussian (kurt 3.0), the noisiest rail by ~8x
+                           in LSB terms: genuine analog noise on the FC sense
+                           path, worth a scope look (it feeds the share loop).
+                           Batch-dependent: 0.0186 (<153) / 0.0209 (153-180
+                           supply swap) / 0.0158 (>180).  Load-independent.
+          V_batt 0.0024 -- 1.2 LSB, quantization-dominated (kurt ~7).  LOAD-
+                           DEPENDENT: reaches ~0.020 under pack sag; this is the
+                           quiescent sensor floor only.
+          V_bus  0.0018 -- 0.49 LSB, near the LSB/sqrt(12) floor; the most
+                           consistent channel (201 logs, both supply batches).
+          V_chg  0.004  -- NOT MEASURABLE: the charger path is unpowered in every
+                           logged run, so the channel is pinned at 0 counts and
+                           negative noise is censored (kurt 272).  Adopted from
+                           V_rgn, which shares the identical 78.7k/10k divider.
+                           TODO(verify) once a charge run is logged.
+          V_rgn  0.0040 -- 0.63 LSB, measured at a real 13.3-13.5 V level (not
+                           clipped).  Heavy-tailed (kurt ~6), so a pure gaussian
+                           slightly understates its excursions.
+          I_fc / I_batt 0.0044 -- 0.6 LSB, both channels agree (4.9 / 5.2 mA raw)
+                           in the 5-30 mA band.  Above ~80 mA the observed std
+                           grows to 12-57 mA, but that is boost ripple and
+                           share-loop dither, NOT sensor noise -- deliberately
+                           excluded (ripple physics belongs to the electrical
+                           engine, not this sensor-noise model).
+        """
         return cls(sigma={
-            "V_fc": 0.010, "V_batt": 0.010, "V_bus": 0.015,   # TODO(verify)
-            "V_chg": 0.020, "V_rgn": 0.020,                   # TODO(verify)
-            "I_fc": 0.020, "I_batt": 0.020,                   # TODO(verify)
+            "V_fc": 0.019, "V_batt": 0.0024, "V_bus": 0.0018,
+            "V_chg": 0.004, "V_rgn": 0.0040,
+            "I_fc": 0.0044, "I_batt": 0.0044,
         }, **kw)
 
     def apply(self, rails):
@@ -279,8 +326,8 @@ class NoiseConfig:
                "I_fc": LSB_I, "I_batt": LSB_I}
         for key, step in lsb.items():
             val = out[key]
-            if key in ("I_fc", "I_batt") and self.ina_zero_offset:
-                val += self.ina_zero_offset
+            if key in ("I_fc", "I_batt"):
+                val += self.ina_zero_offset.get(key, 0.0)
             s = self.sigma.get(key, 0.0)
             if s:
                 val += self._rng.gauss(0.0, s)

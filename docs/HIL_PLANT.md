@@ -727,11 +727,26 @@ Applied to the **injected values**, never to the internal states.
 - **ADC quantization** is real and computed from the firmware's own scale constants
   (`teensy_controller.ino:1128-1144`): `V_fc` 3.01 mV/count, `V_batt` 2.11, `V_bus` 4.55,
   `V_chg`/`V_rgn` 7.15, currents **8.06 mA/count**.
-- **Gaussian sigmas default to ZERO.** No measured per-rail noise figure exists anywhere
-  in this repo, so a non-zero default would be invention. `NoiseConfig.suggested()`
-  offers order-of-magnitude values, every one of them `TODO(verify)`.
-- **INA253 zero offset** defaults to 0.02 A, clipped at zero — 10s-of-mA class,
-  `TODO(verify)`, no per-part measurement exists.
+- **Gaussian sigmas default to ZERO** (a noise-free run stays deterministic), and
+  `NoiseConfig.suggested()` now carries **per-rail sigmas MEASURED from the bench-log
+  corpus** (2026-08-27: all 206 logs, 1 s windows, 75 ms moving-mean detrend, quiescent
+  plateaus only, additive component `√(sd² − LSB²/12)`): `V_fc` **19 mV** (6.3 LSB — the
+  outlier by ~8× in LSB terms; genuine analog noise on the FC sense path, load-independent,
+  worth a scope look since it feeds the share loop), `V_batt` 2.4 mV (quantization-
+  dominated; rises to ~20 mV under pack sag — quiescent floor only), `V_bus` 1.8 mV (near
+  the quantization floor, consistent across 201 logs and both supply batches), `V_rgn`
+  4.0 mV (measured at a real 13.3–13.5 V level; heavy-tailed, kurt ~6), `V_chg` 4 mV
+  **adopted from V_rgn** (identical 78.7 k/10 k divider — the charger path is unpowered in
+  every logged run, so its own channel is censored at 0 counts; `TODO(verify)` after the
+  first logged charge run), currents 4.4 mA sensor floor (the 12–57 mA std observed above
+  ~80 mA is boost ripple / share-loop dither — ripple physics, deliberately excluded from
+  this sensor-noise model).
+- **INA253 zero offset is MEASURED and asymmetric between the two fitted parts**
+  (per-log minimum mean, bus live, 201 logs): `I_fc` **+19.9 mA median** (the old 0.02 A
+  default confirmed to ~1 count), `I_batt` **≈ 0** (+0.2 mA; clipped at zero, so a small
+  negative offset cannot be excluded). `NoiseConfig` therefore defaults to a per-channel
+  dict `{"I_fc": 0.020, "I_batt": 0.0}` (a plain float is still accepted and applied to
+  both).
 
 ### 8.8 Events and the sidecar
 

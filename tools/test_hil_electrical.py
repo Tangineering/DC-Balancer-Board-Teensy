@@ -769,5 +769,41 @@ def test_chopper_peak_w_in_summary():
     assert e.summary()["chopper_peak_w"] == 0.0
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Measured noise model (2026-08-27 bench-log corpus fit) — pin the values so a
+# drive-by edit cannot silently detach them from their measurement provenance.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_suggested_sigmas_are_the_measured_values():
+    nc = he.NoiseConfig.suggested(seed=1)
+    assert nc.sigma == {
+        "V_fc": 0.019, "V_batt": 0.0024, "V_bus": 0.0018,
+        "V_chg": 0.004, "V_rgn": 0.0040,
+        "I_fc": 0.0044, "I_batt": 0.0044,
+    }
+    # V_chg is adopted from V_rgn (identical divider; own channel censored at 0
+    # in every logged run) — the two must stay paired until a charge run is logged.
+    assert nc.sigma["V_chg"] == pytest.approx(nc.sigma["V_rgn"], rel=0.01)
+
+
+def test_ina_zero_offset_default_is_per_channel_asymmetric():
+    nc = he.NoiseConfig(quantize=False, seed=1)
+    assert nc.ina_zero_offset == {"I_fc": he.INA_ZERO_OFFSET_A, "I_batt": 0.0}
+    rails = {"V_fc": 12.0, "V_batt": 8.0, "V_bus": 15.9, "V_chg": 0.0,
+             "V_rgn": 0.0, "I_fc": 1.0, "I_batt": 1.0}
+    out = nc.apply(rails)
+    assert out["I_fc"] == pytest.approx(1.0 + he.INA_ZERO_OFFSET_A)
+    assert out["I_batt"] == pytest.approx(1.0)      # BT part measured offset-free
+
+
+def test_ina_zero_offset_float_back_compat_applies_to_both():
+    nc = he.NoiseConfig(quantize=False, ina_zero_offset=0.05, seed=1)
+    rails = {"V_fc": 12.0, "V_batt": 8.0, "V_bus": 15.9, "V_chg": 0.0,
+             "V_rgn": 0.0, "I_fc": 1.0, "I_batt": 2.0}
+    out = nc.apply(rails)
+    assert out["I_fc"] == pytest.approx(1.05)
+    assert out["I_batt"] == pytest.approx(2.05)
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
