@@ -28,23 +28,27 @@ the rig a fault-*injection* rig rather than a demo.
         HOST — tools/hil_plant_sim.py                    TEENSY 4.1  (-DHIL_SIM=1 -DUSE_ETHERNET=1)
    ┌────────────────────────────────────────┐        ┌──────────────────────────────────────────┐
    │ Plant.step(dt, obs)                    │        │ receiveCommands()                        │
-   │  ├ mechanical integrator  v            │  35 B  │  drain ≤ UDP_DRAIN_MAX_PER_TICK (8)      │
+   │  ├ mechanical integrator  v            │  40 B  │  drain ≤ UDP_DRAIN_MAX_PER_TICK (8)      │
    │  ├ droop bus node        V_bus         │ ─────► │  parse, NaN/Inf reject, host lock,       │
    │  ├ source split          I_fc, I_batt  │  0xB5  │  commit NEWEST accepted frame            │
-   │  └ path rails            V_chg, V_rgn  │  UDP   │            │                             │
-   │            │                           │  :5001 │            ▼                             │
-   │            ▼                           │        │ updateSensors()  ── HIL branch ──        │
-   │  pack_inject(seq, 7 rails + v_actual)  │        │  V_fc V_batt V_bus V_chg V_rgn           │
-   │                                        │        │  I_fc I_batt v_actual  ← frame           │
-   │                                        │        │  (engineering units; no SCALE_*;         │
-   │                                        │        │   updateWheelSpeed() SKIPPED)            │
+   │  ├ path rails            V_chg, V_rgn  │  UDP   │            │                             │
+   │  └ Ag105 charger model   I_charge,     │  :5001 │            ▼                             │
+   │              ag105_status              │        │ updateSensors()  ── HIL branch ──        │
+   │            │                           │        │  V_fc V_batt V_bus V_chg V_rgn           │
+   │            ▼                           │        │  I_fc I_batt v_actual  ← frame           │
+   │  pack_inject(seq, 7 rails + v_actual   │        │  (engineering units; no SCALE_*;         │
+   │      + I_charge + ag105_status)        │        │   updateWheelSpeed() SKIPPED)             │
+   │                                        │        │ pollAg105()  ── HIL branch ──             │
+   │                                        │        │  I_charge, ag105_status  ← frame          │
+   │                                        │        │  (no I2C; chargerHasPower() still real)  │
    │                                        │        │            │                             │
    │                                        │        │            ▼                             │
    │                                        │        │ computeDerivedSignals()                  │
    │                                        │        │ detectFaults()          ← UNMODIFIED     │
    │                                        │        │ state machine 0/1/2/3/98/99              │
    │                                        │        │ motorControl()  powerBalance()           │
-   │                                        │        │ sequencing guards → digitalWrite()       │
+   │                                        │        │ chargingControl()  sequencing guards      │
+   │                                        │        │   → digitalWrite()                        │
    │  parse_output() → obs                  │  16 B  │ setDroopMdac() → mdacLastCode{FC,BT}     │
    │  ◄──────────────────────────────────── │ ◄───── │            │                             │
    │  switch bits, aux bits, I_cmd,         │  0xB6  │            ▼                             │
@@ -85,7 +89,7 @@ The host loop is one flat `while` at `--rate` (default 1000 Hz, `dt = 1/rate`):
 | Receive | Non-blocking `recvfrom` **drained to empty**; every frame is validated by `parse_output()`; malformed frames increment `rx_bad`. The **newest** valid frame becomes `obs` — an observation is a state snapshot, not an event, so older queued frames are simply superseded. |
 | Scenario | `apply_scenario(plant, scenario, t)` mutates the plant for this tick and returns the transmit-enable flag. The flag is recomputed statelessly from `t` every tick — it is a return value, never latched. |
 | Integrate | `plant.step(dt, obs)` — one explicit-Euler tick (§3, §4). With `obs is None` (no frame received yet) the actuators default to all-off, `i_cmd = 0`, and both MDAC fractions to 0.5. |
-| Transmit | `pack_inject()` → one 35-byte datagram to `--teensy-ip:--port`; `seq` increments **only on a transmitted tick**. |
+| Transmit | `pack_inject()` → one 40-byte datagram to `--teensy-ip:--port`; `seq` increments **only on a transmitted tick**. |
 | Log | One CSV row (§7). |
 | Status | A 1 Hz line (§7). |
 | Schedule | Drift-corrected: `next_tick += dt`; `sleep(slack)` when ahead; when behind, accumulate `max_overrun`, and if a single overrun exceeds **0.25 s** resynchronize `next_tick` to now rather than spinning through a burst of catch-up ticks the plant cannot honour. |
@@ -294,17 +298,65 @@ mid-campaign, so no logged stiffness figure is a stable reference for them eithe
 
 The charger and regen rails are pure mirrors of the bus, gated by their path switches.
 That is enough to make the §2 mutual-exclusion sequencing visible in the CSV, and it is
-all the model claims — see §4.6.
+all the model claims for the rails themselves — the charger *behind* those rails is
+modelled separately, next.
 
-### 4.6 Simplifications and their consequences
+### 4.6 The Ag105 charger model
+
+Unlike the electrical sections above, the charger is modelled at the **status level**,
+mirroring `pollAg105()`'s HIL branch in the firmware (which injects `I_charge` and
+`ag105_status` directly and skips I2C entirely, while still reading `chargerHasPower()`
+from the real switch pins — the sequencing under test is the firmware's own, not the
+host's).
+
+```
+    chg_path    = (switch & SW_FC_CHARGE) or ((switch & SW_REGEN) and (switch & SW_MOT_PWR))
+    v_chg_in    = V_chg if (switch & SW_FC_CHARGE) else V_rgn
+    chg_powered = chg_path and v_chg_in >= AG105_V_IN_MIN
+```
+
+`chg_path` mirrors the firmware's own `chargerHasPower()` gate exactly (`FC_CHARGE_ENABLE`
+high, or `REGEN_ENABLE` and `MOT_PWR_ENABLE` both high). `AG105_V_IN_MIN` = 8.0 V is a
+**plant-only refinement on top of that gate** — a closed path switch onto a collapsed bus
+still cannot charge a real module, and `chargerHasPower()` itself has no rail-voltage term
+to mirror; this floor is not present in firmware, only in the simulated physics.
+**`TODO(verify)`** — no datasheet or bench figure backs 8.0 V specifically.
+
+State machine, driven by `chg_powered` and a `chg_powered_s` timer that resets to 0 the
+instant power is lost:
+
+| Condition | `I_charge` | `ag105_status` |
+|---|---|---|
+| `chg_powered` false | 0.0 A (decays to 0 no ramp) | `AG105_ST_DISCONNECT` (0x00) — matches what the firmware's own failed-read path leaves behind |
+| `chg_powered` true, `chg_powered_s < AG105_SETTLE_S` | 0.0 A | `AG105_ST_BRINGUP` (0x04, GENSTAT 100) |
+| `chg_powered` true, settled | first-order ramp toward `AG105_I_MAX` with time constant `AG105_TAU_S` | `AG105_ST_CHARGING \| AG105_FLAG_CC` (0x42), plus `AG105_FLAG_MPPT_EN \| AG105_FLAG_PWR_TRACK` (0x18) **only while `MPPT_DISABLE` reads HIGH** (aux bit2 set) |
+
+| Constant | Value | Provenance |
+|---|---|---|
+| `AG105_SETTLE_S` | 0.5 s | Matches the firmware's own `AG105_SETTLE_MS` (500, `TODO(calibrate)` in the `.ino`) — the bring-up window before `ag105Configured` is trusted. |
+| `AG105_TAU_S` | 0.4 s | Simulator-local numerical parameter — **`TODO(verify)`**, no bench figure backs the ramp rate. |
+| `AG105_I_MAX` | 2.5 A | The firmware's own configured charge-current ceiling (reg `0x00` = `0x01`, `Ag105_Table4_Charge_Current_Select.json`). |
+| `AG105_V_IN_MIN` | 8.0 V | Plant-only input-rail floor — see above. **`TODO(verify)`**. |
+
+`MPPT_DISABLE` is active-low on the real hardware (LOW inhibits the MPPT perturb-and-
+observe loop, HIGH releases it — CLAUDE.md §3); the model reproduces only that polarity's
+effect on the two tracking flags in the status byte. Charging itself continues regardless
+of the pin state, matching the firmware's own rationale for asserting it during regen
+(the fast TL431/BSP170P chopper, not the Ag105, absorbs the transient — see §3.4). There
+is **no battery state of charge and no CV taper**, so the model never reaches
+`AG105_ST_FULL`, and there is no simulated MPPT perturb-and-observe loop or I2C transport
+— the config handshake (reg `0x01`=0x08, reg `0x00`=0x01) is not modelled at all, because
+the firmware's HIL branch skips it entirely and just injects the resulting numbers.
+
+### 4.7 Simplifications and their consequences
 
 | Simplification | Consequence |
 |---|---|
 | **No boost-converter dynamics.** The bus is algebraic in `I_total`; there is no voltage loop, no RHP zero, no compensator lag. | Nothing here reproduces the boost-death class of failure, the τ_r lag the share-loop plant is built on, or a converter's transient response. Do not fit `τ_r` or any converter parameter against a HIL trace. |
 | **No RT1987 turn-on transient.** A switch bit change takes effect within the same tick. | The *ordering* of switch operations is fully observable at 1 ms; the *hot-plug energy* that killed a boost (Death 5) is not modelled at all. A HIL pass says the sequencing logic is right, not that a real closure would be survivable. |
 | **Split proportional to MDAC code ratio.** Sign- and monotonicity-preserving, wrong gain. | Share-loop *logic* testable; share-loop *tuning* not. |
-| **Regen floored at zero (§3.4).** | No bus rise under braking, no regen energy to the charger, no `V_rgn` excursion beyond the bus value. The chopper clamp behaviour seen in the bench logs cannot appear. |
-| **Charger path absent.** The injection frame carries no charger fields, so `I_charge`, `ag105_status_raw`, the GENSTAT decode, `ag105Configured` and `chargingControl()`'s readiness gating all still come from the **real, unpowered** Ag105 I2C bus. | Expect `I_charge == 0` and `ag105IsReady()` false; the charger branch of `chargingControl()` is effectively dead. Any HIL result that depends on charger behaviour is not meaningful. |
+| **Regen floored at zero (§3.4).** | No bus rise under braking, so the `REGEN_ENABLE`+`MOT_PWR_ENABLE` charger-power path (§4.6) can be exercised, but never with genuine regen energy behind it; no `V_rgn` excursion beyond the bus value, so the chopper clamp behaviour seen in the bench logs cannot appear. |
+| **Charger status-level only, no SoC/CV/MPPT-loop.** `I_charge` and `ag105_status` are now injected (§4.6), so `chargingControl()`'s readiness gating and the GENSTAT fault check are live and testable — but there is no battery state of charge, no CV taper, no simulated MPPT perturb-and-observe behaviour, and the I2C transport/config handshake are not modelled at all. | Sequencing and status-decode logic around the charger are meaningful HIL results; charger *tuning* or *energy* behaviour is not. |
 | **Single lumped bus node.** No wiring impedance, no per-source bus segment, no capacitance between nodes. | Handoff-gap phenomena of the TP0178 class (a source dropping out and the other ideal diode picking up only reactively) are not reproduced faithfully; the split here is instantaneous. |
 | **No sensor noise, no quantization, no ADC path.** | Steady-state error in a HIL drive run validates the loop's *structure*, not its noise rejection. There is no encoder jitter, so the current-side chatter seen on the bench cannot appear. |
 
@@ -325,7 +377,8 @@ bytes 1–14, returning `None` on any failure).
 | `switch` bit `SW_FC_CHARGE` (0x10) | `V_chg` = `V_bus`, else 0 |
 | `switch` bit `SW_BT_SEQ` (0x20) | **logged only** — the pack sequencing switch has no modelled effect |
 | `aux` bit0 `FC_REG_ENABLE`, bit1 `BT_REG_ENABLE` | source liveness (§4.1) |
-| `aux` bit2 `MPPT_DISABLE`, bit3 `CBAL_DISABLE` | **logged only** — the charger and balancer are not modelled |
+| `aux` bit2 `MPPT_DISABLE` | drives the two Ag105 tracking flags in the injected status byte (§4.6) while charging |
+| `aux` bit3 `CBAL_DISABLE` | **logged only** — the balancer is not modelled |
 | `current` (float32, **post-clamp**) | `i_cmd` → `f_drive = K_F·i_cmd` (§3.3). Post-clamp means the ±`MOTOR_I_CMD_MAX` (12 A) limiter has already been applied by the firmware; the plant sees exactly what the VESC would be told. |
 | `mdac_fc`, `mdac_bt` (raw AD5443 words) | `mdac_fraction()` — validates the `0x1000` load-and-update control nibble and returns `(word & 0x0FFF)/4095`; a word with a different nibble returns 0.0. Feeds the split (§4.4). Mirrors captured at the firmware's single `setDroopMdac()` SPI chokepoint, because the AD5443 has no readback path. |
 | `state`, `fault_flags` | **logged and printed only** — never fed back into the model. The plant does not change behaviour because the board faulted; that asymmetry is deliberate, so a fault's *plant-side* consequences remain whatever the switch bits say. |
@@ -349,10 +402,15 @@ Selected with `--scenario`; `apply_scenario()` is re-evaluated every tick from `
 | `comm-loss` | transmit suppressed for `5.0 ≤ t < 6.0` s; the plant keeps integrating and logging | the two-stage hold-then-zero in `updateSensors()` | ≤ 50 ms: unchanged. 50–250 ms: values **held**, `hilStale` set, and on the **stale entry edge** `haltMotorOutput()` stands the actuator down (setpoint zeroed, Youla state reset, 0 A sent) — the sensors stay held so a missed tick cannot latch a bogus UV fault. > 250 ms: all seven rails and `v_actual` forced to zero, host unbound, and `triggerFault(FAULT_HIL_LINK, ERR_HIL_STALE)` latched — `ERR_HIL_STALE` = 0x10 disambiguates the deliberate `FAULT_PI_TIMEOUT` bit alias. On resume the link re-locks and the accept count resumes. This is H3. |
 | `drive` | none; `i_aux` at nominal | whatever the operator commands over USB serial (`'V'`, `'D'`, `'Y'`, `'W'`, State-98 generally) | The plant just stays honest underneath a hand-driven run. `v_actual` in the CSV should converge on the setpoint with no sustained ±12 A rail chatter; `current` should show the Hanus-conditioned ramp and release. This is H4 — and since the model has no encoder noise, it validates the loop's *structure*, not its tuning. |
 
-Two scenario notes. First, `sag` injects an **offset on the bus node**, not a source
+Three scenario notes. First, `sag` injects an **offset on the bus node**, not a source
 failure — `V_fc` and `V_batt` are unaffected, so it is an isolated bus-UV stimulus rather
 than a source-dropout stimulus. Second, `comm-loss` is the only scenario that touches the
-transmit gate; all others return `tx_enabled = True` unconditionally.
+transmit gate; all others return `tx_enabled = True` unconditionally. Third, `sag` is an
+**incidental** charger stimulus too, not a dedicated one: if `FC_CHARGE_ENABLE` happens to
+be closed when the offset lands, `V_chg` sags with the bus and can cross below
+`AG105_V_IN_MIN` (§4.6), dropping `chg_powered` and resetting the settle timer — worth
+watching for in a `sag` trace that also has the charger path open, but not something the
+scenario was built to isolate.
 
 ---
 
@@ -360,7 +418,7 @@ transmit gate; all others return `tx_enabled = True` unconditionally.
 
 ### 7.1 CSV schema (`--csv`)
 
-One row per tick, 17 columns:
+One row per tick, 19 columns:
 
 | Column | Source | Notes |
 |---|---|---|
@@ -369,6 +427,8 @@ One row per tick, 17 columns:
 | `V_fc`, `V_batt`, `V_bus`, `V_chg`, `V_rgn` | plant, 4 dp | volts, injected this tick |
 | `I_fc`, `I_batt` | plant, 4 dp | amps |
 | `v_actual` | plant, 5 dp | m/s, flywheel surface speed |
+| `I_charge` | plant, 4 dp | amps, simulated Ag105 charge current (§4.6) |
+| `ag105_status` | plant | raw Table 6 status byte, hex-formatted (`0xNN`) |
 | `state`, `switch`, `aux` | last `obs` | **blank until the first observation frame arrives** |
 | `current` | last `obs`, 4 dp | post-clamp commanded motor current, A |
 | `mdac_fc`, `mdac_bt` | last `obs` | raw 16-bit words; apply `mdac_fraction()` offline to get 0..1 |
@@ -383,9 +443,10 @@ board reported 0".
 ### 7.2 Status line
 
 At 1 Hz the simulator prints board state, switch and aux bytes in hex, `I_cmd`,
-`fault_flags`, and the plant's `v`, `V_bus`, `I_fc`, `I_batt`. Before any observation
-frame arrives it prints the tx count and the "is the board flashed with `-DHIL_SIM=1`?"
-prompt instead — which is the fastest way to catch a wrong-flag flash or a wrong IP.
+`fault_flags`, and the plant's `v`, `V_bus`, `I_fc`, `I_batt`, `I_charge` and
+`ag105_status` (as `I_chg=`/`chg=0x..`). Before any observation frame arrives it prints
+the tx count and the "is the board flashed with `-DHIL_SIM=1`?" prompt instead — which is
+the fastest way to catch a wrong-flag flash or a wrong IP.
 
 ### 7.3 Correlating with the board-side BLG log
 
@@ -421,20 +482,24 @@ The model is trustworthy for:
   hold-then-zero staging, telemetry/command coexistence on one socket.
 - **Control-loop structure** — that the drive controller converges, that anti-windup releases
   cleanly, that the share loop moves the codes in the right direction.
+- **Charger sequencing and status decode** — `chargerHasPower()` gating, the settle-window
+  bring-up, and `detectFaults()`'s GENSTAT check against an injected `ag105_status` (§4.6).
 
 It is **not** trustworthy for: control gains of any kind, converter behaviour, hot-plug
-energy, regen energetics, charger behaviour, encoder/estimator behaviour, sensor noise,
-electrical margins, or anything the board's analog front end does. The constants marked
-`TODO(verify)` in §3–§4 (`V_STICTION`, `K_DROOP_BUS`, `R_BUS_BLEED`, `ETA_BOOST`,
-`I_AUX_A`, `R_FC_INT`, `R_BT_INT`) bound the electrical model's quantitative claims
-further: the *shapes* are right, the *magnitudes* are plausible rather than measured.
+energy, regen energetics, charger *tuning* or *energy* behaviour (no SoC, no CV taper, no
+simulated MPPT loop — §4.6), encoder/estimator behaviour, sensor noise, electrical margins,
+or anything the board's analog front end does. The constants marked `TODO(verify)` in
+§3–§4 (`V_STICTION`, `K_DROOP_BUS`, `R_BUS_BLEED`, `ETA_BOOST`, `I_AUX_A`, `R_FC_INT`,
+`R_BT_INT`, plus `AG105_TAU_S` and `AG105_V_IN_MIN` from §4.6) bound the electrical
+model's quantitative claims further: the *shapes* are right, the *magnitudes* are
+plausible rather than measured.
 
 ### 8.2 Flagged follow-ups
 
 | Item | Scope |
 |---|---|
-| **Ag105 / `I_charge` injection** | Extend the injection frame with the charger fields and gate `pollAg105()` under `HIL_SIM`, so the charger branch stops being dead. This is a **frame-layout change** — the simulator must move in lockstep, and the fw v21 frame sizes (35/16) are quoted in both the `.ino` and the script. |
-| **`--replay` mode** | Feed decoded BLG runs back as injection frames, turning recorded bench incidents (the ML0151 drag event, the TP0178 handoff sag, the VESC reversal dead window) into repeatable regression stimuli against the firmware. |
+| **`--replay` mode** | Feed decoded BLG runs back as injection frames, turning recorded bench incidents (the ML0151 drag event, the TP0178 handoff sag, the VESC reversal dead window) into repeatable regression stimuli against the firmware. **In progress** as of this writing — a parallel change to the Ag105/`I_charge` injection work this document describes. |
 | **Richer electrical model** | Boost voltage-loop lag (the `τ_r` lump), an RT1987 turn-on ramp, per-source bus segments, and a split derived from the droop network's equivalent resistances rather than the raw code ratio. Each would extend the validity envelope in §8.1 by exactly one row. |
-| **Measured electrical constants** | Close the `TODO(verify)` list — most cheaply `K_DROOP_BUS` and `I_AUX_A`, both directly observable on a healthy bench run. |
+| **Measured electrical constants** | Close the `TODO(verify)` list — most cheaply `K_DROOP_BUS` and `I_AUX_A`, both directly observable on a healthy bench run; `AG105_TAU_S` and `AG105_V_IN_MIN` (§4.6) need a bench charge cycle instead. |
 | **Decoder bit6 label** | `tools/decode_benchlog.py` should name the HIL provenance bit so a simulated run cannot be mistaken for a measured one downstream. |
+| **Battery state of charge / CV taper / MPPT loop** | The Ag105 model (§4.6) is status-level only; a stateful SoC model would let `AG105_ST_FULL` and a genuine CV taper appear in a HIL run. |
