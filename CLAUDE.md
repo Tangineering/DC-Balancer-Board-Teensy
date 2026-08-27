@@ -1335,3 +1335,54 @@ sequencing/fault/command/controller/UDP change (telemetry stays v4/58 B).
   velocity number on the new wheel; keep one pre-Schmitt run as the edge-rate baseline.
   Then the fw v18 order unchanged: Schmitt → VESC regen-ceiling → matched-Itot share
   sweep → F_c/b_eff refit. Housekeeping: analyzer exe rebuild; .venv_benchlog pandas/scipy.
+
+---
+
+## Status & session addendum (2026-08-27, fw v21: HIL mode — Teensy as DUT vs a simulated plant)
+
+Orchestrated round (Opus implementer, Sonnet test-writer, parallel Opus safety + Sonnet
+correctness reviews, fix round). **fw v21 (pending flash; the next flash carries v21 alone).**
+Ledger row 21 has full detail; docs/HIL_MODE.md is the reference (frame tables, H1–H5 test
+plan, limitations).
+
+- **New compile flag `HIL_SIM` (default 0; requires `USE_ETHERNET=1`, `#error` otherwise).**
+  Signal-level controller-HIL: a 35-byte UDP injection frame (sync 0xB5, seq, 8×float32 LE —
+  the 7 rails + v_actual in engineering units, XOR bytes 1–33) overrides updateSensors();
+  a 16-byte observation frame (0xB6: seq echo, mainState, switch_state via the factored
+  `readSwitchState()`, aux pin bits, post-clamp `current`, MDAC mirrors from the
+  setDroopMdac() chokepoint, fault_flags, XOR bytes 1–14) streams at 1 kHz to the learned
+  host. Codec compiled unconditionally (testable in every build); only the wiring is gated.
+  detectFaults(), sequencing guards and both controllers run UNMODIFIED on injected values —
+  fault injection is the purpose. v4 telemetry (58 B) and the 22-byte command packet are
+  byte-identical; no protocol bump.
+- **Link-loss is two-stage hold-then-zero**: ≤50 ms fresh; 50–250 ms HOLD (a missed tick is
+  a host artefact, not a plant event) with `haltMotorOutput()` on the stale ENTRY EDGE
+  (review MED-2: a frozen v_actual is live feedback to a ~454 A/(m/s) loop with a real VESC
+  attached); >250 ms force zeros, unbind the host, and latch
+  `triggerFault(FAULT_HIL_LINK, ERR_HIL_STALE)` (FAULT_HIL_LINK ALIASES FAULT_PI_TIMEOUT —
+  fault_flags has no free bit and is protocol-frozen; ERR_HIL_STALE = 0x10 disambiguates).
+- **receiveCommands() is now a bounded drain loop** (UDP_DRAIN_MAX_PER_TICK 8, review
+  MED-1): all 22-byte commands dispatch in order via the extracted, byte-identical
+  `processPiCommandPacket()`; only the NEWEST valid injection frame per tick is committed;
+  drain counters in the 'S' dump. Host learned on FIRST accepted frame only; foreign-source
+  frames ignored + counted (LOW-3). BLG record flags **bit6 = HIL build** (LOW-1; decoder
+  update is open tooling follow-up). "(INJECTED)" provenance markers in the dumps (LOW-2).
+  MED-3 (skipping updateWheelSpeed() vs the fw v17 wrap-guard invariant) is documented at
+  both sites — any future "revert to real sensors" fallback must add the wrap guard.
+- **tools/hil_plant_sim.py** (stdlib-only, 1 kHz drift-corrected): mechanical plant from the
+  fw v14 constants (m_eff 3.5, K_F 0.7538, F_c 2.00, b_eff 0.534), simple droop-bus
+  electrical model honoring switch semantics, scenarios steady/step-load/sag/comm-loss/
+  drive, CSV logging. Known limitations: signal-level only (no power-HIL), charger path NOT
+  simulated (Ag105 I2C real and unpowered; I_charge not injectable — frame extension is the
+  known follow-up), encoder estimator bypassed. Production (BENCH_TEST=0) HIL boot REQUIRES
+  the simulator streaming before power-on (~800 ms INIT_FAIL otherwise; bannered).
+- **Tests: 3523 production + 175 bench + 3625 HIL-build (new third build,
+  -DHIL_SIM=1 -DUSE_ETHERNET=1), all pass, rebuilt from source.** Coverage incl. golden
+  frames both directions, NaN/Inf reject (a checksum admits NaN patterns that would poison
+  the drive recursion), dispatch interleaving/newest-wins/cap, hold/zero/fault/recovery
+  edges, State-99-keeps-injecting regression, hilSendTick content, host lock, BLG bit6.
+  mock_ethernet.h gained remoteIP/remotePort + a multi-packet RX queue.
+- **Next:** flash a bare Teensy (no PCB needed — that is the point) + Ethernet, run the H1–H5
+  plan in docs/HIL_MODE.md. Open follow-ups: decode_benchlog.py bit6 label, Ag105/I_charge
+  injection, a --replay mode feeding decoded BLGs back as injection frames (would turn
+  recorded bench incidents into regression stimuli).
