@@ -230,7 +230,23 @@ The droop is now **measured, and mode-aware**. The old single source-agnostic
 | `V_BUS_DROOP_V0` | 15.95 V | **Measured** no-load intercept. The per-log fits land in 15.943–15.957 V. |
 | `K_DROOP_BUS_SHARED` | 0.074 ± 0.004 V/A | **Measured**, both sources live. |
 | `K_DROOP_BUS_SINGLE` | 0.1615 ± 0.001 V/A | **Measured**, exactly one source live. FC-only and BT-only agree within 2 %. |
-| `v_bus_offset` | scenario-driven | 0 except during `sag` (§6) |
+| `v_bus_offset` (simple mode) | scenario-driven | 0 except during `sag` (§6) — a REAL algebraic disturbance: it is added directly into this node equation, so it is a plant-level event every downstream reader (including the hi-fi engine's own `V_bus` if it were driving this equation) would agree on. |
+
+> **M5 — a named asymmetry between the two electrical modes.** The hi-fi engine's
+> equivalent (`ElectricalSim.v_bus_sense_offset`, fed from the same scenario-driven
+> `Plant.v_bus_offset`) is **SENSED-RAIL-ONLY**: it is added only in `ElectricalSim._rails()`,
+> after the node solve, so the node itself, the diode switches, the boost droop sources and
+> the regen chopper never see it and cannot react to or fight it. Stamping it as a real
+> Norton disturbance on `N_BUS` (mirroring the simple-mode algebra) was attempted and risks
+> destabilizing the node solve against the existing droop sources at the small source
+> resistance needed to make it dominate; rather than ship an under-tested network change,
+> the attribute was renamed (`v_bus_offset` → `v_bus_sense_offset`) to make the asymmetry
+> impossible to miss in code, and it is documented here instead. Practical consequence: the
+> `sag` scenario's `-5 V` dip reaches the firmware's `V_bus` reading identically in both
+> modes (so the UV fault path, §6's H2, is equally exercisable either way), but in hi-fi
+> mode nothing else in the network — the boost regulators, the RT1987 switches, the chopper
+> — responds to it, whereas in simple mode the offset participates in the same droop equation
+> everything else does.
 
 **Fit provenance.** `V_bus` regressed against `I_fc + I_batt` over quasi-steady 200 ms
 blocks of **TP0170–0180** (with **TP0178 excluded** — that is the handoff-sag log, not a
@@ -422,8 +438,8 @@ Selected with `--scenario`; `apply_scenario()` is re-evaluated every tick from `
 
 | Scenario | Perturbation | Firmware path exercised | Expected observable |
 |---|---|---|---|
-| `steady` | `i_aux` held at 0.15 A | quiescent baseline: bring-up, Idle, telemetry, the link itself | `V_bus` ≈ 16.0 − 0.35·`I_total`; `fault_flags == 0`; observation `state` settles at 1 (Idle); simulator rx rate ≈ 1 kHz. This is H1. |
-| `step-load` | `i_aux` → 0.15 + **1.2 A** at t = 5 s (step, held) | share loop's disturbance rejection: `I_total` steps, both source currents rise, the droop node sags by 0.35·1.2 ≈ **0.42 V** | Share loop moves the MDAC codes to restore `power_share_actual` toward its setpoint; the split ratio visibly tracks. Note §4.4 — the *direction* is meaningful, the *gain* is not. |
+| `steady` | `i_aux` held at 0.15 A | quiescent baseline: bring-up, Idle, telemetry, the link itself | `V_bus` ≈ `V_BUS_DROOP_V0` (15.95 V) − `k`·`I_total` with the F1-corrected, mode-aware `k` (§4.2: `K_DROOP_BUS_SHARED` 0.074 V/A with both sources live, `K_DROOP_BUS_SINGLE` 0.1615 V/A with one) — at `i_aux` = 0.15 A alone that is a sub-30 mV droop either way, i.e. `V_bus` stays within noise of 15.95 V; `fault_flags == 0`; observation `state` settles at 1 (Idle); simulator rx rate ≈ 1 kHz. This is H1. |
+| `step-load` | `i_aux` → 0.15 + **1.2 A** at t = 5 s (step, held) | share loop's disturbance rejection: `I_total` steps, both source currents rise, the droop node sags by `k`·1.2 A — **0.074·1.2 ≈ 0.089 V** with both sources live (the common case), or **0.1615·1.2 ≈ 0.194 V** if only one is (the old single source-agnostic 0.35 V/A figure this table used to quote is retired — see §4.2) | Share loop moves the MDAC codes to restore `power_share_actual` toward its setpoint; the split ratio visibly tracks. Note §4.4 — the *direction* is meaningful, the *gain* is not. |
 | `sag` | `v_bus_offset` = **−5.0 V** for `5.0 ≤ t < 6.0` s | the **real** undervoltage path: `LIMIT_V_BUS_MIN` 12.0 V with the `UV_BUS_DWELL_*` leaky-integrator filter (`UV_BUS_DWELL_LATCH_MS` 20 ms net dwell to latch) | ≈ 16 − 5 ≈ 11 V, ~1 V under the limit, for 1 s — far past the 20 ms dwell. Expect `mainState` → **99**, the UV bit latched in `fault_flags`, and the switch bitmask going to the State-99 safe combination. Crucially, **no fault before the dwell elapses**. This is H2. Requires the bus to be armed (`uvBusArmed`), i.e. the bring-up must have reached `V_BUS_CHARGED_THRESH` first. |
 | `comm-loss` | transmit suppressed for `5.0 ≤ t < 6.0` s; the plant keeps integrating and logging | the two-stage hold-then-zero in `updateSensors()` | ≤ 50 ms: unchanged. 50–250 ms: values **held**, `hilStale` set, and on the **stale entry edge** `haltMotorOutput()` stands the actuator down (setpoint zeroed, Youla state reset, 0 A sent) — the sensors stay held so a missed tick cannot latch a bogus UV fault. > 250 ms: all seven rails and `v_actual` forced to zero, host unbound, and `triggerFault(FAULT_HIL_LINK, ERR_HIL_STALE)` latched — `ERR_HIL_STALE` = 0x10 disambiguates the deliberate `FAULT_PI_TIMEOUT` bit alias. On resume the link re-locks and the accept count resumes. This is H3. |
 | `drive` | none; `i_aux` at nominal | whatever the operator commands over USB serial (`'V'`, `'D'`, `'Y'`, `'W'`, State-98 generally) | The plant just stays honest underneath a hand-driven run. `v_actual` in the CSV should converge on the setpoint with no sustained ±12 A rail chatter; `current` should show the Hanus-conditioned ramp and release. This is H4 — and since the model has no encoder noise, it validates the loop's *structure*, not its tuning. |
@@ -635,13 +651,33 @@ SCP behaviours fall out rather than being scripted:
 | `SOFT` | VOUT follows a linear ramp over `tON = (VIN/35)·(CSS_nF/0.0023 − 100) µs` — ~19.8 ms at 16 V on the 100 nF switches (`FC_BUS`, `BT_BUS`, `MOT_PWR`), ~1.07 ms on the 5.6 nF ones (`REGEN`, `FC_CHARGE`, `BT_SEQ`). Foldback SCP is active **only here**: 8.5 A at ΔV ≤ 5 V falling toward ~5.3 A at ΔV = 16 V, floored at 2.5 A. Held continuously at the clamp for **250 µs** → **CUT**, auto-retry after **64 ms**. |
 | `ON` | Forward regulation at `V_FWD` = 35 mV, `R_ON` = 21 mΩ. Fast reverse comparator at **−50 mV** → off, then re-arm **without** a new soft-start once forward again. |
 
-Two modelling notes. First, the soft-start is a **controlled source on the output node**,
+Three modelling notes. First, the soft-start is a **controlled source on the output node**,
 not a resistor referenced to the input node: stamping it the latter way (with the offset
 computed from the previous substep's `v_in` while the conductance term moved `v_in`
 inside the solve) injected a fictitious ~1400 A into the bus. Second, both the foldback
 limit and the boost's output-current ceiling are stamped as **equivalent resistances**,
 never ideal current sources — an ideal source into a 30 µF node is unbounded within a
-single substep.
+single substep (the same principle the H1 fix, §8.3 below, applies to the motor draw/regen
+load). Third — **M6, declared here rather than left implicit** — the soft-start stamp is
+**charge-NON-CONSERVING**: the output node gets an implicit conductance (so it participates
+correctly in the node solve), but the input node is debited *explicitly*, from the
+*previous* substep's current estimate rather than the node solve's own current. This is a
+deliberate stability trade (see the comment at `Rt1987.stamp()`'s `SOFT` branch), not an
+oversight — it only matters during the ~1–20 ms soft-start ramp itself, so treat inrush
+current *shape* during that window as approximate, not exact.
+
+Separately — **H1** — the same "never an ideal source into a small node" discipline now
+also covers the **motor draw/regen load** on `N_MOT` (§4.3/§8.3): a negative (regen)
+`i_motor` used to be stamped as an ideal current source, which is unbounded when `MOT_PWR`
+is open and the node has only the 2 kΩ bleed for company (reproduced: the node ran to
+~10 kV within seconds, and the resulting kV-scale `sw_ring` events fired the `over_absmax`
+Death-5 verdict from a numerical artefact, not a hardware conclusion). It is now stamped as
+a Norton conductance referenced to the previous substep's node voltage
+(`g = i_motor / max(v_node, V_MOT_LOAD_FLOOR)`), and the node solve additionally clamps any
+node that still ends up past `2×V_ABSMAX` to that bound, emitting one `node_runaway` event.
+The `sw_ring` `over_absmax` verdict is itself gated on the cutting switch's node voltage
+being `<= V_ABSMAX` at cut time, so an implausible node state can no longer manufacture a
+Death-5 signature on its own.
 
 **The handoff gap is emergent.** A standby switch conducts only once its input exceeds
 its output by `V_FWD`; so when the live source goes dark, the bus must first *sag* by
@@ -692,8 +728,16 @@ Applied to the **injected values**, never to the internal states.
 ### 8.8 Events and the sidecar
 
 `ElectricalSim.events` accumulates dicts (`scp_cut`, `sw_ring`, `reverse_block`,
-`boost_ovp`). With `--csv PATH` they are written to **`PATH.events.jsonl`**, one JSON
-object per line, and summarized at exit.
+`boost_ovp`, and — as of the M1/M2/H1 fixes — `numeric_fault` and `node_runaway`). With
+`--csv PATH` they are now **streamed to `PATH.events.jsonl`** as they happen (drained and
+`flush()`ed every simulator tick, M3) rather than written once at exit — the durable record
+on disk is current up to the last completed tick even if the process is later killed hard.
+`hil_plant_sim.py` trims `ElectricalSim.events` after every drain to bound its own memory on
+a long run; the sidecar file (and the driver's own running `elec_events_total` /
+over-abs-max tallies used for the exit summary) carry the cumulative totals instead.
+`ElectricalSim.summary()`'s own `events`/`event_kinds` fields therefore reflect only
+whatever has accumulated since the last drain, not the whole run — read the sidecar (or the
+driver's printed totals) for the run-wide picture.
 
 ---
 
@@ -703,6 +747,16 @@ Both electrical engines share **one instance each** of the fuel-cell and battery
 `Plant` owns them and hands them to `ElectricalSim`, so SOC and the FC double-layer state
 are integrated exactly once per tick whichever mode is active, and a scenario behaves the
 same way in both. They live in `tools/hil_electrical.py` (SOURCE MODELS block).
+
+> **L6 fidelity boundary.** The current fed to these models in hi-fi mode
+> (`ElectricalSim.i_fc` / `i_bt`, set from the `FC_BUS`/`BT_BUS` **switch link** current in
+> `_substep()`) is the ideal-diode switch's current, not the boost's own input draw. With a
+> boost enabled but its bus switch **open** — the `bringup` scenario's operating condition,
+> and any stage where a channel is regulating but not yet feeding the bus — the switch
+> carries zero current, so the fuel-cell/battery models see zero draw even though the boost
+> itself may be drawing from the source. Deliberate (the switch link is the only current this
+> network solves for on that side of the boost), but it means FC/SOC dynamics during an
+> enabled-but-unbussed boost stage are not modelled by either electrical mode.
 
 Structure and parameter names follow:
 

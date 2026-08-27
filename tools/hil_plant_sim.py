@@ -63,6 +63,7 @@ do not influence the replayed trajectory.  See docs/HIL_MODE.md "Replay mode".
 
 import argparse
 import csv
+import json
 import os
 import socket
 import struct
@@ -331,7 +332,18 @@ class Plant:
             # and the Ag105 status logic below stay here, so a scenario behaves the
             # same way in either mode apart from the electrical fidelity itself.
             self.electrical.i_aux = self.i_aux
-            self.electrical.v_bus_offset = self.v_bus_offset
+            # M5 DEVIATION: hi-fi's v_bus_sense_offset is SENSED-RAIL-ONLY (added
+            # only in ElectricalSim._rails(), never seen by the node/diode/chopper
+            # network) -- an intentional asymmetry against simple mode, where the
+            # same scenario offset IS a real algebraic disturbance on V_bus.  See
+            # hil_electrical.py's ElectricalSim.__init__ comment and
+            # docs/HIL_PLANT.md's scenario table for the full rationale.
+            self.electrical.v_bus_sense_offset = self.v_bus_offset
+            # L5: self.i_charge here is last TICK's Ag105 current -- this tick's
+            # value is computed further down in the Ag105 state machine below,
+            # after the electrical substeps have already run.  Deliberate and
+            # harmless: one 1 ms tick of lag against a 0.4 s (AG105_TAU_S) charger
+            # ramp is not an ordering bug to fix.
             self.electrical.i_charge_into_pack = self.i_charge
             rails = self.electrical.step(dt, {
                 "sw": sw, "aux": aux, "i_motor_a": i_motor,
@@ -972,7 +984,6 @@ def main(argv=None):
         print(f"[hil] pi-command timeline: {len(commander.timeline)} entries, "
               f"{PiCommander.PI_CMD_HZ:.0f} Hz")
     pi_frames = 0
-    events_file = None
     obs = None
     seq = 0
     rx_frames = 0
@@ -1004,6 +1015,50 @@ def main(argv=None):
             if electrical is not None:
                 header_row += ["elec_substep_hz", "elec_events"]
         writer.writerow(header_row)
+
+    # M3: open the electrical-events sidecar UP FRONT and stream into it as events
+    # happen (drained + flushed every tick, below), instead of writing it only
+    # after the main loop returns.  Previously a timeout SIGKILL on a wedged run
+    # lost exactly the evidence about why it wedged; now the file on disk is
+    # current as of the last completed tick even if the process is killed hard.
+    events_path = None
+    events_file = None
+    events_written = 0          # index into electrical.events already flushed
+    elec_events_total = 0       # cumulative count (electrical.events is TRIMMED
+                                 # below to bound RAM on a long run, so this is the
+                                 # durable total)
+    elec_over_absmax = []       # small list of over-abs-max sw_ring events, kept
+                                 # in full (rare) for the exit banner
+    if args.csv and electrical is not None:
+        events_path = args.csv + ".events.jsonl"
+        try:
+            events_file = open(events_path, "w", encoding="utf-8")
+        except OSError as exc:
+            print(f"[hil] could not open {events_path}: {exc}", file=sys.stderr)
+            events_path = None
+
+    def _drain_electrical_events():
+        """Flush any new ElectricalSim events to the sidecar and bound RAM.
+
+        Called every tick.  electrical.events is TRIMMED after each drain (M3):
+        the sidecar file is now the durable record, so there is no reason to also
+        keep an ever-growing in-memory copy for the life of a long run."""
+        nonlocal events_written, elec_events_total
+        if electrical is None:
+            return
+        new_events = electrical.events[events_written:]
+        if not new_events:
+            return
+        elec_events_total += len(new_events)
+        for e in new_events:
+            if e.get("kind") == "sw_ring" and e.get("over_absmax"):
+                elec_over_absmax.append(e)
+            if events_file is not None:
+                events_file.write(json.dumps(e) + "\n")
+        if events_file is not None:
+            events_file.flush()
+        del electrical.events[:]
+        events_written = 0
 
     src = f"replay={os.path.basename(args.replay)}" if replay else f"scenario={scenario}"
     print(f"[hil] {src} dest={dest[0]}:{dest[1]} "
@@ -1052,6 +1107,8 @@ def main(argv=None):
                 tx_enabled = apply_scenario(plant, scenario, t)
                 sensors = plant.step(dt, obs)
                 rec_idx = None
+
+            _drain_electrical_events()
 
             if tx_enabled:
                 frame = pack_inject(
@@ -1106,14 +1163,22 @@ def main(argv=None):
                     row.append(f"{sensors.get('soc', 0.0):.5f}")
                     if electrical is not None:
                         row.append(f"{electrical.achieved_substep_hz:.0f}")
-                        row.append(len(electrical.events))
+                        # M3: electrical.events is trimmed on every drain now, so
+                        # the durable per-tick total is the tracked cumulative
+                        # counter, not len(electrical.events) (which is ~0 most
+                        # ticks).
+                        row.append(elec_events_total)
                 writer.writerow(row)
 
             ticks += 1
 
-            # ── 1 Hz status line ─────────────────────────────────────────────
+            # ── 1 Hz status line (and CSV flush, M3) ─────────────────────────
             if now - last_status >= 1.0:
                 last_status = now
+                # M3: flush at ~1 Hz so a hard-killed run's CSV is current on disk
+                # up to the last completed second, not just at clean exit.
+                if csv_file:
+                    csv_file.flush()
                 if obs:
                     print(f"[hil] t={t:6.2f}s  state={obs['state']:2d} "
                           f"sw=0x{obs['switch']:02X} aux=0x{obs['aux']:02X} "
@@ -1123,7 +1188,7 @@ def main(argv=None):
                           f"I_chg={sensors['I_charge']:4.2f} chg=0x{sensors['ag105_status']:02X}"
                           + (f" soc={sensors['soc'] * 100:4.1f}%" if not replay else "")
                           + (f" | elec {electrical.achieved_substep_hz / 1e3:5.1f} kHz "
-                             f"({electrical._n_sub} sub/tick) ev={len(electrical.events)}"
+                             f"({electrical._n_sub} sub/tick) ev={elec_events_total}"
                              if electrical is not None else ""))
                 else:
                     print(f"[hil] t={t:6.2f}s  no observation frames yet "
@@ -1144,6 +1209,14 @@ def main(argv=None):
     except KeyboardInterrupt:
         print("\n[hil] interrupted")
     finally:
+        # M3: final drain so a break/exception on the last tick cannot lose the
+        # handful of events accumulated since the previous drain.
+        _drain_electrical_events()
+        if events_file is not None:
+            try:
+                events_file.close()
+            except OSError:
+                pass
         if csv_file:
             csv_file.close()
         sock.close()
@@ -1164,26 +1237,25 @@ def main(argv=None):
               f"{plant.fuel_cell.i:.3f} A")
     if electrical is not None:
         summ = electrical.summary()
+        # M3: electrical.events is trimmed on every drain, so the durable totals
+        # for this exit summary are the tracked counters, not summ['events'] /
+        # electrical.events (which reflect only whatever has accumulated since the
+        # last drain — near-empty on a normal exit).
         print(f"[hil] electrical(hifi): {summ['achieved_substep_hz'] / 1e3:.1f} kHz "
               f"achieved substep rate ({summ['substeps_per_tick']} substeps/tick, "
-              f"trace={summ['trace_config']}), {summ['events']} events "
-              f"{summ['event_kinds'] or ''}")
-        over = [e for e in electrical.events
-                if e.get("kind") == "sw_ring" and e.get("over_absmax")]
-        if over:
-            print(f"[hil] *** {len(over)} switching event(s) with an estimated ring "
-                  f"peak ABOVE the 20 V abs-max — the boost-death signature; "
-                  f"worst {max(e['peak_v'] for e in over):.2f} V ***")
-        if args.csv and electrical.events:
-            path = args.csv + ".events.jsonl"
-            try:
-                import json
-                with open(path, "w", encoding="utf-8") as fh:
-                    for e in electrical.events:
-                        fh.write(json.dumps(e) + "\n")
-                print(f"[hil] {len(electrical.events)} electrical events -> {path}")
-            except OSError as exc:
-                print(f"[hil] could not write {path}: {exc}", file=sys.stderr)
+              f"trace={summ['trace_config']}), {elec_events_total} events")
+        if summ.get("numeric_fault"):
+            print("[hil] *** numeric_fault: the electrical solve produced a "
+                  "non-finite node value at least once this run (see the "
+                  "'numeric_fault' events in the sidecar) — treat this run's "
+                  "electrical trace as suspect ***")
+        if elec_over_absmax:
+            print(f"[hil] *** {len(elec_over_absmax)} switching event(s) with an "
+                  f"estimated ring peak ABOVE the 20 V abs-max — the boost-death "
+                  f"signature; worst "
+                  f"{max(e['peak_v'] for e in elec_over_absmax):.2f} V ***")
+        if events_path:
+            print(f"[hil] {elec_events_total} electrical events -> {events_path}")
     if replay:
         print(f"[hil] replay: {args.replay} at {args.replay_speed:g}x, "
               f"reached record {replay.i}/{len(replay.records) - 1}, "

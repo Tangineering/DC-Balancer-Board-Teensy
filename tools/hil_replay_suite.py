@@ -785,14 +785,26 @@ def check_returns_off_rail(data, spec):
     t_end_csv = data.current[-1][0]
     worst = None
     pinned_to_end = None
+    # L7: SINGLE forward walk over data.current with a cursor shared across
+    # episodes, instead of rescanning the whole series from the start for every
+    # episode (was O(episodes * samples) -- ~5M iterations on a log like ML0151).
+    # Episodes come out of _rail_episodes() in ascending time order (itself a
+    # single forward scan) and data.current is already time-ordered, so the
+    # cursor only ever needs to move forward -- behavior-identical to the old
+    # per-episode full rescan.
+    cursor = 0
+    n = len(data.current)
     for a, b, _s in eps:
+        while cursor < n and data.current[cursor][0] <= b:
+            cursor += 1
         rec = None
-        for t, i in data.current:
-            if t <= b:
-                continue
+        j = cursor
+        while j < n:
+            t, i = data.current[j]
             if abs(i) < level:
                 rec = t - b
                 break
+            j += 1
         if rec is None:
             # Episode never released within the CSV.
             if (b - a) <= within and (t_end_csv - b) <= within:
@@ -857,6 +869,10 @@ def evaluate_replay_csv(entry, csv_path):
         "passed": False,
         "checks": [],
         "notes": [],
+        # L8: structured, additive field so a caller (run_hil_suite.py) can detect
+        # "the board never answered" numerically instead of substring-matching a
+        # prose note from this module.  None until a CSV is actually parsed below.
+        "n_obs": None,
     }
 
     fw = entry.get("fw_version")
@@ -881,6 +897,7 @@ def evaluate_replay_csv(entry, csv_path):
         result["checks"].append({"name": "csv", "passed": False, "detail": str(exc)})
         return result
 
+    result["n_obs"] = data.n_obs
     if data.n_obs == 0:
         result["notes"].append(
             "No observation frames in the CSV — the board never answered. Is it "

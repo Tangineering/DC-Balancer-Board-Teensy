@@ -97,6 +97,17 @@ FAULT_ALLOWED = {
                      "(depends on --soc0/--capacity-ah) — hil_plant_sim.py SCENARIOS",
     "charge-fault": "charger-input collapse at t = 20 s may or may not latch, "
                     "depending on the GENSTAT decode path — hil_plant_sim.py SCENARIOS",
+    # F2: `handoff-sag` is a live simulation of the TP0178/TP0201 class, whose
+    # RECORDED margin above LIMIT_V_BUS_MIN was only 0.15-0.185 V with a ~10 ms
+    # dwell (half the 20 ms latch window) — see hil_replay_suite.py's TP0178/TP0201
+    # entries. A legitimately deeper sag on this scenario's own +1.5 A load step
+    # would correctly latch UV_BUS; without this entry that correct latch would be
+    # misreported as an unexpected-fault FAIL rather than the real hardware-class
+    # behaviour it is.
+    "handoff-sag": "UV_BUS if the standby diode's reactive pickup gap is deep/long "
+                   "enough — TP0178/TP0201 recorded only 0.15-0.185 V of margin "
+                   "with a ~10 ms dwell against the 20 ms latch, so this is a "
+                   "plausible, not anomalous, outcome of this scenario",
 }
 
 # Always-reported open findings (report section 'Known open findings').
@@ -165,6 +176,28 @@ def build_plan(args):
             ]
             if meta.get("vesc_cap_f") is not None and mode == "hifi":
                 argv += ["--vesc-cap-uf", "%g" % (meta["vesc_cap_f"] * 1e6)]
+            if name == "soc-depletion":
+                # L9(c): at the DEFAULT --soc0 0.7 / 5 Ah / this scenario's stock
+                # 120 s duration, the run cannot reach LIMIT_V_BATT_MIN at all:
+                # ~115 s of the +3.0 A load step is ~345 A*s against an 18000 A*s
+                # (5 Ah) pack, i.e. ~1.9% SOC -- nowhere near the UV floor.  Even at
+                # --soc0 0.15 alone, 120 s only reaches ~13% SOC (V_batt ~6.9 V,
+                # still above the 6.2 V limit per the BatterySource OCV/Rs(SOC)
+                # curve).  Reaching LIMIT_V_BATT_MIN (~6.2 V) needs SOC to fall to
+                # roughly 0.05 (where the fitted model's Rs(SOC) knee below 15%
+                # steepens the sag enough to cross 6.2 V), i.e. a further ~0.10 of
+                # SOC = 1800 A*s at 3 A = 600 s beyond the 5 s ramp-up -- so this
+                # entry is bumped to --soc0 0.15 and a 650 s duration (5 s ramp +
+                # 645 s of load = ~1935 A*s = ~10.75% SOC, landing at ~4.25% SOC,
+                # comfortably past the ~5% crossing point).
+                dur = 650.0
+                argv = [
+                    "--scenario", name,
+                    "--electrical", mode,
+                    "--duration", "%g" % dur,
+                    "--soc0", "0.15",
+                    "--csv", os.path.join(args.out, csv_name),
+                ]
             plan.append({
                 "kind": "scenario", "name": name, "mode": mode,
                 "electrical_required": need,
@@ -311,7 +344,7 @@ def analyze_scenario_csv(csv_path):
 def analyze_events(path):
     """Event counts by kind from a hi-fi .events.jsonl sidecar."""
     out = {"path": path, "total": 0, "kinds": {}, "over_absmax": 0,
-           "worst_ring_v": None}
+           "worst_ring_v": None, "read_error": None}
     if not path or not os.path.isfile(path):
         return out
     try:
@@ -333,8 +366,10 @@ def analyze_events(path):
                     if pv is not None and (out["worst_ring_v"] is None
                                            or pv > out["worst_ring_v"]):
                         out["worst_ring_v"] = pv
-    except OSError:
-        pass
+    except OSError as exc:
+        # L9(b): record the failure instead of silently swallowing it -- an
+        # unreadable sidecar must not render in REPORT.md as "0 events, clean".
+        out["read_error"] = str(exc)
     return out
 
 
@@ -387,23 +422,43 @@ def judge_scenario(name, metrics, events, child):
     return all(c["passed"] for c in checks), checks
 
 
+CHILD_TERM_GRACE_S = 5.0    # M3: SIGTERM grace period before an unconditional kill()
+
+
 def run_child(item, args):
-    """Execute one plan item. Returns the child record (never raises)."""
+    """Execute one plan item. Returns the child record (never raises).
+
+    M3: uses Popen + terminate() (not subprocess.run(..., timeout=...), which only
+    ever escalates straight to SIGKILL on a timeout) so a wedged hil_plant_sim.py
+    child gets a chance to run its own KeyboardInterrupt/finally cleanup (closing
+    its CSV and events sidecar cleanly) before being killed outright."""
     argv = full_argv(item, args)
     rec = {"argv": argv, "status": "ok", "returncode": None,
            "wall_s": None, "log": item["log"], "summary": {}}
     t0 = time.time()
+    proc = None
     try:
-        proc = subprocess.run(argv, cwd=_REPO, stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT, timeout=item["timeout_s"])
-        out = proc.stdout.decode("utf-8", "replace")
-        rec["returncode"] = proc.returncode
-        if proc.returncode != 0:
-            rec["status"] = "nonzero-exit"
-    except subprocess.TimeoutExpired as exc:
-        out = (exc.stdout or b"").decode("utf-8", "replace")
-        out += "\n[run_hil_suite] *** TIMEOUT after %.1f s — child killed ***\n" % item["timeout_s"]
-        rec["status"] = "TIMEOUT"
+        proc = subprocess.Popen(argv, cwd=_REPO, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT)
+        try:
+            out_b, _ = proc.communicate(timeout=item["timeout_s"])
+            rec["returncode"] = proc.returncode
+            if proc.returncode != 0:
+                rec["status"] = "nonzero-exit"
+            out = out_b.decode("utf-8", "replace")
+        except subprocess.TimeoutExpired:
+            proc.terminate()          # SIGTERM: catchable, unlike SIGKILL
+            try:
+                out_b, _ = proc.communicate(timeout=CHILD_TERM_GRACE_S)
+            except subprocess.TimeoutExpired:
+                proc.kill()            # child ignored/missed SIGTERM -- last resort
+                out_b, _ = proc.communicate()
+            out = out_b.decode("utf-8", "replace")
+            out += ("\n[run_hil_suite] *** TIMEOUT after %.1f s — child sent SIGTERM "
+                    "(%.0fs grace, then SIGKILL if needed) ***\n"
+                    % (item["timeout_s"], CHILD_TERM_GRACE_S))
+            rec["status"] = "TIMEOUT"
+            rec["returncode"] = proc.returncode
     except OSError as exc:
         out = "[run_hil_suite] could not launch child: %s\n" % exc
         rec["status"] = "launch-failed"
@@ -413,8 +468,10 @@ def run_child(item, args):
         with open(item["log"], "w", encoding="utf-8") as fh:
             fh.write(" ".join(argv) + "\n\n")
             fh.write(out)
-    except OSError:
-        pass
+    except OSError as exc:
+        # L9(b): record the failure instead of silently swallowing it -- the
+        # REPORT.md link to this .log must not silently point at nothing.
+        rec["log_write_error"] = str(exc)
     return rec
 
 
@@ -455,6 +512,12 @@ def render_report(meta, results):
     A(_row(["Result", "%d/%d passed" % (npass, len(results))]))
     if meta.get("aborted"):
         A(_row(["ABORTED", meta["aborted"]]))
+    if meta.get("partial"):
+        # M4: this report was written mid-run (or the run was interrupted before
+        # the plan finished) -- results.json/REPORT.md are rewritten after every
+        # run, so this file is never stale, but it may legitimately be incomplete.
+        A(_row(["PARTIAL", "the plan did not run to completion -- this report "
+                           "covers only the runs completed so far"]))
     A("")
 
     # ── Summary table ────────────────────────────────────────────────────────
@@ -503,14 +566,20 @@ def render_report(meta, results):
                 A("- hi-fi substep rate: mean %.0f Hz, min %.0f Hz"
                   % (m["substep_hz_mean"], m["substep_hz_min"]))
             ev = r.get("events", {})
-            if ev.get("total"):
+            if ev.get("read_error"):
+                # L9(b): a sidecar that failed to READ must not render as a silent
+                # "0 events, clean" — it means events on disk were never inspected.
+                A("- electrical events: **could not read sidecar** (%s)" % ev["read_error"])
+            elif ev.get("total"):
                 kinds = ", ".join("%s=%d" % kv for kv in sorted(ev["kinds"].items()))
                 A("- electrical events: %d (%s)%s"
                   % (ev["total"], kinds,
                      "; **%d over abs-max**" % ev["over_absmax"] if ev["over_absmax"] else ""))
-            A("- child: %s (rc %s, %.1f s wall) — log `%s`"
+            log_note = (" **(log write failed: %s)**" % r["child"]["log_write_error"]
+                        if r["child"].get("log_write_error") else "")
+            A("- child: %s (rc %s, %.1f s wall) — log `%s`%s"
               % (r["child"]["status"], r["child"]["returncode"], r["child"]["wall_s"] or 0.0,
-                 os.path.basename(r["child"]["log"])))
+                 os.path.basename(r["child"]["log"]), log_note))
             A("")
             for c in r["checks"]:
                 A("  - [%s] **%s** — %s" % ("x" if c["passed"] else " ", c["name"], c["detail"]))
@@ -538,10 +607,13 @@ def render_report(meta, results):
                 if r.get("description"):
                     A("*%s*" % r["description"])
                     A("")
-                A("- child: %s (rc %s, %.1f s wall) — log `%s`, CSV `%s`"
+                log_note = (" **(log write failed: %s)**" % r["child"]["log_write_error"]
+                            if r["child"].get("log_write_error") else "")
+                A("- child: %s (rc %s, %.1f s wall) — log `%s`%s, CSV `%s`"
                   % (r["child"]["status"], r["child"]["returncode"],
                      r["child"]["wall_s"] or 0.0,
-                     os.path.basename(r["child"]["log"]), os.path.basename(r.get("csv", ""))))
+                     os.path.basename(r["child"]["log"]), log_note,
+                     os.path.basename(r.get("csv", ""))))
                 for c in r["checks"]:
                     A("  - [%s] **%s** — %s" % ("x" if c["passed"] else " ", c["name"], c["detail"]))
                 for n in r.get("notes", []):
@@ -667,7 +739,61 @@ def main(argv=None):
         for p in problems:
             print("  - %s" % p)
 
+    def make_meta(aborted_now, partial_now):
+        return {
+            "date": datetime.datetime.now().isoformat(timespec="seconds"),
+            "teensy_ip": args.teensy_ip, "port": args.port,
+            "target_fw": TARGET_FW_VERSION,
+            "host": "%s %s (%s)" % (platform.system(), platform.release(), platform.machine()),
+            "python": platform.python_version(),
+            "electrical_pref": args.electrical_pref,
+            "settle_s": args.settle_s,
+            "out": args.out,
+            "aborted": aborted_now,
+            # M4: True whenever the plan did not run to completion for ANY reason
+            # (Ctrl-C, an abort, or -- belt and suspenders -- a mismatched result
+            # count), so a partial results.json/REPORT.md is never mistaken for a
+            # clean, complete run.
+            "partial": partial_now,
+            "suite_log_problems": problems,
+        }
+
+    def write_outputs(meta_now, results_now):
+        # M4: rewrite BOTH files after every run (not just once at the very end),
+        # so a Ctrl-C or a hard kill loses at most the run in flight, never the
+        # whole session's worth of already-completed results.
+        with open(os.path.join(args.out, "results.json"), "w", encoding="utf-8") as fh:
+            json.dump({"meta": meta_now, "results": results_now}, fh, indent=2, default=str)
+        with open(os.path.join(args.out, "REPORT.md"), "w", encoding="utf-8") as fh:
+            fh.write(render_report(meta_now, results_now))
+
     results = []
+    aborted = None
+    interrupted = False
+    try:
+        results, aborted = _run_plan(plan, args, problems, results, write_outputs)
+    except KeyboardInterrupt:
+        interrupted = True
+        print("\n[suite] interrupted (Ctrl-C) — writing partial results", file=sys.stderr)
+    finally:
+        meta = make_meta(aborted, interrupted or len(results) < len(plan))
+        write_outputs(meta, results)
+
+    npass = sum(1 for r in results if r["passed"])
+    print("\n[suite] %d/%d passed — report: %s"
+          % (npass, len(results), os.path.join(args.out, "REPORT.md")))
+
+    if interrupted:
+        return 130
+    if aborted:
+        return 2
+    return 0 if npass == len(results) and results else 1
+
+
+def _run_plan(plan, args, problems, results, write_outputs):
+    """The per-run loop, factored out of main() so M4's try/except/finally around
+    it can rewrite results.json/REPORT.md after every run without duplicating the
+    run body. Mutates and returns `results`; returns (results, aborted)."""
     aborted = None
     for i, item in enumerate(plan):
         print("[suite] (%d/%d) %s %s ..." % (i + 1, len(plan), item["kind"], item["name"]),
@@ -703,10 +829,32 @@ def main(argv=None):
                    "metrics": {}, "events": {}, "child": child,
                    "csv": item["csv"], "events_path": None, "log_path": item["log"],
                    "key_metrics": "%d/%d checks passed" % (npass, len(checks))}
-            no_obs = any("No observation frames" in n for n in ev.get("notes", []))
+            # L8: evaluate_replay_csv() now returns a structured "n_obs" (None if
+            # the CSV itself could not be loaded/parsed at all) instead of forcing
+            # this caller to substring-match a prose note from a different module.
+            # Treat "unknown" the same as "zero" for the abort decision: a CSV that
+            # never even parsed is at least as strong evidence the board never
+            # answered as a CSV with zero observation rows.
+            no_obs = ev.get("n_obs") in (0, None)
 
         results.append(res)
         print("    -> %s (%s)" % ("PASS" if passed else "FAIL", res["key_metrics"]))
+
+        # M4: rewrite the report after every completed run (not just at the very
+        # end), so an interruption below or later in the plan loses at most the
+        # run in flight. `partial=True` here is provisional -- main()'s finally
+        # block writes the authoritative final meta once the loop actually exits.
+        write_outputs(
+            {"date": datetime.datetime.now().isoformat(timespec="seconds"),
+             "teensy_ip": args.teensy_ip, "port": args.port,
+             "target_fw": TARGET_FW_VERSION,
+             "host": "%s %s (%s)" % (platform.system(), platform.release(), platform.machine()),
+             "python": platform.python_version(),
+             "electrical_pref": args.electrical_pref, "settle_s": args.settle_s,
+             "out": args.out, "aborted": aborted,
+             "partial": (i + 1) < len(plan),
+             "suite_log_problems": problems},
+            results)
 
         if i == 0 and no_obs and not args.keep_going:
             aborted = ("board unreachable: the first run (%s) saw ZERO observation "
@@ -721,30 +869,7 @@ def main(argv=None):
         if i + 1 < len(plan) and args.settle_s > 0:
             time.sleep(args.settle_s)
 
-    meta = {
-        "date": datetime.datetime.now().isoformat(timespec="seconds"),
-        "teensy_ip": args.teensy_ip, "port": args.port,
-        "target_fw": TARGET_FW_VERSION,
-        "host": "%s %s (%s)" % (platform.system(), platform.release(), platform.machine()),
-        "python": platform.python_version(),
-        "electrical_pref": args.electrical_pref,
-        "settle_s": args.settle_s,
-        "out": args.out,
-        "aborted": aborted,
-        "suite_log_problems": problems,
-    }
-    with open(os.path.join(args.out, "results.json"), "w", encoding="utf-8") as fh:
-        json.dump({"meta": meta, "results": results}, fh, indent=2, default=str)
-    with open(os.path.join(args.out, "REPORT.md"), "w", encoding="utf-8") as fh:
-        fh.write(render_report(meta, results))
-
-    npass = sum(1 for r in results if r["passed"])
-    print("\n[suite] %d/%d passed — report: %s"
-          % (npass, len(results), os.path.join(args.out, "REPORT.md")))
-
-    if aborted:
-        return 2
-    return 0 if npass == len(results) and results else 1
+    return results, aborted
 
 
 if __name__ == "__main__":

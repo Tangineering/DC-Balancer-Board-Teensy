@@ -59,6 +59,14 @@ Fidelity boundaries (read before believing a number out of this engine):
   * Backward Euler.  The engine is L-stable, so a stiff node pair (a 22 mΩ switch
     between two ~35 µF nodes is a 0.77 µs RC) settles to the correct quasi-static
     solution instead of blowing up — but the transient itself is not resolved.
+  * M6: the RT1987 SOFT-START stamp is charge-NON-CONSERVING.  Rt1987.stamp()'s
+    SOFT branch drives the output node through an IMPLICIT conductance (so it
+    participates correctly in the node solve) but debits the input node
+    EXPLICITLY, from the previous substep's current estimate rather than the node
+    solve's own current -- a deliberate stability trade (see the comment at the
+    stamp site), not an oversight, and not charge-balanced within one substep. It
+    matters only during the ~1-20 ms soft-start ramp itself: treat inrush current
+    shape during that window as approximate, not exact (docs/HIL_PLANT.md §8.4).
 
 Stdlib only (the parent script is stdlib-only by charter): no numpy.
 """
@@ -141,11 +149,12 @@ def rt1987_t_on_s(v_in, css_nf):
 def rt1987_fold_limit(dv):
     """Foldback current limit vs the switch's VIN-VOUT differential [A].
 
-    2.5 A while VOUT is low (large dV at the start of a ramp into a discharged
-    node reads as dV >= knee at first, so the profile is expressed the datasheet
-    way: the limit RISES from 2.5 A toward 8.5 A as dV FALLS to <= 5 V).  Above the
-    knee the limit is interpolated linearly down toward 2.5 A at dV = 16 V, which
-    reproduces the ~5.3 A quoted at dV = 16 V.
+    L2 fix: this docstring previously said "2.5 A while VOUT < 2 V rising", which
+    contradicts the code below (and docs/HIL_PLANT.md, which already agreed with
+    the code, not the old docstring).  The actual profile: 8.5 A while dV <= 5 V,
+    interpolated linearly DOWN as dV rises past the 5 V knee (reaching ~5.3 A at
+    dV = 16 V), continuing to fall until it hits the RT_I_FOLD_LOW = 2.5 A floor
+    (at dV ~= 25.6 V on this slope) and staying there for any larger dV.
     """
     if dv <= RT_DV_FOLD_KNEE:
         return RT_I_FOLD_HIGH
@@ -167,6 +176,13 @@ C_CHG_NODE = 10e-6          # F  TODO(verify): no separate charger-input cap ide
 C_RGN_NODE = 10e-6          # F  TODO(verify): likewise
 
 R_NODE_BLEED = 2000.0       # ohm  effective bleed on every node (dark-node decay)
+V_MOT_LOAD_FLOOR = 1.0      # V    floor for the H1 motor-draw/regen Norton
+                            #      conductance (i_motor / max(v_node, this)) so the
+                            #      element cannot divide by (or explode near) zero
+                            #      when V-MOT is dark
+V_NODE_RUNAWAY_MULT = 2.0   # x V_ABSMAX  hard backstop: a node past this after a
+                            #      substep solve is a solver artefact, not a
+                            #      plausible physical state on this rig (H1)
 
 # Regen chopper — TL431 + BSP170P into 47 Ω / 20 W, autonomous (no firmware control).
 # Observed clamping 13.3 -> 18.1 V peak (CLAUDE.md 2026-08-17b).  The THRESHOLD itself
@@ -198,7 +214,13 @@ TRACE_L_NH = {
     "short": {"FC": 1.5, "BT": 1.5, "OTHER": 1.5},
 }
 DI_DT_LOAD_DUMP = 1.3e9     # A/s  ~1.3 A/ns class slew on an SCP cut
-                            #      (docs/boost-bringup-debug.md, Death-5 analysis)
+                            #      (docs/boost-bringup-debug.md, Death-5 analysis).
+                            #      L1: this is a FIXED WORST-CASE bound applied
+                            #      regardless of the actual cut current i_cut -- no
+                            #      scaling law vs i_cut is documented anywhere in
+                            #      this repo, so none is invented here.  Treat the
+                            #      resulting peak_v as "at least this bad", not a
+                            #      current-dependent prediction.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ADC quantization — computed from the firmware's own scale constants
@@ -289,6 +311,16 @@ class NoiseConfig:
 # and passes them to ElectricalSim, so `--electrical simple` and `--electrical hifi`
 # integrate the SAME source state (and the same SOC) and a scenario behaves the same
 # way in both.  See docs/HIL_PLANT.md "Source models".
+#
+# L6 FIDELITY BOUNDARY: the current fed to these models (self.i_fc / self.i_bt,
+# set from self.switches["FC_BUS"].i / ["BT_BUS"].i in _substep()) is the IDEAL-
+# DIODE SWITCH LINK current, not the boost's own input draw.  With a boost enabled
+# but its bus switch OPEN -- the bring-up scenario's operating condition, and any
+# scenario stage where a channel is regulating but not yet feeding the bus -- the
+# switch carries zero current, so these source models see zero draw even though
+# the boost itself may be drawing from the source.  Deliberate (the switch link is
+# the only current this network solves for on that side), but it means FC/SOC
+# dynamics during an enabled-but-unbussed boost stage are NOT modelled here.
 # ═════════════════════════════════════════════════════════════════════════════
 
 # ── Fuel cell (paper §2.1) ───────────────────────────────────────────────────
@@ -347,6 +379,11 @@ class FuelCellSource:
 
     def __init__(self, n_cells=FC_N_CELLS, area_cm2=FC_AREA_CM2, tau_s=FC_TAU_S,
                  r_series=FC_R_SERIES_RIG, health=1.0):
+        if tau_s <= 0.0:
+            # L3: tau_s divides update()'s dt/tau_s term -- 0 (or negative) is a
+            # ZeroDivisionError (or a sign-flipped, unstable double-layer state)
+            # rather than a caught, explained failure.
+            raise ValueError(f"FuelCellSource tau_s must be > 0, got {tau_s!r}")
         self.n_cells = n_cells
         self.area_cm2 = area_cm2
         self.tau_s = tau_s
@@ -412,6 +449,11 @@ class BatterySource:
     """
 
     def __init__(self, soc0=0.7, capacity_ah=BATT_CAPACITY_AH, cells=BATT_CELLS):
+        if capacity_ah <= 0.0:
+            # L3: capacity_as divides update()'s coulomb-count term -- 0 (or
+            # negative) is a ZeroDivisionError rather than a caught, explained
+            # failure.
+            raise ValueError(f"BatterySource capacity_ah must be > 0, got {capacity_ah!r}")
         self.soc = min(1.0, max(0.0, soc0))
         self.capacity_as = capacity_ah * 3600.0
         self.cells = cells
@@ -579,6 +621,30 @@ class Rt1987:
         if not en or not powered:
             if self.state != "OFF":
                 self._open(events, t_now, trace_l_nh, v_out, "en_low" if not en else "uvlo")
+            else:
+                # H2 fix: _open() is the ONLY other site that clears _restart_no_ss,
+                # and it only runs when leaving a non-OFF state.  If the switch was
+                # already OFF-with-reverse-block-pending (set by the ON-state reverse
+                # comparator branch below) when EN goes low or VIN drops under UVLO,
+                # this branch used to be a no-op and the flag survived the EN cycle --
+                # so a FRESH enable into a discharged node would skip BOTH TD_ON and
+                # soft-start, defeating the very foldback this engine exists to
+                # exercise.  Clear it here too, unconditionally, on any EN-low/
+                # unpowered transition.  Documented semantics are unchanged: a
+                # reverse-blocked, STILL-ENABLED switch re-arms without soft-start;
+                # a power/EN cycle in between forces a full TD_ON + soft-start restart.
+                self._restart_no_ss = False
+                self.t_state = 0.0
+            # M1 fix: the 64 ms SCP auto-retry timer decrement lives below this
+            # early return, so an EN-low (or UVLO) window used to FREEZE t_retry
+            # instead of letting it run -- the real RT1987 resets on an EN cycle (a
+            # power-down/up is a stronger event than a mere timeout elapsing), so a
+            # latched retry must not survive being power-cycled.  Chosen semantics,
+            # documented here: EN-cycle RESETS the retry timer outright, rather than
+            # "decrement unconditionally" (which would let time silently pass while
+            # unpowered and could make a retry appear to elapse faster than the part
+            # would ever observe with EN genuinely low the whole time).
+            self.t_retry = 0.0
             return
 
         if self.state == "OFF":
@@ -648,9 +714,15 @@ class Rt1987:
         if i_before > 0.05:
             l_h = trace_l_nh * 1e-9
             peak = v_node + l_h * DI_DT_LOAD_DUMP
+            # H1 fix: gate the Death-5 verdict on v_node itself being a PLAUSIBLE
+            # node state at cut time (<= the 20 V abs-max already).  Without this an
+            # implausible/runaway node value (e.g. from a solver artefact the M2/H1
+            # backstops above did not fully suppress) could manufacture an
+            # over_absmax verdict on its own, independent of any real di/dt event.
+            plausible = v_node <= V_ABSMAX
             ev = {"t": t_now, "kind": "sw_ring", "switch": self.name,
                   "reason": reason, "i_cut": i_before, "peak_v": peak,
-                  "over_absmax": peak > V_ABSMAX}
+                  "over_absmax": bool(plausible and peak > V_ABSMAX)}
             events.append(ev)
         if reason == "scp_cut":
             events.append({"t": t_now, "kind": "scp_cut", "switch": self.name,
@@ -872,14 +944,26 @@ class ElectricalSim:
 
         self.events = []
         self.i_aux = I_AUX_A
-        self.v_bus_offset = 0.0     # scenario disturbance, added to the SENSED bus
+        # M5 DEVIATION: renamed from v_bus_offset to v_bus_sense_offset.  Stamping
+        # this as a real network disturbance (a Norton source on N_BUS) was tried
+        # and risks destabilizing the node solve against the boost droop sources at
+        # the small source resistance needed to make it dominate; rather than ship
+        # an under-tested network change, this stays a SENSED-RAIL-ONLY offset (the
+        # `sag` scenario's -5 V dip is added only in _rails(), never seen by the
+        # node, diodes or chopper) and the asymmetry vs simple mode (where the same
+        # scenario offset IS a real algebraic disturbance) is documented explicitly
+        # here and in docs/HIL_PLANT.md's scenario table.
+        self.v_bus_sense_offset = 0.0
         self.i_charge_into_pack = 0.0   # A, set by Plant: Ag105 -> pack (charging)
         self.chopper_active = False
+        self.numeric_fault = False      # M2: sticky -- set once, never cleared
+        self.neg_clamp_count = 0        # M2: diagnostic counter of negative-node clamps
 
         self.t = 0.0
         self.achieved_substep_hz = 0.0
         self._n_sub = 8
         self._cost_ewma = 0.0
+        self._cost_init = False     # L4: separate init flag -- see step()
         self.i_fc = 0.0
         self.i_bt = 0.0
 
@@ -905,8 +989,16 @@ class ElectricalSim:
         # host's MAXIMUM ACHIEVABLE rate rather than a fixed one, and never eats
         # the whole tick — the 1 kHz frame transmission always gets its slack.
         per = elapsed / n if n else 0.0
-        self._cost_ewma = per if self._cost_ewma == 0.0 else \
-            0.75 * self._cost_ewma + 0.25 * per
+        # L4: use an explicit init flag rather than "_cost_ewma == 0.0" as the
+        # uninitialized sentinel.  On a coarse perf_counter (some hosts/containers)
+        # a genuinely zero-elapsed tick is possible and would otherwise RESET the
+        # EWMA to 0.0 every time it recurred, corrupting the reported
+        # achieved_substep_hz down to 0.0 rather than holding the last real rate.
+        if not self._cost_init:
+            self._cost_ewma = per
+            self._cost_init = True
+        else:
+            self._cost_ewma = 0.75 * self._cost_ewma + 0.25 * per
         if self._cost_ewma > 0.0:
             n_budget = int((dt * self.BUDGET_FRAC) / self._cost_ewma)
         else:
@@ -915,7 +1007,10 @@ class ElectricalSim:
         # Budget WINS over the accuracy preference: a host that cannot afford the
         # 50 us ceiling runs coarser and says so, rather than overrunning the tick.
         self._n_sub = max(1, min(self.N_SUB_MAX, n_pref if n_budget >= n_pref else n_budget))
-        self.achieved_substep_hz = (n / elapsed) if elapsed > 0 else 0.0
+        # L4 (cont.): hold the last non-zero achieved rate on a zero-elapsed tick
+        # (coarse perf_counter) instead of reporting a misleading 0.0 Hz.
+        if elapsed > 0:
+            self.achieved_substep_hz = n / elapsed
 
         self.t += dt
         return self._rails(sw)
@@ -987,9 +1082,23 @@ class ElectricalSim:
 
         # Loads.
         J[N_BUS] -= self.i_aux
-        # Motor draw sits on the V-MOT node, behind MOT_PWR, through the 470 uF ESR.
+        # Motor draw/regen sits on the V-MOT node, behind MOT_PWR, through the 470 uF
+        # ESR.  H1 FIX: this was previously stamped as an IDEAL current source
+        # (J[N_MOT] -= i_motor) -- fine for a positive (motoring) draw, but for a
+        # NEGATIVE (regen) current with MOT_PWR open, the node has only the 2 kOhm
+        # bleed for company and an ideal source into that is unbounded: reproduced,
+        # it ran the node to ~10 kV within seconds, and the resulting kV-scale
+        # sw_ring events fired the over_absmax Death-5 signature -- a numerical
+        # solver runaway rendered as a hardware conclusion.  Stamped instead as a
+        # bounded Norton conductance referenced to the PREVIOUS substep's node
+        # voltage: g = i_motor / max(v_node, V_MOT_LOAD_FLOOR).  At v_node == v_prev
+        # this delivers exactly i_motor (self-consistent: g*v_prev == i_motor), but
+        # as the node evolves the delivered current scales WITH voltage instead of
+        # staying an unbounded constant, so the runaway direction (rising |V|)
+        # shrinks the effective source term instead of feeding it.
         if i_motor:
-            J[N_MOT] -= i_motor
+            g_mot = i_motor / max(v[N_MOT], V_MOT_LOAD_FLOOR)
+            G[N_MOT][N_MOT] += g_mot
         if i_charge:
             # The charger draws from whichever path is powering it.
             node = N_CHG if (sw & SW_FC_CHARGE) else N_RGN
@@ -1001,10 +1110,35 @@ class ElectricalSim:
         if self.chopper_active:
             G[N_RGN][N_RGN] += 1.0 / R_CHOPPER
 
-        self.v = _solve(G, J)
+        new_v = _solve(G, J)
+        prev_v = self.v
         for i in range(N_NODES):
-            if self.v[i] < 0.0:
-                self.v[i] = 0.0
+            if not math.isfinite(new_v[i]):
+                # M2: NaN/inf used to pass the "< 0.0" clamp below untouched and
+                # reach the wire -- the firmware rejects a NaN-carrying frame outright
+                # (a misleading ERR_HIL_STALE rather than the real cause).  Restore
+                # the node's previous value, log it, and set a STICKY fault so a
+                # summary/report consumer can tell the whole run is suspect even if
+                # a later substep happens to solve clean again.
+                self.events.append({"t": self.t, "kind": "numeric_fault",
+                                    "node": _NODE_NAMES[i], "value": repr(new_v[i])})
+                self.numeric_fault = True
+                new_v[i] = prev_v[i]
+                continue
+            if new_v[i] < 0.0:
+                self.neg_clamp_count += 1
+                new_v[i] = 0.0
+            elif new_v[i] > V_NODE_RUNAWAY_MULT * V_ABSMAX:
+                # H1 backstop: any node this far past the 20 V abs-max is not a
+                # plausible state at any bench-recorded operating point -- emit ONE
+                # event and clamp so a single bad substep cannot propagate an
+                # unbounded value (and cannot itself manufacture an over_absmax
+                # sw_ring verdict via the gate in _open() below).
+                self.events.append({"t": self.t, "kind": "node_runaway",
+                                    "node": _NODE_NAMES[i], "v": new_v[i],
+                                    "clamped_to": V_NODE_RUNAWAY_MULT * V_ABSMAX})
+                new_v[i] = V_NODE_RUNAWAY_MULT * V_ABSMAX
+        self.v = new_v
         if fc_active:
             self.boost_fc.post_solve(self.v)
         if bt_active:
@@ -1018,7 +1152,7 @@ class ElectricalSim:
             # are on the source side of each boost).
             "V_fc": self.fuel_cell.v_terminal,
             "V_batt": self.battery.v_terminal,
-            "V_bus": max(0.0, v[N_BUS] + self.v_bus_offset),
+            "V_bus": max(0.0, v[N_BUS] + self.v_bus_sense_offset),
             "V_chg": v[N_CHG],
             "V_rgn": v[N_RGN],
             "I_fc": self.i_fc,
@@ -1052,4 +1186,6 @@ class ElectricalSim:
             "events": len(self.events),
             "event_kinds": kinds,
             "trace_config": self.trace_config,
+            "numeric_fault": self.numeric_fault,          # M2: sticky
+            "neg_clamp_count": self.neg_clamp_count,      # M2: diagnostic
         }
