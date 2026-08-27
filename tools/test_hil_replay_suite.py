@@ -518,5 +518,201 @@ def test_v18_plus_entries_do_not_get_the_stale_wheel_note(tmp_path):
             assert not any("STABILITY and FAULT BEHAVIOUR" in n for n in res["notes"]), e["log"]
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# 6. L7: check_returns_off_rail single-pass rewrite — multi-episode pinning
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_l7_returns_off_rail_multiple_episodes_all_release_cleanly():
+    """Three separate rail episodes, each released promptly, in one CSV.
+    Pins the single-pass cursor rewrite against the old per-episode full
+    rescan: the cursor must correctly find EACH episode's own release point
+    without episode 2/3's scan being thrown off by episode 1 already having
+    advanced the cursor past it."""
+    def current(t):
+        if 0.10 <= t < 0.20 or 0.50 <= t < 0.60 or 1.00 <= t < 1.30:
+            return 12.0
+        return 0.0
+
+    rows = _uniform_rows(2.0, 0.01, current=current)
+    path_ok = "l7_multi_ok.csv"
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, path_ok)
+        write_replay_csv(path, rows)
+        spec = {"kind": "returns_off_rail", "name": "rr",
+                "level_a": rs.OFF_RAIL_LEVEL_A, "within_s": rs.OFF_RAIL_WITHIN_S}
+        res = rs.evaluate_replay_csv(_entry([spec]), path)
+    assert res["passed"] is True
+    detail = res["checks"][0]["detail"]
+    assert "3 rail episode(s)" in detail
+
+
+def test_l7_returns_off_rail_multiple_episodes_last_one_pinned_at_eof():
+    """Two episodes release cleanly; a THIRD, later and longer than
+    within_s, is still pinned when the CSV ends -- the windup failure must
+    still be detected correctly even with earlier, unrelated episodes ahead
+    of it in the single forward-cursor walk."""
+    def current(t):
+        if 0.10 <= t < 0.20 or 0.50 <= t < 0.60 or t >= 1.00:
+            return 12.0
+        return 0.0
+
+    rows = _uniform_rows(3.5, 0.01, current=current)
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "l7_multi_pinned.csv")
+        write_replay_csv(path, rows)
+        spec = {"kind": "returns_off_rail", "name": "rr",
+                "level_a": rs.OFF_RAIL_LEVEL_A, "within_s": rs.OFF_RAIL_WITHIN_S}
+        res = rs.evaluate_replay_csv(_entry([spec]), path)
+    assert res["passed"] is False
+    detail = res["checks"][0]["detail"]
+    assert "still on the rail" in detail
+    assert "t=1.000s" in detail or "t=1.00" in detail
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 7. L8: evaluate_replay_csv's numeric n_obs field
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_l8_n_obs_field_zero_for_no_observation_csv(tmp_path):
+    rows = _uniform_rows(0.2, 0.01)
+    for r in rows:
+        r["no_obs"] = True
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    res = rs.evaluate_replay_csv(_entry([{"kind": "no_fault", "name": "no_fault"}]), str(path))
+    assert res["n_obs"] == 0
+    assert isinstance(res["n_obs"], int)
+
+
+def test_l8_n_obs_field_nonzero_for_normal_csv(tmp_path):
+    rows = _uniform_rows(0.2, 0.01, fault_flags=lambda t: 0)
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    res = rs.evaluate_replay_csv(_entry([{"kind": "no_fault", "name": "no_fault"}]), str(path))
+    assert res["n_obs"] == len(rows)
+    assert res["n_obs"] > 0
+
+
+def test_l8_n_obs_field_none_when_csv_never_parses():
+    res = rs.evaluate_replay_csv(_entry([{"kind": "no_fault", "name": "no_fault"}]),
+                                 "/nonexistent/path/nope.csv")
+    assert res["n_obs"] is None
+
+
+def test_l8_wrapper_side_abort_decision_treats_none_and_zero_alike():
+    """Pin the exact numeric contract run_hil_suite.py's _run_plan() reads:
+    `ev.get("n_obs") in (0, None)` must be True for both the zero-obs and the
+    could-not-parse cases, and False for a normal CSV -- this is the decision
+    itself, re-derived here rather than trusted from the source comment."""
+    def no_obs_decision(n_obs):
+        return n_obs in (0, None)
+
+    assert no_obs_decision(0) is True
+    assert no_obs_decision(None) is True
+    assert no_obs_decision(5) is False
+    assert no_obs_decision(1) is False
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 8. F5/F6: check_fault_latched stimulus-qualification gating
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_f5_require_stimulus_false_skips_qualification():
+    """With require_stimulus=False, a UV_BUS check must not run the leaky-
+    dwell stimulus sanity check at all -- a bit that is simply never set
+    fails on 'never set', not on 'INCONCLUSIVE'."""
+    rows = _uniform_rows(0.2, 0.001, V_bus=lambda t: 15.9, fault_flags=lambda t: 0)
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "a.csv")
+        write_replay_csv(path, rows)
+        spec = {"kind": "fault_latched", "name": "uv_bus_latched",
+                "bit": rs.FAULT_UV_BUS, "require_stimulus": False}
+        res = rs.evaluate_replay_csv(_entry([spec]), path)
+    assert res["passed"] is False
+    detail = res["checks"][0]["detail"]
+    assert "INCONCLUSIVE" not in detail
+    assert "never set" in detail
+
+
+def test_f5_require_stimulus_false_passes_if_bit_latches_regardless_of_v_bus():
+    """require_stimulus=False + the bit IS latched -> passes even though
+    V_bus never actually dipped (the stimulus-sanity gate is skipped
+    entirely, not just downgraded)."""
+    rows = _uniform_rows(0.2, 0.001, V_bus=lambda t: 15.9,
+                          fault_flags=lambda t: rs.FAULT_UV_BUS if t > 0.05 else 0)
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "a.csv")
+        write_replay_csv(path, rows)
+        spec = {"kind": "fault_latched", "name": "uv_bus_latched",
+                "bit": rs.FAULT_UV_BUS, "require_stimulus": False}
+        res = rs.evaluate_replay_csv(_entry([spec]), path)
+    assert res["passed"] is True
+
+
+def test_f6_non_uv_bit_skips_qualification_even_with_require_stimulus_true():
+    """The stimulus-qualification gate is hardcoded to `bit == FAULT_UV_BUS`
+    -- a fault_latched check on a DIFFERENT bit (e.g. FAULT_OC_FC) must never
+    invoke the UV-specific dwell-integrator sanity check, even with
+    require_stimulus left at its True default."""
+    rows = _uniform_rows(0.2, 0.001, V_bus=lambda t: 15.9,  # never dips -- would be
+                                                             # INCONCLUSIVE for UV_BUS
+                          fault_flags=lambda t: rs.FAULT_OC_FC if t > 0.05 else 0)
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "a.csv")
+        write_replay_csv(path, rows)
+        spec = {"kind": "fault_latched", "name": "oc_fc_latched",
+                "bit": rs.FAULT_OC_FC}   # require_stimulus defaults True
+        res = rs.evaluate_replay_csv(_entry([spec]), path)
+    assert res["passed"] is True
+    assert "INCONCLUSIVE" not in res["checks"][0]["detail"]
+
+
+def test_f6_non_uv_bit_never_set_fails_without_stimulus_note():
+    rows = _uniform_rows(0.2, 0.001, V_bus=lambda t: 15.9, fault_flags=lambda t: 0)
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "a.csv")
+        write_replay_csv(path, rows)
+        spec = {"kind": "fault_latched", "name": "oc_fc_latched", "bit": rs.FAULT_OC_FC}
+        res = rs.evaluate_replay_csv(_entry([spec]), path)
+    assert res["passed"] is False
+    assert "INCONCLUSIVE" not in res["checks"][0]["detail"]
+    assert "stimulus qualifies" not in res["checks"][0]["detail"]
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 9. Contract-review gap: multiple check kinds in one evaluate_replay_csv call
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_evaluate_replay_csv_multiple_check_kinds_aggregation(tmp_path):
+    """One entry mixing a passing, a failing, and an unknown check kind: the
+    aggregation loop must run every check (not short-circuit on the first
+    failure), report each individually, and the unknown kind must fail
+    without raising -- overall `passed` is the AND of all three."""
+    rows = _uniform_rows(0.3, 0.005, fault_flags=lambda t: 0, current=lambda t: 13.0)
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    entry = _entry([
+        {"kind": "no_fault", "name": "no_fault"},              # passes (fault_flags all 0)
+        {"kind": "bounded_current", "name": "bc"},              # fails (13.0 > clamp+eps)
+        {"kind": "not_a_real_kind", "name": "bogus"},           # fails (unknown kind)
+    ])
+    res = rs.evaluate_replay_csv(entry, str(path))
+    assert len(res["checks"]) == 3
+    by_name = {c["name"]: c for c in res["checks"]}
+    assert by_name["no_fault"]["passed"] is True
+    assert by_name["bc"]["passed"] is False
+    assert by_name["bogus"]["passed"] is False
+    assert "unknown check kind" in by_name["bogus"]["detail"]
+    assert res["passed"] is False   # AND over all three, not just the first
+    # notes are still populated normally alongside the mixed checks
+    assert any("Replay is OPEN LOOP" in n for n in res["notes"])
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

@@ -1118,5 +1118,95 @@ def test_ag105_full_at_high_soc_with_cv_taper():
     assert out["I_charge"] < 0.1
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# 11. M5: v_bus_sense_offset — the sag scenario's hifi asymmetry (review-fix
+#     round). See test_hil_electrical.py for the engine-level version; this
+#     exercises the same thing through Plant + the "sag" scenario, matching
+#     how hil_plant_sim.py actually wires it (Plant.electrical.v_bus_sense_offset
+#     = plant.v_bus_offset, set by apply_scenario()).
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_m5_sag_scenario_moves_sensed_v_bus_not_node_internal_rails_hifi():
+    from hil_electrical import ElectricalSim
+    electrical = ElectricalSim(trace_config="short")
+    plant = hil.Plant(electrical=electrical)
+    sw = hil.SW_FC_BUS | hil.SW_FC_CHARGE
+    aux = hil.AUX_FC_REG
+    obs = _obs(switch=sw, aux=aux, current=0.0)
+    out = None
+    for _ in range(600):
+        out = plant.step(1e-3, obs)
+    v_bus_before, v_chg_before = out["V_bus"], out["V_chg"]
+
+    # apply_scenario("sag", t) sets plant.v_bus_offset = -5.0 during the dip
+    # window; Plant.step() forwards it to electrical.v_bus_sense_offset.
+    hil.apply_scenario(plant, "sag", 5.5)
+    assert plant.v_bus_offset == -5.0
+    out2 = plant.step(1e-3, obs)
+    assert electrical.v_bus_sense_offset == -5.0
+    assert out2["V_bus"] == pytest.approx(v_bus_before - 5.0, abs=0.05)
+    # V_chg is downstream of the NODE, not the sensed offset -- must not have
+    # jumped by ~5 V in a single 1 ms tick the way V_bus did.
+    assert abs(out2["V_chg"] - v_chg_before) < 1.0
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 12. M3: electrical-events sidecar streaming (review-fix round)
+#
+# _drain_electrical_events() is a closure nested inside main() and is not
+# independently importable/reachable offline (no board, no socket peer
+# needed for THIS engine, since injection is host->board only and no
+# real board means `obs` stays None the whole run, so switches never close
+# and no RT1987/boost events actually fire).  This is therefore a
+# black-box check of the WIRING around the drain (sidecar created, valid
+# JSONL, gated correctly on --csv/--electrical), not a white-box trigger of
+# a nonzero event count -- see the final report for this round's note on
+# the gap.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_m3_hifi_with_csv_creates_events_sidecar(tmp_path):
+    header, rows = _run_main_csv(
+        tmp_path, ["--scenario", "steady", "--electrical", "hifi", "--duration", "0.05"])
+    sidecar = str(tmp_path / "run.csv") + ".events.jsonl"
+    assert os.path.isfile(sidecar), "M3: the sidecar must be created up front, not just on exit"
+    # Valid JSONL (each non-blank line parses), whether or not any events fired.
+    import json
+    with open(sidecar, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line:
+                json.loads(line)   # must not raise
+    # The CSV's final elec_events column must be a non-negative integer and
+    # must match the number of lines actually persisted to the sidecar (the
+    # durable cumulative counter, not len(electrical.events) which is
+    # trimmed after every drain).
+    assert rows, "expected at least one CSV row"
+    elec_events_col = rows[-1][-1]
+    assert elec_events_col.strip() != ""
+    n_reported = int(elec_events_col)
+    with open(sidecar, encoding="utf-8") as fh:
+        n_lines = sum(1 for line in fh if line.strip())
+    assert n_reported == n_lines
+
+
+def test_m3_simple_mode_with_csv_writes_no_sidecar(tmp_path):
+    """The sidecar is gated on `electrical is not None` -- simple mode (the
+    default engine) must not create one at all."""
+    _header, _rows = _run_main_csv(
+        tmp_path, ["--scenario", "steady", "--electrical", "simple", "--duration", "0.02"],
+        name="simple.csv")
+    sidecar = str(tmp_path / "simple.csv") + ".events.jsonl"
+    assert not os.path.isfile(sidecar)
+
+
+def test_m3_hifi_without_csv_does_not_crash(tmp_path):
+    """No --csv at all: main() must still run to completion under hifi (the
+    sidecar/CSV-flush logic must not assume args.csv is set)."""
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58992", "--bind-port", "0",
+                   "--rate", "200", "--scenario", "steady", "--electrical", "hifi",
+                   "--duration", "0.02"])
+    assert rc == 0
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

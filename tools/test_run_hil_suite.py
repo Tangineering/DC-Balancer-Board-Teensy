@@ -614,18 +614,159 @@ def test_results_json_round_trips():
 # ─────────────────────────────────────────────────────────────────────────
 
 def test_finding_exit_code_logic_is_inline_in_main_untestable_offline():
-    """FINDING: the exit-code decision (0 = all passed, 1 = some failed,
-    2 = aborted early on a dead first run) is computed inline at the tail of
-    main() -- `if aborted: return 2` / `return 0 if npass == len(results) and
-    results else 1` -- rather than factored into a standalone pure function.
-    main() itself builds a real child process, sleeps --settle-s between
-    runs, and writes files, so exercising this logic means either invoking
-    main() end-to-end (out of scope: needs a board or extensive subprocess
-    mocking) or duplicating the two-line decision here as a parallel
-    implementation, which would test the copy, not the code. Recorded as a
-    gap per the task's item 7 instruction ("if it's inline in main, note as
-    untested") rather than asserted against."""
+    """FINDING (updated for the review-fix round): the per-run loop was
+    factored out into module-level `_run_plan()` (M4), which IS now covered
+    below via monkeypatched `run_child`. What remains genuinely inline in
+    main()'s tail, and still not independently testable offline, is the
+    final exit-code selection -- `if interrupted: return 130` /
+    `if aborted: return 2` / `return 0 if npass == len(results) and results
+    else 1` -- plus the KeyboardInterrupt/finally wiring around
+    `_run_plan()` itself. The KeyboardInterrupt -> 130 + partial-report path
+    IS exercised below (test_m4_main_keyboardinterrupt_writes_partial_report)
+    by monkeypatching `_run_plan` to raise; the plain 0-vs-1 success/failure
+    tail is not, since reaching it needs `_run_plan` to run its real loop to
+    completion, which needs a plan whose child processes are real subprocess
+    calls (main() calls `run_child` directly, not through an injectable
+    parameter the way `_run_plan` does). Recorded as a narrower residual gap
+    than before, not asserted against."""
     assert True
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 8. Re-pinned: soc-depletion plan special-case (duration 650, --soc0 0.15)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_soc_depletion_duration_and_soc0_repinned_to_650_and_0_15():
+    """soc-depletion's SCENARIOS entry itself still says duration_s=120 (see
+    test_hil_plant_sim.py's SCENARIOS-registry tests) -- build_plan() special-
+    cases ONLY this one scenario name and overrides both the duration and adds
+    --soc0 0.15, per the review-fix round's derivation (5s ramp + 645s of load
+    at 3 A on a 5 Ah pack reaches ~4.25% SOC, past the ~5% UV-crossing point;
+    see the comment at the override site). Every other scenario must be
+    unaffected by this special case."""
+    plan = rhs.build_plan(_args(only=["soc-depletion"]))
+    assert len(plan) == 1
+    item = plan[0]
+    assert item["duration_s"] == pytest.approx(650.0)
+    assert item["timeout_s"] == pytest.approx(650.0 + rhs.GRACE_S)
+    argv = item["argv"]
+    assert "--duration" in argv
+    assert argv[argv.index("--duration") + 1] == "650"
+    assert "--soc0" in argv
+    assert argv[argv.index("--soc0") + 1] == "0.15"
+    # SCENARIOS itself is untouched -- this is purely a build_plan() override.
+    assert SCENARIOS["soc-depletion"]["duration_s"] == pytest.approx(120.0)
+
+
+def test_soc_depletion_override_does_not_leak_into_other_scenarios():
+    plan = rhs.build_plan(_args())
+    for p in plan:
+        if p["kind"] != "scenario" or p["name"] == "soc-depletion":
+            continue
+        assert "--soc0" not in p["argv"], p["name"]
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 9. F2: handoff-sag is FAULT_ALLOWED (review-fix round)
+# ─────────────────────────────────────────────────────────────────────────
+
+FAULT_UV_BUS = 0x0100   # hil_replay_suite.FAULT_UV_BUS, re-derived for this test file
+
+
+def test_f2_handoff_sag_is_in_fault_allowed():
+    assert "handoff-sag" in rhs.FAULT_ALLOWED
+    assert "handoff-sag" not in rhs.FAULT_REQUIRED
+
+
+def test_f2_judge_scenario_handoff_sag_with_uv_fault_passes_that_check():
+    """A UV_BUS fault on handoff-sag is a PLAUSIBLE outcome (TP0178/TP0201-
+    class reactive standby pickup), not an unexpected failure -- the
+    fault_allowed check must pass whether or not the fault actually fired."""
+    m_with_fault = _metrics(fault_bits_seen=FAULT_UV_BUS, final_fault_flags=FAULT_UV_BUS)
+    passed, checks = rhs.judge_scenario("handoff-sag", m_with_fault, _events(), _child())
+    fa = [c for c in checks if c["name"] == "fault_allowed"][0]
+    assert fa["passed"] is True
+    assert passed is True   # nothing else in the default fixture should fail it
+
+    m_clean = _metrics(fault_bits_seen=0, final_fault_flags=0)
+    passed2, checks2 = rhs.judge_scenario("handoff-sag", m_clean, _events(), _child())
+    fa2 = [c for c in checks2 if c["name"] == "fault_allowed"][0]
+    assert fa2["passed"] is True
+    assert passed2 is True
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 10. M4: _run_plan() write_outputs-per-run + main() partial-report wiring
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_m4_run_plan_calls_write_outputs_after_every_run(monkeypatch):
+    """_run_plan() must rewrite results.json/REPORT.md (via the injected
+    write_outputs callback) after EVERY completed run, not just at the end --
+    so an interruption mid-plan loses at most the run in flight."""
+    def fake_run_child(item, args):
+        return {"status": "ok", "returncode": 0, "wall_s": 0.01, "log": item["log"],
+                "summary": {"achieved_hz": 1000.0, "tx_frames": 10, "rx_frames": 10,
+                           "rx_bad": 0}}
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+
+    args = _args(only=["steady", "ML0146"], keep_going=True, settle_s=0.0)
+    plan = rhs.build_plan(args)
+    assert len(plan) == 2   # one scenario, one replay -- both kinds exercised
+
+    calls = []
+
+    def write_outputs(meta, results):
+        calls.append((len(results), dict(meta)))
+
+    results, aborted = rhs._run_plan(plan, args, [], [], write_outputs)
+
+    assert len(results) == 2
+    assert len(calls) == 2, "write_outputs must fire once per completed run"
+    # After run 1: 1 result recorded, and the plan is not yet complete.
+    assert calls[0][0] == 1
+    assert calls[0][1]["partial"] is True
+    # After run 2 (the last one): 2 results recorded, plan complete.
+    assert calls[1][0] == 2
+    assert calls[1][1]["partial"] is False
+
+
+def test_m4_run_plan_results_list_is_the_same_object_mutated_in_place(monkeypatch):
+    """_run_plan()'s docstring says it mutates and returns `results` -- pin
+    that the returned list IS the one passed in (append-in-place), not a
+    fresh copy, since write_outputs() is handed that same list reference on
+    every call and relies on it reflecting what's been appended so far."""
+    def fake_run_child(item, args):
+        return {"status": "ok", "returncode": 0, "wall_s": 0.01, "log": item["log"],
+                "summary": {"achieved_hz": 1000.0}}
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+    args = _args(only=["steady"], keep_going=True, settle_s=0.0)
+    plan = rhs.build_plan(args)
+    seeded = []
+    out, _aborted = rhs._run_plan(plan, args, [], seeded, lambda m, r: None)
+    assert out is seeded
+
+
+def test_m4_main_keyboardinterrupt_writes_partial_report(tmp_path, monkeypatch):
+    """main() must catch a KeyboardInterrupt out of _run_plan(), still write
+    results.json/REPORT.md (via its finally block), mark meta["partial"]
+    True, and return exit code 130."""
+    def boom(plan, args, problems, results, write_outputs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(rhs, "_run_plan", boom)
+    rc = rhs.main(["--out", str(tmp_path), "--only", "steady"])
+    assert rc == 130
+
+    results_path = tmp_path / "results.json"
+    report_path = tmp_path / "REPORT.md"
+    assert results_path.is_file()
+    assert report_path.is_file()
+    loaded = json.loads(results_path.read_text())
+    assert loaded["meta"]["partial"] is True
+    assert loaded["results"] == []
+    assert "PARTIAL" in report_path.read_text()
 
 
 if __name__ == "__main__":

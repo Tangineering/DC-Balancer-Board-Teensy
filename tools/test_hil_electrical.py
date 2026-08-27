@@ -437,5 +437,281 @@ def test_determinism_finding_unpinned_substep_count_is_host_timing_dependent():
     assert hasattr(e, "_n_sub"), "only the private attribute can pin it (used above)"
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# 8. H1: regen node-runaway backstop (review-fix round)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_h1_regen_with_mot_pwr_open_node_stays_bounded():
+    """A large NEGATIVE (regen) i_motor_a with MOT_PWR open must not run the
+    V-MOT node away: the Norton-conductance stamp (i_motor / max(v, floor))
+    keeps it self-limiting, so after many ticks the node stays within the
+    V_NODE_RUNAWAY_MULT*V_ABSMAX backstop with at most the occasional
+    node_runaway event, not a divergence."""
+    e = he.ElectricalSim(trace_config="short")
+    for _ in range(2000):
+        e.step(1e-3, _actuators(sw=0, aux=0, i_motor_a=-50.0))
+    assert e.node_voltage("MOT") <= he.V_NODE_RUNAWAY_MULT * he.V_ABSMAX
+    assert e.node_voltage("MOT") >= 0.0
+    runaways = [ev for ev in e.events if ev["kind"] == "node_runaway"]
+    assert len(runaways) <= 1
+
+
+def test_h1_node_runaway_backstop_fires_and_clamps_once():
+    """Force an implausible prior MOT-node voltage (simulating a solver
+    artefact) ahead of a large regen draw: the backstop must clamp the node
+    to V_NODE_RUNAWAY_MULT*V_ABSMAX, emit exactly one node_runaway event for
+    that tick, and not re-trigger every subsequent tick once the node is
+    back in a sane range."""
+    e = he.ElectricalSim(trace_config="short")
+    e.v[he.N_MOT] = 1000.0     # implausible prior state
+    e._n_sub = 1
+    e.step(1e-3, _actuators(sw=0, aux=0, i_motor_a=-50.0))
+    first_pass_events = [ev for ev in e.events if ev["kind"] == "node_runaway"]
+    assert len(first_pass_events) == 1
+    assert first_pass_events[0]["clamped_to"] == pytest.approx(he.V_NODE_RUNAWAY_MULT * he.V_ABSMAX)
+    assert e.node_voltage("MOT") == pytest.approx(he.V_NODE_RUNAWAY_MULT * he.V_ABSMAX)
+
+    for _ in range(20):
+        e._n_sub = 1
+        e.step(1e-3, _actuators(sw=0, aux=0, i_motor_a=-50.0))
+    total_runaways = [ev for ev in e.events if ev["kind"] == "node_runaway"]
+    assert len(total_runaways) == 1, "backstop must not keep re-firing once the node is bounded"
+
+
+def test_h1_sw_ring_over_absmax_suppressed_when_node_already_implausible():
+    """Rt1987._open()'s plausibility gate: an implausible v_node (> V_ABSMAX)
+    at cut time must NOT be able to manufacture an over_absmax verdict on its
+    own, even though the analytic peak estimate (v_node + L*di/dt) exceeds
+    V_ABSMAX by construction whenever v_node itself already does."""
+    sw = he.Rt1987("T", 0, 1, css_nf=5.6, c_load_f=30e-6)
+    sw.i = 5.0
+    events = []
+    sw._open(events, t_now=0.0, trace_l_nh=50.0, v_node=100.0, reason="scp_cut")
+    rings = [e for e in events if e["kind"] == "sw_ring"]
+    assert len(rings) == 1
+    assert rings[0]["peak_v"] > he.V_ABSMAX     # the raw estimate WOULD trip it
+    assert rings[0]["over_absmax"] is False     # but the plausibility gate blocks it
+
+
+def test_h1_sw_ring_over_absmax_true_when_node_plausible():
+    """Same construction, but v_node itself is a plausible (<= V_ABSMAX)
+    value at cut time: the over_absmax verdict must fire normally."""
+    sw = he.Rt1987("T", 0, 1, css_nf=5.6, c_load_f=30e-6)
+    sw.i = 5.0
+    events = []
+    sw._open(events, t_now=0.0, trace_l_nh=50.0, v_node=15.0, reason="scp_cut")
+    rings = [e for e in events if e["kind"] == "sw_ring"]
+    assert len(rings) == 1
+    assert rings[0]["peak_v"] > he.V_ABSMAX
+    assert rings[0]["over_absmax"] is True
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 9. H2: reverse-trip re-arm semantics (review-fix round)
+# ─────────────────────────────────────────────────────────────────────────
+
+def _drive_to_on(sw, v, ticks=200, dt=1e-4):
+    events = []
+    t = 0.0
+    for _ in range(ticks):
+        sw.update(dt, v, True, events, t, 1.5)
+        t += dt
+    return events, t
+
+
+def test_h2_reverse_trip_still_enabled_rearms_without_soft_start():
+    """Kept-behavior control case: a reverse-blocked switch that stays
+    ENABLED (EN never goes low) must re-arm straight to ON once forward
+    again — no fresh TD_ON/SOFT cycle."""
+    sw = he.Rt1987("T", 0, 1, css_nf=5.6, c_load_f=30e-6)
+    v = [10.0, 9.98]
+    events, t = _drive_to_on(sw, v)
+    assert sw.state == "ON"
+
+    v = [10.0, 10.10]   # reverse trip
+    sw.update(1e-4, v, True, events, t, 1.5)
+    t += 1e-4
+    assert sw.state == "OFF"
+    assert sw._restart_no_ss is True
+
+    v = [10.0, 9.90]     # forward again, EN never dropped
+    sw.update(1e-4, v, True, events, t, 1.5)
+    assert sw.state == "ON"
+
+
+def test_h2_reverse_trip_then_en_cycle_forces_td_on_then_soft():
+    """H2 fix: a reverse-blocked switch that THEN sees EN go low (or VIN drop
+    under UVLO) must have _restart_no_ss cleared — a fresh EN into a
+    near-0-V node must run TD_ON then SOFT like a normal cold start, never
+    jump straight to ON."""
+    sw = he.Rt1987("T", 0, 1, css_nf=5.6, c_load_f=30e-6)
+    v = [10.0, 9.98]
+    events, t = _drive_to_on(sw, v)
+    assert sw.state == "ON"
+
+    v = [10.0, 10.10]   # reverse trip
+    sw.update(1e-4, v, True, events, t, 1.5)
+    t += 1e-4
+    assert sw._restart_no_ss is True
+
+    # EN goes low: must clear the pending no-soft-start re-arm.
+    v = [10.0, 0.0]
+    sw.update(1e-4, v, False, events, t, 1.5)
+    t += 1e-4
+    assert sw.state == "OFF"
+    assert sw._restart_no_ss is False
+
+    # Fresh EN into a ~0 V node: must go TD_ON, not straight to ON.
+    sw.update(1e-4, v, True, events, t, 1.5)
+    assert sw.state == "TD_ON"
+    t += 1e-4
+    for _ in range(70):        # well under RT_TD_ON_S (8 ms)
+        sw.update(1e-4, v, True, events, t, 1.5)
+        t += 1e-4
+        assert sw.state == "TD_ON", "must not skip TD_ON after the EN cycle"
+    for _ in range(100):        # cross the 8 ms boundary
+        sw.update(1e-4, v, True, events, t, 1.5)
+        t += 1e-4
+        if sw.state == "SOFT":
+            break
+    assert sw.state == "SOFT", "must reach SOFT (soft-start), not jump to ON"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 10. M1: SCP-cut retry timer reset on EN cycle (review-fix round)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_m1_en_cycle_after_scp_cut_resets_retry_timer():
+    sw, events, _trace = _run_switch(css_nf=100.0, v_out_fixed=0.0, ticks=120, dt=1e-4)
+    assert sw.state == "OFF"
+    assert sw.cut_count >= 1
+    assert sw.t_retry > 0.0, "expected the 64 ms auto-retry timer armed after the cut"
+
+    # EN low then high again, well before the 64 ms retry would have elapsed.
+    v = [16.0, 0.0]
+    sw.update(1e-4, v, False, events, 0.0120, 1.5)
+    assert sw.t_retry == 0.0, "EN-cycle must reset the retry timer, not just decrement it"
+    sw.update(1e-4, v, True, events, 0.0121, 1.5)
+    assert sw.state == "TD_ON", "must restart the TD_ON/SOFT cycle immediately, not wait out the old retry"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 11. M2: numeric_fault / neg_clamp_count (review-fix round)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_m2_nan_actuator_sets_sticky_numeric_fault_and_restores_finite():
+    """Inject NaN via a NaN actuator (i_motor_a) with MOT_PWR closed, AFTER a
+    few good ticks so there is a finite previous state to restore from.
+    Confirms: a numeric_fault event per corrupted node, the sticky flag set
+    (and visible via summary()), and every node restored to a finite value."""
+    import math
+    e = he.ElectricalSim(trace_config="short")
+    for _ in range(10):
+        e.step(1e-3, _actuators())
+    assert all(math.isfinite(x) for x in e.v)
+    assert e.numeric_fault is False
+
+    e._n_sub = 1
+    e.step(1e-3, _actuators(sw=SW_MOT_PWR, i_motor_a=float("nan")))
+    assert e.numeric_fault is True
+    assert e.summary()["numeric_fault"] is True
+    assert all(math.isfinite(x) for x in e.v), "a corrupted node must be restored, not left NaN"
+    numeric_events = [ev for ev in e.events if ev["kind"] == "numeric_fault"]
+    assert numeric_events
+
+    # Sticky: a later CLEAN tick must not clear the flag.
+    e.step(1e-3, _actuators())
+    assert e.numeric_fault is True
+    assert e.summary()["numeric_fault"] is True
+
+
+def test_m2_neg_clamp_count_increments_on_negative_node_clamp():
+    """A dark network (everything OFF, nothing driving any node up) decays
+    toward/through 0 and gets clamped there — neg_clamp_count must count
+    those clamps as a diagnostic."""
+    e = he.ElectricalSim(trace_config="short")
+    assert e.neg_clamp_count == 0
+    e.step(1e-3, _actuators(sw=0, aux=0))
+    assert e.neg_clamp_count > 0
+    assert e.summary()["neg_clamp_count"] == e.neg_clamp_count
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 12. M5: v_bus_sense_offset rename (review-fix round)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_m5_attribute_renamed_to_v_bus_sense_offset():
+    e = he.ElectricalSim(trace_config="short")
+    assert hasattr(e, "v_bus_sense_offset")
+    assert e.v_bus_sense_offset == 0.0
+    assert not hasattr(e, "v_bus_offset"), "the old name must not linger as a stale alias"
+
+
+def test_m5_sense_offset_moves_only_v_bus_in_rails_not_the_node():
+    """The offset is added ONLY in _rails()'s V_bus computation, never seen
+    by the node solve, so the underlying VBUS node (and everything derived
+    from it, like V_chg/V_rgn) must be untouched by it."""
+    e = he.ElectricalSim(trace_config="short")
+    for _ in range(50):
+        e.step(1e-3, _actuators(sw=SW_FC_BUS, aux=AUX_FC_REG))
+    node_before = e.node_voltage("BUS")
+    rails_before = e._rails(SW_FC_BUS)
+
+    e.v_bus_sense_offset = -5.0
+    rails_after = e._rails(SW_FC_BUS)
+    node_after = e.node_voltage("BUS")
+
+    assert node_after == pytest.approx(node_before)       # node itself untouched
+    assert rails_after["V_bus"] == pytest.approx(rails_before["V_bus"] - 5.0)
+    assert rails_after["V_chg"] == pytest.approx(rails_before["V_chg"])
+    assert rails_after["V_rgn"] == pytest.approx(rails_before["V_rgn"])
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 13. L3: source-model degenerate-parameter guards (review-fix round)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_l3_fuelcellsource_zero_tau_raises_valueerror():
+    with pytest.raises(ValueError):
+        he.FuelCellSource(tau_s=0.0)
+    with pytest.raises(ValueError):
+        he.FuelCellSource(tau_s=-0.01)
+
+
+def test_l3_batterysource_zero_capacity_raises_valueerror():
+    with pytest.raises(ValueError):
+        he.BatterySource(capacity_ah=0.0)
+    with pytest.raises(ValueError):
+        he.BatterySource(capacity_ah=-1.0)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 14. L4: zero-elapsed-tick handling (review-fix round)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_l4_zero_elapsed_tick_holds_last_achieved_rate(monkeypatch):
+    """On a host with a coarse time.perf_counter(), a genuinely zero-elapsed
+    tick must HOLD the last non-zero achieved_substep_hz rather than reset
+    it to 0.0 (the old `_cost_ewma == 0.0` sentinel would have corrupted the
+    EWMA on this exact condition)."""
+    e = he.ElectricalSim(trace_config="short")
+    e.step(1e-3, _actuators())     # establish a real, nonzero rate
+    prev_rate = e.achieved_substep_hz
+    assert prev_rate > 0.0
+    assert e._cost_init is True
+
+    const_time = [100.0]
+    monkeypatch.setattr(he.time, "perf_counter", lambda: const_time[0])
+    e.step(1e-3, _actuators())     # elapsed == 0.0 exactly
+    assert e.achieved_substep_hz == prev_rate
+
+
+def test_l4_cost_init_flag_starts_false_and_first_tick_sets_it():
+    e = he.ElectricalSim(trace_config="short")
+    assert e._cost_init is False
+    e.step(1e-3, _actuators())
+    assert e._cost_init is True
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
