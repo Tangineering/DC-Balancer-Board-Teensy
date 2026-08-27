@@ -2461,7 +2461,7 @@ bool wheelSpeedResetPending = false;
 #define FW_VERSION 21
 
 #ifndef BENCH_TEST
-#define BENCH_TEST 1
+#define BENCH_TEST 0
 #endif
 
 // ── HIL (hardware-in-the-loop) simulation build ──────────────────────────────
