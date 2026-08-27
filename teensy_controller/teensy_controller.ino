@@ -2493,7 +2493,7 @@ bool wheelSpeedResetPending = false;
 // the networkUp guard below must gate every UDP access.
 // Overridable via -DUSE_ETHERNET=1 (same pattern as BENCH_TEST).
 #ifndef USE_ETHERNET
-#define USE_ETHERNET 0
+#define USE_ETHERNET 1
 #endif
 
 // ── Power-share controller selection ─────────────────────────────────────────
