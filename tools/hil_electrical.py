@@ -314,6 +314,9 @@ class Rt1987:
         self.t_retry = 0.0          # s since a CUT
         self.i = 0.0                # A last-substep current (in -> out)
         self.cut_count = 0
+        self.v_ss_start = 0.0       # V  output voltage at soft-start entry
+        self._fold_active = False
+        self._restart_no_ss = False
 
     # -- stamping -----------------------------------------------------------
     def stamp(self, G, J, v, en):
@@ -327,10 +330,27 @@ class Rt1987:
         if self.state in ("OFF", "TD_ON"):
             return                                   # full isolation, nothing to stamp
         if self.state == "SOFT":
-            # Current-limited source: min(foldback limit, ramp-rate limit).
-            i_lim = self._soft_limit(v_in, v_out)
-            J[self.n_in] -= i_lim
-            J[self.n_out] += i_lim
+            # Soft-start: the pass FET's gate is ramped so VOUT FOLLOWS a linear
+            # ramp — the switch behaves as a voltage source at the ramp value, not
+            # as a fixed current source.  It supplies whatever the load asks up to
+            # the foldback ceiling; only when the ceiling binds does it become a
+            # current source (and only THEN does the 250 us SCP blanking count).
+            i_fold, i_res, target = self._soft_operating_point(v_in, v_out)
+            if i_res > i_fold:
+                J[self.n_in] -= i_fold
+                J[self.n_out] += i_fold
+            else:
+                r = RT_R_ON + self.r_series
+                g = 1.0 / r
+                G[self.n_in][self.n_in] += g
+                G[self.n_out][self.n_out] += g
+                G[self.n_in][self.n_out] -= g
+                G[self.n_out][self.n_in] -= g
+                # Thevenin toward the ramp value: the drop (v_in - target) is the
+                # FET's own not-yet-enhanced channel, modelled as a source offset.
+                off = (v_in - target) * g
+                J[self.n_in] += off
+                J[self.n_out] -= off
             return
         # ON: forward branch with the 35 mV regulation offset, i = (dv - V_FWD)/R.
         r = RT_R_ON + self.r_series
@@ -343,13 +363,22 @@ class Rt1987:
         J[self.n_in] += off        # the offset opposes forward conduction
         J[self.n_out] -= off
 
-    def _soft_limit(self, v_in, v_out):
+    def _soft_operating_point(self, v_in, v_out):
+        """Return (foldback limit, resistive-branch current, ramp target) [A, A, V].
+
+        The ramp target is the RT1987's soft-start VOUT profile: a linear ramp from
+        the output's starting voltage to VIN over
+        tON = (VIN/35)*(CSS_nF/0.0023 - 100) us (datasheet).  With CSS = 100 nF that
+        is ~19.8 ms at 16 V; with 5.6 nF, ~1.07 ms.
+        """
+        t_on = rt1987_t_on_s(max(v_in, 1.0), self.css_nf)
+        frac = 1.0 if t_on <= 0 else min(1.0, self.t_state / t_on)
+        target = self.v_ss_start + (v_in - self.v_ss_start) * frac
         dv = max(0.0, v_in - v_out)
         i_fold = rt1987_fold_limit(dv)
-        t_on = rt1987_t_on_s(max(v_in, 1.0), self.css_nf)
-        i_ramp = (self.c_load * v_in / t_on) if t_on > 0 else i_fold
-        self._fold_active = i_fold <= i_ramp
-        return min(i_fold, i_ramp)
+        i_res = max(0.0, (target - v_out)) / (RT_R_ON + self.r_series)
+        self._fold_active = i_res > i_fold
+        return i_fold, i_res, target
 
     # -- advance ------------------------------------------------------------
     def update(self, dt, v, en, events, t_now, trace_l_nh):
@@ -360,7 +389,8 @@ class Rt1987:
         if self.state == "ON":
             self.i = max(0.0, (v_in - v_out - RT_V_FWD) / (RT_R_ON + self.r_series))
         elif self.state == "SOFT":
-            self.i = self._soft_limit(v_in, v_out)
+            i_fold, i_res, _t = self._soft_operating_point(v_in, v_out)
+            self.i = min(i_fold, i_res)
         else:
             self.i = 0.0
 
@@ -378,7 +408,7 @@ class Rt1987:
             self._goto("TD_ON")
         elif self.state == "TD_ON":
             if self.t_state >= RT_TD_ON_S:
-                self._goto("SOFT")
+                self._goto("SOFT", v_out)
         elif self.state == "SOFT":
             # SCP: the foldback clamp (not the ramp limiter) held continuously for
             # 250 us trips a CUT with a 64 ms auto-retry.
@@ -391,9 +421,10 @@ class Rt1987:
                 self._open(events, t_now, trace_l_nh, v_out, "scp_cut")
                 self.t_retry = RT_SCP_RETRY_S
                 return
-            # Soft-start complete when the differential has collapsed to the
-            # forward-regulation band.
-            if (v_in - v_out) <= RT_V_FWD * 2.0:
+            # Soft-start complete when the ramp has run out AND the differential has
+            # collapsed into the forward-regulation band.
+            t_on = rt1987_t_on_s(max(v_in, 1.0), self.css_nf)
+            if self.t_state >= t_on and (v_in - v_out) <= RT_V_FWD * 2.0:
                 self._goto("ON")
         elif self.state == "ON":
             # Fast reverse comparator: off within 0.5 us, auto-restart WITHOUT
@@ -413,10 +444,13 @@ class Rt1987:
             self._restart_no_ss = False
             self._goto("ON")
 
-    def _goto(self, state):
+    def _goto(self, state, v_out=0.0):
+        if state == "SOFT":
+            self.v_ss_start = v_out
         self.state = state
         self.t_state = 0.0
         self.t_clamped = 0.0
+        self._fold_active = False
 
     def _open(self, events, t_now, trace_l_nh, v_node, reason):
         """Open the switch and emit the ANALYTIC parasitic-ring estimate.
