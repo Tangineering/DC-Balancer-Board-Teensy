@@ -453,7 +453,8 @@ def test_decode_blg_api(tmpdir):
     check("api: header fields", res.header == {
         "version": 1, "record_size": RECORD_SIZE, "profile_type": 2,
         "start_millis": 42, "start_micros": 4242, "k_droop_ohm": 0.305,
-        "fw_version": None, "profile_amp": None, "profile_b": None},
+        "fw_version": None, "profile_amp": None, "profile_b": None,
+        "hil_build": False},
         repr(res.header))
 
     # Format v2: fw_version parsed from offset 18 and reported.
@@ -994,6 +995,85 @@ def test_v7_record_size_mismatch(tmpdir):
           "unexpected record_size 92" in err and "expected 106" in err, err)
 
 
+def test_hil_build_flag(tmpdir):
+    """(z) flags bit6 (0x40, fw v21 HIL_SIM build) is surfaced as
+    header["hil_build"] -- true if ANY record has the bit set, false if
+    none do -- plus a WARNING line/banner note when true, mirroring how
+    bit4/bit5 are simply passed through raw in the CSV `flags` column
+    (verified here too: bit6 does not disturb bit0-bit5 in the same
+    byte). Exercised on v5/v6/v7 (the only formats with a flags byte that
+    can plausibly be fw v21+)."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    # (1) bit6 clear on every record: hil_build False, no warning, CSV
+    # flags column carries the untouched byte through (0x03: fault/
+    # velocity-valid bits only, no drive/share/hil bits).
+    data = pack_header_v7(fw_version=20)
+    for i in range(5):
+        data += pack_record_v7(t_us=i * 1000, flags=0x03)
+    data += pack_trailer(records_written=5, dropped=0, close_reason=1,
+                          record_size=RECORD_SIZE_V7)
+    res = db.decode_blg(data)
+    check("hil_build: false when no record has bit6 set",
+          res.header["hil_build"] is False, repr(res.header))
+    check("hil_build: no HIL warning when bit6 clear",
+          not any("HIL_SIM" in w for w in res.warnings), repr(res.warnings))
+    check("hil_build: CSV flags column untouched (0x03) when bit6 clear",
+          res.csv_rows[0].split(",")[-1] == "3", res.csv_rows[0])
+
+    # (2) bit6 set on every record, combined with bit4/bit5 (0x40|0x10|0x20
+    # = 0x70) -- hil_build True, warning present, and the CSV flags column
+    # carries the FULL byte through raw (bit6 coexists with bit4/bit5
+    # exactly like it coexists with bit0-bit3).
+    data = pack_header_v7(fw_version=21)
+    for i in range(5):
+        data += pack_record_v7(t_us=i * 1000, flags=0x70)
+    data += pack_trailer(records_written=5, dropped=0, close_reason=1,
+                          record_size=RECORD_SIZE_V7)
+    res = db.decode_blg(data)
+    check("hil_build: true when every record has bit6 set",
+          res.header["hil_build"] is True, repr(res.header))
+    check("hil_build: HIL warning present when bit6 set",
+          any("HIL_SIM" in w and "WARNING" in w for w in res.warnings),
+          repr(res.warnings))
+    check("hil_build: warning also flows through report_lines (CLI stderr)",
+          any("HIL_SIM" in l for l in res.report_lines),
+          repr(res.report_lines))
+    check("hil_build: CSV flags column carries the full byte (0x70) through",
+          res.csv_rows[0].split(",")[-1] == str(0x70), res.csv_rows[0])
+
+    # (3) bit6 set on only ONE of several records: still detected (the
+    # header-level flag is an ANY-record OR, not an all-records AND).
+    data = pack_header_v7(fw_version=21)
+    for i in range(5):
+        data += pack_record_v7(t_us=i * 1000,
+                                flags=(0x40 if i == 3 else 0x00))
+    data += pack_trailer(records_written=5, dropped=0, close_reason=1,
+                          record_size=RECORD_SIZE_V7)
+    res = db.decode_blg(data)
+    check("hil_build: true when only ONE record has bit6 set",
+          res.header["hil_build"] is True, repr(res.header))
+
+    # (4) v5 and v6 (not just v7) surface the same header field -- the flags
+    # byte lives at the same offset in every record format that has one.
+    data_v5 = pack_header_v5(fw_version=21)
+    data_v5 += pack_record_v5(t_us=0, flags=0x40)
+    data_v5 += pack_trailer(records_written=1, dropped=0, close_reason=1,
+                             record_size=RECORD_SIZE_V5)
+    res_v5 = db.decode_blg(data_v5)
+    check("hil_build: v5 surfaces hil_build too",
+          res_v5.header["hil_build"] is True, repr(res_v5.header))
+
+    data_v6 = pack_header_v6(fw_version=21)
+    data_v6 += pack_record_v6(t_us=0, flags=0x40)
+    data_v6 += pack_trailer(records_written=1, dropped=0, close_reason=1,
+                             record_size=RECORD_SIZE_V6)
+    res_v6 = db.decode_blg(data_v6)
+    check("hil_build: v6 surfaces hil_build too",
+          res_v6.header["hil_build"] is True, repr(res_v6.header))
+
+
 def test_v6_regression(tmpdir):
     """(y) Regression: v6 header + 26-column CSV decode is unchanged after
     adding v7 support -- same header path, same RECORD_FMT_V6/
@@ -1123,6 +1203,7 @@ def main():
         test_v7_header_and_record(tmpdir)
         test_v7_near_wrap_edge_counters(tmpdir)
         test_v7_record_size_mismatch(tmpdir)
+        test_hil_build_flag(tmpdir)
         test_v6_regression(tmpdir)
         test_v5_regression(tmpdir)
         test_v5_real_log_regression(tmpdir)

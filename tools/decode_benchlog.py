@@ -80,6 +80,20 @@ The firmware writer lives in teensy_controller/teensy_controller.ino
     tick's share loop is the Youla share controller (clear = PI
     fallback).
 
+  Record, format v5/v6/v7 (fw v21): flags gains a further bit in the SAME
+    byte/offset -- bit6 (0x40) = this record was written by a HIL_SIM
+    build (Teensy running against tools/hil_plant_sim.py's simulated
+    plant, not the real board -- see docs/HIL_MODE.md). Passed through raw
+    in the CSV `flags` column exactly like bit4/bit5, no new column. A HIL
+    record's rail values are whatever the simulator injected, so any
+    analysis that treats them as real bench measurements (e.g. the
+    encoder_diagnostics scale audit, which compares encoder_pos-derived
+    truth velocity against an injected v_act) is comparing a simulated
+    signal against itself and draws no hardware conclusion. This decoder
+    surfaces it as a header-level `hil_build` flag (true if ANY record in
+    the file has bit6 set) plus a WARNING line/banner note, so a HIL log
+    is identifiable without inspecting individual records.
+
   Header, format v6 (fw v16): adds no header fields -- v6 is IDENTICAL to
     v4/v5 in the header (32 B layout, same offsets). Only the RECORD format
     changes; see below. The existing `if version >= 4:` header branches
@@ -352,10 +366,14 @@ class DecodeResult:
     """Result of decode_blg(). csv_rows have no trailing newline.
 
     header: {version, record_size, profile_type, start_millis,
-             start_micros, k_droop_ohm, fw_version, profile_amp, profile_b}
+             start_micros, k_droop_ohm, fw_version, profile_amp, profile_b,
+             hil_build}
              -- profile_amp/profile_b are float or None; None for v1-v3
              files and for a v4 file whose corresponding param-valid flag
-             bit (header byte 7, bit0=amp/bit1=b) is clear.
+             bit (header byte 7, bit0=amp/bit1=b) is clear. hil_build is a
+             bool: True if flags bit6 (0x40, fw v21) was set on ANY record
+             in the file (a per-record bit, not a header field -- computed
+             by scanning every record).
     trailer: None, or {records_written, dropped, close_reason (int),
               close_reason_str, error_code, abandoned}
     warnings: human-readable warning lines, WITHOUT the
@@ -432,6 +450,9 @@ def decode_blg(data):
         "profile_amp": profile_amp,
         "profile_b": profile_b,
     }
+    # hil_build is finalized after the record loop below (it depends on
+    # scanning every record's flags byte for bit6) and inserted into this
+    # same header dict just before it is returned.
 
     csv_rows = []
     off = HEADER_SIZE
@@ -441,6 +462,7 @@ def decode_blg(data):
     garbage_at = None
     max_interval_us = 0
     missed_periods = 0
+    hil_build = False  # flags bit6 (0x40, fw v21) seen on ANY record
     while off + record_size <= len(data):
         chunk = data[off:off + record_size]
         off += record_size
@@ -503,6 +525,8 @@ def decode_blg(data):
             (_t, share_sp, share_act, v_sp, v_act, i_fc, i_batt, gfc, gbt,
              v_bus, i_cmd, fault_flags, ps_phase, dc_phase, trap_phase,
              flags) = fields
+        if flags & 0x40:
+            hil_build = True
         velocity_valid = bool(flags & 0x02)
         v_sp_cell = ("%.9g" % v_sp) if velocity_valid else ""
         v_act_cell = ("%.9g" % v_act) if velocity_valid else ""
@@ -531,8 +555,19 @@ def decode_blg(data):
         csv_rows.append(",".join(str(c) for c in row))
         records_read += 1
 
+    header["hil_build"] = hil_build
+
     report_lines = []
     warnings = []
+
+    if hil_build:
+        w = ("WARNING: HIL_SIM build (flags bit6 set on at least one "
+             "record) -- this log's rail values came from "
+             "tools/hil_plant_sim.py's simulated plant, not the real "
+             "board; do not analyze it as a real bench run (see "
+             "docs/HIL_MODE.md)")
+        warnings.append(w)
+        report_lines.append(f"[decode_benchlog] {w}")
 
     fw_str = "pre-versioning" if fw_version is None else str(fw_version)
     banner = (

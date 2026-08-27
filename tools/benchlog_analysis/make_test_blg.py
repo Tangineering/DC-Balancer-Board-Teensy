@@ -39,7 +39,9 @@ oscillation. Flags bit4/bit5 (Youla drive/share controller active) both
 default ON for --v5, so a fresh synthetic file exercises the
 Youla-controller-active decode path by default; pass --flags-bit4-off /
 --flags-bit5-off to force either off instead, and combine as needed to
-cover all four bit4/bit5 combinations across multiple invocations.
+cover all four bit4/bit5 combinations across multiple invocations. Flags
+bit6 (0x40, fw v21 HIL_SIM build) defaults OFF -- pass --flags-bit6-on to
+generate a synthetic HIL-flagged log instead.
 Mutually exclusive with --header-v1 and --v3.
 
 --v6 writes the format-v6 header/record layout (header identical to v4/v5;
@@ -58,7 +60,7 @@ not compose with a bare --v5 flag either -- pass --v6 alone).
 v4/v5/v6; record is the v6 92 B record with enc_edge_count_a,
 enc_edge_count_b, enc_phase_ewma, enc_duty_a_ewma, enc_duty_b_ewma
 appended, 106 B total). Implies the v4 header and the same flag-bit
-defaults as --v6 (bit4/bit5 ON; same invalid-bit flags).
+defaults as --v6 (bit4/bit5 ON, bit6 OFF; same invalid-bit flags).
 The synthetic edge counters integrate ~2 x |v_act| / pitch edges per
 channel per sample (2 edges per slot per channel, CHANGE interrupts) with
 a slight A/B asymmetry and a small spurious-edge excess on channel A, and
@@ -473,12 +475,18 @@ def build_blg(seed, truncate, wrap=False, dropped=0, fw_version=1,
               header_v1=False, v3=False, v4=False, v5=False, v6=False,
               v7=False, profile_amp=6.0, profile_b=0.15,
               profile_amp_valid=True, profile_b_valid=True,
-              flags_bit4=None, flags_bit5=None):
+              flags_bit4=None, flags_bit5=None, flags_bit6=None):
     """flags_bit4/flags_bit5 (v5/v6/v7 only): True/False forces that flags
     bit on or off on every record; None (default) defaults to ON for
     --v5/--v6/--v7 (Youla drive/share controllers active, matching the real
     firmware's default build), applied on top of the base signal's flags
-    byte (0x03, minus the deliberate velocity-invalid window)."""
+    byte (0x03, minus the deliberate velocity-invalid window).
+
+    flags_bit6 (v5/v6/v7 only): True/False forces flags bit6 (0x40, fw v21
+    HIL_SIM build) on or off on every record; None (default) defaults to
+    OFF, matching the real firmware's default (non-HIL) build -- unlike
+    bit4/bit5, a synthetic test log should NOT claim to be a HIL log
+    unless a test explicitly asks for one."""
     sig = build_signals(seed, wrap=wrap, fw_version=fw_version)
     n = N_SAMPLES
     if truncate:
@@ -489,9 +497,11 @@ def build_blg(seed, truncate, wrap=False, dropped=0, fw_version=1,
                 RECORD_SIZE_V3 if (v3 or v4) else RECORD_SIZE)))
 
     if v5 or v6 or v7:
-        # None defaults to ON for --v5/--v6/--v7.
+        # None defaults to ON for --v5/--v6/--v7 (bit4/bit5); bit6 defaults
+        # to OFF -- see the flags_bit6 docstring above.
         bit4 = True if flags_bit4 is None else flags_bit4
         bit5 = True if flags_bit5 is None else flags_bit5
+        bit6 = False if flags_bit6 is None else flags_bit6
         sig = dict(sig)  # shallow copy -- only flags is mutated
         flags = sig["flags"].copy()
         if bit4:
@@ -502,6 +512,10 @@ def build_blg(seed, truncate, wrap=False, dropped=0, fw_version=1,
             flags |= 0x20
         else:
             flags &= ~0x20 & 0xFF
+        if bit6:
+            flags |= 0x40
+        else:
+            flags &= ~0x40 & 0xFF
         sig["flags"] = flags
 
     out = bytearray()
@@ -605,6 +619,14 @@ def main():
                      help="v5/v6 only: force flags bit5 ON on every record "
                           "(this is already the default; provided for "
                           "symmetry / explicitness)")
+    ap.add_argument("--flags-bit6-on", action="store_true",
+                     help="v5/v6/v7 only: force flags bit6 (0x40, fw v21 "
+                          "HIL_SIM build) ON on every record, to generate a "
+                          "synthetic HIL-flagged log (default: OFF)")
+    ap.add_argument("--flags-bit6-off", action="store_true",
+                     help="v5/v6/v7 only: force flags bit6 OFF on every "
+                          "record (this is already the default; provided "
+                          "for symmetry / explicitness)")
     args = ap.parse_args()
 
     if sum([args.header_v1, args.v3, args.v4, args.v5, args.v6,
@@ -618,11 +640,16 @@ def main():
     if args.flags_bit5_off and args.flags_bit5_on:
         raise SystemExit(
             "--flags-bit5-off and --flags-bit5-on are mutually exclusive")
+    if args.flags_bit6_off and args.flags_bit6_on:
+        raise SystemExit(
+            "--flags-bit6-off and --flags-bit6-on are mutually exclusive")
 
     flags_bit4 = True if args.flags_bit4_on else (
         False if args.flags_bit4_off else None)
     flags_bit5 = True if args.flags_bit5_on else (
         False if args.flags_bit5_off else None)
+    flags_bit6 = True if args.flags_bit6_on else (
+        False if args.flags_bit6_off else None)
 
     data = build_blg(args.seed, args.truncate, wrap=args.wrap,
                      dropped=args.dropped, fw_version=args.fw_version,
@@ -631,7 +658,8 @@ def main():
                      profile_amp=args.profile_amp, profile_b=args.profile_b,
                      profile_amp_valid=not args.profile_amp_invalid,
                      profile_b_valid=not args.profile_b_invalid,
-                     flags_bit4=flags_bit4, flags_bit5=flags_bit5)
+                     flags_bit4=flags_bit4, flags_bit5=flags_bit5,
+                     flags_bit6=flags_bit6)
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)

@@ -23,6 +23,8 @@ import re
 import sys
 from pathlib import Path
 
+import numpy as np
+
 if __package__ in (None, ""):
     if not getattr(sys, "frozen", False):  # frozen: bundle resolves the pkg
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -105,6 +107,16 @@ def make_all(run_dir, data=None, cfg=None):
     # way as _run_name, so the make_all signature (a GUI contract) is unchanged
     # and a hand-built cfg simply falls back to the pre-v18 pitch.
     cfg.setdefault("_fw_version", _read_fw_version(run_dir))
+    # HIL provenance (fw v21, flags bit6 0x40): computed directly from the
+    # loaded CSV's flags column rather than decode_report.txt, since it's
+    # a per-record bit already available in `data`. True if ANY record has
+    # the bit set. Every figure's suptitle (see figures._suptitle) shows a
+    # warning banner when this is set, so a HIL PNG cannot be mistaken for
+    # a real bench run -- see docs/HIL_MODE.md.
+    flags_col = data.get("flags")
+    hil_build = bool(flags_col is not None and flags_col.size and
+                      np.any(np.nan_to_num(flags_col).astype(np.int64) & 0x40))
+    cfg.setdefault("_hil_build", hil_build)
 
     saved = []
     for name, builder in figures.FIGURES:
