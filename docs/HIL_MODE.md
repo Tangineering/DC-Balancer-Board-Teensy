@@ -384,7 +384,24 @@ A renderer exception can never propagate into the simulation — the thread catc
 everything, restores the cursor, prints one warning and dies; the run continues.
 
 If stdout is **not a tty** (piped, redirected, captured), the dashboard refuses to
-start, says so in one line, and the normal 1 Hz status lines are kept.
+start, says so in one line, and the normal 1 Hz status lines are kept. If the
+renderer thread dies mid-run, the suppressed 1 Hz status lines resume printing
+from the next tick (the dashboard no longer leaves the screen frozen forever).
+
+**Sparklines and narrow terminals.** Each frame reads the real terminal size
+(`shutil.get_terminal_size`, falling back to 80×24) and adapts to it: line text
+is truncated to the terminal width so the fixed-line `ESC[H` redraw can never
+wrap and corrupt the screen; the sparklines shrink to `max(10, cols-40)` points
+wide, showing only the most recent samples at that width; the `fault_flags`
+line caps at 4 spelled-out names plus a `+k more` suffix; and if the whole
+frame still would not fit the terminal's row count, the lowest-priority lines
+(section header rules and blank spacers first, then the hi-fi/hint lines) are
+dropped before the essential rows. At the *default* 80-column-or-wider terminal
+and the default 5 Hz refresh, a sparkline spans roughly its full **60-sample /
+~12 s** history window (stretching further if the renderer falls behind); on a
+narrower terminal it shows fewer of those samples, i.e. a shorter time window
+at the same 5 Hz sample rate — the spark is always "however many of the most
+recent samples fit", not a fixed time span.
 
 ### Suite integration (`--dashboard`, default OFF)
 
@@ -395,7 +412,13 @@ and parses the run summary out of it, but a dashboard writing ANSI into a captur
 pipe is useless (and the child's own tty check would just disable it). So with
 `--dashboard` the children are given the **real terminal** for stdout (stderr is
 still captured), the run record is marked `stdout_passthrough`, and the
-stdout-derived summary columns in `REPORT.md` are empty for that run. Use it to
+stdout-derived summary columns in `REPORT.md` are empty for that run. `REPORT.md`
+says so explicitly — a "Dashboard mode" header row, a per-scenario note above the
+affected fields, and an explicit `achieved_rate` check with `passed: true` and a
+"rate gate SKIPPED" detail (not a silently absent check) — so the empty columns
+read as "unmeasurable in this mode", not as a parse failure. Because passthrough
+needs the real terminal, `--dashboard` refuses to run at all (with a clear error)
+when stdout is not a tty (piped/CI); drop the flag or run interactively. Use it to
 watch a run; leave it off when you want a complete report.
 
 ## Running the full suite

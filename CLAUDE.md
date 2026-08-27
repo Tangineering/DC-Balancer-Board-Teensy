@@ -1499,3 +1499,35 @@ tooling only — FW_VERSION stays 21, wire protocol frozen (40 B inject / 16 B o
   for the first full HIL report; hifi handoff-sag needs on-board verification (the share
   cut latch actually opening BT_BUS was not verifiable without hardware). Housekeeping
   unchanged: analyzer exe rebuild; .venv_benchlog pandas/scipy.
+
+---
+
+## Status & session addendum (2026-08-27d, HIL live terminal dashboard)
+
+Orchestrated tooling round (Opus implementer, Sonnet test-writer, Opus combined-lens review,
+Sonnet fix round). Python tooling only; FW_VERSION stays 21; wire protocol/CSV untouched.
+
+- **tools/hil_dashboard.py (new, stdlib):** ANSI live dashboard (plain ESC[H redraw, not
+  curses — Windows Terminal/MSYS2 compatible via the os.system("") VT trick). Shows v_sp/
+  v_act, share_sp/share_act (sp from the PiCommander timeline when pi-driven, else "—";
+  share_act = I_fc/I_tot above 50 mA), V_bus/I_tot/I_fc/I_bt with ~12 s sparklines, named
+  switch/aux indicators, firmware state, decoded fault names, frame counters, hifi substep
+  rate/chopper peak. Terminal-size adaptive (per-frame get_terminal_size, ANSI-safe
+  truncation, priority-based line dropping); non-tty stdout → polite refusal, normal prints.
+- **Lightness contract (user prime directive, review-verified):** the 1 kHz loop's only
+  obligation is ONE scalar-only dict build + one attribute assignment per tick — no locks,
+  no I/O, no time syscalls, provably no torn reads (fresh dict of scalars each tick); a 5 Hz
+  daemon thread owns history rings and rendering; O(60) per render regardless of run length.
+  Measured: 999.9 Hz with rendering vs 1000.0 Hz without (pty, dead IP). Zero-cost when off
+  (one local-bool branch). Renderer exceptions latch dash.error, restore the cursor, never
+  propagate; the sim resumes normal 1 Hz status prints on renderer death (review F2).
+- **Flags:** `hil_plant_sim.py --dash` (suppresses the scrolling status lines while active;
+  banners/exit summary unaffected); `run_hil_suite.py --dashboard` (default OFF per the
+  "in case it affects the simulation" requirement) passes --dash to every child with stdout
+  passed through — the REPORT.md rate gate is explicitly SKIPPED-and-labeled for such runs
+  (F3), and --dashboard without a tty is refused at argparse (F4).
+- **Review round: 4 MED + 6 LOW, all accepted/fixed** (narrow-terminal wrap corruption,
+  renderer-death silence, silent rate-gate drop, piped-wrapper dead zone; + cosmetic LOWs).
+  Orchestrator applied the two mechanical F2 test ripples. **Tests: 296 pytest green**
+  (34 new dashboard tests incl. a FAULT_NAMES equality pin against hil_replay_suite and a
+  code-shape guard that the sim touches only dash.snapshot/start/stop/error).

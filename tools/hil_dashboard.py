@@ -36,6 +36,8 @@ Stdlib only.
 
 import collections
 import os
+import re
+import shutil
 import sys
 import threading
 import time
@@ -74,16 +76,30 @@ CSI = "\x1b["
 DASH = "—"
 
 
-def decode_faults(flags):
-    """0x0000 -> 'none'; otherwise the set bit names, comma separated."""
+def decode_faults(flags, max_names=None):
+    """0x0000 -> 'none'; otherwise the set bit names, comma separated.
+
+    F1: `max_names` caps how many names are spelled out before collapsing the
+    rest to '+k more' — used by the dashboard to keep the faults line inside
+    the terminal width. Unlimited (the pre-F1 behaviour) when omitted."""
     if not flags:
         return "none"
     names = [n for bit, n in FAULT_NAMES if flags & bit]
-    return ", ".join(names) if names else "0x%04X" % flags
+    if not names:
+        return "0x%04X" % flags
+    if max_names is not None and len(names) > max_names:
+        shown = names[:max_names]
+        return ", ".join(shown) + ", +%d more" % (len(names) - max_names)
+    return ", ".join(names)
 
 
-def sparkline(values, lo=None, hi=None):
-    """Unicode block sparkline over `values` (None entries render as a space)."""
+def sparkline(values, lo=None, hi=None, width=None):
+    """Unicode block sparkline over `values` (None entries render as a space).
+
+    F1: `width` (if given) keeps only the most recent `width` samples, so a
+    narrow terminal gets a shorter spark instead of one that overflows."""
+    if width is not None and width > 0:
+        values = list(values)[-width:]
     pts = [v for v in values if v is not None]
     if not pts:
         return ""
@@ -103,8 +119,28 @@ def sparkline(values, lo=None, hi=None):
     return "".join(out)
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _visible_len(text):
+    """Length of `text` as it will occupy terminal columns -- ANSI SGR color
+    codes stripped (they are zero-width on screen). F1 needs this to decide
+    whether a line needs truncating without ever cutting inside an escape."""
+    return len(_ANSI_RE.sub("", text))
+
+
+_NUM_WIDTH_RE = re.compile(r"%-?0?(\d+)")
+
+
 def _num(v, fmt="%7.3f"):
-    return DASH.rjust(7) if v is None else (fmt % v)
+    if v is not None:
+        return fmt % v
+    # F8: derive the placeholder width from fmt's own field width instead of
+    # a fixed 7 -- callers pass fmt="%6.0f" etc. and a mismatched placeholder
+    # width made the em-dash jitter the column vs real values.
+    m = _NUM_WIDTH_RE.match(fmt)
+    width = int(m.group(1)) if m else 7
+    return DASH.rjust(width)
 
 
 class Dashboard:
@@ -131,6 +167,7 @@ class Dashboard:
         self._stopped = False
         self._started = False
         self.error = None               # one-line reason the renderer died
+        self._error_reported = False    # F6: dedupe the death message vs stop()
         # History rings — owned exclusively by the renderer thread.
         self._hist = {k: collections.deque([None] * HISTORY_N, maxlen=HISTORY_N)
                       for k in ("v_act", "share", "V_bus", "I_tot", "I_fc", "I_bt")}
@@ -176,8 +213,22 @@ class Dashboard:
                 sys.stdout.flush()
             except Exception:           # pragma: no cover - defensive
                 pass
-        if self.error:
+        if self.error and not self._error_reported:
+            # F6: the renderer thread itself prints this when it dies (see
+            # _run()'s except clause); only print here if it never got the
+            # chance to (e.g. the death happened after its own print already
+            # ran is the common case and is already covered by the flag it
+            # sets there).
             print("[hil] dashboard stopped early: %s" % self.error)
+        if self._started:
+            # F7 (belt-and-suspenders): re-emit the cursor-show in case a
+            # timed-out join let an in-flight frame (or the error path above)
+            # write after the earlier restore. Cheap and idempotent.
+            try:
+                sys.stdout.write(CSI + "?25h")
+                sys.stdout.flush()
+            except Exception:           # pragma: no cover - defensive
+                pass
 
     # ── renderer thread ──────────────────────────────────────────────────────
     def _run(self):
@@ -187,7 +238,15 @@ class Dashboard:
                 snap = self.snapshot        # atomic read of the drop box
                 if snap is not None:
                     self._sample(snap)
-                    sys.stdout.write(self._render(snap))
+                    rendered = self._render(snap)
+                    # F7: stop() may have been signalled (and may already be
+                    # mid-teardown, e.g. its 1 s join about to time out) while
+                    # we were sampling/rendering above -- re-check right
+                    # before the write so a frame in flight cannot land after
+                    # stop() has restored the cursor/terminal.
+                    if self._stop.is_set():
+                        break
+                    sys.stdout.write(rendered)
                     sys.stdout.flush()
                 self._stop.wait(period)
         except BaseException as exc:        # never propagate into the sim
@@ -197,6 +256,7 @@ class Dashboard:
                 sys.stdout.write("[hil] dashboard renderer died (%s); "
                                  "simulation continues.\n" % self.error)
                 sys.stdout.flush()
+                self._error_reported = True     # F6: stop() must not repeat this
             except Exception:
                 pass
 
@@ -210,24 +270,50 @@ class Dashboard:
         h["I_bt"].append(s.get("I_bt"))
 
     # ── formatting helpers ───────────────────────────────────────────────────
-    def _dot(self, on):
-        if not self.color:
+    def _dot(self, on, color=None):
+        c = self.color if color is None else color
+        if not c:
             return "●" if on else "○"
         return ("\x1b[32m●\x1b[0m" if on else "\x1b[2m○\x1b[0m")
 
-    def _bits(self, value, table):
+    def _bits(self, value, table, color=None):
         if value is None:
             return DASH
-        return "  ".join("%s %s" % (self._dot(value & bit), name)
+        return "  ".join("%s %s" % (self._dot(value & bit, color=color), name)
                          for bit, name in table)
 
     def _line(self, text):
         return text + CSI + "K\n"
 
+    def _fit_line(self, text, avail):
+        """F1: truncate one rendered line's VISIBLE text to `avail` columns.
+
+        Plain lines (no ANSI) are cut directly -- the visible length equals
+        len(text), so a substring can never land inside an escape. A line
+        carrying escapes (only the switch/aux dot lines, via `has_color`)
+        would need escape-aware slicing to cut safely mid-line; instead of
+        that complexity, the caller re-renders those specific lines with
+        color forced off before calling here, so by the time a colored line
+        reaches `_fit_line` it is always already the plain fallback."""
+        if avail is None or avail <= 0 or _visible_len(text) <= avail:
+            return text
+        return text[:avail]
+
     def _render(self, s):
-        L = [CSI + "H"]
-        A = L.append
-        add = lambda t: A(self._line(t))
+        # F1: adapt to the real terminal every frame -- a narrow terminal
+        # combined with the ESC[H fixed-line redraw otherwise wraps long
+        # lines and permanently corrupts the screen (each redraw re-wraps
+        # onto lines the cursor-home math no longer accounts for).
+        cols, rows = shutil.get_terminal_size((80, 24))
+        avail = max(cols - 1, 20)       # leave the last column alone
+        max_lines = max(rows - 1, 5)    # leave the last row alone
+        spark_w = max(10, cols - 40)
+
+        # Each entry: (priority, text). priority 0 = always keep; higher
+        # numbers are dropped first (in reverse line order) if the frame
+        # would otherwise overflow the terminal's row count.
+        rows_out = []
+        add = lambda t, pri=0: rows_out.append((pri, self._fit_line(t, avail)))
 
         mode = s.get("mode", "?")
         add("HIL dashboard  t=%7.2f s  %s  [%s]  %.0f Hz view"
@@ -235,47 +321,74 @@ class Dashboard:
         add("  rate %s Hz achieved   tx=%s rx=%s bad=%s   pi=%s"
             % (_num(s.get("rate_hz"), "%6.0f"), s.get("tx", 0), s.get("rx", 0),
                s.get("bad", 0), s.get("pi", 0)))
-        add("")
+        add("", pri=2)
 
-        add("── setpoints ─────────────────────────────────────────────")
+        add("── setpoints ─────────────────────────────────────────────", pri=1)
         add("  v      sp %s   act %s m/s  %s"
             % (_num(s.get("v_sp")), _num(s.get("v_act")),
-               sparkline(self._hist["v_act"])))
+               sparkline(self._hist["v_act"], width=spark_w)))
         add("  share  sp %s   act %s      %s"
             % (_num(s.get("share_sp")), _num(s.get("share_act")),
-               sparkline(self._hist["share"], 0.0, 1.0)))
-        add("")
+               sparkline(self._hist["share"], 0.0, 1.0, width=spark_w)))
+        add("", pri=2)
 
-        add("── rails ─────────────────────────────────────────────────")
+        add("── rails ─────────────────────────────────────────────────", pri=1)
         for key, label, unit in (("V_bus", "V_bus", "V"), ("I_tot", "I_tot", "A"),
                                  ("I_fc", "I_fc ", "A"), ("I_bt", "I_bt ", "A")):
             vals = self._hist[key]
             pts = [v for v in vals if v is not None]
             rng = ("[%.2f..%.2f]" % (min(pts), max(pts))) if pts else ""
             add("  %s %s %s  %s %s" % (label, _num(s.get(key)), unit,
-                                       sparkline(vals), rng))
-        add("")
+                                       sparkline(vals, width=spark_w), rng))
+        add("", pri=2)
 
-        add("── switches ──────────────────────────────────────────────")
-        add("  " + self._bits(s.get("switch"), SWITCH_BITS))
-        add("  " + self._bits(s.get("aux"), AUX_BITS))
-        add("")
+        add("── switches ──────────────────────────────────────────────", pri=1)
+        for value, table in ((s.get("switch"), SWITCH_BITS), (s.get("aux"), AUX_BITS)):
+            colored = "  " + self._bits(value, table)
+            # F1: only fall back to the uncolored render when the colored one
+            # would actually need cutting -- avoids re-computing on every
+            # frame in the common (wide terminal) case.
+            if _visible_len(colored) > avail:
+                add("  " + self._bits(value, table, color=False))
+            else:
+                rows_out.append((0, colored))
+        add("", pri=2)
 
         st = s.get("state")
-        add("── board ─────────────────────────────────────────────────")
+        add("── board ─────────────────────────────────────────────────", pri=1)
         add("  state %s  I_cmd %s A  I_chg %s A  ag105 %s"
             % (("%2d %-6s" % (st, STATE_NAMES.get(st, "?"))) if st is not None
                else (DASH + " " * 8),
                _num(s.get("I_cmd")), _num(s.get("I_chg")),
                "—" if s.get("ag105") is None else "0x%02X" % s["ag105"]))
+        # F1: cap the fault names spelled out so a multi-fault line can't
+        # blow past the terminal width -- 4 leaves room for the "0x%04X"
+        # prefix and a trailing "+k more" even on an 80-col terminal.
         add("  faults 0x%04X  %s"
-            % (s.get("faults") or 0, decode_faults(s.get("faults") or 0)))
+            % (s.get("faults") or 0, decode_faults(s.get("faults") or 0, max_names=4)))
         if s.get("hifi_hz") is not None:
             add("  hifi   %.1f kHz substep   events %d   chopper peak %s W"
                 % (s["hifi_hz"] / 1e3, s.get("hifi_events", 0),
-                   _num(s.get("hifi_chopper_w"), "%6.1f")))
+                   _num(s.get("hifi_chopper_w"), "%6.1f")), pri=1)
         else:
-            add("")
-        add("")
-        add("  (sampled view — several ticks behind by design; Ctrl-C to stop)")
+            add("", pri=2)
+        if s.get("rx", None) == 0 and (s.get("t") or 0.0) > 2.0:
+            # F9: the most useful diagnostic when nothing has arrived yet --
+            # surfaced in-frame since the 1 Hz status print is suppressed
+            # while the dashboard owns the screen.
+            add("  ⚠ no observation frames yet — is the board flashed with "
+                "-DHIL_SIM=1?", pri=1)
+        add("", pri=2)
+        add("  (sampled view — several ticks behind by design; Ctrl-C to stop)", pri=1)
+
+        # F1: clamp total lines to the terminal's row count, dropping the
+        # lowest-priority lines first (stable order otherwise preserved).
+        if len(rows_out) > max_lines:
+            keep = sorted(range(len(rows_out)), key=lambda i: rows_out[i][0])[:max_lines]
+            keep = sorted(keep)
+            rows_out = [rows_out[i] for i in keep]
+
+        L = [CSI + "H"]
+        for _, text in rows_out:
+            L.append(self._line(text))
         return "".join(L)

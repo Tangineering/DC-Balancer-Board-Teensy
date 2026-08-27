@@ -323,6 +323,7 @@ class _CapturingDashboard:
     def __init__(self, *a, **k):
         self.snapshots = []
         self._snapshot = None
+        self.error = None       # F2: the sim's 1 Hz block reads dash.error
 
     def start(self):
         return True
@@ -427,7 +428,10 @@ def test_snapshot_populated_from_pi_timeline_for_charge_cruise(
 def test_status_lines_suppressed_with_dash_active(tmp_path, capturing_dashboard, capsys):
     argv, csv_path = _base_argv(
         tmp_path, ["--scenario", "steady", "--electrical", "simple",
-                   "--rate", "2000", "--duration", "1.2", "--dash"])
+                   # F5: 1.6 s vs the 1.0 s status cadence gives >0.5 s margin
+                   # instead of 0.2 s -- the old 1.2 s duration was flaky on a
+                   # cold start.
+                   "--rate", "2000", "--duration", "1.6", "--dash"])
     rc = hil.main(argv)
     assert rc == 0
     out = capsys.readouterr().out
@@ -439,7 +443,7 @@ def test_status_lines_suppressed_with_dash_active(tmp_path, capturing_dashboard,
 def test_status_lines_present_without_dash(tmp_path, capsys):
     argv, csv_path = _base_argv(
         tmp_path, ["--scenario", "steady", "--electrical", "simple",
-                   "--rate", "2000", "--duration", "1.2"])
+                   "--rate", "2000", "--duration", "1.6"])  # F5: see above
     rc = hil.main(argv)
     assert rc == 0
     out = capsys.readouterr().out
@@ -559,7 +563,7 @@ def test_hot_path_feed_is_a_single_snapshot_assignment_no_other_dash_calls():
     # Every occurrence of `dash.<name>` other than `dash.snapshot`, `dash.start(`
     # and `dash.stop(` would indicate a heavier per-tick interaction.
     calls = re.findall(r"\bdash\.(\w+)\s*(\(?)", src)
-    allowed = {"snapshot", "start", "stop"}
+    allowed = {"snapshot", "start", "stop", "error"}  # error: F2, read at 1 Hz only
     unexpected = sorted({name for name, _paren in calls if name not in allowed})
     assert not unexpected, (
         "hil_plant_sim.py touches dash.%s beyond the documented "

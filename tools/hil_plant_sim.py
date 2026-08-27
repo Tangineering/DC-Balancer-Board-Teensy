@@ -1237,7 +1237,7 @@ def main(argv=None):
                 # up to the last completed second, not just at clean exit.
                 if csv_file:
                     csv_file.flush()
-                if dash_on:
+                if dash_on and dash.error is None:
                     pass                # the dashboard owns the screen
                 elif obs:
                     print(f"[hil] t={t:6.2f}s  state={obs['state']:2d} "

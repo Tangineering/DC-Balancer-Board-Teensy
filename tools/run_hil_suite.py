@@ -407,6 +407,15 @@ def judge_scenario(name, metrics, events, child):
     if rate is not None:
         checks.append({"name": "achieved_rate", "passed": rate >= 900.0,
                        "detail": "%.1f Hz achieved (target 1000; host-stall gate 900)" % rate})
+    elif child.get("stdout_passthrough"):
+        # F3: with --dashboard the child's stdout was handed to the terminal
+        # (run_child()'s TRADE-OFF), so there is no captured summary to parse
+        # a rate from. Make that explicit instead of letting the rate gate
+        # silently vanish -- an absent check here reads as "not applicable",
+        # not "skipped for an operational reason".
+        checks.append({"name": "achieved_rate", "passed": True,
+                       "detail": "not measurable — --dashboard passed stdout through; "
+                                 "rate gate SKIPPED"})
 
     if events["over_absmax"]:
         checks.append({"name": "sw_ring_over_absmax", "passed": False,
@@ -524,6 +533,14 @@ def render_report(meta, results):
     A(_row(["Python", meta.get("python", "?")]))
     A(_row(["Electrical preference", meta.get("electrical_pref", "?")]))
     A(_row(["Settle pause between runs", "%s s" % meta.get("settle_s")]))
+    if meta.get("dashboard"):
+        # F3: --dashboard hands children the real terminal for stdout, so the
+        # per-run summary columns below (and the achieved-rate check) cannot
+        # be parsed from a capture -- flag it here, once, instead of leaving
+        # the reader to infer it from a wall of "?" cells.
+        A(_row(["Dashboard mode", "ON — children ran with --dash; stdout summary "
+                                  "columns below are unavailable (see the "
+                                  "achieved_rate note on each scenario)"]))
     A(_row(["Runs", "%d (%d scenario, %d replay)"
             % (len(results),
                sum(1 for r in results if r["kind"] == "scenario"),
@@ -573,6 +590,13 @@ def render_report(meta, results):
             A("")
             if r.get("description"):
                 A("*%s*" % r["description"])
+                A("")
+            if r.get("child", {}).get("stdout_passthrough"):
+                # F3: explain the '?' frame/rate cells below before the reader
+                # hits them, not just in the summary-table header row.
+                A("*(ran with `--dashboard`: stdout was passed through to the "
+                  "terminal, so the frame/rate summary below is unavailable — "
+                  "see the `achieved_rate` check.)*")
                 A("")
             m = r.get("metrics", {})
             A("- electrical: **%s** (scenario requires `%s`)"
@@ -737,6 +761,16 @@ def main(argv=None):
                     help="build every argv and write plan.json into the report dir; run nothing")
     args = ap.parse_args(argv)
 
+    # F4: --dashboard hands the child the real stdout (see run_child()'s
+    # TRADE-OFF comment) so it can draw ANSI directly -- but on a non-tty
+    # stdout (piped into a file, captured by CI) that both fails to show a
+    # dashboard AND throws away the captured stdout run_child() would
+    # otherwise have parsed the per-run summary from. Refuse up front rather
+    # than silently degrading both the dashboard and the report.
+    if args.dashboard and not sys.stdout.isatty():
+        ap.error("--dashboard requires a terminal (stdout is not a tty); "
+                 "drop --dashboard or run this in an interactive terminal.")
+
     if args.out is None:
         args.out = "hil_report_%s" % datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     # Children run with cwd = repo root, so every artifact path must be absolute
@@ -786,6 +820,7 @@ def main(argv=None):
             # clean, complete run.
             "partial": partial_now,
             "suite_log_problems": problems,
+            "dashboard": args.dashboard,
         }
 
     def write_outputs(meta_now, results_now):
