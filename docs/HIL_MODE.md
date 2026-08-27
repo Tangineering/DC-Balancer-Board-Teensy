@@ -1,5 +1,10 @@
 # HIL mode — real Teensy against a simulated plant (fw v21)
 
+> For the plant-side deep dive — the mechanical/electrical model, constant provenance,
+> the simplifications and their consequences, the CSV schema and the extension roadmap —
+> see [`docs/HIL_PLANT.md`](HIL_PLANT.md). This document covers the link: frames, staging,
+> build flags and the H1–H5 test plan.
+
 ## Purpose
 
 HIL mode makes the **real Teensy the device under test** and replaces the *plant*
