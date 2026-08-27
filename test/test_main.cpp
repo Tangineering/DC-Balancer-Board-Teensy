@@ -1957,6 +1957,118 @@ static void test_hil_wiring_send_tick() {
           "hilSendTick: resends once HIL_SEND_PERIOD_MS has elapsed");
     check(Udp.last_written[1] == 0x5B, "hilSendTick: the resend carries the updated seq");
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// pollAg105() HIL bypass — fw v21 charger extension
+// ═════════════════════════════════════════════════════════════════════════════
+// Once an injection frame has arrived, pollAg105() must not touch Wire at all (there is no
+// Ag105 on a HIL rig). The "powered" test asserts on the DECODED result (the same fields the
+// real path would populate) AND that the mock I2C bus stayed untouched, so a regression that
+// accidentally fell through to the real path would fail on both counts.
+
+static void test_hil_wiring_pollag105_powered_bypass() {
+    test_group("HIL wiring pollAg105(): powered + injected status/current bypasses I2C entirely");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;   // chargerHasPower() true via the real switch pin
+
+    // Deliberately never touch Wire.rx_queue — if the bypass fails and the real path runs, the
+    // mock's emulate_regs default would still synthesize a response, so ALSO assert write_log
+    // stays empty (nothing attempted an I2C transaction at all).
+    injectHilFrame(80, 1, 1, 1, 1, 1, 1, 1, 1, /*I_charge=*/1.87f, /*ag105_status=*/0x02);
+    pollAg105();
+
+    check(ag105_status_raw == 0x02, "HIL pollAg105 (powered): ag105_status_raw sourced from the injected byte");
+    check(fabsf(I_charge - 1.87f) < 1e-4f, "HIL pollAg105 (powered): I_charge sourced from the injected float");
+    check(ag105DataValid, "HIL pollAg105 (powered): ag105DataValid true (a successful 'read')");
+    check(Wire.write_log.empty(), "HIL pollAg105 (powered): the real I2C bus was never touched");
+}
+
+static void test_hil_wiring_pollag105_unpowered_clears() {
+    test_group("HIL wiring pollAg105(): unpowered clears config/valid/status/current");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+    // All switches LOW (default from reset_test_state) -> chargerHasPower() false.
+
+    injectHilFrame(81, 1, 1, 1, 1, 1, 1, 1, 1, /*I_charge=*/3.3f, /*ag105_status=*/0x02);
+    ag105Configured = true;   // arm so the test can observe it being re-armed to false
+    pollAg105();
+
+    check(!ag105Configured, "HIL pollAg105 (unpowered): ag105Configured re-armed false");
+    check(!ag105DataValid,  "HIL pollAg105 (unpowered): ag105DataValid false");
+    check(ag105_status_raw == 0, "HIL pollAg105 (unpowered): ag105_status_raw cleared (0x00 == "
+          "\"no charger data\" for telemetry, matching the real path's NAK branch)");
+    check(I_charge == 0.0f, "HIL pollAg105 (unpowered): I_charge cleared");
+    check(Wire.write_log.empty(), "HIL pollAg105 (unpowered): the real I2C bus was never touched");
+}
+
+static void test_hil_wiring_pollag105_settles_to_configured() {
+    test_group("HIL wiring pollAg105(): ag105Configured set by fiat once settled (no I2C write simulated)");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;
+
+    injectHilFrame(82, 1, 1, 1, 1, 1, 1, 1, 1, 1.0f, 0x02);
+    pollAg105();   // power EDGE this tick -> ag105PowerOnMs stamped now, not yet settled
+    check(!ag105Configured, "HIL pollAg105 (settle): not configured on the power edge tick itself");
+
+    g_mock_millis = 1000 + AG105_SETTLE_MS - 1;
+    pollAg105();
+    check(!ag105Configured, "HIL pollAg105 (settle): still not configured just short of AG105_SETTLE_MS");
+
+    g_mock_millis = 1000 + AG105_SETTLE_MS;
+    pollAg105();
+    check(ag105Configured, "HIL pollAg105 (settle): configured BY FIAT once settled (the config WRITE "
+          "sequence, initAg105Charger(), is never invoked under HIL)");
+    check(Wire.write_log.empty(), "HIL pollAg105 (settle): still no real I2C transaction, even at config time");
+}
+
+static void test_hil_wiring_pollag105_genstat_fault_still_latches() {
+    test_group("HIL wiring pollAg105(): an injected GENSTAT error byte still latches FAULT_CHARGER_STAT");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+    mainState = 2;   // faultArmed-equivalent state for the (unmodified) detectFaults() GENSTAT check
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;
+
+    // GENSTAT bits [2:0] = 0x05 (OC/Regulation Error) — Ag105_Table6_I2C_Status_Byte.json.
+    injectHilFrame(83, 10.0f, 7.4f, 16.0f, 5.0f, 13.0f, 0.2f, 0.5f, 0.0f, /*I_charge=*/1.0f,
+                   /*ag105_status=*/0x05);
+    pollAg105();
+    check(ag105DataValid && ag105_status_raw == 0x05,
+          "HIL pollAg105 (GENSTAT fault): (setup) the injected error byte landed live");
+
+    detectFaults();   // the UNMODIFIED GENSTAT check — fault injection is the point (fw v21)
+    check((fault_flags & FAULT_CHARGER_STAT) != 0,
+          "HIL pollAg105 (GENSTAT fault): FAULT_CHARGER_STAT latched through the unmodified detectFaults()");
+    check(error_code == ERR_CHARGER_STAT,
+          "HIL pollAg105 (GENSTAT fault): error_code latches ERR_CHARGER_STAT");
+    check(mainState == 99, "HIL pollAg105 (GENSTAT fault): State 99 latched exactly as on real hardware");
+}
+
+static void test_hil_wiring_pollag105_real_i2c_before_first_frame() {
+    test_group("HIL wiring pollAg105(): before the first accepted frame, the REAL I2C path still runs");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+    check(!hilHaveFrame, "HIL pollAg105 (pre-frame): (setup) no injection frame has arrived yet");
+
+    // Script a real-I2C response distinct from anything a HIL frame would carry, exactly like the
+    // pre-existing (non-HIL) test_poll_ag105() fixture.
+    Wire.rx_queue.push(0x03);   // GENSTAT = fully charged
+    Wire.rx_queue.push(77);     // -> 77 * 0.011 A/count
+
+    pollAg105();
+
+    check(ag105_status_raw == 0x03,
+          "HIL pollAg105 (pre-frame): ag105_status_raw came from the REAL (scripted) I2C read");
+    check(fabsf(I_charge - 77 * 0.011f) < 1e-4f,
+          "HIL pollAg105 (pre-frame): I_charge came from the REAL (scripted) I2C read, not injection");
+    check(ag105DataValid, "HIL pollAg105 (pre-frame): ag105DataValid true on a successful real read");
+}
 #endif  // HIL_SIM
 
 // ─── PI controller basic behavior ────────────────────────────────────────────
