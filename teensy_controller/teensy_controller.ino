@@ -1076,6 +1076,23 @@
 #include "share_controller.h"   // Youla-H power-share controller (generated coeffs)
 #include "drive_controller.h"   // Youla-H drive/velocity controller (generated coeffs, fw v10)
 
+// Arduino-builder guard.  The builder auto-generates a prototype for every .ino
+// function that does not already have one and inserts those prototypes ABOVE the
+// first function definition — which sits far earlier in this file than the HIL
+// codec's own types.  Without this declaration the generated prototype for
+// hilParseInjectFrame() fails to compile with
+//     error: 'HilInjectFrame' has not been declared
+// reported, via the builder's #line mapping, against the DEFINITION's line, so the
+// error points at code where the type looks perfectly well-defined.  An incomplete
+// type is enough for a reference parameter in a declaration.  The explicit
+// prototype beside the struct below is the file's existing idiom (cf.
+// trapPhaseStr()) and suppresses the generated one; this line additionally keeps
+// the sketch correct if a prototype is ever emitted anyway.  Only types used as
+// PARAMETERS are affected — the other sketch structs are locals/array types only.
+// g++ on the host test build performs no prototype insertion, which is why the
+// test suite never caught this.
+struct HilInjectFrame;
+
 VescUart vesc;
 EthernetUDP Udp;
 
@@ -2607,6 +2624,19 @@ struct HilInjectFrame {
     float I_charge;         // A — simulated Ag105 reg 0x06 reading, already scaled
     uint8_t ag105_status;   // raw Table 6 status byte (Ag105_Table6_I2C_Status_Byte.json)
 };
+
+// Manual prototype — REQUIRED, same reason as trapPhaseStr()'s below.  The Arduino
+// builder auto-generates a prototype for every .ino function that lacks one and
+// inserts it ABOVE the first function definition, which sits earlier in this file
+// than this struct; the generated prototype then fails with
+//     error: 'HilInjectFrame' has not been declared
+// reported (via the builder's #line mapping) against the definition's own line, so
+// the error points at code where the type looks perfectly well-defined.  Declaring
+// the prototype here suppresses the generated one.  Only functions taking a
+// sketch-defined type as a PARAMETER are affected; the other sketch structs appear
+// solely as locals/array element types.  g++ on the host test build does no
+// prototype insertion, which is why the suite never caught this.
+bool hilParseInjectFrame(const uint8_t *buf, int len, HilInjectFrame &out);
 
 // ── HIL link state (grouped; only read/written by the HIL paths) ─────────────
 HilInjectFrame hilInject      = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
