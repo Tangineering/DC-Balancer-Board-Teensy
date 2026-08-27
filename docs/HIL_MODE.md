@@ -350,6 +350,75 @@ over the line: the same run under `--scenario sag` (a −5 V, 1 s disturbance) *
 latch State 99 with the UV bit, which is test **H2**. Replay checks the near-miss;
 the scenario checks the trip. Both should hold on any build.
 
+## Running the full suite
+
+The individual commands above are for a single scenario or a single recorded log.
+`tools/run_hil_suite.py` is the one-shot wrapper: it runs **every** scenario in
+`SCENARIOS` and **every** entry in the replay suite against a flashed board, then
+packages the whole thing into a timestamped report directory.
+
+```bash
+python3 tools/run_hil_suite.py --teensy-ip 192.168.1.50
+```
+
+**Prerequisites**
+
+- The board is flashed `-DHIL_SIM=1 -DUSE_ETHERNET=1` (fw v21 or later — the runner
+  states that expectation in the report header; it does not enforce it).
+- Board and simulator host share an L2 segment, and the board answers on
+  `--teensy-ip` / `--port` (default `5001`, the `.ino` `local_port`).
+- Nothing on the power stage. This is signal-level HIL; the scenarios drive the
+  firmware's fault and sequencing paths deliberately.
+- Under a production (`BENCH_TEST=0`) build the simulator must already be streaming
+  before the board powers on, or the board hits `INIT_FAIL` in ~800 ms.
+
+**Options**
+
+| Flag | Meaning |
+|------|---------|
+| `--out DIR` | report directory (default `hil_report_<YYYYmmdd_HHMMSS>/`) |
+| `--list` | print the run plan and estimated wall time; needs no board |
+| `--dry-run` | build every child argv, write `plan.json`, run nothing |
+| `--only PAT` / `--skip PAT` | shell globs on the run name; repeatable |
+| `--replay-only` / `--scenarios-only` | run one half of the plan |
+| `--electrical-pref {hifi,simple}` | engine for scenarios whose requirement is `any` (default `hifi`); scenarios that *require* one engine always run in it |
+| `--settle-s X` | pause between runs (default 5 s) |
+| `--keep-going` | do not abort when the first run sees no observation frames |
+
+**Board state between runs.** Each run opens its own socket, and the firmware learns
+its host from the first accepted injection frame. The default 5 s settle pause is far
+longer than the 250 ms zero stage, so between runs the board force-zeros the injected
+rails, unbinds the host and latches `ERR_HIL_STALE` — i.e. each run starts from a
+known *latched* board, not from whatever the previous scenario left behind. That
+latch is expected; the runner judges each run's fault outcome against that run's own
+stimulus. For a clean State-1 board on a particular run, power-cycle and pass
+`--settle-s 0`.
+
+**Execution model.** Every run is a separate `hil_plant_sim.py` child process (not an
+in-process call) with a hard timeout of the run's duration + 30 s, so a wedged run is
+killed and recorded as `TIMEOUT` instead of hanging the session. Each child's
+stdout/stderr lands in a per-run `.log`.
+
+**What the report contains** (`REPORT.md` + machine-readable `results.json`):
+
+- a header — date, board IP, firmware expectation, host, achieved tick rates;
+- a summary table of every run (kind, electrical mode, duration, pass/fail, key metrics);
+- a **scenarios** section. Scenario entries carry no declarative checks, so the runner
+  applies its own health criteria: at least one observation frame arrived (zero frames
+  = FAIL, the board is absent), the fault outcome matches an expectation table (`sag`
+  must latch UV_BUS per H2; `comm-loss` must latch `ERR_HIL_STALE`, since its 1 s gap
+  is past the 250 ms zero stage; `soc-depletion` and `charge-fault` are *allowed* to
+  fault; everything else must stay clean), the achieved rate held above 900 Hz, and no
+  `sw_ring` event exceeded the 20 V abs-max;
+- a **replay** section, grouped conformance vs deviation, with each declarative check's
+  detail and the entry's fw-delta / open-loop notes;
+- a **known open findings** section that always carries the `K_DROOP_BUS`
+  design-vs-measured ×4 discrepancy, plus any over-abs-max `sw_ring` events seen;
+- an appendix listing every artifact file.
+
+Exit code: `0` all passed, `1` at least one failure, `2` the board never answered on
+the first run (the runner aborts early rather than grinding through 30+ dead runs).
+
 ## HIL test plan
 
 | ID | Precondition | Stimulus | Acceptance criterion |

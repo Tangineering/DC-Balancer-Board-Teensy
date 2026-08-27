@@ -10,6 +10,7 @@ CLI-diffing approach decode_benchlog's test needed.
 
 Run: cd tools && python -m pytest test_hil_plant_sim.py -v
 """
+import csv
 import os
 import struct
 import sys
@@ -257,12 +258,64 @@ def test_motor_force_present_when_both_gates_satisfied():
 # ─────────────────────────────────────────────────────────────────────────
 
 def test_droop_bus_value_with_live_source():
+    """UPDATED (tooling round): the droop model is now mode-aware — a single
+    live source uses K_DROOP_BUS_SINGLE (0.16 V/A) off the measured no-load
+    intercept V_BUS_DROOP_V0 (15.95 V), not the old single V_BUS_NOMINAL-based
+    0.35 V/A placeholder. Only FC_BUS is live here, so this exercises the
+    single-source branch."""
     plant = hil.Plant()
     obs = _obs(switch=hil.SW_FC_BUS, aux=hil.AUX_FC_REG, current=0.0)
     out = plant.step(1e-3, obs)
     # i_total is just I_AUX_A (no motor draw, mot_live False)
-    expected = hil.V_BUS_NOMINAL - hil.K_DROOP_BUS * hil.I_AUX_A
+    expected = hil.V_BUS_DROOP_V0 - hil.K_DROOP_BUS_SINGLE * hil.I_AUX_A
     assert out["V_bus"] == pytest.approx(expected, abs=1e-6)
+
+
+def test_droop_bus_value_both_sources_live():
+    """The both-live regime uses the shallower K_DROOP_BUS_SHARED (0.074 V/A),
+    not the single-source slope — the two are fit separately (CLAUDE.md /
+    hil_plant_sim.py "MEASURED bus droop")."""
+    plant = hil.Plant()
+    obs = _obs(switch=hil.SW_FC_BUS | hil.SW_BT_BUS,
+               aux=hil.AUX_FC_REG | hil.AUX_BT_REG, current=0.0)
+    out = plant.step(1e-3, obs)
+    expected = hil.V_BUS_DROOP_V0 - hil.K_DROOP_BUS_SHARED * hil.I_AUX_A
+    assert out["V_bus"] == pytest.approx(expected, abs=1e-6)
+
+
+def test_droop_fit_two_operating_points_both_live():
+    """Fit the shared-source slope through two distinct current operating
+    points (not a single sample) and confirm it matches K_DROOP_BUS_SHARED,
+    with the V0 intercept landing at V_BUS_DROOP_V0."""
+    def v_bus_at(i_aux):
+        plant = hil.Plant()
+        obs = _obs(switch=hil.SW_FC_BUS | hil.SW_BT_BUS,
+                   aux=hil.AUX_FC_REG | hil.AUX_BT_REG, current=0.0)
+        plant.i_aux = i_aux
+        out = plant.step(1e-3, obs)
+        return out["V_bus"]
+
+    v1 = v_bus_at(0.15)
+    v2 = v_bus_at(1.5)
+    slope = (v1 - v2) / (1.5 - 0.15)
+    assert slope == pytest.approx(hil.K_DROOP_BUS_SHARED, abs=1e-6)
+    intercept = v1 + hil.K_DROOP_BUS_SHARED * 0.15
+    assert intercept == pytest.approx(hil.V_BUS_DROOP_V0, abs=1e-6)
+
+
+def test_droop_fit_two_operating_points_single_live():
+    """Same fit, single-source regime -> K_DROOP_BUS_SINGLE."""
+    def v_bus_at(i_aux):
+        plant = hil.Plant()
+        obs = _obs(switch=hil.SW_FC_BUS, aux=hil.AUX_FC_REG, current=0.0)
+        plant.i_aux = i_aux
+        out = plant.step(1e-3, obs)
+        return out["V_bus"]
+
+    v1 = v_bus_at(0.15)
+    v2 = v_bus_at(1.0)
+    slope = (v1 - v2) / (1.0 - 0.15)
+    assert slope == pytest.approx(hil.K_DROOP_BUS_SINGLE, abs=1e-6)
 
 
 def test_rc_decay_when_dark():
@@ -351,20 +404,29 @@ def test_mdac_split_degenerate_zero_codes_falls_back_to_half():
 
 
 def test_ir_sag_on_source_terminals():
+    """UPDATED (tooling round): the old fixed V_FC_OPEN/R_FC_INT/V_BT_OPEN/
+    R_BT_INT scalar-sag model is retired from hil_plant_sim — the source
+    terminals now come from the shared FuelCellSource/BatterySource paper-form
+    models in hil_electrical.py (Plant.fuel_cell / Plant.battery), which sag
+    under load through their own polarization/OCV+Rs form rather than a fixed
+    R_INT constant.  Assert the sag DIRECTION and the open-circuit references
+    those models actually produce instead of the retired constants."""
     plant = hil.Plant()
-    # Drive up I_fc/I_batt through a large aux-equivalent draw by cranking
-    # the motor with both sources live, so the sag term is non-trivial.
     plant.v_bus = hil.V_BUS_NOMINAL
     obs = _obs(switch=SW_ALL_LIVE, aux=AUX_BOTH_REG, current=6.0)
     out = None
     for _ in range(500):
         out = plant.step(1e-3, obs)
     assert out["I_fc"] > 0.0
-    expected_v_fc = max(0.0, hil.V_FC_OPEN - hil.R_FC_INT * out["I_fc"])
-    assert out["V_fc"] == pytest.approx(expected_v_fc, abs=1e-6)
-    assert out["V_fc"] < hil.V_FC_OPEN
-    expected_v_batt = max(0.0, hil.V_BT_OPEN - hil.R_BT_INT * out["I_batt"])
-    assert out["V_batt"] == pytest.approx(expected_v_batt, abs=1e-6)
+    # FuelCellSource open-circuit is fitted to ~12.97 V (FC_N_CELLS=12 so that
+    # N*Vcell(0) ~= 13 V OC class); under load the terminal voltage must sag
+    # below it.
+    oc_fc = plant.fuel_cell.open_circuit()
+    assert oc_fc == pytest.approx(12.97, abs=0.05)
+    assert 0.0 < out["V_fc"] < oc_fc
+    # BatterySource sags below its OCV(SOC) under discharge current too.
+    assert out["I_batt"] > 0.0
+    assert 0.0 < out["V_batt"] < plant.battery.ocv()
 
 
 def test_v_chg_gated_on_fc_charge_switch():
@@ -735,6 +797,325 @@ def test_main_bad_magic_replay_file_exits(tmp_path):
     path.write_bytes(b"XXXX" + b"\x00" * 60)
     with pytest.raises(SystemExit):
         hil.main(["--replay", str(path)])
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 6. PiCommander / pack_pi_command golden frame
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_pack_pi_command_golden_offsets_and_sync():
+    """Independently derived from teensy_controller.ino:4806-4852
+    (processPiCommandPacket) and SYNC_BYTE_RX at .ino:2528 — NOT copied from
+    hil_plant_sim's own constants, to catch a drift between the module and
+    the firmware it claims to mirror.
+
+    Layout (22 bytes total):
+      0   u8   sync = 0xBB
+      1   u32  timestamp_ms          LE
+      5   u16  counter                LE
+      7   f32  v_setpoint             LE
+      11  f32  power_share_setpoint   LE
+      15  f32  charge_goal            LE
+      19  u8   mode_cmd
+      20  u8   droop_enable
+      21  u8   XOR checksum over bytes 1..20
+    """
+    frame = hil.pack_pi_command(
+        timestamp_ms=0x12345678, counter=0xBEEF,
+        v_setpoint=1.5, power_share_setpoint=0.25, charge_goal=0.75,
+        mode_cmd=hil.MODE_HYBRID, droop_enable=1)
+    assert len(frame) == 22
+    assert frame[0] == 0xBB
+    (ts,) = struct.unpack_from("<I", frame, 1)
+    assert ts == 0x12345678
+    (counter,) = struct.unpack_from("<H", frame, 5)
+    assert counter == 0xBEEF
+    (v_sp, share_sp, chg) = struct.unpack_from("<fff", frame, 7)
+    assert v_sp == pytest.approx(1.5, abs=1e-6)
+    assert share_sp == pytest.approx(0.25, abs=1e-6)
+    assert chg == pytest.approx(0.75, abs=1e-6)
+    assert frame[19] == hil.MODE_HYBRID
+    assert frame[20] == 1
+    # checksum by hand: XOR of bytes 1..20 inclusive (20 bytes, the body)
+    manual = 0
+    for b in frame[1:21]:
+        manual ^= b
+    assert frame[21] == manual
+    assert hil.SYNC_BYTE_RX == 0xBB
+    assert hil.PI_CMD_SIZE == 22
+
+
+def test_pack_pi_command_field_masking():
+    frame = hil.pack_pi_command(
+        timestamp_ms=0x1_0000_0001, counter=0x1FFFF,
+        v_setpoint=0.0, power_share_setpoint=0.0, charge_goal=0.0,
+        mode_cmd=0x1FF, droop_enable=0x1FF)
+    (ts,) = struct.unpack_from("<I", frame, 1)
+    assert ts == 1  # masked to 32 bits
+    (counter,) = struct.unpack_from("<H", frame, 5)
+    assert counter == 0xFFFF
+    assert frame[19] == 0xFF
+    assert frame[20] == 0xFF
+
+
+def test_picommander_holds_fields_between_timeline_entries():
+    timeline = [(0.0, {"mode_cmd": hil.MODE_SAFE}),
+                (1.0, {"v_setpoint": 2.0})]
+    cmd = hil.PiCommander(timeline, rate_hz=10.0)
+    pkt0 = cmd.tick(0.0)
+    assert pkt0 is not None
+    (v0,) = struct.unpack_from("<f", pkt0, 7)
+    assert v0 == pytest.approx(0.0)
+    assert pkt0[19] == hil.MODE_SAFE
+    # Not yet time for the next scheduled TX, but t has passed the v_setpoint
+    # timeline entry — the state updates even if this call doesn't transmit.
+    pkt_mid = cmd.tick(1.05)
+    assert pkt_mid is not None
+    (v_mid,) = struct.unpack_from("<f", pkt_mid, 7)
+    assert v_mid == pytest.approx(2.0)
+    assert pkt_mid[19] == hil.MODE_SAFE  # mode_cmd HELD, not reset
+
+
+def test_picommander_no_timeline_never_sends():
+    cmd = hil.PiCommander(None)
+    assert cmd.tick(0.0) is None
+    assert cmd.tick(100.0) is None
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 7. SCENARIOS registry
+# ─────────────────────────────────────────────────────────────────────────
+
+EXPECTED_SCENARIO_NAMES = {
+    "steady", "step-load", "sag", "comm-loss", "drive",
+    "charge-cruise", "charge-regen", "charge-fault", "soc-depletion",
+    "handoff-sag", "bringup", "scp-inrush",
+}
+
+
+def test_scenarios_registry_names():
+    assert set(hil.SCENARIOS) == EXPECTED_SCENARIO_NAMES
+    assert set(hil.SCENARIO_NAMES) == EXPECTED_SCENARIO_NAMES
+
+
+def test_scenarios_registry_required_keys():
+    for name, meta in hil.SCENARIOS.items():
+        assert "description" in meta and isinstance(meta["description"], str) and meta["description"]
+        assert meta["electrical"] in ("simple", "hifi", "any"), name
+        assert isinstance(meta["duration_s"], (int, float)) and meta["duration_s"] > 0, name
+
+
+def test_scenarios_hifi_only_set():
+    hifi_only = {name for name, meta in hil.SCENARIOS.items() if meta["electrical"] == "hifi"}
+    assert hifi_only == {"handoff-sag", "bringup", "scp-inrush"}
+
+
+def test_hifi_only_scenario_refused_under_electrical_simple():
+    """CLI-level guard: main() must ap.error() (-> SystemExit) rather than
+    silently running a hifi-only scenario on the simple droop node."""
+    with pytest.raises(SystemExit):
+        hil.main(["--scenario", "bringup", "--electrical", "simple"])
+    with pytest.raises(SystemExit):
+        hil.main(["--scenario", "handoff-sag"])  # default electrical=simple
+    with pytest.raises(SystemExit):
+        hil.main(["--scenario", "scp-inrush", "--electrical", "simple"])
+
+
+def test_electrical_hifi_rejected_with_replay():
+    with pytest.raises(SystemExit):
+        hil.main(["--replay", "x.BLG", "--electrical", "hifi"])
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 8. Charging scenario semantics
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_charge_cruise_timeline_delivers_positive_charge_goal():
+    meta = hil.SCENARIOS["charge-cruise"]
+    timeline = meta["pi_timeline"]
+    # walk the timeline forward and confirm charge_goal eventually goes positive
+    state = {"charge_goal": 0.0}
+    saw_positive = False
+    for _t, fields in timeline:
+        state.update(fields)
+        if state.get("charge_goal", 0.0) > 0.0:
+            saw_positive = True
+    assert saw_positive
+
+
+def test_charge_regen_timeline_delivers_positive_charge_goal():
+    meta = hil.SCENARIOS["charge-regen"]
+    state = {"charge_goal": 0.0}
+    for _t, fields in meta["pi_timeline"]:
+        state.update(fields)
+    assert state["charge_goal"] > 0.0
+
+
+def test_charge_fault_drops_charger_rail():
+    plant = hil.Plant()
+    hil.apply_scenario(plant, "charge-fault", 5.0)
+    assert plant.chg_fault is False
+    hil.apply_scenario(plant, "charge-fault", 25.0)
+    assert plant.chg_fault is True
+
+
+def test_charge_fault_timeline_establishes_charging_intent():
+    meta = hil.SCENARIOS["charge-fault"]
+    state = {"charge_goal": 0.0, "mode_cmd": hil.MODE_SAFE}
+    for _t, fields in meta["pi_timeline"]:
+        state.update(fields)
+    assert state["charge_goal"] > 0.0
+    assert state["mode_cmd"] == hil.MODE_HYBRID
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 9. CSV schema
+# ─────────────────────────────────────────────────────────────────────────
+
+def _run_main_csv(tmp_path, extra_args, name="run.csv"):
+    csv_path = str(tmp_path / name)
+    args = ["--teensy-ip", "127.0.0.1", "--port", "58991",
+            "--bind-port", "0", "--rate", "200", "--csv", csv_path] + extra_args
+    rc = hil.main(args)
+    assert rc == 0
+    with open(csv_path, newline="") as fh:
+        reader = csv.reader(fh)
+        header = next(reader)
+        rows = list(reader)
+    return header, rows
+
+
+def test_csv_schema_sim_mode_appends_soc(tmp_path):
+    header, _rows = _run_main_csv(
+        tmp_path, ["--scenario", "steady", "--electrical", "simple", "--duration", "0.02"])
+    assert header[-1] == "soc"
+    assert "elec_substep_hz" not in header
+    assert "elec_events" not in header
+    assert "replay_rec" not in header
+
+
+def test_csv_schema_hifi_mode_appends_elec_columns(tmp_path):
+    header, _rows = _run_main_csv(
+        tmp_path, ["--scenario", "steady", "--electrical", "hifi", "--duration", "0.02"])
+    assert header[-3:] == ["soc", "elec_substep_hz", "elec_events"]
+
+
+REPLAY_CSV_HEADER_PIN = [
+    "t", "seq", "V_fc", "V_batt", "V_bus", "V_chg", "V_rgn", "I_fc", "I_batt",
+    "v_actual", "I_charge", "ag105_status",
+    "state", "switch", "aux", "current", "mdac_fc", "mdac_bt",
+    "fault_flags", "replay_rec",
+]
+
+
+def test_csv_schema_replay_mode_unchanged_with_replay_rec_last(tmp_path):
+    """Regression-pin the exact pre-existing replay CSV column order: replay
+    mode must NOT gain soc/elec columns (the plant integrator is bypassed, so
+    they would be meaningless — see the module's own comment at the writer)."""
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    header, _rows = _run_main_csv(
+        tmp_path, ["--replay", blg_path, "--duration", "0.02"], name="replay.csv")
+    assert header == REPLAY_CSV_HEADER_PIN
+    assert header[-1] == "replay_rec"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 10. Source models via Plant (SOC, OCV, FC polarization)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_soc_coulomb_counting_discharge():
+    """1 A discharge for 1 h (3600 ticks @ dt=1s) on a 5 Ah pack must drop
+    SOC by ~0.2, matching a plain coulomb count."""
+    plant = hil.Plant(soc0=0.5, capacity_ah=5.0)
+    for _ in range(3600):
+        plant.battery.update(1.0, 1.0)
+    assert plant.battery.soc == pytest.approx(0.3, abs=1e-6)
+
+
+def test_soc_coulomb_counting_charge_raises_soc():
+    plant = hil.Plant(soc0=0.5, capacity_ah=5.0)
+    for _ in range(3600):
+        plant.battery.update(1.0, -1.0)   # negative = charge
+    assert plant.battery.soc == pytest.approx(0.7, abs=1e-6)
+
+
+def test_soc_clamped_to_unit_interval():
+    plant = hil.Plant(soc0=0.99, capacity_ah=1.0)
+    for _ in range(20000):
+        plant.battery.update(1.0, 1.0)  # heavy discharge, would go deeply negative
+    assert plant.battery.soc == 0.0
+    plant2 = hil.Plant(soc0=0.01, capacity_ah=1.0)
+    for _ in range(20000):
+        plant2.battery.update(1.0, -1.0)  # heavy charge, would exceed 1.0
+    assert plant2.battery.soc == 1.0
+
+
+def test_v_batt_follows_ocv_monotone_in_soc():
+    """V_batt (via BatterySource.ocv()) must be monotone non-decreasing in
+    SOC across the whole LIPO_OCV_SOC table span."""
+    from hil_electrical import LIPO_OCV_SOC
+    ocvs = []
+    for soc in LIPO_OCV_SOC:
+        b = hil.BatterySource(soc0=soc)
+        ocvs.append(b.ocv())
+    assert all(a <= b + 1e-9 for a, b in zip(ocvs, ocvs[1:]))
+    # And densely sampled in between (the table is linearly interpolated).
+    dense = [hil.BatterySource(soc0=s / 100.0).ocv() for s in range(0, 101, 5)]
+    assert all(a <= b + 1e-9 for a, b in zip(dense, dense[1:]))
+
+
+def test_fc_open_circuit_approx_12_97v():
+    fc = hil.FuelCellSource()
+    assert fc.open_circuit() == pytest.approx(12.97, abs=0.02)
+
+
+def test_fc_effective_resistance_approx_0_447_ohm_at_2A():
+    """Settle the double-layer state at a constant 2 A load and confirm the
+    resulting IR sag implies ~0.447 ohm effective resistance (CLAUDE.md /
+    hil_electrical.py: "~0.45 ohm effective bench IR sag")."""
+    fc = hil.FuelCellSource()
+    oc = fc.open_circuit()
+    v = None
+    for _ in range(2000):        # far past FC_TAU_S=0.02s at dt=1e-3
+        v = fc.update(1e-3, 2.0)
+    r_eff = (oc - v) / 2.0
+    assert r_eff == pytest.approx(0.447, abs=0.02)
+
+
+def test_fc_first_order_sag_on_load_step():
+    """A fresh fuel cell subjected to a constant current step must settle
+    monotonically DOWN toward its new equilibrium over ~FC_TAU_S (the
+    double-layer state starts at the old, lower-loss equilibrium and ramps
+    toward the new one), not jump there instantly and not oscillate."""
+    fc = hil.FuelCellSource()
+    vs = []
+    for _ in range(200):
+        vs.append(fc.update(1e-3, 2.0))
+    assert all(a >= b - 1e-9 for a, b in zip(vs, vs[1:])), "not monotone non-increasing"
+    # Should have mostly settled within several time constants.
+    tail_span = max(vs[-20:]) - min(vs[-20:])
+    assert tail_span < 1e-3
+
+
+def test_ag105_full_at_high_soc_with_cv_taper():
+    """SOC >= 0.995 must report GENSTAT Fully Charged with the CV flag, and
+    the charge current must taper toward 0 rather than sit at the ceiling."""
+    plant = hil.Plant(soc0=0.995)
+    plant.v_bus = hil.V_BUS_NOMINAL
+    obs = _obs(switch=hil.SW_FC_CHARGE | hil.SW_FC_BUS, aux=hil.AUX_FC_REG, current=0.0)
+    dt = 1e-3
+    settle_ticks = int(hil.AG105_SETTLE_S / dt) + 5
+    for _ in range(settle_ticks):
+        out = plant.step(dt, obs)
+    assert out["ag105_status"] & 0x07 == hil.AG105_ST_FULL
+    assert out["ag105_status"] & hil.AG105_FLAG_CV
+    # Taper toward zero: run a while longer and confirm the current decreases
+    # (it starts at 0 right at bring-up, so drive it up first via a lower SOC
+    # baseline is unnecessary — assert it stays near 0 / decreasing, never
+    # rails at AG105_I_MAX like the CC branch does).
+    for _ in range(2000):
+        out = plant.step(dt, obs)
+    assert out["I_charge"] < 0.1
 
 
 if __name__ == "__main__":

@@ -445,6 +445,21 @@ be closed when the offset lands, `V_chg` sags with the bus and can cross below
 watching for in a `sag` trace that also has the charger path open, but not something the
 scenario was built to isolate.
 
+### 6.1 Running every scenario in one pass
+
+The table above is per-scenario. To run **all** of them — plus the recorded-log replay
+suite — against a flashed board in a single pass, use the wrapper
+`tools/run_hil_suite.py` (documented in `docs/HIL_MODE.md`, "Running the full suite").
+It launches each scenario as a separate `hil_plant_sim.py` child with a timeout,
+picks the electrical engine per scenario (a `hifi`-only scenario always runs hi-fi;
+`any` scenarios follow `--electrical-pref`), pauses between runs so the board unbinds
+its HIL host, and writes a `REPORT.md` + `results.json` covering observation-frame
+counts, achieved tick rate, fault outcome against an expectation table, hi-fi substep
+statistics and the event-sidecar counts — including any `sw_ring` above the 20 V
+abs-max. The report's "known open findings" section always restates the `K_DROOP_BUS`
+design-vs-measured ×4 discrepancy (§4), since every bus-droop number in a suite run is
+mode-dependent until that gap is closed.
+
 ---
 
 ## 7. Data capture
