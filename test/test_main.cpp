@@ -23,6 +23,7 @@
 #include <cstring>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 
 static int g_tests_passed = 0;
 static int g_tests_failed = 0;
@@ -189,6 +190,26 @@ static void reset_test_state() {
     pkt_counter_T    = 0;
     last_rx_ms       = 0;
     pi_ever_connected = false;
+
+    // .ino HIL link state (fw v21) — the codec is compiled unconditionally, so this state
+    // exists (and must be reset) in both non-HIL and HIL builds.
+    hilInject         = HilInjectFrame{0, 0, 0, 0, 0, 0, 0, 0, 0};
+    hilHaveFrame      = false;
+    hilStale          = false;
+    hilZeroed         = false;
+    hilLastFrameMs    = 0;
+    hilFramesAccepted = 0;
+    hilFramesRejected = 0;
+    hilHostIp         = IPAddress(0, 0, 0, 0);
+    hilHostPort       = 0;
+    mdacLastCodeFC    = 0;
+    mdacLastCodeBT    = 0;
+    // fw v21 fix round: host lock + foreign-frame counter + bounded-drain instrumentation.
+    hilFramesForeign  = 0;
+    hilHostLocked     = false;
+    udpDrainedLastTick = 0;
+    udpDrainedMaxTick  = 0;
+    udpDrainCapHits    = 0;
 
     // .ino drive cycle
     driveCycleActive     = false;
@@ -974,6 +995,869 @@ static void test_command_parsing() {
     check(fabsf(v_setpoint - 99.0f) < 0.001f,
           "receiveCommands: packet dropped when size != 22");
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// HIL (hardware-in-the-loop) LINK — fw v21
+// ═════════════════════════════════════════════════════════════════════════════
+// The codec (hilChecksum/hilParseInjectFrame/hilPackOutputFrame/readSwitchState/
+// readHilAuxState) is compiled UNCONDITIONALLY, so these tests run in BOTH the
+// -DBENCH_TEST=0 and -DBENCH_TEST=1 host builds, exactly like the v4 telemetry codec
+// tests above. Only the WIRING (updateSensors() sourcing, receiveCommands() acting on
+// an accepted frame, hilSendTick()) is gated on HIL_SIM and lives in the third
+// (-DHIL_SIM=1 -DUSE_ETHERNET=1) build's tests further down.
+
+// Independent XOR-checksum helper (deliberately NOT calling hilChecksum() itself) so the
+// golden-frame fixtures below don't become circular with the checksum-correctness test.
+static uint8_t xor_checksum_span(const uint8_t* buf, int lo, int hi_exclusive) {
+    uint8_t c = 0;
+    for (int i = lo; i < hi_exclusive; i++) c ^= buf[i];
+    return c;
+}
+
+static void test_hil_checksum() {
+    test_group("HIL: hilChecksum() correctness");
+
+    uint8_t buf1[5] = {0xB5, 0x01, 0x02, 0x03, 0xFF};
+    check(hilChecksum(buf1, 5) == (uint8_t)(0x01 ^ 0x02 ^ 0x03),
+          "hilChecksum: XOR over bytes[1..len-2], excludes sync and checksum byte itself");
+
+    uint8_t buf2[6] = {0xAA, 0x11, 0x22, 0x33, 0x44, 0x00};
+    check(hilChecksum(buf2, 6) == (uint8_t)(0x11 ^ 0x22 ^ 0x33 ^ 0x44),
+          "hilChecksum: correct over a longer span");
+
+    uint8_t buf3[3] = {0xB5, 0x00, 0x00};
+    check(hilChecksum(buf3, 3) == 0x00,
+          "hilChecksum: single-byte span of 0x00 checksums to 0");
+}
+
+// Builds a golden 35-byte injection frame with an independently-computed checksum.
+static void build_golden_hil_inject_frame(uint8_t* buf, uint8_t seq,
+                                           float V_fc, float V_batt, float V_bus,
+                                           float V_chg, float V_rgn,
+                                           float I_fc, float I_batt, float v_actual) {
+    buf[0] = HIL_SYNC_INJECT;
+    buf[1] = seq;
+    int idx = 2;
+    memcpy(&buf[idx], &V_fc,     4); idx += 4;
+    memcpy(&buf[idx], &V_batt,   4); idx += 4;
+    memcpy(&buf[idx], &V_bus,    4); idx += 4;
+    memcpy(&buf[idx], &V_chg,    4); idx += 4;
+    memcpy(&buf[idx], &V_rgn,    4); idx += 4;
+    memcpy(&buf[idx], &I_fc,     4); idx += 4;
+    memcpy(&buf[idx], &I_batt,   4); idx += 4;
+    memcpy(&buf[idx], &v_actual, 4); idx += 4;
+    buf[34] = xor_checksum_span(buf, 1, 34);
+}
+
+static void test_hil_parse_accept() {
+    test_group("HIL: hilParseInjectFrame() accepts a golden frame");
+
+    uint8_t buf[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(buf, 0x7A, 10.0f, 7.4f, 16.0f, 5.0f, 13.0f, 1.25f, 2.5f, 3.0f);
+
+    HilInjectFrame out;
+    bool ok = hilParseInjectFrame(buf, HIL_INJECT_SIZE, out);
+    check(ok, "hilParseInjectFrame: golden frame accepted");
+    check(out.seq == 0x7A,                       "hilParseInjectFrame: seq decoded");
+    check(fabsf(out.V_fc     - 10.0f) < 1e-6f,    "hilParseInjectFrame: V_fc decoded");
+    check(fabsf(out.V_batt   - 7.4f)  < 1e-6f,    "hilParseInjectFrame: V_batt decoded");
+    check(fabsf(out.V_bus    - 16.0f) < 1e-6f,    "hilParseInjectFrame: V_bus decoded");
+    check(fabsf(out.V_chg    - 5.0f)  < 1e-6f,    "hilParseInjectFrame: V_chg decoded");
+    check(fabsf(out.V_rgn    - 13.0f) < 1e-6f,    "hilParseInjectFrame: V_rgn decoded");
+    check(fabsf(out.I_fc     - 1.25f) < 1e-6f,    "hilParseInjectFrame: I_fc decoded");
+    check(fabsf(out.I_batt   - 2.5f)  < 1e-6f,    "hilParseInjectFrame: I_batt decoded");
+    check(fabsf(out.v_actual - 3.0f)  < 1e-6f,    "hilParseInjectFrame: v_actual decoded");
+}
+
+static void test_hil_parse_reject_bad_sync() {
+    test_group("HIL: hilParseInjectFrame() rejects bad sync");
+    uint8_t buf[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(buf, 1, 1, 2, 3, 4, 5, 6, 7, 8);
+    buf[0] = 0x00;   // corrupt sync — checksum span (bytes 1..33) untouched so this isolates sync
+    HilInjectFrame out;
+    out.seq = 0xEE;  // sentinel — must remain untouched on rejection
+    bool ok = hilParseInjectFrame(buf, HIL_INJECT_SIZE, out);
+    check(!ok, "hilParseInjectFrame: bad sync rejected");
+    check(out.seq == 0xEE, "hilParseInjectFrame: rejected frame leaves `out` untouched (bad sync)");
+}
+
+static void test_hil_parse_reject_bad_checksum() {
+    test_group("HIL: hilParseInjectFrame() rejects bad checksum");
+    uint8_t buf[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(buf, 1, 1, 2, 3, 4, 5, 6, 7, 8);
+    buf[HIL_INJECT_SIZE - 1] ^= 0xFF;   // corrupt checksum byte only
+    HilInjectFrame out;
+    out.seq = 0xEE;
+    bool ok = hilParseInjectFrame(buf, HIL_INJECT_SIZE, out);
+    check(!ok, "hilParseInjectFrame: bad checksum rejected");
+    check(out.seq == 0xEE, "hilParseInjectFrame: rejected frame leaves `out` untouched (bad checksum)");
+}
+
+static void test_hil_parse_reject_wrong_length() {
+    test_group("HIL: hilParseInjectFrame() rejects wrong length");
+    uint8_t buf[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(buf, 1, 1, 2, 3, 4, 5, 6, 7, 8);
+    HilInjectFrame out;
+    out.seq = 0xEE;
+    check(!hilParseInjectFrame(buf, HIL_INJECT_SIZE - 1, out), "hilParseInjectFrame: short length rejected");
+    check(!hilParseInjectFrame(buf, HIL_INJECT_SIZE + 1, out), "hilParseInjectFrame: long length rejected");
+    check(!hilParseInjectFrame(NULL, HIL_INJECT_SIZE, out),    "hilParseInjectFrame: NULL buffer rejected");
+    check(out.seq == 0xEE, "hilParseInjectFrame: rejected frames leave `out` untouched (wrong length)");
+}
+
+// NaN/Inf rejection — one field at a time, at each of the 8 float offsets, both NaN and Inf.
+static void test_hil_parse_reject_nan_inf() {
+    test_group("HIL: hilParseInjectFrame() rejects NaN/Inf in any field");
+    const char* names[8] = {"V_fc", "V_batt", "V_bus", "V_chg", "V_rgn", "I_fc", "I_batt", "v_actual"};
+    float bad_values[2] = { std::nanf(""), std::numeric_limits<float>::infinity() };
+    const char* bad_names[2] = {"NaN", "Inf"};
+
+    for (int field = 0; field < 8; field++) {
+        for (int b = 0; b < 2; b++) {
+            uint8_t buf[HIL_INJECT_SIZE];
+            build_golden_hil_inject_frame(buf, 1, 1, 2, 3, 4, 5, 6, 7, 8);
+            memcpy(&buf[2 + field * 4], &bad_values[b], 4);
+            buf[34] = xor_checksum_span(buf, 1, 34);   // re-derive checksum over the poisoned bytes
+
+            HilInjectFrame out;
+            out.seq = 0xEE;
+            bool ok = hilParseInjectFrame(buf, HIL_INJECT_SIZE, out);
+            char desc[96];
+            snprintf(desc, sizeof(desc), "hilParseInjectFrame: %s in %s rejected", bad_names[b], names[field]);
+            check(!ok, desc);
+        }
+    }
+    // Also confirm a fully-clean frame with the same checksum recomputation still passes —
+    // otherwise the loop above would vacuously "pass" if the checksum re-derivation itself
+    // were broken and every frame failed on checksum instead of the NaN/Inf gate.
+    uint8_t clean[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(clean, 1, 1, 2, 3, 4, 5, 6, 7, 8);
+    HilInjectFrame out2;
+    check(hilParseInjectFrame(clean, HIL_INJECT_SIZE, out2),
+          "hilParseInjectFrame: control — the same builder produces an ACCEPTED clean frame "
+          "(the NaN/Inf rejections above are not just checksum failures)");
+}
+
+static void test_hil_pack_output_frame() {
+    test_group("HIL: hilPackOutputFrame() golden byte layout");
+    uint8_t buf[HIL_OUTPUT_SIZE] = {};
+    float motorCurrent = -4.5f;
+    uint16_t mdacFC = 0x1234, mdacBT = 0xABCD, faults = 0x8001;
+    hilPackOutputFrame(buf, 0x33, 2, 0x15, 0x0A, motorCurrent, mdacFC, mdacBT, faults);
+
+    check(buf[0] == HIL_SYNC_OUTPUT, "hilPackOutputFrame: offset 0 sync 0xB6");
+    check(buf[1] == 0x33,            "hilPackOutputFrame: offset 1 seq echo");
+    check(buf[2] == 2,               "hilPackOutputFrame: offset 2 mainState");
+    check(buf[3] == 0x15,            "hilPackOutputFrame: offset 3 switch_state");
+    check(buf[4] == 0x0A,            "hilPackOutputFrame: offset 4 aux state");
+    float read_cur = 0;
+    memcpy(&read_cur, &buf[5], 4);
+    check(fabsf(read_cur - motorCurrent) < 1e-6f, "hilPackOutputFrame: offset 5 current (float32 LE)");
+    uint16_t read_fc = 0, read_bt = 0, read_flt = 0;
+    memcpy(&read_fc,  &buf[9],  2);
+    memcpy(&read_bt,  &buf[11], 2);
+    memcpy(&read_flt, &buf[13], 2);
+    check(read_fc  == mdacFC,  "hilPackOutputFrame: offset 9 MDAC FC code");
+    check(read_bt  == mdacBT,  "hilPackOutputFrame: offset 11 MDAC BT code");
+    check(read_flt == faults,  "hilPackOutputFrame: offset 13 fault_flags");
+    check(buf[15] == xor_checksum_span(buf, 1, 15),
+          "hilPackOutputFrame: offset 15 checksum spans bytes 1..14");
+}
+
+static void test_hil_read_switch_state_matches_telemetry() {
+    test_group("HIL: readSwitchState() matches the telemetry-packed switch_state byte");
+    reset_test_state();
+    g_pin_value[FC_BUS_ENABLE]      = HIGH;
+    g_pin_value[REGEN_ENABLE]       = HIGH;
+    g_pin_value[BT_SEQUENCE_ENABLE] = HIGH;
+
+    uint8_t helper = readSwitchState();
+
+    Udp.reset();
+    sendTelemetry();
+    uint8_t telem = Udp.last_written[52];
+
+    check(helper == telem,
+          "readSwitchState(): equals telemetry offset-52 switch_state for a mixed pin pattern");
+    check(helper == (SW_FC_BUS | SW_REGEN | SW_BT_SEQ),
+          "readSwitchState(): bitmask matches the driven pins exactly");
+
+    // All-LOW control case too, so the equality isn't just an artefact of one pattern.
+    reset_test_state();
+    uint8_t helper0 = readSwitchState();
+    Udp.reset();
+    sendTelemetry();
+    check(helper0 == Udp.last_written[52] && helper0 == 0,
+          "readSwitchState(): all-LOW matches telemetry offset-52 (== 0)");
+}
+
+static void test_hil_read_aux_state() {
+    test_group("HIL: readHilAuxState() bit mapping");
+    reset_test_state();
+
+    check(readHilAuxState() == 0x00, "readHilAuxState: all LOW -> 0x00");
+
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    check(readHilAuxState() == 0x01, "readHilAuxState: FC_REG_ENABLE -> bit0");
+    g_pin_value[FC_REG_ENABLE] = LOW;
+
+    g_pin_value[BT_REG_ENABLE] = HIGH;
+    check(readHilAuxState() == 0x02, "readHilAuxState: BT_REG_ENABLE -> bit1");
+    g_pin_value[BT_REG_ENABLE] = LOW;
+
+    g_pin_value[MPPT_DISABLE] = HIGH;
+    check(readHilAuxState() == 0x04, "readHilAuxState: MPPT_DISABLE -> bit2");
+    g_pin_value[MPPT_DISABLE] = LOW;
+
+    g_pin_value[CBAL_DISABLE] = HIGH;
+    check(readHilAuxState() == 0x08, "readHilAuxState: CBAL_DISABLE -> bit3");
+    g_pin_value[CBAL_DISABLE] = LOW;
+
+    // All four together — confirms independence (no bit clobbers another).
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    g_pin_value[BT_REG_ENABLE] = HIGH;
+    g_pin_value[MPPT_DISABLE]  = HIGH;
+    g_pin_value[CBAL_DISABLE]  = HIGH;
+    check(readHilAuxState() == 0x0F, "readHilAuxState: all four HIGH -> 0x0F");
+}
+
+static void test_hil_setdroopmdac_mirrors() {
+    test_group("HIL: setDroopMdac() mirror globals track the SPI-captured words");
+    reset_test_state();
+    SPI.reset();
+    setDroopMdac(0.75f, 0.25f);
+    check(SPI.transfer_log.size() == 2, "setDroopMdac: two 16-bit SPI words written (FC then BT)");
+    check(mdacLastCodeFC == SPI.transfer_log[0],
+          "setDroopMdac: mdacLastCodeFC equals the SPI-captured FC word");
+    check(mdacLastCodeBT == SPI.transfer_log[1],
+          "setDroopMdac: mdacLastCodeBT equals the SPI-captured BT word");
+
+    // Different gains -> different codes, still tracking exactly.
+    SPI.reset();
+    setDroopMdac(0.10f, 0.90f);
+    check(mdacLastCodeFC == SPI.transfer_log[0] && mdacLastCodeBT == SPI.transfer_log[1],
+          "setDroopMdac: mirrors re-track on a second write with different gains");
+    check(mdacLastCodeFC != mdacLastCodeBT,
+          "setDroopMdac: distinct gains produce distinct mirrored codes (not a stuck/aliased mirror)");
+}
+
+// ─── Length dispatch in receiveCommands() (fw v21) ────────────────────────────
+static void test_hil_dispatch_command_packet_unchanged() {
+    test_group("HIL dispatch: 22-byte command packet still parses identically");
+    reset_test_state();
+
+    uint8_t pkt[22] = {};
+    pkt[0] = 0xBB;
+    uint32_t ts_val = 999;
+    memcpy(&pkt[1], &ts_val, 4);
+    uint16_t cnt = 3;
+    memcpy(&pkt[5], &cnt, 2);
+    float v_sp = 1.5f;
+    memcpy(&pkt[7], &v_sp, 4);
+    float ps = 0.6f;
+    memcpy(&pkt[11], &ps, 4);
+    float cg = 0.5f;
+    memcpy(&pkt[15], &cg, 4);
+    pkt[19] = 0;
+    pkt[20] = 0;
+    pkt[21] = xor_checksum_span(pkt, 1, 21);
+
+    Udp.queue_packet(pkt, 22);
+    receiveCommands();
+
+    check(fabsf(v_setpoint - 1.5f) < 0.001f,
+          "HIL dispatch: a queued 22-byte packet still parses via the command path");
+    check(fabsf(power_share_setpoint - 0.6f) < 0.001f,
+          "HIL dispatch: 22-byte power_share_setpoint parsed via the queued-packet path too");
+    check(hilFramesAccepted == 0 && hilFramesRejected == 0,
+          "HIL dispatch: a 22-byte packet never touches the HIL accept/reject counters");
+}
+
+static void test_hil_dispatch_wrong_size_dropped() {
+    test_group("HIL dispatch: a mis-sized (30-byte) packet is dropped without side effects");
+    reset_test_state();
+    v_setpoint = 42.0f;
+    uint8_t pkt[30] = {0xBB};
+    Udp.queue_packet(pkt, 30);
+    receiveCommands();
+    check(fabsf(v_setpoint - 42.0f) < 0.001f, "HIL dispatch: v_setpoint unchanged for a 30-byte packet");
+    check(!hilHaveFrame, "HIL dispatch: a 30-byte packet never sets hilHaveFrame");
+    check(hilFramesAccepted == 0 && hilFramesRejected == 0,
+          "HIL dispatch: a 30-byte packet never touches the HIL accept/reject counters");
+}
+
+// ─── Bounded receive drain (fw v21 MED-1) — general, all three builds ─────────
+// UDP_DRAIN_MAX_PER_TICK and the drain counters are declared unconditionally (only the injection-
+// frame HALF of the drain body is HIL_SIM-gated), so the CAP itself is exercisable with plain
+// 22-byte command packets in every build.
+static void test_hil_dispatch_drain_bounded_with_commands() {
+    test_group("HIL dispatch drain: UDP_DRAIN_MAX_PER_TICK caps a backlog of plain command packets");
+    reset_test_state();
+
+    const int kQueued = UDP_DRAIN_MAX_PER_TICK + 2;   // 10 with the current cap of 8
+    for (int i = 0; i < kQueued; i++) {
+        uint8_t pkt[22] = {};
+        pkt[0] = 0xBB;
+        float v_sp = (float)(i + 1);
+        memcpy(&pkt[7], &v_sp, 4);
+        pkt[19] = 4;   // MODE_SAFE
+        pkt[21] = xor_checksum_span(pkt, 1, 21);
+        Udp.queue_packet(pkt, 22);
+    }
+
+    receiveCommands();
+    check(udpDrainedLastTick == UDP_DRAIN_MAX_PER_TICK,
+          "HIL dispatch drain: exactly UDP_DRAIN_MAX_PER_TICK commands drained in one call");
+    check(udpDrainCapHits == 1, "HIL dispatch drain: cap-hit counter increments when the cap is hit");
+    // Every command IN the drained batch is dispatched in order (unlike injection frames, commands
+    // are not coalesced) — v_setpoint should reflect the LAST of the 8 drained, i.e. i == 7 -> 8.0.
+    check(fabsf(v_setpoint - (float)UDP_DRAIN_MAX_PER_TICK) < 1e-4f,
+          "HIL dispatch drain: commands dispatch in arrival order up to the cap, not coalesced");
+    check(Udp.rx_queue.size() == (size_t)(kQueued - UDP_DRAIN_MAX_PER_TICK),
+          "HIL dispatch drain: packets past the cap remain queued for the next tick");
+
+    receiveCommands();
+    check(udpDrainedLastTick == 2, "HIL dispatch drain: the second call drains the remaining 2 packets");
+    check(fabsf(v_setpoint - (float)kQueued) < 1e-4f,
+          "HIL dispatch drain: the final packet's v_setpoint lands after the second drain");
+    check(udpDrainCapHits == 1,
+          "HIL dispatch drain: the second (under-cap) call does not bump cap-hits again");
+}
+
+#if !HIL_SIM
+static void test_hil_dispatch_35byte_dropped_in_nonhil_build() {
+    test_group("HIL dispatch: a 35-byte HIL frame is inert in a non-HIL build");
+    reset_test_state();
+    v_setpoint = 7.0f;
+    mode_cmd   = 4;
+
+    uint8_t buf[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(buf, 5, 10, 7, 16, 5, 13, 1, 2, 3);
+    Udp.queue_packet(buf, HIL_INJECT_SIZE);
+    receiveCommands();
+
+    // Nothing HIL-side happened (the wiring is compiled out under !HIL_SIM)...
+    check(!hilHaveFrame, "HIL dispatch (non-HIL build): hilHaveFrame stays false for a valid HIL frame");
+    check(hilFramesAccepted == 0 && hilFramesRejected == 0,
+          "HIL dispatch (non-HIL build): accept/reject counters never move (the increments are "
+          "inside #if HIL_SIM)");
+    // ...and nothing command-side happened either — the 35-byte length is caught and returned on
+    // before the 22-byte command path is ever reached, so a valid-looking HIL frame can never be
+    // misinterpreted as a corrupt command packet.
+    check(fabsf(v_setpoint - 7.0f) < 0.001f,
+          "HIL dispatch (non-HIL build): v_setpoint unchanged — the 35-byte frame never reaches "
+          "the 22-byte command parser");
+}
+#endif
+
+// ═════════════════════════════════════════════════════════════════════════════
+// HIL WIRING — fw v21, only compiled in the third (-DHIL_SIM=1 -DUSE_ETHERNET=1) build.
+// ═════════════════════════════════════════════════════════════════════════════
+// These exercise updateSensors()'s HIL branch and receiveCommands()'s HIL_SIM-gated
+// accept path, which do not exist as callable code in the ordinary two host builds.
+#if HIL_SIM
+
+// Injects one accepted HIL frame via the real receiveCommands() path (queues the wire
+// bytes, exactly as a live simulator would send them) and returns after the accept.
+static void injectHilFrame(uint8_t seq, float V_fc, float V_batt, float V_bus, float V_chg,
+                            float V_rgn, float I_fc, float I_batt, float v_actual) {
+    uint8_t buf[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(buf, seq, V_fc, V_batt, V_bus, V_chg, V_rgn, I_fc, I_batt, v_actual);
+    Udp.queue_packet(buf, HIL_INJECT_SIZE);
+    receiveCommands();
+}
+
+static void test_hil_wiring_dispatch_accepts_and_learns_host() {
+    test_group("HIL wiring: receiveCommands() accepts a 35-byte frame and learns the host");
+    reset_test_state();
+    networkUp = true;
+
+    uint8_t buf[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(buf, 0x09, 10, 7, 16, 5, 13, 1, 2, 3);
+    Udp.queue_packet(buf, HIL_INJECT_SIZE, IPAddress(10, 0, 0, 5), 6001);
+    receiveCommands();
+
+    check(hilHaveFrame, "HIL wiring: hilHaveFrame set after an accepted 35-byte frame");
+    check(hilFramesAccepted == 1 && hilFramesRejected == 0,
+          "HIL wiring: accept counter increments exactly once, reject counter untouched");
+    check(hilInject.seq == 0x09, "HIL wiring: hilInject carries the accepted frame's seq");
+    check(hilHostIp   == IPAddress(10, 0, 0, 5), "HIL wiring: hilHostIp learned from Udp.remoteIP()");
+    check(hilHostPort == 6001,                    "HIL wiring: hilHostPort learned from Udp.remotePort()");
+
+    // A rejected frame (bad checksum) must NOT overwrite the learned host or the accepted data.
+    uint8_t bad[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(bad, 0x0A, 99, 99, 99, 99, 99, 99, 99, 99);
+    bad[HIL_INJECT_SIZE - 1] ^= 0xFF;
+    Udp.queue_packet(bad, HIL_INJECT_SIZE, IPAddress(10, 0, 0, 9), 7000);
+    receiveCommands();
+    check(hilFramesRejected == 1, "HIL wiring: reject counter increments on a bad-checksum frame");
+    check(hilInject.seq == 0x09,  "HIL wiring: a rejected frame does not overwrite hilInject");
+    check(hilHostIp == IPAddress(10, 0, 0, 5),
+          "HIL wiring: a rejected frame does not relearn the host address");
+}
+
+static void test_hil_wiring_injection_reaches_globals() {
+    test_group("HIL wiring: injected values reach the seven rail globals and v_actual");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+
+    injectHilFrame(1, 11.1f, 7.7f, 15.5f, 4.4f, 12.2f, 0.9f, 1.1f, 2.2f);
+    updateSensors();
+
+    check(fabsf(V_fc     - 11.1f) < 1e-4f, "HIL wiring: V_fc sourced from the injection frame");
+    check(fabsf(V_batt   - 7.7f)  < 1e-4f, "HIL wiring: V_batt sourced from the injection frame");
+    check(fabsf(V_bus    - 15.5f) < 1e-4f, "HIL wiring: V_bus sourced from the injection frame");
+    check(fabsf(V_chg    - 4.4f)  < 1e-4f, "HIL wiring: V_chg sourced from the injection frame");
+    check(fabsf(V_rgn    - 12.2f) < 1e-4f, "HIL wiring: V_rgn sourced from the injection frame");
+    check(fabsf(I_fc     - 0.9f)  < 1e-4f, "HIL wiring: I_fc sourced from the injection frame");
+    check(fabsf(I_batt   - 1.1f)  < 1e-4f, "HIL wiring: I_batt sourced from the injection frame");
+    check(fabsf(v_actual - 2.2f)  < 1e-4f, "HIL wiring: v_actual sourced from the injection frame");
+}
+
+static void test_hil_wiring_updateWheelSpeed_skipped() {
+    test_group("HIL wiring: updateWheelSpeed() is skipped while an active HIL frame is live");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+
+    // Drive the encoder ISRs so a normal (non-HIL) updateSensors() call would move v_actual via
+    // updateWheelSpeed(). If the HIL branch fails to skip it, v_actual would be overwritten by
+    // the encoder estimator instead of the injected value below.
+    encoderPos = 100000;
+
+    injectHilFrame(2, 1, 1, 1, 1, 1, 1, 1, 9.99f);
+    updateSensors();
+
+    check(fabsf(v_actual - 9.99f) < 1e-4f,
+          "HIL wiring: v_actual is the injected value, not something updateWheelSpeed() computed");
+}
+
+static void test_hil_wiring_hold_before_stale_deadline() {
+    test_group("HIL wiring: values HOLD (age <= HIL_STALE_MS) — no re-send needed to stay fresh");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+    mainState = 2;   // Run — so a spurious mainState==99 transition here would be obvious
+
+    injectHilFrame(3, 5.0f, 5.0f, 5.0f, 5.0f, 5.0f, 5.0f, 5.0f, 5.0f);
+    updateSensors();
+    check(!hilStale && !hilZeroed, "HIL wiring: fresh right after injection");
+
+    g_mock_millis = 1000 + (HIL_STALE_MS - 1);   // still inside the fresh window
+    updateSensors();
+    check(!hilStale,  "HIL wiring: still fresh at age == HIL_STALE_MS - 1");
+    check(!hilZeroed, "HIL wiring: not zeroed at age == HIL_STALE_MS - 1");
+    check(fabsf(V_fc - 5.0f) < 1e-4f, "HIL wiring: value unchanged while fresh (no new frame arrived)");
+
+    // EXACT BOUNDARY (fix round item C): age == HIL_STALE_MS itself is still fresh (`<=`).
+    g_mock_millis = 1000 + HIL_STALE_MS;
+    updateSensors();
+    check(!hilStale,  "HIL wiring: exact boundary age == HIL_STALE_MS is still fresh");
+    check(!hilZeroed, "HIL wiring: exact boundary age == HIL_STALE_MS is not zeroed");
+
+    g_mock_millis = 1000 + HIL_STALE_MS + 1;   // just past stale, well short of zero
+    updateSensors();
+    check(hilStale,   "HIL wiring: STALE flagged once age exceeds HIL_STALE_MS");
+    check(!hilZeroed, "HIL wiring: not yet zeroed (age < HIL_ZERO_MS)");
+    check(fabsf(V_fc - 5.0f) < 1e-4f,
+          "HIL wiring: value HELD at its last injected reading while merely stale (no rail collapse)");
+    // MED-2: the stale ENTRY EDGE is not a fault — the link may still recover inside HIL_ZERO_MS.
+    check(mainState == 2,
+          "HIL wiring: the stale entry edge alone does NOT latch a fault (fault is reserved for "
+          "the zero/dead stage)");
+    check((fault_flags & FAULT_HIL_LINK) == 0,
+          "HIL wiring: FAULT_HIL_LINK is not raised on the stale entry edge");
+}
+
+// MED-2: on the stale ENTRY EDGE the firmware calls haltMotorOutput() — the sensor values HOLD,
+// but the actuator is stood down, because a frozen v_actual is still live feedback to a controller
+// with ~454 A/(m/s) LF gain (a constant error would otherwise integrate straight to a current rail
+// commanded into a real VESC in a mixed rig).
+static void test_hil_wiring_stale_entry_halts_motor_output() {
+    test_group("HIL wiring: stale ENTRY EDGE calls haltMotorOutput() (current==0, drive state reset)");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+    mainState = 2;
+
+    injectHilFrame(30, 5, 5, 5, 5, 5, 5, 5, 5);
+    updateSensors();   // fresh — establishes the baseline tick
+
+    // Arm every field haltMotorOutput() is documented to clear, so the assertions below can't
+    // pass by accident (they were already zero).
+    v_setpoint          = 2.5f;
+    manualMotorCurrent  = 3.0f;
+    manualMotorVelocity = 1.5f;
+    manualMotorMode     = MOTOR_TEST_CURRENT;
+    pi_motor_accum      = 4.0f;
+    targetMotorTorque   = 6.0f;
+    current             = 7.0f;
+
+    g_mock_millis = 1000 + HIL_STALE_MS + 1;   // cross into stale — the entry edge
+    updateSensors();
+
+    check(hilStale, "HIL wiring (halt): (setup) the stale entry edge actually fired");
+    check(v_setpoint == 0.0f,          "HIL wiring (halt): v_setpoint zeroed by haltMotorOutput()");
+    check(manualMotorCurrent == 0.0f,  "HIL wiring (halt): manualMotorCurrent zeroed");
+    check(manualMotorVelocity == 0.0f, "HIL wiring (halt): manualMotorVelocity zeroed");
+    check(manualMotorMode == MOTOR_TEST_OFF, "HIL wiring (halt): manualMotorMode forced OFF");
+    check(pi_motor_accum == 0.0f,      "HIL wiring (halt): pi_motor_accum (PI fallback integrator) cleared");
+    check(targetMotorTorque == 0.0f,   "HIL wiring (halt): targetMotorTorque cleared");
+    check(current == 0.0f,             "HIL wiring (halt): commanded motor current (VESC-bound) is 0");
+
+    // Re-arm and take one MORE stale tick (still inside the stale window, not a fresh entry edge
+    // again) — haltMotorOutput() must not be re-invoked every tick, only on the edge. This isn't
+    // separately observable from the zeroed fields alone (they'd stay zero either way), so arm a
+    // sentinel the second call would have to zero AGAIN for the assertion to trivially pass, and
+    // instead assert the mode a second unconditional call would have forced (already OFF) while a
+    // manually-set current the edge-only design permits between ticks stays untouched.
+    manualMotorCurrent = 9.0f;   // if haltMotorOutput() re-fires every stale tick this goes to 0 too
+    g_mock_millis = 1000 + HIL_STALE_MS + 2;   // still stale, NOT a fresh entry edge
+    updateSensors();
+    check(manualMotorCurrent == 9.0f,
+          "HIL wiring (halt): haltMotorOutput() fires on the ENTRY edge only, not every stale tick");
+}
+
+static void test_hil_wiring_zero_after_dead_deadline() {
+    test_group("HIL wiring: values force to safe zero once age exceeds HIL_ZERO_MS");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+    mainState = 2;
+
+    injectHilFrame(4, 8.0f, 8.0f, 8.0f, 8.0f, 8.0f, 8.0f, 8.0f, 8.0f);
+    updateSensors();
+
+    // EXACT BOUNDARY (fix round item C): age == HIL_ZERO_MS itself is still HELD, not zeroed
+    // (the zero stage requires age STRICTLY greater than HIL_ZERO_MS).
+    g_mock_millis = 1000 + HIL_ZERO_MS;
+    updateSensors();
+    check(hilStale,  "HIL wiring: exact boundary age == HIL_ZERO_MS is stale...");
+    check(!hilZeroed, "HIL wiring: ...but NOT yet zeroed (the zero stage needs age > HIL_ZERO_MS)");
+    check(fabsf(V_fc - 8.0f) < 1e-4f, "HIL wiring: value still HELD at the exact HIL_ZERO_MS boundary");
+    check(mainState == 2, "HIL wiring: no fault latched yet at the exact HIL_ZERO_MS boundary");
+
+    g_mock_millis = 1000 + HIL_ZERO_MS + 1;
+    updateSensors();
+
+    check(hilStale,  "HIL wiring: stale flag set once past HIL_ZERO_MS too");
+    check(hilZeroed, "HIL wiring: zeroed flag set once age exceeds HIL_ZERO_MS");
+    check(V_fc == 0.0f && V_batt == 0.0f && V_bus == 0.0f && V_chg == 0.0f && V_rgn == 0.0f &&
+          I_fc == 0.0f && I_batt == 0.0f && v_actual == 0.0f,
+          "HIL wiring: all eight rail globals forced to safe zero on a dead link");
+
+    // MED-2: the zero stage is where the fault actually latches — this is the whole point of the
+    // fix (previously non-deterministic: the zeros only faulted if uvBusArmed happened to be set).
+    check((fault_flags & FAULT_HIL_LINK) != 0,
+          "HIL wiring: FAULT_HIL_LINK latched at the zero/dead stage");
+    check((fault_flags & FAULT_HIL_LINK) == FAULT_PI_TIMEOUT,
+          "HIL wiring: FAULT_HIL_LINK is confirmed to be the FAULT_PI_TIMEOUT alias (no free bit)");
+    check(error_code == ERR_HIL_STALE, "HIL wiring: error_code latches ERR_HIL_STALE (not ERR_PI_TIMEOUT)");
+    check(mainState == 99, "HIL wiring: the dead link latches State 99 exactly like any other fault");
+    // LOW-3: the host unbinds at the zero stage so a restarted simulator on a new port can rebind.
+    check(!hilHostLocked, "HIL wiring: hilHostLocked cleared at the zero stage (LOW-3 unbind)");
+}
+
+static void test_hil_wiring_refresh_after_link_recovery() {
+    test_group("HIL wiring: a fresh frame after a dead link clears stale/zeroed and re-applies values");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+    mainState = 2;
+
+    injectHilFrame(5, 6.0f, 6.0f, 6.0f, 6.0f, 6.0f, 6.0f, 6.0f, 6.0f);
+    updateSensors();
+    g_mock_millis = 1000 + HIL_ZERO_MS + 1;
+    updateSensors();
+    check(hilZeroed, "HIL wiring: (setup) link is dead/zeroed before the recovery frame");
+    check(mainState == 99, "HIL wiring: (setup) the dead link has latched State 99");
+
+    g_mock_millis = 1000 + HIL_ZERO_MS + 2;
+    injectHilFrame(6, 13.5f, 13.5f, 13.5f, 13.5f, 13.5f, 13.5f, 13.5f, 13.5f);
+    updateSensors();
+
+    check(!hilStale && !hilZeroed, "HIL wiring: stale/zeroed cleared by the recovery frame");
+    check(fabsf(V_fc - 13.5f) < 1e-4f, "HIL wiring: fresh recovery values applied, not the stale zeros");
+    check(fabsf(v_actual - 13.5f) < 1e-4f, "HIL wiring: v_actual also refreshed on recovery");
+    check(hilHostLocked, "HIL wiring: the recovery frame re-binds the host (hilHostLocked set again)");
+    // A LINK recovering does not retroactively un-latch a FAULT — State 99 is sticky by design
+    // (every other fault behaves this way too); only an operator/State-99 path clears it.
+    check(mainState == 99,
+          "HIL wiring: the link recovering does NOT auto-clear the already-latched State 99 fault");
+}
+
+static void test_hil_wiring_detectFaults_fires_on_injection() {
+    test_group("HIL wiring: detectFaults() fires on an injected overcurrent — fault injection is the point");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+    mainState = 2;   // Run — OC/UV checks are only meaningful outside Init/Idle for this rig
+
+    injectHilFrame(7, 10.0f, 7.4f, 16.0f, 5.0f, 13.0f, /*I_fc=*/LIMIT_I_FC_MAX + 0.5f, 1.0f, 0.0f);
+    updateSensors();
+    detectFaults();
+
+    check((fault_flags & FAULT_OC_FC) != 0,
+          "HIL wiring: an injected I_fc above LIMIT_I_FC_MAX trips FAULT_OC_FC through the "
+          "UNMODIFIED detectFaults() — there is deliberately no HIL-specific fault suppression");
+    check(mainState == 99, "HIL wiring: the overcurrent fault latches State 99 exactly as on real hardware");
+}
+
+// Item C: rails must keep updating from the injection frame even after a fault has latched
+// State 99 — "no HIL-specific fault suppression anywhere" applies after the latch too, not just
+// on the way in. A HIL host debugging a fault needs to see the plant keep evolving post-latch.
+static void test_hil_wiring_rails_update_after_state99_latch() {
+    test_group("HIL wiring: injected rails keep updating in State 99 (no post-latch suppression)");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+    mainState = 2;
+
+    injectHilFrame(40, 10.0f, 7.4f, 16.0f, 5.0f, 13.0f, LIMIT_I_FC_MAX + 0.5f, 1.0f, 3.0f);
+    updateSensors();
+    detectFaults();
+    check(mainState == 99, "HIL wiring (post-latch): (setup) the overcurrent fault latched State 99");
+
+    // A fresh injection frame after the latch — still within HIL_STALE_MS, from the same host.
+    g_mock_millis = 1001;
+    injectHilFrame(41, 11.0f, 7.5f, 15.9f, 5.1f, 13.1f, 0.2f, 1.2f, 4.0f);
+    updateSensors();
+
+    check(fabsf(V_fc - 11.0f) < 1e-4f, "HIL wiring (post-latch): V_fc still tracks a fresh injection");
+    check(fabsf(I_fc - 0.2f)  < 1e-4f, "HIL wiring (post-latch): I_fc still tracks a fresh injection "
+          "(even though this new value is back under the OC limit)");
+    check(fabsf(v_actual - 4.0f) < 1e-4f, "HIL wiring (post-latch): v_actual still tracks a fresh injection");
+    check(mainState == 99, "HIL wiring (post-latch): State 99 stays latched (triggerFault() latches "
+          "the FIRST cause only; a later healthy sample does not un-latch it)");
+}
+
+// LOW-3: host lock — a well-formed frame from a source other than the locked host is ignored
+// entirely (not applied, does not restamp hilLastFrameMs), counted in hilFramesForeign, and the
+// host re-learns only after the link goes fully dead (zero stage) and unbinds.
+static void test_hil_wiring_host_lock_and_foreign_frames() {
+    test_group("HIL wiring: host lock ignores foreign frames; re-learns only after unbind");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+
+    IPAddress hostA(10, 0, 0, 5);
+    IPAddress hostB(10, 0, 0, 9);
+
+    uint8_t bufA[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(bufA, 50, 1, 1, 1, 1, 1, 1, 1, 1);
+    Udp.queue_packet(bufA, HIL_INJECT_SIZE, hostA, 6001);
+    receiveCommands();
+    check(hilHostLocked && hilHostIp == hostA && hilHostPort == 6001,
+          "HIL wiring (host lock): (setup) host A binds on the first accepted frame");
+
+    // Host B sends a perfectly well-formed frame — must be ignored, not applied, and counted.
+    uint8_t bufB[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(bufB, 51, 99, 99, 99, 99, 99, 99, 99, 99);
+    Udp.queue_packet(bufB, HIL_INJECT_SIZE, hostB, 7000);
+    uint32_t frameMsBefore = hilLastFrameMs;
+    receiveCommands();
+
+    check(hilFramesForeign == 1, "HIL wiring (host lock): foreign frame counted in hilFramesForeign");
+    check(hilInject.seq == 50,   "HIL wiring (host lock): foreign frame's payload never committed");
+    check(hilLastFrameMs == frameMsBefore,
+          "HIL wiring (host lock): foreign frame does not restamp hilLastFrameMs");
+    check(hilHostIp == hostA, "HIL wiring (host lock): foreign frame does not redirect the locked host");
+
+    // A same-host frame still lands normally while locked.
+    uint8_t bufA2[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(bufA2, 52, 2, 2, 2, 2, 2, 2, 2, 2);
+    Udp.queue_packet(bufA2, HIL_INJECT_SIZE, hostA, 6001);
+    receiveCommands();
+    check(hilInject.seq == 52, "HIL wiring (host lock): a same-host frame still commits while locked");
+
+    // Drive the link fully dead so it unbinds (LOW-3), then confirm host B can now take over.
+    g_mock_millis = 1000 + HIL_ZERO_MS + 100;
+    updateSensors();
+    check(!hilHostLocked, "HIL wiring (host lock): (setup) the dead link unbound the host");
+
+    uint8_t bufB2[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(bufB2, 53, 3, 3, 3, 3, 3, 3, 3, 3);
+    Udp.queue_packet(bufB2, HIL_INJECT_SIZE, hostB, 7000);
+    receiveCommands();
+    check(hilHostLocked && hilHostIp == hostB && hilHostPort == 7000,
+          "HIL wiring (host lock): after unbind, the NEXT accepted frame (from host B) re-binds");
+    check(hilInject.seq == 53, "HIL wiring (host lock): host B's frame is applied post-rebind");
+}
+
+// ─── Bounded receive drain (fw v21 review MED-1) ──────────────────────────────
+// Injection-frame drain semantics need HIL_SIM to observe (only HIL builds parse/commit them),
+// but the newest-wins commit and interleaving with commands are the parts unique to this build.
+
+static void test_hil_wiring_drain_newest_injection_wins() {
+    test_group("HIL wiring drain: with 2+ queued injection frames, only the NEWEST is committed");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+
+    uint8_t f1[HIL_INJECT_SIZE], f2[HIL_INJECT_SIZE], f3[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(f1, 60, 1, 1, 1, 1, 1, 1, 1, 1);
+    build_golden_hil_inject_frame(f2, 61, 2, 2, 2, 2, 2, 2, 2, 2);
+    build_golden_hil_inject_frame(f3, 62, 3, 3, 3, 3, 3, 3, 3, 3);
+    Udp.queue_packet(f1, HIL_INJECT_SIZE);
+    Udp.queue_packet(f2, HIL_INJECT_SIZE);
+    Udp.queue_packet(f3, HIL_INJECT_SIZE);
+
+    receiveCommands();
+
+    check(hilFramesAccepted == 3,
+          "HIL wiring drain: all 3 injection frames are individually parsed/counted as accepted");
+    check(hilInject.seq == 62, "HIL wiring drain: hilInject carries the NEWEST (last-queued) frame's seq");
+    check(fabsf(hilInject.V_fc - 3.0f) < 1e-4f,
+          "HIL wiring drain: hilInject's payload is the newest frame's, not an earlier one");
+    check(udpDrainedLastTick == 3, "HIL wiring drain: all 3 datagrams drained in one receiveCommands() call");
+}
+
+static void test_hil_wiring_drain_interleaved_command_and_injection() {
+    test_group("HIL wiring drain: a 22B command and 35B HIL frames interleaved in one drain both take effect");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+
+    uint8_t cmd1[22] = {};
+    cmd1[0] = 0xBB;
+    float v_sp1 = 1.0f;
+    memcpy(&cmd1[7], &v_sp1, 4);
+    cmd1[19] = 4;   // MODE_SAFE, harmless regardless of mainState
+    cmd1[21] = xor_checksum_span(cmd1, 1, 21);
+
+    uint8_t hil1[HIL_INJECT_SIZE];
+    build_golden_hil_inject_frame(hil1, 70, 9, 9, 9, 9, 9, 9, 9, 9);
+
+    uint8_t cmd2[22] = {};
+    cmd2[0] = 0xBB;
+    float v_sp2 = 2.0f;
+    memcpy(&cmd2[7], &v_sp2, 4);
+    cmd2[19] = 4;
+    cmd2[21] = xor_checksum_span(cmd2, 1, 21);
+
+    // Interleave: command, HIL, command — exercising the "back-to-back FIFO" gap directly.
+    Udp.queue_packet(cmd1, 22);
+    Udp.queue_packet(hil1, HIL_INJECT_SIZE);
+    Udp.queue_packet(cmd2, 22);
+
+    receiveCommands();
+
+    check(udpDrainedLastTick == 3, "HIL wiring drain: all 3 interleaved datagrams drained in one call");
+    check(fabsf(v_setpoint - 2.0f) < 1e-4f,
+          "HIL wiring drain: BOTH commands took effect in arrival order (the later one wins v_setpoint)");
+    check(hilHaveFrame && hilInject.seq == 70,
+          "HIL wiring drain: the HIL frame sandwiched between the two commands still committed");
+    check(hilFramesAccepted == 1, "HIL wiring drain: the one HIL frame is counted accepted");
+}
+
+static void test_hil_wiring_drain_bounded_cap() {
+    test_group("HIL wiring drain: UDP_DRAIN_MAX_PER_TICK bounds one receiveCommands() call");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+
+    // Queue more injection frames than the cap — all well-formed, distinct seq per frame.
+    const int kQueued = UDP_DRAIN_MAX_PER_TICK + 3;   // 11 with the current cap of 8
+    for (int i = 0; i < kQueued; i++) {
+        uint8_t f[HIL_INJECT_SIZE];
+        build_golden_hil_inject_frame(f, (uint8_t)(100 + i), 1, 1, 1, 1, 1, 1, 1, (float)i);
+        Udp.queue_packet(f, HIL_INJECT_SIZE);
+    }
+    check(Udp.rx_queue.size() == (size_t)kQueued, "HIL wiring drain: (setup) all frames queued in the mock");
+
+    receiveCommands();
+
+    check(udpDrainedLastTick == UDP_DRAIN_MAX_PER_TICK,
+          "HIL wiring drain: exactly UDP_DRAIN_MAX_PER_TICK datagrams drained in one call");
+    check(udpDrainCapHits == 1, "HIL wiring drain: udpDrainCapHits increments when the cap is hit");
+    check(udpDrainedMaxTick == UDP_DRAIN_MAX_PER_TICK,
+          "HIL wiring drain: high-water mark tracks the capped drain");
+    check(Udp.rx_queue.size() == (size_t)(kQueued - UDP_DRAIN_MAX_PER_TICK),
+          "HIL wiring drain: the remaining (uncapped) packets stay queued for the NEXT tick's drain");
+    // The committed frame is the newest of the CAPPED batch (index cap-1), not the overall newest —
+    // the drain simply hasn't reached the last 3 packets yet this tick.
+    check(hilInject.v_actual == (float)(UDP_DRAIN_MAX_PER_TICK - 1),
+          "HIL wiring drain: newest-of-the-drained-batch committed (not the still-queued tail)");
+
+    // A second call drains the rest.
+    receiveCommands();
+    check(udpDrainedLastTick == 3, "HIL wiring drain: the second call drains the remaining 3 packets");
+    check(udpDrainCapHits == 1, "HIL wiring drain: the second (under-cap) call does not bump cap-hits again");
+    check(Udp.rx_queue.empty(), "HIL wiring drain: the queue is fully drained across the two calls");
+}
+
+static void test_hil_wiring_send_tick() {
+    test_group("HIL wiring: hilSendTick() gating and packed content");
+    reset_test_state();
+
+    // Gate: !networkUp -> never sends, regardless of hilHaveFrame.
+    networkUp = false;
+    hilHaveFrame = true;
+    Udp.reset();
+    hilSendTick();
+    check(Udp.last_written.empty(), "hilSendTick: gated off while !networkUp");
+
+    // Gate: networkUp but no frame yet -> never sends.
+    networkUp = true;
+    hilHaveFrame = false;
+    Udp.reset();
+    hilSendTick();
+    check(Udp.last_written.empty(), "hilSendTick: gated off while !hilHaveFrame");
+
+    // Now arm a real frame and distinct, checkable actuator/observer state.
+    hilHaveFrame = true;
+    hilInject.seq = 0x5A;
+    mainState = 2;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[REGEN_ENABLE]  = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    current        = -3.25f;
+    mdacLastCodeFC = 0x1111;
+    mdacLastCodeBT = 0x2222;
+    fault_flags    = FAULT_OC_FC;
+
+    // Use a millis value far past anything an earlier test could have left in hilSendTick()'s
+    // internal static hilLastSendMs, so this call is unambiguously due regardless of run order.
+    g_mock_millis = 5000000UL;
+    Udp.reset();
+    hilSendTick();
+
+    check(Udp.last_written.size() == HIL_OUTPUT_SIZE,
+          "hilSendTick: sends exactly one HIL_OUTPUT_SIZE-byte datagram when due");
+    const uint8_t* out = Udp.last_written.data();
+    check(out[0] == HIL_SYNC_OUTPUT, "hilSendTick: sync byte 0xB6");
+    check(out[1] == hilInject.seq,   "hilSendTick: seq echoes the last accepted injection frame's seq");
+    check(out[2] == (uint8_t)mainState, "hilSendTick: mainState packed correctly");
+    check(out[3] == readSwitchState(), "hilSendTick: switch_state matches readSwitchState() live");
+    check(out[4] == readHilAuxState(), "hilSendTick: aux state matches readHilAuxState() live");
+    float sentCurrent = 0;
+    memcpy(&sentCurrent, &out[5], 4);
+    check(fabsf(sentCurrent - current) < 1e-6f, "hilSendTick: current matches the live global");
+    uint16_t sentFC = 0, sentBT = 0, sentFlt = 0;
+    memcpy(&sentFC,  &out[9],  2);
+    memcpy(&sentBT,  &out[11], 2);
+    memcpy(&sentFlt, &out[13], 2);
+    check(sentFC  == mdacLastCodeFC, "hilSendTick: MDAC FC code matches the live mirror");
+    check(sentBT  == mdacLastCodeBT, "hilSendTick: MDAC BT code matches the live mirror");
+    check(sentFlt == fault_flags,    "hilSendTick: fault_flags matches the live global");
+    check(out[15] == xor_checksum_span(out, 1, 15), "hilSendTick: checksum valid over bytes 1..14");
+
+    // 1 ms cadence gate: calling again in the SAME millis must not resend.
+    Udp.reset();
+    hilSendTick();
+    check(Udp.last_written.empty(), "hilSendTick: does not resend within the same millis() tick");
+
+    // Advancing 1 ms allows the next send.
+    g_mock_millis += 1;
+    Udp.reset();
+    hilInject.seq = 0x5B;
+    hilSendTick();
+    check(Udp.last_written.size() == HIL_OUTPUT_SIZE,
+          "hilSendTick: resends once HIL_SEND_PERIOD_MS has elapsed");
+    check(Udp.last_written[1] == 0x5B, "hilSendTick: the resend carries the updated seq");
+}
+#endif  // HIL_SIM
 
 // ─── PI controller basic behavior ────────────────────────────────────────────
 static void test_pi_controllers() {
@@ -1911,7 +2795,7 @@ static void test_share_handoff_mode_constants() {
     check(fabsf(SHARE_GOV_FILT_ALPHA - 0.05f) < 1e-6f,
           "constants: (setup) SHARE_GOV_FILT_ALPHA is the EMA weight the handoff filters share "
           "with the governor's load filter");
-    check(FW_VERSION == 20, "pin: FW_VERSION == 20");
+    check(FW_VERSION == 21, "pin: FW_VERSION == 21");
 }
 
 // DARK seed (item B3): resetShareControlState() (and reset_test_state()'s mirror of it) seeds
@@ -11156,8 +12040,13 @@ static void test_sdlog_record_schema() {
     exp[REC_OFF_TRAP_PHASE] = 0xFF;   // trapezoid not running
     // bit0 profile driving powerBalance, bit1 velocity chain OK, bit4/bit5 the fw v11 build-
     // identity bits -- both set because the default build has USE_YOULA_DRIVE_CONTROLLER=1 and
-    // USE_YOULA_SHARE_CONTROLLER=1.
+    // USE_YOULA_SHARE_CONTROLLER=1. bit6 (fw v21 fix round) is the HIL-provenance bit -- set only
+    // when this fixture itself is compiled into a HIL_SIM=1 build (the third host build), so the
+    // golden byte here must track the same compile-time condition the firmware uses.
     exp[REC_OFF_FLAGS]      = 0x03 | 0x10 | 0x20;
+#if HIL_SIM
+    exp[REC_OFF_FLAGS]     |= 0x40;
+#endif
     // exp[66..67] stay zero (pad)
     // Format v5 tail: reset_test_state() called resetDriveControlState() and no controller step
     // has run since, so the Youla build's held pre-clamp capture and integrator state are both
@@ -11491,6 +12380,37 @@ static void test_sdlog_flags_youla_build_bits() {
     // bits 0-3 are unaffected by this round -- a sanity check that the append didn't disturb
     // the pre-existing bit-packing (bit0 set: this sample was taken with a PS profile active).
     check((flags & 0x01) != 0, "flags bit4/5 case: bit0 (profile driving powerBalance) unaffected");
+}
+
+// ─── fw v21 fix round: record flags bit6 (HIL provenance) ────────────────────
+// Compile-time constant, stamped per record so a decoded run declares its sensor columns as
+// SIMULATED (HIL_SIM build) rather than measured. Must be set in the HIL build and clear in both
+// non-HIL builds — asserted both ways so this test can't pass vacuously in either configuration.
+static void test_sdlog_flags_hil_provenance_bit() {
+    test_group("SD log: record flags bit6 stamps HIL provenance (fw v21 fix round)");
+
+    reset_test_state();
+    g_mock_millis = 1000;
+    g_mock_micros = 1000;
+    logOpenForProfile(LOG_TYPE_PS);
+    powerShareProfileActive = true;
+    logSampleTick();
+    logDrainTick();
+
+    const std::string* f = sd_file("PS0001.BLG");
+    check(f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE,
+          "flags bit6: the record made it to the (mock) card");
+    if (f == nullptr || f->size() < LOG_HDR_SIZE + LOG_REC_SIZE) return;
+
+    uint8_t flags = (uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_FLAGS];
+#if HIL_SIM
+    check((flags & 0x40) != 0, "flags bit6: SET under a HIL_SIM=1 build — sensor columns are simulated");
+#else
+    check((flags & 0x40) == 0, "flags bit6: CLEAR under a non-HIL build — sensor columns are measured");
+#endif
+    // Sanity: bits 0/4/5 still behave as pinned by the sibling test — the append didn't shift
+    // anything else in the byte.
+    check((flags & 0x01) != 0, "flags bit6 case: bit0 (profile driving powerBalance) unaffected");
 }
 
 // ─── 6d. Format v5 value plumbing: u_unsat/drive_x0 (fw v11) ────────────────
@@ -16033,6 +16953,41 @@ int main() {
     test_detect_faults();
     test_telemetry_v4_layout();
     test_command_parsing();
+
+    // ── HIL (hardware-in-the-loop) link — fw v21 ────────────────────────────
+    test_hil_checksum();
+    test_hil_parse_accept();
+    test_hil_parse_reject_bad_sync();
+    test_hil_parse_reject_bad_checksum();
+    test_hil_parse_reject_wrong_length();
+    test_hil_parse_reject_nan_inf();
+    test_hil_pack_output_frame();
+    test_hil_read_switch_state_matches_telemetry();
+    test_hil_read_aux_state();
+    test_hil_setdroopmdac_mirrors();
+    test_hil_dispatch_command_packet_unchanged();
+    test_hil_dispatch_wrong_size_dropped();
+    test_hil_dispatch_drain_bounded_with_commands();
+#if !HIL_SIM
+    test_hil_dispatch_35byte_dropped_in_nonhil_build();
+#endif
+#if HIL_SIM
+    test_hil_wiring_dispatch_accepts_and_learns_host();
+    test_hil_wiring_injection_reaches_globals();
+    test_hil_wiring_updateWheelSpeed_skipped();
+    test_hil_wiring_hold_before_stale_deadline();
+    test_hil_wiring_stale_entry_halts_motor_output();
+    test_hil_wiring_zero_after_dead_deadline();
+    test_hil_wiring_refresh_after_link_recovery();
+    test_hil_wiring_detectFaults_fires_on_injection();
+    test_hil_wiring_rails_update_after_state99_latch();
+    test_hil_wiring_host_lock_and_foreign_frames();
+    test_hil_wiring_drain_newest_injection_wins();
+    test_hil_wiring_drain_interleaved_command_and_injection();
+    test_hil_wiring_drain_bounded_cap();
+    test_hil_wiring_send_tick();
+#endif
+
     test_pi_controllers();
     test_drive_cycle();
     test_pi_watchdog_guard();
@@ -16236,6 +17191,7 @@ int main() {
     test_benchlogrecord_v3_layout();
     test_sdlog_flags_share_loop_mode_bits();
     test_sdlog_flags_youla_build_bits();
+    test_sdlog_flags_hil_provenance_bit();
 #if USE_YOULA_DRIVE_CONTROLLER
     test_sdlog_record_u_unsat_drive_x0_saturating();
     test_sdlog_record_u_unsat_drive_x0_unclamped();
