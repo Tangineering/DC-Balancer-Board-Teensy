@@ -241,9 +241,22 @@ def _legend(ax, handles=None, labels=None, loc="upper right", ncol=1,
     return leg
 
 
-def _suptitle(fig, run_name, what):
+def _suptitle(fig, cfg, what):
+    """Figure suptitle: "<run_name> — <what>", with a HIL_SIM banner
+    prepended when cfg["_hil_build"] is True (injected by make_all() from
+    the log's flags bit6 -- see _hil_build() below). A HIL log's rail
+    values came from tools/hil_plant_sim.py's simulated plant, not the
+    real board (fw v21, docs/HIL_MODE.md); every figure gets the same
+    warning so a HIL PNG cannot be mistaken for a real bench run.
+    """
+    run_name = _run_name(cfg)
     title = ("%s — %s" % (run_name, what)) if run_name else what
-    fig.suptitle(title, color=TEXT_COLOR, fontsize=13, fontweight="bold")
+    if _hil_build(cfg):
+        title = "⚠ HIL_SIM LOG (simulated plant, not real hardware) — " + title
+        color = "#b3261e"
+    else:
+        color = TEXT_COLOR
+    fig.suptitle(title, color=color, fontsize=13, fontweight="bold")
 
 
 def _run_name(cfg):
@@ -251,6 +264,15 @@ def _run_name(cfg):
     if isinstance(cfg, dict):
         return cfg.get("_run_name", "")
     return ""
+
+
+def _hil_build(cfg):
+    """HIL_SIM provenance flag injected by make_all via cfg["_hil_build"]
+    (optional; see decode_benchlog.decode_blg()'s header["hil_build"],
+    True when flags bit6 (0x40, fw v21) was set on any record)."""
+    if isinstance(cfg, dict):
+        return bool(cfg.get("_hil_build", False))
+    return False
 
 
 def _r_cmd(data):
@@ -361,7 +383,7 @@ def tracking_subplots(data, cfg):
     _legend(ax1)
 
     ax1.set_xlim(float(t[0]), float(t[-1]))
-    _suptitle(fig, _run_name(cfg), "tracking")
+    _suptitle(fig, cfg, "tracking")
     return fig
 
 
@@ -407,7 +429,7 @@ def error_subplots(data, cfg):
     _legend(ax1)
 
     ax1.set_xlim(float(t[0]), float(t[-1]))
-    _suptitle(fig, _run_name(cfg), "tracking error")
+    _suptitle(fig, cfg, "tracking error")
     return fig
 
 
@@ -462,7 +484,7 @@ def effort_subplots(data, cfg):
             bbox_to_anchor=(1.0, 1.0))
 
     ax1.set_xlim(float(t[0]), float(t[-1]))
-    _suptitle(fig, _run_name(cfg), "control effort")
+    _suptitle(fig, cfg, "control effort")
     return fig
 
 
@@ -506,7 +528,7 @@ def currents_and_share(data, cfg):
     _legend(ax1)
 
     ax1.set_xlim(float(t[0]), float(t[-1]))
-    _suptitle(fig, _run_name(cfg), "channel currents and power share")
+    _suptitle(fig, cfg, "channel currents and power share")
     return fig
 
 
@@ -583,7 +605,7 @@ def share_controller(data, cfg):
     _legend(ax1, h, [x.get_label() for x in h], loc="upper right")
 
     ax1.set_xlim(float(t[0]), float(t[-1]))
-    _suptitle(fig, _run_name(cfg), "power-share controller")
+    _suptitle(fig, cfg, "power-share controller")
     return fig
 
 
@@ -672,7 +694,7 @@ def bus_and_share(data, cfg):
     _legend(ax1)
 
     ax1.set_xlim(float(t[0]), float(t[-1]))
-    _suptitle(fig, _run_name(cfg), "bus voltage, current draw, power share")
+    _suptitle(fig, cfg, "bus voltage, current draw, power share")
     return fig
 
 
@@ -741,7 +763,7 @@ def charge_regen_and_currents(data, cfg):
     _legend(ax1, ncol=2)
 
     ax1.set_xlim(float(t[0]), float(t[-1]))
-    _suptitle(fig, _run_name(cfg),
+    _suptitle(fig, cfg,
               "charger/regen node voltages and channel currents")
     return fig
 
@@ -809,7 +831,7 @@ def drive_controller_conditioning(data, cfg):
     _legend(ax1)
 
     ax1.set_xlim(float(t[0]), float(t[-1]))
-    _suptitle(fig, _run_name(cfg), "drive controller conditioning (u_unsat, x[0])")
+    _suptitle(fig, cfg, "drive controller conditioning (u_unsat, x[0])")
     return fig
 
 
@@ -1046,7 +1068,7 @@ def encoder_diagnostics(data, cfg):
     _legend(ax2)
 
     ax2.set_xlim(float(t[0]), float(t[-1]))
-    _suptitle(fig, _run_name(cfg), "encoder diagnostics")
+    _suptitle(fig, cfg, "encoder diagnostics")
     return fig
 
 
@@ -1111,7 +1133,7 @@ def encoder_phase_duty(data, cfg):
     _legend(ax1)
 
     ax1.set_xlim(float(t[0]), float(t[-1]))
-    _suptitle(fig, _run_name(cfg), "encoder phase/duty")
+    _suptitle(fig, cfg, "encoder phase/duty")
     return fig
 
 

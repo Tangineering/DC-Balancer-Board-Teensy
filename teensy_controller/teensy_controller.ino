@@ -2454,10 +2454,13 @@ bool wheelSpeedResetPending = false;
 // simulated on a host (tools/hil_plant_sim.py) and injected over the existing UDP
 // socket as engineering-unit sensor values. updateSensors() sources V_fc/V_batt/
 // V_bus/V_chg/V_rgn/I_fc/I_batt/v_actual from the injection frame instead of the
-// hardware, and loop() streams the actuator state (state, switches, motor current
+// hardware, pollAg105() sources I_charge and the Ag105 Table 6 status byte from the
+// same frame instead of I2C (see the frame table for exactly what that does and does
+// not simulate), and loop() streams the actuator state (state, switches, motor current
 // command, MDAC codes, fault flags) back at 1 kHz so the host can close the loop.
 // EVERYTHING ELSE — detectFaults(), the sequencing guards, both controllers, the
-// charger logic — runs completely unmodified. That is the entire point: this is a
+// charger CONTROL logic (chargingControl(), the GENSTAT decode, the readiness
+// gating) — runs completely unmodified. That is the entire point: this is a
 // fault-INJECTION rig, so there is deliberately no HIL-specific fault suppression.
 // NEVER flash a HIL_SIM=1 build onto a board attached to a live power stage: the
 // firmware's picture of the hardware is fiction, so its switch decisions are too.
@@ -2537,7 +2540,7 @@ uint16_t       pkt_counter_T = 0;
 // never be mistaken for a command packet and vice versa, even before the length
 // dispatch in receiveCommands() gets a chance to separate them.
 //
-// INJECTION FRAME (simulator -> Teensy), 35 bytes, little-endian:
+// INJECTION FRAME (simulator -> Teensy), 40 bytes, little-endian:
 //   off | size | field
 //   ----+------+---------------------------------------------------------------
 //    0  |  1   | sync 0xB5
@@ -2550,17 +2553,28 @@ uint16_t       pkt_counter_T = 0;
 //   22  |  4   | I_fc      [A]
 //   26  |  4   | I_batt    [A]
 //   30  |  4   | v_actual  [m/s]
-//   34  |  1   | XOR checksum over bytes 1..33
+//   34  |  4   | I_charge  [A]   simulated Ag105 measured charge current (reg 0x06
+//       |      |                 equivalent, already scaled by 0.011 A/count)
+//   38  |  1   | ag105_status    raw Table 6 status byte, exactly as an I2C read
+//       |      |                 would return it (Ag105_Table6_I2C_Status_Byte.json)
+//   39  |  1   | XOR checksum over bytes 1..38
 //
-// NOT SIMULATED (fw v21 limitation — review LOW-4). The frame carries no charger state, so the
-// ENTIRE Ag105 path stays REAL in a HIL build: I_charge, ag105_status_raw / the GENSTAT decode,
-// ag105Configured and chargingControl()'s readiness gating all come from the physical I2C bus,
-// which in a HIL rig is unpowered (no charger power path is open, and there is no board-side
-// plant to open one). Expect I_charge == 0, ag105IsReady() false, and the charger branch of
-// chargingControl() to be effectively dead. Any HIL result that depends on charger behaviour is
-// therefore not meaningful. Extending the injection frame with the charger fields (and gating
-// pollAg105() under HIL_SIM) is the known follow-up; it is a frame-layout change, so it needs a
-// simulator update in lockstep.
+// FRAME SIZE 35 -> 40 (fw v21 charger extension, closing review LOW-4). The 35-byte layout was
+// NEVER FLASHED (fw v21 is pending its first flash), so this is a clean size bump with NO
+// back-compat path: a 35-byte datagram no longer matches the length dispatch in receiveCommands()
+// and is dropped unread like any other stray packet — which is the correct, loud failure mode for
+// a stale simulator (the 'S' dump shows accepts stuck at zero rather than a half-decoded frame).
+// Keep tools/hil_plant_sim.py and docs/HIL_MODE.md in lockstep.
+//
+// CHARGER SIMULATION SCOPE. What IS simulated: the Ag105's measured charge current and its
+// Table 6 status byte, and therefore everything downstream of them — ag105_status_raw, the
+// GENSTAT decode / ag105IsReady(), the detectFaults() GENSTAT error check, I_charge in telemetry
+// and the BLG, and chargingControl()'s MPPT release gating. What is NOT simulated: the I2C
+// TRANSPORT and the configuration handshake. Under HIL, pollAg105() never touches the Wire bus
+// (there is no Ag105 on a HIL rig, so every real poll would be a NACK/timeout burning loop time
+// and feeding the UDP drain backlog); ag105Configured is set by fiat once the charger is powered
+// and settled, so initAg105Charger()'s read-verify-write sequence and its ERR_INIT_FAIL /
+// ERR_I2C_CHARGER paths are NOT exercised in a HIL build. Those remain bench-only.
 //
 // OUTPUT FRAME (Teensy -> simulator), 16 bytes, little-endian:
 //   off | size | field
@@ -2578,7 +2592,7 @@ uint16_t       pkt_counter_T = 0;
 //   15  |  1   | XOR checksum over bytes 1..14
 #define HIL_SYNC_INJECT   0xB5u
 #define HIL_SYNC_OUTPUT   0xB6u
-#define HIL_INJECT_SIZE   35
+#define HIL_INJECT_SIZE   40
 #define HIL_OUTPUT_SIZE   16
 #define HIL_STALE_MS      50u    // injection older than this -> hold last values, flag stale
 #define HIL_ZERO_MS       250u   // ...and older than THIS -> force safe zeros (dead link)
@@ -2590,10 +2604,12 @@ struct HilInjectFrame {
     float V_fc, V_batt, V_bus, V_chg, V_rgn;
     float I_fc, I_batt;
     float v_actual;
+    float I_charge;         // A — simulated Ag105 reg 0x06 reading, already scaled
+    uint8_t ag105_status;   // raw Table 6 status byte (Ag105_Table6_I2C_Status_Byte.json)
 };
 
 // ── HIL link state (grouped; only read/written by the HIL paths) ─────────────
-HilInjectFrame hilInject      = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+HilInjectFrame hilInject      = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 bool           hilHaveFrame   = false;  // true after the first ACCEPTED injection frame
 bool           hilStale       = false;  // last updateSensors() ran on held (not fresh) values
 bool           hilZeroed      = false;  // held values have been forced to safe zeros
@@ -2679,14 +2695,16 @@ bool hilParseInjectFrame(const uint8_t *buf, int len, HilInjectFrame &out) {
     memcpy(&f.I_fc,     &buf[idx], 4); idx += 4;
     memcpy(&f.I_batt,   &buf[idx], 4); idx += 4;
     memcpy(&f.v_actual, &buf[idx], 4); idx += 4;
+    memcpy(&f.I_charge, &buf[idx], 4); idx += 4;
+    f.ag105_status = buf[idx++];
 
     // Reject NaN/Inf for the same reason receiveCommands() sanitizes the Pi floats: an
     // XOR checksum passes plenty of bit patterns that decode as NaN, and a NaN reaching
     // v_actual poisons the drive controller's recursion permanently. A rejected frame is
     // simply not applied — the hold-then-zero path in updateSensors() covers the gap.
-    const float fields[8] = { f.V_fc, f.V_batt, f.V_bus, f.V_chg, f.V_rgn,
-                              f.I_fc, f.I_batt, f.v_actual };
-    for (int i = 0; i < 8; i++) {
+    const float fields[9] = { f.V_fc, f.V_batt, f.V_bus, f.V_chg, f.V_rgn,
+                              f.I_fc, f.I_batt, f.v_actual, f.I_charge };
+    for (int i = 0; i < 9; i++) {
         if (isnan(fields[i]) || isinf(fields[i])) return false;
     }
 
@@ -4287,6 +4305,12 @@ void printSensors() {
     Serial.print("P_fc=");               Serial.print(P_fc_actual, 2); Serial.print("W  ");
     Serial.print("P_batt=");             Serial.print(P_batt_actual, 2); Serial.println("W");
     Serial.println("--- Charger ---");
+#if HIL_SIM
+    // Provenance marker, same class as the rails banner above (fw v21 LOW-2): under an active
+    // link the status byte and I_charge come from the simulator, not from I2C — and nothing on
+    // this line would otherwise say so.
+    if (hilHaveFrame) Serial.println("(INJECTED — no I2C poll while the HIL link is up)");
+#endif
     Serial.print("ag105_status_raw=0x"); Serial.print(ag105_status_raw, HEX);
     Serial.print("  CHARGER_STAT=");     Serial.println(digitalRead(CHARGER_STAT));
     Serial.print("powered=");            Serial.print(chargerHasPower());
@@ -4353,6 +4377,13 @@ void updateSensors() {
                 hilInject.I_fc     = 0.0f;
                 hilInject.I_batt   = 0.0f;
                 hilInject.v_actual = 0.0f;
+                // Charger fields follow the same dead-link contract as the rails. I_charge 0 A
+                // and status 0x00 are exactly what the REAL pollAg105() leaves behind on a failed
+                // read (see its NAK branch): 0x00 is the Pi's "no charger data" value at telemetry
+                // offset 51, and the HIL poll marks ag105DataValid false alongside it, so
+                // ag105IsReady() is false and the GENSTAT fault check ignores the byte.
+                hilInject.I_charge     = 0.0f;
+                hilInject.ag105_status = 0;
                 // LOW-3: the link is dead, so unbind the host. The next accepted frame re-learns
                 // the source address (a restarted simulator on a new port recovers here, and only
                 // here — see receiveCommands()).
@@ -4854,7 +4885,7 @@ void receiveCommands() {
 
 #if HIL_SIM
     bool           hilPending = false;   // an accepted frame is waiting to be committed
-    HilInjectFrame hilLatest = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    HilInjectFrame hilLatest = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     IPAddress      hilSrcIp(0, 0, 0, 0);
     uint16_t       hilSrcPort = 0;
 #endif
@@ -9518,6 +9549,52 @@ bool initAg105Charger() {
 }
 
 void pollAg105() {
+#if HIL_SIM
+    // ── HIL charger sourcing (fw v21 charger extension) ──────────────────────────────────────
+    // Once the injection link is live the Ag105 is SIMULATED, and this function must not touch
+    // the Wire bus at all: a HIL rig has no charger (indeed usually no board), so every real poll
+    // is a NACK/timeout that burns loop time in the 50 Hz slot and feeds the UDP drain backlog
+    // the fw v21 MED-1 drain was added to bound. Before the first frame we fall through to the
+    // real I2C path, exactly as updateSensors() falls through to the real ADCs — the link coming
+    // up stays a clean one-way transition.
+    //
+    // SEMANTICS MIRRORED FROM THE REAL PATH BELOW (deliberately, line for line):
+    //   • the power edge still starts the settle timer, and chargerHasPower() is read from the
+    //     REAL switch pins — the sequencing under test is the firmware's own, not the host's;
+    //   • unpowered  -> ag105Configured re-arms, ag105DataValid false, I_charge 0. Identical to
+    //     the real path's !powered block AND to its subsequent NAK (an unpowered charger cannot
+    //     ACK), so the two agree without a special case;
+    //   • powered    -> the injected status byte and current stand in for a successful 2-byte
+    //     read: ag105_status_raw = injected byte (0x00 IS a real status — Battery Disconnect —
+    //     so validity is tracked out-of-band exactly as in the real path), ag105DataValid true,
+    //     I_charge = injected amps (already in A; the 0.011 A/count scale is the simulator's job,
+    //     mirroring the fact that scaling happens once, at the read site);
+    //   • settled && !ag105Configured -> configured. The config WRITES are not simulated (see the
+    //     frame-table comment), so this succeeds by fiat and never raises ERR_INIT_FAIL.
+    // No fault is raised from this path: FAULT_I2C_CHARGER and the init fault are TRANSPORT
+    // failures, and there is no transport here. The GENSTAT error check in detectFaults() is
+    // fully live and IS reachable — inject a Table 6 byte with GENSTAT 0b101/0b110/0b111.
+    if (hilHaveFrame) {
+        bool powered = chargerHasPower();
+        if (powered && !ag105HadPower) ag105PowerOnMs = millis();
+        ag105HadPower = powered;
+
+        if (!powered) {
+            ag105Configured  = false;
+            ag105DataValid   = false;
+            ag105_status_raw = 0;
+            I_charge         = 0.0f;
+            return;
+        }
+
+        ag105_status_raw = hilInject.ag105_status;
+        ag105DataValid   = true;
+        I_charge         = hilInject.I_charge;
+
+        if (millis() - ag105PowerOnMs >= AG105_SETTLE_MS) ag105Configured = true;
+        return;
+    }
+#endif
     // Power-aware service: tracks when the charger has input power, lazily configures it once
     // it has booted, polls measured current/status, and faults only when the charger genuinely
     // should be responding. Called at ~50 Hz from loop() in every state.
