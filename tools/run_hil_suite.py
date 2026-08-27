@@ -246,7 +246,8 @@ def full_argv(plan_item, args):
     """The child's complete argv, transport flags appended (build_sim_argv and the
     scenario builder both deliberately omit them — the wrapper owns transport)."""
     return ([sys.executable, SIM_SCRIPT] + plan_item["argv"]
-            + ["--teensy-ip", args.teensy_ip, "--port", str(args.port)])
+            + ["--teensy-ip", args.teensy_ip, "--port", str(args.port)]
+            + (["--dash"] if getattr(args, "dashboard", False) else []))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -443,13 +444,27 @@ def run_child(item, args):
     argv = full_argv(item, args)
     rec = {"argv": argv, "status": "ok", "returncode": None,
            "wall_s": None, "log": item["log"], "summary": {}}
+    # --dashboard TRADE-OFF: the dashboard writes ANSI to stdout, which is
+    # useless (and log-bloating) inside a captured pipe — and the child's own
+    # tty check would simply disable it, making the flag a no-op.  So with
+    # --dashboard we hand the child the real terminal for stdout and capture
+    # only stderr.  COST: the per-run summary is parsed from stdout, so the
+    # summary columns in REPORT.md are empty for dashboard runs.  That is why
+    # the flag is OFF by default: without it, behaviour is byte-identical to
+    # before, and reports stay complete.
+    dashboard = getattr(args, "dashboard", False)
+    if dashboard:
+        rec["stdout_passthrough"] = True
     t0 = time.time()
     proc = None
     try:
-        proc = subprocess.Popen(argv, cwd=_REPO, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT)
+        proc = subprocess.Popen(argv, cwd=_REPO,
+                                stdout=None if dashboard else subprocess.PIPE,
+                                stderr=subprocess.PIPE if dashboard
+                                else subprocess.STDOUT)
         try:
-            out_b, _ = proc.communicate(timeout=item["timeout_s"])
+            out_b, err_b = proc.communicate(timeout=item["timeout_s"])
+            out_b = out_b if out_b is not None else (err_b or b"")
             rec["returncode"] = proc.returncode
             if proc.returncode != 0:
                 rec["status"] = "nonzero-exit"
@@ -457,10 +472,12 @@ def run_child(item, args):
         except subprocess.TimeoutExpired:
             proc.terminate()          # SIGTERM: catchable, unlike SIGKILL
             try:
-                out_b, _ = proc.communicate(timeout=CHILD_TERM_GRACE_S)
+                out_b, err_b = proc.communicate(timeout=CHILD_TERM_GRACE_S)
+                out_b = out_b if out_b is not None else (err_b or b"")
             except subprocess.TimeoutExpired:
                 proc.kill()            # child ignored/missed SIGTERM -- last resort
-                out_b, _ = proc.communicate()
+                out_b, err_b = proc.communicate()
+                out_b = out_b if out_b is not None else (err_b or b"")
             out = out_b.decode("utf-8", "replace")
             out += ("\n[run_hil_suite] *** TIMEOUT after %.1f s — child sent SIGTERM "
                     "(%.0fs grace, then SIGKILL if needed) ***\n"
@@ -710,6 +727,11 @@ def main(argv=None):
                          % DEFAULT_SETTLE_S)
     ap.add_argument("--keep-going", action="store_true",
                     help="do not abort when the first run sees no observation frames")
+    ap.add_argument("--dashboard", action="store_true",
+                    help="run every child with the live dashboard (--dash). OFF by "
+                         "default: it takes over the terminal, so children run with "
+                         "stdout passed through instead of captured, and the "
+                         "stdout-derived summary columns in REPORT.md are empty.")
     ap.add_argument("--list", action="store_true", help="print the run plan and exit")
     ap.add_argument("--dry-run", action="store_true",
                     help="build every argv and write plan.json into the report dir; run nothing")

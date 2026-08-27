@@ -350,6 +350,54 @@ over the line: the same run under `--scenario sag` (a −5 V, 1 s disturbance) *
 latch State 99 with the UV bit, which is test **H2**. Replay checks the near-miss;
 the scenario checks the trip. Both should hold on any build.
 
+## Live dashboard (`--dash`)
+
+`tools/hil_dashboard.py` gives the simulator a one-screen live view instead of the
+1 Hz status lines:
+
+```bash
+python3 tools/hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario steady --dash
+```
+
+It shows, all on one non-scrolling screen: elapsed time, source (scenario or
+replay), electrical mode, achieved tick rate and the tx/rx/bad/pi frame counters;
+**v setpoint vs actual** and **power-share setpoint vs actual** (share = I_fc/I_tot,
+shown as `—` below ~50 mA total where the ratio is meaningless); **V_bus, I_tot,
+I_fc, I_bt** with unicode sparklines and each channel's observed range; the six
+RT1987 switch states (`FC_BUS BT_BUS MOT_PWR REGEN FC_CHG BT_SEQ`) and the four aux
+pins (`FC_REG BT_REG MPPT_DIS CBAL_DIS`) as ●/○ from the observation frame's
+bitmasks; the firmware `mainState` (number + name), commanded current, charge
+current, the raw Ag105 status byte, `fault_flags` **decoded to names**; and, in
+hi-fi mode, the achieved substep rate, electrical event count and chopper peak
+power.
+
+**Lightness contract.** The 1 kHz loop's entire obligation is one attribute
+assignment (`dash.snapshot = {...}`) — atomic under the GIL, no locks, no queues,
+no I/O on the hot path. A **daemon thread** wakes at 5 Hz, takes whatever snapshot
+happens to be current, appends to its own history rings and redraws with plain
+ANSI escapes (not curses, so Windows Terminal / MSYS2 work; VT processing is
+enabled via the stdlib `os.system("")` trick). The view is therefore *sampled*:
+it is several — often many — ticks behind and drops everything in between, by
+design. The CSV and the BLG remain the record of truth. Measured cost on a 5 s
+`steady` run through a pty: **1000.0 Hz without `--dash` vs 999.9 Hz with it.**
+A renderer exception can never propagate into the simulation — the thread catches
+everything, restores the cursor, prints one warning and dies; the run continues.
+
+If stdout is **not a tty** (piped, redirected, captured), the dashboard refuses to
+start, says so in one line, and the normal 1 Hz status lines are kept.
+
+### Suite integration (`--dashboard`, default OFF)
+
+`tools/run_hil_suite.py --dashboard` appends `--dash` to every child. It is **off
+by default** so suite behaviour without it stays byte-identical, and because of one
+trade-off: the wrapper normally captures each child's stdout into a per-run `.log`
+and parses the run summary out of it, but a dashboard writing ANSI into a captured
+pipe is useless (and the child's own tty check would just disable it). So with
+`--dashboard` the children are given the **real terminal** for stdout (stderr is
+still captured), the run record is marked `stdout_passthrough`, and the
+stdout-derived summary columns in `REPORT.md` are empty for that run. Use it to
+watch a run; leave it off when you want a complete report.
+
 ## Running the full suite
 
 The individual commands above are for a single scenario or a single recorded log.

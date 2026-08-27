@@ -907,6 +907,9 @@ def main(argv=None):
                     help="run length in seconds (default 30; replay default = log length)")
     ap.add_argument("--rate", type=float, default=1000.0, help="tick rate in Hz (default 1000)")
     ap.add_argument("--csv", default=None, help="write a per-tick CSV log here")
+    ap.add_argument("--dash", action="store_true",
+                    help="live terminal dashboard (5 Hz sampled view; suppresses the "
+                         "1 Hz status lines while running). Off by default. Requires a tty.")
     args = ap.parse_args(argv)
 
     if args.list_scenarios:
@@ -1064,6 +1067,28 @@ def main(argv=None):
     print(f"[hil] {src} dest={dest[0]}:{dest[1]} "
           f"rate={args.rate:.0f} Hz duration={args.duration:.1f} s")
 
+    # ── Optional live dashboard ──────────────────────────────────────────────
+    # Lightness contract (docs/HIL_MODE.md "Live dashboard"): the loop's ONLY
+    # obligation is `dash.snapshot = {...}` — one attribute assignment, atomic
+    # under the GIL.  A daemon thread renders at 5 Hz from whatever snapshot is
+    # current, so the view is deliberately several ticks behind.  Banners above
+    # and the summary below still print normally; the 1 Hz status lines and the
+    # in-loop replay note are suppressed/deferred while the screen is owned.
+    dash = None
+    deferred_notes = []
+    if args.dash:
+        # Lazy import, same convention as the replay decoder above: the module
+        # lives beside this file rather than on the default path.
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        try:
+            from hil_dashboard import Dashboard
+        except ImportError as exc:
+            raise SystemExit(f"[hil] --dash needs tools/hil_dashboard.py ({exc})")
+        d = Dashboard()
+        if d.start():
+            dash = d
+    dash_on = dash is not None
+
     t0 = time.monotonic()
     next_tick = t0
     last_status = t0
@@ -1101,7 +1126,11 @@ def main(argv=None):
                 tx_enabled = True
                 sensors, rec_idx = replay.sample(t)
                 if sensors is None:
-                    print(f"[hil] replay: end of log at t={t:.3f}s")
+                    note = f"[hil] replay: end of log at t={t:.3f}s"
+                    if dash_on:
+                        deferred_notes.append(note)   # screen is owned; print after stop()
+                    else:
+                        print(note)
                     break
             else:
                 tx_enabled = apply_scenario(plant, scenario, t)
@@ -1172,6 +1201,35 @@ def main(argv=None):
 
             ticks += 1
 
+            # ── Dashboard feed: ONE attribute assignment, no I/O, no locks ───
+            if dash_on:
+                i_fc = sensors["I_fc"]
+                i_bt = sensors["I_batt"]
+                i_tot = i_fc + i_bt
+                dash.snapshot = {
+                    "t": t, "source": src, "mode": args.electrical,
+                    "rate_hz": (ticks / (now - t0)) if now > t0 else None,
+                    "tx": tx_frames, "rx": rx_frames, "bad": rx_bad, "pi": pi_frames,
+                    "v_sp": commander.state["v_setpoint"] if commander and commander.timeline else None,
+                    "v_act": sensors["v_actual"],
+                    "share_sp": (commander.state["power_share_setpoint"]
+                                 if commander and commander.timeline else None),
+                    # Share is undefined at negligible source current — the
+                    # ratio is all noise below ~50 mA.
+                    "share_act": (i_fc / i_tot) if i_tot > 0.05 else None,
+                    "V_bus": sensors["V_bus"], "I_tot": i_tot,
+                    "I_fc": i_fc, "I_bt": i_bt,
+                    "I_chg": sensors["I_charge"], "ag105": sensors["ag105_status"],
+                    "state": obs["state"] if obs else None,
+                    "switch": obs["switch"] if obs else None,
+                    "aux": obs["aux"] if obs else None,
+                    "I_cmd": obs["current"] if obs else None,
+                    "faults": obs["fault_flags"] if obs else 0,
+                    "hifi_hz": electrical.achieved_substep_hz if electrical else None,
+                    "hifi_events": elec_events_total,
+                    "hifi_chopper_w": electrical.chopper_peak_w if electrical else None,
+                }
+
             # ── 1 Hz status line (and CSV flush, M3) ─────────────────────────
             if now - last_status >= 1.0:
                 last_status = now
@@ -1179,7 +1237,9 @@ def main(argv=None):
                 # up to the last completed second, not just at clean exit.
                 if csv_file:
                     csv_file.flush()
-                if obs:
+                if dash_on:
+                    pass                # the dashboard owns the screen
+                elif obs:
                     print(f"[hil] t={t:6.2f}s  state={obs['state']:2d} "
                           f"sw=0x{obs['switch']:02X} aux=0x{obs['aux']:02X} "
                           f"I_cmd={obs['current']:+6.2f}A  faults=0x{obs['fault_flags']:04X} "
@@ -1207,8 +1267,16 @@ def main(argv=None):
                     # through a burst of catch-up ticks the plant cannot honour.
                     next_tick = time.monotonic()
     except KeyboardInterrupt:
+        if dash is not None:
+            dash.stop()                 # restore the terminal before printing
+            dash_on = False
         print("\n[hil] interrupted")
     finally:
+        if dash is not None:
+            dash.stop()                 # idempotent
+            dash_on = False
+        for note in deferred_notes:
+            print(note)
         # M3: final drain so a break/exception on the last tick cannot lose the
         # handful of events accumulated since the previous drain.
         _drain_electrical_events()
