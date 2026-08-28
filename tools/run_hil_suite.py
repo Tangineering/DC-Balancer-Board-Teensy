@@ -86,10 +86,24 @@ DEFAULT_SETTLE_S = 5.0         # >> HIL_ZERO_MS (250 ms); see module docstring
 #                 so this one is "allowed", not "required" (see ALLOWED below).
 # Everything else is expected fault-free; a fault there is a finding.
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# --pi-live NOTE (verified from source, do not "fix" this):
+#   The comm-loss expectation is UNCHANGED under --pi-live.  The HIL stale clock
+#   keys on ACCEPTED INJECTION FRAMES ONLY: hilLastFrameMs is stamped in
+#   receiveCommands()'s commit block (.ino:4970-4976), which runs only for a
+#   40-byte frame that passed hilParseInjectFrame() and the host lock; and
+#   updateSensors() ages exactly that stamp (.ino:4379-4431).  A 22-byte Pi
+#   command takes the other branch (processPiCommandPacket(), .ino:4835) and
+#   touches only last_rx_ms / pi_ever_connected (.ino:4884-4885), which belong to
+#   the SEPARATE Pi watchdog (checkPiWatchdog(), .ino:4817-4826).  So a real Pi's
+#   command traffic does NOT keep the HIL link alive: when this simulator stops
+#   injecting for 1 s, ERR_HIL_STALE latches exactly as it does without a Pi.
 FAULT_REQUIRED = {
     "sag": ("docs/HIL_MODE.md H2 — UV_BUS latched by the -5 V / 1 s dip", 0x0100),
     "comm-loss": ("docs/HIL_MODE.md link-loss — 1 s gap > 250 ms zero stage, "
-                  "ERR_HIL_STALE (FAULT_HIL_LINK aliases FAULT_PI_TIMEOUT 0x0010)",
+                  "ERR_HIL_STALE (FAULT_HIL_LINK aliases FAULT_PI_TIMEOUT 0x0010); "
+                  "unchanged under --pi-live — the stale clock keys on injection "
+                  "frames only (.ino:4970-4976), not on Pi command traffic",
                   0x0010),
 }
 FAULT_ALLOWED = {
@@ -121,6 +135,15 @@ K_DROOP_FINDING = (
     "both electrical modes shows the gap directly; treat any bus-droop number "
     "in this report as mode-dependent until the discrepancy is closed."
 )
+
+
+def _suite_mode(args):
+    """The suite's command-source mode, recorded in meta and every run record.
+
+    'pi-live'  — a REAL Pi owns the 22-byte command packet (--pi-live)
+    'scripted' — the default: each scenario's own pi_timeline (or, for a scenario
+                 that declares one, its emulated-EMS strategy inside the child)"""
+    return "pi-live" if getattr(args, "pi_live", False) else "scripted"
 
 
 def fault_names(bits):
@@ -162,9 +185,32 @@ def build_plan(args):
     Pure w.r.t. the board: safe to call for --list / --dry-run with no hardware."""
     plan = []
 
+    pi_live = getattr(args, "pi_live", False)
+
     if not args.replay_only:
         for name, meta in SCENARIOS.items():
             need = meta.get("electrical", "any")
+            if pi_live and (meta.get("pi_timeline") or meta.get("ems")):
+                # SKIPPED, not failed: under --pi-live the real Pi owns the 22-byte
+                # command packet, and hil_plant_sim.py refuses a scenario carrying
+                # its own timeline (two command sources would overwrite each other
+                # at 50 Hz). Recorded with a reason so the report shows the gap.
+                plan.append({
+                    "kind": "scenario", "name": name,
+                    "mode": need if need in ("simple", "hifi") else args.electrical_pref,
+                    "electrical_required": need,
+                    "description": meta.get("description", ""),
+                    "duration_s": 0.0, "csv": None, "events": None, "log": None,
+                    "argv": None, "timeout_s": 0.0,
+                    "skip_reason": (
+                        ("--pi-live: this scenario carries its own pi_timeline "
+                         "(%d entries); the real Pi owns the command link"
+                         % len(meta["pi_timeline"])) if meta.get("pi_timeline") else
+                        ("--pi-live: this scenario's whole stimulus IS the emulated "
+                         "EMS layer (strategy '%s'); with a real Pi commanding there "
+                         "is nothing left for it to drive" % meta["ems"])),
+                })
+                continue
             mode = need if need in ("simple", "hifi") else args.electrical_pref
             dur = float(meta.get("duration_s", 30.0))
             csv_name = "hil_scenario_%s_%s.csv" % (name, mode)
@@ -245,9 +291,15 @@ def filter_plan(plan, only, skip):
 def full_argv(plan_item, args):
     """The child's complete argv, transport flags appended (build_sim_argv and the
     scenario builder both deliberately omit them — the wrapper owns transport)."""
+    if plan_item.get("skip_reason"):
+        return []          # nothing is launched for a skipped run
     return ([sys.executable, SIM_SCRIPT] + plan_item["argv"]
             + ["--teensy-ip", args.teensy_ip, "--port", str(args.port)]
-            + (["--dash"] if getattr(args, "dashboard", False) else []))
+            + (["--dash"] if getattr(args, "dashboard", False) else [])
+            # --pi-live applies to the SCENARIO half only: replay mode creates no
+            # commander anyway, and hil_plant_sim.py refuses the combination.
+            + (["--pi-live"] if getattr(args, "pi_live", False)
+               and plan_item["kind"] == "scenario" else []))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -374,7 +426,7 @@ def analyze_events(path):
     return out
 
 
-def judge_scenario(name, metrics, events, child):
+def judge_scenario(name, metrics, events, child, pi_live=False):
     """Scenario pass/fail. Returns (passed, checks[]) — pure over the inputs."""
     checks = []
 
@@ -400,8 +452,19 @@ def judge_scenario(name, metrics, events, child):
         checks.append({"name": "fault_allowed", "passed": True,
                        "detail": "observed %s; %s" % (fault_names(seen), FAULT_ALLOWED[name])})
     else:
-        checks.append({"name": "no_unexpected_fault", "passed": seen == 0,
-                       "detail": "fault_flags union over the run = %s" % fault_names(seen)})
+        # Under --pi-live the Pi watchdog is outside this harness's control: an
+        # operator-driven Pi that stops commanding while the board is in State 2/3
+        # legitimately latches FAULT_PI_TIMEOUT (0x0010) after PI_TIMEOUT_MS = 500
+        # (.ino:2788, 4817-4826). That is an operator event, not a firmware
+        # finding, so it is excused HERE ONLY — comm-loss still REQUIRES the same
+        # bit above (it arrives via ERR_HIL_STALE, which the Pi cannot mask).
+        unexpected = seen & ~0x0010 if pi_live else seen
+        checks.append({"name": "no_unexpected_fault", "passed": unexpected == 0,
+                       "detail": "fault_flags union over the run = %s%s"
+                                 % (fault_names(seen),
+                                    "  (PI_TIMEOUT excused under --pi-live: the "
+                                    "operator's Pi owns the command cadence)"
+                                    if pi_live and (seen & 0x0010) else "")})
 
     rate = (child.get("summary") or {}).get("achieved_hz")
     if rate is not None:
@@ -531,6 +594,12 @@ def render_report(meta, results):
             % meta.get("target_fw", TARGET_FW_VERSION)]))
     A(_row(["Host", meta.get("host", "?")]))
     A(_row(["Python", meta.get("python", "?")]))
+    A(_row(["Command source", {"pi-live": "MODE B — a REAL Pi owned the command link "
+                               "(--pi-live); scenarios with their own pi_timeline "
+                               "were SKIPPED",
+                               "scripted": "scripted (scenario pi_timeline / emulated "
+                               "EMS strategy)"}.get(meta.get("mode", "scripted"),
+                                                    meta.get("mode"))]))
     A(_row(["Electrical preference", meta.get("electrical_pref", "?")]))
     A(_row(["Settle pause between runs", "%s s" % meta.get("settle_s")]))
     if meta.get("dashboard"):
@@ -551,7 +620,12 @@ def render_report(meta, results):
         A(_row(["Achieved tick rate", "min %.1f / mean %.1f / max %.1f Hz"
                 % (min(rates), sum(rates) / len(rates), max(rates))]))
     npass = sum(1 for r in results if r["passed"])
-    A(_row(["Result", "%d/%d passed" % (npass, len(results))]))
+    nskip = sum(1 for r in results if r.get("skipped"))
+    A(_row(["Result", "%d/%d passed%s"
+            % (npass, len(results),
+               # Skipped runs count as passing (they are not board failures), but
+               # saying so here stops "13/13 passed" reading as 13 runs executed.
+               "  (%d of them SKIPPED, not executed)" % nskip if nskip else "")]))
     if meta.get("aborted"):
         A(_row(["ABORTED", meta["aborted"]]))
     if meta.get("partial"):
@@ -624,11 +698,16 @@ def render_report(meta, results):
                 A("- electrical events: %d (%s)%s"
                   % (ev["total"], kinds,
                      "; **%d over abs-max**" % ev["over_absmax"] if ev["over_absmax"] else ""))
-            log_note = (" **(log write failed: %s)**" % r["child"]["log_write_error"]
-                        if r["child"].get("log_write_error") else "")
-            A("- child: %s (rc %s, %.1f s wall) — log `%s`%s"
-              % (r["child"]["status"], r["child"]["returncode"], r["child"]["wall_s"] or 0.0,
-                 os.path.basename(r["child"]["log"]), log_note))
+            if r.get("skipped"):
+                # No child was ever launched, so there is no rc/wall/log to report.
+                A("- child: **not run** — %s" % r.get("skip_reason", "skipped"))
+            else:
+                log_note = (" **(log write failed: %s)**" % r["child"]["log_write_error"]
+                            if r["child"].get("log_write_error") else "")
+                A("- child: %s (rc %s, %.1f s wall) — log `%s`%s"
+                  % (r["child"]["status"], r["child"]["returncode"],
+                     r["child"]["wall_s"] or 0.0,
+                     os.path.basename(r["child"]["log"]), log_note))
             A("")
             for c in r["checks"]:
                 A("  - [%s] **%s** — %s" % ("x" if c["passed"] else " ", c["name"], c["detail"]))
@@ -723,8 +802,9 @@ def print_plan(plan, args):
         total += (d or 0.0) + args.settle_s
         print("%-14s %-9s %-12s %-9s %s"
               % (p["name"], p["kind"], p.get("mode", ""),
-                 ("%.0f s" % d) if d else "?",
-                 (p.get("description") or "")[:70]))
+                 ("%.0f s" % d) if d else ("SKIP" if p.get("skip_reason") else "?"),
+                 ("SKIPPED — " + p["skip_reason"]) if p.get("skip_reason")
+                 else (p.get("description") or "")[:70]))
     print("\nestimated wall time incl. %.0f s settle pauses: %.0f s (%.1f min)"
           % (args.settle_s, total, total / 60.0))
 
@@ -756,6 +836,11 @@ def main(argv=None):
                          "default: it takes over the terminal, so children run with "
                          "stdout passed through instead of captured, and the "
                          "stdout-derived summary columns in REPORT.md are empty.")
+    ap.add_argument("--pi-live", action="store_true",
+                    help="MODE B: a REAL Pi drives the 22-byte command packet; the "
+                         "children run with --pi-live and send injection frames only. "
+                         "Scenarios carrying their own pi_timeline are SKIPPED (with a "
+                         "reason) rather than run against a second command source.")
     ap.add_argument("--list", action="store_true", help="print the run plan and exit")
     ap.add_argument("--dry-run", action="store_true",
                     help="build every argv and write plan.json into the report dir; run nothing")
@@ -821,6 +906,7 @@ def main(argv=None):
             "partial": partial_now,
             "suite_log_problems": problems,
             "dashboard": args.dashboard,
+            "mode": _suite_mode(args),
         }
 
     def write_outputs(meta_now, results_now):
@@ -861,6 +947,41 @@ def _run_plan(plan, args, problems, results, write_outputs):
     run body. Mutates and returns `results`; returns (results, aborted)."""
     aborted = None
     for i, item in enumerate(plan):
+        if item.get("skip_reason"):
+            # Recorded as a PASSING, explicitly-skipped run: it is not a failure of
+            # the board, and silently dropping it would make the report's run count
+            # differ between modes with nothing to explain why.
+            print("[suite] (%d/%d) %s %s ... SKIPPED (%s)"
+                  % (i + 1, len(plan), item["kind"], item["name"], item["skip_reason"]),
+                  flush=True)
+            results.append({
+                "kind": item["kind"], "name": item["name"], "mode": item.get("mode", ""),
+                "electrical_required": item.get("electrical_required"),
+                "description": item.get("description", ""), "duration_s": 0.0,
+                "cmd_mode": _suite_mode(args),
+                "passed": True, "skipped": True, "skip_reason": item["skip_reason"],
+                "checks": [{"name": "skipped", "passed": True,
+                            "detail": item["skip_reason"]}],
+                "notes": [], "metrics": {}, "events": {},
+                "child": {"status": "skipped", "summary": {}},
+                "csv": None, "events_path": None, "log_path": None,
+                "key_metrics": "skipped",
+            })
+            write_outputs(
+                {"date": datetime.datetime.now().isoformat(timespec="seconds"),
+                 "teensy_ip": args.teensy_ip, "port": args.port,
+                 "target_fw": TARGET_FW_VERSION,
+                 "host": "%s %s (%s)" % (platform.system(), platform.release(),
+                                         platform.machine()),
+                 "python": platform.python_version(),
+                 "electrical_pref": args.electrical_pref, "settle_s": args.settle_s,
+                 "out": args.out, "aborted": aborted,
+                 "partial": (i + 1) < len(plan),
+                 "suite_log_problems": problems,
+                 "mode": _suite_mode(args)},
+                results)
+            continue
+
         print("[suite] (%d/%d) %s %s ..." % (i + 1, len(plan), item["kind"], item["name"]),
               flush=True)
         child = run_child(item, args)
@@ -868,10 +989,12 @@ def _run_plan(plan, args, problems, results, write_outputs):
         if item["kind"] == "scenario":
             metrics = analyze_scenario_csv(item["csv"])
             events = analyze_events(item["events"])
-            passed, checks = judge_scenario(item["name"], metrics, events, child)
+            passed, checks = judge_scenario(item["name"], metrics, events, child,
+                                            pi_live=getattr(args, "pi_live", False))
             key = "obs %d/%d, faults %s" % (metrics["n_obs"], metrics["rows"],
                                             fault_names(metrics["fault_bits_seen"] or 0))
             res = {"kind": "scenario", "name": item["name"], "mode": item["mode"],
+                   "cmd_mode": _suite_mode(args),
                    "electrical_required": item["electrical_required"],
                    "description": item["description"], "duration_s": item["duration_s"],
                    "passed": passed, "checks": checks, "notes": [],
@@ -889,6 +1012,7 @@ def _run_plan(plan, args, problems, results, write_outputs):
             passed = ev["passed"] and child["status"] == "ok"
             npass = sum(1 for c in checks if c["passed"])
             res = {"kind": "replay", "name": item["name"], "mode": item["mode"],
+                   "cmd_mode": _suite_mode(args),
                    "description": item["description"], "duration_s": item["duration_s"],
                    "passed": passed, "checks": checks, "notes": ev.get("notes", []),
                    "metrics": {}, "events": {}, "child": child,
@@ -918,7 +1042,8 @@ def _run_plan(plan, args, problems, results, write_outputs):
              "electrical_pref": args.electrical_pref, "settle_s": args.settle_s,
              "out": args.out, "aborted": aborted,
              "partial": (i + 1) < len(plan),
-             "suite_log_problems": problems},
+             "suite_log_problems": problems,
+             "mode": _suite_mode(args)},
             results)
 
         if i == 0 and no_obs and not args.keep_going:

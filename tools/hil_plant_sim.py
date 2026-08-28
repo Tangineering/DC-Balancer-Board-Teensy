@@ -652,7 +652,7 @@ class PiCommander:
 
     PI_CMD_HZ = 50.0
 
-    def __init__(self, timeline, rate_hz=PI_CMD_HZ):
+    def __init__(self, timeline, rate_hz=PI_CMD_HZ, policy=None, policy_name=None):
         self.timeline = sorted(timeline or [], key=lambda e: e[0])
         self.period = 1.0 / rate_hz
         self.next_tx = 0.0
@@ -662,15 +662,47 @@ class PiCommander:
         self.state = {"v_setpoint": 0.0, "power_share_setpoint": 0.5,
                       "charge_goal": 0.0, "mode_cmd": MODE_SAFE, "droop_enable": 0}
         self.last_applied = None
+        # ── Mode A: emulated Pi EMS ──────────────────────────────────────────
+        # `policy` is an EMS_STRATEGIES callable; when set it SUBSTITUTES for the
+        # timeline lookup below (the two are mutually exclusive by construction —
+        # main() refuses --ems on a scenario whose timeline it would silently
+        # replace without saying so).  Cadence, held-field semantics, packet
+        # format and the watchdog-keepalive role are all unchanged: the policy
+        # only decides WHAT the held state is, never WHEN a packet goes out.
+        self.policy = policy
+        self.policy_name = policy_name
+        self.policy_calls = 0
+        self.last_fb = None
 
-    def tick(self, t):
-        """Return a packet to send at time t, or None."""
+    def active(self):
+        """True if this commander will ever transmit (timeline OR EMS policy)."""
+        return bool(self.timeline) or self.policy is not None
+
+    def tick(self, t, fb_factory=None):
+        """Return a packet to send at time t, or None.
+
+        `fb_factory` is a zero-argument callable returning the feedback view dict
+        for an EMS policy.  It is invoked ONLY on a due commander tick (50 Hz), not
+        on every 1 kHz sim tick — assembling the view is the caller's cost and there
+        is no reason to pay it 20x over."""
         while self.idx < len(self.timeline) and self.timeline[self.idx][0] <= t:
             self.state.update(self.timeline[self.idx][1])
             self.last_applied = self.timeline[self.idx]
             self.idx += 1
-        if not self.timeline or t < self.next_tx:
+        if not self.active() or t < self.next_tx:
             return None
+        if self.policy is not None:
+            fb = fb_factory() if fb_factory is not None else {"t": t}
+            self.last_fb = fb
+            self.policy_calls += 1
+            out = self.policy(t, fb) or {}
+            # UNSET FIELDS HOLD — the same contract as a timeline entry and as the
+            # firmware itself (.ino:4846-4848 holds a field it rejects).
+            for k, v in out.items():
+                if k not in self.state:
+                    raise KeyError("EMS policy returned unknown field %r "
+                                   "(allowed: %s)" % (k, ", ".join(sorted(self.state))))
+                self.state[k] = v
         self.next_tx = t + self.period
         self.counter = (self.counter + 1) & 0xFFFF
         self.sent += 1
@@ -678,6 +710,118 @@ class PiCommander:
             int(t * 1000.0), self.counter, self.state["v_setpoint"],
             self.state["power_share_setpoint"], self.state["charge_goal"],
             self.state["mode_cmd"], self.state["droop_enable"])
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# MODE A — EMULATED PI EMS  (--ems STRATEGY)
+#
+# An energy-management STRATEGY sits where the real Raspberry Pi's supervisor
+# would: it watches feedback and decides the four command fields the firmware
+# consumes.  It is emulated on the HOST, inside this simulator, so a strategy can
+# be developed and regression-run without the Pi in the loop at all.
+#
+#   policy(t, fb) -> dict   with any subset of
+#                     {v_setpoint, power_share_setpoint, charge_goal, mode_cmd}
+#   UNSET FIELDS HOLD.  Returning {} is legal and means "no change".
+#   The policy is called at PiCommander.PI_CMD_HZ (50 Hz), NOT at the 1 kHz sim
+#   tick, and its output is what the 50 Hz command packets carry.
+#
+# ── The feedback view `fb` ───────────────────────────────────────────────────
+# `fb` is assembled once per commander tick.  It is deliberately RICHER than what
+# a real Pi can see: the real Pi gets only the 58-byte v4 telemetry packet
+# (.ino:4988-5069, PLAN.md §6b), whereas `fb` also carries PLANT TRUTH from the
+# simulator's own state and fields from the 16-byte HIL observation frame, which
+# no Pi ever receives.  A strategy that is meant to be portable to the real Pi
+# MUST restrict itself to the telemetry-equivalent keys:
+#
+#   TELEMETRY-EQUIVALENT (a real Pi can compute these from the v4 packet):
+#     t          — the Pi has its own clock; the packet also carries timestamp_ms
+#     v_actual   (offset  7)      V_batt   (11)     I_batt  (15)
+#     I_charge   (19)             V_fc     (23)     I_fc    (27)
+#     V_bus      (31)             V_rgn    (35)     V_chg   (39)
+#     ag105_status (51, raw Table-6 byte)  switch   (52, switch_state bitmask)
+#     fault_flags  (53)
+#
+#   NOT TELEMETRY-EQUIVALENT — simulator/HIL-only, do NOT use in a portable policy:
+#     soc        — PLANT TRUTH from BatterySource's coulomb count.  The real pack
+#                  has no SoC output at all; the Pi would have to estimate it.
+#     state      — mainState, from the HIL observation frame.  v4 telemetry
+#                  carries only error_source_state (offset 56), i.e. the state at
+#                  the time of the FIRST fault — not the live state.
+#     aux        — HIL observation frame byte 4 (FC/BT_REG_ENABLE, MPPT_DISABLE,
+#                  CBAL_DISABLE).  Not in v4 telemetry.
+#     current    — post-clamp motor-current command, HIL observation frame.  Not
+#                  in v4 telemetry.
+#     v_profile  — this scenario's own scripted speed profile (see below).
+#
+# Note also that v4 telemetry carries power_share_actual (offset 43) and the two
+# droop-gain words (47/49), which `fb` does NOT expose — the observation frame
+# does not carry them.  A portable policy must not depend on them either.
+# ═════════════════════════════════════════════════════════════════════════════
+
+def piecewise(profile, t):
+    """Linear interpolation of a [(t, value), ...] profile, clamped at both ends."""
+    if not profile:
+        return None
+    if t <= profile[0][0]:
+        return float(profile[0][1])
+    for (t0, v0), (t1, v1) in zip(profile, profile[1:]):
+        if t <= t1:
+            span = t1 - t0
+            if span <= 0:
+                return float(v1)
+            return float(v0) + (float(v1) - float(v0)) * (t - t0) / span
+    return float(profile[-1][1])
+
+
+# Fallback cruise speed for a strategy asked to run on a scenario with no speed
+# profile of its own.  Provenance: the `charge-cruise` scenario's own pi_timeline
+# uses v_setpoint = 1.2 m/s as its "moderate cruise" (see SCENARIOS below) — the
+# same number is reused here rather than inventing a second one.
+EMS_DEFAULT_CRUISE_MPS = 1.2
+
+# Time at which a strategy hands the firmware MODE_HYBRID (Idle -> Run, .ino:4858).
+# Matches every existing pi_timeline in SCENARIOS, which all step to Run at 3.0 s
+# after a MODE_SAFE settle — long enough for the staged bring-up to finish.
+EMS_RUN_ENTRY_S = 3.0
+
+
+def ems_hold_5050(t, fb):
+    """hold-5050 — constant 50/50 power split.
+
+    name       : hold-5050
+    intent     : the trivial reference strategy and the TEMPLATE for real ones.
+                 It makes no decisions: the split is pinned at 0.50 so any
+                 observed share deviation belongs to the firmware's share loop
+                 and the plant, never to the EMS.
+    fields     : mode_cmd (SAFE -> HYBRID at EMS_RUN_ENTRY_S),
+                 power_share_setpoint (0.50 constant),
+                 v_setpoint (the scenario's `ems_v_profile` if it defines one,
+                 else EMS_DEFAULT_CRUISE_MPS),
+                 charge_goal (0.0 — charging deliberately out of scope here).
+    feedback   : uses NOTHING but `fb["t"]` and `fb["v_profile"]`.  It is therefore
+                 trivially portable to the real Pi (see the telemetry-equivalence
+                 list above).
+    provenance : cruise value from the `charge-cruise` pi_timeline; Run-entry time
+                 from the same timelines; 0.50 is the firmware's own default
+                 power_share_setpoint.
+    """
+    v_sp = fb.get("v_profile")
+    if v_sp is None:
+        v_sp = EMS_DEFAULT_CRUISE_MPS
+    return {
+        "mode_cmd": MODE_HYBRID if t >= EMS_RUN_ENTRY_S else MODE_SAFE,
+        "power_share_setpoint": 0.50,
+        "v_setpoint": v_sp,
+        "charge_goal": 0.0,
+    }
+
+
+EMS_STRATEGIES = {
+    "hold-5050": ems_hold_5050,
+}
+
+EMS_NAMES = list(EMS_STRATEGIES)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -693,6 +837,9 @@ class PiCommander:
 #   duration_s : default --duration for this scenario
 #   pi_timeline: optional [(t, {field: value})] fed to PiCommander
 #   vesc_cap_f : optional override of the VESC input capacitance (hi-fi only)
+#   ems        : optional default --ems strategy name for this scenario
+#   ems_v_profile : optional [(t, v_setpoint)] speed profile an EMS strategy may
+#                consume via fb["v_profile"] (piecewise-linear, clamped)
 # ═════════════════════════════════════════════════════════════════════════════
 SCENARIOS = {
     "steady": {
@@ -766,6 +913,37 @@ SCENARIOS = {
             (5.0,  {"power_share_setpoint": 0.0}),   # all load onto the battery
         ],
     },
+    # ── Mode A: emulated-EMS scenarios ─────────────────────────────────────────
+    "ems-drive-cycle": {
+        "description": "60 s drive cycle (accelerate / cruise / decelerate / stop) "
+                       "commanded by the emulated Pi EMS layer (--ems, default "
+                       "hold-5050) instead of a scripted pi_timeline",
+        "electrical": "any", "duration_s": 60.0,
+        # NOTE: deliberately NO pi_timeline. The commands come from the EMS policy;
+        # a timeline here would be silently replaced by --ems (main() prints a
+        # notice when that happens) and would only confuse the provenance.
+        "ems": "hold-5050",
+        # Piecewise-linear v_setpoint. Segments, and why these numbers:
+        #   0.0- 3.0  standstill  (below V_SP_ZERO_THRESH 0.07 m/s the firmware
+        #                          commands 0 A and holds the drive controller in
+        #                          reset — CLAUDE.md fw v13; also covers the
+        #                          MODE_SAFE settle before EMS_RUN_ENTRY_S)
+        #   3.0-10.0  accelerate to 1.5 m/s  (0.214 m/s^2 — far inside the
+        #                          rail-acceleration bound ~2.0 m/s^2, so the
+        #                          drive controller is not saturation-limited)
+        #  10.0-30.0  cruise 1.5 m/s   (inside the design's v >= 0.5 m/s validity
+        #                          floor, CLAUDE.md fw v12)
+        #  30.0-40.0  cruise 2.0 m/s   (a second cruise level: an incremental
+        #                          dv/dI datapoint without leaving the floor)
+        #  40.0-52.0  decelerate to 0  (0.167 m/s^2; the last ~0.4 s crosses the
+        #                          0.5 m/s validity floor on the way down, which
+        #                          is the honest end of a drive cycle)
+        #  52.0-60.0  standstill
+        "ems_v_profile": [
+            (0.0, 0.0), (3.0, 0.0), (10.0, 1.5), (30.0, 1.5),
+            (32.0, 2.0), (40.0, 2.0), (52.0, 0.0), (60.0, 0.0),
+        ],
+    },
     # ── Hi-fi-only scenarios ───────────────────────────────────────────────────
     "handoff-sag": {
         "description": "TP0178/TP0201 class: drive the share to a rail so one source "
@@ -827,6 +1005,10 @@ def apply_scenario(plant, scenario, t):
         # Nothing to perturb: the stimulus is the pi-command timeline (mode -> Run,
         # a cruise setpoint, charge_goal > 0).  The plant just carries the load.
         plant.i_aux = I_AUX_A
+    elif scenario == "ems-drive-cycle":
+        # Plant carries the ordinary aux load; the whole stimulus is the EMS
+        # layer's 50 Hz command stream (see EMS_STRATEGIES / ems_v_profile).
+        plant.i_aux = I_AUX_A
     elif scenario == "charge-fault":
         # Charging is established by the timeline; at t = 20 s the charger's INPUT
         # rail collapses (a connector, the FC path browning out).  The Ag105 goes
@@ -878,6 +1060,15 @@ def main(argv=None):
                          "Use --list-scenarios for descriptions.")
     ap.add_argument("--list-scenarios", action="store_true",
                     help="print the scenario registry and exit")
+    ap.add_argument("--ems", default=None, choices=EMS_NAMES,
+                    help="MODE A: drive the Pi command stream from an emulated EMS "
+                         "strategy instead of the scenario's scripted pi_timeline "
+                         "(requires --scenario; not with --replay or --pi-live)")
+    ap.add_argument("--pi-live", action="store_true",
+                    help="MODE B: a REAL Pi owns the command link. This process sends "
+                         "injection frames and receives observation frames only — no "
+                         "PiCommander is created. Not with --ems, and refused on a "
+                         "scenario that carries its own pi_timeline.")
     ap.add_argument("--electrical", default="simple", choices=["simple", "hifi"],
                     help="electrical engine: 'simple' droop node (default) or 'hifi' "
                          "(tools/hil_electrical.py — TPS61288 average model, RT1987 "
@@ -924,8 +1115,36 @@ def main(argv=None):
         ap.error("--replay-speed must be > 0")
     if args.loop and not args.replay:
         ap.error("--loop only applies to --replay")
+
+    # ── Mode A / Mode B interaction rules ────────────────────────────────────
+    # The firmware holds an unrejected command field forever, so two command
+    # sources on one link do not "blend" — they overwrite each other at 50 Hz and
+    # the board follows whichever wrote last. Every combination that would create
+    # a second source is refused here rather than producing a trace nobody can
+    # attribute.
+    if args.ems and args.pi_live:
+        ap.error("--ems and --pi-live are mutually exclusive: --ems IS an emulated "
+                 "Pi, so with a real Pi attached two sources would fight over the "
+                 "same 22-byte command packet")
+    if args.ems and args.replay:
+        ap.error("--ems needs a simulated plant (--scenario); in --replay mode the "
+                 "plant integrator is bypassed and the rails come from the log")
+    if args.pi_live and args.replay:
+        ap.error("--pi-live has no effect with --replay: replay mode already creates "
+                 "no PiCommander, and the replayed rails ignore the Pi's commands")
+
     scenario = args.scenario or "steady"
     meta = SCENARIOS[scenario]
+
+    if args.pi_live and not args.replay and meta.get("pi_timeline"):
+        ap.error(f"scenario '{scenario}' carries its own pi_timeline, which --pi-live "
+                 f"cannot honour: the real Pi owns the command link. Pick a scenario "
+                 f"without a timeline (e.g. 'steady', 'drive', 'sag', 'comm-loss') "
+                 f"and let the Pi supply the commands.")
+
+    ems_name = args.ems
+    if not args.replay and ems_name is None and not args.pi_live and meta.get("ems"):
+        ems_name = meta["ems"]      # scenario's own default strategy
     if not args.replay:
         if meta["electrical"] == "hifi" and args.electrical != "hifi":
             ap.error(f"scenario '{scenario}' requires --electrical hifi "
@@ -982,10 +1201,37 @@ def main(argv=None):
               f"C_vesc={c_vesc * 1e6:.0f} uF noise={'on' if args.noise else 'off'}")
     plant = Plant(electrical=electrical, soc0=args.soc0,
                   capacity_ah=args.capacity_ah)
-    commander = PiCommander(meta.get("pi_timeline")) if not args.replay else None
-    if commander and commander.timeline:
-        print(f"[hil] pi-command timeline: {len(commander.timeline)} entries, "
-              f"{PiCommander.PI_CMD_HZ:.0f} Hz")
+    # ── Command source ───────────────────────────────────────────────────────
+    # replay  : no commander (the rails come from a log; commanding is meaningless)
+    # pi-live : no commander — a REAL Pi owns the 22-byte command packet
+    # ems     : commander driven by an EMS policy (REPLACES any pi_timeline)
+    # default : commander driven by the scenario's pi_timeline (unchanged)
+    commander = None
+    ems_policy = None
+    if not args.replay and not args.pi_live:
+        if ems_name:
+            ems_policy = EMS_STRATEGIES[ems_name]
+            if meta.get("pi_timeline"):
+                print(f"[hil] NOTICE: --ems {ems_name} REPLACES scenario "
+                      f"'{scenario}''s pi_timeline ({len(meta['pi_timeline'])} "
+                      f"entries) — the timeline is not played at all")
+            commander = PiCommander(None, policy=ems_policy, policy_name=ems_name)
+            print(f"[hil] EMS strategy: {ems_name} at "
+                  f"{PiCommander.PI_CMD_HZ:.0f} Hz"
+                  + (f", v_setpoint profile: {len(meta['ems_v_profile'])} points"
+                     if meta.get("ems_v_profile") else
+                     f", constant cruise {EMS_DEFAULT_CRUISE_MPS:g} m/s "
+                     f"(scenario defines no ems_v_profile)"))
+        else:
+            commander = PiCommander(meta.get("pi_timeline"))
+            if commander.timeline:
+                print(f"[hil] pi-command timeline: {len(commander.timeline)} entries, "
+                      f"{PiCommander.PI_CMD_HZ:.0f} Hz")
+    if args.pi_live:
+        print("[hil] PI-LIVE: no commands are sent by this process. A real Pi must "
+              "drive the 22-byte command packet, or the board stays in Idle "
+              "(and, once it has ever seen a Pi, faults PI_TIMEOUT after "
+              "500 ms of command silence in State 2/3 — .ino:2788, 4817-4826).")
     pi_frames = 0
     obs = None
     seq = 0
@@ -1017,6 +1263,14 @@ def main(argv=None):
             header_row.append("soc")            # APPEND-only (scope extension)
             if electrical is not None:
                 header_row += ["elec_substep_hz", "elec_events"]
+            # APPEND-only, and UNCONDITIONAL in simulated-plant mode: the two
+            # command columns are present for EVERY simulated run, not only under
+            # --ems. Column presence must not vary with a flag inside one mode, or
+            # nothing downstream can parse "a simulated-mode CSV" without first
+            # knowing which flags produced it. They are BLANK when no commander
+            # exists (--pi-live: the real Pi's commands are not observable here).
+            # Replay mode's schema is untouched — `replay_rec` keeps its index.
+            header_row += ["cmd_v_sp", "cmd_share_sp"]
         writer.writerow(header_row)
 
     # M3: open the electrical-events sidecar UP FRONT and stream into it as events
@@ -1064,6 +1318,12 @@ def main(argv=None):
         events_written = 0
 
     src = f"replay={os.path.basename(args.replay)}" if replay else f"scenario={scenario}"
+    # Mode marker, shown on the 1 Hz status line's banner and in the dashboard
+    # header (the dashboard renders snapshot["source"] verbatim).
+    if args.pi_live:
+        src += " PI-LIVE"
+    elif ems_name:
+        src += f" EMS:{ems_name}"
     print(f"[hil] {src} dest={dest[0]}:{dest[1]} "
           f"rate={args.rate:.0f} Hz duration={args.duration:.1f} s")
 
@@ -1158,7 +1418,34 @@ def main(argv=None):
             # Same socket, same destination: the firmware's receiveCommands()
             # drains both frame types and dispatches by length (fw v21).
             if commander is not None and tx_enabled:
-                pkt = commander.tick(t)
+                def _fb():
+                    """Feedback view for an EMS policy — see the MODE A block above
+                    for which keys are telemetry-equivalent and which are not.
+                    Built ONLY on a due 50 Hz commander tick."""
+                    fb = {
+                        "t": t,
+                        # telemetry-equivalent (v4 packet, .ino:4988-5069)
+                        "v_actual": sensors["v_actual"],
+                        "V_bus": sensors["V_bus"], "V_fc": sensors["V_fc"],
+                        "V_batt": sensors["V_batt"], "V_chg": sensors["V_chg"],
+                        "V_rgn": sensors["V_rgn"],
+                        "I_fc": sensors["I_fc"], "I_batt": sensors["I_batt"],
+                        "I_charge": sensors["I_charge"],
+                        "ag105_status": sensors["ag105_status"],
+                        # plant truth — NOT visible to a real Pi
+                        "soc": sensors.get("soc"),
+                        # scenario profile (host-side script, not feedback at all)
+                        "v_profile": piecewise(meta.get("ems_v_profile"), t),
+                        # observation frame — NOT in v4 telemetry except `switch`
+                        # (offset 52) and `fault_flags` (offset 53)
+                        "state": obs["state"] if obs else None,
+                        "switch": obs["switch"] if obs else None,
+                        "aux": obs["aux"] if obs else None,
+                        "current": obs["current"] if obs else None,
+                        "fault_flags": obs["fault_flags"] if obs else None,
+                    }
+                    return fb
+                pkt = commander.tick(t, _fb)
                 if pkt is not None:
                     try:
                         sock.sendto(pkt, dest)
@@ -1197,6 +1484,14 @@ def main(argv=None):
                         # counter, not len(electrical.events) (which is ~0 most
                         # ticks).
                         row.append(elec_events_total)
+                    # Commanded setpoints as this process last sent them. Blank
+                    # under --pi-live (no commander): the real Pi's commands never
+                    # pass through here, so a number would be a fabrication.
+                    if commander is not None and commander.active():
+                        row.append(f"{commander.state['v_setpoint']:.4f}")
+                        row.append(f"{commander.state['power_share_setpoint']:.4f}")
+                    else:
+                        row += ["", ""]
                 writer.writerow(row)
 
             ticks += 1
@@ -1210,10 +1505,16 @@ def main(argv=None):
                     "t": t, "source": src, "mode": args.electrical,
                     "rate_hz": (ticks / (now - t0)) if now > t0 else None,
                     "tx": tx_frames, "rx": rx_frames, "bad": rx_bad, "pi": pi_frames,
-                    "v_sp": commander.state["v_setpoint"] if commander and commander.timeline else None,
+                    # `.active()` covers BOTH command sources: a scripted timeline
+                    # and an EMS policy. Under --pi-live there is no commander at
+                    # all, so these degrade to None and the dashboard renders an
+                    # em-dash — correct, since the real Pi's setpoints are external
+                    # and genuinely unknown to this process.
+                    "v_sp": (commander.state["v_setpoint"]
+                             if commander and commander.active() else None),
                     "v_act": sensors["v_actual"],
                     "share_sp": (commander.state["power_share_setpoint"]
-                                 if commander and commander.timeline else None),
+                                 if commander and commander.active() else None),
                     # Share is undefined at negligible source current — the
                     # ratio is all noise below ~50 mA.
                     "share_act": (i_fc / i_tot) if i_tot > 0.05 else None,
@@ -1294,9 +1595,18 @@ def main(argv=None):
     print(f"[hil] done: {ticks} ticks in {elapsed:.2f}s -> {achieved:.1f} Hz achieved "
           f"(target {args.rate:.0f} Hz), max overrun {max_overrun * 1e3:.2f} ms")
     print(f"[hil] tx={tx_frames} frames, rx={rx_frames} frames, {rx_bad} malformed")
-    if commander is not None and commander.timeline:
-        print(f"[hil] pi commands sent: {pi_frames} "
-              f"(timeline entries applied: {commander.idx}/{len(commander.timeline)})")
+    if commander is not None and commander.active():
+        if commander.policy is not None:
+            print(f"[hil] pi commands sent: {pi_frames} "
+                  f"(EMS {commander.policy_name}, {commander.policy_calls} policy "
+                  f"evaluations; final v_sp={commander.state['v_setpoint']:.3f} "
+                  f"share_sp={commander.state['power_share_setpoint']:.3f})")
+        else:
+            print(f"[hil] pi commands sent: {pi_frames} "
+                  f"(timeline entries applied: {commander.idx}/{len(commander.timeline)})")
+    elif args.pi_live:
+        print("[hil] PI-LIVE: 0 commands sent by this process (a real Pi owned the "
+              "command link)")
     if not replay:
         print(f"[hil] battery: SOC {args.soc0 * 100:.1f}% -> "
               f"{plant.battery.soc * 100:.1f}% "

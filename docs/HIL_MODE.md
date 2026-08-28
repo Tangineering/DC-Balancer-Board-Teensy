@@ -4,6 +4,11 @@
 > the simplifications and their consequences, the CSV schema and the extension roadmap —
 > see [`docs/HIL_PLANT.md`](HIL_PLANT.md). This document covers the link: frames, staging,
 > build flags and the H1–H5 test plan.
+>
+> For the OPERATOR-facing walkthrough — network/switch setup, the three-node bring-up
+> and shutdown order, Mode A (emulated Pi EMS, `--ems`), Mode B (a real Pi in the loop,
+> `--pi-live`) and a troubleshooting table — see
+> [`docs/HIL_USER_MANUAL.md`](HIL_USER_MANUAL.md).
 
 ## Purpose
 
@@ -201,6 +206,11 @@ python3 tools/hil_plant_sim.py \
         --duration 30 \
         --csv hil_run.csv
 ```
+
+Two additional command sources exist and are documented in
+[`docs/HIL_USER_MANUAL.md`](HIL_USER_MANUAL.md): `--ems STRATEGY` (Mode A — an
+emulated Pi EMS policy replaces the scenario's `pi_timeline`) and `--pi-live`
+(Mode B — a real Pi owns the command link and this process injects only).
 
 Stdlib only — no numpy. (To drive the board from a recorded bench log instead of
 the modelled plant, see **Replay mode** below.) Scenarios:
@@ -431,6 +441,10 @@ packages the whole thing into a timestamped report directory.
 ```bash
 python3 tools/run_hil_suite.py --teensy-ip 192.168.1.50
 ```
+
+`--pi-live` runs the same plan with a real Pi commanding: scenarios carrying their
+own `pi_timeline` (and the EMS scenario) are SKIPPED with a reason, and the report
+is tagged `mode: pi-live`. See [`docs/HIL_USER_MANUAL.md`](HIL_USER_MANUAL.md) §5.
 
 **Prerequisites**
 
