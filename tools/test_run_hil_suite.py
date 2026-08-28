@@ -749,6 +749,43 @@ def test_m4_run_plan_results_list_is_the_same_object_mutated_in_place(monkeypatc
     assert out is seeded
 
 
+def test_f6_all_skipped_plan_exits_nonzero(tmp_path, monkeypatch):
+    """F6: when EVERY planned run was skipped, main() must not exit 0 -- the
+    old `npass == len(results) and results` check let an all-skips run look
+    like a clean pass because skipped records count as passed=True."""
+    def fake_run_child(item, args):
+        raise AssertionError("no child should ever be launched: the whole "
+                             "plan is expected to be skip-only")
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+    # --pi-live + --only matching ONLY a pi_timeline/ems scenario -> every
+    # planned run is a skip record, nothing is ever launched.
+    rc = rhs.main(["--out", str(tmp_path), "--pi-live", "--scenarios-only",
+                   "--only", "charge-cruise"])
+    assert rc == 1
+
+
+def test_f6_partial_skip_plan_is_not_flagged_all_skipped(monkeypatch):
+    """Sanity converse of the above: a plan with at least one EXECUTED run
+    alongside skips must not trip the 'every planned run was skipped' F6
+    guard (checked directly against _run_plan's results, since judging the
+    executed run's own pass/fail needs a real CSV main() doesn't fabricate
+    here)."""
+    def fake_run_child(item, args):
+        return {"status": "ok", "returncode": 0, "wall_s": 0.01, "log": item["log"],
+                "summary": {"achieved_hz": 1000.0, "tx_frames": 10, "rx_frames": 10,
+                           "rx_bad": 0}}
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+    args = _args(pi_live=True, scenarios_only=True,
+                 only=["steady", "charge-cruise"], settle_s=0.0)
+    plan = rhs.build_plan(args)
+    results, _aborted = rhs._run_plan(plan, args, [], [], lambda m, r: None)
+    assert results, "sanity: at least one run must have been recorded"
+    assert not all(r.get("skipped") for r in results), (
+        "steady is not a pi_timeline/ems scenario and must have executed")
+
+
 def test_m4_main_keyboardinterrupt_writes_partial_report(tmp_path, monkeypatch):
     """main() must catch a KeyboardInterrupt out of _run_plan(), still write
     results.json/REPORT.md (via its finally block), mark meta["partial"]
@@ -789,14 +826,20 @@ def test_pi_live_skip_set_matches_pi_timeline_or_ems_scenarios():
 
 
 def test_build_plan_pi_live_produces_skip_records_for_exact_set():
+    """F5 ripple: --pi-live now ALSO skip-records the entire replay half, so
+    this must filter to the scenario half to keep pinning the original
+    pi_timeline/ems set (the replay skip set is covered separately)."""
     plan = rhs.build_plan(_args(pi_live=True))
-    skipped = {p["name"] for p in plan if p.get("skip_reason")}
+    skipped = {p["name"] for p in plan
+               if p.get("skip_reason") and p["kind"] == "scenario"}
     assert skipped == PI_LIVE_SKIP_SCENARIOS
 
 
 def test_build_plan_pi_live_skip_records_shape():
     plan = rhs.build_plan(_args(pi_live=True))
-    skips = [p for p in plan if p.get("skip_reason")]
+    # F5 ripple: skip records now exist for both kinds -- scope this test to
+    # the scenario half, which is what it was written to pin.
+    skips = [p for p in plan if p.get("skip_reason") and p["kind"] == "scenario"]
     assert skips
     for p in skips:
         assert p["kind"] == "scenario"
@@ -867,51 +910,151 @@ def test_full_argv_pi_live_and_dashboard_coexist_in_argv():
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 8. judge_scenario(): FAULT_PI_TIMEOUT excusal under --pi-live
+# 7b. F5: --pi-live skips the ENTIRE replay half
 # ─────────────────────────────────────────────────────────────────────────
+
+def test_build_plan_pi_live_skips_entire_replay_half():
+    plan = rhs.build_plan(_args(pi_live=True))
+    replay_items = [p for p in plan if p["kind"] == "replay"]
+    assert replay_items, "sanity: the replay half must still occupy plan slots"
+    assert all(p.get("skip_reason") for p in replay_items)
+    assert all("second stimulus" in p["skip_reason"] for p in replay_items)
+    assert len(replay_items) == len(REPLAY_SUITE)
+
+
+def test_build_plan_pi_live_replay_skip_records_shape():
+    plan = rhs.build_plan(_args(pi_live=True))
+    replay_skips = [p for p in plan if p["kind"] == "replay" and p.get("skip_reason")]
+    assert replay_skips
+    for p in replay_skips:
+        assert p["argv"] is None
+        assert p["duration_s"] == 0.0
+        assert p["csv"] is None
+
+
+def test_build_plan_default_replay_half_unaffected_by_pi_live_off():
+    plan = rhs.build_plan(_args())
+    replay_items = [p for p in plan if p["kind"] == "replay"]
+    assert replay_items
+    assert not any(p.get("skip_reason") for p in replay_items)
+
+
+def test_full_argv_replay_only_and_pi_live_is_argparse_error():
+    """F5: --replay-only + --pi-live is refused up front -- once the whole
+    replay half is skipped under --pi-live, --replay-only has nothing left to
+    run."""
+    with pytest.raises(SystemExit):
+        rhs.main(["--replay-only", "--pi-live", "--list"])
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 8. judge_scenario(): FAULT_PI_TIMEOUT excusal under --pi-live
+#
+# F1/F2 REWRITE: triggerFault() ALWAYS ORs in FAULT_ERROR 0x8000 (.ino:4501-
+# 4503), so a real PI_TIMEOUT latch is observed as 0x8010, never bare 0x0010 --
+# the old tests below stimulated fault_bits_seen=0x0010, a union the firmware
+# can never actually produce, and the old `seen & ~0x0010` mask left 0x8000 in
+# `unexpected` so the excusal never really passed. All 0x0010 stimuli here are
+# rewritten to 0x8010 (FAULT_ERROR | PI_TIMEOUT). The excusal additionally now
+# requires the child's OWN injection stream to have been continuous
+# (tx_frames >= 0.98 * rate * duration_s, send_errors == 0) -- these tests
+# pass duration_s explicitly and use _live_child()/_gappy_child() to supply a
+# continuous or gappy child summary.
+# ─────────────────────────────────────────────────────────────────────────
+
+RATE_HZ = rhs.HIL_DEFAULT_RATE_HZ
+
 
 def _metrics(fault_bits_seen=0, final_fault_flags=0, n_obs=10, rows=10):
     return {"n_obs": n_obs, "rows": rows, "fault_bits_seen": fault_bits_seen,
             "final_fault_flags": final_fault_flags, "final_state": 2}
 
 
+def _live_child(duration_s=30.0, achieved_hz=1000.0):
+    """A child summary whose own injection stream was continuous for the
+    whole run -- the only kind F2's excusal may fire on."""
+    return {"status": "ok", "summary": {
+        "achieved_hz": achieved_hz,
+        "tx_frames": int(RATE_HZ * duration_s),   # exactly 100% -- well over 98%
+        "send_errors": 0,
+    }}
+
+
+def _gappy_child(duration_s=30.0, achieved_hz=1000.0):
+    """A child summary whose tx count fell well short of the run -- the
+    stream had gaps, so F2 must refuse to attribute the fault to the Pi."""
+    return {"status": "ok", "summary": {
+        "achieved_hz": achieved_hz,
+        "tx_frames": int(RATE_HZ * duration_s * 0.5),   # well under 98%
+        "send_errors": 0,
+    }}
+
+
 def test_judge_scenario_pi_timeout_excused_only_under_pi_live_on_non_required_scenario():
-    child = {"status": "ok", "summary": {"achieved_hz": 1000.0}}
+    child = _live_child()
     passed_default, checks_default = rhs.judge_scenario(
-        "steady", _metrics(fault_bits_seen=0x0010, final_fault_flags=0x0010),
-        rhs.analyze_events(None), child, pi_live=False)
+        "steady", _metrics(fault_bits_seen=0x8010, final_fault_flags=0x8010),
+        rhs.analyze_events(None), child, pi_live=False, duration_s=30.0)
     passed_live, checks_live = rhs.judge_scenario(
-        "steady", _metrics(fault_bits_seen=0x0010, final_fault_flags=0x0010),
-        rhs.analyze_events(None), child, pi_live=True)
+        "steady", _metrics(fault_bits_seen=0x8010, final_fault_flags=0x8010),
+        rhs.analyze_events(None), child, pi_live=True, duration_s=30.0)
     assert passed_default is False, "PI_TIMEOUT must still FAIL a scenario by default"
-    assert passed_live is True, "PI_TIMEOUT must be excused under --pi-live"
+    assert passed_live is True, ("PI_TIMEOUT must be excused under --pi-live when "
+                                 "the fault union is exactly 0x8010 and the "
+                                 "injection stream was continuous")
+
+
+def test_judge_scenario_pi_timeout_not_excused_with_gappy_injection_stream():
+    """F2: 0x0010 (aliased FAULT_HIL_LINK) observed with a GAPPY injection
+    stream must NOT be excused -- a genuine HIL-link failure is plausible."""
+    passed_live, checks_live = rhs.judge_scenario(
+        "steady", _metrics(fault_bits_seen=0x8010, final_fault_flags=0x8010),
+        rhs.analyze_events(None), _gappy_child(), pi_live=True, duration_s=30.0)
+    assert passed_live is False
+    fault_check = next(c for c in checks_live if c["name"] == "no_unexpected_fault")
+    assert fault_check["passed"] is False
+    assert "gaps" in fault_check["detail"]
+
+
+def test_judge_scenario_pi_timeout_not_excused_on_extra_bit_0x8030():
+    """F2: the fault union must be EXACTLY 0x8010 -- an extra bit alongside it
+    (0x8030 = FAULT_ERROR | PI_TIMEOUT | 0x0020) must not be excused even with
+    a continuous stream."""
+    passed_live, checks_live = rhs.judge_scenario(
+        "steady", _metrics(fault_bits_seen=0x8030, final_fault_flags=0x8030),
+        rhs.analyze_events(None), _live_child(), pi_live=True, duration_s=30.0)
+    assert passed_live is False
+    fault_check = next(c for c in checks_live if c["name"] == "no_unexpected_fault")
+    assert fault_check["passed"] is False
 
 
 def test_judge_scenario_comm_loss_still_requires_0x0010_under_both_modes():
-    child = {"status": "ok", "summary": {"achieved_hz": 1000.0}}
+    child = _live_child()
     for pi_live in (False, True):
+        # F1/F2: FAULT_REQUIRED still checks against the raw wanted bit
+        # (0x0010) via `seen & want` -- comm-loss is unaffected by the excusal
+        # rewrite because it never reaches the no_unexpected_fault branch.
         passed, checks = rhs.judge_scenario(
-            "comm-loss", _metrics(fault_bits_seen=0x0010, final_fault_flags=0x0010),
-            rhs.analyze_events(None), child, pi_live=pi_live)
+            "comm-loss", _metrics(fault_bits_seen=0x8010, final_fault_flags=0x8010),
+            rhs.analyze_events(None), child, pi_live=pi_live, duration_s=30.0)
         fault_check = next(c for c in checks if c["name"] == "expected_fault")
         assert fault_check["passed"] is True
 
         passed_missing, checks_missing = rhs.judge_scenario(
             "comm-loss", _metrics(fault_bits_seen=0, final_fault_flags=0),
-            rhs.analyze_events(None), child, pi_live=pi_live)
+            rhs.analyze_events(None), child, pi_live=pi_live, duration_s=30.0)
         fault_check_missing = next(c for c in checks_missing
                                     if c["name"] == "expected_fault")
         assert fault_check_missing["passed"] is False
 
 
 def test_judge_scenario_pi_timeout_excusal_does_not_mask_other_faults():
-    """--pi-live excuses ONLY bit 0x0010 -- a PI_TIMEOUT bit alongside an
-    unrelated fault bit must still fail on the unrelated bit."""
-    child = {"status": "ok", "summary": {"achieved_hz": 1000.0}}
+    """--pi-live excuses ONLY the exact 0x8010 union -- a PI_TIMEOUT bit
+    alongside an unrelated fault bit must still fail."""
     passed, checks = rhs.judge_scenario(
-        "steady", _metrics(fault_bits_seen=0x0010 | 0x0100,
-                           final_fault_flags=0x0010 | 0x0100),
-        rhs.analyze_events(None), child, pi_live=True)
+        "steady", _metrics(fault_bits_seen=0x8010 | 0x0100,
+                           final_fault_flags=0x8010 | 0x0100),
+        rhs.analyze_events(None), _live_child(), pi_live=True, duration_s=30.0)
     assert passed is False
     fault_check = next(c for c in checks if c["name"] == "no_unexpected_fault")
     assert fault_check["passed"] is False
@@ -921,10 +1064,9 @@ def test_judge_scenario_pi_timeout_excusal_not_applied_to_fault_required_scenari
     """FAULT_REQUIRED scenarios ('sag', 'comm-loss') use the expected_fault
     check path, not no_unexpected_fault -- the pi_live excusal branch must
     never engage there."""
-    child = {"status": "ok", "summary": {"achieved_hz": 1000.0}}
     passed, checks = rhs.judge_scenario(
-        "sag", _metrics(fault_bits_seen=0x0100, final_fault_flags=0x0100),
-        rhs.analyze_events(None), child, pi_live=True)
+        "sag", _metrics(fault_bits_seen=0x8100, final_fault_flags=0x8100),
+        rhs.analyze_events(None), _live_child(), pi_live=True, duration_s=30.0)
     assert passed is True
     assert not any(c["name"] == "no_unexpected_fault" for c in checks)
 
@@ -965,6 +1107,33 @@ def test_render_report_handles_skip_records_without_crashing():
     assert "charge-cruise" in report
     assert "not run" in report
     assert "SKIPPED" in report
+
+
+def test_render_report_f6_skip_record_renders_skipped_not_pass():
+    """F6: a skipped run must render as SKIPPED, both in the summary table's
+    result cell and the per-run heading -- not as PASS, which used to be
+    indistinguishable from an executed clean run."""
+    results = [_skip_result(name="charge-cruise")]
+    report = rhs.render_report(_base_meta(mode="pi-live"), results)
+    assert "### `charge-cruise` — SKIPPED" in report
+    # summary-table row: no "PASS" for this run's result cell
+    table_line = next(l for l in report.splitlines() if l.startswith("| charge-cruise "))
+    assert "| SKIPPED |" in table_line
+    assert "| PASS |" not in table_line
+
+
+def test_render_report_f6_skip_record_omits_fabricated_metric_lines():
+    """F6: a skipped run must not render fabricated-clean detail lines (final
+    fault_flags 0x0000, frames tx ?/rx ? etc.) since no child ever ran."""
+    results = [_skip_result(name="charge-cruise")]
+    report = rhs.render_report(_base_meta(mode="pi-live"), results)
+    # Isolate the charge-cruise section only (avoid false negatives from other
+    # runs in a larger report).
+    start = report.index("### `charge-cruise`")
+    end = report.find("### `", start + 1)
+    section = report[start: end if end != -1 else len(report)]
+    assert "final `fault_flags`" not in section
+    assert "frames: tx" not in section
 
 
 def test_render_report_skip_count_labeled_in_result_row():
@@ -1045,6 +1214,31 @@ def test_run_plan_skip_record_carries_cmd_mode():
     assert results[0]["cmd_mode"] == "pi-live"
     assert results[0]["skipped"] is True
     assert results[0]["passed"] is True
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 11. F14(a): print_plan() wall-time estimate excludes skipped runs
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_print_plan_wall_time_excludes_skipped_settle_pauses(capsys):
+    """F14(a): a skipped run launches no child and gets no settle pause --
+    it must not contribute settle_s to the printed wall-time estimate. Checked
+    against an INDEPENDENTLY computed expectation from the plan itself (per-
+    scenario duration_s varies -- 30/40/45/60 s -- so a skip-count * settle_s
+    delta against a second plan is not a stable comparison)."""
+    args_live = _args(pi_live=True, scenarios_only=True, settle_s=5.0)
+    plan_live = rhs.build_plan(args_live)
+    n_skipped = sum(1 for p in plan_live if p.get("skip_reason"))
+    assert n_skipped > 0, "sanity: --pi-live must actually skip some scenarios"
+
+    expected_total = sum((p.get("duration_s") or 0.0) + 5.0
+                         for p in plan_live if not p.get("skip_reason"))
+
+    rhs.print_plan(plan_live, args_live)
+    out_live = capsys.readouterr().out
+    total_live = float(out_live.rsplit("incl.", 1)[1].split(":")[1].split("s")[0])
+
+    assert total_live == pytest.approx(expected_total, abs=1.0)
 
 
 if __name__ == "__main__":

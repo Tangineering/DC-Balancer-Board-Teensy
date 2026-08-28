@@ -1239,6 +1239,19 @@ def test_ems_hold_5050_mode_steps_at_run_entry():
     assert at["mode_cmd"] == hil.MODE_HYBRID
 
 
+def test_ems_hold_5050_mode_steps_back_to_safe_at_run_exit():
+    """F14(b): ems_hold_5050 now hands MODE_SAFE back at EMS_RUN_EXIT_S so a
+    drive cycle genuinely finishes Run -> Finish -> Idle instead of ending
+    parked in State 2."""
+    just_before = hil.ems_hold_5050(hil.EMS_RUN_EXIT_S - 0.01, {"v_profile": None})
+    at = hil.ems_hold_5050(hil.EMS_RUN_EXIT_S, {"v_profile": None})
+    well_after = hil.ems_hold_5050(hil.EMS_RUN_EXIT_S + 5.0, {"v_profile": None})
+    assert just_before["mode_cmd"] == hil.MODE_HYBRID
+    assert at["mode_cmd"] == hil.MODE_SAFE
+    assert well_after["mode_cmd"] == hil.MODE_SAFE
+    assert hil.EMS_RUN_EXIT_S > hil.EMS_RUN_ENTRY_S
+
+
 def test_ems_hold_5050_uses_v_profile_when_present_else_default_cruise():
     out = hil.ems_hold_5050(5.0, {"v_profile": 2.75})
     assert out["v_setpoint"] == pytest.approx(2.75)
@@ -1308,15 +1321,13 @@ def test_pi_commander_fb_built_only_on_due_ticks():
     assert abs(calls["n"] - 3) <= 1
 
 
-# NOTE: the module documents a "telemetry-equivalent" fb-key subset in a
-# comment block above ems_hold_5050/PiCommander (t, v_actual, V_batt, I_batt,
-# I_charge, V_fc, I_fc, V_bus, V_rgn, V_chg, ag105_status, switch,
-# fault_flags) but does NOT expose it as a named constant anywhere in
-# hil_plant_sim.py -- there is nothing importable to pin against. Flagged as
-# a gap in the final report rather than asserting against a hand-copied
-# literal that could silently drift from the comment with no test failure.
+# GAP CLOSED (was a NOTE here): the module now exposes the "telemetry-
+# equivalent" fb-key subset as the importable hil.FB_TELEMETRY_EQUIV_KEYS
+# constant (test-writer recommendation, adjudicated ACCEPT), so this test pins
+# against the real constant instead of a hand-copied literal that could
+# silently drift from the module.
 def test_pi_commander_fb_contains_all_keys_used_by_hold_5050_and_more():
-    """Sanity floor in place of the (missing) named constant above: capture the
+    """Sanity floor pinning FB_TELEMETRY_EQUIV_KEYS against reality: capture the
     real fb dict main() builds (via a probe policy) and check it is a strict
     SUPERSET of every key ems_hold_5050 actually reads, plus the documented
     plant-truth/observation-frame keys the module says are NOT portable."""
@@ -1362,12 +1373,11 @@ def test_pi_commander_fb_contains_all_keys_used_by_hold_5050_and_more():
         hil.EMS_NAMES.remove("_probe")
     assert rc == 0
     assert seen_fb, "the probe policy must have been called at least once"
-    telemetry_equivalent = {
-        "t", "v_actual", "V_batt", "I_batt", "I_charge", "V_fc", "I_fc",
-        "V_bus", "V_rgn", "V_chg", "ag105_status", "switch", "fault_flags",
-    }
-    not_portable = {"soc", "v_profile", "state", "aux", "current"}
-    assert telemetry_equivalent <= set(seen_fb)
+    # Tightened per the test-writer recommendation (adjudicated ACCEPT): pin
+    # against the now-importable hil.FB_TELEMETRY_EQUIV_KEYS constant instead of
+    # a hand-copied literal that could silently drift from the module.
+    assert hil.FB_TELEMETRY_EQUIV_KEYS <= set(seen_fb)
+    not_portable = {"soc", "v_profile", "state", "aux", "current", "obs_age_s"}
     assert not_portable <= set(seen_fb)
 
 
@@ -1436,17 +1446,14 @@ def test_ems_hold5050_wire_truth_share_field_is_0_5(capturing_socket):
 # 13. --ems CLI
 # ─────────────────────────────────────────────────────────────────────────
 
-def test_ems_without_explicit_scenario_falls_back_to_default_scenario(capturing_socket):
-    """SUSPECTED DEFECT (see final report): the --ems help text says "requires
-    --scenario", but main() has no check enforcing it -- omitting --scenario
-    just falls back to the default 'steady' scenario (`scenario = args.scenario
-    or "steady"`) and runs --ems against it rather than refusing. This test
-    pins the ACTUAL behavior rather than asserting the documented-but-
-    unenforced refusal, so it does not mask the gap under a false green."""
-    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "59001", "--bind-port", "0",
+def test_ems_without_explicit_scenario_is_refused():
+    """F9 fix: the --ems help text says "requires --scenario" and main() now
+    enforces it. Before the fix, omitting --scenario silently fell back to
+    'steady' (which has no ems_v_profile) and ran --ems against it anyway."""
+    with pytest.raises(SystemExit):
+        hil.main(["--teensy-ip", "127.0.0.1", "--port", "59001", "--bind-port", "0",
                    "--rate", "500", "--duration", "0.05",
                    "--ems", "hold-5050"])
-    assert rc == 0
 
 
 def test_ems_refused_with_replay(tmp_path):
@@ -1593,23 +1600,16 @@ def test_pi_live_with_pi_timeline_scenario_refused():
         hil.main(["--scenario", "charge-cruise", "--pi-live"])
 
 
-def test_pi_live_with_ems_only_scenario_not_refused_potential_gap(capturing_socket):
-    """POTENTIAL GAP (see final report, not asserted as required by the task
-    spec): the documented --pi-live refusal only checks meta['pi_timeline'],
-    not meta['ems'] (.ino-adjacent code: `if args.pi_live and not args.replay
-    and meta.get("pi_timeline")`). 'ems-drive-cycle' carries meta['ems'] but
-    NO pi_timeline, so --pi-live + ems-drive-cycle currently runs to
-    completion silently (no commander is ever created, so the scenario's
-    whole stimulus -- the EMS command stream -- never happens; the run is a
-    60 s no-op from the command-link perspective). Pinning actual behavior."""
-    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "59002", "--bind-port", "0",
+def test_pi_live_with_ems_only_scenario_refused():
+    """F3 fix: the gap this test used to pin is closed. The --pi-live refusal
+    now checks `meta.get("pi_timeline") or meta.get("ems")`, so an ems-driven
+    scenario ('ems-drive-cycle' carries meta['ems'] but no pi_timeline) is
+    refused up front instead of silently running as a 60 s command-link no-op
+    (no commander was ever created for it under the old check)."""
+    with pytest.raises(SystemExit):
+        hil.main(["--teensy-ip", "127.0.0.1", "--port", "59002", "--bind-port", "0",
                    "--rate", "500", "--scenario", "ems-drive-cycle",
                    "--electrical", "simple", "--duration", "0.05", "--pi-live"])
-    assert rc == 0
-    sock = capturing_socket["sock"]
-    cmd_packets = [d for d, _addr in sock.sent
-                   if len(d) == hil.PI_CMD_SIZE and d[0] == hil.SYNC_BYTE_RX]
-    assert cmd_packets == []
 
 
 def test_pi_live_dashboard_snapshot_setpoints_are_none(tmp_path, capturing_dashboard,

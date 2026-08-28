@@ -636,6 +636,13 @@ def pack_pi_command(timestamp_ms, counter, v_setpoint, power_share_setpoint,
     return bytes([SYNC_BYTE_RX]) + body + bytes([xor_checksum(body)])
 
 
+# F10: the four fields an EMS policy may set — see PiCommander.tick(). Deliberately
+# narrower than PiCommander.state's key set, which also carries droop_enable (the
+# reserved/discarded byte, .ino:4880-4881).
+POLICY_ALLOWED_FIELDS = frozenset(
+    {"v_setpoint", "power_share_setpoint", "charge_goal", "mode_cmd"})
+
+
 class PiCommander:
     """Plays a scenario's pi-command timeline onto the same socket as the injection
     frames, at a fixed rate.
@@ -643,7 +650,8 @@ class PiCommander:
     A timeline is a list of (t_seconds, fields) applied in order; `fields` may set
     any of v_setpoint / power_share_setpoint / charge_goal / mode_cmd /
     droop_enable, and unspecified fields HOLD their previous value — matching the
-    firmware, which also holds a field it rejects (.ino:4846-4848).
+    firmware, which also holds a field it rejects (comment .ino:4869,
+    code .ino:4874-4876).
 
     Rate: PI_CMD_HZ.  The firmware's Pi watchdog wants regular traffic, and a
     command packet is what marks the link alive (`last_rx_ms`, .ino:4854), so the
@@ -697,11 +705,19 @@ class PiCommander:
             self.policy_calls += 1
             out = self.policy(t, fb) or {}
             # UNSET FIELDS HOLD — the same contract as a timeline entry and as the
-            # firmware itself (.ino:4846-4848 holds a field it rejects).
+            # firmware itself (comment .ino:4869, code .ino:4874-4876 holds a
+            # field it rejects).
+            # F10: the documented policy-return contract is exactly the four
+            # command fields a Pi actually decides. `self.state` also carries
+            # `droop_enable` (the reserved/discarded byte, .ino:4880-4881) so a
+            # policy CAN'T set it here — gate against the narrower allow-list,
+            # not against self.state's keys, or droop_enable would silently be
+            # accepted like a real field.
             for k, v in out.items():
-                if k not in self.state:
+                if k not in POLICY_ALLOWED_FIELDS:
                     raise KeyError("EMS policy returned unknown field %r "
-                                   "(allowed: %s)" % (k, ", ".join(sorted(self.state))))
+                                   "(allowed: %s)"
+                                   % (k, ", ".join(sorted(POLICY_ALLOWED_FIELDS))))
                 self.state[k] = v
         self.next_tx = t + self.period
         self.counter = (self.counter + 1) & 0xFFFF
@@ -753,11 +769,38 @@ class PiCommander:
 #     current    — post-clamp motor-current command, HIL observation frame.  Not
 #                  in v4 telemetry.
 #     v_profile  — this scenario's own scripted speed profile (see below).
+#     obs_age_s  — F11: seconds since the last DECODED observation frame (None
+#                  if none has ever arrived).  Observation-frame-derived keys
+#                  above (state/switch/aux/current/fault_flags) are NOT
+#                  themselves bounded by freshness — obs is not cleared on a
+#                  stall — so a policy reading any of them should check
+#                  obs_age_s and treat those keys as stale once it exceeds
+#                  roughly HIL_ZERO_MS/1000 (0.25 s).  See manual Sec 3.3.
 #
 # Note also that v4 telemetry carries power_share_actual (offset 43) and the two
 # droop-gain words (47/49), which `fb` does NOT expose — the observation frame
 # does not carry them.  A portable policy must not depend on them either.
+#
+# F10: the policy RETURN contract is narrower than `fb` itself — a policy may
+# only set the four documented command fields (v_setpoint, power_share_setpoint,
+# charge_goal, mode_cmd; see POLICY_ALLOWED_FIELDS, defined just above
+# PiCommander). It may
+# NOT set droop_enable even though PiCommander.state carries that key
+# internally — droop_enable is the reserved/discarded byte (.ino:4880-4881),
+# not a real policy decision, and returning it now raises like any other
+# unknown key.
 # ═════════════════════════════════════════════════════════════════════════════
+
+# Promoted from the comment table above to a named, importable constant (test-
+# writer recommendation, adjudicated ACCEPT) — the TELEMETRY-EQUIVALENT key set
+# a portable EMS policy may depend on. `obs_age_s` (F11) is deliberately NOT a
+# member: it is derived from the HIL observation frame, which a real Pi never
+# receives, same as `state`/`aux`/`current` above.
+FB_TELEMETRY_EQUIV_KEYS = frozenset({
+    "t", "v_actual", "V_batt", "I_batt", "I_charge", "V_fc", "I_fc",
+    "V_bus", "V_rgn", "V_chg", "ag105_status", "switch", "fault_flags",
+})
+
 
 def piecewise(profile, t):
     """Linear interpolation of a [(t, value), ...] profile, clamped at both ends."""
@@ -786,6 +829,15 @@ EMS_DEFAULT_CRUISE_MPS = 1.2
 EMS_RUN_ENTRY_S = 3.0
 
 
+# F14(b): the time ems_hold_5050 hands the firmware back MODE_SAFE, closing the
+# drive cycle out (Run -> Finish -> Idle) instead of ending the run parked in
+# State 2. Chosen against ems-drive-cycle's own ems_v_profile, which reaches
+# standstill (v_setpoint 0) at t=52.0 and holds it through the 60 s duration —
+# 55.0 gives 3 s of standstill margin before commanding MODE_SAFE, and still
+# leaves 5 s inside the run for Finish -> Idle to actually complete.
+EMS_RUN_EXIT_S = 55.0
+
+
 def ems_hold_5050(t, fb):
     """hold-5050 — constant 50/50 power split.
 
@@ -794,7 +846,10 @@ def ems_hold_5050(t, fb):
                  It makes no decisions: the split is pinned at 0.50 so any
                  observed share deviation belongs to the firmware's share loop
                  and the plant, never to the EMS.
-    fields     : mode_cmd (SAFE -> HYBRID at EMS_RUN_ENTRY_S),
+    fields     : mode_cmd (SAFE -> HYBRID at EMS_RUN_ENTRY_S, back to SAFE at
+                 EMS_RUN_EXIT_S so a drive cycle genuinely finishes
+                 Run -> Finish -> Idle instead of ending parked in State 2 —
+                 F14(b)),
                  power_share_setpoint (0.50 constant),
                  v_setpoint (the scenario's `ems_v_profile` if it defines one,
                  else EMS_DEFAULT_CRUISE_MPS),
@@ -804,13 +859,15 @@ def ems_hold_5050(t, fb):
                  list above).
     provenance : cruise value from the `charge-cruise` pi_timeline; Run-entry time
                  from the same timelines; 0.50 is the firmware's own default
-                 power_share_setpoint.
+                 power_share_setpoint; Run-exit time from ems-drive-cycle's own
+                 ems_v_profile standstill segment (see EMS_RUN_EXIT_S).
     """
     v_sp = fb.get("v_profile")
     if v_sp is None:
         v_sp = EMS_DEFAULT_CRUISE_MPS
+    in_run = EMS_RUN_ENTRY_S <= t < EMS_RUN_EXIT_S
     return {
-        "mode_cmd": MODE_HYBRID if t >= EMS_RUN_ENTRY_S else MODE_SAFE,
+        "mode_cmd": MODE_HYBRID if in_run else MODE_SAFE,
         "power_share_setpoint": 0.50,
         "v_setpoint": v_sp,
         "charge_goal": 0.0,
@@ -915,14 +972,26 @@ SCENARIOS = {
     },
     # ── Mode A: emulated-EMS scenarios ─────────────────────────────────────────
     "ems-drive-cycle": {
-        "description": "60 s drive cycle (accelerate / cruise / decelerate / stop) "
-                       "commanded by the emulated Pi EMS layer (--ems, default "
-                       "hold-5050) instead of a scripted pi_timeline",
+        "description": "60 s drive cycle (accelerate / cruise / decelerate / stop, "
+                       "then Run -> Finish -> Idle via ems_hold_5050's "
+                       "EMS_RUN_EXIT_S) commanded by the emulated Pi EMS layer "
+                       "(--ems, default hold-5050) instead of a scripted "
+                       "pi_timeline",
         "electrical": "any", "duration_s": 60.0,
         # NOTE: deliberately NO pi_timeline. The commands come from the EMS policy;
         # a timeline here would be silently replaced by --ems (main() prints a
         # notice when that happens) and would only confuse the provenance.
         "ems": "hold-5050",
+        # F8: comment corrected to match the table exactly — it previously (a)
+        # omitted the 30.0-32.0 ramp segment entirely (jumping straight from
+        # "30.0-40.0 cruise 2.0" to describing only the 1.5 m/s cruise) and
+        # (b) conflated two different numbers under one "the last ~0.4 s" claim:
+        # the setpoint crosses the design's 0.5 m/s VALIDITY FLOOR at t=49.0
+        # (3.0 s before reaching zero at t=52.0, not "the last ~0.4 s"), while
+        # 0.42 s is separately the time the setpoint spends below
+        # V_SP_ZERO_THRESH (0.07 m/s) before t=52.0 -- two distinct thresholds,
+        # two distinct durations.
+        #
         # Piecewise-linear v_setpoint. Segments, and why these numbers:
         #   0.0- 3.0  standstill  (below V_SP_ZERO_THRESH 0.07 m/s the firmware
         #                          commands 0 A and holds the drive controller in
@@ -933,11 +1002,15 @@ SCENARIOS = {
         #                          drive controller is not saturation-limited)
         #  10.0-30.0  cruise 1.5 m/s   (inside the design's v >= 0.5 m/s validity
         #                          floor, CLAUDE.md fw v12)
-        #  30.0-40.0  cruise 2.0 m/s   (a second cruise level: an incremental
+        #  30.0-32.0  accelerate 1.5 -> 2.0 m/s  (0.25 m/s^2; the ramp BETWEEN
+        #                          the two cruise levels below)
+        #  32.0-40.0  cruise 2.0 m/s   (a second cruise level: an incremental
         #                          dv/dI datapoint without leaving the floor)
-        #  40.0-52.0  decelerate to 0  (0.167 m/s^2; the last ~0.4 s crosses the
-        #                          0.5 m/s validity floor on the way down, which
-        #                          is the honest end of a drive cycle)
+        #  40.0-52.0  decelerate to 0  (0.167 m/s^2). Crosses the 0.5 m/s
+        #                          VALIDITY FLOOR at t=49.0 (3.0 s before
+        #                          reaching zero — the honest end of a drive
+        #                          cycle) and separately spends the LAST 0.42 s
+        #                          (t=51.58-52.0) below V_SP_ZERO_THRESH 0.07 m/s
         #  52.0-60.0  standstill
         "ems_v_profile": [
             (0.0, 0.0), (3.0, 0.0), (10.0, 1.5), (30.0, 1.5),
@@ -1129,6 +1202,14 @@ def main(argv=None):
     if args.ems and args.replay:
         ap.error("--ems needs a simulated plant (--scenario); in --replay mode the "
                  "plant integrator is bypassed and the rails come from the log")
+    # F9: the --ems help text says "(requires --scenario)" but nothing enforced
+    # it -- omitting --scenario silently fell back to 'steady', which has no
+    # ems_v_profile, so an EMS strategy expecting one (e.g. ems_hold_5050 on
+    # ems-drive-cycle) ran against a scenario it was never meant to drive.
+    if args.ems and not args.scenario:
+        ap.error("--ems requires --scenario (e.g. --scenario ems-drive-cycle): "
+                 "without it, --ems would silently fall back to the 'steady' "
+                 "scenario, which has no ems_v_profile for the strategy to read")
     if args.pi_live and args.replay:
         ap.error("--pi-live has no effect with --replay: replay mode already creates "
                  "no PiCommander, and the replayed rails ignore the Pi's commands")
@@ -1136,11 +1217,24 @@ def main(argv=None):
     scenario = args.scenario or "steady"
     meta = SCENARIOS[scenario]
 
+    # F3: the pi_timeline guard originally missed ems-driven scenarios (those with
+    # meta["ems"] but no meta["pi_timeline"]) — an ems-driven scenario run under
+    # --pi-live silently ran as a 60 s no-op (no commander is created for either
+    # pi_timeline or ems under --pi-live, so nothing ever commands the board).
+    # Both are "this scenario's whole stimulus comes from a command source
+    # --pi-live disables", so both must refuse.
     if args.pi_live and not args.replay and meta.get("pi_timeline"):
         ap.error(f"scenario '{scenario}' carries its own pi_timeline, which --pi-live "
                  f"cannot honour: the real Pi owns the command link. Pick a scenario "
                  f"without a timeline (e.g. 'steady', 'drive', 'sag', 'comm-loss') "
                  f"and let the Pi supply the commands.")
+    if args.pi_live and not args.replay and meta.get("ems"):
+        ap.error(f"scenario '{scenario}' IS the emulated-EMS layer (strategy "
+                 f"'{meta['ems']}'); with a real Pi attached under --pi-live there "
+                 f"is nothing left for it to drive — the emulated EMS commander is "
+                 f"never created under --pi-live, so this would silently run as a "
+                 f"no-op. Pick a scenario without an ems strategy (e.g. 'steady', "
+                 f"'drive', 'sag', 'comm-loss') and let the Pi supply the commands.")
 
     ems_name = args.ems
     if not args.replay and ems_name is None and not args.pi_live and meta.get("ems"):
@@ -1234,10 +1328,14 @@ def main(argv=None):
               "500 ms of command silence in State 2/3 — .ino:2788, 4817-4826).")
     pi_frames = 0
     obs = None
+    obs_last_t = None      # F11: sim-clock time of the last DECODED observation
+                            # frame (None = never decoded one yet)
     seq = 0
     rx_frames = 0
     rx_bad = 0
     tx_frames = 0
+    send_errors = 0     # F2: sendto() OSError count, parsed by run_hil_suite's
+                        # pi-live fault-attribution judge as a continuity signal
     max_overrun = 0.0
 
     csv_file = None
@@ -1376,6 +1474,9 @@ def main(argv=None):
                     rx_bad += 1
                 else:
                     obs = decoded
+                    obs_last_t = t          # F11: stamp with sim-clock time, not
+                                             # wall time — obs_age_s is measured
+                                             # against the same clock as `t`
                     rx_frames += 1
 
             if replay:
@@ -1410,6 +1511,8 @@ def main(argv=None):
                     sock.sendto(frame, dest)
                     tx_frames += 1
                 except OSError as exc:
+                    send_errors += 1   # F2: continuity signal for run_hil_suite's
+                                        # pi-live fault-attribution judge
                     print(f"[hil] send failed: {exc}", file=sys.stderr)
                 sent_seq = seq                 # the seq actually on the wire this tick
                 seq = (seq + 1) & 0xFF
@@ -1418,34 +1521,53 @@ def main(argv=None):
             # Same socket, same destination: the firmware's receiveCommands()
             # drains both frame types and dispatches by length (fw v21).
             if commander is not None and tx_enabled:
-                def _fb():
-                    """Feedback view for an EMS policy — see the MODE A block above
-                    for which keys are telemetry-equivalent and which are not.
-                    Built ONLY on a due 50 Hz commander tick."""
-                    fb = {
-                        "t": t,
-                        # telemetry-equivalent (v4 packet, .ino:4988-5069)
-                        "v_actual": sensors["v_actual"],
-                        "V_bus": sensors["V_bus"], "V_fc": sensors["V_fc"],
-                        "V_batt": sensors["V_batt"], "V_chg": sensors["V_chg"],
-                        "V_rgn": sensors["V_rgn"],
-                        "I_fc": sensors["I_fc"], "I_batt": sensors["I_batt"],
-                        "I_charge": sensors["I_charge"],
-                        "ag105_status": sensors["ag105_status"],
-                        # plant truth — NOT visible to a real Pi
-                        "soc": sensors.get("soc"),
-                        # scenario profile (host-side script, not feedback at all)
-                        "v_profile": piecewise(meta.get("ems_v_profile"), t),
-                        # observation frame — NOT in v4 telemetry except `switch`
-                        # (offset 52) and `fault_flags` (offset 53)
-                        "state": obs["state"] if obs else None,
-                        "switch": obs["switch"] if obs else None,
-                        "aux": obs["aux"] if obs else None,
-                        "current": obs["current"] if obs else None,
-                        "fault_flags": obs["fault_flags"] if obs else None,
-                    }
-                    return fb
-                pkt = commander.tick(t, _fb)
+                # F13: build the fb closure/dict only when there is an EMS policy
+                # to feed it. A scripted timeline commander never reads fb_factory
+                # (PiCommander.tick only calls it when self.policy is not None),
+                # so for the scripted/plain path this was a dict-and-closure built
+                # every 1 kHz tick for nothing. Hot path (no policy) is now just
+                # `commander.tick(t, None)`, byte-identical in behavior.
+                if commander.policy is not None:
+                    def _fb():
+                        """Feedback view for an EMS policy — see the MODE A block
+                        above for which keys are telemetry-equivalent and which
+                        are not (FB_TELEMETRY_EQUIV_KEYS). Built ONLY on a due
+                        50 Hz commander tick, and only when a policy is armed."""
+                        fb = {
+                            "t": t,
+                            # telemetry-equivalent (v4 packet, .ino:4988-5069) —
+                            # see FB_TELEMETRY_EQUIV_KEYS
+                            "v_actual": sensors["v_actual"],
+                            "V_bus": sensors["V_bus"], "V_fc": sensors["V_fc"],
+                            "V_batt": sensors["V_batt"], "V_chg": sensors["V_chg"],
+                            "V_rgn": sensors["V_rgn"],
+                            "I_fc": sensors["I_fc"], "I_batt": sensors["I_batt"],
+                            "I_charge": sensors["I_charge"],
+                            "ag105_status": sensors["ag105_status"],
+                            # plant truth — NOT visible to a real Pi
+                            "soc": sensors.get("soc"),
+                            # scenario profile (host-side script, not feedback at all)
+                            "v_profile": piecewise(meta.get("ems_v_profile"), t),
+                            # observation frame — NOT in v4 telemetry except `switch`
+                            # (offset 52) and `fault_flags` (offset 53)
+                            "state": obs["state"] if obs else None,
+                            "switch": obs["switch"] if obs else None,
+                            "aux": obs["aux"] if obs else None,
+                            "current": obs["current"] if obs else None,
+                            "fault_flags": obs["fault_flags"] if obs else None,
+                            # F11: age of the last DECODED observation frame, in
+                            # sim-clock seconds; None if none has ever arrived.
+                            # obs itself is NOT bounded by freshness (behavior-
+                            # preserving) — a policy that cares must check this
+                            # against ~HIL_ZERO_MS/1000 (0.25 s) itself; see the
+                            # MODE A block / manual Sec 3.3.
+                            "obs_age_s": (t - obs_last_t) if obs_last_t is not None
+                                         else None,
+                        }
+                        return fb
+                    pkt = commander.tick(t, _fb)
+                else:
+                    pkt = commander.tick(t, None)
                 if pkt is not None:
                     try:
                         sock.sendto(pkt, dest)
@@ -1594,7 +1716,8 @@ def main(argv=None):
     achieved = ticks / elapsed if elapsed > 0 else 0.0
     print(f"[hil] done: {ticks} ticks in {elapsed:.2f}s -> {achieved:.1f} Hz achieved "
           f"(target {args.rate:.0f} Hz), max overrun {max_overrun * 1e3:.2f} ms")
-    print(f"[hil] tx={tx_frames} frames, rx={rx_frames} frames, {rx_bad} malformed")
+    print(f"[hil] tx={tx_frames} frames, rx={rx_frames} frames, {rx_bad} malformed, "
+          f"send_errors={send_errors}")
     if commander is not None and commander.active():
         if commander.policy is not None:
             print(f"[hil] pi commands sent: {pi_frames} "

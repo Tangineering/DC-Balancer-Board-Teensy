@@ -181,9 +181,13 @@ Contract:
 
 * Called at **50 Hz** (`PiCommander.PI_CMD_HZ`), not at the 1 kHz plant tick.
 * Returns **any subset** of the four fields. **Unset fields hold** — the same
-  contract the firmware itself applies to a field it rejects (`.ino:4846-4848`).
-  Returning `{}` is legal.
-* Returning an unknown field name raises immediately (typos fail loudly).
+  contract the firmware itself applies to a field it rejects (comment
+  `.ino:4869`, code `.ino:4874-4876`). Returning `{}` is legal.
+* Returning an unknown field name raises immediately (typos fail loudly). Only
+  the four documented fields (`v_setpoint`, `power_share_setpoint`,
+  `charge_goal`, `mode_cmd`) are accepted — `droop_enable` is the reserved
+  byte (`.ino:4880-4881`) and is not a legal EMS-policy return, same as any
+  other unknown key.
 
 **Portability — read this before using `fb`.** `fb` is deliberately richer than
 what a real Pi can see. The Pi receives only the 58-byte v4 telemetry packet
@@ -206,6 +210,13 @@ Keys that are **not** — using them makes a strategy simulator-only:
 * `current` — post-clamp motor-current command. Observation frame only.
 * `v_profile` — the scenario's scripted speed profile; a host-side script, not
   feedback at all.
+* `obs_age_s` (F11) — seconds since the last DECODED observation frame, or
+  `None` if none has ever arrived. Observation-frame-derived keys (`state`,
+  `switch`, `aux`, `current`, `fault_flags`) are **not** bounded by freshness
+  themselves — `obs` is not zeroed out on a stall — so a policy that reads any
+  of them **must** check `obs_age_s` itself and treat those keys as stale once
+  it exceeds roughly `HIL_ZERO_MS / 1000` (0.25 s). `obs_age_s` is HIL-only,
+  same as the keys it qualifies.
 
 Note the converse too: v4 telemetry carries `power_share_actual` (offset 43) and
 the two droop-gain words (47/49), which `fb` does **not** expose, because the
@@ -263,7 +274,7 @@ starts showing rails and switch dots. `rx` climbing = the board is answering.
 On the board's USB serial you should see the HIL banner and the bring-up phases.
 **Expected resting state: `state=1` (Idle), `faults=0x0000`.**
 
-**Step 3 — start the Pi / EMS last.** *Why last:* the Pi's commands must land on
+**Step 3 — start the Pi last.** *Why last:* the Pi's commands must land on
 a board that is already alive and already fault-free. A command arriving during
 bring-up is at best ignored; worse, once the Pi has ever been seen
 (`pi_ever_connected`, `.ino:4885`) the firmware arms its **Pi watchdog** — in
@@ -275,11 +286,17 @@ the status line's `state` steps 1 → 2 when the Pi commands a Run mode, and
 
 ### 4.2 Failure signatures if you break the order
 
+F12: `triggerFault()` ORs `FAULT_ERROR` (0x8000) into `fault_flags` alongside
+*every* latched fault (`.ino:4501-4503`), so a lone `PI_TIMEOUT`/`HIL_STALE`
+latch is observed as `0x8010`, never bare `0x0010` — and `INIT_FAIL` (bit
+0x2000) is observed as `0xA000`, never bare `0x2000`. The literals below are
+corrected to what you will actually see on the wire.
+
 | Symptom | What happened | Fix |
 |---|---|---|
-| `faults=0x2000`, error `Init failure`, state 99 immediately after power-on | `INIT_FAIL`: board powered before the simulator, bring-up timed out at 800 ms on real (zero) ADCs | Power the board down, start the simulator, power up again. Or use the `BENCH_TEST=1` build while bringing the rig up. |
-| Board answers, then latches `0x0010` with error `HIL link dead` | `ERR_HIL_STALE`: >250 ms with no *injection* frame (`HIL_ZERO_MS`, `.ino:2615`) — simulator stopped, Ctrl-C'd, or the cable moved | Restart the simulator. The board stays latched in State 99; power-cycle it for a clean State 1. |
-| `faults=0x0010` with error `Pi timeout` while running | Pi stopped commanding for >500 ms in State 2/3 | Restart the Pi bridge. Note the flag is the same bit as above — read `error_code` to tell them apart (`ERR_PI_TIMEOUT` 0x05 vs `ERR_HIL_STALE` 0x10, `.ino:1492`, `.ino:1505`). |
+| `faults=0xA000`, error `Init failure`, state 99 immediately after power-on | `INIT_FAIL` (0x2000) `\|` `FAULT_ERROR` (0x8000): board powered before the simulator, bring-up timed out at 800 ms on real (zero) ADCs | Power the board down, start the simulator, power up again. Or use the `BENCH_TEST=1` build while bringing the rig up. |
+| Board answers, then latches `0x8010` with error `HIL link dead` | `ERR_HIL_STALE`: >250 ms with no *injection* frame (`HIL_ZERO_MS`, `.ino:2615`) — simulator stopped, Ctrl-C'd, or the cable moved | Restart the simulator. The board stays latched in State 99; power-cycle it for a clean State 1. |
+| `faults=0x8010` with error `Pi timeout` while running | Pi stopped commanding for >500 ms in State 2/3 | Restart the Pi bridge. Note the flag is the same bit as above — read `error_code` to tell them apart (`ERR_PI_TIMEOUT` 0x05 vs `ERR_HIL_STALE` 0x10, `.ino:1492`, `.ino:1505`). |
 | Simulator's `tx` climbs, `rx` stays 0 forever | Board not flashed HIL, wrong IP/port, or not on the same L2 segment | Check the boot banner, `--teensy-ip`, `--port 5001`. |
 | Pi commands work but the Pi sees no telemetry | The Pi is not at `192.168.1.100` — telemetry goes to that literal address (`.ino:2541`, `.ino:5065`) | Move the Pi to `.100`. |
 

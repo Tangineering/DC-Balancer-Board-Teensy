@@ -1531,3 +1531,61 @@ Sonnet fix round). Python tooling only; FW_VERSION stays 21; wire protocol/CSV u
   Orchestrator applied the two mechanical F2 test ripples. **Tests: 296 pytest green**
   (34 new dashboard tests incl. a FAULT_NAMES equality pin against hil_replay_suite and a
   code-shape guard that the sim touches only dash.snapshot/start/stop/error).
+
+---
+
+## Status & session addendum (2026-08-27e, HIL Mode A/B: emulated EMS + Pi-in-the-loop + user manual)
+
+Orchestrated tooling round (Opus implementer, Sonnet test-writer, Opus combined-lens review,
+Sonnet fix round). Python tooling + docs only; FW_VERSION stays 21; wire protocol frozen.
+
+- **Mode A — emulated Pi EMS (`hil_plant_sim.py --ems STRATEGY`):** EMS_STRATEGIES registry;
+  a policy is `policy(t, fb) -> {v_setpoint|power_share_setpoint|charge_goal|mode_cmd}`
+  (POLICY_ALLOWED_FIELDS-gated, unknown keys raise; unset fields hold, matching
+  .ino:4869/4874-4876). `fb` is built only on due 50 Hz commander ticks and carries plant
+  truth + last obs + `obs_age_s`; FB_TELEMETRY_EQUIV_KEYS names the subset a real Pi would
+  see (verified field-by-field against sendTelemetry(), .ino:4988-5069) — policies meant
+  for the real Pi must restrict to it. First strategy `hold-5050` (share 0.5 constant,
+  MODE_HYBRID at 3 s, MODE_SAFE at 55 s). New scenario `ems-drive-cycle` (60 s, 8-point
+  accelerate/cruise/step/decel profile; decel 0.167 m/s² stays gentler than coast — no
+  regen entry). `--ems` requires `--scenario`, replaces a pi_timeline with a notice.
+- **Mode B — real Pi in the loop (`--pi-live`):** the sim injects sensors ONLY; PiCommander
+  is never constructed; refused with `--ems`, `--replay`, and on any EMS/pi_timeline
+  scenario. VERIFIED FROM SOURCE: telemetry destination is FIXED 192.168.1.100:5000
+  (.ino:2541-2542, 5065) — a Pi elsewhere commands blind; the HIL stale clock keys on
+  ACCEPTED INJECTION FRAMES ONLY (.ino:4970-4976) and the Pi watchdog (PI_TIMEOUT_MS 500,
+  armed State 2/3 after pi_ever_connected, .ino:4817-4826/2788) is fully independent — so
+  comm-loss keeps its required 0x0010 under pi-live, and Mode A's 50 Hz cadence is
+  load-bearing in Run state.
+- **Suite:** `run_hil_suite.py --pi-live` skips EMS/pi_timeline scenarios AND the entire
+  replay half (the operator's Pi is an uncontrolled second stimulus over a replayed
+  trajectory) as SKIPPED-rendered records; cmd_mode tagging in results.json/REPORT.md;
+  all-skips exits 1. **Review F1 (HIGH): the pi-live PI_TIMEOUT excusal was a NO-OP**
+  (triggerFault() always ORs FAULT_ERROR 0x8000, so the old mask left 0x8000 unexcused
+  while printing that it excused) — replaced by the narrowest rule: excused only when the
+  union is EXACTLY 0x8010 AND the child's own injection stream was continuous (tx >= 98%,
+  0 send errors, parsed from the child summary); otherwise "cannot attribute to the Pi".
+  Residual documented: error_code is not on the observation frame, so PI_TIMEOUT vs
+  HIL_STALE (0x0010 alias) is not distinguishable — frame extension is future protocol
+  work. CSV: `cmd_v_sp`/`cmd_share_sp` appended unconditionally in simulated mode (blank
+  without a commander; replay schema untouched).
+- **docs/HIL_USER_MANUAL.md (new):** operator manual — three modes, hardware/network
+  (unmanaged switch, static IPs, ~0.5 Mbit/s), build flags (note: the source defaults were
+  flipped to BENCH_TEST 0 / USE_ETHERNET 1 by the operator for Arduino-IDE builds;
+  HIL_SIM still defaults 0 and must be flipped for an HIL flash), Mode-A walkthrough +
+  strategy template, Mode-B THREE-NODE SEQUENCING (network → simulator streaming →
+  board power [BUS_CHARGE_TIMEOUT_MS 800, .ino:1381] → Pi last; shutdown Pi → sim →
+  board), per-step failure signatures with the real 0xA000/0x8010 literals, and the open
+  item that the Pi's v4 telemetry parser has never been audited.
+- **Review round: 1 HIGH + 4 MED + 9 LOW — all accepted, all fixed** (ems-scenario
+  pi-live refusal gap [also found independently by the test-writer], replay-half second-
+  stimulus gap, skip records rendered as fake-clean PASSes, wrong hold-on-reject anchor,
+  --ems scenario requirement now enforced, obs_age_s staleness signal added, per-tick
+  closure hoisted off the no-policy hot path).
+- **Tests: 357 pytest green** (~55 new). Also this round: the operator flashed fw v21
+  (first HIL-capable flash) after the Arduino prototype fix; logs ML0218/ML0221 landed
+  (bench runs, not HIL-build). The accidentally-tracked Linux test binaries
+  (test/run_tests*) were untracked and gitignored; the Windows .exe artifacts stay.
+- **Next:** Mode-A smoke on the bench (`--ems hold-5050 --scenario ems-drive-cycle
+  --dash`), then the Mode-B bring-up per the manual; audit the Pi bridge's v4 parser
+  before the first pi-live run.

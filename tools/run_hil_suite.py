@@ -258,6 +258,24 @@ def build_plan(args):
 
     if not args.scenarios_only:
         for entry in REPLAY_SUITE:
+            if pi_live:
+                # F5: skip the ENTIRE replay half under --pi-live, per-entry
+                # (same skip-record mechanism as the pi_timeline/ems scenario
+                # skips above) rather than silently letting a real Pi command
+                # over a replayed trajectory it was never part of recording.
+                plan.append({
+                    "kind": "replay", "name": entry["log"], "mode": entry["mode"],
+                    "description": entry.get("classification", ""),
+                    "duration_s": 0.0, "csv": None, "events": None, "log": None,
+                    "argv": None, "timeout_s": 0.0, "entry": entry,
+                    "skip_reason": (
+                        "--pi-live: replay mode plays a RECORDED trajectory "
+                        "regardless of what a live Pi commands, so the Pi would "
+                        "be an uncontrolled second stimulus over a run that "
+                        "cannot react to it — the whole replay half is skipped "
+                        "under --pi-live"),
+                })
+                continue
             csv_path = replay_csv_path(entry, args.out)
             argv = build_sim_argv(entry, args.out)
             est = blg_duration_estimate_s(os.path.join(_REPO, entry["path"]))
@@ -272,6 +290,10 @@ def build_plan(args):
                 "timeout_s": (est if est else 120.0) + GRACE_S,
                 "entry": entry,
             })
+        if pi_live:
+            print("[suite] --pi-live: skipping the entire replay half (%d entries) — "
+                  "a live Pi would be an uncontrolled second stimulus over a "
+                  "replayed trajectory" % len(REPLAY_SUITE))
 
     return filter_plan(plan, args.only, args.skip)
 
@@ -324,6 +346,12 @@ def parse_child_summary(text):
                 out["tx_frames"] = int(line.split("tx=")[1].split()[0])
                 out["rx_frames"] = int(line.split("rx=")[1].split()[0])
                 out["rx_bad"] = int(line.split("frames,")[-1].split()[0])
+            except (IndexError, ValueError):
+                pass
+            try:
+                # F2: absent on an older sim build (pre-fix) -- treated as
+                # "unknown", not "zero", by the judge below.
+                out["send_errors"] = int(line.split("send_errors=")[1].split()[0])
             except (IndexError, ValueError):
                 pass
         elif line.startswith("[hil] electrical(hifi):"):
@@ -426,7 +454,14 @@ def analyze_events(path):
     return out
 
 
-def judge_scenario(name, metrics, events, child, pi_live=False):
+FAULT_ERROR = 0x8000       # .ino:4501-4503 — triggerFault() ORs this into EVERY
+                            # latched fault, so a lone PI_TIMEOUT/HIL_STALE latch
+                            # is observed as 0x8010, never bare 0x0010.
+HIL_DEFAULT_RATE_HZ = 1000.0   # the suite never overrides hil_plant_sim.py's
+                                # --rate default (full_argv appends none)
+
+
+def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None):
     """Scenario pass/fail. Returns (passed, checks[]) — pure over the inputs."""
     checks = []
 
@@ -452,19 +487,74 @@ def judge_scenario(name, metrics, events, child, pi_live=False):
         checks.append({"name": "fault_allowed", "passed": True,
                        "detail": "observed %s; %s" % (fault_names(seen), FAULT_ALLOWED[name])})
     else:
-        # Under --pi-live the Pi watchdog is outside this harness's control: an
-        # operator-driven Pi that stops commanding while the board is in State 2/3
-        # legitimately latches FAULT_PI_TIMEOUT (0x0010) after PI_TIMEOUT_MS = 500
-        # (.ino:2788, 4817-4826). That is an operator event, not a firmware
-        # finding, so it is excused HERE ONLY — comm-loss still REQUIRES the same
-        # bit above (it arrives via ERR_HIL_STALE, which the Pi cannot mask).
-        unexpected = seen & ~0x0010 if pi_live else seen
+        # F1/F2: under --pi-live the Pi watchdog is outside this harness's
+        # control: an operator-driven Pi that stops commanding while the board
+        # is in State 2/3 legitimately latches FAULT_PI_TIMEOUT (0x0010) after
+        # PI_TIMEOUT_MS = 500 (.ino:2788, 4817-4826). That is an operator event,
+        # not a firmware finding — but two things must be true before this
+        # harness excuses it:
+        #
+        #   F1: triggerFault() ALWAYS ORs in FAULT_ERROR 0x8000 alongside any
+        #       fault (.ino:4501-4503), so a bare PI_TIMEOUT latch is observed
+        #       as 0x8010, never 0x0010 alone. The old `seen & ~0x0010` mask
+        #       left 0x8000 in `unexpected` on every excusal, so the excusal
+        #       NEVER actually passed anything — it printed "excused" and then
+        #       failed the run anyway on the FAULT_ERROR bit it forgot to mask.
+        #
+        #   F2: 0x0010 is BOTH FAULT_PI_TIMEOUT and its alias FAULT_HIL_LINK
+        #       (.ino:1193), and the 16-byte observation frame carries no
+        #       error_code to tell them apart (residual noted below and in the
+        #       manual). Excusing on the bit alone would also excuse a genuine
+        #       injection-link failure. Narrowest defensible rule: excuse ONLY
+        #       when (a) the fault union is EXACTLY 0x8010 — nothing else set,
+        #       not even other latched bits alongside it — AND (b) THIS
+        #       process's own injection stream was continuous for the run (its
+        #       sendto() calls landed and kept pace), so a HIL-link explanation
+        #       is implausible and PI_TIMEOUT is the only fault-producing
+        #       explanation left standing. Continuity is judged from the
+        #       child's own parsed summary: tx_frames >= 98% of the frames a
+        #       full-rate run would have sent, and zero sendto() errors.
+        #
+        # Residual (documented, not fixed here): the observation frame has no
+        # error_code, so even a "continuous stream" verdict is an inference by
+        # elimination, not a direct read of which of the two aliased causes
+        # fired. A frame extension to carry error_code is future protocol work
+        # (see docs/HIL_MODE.md and the manual).
+        exactly_pi_timeout = seen == (FAULT_ERROR | 0x0010)
+        summary = child.get("summary") or {}
+        tx = summary.get("tx_frames")
+        send_errors = summary.get("send_errors")
+        expected_tx = (HIL_DEFAULT_RATE_HZ * duration_s) if duration_s else None
+        stream_continuous = (
+            pi_live and exactly_pi_timeout
+            and tx is not None and send_errors is not None
+            and expected_tx is not None
+            and tx >= 0.98 * expected_tx
+            and send_errors == 0
+        )
+        if pi_live and exactly_pi_timeout and not stream_continuous:
+            unexpected = seen   # do NOT excuse — attribution to the Pi is unsafe
+            excuse_detail = ("  (0x%04X observed but the injection stream had "
+                              "gaps or is unmeasured — cannot attribute to the "
+                              "Pi; NOT excused)" % seen)
+        elif stream_continuous:
+            unexpected = 0
+            excuse_detail = ("  (PI_TIMEOUT excused under --pi-live: fault union "
+                              "is exactly 0x%04X (FAULT_ERROR|PI_TIMEOUT) and this "
+                              "process's own injection stream was continuous "
+                              "(tx=%d/%s frames, %d send errors) — the operator's "
+                              "Pi owns the command cadence. Residual: the "
+                              "observation frame carries no error_code, so "
+                              "PI_TIMEOUT vs the aliased HIL_STALE is inferred by "
+                              "elimination, not read directly.)"
+                              % (seen, tx, ("%.0f" % expected_tx) if expected_tx
+                                 else "?", send_errors))
+        else:
+            unexpected = seen
+            excuse_detail = ""
         checks.append({"name": "no_unexpected_fault", "passed": unexpected == 0,
                        "detail": "fault_flags union over the run = %s%s"
-                                 % (fault_names(seen),
-                                    "  (PI_TIMEOUT excused under --pi-live: the "
-                                    "operator's Pi owns the command cadence)"
-                                    if pi_live and (seen & 0x0010) else "")})
+                                 % (fault_names(seen), excuse_detail)})
 
     rate = (child.get("summary") or {}).get("achieved_hz")
     if rate is not None:
@@ -643,9 +733,14 @@ def render_report(meta, results):
     A(_row(["---"] * 6))
     for r in results:
         dur = r.get("duration_s")
+        # F6: a skipped run rendered as "PASS" here, indistinguishable from an
+        # executed clean run, and paired with the fabricated-clean detail lines
+        # below it looked like a run that had actually happened.
+        result_cell = ("SKIPPED" if r.get("skipped")
+                       else ("PASS" if r["passed"] else "**FAIL**"))
         A(_row([r["name"], r["kind"], r.get("mode", ""),
                 ("%.1f s" % dur) if dur else "—",
-                "PASS" if r["passed"] else "**FAIL**",
+                result_cell,
                 r.get("key_metrics", "")]))
     A("")
 
@@ -660,11 +755,25 @@ def render_report(meta, results):
         A("host must have held the tick rate.")
         A("")
         for r in scen:
-            A("### `%s` — %s" % (r["name"], "PASS" if r["passed"] else "FAIL"))
+            heading = "SKIPPED" if r.get("skipped") else ("PASS" if r["passed"] else "FAIL")
+            A("### `%s` — %s" % (r["name"], heading))
             A("")
             if r.get("description"):
                 A("*%s*" % r["description"])
                 A("")
+            if r.get("skipped"):
+                # F6: no child was ever launched for a skipped run — there is no
+                # CSV, no frames, no fault_flags to report. The old code fell
+                # through to the metric/frame/fault lines below with empty
+                # metrics/events dicts, which rendered as e.g. "final fault_flags
+                # 0x0000 (none)" -- a FABRICATED clean result for a run that never
+                # happened. Short-circuit entirely instead.
+                A("- child: **not run** — %s" % r.get("skip_reason", "skipped"))
+                A("")
+                for c in r["checks"]:
+                    A("  - [%s] **%s** — %s" % ("x" if c["passed"] else " ", c["name"], c["detail"]))
+                A("")
+                continue
             if r.get("child", {}).get("stdout_passthrough"):
                 # F3: explain the '?' frame/rate cells below before the reader
                 # hits them, not just in the summary-table header row.
@@ -698,16 +807,12 @@ def render_report(meta, results):
                 A("- electrical events: %d (%s)%s"
                   % (ev["total"], kinds,
                      "; **%d over abs-max**" % ev["over_absmax"] if ev["over_absmax"] else ""))
-            if r.get("skipped"):
-                # No child was ever launched, so there is no rc/wall/log to report.
-                A("- child: **not run** — %s" % r.get("skip_reason", "skipped"))
-            else:
-                log_note = (" **(log write failed: %s)**" % r["child"]["log_write_error"]
-                            if r["child"].get("log_write_error") else "")
-                A("- child: %s (rc %s, %.1f s wall) — log `%s`%s"
-                  % (r["child"]["status"], r["child"]["returncode"],
-                     r["child"]["wall_s"] or 0.0,
-                     os.path.basename(r["child"]["log"]), log_note))
+            log_note = (" **(log write failed: %s)**" % r["child"]["log_write_error"]
+                        if r["child"].get("log_write_error") else "")
+            A("- child: %s (rc %s, %.1f s wall) — log `%s`%s"
+              % (r["child"]["status"], r["child"]["returncode"],
+                 r["child"]["wall_s"] or 0.0,
+                 os.path.basename(r["child"]["log"]), log_note))
             A("")
             for c in r["checks"]:
                 A("  - [%s] **%s** — %s" % ("x" if c["passed"] else " ", c["name"], c["detail"]))
@@ -730,11 +835,21 @@ def render_report(meta, results):
             A(title)
             A("")
             for r in g:
-                A("#### `%s` — %s" % (r["name"], "PASS" if r["passed"] else "FAIL"))
+                heading = "SKIPPED" if r.get("skipped") else ("PASS" if r["passed"] else "FAIL")
+                A("#### `%s` — %s" % (r["name"], heading))
                 A("")
                 if r.get("description"):
                     A("*%s*" % r["description"])
                     A("")
+                if r.get("skipped"):
+                    # F5/F6: --pi-live skips the whole replay half — no child, no
+                    # CSV, nothing to report but why.
+                    A("- child: **not run** — %s" % r.get("skip_reason", "skipped"))
+                    A("")
+                    for c in r["checks"]:
+                        A("  - [%s] **%s** — %s" % ("x" if c["passed"] else " ", c["name"], c["detail"]))
+                    A("")
+                    continue
                 log_note = (" **(log write failed: %s)**" % r["child"]["log_write_error"]
                             if r["child"].get("log_write_error") else "")
                 A("- child: %s (rc %s, %.1f s wall) — log `%s`%s, CSV `%s`"
@@ -799,7 +914,10 @@ def print_plan(plan, args):
     total = 0.0
     for p in plan:
         d = p.get("duration_s")
-        total += (d or 0.0) + args.settle_s
+        # F14(a): a skipped run launches no child and gets no settle pause either
+        # -- it was contributing a phantom settle_s to the wall-time estimate.
+        if not p.get("skip_reason"):
+            total += (d or 0.0) + args.settle_s
         print("%-14s %-9s %-12s %-9s %s"
               % (p["name"], p["kind"], p.get("mode", ""),
                  ("%.0f s" % d) if d else ("SKIP" if p.get("skip_reason") else "?"),
@@ -855,6 +973,20 @@ def main(argv=None):
     if args.dashboard and not sys.stdout.isatty():
         ap.error("--dashboard requires a terminal (stdout is not a tty); "
                  "drop --dashboard or run this in an interactive terminal.")
+
+    # F5: under --pi-live the operator's Pi is a second, uncontrolled stimulus
+    # over whatever a replay run injects (replay mode plays recorded rails
+    # regardless of what the Pi commands, and — unlike the scenario half — the
+    # replay half is not skip-recorded per entry, so --pi-live would silently
+    # run all 26 replays with a live Pi fighting the replayed trajectory).
+    # --replay-only + --pi-live has NOTHING left to run once the whole replay
+    # half is skipped for that reason, so refuse the combination up front
+    # rather than producing an empty, confusing plan.
+    if args.pi_live and args.replay_only:
+        ap.error("--replay-only and --pi-live are mutually exclusive: under "
+                 "--pi-live the entire replay half is skipped (a real Pi is an "
+                 "uncontrolled second stimulus over a replayed trajectory), which "
+                 "would leave --replay-only with nothing to run.")
 
     if args.out is None:
         args.out = "hil_report_%s" % datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -938,6 +1070,15 @@ def main(argv=None):
         return 130
     if aborted:
         return 2
+    # F6: every planned run being skipped (e.g. --pi-live over a plan whose
+    # scenario half is ALL pi_timeline/ems entries) is not a passing suite run —
+    # nothing was ever actually exercised against the board. The old
+    # `npass == len(results) and results` check let an all-skips run exit 0
+    # because skipped runs count as "passed".
+    if results and all(r.get("skipped") for r in results):
+        print("[suite] every planned run was SKIPPED — nothing was exercised "
+              "against the board; treating this as a failing suite run", file=sys.stderr)
+        return 1
     return 0 if npass == len(results) and results else 1
 
 
@@ -990,7 +1131,8 @@ def _run_plan(plan, args, problems, results, write_outputs):
             metrics = analyze_scenario_csv(item["csv"])
             events = analyze_events(item["events"])
             passed, checks = judge_scenario(item["name"], metrics, events, child,
-                                            pi_live=getattr(args, "pi_live", False))
+                                            pi_live=getattr(args, "pi_live", False),
+                                            duration_s=item.get("duration_s"))
             key = "obs %d/%d, faults %s" % (metrics["n_obs"], metrics["rows"],
                                             fault_names(metrics["fault_bits_seen"] or 0))
             res = {"kind": "scenario", "name": item["name"], "mode": item["mode"],
