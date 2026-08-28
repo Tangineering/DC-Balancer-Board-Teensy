@@ -40,11 +40,12 @@ def _args(**overrides):
 # 1. build_plan()
 # ─────────────────────────────────────────────────────────────────────────
 
-def test_build_plan_full_count_38_runs():
+def test_build_plan_full_count_39_runs():
+    # 13 scenarios (ems-drive-cycle added this round) + 26 replays = 39.
     plan = rhs.build_plan(_args())
-    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 38
+    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 39
     kinds = [p["kind"] for p in plan]
-    assert kinds.count("scenario") == 12
+    assert kinds.count("scenario") == 13
     assert kinds.count("replay") == 26
 
 
@@ -56,7 +57,7 @@ def test_build_plan_replay_only():
 
 def test_build_plan_scenarios_only():
     plan = rhs.build_plan(_args(scenarios_only=True))
-    assert len(plan) == 12
+    assert len(plan) == 13
     assert all(p["kind"] == "scenario" for p in plan)
 
 
@@ -767,6 +768,283 @@ def test_m4_main_keyboardinterrupt_writes_partial_report(tmp_path, monkeypatch):
     assert loaded["meta"]["partial"] is True
     assert loaded["results"] == []
     assert "PARTIAL" in report_path.read_text()
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 6. --pi-live: build_plan() skip records
+# ─────────────────────────────────────────────────────────────────────────
+
+# Exactly the scenarios whose SCENARIOS entry carries a pi_timeline or an
+# ems strategy -- these are the ones build_plan() must SKIP under --pi-live.
+PI_LIVE_SKIP_SCENARIOS = {
+    "charge-cruise", "charge-regen", "charge-fault", "soc-depletion",
+    "handoff-sag", "ems-drive-cycle",
+}
+
+
+def test_pi_live_skip_set_matches_pi_timeline_or_ems_scenarios():
+    computed = {name for name, meta in SCENARIOS.items()
+                if meta.get("pi_timeline") or meta.get("ems")}
+    assert computed == PI_LIVE_SKIP_SCENARIOS
+
+
+def test_build_plan_pi_live_produces_skip_records_for_exact_set():
+    plan = rhs.build_plan(_args(pi_live=True))
+    skipped = {p["name"] for p in plan if p.get("skip_reason")}
+    assert skipped == PI_LIVE_SKIP_SCENARIOS
+
+
+def test_build_plan_pi_live_skip_records_shape():
+    plan = rhs.build_plan(_args(pi_live=True))
+    skips = [p for p in plan if p.get("skip_reason")]
+    assert skips
+    for p in skips:
+        assert p["kind"] == "scenario"
+        assert p["argv"] is None
+        assert p["duration_s"] == 0.0
+        assert isinstance(p["skip_reason"], str) and p["skip_reason"]
+
+
+def test_build_plan_pi_live_non_skip_scenarios_unaffected():
+    plan_live = rhs.build_plan(_args(pi_live=True))
+    plan_default = rhs.build_plan(_args())
+    live_names = {p["name"] for p in plan_live if not p.get("skip_reason")
+                  and p["kind"] == "scenario"}
+    default_names = {p["name"] for p in plan_default if p["kind"] == "scenario"}
+    assert live_names == default_names - PI_LIVE_SKIP_SCENARIOS
+
+
+def test_build_plan_pi_live_total_count_still_39():
+    """Skip records still occupy a plan slot -- the total run count (39) is
+    unchanged under --pi-live, only their kind (executed vs skipped) differs."""
+    plan = rhs.build_plan(_args(pi_live=True))
+    assert len(plan) == 39
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 7. full_argv(): --pi-live passthrough (scenario half only) and skip == []
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_full_argv_pi_live_flag_present_for_runnable_scenario():
+    plan = rhs.build_plan(_args(pi_live=True))
+    steady = next(p for p in plan if p["name"] == "steady")
+    argv = rhs.full_argv(steady, _args(pi_live=True))
+    assert "--pi-live" in argv
+
+
+def test_full_argv_pi_live_absent_without_the_flag():
+    plan = rhs.build_plan(_args())
+    steady = next(p for p in plan if p["name"] == "steady")
+    argv = rhs.full_argv(steady, _args())
+    assert "--pi-live" not in argv
+
+
+def test_full_argv_pi_live_not_applied_to_replay_half():
+    """--pi-live applies to the scenario half only -- a replay child never
+    gets --pi-live even when the suite-level flag is set (hil_plant_sim.py
+    refuses --pi-live with --replay, and replay mode makes no commander
+    anyway)."""
+    plan = rhs.build_plan(_args(pi_live=True, replay_only=True))
+    assert plan
+    replay_item = plan[0]
+    assert replay_item["kind"] == "replay"
+    argv = rhs.full_argv(replay_item, _args(pi_live=True))
+    assert "--pi-live" not in argv
+
+
+def test_full_argv_returns_empty_list_for_skip_records():
+    plan = rhs.build_plan(_args(pi_live=True))
+    skip_item = next(p for p in plan if p.get("skip_reason"))
+    assert rhs.full_argv(skip_item, _args(pi_live=True)) == []
+
+
+def test_full_argv_pi_live_and_dashboard_coexist_in_argv():
+    plan = rhs.build_plan(_args(pi_live=True))
+    steady = next(p for p in plan if p["name"] == "steady")
+    argv = rhs.full_argv(steady, _args(pi_live=True, dashboard=True))
+    assert "--pi-live" in argv
+    assert "--dash" in argv
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 8. judge_scenario(): FAULT_PI_TIMEOUT excusal under --pi-live
+# ─────────────────────────────────────────────────────────────────────────
+
+def _metrics(fault_bits_seen=0, final_fault_flags=0, n_obs=10, rows=10):
+    return {"n_obs": n_obs, "rows": rows, "fault_bits_seen": fault_bits_seen,
+            "final_fault_flags": final_fault_flags, "final_state": 2}
+
+
+def test_judge_scenario_pi_timeout_excused_only_under_pi_live_on_non_required_scenario():
+    child = {"status": "ok", "summary": {"achieved_hz": 1000.0}}
+    passed_default, checks_default = rhs.judge_scenario(
+        "steady", _metrics(fault_bits_seen=0x0010, final_fault_flags=0x0010),
+        rhs.analyze_events(None), child, pi_live=False)
+    passed_live, checks_live = rhs.judge_scenario(
+        "steady", _metrics(fault_bits_seen=0x0010, final_fault_flags=0x0010),
+        rhs.analyze_events(None), child, pi_live=True)
+    assert passed_default is False, "PI_TIMEOUT must still FAIL a scenario by default"
+    assert passed_live is True, "PI_TIMEOUT must be excused under --pi-live"
+
+
+def test_judge_scenario_comm_loss_still_requires_0x0010_under_both_modes():
+    child = {"status": "ok", "summary": {"achieved_hz": 1000.0}}
+    for pi_live in (False, True):
+        passed, checks = rhs.judge_scenario(
+            "comm-loss", _metrics(fault_bits_seen=0x0010, final_fault_flags=0x0010),
+            rhs.analyze_events(None), child, pi_live=pi_live)
+        fault_check = next(c for c in checks if c["name"] == "expected_fault")
+        assert fault_check["passed"] is True
+
+        passed_missing, checks_missing = rhs.judge_scenario(
+            "comm-loss", _metrics(fault_bits_seen=0, final_fault_flags=0),
+            rhs.analyze_events(None), child, pi_live=pi_live)
+        fault_check_missing = next(c for c in checks_missing
+                                    if c["name"] == "expected_fault")
+        assert fault_check_missing["passed"] is False
+
+
+def test_judge_scenario_pi_timeout_excusal_does_not_mask_other_faults():
+    """--pi-live excuses ONLY bit 0x0010 -- a PI_TIMEOUT bit alongside an
+    unrelated fault bit must still fail on the unrelated bit."""
+    child = {"status": "ok", "summary": {"achieved_hz": 1000.0}}
+    passed, checks = rhs.judge_scenario(
+        "steady", _metrics(fault_bits_seen=0x0010 | 0x0100,
+                           final_fault_flags=0x0010 | 0x0100),
+        rhs.analyze_events(None), child, pi_live=True)
+    assert passed is False
+    fault_check = next(c for c in checks if c["name"] == "no_unexpected_fault")
+    assert fault_check["passed"] is False
+
+
+def test_judge_scenario_pi_timeout_excusal_not_applied_to_fault_required_scenarios():
+    """FAULT_REQUIRED scenarios ('sag', 'comm-loss') use the expected_fault
+    check path, not no_unexpected_fault -- the pi_live excusal branch must
+    never engage there."""
+    child = {"status": "ok", "summary": {"achieved_hz": 1000.0}}
+    passed, checks = rhs.judge_scenario(
+        "sag", _metrics(fault_bits_seen=0x0100, final_fault_flags=0x0100),
+        rhs.analyze_events(None), child, pi_live=True)
+    assert passed is True
+    assert not any(c["name"] == "no_unexpected_fault" for c in checks)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 9. render_report(): skip records, meta mode, "Command source" row
+# ─────────────────────────────────────────────────────────────────────────
+
+def _skip_result(name="charge-cruise", reason="--pi-live: this scenario carries "
+                                               "its own pi_timeline (4 entries)"):
+    return {
+        "kind": "scenario", "name": name, "mode": "hifi",
+        "electrical_required": "any", "description": "d", "duration_s": 0.0,
+        "cmd_mode": "pi-live",
+        "passed": True, "skipped": True, "skip_reason": reason,
+        "checks": [{"name": "skipped", "passed": True, "detail": reason}],
+        "notes": [], "metrics": {}, "events": {},
+        "child": {"status": "skipped", "summary": {}},
+        "csv": None, "events_path": None, "log_path": None,
+        "key_metrics": "skipped",
+    }
+
+
+def _base_meta(**overrides):
+    meta = {"date": "2026-08-28", "teensy_ip": "192.168.1.50", "port": 5001,
+            "target_fw": rhs.TARGET_FW_VERSION, "host": "test", "python": "3.x",
+            "electrical_pref": "hifi", "settle_s": 5.0, "out": "/tmp/x",
+            "aborted": None, "partial": False, "suite_log_problems": [],
+            "mode": "scripted"}
+    meta.update(overrides)
+    return meta
+
+
+def test_render_report_handles_skip_records_without_crashing():
+    results = [_skip_result()]
+    report = rhs.render_report(_base_meta(mode="pi-live"), results)
+    assert isinstance(report, str) and report
+    assert "charge-cruise" in report
+    assert "not run" in report
+    assert "SKIPPED" in report
+
+
+def test_render_report_skip_count_labeled_in_result_row():
+    results = [_skip_result(name="a"), _skip_result(name="b")]
+    report = rhs.render_report(_base_meta(mode="pi-live"), results)
+    assert "SKIPPED, not executed" in report
+    assert "2 of them SKIPPED" in report
+
+
+def test_render_report_command_source_row_pi_live():
+    report = rhs.render_report(_base_meta(mode="pi-live"), [])
+    assert "Command source" in report
+    assert "MODE B" in report
+    assert "--pi-live" in report
+
+
+def test_render_report_command_source_row_scripted():
+    report = rhs.render_report(_base_meta(mode="scripted"), [])
+    assert "Command source" in report
+    assert "scripted" in report
+
+
+def test_render_report_mixed_skip_and_normal_records():
+    """A childless skip record next to a normal executed record must not
+    crash render_report (skip records have no rc/wall/log fields the
+    executed-record branch reads)."""
+    normal = {
+        "kind": "scenario", "name": "steady", "mode": "hifi",
+        "electrical_required": "any", "description": "d", "duration_s": 30.0,
+        "cmd_mode": "pi-live",
+        "passed": True, "checks": [{"name": "observation_frames", "passed": True,
+                                    "detail": "ok"}],
+        "notes": [], "metrics": {"csv": "x.csv", "rows": 10, "n_obs": 10,
+                                 "final_fault_flags": 0, "fault_bits_seen": 0,
+                                 "final_state": 2},
+        "events": {},
+        "child": {"status": "ok", "returncode": 0, "wall_s": 1.0, "log": "x.log",
+                  "summary": {"achieved_hz": 1000.0, "tx_frames": 100,
+                             "rx_frames": 100, "rx_bad": 0}},
+        "csv": "x.csv", "events_path": None, "log_path": "x.log",
+        "key_metrics": "obs 10/10, faults none",
+    }
+    results = [normal, _skip_result()]
+    report = rhs.render_report(_base_meta(mode="pi-live"), results)
+    assert "steady" in report
+    assert "charge-cruise" in report
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 10. cmd_mode tagging via _suite_mode()
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_suite_mode_pi_live_vs_scripted():
+    assert rhs._suite_mode(_args(pi_live=True)) == "pi-live"
+    assert rhs._suite_mode(_args()) == "scripted"
+    assert rhs._suite_mode(_args(pi_live=False)) == "scripted"
+
+
+def test_run_plan_tags_cmd_mode_on_records(monkeypatch):
+    def fake_run_child(item, args):
+        return {"status": "ok", "returncode": 0, "wall_s": 0.01, "log": item["log"],
+                "summary": {"achieved_hz": 1000.0}}
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+    args = _args(only=["steady"], keep_going=True, settle_s=0.0, pi_live=True)
+    plan = rhs.build_plan(args)
+    results, _aborted = rhs._run_plan(plan, args, [], [], lambda m, r: None)
+    assert results
+    assert all(r["cmd_mode"] == "pi-live" for r in results)
+
+
+def test_run_plan_skip_record_carries_cmd_mode():
+    args = _args(only=["charge-cruise"], pi_live=True, settle_s=0.0)
+    plan = rhs.build_plan(args)
+    assert plan and plan[0].get("skip_reason")
+    results, _aborted = rhs._run_plan(plan, args, [], [], lambda m, r: None)
+    assert len(results) == 1
+    assert results[0]["cmd_mode"] == "pi-live"
+    assert results[0]["skipped"] is True
+    assert results[0]["passed"] is True
 
 
 if __name__ == "__main__":

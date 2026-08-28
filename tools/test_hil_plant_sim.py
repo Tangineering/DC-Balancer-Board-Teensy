@@ -889,6 +889,7 @@ def test_picommander_no_timeline_never_sends():
 EXPECTED_SCENARIO_NAMES = {
     "steady", "step-load", "sag", "comm-loss", "drive",
     "charge-cruise", "charge-regen", "charge-fault", "soc-depletion",
+    "ems-drive-cycle",
     "handoff-sag", "bringup", "scp-inrush",
 }
 
@@ -988,7 +989,9 @@ def _run_main_csv(tmp_path, extra_args, name="run.csv"):
 def test_csv_schema_sim_mode_appends_soc(tmp_path):
     header, _rows = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "simple", "--duration", "0.02"])
-    assert header[-1] == "soc"
+    # cmd_v_sp/cmd_share_sp are appended UNCONDITIONALLY in simulated-plant
+    # mode (this round), after soc — so soc is now third-from-last.
+    assert header[-3:] == ["soc", "cmd_v_sp", "cmd_share_sp"]
     assert "elec_substep_hz" not in header
     assert "elec_events" not in header
     assert "replay_rec" not in header
@@ -997,7 +1000,8 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
 def test_csv_schema_hifi_mode_appends_elec_columns(tmp_path):
     header, _rows = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "hifi", "--duration", "0.02"])
-    assert header[-3:] == ["soc", "elec_substep_hz", "elec_events"]
+    assert header[-5:] == ["soc", "elec_substep_hz", "elec_events",
+                           "cmd_v_sp", "cmd_share_sp"]
 
 
 REPLAY_CSV_HEADER_PIN = [
@@ -1181,7 +1185,11 @@ def test_m3_hifi_with_csv_creates_events_sidecar(tmp_path):
     # durable cumulative counter, not len(electrical.events) which is
     # trimmed after every drain).
     assert rows, "expected at least one CSV row"
-    elec_events_col = rows[-1][-1]
+    # cmd_v_sp/cmd_share_sp are now unconditionally appended after the hifi
+    # elec_* columns in simulated-plant mode (INTENDED, this round), so
+    # elec_events is the third-from-last column, not the last.
+    assert header[-2:] == ["cmd_v_sp", "cmd_share_sp"]
+    elec_events_col = rows[-1][-3]
     assert elec_events_col.strip() != ""
     n_reported = int(elec_events_col)
     with open(sidecar, encoding="utf-8") as fh:
@@ -1206,6 +1214,452 @@ def test_m3_hifi_without_csv_does_not_crash(tmp_path):
                    "--rate", "200", "--scenario", "steady", "--electrical", "hifi",
                    "--duration", "0.02"])
     assert rc == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 11. EMS_STRATEGIES / ems_hold_5050 / PiCommander(policy=...)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_ems_strategies_registry_has_hold_5050():
+    assert "hold-5050" in hil.EMS_STRATEGIES
+    assert hil.EMS_STRATEGIES["hold-5050"] is hil.ems_hold_5050
+    assert "hold-5050" in hil.EMS_NAMES
+
+
+def test_ems_hold_5050_returns_constant_5050_split():
+    for t in (0.0, 1.0, 3.0, 10.0, 59.9):
+        out = hil.ems_hold_5050(t, {"v_profile": None})
+        assert out["power_share_setpoint"] == pytest.approx(0.50)
+
+
+def test_ems_hold_5050_mode_steps_at_run_entry():
+    before = hil.ems_hold_5050(hil.EMS_RUN_ENTRY_S - 0.01, {"v_profile": None})
+    at = hil.ems_hold_5050(hil.EMS_RUN_ENTRY_S, {"v_profile": None})
+    assert before["mode_cmd"] == hil.MODE_SAFE
+    assert at["mode_cmd"] == hil.MODE_HYBRID
+
+
+def test_ems_hold_5050_uses_v_profile_when_present_else_default_cruise():
+    out = hil.ems_hold_5050(5.0, {"v_profile": 2.75})
+    assert out["v_setpoint"] == pytest.approx(2.75)
+    out2 = hil.ems_hold_5050(5.0, {"v_profile": None})
+    assert out2["v_setpoint"] == pytest.approx(hil.EMS_DEFAULT_CRUISE_MPS)
+
+
+def test_ems_hold_5050_charge_goal_is_zero():
+    out = hil.ems_hold_5050(5.0, {"v_profile": None})
+    assert out["charge_goal"] == pytest.approx(0.0)
+
+
+def _fake_policy_unknown_field(t, fb):
+    return {"not_a_real_field": 1.0}
+
+
+def test_pi_commander_policy_unknown_field_raises_keyerror():
+    pc = hil.PiCommander(None, policy=_fake_policy_unknown_field, policy_name="fake")
+    with pytest.raises(KeyError):
+        pc.tick(0.0, lambda: {"t": 0.0})
+
+
+def _fake_policy_partial(t, fb):
+    # Only ever sets power_share_setpoint -- every other field must HOLD.
+    return {"power_share_setpoint": 0.50}
+
+
+def test_pi_commander_policy_held_field_semantics():
+    pc = hil.PiCommander(None, policy=_fake_policy_partial, policy_name="fake")
+    pc.state["v_setpoint"] = 1.23      # pre-seed a value the policy never touches
+    pkt = pc.tick(0.0, lambda: {"t": 0.0})
+    assert pkt is not None
+    assert pc.state["v_setpoint"] == pytest.approx(1.23), \
+        "a field the policy did not return must HOLD its previous value"
+    assert pc.state["power_share_setpoint"] == pytest.approx(0.50)
+
+
+def test_pi_commander_policy_active_true_with_no_timeline():
+    pc = hil.PiCommander(None, policy=hil.ems_hold_5050, policy_name="hold-5050")
+    assert pc.active() is True
+
+
+def test_pi_commander_fb_built_only_on_due_ticks():
+    """fb_factory must be invoked only when the 50 Hz commander tick is actually
+    due -- not once per (much faster) simulated sim tick."""
+    calls = {"n": 0}
+
+    def fb_factory():
+        calls["n"] += 1
+        return {"t": 0.0}
+
+    pc = hil.PiCommander(None, policy=hil.ems_hold_5050, policy_name="hold-5050",
+                          rate_hz=50.0)
+    period = 1.0 / 50.0
+    # Simulate a 1 kHz sim tick loop for 3 commander periods: 1 fb build per
+    # commander period, not per sim tick.
+    n_ticks = 0
+    t = 0.0
+    dt = 1.0 / 1000.0
+    while t < 3 * period + dt:
+        pc.tick(t, fb_factory)
+        n_ticks += 1
+        t += dt
+    assert n_ticks > 3 * period / dt * 0.9, "sanity: this loop really ran many sim ticks"
+    assert calls["n"] == pytest.approx(pc.policy_calls)
+    # Roughly one fb build per commander period (allow +/-1 for boundary rounding).
+    assert abs(calls["n"] - 3) <= 1
+
+
+# NOTE: the module documents a "telemetry-equivalent" fb-key subset in a
+# comment block above ems_hold_5050/PiCommander (t, v_actual, V_batt, I_batt,
+# I_charge, V_fc, I_fc, V_bus, V_rgn, V_chg, ag105_status, switch,
+# fault_flags) but does NOT expose it as a named constant anywhere in
+# hil_plant_sim.py -- there is nothing importable to pin against. Flagged as
+# a gap in the final report rather than asserting against a hand-copied
+# literal that could silently drift from the comment with no test failure.
+def test_pi_commander_fb_contains_all_keys_used_by_hold_5050_and_more():
+    """Sanity floor in place of the (missing) named constant above: capture the
+    real fb dict main() builds (via a probe policy) and check it is a strict
+    SUPERSET of every key ems_hold_5050 actually reads, plus the documented
+    plant-truth/observation-frame keys the module says are NOT portable."""
+    seen_fb = {}
+
+    def _probe(t, fb):
+        seen_fb.update(fb)
+        return {}
+
+    import socket as _socket
+
+    class _NullSocket:
+        def __init__(self, *a, **k):
+            pass
+
+        def setblocking(self, flag):
+            pass
+
+        def bind(self, addr):
+            pass
+
+        def sendto(self, data, addr):
+            return len(data)
+
+        def recvfrom(self, bufsize):
+            raise BlockingIOError()
+
+        def close(self):
+            pass
+
+    orig = _socket.socket
+    hil.socket.socket = _NullSocket
+    try:
+        hil.EMS_STRATEGIES["_probe"] = _probe
+        hil.EMS_NAMES.append("_probe")
+        rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "59000",
+                       "--bind-port", "0", "--rate", "500", "--scenario", "steady",
+                       "--electrical", "simple", "--duration", "0.05",
+                       "--ems", "_probe"])
+    finally:
+        hil.socket.socket = orig
+        del hil.EMS_STRATEGIES["_probe"]
+        hil.EMS_NAMES.remove("_probe")
+    assert rc == 0
+    assert seen_fb, "the probe policy must have been called at least once"
+    telemetry_equivalent = {
+        "t", "v_actual", "V_batt", "I_batt", "I_charge", "V_fc", "I_fc",
+        "V_bus", "V_rgn", "V_chg", "ag105_status", "switch", "fault_flags",
+    }
+    not_portable = {"soc", "v_profile", "state", "aux", "current"}
+    assert telemetry_equivalent <= set(seen_fb)
+    assert not_portable <= set(seen_fb)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 12. hold-5050 wire-truth: capture actual 22-byte command packets
+# ─────────────────────────────────────────────────────────────────────────
+
+class _CapturingSocket:
+    """Stand-in for socket.socket: records every sendto() payload/address,
+    never actually transmits (destination is unreachable/meaningless in
+    these tests), and answers recvfrom() as if nothing is waiting."""
+
+    def __init__(self, *a, **k):
+        self.sent = []          # list of (data, addr)
+
+    def setblocking(self, flag):
+        pass
+
+    def bind(self, addr):
+        pass
+
+    def sendto(self, data, addr):
+        self.sent.append((bytes(data), addr))
+        return len(data)
+
+    def recvfrom(self, bufsize):
+        raise BlockingIOError()
+
+    def close(self):
+        pass
+
+
+@pytest.fixture
+def capturing_socket(monkeypatch):
+    holder = {}
+
+    def _fake_socket(*a, **k):
+        s = _CapturingSocket()
+        holder["sock"] = s
+        return s
+
+    monkeypatch.setattr(hil.socket, "socket", _fake_socket)
+    return holder
+
+
+def test_ems_hold5050_wire_truth_share_field_is_0_5(capturing_socket):
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58994", "--bind-port", "0",
+                   "--rate", "500", "--scenario", "ems-drive-cycle",
+                   "--electrical", "simple", "--duration", "0.2", "--ems", "hold-5050"])
+    assert rc == 0
+    sock = capturing_socket["sock"]
+    # Pi-command packets are PI_CMD_SIZE (22) bytes with sync SYNC_BYTE_RX;
+    # injection frames are HIL_INJECT_SIZE (40) with HIL_SYNC_INJECT -- filter
+    # on size+sync to isolate the command packets actually placed on the wire.
+    cmd_packets = [d for d, _addr in sock.sent
+                   if len(d) == hil.PI_CMD_SIZE and d[0] == hil.SYNC_BYTE_RX]
+    assert cmd_packets, "expected at least one 22-byte Pi command packet"
+    import struct as _struct
+    for pkt in cmd_packets:
+        _ts, _ctr, _v_sp, share_sp, _cg, _mode, _drp = _struct.unpack_from(
+            "<IHfffBB", pkt, 1)
+        assert share_sp == pytest.approx(0.50, abs=1e-6)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 13. --ems CLI
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_ems_without_explicit_scenario_falls_back_to_default_scenario(capturing_socket):
+    """SUSPECTED DEFECT (see final report): the --ems help text says "requires
+    --scenario", but main() has no check enforcing it -- omitting --scenario
+    just falls back to the default 'steady' scenario (`scenario = args.scenario
+    or "steady"`) and runs --ems against it rather than refusing. This test
+    pins the ACTUAL behavior rather than asserting the documented-but-
+    unenforced refusal, so it does not mask the gap under a false green."""
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "59001", "--bind-port", "0",
+                   "--rate", "500", "--duration", "0.05",
+                   "--ems", "hold-5050"])
+    assert rc == 0
+
+
+def test_ems_refused_with_replay(tmp_path):
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    with pytest.raises(SystemExit):
+        hil.main(["--replay", blg_path, "--ems", "hold-5050"])
+
+
+def test_ems_and_pi_live_mutually_exclusive():
+    with pytest.raises(SystemExit):
+        hil.main(["--scenario", "steady", "--ems", "hold-5050", "--pi-live"])
+
+
+def test_ems_replaces_pi_timeline_prints_notice(capsys, capturing_socket):
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58995", "--bind-port", "0",
+                   "--rate", "500", "--scenario", "charge-cruise",
+                   "--electrical", "simple", "--duration", "0.05", "--ems", "hold-5050"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "REPLACES" in out
+    assert "charge-cruise" in out
+
+
+def test_ems_default_cli_replaces_ems_drive_cycle_own_ems_no_double_notice(
+        capsys, capturing_socket):
+    """ems-drive-cycle already declares its OWN default ems strategy and NO
+    pi_timeline -- selecting it (with no explicit --ems) must not print the
+    REPLACES-a-timeline notice, since there is no timeline to replace."""
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58996", "--bind-port", "0",
+                   "--rate", "500", "--scenario", "ems-drive-cycle",
+                   "--electrical", "simple", "--duration", "0.05"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "REPLACES" not in out
+    assert "EMS strategy: hold-5050" in out
+
+
+class _CapturingDashboard:
+    """Local copy of the pattern in test_hil_dashboard.py's _CapturingDashboard
+    (that file is out of this round's scope to edit) -- captures every
+    snapshot assignment without touching a real terminal."""
+
+    def __init__(self, *a, **k):
+        self.snapshots = []
+        self._snapshot = None
+        self.error = None
+
+    def start(self):
+        return True
+
+    def stop(self):
+        pass
+
+    @property
+    def snapshot(self):
+        return self._snapshot
+
+    @snapshot.setter
+    def snapshot(self, value):
+        self._snapshot = value
+        self.snapshots.append(value)
+
+
+@pytest.fixture
+def capturing_dashboard(monkeypatch):
+    instances = []
+
+    class _Recording(_CapturingDashboard):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            instances.append(self)
+
+    monkeypatch.setitem(sys.modules, "hil_dashboard", type(sys)("hil_dashboard"))
+    sys.modules["hil_dashboard"].Dashboard = _Recording
+    return instances
+
+
+def test_ems_dashboard_snapshot_reflects_ems_values(tmp_path, capturing_dashboard,
+                                                     capturing_socket):
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58997", "--bind-port", "0",
+                   "--rate", "500", "--scenario", "ems-drive-cycle",
+                   "--electrical", "simple", "--duration", "0.1", "--ems", "hold-5050",
+                   "--dash"])
+    assert rc == 0
+    instances = capturing_dashboard
+    assert len(instances) == 1
+    snaps = instances[0].snapshots
+    assert snaps
+    # The EMS policy always sets share_sp = 0.50 and v_sp to the scenario's
+    # own v_profile (or the default cruise) -- never None, since the EMS
+    # commander is always .active().
+    assert any(s["share_sp"] == pytest.approx(0.50) for s in snaps)
+    assert any(s["v_sp"] is not None for s in snaps)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 14. "ems-drive-cycle" scenario
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_ems_drive_cycle_in_scenarios_with_electrical_and_duration():
+    meta = hil.SCENARIOS["ems-drive-cycle"]
+    assert meta["electrical"] in ("simple", "hifi", "any")
+    assert meta["duration_s"] == pytest.approx(60.0)
+    assert meta.get("ems") == "hold-5050"
+    assert not meta.get("pi_timeline")
+
+
+def test_ems_drive_cycle_profile_hits_standstill_and_cruise():
+    profile = hil.SCENARIOS["ems-drive-cycle"]["ems_v_profile"]
+    # Standstill segments (0-3 s and 52-60 s per the module comment).
+    assert hil.piecewise(profile, 0.0) == pytest.approx(0.0)
+    assert hil.piecewise(profile, 1.5) == pytest.approx(0.0)
+    assert hil.piecewise(profile, 58.0) == pytest.approx(0.0)
+    # Cruise segments.
+    assert hil.piecewise(profile, 20.0) == pytest.approx(1.5)
+    assert hil.piecewise(profile, 35.0) == pytest.approx(2.0)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 15. --pi-live
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_pi_live_sends_no_command_packets_only_injection_frames(capturing_socket):
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58998", "--bind-port", "0",
+                   "--rate", "500", "--scenario", "steady",
+                   "--electrical", "simple", "--duration", "0.05", "--pi-live"])
+    assert rc == 0
+    sock = capturing_socket["sock"]
+    assert sock.sent, "expected injection frames to be sent"
+    for data, _addr in sock.sent:
+        assert not (len(data) == hil.PI_CMD_SIZE and data[0] == hil.SYNC_BYTE_RX), \
+            "no 22-byte Pi command packet may be sent under --pi-live"
+        assert len(data) == hil.HIL_INJECT_SIZE
+        assert data[0] == hil.HIL_SYNC_INJECT
+
+
+def test_pi_live_and_ems_refused():
+    with pytest.raises(SystemExit):
+        hil.main(["--scenario", "steady", "--pi-live", "--ems", "hold-5050"])
+
+
+def test_pi_live_with_pi_timeline_scenario_refused():
+    with pytest.raises(SystemExit):
+        hil.main(["--scenario", "charge-cruise", "--pi-live"])
+
+
+def test_pi_live_with_ems_only_scenario_not_refused_potential_gap(capturing_socket):
+    """POTENTIAL GAP (see final report, not asserted as required by the task
+    spec): the documented --pi-live refusal only checks meta['pi_timeline'],
+    not meta['ems'] (.ino-adjacent code: `if args.pi_live and not args.replay
+    and meta.get("pi_timeline")`). 'ems-drive-cycle' carries meta['ems'] but
+    NO pi_timeline, so --pi-live + ems-drive-cycle currently runs to
+    completion silently (no commander is ever created, so the scenario's
+    whole stimulus -- the EMS command stream -- never happens; the run is a
+    60 s no-op from the command-link perspective). Pinning actual behavior."""
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "59002", "--bind-port", "0",
+                   "--rate", "500", "--scenario", "ems-drive-cycle",
+                   "--electrical", "simple", "--duration", "0.05", "--pi-live"])
+    assert rc == 0
+    sock = capturing_socket["sock"]
+    cmd_packets = [d for d, _addr in sock.sent
+                   if len(d) == hil.PI_CMD_SIZE and d[0] == hil.SYNC_BYTE_RX]
+    assert cmd_packets == []
+
+
+def test_pi_live_dashboard_snapshot_setpoints_are_none(tmp_path, capturing_dashboard,
+                                                        capturing_socket):
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58999", "--bind-port", "0",
+                   "--rate", "500", "--scenario", "steady", "--electrical", "simple",
+                   "--duration", "0.05", "--pi-live", "--dash"])
+    assert rc == 0
+    snaps = capturing_dashboard[0].snapshots
+    assert snaps
+    assert all(s["v_sp"] is None for s in snaps)
+    assert all(s["share_sp"] is None for s in snaps)
+
+
+def test_pi_live_csv_cmd_columns_blank(tmp_path):
+    header, rows = _run_main_csv(
+        tmp_path, ["--scenario", "steady", "--electrical", "simple",
+                   "--duration", "0.02", "--pi-live"])
+    assert header[-2:] == ["cmd_v_sp", "cmd_share_sp"]
+    v_idx, share_idx = header.index("cmd_v_sp"), header.index("cmd_share_sp")
+    assert rows, "expected at least one CSV row"
+    for row in rows:
+        assert row[v_idx] == ""
+        assert row[share_idx] == ""
+
+
+def test_ems_csv_cmd_columns_populated(tmp_path):
+    header, rows = _run_main_csv(
+        tmp_path, ["--scenario", "ems-drive-cycle", "--electrical", "simple",
+                   "--duration", "0.05", "--ems", "hold-5050"])
+    v_idx, share_idx = header.index("cmd_v_sp"), header.index("cmd_share_sp")
+    assert rows
+    assert any(row[share_idx] != "" for row in rows)
+    for row in rows:
+        if row[share_idx] != "":
+            assert float(row[share_idx]) == pytest.approx(0.50)
+
+
+def test_plain_scenario_csv_cmd_columns_reflect_timeline_or_blank(tmp_path):
+    """A plain scripted scenario (default mode, no --ems/--pi-live) still has
+    an active commander whenever the scenario declares a pi_timeline, so its
+    cmd_* columns populate once the first packet has gone out; 'steady' (no
+    timeline) leaves them blank throughout."""
+    header, rows = _run_main_csv(
+        tmp_path, ["--scenario", "steady", "--electrical", "simple", "--duration", "0.02"])
+    v_idx, share_idx = header.index("cmd_v_sp"), header.index("cmd_share_sp")
+    assert rows
+    for row in rows:
+        assert row[v_idx] == ""
+        assert row[share_idx] == ""
 
 
 if __name__ == "__main__":
