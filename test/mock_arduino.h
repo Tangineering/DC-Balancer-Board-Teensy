@@ -40,7 +40,19 @@ typedef unsigned char  byte;
 inline uint32_t g_mock_millis = 0;
 inline uint32_t g_mock_micros = 0;
 
-inline uint32_t millis()  { return g_mock_millis; }
+// TEST-ONLY LIVE-LINK MODEL (fw v22, S3). Point this at the firmware's hilLastFrameMs to model a
+// simulator STREAMING injection frames: with a real 1 kHz stream that timestamp tracks the clock,
+// so "link fresh" is true on every tick no matter how far a test advances g_mock_millis. Needed
+// because busBringupTick() re-checks link freshness on EVERY tick (it aborts a bring-up whose plant
+// has gone away), whereas the pre-S3 fixtures primed one frame and then advanced time freely.
+// nullptr (the default, restored by mock_reset()) leaves millis() untouched, so the staleness /
+// hold / dead-link tests still control hilLastFrameMs by hand.
+inline uint32_t* g_mock_millis_track = nullptr;
+
+inline uint32_t millis()  {
+    if (g_mock_millis_track) *g_mock_millis_track = g_mock_millis;
+    return g_mock_millis;
+}
 inline uint32_t micros()  { return g_mock_micros; }
 inline void delay(unsigned long)             {}
 inline void delayMicroseconds(unsigned int)  {}
@@ -169,6 +181,7 @@ inline String operator+(const char* c, const String& str) {
 // ── State reset helper ────────────────────────────────────────────────────────
 // Call before each test to clear accumulated mock state.
 inline void mock_reset() {
+    g_mock_millis_track = nullptr;
     g_mock_millis = 0;
     g_mock_micros = 0;
     memset(g_analog_pin, 0, sizeof(g_analog_pin));

@@ -1064,6 +1064,55 @@
  *          reads in the build-independent diagnostics section; the pitch-fraction arithmetic is
  *          entirely in the ISRs. All three are also surfaced in the State-98 'S' dump as pitch
  *          fractions (value/256.0), bench-first.
+ *  - fw v22 (2026-08-30) — HIL SEQUENTIAL RUNS: State-0 injection wait gate + auto-recovery from
+ *      the HIL dead-link latch. EVERY change is inside #if HIL_SIM; a non-HIL build has no
+ *      behavioural change other than the FW_VERSION stamp (same pins, sequencing, faults,
+ *      telemetry v4/58 B, command packet, BLG record v7/106 B and controller coefficients). WHY: an HIL session cost one physical
+ *      power cycle per run. The board latched State 99 the moment the simulator stopped
+ *      (FAULT_HIL_LINK / ERR_HIL_STALE, by design since fw v21) and stayed latched, so a suite of
+ *      38 runs meant 38 trips to the bench.
+ *      (a) STATE 0 UNDER HIL ALWAYS RUNS THE STAGED BRING-UP. The BENCH_TEST dark-boot bypass
+ *          exists because enabling a boost at boot on a soft bench supply browns the Teensy out —
+ *          a statement about a REAL power stage. Under HIL_SIM there is no power stage and every
+ *          sensor is injected, so the rationale is void and the bypass merely made a BENCH_TEST=1
+ *          HIL flash unable to reach Run without an operator pressing 'T'/'G'/'Q'. HIL builds now
+ *          take busBringupStart()/busBringupTick(true) at BOTH BENCH_TEST values; non-HIL builds
+ *          keep the fw v21 behaviour verbatim.
+ *      (b) INJECTION WAIT GATE. Before ARMING the bring-up machine, a HIL build waits (1 Hz
+ *          notice, non-blocking, detectFaults() live) until the injection link is up and fresh
+ *          (hilHaveFrame && age <= HIL_STALE_MS). No bring-up phase clock starts before the plant
+ *          exists, so the documented fw v21 boot-order race — a production HIL flash latching
+ *          INIT_FAIL ~800 ms after power-on if the simulator had not started — is REMOVED, not
+ *          merely documented. The gate is armed-once: it guards the START only, so a mid-bring-up
+ *          link hiccup is handled by the existing two-stage hold-then-zero, not by stalling a
+ *          machine whose phase timeouts are already running.
+ *      (c) AUTO-RECOVERY FROM THE DEAD-LINK LATCH. In state99Phase == 3 (teardown COMPLETE, stage
+ *          dark) a HIL build re-enters State 0 when ALL of: error_code == ERR_HIL_STALE AND
+ *          fault_flags == (FAULT_ERROR | FAULT_PI_TIMEOUT) EXACTLY (0x8010 — FAULT_HIL_LINK is an
+ *          alias of FAULT_PI_TIMEOUT, so any OTHER bit means a real fault also latched and the
+ *          board must stay latched); the link has been continuously fresh for
+ *          HIL_RECOVER_DEBOUNCE_MS (500 ms > HIL_ZERO_MS, so a flapping link cannot oscillate
+ *          latch/recover); and the SD bench log is fully closed and drained. hilWarmReset()
+ *          restores the software state machine to its boot values and sets mainState = 0; it
+ *          touches NO pin — phase 2 already left the stage exactly as setup() does, except
+ *          BT_SEQUENCE_ENABLE, which the IO CSV says need not be turned off and which bring-up P1
+ *          drives HIGH anyway. Recovery itself therefore opens and closes no switch: only the
+ *          staged machine sequences the stage (CLAUDE.md §2).
+ *      (d) FIX ROUND. Four changes closing gaps the reviews found in (a)-(c), all HIL-gated:
+ *          - busBringupTick() aborts a bring-up whose injection link has gone stale, at the TOP of
+ *            the tick, ahead of every phase gate (S3). The bug: the phase clocks run on millis()
+ *            while the sensor values are HELD, so a phase timeout could latch FAULT_INIT_FAIL /
+ *            FAULT_MOT_HOTPLUG — outside the recovery admission — turning "the operator stopped
+ *            the simulator" into a permanent latch. The abort is busBringupAbort()'s dark teardown
+ *            and no fault; State 0's wait gate re-arms the machine when frames return.
+ *          - updateSensors() publishes ZEROS, not floating real ADCs, before the first accepted
+ *            frame (S7). The wait gate is unbounded, an HIL target is a bare Teensy, and OV faults
+ *            are not recoverable — a floating pin could latch the board before the plant appears.
+ *          - hilWarmReset() re-anchors droopSlew_prev / shareHandoffPrevRatio to 0.5 (S2), because
+ *            the post-recovery bring-up re-writes the MDACs to 50/50 and the "MDACs hold the split
+ *            across a reset" invariant does not survive that; and clears logManualActive (S8).
+ *          - The source default is HIL_SIM 0 (S1): an ordinary flash is a normal bench build.
+ *            A HIL_SIM=1 flash is unusable on a bench without a simulator, because of (a).
  */
 
 #include <stddef.h>             // offsetof — pins the append-only BenchLogRecord field offsets
@@ -2458,7 +2507,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 21
+#define FW_VERSION 22
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -2482,8 +2531,15 @@ bool wheelSpeedResetPending = false;
 // NEVER flash a HIL_SIM=1 build onto a board attached to a live power stage: the
 // firmware's picture of the hardware is fiction, so its switch decisions are too.
 // Overridable via -DHIL_SIM=1 (same pattern as BENCH_TEST).
+// DEFAULT 0 — an ordinary flash is a NORMAL BENCH BUILD. Set this to 1 (or build with
+// -DHIL_SIM=1) only for an HIL flash, and note what that flash costs on a bench: fw v22's
+// State-0 injection wait gate means a HIL_SIM=1 build NEVER leaves State 0 — no bring-up, no
+// Idle, no State-98 console — until a simulator is streaming injection frames at it. So a
+// HIL_SIM=1 build is unusable on a bench without tools/hil_plant_sim.py running, and the
+// symptom is the once-per-second "State 0: waiting for HIL injection stream..." line rather
+// than any fault. See docs/HIL_USER_MANUAL.md §2.4.
 #ifndef HIL_SIM
-#define HIL_SIM 1
+#define HIL_SIM 0
 #endif
 
 // ── Network config ────────────────────────────────────────────────────────────
@@ -2652,6 +2708,24 @@ IPAddress      hilHostIp(0, 0, 0, 0);   // learned on the first accepted frame, 
                                         // first frame after the link goes dead (see receiveCommands)
 uint16_t       hilHostPort   = 0;
 bool           hilHostLocked = false;   // true while a host is bound; cleared when the link dies
+
+// ── HIL auto-recovery from the dead-link latch (fw v22) ──────────────────────
+// A dead injection link latches State 99 (FAULT_HIL_LINK / ERR_HIL_STALE) by design — with no
+// plant behind the numbers the board must stop sequencing against fiction. Before fw v22 that
+// latch was permanent, so every HIL run in a suite cost a physical power cycle. doState99() now
+// warm-resets back to State 0 once the link is demonstrably back, under the narrow conditions
+// documented at the recovery block. NOT a general fault-recovery mechanism: it is reachable only
+// for the exact 0x8010 fault union, only under HIL_SIM, and only after the teardown has finished.
+//
+// DEBOUNCE: the link must be continuously fresh for this long before the reset is taken. 500 ms is
+// deliberately LONGER than HIL_ZERO_MS (250 ms): a link that flaps at the dead-link boundary would
+// otherwise re-latch and re-recover indefinitely, cycling the board through bring-up on every
+// flap. With the debounce longer than the fault's own dead-time, a marginal link settles into the
+// latched state (visible, diagnosable) instead of oscillating.
+#define HIL_RECOVER_DEBOUNCE_MS 500u
+uint32_t       hilRecoverArmMs  = 0;      // millis() when the current continuously-fresh window began
+bool           hilRecoverArmed  = false;  // a fresh-link window is open (re-armed on any staleness)
+uint32_t       hilWarmResetCount = 0;     // diagnostics: warm resets taken since power-on ('S' dump)
 
 // ── UDP receive-drain instrumentation (fw v21 MED-1) ─────────────────────────
 // receiveCommands() used to consume exactly ONE datagram per loop tick. At the HIL injection rate
@@ -3225,6 +3299,11 @@ void doEncoderB();
 bool busBringupStart();
 BringupStatus busBringupTick(bool doInit);
 void busBringupAbort();
+// Droop/share MDAC-truth anchors — DEFINED further down (next to applyShareRatio() and the fw v19
+// conduction-aware slew limiter, which own them). Declared here only so hilWarmReset() (S2) can
+// follow the hardware back to the 50/50 split that the post-recovery initMdacOutputs() writes.
+extern float droopSlew_prev;
+extern float shareHandoffPrevRatio;
 bool busHotPlugUnsafe(int regPin);
 void commandMotorCurrent(float amps);
 void motorControl();
@@ -4140,10 +4219,13 @@ void setup() {
     Serial.println("*  V_fc/V_batt/V_bus/V_chg/V_rgn/I_fc/I_batt/v_actual come     *");
     Serial.println("*  from tools/hil_plant_sim.py, NOT from this board's ADCs.    *");
     Serial.println("*  NEVER RUN THIS BUILD WITH A LIVE POWER STAGE CONNECTED.     *");
-    Serial.println("*  START tools/hil_plant_sim.py BEFORE POWERING THE BOARD:     *");
-    Serial.println("*  on a production (BENCH_TEST=0) flash the staged bring-up    *");
-    Serial.println("*  reads real ADCs until the first frame lands and will latch  *");
-    Serial.println("*  INIT_FAIL at ~800 ms if injection has not started.          *");
+    // fw v22: the boot-order race is GONE. State 0 waits (1 Hz notice, no bring-up phase clock
+    // running) until the injection link is up and fresh before arming the staged machine, so the
+    // simulator may be started at any time after power-on. Start order is now a convenience, not a
+    // precondition — and a dead link auto-recovers from State 99 instead of latching for good.
+    Serial.println("*  START ORDER IS FREE (fw v22): State 0 waits for the         *");
+    Serial.println("*  injection stream, and a dead link warm-resets back to       *");
+    Serial.println("*  State 0 once tools/hil_plant_sim.py is streaming again.     *");
     Serial.println("****************************************************************");
 #endif
 
@@ -4452,9 +4534,30 @@ void updateSensors() {
         // estimator back control.
         return;
     }
-    // No frame has EVER arrived: fall through to the real ADCs. That keeps a HIL flash readable on
-    // a bench with the simulator not yet started (the values are meaningless but bounded), and it
-    // means the link coming up is a clean one-way transition.
+    // ── S7: NO FRAME HAS EVER ARRIVED → PUBLISH ZEROS, NEVER THE REAL ADCs ──────────────────
+    // fw v21 fell through to analogRead() here, on the theory that meaningless-but-bounded values
+    // keep a HIL flash readable on a bench. fw v22 makes that unsafe: the State-0 wait gate holds
+    // the board in State 0 for an UNBOUNDED time before the simulator starts, and on a bare
+    // Teensy (the HIL target — no PCB, that is the point) the analog pins FLOAT. A floating input
+    // sitting near the rail reads as ~V_max on the divider scale, and the OV checks are NOT in the
+    // recoverable fault set (doState99() admits only fault_flags == 0x8010 / ERR_HIL_STALE), so a
+    // single float excursion latches the board permanently before the plant ever appears.
+    // An HIL build must never trust a real ADC — its picture of the hardware is fiction by
+    // construction. Zero is the honest value for "no plant yet", and it is inert: every OV check
+    // is a `> LIMIT` test against a positive limit, and every UV check is armed only by a matched
+    // source pair (bus switch closed AND that channel's boost enabled), which cannot exist while
+    // the wait gate holds the stage dark. So zeros latch nothing.
+    // updateWheelSpeed() is deliberately still skipped for the same reason as the injected branch
+    // (the estimator's output is unread in this build); v_actual is zeroed here instead.
+    I_fc     = 0.0f;
+    I_batt   = 0.0f;
+    V_fc     = 0.0f;
+    V_batt   = 0.0f;
+    V_bus    = 0.0f;
+    V_chg    = 0.0f;
+    V_rgn    = 0.0f;
+    v_actual = 0.0f;
+    return;
 #endif
     updateWheelSpeed();
 
@@ -5092,7 +5195,52 @@ static void initControlPeripherals() {
 }
 
 void doState0() {
-#if BENCH_TEST
+#if HIL_SIM
+    // ── HIL State 0 (fw v22) ─────────────────────────────────────────────────────────────────
+    // Under HIL_SIM this branch replaces BOTH fw v21 paths, at either BENCH_TEST value.
+    //
+    // WHY THE BENCH_TEST BYPASS IS VOID HERE: the dark-boot bypass below exists because enabling a
+    // boost at boot on a soft, current-limited bench supply sags VBT, browns out the board-powered
+    // Teensy and motorboats the reboot. That is a statement about a REAL power stage. An HIL build
+    // has none — every rail, current and speed is injected fiction — so the bypass bought nothing
+    // and cost everything: a BENCH_TEST=1 HIL flash could not reach Run at all without an operator
+    // at the USB console driving 'T'/'G'/'Q'. Sequential unattended runs need State 0 to bring the
+    // (simulated) stage up by itself, so HIL builds always take the staged machine.
+    //
+    // INJECTION WAIT GATE: the machine is not ARMED until the link is up and FRESH. Every bring-up
+    // phase is timeout-gated against millis(), so arming before the simulator is streaming starts
+    // clocks against a plant that does not exist yet — exactly the fw v21 boot-order race, where a
+    // production HIL flash latched INIT_FAIL ~800 ms after power-on unless the operator had started
+    // the simulator first. Waiting here removes the race instead of documenting it.
+    // This gate guards the START; once bringupActive, busBringupTick() applies the SAME freshness
+    // test at the top of every tick and ABORTS (not faults) on a mid-bring-up link loss — see the
+    // S3 block there. Together the two checks mean the phase clocks only ever run against a live,
+    // fresh plant.
+    // Non-blocking: this returns, so loop() keeps calling updateSensors()/detectFaults() every
+    // tick. A dark wait cannot latch a spurious UV: uvBusArmed is armed only by a MATCHED SOURCE
+    // PAIR (bus switch closed AND that channel's boost enabled) and the stage is dark here, so the
+    // UV check is disarmed and its dwell integrator is dumped every tick (see detectFaults()).
+    if (!bringupActive) {
+        bool linkFresh = hilHaveFrame && ((millis() - hilLastFrameMs) <= HIL_STALE_MS);
+        if (!linkFresh) {
+            static uint32_t lastWaitPrint = 0;
+            if (millis() - lastWaitPrint >= 1000) {
+                lastWaitPrint = millis();
+                Serial.println("State 0: waiting for HIL injection stream...");
+            }
+            return;
+        }
+        busBringupStart();
+    }
+    {
+        BringupStatus st = busBringupTick(true);   // doInit: State 0 owns peripheral init
+        if (st == BRINGUP_DONE) {
+            Serial.println("State 0 -> State 1 (IDLE) [HIL: staged bring-up on the simulated plant]");
+            mainState = 1;
+        }
+        // BRINGUP_FAILED: busBringupTick() already latched State 99 via triggerFault().
+    }
+#elif BENCH_TEST
     // BENCH bring-up bypass — boot to Idle with the power stage DARK (boosts, bus switches, and
     // BT_SEQUENCE all stay LOW from setup()), and do NOT gate on V_bus.
     //
@@ -5284,6 +5432,173 @@ void doState3() {
     mainState = 1;
 }
 
+#if HIL_SIM
+// ── HIL warm reset (fw v22) ──────────────────────────────────────────────────────────────────
+// Restores the SOFTWARE state machine to its boot values and re-enters State 0, so a HIL suite can
+// run back-to-back cases without a physical power cycle. Called from ONE place only: doState99()'s
+// recovery block, which gates it on the exact dead-link fault union, a debounced live link, and a
+// fully-closed bench log. See that block for the admission rules — this function does not check
+// them and must never be called from anywhere else.
+//
+// NO PIN IS TOUCHED HERE, deliberately. State-99 phase 2 has already left the stage in exactly the
+// setup() configuration — boosts LOW, all four path switches LOW, MPPT_DISABLE LOW, CBAL_DISABLE
+// LOW — with ONE exception: BT_SEQUENCE_ENABLE is left HIGH. That is acceptable and intended: the
+// IO CSV's note for pin 32 says the battery sequencing switch does not need to be turned off again
+// once the system is up, and bring-up phase P1 drives it HIGH regardless, so State 0 finds it in
+// the state it would have driven anyway. Driving pins here would also violate CLAUDE.md §2 — only
+// the staged bring-up machine sequences the power path, and it re-derives the whole sequence.
+void hilWarmReset() {
+    hilWarmResetCount++;
+    Serial.println("[HIL] link recovered — warm reset, re-entering State 0");
+    Serial.print  ("[HIL] this is a RUN SEPARATOR: fault/error latches, controller state, Pi "
+                   "command state and the bring-up machine are back at boot values (warm reset #");
+    Serial.print(hilWarmResetCount);
+    Serial.println("). Boot-monotonic diagnostics (encoder edge counters, HIL frame counters, "
+                   "OV/UV transient counts) are NOT cleared — they stay cumulative across runs.");
+
+    // ── Fault / error latches ────────────────────────────────────────────────
+    fault_flags        = 0;
+    error_code         = ERR_NONE;
+    error_source_state = 0;
+    state99Phase       = 0;   // doState99()'s function-static phaseStart is re-stamped by case 0
+                              // on the next entry, so it needs no separate reset.
+
+    // ── Armed-fault state (the dwell integrators and their arming latches) ───
+    // Boot values. detectFaults() would disarm most of these on its own against a dark stage, but
+    // a warm reset is a run boundary: carrying a partially-accumulated dwell into the next run
+    // could let two unrelated runs add up into a latch, which is exactly the cross-run leakage the
+    // disarm path already exists to prevent. The TRANSIENT COUNTERS are deliberately left alone —
+    // they are boot-cumulative diagnostics, like the encoder edge counters.
+    uvBusArmed       = false;
+    uvBusUnderActive = false;
+    uvBusDwellMs     = 0.0f;
+    uvBusLastTickMs  = millis();
+    ovBusOverActive  = false;
+    ovBusOverSamples = 0;
+    fcUvArmed        = false;
+    fcUvUnderActive  = false;
+    fcUvDwellMs      = 0.0f;
+    fcUvLastTickMs   = millis();
+
+    // ── Motor / drive controller ─────────────────────────────────────────────
+    // The shared stop primitive: zeroes v_setpoint and the manual-motor state, clears the PI
+    // accumulator, resets the Youla drive controller's 5 states and sends 0 A. It touches no
+    // power-path switch, which is why it is safe here.
+    haltMotorOutput();
+
+    // ── Power-share loop ─────────────────────────────────────────────────────
+    // resetShareControlState() re-seeds the controller core, the governor filter and the fw v19
+    // conduction/slew state. The isolation + setpoint-cut latches are NOT owned by it, and
+    // doState99() phase 0 clears only three of the four (shareIsoFC, shareSpCutFC, shareSpCutBT) —
+    // shareIsoBT is left set if the share loop had cut BT off the bus. Clear all four: both bus
+    // switches are open by state action, so no claim is outstanding, and a surviving latch would
+    // freeze the share loop on the next run (same argument as busBringupAbort()/safeAllSwitches()).
+    resetShareControlState();
+    shareIsoFC   = false;
+    shareIsoBT   = false;
+    shareSpCutFC = false;
+    shareSpCutBT = false;
+    powerBalanceLive = false;
+    pi_power_accum   = 0.0f;
+    // S2: the MDAC-truth anchors must follow the HARDWARE to 50/50. resetShareControlState()
+    // deliberately does NOT touch droopSlew_prev / shareHandoffPrevRatio, and that non-touch is
+    // correct for an in-session reset because the MDACs physically HOLD the last applied split
+    // across it. That invariant does NOT survive a warm reset: the post-recovery bring-up re-runs
+    // initControlPeripherals() at phase P1, whose initMdacOutputs() re-writes both channels to the
+    // 50/50 codes. Leaving the anchors at (say) 0.85 would make the next run's first
+    // applyShareRatio() see a 0.35 "motion" against hardware that is actually at 0.5 — defeating
+    // the fw v19 conduction-aware slew limiter with a single unbounded step. Follow the hardware.
+    droopSlew_prev         = 0.5f;
+    shareHandoffPrevRatio  = 0.5f;
+
+    // ── Control rate limiters ────────────────────────────────────────────────
+    // Back-dated so the first tick of the new run is a control tick (and its first logged sample).
+    resetControlRateLimiters();
+
+    // ── State-transition flags ───────────────────────────────────────────────
+    changeToRun = false;
+    changeToFin = false;
+
+    // ── Bring-up machine ─────────────────────────────────────────────────────
+    // busBringupTick()'s failure path and busBringupAbort() both clear bringupActive already, but
+    // this is asserted rather than assumed: busBringupStart() REFUSES to arm while bringupActive is
+    // true, so a leaked flag would silently strand State 0 forever. bringupPhase is set for the
+    // same determinism (busBringupStart() sets it too). No pin write — that is busBringupAbort()'s
+    // job, and the teardown has already done the equivalent.
+    bringupActive = false;
+    bringupPhase  = 0;
+
+    // ── Pi command state → boot defaults ─────────────────────────────────────
+    // Same values as the initializers at the "Commands received from Pi" block. mode_cmd = 4 is
+    // SAFE, so a warm reset cannot re-enter Run on a stale MODE_HYBRID: the next Run entry needs a
+    // fresh command packet from the Pi/EMS, which is the intended unattended-rerun path
+    // (receiveCommands() only acts on mode_cmd when mainState == 1).
+    v_setpoint           = 0.0f;   // (haltMotorOutput() already did this; restated for the record)
+    power_share_setpoint = 0.5f;
+    charge_goal          = 0.0f;
+    mode_cmd             = 4;      // SAFE
+    // Pi watchdog re-arms exactly as after a boot: it is inert until the first packet arrives
+    // (pi_ever_connected), and last_rx_ms is stamped now so the first armed evaluation after a
+    // reconnect cannot see a 500 ms-old timestamp from the previous run.
+    pi_ever_connected = false;
+    last_rx_ms        = millis();
+
+    // ── Ag105 charger session state ──────────────────────────────────────────
+    // The charger is unpowered (every charger power path is open after the teardown), so this is
+    // the same state pollAg105()'s power-loss re-arm would leave behind. ag105Configured is also
+    // cleared by initControlPeripherals() at bring-up phase P1 (S4: NOT by doState0() itself —
+    // doState0() only drives the bring-up machine); the rest is cleared here so the next run
+    // cannot read a stale status byte as valid before its first poll.
+    ag105Configured  = false;
+    ag105DataValid   = false;
+    ag105HadPower    = false;
+    ag105PowerOnMs   = 0;
+    ag105_status_raw = 0;
+    I_charge         = 0.0f;
+
+    // ── State-98 bench-tool residue ──────────────────────────────────────────
+    // State 98 is reachable from Idle ('T'), so a fault taken during a bench profile lands here
+    // with the profile's ownership flags still set. triggerFault() closes the LOG but clears none
+    // of these. A surviving flag would make the next run's State-98 entry refuse to start a
+    // profile ("already running") or advance a profile nobody armed, so clear the lot. Cheap and
+    // unconditional: on a Pi/EMS-driven HIL run they are all already false.
+    driveCycleActive         = false;
+    powerShareProfileActive  = false;
+    trapProfileActive        = false;
+    combinedProfileActive    = false;
+    wProfileActive           = false;
+    tsweepActive             = false;
+    vescWatchActive          = false;
+    plotModeActive           = false;
+    plotArmTarget            = PLOT_ARM_NONE;
+    pendingInput             = PEND_NONE;
+    inputBufIdx              = 0;
+    // S8: log ownership. The recovery admission gate already requires the bench log to be fully
+    // closed (!logActive && !logCloseRequested && !logFile.isOpen()), and logFinishFile() clears
+    // this flag on every close path — so this is defence in depth, not a live fix. It matters if
+    // that gate is ever relaxed: a leaked logManualActive would make the next run's 'K 0' close a
+    // log it does not own, or mis-label a profile log's ownership in printSdStatus().
+    logManualActive          = false;
+
+    // ── Velocity estimator ───────────────────────────────────────────────────
+    // Under an active HIL link updateSensors() is v_actual's sole writer and returns before
+    // updateWheelSpeed(), so the estimator is inert; the reset keeps the two builds' warm-reset
+    // semantics identical and costs nothing.
+    encoderVelReset();
+    wheelSpeedResetPending = false;
+
+    // ── Recovery arming ──────────────────────────────────────────────────────
+    // Disarm so the NEXT dead-link latch starts its debounce window from scratch. hilStale /
+    // hilZeroed are not touched here: updateSensors() clears both at the top of every loop tick on
+    // which a fresh frame is present, and the recovery gate above requires exactly that, so they
+    // are already false by the time this runs.
+    hilRecoverArmed = false;
+    hilRecoverArmMs = 0;
+
+    mainState = 0;   // State 0 re-runs the injection wait gate + the staged bring-up
+}
+#endif
+
 void doState99() {
     // ERROR — non-blocking phased safe shutdown; latched until power cycle.
     // Phase 0 routes residual VBUS energy into the charger (only the ~30–40µF of RT1987
@@ -5355,6 +5670,54 @@ void doState99() {
         default:
             break;   // fully shut down; latched until power cycle
     }
+
+#if HIL_SIM
+    // ── HIL dead-link auto-recovery (fw v22) ─────────────────────────────────────────────────
+    // The ONLY path out of State 99 anywhere in the firmware, and it exists only in an HIL build.
+    // Under HIL_SIM a stopped simulator is a routine event (the end of a run), not a hazard, and
+    // fw v21 made it latch the board — so a 38-run suite cost 38 power cycles. Recovery is
+    // admitted under four conditions, all necessary:
+    //
+    //   1. state99Phase == 3 — the teardown has COMPLETED. Warm-resetting between phases would
+    //      abandon the sequencing mid-way, leaving an energized path pointed into a boost that
+    //      phase 2 has not yet disabled (CLAUDE.md §2 back-feed rule).
+    //   2. error_code == ERR_HIL_STALE AND fault_flags == (FAULT_ERROR | FAULT_PI_TIMEOUT)
+    //      EXACTLY. FAULT_HIL_LINK is a documented ALIAS of FAULT_PI_TIMEOUT (fault_flags has no
+    //      free bit and the layout is protocol-frozen), so the union 0x8010 is the dead-link
+    //      signature and error_code disambiguates it from a genuine Pi timeout. Testing for
+    //      EQUALITY, not for the bits being present, is the load-bearing part: any additional bit
+    //      means a REAL fault latched as well (an OV, a bring-up failure, a switch conflict), and
+    //      a real fault must stay latched for the operator regardless of the link.
+    //   3. The link has been continuously fresh for HIL_RECOVER_DEBOUNCE_MS. The window re-arms
+    //      from zero on any staleness, so a link flapping around the dead-link boundary settles
+    //      into the latch instead of cycling the board through bring-up (see the constant).
+    //   4. The bench log is fully closed. triggerFault() only REQUESTS the close; logDrainTick()
+    //      does the card I/O, and its own gate (mainState == 99 && state99Phase < 3) means the
+    //      drain runs in phase 3 — the same window this block lives in. Warm-resetting with a
+    //      close in flight would move mainState off 99 with logActive/logCloseRequested still set,
+    //      stranding an unfinished file (and its trailer) across the run boundary.
+    //
+    // Recovery itself opens and closes NO switch: it hands the (already dark) stage back to
+    // State 0, which re-derives the whole sequence through the staged bring-up machine.
+    if (state99Phase == 3) {
+        bool linkFresh = hilHaveFrame && ((millis() - hilLastFrameMs) <= HIL_STALE_MS);
+        if (!linkFresh) {
+            hilRecoverArmed = false;              // re-arm from scratch on any staleness
+        } else if (!hilRecoverArmed) {
+            hilRecoverArmed = true;
+            hilRecoverArmMs = millis();
+        }
+
+        bool deadLinkOnly = (error_code == ERR_HIL_STALE) &&
+                            (fault_flags == (uint16_t)(FAULT_ERROR | FAULT_PI_TIMEOUT));
+        bool logClosed    = !logActive && !logCloseRequested && !logFile.isOpen();
+
+        if (deadLinkOnly && logClosed && hilRecoverArmed &&
+            (millis() - hilRecoverArmMs) >= HIL_RECOVER_DEBOUNCE_MS) {
+            hilWarmReset();
+        }
+    }
+#endif
 }
 
 
@@ -7920,6 +8283,18 @@ void printTestStatus() {
     Serial.print(udpDrainCapHits);
     Serial.print("   (cap ");         Serial.print(UDP_DRAIN_MAX_PER_TICK);
     Serial.println("/tick)");
+    // fw v22 auto-recovery status (fw v8 observability lesson: every new mechanism gets a dump
+    // line). "armed" means a continuously-fresh window is open and how long it has run; the reset
+    // is taken at HIL_RECOVER_DEBOUNCE_MS, and only from State 99 phase 3 on the exact 0x8010
+    // dead-link fault union with the bench log closed.
+    Serial.print("recover arm:        ");
+    if (hilRecoverArmed) {
+        Serial.print("armed, "); Serial.print(millis() - hilRecoverArmMs);
+        Serial.print(" / ");     Serial.print(HIL_RECOVER_DEBOUNCE_MS); Serial.println(" ms");
+    } else {
+        Serial.println("disarmed (link not fresh, or reset just taken)");
+    }
+    Serial.print("warm resets:        "); Serial.println(hilWarmResetCount);
 #endif
     Serial.println("--- bench tools ---");
     Serial.print("bringup:            ");
@@ -8152,6 +8527,44 @@ static BringupStatus busBringupFail(const char* msg, uint16_t fault_bit, ErrorCo
 
 BringupStatus busBringupTick(bool doInit) {
     if (!bringupActive) return BRINGUP_IDLE;
+
+#if HIL_SIM
+    // ── S3: LINK DEATH DURING BRING-UP ABORTS, IT DOES NOT FAULT ─────────────────────────────
+    // The bug this closes: every phase below is timeout-gated against millis(), but the plant
+    // behind the ADC values is a host process. When the injection link dies mid-bring-up,
+    // updateSensors() HOLDS the last frame for HIL_STALE_MS..HIL_ZERO_MS (50–250 ms) — so V_bus
+    // stops responding while the phase clocks keep running. A phase gate that was already near
+    // expiry then times out and busBringupFail() latches FAULT_INIT_FAIL / FAULT_MOT_HOTPLUG.
+    // Those are OUTSIDE doState99()'s recovery admission (which demands fault_flags EXACTLY
+    // 0x8010 + ERR_HIL_STALE), so the board latches PERMANENTLY on what is merely the operator
+    // stopping the simulator — defeating the whole fw v22 auto-recovery feature. It is a RACE:
+    // whichever fires first, the phase timeout or the HIL_ZERO_MS dead-link fault, decides
+    // whether the run is recoverable.
+    //
+    // The check therefore sits at the TOP of the tick, ahead of every phase gate, so within any
+    // invocation the abort ALWAYS wins the race.
+    //
+    // DEVIATION FROM THE FINDING AS WRITTEN: the finding names hilZeroed as the trigger. That is
+    // too late — hilZeroed is set by updateSensors(), which triggers FAULT_HIL_LINK in the same
+    // breath and moves mainState to 99, so this function is never reached in that state. The
+    // window that actually races the phase timeouts is the HOLD window, so the predicate here is
+    // the same "link fresh" test the State-0 wait gate uses (which subsumes hilZeroed).
+    // Consequence, accepted: a >50 ms hiccup mid-bring-up now restarts the bring-up instead of
+    // riding it out on held values. That is the conservative direction — the abort's teardown is
+    // dark and the machine re-arms for free from the State-0 wait gate — and a bring-up run
+    // against frozen sensor values was never meaningful anyway.
+    //
+    // Recovery path: busBringupAbort() clears bringupActive, so doState0()'s `if (!bringupActive)`
+    // wait gate takes over on the next tick and re-starts the bring-up when frames return. Under
+    // the State-98 'G' command the BRINGUP_IDLE return simply leaves the operator in State 98
+    // with the notice printed — that mode is theirs to drive.
+    if (!(hilHaveFrame && ((millis() - hilLastFrameMs) <= HIL_STALE_MS))) {
+        Serial.println("[bringup] HIL injection link lost mid-bring-up — aborting (not a fault); "
+                       "State 0 re-arms when frames return.");
+        busBringupAbort();
+        return BRINGUP_IDLE;
+    }
+#endif
 
     uint32_t now = millis();
     switch (bringupPhase) {

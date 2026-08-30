@@ -327,8 +327,9 @@ not the plant `controller_design/system_model.md` synthesizes against.
 ```
     V_fc   = max(0, V_FC_OPEN − R_FC_INT · I_fc)      13.0 V, 0.45 Ω
     V_batt = max(0, V_BT_OPEN − R_BT_INT · I_batt)     8.0 V, 0.05 Ω
-    V_chg  = V_bus if (switch & SW_FC_CHARGE) else 0
-    V_rgn  = V_bus if (switch & SW_REGEN)     else 0
+    V_chg  = V_bus if ((switch & SW_FC_CHARGE) or
+                       ((switch & SW_REGEN) and (switch & SW_MOT_PWR))) else 0
+    V_rgn  = V_bus if (switch & SW_MOT_PWR)   else 0
 ```
 
 `V_FC_OPEN` 13.0 V is the H-20 fuel cell's open-circuit class (the firmware's
@@ -338,10 +339,16 @@ resistances are plausible source impedances — **`TODO(verify)`**, neither is m
 the repo, and the 2026-08-17b addendum records that the bench supplies were *swapped*
 mid-campaign, so no logged stiffness figure is a stable reference for them either.
 
-The charger and regen rails are pure mirrors of the bus, gated by their path switches.
-That is enough to make the §2 mutual-exclusion sequencing visible in the CSV, and it is
-all the model claims for the rails themselves — the charger *behind* those rails is
-modelled separately, next.
+The charger and regen rails are pure mirrors of the bus, gated by the switches that
+actually feed them (**topology corrected 2026-08-30 from schematic sheet 4**: the
+`RGN-V` divider sits on V-MOT *upstream* of the REGEN switch — so `V_rgn` is the
+firmware's motor-node proxy and follows `MOT_PWR_ENABLE`, not `REGEN_ENABLE` — and both
+the REGEN and FC-charge switch outputs join at the single `VCHG-IN` node that `V_chg`
+senses). The original `SW_REGEN`-gated `V_rgn` made the staged bring-up's P3 gate
+unsatisfiable and every simulated bring-up latch `FAULT_MOT_HOTPLUG`. That is enough to
+make the §2 mutual-exclusion sequencing visible in the CSV, and it is all the model
+claims for the rails themselves — the charger *behind* those rails is modelled
+separately, next.
 
 ### 4.6 The Ag105 charger model
 
@@ -353,7 +360,7 @@ host's).
 
 ```
     chg_path    = (switch & SW_FC_CHARGE) or ((switch & SW_REGEN) and (switch & SW_MOT_PWR))
-    v_chg_in    = V_chg if (switch & SW_FC_CHARGE) else V_rgn
+    v_chg_in    = V_chg          # the shared VCHG-IN node, fed by either path
     chg_powered = chg_path and v_chg_in >= AG105_V_IN_MIN
 ```
 
@@ -414,9 +421,9 @@ bytes 1–14, returning `None` on any failure).
 |---|---|
 | `switch` bit `SW_FC_BUS` (0x01) | with `AUX_FC_REG` → `fc_live` (§4.1) |
 | `switch` bit `SW_BT_BUS` (0x02) | with `AUX_BT_REG` → `bt_live` |
-| `switch` bit `SW_MOT_PWR` (0x04) | `mot_live` → gates motor force (§3.3) and motor bus draw (§4.3) |
-| `switch` bit `SW_REGEN` (0x08) | `V_rgn` = `V_bus`, else 0 |
-| `switch` bit `SW_FC_CHARGE` (0x10) | `V_chg` = `V_bus`, else 0 |
+| `switch` bit `SW_MOT_PWR` (0x04) | `mot_live` → gates motor force (§3.3), motor bus draw (§4.3), and `V_rgn` = `V_bus` (the RGN-V divider is on V-MOT — §4.5) |
+| `switch` bit `SW_REGEN` (0x08) | with `SW_MOT_PWR` → feeds `V_chg` (shared VCHG-IN node, §4.5) |
+| `switch` bit `SW_FC_CHARGE` (0x10) | feeds `V_chg` = `V_bus`, else the regen path or 0 |
 | `switch` bit `SW_BT_SEQ` (0x20) | **logged only** — the pack sequencing switch has no modelled effect |
 | `aux` bit0 `FC_REG_ENABLE`, bit1 `BT_REG_ENABLE` | source liveness (§4.1) |
 | `aux` bit2 `MPPT_DISABLE` | drives the two Ag105 tracking flags in the injected status byte (§4.6) while charging |
@@ -588,8 +595,8 @@ Six capacitive nodes form the ODE state, solved **backward Euler** each substep 
 | `OFC` / `OBT` — boost outputs | 30 µF / 40.1 µF | derated bulk; BT carries +10.1 µF of bodge caps |
 | `BUS` — VBUS proper | 35 µF | 30–40 µF band, midpoint |
 | `MOT` — V-MOT, **behind** `MOT_PWR` | 470 µF (ESR 80 mΩ) + VESC input | VESC envelope 0.2–0.9 mF, default 0.5 mF, `--vesc-cap-uf` |
-| `CHG` — charger input | 10 µF | **`TODO(verify)`** — no separate cap identified on the schematic |
-| `RGN` — regen node | 10 µF | **`TODO(verify)`** — likewise |
+| `CHG` — shared VCHG-IN charger input (fed by both the REGEN and FC-charge switches) | 10 µF | **`TODO(verify)`** — no separate cap identified on the schematic |
+| `RGN` — **RETIRED** (2026-08-30): the regen node *is* V-MOT; index kept for matrix-shape stability, no links, bleeds to 0 | 10 µF | — |
 
 Backward Euler is not a stylistic choice: a 22 mΩ ideal-diode switch between two ~35 µF
 nodes is a **0.77 µs RC**. An explicit method would need ~µs substeps to stay stable;
@@ -707,7 +714,14 @@ part's specification rather than scripted.
 
 The TL431 + BSP170P clamp on the regen node is autonomous — **not** under firmware
 control. Above `V_CHOPPER_TRIP` a shunt of `V_rgn / 47 Ω` conducts (47 Ω / 20 W dump
-resistor). `V_bus` is unaffected: the chopper sits behind `MOT_PWR`/`REGEN`.
+resistor). The chopper sits directly on V-MOT (2026-08-30 topology fix — upstream of
+the REGEN switch, matching the bench observation that the clamp held 18.1 V with
+`REGEN_ENABLE` open), so it does not reach the bus through the REGEN path. However,
+it **does** couple to `V_bus` through a closed `MOT_PWR`, which conducts BUS ↔ MOT.
+At the 18.1 V clamp the shunt draws ≈ 18.1 / 47 = **0.385 A**, and the droop law
+(0.074 V/A both-sources, 0.16 V/A single-source) turns that into **≈ 0.03–0.06 V** of
+bus sag — small enough to be consistent with the bench observation "`V_bus` unmoved"
+(CLAUDE.md 2026-08-17b) rather than contradicting it.
 The clamp level is **bench-calibrated at 18.1 V** (operator, 2026-08-27, from the
 observed 13.3 → 18.1 V clamping excursion, CLAUDE.md 2026-08-17b; the earlier 16.5 V
 `TODO(calibrate)` placeholder is retired).

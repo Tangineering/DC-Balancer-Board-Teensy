@@ -57,6 +57,9 @@ import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
+# Repo-root home for every HIL artifact (report dirs here, hil_plant_sim.py's
+# relative --csv paths there too).  Operator-created; created on demand anyway.
+HIL_RESULTS_DIR = os.path.join(_REPO, "HIL Results")
 sys.path.insert(0, _HERE)
 
 from hil_plant_sim import SCENARIOS, TEENSY_PORT_DEFAULT            # noqa: E402
@@ -653,7 +656,9 @@ def run_child(item, args):
     rec["summary"] = parse_child_summary(out)
     try:
         with open(item["log"], "w", encoding="utf-8") as fh:
-            fh.write(" ".join(argv) + "\n\n")
+            # L2: list2cmdline quotes the args, so the header line stays
+            # copy-pasteable now that the default output path contains a space.
+            fh.write(subprocess.list2cmdline(argv) + "\n\n")
             fh.write(out)
     except OSError as exc:
         # L9(b): record the failure instead of silently swallowing it -- the
@@ -934,7 +939,9 @@ def main(argv=None):
     ap.add_argument("--port", type=int, default=TEENSY_PORT_DEFAULT,
                     help="board UDP port (default %d, the .ino local_port)" % TEENSY_PORT_DEFAULT)
     ap.add_argument("--out", default=None,
-                    help="report directory (default hil_report_<YYYYmmdd_HHMMSS>/)")
+                    help="report directory (default "
+                         "'<repo>/HIL Results/hil_report_<YYYYmmdd_HHMMSS>'). An "
+                         "explicit relative path is taken relative to the CWD.")
     ap.add_argument("--only", action="append", default=[], metavar="PATTERN",
                     help="glob on the run name; repeatable")
     ap.add_argument("--skip", action="append", default=[], metavar="PATTERN",
@@ -989,9 +996,19 @@ def main(argv=None):
                  "would leave --replay-only with nothing to run.")
 
     if args.out is None:
-        args.out = "hil_report_%s" % datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Default report directory lands in the repo-root "HIL Results" folder,
+        # the shared home for every HIL artifact (hil_plant_sim.py resolves its
+        # own relative --csv paths there too).
+        args.out = os.path.join(
+            HIL_RESULTS_DIR,
+            "hil_report_%s" % datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
+        os.makedirs(HIL_RESULTS_DIR, exist_ok=True)
     # Children run with cwd = repo root, so every artifact path must be absolute
-    # or a relative --out would scatter CSVs into the repo root.
+    # or a relative --out would scatter CSVs into the repo root.  An explicit
+    # --out keeps its historical semantics: relative is relative to the CWD.
+    # Per-run CSV paths below are built with os.path.join(args.out, ...) and are
+    # therefore ABSOLUTE, which hil_plant_sim.resolve_output_path() honors
+    # verbatim — the suite's artifacts never get redirected into HIL Results.
     args.out = os.path.abspath(args.out)
 
     plan = build_plan(args)

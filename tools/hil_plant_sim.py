@@ -166,11 +166,37 @@ R_BUS_BLEED = 2000.0     # ohm   effective bleed across that capacitance
 # instance of each.  See docs/HIL_PLANT.md "Source models".
 # (path insert so `python3 tools/hil_plant_sim.py` from the repo root and
 #  `from hil_plant_sim import SCENARIOS` from a sibling both resolve the module.)
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(_HERE)
+sys.path.insert(0, _HERE)
 from hil_electrical import (                                   # noqa: E402
     BatterySource, FuelCellSource, ElectricalSim, NoiseConfig,
     BATT_CAPACITY_AH, C_VESC_DEFAULT,
 )
+
+# ── Output artifact convention ──────────────────────────────────────────────
+# Every HIL artifact this tool writes lands under "<repo>/HIL Results" unless the
+# operator gives an ABSOLUTE path.  run_hil_suite.py already hands its children
+# absolute per-run CSV paths (os.path.join(args.out, ...)), so those are honored
+# verbatim and the suite keeps full control of its own report directory.
+HIL_RESULTS_DIR = os.path.join(REPO_ROOT, "HIL Results")
+
+
+def resolve_output_path(path):
+    """Resolve a user-supplied output path under the HIL Results convention.
+
+    Absolute paths are returned unchanged.  A relative path (bare filename or
+    with subdirectories) is resolved under HIL_RESULTS_DIR.  The containing
+    directory — including any subdirectories of the resolved path — is created.
+    """
+    if os.path.isabs(path):
+        resolved = path
+    else:
+        resolved = os.path.join(HIL_RESULTS_DIR, path)
+    parent = os.path.dirname(resolved)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    return resolved
 
 
 def xor_checksum(payload: bytes) -> int:
@@ -395,16 +421,26 @@ class Plant:
             # Net pack current: boost draw minus the Ag105's charge current.
             v_batt = self.battery.update(dt, i_bt_src - self.i_charge)
 
-            # Charger input tracks the bus when its path switch is closed, else 0.
-            self.v_chg = self.v_bus if (sw & SW_FC_CHARGE) else 0.0
-            self.v_rgn = self.v_bus if (sw & SW_REGEN) else 0.0
+            # TOPOLOGY FIX (2026-08-30, schematic sheet 4): V_rgn's divider sits
+            # on V-MOT itself, UPSTREAM of the REGEN switch — in this bus-level
+            # model the motor node tracks the bus whenever MOT_PWR is closed.
+            # The firmware's staged-bring-up P3 gate reads V_rgn as its motor-node
+            # proxy, so the old SW_REGEN gating made every bring-up fail P3.
+            # V_chg is the shared VCHG-IN node, fed by EITHER path switch
+            # (FC_CHARGE from the bus; REGEN from V-MOT, which needs MOT_PWR up).
+            self.v_rgn = self.v_bus if (sw & SW_MOT_PWR) else 0.0
+            chg_fed = bool(sw & SW_FC_CHARGE) or \
+                (bool(sw & SW_REGEN) and bool(sw & SW_MOT_PWR))
+            self.v_chg = self.v_bus if chg_fed else 0.0
 
         # ── Ag105 charger ────────────────────────────────────────────────────
         # Power gating mirrors the firmware's chargerHasPower(): FC_CHARGE closed, or
         # REGEN and MOT_PWR both closed.  The rail actually presented to the module has
         # to be up as well — a closed switch onto a collapsed bus charges nothing.
         chg_path = bool(sw & SW_FC_CHARGE) or (bool(sw & SW_REGEN) and bool(sw & SW_MOT_PWR))
-        v_chg_in = self.v_chg if (sw & SW_FC_CHARGE) else self.v_rgn
+        # v_chg is the shared VCHG-IN node and already reflects whichever path
+        # feeds it (2026-08-30 topology fix), so it IS the module's input rail.
+        v_chg_in = self.v_chg
         chg_powered = chg_path and v_chg_in >= AG105_V_IN_MIN and not self.chg_fault
         if chg_powered:
             self.chg_powered_s += dt
@@ -1170,7 +1206,11 @@ def main(argv=None):
     ap.add_argument("--duration", type=float, default=None,
                     help="run length in seconds (default 30; replay default = log length)")
     ap.add_argument("--rate", type=float, default=1000.0, help="tick rate in Hz (default 1000)")
-    ap.add_argument("--csv", default=None, help="write a per-tick CSV log here")
+    ap.add_argument("--csv", default=None,
+                    help="write a per-tick CSV log here. A relative path (bare "
+                         "filename or with subdirs) is resolved under "
+                         "'<repo>/HIL Results'; an absolute path is used verbatim. "
+                         "The electrical events sidecar follows the resolved path.")
     ap.add_argument("--dash", action="store_true",
                     help="live terminal dashboard (5 Hz sampled view; suppresses the "
                          "1 Hz status lines while running). Off by default. Requires a tty.")
@@ -1341,7 +1381,21 @@ def main(argv=None):
     csv_file = None
     writer = None
     if args.csv:
-        csv_file = open(args.csv, "w", newline="")
+        # Relative paths land in "<repo>/HIL Results"; absolute paths (including the
+        # ones run_hil_suite.py hands its children) are honored verbatim.  The
+        # events sidecar below derives from this RESOLVED path, so it follows.
+        args.csv = resolve_output_path(args.csv)
+        print("[hil] CSV log: %s" % args.csv)
+        # L1: a CSV the operator explicitly asked for is a run REQUIREMENT -- if it
+        # cannot be opened, abort before the run starts rather than limp through a
+        # run whose record is silently missing.  The asymmetry with the events
+        # sidecar below (best-effort, warn and continue) is deliberate: the sidecar
+        # is diagnostic extra, the CSV is the deliverable.
+        try:
+            csv_file = open(args.csv, "w", newline="")
+        except OSError as exc:
+            print(f"[hil] could not open CSV log {args.csv}: {exc}", file=sys.stderr)
+            sys.exit(2)
         writer = csv.writer(csv_file)
         header_row = [
             "t", "seq", "V_fc", "V_batt", "V_bus", "V_chg", "V_rgn", "I_fc", "I_batt",

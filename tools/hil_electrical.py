@@ -566,6 +566,11 @@ def _solve(A, b):
 
 
 # Node indices of the electrical network.
+# N_RGN is RETIRED as a physical node (2026-08-30 topology fix): the regen node
+# IS V-MOT (RGN-V divider + chopper sit upstream of the REGEN switch, whose
+# output joins FC_CHARGE's at the shared N_CHG / VCHG-IN node).  The index is
+# kept so the matrix dimensions and node-name lists stay stable; the node has no
+# links and bleeds to 0.
 N_OFC, N_OBT, N_BUS, N_MOT, N_CHG, N_RGN = range(6)
 N_NODES = 6
 _NODE_NAMES = ["OFC", "OBT", "BUS", "MOT", "CHG", "RGN"]
@@ -964,6 +969,9 @@ class ElectricalSim:
         self.v = [0.0] * N_NODES
         self.c_node = [
             C_BOOST_OUT_FC, C_BOOST_OUT_BT, C_VBUS,
+            # The trailing C_RGN_NODE entry PADS the retired N_RGN index (see the
+            # node-index note above) so the list length matches N_NODES.  The node
+            # has no links; the capacitance value is inert.
             C_MOT_LOCAL + c_vesc_f, C_CHG_NODE, C_RGN_NODE,
         ]
 
@@ -977,7 +985,19 @@ class ElectricalSim:
                              r_series=R_SHUNT),
             "MOT_PWR": Rt1987("MOT_PWR", N_BUS, N_MOT, CSS_NF["MOT_PWR"],
                               C_MOT_LOCAL + c_vesc_f),
-            "REGEN": Rt1987("REGEN", N_MOT, N_RGN, CSS_NF["REGEN"], C_RGN_NODE),
+            # TOPOLOGY FIX (2026-08-30, schematic sheet 4 + operator): D-BC-RG's
+            # OUTPUT joins D-BC-FC's output at the shared VCHG-IN node into the
+            # Ag105 (CHG-V divider senses that node), so REGEN links MOT -> CHG.
+            # The RGN-V divider and the chopper sit on V-MOT itself, UPSTREAM of
+            # the switch — the old MOT -> N_RGN link put the sense point on the
+            # wrong side and every simulated bring-up failed P3 (V_rgn dark).
+            # L5: REGEN and FC_CHARGE both terminate on the SHARED N_CHG node, and
+            # each is handed c_load_f = C_CHG_NODE -- so each CSS soft-start ramp is
+            # computed as if it alone charges the 10 uF.  With both closed the true
+            # shared load is not double-counted in the network solve (one node, one
+            # capacitor); only the per-switch ramp timing is optimistic.  Bounded
+            # inaccuracy: the 5.6 nF CSS gives a ~1 ms ramp either way.  Accepted.
+            "REGEN": Rt1987("REGEN", N_MOT, N_CHG, CSS_NF["REGEN"], C_CHG_NODE),
             "FC_CHARGE": Rt1987("FC_CHARGE", N_BUS, N_CHG, CSS_NF["FC_CHARGE"],
                                 C_CHG_NODE),
             # BT_SEQ gates the pack into the BT boost INPUT; it is not a node link in
@@ -1156,30 +1176,37 @@ class ElectricalSim:
             g_mot = i_motor / max(v[N_MOT], V_MOT_LOAD_FLOOR)
             G[N_MOT][N_MOT] += g_mot
         if i_charge:
-            # The charger draws from whichever path is powering it.
-            node = N_CHG if (sw & SW_FC_CHARGE) else N_RGN
-            J[node] -= i_charge
+            # The charger input is the single shared VCHG-IN node — both the
+            # FC-charge and regen paths land there (schematic sheet 4).
+            J[N_CHG] -= i_charge
 
-        # Regen chopper: autonomous TL431/BSP170P clamp into 47 ohm.  V_bus is NOT
-        # affected — the chopper sits behind MOT_PWR/REGEN on the regen node.
-        self.chopper_active = v[N_RGN] > V_CHOPPER_TRIP
+        # Regen chopper: autonomous TL431/BSP170P clamp into 47 ohm.  It sits
+        # directly on V-MOT (the regen node IS the motor node; schematic sheet 4),
+        # so it does NOT couple to V_bus through the REGEN switch — but it DOES
+        # couple through a CLOSED MOT_PWR, since that RT1987 conducts BUS <-> MOT.
+        # Expected bus effect while clamping: the 47 ohm shunt draws ~18.1/47 =
+        # ~0.385 A, which the droop law turns into ~0.385 * 0.074-0.16 =
+        # ~0.03-0.06 V of bus sag.  That is small enough to be consistent with the
+        # bench observation "V_rgn 13.3 -> 18.1 V held, V_bus unmoved"
+        # (CLAUDE.md 2026-08-17b) rather than contradicting it.
+        self.chopper_active = v[N_MOT] > V_CHOPPER_TRIP
         if self.chopper_active:
-            G[N_RGN][N_RGN] += 1.0 / R_CHOPPER
+            G[N_MOT][N_MOT] += 1.0 / R_CHOPPER
 
         new_v = _solve(G, J)
         # Chopper dissipation check — THE reason the chopper is simulated at all:
         # whether V_rgn^2 / 47 Ω ever exceeds the dump resistor's 20 W rating.
         # Computed from the SOLVED node voltage (the clamp conductance above was
         # stamped from the pre-solve voltage, so this is the consistent pairing).
-        if self.chopper_active and math.isfinite(new_v[N_RGN]):
-            p_chop = (new_v[N_RGN] ** 2) / R_CHOPPER
+        if self.chopper_active and math.isfinite(new_v[N_MOT]):
+            p_chop = (new_v[N_MOT] ** 2) / R_CHOPPER
             if p_chop > self.chopper_peak_w:
                 self.chopper_peak_w = p_chop
             if p_chop > P_CHOPPER_MAX_W:
                 if not self._chopper_over:      # once per excursion
                     self._chopper_over = True
                     self.events.append({"t": self.t, "kind": "chopper_over_power",
-                                        "p_w": p_chop, "v_rgn": new_v[N_RGN],
+                                        "p_w": p_chop, "v_rgn": new_v[N_MOT],
                                         "rating_w": P_CHOPPER_MAX_W})
             else:
                 self._chopper_over = False
@@ -1231,7 +1258,10 @@ class ElectricalSim:
             "V_batt": self.battery.v_terminal,
             "V_bus": max(0.0, v[N_BUS] + self.v_bus_sense_offset),
             "V_chg": v[N_CHG],
-            "V_rgn": v[N_RGN],
+            # RGN-V's divider hangs on V-MOT itself, upstream of the REGEN switch
+            # (schematic sheet 4) — it is the firmware's motor-node proxy and the
+            # staged bring-up's P3 gate reads it.
+            "V_rgn": v[N_MOT],
             "I_fc": self.i_fc,
             "I_batt": self.i_bt,
         }

@@ -213,6 +213,13 @@ static void reset_test_state() {
     udpDrainedMaxTick  = 0;
     udpDrainCapHits    = 0;
 
+    // .ino fw v22 HIL dead-link auto-recovery (doState99() phase-3 block + hilWarmReset()).
+    // hilWarmResetCount mirrors hilFramesAccepted above: a diagnostic counter that is boot-
+    // monotonic on real hardware but reset here because reset_test_state() models a fresh boot.
+    hilRecoverArmed   = false;
+    hilRecoverArmMs   = 0;
+    hilWarmResetCount = 0;
+
     // .ino drive cycle
     driveCycleActive     = false;
     driveCyclePhaseIdx   = 0;
@@ -1443,6 +1450,14 @@ static void test_hil_dispatch_40byte_dropped_in_nonhil_build() {
 // ═════════════════════════════════════════════════════════════════════════════
 // These exercise updateSensors()'s HIL branch and receiveCommands()'s HIL_SIM-gated
 // accept path, which do not exist as callable code in the ordinary two host builds.
+
+// Declared OUTSIDE the #if so the SHARED bring-up fixtures (compiled into all three builds) can
+// call it unconditionally. The real body is defined at the end of the HIL block below; in the two
+// non-HIL builds this no-op stands in, because there is no injection link to keep alive.
+#if !HIL_SIM
+static void hilPrimeFreshLinkForBringup() {}
+#endif
+
 #if HIL_SIM
 
 // Injects one accepted HIL frame via the real receiveCommands() path (queues the wire
@@ -1456,6 +1471,32 @@ static void injectHilFrame(uint8_t seq, float V_fc, float V_batt, float V_bus, f
     Udp.queue_packet(buf, HIL_INJECT_SIZE);
     receiveCommands();
 }
+
+// fw v22: doState0()'s injection-wait gate (see the .ino) requires hilHaveFrame && a FRESH link
+// before it will arm the staged bring-up (bringupActive true). A number of pre-existing tests
+// drive doState0() directly to exercise the staged machine's own phase logic (P0-P3 gating,
+// timeouts, dark-start ordering) — that logic is shared code and those tests are compiled into
+// all three builds. Under HIL_SIM they now need one fresh frame primed before the FIRST doState0()
+// call in a sequence: the gate "guards the START ONLY" (skipped once bringupActive is true), so a
+// single priming call is sufficient for a whole walk of doState0() calls even though g_mock_millis
+// advances far past HIL_STALE_MS between them — none of these tests call updateSensors(), so the
+// separate hilStale/hilZeroed staleness machinery never enters into it. Values are irrelevant (the
+// gate only checks hilHaveFrame + recency); callers set V_fc/V_batt/V_bus/etc. directly afterward.
+//
+// fw v22 S3 UPDATE — one primed frame is NO LONGER sufficient on its own. busBringupTick() now
+// re-checks link freshness on EVERY tick and safely ABORTS a bring-up whose plant has gone away
+// (the hold-window-vs-phase-timeout race that used to latch an unrecoverable INIT_FAIL). These
+// fixtures advance g_mock_millis by hundreds of ms between doState0()/busBringupTick() calls
+// without sending frames, which under the new rule reads as a dead link. So the helper also arms
+// the mock's live-link model (g_mock_millis_track), which makes hilLastFrameMs follow the clock —
+// exactly what a simulator streaming at 1 kHz produces, and the condition these tests have always
+// meant to assume. mock_reset() disarms it, so the staleness/hold/dead-link tests are unaffected.
+#if HIL_SIM
+static void hilPrimeFreshLinkForBringup() {
+    injectHilFrame(0xF0, 0, 0, 0, 0, 0, 0, 0, 0);
+    g_mock_millis_track = &hilLastFrameMs;
+}
+#endif
 
 static void test_hil_wiring_dispatch_accepts_and_learns_host() {
     test_group("HIL wiring: receiveCommands() accepts a 40-byte frame and learns the host");
@@ -2068,6 +2109,524 @@ static void test_hil_wiring_pollag105_real_i2c_before_first_frame() {
     check(fabsf(I_charge - 77 * 0.011f) < 1e-4f,
           "HIL pollAg105 (pre-frame): I_charge came from the REAL (scripted) I2C read, not injection");
     check(ag105DataValid, "HIL pollAg105 (pre-frame): ag105DataValid true on a successful real read");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// fw v22 — HIL State-0 injection-wait gate + State-99 dead-link auto-recovery
+// ═════════════════════════════════════════════════════════════════════════════
+// A. doState0() now waits for a fresh injection link before arming the staged bring-up.
+// B. doState99() phase 3 auto-recovers from the HIL dead-link latch via hilWarmReset().
+
+// Drives doState99() 1 ms per tick (matching test_sdlog_state99_drain_gated's real-loop pattern)
+// until state99Phase reaches 3 (fully latched) or the tick budget runs out. Does not touch the
+// link — callers inject/withhold frames themselves before/around each call as needed.
+static void hilWalkTeardownToPhase3(int maxTicks = 40) {
+    for (int i = 0; i < maxTicks && state99Phase != 3; i++) {
+        doState99();
+        g_mock_millis += 1;
+    }
+}
+
+// Keeps the HIL link continuously fresh (re-injecting a frame every stepMs, well inside
+// HIL_STALE_MS) while pumping doState99() once per stepMs of simulated time, for durationMs.
+// Mirrors the real loop()'s switch(mainState) dispatch: doState99() is only ever called while
+// mainState==99. Once a warm reset fires (mainState -> 0), the loop stops calling doState99()
+// for the rest of the pump duration — calling it unconditionally would spuriously re-run
+// teardown phase 0 against a machine that already left State 99 (a test-harness artifact the
+// real firmware never exhibits, since its dispatch is state-gated).
+static void hilPumpFreshLinkForMs(uint32_t durationMs, uint32_t stepMs = 10) {
+    for (uint32_t t = 0; t < durationMs; t += stepMs) {
+        injectHilFrame(0xF8, 1, 1, 1, 1, 1, 1, 1, 1);
+        if (mainState == 99) doState99();
+        g_mock_millis += stepMs;
+    }
+}
+
+// Reaches state99Phase==3 with EXACTLY fault_flags==0x8010 / error_code==ERR_HIL_STALE, via the
+// same natural dead-link path as test_hil_wiring_zero_after_dead_deadline (not a hand-set fault),
+// so the admission tests below start from a realistic post-teardown state. The link is left
+// stale/dead afterward (nothing re-injects), so callers control the recovery timing themselves.
+static void hilLatchDeadLinkAtPhase3() {
+    reset_test_state();
+    mainState = 2;
+    g_mock_millis = 1000;
+    injectHilFrame(0xF2, 5, 5, 5, 5, 5, 5, 5, 5);
+    updateSensors();
+    g_mock_millis += HIL_ZERO_MS + 1;
+    updateSensors();   // latches FAULT_HIL_LINK / ERR_HIL_STALE, mainState -> 99
+    check(mainState == 99 && error_code == ERR_HIL_STALE &&
+          fault_flags == (uint16_t)(FAULT_ERROR | FAULT_PI_TIMEOUT),
+          "recovery matrix: (setup) dead link latched with the exact 0x8010 union");
+    hilWalkTeardownToPhase3();
+    check(state99Phase == 3, "recovery matrix: (setup) teardown reached phase 3");
+}
+
+// ─── 1/2. State-0 wait gate blocks bring-up with no frame; a fresh frame arms it, and the
+//          staged machine then reaches Idle on injected rails at either BENCH_TEST value (the
+//          HIL branch in doState0() is entirely self-contained — no nested #if BENCH_TEST — so
+//          the one HIL_SIM build (compiled at -DBENCH_TEST=0) exercises the identical code that
+//          would run under -DBENCH_TEST=1 too; the non-HIL BENCH_TEST=1 dark-boot bypass is a
+//          separate #elif branch, pinned unchanged by test_dostate0_bench_bypass() in the
+//          dedicated bench build). ─────────────────────────────────────────────────────────
+static void test_hil_state0_wait_gate_blocks_without_frame() {
+    test_group("fw v22 State-0 wait gate: no injection frame -> bring-up never arms");
+    reset_test_state();
+    mainState = 0;
+    g_mock_millis = 0;
+    check(!hilHaveFrame, "wait gate: (setup) no frame has arrived yet");
+
+    for (int i = 0; i < 50; i++) {
+        g_mock_millis += 100;
+        doState0();
+        check(!bringupActive, "wait gate: bringupActive stays false with no frame ever accepted");
+        check(mainState == 0, "wait gate: mainState stays 0 (not Idle, not faulted)");
+    }
+    check(error_code == ERR_NONE && fault_flags == 0,
+          "wait gate: no INIT_FAIL latch no matter how long the wait runs");
+}
+
+static void test_hil_state0_fresh_frame_arms_bringup_reaches_idle() {
+    test_group("fw v22 State-0 wait gate: a fresh frame arms the staged bring-up -> Idle (BRINGUP_DONE)");
+    reset_test_state();
+    hilPrimeFreshLinkForBringup();   // fw v22 S3: model a streaming link (no-op in non-HIL builds)
+    mainState = 0;
+    g_mock_millis = 0;
+
+    injectHilFrame(0xF1, 12.0f, 7.0f, 0.0f, 0, 0, 0, 0, 0);
+    V_fc = 12.0f; V_batt = 7.0f; V_bus = 0.0f; V_rgn = 0.0f;
+    doState0();
+    check(bringupActive && bringupPhase == 1,
+          "wait gate: a fresh frame arms the staged machine (P0 entry) — no 'G' involved");
+
+    g_mock_millis += PRECHARGE_MIN_MS + 1;
+    V_bus = 11.0f;
+    doState0();
+    check(bringupPhase == 2, "wait gate: P0 gate passes on the injected rails -> boosts on");
+
+    g_mock_millis += 1;
+    V_bus = 16.0f;
+    doState0();
+    check(bringupPhase == 3, "wait gate: P1 gate passes -> dwell");
+
+    g_mock_millis += BUS_REG_DWELL_MS + 1;
+    doState0();
+    check(bringupPhase == 4, "wait gate: dwell completes");
+
+    g_mock_millis += 1;
+    doState0();
+    check(bringupPhase == 5 && digitalRead(MOT_PWR_ENABLE) == HIGH,
+          "wait gate: P3 connects the motor node — production-style, MOT_PWR HIGH");
+
+    g_mock_millis += 20;
+    V_rgn = V_bus - MOT_HOTPLUG_MARGIN + 0.5f;
+    doState0();
+    check(mainState == 1 && !bringupActive,
+          "wait gate: BRINGUP_DONE -> Idle on the injected rails");
+    check(error_code == ERR_NONE && fault_flags == 0,
+          "wait gate: no fault latched on a healthy HIL bring-up");
+
+    // fw v22 S3 — CONTRACT CHANGE, asserted here rather than dropped. The pre-S3 rule was "the
+    // gate guards the START only: mid-bring-up staleness never re-blocks an already-armed
+    // machine", and this test used to confirm the walk completed on a link that had gone stale.
+    // S3 reverses that deliberately: a bring-up whose plant has gone away is timing its
+    // millis()-gated phases against HELD sensor values, and a phase timeout there latches
+    // FAULT_INIT_FAIL / FAULT_MOT_HOTPLUG — outside doState99()'s recovery admission, i.e. a
+    // PERMANENT latch on nothing worse than the operator stopping the simulator. So the walk
+    // above is now run on a live link (hilPrimeFreshLinkForBringup()), and mid-bring-up link
+    // loss must ABORT SAFELY instead: no fault, stage dark, machine disarmed and free to re-arm
+    // from the State-0 wait gate when frames return.
+    g_mock_millis_track = nullptr;      // the simulator stops here
+    mainState = 0;
+    busBringupStart();
+    check(bringupActive, "S3: (setup) a fresh bring-up is armed");
+    g_mock_millis += HIL_STALE_MS + 1;  // ... and the link goes stale mid-bring-up
+    BringupStatus st = busBringupTick(true);
+    check(st == BRINGUP_IDLE,   "S3: a stale link mid-bring-up returns IDLE, not FAILED");
+    check(!bringupActive,       "S3: the bring-up is disarmed (aborted), free to re-arm");
+    check(error_code == ERR_NONE && fault_flags == 0,
+          "S3: link loss mid-bring-up latches NO fault — the recoverable dead-link path owns it");
+    check(digitalRead(FC_REG_ENABLE) == LOW && digitalRead(BT_REG_ENABLE) == LOW &&
+          digitalRead(MOT_PWR_ENABLE) == LOW,
+          "S3: the abort darkened the stage (busBringupAbort() teardown order)");
+    check(mainState == 0, "S3: the board stays in State 0 — the wait gate takes over next tick");
+}
+
+// ─── 3(a). Exact admission: 0x8010 + ERR_HIL_STALE + fresh link for the full debounce ────────
+static void test_hil_recovery_admits_exact_deadlink() {
+    test_group("fw v22 recovery (a): exact 0x8010 + ERR_HIL_STALE + continuous fresh link -> warm reset");
+    hilLatchDeadLinkAtPhase3();
+    uint32_t resetsBefore = hilWarmResetCount;
+
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS - 10);
+    check(hilWarmResetCount == resetsBefore,
+          "recovery (a): no warm reset before the debounce window fully elapses");
+    check(mainState == 99, "recovery (a): still latched just short of the debounce");
+
+    hilPumpFreshLinkForMs(30);
+    check(hilWarmResetCount == resetsBefore + 1,
+          "recovery (a): warm reset fires once the debounce window elapses");
+    check(mainState == 0, "recovery (a): mainState back at 0 after the warm reset");
+    check(fault_flags == 0 && error_code == ERR_NONE,
+          "recovery (a): fault/error latches cleared by the warm reset");
+}
+
+// ─── 3(b). Any additional fault bit alongside the dead-link union -> never recovers ───────────
+static void test_hil_recovery_denies_extra_fault_bit() {
+    test_group("fw v22 recovery (b): an extra fault bit alongside 0x8010 -> never recovers");
+    hilLatchDeadLinkAtPhase3();
+    fault_flags |= FAULT_OC_FC;   // a real fault latched alongside the dead link
+    uint32_t resetsBefore = hilWarmResetCount;
+
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 200);
+    check(hilWarmResetCount == resetsBefore,
+          "recovery (b): no warm reset with an extra fault bit set, however long the link stays fresh");
+    check(mainState == 99, "recovery (b): stays latched in State 99");
+
+    // Same probe with FAULT_UV_BUS, named explicitly in the test list.
+    hilLatchDeadLinkAtPhase3();
+    fault_flags |= FAULT_UV_BUS;
+    resetsBefore = hilWarmResetCount;
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 200);
+    check(hilWarmResetCount == resetsBefore,
+          "recovery (b): no warm reset with FAULT_UV_BUS also set");
+}
+
+// ─── 3(c). A genuine Pi timeout carrying the same 0x8010 union -> never recovers ──────────────
+static void test_hil_recovery_denies_genuine_pi_timeout() {
+    test_group("fw v22 recovery (c): genuine ERR_PI_TIMEOUT under the same 0x8010 union -> never recovers");
+    reset_test_state();
+    mainState = 2;
+    g_mock_millis = 1000;
+    triggerFault(FAULT_PI_TIMEOUT, ERR_PI_TIMEOUT);   // the real Pi-watchdog path, not HIL
+    check(fault_flags == (uint16_t)(FAULT_ERROR | FAULT_PI_TIMEOUT) && error_code == ERR_PI_TIMEOUT,
+          "recovery (c): (setup) fault_flags union is bit-identical to the dead-link case");
+    hilWalkTeardownToPhase3();
+    check(state99Phase == 3, "recovery (c): (setup) teardown reached phase 3");
+    uint32_t resetsBefore = hilWarmResetCount;
+
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 200);
+    check(hilWarmResetCount == resetsBefore,
+          "recovery (c): error_code disambiguates a real Pi timeout — it never auto-recovers");
+    check(mainState == 99, "recovery (c): stays latched in State 99");
+}
+
+// ─── 3(d). Debounce: a staleness gap resets the window; only continuous freshness fires ───────
+static void test_hil_recovery_debounce_resets_on_staleness() {
+    test_group("fw v22 recovery (d): a staleness gap resets the debounce window");
+    hilLatchDeadLinkAtPhase3();
+    uint32_t resetsBefore = hilWarmResetCount;
+
+    hilPumpFreshLinkForMs(400);
+    check(hilWarmResetCount == resetsBefore, "recovery (d): not yet — 400 ms fresh is short of the debounce");
+    check(hilRecoverArmed, "recovery (d): (setup) the arming latch is set during the fresh window");
+
+    g_mock_millis += HIL_STALE_MS + 1;   // let the link go stale WITHOUT re-injecting
+    doState99();
+    check(!hilRecoverArmed, "recovery (d): a staleness gap disarms the window");
+    check(hilWarmResetCount == resetsBefore, "recovery (d): no recovery across the gap");
+
+    hilPumpFreshLinkForMs(400);
+    check(hilWarmResetCount == resetsBefore,
+          "recovery (d): a second 400 ms fresh stretch is not yet the full debounce — the gap "
+          "restarted the clock instead of the two stretches adding up");
+
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20 - 400);
+    check(hilWarmResetCount == resetsBefore + 1,
+          "recovery (d): continuous freshness for the full debounce (measured from the re-arm) fires it");
+}
+
+// ─── 3(e). Recovery only counts time spent AT state99Phase==3, never mid-teardown ─────────────
+static void test_hil_recovery_gated_on_phase3_only() {
+    test_group("fw v22 recovery (e): armed/debounced only while state99Phase == 3, not mid-teardown");
+    reset_test_state();
+    mainState = 2;
+    g_mock_millis = 1000;
+    injectHilFrame(0xF9, 5, 5, 5, 5, 5, 5, 5, 5);
+    updateSensors();
+    g_mock_millis += HIL_ZERO_MS + 1;
+    updateSensors();
+    check(mainState == 99 && state99Phase == 0,
+          "recovery (e): (setup) dead link just latched, teardown has not run yet");
+
+    // Keep the link fresh continuously from BEFORE phase 3 is reached. If the arming/debounce
+    // clock were mistakenly not phase-gated, this pre-existing freshness would already satisfy
+    // it the instant phase 3 arrives.
+    uint32_t resetsBefore = hilWarmResetCount;
+    for (int i = 0; i < 30 && state99Phase != 3; i++) {
+        injectHilFrame(0xFA, 1, 1, 1, 1, 1, 1, 1, 1);
+        doState99();
+        // The switch runs BEFORE the recovery block within one doState99() call, so a phase-2
+        // -> 3 transition and the recovery block's phase==3 check can land on the SAME tick —
+        // arming legitimately begins there. Only assert "not yet armed" on ticks that are still
+        // strictly before phase 3 after the call.
+        if (state99Phase != 3) {
+            check(hilWarmResetCount == resetsBefore, "recovery (e): no recovery while phase < 3");
+            check(!hilRecoverArmed, "recovery (e): the arming latch never sets before phase 3");
+        }
+        g_mock_millis += 1;
+    }
+    check(state99Phase == 3, "recovery (e): (setup) teardown reached phase 3");
+    check(hilWarmResetCount == resetsBefore,
+          "recovery (e): the instant phase 3 is reached, recovery has NOT already fired from "
+          "pre-phase-3 freshness");
+
+    // Only from here does the debounce clock run.
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
+    check(hilWarmResetCount == resetsBefore + 1,
+          "recovery (e): recovery fires once the debounce is satisfied measured FROM phase 3");
+}
+
+// ─── 3(f). An open bench log blocks recovery until it is fully closed ─────────────────────────
+static void test_hil_recovery_blocked_by_open_log() {
+    test_group("fw v22 recovery (f): an open bench log blocks recovery until fully closed");
+    hilLatchDeadLinkAtPhase3();
+    uint32_t resetsBefore = hilWarmResetCount;
+
+    logActive = true;   // simulate a log still open (e.g. a manual 'K 1' run in progress)
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 50);
+    check(hilWarmResetCount == resetsBefore, "recovery (f): blocked while logActive is true");
+    check(mainState == 99, "recovery (f): still latched");
+
+    logActive = false;
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
+    check(hilWarmResetCount == resetsBefore + 1,
+          "recovery (f): recovers once the log is fully closed");
+
+    // logCloseRequested (a close in flight) blocks it too, independent of logActive/logFile.
+    hilLatchDeadLinkAtPhase3();
+    resetsBefore = hilWarmResetCount;
+    logCloseRequested = true;
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 50);
+    check(hilWarmResetCount == resetsBefore,
+          "recovery (f): a close-in-flight (logCloseRequested) also blocks recovery");
+    logCloseRequested = false;
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
+    check(hilWarmResetCount == resetsBefore + 1,
+          "recovery (f): recovers once the close-in-flight flag clears too");
+}
+
+// ─── 4. hilWarmReset() state audit: every enumerated global restored; pins untouched; ─────────
+//        boot-monotonic diagnostics NOT cleared.
+static void test_hil_warmreset_state_audit() {
+    test_group("fw v22 hilWarmReset(): full state audit — reset-list globals restored, pins "
+               "untouched, boot-monotonic counters preserved");
+    hilLatchDeadLinkAtPhase3();
+
+    // Dirty every reset-list global with a value a no-op reset would leave behind.
+    v_setpoint = 3.3f; power_share_setpoint = 0.9f; charge_goal = 2.5f; mode_cmd = 0;
+    pi_ever_connected = true;
+    driveCycleActive = true; powerShareProfileActive = true; trapProfileActive = true;
+    combinedProfileActive = true; wProfileActive = true; tsweepActive = true;
+    vescWatchActive = true; plotModeActive = true; plotArmTarget = PLOT_ARM_SHARE;
+    pendingInput = PEND_TRAP_PARAMS; inputBufIdx = 3;
+    changeToRun = true; changeToFin = true;
+    shareIsoFC = true; shareIsoBT = true; shareSpCutFC = true; shareSpCutBT = true;
+    powerBalanceLive = true; pi_power_accum = 42.0f;
+    driveCtrl_x[0] = 5.0; driveCtrl_x[1] = -3.0;
+    ag105Configured = true; ag105DataValid = true; ag105HadPower = true;
+    ag105PowerOnMs = 12345; ag105_status_raw = 0x22; I_charge = 1.9f;
+    uvBusArmed = true; uvBusUnderActive = true; uvBusDwellMs = 5.0f;
+    ovBusOverActive = true; ovBusOverSamples = 3;
+    fcUvArmed = true; fcUvUnderActive = true; fcUvDwellMs = 5.0f;
+    manualMotorCurrent = 3.0f; manualMotorVelocity = 1.5f; manualMotorMode = MOTOR_TEST_CURRENT;
+    pi_motor_accum = 4.0f; targetMotorTorque = 6.0f; current = 7.0f;
+    bringupActive = true; bringupPhase = 3;
+    wheelSpeedResetPending = true;
+    encPeriodRefUs = 999;
+
+    // Boot-monotonic diagnostics that must SURVIVE the warm reset — distinctive nonzero seeds.
+    hilFramesAccepted = 77;
+    encEdgeCountA = 11; encEdgeCountB = 13;
+
+    // Snapshot every switch pin hilWarmReset()'s doc comment claims is left untouched.
+    const int pins[] = { FC_REG_ENABLE, BT_REG_ENABLE, FC_BUS_ENABLE, BT_BUS_ENABLE,
+                          MOT_PWR_ENABLE, REGEN_ENABLE, FC_CHARGE_ENABLE, BT_SEQUENCE_ENABLE,
+                          MPPT_DISABLE, CBAL_DISABLE };
+    int before[10];
+    for (int i = 0; i < 10; i++) before[i] = digitalRead(pins[i]);
+
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
+    check(hilWarmResetCount == 1, "warmreset audit: exactly one warm reset fired");
+    check(mainState == 0, "warmreset audit: mainState reset to 0");
+
+    for (int i = 0; i < 10; i++) {
+        check(digitalRead(pins[i]) == before[i], "warmreset audit: no switch pin touched by the reset");
+    }
+
+    check(fault_flags == 0 && error_code == ERR_NONE && error_source_state == 0 && state99Phase == 0,
+          "warmreset audit: fault/error latches and state99Phase cleared");
+    check(v_setpoint == 0.0f && power_share_setpoint == 0.5f && charge_goal == 0.0f && mode_cmd == 4,
+          "warmreset audit: Pi command state back at boot defaults (mode_cmd=4 SAFE)");
+    check(!pi_ever_connected, "warmreset audit: pi_ever_connected re-armed false");
+    check(!driveCycleActive && !powerShareProfileActive && !trapProfileActive &&
+          !combinedProfileActive && !wProfileActive && !tsweepActive && !vescWatchActive &&
+          !plotModeActive,
+          "warmreset audit: State-98 profile/plot ownership flags all cleared");
+    check(plotArmTarget == PLOT_ARM_NONE && pendingInput == PEND_NONE && inputBufIdx == 0,
+          "warmreset audit: plot-arm target and pending-input state cleared");
+    check(!changeToRun && !changeToFin, "warmreset audit: state-transition flags cleared");
+    check(!shareIsoFC && !shareIsoBT && !shareSpCutFC && !shareSpCutBT,
+          "warmreset audit: all four share isolation/setpoint-cut latches cleared");
+    check(!powerBalanceLive && pi_power_accum == 0.0f,
+          "warmreset audit: share loop live-gate and PI accumulator cleared");
+    check(driveCtrl_x[0] == 0.0 && driveCtrl_x[1] == 0.0,
+          "warmreset audit: drive controller state vector zeroed (haltMotorOutput())");
+    check(!ag105Configured && !ag105DataValid && !ag105HadPower && ag105PowerOnMs == 0 &&
+          ag105_status_raw == 0 && I_charge == 0.0f,
+          "warmreset audit: Ag105 lazy-config/session state cleared");
+    check(!uvBusArmed && !uvBusUnderActive && uvBusDwellMs == 0.0f,
+          "warmreset audit: UV_BUS dwell integrator/arming cleared");
+    check(!ovBusOverActive && ovBusOverSamples == 0,
+          "warmreset audit: OV_BUS persistence window cleared");
+    check(!fcUvArmed && !fcUvUnderActive && fcUvDwellMs == 0.0f,
+          "warmreset audit: UV_FC dwell integrator/arming cleared");
+    check(manualMotorCurrent == 0.0f && manualMotorVelocity == 0.0f &&
+          manualMotorMode == MOTOR_TEST_OFF && pi_motor_accum == 0.0f &&
+          targetMotorTorque == 0.0f && current == 0.0f,
+          "warmreset audit: haltMotorOutput() zeroed manual/PI-fallback motor state");
+    check(!bringupActive && bringupPhase == 0,
+          "warmreset audit: bring-up machine reset to boot values (no pin write of its own)");
+    check(!wheelSpeedResetPending, "warmreset audit: encoderVelReset() supersedes any pending buffer reset");
+    check(encPeriodRefUs == 0, "warmreset audit: encoderVelReset() cleared the adaptive period reference");
+
+    // Boot-monotonic counters must NOT be cleared.
+    // hilPumpFreshLinkForMs() itself accepts further frames while driving the recovery, so the
+    // exact count has grown past the seed — the property under test is that it was NOT cleared
+    // back to 0 (or below the seed) by the warm reset, not a specific post-pump value.
+    check(hilFramesAccepted > 77, "warmreset audit: hilFramesAccepted is boot-monotonic, NOT cleared");
+    check(encEdgeCountA == 11 && encEdgeCountB == 13,
+          "warmreset audit: encoder edge counters are boot-monotonic, NOT cleared");
+}
+
+// ─── 5/6. End-to-end sequential-run regression: bring up -> Idle -> Run -> dead link -> ───────
+//          teardown -> warm reset -> State 0 -> auto bring-up -> Idle -> Run again. Also covers
+//          item 6: a mode_cmd arriving during State 0/99 does not enter Run.
+static void test_hil_sequential_run_regression() {
+    test_group("fw v22 end-to-end: bring-up -> Run -> dead link -> recovery -> bring-up -> Run again");
+    reset_test_state();
+    hilPrimeFreshLinkForBringup();   // fw v22 S3: model a streaming link (no-op in non-HIL builds)
+    mainState = 0;
+    g_mock_millis = 0;
+
+    // ── Run 1: bring-up ──────────────────────────────────────────────────────────────────────
+    injectHilFrame(0x01, 12.0f, 7.0f, 0.0f, 0, 0, 0, 0, 0);
+    V_fc = 12.0f; V_batt = 7.0f; V_bus = 0.0f; V_rgn = 0.0f;
+    doState0();
+    g_mock_millis += PRECHARGE_MIN_MS + 1; V_bus = 11.0f;             doState0();
+    g_mock_millis += 1;                    V_bus = 16.0f;             doState0();
+    g_mock_millis += BUS_REG_DWELL_MS + 1;                            doState0();
+    g_mock_millis += 1;                                               doState0();
+    g_mock_millis += 20; V_rgn = V_bus - MOT_HOTPLUG_MARGIN + 0.5f;   doState0();
+    check(mainState == 1, "e2e: run 1 reaches Idle");
+
+    // A mode_cmd DURING State 0 must not have taken effect — mainState==1 gate (pre-existing,
+    // unchanged by fw v22). Confirmed retroactively: changeToRun is false right up to the point
+    // we set it explicitly below, i.e. nothing armed Run early.
+    check(!changeToRun, "e2e: (item 6) no stray Run entry survived the bring-up walk");
+
+    // ── Run 1: enter Run ─────────────────────────────────────────────────────────────────────
+    changeToRun = true;
+    doState1();
+    check(mainState == 2, "e2e: run 1 enters Run");
+    check(driveCtrl_x[0] == 0.0, "e2e: Idle->Run reset the drive controller state (run 1 starts clean)");
+
+    // Dirty the drive controller mid-run so the SECOND run's clean start is actually observable.
+    driveCtrl_x[0] = 9.0;
+    current = 6.0f;
+
+    // ── Dead link kills the run ──────────────────────────────────────────────────────────────
+    // Stop the mock's live-link model (armed by hilPrimeFreshLinkForBringup() at the top) so
+    // hilLastFrameMs stops following the clock — this is the point where the simulator "stops".
+    g_mock_millis_track = nullptr;
+    g_mock_millis += HIL_ZERO_MS + 1;   // no frame re-injected since 0x01 -> link is long dead
+    updateSensors();
+    check(mainState == 99 && error_code == ERR_HIL_STALE, "e2e: the dead link latches State 99");
+    check(current == 0.0f, "e2e: haltMotorOutput() zeroed the commanded current on the stale entry edge");
+
+    // ── Teardown completes, link returns, warm reset fires ──────────────────────────────────
+    hilWalkTeardownToPhase3();
+    check(state99Phase == 3, "e2e: teardown reaches phase 3");
+    uint32_t resetsBefore = hilWarmResetCount;
+
+    // A mode_cmd arriving WHILE latched in State 99 must not sneak Run in once State 0 reruns —
+    // receiveCommands()'s mode_cmd<=3 branch only fires at mainState==1, so injecting one now
+    // (mainState==99) cannot set changeToRun. (injectHilFrame() itself carries no mode_cmd —
+    // that is the 22-byte command packet's job — so this also confirms the injection path alone
+    // never touches changeToRun.)
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
+    check(hilWarmResetCount == resetsBefore + 1, "e2e: warm reset fires");
+    check(mainState == 0, "e2e: back at State 0");
+    check(!changeToRun, "e2e: (item 6) no Run entry survived into the new run from stale intent");
+    check(driveCtrl_x[0] == 0.0, "e2e: warm reset re-zeroed the drive controller state");
+
+    // ── Run 2: State 0 auto bring-up (no operator, no 'G') ──────────────────────────────────
+    // The simulator is streaming again (that is what fired the warm reset above), so re-arm the
+    // mock's live-link model: run 2's bring-up walk advances g_mock_millis across HIL_STALE_MS
+    // several times, and under fw v22 S3 a bring-up on a link that has gone quiet aborts.
+    hilPrimeFreshLinkForBringup();
+    injectHilFrame(0x02, 12.0f, 7.0f, 0.0f, 0, 0, 0, 0, 0);
+    V_fc = 12.0f; V_batt = 7.0f; V_bus = 0.0f; V_rgn = 0.0f;
+    doState0();
+    check(bringupActive && bringupPhase == 1, "e2e: run 2's bring-up arms fresh off the warm reset");
+    g_mock_millis += PRECHARGE_MIN_MS + 1; V_bus = 11.0f;             doState0();
+    g_mock_millis += 1;                    V_bus = 16.0f;             doState0();
+    g_mock_millis += BUS_REG_DWELL_MS + 1;                            doState0();
+    g_mock_millis += 1;                                               doState0();
+    g_mock_millis += 20; V_rgn = V_bus - MOT_HOTPLUG_MARGIN + 0.5f;   doState0();
+    check(mainState == 1 && !bringupActive, "e2e: run 2 reaches Idle via its own independent bring-up");
+
+    // ── Run 2: re-enter Run — the second run's controllers start from a clean reset ─────────
+    check(driveCtrl_x[0] == 0.0, "e2e: (item 6 continued) run 2's controller state is still clean at Idle");
+    changeToRun = true;
+    doState1();
+    check(mainState == 2, "e2e: run 2 enters Run on its own mode_cmd, independent of run 1");
+    check(driveCtrl_x[0] == 0.0,
+          "e2e: run 2's Idle->Run reset leaves the drive controller at 0 — no history from run 1");
+    check(current == 0.0f, "e2e: run 2 starts with I_cmd 0 until freshly commanded");
+}
+
+// ─── 6. mode_cmd arriving during State 0/99 does not enter Run; the next command after Idle does
+static void test_hil_mode_cmd_gated_outside_idle() {
+    test_group("fw v22 (item 6): a MODE_HYBRID command during State 0/99 does not enter Run; the "
+               "next one after Idle does");
+    reset_test_state();
+
+    // Build a valid 22-byte command packet, mode_cmd = MODE_HYBRID (0), matching
+    // test_command_parsing()'s layout exactly.
+    auto sendModeHybridPacket = []() {
+        uint8_t pkt[22] = {};
+        pkt[0] = 0xBB;
+        uint32_t ts_val = 1; memcpy(&pkt[1], &ts_val, 4);
+        uint16_t cnt = 1;    memcpy(&pkt[5], &cnt, 2);
+        float v_sp = 0.0f;   memcpy(&pkt[7], &v_sp, 4);
+        float ps   = 0.5f;   memcpy(&pkt[11], &ps, 4);
+        float cg   = 0.0f;   memcpy(&pkt[15], &cg, 4);
+        pkt[19] = 0;   // mode_cmd = MODE_HYBRID
+        pkt[20] = 0;
+        uint8_t cs = 0;
+        for (int i = 1; i < 21; i++) cs ^= pkt[i];
+        pkt[21] = cs;
+        Udp.fake_packet_size = 22;
+        memcpy(Udp.fake_packet, pkt, 22);
+        receiveCommands();
+    };
+
+    // ── During State 0 (bring-up not yet complete): must not enter Run. ─────────────────────
+    mainState = 0;
+    g_mock_millis = 0;
+    injectHilFrame(0x11, 12.0f, 7.0f, 0.0f, 0, 0, 0, 0, 0);
+    sendModeHybridPacket();
+    check(!changeToRun, "item 6: mode_cmd during State 0 does not set changeToRun");
+
+    // ── During State 99 (latched): must not enter Run either. ───────────────────────────────
+    mainState = 99;
+    sendModeHybridPacket();
+    check(!changeToRun, "item 6: mode_cmd during State 99 does not set changeToRun");
+
+    // ── Once Idle is reached, the same command DOES enter Run. ──────────────────────────────
+    mainState = 1;
+    sendModeHybridPacket();
+    check(changeToRun, "item 6: the identical command, sent once mainState==1, sets changeToRun");
 }
 #endif  // HIL_SIM
 
@@ -3007,7 +3566,8 @@ static void test_share_handoff_mode_constants() {
     check(fabsf(SHARE_GOV_FILT_ALPHA - 0.05f) < 1e-6f,
           "constants: (setup) SHARE_GOV_FILT_ALPHA is the EMA weight the handoff filters share "
           "with the governor's load filter");
-    check(FW_VERSION == 21, "pin: FW_VERSION == 21");
+    // fw v22 (HIL State-0 wait gate + State-99 dead-link auto-recovery): stale pin updated.
+    check(FW_VERSION == 22, "pin: FW_VERSION == 22");
 }
 
 // DARK seed (item B3): resetShareControlState() (and reset_test_state()'s mirror of it) seeds
@@ -5074,6 +5634,9 @@ static void test_dostate0_reaches_idle_unpowered() {
     Wire.next_endtransmission_result = 1;   // any stray I2C would NACK — must not matter
     mainState = 0;
     g_mock_millis = 0;
+#if HIL_SIM
+    hilPrimeFreshLinkForBringup();          // fw v22: arm past the injection-wait gate
+#endif
     V_fc = 12.0f; V_batt = 7.0f;            // FC is the WINNING source — max() must be used
     V_bus = 0.0f; V_rgn = 0.0f;
 
@@ -5164,6 +5727,9 @@ static void test_dostate0_precharge_timeout() {
     reset_test_state();
     mainState = 0;
     g_mock_millis = 0;
+#if HIL_SIM
+    hilPrimeFreshLinkForBringup();          // fw v22: arm past the injection-wait gate
+#endif
     V_fc = 0.0f; V_batt = 0.0f; V_bus = 0.0f;
 
     doState0();                              // P0 entry
@@ -5191,6 +5757,9 @@ static void test_dostate0_bus_charge_timeout() {
     reset_test_state();
     mainState = 0;
     g_mock_millis = 0;
+#if HIL_SIM
+    hilPrimeFreshLinkForBringup();          // fw v22: arm past the injection-wait gate
+#endif
     V_fc = 6.0f; V_batt = 6.0f;
     V_bus = 6.0f;                            // pre-charges fine, but boosts never regulate
 
@@ -5219,6 +5788,9 @@ static void test_bringup_dwell_dip_and_timeout() {
         reset_test_state();
         mainState = 0;
         g_mock_millis = 0;
+#if HIL_SIM
+        hilPrimeFreshLinkForBringup();          // fw v22: arm past the injection-wait gate
+#endif
         V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
         doState0();                                  // P0 entry
         g_mock_millis = PRECHARGE_MIN_MS + 1;
@@ -5271,6 +5843,9 @@ static void test_bringup_mot_connect_timeout() {
     reset_test_state();
     mainState = 0;
     g_mock_millis = 0;
+#if HIL_SIM
+    hilPrimeFreshLinkForBringup();          // fw v22: arm past the injection-wait gate
+#endif
     V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
     doState0();                                       // P0 entry
     g_mock_millis = PRECHARGE_MIN_MS + 1;
@@ -5300,6 +5875,7 @@ static void test_dostate98_g_bringup() {
     test_group("State 98 'G' staged bring-up");
 
     reset_test_state();
+    hilPrimeFreshLinkForBringup();   // fw v22 S3: model a streaming link (no-op in non-HIL builds)
     mainState = 98;
     g_mock_millis = 0;
     V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
@@ -5406,6 +5982,7 @@ static void test_dostate98_bringup_abort() {
     // Walk to mid-P1 (boosts ON, bus switches ON) then abort with 'X'.
     auto walk_to_p1 = []() {
         reset_test_state();
+        hilPrimeFreshLinkForBringup();   // fw v22 S3: model a streaming link (no-op in non-HIL builds)
         mainState = 98;
         g_mock_millis = 0;
         V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
@@ -6334,6 +6911,7 @@ static void test_bringup_dark_start() {
     // A boost left enabled by a manual 'F' and a latched FC_CHARGE must both be cleared BEFORE
     // the bus switches close (hot-plug + illegal BT_BUS+FC_CHARGE combination respectively).
     reset_test_state();
+    hilPrimeFreshLinkForBringup();   // fw v22 S3: model a streaming link (no-op in non-HIL builds)
     mainState = 98;
     g_mock_millis = 0;
     V_fc = 12.0f; V_batt = 7.0f; V_bus = 0.0f; V_rgn = 0.0f;
@@ -6363,6 +6941,9 @@ static void test_bringup_dark_start() {
     reset_test_state();
     mainState = 0;
     g_mock_millis = 0;
+#if HIL_SIM
+    hilPrimeFreshLinkForBringup();          // fw v22: arm past the injection-wait gate
+#endif
     V_fc = 12.0f; V_batt = 7.0f; V_bus = 0.0f;
     g_pin_value[FC_REG_ENABLE]    = HIGH;
     g_pin_value[FC_CHARGE_ENABLE] = HIGH;
@@ -6381,6 +6962,9 @@ static void test_bringup_late_gate_faults() {
     reset_test_state();
     mainState = 0;
     g_mock_millis = 0;
+#if HIL_SIM
+    hilPrimeFreshLinkForBringup();          // fw v22: arm past the injection-wait gate
+#endif
     V_fc = 12.0f; V_batt = 7.0f; V_bus = 0.0f;
     doState0();                                            // P0 entry, phaseStart = 0
     V_bus = 11.0f;                                         // gate voltages now satisfied
@@ -6395,6 +6979,9 @@ static void test_bringup_late_gate_faults() {
     reset_test_state();
     mainState = 0;
     g_mock_millis = 0;
+#if HIL_SIM
+    hilPrimeFreshLinkForBringup();          // fw v22: arm past the injection-wait gate
+#endif
     V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f;
     doState0();                                            // P0 entry
     g_mock_millis = PRECHARGE_MIN_MS + 1;
@@ -6410,6 +6997,9 @@ static void test_bringup_late_gate_faults() {
     reset_test_state();
     mainState = 0;
     g_mock_millis = 0;
+#if HIL_SIM
+    hilPrimeFreshLinkForBringup();          // fw v22: arm past the injection-wait gate
+#endif
     V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
     doState0();                                            // P0 entry
     g_mock_millis = PRECHARGE_MIN_MS + 1;  doState0();     // → P1
@@ -6433,6 +7023,9 @@ static void test_bringup_p3_bus_sag() {
     reset_test_state();
     mainState = 0;
     g_mock_millis = 0;
+#if HIL_SIM
+    hilPrimeFreshLinkForBringup();          // fw v22: arm past the injection-wait gate
+#endif
     V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
     doState0();                                            // P0 entry
     g_mock_millis = PRECHARGE_MIN_MS + 1;  doState0();     // → P1
@@ -6465,6 +7058,7 @@ static void test_bringup_g_takes_motor_ownership() {
     test_group("'G' clears a standing manual motor command / droop-live");
 
     reset_test_state();
+    hilPrimeFreshLinkForBringup();   // fw v22 S3: model a streaming link (no-op in non-HIL builds)
     mainState = 98;
     g_mock_millis = 0;
     V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
@@ -6501,6 +7095,7 @@ static void test_bringup_suppresses_manual_block() {
     test_group("Manual/live motor block suppressed during a bring-up (round 2, F1)");
 
     reset_test_state();
+    hilPrimeFreshLinkForBringup();   // fw v22 S3: model a streaming link (no-op in non-HIL builds)
     mainState = 98;
     g_mock_millis = 0;
     V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
@@ -6544,6 +7139,7 @@ static void test_dostate98_topology_lockout() {
 
     // Walk to mid-P1 (boosts ON via the machine, bus switches ON).
     reset_test_state();
+    hilPrimeFreshLinkForBringup();   // fw v22 S3: model a streaming link (no-op in non-HIL builds)
     mainState = 98;
     g_mock_millis = 0;
     V_fc = 12.0f; V_batt = 7.0f; V_bus = 11.0f; V_rgn = 0.0f;
@@ -13701,6 +14297,10 @@ static void test_sdlog_k1_refusals() {
     // (a) staged bring-up in progress
     reset_test_state();
     mainState = 98;
+    // fw v22 S3: doState98() ticks the bring-up machine, which now aborts a bring-up whose HIL
+    // injection link is dead. Prime a live link so the machine is still ACTIVE when the guard
+    // under test runs (no-op in the two non-HIL builds).
+    hilPrimeFreshLinkForBringup();
     bringupActive = true;
     Serial.tx_clear();
     k_send(" 1");
@@ -14959,6 +15559,10 @@ static void test_tsweep_fire_time_preconditions() {
     // tick: ticking it would run the bring-up machine to its own timeout first, which is a test
     // of busBringupTick(), not of this guard.
     g_mock_millis += 11000;
+    // fw v22 S3: keep the (simulated) injection link alive so the bring-up machine stays ACTIVE
+    // through the doState98() tick — otherwise the new link-loss abort clears bringupActive first
+    // and this test stops exercising its own guard. No-op in the two non-HIL builds.
+    hilPrimeFreshLinkForBringup();
     bringupActive = true;
     doState98();
     check(tsweepActive == false,
@@ -16791,6 +17395,16 @@ static void test_w_status_suppression_no_charging() {
 // ─── doState0() BENCH_TEST bypass: boot to Idle with the power stage off ──────
 // Built only in the -DBENCH_TEST=1 pass (run_tests_bench). The -DBENCH_TEST=0 suite covers the
 // production doState0 (test_dostate0_reaches_idle_unpowered / _bus_charge_timeout).
+#if !HIL_SIM
+// fw v22 note: doState0()'s dispatch is `#if HIL_SIM ... #elif BENCH_TEST ... #else`, and the
+// .ino's own #ifndef block defaults HIL_SIM to 1 independent of BENCH_TEST — so a build with
+// HIL_SIM left at its default compiles the STAGED bring-up machine here regardless of
+// BENCH_TEST's value, and the single-call dark-boot bypass this test targets is not reachable
+// code in that build (a single doState0() call only runs the machine's P0 entry, not a full
+// boot-to-Idle). This test is therefore compiled only when HIL_SIM is explicitly forced to 0
+// (not exercised by any of the three Makefile targets today, all of which leave the .ino
+// default in force) — kept guarded rather than deleted so it still pins the real bypass the
+// moment any build overrides HIL_SIM=0.
 static void test_dostate0_bench_bypass() {
     test_group("doState0() BENCH_TEST bypass (power stage off)");
     reset_test_state();
@@ -16813,6 +17427,7 @@ static void test_dostate0_bench_bypass() {
     check(!(fault_flags & FAULT_INIT_FAIL) && error_code == ERR_NONE && mainState != 99,
           "doState0/bench: never gates or faults on low V_bus");
 }
+#endif  // !HIL_SIM
 
 // ─── FAULT_UV_BUS is armed under BENCH_TEST even though OC/UV_BATT are not ──
 // The whole point of the fw v4 UV_BUS rework: WP0039/TP0016 both ran under BENCH_TEST (State
@@ -17111,7 +17726,9 @@ int main() {
     printf("===================================\n");
 
 #if BENCH_TEST
+#if !HIL_SIM
     test_dostate0_bench_bypass();
+#endif
     // Review F6: tests whose code paths compile IDENTICALLY in both builds also run here, so a
     // bench flash gets the same coverage. Excluded: the production doState0() bring-up tests
     // (the bench bypass replaces that path entirely) and anything relying on faults compiled out
@@ -17205,6 +17822,19 @@ int main() {
     test_hil_wiring_pollag105_settles_to_configured();
     test_hil_wiring_pollag105_genstat_fault_still_latches();
     test_hil_wiring_pollag105_real_i2c_before_first_frame();
+
+    // ── fw v22: HIL State-0 wait gate + State-99 dead-link auto-recovery ────
+    test_hil_state0_wait_gate_blocks_without_frame();
+    test_hil_state0_fresh_frame_arms_bringup_reaches_idle();
+    test_hil_recovery_admits_exact_deadlink();
+    test_hil_recovery_denies_extra_fault_bit();
+    test_hil_recovery_denies_genuine_pi_timeout();
+    test_hil_recovery_debounce_resets_on_staleness();
+    test_hil_recovery_gated_on_phase3_only();
+    test_hil_recovery_blocked_by_open_log();
+    test_hil_warmreset_state_audit();
+    test_hil_sequential_run_regression();
+    test_hil_mode_cmd_gated_outside_idle();
 #endif
 
     test_pi_controllers();

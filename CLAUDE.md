@@ -1589,3 +1589,63 @@ Sonnet fix round). Python tooling + docs only; FW_VERSION stays 21; wire protoco
 - **Next:** Mode-A smoke on the bench (`--ems hold-5050 --scenario ems-drive-cycle
   --dash`), then the Mode-B bring-up per the manual; audit the Pi bridge's v4 parser
   before the first pi-live run.
+
+---
+
+## Status & session addendum (2026-08-30, fw v22: HIL sequential runs + regen-node topology fix)
+
+First real HIL bench session (fw v21 flashed, Mode A). Three orchestrated rounds; ledger row 22.
+
+- **HIL regen-node TOPOLOGY FIX (tooling).** The first bring-up attempts latched INIT_FAIL then
+  MOT_HOTPLUG: the simulator had the REGEN switch between V-MOT and the RGN sense/chopper node.
+  **Schematic sheet 4 + operator confirm:** the RGN-V divider and TL431/BSP170P chopper sit ON
+  V-MOT, upstream of D-BC-RG; D-BC-RG and D-BC-FC outputs join at the shared VCHG-IN node
+  (CHG-V divider) into the Ag105. Fixed in hil_electrical.py (REGEN links N_MOT→N_CHG, V_rgn
+  reads N_MOT, chopper on N_MOT, charger always draws N_CHG; N_RGN retired as an index-padding
+  node) and the simple model (V_rgn follows MOT_PWR; V_chg fed by either path). PSCAD_SIM_DESIGN,
+  HIL_PLANT and the chopper "V_bus unaffected" claims reconciled (coupling through closed
+  MOT_PWR ≈ 0.03–0.06 V — consistent with the bench). **Validated on hardware:** staged bring-up
+  P0–P3 DONE on injected sensors; full 60 s ems-drive-cycle ran clean (median |v_act−v_sp|
+  1 mm/s, zero faults in Run).
+- **Known open tooling defect:** the hifi RT1987 SOFT-state clamp detector computes demand as
+  (target−v_out)/R_ON with a one-substep-stale v_out, so the two 5.6 nF charger-path switches
+  (REGEN, FC_CHARGE) false-SCP-cut forever and the Ag105 can never power in hifi charge
+  scenarios. Needs its own round (physical C·dV/dt ramp current).
+- **HIL Results/ output convention (tooling round):** every HIL artifact defaults into repo-root
+  `HIL Results/` (relative --csv resolved there, absolute honored; suite reports
+  `HIL Results/hil_report_<ts>/`); gitignored. `.venv_hil` (uv, stdlib-only + pytest/pyserial)
+  is the HIL interpreter — bare `python` is the MS-Store stub. Bench PC Ethernet needs the
+  static IP 192.168.1.10 (APIPA 169.254.* = forgot it; manual §4.1 has the check).
+- **fw v22 (pending flash): HIL sequential runs without power-cycle.** (a) Under HIL_SIM,
+  doState0() waits for a FRESH injection link (1 Hz notice; zeros published pre-first-frame so
+  floating ADCs cannot OV-latch — S7) then runs the STAGED bring-up in BOTH BENCH_TEST values —
+  the T/G/Q dance and the fw v21 boot-order race are gone on HIL builds (non-HIL bench keeps
+  the dark-boot + 'G' doctrine verbatim). (b) doState99() phase 3 auto-recovers from the
+  dead-link latch: admission = fault_flags EXACTLY 0x8010 AND error_code ERR_HIL_STALE AND
+  500 ms continuously-fresh link (HIL_RECOVER_DEBOUNCE_MS, re-armed on any staleness) AND the
+  BLG fully closed; action = hilWarmReset() (software-state-only boot restore incl.
+  droopSlew_prev/shareHandoffPrevRatio re-anchored to the re-initialized MDACs' 0.5 — S2;
+  NO pin writes) → State 0 → auto bring-up. Any other fault (incl. genuine ERR_PI_TIMEOUT,
+  same 0x8010 union — error_code disambiguates, first-cause-only) stays latched forever.
+  (c) Link death DURING bring-up aborts to the wait gate instead of racing the phase timeouts
+  into an unrecoverable INIT_FAIL (S3; the abort predicate is link-freshness, not hilZeroed —
+  the hold window is the race window). Mode-B warning: a persistent Pi must restart its
+  timeline on observing mainState 99→0 or it commands a mid-profile setpoint into a
+  freshly-reset drive loop.
+- **HIL_SIM source default flipped back to 0 (operator decision, S1 HIGH):** the operator's
+  IDE flip had made EVERY build HIL — including the test Makefile's "production"/"bench"
+  targets, which were silently compiling the HIL path (correctness HIGH-1; the bench 175→169
+  drop was the dead dark-boot test). Makefile now passes -DHIL_SIM=0 explicitly on both non-HIL
+  targets. **An HIL flash now requires editing HIL_SIM to 1** (manual §2.4); a default flash is
+  a normal bench build again, and a HIL_SIM=1 build without a simulator sits visibly in the
+  State-0 wait loop (no serial console there — flip the flag back for bench work).
+- **Tests: 3535 production (-DHIL_SIM=0) + 175 bench (-DHIL_SIM=0) + 3909 HIL, all green,
+  orchestrator-rebuilt.** New coverage: wait gate, auto bring-up, recovery admission matrix
+  (exact-flags/extra-bit/PI_TIMEOUT/debounce/phase-3/open-log), ~35-global warm-reset audit
+  (pins untouched, boot-monotonic counters preserved), two-run sequential regression, mode_cmd
+  gating, mid-bring-up abort. Mock gained a tracked-millis fresh-link model
+  (g_mock_millis_track).
+- **Next bench:** flash fw v22 (edit HIL_SIM 0→1 first); verify sequential Mode-A runs and a
+  full run_hil_suite pass without power-cycles; keep the hifi SOFT-SCP fix and the Pi-bridge
+  v4 parser audit on the list. `.venv_benchlog` still lacks pandas/scipy; analyzer exe rebuild
+  still pending.

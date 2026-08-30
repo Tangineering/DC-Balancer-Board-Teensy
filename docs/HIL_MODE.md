@@ -1,4 +1,4 @@
-# HIL mode — real Teensy against a simulated plant (fw v21)
+# HIL mode — real Teensy against a simulated plant (fw v21, extended fw v22)
 
 > For the plant-side deep dive — the mechanical/electrical model, constant provenance,
 > the simplifications and their consequences, the CSV schema and the extension roadmap —
@@ -117,15 +117,16 @@ Rejections are counted and shown in the `'S'` dump.
 Sent at 1 kHz from `loop()`, but only **after the first accepted injection frame**
 (before that there is no host address to send to) and only when `networkUp`.
 
-## Link-loss behaviour: hold, then zero
+## Link-loss behaviour: hold, then zero, then latch — and (fw v22) auto-recover
 
-Two thresholds, and the staging is deliberate:
+Three thresholds and one recovery path. The staging is deliberate:
 
 | Age of last accepted frame | Behaviour |
 |---|---|
 | ≤ `HIL_STALE_MS` (50 ms) | apply the injected values normally |
 | ≤ `HIL_ZERO_MS` (250 ms) | **HOLD** the last values, set `hilStale` |
 | > `HIL_ZERO_MS` | force **safe zeros** on all seven rails and `v_actual`, **latch `ERR_HIL_STALE`** |
+| link returns, fresh for `HIL_RECOVER_DEBOUNCE_MS` (500 ms) | **warm reset back to State 0** (fw v22) — see below |
 
 A dropped or late packet is a *host scheduling* artefact, not a plant event.
 Zeroing immediately would inject a full-scale rail collapse into `detectFaults()`
@@ -154,6 +155,51 @@ Two things happen on the *edges* of that staging (added in the fw v21 review rou
   fixed-width `fault_flags` word are allocated, and `error_code` is what names the
   cause. See the comment at the `#define FAULT_HIL_LINK` site.
 
+### Auto-recovery from the dead-link latch (fw v22)
+
+Under fw v21 that latch was permanent, and stopping the simulator is the normal end
+of an HIL run — so a 38-run suite cost 38 physical power cycles. A HIL build now
+warm-resets itself back to State 0 when the link comes back. This is the **only**
+path out of State 99 anywhere in the firmware, and it exists only under `HIL_SIM`.
+
+All four conditions are required:
+
+1. `state99Phase == 3` — the phased teardown has **completed**. Resetting between
+   phases would abandon the sequencing mid-way and could leave an energized path
+   pointed into a not-yet-disabled boost (CLAUDE.md §2 back-feed rule).
+2. `error_code == ERR_HIL_STALE` **and** `fault_flags == (FAULT_ERROR | FAULT_PI_TIMEOUT)`
+   **exactly** (`0x8010`). Testing for equality rather than for the bits being present
+   is the load-bearing part: `FAULT_HIL_LINK` is an alias of `FAULT_PI_TIMEOUT`, so any
+   *additional* bit means a real fault latched as well (an OV, a bring-up failure, a
+   switch conflict) and the board must stay latched for the operator.
+3. The link has been continuously fresh (`age <= HIL_STALE_MS`) for
+   `HIL_RECOVER_DEBOUNCE_MS` = **500 ms**. The window re-arms from zero on any
+   staleness. 500 ms is deliberately longer than the 250 ms zero stage, so a link
+   flapping around the dead-link boundary settles into the latch — visible and
+   diagnosable — instead of cycling the board through bring-up on every flap.
+4. The SD bench log is fully closed and drained. `triggerFault()` only *requests* the
+   close; `logDrainTick()` does the card I/O in phase 3, the same window this check
+   lives in, so a reset taken with a close in flight would strand an unfinished file.
+
+`hilWarmReset()` then restores the software state machine to boot values — fault and
+error latches, the UV/OV arming and dwell integrators, the motor and Youla drive
+state, the share loop and all four isolation/setpoint-cut latches, the control rate
+limiters, the bring-up machine, the Pi command state (including `mode_cmd` back to
+**SAFE**, so a stale `MODE_HYBRID` cannot re-enter Run), the Ag105 session flags, the
+State-98 bench-tool residue and the velocity estimator — and sets `mainState = 0`.
+Boot-monotonic diagnostics (encoder edge counters, HIL frame counters, OV/UV transient
+counts) stay cumulative across runs by design.
+
+**No pin is touched by the reset.** Teardown phase 2 has already left the stage in the
+`setup()` configuration, with the single exception of `BT_SEQUENCE_ENABLE`, which the
+IO CSV says need not be turned off again and which bring-up phase P1 drives HIGH
+anyway. Recovery therefore opens and closes no switch: State 0 re-derives the whole
+sequence through the staged bring-up machine.
+
+The console prints `[HIL] link recovered — warm reset, re-entering State 0` plus a
+run-separator note. The `'S'` dump's `--- HIL ---` section shows `recover arm:`
+(armed / elapsed against the debounce) and a cumulative `warm resets:` count.
+
 **Host binding (fw v21).** The host address/port is learned from the **first**
 accepted frame and re-learned only after the link has gone dead. While the link is
 up, a well-formed frame from any other source address is ignored entirely — not
@@ -173,12 +219,28 @@ rising means the loop is not keeping up with the injection rate.
 Before the *first* frame ever arrives the real ADCs are read as usual, so a HIL
 flash is still readable on a desk with the simulator not yet started.
 
-> ⚠️ **Production (`BENCH_TEST=0`) HIL boot is order-sensitive: start
-> `tools/hil_plant_sim.py` BEFORE powering the board.** Until the first frame
-> lands the firmware reads real (disconnected) ADCs, and the staged bring-up
-> latches `FAULT_INIT_FAIL` at ~800 ms on those readings. Injection that starts
-> mid-bring-up also satisfies the bring-up gates on a step rather than a ramp.
-> The boot banner repeats this.
+> ✅ **Boot order is free from fw v22.** State 0 in a HIL build waits — non-blocking,
+> with a 1 Hz `State 0: waiting for HIL injection stream...` notice and
+> `detectFaults()` live — until the link is up and fresh before it **arms** the
+> staged bring-up machine, so no bring-up phase clock runs before the plant exists.
+> The board and the simulator may be started in either order.
+>
+> *Historical (fw v21):* a production (`BENCH_TEST=0`) HIL flash read real
+> (disconnected) ADCs until the first frame landed and latched `FAULT_INIT_FAIL` at
+> ~800 ms if injection had not started. That race is removed, not documented; the
+> boot banner was re-worded to match.
+>
+> Note the gate guards the **start** only (it is skipped once `bringupActive`): a
+> link hiccup *during* bring-up is handled by the two-stage hold-then-zero above,
+> and a genuine loss faults and then auto-recovers.
+
+> ⚠️ **`BENCH_TEST` no longer changes State 0 under `HIL_SIM` (fw v22).** A HIL build
+> runs the staged bring-up at *both* `BENCH_TEST` values. The `BENCH_TEST=1`
+> dark-boot bypass exists because enabling a boost at boot on a soft bench supply
+> browns out the board-powered Teensy — a statement about a real power stage, of
+> which a HIL build has none. Keeping it only made a `BENCH_TEST=1` HIL flash unable
+> to reach Run without an operator driving `'T'`/`'G'`/`'Q'` at the USB console.
+> Non-HIL builds are unaffected and keep the fw v21 behaviour verbatim.
 
 ## Building and flashing
 
@@ -206,6 +268,10 @@ python3 tools/hil_plant_sim.py \
         --duration 30 \
         --csv hil_run.csv
 ```
+
+A relative `--csv` path (as above) lands in `HIL Results/` at the repo root; an
+absolute path is honored verbatim (`docs/HIL_USER_MANUAL.md` §2.5). The
+electrical events sidecar follows the resolved path.
 
 Two additional command sources exist and are documented in
 [`docs/HIL_USER_MANUAL.md`](HIL_USER_MANUAL.md): `--ems STRATEGY` (Mode A — an
@@ -454,14 +520,15 @@ is tagged `mode: pi-live`. See [`docs/HIL_USER_MANUAL.md`](HIL_USER_MANUAL.md) �
   `--teensy-ip` / `--port` (default `5001`, the `.ino` `local_port`).
 - Nothing on the power stage. This is signal-level HIL; the scenarios drive the
   firmware's fault and sequencing paths deliberately.
-- Under a production (`BENCH_TEST=0`) build the simulator must already be streaming
-  before the board powers on, or the board hits `INIT_FAIL` in ~800 ms.
+- From fw v22 the board may be powered before or after the simulator: State 0 waits
+  for the injection stream. (Under fw v21 a production build had to see the simulator
+  streaming before power-on or it hit `INIT_FAIL` in ~800 ms.)
 
 **Options**
 
 | Flag | Meaning |
 |------|---------|
-| `--out DIR` | report directory (default `hil_report_<YYYYmmdd_HHMMSS>/`) |
+| `--out DIR` | report directory (default `HIL Results/hil_report_<YYYYmmdd_HHMMSS>/` at the repo root; an explicit DIR keeps its usual CWD-relative meaning) |
 | `--list` | print the run plan and estimated wall time; needs no board |
 | `--dry-run` | build every child argv, write `plan.json`, run nothing |
 | `--only PAT` / `--skip PAT` | shell globs on the run name; repeatable |
@@ -473,11 +540,19 @@ is tagged `mode: pi-live`. See [`docs/HIL_USER_MANUAL.md`](HIL_USER_MANUAL.md) �
 **Board state between runs.** Each run opens its own socket, and the firmware learns
 its host from the first accepted injection frame. The default 5 s settle pause is far
 longer than the 250 ms zero stage, so between runs the board force-zeros the injected
-rails, unbinds the host and latches `ERR_HIL_STALE` — i.e. each run starts from a
-known *latched* board, not from whatever the previous scenario left behind. That
-latch is expected; the runner judges each run's fault outcome against that run's own
-stimulus. For a clean State-1 board on a particular run, power-cycle and pass
-`--settle-s 0`.
+rails, unbinds the host and latches `ERR_HIL_STALE`.
+
+**From fw v22 that latch releases itself.** Once the next run starts streaming, the
+board debounces the link for 500 ms and warm-resets to State 0, then runs the staged
+bring-up on the new run's injected plant — so each run now begins from a *fresh boot
+equivalent*, not from a latched board, and the whole 38-run plan executes without
+anyone touching the hardware. The recovery is admitted only for the exact `0x8010`
+dead-link fault union, so a run that latches a **real** fault still leaves the board
+latched, and the following run's zero-observation-frame / fault checks report it. The
+runner still judges each run's fault outcome against that run's own stimulus.
+
+*Under fw v21 each run instead started from a known latched board; the way to get a
+clean State-1 board for a particular run was to power-cycle and pass `--settle-s 0`.*
 
 **Execution model.** Every run is a separate `hil_plant_sim.py` child process (not an
 in-process call) with a hard timeout of the run's duration + 30 s, so a wedged run is
@@ -510,7 +585,7 @@ the first run (the runner aborts early rather than grinding through 30+ dead run
 |----|--------------|----------|----------------------|
 | **H1 — boot to idle** | Board flashed `-DHIL_SIM=1 -DUSE_ETHERNET=1`, nothing on the power stage. Simulator not yet started. | Power the board, read the USB banner; start `--scenario steady`. | Banner names HIL_SIM and the simulated-sensor warning. Within 1 s of simulator start the `'S'` dump shows `link: UP`, rising accept count, zero rejects. Board reaches State 1 (Idle) with no fault; `fault_flags == 0`. Simulator's rx count rises at ~1 kHz. |
 | **H2 — fault injection (UV)** | H1 passing, board in Idle or Run with the bus brought up. | `--scenario sag` (bus −5 V for 1 s at t = 5 s). | `V_bus` in the CSV crosses below `LIMIT_V_BUS_MIN` 12.0 V for longer than the 20 ms dwell; the observation frame shows `mainState` 99 and `fault_flags` with the UV bit set, latched. Switch bitmask goes to the State-99 safe combination. No fault is raised by the sag *before* the dwell elapses. |
-| **H3 — comm-loss hold-then-zero** | H1 passing, board in Idle, simulator logging. | `--scenario comm-loss` (1 s transmit gap at t = 5 s). | During the first 50 ms of the gap the board's behaviour is unchanged. `'S'` dump reads `STALE` between 50 ms and 250 ms with no fault attributable to the gap. After 250 ms it reads `DEAD (zeroed)` and the injected rails read 0 — the ordinary UV/sequencing logic responds to that as it would to a dead board. On resume, `link: UP` returns and the accept count resumes rising. |
+| **H3 — comm-loss hold-then-zero** | H1 passing, board in Idle, simulator logging. | `--scenario comm-loss` (1 s transmit gap at t = 5 s). | During the first 50 ms of the gap the board's behaviour is unchanged. `'S'` dump reads `STALE` between 50 ms and 250 ms with no fault attributable to the gap. After 250 ms it reads `DEAD (zeroed)` and the injected rails read 0 — the ordinary UV/sequencing logic responds to that as it would to a dead board — and `ERR_HIL_STALE` latches State 99. On resume, `link: UP` returns and the accept count resumes rising; **fw v22:** ~500 ms later the console prints `[HIL] link recovered — warm reset, re-entering State 0`, the observation frame's `mainState` returns 0 → 1 and `fault_flags` clears to 0, and the `'S'` dump's `warm resets:` count increments. |
 | **H4 — closed-loop drive cycle** | H1 passing, board in State 98, `MOT_PWR_ENABLE` closed, `--scenario drive` running. | Command `'V' 1.0` (or a `'D'` drive cycle) over USB serial. | Injected `v_actual` in the CSV converges on the setpoint with no sustained ±12 A rail chatter; observed `current` shows the Hanus-conditioned ramp and release. Steady-state error small (the model has no encoder noise, so this validates the loop's *structure*, not its tuning). Compare against `controller_design_MIMO/figures/drive_siso_step.csv`. |
 | **H5 — switch-sequencing observation** | H1 passing, board in State 98. | Exercise the bring-up (`'G'`), then toggle switches individually; attempt `FC_CHARGE_ENABLE` with `BT_BUS_ENABLE`/`REGEN_ENABLE` closed. | The observation frame's switch byte shows the §2 ordering at 1 ms resolution: `BT_SEQUENCE_ENABLE` off at boot then on; `assertFcChargeEnable()` drives `BT_BUS`/`REGEN` low **before** `FC_CHARGE` goes high — never a tick with the illegal combination. The aux byte shows `MPPT_DISABLE`/`CBAL_DISABLE` at their fail-safe levels from the first frame. |
 

@@ -442,15 +442,19 @@ def test_v_chg_gated_on_fc_charge_switch():
     assert out2["V_chg"] == pytest.approx(out2["V_bus"], abs=1e-6)
 
 
-def test_v_rgn_gated_on_regen_switch():
+def test_v_rgn_gated_on_mot_pwr_switch():
+    # 2026-08-30 topology fix: the RGN-V divider sits on V-MOT, upstream of the
+    # REGEN switch (schematic sheet 4) — V_rgn tracks the motor node, which in
+    # the simple model follows the bus when MOT_PWR is closed.  A closed REGEN
+    # switch alone (MOT_PWR open) leaves the node dark.
     plant = hil.Plant()
     plant.v_bus = 12.0
-    obs_open = _obs(switch=0, aux=0, current=0.0)
+    obs_open = _obs(switch=hil.SW_REGEN, aux=0, current=0.0)
     out = plant.step(1e-3, obs_open)
     assert out["V_rgn"] == 0.0
     plant2 = hil.Plant()
     plant2.v_bus = 12.0
-    obs_closed = _obs(switch=hil.SW_REGEN, aux=0, current=0.0)
+    obs_closed = _obs(switch=hil.SW_MOT_PWR, aux=0, current=0.0)
     out2 = plant2.step(1e-3, obs_closed)
     assert out2["V_rgn"] == pytest.approx(out2["V_bus"], abs=1e-6)
 
@@ -1660,6 +1664,92 @@ def test_plain_scenario_csv_cmd_columns_reflect_timeline_or_blank(tmp_path):
     for row in rows:
         assert row[v_idx] == ""
         assert row[share_idx] == ""
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 13. resolve_output_path() / "HIL Results" output convention
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_resolve_output_path_bare_filename_lands_under_hil_results(tmp_path, monkeypatch):
+    fake_dir = tmp_path / "HIL Results"
+    monkeypatch.setattr(hil, "HIL_RESULTS_DIR", str(fake_dir))
+    resolved = hil.resolve_output_path("run.csv")
+    assert os.path.dirname(os.path.normpath(resolved)) == os.path.normpath(str(fake_dir))
+    assert os.path.basename(resolved) == "run.csv"
+
+
+def test_resolve_output_path_relative_with_subdir_nests_under_hil_results(tmp_path, monkeypatch):
+    fake_dir = tmp_path / "HIL Results"
+    monkeypatch.setattr(hil, "HIL_RESULTS_DIR", str(fake_dir))
+    resolved = hil.resolve_output_path(os.path.join("batch1", "run.csv"))
+    expected = os.path.normpath(str(fake_dir / "batch1" / "run.csv"))
+    assert os.path.normpath(resolved) == expected
+
+
+def test_resolve_output_path_absolute_path_returned_verbatim(tmp_path, monkeypatch):
+    fake_dir = tmp_path / "HIL Results"
+    monkeypatch.setattr(hil, "HIL_RESULTS_DIR", str(fake_dir))
+    abs_path = str(tmp_path / "elsewhere" / "run.csv")
+    resolved = hil.resolve_output_path(abs_path)
+    assert os.path.normpath(resolved) == os.path.normpath(abs_path)
+    # And it must NOT have been redirected under HIL_RESULTS_DIR.
+    assert os.path.normpath(str(fake_dir)) not in os.path.normpath(resolved)
+
+
+def test_resolve_output_path_creates_containing_directory(tmp_path, monkeypatch):
+    """Resolving a path into a fresh subdir under a monkeypatched
+    HIL_RESULTS_DIR must create that directory (never the real one)."""
+    fake_dir = tmp_path / "HIL Results"
+    assert not fake_dir.exists()
+    monkeypatch.setattr(hil, "HIL_RESULTS_DIR", str(fake_dir))
+    resolved = hil.resolve_output_path(os.path.join("fresh_subdir", "run.csv"))
+    assert os.path.isdir(os.path.dirname(resolved))
+    assert os.path.normpath(os.path.dirname(resolved)) == \
+        os.path.normpath(str(fake_dir / "fresh_subdir"))
+
+
+def test_hil_results_dir_name_and_parent_is_repo_root():
+    """HIL_RESULTS_DIR must literally be '<repo root>/HIL Results' -- a
+    vacuous 'is a directory under REPO_ROOT' check would pass even if the
+    folder name were reverted to something else, so pin the basename too."""
+    assert os.path.basename(os.path.normpath(hil.HIL_RESULTS_DIR)) == "HIL Results"
+    parent = os.path.dirname(os.path.normpath(hil.HIL_RESULTS_DIR))
+    assert os.path.normpath(parent) == os.path.normpath(hil.REPO_ROOT)
+    assert os.path.isdir(os.path.join(hil.REPO_ROOT, "tools"))
+    assert os.path.isdir(os.path.join(hil.REPO_ROOT, "teensy_controller"))
+
+
+def test_main_relative_csv_is_resolved_under_monkeypatched_hil_results(tmp_path, monkeypatch):
+    """Exercise the actual --csv open site in main() (not just the helper in
+    isolation): a bare relative --csv name must land under HIL_RESULTS_DIR,
+    with the .events.jsonl sidecar following the RESOLVED path."""
+    fake_dir = tmp_path / "HIL Results"
+    monkeypatch.setattr(hil, "HIL_RESULTS_DIR", str(fake_dir))
+    monkeypatch.chdir(tmp_path)
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58993", "--bind-port", "0",
+                   "--rate", "200", "--scenario", "steady", "--electrical", "hifi",
+                   "--duration", "0.02", "--csv", os.path.join("relbatch", "relrun.csv")])
+    assert rc == 0
+    resolved = fake_dir / "relbatch" / "relrun.csv"
+    assert resolved.is_file()
+    # The sidecar path derivation follows the resolved CSV path (main()
+    # reassigns args.csv to the resolved path before deriving the sidecar).
+    sidecar = fake_dir / "relbatch" / "relrun.csv.events.jsonl"
+    assert sidecar.is_file()
+
+
+def test_main_prints_resolved_csv_path(tmp_path, monkeypatch, capsys):
+    fake_dir = tmp_path / "HIL Results"
+    monkeypatch.setattr(hil, "HIL_RESULTS_DIR", str(fake_dir))
+    monkeypatch.chdir(tmp_path)
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58994", "--bind-port", "0",
+                   "--rate", "200", "--scenario", "steady", "--electrical", "simple",
+                   "--duration", "0.02", "--csv", "printed.csv"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    resolved = os.path.normpath(str(fake_dir / "printed.csv"))
+    assert any(os.path.normpath(line.split("[hil] CSV log: ", 1)[1]) == resolved
+               for line in out.splitlines() if "[hil] CSV log:" in line)
 
 
 if __name__ == "__main__":

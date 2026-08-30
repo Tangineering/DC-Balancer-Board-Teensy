@@ -1241,5 +1241,81 @@ def test_print_plan_wall_time_excludes_skipped_settle_pauses(capsys):
     assert total_live == pytest.approx(expected_total, abs=1.0)
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# 12. "HIL Results" default --out convention
+# ─────────────────────────────────────────────────────────────────────────
+
+def _capture_args_via_list(monkeypatch, argv):
+    """main(["--list", ...]) resolves args.out (including the default-out
+    branch) and calls print_plan(plan, args) before returning 0 -- this is
+    the earliest seam that exposes the resolved args.out without actually
+    running the suite. Capture it by patching print_plan."""
+    captured = {}
+
+    def fake_print_plan(plan, args):
+        captured["out"] = args.out
+
+    monkeypatch.setattr(rhs, "print_plan", fake_print_plan)
+    rc = rhs.main(argv)
+    assert rc == 0
+    assert "out" in captured, "print_plan was not called -- main() did not reach --list"
+    return captured["out"]
+
+
+def test_main_default_out_lands_under_hil_results_dir(tmp_path, monkeypatch):
+    fake_dir = tmp_path / "HIL Results"
+    monkeypatch.setattr(rhs, "HIL_RESULTS_DIR", str(fake_dir))
+    out = _capture_args_via_list(monkeypatch, ["--list"])
+    assert os.path.normpath(os.path.dirname(out)) == os.path.normpath(str(fake_dir))
+
+
+def test_main_default_out_matches_hil_report_timestamp_pattern(tmp_path, monkeypatch):
+    import re
+    fake_dir = tmp_path / "HIL Results"
+    monkeypatch.setattr(rhs, "HIL_RESULTS_DIR", str(fake_dir))
+    out = _capture_args_via_list(monkeypatch, ["--list"])
+    basename = os.path.basename(out)
+    assert re.fullmatch(r"hil_report_\d{8}_\d{6}", basename), basename
+
+
+def test_main_default_out_creates_hil_results_dir(tmp_path, monkeypatch):
+    fake_dir = tmp_path / "HIL Results"
+    assert not fake_dir.exists()
+    monkeypatch.setattr(rhs, "HIL_RESULTS_DIR", str(fake_dir))
+    _capture_args_via_list(monkeypatch, ["--list"])
+    assert fake_dir.is_dir()
+
+
+def test_main_explicit_relative_out_is_cwd_relative_not_hil_results(tmp_path, monkeypatch):
+    """An explicit --out keeps its historical semantics: relative to the CWD,
+    NOT redirected under HIL_RESULTS_DIR -- only the default-out branch
+    changed."""
+    fake_dir = tmp_path / "HIL Results"
+    monkeypatch.setattr(rhs, "HIL_RESULTS_DIR", str(fake_dir))
+    monkeypatch.chdir(tmp_path)
+    out = _capture_args_via_list(monkeypatch, ["--list", "--out", "my_report"])
+    assert os.path.normpath(out) == os.path.normpath(str(tmp_path / "my_report"))
+    assert os.path.normpath(str(fake_dir)) not in os.path.normpath(out)
+
+
+def test_main_explicit_absolute_out_returned_verbatim(tmp_path, monkeypatch):
+    fake_dir = tmp_path / "HIL Results"
+    monkeypatch.setattr(rhs, "HIL_RESULTS_DIR", str(fake_dir))
+    explicit = str(tmp_path / "elsewhere" / "my_report")
+    out = _capture_args_via_list(monkeypatch, ["--list", "--out", explicit])
+    assert os.path.normpath(out) == os.path.normpath(explicit)
+
+
+def test_hil_results_dir_name_and_parent_is_repo_root():
+    """Pin the literal folder name (not just 'somewhere under REPO_ROOT') so
+    a revert of the feature -- e.g. back to a bare 'reports' dir -- fails
+    this test."""
+    assert os.path.basename(os.path.normpath(rhs.HIL_RESULTS_DIR)) == "HIL Results"
+    parent = os.path.dirname(os.path.normpath(rhs.HIL_RESULTS_DIR))
+    assert os.path.normpath(parent) == os.path.normpath(rhs._REPO)
+    assert os.path.isdir(os.path.join(rhs._REPO, "tools"))
+    assert os.path.isdir(os.path.join(rhs._REPO, "teensy_controller"))
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

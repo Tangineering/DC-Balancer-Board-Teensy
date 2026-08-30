@@ -14,12 +14,16 @@ MSYS2_UCRT64 = /c/msys64/ucrt64/bin
 CXX      = g++
 # -DBENCH_TEST=0 compiles the PRODUCTION fault behavior (the .ino defaults BENCH_TEST=1 for
 # bench flashing via #ifndef). The main suite asserts shipped behavior, so it must build with 0.
+# -DHIL_SIM=0 is stated EXPLICITLY here rather than inherited from the .ino's #ifndef default
+# (fw v22 HIGH-1). These two suites assert NON-HIL shipped behavior, so a future change to that
+# default must not be able to silently convert them into HIL builds again. run_tests_hil below
+# passes -DHIL_SIM=1 for the opposite reason.
 # -DNO_ETH_WARNING: the .ino warns on BENCH_TEST=0 + USE_ETHERNET=0 (a mis-flash hazard on real
 # hardware); the test suite builds that combination deliberately (mocked networking), so suppress.
-CXXFLAGS = -std=c++17 -Wall -Wextra -I. -I../teensy_controller -I../controller_design -I../controller_design_MIMO -DBENCH_TEST=0 -DNO_ETH_WARNING
+CXXFLAGS = -std=c++17 -Wall -Wextra -I. -I../teensy_controller -I../controller_design -I../controller_design_MIMO -DBENCH_TEST=0 -DHIL_SIM=0 -DNO_ETH_WARNING
 # Second build at -DBENCH_TEST=1 exercises the doState0() bench bypass. The full suite's test
 # functions are compiled but not called in this pass, so silence the expected unused warnings.
-CXXFLAGS_BENCH = -std=c++17 -Wall -Wextra -Wno-unused-function -I. -I../teensy_controller -I../controller_design -I../controller_design_MIMO -DBENCH_TEST=1 -DNO_ETH_WARNING
+CXXFLAGS_BENCH = -std=c++17 -Wall -Wextra -Wno-unused-function -I. -I../teensy_controller -I../controller_design -I../controller_design_MIMO -DBENCH_TEST=1 -DHIL_SIM=0 -DNO_ETH_WARNING
 # Third build (fw v21): -DHIL_SIM=1 -DUSE_ETHERNET=1 exercises the HIL wiring (updateSensors()'s
 # injection branch, receiveCommands()'s HIL_SIM-gated accept path, hilSendTick()) that is compiled
 # out entirely in the two builds above. HIL_SIM=1 requires USE_ETHERNET=1 (the .ino #errors

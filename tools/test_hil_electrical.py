@@ -730,9 +730,10 @@ def test_chopper_constants_bench_calibrated():
 
 def test_chopper_peak_power_tracked_no_event_below_rating():
     e = he.ElectricalSim()
-    # Force the regen node just above the clamp but far below the 30.7 V
-    # power-rating crossover, then run one substep directly.
-    e.v[he.N_RGN] = 20.0
+    # Force the motor node (the regen node IS V-MOT — 2026-08-30 topology fix)
+    # just above the clamp but far below the 30.7 V power-rating crossover,
+    # then run one substep directly.
+    e.v[he.N_MOT] = 20.0
     e._substep(1e-5, 0, 0, 0.0, 0.0, 0.0, 0.0)
     assert e.chopper_active
     assert 0.0 < e.chopper_peak_w < he.P_CHOPPER_MAX_W
@@ -743,7 +744,7 @@ def test_chopper_over_power_event_once_per_excursion():
     e = he.ElectricalSim()
     # Start far above the rating crossover: even after one backward-Euler
     # relaxation the solved node stays > 30.7 V, so V^2/47 > 20 W.
-    e.v[he.N_RGN] = 60.0
+    e.v[he.N_MOT] = 60.0
     e._substep(1e-6, 0, 0, 0.0, 0.0, 0.0, 0.0)
     over = [ev for ev in e.events if ev["kind"] == "chopper_over_power"]
     assert len(over) == 1
@@ -752,14 +753,14 @@ def test_chopper_over_power_event_once_per_excursion():
     assert e.chopper_peak_w > he.P_CHOPPER_MAX_W
     # Still above the rating on the next substep: the once-per-excursion latch
     # must NOT emit a second event.
-    e.v[he.N_RGN] = 60.0
+    e.v[he.N_MOT] = 60.0
     e._substep(1e-6, 0, 0, 0.0, 0.0, 0.0, 0.0)
     assert sum(1 for ev in e.events if ev["kind"] == "chopper_over_power") == 1
     # Excursion ends (node back below the clamp), then a new excursion begins:
     # a second event is correct.
-    e.v[he.N_RGN] = 5.0
+    e.v[he.N_MOT] = 5.0
     e._substep(1e-6, 0, 0, 0.0, 0.0, 0.0, 0.0)
-    e.v[he.N_RGN] = 60.0
+    e.v[he.N_MOT] = 60.0
     e._substep(1e-6, 0, 0, 0.0, 0.0, 0.0, 0.0)
     assert sum(1 for ev in e.events if ev["kind"] == "chopper_over_power") == 2
 

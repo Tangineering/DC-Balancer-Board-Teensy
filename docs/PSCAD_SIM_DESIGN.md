@@ -997,12 +997,21 @@ not a reproduction.
 | `FC_BUS_ENABLE` | 0x01 | D-FC | `N_OFC → N_BUS` |
 | `BT_BUS_ENABLE` | 0x02 | D-BT | `N_OBT → N_BUS` |
 | `MOT_PWR_ENABLE` | 0x04 | D-MT | `N_BUS → N_MOT` |
-| `REGEN_ENABLE` | 0x08 | D-BRG | `N_MOT → N_RGN` |
+| `REGEN_ENABLE` | 0x08 | D-BRG | `N_MOT → N_CHG` (2026-08-30 topology fix — see note below) |
 | `FC_CHARGE_ENABLE` | 0x10 | D-BFC | `N_BUS → N_CHG` |
 | `BT_SEQUENCE_ENABLE` | 0x20 | B-BSQ | gates the pack into the BT boost **input** (enable-state only; no node link in the HIL model) |
 
 (BOM line 77: RT1987N-A qty 6, designators D-FC, D-BT, D-MT, D-BRG, D-BFC, B-BSQ — the
 spelling used throughout this document; per-net aliases are listed once in §2.1.)
+
+> **Topology fix, 2026-08-30 (authority: schematic sheet 4).** `D-BRG` and `D-BFC` join their
+> **outputs** at the single shared `VCHG-IN` node (`N_CHG`) that feeds the Ag105, and the
+> `CHG-V` divider senses that node; the charger always draws from it, whichever path is open.
+> The `RGN-V` divider and the TL431/BSP170P chopper sit on **V-MOT itself, upstream of the
+> REGEN switch** — so there is no separate regen node. `N_RGN` is **retired** as a physical
+> node (the earlier `N_MOT → N_RGN` mapping put the regen sense point on the wrong side of the
+> switch). The same retirement is recorded in `tools/hil_electrical.py:568–575` and
+> `docs/HIL_PLANT.md` §8.2.
 
 Also present as-fitted: **10 kΩ EN-to-GND resistors** (bodge B7) so every switch defaults low
 while the Teensy GPIO is high-Z during reset/boot. Include them; they only matter in a
@@ -1205,7 +1214,12 @@ either.
 #### Model
 
 Autonomous, **not** firmware-controlled: a TL431 comparator driving a BSP170P P-channel MOSFET
-that dumps the regen node into 47 Ω. It sits on the **regen node only**; `V_bus` is unaffected.
+that dumps the regen node into 47 Ω. It sits on **V-MOT** (`N_MOT`) — the regen node *is* the
+motor node, upstream of the REGEN switch (2026-08-30 topology fix). It therefore does not
+reach the bus through the REGEN path, but it **does** couple to `V_bus` through a closed
+`MOT_PWR`: at the 18.1 V clamp the shunt draws ≈ 0.385 A, which the droop law (0.074 V/A
+both-sources, 0.16 V/A single-source) turns into ≈ 0.03–0.06 V of bus sag — consistent with
+the bench observation "`V_bus` unmoved".
 
 ```
 if V_rgn > V_CHOPPER_TRIP:  conduct, P = V_rgn^2 / R_CHOPPER
@@ -1226,22 +1240,26 @@ thermally limiting at its own clamp point — a useful sanity result.
 
 #### PSCAD realization notes
 
-- A comparator with hysteresis driving a switch in series with a 47 Ω resistor from `N_RGN` to
+- A comparator with hysteresis driving a switch in series with a 47 Ω resistor from `N_MOT` to
   ground. The TL431's own dynamics are not modelled and there is no repo data to model them
   from; the element is a threshold, `TODO(verify)` on turn-on speed.
 - Give it a dissipation output channel (`V_rgn²/47`, running peak) and a "chopper conducting"
   logic channel — the Python engine tracks exactly these two (`chopper_peak_w`,
   `chopper_over_power`) and `run_hil_suite` turns the second into a failing check.
-- The chopper only exists on `N_RGN`. Do not connect it to `N_BUS`; a model that clamps the bus
-  will hide every OVP-class event §4.3 exists to catch.
+- The chopper connects to `N_MOT`, **not** to `N_BUS` directly. Its only route to the bus is
+  through the `MOT_PWR` switch element, which must be modelled as the switch it is. Do not
+  attach the clamp straight to `N_BUS`; a model that clamps the bus unconditionally will hide
+  every OVP-class event §4.3 exists to catch.
 
 #### Role, stated correctly
 
 The chopper is the **PRIMARY fast clamp**. The Ag105 is the slow secondary harvester. The
 firmware's `MPPT_DISABLE` assertion during braking exists to stop the Ag105's perturb-and-
-observe loop fighting the transient — **not** because the chopper needs help. **There is no
-`V_rgn` fault check in the firmware at all**, which is itself worth knowing when reading a
-PSCAD run where `V_rgn` goes somewhere interesting.
+observe loop fighting the transient — **not** because the chopper needs help. The firmware
+**does** check the regen node: `FAULT_OV_RGN` trips against `LIMIT_V_RGN_MAX = 28.0f`
+(`teensy_controller.ino:1347`), which is 9.9 V above the 18.1 V clamp — so a PSCAD run in
+which `V_rgn` goes somewhere interesting between 18.1 V and 28 V is below the firmware's
+threshold, and only an excursion past 28 V would latch a fault.
 
 #### What validates it
 
@@ -1257,7 +1275,7 @@ The observed clamp behaviour during the sustained regen rail in logs 153–180:
 | `N_BUS` | 35 µF | "30–40 µF band, midpoint": 4×10 µF RT1987 ceramics (D-FC VOUT, D-BT VOUT, D-MT VIN, D-BFC VIN) + the BUS-V divider (`boost-bringup-debug.md:49–50`) |
 | `N_MOT` | 470 µF (ESR 80 mΩ) **+ VESC input 0.5 mF** (0.2–0.9 mF envelope) | BOM line 30 (CAL 470 µF 35 V Al-el, 80 mΩ) — labelled "Charging path capacitor" in the BOM but it is the **V-MOT bulk cap**, explicitly *not* on VBUS. VESC input capacitance is `--vesc-cap-uf`, **`TODO(verify)`** (OQ-11) |
 | `N_CHG` | 10 µF | **`TODO(verify)`** — no separate cap identified on the schematic |
-| `N_RGN` | 10 µF | **`TODO(verify)`** likewise |
+| `N_RGN` | — | **RETIRED** as a physical node (2026-08-30 topology fix): the regen node *is* `N_MOT`. The 10 µF `C_RGN_NODE` entry survives in `tools/hil_electrical.py` only to pad the retired index and keep the matrix dimensions stable; do not instantiate a separate capacitor in PSCAD |
 | `R_BUS_BLEED` (not a capacitance — the discharge path across `N_BUS`) | 2000 Ω → `τ = 0.07 s` at 35 µF | `hil_electrical.py`, **`TODO(verify)`**, simulator-only. Without it a dark bus never discharges and both the snapshot state and the State-99 teardown are unphysical |
 
 Other BOM capacitance not broken out as separate nodes, but present on the board and worth
@@ -1676,7 +1694,7 @@ substepping is likewise reported back into a 1 kHz frame (`HIL_PLANT.md` §8.1).
 | `V_batt` | `V_batt` | `V_batt` (v3+) | V | Pack terminal |
 | `V_bus` | `V_bus` | `V_bus` | V | `N_BUS` |
 | `V_chg` | `V_chg` | `V_chg` (v3+) | V | `N_CHG` |
-| `V_rgn` | `V_rgn` | `V_rgn` (v3+) | V | `N_RGN` |
+| `V_rgn` | `V_rgn` | `V_rgn` (v3+) | V | `N_MOT` — the `RGN-V` divider sits on V-MOT, upstream of the REGEN switch (2026-08-30 topology fix); there is no separate `N_RGN` |
 | `I_fc` | `I_fc` | `I_fc` | A | Bus-side FC branch current. **Compute this from the sense chain** (`V_INA/K_sns_fw`), as the firmware does — not from a branch ammeter. The difference is load-bearing for the droop fit (§5.2, §5.3) |
 | `I_batt` | `I_batt` | `I_batt` | A | Bus-side BT branch current, same rule |
 | `pscad_I_fc_true` / `pscad_I_bt_true` | — | — | A | The branch **ammeter** currents. PSCAD-only; export alongside so the two can be differenced |
@@ -1895,7 +1913,8 @@ What these projects deliberately do **not** do:
   regen clip and the ≈428 ms reversal dead window reproduce observed symptoms with no
   mechanism claim, and none of them is in the Python plant.
 - **Simulator-only tuning values stay flagged.** `V_STICTION`, `R_BUS_BLEED`, `ETA_BOOST`,
-  `I_AUX_A`, `R_FC_INT`/`R_BT_INT`, `AG105_TAU_S`, `AG105_V_IN_MIN`, `C_CHG_NODE`/`C_RGN_NODE`,
+  `I_AUX_A`, `R_FC_INT`/`R_BT_INT`, `AG105_TAU_S`, `AG105_V_IN_MIN`, `C_CHG_NODE` (`C_RGN_NODE`
+  is retired — §4.9),
   and the `"short"` trace-L set are inherited from `hil_electrical.py` as **`TODO(verify)` /
   `TODO(calibrate)`**. Using them in PSCAD does not promote them. A PSCAD run that agrees with
   a HIL run on a quantity governed by one of these has demonstrated that two models share an
@@ -1988,7 +2007,7 @@ Grouped by where it bites. This is the list to shorten.
 | `R_BODY_DIODE` = 0.15 Ω | §4.3 | `TODO(verify)` — OQ-17 |
 | `TAU_R` = 100 µs (range 20–300) | §4.3 | `TODO(calibrate)` |
 | VESC input capacitance 0.5 mF (0.2–0.9 mF) | §4.9 | `TODO(verify)` — OQ-11 |
-| `C_CHG_NODE` / `C_RGN_NODE` = 10 µF each | §4.9 | `TODO(verify)` |
+| `C_CHG_NODE` = 10 µF | §4.9 | `TODO(verify)` (`C_RGN_NODE` is retired — see §4.9) |
 | Node ESL values (all parts) | §4.9 | `TODO(verify)` — not in the repo at all |
 | `"short"` trace-L set = 1.5 nH flat; `OTHER` = 2.5 nH | §4.10 | `TODO(verify)` — OQ-18 |
 | Switch-node ring capacitance (`C_oss` + package + board) | §4.10 | `TODO(verify)` — OQ-21, **not in the repo at all** |
@@ -2004,7 +2023,7 @@ Grouped by where it bites. This is the list to shorten.
 
 `V_STICTION` 0.02 m/s · `R_BUS_BLEED` 2000 Ω · `ETA_BOOST` 0.85 · `I_AUX_A` 0.15 A ·
 `R_FC_INT` 0.45 Ω / `R_BT_INT` 0.05 Ω · `AG105_TAU_S` 0.4 s · `AG105_V_IN_MIN` 8.0 V ·
-`C_CHG_NODE` / `C_RGN_NODE` 10 µF.
+`C_CHG_NODE` 10 µF (`C_RGN_NODE` retired — §4.9).
 
 **Source-model parameters, all `TODO(calibrate)`:**
 

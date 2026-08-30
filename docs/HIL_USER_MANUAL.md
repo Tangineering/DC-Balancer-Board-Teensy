@@ -10,7 +10,10 @@ material lives elsewhere and is cited rather than repeated:
 | The curated replay-log ledger | `docs/HIL_REPLAY_LOGS.md` |
 
 Everything below was checked against `teensy_controller/teensy_controller.ino`
-(fw v21) at the line anchors given. Where a value is a simulator tuning number
+(fw v21) at the line anchors given; the fw v22 amendments (State-0 injection wait
+gate, automatic staged bring-up under `HIL_SIM` at both `BENCH_TEST` values, and
+auto-recovery from the dead-link latch) are called out inline and shift some anchors
+by a few dozen lines. Where a value is a simulator tuning number
 rather than a measured one, it is marked as such — do not launder those into
 calibrated facts.
 
@@ -122,27 +125,112 @@ netmask 255.255.255.0, no gateway required
 -DHIL_SIM=1 -DUSE_ETHERNET=1
 ```
 
-`HIL_SIM=1` without `USE_ETHERNET=1` is a compile error by design (`.ino:2535-2537`):
+`HIL_SIM=1` without `USE_ETHERNET=1` is a compile error by design (`.ino:2575-2578`):
 the injection and observation frames live on the UDP socket.
 
-`BENCH_TEST` chooses how strict the board is with itself:
+**The source defaults to `#define HIL_SIM 0` — an ordinary flash is a normal bench
+build.** The Arduino IDE does not pass `-D` flags, so an HIL flash means **editing that
+line in `teensy_controller.ino` to `1`** (or building from the command line with
+`-DHIL_SIM=1 -DUSE_ETHERNET=1`), and **editing it back to `0` before the next bench
+flash**. `USE_ETHERNET` already defaults to `1`; `BENCH_TEST` defaults to `0`.
 
-* **`-DBENCH_TEST=1`** — the bench build. Overcurrent faults are compiled out and
-  the bring-up is more forgiving. **Start here.** It tolerates a late simulator.
-* **`-DBENCH_TEST=0`** — the production build. The staged bring-up reads *real*
-  ADCs until the first injection frame lands, and if the bus has not reached
-  `V_BUS_CHARGED_THRESH` within **`BUS_CHARGE_TIMEOUT_MS` = 800 ms**
-  (`.ino:1381`) it latches `FAULT_INIT_FAIL` / `ERR_INIT_FAIL` (`.ino:8218-8220`).
-  On a bare Teensy the ADCs read ~0 V, so **the simulator must already be
-  streaming when the board powers up.** The firmware says so itself in its boot
-  banner (`.ino:4139-4147`).
+> ⚠ **A `HIL_SIM=1` build is unusable on a bench without a simulator.** From fw v22
+> State 0 waits indefinitely for the injection stream, so the board never brings the bus
+> up, never reaches Idle and never reaches the State-98 console. The symptom is the
+> once-per-second `State 0: waiting for HIL injection stream...` line and nothing else —
+> no fault, no error code. If a bench session looks dead in exactly that way, check the
+> flag first.
+
+**From fw v22, `BENCH_TEST` no longer changes State 0 under `HIL_SIM`.** A HIL build
+runs the staged bring-up automatically at *both* values, and State 0 first **waits**
+for the injection stream before arming it. So:
+
+* **Boot order is free.** Board first or simulator first, either works. State 0 prints
+  `State 0: waiting for HIL injection stream...` once per second until the link is up
+  and fresh, and starts no bring-up phase clock before then. `detectFaults()` keeps
+  running throughout, and the dark wait cannot latch a spurious undervoltage.
+* **No manual `T`/`G`/`Q` bring-up is needed on either build** (see §3.0, kept as
+  background for non-HIL bench work).
+
+What `BENCH_TEST` still changes is how strict the board is with itself:
+
+* **`-DBENCH_TEST=1`** — the bench build. Overcurrent faults are compiled out and the
+  bring-up gates are more forgiving. **Start here.**
+* **`-DBENCH_TEST=0`** — the production build. Full fault coverage. Its staged bring-up
+  still latches `FAULT_INIT_FAIL` / `ERR_INIT_FAIL` (`.ino:8218-8220`) if the bus has
+  not reached `V_BUS_CHARGED_THRESH` within **`BUS_CHARGE_TIMEOUT_MS` = 800 ms**
+  (`.ino:1415`) — but under fw v22 that clock only starts *after* the injection link is
+  live, so it now times the simulated plant's bus, not a bare Teensy's zero ADCs.
+
+*Historical (fw v21):* a `BENCH_TEST=0` HIL flash read real ADCs until the first frame
+landed and latched `INIT_FAIL` at ~800 ms unless the simulator was already streaming at
+power-on, and a `BENCH_TEST=1` HIL flash booted dark and could not reach Run without a
+manual bring-up. Both are fixed; the boot banner was re-worded to match.
 
 The board prints a loud HIL banner at boot. If you do not see it, you are not
 running the HIL build.
 
+### 2.5 Where the output goes — `HIL Results\`
+
+Every HIL artifact defaults into the folder **`HIL Results\`** at the repo root,
+so nothing scatters into the working directory:
+
+* `hil_plant_sim.py --csv <name>` — a **relative** path (bare filename or with
+  subdirectories) is resolved under `HIL Results\`; the directory is created if
+  needed. An **absolute** path is honored verbatim. The electrical events
+  sidecar (`<csv>.events.jsonl`) follows the resolved path automatically.
+  The simulator prints `[hil] CSV log: <resolved path>` at startup.
+* `run_hil_suite.py` — the default report directory is
+  `HIL Results\hil_report_<YYYYmmdd_HHMMSS>\`. An explicit `--out` keeps its
+  old meaning (a relative path is relative to your current directory). The
+  suite hands each child an absolute per-run CSV path, so those land inside the
+  report directory rather than being redirected.
+
+Replay **input** paths are **unchanged** — this convention governs outputs only.
+A `--replay <path>` argument is interpreted exactly as typed, relative to your
+current working directory (so the usual `logs\ML0146.BLG` form still works), and
+is never redirected into `HIL Results\`. The curated replay suite is separate
+again: `hil_replay_suite.py` resolves its own 26 input logs against the **repo
+root**, so it finds them from any working directory.
+
 ---
 
 ## 3. Mode A walkthrough — emulated Pi EMS
+
+### 3.0 Background — the manual bus bring-up (NOT required on a HIL build)
+
+> **Skip this section for HIL runs.** From fw v22 a `HIL_SIM=1` build brings the bus up
+> by itself in State 0 at *both* `BENCH_TEST` values, after waiting for the injection
+> stream. The manual sequence below is kept because it is still how you bring the bus
+> up on a **non-HIL** `BENCH_TEST=1` bench flash, and because the failure mode it
+> describes is what you would see if the automatic bring-up were ever bypassed.
+
+**Non-HIL bench build.** On a non-HIL `BENCH_TEST=1` flash, `doState0()` boots straight to
+Idle with the power stage **dark** — boosts, bus switches and `BT_SEQUENCE` all
+stay LOW from `setup()`, and there is no bus gate (`.ino:5094-5112`). Nothing
+brings the bus up on its own. If an EMS strategy or a scenario then commands
+`MODE_HYBRID`, `doState2()` calls `assertMotPwrEnable(true)` on a dark bus, the
+guard refuses, and the board latches `FAULT_MOT_HOTPLUG` / `ERR_MOT_HOTPLUG`
+(`.ino:5228-5232`) — `fault_flags = 0xC000` (`FAULT_MOT_HOTPLUG` 0x4000
+`.ino:1183`, ORed with `FAULT_ERROR` 0x8000), `error_code = 0xF`
+(`.ino:1502`), reported *from state 2*.
+
+Run the staged bring-up manually over USB serial before any run:
+
+1. Type **`T`** — Idle → State 98 (test state).
+2. Type **`G`** — arms the staged bring-up (`.ino:5643-5652`): P0 pre-charge →
+   P1 boosts → P2 dwell → P3 motor-node connect. Wait for
+   **`[bringup] DONE: bus + motor node up`** (`.ino:8273`).
+3. Type **`Q`** — back to Idle (`.ino:6021-6053`). The **bus stays up**:
+   `busBringupAbort()` returns immediately once the bring-up has completed
+   (`.ino:8286-8287`), so it does not darken the stage. `MOT_PWR_ENABLE` *is*
+   forced LOW on exit (`.ino:6044`), but `doState2()` treats that reconnect at a
+   regulated bus as the sanctioned CSS soft-start case, not a hot-plug
+   (`.ino:5222-5227`).
+
+A **`BENCH_TEST=0`** flash needs none of this — its `doState0()` runs the same staged
+machine automatically. **So does any `HIL_SIM=1` flash from fw v22**, which is why this
+section does not apply to the Mode A / Mode B walkthroughs below.
 
 ### 3.1 Run it
 
@@ -263,6 +351,14 @@ The dashboard shows `PI-LIVE` in its header, and `v sp` / `share sp` render as
 **`—`**: those setpoints are external and genuinely unknown to this process.
 An em-dash here is correct, not a bug.
 
+> ⚠ **Before the first Mode B run, decide what your Pi does when the board warm-resets.**
+> From fw v22 a stopped-and-restarted simulator makes the board recover on its own
+> (State 99 → State 0 → bring-up → Idle) without an operator. A Pi that keeps running
+> across that boundary will command its *mid-profile* setpoint into a freshly reset
+> drive loop the moment it re-sends a run mode. Make the Pi watch `mainState` in the
+> observation stream and restart its timeline on a 99 → 0 transition. Full statement of
+> the hazard in §4.4.
+
 ### 4.1 Three-node bring-up sequencing — the centrepiece
 
 Order matters, and every step below has a reason grounded in the firmware.
@@ -273,17 +369,43 @@ stack worth relying on), so verify PC↔Pi instead, and confirm both are on
 `192.168.1.0/24`. *Why first:* the board learns the simulator's address from the
 first frame it accepts, so a wrong subnet is not "slow", it is silent.
 
-**Step 1 — start the plant simulator. BEFORE the board is powered.**
+> **Windows check — the no-observation-frames trap (hit on first bring-up,
+> 2026-08-30).** If the simulator runs but receives zero observation frames,
+> check the PC's Ethernet adapter address first:
+>
+> ```powershell
+> Get-NetIPAddress -InterfaceAlias "Ethernet" -AddressFamily IPv4
+> ```
+>
+> A `169.254.*` address (APIPA) means no static IP is set — there is no DHCP
+> server on the bench subnet, so Windows autoconfigures. Injection frames then
+> never reach the board, it never learns the host, and it never replies. Fix
+> (elevated PowerShell; do **not** use `.100`, that address is the Pi's):
+>
+> ```powershell
+> New-NetIPAddress -InterfaceAlias "Ethernet" -IPAddress 192.168.1.10 -PrefixLength 24
+> ```
+>
+> No gateway is needed on a flat bench subnet. `AddressState: Tentative` in the
+> output is duplicate-address detection in progress; re-query until it reads
+> `Preferred`. Windows Firewall normally passes the observation frames without a
+> rule (they are replies to the simulator's own outbound flow); a VPN client is
+> the next discriminator only if frames still do not arrive with the IP correct.
+
+**Step 1 — start the plant simulator.** (Recommended before powering the board, but
+from fw v22 no longer required — see the note under this step.)
 
 ```powershell
 .venv_hil\Scripts\python.exe tools\hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario steady --pi-live --dash
 ```
 
-*Why:* on a `BENCH_TEST=0` flash the staged bring-up reads real ADCs until the
-first injection frame lands and latches `FAULT_INIT_FAIL` if the bus has not
-charged within `BUS_CHARGE_TIMEOUT_MS` = 800 ms (`.ino:1381`, `.ino:8218-8220`).
-A bare Teensy's ADCs read zero, so a late simulator means a guaranteed
-`INIT_FAIL`. *What you see:* once per second,
+*Why still first:* it is the simplest order and it gives the board a plant from its
+very first tick. **fw v22 removed the hard requirement:** State 0 in a HIL build waits
+for the injection stream before arming the staged bring-up, so a late simulator now
+just means the board sits printing `State 0: waiting for HIL injection stream...` until
+you start it. *(Under fw v21 a `BENCH_TEST=0` flash read real ADCs meanwhile and latched
+`FAULT_INIT_FAIL` at `BUS_CHARGE_TIMEOUT_MS` = 800 ms — `.ino:1415`, `.ino:8613-8617` —
+so a late simulator was a guaranteed `INIT_FAIL`.)* *What you see:* once per second,
 `[hil] t=... no observation frames yet (tx=N) — is the board flashed with -DHIL_SIM=1?`
 That message is EXPECTED at this step; `tx` climbing proves the simulator is
 transmitting.
@@ -295,6 +417,15 @@ status line (`state=`, `sw=0x..`, `I_cmd=`, `faults=0x0000`), or the dashboard
 starts showing rails and switch dots. `rx` climbing = the board is answering.
 On the board's USB serial you should see the HIL banner and the bring-up phases.
 **Expected resting state: `state=1` (Idle), `faults=0x0000`.**
+
+**Step 2a — DELETED at fw v22.** The manual `T` → `G` → `Q` bus bring-up is no longer
+required on a HIL flash at either `BENCH_TEST` value: State 0 runs the staged machine
+itself once the injection link is live, and you should see the bring-up phases end at
+`[bringup] DONE: bus + motor node up` (`.ino:8273`) followed by
+`State 0 -> State 1 (IDLE) [HIL: staged bring-up on the simulated plant]` on the USB
+console. If you are on a **fw v21** flash, do step 2a as §3.0 describes, or the first Pi
+`MODE_HYBRID` command latches `FAULT_MOT_HOTPLUG` (`fault_flags = 0xC000`,
+`error_code = 0xF`, from state 2; `.ino:5228-5232`).
 
 **Step 3 — start the Pi last.** *Why last:* the Pi's commands must land on
 a board that is already alive and already fault-free. A command arriving during
@@ -316,9 +447,9 @@ corrected to what you will actually see on the wire.
 
 | Symptom | What happened | Fix |
 |---|---|---|
-| `faults=0xA000`, error `Init failure`, state 99 immediately after power-on | `INIT_FAIL` (0x2000) `\|` `FAULT_ERROR` (0x8000): board powered before the simulator, bring-up timed out at 800 ms on real (zero) ADCs | Power the board down, start the simulator, power up again. Or use the `BENCH_TEST=1` build while bringing the rig up. |
-| Board answers, then latches `0x8010` with error `HIL link dead` | `ERR_HIL_STALE`: >250 ms with no *injection* frame (`HIL_ZERO_MS`, `.ino:2615`) — simulator stopped, Ctrl-C'd, or the cable moved | Restart the simulator. The board stays latched in State 99; power-cycle it for a clean State 1. |
-| `faults=0x8010` with error `Pi timeout` while running | Pi stopped commanding for >500 ms in State 2/3 | Restart the Pi bridge. Note the flag is the same bit as above — read `error_code` to tell them apart (`ERR_PI_TIMEOUT` 0x05 vs `ERR_HIL_STALE` 0x10, `.ino:1492`, `.ino:1505`). |
+| `faults=0xA000`, error `Init failure`, state 99 immediately after power-on | `INIT_FAIL` (0x2000) `\|` `FAULT_ERROR` (0x8000): board powered before the simulator, the staged bring-up timed out at 800 ms. **On fw v22 this can no longer be caused by a late simulator** (State 0 waits for injection before any bring-up clock starts), so read it as a genuine bring-up failure on the *simulated* plant — the injected `V_bus` never reached `V_BUS_CHARGED_THRESH`. On fw v21 it usually meant the board was powered before the simulator. | Check that the scenario / electrical model actually raises `V_bus`. On fw v21: power the board down, start the simulator, power up again. |
+| Board answers, then latches `0x8010` with error `HIL link dead` | `ERR_HIL_STALE`: >250 ms with no *injection* frame (`HIL_ZERO_MS`, `.ino:2615`) — simulator stopped, Ctrl-C'd, or the cable moved | **fw v22: just restart the simulator.** After ~500 ms of fresh frames the board warm-resets itself to State 0, re-runs the bring-up and returns to Idle — no power cycle. It stays latched only if some *other* fault bit latched too (`fault_flags != 0x8010`), which is intended. *(fw v21: power-cycle for a clean State 1.)* |
+| `faults=0x8010` with error `Pi timeout` while running | Pi stopped commanding for >500 ms in State 2/3 | Restart the Pi bridge, then power-cycle the board. Note the flag is the same bit as above — read `error_code` to tell them apart (`ERR_PI_TIMEOUT` 0x05 vs `ERR_HIL_STALE` 0x10, `.ino:1492`, `.ino:1505`). **The fw v22 auto-recovery does NOT apply here:** it requires `error_code == ERR_HIL_STALE`, so a genuine Pi timeout stays latched. |
 | Simulator's `tx` climbs, `rx` stays 0 forever | Board not flashed HIL, wrong IP/port, or not on the same L2 segment | Check the boot banner, `--teensy-ip`, `--port 5001`. |
 | Pi commands work but the Pi sees no telemetry | The Pi is not at `192.168.1.100` — telemetry goes to that literal address (`.ino:2541`, `.ino:5065`) | Move the Pi to `.100`. |
 
@@ -330,7 +461,9 @@ corrected to what you will actually see on the wire.
 2. **Simulator second.** Stopping it kills the injection stream, so the board will
    fault `ERR_HIL_STALE` about 250 ms later. That is expected and harmless — the
    board is a bare Teensy — and it is exactly why the suite's 5 s inter-run settle
-   exists. Stopping the simulator *first* would instead leave the Pi commanding a
+   exists. On fw v22 the board would warm-reset itself back to State 0 if you started
+   the simulator again; leaving it stopped keeps the board latched, which is the
+   correct end-of-session state. Stopping the simulator *first* would instead leave the Pi commanding a
    board whose sensors have been force-zeroed, which is a needlessly confusing
    final trace.
 3. **Board last.** Power it down once nothing else is talking to it.
@@ -339,15 +472,47 @@ corrected to what you will actually see on the wire.
 
 * **Simulator died / restarted** — the board is latched in State 99 by then. Restart
   the simulator; the host lock re-learns the new source only after the link went
-  dead, which it already has. Then **power-cycle the board**: State 99 is latched
-  by design and nothing on the network clears it.
-* **Pi died / restarted** — if the board was in State 2/3 it latched `PI_TIMEOUT`.
-  Same recovery: restart the Pi, power-cycle the board, then re-run steps 2–3.
-* **Cable/switch glitch** — both of the above at once. Re-run the whole sequence from
-  step 0; do not try to reattach mid-flight.
+  dead, which it already has. **On fw v22 that is the whole recovery:** after ~500 ms
+  of continuously fresh frames the board warm-resets to State 0, runs the staged
+  bring-up and returns to Idle. Watch for `[HIL] link recovered — warm reset,
+  re-entering State 0` on the USB console and `faults` clearing to `0x0000` on the
+  status line. Note the warm reset puts `mode_cmd` back to SAFE, so the EMS/Pi must
+  re-send its mode command to get back into Run. *(fw v21: power-cycle the board.)*
 
-There is deliberately **no remote fault reset**. A latched State 99 clears only on
-a board reset.
+  > ⚠ **A PERSISTENT COMMANDER MUST RESTART ITS TIMELINE ON A WARM RESET.** SAFE is the
+  > only thing standing between the recovered board and the commander's *current*
+  > setpoint: the board re-enters Run as soon as any streaming commander sends a run
+  > mode, and it does so with a freshly reset drive controller and `v_setpoint = 0`. A
+  > Pi or custom runner that keeps running through the reset will re-send whatever its
+  > profile says at *its* wall-clock time — e.g. a mid-profile 2.5 m/s — into that fresh
+  > loop as a step from standstill. On a mixed rig with a live VESC the drive controller
+  > rails within tens of milliseconds. **Watch `mainState` in the observation frame: a
+  > 99 → 0 transition is the run boundary, and your commander must restart its timeline
+  > at t = 0 there** (or stop commanding and let the operator restart it). Mode A's
+  > per-process simulators are immune by construction — each run is a new process that
+  > starts at t = 0 — so this is a Mode B and custom-runner hazard.
+* **Simulator died *during* the bring-up** — a special case, and it is benign. The
+  bring-up's phase gates are timed against `millis()` while the sensor values are held,
+  so a phase timeout there would latch `FAULT_INIT_FAIL` / `FAULT_MOT_HOTPLUG`, which are
+  **not** in the recoverable set. The firmware instead aborts the bring-up safely the
+  moment the link goes stale and prints `[bringup] HIL injection link lost mid-bring-up —
+  aborting (not a fault); State 0 re-arms when frames return.` The stage goes dark, no
+  fault latches, and the bring-up simply restarts when the simulator comes back. Under
+  the State-98 `'G'` command the board stays in State 98 with the same notice.
+* **Pi died / restarted** — if the board was in State 2/3 it latched `PI_TIMEOUT`.
+  **Not** auto-recoverable (the fw v22 path requires `error_code == ERR_HIL_STALE`):
+  restart the Pi, power-cycle the board, then re-run steps 2–3.
+* **Cable/switch glitch** — both of the above at once. Whether the board self-recovers
+  depends on which fault latched *first*: `error_code` names it, and only
+  `ERR_HIL_STALE` with `fault_flags` exactly `0x8010` recovers. Re-run the whole
+  sequence from step 0; do not try to reattach mid-flight.
+
+There is still deliberately **no remote fault reset**, and no operator command clears
+a latch. The fw v22 auto-recovery is narrower than one: admitted only for the dead-link
+fault union `0x8010` with `error_code == ERR_HIL_STALE`, only after the State-99
+teardown has completed, only with the bench log closed, and only under `HIL_SIM`.
+**Every other latched fault still clears only on a board reset**, and a dead-link latch
+that arrived alongside any other fault bit stays latched too.
 
 ---
 
@@ -384,6 +549,13 @@ Under `--pi-live`:
   **A real Pi's traffic does not keep the HIL link alive**, so `comm-loss` still
   latches `ERR_HIL_STALE` with the Pi attached.
 
+**Between runs (fw v22).** The 5 s inter-run settle is far longer than the 250 ms zero
+stage, so the board latches `ERR_HIL_STALE` after each run — and then warm-resets to
+State 0 when the next run starts streaming, bringing the simulated stage up again. Each
+run therefore begins from a fresh-boot equivalent rather than from a latched board, and
+the whole plan runs unattended. A run that latches a *real* fault still leaves the board
+latched, and the next run's health checks report it.
+
 `--dashboard` hands children the real terminal for stdout, so per-run summary
 columns (and the achieved-rate gate) are unavailable and the report says so. It is
 refused on a non-tty stdout rather than silently degrading.
@@ -397,12 +569,12 @@ refused on a non-tty stdout rather than silently degrading.
 | `no observation frames yet (tx=N)` forever | Not the HIL build, wrong IP/port, or different L2 segment | Confirm the boot banner; `--teensy-ip 192.168.1.50 --port 5001`; unmanaged switch, no Wi-Fi bridge |
 | Board's `'S'` dump shows HIL **accepts stuck at 0** while rejects/foreign climb | A **35-byte legacy injection frame**. The fw v21 frame is **40 bytes** (I_charge at 34, Ag105 status at 38, XOR over 1..38); a 35-byte datagram no longer matches the length dispatch and is dropped unread | Update the simulator (this repo's `pack_inject`); do not patch the firmware |
 | Accepts climb but `hilFramesForeign` also climbs | Another process is sending injection frames — an old simulator still running | Kill the stale process; the lock only releases after 250 ms of true silence |
-| `faults=0x0010`, error `HIL link dead` | Simulator stopped or the host stalled >250 ms | Restart the simulator, power-cycle the board (State 99 is latched) |
+| `faults=0x0010`, error `HIL link dead` | Simulator stopped or the host stalled >250 ms | Restart the simulator — on fw v22 the board warm-resets to State 0 by itself ~500 ms later. Power-cycle only if `fault_flags` is not exactly `0x8010` (another fault latched too). |
 | Frequent brief `hilStale` without a fault | Host scheduling jitter in the 50–250 ms band — held values, motor stood down | Close other load on the PC; check the achieved-rate line (target ≥ 900 Hz) |
 | `--dash` refuses to start | stdout is not a tty (piped, redirected, CI) | Run in a terminal, or drop `--dash` |
 | `--dashboard` rejected by the suite | Same, at the wrapper level | Run interactively or drop the flag |
 | Achieved rate well under 1000 Hz | Host stall, or the hi-fi engine on a slow PC | Try `--electrical simple`; the suite gates at 900 Hz |
-| Pi commands ignored | Board not in a state that accepts them, or already latched in 99 | Check `state` on the status line; power-cycle to clear |
+| Pi commands ignored | Board not in a state that accepts them, or already latched in 99 | Check `state` on the status line. `mode_cmd` is acted on only in State 1 (Idle), and a fw v22 warm reset resets it to SAFE — so after a recovery the EMS/Pi must re-send its mode command. Power-cycle to clear any non-dead-link latch. |
 
 ---
 
