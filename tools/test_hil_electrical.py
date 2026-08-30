@@ -9,6 +9,7 @@ below).
 
 Run: cd tools && python -m pytest test_hil_electrical.py -v
 """
+import math
 import os
 import sys
 
@@ -804,6 +805,279 @@ def test_ina_zero_offset_float_back_compat_applies_to_both():
     out = nc.apply(rails)
     assert out["I_fc"] == pytest.approx(1.05)
     assert out["I_batt"] == pytest.approx(2.05)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Physical SOFT-state operating point (2026-08-30 fix) — Rt1987._soft_operating_
+# point() now returns i_phys = max(c_load*rate, (target_prev - v_out)/R) with
+# target_prev evaluated at the SAME instant as v_out, instead of the old
+# next-instant target whose per-substep step across the 21 mOhm pass resistance
+# read as tens of amps of fictitious demand.  Most tests below are REGRESSIONS
+# for that fix (each docstring says why it would have FAILED under the old
+# form); three are GUARDS, not regressions — they passed under the old code too
+# and pin what the fix must NOT break: the two genuine-overload/persistent-short
+# tests (the old form folded MORE readily) and the _h==0 degradation test
+# (arithmetically identical either way).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _settle(e, sw, aux, ticks, dt=1e-3, i_motor_a=0.0):
+    # F1 (review, 2026-08-30): every step in this section pins _n_sub — the
+    # adaptive budgeting floors at 1 substep on a starved host, and the physical
+    # SOFT current converges only for substeps <= ~125 us (measured: peak
+    # precharge I_fc reads 4.27 A at _n_sub=1 vs the converged 0.22 A at >=8).
+    rails = None
+    for _ in range(ticks):
+        rails = _pin_and_step(e, dt, _actuators(sw=sw, aux=aux, i_motor_a=i_motor_a))
+    return rails
+
+
+def test_regen_reaches_on_from_regulated_bus_with_zero_scp_cuts():
+    """REGEN's input node is V-MOT (topology fix, 2026-08-30 docstring at the
+    switch table), so bring the bus AND MOT_PWR up first, then close REGEN.
+
+    Under the OLD stale-target form, the 5.6 nF REGEN switch's ~1.07 ms
+    soft-start ramp read a fictitious ~tens-of-amps demand for its ENTIRE
+    ramp (the module docstring's "fold-active for their entire ramp" claim),
+    so t_clamped ran past the 250 us SCP blanking every single time and
+    REGEN could never reach ON — it would CUT instead.  This test would
+    therefore have failed (reached_on=False, cut_count>0) under the old code.
+    """
+    e = he.ElectricalSim(trace_config="short")
+    sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ | SW_MOT_PWR
+    aux = AUX_FC_REG | AUX_BT_REG
+    _settle(e, sw, aux, 500)
+    assert e.switch_state("MOT_PWR") == "ON"
+    v_bus_before = e.node_voltage("BUS")
+
+    cut_before = e.switches["REGEN"].cut_count
+    sw |= SW_REGEN
+    reached_on = False
+    rails = None
+    for _ in range(20):        # ~20 ms budget; t_D(ON) 8ms + soft ~1.07ms
+        rails = _pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux))
+        if e.switch_state("REGEN") == "ON":
+            reached_on = True
+            break
+    assert reached_on, (
+        f"REGEN never reached ON within 20 ms (state={e.switch_state('REGEN')}); "
+        "this is exactly the old-code regression the fix addresses")
+    assert e.switches["REGEN"].cut_count == cut_before, "expected zero scp_cut events"
+    assert rails["V_chg"] == pytest.approx(v_bus_before, abs=0.5)
+
+
+def test_fc_charge_reaches_on_from_regulated_bus_with_zero_scp_cuts():
+    """FC_CHARGE's input node is V-BUS directly.  Same old-code failure mode
+    as REGEN above (5.6 nF CSS, tON ~1.07 ms, fold-active the whole ramp
+    under the stale-target form) — this test would have failed under the
+    old code (never ON, cut_count > cut_before)."""
+    e = he.ElectricalSim(trace_config="short")
+    sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ
+    aux = AUX_FC_REG | AUX_BT_REG
+    _settle(e, sw, aux, 500)
+    v_bus_before = e.node_voltage("BUS")
+
+    cut_before = e.switches["FC_CHARGE"].cut_count
+    sw |= SW_FC_CHARGE
+    reached_on = False
+    rails = None
+    for _ in range(20):
+        rails = _pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux))
+        if e.switch_state("FC_CHARGE") == "ON":
+            reached_on = True
+            break
+    assert reached_on, (
+        f"FC_CHARGE never reached ON within 20 ms (state={e.switch_state('FC_CHARGE')})")
+    assert e.switches["FC_CHARGE"].cut_count == cut_before
+    assert rails["V_chg"] == pytest.approx(v_bus_before, abs=0.5)
+
+
+def test_precharge_current_is_physical_not_fictitious_amps():
+    """Regression pin for today's bench FAULT_OC_FC: from dark, close
+    FC_BUS + BT_BUS with the boosts OFF (body-diode-only precharge of the
+    boost-output nodes / V-BUS).  LIMIT_I_FC_MAX is 1.4 A in firmware; the
+    physical inrush is C*dV/dt on the order of tens of mA.
+
+    Under the OLD stale-target form, self.i (the INA253 sense point for
+    FC_BUS/BT_BUS) carried the rate*h/R skew — "enough fictitious I_fc to
+    latch FAULT_OC_FC ... on a production HIL boot" per the module
+    docstring — so |I_fc| would have spiked well past 0.3 A (indeed past the
+    1.4 A firmware limit) during precharge under the old code.
+    """
+    e = he.ElectricalSim(trace_config="short")
+    sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ
+    aux = 0        # boosts OFF: pure body-diode precharge
+    peak_i_fc = peak_i_bt = 0.0
+    for _ in range(60):     # well past both switches' t_D(ON)+soft-start
+        rails = _pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux))
+        peak_i_fc = max(peak_i_fc, abs(rails["I_fc"]))
+        peak_i_bt = max(peak_i_bt, abs(rails["I_batt"]))
+    assert peak_i_fc < 0.3, f"I_fc precharge peak {peak_i_fc:.3f} A"
+    assert peak_i_bt < 0.3, f"I_batt precharge peak {peak_i_bt:.3f} A"
+    assert e.switch_state("FC_BUS") == "ON"
+    assert e.switch_state("BT_BUS") == "ON"
+    assert e.switches["FC_BUS"].cut_count == 0
+    assert e.switches["BT_BUS"].cut_count == 0
+
+
+def test_full_bringup_current_ceiling_stays_under_1p2a():
+    """P0 close bus switches -> P1 enable boosts -> close MOT_PWR (no aux
+    load): every sampled |I_fc|/|I_batt| stays under 1.2 A across the whole
+    staged bring-up.  Under the old stale-target form the SOFT-state
+    current on FC_BUS/BT_BUS (100 nF, tON ~19.8 ms) would read the
+    per-substep rate*h/R skew for a large fraction of that ramp, well above
+    1.2 A (the module docstring cites a ~36 A example at h=50 us)."""
+    e = he.ElectricalSim(trace_config="short")
+    sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ
+    aux = 0
+    samples = []
+
+    for _ in range(50):        # P0: bus switches only
+        samples.append(_pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux)))
+
+    aux = AUX_FC_REG | AUX_BT_REG
+    for _ in range(400):       # P1: boosts enabled
+        samples.append(_pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux)))
+
+    sw |= SW_MOT_PWR
+    for _ in range(400):       # close MOT_PWR
+        samples.append(_pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux)))
+
+    worst_fc = max(abs(r["I_fc"]) for r in samples)
+    worst_bt = max(abs(r["I_batt"]) for r in samples)
+    assert worst_fc < 1.2, f"worst I_fc {worst_fc:.3f} A during bring-up"
+    assert worst_bt < 1.2, f"worst I_batt {worst_bt:.3f} A during bring-up"
+
+
+def test_genuine_overload_still_folds_and_cuts_then_recovers_on_retry():
+    """MOT_PWR closing into a large VESC cap (0.9 mF) PLUS a heavy motor
+    draw is a GENUINE overload: the node cannot track the soft-start ramp,
+    the demand crosses the foldback limit on physics (not discretization),
+    and MOT_PWR must still SCP-cut after ~250 us of continuous fold-active
+    clamping.  This is the fix's own claim (docstring: "a genuine overload
+    still folds and cuts... on physics rather than on discretization") —
+    a test suite that only checked the false-cut fix without this would not
+    catch a fix that went too far and disabled foldback altogether."""
+    e = he.ElectricalSim(trace_config="short", c_vesc_f=0.9e-3)
+    sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ
+    aux = AUX_FC_REG | AUX_BT_REG
+    _settle(e, sw, aux, 500)
+
+    sw |= SW_MOT_PWR
+    heavy_i = 40.0     # A: enough sustained draw to hold V-MOT down and
+                        # keep the ramp from tracking (a genuine overload,
+                        # not a discretization artifact)
+    cut_before = e.switches["MOT_PWR"].cut_count
+    scp_events = []
+    for _ in range(800):       # 800 ms budget to observe the first cut
+        _pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux, i_motor_a=heavy_i))
+        scp_events = [ev for ev in e.events
+                      if ev["kind"] == "scp_cut" and ev["switch"] == "MOT_PWR"]
+        if scp_events:
+            break
+    assert scp_events, "genuine overload never tripped an SCP cut on MOT_PWR"
+    assert scp_events[0]["cut_count"] == cut_before + 1
+
+    # Release the overload and let the 64 ms auto-retry bring it up cleanly.
+    reached_on = False
+    for _ in range(300):       # 300 ms: several retry windows
+        _pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux, i_motor_a=0.0))
+        if e.switch_state("MOT_PWR") == "ON":
+            reached_on = True
+            break
+    assert reached_on, "MOT_PWR never recovered to ON after the overload was released"
+
+
+def test_persistent_hard_short_never_reaches_on():
+    """A held-down node (huge sustained load, never released) must stay in
+    the cut/retry cycle indefinitely — never ON.  Companion to the recovery
+    half above: confirms the fix did not turn foldback into a one-shot
+    formality that always eventually lets a short through."""
+    e = he.ElectricalSim(trace_config="short", c_vesc_f=0.9e-3)
+    sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ
+    aux = AUX_FC_REG | AUX_BT_REG
+    _settle(e, sw, aux, 500)
+
+    sw |= SW_MOT_PWR
+    heavy_i = 1000.0   # A: a persistent hard short, never released
+    for _ in range(2000):      # 2 s: several retry cycles
+        _pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux, i_motor_a=heavy_i))
+    assert e.switch_state("MOT_PWR") != "ON"
+    assert e.switches["MOT_PWR"].cut_count >= 2, "expected multiple retry cycles"
+
+
+def test_soft_start_current_is_physical_and_bounded_below_1a():
+    """During a healthy 100 nF SOFT ramp (FC_BUS charging C_VBUS from
+    dark), self.i (the INA253 sense point, read via rails["I_fc"]) must
+    stay physically small — bounded above by 1 A and below a loose
+    multiple of the analytic ramp-displacement estimate c_load*rate — and
+    NEVER the old amps-scale discretization artifact.
+
+    Under the OLD stale-target form this is precisely the case the module
+    docstring quantifies: "rate*h/R at 15 kV/s and h = 50 us is ~36 A,
+    against a true C*rate of ~0.5 A" — i.e. the old code would have failed
+    the `< 1.0` assertion below by roughly two orders of magnitude.
+    """
+    e = he.ElectricalSim(trace_config="short")
+    sw = SW_FC_BUS
+    aux = AUX_FC_REG
+    max_i = 0.0
+    v_in_at_soft = None
+    for _ in range(60):        # covers t_D(ON) 8ms + soft-start ~19.8ms
+        rails = _pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux))
+        if e.switch_state("FC_BUS") == "SOFT":
+            if v_in_at_soft is None:
+                v_in_at_soft = e.node_voltage("OFC")   # FC_BUS's n_in
+            max_i = max(max_i, abs(rails["I_fc"]))
+    assert v_in_at_soft is not None, "never observed SOFT — widen the window"
+    assert max_i < 1.0, f"I_fc peaked at {max_i:.3f} A during SOFT — artifact-scale"
+    assert max_i > 1e-4, "I_fc stayed exactly zero during SOFT — data path dead?"
+
+    # Loose physical cross-check against the analytic ramp-displacement
+    # estimate c_load*rate (deliberately loose: v_in itself drifts across
+    # the sampled window as the boost regulates up, so this is order-of-
+    # magnitude, not exact).
+    # (v_in itself keeps rising across the sampled window as FC_BUS's own
+    # input node charges, so the single-instant estimate below under-states
+    # the true rate later in the ramp; the multiplier is widened accordingly
+    # and is still an order-of-magnitude check, not a tight one.)
+    t_on = he.rt1987_t_on_s(max(v_in_at_soft, 1.0), 100.0)
+    rate_estimate = v_in_at_soft / t_on
+    i_track_estimate = he.C_VBUS * rate_estimate
+    assert i_track_estimate * 0.05 <= max_i <= i_track_estimate * 15.0, (
+        f"max_i={max_i:.4f} A vs c_load*rate estimate={i_track_estimate:.4f} A")
+
+
+def test_stamp_without_prior_update_h_zero_degrades_safely():
+    """_h defaults to 0.0 until update() first runs.  A stamp() called on a
+    fresh switch (never update()'d, _h still 0.0) must not raise, and the
+    degradation must be toward SAFE — not toward the retired stale-target
+    artifact.
+
+    With _h == 0.0, t_prev = max(0, t_state - 0) == t_state, so
+    frac_prev == frac and target_prev == target: the lag term collapses to
+    (target - v_out)/R evaluated at ONE instant, exactly what the fix
+    intends (same-instant target vs v_out), never the old rate*h/R skew
+    (which required a genuine h > 0 gap between the two evaluations to
+    exist at all). This documents the code's own degradation path rather
+    than asserting a value the source does not commit to.
+    """
+    sw = he.Rt1987("T", 0, 1, css_nf=100.0, c_load_f=35e-6)
+    assert sw._h == 0.0                    # never update()'d
+    sw.state = "SOFT"
+    sw.t_state = 5e-3
+    sw.v_ss_start = 0.0
+    v = [15.0, 3.0]
+    G = [[0.0, 0.0], [0.0, 0.0]]
+    J = [0.0, 0.0]
+    sw.stamp(G, J, v, None)                # must not raise
+
+    t_on = he.rt1987_t_on_s(15.0, 100.0)
+    frac = min(1.0, sw.t_state / t_on)
+    frac_prev = min(1.0, max(0.0, sw.t_state - sw._h) / t_on)
+    assert frac_prev == frac               # same-instant degradation, confirmed
+
+    assert math.isfinite(G[1][1]) and math.isfinite(J[1])
+    assert G[1][1] > 0.0                   # a finite, sane conductance was stamped
 
 
 if __name__ == "__main__":

@@ -1649,3 +1649,44 @@ First real HIL bench session (fw v21 flashed, Mode A). Three orchestrated rounds
   full run_hil_suite pass without power-cycles; keep the hifi SOFT-SCP fix and the Pi-bridge
   v4 parser audit on the list. `.venv_benchlog` still lacks pandas/scipy; analyzer exe rebuild
   still pending.
+
+---
+
+## Status & session addendum (2026-08-30b, hifi RT1987 SOFT-state physics fix)
+
+fw v22 VALIDATED ON HARDWARE (operator ran two back-to-back Mode-A cycles, no power-cycle).
+The first BENCH_TEST=0 HIL boot then latched FAULT_OC_FC (0x8001, from state 0) — the
+production build's single-sample OC check (LIMIT_I_FC_MAX 1.4 A) had never met a bring-up
+before, and the injected I_fc read amps. **Root cause: the fw v22 addendum's "known open
+tooling defect" — the RT1987 SOFT-state stale-demand bug — now FIXED (orchestrated round);
+that "open defect" line is SUPERSEDED by this addendum.** The firmware is untouched and
+needs no OC persistence filter: the physical pre-charge inrush is C·dV/dt ≈ 28 mA.
+
+- **Fix (tools/hil_electrical.py):** `_soft_operating_point()` evaluates the ramp target at
+  the SAME instant as the solved v_out (the old next-instant target put rate·h/R ≈ 30-36 A
+  of pure discretization into the demand); reported current (the INA253 sense) is
+  i_phys = max(c_load·rate, (target_prev − v_out)/R) clamped by the fold limit; the fold
+  stamp uses the overdrive-ratio resistance r·(i_phys/i_fold) (continuous at the boundary,
+  degrades toward open). All three symptoms gone in one change: (1) REGEN/FC_CHARGE (5.6 nF)
+  reach ON — hifi charge scenarios can finally power the Ag105; (2) bring-up channel currents
+  are physical (P0 peak 0.22 A vs 1.98 A before; full staged bring-up ≤ 0.47 A, under the
+  1.4 A OC limit with margin); (3) genuine overloads still fold and SCP-cut (scp-inrush 6 A
+  margin case folds at ~5.6 A, cuts, 64 ms retry; persistent short latches the retry loop;
+  released overload completes to ON).
+- **Review round (data-integrity + contract lenses):** no HIGHs. F1 MED — the new tests ran
+  unpinned `_n_sub` and the physical current converges only for substeps ≲ 125 µs (4.27 A at
+  _n_sub=1 vs 0.22 A converged): all pinned via `_pin_and_step` now. LOWs applied: guard-vs-
+  regression test banner, the i_track-floor assumption comment (c_load·rate < 2.5 A for all
+  shipped c_load; a ≥10 mF c_vesc_f would break it), M6 charge-non-conservation note updated
+  to the post-fix imbalance, the 28 ms→19.8 ms tON figure, and the sw_ring population note
+  (SOFT-state opens at physical mA no longer emit rings — correct). Accepted residual: the
+  ratio-form comment slightly overstates generality in the unreachable i_track-fold branch.
+- **Tests: 371 pytest green** (54 in test_hil_electrical.py incl. 9 new: charger-path
+  switches reach ON, the OC-regression current pins, overload/short SCP guards, _h==0
+  degradation). Firmware suites untouched (3535/175/3909 from the fw v22 round stand).
+- **Next bench:** power-cycle (the OC latch is correctly non-recoverable), then a
+  BENCH_TEST=0 HIL boot should reach Idle unattended; validate sequential runs + mid-run
+  sim-kill recovery + the first powered-Ag105 hifi charge scenario, then the full
+  run_hil_suite. The operator's local .ino flag flip (BENCH_TEST 0 / HIL_SIM 1) is the
+  CURRENT FLASH's config and stays uncommitted — repo defaults remain BENCH_TEST 1 /
+  HIL_SIM 0.

@@ -655,10 +655,10 @@ SCP behaviours fall out rather than being scripted:
 |---|---|
 | `OFF` | **Full isolation** — back-to-back FETs, **no body-diode path**. Entered on EN low or `VIN < UVLO` (3.175 V). |
 | `TD_ON` | 8 ms typ EN-rise delay. |
-| `SOFT` | VOUT follows a linear ramp over `tON = (VIN/35)·(CSS_nF/0.0023 − 100) µs` — ~19.8 ms at 16 V on the 100 nF switches (`FC_BUS`, `BT_BUS`, `MOT_PWR`), ~1.07 ms on the 5.6 nF ones (`REGEN`, `FC_CHARGE`, `BT_SEQ`). Foldback SCP is active **only here**: 8.5 A at ΔV ≤ 5 V falling toward ~5.3 A at ΔV = 16 V, floored at 2.5 A. Held continuously at the clamp for **250 µs** → **CUT**, auto-retry after **64 ms**. |
+| `SOFT` | VOUT follows a linear ramp over `tON = (VIN/35)·(CSS_nF/0.0023 − 100) µs` — ~19.8 ms at 16 V on the 100 nF switches (`FC_BUS`, `BT_BUS`, `MOT_PWR`), ~1.07 ms on the 5.6 nF ones (`REGEN`, `FC_CHARGE`, `BT_SEQ`). The pass current is the **physical** one — `i ≈ c_load·d(target)/dt + i_load` (see the fourth modelling note) — and both the reported link current and the foldback decision derive from it. Foldback SCP is active **only here**: 8.5 A at ΔV ≤ 5 V falling toward ~5.3 A at ΔV = 16 V, floored at 2.5 A. Held continuously at the clamp for **250 µs** → **CUT**, auto-retry after **64 ms**. |
 | `ON` | Forward regulation at `V_FWD` = 35 mV, `R_ON` = 21 mΩ. Fast reverse comparator at **−50 mV** → off, then re-arm **without** a new soft-start once forward again. |
 
-Three modelling notes. First, the soft-start is a **controlled source on the output node**,
+Four modelling notes. First, the soft-start is a **controlled source on the output node**,
 not a resistor referenced to the input node: stamping it the latter way (with the offset
 computed from the previous substep's `v_in` while the conductance term moved `v_in`
 inside the solve) injected a fictitious ~1400 A into the bus. Second, both the foldback
@@ -672,6 +672,38 @@ correctly in the node solve), but the input node is debited *explicitly*, from t
 deliberate stability trade (see the comment at `Rt1987.stamp()`'s `SOFT` branch), not an
 oversight — it only matters during the ~1–20 ms soft-start ramp itself, so treat inrush
 current *shape* during that window as approximate, not exact.
+
+Fourth — **the soft-start current is PHYSICAL, and was not always** (2026-08-30 fix). The
+operating point used to read the demand as `(target − v_out)/R_ON` with `target` evaluated
+at the current substep and `v_out` carried over from the previous one. Those are one
+substep apart, so the gap contained the ramp's per-substep step `rate·h` on top of the
+genuine tracking lag; across a 21 mΩ pass element that skew reads as **tens of amps** of
+demand while the physical current is milliamps (`rate·h/R` at 15 kV/s and h = 50 µs is
+~36 A, against a true `C·rate` of ~0.5 A). It made the 5.6 nF switches fold-active for
+their entire ~1 ms ramp — so `REGEN` and `FC_CHARGE` cut at 250 µs, retried at 64 ms and
+**could never reach `ON`**, which meant no hi-fi charge scenario could power the Ag105 —
+and, because `Rt1987.i` is the INA253 sense point, it injected amps of fictitious
+`I_fc`/`I_batt` into the bring-up: enough to latch `FAULT_OC_FC` (`LIMIT_I_FC_MAX` 1.4 A,
+single-sample) on a `BENCH_TEST=0` HIL boot from a real current of
+`C·dV/dt ≈ 35 µF · 16 V / 19.8 ms ≈ 28 mA` (19.8 ms is the model's own `tON` at 16 V
+on a 100 nF CSS).
+
+The demand is now `i_phys ≈ c_load·d(target)/dt + i_load`, recovered by evaluating the ramp
+target at the **same instant** as `v_out` (one substep back): in tracking equilibrium the
+discrete solve settles at `target_prev − v_out = R·(c_load·rate + i_load)`, so the lag term
+alone *is* the physical current, with `c_load·rate` kept as a floor. Foldback binds by
+scaling the pass resistance by the overdrive ratio `i_phys/i_fold`. **Genuine overload is
+untouched**: a node held down by load or a short does not track, the gap grows without
+bound, and the clamp/cut/retry fires on physics. Measured after the fix — bus pre-charge
+from dark peaks at 0.22 A (was 1.98 A) with zero cuts; `REGEN`/`FC_CHARGE` reach `ON` 10 ms
+after enable with zero cuts (was: never); `MOT_PWR` closing into 1.37 mF under the
+`scp-inrush` 6 A load still folds at ~5.6 A and cuts with the 64 ms retry, and completes
+that retry once the load is removed. The reverse-comparator/`_restart_no_ss` handoff path,
+the chopper, the droop split and the events schema are unchanged. One event
+*population* did shift: a SOFT-state open (EN-low/UVLO mid-ramp) now carries the
+physical ~tens-of-mA current, which falls under `_open()`'s 0.05 A ring-estimate
+gate — so such opens no longer emit an `sw_ring` event (the old code always did,
+at the fictitious fold-scale current). Physically correct: no current, no ring.
 
 Separately — **H1** — the same "never an ideal source into a small node" discipline now
 also covers the **motor draw/regen load** on `N_MOT` (§4.3/§8.3): a negative (regen)

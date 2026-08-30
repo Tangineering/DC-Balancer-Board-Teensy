@@ -52,6 +52,13 @@ Fidelity boundaries (read before believing a number out of this engine):
     estimated ANALYTICALLY (V_peak ≈ V_node + L·di/dt) and emitted as an EVENT
     annotation, compared against the 20 V abs-max.  So the engine DETECTS the
     boost-death mechanism; it does not simulate the ringing waveform.
+  * RT1987 SOFT-state current is the PHYSICAL pass current (ramp displacement
+    c_load*d(target)/dt plus downstream load), not a resistive gap against a
+    one-substep-stale node voltage.  Fixed 2026-08-30 — the stale form read tens
+    of amps of fictitious demand, permanently SCP-cut the 5.6 nF switches (REGEN,
+    FC_CHARGE) and injected enough fictitious I_fc to latch FAULT_OC_FC on a
+    production HIL boot.  See Rt1987._soft_operating_point() and HIL_PLANT.md
+    §8.4's fourth modelling note.
   * RT1987 numbers are TYPICALS.  The datasheet min/max spread is not modelled, so
     a margin that is thin here is thin in the typical part, not in the worst part.
   * The INA253 sense pole (~350 kHz) is lumped/neglected: at the achievable substep
@@ -64,9 +71,14 @@ Fidelity boundaries (read before believing a number out of this engine):
     participates correctly in the node solve) but debits the input node
     EXPLICITLY, from the previous substep's current estimate rather than the node
     solve's own current -- a deliberate stability trade (see the comment at the
-    stamp site), not an oversight, and not charge-balanced within one substep. It
-    matters only during the ~1-20 ms soft-start ramp itself: treat inrush current
-    shape during that window as approximate, not exact (docs/HIL_PLANT.md §8.4).
+    stamp site), not an oversight, and not charge-balanced within one substep.
+    Post-fix (2026-08-30) the explicit debit is the PHYSICAL current, so the
+    healthy-ramp imbalance fell by orders of magnitude (it was up to i_fold =
+    8.5 A of fictitious source-node drain); in the FOLD branch the residual
+    imbalance now points the other way (the implicit output draw can exceed the
+    i_fold input debit). It matters only during the ~1-20 ms soft-start ramp:
+    treat inrush current shape during that window as approximate, not exact
+    (docs/HIL_PLANT.md §8.4).
 
 Stdlib only (the parent script is stdlib-only by charter): no numpy.
 """
@@ -600,6 +612,11 @@ class Rt1987:
         self.v_ss_start = 0.0       # V  output voltage at soft-start entry
         self._fold_active = False
         self._restart_no_ss = False
+        #: substep length of the most recent update(), cached so the SOFT-state
+        #: operating point can evaluate the ramp target at the SAME instant as the
+        #: node voltages it is compared against (see _soft_operating_point()).
+        #: update() always precedes stamp() within a substep, so this is fresh.
+        self._h = 0.0
 
     # -- stamping -----------------------------------------------------------
     def stamp(self, G, J, v, en):
@@ -622,17 +639,22 @@ class Rt1987:
             # So: drive n_out toward `target` through the pass resistance, and take
             # the same current out of n_in explicitly.  The input node here is a
             # stiff regulated boost output, so the explicit half is well behaved.
-            i_fold, i_res, target = self._soft_operating_point(v_in, v_out)
+            i_fold, i_phys, target = self._soft_operating_point(v_in, v_out)
             r = RT_R_ON + self.r_series
-            if i_res > i_fold:
+            if i_phys > i_fold:
                 # Foldback binding: an EQUIVALENT RESISTANCE that delivers the limit
-                # at the present differential, not an ideal current source (an ideal
-                # source into a 30 uF node is unbounded within one substep).
-                r = max(r, (target - v_out) / max(i_fold, 1e-6))
+                # at the present demand, not an ideal current source (an ideal source
+                # into a 30 uF node is unbounded within one substep).  Scaling the
+                # pass resistance by the OVERDRIVE RATIO i_phys/i_fold is the form
+                # that uses only physical quantities: it is exactly the resistance
+                # at which the same physical demand delivers i_fold.  The previous
+                # form divided the (target - stale v_out) gap by i_fold, which
+                # inherited the one-substep ramp skew described below.
+                r = max(r, r * i_phys / max(i_fold, 1e-6))
             g = 1.0 / r
             G[self.n_out][self.n_out] += g
             J[self.n_out] += g * target
-            J[self.n_in] -= min(i_fold, max(0.0, i_res))
+            J[self.n_in] -= min(i_fold, max(0.0, i_phys))
             return
         # ON: forward branch with the 35 mV regulation offset, i = (dv - V_FWD)/R.
         r = RT_R_ON + self.r_series
@@ -646,33 +668,89 @@ class Rt1987:
         J[self.n_out] -= off
 
     def _soft_operating_point(self, v_in, v_out):
-        """Return (foldback limit, resistive-branch current, ramp target) [A, A, V].
+        """Return (foldback limit, PHYSICAL pass current, ramp target) [A, A, V].
 
         The ramp target is the RT1987's soft-start VOUT profile: a linear ramp from
         the output's starting voltage to VIN over
         tON = (VIN/35)*(CSS_nF/0.0023 - 100) us (datasheet).  With CSS = 100 nF that
         is ~19.8 ms at 16 V; with 5.6 nF, ~1.07 ms.
+
+        ── 2026-08-30 fix: the middle return value is now PHYSICAL ──────────────
+        It used to be `(target - v_out) / R` with `target` evaluated at the CURRENT
+        substep and `v_out` carried over from the PREVIOUS one.  Those two are one
+        substep apart, so the gap contained the ramp's per-substep step
+        `rate*h` on top of the genuine tracking lag.  Since `R` is 21 mOhm, that
+        skew reads as TENS OF AMPS of demand while the physical pass current is
+        milliamps: rate*h/R at 15 kV/s and h = 50 us is ~36 A, against a true
+        C*rate of ~0.5 A.  Three consequences, all now fixed:
+          * the 5.6 nF switches (REGEN, FC_CHARGE, tON ~1 ms) were fold-active for
+            their entire ramp, so t_clamped ran past the 250 us SCP blanking and
+            they CUT every time — they could never reach ON, and no hifi charge
+            scenario could power the Ag105;
+          * `self.i` is the INA253 sense point (_substep() reads
+            switches["FC_BUS"].i / ["BT_BUS"].i), so bring-up injected amps of
+            fictitious I_fc/I_batt — enough to latch FAULT_OC_FC (LIMIT_I_FC_MAX
+            1.4 A, single-sample) on a production HIL boot, from a real current of
+            C*dV/dt ~ 35 uF * 16 V / 28 ms ~ 20 mA;
+          * SCP was decided by the artefact rather than by the load.
+
+        The physical pass current during soft-start is the charge current the
+        output node needs to FOLLOW the ramp, plus whatever the downstream load
+        draws:  i_phys ~= c_load * d(target)/dt + i_load.  Both terms are recovered
+        without extra state by evaluating the ramp target at the SAME instant as
+        `v_out` (i.e. one substep back, `t_state - h`): in tracking equilibrium the
+        discrete solve settles at target_prev - v_out = R*(c_load*rate + i_load),
+        so the lag term alone IS the physical current.  `c_load*rate` is kept as a
+        FLOOR so a momentary overshoot of the node past the target (a load release)
+        cannot under-report the displacement current to zero.
+
+        A genuine overload still folds and cuts: a node held down by load or a
+        short does not track, `target_prev - v_out` grows without bound, and the
+        demand crosses i_fold on physics rather than on discretization.
         """
+        r = RT_R_ON + self.r_series
         t_on = rt1987_t_on_s(max(v_in, 1.0), self.css_nf)
         frac = 1.0 if t_on <= 0 else min(1.0, self.t_state / t_on)
         target = self.v_ss_start + (v_in - self.v_ss_start) * frac
+        # Ramp target at the instant `v_out` was solved (one substep back).
+        t_prev = max(0.0, self.t_state - self._h)
+        frac_prev = 1.0 if t_on <= 0 else min(1.0, t_prev / t_on)
+        target_prev = self.v_ss_start + (v_in - self.v_ss_start) * frac_prev
+        # Displacement current needed to follow the ramp, zero once it has run out.
+        rate = 0.0 if t_on <= 0 or self.t_state >= t_on else \
+            max(0.0, v_in - self.v_ss_start) / t_on
+        # F2 (review, 2026-08-30): the i_track floor is unconditional — it reports
+        # c_load*rate even when the node sits at/above the ramp (load release),
+        # where the true displacement current is ~0.  Assumption recorded here:
+        # c_load*rate < RT_I_FOLD_LOW (2.5 A) for every shipped c_load (worst is
+        # MOT_PWR at ~1.37 mF -> ~1.1 A), so the floor alone can never assert
+        # _fold_active.  A caller passing c_vesc_f >~ 10 mF breaks that — gate the
+        # floor on (target_prev > v_out) if such capacitances ever ship.
+        # Residual h-sensitivity (F1): the fix removes the rate*h/R skew, but the
+        # reported current converges only for substeps <= ~125 us; tests pin _n_sub.
+        i_track = self.c_load * rate
+        i_lag = max(0.0, target_prev - v_out) / r
+        i_phys = max(i_track, i_lag)
         dv = max(0.0, v_in - v_out)
         i_fold = rt1987_fold_limit(dv)
-        i_res = max(0.0, (target - v_out)) / (RT_R_ON + self.r_series)
-        self._fold_active = i_res > i_fold
-        return i_fold, i_res, target
+        self._fold_active = i_phys > i_fold
+        return i_fold, i_phys, target
 
     # -- advance ------------------------------------------------------------
     def update(self, dt, v, en, events, t_now, trace_l_nh):
         v_in, v_out = v[self.n_in], v[self.n_out]
         self.t_state += dt
+        self._h = dt        # must be set BEFORE _soft_operating_point() is used
         # Measured current for the ON branch (used by the reverse comparator and
-        # by the ring estimate); in SOFT it is the limit that was stamped.
+        # by the ring estimate); in SOFT it is the PHYSICAL soft-start pass current
+        # (ramp displacement + downstream load), clamped by the foldback limit.
+        # This value is the INA253 sense point for FC_BUS/BT_BUS, so it must never
+        # carry the discretization artefact _soft_operating_point() documents.
         if self.state == "ON":
             self.i = max(0.0, (v_in - v_out - RT_V_FWD) / (RT_R_ON + self.r_series))
         elif self.state == "SOFT":
-            i_fold, i_res, _t = self._soft_operating_point(v_in, v_out)
-            self.i = min(i_fold, i_res)
+            i_fold, i_phys, _t = self._soft_operating_point(v_in, v_out)
+            self.i = min(i_fold, i_phys)
         else:
             self.i = 0.0
 
