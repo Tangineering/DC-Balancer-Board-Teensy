@@ -2461,7 +2461,7 @@ bool wheelSpeedResetPending = false;
 #define FW_VERSION 21
 
 #ifndef BENCH_TEST
-#define BENCH_TEST 0
+#define BENCH_TEST 1
 #endif
 
 // ── HIL (hardware-in-the-loop) simulation build ──────────────────────────────
@@ -2483,7 +2483,7 @@ bool wheelSpeedResetPending = false;
 // firmware's picture of the hardware is fiction, so its switch decisions are too.
 // Overridable via -DHIL_SIM=1 (same pattern as BENCH_TEST).
 #ifndef HIL_SIM
-#define HIL_SIM 0
+#define HIL_SIM 1
 #endif
 
 // ── Network config ────────────────────────────────────────────────────────────

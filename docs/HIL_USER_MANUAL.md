@@ -44,7 +44,8 @@ creates no commander at all (`docs/HIL_MODE.md` "Replay mode").
 * A **Teensy 4.1** with the Ethernet kit (the `NativeEthernet` PHY board), flashed
   with the HIL build. **No PCB, no power stage, no motor.** That is the point of
   HIL: every sensor value is injected.
-* A **PC** running `tools/hil_plant_sim.py` (Python 3, stdlib only).
+* A **PC** running `tools/hil_plant_sim.py` (Python 3, stdlib only — see §2.2 for
+  the interpreter path).
 * For Mode B, the **Raspberry Pi** running the real bridge software.
 * An **unmanaged Ethernet switch**, any 100 Mbit or faster.
 
@@ -58,7 +59,31 @@ creates no commander at all (`docs/HIL_MODE.md` "Replay mode").
 > switch removes it. Wi-Fi bridges and powerline adapters are worse than a hub;
 > do not use them.
 
-### 2.2 Addresses — these are compiled in
+### 2.2 Python environment — use `.venv_hil`
+
+On the bench PC (Windows), the bare `python` command is the Microsoft Store stub
+and fails with "Python was not found". Use the project-local HIL virtual
+environment instead. It is separate from `.venv_benchlog` (the log-analysis
+environment) on purpose: the HIL tools are stdlib-only, so this venv carries no
+packages and never breaks when the analysis environment changes.
+
+Interpreter path, relative to the repository root:
+
+```
+.venv_hil\Scripts\python.exe
+```
+
+Every command in this manual uses that path and fits on **one line**, so it can
+be pasted into PowerShell directly. To recreate the environment (it was created
+with `uv`, Python 3.14):
+
+```bash
+uv venv .venv_hil
+```
+
+No `pip install` step follows — there is nothing to install.
+
+### 2.3 Addresses — these are compiled in
 
 The firmware's addresses are **hard-coded**, not configured at runtime:
 
@@ -91,7 +116,7 @@ Suggested static-IP plan (one flat subnet, no router needed):
 netmask 255.255.255.0, no gateway required
 ```
 
-### 2.3 Firmware build flags
+### 2.4 Firmware build flags
 
 ```
 -DHIL_SIM=1 -DUSE_ETHERNET=1
@@ -121,10 +146,8 @@ running the HIL build.
 
 ### 3.1 Run it
 
-```bash
-python3 tools/hil_plant_sim.py --teensy-ip 192.168.1.50 \
-        --scenario ems-drive-cycle --ems hold-5050 \
-        --duration 60 --csv ems_run.csv --dash
+```powershell
+.venv_hil\Scripts\python.exe tools\hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario ems-drive-cycle --ems hold-5050 --duration 60 --csv ems_run.csv --dash
 ```
 
 `--ems` may be omitted for `ems-drive-cycle`: the scenario declares
@@ -227,9 +250,8 @@ depend on them either.
 
 ## 4. Mode B walkthrough — a real Pi in the loop
 
-```bash
-python3 tools/hil_plant_sim.py --teensy-ip 192.168.1.50 \
-        --scenario steady --pi-live --duration 120 --csv pilive.csv --dash
+```powershell
+.venv_hil\Scripts\python.exe tools\hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario steady --pi-live --duration 120 --csv pilive.csv --dash
 ```
 
 Under `--pi-live` this process sends injection frames and receives observation
@@ -253,8 +275,8 @@ first frame it accepts, so a wrong subnet is not "slow", it is silent.
 
 **Step 1 — start the plant simulator. BEFORE the board is powered.**
 
-```bash
-python3 tools/hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario steady --pi-live --dash
+```powershell
+.venv_hil\Scripts\python.exe tools\hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario steady --pi-live --dash
 ```
 
 *Why:* on a `BENCH_TEST=0` flash the staged bring-up reads real ADCs until the
@@ -331,15 +353,15 @@ a board reset.
 
 ## 5. Suite runs
 
-```bash
+```powershell
 # scripted, everything (13 scenarios + 26 replays)
-python3 tools/run_hil_suite.py --teensy-ip 192.168.1.50
+.venv_hil\Scripts\python.exe tools\run_hil_suite.py --teensy-ip 192.168.1.50
 
 # with the live dashboard on each child (needs a real terminal)
-python3 tools/run_hil_suite.py --teensy-ip 192.168.1.50 --dashboard
+.venv_hil\Scripts\python.exe tools\run_hil_suite.py --teensy-ip 192.168.1.50 --dashboard
 
 # Mode B: a real Pi drives every scenario
-python3 tools/run_hil_suite.py --teensy-ip 192.168.1.50 --pi-live --scenarios-only
+.venv_hil\Scripts\python.exe tools\run_hil_suite.py --teensy-ip 192.168.1.50 --pi-live --scenarios-only
 ```
 
 Mode tagging: `results.json` / `REPORT.md` carry `mode: "pi-live"` or
