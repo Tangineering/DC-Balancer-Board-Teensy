@@ -1820,6 +1820,53 @@ Three orchestrated tooling rounds and a full HIL campaign in one session. FW sta
   objective home (unreachable on the BT rail behind OC_BT — retire from handoff-sag or a
   v_bus_sense_offset scenario), Ag105 lazy-re-config + FC_CHARGE open-through-loss policy
   on real hardware, chopper coverage (needs energy into the motor node), Pi-bridge v4
-  parser audit. Untracked/unowned in the tree: PSCAD/, tools/hil_report_analysis.py (+
-  test) — provenance unconfirmed this session, deliberately not committed. Housekeeping
-  unchanged: analyzer exe rebuild; .venv_benchlog pandas/scipy.
+  parser audit. Untracked/unowned in the tree: PSCAD/ — provenance unconfirmed this
+  session, deliberately not committed. (tools/hil_report_analysis.py + test were this
+  round's parallel session's mid-flight work — owned; see the 2026-08-30e addendum.)
+  Housekeeping unchanged: analyzer exe rebuild; .venv_benchlog pandas/scipy.
+
+---
+
+## Status & session addendum (2026-08-30e, HIL report analysis pipeline: tools/hil_report_analysis.py)
+
+Orchestrated tooling round (Opus implementer, independent Sonnet test-writer, parallel
+Opus data-integrity + Sonnet contract reviews, fix round). Python tooling + skill docs
+only; no firmware, wire-protocol, or benchlog_analysis change (reuse is all by import —
+zero edits there).
+
+- **tools/hil_report_analysis.py (new, ~1730 lines):** post-campaign analyzer for a
+  `run_hil_suite.py` report folder. Per run: moves the CSV + `.meta.json` +
+  `.events.jsonl` + child log into `scenario_<name>_<mode>` / `replay_<LOG>` subfolders
+  (idempotent; orphaned-sidecar heal; shared parent files provably never moved), adapts
+  the HIL CSV into the benchlog data-dict schema (`current`→`I_cmd`, `mdac_*` via
+  `hil_plant_sim.mdac_fraction` — verified equal to the BLG `gFC` convention up to
+  1 LSB; `share_act` derived with the 50 mA mask) and renders the `figures.py`
+  `FIGURES` registry (KeyError/None = clean skip, anything else propagates) plus two
+  HIL-specific figures (state/switch/aux/fault lanes; charger/SoC/substep). Replays
+  additionally decode the source BLG (header fw wins over the sidecar, disagreement
+  reported; corrupt BLG degrades, never kills the run), align on `replay_rec`
+  (preamble/blind rows dropped), and get overlay, injection-fidelity, and
+  response-deviation figures with RMS/max metrics into per-run
+  `analysis.json`/`ANALYSIS.md`. Parent gets `ANALYSIS_SUMMARY.md`/`analysis_summary.json`
+  + two summary figures. Honesty markings: post-grace vs whole-run fault unions kept
+  separate; open-loop replay caveat everywhere; pre-v18 different-law `*`; unknown
+  source fw = `?` "comparability UNVERIFIED", never silently same-law. PNG writes are
+  tmp+`os.replace` atomic and mtime-invalidated against the CSV; a non-report parent is
+  refused (exit 2). Needs numpy+matplotlib (miniforge python; NOT `.venv_hil`).
+- **Validated on the real campaign** (copy of hil_report_20260830_203006): 37/37 runs,
+  0 errors, idempotent second pass byte-identical. Two data findings: injection
+  fidelity is CSV-rounding-clean (RMS ≤ 3e-5); gFC/gBT deviation vs a source log that
+  never armed the share loop is a constant 0.298 (r=0.5 default vs logged 0) — real,
+  explainable, and near-meaningless for such logs (a detector to suppress those rows is
+  flagged, not built).
+- **Reviews:** no HIGH; 5 MED (orphan-sidecar heal, two-electrical-modes-of-one-scenario
+  silently dropped, non-atomic/stale figure writes, law caveat trusting the sidecar over
+  the decoded header, corrupt-BLG killing whole-run analysis) + 8 LOW — all accepted and
+  fixed except the case-insensitive-name collision (rejected, comment only).
+- **Tests: 110 pytest green** (`miniforge3\python.exe -m pytest
+  tools/test_hil_report_analysis.py`); existing HIL suites unaffected (602 + 14 skips).
+  No committed venv holds numpy+matplotlib+pytest together — standing gap.
+- **hil-agent-analysis skill updated (operator request):** POST-HOC Stage 0 now runs
+  the tool BEFORE dispatch (briefs reference the subfolders + pre-built figures and
+  paste `analysis.json` metrics); LIVE mode runs it as close-out step 0 after
+  `partial: false` — NEVER while the suite is running (it moves the suite's files).

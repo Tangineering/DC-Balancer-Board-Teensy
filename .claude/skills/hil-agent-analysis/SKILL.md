@@ -33,6 +33,24 @@ proposes a fix.
 
 ## Stage 0 — Orchestrator scout (never skipped)
 
+0. **POST-HOC mode: run the report-analysis tool FIRST** — before any dispatch:
+   `python tools/hil_report_analysis.py "HIL Results/hil_report_<ts>"` (needs
+   numpy+matplotlib — use an interpreter that has them, e.g. miniforge python; NOT
+   `.venv_hil`, which is stdlib-only). It reorganizes each run into a
+   `scenario_<name>_<mode>` / `replay_<LOG>` subfolder (CSV + meta + events + child
+   log), renders the benchlog-registry figures plus HIL-specific ones per run, writes
+   per-run `ANALYSIS.md`/`analysis.json` (replays additionally get source-BLG overlay,
+   injection-fidelity and response-deviation figures with RMS/max metrics), and writes
+   `ANALYSIS_SUMMARY.md`/`analysis_summary.json` + two summary figures in the parent.
+   Then write briefs against the NEW subfolder paths, paste the run's `analysis.json`
+   deviation metrics into replay briefs, and tell agents the figures already exist —
+   an agent's job becomes verifying/interpreting them, not regenerating plots.
+   **NEVER run it in LIVE mode while the suite is running** — it MOVES the suite's
+   files out from under it; in LIVE mode it is the FIRST step of Stage 4 close-out,
+   after `results.json` reports `"partial": false`. Caveats the tool already encodes
+   (trust its markings, do not re-derive): post-grace vs whole-run fault unions,
+   open-loop replay semantics, pre-v18 different-law `*` and unknown-fw `?` markers.
+
 1. Read this skill's `references/hil-conventions.md` (the anti-artifact block) and the
    PREVIOUS campaign's `HIL_FINDINGS.md` — it is the baseline every regression brief
    cites. The two examples in `references/` show the expected ledger shape.
@@ -123,6 +141,9 @@ Self-contained, ~3–5 kB. Parts, in order:
 
 When the suite completes (`partial: false`) and all agents have reported:
 
+0. LIVE mode: run `tools/hil_report_analysis.py` on the folder now (see Stage 0 item 0)
+   — the per-run figures and deviation metrics feed the FINAL SUMMARY, and the
+   reorganized subfolders are the layout the summary's file references should use.
 1. Append a **FINAL SUMMARY** section to `HIL_FINDINGS.md`: corrected scoreboard (with
    the suite's own tally if they differ), hardware firsts, repeatability results, the
    FAIL classifications, cross-cutting discoveries, the ranked fix queue, and the
