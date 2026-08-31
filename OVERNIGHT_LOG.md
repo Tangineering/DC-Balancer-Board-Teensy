@@ -66,6 +66,14 @@ BENCH_TEST 0 / HIL_SIM 1 flip — NEVER committed). Dashboard OFF (no tty in my 
    threshold ~5.53 A; the real path is a few % more aggressive than the bench —
    single-digit margin either way IS the fragility, now documented in place).
 
+## Operator review (2026-08-31 morning)
+
+**ALL DECISIONS RATIFIED** (operator, after walkthrough). No reverts. Follow-ups queued as
+the next orchestrated rounds: (a) the scp deterministic-fold stimulus TIMING redesign
+(decision #8's open item) + FU4 (Idle→Run setpoint-arrival synthetic entry, decision #6);
+(b) DP-informed EMS strategies + H2 metric; (c) scenario expansion (Y-profile EMS ×4,
+FTP75, MPPT tracking, +3). This log is now historical record; resume-point section moot.
+
 ## Commit ledger
 
 - `9d17d23` — adopted the parallel session's HIL report analysis pipeline (pre-round).
