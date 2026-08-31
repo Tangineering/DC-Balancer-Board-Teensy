@@ -208,6 +208,14 @@ SETTLE_MIN_RECOVER_S = 1.5
 #                 t = X and in one of those mainStates, i.e. it actually reached
 #                 its own stimulus
 #   events_require  event kinds that must appear in the hi-fi .events.jsonl sidecar
+#   events_any_of   a list of GROUPS, each {"name", "branches": [...]}, where a
+#                 branch is {"name", "label", "why", "events": [spec, ...]} and is
+#                 satisfied when ALL of its event specs pass. The group passes if
+#                 ANY branch does, and the check NAMES the winning branch. For a
+#                 scenario whose result is decided by a race with two legal
+#                 orderings — see scp-inrush, the only user today, whose comment
+#                 carries the not-check-laundering argument this field must always
+#                 be justified by.
 #   signals_require POSITIVE evidence from the CSV that the objective was actually
 #                 reached — a list of specs, see judge_signals()
 #   source        citation.  Do not extend this table from intuition.
@@ -513,38 +521,114 @@ FAULT_EXPECTATIONS = {
         # would a run that cut repeatedly for the wrong reason. All three facts
         # below were measured on hardware in campaign 20260830_203006 and are
         # pinned so a drift in any of them is visible:
-        #   count == 1        one cut, at t = 0.600000. More would mean the retry
+        #   count == 1        ON OUTCOME A ONLY (see the two-outcome block below):
+        #                     one cut, at t = 0.600000. More would mean the retry
         #                     cadence became reachable (it is not, with firmware
         #                     attached — the State-99 teardown opens MOT_PWR 54 ms
         #                     before the 64 ms re-arm), so >1 is a real change.
+        #                     Outcome B pins count == 0 instead, which is the same
+        #                     assertion read from the other side of the race.
         #   over_absmax == 0  no ring above the 20 V abs-max: this scenario must
         #                     exercise the foldback WITHOUT producing the Death-5
         #                     boost-kill signature. The two 17.72 V rings observed
         #                     are the teardown's own EN-low openings at ~0.1 A.
-        #   i_cut 6.0-6.6 A   the REPEATABILITY band (tightened from the 5.0-8.0 A
-        #                     plausibility band on 2026-08-31 — see F2 below).
-        #                     Measured 6.290 A = 5.0 A load + ~1.11 A CSS ramp
-        #                     current + blank-window lag growth, against a fold
-        #                     limit of 5.36 A at dv ~ 15.15 V. The old band ran from
-        #                     the fold limit's own lower reach to RT_I_FOLD_HIGH,
-        #                     i.e. "is this a foldback event at all"; the new one
-        #                     asks the stronger question the repeat measurements
-        #                     now support, "is it THE SAME foldback event".
-        # F2 (2026-08-31): the i_cut band TIGHTENED 5.0-8.0 -> 6.0-6.6 A. The
-        # original band was the fold limit's own reach — a physics plausibility
-        # bound, correct but loose enough that a 25 % drift would still pass.
-        # Two campaigns have now measured the SAME cut to 4 significant figures:
-        # 6.2852 A (campaign 20260830_203006) and 6.290012976976211 A (round-1
-        # campaign 20260831_000518) — a 0.076 % repeat — against 6.290 A measured
-        # on hardware. 6.0/6.6 brackets both with ~4 % margin either side, which is
-        # ~50x the observed run-to-run spread: wide enough that a legitimate
-        # substep-rate or capacitance change does not trip it, tight enough that a
-        # real change in the foldback path does. The count and the abs-max forbid
-        # are unchanged.
-        "events_require": [
-            {"kind": "scp_cut", "count": 1,
-             "field": "i_cut", "min_value": 6.0, "max_value": 6.6},
-        ],
+        #                     Asserted on BOTH outcomes (events_forbid_over_absmax
+        #                     is outside the any_of), which is correct: the
+        #                     Death-5 signature is forbidden either way.
+        #   i_cut bands       per outcome — 6.0-6.6 A on the fired cut (A),
+        #                     3.5-5.5 A on the approach ring (B). Derivations in
+        #                     the two-outcome block below.
+        # ── TWO-OUTCOME EXPECTATION (2026-08-31) ────────────────────────────
+        # This scenario's result is decided by a ONE-TICK RACE, and the check now
+        # scores BOTH of its legal orderings instead of only one.
+        #
+        # THE RACE (root-caused 2026-08-31; mechanism documented at the
+        # RX-before-step site in hil_plant_sim.py's main(), bench evidence table at
+        # SCP_INRUSH_MOT_LOAD_A): the RT1987 fold's cut lands one tick after switch
+        # admission (S = MOT_PWR close + RT_TD_ON_S); the firmware's OC_FC teardown
+        # lands at S+L where L = the observation round trip, 1 OR 2 ticks depending
+        # on sub-millisecond host/board phase; and the simulator applies the
+        # observed switch word BEFORE stepping the solver, so a tie goes to the
+        # firmware.
+        #     L=2 -> the fold fires first           -> OUTCOME A
+        #     L=1 -> the teardown's EN-low preempts -> OUTCOME B
+        #
+        # WHY THIS IS NOT CHECK-LAUNDERING. The two outcomes are the SAME correct
+        # physics seen in the two legal orderings of that race — not a strict and a
+        # lenient reading of one result. The plant traces are BIT-IDENTICAL up to
+        # the tick the race resolves; the board's protective behaviour is identical
+        # in both (it latches OC_FC on the over-limit sample either way, which
+        # `fault_allow_only` above already asserts and this entry deliberately does
+        # NOT duplicate); and the switch ends up open either way. The DEFECT was
+        # that the check scored the coin flip — round 2 FAILED on a stimulus that
+        # had behaved correctly. Widening the band would have been laundering;
+        # enumerating the two orderings and NAMING which one occurred is not.
+        #
+        # The check reports the winning outcome, so the L distribution becomes a
+        # TRACKED SIGNAL across campaigns rather than an intermittent red tick.
+        # Outcome A is the STRONGER branch and is kept verbatim: it is the only one
+        # in which the foldback actually fires, so it alone measures i_cut. Outcome
+        # B only witnesses the fold being APPROACHED — a campaign run that only
+        # ever draws B is still a real coverage gap, and should be read as one.
+        #
+        # OPERATOR-CHOICE ITEM, logged and NOT attempted: making the fold
+        # deterministic needs a stimulus TIMING redesign (close MOT_PWR into an
+        # already-loaded node so the fold engages well before any firmware
+        # reaction). The load knob cannot do it — bench-derived, the tick-S
+        # threshold is ~12.7 A = 1.49x RT_I_FOLD_HIGH 8.5 A, which would be a hard
+        # short rather than the inrush-margin case this scenario is defined to be.
+        #
+        # OUTCOME A BAND, i_cut 6.0-6.6 A. Measured 6.290 A = 5.0 A load + ~1.11 A
+        # CSS ramp current + blank-window lag growth, against a fold limit of
+        # 5.36 A at dv ~ 15.15 V. ⚠️ Its ORIGINAL justification is RETIRED: it read
+        # "two campaigns measured the same cut to four significant figures —
+        # 6.2852 A (20260830_203006) and 6.290012976976211 A (round 1,
+        # 20260831_000518), a 0.076 % repeat". Both are the L=2 branch of the same
+        # coin flip, so that repeat measured the ORDERING, not the reproducibility.
+        # The numbers are KEPT because they still bracket both observed cuts and a
+        # headless bench sweep (loads 6-8 A, substep counts 20-100) puts i_cut at
+        # 6.54-6.69 — the right ORDER, not a fit to two draws.
+        #
+        # OUTCOME B BAND, i_cut 3.5-5.5 A on the MOT_PWR ring. Round 2 measured
+        # 4.5565 A. The band comes from the bench's own ramp trajectory rather than
+        # that single point: across the admission window the switch current sweeps
+        # 0 -> ~6.2 A, and a preempt at S+1 necessarily lands in the upper part of
+        # that ramp. The FLOOR 3.5 A sits just under the earliest in-tick value a
+        # preempt can catch; the CEILING 5.5 A sits just above the ~5.36 A fold
+        # entry, because outcome B means the fold was approached and NOT fired — a
+        # ring above the fold limit would have folded instead. `where` pins the
+        # event to MOT_PWR: the same run carries FC_BUS/BT_BUS en_low rings
+        # (0.10-2.07 A across the two campaigns) that would otherwise pool into the
+        # same field_values list and satisfy the band by accident.
+        # The abs-max forbid is unchanged.
+        "events_any_of": [{
+            "name": "events_scp_fold_or_approach",
+            "branches": [
+                {"name": "A_fold_fired",
+                 "label": "the foldback FIRED (L=2: the fold won the one-tick "
+                          "race) — STRONGER evidence, i_cut is measured here",
+                 "why": "campaign 20260830_203006 i_cut 6.2852 A; round 1 "
+                        "20260831_000518 i_cut 6.290013 A; hardware 6.290 A",
+                 "events": [
+                     {"kind": "scp_cut", "count": 1,
+                      "field": "i_cut", "min_value": 6.0, "max_value": 6.6},
+                 ]},
+                {"name": "B_fold_approached",
+                 "label": "WEAKER evidence — the fold was approached, not fired "
+                          "(firmware teardown won the one-tick race; see the "
+                          "RX-before-step note in hil_plant_sim.py)",
+                 "why": "round 2 20260831_010145: 0 scp_cut, MOT_PWR ring at "
+                        "i_cut 4.5565 A = 85 % of the ~5.36 A fold entry. The "
+                        "OC_FC|ERROR latch is asserted by `fault_allow_only` "
+                        "above and deliberately NOT duplicated here",
+                 "events": [
+                     {"kind": "scp_cut", "count": 0},
+                     {"kind": "sw_ring", "where": {"switch": "MOT_PWR"},
+                      "count": 1, "field": "i_cut",
+                      "min_value": 3.5, "max_value": 5.5},
+                 ]},
+            ],
+        }],
         "events_forbid_over_absmax": True,
     },
     "bringup": {
@@ -643,6 +727,33 @@ def _expectation_time_bounds(entry):
             if _sub.get("after_t") is not None:
                 yield "signals_require[%s].after_t" % _leaf, _sub["after_t"]
 
+
+# events_any_of shape, asserted at import for the same reason every other bound
+# here is: a malformed branch would silently never match and the group would fail
+# as "NO outcome matched", which reads as a board finding rather than as a table
+# defect.  A one-branch group is refused outright — a group with nothing to choose
+# between is an events_require spelled the long way, and using any_of for it would
+# hide a single expectation behind a mechanism that exists to name alternatives.
+for _n, _e in FAULT_EXPECTATIONS.items():
+    for _g in _e.get("events_any_of", ()):
+        _brs = _g.get("branches") or []
+        assert _g.get("name"), (
+            "FAULT_EXPECTATIONS[%r]: an events_any_of group needs a `name` — it "
+            "becomes the check name." % _n)
+        assert len(_brs) >= 2, (
+            "FAULT_EXPECTATIONS[%r].events_any_of[%r] has %d branch(es). Use "
+            "events_require for a single expectation; any_of exists to enumerate "
+            "ALTERNATIVE legal outcomes and must name at least two."
+            % (_n, _g.get("name"), len(_brs)))
+        for _b in _brs:
+            assert _b.get("name") and _b.get("events"), (
+                "FAULT_EXPECTATIONS[%r].events_any_of[%r]: every branch needs a "
+                "`name` (it is reported as the winning outcome) and a non-empty "
+                "`events` list." % (_n, _g.get("name")))
+            for _s in _b["events"]:
+                assert isinstance(_s, str) or "kind" in _s, (
+                    "FAULT_EXPECTATIONS[%r].events_any_of[%r].%s: every event "
+                    "spec needs a `kind`." % (_n, _g.get("name"), _b["name"]))
 
 for _n, _e in FAULT_EXPECTATIONS.items():
     _dur = (SCENARIOS.get(_n) or {}).get("duration_s")
@@ -1574,9 +1685,20 @@ def judge_warm_resets(name, kind, counts, source):
                 note, None)
 
     if count == 0:
+        # WORDING (2026-08-31): this used to say "the board never left State 99
+        # during the run", which is FALSE on the common case. `count` is the
+        # MID-RUN count — transitions after WARM_RESET_GRACE_S — so it is zero
+        # both when the board never left State 99 AND when it left it exactly as
+        # intended, during the in-grace recovery from the previous run's
+        # inherited latch (which is what nearly every run in a sequential campaign
+        # does). Claiming the stronger fact from the weaker measurement invented a
+        # board state on most passing runs. `warm_resets_observed` in the metrics
+        # carries the whole-run count for anyone who wants it.
         return ({"name": "warm_reset_tripwire", "passed": True,
-                 "detail": "no mid-run warm reset (%s) — the board never left "
-                           "State 99 during the run" % source},
+                 "detail": "no mid-run warm reset after the %.1f s grace bound "
+                           "(%s); an in-grace recovery from the previous run's "
+                           "inherited latch is normal and is not counted here"
+                           % (WARM_RESET_GRACE_S, source)},
                 note, None)
     reason = ("%d mid-run HIL warm reset(s) observed (%s): %s. Most likely a "
               "host stall of >= 1 s, which fw v23+ reads as a run boundary. "
@@ -1605,11 +1727,73 @@ def result_label(r, bold_fail=False):
     return "**FAIL**" if bold_fail else "FAIL"
 
 
+def _judge_event_spec(req, events):
+    """Evaluate ONE event spec against analyze_events() output.
+
+    Returns (passed, observed_text, problems[]).  Shared by `events_require` and
+    every branch of `events_any_of`, so the two cannot drift apart.
+
+    Spec forms:
+      "kind"                                  at least one event of that kind
+      {"kind": k, "count": n}                 exactly n
+      {"kind": k, "field": f,
+       "min_value": lo, "max_value": hi}      every f on a matching event in band
+      {"kind": k, "where": {"switch": "MOT_PWR", "reason": "uvlo"}, ...}
+                                              restrict to events matching ALL of
+                                              those exact field values first
+
+    `where` exists because `field_values` pools every event of a kind together:
+    an scp-inrush run carries three sw_ring events (MOT_PWR plus FC_BUS/BT_BUS),
+    and the two-outcome expectation turns on telling them apart."""
+    spec = {"kind": req} if isinstance(req, str) else dict(req)
+    kind = spec["kind"]
+    where = spec.get("where") or {}
+    field = spec.get("field")
+    if where:
+        matching = [e for e in events.get("events_by_kind", {}).get(kind, [])
+                    if all(e.get(k) == v for k, v in where.items())]
+        n = len(matching)
+        vals = [float(e[field]) for e in matching
+                if isinstance(e.get(field), (int, float))
+                and not isinstance(e.get(field), bool)] if field else []
+    else:
+        n = events.get("kinds", {}).get(kind, 0)
+        vals = (events.get("field_values", {}).get(kind, {}).get(field, [])
+                if field else [])
+    tag = kind if not where else "%s[%s]" % (
+        kind, ", ".join("%s=%s" % (k, v) for k, v in sorted(where.items())))
+    problems = []
+    if "count" in spec:
+        if n != int(spec["count"]):
+            problems.append("count %d, expected exactly %d" % (n, int(spec["count"])))
+    elif n == 0:
+        problems.append("no such event")
+    if field is not None:
+        # A count-0 spec that PASSED asserts absence; there is then no field to
+        # check and demanding one would contradict the spec's own expectation.
+        if not vals and not (spec.get("count") == 0 and n == 0):
+            problems.append("no '%s' field on any '%s' event to check" % (field, tag))
+        elif vals:
+            lo, hi = spec.get("min_value"), spec.get("max_value")
+            bad = [v for v in vals
+                   if (lo is not None and v < lo) or (hi is not None and v > hi)]
+            if bad:
+                problems.append(
+                    "%s out of the [%s, %s] plausibility band: %s"
+                    % (field,
+                       "%g" % lo if lo is not None else "-inf",
+                       "%g" % hi if hi is not None else "+inf",
+                       ", ".join("%.3f" % v for v in bad)))
+    observed = ("%d '%s' event(s)" % (n, tag)) + (
+        "; %s = %s" % (field, ", ".join("%.3f" % v for v in vals)) if vals else "")
+    return (not problems), observed, problems
+
+
 def analyze_events(path):
     """Event counts by kind from a hi-fi .events.jsonl sidecar."""
     out = {"path": path, "total": 0, "kinds": {}, "over_absmax": 0,
            "worst_ring_v": None, "worst_over_absmax_ring_v": None,
-           "field_values": {}, "read_error": None}
+           "field_values": {}, "events_by_kind": {}, "read_error": None}
     if not path or not os.path.isfile(path):
         return out
     try:
@@ -1625,6 +1809,16 @@ def analyze_events(path):
                 out["total"] += 1
                 k = e.get("kind", "?")
                 out["kinds"][k] = out["kinds"].get(k, 0) + 1
+                # 2026-08-31: the whole event, per kind, so an events spec can
+                # FILTER (`where`) instead of only counting. `field_values` below
+                # pools every event of a kind together, which cannot separate the
+                # MOT_PWR sw_ring from the FC_BUS/BT_BUS ones that share it — and
+                # the two-outcome scp-inrush expectation turns on exactly that
+                # distinction. Bounded by construction: these events are rare (3-4
+                # in a whole scp-inrush run), and only scalars are kept.
+                out["events_by_kind"].setdefault(k, []).append(
+                    {fn: fv for fn, fv in e.items()
+                     if isinstance(fv, (int, float, str, bool))})
                 # Numeric fields, kept per kind so an events_require spec can pin a
                 # plausibility band on one (scp_cut's i_cut).  Small by construction:
                 # these events are rare.
@@ -1812,41 +2006,54 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
         # or a dict pinning count and/or a numeric field's plausibility band. The
         # bare form is kept because most future entries will want nothing more.
         for req in expect.get("events_require", ()):
-            spec = {"kind": req} if isinstance(req, str) else dict(req)
-            kind = spec["kind"]
-            n = events.get("kinds", {}).get(kind, 0)
-            vals = (events.get("field_values", {}).get(kind, {})
-                    .get(spec.get("field"), []))
-            problems = []
-            if "count" in spec:
-                if n != int(spec["count"]):
-                    problems.append("count %d, expected exactly %d"
-                                    % (n, int(spec["count"])))
-            elif n == 0:
-                problems.append("no such event")
-            if spec.get("field") is not None:
-                if not vals:
-                    problems.append("no '%s' field on any '%s' event to check"
-                                    % (spec["field"], kind))
-                else:
-                    lo, hi = spec.get("min_value"), spec.get("max_value")
-                    bad = [v for v in vals
-                           if (lo is not None and v < lo)
-                           or (hi is not None and v > hi)]
-                    if bad:
-                        problems.append(
-                            "%s out of the [%s, %s] plausibility band: %s"
-                            % (spec["field"],
-                               "%g" % lo if lo is not None else "-inf",
-                               "%g" % hi if hi is not None else "+inf",
-                               ", ".join("%.3f" % v for v in bad)))
-            observed = ("%d '%s' event(s)" % (n, kind)) + (
-                "; %s = %s" % (spec["field"], ", ".join("%.3f" % v for v in vals))
-                if vals else "")
+            ok, observed, problems = _judge_event_spec(req, events)
+            kind = (req if isinstance(req, str) else req["kind"])
             checks.append({
-                "name": "events_require_%s" % kind, "passed": not problems,
-                "detail": (observed if not problems else
+                "name": "events_require_%s" % kind, "passed": ok,
+                "detail": (observed if ok else
                            "%s — %s (%s)" % (observed, "; ".join(problems), why))})
+
+        # ── events_any_of: ONE stimulus, two legal orderings (2026-08-31) ────
+        # A list of BRANCHES; each branch is {"name", "why", "events": [spec,...]}
+        # and is satisfied when ALL of its specs pass. The check passes if ANY
+        # branch does, and NAMES the branch that did — that label is the tracking
+        # signal (see the scp-inrush entry: it records which side of a one-tick
+        # race the run landed on, so the distribution is visible across
+        # campaigns instead of showing up as an intermittent FAIL).
+        for grp in expect.get("events_any_of", ()):
+            branches = list(grp.get("branches") or ())
+            results = []
+            for br in branches:
+                probs, obs_parts = [], []
+                for spec in br.get("events", ()):
+                    ok_b, observed_b, problems_b = _judge_event_spec(spec, events)
+                    obs_parts.append(observed_b)
+                    if not ok_b:
+                        probs.extend(problems_b)
+                results.append((not probs, br, "; ".join(obs_parts), probs))
+            won = next((i for i, r in enumerate(results) if r[0]), None)
+            gname = grp.get("name", "events_any_of")
+            if won is None:
+                detail = ("NO outcome matched (%s). " % why) + " || ".join(
+                    "[%s] %s — %s" % (r[1].get("name", "branch %d" % i),
+                                      r[2], "; ".join(r[3]))
+                    for i, r in enumerate(results))
+                checks.append({"name": gname, "passed": False, "detail": detail})
+            else:
+                br = results[won][1]
+                other = " || ".join(
+                    "[%s] not matched: %s" % (r[1].get("name", "branch %d" % i),
+                                              "; ".join(r[3]))
+                    for i, r in enumerate(results) if i != won)
+                checks.append({
+                    "name": gname, "passed": True,
+                    "detail": ("OUTCOME **%s**%s: %s (%s)%s"
+                               % (br.get("name", "branch %d" % won),
+                                  "" if not br.get("label") else
+                                  " — %s" % br["label"],
+                                  results[won][2],
+                                  br.get("why") or why,
+                                  "" if not other else "  || " + other))})
 
         if expect.get("events_forbid_over_absmax"):
             n_over = events.get("over_absmax", 0)

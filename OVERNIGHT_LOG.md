@@ -39,6 +39,32 @@ BENCH_TEST 0 / HIL_SIM 1 flip — NEVER committed). Dashboard OFF (no tty in my 
    Deliberate ratchet; loosen per entry if a legitimate stimulus change lowers activity.
 6. **FU4 deferred** (Idle→Run setpoint-arrival synthetic entry — new stimulus design,
    your call).
+7. **[SUPERSEDED by #8 — re-margin measured INFEASIBLE; nothing was retired.]**
+   Original plan: scp-inrush re-margin retiring the 6.290 A i_cut pin.
+   Round 2 FAILed events_require_scp_cut with 0 cut events: the sim's SCP cut and the
+   firmware's OC teardown are 0–1 ticks apart, decided by the observation round-trip
+   (L=2 in round 1/campaign 2, L=1 in round 2 — the 0.076% "repeat" was two draws of
+   the same coin). Plant trace bit-identical; board correct both rounds; classified
+   scenario knife-edge. Fix applied tonight: SCP_INRUSH_MOT_LOAD_A raised so the cut
+   fires inside the admission tick's blanking window (phase-independent), i_cut band
+   re-derived from a headless hil_electrical bench, tripwire wording fixed. The old
+   6.290 A figure is retired FOR MARGIN, NOT DRIFT — the 5.0 A stimulus + 6.0-6.6 band
+   can be restored by reverting the scenario constant if you prefer the knife-edge
+   documented instead.
+8. **scp-inrush made a TWO-OUTCOME expectation instead** (the root-causer's fallback,
+   adopted after the implementer's headless bench proved the re-margin infeasible: a
+   tick-S cut needs ~12.70 A load = 1.49× RT_I_FOLD_HIGH 8.5 A — a hard short, not the
+   SCP-margin case the scenario exists for; the load knob cannot fix the phase race).
+   Outcome A (fold won, L=2): exactly 1 scp_cut with i_cut in 6.0–6.6. Outcome B
+   (firmware won, L=1): 0 cuts AND a MOT_PWR sw_ring in the fold-approach band AND
+   OC_FC latched — explicitly labeled WEAKER evidence (fold approached, not fired).
+   Both are the same correct physics in the two legal orderings; the check no longer
+   scores a coin flip. THE DETERMINISTIC-FOLD PATH REMAINS OPEN FOR YOU: a stimulus
+   TIMING redesign (close MOT_PWR into an already-loaded node so the fold engages well
+   before any firmware reaction) — a scenario redesign I did not attempt autonomously.
+   Also found: the 5.0 A stimulus never had its claimed 15% fold margin (bench
+   threshold ~5.53 A; the real path is a few % more aggressive than the bench —
+   single-digit margin either way IS the fragility, now documented in place).
 
 ## Commit ledger
 

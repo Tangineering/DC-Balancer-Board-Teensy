@@ -785,87 +785,222 @@ def test_judge_scenario_survive_to_fails_on_wrong_state_at_the_gate():
     assert "mainState at t=" in sv["detail"]
 
 
-def test_judge_scenario_events_require_scp_cut_passes_when_present():
-    """'scp-inrush' events_require is the DICT form (2026-08-30c, campaign
-    follow-up (1)): exactly one scp_cut, its i_cut field inside the band.
-    F2 (2026-08-31): the band TIGHTENED 5.0-8.0 -> 6.0-6.6 A -- from a fold-
-    physics PLAUSIBILITY bound to a REPEATABILITY bound, after two campaigns
-    measured the same cut to 4 significant figures (6.2852 A / 6.290013 A)."""
-    expect = rhs.FAULT_EXPECTATIONS["scp-inrush"]["events_require"][0]
-    assert expect == {"kind": "scp_cut", "count": 1,
-                      "field": "i_cut", "min_value": 6.0, "max_value": 6.6}
+# ─────────────────────────────────────────────────────────────────────────
+# 4c. events_any_of (2026-08-31): scp-inrush's ONE-TICK-RACE two-outcome
+#     expectation -- events_require moved into branch A, branch B added.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_fault_expectations_scp_inrush_no_longer_carries_events_require():
+    """The bare events_require is GONE from scp-inrush -- both outcomes now
+    live inside its single events_any_of group."""
+    expect = rhs.FAULT_EXPECTATIONS["scp-inrush"]
+    assert "events_require" not in expect
+    assert "events_any_of" in expect
+    assert len(expect["events_any_of"]) == 1
+    grp = expect["events_any_of"][0]
+    assert grp["name"] == "events_scp_fold_or_approach"
+    assert {b["name"] for b in grp["branches"]} == {"A_fold_fired", "B_fold_approached"}
+
+
+def test_fault_expectations_scp_inrush_branch_a_events_shape():
+    """Branch A carries exactly the OLD events_require spec (F2's tightened
+    6.0-6.6 A band), just relocated -- the physics didn't change, only where
+    it is scored."""
+    grp = rhs.FAULT_EXPECTATIONS["scp-inrush"]["events_any_of"][0]
+    br_a = next(b for b in grp["branches"] if b["name"] == "A_fold_fired")
+    assert br_a["events"] == [{"kind": "scp_cut", "count": 1,
+                               "field": "i_cut", "min_value": 6.0, "max_value": 6.6}]
+
+
+def test_fault_expectations_scp_inrush_branch_b_events_shape():
+    grp = rhs.FAULT_EXPECTATIONS["scp-inrush"]["events_any_of"][0]
+    br_b = next(b for b in grp["branches"] if b["name"] == "B_fold_approached")
+    assert br_b["events"] == [
+        {"kind": "scp_cut", "count": 0},
+        {"kind": "sw_ring", "where": {"switch": "MOT_PWR"}, "count": 1,
+         "field": "i_cut", "min_value": 3.5, "max_value": 5.5},
+    ]
+
+
+def test_judge_scenario_scp_inrush_outcome_a_wins_fold_fired(tmp_path):
+    """Outcome A (the fold fired, L=2): one scp_cut in the [6.0, 6.6] A band,
+    no sw_ring events at all. The group must pass, name A_fold_fired as the
+    winner, and carry its 'STRONGER' label text."""
     m = _metrics(fault_bits_seen=0, final_fault_flags=0)
     events = _events(kinds={"scp_cut": 1},
                      field_values={"scp_cut": {"i_cut": [6.29]}})
     passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
-    ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
-    assert ev["passed"] is True
+    grp = [c for c in checks if c["name"] == "events_scp_fold_or_approach"][0]
+    assert grp["passed"] is True
+    assert "OUTCOME **A_fold_fired**" in grp["detail"]
+    assert "STRONGER" in grp["detail"]
     assert passed is True
 
 
-def test_judge_scenario_events_require_scp_cut_fails_when_absent():
-    """'scp-inrush' requires no fault at all, but DOES require exactly one
-    scp_cut event in the electrical sidecar -- absent, the whole judgement
-    fails even though every fault-bit check is clean."""
+def test_judge_scenario_scp_inrush_outcome_b_wins_fold_approached():
+    """Outcome B (L=1, the teardown preempted the fold): zero scp_cut, one
+    MOT_PWR sw_ring in the [3.5, 5.5] A band. The `where` filter must isolate
+    it from an UNRELATED FC_BUS sw_ring the same run also carries (the exact
+    scenario `where` exists for -- field_values pools all sw_ring events
+    together and cannot tell them apart)."""
     m = _metrics(fault_bits_seen=0, final_fault_flags=0)
-    events = _events()   # kinds == {}
+    events = _events(kinds={"sw_ring": 2},
+                     field_values={"sw_ring": {"i_cut": [4.5565, 1.2]}})
+    events["events_by_kind"] = {
+        "sw_ring": [{"switch": "MOT_PWR", "i_cut": 4.5565},
+                    {"switch": "FC_BUS", "i_cut": 1.2}],
+    }
     passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
+    grp = [c for c in checks if c["name"] == "events_scp_fold_or_approach"][0]
+    assert grp["passed"] is True
+    assert "OUTCOME **B_fold_approached**" in grp["detail"]
+    assert "WEAKER" in grp["detail"]
+    assert "sw_ring[switch=MOT_PWR]" in grp["detail"]
+    assert passed is True
+
+
+def test_judge_scenario_scp_inrush_neither_outcome_matches_fails_with_text():
+    """No scp_cut and no sw_ring at all -- neither branch's events pass, and
+    the group must fail with the 'NO outcome matched' text, naming both
+    branches' own problems."""
+    m = _metrics(fault_bits_seen=0, final_fault_flags=0)
+    events = _events()   # kinds == {}, field_values == {}
+    passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
+    grp = [c for c in checks if c["name"] == "events_scp_fold_or_approach"][0]
+    assert grp["passed"] is False
+    assert grp["detail"].startswith("NO outcome matched")
+    assert "A_fold_fired" in grp["detail"]
+    assert "B_fold_approached" in grp["detail"]
     assert passed is False
-    ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
-    assert ev["passed"] is False
-    assert "count 0, expected exactly 1" in ev["detail"]
 
 
-def test_judge_scenario_events_require_scp_cut_fails_on_wrong_count():
-    """More than one cut is a real change (with firmware attached, the
-    State-99 teardown opens MOT_PWR before the 64 ms retry re-arms, so the
-    retry cadence should never be reachable here) -- count != 1 fails even
-    though at least one scp_cut fired."""
-    m = _metrics(fault_bits_seen=0, final_fault_flags=0)
-    events = _events(kinds={"scp_cut": 3},
-                     field_values={"scp_cut": {"i_cut": [6.29, 6.1, 6.4]}})
-    passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
-    ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
-    assert ev["passed"] is False
-    assert "count 3, expected exactly 1" in ev["detail"]
-    assert passed is False
-
-
-def test_judge_scenario_events_require_scp_cut_fails_when_i_cut_outside_band():
-    """The i_cut band [6.0, 6.6] A (F2, tightened from 5.0-8.0): a cut
-    outside it is not a repeat of the measured foldback event and must fail,
-    even with the right count."""
-    m = _metrics(fault_bits_seen=0, final_fault_flags=0)
-    events = _events(kinds={"scp_cut": 1},
-                     field_values={"scp_cut": {"i_cut": [2.5]}})
-    passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
-    ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
-    assert ev["passed"] is False
-    assert "out of the [6, 6.6] plausibility band" in ev["detail"]
-    assert "2.500" in ev["detail"]
-
-
-def test_judge_scenario_events_require_scp_cut_fails_just_outside_new_tightened_band():
-    """F2 boundary check: a cut that would have PASSED the old 5.0-8.0 band
-    (e.g. 5.5 A, or 7.0 A) must now FAIL under the tightened 6.0-6.6 A band --
-    pins that the band actually moved, not just that its literal changed."""
-    m = _metrics(fault_bits_seen=0, final_fault_flags=0)
-    for i_cut in (5.5, 5.999, 6.601, 7.0):
-        events = _events(kinds={"scp_cut": 1},
-                         field_values={"scp_cut": {"i_cut": [i_cut]}})
-        _passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
-        ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
-        assert ev["passed"] is False, i_cut
-
-
-def test_judge_scenario_events_require_scp_cut_passes_at_band_boundaries():
+def test_judge_scenario_scp_inrush_outcome_a_band_boundaries_and_tightened_rejection():
+    """F2's tightened 6.0-6.6 A band, now scored inside branch A: boundary
+    values pass, values that would have passed the OLD 5.0-8.0 A band (5.5,
+    7.0) now fail branch A -- and since neither the scp_cut count nor the
+    sw_ring event exist for branch B either, the WHOLE group fails."""
     m = _metrics(fault_bits_seen=0, final_fault_flags=0)
     for i_cut in (6.0, 6.6, 6.290012976976211):
-        events = _events(kinds={"scp_cut": 1},
-                         field_values={"scp_cut": {"i_cut": [i_cut]}})
+        events = _events(kinds={"scp_cut": 1}, field_values={"scp_cut": {"i_cut": [i_cut]}})
         _passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
-        ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
-        assert ev["passed"] is True, i_cut
+        grp = [c for c in checks if c["name"] == "events_scp_fold_or_approach"][0]
+        assert grp["passed"] is True, i_cut
+
+    for i_cut in (5.5, 5.999, 6.601, 7.0):
+        events = _events(kinds={"scp_cut": 1}, field_values={"scp_cut": {"i_cut": [i_cut]}})
+        _passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
+        grp = [c for c in checks if c["name"] == "events_scp_fold_or_approach"][0]
+        assert grp["passed"] is False, i_cut
+
+
+# -- _judge_event_spec() unit coverage (shared by events_require and every
+#    events_any_of branch) --------------------------------------------------
+
+def test_judge_event_spec_where_filter_isolates_matching_kind_and_field():
+    events = {"kinds": {"sw_ring": 1}, "field_values": {},
+             "events_by_kind": {"sw_ring": [{"switch": "MOT_PWR", "i_cut": 4.5}]}}
+    spec = {"kind": "sw_ring", "where": {"switch": "MOT_PWR"}, "count": 1,
+           "field": "i_cut", "min_value": 3.5, "max_value": 5.5}
+    ok, observed, problems = rhs._judge_event_spec(spec, events)
+    assert ok is True
+    assert problems == []
+    assert "sw_ring[switch=MOT_PWR]" in observed
+
+
+def test_judge_event_spec_where_filter_wrong_switch_value_is_negative(tmp_path=None):
+    """The event KIND is right (sw_ring) but the field value inside `where`
+    does not match -- the filtered count must be 0, distinctly from 'no such
+    kind at all'."""
+    events = {"kinds": {"sw_ring": 1}, "field_values": {},
+             "events_by_kind": {"sw_ring": [{"switch": "FC_BUS", "i_cut": 4.5}]}}
+    spec = {"kind": "sw_ring", "where": {"switch": "MOT_PWR"}, "count": 1,
+           "field": "i_cut", "min_value": 3.5, "max_value": 5.5}
+    ok, observed, problems = rhs._judge_event_spec(spec, events)
+    assert ok is False
+    assert "count 0, expected exactly 1" in problems[0]
+    assert "sw_ring[switch=MOT_PWR]" in observed
+
+
+def test_judge_event_spec_count_zero_does_not_demand_a_field_value():
+    """Deliberate carve-out: a count==0 spec asserts ABSENCE. When no events
+    (and so no field values) exist, that must NOT ALSO be flagged as 'no
+    field to check' -- pinned so this is not later 'fixed' into a spurious
+    second failure on every legitimate absence assertion."""
+    events = {"kinds": {}, "field_values": {}, "events_by_kind": {}}
+    spec = {"kind": "scp_cut", "count": 0, "field": "i_cut",
+           "min_value": 6.0, "max_value": 6.6}
+    ok, observed, problems = rhs._judge_event_spec(spec, events)
+    assert ok is True
+    assert problems == []
+
+
+def test_judge_event_spec_bare_string_form_still_works():
+    """The bare-string spec form ("kind" alone, meaning 'at least one') must
+    still work -- _judge_event_spec is shared with events_require, which
+    relies on it."""
+    events = _events(kinds={"scp_cut": 1})
+    ok, observed, problems = rhs._judge_event_spec("scp_cut", events)
+    assert ok is True
+    assert "1 'scp_cut' event(s)" in observed
+
+
+# -- events_any_of import-time validation (direct predicate re-derivation,
+#    same convention as _expectation_time_bounds's reject-direction test --
+#    the loop itself runs once at import, so this re-derives its assertions
+#    rather than re-triggering a module import) ------------------------------
+
+def _validate_events_any_of_group(name, grp):
+    """Line-for-line re-derivation of the import-time events_any_of
+    validation in run_hil_suite.py, for testing the predicate directly."""
+    brs = grp.get("branches") or []
+    assert grp.get("name"), "group needs a name"
+    assert len(brs) >= 2, (
+        "FAULT_EXPECTATIONS[%r].events_any_of[%r] has %d branch(es)"
+        % (name, grp.get("name"), len(brs)))
+    for b in brs:
+        assert b.get("name") and b.get("events"), (
+            "every branch needs a name and a non-empty events list")
+        for s in b["events"]:
+            assert isinstance(s, str) or "kind" in s, (
+                "every event spec needs a kind")
+
+
+def test_events_any_of_validation_accepts_the_live_scp_inrush_group():
+    grp = rhs.FAULT_EXPECTATIONS["scp-inrush"]["events_any_of"][0]
+    _validate_events_any_of_group("scp-inrush", grp)   # must not raise
+
+
+def test_events_any_of_validation_rejects_a_one_branch_group():
+    bad = {"name": "only_one_way", "branches": [
+        {"name": "only", "events": [{"kind": "scp_cut", "count": 1}]},
+    ]}
+    with pytest.raises(AssertionError, match="branch"):
+        _validate_events_any_of_group("synthetic", bad)
+
+
+def test_events_any_of_validation_rejects_an_event_spec_without_kind():
+    bad = {"name": "g", "branches": [
+        {"name": "a", "events": [{"count": 1}]},          # no "kind"
+        {"name": "b", "events": [{"kind": "scp_cut"}]},
+    ]}
+    with pytest.raises(AssertionError, match="kind"):
+        _validate_events_any_of_group("synthetic", bad)
+
+
+def test_events_any_of_validation_rejects_a_branch_missing_name_or_events():
+    bad_no_name = {"name": "g", "branches": [
+        {"events": [{"kind": "scp_cut"}]},
+        {"name": "b", "events": [{"kind": "scp_cut"}]},
+    ]}
+    with pytest.raises(AssertionError):
+        _validate_events_any_of_group("synthetic", bad_no_name)
+
+    bad_no_events = {"name": "g", "branches": [
+        {"name": "a", "events": []},
+        {"name": "b", "events": [{"kind": "scp_cut"}]},
+    ]}
+    with pytest.raises(AssertionError):
+        _validate_events_any_of_group("synthetic", bad_no_events)
 
 
 def test_judge_scenario_events_forbid_over_absmax_pass_and_fail():
@@ -900,7 +1035,7 @@ def test_fault_expectations_schema_every_entry_has_a_nonempty_source():
 
 def test_fault_expectations_schema_only_known_fields():
     known = {"require", "allow_only", "not_before_s", "survive_to",
-            "events_require", "source", "signals_require",
+            "events_require", "events_any_of", "source", "signals_require",
             "events_forbid_over_absmax"}
     for name, expect in rhs.FAULT_EXPECTATIONS.items():
         assert set(expect) <= known, (name, set(expect) - known)
@@ -1759,6 +1894,61 @@ def test_analyze_events_field_values_collected_per_kind(tmp_path):
     assert "t" not in out["field_values"]["scp_cut"]
     assert "switch" not in out["field_values"]["scp_cut"]
     assert out["field_values"]["sw_ring"]["peak_v"] == [pytest.approx(17.578)]
+
+
+# -- events_by_kind (2026-08-31, feeds _judge_event_spec's `where` filter) --
+
+def test_analyze_events_missing_path_events_by_kind_present_and_empty():
+    """events_by_kind must be present (as {}) in the zeroed/missing-path
+    dict, alongside the other event fields, not added only once a real
+    sidecar is parsed."""
+    out = rhs.analyze_events(None)
+    assert out["events_by_kind"] == {}
+    out2 = rhs.analyze_events("/nonexistent/file.jsonl")
+    assert out2["events_by_kind"] == {}
+
+
+def test_analyze_events_events_by_kind_holds_the_whole_event_grouped_by_kind(tmp_path):
+    lines = [
+        {"kind": "sw_ring", "switch": "MOT_PWR", "i_cut": 4.5565, "over_absmax": False},
+        {"kind": "sw_ring", "switch": "FC_BUS", "i_cut": 1.2, "over_absmax": False},
+        {"kind": "scp_cut", "switch": "MOT_PWR", "i_cut": 6.29},
+    ]
+    path = tmp_path / "events.jsonl"
+    with open(path, "w", encoding="utf-8") as fh:
+        for e in lines:
+            fh.write(json.dumps(e) + "\n")
+    out = rhs.analyze_events(str(path))
+    assert len(out["events_by_kind"]["sw_ring"]) == 2
+    assert len(out["events_by_kind"]["scp_cut"]) == 1
+    mot_pwr = [e for e in out["events_by_kind"]["sw_ring"] if e["switch"] == "MOT_PWR"][0]
+    assert mot_pwr["i_cut"] == pytest.approx(4.5565)
+    fc_bus = [e for e in out["events_by_kind"]["sw_ring"] if e["switch"] == "FC_BUS"][0]
+    assert fc_bus["i_cut"] == pytest.approx(1.2)
+    # kinds count and events_by_kind length must always agree -- two different
+    # views of the same underlying events, so they cannot legitimately drift.
+    for kind, n in out["kinds"].items():
+        assert len(out["events_by_kind"][kind]) == n
+
+
+def test_analyze_events_events_by_kind_keeps_scalars_only(tmp_path):
+    """Only int/float/str/bool fields survive into events_by_kind (the same
+    scalars-only discipline field_values already applies) -- a nested
+    dict/list value on a future event kind must not be carried through raw."""
+    lines = [
+        {"kind": "weird_event", "switch": "MOT_PWR", "i_cut": 4.5,
+         "nested": {"a": 1}, "listy": [1, 2, 3]},
+    ]
+    path = tmp_path / "events.jsonl"
+    with open(path, "w", encoding="utf-8") as fh:
+        for e in lines:
+            fh.write(json.dumps(e) + "\n")
+    out = rhs.analyze_events(str(path))
+    ev = out["events_by_kind"]["weird_event"][0]
+    assert ev["switch"] == "MOT_PWR"
+    assert ev["i_cut"] == pytest.approx(4.5)
+    assert "nested" not in ev
+    assert "listy" not in ev
 
 
 def test_analyze_events_ignores_blank_and_malformed_lines(tmp_path):
@@ -3409,6 +3599,24 @@ def test_judge_warm_resets_non_whitelisted_zero_passes_clean():
     assert note is None
     assert check["passed"] is True
     assert check["name"] == "warm_reset_tripwire"
+
+
+def test_judge_warm_resets_zero_mid_run_detail_wording_interpolates_grace_bound():
+    """2026-08-31 wording fix: the old detail claimed 'the board never left
+    State 99 during the run', which is FALSE on the common case -- `count` is
+    MID-RUN only (post-grace), so it is also zero on the (normal, expected)
+    in-grace recovery from the previous run's inherited latch. The new
+    wording must say that instead, and must interpolate the actual
+    WARM_RESET_GRACE_S value rather than hard-coding '2.0'."""
+    check, _note, _reason = rhs.judge_warm_resets(
+        "steady", "scenario", _wr_counts(mid_run=0, observed=0), "meta.json")
+    detail = check["detail"]
+    assert "never left State 99 during the run" not in detail
+    assert ("no mid-run warm reset after the %.1f s grace bound"
+           % rhs.WARM_RESET_GRACE_S) in detail
+    assert "in-grace recovery" in detail
+    assert "is normal" in detail
+    assert "(meta.json)" in detail
 
 
 def test_judge_warm_resets_non_whitelisted_nonzero_is_inconclusive():

@@ -1943,8 +1943,64 @@ HANDOFF_STEP_A = 1.5        # at t = 20.0 — the perturbation, against BT's 3.0
 # engages, v_out falls behind the ramp target at ~224 V/s while the fold limit
 # rises only ~0.29 A/V, so i_lag grows ~2.7 A within the 250 us SCP blanking
 # window — every fold reaches RT_SCP_BLANK_S and CUTS.  The scenario is therefore
-# scored on the EVENTS (scp_cut must appear) with the fault outcome allowed but
-# not required; see run_hil_suite.py's FAULT_EXPECTATIONS["scp-inrush"].
+# scored on the EVENTS, with the fault outcome allowed but not required; see
+# run_hil_suite.py's FAULT_EXPECTATIONS["scp-inrush"].  ⚠️ "scp_cut must appear"
+# was true of that scoring until 2026-08-31 and is no longer: the expectation is
+# now TWO-OUTCOME, because whether the fold gets to fire at all is decided by a
+# one-tick race the stimulus cannot win reliably.  See below.
+#
+# ⚠️ 2026-08-31 — THIS VALUE IS FRAGILE AND THE FIX IS NOT AVAILABLE HERE.
+# Round 2 of the campaign scored `events_require_scp_cut` FAIL with zero cut
+# events, on a plant trace otherwise bit-identical to round 1's. Root cause is
+# the RX-before-step ordering in main()'s scenario branch (see the comment at
+# that site): the fold's cut lands one tick after switch admission
+# (S = MOT_PWR close + RT_TD_ON_S), the firmware's OC_FC teardown lands at S+L
+# with L = 1 or 2 depending on sub-ms host/board phase, and a tie goes to the
+# firmware. L=2 -> cut fires (campaign 20260830_203006: 6.2852 A; round 1
+# 20260831_000518: 6.290013 A, hardware-corroborated 6.290 A). L=1 -> EN-low
+# preempts the fold at ~4.5565 A, ~85 % of the ~5.36 A fold entry, and nothing
+# is recorded. The 0.076 % "repeat" between those two i_cut figures was two
+# draws of the same coin, NOT evidence of a tight, reproducible measurement.
+#
+# THE OBVIOUS FIX — raise this load until the 250 us blanking window is consumed
+# inside the admission tick, so the cut lands at S and can never race S+1 — WAS
+# DERIVED EMPIRICALLY AND DOES NOT FIT. Headless bench (ElectricalSim driven
+# directly, and again via Plant replaying round 1's own recorded switch stream;
+# substep count PINNED and swept 20-100 to span the real ~57):
+#     load       outcome
+#     5.0 A      no fold at all in the bench; the cut threshold bisects to
+#                ~5.53 A, so the shipped value sits ~9.6 % BELOW its own
+#                trigger. (The real runs did cut, so the shipped path is a few
+#                percent more aggressive than the bench — but single-digit
+#                margin either way is the fragility itself.)
+#     6-12 A     cut lands at S+1: the phase race, unchanged.
+#     ~12.7 A    bisected threshold for a cut at S (phase-INDEPENDENT).
+#     >= 14 A    cut at S on every substep count tested.
+# The tick-S threshold is ~12.7 A = 1.49x RT_I_FOLD_HIGH (8.5 A). A load above
+# RT_I_FOLD_HIGH can never be regulated into at ANY dV, so the switch could
+# never complete soft-start — that is a hard short, not the "legitimate
+# SCP-MARGIN case" this scenario is defined to be. Raising the load to make the
+# check deterministic would therefore destroy the scenario's own identity.
+# The premise of the proposed fix does not hold either: the demand is not
+# c_load*rate + i_load at the first SOFT substep. Measured, the switch current
+# RAMPS at ~0.154 A/substep from ~1.1 A because the node solve governs it, so
+# ~27 substeps elapse before the fold engages regardless of load, and the load
+# only shifts that slightly.
+# RESOLUTION (operator ruling, 2026-08-31): the load STAYS AT 5.0 A and the check
+# became TWO-OUTCOME instead — run_hil_suite.py's FAULT_EXPECTATIONS["scp-inrush"]
+# now scores outcome A (fold fired, L=2, i_cut 6.0-6.6 A) OR outcome B (fold
+# approached, L=1, MOT_PWR ring i_cut 3.5-5.5 A), and NAMES which one occurred.
+# That is not check-laundering: both outcomes are the same correct physics in the
+# two legal orderings of the race, the plant traces are bit-identical up to the
+# tick it resolves, and the board latches OC_FC either way. The defect was that
+# the check scored the coin flip. The full argument lives at that entry.
+# The old 5.0 A and the 6.290 A hardware-corroborated i_cut are therefore NOT
+# retired — no drift was found and no re-margin was applied.
+#
+# OPERATOR-CHOICE ITEM, logged and not attempted: a deterministic fold needs a
+# stimulus TIMING redesign — close MOT_PWR into an ALREADY-LOADED node so the fold
+# engages well before any firmware reaction can reach the tick. The load knob
+# cannot get there, per the table above.
 SCP_INRUSH_MOT_LOAD_A = 5.0
 
 
@@ -2832,6 +2888,30 @@ def main(argv=None):
                         elif sensors["I_fc"] < -args.replay_i_fc_clamp:
                             sensors["I_fc"] = -args.replay_i_fc_clamp
             else:
+                # ── RX-BEFORE-STEP ORDERING, and what it decides ────────────
+                # `obs` here is the MOST RECENT observation frame, received at the
+                # top of this tick, and it is applied to the plant BEFORE the
+                # solver runs. So on any tick where the board's switch word and an
+                # autonomous plant event would both act, THE BOARD'S WORD WINS —
+                # a tie goes to the firmware.
+                #
+                # This is not academic: it decides the scp-inrush scenario's
+                # outcome (root-caused 2026-08-31). The RT1987 SCP fold's cut
+                # lands one tick after switch admission (S = MOT_PWR close +
+                # RT_TD_ON_S), while the firmware's OC_FC teardown lands at S+L,
+                # where L is the observation round trip — 1 OR 2 ticks depending
+                # on sub-millisecond host/board phase. At L=2 the fold cuts first
+                # and `scp_cut` fires; at L=1 the teardown's EN-low preempts it
+                # and no event is recorded, from a plant trace that is otherwise
+                # bit-identical. Campaign 20260830_203006 and round 1 saw L=2;
+                # round 2 saw L=1 and the scenario failed on a phase coin-flip,
+                # not on anything the board or the model did wrong.
+                #
+                # Keep this ordering — a plant that ran ahead of the board's own
+                # word would be the less faithful of the two. But any scenario
+                # whose verdict depends on an event landing in the SAME tick as a
+                # firmware reaction is sitting on this coin flip, and must be
+                # re-margined at the stimulus rather than have its check widened.
                 tx_enabled = apply_scenario(plant, scenario, t)
                 sensors = plant.step(dt, obs)
                 rec_idx = None
