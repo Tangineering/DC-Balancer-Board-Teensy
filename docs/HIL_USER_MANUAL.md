@@ -36,8 +36,13 @@ The plant, the fault paths, the sequencing guards and both controllers are
 identical in all three — only the commander differs.
 
 A fourth thing exists and is *not* a mode: `--replay PATH.BLG` streams a recorded
-bench log's rails at the board instead of integrating a plant. It is open-loop and
-creates no commander at all (`docs/HIL_MODE.md` "Replay mode").
+bench log's rails at the board instead of integrating a plant. It is open-loop, and
+by default creates no commander at all, so the board sits in Idle
+(`docs/HIL_MODE.md` "Replay mode"). Adding `--replay-commands` also replays the
+log's recorded `v_sp`/`share_sp` as Pi command packets at 50 Hz, so the board
+reaches Run and both control loops step — **the plant side stays open loop either
+way**, so that tests the controller's *reaction* to a recorded stimulus, never
+closed-loop tracking.
 
 ---
 

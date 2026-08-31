@@ -55,7 +55,7 @@ SCEN_HEADER = ["t", "seq", "V_fc", "V_batt", "V_bus", "V_chg", "V_rgn",
 REPLAY_HEADER = ["t", "seq", "V_fc", "V_batt", "V_bus", "V_chg", "V_rgn",
                  "I_fc", "I_batt", "v_actual", "I_charge", "ag105_status",
                  "state", "switch", "aux", "current", "mdac_fc", "mdac_bt",
-                 "fault_flags", "replay_rec"]
+                 "fault_flags", "replay_rec", "cmd_v_sp", "cmd_share_sp"]
 
 
 def _mdac_word(frac):
@@ -110,21 +110,29 @@ def make_scenario_csv(path, n=20, dt=0.05, state=2, fault_flags=0,
 
 
 def make_replay_csv(path, n=20, dt=0.05, replay_rec_fn=None,
-                     state_blank_at=(), fault_flags=0):
+                     state_blank_at=(), fault_flags=0,
+                     cmd_v_sp_fn=None, cmd_share_sp_fn=None):
     """Write a minimal hil_replay_*.csv. replay_rec_fn(i) -> int (default i-2,
-    so the first two rows are the synthetic preamble at -2/-1)."""
-    if replay_rec_fn is None:
-        replay_rec_fn = lambda i: i - 2  # noqa: E731
+    so the first two rows are the synthetic preamble at -2/-1).
+
+    cmd_v_sp_fn/cmd_share_sp_fn(i) -> value, matching the real 2026-08-30
+    replay schema where cmd_v_sp/cmd_share_sp are ALWAYS present as columns
+    but are BLANK cells on a plain --replay (no commander) and populated
+    under --replay-commands. Default None -> every cell blank (the plain-
+    replay CSV shape), so existing call sites are unaffected."""
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(REPLAY_HEADER)
+        rrf = replay_rec_fn if replay_rec_fn is not None else (lambda i: i - 2)
         for i in range(n):
             t = i * dt
             state = "" if i in state_blank_at else 2
+            cmd_v_sp = "" if cmd_v_sp_fn is None else cmd_v_sp_fn(i)
+            cmd_share_sp = "" if cmd_share_sp_fn is None else cmd_share_sp_fn(i)
             row = [t, i, 13.0, 8.0, 16.0, 13.0, 16.0, 0.5, 0.5,
                    1.0 + 0.01 * i, 0.1, "0x00", state, 0x3F, 0x0F, 1.2,
                    _mdac_word(0.3), _mdac_word(0.3), fault_flags,
-                   replay_rec_fn(i)]
+                   rrf(i), cmd_v_sp, cmd_share_sp]
             w.writerow(row)
     return path
 
@@ -571,6 +579,71 @@ def test_adapt_to_benchlog_missing_optional_columns_absent_not_nan_filled(
     data = hra.adapt_to_benchlog(hil)
     assert "v_sp" not in data
     assert "share_sp" not in data
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# L4 (fix round, 2026-08-30): a replay CSV now carries cmd_v_sp/cmd_share_sp
+# unconditionally (--replay-commands landed), but they are blank (all-NaN)
+# unless that flag was passed. adapt_to_benchlog() must drop an all-NaN cmd_*
+# column rather than emit one an empty figure would be drawn on.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_adapt_to_benchlog_replay_csv_plain_cmd_columns_present_but_all_nan_dropped(
+        tmp_path):
+    """Plain --replay (no --replay-commands): cmd_v_sp/cmd_share_sp exist as
+    CSV COLUMNS (unconditional append) and load_hil_csv() parses them into
+    the raw `hil` dict as all-NaN arrays -- but adapt_to_benchlog() must drop
+    both from the adapted dict entirely, not pass the all-NaN arrays through."""
+    p = tmp_path / "r_plain.csv"
+    make_replay_csv(p, n=6)   # cmd_v_sp_fn/cmd_share_sp_fn default None -> blank cells
+    hil = hra.load_hil_csv(p)
+    assert "cmd_v_sp" in hil
+    assert "cmd_share_sp" in hil
+    assert np.all(np.isnan(hil["cmd_v_sp"]))
+    assert np.all(np.isnan(hil["cmd_share_sp"]))
+
+    data = hra.adapt_to_benchlog(hil)
+    assert "v_sp" not in data
+    assert "share_sp" not in data
+
+
+def test_adapt_to_benchlog_replay_csv_command_replay_cmd_columns_present_and_kept(
+        tmp_path):
+    """--replay-commands: cmd_v_sp/cmd_share_sp carry real (non-NaN) values,
+    and adapt_to_benchlog() must map them through to v_sp/share_sp -- the
+    all-NaN drop must not also swallow a genuinely populated column."""
+    p = tmp_path / "r_cmds.csv"
+    make_replay_csv(p, n=6,
+                    cmd_v_sp_fn=lambda i: 1.5 + 0.1 * i,
+                    cmd_share_sp_fn=lambda i: 0.5)
+    hil = hra.load_hil_csv(p)
+    assert not np.any(np.isnan(hil["cmd_v_sp"]))
+    assert not np.any(np.isnan(hil["cmd_share_sp"]))
+
+    data = hra.adapt_to_benchlog(hil)
+    assert "v_sp" in data
+    assert "share_sp" in data
+    assert np.array_equal(data["v_sp"], hil["cmd_v_sp"])
+    assert np.array_equal(data["share_sp"], hil["cmd_share_sp"])
+    assert data["v_sp"][0] == pytest.approx(1.5)
+    assert data["share_sp"][0] == pytest.approx(0.5)
+
+
+def test_adapt_to_benchlog_replay_csv_partially_populated_cmd_column_is_kept():
+    """A column with SOME NaN and some real values (e.g. the synthetic
+    preamble rows still blank, the handover rows populated) must NOT be
+    treated as all-NaN -- np.all(isnan(...)) is False, so it passes through,
+    NaNs and all (a figure builder downstream is expected to handle that, the
+    same as any other partially-observed column)."""
+    n = 6
+    v_sp = np.array([np.nan, np.nan, 1.0, 1.1, 1.2, 1.3])
+    hil = {"t_s": np.arange(n, dtype=np.float64),
+           "cmd_v_sp": v_sp,
+           "cmd_share_sp": np.full(n, np.nan)}
+    data = hra.adapt_to_benchlog(hil)
+    assert "v_sp" in data
+    assert np.array_equal(data["v_sp"], v_sp, equal_nan=True)
+    assert "share_sp" not in data   # this one genuinely is all-NaN
 
 
 def test_adapt_to_benchlog_flags_column_is_hil_banner_bit():

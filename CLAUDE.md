@@ -1870,3 +1870,64 @@ zero edits there).
   the tool BEFORE dispatch (briefs reference the subfolders + pre-built figures and
   paste `analysis.json` metrics); LIVE mode runs it as close-out step 0 after
   `partial: false` — NEVER while the suite is running (it moves the suite's files).
+
+---
+
+## Status & session addendum (2026-08-31, HIL command replay + suite fixes + duration trims)
+
+Orchestrated tooling round (Opus implementer, independent Sonnet test-writer, parallel
+Opus data-integrity + Sonnet contract reviews, fix round). Python tooling + docs only;
+FW_VERSION stays 23; wire protocol frozen (40 B inject / 16 B observe / 22 B command).
+
+- **`--replay-commands` (hil_plant_sim.py):** replay mode can now drive the firmware's
+  22-byte Pi command packet at 50 Hz from the BLG's own recorded `v_sp`/`share_sp`
+  (columns exist in every format v1-v7; blank velocity-invalid `v_sp` → 0.0). MODE_SAFE
+  during the 2.5 s preamble, MODE_HYBRID after; charge_goal 0; values ZOH'd from THIS
+  tick's already-sampled replay record so `--replay-speed` axis alignment is structural
+  (the RATE stays 50 Hz of wall clock — speed > 1 under-samples the setpoint; use 1.0
+  for fidelity). Requires `--replay`; --ems/--pi-live exclusions transitive. OPEN-LOOP
+  on the plant side by construction — injected v_actual never responds; the drive loop
+  fighting the trajectory is the stimulus. Replay CSV appends `cmd_v_sp`/`cmd_share_sp`
+  after `replay_rec` unconditionally (blank without the flag; the column is the 1 kHz
+  ZOH axis, the wire lags ≤ 20 ms). PiCommander gained `always_active`.
+- **Replay suite de-vacuation (hil_replay_suite.py):** new `drive_loop_stepped` check
+  kind (≥ 0.05 A on ≥ 50 recorded-window samples); 14 of 26 entries opt in
+  (`replay_commands: True` + the check ordered first): ML0203/0137/0140/0146/0149/0151/
+  0153/0164/0165/0169, YP0152/0166/0196/0214. The UV trio (TP0010/0053, WP0097), ML0217,
+  TP0178/0201 and every v_sp≡0 current-mode 'T'/'W' log stay command-free (stimulus
+  purity; measured, not assumed). Motor-response checks on command-free entries now tag
+  "NOT EXERCISED (no command replay)" (passed=True + counters) instead of reading as
+  plain vacuous PASSes. ⚠️ ML0203 replays a FULL-RANGE share_sp (0.0-1.0) — it actuates
+  updateShareSetpointCutoff() both directions by design; share axis actuation rule added
+  to the decision-rules comment. `build_sim_argv()` mirrors the flag (third modifier).
+- **A5 fixed:** replay runs' results.json `metrics` was hardcoded `{}` — the latched
+  end-state (the 0x8001 that carried into campaign 214819) was invisible.
+  `ReplayCsv.metrics()` now populates final_fault_flags/final_state/unions from the
+  single parse, and REPORT.md renders the fault line per replay entry.
+- **A1 fixed (soc-depletion):** the `signal_soc_fell` 0.05 threshold was physically
+  unreachable at soc0 0.15 (latch is a STATE condition at soc≈0.113 → ΔSOC_max 0.037;
+  budget used bus-side 2.2 A where the pack draws ≈6.19 A). Now a disjunctive
+  `soc_depleted` gate (new `any_of` spec kind + `fault_latch_bit` leaf: bit ∧ 0x8000 at
+  t ≥ after_t), soc0 0.20, duration 400 s (latch est. ≈266 s; ~480 s cheaper).
+- **Scenario durations trimmed** (operator request: ≤ ~3 s dead time after the last
+  stimulus event): steady 10, step-load 10, sag 9, comm-loss 12, charge-cruise 15,
+  charge-fault 25, ems-drive-cycle 58, handoff-sag 24, bringup 8, scp-inrush 6;
+  drive (operator time) and charge-regen (profile to t=43) kept; soc-depletion kept at
+  400 (model-uncertain latch). Suite wall time 34.4 → ~23.4 min pre-A1, and the import-
+  time assert now walks not_before_s / survive_to.t / t_window uppers / any_of after_t
+  against each duration. `bringup` gained survive_to {t:4.0, states {1,2}} (its
+  completion was only ever asserted negatively); steady/step-load deliberately NOT
+  given entries (would cost the --pi-live PI_TIMEOUT excusal for nothing).
+  ⚠️ Baseline-statistics windows shrink vs campaigns 203006/214819 — medians/variances
+  are not directly comparable across the boundary; per-event measurements are.
+- **A3:** HIL_PLANT.md note — phase-0 VBUS→Ag105 bleed is a no-op under 8 ms TD_ON vs
+  the 10 ms dwell. **A4 (early-exit guard) deferred** — A1's duration cut removed most
+  of the dark-tail cost. Docs updated in lockstep (HIL_MODE/HIL_REPLAY_LOGS incl. Cmds
+  column + checklist step, HIL_USER_MANUAL, PSCAD_SIM_DESIGN stale 60 s refs,
+  hil-conventions.md two-class replay statement).
+- **Tests: 674 passed + 25 numpy-skips (.venv_hil, five suites) / 718 with miniforge
+  (incl. test_hil_report_analysis.py 113)** — orchestrator-rerun. hil_report_analysis
+  adapter now drops all-NaN cmd_* columns (clean figure skip for plain replays).
+- **Overnight autonomous session (operator away):** decisions taken without sign-off are
+  logged in `OVERNIGHT_LOG.md` at repo root with the commit ledger for choosing a
+  resume point.

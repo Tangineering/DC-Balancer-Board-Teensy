@@ -351,7 +351,7 @@ the modelled plant, see **Replay mode** below.) Scenarios:
 | `charge-cruise` | Run + cruise + `charge_goal` > 0 via the Pi command timeline — `FC_CHARGE` opens on intent, the Ag105 settles to Charging, MPPT released |
 | `charge-regen` | cruise/brake cycling driven by the **`regen-harvest` EMS strategy** (redesigned 2026-08-30). `charge_goal` is asserted **only inside a braking window**, so the Ag105 is fed through `REGEN` + `MOT_PWR` and the single-source `FC_CHARGE` path never opens. Charge ceiling de-rated to 1.6 A (`chg_i_ceiling_a`). |
 | `charge-fault` | charging established (cruise at t = 5, `charge_goal` staggered to t = 8), then the charger input rail collapses at t = 20 s — the GENSTAT decode / charger-loss path. Charge ceiling de-rated to 0.8 A (`chg_i_ceiling_a`) so the FC-path draw stays under `LIMIT_I_FC_MAX` and the run survives to its own stimulus. |
-| `soc-depletion` | sustained battery-heavy load; `V_batt` walks down the OCV curve toward `LIMIT_V_BATT_MIN` (use `--soc0` / `--capacity-ah` to fit a bench session). The share rail (t = 5) and the load (a 3 s ramp from t = 10) are **staggered**: landing both on one tick put 1.47 A on FC for a single sample and latched `OC_FC`. The load itself is **2.2 A**, not 3.0: the setpoint latch cuts FC *off the bus* at `share_sp = 0.0`, so BT alone carries 0.15 + 2.2 = **2.35 A** against `LIMIT_I_BT_MAX` 3.0 A (22 % margin) — at 3.0 A it was 3.15 A, over the limit outright, for the whole run. The suite's duration override rose 650 → 880 s in lockstep so the delivered charge, and the depletion depth, are preserved. |
+| `soc-depletion` | sustained battery-heavy load; `V_batt` walks down the OCV curve toward `LIMIT_V_BATT_MIN` (use `--soc0` / `--capacity-ah` to fit a bench session). The share rail (t = 5) and the load (a 3 s ramp from t = 10) are **staggered**: landing both on one tick put 1.47 A on FC for a single sample and latched `OC_FC`. The load itself is **2.2 A**, not 3.0: the setpoint latch cuts FC *off the bus* at `share_sp = 0.0`, so BT alone carries 0.15 + 2.2 = **2.35 A** against `LIMIT_I_BT_MAX` 3.0 A (22 % margin) — at 3.0 A it was 3.15 A, over the limit outright, for the whole run. **Suite override re-derived 2026-08-30:** `--soc0` **0.20**, duration **400 s** (was 0.15 / 880 s). The old pair could not satisfy its own check — it treated the 2.2 A *bus-side* load as the coulomb current, when the pack sits behind the boost (6.46 → 14.37 V) and delivers ≈ **6.19 A**; and the `UV_BATT` latch is a *state* condition (`OCV(soc) − I·(Rs(soc)+R1) = 6.2 V` solves at `soc_latch ≈ 0.113`), so the run ends there rather than running the assumed ~870 s. From `soc0` 0.15 the maximum observable fall was 0.037, **below** the 0.05 threshold at any duration. At 0.20 the ceiling is 0.087 = **1.74×** the threshold, the latch is expected at ≈ 266 s, and the signal gate is now **disjunctive** — either the 0.05 fall *or* a post-ramp `UV_BATT` latch proves the depletion, because the two foreclose each other. |
 | `handoff-sag` **(hi-fi only)** | the share **setpoint latch** cuts one source off the bus, then a +1.5 A step probes the single-source sag and the UV dwell decision. Operating point re-derived 2026-08-30: a +0.40 A pre-load from t = 4 puts the pre-rail total at ~0.74 A — above the 0.60 A closed-loop governor gate, below the cut's own 0.5 A/channel handoff guard — and the rail direction is **share 0.0** (BT survives), because at the FC rail `LIMIT_I_FC_MAX` 1.4 A leaves too little perturbation budget. ⚠️ A *reactive pickup* is **not** reachable from a setpoint-latched cut: the switch is driven EN-low and an EN-low RT1987 does not conduct at all. |
 | `bringup` **(hi-fi only)** | from dark: the firmware's staged bring-up P0–P3 against the real RT1987 t_D(ON) + soft-start delays |
 | `scp-inrush` **(hi-fi only)** | RT1987 soft-start **foldback + SCP cut** on `MOT_PWR` into the top of the VESC input envelope (0.9 mF). The 5.0 A V-MOT load is declared **from t = 0**, so it appears exactly when bring-up P3 closes the switch and the ramp runs into it while still in `SOFT` — the only window in which the foldback branch exists. Scored on `scp_cut` appearing in the events sidecar; see `SCP_INRUSH_MOT_LOAD_A` for why an `scp_cut` and an OC fault cannot be separated in this model. |
@@ -415,10 +415,70 @@ the run auto-name itself (`hil_replay-tp0178_<timestamp>.csv`).
 | `--replay-speed X` | pacing multiplier (default `1.0` = true wall clock) |
 | `--loop` | repeat the log until `--duration` elapses (replay only) |
 | `--duration` | defaults to the log's own length ÷ `--replay-speed` |
+| `--replay-commands` | ALSO replay the log's recorded `v_sp`/`share_sp` as Pi command packets — see below (replay only) |
 
 The log is decoded through `tools/decode_benchlog.py`'s `decode_blg()` (lazy
 import; a clear message and a non-zero exit if it can't be imported, read or
 parsed), so every BLG format version that decoder supports (v1–v7) replays.
+
+### Command replay (`--replay-commands`)
+
+By default a replay sends **injection frames only**. No `PiCommander` is built, so
+no 22-byte command packet ever reaches the board: it brings up, sits in **State 1
+(Idle)** holding `vesc.setCurrent(0)`, and the observation frame's `current` is
+`0.0000 A` for the whole run. Every current-shape assertion in the replay suite is
+then vacuously true.
+
+`--replay-commands` closes that gap. The log's own recorded `v_sp` and `share_sp`
+— columns present in **every** BLG format v1–v7 — are replayed as ordinary Pi
+command packets at **50 Hz**, on the same socket as the injection frames:
+
+```
+python3 tools/hil_plant_sim.py --teensy-ip 192.168.1.50 \
+        --replay logs/ML0151.BLG --replay-commands --csv hil_replay_ML0151.csv
+```
+
+- **While the synthetic bring-up preamble runs** the commander holds `MODE_SAFE`,
+  `v_setpoint = 0`, `share = 0.5`. `MODE_SAFE` only acts from State 2, so it is
+  inert during bring-up — which is what is wanted there. With
+  `--replay-no-preamble` there is no preamble and `MODE_HYBRID` is commanded from
+  `t = 0`; on a log whose point is that bring-up fails the board never reaches
+  Idle, so the command is harmlessly ignored (dispatch requires `mainState == 1`).
+- **After the preamble** it commands `MODE_HYBRID` with the record's own
+  `v_sp`/`share_sp`. `mode_cmd <= 3` from State 1 is what moves the board
+  **Idle → Run**.
+- The command state is written from **the same tick's replay record**, so it is
+  zero-order held on exactly the same time axis as the injection stream —
+  `--replay-speed` alignment is automatic.
+- Two CSV columns, `cmd_v_sp` and `cmd_share_sp`, are appended to the replay
+  schema **unconditionally** (blank under a plain `--replay`), and the
+  `.meta.json` sidecar records `replay_source.replay_commands`. They carry the
+  record's own commanded value for **that tick** (1 kHz), not the last value
+  transmitted — the 50 Hz packet stream lags them by ≤ 20 ms.
+- **Use `--replay-speed 1.0` when command fidelity matters.** The command stream
+  runs at 50 Hz of *wall* clock, not of log time, so a speed of X under-samples
+  the recorded setpoint by exactly X.
+
+Two firmware behaviours to know before reading such a trace:
+
+- **Idle → Run zeroes `v_setpoint` and resets the drive controller**
+  (`doState1()`, `.ino:5382-5410`). The real setpoint therefore arrives on the
+  *next* 50 Hz packet, ≤ 20 ms later. That is by design, not a dropout.
+- **Once in Run the 50 Hz stream is load-bearing.** The Pi watchdog
+  (`PI_TIMEOUT_MS = 500`, `.ino:2915`) arms after the first command packet and
+  latches if the stream stops in State 2/3, so the commander keeps transmitting on
+  every due tick for the whole run — through log gaps and the preamble alike.
+
+> ⚠️ **Command replay does NOT close the loop.** It adds a second *replayed*
+> channel. The injected `v_actual` still does not respond to what the firmware
+> commands, so this exercises the controller's **reaction** to a recorded
+> stimulus, never closed-loop tracking. Expect the drive loop to **fight** the
+> recorded trajectory wherever the recorded and flashed control laws differ —
+> that is the stimulus, not a defect.
+
+Which suite entries opt in, and why some deliberately do not, is
+`replay_commands` in `tools/hil_replay_suite.py` and the `cmds` column of
+`docs/HIL_REPLAY_LOGS.md`.
 
 ### ⚠️ Fidelity caveat — replay is an OPEN-LOOP stimulus
 
@@ -431,6 +491,8 @@ switch sequencing, fault latching, command shape at a given operating point — 
 must never be read as a closed-loop trajectory match. Two further consequences:
 
 - The board's own `'V'`/`'D'`/`'Y'` commands cannot "drive" a replay.
+- `--replay-commands` (above) does **not** change any of this: it replays the
+  recorded *commands* as a second fixed channel, it does not close the loop.
 - Divergence between the replayed `I_cmd` (in the log) and the live `current` (in
   the observation frame) is **expected**, not a defect — see the version warning
   below.

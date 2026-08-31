@@ -100,11 +100,12 @@ Replay is **open loop** (see `HIL_MODE.md` §"Fidelity caveat"). Concretely:
 - **The charger is not replayed.** No BLG record format v1–v7 carries a charge
   current or an Ag105 status byte, so `I_charge` injects as `0.0 A` and
   `ag105_status` as `0x00` (GENSTAT *Battery Disconnect*) for every entry.
-- **`v_setpoint` is not replayable.** The injection frame carries sensors only; the
-  22-byte Pi command packet is a separate path. The board sits at whatever setpoint
-  it was left at (0 in Idle). Anything that depends on a commanded setpoint — the
-  ML0144 `v_sp ≠ 0` relay, for instance — is out of reach; see that entry for the
-  honest reduced claim.
+- **`v_setpoint` reaches the board only on an entry that opts in** (`Cmds` column,
+  §3e below). Without it the board sits at whatever setpoint it was left at (0 in
+  Idle) and every current-shape check is tagged **NOT EXERCISED**. With it the
+  recorded `v_sp`/`share_sp` are replayed as Pi command packets, the board reaches
+  Run, and those checks become real — but the **plant** stays open loop either
+  way, so it is still a reaction test, never a tracking test.
 - **Pre-v18 logs are a different wheel and a different law** (§2).
 
 ### 3a. Synthetic bring-up preamble (2026-08-30)
@@ -266,6 +267,56 @@ run**. Without the gate, a board that never came up fails every check for one si
 reason and the report reads as N independent findings. An entry whose *point* is a
 failing bring-up sets `skip_bringup_gate` (only ML0217 does).
 
+### 3e. Command replay — `replay_commands` (2026-08-30)
+
+An entry may set `replay_commands: True`. `build_sim_argv()` then passes
+`--replay-commands` to the simulator, and the log's own recorded `v_sp` and
+`share_sp` (columns present in every BLG format v1–v7) are replayed as 22-byte Pi
+command packets at 50 Hz alongside the injection frames. The board goes
+**Idle → Run** and both control loops step against the recorded stimulus, so the
+current-shape checks judge the **live controller's reaction** instead of a flat
+zero. Such an entry also carries a `drive_loop_stepped` check, ordered before its
+motor-response checks: if commands were replayed and the loop still never moved,
+that is a real FAIL and the reader sees the cause first.
+
+**It does not close the loop.** The injected `v_actual` still does not respond to
+what the firmware commands, so the drive loop is *expected* to fight the recorded
+trajectory wherever the recorded and flashed laws differ.
+
+Entries that do **not** opt in have their motor-response checks tagged
+`NOT EXERCISED (no command replay)` — `passed` stays `True` (the assertion "the
+firmware did not drive on an uncommanded stimulus" is real and worth keeping), but
+the tag and the `n_checks_not_exercised` count say plainly that the check carried
+no evidence about the entry's own classification.
+
+Three rules decide the flag, and each entry states which one applied:
+
+1. **Fault-path purity.** An entry whose verdict is a fault *decision* stays
+   command-free: the UV pair **TP0010 / TP0053** (whose trajectories are already
+   modified by `i_fc_clamp_a` — a second stimulus there could change the outcome
+   outright), **ML0217**'s `INIT_FAIL`, and the must-**not**-latch pair
+   **TP0178 / TP0201**.
+2. **The recorded `v_sp` must be real.** The `'T'` and `'W'` State-98 profiles
+   command *current* directly, never velocity, so their records carry `v_sp`
+   **identically 0** (measured 2026-08-30): TP0010, TP0053, TP0170, TP0171,
+   TP0176, TP0178, TP0201, TP0210, WP0097, WP0197. Replaying that commands
+   nothing — `V_SP_ZERO_THRESH` yields 0 A — so `drive_loop_stepped` would fail on
+   a stimulus that never existed. Their `share_sp` axis *is* live, but the share
+   setpoint alone does not move the motor.
+3. **The entry's own expectation must survive it.** **ML0144** asserts
+   `near_zero_current`, which is predicated on `v_setpoint = 0`; its recording
+   carries 3845 rows of nonzero `v_sp`, so replaying the commands would drive the
+   motor and contradict the entry outright.
+
+Everything else with a live recorded `v_sp` opts in: **14 of 26** entries
+(`Cmds` column below).
+
+The three `OC_FC` entries opt in and are safe to: `OC_FC` latches off the
+*injected* `I_fc`, which command replay cannot touch, and each has a long
+pre-latch window (measured, log time: ML0203 33.5 s of 43.8 s, ML0165 18.0 s of
+38.6 s, ML0169 2.3 s of 18.7 s — ML0169 is the tightest and the one to check first
+if `drive_loop_stepped` ever starts failing there).
+
 ---
 
 ## 4. The suite
@@ -280,48 +331,48 @@ carries the implicit `bringup_reached_idle` gate (3d).
 
 ### Conformance — current wheel and control law
 
-| Log | fw | BLG | Classification | Why | Checks |
-|---|---|---|---|---|---|
-| YP0196 | 18 | 6 | `'Y'` combined drive-cycle + power-share profile | Both loops' stimulus together on the current law | `no_fault`, `bounded_current` |
-| WP0197 | 18 | 6 | `'W'` combined current + power-share profile | The current-axis twin of `'Y'` — encoder-less share stimulus | `no_fault`, `bounded_current` |
-| TP0210 * | 19 | 6 | `'T'` share sweep, handoff-slew build | Most recent share stimulus; nearest to the flashed target | `no_fault`, `bounded_current` |
-| YP0214 * | 19 | 6 | `'Y'` combined profile on fw v19 | Combined-profile stimulus with the handoff slew in the recording | `no_fault`, `bounded_current` |
+| Log | fw | BLG | Classification | Why | Checks | Cmds |
+|---|---|---|---|---|---|---|
+| YP0196 | 18 | 6 | `'Y'` combined drive-cycle + power-share profile | Both loops' stimulus together on the current law | `no_fault`, `bounded_current`, `drive_loop_stepped`| **yes** |
+| WP0197 | 18 | 6 | `'W'` combined current + power-share profile | The current-axis twin of `'Y'` — encoder-less share stimulus | `no_fault`, `bounded_current` | no |
+| TP0210 * | 19 | 6 | `'T'` share sweep, handoff-slew build | Most recent share stimulus; nearest to the flashed target | `no_fault`, `bounded_current` | no |
+| YP0214 * | 19 | 6 | `'Y'` combined profile on fw v19 | Combined-profile stimulus with the handoff slew in the recording | `no_fault`, `bounded_current`, `drive_loop_stepped`| **yes** |
 
 ### Conformance — older wheel/law (stability conformance only, §2)
 
-| Log | fw | BLG | Classification | Why | Checks |
-|---|---|---|---|---|---|
-| ML0146 | 14 | 5 | clean `'V'` step, 120-slot wheel | First-flash fw v14 clean baseline. **Not a trace-match case** | `no_fault`, `bounded_current`, `no_rail_limit_cycle` |
-| ML0149 | 14 | 5 | clean `'V'` step, higher setpoint | Second clean fw v14 point, same meaning | `no_fault`, `bounded_current`, `no_rail_limit_cycle` |
-| TP0170 | 16 | 6 | share sweep, `share_sp = 0.5` | Balanced-share operating point of the first genuine closed-loop share dataset | `no_fault`, `bounded_current` |
-| TP0176 | 16 | 6 | share sweep at the FC rail (FC-only 43–45 % of the run) | The share-rail extreme: one source carries the bus for a long stretch | `no_fault`, `bounded_current` |
-| YP0152 | 14 | 5 | first `'Y'` profile on the Youla drive controller | Combined-profile representative from the fw v14 era | `no_fault`, `bounded_current` |
-| **ML0151** | 14 | 5 | **H6 flagship** — 56 s stepladder with the ~428 ms VESC dead window, the drag step-change and ~90 saturation episodes | Richest recorded incident in the archive; many saturation entries/exits back to back is exactly the class the fw v18 general-Hanus fix targets | `no_fault`, `bounded_current`, `returns_off_rail`, `no_rail_limit_cycle` |
-| TP0178 | 16 | 6 | handoff bus sag to 12.15 V — 0.15 V above `LIMIT_V_BUS_MIN`, 10 ms dwell (half the 20 ms latch) | The **negative** UV case: the recorded dip must *not* latch UV_BUS. Pairs with the UV pair (TP0010/TP0053), which must | `no_fault`, `fault_not_latched(UV_BUS)` |
+| Log | fw | BLG | Classification | Why | Checks | Cmds |
+|---|---|---|---|---|---|---|
+| ML0146 | 14 | 5 | clean `'V'` step, 120-slot wheel | First-flash fw v14 clean baseline. **Not a trace-match case** | `no_fault`, `bounded_current`, `no_rail_limit_cycle`, `drive_loop_stepped`| **yes** |
+| ML0149 | 14 | 5 | clean `'V'` step, higher setpoint | Second clean fw v14 point, same meaning | `no_fault`, `bounded_current`, `no_rail_limit_cycle`, `drive_loop_stepped`| **yes** |
+| TP0170 | 16 | 6 | share sweep, `share_sp = 0.5` | Balanced-share operating point of the first genuine closed-loop share dataset | `no_fault`, `bounded_current` | no |
+| TP0176 | 16 | 6 | share sweep at the FC rail (FC-only 43–45 % of the run) | The share-rail extreme: one source carries the bus for a long stretch | `no_fault`, `bounded_current` | no |
+| YP0152 | 14 | 5 | first `'Y'` profile on the Youla drive controller | Combined-profile representative from the fw v14 era | `no_fault`, `bounded_current`, `drive_loop_stepped`| **yes** |
+| **ML0151** | 14 | 5 | **H6 flagship** — 56 s stepladder with the ~428 ms VESC dead window, the drag step-change and ~90 saturation episodes | Richest recorded incident in the archive; many saturation entries/exits back to back is exactly the class the fw v18 general-Hanus fix targets | `no_fault`, `bounded_current`, `returns_off_rail`, `no_rail_limit_cycle`, `drive_loop_stepped`| **yes** |
+| TP0178 | 16 | 6 | handoff bus sag to 12.15 V — 0.15 V above `LIMIT_V_BUS_MIN`, 10 ms dwell (half the 20 ms latch) | The **negative** UV case: the recorded dip must *not* latch UV_BUS. Pairs with the UV pair (TP0010/TP0053), which must | `no_fault`, `fault_not_latched(UV_BUS)` | no |
 
 ### Deviation — the modern firmware must not reproduce the defect
 
-| Log | fw | BLG | Recorded defect | Check + caveat |
-|---|---|---|---|---|
-| ML0137 | 11 | 5 | boxcar-estimator ±12 A rail-to-rail limit cycle, 2.3–2.6 Hz | `no_rail_limit_cycle`, `bounded_current`, `no_fault`. **Caveat:** replay injects the *recorded* `v_act`, so this tests the controller's reaction to that stimulus, **not** the estimator fix that actually removed the cycle |
-| ML0140 | 12 | 5 | estimator blind holds, 120–560 ms, under direction dither | `no_fault`, `bounded_current`, `returns_off_rail` — a long frozen-velocity stimulus |
-| ML0144 | 12 | 5 | `v_sp = 0` relay: 90 % rail bang-bang closing the loop below the estimator floor | `no_fault`, `near_zero_current`. **Honest limit:** replay cannot set `v_setpoint`, so the `v_sp ≠ 0` relay is unreachable. What *is* checkable, and what is checked: with `v_sp = 0` and this log's `v_actual` injected, the firmware commands ~0 A (the `V_SP_ZERO_THRESH` behaviour) instead of bang-banging |
-| ML0153 | 14 | 5 | T/2 basin — `v_act` corrupted to ~2× true | `no_fault`, `bounded_current`. **Caveat:** the basin fix is in the estimator, which replay bypasses — not testable open-loop |
-| ML0164 | 16 | 6 | x2 **rounding** basin, locked breakaway-to-stop | `no_fault`, `bounded_current`. Same caveat |
-| TP0171 | 16 | 6 | reset re-seeded *into* the x2 basin (~15 ms recovery) | `no_fault`, `bounded_current`. Same caveat |
-| YP0166 | 16 | 6 | mid-run `v = 0` injection at a true 1.49 m/s → ±12 A rail pair within 12 ms (the fw v17 TOCTOU race) | `no_fault`, `bounded_current`, `returns_off_rail` — a full-scale velocity step straight into the ~454 A/(m/s) LF gain must give a **bounded** transient that releases |
-| TP0201 | 18 | 6 | share-rail handoff gap, bus 15.86 → 12.185 V | `no_fault`, `fault_not_latched(UV_BUS)` — 0.185 V above the limit for ~10 ms, inside the 20 ms dwell, so no latch. **Caveat:** the fw v19 handoff *slew* that mitigates the gap acts on the plant, which replay bypasses; only the fault decision is exercisable |
-| TP0010 | — (pre-versioning) | 1 | bus collapse the old firmware died on **without faulting** | `fault_latched(UV_BUS)` — the fw v5 leaky-dwell filter must latch. That is the whole point of the rework |
-| TP0053 | 4 | 2 | repetitive source-commutation dropout (~9 ms under / ~51 ms over per ~60 ms cycle) that **evaded** the fw v4 window filter | `fault_latched(UV_BUS)` — the exact case the dwell integrator was designed for: net +6.45 ms per cycle, so it must latch within a few cycles |
+| Log | fw | BLG | Recorded defect | Check + caveat | Cmds |
+|---|---|---|---|---|---|
+| ML0137 | 11 | 5 | boxcar-estimator ±12 A rail-to-rail limit cycle, 2.3–2.6 Hz | `no_rail_limit_cycle`, `bounded_current`, `no_fault`. **Caveat:** replay injects the *recorded* `v_act`, so this tests the controller's reaction to that stimulus, **not** the estimator fix that actually removed the cycle, `drive_loop_stepped`| **yes** |
+| ML0140 | 12 | 5 | estimator blind holds, 120–560 ms, under direction dither | `no_fault`, `bounded_current`, `returns_off_rail` — a long frozen-velocity stimulus, `drive_loop_stepped`| **yes** |
+| ML0144 | 12 | 5 | `v_sp = 0` relay: 90 % rail bang-bang closing the loop below the estimator floor | `no_fault`, `near_zero_current`. **Honest limit:** replay cannot set `v_setpoint`, so the `v_sp ≠ 0` relay is unreachable. What *is* checkable, and what is checked: with `v_sp = 0` and this log's `v_actual` injected, the firmware commands ~0 A (the `V_SP_ZERO_THRESH` behaviour) instead of bang-banging | no |
+| ML0153 | 14 | 5 | T/2 basin — `v_act` corrupted to ~2× true | `no_fault`, `bounded_current`. **Caveat:** the basin fix is in the estimator, which replay bypasses — not testable open-loop, `drive_loop_stepped`| **yes** |
+| ML0164 | 16 | 6 | x2 **rounding** basin, locked breakaway-to-stop | `no_fault`, `bounded_current`. Same caveat, `drive_loop_stepped`| **yes** |
+| TP0171 | 16 | 6 | reset re-seeded *into* the x2 basin (~15 ms recovery) | `no_fault`, `bounded_current`. Same caveat | no |
+| YP0166 | 16 | 6 | mid-run `v = 0` injection at a true 1.49 m/s → ±12 A rail pair within 12 ms (the fw v17 TOCTOU race) | `no_fault`, `bounded_current`, `returns_off_rail` — a full-scale velocity step straight into the ~454 A/(m/s) LF gain must give a **bounded** transient that releases, `drive_loop_stepped`| **yes** |
+| TP0201 | 18 | 6 | share-rail handoff gap, bus 15.86 → 12.185 V | `no_fault`, `fault_not_latched(UV_BUS)` — 0.185 V above the limit for ~10 ms, inside the 20 ms dwell, so no latch. **Caveat:** the fw v19 handoff *slew* that mitigates the gap acts on the plant, which replay bypasses; only the fault decision is exercisable | no |
+| TP0010 | — (pre-versioning) | 1 | bus collapse the old firmware died on **without faulting** | `fault_latched(UV_BUS)` — the fw v5 leaky-dwell filter must latch. That is the whole point of the rework | no |
+| TP0053 | 4 | 2 | repetitive source-commutation dropout (~9 ms under / ~51 ms over per ~60 ms cycle) that **evaded** the fw v4 window filter | `fault_latched(UV_BUS)` — the exact case the dwell integrator was designed for: net +6.45 ms per cycle, so it must latch within a few cycles | no |
 
 ### 4a. Deviation — the OC_FC reclassification (operator ruling (a), 2026-08-30)
 
-| Log | fw | BLG | Recorded I_fc peak | Check |
-|---|---|---|---|---|
-| ML0203 | 18 | 6 | 2.11 A | `fault_latched(OC_FC)` + `require_stimulus`, `bounded_current` |
-| ML0165 | 16 | 6 | 1.52 A | same |
-| ML0169 | 16 | 6 | 1.88 A | same |
-| WP0097 | 5 | 3 | **3.60 A** (archive maximum) | same — but see the timing caveat below |
+| Log | fw | BLG | Recorded I_fc peak | Check | Cmds |
+|---|---|---|---|---|---|
+| ML0203 | 18 | 6 | 2.11 A | `fault_latched(OC_FC)` + `require_stimulus`, `bounded_current`, `drive_loop_stepped`| **yes** |
+| ML0165 | 16 | 6 | 1.52 A | same, `drive_loop_stepped`| **yes** |
+| ML0169 | 16 | 6 | 1.88 A | same, `drive_loop_stepped`| **yes** |
+| WP0097 | 5 | 3 | **3.60 A** (archive maximum) | same — but see the timing caveat below | no |
 
 These four were classified "clean" from their **bench** behaviour. They were recorded
 with **DC bench supplies standing in for the H-20 fuel cell**, and `BENCH_TEST`
@@ -358,9 +409,9 @@ endurance now has no replay representative.** Restoring it needs a recorded run 
 
 ### 4b. Deviation — ML0217, dark-bus (2026-08-30)
 
-| Log | fw | BLG | Recorded defect | Check |
-|---|---|---|---|---|
-| ML0217 * | 19 | 6 | **recorded with a dark bus** — measured `V_bus` max **0.35 V** over all 38 s | `fault_latched(INIT_FAIL)`, `bounded_current`; `skip_bringup_gate`, `skip_preamble` |
+| Log | fw | BLG | Recorded defect | Check | Cmds |
+|---|---|---|---|---|---|
+| ML0217 * | 19 | 6 | **recorded with a dark bus** — measured `V_bus` max **0.35 V** over all 38 s | `fault_latched(INIT_FAIL)`, `bounded_current`; `skip_bringup_gate`, `skip_preamble` | no |
 
 It was never the "duration/soak case" it was catalogued as. Replayed, the staged
 bring-up cannot pass P1 and times out at `BUS_CHARGE_TIMEOUT_MS` into
@@ -511,7 +562,8 @@ passing vacuously.
    table that disagrees with the file.
 4. **Define the checks** from the existing kinds where possible: `no_fault`,
    `fault_latched`, `fault_not_latched`, `bounded_current`, `no_sustained_rail`,
-   `no_rail_limit_cycle`, `returns_off_rail`, `near_zero_current`. A new kind is a
+   `no_rail_limit_cycle`, `returns_off_rail`, `near_zero_current`,
+   `drive_loop_stepped`. A new kind is a
    small pure `(ReplayCsv, spec) -> (bool, str)` function plus a `CHECK_KINDS` entry
    — and a named constant with its rationale for any threshold it introduces.
 4b. **Check the recorded `I_fc` against `LIMIT_I_FC_MAX` (1.4 A) before calling a log
@@ -531,15 +583,26 @@ passing vacuously.
      recorded current (a DC bench supply standing in for the fuel cell) would
      pre-empt the stimulus the entry exists for, and declare it in `why`. Emits
      `--replay-i-fc-clamp`.
+   - `replay_commands: True/False` — **decide this explicitly for every new
+     entry** (§3e). Work the three rules in order: (1) is this entry's verdict a
+     fault *decision*? Then keep the stimulus pure and set `False`. (2) Is the
+     recorded `v_sp` actually nonzero? A `'T'`/`'W'` State-98 recording commands
+     current, not velocity, and carries `v_sp` identically 0 — measure it, do not
+     assume. (3) Would a live command contradict the entry's own expectation (the
+     ML0144 case)? If none of the three refuses it, set `True` **and add a
+     `drive_loop_stepped` check ordered before the motor-response checks**.
+     Emits `--replay-commands`.
    - `require_stimulus` on a `fault_latched` check is supported for `FAULT_UV_BUS`
      and `FAULT_OC_FC` (§4c); any other bit is reported as an authoring error rather
      than silently unguarded.
 
-   Both stimulus modifiers are mirrored by `build_sim_argv()`, so a hand-run replay
+   All three stimulus modifiers (`skip_preamble`, `i_fc_clamp_a`,
+   `replay_commands`) are mirrored by `build_sim_argv()`, so a hand-run replay
    injects exactly what a suite-run one does.
-5. **Write the open-loop caveat.** If the defect being guarded lives in the estimator,
-   the plant or a commanded setpoint, replay cannot test it. Say so in `why` (§3
-   lists the classes). An entry that overclaims is worse than no entry.
+5. **Write the open-loop caveat.** If the defect being guarded lives in the estimator
+   or the plant, replay cannot test it — `replay_commands` does not change that, it
+   only replays a second recorded channel. Say so in `why` (§3 lists the classes).
+   An entry that overclaims is worse than no entry.
 6. **Add the `REPLAY_SUITE` entry** in `tools/hil_replay_suite.py`, and **update
    §4 of this document** in the same change.
 7. If the recording firmware version is new to `FW_DELTA_NOTES`, add its one-line

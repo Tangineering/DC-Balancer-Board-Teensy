@@ -626,6 +626,183 @@ def test_check_near_zero_current_fail_bang_bang(tmp_path):
     assert "not driving" in res["checks"][-1]["detail"]
 
 
+# -- drive_loop_stepped (--replay-commands) ----------------------------------
+
+def test_check_drive_loop_stepped_pass(tmp_path):
+    rows = _with_bringup_and_grace(_uniform_rows(0.5, 0.001, current=lambda t: 2.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "drive_loop_stepped", "name": "dls"}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    assert res["checks"][-1]["passed"] is True
+    assert res["passed"] is True
+    assert "drive loop stepped" in res["checks"][-1]["detail"]
+
+
+def test_check_drive_loop_stepped_fail_flat(tmp_path):
+    rows = _with_bringup_and_grace(_uniform_rows(0.5, 0.001, current=lambda t: 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "drive_loop_stepped", "name": "dls"}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    assert res["checks"][-1]["passed"] is False
+    assert res["passed"] is False
+    assert "never stepped" in res["checks"][-1]["detail"]
+
+
+def test_check_drive_loop_stepped_no_observation_frames_at_all_fails_not_raises(tmp_path):
+    """A CSV with rows but never an observation frame at all -- both
+    `data.current` and `data.current_recorded` are empty, so `series` falls
+    back to nothing and the check must fail with the 'never answered' detail,
+    not raise. Exercised as a unit call on check_drive_loop_stepped() directly
+    (rather than through evaluate_replay_csv()): a zero-observation CSV never
+    reaches per-check evaluation there at all -- the bring-up gate fails first
+    and short-circuits every entry check (see
+    test_evaluate_zero_observation_csv_all_checks_fail_with_note) -- so this
+    branch is reachable only by calling the check function itself."""
+    rows = _uniform_rows(0.1, 0.01)
+    for r in rows:
+        r["no_obs"] = True
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    assert data.current == [], "sanity: no observation frames at all"
+    passed, detail = rs.check_drive_loop_stepped(data, {"kind": "drive_loop_stepped"})
+    assert passed is False
+    assert "never answered" in detail
+
+
+def test_check_drive_loop_stepped_boundary_min_a_inclusive(tmp_path):
+    """abs(i) >= min_a is the comparison (source: `if abs(i) >= min_a`) -- a
+    sample sitting EXACTLY at DRIVE_STEPPED_MIN_A must count toward n, not be
+    excluded by a strict '>' the source does not use."""
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.5, 0.001, current=lambda t: rs.DRIVE_STEPPED_MIN_A))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "drive_loop_stepped", "name": "dls"}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    assert res["checks"][-1]["passed"] is True
+
+
+def test_check_drive_loop_stepped_boundary_min_samples_exact_pass_one_fewer_fails(tmp_path):
+    """`n < min_n` is the comparison (source), so n == min_n passes and
+    n == min_n - 1 fails -- exercised on both sides directly via the spec-level
+    min_samples override, independent of the module default."""
+    def _rows_with_n_stepped(n):
+        rows = []
+        for i in range(200):
+            rows.append({"t": i * 0.001, "current": 5.0 if i < n else 0.0})
+        return _with_bringup_and_grace(rows)
+
+    spec = {"kind": "drive_loop_stepped", "name": "dls", "min_samples": 50}
+
+    path_pass = tmp_path / "exact.csv"
+    write_replay_csv(path_pass, _rows_with_n_stepped(50))
+    res_pass = rs.evaluate_replay_csv(_entry([spec]), str(path_pass))
+    assert res_pass["checks"][-1]["passed"] is True
+
+    path_fail = tmp_path / "one_fewer.csv"
+    write_replay_csv(path_fail, _rows_with_n_stepped(49))
+    res_fail = rs.evaluate_replay_csv(_entry([spec]), str(path_fail))
+    assert res_fail["checks"][-1]["passed"] is False
+
+
+def test_check_drive_loop_stepped_opt_in_entry_with_flat_current_is_a_real_fail(tmp_path):
+    """A replay_commands: True entry whose recorded current stayed flat zero
+    must FAIL drive_loop_stepped for real -- the NOT-EXERCISED retagging below
+    applies only to entries that do NOT set replay_commands, so this is not
+    silently downgraded to a soft pass."""
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.5, 0.001, fault_flags=lambda t: 0, current=lambda t: 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    entry = _entry([
+        {"kind": "drive_loop_stepped", "name": "dls"},
+        {"kind": "bounded_current", "name": "bc"},
+    ], replay_commands=True)
+    res = rs.evaluate_replay_csv(entry, str(path))
+    by_name = {c["name"]: c for c in res["checks"]}
+    assert by_name["dls"]["passed"] is False
+    assert not by_name["dls"]["detail"].startswith(rs.NOT_EXERCISED_PREFIX)
+    # bounded_current still passes (0 A is within the clamp), and it STILL
+    # carries the plain VACUOUS_TAG (command_is_identically_zero() is a
+    # property of the DATA, independent of whether commands were replayed) --
+    # only the NOT_EXERCISED retagging is gated on cmds_replayed being False.
+    assert by_name["bc"]["passed"] is True
+    assert rs.VACUOUS_TAG in by_name["bc"]["detail"]
+    assert not by_name["bc"]["detail"].startswith(rs.NOT_EXERCISED_PREFIX)
+    assert res["passed"] is False
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 2b. NOT_EXERCISED tagging (replay_commands-aware, supersedes the plain
+#     VACUOUS_TAG on entries that do not opt in)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_not_exercised_tag_only_on_motor_response_kinds_for_non_opt_in_entry(tmp_path):
+    """no_fault is NOT in MOTOR_RESPONSE_KINDS -- it must never carry the
+    NOT-EXERCISED prefix, even on a command-free entry with flat current."""
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.005, fault_flags=lambda t: 0, current=lambda t: 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    entry = _entry([{"kind": "no_fault", "name": "nf"},
+                    {"kind": "bounded_current", "name": "bc"}])  # no replay_commands key
+    res = rs.evaluate_replay_csv(entry, str(path))
+    by_name = {c["name"]: c for c in res["checks"]}
+    assert not by_name["nf"]["detail"].startswith(rs.NOT_EXERCISED_PREFIX)
+    assert by_name["bc"]["detail"].startswith(rs.NOT_EXERCISED_PREFIX)
+    assert by_name["bc"]["passed"] is True
+    assert res["n_checks_not_exercised"] == 1
+
+
+def test_not_exercised_tag_absent_on_opted_in_entry_even_with_flat_current(tmp_path):
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.005, fault_flags=lambda t: 0, current=lambda t: 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    entry = _entry([{"kind": "bounded_current", "name": "bc"}], replay_commands=True)
+    res = rs.evaluate_replay_csv(entry, str(path))
+    by_name = {c["name"]: c for c in res["checks"]}
+    assert not by_name["bc"]["detail"].startswith(rs.NOT_EXERCISED_PREFIX)
+    assert res["n_checks_not_exercised"] == 0
+
+
+def test_not_exercised_tag_absent_when_current_is_not_flat_regardless_of_replay_commands(tmp_path):
+    """The NOT-EXERCISED condition is (cmds_replayed is False) AND (kind in
+    MOTOR_RESPONSE_KINDS) AND (command_is_identically_zero()) -- all three,
+    not just the absence of replay_commands."""
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.005, fault_flags=lambda t: 0,
+                      current=lambda t: 5.0 if t > 0.1 else 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    entry = _entry([{"kind": "bounded_current", "name": "bc"}])
+    res = rs.evaluate_replay_csv(entry, str(path))
+    by_name = {c["name"]: c for c in res["checks"]}
+    assert not by_name["bc"]["detail"].startswith(rs.NOT_EXERCISED_PREFIX)
+    assert res["n_checks_not_exercised"] == 0
+
+
+def test_n_checks_vacuous_equals_plain_vacuous_plus_not_exercised(tmp_path):
+    """n_checks_vacuous keeps its established total-non-evidence meaning: the
+    disjoint-by-construction not-exercised count plus whatever plain vacuous
+    checks remain (none, here, since every MOTOR_RESPONSE_KINDS check on a
+    non-opt-in flat-current entry is retagged not-exercised)."""
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.005, fault_flags=lambda t: 0, current=lambda t: 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    entry = _entry([{"kind": "bounded_current", "name": "bc"},
+                    {"kind": "no_rail_limit_cycle", "name": "nrlc"}])
+    res = rs.evaluate_replay_csv(entry, str(path))
+    assert res["n_checks_not_exercised"] == 2
+    assert res["n_checks_vacuous"] == 2
+    assert res["n_checks_substantive"] == res["n_checks"] - 2
+    assert any("2 of" in n and "NOT EXERCISED" in n for n in res["notes"])
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # 3. evaluate_replay_csv edge cases
 # ─────────────────────────────────────────────────────────────────────────
@@ -753,6 +930,79 @@ def test_build_sim_argv_omits_replay_i_fc_clamp_for_other_entries():
     assert entry.get("i_fc_clamp_a") is None
     argv = rs.build_sim_argv(entry, "/tmp/csvdir")
     assert "--replay-i-fc-clamp" not in argv
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 4c. --replay-commands: REPLAY_SUITE table pins / build_sim_argv mirroring
+# ─────────────────────────────────────────────────────────────────────────
+
+REPLAY_COMMANDS_TRUE_SET = {
+    "ML0137", "ML0140", "ML0146", "ML0149", "ML0151", "ML0153", "ML0164",
+    "ML0165", "ML0169", "ML0203", "YP0152", "YP0166", "YP0196", "YP0214",
+}
+
+
+def test_replay_suite_replay_commands_true_set_matches_the_14_entries():
+    trues = {e["log"] for e in rs.REPLAY_SUITE if e.get("replay_commands") is True}
+    assert trues == REPLAY_COMMANDS_TRUE_SET
+    assert len(trues) == 14
+
+
+def test_replay_suite_every_entry_declares_replay_commands_as_a_bool():
+    """Every entry must set replay_commands to True or False explicitly (not
+    omit it) -- an implicit falsy-but-absent value would silently escape the
+    fault-path-purity/rule-2/rule-3 review discipline the table comment
+    documents, and build_sim_argv's `.get()` would still work either way,
+    hiding the omission."""
+    for e in rs.REPLAY_SUITE:
+        assert "replay_commands" in e, e["log"]
+        assert isinstance(e["replay_commands"], bool), e["log"]
+
+
+def test_replay_suite_true_entries_each_carry_a_drive_loop_stepped_check():
+    for e in rs.REPLAY_SUITE:
+        if e.get("replay_commands") is True:
+            kinds = [c["kind"] for c in e["checks"]]
+            assert "drive_loop_stepped" in kinds, e["log"]
+
+
+def test_replay_suite_false_entries_never_carry_a_drive_loop_stepped_check():
+    for e in rs.REPLAY_SUITE:
+        if e.get("replay_commands") is False:
+            kinds = [c["kind"] for c in e["checks"]]
+            assert "drive_loop_stepped" not in kinds, e["log"]
+
+
+def test_replay_suite_fault_path_purity_entries_are_command_free():
+    """Rule 1: the UV pair (TP0010/TP0053), ML0217 (INIT_FAIL), and the
+    must-NOT-latch entries (TP0178/TP0201) must stay command-free -- a second
+    stimulus over a fault-DECISION entry could confuse the attribution."""
+    index = rs.suite_index()
+    for log in ("TP0010", "TP0053", "ML0217", "TP0178", "TP0201"):
+        assert index[log]["replay_commands"] is False, log
+
+
+def test_replay_suite_current_mode_profile_entries_are_command_free():
+    """Rule 2: 'T'/'W' State-98 profiles command CURRENT directly and record
+    v_sp identically 0 -- these must all stay command-free (replaying them
+    would command nothing, per the table comment)."""
+    index = rs.suite_index()
+    for log in ("WP0097", "WP0197", "TP0170", "TP0171", "TP0176", "TP0210"):
+        assert index[log]["replay_commands"] is False, log
+
+
+def test_build_sim_argv_emits_replay_commands_for_opted_in_entry():
+    entry = rs.suite_index()["ML0146"]
+    assert entry["replay_commands"] is True
+    argv = rs.build_sim_argv(entry, "/tmp/csvdir")
+    assert "--replay-commands" in argv
+
+
+def test_build_sim_argv_omits_replay_commands_for_command_free_entry():
+    entry = rs.suite_index()["TP0010"]
+    assert entry["replay_commands"] is False
+    argv = rs.build_sim_argv(entry, "/tmp/csvdir")
+    assert "--replay-commands" not in argv
 
 
 def test_ml0217_carries_skip_preamble_and_skip_bringup_gate():
@@ -1059,6 +1309,105 @@ def test_l8_wrapper_side_abort_decision_treats_none_and_zero_alike():
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# 7b. A5: ReplayCsv.metrics() / evaluate_replay_csv()'s "metrics" field
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_metrics_final_fault_flags_reflects_a_latched_bit_not_dropped(tmp_path):
+    """A5 regression: this is the exact bug that hid a carried-in 0x8100
+    latch. metrics()['final_fault_flags'] must be the LAST row's fault_flags,
+    truthfully, not {} / 0x0000 by construction."""
+    rows = _with_bringup_and_grace(_uv_collapse_rows())
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    m = data.metrics(csv_path=str(path))
+    assert m["final_fault_flags"] == rows[-1]["fault_flags"]
+    assert m["final_fault_flags"] & rs.FAULT_UV_BUS
+    assert m["csv"] == str(path)
+
+
+def test_metrics_fault_bits_seen_is_union_across_the_whole_run(tmp_path):
+    rows = _with_bringup_and_grace([
+        {"t": 0.0, "fault_flags": rs.FAULT_OC_FC, "state": 2},
+        {"t": 0.1, "fault_flags": 0, "state": 2},        # transient bit clears
+        {"t": 0.2, "fault_flags": rs.FAULT_UV_BUS, "state": 99},
+    ])
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    m = data.metrics()
+    assert m["fault_bits_seen"] == (rs.FAULT_OC_FC | rs.FAULT_UV_BUS)
+    # final_fault_flags is only the LAST sample, not the union
+    assert m["final_fault_flags"] == rs.FAULT_UV_BUS
+
+
+def test_metrics_final_state_is_the_last_row_state(tmp_path):
+    rows = _with_bringup_and_grace(_uniform_rows(0.2, 0.01, state=lambda t: 2))
+    rows.append({"t": rows[-1]["t"] + 0.01, "state": 99, "fault_flags": 0})
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    m = data.metrics()
+    assert m["final_state"] == 99
+
+
+def test_metrics_n_obs_and_n_obs_post_grace_match_faults_all_and_faults(tmp_path):
+    rows = _with_bringup_and_grace(_uniform_rows(0.1, 0.01, fault_flags=lambda t: 0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    m = data.metrics()
+    assert m["n_obs"] == len(data.faults_all)
+    assert m["n_obs_post_grace"] == len(data.faults)
+    assert m["n_obs_post_grace"] <= m["n_obs"]
+    assert m["grace_s"] == data.grace_s
+    assert m["duration_s"] == pytest.approx(data.duration_s)
+    assert m["rows"] == data.n_rows
+    assert m["last_obs_t"] == pytest.approx(data.faults_all[-1][0])
+
+
+def test_metrics_empty_csv_reports_none_fields_not_raising(tmp_path):
+    """A structurally valid CSV with zero observation rows (all obs columns
+    blank) must not raise -- every observation-derived field degrades to
+    None/0 gracefully."""
+    rows = _uniform_rows(0.1, 0.01)
+    for r in rows:
+        r["no_obs"] = True
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    m = data.metrics()
+    assert m["final_fault_flags"] is None
+    assert m["last_obs_t"] is None
+    assert m["n_obs"] == 0
+
+
+def test_evaluate_replay_csv_metrics_field_populated_on_success(tmp_path):
+    """A5: evaluate_replay_csv()'s top-level 'metrics' must be the SAME
+    parse's data.metrics(), not the old hardcoded {}."""
+    rows = _with_bringup_and_grace(_uv_collapse_rows())
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    entry = _entry([{"kind": "fault_latched", "name": "uv", "bit": rs.FAULT_UV_BUS,
+                     "require_stimulus": True}])
+    res = rs.evaluate_replay_csv(entry, str(path))
+    assert res["metrics"], "must not be the old empty {}"
+    assert res["metrics"]["final_fault_flags"] & rs.FAULT_UV_BUS
+    assert res["metrics"]["csv"] == str(path)
+
+
+def test_evaluate_replay_csv_metrics_field_populated_on_load_failure(tmp_path):
+    """The load-failure path (missing/unreadable CSV) must ALSO set a
+    non-empty metrics dict carrying an 'error' key, per ReplayCsv.metrics()'s
+    documented contract for that field."""
+    entry = _entry([{"kind": "no_fault", "name": "no_fault"}])
+    res = rs.evaluate_replay_csv(entry, "/nonexistent/path/nope.csv")
+    assert res["metrics"], "must not be the old empty {}"
+    assert "error" in res["metrics"]
+    assert res["metrics"]["csv"] == "/nonexistent/path/nope.csv"
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # 8. F5/F6: check_fault_latched stimulus-qualification gating
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -1247,7 +1596,12 @@ def test_command_is_identically_zero_false_when_no_observations_at_all(tmp_path)
     assert data.command_is_identically_zero() is False
 
 
-def test_vacuous_tag_applied_to_command_shape_checks_when_current_is_all_zero(tmp_path):
+def test_not_exercised_tag_applied_to_command_shape_checks_when_current_is_all_zero(tmp_path):
+    """2026-08-30 (--replay-commands): on an entry WITHOUT replay_commands
+    (this one omits the key entirely), the plain VACUOUS_TAG is now REPLACED
+    by the sharper NOT_EXERCISED_TAG for every MOTOR_RESPONSE_KINDS check --
+    see NOT_EXERCISED_PREFIX/_TAG. The underlying assertion (`passed` stays
+    True) is unchanged from the original vacuous-tag behaviour."""
     rows = _with_bringup_and_grace(
         _uniform_rows(0.2, 0.005, fault_flags=lambda t: 0, current=lambda t: 0.0))
     path = tmp_path / "a.csv"
@@ -1262,12 +1616,35 @@ def test_vacuous_tag_applied_to_command_shape_checks_when_current_is_all_zero(tm
     by_name = {c["name"]: c for c in res["checks"]}
     for name in ("bc", "nrlc", "rr", "nzc"):
         assert by_name[name]["passed"] is True
-        assert rs.VACUOUS_TAG in by_name[name]["detail"], name
+        assert by_name[name]["detail"].startswith(rs.NOT_EXERCISED_PREFIX), name
+        # the plain VACUOUS_TAG text is stripped out entirely, not just prefixed
+        assert rs.VACUOUS_TAG not in by_name[name]["detail"], name
     assert res["n_checks"] == 5   # + the bring-up gate check
+    assert res["n_checks_not_exercised"] == 4
     assert res["n_checks_vacuous"] == 4
     assert res["n_checks_substantive"] == 1
-    assert any("4 of 5 checks are VACUOUS" in n for n in res["notes"])
-    assert any("SUBSTANTIVE checks: 1" in n for n in res["notes"])
+    assert any("4 of 5 checks were NOT EXERCISED" in n for n in res["notes"])
+    assert not any("VACUOUS" in n for n in res["notes"])
+
+
+def test_vacuous_tag_survives_on_opted_in_entry_whose_current_stayed_flat(tmp_path):
+    """The counterpart case the NOT_EXERCISED rewrite must NOT touch: an entry
+    that DID set replay_commands: True but whose recorded current still came
+    back flat zero keeps the plain VACUOUS_TAG (command_is_identically_zero()
+    is a property of the data, not of whether commands were replayed) -- only
+    entries WITHOUT replay_commands get the NOT_EXERCISED retag."""
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.005, fault_flags=lambda t: 0, current=lambda t: 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    entry = _entry([{"kind": "bounded_current", "name": "bc"}], replay_commands=True)
+    res = rs.evaluate_replay_csv(entry, str(path))
+    by_name = {c["name"]: c for c in res["checks"]}
+    assert by_name["bc"]["passed"] is True
+    assert rs.VACUOUS_TAG in by_name["bc"]["detail"]
+    assert not by_name["bc"]["detail"].startswith(rs.NOT_EXERCISED_PREFIX)
+    assert res["n_checks_not_exercised"] == 0
+    assert res["n_checks_vacuous"] == 1
 
 
 def test_vacuous_tag_absent_when_current_is_not_all_zero(tmp_path):

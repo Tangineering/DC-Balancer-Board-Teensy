@@ -488,35 +488,58 @@ def _child(status="ok", summary=None):
     return {"status": status, "returncode": 0, "summary": summary or {"achieved_hz": 1000.0}}
 
 
-def _passing_signals(scenario_name):
-    """A scan_signals()-shaped measured list (M2) that satisfies every
-    signals_require spec on `scenario_name` -- one measurement dict per spec,
-    in the same order, built to just clear its own assertion kind (>= for
-    min_ticks/min_value/strictly_decreases_by, <= for max_ticks)."""
+def _leaf_measurement_pass(spec):
+    """A single leaf-spec measurement (M2) that just clears its own assertion
+    kind (>= for min_ticks/min_value/strictly_decreases_by, <= for max_ticks,
+    a latch at exactly after_t for fault_latch_bit)."""
+    m = {"rows": 10, "ticks": 0, "peak": None, "first": None, "last": None,
+         "latch_t": None}
+    if "min_ticks" in spec:
+        m["ticks"] = int(spec["min_ticks"])
+    elif "max_ticks" in spec:
+        m["ticks"] = int(spec["max_ticks"])
+    elif "min_value" in spec:
+        m["peak"] = float(spec["min_value"])
+    elif "strictly_decreases_by" in spec:
+        need = float(spec["strictly_decreases_by"])
+        m["first"] = need
+        m["last"] = 0.0
+    elif "fault_latch_bit" in spec:
+        m["latch_t"] = float(spec.get("after_t", 0.0))
+    return m
+
+
+def _leaf_measurement_fail(spec):
+    """The converse: unmeasured (zero rows), which judge_signals() fails on
+    'never reached' for every leaf-spec kind, including fault_latch_bit."""
+    return {"rows": 0, "ticks": 0, "peak": None, "first": None, "last": None,
+            "latch_t": None}
+
+
+def _signals_from(scenario_name, leaf_builder):
+    """A scan_signals()-shaped measured list (M2/A1) for `scenario_name`'s
+    signals_require, one entry per top-level spec in the same order.  A plain
+    (non-`any_of`) spec gets one leaf measurement from `leaf_builder`; a
+    disjunctive (`any_of`) spec gets {"any_of": [<leaf>, ...]}, one per arm --
+    matching the shape scan_signals()/judge_signals() actually exchange (see
+    _flatten_signal_specs / _nest in run_hil_suite.py)."""
     specs = rhs.FAULT_EXPECTATIONS[scenario_name].get("signals_require") or []
     out = []
     for spec in specs:
-        m = {"rows": 10, "ticks": 0, "peak": None, "first": None, "last": None}
-        if "min_ticks" in spec:
-            m["ticks"] = int(spec["min_ticks"])
-        elif "max_ticks" in spec:
-            m["ticks"] = int(spec["max_ticks"])
-        elif "min_value" in spec:
-            m["peak"] = float(spec["min_value"])
-        elif "strictly_decreases_by" in spec:
-            need = float(spec["strictly_decreases_by"])
-            m["first"] = need
-            m["last"] = 0.0
-        out.append(m)
+        arms = spec.get("any_of")
+        if arms:
+            out.append({"any_of": [leaf_builder(a) for a in arms]})
+        else:
+            out.append(leaf_builder(spec))
     return out
 
 
+def _passing_signals(scenario_name):
+    return _signals_from(scenario_name, _leaf_measurement_pass)
+
+
 def _failing_signals(scenario_name):
-    """The converse of _passing_signals(): unmeasured (zero rows) for every
-    spec, which judge_signals() fails on 'never reached'."""
-    specs = rhs.FAULT_EXPECTATIONS[scenario_name].get("signals_require") or []
-    return [{"rows": 0, "ticks": 0, "peak": None, "first": None, "last": None}
-            for _ in specs]
+    return _signals_from(scenario_name, _leaf_measurement_fail)
 
 
 def test_judge_scenario_fault_required_with_fault_present_passes():
@@ -794,6 +817,48 @@ def test_fault_expectations_schema_only_known_fields():
         assert set(expect) <= known, (name, set(expect) - known)
 
 
+def test_fault_expectations_bringup_entry_shape():
+    """L2 (2026-08-30): 'bringup' moved OUT of the unlisted/no-entry group into
+    FAULT_EXPECTATIONS with a POSITIVE survive_to assertion (the staged
+    bring-up actually completed), no `require`, and an explicit
+    allow_only=FAULT_ERROR (same value the unlisted-scenario default would
+    give, written out so a reader does not have to re-derive it)."""
+    assert "bringup" in rhs.FAULT_EXPECTATIONS
+    entry = rhs.FAULT_EXPECTATIONS["bringup"]
+    assert "require" not in entry
+    assert entry["allow_only"] == rhs.FAULT_ERROR
+    assert entry["survive_to"]["t"] == pytest.approx(4.0)
+    assert entry["survive_to"]["states"] == {1, 2}
+    assert entry.get("source")
+
+
+def test_fault_expectations_bringup_still_unlisted_scenarios_unaffected():
+    """The three scenarios that DID stay in the unlisted/no-entry group
+    (steady, step-load, drive) must remain absent -- bringup's move must not
+    have dragged them along or been a wholesale table restructure."""
+    for name in ("steady", "step-load", "drive"):
+        assert name not in rhs.FAULT_EXPECTATIONS, name
+
+
+def test_judge_scenario_bringup_survive_to_passes_in_idle_or_run_fails_in_init():
+    """Functional pin of the new bringup entry: surviving to t=4.0 in state 1
+    (Idle) or 2 (Run) passes; still in state 0 (Init, bring-up never
+    completed) at that gate fails -- the entry's whole POINT."""
+    for state in (1, 2):
+        m = _metrics(fault_bits_seen=0, final_fault_flags=0,
+                     fault_bits_before_survive=0, state_at_survive=state)
+        passed, checks = rhs.judge_scenario("bringup", m, _events(), _child())
+        assert passed is True, state
+        assert not any(c["name"] == "expected_fault" for c in checks)
+
+    m_stuck = _metrics(fault_bits_seen=0, final_fault_flags=0,
+                       fault_bits_before_survive=0, state_at_survive=0)
+    passed_stuck, checks_stuck = rhs.judge_scenario("bringup", m_stuck, _events(), _child())
+    assert passed_stuck is False
+    sv = [c for c in checks_stuck if c["name"] == "survives_to_stimulus"][0]
+    assert sv["passed"] is False
+
+
 def test_fault_expectations_not_before_and_survive_to_exceed_grace():
     """M7/L3: re-derive the module's own import-time invariant directly
     against the live table -- run_hil_suite.py asserts, at import, that every
@@ -816,6 +881,114 @@ def test_fault_expectations_not_before_and_survive_to_exceed_grace():
             assert sv > rhs.WARM_RESET_GRACE_S, name
     assert saw_not_before and saw_survive_to, (
         "sanity: the live table must exercise both fields or this test is vacuous")
+
+
+def test_fault_expectations_time_bounds_stay_under_scenario_duration_via_helper():
+    """2026-08-30 duration-trim import-time assert, re-derived using the
+    MODULE'S OWN `_expectation_time_bounds()` (fix-round addition) rather than
+    hand-walking not_before_s/survive_to.t only -- the live import assert now
+    covers signals_require t_window uppper bounds and any_of after_t too, so
+    this test must exercise the same helper the assert uses, or a bug in
+    a field type this test doesn't hand-walk would go uncaught.
+    soc-depletion is excepted from the strict SCENARIOS duration_s check: the
+    suite overrides its 120 s SCENARIOS entry to 400 s in build_plan(), and
+    the import assert conservatively uses the smaller (SCENARIOS) value."""
+    saw_any = False
+    for name, expect in rhs.FAULT_EXPECTATIONS.items():
+        dur = (SCENARIOS.get(name) or {}).get("duration_s")
+        if dur is None:
+            continue
+        for key, t in rhs._expectation_time_bounds(expect):
+            if t is None:
+                continue
+            saw_any = True
+            assert t < dur, (name, key, t, dur)
+    assert saw_any, "sanity: the live table must exercise this bound or the test is vacuous"
+
+
+def test_expectation_time_bounds_charge_regen_two_t_window_upper_bounds():
+    """charge-regen carries TWO signals_require specs, each with
+    t_window=(14.0, 16.1) -- both t_window[1] values (16.1, 16.1) must be
+    yielded, alongside survive_to.t=14.0."""
+    entry = rhs.FAULT_EXPECTATIONS["charge-regen"]
+    bounds = list(rhs._expectation_time_bounds(entry))
+    by_key = dict(bounds)
+    assert by_key["survive_to.t"] == pytest.approx(14.0)
+    t_window_vals = sorted(t for k, t in bounds if "t_window" in k)
+    assert t_window_vals == [pytest.approx(16.1), pytest.approx(16.1)]
+    assert sum(1 for k, _t in bounds if "t_window" in k) == 2
+    assert "not_before_s" not in by_key or by_key["not_before_s"] is None
+
+
+def test_expectation_time_bounds_soc_depletion_survive_to_and_any_of_after_t():
+    """soc-depletion's survive_to.t (13.0) and its any_of arm's after_t (also
+    13.0, the UV_BATT-latch arm) must BOTH be yielded, distinctly keyed."""
+    entry = rhs.FAULT_EXPECTATIONS["soc-depletion"]
+    bounds = dict(rhs._expectation_time_bounds(entry))
+    assert bounds["survive_to.t"] == pytest.approx(13.0)
+    after_t_keys = [k for k in bounds if k.endswith(".after_t")]
+    assert len(after_t_keys) == 1
+    assert "any_of" in after_t_keys[0]
+    assert bounds[after_t_keys[0]] == pytest.approx(13.0)
+
+
+def test_expectation_time_bounds_t_window_none_upper_bound_not_yielded():
+    """A t_window whose upper bound is None ("to the end of the run") must
+    NOT be yielded -- it cannot be past the duration by construction, and
+    yielding None would either vacuously pass or crash the `t < dur`
+    comparison at import."""
+    entry = {"signals_require": [
+        {"name": "x", "column": "I_charge", "min_value": 1.0,
+         "t_window": (5.0, None)}]}
+    keys = [k for k, _t in rhs._expectation_time_bounds(entry)]
+    assert not any("t_window" in k for k in keys)
+
+
+def test_expectation_time_bounds_no_time_valued_fields_yields_nothing_but_survive_to():
+    """A bare entry with neither not_before_s, survive_to, nor
+    signals_require still yields the two top-level slots (both None)."""
+    bounds = dict(rhs._expectation_time_bounds({"allow_only": 0}))
+    assert bounds == {"not_before_s": None, "survive_to.t": None}
+
+
+def test_fault_expectations_duration_predicate_rejects_a_bound_at_or_past_duration():
+    """Re-derive the import-time predicate itself (rather than trusting the
+    source comment) and confirm it actually REJECTS the mistake it exists to
+    catch: a bound at or past the scenario's own duration_s -- now exercised
+    across every field kind `_expectation_time_bounds()` can yield (not_before_s,
+    survive_to.t, signals_require t_window[1], any_of after_t), not just the
+    two original top-level fields."""
+    def predicate_ok(t, dur):
+        return dur is None or t is None or t < dur
+
+    assert predicate_ok(8.0, 15.0) is True     # comfortably inside
+    assert predicate_ok(15.0, 15.0) is False   # AT the duration -- never crossed
+    assert predicate_ok(20.0, 15.0) is False   # PAST the duration -- probes a
+                                                # row that does not exist
+    assert predicate_ok(None, 15.0) is True    # no bound declared -- vacuous ok
+    assert predicate_ok(8.0, None) is True     # no duration known -- vacuous ok
+
+    # Now drive the SAME predicate through _expectation_time_bounds() against a
+    # synthetic entry that violates it via a t_window upper bound and via an
+    # any_of arm's after_t -- the two NEW field kinds this round's import assert
+    # must also catch, not just the pre-existing not_before_s/survive_to.t pair.
+    bad_entry = {
+        "not_before_s": 5.0,        # fine, under a 20.0 s duration
+        "signals_require": [
+            {"name": "ok", "column": "x", "min_value": 1.0, "t_window": (1.0, 19.9)},
+            {"name": "bad_window", "column": "x", "min_value": 1.0,
+             "t_window": (1.0, 25.0)},                       # PAST the 20.0 s duration
+            {"name": "bad_any_of", "any_of": [
+                {"fault_latch_bit": 0x1, "after_t": 21.0}]},  # PAST the duration
+        ],
+    }
+    dur = 20.0
+    violations = [(k, t) for k, t in rhs._expectation_time_bounds(bad_entry)
+                  if not predicate_ok(t, dur)]
+    violating_keys = {k for k, _t in violations}
+    assert any("bad_window" in k for k in violating_keys)
+    assert any("bad_any_of" in k for k in violating_keys)
+    assert len(violations) == 2   # exactly the two deliberately-bad fields
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -980,6 +1153,206 @@ def test_scan_signals_strictly_decreases_by_fail_soc_rose(tmp_path):
     measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
     checks = rhs.judge_signals(specs, measured, "why")
     assert checks[0]["passed"] is False
+
+
+# -- fault_latch_bit (A1) ------------------------------------------------------
+# The LATCH rule: fault_flags & MASK AND fault_flags & FAULT_ERROR on the SAME
+# row, at t >= after_t. A bare bit (no FAULT_ERROR) or an early latch (before
+# after_t) must not count -- mirrors hil_replay_suite's check_fault_latched.
+
+def test_scan_signals_fault_latch_bit_bare_bit_without_fault_error_rejected(tmp_path):
+    rows = [{"t": "20.0", "fault_flags": hex(rhs.FAULT_UV_BATT)}]  # bit set, no ERROR
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "uv", "fault_latch_bit": rhs.FAULT_UV_BATT, "after_t": 13.0}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is False
+    assert "never" in checks[0]["detail"]
+
+
+def test_scan_signals_fault_latch_bit_latched_before_after_t_rejected(tmp_path):
+    """A latch (bit + FAULT_ERROR) occurring BEFORE after_t must not count --
+    a transient before the stimulus window is not evidence of it."""
+    rows = [{"t": "5.0", "fault_flags": hex(rhs.FAULT_UV_BATT | rhs.FAULT_ERROR)}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "uv", "fault_latch_bit": rhs.FAULT_UV_BATT, "after_t": 13.0}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is False
+
+
+def test_scan_signals_fault_latch_bit_latched_at_exactly_after_t_accepted(tmp_path):
+    """The boundary: a latch at t == after_t counts (>=, not >)."""
+    rows = [{"t": "13.0", "fault_flags": hex(rhs.FAULT_UV_BATT | rhs.FAULT_ERROR)}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "uv", "fault_latch_bit": rhs.FAULT_UV_BATT, "after_t": 13.0}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+    assert "LATCHED" in checks[0]["detail"]
+    assert "t=13.000" in checks[0]["detail"]
+
+
+def test_scan_signals_fault_latch_bit_latched_after_after_t_accepted(tmp_path):
+    rows = [{"t": "266.0", "fault_flags": hex(rhs.FAULT_UV_BATT | rhs.FAULT_ERROR)}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "uv", "fault_latch_bit": rhs.FAULT_UV_BATT, "after_t": 13.0}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+
+
+def test_scan_signals_fault_latch_bit_blank_cell_skipped_not_a_crash(tmp_path):
+    rows = [{"t": "13.0", "fault_flags": ""},
+            {"t": "13.001", "fault_flags": hex(rhs.FAULT_UV_BATT | rhs.FAULT_ERROR)}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "uv", "fault_latch_bit": rhs.FAULT_UV_BATT, "after_t": 13.0}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+
+
+def test_scan_signals_fault_latch_bit_0x_prefixed_and_bare_decimal_both_parse(tmp_path):
+    """fault_flags cells are parsed with int(cell, 0) -- both '0x...' hex and
+    a bare decimal string must parse (CSVs write hex; some hand-built test
+    fixtures use decimal)."""
+    rows = [{"t": "13.0", "fault_flags": str(rhs.FAULT_UV_BATT | rhs.FAULT_ERROR)}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "uv", "fault_latch_bit": rhs.FAULT_UV_BATT, "after_t": 13.0}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+
+
+def test_scan_signals_fault_latch_bit_malformed_cell_skipped_not_raising(tmp_path):
+    rows = [{"t": "13.0", "fault_flags": "not-a-number"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "uv", "fault_latch_bit": rhs.FAULT_UV_BATT, "after_t": 13.0}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is False
+
+
+def test_scan_signals_fault_latch_bit_rows_counted_even_before_after_t(tmp_path):
+    """'rows' still counts a pre-after_t sample (so 'no rows to judge' keeps
+    its own separate meaning), it just never latches from it."""
+    rows = [{"t": "1.0", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "uv", "fault_latch_bit": rhs.FAULT_UV_BATT, "after_t": 13.0}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    assert measured[0]["rows"] == 1
+    assert measured[0]["latch_t"] is None
+
+
+# -- any_of disjunction (A1) ---------------------------------------------------
+
+def test_judge_signals_any_of_passes_when_only_first_arm_passes(tmp_path):
+    rows = [{"t": "3.0", "soc": "0.70", "fault_flags": "0"},
+            {"t": "3.1", "soc": "0.60", "fault_flags": "0"}]  # fell 0.10, no UV latch
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    spec = {"name": "either", "label": "either proof",
+            "any_of": [
+                {"column": "soc", "strictly_decreases_by": 0.05, "label": "fall"},
+                {"fault_latch_bit": rhs.FAULT_UV_BATT, "after_t": 0.0, "label": "latch"},
+            ]}
+    measured = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    checks = rhs.judge_signals([spec], measured, "why")
+    assert checks[0]["passed"] is True
+    assert "satisfied by arm 1" in checks[0]["detail"]
+    assert "[OK] fall" in checks[0]["detail"]
+    assert "[no] latch" in checks[0]["detail"]
+
+
+def test_judge_signals_any_of_passes_when_only_second_arm_passes(tmp_path):
+    rows = [{"t": "3.0", "soc": "0.70", "fault_flags": "0"},
+            {"t": "3.1", "soc": "0.69", "fault_flags":     # fell only 0.01, too little
+             hex(rhs.FAULT_UV_BATT | rhs.FAULT_ERROR)}]     # but latches
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    spec = {"name": "either", "label": "either proof",
+            "any_of": [
+                {"column": "soc", "strictly_decreases_by": 0.05, "label": "fall"},
+                {"fault_latch_bit": rhs.FAULT_UV_BATT, "after_t": 0.0, "label": "latch"},
+            ]}
+    measured = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    checks = rhs.judge_signals([spec], measured, "why")
+    assert checks[0]["passed"] is True
+    assert "satisfied by arm 2" in checks[0]["detail"]
+    assert "[no] fall" in checks[0]["detail"]
+    assert "[OK] latch" in checks[0]["detail"]
+
+
+def test_judge_signals_any_of_fails_when_neither_arm_passes(tmp_path):
+    rows = [{"t": "3.0", "soc": "0.70", "fault_flags": "0"},
+            {"t": "3.1", "soc": "0.69", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    spec = {"name": "either", "label": "either proof",
+            "any_of": [
+                {"column": "soc", "strictly_decreases_by": 0.05, "label": "fall"},
+                {"fault_latch_bit": rhs.FAULT_UV_BATT, "after_t": 0.0, "label": "latch"},
+            ]}
+    measured = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    checks = rhs.judge_signals([spec], measured, "why")
+    assert checks[0]["passed"] is False
+    assert "NO arm satisfied" in checks[0]["detail"]
+    assert "[no] fall" in checks[0]["detail"]
+    assert "[no] latch" in checks[0]["detail"]
+
+
+def test_judge_signals_any_of_detail_reports_every_arm_not_just_the_winner(tmp_path):
+    """The detail must name EVERY arm's measurement, not just the one that
+    won -- so a reader can see a failing arm was physically foreclosed by the
+    passing one, rather than a check that was silently weakened."""
+    rows = [{"t": "3.0", "soc": "0.70", "fault_flags": "0"},
+            {"t": "3.1", "soc": "0.60",
+             "fault_flags": hex(rhs.FAULT_UV_BATT | rhs.FAULT_ERROR)}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    spec = {"name": "either", "label": "either proof",
+            "any_of": [
+                {"column": "soc", "strictly_decreases_by": 0.05, "label": "SoC fall"},
+                {"fault_latch_bit": rhs.FAULT_UV_BATT, "after_t": 0.0, "label": "UV latch"},
+            ]}
+    measured = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    checks = rhs.judge_signals([spec], measured, "why")
+    detail = checks[0]["detail"]
+    assert "SoC fall" in detail
+    assert "UV latch" in detail
+    assert "either proof" in detail
+    assert "why" in detail
+
+
+def test_scan_signals_and_judge_signals_any_of_shape_stays_parallel_to_specs(tmp_path):
+    """scan_signals() must return one measurement slot per TOP-LEVEL spec
+    (parallel to `specs`), even when one spec is disjunctive and the other is
+    not -- mixing plain and any_of specs in one call must not misalign."""
+    rows = [{"t": "3.0", "soc": "0.70", "fault_flags": "0", "I_charge": "1.0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [
+        {"name": "plain", "column": "I_charge", "min_value": 0.5, "label": "plain"},
+        {"name": "either", "label": "either",
+         "any_of": [{"column": "soc", "strictly_decreases_by": 0.05, "label": "fall"},
+                    {"fault_latch_bit": rhs.FAULT_UV_BATT, "after_t": 0.0, "label": "latch"}]},
+    ]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    assert len(measured) == 2
+    assert "any_of" not in measured[0]
+    assert "any_of" in measured[1]
+    assert len(measured[1]["any_of"]) == 2
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert len(checks) == 2
+    assert checks[0]["passed"] is True   # plain: I_charge peak 1.0 >= 0.5
 
 
 # -- t_window edges -----------------------------------------------------------
@@ -1376,14 +1749,30 @@ def _fake_scenario_result(name="steady", passed=True, fault_bits=0, over_absmax=
             "log_path": "run.log", "key_metrics": "obs 100/100"}
 
 
-def _fake_replay_result(name="ML0151", mode="conformance", passed=True):
-    checks = [{"name": "no_fault", "passed": passed, "detail": "..."}]
-    return {"kind": "replay", "name": name, "mode": mode,
-            "description": "test replay", "duration_s": 56.0,
-            "passed": passed, "checks": checks, "notes": ["fw 14: ..."],
-            "metrics": {}, "events": {}, "child": _fake_child(),
-            "csv": "y.csv", "events_path": None, "log_path": "run_replay.log",
-            "key_metrics": "1/1 checks passed"}
+def _fake_replay_result(name="ML0151", mode="conformance", passed=True,
+                        metrics=None, replay_commands=None, skipped=False,
+                        checks=None):
+    """metrics/replay_commands/skipped/checks default to the ORIGINAL fixture
+    shape (metrics={}, no replay_commands key, not skipped) so every existing
+    call site is unaffected; the fix-round render_report tests pass them
+    explicitly."""
+    reason = "--pi-live: this scenario is EMS/pi_timeline-driven"
+    if checks is None:
+        checks = ([{"name": "skipped", "passed": True, "detail": reason}] if skipped
+                  else [{"name": "no_fault", "passed": passed, "detail": "..."}])
+    r = {"kind": "replay", "name": name, "mode": mode,
+         "description": "test replay", "duration_s": 56.0,
+         "passed": passed, "checks": checks, "notes": ["fw 14: ..."],
+         "metrics": {} if metrics is None else metrics, "events": {},
+         "child": _fake_child(),
+         "csv": "y.csv", "events_path": None, "log_path": "run_replay.log",
+         "key_metrics": "1/1 checks passed"}
+    if replay_commands is not None:
+        r["replay_commands"] = replay_commands
+    if skipped:
+        r["skipped"] = True
+        r["skip_reason"] = reason
+    return r
 
 
 def _fake_meta(**overrides):
@@ -1500,6 +1889,138 @@ def test_render_report_empty_results_does_not_crash():
     assert "0/0 passed" in report
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# 6b. M1: render_report()'s replay-half preamble — the two-branch
+#     replay_commands-count sentence (fix round)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_render_report_replay_preamble_reports_the_opted_in_split():
+    """When at least one replay entry set replay_commands, the preamble must
+    name BOTH the count that did (with the controller-reaction language) and
+    the count that did not (tagged NOT EXERCISED) — counted from the actual
+    records, not a static sentence."""
+    results = [
+        _fake_replay_result(name="ML0146", replay_commands=True),
+        _fake_replay_result(name="ML0151", replay_commands=True),
+        _fake_replay_result(name="TP0010", replay_commands=False),
+    ]
+    report = rhs.render_report(_fake_meta(), results)
+    assert "**2 of 3** replay entries set `replay_commands`" in report
+    assert "The remaining **1** construct no commander at all" in report
+    assert "NOT EXERCISED" in report
+    assert "No entry in this run set" not in report
+
+
+def test_render_report_replay_preamble_zero_opt_in_branch():
+    """No replay entry set replay_commands: the OTHER branch fires — a single
+    blanket sentence, not the N-of-M split (which would read '0 of 2' rather
+    than the intended plain-English zero-case wording)."""
+    results = [
+        _fake_replay_result(name="TP0010", replay_commands=False),
+        _fake_replay_result(name="TP0053"),   # key omitted entirely -- also falsy
+    ]
+    report = rhs.render_report(_fake_meta(), results)
+    assert "No entry in this run set `replay_commands`" in report
+    assert "no commander was" in report
+    assert "NOT EXERCISED" in report
+    assert "replay entries set `replay_commands`:" not in report   # the opt-in branch's sentence
+
+
+def test_render_report_replay_preamble_absent_when_no_replay_results():
+    """The whole '## Replay suite' section (preamble included) must not
+    render at all when there are no replay results -- scenario-only runs must
+    not pay for, or confuse a reader with, replay-half language."""
+    report = rhs.render_report(_fake_meta(), [_fake_scenario_result()])
+    assert "## Replay suite" not in report
+    assert "replay_commands" not in report
+
+
+def test_render_report_replay_preamble_open_loop_warning_present():
+    results = [_fake_replay_result(replay_commands=True)]
+    report = rhs.render_report(_fake_meta(), results)
+    assert "does NOT close the loop" in report
+    assert "REACTION test, never a tracking test" in report
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 6c. M2: render_report()'s per-entry replay fault-metrics block
+# ─────────────────────────────────────────────────────────────────────────
+
+def _replay_metrics(**overrides):
+    m = {"csv": "y.csv", "rows": 100, "n_obs": 90, "n_obs_post_grace": 70,
+         "final_fault_flags": 0, "fault_bits_seen": 0, "fault_bits_post_grace": 0,
+         "fault_first_t": {}, "last_obs_t": 5.6, "grace_s": rhs.WARM_RESET_GRACE_S,
+         "final_state": 2, "duration_s": 5.6}
+    m.update(overrides)
+    return m
+
+
+def test_render_report_replay_metrics_block_final_flags_and_unions_rendered():
+    latched = rhs.FAULT_UV_BUS | rhs.FAULT_ERROR
+    results = [_fake_replay_result(metrics=_replay_metrics(
+        final_fault_flags=latched, fault_bits_seen=latched,
+        fault_bits_post_grace=latched, final_state=99))]
+    report = rhs.render_report(_fake_meta(), results)
+    assert "100 rows, 90 with an observation frame" in report
+    assert ("final `fault_flags` `0x%04X`" % latched) in report
+    assert "union over the run:" in report
+    assert "POST-GRACE union (t >= %.1fs" % rhs.WARM_RESET_GRACE_S in report
+    assert "final state: 99" in report
+
+
+def test_render_report_replay_metrics_block_carried_in_sub_line_when_bit_cleared_pre_grace():
+    """A bit seen only BEFORE the grace bound (present in the whole-run union,
+    absent from the post-grace union) must get the dedicated 'carried in from
+    the predecessor's settle latch' sub-line -- the exact scenario A5/M2 exist
+    to surface."""
+    seen = rhs.FAULT_UV_BUS | rhs.FAULT_ERROR
+    results = [_fake_replay_result(metrics=_replay_metrics(
+        final_fault_flags=0, fault_bits_seen=seen, fault_bits_post_grace=0))]
+    report = rhs.render_report(_fake_meta(), results)
+    assert "carried in from the predecessor's settle latch" in report
+    assert "cleared by the fw v23 grace-window warm reset" in report
+
+
+def test_render_report_replay_metrics_block_no_carried_in_line_when_unions_match():
+    results = [_fake_replay_result(metrics=_replay_metrics(
+        final_fault_flags=0, fault_bits_seen=0, fault_bits_post_grace=0))]
+    report = rhs.render_report(_fake_meta(), results)
+    assert "carried in from the predecessor's settle latch" not in report
+
+
+def test_render_report_replay_metrics_block_load_failure_form():
+    """A load-failure metrics dict (only csv/error -- ReplayCsv.metrics() never
+    ran) must render the short 'could not be read' form, not attempt the
+    rows/final-flags line (which would KeyError-style crash on a dict this
+    thin if it were reached)."""
+    results = [_fake_replay_result(metrics={"csv": "y.csv", "error": "boom: no such file"})]
+    report = rhs.render_report(_fake_meta(), results)
+    assert "**could not be read** (boom: no such file)" in report
+    assert "with an observation frame" not in report
+
+
+def test_render_report_replay_metrics_block_absent_when_metrics_empty():
+    """The original bare `{}` shape (or any metrics dict with rows falsy and
+    no error key) must render NEITHER form -- no crash, no fabricated line."""
+    results = [_fake_replay_result(metrics={})]
+    report = rhs.render_report(_fake_meta(), results)
+    assert "with an observation frame" not in report
+    assert "could not be read" not in report
+
+
+def test_render_report_replay_skipped_record_short_circuits_before_metrics_block():
+    """A skipped replay record (--pi-live) has no child/CSV at all -- the
+    renderer must print the 'child: not run' line and `continue` BEFORE ever
+    reaching the metrics block, even if (defensively) a metrics dict were
+    present on the record."""
+    results = [_fake_replay_result(skipped=True,
+                                   metrics=_replay_metrics(final_fault_flags=0x8010))]
+    report = rhs.render_report(_fake_meta(), results)
+    assert "child: **not run**" in report
+    assert "with an observation frame" not in report
+    assert "final `fault_flags`" not in report
+
+
 def test_results_json_round_trips():
     results = [_fake_scenario_result(), _fake_replay_result()]
     meta = _fake_meta()
@@ -1539,29 +2060,51 @@ def test_finding_exit_code_logic_is_inline_in_main_untestable_offline():
 # 8. Re-pinned: soc-depletion plan special-case (duration 650, --soc0 0.15)
 # ─────────────────────────────────────────────────────────────────────────
 
-def test_soc_depletion_duration_and_soc0_repinned_to_880_and_0_15():
+def test_soc_depletion_duration_and_soc0_repinned_to_400_and_0_20():
     """soc-depletion's SCENARIOS entry itself still says duration_s=120 (see
     test_hil_plant_sim.py's SCENARIOS-registry tests) -- build_plan() special-
     cases ONLY this one scenario name and overrides both the duration and adds
-    --soc0 0.15. RE-DERIVED (review M4, 2026-08-30): the endurance load dropped
-    3.0 -> SOC_ENDURANCE_LOAD_A 2.2 A (3.0 A overloaded the surviving BT channel
-    past LIMIT_I_BT_MAX 3.0 A for the whole run), so the duration grew in
-    lockstep to preserve delivered charge (645 s x 3.0 A = 1935 A*s vs the new
-    870 s x 2.2 A = 1914 A*s, -1.1%); 880 s total = 10 s before the load ramp +
-    870 s of load. Every other scenario must be unaffected by this special
-    case."""
+    --soc0. RE-DERIVED AGAIN (campaign 20260830_214819, HIL_FINDINGS
+    'soc-depletion', 2026-08-30, superseding the 880 s / 0.15 M4 derivation):
+    the coulomb current that actually depletes the pack is PACK-SIDE (~6.19 A,
+    behind the boost), not the 2.2 A BUS-side SOC_ENDURANCE_LOAD_A, and the
+    UV_BATT latch is a STATE condition (soc_latch ~= 0.1130) that FORECLOSES
+    the run, not a time budget -- so the old --soc0 0.15 could only ever fall
+    0.037, below the 0.05 signal threshold, no matter how long the run ran.
+    Corrected together: --soc0 0.20 (ceiling 0.20 - 0.113 = 0.087, 1.74x the
+    threshold) and --duration 400 (estimated latch at ~266 s + margin, 480 s
+    CHEAPER than the old 880 s). The signal check is now disjunctive (see
+    FAULT_EXPECTATIONS/test_soc_depletion_signal_spec_is_disjunctive): either
+    the 0.05 SoC fall or a post-ramp UV_BATT latch proves depletion."""
     plan = rhs.build_plan(_args(only=["soc-depletion"]))
     assert len(plan) == 1
     item = plan[0]
-    assert item["duration_s"] == pytest.approx(880.0)
-    assert item["timeout_s"] == pytest.approx(880.0 + rhs.TIMEOUT_GRACE_S)
+    assert item["duration_s"] == pytest.approx(400.0)
+    assert item["timeout_s"] == pytest.approx(400.0 + rhs.TIMEOUT_GRACE_S)
     argv = item["argv"]
     assert "--duration" in argv
-    assert argv[argv.index("--duration") + 1] == "880"
+    assert argv[argv.index("--duration") + 1] == "400"
     assert "--soc0" in argv
-    assert argv[argv.index("--soc0") + 1] == "0.15"
+    assert argv[argv.index("--soc0") + 1] == "0.20"
     # SCENARIOS itself is untouched -- this is purely a build_plan() override.
     assert SCENARIOS["soc-depletion"]["duration_s"] == pytest.approx(120.0)
+
+
+def test_soc_depletion_signal_spec_is_disjunctive_any_of_two_arms():
+    """A1: the soc_depleted signal spec must be an any_of with exactly two
+    arms -- the SoC-fall proof and the post-ramp UV_BATT latch proof -- since
+    the two are mutually exclusive in practice (a latch ends the run and caps
+    the observable fall)."""
+    expect = rhs.FAULT_EXPECTATIONS["soc-depletion"]
+    specs = expect["signals_require"]
+    assert len(specs) == 1
+    spec = specs[0]
+    arms = spec["any_of"]
+    assert len(arms) == 2
+    assert arms[0]["strictly_decreases_by"] == pytest.approx(0.05)
+    assert arms[0]["column"] == "soc"
+    assert arms[1]["fault_latch_bit"] == rhs.FAULT_UV_BATT
+    assert arms[1]["after_t"] == pytest.approx(13.0)
 
 
 def test_soc_depletion_override_does_not_leak_into_other_scenarios():
@@ -1617,6 +2160,79 @@ def test_f2_judge_scenario_handoff_sag_with_uv_fault_passes_that_check():
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# 9b. A5: _run_plan()'s replay branch stores the REAL metrics, not {}
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_a5_run_plan_replay_metrics_is_not_empty_and_carries_final_fault_flags(
+        monkeypatch):
+    """A5 (campaign 20260830_214819): the replay branch of _run_plan() used to
+    hardcode `"metrics": {}`, so a replay run that ended LATCHED (e.g. a
+    carried-in 0x8100/0x8001) rendered in results.json/REPORT.md as
+    'final fault_flags 0x0000 (none)' -- the exact latched end-state that
+    carries into the next run, hidden. This test is built to FAIL under that
+    old behaviour: it asserts the truthful nonzero final_fault_flags actually
+    reaches the result record, which `{"metrics": {}}` could never satisfy."""
+    def fake_run_child(item, args):
+        return {"status": "ok", "returncode": 0, "wall_s": 0.01, "log": item["log"],
+                "summary": {"achieved_hz": 1000.0}}
+
+    latched = rhs.FAULT_UV_BUS | rhs.FAULT_ERROR
+
+    def fake_evaluate_replay_csv(entry, csv_path):
+        return {"passed": True,
+               "checks": [{"name": "uv", "passed": True, "detail": "..."}],
+               "notes": [], "n_obs": 10,
+               "n_checks_vacuous": 0, "n_checks_substantive": 1,
+               # A5: the exact shape ReplayCsv.metrics() returns -- a truthful
+               # LATCHED end-state the old `{}` could never carry.
+               "metrics": {"csv": csv_path, "rows": 10, "n_obs": 10,
+                           "n_obs_post_grace": 8, "final_fault_flags": latched,
+                           "fault_bits_seen": latched, "fault_bits_post_grace": latched,
+                           "fault_first_t": {"UV_BUS": 5.25}, "last_obs_t": 10.0,
+                           "grace_s": 2.0, "final_state": 99, "duration_s": 10.0}}
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+    monkeypatch.setattr(rhs, "evaluate_replay_csv", fake_evaluate_replay_csv)
+
+    args = _args(only=["ML0146"], keep_going=True, settle_s=0.0)
+    plan = rhs.build_plan(args)
+    results, _aborted = rhs._run_plan(plan, args, [], [], lambda m, r: None)
+    r = results[0]
+    # This is the assertion that FAILS under the old `"metrics": {}` --
+    # r["metrics"] would be {} and .get("final_fault_flags") would be None,
+    # not the truthful latched value.
+    assert r["metrics"]
+    assert r["metrics"]["final_fault_flags"] == latched
+    assert r["metrics"]["final_state"] == 99
+
+
+def test_a5_run_plan_replay_metrics_defaults_to_empty_dict_when_evaluate_omits_it(
+        monkeypatch):
+    """A defensive-default check: if evaluate_replay_csv() ever omits the
+    'metrics' key entirely (rather than the source's designed-in {} on the
+    load-failure path), _run_plan() must still produce an empty dict, not
+    raise a KeyError."""
+    def fake_run_child(item, args):
+        return {"status": "ok", "returncode": 0, "wall_s": 0.01, "log": item["log"],
+                "summary": {"achieved_hz": 1000.0}}
+
+    def fake_evaluate_replay_csv(entry, csv_path):
+        return {"passed": True,
+               "checks": [{"name": "no_fault", "passed": True, "detail": "..."}],
+               "notes": [], "n_obs": 10,
+               "n_checks_vacuous": 0, "n_checks_substantive": 1}
+        # deliberately no "metrics" key at all
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+    monkeypatch.setattr(rhs, "evaluate_replay_csv", fake_evaluate_replay_csv)
+
+    args = _args(only=["ML0146"], keep_going=True, settle_s=0.0)
+    plan = rhs.build_plan(args)
+    results, _aborted = rhs._run_plan(plan, args, [], [], lambda m, r: None)
+    assert results[0]["metrics"] == {}
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # 10. M4: _run_plan() write_outputs-per-run + main() partial-report wiring
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -1652,11 +2268,17 @@ def test_m4_run_plan_calls_write_outputs_after_every_run(monkeypatch):
     assert calls[1][1]["partial"] is False
 
 
-def test_run_plan_replay_key_metrics_shows_substantive_vacuous_split(monkeypatch):
-    """Item 5: a replay run's key_metrics string must say how many of its
-    passing checks were VACUOUS (no commander -> current identically 0 A) --
-    "%d/%d checks passed" alone counts vacuous checks alongside real ones and
-    reads stronger than the run actually is."""
+def test_run_plan_replay_key_metrics_shows_substantive_not_evidence_split_no_command_replay(
+        monkeypatch):
+    """Item 5/L3, wording updated 2026-08-30 (fix-round): a replay run's
+    key_metrics string must say how many of its passing checks carried no
+    evidence -- "%d/%d checks passed" alone counts vacuous checks alongside
+    real ones and reads stronger than the run actually is. The three-way
+    `nonevidence_why` branch in _run_plan() is keyed on the ENTRY's own
+    `replay_commands` (the intent), not on the observed counters: this case
+    has `ev.get("replay_commands")` falsy (the key is omitted entirely, same
+    as an explicit False), so the label reads "no command replay" -- there is
+    no longer a "no commander" wording anywhere in the source."""
     def fake_run_child(item, args):
         return {"status": "ok", "returncode": 0, "wall_s": 0.01, "log": item["log"],
                 "summary": {"achieved_hz": 1000.0, "tx_frames": 10, "rx_frames": 10,
@@ -1668,6 +2290,9 @@ def test_run_plan_replay_key_metrics_shows_substantive_vacuous_split(monkeypatch
                           {"name": "bc", "passed": True, "detail": "vacuous-tagged"}],
                "notes": [], "n_obs": 10,
                "n_checks_vacuous": 1, "n_checks_substantive": 1}
+        # deliberately no "replay_commands" / "n_checks_not_exercised" keys --
+        # a real evaluate_replay_csv() result whose vacuous check never went
+        # through the NOT_EXERCISED retagging path.
 
     monkeypatch.setattr(rhs, "run_child", fake_run_child)
     monkeypatch.setattr(rhs, "evaluate_replay_csv", fake_evaluate_replay_csv)
@@ -1682,7 +2307,96 @@ def test_run_plan_replay_key_metrics_shows_substantive_vacuous_split(monkeypatch
     assert r["n_checks_vacuous"] == 1
     assert r["n_checks_substantive"] == 1
     assert "2/2 checks passed" in r["key_metrics"]
-    assert "1 substantive, 1 vacuous" in r["key_metrics"]
+    assert "1 substantive, 1 not evidence — no command replay" in r["key_metrics"]
+    assert "commands replayed" not in r["key_metrics"]
+    assert "no commander" not in r["key_metrics"]   # the old wording is gone entirely
+
+
+def test_run_plan_replay_key_metrics_defensive_suite_bug_branch(monkeypatch):
+    """The defensive third branch: replay_commands truthy AND
+    n_checks_not_exercised truthy is supposed to be UNREACHABLE (NOT_EXERCISED
+    is only ever applied on a non-opt-in entry -- see hil_replay_suite's
+    check-loop gate), but if evaluate_replay_csv() ever produced that
+    combination anyway, _run_plan() must name it distinctly as a suite
+    defect rather than silently folding it into either of the two legitimate
+    labels."""
+    def fake_run_child(item, args):
+        return {"status": "ok", "returncode": 0, "wall_s": 0.01, "log": item["log"],
+                "summary": {"achieved_hz": 1000.0}}
+
+    def fake_evaluate_replay_csv(entry, csv_path):
+        return {"passed": True,
+               "checks": [{"name": "bc", "passed": True, "detail": "..."}],
+               "notes": [], "n_obs": 10,
+               "n_checks_vacuous": 1, "n_checks_substantive": 0,
+               "n_checks_not_exercised": 1, "replay_commands": True}
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+    monkeypatch.setattr(rhs, "evaluate_replay_csv", fake_evaluate_replay_csv)
+
+    args = _args(only=["ML0146"], keep_going=True, settle_s=0.0)
+    plan = rhs.build_plan(args)
+    results, _aborted = rhs._run_plan(plan, args, [], [], lambda m, r: None)
+    r = results[0]
+    assert r["replay_commands"] is True
+    assert r["n_checks_not_exercised"] == 1
+    assert "0 substantive, 1 not evidence — opt-in entry tagged NOT EXERCISED (suite bug)" \
+        in r["key_metrics"]
+
+
+def test_run_plan_replay_key_metrics_labels_no_command_replay_when_not_exercised(
+        monkeypatch):
+    """The converse label: when n_checks_not_exercised is truthy (a
+    command-free entry retagged NOT EXERCISED), key_metrics must say
+    'no command replay', not 'no commander'."""
+    def fake_run_child(item, args):
+        return {"status": "ok", "returncode": 0, "wall_s": 0.01, "log": item["log"],
+                "summary": {"achieved_hz": 1000.0}}
+
+    def fake_evaluate_replay_csv(entry, csv_path):
+        return {"passed": True,
+               "checks": [{"name": "no_fault", "passed": True, "detail": "..."},
+                          {"name": "bc", "passed": True,
+                           "detail": "NOT EXERCISED (no command replay): ..."}],
+               "notes": [], "n_obs": 10,
+               "n_checks_vacuous": 1, "n_checks_substantive": 1,
+               "n_checks_not_exercised": 1, "replay_commands": False}
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+    monkeypatch.setattr(rhs, "evaluate_replay_csv", fake_evaluate_replay_csv)
+
+    args = _args(only=["ML0146"], keep_going=True, settle_s=0.0)
+    plan = rhs.build_plan(args)
+    results, _aborted = rhs._run_plan(plan, args, [], [], lambda m, r: None)
+    r = results[0]
+    assert r["n_checks_not_exercised"] == 1
+    assert "1 substantive, 1 not evidence — no command replay" in r["key_metrics"]
+    assert "commands replayed" not in r["key_metrics"]
+
+
+def test_run_plan_replay_key_metrics_shows_commands_replayed_suffix(monkeypatch):
+    """An entry that DID replay commands gets the "(commands replayed)"
+    suffix on key_metrics, ahead of any substantive/vacuous split."""
+    def fake_run_child(item, args):
+        return {"status": "ok", "returncode": 0, "wall_s": 0.01, "log": item["log"],
+                "summary": {"achieved_hz": 1000.0}}
+
+    def fake_evaluate_replay_csv(entry, csv_path):
+        return {"passed": True,
+               "checks": [{"name": "dls", "passed": True, "detail": "..."}],
+               "notes": [], "n_obs": 10,
+               "n_checks_vacuous": 0, "n_checks_substantive": 1,
+               "n_checks_not_exercised": 0, "replay_commands": True}
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+    monkeypatch.setattr(rhs, "evaluate_replay_csv", fake_evaluate_replay_csv)
+
+    args = _args(only=["ML0146"], keep_going=True, settle_s=0.0)
+    plan = rhs.build_plan(args)
+    results, _aborted = rhs._run_plan(plan, args, [], [], lambda m, r: None)
+    r = results[0]
+    assert r["replay_commands"] is True
+    assert r["key_metrics"].startswith("1/1 checks passed (commands replayed)")
 
 
 def test_run_plan_replay_key_metrics_omits_split_when_nothing_vacuous(monkeypatch):
@@ -2217,7 +2931,7 @@ def test_print_plan_wall_time_excludes_skipped_settle_pauses(capsys):
     """F14(a): a skipped run launches no child and gets no settle pause --
     it must not contribute settle_s to the printed wall-time estimate. Checked
     against an INDEPENDENTLY computed expectation from the plan itself (per-
-    scenario duration_s varies -- 30/40/45/60 s -- so a skip-count * settle_s
+    scenario duration_s varies -- 6-58 s (2026-08-30 trim) -- so a skip-count * settle_s
     delta against a second plan is not a stable comparison)."""
     args_live = _args(pi_live=True, scenarios_only=True, settle_s=5.0)
     plan_live = rhs.build_plan(args_live)
@@ -2871,7 +3585,13 @@ def test_k4_replay_half_inconclusive_end_to_end(tmp_path, monkeypatch):
     assert res["inconclusive"] is True
     assert res["passed"] is False
     assert res["inconclusive_reason"]
-    report = (tmp_path / "REPORT.md").read_text()
+    # encoding="utf-8" explicit: the replay-half preamble (M1, fix round) now
+    # writes a literal "⚠️" into REPORT.md, and main() writes the file as
+    # UTF-8 -- Path.read_text()'s platform-default encoding (cp1252 on
+    # Windows) cannot decode the variation-selector byte in that emoji and
+    # raises UnicodeDecodeError. Reading it back the same way it was written
+    # is a test-robustness fix, not a change to what main() writes.
+    report = (tmp_path / "REPORT.md").read_text(encoding="utf-8")
     assert "INCONCLUSIVE" in report
 
 

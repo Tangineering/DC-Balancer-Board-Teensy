@@ -6,16 +6,27 @@ A curated set of REAL bench logs (logs/*.BLG) is replayed at the firmware throug
 `tools/hil_plant_sim.py --replay`, and the resulting per-tick CSV is evaluated
 here against declarative, firmware-version-aware checks.
 
-WHAT THIS HALF ACTUALLY IS (relabelled 2026-08-30, HIL_FINDINGS "Replay half"):
-a **bring-up + fault-decision regression harness**, not a control-response suite.
-Replay mode constructs NO commander, so no replayed run ever reaches State 2: the
-board brings up, sits in Idle, and `current` is 0.000 A for the whole run.  Every
-current-shape check below is therefore vacuously true on a healthy board — they
-are retained as "no SPURIOUS command" assertions (the firmware must not drive on
-an injected stimulus it was never commanded to follow), and they are annotated as
-such in the report, not advertised as controller coverage.  What the half really
-tests is: does the fw v22+ staged bring-up complete on this stimulus, and does the
-fault machinery make the right LATCH decision on it.
+WHAT THIS HALF ACTUALLY IS (relabelled 2026-08-30, HIL_FINDINGS "Replay half";
+amended the same day when command replay landed): a **bring-up + fault-decision
+regression harness**, and — for the entries that opt in — a **controller-reaction**
+harness on top of it.
+
+  Entries WITHOUT `replay_commands`: no commander is constructed, so the run never
+  reaches State 2; the board brings up, sits in Idle, and `current` is 0.000 A for
+  the whole run.  Every current-shape check is then vacuously true on a healthy
+  board.  They are retained as "no SPURIOUS command" assertions (the firmware must
+  not drive on an injected stimulus it was never commanded to follow) and are
+  tagged NOT EXERCISED in the report, never advertised as controller coverage.
+
+  Entries WITH `replay_commands: True`: the log's own recorded v_sp / share_sp are
+  replayed as 22-byte Pi command packets at 50 Hz (hil_plant_sim
+  --replay-commands), the board goes Idle -> Run, and the drive and share loops
+  step against the recorded stimulus.  The current-shape checks then judge the
+  LIVE controller's reaction, and a `drive_loop_stepped` check asserts the loop
+  actually moved.  STILL OPEN LOOP on the plant side — see the caveat below.
+
+Either way the half also tests: does the fw v22+ staged bring-up complete on this
+stimulus, and does the fault machinery make the right LATCH decision on it.
 
 Two evaluation MODES (see docs/HIL_REPLAY_LOGS.md for the full policy):
 
@@ -36,6 +47,10 @@ Two evaluation MODES (see docs/HIL_REPLAY_LOGS.md for the full policy):
 is bypassed, so the firmware's commands do not influence the replayed trajectory,
 and the encoder/estimator path is bypassed entirely (v_actual is INJECTED).  Every
 check below is therefore a check on the firmware's RESPONSE to a fixed stimulus.
+`replay_commands` does NOT change this — it adds a second replayed channel (the
+commands), it does not close the loop.  Expect a `replay_commands` entry's drive
+loop to FIGHT the recorded trajectory wherever the recorded and flashed control
+laws differ: that is the stimulus, not a defect.
 
 Firmware-sourced constants used by the checks are cited at their definitions.
 
@@ -355,6 +370,49 @@ OC_FC_RECLASS_WHY = (
 #   why            why it is in the suite
 #   provisional    True = selection not yet confirmed against a full analysis pass
 #   checks         list of declarative check specs (see CHECK_KINDS)
+#   replay_commands  True = ALSO replay this log's recorded v_sp / share_sp as
+#                  22-byte Pi command packets (--replay-commands), so the board
+#                  reaches Run and both loops step. MIRRORED in build_sim_argv().
+#
+# ── Deciding `replay_commands` (2026-08-30) ─────────────────────────────────
+# Three rules, applied per entry and stated in each entry's comment:
+#
+#  1. FAULT-PATH PURITY. An entry whose point is a fault DECISION (the UV pair
+#     TP0010/TP0053, ML0217's INIT_FAIL, TP0178/TP0201's must-NOT-latch) stays
+#     command-free. Its verdict must not be contaminated by a second stimulus, and
+#     for the clamped UV pair (i_fc_clamp_a) commands could change the outcome
+#     outright. These carry an explicit `replay_commands: False`.
+#  2. THE RECORDED v_sp MUST BE REAL. The 'T'/'W' State-98 profiles command
+#     CURRENT directly, never velocity: TP0010/0053/0170/0171/0176/0178/0201/0210,
+#     WP0097 and WP0197 all record v_sp IDENTICALLY 0 (measured, 2026-08-30).
+#     Replaying that commands nothing — the firmware's V_SP_ZERO_THRESH cutoff
+#     yields 0 A — so `drive_loop_stepped` would FAIL on a stimulus that never
+#     existed. Their share_sp axis IS live, but the Pi packet's share setpoint
+#     alone does not move the motor, so there is nothing for a current-shape check
+#     to judge. These stay command-free too.
+#  3. THE ENTRY'S OWN EXPECTATION MUST SURVIVE IT. ML0144 asserts
+#     `near_zero_current`; its recorded v_sp is nonzero for 3845 rows, so
+#     replaying it would drive the motor and contradict the entry's own claim.
+#     Command-free.
+#
+# ── AND CHECK THE SHARE AXIS, WHICH ACTUATES (L6, 2026-08-30) ───────────────
+# `share_sp` is not a passive number: updateShareSetpointCutoff() (.ino:249-258)
+# latches the STARVED CHANNEL OFF THE BUS — driving FC_BUS_ENABLE or
+# BT_BUS_ENABLE — and FREEZES the share controller whenever the SETPOINT leaves
+# [DROOP_R_MIN, DROOP_R_MAX] = [0.15, 0.85]. Replaying such a setpoint therefore
+# commands a real switch transition, not just a ratio. Measure the recorded range
+# before opting an entry in, and call it out in the entry when it leaves the band.
+# Measured across the 14 opt-in entries (2026-08-30): thirteen stay inside it
+# (0.500 constant, or 0.300-0.700 for the 'Y' profiles). ONE does not — ML0203,
+# whose recorded share_sp sweeps the full 0.000-1.000 and so exercises the cutoff
+# in both directions; see its entry. That is correct firmware behaviour on a
+# genuinely out-of-band setpoint and none of ML0203's checks read switch state, so
+# it is documented rather than refused — but an entry whose checks DID read
+# switch_state, or whose purpose were a bus/sequencing decision, would have to
+# weigh the cutoff as a second stimulus under rule 1.
+#
+# Everything else with a live recorded v_sp opts IN, and gains a
+# `drive_loop_stepped` check ordered BEFORE its motor-response checks.
 REPLAY_SUITE = [
     # ── CONFORMANCE — current wheel + control law (fw v18/v19) ───────────────
     {
@@ -364,9 +422,29 @@ REPLAY_SUITE = [
                           "I_fc peaks at 2.11 A — above LIMIT_I_FC_MAX",
         "why": OC_FC_RECLASS_WHY % ("ML0203", 2.11),
         "provisional": False,
+        # Rule 2 satisfied (32581 rows of nonzero recorded v_sp) and rule 1 does
+        # not apply: OC_FC latches off the INJECTED I_fc, which command replay
+        # cannot touch. Measured 2026-08-30: the crossing is at log t=33.548s of a
+        # 43.8s log, so the loop has ~31s of Run before the latch — the
+        # drive_loop_stepped window is not tight.
+        #
+        # L6 — THE ONE OPT-IN ENTRY WHOSE SHARE AXIS ACTUATES. Its recorded
+        # share_sp sweeps the FULL 0.000-1.000 (measured 2026-08-30), so replaying
+        # it drives the setpoint outside [DROOP_R_MIN, DROOP_R_MAX] = [0.15, 0.85]
+        # in BOTH directions and updateShareSetpointCutoff() (.ino:249-258) latches
+        # the starved channel off the bus and freezes the share controller. That is
+        # CORRECT firmware behaviour on a genuinely recorded out-of-band setpoint,
+        # and none of this entry's three checks reads switch_state, so it is
+        # accepted and DECLARED rather than refused. Two things to know when reading
+        # the trace: switch_state will show FC_BUS/BT_BUS transitions no other
+        # replay entry produces, and the share controller is frozen for those
+        # stretches. Neither affects oc_fc_latched — the OC comparison is against
+        # the INJECTED I_fc, which command replay cannot touch.
+        "replay_commands": True,
         "checks": [
             {"kind": "fault_latched", "name": "oc_fc_latched",
              "bit": FAULT_OC_FC, "require_stimulus": True},
+            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
             {"kind": "bounded_current", "name": "bounded_current"},
         ],
     },
@@ -376,7 +454,12 @@ REPLAY_SUITE = [
         "classification": "'Y' combined drive-cycle + power-share profile",
         "why": "Exercises both loops' stimulus together on the current law.",
         "provisional": False,
+        # 'Y' records BOTH axes live (30697 nonzero v_sp rows, 19678 rows with
+        # share_sp off 0.5) — the strongest command-replay candidate in the suite,
+        # and the only class where the drive and share setpoints move together.
+        "replay_commands": True,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
@@ -385,6 +468,12 @@ REPLAY_SUITE = [
         "classification": "'W' combined current + power-share profile",
         "why": "The current-axis twin of 'Y' — encoder-less share-loop stimulus.",
         "provisional": False,
+        # RULE 2: 'W' is the CURRENT-mode twin, so its recorded v_sp is
+        # IDENTICALLY 0 across all 34609 rows (measured 2026-08-30) — the motor
+        # axis was commanded as amps by the State-98 profile, which the 22-byte Pi
+        # packet cannot express. Replaying it would command nothing and
+        # drive_loop_stepped would fail on an absent stimulus.
+        "replay_commands": False,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
@@ -394,6 +483,11 @@ REPLAY_SUITE = [
         "classification": "'T' share sweep on the fw v19 handoff-slew build",
         "why": "Most recent share-sweep stimulus; nearest to the flashed target.",
         "provisional": True,
+        # RULE 2: a 'T' share sweep records v_sp identically 0 (13107 rows,
+        # measured 2026-08-30). Its share_sp axis IS live, but the share setpoint
+        # alone does not move the motor, so there would be nothing for a
+        # current-shape check to judge.
+        "replay_commands": False,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
@@ -440,6 +534,11 @@ REPLAY_SUITE = [
         "provisional": True,
         "skip_bringup_gate": True,
         "skip_preamble": True,
+        # RULE 1 (fault-path purity), explicit: this entry's whole verdict is a
+        # bring-up FAULT DECISION on a dark bus. A second stimulus over it proves
+        # nothing and could only confuse the attribution. Its recorded v_sp is
+        # identically 0 in any case (33756 rows), so rule 2 refuses it too.
+        "replay_commands": False,
         # Required alongside skip_preamble (see _assert_skip_preamble_entries()):
         # this entry's first 2.0 s of RECORDED stimulus sit inside the excluded
         # fault window, so it is only scorable because INIT_FAIL latches at ~0.3 s
@@ -456,7 +555,11 @@ REPLAY_SUITE = [
         "classification": "'Y' combined profile on fw v19",
         "why": "Combined-profile stimulus with the handoff slew in the recording.",
         "provisional": True,
+        # Same 'Y' class as YP0196/YP0152/YP0166: both command axes live
+        # (30719 nonzero v_sp rows, 19697 rows with share_sp off 0.5).
+        "replay_commands": True,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
 
@@ -469,8 +572,13 @@ REPLAY_SUITE = [
                "wheel geometry and the control law both changed at fw v18. "
                "Conformance here means stable, fault-free, no limit cycle.",
         "provisional": False,
+        # A clean 'V' step with 8356 rows of nonzero recorded v_sp: replaying it
+        # turns three previously-vacuous current-shape checks into a real
+        # assertion about the flashed law's reaction to a clean step.
+        "replay_commands": True,
         "checks": [
             {"kind": "no_fault", "name": "no_fault"},
+            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
             {"kind": "bounded_current", "name": "bounded_current"},
             {"kind": "no_rail_limit_cycle", "name": "no_rail_limit_cycle",
              "max_alt_per_s": LIMIT_CYCLE_ALT_PER_S},
@@ -482,8 +590,11 @@ REPLAY_SUITE = [
         "classification": "clean 'V' step (higher setpoint), fw v14",
         "why": "Second clean fw v14 point; same stability-only conformance meaning.",
         "provisional": False,
+        # Same class as ML0146 (7261 rows of nonzero recorded v_sp).
+        "replay_commands": True,
         "checks": [
             {"kind": "no_fault", "name": "no_fault"},
+            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
             {"kind": "bounded_current", "name": "bounded_current"},
             {"kind": "no_rail_limit_cycle", "name": "no_rail_limit_cycle",
              "max_alt_per_s": LIMIT_CYCLE_ALT_PER_S},
@@ -496,8 +607,13 @@ REPLAY_SUITE = [
                           "— above LIMIT_I_FC_MAX",
         "why": OC_FC_RECLASS_WHY % ("ML0165", 1.52),
         "provisional": False,
+        # Same reasoning as ML0203: 28826 rows of nonzero recorded v_sp, and the
+        # OC crossing is at log t=17.979s of a 38.6s log, so ~18s of Run precede
+        # the latch. OC_FC comes off the injected I_fc, untouched by commands.
+        "replay_commands": True,
         "checks": [{"kind": "fault_latched", "name": "oc_fc_latched",
                     "bit": FAULT_OC_FC, "require_stimulus": True},
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
@@ -514,8 +630,15 @@ REPLAY_SUITE = [
             "recorded run whose I_fc stays under 1.4 A would be needed to restore "
             "it (see docs/HIL_REPLAY_LOGS.md)."),
         "provisional": False,
+        # 11814 rows of nonzero recorded v_sp. TIGHTEST of the three OC entries:
+        # the crossing is at log t=2.335s, so the drive loop has ~2.3s of Run
+        # before the latch (~2300 samples at 1 kHz against the 50-sample
+        # drive_loop_stepped floor — still ~45x margin, but this is the entry to
+        # look at first if drive_loop_stepped ever starts failing here).
+        "replay_commands": True,
         "checks": [{"kind": "fault_latched", "name": "oc_fc_latched",
                     "bit": FAULT_OC_FC, "require_stimulus": True},
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
@@ -525,6 +648,8 @@ REPLAY_SUITE = [
         "why": "The balanced-share operating point of the first genuine closed-loop "
                "share dataset.",
         "provisional": False,
+        # RULE 2: 'T' share sweep — recorded v_sp is identically 0 (13125 rows).
+        "replay_commands": False,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
@@ -534,6 +659,8 @@ REPLAY_SUITE = [
         "classification": "share sweep at the FC rail (FC-only for 43–45 % of the run)",
         "why": "The share-rail extreme: one source carries the bus for a long stretch.",
         "provisional": False,
+        # RULE 2: 'T' share sweep — recorded v_sp is identically 0 (13122 rows).
+        "replay_commands": False,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
@@ -543,7 +670,11 @@ REPLAY_SUITE = [
         "classification": "first 'Y' combined profile on the Youla drive controller",
         "why": "Combined-profile representative from the fw v14 era.",
         "provisional": False,
+        # 'Y' class, both axes live (30464 nonzero v_sp rows, 19593 off-0.5
+        # share_sp rows).
+        "replay_commands": True,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
@@ -564,8 +695,16 @@ REPLAY_SUITE = [
                "saturation behaviour it exists to test. Check this number first if "
                "ML0151 ever starts failing.",
         "provisional": False,
+        # THE flagship command-replay entry: 44664 rows of nonzero recorded v_sp
+        # over 56.6s, containing the ~90 saturation entries/exits this entry
+        # exists for. Its returns_off_rail / no_rail_limit_cycle checks were the
+        # most misleading vacuous passes in the half — the H6 anti-windup
+        # regression asserted nothing at all while the command sat at 0 A. With
+        # commands replayed they judge the live general-Hanus behaviour.
+        "replay_commands": True,
         "checks": [
             {"kind": "no_fault", "name": "no_fault"},
+            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
             {"kind": "bounded_current", "name": "bounded_current"},
             {"kind": "returns_off_rail", "name": "returns_off_rail",
              "level_a": OFF_RAIL_LEVEL_A, "within_s": OFF_RAIL_WITHIN_S},
@@ -581,6 +720,10 @@ REPLAY_SUITE = [
         "why": "The NEGATIVE UV case: the recorded dip must NOT latch UV_BUS. Pairs "
                "with the legacy UV trio, which must.",
         "provisional": False,
+        # RULE 1 (fault-path purity) AND rule 2: this entry's verdict is a
+        # must-NOT-latch fault DECISION, and its 'T'-profile recording has v_sp
+        # identically 0 (12960 rows) anyway.
+        "replay_commands": False,
         "checks": [
             {"kind": "no_fault", "name": "no_fault"},
             {"kind": "fault_not_latched", "name": "uv_not_latched", "bit": FAULT_UV_BUS},
@@ -596,7 +739,12 @@ REPLAY_SUITE = [
                "RECORDED v_act, so this tests the CONTROLLER's reaction to that "
                "stimulus, NOT the estimator fix that actually removed the cycle.",
         "provisional": False,
+        # The canonical limit-cycle deviation, and the check that most needed a
+        # live command: no_rail_limit_cycle on a flat-zero series proves nothing.
+        # 2303 rows of nonzero recorded v_sp over a 4.8s log.
+        "replay_commands": True,
         "checks": [
+            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
             {"kind": "no_rail_limit_cycle", "name": "no_rail_limit_cycle",
              "max_alt_per_s": LIMIT_CYCLE_ALT_PER_S},
             {"kind": "bounded_current", "name": "bounded_current"},
@@ -610,7 +758,11 @@ REPLAY_SUITE = [
         "why": "A long frozen-velocity stimulus: the command must stay bounded and "
                "no fault may latch while the injected velocity is stale.",
         "provisional": False,
+        # "The command must stay bounded" is only an assertion if there IS a
+        # command: 4017 rows of nonzero recorded v_sp over a 6.5s log.
+        "replay_commands": True,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
                    {"kind": "bounded_current", "name": "bounded_current"},
                    {"kind": "returns_off_rail", "name": "returns_off_rail",
                     "level_a": OFF_RAIL_LEVEL_A, "within_s": OFF_RAIL_WITHIN_S}],
@@ -627,6 +779,14 @@ REPLAY_SUITE = [
                "the log's v_actual injected, the firmware commands ~0 A instead of "
                "bang-banging. The v_sp≠0 relay itself is NOT reproducible here.",
         "provisional": False,
+        # RULE 3 (the entry's own expectation must survive it): near_zero_current
+        # IS this entry's claim, and it is predicated on v_setpoint = 0. The
+        # recording carries 3845 rows of NONZERO v_sp, so replaying the commands
+        # would legitimately drive the motor and contradict the entry outright.
+        # The v_sp != 0 relay would then be reproducible — but that is a DIFFERENT
+        # entry with different checks, not this one. Left command-free deliberately;
+        # see docs/HIL_REPLAY_LOGS.md if a relay entry is ever added.
+        "replay_commands": False,
         "checks": [
             {"kind": "no_fault", "name": "no_fault"},
             {"kind": "near_zero_current", "name": "near_zero_current",
@@ -642,7 +802,14 @@ REPLAY_SUITE = [
                "command bounded. CAVEAT: the basin fix itself lives in the ESTIMATOR, "
                "which replay bypasses — it is NOT testable open-loop.",
         "provisional": False,
+        # The deviation claim here is "the firmware keeps its command bounded on a
+        # CORRUPTED velocity" — which needs a command to be meaningful. 5683 rows
+        # of nonzero recorded v_sp. The basin fix itself remains untestable
+        # open-loop; command replay does not change that, it just makes the
+        # bounded-command half real.
+        "replay_commands": True,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
@@ -652,7 +819,10 @@ REPLAY_SUITE = [
         "why": "Same class as ML0153 with the fw v15 rounding path; same caveat — "
                "the basin fix is in the estimator, which replay bypasses.",
         "provisional": False,
+        # Same reasoning as ML0153 (16345 rows of nonzero recorded v_sp).
+        "replay_commands": True,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
@@ -661,6 +831,12 @@ REPLAY_SUITE = [
         "classification": "reset re-seeded INTO the x2 basin (~15 ms recovery)",
         "why": "The reset-into-basin stimulus. Same open-loop caveat as ML0153/0164.",
         "provisional": False,
+        # RULE 2, and the reason this entry does NOT join its ML0153/ML0164
+        # siblings: TP0171 is a 'T' CURRENT-mode profile, so its recorded v_sp is
+        # identically 0 (13131 rows, measured 2026-08-30) even though the estimator
+        # stimulus it carries is the same class. Replaying its commands would
+        # command nothing.
+        "replay_commands": False,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
@@ -673,8 +849,13 @@ REPLAY_SUITE = [
                "modern firmware must produce a BOUNDED transient that comes back off "
                "the rail, and must not fault.",
         "provisional": False,
+        # "A BOUNDED transient that comes back off the rail" is the entry's whole
+        # claim and needs the loop running to mean anything. 'Y' class: 30723
+        # nonzero v_sp rows, 19606 rows with share_sp off 0.5.
+        "replay_commands": True,
         "checks": [
             {"kind": "no_fault", "name": "no_fault"},
+            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
             {"kind": "bounded_current", "name": "bounded_current"},
             {"kind": "returns_off_rail", "name": "returns_off_rail",
              "level_a": OFF_RAIL_LEVEL_A, "within_s": OFF_RAIL_WITHIN_S},
@@ -690,6 +871,9 @@ REPLAY_SUITE = [
                "mitigates the gap acts on the plant, which replay bypasses — the "
                "mitigation is not exercisable open-loop, only the fault decision is.",
         "provisional": False,
+        # RULE 1 (fault-path purity) AND rule 2: a must-NOT-latch fault decision,
+        # recorded by a 'T' profile whose v_sp is identically 0 (12961 rows).
+        "replay_commands": False,
         "checks": [
             {"kind": "no_fault", "name": "no_fault"},
             {"kind": "fault_not_latched", "name": "uv_not_latched", "bit": FAULT_UV_BUS},
@@ -712,6 +896,13 @@ REPLAY_SUITE = [
                + UV_PAIR_CLAMP_WHY % ("TP0010", 4.770, 4.797),
         "provisional": False,
         "i_fc_clamp_a": UV_PAIR_I_FC_CLAMP_A,
+        # RULE 1, and DELIBERATE for this pair specifically: the entry's whole
+        # verdict is a UV fault DECISION on an ALREADY-MODIFIED trajectory
+        # (i_fc_clamp_a). A replayed command stream is a second stimulus over that,
+        # and driving the motor could change what the board does around the
+        # collapse — turning a fault-latch regression into an unattributable
+        # result. Its recorded v_sp is identically 0 in any case (12921 rows).
+        "replay_commands": False,
         "checks": [{"kind": "fault_latched", "name": "uv_bus_latched",
                     "bit": FAULT_UV_BUS, "require_stimulus": True}],
     },
@@ -725,6 +916,9 @@ REPLAY_SUITE = [
                + UV_PAIR_CLAMP_WHY % ("TP0053", 3.929, 4.462),
         "provisional": False,
         "i_fc_clamp_a": UV_PAIR_I_FC_CLAMP_A,
+        # RULE 1, same reasoning as TP0010: clamped UV-latch stimulus stays PURE.
+        # Recorded v_sp is identically 0 (4585 rows).
+        "replay_commands": False,
         "checks": [{"kind": "fault_latched", "name": "uv_bus_latched",
                     "bit": FAULT_UV_BUS, "require_stimulus": True}],
     },
@@ -755,6 +949,12 @@ REPLAY_SUITE = [
             "qualifying UV stimulus (the suite already worded that honestly, but "
             "kept scoring it). TP0010 and TP0053 remain the UV pair."),
         "provisional": False,
+        # RULE 1 and RULE 2. Fault-path entry, and a 'W' CURRENT-mode recording:
+        # v_sp is identically 0 across all 14636 rows (measured 2026-08-30), so
+        # command replay would command nothing. Its OC crossing is also the
+        # tightest in the suite (last 40 ms of the log) — nothing that shifts the
+        # time base belongs anywhere near this entry.
+        "replay_commands": False,
         "checks": [{"kind": "fault_latched", "name": "oc_fc_latched",
                     "bit": FAULT_OC_FC, "require_stimulus": True},
                    {"kind": "bounded_current", "name": "bounded_current"}],
@@ -911,6 +1111,58 @@ class ReplayCsv:
         for _t, f in self.faults:
             post |= f
         return pre & ~post
+
+    def metrics(self, csv_path=None):
+        """Health metrics for results.json, from the SAME single parse.
+
+        A5 (campaign 20260830_214819): `_run_plan`'s replay branch used to store
+        `"metrics": {}`, so a replay run whose sidecar showed a latched 0x8100 /
+        0x8001 rendered in results.json and REPORT.md as `final fault_flags
+        0x0000 (none)` — the exact latched end-state that carries into the next
+        run, hidden.
+
+        Field names match run_hil_suite.analyze_scenario_csv() WHERE THE SEMANTICS
+        MATCH, so one consumer can read both halves.  Fields whose semantics do
+        NOT carry over are OMITTED rather than faked:
+          survive_to_t / fault_bits_before_survive / state_at_survive
+                              — scenario-only (FAULT_EXPECTATIONS['survive_to']).
+          substep_hz_min/mean — replay mode runs no electrical engine.
+          error               — set only on the load-failure path, by the caller.
+
+        `n_obs` counts rows carrying a fault_flags cell, matching the scenario
+        analyzer's definition (hil_plant_sim writes every observation column from
+        the same decoded frame, so it equals len(self.current) in practice).
+        `fault_first_t` is keyed by fault NAME and covers POST-GRACE first
+        sightings only, again matching the scenario analyzer; `first_fault_t()`
+        remains the whole-run view for the check details."""
+        seen = 0
+        for _t, f in self.faults_all:
+            seen |= f
+        post = 0
+        first_t = {}
+        for t, f in self.faults:
+            new = f & ~post
+            post |= f
+            b = 1
+            while new:
+                if new & 1:
+                    first_t.setdefault(_fault_names(b), t)
+                new >>= 1
+                b <<= 1
+        return {
+            "csv": csv_path,
+            "rows": self.n_rows,
+            "n_obs": len(self.faults_all),
+            "n_obs_post_grace": len(self.faults),
+            "final_fault_flags": self.faults_all[-1][1] if self.faults_all else None,
+            "fault_bits_seen": seen,
+            "fault_bits_post_grace": post,
+            "fault_first_t": first_t,
+            "last_obs_t": self.faults_all[-1][0] if self.faults_all else None,
+            "grace_s": self.grace_s,
+            "final_state": self.state[-1][1] if self.state else None,
+            "duration_s": self.duration_s,
+        }
 
     def reached_idle_t(self, deadline_s=BRINGUP_DEADLINE_S):
         """Sim time the board first reported mainState 1, or None within deadline."""
@@ -1238,10 +1490,76 @@ VACUOUS_TAG = (" **(vacuous — no commander in replay mode, so the command is "
                "drive on an uncommanded stimulus, and carries no evidence about "
                "this entry's own classification)**")
 
+# The same condition, stated at the FRONT of the detail rather than appended, for
+# the entries that could have replayed commands and did not.  Sharpened from the
+# trailing VACUOUS_TAG (2026-08-30) because a reader scanning check details sees
+# the first words, not the last: a motor-response check on a command-free entry
+# is not a weak pass, it is a check that was never exercised.
+#
+# `passed` deliberately STAYS True.  The checks[] schema is boolean and the
+# assertion the check actually made ("the firmware did not drive on an
+# uncommanded stimulus") is true and worth keeping; failing every command-free
+# entry would assert something nobody claimed.  The distinct result is the TAG
+# plus the n_checks_not_exercised count, not a red tick.
+NOT_EXERCISED_PREFIX = "NOT EXERCISED (no command replay)"
+NOT_EXERCISED_TAG = (
+    NOT_EXERCISED_PREFIX + ": this entry does not set `replay_commands`, so no "
+    "22-byte Pi command packet was sent, the board never left Idle and the motor "
+    "command is identically 0 A. The only thing asserted is that the firmware did "
+    "NOT drive on an uncommanded stimulus — nothing about the controller's "
+    "response to this log. Set `replay_commands: True` on the entry to exercise "
+    "it. Measured detail follows — ")
+
+# The check kinds whose verdict is read off `data.current`, i.e. the ones the
+# tag above applies to.  Named explicitly rather than inferred, so adding a
+# motor-response kind without deciding this question is a visible omission.
+MOTOR_RESPONSE_KINDS = frozenset({
+    "bounded_current", "no_sustained_rail", "no_rail_limit_cycle",
+    "returns_off_rail", "near_zero_current",
+})
+
+# ── drive_loop_stepped thresholds (suite policy, not firmware) ──────────────
+# "The loop actually stepped" on a --replay-commands entry.  0.05 A is an order
+# of magnitude above the CSV's %.4f print resolution and well under any
+# meaningful command, so it separates "commanded something" from "commanded
+# nothing"; 50 samples at the 1 kHz tick is 50 ms of it, long enough that a
+# single spurious sample cannot satisfy the check.
+DRIVE_STEPPED_MIN_A = 0.05
+DRIVE_STEPPED_MIN_SAMPLES = 50
+
 
 def _vacuous_suffix(data):
     """Item 5: tag a command-shape check whose series is identically zero."""
     return VACUOUS_TAG if data.command_is_identically_zero() else ""
+
+
+def check_drive_loop_stepped(data, spec):
+    """The commanded current shows real drive activity in the recorded window.
+
+    Only meaningful on a `replay_commands` entry: it is the assertion that the
+    command replay ACTUALLY REACHED the board and moved it out of Idle. A FAIL
+    here is a real failure (commands were sent and the loop never stepped), and it
+    is ordered before the motor-response checks so a reader sees the cause first
+    rather than N downstream checks passing on a flat zero."""
+    min_a = float(spec.get("min_abs_a", DRIVE_STEPPED_MIN_A))
+    min_n = int(spec.get("min_samples", DRIVE_STEPPED_MIN_SAMPLES))
+    series = data.current_recorded or data.current
+    if not series:
+        return False, ("no observation frames in the recorded window "
+                       "(t >= %.1fs) — the board never answered" % data.preamble_s)
+    n = sum(1 for _t, i in series if abs(i) >= min_a)
+    peak_t, peak = max(series, key=lambda tv: abs(tv[1]))
+    if n < min_n:
+        return False, (
+            f"the drive loop never stepped: only {n} of {len(series)} recorded-window "
+            f"samples have |I_cmd| >= {min_a:.2f} A (need >= {min_n}); peak "
+            f"{peak:+.4f} A at t={peak_t:.3f}s. Commands WERE replayed for this "
+            f"entry, so a flat command means they did not reach the board, the "
+            f"board never left Idle, or the recorded v_sp/share_sp are themselves "
+            f"identically zero")
+    return True, (f"drive loop stepped: {n} of {len(series)} recorded-window samples "
+                  f"have |I_cmd| >= {min_a:.2f} A (need >= {min_n}); peak "
+                  f"{peak:+.4f} A at t={peak_t:.3f}s")
 
 
 def check_bounded_current(data, spec):
@@ -1406,6 +1724,7 @@ CHECK_KINDS = {
     "no_rail_limit_cycle": check_no_rail_limit_cycle,
     "returns_off_rail": check_returns_off_rail,
     "near_zero_current": check_near_zero_current,
+    "drive_loop_stepped": check_drive_loop_stepped,
 }
 
 
@@ -1430,6 +1749,9 @@ def evaluate_replay_csv(entry, csv_path):
         # "the board never answered" numerically instead of substring-matching a
         # prose note from this module.  None until a CSV is actually parsed below.
         "n_obs": None,
+        # A5: health metrics for results.json, filled from the SAME parse below.
+        # Empty (not fabricated) until a CSV exists — see ReplayCsv.metrics().
+        "metrics": {},
     }
 
     fw = entry.get("fw_version")
@@ -1475,19 +1797,52 @@ def evaluate_replay_csv(entry, csv_path):
             f"the entry's `why` and docs/HIL_REPLAY_LOGS.md for the justification "
             f"(operator ruling (a)); no conclusion about FC current may be drawn "
             f"from this run.")
-    result["notes"].append(
-        "PURPOSE: this half is a BRING-UP + FAULT-DECISION regression harness. No "
-        "commander exists in replay mode, so the board never leaves Idle and the "
-        "commanded current is 0 A throughout; the current-shape checks assert only "
-        "that the firmware does NOT drive on an uncommanded stimulus.")
+    # PURPOSE is per-entry from 2026-08-30: an entry carrying `replay_commands`
+    # DOES reach State 2 and DOES step both loops, so the blanket "no commander
+    # exists in replay mode" sentence would be false for it.
+    cmds_replayed = bool(entry.get("replay_commands"))
+    # Set HERE, not with the check counters below: the bring-up gate can return
+    # early, and a consumer asking "did this entry replay commands?" must get an
+    # answer on that path too (the counters legitimately do not exist there —
+    # no entry checks ran).
+    result["replay_commands"] = cmds_replayed
+    if cmds_replayed:
+        result["notes"].append(
+            "PURPOSE: bring-up + fault-decision regression AND controller "
+            "reaction. This entry sets `replay_commands`, so the log's recorded "
+            "v_sp / share_sp ARE replayed as 22-byte Pi command packets at 50 Hz "
+            "(hil_plant_sim --replay-commands): the board goes Idle -> Run and the "
+            "drive and share loops step against the recorded stimulus. The "
+            "current-shape checks therefore judge the LIVE controller's reaction. "
+            "Still OPEN LOOP on the plant side — the injected v_actual does not "
+            "respond to the commands — so this is reaction, not tracking, and the "
+            "loop is EXPECTED to fight the recorded trajectory wherever the "
+            "recorded and flashed control laws differ.")
+        result["notes"].append(
+            "Idle -> Run zeroes v_setpoint and resets the drive controller "
+            "(doState1, .ino:5382-5410), so the first real setpoint arrives on the "
+            "next 50 Hz packet, <= 20 ms later. Once in Run the command stream is "
+            "LOAD-BEARING: the Pi watchdog (PI_TIMEOUT_MS 500, .ino:2915) latches "
+            "if it stops.")
+    else:
+        result["notes"].append(
+            "PURPOSE: this half is a BRING-UP + FAULT-DECISION regression harness. "
+            "This entry does NOT set `replay_commands`, so no commander exists, the "
+            "board never leaves Idle and the commanded current is 0 A throughout; "
+            "the current-shape checks assert only that the firmware does NOT drive "
+            "on an uncommanded stimulus, and are tagged NOT EXERCISED.")
 
     try:
         data = load_replay_csv(csv_path, preamble_s=entry_preamble_s(entry))
     except (OSError, ValueError) as exc:
         result["checks"].append({"name": "csv", "passed": False, "detail": str(exc)})
+        # A5: `error` is the one metrics field the scenario analyzer sets on a
+        # CSV it could not read; mirror it rather than leaving a bare {}.
+        result["metrics"] = {"csv": csv_path, "error": str(exc)}
         return result
 
     result["n_obs"] = data.n_obs
+    result["metrics"] = data.metrics(csv_path)
     if data.n_obs == 0:
         result["notes"].append(
             "No observation frames in the CSV — the board never answered. Is it "
@@ -1545,23 +1900,47 @@ def evaluate_replay_csv(entry, csv_path):
             except Exception as exc:                      # never let one check kill the run
                 passed, detail = False, f"check raised {type(exc).__name__}: {exc}"
         all_passed = all_passed and passed
+        # NOT-EXERCISED tagging: a motor-response check on an entry that did NOT
+        # replay commands, whose command series is measurably flat zero, is not a
+        # weak pass — it was never exercised. Stated at the FRONT of the detail
+        # (the trailing VACUOUS_TAG is what this replaced) and counted separately.
+        if (cmds_replayed is False
+                and spec.get("kind") in MOTOR_RESPONSE_KINDS
+                and data.command_is_identically_zero()):
+            detail = NOT_EXERCISED_TAG + detail.replace(VACUOUS_TAG, "")
         result["checks"].append({"name": name, "passed": passed, "detail": detail})
 
     # Item 5: substantive-vs-total counts, so a reader can see how much of a green
-    # entry is actually evidence.  A check is "vacuous" here only in the precise,
-    # measured sense above: its detail carries the tag.
+    # entry is actually evidence.  A check is "vacuous"/"not exercised" here only
+    # in the precise, measured sense above: its detail carries the tag.
+    #
+    # The two tags are DISJOINT by construction — NOT_EXERCISED_TAG is applied
+    # only after the VACUOUS_TAG has been stripped from the same detail — and both
+    # count as non-substantive, so `n_checks_vacuous` keeps its established
+    # meaning ("checks that carried no evidence") for run_hil_suite.py's
+    # key_metrics rendering while the new counter says how many of those were the
+    # sharper case.  Fields are additive; nothing was renamed.
     n_total = len(result["checks"])
-    n_vacuous = sum(1 for c in result["checks"] if VACUOUS_TAG in c["detail"])
+    n_not_exercised = sum(1 for c in result["checks"]
+                          if c["detail"].startswith(NOT_EXERCISED_PREFIX))
+    n_vacuous = sum(1 for c in result["checks"]
+                    if VACUOUS_TAG in c["detail"]) + n_not_exercised
     result["n_checks"] = n_total
     result["n_checks_vacuous"] = n_vacuous
+    result["n_checks_not_exercised"] = n_not_exercised
     result["n_checks_substantive"] = n_total - n_vacuous
-    if n_vacuous:
+    if n_not_exercised:
         result["notes"].append(
-            f"{n_vacuous} of {n_total} checks are VACUOUS on this run: replay mode "
-            f"builds no commander, so the board never leaves Idle and the motor "
-            f"command is identically 0 A. Those checks assert only that the firmware "
-            f"did not drive on an uncommanded stimulus. SUBSTANTIVE checks: "
-            f"{n_total - n_vacuous}.")
+            f"{n_not_exercised} of {n_total} checks were NOT EXERCISED: this entry "
+            f"does not set `replay_commands`, so no Pi command packet was sent, the "
+            f"board never left Idle and the motor command is identically 0 A. Those "
+            f"checks assert only that the firmware did not drive on an uncommanded "
+            f"stimulus.")
+    if n_vacuous - n_not_exercised:
+        result["notes"].append(
+            f"{n_vacuous - n_not_exercised} of {n_total} checks are VACUOUS on this "
+            f"run: the observed motor command is identically 0 A. SUBSTANTIVE "
+            f"checks: {n_total - n_vacuous}.")
     result["passed"] = all_passed and bool(entry.get("checks"))
     if not entry.get("checks"):
         result["checks"].append({"name": "checks", "passed": False,
@@ -1586,14 +1965,21 @@ def build_sim_argv(entry, csv_dir):
     csv_path = os.path.join(csv_dir, f"hil_replay_{entry['log']}.csv")
     argv = ["--replay", os.path.join(REPO_ROOT, entry["path"]),
             "--csv", csv_path, "--force"]
-    # Per-entry stimulus modifiers. Both are declared in the entry table and BOTH
-    # must be mirrored here, or a hand-run replay would silently differ from a
-    # suite-run one and the checks (which resolve the same fields) would be
-    # scoring a different stimulus than the one that was injected.
+    # Per-entry stimulus modifiers. ALL THREE (skip_preamble, i_fc_clamp_a,
+    # replay_commands) are declared in the entry table and ALL THREE must be
+    # mirrored here, or a hand-run replay would silently differ from a suite-run
+    # one and the checks (which resolve the same fields) would be scoring a
+    # different stimulus than the one that was injected.
     if entry.get("skip_preamble"):
         argv.append("--replay-no-preamble")
     if entry.get("i_fc_clamp_a") is not None:
         argv += ["--replay-i-fc-clamp", "%g" % float(entry["i_fc_clamp_a"])]
+    if entry.get("replay_commands"):
+        # Third mirrored modifier: without it the entry's drive_loop_stepped check
+        # would fail against a run that was never given commands, and its
+        # motor-response checks would be scoring a flat zero the entry did not
+        # expect.
+        argv.append("--replay-commands")
     return argv
 
 
@@ -1636,18 +2022,22 @@ def verify_suite_logs(repo_root=REPO_ROOT):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _print_suite():
-    print(f"{'log':8} {'fw':>4} {'blg':>3}  {'mode':11} checks")
-    print("-" * 78)
+    print(f"{'log':8} {'fw':>4} {'blg':>3}  {'mode':11} {'cmds':4} checks")
+    print("-" * 84)
     for e in REPLAY_SUITE:
         fw = "-" if e["fw_version"] is None else str(e["fw_version"])
         prov = " *" if e["provisional"] else ""
+        cmds = "yes" if e.get("replay_commands") else "no"
         checks = ",".join(c["name"] for c in e["checks"])
-        print(f"{e['log']:8} {fw:>4} {e['blg_version']:>3}  {e['mode']:11} {checks}{prov}")
-    print("-" * 78)
+        print(f"{e['log']:8} {fw:>4} {e['blg_version']:>3}  {e['mode']:11} "
+              f"{cmds:4} {checks}{prov}")
+    print("-" * 84)
+    n_cmds = sum(1 for e in REPLAY_SUITE if e.get("replay_commands"))
     print(f"{len(REPLAY_SUITE)} entries "
           f"({sum(1 for e in REPLAY_SUITE if e['mode'] == 'conformance')} conformance, "
           f"{sum(1 for e in REPLAY_SUITE if e['mode'] == 'deviation')} deviation); "
-          f"* = provisional")
+          f"* = provisional; cmds = replays the log's recorded v_sp/share_sp as Pi "
+          f"command packets ({n_cmds} of {len(REPLAY_SUITE)})")
 
 
 def main(argv=None):

@@ -648,6 +648,55 @@ def test_load_replay_field_mapping_matches_decoder_csv(tmp_path):
         assert sensors["ag105_status"] == hil.AG105_ST_DISCONNECT
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# --replay-commands: REPLAY_CMD_FIELD_MAP / cmd_v_sp / cmd_share_sp extraction
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_load_replay_cmd_field_mapping_matches_decoder_csv(tmp_path):
+    """cmd_v_sp/cmd_share_sp are resolved BY NAME from the decoder's own
+    v_sp/share_sp columns, same convention as REPLAY_FIELD_MAP, and every
+    record's sensors dict carries them regardless of --replay-commands (the
+    flag only decides whether the CALLER reads them)."""
+    path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+
+    sys.path.insert(0, HERE)
+    import decode_benchlog
+
+    with open(path, "rb") as fh:
+        data = fh.read()
+    result = decode_benchlog.decode_blg(data)
+    cols = result.csv_header.split(",")
+    idx = {name: i for i, name in enumerate(cols)}
+
+    records, _header, _warnings, _derive_v_rgn = hil.load_replay(path)
+    assert hil.REPLAY_CMD_FIELD_MAP == [("v_sp", "cmd_v_sp"), ("share_sp", "cmd_share_sp")]
+
+    for (_t, sensors), csv_row in zip(records, result.csv_rows):
+        cells = csv_row.split(",")
+        v_sp_cell = cells[idx["v_sp"]]
+        share_sp_cell = cells[idx["share_sp"]]
+        expected_v_sp = float(v_sp_cell) if v_sp_cell != "" else hil.REPLAY_CMD_DEFAULT["cmd_v_sp"]
+        expected_share_sp = float(share_sp_cell)  # v3 share_sp is always numeric
+        assert sensors["cmd_v_sp"] == pytest.approx(expected_v_sp, abs=1e-4)
+        assert sensors["cmd_share_sp"] == pytest.approx(expected_share_sp, abs=1e-4)
+
+
+def test_load_replay_cmd_v_sp_blank_becomes_zero(tmp_path):
+    """v1/v2 logs carry a velocity-invalid window (blank v_sp cell, same
+    convention as v_act) -- must default to REPLAY_CMD_DEFAULT['cmd_v_sp']
+    (0.0), never raise or propagate a blank string."""
+    path = _write_synthetic_blg(tmp_path, fw_version=1, header_v1=True)
+    records, _header, _warnings, _derive_v_rgn = hil.load_replay(path)
+    cmd_v_sps = [sensors["cmd_v_sp"] for _t, sensors in records]
+    assert any(v == hil.REPLAY_CMD_DEFAULT["cmd_v_sp"] for v in cmd_v_sps), \
+        "expected at least one blank/default cmd_v_sp sample in the synthetic v1 log"
+    assert all(isinstance(v, float) for v in cmd_v_sps)
+
+
+def test_load_replay_cmd_default_constants():
+    assert hil.REPLAY_CMD_DEFAULT == {"cmd_v_sp": 0.0, "cmd_share_sp": 0.5}
+
+
 def test_load_replay_blank_v_act_becomes_zero(tmp_path):
     """v1/v2 logs carry a velocity-invalid window (blank v_act cell); the
     replay must inject 0.0 m/s for those records, not raise or propagate a
@@ -747,6 +796,15 @@ def test_replay_preamble_sensors_v_rgn_follows_mot_pwr_closed():
     open_ = hil.replay_preamble_sensors(1.0, mot_pwr_closed=False)
     assert closed["V_rgn"] == pytest.approx(hil.REPLAY_PREAMBLE_V_BUS)
     assert open_["V_rgn"] == pytest.approx(0.0)
+
+
+def test_replay_preamble_sensors_carries_cmd_defaults():
+    """A preamble tick must never KeyError on sensors['cmd_v_sp']/
+    ['cmd_share_sp'] when --replay-commands is given -- the preamble sensors
+    dict carries the SAFE/standstill command defaults unconditionally."""
+    s = hil.replay_preamble_sensors(1.0, mot_pwr_closed=False)
+    assert s["cmd_v_sp"] == hil.REPLAY_CMD_DEFAULT["cmd_v_sp"] == 0.0
+    assert s["cmd_share_sp"] == hil.REPLAY_CMD_DEFAULT["cmd_share_sp"] == 0.5
 
 
 def test_replay_preamble_sensors_shape_matches_injection_frame_fields():
@@ -1008,6 +1066,63 @@ def test_picommander_no_timeline_never_sends():
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# 6b. --replay-commands: PiCommander(always_active=...) — the third
+#     activation mechanism
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_picommander_always_active_default_false_regression():
+    """Every EXISTING construction (positional/keyword, no always_active) must
+    behave byte-for-byte as before: no timeline, no policy -> active() False,
+    tick() never transmits, regardless of always_active being a new parameter."""
+    cmd = hil.PiCommander(None)
+    assert cmd.always_active is False
+    assert cmd.active() is False
+    assert cmd.tick(0.0) is None
+    assert cmd.tick(50.0) is None
+
+
+def test_picommander_always_active_true_with_no_timeline_or_policy_is_active():
+    cmd = hil.PiCommander(None, always_active=True)
+    assert cmd.active() is True
+    assert cmd.tick(0.0) is not None
+
+
+def test_picommander_always_active_true_transmits_state_written_externally():
+    """The --replay-commands pattern: caller writes commander.state directly
+    (no timeline entry, no policy) before each tick(); always_active is what
+    makes tick() honor that externally-driven state instead of returning None."""
+    cmd = hil.PiCommander(None, always_active=True)
+    cmd.state["v_setpoint"] = 3.25
+    cmd.state["power_share_setpoint"] = 0.75
+    cmd.state["mode_cmd"] = hil.MODE_HYBRID
+    pkt = cmd.tick(0.0)
+    assert pkt is not None
+    (v_sp, share_sp) = struct.unpack_from("<ff", pkt, 7)
+    assert v_sp == pytest.approx(3.25)
+    assert share_sp == pytest.approx(0.75)
+    assert pkt[19] == hil.MODE_HYBRID
+
+
+def test_picommander_always_active_50hz_cadence_matches_pi_cmd_hz():
+    """Cadence, held-field semantics and the packet format are UNCHANGED by
+    always_active -- only whether tick() ever fires at all."""
+    cmd = hil.PiCommander(None, always_active=True, rate_hz=50.0)
+    sent_times = []
+    for ms in range(0, 201):     # 1 kHz sim tick over 0.2 s, integer ms to
+        t = ms / 1000.0          # avoid float-accumulation drift in the loop
+        pkt = cmd.tick(t)
+        if pkt is not None:
+            sent_times.append(round(t, 3))
+    # 50 Hz over 0.2s -> a packet roughly every 20 ms (float-accumulation in
+    # `next_tx` can shift a due tick by one 1 kHz sample, so this checks the
+    # count and spacing rather than pinning exact multiples of 0.02).
+    assert len(sent_times) in (10, 11)
+    assert sent_times[0] == pytest.approx(0.0)
+    deltas = [b - a for a, b in zip(sent_times, sent_times[1:])]
+    assert all(0.019 <= d <= 0.021 for d in deltas)
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # 7. SCENARIOS registry
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -1034,6 +1149,33 @@ def test_scenarios_registry_required_keys():
 def test_scenarios_hifi_only_set():
     hifi_only = {name for name, meta in hil.SCENARIOS.items() if meta["electrical"] == "hifi"}
     assert hifi_only == {"handoff-sag", "bringup", "scp-inrush"}
+
+
+# 2026-08-30 duration trim (Feature D): a literal table pin so a silent revert
+# (e.g. a merge conflict resurrecting the old 30/40/60 s values) fails loudly
+# here instead of only showing up as a run_hil_suite timing/timeout surprise.
+# "drive" and "charge-regen" were deliberately NOT trimmed this round and are
+# pinned at their unchanged values for the same reason.
+EXPECTED_SCENARIO_DURATIONS_S = {
+    "steady": 10.0,
+    "step-load": 10.0,
+    "sag": 9.0,
+    "comm-loss": 12.0,
+    "drive": 30.0,
+    "charge-cruise": 15.0,
+    "charge-regen": 45.0,
+    "charge-fault": 25.0,
+    "soc-depletion": 120.0,
+    "ems-drive-cycle": 58.0,
+    "handoff-sag": 24.0,
+    "bringup": 8.0,
+    "scp-inrush": 6.0,
+}
+
+
+def test_scenarios_registry_duration_table_pin():
+    durations = {name: meta["duration_s"] for name, meta in hil.SCENARIOS.items()}
+    assert durations == pytest.approx(EXPECTED_SCENARIO_DURATIONS_S)
 
 
 def test_hifi_only_scenario_refused_under_electrical_simple():
@@ -1404,15 +1546,19 @@ REPLAY_CSV_HEADER_PIN = [
 ]
 
 
-def test_csv_schema_replay_mode_unchanged_with_replay_rec_last(tmp_path):
-    """Regression-pin the exact pre-existing replay CSV column order: replay
-    mode must NOT gain soc/elec columns (the plant integrator is bypassed, so
-    they would be meaningless — see the module's own comment at the writer)."""
+def test_csv_schema_replay_mode_appends_cmd_columns_after_replay_rec(tmp_path):
+    """Regression-pin the replay CSV column order: replay mode must NOT gain
+    soc/elec columns (the plant integrator is bypassed, so they would be
+    meaningless — see the module's own comment at the writer), and (2026-08-30,
+    --replay-commands) cmd_v_sp/cmd_share_sp are now appended UNCONDITIONALLY
+    after replay_rec — replay_rec itself keeps its established index, it is
+    simply no longer the LAST column."""
     blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
     header, _rows = _run_main_csv(
         tmp_path, ["--replay", blg_path, "--duration", "0.02"], name="replay.csv")
-    assert header == REPLAY_CSV_HEADER_PIN
-    assert header[-1] == "replay_rec"
+    assert header == REPLAY_CSV_HEADER_PIN + ["cmd_v_sp", "cmd_share_sp"]
+    assert header.index("replay_rec") == REPLAY_CSV_HEADER_PIN.index("replay_rec")
+    assert header[-2:] == ["cmd_v_sp", "cmd_share_sp"]
 
 
 def test_replay_preamble_rows_precede_recorded_trajectory_then_hand_over(tmp_path):
@@ -1560,6 +1706,177 @@ def test_replay_i_fc_clamp_meta_sidecar_none_when_unclamped(tmp_path):
     with open(hil.meta_path_for(csv_path)) as fh:
         meta = json.load(fh)
     assert meta["config"]["replay_i_fc_clamp_a"] is None
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 9d. --replay-commands
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_main_replay_commands_requires_replay():
+    with pytest.raises(SystemExit):
+        hil.main(["--scenario", "steady", "--replay-commands"])
+    with pytest.raises(SystemExit):
+        hil.main(["--replay-commands"])
+
+
+def test_replay_commands_csv_header_cmd_columns_after_replay_rec(tmp_path):
+    """cmd_v_sp/cmd_share_sp are APPENDED after replay_rec, and replay_rec's
+    own index is unchanged by the flag being present."""
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    header, _rows = _run_main_csv(
+        tmp_path, ["--replay", blg_path, "--replay-commands", "--duration", "0.02"],
+        name="replay_cmds.csv")
+    assert header == REPLAY_CSV_HEADER_PIN + ["cmd_v_sp", "cmd_share_sp"]
+    assert header.index("replay_rec") == REPLAY_CSV_HEADER_PIN.index("replay_rec")
+
+
+def test_replay_plain_csv_header_unchanged_cmd_columns_blank(tmp_path):
+    """Plain --replay (no --replay-commands): the header still gains the two
+    columns (unconditional append, same schema either way), but every row's
+    cells are blank -- a number there would be a fabrication (no commander
+    exists to have sent it)."""
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    header, rows = _run_main_csv(
+        tmp_path, ["--replay", blg_path, "--duration", "0.02"], name="replay_plain.csv")
+    assert header == REPLAY_CSV_HEADER_PIN + ["cmd_v_sp", "cmd_share_sp"]
+    v_sp_idx = header.index("cmd_v_sp")
+    share_sp_idx = header.index("cmd_share_sp")
+    assert rows, "sanity"
+    for r in rows:
+        assert r[v_sp_idx] == ""
+        assert r[share_sp_idx] == ""
+
+
+def test_replay_commands_csv_cells_populated_when_flag_given(tmp_path):
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    header, rows = _run_main_csv(
+        tmp_path, ["--replay", blg_path, "--replay-commands", "--duration", "0.05"],
+        name="replay_cmds_populated.csv")
+    v_sp_idx = header.index("cmd_v_sp")
+    share_sp_idx = header.index("cmd_share_sp")
+    assert rows, "sanity"
+    for r in rows:
+        # populated: parses as a float, never blank
+        float(r[v_sp_idx])
+        float(r[share_sp_idx])
+
+
+def test_replay_commands_preamble_rows_are_mode_safe_standstill(tmp_path, capturing_socket):
+    """During the synthetic bring-up preamble (t < replay_preamble_s), the
+    commander must send MODE_SAFE with v_setpoint=0.0/power_share_setpoint=0.5,
+    regardless of what the log's own first record contains; after the
+    preamble it switches to MODE_HYBRID and the record's own values."""
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58997", "--bind-port", "0",
+                   "--rate", "500", "--replay", blg_path, "--replay-commands",
+                   "--duration", str(hil.REPLAY_PREAMBLE_S + 0.5), "--no-csv"])
+    assert rc == 0
+    sock = capturing_socket["sock"]
+    cmd_packets = [d for d, _addr in sock.sent
+                   if len(d) == hil.PI_CMD_SIZE and d[0] == hil.SYNC_BYTE_RX]
+    assert cmd_packets, "expected at least one 22-byte Pi command packet"
+    saw_preamble = False
+    saw_post = False
+    for pkt in cmd_packets:
+        (ts_ms, _ctr, v_sp, share_sp, _cg, mode, _drp) = struct.unpack_from(
+            "<IHfffBB", pkt, 1)
+        t = ts_ms / 1000.0
+        if t < hil.REPLAY_PREAMBLE_S:
+            saw_preamble = True
+            assert mode == hil.MODE_SAFE
+            assert v_sp == pytest.approx(0.0)
+            assert share_sp == pytest.approx(0.5)
+        else:
+            saw_post = True
+            assert mode == hil.MODE_HYBRID
+    assert saw_preamble, "sanity: expected at least one preamble-window packet"
+    assert saw_post, "sanity: expected at least one post-preamble packet"
+
+
+def test_replay_no_preamble_commands_mode_hybrid_from_t0(tmp_path, capturing_socket):
+    """--replay-no-preamble: MODE_HYBRID from t=0 -- no MODE_SAFE window at
+    all, since there is no synthetic preamble to stand still through."""
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58996", "--bind-port", "0",
+                   "--rate", "500", "--replay", blg_path, "--replay-commands",
+                   "--replay-no-preamble", "--duration", "0.1", "--no-csv"])
+    assert rc == 0
+    sock = capturing_socket["sock"]
+    cmd_packets = [d for d, _addr in sock.sent
+                   if len(d) == hil.PI_CMD_SIZE and d[0] == hil.SYNC_BYTE_RX]
+    assert cmd_packets, "expected at least one 22-byte Pi command packet"
+    for pkt in cmd_packets:
+        assert pkt[19] == hil.MODE_HYBRID
+
+
+def test_replay_plain_no_command_packets_sent(tmp_path, capturing_socket):
+    """Plain --replay (no --replay-commands): no commander is constructed at
+    all, so NO 22-byte Pi command packet is ever placed on the wire -- only
+    40-byte injection frames."""
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58995", "--bind-port", "0",
+                   "--rate", "500", "--replay", blg_path, "--duration", "0.05",
+                   "--no-csv"])
+    assert rc == 0
+    sock = capturing_socket["sock"]
+    assert sock.sent, "sanity: injection frames must have been sent"
+    cmd_packets = [d for d, _addr in sock.sent
+                   if len(d) == hil.PI_CMD_SIZE and d[0] == hil.SYNC_BYTE_RX]
+    assert cmd_packets == [], "plain replay must construct no commander at all"
+
+
+def test_replay_commands_meta_sidecar_records_true(tmp_path):
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    csv_path = str(tmp_path / "cmds.csv")
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58994", "--bind-port", "0",
+                   "--rate", "200", "--replay", blg_path, "--replay-commands",
+                   "--duration", "0.02", "--csv", csv_path])
+    assert rc == 0
+    with open(hil.meta_path_for(csv_path)) as fh:
+        meta = json.load(fh)
+    assert meta["config"]["replay_commands"] is True
+    assert meta["replay_source"]["replay_commands"] is True
+
+
+def test_replay_plain_meta_sidecar_records_false(tmp_path):
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    csv_path = str(tmp_path / "plain.csv")
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58993", "--bind-port", "0",
+                   "--rate", "200", "--replay", blg_path,
+                   "--duration", "0.02", "--csv", csv_path])
+    assert rc == 0
+    with open(hil.meta_path_for(csv_path)) as fh:
+        meta = json.load(fh)
+    assert meta["config"]["replay_commands"] is False
+    assert meta["replay_source"]["replay_commands"] is False
+
+
+def test_replay_commands_zoh_aligned_with_injection_via_speed(tmp_path):
+    """At --replay-speed 2.0, the CSV's `replay_rec` for a post-preamble row
+    is the exact same ReplaySource record index that produced that row's
+    injection frame -- proving the command axis is zero-order held on exactly
+    the same time axis, so --replay-speed alignment needs no separate pacing
+    (module docstring/comment claim, verified by construction here)."""
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    records, _header, _warnings, _derive_v_rgn = hil.load_replay(blg_path)
+    header, rows = _run_main_csv(
+        tmp_path, ["--replay", blg_path, "--replay-commands",
+                   "--replay-speed", "2.0", "--rate", "500",
+                   "--duration", str(hil.REPLAY_PREAMBLE_S + 0.3)],
+        name="replay_speed2.csv")
+    t_idx = header.index("t")
+    rec_idx_col = header.index("replay_rec")
+    v_sp_idx = header.index("cmd_v_sp")
+
+    post_preamble = [r for r in rows if float(r[t_idx]) >= hil.REPLAY_PREAMBLE_S]
+    assert post_preamble, "sanity: the run must reach past the preamble"
+    checked = 0
+    for r in post_preamble:
+        rec_idx = int(r[rec_idx_col])
+        expected_v_sp = records[rec_idx][1]["cmd_v_sp"]
+        assert float(r[v_sp_idx]) == pytest.approx(expected_v_sp, abs=1e-3)
+        checked += 1
+    assert checked > 0
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -2219,7 +2536,7 @@ def test_ems_dashboard_snapshot_reflects_ems_values(tmp_path, capturing_dashboar
 def test_ems_drive_cycle_in_scenarios_with_electrical_and_duration():
     meta = hil.SCENARIOS["ems-drive-cycle"]
     assert meta["electrical"] in ("simple", "hifi", "any")
-    assert meta["duration_s"] == pytest.approx(60.0)
+    assert meta["duration_s"] == pytest.approx(58.0)  # trimmed from 60.0, 2026-08-30
     assert meta.get("ems") == "hold-5050"
     assert not meta.get("pi_timeline")
 

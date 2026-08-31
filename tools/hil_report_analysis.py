@@ -389,10 +389,15 @@ def move_run_files(run, report_dir):
 def load_hil_csv(csv_path):
     """Parse an HIL sim CSV into {column: float64 array} plus t_s.
 
-    Columns are resolved BY NAME (a simple-electrical scenario CSV lacks
-    soc/elec_*; a replay CSV lacks soc/cmd_* and adds replay_rec), blank cells
-    become NaN, and `ag105_status` is parsed from its 0x-hex text. `t_s` is a
-    copy of `t` -- the simulator already writes seconds from run start.
+    Columns are resolved BY NAME (a simple-electrical scenario CSV lacks elec_*;
+    a replay CSV lacks soc and adds replay_rec), blank cells become NaN, and
+    `ag105_status` is parsed from its 0x-hex text. `t_s` is a copy of `t` -- the
+    simulator already writes seconds from run start.
+
+    NOTE (2026-08-30): a replay CSV DOES carry cmd_v_sp/cmd_share_sp now -- they
+    were appended unconditionally to the replay schema when --replay-commands
+    landed -- but they are blank (all-NaN) unless that flag was passed. See
+    adapt_to_benchlog(), which drops an all-NaN cmd_* column rather than emit one.
     """
     csv_path = Path(csv_path)
     with open(csv_path, "r", newline="") as f:
@@ -465,10 +470,15 @@ def adapt_to_benchlog(hil):
         out["gFC"] = _mdac_column(hil["mdac_fc"])
     if "mdac_bt" in hil:
         out["gBT"] = _mdac_column(hil["mdac_bt"])
-    if "cmd_v_sp" in hil:
-        out["v_sp"] = hil["cmd_v_sp"].copy()
-    if "cmd_share_sp" in hil:
-        out["share_sp"] = hil["cmd_share_sp"].copy()
+    # L4: a replay CSV now carries cmd_v_sp/cmd_share_sp too, but they are BLANK
+    # (-> all-NaN) on a plain --replay, where no commander exists. Emitting an
+    # all-NaN column would replace the clean "column absent -> figure skipped"
+    # path with a figure drawn on nothing, so drop it instead. A --replay-commands
+    # run, and every simulated run with a commander, has real values and is
+    # unaffected.
+    for _src, _dst in (("cmd_v_sp", "v_sp"), ("cmd_share_sp", "share_sp")):
+        if _src in hil and not np.all(np.isnan(hil[_src])):
+            out[_dst] = hil[_src].copy()
 
     if "I_fc" in hil and "I_batt" in hil:
         out["share_act"] = share_actual(hil["I_fc"], hil["I_batt"])

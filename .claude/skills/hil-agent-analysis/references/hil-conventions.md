@@ -78,8 +78,25 @@ hash-different does not strictly imply model-different; check the commit.
   not_before_s / survive_to / events_require / signals_require, each entry with a source
   citation. Replay entries carry declarative checks in REPLAY_SUITE; `docs/HIL_REPLAY_LOGS.md`
   is the maintained ledger.
-- Replay-half purpose: bring-up + fault-decision regression. `current ≡ 0` (no commander,
-  no State 2) — current-shape checks are vacuous and tagged "(vacuous — no commander)".
+- Replay-half purpose is TWO CLASSES since 2026-08-30 — check which one a run is before
+  reading its current-shape checks:
+  - **Opt-in (`replay_commands`)**: the log's own recorded `v_sp`/`share_sp` are replayed
+    as 22-byte Pi command packets at 50 Hz (`--replay-commands`), so the board DOES reach
+    State 2 and both loops step. Its current-shape checks judge the live controller's
+    reaction, and a `drive_loop_stepped` check asserts the loop actually moved. 14 of 26
+    entries.
+  - **Non-opt-in**: no commander is constructed, `current ≡ 0`, no State 2. Current-shape
+    checks assert only "the firmware did not drive on an uncommanded stimulus".
+  **Discriminators, in order of reliability:** the per-run `replay_commands` boolean in
+  `results.json`; `"(commands replayed)"` in that run's `key_metrics`; and a check detail
+  beginning `NOT EXERCISED (no command replay)` (the sharpened form of the older trailing
+  "(vacuous — no commander)" tag, which now survives only for an opt-in entry whose command
+  came back flat). `key_metrics`' non-evidence reason is three-way: "no command replay" /
+  "commands replayed, loop never stepped" / "no commander".
+  ⚠️ Command replay does NOT close the loop — the injected `v_actual` never responds to what
+  the firmware commands. An opt-in run is a REACTION test, and the drive loop is EXPECTED to
+  fight the recorded trajectory where the recorded and flashed laws differ. Do not report
+  that divergence as a board finding.
 
 ## Known model-fidelity boundaries (do not report as board findings)
 

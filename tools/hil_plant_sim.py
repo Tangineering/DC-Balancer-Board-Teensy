@@ -861,6 +861,25 @@ REPLAY_FIELD_MAP = [
     ("v_act",  "v_actual"),
 ]
 
+# ── Replayed COMMANDS (--replay-commands) ───────────────────────────────────
+# The same decoder CSV columns, but these do NOT go into the injection frame:
+# they are carried alongside the sensors and, when --replay-commands is given,
+# drive the 22-byte Pi command packet so the firmware's drive/share loops
+# actually STEP against the recorded stimulus instead of sitting in Idle.
+# `v_sp` and `share_sp` exist in EVERY BLG format v1-v7 (decode_benchlog.py
+# CSV_FIELDS*), and like REPLAY_FIELD_MAP they are resolved by NAME at runtime.
+# The keys land in the same per-record sensors dict; the injection-frame packer
+# reads its fields explicitly, so these extra keys are inert without the flag.
+REPLAY_CMD_FIELD_MAP = [
+    ("v_sp",     "cmd_v_sp"),
+    ("share_sp", "cmd_share_sp"),
+]
+# Values used when the source column is absent or blank.  `v_sp` cells are BLANK
+# when the record's velocity-valid flag (bit1) is clear — the same convention the
+# sensor loop uses for v_act — so 0.0 m/s is the honest command.  `share_sp` is
+# always numeric in every format, but 0.5 (balanced) is the neutral fallback.
+REPLAY_CMD_DEFAULT = {"cmd_v_sp": 0.0, "cmd_share_sp": 0.5}
+
 # The BLG record carries NO charge-current and NO Ag105 status field in any
 # format version v1-v7 (see decode_benchlog's record tables), so these two
 # injection-frame fields are replayed as zeros: I_charge = 0.0 A and
@@ -955,6 +974,11 @@ def replay_preamble_sensors(t, mot_pwr_closed):
         "v_actual": 0.0,
         "I_charge": REPLAY_I_CHARGE,
         "ag105_status": REPLAY_AG105_STATUS,
+        # --replay-commands: the preamble carries the SAFE/standstill command, so
+        # a preamble tick can never KeyError on the commander update below.  The
+        # values are only read when --replay-commands is given.
+        "cmd_v_sp": REPLAY_CMD_DEFAULT["cmd_v_sp"],
+        "cmd_share_sp": REPLAY_CMD_DEFAULT["cmd_share_sp"],
     }
 
 # t_us in a BLG is micros() at sample time and wraps every ~71.58 min; the
@@ -1029,6 +1053,15 @@ def load_replay(path):
                 sensors[dst] = absent_default.get(dst, 0.0)
         sensors["I_charge"] = REPLAY_I_CHARGE
         sensors["ag105_status"] = REPLAY_AG105_STATUS
+        # Recorded COMMANDS, carried alongside the sensors (see
+        # REPLAY_CMD_FIELD_MAP).  Extra keys are inert unless --replay-commands
+        # is given: pack_inject() reads its eight fields by name.
+        for src, dst in REPLAY_CMD_FIELD_MAP:
+            cell = cells[idx[src]] if src in idx else ""
+            try:
+                sensors[dst] = float(cell) if cell != "" else REPLAY_CMD_DEFAULT[dst]
+            except ValueError:
+                sensors[dst] = REPLAY_CMD_DEFAULT[dst]
         records.append((t_us_accum / 1e6, sensors))
 
     if not records:
@@ -1152,7 +1185,8 @@ class PiCommander:
 
     PI_CMD_HZ = 50.0
 
-    def __init__(self, timeline, rate_hz=PI_CMD_HZ, policy=None, policy_name=None):
+    def __init__(self, timeline, rate_hz=PI_CMD_HZ, policy=None, policy_name=None,
+                 always_active=False):
         self.timeline = sorted(timeline or [], key=lambda e: e[0])
         self.period = 1.0 / rate_hz
         self.next_tx = 0.0
@@ -1173,10 +1207,22 @@ class PiCommander:
         self.policy_name = policy_name
         self.policy_calls = 0
         self.last_fb = None
+        # ── --replay-commands: externally-driven state ───────────────────────
+        # A third command source exists in replay mode: neither a timeline nor a
+        # policy, but the RECORDED v_sp/share_sp of the log being replayed, which
+        # the caller writes straight into `self.state` before each tick.  Such a
+        # commander has an EMPTY timeline and NO policy, so active() would be
+        # False and tick() would never transmit.  `always_active` is the explicit
+        # opt-in for that case; it changes nothing else (cadence, packet, counters
+        # and held-field semantics are identical) and defaults False, so every
+        # existing construction behaves byte-for-byte as before.
+        self.always_active = bool(always_active)
 
     def active(self):
-        """True if this commander will ever transmit (timeline OR EMS policy)."""
-        return bool(self.timeline) or self.policy is not None
+        """True if this commander will ever transmit (timeline, EMS policy, or an
+        externally-driven state — see `always_active`)."""
+        return (self.always_active or bool(self.timeline)
+                or self.policy is not None)
 
     def tick(self, t, fb_factory=None):
         """Return a packet to send at time t, or None.
@@ -1324,9 +1370,10 @@ EMS_RUN_ENTRY_S = 3.0
 # F14(b): the time ems_hold_5050 hands the firmware back MODE_SAFE, closing the
 # drive cycle out (Run -> Finish -> Idle) instead of ending the run parked in
 # State 2. Chosen against ems-drive-cycle's own ems_v_profile, which reaches
-# standstill (v_setpoint 0) at t=52.0 and holds it through the 60 s duration —
-# 55.0 gives 3 s of standstill margin before commanding MODE_SAFE, and still
-# leaves 5 s inside the run for Finish -> Idle to actually complete.
+# standstill (v_setpoint 0) at t=52.0 and holds it (piecewise() clamps past the
+# profile's last point) — 55.0 gives 3 s of standstill margin before commanding
+# MODE_SAFE, and still leaves 3 s inside the 58 s duration (trimmed from 60 s,
+# 2026-08-30) for Finish -> Idle to actually complete.
 EMS_RUN_EXIT_S = 55.0
 
 
@@ -1480,22 +1527,38 @@ EMS_NAMES = list(EMS_STRATEGIES)
 SCENARIOS = {
     "steady": {
         "description": "fixed aux load; the quiescent baseline (H1)",
-        "electrical": "any", "duration_s": 30.0,
+        # DURATION 30 -> 10 (2026-08-30 trim): no stimulus event at all. Bring-up
+        # completes ~0.6 s and WARM_RESET_GRACE_S is 2.0 s, so 10 s leaves ~8 s of
+        # post-grace steady baseline for the statistics this scenario exists for.
+        "electrical": "any", "duration_s": 10.0,
     },
     "step-load": {
         "description": "+1.2 A aux load step at t = 5 s — a bus disturbance the "
                        "share loop must reject",
-        "electrical": "any", "duration_s": 30.0,
+        # DURATION 30 -> 10 (2026-08-30 trim): last event t=5.0 (the aux step); the
+        # share loop's rejection transient is ~1 s, so 10 s is last event + ~4 s.
+        # Deliberately looser than the ~3 s rule: the post-step SETTLED window is
+        # itself the observable here, not just the transient.
+        "electrical": "any", "duration_s": 10.0,
     },
     "sag": {
         "description": "-5 V bus disturbance for 1 s at t = 5 s, crossing "
                        "LIMIT_V_BUS_MIN (12.0 V) — the real UV path (H2)",
-        "electrical": "any", "duration_s": 30.0,
+        # DURATION 30 -> 9 (2026-08-30 trim): last event t=6.0 (end of the 1 s dip);
+        # the UV dwell decision lands +20 ms after the crossing at t~5.02, and the
+        # latch then persists. 9 s = last event + 3 s of latched observation, all
+        # post-grace (not_before_s 5.0 > WARM_RESET_GRACE_S 2.0).
+        "electrical": "any", "duration_s": 9.0,
     },
     "comm-loss": {
         "description": "stops transmitting for 2 s at t = 5 s — hold-then-zero, "
                        "then the fw v23+ run-boundary warm recovery (H3)",
-        "electrical": "any", "duration_s": 30.0,
+        # DURATION 30 -> 12 (2026-08-30 trim): last event is the fw v23 warm recovery,
+        # complete ~7.6 s (gap ends 7.0 + HIL_RECOVER_DEBOUNCE_MS 0.5 + ~0.12 s of
+        # staged bring-up). 12 s = last event + ~4.4 s, which keeps the mid-run
+        # warm-reset tripwire (warm_resets_expected 1, transition at ~7.5 s) and the
+        # post-grace fault union (2.0-12.0 s, containing the 5.251 s latch) intact.
+        "electrical": "any", "duration_s": 12.0,
         # This scenario's whole point after the gap is that the board RECOVERS:
         # the 2 s silence satisfies fw v23's HIL_RUN_BOUNDARY_MS = 1000 ms, so
         # exactly one mainState 99 -> 0 warm reset is EXPECTED mid-run.  Every
@@ -1521,7 +1584,10 @@ SCENARIOS = {
     "charge-cruise": {
         "description": "Run state, moderate cruise, charge_goal > 0: FC_CHARGE opens "
                        "on intent, the Ag105 settles to Charging, MPPT released",
-        "electrical": "any", "duration_s": 40.0,
+        # DURATION 40 -> 15 (2026-08-30 trim): last event is the REQUIRED OC_FC latch,
+        # measured t=8.7221 s off the charge_goal step at t=8.0. 15 s = last event +
+        # ~6 s. not_before_s 8.0 and survive_to.t 8.0 are both well inside it.
+        "electrical": "any", "duration_s": 15.0,
         "pi_timeline": [
             (0.5,  {"mode_cmd": MODE_SAFE, "charge_goal": 0.0}),
             (3.0,  {"mode_cmd": MODE_HYBRID}),            # Idle -> Run (.ino:4858)
@@ -1601,7 +1667,10 @@ SCENARIOS = {
     "charge-fault": {
         "description": "charging established, then the charger input rail collapses "
                        "— exercises the GENSTAT decode / charger-loss path",
-        "electrical": "any", "duration_s": 40.0,
+        # DURATION 40 -> 25 (2026-08-30 trim): last event t=20.0 (the charger input
+        # collapse); the GENSTAT / chargerHasPower() reaction is ~1 s. 25 s = last
+        # event + 5 s. survive_to.t 20.0 and the signals window (8, 20) both fit.
+        "electrical": "any", "duration_s": 25.0,
         # De-rated charge ceiling so the run SURVIVES to its own t = 20 s stimulus.
         # HIL_FINDINGS "charge-fault": the run latched OC_FC at t = 5.758 s — 14.25 s
         # BEFORE the scripted charger-input collapse — so the GENSTAT/charger-loss
@@ -1639,16 +1708,23 @@ SCENARIOS = {
     "soc-depletion": {
         "description": "sustained battery-heavy load: V_batt walks DOWN the OCV "
                        "curve toward LIMIT_V_BATT_MIN — the honest UV_BATT path",
+        # 120 s is the STANDALONE default and does NOT reach the UV floor from the
+        # default --soc0 0.7. run_hil_suite.py overrides both: --soc0 0.20 and
+        # --duration 400 (re-derived 2026-08-30 — the pack-side coulomb current is
+        # ~6.19 A, not the 2.2 A bus-side load, and the UV_BATT latch forecloses
+        # the run at soc ~= 0.113). Run it standalone with those two flags to
+        # reproduce a suite run.
         "electrical": "any", "duration_s": 120.0,
         "pi_timeline": [
             (0.5,  {"mode_cmd": MODE_SAFE}),
             (3.0,  {"mode_cmd": MODE_HYBRID}),
             # STAGGERED from the aux step (HIL_FINDINGS "soc-depletion"): the share
-            # rail and the scenario's own +3.0 A load step were authored
-            # independently and both landed on t = 5.0.  The new ~3.15 A draw split
+            # rail and the scenario's own load step (then +3.0 A, now
+            # SOC_ENDURANCE_LOAD_A) were authored independently and both landed on
+            # t = 5.0.  The new ~3.15 A draw split
             # EVENLY across both boosts for one 1 ms tick before the droop could
             # reapportion, and 1.4705 A — 5 mA over LIMIT_I_FC_MAX — latched OC_FC
-            # on a single sample.  The board then sat dark for the remaining 645 s
+            # on a single sample.  The board then sat dark for the rest of the run
             # and the endurance objective (V_batt walking down the OCV curve) was
             # never reached.  The share rail now settles first; the load ramps in
             # from t = 10.0 (see apply_scenario).
@@ -1657,12 +1733,18 @@ SCENARIOS = {
     },
     # ── Mode A: emulated-EMS scenarios ─────────────────────────────────────────
     "ems-drive-cycle": {
-        "description": "60 s drive cycle (accelerate / cruise / decelerate / stop, "
+        "description": "58 s drive cycle (accelerate / cruise / decelerate / stop, "
                        "then Run -> Finish -> Idle via ems_hold_5050's "
                        "EMS_RUN_EXIT_S) commanded by the emulated Pi EMS layer "
                        "(--ems, default hold-5050) instead of a scripted "
                        "pi_timeline",
-        "electrical": "any", "duration_s": 60.0,
+        # DURATION 60 -> 58 (2026-08-30 trim): last event is EMS_RUN_EXIT_S = 55.0,
+        # where hold-5050 commands MODE_SAFE and the board goes Run -> Finish ->
+        # Idle within a tick. 58 s = last event + 3 s. ORDERING VERIFIED:
+        # ems_v_profile reaches standstill at t=52.0 < EMS_RUN_EXIT_S 55.0 < 58.0,
+        # and piecewise() clamps past its last point, so dropping the profile's
+        # trailing (60.0, 0.0) sample from the run changes no commanded value.
+        "electrical": "any", "duration_s": 58.0,
         # NOTE: deliberately NO pi_timeline. The commands come from the EMS policy;
         # a timeline here would be silently replaced by --ems (main() prints a
         # notice when that happens) and would only confuse the provenance.
@@ -1750,7 +1832,11 @@ SCENARIOS = {
                        "reactive standby pickup is NOT reachable from a "
                        "setpoint-latched cut (the switch is EN-low) — see the "
                        "scenario comment",
-        "electrical": "hifi", "duration_s": 40.0,
+        # DURATION 40 -> 24 (2026-08-30 trim): last event t=20.0 (HANDOFF_STEP_A); the
+        # share-cut latch and the UV dwell decision both resolve within ~50 ms.
+        # 24 s = last event + 4 s of single-source observation. survive_to.t 20.0
+        # and the fc_bus_open signals window (8, 20) are unaffected.
+        "electrical": "hifi", "duration_s": 24.0,
         # ⚠️ THE 2 s GAP BETWEEN t = 4.0 AND t = 6.0 IS LOAD-BEARING (measured,
         # campaign 20260830_203006 — it was undocumented and nearly lost).  The
         # t = 4.0 v_setpoint step rails the drive controller, and that transient
@@ -1774,24 +1860,35 @@ SCENARIOS = {
     "bringup": {
         "description": "from dark: the firmware's staged bring-up (P0-P3) against the "
                        "real RT1987 t_D(ON) + soft-start delays",
-        "electrical": "hifi", "duration_s": 30.0,
+        # DURATION 30 -> 8 (2026-08-30 trim): last event is the end of the staged
+        # bring-up, ~2 s under fw v22+ HIL auto bring-up. 8 s = last event + ~6 s,
+        # of which 6 s is post-grace. This scenario carries no FAULT_EXPECTATIONS
+        # entry (expected fault-free) and therefore no events_require to land.
+        "electrical": "hifi", "duration_s": 8.0,
     },
     "scp-inrush": {
         "description": "RT1987 soft-start foldback + SCP cut: MOT_PWR closes during "
                        "bring-up P3 into a 5.0 A V-MOT load on the high end of the "
                        "VESC input envelope (0.9 mF) plus the 470 uF local bulk",
-        "electrical": "hifi", "duration_s": 30.0,
+        # DURATION 30 -> 6 (2026-08-30 trim): last event is the scp_cut at t=0.600 and
+        # the State-99 teardown right behind it. The 64 ms foldback retry is
+        # unreachable with firmware attached (the teardown opens MOT_PWR 54 ms
+        # before the re-arm), which is exactly why events_require pins count == 1 —
+        # so no later cycle is being cut off here. 6 s = last event + ~5 s, leaving
+        # 4 s post-grace for the latch to be observed (the cut itself is PRE-grace,
+        # but the event sidecar is not grace-filtered and State 99 does not clear).
+        "electrical": "hifi", "duration_s": 6.0,
         "vesc_cap_f": 0.9e-3,
     },
 }
 
 SCENARIO_NAMES = list(SCENARIOS)
 
-# `soc-depletion`: seconds over which the 3.0 A endurance load ramps in from
-# t = 10.0.  3 s is ~150 share-loop ticks (SHARE_CTRL_PERIOD_US 20000 = 50 Hz)
-# — slow enough that the closed share loop tracks the load rather than being
-# stepped by it, and negligible against the 650 s the suite runs this scenario
-# for.  See apply_scenario().
+# `soc-depletion`: seconds over which the SOC_ENDURANCE_LOAD_A bus-side endurance
+# load ramps in from t = 10.0.  3 s is ~150 share-loop ticks (SHARE_CTRL_PERIOD_US
+# 20000 = 50 Hz) — slow enough that the closed share loop tracks the load rather
+# than being stepped by it, and negligible against the 400 s the suite runs this
+# scenario for (re-derived 2026-08-30; was 880 s).  See apply_scenario().
 SOC_LOAD_RAMP_S = 3.0
 
 # `soc-depletion`: the endurance load, in amps, ramped in from t = 10.
@@ -1882,8 +1979,9 @@ def apply_scenario(plant, scenario, t):
         # bound by at most one tick — a single late frame, one scheduling
         # overrun, or the board's own millis() granularity decided whether the
         # board recovered, so the same scenario passed or failed at random.  2 s
-        # gives a 1000 ms margin on a 1000 ms requirement, and the 30 s duration
-        # leaves 23 s after the gap for the recovery to be observed.
+        # gives a 1000 ms margin on a 1000 ms requirement, and the 12 s duration
+        # (trimmed from 30 s, 2026-08-30) leaves 5 s after the gap — the recovery
+        # completes at ~7.6 s, so ~4.4 s of it is observed.
         tx_enabled = not (5.0 <= t < 7.0)
     elif scenario == "drive":
         # Plant only.  The operator drives the firmware by hand ('V', 'D', 'Y' ...)
@@ -2022,7 +2120,11 @@ def main(argv=None):
                     help="replay a recorded bench log as injection frames "
                          "(bypasses the plant integrator; open-loop stimulus)")
     ap.add_argument("--replay-speed", type=float, default=1.0,
-                    help="replay pacing multiplier (default 1.0 = true wall clock)")
+                    help="replay pacing multiplier (default 1.0 = true wall clock). "
+                         "NOTE for --replay-commands: the command stream runs at "
+                         "50 Hz of WALL clock, not of log time, so a speed of X "
+                         "under-samples the recorded setpoint by X — use 1.0 when "
+                         "command fidelity matters.")
     ap.add_argument("--replay-no-preamble", action="store_true",
                     help="replay: SKIP the synthetic bring-up preamble and play the "
                          "log raw from t = 0. For an entry whose point is that "
@@ -2031,6 +2133,16 @@ def main(argv=None):
                          "so FAULT_INIT_FAIL — reachable only from State 0's "
                          "bring-up machine — can never fire. Timestamps are "
                          "UNSHIFTED with this flag.")
+    ap.add_argument("--replay-commands", action="store_true",
+                    help="replay: ALSO replay the log's recorded commands "
+                         "(v_sp / share_sp) as 22-byte Pi command packets at "
+                         "50 Hz, so the drive and share loops actually STEP "
+                         "against the recorded stimulus instead of holding 0 A "
+                         "in Idle. STILL OPEN LOOP on the plant side: the "
+                         "injected v_actual does NOT respond to what the "
+                         "firmware commands, so this tests the controller's "
+                         "REACTION to a recorded trajectory, not closed-loop "
+                         "behaviour. Requires --replay.")
     ap.add_argument("--replay-i-fc-clamp", type=float, default=None,
                     metavar="AMPS",
                     help="replay: clamp the injected I_fc to at most AMPS. The "
@@ -2115,6 +2227,15 @@ def main(argv=None):
                  "no PiCommander, and the replayed rails ignore the Pi's commands")
     if args.replay_no_preamble and not args.replay:
         ap.error("--replay-no-preamble only applies to --replay")
+    # --replay-commands is a REPLAY-mode flag, and its exclusivity against the
+    # other two command sources is TRANSITIVE rather than restated here: --ems
+    # and --pi-live are each already refused with --replay above, so neither can
+    # coexist with a flag that requires --replay.  There is therefore no path on
+    # which two sources write the 22-byte command packet.
+    if args.replay_commands and not args.replay:
+        ap.error("--replay-commands only applies to --replay (in simulated-plant "
+                 "mode the commands come from the scenario's pi_timeline, an "
+                 "--ems strategy, or a real Pi under --pi-live)")
     if args.replay_i_fc_clamp is not None:
         if not args.replay:
             ap.error("--replay-i-fc-clamp only applies to --replay")
@@ -2177,6 +2298,19 @@ def main(argv=None):
               f"{', looping' if args.loop else ''}")
         print("[hil] WARNING: replay is an OPEN-LOOP stimulus — the firmware's "
               "commands do NOT influence the replayed trajectory.")
+        if args.replay_commands:
+            print("[hil] replay: --replay-commands — the log's recorded v_sp / "
+                  "share_sp are replayed as 22-byte Pi command packets at "
+                  f"{PiCommander.PI_CMD_HZ:.0f} Hz (MODE_SAFE while the preamble "
+                  "runs, MODE_HYBRID after it), so the drive and share loops "
+                  "STEP instead of holding 0 A in Idle.")
+            print("[hil] WARNING: the commands are replayed but THE PLANT SIDE "
+                  "STAYS OPEN LOOP — the injected v_actual does not respond to "
+                  "what the firmware commands. This tests the controller's "
+                  "REACTION to a recorded stimulus, NOT closed-loop behaviour. "
+                  "Expect the drive loop to FIGHT the recorded trajectory "
+                  "wherever the recorded and flashed control laws differ: that "
+                  "is the stimulus, not a defect.")
         print(f"[hil] WARNING: this log was recorded under fw_version {fw_str}; "
               "the flashed firmware's control law may differ (e.g. a v14 'V' "
               "trace is a different control law than v13 — new coefficients and "
@@ -2233,12 +2367,21 @@ def main(argv=None):
     plant = Plant(electrical=electrical, soc0=args.soc0,
                   capacity_ah=args.capacity_ah, ag105_i_max=chg_ceiling)
     # ── Command source ───────────────────────────────────────────────────────
-    # replay  : no commander (the rails come from a log; commanding is meaningless)
+    # replay             : no commander (the rails come from a log)
+    # replay + --replay-commands : commander driven by the LOG's recorded
+    #                      v_sp/share_sp, written into commander.state per tick
     # pi-live : no commander — a REAL Pi owns the 22-byte command packet
     # ems     : commander driven by an EMS policy (REPLACES any pi_timeline)
     # default : commander driven by the scenario's pi_timeline (unchanged)
     commander = None
     ems_policy = None
+    if args.replay and args.replay_commands:
+        # Empty timeline, no policy: every field of `state` is written by the
+        # main loop from THIS tick's replay record before commander.tick() runs,
+        # so `always_active` is what makes it transmit at all (see PiCommander).
+        commander = PiCommander(None, always_active=True)
+        print(f"[hil] replay commands: recorded v_sp/share_sp at "
+              f"{PiCommander.PI_CMD_HZ:.0f} Hz")
     if not args.replay and not args.pi_live:
         if ems_name:
             ems_policy = EMS_STRATEGIES[ems_name]
@@ -2367,6 +2510,13 @@ def main(argv=None):
             # mode — the plant integrator is bypassed, so they would be meaningless,
             # and leaving them out keeps replay_rec at its established column index.
             header_row.append("replay_rec")
+            # APPEND-only, and UNCONDITIONAL in replay mode — the same principle
+            # the simulated branch states below: column presence must not vary
+            # with a flag inside one mode, or nothing downstream can parse "a
+            # replay-mode CSV" without first knowing which flags produced it.
+            # BLANK under a plain --replay (no commander), populated under
+            # --replay-commands. `replay_rec` keeps its established index.
+            header_row += ["cmd_v_sp", "cmd_share_sp"]
         else:
             header_row.append("soc")            # APPEND-only (scope extension)
             if electrical is not None:
@@ -2475,6 +2625,10 @@ def main(argv=None):
                 "span_s": round(replay.span, 6),
                 "blg_version": blg_header.get("version"),
                 "blg_fw_version": blg_header.get("fw_version"),
+                # --replay-commands: were the log's recorded v_sp/share_sp also
+                # replayed as Pi command packets?  A replay CSV whose `current`
+                # column is non-zero is only interpretable alongside this flag.
+                "replay_commands": bool(args.replay_commands),
             }),
             "argv": list(sys.argv[1:]) if argv is None else list(argv),
             "config": {
@@ -2493,6 +2647,7 @@ def main(argv=None):
                 "chg_i_ceiling_a": chg_ceiling,
                 "replay_preamble_s": replay_preamble_s if args.replay else None,
                 "replay_i_fc_clamp_a": args.replay_i_fc_clamp,
+                "replay_commands": bool(args.replay_commands) if args.replay else None,
                 "dash": bool(args.dash),
             },
             "constants_hash": constants_hash(meta_const),
@@ -2704,6 +2859,40 @@ def main(argv=None):
             # Same socket, same destination: the firmware's receiveCommands()
             # drains both frame types and dispatches by length (fw v21).
             if commander is not None and tx_enabled:
+                if replay and args.replay_commands:
+                    # ── Replayed commands ────────────────────────────────────
+                    # Driven from THIS TICK's already-sampled replay record, so
+                    # the command stream is zero-order held on exactly the same
+                    # time axis as the injection stream — --replay-speed
+                    # alignment is therefore automatic and needs no separate
+                    # pacing.  Written into `state` before tick(); the 50 Hz gate
+                    # inside tick() then decides when a packet actually goes out,
+                    # so the board sees the command that was current at the last
+                    # due tick, exactly like a real Pi.
+                    if t < replay_preamble_s:
+                        # Synthetic bring-up window: hold the board at standstill
+                        # in SAFE.  MODE_SAFE only acts in State 2 (.ino:5051-5052);
+                        # from State 0/1 it is inert, which is what is wanted while
+                        # the staged bring-up runs.
+                        commander.state["mode_cmd"] = MODE_SAFE
+                        commander.state["v_setpoint"] = 0.0
+                        commander.state["power_share_setpoint"] = 0.5
+                    else:
+                        # MODE_HYBRID with mainState 1 is what moves the board
+                        # Idle -> Run (.ino:5047-5050).  doState1() zeroes
+                        # v_setpoint on that transition and resets the drive
+                        # controller, so the real setpoint arrives on the next
+                        # 50 Hz packet (<= 20 ms later) — by design, and stated in
+                        # docs/HIL_MODE.md.  Once in Run the 50 Hz stream is
+                        # LOAD-BEARING: PI_TIMEOUT_MS is 500 ms (.ino:2915) and the
+                        # watchdog arms after the first command, so this branch
+                        # must keep writing for the WHOLE remaining run, gaps in
+                        # the log included.
+                        commander.state["mode_cmd"] = MODE_HYBRID
+                        commander.state["v_setpoint"] = sensors["cmd_v_sp"]
+                        commander.state["power_share_setpoint"] = \
+                            sensors["cmd_share_sp"]
+                    commander.state["charge_goal"] = 0.0
                 # F13: build the fb closure/dict only when there is an EMS policy
                 # to feed it. A scripted timeline commander never reads fb_factory
                 # (PiCommander.tick only calls it when self.policy is not None),
@@ -2780,6 +2969,26 @@ def main(argv=None):
                 ]
                 if replay:
                     row.append(rec_idx)
+                    # M3 — WHAT THESE TWO COLUMNS ARE, precisely: the RECORD'S OWN
+                    # commanded value for THIS tick, sampled at the 1 kHz tick rate.
+                    # They are NOT "what was last transmitted": under
+                    # --replay-commands the state is rewritten every 1 kHz tick
+                    # while packets leave at PiCommander.PI_CMD_HZ (50 Hz), so the
+                    # transmitted stream LAGS this column by <= 20 ms, and across
+                    # the preamble boundary the column LEADS the last transmitted
+                    # mode by up to one command period.
+                    # The 1 kHz semantics are deliberate: this column is the clean
+                    # zero-order-held command axis for offline analysis, aligned
+                    # tick-for-tick with the injected sensors beside it. Anything
+                    # needing the wire-accurate stream must reconstruct it from the
+                    # 50 Hz cadence.
+                    # Blank under a plain --replay (no commander exists): a number
+                    # there would be a fabrication.
+                    if commander is not None and commander.active():
+                        row.append(f"{commander.state['v_setpoint']:.4f}")
+                        row.append(f"{commander.state['power_share_setpoint']:.4f}")
+                    else:
+                        row += ["", ""]
                 else:
                     row.append(f"{sensors.get('soc', 0.0):.5f}")
                     if electrical is not None:
@@ -2950,7 +3159,17 @@ def main(argv=None):
               "as INCONCLUSIVE unless the scenario expects the recovery "
               "(comm-loss does). ***")
     if commander is not None and commander.active():
-        if commander.policy is not None:
+        if replay and args.replay_commands:
+            print(f"[hil] pi commands sent: {pi_frames} (REPLAYED from "
+                  f"{os.path.basename(args.replay)}'s recorded v_sp/share_sp; "
+                  f"final v_sp={commander.state['v_setpoint']:.3f} "
+                  f"share_sp={commander.state['power_share_setpoint']:.3f}, "
+                  f"mode_cmd={commander.state['mode_cmd']})")
+            print("[hil] NOTE: --replay-commands replays the COMMANDS only. The "
+                  "plant side stayed OPEN LOOP — the injected v_actual never "
+                  "responded to them, so this run is evidence about the "
+                  "controller's REACTION, not about closed-loop tracking.")
+        elif commander.policy is not None:
             print(f"[hil] pi commands sent: {pi_frames} "
                   f"(EMS {commander.policy_name}, {commander.policy_calls} policy "
                   f"evaluations; final v_sp={commander.state['v_setpoint']:.3f} "

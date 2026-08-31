@@ -354,14 +354,39 @@ FAULT_EXPECTATIONS = {
         # anything before that is a transient, not depletion.
         "survive_to": {"t": 13.0, "states": {2, 3}},
         # M2: the objective is DEPLETION, and "no fault" is satisfied by a run that
-        # never drew anything. The `soc` column is the coulomb count itself, so a
-        # monotone fall of at least 0.05 (5 % SoC) is direct evidence the endurance
-        # walk happened. Budget at SOC_ENDURANCE_LOAD_A 2.2 A over the suite's ~870 s
-        # of load: 1914 A*s / 18000 A*s = 0.106, so 0.05 is a floor with 2x margin
-        # and survives a shortened --duration without becoming unachievable.
+        # never drew anything, so a positive trace assertion is required.
+        #
+        # A1 — REWRITTEN 2026-08-30 (campaign 20260830_214819, HIL_FINDINGS
+        # 'soc-depletion').  The old single-arm 0.05 threshold was PHYSICALLY
+        # UNREACHABLE at --soc0 0.15, and its budget comment was wrong twice:
+        #   * It used the 2.2 A BUS-side load as the coulomb current.  The pack
+        #     sits behind the boost, which steps 6.46 -> 14.37 V, so the PACK-SIDE
+        #     current is ~6.19 A (measured, validated to 0.06 %).
+        #   * It assumed ~870 s of load.  The UV_BATT latch is a STATE condition,
+        #     not a time one: OCV(soc) - I*(Rs(soc)+R1) = 6.2 V solves at
+        #     soc_latch ~= 0.1130, so the run ENDS there.  From soc0 0.15 the
+        #     maximum possible fall is 0.15 - 0.113 = 0.0370 — below the 0.05
+        #     threshold no matter how long the run is.
+        # At the corrected --soc0 0.20 (see the plan builder) the ceiling is
+        # 0.20 - 0.113 = 0.087, i.e. 1.74x the 0.05 threshold, and the latch is
+        # expected at ~13 + 0.087*18000/6.19 ~= 266 s.
+        #
+        # DISJUNCTIVE because the two proofs FORECLOSE EACH OTHER: a UV_BATT latch
+        # ends the run and caps the observable fall, while a run that never latches
+        # is the one that can accumulate the fall.  A UV_BATT latch after the ramp
+        # transient is the STRONGER evidence of depletion — the pack demonstrably
+        # walked all the way to its UV floor — so either satisfies the objective.
+        # `after_t` = survive_to.t = 13.0 s, the end of the load ramp; a latch
+        # before that would be a transient, not depletion.
         "signals_require": [
-            {"name": "soc_fell", "column": "soc", "strictly_decreases_by": 0.05,
-             "label": "battery SoC walked down under the endurance load"},
+            {"name": "soc_depleted",
+             "label": "the pack demonstrably depleted under the endurance load",
+             "any_of": [
+                 {"column": "soc", "strictly_decreases_by": 0.05,
+                  "label": "SoC fell >= 0.05"},
+                 {"fault_latch_bit": FAULT_UV_BATT, "after_t": 13.0,
+                  "label": "UV_BATT latched after the load ramp"},
+             ]},
         ],
     },
     "handoff-sag": {
@@ -500,9 +525,59 @@ FAULT_EXPECTATIONS = {
         ],
         "events_forbid_over_absmax": True,
     },
+    "bringup": {
+        # L2 (2026-08-30): this scenario's WHOLE POINT is that the staged bring-up
+        # completes against the real RT1987 delays, and until now it asserted that
+        # only NEGATIVELY — "no fault appeared" — which a board that never left
+        # State 0 also satisfies. `survive_to` is the positive form: at t = 4.0 the
+        # board must be un-latched AND in Idle (or Run).
+        #
+        # t = 4.0 is derived, not round: fw v22+ HIL auto bring-up completes at
+        # ~0.62 s measured (HIL_RECOVER_DEBOUNCE_MS + ~0.12 s of staging,
+        # HIL_FINDINGS "bringup"), and the probe must land after WARM_RESET_GRACE_S
+        # (2.0 s) because `state_at_survive` is only collected on post-grace rows
+        # (analyze_scenario_csv). 4.0 is ~6x the measured completion and 2 s clear
+        # of the grace bound, inside the trimmed 8 s duration.
+        #
+        # STATES {1, 2}: unattended this scenario has no pi_timeline and no ems, so
+        # the board settles in Idle (1). Run (2) is admitted because the scenario is
+        # also the one an operator drives by hand, and reaching Run is a STRONGER
+        # demonstration that bring-up completed, not a weaker one.
+        #
+        # NO `require`, and `allow_only` stated EXPLICITLY rather than left to the
+        # default: with no `require` the default resolves to FAULT_ERROR alone,
+        # which is the same value — writing it out means a future reader does not
+        # have to re-derive that "clean" is what is being asserted.
+        #
+        # KNOWN TRADE-OFF, accepted: having ANY entry here moves this scenario from
+        # judge_scenario()'s `else` branch to its `if expect is not None` branch, so
+        # it loses the --pi-live PI_TIMEOUT excusal (an operator Pi that drives the
+        # board to Run and then stops commanding would now fail it rather than be
+        # excused). That is the table's existing contract — every scenario with an
+        # expectations entry already forgoes that excusal — and the positive
+        # bring-up assertion is worth more than an excusal for a Pi behaviour this
+        # scenario does not script.
+        "source": "SCENARIOS['bringup'] — 'from dark: the firmware's staged "
+                  "bring-up (P0-P3) against the real RT1987 t_D(ON) + soft-start "
+                  "delays'. Measured completion ~0.62 s (HIL_FINDINGS 'bringup'/"
+                  "'comm-loss'); the probe at t = 4.0 s is ~6x that and 2 s clear "
+                  "of WARM_RESET_GRACE_S.",
+        "allow_only": FAULT_ERROR,
+        "survive_to": {"t": 4.0, "states": {1, 2}},
+    },
 }
 # Everything not listed is expected fault-free (post-grace); a fault there is a
-# finding: steady, step-load, bringup, ems-drive-cycle, drive.
+# finding: steady, step-load, ems-drive-cycle, drive.
+#
+# `bringup` LEFT that group on 2026-08-30 (L2): it is listed above with no
+# `require` and an explicit `allow_only = FAULT_ERROR`, i.e. the same "expected
+# clean" expectation the unlisted scenarios get, PLUS a `survive_to` positive
+# assertion that the bring-up actually completed. The three still unlisted have no
+# comparable completion event to assert — steady has no stimulus at all, step-load's
+# is a plant-side load step with no state consequence, and `drive` is whatever the
+# operator does by hand — so giving them entries would buy nothing and would cost
+# them the --pi-live PI_TIMEOUT excusal that only the `else` branch offers. They
+# stay unlisted deliberately.
 
 # L3 — LOAD-TIME CONSISTENCY, asserted rather than trusted.
 # Both `not_before_s` and `survive_to.t` are compared against times taken from the
@@ -512,7 +587,51 @@ FAULT_EXPECTATIONS = {
 # fault scan never reaches, silently reporting "no observation frame at or after
 # t=X". Neither failure has a symptom at the point of use, so it is caught here, at
 # import, where the table is written.
+#
+# The 2026-08-30 duration trim added the OTHER side of the same sandwich: a bound
+# taken from the post-grace window is equally useless if it sits at or beyond the
+# END of the run.  `not_before_s` past the duration can never be crossed;
+# `survive_to.t` past it probes a moment no row exists for, reporting "no
+# observation frame at or after t=X" — which reads as a board failure rather than
+# as a scenario mis-specification; a `signals_require` t_window whose UPPER bound
+# is past it silently shrinks (the window is clipped by where the CSV ends, so a
+# spec asking for evidence in (8, 40) on a 24 s run is judged on (8, 24) with no
+# symptom anywhere); and a disjunctive arm's `after_t` past it can never latch.
+# Trimming a scenario's duration below its own timing bounds is exactly the
+# mistake this half catches, at import, for free — EVERY time-valued field in the
+# table is covered, so a new field is the only way to reintroduce the gap.
+# NOTE the one deliberate divergence: soc-depletion's SCENARIOS duration_s (120 s)
+# is the STANDALONE default; the suite overrides it to 400 s in build_plan().  The
+# assert uses the smaller of the two, so it is conservative either way.
+def _expectation_time_bounds(entry):
+    """(label, t) for every time-valued field in one FAULT_EXPECTATIONS entry.
+
+    A `t_window` upper bound of None means "to the end of the run" and is
+    deliberately NOT yielded — it cannot be past the duration by construction."""
+    yield "not_before_s", entry.get("not_before_s")
+    yield "survive_to.t", (entry.get("survive_to") or {}).get("t")
+    for _i, _spec in enumerate(entry.get("signals_require") or ()):
+        _tag = _spec.get("name") or _spec.get("label") or "signal[%d]" % _i
+        for _leaf, _sub in ([(_tag, _spec)] +
+                            [("%s.any_of[%d]" % (_tag, _j), _a)
+                             for _j, _a in enumerate(_spec.get("any_of") or ())]):
+            _w = _sub.get("t_window")
+            if _w and _w[1] is not None:
+                yield "signals_require[%s].t_window[1]" % _leaf, _w[1]
+            if _sub.get("after_t") is not None:
+                yield "signals_require[%s].after_t" % _leaf, _sub["after_t"]
+
+
 for _n, _e in FAULT_EXPECTATIONS.items():
+    _dur = (SCENARIOS.get(_n) or {}).get("duration_s")
+    for _key, _t in _expectation_time_bounds(_e):
+        assert _dur is None or _t is None or _t < _dur, (
+            "FAULT_EXPECTATIONS[%r].%s = %r must be < SCENARIOS[%r]['duration_s'] "
+            "(%.1f): a bound at or past the end of the run is never crossed, so "
+            "the check is vacuous (not_before_s / after_t), probes a row that does "
+            "not exist (survive_to.t), or is silently clipped (t_window upper "
+            "bound). Re-derive the duration or the bound."
+            % (_n, _key, _t, _n, _dur))
     _nb = _e.get("not_before_s")
     assert _nb is None or _nb > WARM_RESET_GRACE_S, (
         "FAULT_EXPECTATIONS[%r].not_before_s = %r must be > WARM_RESET_GRACE_S "
@@ -662,38 +781,55 @@ def build_plan(args):
             if meta.get("vesc_cap_f") is not None and mode == "hifi":
                 argv += ["--vesc-cap-uf", "%g" % (meta["vesc_cap_f"] * 1e6)]
             if name == "soc-depletion":
-                # L9(c): at the DEFAULT --soc0 0.7 / 5 Ah / this scenario's stock
-                # 120 s duration, the run cannot reach LIMIT_V_BATT_MIN at all:
-                # ~115 s of the +3.0 A load step is ~345 A*s against an 18000 A*s
-                # (5 Ah) pack, i.e. ~1.9% SOC -- nowhere near the UV floor.  Even at
-                # --soc0 0.15 alone, 120 s only reaches ~13% SOC (V_batt ~6.9 V,
-                # still above the 6.2 V limit per the BatterySource OCV/Rs(SOC)
-                # curve).  Reaching LIMIT_V_BATT_MIN (~6.2 V) needs SOC to fall to
-                # roughly 0.05 (where the fitted model's Rs(SOC) knee below 15%
-                # steepens the sag enough to cross 6.2 V), i.e. a further ~0.10 of
-                # SOC = 1800 A*s at 3 A = 600 s beyond the ramp-up -- so this entry
-                # is bumped to --soc0 0.15 and a long duration.
+                # RE-DERIVED 2026-08-30 (campaign 20260830_214819, HIL_FINDINGS
+                # 'soc-depletion').  The previous derivation — --soc0 0.15 for
+                # 880 s, aiming at "~4.4 % SOC" — was wrong on both of its inputs,
+                # and the run it produced could not satisfy its own signal check:
                 #
-                # RE-DERIVED 2026-08-30 (review M4).  The endurance load was reduced
-                # 3.0 -> SOC_ENDURANCE_LOAD_A 2.2 A because at 3.0 A the surviving
-                # BT channel carried 3.15 A against LIMIT_I_BT_MAX 3.0 A -- over the
-                # limit outright, for 645 s, with nobody having written the number
-                # down (the FC budgets elsewhere had this discipline; this one did
-                # not).  The DURATION is extended in lockstep so the delivered
-                # charge, and therefore the depletion depth, is preserved:
-                #     old:  645 s x 3.0 A = 1935 A*s
-                #     new:  870 s x 2.2 A = 1914 A*s   (-1.1%)
-                # 880 s total = 10 s before the load ramp + 870 s of load, landing
-                # at ~4.4% SOC, still past the ~5% crossing point.
-                # COST: +230 s (~3.8 min) of suite wall time.  Paid deliberately --
-                # the alternative was keeping the run short and quietly abandoning
-                # the endurance objective the scenario exists for.
-                dur = 880.0
+                #  1. COULOMB CURRENT.  It used the 2.2 A SOC_ENDURANCE_LOAD_A
+                #     figure, which is a BUS-SIDE load.  The pack sits behind the
+                #     boost (6.46 -> 14.37 V), so the PACK-SIDE current that
+                #     actually depletes it is ~6.19 A — 2.8x larger.  Measured on
+                #     the campaign trace, validated to 0.06 %.
+                #  2. WINDOW.  It assumed the load simply runs for ~870 s.  It does
+                #     not: the UV_BATT latch is a STATE condition —
+                #     OCV(soc) - I*(Rs(soc)+R1) = 6.2 V solves at soc_latch ~=
+                #     0.1130 — so the run is FORECLOSED there, at ~105.5 s from
+                #     soc0 0.15.  The remaining ~775 s were spent latched.
+                #
+                # Consequence: from soc0 0.15 the maximum observable fall is
+                # 0.15 - 0.113 = 0.0370, BELOW the 0.05 signal threshold, for any
+                # duration.  Corrected here and in FAULT_EXPECTATIONS together:
+                #   --soc0 0.20  -> ceiling 0.20 - 0.113 = 0.087 = 1.74x the
+                #                   threshold, and the run STARTS above the
+                #                   Rs(SOC) knee, so "walks down the OCV curve"
+                #                   is literally true for the early window.
+                #   --duration 400 -> estimated latch at
+                #                   13 + 0.087*18000/6.19 ~= 266 s, plus ~134 s of
+                #                   margin and tail.  480 s CHEAPER than the old
+                #                   880 s, and the objective is now reachable.
+                # The signal check is disjunctive (see FAULT_EXPECTATIONS): either
+                # the 0.05 fall OR a post-ramp UV_BATT latch proves the depletion.
+                #
+                # SOC_ENDURANCE_LOAD_A stays 2.2 A (review M4, hardware-validated
+                # 21.19 % BT margin) — only soc0 and the duration move.
+                #
+                # THE ~3 s POST-EVENT TRIM RULE (2026-08-30) DELIBERATELY DOES NOT
+                # APPLY HERE. Every other scenario's last event is at a SCRIPTED
+                # time, so the tail can be cut to a few seconds with certainty.
+                # This one's last event — the UV_BATT latch — is at a MODELLED
+                # time: ~266 s, from an Rs(SOC) curve that is still
+                # `TODO(calibrate)` (hil_plant_sim BatterySource). The ~134 s of
+                # tail is not dead time, it is the uncertainty budget on that
+                # estimate; trimming it to ~269 s would turn any model error into
+                # a run that ends before its own objective. Re-derive this only
+                # once the OCV/Rs curve is measured.
+                dur = 400.0
                 argv = [
                     "--scenario", name,
                     "--electrical", mode,
                     "--duration", "%g" % dur,
-                    "--soc0", "0.15",
+                    "--soc0", "0.20",
                     "--csv", os.path.join(args.out, csv_name),
                 ]
             plan.append({
@@ -957,23 +1093,76 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
 #                                          switch was OPENED and stayed open)
 #   {"column": "I_charge", "min_value": X} some sample must reach >= X
 #   {"column": "soc", "strictly_decreases_by": X}  last - first <= -X
+#   {"fault_latch_bit": MASK, "after_t": T}  some row at t >= T shows
+#                                          fault_flags & MASK AND & FAULT_ERROR
+#                                          (the LATCH rule — a transient bare bit
+#                                          does not count, matching the replay
+#                                          half's latch semantics)
 #
-# Optional on any spec: "t_window": (t0, t1) — restrict to that SIM-time window
-# (t1 may be None for "to the end"), and "label": human text for the report.
-# Every spec is judged only on rows at or after the grace bound, for the same
-# reason the fault checks are: the pre-grace window belongs to the previous run.
+# DISJUNCTIVE SPEC (A1, 2026-08-30):
+#   {"name": ..., "any_of": [<subspec>, <subspec>, ...], "label": ...}
+# passes when ANY arm passes, and its detail reports EVERY arm's measurement plus
+# which one satisfied it.  Introduced because soc-depletion's objective —
+# "the pack demonstrably walked down" — has two mutually-exclusive-in-practice
+# proofs: a large enough SoC fall, OR a UV_BATT latch, which is the stronger
+# evidence but FORECLOSES the fall by ending the run.  A single-arm spec had to
+# pick one and was unreachable either way.
+#
+# Optional on any spec (including each arm): "t_window": (t0, t1) — restrict to
+# that SIM-time window (t1 may be None for "to the end"), and "label": human text
+# for the report.  Every spec is judged only on rows at or after the grace bound,
+# for the same reason the fault checks are: the pre-grace window belongs to the
+# previous run.
+#
+# scan_signals() and judge_signals() are and must stay PURE over their inputs
+# (scan reads the CSV; judge does no I/O at all).
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _flatten_signal_specs(specs):
+    """(spec, arms) per top-level spec, where `arms` is its `any_of` list or [].
+
+    The scanner needs a FLAT list of leaf specs to measure in one pass; the judge
+    needs the tree back.  One helper so the two cannot disagree about the shape."""
+    return [(s, list(s.get("any_of") or [])) for s in specs]
+
+
+def _leaf_signal_specs(specs):
+    """Every leaf spec, in the order scan_signals() measures them."""
+    leaves = []
+    for spec, arms in _flatten_signal_specs(specs):
+        leaves.extend(arms or [spec])
+    return leaves
+
 
 def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
     """One pass over the CSV collecting exactly what `specs` needs.
 
     Returns a list parallel to `specs` of measurement dicts; judge_signals() turns
-    those into checks.  Kept separate from analyze_scenario_csv() so a scenario
-    with no signals_require pays nothing."""
-    out = [{"ticks": 0, "peak": None, "first": None, "last": None, "rows": 0}
-           for _ in specs]
-    if not specs or not os.path.isfile(csv_path):
+    those into checks.  A DISJUNCTIVE spec (`any_of`) measures each arm and returns
+    {"any_of": [<arm measurement>, ...]} in that spec's slot, so the return value
+    stays parallel to `specs` either way.  Kept separate from
+    analyze_scenario_csv() so a scenario with no signals_require pays nothing."""
+    def _blank():
+        return {"ticks": 0, "peak": None, "first": None, "last": None, "rows": 0,
+                "latch_t": None}
+
+    tree = _flatten_signal_specs(specs)
+    leaves = _leaf_signal_specs(specs)
+    leaf_m = [_blank() for _ in leaves]
+
+    def _nest():
+        out, i = [], 0
+        for spec, arms in tree:
+            if arms:
+                out.append({"any_of": leaf_m[i:i + len(arms)]})
+                i += len(arms)
+            else:
+                out.append(leaf_m[i])
+                i += 1
         return out
+
+    if not specs or not os.path.isfile(csv_path):
+        return _nest()
     try:
         with open(csv_path, newline="") as fh:
             for row in csv.DictReader(fh):
@@ -983,9 +1172,30 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
                     continue
                 if t != t or t < grace_s:
                     continue
-                for spec, m in zip(specs, out):
+                for spec, m in zip(leaves, leaf_m):
                     w = spec.get("t_window")
                     if w and (t < w[0] or (w[1] is not None and t > w[1])):
+                        continue
+                    if "fault_latch_bit" in spec:
+                        # A1: the LATCH rule — the named bit AND FAULT_ERROR, on
+                        # the SAME row, at or after `after_t`.  A bare transient
+                        # indication is deliberately not enough; this mirrors
+                        # hil_replay_suite's check_fault_latched semantics.  Rows
+                        # before `after_t` are counted in `rows` (so "no rows to
+                        # judge" still means what it says) but never latch.
+                        m["rows"] += 1
+                        if t < float(spec.get("after_t", 0.0)):
+                            continue
+                        cell = (row.get("fault_flags") or "").strip()
+                        if not cell:
+                            continue
+                        try:
+                            bits = int(cell, 0)
+                        except ValueError:
+                            continue
+                        if (bits & int(spec["fault_latch_bit"])) and (bits & FAULT_ERROR):
+                            if m["latch_t"] is None:
+                                m["latch_t"] = t
                         continue
                     m["rows"] += 1
                     if "switch_bit" in spec:
@@ -1011,9 +1221,56 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
                         m["first"] = v
                     m["last"] = v
     except OSError as exc:
-        for m in out:
+        for m in leaf_m:
             m["error"] = str(exc)
-    return out
+    return _nest()
+
+
+def _judge_signal_leaf(spec, m):
+    """(passed, measurement_text) for ONE leaf spec.  Pure.
+
+    The text is the measurement without the surrounding label/`why`, so a
+    disjunctive spec can report every arm's number in one detail line."""
+    win = ("" if not spec.get("t_window") else
+           " in t=[%s, %s]s" % (spec["t_window"][0],
+                                spec["t_window"][1]
+                                if spec["t_window"][1] is not None else "end"))
+    if m.get("error"):
+        return False, "could not read the CSV: %s" % m["error"]
+    if not m["rows"]:
+        return False, ("no observed rows%s — the window this arm lives in was "
+                       "never reached" % win)
+    if "min_ticks" in spec:
+        return (m["ticks"] >= int(spec["min_ticks"]),
+                "bit set on %d tick(s)%s, need >= %d"
+                % (m["ticks"], win, int(spec["min_ticks"])))
+    if "max_ticks" in spec:
+        return (m["ticks"] <= int(spec["max_ticks"]),
+                "bit set on %d tick(s)%s, need <= %d"
+                % (m["ticks"], win, int(spec["max_ticks"])))
+    if "min_value" in spec:
+        peak = m["peak"]
+        return (peak is not None and peak >= float(spec["min_value"]),
+                "peak %s%s, need >= %g"
+                % ("unmeasured" if peak is None else "%.4f" % peak, win,
+                   float(spec["min_value"])))
+    if "strictly_decreases_by" in spec:
+        need = float(spec["strictly_decreases_by"])
+        have = (None if m["first"] is None or m["last"] is None
+                else m["first"] - m["last"])
+        return (have is not None and have >= need,
+                "fell by %s%s, need >= %g"
+                % ("unmeasured" if have is None else "%.6f" % have, win, need))
+    if "fault_latch_bit" in spec:
+        after = float(spec.get("after_t", 0.0))
+        t = m.get("latch_t")
+        return (t is not None,
+                "%s LATCHED (bit + FAULT_ERROR) %s%s, need a latch at t >= %g s"
+                % (fault_names(int(spec["fault_latch_bit"])),
+                   "at t=%.3f s" % t if t is not None else "never",
+                   win, after))
+    return False, ("suite error: signal spec %r declares no assertion kind"
+                   % (spec,))
 
 
 def judge_signals(specs, measured, why):
@@ -1022,55 +1279,34 @@ def judge_signals(specs, measured, why):
     for spec, m in zip(specs, measured):
         label = spec.get("label") or "signal"
         name = "signal_%s" % spec.get("name", label.split()[0].lower())
-        win = ("" if not spec.get("t_window") else
-               " in t=[%s, %s]s" % (spec["t_window"][0],
-                                    spec["t_window"][1]
-                                    if spec["t_window"][1] is not None else "end"))
-        if m.get("error"):
-            checks.append({"name": name, "passed": False,
-                           "detail": "could not read the CSV: %s" % m["error"]})
-            continue
-        if not m["rows"]:
+        arms = list(spec.get("any_of") or [])
+        if arms:
+            # A1 disjunction: pass when ANY arm passes, and report EVERY arm's
+            # measurement plus which one satisfied it. Reporting all arms is the
+            # point — a reader must be able to see that the arm that failed was
+            # physically foreclosed by the arm that passed, not that a check was
+            # weakened until it went green.
+            arm_ms = m.get("any_of") or []
+            results = [_judge_signal_leaf(a, am) for a, am in zip(arms, arm_ms)]
+            ok = any(p for p, _ in results)
+            won = next((i for i, (p, _) in enumerate(results) if p), None)
+            parts = []
+            for i, ((p, text), a) in enumerate(zip(results, arms)):
+                parts.append("[%s] %s: %s"
+                             % ("OK" if p else "no",
+                                a.get("label") or a.get("name") or "arm %d" % (i + 1),
+                                text))
             checks.append({
-                "name": name, "passed": False,
-                "detail": ("no observed rows%s to judge '%s' — the window the "
-                           "objective lives in was never reached (%s)"
-                           % (win, label, why))})
+                "name": name, "passed": ok,
+                "detail": ("%s: %s (%s) — %s"
+                           % (label,
+                              ("satisfied by arm %d" % (won + 1)) if ok
+                              else "NO arm satisfied",
+                              "; ".join(parts), why))})
             continue
-        if "min_ticks" in spec:
-            ok = m["ticks"] >= int(spec["min_ticks"])
-            checks.append({"name": name, "passed": ok,
-                           "detail": ("%s: bit set on %d tick(s)%s, need >= %d (%s)"
-                                      % (label, m["ticks"], win,
-                                         int(spec["min_ticks"]), why))})
-        elif "max_ticks" in spec:
-            ok = m["ticks"] <= int(spec["max_ticks"])
-            checks.append({"name": name, "passed": ok,
-                           "detail": ("%s: bit set on %d tick(s)%s, need <= %d (%s)"
-                                      % (label, m["ticks"], win,
-                                         int(spec["max_ticks"]), why))})
-        elif "min_value" in spec:
-            peak = m["peak"]
-            ok = peak is not None and peak >= float(spec["min_value"])
-            checks.append({"name": name, "passed": ok,
-                           "detail": ("%s: peak %s%s, need >= %g (%s)"
-                                      % (label,
-                                         "unmeasured" if peak is None else "%.4f" % peak,
-                                         win, float(spec["min_value"]), why))})
-        elif "strictly_decreases_by" in spec:
-            need = float(spec["strictly_decreases_by"])
-            have = (None if m["first"] is None or m["last"] is None
-                    else m["first"] - m["last"])
-            ok = have is not None and have >= need
-            checks.append({"name": name, "passed": ok,
-                           "detail": ("%s: fell by %s%s, need >= %g (%s)"
-                                      % (label,
-                                         "unmeasured" if have is None else "%.6f" % have,
-                                         win, need, why))})
-        else:
-            checks.append({"name": name, "passed": False,
-                           "detail": "suite error: signal spec %r declares no "
-                                     "assertion kind" % (spec,)})
+        ok, text = _judge_signal_leaf(spec, m)
+        checks.append({"name": name, "passed": ok,
+                       "detail": "%s: %s (%s)" % (label, text, why)})
     return checks
 
 
@@ -1975,12 +2211,40 @@ def render_report(meta, results):
         A("cannot influence the replayed trajectory). Checks are the declarative ones in")
         A("`tools/hil_replay_suite.py`; the notes carry each entry's fw-delta caveat.")
         A("")
-        A("**What this half is:** a BRING-UP + FAULT-DECISION regression harness.")
-        A("Replay mode constructs no commander, so no run reaches State 2 and the")
-        A("commanded current is 0 A throughout — the current-shape checks assert only")
-        A("that the firmware does not drive on an uncommanded stimulus. Each run is")
-        A("preceded by a %.1f s synthetic bring-up preamble of healthy nominal rails," % REPLAY_PREAMBLE_S)
-        A("so times below are SIM-relative and log time = sim time − %.1f s." % REPLAY_PREAMBLE_S)
+        # M1: the half is TWO CLASSES from 2026-08-30, and a blanket "no commander
+        # exists" preamble would now be false for the entries that opt into command
+        # replay — the ones whose current-shape checks actually carry evidence.
+        # Counted from the records, not assumed, so this sentence cannot drift out
+        # of step with the suite table.
+        n_cmd = sum(1 for r in rep if r.get("replay_commands"))
+        A("**What this half is:** a BRING-UP + FAULT-DECISION regression harness,")
+        A("and — for the entries that opt in — a CONTROLLER-REACTION harness too.")
+        if n_cmd:
+            A("**%d of %d** replay entries set `replay_commands`: the log's own recorded"
+              % (n_cmd, len(rep)))
+            A("`v_sp`/`share_sp` are replayed as 22-byte Pi command packets at 50 Hz, so")
+            A("the board DOES reach State 2 and both control loops step against the")
+            A("recorded stimulus. Their current-shape checks judge the live controller's")
+            A("reaction, and a `drive_loop_stepped` check asserts the loop actually moved.")
+            A("")
+            A("The remaining **%d** construct no commander at all: the board brings up,"
+              % (len(rep) - n_cmd))
+            A("sits in Idle, and the commanded current is 0 A throughout. Their")
+            A("current-shape checks assert only that the firmware does not drive on an")
+            A("uncommanded stimulus, and are tagged **NOT EXERCISED** below.")
+        else:
+            A("No entry in this run set `replay_commands`, so no commander was")
+            A("constructed: no run reached State 2, the commanded current is 0 A")
+            A("throughout, and every current-shape check asserts only that the firmware")
+            A("does not drive on an uncommanded stimulus (tagged **NOT EXERCISED**).")
+        A("")
+        A("⚠️ Command replay does NOT close the loop — the injected `v_actual` still does")
+        A("not respond to what the firmware commands, so even an opt-in entry is a")
+        A("REACTION test, never a tracking test.")
+        A("")
+        A("Each run is preceded by a %.1f s synthetic bring-up preamble of healthy" % REPLAY_PREAMBLE_S)
+        A("nominal rails, so times below are SIM-relative and log time = sim time − %.1f s."
+          % REPLAY_PREAMBLE_S)
         A("")
         for group, title in (("conformance", "### Conformance"),
                              ("deviation", "### Deviation")):
@@ -2014,6 +2278,37 @@ def render_report(meta, results):
                      r["child"]["wall_s"] or 0.0,
                      os.path.basename(r["child"]["log"]), log_note,
                      os.path.basename(r.get("csv", ""))))
+                # M2: replay metrics have been in results.json since the A5 fix but
+                # were never RENDERED, so REPORT.md — the artifact a reader actually
+                # opens — still showed nothing about a replay's latched end state.
+                # Same three facts the scenario section prints, and for the same
+                # reason: the whole-run union is what was OBSERVED, the post-grace
+                # union is what this run PRODUCED, and the final flags are what
+                # carries into the NEXT run. Guarded on a populated metrics dict so
+                # a load-failure record (which carries only csv/error) stays short.
+                rm = r.get("metrics") or {}
+                if rm.get("rows"):
+                    seen_b = rm.get("fault_bits_seen") or 0
+                    post_b = rm.get("fault_bits_post_grace") or 0
+                    A("- CSV: %d rows, %d with an observation frame; final "
+                      "`fault_flags` `0x%04X` (%s); union over the run: %s; "
+                      "POST-GRACE union (t >= %.1fs, what the checks judge): %s; "
+                      "final state: %s"
+                      % (rm.get("rows", 0), rm.get("n_obs", 0),
+                         rm.get("final_fault_flags") or 0,
+                         fault_names(rm.get("final_fault_flags") or 0),
+                         fault_names(seen_b),
+                         rm.get("grace_s", WARM_RESET_GRACE_S),
+                         fault_names(post_b), rm.get("final_state")))
+                    carried_b = seen_b & ~post_b
+                    if carried_b:
+                        A("  - carried in from the predecessor's settle latch "
+                          "(seen only before t=%.1fs, cleared by the fw v23 "
+                          "grace-window warm reset): %s"
+                          % (rm.get("grace_s", WARM_RESET_GRACE_S),
+                             fault_names(carried_b)))
+                elif rm.get("error"):
+                    A("- CSV: **could not be read** (%s)" % rm["error"])
                 for c in r["checks"]:
                     A("  - [%s] **%s** — %s" % ("x" if c["passed"] else " ", c["name"], c["detail"]))
                 for n in r.get("notes", []):
@@ -2398,22 +2693,54 @@ def _run_plan(plan, args, problems, results, write_outputs):
                                                                child["returncode"])})
             passed = ev["passed"] and child["status"] == "ok"
             npass = sum(1 for c in checks if c["passed"])
+            # L2/L3: THREE distinct reasons a replay check can carry no evidence,
+            # and they mean different things to a reader. Branch on the ENTRY's own
+            # `replay_commands` (the intent), not on the observed counters, so an
+            # opt-in entry whose loop never actually stepped is named as the real
+            # finding it is rather than lumped in with the entries that never asked
+            # for a command in the first place.
+            if not ev.get("replay_commands"):
+                nonevidence_why = "no command replay"
+            elif ev.get("n_checks_not_exercised"):
+                # Defensive: NOT EXERCISED is only ever applied to a non-opt-in
+                # entry, so this pairing should be unreachable. Named rather than
+                # silently folded into the branch below.
+                nonevidence_why = "opt-in entry tagged NOT EXERCISED (suite bug)"
+            else:
+                nonevidence_why = "commands replayed, loop never stepped"
             res = {"kind": "replay", "name": item["name"], "mode": item["mode"],
                    "cmd_mode": _suite_mode(args),
                    "description": item["description"], "duration_s": item["duration_s"],
                    "passed": passed, "checks": checks, "notes": ev.get("notes", []),
-                   "metrics": {}, "events": {}, "child": child,
+                   # A5 (campaign 20260830_214819): this used to be a hardcoded
+                   # `{}`, so a replay run that ended LATCHED (0x8100 / 0x8001 in
+                   # its own sidecar) had no fault record here at ALL — results.json
+                   # carried none and REPORT.md's replay block printed none, so the
+                   # end state that carries into the NEXT run was invisible.
+                   # evaluate_replay_csv() now returns the metrics from its own
+                   # single parse of the same CSV, with scenario-matching field
+                   # names where the semantics match and the scenario-only fields
+                   # OMITTED rather than faked (see ReplayCsv.metrics()); the
+                   # replay per-entry block in render_report() renders them (M2).
+                   "metrics": ev.get("metrics") or {},
+                   "events": {}, "child": child,
                    "csv": item["csv"], "events_path": None, "log_path": item["log"],
                    "n_checks_vacuous": ev.get("n_checks_vacuous"),
                    "n_checks_substantive": ev.get("n_checks_substantive"),
+                   "n_checks_not_exercised": ev.get("n_checks_not_exercised"),
+                   "replay_commands": ev.get("replay_commands"),
                    # Item 5: "%d/%d checks passed" counts vacuous checks alongside
                    # real ones. Say how many carried evidence, so a green replay
-                   # entry cannot read stronger than it is.
+                   # entry cannot read stronger than it is. The parenthetical also
+                   # says WHY there was no evidence — see `nonevidence_why` above
+                   # for the three-way distinction.
                    "key_metrics": ("%d/%d checks passed" % (npass, len(checks)))
+                                  + (" (commands replayed)"
+                                     if ev.get("replay_commands") else "")
                                   + ("" if not ev.get("n_checks_vacuous") else
-                                     " (%d substantive, %d vacuous — no commander)"
+                                     " (%d substantive, %d not evidence — %s)"
                                      % (ev.get("n_checks_substantive") or 0,
-                                        ev["n_checks_vacuous"]))}
+                                        ev["n_checks_vacuous"], nonevidence_why))}
             # L8: evaluate_replay_csv() now returns a structured "n_obs" (None if
             # the CSV itself could not be loaded/parsed at all) instead of forcing
             # this caller to substring-match a prose note from a different module.
