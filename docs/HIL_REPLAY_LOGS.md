@@ -107,6 +107,20 @@ Replay is **open loop** (see `HIL_MODE.md` §"Fidelity caveat"). Concretely:
   Run, and those checks become real — but the **plant** stays open loop either
   way, so it is still a reaction test, never a tracking test.
 - **Pre-v18 logs are a different wheel and a different law** (§2).
+- **OC faults latch on the INJECTED current regardless of switch topology.** The
+  injected rail currents do not depend on the board's own switch state, so an OC
+  fault can latch on a current that could not physically have flowed through the
+  path the board actually had open. Clean as of campaign `20260831_000518` —
+  ML0203's `OC_FC` latch had `FC_BUS` closed — but check `switch_state` at the
+  latch time before reading a replay OC result as a hardware statement.
+- **`no_sustained_rail` is deliberately not used in this half.** It asserts that
+  no rail episode outlasts 1.0 s, which is a windup symptom *on a closed loop*.
+  Open loop, a correct controller facing a standing error is supposed to stay on
+  the rail as long as the recorded trajectory holds that error in front of it
+  (YP0166 measured 1.217 s, correctly). Applying it here would fail correct
+  behaviour, and inflating the threshold until it passed would leave it asserting
+  nothing. `returns_off_rail` covers the real question — does the command
+  *release* once the error goes away.
 
 ### 3a. Synthetic bring-up preamble (2026-08-30)
 
@@ -333,10 +347,10 @@ carries the implicit `bringup_reached_idle` gate (3d).
 
 | Log | fw | BLG | Classification | Why | Checks | Cmds |
 |---|---|---|---|---|---|---|
-| YP0196 | 18 | 6 | `'Y'` combined drive-cycle + power-share profile | Both loops' stimulus together on the current law | `no_fault`, `bounded_current`, `drive_loop_stepped`| **yes** |
+| YP0196 | 18 | 6 | `'Y'` combined drive-cycle + power-share profile | Both loops' stimulus together on the current law | `no_fault`, `bounded_current`, `share_loop_actuated`, `drive_loop_stepped`| **yes** |
 | WP0197 | 18 | 6 | `'W'` combined current + power-share profile | The current-axis twin of `'Y'` — encoder-less share stimulus | `no_fault`, `bounded_current` | no |
 | TP0210 * | 19 | 6 | `'T'` share sweep, handoff-slew build | Most recent share stimulus; nearest to the flashed target | `no_fault`, `bounded_current` | no |
-| YP0214 * | 19 | 6 | `'Y'` combined profile on fw v19 | Combined-profile stimulus with the handoff slew in the recording | `no_fault`, `bounded_current`, `drive_loop_stepped`| **yes** |
+| YP0214 * | 19 | 6 | `'Y'` combined profile on fw v19 | Combined-profile stimulus with the handoff slew in the recording | `no_fault`, `bounded_current`, `share_loop_actuated`, `drive_loop_stepped`| **yes** |
 
 ### Conformance — older wheel/law (stability conformance only, §2)
 
@@ -346,7 +360,7 @@ carries the implicit `bringup_reached_idle` gate (3d).
 | ML0149 | 14 | 5 | clean `'V'` step, higher setpoint | Second clean fw v14 point, same meaning | `no_fault`, `bounded_current`, `no_rail_limit_cycle`, `drive_loop_stepped`| **yes** |
 | TP0170 | 16 | 6 | share sweep, `share_sp = 0.5` | Balanced-share operating point of the first genuine closed-loop share dataset | `no_fault`, `bounded_current` | no |
 | TP0176 | 16 | 6 | share sweep at the FC rail (FC-only 43–45 % of the run) | The share-rail extreme: one source carries the bus for a long stretch | `no_fault`, `bounded_current` | no |
-| YP0152 | 14 | 5 | first `'Y'` profile on the Youla drive controller | Combined-profile representative from the fw v14 era | `no_fault`, `bounded_current`, `drive_loop_stepped`| **yes** |
+| YP0152 | 14 | 5 | first `'Y'` profile on the Youla drive controller | Combined-profile representative from the fw v14 era | `no_fault`, `bounded_current`, `share_loop_actuated`, `drive_loop_stepped`| **yes** |
 | **ML0151** | 14 | 5 | **H6 flagship** — 56 s stepladder with the ~428 ms VESC dead window, the drag step-change and ~90 saturation episodes | Richest recorded incident in the archive; many saturation entries/exits back to back is exactly the class the fw v18 general-Hanus fix targets | `no_fault`, `bounded_current`, `returns_off_rail`, `no_rail_limit_cycle`, `drive_loop_stepped`| **yes** |
 | TP0178 | 16 | 6 | handoff bus sag to 12.15 V — 0.15 V above `LIMIT_V_BUS_MIN`, 10 ms dwell (half the 20 ms latch) | The **negative** UV case: the recorded dip must *not* latch UV_BUS. Pairs with the UV pair (TP0010/TP0053), which must | `no_fault`, `fault_not_latched(UV_BUS)` | no |
 
@@ -360,7 +374,7 @@ carries the implicit `bringup_reached_idle` gate (3d).
 | ML0153 | 14 | 5 | T/2 basin — `v_act` corrupted to ~2× true | `no_fault`, `bounded_current`. **Caveat:** the basin fix is in the estimator, which replay bypasses — not testable open-loop, `drive_loop_stepped`| **yes** |
 | ML0164 | 16 | 6 | x2 **rounding** basin, locked breakaway-to-stop | `no_fault`, `bounded_current`. Same caveat, `drive_loop_stepped`| **yes** |
 | TP0171 | 16 | 6 | reset re-seeded *into* the x2 basin (~15 ms recovery) | `no_fault`, `bounded_current`. Same caveat | no |
-| YP0166 | 16 | 6 | mid-run `v = 0` injection at a true 1.49 m/s → ±12 A rail pair within 12 ms (the fw v17 TOCTOU race) | `no_fault`, `bounded_current`, `returns_off_rail` — a full-scale velocity step straight into the ~454 A/(m/s) LF gain must give a **bounded** transient that releases, `drive_loop_stepped`| **yes** |
+| YP0166 | 16 | 6 | mid-run `v = 0` injection at a true 1.49 m/s → ±12 A rail pair within 12 ms (the fw v17 TOCTOU race) | `no_fault`, `bounded_current`, `returns_off_rail` — a full-scale velocity step straight into the ~454 A/(m/s) LF gain must give a **bounded** transient that releases, `share_loop_actuated`, `drive_loop_stepped`| **yes** |
 | TP0201 | 18 | 6 | share-rail handoff gap, bus 15.86 → 12.185 V | `no_fault`, `fault_not_latched(UV_BUS)` — 0.185 V above the limit for ~10 ms, inside the 20 ms dwell, so no latch. **Caveat:** the fw v19 handoff *slew* that mitigates the gap acts on the plant, which replay bypasses; only the fault decision is exercisable | no |
 | TP0010 | — (pre-versioning) | 1 | bus collapse the old firmware died on **without faulting** | `fault_latched(UV_BUS)` — the fw v5 leaky-dwell filter must latch. That is the whole point of the rework | no |
 | TP0053 | 4 | 2 | repetitive source-commutation dropout (~9 ms under / ~51 ms over per ~60 ms cycle) that **evaded** the fw v4 window filter | `fault_latched(UV_BUS)` — the exact case the dwell integrator was designed for: net +6.45 ms per cycle, so it must latch within a few cycles | no |
@@ -369,7 +383,7 @@ carries the implicit `bringup_reached_idle` gate (3d).
 
 | Log | fw | BLG | Recorded I_fc peak | Check | Cmds |
 |---|---|---|---|---|---|
-| ML0203 | 18 | 6 | 2.11 A | `fault_latched(OC_FC)` + `require_stimulus`, `bounded_current`, `drive_loop_stepped`| **yes** |
+| ML0203 | 18 | 6 | 2.11 A | `fault_latched(OC_FC)` + `require_stimulus`, `bounded_current`, `share_loop_actuated`, `drive_loop_stepped`| **yes** |
 | ML0165 | 16 | 6 | 1.52 A | same, `drive_loop_stepped`| **yes** |
 | ML0169 | 16 | 6 | 1.88 A | same, `drive_loop_stepped`| **yes** |
 | WP0097 | 5 | 3 | **3.60 A** (archive maximum) | same — but see the timing caveat below | no |
@@ -563,7 +577,8 @@ passing vacuously.
 4. **Define the checks** from the existing kinds where possible: `no_fault`,
    `fault_latched`, `fault_not_latched`, `bounded_current`, `no_sustained_rail`,
    `no_rail_limit_cycle`, `returns_off_rail`, `near_zero_current`,
-   `drive_loop_stepped`. A new kind is a
+   `drive_loop_stepped`, `share_loop_actuated`. (`no_sustained_rail` exists but is
+   **not** for this half — see §3.) A new kind is a
    small pure `(ReplayCsv, spec) -> (bool, str)` function plus a `CHECK_KINDS` entry
    — and a named constant with its rationale for any threshold it introduces.
 4b. **Check the recorded `I_fc` against `LIMIT_I_FC_MAX` (1.4 A) before calling a log
@@ -591,7 +606,19 @@ passing vacuously.
      assume. (3) Would a live command contradict the entry's own expectation (the
      ML0144 case)? If none of the three refuses it, set `True` **and add a
      `drive_loop_stepped` check ordered before the motor-response checks**.
-     Emits `--replay-commands`.
+     Emits `--replay-commands`. An opt-in entry should also carry
+     `drive_min_frac` on its `drive_loop_stepped` check — the fraction of the
+     recorded window that must show drive activity, set at roughly **half** the
+     entry's own measured fraction. The absolute 50-sample floor sits 31–1017×
+     below measured activity and only catches a *dead* command path, not a dying
+     one; the per-entry fraction is what catches degradation.
+   - `share_loop_actuated` — add it to an entry whose recorded `share_sp`
+     actually varies (measure it; most logs hold 0.500 constant). It asserts the
+     MDAC droop split **moved**, which is the share axis's only observable here.
+     It deliberately does **not** assert setpoint tracking: open-loop replay winds
+     the share PI regardless, and entries with a *constant* 0.500 setpoint still
+     show a ratio span of ~0.35 from windup alone, so a tracking assertion would
+     be satisfied by windup and prove nothing.
    - `require_stimulus` on a `fault_latched` check is supported for `FAULT_UV_BUS`
      and `FAULT_OC_FC` (§4c); any other bit is reported as an authoring error rather
      than silently unguarded.

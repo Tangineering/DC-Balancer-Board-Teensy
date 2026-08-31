@@ -493,6 +493,13 @@ must never be read as a closed-loop trajectory match. Two further consequences:
 - The board's own `'V'`/`'D'`/`'Y'` commands cannot "drive" a replay.
 - `--replay-commands` (above) does **not** change any of this: it replays the
   recorded *commands* as a second fixed channel, it does not close the loop.
+- **OC faults latch on injected currents regardless of switch topology.** The
+  injected rail currents are independent of the board's own switch state, so an
+  OC fault can latch on a current that could not physically have flowed through
+  the path the board actually had open. Clean as of campaign
+  `20260831_000518` — ML0203's `OC_FC` latch had `FC_BUS` closed — but check
+  `switch_state` at the latch time before reading any replay OC result as a
+  statement about hardware.
 - Divergence between the replayed `I_cmd` (in the log) and the live `current` (in
   the observation frame) is **expected**, not a defect — see the version warning
   below.

@@ -361,7 +361,11 @@ FAULT_EXPECTATIONS = {
         # UNREACHABLE at --soc0 0.15, and its budget comment was wrong twice:
         #   * It used the 2.2 A BUS-side load as the coulomb current.  The pack
         #     sits behind the boost, which steps 6.46 -> 14.37 V, so the PACK-SIDE
-        #     current is ~6.19 A (measured, validated to 0.06 %).
+        #     current is ~2.8x larger.  F4 (2026-08-31): it is a RANGE, not the
+        #     single 6.19 A point once quoted here — measured 5.72-6.45 A, mean
+        #     6.03 A (round-1 campaign 20260831_000518). It RISES as the pack
+        #     drains: the bus load is constant POWER, so a falling V_batt must be
+        #     met with more pack current for the same delivered watts.
         #   * It assumed ~870 s of load.  The UV_BATT latch is a STATE condition,
         #     not a time one: OCV(soc) - I*(Rs(soc)+R1) = 6.2 V solves at
         #     soc_latch ~= 0.1130, so the run ENDS there.  From soc0 0.15 the
@@ -369,7 +373,11 @@ FAULT_EXPECTATIONS = {
         #     threshold no matter how long the run is.
         # At the corrected --soc0 0.20 (see the plan builder) the ceiling is
         # 0.20 - 0.113 = 0.087, i.e. 1.74x the 0.05 threshold, and the latch is
-        # expected at ~13 + 0.087*18000/6.19 ~= 266 s.
+        # expected at ~13 + 0.087*18000/6.03 ~= 273 s on the measured mean pack
+        # current.  MEASURED 270.704 s (round-1 campaign 20260831_000518) — 0.8 %
+        # under the mean-based estimate, and 1.7 % over the older 6.19 A point
+        # estimate's ~266 s.  Both estimates are close enough that the 400 s
+        # duration is comfortable either way.
         #
         # DISJUNCTIVE because the two proofs FORECLOSE EACH OTHER: a UV_BATT latch
         # ends the run and caps the observable fall, while a run that never latches
@@ -513,15 +521,29 @@ FAULT_EXPECTATIONS = {
         #                     exercise the foldback WITHOUT producing the Death-5
         #                     boost-kill signature. The two 17.72 V rings observed
         #                     are the teardown's own EN-low openings at ~0.1 A.
-        #   i_cut 5.0-8.0 A   the fold plausibility band. Measured 6.290 A =
-        #                     5.0 A load + ~1.11 A CSS ramp current + blank-window
-        #                     lag growth, against a fold limit of 5.36 A at
-        #                     dv ~ 15.15 V. The band's floor is the fold limit's own
-        #                     lower reach and its ceiling is RT_I_FOLD_HIGH, so a
-        #                     cut outside it is not a foldback event at all.
+        #   i_cut 6.0-6.6 A   the REPEATABILITY band (tightened from the 5.0-8.0 A
+        #                     plausibility band on 2026-08-31 — see F2 below).
+        #                     Measured 6.290 A = 5.0 A load + ~1.11 A CSS ramp
+        #                     current + blank-window lag growth, against a fold
+        #                     limit of 5.36 A at dv ~ 15.15 V. The old band ran from
+        #                     the fold limit's own lower reach to RT_I_FOLD_HIGH,
+        #                     i.e. "is this a foldback event at all"; the new one
+        #                     asks the stronger question the repeat measurements
+        #                     now support, "is it THE SAME foldback event".
+        # F2 (2026-08-31): the i_cut band TIGHTENED 5.0-8.0 -> 6.0-6.6 A. The
+        # original band was the fold limit's own reach — a physics plausibility
+        # bound, correct but loose enough that a 25 % drift would still pass.
+        # Two campaigns have now measured the SAME cut to 4 significant figures:
+        # 6.2852 A (campaign 20260830_203006) and 6.290012976976211 A (round-1
+        # campaign 20260831_000518) — a 0.076 % repeat — against 6.290 A measured
+        # on hardware. 6.0/6.6 brackets both with ~4 % margin either side, which is
+        # ~50x the observed run-to-run spread: wide enough that a legitimate
+        # substep-rate or capacitance change does not trip it, tight enough that a
+        # real change in the foldback path does. The count and the abs-max forbid
+        # are unchanged.
         "events_require": [
             {"kind": "scp_cut", "count": 1,
-             "field": "i_cut", "min_value": 5.0, "max_value": 8.0},
+             "field": "i_cut", "min_value": 6.0, "max_value": 6.6},
         ],
         "events_forbid_over_absmax": True,
     },
@@ -789,8 +811,13 @@ def build_plan(args):
                 #  1. COULOMB CURRENT.  It used the 2.2 A SOC_ENDURANCE_LOAD_A
                 #     figure, which is a BUS-SIDE load.  The pack sits behind the
                 #     boost (6.46 -> 14.37 V), so the PACK-SIDE current that
-                #     actually depletes it is ~6.19 A — 2.8x larger.  Measured on
-                #     the campaign trace, validated to 0.06 %.
+                #     actually depletes it is ~2.8x larger.
+                #     F4 (2026-08-31): that current is a RANGE, not a point —
+                #     measured 5.72-6.45 A, MEAN 6.03 A (round-1 campaign
+                #     20260831_000518), rising as the pack drains because the bus
+                #     load is constant POWER and a falling V_batt must be met with
+                #     more pack current. The estimate below therefore uses a mean,
+                #     which is why the predicted latch time is approximate.
                 #  2. WINDOW.  It assumed the load simply runs for ~870 s.  It does
                 #     not: the UV_BATT latch is a STATE condition —
                 #     OCV(soc) - I*(Rs(soc)+R1) = 6.2 V solves at soc_latch ~=
@@ -805,9 +832,14 @@ def build_plan(args):
                 #                   Rs(SOC) knee, so "walks down the OCV curve"
                 #                   is literally true for the early window.
                 #   --duration 400 -> estimated latch at
-                #                   13 + 0.087*18000/6.19 ~= 266 s, plus ~134 s of
+                #                   13 + 0.087*18000/6.03 ~= 273 s (the 6.19 A
+                #                   point estimate gave ~266 s), plus ~127 s of
                 #                   margin and tail.  480 s CHEAPER than the old
                 #                   880 s, and the objective is now reachable.
+                #                   MEASURED 270.704 s (round-1 campaign
+                #                   20260831_000518), so the tail actually ran
+                #                   ~129 s — the uncertainty budget below was not
+                #                   needed this time, but see why it stays.
                 # The signal check is disjunctive (see FAULT_EXPECTATIONS): either
                 # the 0.05 fall OR a post-ramp UV_BATT latch proves the depletion.
                 #
@@ -1000,10 +1032,28 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
     `survive_to_t` (a scenario's FAULT_EXPECTATIONS['survive_to']['t']) adds two
     probes that need a single pass over the rows: `fault_bits_before_survive`
     (post-grace bits observed strictly before that time) and `state_at_survive`
-    (mainState on the first observed row at or after it)."""
+    (mainState on the first observed row at or after it).
+
+    TWO FIRST-SIGHTING MAPS, and they answer different questions (F1, 2026-08-31):
+
+      fault_first_t            POST-GRACE first sighting. This is what
+                               `not_before_s` is judged against, so it MUST be
+                               post-grace-scoped. Consequence: for a fault that
+                               latched inside the grace window and persisted, it
+                               reports the GRACE BOUND, not the onset.
+      fault_first_t_whole_run  first sighting anywhere in the run. Report-only —
+                               no check reads it — and the honest answer to "when
+                               did this actually happen?".
+
+    Measured example, round-1 campaign 20260831_000518: scp-inrush's OC_FC cut is
+    stamped t = 0.600 by its own `scp_cut` event, `fault_first_t` says 2.000371,
+    and `fault_first_t_whole_run` says 0.600-ish. Quote the whole-run one to a
+    reader; quote the post-grace one only when explaining a `not_before_s`
+    verdict."""
     m = {"csv": csv_path, "rows": 0, "n_obs": 0, "final_fault_flags": None,
          "fault_bits_seen": 0, "fault_bits_post_grace": 0,
-         "fault_first_t": {}, "n_obs_post_grace": 0, "last_obs_t": None,
+         "fault_first_t": {}, "fault_first_t_whole_run": {},
+         "n_obs_post_grace": 0, "last_obs_t": None,
          "grace_s": grace_s, "survive_to_t": survive_to_t,
          "fault_bits_before_survive": 0, "state_at_survive": None,
          "final_state": None, "duration_s": None,
@@ -1013,6 +1063,9 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
         return m
     subs = []
     t_first = t_last = None
+    # F1: separate accumulator for the whole-run first-sighting map — the
+    # post-grace union cannot serve, since it is empty for every pre-grace row.
+    _seen_for_first = 0
     try:
         with open(csv_path, newline="") as fh:
             for row in csv.DictReader(fh):
@@ -1049,6 +1102,20 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
                     # grace bound; treat it as PRE-grace (the conservative side —
                     # it is excluded from the post-grace union and so can never
                     # excuse a real in-run fault, only fail to accuse on one).
+                    # F1 (2026-08-31): the WHOLE-RUN first sighting of each bit,
+                    # unfiltered by the grace bound. `fault_first_t` below is
+                    # post-grace-scoped by design (it feeds `not_before_s`, which
+                    # judges the post-grace window), but that makes it report the
+                    # GRACE BOUND as the onset time for any fault that latched
+                    # inside the window and persisted: scp-inrush's OC_FC cut is
+                    # measured at t = 0.600 by its own scp_cut event, and
+                    # `fault_first_t` says 2.000371 (round-1 campaign
+                    # 20260831_000518). Both numbers are correct for their own
+                    # question; only reporting the first one is what misleads.
+                    if t is not None:
+                        for b in _split_bits(bits & ~_seen_for_first):
+                            m["fault_first_t_whole_run"].setdefault(fault_names(b), t)
+                        _seen_for_first |= bits
                     post = t is not None and t >= grace_s
                     if post:
                         m["n_obs_post_grace"] += 1

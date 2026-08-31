@@ -30,6 +30,23 @@ BENCH_TEST 0 / HIL_SIM 1 flip — NEVER committed). Dashboard OFF (no tty in my 
    scp-inrush 6; drive/charge-regen kept; soc-depletion 400 s + soc0 0.20 (A1).
    Cross-campaign caveat: baseline-statistics windows shrink vs campaigns 203006/214819.
 
+4. **Round-1 fix round run with a LIGHTENED pipeline** (single implementer + test
+   reconciliation + orchestrator diff review, no fresh two-lens pass): all nine items
+   originate FROM tonight's two-lens review + audit findings and are LOW/MED tooling
+   changes. Deviation from the full orchestrated-feature pipeline, judged proportionate.
+5. **FU3 tightens drive_loop_stepped thresholds from round-1 measured data** — future
+   replay runs FAIL if the command path degrades below ~half of tonight's activity.
+   Deliberate ratchet; loosen per entry if a legitimate stimulus change lowers activity.
+6. **FU4 deferred** (Idle→Run setpoint-arrival synthetic entry — new stimulus design,
+   your call).
+
 ## Commit ledger
 
-(rounds land below as they complete)
+- `9d17d23` — adopted the parallel session's HIL report analysis pipeline (pre-round).
+- `817295d` — the feature round: command replay, soc-depletion gate (A1), replay
+  metrics (A5), duration trims. All reviews clean after fix round; 674+25/718 tests.
+- **Round 1 (hil_report_20260831_000518): 39/39 PASS, all verified for the right
+  reason.** TRCB fix CONFIRMED on hardware; command replay proven at scale 1.00;
+  soc-depletion redesign validated; B1 (INA253 side) raised and refuted same night.
+  Ledger + summary in the report folder (not committed — HIL Results/ is gitignored).
+- (round-1 fix round pending → commit next)

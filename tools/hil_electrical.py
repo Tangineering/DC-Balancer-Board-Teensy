@@ -1387,6 +1387,10 @@ class ElectricalSim:
         # The INA253s sense each boost's OUTPUT current; the sources see the INPUT
         # current, so refer it back through the bus/source voltage ratio and the
         # boost efficiency before driving the polarization / SOC models.
+        #
+        # Output-side CONFIRMED 2026-08-31 against the schematic (sheets 1-2:
+        # TPS61288 VOUT -> VOUT-FC/BT -> INA253 IS+ -> IS- -> VBUS-FC/BT ->
+        # RT1987 VIN); do not re-open.
         bt_seq_on = bool(sw & SW_BT_SEQ)
         i_fc_src = self._source_current(self.i_fc, self.fuel_cell.v_terminal, v[N_BUS])
         i_bt_src = self._source_current(self.i_bt, self.battery.v_terminal, v[N_BUS])

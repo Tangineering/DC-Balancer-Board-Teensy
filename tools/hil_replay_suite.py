@@ -413,6 +413,23 @@ OC_FC_RECLASS_WHY = (
 #
 # Everything else with a live recorded v_sp opts IN, and gains a
 # `drive_loop_stepped` check ordered BEFORE its motor-response checks.
+#
+# ── WHY `no_sustained_rail` IS ABSENT FROM THIS HALF (FU5, 2026-08-31) ──────
+# It is a deliberate omission, not a threshold that was quietly dropped because
+# entries kept failing it. `no_sustained_rail` asserts that no single rail
+# episode outlasts SUSTAINED_RAIL_S (1.0 s) — a windup symptom ON A CLOSED LOOP,
+# where a healthy controller drives the error down and comes off the rail.
+# Replay is OPEN LOOP: the injected `v_actual` cannot respond to the command, so
+# a correct controller facing a standing error is SUPPOSED to sit on the rail
+# for as long as the recorded trajectory keeps that error in front of it.
+# Measured, round-1 campaign 20260831_000518: YP0166 holds a rail for 1.217 s
+# with nothing wrong. Applying the check here would fail correct behaviour and
+# the only way to keep it green would be to inflate the threshold until it
+# asserted nothing — the classic fitted-threshold failure. The genuine windup
+# question is instead covered by `returns_off_rail` (does the command RELEASE
+# once the error goes away) and by the BLG `u_unsat` conditioning trace on
+# hardware runs. The check kind stays in CHECK_KINDS for the scenario half and
+# for any future closed-loop harness.
 REPLAY_SUITE = [
     # ── CONFORMANCE — current wheel + control law (fw v18/v19) ───────────────
     {
@@ -440,11 +457,38 @@ REPLAY_SUITE = [
         # replay entry produces, and the share controller is frozen for those
         # stretches. Neither affects oc_fc_latched — the OC comparison is against
         # the INJECTED I_fc, which command replay cannot touch.
+        #
+        # FU2 (2026-08-31) — WHAT THAT ACTUATION MEASURED, so a reader does not
+        # rediscover it as an alarm. Round-1 campaign 20260831_000518:
+        # switch_transitions = 222 for this entry against 0-50 for every other
+        # replay, i.e. 3 FC-open and 107 BT-open events. The 106-event bulk is
+        # CHATTER, and its mechanism is understood: under OPEN-LOOP replay the
+        # share PI integrates against an error it can never null, winds to the
+        # rail, and drives the setpoint back and forth across the
+        # DROOP_R_MIN/DROOP_R_MAX boundary — so the cutoff opens and re-closes.
+        # That is an ACCEPTED RESIDUAL of the fw v6-era open-loop share windup,
+        # not a firmware defect and not a regression: on hardware the loop closes
+        # and the setpoint does not oscillate across the boundary. The count is
+        # now in results.json/REPORT.md via ReplayCsv.metrics() so it is visible
+        # rather than silent; a LARGE change in it is the thing worth looking at.
         "replay_commands": True,
         "checks": [
             {"kind": "fault_latched", "name": "oc_fc_latched",
              "bit": FAULT_OC_FC, "require_stimulus": True},
-            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
+            {"kind": "share_loop_actuated", "name": "share_loop_actuated",
+                    # FU1: this entry's recorded share_sp varies over
+                    # [0.000, 1.000], and the MDAC ratio r = BT/(FC+BT)
+                    # measured a span of 0.699 (round-1 campaign
+                    # 20260831_000518) against the 0.20 floor.
+                    # ACTUATION ONLY - see check_share_loop_actuated:
+                    # open-loop replay winds the share PI regardless,
+                    # so setpoint TRACKING is deliberately not asserted.
+                    },
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
+                    # FU3: measured 0.696 of the recorded window over
+                    # threshold (round-1 campaign 20260831_000518);
+                    # floor set at half that.
+                    "drive_min_frac": 0.35},
             {"kind": "bounded_current", "name": "bounded_current"},
         ],
     },
@@ -459,7 +503,20 @@ REPLAY_SUITE = [
         # and the only class where the drive and share setpoints move together.
         "replay_commands": True,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
-                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
+                   {"kind": "share_loop_actuated", "name": "share_loop_actuated",
+                    # FU1: this entry's recorded share_sp varies over
+                    # [0.300, 0.700], and the MDAC ratio r = BT/(FC+BT)
+                    # measured a span of 0.695 (round-1 campaign
+                    # 20260831_000518) against the 0.20 floor.
+                    # ACTUATION ONLY - see check_share_loop_actuated:
+                    # open-loop replay winds the share PI regardless,
+                    # so setpoint TRACKING is deliberately not asserted.
+                    },
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
+                    # FU3: measured 0.881 of the recorded window over
+                    # threshold (round-1 campaign 20260831_000518);
+                    # floor set at half that.
+                    "drive_min_frac": 0.44},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
@@ -559,7 +616,20 @@ REPLAY_SUITE = [
         # (30719 nonzero v_sp rows, 19697 rows with share_sp off 0.5).
         "replay_commands": True,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
-                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
+                   {"kind": "share_loop_actuated", "name": "share_loop_actuated",
+                    # FU1: this entry's recorded share_sp varies over
+                    # [0.300, 0.700], and the MDAC ratio r = BT/(FC+BT)
+                    # measured a span of 0.552 (round-1 campaign
+                    # 20260831_000518) against the 0.20 floor.
+                    # ACTUATION ONLY - see check_share_loop_actuated:
+                    # open-loop replay winds the share PI regardless,
+                    # so setpoint TRACKING is deliberately not asserted.
+                    },
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
+                    # FU3: measured 0.879 of the recorded window over
+                    # threshold (round-1 campaign 20260831_000518);
+                    # floor set at half that.
+                    "drive_min_frac": 0.44},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
 
@@ -578,7 +648,11 @@ REPLAY_SUITE = [
         "replay_commands": True,
         "checks": [
             {"kind": "no_fault", "name": "no_fault"},
-            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
+            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
+                    # FU3: measured 0.686 of the recorded window over
+                    # threshold (round-1 campaign 20260831_000518);
+                    # floor set at half that.
+                    "drive_min_frac": 0.34},
             {"kind": "bounded_current", "name": "bounded_current"},
             {"kind": "no_rail_limit_cycle", "name": "no_rail_limit_cycle",
              "max_alt_per_s": LIMIT_CYCLE_ALT_PER_S},
@@ -594,7 +668,11 @@ REPLAY_SUITE = [
         "replay_commands": True,
         "checks": [
             {"kind": "no_fault", "name": "no_fault"},
-            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
+            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
+                    # FU3: measured 0.671 of the recorded window over
+                    # threshold (round-1 campaign 20260831_000518);
+                    # floor set at half that.
+                    "drive_min_frac": 0.34},
             {"kind": "bounded_current", "name": "bounded_current"},
             {"kind": "no_rail_limit_cycle", "name": "no_rail_limit_cycle",
              "max_alt_per_s": LIMIT_CYCLE_ALT_PER_S},
@@ -613,7 +691,11 @@ REPLAY_SUITE = [
         "replay_commands": True,
         "checks": [{"kind": "fault_latched", "name": "oc_fc_latched",
                     "bit": FAULT_OC_FC, "require_stimulus": True},
-                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
+                    # FU3: measured 0.404 of the recorded window over
+                    # threshold (round-1 campaign 20260831_000518);
+                    # floor set at half that.
+                    "drive_min_frac": 0.20},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
@@ -638,7 +720,11 @@ REPLAY_SUITE = [
         "replay_commands": True,
         "checks": [{"kind": "fault_latched", "name": "oc_fc_latched",
                     "bit": FAULT_OC_FC, "require_stimulus": True},
-                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
+                    # FU3: measured 0.084 of the recorded window over
+                    # threshold (round-1 campaign 20260831_000518);
+                    # floor set at half that.
+                    "drive_min_frac": 0.04},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
@@ -674,7 +760,20 @@ REPLAY_SUITE = [
         # share_sp rows).
         "replay_commands": True,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
-                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
+                   {"kind": "share_loop_actuated", "name": "share_loop_actuated",
+                    # FU1: this entry's recorded share_sp varies over
+                    # [0.300, 0.700], and the MDAC ratio r = BT/(FC+BT)
+                    # measured a span of 0.400 (round-1 campaign
+                    # 20260831_000518) against the 0.20 floor.
+                    # ACTUATION ONLY - see check_share_loop_actuated:
+                    # open-loop replay winds the share PI regardless,
+                    # so setpoint TRACKING is deliberately not asserted.
+                    },
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
+                    # FU3: measured 0.877 of the recorded window over
+                    # threshold (round-1 campaign 20260831_000518);
+                    # floor set at half that.
+                    "drive_min_frac": 0.44},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
@@ -704,7 +803,11 @@ REPLAY_SUITE = [
         "replay_commands": True,
         "checks": [
             {"kind": "no_fault", "name": "no_fault"},
-            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
+            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
+                    # FU3: measured 0.899 of the recorded window over
+                    # threshold (round-1 campaign 20260831_000518);
+                    # floor set at half that.
+                    "drive_min_frac": 0.45},
             {"kind": "bounded_current", "name": "bounded_current"},
             {"kind": "returns_off_rail", "name": "returns_off_rail",
              "level_a": OFF_RAIL_LEVEL_A, "within_s": OFF_RAIL_WITHIN_S},
@@ -744,7 +847,11 @@ REPLAY_SUITE = [
         # 2303 rows of nonzero recorded v_sp over a 4.8s log.
         "replay_commands": True,
         "checks": [
-            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
+            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
+                    # FU3: measured 0.543 of the recorded window over
+                    # threshold (round-1 campaign 20260831_000518);
+                    # floor set at half that.
+                    "drive_min_frac": 0.27},
             {"kind": "no_rail_limit_cycle", "name": "no_rail_limit_cycle",
              "max_alt_per_s": LIMIT_CYCLE_ALT_PER_S},
             {"kind": "bounded_current", "name": "bounded_current"},
@@ -762,7 +869,11 @@ REPLAY_SUITE = [
         # command: 4017 rows of nonzero recorded v_sp over a 6.5s log.
         "replay_commands": True,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
-                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
+                    # FU3: measured 0.699 of the recorded window over
+                    # threshold (round-1 campaign 20260831_000518);
+                    # floor set at half that.
+                    "drive_min_frac": 0.35},
                    {"kind": "bounded_current", "name": "bounded_current"},
                    {"kind": "returns_off_rail", "name": "returns_off_rail",
                     "level_a": OFF_RAIL_LEVEL_A, "within_s": OFF_RAIL_WITHIN_S}],
@@ -809,7 +920,11 @@ REPLAY_SUITE = [
         # bounded-command half real.
         "replay_commands": True,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
-                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
+                    # FU3: measured 0.634 of the recorded window over
+                    # threshold (round-1 campaign 20260831_000518);
+                    # floor set at half that.
+                    "drive_min_frac": 0.32},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
@@ -822,7 +937,11 @@ REPLAY_SUITE = [
         # Same reasoning as ML0153 (16345 rows of nonzero recorded v_sp).
         "replay_commands": True,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
-                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
+                    # FU3: measured 0.706 of the recorded window over
+                    # threshold (round-1 campaign 20260831_000518);
+                    # floor set at half that.
+                    "drive_min_frac": 0.35},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
@@ -855,7 +974,20 @@ REPLAY_SUITE = [
         "replay_commands": True,
         "checks": [
             {"kind": "no_fault", "name": "no_fault"},
-            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
+            {"kind": "share_loop_actuated", "name": "share_loop_actuated",
+                    # FU1: this entry's recorded share_sp varies over
+                    # [0.300, 0.700], and the MDAC ratio r = BT/(FC+BT)
+                    # measured a span of 0.546 (round-1 campaign
+                    # 20260831_000518) against the 0.20 floor.
+                    # ACTUATION ONLY - see check_share_loop_actuated:
+                    # open-loop replay winds the share PI regardless,
+                    # so setpoint TRACKING is deliberately not asserted.
+                    },
+                   {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
+                    # FU3: measured 0.887 of the recorded window over
+                    # threshold (round-1 campaign 20260831_000518);
+                    # floor set at half that.
+                    "drive_min_frac": 0.44},
             {"kind": "bounded_current", "name": "bounded_current"},
             {"kind": "returns_off_rail", "name": "returns_off_rail",
              "level_a": OFF_RAIL_LEVEL_A, "within_s": OFF_RAIL_WITHIN_S},
@@ -1071,6 +1203,13 @@ class ReplayCsv:
         # check_fault_latched's OC stimulus guard.
         self.i_fc = _series(rows, "t", "I_fc", float)
         self.state = _series(rows, "t", "state", _int_any)
+        # FU2: the switch bitmask, and the MDAC command words, over the RECORDED
+        # window.  Both are observation-frame columns and are blank before the
+        # first frame arrives, so _series drops those rows for us.
+        self.switch = _series(rows, "t", "switch", _int_any)
+        self.switch_recorded = [(t, s) for t, s in self.switch if t >= preamble_s]
+        self.mdac_fc = _series(rows, "t", "mdac_fc", _int_any)
+        self.mdac_bt = _series(rows, "t", "mdac_bt", _int_any)
         self.n_rows = len(rows)
         self.n_obs = len(self.current)
         self.duration_s = (float(rows[-1]["t"]) - float(rows[0]["t"])) if rows else 0.0
@@ -1152,6 +1291,18 @@ class ReplayCsv:
         return {
             "csv": csv_path,
             "rows": self.n_rows,
+            # FU2 (2026-08-31): how many times the switch bitmask CHANGED VALUE
+            # over the recorded window. Cheap (one pass over an already-parsed
+            # series) and report-only — no check reads it — but without it a
+            # replay entry's switch actuation is completely silent in
+            # results.json and REPORT.md. ML0203 measured 222 changes in round-1
+            # campaign 20260831_000518 against 0-50 for every other entry; that
+            # gap is exactly the kind of thing that should not need a bespoke
+            # analysis pass to notice. NOTE it counts CHANGES, so one open+close
+            # of one switch is 2; it is a churn indicator, not an event count.
+            "switch_transitions": sum(
+                1 for a, b in zip(self.switch_recorded, self.switch_recorded[1:])
+                if a[1] != b[1]),
             "n_obs": len(self.faults_all),
             "n_obs_post_grace": len(self.faults),
             "final_fault_flags": self.faults_all[-1][1] if self.faults_all else None,
@@ -1533,6 +1684,95 @@ def _vacuous_suffix(data):
     return VACUOUS_TAG if data.command_is_identically_zero() else ""
 
 
+# ── share_loop_actuated thresholds (suite policy, not firmware) ─────────────
+# FU1 (2026-08-31). Measured MDAC-ratio spans over the recorded window, round-1
+# campaign 20260831_000518, for the five entries whose recorded share_sp varies:
+#   YP0152 0.400   YP0166 0.546   YP0196 0.695   YP0214 0.552   ML0203 0.699
+# 0.20 is half the SMALLEST of those, so every current entry clears it ~2x and a
+# path that half-died still fails.
+SHARE_ACTUATED_MIN_SPAN = 0.20
+# A ratio needs both codes; below this many usable samples the window is not
+# evidence either way. 50 matches DRIVE_STEPPED_MIN_SAMPLES for the same reason.
+SHARE_ACTUATED_MIN_SAMPLES = 50
+# AD5443 command word: control nibble 0x1 = load-and-update, then a 12-bit code
+# (hil_plant_sim.MDAC_CMD_LOAD_UPDATE / MDAC_RES). A word carrying any other
+# nibble is not a code write and is skipped rather than read as zero.
+MDAC_CMD_LOAD_UPDATE = 0x1000
+MDAC_CODE_MASK = 0x0FFF
+
+
+def _mdac_share_ratio_series(data):
+    """(t, r) with r = BT_code / (FC_code + BT_code) over the RECORDED window.
+
+    This is the DROOP-GAIN split the firmware actually wrote to the two MDACs —
+    the share loop's actuator, and the only share-side observable the 16-byte
+    observation frame carries. Samples are skipped when either word is blank,
+    carries a non-load-update control nibble, or the codes sum to zero."""
+    fc = dict(data.mdac_fc)
+    out = []
+    for t, bw in data.mdac_bt:
+        if t < data.preamble_s:
+            continue
+        fw = fc.get(t)
+        if fw is None:
+            continue
+        if (fw & 0xF000) != MDAC_CMD_LOAD_UPDATE or (bw & 0xF000) != MDAC_CMD_LOAD_UPDATE:
+            continue
+        a, b = fw & MDAC_CODE_MASK, bw & MDAC_CODE_MASK
+        if a + b == 0:
+            continue
+        out.append((t, b / float(a + b)))
+    return out
+
+
+def check_share_loop_actuated(data, spec):
+    """The MDAC droop split MOVED over the recorded window.
+
+    WHAT THIS ASSERTS, precisely: that the share loop's ACTUATOR travelled — the
+    firmware wrote a materially different FC/BT droop-gain split at some point
+    than at another. That is the share axis's only observable here, and before
+    this check existed the entire share axis was unasserted across all 122 checks
+    in the half.
+
+    WHAT IT DELIBERATELY DOES NOT ASSERT: that the split TRACKED the commanded
+    setpoint. Replay is open loop, so the share PI integrates against an error it
+    can never null and winds regardless — measured, round-1 campaign
+    20260831_000518: entries whose recorded share_sp is CONSTANT at 0.500
+    (ML0140, ML0151, ML0169, ...) still show a ratio span of ~0.35 from windup
+    alone. A tracking assertion here would therefore be satisfied by windup and
+    would be evidence of nothing. Movement is the honest claim; a tolerance-based
+    tracking check belongs to a closed-loop harness, not to this one.
+
+    Spec fields: `min_span` (default SHARE_ACTUATED_MIN_SPAN), `min_samples`
+    (default SHARE_ACTUATED_MIN_SAMPLES)."""
+    min_span = float(spec.get("min_span", SHARE_ACTUATED_MIN_SPAN))
+    min_n = int(spec.get("min_samples", SHARE_ACTUATED_MIN_SAMPLES))
+    series = _mdac_share_ratio_series(data)
+    if len(series) < min_n:
+        return False, (
+            f"only {len(series)} usable MDAC sample(s) in the recorded window "
+            f"(t >= {data.preamble_s:.1f}s, need >= {min_n}) — both mdac_fc and "
+            f"mdac_bt must carry a 0x1nnn load-and-update word for a ratio to "
+            f"exist, so this is 'not measured', not 'did not move'")
+    lo_t, lo = min(series, key=lambda tv: tv[1])
+    hi_t, hi = max(series, key=lambda tv: tv[1])
+    span = hi - lo
+    if span < min_span:
+        return False, (
+            f"the share actuator did not move: MDAC ratio r = BT/(FC+BT) spanned "
+            f"only {span:.4f} over {len(series)} recorded-window samples "
+            f"({lo:.4f} at t={lo_t:.3f}s .. {hi:.4f} at t={hi_t:.3f}s), need "
+            f">= {min_span:.2f}. This entry's recorded share_sp varies, so a flat "
+            f"split means the command did not reach the share loop or the MDAC "
+            f"write path is broken")
+    return True, (
+        f"share actuator moved: MDAC ratio r = BT/(FC+BT) spanned {span:.4f} "
+        f"({lo:.4f} at t={lo_t:.3f}s .. {hi:.4f} at t={hi_t:.3f}s) over "
+        f"{len(series)} recorded-window samples, need >= {min_span:.2f}. "
+        f"ACTUATION ONLY — open-loop replay winds the share PI regardless, so "
+        f"this is NOT evidence the split tracked the commanded setpoint")
+
+
 def check_drive_loop_stepped(data, spec):
     """The commanded current shows real drive activity in the recorded window.
 
@@ -1540,25 +1780,56 @@ def check_drive_loop_stepped(data, spec):
     command replay ACTUALLY REACHED the board and moved it out of Idle. A FAIL
     here is a real failure (commands were sent and the loop never stepped), and it
     is ordered before the motor-response checks so a reader sees the cause first
-    rather than N downstream checks passing on a flat zero."""
+    rather than N downstream checks passing on a flat zero.
+
+    TWO FLOORS, and the second is what makes this check bite (FU3, 2026-08-31):
+
+      min_samples   an ABSOLUTE floor (50 samples), the "did anything happen at
+                    all" bound. Kept as the default so an entry without a
+                    measurement still gets a check.
+      drive_min_frac  optional, PER-ENTRY: the fraction of recorded-window
+                    samples that must clear the threshold. Default None = the
+                    absolute floor alone, i.e. previous behaviour exactly.
+
+    Why the fraction was needed: the 50-sample floor sits 31-1017x BELOW measured
+    activity (round-1 campaign 20260831_000518 — ML0151 ran 0.899 of its window
+    over threshold, i.e. ~50 000 samples against a floor of 50). A command path
+    that had DEGRADED to a few percent of its real duty would have sailed through.
+    Each opted-in entry now carries a fraction at roughly HALF its own measured
+    value, so a real halving of drive activity fails while ordinary run-to-run
+    variation does not."""
     min_a = float(spec.get("min_abs_a", DRIVE_STEPPED_MIN_A))
     min_n = int(spec.get("min_samples", DRIVE_STEPPED_MIN_SAMPLES))
+    min_frac = spec.get("drive_min_frac")
     series = data.current_recorded or data.current
     if not series:
         return False, ("no observation frames in the recorded window "
                        "(t >= %.1fs) — the board never answered" % data.preamble_s)
     n = sum(1 for _t, i in series if abs(i) >= min_a)
+    frac = n / float(len(series))
     peak_t, peak = max(series, key=lambda tv: abs(tv[1]))
+    need = f"need >= {min_n}"
+    if min_frac is not None:
+        need += f" AND >= {float(min_frac) * 100:.0f}% of the window"
     if n < min_n:
         return False, (
             f"the drive loop never stepped: only {n} of {len(series)} recorded-window "
-            f"samples have |I_cmd| >= {min_a:.2f} A (need >= {min_n}); peak "
+            f"samples have |I_cmd| >= {min_a:.2f} A ({need}); peak "
             f"{peak:+.4f} A at t={peak_t:.3f}s. Commands WERE replayed for this "
             f"entry, so a flat command means they did not reach the board, the "
             f"board never left Idle, or the recorded v_sp/share_sp are themselves "
             f"identically zero")
+    if min_frac is not None and frac < float(min_frac):
+        return False, (
+            f"the drive loop stepped but the command path looks DEGRADED: "
+            f"{n} of {len(series)} recorded-window samples ({frac * 100:.1f}%) have "
+            f"|I_cmd| >= {min_a:.2f} A, below this entry's own measured-and-halved "
+            f"floor of {float(min_frac) * 100:.0f}%; peak {peak:+.4f} A at "
+            f"t={peak_t:.3f}s. The absolute {min_n}-sample floor PASSED — that "
+            f"floor sits orders of magnitude under normal activity and only "
+            f"catches a dead path, not a dying one")
     return True, (f"drive loop stepped: {n} of {len(series)} recorded-window samples "
-                  f"have |I_cmd| >= {min_a:.2f} A (need >= {min_n}); peak "
+                  f"({frac * 100:.1f}%) have |I_cmd| >= {min_a:.2f} A ({need}); peak "
                   f"{peak:+.4f} A at t={peak_t:.3f}s")
 
 
@@ -1725,6 +1996,7 @@ CHECK_KINDS = {
     "returns_off_rail": check_returns_off_rail,
     "near_zero_current": check_near_zero_current,
     "drive_loop_stepped": check_drive_loop_stepped,
+    "share_loop_actuated": check_share_loop_actuated,
 }
 
 
@@ -1769,6 +2041,15 @@ def evaluate_replay_csv(entry, csv_path):
         "Replay is OPEN LOOP: the plant integrator and the encoder estimator are "
         "bypassed, and I_charge/ag105_status inject as 0.0 A / 0x00 for every BLG "
         "format v1-v7.")
+    # FU6 (2026-08-31): a fidelity boundary specific to the current-sense path.
+    result["notes"].append(
+        "FIDELITY: the injected rail currents are INDEPENDENT of the board's own "
+        "switch state, so an OC fault latches on an injected current even in a "
+        "switch topology where that current could not physically flow. Clean this "
+        "campaign — ML0203's OC_FC latch had FC_BUS closed, so the current had a "
+        "real path — but a future stimulus could latch OC on an OPEN path. Check "
+        "switch_state at the latch time before reading any replay OC result as a "
+        "hardware statement.")
     pre_s = entry_preamble_s(entry)
     if pre_s > 0.0:
         result["notes"].append(

@@ -315,6 +315,69 @@ def test_analyze_scenario_csv_fault_bits_seen_is_union_not_just_final():
     assert m["fault_bits_seen"] == 0x0003        # but the union saw both bits
 
 
+# ── F1: fault_first_t_whole_run -- unfiltered first-sighting map ───────────
+
+def test_analyze_scenario_csv_fault_first_t_whole_run_present_in_zero_obs_dict():
+    """The whole-run map must be present (as {}) in the initial/degenerate
+    metrics dict alongside fault_first_t, not added only once a row is
+    actually parsed."""
+    m = rhs.analyze_scenario_csv("/nonexistent/path/nope.csv")
+    assert m["fault_first_t_whole_run"] == {}
+    assert m["fault_first_t"] == {}
+
+
+def test_analyze_scenario_csv_fault_first_t_whole_run_populated_pre_grace(tmp_path):
+    """A bit that appears BEFORE the grace bound must still land in the
+    whole-run map (F1's whole point), even though it is invisible to
+    fault_first_t (post-grace only, see the next test)."""
+    rows = [
+        {"t": "0.500", "fault_flags": hex(0x0001), "state": "2"},  # pre-grace (2.0s)
+        {"t": "3.000", "fault_flags": "0", "state": "2"},
+    ]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    m = rhs.analyze_scenario_csv(str(path), grace_s=2.0)
+    assert m["fault_first_t_whole_run"].get(rhs.fault_names(0x0001)) == pytest.approx(0.5)
+
+
+def test_analyze_scenario_csv_fault_first_t_whole_run_differs_from_post_grace_on_in_grace_latch(
+        tmp_path):
+    """The exact scenario F1 exists to surface: a bit that latches INSIDE the
+    grace window and persists reports the GRACE BOUND in fault_first_t (its
+    honest post-grace-scoped answer) but its true onset time in
+    fault_first_t_whole_run -- the two maps must disagree here, not agree."""
+    rows = [
+        {"t": "0.600", "fault_flags": hex(0x0001), "state": "99"},  # true onset, pre-grace
+        {"t": "1.500", "fault_flags": hex(0x0001), "state": "99"},  # persists through grace
+        {"t": "2.000", "fault_flags": hex(0x0001), "state": "99"},  # exactly at grace_s
+        {"t": "3.000", "fault_flags": hex(0x0001), "state": "99"},
+    ]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    m = rhs.analyze_scenario_csv(str(path), grace_s=2.0)
+    name = rhs.fault_names(0x0001)
+    assert m["fault_first_t_whole_run"][name] == pytest.approx(0.6)
+    assert m["fault_first_t"][name] == pytest.approx(2.0)
+    assert m["fault_first_t_whole_run"][name] != m["fault_first_t"][name]
+
+
+def test_analyze_scenario_csv_fault_first_t_whole_run_matches_post_grace_when_onset_is_post_grace(
+        tmp_path):
+    """The converse sanity check: when a bit's true onset IS post-grace, both
+    maps must agree -- the divergence in the test above is specifically a
+    pre-grace-onset artifact, not a general property of the two maps."""
+    rows = [
+        {"t": "0.500", "fault_flags": "0", "state": "2"},
+        {"t": "5.000", "fault_flags": hex(0x0001), "state": "99"},
+    ]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    m = rhs.analyze_scenario_csv(str(path), grace_s=2.0)
+    name = rhs.fault_names(0x0001)
+    assert m["fault_first_t_whole_run"][name] == pytest.approx(5.0)
+    assert m["fault_first_t"][name] == pytest.approx(5.0)
+
+
 def test_analyze_scenario_csv_zero_obs_rows_only(tmp_path):
     rows = [{"t": "0.000", "fault_flags": ""}, {"t": "0.001", "fault_flags": ""}]
     path = tmp_path / "a.csv"
@@ -723,12 +786,14 @@ def test_judge_scenario_survive_to_fails_on_wrong_state_at_the_gate():
 
 
 def test_judge_scenario_events_require_scp_cut_passes_when_present():
-    """'scp-inrush' events_require is now the DICT form (2026-08-30c,
-    campaign follow-up (1)): exactly one scp_cut, its i_cut field inside
-    the [5.0, 8.0] A fold-plausibility band."""
+    """'scp-inrush' events_require is the DICT form (2026-08-30c, campaign
+    follow-up (1)): exactly one scp_cut, its i_cut field inside the band.
+    F2 (2026-08-31): the band TIGHTENED 5.0-8.0 -> 6.0-6.6 A -- from a fold-
+    physics PLAUSIBILITY bound to a REPEATABILITY bound, after two campaigns
+    measured the same cut to 4 significant figures (6.2852 A / 6.290013 A)."""
     expect = rhs.FAULT_EXPECTATIONS["scp-inrush"]["events_require"][0]
     assert expect == {"kind": "scp_cut", "count": 1,
-                      "field": "i_cut", "min_value": 5.0, "max_value": 8.0}
+                      "field": "i_cut", "min_value": 6.0, "max_value": 6.6}
     m = _metrics(fault_bits_seen=0, final_fault_flags=0)
     events = _events(kinds={"scp_cut": 1},
                      field_values={"scp_cut": {"i_cut": [6.29]}})
@@ -767,16 +832,40 @@ def test_judge_scenario_events_require_scp_cut_fails_on_wrong_count():
 
 
 def test_judge_scenario_events_require_scp_cut_fails_when_i_cut_outside_band():
-    """The i_cut plausibility band [5.0, 8.0] A: a cut outside it is not a
-    foldback event at all and must fail, even with the right count."""
+    """The i_cut band [6.0, 6.6] A (F2, tightened from 5.0-8.0): a cut
+    outside it is not a repeat of the measured foldback event and must fail,
+    even with the right count."""
     m = _metrics(fault_bits_seen=0, final_fault_flags=0)
     events = _events(kinds={"scp_cut": 1},
                      field_values={"scp_cut": {"i_cut": [2.5]}})
     passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
     ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
     assert ev["passed"] is False
-    assert "out of the [5, 8] plausibility band" in ev["detail"]
+    assert "out of the [6, 6.6] plausibility band" in ev["detail"]
     assert "2.500" in ev["detail"]
+
+
+def test_judge_scenario_events_require_scp_cut_fails_just_outside_new_tightened_band():
+    """F2 boundary check: a cut that would have PASSED the old 5.0-8.0 band
+    (e.g. 5.5 A, or 7.0 A) must now FAIL under the tightened 6.0-6.6 A band --
+    pins that the band actually moved, not just that its literal changed."""
+    m = _metrics(fault_bits_seen=0, final_fault_flags=0)
+    for i_cut in (5.5, 5.999, 6.601, 7.0):
+        events = _events(kinds={"scp_cut": 1},
+                         field_values={"scp_cut": {"i_cut": [i_cut]}})
+        _passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
+        ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
+        assert ev["passed"] is False, i_cut
+
+
+def test_judge_scenario_events_require_scp_cut_passes_at_band_boundaries():
+    m = _metrics(fault_bits_seen=0, final_fault_flags=0)
+    for i_cut in (6.0, 6.6, 6.290012976976211):
+        events = _events(kinds={"scp_cut": 1},
+                         field_values={"scp_cut": {"i_cut": [i_cut]}})
+        _passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
+        ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
+        assert ev["passed"] is True, i_cut
 
 
 def test_judge_scenario_events_forbid_over_absmax_pass_and_fail():

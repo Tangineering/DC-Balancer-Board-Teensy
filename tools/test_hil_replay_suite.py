@@ -735,6 +735,216 @@ def test_check_drive_loop_stepped_opt_in_entry_with_flat_current_is_a_real_fail(
     assert res["passed"] is False
 
 
+# -- drive_loop_stepped: drive_min_frac (FU3, --replay-commands) ------------
+
+def test_check_drive_loop_stepped_drive_min_frac_none_default_matches_previous_behavior(
+        tmp_path):
+    """No drive_min_frac in the spec (the module default) must be BYTE-
+    IDENTICAL to the pre-FU3 behaviour: only the absolute min_samples floor
+    is judged, and the detail carries no fraction requirement clause."""
+    rows = _with_bringup_and_grace(_uniform_rows(0.5, 0.001, current=lambda t: 2.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "drive_loop_stepped", "name": "dls"}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    assert res["checks"][-1]["passed"] is True
+    assert "AND >=" not in res["checks"][-1]["detail"]
+
+
+def test_check_drive_loop_stepped_drive_min_frac_just_above_and_below(tmp_path):
+    """Fraction boundary: 1000 recorded-window samples, drive_min_frac=0.40 --
+    401 stepped samples (40.1%) passes, 399 (39.9%) fails, both comfortably
+    clear of the 50-sample absolute floor either way."""
+    def build(n_above):
+        rows = [{"t": i * 0.001, "current": 5.0 if i < n_above else 0.0}
+               for i in range(1000)]
+        return _with_bringup_and_grace(rows)
+
+    spec = {"kind": "drive_loop_stepped", "name": "dls", "drive_min_frac": 0.40}
+
+    path_above = tmp_path / "above.csv"
+    write_replay_csv(path_above, build(401))
+    res_above = rs.evaluate_replay_csv(_entry([spec]), str(path_above))
+    assert res_above["checks"][-1]["passed"] is True
+
+    path_below = tmp_path / "below.csv"
+    write_replay_csv(path_below, build(399))
+    res_below = rs.evaluate_replay_csv(_entry([spec]), str(path_below))
+    assert res_below["checks"][-1]["passed"] is False
+    assert "DEGRADED" in res_below["checks"][-1]["detail"]
+
+
+def test_check_drive_loop_stepped_absolute_floor_passes_but_fraction_fails(tmp_path):
+    """THE key case FU3 exists for: the 50-sample absolute floor sits orders
+    of magnitude below real activity, so a command path that DEGRADED to a
+    small fraction of its duty cycle still clears the absolute floor -- only
+    the fraction actually catches it. Same CSV, with vs without the fraction
+    spec, to prove the absolute-floor-alone verdict really would have been a
+    PASS."""
+    rows = [{"t": i * 0.001, "current": 5.0 if i < 60 else 0.0} for i in range(1000)]
+    rows = _with_bringup_and_grace(rows)
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+
+    spec_frac = {"kind": "drive_loop_stepped", "name": "dls", "drive_min_frac": 0.5}
+    res_frac = rs.evaluate_replay_csv(_entry([spec_frac]), str(path))
+    detail = res_frac["checks"][-1]["detail"]
+    assert res_frac["checks"][-1]["passed"] is False
+    assert "looks DEGRADED" in detail
+    assert "floor PASSED" in detail
+
+    spec_abs = {"kind": "drive_loop_stepped", "name": "dls2"}
+    res_abs = rs.evaluate_replay_csv(_entry([spec_abs]), str(path))
+    assert res_abs["checks"][-1]["passed"] is True   # confirms the "PASSED" claim above
+
+
+def test_check_drive_loop_stepped_passing_detail_includes_percentage(tmp_path):
+    """FU3: the passing detail now reports the stepped fraction as a
+    percentage even when drive_min_frac is not given (informational)."""
+    rows = _with_bringup_and_grace(_uniform_rows(0.5, 0.001, current=lambda t: 2.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    res = rs.evaluate_replay_csv(
+        _entry([{"kind": "drive_loop_stepped", "name": "dls"}]), str(path))
+    assert res["checks"][-1]["passed"] is True
+    assert "(100.0%) have" in res["checks"][-1]["detail"]
+
+
+def test_check_drive_loop_stepped_fail_detail_states_frac_requirement_when_given(tmp_path):
+    rows = _with_bringup_and_grace(_uniform_rows(0.5, 0.001, current=lambda t: 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "drive_loop_stepped", "name": "dls", "drive_min_frac": 0.35}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    assert res["checks"][-1]["passed"] is False
+    assert "AND >= 35% of the window" in res["checks"][-1]["detail"]
+
+
+# -- share_loop_actuated (FU1, --replay-commands) ----------------------------
+# r = BT_code / (FC_code + BT_code) over MDAC words carrying the load-and-
+# update control nibble (0x1nnn); MDAC_CMD_LOAD_UPDATE/MDAC_CODE_MASK below
+# are re-derived from the module's own constants, not hand-copied literals.
+
+def test_check_share_loop_actuated_pass_span_above_floor(tmp_path):
+    """A ratio that sweeps well past the 0.20 floor passes."""
+    def mdac_fc(t):
+        bt_code = int(100 + (t / 0.5) * 3000)
+        return rs.MDAC_CMD_LOAD_UPDATE | (4000 - bt_code)
+
+    def mdac_bt(t):
+        bt_code = int(100 + (t / 0.5) * 3000)
+        return rs.MDAC_CMD_LOAD_UPDATE | bt_code
+
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.5, 0.001, mdac_fc=mdac_fc, mdac_bt=mdac_bt,
+                      fault_flags=lambda t: 0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    res = rs.evaluate_replay_csv(
+        _entry([{"kind": "share_loop_actuated", "name": "sla"}]), str(path))
+    assert res["checks"][-1]["passed"] is True
+    assert "share actuator moved" in res["checks"][-1]["detail"]
+
+
+def test_check_share_loop_actuated_fail_flat_split_nonzero_code(tmp_path):
+    """A CONSTANT NONZERO split (r = 0.5 throughout, via 0x1800/0x1800 -- a
+    real code write every sample, NOT the code==0 'unusable' case) must FAIL
+    on span, distinctly from the 'not measured' branch."""
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.5, 0.001, mdac_fc=lambda t: 0x1800, mdac_bt=lambda t: 0x1800,
+                      fault_flags=lambda t: 0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    res = rs.evaluate_replay_csv(
+        _entry([{"kind": "share_loop_actuated", "name": "sla"}]), str(path))
+    assert res["checks"][-1]["passed"] is False
+    assert "did not move" in res["checks"][-1]["detail"]
+    assert "spanned only 0.0000" in res["checks"][-1]["detail"]
+
+
+def test_check_share_loop_actuated_non_load_update_nibble_is_not_measured(tmp_path):
+    """A control nibble other than 0x1 is not a code write at all and is
+    skipped -- the FC word always carries nibble 0x2 here, so ZERO usable
+    samples exist and the verdict must be 'not measured', not a flat-split
+    failure (a DIFFERENT case -- see the previous test)."""
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.5, 0.001, mdac_fc=lambda t: 0x2800, mdac_bt=lambda t: 0x1800,
+                      fault_flags=lambda t: 0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    res = rs.evaluate_replay_csv(
+        _entry([{"kind": "share_loop_actuated", "name": "sla"}]), str(path))
+    assert res["checks"][-1]["passed"] is False
+    assert "not measured" in res["checks"][-1]["detail"]
+    assert "usable MDAC sample" in res["checks"][-1]["detail"]
+
+
+def test_check_share_loop_actuated_below_min_samples_floor(tmp_path):
+    """Fewer usable samples than min_samples (default or overridden) fails
+    'not measured', even though every sample IS a valid load-and-update code
+    (the previous test's zero-usable-samples case is a DIFFERENT reason for
+    the same verdict)."""
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.01, 0.001, mdac_fc=lambda t: 0x1C00, mdac_bt=lambda t: 0x1400,
+                      fault_flags=lambda t: 0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    res = rs.evaluate_replay_csv(
+        _entry([{"kind": "share_loop_actuated", "name": "sla"}]), str(path))
+    assert res["checks"][-1]["passed"] is False
+    assert "not measured" in res["checks"][-1]["detail"]
+    assert f"need >= {rs.SHARE_ACTUATED_MIN_SAMPLES}" in res["checks"][-1]["detail"]
+
+
+def test_check_share_loop_actuated_min_samples_override(tmp_path):
+    """The same CSV that satisfies the module default min_samples fails
+    against a spec-level override demanding more than exist."""
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.5, 0.001, mdac_fc=lambda t: 0x1C00, mdac_bt=lambda t: 0x1400,
+                      fault_flags=lambda t: 0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    default_res = rs.evaluate_replay_csv(
+        _entry([{"kind": "share_loop_actuated", "name": "sla"}]), str(path))
+    assert default_res["checks"][-1]["passed"] is False   # flat split, but WAS measured
+
+    override_res = rs.evaluate_replay_csv(
+        _entry([{"kind": "share_loop_actuated", "name": "sla",
+                "min_samples": 100000}]), str(path))
+    assert override_res["checks"][-1]["passed"] is False
+    assert "not measured" in override_res["checks"][-1]["detail"]
+    assert "need >= 100000" in override_res["checks"][-1]["detail"]
+
+
+def test_check_share_loop_actuated_min_span_override(tmp_path):
+    """A flat split (span 0.0) that would fail the module default passes
+    against a spec-level min_span of 0.0."""
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.5, 0.001, mdac_fc=lambda t: 0x1800, mdac_bt=lambda t: 0x1800,
+                      fault_flags=lambda t: 0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    res = rs.evaluate_replay_csv(
+        _entry([{"kind": "share_loop_actuated", "name": "sla", "min_span": 0.0}]),
+        str(path))
+    assert res["checks"][-1]["passed"] is True
+
+
+def test_replay_suite_share_loop_actuated_only_on_the_five_documented_entries():
+    """FU1: share_loop_actuated is opted into by exactly the five entries
+    whose recorded share_sp varies (YP0152/YP0166/YP0196/YP0214/ML0203) --
+    every constant-setpoint entry (including the other opted-in
+    drive_loop_stepped-only entries) must NOT carry it."""
+    expected = {"YP0152", "YP0166", "YP0196", "YP0214", "ML0203"}
+    have = {e["log"] for e in rs.REPLAY_SUITE
+           if any(c["kind"] == "share_loop_actuated" for c in e["checks"])}
+    assert have == expected
+    # sanity: every one of the five is itself replay_commands: True
+    index = rs.suite_index()
+    for log in expected:
+        assert index[log]["replay_commands"] is True, log
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # 2b. NOT_EXERCISED tagging (replay_commands-aware, supersedes the plain
 #     VACUOUS_TAG on entries that do not opt in)
@@ -971,6 +1181,65 @@ def test_replay_suite_false_entries_never_carry_a_drive_loop_stepped_check():
         if e.get("replay_commands") is False:
             kinds = [c["kind"] for c in e["checks"]]
             assert "drive_loop_stepped" not in kinds, e["log"]
+
+
+# FU3 (2026-08-31): a deliberate RATCHET from round-1 measured data -- each
+# opted-in entry's drive_min_frac sits at roughly HALF its own measured
+# stepped-fraction (round-1 campaign 20260831_000518). Pinned as a literal
+# table so a future edit that silently loosens (or accidentally drops) one
+# entry's floor fails here, not three log-analysis rounds later.
+EXPECTED_DRIVE_MIN_FRAC = {
+    "ML0203": 0.35, "YP0196": 0.44, "YP0214": 0.44, "ML0146": 0.34,
+    "ML0149": 0.34, "ML0165": 0.20, "ML0169": 0.04, "YP0152": 0.44,
+    "ML0151": 0.45, "ML0137": 0.27, "ML0140": 0.35, "ML0153": 0.32,
+    "ML0164": 0.35, "YP0166": 0.44,
+}
+
+
+def test_replay_suite_drive_min_frac_table_pin():
+    index = rs.suite_index()
+    have = {}
+    for log in EXPECTED_DRIVE_MIN_FRAC:
+        entry = index[log]
+        dls = [c for c in entry["checks"] if c["kind"] == "drive_loop_stepped"][0]
+        have[log] = dls.get("drive_min_frac")
+    assert have == pytest.approx(EXPECTED_DRIVE_MIN_FRAC)
+
+
+def test_replay_suite_drive_min_frac_set_matches_true_entries_exactly():
+    """Every replay_commands: True entry (which is exactly the set carrying a
+    drive_loop_stepped check, per the test above) must ALSO carry a
+    drive_min_frac -- FU3 ratcheted every opted-in entry, none was left on
+    the bare absolute floor. Table completeness, not just table correctness."""
+    have_frac = set()
+    for e in rs.REPLAY_SUITE:
+        for c in e["checks"]:
+            if c["kind"] == "drive_loop_stepped" and c.get("drive_min_frac") is not None:
+                have_frac.add(e["log"])
+    assert have_frac == set(EXPECTED_DRIVE_MIN_FRAC)
+    assert have_frac == {e["log"] for e in rs.REPLAY_SUITE
+                         if e.get("replay_commands") is True}
+
+
+def test_replay_suite_drive_min_frac_values_are_roughly_half_the_documented_measurement():
+    """Cross-check FU3's own stated derivation ('roughly HALF its own
+    measured stepped-fraction') against the entry comments' measured values,
+    parsed straight from the source rather than hand-copied -- a floor that
+    silently drifted from ~0.5x the measurement would still be a valid float
+    but would no longer be the ratchet the table claims to be."""
+    import inspect
+    import re
+    src = inspect.getsource(rs)
+    # "measured 0.696 of the recorded window over threshold ... drive_min_frac": 0.35
+    pattern = re.compile(
+        r'measured (\d+\.\d+) of the recorded window over\s*\n\s*#\s*threshold.*?'
+        r'"drive_min_frac":\s*([\d.]+)', re.DOTALL)
+    matches = pattern.findall(src)
+    assert len(matches) == len(EXPECTED_DRIVE_MIN_FRAC), (
+        "sanity: expected one measured/floor comment pair per opted-in entry")
+    for measured_s, floor_s in matches:
+        measured, floor = float(measured_s), float(floor_s)
+        assert floor == pytest.approx(measured / 2.0, abs=0.011), (measured, floor)
 
 
 def test_replay_suite_fault_path_purity_entries_are_command_free():
@@ -1380,6 +1649,67 @@ def test_metrics_empty_csv_reports_none_fields_not_raising(tmp_path):
     assert m["final_fault_flags"] is None
     assert m["last_obs_t"] is None
     assert m["n_obs"] == 0
+
+
+# -- FU2: switch_transitions ------------------------------------------------
+
+def test_metrics_switch_transitions_counts_value_changes_not_events(tmp_path):
+    """switch_transitions counts VALUE CHANGES between consecutive recorded-
+    window samples, not a count of 'events' -- a bit staying SET across three
+    consecutive samples is one transition (the rising edge), not three, and
+    it falling back is a second."""
+    switches = [0, 0, 1, 1, 1, 0, 0]
+
+    def switch_fn(t):
+        return switches[int(round(t / 0.01))]
+
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.06, 0.01, switch=switch_fn, fault_flags=lambda t: 0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    m = data.metrics()
+    # 0->1 and 1->0: exactly 2 VALUE CHANGES, independent of how many samples
+    # each level held for.
+    assert m["switch_transitions"] == 2
+
+
+def test_metrics_switch_transitions_zero_when_switch_never_changes(tmp_path):
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.05, 0.01, switch=lambda t: 0x3F, fault_flags=lambda t: 0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    assert data.metrics()["switch_transitions"] == 0
+
+
+def test_metrics_switch_transitions_preamble_content_excluded_entirely(tmp_path):
+    """A switch flip that happens entirely BEFORE preamble_s (no shift
+    applied) must not be counted at all -- switch_recorded is empty, same
+    scoping as current_recorded."""
+    rows = _with_bringup(
+        _uniform_rows(0.06, 0.01, switch=lambda t: 0 if t < 0.03 else 1,
+                     fault_flags=lambda t: 0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    assert data.switch_recorded == []
+    assert data.metrics()["switch_transitions"] == 0
+
+
+def test_metrics_switch_transitions_only_counts_post_preamble_flips(tmp_path):
+    """Content straddling preamble_s: a flip BEFORE it is invisible, the SAME
+    shaped flip AFTER it counts -- proving the scoping is on TIME, not on the
+    switch pattern itself."""
+    pre = _uniform_rows(0.06, 0.01, switch=lambda t: 0 if t < 0.03 else 1)
+    post = _shift_rows(
+        _uniform_rows(0.06, 0.01, switch=lambda t: 0 if t < 0.03 else 1),
+        rs.REPLAY_PREAMBLE_S)
+    rows = _with_bringup(pre + post)
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    assert data.metrics()["switch_transitions"] == 1   # only the shifted flip counts
 
 
 def test_evaluate_replay_csv_metrics_field_populated_on_success(tmp_path):
