@@ -1931,3 +1931,56 @@ FW_VERSION stays 23; wire protocol frozen (40 B inject / 16 B observe / 22 B com
 - **Overnight autonomous session (operator away):** decisions taken without sign-off are
   logged in `OVERNIGHT_LOG.md` at repo root with the commit ledger for choosing a
   resume point.
+
+---
+
+## Status & session addendum (2026-08-31b, overnight campaigns 1–4: 156 runs, zero board defects)
+
+Four back-to-back full-suite campaigns run autonomously overnight (operator away;
+`OVERNIGHT_LOG.md` has the decision log + resume points), each analyzed under the
+hil-agent-analysis skill, with two fix rounds between. Commits 817295d → 9612369 →
+82c8f75; report folders hil_report_20260831_{000518,010145,015024,021553} (local-only).
+
+- **Round 1 (39/39 — first fully-green campaign on record, every PASS verified for the
+  right reason):** the TRCB/SOFT-start fix CONFIRMED ON HARDWARE (comm-loss warm
+  MOT_PWR re-close 1.041× physical, was 3.9×; reverse_block observed in soft-start;
+  bleed τ to 0.02%); command replay proven at scale 1.00 by the V_SP_ZERO_THRESH bin
+  scan (the I_cmd zero/nonzero boundary lands exactly on the firmware's 0.07 m/s —
+  a constant the replay path never applies); replay-half vacuity 40.5% → 6.6%;
+  soc-depletion A1 redesign validated (both gate arms independently green, latch
+  270.704 s vs ~266 predicted, +1.8% fully explained by the rising pack current);
+  duration trims cost nothing; the INA253 sense-side question (B1) was raised by an
+  analysis agent and REFUTED same night against the schematic (output-side confirmed —
+  sheets 1/2/4; margin claims stand). Fix round → 9612369: `share_loop_actuated`
+  check kind (the share axis had ZERO checks across 122), `drive_min_frac` floors at
+  ~half round-1 measured activity (a degraded command path now fails), i_cut band,
+  `fault_first_t_whole_run` (the post-grace-scoped map mis-reads in-grace latch
+  onsets), `switch_transitions`.
+- **Round 2 (38/39):** the one FAIL exposed the scp-inrush KNIFE-EDGE — the sim's SCP
+  cut (tick S+1 after the 8 ms TD_ON admission) races the firmware's OC teardown at
+  S+L where **L = the observation round-trip = 1 or 2 ticks** (sub-ms host phase); the
+  sim applies the observed switch word BEFORE stepping the solver, so a tie goes to
+  the firmware. The celebrated 0.076% i_cut "repeat" was two draws of the same L=2
+  coin. Plant trace bit-identical; board correct in both orderings. A headless bench
+  proved the re-margin fix INFEASIBLE (a tick-S cut needs ~12.7 A = 1.49× RT_I_FOLD_HIGH
+  — a hard short, not the SCP-margin case; the 5.0 A stimulus's claimed 15% fold margin
+  also never existed — bench threshold ~5.53 A). Adopted instead (82c8f75): two-outcome
+  `events_any_of` — A_fold_fired (1 scp_cut, i_cut 6.0–6.6, STRONGER) / B_fold_approached
+  (0 cuts + MOT_PWR sw_ring 3.5–5.5 A + the OC latch, WEAKER) — the check names the
+  outcome and tracks the L distribution instead of scoring a coin flip. The
+  deterministic-fold path (stimulus TIMING redesign) is an open operator item.
+  Everything else REPEAT CLEAN (comm-loss re-close 0.3696 A/ch EXACT; bringup peaks
+  exact to 4 decimals).
+- **Rounds 3–4 (39/39 both; round 4 ZERO structural diffs vs 3):** both branches of the
+  two-outcome check validated live (L record across five campaigns: A,A,B,B,A —
+  bimodal by mechanism). The handoff-sag cut-latency tracker (round-1 anomaly, −65%
+  vs baseline) CLOSED with a corrected model: datapoint #5 (13.130 ms) broke the
+  assumed [0,12) window and revealed the true one — uniform command-arrival phase over
+  the **20 ms share tick** (all five points 2.850–13.130 ms fit [0,20); campaign-2's
+  11.968 ms was never a distinct mode). Reopen only on a value ≥ 20 ms.
+- **Tests: 712 passed + 25 numpy-skips (.venv_hil, five suites) / 756 (miniforge incl.
+  test_hil_report_analysis).** All tooling; FW stays v23; wire protocol frozen.
+- **Standing items** (unchanged unless noted): scp timing redesign (optional,
+  operator); FU4 Idle→Run setpoint-arrival synthetic entry; Rs(SOC) calibration vs a
+  real 2S pack (still sets soc_latch 0.113); early-exit guard (now minor); analyzer
+  exe rebuild; .venv_benchlog pandas/scipy; Pi-bridge v4 parser audit.

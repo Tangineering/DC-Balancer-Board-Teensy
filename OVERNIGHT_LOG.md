@@ -75,4 +75,29 @@ BENCH_TEST 0 / HIL_SIM 1 flip — NEVER committed). Dashboard OFF (no tty in my 
   reason.** TRCB fix CONFIRMED on hardware; command replay proven at scale 1.00;
   soc-depletion redesign validated; B1 (INA253 side) raised and refuted same night.
   Ledger + summary in the report folder (not committed — HIL Results/ is gitignored).
-- (round-1 fix round pending → commit next)
+- `9612369` — round-1 fix round: share_loop_actuated, drive_min_frac ratchet,
+  fault_first_t_whole_run, switch_transitions, i_cut band, comment cites.
+- **Round 2 (hil_report_20260831_010145): 38/39.** The one FAIL (scp-inrush, 0 cut
+  events) root-caused as the L=1/L=2 observation-round-trip knife-edge — board
+  bit-identical and correct in both orderings; everything else REPEAT CLEAN with
+  multiple exact repeats.
+- `82c8f75` — scp two-outcome `events_any_of` (re-margin proven infeasible by headless
+  bench — see decisions #7/#8), warm_reset_tripwire wording, RX-before-step note,
+  where-filter on event specs.
+- **Round 3 (hil_report_20260831_015024): 39/39, audit-confirmed.** Two-outcome check
+  validated live on its first B draw; L bimodal-by-mechanism; handoff latency read as
+  phase jitter.
+- **Round 4 (hil_report_20260831_021553): 39/39, ZERO structural diffs vs round 3.**
+  scp drew outcome A (both branches now exercised); handoff latency datapoint #5
+  (13.130 ms) corrected the jitter model to uniform [0,20) ms (50 Hz share tick) and
+  CLOSED the tracker. 156 runs tonight, no power-cycles, no board defects.
+- (final commit below = this log + the CLAUDE.md addendum)
+
+## Where to resume from
+
+Every commit tonight is safe to resume from; nothing was left mid-flight. If you want
+to unwind a decision: `817295d` predates all suite-check ratchets; `9612369` predates
+the two-outcome scp expectation; `82c8f75` (== HEAD before the close-out commit) is
+the state all of rounds 3–4 validated. The four report folders (000518, 010145,
+015024, 021553) are local-only (HIL Results/ gitignored) — each carries HIL_FINDINGS
++ HIL_SUMMARY.
