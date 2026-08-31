@@ -1755,3 +1755,71 @@ scenario and every later run found the board latched (fw v22 recovered only the 
   plan; the hifi powered-Ag105 charge scenario and the Pi-bridge v4 parser audit remain
   from the fw v22 list. Housekeeping unchanged: analyzer exe rebuild; .venv_benchlog
   pandas/scipy.
+
+---
+
+## Status & session addendum (2026-08-30d, suite fix round + campaign 2 + SOFT-start TRCB fix + hil-agent-analysis skill)
+
+Three orchestrated tooling rounds and a full HIL campaign in one session. FW stays v23
+(no firmware change); tooling commits 7802466 and bfcd33f. All on main.
+
+- **Suite/scenario fix round (7802466),** implementing the campaign-1 findings under two
+  operator rulings — (a) LIMIT_I_FC_MAX stays 1.4 A (bench logs exceeding it used DC
+  supplies; OC_FC on those traces is correct hardware replication) and (b) FC-charge +
+  hard accel is infeasible BY DESIGN (scenarios demanding both must expect OC_FC).
+  Grace-aware scoring (post-grace fault union judged, WARM_RESET_GRACE_S single-sourced,
+  carried-in settle latches excused and named — the 23-false-FAIL fix); FAULT_EXPECTATIONS
+  replaces FAULT_REQUIRED/FAULT_ALLOWED (require/allow_only/not_before_s/survive_to/
+  events_require/signals_require, per-entry citations); scenario redesigns: charge-cruise
+  REQUIRES OC_FC (ruling b), charge-regen is EMS-driven (`regen-harvest`: charge_goal only
+  inside interpolated braking windows — a stepped timeline physically cannot sustain
+  regen), charge-fault gains `chg_i_ceiling_a` 0.8 A and reaches its t=20 collapse,
+  soc-depletion staggered/2.2 A/880 s, handoff-sag re-derived around the share-cut
+  setpoint latch (the 0.60 A governor gate does NOT own the cut), scp-inrush 5.0 A from
+  t=0 (fold binds at ~5.36 A > OC sum 4.4 A — no load folds without an OC), drive
+  operator_required (--with-operator). Replay half: 2.5 s synthetic bring-up preamble +
+  absent-rail nominals (BLG v1/v2 runnable), per-entry i_fc_clamp_a 1.3 (TP0010/53 keep
+  UV-latch coverage; ruling-a honest), skip_preamble (ML0217 cold-boot INIT_FAIL),
+  OC-quartet reclassification (ML0165/169/203/WP0097). Two-lens reviews: 2 HIGH (TP0010/53
+  would OC before UV; ML0217+preamble can't INIT_FAIL) + 7 MED + contract lens, all fixed.
+- **Campaign 2 (hil_report_20260830_203006): 38 runs — 36 PASS / 1 FAIL / 1 SKIP, every
+  verdict correct.** Firsts: regen path end-to-end ×3 windows (path/sequencing only — the
+  plant floors regen power; SOC fell), GENSTAT input-collapse response, share-cut latch
+  (12 ms, guard at 24% margin), SOFT-state SCP cut (6.29 A), replay UV/INIT_FAIL coverage
+  alive. Repeatability: bring-up ~1 ms/~1 mA across campaigns; UV dwell 19.992 ms;
+  ems-drive-cycle sub-1%. Discovery: the hifi engine implements the DESIGN droop
+  (0.316/0.633 Ω, ratio exactly 2.000) — ~4× bench K_DROOP_BUS; bannered, sag depths not
+  bench-comparable. The FAIL (comm-loss) was a REAL OC_FC 3 ms after a validated recovery
+  (Δ 1.1 ms) — root cause below. Ledger + HIL_SUMMARY.md in the report folder.
+- **SOFT-start pre-charged-node fix + TRCB (bfcd33f, hil_electrical.py):** the comm-loss
+  artifact (t_on recomputed from sagging v_in while v_ss_start latched; 3.9-6.8× current
+  on a warm MOT_PWR close — the one path that closes into a pre-charged node). Both
+  originally-adjudicated fixes REJECTED on measurement (latching t_on regresses cold
+  0.2226→3.81 A; a stamp-skip clamp goes bang-bang 6.95 A); shipped: per-episode VIN
+  high-water mark scoped to pre-charged entries (warm 6.82×→1.02×, cold byte-identical),
+  then the focused review found the min(target,v_in) cap could sink −55 to −345 A of
+  phantom charge (no reverse handling in SOFT) → replaced with the datasheet TRCB block
+  (RT1987 §17.4/§17.6/Table 1: reverse comparator not restricted to post-soft-start;
+  TD_ON admission gate; auto-restart without soft-start). scp-inrush re-verified on the
+  faithful staged-bring-up sequence: scp_cut i_cut 6.2852 A vs hardware 6.290 (0.07%) —
+  no event stolen (P3 closes onto a DARK node, +13.9 V forward; reverse trips need a
+  pre-charged node). Known residual (documented, future work): the model ramp conflates
+  slope with endpoint (true slew 645.5 V/s VIN-independent; cold +25% / warm −10% bias)
+  — a constant-slew redesign moves the hardware-corroborated cold pins, needs its own A/B.
+- **New skill `.claude/skills/hil-agent-analysis`:** the campaign-analysis pipeline (LIVE
+  mode with finalization-aware sidecar watcher + dispatch-as-runs-land, POST-HOC mode;
+  per-run briefs with the "PASS for the right reason" recomputation standard; FAIL
+  classification scoring-defect/sim-artifact/scenario-gap/board-real; HIL_FINDINGS.md
+  ledger + HIL_SUMMARY.md digest with manual-review pointers). references/ carries
+  hil-conventions.md and both campaign ledgers as exemplars.
+- **Tests: 602 passed + 14 skipped** across the five HIL pytest suites (TRCB-in-SOFT,
+  TD_ON hold, warm/cold A/B pins, signals/events/grace-boundary coverage). Firmware
+  suites untouched (3535/175/3993 from fw v23 stand).
+- **Next bench:** rerun the suite — comm-loss PASSing is the acceptance test for the
+  SOFT-start fix; soc-depletion (880 s) still needs a slot. Operator items: UV-dwell
+  objective home (unreachable on the BT rail behind OC_BT — retire from handoff-sag or a
+  v_bus_sense_offset scenario), Ag105 lazy-re-config + FC_CHARGE open-through-loss policy
+  on real hardware, chopper coverage (needs energy into the motor node), Pi-bridge v4
+  parser audit. Untracked/unowned in the tree: PSCAD/, tools/hil_report_analysis.py (+
+  test) — provenance unconfirmed this session, deliberately not committed. Housekeeping
+  unchanged: analyzer exe rebuild; .venv_benchlog pandas/scipy.
