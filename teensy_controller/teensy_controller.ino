@@ -1086,13 +1086,13 @@
  *          merely documented. The gate is armed-once: it guards the START only, so a mid-bring-up
  *          link hiccup is handled by the existing two-stage hold-then-zero, not by stalling a
  *          machine whose phase timeouts are already running.
- *      (c) AUTO-RECOVERY FROM THE DEAD-LINK LATCH. In state99Phase == 3 (teardown COMPLETE, stage
- *          dark) a HIL build re-enters State 0 when ALL of: error_code == ERR_HIL_STALE AND
- *          fault_flags == (FAULT_ERROR | FAULT_PI_TIMEOUT) EXACTLY (0x8010 — FAULT_HIL_LINK is an
- *          alias of FAULT_PI_TIMEOUT, so any OTHER bit means a real fault also latched and the
- *          board must stay latched); the link has been continuously fresh for
- *          HIL_RECOVER_DEBOUNCE_MS (500 ms > HIL_ZERO_MS, so a flapping link cannot oscillate
- *          latch/recover); and the SD bench log is fully closed and drained. hilWarmReset()
+ *      (c) AUTO-RECOVERY FROM A LATCHED STATE 99. In state99Phase == 3 (teardown COMPLETE, stage
+ *          dark) a HIL build re-enters State 0 when ALL of: a RUN BOUNDARY has been observed (the
+ *          injection link silent for HIL_RUN_BOUNDARY_MS while in State 99 — see fw v23
+ *          below); the link has been continuously fresh again for HIL_RECOVER_DEBOUNCE_MS (500 ms >
+ *          HIL_ZERO_MS, so a flapping link cannot oscillate latch/recover); and the SD bench log is
+ *          fully closed and drained. Fw v22 additionally required the EXACT 0x8010 dead-link fault
+ *          signature; fw v23 REMOVES that test — see the fw v23 entry. hilWarmReset()
  *          restores the software state machine to its boot values and sets mainState = 0; it
  *          touches NO pin — phase 2 already left the stage exactly as setup() does, except
  *          BT_SEQUENCE_ENABLE, which the IO CSV says need not be turned off and which bring-up P1
@@ -1113,6 +1113,29 @@
  *            across a reset" invariant does not survive that; and clears logManualActive (S8).
  *          - The source default is HIL_SIM 0 (S1): an ordinary flash is a normal bench build.
  *            A HIL_SIM=1 flash is unusable on a bench without a simulator, because of (a).
+ *  - fw v23 (2026-08-30) — HIL AUTO-RECOVERY EXTENDED TO ANY LATCHED FAULT, GATED ON A RUN
+ *      BOUNDARY. Inside #if HIL_SIM only; a non-HIL build has no behavioural change other than the
+ *      FW_VERSION stamp (same pins, sequencing, faults, telemetry v4/58 B, command packet, BLG
+ *      record v7/106 B and controller coefficients). WHY: a run_hil_suite pass latched
+ *      FAULT_UV_BUS in one scenario, and because fw v22 admitted recovery ONLY for the exact
+ *      0x8010 dead-link union, every SUBSEQUENT run found the board latched and the suite needed a
+ *      power cycle. Under HIL_SIM the plant is a simulation, so every fault is a simulated-plant
+ *      event and belongs to ONE run. The deadLinkOnly signature test is removed; in its place the
+ *      recovery requires a RUN BOUNDARY — HIL_RUN_BOUNDARY_MS (1000 ms, >> HIL_ZERO_MS) with NO
+ *      injection frame, observed while in State 99. The window is anchored to the LAST ACCEPTED
+ *      FRAME (hilLastFrameMs) and tracked in ANY teardown phase, so the figure means literally
+ *      1000 ms of link silence; anchoring it to the first dead tick instead would have added the
+ *      250 ms detection latency plus the teardown, so a literal 1 s host gap would never have
+ *      recovered. A gap of exactly 1.0 s is knife-edge (one loop tick of margin) — host gaps are
+ *      specified well above 1 s. That preserves the
+ *      in-run latch semantics the replay suite's fault_latched checks depend on (a mid-scenario
+ *      fault cannot self-clear, because the host is still streaming), while a between-scenario gap
+ *      of several seconds clears the board for the next run. Bounded: the boundary flag is cleared
+ *      by hilWarmReset(), so a persistent fault condition simply re-latches next run — one
+ *      recovery attempt per boundary, not a retry loop. The exact-signature test could NOT simply
+ *      be widened, because triggerFault() ORs bits into fault_flags even when already latched
+ *      while error_code stays first-cause-only: a real fault followed by the simulator stopping
+ *      yields 0x8010-plus-bits with a non-HIL error_code, so no equality signature exists.
  */
 
 #include <stddef.h>             // offsetof — pins the append-only BenchLogRecord field offsets
@@ -2507,7 +2530,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 22
+#define FW_VERSION 23
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -2709,13 +2732,15 @@ IPAddress      hilHostIp(0, 0, 0, 0);   // learned on the first accepted frame, 
 uint16_t       hilHostPort   = 0;
 bool           hilHostLocked = false;   // true while a host is bound; cleared when the link dies
 
-// ── HIL auto-recovery from the dead-link latch (fw v22) ──────────────────────
+// ── HIL auto-recovery from a latched State 99 (fw v22, extended fw v23) ──────
 // A dead injection link latches State 99 (FAULT_HIL_LINK / ERR_HIL_STALE) by design — with no
 // plant behind the numbers the board must stop sequencing against fiction. Before fw v22 that
 // latch was permanent, so every HIL run in a suite cost a physical power cycle. doState99() now
-// warm-resets back to State 0 once the link is demonstrably back, under the narrow conditions
-// documented at the recovery block. NOT a general fault-recovery mechanism: it is reachable only
-// for the exact 0x8010 fault union, only under HIL_SIM, and only after the teardown has finished.
+// warm-resets back to State 0 once the link is demonstrably back, under the conditions documented
+// at the recovery block. Fw v23 widens it from the exact dead-link fault union to ANY latched
+// fault, and replaces the signature test with a RUN-BOUNDARY gate (below). Still not a general
+// fault-recovery mechanism: only under HIL_SIM, only after the teardown has finished, and only
+// across a run boundary.
 //
 // DEBOUNCE: the link must be continuously fresh for this long before the reset is taken. 500 ms is
 // deliberately LONGER than HIL_ZERO_MS (250 ms): a link that flaps at the dead-link boundary would
@@ -2726,6 +2751,34 @@ bool           hilHostLocked = false;   // true while a host is bound; cleared w
 uint32_t       hilRecoverArmMs  = 0;      // millis() when the current continuously-fresh window began
 bool           hilRecoverArmed  = false;  // a fresh-link window is open (re-armed on any staleness)
 uint32_t       hilWarmResetCount = 0;     // diagnostics: warm resets taken since power-on ('S' dump)
+
+// RUN BOUNDARY (fw v23). A "run boundary" is HIL_RUN_BOUNDARY_MS with NO injection frame, observed
+// while the board sits in State 99. The window is anchored to the last accepted frame
+// (hilLastFrameMs) and tracked in ANY teardown phase, so the figure means literally "1000 ms of
+// link silence" — see the note at the recovery block for why the anchor matters. It is the gate
+// that lets recovery be widened from the exact dead-link fault union to ANY fault without breaking
+// in-run latch semantics: while a scenario is running the host is streaming, so no boundary can
+// accrue and a mid-run fault stays latched for the rest of that run (the replay suite's
+// fault_latched deviation checks depend on exactly that). 1000 ms is deliberately MUCH longer than
+// HIL_ZERO_MS (250 ms), so a host-side hiccup — a GC pause, a suite process being killed slowly, a
+// scheduler overrun — cannot masquerade as a boundary. A host gap of EXACTLY 1.0 s is knife-edge
+// (one loop tick of margin); host-side gaps are specified well above 1 s, and the suite's
+// inter-run settle is seconds.
+// For the pure dead-link case the board is latched BECAUSE the link died, so the window is already
+// running when State 99 is entered and the boundary accrues during the teardown, before any frames
+// return. Recovery timing is therefore essentially unchanged from fw v22 (the debounce still runs
+// after frames return; the boundary is already satisfied by then unless the host restarts inside
+// 1000 ms of the LAST FRAME).
+#define HIL_RUN_BOUNDARY_MS 1000u
+uint32_t       hilDeadSinceMs      = 0;      // start of the current dead window, anchored to the
+                                             // TRUE link-death instant (hilLastFrameMs) rather than
+                                             // to the tick that first noticed — stamped in ANY
+                                             // State-99 phase, not only phase 3. Falls back to
+                                             // millis() only when no frame has ever arrived.
+bool           hilDeadSinceValid   = false;  // hilDeadSinceMs holds a live dead-window start
+bool           hilRunBoundarySeen  = false;  // a full HIL_RUN_BOUNDARY_MS dead window has been seen
+                                             // while latched; cleared by hilWarmReset() so each
+                                             // boundary admits at most ONE recovery attempt
 
 // ── UDP receive-drain instrumentation (fw v21 MED-1) ─────────────────────────
 // receiveCommands() used to consume exactly ONE datagram per loop tick. At the HIL injection rate
@@ -4539,9 +4592,12 @@ void updateSensors() {
     // keep a HIL flash readable on a bench. fw v22 makes that unsafe: the State-0 wait gate holds
     // the board in State 0 for an UNBOUNDED time before the simulator starts, and on a bare
     // Teensy (the HIL target — no PCB, that is the point) the analog pins FLOAT. A floating input
-    // sitting near the rail reads as ~V_max on the divider scale, and the OV checks are NOT in the
-    // recoverable fault set (doState99() admits only fault_flags == 0x8010 / ERR_HIL_STALE), so a
-    // single float excursion latches the board permanently before the plant ever appears.
+    // sitting near the rail reads as ~V_max on the divider scale, so a single float excursion
+    // latches the board on nothing. Fw v23 made that latch recoverable in principle (any fault
+    // clears across a run boundary), but recovery needs the injection link to come back and the
+    // whole point of this branch is the window BEFORE the host exists — an OV latched here would
+    // still cost the operator the run, and a board that latches before its plant appears is
+    // indefensible regardless of whether a later boundary would clear it.
     // An HIL build must never trust a real ADC — its picture of the hardware is fiction by
     // construction. Zero is the honest value for "no plant yet", and it is inert: every OV check
     // is a `> LIMIT` test against a positive limit, and every UV check is armed only by a matched
@@ -5433,12 +5489,14 @@ void doState3() {
 }
 
 #if HIL_SIM
-// ── HIL warm reset (fw v22) ──────────────────────────────────────────────────────────────────
+// ── HIL warm reset (fw v22; admission widened fw v23) ────────────────────────────────────────
 // Restores the SOFTWARE state machine to its boot values and re-enters State 0, so a HIL suite can
 // run back-to-back cases without a physical power cycle. Called from ONE place only: doState99()'s
-// recovery block, which gates it on the exact dead-link fault union, a debounced live link, and a
-// fully-closed bench log. See that block for the admission rules — this function does not check
-// them and must never be called from anywhere else.
+// recovery block, which gates it on a completed teardown, an observed RUN BOUNDARY (fw v23 — the
+// injection link silent for HIL_RUN_BOUNDARY_MS; this replaced fw v22's exact-0x8010 fault-union
+// test, so ANY latched fault now reaches this function), a debounced live link, and a fully-closed
+// bench log. See that block for the admission rules — this function does not check them and must
+// never be called from anywhere else.
 //
 // NO PIN IS TOUCHED HERE, deliberately. State-99 phase 2 has already left the stage in exactly the
 // setup() configuration — boosts LOW, all four path switches LOW, MPPT_DISABLE LOW, CBAL_DISABLE
@@ -5449,7 +5507,16 @@ void doState3() {
 // the staged bring-up machine sequences the power path, and it re-derives the whole sequence.
 void hilWarmReset() {
     hilWarmResetCount++;
-    Serial.println("[HIL] link recovered — warm reset, re-entering State 0");
+    Serial.println("[HIL] run boundary + link recovered — warm reset, re-entering State 0");
+    // fw v23 S3: PRINT THE OUTGOING FAULT EVIDENCE BEFORE CLEARING IT. Since fw v23 recovers ANY
+    // latched fault, the warm reset is the last moment the cause exists anywhere on the board —
+    // it is not on the observation frame, and a suite child that was not running when the fault
+    // latched never saw it. Losing it silently would make a recovered run indistinguishable from
+    // a clean one.
+    Serial.print  ("[HIL] cleared fault: error_code=0x"); Serial.print(error_code, HEX);
+    Serial.print  (" (");                                 Serial.print(errorCodeStr(error_code));
+    Serial.print  (")  fault_flags=0x");                  Serial.print(fault_flags, HEX);
+    Serial.print  ("  from state ");                      Serial.println(error_source_state);
     Serial.print  ("[HIL] this is a RUN SEPARATOR: fault/error latches, controller state, Pi "
                    "command state and the bring-up machine are back at boot values (warm reset #");
     Serial.print(hilWarmResetCount);
@@ -5594,6 +5661,12 @@ void hilWarmReset() {
     // are already false by the time this runs.
     hilRecoverArmed = false;
     hilRecoverArmMs = 0;
+    // fw v23: clear the run-boundary observation too. This is what BOUNDS the widened recovery to
+    // one attempt per boundary: if whatever faulted is still present, the next run re-latches and
+    // stays latched until another dead window is observed.
+    hilRunBoundarySeen = false;
+    hilDeadSinceValid  = false;
+    hilDeadSinceMs     = 0;
 
     mainState = 0;   // State 0 re-runs the injection wait gate + the staged bring-up
 }
@@ -5627,7 +5700,26 @@ void doState99() {
         Serial.print("[STATE 99] error_code=0x"); Serial.print(error_code, HEX);
         Serial.print(" (");                       Serial.print(errorCodeStr(error_code));
         Serial.print(")  fault_flags=0x");        Serial.print(fault_flags, HEX);
-        Serial.print("  from state ");            Serial.println(error_source_state);
+        Serial.print("  from state ");            Serial.print(error_source_state);
+#if HIL_SIM
+        // fw v23 S4: the recovery preconditions, on the SAME 1 Hz line that reports the latch.
+        // Without this, a board that will not recover is indistinguishable from one that cannot,
+        // and the 'S' dump is not reachable from State 99 — this is the only live view.
+        Serial.print("  [recovery: boundary=");
+        if (hilRunBoundarySeen)      { Serial.print("SEEN"); }
+        else if (hilDeadSinceValid)  { Serial.print(millis() - hilDeadSinceMs);
+                                       Serial.print("/"); Serial.print(HIL_RUN_BOUNDARY_MS);
+                                       Serial.print("ms dead"); }
+        else                         { Serial.print("no (link fresh)"); }
+        Serial.print("  arm=");
+        if (hilRecoverArmed) { Serial.print(millis() - hilRecoverArmMs);
+                               Serial.print("/"); Serial.print(HIL_RECOVER_DEBOUNCE_MS);
+                               Serial.print("ms"); }
+        else                 { Serial.print("disarmed"); }
+        Serial.print("  phase="); Serial.print(state99Phase);
+        Serial.print("]");
+#endif
+        Serial.println();
     }
 
     switch (state99Phase) {
@@ -5672,22 +5764,27 @@ void doState99() {
     }
 
 #if HIL_SIM
-    // ── HIL dead-link auto-recovery (fw v22) ─────────────────────────────────────────────────
+    // ── HIL auto-recovery from a latched State 99 (fw v22; widened fw v23) ───────────────────
     // The ONLY path out of State 99 anywhere in the firmware, and it exists only in an HIL build.
     // Under HIL_SIM a stopped simulator is a routine event (the end of a run), not a hazard, and
-    // fw v21 made it latch the board — so a 38-run suite cost 38 power cycles. Recovery is
-    // admitted under four conditions, all necessary:
+    // fw v21 made it latch the board — so a 38-run suite cost 38 power cycles. fw v22 recovered
+    // only the exact dead-link fault union; a suite scenario that latched a REAL fault (an
+    // observed FAULT_UV_BUS) then left every later run to find the board latched. Under HIL_SIM
+    // every fault is a SIMULATED-plant event that belongs to one run, so fw v23 admits any fault
+    // code and instead gates on a RUN BOUNDARY. Recovery is admitted under five conditions, all
+    // necessary:
     //
     //   1. state99Phase == 3 — the teardown has COMPLETED. Warm-resetting between phases would
     //      abandon the sequencing mid-way, leaving an energized path pointed into a boost that
     //      phase 2 has not yet disabled (CLAUDE.md §2 back-feed rule).
-    //   2. error_code == ERR_HIL_STALE AND fault_flags == (FAULT_ERROR | FAULT_PI_TIMEOUT)
-    //      EXACTLY. FAULT_HIL_LINK is a documented ALIAS of FAULT_PI_TIMEOUT (fault_flags has no
-    //      free bit and the layout is protocol-frozen), so the union 0x8010 is the dead-link
-    //      signature and error_code disambiguates it from a genuine Pi timeout. Testing for
-    //      EQUALITY, not for the bits being present, is the load-bearing part: any additional bit
-    //      means a REAL fault latched as well (an OV, a bring-up failure, a switch conflict), and
-    //      a real fault must stay latched for the operator regardless of the link.
+    //   2. A RUN BOUNDARY has been observed: the injection link continuously DEAD for
+    //      HIL_RUN_BOUNDARY_MS while latched here. This is what replaces fw v22's exact-0x8010
+    //      signature test. In-run latch semantics are preserved because a running scenario keeps
+    //      streaming, so no boundary can accrue and a mid-scenario fault cannot self-clear (the
+    //      replay suite's fault_latched deviation checks depend on that). An exact signature could
+    //      not simply be widened: triggerFault() ORs bits into fault_flags even when already
+    //      latched while error_code stays first-cause-only, so "a real fault, then the simulator
+    //      stops" produces 0x8010-plus-bits with a non-HIL error_code and no equality test exists.
     //   3. The link has been continuously fresh for HIL_RECOVER_DEBOUNCE_MS. The window re-arms
     //      from zero on any staleness, so a link flapping around the dead-link boundary settles
     //      into the latch instead of cycling the board through bring-up (see the constant).
@@ -5696,24 +5793,58 @@ void doState99() {
     //      drain runs in phase 3 — the same window this block lives in. Warm-resetting with a
     //      close in flight would move mainState off 99 with logActive/logCloseRequested still set,
     //      stranding an unfinished file (and its trailer) across the run boundary.
+    //   5. (implicit) BOUNDED RETRY. hilWarmReset() clears hilRunBoundarySeen, so one boundary
+    //      admits at most ONE recovery attempt. If the fault condition is persistent (the plant
+    //      keeps injecting an out-of-range rail), the next run simply re-latches — the board never
+    //      loops through bring-up against a standing fault.
+    //
+    // BOUNDARY TRACKING RUNS IN EVERY State-99 PHASE, not only phase 3 — deliberately, and this is
+    // a deviation from the arming logic's phase-3 scoping. The teardown phases are dwell-bounded
+    // but NOT short relative to a 1000 ms window, so phase-3-only tracking would lose most of the
+    // observable dead time for a ~1 s host gap. Costs nothing: the boundary is only an ADMISSION
+    // PRECONDITION — the reset itself is still gated on phase 3, on the log being closed and on the
+    // fresh-link debounce, so nothing is sequenced early.
+    //
+    // THE DEAD WINDOW IS ANCHORED TO hilLastFrameMs — the TRUE link-death instant — not to the
+    // first dead tick observed here (review S1/C1). Anchoring to the observation would have added
+    // the whole detection latency to the window: the dead-link fault does not even latch until
+    // HIL_ZERO_MS (250 ms) after the last frame, and the teardown phases run after that, so a
+    // nominal 1000 ms boundary would really have demanded ~1250 ms+ of silence and a literal 1 s
+    // host gap would never have recovered. With the anchor at the last frame the boundary means
+    // exactly what it says: 1000 ms with no injection frame. A ≥1 s gap therefore satisfies it,
+    // though exactly 1.0 s is knife-edge (one loop tick of margin) — host-side gaps are specified
+    // well above 1 s, not at it.
+    // hilHaveFrame false (no frame has EVER arrived) has no last-frame instant to anchor to, so
+    // that edge falls back to nowMs and simply starts counting from the first observation.
     //
     // Recovery itself opens and closes NO switch: it hands the (already dark) stage back to
     // State 0, which re-derives the whole sequence through the staged bring-up machine.
+    uint32_t nowMs     = millis();
+    bool     linkFresh = hilHaveFrame && ((nowMs - hilLastFrameMs) <= HIL_STALE_MS);
+
+    if (!linkFresh) {
+        if (!hilDeadSinceValid) {                 // stamp the start of this dead window
+            hilDeadSinceValid = true;
+            hilDeadSinceMs    = hilHaveFrame ? hilLastFrameMs : nowMs;
+        } else if ((nowMs - hilDeadSinceMs) >= HIL_RUN_BOUNDARY_MS) {
+            hilRunBoundarySeen = true;            // run boundary observed (sticky until warm reset)
+        }
+    } else {
+        hilDeadSinceValid = false;                // link is back — this dead window is over
+    }
+
     if (state99Phase == 3) {
-        bool linkFresh = hilHaveFrame && ((millis() - hilLastFrameMs) <= HIL_STALE_MS);
         if (!linkFresh) {
             hilRecoverArmed = false;              // re-arm from scratch on any staleness
         } else if (!hilRecoverArmed) {
             hilRecoverArmed = true;
-            hilRecoverArmMs = millis();
+            hilRecoverArmMs = nowMs;
         }
 
-        bool deadLinkOnly = (error_code == ERR_HIL_STALE) &&
-                            (fault_flags == (uint16_t)(FAULT_ERROR | FAULT_PI_TIMEOUT));
-        bool logClosed    = !logActive && !logCloseRequested && !logFile.isOpen();
+        bool logClosed = !logActive && !logCloseRequested && !logFile.isOpen();
 
-        if (deadLinkOnly && logClosed && hilRecoverArmed &&
-            (millis() - hilRecoverArmMs) >= HIL_RECOVER_DEBOUNCE_MS) {
+        if (hilRunBoundarySeen && logClosed && hilRecoverArmed &&
+            (nowMs - hilRecoverArmMs) >= HIL_RECOVER_DEBOUNCE_MS) {
             hilWarmReset();
         }
     }
@@ -8283,10 +8414,23 @@ void printTestStatus() {
     Serial.print(udpDrainCapHits);
     Serial.print("   (cap ");         Serial.print(UDP_DRAIN_MAX_PER_TICK);
     Serial.println("/tick)");
-    // fw v22 auto-recovery status (fw v8 observability lesson: every new mechanism gets a dump
+    // fw v22/v23 auto-recovery status (fw v8 observability lesson: every new mechanism gets a dump
     // line). "armed" means a continuously-fresh window is open and how long it has run; the reset
-    // is taken at HIL_RECOVER_DEBOUNCE_MS, and only from State 99 phase 3 on the exact 0x8010
-    // dead-link fault union with the bench log closed.
+    // is taken at HIL_RECOVER_DEBOUNCE_MS, and only from State 99 phase 3, for ANY latched fault
+    // (fw v23), with the bench log closed AND a run boundary seen — HIL_RUN_BOUNDARY_MS with no
+    // injection frame, measured from the last accepted frame. Without the boundary line below, a
+    // board that refuses to recover looks identical whether it is waiting on the debounce or on
+    // the boundary. The State-99 1 Hz print carries the same pair live; this line stays useful
+    // after a recovery, when State 99 is no longer printing.
+    Serial.print("run boundary:       ");
+    if (hilRunBoundarySeen) {
+        Serial.println("SEEN (recovery permitted for any fault this boundary)");
+    } else if (hilDeadSinceValid) {
+        Serial.print("accruing, ");    Serial.print(millis() - hilDeadSinceMs);
+        Serial.print(" / ");           Serial.print(HIL_RUN_BOUNDARY_MS); Serial.println(" ms dead");
+    } else {
+        Serial.println("not seen (link fresh, or not in State 99)");
+    }
     Serial.print("recover arm:        ");
     if (hilRecoverArmed) {
         Serial.print("armed, "); Serial.print(millis() - hilRecoverArmMs);
@@ -8534,12 +8678,21 @@ BringupStatus busBringupTick(bool doInit) {
     // behind the ADC values is a host process. When the injection link dies mid-bring-up,
     // updateSensors() HOLDS the last frame for HIL_STALE_MS..HIL_ZERO_MS (50–250 ms) — so V_bus
     // stops responding while the phase clocks keep running. A phase gate that was already near
-    // expiry then times out and busBringupFail() latches FAULT_INIT_FAIL / FAULT_MOT_HOTPLUG.
-    // Those are OUTSIDE doState99()'s recovery admission (which demands fault_flags EXACTLY
-    // 0x8010 + ERR_HIL_STALE), so the board latches PERMANENTLY on what is merely the operator
-    // stopping the simulator — defeating the whole fw v22 auto-recovery feature. It is a RACE:
-    // whichever fires first, the phase timeout or the HIL_ZERO_MS dead-link fault, decides
-    // whether the run is recoverable.
+    // expiry then times out and busBringupFail() latches FAULT_INIT_FAIL / FAULT_MOT_HOTPLUG on
+    // what is merely the operator stopping the simulator.
+    //
+    // RATIONALE UPDATED AT fw v23, AND IT IS NOW WEAKER — state it honestly. Under fw v22 those
+    // two faults were OUTSIDE doState99()'s recovery admission (which demanded fault_flags EXACTLY
+    // 0x8010 + ERR_HIL_STALE), so the mis-attributed latch was PERMANENT and this abort was the
+    // difference between a recoverable run and a bench trip. Fw v23 admits any fault across a run
+    // boundary, so INIT_FAIL / MOT_HOTPLUG latched here WOULD eventually clear. Three reasons the
+    // abort still earns its place: (1) recovery costs a full run boundary — the host must go
+    // silent for HIL_RUN_BOUNDARY_MS and come back — where the abort simply restarts the bring-up
+    // as soon as frames return, within the same run; (2) a latched fault is REPORTED, so a
+    // mis-attributed INIT_FAIL becomes a false failure in that run's suite result and in any log
+    // analysis, which no later recovery undoes; (3) the fault would be a lie about the plant —
+    // the bring-up did not fail, the host stopped answering. It is still a RACE (phase timeout vs
+    // the HIL_ZERO_MS dead-link fault), and the abort is what makes the honest outcome win it.
     //
     // The check therefore sits at the TOP of the tick, ahead of every phase gate, so within any
     // invocation the abort ALWAYS wins the race.

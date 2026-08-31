@@ -35,9 +35,49 @@ BOARD-STATE ASSUMPTION BETWEEN RUNS
   stimulus, not against a clean-boot assumption. If you want a clean State-1 board
   for a particular run, power-cycle between runs and pass --settle-s 0.
 
+  fw v23+ ADDS AUTO-RECOVERY, and it has a MINIMUM: the board warm-resets that
+  ERR_HIL_STALE latch back to State 0 only after the injection link has been
+  continuously dead for >= 1 s, which is what marks a RUN BOUNDARY. A --settle-s
+  below SETTLE_MIN_RECOVER_S (1.5 s) is therefore warned about at plan time,
+  because the boundary MAY NOT be crossed reliably. Note that the boundary is
+  anchored at the board's LAST ACCEPTED FRAME, so the dead window is this pause
+  PLUS the previous child's teardown PLUS the next child's startup — the true
+  gap is longer than --settle-s by an unmeasured margin, which is exactly why
+  the wording is "may not" and not "will not". When it is not crossed, every run
+  after the first starts from a board that never recovered and each of those
+  results is an artifact of the pause length rather than of the scenario. The
+  warning is NOT a floor: --settle-s 0 combined with a power-cycle between runs
+  remains the deliberate way to give each run a clean-boot board.
+
+PER-RUN ARTIFACTS
+  Each child gets an explicit absolute --csv inside this run's fresh report
+  directory, so hil_plant_sim.py's auto-naming and its overwrite refusal never
+  apply here. Each CSV also gets a "<csv>.meta.json" sidecar written by the
+  child (scenario/mode, resolved config, model-constants hash, git rev, results).
+
+MID-RUN WARM-RESET TRIPWIRE
+  From fw v23 the board recovers from its latched State 99 on its own after a run
+  boundary. A host stall of >= 1 s mid-run looks exactly like one, so the board
+  warm-resets. The damage is NOT "a latched fault silently vanishes" — the union
+  and fault_latched checks look at the whole run and would fail loudly on that.
+  It is that after the reset the board runs State 0 -> bring-up -> Idle, so the
+  REST OF THE RUN IS NOT THE SCENARIO its checks assume: the stimulus timeline
+  keeps playing against a board that restarted underneath it, a fault that fires
+  again afterwards reads as having fired once (any dwell/timing conclusion from
+  it is wrong), and a check keyed to the FINAL state or flags reads the clean
+  post-recovery board. Each child counts the mainState transitions out of State
+  99 it observed and reports them in its exit summary and its .meta.json
+  sidecar; a run with a nonzero MID-RUN count is marked INCONCLUSIVE here, not
+  PASS and not FAIL — nothing was disproved, the evidence was destroyed. A run
+  that is inconclusive AND had other check failures is labelled as both. The one
+  whitelisted scenario is `comm-loss`, whose 2 s gap exists to cross the
+  boundary: it REQUIRES exactly one
+  (SCENARIOS["comm-loss"]["warm_resets_expected"]); MORE than expected is
+  inconclusive there too, FEWER is a plain failure.
+
 EXIT CODES
   0  every run passed
-  1  at least one run failed
+  1  at least one run failed (an INCONCLUSIVE run counts here — re-run it)
   2  the board never answered on the first run (aborted early; --keep-going
      overrides and grinds through the whole plan anyway)
 """
@@ -71,6 +111,11 @@ from hil_replay_suite import (                                      # noqa: E402
 SIM_SCRIPT = os.path.join(_HERE, "hil_plant_sim.py")
 GRACE_S = 30.0                 # timeout = expected duration + this
 DEFAULT_SETTLE_S = 5.0         # >> HIL_ZERO_MS (250 ms); see module docstring
+# Shortest settle pause that still marks a RUN BOUNDARY for the fw v23+ HIL
+# auto-recovery (the firmware needs the link continuously dead for >= 1 s; 1.5 s
+# is that bound plus margin for host jitter).  Warned about, never enforced —
+# --settle-s 0 with a power-cycle between runs stays a valid workflow.
+SETTLE_MIN_RECOVER_S = 1.5
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Which scenarios EXPECT the board to latch a fault.
@@ -78,7 +123,7 @@ DEFAULT_SETTLE_S = 5.0         # >> HIL_ZERO_MS (250 ms); see module docstring
 # Sources, per entry (do not extend this table from intuition — cite a source):
 #   sag           docs/HIL_MODE.md test H2: "mainState 99 and fault_flags with the
 #                 UV bit set, latched" for the -5 V / 1 s dip past LIMIT_V_BUS_MIN.
-#   comm-loss     The scenario stops transmitting for 1 s, which is past the
+#   comm-loss     The scenario stops transmitting for 2 s, which is past the
 #                 firmware's 250 ms zero stage: CLAUDE.md fw v21 addendum and
 #                 docs/HIL_MODE.md "Link-loss behaviour" — ">250 ms force zeros,
 #                 unbind the host, and latch FAULT_HIL_LINK / ERR_HIL_STALE".
@@ -103,7 +148,7 @@ DEFAULT_SETTLE_S = 5.0         # >> HIL_ZERO_MS (250 ms); see module docstring
 #   injecting for 1 s, ERR_HIL_STALE latches exactly as it does without a Pi.
 FAULT_REQUIRED = {
     "sag": ("docs/HIL_MODE.md H2 — UV_BUS latched by the -5 V / 1 s dip", 0x0100),
-    "comm-loss": ("docs/HIL_MODE.md link-loss — 1 s gap > 250 ms zero stage, "
+    "comm-loss": ("docs/HIL_MODE.md link-loss — 2 s gap > 250 ms zero stage, "
                   "ERR_HIL_STALE (FAULT_HIL_LINK aliases FAULT_PI_TIMEOUT 0x0010); "
                   "unchanged under --pi-live — the stale clock keys on injection "
                   "frames only (.ino:4970-4976), not on Pi command traffic",
@@ -318,7 +363,16 @@ def full_argv(plan_item, args):
     scenario builder both deliberately omit them — the wrapper owns transport)."""
     if plan_item.get("skip_reason"):
         return []          # nothing is launched for a skipped run
-    return ([sys.executable, SIM_SCRIPT] + plan_item["argv"]
+    # D1/K1: --force on EVERY child, both halves.  hil_plant_sim.py refuses an
+    # explicit --csv whose CSV or either sidecar already exists (exit 2), and a
+    # child cannot be asked interactively.  The default report directory is
+    # fresh per run so nothing is there — but an operator-supplied --out, a
+    # re-run into the same directory, or a partially-completed plan resumed into
+    # it all collide, and the run would die at startup with a refusal nobody is
+    # present to answer.  Deduplicated because hil_replay_suite.build_sim_argv()
+    # also emits it (for operators using --argv-for by hand).
+    force = [] if "--force" in plan_item["argv"] else ["--force"]
+    return ([sys.executable, SIM_SCRIPT] + plan_item["argv"] + force
             + ["--teensy-ip", args.teensy_ip, "--port", str(args.port)]
             + (["--dash"] if getattr(args, "dashboard", False) else [])
             # --pi-live applies to the SCENARIO half only: replay mode creates no
@@ -355,6 +409,14 @@ def parse_child_summary(text):
                 # F2: absent on an older sim build (pre-fix) -- treated as
                 # "unknown", not "zero", by the judge below.
                 out["send_errors"] = int(line.split("send_errors=")[1].split()[0])
+            except (IndexError, ValueError):
+                pass
+        elif line.startswith("[hil] warm resets:"):
+            # "[hil] warm resets: N observed, M mid-run (after 2.0s)[ at t=...]"
+            try:
+                out["warm_resets"] = int(line.split("resets:")[1].split("observed")[0])
+                out["warm_resets_mid_run"] = int(
+                    line.split("observed,")[1].split("mid-run")[0])
             except (IndexError, ValueError):
                 pass
         elif line.startswith("[hil] electrical(hifi):"):
@@ -423,6 +485,218 @@ def analyze_scenario_csv(csv_path):
         m["substep_hz_min"] = min(subs)
         m["substep_hz_mean"] = sum(subs) / len(subs)
     return m
+
+
+def read_run_meta(csv_path, launched_at=None):
+    """Load the child's '<csv>.meta.json' sidecar; {} if absent/stale/unreadable.
+
+    Preferred over the stdout summary for the warm-reset tripwire: under
+    --dashboard the child's stdout goes to the terminal and is never captured,
+    so the sidecar is the only surviving record of the count.
+
+    D2 — THIS ATTEMPT'S sidecar, or nothing.  A sidecar sitting at that path may
+    belong to a PREVIOUS run (the suite now passes --force, so a re-run into a
+    non-fresh --out overwrites the CSV but reads the old sidecar until the child
+    rewrites it), and reading a stale one would report a stale warm-reset count
+    against a fresh run.  Three guards, in increasing strength:
+
+      1. `results` must not be None.  The sidecar is written twice — "running"
+         with results=None before the loop, then again at exit.  results=None
+         means the child died before finalizing, which is genuinely UNMEASURED,
+         not zero.
+      2. `doc["csv"]` must equal the path we asked for.  Cheap, and catches a
+         sidecar copied or renamed into place.
+      3. `created` must be at or after the child's launch time, when the caller
+         supplies one.  Timestamps are the child's local ISO-8601 with offset and
+         this host's clock, so they are comparable; anything unparseable is
+         treated as "cannot verify" and passes this guard rather than discarding
+         a sidecar that is probably fine (guards 1-2 are the load-bearing pair).
+    """
+    if not csv_path:
+        return {}
+    try:
+        with open(csv_path + ".meta.json", encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(doc, dict):
+        return {}
+    if doc.get("results") is None:
+        return {}                          # guard 1: never finalized
+    if os.path.normcase(os.path.abspath(str(doc.get("csv") or ""))) != \
+            os.path.normcase(os.path.abspath(csv_path)):
+        return {}                          # guard 2: not this run's CSV
+    if launched_at is not None:
+        created = doc.get("created")
+        try:
+            if datetime.datetime.fromisoformat(str(created)) < launched_at:
+                return {}                  # guard 3: predates this attempt
+        except (TypeError, ValueError):
+            pass                           # unparseable -> cannot verify, allow
+    return doc
+
+
+def warm_reset_count(csv_path, child):
+    """Mid-run warm resets for one run: (dict, source).
+
+    The dict carries "mid_run", "observed" and "times" (any of them None when
+    that field is unavailable).  A None `mid_run` means UNMEASURED — an older
+    simulator build, a child that died before finalizing its sidecar, or a run
+    whose sidecar and stdout are both unusable.  Unmeasured must never render as
+    zero: the whole point of the tripwire is that the damage it detects does not
+    show up in the run's own outcome."""
+    launched_at = None
+    raw_launch = (child or {}).get("launched_at")
+    if raw_launch:
+        try:
+            launched_at = datetime.datetime.fromisoformat(str(raw_launch))
+        except (TypeError, ValueError):
+            launched_at = None
+    meta = read_run_meta(csv_path, launched_at)
+    res = meta.get("results") or {}
+    if isinstance(res.get("warm_resets_mid_run"), int):
+        return ({"mid_run": res["warm_resets_mid_run"],
+                 "observed": res.get("warm_resets_observed"),
+                 "times": res.get("warm_reset_times_s")},
+                "meta.json")
+    summary = (child or {}).get("summary") or {}
+    if isinstance(summary.get("warm_resets_mid_run"), int):
+        # D4: the stdout line carries both counts but no timestamps.
+        return ({"mid_run": summary["warm_resets_mid_run"],
+                 "observed": summary.get("warm_resets"), "times": None},
+                "child stdout")
+    return ({"mid_run": None, "observed": None, "times": None}, "unmeasured")
+
+
+# D8: the damage a mid-run warm reset does, stated once and reused, because the
+# loose version ("a latched fault silently disappears") is WRONG for the checks
+# that actually exist -- judge_scenario()'s union check and the replay suite's
+# fault_latched both look at the whole run and would FAIL loudly on a fault that
+# fired and then vanished.
+WARM_RESET_DAMAGE = (
+    "after the reset the board runs State 0 -> bring-up -> Idle, so the REST OF "
+    "THE RUN IS NOT THE SCENARIO the checks assume: the stimulus timeline kept "
+    "playing against a board that restarted underneath it, a fault that fires "
+    "again afterwards reads as having fired once (so any dwell or timing "
+    "conclusion is wrong), and a check keyed to the FINAL state or flags reads "
+    "the clean post-recovery board")
+
+
+def judge_warm_resets(name, kind, counts, source):
+    """The warm-reset tripwire check. Returns (check, note|None, inconclusive|None).
+
+    HAZARD (safety finding S2): from fw v23 the board leaves its latched State 99
+    on its own once the injection link has been dead for a run boundary
+    (1000 ms) and fresh again for 500 ms.  A host stall of that length MID-RUN is
+    indistinguishable from a run boundary, so the board warm-resets.  What that
+    costs is WARM_RESET_DAMAGE above — the run is unusable rather than wrong, so
+    it is marked INCONCLUSIVE and must be re-run.
+
+    The exception is a scenario whose declared point IS the recovery:
+    SCENARIOS[name]["warm_resets_expected"] (comm-loss = 1, whose 2 s gap exists
+    precisely to cross the boundary).  D16: only a SCENARIO run may consult that
+    registry — a replay entry's name is a log id (ML0151), and a collision with a
+    scenario name would silently whitelist a replay.
+
+    Returns a third value, `note`: a non-failing observation (D4) about
+    grace-window transitions."""
+    expected = ((SCENARIOS.get(name) or {}).get("warm_resets_expected")
+                if kind == "scenario" else None)
+    count = counts.get("mid_run")
+    observed = counts.get("observed")
+    times = counts.get("times")
+
+    # D4: transitions inside the grace window are the expected start-of-run
+    # recovery from the previous run's settle pause.  Never failing, never
+    # inconclusive — but worth saying, because on the FIRST run of a plan
+    # against a freshly powered board there is no previous run to recover from,
+    # so a transition there means the board was ALREADY latched at power-on and
+    # deserves a look before the rest of the plan is believed.
+    note = None
+    if isinstance(observed, int) and isinstance(count, int) and observed > count:
+        note = ("%d warm reset(s) inside the start-of-run grace window%s: "
+                "normally the expected recovery from the previous run's settle "
+                "pause, and not counted against this run. On the FIRST run of a "
+                "plan against a freshly powered board there is no previous run "
+                "to recover from — a transition there means the board was "
+                "already latched at power-on, which is worth investigating."
+                % (observed - count,
+                   (" at t=%s s" % ", ".join(str(x) for x in times)) if times else ""))
+
+    if count is None:
+        if expected is not None:
+            # K7: on a whitelisted scenario the count is a REQUIREMENT, so
+            # "unmeasured" is not a quiet pass — the requirement is UNVERIFIED.
+            return ({"name": "warm_reset_expected", "passed": True,
+                     "detail": "UNVERIFIED (%s) — this scenario REQUIRES exactly "
+                               "%d mid-run warm reset(s) (the recovery IS the "
+                               "test), but no count was available from this "
+                               "child, so the requirement was not checked. Not "
+                               "failed, not confirmed." % (source, expected)},
+                    note, None)
+        return ({"name": "warm_reset_tripwire", "passed": True,
+                 "detail": "not measurable (%s) — no mid-run warm-reset count "
+                           "available from this child, so a mid-run restart "
+                           "would be invisible here" % source},
+                note, None)
+
+    if expected is not None:
+        if count == expected:
+            return ({"name": "warm_reset_expected", "passed": True,
+                     "detail": "%d mid-run warm reset(s) observed via %s; this "
+                               "scenario REQUIRES exactly %d (the recovery is "
+                               "the point of the run, not an artifact)"
+                               % (count, source, expected)},
+                    note, None)
+        if count > expected:
+            # D15: an EXTRA reset destroys evidence exactly as it does anywhere
+            # else -- the whitelist licenses the ONE the scenario provokes, not
+            # a host stall on top of it.
+            reason = ("%d mid-run warm reset(s) observed (%s) but this scenario "
+                      "provokes only %d: the extra one(s) are unexplained, and "
+                      "%s. Re-run it on an unloaded host."
+                      % (count, source, expected, WARM_RESET_DAMAGE))
+            return ({"name": "warm_reset_expected", "passed": False,
+                     "detail": reason}, note, reason)
+        # count < expected: the recovery this scenario exists to test did not
+        # happen. A genuine FAIL -- nothing was destroyed, something is missing.
+        return ({"name": "warm_reset_expected", "passed": False,
+                 "detail": "%d mid-run warm reset(s) observed via %s; this "
+                           "scenario REQUIRES exactly %d — the recovery it "
+                           "exists to test did not happen"
+                           % (count, source, expected)},
+                note, None)
+
+    if count == 0:
+        return ({"name": "warm_reset_tripwire", "passed": True,
+                 "detail": "no mid-run warm reset (%s) — the board never left "
+                           "State 99 during the run" % source},
+                note, None)
+    reason = ("%d mid-run HIL warm reset(s) observed (%s): %s. Most likely a "
+              "host stall of >= 1 s, which fw v23+ reads as a run boundary. "
+              "Re-run it on an unloaded host."
+              % (count, source, WARM_RESET_DAMAGE))
+    return ({"name": "warm_reset_tripwire", "passed": False, "detail": reason},
+            note, reason)
+
+
+def result_label(r, bold_fail=False):
+    """One verdict word for a result record, used by ALL render sites.
+
+    D3: an INCONCLUSIVE run whose OTHER checks also failed must not read as a
+    plain "re-run this one" — the tripwire destroyed the evidence for the rest
+    of the run, but the failures already on the record are real and stay
+    visible.  Centralized so the three render sites cannot drift apart."""
+    if r.get("skipped"):
+        return "SKIPPED"
+    if r.get("inconclusive"):
+        also = r.get("also_failed") or 0
+        base = ("INCONCLUSIVE (also FAILED %d check(s))" % also) if also \
+            else "INCONCLUSIVE"
+        return ("**%s**" % base) if bold_fail else base
+    if r["passed"]:
+        return "PASS"
+    return "**FAIL**" if bold_fail else "FAIL"
 
 
 def analyze_events(path):
@@ -621,6 +895,14 @@ def run_child(item, args):
     if dashboard:
         rec["stdout_passthrough"] = True
     t0 = time.time()
+    # D2 guard 3: local wall-clock at launch, in the same ISO-8601-with-offset
+    # form the child stamps into its sidecar's "created", so read_run_meta() can
+    # reject a sidecar that predates this attempt.  Rounded DOWN to the second
+    # (the child's timespec="seconds" truncates), so a child launched at
+    # x.900 s stamping x.000 s is not falsely judged stale.
+    rec["launched_at"] = (datetime.datetime.fromtimestamp(t0)
+                          .replace(microsecond=0).astimezone()
+                          .isoformat(timespec="seconds"))
     proc = None
     try:
         proc = subprocess.Popen(argv, cwd=_REPO,
@@ -716,11 +998,31 @@ def render_report(meta, results):
                 % (min(rates), sum(rates) / len(rates), max(rates))]))
     npass = sum(1 for r in results if r["passed"])
     nskip = sum(1 for r in results if r.get("skipped"))
+    # D3: an inconclusive run whose OTHER checks also failed is BOTH — it is not
+    # eligible for the "these are not failures; re-run them" sentence, because
+    # something did fail on the record before the evidence was destroyed.
+    inc = [r for r in results if r.get("inconclusive")]
+    ninc_clean = sum(1 for r in inc if not (r.get("also_failed") or 0))
+    ninc_failed = len(inc) - ninc_clean
     A(_row(["Result", "%d/%d passed%s"
             % (npass, len(results),
                # Skipped runs count as passing (they are not board failures), but
                # saying so here stops "13/13 passed" reading as 13 runs executed.
                "  (%d of them SKIPPED, not executed)" % nskip if nskip else "")]))
+    if inc:
+        parts = []
+        if ninc_clean:
+            parts.append("%d run(s) saw a MID-RUN HIL warm reset: the board "
+                         "restarted underneath the stimulus, so the rest of "
+                         "each run was not the scenario its checks assume and "
+                         "the verdict proves nothing either way. These are NOT "
+                         "failures; re-run them on an unloaded host." % ninc_clean)
+        if ninc_failed:
+            parts.append("%d further run(s) saw a mid-run warm reset AND had "
+                         "check failures of their own — those failures are real "
+                         "and are listed per run; re-running clears only the "
+                         "inconclusive part." % ninc_failed)
+        A(_row(["INCONCLUSIVE", " ".join(parts)]))
     if meta.get("aborted"):
         A(_row(["ABORTED", meta["aborted"]]))
     if meta.get("partial"):
@@ -741,8 +1043,7 @@ def render_report(meta, results):
         # F6: a skipped run rendered as "PASS" here, indistinguishable from an
         # executed clean run, and paired with the fabricated-clean detail lines
         # below it looked like a run that had actually happened.
-        result_cell = ("SKIPPED" if r.get("skipped")
-                       else ("PASS" if r["passed"] else "**FAIL**"))
+        result_cell = result_label(r, bold_fail=True)
         A(_row([r["name"], r["kind"], r.get("mode", ""),
                 ("%.1f s" % dur) if dur else "—",
                 result_cell,
@@ -760,11 +1061,13 @@ def render_report(meta, results):
         A("host must have held the tick rate.")
         A("")
         for r in scen:
-            heading = "SKIPPED" if r.get("skipped") else ("PASS" if r["passed"] else "FAIL")
-            A("### `%s` — %s" % (r["name"], heading))
+            A("### `%s` — %s" % (r["name"], result_label(r)))
             A("")
             if r.get("description"):
                 A("*%s*" % r["description"])
+                A("")
+            if r.get("inconclusive_reason"):
+                A("> **INCONCLUSIVE.** %s" % r["inconclusive_reason"])
                 A("")
             if r.get("skipped"):
                 # F6: no child was ever launched for a skipped run — there is no
@@ -822,6 +1125,14 @@ def render_report(meta, results):
             for c in r["checks"]:
                 A("  - [%s] **%s** — %s" % ("x" if c["passed"] else " ", c["name"], c["detail"]))
             A("")
+            # D4: non-failing observations (currently the grace-window
+            # warm-reset note). The scenario half had no notes renderer at all
+            # before, so these would have been written to results.json and shown
+            # nowhere a human reads.
+            for n in r.get("notes", []):
+                A("  > NOTE: %s" % n)
+            if r.get("notes"):
+                A("")
 
     # ── Replays ──────────────────────────────────────────────────────────────
     rep = [r for r in results if r["kind"] == "replay"]
@@ -840,11 +1151,13 @@ def render_report(meta, results):
             A(title)
             A("")
             for r in g:
-                heading = "SKIPPED" if r.get("skipped") else ("PASS" if r["passed"] else "FAIL")
-                A("#### `%s` — %s" % (r["name"], heading))
+                A("#### `%s` — %s" % (r["name"], result_label(r)))
                 A("")
                 if r.get("description"):
                     A("*%s*" % r["description"])
+                    A("")
+                if r.get("inconclusive_reason"):
+                    A("> **INCONCLUSIVE.** %s" % r["inconclusive_reason"])
                     A("")
                 if r.get("skipped"):
                     # F5/F6: --pi-live skips the whole replay half — no child, no
@@ -912,6 +1225,37 @@ def render_report(meta, results):
 # ─────────────────────────────────────────────────────────────────────────────
 # CLI
 # ─────────────────────────────────────────────────────────────────────────────
+
+def warn_short_settle(args):
+    """Warn when --settle-s is too short for the fw v23+ run-boundary rule.
+
+    Deliberately a WARNING and not a floor: `--settle-s 0` plus a power-cycle
+    between runs is a documented workflow (module docstring), and on pre-v23
+    firmware a short settle is merely a shorter latch window.  What it must not
+    be is silent — on fw v23+ every run after the first would start from a board
+    that never recovered, and every failure after run 1 would be an artifact."""
+    if args.settle_s >= SETTLE_MIN_RECOVER_S:
+        return
+    print("=" * 78)
+    print("[suite] WARNING: --settle-s %.2f s may not reliably cross the fw v23+ "
+          "RUN BOUNDARY" % args.settle_s)
+    print("        (>= 1 s of continuously DEAD injection link) that gates the HIL "
+          "warm recovery")
+    print("        from State 99 -> State 0. 'May not' is exact: the boundary is "
+          "anchored at the")
+    print("        board's LAST ACCEPTED FRAME, so the previous child's teardown and "
+          "the next")
+    print("        child's startup also count toward the dead window — the true gap "
+          "is this")
+    print("        pause PLUS an unmeasured margin, and whether it clears 1 s is not "
+          "decidable")
+    print("        from here. When it does not, the board stays latched and every "
+          "run after the")
+    print("        first starts from a dead board and its result is an artifact.")
+    print("        Use --settle-s >= %.1f for margin, or keep this value and "
+          "POWER-CYCLE between runs." % SETTLE_MIN_RECOVER_S)
+    print("=" * 78)
+
 
 def print_plan(plan, args):
     print("HIL suite run plan — %d run(s)" % len(plan))
@@ -1012,6 +1356,7 @@ def main(argv=None):
     args.out = os.path.abspath(args.out)
 
     plan = build_plan(args)
+    warn_short_settle(args)
 
     if args.list:
         print_plan(plan, args)
@@ -1080,8 +1425,21 @@ def main(argv=None):
         write_outputs(meta, results)
 
     npass = sum(1 for r in results if r["passed"])
-    print("\n[suite] %d/%d passed — report: %s"
-          % (npass, len(results), os.path.join(args.out, "REPORT.md")))
+    inc = [r for r in results if r.get("inconclusive")]
+    ninc_failed = sum(1 for r in inc if (r.get("also_failed") or 0))
+    # An inconclusive run is not a failure of the board, so say so here rather
+    # than letting it read as one in the headline number — but D3: one that ALSO
+    # failed other checks must not be swept into "just re-run it".
+    inc_note = ""
+    if inc:
+        inc_note = (", %d INCONCLUSIVE (mid-run warm reset — re-run those)"
+                    % len(inc))
+        if ninc_failed:
+            inc_note += (" of which %d ALSO failed checks of their own"
+                         % ninc_failed)
+    print("\n[suite] %d/%d passed%s — report: %s"
+          % (npass, len(results), inc_note,
+             os.path.join(args.out, "REPORT.md")))
 
     if interrupted:
         return 130
@@ -1144,6 +1502,14 @@ def _run_plan(plan, args, problems, results, write_outputs):
               flush=True)
         child = run_child(item, args)
 
+        # Mid-run warm-reset tripwire — applied to BOTH halves.  The replay half
+        # needs it at least as much as the scenario half: its `fault_latched`
+        # checks are exactly the ones a silently-cleared latch turns into a false
+        # PASS.
+        wr_counts, wr_source = warm_reset_count(item["csv"], child)
+        wr_check, wr_note, wr_reason = judge_warm_resets(
+            item["name"], item["kind"], wr_counts, wr_source)
+
         if item["kind"] == "scenario":
             metrics = analyze_scenario_csv(item["csv"])
             events = analyze_events(item["events"])
@@ -1185,8 +1551,41 @@ def _run_plan(plan, args, problems, results, write_outputs):
             # answered as a CSV with zero observation rows.
             no_obs = ev.get("n_obs") in (0, None)
 
+        # Fold the tripwire in AFTER the half-specific judging, so it applies
+        # uniformly and cannot be forgotten by either branch.  An inconclusive
+        # run is deliberately NOT counted as passing (it must be re-run), but it
+        # is flagged separately so the report never renders it as a plain FAIL —
+        # nothing was proven wrong about the board, the evidence was destroyed.
+        # D3: whether any OTHER check failed is decided BEFORE the tripwire is
+        # folded in, so an inconclusive verdict can never hide a real failure.
+        other_failures = sum(1 for c in res["checks"] if not c["passed"])
+        res["checks"] = list(res["checks"]) + [wr_check]
+        res["warm_resets_mid_run"] = wr_counts.get("mid_run")
+        res["warm_resets_observed"] = wr_counts.get("observed")
+        res["warm_reset_times_s"] = wr_counts.get("times")
+        res["warm_reset_source"] = wr_source
+        if wr_note:
+            res["notes"] = list(res.get("notes") or []) + [wr_note]
+        if wr_reason is not None:
+            res["inconclusive"] = True
+            res["inconclusive_reason"] = wr_reason
+            res["also_failed"] = other_failures
+            res["passed"] = False
+        elif not wr_check["passed"]:
+            res["passed"] = False          # an EXPECTED recovery that never happened
+        res["key_metrics"] += ", %s" % (
+            ("INCONCLUSIVE — %s mid-run warm reset(s)%s"
+             % (wr_counts.get("mid_run"),
+                "; also FAILED %d check(s)" % other_failures if other_failures else ""))
+            if wr_reason is not None else
+            ("warm resets %s" % ("?" if wr_counts.get("mid_run") is None
+                                 else wr_counts["mid_run"])))
+
         results.append(res)
-        print("    -> %s (%s)" % ("PASS" if passed else "FAIL", res["key_metrics"]))
+        print("    -> %s (%s)"
+              % (result_label(res), res["key_metrics"]))
+        if wr_note:
+            print("       NOTE: %s" % wr_note)
 
         # M4: rewrite the report after every completed run (not just at the very
         # end), so an interruption below or later in the plan loses at most the

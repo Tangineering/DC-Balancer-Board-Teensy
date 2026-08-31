@@ -194,6 +194,14 @@ python3 tools/hil_plant_sim.py --teensy-ip 192.168.1.50 \
 python3 tools/hil_replay_suite.py --evaluate ML0151 runs/hil_replay_ML0151.csv
 ```
 
+The emitted argv carries **`--force`**, because the CSV name is derived from the log
+and is therefore identical on every replay of the same entry: `hil_plant_sim.py`
+refuses an explicit `--csv` whose CSV or either sidecar (`.meta.json`,
+`.events.jsonl`) already exists, so without it the second replay of an entry into the
+same `--csv-dir` would exit 2 instead of running. **Re-running an entry into the same
+directory therefore overwrites that entry's previous artifacts** — point `--csv-dir`
+somewhere else to keep them.
+
 `evaluate_replay_csv(entry, csv_path)` returns
 `{"log", "mode", "passed", "checks": [{"name", "passed", "detail"}], "notes": [...]}`;
 `--json` prints it verbatim. A missing or unparseable CSV, an unknown check kind, or a

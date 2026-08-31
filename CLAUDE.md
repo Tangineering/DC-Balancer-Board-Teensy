@@ -1690,3 +1690,68 @@ needs no OC persistence filter: the physical pre-charge inrush is C·dV/dt ≈ 2
   run_hil_suite. The operator's local .ino flag flip (BENCH_TEST 0 / HIL_SIM 1) is the
   CURRENT FLASH's config and stays uncommitted — repo defaults remain BENCH_TEST 1 /
   HIL_SIM 0.
+
+---
+
+## Status & session addendum (2026-08-30c, fw v23: any-fault HIL recovery + CSV sidecar/tripwire tooling)
+
+Two orchestrated rounds after the first run_hil_suite attempt latched FAULT_UV_BUS in one
+scenario and every later run found the board latched (fw v22 recovered only the exact
+0x8010/ERR_HIL_STALE dead-link signature). **fw v23 (pending flash)**; ledger row 23.
+
+- **fw v23 — recovery admits ANY latched fault, gated on a RUN BOUNDARY.** The deadLinkOnly
+  signature test is gone (it could not be widened: triggerFault() ORs bits into fault_flags
+  while error_code stays first-cause, so "real fault, then sim stops" has no equality
+  signature). A run boundary is `HIL_RUN_BOUNDARY_MS` (1000 ms) of link silence **anchored
+  at the last accepted frame (`hilLastFrameMs`)** — the review round's headline fix (S1/C1):
+  anchoring at the first dead State-99 tick would have added the 250 ms HIL_ZERO_MS latency
+  and made a literal 1 s host gap unrecoverable. Sticky `hilRunBoundarySeen`; tracking runs
+  in every State-99 phase; admission stays phase-3 + log-closed + 500 ms fresh debounce;
+  one recovery attempt per boundary (hilWarmReset() clears the flag); a mid-scenario fault
+  with the sim still streaming cannot self-clear (replay fault_latched semantics preserved).
+  Other accepted findings: hilWarmReset() prints the outgoing error_code/fault_flags/
+  error_source_state before clearing (S3 — the cause is not on the observation frame); the
+  1 Hz [STATE 99] line carries live boundary/arm/phase status (S4 — 'S' is unreachable from
+  State 99); three stale exact-0x8010 comments rewritten (C2); linkFresh hoisted (C3).
+  Residual documented hazard (S2): a >=1 s host stall MID-scenario followed by resumed
+  streaming forges a boundary and can warm-reset mid-run — mitigated host-side (below), not
+  in firmware.
+- **Tooling — self-describing HIL runs.** hil_plant_sim.py now logs CSV BY DEFAULT
+  (auto-name `hil_<scenario>_<mode>_<ts>.csv` into HIL Results/; `--no-csv` opts out — note
+  it also suppresses the hifi .events.jsonl); an explicit `--csv` whose CSV or either
+  sidecar exists is REFUSED exit 2 without `--force` (suite children and
+  hil_replay_suite --argv-for emit --force themselves). Every CSV gets `<csv>.meta.json`:
+  written at start (status "running") and finalized atomically at exit
+  (completed/interrupted/error) with scenario, argv, resolved config, a model-constants
+  sha256 fingerprint (non-model families excluded, re-exports deduped; hash-different does
+  not strictly imply model-different), git rev+dirty, and end-of-run results.
+- **Mid-run warm-reset tripwire (review S2).** The sim counts observed mainState 99→non-99
+  transitions (grace window 2.0 s classes the legitimate start-of-run recovery; a
+  transition at exactly 2.0 s counts as mid-run); run_hil_suite marks a non-whitelisted
+  mid-run reset INCONCLUSIVE (passed=false, rendered distinctly, "also FAILED n checks"
+  when real checks failed too — INCONCLUSIVE never masks FAIL). comm-loss now REQUIRES
+  exactly one mid-run reset (its tx gap widened 1 s → 2 s: exactly 1.0 s is knife-edge
+  against the 1000 ms boundary); more than expected → INCONCLUSIVE, fewer → FAIL;
+  unmeasured (old sim build / dead child) renders UNVERIFIED, never as zero. Stale-sidecar
+  guards: results non-None + csv path match + created >= launch. --settle-s < 1.5 s warns
+  (boundary may not reliably be crossed; child teardown/startup also counts toward the
+  dead window).
+- **Reviews:** firmware two-lens — 1 HIGH (S7: the operator's local BENCH_TEST/HIL_SIM
+  flips must stay out of the commit), 4 MED (S1/C1 anchor, S2 tripwire, S3 evidence print,
+  C2 stale comments), rest LOW — all accepted/applied except the S2 threshold raise
+  (rejected: conflicts with comm-loss under the anchor fix). Tooling two-lens — no HIGH,
+  8 MED (suite children refused by the new guard without --force; stale-sidecar trust;
+  INCONCLUSIVE-masks-FAIL; sidecar exception-safety; error-path finalize-before-close;
+  HIL_MODE "cannot self-clear" claims; K4 end-to-end coverage gap; D15 whitelist
+  overcount), 12+ LOW — all accepted (3 partial), all applied.
+- **Tests: 3535 production + 175 bench + 3993 HIL (C++) and 487 pytest + 7 skipped — all
+  green, orchestrator-rebuilt from source.** New coverage highlights: exact-equality
+  boundary tick, non-cumulation of separate dead windows, the anchor regression that would
+  have caught S1/C1, never-had-a-frame fallback, warm-reset evidence print, end-to-end
+  _run_plan/render_report inconclusive paths, real sidecar atomicity (os.replace raising),
+  constants-filter sensitivity both directions.
+- **Next bench:** flash fw v23 (edit HIL_SIM 0→1 first — repo defaults unchanged), rerun
+  the full run_hil_suite and confirm a real-fault scenario no longer costs the rest of the
+  plan; the hifi powered-Ag105 charge scenario and the Pi-bridge v4 parser audit remain
+  from the fw v22 list. Housekeeping unchanged: analyzer exe rebuild; .venv_benchlog
+  pandas/scipy.

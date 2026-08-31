@@ -938,9 +938,18 @@ def build_sim_argv(entry, csv_dir):
 
     Deliberately omits --teensy-ip/--port: the wrapper owns the transport and
     appends them.  The CSV name is derived from the log so a batch run leaves an
-    unambiguous artifact per entry."""
+    unambiguous artifact per entry.
+
+    --force is included because the CSV name is DERIVED, not chosen: it is the
+    same name on every replay of the same entry.  hil_plant_sim.py refuses an
+    explicit --csv whose CSV or either sidecar already exists (exit 2), so
+    without --force the second replay of an entry into the same directory —
+    including the default `--argv-for --csv-dir .` form — would die at startup
+    instead of running.  Overwriting a same-entry artifact is the intended
+    behaviour here; keep the old one by pointing --csv-dir somewhere else."""
     csv_path = os.path.join(csv_dir, f"hil_replay_{entry['log']}.csv")
-    return ["--replay", os.path.join(REPO_ROOT, entry["path"]), "--csv", csv_path]
+    return ["--replay", os.path.join(REPO_ROOT, entry["path"]),
+            "--csv", csv_path, "--force"]
 
 
 def replay_csv_path(entry, csv_dir):

@@ -7,6 +7,7 @@ exercises only the pure/offline functions per the fence in the task.
 Run: cd tools && python -m pytest test_run_hil_suite.py -v
 """
 import argparse
+import datetime
 import json
 import os
 import sys
@@ -17,6 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import run_hil_suite as rhs  # noqa: E402
+import hil_replay_suite as hrs  # noqa: E402
 from hil_plant_sim import SCENARIOS  # noqa: E402
 from hil_replay_suite import REPLAY_SUITE  # noqa: E402
 
@@ -1315,6 +1317,630 @@ def test_hil_results_dir_name_and_parent_is_repo_root():
     assert os.path.normpath(parent) == os.path.normpath(rhs._REPO)
     assert os.path.isdir(os.path.join(rhs._REPO, "tools"))
     assert os.path.isdir(os.path.join(rhs._REPO, "teensy_controller"))
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# parse_child_summary() — exact stdout-line format
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_parse_child_summary_done_line_ticks_hz_overrun():
+    text = ("[hil] done: 250 ticks in 0.25s -> 1000.0 Hz achieved (target 1000 Hz), "
+            "max overrun 1.234 ms\n")
+    out = rhs.parse_child_summary(text)
+    assert out["ticks"] == 250
+    assert out["achieved_hz"] == pytest.approx(1000.0)
+    assert out["max_overrun_ms"] == pytest.approx(1.234)
+
+
+def test_parse_child_summary_tx_rx_and_send_errors():
+    text = "[hil] tx=500 frames, rx=498 frames, 2 malformed, send_errors=1\n"
+    out = rhs.parse_child_summary(text)
+    assert out["tx_frames"] == 500
+    assert out["rx_frames"] == 498
+    assert out["rx_bad"] == 2
+    assert out["send_errors"] == 1
+
+
+def test_parse_child_summary_send_errors_absent_on_older_build():
+    """F2: an older sim build's tx= line has no send_errors= field -- the key
+    must be ABSENT (treated as unknown by the pi-live judge), not defaulted
+    to 0."""
+    text = "[hil] tx=500 frames, rx=498 frames, 2 malformed\n"
+    out = rhs.parse_child_summary(text)
+    assert out["tx_frames"] == 500
+    assert "send_errors" not in out
+
+
+def test_parse_child_summary_warm_resets_no_times_suffix():
+    text = "[hil] warm resets: 0 observed, 0 mid-run (after 2.0s)\n"
+    out = rhs.parse_child_summary(text)
+    assert out["warm_resets"] == 0
+    assert out["warm_resets_mid_run"] == 0
+
+
+def test_parse_child_summary_warm_resets_with_times_suffix():
+    text = "[hil] warm resets: 3 observed, 1 mid-run (after 2.0s) at t=0.500, 2.500, 2.600s\n"
+    out = rhs.parse_child_summary(text)
+    assert out["warm_resets"] == 3
+    assert out["warm_resets_mid_run"] == 1
+
+
+def test_parse_child_summary_full_realistic_block():
+    text = (
+        "[hil] done: 30000 ticks in 30.02s -> 999.3 Hz achieved (target 1000 Hz), "
+        "max overrun 0.812 ms\n"
+        "[hil] tx=30000 frames, rx=29998 frames, 0 malformed, send_errors=0\n"
+        "[hil] warm resets: 1 observed, 1 mid-run (after 2.0s) at t=5.502s\n"
+        "[hil] electrical(hifi): 32.1 kHz achieved substep rate (32 substeps/tick, "
+        "trace=short), 14 events\n"
+    )
+    out = rhs.parse_child_summary(text)
+    assert out["ticks"] == 30000
+    assert out["tx_frames"] == 30000
+    assert out["rx_frames"] == 29998
+    assert out["rx_bad"] == 0
+    assert out["send_errors"] == 0
+    assert out["warm_resets"] == 1
+    assert out["warm_resets_mid_run"] == 1
+    assert out["substep_khz"] == pytest.approx(32.1)
+    assert out["elec_events"] == 14
+
+
+def test_parse_child_summary_over_absmax_line_captured():
+    text = ("[hil] *** 2 switching event(s) with an estimated ring peak ABOVE the "
+            "20 V abs-max -- the boost-death signature; worst 24.10 V ***\n")
+    out = rhs.parse_child_summary(text)
+    assert "over_absmax_line" in out
+    assert "ABOVE the 20 V abs-max" in out["over_absmax_line"]
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# read_run_meta() / warm_reset_count() -- REPAIRED for the fix round:
+# read_run_meta() gained `launched_at=None` and three staleness guards (D2):
+#   1. `results` must not be None (a "running"-only sidecar is UNMEASURED).
+#   2. `doc["csv"]` must normcase/abspath-match the requested csv_path.
+#   3. (only when `launched_at` is given) `created` must be >= launched_at;
+#      unparseable `created` CANNOT be compared and therefore PASSES.
+# warm_reset_count() now returns a {"mid_run", "observed", "times"} dict (not
+# a bare int) alongside the source string.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_read_run_meta_none_path_returns_empty_dict():
+    assert rhs.read_run_meta(None) == {}
+
+
+def test_read_run_meta_missing_sidecar_returns_empty_dict(tmp_path):
+    assert rhs.read_run_meta(str(tmp_path / "nope.csv")) == {}
+
+
+def test_read_run_meta_reads_the_sidecar(tmp_path):
+    csv_path = tmp_path / "run.csv"
+    csv_path.write_text("t,seq\n")
+    sidecar = tmp_path / "run.csv.meta.json"
+    # D2 guard 2 requires `csv` in the sidecar to match the requested path.
+    sidecar.write_text(json.dumps({"status": "completed", "csv": str(csv_path),
+                                   "results": {"warm_resets_mid_run": 2}}))
+    meta = rhs.read_run_meta(str(csv_path))
+    assert meta["status"] == "completed"
+    assert meta["results"]["warm_resets_mid_run"] == 2
+
+
+def test_read_run_meta_malformed_json_returns_empty_dict(tmp_path):
+    csv_path = tmp_path / "run.csv"
+    sidecar = tmp_path / "run.csv.meta.json"
+    sidecar.write_text("{not valid json")
+    assert rhs.read_run_meta(str(csv_path)) == {}
+
+
+def test_read_run_meta_non_dict_json_returns_empty_dict(tmp_path):
+    csv_path = tmp_path / "run.csv"
+    sidecar = tmp_path / "run.csv.meta.json"
+    sidecar.write_text(json.dumps([1, 2, 3]))
+    assert rhs.read_run_meta(str(csv_path)) == {}
+
+
+def test_read_run_meta_guard1_results_none_is_stale_unmeasured(tmp_path):
+    """D2 guard 1: the sidecar is written TWICE -- 'running' with results=None
+    before the loop, then again at exit. A results=None sidecar means the
+    child died before finalizing, which read_run_meta() must treat as
+    completely absent (never surfaced as a stale-but-present doc)."""
+    csv_path = tmp_path / "run.csv"
+    sidecar = tmp_path / "run.csv.meta.json"
+    sidecar.write_text(json.dumps({"status": "running", "csv": str(csv_path),
+                                   "results": None}))
+    assert rhs.read_run_meta(str(csv_path)) == {}
+
+
+def test_read_run_meta_guard2_csv_field_mismatch_rejected(tmp_path):
+    """D2 guard 2: a sidecar recording a DIFFERENT csv path belongs to some
+    other run (copied/renamed into place) and must be rejected."""
+    csv_path = tmp_path / "run.csv"
+    sidecar = tmp_path / "run.csv.meta.json"
+    sidecar.write_text(json.dumps({"status": "completed",
+                                   "csv": str(tmp_path / "other.csv"),
+                                   "results": {"warm_resets_mid_run": 1}}))
+    assert rhs.read_run_meta(str(csv_path)) == {}
+
+
+def test_read_run_meta_guard2_csv_field_match_is_normcase_abspath_tolerant(tmp_path):
+    """The comparison is normcase(abspath(...)) on both sides, so a
+    non-normalized but equivalent path in the sidecar must still match."""
+    csv_path = tmp_path / "run.csv"
+    sidecar = tmp_path / "run.csv.meta.json"
+    weird = os.path.join(str(tmp_path), ".", "run.csv")
+    sidecar.write_text(json.dumps({"status": "completed", "csv": weird,
+                                   "results": {"warm_resets_mid_run": 1}}))
+    meta = rhs.read_run_meta(str(csv_path))
+    assert meta.get("results", {}).get("warm_resets_mid_run") == 1
+
+
+def test_read_run_meta_guard3_created_before_launched_at_rejected(tmp_path):
+    """D2 guard 3 (only active when `launched_at` is supplied): a sidecar
+    whose `created` predates the CALLER's launch time belongs to a previous
+    attempt into the same (non-fresh, --force'd) path and must be discarded."""
+    csv_path = tmp_path / "run.csv"
+    sidecar = tmp_path / "run.csv.meta.json"
+    old_created = (datetime.datetime.now() - datetime.timedelta(minutes=5)) \
+        .astimezone().isoformat(timespec="seconds")
+    sidecar.write_text(json.dumps({"status": "completed", "csv": str(csv_path),
+                                   "created": old_created,
+                                   "results": {"warm_resets_mid_run": 1}}))
+    launched_at = datetime.datetime.now().astimezone()
+    assert rhs.read_run_meta(str(csv_path), launched_at) == {}
+    # Guard 3 is opt-in: with no launched_at to compare against, the very same
+    # (stale-looking) sidecar is still accepted.
+    assert rhs.read_run_meta(str(csv_path)) != {}
+
+
+def test_read_run_meta_guard3_equal_second_timestamps_accepted(tmp_path):
+    """`created == launched_at` (to the second) must NOT be rejected -- the
+    guard is a strict `created < launched_at`."""
+    csv_path = tmp_path / "run.csv"
+    sidecar = tmp_path / "run.csv.meta.json"
+    now = datetime.datetime.now().astimezone().replace(microsecond=0)
+    sidecar.write_text(json.dumps({"status": "completed", "csv": str(csv_path),
+                                   "created": now.isoformat(timespec="seconds"),
+                                   "results": {"warm_resets_mid_run": 1}}))
+    meta = rhs.read_run_meta(str(csv_path), now)
+    assert meta.get("results", {}).get("warm_resets_mid_run") == 1
+
+
+def test_read_run_meta_guard3_garbage_created_is_accepted_unverifiable(tmp_path):
+    """An unparseable `created` cannot be compared, so guard 3 lets it through
+    (docstring: 'cannot verify' passes rather than discarding a sidecar that
+    is probably fine)."""
+    csv_path = tmp_path / "run.csv"
+    sidecar = tmp_path / "run.csv.meta.json"
+    sidecar.write_text(json.dumps({"status": "completed", "csv": str(csv_path),
+                                   "created": "not-a-timestamp",
+                                   "results": {"warm_resets_mid_run": 1}}))
+    launched_at = datetime.datetime.now().astimezone()
+    meta = rhs.read_run_meta(str(csv_path), launched_at)
+    assert meta.get("results", {}).get("warm_resets_mid_run") == 1
+
+
+def test_warm_reset_count_prefers_meta_json_over_child_stdout(tmp_path):
+    csv_path = tmp_path / "run.csv"
+    sidecar = tmp_path / "run.csv.meta.json"
+    sidecar.write_text(json.dumps({"csv": str(csv_path),
+                                   "results": {"warm_resets_mid_run": 3,
+                                              "warm_resets_observed": 4,
+                                              "warm_reset_times_s": [1.0, 2.0]}}))
+    child = {"summary": {"warm_resets_mid_run": 99}}
+    counts, source = rhs.warm_reset_count(str(csv_path), child)
+    assert counts == {"mid_run": 3, "observed": 4, "times": [1.0, 2.0]}
+    assert source == "meta.json"
+
+
+def test_warm_reset_count_falls_back_to_child_stdout_when_no_sidecar(tmp_path):
+    """The --dashboard case: the child's stdout goes to the terminal and is
+    never captured, but a sidecar-less run can still fall back to whatever
+    the caller DID manage to capture in `child['summary']`. D4: the stdout
+    line carries both counts but no timestamps, hence times=None."""
+    csv_path = tmp_path / "run.csv"       # no .meta.json written
+    child = {"summary": {"warm_resets_mid_run": 5, "warm_resets": 6}}
+    counts, source = rhs.warm_reset_count(str(csv_path), child)
+    assert counts == {"mid_run": 5, "observed": 6, "times": None}
+    assert source == "child stdout"
+
+
+def test_warm_reset_count_unmeasured_when_neither_source_available(tmp_path):
+    csv_path = tmp_path / "run.csv"
+    counts, source = rhs.warm_reset_count(str(csv_path), {})
+    assert counts == {"mid_run": None, "observed": None, "times": None}
+    assert source == "unmeasured"
+
+
+def test_warm_reset_count_none_csv_path_falls_back_to_stdout():
+    counts, source = rhs.warm_reset_count(
+        None, {"summary": {"warm_resets_mid_run": 7, "warm_resets": 8}})
+    # read_run_meta(None) short-circuits to {}, so only the stdout fallback applies.
+    assert counts == {"mid_run": 7, "observed": 8, "times": None}
+    assert source == "child stdout"
+
+
+def test_warm_reset_count_uses_child_launched_at_for_the_sidecar_guard(tmp_path):
+    """warm_reset_count() must parse child['launched_at'] and pass it through
+    to read_run_meta()'s guard 3 -- a sidecar older than the child's own
+    launch is rejected here too, falling back to the stdout summary."""
+    csv_path = tmp_path / "run.csv"
+    sidecar = tmp_path / "run.csv.meta.json"
+    old_created = (datetime.datetime.now() - datetime.timedelta(minutes=5)) \
+        .astimezone().isoformat(timespec="seconds")
+    sidecar.write_text(json.dumps({"csv": str(csv_path), "created": old_created,
+                                   "results": {"warm_resets_mid_run": 3}}))
+    child = {"launched_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+             "summary": {"warm_resets_mid_run": 9, "warm_resets": 9}}
+    counts, source = rhs.warm_reset_count(str(csv_path), child)
+    assert source == "child stdout"
+    assert counts["mid_run"] == 9
+
+
+def test_warm_reset_count_unparseable_launched_at_does_not_crash(tmp_path):
+    csv_path = tmp_path / "run.csv"
+    child = {"launched_at": "not-a-timestamp",
+             "summary": {"warm_resets_mid_run": 4, "warm_resets": 4}}
+    counts, source = rhs.warm_reset_count(str(csv_path), child)
+    assert source == "child stdout"
+    assert counts["mid_run"] == 4
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# judge_warm_resets() — REPAIRED signature (name, kind, counts, source) ->
+# (check, note, reason_or_None). The fix round's D15 (comm-loss count >
+# expected is now INCONCLUSIVE, not a plain FAIL) and K7 (unmeasured on a
+# whitelisted scenario is an explicit UNVERIFIED note, not a quiet pass) are
+# both matrix INVERSIONS from the pre-fix-round behaviour -- see the two
+# tests named accordingly below.
+# ─────────────────────────────────────────────────────────────────────────
+
+def _wr_counts(mid_run=None, observed=None, times=None):
+    return {"mid_run": mid_run, "observed": observed, "times": times}
+
+
+def test_judge_warm_resets_none_is_unmeasured_pass_with_note():
+    check, note, reason = rhs.judge_warm_resets(
+        "steady", "scenario", _wr_counts(mid_run=None), "unmeasured")
+    assert reason is None
+    assert note is None
+    assert check["passed"] is True
+    assert check["name"] == "warm_reset_tripwire"
+    assert "not measurable" in check["detail"]
+
+
+def test_judge_warm_resets_non_whitelisted_zero_passes_clean():
+    check, note, reason = rhs.judge_warm_resets(
+        "steady", "scenario", _wr_counts(mid_run=0, observed=0), "meta.json")
+    assert reason is None
+    assert note is None
+    assert check["passed"] is True
+    assert check["name"] == "warm_reset_tripwire"
+
+
+def test_judge_warm_resets_non_whitelisted_nonzero_is_inconclusive():
+    check, note, reason = rhs.judge_warm_resets(
+        "steady", "scenario", _wr_counts(mid_run=1, observed=1), "meta.json")
+    assert reason is not None
+    assert check["passed"] is False
+    assert check["name"] == "warm_reset_tripwire"
+    assert "steady" not in (rhs.SCENARIOS.get("steady") or {})  # sanity: no override
+
+
+def test_judge_warm_resets_comm_loss_exactly_one_passes_not_inconclusive():
+    assert rhs.SCENARIOS["comm-loss"].get("warm_resets_expected") == 1
+    check, note, reason = rhs.judge_warm_resets(
+        "comm-loss", "scenario", _wr_counts(mid_run=1, observed=1), "meta.json")
+    assert reason is None
+    assert check["passed"] is True
+    assert check["name"] == "warm_reset_expected"
+
+
+def test_judge_warm_resets_comm_loss_zero_fails_not_inconclusive():
+    """Zero mid-run resets on comm-loss means the recovery never happened --
+    a plain FAIL, and specifically NOT inconclusive (nothing was destroyed;
+    the required event simply did not occur)."""
+    check, note, reason = rhs.judge_warm_resets(
+        "comm-loss", "scenario", _wr_counts(mid_run=0, observed=0), "meta.json")
+    assert reason is None
+    assert check["passed"] is False
+    assert check["name"] == "warm_reset_expected"
+
+
+def test_judge_warm_resets_comm_loss_two_is_now_inconclusive_by_design():
+    """D15 (fix round) -- INVERTS the old expectation: an EXTRA mid-run reset
+    beyond the whitelisted count destroys evidence exactly as it does
+    anywhere else. The whitelist licenses only the ONE reset comm-loss's own
+    2 s gap provokes, not a host stall on top of it, so count=2 (expected=1)
+    is now INCONCLUSIVE, not a plain FAIL."""
+    check, note, reason = rhs.judge_warm_resets(
+        "comm-loss", "scenario", _wr_counts(mid_run=2, observed=2), "meta.json")
+    assert reason is not None
+    assert check["passed"] is False
+    assert check["name"] == "warm_reset_expected"
+
+
+def test_judge_warm_resets_comm_loss_none_is_unverified_note_k7():
+    """K7 (fix round) -- INVERTS the old expectation: on a whitelisted
+    scenario, an unmeasured count is no longer a quiet pass -- the
+    requirement itself was never checked, so the detail text says UNVERIFIED
+    explicitly. Still non-failing (passed True): nothing was disproved."""
+    check, note, reason = rhs.judge_warm_resets(
+        "comm-loss", "scenario", _wr_counts(mid_run=None), "unmeasured")
+    assert reason is None
+    assert check["passed"] is True
+    assert check["name"] == "warm_reset_expected"
+    assert "UNVERIFIED" in check["detail"]
+    assert "unmeasured" in check["detail"]
+
+
+def test_judge_warm_resets_reason_text_mentions_the_source():
+    _check, _note, reason = rhs.judge_warm_resets(
+        "steady", "scenario", _wr_counts(mid_run=2, observed=2), "child stdout")
+    assert reason is not None
+    assert "child stdout" in reason
+    assert "2" in reason
+
+
+def test_judge_warm_resets_d16_replay_kind_never_inherits_scenario_expected():
+    """D16: a replay entry sharing a name with a whitelisted scenario (a
+    collision, e.g. hypothetically 'comm-loss') must NOT consult SCENARIOS --
+    only kind='scenario' may. Treated as an ordinary run: one unexplained
+    mid-run reset with no exemption is INCONCLUSIVE, not a satisfied
+    warm_reset_expected pass."""
+    check, note, reason = rhs.judge_warm_resets(
+        "comm-loss", "replay", _wr_counts(mid_run=1, observed=1), "meta.json")
+    assert check["name"] == "warm_reset_tripwire"
+    assert reason is not None
+    assert check["passed"] is False
+
+
+def test_judge_warm_resets_d4_grace_window_note_when_observed_exceeds_mid_run():
+    check, note, reason = rhs.judge_warm_resets(
+        "steady", "scenario", _wr_counts(mid_run=0, observed=1, times=[0.5]), "meta.json")
+    assert note is not None
+    assert "grace window" in note
+    assert "0.5" in note
+    # A grace-window-only transition is neither a failure nor inconclusive.
+    assert check["passed"] is True
+    assert reason is None
+
+
+def test_judge_warm_resets_d4_no_note_when_observed_equals_mid_run():
+    check, note, reason = rhs.judge_warm_resets(
+        "steady", "scenario", _wr_counts(mid_run=0, observed=0), "meta.json")
+    assert note is None
+
+
+def test_judge_warm_resets_d4_note_alongside_a_real_mid_run_reset():
+    """The grace-window note and the mid-run verdict are independent: a run
+    can have BOTH a grace-window transition AND a separate mid-run one."""
+    check, note, reason = rhs.judge_warm_resets(
+        "steady", "scenario", _wr_counts(mid_run=1, observed=2, times=[0.5, 5.0]),
+        "meta.json")
+    assert note is not None
+    assert check["passed"] is False
+    assert reason is not None
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# render_report() -- D4 grace-window note rendering
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_render_report_d4_scenario_note_rendered_with_marker():
+    result = _fake_scenario_result()
+    result["notes"] = ["1 warm reset(s) inside the start-of-run grace window ..."]
+    report = rhs.render_report(_fake_meta(), [result])
+    assert "> NOTE: 1 warm reset(s) inside the start-of-run grace window ..." in report
+
+
+def test_render_report_d4_replay_note_rendered_with_marker():
+    result = _fake_replay_result()
+    result["notes"] = list(result["notes"]) + ["1 warm reset(s) inside the grace window"]
+    report = rhs.render_report(_fake_meta(), [result])
+    assert "_note_: 1 warm reset(s) inside the grace window" in report
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# render_report() -- K4: inconclusive result, all three render sites
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_render_report_inconclusive_clean_all_three_sites():
+    result = _fake_scenario_result(passed=False)
+    result["inconclusive"] = True
+    result["inconclusive_reason"] = "1 mid-run HIL warm reset(s) observed (meta.json): ..."
+    result["also_failed"] = 0
+    report = rhs.render_report(_fake_meta(), [result])
+    # Header: the clean-inconclusive sentence, and D3's exclusion holds in
+    # the OTHER direction here -- no "also FAILED"/"further run(s)" wording.
+    assert "1 run(s) saw a MID-RUN HIL warm reset" in report
+    assert "These are NOT failures" in report
+    assert "further run(s)" not in report
+    # Table cell (via result_label(bold_fail=True)):
+    assert "**INCONCLUSIVE**" in report
+    assert "also FAILED" not in report
+    # Blockquote:
+    assert "> **INCONCLUSIVE.** 1 mid-run HIL warm reset(s) observed" in report
+
+
+def test_render_report_inconclusive_with_also_failed_all_three_sites():
+    result = _fake_scenario_result(passed=False)
+    result["checks"] = [{"name": "observation_frames", "passed": False, "detail": "no frames"}]
+    result["inconclusive"] = True
+    result["inconclusive_reason"] = "2 mid-run HIL warm reset(s) observed (meta.json): ..."
+    result["also_failed"] = 1
+    report = rhs.render_report(_fake_meta(), [result])
+    # Header: the "also FAILED" branch -- D3: excluded from the "not
+    # failures" sentence, since ninc_clean is 0 when every inconclusive run
+    # also carries a real failure.
+    assert "1 further run(s) saw a mid-run warm reset AND had" in report
+    assert "These are NOT failures" not in report
+    # Table cell:
+    assert "INCONCLUSIVE (also FAILED 1 check(s))" in report
+    # Blockquote (unaffected by also_failed -- still renders):
+    assert "> **INCONCLUSIVE.** 2 mid-run HIL warm reset(s) observed" in report
+
+
+def test_render_report_inconclusive_mixed_clean_and_failed_header_both_parts():
+    clean = _fake_scenario_result(name="steady", passed=False)
+    clean["inconclusive"] = True
+    clean["inconclusive_reason"] = "1 mid-run HIL warm reset(s) observed (meta.json): x"
+    clean["also_failed"] = 0
+    failed = _fake_scenario_result(name="sag", passed=False)
+    failed["checks"] = [{"name": "expected_fault", "passed": False, "detail": "no fault"}]
+    failed["inconclusive"] = True
+    failed["inconclusive_reason"] = "1 mid-run HIL warm reset(s) observed (meta.json): y"
+    failed["also_failed"] = 1
+    report = rhs.render_report(_fake_meta(), [clean, failed])
+    assert "1 run(s) saw a MID-RUN HIL warm reset" in report
+    assert "These are NOT failures" in report
+    assert "1 further run(s) saw a mid-run warm reset AND had" in report
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# K4 -- end-to-end: one _run_plan()/main()-level test per half, using the
+# existing run_child monkeypatch pattern (section 10 above), a written
+# .meta.json showing warm_resets_mid_run=1.
+# ─────────────────────────────────────────────────────────────────────────
+
+def _fake_run_child_with_mid_run_reset(mid_run=1, observed=1, times=(5.5,)):
+    """Builds a run_child() replacement that writes a completed .meta.json
+    sidecar (matching item['csv'], launched safely in the past) showing the
+    given mid-run warm-reset count, and returns a matching child record."""
+    def fake_run_child(item, args):
+        meta_doc = {"status": "completed", "csv": item["csv"],
+                    "results": {"warm_resets_mid_run": mid_run,
+                               "warm_resets_observed": observed,
+                               "warm_reset_times_s": list(times)}}
+        with open(item["csv"] + ".meta.json", "w", encoding="utf-8") as fh:
+            json.dump(meta_doc, fh)
+        return {"status": "ok", "returncode": 0, "wall_s": 0.01, "log": item["log"],
+                "summary": {"achieved_hz": 1000.0, "tx_frames": 10, "rx_frames": 10,
+                           "rx_bad": 0},
+                "launched_at": (datetime.datetime.now() - datetime.timedelta(seconds=30))
+                               .astimezone().isoformat(timespec="seconds")}
+    return fake_run_child
+
+
+def test_k4_scenario_half_inconclusive_end_to_end(tmp_path, monkeypatch):
+    monkeypatch.setattr(rhs, "run_child", _fake_run_child_with_mid_run_reset())
+    # --keep-going: the fake child writes no real CSV, so analyze_scenario_csv()
+    # sees zero observation frames and would otherwise trip the unrelated
+    # "board unreachable, abort after run 1" guard (rc=2) before the tripwire
+    # verdict this test actually cares about is ever reached.
+    rc = rhs.main(["--out", str(tmp_path), "--only", "steady", "--keep-going"])
+    assert rc == 1
+
+    results = json.loads((tmp_path / "results.json").read_text())["results"]
+    assert len(results) == 1
+    res = results[0]
+    assert res["kind"] == "scenario"
+    assert res["inconclusive"] is True
+    assert res["passed"] is False
+    assert res["inconclusive_reason"]
+    report = (tmp_path / "REPORT.md").read_text()
+    assert "INCONCLUSIVE" in report
+
+
+def test_k4_replay_half_inconclusive_end_to_end(tmp_path, monkeypatch):
+    monkeypatch.setattr(rhs, "run_child", _fake_run_child_with_mid_run_reset())
+    rc = rhs.main(["--out", str(tmp_path), "--only", "ML0146", "--keep-going"])
+    assert rc == 1
+
+    results = json.loads((tmp_path / "results.json").read_text())["results"]
+    assert len(results) == 1
+    res = results[0]
+    assert res["kind"] == "replay"
+    assert res["inconclusive"] is True
+    assert res["passed"] is False
+    assert res["inconclusive_reason"]
+    report = (tmp_path / "REPORT.md").read_text()
+    assert "INCONCLUSIVE" in report
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# D1/K2 -- exactly one --force in every child argv, both halves, and in
+# hil_replay_suite.build_sim_argv() itself.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_full_argv_scenario_half_has_exactly_one_force():
+    plan = rhs.build_plan(_args(only=["steady"]))
+    assert len(plan) == 1
+    argv = rhs.full_argv(plan[0], _args())
+    assert argv.count("--force") == 1
+
+
+def test_full_argv_replay_half_has_exactly_one_force():
+    plan = rhs.build_plan(_args(only=["ML0146"]))
+    assert len(plan) == 1
+    # build_sim_argv() already emits --force into plan[0]["argv"] (D1); the
+    # dedup in full_argv() must not add a second one on top of it.
+    assert "--force" in plan[0]["argv"]
+    argv = rhs.full_argv(plan[0], _args())
+    assert argv.count("--force") == 1
+
+
+def test_build_sim_argv_has_exactly_one_force():
+    entry = REPLAY_SUITE[0]
+    argv = hrs.build_sim_argv(entry, "/tmp/csv_dir")
+    assert argv.count("--force") == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# D11 -- refusal/uniquification must consider .meta.json and .events.jsonl,
+# not just the CSV itself (output_path_taken() / unique_output_path()).
+# These live in hil_plant_sim.py; see test_hil_plant_sim.py's mirror of this
+# section for the sanitize/token-level coverage.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_d11_child_csv_paths_are_absolute(tmp_path):
+    """The suite always passes --force (D1), so this is really pinning that
+    run_hil_suite.py hands its children ABSOLUTE CSV paths (module docstring:
+    'the suite's artifacts never get redirected into HIL Results') -- an
+    orphan-sidecar refusal in hil_plant_sim.py (covered thoroughly in
+    test_hil_plant_sim.py) only means anything if the path it is guarding is
+    the one the child was actually told to use, not a relative path that
+    could resolve somewhere else entirely."""
+    plan = rhs.build_plan(_args(only=["steady"], out=str(tmp_path)))
+    argv = rhs.full_argv(plan[0], _args(out=str(tmp_path)))
+    assert "--csv" in argv
+    csv_path = argv[argv.index("--csv") + 1]
+    assert os.path.isabs(csv_path), "child CSV paths must be absolute (D11 note)"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# warn_short_settle()
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_warn_short_settle_fires_below_threshold(capsys):
+    rhs.warn_short_settle(_args(settle_s=1.0))
+    out = capsys.readouterr().out
+    assert "WARNING" in out
+    assert "1.00" in out
+
+
+def test_warn_short_settle_silent_at_default_5s(capsys):
+    rhs.warn_short_settle(_args(settle_s=5.0))
+    out = capsys.readouterr().out
+    assert out == ""
+
+
+def test_warn_short_settle_silent_exactly_at_threshold(capsys):
+    rhs.warn_short_settle(_args(settle_s=rhs.SETTLE_MIN_RECOVER_S))
+    out = capsys.readouterr().out
+    assert out == ""
+
+
+def test_warn_short_settle_fires_just_below_threshold(capsys):
+    rhs.warn_short_settle(_args(settle_s=rhs.SETTLE_MIN_RECOVER_S - 0.01))
+    out = capsys.readouterr().out
+    assert "WARNING" in out
+
+
+def test_settle_min_recover_s_is_1_5():
+    """Pin the literal value: it is derived from the firmware's 1000 ms run-
+    boundary requirement plus host-jitter margin (module docstring), not an
+    arbitrary round number that could silently drift."""
+    assert rhs.SETTLE_MIN_RECOVER_S == pytest.approx(1.5)
 
 
 if __name__ == "__main__":

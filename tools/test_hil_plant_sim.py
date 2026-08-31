@@ -11,6 +11,7 @@ CLI-diffing approach decode_benchlog's test needed.
 Run: cd tools && python -m pytest test_hil_plant_sim.py -v
 """
 import csv
+import json
 import os
 import struct
 import sys
@@ -1216,7 +1217,7 @@ def test_m3_hifi_without_csv_does_not_crash(tmp_path):
     sidecar/CSV-flush logic must not assume args.csv is set)."""
     rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58992", "--bind-port", "0",
                    "--rate", "200", "--scenario", "steady", "--electrical", "hifi",
-                   "--duration", "0.02"])
+                   "--duration", "0.02", "--no-csv"])
     assert rc == 0
 
 
@@ -1370,7 +1371,7 @@ def test_pi_commander_fb_contains_all_keys_used_by_hold_5050_and_more():
         rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "59000",
                        "--bind-port", "0", "--rate", "500", "--scenario", "steady",
                        "--electrical", "simple", "--duration", "0.05",
-                       "--ems", "_probe"])
+                       "--ems", "_probe", "--no-csv"])
     finally:
         hil.socket.socket = orig
         del hil.EMS_STRATEGIES["_probe"]
@@ -1430,7 +1431,8 @@ def capturing_socket(monkeypatch):
 def test_ems_hold5050_wire_truth_share_field_is_0_5(capturing_socket):
     rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58994", "--bind-port", "0",
                    "--rate", "500", "--scenario", "ems-drive-cycle",
-                   "--electrical", "simple", "--duration", "0.2", "--ems", "hold-5050"])
+                   "--electrical", "simple", "--duration", "0.2", "--ems", "hold-5050",
+                   "--no-csv"])
     assert rc == 0
     sock = capturing_socket["sock"]
     # Pi-command packets are PI_CMD_SIZE (22) bytes with sync SYNC_BYTE_RX;
@@ -1474,7 +1476,8 @@ def test_ems_and_pi_live_mutually_exclusive():
 def test_ems_replaces_pi_timeline_prints_notice(capsys, capturing_socket):
     rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58995", "--bind-port", "0",
                    "--rate", "500", "--scenario", "charge-cruise",
-                   "--electrical", "simple", "--duration", "0.05", "--ems", "hold-5050"])
+                   "--electrical", "simple", "--duration", "0.05", "--ems", "hold-5050",
+                   "--no-csv"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "REPLACES" in out
@@ -1488,7 +1491,7 @@ def test_ems_default_cli_replaces_ems_drive_cycle_own_ems_no_double_notice(
     REPLACES-a-timeline notice, since there is no timeline to replace."""
     rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58996", "--bind-port", "0",
                    "--rate", "500", "--scenario", "ems-drive-cycle",
-                   "--electrical", "simple", "--duration", "0.05"])
+                   "--electrical", "simple", "--duration", "0.05", "--no-csv"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "REPLACES" not in out
@@ -1540,7 +1543,7 @@ def test_ems_dashboard_snapshot_reflects_ems_values(tmp_path, capturing_dashboar
     rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58997", "--bind-port", "0",
                    "--rate", "500", "--scenario", "ems-drive-cycle",
                    "--electrical", "simple", "--duration", "0.1", "--ems", "hold-5050",
-                   "--dash"])
+                   "--dash", "--no-csv"])
     assert rc == 0
     instances = capturing_dashboard
     assert len(instances) == 1
@@ -1583,7 +1586,8 @@ def test_ems_drive_cycle_profile_hits_standstill_and_cruise():
 def test_pi_live_sends_no_command_packets_only_injection_frames(capturing_socket):
     rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58998", "--bind-port", "0",
                    "--rate", "500", "--scenario", "steady",
-                   "--electrical", "simple", "--duration", "0.05", "--pi-live"])
+                   "--electrical", "simple", "--duration", "0.05", "--pi-live",
+                   "--no-csv"])
     assert rc == 0
     sock = capturing_socket["sock"]
     assert sock.sent, "expected injection frames to be sent"
@@ -1620,7 +1624,7 @@ def test_pi_live_dashboard_snapshot_setpoints_are_none(tmp_path, capturing_dashb
                                                         capturing_socket):
     rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58999", "--bind-port", "0",
                    "--rate", "500", "--scenario", "steady", "--electrical", "simple",
-                   "--duration", "0.05", "--pi-live", "--dash"])
+                   "--duration", "0.05", "--pi-live", "--dash", "--no-csv"])
     assert rc == 0
     snaps = capturing_dashboard[0].snapshots
     assert snaps
@@ -1750,6 +1754,814 @@ def test_main_prints_resolved_csv_path(tmp_path, monkeypatch, capsys):
     resolved = os.path.normpath(str(fake_dir / "printed.csv"))
     assert any(os.path.normpath(line.split("[hil] CSV log: ", 1)[1]) == resolved
                for line in out.splitlines() if "[hil] CSV log:" in line)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 14. sanitize_token / run_mode_token / auto_csv_name
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_sanitize_token_lowercases():
+    assert hil.sanitize_token("Steady") == "steady"
+    assert hil.sanitize_token("ML0146") == "ml0146"
+
+
+def test_sanitize_token_hostile_input_collapses_to_dashes():
+    out = hil.sanitize_token("a/b\\c:d*e?f\"g<h>i|j")
+    assert out == "a-b-c-d-e-f-g-h-i-j"
+    assert "/" not in out and "\\" not in out and ":" not in out
+
+
+def test_sanitize_token_collapses_runs_of_separators():
+    assert hil.sanitize_token("a   b") == "a-b"
+    assert hil.sanitize_token("a!!!!b") == "a-b"
+
+
+def test_sanitize_token_empty_and_none_and_all_dashes():
+    assert hil.sanitize_token("") == "none"
+    assert hil.sanitize_token(None) == "none"
+    assert hil.sanitize_token("---") == "none"
+    assert hil.sanitize_token("...") == "none"
+
+
+def test_sanitize_token_keeps_dots_and_dashes():
+    assert hil.sanitize_token("ML0146.v2") == "ml0146.v2"
+
+
+def test_run_mode_token_default_is_open():
+    assert hil.run_mode_token() == "open"
+
+
+def test_run_mode_token_pi_live():
+    assert hil.run_mode_token(pi_live=True) == "pilive"
+
+
+def test_run_mode_token_ems():
+    assert hil.run_mode_token(ems_name="hold-5050") == "ems-hold-5050"
+
+
+def test_run_mode_token_timeline():
+    assert hil.run_mode_token(has_timeline=True) == "timeline"
+
+
+def test_run_mode_token_replay_names_the_log():
+    token = hil.run_mode_token(replay_path=os.path.join("x", "ML0146.BLG"))
+    assert token == "replay-ml0146"
+
+
+def test_run_mode_token_replay_takes_priority_over_other_sources():
+    """Ordered by exclusivity (module docstring): --replay wins even if
+    pi_live/ems/timeline are also passed in -- main() never actually
+    constructs the call this way (its own argument rules refuse the
+    combination first), but run_mode_token's OWN ordering must still be
+    replay-first since it is a pure function with no such guard itself."""
+    token = hil.run_mode_token(replay_path="ML0146.BLG", pi_live=True,
+                               ems_name="hold-5050", has_timeline=True)
+    assert token == "replay-ml0146"
+
+
+def test_run_mode_token_hifi_suffix_appended():
+    assert hil.run_mode_token(electrical="hifi") == "open-hifi"
+    assert hil.run_mode_token(pi_live=True, electrical="hifi") == "pilive-hifi"
+    assert hil.run_mode_token(replay_path="ML0146.BLG", electrical="hifi") \
+        == "replay-ml0146-hifi"
+
+
+def test_auto_csv_name_format_with_scenario():
+    name = hil.auto_csv_name("steady", "open", stamp="20260830_120000")
+    assert name == "hil_steady_open_20260830_120000.csv"
+
+
+def test_auto_csv_name_replay_drops_scenario_component():
+    """Replay mode passes scenario=None -- the filename must not carry a
+    spurious 'None' component; the mode token alone (already 'replay-<stem>')
+    names the run."""
+    name = hil.auto_csv_name(None, "replay-ml0146", stamp="20260830_120000")
+    assert name == "hil_replay-ml0146_20260830_120000.csv"
+
+
+def test_auto_csv_name_default_stamp_matches_timestamp_format():
+    import re
+    name = hil.auto_csv_name("steady", "open")
+    assert re.match(r"^hil_steady_open_\d{8}_\d{6}\.csv$", name) is not None
+
+
+def test_auto_csv_name_sanitizes_its_components():
+    name = hil.auto_csv_name("My Scenario!", "open", stamp="20260830_120000")
+    assert name == "hil_my-scenario_open_20260830_120000.csv"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 15. unique_output_path
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_unique_output_path_no_collision_returns_input(tmp_path):
+    p = str(tmp_path / "a.csv")
+    assert hil.unique_output_path(p) == p
+
+
+def test_unique_output_path_single_collision_suffixes_1(tmp_path):
+    (tmp_path / "a.csv").write_text("x")
+    got = hil.unique_output_path(str(tmp_path / "a.csv"))
+    assert got == str(tmp_path / "a_1.csv")
+
+
+def test_unique_output_path_multiple_collisions_finds_first_free(tmp_path):
+    (tmp_path / "a.csv").write_text("x")
+    (tmp_path / "a_1.csv").write_text("x")
+    (tmp_path / "a_2.csv").write_text("x")
+    got = hil.unique_output_path(str(tmp_path / "a.csv"))
+    assert got == str(tmp_path / "a_3.csv")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 16. CSV/sidecar refusal matrix
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_explicit_existing_csv_refused_exit_2_with_message(tmp_path, capsys):
+    csv_path = tmp_path / "exists.csv"
+    csv_path.write_text("pre-existing content")
+    with pytest.raises(SystemExit) as ei:
+        hil.main(["--teensy-ip", "127.0.0.1", "--port", "58900", "--bind-port", "0",
+                   "--rate", "200", "--csv", str(csv_path), "--scenario", "steady",
+                   "--electrical", "simple", "--duration", "0.02"])
+    assert ei.value.code == 2
+    err = capsys.readouterr().err
+    assert "refusing to overwrite" in err
+    # The refusal must not have touched the file.
+    assert csv_path.read_text() == "pre-existing content"
+
+
+def test_explicit_existing_csv_with_force_overwrites(tmp_path):
+    csv_path = tmp_path / "exists.csv"
+    csv_path.write_text("pre-existing content, not a real CSV")
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58901", "--bind-port", "0",
+                   "--rate", "200", "--csv", str(csv_path), "--scenario", "steady",
+                   "--electrical", "simple", "--duration", "0.02", "--force"])
+    assert rc == 0
+    content = csv_path.read_text()
+    assert "pre-existing content" not in content
+    assert content.startswith("t,seq,")
+
+
+def test_auto_named_csv_never_refuses_even_on_collision(tmp_path, monkeypatch):
+    """An auto-named path that happens to collide (two runs started within
+    the same second) must be uniquified with a '_N' suffix, never refused --
+    only an EXPLICIT --csv is refused (see the two tests above)."""
+    fake_dir = tmp_path / "HIL Results"
+    fake_dir.mkdir(parents=True)
+    monkeypatch.setattr(hil, "HIL_RESULTS_DIR", str(fake_dir))
+    monkeypatch.setattr(hil, "auto_csv_name", lambda *a, **k: "fixed_name.csv")
+    (fake_dir / "fixed_name.csv").write_text("existing run, must survive untouched")
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58902", "--bind-port", "0",
+                   "--rate", "200", "--scenario", "steady", "--electrical", "simple",
+                   "--duration", "0.02"])
+    assert rc == 0
+    assert (fake_dir / "fixed_name_1.csv").is_file()
+    assert (fake_dir / "fixed_name_1.csv.meta.json").is_file()
+    assert (fake_dir / "fixed_name.csv").read_text() == "existing run, must survive untouched"
+
+
+def test_no_csv_writes_no_csv_and_no_sidecar(tmp_path, monkeypatch):
+    fake_dir = tmp_path / "HIL Results"
+    monkeypatch.setattr(hil, "HIL_RESULTS_DIR", str(fake_dir))
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58903", "--bind-port", "0",
+                   "--rate", "200", "--scenario", "steady", "--electrical", "simple",
+                   "--duration", "0.02", "--no-csv"])
+    assert rc == 0
+    # HIL_RESULTS_DIR must either not have been created at all, or (if some
+    # other code path touched it) contain nothing.
+    assert not fake_dir.exists() or not any(fake_dir.iterdir())
+
+
+def test_no_csv_and_explicit_csv_mutually_exclusive_argparse_error(tmp_path):
+    with pytest.raises(SystemExit) as ei:
+        hil.main(["--csv", str(tmp_path / "x.csv"), "--no-csv"])
+    assert ei.value.code == 2
+
+
+def test_force_without_explicit_csv_is_argparse_error():
+    with pytest.raises(SystemExit) as ei:
+        hil.main(["--force"])
+    assert ei.value.code == 2
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 16b. D11: refusal/uniquification must consider .meta.json and
+#      .events.jsonl, not just the CSV itself (a run "owns" all three
+#      artifacts -- output_path_taken() checks every one of them).
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_d11_explicit_csv_refused_by_an_orphan_meta_json_alone(tmp_path, capsys):
+    """The CSV itself is absent, but its .meta.json sidecar sits there from a
+    previous (or killed) run -- that alone must trigger the refusal, and the
+    printed message must name the file actually in the way."""
+    csv_path = tmp_path / "run.csv"
+    sidecar = tmp_path / "run.csv.meta.json"
+    sidecar.write_text('{"status": "running"}')
+    assert not csv_path.exists()
+    with pytest.raises(SystemExit) as ei:
+        hil.main(["--teensy-ip", "127.0.0.1", "--port", "58930", "--bind-port", "0",
+                   "--rate", "200", "--csv", str(csv_path), "--scenario", "steady",
+                   "--electrical", "simple", "--duration", "0.02"])
+    assert ei.value.code == 2
+    err = capsys.readouterr().err
+    assert "refusing to overwrite an existing run artifact" in err
+    assert sidecar.name in err
+    # Nothing must have been created/touched by the refusal itself.
+    assert not csv_path.exists()
+
+
+def test_d11_explicit_csv_refused_by_an_orphan_events_sidecar_alone(tmp_path, capsys):
+    csv_path = tmp_path / "run.csv"
+    events_sidecar = tmp_path / "run.csv.events.jsonl"
+    events_sidecar.write_text("")
+    assert not csv_path.exists()
+    with pytest.raises(SystemExit) as ei:
+        hil.main(["--teensy-ip", "127.0.0.1", "--port", "58931", "--bind-port", "0",
+                   "--rate", "200", "--csv", str(csv_path), "--scenario", "steady",
+                   "--electrical", "hifi", "--duration", "0.02"])
+    assert ei.value.code == 2
+    err = capsys.readouterr().err
+    assert "refusing to overwrite an existing run artifact" in err
+    assert events_sidecar.name in err
+
+
+def test_d11_explicit_csv_with_force_overwrites_despite_orphan_sidecar_only(tmp_path):
+    csv_path = tmp_path / "run.csv"
+    sidecar = tmp_path / "run.csv.meta.json"
+    sidecar.write_text('{"status": "running"}')
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58932", "--bind-port", "0",
+                   "--rate", "200", "--csv", str(csv_path), "--scenario", "steady",
+                   "--electrical", "simple", "--duration", "0.02", "--force"])
+    assert rc == 0
+    assert csv_path.is_file()
+
+
+def test_d11_auto_named_bumps_to_1_on_orphan_meta_json_collision(tmp_path, monkeypatch):
+    """An auto-named run must treat an orphan sidecar (the CSV itself absent)
+    the same as a full collision and bump to '_1' -- output_path_taken()
+    checks all three artifact paths, and unique_output_path() calls it."""
+    fake_dir = tmp_path / "HIL Results"
+    fake_dir.mkdir(parents=True)
+    monkeypatch.setattr(hil, "HIL_RESULTS_DIR", str(fake_dir))
+    monkeypatch.setattr(hil, "auto_csv_name", lambda *a, **k: "fixed_name.csv")
+    (fake_dir / "fixed_name.csv.meta.json").write_text('{"status": "running"}')
+    assert not (fake_dir / "fixed_name.csv").exists()
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58933", "--bind-port", "0",
+                   "--rate", "200", "--scenario", "steady", "--electrical", "simple",
+                   "--duration", "0.02"])
+    assert rc == 0
+    assert (fake_dir / "fixed_name_1.csv").is_file()
+    # The orphan sidecar itself must survive untouched.
+    assert (fake_dir / "fixed_name.csv.meta.json").read_text() == '{"status": "running"}'
+
+
+def test_d11_auto_named_bumps_to_1_on_orphan_events_sidecar_collision(tmp_path, monkeypatch):
+    fake_dir = tmp_path / "HIL Results"
+    fake_dir.mkdir(parents=True)
+    monkeypatch.setattr(hil, "HIL_RESULTS_DIR", str(fake_dir))
+    monkeypatch.setattr(hil, "auto_csv_name", lambda *a, **k: "fixed_name.csv")
+    (fake_dir / "fixed_name.csv.events.jsonl").write_text("")
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58934", "--bind-port", "0",
+                   "--rate", "200", "--scenario", "steady", "--electrical", "hifi",
+                   "--duration", "0.02"])
+    assert rc == 0
+    assert (fake_dir / "fixed_name_1.csv").is_file()
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 16c. D12: --no-csv + --electrical hifi prints the events-sidecar
+#      suppression notice (the sidecar derives from the CSV path, so
+#      --no-csv silently disables it too unless the run says so).
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_d12_no_csv_with_hifi_prints_events_suppression_notice(tmp_path, monkeypatch, capsys):
+    fake_dir = tmp_path / "HIL Results"
+    monkeypatch.setattr(hil, "HIL_RESULTS_DIR", str(fake_dir))
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58935", "--bind-port", "0",
+                   "--rate", "200", "--scenario", "steady", "--electrical", "hifi",
+                   "--duration", "0.02", "--no-csv"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "NOTE: --no-csv also suppresses the hi-fi electrical" in out
+    assert "events.jsonl" in out
+
+
+def test_d12_no_csv_with_simple_electrical_prints_no_hifi_notice(tmp_path, monkeypatch, capsys):
+    fake_dir = tmp_path / "HIL Results"
+    monkeypatch.setattr(hil, "HIL_RESULTS_DIR", str(fake_dir))
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58936", "--bind-port", "0",
+                   "--rate", "200", "--scenario", "steady", "--electrical", "simple",
+                   "--duration", "0.02", "--no-csv"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "NOTE: --no-csv also suppresses" not in out
+
+
+def test_d12_hifi_with_csv_prints_no_suppression_notice(tmp_path, capsys):
+    """Sanity converse: the notice is specific to --no-csv -- a hifi run WITH
+    a CSV (the sidecar is written normally) must not print it."""
+    csv_path = str(tmp_path / "run.csv")
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58937", "--bind-port", "0",
+                   "--rate", "200", "--csv", csv_path, "--scenario", "steady",
+                   "--electrical", "hifi", "--duration", "0.02"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "NOTE: --no-csv also suppresses" not in out
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 17. .meta.json sidecar lifecycle
+# ─────────────────────────────────────────────────────────────────────────
+
+def _capture_sidecar_writes(monkeypatch):
+    """Wrap write_meta_sidecar so every call's payload is snapshotted (via a
+    JSON round-trip, which is safe since the payload is JSON-serializable by
+    construction) while still delegating to the real writer, so the file on
+    disk and the call history can both be inspected."""
+    calls = []
+    orig = hil.write_meta_sidecar
+
+    def _wrapper(csv_path, payload):
+        calls.append(json.loads(json.dumps(payload)))
+        return orig(csv_path, payload)
+
+    monkeypatch.setattr(hil, "write_meta_sidecar", _wrapper)
+    return calls
+
+
+def test_sidecar_written_running_first_then_completed(tmp_path, monkeypatch):
+    calls = _capture_sidecar_writes(monkeypatch)
+    csv_path = str(tmp_path / "run.csv")
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58904", "--bind-port", "0",
+                   "--rate", "200", "--csv", csv_path, "--scenario", "steady",
+                   "--electrical", "simple", "--duration", "0.02"])
+    assert rc == 0
+    assert len(calls) >= 2
+    assert calls[0]["status"] == "running"
+    assert calls[0]["results"] is None
+    assert calls[0]["finished"] is None
+    assert calls[-1]["status"] == "completed"
+    assert calls[-1]["results"] is not None
+    assert calls[-1]["finished"] is not None
+    # Atomicity: no leftover .tmp file after the final write.
+    assert not os.path.exists(csv_path + ".meta.json.tmp")
+    assert os.path.exists(csv_path + ".meta.json")
+
+
+def test_sidecar_keyboard_interrupt_status_interrupted(tmp_path, monkeypatch):
+    calls = _capture_sidecar_writes(monkeypatch)
+    csv_path = str(tmp_path / "run.csv")
+
+    def _raise_ki(_s):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(hil.time, "sleep", _raise_ki)
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58905", "--bind-port", "0",
+                   "--rate", "200", "--csv", csv_path, "--scenario", "steady",
+                   "--electrical", "simple", "--duration", "5.0"])
+    # main() catches KeyboardInterrupt internally and still returns 0.
+    assert rc == 0
+    assert calls[-1]["status"] == "interrupted"
+    assert not os.path.exists(csv_path + ".meta.json.tmp")
+
+
+def test_sidecar_unexpected_exception_status_error_and_reraises(tmp_path, monkeypatch):
+    calls = _capture_sidecar_writes(monkeypatch)
+    csv_path = str(tmp_path / "run.csv")
+
+    def _raise_boom(_s):
+        raise RuntimeError("synthetic failure for the error-path test")
+
+    monkeypatch.setattr(hil.time, "sleep", _raise_boom)
+    with pytest.raises(RuntimeError, match="synthetic failure"):
+        hil.main(["--teensy-ip", "127.0.0.1", "--port", "58906", "--bind-port", "0",
+                   "--rate", "200", "--csv", csv_path, "--scenario", "steady",
+                   "--electrical", "simple", "--duration", "5.0"])
+    assert calls[-1]["status"] == "error"
+    assert "synthetic failure" in calls[-1]["error"]
+    assert not os.path.exists(csv_path + ".meta.json.tmp")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 17b. K6: write_meta_sidecar() real atomicity -- a failing os.replace()
+#      (the temp-file -> final-file commit) must never lose the PREVIOUS
+#      sidecar's content, and must never leave a stale .tmp behind; and a
+#      genuinely unserializable payload (D5: json.dump can raise even with
+#      default=str, when str() itself raises) must fail the same way.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_k6_write_meta_sidecar_os_replace_failure_preserves_previous_content(
+        tmp_path, monkeypatch):
+    csv_path = str(tmp_path / "run.csv")
+    sidecar_path = csv_path + ".meta.json"
+    assert hil.write_meta_sidecar(csv_path, {"status": "running", "results": None}) is True
+    original = open(sidecar_path, encoding="utf-8").read()
+
+    def _boom_replace(*a, **k):
+        raise OSError("synthetic os.replace failure")
+
+    monkeypatch.setattr(hil.os, "replace", _boom_replace)
+    ok = hil.write_meta_sidecar(csv_path, {"status": "completed", "results": {"x": 1}})
+    assert ok is False
+    # The commit never happened, so the PREVIOUS content must be untouched.
+    assert open(sidecar_path, encoding="utf-8").read() == original
+    # The new finally-block cleanup must remove the partially-written temp.
+    assert not os.path.exists(sidecar_path + ".tmp")
+
+
+def test_k6_write_meta_sidecar_os_replace_failure_with_no_previous_sidecar(
+        tmp_path, monkeypatch):
+    """Same failure mode, but with nothing on disk beforehand -- must fail
+    cleanly (False, no artifacts) rather than leaving a partial file."""
+    csv_path = str(tmp_path / "run.csv")
+    sidecar_path = csv_path + ".meta.json"
+    assert not os.path.exists(sidecar_path)
+
+    def _boom_replace(*a, **k):
+        raise OSError("synthetic os.replace failure")
+
+    monkeypatch.setattr(hil.os, "replace", _boom_replace)
+    ok = hil.write_meta_sidecar(csv_path, {"status": "running", "results": None})
+    assert ok is False
+    assert not os.path.exists(sidecar_path)
+    assert not os.path.exists(sidecar_path + ".tmp")
+
+
+def test_d5_write_meta_sidecar_unserializable_payload_fails_cleanly(tmp_path):
+    """D5: the catch in write_meta_sidecar() is `Exception`, not `OSError` --
+    json.dump can raise even with default=str, when str() ITSELF raises.
+    Must return False, leave no .tmp/.meta.json artifact, and not propagate
+    past this call."""
+    class _Boom:
+        def __str__(self):
+            raise RuntimeError("cannot stringify")
+
+    csv_path = str(tmp_path / "run.csv")
+    sidecar_path = csv_path + ".meta.json"
+    ok = hil.write_meta_sidecar(csv_path, {"bad": _Boom()})
+    assert ok is False
+    assert not os.path.exists(sidecar_path)
+    assert not os.path.exists(sidecar_path + ".tmp")
+
+
+def test_d5_write_meta_sidecar_unserializable_payload_does_not_clobber_previous(tmp_path):
+    csv_path = str(tmp_path / "run.csv")
+    sidecar_path = csv_path + ".meta.json"
+    assert hil.write_meta_sidecar(csv_path, {"status": "running", "results": None}) is True
+    original = open(sidecar_path, encoding="utf-8").read()
+
+    class _Boom:
+        def __str__(self):
+            raise RuntimeError("cannot stringify")
+
+    ok = hil.write_meta_sidecar(csv_path, {"status": "completed", "bad": _Boom()})
+    assert ok is False
+    assert open(sidecar_path, encoding="utf-8").read() == original
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 18. constants_hash / collect_model_constants / git_provenance
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_collect_model_constants_contains_known_keys():
+    consts = hil.collect_model_constants()
+    assert "hil_plant_sim.K_F" in consts
+    assert "hil_plant_sim.M_EFF" in consts
+    assert any(k.startswith("hil_electrical.") for k in consts)
+
+
+def test_constants_hash_deterministic_across_calls():
+    c1 = hil.collect_model_constants()
+    c2 = hil.collect_model_constants()
+    assert c1 == c2
+    assert hil.constants_hash(c1) == hil.constants_hash(c2)
+
+
+def test_constants_hash_sensitive_to_a_constant_change(monkeypatch):
+    before = hil.constants_hash(hil.collect_model_constants())
+    monkeypatch.setattr(hil, "K_F", hil.K_F + 0.001)
+    after = hil.constants_hash(hil.collect_model_constants())
+    assert before != after
+
+
+def test_constants_hash_is_order_independent_dict_repr():
+    """collect_model_constants() sorts its own output, and constants_hash
+    dumps with sort_keys=True, so a dict built in a different key order must
+    still hash identically."""
+    c = hil.collect_model_constants()
+    reordered = dict(reversed(list(c.items())))
+    assert hil.constants_hash(c) == hil.constants_hash(reordered)
+
+
+def test_git_provenance_shape_on_a_working_repo():
+    info = hil.git_provenance()
+    assert set(info) == {"rev", "dirty", "error"}
+    # This IS a git repo (the test itself lives in one), so under a working
+    # git binary rev should resolve; do not assert on `dirty`'s value (the
+    # working tree may or may not be clean when this runs).
+    assert info["rev"] is None or isinstance(info["rev"], str)
+
+
+def test_git_provenance_null_tolerant_on_subprocess_failure(monkeypatch):
+    def _boom(*a, **k):
+        raise FileNotFoundError("git not on PATH")
+
+    monkeypatch.setattr(hil.subprocess, "run", _boom)
+    info = hil.git_provenance()
+    assert info["rev"] is None
+    assert info["dirty"] is None
+    assert info["error"] is not None
+    assert "git not on PATH" in info["error"]
+
+
+def test_git_provenance_null_tolerant_on_nonzero_returncode(monkeypatch):
+    class _FakeCompleted:
+        def __init__(self, rc, out=b"", err=b""):
+            self.returncode = rc
+            self.stdout = out
+            self.stderr = err
+
+    def _fake_run(cmd, **kw):
+        if cmd[:2] == ["git", "rev-parse"]:
+            return _FakeCompleted(128, err=b"not a git repository")
+        return _FakeCompleted(128, err=b"not a git repository")
+
+    monkeypatch.setattr(hil.subprocess, "run", _fake_run)
+    info = hil.git_provenance()
+    assert info["rev"] is None
+    assert info["dirty"] is None
+    # Both `git rev-parse` and `git status` failed here (both return rc=128),
+    # and the two failures are now APPENDED as separate labeled notes rather
+    # than the second silently overwriting the first -- see git_provenance()'s
+    # `note()` helper.
+    assert info["error"] == "rev-parse: not a git repository; status: not a git repository"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 18b. D9: CONSTANTS_EXCLUDE_PREFIXES -- the fingerprint drops non-model
+#      families (protocol sizes/sync bytes, this file's own metadata, the
+#      warm-reset tripwire's tuning, bitmasks, ports) so a protocol edit or
+#      a tripwire retune does not move constants_hash as loudly as an
+#      actual K_F/K_DROOP_BUS correction would.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_d9_collect_model_constants_excludes_every_declared_prefix():
+    consts = hil.collect_model_constants()
+    for key in consts:
+        name = key.split(".", 1)[1]
+        assert not name.startswith(hil.CONSTANTS_EXCLUDE_PREFIXES), key
+
+
+def test_d9_collect_model_constants_specific_excluded_names_absent():
+    consts = hil.collect_model_constants()
+    names = {k.split(".", 1)[1] for k in consts}
+    for excluded in ("META_FORMAT_VERSION", "WARM_RESET_GRACE_S",
+                     "WARM_RESET_TIMES_MAX", "HIL_SYNC_INJECT", "HIL_INJECT_SIZE",
+                     "HIL_OUTPUT_SIZE", "TEENSY_PORT_DEFAULT", "SW_FC_BUS",
+                     "AUX_FC_REG", "MDAC_CMD_LOAD_UPDATE", "PI_CMD_SIZE"):
+        assert excluded not in names, excluded
+
+
+def test_d9_collect_model_constants_no_duplicate_bare_names_across_modules():
+    """A name re-exported from hil_electrical into hil_plant_sim (the shared
+    `from hil_electrical import ...`) must be recorded ONCE under its
+    canonical hil_electrical. prefix, never twice under both module
+    prefixes."""
+    consts = hil.collect_model_constants()
+    bare_names = [k.split(".", 1)[1] for k in consts]
+    assert len(bare_names) == len(set(bare_names))
+
+
+def test_d9_collect_model_constants_retains_model_constants():
+    consts = hil.collect_model_constants()
+    names = {k.split(".", 1)[1] for k in consts}
+    for retained in ("K_F", "K_DROOP_BUS", "M_EFF"):
+        assert retained in names, retained
+
+
+def test_d9_constants_hash_unaffected_by_an_excluded_constant(monkeypatch):
+    before = hil.constants_hash(hil.collect_model_constants())
+    monkeypatch.setattr(hil, "WARM_RESET_TIMES_MAX", hil.WARM_RESET_TIMES_MAX + 1)
+    after = hil.constants_hash(hil.collect_model_constants())
+    assert before == after
+
+
+def test_d9_constants_hash_changes_when_a_retained_constant_moves(monkeypatch):
+    before = hil.constants_hash(hil.collect_model_constants())
+    monkeypatch.setattr(hil, "K_DROOP_BUS", hil.K_DROOP_BUS + 0.001)
+    after = hil.constants_hash(hil.collect_model_constants())
+    assert before != after
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 19. comm-loss tx-enable window
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_comm_loss_tx_window_edges():
+    plant = hil.Plant()
+    assert hil.apply_scenario(plant, "comm-loss", 4.99) is True
+    assert hil.apply_scenario(plant, "comm-loss", 5.0) is False
+    assert hil.apply_scenario(plant, "comm-loss", 6.0) is False
+    assert hil.apply_scenario(plant, "comm-loss", 6.99) is False
+    assert hil.apply_scenario(plant, "comm-loss", 7.0) is True
+
+
+def test_comm_loss_scenario_declares_warm_resets_expected_1():
+    assert hil.SCENARIOS["comm-loss"]["warm_resets_expected"] == 1
+
+
+def test_scenarios_without_the_key_have_no_expected_warm_resets():
+    assert "warm_resets_expected" not in hil.SCENARIOS["steady"]
+    assert "warm_resets_expected" not in hil.SCENARIOS["sag"]
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 20. Mid-run warm-reset tripwire (drives main()'s inline transition
+#     detector deterministically via a scripted clock + scripted socket --
+#     there is no standalone function to call directly, the detector lives
+#     inline in the observation-drain loop)
+# ─────────────────────────────────────────────────────────────────────────
+
+class _FakeClock:
+    """A monotonic() that only ever advances by exactly what sleep() is
+    asked for, so main()'s tick index maps to sim-time = tick * dt with zero
+    wall-clock jitter -- lets a test place a scripted observation frame at an
+    exact simulated instant."""
+
+    def __init__(self):
+        self.t = 0.0
+
+    def monotonic(self):
+        return self.t
+
+    def sleep(self, s):
+        if s > 0:
+            self.t += s
+
+
+class _ScriptedRecvSocket:
+    """Deterministic stand-in for socket.socket: emits the queued observation
+    frame for whichever tick the shared _FakeClock's current time maps to,
+    otherwise raises BlockingIOError (nothing waiting) like a real
+    non-blocking UDP socket. `frames_by_tick` is consumed (popped) so a frame
+    is delivered exactly once."""
+
+    def __init__(self, clock, dt, frames_by_tick):
+        self._clock = clock
+        self._dt = dt
+        self._frames = dict(frames_by_tick)
+        self.sent = []
+
+    def setblocking(self, flag):
+        pass
+
+    def bind(self, addr):
+        pass
+
+    def sendto(self, data, addr):
+        self.sent.append(bytes(data))
+        return len(data)
+
+    def recvfrom(self, bufsize):
+        tick = round(self._clock.t / self._dt)
+        frame = self._frames.pop(tick, None)
+        if frame is None:
+            raise BlockingIOError()
+        return frame, ("0.0.0.0", 0)
+
+    def close(self):
+        pass
+
+
+def _run_scripted_warm_reset(tmp_path, monkeypatch, frames_by_tick, duration,
+                             rate=1000.0, port=58910):
+    clock = _FakeClock()
+    monkeypatch.setattr(hil.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(hil.time, "sleep", clock.sleep)
+    dt = 1.0 / rate
+    sock = _ScriptedRecvSocket(clock, dt, frames_by_tick)
+    monkeypatch.setattr(hil.socket, "socket", lambda *a, **k: sock)
+    csv_path = str(tmp_path / "run.csv")
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", str(port), "--bind-port", "0",
+                   "--rate", str(rate), "--csv", csv_path, "--scenario", "steady",
+                   "--electrical", "simple", "--duration", str(duration)])
+    assert rc == 0
+    with open(csv_path + ".meta.json", encoding="utf-8") as fh:
+        meta = json.load(fh)
+    return meta["results"]
+
+
+def test_warm_reset_99_to_other_counts_once(tmp_path, monkeypatch):
+    frames = {
+        0: _make_output_frame(seq=0, state=99),
+        100: _make_output_frame(seq=1, state=1),   # t = 0.100 s
+    }
+    res = _run_scripted_warm_reset(tmp_path, monkeypatch, frames, duration=0.15,
+                                   port=58911)
+    assert res["warm_resets_observed"] == 1
+    assert res["warm_resets_mid_run"] == 0
+    assert len(res["warm_reset_times_s"]) == 1
+    assert res["warm_reset_times_s"][0] == pytest.approx(0.1, abs=1e-3)
+
+
+def test_warm_reset_99_to_99_is_not_a_transition(tmp_path, monkeypatch):
+    frames = {
+        0: _make_output_frame(state=99),
+        50: _make_output_frame(state=99),
+    }
+    res = _run_scripted_warm_reset(tmp_path, monkeypatch, frames, duration=0.1,
+                                   port=58912)
+    assert res["warm_resets_observed"] == 0
+
+
+def test_warm_reset_non_99_transitions_are_never_counted(tmp_path, monkeypatch):
+    """Only a transition OUT OF 99 counts -- 1 -> 0 must not."""
+    frames = {
+        0: _make_output_frame(state=1),
+        50: _make_output_frame(state=0),
+    }
+    res = _run_scripted_warm_reset(tmp_path, monkeypatch, frames, duration=0.1,
+                                   port=58913)
+    assert res["warm_resets_observed"] == 0
+
+
+def test_warm_reset_grace_classification_before_grace_not_mid_run(tmp_path, monkeypatch):
+    frames = {
+        0: _make_output_frame(state=99),
+        500: _make_output_frame(state=1),          # t = 0.5 s < WARM_RESET_GRACE_S
+    }
+    res = _run_scripted_warm_reset(tmp_path, monkeypatch, frames, duration=0.6,
+                                   port=58914)
+    assert res["warm_resets_observed"] == 1
+    assert res["warm_resets_mid_run"] == 0
+    assert res["warm_reset_times_s"][0] == pytest.approx(0.5, abs=1e-3)
+
+
+def test_warm_reset_grace_classification_after_grace_is_mid_run(tmp_path, monkeypatch):
+    frames = {
+        0: _make_output_frame(state=99),
+        2500: _make_output_frame(state=1),         # t = 2.5 s > WARM_RESET_GRACE_S (2.0)
+    }
+    res = _run_scripted_warm_reset(tmp_path, monkeypatch, frames, duration=2.6,
+                                   port=58915)
+    assert res["warm_resets_observed"] == 1
+    assert res["warm_resets_mid_run"] == 1
+    assert res["warm_reset_times_s"][0] == pytest.approx(2.5, abs=1e-3)
+
+
+def test_warm_reset_grace_exactly_at_boundary_counts_as_mid_run(tmp_path, monkeypatch):
+    """K5: the implementation's gate is `if t >= WARM_RESET_GRACE_S` (see the
+    module source), not a strict `>` -- a transition landing EXACTLY at
+    2.0 s must count as mid-run.
+
+    Uses rate=1.0 Hz (dt=1.0) rather than the usual 1000 Hz: dt=1.0 is
+    exactly representable in binary floating point, so the _FakeClock's
+    repeated `t += dt` reaches EXACTLY 2.0 at tick 2 with zero accumulated
+    rounding error -- at 1000 Hz (dt=0.001, not exactly representable),
+    2000 additions land a couple of ULPs under 2.0 and would flip this
+    boundary test on floating-point noise rather than on the `>=` under
+    test."""
+    frames = {
+        0: _make_output_frame(state=99),
+        2: _make_output_frame(state=1),   # t = 2.0 s == WARM_RESET_GRACE_S, exactly
+    }
+    res = _run_scripted_warm_reset(tmp_path, monkeypatch, frames, duration=2.5,
+                                   rate=1.0, port=58917)
+    assert res["warm_resets_observed"] == 1
+    assert res["warm_resets_mid_run"] == 1
+    assert res["warm_reset_times_s"][0] == pytest.approx(2.0, abs=1e-9)
+
+
+def test_warm_reset_grace_just_below_boundary_is_not_mid_run(tmp_path, monkeypatch):
+    """The converse pin: 1.999 s (one tick short of the boundary at this
+    1000 Hz rate) must NOT count as mid-run."""
+    frames = {
+        0: _make_output_frame(state=99),
+        1999: _make_output_frame(state=1),   # t = 1.999 s < WARM_RESET_GRACE_S
+    }
+    res = _run_scripted_warm_reset(tmp_path, monkeypatch, frames, duration=2.1,
+                                   port=58918)
+    assert res["warm_resets_observed"] == 1
+    assert res["warm_resets_mid_run"] == 0
+
+
+def test_warm_reset_times_capped_but_count_is_not(tmp_path, monkeypatch):
+    frames = {0: _make_output_frame(state=99)}
+    state = 1
+    tick = 10
+    n_transitions = 0
+    while n_transitions < 25:
+        frames[tick] = _make_output_frame(state=state)
+        if state == 1:
+            n_transitions += 1
+        state = 99 if state == 1 else 1
+        tick += 10
+    duration = (tick + 10) / 1000.0
+    res = _run_scripted_warm_reset(tmp_path, monkeypatch, frames, duration=duration,
+                                   port=58916)
+    assert res["warm_resets_observed"] == 25
+    assert len(res["warm_reset_times_s"]) == hil.WARM_RESET_TIMES_MAX == 16
 
 
 if __name__ == "__main__":

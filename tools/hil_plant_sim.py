@@ -54,6 +54,17 @@ Usage:
     python3 tools/hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario steady \
             --duration 30 --csv hil_run.csv
 
+OUTPUT (see docs/HIL_USER_MANUAL.md Sec 2.5)
+CSV logging is ON BY DEFAULT.  Without --csv the run names itself
+`hil_<scenario>_<mode>_<YYYYmmdd_HHMMSS>.csv` under "<repo>/HIL Results";
+--no-csv turns logging off entirely (CSV, .meta.json AND the hi-fi events
+sidecar), and an explicit --csv whose CSV or either sidecar already exists is
+REFUSED with EXIT CODE 2 unless --force.  Every CSV is accompanied by a `<csv>.meta.json`
+sidecar naming the scenario, the command mode, the resolved configuration, a
+sha256 over the model constants, the git rev, and the run's results.  The
+sidecar is written before the loop starts (status "running") and rewritten at
+exit, so even a killed run leaves a record of what was attempted.
+
 REPLAY MODE (--replay PATH.BLG) swaps the simulated plant for a recorded bench
 log: the .BLG's rail/current/velocity samples are streamed back at the board as
 injection frames, turning a recorded bench incident into a repeatable stimulus.
@@ -63,10 +74,13 @@ do not influence the replayed trajectory.  See docs/HIL_MODE.md "Replay mode".
 
 import argparse
 import csv
+import datetime
+import hashlib
 import json
 import os
 import socket
 import struct
+import subprocess
 import sys
 import time
 
@@ -85,6 +99,43 @@ SW_REGEN, SW_FC_CHARGE, SW_BT_SEQ = 0x08, 0x10, 0x20
 
 AUX_FC_REG, AUX_BT_REG = 0x01, 0x02
 AUX_MPPT_DISABLE, AUX_CBAL_DISABLE = 0x04, 0x08
+
+# ── Mid-run warm-reset tripwire ─────────────────────────────────────────────
+# From fw v23 the board can leave its latched State 99 on its own: after a RUN
+# BOUNDARY (the injection link continuously dead for HIL_RUN_BOUNDARY_MS =
+# 1000 ms) plus 500 ms of continuously fresh link, it warm-resets to State 0 and
+# brings the stage back up.  Between runs that is exactly what the suite wants.
+# MID-RUN it is a hazard: a >= 1 s host stall (GC, a laptop sleeping a core, a
+# blocked write) followed by resumed streaming looks identical to a run boundary,
+# so the board recovers and clears a fault it had latched.
+#
+# WHAT THE HAZARD ACTUALLY IS — state it precisely, because the loose version
+# ("a latched fault silently disappears") is wrong for the checks that exist:
+# a check reading the fault UNION over the run, or the final latched flags, sees
+# the fault fire and fails loudly.  The real damage is subtler and worse:
+#   * after the reset the board is in State 0 -> bring-up -> Idle, so THE REST OF
+#     THE RUN IS NOT THE SCENARIO the checks assume — the stimulus timeline keeps
+#     playing against a board that restarted underneath it;
+#   * a fault that fires again after the reset reads as having fired ONCE, so
+#     "did it latch?" answers yes for the wrong reason and any dwell/timing
+#     conclusion drawn from it is wrong;
+#   * a check keyed to the FINAL state or FINAL flags reads the post-recovery
+#     board, which is clean, and passes.
+# None of that is recoverable after the fact, which is why the run is marked
+# inconclusive rather than interpreted.  Every observed transition out of State
+# 99 is counted here so the run can be judged, not trusted.
+#
+# The count is over 99 -> ANY other state, not literally 99 -> 0: State 99 is
+# latched and the HIL warm reset is its ONLY exit, so this cannot false-positive,
+# and it cannot false-NEGATIVE on a dropped observation frame that hid the brief
+# State 0 (the board is in State 0 only for the bring-up).
+WARM_RESET_GRACE_S = 2.0     # transitions before this are the START-OF-RUN
+                             # recovery from the previous run's settle pause —
+                             # expected, and not counted as mid-run.  Earliest a
+                             # genuine mid-run one can land is ~1.5 s (1000 ms
+                             # boundary + 500 ms fresh), so 2.0 s separates them.
+WARM_RESET_TIMES_MAX = 16    # cap on the recorded transition times (the count
+                             # itself is never capped)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Ag105 Table 6 status byte — authoritative values from
@@ -197,6 +248,276 @@ def resolve_output_path(path):
     if parent:
         os.makedirs(parent, exist_ok=True)
     return resolved
+
+
+# ── Self-describing runs: auto-named CSV + .meta.json sidecar ───────────────
+# Every run that writes a CSV also writes "<csv>.meta.json" beside it, so a bare
+# HIL Results\ directory is readable months later without the shell history that
+# produced it.  This mirrors the BLG SD-logging workflow on the board: the log
+# carries its own header (fw version, parameters) rather than depending on notes.
+#
+# The sidecar is written TWICE — once before the loop starts (status "running")
+# so a killed run still leaves evidence, once at exit with the results.  NOTHING
+# here runs per tick.
+META_FORMAT_VERSION = 1
+META_TOOL_NAME = "hil_plant_sim"
+
+
+def sanitize_token(text) -> str:
+    """Lowercase, filesystem-safe token for a filename component.
+
+    Anything outside [a-z0-9.-] collapses to '-', runs of '-' collapse to one,
+    and leading/trailing '-' are trimmed.  Empty input yields "none"."""
+    s = str(text if text is not None else "").strip().lower()
+    out = []
+    for ch in s:
+        out.append(ch if (ch.isalnum() and ch.isascii()) or ch in ".-" else "-")
+    token = "".join(out)
+    while "--" in token:
+        token = token.replace("--", "-")
+    token = token.strip("-.")
+    return token or "none"
+
+
+def run_mode_token(replay_path=None, pi_live=False, ems_name=None,
+                   has_timeline=False, electrical="simple") -> str:
+    """Short deterministic token naming WHAT drove this run.
+
+    Ordered by exclusivity, matching main()'s own argument rules:
+      replay-<blg stem>  --replay (no command source exists at all)
+      pilive             --pi-live (a real Pi owns the 22-byte command packet)
+      ems-<strategy>     an emulated EMS policy drives the command stream
+      timeline           the scenario's own scripted pi_timeline drives it
+      open               nothing commands the board from here (operator/USB)
+    A hi-fi electrical engine appends "-hifi" (the simple droop node is the
+    default and is left unmarked)."""
+    if replay_path:
+        stem = os.path.splitext(os.path.basename(replay_path))[0]
+        token = "replay-" + sanitize_token(stem)
+    elif pi_live:
+        token = "pilive"
+    elif ems_name:
+        token = "ems-" + sanitize_token(ems_name)
+    elif has_timeline:
+        token = "timeline"
+    else:
+        token = "open"
+    if electrical == "hifi":
+        token += "-hifi"
+    return token
+
+
+def auto_csv_name(scenario, mode_token, stamp=None) -> str:
+    """Default CSV filename: hil_<scenario>_<mode>_<YYYYmmdd_HHMMSS>.csv.
+
+    In replay mode there is no scenario (the rails come from the log), so the
+    scenario component is dropped and the mode token — which already names the
+    log — carries the identity on its own."""
+    stamp = stamp or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    parts = ["hil"]
+    if scenario:
+        parts.append(sanitize_token(scenario))
+    parts.append(sanitize_token(mode_token))
+    parts.append(stamp)
+    return "_".join(parts) + ".csv"
+
+
+def run_artifact_paths(csv_path: str):
+    """Every path a run derives from its CSV path: the CSV, its .meta.json
+    sidecar, and the hi-fi electrical events sidecar.
+
+    A CSV path is not free just because the CSV is missing — a previous run's
+    sidecars sit alongside it under derived names, and clobbering those loses
+    exactly the provenance the sidecar exists to provide."""
+    return (csv_path, meta_path_for(csv_path), csv_path + ".events.jsonl")
+
+
+def output_path_taken(csv_path: str) -> str:
+    """The first of a run's artifact paths that already exists, or "".
+
+    TOCTOU: this is a check, not a lock.  Two simulators racing on the same
+    second can both see a free name and both proceed — the window is
+    microseconds and the loser overwrites.  A file lock is not worth it here:
+    the auto-named case is timestamped per second and the explicit case is a
+    human typing one command."""
+    for p in run_artifact_paths(csv_path):
+        if os.path.exists(p):
+            return p
+    return ""
+
+
+def unique_output_path(path: str) -> str:
+    """Return `path` if free, else the first free '<stem>_N<ext>' (N = 1, 2, ...).
+
+    "Free" means the CSV *and both of its sidecars* are absent
+    (output_path_taken).  Only used for AUTO-named paths: two runs started
+    inside the same second must not silently overwrite each other.  An
+    explicitly-given --csv is refused instead (see main()), because a chosen
+    name is a chosen name."""
+    if not output_path_taken(path):
+        return path
+    stem, ext = os.path.splitext(path)
+    n = 1
+    while output_path_taken("%s_%d%s" % (stem, n, ext)):
+        n += 1
+    return "%s_%d%s" % (stem, n, ext)
+
+
+# Constant families that are NOT part of the plant/electrical MODEL and are
+# therefore excluded from the fingerprint: wire-protocol sizes and sync bytes,
+# the sidecar's own version, the warm-reset tripwire's tuning, socket ports, and
+# the switch/aux bitmask definitions.  Without this filter a protocol edit or a
+# tripwire retune moved `constants_hash` exactly as loudly as a K_F correction,
+# which is precisely the confusion the fingerprint exists to prevent.
+CONSTANTS_EXCLUDE_PREFIXES = (
+    "META_", "WARM_RESET_", "HIL_SYNC_", "HIL_INJECT_", "HIL_OUTPUT_",
+    "TEENSY_PORT", "SW_", "AUX_", "MDAC_CMD_", "CONSTANTS_EXCLUDE",
+    "UDP_", "PI_CMD_", "FB_",
+)
+
+
+def collect_model_constants() -> dict:
+    """Module-level UPPERCASE numeric constants of the plant + electrical MODELS.
+
+    Returned as {"<module>.<NAME>": repr(value)} so the dict is both hashable in
+    a stable way and readable by a human auditing the sidecar.  This is the
+    model-fingerprint record: a K_DROOP_BUS retune or a K_F correction moves
+    `constants_hash`, so two runs can be compared without trusting anybody's
+    memory of which constants were in the tree.
+
+    Two deliberate narrowings keep that claim honest:
+      * CONSTANTS_EXCLUDE_PREFIXES drops the non-model families (protocol sizes,
+        ports, bitmasks, this file's own metadata and tripwire tuning).
+      * A name re-exported from hil_electrical into this module (they share an
+        import) is recorded ONCE, under its canonical `hil_electrical.` prefix,
+        so a re-export churn cannot move the hash on its own.
+
+    LIMITATION, stated rather than implied: hash-EQUAL is strong evidence the
+    model constants match, but hash-DIFFERENT does not strictly imply the model
+    changed — adding an unrelated module-level constant outside the excluded
+    prefixes also moves it.  Compare the `constants` dict itself, which is
+    included in the sidecar for exactly this reason, before concluding anything
+    about a model change."""
+    elec = sys.modules.get("hil_electrical")
+    if elec is None:                      # only if it was never imported
+        try:
+            import hil_electrical as elec        # noqa: F811
+        except Exception:
+            elec = None
+    # hil_electrical FIRST so its names are canonical: this module's `from
+    # hil_electrical import ...` re-exports (BATT_CAPACITY_AH, C_VESC_DEFAULT,
+    # ...) are then skipped as duplicates below rather than recorded twice.
+    mods = [("hil_electrical", elec), ("hil_plant_sim", sys.modules.get(__name__))]
+    out = {}
+    seen = set()
+    for mod_name, mod in mods:
+        if mod is None:
+            continue
+        for name, value in vars(mod).items():
+            if not name or not name[0].isupper() or name.startswith("_"):
+                continue
+            if not name.replace("_", "").isalnum() or name.upper() != name:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            if name.startswith(CONSTANTS_EXCLUDE_PREFIXES):
+                continue
+            if name in seen:
+                continue                  # re-export: keep the canonical module
+            seen.add(name)
+            out["%s.%s" % (mod_name, name)] = repr(value)
+    return dict(sorted(out.items()))
+
+
+def constants_hash(constants: dict) -> str:
+    """sha256 over the canonical JSON dump of collect_model_constants().
+
+    Equal hash => equal constant set.  Different hash => SOMETHING in the set
+    moved, not necessarily a model value; see collect_model_constants()."""
+    blob = json.dumps(constants, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def git_provenance() -> dict:
+    """{'rev': <sha or None>, 'dirty': <bool or None>, 'error': <str or None>}.
+
+    Provenance must never be able to fail a bench run: git missing, git failing,
+    or a non-repo checkout all degrade to nulls plus a note."""
+    info = {"rev": None, "dirty": None, "error": None}
+
+    def note(msg):
+        # APPEND, never overwrite: `rev-parse` failing and `status` failing are
+        # two separate facts, and the old code silently dropped the first.
+        info["error"] = msg if not info["error"] else info["error"] + "; " + msg
+
+    # 5 s per call, not 10: this runs BEFORE the loop starts, so the operator is
+    # sitting in front of a board waiting for the run to begin.  A hung git (a
+    # network filesystem, an index.lock held by another process) must cost the
+    # bench seconds, not tens of seconds.
+    try:
+        rev = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             timeout=5)
+        if rev.returncode == 0:
+            info["rev"] = rev.stdout.decode("utf-8", "replace").strip() or None
+        else:
+            note("rev-parse: "
+                 + (rev.stderr.decode("utf-8", "replace").strip()[:200] or "failed"))
+    except Exception as exc:              # FileNotFoundError, TimeoutExpired, ...
+        note("rev-parse: %s: %s" % (type(exc).__name__, exc))
+    try:
+        st = subprocess.run(["git", "status", "--porcelain"], cwd=REPO_ROOT,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            timeout=5)
+        if st.returncode == 0:
+            info["dirty"] = bool(st.stdout.decode("utf-8", "replace").strip())
+        else:
+            note("status: "
+                 + (st.stderr.decode("utf-8", "replace").strip()[:200] or "failed"))
+    except Exception as exc:
+        note("status: %s: %s" % (type(exc).__name__, exc))
+    return info
+
+
+def meta_path_for(csv_path: str) -> str:
+    return csv_path + ".meta.json"
+
+
+def write_meta_sidecar(csv_path: str, payload: dict) -> bool:
+    """Write payload to '<csv>.meta.json' via temp-file + os.replace.
+
+    Best effort by contract: a provenance file must never abort or crash a bench
+    run, so EVERY failure is reported and swallowed (unlike the CSV itself,
+    which is the deliverable and aborts the run at open time — see main()).
+
+    The catch is `Exception`, not `OSError`: json.dump raises TypeError (and
+    ValueError on a non-finite float) on any value it cannot serialize, and this
+    payload contains values sourced from decode_benchlog's BLG header and from
+    getattr() on the electrical engine — neither of which this function
+    controls.  A TypeError here previously propagated out of an exit path and
+    replaced whatever the run was actually doing."""
+    path = meta_path_for(csv_path)
+    tmp = path + ".tmp"
+    ok = False
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, sort_keys=False, default=str)
+            fh.write("\n")
+        os.replace(tmp, path)
+        ok = True
+    except Exception as exc:
+        print("[hil] could not write %s: %s: %s"
+              % (path, type(exc).__name__, exc), file=sys.stderr)
+    finally:
+        # Clean up on EVERY failure path, including a partially-written temp
+        # from a mid-dump TypeError (the old code only unlinked under OSError,
+        # so a serialization failure left a stale .tmp behind).
+        if not ok:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    return ok
 
 
 def xor_checksum(payload: bytes) -> int:
@@ -933,6 +1254,11 @@ EMS_NAMES = list(EMS_STRATEGIES)
 #   ems        : optional default --ems strategy name for this scenario
 #   ems_v_profile : optional [(t, v_setpoint)] speed profile an EMS strategy may
 #                consume via fb["v_profile"] (piecewise-linear, clamped)
+#   warm_resets_expected : optional int — how many MID-RUN HIL warm resets
+#                (mainState 99 -> 0) this scenario legitimately produces.  Absent
+#                means zero, and run_hil_suite.py marks any run that shows one
+#                INCONCLUSIVE (a host stall can warm-reset the board mid-run and
+#                erase a latched fault, which would read as a false PASS).
 # ═════════════════════════════════════════════════════════════════════════════
 SCENARIOS = {
     "steady": {
@@ -950,8 +1276,16 @@ SCENARIOS = {
         "electrical": "any", "duration_s": 30.0,
     },
     "comm-loss": {
-        "description": "stops transmitting for 1 s at t = 5 s — hold-then-zero (H3)",
+        "description": "stops transmitting for 2 s at t = 5 s — hold-then-zero, "
+                       "then the fw v23+ run-boundary warm recovery (H3)",
         "electrical": "any", "duration_s": 30.0,
+        # This scenario's whole point after the gap is that the board RECOVERS:
+        # the 2 s silence satisfies fw v23's HIL_RUN_BOUNDARY_MS = 1000 ms, so
+        # exactly one mainState 99 -> 0 warm reset is EXPECTED mid-run.  Every
+        # other scenario treats a mid-run warm reset as evidence that a host
+        # stall erased a latched fault (see run_hil_suite.py's tripwire), so the
+        # whitelist has to be declared here rather than inferred.
+        "warm_resets_expected": 1,
     },
     "drive": {
         "description": "plant only; the operator drives the firmware by hand "
@@ -1103,9 +1437,19 @@ def apply_scenario(plant, scenario, t):
         # LIMIT_V_BUS_MIN (12.0 V) and exercise the real UV fault path.
         plant.v_bus_offset = -5.0 if 5.0 <= t < 6.0 else 0.0
     elif scenario == "comm-loss":
-        # Stop transmitting for 1 s at t = 5 s: exercises the firmware's two-stage
-        # hold-then-zero (HIL_STALE_MS 50, HIL_ZERO_MS 250).
-        tx_enabled = not (5.0 <= t < 6.0)
+        # Stop transmitting for 2 s at t = 5 s: exercises the firmware's two-stage
+        # hold-then-zero (HIL_STALE_MS 50, HIL_ZERO_MS 250) AND, on fw v23+, the
+        # RUN BOUNDARY that gates the HIL warm-recovery.
+        #
+        # WHY 2 s AND NOT 1 s: fw v23 anchors the boundary at the LAST ACCEPTED
+        # FRAME and requires the link to be continuously dead for
+        # HIL_RUN_BOUNDARY_MS = 1000 ms.  The old 1.0 s gap therefore cleared the
+        # bound by at most one tick — a single late frame, one scheduling
+        # overrun, or the board's own millis() granularity decided whether the
+        # board recovered, so the same scenario passed or failed at random.  2 s
+        # gives a 1000 ms margin on a 1000 ms requirement, and the 30 s duration
+        # leaves 23 s after the gap for the recovery to be observed.
+        tx_enabled = not (5.0 <= t < 7.0)
     elif scenario == "drive":
         # Plant only.  The operator drives the firmware by hand ('V', 'D', 'Y' ...)
         # over USB serial; this scenario just keeps the plant honest underneath.
@@ -1210,7 +1554,21 @@ def main(argv=None):
                     help="write a per-tick CSV log here. A relative path (bare "
                          "filename or with subdirs) is resolved under "
                          "'<repo>/HIL Results'; an absolute path is used verbatim. "
-                         "The electrical events sidecar follows the resolved path.")
+                         "The electrical events sidecar follows the resolved path. "
+                         "OMIT IT and a name is generated: "
+                         "hil_<scenario>_<mode>_<YYYYmmdd_HHMMSS>.csv under "
+                         "'<repo>/HIL Results'. An explicit path that already "
+                         "exists is REFUSED unless --force.")
+    ap.add_argument("--no-csv", action="store_true",
+                    help="write no CSV, no .meta.json sidecar AND no hi-fi "
+                         "electrical events sidecar (all three derive from the "
+                         "CSV path). CSV logging is ON by default; use this for "
+                         "throughput probes or repeated replays you do not want "
+                         "on disk.")
+    ap.add_argument("--force", action="store_true",
+                    help="overwrite an explicitly-given --csv that already "
+                         "exists (auto-named paths never need this — they get a "
+                         "'_1', '_2', ... suffix instead)")
     ap.add_argument("--dash", action="store_true",
                     help="live terminal dashboard (5 Hz sampled view; suppresses the "
                          "1 Hz status lines while running). Off by default. Requires a tty.")
@@ -1228,6 +1586,12 @@ def main(argv=None):
         ap.error("--replay-speed must be > 0")
     if args.loop and not args.replay:
         ap.error("--loop only applies to --replay")
+    if args.no_csv and args.csv:
+        ap.error("--no-csv and --csv are mutually exclusive: pick a path or pick "
+                 "no log")
+    if args.force and not args.csv:
+        ap.error("--force only applies to an explicit --csv (an auto-named path "
+                 "is uniquified with a '_N' suffix and never overwrites)")
 
     # ── Mode A / Mode B interaction rules ────────────────────────────────────
     # The firmware holds an unrejected command field forever, so two command
@@ -1373,10 +1737,70 @@ def main(argv=None):
     seq = 0
     rx_frames = 0
     rx_bad = 0
+    warm_resets = 0             # observed exits from the latched State 99
+    warm_resets_mid_run = 0     # ... after WARM_RESET_GRACE_S (the hazard)
+    warm_reset_times = []       # sim-clock t of each, capped for the record
     tx_frames = 0
     send_errors = 0     # F2: sendto() OSError count, parsed by run_hil_suite's
                         # pi-live fault-attribution judge as a continuity signal
     max_overrun = 0.0
+    # D10: t0/ticks are predeclared so finalize_meta() is callable from the
+    # moment the sidecar exists — including from the setup code BETWEEN the
+    # "running" write and the loop (the dashboard bring-up), which could
+    # otherwise raise and leave the sidecar frozen at "running" forever.
+    # t0 is None until the run clock actually starts; elapsed reads 0.0 then.
+    t0 = None
+    ticks = 0
+
+    # ── CSV path resolution: ON by default, auto-named ───────────────────────
+    # A run with no record is a run nobody can check afterwards, so logging is the
+    # default and --no-csv is the opt-out.  Two naming regimes, deliberately
+    # asymmetric:
+    #   explicit --csv : the operator chose the name -> an existing file is a
+    #                    REFUSAL (exit 2) unless --force.  Never silently clobber
+    #                    a bench record.
+    #   auto-named     : nobody chose the name -> a collision (two runs inside the
+    #                    same second) just takes the next free '_N' suffix.
+    # run_hil_suite.py passes an explicit --csv into a FRESH timestamped report
+    # directory AND passes --force, so a re-run into an operator-supplied --out
+    # (the one case where the directory is not fresh) cannot stall the plan on a
+    # refusal it has no way to answer.
+    csv_auto = False
+    if args.no_csv:
+        args.csv = None
+        if args.electrical == "hifi" and not args.replay:
+            # The events sidecar derives from the CSV path, so --no-csv silently
+            # disables it too.  On a hi-fi run that is the RT1987/chopper event
+            # record — say so rather than let the operator discover it missing.
+            print("[hil] NOTE: --no-csv also suppresses the hi-fi electrical "
+                  "events sidecar (<csv>.events.jsonl) — scp_cut / sw_ring / "
+                  "chopper events will not be recorded anywhere.")
+    elif args.csv:
+        args.csv = resolve_output_path(args.csv)
+        taken = output_path_taken(args.csv)
+        if taken and not args.force:
+            print("[hil] refusing to overwrite an existing run artifact: %s\n"
+                  "      (a run owns its CSV, its .meta.json sidecar and its "
+                  "events sidecar — any one of them existing means a previous "
+                  "run's record is there)\n"
+                  "      pass --force to overwrite it, or omit --csv for an "
+                  "auto-named log." % taken, file=sys.stderr)
+            sys.exit(2)
+    else:
+        csv_auto = True
+        mode_token_pre = run_mode_token(
+            replay_path=args.replay, pi_live=args.pi_live, ems_name=ems_name,
+            has_timeline=bool(meta.get("pi_timeline")) and not args.replay,
+            electrical=args.electrical)
+        args.csv = unique_output_path(resolve_output_path(auto_csv_name(
+            None if args.replay else scenario, mode_token_pre)))
+
+    # Mode token as recorded in the sidecar (and, for an auto-named run, embedded
+    # in the filename verbatim).
+    mode_token = run_mode_token(
+        replay_path=args.replay, pi_live=args.pi_live, ems_name=ems_name,
+        has_timeline=bool(meta.get("pi_timeline")) and not args.replay,
+        electrical=args.electrical)
 
     csv_file = None
     writer = None
@@ -1384,8 +1808,7 @@ def main(argv=None):
         # Relative paths land in "<repo>/HIL Results"; absolute paths (including the
         # ones run_hil_suite.py hands its children) are honored verbatim.  The
         # events sidecar below derives from this RESOLVED path, so it follows.
-        args.csv = resolve_output_path(args.csv)
-        print("[hil] CSV log: %s" % args.csv)
+        print("[hil] CSV log: %s%s" % (args.csv, " (auto-named)" if csv_auto else ""))
         # L1: a CSV the operator explicitly asked for is a run REQUIREMENT -- if it
         # cannot be opened, abort before the run starts rather than limp through a
         # run whose record is silently missing.  The asymmetry with the events
@@ -1479,6 +1902,123 @@ def main(argv=None):
     print(f"[hil] {src} dest={dest[0]}:{dest[1]} "
           f"rate={args.rate:.0f} Hz duration={args.duration:.1f} s")
 
+    # ── .meta.json sidecar: what this run WAS ────────────────────────────────
+    # Written twice — "running" now (so a SIGKILL/timeout still leaves a record
+    # of what was attempted) and rewritten with results at exit.  Everything
+    # expensive (git subprocesses, the constants sweep) happens HERE, once,
+    # before the 1 kHz loop starts; the loop itself never touches the sidecar.
+    meta_ok = False
+    meta_started = None
+    meta_const = None
+    if args.csv:
+        meta_const = collect_model_constants()
+        meta_started = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+        scenario_meta = None if args.replay else {
+            "name": scenario,
+            "description": meta.get("description"),
+            "duration_s": meta.get("duration_s"),
+            "electrical": meta.get("electrical"),
+            "pi_timeline_entries": len(meta.get("pi_timeline") or []),
+            "ems_default": meta.get("ems"),
+        }
+        meta_doc = {
+            "format_version": META_FORMAT_VERSION,
+            "tool": META_TOOL_NAME,
+            "created": meta_started,
+            "finished": None,
+            "status": "running",
+            "csv": args.csv,
+            "csv_auto_named": csv_auto,
+            "mode": mode_token,
+            "scenario": scenario_meta,
+            "ems_strategy": ems_name,
+            "pi_live": bool(args.pi_live),
+            "replay_source": (None if not args.replay else {
+                "path": args.replay,
+                "basename": os.path.basename(args.replay),
+                "speed": args.replay_speed,
+                "loop": bool(args.loop),
+                "records": len(replay.records),
+                "span_s": round(replay.span, 6),
+                "blg_version": blg_header.get("version"),
+                "blg_fw_version": blg_header.get("fw_version"),
+            }),
+            "argv": list(sys.argv[1:]) if argv is None else list(argv),
+            "config": {
+                "teensy_ip": args.teensy_ip,
+                "port": args.port,
+                "bind_port": args.bind_port,
+                "duration_s": args.duration,
+                "rate_hz": args.rate,
+                "electrical": args.electrical,
+                "trace_config": args.trace_config if args.electrical == "hifi" else None,
+                "vesc_cap_f": (getattr(electrical, "c_vesc", None)
+                               if electrical is not None else None),
+                "noise": bool(args.noise),
+                "soc0": args.soc0,
+                "capacity_ah": args.capacity_ah,
+                "dash": bool(args.dash),
+            },
+            "constants_hash": constants_hash(meta_const),
+            "constants": meta_const,
+            "git": git_provenance(),
+            "results": None,
+        }
+        meta_ok = write_meta_sidecar(args.csv, meta_doc)
+        if meta_ok:
+            print("[hil] run metadata: %s" % meta_path_for(args.csv))
+
+    def finalize_meta(status, error=None):
+        """Rewrite the sidecar with the run's outcome.  Never raises."""
+        if not args.csv or meta_started is None:
+            return
+        elapsed_ = (time.monotonic() - t0) if t0 is not None else 0.0
+        meta_doc["finished"] = datetime.datetime.now().astimezone().isoformat(
+            timespec="seconds")
+        meta_doc["status"] = status
+        meta_doc["error"] = error
+        meta_doc["results"] = {
+            "elapsed_s": round(elapsed_, 3),
+            "ticks": ticks,
+            # One CSV row per tick whenever a writer exists (the row is written
+            # inside the same iteration that increments `ticks`), so this needs
+            # no per-tick counter of its own.
+            "csv_rows": ticks if writer else 0,
+            "achieved_rate_hz": round(ticks / elapsed_, 2) if elapsed_ > 0 else None,
+            "target_rate_hz": args.rate,
+            "max_overrun_ms": round(max_overrun * 1e3, 3),
+            "tx_frames": tx_frames,
+            "rx_frames": rx_frames,
+            "rx_malformed": rx_bad,
+            "send_errors": send_errors,
+            "pi_frames": pi_frames,
+            "final_state": obs["state"] if obs else None,
+            "final_switch": obs["switch"] if obs else None,
+            "final_aux": obs["aux"] if obs else None,
+            "final_fault_flags": obs["fault_flags"] if obs else None,
+            "observed_any_frame": obs is not None,
+            # Mid-run warm-reset tripwire — see WARM_RESET_GRACE_S.  A nonzero
+            # `warm_resets_mid_run` means the board restarted underneath the
+            # stimulus, so the remainder of the run is not the scenario the
+            # checks assume; every verdict on it is inconclusive unless the
+            # scenario expects the recovery
+            # (SCENARIOS[...]["warm_resets_expected"]).
+            "warm_resets_observed": warm_resets,
+            "warm_resets_mid_run": warm_resets_mid_run,
+            "warm_reset_times_s": list(warm_reset_times),
+            "warm_reset_grace_s": WARM_RESET_GRACE_S,
+            "electrical_events": elec_events_total,
+            "electrical_events_path": events_path,
+            "electrical_over_absmax": len(elec_over_absmax),
+            "electrical_substep_hz": (round(electrical.achieved_substep_hz, 1)
+                                      if electrical is not None else None),
+            "electrical_numeric_fault": (bool(electrical.summary().get("numeric_fault"))
+                                         if electrical is not None else None),
+            "soc_final": None if replay else round(plant.battery.soc, 6),
+            "replay_last_record": replay.i if replay else None,
+        }
+        write_meta_sidecar(args.csv, meta_doc)
+
     # ── Optional live dashboard ──────────────────────────────────────────────
     # Lightness contract (docs/HIL_MODE.md "Live dashboard"): the loop's ONLY
     # obligation is `dash.snapshot = {...}` — one attribute assignment, atomic
@@ -1488,25 +2028,40 @@ def main(argv=None):
     # in-loop replay note are suppressed/deferred while the screen is owned.
     dash = None
     deferred_notes = []
-    if args.dash:
-        # Lazy import, same convention as the replay decoder above: the module
-        # lives beside this file rather than on the default path.
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    # D10: anything that raises between the "running" sidecar write above and the
+    # main loop's own try/except would leave the sidecar saying "running"
+    # forever.  The dashboard bring-up is the only such code, and it CAN fail
+    # (a missing module raises SystemExit; Dashboard.start() touches the
+    # terminal).  Finalize as "error" here, then let the exception through
+    # untouched.
+    try:
+        if args.dash:
+            # Lazy import, same convention as the replay decoder above: the
+            # module lives beside this file rather than on the default path.
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            try:
+                from hil_dashboard import Dashboard
+            except ImportError as exc:
+                raise SystemExit(f"[hil] --dash needs tools/hil_dashboard.py ({exc})")
+            d = Dashboard()
+            if d.start():
+                dash = d
+    except BaseException as exc:          # SystemExit is not an Exception
         try:
-            from hil_dashboard import Dashboard
-        except ImportError as exc:
-            raise SystemExit(f"[hil] --dash needs tools/hil_dashboard.py ({exc})")
-        d = Dashboard()
-        if d.start():
-            dash = d
+            finalize_meta("error", error="dashboard setup: %s: %s"
+                                         % (type(exc).__name__, exc))
+        except Exception:
+            pass                          # provenance must never mask the cause
+        raise
     dash_on = dash is not None
 
     t0 = time.monotonic()
     next_tick = t0
     last_status = t0
-    ticks = 0
     tx_enabled = True
     sent_seq = 0        # last seq actually transmitted (CSV column)
+    run_status = "completed"
+    pending_error = None    # D6: set by the except clause, consumed after teardown
 
     try:
         while True:
@@ -1527,6 +2082,16 @@ def main(argv=None):
                 if decoded is None:
                     rx_bad += 1
                 else:
+                    # Warm-reset tripwire (see WARM_RESET_GRACE_S).  Per-frame
+                    # cost is one integer compare on an already-parsed field;
+                    # the list append happens only on a transition.
+                    if (obs is not None and obs["state"] == 99
+                            and decoded["state"] != 99):
+                        warm_resets += 1
+                        if t >= WARM_RESET_GRACE_S:
+                            warm_resets_mid_run += 1
+                        if len(warm_reset_times) < WARM_RESET_TIMES_MAX:
+                            warm_reset_times.append(round(t, 3))
                     obs = decoded
                     obs_last_t = t          # F11: stamp with sim-clock time, not
                                              # wall time — obs_age_s is measured
@@ -1747,7 +2312,21 @@ def main(argv=None):
         if dash is not None:
             dash.stop()                 # restore the terminal before printing
             dash_on = False
+        run_status = "interrupted"
         print("\n[hil] interrupted")
+    except Exception as exc:
+        # D6: do NOT finalize here.  The `finally` below still has to drain the
+        # last electrical events and CLOSE the CSV, so a sidecar written at this
+        # point would claim csv_rows for a file that is not yet flushed to disk
+        # — and if the close itself fails, the sidecar would already be on disk
+        # asserting a complete record.  Capture the cause and finalize AFTER the
+        # teardown, at the single call site below.
+        if dash is not None:
+            dash.stop()
+            dash_on = False
+        run_status = "error"
+        pending_error = "%s: %s" % (type(exc).__name__, exc)
+        raise
     finally:
         if dash is not None:
             dash.stop()                 # idempotent
@@ -1763,8 +2342,25 @@ def main(argv=None):
             except OSError:
                 pass
         if csv_file:
-            csv_file.close()
-        sock.close()
+            # D6: guarded like events_file above — a close() that raises here
+            # would replace the original exception with an OSError about the
+            # log file, losing the actual cause of the failure.
+            try:
+                csv_file.close()
+            except OSError:
+                pass
+        try:
+            sock.close()
+        except OSError:
+            pass
+        if pending_error is not None:
+            # The teardown is complete, so this record is accurate.  Wrapped so
+            # that a sidecar failure can never replace the exception now
+            # propagating out of the `except` clause above.
+            try:
+                finalize_meta("error", error=pending_error)
+            except Exception:
+                pass
 
     elapsed = time.monotonic() - t0
     achieved = ticks / elapsed if elapsed > 0 else 0.0
@@ -1772,6 +2368,23 @@ def main(argv=None):
           f"(target {args.rate:.0f} Hz), max overrun {max_overrun * 1e3:.2f} ms")
     print(f"[hil] tx={tx_frames} frames, rx={rx_frames} frames, {rx_bad} malformed, "
           f"send_errors={send_errors}")
+    # Printed UNCONDITIONALLY (including the 0/0 case) so run_hil_suite.py can
+    # parse it deterministically and tell "none observed" apart from "this sim
+    # build has no tripwire".
+    print(f"[hil] warm resets: {warm_resets} observed, {warm_resets_mid_run} "
+          f"mid-run (after {WARM_RESET_GRACE_S:.1f}s)"
+          + (f" at t={', '.join('%.3f' % x for x in warm_reset_times)}s"
+             if warm_reset_times else ""))
+    if warm_resets_mid_run:
+        print("[hil] *** the board left its latched State 99 MID-RUN: a host "
+              "stall of >= 1 s looks like a run boundary to fw v23+, which then "
+              "warm-resets to State 0 and brings the stage back up. From that "
+              "point THE REST OF THIS RUN IS NOT THE SCENARIO — the stimulus "
+              "timeline kept playing against a board that restarted underneath "
+              "it, a re-latched fault reads as having fired once, and any "
+              "final-state check reads the post-recovery board. Treat this run "
+              "as INCONCLUSIVE unless the scenario expects the recovery "
+              "(comm-loss does). ***")
     if commander is not None and commander.active():
         if commander.policy is not None:
             print(f"[hil] pi commands sent: {pi_frames} "
@@ -1816,7 +2429,9 @@ def main(argv=None):
               f"reached record {replay.i}/{len(replay.records) - 1}, "
               f"laps={replay.laps + 1 if args.loop else 1}")
     if args.csv:
+        finalize_meta(run_status)
         print(f"[hil] CSV written to {args.csv}")
+        print(f"[hil] run metadata ({run_status}) -> {meta_path_for(args.csv)}")
     return 0
 
 

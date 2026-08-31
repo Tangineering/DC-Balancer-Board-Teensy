@@ -219,6 +219,10 @@ static void reset_test_state() {
     hilRecoverArmed   = false;
     hilRecoverArmMs   = 0;
     hilWarmResetCount = 0;
+    // fw v23: run-boundary tracking for the widened any-fault admission gate.
+    hilDeadSinceMs     = 0;
+    hilDeadSinceValid  = false;
+    hilRunBoundarySeen = false;
 
     // .ino drive cycle
     driveCycleActive     = false;
@@ -2161,6 +2165,73 @@ static void hilLatchDeadLinkAtPhase3() {
     check(state99Phase == 3, "recovery matrix: (setup) teardown reached phase 3");
 }
 
+// ── fw v23 helpers: run-boundary-gated any-fault recovery ─────────────────────────────────────
+
+// Advances simulated time by durationMs in stepMs increments WITHOUT re-injecting any frame,
+// calling doState99() once per step while mainState==99 (a no-op once a warm reset lands, matching
+// hilPumpFreshLinkForMs()'s dispatch-gating rationale). Used to control a dead-link window's exact
+// duration against HIL_RUN_BOUNDARY_MS.
+static void hilAccrueDeadMs(uint32_t durationMs, uint32_t stepMs = 10) {
+    for (uint32_t t = 0; t < durationMs; t += stepMs) {
+        if (mainState == 99) doState99();
+        g_mock_millis += stepMs;
+    }
+}
+
+// Latches an arbitrary real fault (mainState 2 -> triggerFault() -> 99) with NO frame ever
+// injected, so the link is dead from the very first doState99() tick (phase 0) — the same natural
+// path hilLatchDeadLinkAtPhase3() exercises for the dead-link-specific case, generalized to any
+// fault. Walks teardown to phase 3; the link stays dead throughout, so hilRunBoundarySeen is NOT
+// yet set on return (the teardown walk alone is well under HIL_RUN_BOUNDARY_MS) — callers extend
+// the same dead window with hilAccrueDeadMs() to cross the boundary.
+static void hilLatchRealFaultDeadAtPhase3(uint16_t faultBit, ErrorCode_t err) {
+    reset_test_state();
+    mainState = 2;
+    g_mock_millis = 1000;
+    triggerFault(faultBit, err);
+    check(mainState == 99, "recovery/real-fault: (setup) the fault latches State 99");
+    hilWalkTeardownToPhase3();
+    check(state99Phase == 3, "recovery/real-fault: (setup) teardown reached phase 3, link dead throughout");
+    check(!hilRunBoundarySeen,
+          "recovery/real-fault: (setup) the teardown walk alone is short of the run boundary");
+}
+
+// Latches an arbitrary real fault with the link kept CONTINUOUSLY FRESH through the whole teardown
+// walk (a frame re-injected every tick), so on return hilDeadSinceValid/hilRunBoundarySeen are both
+// false — a clean baseline from which a caller can then control an exact dead window via
+// hilGoStale() + hilAccrueDeadMs().
+static void hilLatchRealFaultFreshAtPhase3(uint16_t faultBit, ErrorCode_t err) {
+    reset_test_state();
+    mainState = 2;
+    g_mock_millis = 1000;
+    injectHilFrame(0xE5, 5, 5, 5, 5, 5, 5, 5, 5);
+    triggerFault(faultBit, err);
+    check(mainState == 99, "recovery/real-fault-fresh: (setup) the fault latches State 99");
+    for (int i = 0; i < 40 && state99Phase != 3; i++) {
+        injectHilFrame(0xE6, 1, 1, 1, 1, 1, 1, 1, 1);
+        doState99();
+        g_mock_millis += 1;
+    }
+    check(state99Phase == 3,
+          "recovery/real-fault-fresh: (setup) teardown reached phase 3, link kept continuously fresh");
+    check(!hilDeadSinceValid && !hilRunBoundarySeen,
+          "recovery/real-fault-fresh: (setup) no dead tick observed yet -- boundary tracking starts clean");
+}
+
+// Establishes the fw v23 dead-window anchor with ONE doState99() call at the CURRENT
+// g_mock_millis. Callers must have already moved g_mock_millis to a point where the link reads
+// non-fresh (age > HIL_STALE_MS since the last accepted frame, or no frame ever accepted) before
+// calling this. Per the review-round anchor fix, hilDeadSinceMs is stamped as
+// `hilHaveFrame ? hilLastFrameMs : nowMs` — the TRUE last-frame instant, not the tick that first
+// observed the link as dead — so once this call returns, hilDeadSinceMs is a FIXED timestamp
+// (equal to hilLastFrameMs when a frame was ever received). Callers may then jump g_mock_millis
+// directly to hilDeadSinceMs + any target window and call doState99() again to evaluate the
+// >= HIL_RUN_BOUNDARY_MS check exactly, without walking intermediate ticks.
+static void hilAnchorDeadWindow() {
+    doState99();
+    check(hilDeadSinceValid, "hilAnchorDeadWindow: dead window anchored");
+}
+
 // ─── 1/2. State-0 wait gate blocks bring-up with no frame; a fresh frame arms it, and the
 //          staged machine then reaches Idle on injected rails at either BENCH_TEST value (the
 //          HIL branch in doState0() is entirely self-contained — no nested #if BENCH_TEST — so
@@ -2251,11 +2322,24 @@ static void test_hil_state0_fresh_frame_arms_bringup_reaches_idle() {
     check(mainState == 0, "S3: the board stays in State 0 — the wait gate takes over next tick");
 }
 
-// ─── 3(a). Exact admission: 0x8010 + ERR_HIL_STALE + fresh link for the full debounce ────────
+// ─── 3(a). Dead-link admission under fw v23: the run boundary must be observed FIRST (dead >=
+//           1000 ms), and only then does the fresh-link debounce apply. This is the fw v22 (a) test
+//           widened for the boundary gate — the fw v22 exact-0x8010-only version would now fail
+//           (the teardown walk alone leaves the link dead well under HIL_RUN_BOUNDARY_MS). ────────
 static void test_hil_recovery_admits_exact_deadlink() {
-    test_group("fw v22 recovery (a): exact 0x8010 + ERR_HIL_STALE + continuous fresh link -> warm reset");
+    test_group("fw v23 recovery (a): dead-link fault -- boundary (>=1000ms dead) THEN continuous "
+               "fresh link for the debounce -> warm reset");
     hilLatchDeadLinkAtPhase3();
+    check(!hilRunBoundarySeen,
+          "recovery (a): (setup) the teardown walk alone has not yet crossed the run boundary");
     uint32_t resetsBefore = hilWarmResetCount;
+
+    // Continue the SAME dead link (nothing re-injected) past the boundary threshold.
+    hilAccrueDeadMs(HIL_RUN_BOUNDARY_MS + 50);
+    check(hilRunBoundarySeen, "recovery (a): the run boundary is observed once the link has been "
+          "continuously dead for HIL_RUN_BOUNDARY_MS");
+    check(hilWarmResetCount == resetsBefore,
+          "recovery (a): still no recovery -- the link isn't fresh yet, only dead long enough");
 
     hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS - 10);
     check(hilWarmResetCount == resetsBefore,
@@ -2264,56 +2348,465 @@ static void test_hil_recovery_admits_exact_deadlink() {
 
     hilPumpFreshLinkForMs(30);
     check(hilWarmResetCount == resetsBefore + 1,
-          "recovery (a): warm reset fires once the debounce window elapses");
+          "recovery (a): warm reset fires once the boundary AND the debounce window are both satisfied");
     check(mainState == 0, "recovery (a): mainState back at 0 after the warm reset");
     check(fault_flags == 0 && error_code == ERR_NONE,
           "recovery (a): fault/error latches cleared by the warm reset");
 }
 
-// ─── 3(b). Any additional fault bit alongside the dead-link union -> never recovers ───────────
-static void test_hil_recovery_denies_extra_fault_bit() {
-    test_group("fw v22 recovery (b): an extra fault bit alongside 0x8010 -> never recovers");
+// ─── 3(a-2). Any-fault happy path (required item 1): a REAL fault (not merely the dead-link
+//             signature) recovers once its own run boundary + debounce are both satisfied. This is
+//             the core fw v23 widening — no exact 0x8010/ERR_HIL_STALE match is involved at all. ──
+static void test_hil_recovery_any_fault_happy_path() {
+    test_group("fw v23 recovery: ANY latched fault (e.g. FAULT_OV_BUS) recovers once a run boundary "
+               "(dead >=1000ms) and the fresh-link debounce are both satisfied");
+    hilLatchRealFaultDeadAtPhase3(FAULT_OV_BUS, ERR_OV_BUS);
+    check(fault_flags == (uint16_t)(FAULT_ERROR | FAULT_OV_BUS) && error_code == ERR_OV_BUS,
+          "any-fault happy path: (setup) a genuine, non-HIL fault union is latched");
+    uint32_t resetsBefore = hilWarmResetCount;
+
+    hilAccrueDeadMs(HIL_RUN_BOUNDARY_MS + 50);
+    check(hilRunBoundarySeen,
+          "any-fault happy path: the run boundary is observed for a real fault too");
+    check(hilWarmResetCount == resetsBefore,
+          "any-fault happy path: no recovery yet -- the link is dead, not fresh");
+    check(mainState == 99, "any-fault happy path: still latched after the boundary alone");
+
+    // fix-round item 6: a light assertion on hilWarmReset()'s fault-evidence print. Since fw v23
+    // recovers ANY latched fault, the warm reset is the last moment the cause exists anywhere on
+    // the board (it is not on the observation frame) -- assert the print actually names this run's
+    // real, non-HIL cause before the latch is cleared.
+    Serial.tx_clear();
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
+    check(hilWarmResetCount == resetsBefore + 1,
+          "any-fault happy path: warm reset fires once the debounce also elapses");
+    check(Serial.tx_contains("[HIL] cleared fault:"),
+          "any-fault happy path: hilWarmReset() prints the outgoing fault evidence before clearing it");
+    check(Serial.tx_contains("error_code=0x3") && Serial.tx_contains("fault_flags=0x8004"),
+          "any-fault happy path: the evidence print carries this run's actual cleared "
+          "error_code (ERR_OV_BUS) / fault_flags, not a HIL-specific placeholder");
+    check(mainState == 0 && fault_flags == 0 && error_code == ERR_NONE,
+          "any-fault happy path: mainState/fault/error latches all reset to boot values");
+}
+
+// ─── (required item 2, load-bearing negative). A fault latched with the link continuously FRESH
+//     the ENTIRE time -- no dead tick ever observed, hence no boundary, hence NO recovery no matter
+//     how long freshness persists. This is what the replay suite's fault_latched deviation checks
+//     depend on: a mid-scenario fault must stay latched for the rest of that scenario. ─────────────
+static void test_hil_recovery_denies_without_boundary_continuous_fresh() {
+    test_group("fw v23 recovery: a fault latched with the link continuously FRESH throughout -- no "
+               "dead tick ever -- never recovers (the replay suite's fault_latched semantics)");
+    reset_test_state();
+    mainState = 2;
+    g_mock_millis = 1000;
+    injectHilFrame(0xE0, 5, 5, 5, 5, 5, 5, 5, 5);   // link is fresh before the fault ever latches
+    triggerFault(FAULT_OV_BUS, ERR_OV_BUS);
+    check(mainState == 99, "no-boundary/fresh: (setup) the fault latches State 99");
+    uint32_t resetsBefore = hilWarmResetCount;
+
+    // Walk teardown to phase 3 re-injecting a frame every tick -- the link is never once dead.
+    for (int i = 0; i < 40 && state99Phase != 3; i++) {
+        injectHilFrame(0xE1, 1, 1, 1, 1, 1, 1, 1, 1);
+        doState99();
+        g_mock_millis += 1;
+    }
+    check(state99Phase == 3, "no-boundary/fresh: (setup) teardown reached phase 3, link fresh throughout");
+    check(!hilRunBoundarySeen && !hilDeadSinceValid,
+          "no-boundary/fresh: (setup) no dead tick was ever observed -- the boundary was never armed");
+
+    // Keep pumping freshness for many multiples of both the boundary and the debounce windows.
+    hilPumpFreshLinkForMs(4 * (HIL_RUN_BOUNDARY_MS + HIL_RECOVER_DEBOUNCE_MS));
+    check(!hilRunBoundarySeen,
+          "no-boundary/fresh: still no boundary -- freshness alone can never produce one");
+    check(hilWarmResetCount == resetsBefore,
+          "no-boundary/fresh: NO recovery, however long continuous freshness persists, without a "
+          "run boundary ever having been observed");
+    check(mainState == 99 && fault_flags == (uint16_t)(FAULT_ERROR | FAULT_OV_BUS) &&
+          error_code == ERR_OV_BUS,
+          "no-boundary/fresh: the fault stays latched exactly as it was -- this is the load-bearing "
+          "negative the fault_latched replay check depends on");
+}
+
+// ─── (required item 3), REPAIRED for the anchor fix (review S1/C1). The dead window is measured
+//     from T = hilLastFrameMs (the TRUE last-frame instant), NOT from the tick that first observes
+//     the link as dead — so the math below jumps g_mock_millis DIRECTLY to T + a target window and
+//     lets doState99() evaluate the >= HIL_RUN_BOUNDARY_MS check at that exact instant, rather than
+//     walking approximate per-tick margins from a "go stale" call whose own timing no longer
+//     matters to the anchor. Dead just under HIL_RUN_BOUNDARY_MS (from T) never sets the boundary
+//     (and so never recovers, however long freshness then persists); dead for >= the threshold
+//     (from T) does set it. ────────────────────────────────────────────────────────────────────
+static void test_hil_recovery_boundary_threshold() {
+    test_group("fw v23 recovery: boundary threshold, measured from T (the true last-frame instant) "
+               "-- dead just under HIL_RUN_BOUNDARY_MS never sets it; dead >= the threshold does");
+
+    // Just under the threshold.
+    hilLatchRealFaultFreshAtPhase3(FAULT_UV_BUS, ERR_UV_BUS);
+    uint32_t resetsBefore = hilWarmResetCount;
+    uint32_t T = hilLastFrameMs;                    // the fw v23 anchor value once the link goes dead
+    g_mock_millis = T + HIL_STALE_MS + 1;            // first tick the link reads non-fresh
+    hilAnchorDeadWindow();
+    check(hilDeadSinceMs == T,
+          "boundary threshold: the anchor is T (the true last-frame instant), not the tick that "
+          "first observed the link as dead");
+
+    g_mock_millis = T + HIL_RUN_BOUNDARY_MS - 1;     // total dead window one tick short of the boundary
+    doState99();
+    check(!hilRunBoundarySeen,
+          "boundary threshold: a dead window of HIL_RUN_BOUNDARY_MS - 1 ms, measured from T, does "
+          "not set the boundary");
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 50);
+    check(hilWarmResetCount == resetsBefore,
+          "boundary threshold: no recovery without the boundary, however long freshness then persists");
+    check(mainState == 99, "boundary threshold: still latched");
+
+    // At/over the threshold.
+    hilLatchRealFaultFreshAtPhase3(FAULT_UV_BUS, ERR_UV_BUS);
+    resetsBefore = hilWarmResetCount;
+    T = hilLastFrameMs;
+    g_mock_millis = T + HIL_STALE_MS + 1;
+    hilAnchorDeadWindow();
+    check(hilDeadSinceMs == T, "boundary threshold: (setup) anchor confirmed at T again");
+
+    g_mock_millis = T + HIL_RUN_BOUNDARY_MS;         // total dead window exactly at the boundary
+    doState99();
+    check(hilRunBoundarySeen,
+          "boundary threshold: a dead window of exactly HIL_RUN_BOUNDARY_MS ms, measured from T, "
+          "sets the boundary");
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
+    check(hilWarmResetCount == resetsBefore + 1,
+          "boundary threshold: recovers once the boundary and the debounce are both satisfied");
+}
+
+// ─── (required item 4), REPAIRED for the anchor fix. A single dead gap of exactly 300ms measured
+//     from T (> HIL_ZERO_MS 250, well under the 1000ms boundary) followed by resumed freshness --
+//     no boundary, no recovery ever, however long the resumed freshness persists. ─────────────────
+static void test_hil_recovery_subboundary_hiccup() {
+    test_group("fw v23 recovery: a single 300ms dead gap from T (> HIL_ZERO_MS, << "
+               "HIL_RUN_BOUNDARY_MS) never sets the boundary, however long freshness resumes afterward");
+    hilLatchRealFaultFreshAtPhase3(FAULT_UV_FC, ERR_UV_FC);
+    uint32_t resetsBefore = hilWarmResetCount;
+    uint32_t T = hilLastFrameMs;
+
+    g_mock_millis = T + HIL_STALE_MS + 1;
+    hilAnchorDeadWindow();
+    check(hilDeadSinceMs == T, "sub-boundary hiccup: (setup) anchored at T");
+
+    g_mock_millis = T + 300;   // exactly 300ms total dead gap from T
+    doState99();
+    check(!hilRunBoundarySeen,
+          "sub-boundary hiccup: a 300ms dead gap (measured from T) does not reach the 1000ms run "
+          "boundary");
+
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 300);
+    check(hilWarmResetCount == resetsBefore,
+          "sub-boundary hiccup: no recovery -- the gap never set the boundary, however long "
+          "freshness then persists");
+    check(mainState == 99, "sub-boundary hiccup: still latched");
+}
+
+// ─── NEW (review C4): exact-equality boundary test on the natural dead-link path. Pins the >=
+//     comparison in the .ino's boundary check — an accidental > would leave hilRunBoundarySeen
+//     false at exactly HIL_RUN_BOUNDARY_MS and fail this test. ─────────────────────────────────
+static void test_hil_recovery_boundary_exact_equality() {
+    test_group("fw v23 recovery (review C4): boundary exact-equality -- a dead window of EXACTLY "
+               "HIL_RUN_BOUNDARY_MS (from T) sets the boundary (pins >=, not >); one tick short "
+               "does not");
+    hilLatchDeadLinkAtPhase3();
+    check(hilDeadSinceValid,
+          "exact equality: (setup) the dead window is already anchored by the teardown walk");
+    uint32_t T = hilDeadSinceMs;   // the true last-frame instant, per the fw v23 anchor
+
+    // One tick short: NOT set.
+    g_mock_millis = T + HIL_RUN_BOUNDARY_MS - 1;
+    doState99();
+    check(!hilRunBoundarySeen,
+          "exact equality: nowMs - T == HIL_RUN_BOUNDARY_MS - 1 -- one tick short of the boundary, "
+          "not set");
+
+    // Exactly at the boundary: SET.
+    g_mock_millis = T + HIL_RUN_BOUNDARY_MS;
+    doState99();
+    check(hilRunBoundarySeen,
+          "exact equality: nowMs - T == HIL_RUN_BOUNDARY_MS exactly -- the >= comparison sets the "
+          "boundary (an accidental > would fail this assertion)");
+}
+
+// ─── NEW (review C5): non-cumulation regression. Two SEPARATE sub-threshold dead gaps, each
+//     re-anchored from its own last-frame instant with a fresh interval in between, must NOT sum
+//     toward the boundary -- hilDeadSinceValid resets to false on any fresh tick, so gap 2 gets a
+//     brand-new anchor rather than continuing gap 1's clock. A single CONTINUOUS 1000ms gap (no
+//     fresh interval) does set it -- the contrast proves the negative is about cumulation, not some
+//     other difference between the two scenarios. ──────────────────────────────────────────────────
+static void test_hil_recovery_boundary_noncumulation() {
+    test_group("fw v23 recovery (review C5): two sub-threshold dead gaps separated by a fresh "
+               "interval do not cumulate toward the boundary; a single continuous 1000ms gap does");
+    hilLatchRealFaultFreshAtPhase3(FAULT_UV_BUS, ERR_UV_BUS);
+    uint32_t resetsBefore = hilWarmResetCount;
+
+    // Gap 1: 600ms dead from its own anchor T1.
+    uint32_t T1 = hilLastFrameMs;
+    g_mock_millis = T1 + HIL_STALE_MS + 1;
+    hilAnchorDeadWindow();
+    check(hilDeadSinceMs == T1, "non-cumulation: (setup) gap 1 anchored at T1");
+    g_mock_millis = T1 + 600;
+    doState99();
+    check(!hilRunBoundarySeen,
+          "non-cumulation: gap 1 alone (600ms from T1) does not reach the boundary");
+
+    // Freshness resumes -- clears hilDeadSinceValid; this dead window is over.
+    injectHilFrame(0xEB, 1, 1, 1, 1, 1, 1, 1, 1);
+    doState99();
+    check(!hilDeadSinceValid, "non-cumulation: freshness clears the dead-window anchor");
+    check(!hilRunBoundarySeen, "non-cumulation: still no boundary after gap 1 plus a fresh interval");
+
+    // Gap 2: another 600ms dead, from its OWN anchor T2 -- not carried over from gap 1.
+    uint32_t T2 = hilLastFrameMs;
+    g_mock_millis = T2 + HIL_STALE_MS + 1;
+    hilAnchorDeadWindow();
+    check(hilDeadSinceMs == T2 && T2 != T1,
+          "non-cumulation: gap 2 anchors fresh at ITS OWN last-frame instant T2, not T1");
+    g_mock_millis = T2 + 600;
+    doState99();
+    check(!hilRunBoundarySeen,
+          "non-cumulation: gap 2 alone (600ms from T2) also falls short -- the two 600ms gaps did "
+          "NOT sum to 1200ms");
+
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 200);
+    check(hilWarmResetCount == resetsBefore,
+          "non-cumulation: no recovery -- neither gap alone, nor their sum, ever set the boundary");
+    check(mainState == 99, "non-cumulation: still latched");
+
+    // Contrast: a SINGLE continuous 1000ms dead gap (one fresh anchor, no interruption) DOES set it.
+    hilLatchRealFaultFreshAtPhase3(FAULT_UV_BUS, ERR_UV_BUS);
+    resetsBefore = hilWarmResetCount;
+    uint32_t T3 = hilLastFrameMs;
+    g_mock_millis = T3 + HIL_STALE_MS + 1;
+    hilAnchorDeadWindow();
+    check(hilDeadSinceMs == T3, "non-cumulation: (contrast setup) anchored at T3");
+    g_mock_millis = T3 + HIL_RUN_BOUNDARY_MS;
+    doState99();
+    check(hilRunBoundarySeen,
+          "non-cumulation: a SINGLE continuous 1000ms dead gap (no fresh interval) DOES set the "
+          "boundary");
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
+    check(hilWarmResetCount == resetsBefore + 1,
+          "non-cumulation: and recovers -- confirming the negative above is genuinely about "
+          "cumulation, not some other difference between the two scenarios");
+}
+
+// ─── NEW: anchor-semantics regression via the GENUINE dead-link updateSensors() path (not
+//     triggerFault() directly) -- the exact scenario S1/C1 caught. Last frame at T; updateSensors()
+//     itself zeros + latches at T+HIL_ZERO_MS+1 (250ms pre-latch silence). Reaching phase 3 and then
+//     extending the SAME dead window to a TOTAL outage of ~1050ms measured from T (not from the
+//     latch) must recover -- proving the pre-latch silence genuinely counts toward the boundary. ──
+static void test_hil_recovery_anchor_counts_prelatch_silence() {
+    test_group("fw v23 recovery (regression for S1/C1): the dead window is anchored at T (the true "
+               "last-frame instant) via the genuine updateSensors() dead-link path, so the "
+               "HIL_ZERO_MS pre-latch silence counts toward the boundary -- a ~1050ms TOTAL outage "
+               "from T recovers, not requiring ~1250ms+ from the latch");
+    reset_test_state();
+    mainState = 2;
+    g_mock_millis = 1000;
+    injectHilFrame(0xEC, 5, 5, 5, 5, 5, 5, 5, 5);   // T = 1000, the true last-frame instant
+    updateSensors();
+    uint32_t T = g_mock_millis;
+    check(hilLastFrameMs == T, "anchor/prelatch: (setup) T is the injected frame's timestamp");
+
+    g_mock_millis += HIL_ZERO_MS + 1;   // T+251: updateSensors()'s OWN dead-link path zeros + latches
+    updateSensors();
+    check(mainState == 99 && error_code == ERR_HIL_STALE,
+          "anchor/prelatch: (setup) the dead link latches State 99 at T+251");
+
+    hilWalkTeardownToPhase3();
+    check(state99Phase == 3, "anchor/prelatch: (setup) teardown reached phase 3");
+    check(hilDeadSinceValid && hilDeadSinceMs == T,
+          "anchor/prelatch: the dead window is anchored at T (the true last-frame instant), NOT at "
+          "the first observed-dead tick (T+251) or at phase-3 entry -- this is the S1/C1 anchor fix");
+    check(!hilRunBoundarySeen,
+          "anchor/prelatch: (setup) only ~271-300ms of the window has elapsed by phase 3 -- not yet "
+          "the boundary");
+
+    uint32_t resetsBefore = hilWarmResetCount;
+    // A TOTAL outage of ~1050ms measured from T -- i.e. only ~800ms of FURTHER silence past where
+    // the teardown walk left off, not another full 1000ms counted from the latch (T+251).
+    g_mock_millis = T + 1050;
+    doState99();
+    check(hilRunBoundarySeen,
+          "anchor/prelatch: a ~1050ms TOTAL outage from T sets the boundary -- the 250ms pre-latch "
+          "silence genuinely counted");
+
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
+    check(hilWarmResetCount == resetsBefore + 1,
+          "anchor/prelatch: recovers on a ~1050ms total outage from T -- this is the regression "
+          "that would have caught S1/C1");
+    check(mainState == 0, "anchor/prelatch: back at State 0");
+}
+
+// ─── NEW: never-had-a-frame fallback. With hilHaveFrame false, the anchor seeds from nowMs (the
+//     observation instant), NOT from a garbage/zeroed hilLastFrameMs -- otherwise a large
+//     g_mock_millis at first observation would read as an already-huge elapsed window and set the
+//     boundary instantly. ──────────────────────────────────────────────────────────────────────────
+static void test_hil_recovery_never_had_frame_fallback() {
+    test_group("fw v23 recovery: with hilHaveFrame false, the anchor seeds from nowMs, not from a "
+               "garbage hilLastFrameMs -- no instant/bogus boundary");
+    reset_test_state();
+    mainState = 2;
+    // Deliberately large: if the anchor fell back to a stale/zeroed hilLastFrameMs (0, from
+    // reset_test_state()) instead of nowMs, the very first dead tick would already read a
+    // ~50000ms "elapsed" window and set the boundary instantly.
+    g_mock_millis = 50000;
+    check(!hilHaveFrame, "fallback: (setup) no frame has ever been received");
+    triggerFault(FAULT_OV_BUS, ERR_OV_BUS);
+    check(mainState == 99, "fallback: (setup) fault latches with hilHaveFrame still false");
+    hilWalkTeardownToPhase3();
+    check(state99Phase == 3, "fallback: (setup) teardown reached phase 3");
+    check(hilDeadSinceValid, "fallback: (setup) dead window anchored");
+    check(hilDeadSinceMs >= 50000,
+          "fallback: the anchor seeded from nowMs (>= the time the first dead tick was observed), "
+          "not from hilLastFrameMs (0)");
+    check(!hilRunBoundarySeen,
+          "fallback: no instant boundary -- the anchor did not read as ~50000ms of accumulated "
+          "silence");
+
+    uint32_t resetsBefore = hilWarmResetCount;
+    hilAccrueDeadMs(HIL_RUN_BOUNDARY_MS + 50);
+    check(hilRunBoundarySeen, "fallback: the boundary is still reachable normally, counted from nowMs");
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
+    check(hilWarmResetCount == resetsBefore + 1, "fallback: recovers normally after the real wait");
+}
+
+// ─── (required item 5). Boundary tracking runs in EVERY teardown phase (the documented deviation),
+//     not only phase 3: a dead link straddling phases 0-2 and phase 3 accrues toward the SAME
+//     boundary, so a ~1s total dead window (split across phases) still recovers. ───────────────────
+static void test_hil_recovery_boundary_tracked_during_teardown() {
+    test_group("fw v23 recovery: run-boundary tracking starts at the FIRST dead tick in any "
+               "teardown phase, not only phase 3 -- an implementer deviation from the phase-3-only "
+               "arming/debounce scoping");
+    reset_test_state();
+    mainState = 2;
+    g_mock_millis = 1000;
+    triggerFault(FAULT_OV_BUS, ERR_OV_BUS);   // no frame ever injected -> dead from the first tick
+    check(mainState == 99, "boundary/teardown: (setup) fault latches State 99");
+
+    uint32_t latchMs = g_mock_millis;
+    hilWalkTeardownToPhase3();   // phases 0-2 tick by; link dead the entire time
+    check(state99Phase == 3, "boundary/teardown: (setup) teardown reached phase 3, still dead");
+    check(hilDeadSinceValid && hilDeadSinceMs == latchMs,
+          "boundary/teardown: the dead window is timestamped from the FIRST dead tick (phase 0), "
+          "not from phase-3 entry");
+    uint32_t teardownElapsedMs = g_mock_millis - latchMs;
+    check(teardownElapsedMs > 0 && teardownElapsedMs < HIL_RUN_BOUNDARY_MS,
+          "boundary/teardown: (setup) the teardown walk alone consumed only PART of the window");
+
+    // Continue the SAME dead window into phase 3 for only the remainder of the 1000ms budget -- if
+    // phase 0-2 time had not counted, this would fall short of the boundary.
+    uint32_t resetsBefore = hilWarmResetCount;
+    hilAccrueDeadMs(HIL_RUN_BOUNDARY_MS - teardownElapsedMs + 20);
+    check(hilRunBoundarySeen,
+          "boundary/teardown: the boundary is satisfied by teardown time + phase-3 time ADDED "
+          "TOGETHER, confirming phases 0-2 genuinely counted");
+
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
+    check(hilWarmResetCount == resetsBefore + 1,
+          "boundary/teardown: recovers -- the deviation's purpose (crediting early-phase dead time) "
+          "is what made the boundary reachable here");
+}
+
+// ─── 3(b), REWORKED for fw v23. fw v22 denied recovery forever with an extra fault bit set
+//     alongside the dead-link union -- that exact-signature deny is GONE under fw v23 (any fault is
+//     now admissible). What still gates it is the run boundary: without one, it is denied exactly
+//     as before (but for a DIFFERENT reason -- no boundary, not the extra bit); with one, it now
+//     recovers. If the boundary gate were accidentally dropped, the first half of this test would
+//     start passing for the wrong reason but the "boundary observed" checks below would catch it. ─
+static void test_hil_recovery_extra_fault_bit_boundary_gated() {
+    test_group("fw v23 recovery: an extra fault bit alongside the dead-link union no longer blocks "
+               "recovery outright -- only the run-boundary gate does (the fw v22 exact-signature "
+               "deny is gone)");
     hilLatchDeadLinkAtPhase3();
     fault_flags |= FAULT_OC_FC;   // a real fault latched alongside the dead link
     uint32_t resetsBefore = hilWarmResetCount;
 
+    // Short freshness window with no boundary crossed first -- still denied, but now because the
+    // dead time before this point never reached HIL_RUN_BOUNDARY_MS, not because of the extra bit.
     hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 200);
     check(hilWarmResetCount == resetsBefore,
-          "recovery (b): no warm reset with an extra fault bit set, however long the link stays fresh");
-    check(mainState == 99, "recovery (b): stays latched in State 99");
+          "extra bit/boundary: no recovery yet -- the dead time before this point never reached "
+          "the run boundary");
+    check(mainState == 99, "extra bit/boundary: still latched");
 
-    // Same probe with FAULT_UV_BUS, named explicitly in the test list.
+    // Re-latch (same extra bit) and this time run the SAME dead link past the boundary threshold
+    // before resuming freshness.
+    hilLatchDeadLinkAtPhase3();
+    fault_flags |= FAULT_OC_FC;
+    resetsBefore = hilWarmResetCount;
+    hilAccrueDeadMs(HIL_RUN_BOUNDARY_MS + 50);
+    check(hilRunBoundarySeen, "extra bit/boundary: boundary observed with the extra bit still set");
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
+    check(hilWarmResetCount == resetsBefore + 1,
+          "extra bit/boundary: recovers once the boundary is satisfied -- fw v23 admits any fault "
+          "union, not only the exact 0x8010 signature");
+    check(mainState == 0 && fault_flags == 0 && error_code == ERR_NONE,
+          "extra bit/boundary: warm reset clears the extra bit along with everything else");
+
+    // Same probe with FAULT_UV_BUS, named explicitly in the fw v22 test list.
     hilLatchDeadLinkAtPhase3();
     fault_flags |= FAULT_UV_BUS;
     resetsBefore = hilWarmResetCount;
-    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 200);
-    check(hilWarmResetCount == resetsBefore,
-          "recovery (b): no warm reset with FAULT_UV_BUS also set");
+    hilAccrueDeadMs(HIL_RUN_BOUNDARY_MS + 50);
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
+    check(hilWarmResetCount == resetsBefore + 1,
+          "extra bit/boundary: also recovers with FAULT_UV_BUS set, given a boundary");
 }
 
-// ─── 3(c). A genuine Pi timeout carrying the same 0x8010 union -> never recovers ──────────────
-static void test_hil_recovery_denies_genuine_pi_timeout() {
-    test_group("fw v22 recovery (c): genuine ERR_PI_TIMEOUT under the same 0x8010 union -> never recovers");
+// ─── 3(c), REWORKED for fw v23. fw v22 denied a genuine ERR_PI_TIMEOUT under the same 0x8010 union
+//     forever via error_code disambiguation -- that check no longer exists (fw v23 admits any fault
+//     unconditionally on error_code). Denied without a boundary, recovers with one, exactly like
+//     any other fault. ──────────────────────────────────────────────────────────────────────────
+static void test_hil_recovery_pi_timeout_boundary_gated() {
+    test_group("fw v23 recovery: a genuine ERR_PI_TIMEOUT under the same 0x8010 union now also "
+               "recovers once a run boundary is observed -- fw v22's error_code-based deny is gone");
     reset_test_state();
     mainState = 2;
     g_mock_millis = 1000;
     triggerFault(FAULT_PI_TIMEOUT, ERR_PI_TIMEOUT);   // the real Pi-watchdog path, not HIL
     check(fault_flags == (uint16_t)(FAULT_ERROR | FAULT_PI_TIMEOUT) && error_code == ERR_PI_TIMEOUT,
-          "recovery (c): (setup) fault_flags union is bit-identical to the dead-link case");
+          "pi timeout/boundary: (setup) fault_flags union is bit-identical to the dead-link case");
     hilWalkTeardownToPhase3();
-    check(state99Phase == 3, "recovery (c): (setup) teardown reached phase 3");
+    check(state99Phase == 3, "pi timeout/boundary: (setup) teardown reached phase 3");
     uint32_t resetsBefore = hilWarmResetCount;
 
+    // No boundary crossed yet -- still denied.
     hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 200);
     check(hilWarmResetCount == resetsBefore,
-          "recovery (c): error_code disambiguates a real Pi timeout — it never auto-recovers");
-    check(mainState == 99, "recovery (c): stays latched in State 99");
+          "pi timeout/boundary: no recovery without a run boundary, however long freshness persists");
+    check(mainState == 99, "pi timeout/boundary: stays latched");
+
+    // Re-latch the identical genuine-Pi-timeout condition and this time cross the boundary first.
+    reset_test_state();
+    mainState = 2;
+    g_mock_millis = 1000;
+    triggerFault(FAULT_PI_TIMEOUT, ERR_PI_TIMEOUT);
+    hilWalkTeardownToPhase3();
+    check(state99Phase == 3, "pi timeout/boundary: (setup 2) teardown reached phase 3");
+    resetsBefore = hilWarmResetCount;
+    hilAccrueDeadMs(HIL_RUN_BOUNDARY_MS + 50);
+    check(hilRunBoundarySeen, "pi timeout/boundary: boundary observed on the genuine-Pi-timeout path too");
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
+    check(hilWarmResetCount == resetsBefore + 1,
+          "pi timeout/boundary: recovers once the boundary is satisfied -- error_code no longer "
+          "disambiguates a real Pi timeout under fw v23");
+    check(mainState == 0 && error_code == ERR_NONE, "pi timeout/boundary: clean state after recovery");
 }
 
-// ─── 3(d). Debounce: a staleness gap resets the window; only continuous freshness fires ───────
+// ─── 3(d), REWORKED for fw v23: the boundary must be observed FIRST, then the debounce logic is
+//     unchanged from fw v22 -- a staleness gap inside the fresh window resets the debounce clock,
+//     even though the boundary flag itself (once set) survives the flap (required item 6). ────────
 static void test_hil_recovery_debounce_resets_on_staleness() {
-    test_group("fw v22 recovery (d): a staleness gap resets the debounce window");
+    test_group("fw v23 recovery (d): after the boundary is observed, a staleness gap still resets "
+               "the fresh-link debounce window (the boundary flag itself survives the flap)");
     hilLatchDeadLinkAtPhase3();
+    hilAccrueDeadMs(HIL_RUN_BOUNDARY_MS + 50);
+    check(hilRunBoundarySeen, "recovery (d): (setup) boundary observed");
     uint32_t resetsBefore = hilWarmResetCount;
 
     hilPumpFreshLinkForMs(400);
@@ -2322,7 +2815,10 @@ static void test_hil_recovery_debounce_resets_on_staleness() {
 
     g_mock_millis += HIL_STALE_MS + 1;   // let the link go stale WITHOUT re-injecting
     doState99();
-    check(!hilRecoverArmed, "recovery (d): a staleness gap disarms the window");
+    check(!hilRecoverArmed, "recovery (d): a staleness gap disarms the debounce window");
+    check(hilRunBoundarySeen,
+          "recovery (d): the boundary flag itself is NOT cleared by the flap -- only hilWarmReset() "
+          "clears it (required item 6)");
     check(hilWarmResetCount == resetsBefore, "recovery (d): no recovery across the gap");
 
     hilPumpFreshLinkForMs(400);
@@ -2335,9 +2831,13 @@ static void test_hil_recovery_debounce_resets_on_staleness() {
           "recovery (d): continuous freshness for the full debounce (measured from the re-arm) fires it");
 }
 
-// ─── 3(e). Recovery only counts time spent AT state99Phase==3, never mid-teardown ─────────────
+// ─── 3(e), REWORKED for fw v23: arming/debounce are still gated on state99Phase==3 only, even
+//     though boundary TRACKING now runs in every phase. Cross the boundary first (while still in
+//     early teardown phases, deliberately, so a bug that mistakenly required phase==3 for the
+//     boundary too would show up here), then confirm arming/debounce still wait for phase 3. ──────
 static void test_hil_recovery_gated_on_phase3_only() {
-    test_group("fw v22 recovery (e): armed/debounced only while state99Phase == 3, not mid-teardown");
+    test_group("fw v23 recovery (e): arming/debounce still gated on state99Phase==3 only, even "
+               "though boundary tracking itself runs in every phase");
     reset_test_state();
     mainState = 2;
     g_mock_millis = 1000;
@@ -2347,6 +2847,13 @@ static void test_hil_recovery_gated_on_phase3_only() {
     updateSensors();
     check(mainState == 99 && state99Phase == 0,
           "recovery (e): (setup) dead link just latched, teardown has not run yet");
+
+    // Run the link dead long enough to satisfy the run boundary BEFORE resuming freshness --
+    // otherwise the rest of this test would pass for the wrong reason (no recovery merely because
+    // no boundary, not because of the phase gate).
+    hilAccrueDeadMs(HIL_RUN_BOUNDARY_MS + 50);
+    check(hilRunBoundarySeen,
+          "recovery (e): (setup) run boundary observed while still in the early teardown phases");
 
     // Keep the link fresh continuously from BEFORE phase 3 is reached. If the arming/debounce
     // clock were mistakenly not phase-gated, this pre-existing freshness would already satisfy
@@ -2360,7 +2867,8 @@ static void test_hil_recovery_gated_on_phase3_only() {
         // arming legitimately begins there. Only assert "not yet armed" on ticks that are still
         // strictly before phase 3 after the call.
         if (state99Phase != 3) {
-            check(hilWarmResetCount == resetsBefore, "recovery (e): no recovery while phase < 3");
+            check(hilWarmResetCount == resetsBefore,
+                  "recovery (e): no recovery while phase < 3, even with the boundary already satisfied");
             check(!hilRecoverArmed, "recovery (e): the arming latch never sets before phase 3");
         }
         g_mock_millis += 1;
@@ -2373,18 +2881,24 @@ static void test_hil_recovery_gated_on_phase3_only() {
     // Only from here does the debounce clock run.
     hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
     check(hilWarmResetCount == resetsBefore + 1,
-          "recovery (e): recovery fires once the debounce is satisfied measured FROM phase 3");
+          "recovery (e): recovery fires once the debounce is satisfied measured FROM phase 3, the "
+          "boundary having already been satisfied earlier");
 }
 
-// ─── 3(f). An open bench log blocks recovery until it is fully closed ─────────────────────────
+// ─── 3(f), REWORKED for fw v23: an open bench log still blocks recovery even once the boundary is
+//     satisfied (required item 7) -- log-closed is a separate, still-necessary admission condition.
 static void test_hil_recovery_blocked_by_open_log() {
-    test_group("fw v22 recovery (f): an open bench log blocks recovery until fully closed");
+    test_group("fw v23 recovery (f): an open bench log still blocks any-fault recovery, even with "
+               "the run boundary already satisfied, until fully closed");
     hilLatchDeadLinkAtPhase3();
+    hilAccrueDeadMs(HIL_RUN_BOUNDARY_MS + 50);
+    check(hilRunBoundarySeen, "recovery (f): (setup) boundary observed");
     uint32_t resetsBefore = hilWarmResetCount;
 
     logActive = true;   // simulate a log still open (e.g. a manual 'K 1' run in progress)
     hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 50);
-    check(hilWarmResetCount == resetsBefore, "recovery (f): blocked while logActive is true");
+    check(hilWarmResetCount == resetsBefore,
+          "recovery (f): blocked while logActive is true, even with the boundary satisfied");
     check(mainState == 99, "recovery (f): still latched");
 
     logActive = false;
@@ -2394,6 +2908,8 @@ static void test_hil_recovery_blocked_by_open_log() {
 
     // logCloseRequested (a close in flight) blocks it too, independent of logActive/logFile.
     hilLatchDeadLinkAtPhase3();
+    hilAccrueDeadMs(HIL_RUN_BOUNDARY_MS + 50);
+    check(hilRunBoundarySeen, "recovery (f): (setup 2) boundary observed");
     resetsBefore = hilWarmResetCount;
     logCloseRequested = true;
     hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 50);
@@ -2445,6 +2961,11 @@ static void test_hil_warmreset_state_audit() {
     int before[10];
     for (int i = 0; i < 10; i++) before[i] = digitalRead(pins[i]);
 
+    // fw v23: recovery is boundary-gated -- cross HIL_RUN_BOUNDARY_MS before the fresh-link
+    // debounce, or the warm reset below would never fire and the whole audit would be vacuous.
+    hilAccrueDeadMs(HIL_RUN_BOUNDARY_MS + 50);
+    check(hilRunBoundarySeen, "warmreset audit: (setup) boundary observed");
+
     hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
     check(hilWarmResetCount == 1, "warmreset audit: exactly one warm reset fired");
     check(mainState == 0, "warmreset audit: mainState reset to 0");
@@ -2488,6 +3009,9 @@ static void test_hil_warmreset_state_audit() {
           "warmreset audit: bring-up machine reset to boot values (no pin write of its own)");
     check(!wheelSpeedResetPending, "warmreset audit: encoderVelReset() supersedes any pending buffer reset");
     check(encPeriodRefUs == 0, "warmreset audit: encoderVelReset() cleared the adaptive period reference");
+    check(!hilRunBoundarySeen && !hilDeadSinceValid && hilDeadSinceMs == 0,
+          "warmreset audit: fw v23 hilRunBoundarySeen/hilDeadSinceValid/hilDeadSinceMs all cleared "
+          "(required item 8 -- the flag cannot leak into the next run's boundary tracking)");
 
     // Boot-monotonic counters must NOT be cleared.
     // hilPumpFreshLinkForMs() itself accepts further frames while driving the recovery, so the
@@ -2498,11 +3022,52 @@ static void test_hil_warmreset_state_audit() {
           "warmreset audit: encoder edge counters are boot-monotonic, NOT cleared");
 }
 
+// ─── (required item 8, behavioral). hilWarmReset() clears the boundary state, so a SECOND fault
+//     latched afterward with a continuously FRESH link (no dead tick at all) does NOT recover --
+//     the first run's boundary observation must not leak into the second run's admission decision.
+static void test_hil_recovery_boundary_cleared_by_warmreset() {
+    test_group("fw v23 recovery: hilWarmReset() clears hilRunBoundarySeen so it cannot leak into "
+               "the next run -- a second fault with a continuously fresh link does not recover");
+    hilLatchRealFaultDeadAtPhase3(FAULT_OV_BUS, ERR_OV_BUS);
+    hilAccrueDeadMs(HIL_RUN_BOUNDARY_MS + 50);
+    check(hilRunBoundarySeen, "boundary/no-leak: (setup) first run's boundary observed");
+    uint32_t resetsBefore = hilWarmResetCount;
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
+    check(hilWarmResetCount == resetsBefore + 1, "boundary/no-leak: (setup) first run recovers");
+    check(!hilRunBoundarySeen && !hilDeadSinceValid,
+          "boundary/no-leak: (setup) the warm reset cleared the boundary flag");
+
+    // Second run: latch a fresh fault with the link continuously FRESH from the start -- no dead
+    // tick, so no boundary should accrue at all, and thus no recovery, however long freshness runs.
+    mainState = 2;
+    g_mock_millis += 1000;
+    injectHilFrame(0xE7, 5, 5, 5, 5, 5, 5, 5, 5);
+    triggerFault(FAULT_OC_BT, ERR_OC_BT);
+    check(mainState == 99, "boundary/no-leak: (setup) second fault latches");
+    resetsBefore = hilWarmResetCount;
+    for (int i = 0; i < 40 && state99Phase != 3; i++) {
+        injectHilFrame(0xE8, 1, 1, 1, 1, 1, 1, 1, 1);
+        doState99();
+        g_mock_millis += 1;
+    }
+    check(state99Phase == 3,
+          "boundary/no-leak: (setup) second run's teardown reached phase 3, link kept fresh");
+    check(!hilRunBoundarySeen,
+          "boundary/no-leak: the second run's boundary flag is NOT already set from the first run");
+
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 200);
+    check(hilWarmResetCount == resetsBefore,
+          "boundary/no-leak: no recovery -- the second run never observed its own dead tick, and "
+          "the first run's boundary observation did not leak forward");
+    check(mainState == 99, "boundary/no-leak: second run stays latched");
+}
+
 // ─── 5/6. End-to-end sequential-run regression: bring up -> Idle -> Run -> dead link -> ───────
 //          teardown -> warm reset -> State 0 -> auto bring-up -> Idle -> Run again. Also covers
 //          item 6: a mode_cmd arriving during State 0/99 does not enter Run.
 static void test_hil_sequential_run_regression() {
-    test_group("fw v22 end-to-end: bring-up -> Run -> dead link -> recovery -> bring-up -> Run again");
+    test_group("fw v23 end-to-end: bring-up -> Run -> fault -> boundary -> recovery -> bring-up -> "
+               "Run -> fault -> boundary -> recovery again");
     reset_test_state();
     hilPrimeFreshLinkForBringup();   // fw v22 S3: model a streaming link (no-op in non-HIL builds)
     mainState = 0;
@@ -2546,6 +3111,10 @@ static void test_hil_sequential_run_regression() {
     // ── Teardown completes, link returns, warm reset fires ──────────────────────────────────
     hilWalkTeardownToPhase3();
     check(state99Phase == 3, "e2e: teardown reaches phase 3");
+    // fw v23: recovery is now boundary-gated -- continue the same dead link long enough to observe
+    // the run boundary before the debounce/fresh-link phase below.
+    hilAccrueDeadMs(HIL_RUN_BOUNDARY_MS + 50);
+    check(hilRunBoundarySeen, "e2e: the run boundary is observed once the link has been dead long enough");
     uint32_t resetsBefore = hilWarmResetCount;
 
     // A mode_cmd arriving WHILE latched in State 99 must not sneak Run in once State 0 reruns —
@@ -2583,6 +3152,25 @@ static void test_hil_sequential_run_regression() {
     check(driveCtrl_x[0] == 0.0,
           "e2e: run 2's Idle->Run reset leaves the drive controller at 0 — no history from run 1");
     check(current == 0.0f, "e2e: run 2 starts with I_cmd 0 until freshly commanded");
+
+    // ── Run 2: a REAL fault this time (not merely a dead link) -- fw v23's any-fault admission ──
+    //    must hold across a SECOND independent boundary/recovery cycle, with no leakage from run 1.
+    triggerFault(FAULT_OV_BUS, ERR_OV_BUS);
+    check(mainState == 99, "e2e: run 2's real fault latches State 99");
+    check(!hilRunBoundarySeen,
+          "e2e: run 2's boundary flag starts clean -- run 1's observation did not leak forward "
+          "(hilWarmReset() cleared it)");
+    g_mock_millis_track = nullptr;   // this scenario's plant "stops" too -> the link goes dead again
+    hilWalkTeardownToPhase3();
+    check(state99Phase == 3, "e2e: run 2's teardown reaches phase 3");
+    hilAccrueDeadMs(HIL_RUN_BOUNDARY_MS + 50);
+    check(hilRunBoundarySeen, "e2e: run 2's own run boundary is observed independently of run 1's");
+    resetsBefore = hilWarmResetCount;
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
+    check(hilWarmResetCount == resetsBefore + 1,
+          "e2e: run 2 also recovers -- fw v23's any-fault admission holds across repeated cycles");
+    check(mainState == 0 && fault_flags == 0 && error_code == ERR_NONE,
+          "e2e: back at a clean State 0 after the second recovery");
 }
 
 // ─── 6. mode_cmd arriving during State 0/99 does not enter Run; the next command after Idle does
@@ -3566,8 +4154,8 @@ static void test_share_handoff_mode_constants() {
     check(fabsf(SHARE_GOV_FILT_ALPHA - 0.05f) < 1e-6f,
           "constants: (setup) SHARE_GOV_FILT_ALPHA is the EMA weight the handoff filters share "
           "with the governor's load filter");
-    // fw v22 (HIL State-0 wait gate + State-99 dead-link auto-recovery): stale pin updated.
-    check(FW_VERSION == 22, "pin: FW_VERSION == 22");
+    // fw v23 (any-fault run-boundary-gated HIL recovery): stale pin updated.
+    check(FW_VERSION == 23, "pin: FW_VERSION == 23");
 }
 
 // DARK seed (item B3): resetShareControlState() (and reset_test_state()'s mirror of it) seeds
@@ -17827,12 +18415,22 @@ int main() {
     test_hil_state0_wait_gate_blocks_without_frame();
     test_hil_state0_fresh_frame_arms_bringup_reaches_idle();
     test_hil_recovery_admits_exact_deadlink();
-    test_hil_recovery_denies_extra_fault_bit();
-    test_hil_recovery_denies_genuine_pi_timeout();
+    test_hil_recovery_any_fault_happy_path();
+    test_hil_recovery_denies_without_boundary_continuous_fresh();
+    test_hil_recovery_boundary_threshold();
+    test_hil_recovery_subboundary_hiccup();
+    test_hil_recovery_boundary_exact_equality();
+    test_hil_recovery_boundary_noncumulation();
+    test_hil_recovery_anchor_counts_prelatch_silence();
+    test_hil_recovery_never_had_frame_fallback();
+    test_hil_recovery_boundary_tracked_during_teardown();
+    test_hil_recovery_extra_fault_bit_boundary_gated();
+    test_hil_recovery_pi_timeout_boundary_gated();
     test_hil_recovery_debounce_resets_on_staleness();
     test_hil_recovery_gated_on_phase3_only();
     test_hil_recovery_blocked_by_open_log();
     test_hil_warmreset_state_audit();
+    test_hil_recovery_boundary_cleared_by_warmreset();
     test_hil_sequential_run_regression();
     test_hil_mode_cmd_gated_outside_idle();
 #endif

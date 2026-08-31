@@ -117,7 +117,7 @@ Rejections are counted and shown in the `'S'` dump.
 Sent at 1 kHz from `loop()`, but only **after the first accepted injection frame**
 (before that there is no host address to send to) and only when `networkUp`.
 
-## Link-loss behaviour: hold, then zero, then latch — and (fw v22) auto-recover
+## Link-loss behaviour: hold, then zero, then latch — and (fw v22/v23) auto-recover
 
 Three thresholds and one recovery path. The staging is deliberate:
 
@@ -155,23 +155,66 @@ Two things happen on the *edges* of that staging (added in the fw v21 review rou
   fixed-width `fault_flags` word are allocated, and `error_code` is what names the
   cause. See the comment at the `#define FAULT_HIL_LINK` site.
 
-### Auto-recovery from the dead-link latch (fw v22)
+### Auto-recovery from a latched State 99 (fw v22; widened fw v23)
 
 Under fw v21 that latch was permanent, and stopping the simulator is the normal end
 of an HIL run — so a 38-run suite cost 38 physical power cycles. A HIL build now
 warm-resets itself back to State 0 when the link comes back. This is the **only**
 path out of State 99 anywhere in the firmware, and it exists only under `HIL_SIM`.
 
+Fw v22 admitted recovery only for the exact dead-link fault signature. That proved too
+narrow in practice: a suite scenario latched a real `FAULT_UV_BUS`, and every later run
+then found the board latched. **Fw v23 admits ANY latched fault** — under `HIL_SIM` the
+plant is a simulation, so every fault is a simulated-plant event belonging to one run —
+and replaces the signature test with a **run-boundary** gate.
+
 All four conditions are required:
 
 1. `state99Phase == 3` — the phased teardown has **completed**. Resetting between
    phases would abandon the sequencing mid-way and could leave an energized path
    pointed into a not-yet-disabled boost (CLAUDE.md §2 back-feed rule).
-2. `error_code == ERR_HIL_STALE` **and** `fault_flags == (FAULT_ERROR | FAULT_PI_TIMEOUT)`
-   **exactly** (`0x8010`). Testing for equality rather than for the bits being present
-   is the load-bearing part: `FAULT_HIL_LINK` is an alias of `FAULT_PI_TIMEOUT`, so any
-   *additional* bit means a real fault latched as well (an OV, a bring-up failure, a
-   switch conflict) and the board must stay latched for the operator.
+2. **A run boundary has been observed** (fw v23): the injection link continuously
+   **silent** for `HIL_RUN_BOUNDARY_MS` = **1000 ms** while in State 99. The window is
+   anchored to the **last accepted frame**, and tracked in *any* teardown phase — so the
+   figure means literally "1000 ms with no injection frame". Anchoring it to the first
+   *observed* dead tick instead would have added the 250 ms `HIL_ZERO_MS` detection
+   latency plus the teardown, making the real requirement ~1250 ms+ and leaving a literal
+   1 s host gap unable to recover at all. The boundary is only an admission precondition
+   — the reset is still gated on phase 3, on the closed log and on the fresh-link
+   debounce. A gap of **exactly** 1.0 s is knife-edge (one loop tick of margin), so
+   host-side gaps should sit comfortably above 1 s rather than at it. This is
+   what keeps a widened admission safe. While a scenario is running *and the host keeps
+   streaming*, no boundary can accrue and a mid-scenario fault cannot self-clear — which
+   is what the replay suite's `fault_latched` deviation checks rely on. That premise is
+   conditional, not structural: a host stall of ≥ 1 s (a GC pause, a laptop parking a
+   core, a blocked write) **does** forge a boundary mid-scenario, and `comm-loss` now
+   forges one deliberately (its 2 s transmit gap; `warm_resets_expected` 1). Because the
+   premise can break, it is not assumed — every run is checked against the **mid-run
+   warm-reset tripwire** described below, and a run that shows an unexpected one is
+   reported INCONCLUSIVE rather than scored. 1000 ms is
+   deliberately far longer than the 250 ms zero stage, so a host-side hiccup (a suite
+   process being killed slowly, a GC pause) cannot forge a boundary, while the gap
+   between suite scenarios is multiple seconds. The observation is sticky and is cleared
+   by `hilWarmReset()`, so one boundary admits at most **one** recovery attempt: a
+   persistent fault condition simply re-latches on the next run.
+
+   *Why not simply widen the fw v22 signature test?* `triggerFault()` ORs bits into
+   `fault_flags` even when the board is already latched, while `error_code` stays
+   first-cause-only. "A real fault, then the simulator stops" therefore produces
+   `0x8010`-plus-bits with a non-HIL `error_code`, and no equality signature can
+   separate the cases.
+
+   For the pure dead-link case the window is already running when State 99 is entered, so
+   the boundary accrues during the teardown before any frames return and recovery timing
+   is effectively unchanged from fw v22.
+
+   `hilWarmReset()` prints the outgoing `error_code`, `fault_flags` and
+   `error_source_state` **before** clearing them. With any fault now recoverable, that
+   print is the last place the cause exists — it is not carried on the observation frame,
+   and a host that was not attached when the fault latched never saw it. The State-99
+   1 Hz report also appends the live boundary/arm/phase status, so a board that will not
+   recover shows which precondition it is waiting on (the `'S'` dump is not reachable
+   from State 99; its `run boundary:` / `recover arm:` lines remain useful afterwards).
 3. The link has been continuously fresh (`age <= HIL_STALE_MS`) for
    `HIL_RECOVER_DEBOUNCE_MS` = **500 ms**. The window re-arms from zero on any
    staleness. 500 ms is deliberately longer than the 250 ms zero stage, so a link
@@ -273,6 +316,23 @@ A relative `--csv` path (as above) lands in `HIL Results/` at the repo root; an
 absolute path is honored verbatim (`docs/HIL_USER_MANUAL.md` §2.5). The
 electrical events sidecar follows the resolved path.
 
+**CSV logging is on by default.** Omit `--csv` and the run names itself
+`hil_<scenario>_<mode>_<YYYYmmdd_HHMMSS>.csv` under `HIL Results/`, where
+`<mode>` is `open` / `timeline` / `ems-<strategy>` / `pilive` /
+`replay-<log stem>` (plus `-hifi` on a hi-fi run); `--no-csv` disables logging
+entirely — **including the hi-fi `.events.jsonl` sidecar**, which derives from the
+CSV path, so an `--electrical hifi --no-csv` run records no `scp_cut` / `sw_ring` /
+chopper events anywhere (the simulator prints a notice saying so). An explicit
+`--csv` is refused (exit 2) unless `--force` when *any* of its three artifacts —
+the CSV, `.meta.json` or `.events.jsonl` — already exists, since together they are
+one run's record. The example above therefore needs `--force` the second time it is
+run. Every CSV is accompanied by a `<csv>.meta.json` sidecar recording the
+scenario, the command mode, the resolved configuration, a sha256 over the plant
+and electrical model constants (with the constants themselves, so the hash is
+auditable), the git revision, and the run's results. It is written once before
+the loop with `"status": "running"` and rewritten at exit — a killed run still
+leaves a record. See `docs/HIL_USER_MANUAL.md` §2.5 for the full schema.
+
 Two additional command sources exist and are documented in
 [`docs/HIL_USER_MANUAL.md`](HIL_USER_MANUAL.md): `--ems STRATEGY` (Mode A — an
 emulated Pi EMS policy replaces the scenario's `pi_timeline`) and `--pi-live`
@@ -286,7 +346,7 @@ the modelled plant, see **Replay mode** below.) Scenarios:
 | `steady` | fixed aux load; the quiescent baseline |
 | `step-load` | +1.2 A aux load step at t = 5 s — a bus disturbance the share loop must reject |
 | `sag` | −5 V bus disturbance for 1 s at t = 5 s, crossing `LIMIT_V_BUS_MIN` (12.0 V) |
-| `comm-loss` | stops transmitting for 1 s at t = 5 s, then resumes |
+| `comm-loss` | stops transmitting for **2 s** at t = 5 s, then resumes — long enough to clear fw v23's 1000 ms run boundary with margin, so the warm recovery is part of the test |
 | `drive` | plant only; the operator drives the firmware by hand (`'V'`, `'D'`, `'Y'`) over USB |
 | `charge-cruise` | Run + cruise + `charge_goal` > 0 via the Pi command timeline — `FC_CHARGE` opens on intent, the Ag105 settles to Charging, MPPT released |
 | `charge-regen` | cruise/brake cycling with `charge_goal` > 0 — `MPPT_DISABLE` asserted during regen, `REGEN` ⇄ `FC_CHARGE` mutual exclusion visible |
@@ -309,6 +369,9 @@ producing a meaningless trace.
 | `--soc0 X` | initial battery state of charge, 0–1 (default 0.7) |
 | `--capacity-ah X` | battery capacity (default 5.0 Ah) |
 | `--noise` | hi-fi: apply ADC quantization (and any configured sigmas) to the injected values |
+| `--csv PATH` | per-tick CSV log (default: auto-named under `HIL Results/`) |
+| `--no-csv` | write no CSV and no `.meta.json` sidecar |
+| `--force` | overwrite an explicitly-given `--csv` that already exists |
 | `--list-scenarios` | print the scenario registry and exit |
 
 Several scenarios also drive the board through the firmware's **22-byte Pi command
@@ -337,6 +400,11 @@ repeatable stimulus you can re-run against any firmware build.
 python3 tools/hil_plant_sim.py --teensy-ip 192.168.1.50 \
         --replay logs/TP0178.BLG --csv hil_replay_TP0178.csv
 ```
+
+A fixed `--csv` name like this one is refused on the **second** run (exit 2) —
+the CSV, its `.meta.json` and its `.events.jsonl` are that run's record and are
+not overwritten silently. Add `--force` to replace them, or drop `--csv` and let
+the run auto-name itself (`hil_replay-tp0178_<timestamp>.csv`).
 
 | Flag | Meaning |
 |---|---|
@@ -418,6 +486,9 @@ current build:
 python3 tools/hil_plant_sim.py --teensy-ip 192.168.1.50 \
         --replay logs/TP0178.BLG --csv hil_TP0178.csv
 ```
+
+(Repeating this exact command needs `--force`, or a fresh `--csv` name, or no
+`--csv` at all — see the note under "Replay mode" above.)
 
 Expected: the injected `V_bus` column in `hil_TP0178.csv` reproduces the 12.15 V
 trough (it is the recorded one), the observation frame's `mainState` never reaches
@@ -546,10 +617,30 @@ rails, unbinds the host and latches `ERR_HIL_STALE`.
 board debounces the link for 500 ms and warm-resets to State 0, then runs the staged
 bring-up on the new run's injected plant — so each run now begins from a *fresh boot
 equivalent*, not from a latched board, and the whole 38-run plan executes without
-anyone touching the hardware. The recovery is admitted only for the exact `0x8010`
-dead-link fault union, so a run that latches a **real** fault still leaves the board
-latched, and the following run's zero-observation-frame / fault checks report it. The
-runner still judges each run's fault outcome against that run's own stimulus.
+anyone touching the hardware.
+
+**From fw v23 that also covers a run that latched a REAL fault.** Fw v22 admitted
+recovery only for the exact `0x8010` dead-link union, so one scenario latching (for
+example) `FAULT_UV_BUS` left every later run to find a latched board and the suite
+needed a power cycle. Fw v23 admits any fault code, gated instead on a **run boundary**:
+the link must have been silent for `HIL_RUN_BOUNDARY_MS` = 1000 ms, measured from the
+last accepted frame, while the board is in State 99. The default `--settle-s 5` gap
+satisfies that comfortably. Within a run a boundary is not *supposed* to accrue, so a
+fault normally stays latched for the rest of the run that raised it and the runner
+judges each run's fault outcome against that run's own stimulus. Two caveats, both
+load-bearing: a **host stall of ≥ 1 s forges a boundary anyway** (the anchor is the last
+accepted frame, and the host cannot promise it will never stall), and `comm-loss`
+forges one **on purpose**. So "stays latched for the rest of the run" is the expected
+case, not a guarantee — which is precisely why the mid-run warm-reset tripwire below
+checks it on every run instead of assuming it. If the fault condition is persistent, the
+next run simply re-latches (one recovery attempt per boundary).
+
+*Keep `--settle-s` well above 1 s* (the runner warns below 1.5 s). At or under the
+1000 ms boundary the window may not accrue and the board can stay latched into the next
+run, exactly as under fw v22. The margin is not fully under `--settle-s`'s control
+either: the boundary is anchored at the last accepted frame, so the previous child's
+teardown and the next child's startup also count toward the dead window, making the
+true gap longer than the pause by an amount nothing measures.
 
 *Under fw v21 each run instead started from a known latched board; the way to get a
 clean State-1 board for a particular run was to power-cycle and pass `--settle-s 0`.*
@@ -566,10 +657,21 @@ stdout/stderr lands in a per-run `.log`.
 - a **scenarios** section. Scenario entries carry no declarative checks, so the runner
   applies its own health criteria: at least one observation frame arrived (zero frames
   = FAIL, the board is absent), the fault outcome matches an expectation table (`sag`
-  must latch UV_BUS per H2; `comm-loss` must latch `ERR_HIL_STALE`, since its 1 s gap
+  must latch UV_BUS per H2; `comm-loss` must latch `ERR_HIL_STALE`, since its 2 s gap
   is past the 250 ms zero stage; `soc-depletion` and `charge-fault` are *allowed* to
   fault; everything else must stay clean), the achieved rate held above 900 Hz, and no
   `sw_ring` event exceeded the 20 V abs-max;
+- the **mid-run warm-reset tripwire** on every run of both halves. Each child counts the
+  `mainState` transitions out of the latched State 99 that it observed, reports them on
+  its `[hil] warm resets:` summary line and in its `.meta.json` sidecar, and the runner
+  judges the count. Transitions in the first 2 s are the expected start-of-run recovery
+  from the previous run's settle pause and are not counted as mid-run. A nonzero
+  **mid-run** count marks the run **INCONCLUSIVE** — not PASS, not FAIL: a host stall of
+  ≥ 1 s reads to fw v23+ as a run boundary, so the board warm-resets and clears whatever
+  fault it had latched, and every fault-based check on that run (the replay suite's
+  `fault_latched` entries most sharply) would read clean for the wrong reason. The one
+  whitelisted scenario is `comm-loss`, which *requires* exactly one — declared as
+  `warm_resets_expected` in the scenario registry;
 - a **replay** section, grouped conformance vs deviation, with each declarative check's
   detail and the entry's fw-delta / open-loop notes;
 - a **known open findings** section that always carries the `K_DROOP_BUS`
@@ -585,7 +687,7 @@ the first run (the runner aborts early rather than grinding through 30+ dead run
 |----|--------------|----------|----------------------|
 | **H1 — boot to idle** | Board flashed `-DHIL_SIM=1 -DUSE_ETHERNET=1`, nothing on the power stage. Simulator not yet started. | Power the board, read the USB banner; start `--scenario steady`. | Banner names HIL_SIM and the simulated-sensor warning. Within 1 s of simulator start the `'S'` dump shows `link: UP`, rising accept count, zero rejects. Board reaches State 1 (Idle) with no fault; `fault_flags == 0`. Simulator's rx count rises at ~1 kHz. |
 | **H2 — fault injection (UV)** | H1 passing, board in Idle or Run with the bus brought up. | `--scenario sag` (bus −5 V for 1 s at t = 5 s). | `V_bus` in the CSV crosses below `LIMIT_V_BUS_MIN` 12.0 V for longer than the 20 ms dwell; the observation frame shows `mainState` 99 and `fault_flags` with the UV bit set, latched. Switch bitmask goes to the State-99 safe combination. No fault is raised by the sag *before* the dwell elapses. |
-| **H3 — comm-loss hold-then-zero** | H1 passing, board in Idle, simulator logging. | `--scenario comm-loss` (1 s transmit gap at t = 5 s). | During the first 50 ms of the gap the board's behaviour is unchanged. `'S'` dump reads `STALE` between 50 ms and 250 ms with no fault attributable to the gap. After 250 ms it reads `DEAD (zeroed)` and the injected rails read 0 — the ordinary UV/sequencing logic responds to that as it would to a dead board — and `ERR_HIL_STALE` latches State 99. On resume, `link: UP` returns and the accept count resumes rising; **fw v22:** ~500 ms later the console prints `[HIL] link recovered — warm reset, re-entering State 0`, the observation frame's `mainState` returns 0 → 1 and `fault_flags` clears to 0, and the `'S'` dump's `warm resets:` count increments. |
+| **H3 — comm-loss hold-then-zero** | H1 passing, board in Idle, simulator logging. | `--scenario comm-loss` (**2 s** transmit gap at t = 5 s). | During the first 50 ms of the gap the board's behaviour is unchanged. `'S'` dump reads `STALE` between 50 ms and 250 ms with no fault attributable to the gap. After 250 ms it reads `DEAD (zeroed)` and the injected rails read 0 — the ordinary UV/sequencing logic responds to that as it would to a dead board — and `ERR_HIL_STALE` latches State 99. On resume, `link: UP` returns and the accept count resumes rising; **fw v22/v23:** ~500 ms later the console prints `[HIL] run boundary + link recovered — warm reset, re-entering State 0`, the observation frame's `mainState` returns 0 → 1 and `fault_flags` clears to 0, and the `'S'` dump's `warm resets:` count increments. *(fw v23: the boundary window is measured from the last accepted frame, so the scenario's transmit gap satisfies it directly and the `run boundary:` status reads `SEEN`. The gap is **2 s** against a 1000 ms requirement — a 1.0 s gap was knife-edge by one tick and made the outcome a coin flip. The simulator's own `[hil] warm resets:` line must report exactly **1 mid-run**, which is what `run_hil_suite.py` requires for this scenario alone.)* |
 | **H4 — closed-loop drive cycle** | H1 passing, board in State 98, `MOT_PWR_ENABLE` closed, `--scenario drive` running. | Command `'V' 1.0` (or a `'D'` drive cycle) over USB serial. | Injected `v_actual` in the CSV converges on the setpoint with no sustained ±12 A rail chatter; observed `current` shows the Hanus-conditioned ramp and release. Steady-state error small (the model has no encoder noise, so this validates the loop's *structure*, not its tuning). Compare against `controller_design_MIMO/figures/drive_siso_step.csv`. |
 | **H5 — switch-sequencing observation** | H1 passing, board in State 98. | Exercise the bring-up (`'G'`), then toggle switches individually; attempt `FC_CHARGE_ENABLE` with `BT_BUS_ENABLE`/`REGEN_ENABLE` closed. | The observation frame's switch byte shows the §2 ordering at 1 ms resolution: `BT_SEQUENCE_ENABLE` off at boot then on; `assertFcChargeEnable()` drives `BT_BUS`/`REGEN` low **before** `FC_CHARGE` goes high — never a tick with the illegal combination. The aux byte shows `MPPT_DISABLE`/`CBAL_DISABLE` at their fail-safe levels from the first frame. |
 
