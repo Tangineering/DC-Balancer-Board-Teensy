@@ -1080,5 +1080,275 @@ def test_stamp_without_prior_update_h_zero_degrades_safely():
     assert G[1][1] > 0.0                   # a finite, sane conductance was stamped
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SOFT-start pre-charged-node fix (2026-08-30c) — Rt1987._soft_operating_point()
+# now derives tON from a PER-EPISODE VIN HIGH WATER MARK (self._ss_v_in_max)
+# rather than the instantaneous v_in, but ONLY when the episode starts on a
+# pre-charged node (v_ss_start > RT_SS_PRECHARGED_V). A cold start (v_ss_start
+# ~ 0) keeps the original instantaneous-VIN expression bit-for-bit. See the
+# module docstring at _soft_operating_point() for the full derivation and the
+# two REJECTED fixes (skipping the stamp above target; latching tON at SOFT
+# entry) — both are documented there as guard comments, not tested here.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_soft_start_precharged_node_warm_regression_bounded():
+    """THE WARM REGRESSION THIS ROUND WAS FOR. fw v23's between-run warm
+    reset can close MOT_PWR onto V-MOT bled to ~4.4 V while the bus is live
+    at ~15.6-15.8 V — a soft-start entry on a PRE-CHARGED node. Under the
+    retired instantaneous-VIN tON, a sagging v_in shrank tON and grew the
+    ramp rate (positive feedback): the module docstring measures the
+    reported current at ~6.8x the physical displacement current standalone,
+    enough to latch a spurious OC_FC 3 ms after Idle.
+
+    Reproduced end to end through the real ElectricalSim/Rt1987 solve (not
+    a hand-derived formula): bring the bus up normally (FC_BUS+BT_BUS+boosts,
+    the default c_vesc_f -> MOT_PWR's c_load = C_MOT_LOCAL 470 uF +
+    C_VESC_DEFAULT 500 uF = 970 uF, matching the item's c_load=970 uF), force
+    V-MOT down to the bled 4.4 V figure, close MOT_PWR, and pin the substep
+    count per the file's _pin_and_step convention. The physical bound is
+    re-derived from the SAME public rt1987_t_on_s() helper the implementation
+    uses (not a hand-copied constant), against the switch's own recorded
+    v_ss_start/_ss_v_in_max, so it tracks the real episode rather than an
+    assumed one."""
+    e = he.ElectricalSim(trace_config="short")   # default c_vesc_f
+    assert he.C_MOT_LOCAL + he.C_VESC_DEFAULT == pytest.approx(970e-6)
+
+    sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ
+    aux = AUX_FC_REG | AUX_BT_REG
+    for _ in range(500):
+        _pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux))
+    v_bus = e.node_voltage("BUS")
+    assert v_bus == pytest.approx(15.6, abs=0.3), (
+        f"sanity: bus should be near its ~15.6 V nominal, got {v_bus:.3f} V")
+
+    e.v[he.N_MOT] = 4.4    # simulate the bled V-MOT node (isolated OFF switch
+                            # stamps nothing, so this holds until MOT_PWR closes)
+
+    sw |= SW_MOT_PWR
+    mot = e.switches["MOT_PWR"]
+    peak_i = 0.0
+    reached_soft = False
+    for _ in range(30):    # t_D(ON) 8ms + several ms into the ramp
+        _pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux))
+        if mot.state == "SOFT":
+            reached_soft = True
+            peak_i = max(peak_i, abs(mot.i))
+    assert reached_soft, "MOT_PWR never reached SOFT within the window"
+    assert mot.v_ss_start == pytest.approx(4.4, abs=0.5), (
+        "sanity: v_ss_start should have captured the bled node")
+    assert mot.v_ss_start > he.RT_SS_PRECHARGED_V, (
+        "sanity: this must actually exercise the pre-charged path")
+
+    t_on = he.rt1987_t_on_s(max(mot._ss_v_in_max, 1.0), mot.css_nf)
+    rate = (max(0.0, mot._ss_v_in_max - mot.v_ss_start) / t_on) if t_on > 0 else 0.0
+    i_track_bound = mot.c_load * rate    # i_load == 0 here (no i_motor_a driven)
+    assert peak_i <= 1.2 * i_track_bound + 1e-6, (
+        f"reported current {peak_i:.4f} A exceeds 1.2x the physical "
+        f"displacement estimate {i_track_bound:.4f} A -- the positive-"
+        f"feedback regression this fix closes")
+
+    # MED-2 TIGHTENED (2026-08-30 short follow-up round): the counter used to
+    # increment on EVERY call to _soft_operating_point() -- it is called TWICE
+    # per substep (stamp() for the network contribution, update() for the
+    # sense current) -- so it read ~2x high, AND it counted the SOFT-entry
+    # tick itself, where v_out == target trivially (frac == 0, target ==
+    # v_ss_start == v_out at the instant SOFT is entered) -- a definitional
+    # artefact, not a genuine "node above its own ramp" event. `count=True` is
+    # now passed ONLY from stamp() (the one call per substep per switch), and
+    # is additionally gated on `self.t_state > 0.0` to skip that entry tick.
+    # A cold/warm SOFT entry with no genuine runaway now records EXACTLY 0,
+    # not merely "at most 1" -- this was previously a loose bound because the
+    # old counter could not distinguish the boundary artefact from a real
+    # excursion; now it can, so the bound is exact.
+    assert mot._ss_above_target_max_v == pytest.approx(0.0, abs=1e-9)
+    assert mot._ss_above_target_substeps == 0
+
+
+def test_soft_start_cold_start_bringup_peaks_preserved():
+    """Cold-start preservation: the 2026-08-30c fix's cold-start path (a
+    fresh episode entering SOFT with v_ss_start ~ 0, i.e. NOT
+    > RT_SS_PRECHARGED_V) is documented to keep the original
+    instantaneous-VIN expression bit-for-bit — this pins the staged-
+    bring-up-like cold episode's two peak currents as a REGRESSION
+    CONTRACT: they are triple-corroborated on hardware and must not move
+    now that the pre-charged branch exists alongside the cold one.
+
+      P0 (FC_BUS+BT_BUS body-diode precharge, boosts OFF): peak I_fc ~0.222 A
+      Full staged bring-up (P0 -> P1 boosts enabled -> MOT_PWR closes, no aux
+      load): peak I_fc/I_batt ~0.474 A
+
+    (Same scenario shape as test_precharge_current_is_physical_not_fictitious_
+    amps / test_full_bringup_current_ceiling_stays_under_1p2a, which only
+    assert loose upper bounds; this pins the actual converged values.)"""
+    e = he.ElectricalSim(trace_config="short")
+    sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ
+    aux = 0
+    p0_peak_fc = 0.0
+    for _ in range(50):        # P0: bus switches only, boosts off
+        rails = _pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux))
+        p0_peak_fc = max(p0_peak_fc, abs(rails["I_fc"]))
+    assert p0_peak_fc == pytest.approx(0.2224, abs=2e-3)
+
+    aux = AUX_FC_REG | AUX_BT_REG
+    for _ in range(400):       # P1: boosts enabled
+        _pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux))
+
+    sw |= SW_MOT_PWR
+    full_peak_fc = full_peak_bt = 0.0
+    for _ in range(400):       # close MOT_PWR
+        rails = _pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux))
+        full_peak_fc = max(full_peak_fc, abs(rails["I_fc"]))
+        full_peak_bt = max(full_peak_bt, abs(rails["I_batt"]))
+    assert full_peak_fc == pytest.approx(0.4739, abs=2e-3)
+    assert full_peak_bt == pytest.approx(0.4739, abs=2e-3)
+
+    # Cold-start invariant this fix must not disturb: v_ss_start stays ~0 at
+    # every SOFT entry in this scenario (nothing here is pre-charged), so the
+    # per-episode high-water-mark branch never engages.
+    for name in ("FC_BUS", "BT_BUS", "MOT_PWR"):
+        assert e.switches[name].v_ss_start <= he.RT_SS_PRECHARGED_V, (
+            f"{name}: this scenario is supposed to be all-cold-start "
+            f"(v_ss_start={e.switches[name].v_ss_start:.3f} V)")
+    # Re-verification (short follow-up round, item 4): the min(target, v_in)
+    # cap that used to bound the ramp target was REMOVED this round (TRCB in
+    # SOFT is its replacement, see below) -- confirm the cold-start pins
+    # above and the warm-regression bound in
+    # test_soft_start_precharged_node_warm_regression_bounded are unaffected
+    # by that removal. Both are re-asserted verbatim in this file (not
+    # merely re-run): neither test references the cap, both still pass, and
+    # both were re-verified against the actual post-removal simulator output
+    # rather than trusted from before the round.
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SOFT-start review-fix round (2026-08-30, short follow-up): TRCB now runs in
+# SOFT (not just ON), TD_ON->SOFT gains an admission gate on the reverse
+# differential, and the min(target, v_in) cap tried in the prior round was
+# REMOVED (its own defect: sank the servo conductance out of n_out with
+# J[n_in] == 0 -- "charge annihilated", measured -94 A / -345 A). See
+# Rt1987._soft_operating_point()'s and update()'s docstrings for the full
+# derivation; these tests are unit-level (bare Rt1987, no network solve) for
+# full control over v_in/v_out, matching the file's existing
+# test_stamp_without_prior_update_h_zero_degrades_safely pattern.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_trcb_fires_in_soft_on_reverse_differential():
+    """TRCB is no longer an ON-only feature (DS 17.6: the fast reverse
+    comparator trips within t_FRC whenever VIN-VOUT falls below V_FRC, with
+    no restriction to post-soft-start). Mid-ramp (t_state > 0, well short of
+    tON), a reverse differential (v_in - v_out < RT_V_REV) must: open the
+    switch (state -> OFF), latch _restart_no_ss (the reactive standby-diode
+    re-arm-without-soft-start path), zero self.i, and record a reverse_block
+    event tagged during == 'soft_start'.
+
+    v_in/v_out are both kept comfortably above RT_UVLO_V (3.175 V) so the
+    unpowered path is not what is being exercised here -- this is
+    specifically the SOFT-state TRCB branch, not a UVLO open."""
+    sw = he.Rt1987("T", 0, 1, css_nf=100.0, c_load_f=35e-6)
+    sw.state = "SOFT"
+    sw.v_ss_start = 0.0
+    sw._ss_v_in_max = 5.0
+    sw.t_state = 5e-3                  # mid-ramp, not the entry tick
+    v = [5.0, 6.0]                     # dv = -1.0, well past RT_V_REV (-0.050)
+    assert v[0] > he.RT_UVLO_V and v[1] > he.RT_UVLO_V, "sanity: not a UVLO case"
+    assert (v[0] - v[1]) < he.RT_V_REV
+
+    # CRITICALLY: the stamp for THIS substep -- the one in which the reverse
+    # differential is discovered -- must not imply a wild sink. This is
+    # exactly the defect class the removed target-cap produced: J[n_in] is
+    # the explicit current withdrawn from the input node, and it must stay
+    # bounded (floored at 0, ceilinged by the foldback limit) regardless of
+    # how far the ramp target has drifted from v_out.
+    G = [[0.0, 0.0], [0.0, 0.0]]
+    J = [0.0, 0.0]
+    sw.stamp(G, J, v, True)
+    assert math.isfinite(J[0]) and math.isfinite(J[1])
+    assert -he.RT_I_FOLD_HIGH - 1e-6 <= J[0] <= 0.0, (
+        f"J[n_in]={J[0]:.3f} A implies an out-of-band explicit current draw "
+        f"-- the old -94 A/-345 A sink defect class")
+
+    events = []
+    sw.update(1e-3, v, True, events, t_now=0.1234, trace_l_nh=1.5)
+
+    assert sw.state == "OFF"
+    assert sw._restart_no_ss is True
+    assert sw.i == 0.0
+
+    reverse = [e for e in events if e["kind"] == "reverse_block"]
+    assert len(reverse) == 1
+    assert reverse[0]["switch"] == "T"
+    assert reverse[0]["during"] == "soft_start"
+    assert reverse[0]["dv"] == pytest.approx(v[0] - v[1])
+    assert reverse[0]["dv"] < he.RT_V_REV
+
+
+def test_trcb_in_soft_does_not_fire_on_a_forward_differential():
+    """Converse/guard: a healthy forward differential mid-ramp must NOT trip
+    TRCB -- confirms the new branch is gated correctly, not just always-open.
+
+    v_out is chosen close to the analytic ramp target at this t_state (both
+    computed the same way _soft_operating_point() does, via the public
+    rt1987_t_on_s() helper) so the SCP foldback path is not what stops this
+    test from staying in SOFT -- i.e. this isolates the TRCB gate alone,
+    not an incidental fold trip from an artificially large tracking gap."""
+    sw = he.Rt1987("T", 0, 1, css_nf=100.0, c_load_f=35e-6)
+    sw.state = "SOFT"
+    sw.v_ss_start = 0.0
+    sw._ss_v_in_max = 15.0
+    sw.t_state = 5e-3
+    t_on = he.rt1987_t_on_s(15.0, 100.0)
+    target = 15.0 * min(1.0, sw.t_state / t_on)
+    v = [15.0, target]     # v_out tracking the ramp closely -- healthy, forward
+    assert (v[0] - v[1]) > he.RT_V_REV
+    events = []
+    sw.update(1e-3, v, True, events, t_now=0.0, trace_l_nh=1.5)
+    assert sw.state == "SOFT"
+    assert not [e for e in events if e["kind"] == "reverse_block"]
+    assert sw._restart_no_ss is False
+
+
+def test_td_on_holds_past_rt_td_on_s_when_reverse_differential_present():
+    """TD_ON -> SOFT admission gate (DS 17.4 condition 1): t_D(ON) elapsing
+    is necessary but NOT sufficient. With VIN - VOUT held at -0.5 V (well
+    past RT_V_REV), the switch must HOLD in TD_ON even after t_state runs
+    well past RT_TD_ON_S (8 ms) -- pinning that it holds, not a specific
+    duration, since the real part 'continuously monitors' rather than
+    admitting on a timer alone."""
+    sw = he.Rt1987("T", 0, 1, css_nf=100.0, c_load_f=35e-6)
+    sw.state = "TD_ON"
+    sw.t_state = 0.0
+    v_reverse = [5.0, 5.5]      # dv = -0.5 V, inadmissible
+    dt = 1e-3
+    for _ in range(20):         # 20 ms, well past RT_TD_ON_S (8 ms)
+        sw.update(dt, v_reverse, True, [], t_now=0.0, trace_l_nh=1.5)
+    assert sw.t_state > he.RT_TD_ON_S
+    assert sw.state == "TD_ON", (
+        "must HOLD in TD_ON while VIN-VOUT < RT_V_REV, even long past RT_TD_ON_S")
+
+    # Differential clears -> admitted into SOFT on the very next tick, no
+    # further wait once RT_TD_ON_S has already elapsed.
+    v_clear = [5.5, 5.0]        # dv = +0.5 V, admissible
+    sw.update(dt, v_clear, True, [], t_now=0.0, trace_l_nh=1.5)
+    assert sw.state == "SOFT"
+    assert sw.v_ss_start == pytest.approx(5.0)      # v_out at the instant of entry
+    assert sw._ss_v_in_max == pytest.approx(5.5)    # v_in at the instant of entry
+
+
+def test_td_on_enters_soft_immediately_when_differential_already_admissible():
+    """Guard/converse: the ordinary case -- the differential is admissible
+    from the start, so SOFT is entered exactly at t_state == RT_TD_ON_S, not
+    delayed."""
+    sw = he.Rt1987("T", 0, 1, css_nf=100.0, c_load_f=35e-6)
+    sw.state = "TD_ON"
+    sw.t_state = 0.0
+    v = [15.0, 0.5]      # dv = +14.5, admissible throughout
+    dt = 1e-3
+    for _ in range(7):   # 7 ms < RT_TD_ON_S (8 ms) -- must still be waiting
+        sw.update(dt, v, True, [], t_now=0.0, trace_l_nh=1.5)
+    assert sw.state == "TD_ON"
+    sw.update(dt, v, True, [], t_now=0.0, trace_l_nh=1.5)   # 8th ms
+    assert sw.state == "SOFT"
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

@@ -140,6 +140,12 @@ RT_V_FWD = 0.035        # V     forward-regulation target (the handoff-gap eleme
 RT_V_REV = -0.050       # V     reverse comparator threshold
 RT_SCP_BLANK_S = 250e-6  # s    continuous clamp time before a CUT
 RT_SCP_RETRY_S = 64e-3  # s     auto-retry after a CUT
+# 2026-08-30c: output voltage at SOFT entry above which the episode counts as
+# starting on a PRE-CHARGED node, and the tON anti-feedback in
+# Rt1987._soft_operating_point() engages.  1.0 V is the rt1987_t_on_s() VIN floor:
+# below it the tON formula is already clamped and there is no feedback to break,
+# and every hardware-corroborated cold-start ramp begins at ~0 V.
+RT_SS_PRECHARGED_V = 1.0
 RT_I_FOLD_LOW = 2.5     # A     limit while VOUT < 2 V rising
 RT_I_FOLD_HIGH = 8.5    # A     limit at dV <= 5 V
 RT_DV_FOLD_KNEE = 5.0   # V     dV at which the limit reaches RT_I_FOLD_HIGH
@@ -610,6 +616,16 @@ class Rt1987:
         self.i = 0.0                # A last-substep current (in -> out)
         self.cut_count = 0
         self.v_ss_start = 0.0       # V  output voltage at soft-start entry
+        #: highest VIN seen during the CURRENT soft-start episode.  The ramp duration
+        #: is derived from THIS, not from the instantaneous VIN, so tON is
+        #: monotonically non-decreasing within one episode — see
+        #: _soft_operating_point()'s 2026-08-30c block.
+        self._ss_v_in_max = 0.0
+        #: diagnostics for the 2026-08-30c pre-charged-node fix: how many substeps
+        #: the output sat at/above its own ramp target (the pass device sources
+        #: nothing there), and the worst excursion above it.
+        self._ss_above_target_substeps = 0
+        self._ss_above_target_max_v = 0.0
         self._fold_active = False
         self._restart_no_ss = False
         #: substep length of the most recent update(), cached so the SOFT-state
@@ -639,7 +655,19 @@ class Rt1987:
             # So: drive n_out toward `target` through the pass resistance, and take
             # the same current out of n_in explicitly.  The input node here is a
             # stiff regulated boost output, so the explicit half is well behaved.
-            i_fold, i_phys, target = self._soft_operating_point(v_in, v_out)
+            # count=True: stamp() is the ONE call per substep per switch, so the
+            # above-target diagnostic counts substeps rather than calls (MED-2).
+            i_fold, i_phys, target = self._soft_operating_point(v_in, v_out,
+                                                               count=True)
+            # NOTE (2026-08-30c, tried and REJECTED): "if v_out >= target: return"
+            # — skipping the stamp when the node sits above its own ramp, on the
+            # argument that a gate-limited device sources nothing there.  It is true
+            # of the device and WRONG for this model: the conductance-to-target IS
+            # the soft-start servo, and removing it on one side of the target turns a
+            # stiff servo into a bang-bang.  Measured on the pre-charged case it made
+            # things worse, not better (I_tot peak 6.95 A vs 2.82 A with the servo
+            # left intact).  The overshoot it was meant to prevent is a symptom of a
+            # MOVING target, and is fixed at the source in _soft_operating_point().
             r = RT_R_ON + self.r_series
             if i_phys > i_fold:
                 # Foldback binding: an EQUIVALENT RESISTANCE that delivers the limit
@@ -667,7 +695,7 @@ class Rt1987:
         J[self.n_in] += off        # the offset opposes forward conduction
         J[self.n_out] -= off
 
-    def _soft_operating_point(self, v_in, v_out):
+    def _soft_operating_point(self, v_in, v_out, count=False):
         """Return (foldback limit, PHYSICAL pass current, ramp target) [A, A, V].
 
         The ramp target is the RT1987's soft-start VOUT profile: a linear ramp from
@@ -707,18 +735,115 @@ class Rt1987:
         A genuine overload still folds and cuts: a node held down by load or a
         short does not track, `target_prev - v_out` grows without bound, and the
         demand crosses i_fold on physics rather than on discretization.
+
+        ── RAMP SHAPE: WHAT THE DATASHEET SAYS vs WHAT THIS MODEL DOES (MED-3) ──
+        Read this before quoting a soft-start current from this engine as physical.
+        DS 17.1/17.3 define tON as the **10 % to 90 % rise time**, programmed by CSS:
+            tON = (VIN/35) * (CSS_nF/0.0023 - 100) us
+        so the part's TRUE slew rate is
+            dVOUT/dt = 0.8 * VIN / tON = 0.8 * 35 / (CSS_nF/0.0023 - 100)
+        which is **INDEPENDENT OF VIN** — 645.5 V/s at CSS = 100 nF, whatever the
+        rail.  (Verified against the constants: tON = VIN * 1.23938e-3 s, so VIN
+        cancels.)
+
+        THIS MODEL RAMPS `v_ss_start -> v_ref` OVER tON, i.e. it conflates the SLOPE
+        with the ENDPOINT and inherits a VIN- and start-dependent error:
+            cold (v_ss_start ~ 0):   rate = VIN/tON        = 806.9 V/s  -> +25.0 %
+            warm (v_ss_start 4.4 V,
+                  v_ref 15.78 V):    rate = 11.38/tON      = 581.9 V/s  ->  -9.8 %
+        The two biases have OPPOSITE SIGN, which is why no single scale factor fixes
+        it, and why the displacement current this function reports is systematically
+        high on a cold start and low on a warm one.  NOTE the consequence for any
+        test that bounds the reported current by `c_load * rate` computed from
+        rt1987_t_on_s(): that bound is SELF-REFERENTIAL — it re-derives the same
+        wrong slope, so it validates internal consistency, not physicality.
+
+        FUTURE WORK, deliberately NOT done here: a constant-slew ramp
+        (dVOUT/dt = 0.8*35/(CSS_nF/0.0023 - 100), endpoint v_ref, duration whatever
+        the distance requires).  It is the physically right shape, and it MOVES THE
+        COLD PINS — the +25 % bias is baked into the hardware-corroborated 0.2226 A /
+        0.4740 A bring-up numbers, which have been reproduced in three campaigns.
+        Changing it needs its own A/B round against hardware, not a drive-by.
+
+        ── 2026-08-30c fix: tON IS MONOTONICALLY NON-DECREASING PER EPISODE ────
+        tON used to be recomputed from the INSTANTANEOUS v_in on every substep while
+        `v_ss_start` stayed latched, and on a PRE-CHARGED node that pairing is a
+        POSITIVE FEEDBACK LOOP:
+            v_in sags -> tON = (VIN/35)*(...) shrinks -> `rate` and `frac` both grow
+            -> more displacement demand -> more bus draw -> v_in sags further.
+        The cold-start case escapes it (a dark node draws its inrush while the bus is
+        stiff), which is why the 2026-08-30b fix did not surface this.  The comm-loss
+        recovery does not: the fw v23 warm reset closes MOT_PWR onto V-MOT bled to
+        ~4.4 V while the bus is live, and the loop ran the REPORTED current to ~6.8x
+        the physical displacement current (measured standalone; ~3.9x on the board,
+        where the load differs) and drove the node ABOVE its own ramp target — enough
+        to latch a spurious OC_FC 3 ms after Idle.
+
+        WHY NOT SIMPLY LATCH tON AT SOFT ENTRY (the obvious fix, and it is wrong):
+        at SOFT entry the input is frequently still DARK.  The staged bring-up closes
+        FC_BUS/BT_BUS before the boosts are enabled, so v_in at entry is ~0 and
+        rt1987_t_on_s()'s max(v_in, 1.0) floor latches tON = 1.24 ms instead of the
+        ~19.8 ms the ramp actually takes — a 16x-too-fast ramp.  MEASURED: the
+        cold-start P0 peak goes 0.2226 -> 3.81 A.
+
+        L1 CLARIFICATION (the shipped mechanism IS a per-episode high water mark, so
+        this next sentence has to be read carefully): applying the HWM
+        UNCONDITIONALLY — to cold episodes as well — regresses the COLD path exactly
+        as the entry-latch does, and for the same reason.  During P0 the input node
+        is fed through a boost body diode and SAGS under the switch's own draw, so on
+        a cold start holding tON at its pre-draw value keeps the ramp ahead of a node
+        that cannot follow it (cold P0 0.2226 -> 3.81 A again).  What ships is the
+        HWM SCOPED TO A PRE-CHARGED ENTRY; the cold path keeps the instantaneous VIN
+        and is bit-for-bit unchanged.
+
+        WHAT IS ACTUALLY DONE — the anti-feedback is SCOPED TO A PRE-CHARGED ENTRY.
+        The runaway needs v_ss_start well above zero: that is what lets a shrinking
+        tON move `target` DISCONTINUOUSLY (frac = t_state/tON jumps), and with
+        r = 21 mOhm a 0.1 V step in the target is ~4.8 A of demand.  A cold start
+        begins at v_ss_start ~ 0 with the target rising smoothly from zero, and its
+        behaviour is triple-corroborated on hardware — so it keeps the original
+        instantaneous-VIN path, BIT-FOR-BIT.  Only an episode that starts on a
+        pre-charged node (v_ss_start > RT_SS_PRECHARGED_V) derives tON from the
+        per-episode VIN high water mark instead.  That is physical in its own right:
+        a CSS capacitor charging at a fixed current cannot make an in-progress ramp
+        finish SOONER because the input momentarily sagged.  With tON held, a sagging
+        v_in SHRINKS `rate` (numerator falls, denominator held) instead of growing
+        it — negative feedback, which is the point.
         """
         r = RT_R_ON + self.r_series
-        t_on = rt1987_t_on_s(max(v_in, 1.0), self.css_nf)
+        if v_in > self._ss_v_in_max:
+            self._ss_v_in_max = v_in
+        precharged = self.v_ss_start > RT_SS_PRECHARGED_V
+        # RAMP REFERENCE.  Cold start (the hardware-corroborated path) keeps the
+        # original instantaneous VIN, bit-for-bit.  A pre-charged episode uses the
+        # per-episode high water mark for BOTH the duration and the endpoint: with
+        # r = 21 mOhm, a target that follows the bus's own sag/ripple turns millivolts
+        # of node ripple into AMPS of apparent demand, and the measured trace showed
+        # exactly that — the target oscillating with v_in (15.78 -> 14.76 -> 15.35)
+        # and i_phys chattering 0.0 <-> 3.0 A around a true 0.562 A displacement.
+        v_ref = self._ss_v_in_max if precharged else v_in
+        t_on = rt1987_t_on_s(max(v_ref, 1.0), self.css_nf)
         frac = 1.0 if t_on <= 0 else min(1.0, self.t_state / t_on)
-        target = self.v_ss_start + (v_in - self.v_ss_start) * frac
+        target = self.v_ss_start + (v_ref - self.v_ss_start) * frac
         # Ramp target at the instant `v_out` was solved (one substep back).
         t_prev = max(0.0, self.t_state - self._h)
         frac_prev = 1.0 if t_on <= 0 else min(1.0, t_prev / t_on)
-        target_prev = self.v_ss_start + (v_in - self.v_ss_start) * frac_prev
+        target_prev = self.v_ss_start + (v_ref - self.v_ss_start) * frac_prev
+        # NOTE (2026-08-30d, ADDED then REMOVED — do not reinstate): a
+        # `target = min(target, v_in)` cap, on the argument that a pass device
+        # cannot ramp its output above its own input.  The premise is right and the
+        # cap is the wrong mechanism: when the held reference leads a sagging rail
+        # it drives the target BELOW v_out, and the SOFT stamp then sinks the full
+        # 47.6 S servo conductance out of n_out with J[n_in] = 0 — charge
+        # annihilated, measured at -94 A on a 0.3 Vpp bus ripple and -345 A on a bus
+        # collapse, while self.i still reported <= 8.5 A.  The v_out > v_in regime
+        # belongs to the reverse comparator (TRCB), which now runs in SOFT — see
+        # update()'s state machine.  That is also what the part does: DS 17.6 says
+        # the fast reverse comparator trips within t_FRC (~0.5 us) whenever
+        # VIN - VOUT falls below V_FRC, with no restriction to post-soft-start.
         # Displacement current needed to follow the ramp, zero once it has run out.
         rate = 0.0 if t_on <= 0 or self.t_state >= t_on else \
-            max(0.0, v_in - self.v_ss_start) / t_on
+            max(0.0, v_ref - self.v_ss_start) / t_on
         # F2 (review, 2026-08-30): the i_track floor is unconditional — it reports
         # c_load*rate even when the node sits at/above the ramp (load release),
         # where the true displacement current is ~0.  Assumption recorded here:
@@ -731,6 +856,33 @@ class Rt1987:
         i_track = self.c_load * rate
         i_lag = max(0.0, target_prev - v_out) / r
         i_phys = max(i_track, i_lag)
+        if v_out >= target:
+            # At/above its own ramp the gate-limited device sources nothing, so the
+            # displacement floor does not apply either — reporting c_load*rate here
+            # would put a fictitious current on the INA253 sense point (self.i) for a
+            # switch that is not conducting.
+            #
+            # MED-2 (2026-08-30d): this counter used to increment on EVERY call, and
+            # this function is called TWICE per substep — once from update() for the
+            # sense current, once from stamp() for the network contribution — plus
+            # any number of times from a diagnostic probe.  It therefore counted
+            # CALLS, not substeps, and read ~2x high.  `count=True` is passed only
+            # from stamp(), which runs exactly once per substep per switch.
+            #
+            # The entry tick is also excluded.  _goto("SOFT") latches
+            # v_ss_start = v_out, so at t_state == 0 the ramp target IS v_out and the
+            # `>=` is satisfied by equality — a definitional artefact, not the
+            # condition this diagnostic exists to expose.  The previous comment here
+            # claimed "on a cold start it never happens"; that was FALSE, and
+            # test_hil_electrical.py documented the opposite (exactly one count per
+            # cold SOFT entry).  With the entry tick skipped the claim becomes true
+            # as written, and a nonzero count now means what it says: the node was
+            # genuinely above its own ramp mid-episode.
+            if count and self.t_state > 0.0:
+                self._ss_above_target_substeps += 1
+                self._ss_above_target_max_v = max(self._ss_above_target_max_v,
+                                                  v_out - target)
+            i_phys = 0.0
         dv = max(0.0, v_in - v_out)
         i_fold = rt1987_fold_limit(dv)
         self._fold_active = i_phys > i_fold
@@ -746,6 +898,17 @@ class Rt1987:
         # (ramp displacement + downstream load), clamped by the foldback limit.
         # This value is the INA253 sense point for FC_BUS/BT_BUS, so it must never
         # carry the discretization artefact _soft_operating_point() documents.
+        #
+        # L2 — ORDERING IS LOAD-BEARING, do not move this block below the state
+        # machine.  _soft_operating_point() maintains `_ss_v_in_max` (the
+        # per-episode VIN high water mark) as a side effect of being called.  The
+        # state machine's SOFT branch further down re-derives the completion tON
+        # from that same high water mark, so it must run AFTER at least one call has
+        # refreshed it on this substep.  In the same order, the documented
+        # `v_in=None` fallback in _goto("SOFT") (which seeds the mark at 0.0) is
+        # self-healing: the first call here lifts it to the live VIN before anything
+        # reads it.  Reversed, the completion test would consult a stale — possibly
+        # zero — mark and could declare a ramp finished on the first substep.
         if self.state == "ON":
             self.i = max(0.0, (v_in - v_out - RT_V_FWD) / (RT_R_ON + self.r_series))
         elif self.state == "SOFT":
@@ -801,9 +964,43 @@ class Rt1987:
                 return
             self._goto("TD_ON")
         elif self.state == "TD_ON":
-            if self.t_state >= RT_TD_ON_S:
-                self._goto("SOFT", v_out)
+            # DS 17.4 condition 1: "When the device is first enabled, if any of the
+            # following conditions exist, the internal power MOSFET will not turn
+            # on: 1. VIN - VOUT < V_FRC (typically -50mV)".  So t_D(ON) elapsing is
+            # necessary but NOT sufficient — the part also refuses to start into a
+            # reverse differential, and "continuously monitors these conditions to
+            # determine when to allow the power path to be enabled".  Holding in
+            # TD_ON is that monitoring: the switch waits, and enters soft-start on
+            # the first tick the differential is admissible.  Without this gate a
+            # soft-start could begin on a node already above its input, which is
+            # precisely the state the ramp cannot represent.
+            if self.t_state >= RT_TD_ON_S and (v_in - v_out) >= RT_V_REV:
+                self._goto("SOFT", v_out, v_in)
         elif self.state == "SOFT":
+            # TRCB DURING SOFT-START (2026-08-30d).  The reverse comparator is NOT
+            # a post-soft-start feature: DS 17.6 puts it under "when the power path
+            # is enabled", trips within t_FRC (~0.5 us, i.e. inside one substep),
+            # and DS Table 1 gives its fault response as "Auto-restart WITHOUT
+            # soft-start at fault removal" with FLTB high-impedance.  The model used
+            # to run this branch only in ON, which left SOFT with no representation
+            # of the v_out > v_in regime at all — so a sagging rail (bus ripple, a
+            # load step mid-ramp, a collapse) drove the ramp target under the node
+            # and the servo stamp SANK the difference: measured -94 A on 0.3 Vpp of
+            # ripple, -345 A on a collapse, with J[n_in] = 0 so the charge simply
+            # vanished from the network.  Checked BEFORE the SCP/completion logic
+            # below because a reverse event is faster (0.5 us) than either.
+            if (v_in - v_out) < RT_V_REV:
+                events.append({"t": t_now, "kind": "reverse_block",
+                               "switch": self.name, "dv": v_in - v_out,
+                               "during": "soft_start"})
+                self.state = "OFF"
+                self.t_state = 0.0
+                self.t_clamped = 0.0
+                self.t_retry = 0.0
+                self._fold_active = False
+                self.i = 0.0
+                self._restart_no_ss = True
+                return
             # SCP: the foldback clamp (not the ramp limiter) held continuously for
             # 250 us trips a CUT with a 64 ms auto-retry.
             if getattr(self, "_fold_active", False) and (v_in - v_out) > 1.0:
@@ -816,8 +1013,14 @@ class Rt1987:
                 self.t_retry = RT_SCP_RETRY_S
                 return
             # Soft-start complete when the ramp has run out AND the differential has
-            # collapsed into the forward-regulation band.
-            t_on = rt1987_t_on_s(max(v_in, 1.0), self.css_nf)
+            # collapsed into the forward-regulation band.  Uses the LATCHED duration,
+            # for the same reason _soft_operating_point() does: a completion test on
+            # a tON that shrinks with a sagging VIN would declare the ramp finished
+            # early, which is the same artifact wearing a different hat.  Note this
+            # is the per-episode VIN high water mark, not the instantaneous VIN.
+            t_on = rt1987_t_on_s(
+                max(self._ss_v_in_max if self.v_ss_start > RT_SS_PRECHARGED_V
+                    else v_in, 1.0), self.css_nf)
             if self.t_state >= t_on and (v_in - v_out) <= RT_V_FWD * 2.0:
                 self._goto("ON")
         elif self.state == "ON":
@@ -831,9 +1034,17 @@ class Rt1987:
                 self.t_retry = 0.0
                 self._restart_no_ss = True
 
-    def _goto(self, state, v_out=0.0):
+    def _goto(self, state, v_out=0.0, v_in=None):
         if state == "SOFT":
             self.v_ss_start = v_out
+            # 2026-08-30c: a NEW soft-start episode, so the per-episode VIN high
+            # water mark that sets the ramp duration restarts here beside
+            # v_ss_start — the two describe one ramp.  `v_in` is optional only so an
+            # existing direct _goto("SOFT", v) call cannot break; every in-tree
+            # caller passes it.
+            self._ss_v_in_max = v_in if v_in is not None else 0.0
+            self._ss_above_target_substeps = 0
+            self._ss_above_target_max_v = 0.0
         self.state = state
         self.t_state = 0.0
         self.t_clamped = 0.0

@@ -226,7 +226,10 @@ def _uv_collapse_rows():
     """V_bus armed (>= V_BUS_CHARGED_THRESH_V) for 50 ms, then collapses
     below LIMIT_V_BUS_MIN_V for 40 ms (> UV_BUS_DWELL_LATCH_MS=20ms), and
     FAULT_UV_BUS is set from partway through the collapse to the end
-    (latched, matching what the real dwell filter would do)."""
+    (LATCHED, matching what the real dwell filter would do -- the bit is
+    ORed with FAULT_ERROR, since triggerFault() always sets it alongside
+    any latch, and check_fault_latched()/check_fault_not_latched() now use
+    LATCH semantics (bit AND FAULT_ERROR), not the bare bit)."""
     rows = []
     dt = 0.001
     t = 0.0
@@ -237,7 +240,7 @@ def _uv_collapse_rows():
     while t < collapse_start + 0.04:      # 40 ms collapse
         set_bit = (t - collapse_start) >= 0.022  # bit appears once dwell latches
         rows.append({"t": t, "V_bus": 10.0,
-                     "fault_flags": rs.FAULT_UV_BUS if set_bit else 0})
+                     "fault_flags": (rs.FAULT_UV_BUS | rs.FAULT_ERROR) if set_bit else 0})
         t += dt
     return rows
 
@@ -291,7 +294,8 @@ def test_l1_whole_run_first_note_when_fault_persists_from_before_grace(tmp_path)
     early_rows = []
     t = 0.1
     while t < rs.REPLAY_PREAMBLE_S + 0.5:
-        early_rows.append({"t": t, "V_bus": 15.9, "fault_flags": rs.FAULT_UV_BUS})
+        early_rows.append({"t": t, "V_bus": 15.9,
+                           "fault_flags": rs.FAULT_UV_BUS | rs.FAULT_ERROR})
         t += dt
     rows = [_bringup_row()] + early_rows
     path = tmp_path / "a.csv"
@@ -324,6 +328,98 @@ def test_l1_whole_run_first_note_absent_when_first_observation_coincides():
     assert "whole-run first observation" not in detail
 
 
+def test_l1_whole_run_first_note_carried_in_direction_when_bit_clears_before_grace(tmp_path):
+    """The CARRIED-IN direction (item 2): the bit was set early (pre-grace)
+    but is GONE by the LAST pre-grace sample -- the predecessor run's settle
+    latch, cleared by the fw v23 warm reset -- so the post-grace LATCH is a
+    SEPARATE, later event, not the same fault persisting. Must say CLEARED,
+    never PERSISTED (the exact wrong call the campaign report caught on
+    ML0203/ML0169/TP0053 the first time this note was written)."""
+    rows = [_bringup_row()]
+    rows.append({"t": 0.2, "fault_flags": rs.FAULT_UV_BUS})   # early sighting
+    rows.append({"t": 0.5, "fault_flags": rs.FAULT_UV_BUS})
+    rows.append({"t": 1.0, "fault_flags": 0})                 # CLEARS before grace
+    rows.append({"t": 1.9, "fault_flags": 0})                 # last pre-grace sample
+    rows.append({"t": 2.0, "fault_flags": rs.FAULT_UV_BUS | rs.FAULT_ERROR})  # separate LATCH
+    rows.append({"t": 2.5, "fault_flags": rs.FAULT_UV_BUS | rs.FAULT_ERROR})
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "fault_latched", "name": "uv_bus_latched",
+            "bit": rs.FAULT_UV_BUS, "require_stimulus": False}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    assert res["passed"] is True
+    detail = res["checks"][-1]["detail"]
+    assert "CLEARED by t=1.900s" in detail
+    assert "carried-in settle latch" in detail
+    assert "PERSISTED" not in detail
+
+
+def test_check_fault_latched_reports_transient_lead_before_the_real_latch(tmp_path):
+    """Item 2: check_fault_latched's `lead` note names how much earlier the
+    bit was merely INDICATED (bare bit, no FAULT_ERROR) before it actually
+    LATCHED -- pin the print, not just the pass/fail."""
+    rows = [_bringup_row()]
+    rows.append({"t": 2.100, "fault_flags": rs.FAULT_UV_BUS})                    # indicated
+    rows.append({"t": 2.200, "fault_flags": rs.FAULT_UV_BUS})
+    rows.append({"t": 2.321, "fault_flags": rs.FAULT_UV_BUS | rs.FAULT_ERROR})   # latches
+    rows.append({"t": 2.400, "fault_flags": rs.FAULT_UV_BUS | rs.FAULT_ERROR})
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "a.csv")
+        write_replay_csv(path, rows)
+        spec = {"kind": "fault_latched", "name": "uv_bus_latched",
+                "bit": rs.FAULT_UV_BUS, "require_stimulus": False}
+        res = rs.evaluate_replay_csv(_entry([spec]), path)
+    assert res["passed"] is True
+    detail = res["checks"][-1]["detail"]
+    assert "LATCHED (bit + FAULT_ERROR)" in detail
+    assert "transiently indicated 221 ms earlier" in detail
+    assert "t=2.100s" in detail
+
+
+def test_check_fault_latched_run_ending_on_a_transient_no_longer_scores_latched(tmp_path):
+    """Item 2: a run that ends with the bit merely INDICATED (no
+    FAULT_ERROR) at the last sample must FAIL -- a transient at end of run
+    is not a latch, even though the old bare-bit semantics would have
+    accepted it."""
+    rows = [_bringup_row()]
+    rows.append({"t": 2.100, "fault_flags": rs.FAULT_UV_BUS})   # indicated only
+    rows.append({"t": 2.200, "fault_flags": rs.FAULT_UV_BUS})   # ...and stays that way
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "fault_latched", "name": "uv_bus_latched",
+            "bit": rs.FAULT_UV_BUS, "require_stimulus": False}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    assert res["passed"] is False
+    detail = res["checks"][-1]["detail"]
+    assert "INDICATED" in detail
+    assert "never LATCHED" in detail
+    assert "FAULT_ERROR was never set" in detail
+
+
+# ── F5 (item 2): no_fault vs fault_not_latched — a documented, deliberate seam
+def test_f5_no_fault_fails_on_a_transient_that_fault_not_latched_allows(tmp_path):
+    """The contract note above check_fault_not_latched(): pairing `no_fault`
+    with `fault_not_latched` on the SAME entry is NOT redundant. A bare
+    transient indication (no FAULT_ERROR) passes fault_not_latched (it only
+    promises 'never LATCHES') but FAILS no_fault (which promises 'nothing
+    was even indicated'). Pin both halves of that seam on identical data."""
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.005,
+                      fault_flags=lambda t: rs.FAULT_UV_BUS if t > 0.1 else 0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    entry = _entry([
+        {"kind": "no_fault", "name": "no_fault"},
+        {"kind": "fault_not_latched", "name": "uv_not_latched", "bit": rs.FAULT_UV_BUS},
+    ])
+    res = rs.evaluate_replay_csv(entry, str(path))
+    by_name = {c["name"]: c for c in res["checks"]}
+    assert by_name["no_fault"]["passed"] is False
+    assert by_name["uv_not_latched"]["passed"] is True
+    assert res["passed"] is False   # the pair disagrees; the run is NOT clean
+
+
 def test_check_fault_latched_require_stimulus_inconclusive(tmp_path):
     """V_bus never actually collapses (armed, but stays well above
     LIMIT_V_BUS_MIN the whole time): the stimulus does not qualify, so the
@@ -352,6 +448,25 @@ def test_check_fault_not_latched_pass(tmp_path):
 
 
 def test_check_fault_not_latched_fail(tmp_path):
+    """LATCH semantics: the bit must be ORed with FAULT_ERROR to count as a
+    latch (fault_not_latched fails on a LATCH, not a bare indication)."""
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.005,
+                      fault_flags=lambda t: (rs.FAULT_UV_BUS | rs.FAULT_ERROR)
+                      if t > 0.1 else 0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "fault_not_latched", "name": "uv_not_latched", "bit": rs.FAULT_UV_BUS}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    assert res["passed"] is False
+    assert "should NOT latch" in res["checks"][-1]["detail"]
+
+
+def test_check_fault_not_latched_passes_on_a_bare_transient_indication(tmp_path):
+    """Item 2: a bit set WITHOUT FAULT_ERROR (indicated, never latched) must
+    PASS fault_not_latched -- it only promises 'this never LATCHES', and the
+    detail must name the transient so a reader is not misled into thinking
+    nothing happened at all."""
     rows = _with_bringup_and_grace(
         _uniform_rows(0.2, 0.005,
                       fault_flags=lambda t: rs.FAULT_UV_BUS if t > 0.1 else 0))
@@ -359,8 +474,10 @@ def test_check_fault_not_latched_fail(tmp_path):
     write_replay_csv(path, rows)
     spec = {"kind": "fault_not_latched", "name": "uv_not_latched", "bit": rs.FAULT_UV_BUS}
     res = rs.evaluate_replay_csv(_entry([spec]), str(path))
-    assert res["passed"] is False
-    assert "should NOT latch" in res["checks"][-1]["detail"]
+    assert res["passed"] is True
+    detail = res["checks"][-1]["detail"]
+    assert "transiently INDICATED" in detail
+    assert "without ever" in detail and "latching" in detail
 
 
 # -- bounded_current -------------------------------------------------------------
@@ -642,9 +759,49 @@ def test_ml0217_carries_skip_preamble_and_skip_bringup_gate():
     entry = rs.suite_index()["ML0217"]
     assert entry.get("skip_preamble") is True
     assert entry.get("skip_bringup_gate") is True
+    assert entry.get("persistent_fault") is True
     check = entry["checks"][0]
     assert check["kind"] == "fault_latched"
     assert check["bit"] == rs.FAULT_INIT_FAIL
+
+
+# ── _assert_skip_preamble_entries() import-time guard (item 2) ─────────────
+# The guard already ran once at import (module load); these tests re-derive
+# it directly against synthetic tables via monkeypatch, so a future entry
+# that adds skip_preamble without the required persistent_fault/fault_latched
+# pairing fails LOUDLY here instead of only ever being caught by luck at the
+# next `import hil_replay_suite`.
+
+def test_assert_skip_preamble_entries_rejects_missing_persistent_fault(monkeypatch):
+    fake_suite = [{"log": "FAKE", "skip_preamble": True,
+                   "checks": [{"kind": "fault_latched", "bit": rs.FAULT_INIT_FAIL}]}]
+    monkeypatch.setattr(rs, "REPLAY_SUITE", fake_suite)
+    with pytest.raises(AssertionError, match="persistent_fault"):
+        rs._assert_skip_preamble_entries()
+
+
+def test_assert_skip_preamble_entries_rejects_missing_fault_latched_check(monkeypatch):
+    fake_suite = [{"log": "FAKE", "skip_preamble": True, "persistent_fault": True,
+                   "checks": [{"kind": "no_fault"}]}]
+    monkeypatch.setattr(rs, "REPLAY_SUITE", fake_suite)
+    with pytest.raises(AssertionError, match="fault_latched"):
+        rs._assert_skip_preamble_entries()
+
+
+def test_assert_skip_preamble_entries_accepts_the_compliant_shape(monkeypatch):
+    fake_suite = [{"log": "FAKE", "skip_preamble": True, "persistent_fault": True,
+                   "checks": [{"kind": "fault_latched", "bit": rs.FAULT_INIT_FAIL}]}]
+    monkeypatch.setattr(rs, "REPLAY_SUITE", fake_suite)
+    rs._assert_skip_preamble_entries()   # must not raise
+
+
+def test_assert_skip_preamble_entries_ignores_entries_without_skip_preamble(monkeypatch):
+    """An entry with NO skip_preamble is entirely exempt, even with neither
+    persistent_fault nor a fault_latched check -- the guard only concerns
+    entries that void the preamble>=grace assertion."""
+    fake_suite = [{"log": "FAKE", "checks": [{"kind": "no_fault"}]}]
+    monkeypatch.setattr(rs, "REPLAY_SUITE", fake_suite)
+    rs._assert_skip_preamble_entries()   # must not raise
 
 
 def test_only_ml0217_carries_skip_preamble():
@@ -684,6 +841,93 @@ def test_import_time_preamble_ge_grace_assertion_holds():
     narrowing of either constant is caught by this test too, not only by a
     successful `import hil_replay_suite`."""
     assert rs.REPLAY_PREAMBLE_S >= rs.REPLAY_GRACE_S
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 4c. #4 (review, LOW): boundary equality at t == grace_s / t == preamble_s
+#
+# Production code uses strict `t < X: skip` (equivalently `t >= X` to keep)
+# everywhere in this module. Pin the exact boundary sample so a future
+# <-to-<= (or >=-to->) typo fails a test instead of silently reclassifying
+# the one tick that sits exactly on a bound.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_replaycsv_faults_boundary_t_equals_grace_s_included():
+    grace = rs.REPLAY_GRACE_S
+    rows = [{"t": f"{grace:.6f}", "fault_flags": str(rs.FAULT_UV_BUS)}]
+    data = rs.ReplayCsv(rows, ["t", "fault_flags"])
+    assert any(t == pytest.approx(grace) for t, f in data.faults)
+    assert data.faults_pre_grace == []
+
+
+def test_replaycsv_faults_boundary_t_just_before_grace_s_excluded():
+    grace = rs.REPLAY_GRACE_S
+    rows = [{"t": f"{grace - 0.000001:.6f}", "fault_flags": str(rs.FAULT_UV_BUS)}]
+    data = rs.ReplayCsv(rows, ["t", "fault_flags"])
+    assert data.faults == []
+    assert any(t == pytest.approx(grace - 0.000001) for t, f in data.faults_pre_grace)
+
+
+def test_uv_stimulus_qualifies_boundary_armed_row_at_exactly_preamble_s_included():
+    """_uv_stimulus_qualifies() filters `if t < data.preamble_s: continue` --
+    a row at EXACTLY t == preamble_s must be INCLUDED. Proven by making that
+    exact row the one that ESTABLISHES 'armed' (V_bus >= V_BUS_CHARGED_THRESH_V):
+    without it, arming never happens and the dwell latch is unreachable, even
+    though every subsequent dip sample is otherwise identical."""
+    pre = rs.REPLAY_PREAMBLE_S
+    rows = [
+        {"t": f"{pre:.6f}", "V_bus": "15.9"},              # == preamble_s: armed
+        {"t": f"{pre + 0.005:.6f}", "V_bus": "10.0"},
+        {"t": f"{pre + 0.010:.6f}", "V_bus": "10.0"},
+        {"t": f"{pre + 0.015:.6f}", "V_bus": "10.0"},
+        {"t": f"{pre + 0.020:.6f}", "V_bus": "10.0"},
+        {"t": f"{pre + 0.025:.6f}", "V_bus": "10.0"},      # 5 x 5ms dwell = 25ms, comfortably
+                                                            # clears the 20ms latch (FP-safe
+                                                            # margin over an exact-4-tick sum)
+    ]
+    data = rs.ReplayCsv(rows, ["t", "V_bus"])
+    qualifies, when, _peak = rs._uv_stimulus_qualifies(data)
+    assert qualifies is True
+    assert when == pytest.approx(pre + 0.020, abs=1e-6) or when == pytest.approx(pre + 0.025, abs=1e-6)
+
+
+def test_uv_stimulus_qualifies_boundary_armed_row_just_before_preamble_s_excluded():
+    """The converse: the SAME armed row one microsecond before preamble_s is
+    excluded, arming never happens (every included row is the low dip, which
+    is below V_BUS_CHARGED_THRESH_V), and the stimulus never qualifies."""
+    pre = rs.REPLAY_PREAMBLE_S
+    rows = [
+        {"t": f"{pre - 0.000001:.6f}", "V_bus": "15.9"},   # excluded
+        {"t": f"{pre + 0.005:.6f}", "V_bus": "10.0"},
+        {"t": f"{pre + 0.010:.6f}", "V_bus": "10.0"},
+        {"t": f"{pre + 0.015:.6f}", "V_bus": "10.0"},
+        {"t": f"{pre + 0.020:.6f}", "V_bus": "10.0"},
+    ]
+    data = rs.ReplayCsv(rows, ["t", "V_bus"])
+    qualifies, _when, _peak = rs._uv_stimulus_qualifies(data)
+    assert qualifies is False
+
+
+def test_oc_fc_stimulus_qualifies_boundary_sample_at_exactly_preamble_s_included():
+    pre = rs.REPLAY_PREAMBLE_S
+    over = rs.LIMIT_I_FC_MAX_A + 1.0
+    rows = [{"t": f"{pre:.6f}", "I_fc": f"{over:.3f}"}]
+    data = rs.ReplayCsv(rows, ["t", "I_fc"])
+    qualifies, when, peak = rs._oc_fc_stimulus_qualifies(data)
+    assert qualifies is True
+    assert when == pytest.approx(pre)
+    assert peak == pytest.approx(over)
+
+
+def test_oc_fc_stimulus_qualifies_boundary_sample_just_before_preamble_s_excluded():
+    pre = rs.REPLAY_PREAMBLE_S
+    over = rs.LIMIT_I_FC_MAX_A + 1.0
+    rows = [{"t": f"{pre - 0.000001:.6f}", "I_fc": f"{over:.3f}"}]
+    data = rs.ReplayCsv(rows, ["t", "I_fc"])
+    qualifies, when, peak = rs._oc_fc_stimulus_qualifies(data)
+    assert qualifies is False
+    assert when is None
+    assert peak == 0.0   # the excluded sample never even updates `peak`
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -843,7 +1087,8 @@ def test_f5_require_stimulus_false_passes_if_bit_latches_regardless_of_v_bus():
     entirely, not just downgraded)."""
     rows = _with_bringup_and_grace(
         _uniform_rows(0.2, 0.001, V_bus=lambda t: 15.9,
-                      fault_flags=lambda t: rs.FAULT_UV_BUS if t > 0.05 else 0))
+                      fault_flags=lambda t: (rs.FAULT_UV_BUS | rs.FAULT_ERROR)
+                      if t > 0.05 else 0))
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "a.csv")
@@ -863,7 +1108,8 @@ def test_f6_oc_fc_stimulus_qualifies_when_i_fc_exceeds_limit():
     rows = _with_bringup_and_grace(
         _uniform_rows(0.2, 0.001,
                       I_fc=lambda t: 2.0 if t > 0.05 else 0.1,
-                      fault_flags=lambda t: rs.FAULT_OC_FC if t > 0.05 else 0))
+                      fault_flags=lambda t: (rs.FAULT_OC_FC | rs.FAULT_ERROR)
+                      if t > 0.05 else 0))
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "a.csv")
@@ -965,6 +1211,100 @@ def test_evaluate_replay_csv_multiple_check_kinds_aggregation(tmp_path):
     assert res["passed"] is False   # AND over all three, not just the first
     # notes are still populated normally alongside the mixed checks
     assert any("Replay is OPEN LOOP" in n for n in res["notes"])
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# command_is_identically_zero() / VACUOUS_TAG / n_checks_substantive-vacuous
+# (item 2, "F6"/item 5): replay mode constructs no commander, so a run whose
+# `current` column is 0.0000 A on EVERY sample makes several checks true for
+# free -- tagged, and counted, so a reader can tell substantive from vacuous.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_command_is_identically_zero_true_for_an_all_zero_series(tmp_path):
+    rows = _with_bringup(_uniform_rows(0.2, 0.01, current=lambda t: 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    assert data.command_is_identically_zero() is True
+
+
+def test_command_is_identically_zero_false_when_any_sample_is_nonzero(tmp_path):
+    rows = _with_bringup(_uniform_rows(0.2, 0.01,
+                                       current=lambda t: 5.0 if t > 0.1 else 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    assert data.command_is_identically_zero() is False
+
+
+def test_command_is_identically_zero_false_when_no_observations_at_all(tmp_path):
+    rows = _uniform_rows(0.2, 0.01)
+    for r in rows:
+        r["no_obs"] = True
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    assert data.command_is_identically_zero() is False
+
+
+def test_vacuous_tag_applied_to_command_shape_checks_when_current_is_all_zero(tmp_path):
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.005, fault_flags=lambda t: 0, current=lambda t: 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    entry = _entry([
+        {"kind": "bounded_current", "name": "bc"},
+        {"kind": "no_rail_limit_cycle", "name": "nrlc"},
+        {"kind": "returns_off_rail", "name": "rr"},
+        {"kind": "near_zero_current", "name": "nzc"},
+    ])
+    res = rs.evaluate_replay_csv(entry, str(path))
+    by_name = {c["name"]: c for c in res["checks"]}
+    for name in ("bc", "nrlc", "rr", "nzc"):
+        assert by_name[name]["passed"] is True
+        assert rs.VACUOUS_TAG in by_name[name]["detail"], name
+    assert res["n_checks"] == 5   # + the bring-up gate check
+    assert res["n_checks_vacuous"] == 4
+    assert res["n_checks_substantive"] == 1
+    assert any("4 of 5 checks are VACUOUS" in n for n in res["notes"])
+    assert any("SUBSTANTIVE checks: 1" in n for n in res["notes"])
+
+
+def test_vacuous_tag_absent_when_current_is_not_all_zero(tmp_path):
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.005, fault_flags=lambda t: 0,
+                      current=lambda t: 5.0 if t > 0.1 else 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    entry = _entry([{"kind": "bounded_current", "name": "bc"}])
+    res = rs.evaluate_replay_csv(entry, str(path))
+    by_name = {c["name"]: c for c in res["checks"]}
+    assert by_name["bc"]["passed"] is True
+    assert rs.VACUOUS_TAG not in by_name["bc"]["detail"]
+    assert res["n_checks_vacuous"] == 0
+    assert res["n_checks_substantive"] == res["n_checks"]
+    assert not any("VACUOUS" in n for n in res["notes"])
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# TARGET_FW_VERSION / LIMIT_V_BUS_MAX_V (item 2)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_target_fw_version_is_23():
+    """21 -> 23 (2026-08-30): fw v22 (HIL sequential runs) and fw v23 (any-
+    fault run-boundary recovery) are both load-bearing for this suite -- the
+    whole replay half depends on the v22 staged bring-up completing and the
+    v23 between-run recovery, so the target must say what it actually runs
+    against. COMPARABLE_FW_MIN is a SEPARATE constant and stays at 18."""
+    assert rs.TARGET_FW_VERSION == 23
+    assert rs.COMPARABLE_FW_MIN == 18
+    assert 22 in rs.FW_DELTA_NOTES and 23 in rs.FW_DELTA_NOTES
+
+
+def test_limit_v_bus_max_v_matches_firmware():
+    # teensy_controller/teensy_controller.ino:1305 -- LIMIT_V_BUS_MAX =
+    # V_BUS_NOMINAL(16.0) + 1.5 = 17.5 V
+    assert rs.LIMIT_V_BUS_MAX_V == pytest.approx(17.5)
 
 
 if __name__ == "__main__":

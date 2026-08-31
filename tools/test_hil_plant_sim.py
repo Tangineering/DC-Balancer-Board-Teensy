@@ -1276,6 +1276,91 @@ def test_handoff_sag_perturbation_is_1_5_a_on_top_of_the_preload():
     assert hil.HANDOFF_STEP_A == pytest.approx(1.5)
 
 
+def _cruise_coast_i_cmd(v):
+    """The coast-equilibrium commanded current at cruise speed v -- the same
+    closed form the SCENARIOS['handoff-sag']/['charge-fault'] comments use:
+    at steady state (f_net == 0), f_drive = F_COULOMB + B_EFF*v, and
+    i_cmd = f_drive / K_F (hil_plant_sim.py Plant.step()'s mechanical
+    section)."""
+    return (hil.F_COULOMB + hil.B_EFF * v) / hil.K_F
+
+
+def test_handoff_sag_operating_point_is_inside_the_share_governor_bracket():
+    """(review #5, LOW) The handoff-sag operating point is bracketed by two
+    REAL firmware constraints (hil_plant_sim.py SCENARIOS['handoff-sag']
+    comment, review M3) -- this pins the INEQUALITIES those constants imply,
+    not just the raw HANDOFF_PRELOAD_A/HANDOFF_STEP_A magnitudes:
+
+      lower bound  2*SHARE_MINORITY_I_MIN_A (.ino:2002, 0.30 A) -- the share
+                   loop must be in CLOSED-LOOP mode for a share test to mean
+                   anything, which needs the filtered total > this.
+      upper bound  2*SHARE_CUT_MAX_HANDOFF_A (.ino:2018, 0.5 A) -- the cut is
+                   REFUSED unless the doomed channel's measured current is
+                   <= this (a one-tick transfer of a bigger current onto the
+                   survivor is why the cut exists at all).
+
+    Neither SHARE_MINORITY_I_MIN_A, SHARE_CUT_MAX_HANDOFF_A nor
+    LIMIT_I_BT_MAX is mirrored as a Python constant anywhere in tools/, so
+    they are declared here as test-local literals citing their .ino
+    definitions (the existing test-file style already does this for other
+    firmware constants).
+
+    The pre-step total is I_AUX_A + HANDOFF_PRELOAD_A + i_motor at the
+    scenario's own 1.0 m/s cruise setpoint (hil_plant_sim.py SCENARIOS
+    ['handoff-sag'] comment's own arithmetic) -- reproduced by actually
+    running the real Plant model, not a hand-copied number, so a future
+    constant change (K_F, B_EFF, F_COULOMB, ETA_BOOST, HANDOFF_PRELOAD_A,
+    HANDOFF_STEP_A, I_AUX_A) is caught automatically rather than needing
+    this test hand-updated in lockstep."""
+    # teensy_controller/teensy_controller.ino:2002
+    SHARE_MINORITY_I_MIN_A = 0.30
+    # teensy_controller/teensy_controller.ino:2018
+    SHARE_CUT_MAX_HANDOFF_A = 0.5
+    # teensy_controller/teensy_controller.ino:1339
+    LIMIT_I_BT_MAX = 3.0
+
+    v_cruise = 1.0
+    i_cmd = _cruise_coast_i_cmd(v_cruise)
+
+    # ── Pre-step: both sources live, the share loop closed-loop entry gate ──
+    plant = hil.Plant()
+    plant.v = v_cruise   # the cruise setpoint, set directly -- this test wants
+                         # the STEADY-STATE current at that speed, not a ramp
+                         # to it (i_cmd is exactly the coast equilibrium, so
+                         # f_net == 0 and v does not drift while stepping)
+    hil.apply_scenario(plant, "handoff-sag", 19.999)   # pre-step i_aux (preload applied)
+    obs_pre = _obs(switch=SW_ALL_LIVE, aux=AUX_BOTH_REG, current=i_cmd)
+    out = None
+    for _ in range(50):   # let the algebraic droop snap settle (no RC lag,
+                          # but i_motor's OWN divisor uses the PREVIOUS tick's
+                          # v_bus -- converges in a handful of ticks)
+        out = plant.step(1e-3, obs_pre)
+    pre_step_total = out["I_fc"] + out["I_batt"]
+
+    lower = 2.0 * SHARE_MINORITY_I_MIN_A
+    upper = 2.0 * SHARE_CUT_MAX_HANDOFF_A
+    assert lower < pre_step_total < upper, (
+        f"pre-step total {pre_step_total:.4f} A must sit strictly inside "
+        f"({lower}, {upper}) A -- the closed-loop entry gate / cut-refusal "
+        f"bracket the scenario is designed around")
+
+    # ── Post-step: FC cut, BT alone carries the whole total ─────────────────
+    hil.apply_scenario(plant, "handoff-sag", 20.0)     # the perturbation
+    obs_post = _obs(switch=hil.SW_BT_BUS | hil.SW_MOT_PWR,
+                    aux=hil.AUX_BT_REG, current=i_cmd)
+    out2 = None
+    for _ in range(50):
+        out2 = plant.step(1e-3, obs_post)
+    post_step_survivor = out2["I_batt"]
+
+    assert post_step_survivor < LIMIT_I_BT_MAX
+    margin = (LIMIT_I_BT_MAX - post_step_survivor) / LIMIT_I_BT_MAX
+    assert margin > 0.10, (
+        f"post-step BT current {post_step_survivor:.4f} A leaves only "
+        f"{margin:.1%} margin under LIMIT_I_BT_MAX {LIMIT_I_BT_MAX} A -- too "
+        f"thin to be the deliberate design margin the scenario claims")
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # 9. CSV schema
 # ─────────────────────────────────────────────────────────────────────────
@@ -1397,25 +1482,60 @@ def test_replay_no_preamble_meta_sidecar_records_zero_preamble(tmp_path):
 # 9c. H1: --replay-i-fc-clamp end to end (symmetric, both signs)
 # ─────────────────────────────────────────────────────────────────────────
 
-def test_replay_i_fc_clamp_bounds_both_signs(tmp_path):
-    """The clamp is symmetric: no injected I_fc sample may exceed +clamp or
-    fall below -clamp, regardless of which direction the recorded current
-    actually went."""
-    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
-    clamp = 0.05   # deliberately tiny so the clamp is almost certainly binding
+def test_replay_i_fc_clamp_bounds_both_signs(tmp_path, monkeypatch):
+    """The clamp is symmetric (hil_plant_sim.py:2629-2636): no injected I_fc
+    sample may exceed +clamp or fall below -clamp.
+
+    FIX (review #3, MED): the synthetic .BLG's own I_fc trace does not
+    reliably visit both signs beyond the clamp -- in the previously-tested
+    window it sat at ~0.5 A +/- 0.05, ~10 sigma from ever tripping the
+    `elif sensors["I_fc"] < -args.replay_i_fc_clamp` branch, so that branch
+    could be deleted and this test would still pass. Rather than depend on
+    numpy/make_test_blg or a lucky seed to happen to produce a negative
+    excursion, this monkeypatches load_replay() to hand back a fully
+    DETERMINISTIC records list — one sample well above +clamp, one well
+    below -clamp, one inside the band — so both clamp branches are provably
+    exercised on every run, and this needs no numpy at all."""
+    clamp = 1.3
+    base = {"V_fc": 13.0, "V_batt": 7.8, "V_bus": 15.9, "V_chg": 0.0,
+            "V_rgn": 0.0, "I_batt": 0.1, "v_actual": 0.0,
+            "I_charge": 0.0, "ag105_status": 0}
+    records = [
+        (0.000, dict(base, I_fc=clamp + 5.0)),      # must clamp DOWN to +clamp
+        (0.001, dict(base, I_fc=-(clamp + 5.0))),   # must clamp UP to -clamp
+        (0.002, dict(base, I_fc=0.2)),              # inside the band, untouched
+        # Span extended well past the run's duration below with the SAME
+        # in-band value, held by zero-order hold -- ReplaySource.sample()
+        # ends the run the instant sim time exceeds the last record's `t`
+        # (records[-1][0] IS the span), and float accumulation of `t` over
+        # many 1 ms ticks can overshoot an exact 0.002 boundary by an ulp,
+        # ending the run one tick early. A comfortably later last record
+        # removes that race entirely.
+        (1.0, dict(base, I_fc=0.2)),
+    ]
+
+    def fake_load_replay(path):
+        return records, {"version": 3, "fw_version": 14}, [], False
+
+    monkeypatch.setattr(hil, "load_replay", fake_load_replay)
     header, rows = _run_main_csv(
-        tmp_path, ["--replay", blg_path, "--replay-i-fc-clamp", str(clamp),
-                   "--rate", "200", "--duration", "0.05"],
-        name="replay_clamped.csv")
+        tmp_path, ["--replay", "fake_path_unused.BLG", "--replay-no-preamble",
+                   "--replay-i-fc-clamp", str(clamp),
+                   "--rate", "1000", "--duration", "0.005"],
+        name="replay_clamp_both_signs.csv")
     i_fc_idx = header.index("I_fc")
-    assert rows, "sanity: the run must have produced rows"
-    for r in rows:
-        cell = r[i_fc_idx]
-        if cell == "":
-            continue   # preamble/pre-observation rows may be blank
-        v = float(cell)
+    values = [float(r[i_fc_idx]) for r in rows if r[i_fc_idx] != ""]
+    assert values, "sanity: some I_fc values must have been recorded"
+    for v in values:
         assert -clamp - 1e-6 <= v <= clamp + 1e-6, (
             f"I_fc={v} escaped the +/-{clamp} A clamp")
+    # Both clamp branches must actually have fired -- not just be consistent
+    # with having fired.
+    assert max(values) == pytest.approx(clamp)
+    assert min(values) == pytest.approx(-clamp)
+    # And the in-band sample must have passed through UNCHANGED (the clamp
+    # is a ceiling/floor, not a rescale).
+    assert any(v == pytest.approx(0.2) for v in values)
 
 
 def test_replay_i_fc_clamp_meta_sidecar_records_the_value(tmp_path):

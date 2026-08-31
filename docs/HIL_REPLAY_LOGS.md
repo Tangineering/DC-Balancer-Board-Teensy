@@ -30,6 +30,16 @@ advertised as controller coverage. What the half genuinely tests is: *does the
 fw v22+ staged bring-up complete on this stimulus, and does the fault machinery
 make the right latch decision on it?*
 
+**Vacuous checks are now tagged, and counted.** Measured over the 26-entry campaign
+`20260830_203006`: **32 of 79 checks were vacuous** — `bounded_current` (24),
+`no_rail_limit_cycle` (4), `returns_off_rail` (3), `near_zero_current` (1) — because
+`current` is identically 0 A on every run. Four entries (ML0137, ML0140, ML0144,
+YP0166) carry *no* evidence about their own classification for this reason. A check
+whose command series is all-zero now carries a `**(vacuous — no commander …)**`
+marker in its detail, and each entry reports a substantive-vs-total count, so a green
+entry cannot read stronger than it is. The condition is measured per run, so the tag
+disappears by itself the day a commander is added.
+
 That buys two things the synthetic scenarios cannot:
 
 1. **Regression against real incidents.** A recorded VESC dead window, a handoff bus
@@ -45,9 +55,17 @@ That buys two things the synthetic scenarios cannot:
 ## 2. Policy: conformance vs deviation
 
 The mode of an entry is decided **by the firmware version the log was recorded on**,
-relative to the currently flashed target — **fw v21 = the fw v18 control law + the
-v19 share handoff slew + v20/v21 observability/HIL**. v19–v21 change no control
-semantics except the v19 share handoff slew.
+relative to the currently flashed target — **fw v23 = the fw v18 control law + the
+v19 share handoff slew + v20/v21 observability/HIL + the v22/v23 HIL sequencing and
+any-fault run-boundary recovery**. v19–v23 change no control semantics except the
+v19 share handoff slew.
+
+`TARGET_FW_VERSION` was bumped **21 → 23** on 2026-08-30c: it had never been raised
+for v22 or v23, so every report header claimed "fw v21" while the whole replay half
+in fact depends on the v22 staged bring-up completing and on the v23 between-run
+recovery. `COMPARABLE_FW_MIN` (18) is a **separate** constant and is unchanged, so no
+entry's conformance/deviation classification moves; the only consumer of
+`TARGET_FW_VERSION` is the report header's firmware expectation.
 
 | Mode | When | What the firmware must do |
 |---|---|---|
@@ -91,13 +109,24 @@ Replay is **open loop** (see `HIL_MODE.md` §"Fidelity caveat"). Concretely:
 
 ### 3a. Synthetic bring-up preamble (2026-08-30)
 
+> **`skip_preamble` entries must declare `persistent_fault: True`** — asserted at
+> import (`_assert_skip_preamble_entries()`), because the global assertion below
+> buys such an entry nothing. With no preamble the recorded stimulus starts at
+> t = 0, so its first `WARM_RESET_GRACE_S` seconds sit inside the excluded
+> fault-scoring window by construction, and **only a fault that PERSISTS past the
+> bound is scorable at all**. ML0217 is safe for exactly that reason and no other:
+> `INIT_FAIL` latches at ~0.3 s and holds for the remaining 37.6 s. A future entry
+> whose expected fault were transient and early would be judged on an empty window
+> and pass on nothing. The guard also requires at least one `fault_latched` check,
+> since a latch is what makes persistence true (State 99 does not clear).
+>
 > **Per-entry opt-out: `skip_preamble`.** An entry whose point is that bring-up
 > *fails* must replay raw — see ML0217 in §4b. For such an entry the preamble bound
 > is **0.0 s**, timestamps are unshifted (sim time = log time) and `replay_rec`
 > starts at 0. Everything that needs the bound resolves it through
 > `entry_preamble_s(entry)`; nothing hard-codes `REPLAY_PREAMBLE_S`.
 >
-> **Load-bearing ordering, asserted at import:**
+> **Load-bearing ordering, asserted at import (global case):**
 > `REPLAY_PREAMBLE_S >= WARM_RESET_GRACE_S`. If the preamble were shorter, the first
 > `(grace − preamble)` seconds of every recorded trajectory would fall inside the
 > excluded fault window (§3c) and a real early fault would vanish with no symptom.
@@ -203,6 +232,29 @@ Two consequences:
   other command checks are extremal (`bounded_current`, `no_sustained_rail`) or
   per-episode (`returns_off_rail`); a quiet preamble adds no episodes and cannot
   lower a maximum, so they are unaffected.
+
+### 3c-bis. Transient indication vs LATCH (2026-08-30c)
+
+The firmware **publishes** a fault bit as soon as the condition is indicated, and
+separately **latches** it — entering State 99 and ORing in `FAULT_ERROR` (`0x8000`) —
+once the condition survives its filter. So `fault_flags & BIT` answers *"was the
+condition ever indicated?"*, while `fault_flags & (BIT | FAULT_ERROR)` answers *"did
+the board actually latch on it?"*. Measured on this suite: **TP0010 indicates
+`UV_BUS` 321 ms before it latches, TP0053 536 ms before** — a real, reportable gap,
+not rounding.
+
+Both `fault_latched` and `fault_not_latched` use **latch** semantics (bit *and*
+`FAULT_ERROR`), on the reported time and on the end-of-run test. `fault_latched` also
+prints how far ahead of the latch the transient indication ran.
+
+**The `no_fault` + `fault_not_latched` pair is not redundant, and the seam is
+deliberate.** On a stimulus deep enough to produce a transient indication without a
+latch, `fault_not_latched` **passes** (its contract is only "this dip does not
+latch") while `no_fault` **fails** (its contract is "nothing was even indicated").
+`no_fault` is the strictly stronger claim. An entry that wants to permit a transient
+must drop `no_fault` — it must not weaken the pair. TP0178/TP0201 pass today because
+their recorded minima (12.1489 / 12.1853 V) never cross `LIMIT_V_BUS_MIN` at all, so
+neither check goes near the seam.
 
 ### 3d. Bring-up gate (2026-08-30)
 

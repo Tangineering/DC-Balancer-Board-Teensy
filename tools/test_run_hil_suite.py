@@ -413,6 +413,30 @@ def test_analyze_scenario_csv_last_obs_t_none_when_never_observed(tmp_path):
     assert m["n_obs_post_grace"] == 0
 
 
+# ── #4 (review, LOW): boundary equality -- t == grace_s lands POST-grace ────
+# Production code (`post = t is not None and t >= grace_s`) uses >=, i.e. it
+# skips strictly `t < grace_s`. Pin that convention directly so a future
+# <-to-<= (or >=-to->) typo fails a test instead of silently reclassifying
+# the one tick that sits exactly on the boundary.
+
+def test_analyze_scenario_csv_boundary_t_equals_grace_s_lands_post_grace(tmp_path):
+    rows = [{"t": "2.000000", "fault_flags": "0x0100", "state": "2"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    m = rhs.analyze_scenario_csv(str(path), grace_s=2.0)
+    assert m["n_obs_post_grace"] == 1
+    assert m["fault_bits_post_grace"] == 0x0100
+
+
+def test_analyze_scenario_csv_boundary_t_just_before_grace_s_excluded(tmp_path):
+    rows = [{"t": "1.999999", "fault_flags": "0x0100", "state": "2"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    m = rhs.analyze_scenario_csv(str(path), grace_s=2.0)
+    assert m["n_obs_post_grace"] == 0
+    assert m["fault_bits_post_grace"] == 0
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # 4. judge_scenario()
 # ─────────────────────────────────────────────────────────────────────────
@@ -452,8 +476,12 @@ def _metrics(n_obs=10, rows=10, final_fault_flags=0, fault_bits_seen=0, final_st
             "last_obs_t": last_obs_t}
 
 
-def _events(over_absmax=0, worst_ring_v=None):
-    return {"total": 0, "kinds": {}, "over_absmax": over_absmax, "worst_ring_v": worst_ring_v}
+def _events(over_absmax=0, worst_ring_v=None, worst_over_absmax_ring_v=None,
+           kinds=None, field_values=None):
+    return {"total": 0, "kinds": kinds or {}, "over_absmax": over_absmax,
+            "worst_ring_v": worst_ring_v,
+            "worst_over_absmax_ring_v": worst_over_absmax_ring_v,
+            "field_values": field_values or {}}
 
 
 def _child(status="ok", summary=None):
@@ -672,25 +700,85 @@ def test_judge_scenario_survive_to_fails_on_wrong_state_at_the_gate():
 
 
 def test_judge_scenario_events_require_scp_cut_passes_when_present():
+    """'scp-inrush' events_require is now the DICT form (2026-08-30c,
+    campaign follow-up (1)): exactly one scp_cut, its i_cut field inside
+    the [5.0, 8.0] A fold-plausibility band."""
+    expect = rhs.FAULT_EXPECTATIONS["scp-inrush"]["events_require"][0]
+    assert expect == {"kind": "scp_cut", "count": 1,
+                      "field": "i_cut", "min_value": 5.0, "max_value": 8.0}
     m = _metrics(fault_bits_seen=0, final_fault_flags=0)
-    events = _events()
-    events["kinds"] = {"scp_cut": 1}
+    events = _events(kinds={"scp_cut": 1},
+                     field_values={"scp_cut": {"i_cut": [6.29]}})
     passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
     ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
     assert ev["passed"] is True
+    assert passed is True
 
 
 def test_judge_scenario_events_require_scp_cut_fails_when_absent():
-    """'scp-inrush' requires no fault at all, but DOES require an scp_cut
-    event in the electrical sidecar -- absent, the whole judgement fails
-    even though every fault-bit check is clean."""
+    """'scp-inrush' requires no fault at all, but DOES require exactly one
+    scp_cut event in the electrical sidecar -- absent, the whole judgement
+    fails even though every fault-bit check is clean."""
     m = _metrics(fault_bits_seen=0, final_fault_flags=0)
     events = _events()   # kinds == {}
     passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
     assert passed is False
     ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
     assert ev["passed"] is False
-    assert "never fired" in ev["detail"]
+    assert "count 0, expected exactly 1" in ev["detail"]
+
+
+def test_judge_scenario_events_require_scp_cut_fails_on_wrong_count():
+    """More than one cut is a real change (with firmware attached, the
+    State-99 teardown opens MOT_PWR before the 64 ms retry re-arms, so the
+    retry cadence should never be reachable here) -- count != 1 fails even
+    though at least one scp_cut fired."""
+    m = _metrics(fault_bits_seen=0, final_fault_flags=0)
+    events = _events(kinds={"scp_cut": 3},
+                     field_values={"scp_cut": {"i_cut": [6.29, 6.1, 6.4]}})
+    passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
+    ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
+    assert ev["passed"] is False
+    assert "count 3, expected exactly 1" in ev["detail"]
+    assert passed is False
+
+
+def test_judge_scenario_events_require_scp_cut_fails_when_i_cut_outside_band():
+    """The i_cut plausibility band [5.0, 8.0] A: a cut outside it is not a
+    foldback event at all and must fail, even with the right count."""
+    m = _metrics(fault_bits_seen=0, final_fault_flags=0)
+    events = _events(kinds={"scp_cut": 1},
+                     field_values={"scp_cut": {"i_cut": [2.5]}})
+    passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
+    ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
+    assert ev["passed"] is False
+    assert "out of the [5, 8] plausibility band" in ev["detail"]
+    assert "2.500" in ev["detail"]
+
+
+def test_judge_scenario_events_forbid_over_absmax_pass_and_fail():
+    """scp-inrush must exercise the foldback WITHOUT producing the Death-5
+    boost-kill signature (events_forbid_over_absmax)."""
+    m = _metrics(fault_bits_seen=0, final_fault_flags=0)
+    clean_events = _events(over_absmax=0, kinds={"scp_cut": 1},
+                           field_values={"scp_cut": {"i_cut": [6.29]}})
+    passed, checks = rhs.judge_scenario("scp-inrush", m, clean_events, _child())
+    forbid = [c for c in checks if c["name"] == "events_no_over_absmax"][0]
+    assert forbid["passed"] is True
+    assert passed is True
+
+    ringing_events = _events(over_absmax=1, worst_over_absmax_ring_v=21.5,
+                             kinds={"scp_cut": 1},
+                             field_values={"scp_cut": {"i_cut": [6.29]}})
+    passed2, checks2 = rhs.judge_scenario("scp-inrush", m, ringing_events, _child())
+    forbid2 = [c for c in checks2 if c["name"] == "events_no_over_absmax"][0]
+    assert forbid2["passed"] is False
+    assert "Death-5" in forbid2["detail"]
+    assert passed2 is False
+
+
+def test_fault_expectations_scp_inrush_events_forbid_over_absmax_flag():
+    assert rhs.FAULT_EXPECTATIONS["scp-inrush"]["events_forbid_over_absmax"] is True
 
 
 def test_fault_expectations_schema_every_entry_has_a_nonempty_source():
@@ -700,7 +788,8 @@ def test_fault_expectations_schema_every_entry_has_a_nonempty_source():
 
 def test_fault_expectations_schema_only_known_fields():
     known = {"require", "allow_only", "not_before_s", "survive_to",
-            "events_require", "source", "signals_require"}
+            "events_require", "source", "signals_require",
+            "events_forbid_over_absmax"}
     for name, expect in rhs.FAULT_EXPECTATIONS.items():
         assert set(expect) <= known, (name, set(expect) - known)
 
@@ -957,6 +1046,30 @@ def test_scan_signals_filters_pre_grace_samples(tmp_path):
     assert "peak 0.1000" in checks[0]["detail"]
 
 
+# ── #4 (review, LOW): boundary equality -- t == grace_s is measured ────────
+# scan_signals() skips strictly `t < grace_s`; a row at EXACTLY t == grace_s
+# must be measured, not excluded.
+
+def test_scan_signals_boundary_t_equals_grace_s_is_measured(tmp_path):
+    rows = [{"t": "2.000000", "I_charge": "0.9", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "x", "column": "I_charge", "min_value": 0.5}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=2.0)
+    assert measured[0]["rows"] == 1
+    assert measured[0]["peak"] == pytest.approx(0.9)
+
+
+def test_scan_signals_boundary_t_just_before_grace_s_excluded(tmp_path):
+    rows = [{"t": "1.999999", "I_charge": "0.9", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "x", "column": "I_charge", "min_value": 0.5}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=2.0)
+    assert measured[0]["rows"] == 0
+    assert measured[0]["peak"] is None
+
+
 def test_scan_signals_missing_file_returns_empty_measurements():
     specs = [{"name": "x", "column": "I_charge", "min_value": 0.5}]
     out = rhs.scan_signals("/nonexistent/path/nope.csv", specs)
@@ -1082,13 +1195,30 @@ def test_judge_scenario_observation_frames_post_grace_detail_handles_missing_las
 
 
 def test_judge_scenario_sw_ring_over_absmax_fails_even_if_no_fault():
+    """Item 9: the abs-max banner reads worst_over_absmax_ring_v (the
+    over-abs-max SUBSET), not worst_ring_v (which item 9 now records
+    unconditionally, sub-abs-max rings included)."""
     m = _metrics(fault_bits_seen=0, final_fault_flags=0)
-    passed, checks = rhs.judge_scenario("steady", m, _events(over_absmax=2, worst_ring_v=21.5),
-                                        _child())
+    events = _events(over_absmax=2, worst_ring_v=21.5, worst_over_absmax_ring_v=21.5)
+    passed, checks = rhs.judge_scenario("steady", m, events, _child())
     assert passed is False
     ring = [c for c in checks if c["name"] == "sw_ring_over_absmax"][0]
     assert ring["passed"] is False
     assert "21.50" in ring["detail"]
+
+
+def test_judge_scenario_sw_ring_over_absmax_uses_over_absmax_subset_not_worst_ring():
+    """Item 9 regression: worst_ring_v may be a SUB-abs-max ring (e.g. from a
+    different, cleaner switching event) while worst_over_absmax_ring_v is
+    the actual over-abs-max peak -- the banner must report the latter, not
+    accidentally the former."""
+    m = _metrics(fault_bits_seen=0, final_fault_flags=0)
+    events = _events(over_absmax=1, worst_ring_v=17.578,          # sub-abs-max, lower
+                     worst_over_absmax_ring_v=21.5)                # the real over-abs-max peak
+    _passed, checks = rhs.judge_scenario("steady", m, events, _child())
+    ring = [c for c in checks if c["name"] == "sw_ring_over_absmax"][0]
+    assert "21.50" in ring["detail"]
+    assert "17.58" not in ring["detail"]
 
 
 def test_judge_scenario_child_process_failure_fails():
@@ -1145,6 +1275,28 @@ def test_analyze_events_counts_by_kind_and_over_absmax(tmp_path):
     assert out["kinds"] == {"boost_ovp": 1, "sw_ring": 3, "scp_cut": 1}
     assert out["over_absmax"] == 2
     assert out["worst_ring_v"] == pytest.approx(25.9)
+    assert out["worst_over_absmax_ring_v"] == pytest.approx(25.9)
+
+
+def test_analyze_events_field_values_collected_per_kind(tmp_path):
+    """Item 3: analyze_events() collects every numeric field, keyed by event
+    kind, so a events_require spec can pin a plausibility band on one (e.g.
+    scp_cut's i_cut) -- 't'/'kind'/'switch' and booleans are excluded."""
+    lines = [
+        {"kind": "scp_cut", "switch": "MOT_PWR", "cut_count": 1, "i_cut": 6.29, "t": 0.6},
+        {"kind": "scp_cut", "switch": "MOT_PWR", "cut_count": 2, "i_cut": 6.10, "t": 0.664},
+        {"kind": "sw_ring", "switch": "FC_BUS", "over_absmax": False, "peak_v": 17.578},
+    ]
+    path = tmp_path / "events.jsonl"
+    with open(path, "w", encoding="utf-8") as fh:
+        for e in lines:
+            fh.write(json.dumps(e) + "\n")
+    out = rhs.analyze_events(str(path))
+    assert out["field_values"]["scp_cut"]["i_cut"] == [pytest.approx(6.29), pytest.approx(6.10)]
+    assert out["field_values"]["scp_cut"]["cut_count"] == [1.0, 2.0]
+    assert "t" not in out["field_values"]["scp_cut"]
+    assert "switch" not in out["field_values"]["scp_cut"]
+    assert out["field_values"]["sw_ring"]["peak_v"] == [pytest.approx(17.578)]
 
 
 def test_analyze_events_ignores_blank_and_malformed_lines(tmp_path):
@@ -1159,13 +1311,39 @@ def test_analyze_events_ignores_blank_and_malformed_lines(tmp_path):
     assert out["kinds"] == {"boost_ovp": 2}
 
 
-def test_analyze_events_no_over_absmax_ring_events_leaves_worst_none(tmp_path):
+def test_analyze_events_worst_ring_v_recorded_unconditionally(tmp_path):
+    """Item 9: worst_ring_v is now recorded for EVERY sw_ring event, not just
+    ones flagged over_absmax -- a sub-abs-max ring used to be invisible
+    (campaign 20260830_203006's 17.578 V FC-open ring, 0.078 V over
+    LIMIT_V_BUS_MAX, appeared nowhere in REPORT.md). worst_over_absmax_ring_v
+    is the SEPARATE, narrower subset and stays None when nothing crossed the
+    abs-max."""
     path = tmp_path / "events.jsonl"
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(json.dumps({"kind": "sw_ring", "over_absmax": False, "peak_v": 12.0}) + "\n")
     out = rhs.analyze_events(str(path))
     assert out["over_absmax"] == 0
-    assert out["worst_ring_v"] is None
+    assert out["worst_ring_v"] == pytest.approx(12.0)
+    assert out["worst_over_absmax_ring_v"] is None
+
+
+def test_analyze_events_worst_over_absmax_ring_v_is_the_over_absmax_subset(tmp_path):
+    """worst_ring_v is the max across ALL rings; worst_over_absmax_ring_v is
+    the max across only the ones flagged over_absmax -- and they can differ,
+    as here where the single biggest ring is NOT the over-abs-max one."""
+    lines = [
+        {"kind": "sw_ring", "over_absmax": False, "peak_v": 30.0},   # biggest overall
+        {"kind": "sw_ring", "over_absmax": True, "peak_v": 21.5},    # biggest over-abs-max
+        {"kind": "sw_ring", "over_absmax": True, "peak_v": 20.5},
+    ]
+    path = tmp_path / "events.jsonl"
+    with open(path, "w", encoding="utf-8") as fh:
+        for e in lines:
+            fh.write(json.dumps(e) + "\n")
+    out = rhs.analyze_events(str(path))
+    assert out["over_absmax"] == 2
+    assert out["worst_ring_v"] == pytest.approx(30.0)
+    assert out["worst_over_absmax_ring_v"] == pytest.approx(21.5)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1178,13 +1356,17 @@ def _fake_child(rc=0, status="ok", achieved_hz=1000.0, log="run.log"):
                        "rx_frames": 998, "rx_bad": 0, "max_overrun_ms": 0.5}}
 
 
-def _fake_scenario_result(name="steady", passed=True, fault_bits=0, over_absmax=0):
+def _fake_scenario_result(name="steady", passed=True, fault_bits=0, over_absmax=0,
+                          worst_ring_v=None):
     metrics = {"csv": "x.csv", "rows": 100, "n_obs": 100,
                "final_fault_flags": fault_bits, "fault_bits_seen": fault_bits,
                "final_state": 2, "duration_s": 30.0,
                "substep_hz_min": None, "substep_hz_mean": None}
+    if worst_ring_v is None:
+        worst_ring_v = 21.0 if over_absmax else None
     events = {"total": 0, "kinds": {}, "over_absmax": over_absmax,
-              "worst_ring_v": 21.0 if over_absmax else None}
+              "worst_ring_v": worst_ring_v,
+              "worst_over_absmax_ring_v": worst_ring_v if over_absmax else None}
     checks = [{"name": "observation_frames", "passed": True, "detail": "ok"}]
     return {"kind": "scenario", "name": name, "mode": "hifi",
             "electrical_required": "any", "description": "test scenario",
@@ -1265,6 +1447,45 @@ def test_render_report_no_over_absmax_finding_when_absent():
     results = [_fake_scenario_result(over_absmax=0)]
     report = rhs.render_report(_fake_meta(), results)
     assert "No `sw_ring` event above the 20 V abs-max" in report
+
+
+def test_render_report_worst_ring_line_shown_even_when_sub_absmax():
+    """Item 9: the per-run 'worst estimated switching-ring peak' line must
+    appear whenever worst_ring_v is not None, REGARDLESS of over_absmax --
+    campaign 20260830_203006's 17.578 V FC-open ring (sub-abs-max) used to
+    be invisible in REPORT.md entirely."""
+    results = [_fake_scenario_result(over_absmax=0, worst_ring_v=17.578)]
+    results[0]["events"]["total"] = 1     # the per-run line is gated on ev["total"]
+    results[0]["events"]["kinds"] = {"sw_ring": 1}
+    report = rhs.render_report(_fake_meta(), results)
+    assert "worst estimated switching-ring peak" in report
+    assert "17.578" in report
+    assert "LIMIT_V_BUS_MAX" in report
+
+
+def test_render_report_worst_ring_line_absent_when_never_measured():
+    results = [_fake_scenario_result(over_absmax=0, worst_ring_v=None)]
+    report = rhs.render_report(_fake_meta(), results)
+    assert "worst estimated switching-ring peak" not in report
+
+
+def test_render_report_sub_absmax_rings_above_limit_v_bus_max_section():
+    """Item 9: when NO result crossed the 20 V abs-max at all, a result
+    whose worst_ring_v is nonetheless above LIMIT_V_BUS_MAX (17.5 V) is
+    still surfaced, in the 'Known open findings' section -- the only place
+    it would otherwise show up nowhere in the whole report."""
+    results = [_fake_scenario_result(name="handoff-sag", over_absmax=0,
+                                     worst_ring_v=17.578)]
+    report = rhs.render_report(_fake_meta(), results)
+    assert "No `sw_ring` event above the 20 V abs-max" in report
+    assert "Sub-abs-max rings above `LIMIT_V_BUS_MAX`" in report
+    assert "`handoff-sag`: worst estimated ring peak 17.578 V" in report
+
+
+def test_render_report_sub_absmax_section_absent_when_all_rings_under_limit():
+    results = [_fake_scenario_result(over_absmax=0, worst_ring_v=12.0)]
+    report = rhs.render_report(_fake_meta(), results)
+    assert "Sub-abs-max rings above" not in report
 
 
 def test_render_report_aborted_meta_shown():
@@ -1429,6 +1650,61 @@ def test_m4_run_plan_calls_write_outputs_after_every_run(monkeypatch):
     # After run 2 (the last one): 2 results recorded, plan complete.
     assert calls[1][0] == 2
     assert calls[1][1]["partial"] is False
+
+
+def test_run_plan_replay_key_metrics_shows_substantive_vacuous_split(monkeypatch):
+    """Item 5: a replay run's key_metrics string must say how many of its
+    passing checks were VACUOUS (no commander -> current identically 0 A) --
+    "%d/%d checks passed" alone counts vacuous checks alongside real ones and
+    reads stronger than the run actually is."""
+    def fake_run_child(item, args):
+        return {"status": "ok", "returncode": 0, "wall_s": 0.01, "log": item["log"],
+                "summary": {"achieved_hz": 1000.0, "tx_frames": 10, "rx_frames": 10,
+                           "rx_bad": 0}}
+
+    def fake_evaluate_replay_csv(entry, csv_path):
+        return {"passed": True,
+               "checks": [{"name": "no_fault", "passed": True, "detail": "..."},
+                          {"name": "bc", "passed": True, "detail": "vacuous-tagged"}],
+               "notes": [], "n_obs": 10,
+               "n_checks_vacuous": 1, "n_checks_substantive": 1}
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+    monkeypatch.setattr(rhs, "evaluate_replay_csv", fake_evaluate_replay_csv)
+
+    args = _args(only=["ML0146"], keep_going=True, settle_s=0.0)
+    plan = rhs.build_plan(args)
+    assert len(plan) == 1
+
+    results, _aborted = rhs._run_plan(plan, args, [], [], lambda m, r: None)
+    assert len(results) == 1
+    r = results[0]
+    assert r["n_checks_vacuous"] == 1
+    assert r["n_checks_substantive"] == 1
+    assert "2/2 checks passed" in r["key_metrics"]
+    assert "1 substantive, 1 vacuous" in r["key_metrics"]
+
+
+def test_run_plan_replay_key_metrics_omits_split_when_nothing_vacuous(monkeypatch):
+    def fake_run_child(item, args):
+        return {"status": "ok", "returncode": 0, "wall_s": 0.01, "log": item["log"],
+                "summary": {"achieved_hz": 1000.0}}
+
+    def fake_evaluate_replay_csv(entry, csv_path):
+        return {"passed": True,
+               "checks": [{"name": "no_fault", "passed": True, "detail": "..."}],
+               "notes": [], "n_obs": 10,
+               "n_checks_vacuous": 0, "n_checks_substantive": 1}
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+    monkeypatch.setattr(rhs, "evaluate_replay_csv", fake_evaluate_replay_csv)
+
+    args = _args(only=["ML0146"], keep_going=True, settle_s=0.0)
+    plan = rhs.build_plan(args)
+    results, _aborted = rhs._run_plan(plan, args, [], [], lambda m, r: None)
+    r = results[0]
+    assert r["key_metrics"].startswith("1/1 checks passed")
+    assert "vacuous" not in r["key_metrics"]
 
 
 def test_m4_run_plan_results_list_is_the_same_object_mutated_in_place(monkeypatch):
@@ -2424,6 +2700,33 @@ def test_judge_warm_resets_d4_no_note_when_observed_equals_mid_run():
     check, note, reason = rhs.judge_warm_resets(
         "steady", "scenario", _wr_counts(mid_run=0, observed=0), "meta.json")
     assert note is None
+
+
+def test_judge_warm_resets_item10_renders_only_in_grace_timestamps():
+    """Item 10: `times` carries EVERY observed transition, mid-run ones
+    included -- the note must render ONLY the in-grace subset. The exact
+    comm-loss bug this fixes: 'at t=0.5, 7.5' where 7.5 was the scenario's
+    OWN designed mid-run recovery, not a second in-grace event."""
+    check, note, reason = rhs.judge_warm_resets(
+        "steady", "scenario",
+        _wr_counts(mid_run=0, observed=1, times=[0.5, 7.5]), "meta.json")
+    assert note is not None
+    assert "0.5" in note
+    assert "7.5" not in note
+
+
+def test_judge_warm_resets_item10_no_in_grace_timestamp_fallback():
+    """When `times` exist but NONE is in-grace (the list is capped, or the
+    clocks disagree), the note must say so explicitly rather than printing
+    mid-run times under an 'in-grace' heading."""
+    check, note, reason = rhs.judge_warm_resets(
+        "steady", "scenario",
+        _wr_counts(mid_run=0, observed=1, times=[7.5, 12.0]), "meta.json")
+    assert note is not None
+    assert "no in-grace timestamp available" in note
+    assert "7.5" in note and "12" in note
+    assert rhs.WARM_RESET_GRACE_S is not None
+    assert ("%.1f" % rhs.WARM_RESET_GRACE_S) in note
 
 
 def test_judge_warm_resets_d4_note_alongside_a_real_mid_run_reset():

@@ -74,6 +74,15 @@ from hil_plant_sim import (                                        # noqa: E402
 # provoked would be silently dropped — a false PASS with no symptom anywhere.
 # Shortening the preamble without re-deriving the grace bound is exactly the change
 # this catches.
+# The same guard, per entry, for the case that VOIDS it (campaign F4 / round-2
+# reviewer): a `skip_preamble` entry has NO preamble, so its recorded stimulus
+# starts at t = 0 and its first WARM_RESET_GRACE_S seconds sit inside the excluded
+# fault window by construction.  ML0217 is safe only because its INIT_FAIL latches
+# at ~0.3 s and PERSISTS for the remaining 37.6 s, so the post-grace samples still
+# carry it.  An entry whose expected fault were TRANSIENT and early would be
+# scored on an empty window and pass on nothing at all.  Any skip_preamble entry
+# must therefore assert that its expectation is persistent — see
+# _assert_skip_preamble_entries() below, which runs at import.
 assert REPLAY_PREAMBLE_S >= WARM_RESET_GRACE_S, (
     "REPLAY_PREAMBLE_S (%.3f s) must be >= WARM_RESET_GRACE_S (%.3f s): the fault "
     "checks exclude everything before the grace bound, so a shorter preamble would "
@@ -134,6 +143,11 @@ FAULT_NAMES = {
 # teensy_controller/teensy_controller.ino:1258
 #   #define LIMIT_V_BUS_MIN  12.0f   // V — minimum VBUS while the bus is armed
 LIMIT_V_BUS_MIN_V = 12.0
+# teensy_controller/teensy_controller.ino:1305
+#   #define LIMIT_V_BUS_MAX (V_BUS_NOMINAL + 1.5f)   // 16.0 + 1.5 = 17.5 V
+# (TPS61288 hardware OVP is 19 V; the 20 V abs-max above that is V_ABSMAX in
+# hil_electrical.py.)  Re-exported for run_hil_suite.py's ring reporting.
+LIMIT_V_BUS_MAX_V = 17.5
 # teensy_controller/teensy_controller.ino:1284
 #   #define UV_BUS_DWELL_LATCH_MS 20.0f  // ms of accumulated net under-dwell → latch
 UV_BUS_DWELL_LATCH_MS = 20.0
@@ -255,10 +269,23 @@ FW_DELTA_NOTES = {
     19:   "fw v19: fw v18 law plus the share handoff slew; drive channel unchanged.",
     20:   "fw v20: observability only (BLG v7 encoder counters/phase/duty).",
     21:   "fw v21: HIL mode; no control-semantics change vs v18/v19.",
+    22:   "fw v22: HIL sequential runs (State-0 injection-link wait gate + closed-loop "
+          "staged bring-up under HIL_SIM); no control-semantics change.",
+    23:   "fw v23: HIL any-fault run-boundary recovery; no control-semantics change. "
+          "THE FLASHED TARGET.",
 }
 
 # The firmware version currently flashed / targeted by this suite.
-TARGET_FW_VERSION = 21
+# 21 -> 23 (2026-08-30): never bumped when fw v22 (HIL sequential runs, closed-loop
+# staged bring-up under HIL_SIM) and fw v23 (any-fault run-boundary recovery)
+# shipped. Both are load-bearing for this suite — the whole replay half now depends
+# on the v22 staged bring-up completing and on the v23 between-run recovery — so a
+# report claiming "fw v21" was misdescribing what it ran against. Consumers checked:
+# run_hil_suite.py uses it for the report header's firmware expectation only
+# (meta["target_fw"], rendered in REPORT.md); COMPARABLE_FW_MIN (18) is a SEPARATE
+# constant and is unchanged, so no entry's conformance/stability classification
+# moves. FW_DELTA_NOTES gains v22/v23 rows below.
+TARGET_FW_VERSION = 23
 # Logs at or above this fw version share the current control law AND wheel.
 COMPARABLE_FW_MIN = 18
 
@@ -413,6 +440,12 @@ REPLAY_SUITE = [
         "provisional": True,
         "skip_bringup_gate": True,
         "skip_preamble": True,
+        # Required alongside skip_preamble (see _assert_skip_preamble_entries()):
+        # this entry's first 2.0 s of RECORDED stimulus sit inside the excluded
+        # fault window, so it is only scorable because INIT_FAIL latches at ~0.3 s
+        # and HOLDS for the remaining 37.6 s. Measured on hardware, campaign
+        # 20260830_203006.
+        "persistent_fault": True,
         "checks": [{"kind": "fault_latched", "name": "init_fail_latched",
                     "bit": FAULT_INIT_FAIL, "require_stimulus": False},
                    {"kind": "bounded_current", "name": "bounded_current"}],
@@ -757,6 +790,42 @@ def suite_index():
     return {e["log"]: e for e in REPLAY_SUITE}
 
 
+def _assert_skip_preamble_entries():
+    """Import-time guard for the case that voids the preamble >= grace assertion.
+
+    Campaign finding F4 (independently found by the round-2 reviewer): the global
+    assertion buys nothing for an entry that has NO preamble.  Such an entry's
+    recorded stimulus starts at t = 0, so its first WARM_RESET_GRACE_S seconds are
+    inside the excluded fault window by construction, and only a PERSISTENT expected
+    fault survives to be scored.  ML0217 is safe for exactly that reason and no
+    other: INIT_FAIL latches at ~0.3 s and holds for the remaining 37.6 s.
+
+    An entry added later whose expected fault is transient and early would be judged
+    on an empty window and PASS on nothing.  So a skip_preamble entry must say, in
+    the table, that it knows this: `persistent_fault: True` plus at least one
+    `fault_latched` check (a latched fault is persistent by definition — State 99
+    does not clear).  Fails loudly at import rather than quietly at score time."""
+    for e in REPLAY_SUITE:
+        if not e.get("skip_preamble"):
+            continue
+        log = e.get("log")
+        assert e.get("persistent_fault") is True, (
+            f"REPLAY_SUITE[{log!r}] sets skip_preamble, which places its first "
+            f"{WARM_RESET_GRACE_S:.1f}s of RECORDED stimulus inside the excluded "
+            f"fault-scoring window. That is only safe if the expected fault "
+            f"PERSISTS past the bound. Declare `persistent_fault: True` (and say "
+            f"why in `why`) if it does; if it does not, this entry cannot use "
+            f"skip_preamble — it would be scored on an empty window.")
+        assert any(c.get("kind") == "fault_latched" for c in e.get("checks", [])), (
+            f"REPLAY_SUITE[{log!r}] declares persistent_fault with no "
+            f"`fault_latched` check. Persistence is only established by a latch "
+            f"(State 99 does not clear); a `no_fault`-style expectation on a "
+            f"skip_preamble entry proves nothing about the excluded window.")
+
+
+_assert_skip_preamble_entries()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CSV parsing.
 #
@@ -818,6 +887,20 @@ class ReplayCsv:
             if (f & bit) if bit is not None else f:
                 return t
         return None
+
+    def command_is_identically_zero(self):
+        """True when the observed motor command is 0 A on EVERY sample.
+
+        Campaign finding F6: replay mode constructs no commander, so no replayed run
+        ever reaches State 2 and `current` is 0.0000 A throughout — 32 of the half's
+        79 checks (bounded_current, no_rail_limit_cycle, returns_off_rail,
+        near_zero_current) are then VACUOUSLY TRUE.  They still assert something
+        real ("the firmware did not drive on an uncommanded stimulus"), but they
+        carry no evidence about the entry's own classification, and a reader
+        counting green ticks cannot tell the difference.  Measured, not assumed, so
+        the tag disappears by itself the day a commander is added."""
+        return bool(self.current) and all(i == 0.0 for _t, i in self.current)
+
 
     def carried_in_bits(self):
         """Fault bits seen ONLY before the grace bound — the predecessor's latch."""
@@ -886,18 +969,40 @@ def _fault_names(bits):
 
 
 def _whole_run_first_note(data, bit=None):
-    """L1: name the WHOLE-RUN first observation when it precedes the grace bound.
+    """Name the WHOLE-RUN first observation when it precedes the grace bound.
 
-    Every time a check prints is necessarily a first POST-GRACE observation.  For a
-    fault that latched earlier and persisted (ML0217's INIT_FAIL at ~0.3 s), that
-    number describes the filter, not the event — so the real one is shown beside
-    it.  Silent when the two coincide."""
+    Every time a check prints is necessarily a first POST-GRACE observation, so when
+    a bit was ALSO seen earlier the reader needs to know which story that earlier
+    sighting tells.  There are two, and the campaign report (F1) caught the first
+    version of this asserting the wrong one on ML0203/ML0169/TP0053:
+
+      PERSISTED   the bit is still set on the LAST pre-grace sample, so it latched
+                  early and the grace filter is looking at that same latch.
+                  ML0217's INIT_FAIL at ~0.3 s is the standing example.
+      CARRIED-IN  the bit was set early and is GONE by the end of the pre-grace
+                  window — the predecessor run's settle latch, cleared by the fw v23
+                  warm reset at t ~= 0.5 s.  The post-grace sighting is then a
+                  SEPARATE, later event that merely shares a bit.
+
+    Deciding on the LAST pre-grace sample rather than on "was it ever seen early" is
+    exactly what separates the two; they are indistinguishable to a reader otherwise,
+    and calling a carried-in latch "PERSISTED" invents a fault the run never had."""
     t0 = data.first_fault_t(bit)
     if t0 is None or t0 >= data.grace_s:
         return ""
-    return (f" (whole-run first observation t={t0:.3f}s — it latched BEFORE the "
-            f"{data.grace_s:.1f}s grace bound and PERSISTED, which is why the "
-            f"grace filter still sees it)")
+    last_pre = data.faults_pre_grace[-1] if data.faults_pre_grace else None
+    still_set = last_pre is not None and (
+        (last_pre[1] & bit) if bit is not None else last_pre[1])
+    if still_set:
+        return (f" (whole-run first observation t={t0:.3f}s — it latched BEFORE the "
+                f"{data.grace_s:.1f}s grace bound and was STILL SET on the last "
+                f"pre-grace sample, i.e. it PERSISTED, which is why the grace filter "
+                f"still sees it)")
+    if last_pre is None:
+        return f" (also seen at t={t0:.3f}s, before the grace bound)"
+    return (f" (also seen at t={t0:.3f}s but CLEARED by t={last_pre[0]:.3f}s — that "
+            f"earlier sighting is the predecessor run's carried-in settle latch, NOT "
+            f"this one; the post-grace occurrence is a separate, later event)")
 
 
 def _carried_in_note(data):
@@ -934,17 +1039,53 @@ def check_no_fault(data, spec):
                   f"t >= {data.grace_s:.1f}s{_carried_in_note(data)}")
 
 
+# ── TRANSIENT INDICATION vs LATCH — the contract both fault checks share ────
+# The firmware PUBLISHES a fault bit as soon as the condition is indicated, and
+# separately LATCHES it (State 99) by ORing in FAULT_ERROR 0x8000 once the
+# condition survives its filter.  So `fault_flags & BIT` alone answers "was the
+# condition ever indicated?", while `fault_flags & (BIT | FAULT_ERROR)` answers
+# "did the board actually latch on it?".  Measured on this suite: TP0010 indicates
+# UV_BUS 321 ms before it latches, TP0053 536 ms before — a real and reportable
+# gap, not rounding.
+#
+# The two checks deliberately use DIFFERENT halves of that contract, and the
+# asymmetry is the point:
+#   check_fault_latched     -> LATCH semantics (bit AND FAULT_ERROR).  The entry
+#                              promises the board latches; a transient indication
+#                              that self-clears is not that promise kept.
+#   check_fault_not_latched -> LATCH semantics too (its name is its contract): a
+#                              sub-latch transient dip must NOT fail an entry that
+#                              only ever promised "this dip does not latch UV".
+# CONSEQUENCE, stated because it is a real seam (campaign finding F5): an entry
+# pairing `no_fault` with `fault_not_latched` is NOT redundant. On a stimulus deep
+# enough to produce a transient indication without a latch, `fault_not_latched`
+# passes and `no_fault` FAILS — correctly, and by design. `no_fault` is the
+# stronger claim ("nothing was even indicated"); if a future entry wants to permit
+# a transient it must drop `no_fault`, not weaken this pair. TP0178/TP0201 pass
+# today because their recorded minima (12.1489/12.1853 V) never cross
+# LIMIT_V_BUS_MIN at all, so neither check is exercised near the seam.
 def check_fault_not_latched(data, spec):
-    """A specific bit must never appear post-grace (the negative UV cases)."""
+    """A specific bit must never LATCH post-grace (the negative UV cases).
+
+    Latch semantics: bit AND FAULT_ERROR. See the contract note above for why a
+    bare transient indication does not fail this check but does fail `no_fault`."""
     bit = int(spec["bit"])
-    hits = [(t, f) for t, f in data.faults if f & bit]
     if not data.faults:
         return False, (f"no observation frames at or after t={data.grace_s:.1f}s")
-    if hits:
-        return False, (f"{_fault_names(bit)} set at t={hits[0][0]:.3f}s "
-                       f"({len(hits)} ticks) — the recorded dip should NOT latch it")
-    return True, (f"{_fault_names(bit)} never set across {len(data.faults)} ticks "
-                  f"at t >= {data.grace_s:.1f}s{_carried_in_note(data)}")
+    latched = [(t, f) for t, f in data.faults if (f & bit) and (f & FAULT_ERROR)]
+    if latched:
+        return False, (f"{_fault_names(bit)} LATCHED at t={latched[0][0]:.3f}s "
+                       f"({len(latched)} ticks with FAULT_ERROR also set) — the "
+                       f"recorded dip should NOT latch it")
+    indicated = [t for t, f in data.faults if f & bit]
+    note = ""
+    if indicated:
+        note = (f"; NOTE {_fault_names(bit)} was transiently INDICATED on "
+                f"{len(indicated)} tick(s) from t={indicated[0]:.3f}s without ever "
+                f"latching — allowed here (this check promises no LATCH), but a "
+                f"`no_fault` check on the same entry will fail on it")
+    return True, (f"{_fault_names(bit)} never latched across {len(data.faults)} "
+                  f"ticks at t >= {data.grace_s:.1f}s{note}{_carried_in_note(data)}")
 
 
 def check_fault_latched(data, spec):
@@ -995,16 +1136,31 @@ def check_fault_latched(data, spec):
             return False, (f"suite error: require_stimulus is set for "
                            f"{_fault_names(bit)}, which has no stimulus model here. "
                            f"Add one, or set require_stimulus: False deliberately.")
-    hits = [t for t, f in data.faults if f & bit]
+    # F2/F3: LATCH semantics — bit AND FAULT_ERROR, on both the reported time and
+    # the end-of-run test.  Reporting the first sample with the bit alone reports
+    # the TRANSIENT INDICATION, which on this suite is 321 ms (TP0010) / 536 ms
+    # (TP0053) before the real latch; and an end test on the bare bit would accept
+    # a run whose indication was still flapping at the last sample.
+    hits = [t for t, f in data.faults if (f & bit) and (f & FAULT_ERROR)]
+    indicated = [t for t, f in data.faults if f & bit]
     end_flags = data.faults[-1][1]
     if not hits:
         extra = f" (stimulus qualifies from t={stim_t:.3f}s)" if stim_t is not None else ""
+        if indicated:
+            return False, (f"{_fault_names(bit)} was INDICATED from "
+                           f"t={indicated[0]:.3f}s but never LATCHED — FAULT_ERROR "
+                           f"was never set alongside it{extra}")
         return False, f"{_fault_names(bit)} was never set{extra}"
-    if not (end_flags & bit):
-        return False, (f"{_fault_names(bit)} set at t={hits[0]:.3f}s but CLEARED by the "
-                       f"end of the run (final 0x{end_flags:04X}) — it must LATCH")
-    return True, (f"{_fault_names(bit)} latched; first POST-GRACE observation at "
-                  f"t={hits[0]:.3f}s"
+    if not (end_flags & bit and end_flags & FAULT_ERROR):
+        return False, (f"{_fault_names(bit)} latched at t={hits[0]:.3f}s but was "
+                       f"CLEARED by the end of the run (final 0x{end_flags:04X}) — "
+                       f"it must LATCH and hold")
+    lead = ""
+    if indicated and indicated[0] < hits[0]:
+        lead = (f" (transiently indicated {1000.0 * (hits[0] - indicated[0]):.0f} ms "
+                f"earlier, at t={indicated[0]:.3f}s, before the filter latched)")
+    return True, (f"{_fault_names(bit)} LATCHED (bit + FAULT_ERROR); first "
+                  f"POST-GRACE latched observation at t={hits[0]:.3f}s{lead}"
                   + _whole_run_first_note(data, bit)
                   + (f", stimulus qualified from t={stim_t:.3f}s" if stim_t is not None else ""))
 
@@ -1077,6 +1233,17 @@ def _uv_stimulus_qualifies(data):
     return False, None, peak
 
 
+VACUOUS_TAG = (" **(vacuous — no commander in replay mode, so the command is "
+               "identically 0 A; this check asserts only that the firmware did NOT "
+               "drive on an uncommanded stimulus, and carries no evidence about "
+               "this entry's own classification)**")
+
+
+def _vacuous_suffix(data):
+    """Item 5: tag a command-shape check whose series is identically zero."""
+    return VACUOUS_TAG if data.command_is_identically_zero() else ""
+
+
 def check_bounded_current(data, spec):
     """|current| never exceeds the firmware's own clamp."""
     limit = float(spec.get("limit_a", MOTOR_I_CMD_MAX_A)) + I_CMD_EPS_A
@@ -1085,7 +1252,8 @@ def check_bounded_current(data, spec):
     worst_t, worst = max(data.current, key=lambda tv: abs(tv[1]))
     if abs(worst) > limit:
         return False, f"|I_cmd| reached {worst:+.4f} A at t={worst_t:.3f}s (limit {limit:.2f} A)"
-    return True, f"peak |I_cmd| {worst:+.4f} A at t={worst_t:.3f}s, within ±{limit:.2f} A"
+    return True, (f"peak |I_cmd| {worst:+.4f} A at t={worst_t:.3f}s, within "
+                  f"±{limit:.2f} A{_vacuous_suffix(data)}")
 
 
 def _rail_episodes(series, level):
@@ -1119,7 +1287,7 @@ def check_no_sustained_rail(data, spec):
         return False, (f"rail episode of {longest[0]:.3f}s at t={longest[1]:.3f}s "
                        f"(sign {longest[2]:+d}) exceeds {max_s:.2f}s")
     return True, (f"{len(eps)} rail episode(s), longest {longest[0]:.3f}s "
-                  f"(limit {max_s:.2f}s)")
+                  f"(limit {max_s:.2f}s){_vacuous_suffix(data)}")
 
 
 def check_no_rail_limit_cycle(data, spec):
@@ -1149,7 +1317,7 @@ def check_no_rail_limit_cycle(data, spec):
         return False, (f"{alts} rail-to-rail alternations over {span:.2f}s = "
                        f"{rate:.2f}/s (limit {max_rate:.2f}/s) — looks like a limit cycle")
     return True, (f"{alts} rail-to-rail alternations over {span:.2f}s = {rate:.2f}/s "
-                  f"(limit {max_rate:.2f}/s)")
+                  f"(limit {max_rate:.2f}/s){_vacuous_suffix(data)}")
 
 
 def check_returns_off_rail(data, spec):
@@ -1169,7 +1337,7 @@ def check_returns_off_rail(data, spec):
         return False, "no observation frames in the CSV"
     eps = _rail_episodes(data.current, rail_level)
     if not eps:
-        return True, "no rail episodes to return from"
+        return True, "no rail episodes to return from" + _vacuous_suffix(data)
     t_end_csv = data.current[-1][0]
     worst = None
     pinned_to_end = None
@@ -1225,7 +1393,8 @@ def check_near_zero_current(data, spec):
     if abs(worst) > max_abs:
         return False, (f"|I_cmd| reached {worst:+.4f} A at t={worst_t:.3f}s, above the "
                        f"{max_abs:.2f} A 'not driving' bound")
-    return True, f"peak |I_cmd| {worst:+.4f} A, within ±{max_abs:.2f} A"
+    return True, (f"peak |I_cmd| {worst:+.4f} A, within "
+                  f"±{max_abs:.2f} A{_vacuous_suffix(data)}")
 
 
 CHECK_KINDS = {
@@ -1378,6 +1547,21 @@ def evaluate_replay_csv(entry, csv_path):
         all_passed = all_passed and passed
         result["checks"].append({"name": name, "passed": passed, "detail": detail})
 
+    # Item 5: substantive-vs-total counts, so a reader can see how much of a green
+    # entry is actually evidence.  A check is "vacuous" here only in the precise,
+    # measured sense above: its detail carries the tag.
+    n_total = len(result["checks"])
+    n_vacuous = sum(1 for c in result["checks"] if VACUOUS_TAG in c["detail"])
+    result["n_checks"] = n_total
+    result["n_checks_vacuous"] = n_vacuous
+    result["n_checks_substantive"] = n_total - n_vacuous
+    if n_vacuous:
+        result["notes"].append(
+            f"{n_vacuous} of {n_total} checks are VACUOUS on this run: replay mode "
+            f"builds no commander, so the board never leaves Idle and the motor "
+            f"command is identically 0 A. Those checks assert only that the firmware "
+            f"did not drive on an uncommanded stimulus. SUBSTANTIVE checks: "
+            f"{n_total - n_vacuous}.")
     result["passed"] = all_passed and bool(entry.get("checks"))
     if not entry.get("checks"):
         result["checks"].append({"name": "checks", "passed": False,

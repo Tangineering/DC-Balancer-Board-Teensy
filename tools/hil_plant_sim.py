@@ -200,6 +200,22 @@ V_BUS_NOMINAL = 16.0     # V   the firmware's own constant; kept for reference
 # measured 0.074 V/A.  Nothing in the repo explains the discrepancy yet; the hi-fi
 # electrical engine (hil_electrical.py) reproduces the DESIGN value by construction,
 # so running the same scenario in both modes shows the gap directly.
+#
+# ⚠️ MEASURED ON HARDWARE, 2026-08-30c (campaign 20260830_203006, handoff-sag trace,
+# and it closes charge-regen's sag follow-up).  The hi-fi engine's realized droop
+# was FITTED from a live HIL trace at **0.316 ohm shared / 0.633 ohm single, ratio
+# exactly 2.000, V0 = 15.867 V** — i.e. the DESIGN chain (0.30 V/A at g = 0.298),
+# +5%, confirmed rather than assumed.  So the two electrical modes differ by ~4x in
+# BUS SAG DEPTH for the same load, by construction and not by defect:
+#   * simple mode reproduces the BENCH-MEASURED droop and is what a bench log looks
+#     like;
+#   * hi-fi mode reproduces the DESIGNED droop and sags ~4x deeper.
+# Consequences, both load-bearing when reading a hi-fi trace: sag figures are
+# CONSERVATIVE (a UV/sag test that passes in hi-fi passes with margin on the real
+# bus), and they are NOT COMPARABLE to a recorded bench log or to a simple-mode run.
+# charge-regen's 0.49 V sag under 1.54 A is exactly 1.54 * 0.316 — arithmetic, not an
+# anomaly.  Closing the gap means reconciling hil_electrical's FB-node superposition
+# against the measured fit; until then this banner is the disclosure.
 K_DROOP_BUS_SHARED = 0.074   # V/A  both sources live
 K_DROOP_BUS_SINGLE = 0.16    # V/A  exactly one source live
 V_BUS_DROOP_V0 = 15.95       # V    measured no-load intercept
@@ -1391,6 +1407,19 @@ def ems_regen_harvest(t, fb):
                  charge_goal (1.0 inside a braking window, 0.0 otherwise).
     feedback   : uses `fb["t"]` and `fb["v_profile"]` ONLY — trivially portable to
                  the real Pi (FB_TELEMETRY_EQUIV_KEYS).
+    ⚠️ WHAT THE REGEN WINDOWS DO AND DO NOT SHOW (measured 2026-08-30c).  The
+                 plant FLOORS regen power at zero (`p_mech = max(0.0, ...)` in
+                 Plant.step(); the VESC's Battery Regen Max is a torque clip on this
+                 rig, not a dump path — CLAUDE.md 2026-08-17b).  So the energy the
+                 Ag105 receives during a braking window is NOT recovered kinetic
+                 energy: it is sourced from the BOOSTS, through the bus, via
+                 REGEN + MOT_PWR.  This scenario therefore validates the regen
+                 POWER PATH and the firmware's branch selection — REGEN high with
+                 FC_CHARGE low, MPPT_DISABLE LOW, I_charge delivered through that
+                 path — and says NOTHING about energy recovery or round-trip
+                 efficiency.  The tell is in the trace: battery SoC DECREASES across
+                 a regen window rather than rising.  Do not quote a charge figure
+                 from this scenario as harvested energy.
     why not a timeline: a pi_timeline is a STEP function, and a step-down in
                  v_setpoint rails the drive controller to -12 A for only
                  ~(dv / 3.3 m/s^2) — 0.8 s even for a 2.7 m/s step — which never
@@ -1722,6 +1751,19 @@ SCENARIOS = {
                        "setpoint-latched cut (the switch is EN-low) — see the "
                        "scenario comment",
         "electrical": "hifi", "duration_s": 40.0,
+        # ⚠️ THE 2 s GAP BETWEEN t = 4.0 AND t = 6.0 IS LOAD-BEARING (measured,
+        # campaign 20260830_203006 — it was undocumented and nearly lost).  The
+        # t = 4.0 v_setpoint step rails the drive controller, and that transient
+        # pushes I_fc to 0.623 A — ABOVE the SHARE_CUT_MAX_HANDOFF_A 0.5 A guard
+        # (.ino:2018) — for 233 ticks, until t = 4.573.  A rail command issued in
+        # that window is REFUSED on load: updateShareSetpointCutoff() takes its
+        # `shareCutDeferredFC` branch (.ino:9241-9247) instead of cutting, and the
+        # scenario's entire objective (an actually-opened bus switch) silently does
+        # not happen.  The commanded rail must therefore wait for the drive
+        # transient to settle.  Margin as shipped: 1.43 s, i.e. ~3.5x the 0.573 s
+        # the transient actually takes.  DO NOT close this gap, and do not move
+        # either entry toward the other, without re-measuring I_fc through the
+        # v_setpoint step.
         "pi_timeline": [
             (0.5,  {"mode_cmd": MODE_SAFE}),
             (3.0,  {"mode_cmd": MODE_HYBRID}),

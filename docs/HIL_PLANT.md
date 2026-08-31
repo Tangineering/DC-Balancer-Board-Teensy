@@ -252,6 +252,30 @@ The droop is now **measured, and mode-aware**. The old single source-agnostic
 blocks of **TP0170–0180** (with **TP0178 excluded** — that is the handoff-sag log, not a
 steady operating point), **ML0165** and **ML0169**, all fw v16.
 
+> ### ⚠️ Hi-fi droop is the DESIGN chain, not the bench measurement
+>
+> **Measured 2026-08-30 from a live HIL trace** (campaign `20260830_203006`,
+> `handoff-sag`): the hi-fi engine's realized droop fits at **0.316 Ω shared /
+> 0.633 Ω single, ratio exactly 2.000, V₀ = 15.867 V** — i.e. the **designed** MDAC
+> droop chain (`R_e = RE_MAX·g = 2.014 × 0.298` ⇒ 0.30 V/A shared), +5 %. The
+> bench-measured droop is `K_DROOP_BUS` **0.074 / 0.16 V/A** — about **4× smaller**.
+>
+> That gap is *by construction*, not a defect, and it means the two electrical modes
+> answer different questions:
+>
+> | | droop | what a sag figure means |
+> |---|---|---|
+> | `--electrical simple` | bench-measured 0.074 / 0.16 V/A | comparable to a recorded bench log |
+> | `--electrical hifi` | design 0.316 / 0.633 Ω | **~4× deeper sag for the same load** |
+>
+> **Read hi-fi sag depths as CONSERVATIVE**: a UV or sag test that passes in hi-fi
+> passes with margin on the real bus. **Do not compare them to a bench log or to a
+> simple-mode run.** `charge-regen`'s 0.49 V sag under 1.54 A is exactly
+> `1.54 × 0.316` — arithmetic, not an anomaly. Closing the gap means reconciling
+> `hil_electrical.py`'s FB-node superposition against the measured fit; until then
+> this banner is the disclosure. The same note sits at the `K_DROOP_BUS` definition
+> in `hil_plant_sim.py`.
+
 > **⚠ OPEN FINDING — the realized droop is ~4× BELOW the design value, and this is not
 > hidden.** The MDAC droop chain predicts a per-channel Thevenin resistance
 > `R_e = RE_MAX · g = 2.014 Ω × 0.298 = 0.60 Ω`, i.e. **0.30 V/A** with both channels
@@ -658,7 +682,7 @@ SCP behaviours fall out rather than being scripted:
 |---|---|
 | `OFF` | **Full isolation** — back-to-back FETs, **no body-diode path**. Entered on EN low or `VIN < UVLO` (3.175 V). |
 | `TD_ON` | 8 ms typ EN-rise delay. |
-| `SOFT` | VOUT follows a linear ramp over `tON = (VIN/35)·(CSS_nF/0.0023 − 100) µs` — ~19.8 ms at 16 V on the 100 nF switches (`FC_BUS`, `BT_BUS`, `MOT_PWR`), ~1.07 ms on the 5.6 nF ones (`REGEN`, `FC_CHARGE`, `BT_SEQ`). The pass current is the **physical** one — `i ≈ c_load·d(target)/dt + i_load` (see the fourth modelling note) — and both the reported link current and the foldback decision derive from it. Foldback SCP is active **only here**: 8.5 A at ΔV ≤ 5 V falling toward ~5.3 A at ΔV = 16 V, floored at 2.5 A. Held continuously at the clamp for **250 µs** → **CUT**, auto-retry after **64 ms**. |
+| `SOFT` | VOUT follows a linear ramp over `tON = (VIN/35)·(CSS_nF/0.0023 − 100) µs` — ~19.8 ms at 16 V on the 100 nF switches (`FC_BUS`, `BT_BUS`, `MOT_PWR`), ~1.07 ms on the 5.6 nF ones (`REGEN`, `FC_CHARGE`, `BT_SEQ`). The pass current is the **physical** one — `i ≈ c_load·d(target)/dt + i_load` (see the fourth modelling note) — and both the reported link current and the foldback decision derive from it. Foldback SCP is active **only here**: 8.5 A at ΔV ≤ 5 V falling toward ~5.3 A at ΔV = 16 V, floored at 2.5 A. Held continuously at the clamp for **250 µs** → **CUT**, auto-retry after **64 ms**. **2026-08-30c:** on an episode that starts on a **pre-charged** node (`v_ss_start > RT_SS_PRECHARGED_V` 1.0 V) the ramp's duration *and* endpoint come from the per-episode VIN **high water mark**, not the instantaneous VIN, and the target is capped at VIN. A cold start keeps the original instantaneous-VIN path bit-for-bit. See the note below. |
 | `ON` | Forward regulation at `V_FWD` = 35 mV, `R_ON` = 21 mΩ. Fast reverse comparator at **−50 mV** → off, then re-arm **without** a new soft-start once forward again. |
 
 Four modelling notes. First, the soft-start is a **controlled source on the output node**,
@@ -813,6 +837,165 @@ whatever has accumulated since the last drain, not the whole run — read the si
 driver's printed totals) for the run-wide picture.
 
 ---
+
+### The pre-charged-node soft-start artifact (fixed 2026-08-30c)
+
+`comm-loss` is the only scenario whose bring-up closes `MOT_PWR` onto a node that is
+already **pre-charged** — the fw v23 warm recovery runs after V-MOT has bled from
+13.86 V to ~4.39 V through its 2 kΩ path, while the bus is live. That combination
+exposed a **positive feedback loop** in the SOFT model: `tON` was recomputed from the
+*instantaneous* VIN every substep while `v_ss_start` stayed latched, so
+
+> VIN sags → `tON = (VIN/35)·(…)` shrinks → `frac = t_state/tON` and `rate` both grow
+> → more displacement demand → more bus draw → VIN sags further.
+
+With `r = 21 mΩ`, a target that also chases the sagging rail turns millivolts of node
+ripple into **amps** of apparent demand. Measured: the node ran 0.84 V *above* its own
+ramp target and the reported current reached **3.9×** physical on the board (**6.8×**
+in a standalone reproduction), enough to latch a spurious `OC_FC` 3 ms after Idle.
+
+Two fixes were tried and **rejected**, both recorded at the code so they are not
+re-attempted:
+
+1. *Latch `tON` at SOFT entry.* At entry the input is frequently still dark — the
+   staged bring-up closes `FC_BUS`/`BT_BUS` **before** the boosts are enabled — so
+   this latches `tON` = 1.24 ms instead of ~19.8 ms, a 16×-too-fast ramp. Measured:
+   the cold-start P0 peak goes **0.2226 → 3.81 A**, destroying the one behaviour that
+   is triple-corroborated on hardware.
+2. *Skip the stamp when `v_out ≥ target`.* True of the device, wrong for the model:
+   the conductance-to-target **is** the soft-start servo, and removing it on one side
+   turns a stiff servo into a bang-bang. Measured: `I_tot` peak 6.95 A vs 2.82 A with
+   the servo left intact.
+
+**What shipped:** the anti-feedback is *scoped to a pre-charged entry*
+(`v_ss_start > RT_SS_PRECHARGED_V`). Such an episode derives both the ramp duration
+and its endpoint from the per-episode VIN high water mark — a CSS capacitor charging
+at a fixed current cannot make an in-progress ramp finish *sooner* because the input
+momentarily sagged — and clamps the target to the instantaneous VIN, since a pass
+device cannot ramp its output above its own input. A cold start (`v_ss_start ≈ 0`)
+takes the original path untouched.
+
+### TRCB during soft-start (added 2026-08-30d)
+
+The first version of the fix above capped the ramp target at the instantaneous VIN
+(`target = min(target, v_in)`), on the correct premise that a pass device cannot ramp
+its output above its own input. **The premise was right and the mechanism was wrong.**
+When the held reference leads a *sagging* rail the cap drives the target BELOW `v_out`,
+and the SOFT stamp then sinks the full 47.6 S servo conductance out of `n_out` with
+`J[n_in] = 0` — charge annihilated, not transferred. Measured: **-94 A** on 0.3 Vpp of
+2 kHz bus ripple, **-345 A** on a bus collapse mid-ramp, while the reported sense
+current still read <= 8.5 A. Nothing in the model represented the `v_out > v_in` regime
+during soft-start at all, because the reverse-comparator branch ran only in state `ON`.
+
+The datasheet is explicit that this is wrong, and all three points were checked against
+`references/Datasheets/RT1987_DS-00.pdf`:
+
+- **17.6** puts the fast reverse comparator under *"when the power path is enabled"*,
+  tripping within `t_FRC` (~0.5 us, i.e. inside one substep) whenever `VIN - VOUT`
+  falls below `V_FRC` (typ. -50 mV). **No restriction to post-soft-start.**
+- **Table 1** gives TRCB's fault response as *"Auto-restart **without** soft-start at
+  fault removal"*, FLTB high-impedance — which is exactly the existing
+  `_restart_no_ss` path.
+- **17.4 condition 1**: *"When the device is first enabled, if any of the following
+  conditions exist, the internal power MOSFET will not turn on: 1. VIN - VOUT < V_FRC"*
+  — so `t_D(ON)` elapsing is necessary but not sufficient to begin a ramp.
+
+**What shipped:** the reverse-comparator branch now runs in `SOFT` as well as `ON`
+(checked *before* the SCP and completion logic, since a reverse event at 0.5 us is
+faster than either); the `TD_ON` -> `SOFT` transition is gated on `VIN - VOUT >= V_FRC`,
+holding in `TD_ON` until the differential is admissible; and the `min(target, v_in)`
+cap is **removed** — the TRCB block replaces it as the guard for that regime.
+
+**Verification (A/B on one driver, pinned 62.5 us substeps).** `i_node` is the current
+the SOFT stamp actually delivers into `n_out`; a negative value is the annihilation
+bug. "above target" is the worst `v_out - target` excursion *within* an episode.
+
+| case | metric | before | after |
+|---|---|---|---|
+| cold staged bring-up | P0 peak `I_fc` | 0.222557 A | **0.222557 A** (delta 0, bit-for-bit) |
+| cold staged bring-up | P3 peak `I_fc` | 0.473950 A | **0.473950 A** (delta 0, bit-for-bit) |
+| warm, quiescent | reported / physical | 6.82x | **1.02x** |
+| warm, quiescent | `I_tot` peak | 7.785 A | **0.731 A** |
+| warm, quiescent | above target | 0 V | **0 V** |
+| warm + 0.3 Vpp ripple | `i_node` min | **-94.40 A** | **0.00 A** |
+| warm + 0.3 Vpp ripple | peak `I_fc` | 1.958 A | **0.165 A** |
+| warm + 0.3 Vpp ripple | above target | 1.982 V | **0 V** |
+| warm + 0.6 Vpp ripple | `i_node` min | **-62.66 A** | **0.00 A** |
+| warm + 0.6 Vpp ripple | peak `I_fc` | 3.341 A | **0.270 A** |
+| warm + 6 A load step mid-ramp | `i_node` min | **-20.26 A** | **0.00 A** |
+| warm + 6 A load step mid-ramp | peak `I_fc` | 4.121 A | **3.381 A** (vs 3.081 A load baseline) |
+| warm + bus collapse mid-ramp | `i_node` min | **-344.59 A** | **0.00 A** |
+| warm + bus collapse mid-ramp | peak `I_fc` | 2.475 A | **1.185 A** |
+| `MOT_PWR` already ON + 6 A | peak `I_fc` | 3.081 A | **3.081 A** (delta 0, reference) |
+
+**The "0 V above target" row is scoped to the QUIESCENT episode, deliberately.** Under
+disturbance the pre-fix model reached 1.98 V / 1.32 V / 0.43 V / 7.24 V above target on
+the four cases above — an earlier version of this table quoted the quiescent 0 V without
+that scope and read as a stronger claim than it was. Post-fix every case reads 0 V,
+because TRCB now removes the switch from the network before the node can lead its own
+ramp.
+
+The cold figures are the hardware-corroborated ones (P0 0.2226 A / P3 0.4740 A,
+reproduced in three separate campaigns), and they do not move.
+
+**`scp-inrush` does NOT lose its event to the new reverse branch** — checked
+explicitly, because fold/SCP is a `SOFT`-only mechanism and a reverse trip removes the
+switch from `SOFT`, so a trip arriving first would have silently emptied that
+scenario's `events_require`. A headless reproduction of the *shipped* sequence (real
+`Plant`, real `ElectricalSim` at the scenario's own `vesc_cap_f`, real
+`apply_scenario()`, and the actuator word stepped through the firmware's own bring-up
+gates evaluated against the plant's rails) gives:
+
+| at the P3 `MOT_PWR` close | value |
+|---|---|
+| `v_in` (bus) | 15.79 V |
+| `v_out` (motor node) | 0.00 → 0.67 V |
+| differential `dv` | **+13.89 V — massively forward** |
+| event that fires | **`scp_cut`**, `i_cut` = **6.2852 A** |
+| vs the on-hardware campaign | 6.290 A — **0.07 % apart** |
+| `over_absmax` | 0 |
+
+The motor node is **dark** at P3 (the 5 A load holds it at 0 V), so no reverse
+condition can develop. A reverse trip during soft-start needs a **pre-charged** node —
+the `comm-loss` warm-recovery shape — which P3 never presents. The two cases are
+structurally different and do not compete for the same event.
+
+**One new, inert event does appear in hi-fi runs:** a `reverse_block` on **BT_BUS** at
+~62 ms with `dv = −50.4 mV`, tagged `during: "soft_start"`. That is the diode-OR
+blocking whichever boost output is momentarily lower — the RT1987's advertised
+source-sharing function (§17 intro) — and it is verified inert: with the SOFT reverse
+branch disabled, cut counts and **both** bring-up current pins are byte-identical
+(Δ 0.000000000 on P0 and P3, with and without the 5 A load). Expect it in the events
+sidecar; nothing scores on it.
+
+**SCP retry cadence is preserved** (verified at unit level): after a cut the node is
+left dark, so the 64 ms re-arm re-enters soft-start with `v_ss_start` ~ 0 — the COLD
+path — and the new `TD_ON` gate never delays it, since a dark node is by definition
+forward-biased. One side effect is real and wanted: removing the target cap raises the
+apparent overdrive on a *sagging* rail (standalone `scp-inrush`-shaped driver: reported
+peak 6.30 -> 8.39 A), because the cap had been quietly shrinking the demand exactly when
+the bus browned out. That makes a genuine overload *more* likely to fold, not less.
+
+### Known bias in the ramp shape (not fixed — future work)
+
+Quote a soft-start current from this engine as *physical* only with this in mind.
+**17.1/17.3** define `tON` as the **10 % to 90 % rise time**, so the part's true slew is
+`0.8 x VIN / tON = 0.8 x 35 / (CSS_nF/0.0023 - 100)` — **independent of VIN**,
+645.5 V/s at CSS = 100 nF. This model instead ramps `v_ss_start -> v_ref` *over* `tON`,
+conflating slope with endpoint, and inherits a start-dependent error of **opposite
+sign** at the two ends:
+
+| episode | model slew | true slew | bias |
+|---|---|---|---|
+| cold (`v_ss_start` ~ 0) | 806.9 V/s | 645.5 V/s | **+25.0 %** |
+| warm (4.4 V -> 15.78 V) | 581.9 V/s | 645.5 V/s | **-9.8 %** |
+
+No single scale factor fixes both. Note also that a test bounding the reported current
+by `c_load x rate` computed from `rt1987_t_on_s()` is **self-referential** — it
+re-derives the same wrong slope, so it validates internal consistency, not physicality.
+The right shape is a constant-slew ramp, and it is deliberately **not** implemented
+here: the +25 % cold bias is baked into the hardware-corroborated 0.2226 A / 0.4740 A
+bring-up pins, so changing it needs its own A/B round against hardware.
 
 ## 9. Source models
 

@@ -122,6 +122,9 @@ from hil_plant_sim import (                                        # noqa: E402
     # and a second copy here would be a silent divergence waiting to happen.
     SW_FC_BUS, SW_REGEN,
 )
+# The hi-fi engine's abs-max ring threshold, for the event checks and the report
+# banner.  Imported, never re-declared.
+from hil_electrical import V_ABSMAX as V_ABSMAX_V              # noqa: E402
 from hil_replay_suite import (                                      # noqa: E402
     REPLAY_SUITE, FAULT_NAMES, TARGET_FW_VERSION,
     build_sim_argv, evaluate_replay_csv, replay_csv_path, verify_suite_logs,
@@ -130,6 +133,9 @@ from hil_replay_suite import (                                      # noqa: E402
     # are cited against teensy_controller.ino:1149-1166 at their definitions there.
     FAULT_OC_FC, FAULT_UV_BATT, FAULT_UV_BUS, FAULT_MOT_HOTPLUG,
     FAULT_PI_TIMEOUT, FAULT_ERROR,
+    # .ino:1305 — the firmware's own bus OV limit (V_BUS_NOMINAL + 1.5 = 17.5 V).
+    # Used only to decide whether a sub-abs-max ring is still worth reporting.
+    LIMIT_V_BUS_MAX_V,
 )
 
 SIM_SCRIPT = os.path.join(_HERE, "hil_plant_sim.py")
@@ -363,11 +369,26 @@ FAULT_EXPECTATIONS = {
         # RECORDED margin above LIMIT_V_BUS_MIN was only 0.15-0.185 V with a ~10 ms
         # dwell (half the 20 ms latch window) — see hil_replay_suite.py's TP0178/
         # TP0201 entries.  A legitimately deeper sag on this scenario's own load
-        # step would correctly latch UV_BUS.  What is NOT acceptable any more is
-        # OC_FC: HIL_FINDINGS 'handoff-sag' showed the +1.5 A step pre-empting the
-        # whole test at +2.2 ms with the bus still 1.05 V above the UV floor. The
-        # step is now +0.8 A (~1.14 A on the FC-only channel), so an OC_FC here
-        # means the perturbation budget is wrong again and must be seen.
+        # step would correctly latch UV_BUS.
+        #
+        # CORRECTED 2026-08-30c (campaign follow-up (1), and the round-2 reviewer
+        # found the same staleness independently): this comment used to describe a
+        # "+0.8 A step (~1.14 A on the FC-only channel)". That was an intermediate
+        # design that never shipped. The SHIPPED scenario rails share to 0.0 so
+        # **BT survives** and steps +1.5 A against it — measured on hardware at
+        # I_batt 2.2709 A vs LIMIT_I_BT_MAX 3.0 A (24.3 % margin, against the 25 %
+        # designed). An OC_FC here would still mean the perturbation budget is
+        # wrong, but the channel at risk is BT, not FC; OC_BT is the fault this
+        # operating point can actually reach, and allow_only refuses both.
+        #
+        # ⚠️ UV_BUS IS NOT REACHABLE AT THIS OPERATING POINT (measured, campaign
+        # 20260830_203006): min V_bus was 14.4300 V, 2.43 V above the floor, and at
+        # the fitted single-source hifi droop (0.633 ohm) reaching 12.0 V needs
+        # ~6.1 A — at which OC_BT always wins first. `allow_only: UV_BUS` is
+        # therefore PERMISSIVE BUT NEVER EXERCISED here. It is kept because the
+        # scenario models a class whose recorded members did sag that far, not
+        # because this run can; the UV objective needs its own home (a
+        # v_bus_sense_offset scenario), which is an open item, not a silent gap.
         "source": "hil_replay_suite.py TP0178/TP0201 entries (0.15-0.185 V of "
                   "recorded margin, ~10 ms dwell vs the 20 ms latch) + "
                   "HIL_FINDINGS 'handoff-sag' for the OC_FC pre-emption + "
@@ -401,15 +422,29 @@ FAULT_EXPECTATIONS = {
         # The load now sits behind MOT_PWR from t = 0, so the P3 close ramps into
         # it while still in SOFT.
         #
-        # NO fault is REQUIRED, deliberately: two outcomes race, and which one wins
-        # is not deterministic.  The clamp passes ~5.3 A for the 250 us SCP
-        # blanking window before each cut, so a 1 kHz injection tick samples it
-        # with probability ~250 us / 72 ms per retry cycle (~0.35 %) — over the
-        # 500 ms MOT_CONNECT_TIMEOUT_MS window that is ~1.75 expected hits, i.e.
-        # OC_FC usually but not always fires first.  If it does not, the motor node
-        # never tracks the bus and bring-up P3 times out into FAULT_MOT_HOTPLUG
-        # (.ino:8832-8834).  Both are correct firmware behaviour; allow both,
-        # require neither, and let the events sidecar carry the real assertion.
+        # NO fault is REQUIRED, but NOT for the reason first written here.
+        #
+        # THE ORIGINAL DERIVATION WAS WRONG IN PREMISE (corrected 2026-08-30c from
+        # the measured campaign trace). It claimed the over-limit current exists
+        # only inside the 250 us SCP blanking window, giving ~250 us / 72 ms per
+        # retry cycle (~0.35 %) and "~1.75 expected hits" over the 500 ms
+        # MOT_CONNECT_TIMEOUT_MS — i.e. a coin-flip. That is not what happens: the
+        # over-limit current spans the WHOLE SOFT conduction interval, not just the
+        # blanking window. Measured: I_fc carried 1.966 A (> the 1.4 A limit) for
+        # ~0.95 ms, which is >= one 1 kHz sample period, so the firmware's
+        # single-sample OC check is hit on the FIRST fold cycle. OC_FC is
+        # NEAR-DETERMINISTIC, not a race — and the campaign observed exactly that,
+        # with a single cut and no retries.
+        #
+        # The consequence for this table is unchanged, which is why the entry still
+        # requires no fault: FAULT_MOT_HOTPLUG (.ino:8832-8834) remains the outcome
+        # if the OC is ever missed, and both are correct firmware behaviour. What
+        # DID change is the honest reading of the scenario — the sim mechanism fires
+        # roughly 1 ms before the firmware protects itself, and that 1 ms is the
+        # entire margin. Zero retry cycles are observable with firmware attached:
+        # the State-99 teardown pulls MOT_PWR LOW ~10 ms after the fault, 54 ms
+        # before the 64 ms re-arm, so retry-cadence coverage needs a firmware-free
+        # hil_electrical bench, not this scenario.
         # See SCP_INRUSH_MOT_LOAD_A in hil_plant_sim.py for why an scp_cut cannot
         # be separated from an OC fault in this model.
         "source": "HIL_FINDINGS 'scp-inrush' recommendation 3 + "
@@ -417,7 +452,53 @@ FAULT_EXPECTATIONS = {
                   "(RT_SCP_BLANK_S 250 us, RT_SCP_RETRY_S 64 ms) + "
                   "hil_plant_sim.py SCP_INRUSH_MOT_LOAD_A for the 5.0 A derivation",
         "allow_only": FAULT_OC_FC | FAULT_MOT_HOTPLUG | FAULT_ERROR,
-        "events_require": ["scp_cut"],
+        # ⚠️ RE-VERIFIED 2026-08-30d against the TRCB-in-SOFT change, because that
+        # change could in principle have stolen this scenario's event: a reverse
+        # trip removes the switch from SOFT, and fold/SCP is a SOFT-only mechanism,
+        # so a reverse trip before the fold would mean no scp_cut ever fires.
+        # A headless reproduction of the SHIPPED sequence — real Plant, real
+        # ElectricalSim at this scenario's own vesc_cap_f, real apply_scenario(),
+        # and the actuator word stepped through the firmware's own bring-up gates
+        # (busBringupTick(), .ino:8723-8845) evaluated against the plant's rails —
+        # settles it. AT THE P3 CLOSE THE MOTOR NODE IS DARK: the 5 A load holds it
+        # at 0 V, so the differential is
+        #     v_in 15.79 V, v_out 0.00 -> 0.67 V, dv = +13.89 V
+        # i.e. massively FORWARD. There is no reverse condition to trip, and the
+        # measured outcome is exactly the expected one: a single MOT_PWR scp_cut
+        # with i_cut = 6.2852 A, which is 0.07 % from the campaign's on-hardware
+        # 6.290 A and comfortably inside the band below.
+        # A reverse trip during soft-start needs a PRE-CHARGED node (the comm-loss
+        # warm-recovery shape), which P3 never presents — the two cases are
+        # structurally different and do not compete.
+        # (One NEW reverse_block does appear in a hi-fi run, on BT_BUS at ~62 ms,
+        # dv = -50.4 mV: the diode-OR blocking whichever boost is momentarily lower,
+        # which is the RT1987's advertised function. Verified INERT — cut counts and
+        # both bring-up current pins are byte-identical with the branch disabled.)
+        #
+        # TIGHTENED 2026-08-30c (campaign follow-up (1)). "at least one scp_cut"
+        # was too loose to be evidence: a 0.3 A cut would have passed it, and so
+        # would a run that cut repeatedly for the wrong reason. All three facts
+        # below were measured on hardware in campaign 20260830_203006 and are
+        # pinned so a drift in any of them is visible:
+        #   count == 1        one cut, at t = 0.600000. More would mean the retry
+        #                     cadence became reachable (it is not, with firmware
+        #                     attached — the State-99 teardown opens MOT_PWR 54 ms
+        #                     before the 64 ms re-arm), so >1 is a real change.
+        #   over_absmax == 0  no ring above the 20 V abs-max: this scenario must
+        #                     exercise the foldback WITHOUT producing the Death-5
+        #                     boost-kill signature. The two 17.72 V rings observed
+        #                     are the teardown's own EN-low openings at ~0.1 A.
+        #   i_cut 5.0-8.0 A   the fold plausibility band. Measured 6.290 A =
+        #                     5.0 A load + ~1.11 A CSS ramp current + blank-window
+        #                     lag growth, against a fold limit of 5.36 A at
+        #                     dv ~ 15.15 V. The band's floor is the fold limit's own
+        #                     lower reach and its ceiling is RT_I_FOLD_HIGH, so a
+        #                     cut outside it is not a foldback event at all.
+        "events_require": [
+            {"kind": "scp_cut", "count": 1,
+             "field": "i_cut", "min_value": 5.0, "max_value": 8.0},
+        ],
+        "events_forbid_over_absmax": True,
     },
 }
 # Everything not listed is expected fault-free (post-grace); a fault there is a
@@ -1120,14 +1201,30 @@ def judge_warm_resets(name, kind, counts, source):
     # deserves a look before the rest of the plan is believed.
     note = None
     if isinstance(observed, int) and isinstance(count, int) and observed > count:
+        # ITEM 10: render ONLY the in-grace timestamps here.  `times` is every
+        # observed transition, mid-run ones included, so printing all of them
+        # against a count of in-grace resets reads as a contradiction — comm-loss
+        # showed "1 warm reset inside the grace window at t=0.5, 7.5" where 7.5 is
+        # its designed MID-run recovery, which this sentence is not about.
+        in_grace = [x for x in (times or [])
+                    if isinstance(x, (int, float)) and x < WARM_RESET_GRACE_S]
+        when = ""
+        if in_grace:
+            when = " at t=%s s" % ", ".join("%g" % x for x in in_grace)
+        elif times:
+            # Timestamps exist but none is in-grace: the list is capped
+            # (WARM_RESET_TIMES_MAX) or the clocks disagree.  Say so rather than
+            # printing mid-run times under an in-grace heading.
+            when = (" (no in-grace timestamp available; the recorded times %s are "
+                    "all at or after the %.1fs bound)"
+                    % (", ".join("%g" % x for x in times), WARM_RESET_GRACE_S))
         note = ("%d warm reset(s) inside the start-of-run grace window%s: "
                 "normally the expected recovery from the previous run's settle "
                 "pause, and not counted against this run. On the FIRST run of a "
                 "plan against a freshly powered board there is no previous run "
                 "to recover from — a transition there means the board was "
                 "already latched at power-on, which is worth investigating."
-                % (observed - count,
-                   (" at t=%s s" % ", ".join(str(x) for x in times)) if times else ""))
+                % (observed - count, when))
 
     if count is None:
         if expected is not None:
@@ -1208,7 +1305,8 @@ def result_label(r, bold_fail=False):
 def analyze_events(path):
     """Event counts by kind from a hi-fi .events.jsonl sidecar."""
     out = {"path": path, "total": 0, "kinds": {}, "over_absmax": 0,
-           "worst_ring_v": None, "read_error": None}
+           "worst_ring_v": None, "worst_over_absmax_ring_v": None,
+           "field_values": {}, "read_error": None}
     if not path or not os.path.isfile(path):
         return out
     try:
@@ -1224,12 +1322,33 @@ def analyze_events(path):
                 out["total"] += 1
                 k = e.get("kind", "?")
                 out["kinds"][k] = out["kinds"].get(k, 0) + 1
-                if k == "sw_ring" and e.get("over_absmax"):
-                    out["over_absmax"] += 1
+                # Numeric fields, kept per kind so an events_require spec can pin a
+                # plausibility band on one (scp_cut's i_cut).  Small by construction:
+                # these events are rare.
+                for fname, fval in e.items():
+                    if fname in ("t", "kind", "switch") or isinstance(fval, bool):
+                        continue
+                    if isinstance(fval, (int, float)):
+                        out["field_values"].setdefault(k, {}).setdefault(
+                            fname, []).append(float(fval))
+                if k == "sw_ring":
                     pv = e.get("peak_v")
+                    # ITEM 9: record the worst ring UNCONDITIONALLY.  This used to be
+                    # tracked only for rings already flagged over_absmax, so a ring
+                    # BELOW the 20 V abs-max but above LIMIT_V_BUS_MAX appeared
+                    # nowhere at all — campaign 20260830_203006's 17.578 V FC-open
+                    # ring (0.078 V over LIMIT_V_BUS_MAX) was invisible in REPORT.md.
+                    # The abs-max subset is kept separately so the Death-5 banner
+                    # still reports the number it always did.
                     if pv is not None and (out["worst_ring_v"] is None
                                            or pv > out["worst_ring_v"]):
                         out["worst_ring_v"] = pv
+                    if e.get("over_absmax"):
+                        out["over_absmax"] += 1
+                        if pv is not None and (
+                                out["worst_over_absmax_ring_v"] is None
+                                or pv > out["worst_over_absmax_ring_v"]):
+                            out["worst_over_absmax_ring_v"] = pv
     except OSError as exc:
         # L9(b): record the failure instead of silently swallowing it -- an
         # unreadable sidecar must not render in REPORT.md as "0 events, clean".
@@ -1386,15 +1505,60 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
             else:
                 checks.extend(judge_signals(sig_specs, signals, why))
 
-        for kind in expect.get("events_require", ()):
+        # events_require accepts EITHER a bare kind string (at least one such event)
+        # or a dict pinning count and/or a numeric field's plausibility band. The
+        # bare form is kept because most future entries will want nothing more.
+        for req in expect.get("events_require", ()):
+            spec = {"kind": req} if isinstance(req, str) else dict(req)
+            kind = spec["kind"]
             n = events.get("kinds", {}).get(kind, 0)
+            vals = (events.get("field_values", {}).get(kind, {})
+                    .get(spec.get("field"), []))
+            problems = []
+            if "count" in spec:
+                if n != int(spec["count"]):
+                    problems.append("count %d, expected exactly %d"
+                                    % (n, int(spec["count"])))
+            elif n == 0:
+                problems.append("no such event")
+            if spec.get("field") is not None:
+                if not vals:
+                    problems.append("no '%s' field on any '%s' event to check"
+                                    % (spec["field"], kind))
+                else:
+                    lo, hi = spec.get("min_value"), spec.get("max_value")
+                    bad = [v for v in vals
+                           if (lo is not None and v < lo)
+                           or (hi is not None and v > hi)]
+                    if bad:
+                        problems.append(
+                            "%s out of the [%s, %s] plausibility band: %s"
+                            % (spec["field"],
+                               "%g" % lo if lo is not None else "-inf",
+                               "%g" % hi if hi is not None else "+inf",
+                               ", ".join("%.3f" % v for v in bad)))
+            observed = ("%d '%s' event(s)" % (n, kind)) + (
+                "; %s = %s" % (spec["field"], ", ".join("%.3f" % v for v in vals))
+                if vals else "")
             checks.append({
-                "name": "events_require_%s" % kind, "passed": n > 0,
-                "detail": ("%d '%s' event(s) in the electrical sidecar" % (n, kind))
-                          if n else
-                          ("NO '%s' event in the electrical sidecar — the "
-                           "mechanism this scenario exists to exercise never "
-                           "fired (%s)" % (kind, why))})
+                "name": "events_require_%s" % kind, "passed": not problems,
+                "detail": (observed if not problems else
+                           "%s — %s (%s)" % (observed, "; ".join(problems), why))})
+
+        if expect.get("events_forbid_over_absmax"):
+            n_over = events.get("over_absmax", 0)
+            checks.append({
+                "name": "events_no_over_absmax", "passed": n_over == 0,
+                "detail": ("no switching event rang above the %.0f V abs-max "
+                           "(worst estimated peak %s V)"
+                           % (V_ABSMAX_V,
+                              "%.2f" % events["worst_ring_v"]
+                              if events.get("worst_ring_v") is not None else "n/a"))
+                          if n_over == 0 else
+                          ("%d ring(s) above the %.0f V abs-max — the Death-5 "
+                           "boost-kill signature; this scenario must exercise the "
+                           "foldback WITHOUT producing it (%s)"
+                           % (n_over, V_ABSMAX_V, why))})
     else:
         # F1/F2: under --pi-live the Pi watchdog is outside this harness's
         # control: an operator-driven Pi that stops commanding while the board
@@ -1492,10 +1656,11 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
     if events["over_absmax"]:
         checks.append({"name": "sw_ring_over_absmax", "passed": False,
                        "detail": "%d switching event(s) with an estimated ring peak above "
-                                 "the 20 V abs-max — the boost-death signature; worst %s V"
-                                 % (events["over_absmax"],
-                                    ("%.2f" % events["worst_ring_v"])
-                                    if events["worst_ring_v"] is not None else "?")})
+                                 "the %.0f V abs-max — the boost-death signature; worst %s V"
+                                 % (events["over_absmax"], V_ABSMAX_V,
+                                    ("%.2f" % events["worst_over_absmax_ring_v"])
+                                    if events.get("worst_over_absmax_ring_v") is not None
+                                    else "?")})
 
     n_chop = events["kinds"].get("chopper_over_power", 0)
     if n_chop:
@@ -1772,6 +1937,16 @@ def render_report(meta, results):
                 A("- electrical events: %d (%s)%s"
                   % (ev["total"], kinds,
                      "; **%d over abs-max**" % ev["over_absmax"] if ev["over_absmax"] else ""))
+                # ITEM 9: the worst ring, whether or not it crossed the abs-max. A
+                # ring below 20 V but above LIMIT_V_BUS_MAX used to appear nowhere
+                # in this report at all (campaign 20260830_203006's 17.578 V
+                # FC-open ring, 0.078 V over the bus limit).
+                if ev.get("worst_ring_v") is not None:
+                    A("- worst estimated switching-ring peak: **%.3f V** (abs-max "
+                      "%.0f V; `LIMIT_V_BUS_MAX` %.1f V). Analytic estimate only — "
+                      "the nH-uF loop is not integrated (see `hil_electrical.py`'s "
+                      "module docstring)."
+                      % (ev["worst_ring_v"], V_ABSMAX_V, LIMIT_V_BUS_MAX_V))
             log_note = (" **(log write failed: %s)**" % r["child"]["log_write_error"]
                         if r["child"].get("log_write_error") else "")
             A("- child: %s (rc %s, %.1f s wall) — log `%s`%s"
@@ -1862,7 +2037,17 @@ def render_report(meta, results):
                  ("%.2f" % ev["worst_ring_v"]) if ev["worst_ring_v"] is not None else "?"))
     else:
         A("")
-        A("2. No `sw_ring` event above the 20 V abs-max was observed in this run.")
+        A("2. No `sw_ring` event above the %.0f V abs-max was observed in this run."
+          % V_ABSMAX_V)
+        worst = [(r["name"], r["events"]["worst_ring_v"]) for r in results
+                 if (r.get("events") or {}).get("worst_ring_v") is not None]
+        over_bus = [(n, v) for n, v in worst if v > LIMIT_V_BUS_MAX_V]
+        if over_bus:
+            A("   Sub-abs-max rings above `LIMIT_V_BUS_MAX` (%.1f V) WERE observed, "
+              "and are reported here because nothing else in this file would show "
+              "them:" % LIMIT_V_BUS_MAX_V)
+            for n, v in sorted(over_bus, key=lambda kv: -kv[1]):
+                A("   - `%s`: worst estimated ring peak %.3f V" % (n, v))
     for extra in meta.get("extra_findings", []):
         A("")
         A("- %s" % extra)
@@ -2219,7 +2404,16 @@ def _run_plan(plan, args, problems, results, write_outputs):
                    "passed": passed, "checks": checks, "notes": ev.get("notes", []),
                    "metrics": {}, "events": {}, "child": child,
                    "csv": item["csv"], "events_path": None, "log_path": item["log"],
-                   "key_metrics": "%d/%d checks passed" % (npass, len(checks))}
+                   "n_checks_vacuous": ev.get("n_checks_vacuous"),
+                   "n_checks_substantive": ev.get("n_checks_substantive"),
+                   # Item 5: "%d/%d checks passed" counts vacuous checks alongside
+                   # real ones. Say how many carried evidence, so a green replay
+                   # entry cannot read stronger than it is.
+                   "key_metrics": ("%d/%d checks passed" % (npass, len(checks)))
+                                  + ("" if not ev.get("n_checks_vacuous") else
+                                     " (%d substantive, %d vacuous — no commander)"
+                                     % (ev.get("n_checks_substantive") or 0,
+                                        ev["n_checks_vacuous"]))}
             # L8: evaluate_replay_csv() now returns a structured "n_obs" (None if
             # the CSV itself could not be loaded/parsed at all) instead of forcing
             # this caller to substring-match a prose note from a different module.
