@@ -141,12 +141,53 @@ def test_build_plan_replay_argv_uses_build_sim_argv():
 def test_build_plan_timeout_uses_grace_s():
     plan = rhs.build_plan(_args(only=["steady"]))
     dur = plan[0]["duration_s"]
-    assert plan[0]["timeout_s"] == pytest.approx(dur + rhs.GRACE_S)
+    assert plan[0]["timeout_s"] == pytest.approx(dur + rhs.TIMEOUT_GRACE_S)
 
 
 def test_build_plan_no_match_returns_empty():
     plan = rhs.build_plan(_args(only=["no-such-run-xyz"]))
     assert plan == []
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 1b. 'drive' (operator_required): SKIPPED by default, included under
+#     --with-operator
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_build_plan_drive_is_skipped_by_default():
+    assert SCENARIOS["drive"].get("operator_required") is True
+    plan = rhs.build_plan(_args(only=["drive"]))
+    assert len(plan) == 1
+    item = plan[0]
+    assert item["kind"] == "scenario"
+    assert item["argv"] is None
+    assert item["duration_s"] == 0.0
+    assert item["skip_reason"] and item["skip_reason"].startswith("OPERATOR-REQUIRED")
+
+
+def test_build_plan_drive_runs_under_with_operator():
+    plan = rhs.build_plan(_args(only=["drive"], with_operator=True))
+    assert len(plan) == 1
+    item = plan[0]
+    assert item["kind"] == "scenario"
+    assert not item.get("skip_reason")
+    assert item["argv"] is not None
+    assert "--scenario" in item["argv"] and "drive" in item["argv"]
+    assert item["duration_s"] == pytest.approx(SCENARIOS["drive"]["duration_s"])
+
+
+def test_build_plan_with_operator_does_not_affect_other_scenarios():
+    """--with-operator only changes 'drive' -- every other scenario's plan
+    entry is identical with or without it."""
+    plan_default = {p["name"]: p for p in rhs.build_plan(_args()) if p["kind"] == "scenario"}
+    plan_operator = {p["name"]: p for p in rhs.build_plan(_args(with_operator=True))
+                     if p["kind"] == "scenario"}
+    for name in plan_default:
+        if name == "drive":
+            continue
+        assert plan_default[name]["argv"] == plan_operator[name]["argv"], name
+        assert not plan_default[name].get("skip_reason")
+        assert not plan_operator[name].get("skip_reason")
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -193,6 +234,10 @@ def test_no_other_scenario_gets_vesc_cap_uf():
     plan = rhs.build_plan(_args())
     for p in plan:
         if p["kind"] != "scenario" or p["name"] == "scp-inrush":
+            continue
+        if p["argv"] is None:
+            # operator_required skip record ('drive' without --with-operator):
+            # no argv is ever built for it, so there is nothing to assert here.
             continue
         assert "--vesc-cap-uf" not in p["argv"], p["name"]
 
@@ -321,13 +366,90 @@ def test_analyze_scenario_csv_malformed_fault_flags_cell_skipped(tmp_path):
     assert m["final_state"] == 1
 
 
+# ── M1: n_obs_post_grace / last_obs_t ───────────────────────────────────────
+
+def test_analyze_scenario_csv_n_obs_post_grace_and_last_obs_t_normal_run(tmp_path):
+    """A board answering through and past the grace bound: n_obs_post_grace
+    counts only the post-grace ticks, and last_obs_t is the LAST observed
+    tick regardless of the grace bound."""
+    rows = [
+        {"t": "0.500", "fault_flags": "0", "state": "2"},
+        {"t": "1.500", "fault_flags": "0", "state": "2"},
+        {"t": "2.500", "fault_flags": "0", "state": "2"},
+        {"t": "3.500", "fault_flags": "0", "state": "2"},
+    ]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    m = rhs.analyze_scenario_csv(str(path), grace_s=2.0)
+    assert m["n_obs"] == 4
+    assert m["n_obs_post_grace"] == 2   # t=2.500, t=3.500
+    assert m["last_obs_t"] == pytest.approx(3.5)
+
+
+def test_analyze_scenario_csv_n_obs_post_grace_zero_when_board_dies_before_grace(tmp_path):
+    """The M1 motivating case: the board answers a few ticks, then goes
+    SILENT before the grace bound ever arrives -- n_obs is nonzero (it
+    answered) but n_obs_post_grace is 0, and last_obs_t names the moment it
+    stopped."""
+    rows = [
+        {"t": "0.100", "fault_flags": "0", "state": "2"},
+        {"t": "0.200", "fault_flags": "0", "state": "2"},
+        {"t": "0.400", "fault_flags": "0", "state": "2"},
+    ]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    m = rhs.analyze_scenario_csv(str(path), grace_s=2.0)
+    assert m["n_obs"] == 3
+    assert m["n_obs_post_grace"] == 0
+    assert m["last_obs_t"] == pytest.approx(0.4)
+
+
+def test_analyze_scenario_csv_last_obs_t_none_when_never_observed(tmp_path):
+    rows = [{"t": "0.000", "fault_flags": ""}, {"t": "0.001", "fault_flags": ""}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    m = rhs.analyze_scenario_csv(str(path))
+    assert m["last_obs_t"] is None
+    assert m["n_obs_post_grace"] == 0
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # 4. judge_scenario()
 # ─────────────────────────────────────────────────────────────────────────
 
-def _metrics(n_obs=10, rows=10, final_fault_flags=0, fault_bits_seen=0, final_state=2):
+def _metrics(n_obs=10, rows=10, final_fault_flags=0, fault_bits_seen=0, final_state=2,
+             fault_bits_post_grace=None, fault_first_t=None, grace_s=None,
+             survive_to_t=None, fault_bits_before_survive=0, state_at_survive=None,
+             n_obs_post_grace=None, last_obs_t=None):
+    """Build an analyze_scenario_csv()-shaped metrics dict.
+
+    By default `fault_bits_post_grace` mirrors `fault_bits_seen` (no carried-in
+    exclusion, as if every bit was observed fresh from this run), `fault_first_t`
+    is empty -- which is enough for judge_scenario()'s `not_before_s` gate to
+    pass VACUOUSLY, since a bit absent from `fault_first_t` never triggers the
+    'appeared before the stimulus' rejection (see the dedicated not_before tests
+    below for the case that supplies it deliberately) -- and (M1)
+    `n_obs_post_grace` mirrors `n_obs`, so the new `observation_frames_post_grace`
+    check passes by default too (see test_judge_scenario_observation_frames_post_grace_*
+    for the case that deliberately empties the post-grace window).
+
+    L4: `fault_first_t` keys are fault NAME STRINGS (rhs.fault_names(bit)), not
+    raw int bitmasks -- callers must key it the same way judge_scenario() reads
+    it, or a `not_before_s` test passes/fails for the wrong reason."""
+    if n_obs_post_grace is None:
+        n_obs_post_grace = n_obs
     return {"n_obs": n_obs, "rows": rows, "final_fault_flags": final_fault_flags,
-            "fault_bits_seen": fault_bits_seen, "final_state": final_state}
+            "fault_bits_seen": fault_bits_seen,
+            "fault_bits_post_grace": (fault_bits_seen if fault_bits_post_grace is None
+                                      else fault_bits_post_grace),
+            "fault_first_t": fault_first_t or {},
+            "final_state": final_state,
+            "grace_s": rhs.WARM_RESET_GRACE_S if grace_s is None else grace_s,
+            "survive_to_t": survive_to_t,
+            "fault_bits_before_survive": fault_bits_before_survive,
+            "state_at_survive": state_at_survive,
+            "n_obs_post_grace": n_obs_post_grace,
+            "last_obs_t": last_obs_t}
 
 
 def _events(over_absmax=0, worst_ring_v=None):
@@ -338,10 +460,42 @@ def _child(status="ok", summary=None):
     return {"status": status, "returncode": 0, "summary": summary or {"achieved_hz": 1000.0}}
 
 
+def _passing_signals(scenario_name):
+    """A scan_signals()-shaped measured list (M2) that satisfies every
+    signals_require spec on `scenario_name` -- one measurement dict per spec,
+    in the same order, built to just clear its own assertion kind (>= for
+    min_ticks/min_value/strictly_decreases_by, <= for max_ticks)."""
+    specs = rhs.FAULT_EXPECTATIONS[scenario_name].get("signals_require") or []
+    out = []
+    for spec in specs:
+        m = {"rows": 10, "ticks": 0, "peak": None, "first": None, "last": None}
+        if "min_ticks" in spec:
+            m["ticks"] = int(spec["min_ticks"])
+        elif "max_ticks" in spec:
+            m["ticks"] = int(spec["max_ticks"])
+        elif "min_value" in spec:
+            m["peak"] = float(spec["min_value"])
+        elif "strictly_decreases_by" in spec:
+            need = float(spec["strictly_decreases_by"])
+            m["first"] = need
+            m["last"] = 0.0
+        out.append(m)
+    return out
+
+
+def _failing_signals(scenario_name):
+    """The converse of _passing_signals(): unmeasured (zero rows) for every
+    spec, which judge_signals() fails on 'never reached'."""
+    specs = rhs.FAULT_EXPECTATIONS[scenario_name].get("signals_require") or []
+    return [{"rows": 0, "ticks": 0, "peak": None, "first": None, "last": None}
+            for _ in specs]
+
+
 def test_judge_scenario_fault_required_with_fault_present_passes():
-    """'sag' is in FAULT_REQUIRED (UV_BUS 0x0100)."""
-    assert "sag" in rhs.FAULT_REQUIRED
-    _why, want = rhs.FAULT_REQUIRED["sag"]
+    """'sag' requires UV_BUS (0x0100)."""
+    assert "sag" in rhs.FAULT_EXPECTATIONS
+    want = rhs.FAULT_EXPECTATIONS["sag"]["require"]
+    assert want == rhs.FAULT_UV_BUS
     m = _metrics(fault_bits_seen=want, final_fault_flags=want)
     passed, checks = rhs.judge_scenario("sag", m, _events(), _child())
     assert passed is True
@@ -358,8 +512,8 @@ def test_judge_scenario_fault_required_without_fault_fails():
 
 
 def test_judge_scenario_comm_loss_fault_required_matches_hil_link_bit():
-    assert "comm-loss" in rhs.FAULT_REQUIRED
-    _why, want = rhs.FAULT_REQUIRED["comm-loss"]
+    assert "comm-loss" in rhs.FAULT_EXPECTATIONS
+    want = rhs.FAULT_EXPECTATIONS["comm-loss"]["require"]
     assert want == 0x0010     # FAULT_HIL_LINK aliases FAULT_PI_TIMEOUT
     m = _metrics(fault_bits_seen=want, final_fault_flags=want)
     passed, _checks = rhs.judge_scenario("comm-loss", m, _events(), _child())
@@ -367,9 +521,8 @@ def test_judge_scenario_comm_loss_fault_required_matches_hil_link_bit():
 
 
 def test_judge_scenario_no_unexpected_fault_scenario_fails_on_any_fault():
-    """'steady' is neither required nor allowed -> any fault is unexpected."""
-    assert "steady" not in rhs.FAULT_REQUIRED
-    assert "steady" not in rhs.FAULT_ALLOWED
+    """'steady' has no FAULT_EXPECTATIONS entry -> any fault is unexpected."""
+    assert "steady" not in rhs.FAULT_EXPECTATIONS
     m = _metrics(fault_bits_seen=0x0100, final_fault_flags=0x0100)
     passed, checks = rhs.judge_scenario("steady", m, _events(), _child())
     assert passed is False
@@ -383,14 +536,497 @@ def test_judge_scenario_no_unexpected_fault_scenario_passes_when_clean():
     assert passed is True
 
 
-def test_judge_scenario_fault_allowed_scenario_always_passes_that_check():
-    """'soc-depletion' is FAULT_ALLOWED — present or absent, that check passes."""
-    assert "soc-depletion" in rhs.FAULT_ALLOWED
-    for bits in (0, 0x0002):
-        m = _metrics(fault_bits_seen=bits, final_fault_flags=bits)
-        passed, checks = rhs.judge_scenario("soc-depletion", m, _events(), _child())
-        fa = [c for c in checks if c["name"] == "fault_allowed"][0]
+def test_judge_scenario_fault_allow_only_scenario_passes_with_or_without_the_allowed_bit():
+    """'soc-depletion' has no `require`, only `allow_only` (UV_BATT|ERROR) —
+    present or absent, the allow_only check passes as long as the survive_to
+    gate is also met and (M2) its signals_require ('soc' fell >= 0.05) is
+    satisfied, and no `expected_fault` check is even emitted (there is
+    nothing REQUIRED here)."""
+    assert "require" not in rhs.FAULT_EXPECTATIONS["soc-depletion"]
+    allow = rhs.FAULT_EXPECTATIONS["soc-depletion"]["allow_only"]
+    assert allow & rhs.FAULT_UV_BATT
+    signals = _passing_signals("soc-depletion")
+    for bits in (0, rhs.FAULT_UV_BATT):
+        m = _metrics(fault_bits_seen=bits, final_fault_flags=bits,
+                     fault_bits_before_survive=0, state_at_survive=2)
+        passed, checks = rhs.judge_scenario("soc-depletion", m, _events(), _child(),
+                                            signals=signals)
+        fa = [c for c in checks if c["name"] == "fault_allow_only"][0]
         assert fa["passed"] is True
+        assert not any(c["name"] == "expected_fault" for c in checks)
+        assert passed is True
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 4b. FAULT_EXPECTATIONS: not_before_s / allow_only / survive_to / events_require
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_judge_scenario_charge_cruise_not_before_rejects_early_oc_fc():
+    """'charge-cruise' requires OC_FC not_before_s=8.0 -- a first-appearance
+    time BEFORE the stimulus did not come from it and must fail the
+    expected_fault check, even though the bit IS present post-grace."""
+    expect = rhs.FAULT_EXPECTATIONS["charge-cruise"]
+    want = expect["require"]
+    not_before = expect["not_before_s"]
+    m = _metrics(fault_bits_seen=want, final_fault_flags=want,
+                 fault_first_t={rhs.fault_names(want): not_before - 1.0},   # too early
+                 fault_bits_before_survive=0, state_at_survive=2)
+    passed, checks = rhs.judge_scenario("charge-cruise", m, _events(), _child())
+    assert passed is False
+    ef = [c for c in checks if c["name"] == "expected_fault"][0]
+    assert ef["passed"] is False
+    assert "BEFORE the stimulus" in ef["detail"]
+
+
+def test_judge_scenario_charge_cruise_not_before_accepts_on_time_oc_fc():
+    """The converse: OC_FC first appearing AT OR AFTER not_before_s passes."""
+    expect = rhs.FAULT_EXPECTATIONS["charge-cruise"]
+    want = expect["require"]
+    not_before = expect["not_before_s"]
+    m = _metrics(fault_bits_seen=want, final_fault_flags=want,
+                 fault_first_t={rhs.fault_names(want): not_before + 0.5},
+                 fault_bits_before_survive=0, state_at_survive=2)
+    passed, checks = rhs.judge_scenario("charge-cruise", m, _events(), _child())
+    ef = [c for c in checks if c["name"] == "expected_fault"][0]
+    assert ef["passed"] is True
+    assert passed is True
+
+
+def test_judge_scenario_allow_only_rejects_an_unlisted_bit():
+    """'sag' allow_only is UV_BUS|ERROR only -- an unrelated extra bit
+    (e.g. OC_FC) alongside the required UV_BUS must fail fault_allow_only,
+    even though the require check itself is satisfied."""
+    expect = rhs.FAULT_EXPECTATIONS["sag"]
+    want = expect["require"]
+    extra_bits = want | rhs.FAULT_OC_FC
+    m = _metrics(fault_bits_seen=extra_bits, final_fault_flags=extra_bits,
+                 fault_first_t={rhs.fault_names(want): expect["not_before_s"] + 0.5})
+    passed, checks = rhs.judge_scenario("sag", m, _events(), _child())
+    assert passed is False
+    ef = [c for c in checks if c["name"] == "expected_fault"][0]
+    assert ef["passed"] is True   # UV_BUS itself is present and on-time
+    fa = [c for c in checks if c["name"] == "fault_allow_only"][0]
+    assert fa["passed"] is False
+    assert "OC_FC" in fa["detail"]
+
+
+def test_fault_expectations_allow_only_defaults_to_require_or_error():
+    """An entry that specifies `require` but omits `allow_only` is not
+    'anything goes' -- it defaults to require|FAULT_ERROR. Every entry in the
+    live table happens to set allow_only explicitly, so this pins the DEFAULT
+    computation directly against judge_scenario() with a synthetic entry."""
+    import types
+    synth = {"require": rhs.FAULT_UV_BUS, "source": "test"}   # no allow_only key
+    saved = dict(rhs.FAULT_EXPECTATIONS)
+    rhs.FAULT_EXPECTATIONS["__synthetic_default_allow_only__"] = synth
+    try:
+        want = rhs.FAULT_UV_BUS
+        m = _metrics(fault_bits_seen=want, final_fault_flags=want)
+        passed, checks = rhs.judge_scenario(
+            "__synthetic_default_allow_only__", m, _events(), _child())
+        fa = [c for c in checks if c["name"] == "fault_allow_only"][0]
+        assert fa["passed"] is True
+        # An extra bit outside require|ERROR must still be rejected -- the
+        # default is NOT "anything goes".
+        extra = want | rhs.FAULT_OC_FC
+        m2 = _metrics(fault_bits_seen=extra, final_fault_flags=extra)
+        _passed2, checks2 = rhs.judge_scenario(
+            "__synthetic_default_allow_only__", m2, _events(), _child())
+        fa2 = [c for c in checks2 if c["name"] == "fault_allow_only"][0]
+        assert fa2["passed"] is False
+    finally:
+        rhs.FAULT_EXPECTATIONS.clear()
+        rhs.FAULT_EXPECTATIONS.update(saved)
+
+
+def test_judge_scenario_survive_to_fails_when_fault_lands_before_the_gate():
+    """'charge-cruise' survive_to requires the run to reach t=8.0 in Run/
+    Finish before anything latches -- a bit observed BEFORE that time fails
+    survives_to_stimulus even if the (later) expected_fault also passes."""
+    expect = rhs.FAULT_EXPECTATIONS["charge-cruise"]
+    want = expect["require"]
+    m = _metrics(fault_bits_seen=want, final_fault_flags=want,
+                 fault_first_t={rhs.fault_names(want): expect["not_before_s"] + 0.5},
+                 fault_bits_before_survive=want,   # latched before the gate
+                 state_at_survive=None)
+    passed, checks = rhs.judge_scenario("charge-cruise", m, _events(), _child())
+    assert passed is False
+    sv = [c for c in checks if c["name"] == "survives_to_stimulus"][0]
+    assert sv["passed"] is False
+    assert "never reached its own stimulus" in sv["detail"]
+
+
+def test_judge_scenario_survive_to_fails_on_wrong_state_at_the_gate():
+    """The board is un-latched at t=8.0 but not in {2, 3} (Run/Finish) --
+    e.g. still in State 0/1 -- so it never actually got there either."""
+    expect = rhs.FAULT_EXPECTATIONS["charge-cruise"]
+    want = expect["require"]
+    m = _metrics(fault_bits_seen=want, final_fault_flags=want,
+                 fault_first_t={rhs.fault_names(want): expect["not_before_s"] + 0.5},
+                 fault_bits_before_survive=0, state_at_survive=1)
+    passed, checks = rhs.judge_scenario("charge-cruise", m, _events(), _child())
+    assert passed is False
+    sv = [c for c in checks if c["name"] == "survives_to_stimulus"][0]
+    assert sv["passed"] is False
+    assert "mainState at t=" in sv["detail"]
+
+
+def test_judge_scenario_events_require_scp_cut_passes_when_present():
+    m = _metrics(fault_bits_seen=0, final_fault_flags=0)
+    events = _events()
+    events["kinds"] = {"scp_cut": 1}
+    passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
+    ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
+    assert ev["passed"] is True
+
+
+def test_judge_scenario_events_require_scp_cut_fails_when_absent():
+    """'scp-inrush' requires no fault at all, but DOES require an scp_cut
+    event in the electrical sidecar -- absent, the whole judgement fails
+    even though every fault-bit check is clean."""
+    m = _metrics(fault_bits_seen=0, final_fault_flags=0)
+    events = _events()   # kinds == {}
+    passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
+    assert passed is False
+    ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
+    assert ev["passed"] is False
+    assert "never fired" in ev["detail"]
+
+
+def test_fault_expectations_schema_every_entry_has_a_nonempty_source():
+    for name, expect in rhs.FAULT_EXPECTATIONS.items():
+        assert expect.get("source"), name
+
+
+def test_fault_expectations_schema_only_known_fields():
+    known = {"require", "allow_only", "not_before_s", "survive_to",
+            "events_require", "source", "signals_require"}
+    for name, expect in rhs.FAULT_EXPECTATIONS.items():
+        assert set(expect) <= known, (name, set(expect) - known)
+
+
+def test_fault_expectations_not_before_and_survive_to_exceed_grace():
+    """M7/L3: re-derive the module's own import-time invariant directly
+    against the live table -- run_hil_suite.py asserts, at import, that every
+    `not_before_s` and every `survive_to.t` is strictly > WARM_RESET_GRACE_S
+    (both are compared against the POST-GRACE window, so a value at or below
+    the grace bound would be vacuous or unreachable rather than stricter).
+    Re-deriving it here means a future entry that violates it fails an
+    explicit test, not just an import-time AssertionError nobody watches.
+    Also confirms the table isn't vacuously satisfying this by omitting both
+    fields everywhere."""
+    saw_not_before = saw_survive_to = False
+    for name, expect in rhs.FAULT_EXPECTATIONS.items():
+        nb = expect.get("not_before_s")
+        if nb is not None:
+            saw_not_before = True
+            assert nb > rhs.WARM_RESET_GRACE_S, name
+        sv = (expect.get("survive_to") or {}).get("t")
+        if sv is not None:
+            saw_survive_to = True
+            assert sv > rhs.WARM_RESET_GRACE_S, name
+    assert saw_not_before and saw_survive_to, (
+        "sanity: the live table must exercise both fields or this test is vacuous")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 4c. M2: signals_require -- scan_signals() / judge_signals()
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_scan_signals_no_specs_is_free_and_returns_nothing(tmp_path):
+    """A scenario with no signals_require pays nothing -- scan_signals()
+    returns an empty list without even opening the CSV."""
+    out = rhs.scan_signals("/nonexistent/path/nope.csv", [])
+    assert out == []
+
+
+# -- switch_bit / min_ticks -----------------------------------------------
+
+def test_scan_signals_switch_bit_min_ticks_pass(tmp_path):
+    rows = [{"t": "3.0", "switch": str(rhs.SW_REGEN), "fault_flags": "0"},
+            {"t": "3.1", "switch": str(rhs.SW_REGEN), "fault_flags": "0"},
+            {"t": "3.2", "switch": "0", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "regen", "switch_bit": rhs.SW_REGEN, "min_ticks": 2,
+             "label": "REGEN_ENABLE asserted"}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+    assert checks[0]["name"] == "signal_regen"
+
+
+def test_scan_signals_switch_bit_min_ticks_fail_not_enough_ticks(tmp_path):
+    rows = [{"t": "3.0", "switch": str(rhs.SW_REGEN), "fault_flags": "0"},
+            {"t": "3.1", "switch": "0", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "regen", "switch_bit": rhs.SW_REGEN, "min_ticks": 5}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is False
+    assert "bit set on 1 tick" in checks[0]["detail"]
+
+
+# -- switch_bit / max_ticks -------------------------------------------------
+
+def test_scan_signals_switch_bit_max_ticks_pass_bit_stayed_clear(tmp_path):
+    rows = [{"t": "3.0", "switch": "0", "fault_flags": "0"},
+            {"t": "3.1", "switch": "0", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "fc_bus_open", "switch_bit": rhs.SW_FC_BUS, "max_ticks": 0}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+
+
+def test_scan_signals_switch_bit_max_ticks_fail_bit_stayed_set(tmp_path):
+    rows = [{"t": "3.0", "switch": str(rhs.SW_FC_BUS), "fault_flags": "0"},
+            {"t": "3.1", "switch": str(rhs.SW_FC_BUS), "fault_flags": "0"},
+            {"t": "3.2", "switch": str(rhs.SW_FC_BUS), "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "fc_bus_open", "switch_bit": rhs.SW_FC_BUS, "max_ticks": 1}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is False
+
+
+# -- column / min_value ------------------------------------------------------
+
+def test_scan_signals_min_value_pass(tmp_path):
+    rows = [{"t": "3.0", "I_charge": "0.1", "fault_flags": "0"},
+            {"t": "3.1", "I_charge": "0.6", "fault_flags": "0"},
+            {"t": "3.2", "I_charge": "0.3", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "charge_current", "column": "I_charge", "min_value": 0.5}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+    assert "peak 0.6000" in checks[0]["detail"]
+
+
+def test_scan_signals_min_value_fail_peak_too_low(tmp_path):
+    rows = [{"t": "3.0", "I_charge": "0.1", "fault_flags": "0"},
+            {"t": "3.1", "I_charge": "0.2", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "charge_current", "column": "I_charge", "min_value": 0.5}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is False
+
+
+def test_scan_signals_min_value_unmeasured_fails_not_skips(tmp_path):
+    """A row is scanned (m['rows'] > 0) but the column cell itself is always
+    blank: judge_signals() reports the peak as 'unmeasured' -- an UNMEASURED
+    positive assertion FAILS, it is never silently skipped (that is the whole
+    reason this table exists)."""
+    rows = [{"t": "3.0", "fault_flags": "0"}]   # I_charge column present but blank
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "charge_current", "column": "I_charge", "min_value": 0.5,
+             "label": "charger current"}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "the-why-string")
+    assert checks[0]["passed"] is False
+    assert "unmeasured" in checks[0]["detail"]
+    assert "the-why-string" in checks[0]["detail"]
+
+
+def test_scan_signals_no_rows_scanned_at_all_reports_never_reached(tmp_path):
+    """The DIFFERENT unmeasured case: no row even falls inside the spec's own
+    t_window / grace filter, so m['rows'] stays 0 and judge_signals() reports
+    'no observed rows ... never reached' -- distinct wording from a scanned-
+    but-blank column (the case above)."""
+    rows = [{"t": "3.0", "I_charge": "0.9", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "charge_current", "column": "I_charge", "min_value": 0.5,
+             "label": "charger current", "t_window": (10.0, 20.0)}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "the-why-string")
+    assert checks[0]["passed"] is False
+    assert "no observed rows" in checks[0]["detail"]
+    assert "never reached" in checks[0]["detail"]
+    assert "the-why-string" in checks[0]["detail"]
+
+
+# -- column / strictly_decreases_by ------------------------------------------
+
+def test_scan_signals_strictly_decreases_by_pass(tmp_path):
+    rows = [{"t": "3.0", "soc": "0.70", "fault_flags": "0"},
+            {"t": "3.1", "soc": "0.60", "fault_flags": "0"},
+            {"t": "3.2", "soc": "0.50", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "soc_fell", "column": "soc", "strictly_decreases_by": 0.15}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+    assert "fell by 0.200000" in checks[0]["detail"]
+
+
+def test_scan_signals_strictly_decreases_by_fail_not_enough_fall(tmp_path):
+    rows = [{"t": "3.0", "soc": "0.70", "fault_flags": "0"},
+            {"t": "3.1", "soc": "0.68", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "soc_fell", "column": "soc", "strictly_decreases_by": 0.15}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is False
+
+
+def test_scan_signals_strictly_decreases_by_fail_soc_rose(tmp_path):
+    """A RISING value must not accidentally pass -- 'first - last' goes
+    negative, which is < the required positive fall."""
+    rows = [{"t": "3.0", "soc": "0.50", "fault_flags": "0"},
+            {"t": "3.1", "soc": "0.70", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "soc_fell", "column": "soc", "strictly_decreases_by": 0.05}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is False
+
+
+# -- t_window edges -----------------------------------------------------------
+
+def test_scan_signals_t_window_excludes_samples_outside_it(tmp_path):
+    rows = [{"t": "1.0", "I_charge": "9.0", "fault_flags": "0"},   # before window
+            {"t": "5.0", "I_charge": "0.1", "fault_flags": "0"},   # inside, too low
+            {"t": "9.0", "I_charge": "9.0", "fault_flags": "0"}]   # after window
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "charge_current", "column": "I_charge", "min_value": 0.5,
+             "t_window": (3.0, 7.0)}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    # The 9.0 A samples are outside the window and must not count -- only the
+    # in-window 0.1 A sample is seen, which is below min_value.
+    assert checks[0]["passed"] is False
+    assert "peak 0.1000" in checks[0]["detail"]
+
+
+def test_scan_signals_t_window_boundary_inclusive_both_ends(tmp_path):
+    """t0 and t1 themselves are INSIDE the window (the guard is `t < w[0] or
+    t > w[1]`, both strict)."""
+    rows = [{"t": "3.0", "I_charge": "0.9", "fault_flags": "0"},   # == t0
+            {"t": "7.0", "I_charge": "0.1", "fault_flags": "0"}]   # == t1
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "charge_current", "column": "I_charge", "min_value": 0.5,
+             "t_window": (3.0, 7.0)}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True   # the t0 sample (0.9 A) counted
+
+
+def test_scan_signals_t_window_open_ended_to_the_end(tmp_path):
+    """t1 = None means 'to the end of the run' -- no upper bound."""
+    rows = [{"t": "3.0", "I_charge": "0.1", "fault_flags": "0"},
+            {"t": "999.0", "I_charge": "0.9", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "charge_current", "column": "I_charge", "min_value": 0.5,
+             "t_window": (3.0, None)}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+
+
+# -- post-grace filtering -----------------------------------------------------
+
+def test_scan_signals_filters_pre_grace_samples(tmp_path):
+    """Every spec is judged only on rows at or after the grace bound, for the
+    same reason the fault checks are -- a pre-grace sample belongs to the
+    previous run."""
+    rows = [{"t": "0.5", "I_charge": "9.0", "fault_flags": "0"},   # pre-grace
+            {"t": "3.0", "I_charge": "0.1", "fault_flags": "0"}]   # post-grace, low
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "charge_current", "column": "I_charge", "min_value": 0.5}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=2.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    # The 9.0 A pre-grace sample must not count -- only the 0.1 A post-grace
+    # sample is seen, which is below min_value.
+    assert checks[0]["passed"] is False
+    assert "peak 0.1000" in checks[0]["detail"]
+
+
+def test_scan_signals_missing_file_returns_empty_measurements():
+    specs = [{"name": "x", "column": "I_charge", "min_value": 0.5}]
+    out = rhs.scan_signals("/nonexistent/path/nope.csv", specs)
+    assert len(out) == 1
+    assert out[0]["rows"] == 0
+
+
+# -- multiple specs, parallel measurement -------------------------------------
+
+def test_scan_signals_measures_multiple_specs_in_one_pass(tmp_path):
+    rows = [{"t": "3.0", "switch": str(rhs.SW_REGEN), "I_charge": "0.6",
+             "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [
+        {"name": "regen", "switch_bit": rhs.SW_REGEN, "min_ticks": 1},
+        {"name": "charge_current", "column": "I_charge", "min_value": 0.5},
+    ]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert len(checks) == 2
+    assert all(c["passed"] for c in checks)
+
+
+# -- suite-error / unknown spec shape -----------------------------------------
+
+def test_judge_signals_spec_with_no_assertion_kind_is_a_suite_error(tmp_path):
+    rows = [{"t": "3.0", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "bogus", "column": "I_charge"}]   # no min_value/etc.
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is False
+    assert "declares no" in checks[0]["detail"]
+
+
+def test_judge_signals_csv_read_error_is_reported_not_raised():
+    specs = [{"name": "x", "column": "I_charge", "min_value": 0.5}]
+    measured = [{"error": "synthetic OSError"}]
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is False
+    assert "synthetic OSError" in checks[0]["detail"]
+
+
+# -- signals_require wired end-to-end through judge_scenario() ---------------
+
+def test_judge_scenario_signals_require_unmeasured_fails_not_skipped():
+    """signals=None (the caller did not run scan_signals()) is NOT the same
+    as 'nothing to check' -- an unmeasured positive assertion is a gap, and
+    judge_scenario() must fail it, not silently omit the check."""
+    m = _metrics(fault_bits_seen=0, final_fault_flags=0,
+                 fault_bits_before_survive=0, state_at_survive=2)
+    passed, checks = rhs.judge_scenario("soc-depletion", m, _events(), _child(),
+                                        signals=None)
+    sig = [c for c in checks if c["name"] == "signals_require"][0]
+    assert sig["passed"] is False
+    assert "not measured" in sig["detail"]
+    assert passed is False
+
+
+def test_judge_scenario_signals_require_measured_and_failing_fails_the_run():
+    m = _metrics(fault_bits_seen=0, final_fault_flags=0,
+                 fault_bits_before_survive=0, state_at_survive=2)
+    signals = _failing_signals("soc-depletion")
+    passed, checks = rhs.judge_scenario("soc-depletion", m, _events(), _child(),
+                                        signals=signals)
+    sig_checks = [c for c in checks if c["name"].startswith("signal_")]
+    assert sig_checks and all(not c["passed"] for c in sig_checks)
+    assert passed is False
 
 
 def test_judge_scenario_zero_obs_fails():
@@ -400,6 +1036,49 @@ def test_judge_scenario_zero_obs_fails():
     obs = [c for c in checks if c["name"] == "observation_frames"][0]
     assert obs["passed"] is False
     assert "never answered" in obs["detail"]
+    # M1: observation_frames_post_grace is not even emitted when the board
+    # never answered AT ALL -- observation_frames already covers that.
+    assert not any(c["name"] == "observation_frames_post_grace" for c in checks)
+
+
+# ── M1: observation_frames_post_grace ───────────────────────────────────────
+
+def test_judge_scenario_observation_frames_post_grace_passes_by_default():
+    """_metrics()' default mirrors n_obs into n_obs_post_grace, so a normal
+    fixture passes this check too -- the sanity case every other judge_scenario
+    test above already relies on implicitly."""
+    m = _metrics()
+    passed, checks = rhs.judge_scenario("steady", m, _events(), _child())
+    post = [c for c in checks if c["name"] == "observation_frames_post_grace"][0]
+    assert post["passed"] is True
+    assert passed is True
+
+
+def test_judge_scenario_observation_frames_post_grace_fails_when_board_dies_before_grace():
+    """M1's motivating case: the board answered SOME ticks (observation_frames
+    passes) but none of them are post-grace -- it went silent inside the
+    grace window. Every post-grace fault check would otherwise pass on an
+    EMPTY window, misreporting a dead board as clean. last_obs_t must be
+    named in the detail."""
+    m = _metrics(n_obs=5, n_obs_post_grace=0, last_obs_t=0.437,
+                 fault_bits_seen=0, final_fault_flags=0)
+    passed, checks = rhs.judge_scenario("steady", m, _events(), _child())
+    post = [c for c in checks if c["name"] == "observation_frames_post_grace"][0]
+    assert post["passed"] is False
+    assert "0.437" in post["detail"]
+    assert "went silent" in post["detail"]
+    assert passed is False
+
+
+def test_judge_scenario_observation_frames_post_grace_detail_handles_missing_last_obs_t():
+    """Defensive formatting: last_obs_t missing entirely (None) must not
+    raise a formatting error -- rendered as '?' rather than crashing the
+    whole judgement."""
+    m = _metrics(n_obs=5, n_obs_post_grace=0, last_obs_t=None)
+    passed, checks = rhs.judge_scenario("steady", m, _events(), _child())
+    post = [c for c in checks if c["name"] == "observation_frames_post_grace"][0]
+    assert post["passed"] is False
+    assert "?" in post["detail"]
 
 
 def test_judge_scenario_sw_ring_over_absmax_fails_even_if_no_fault():
@@ -639,22 +1318,25 @@ def test_finding_exit_code_logic_is_inline_in_main_untestable_offline():
 # 8. Re-pinned: soc-depletion plan special-case (duration 650, --soc0 0.15)
 # ─────────────────────────────────────────────────────────────────────────
 
-def test_soc_depletion_duration_and_soc0_repinned_to_650_and_0_15():
+def test_soc_depletion_duration_and_soc0_repinned_to_880_and_0_15():
     """soc-depletion's SCENARIOS entry itself still says duration_s=120 (see
     test_hil_plant_sim.py's SCENARIOS-registry tests) -- build_plan() special-
     cases ONLY this one scenario name and overrides both the duration and adds
-    --soc0 0.15, per the review-fix round's derivation (5s ramp + 645s of load
-    at 3 A on a 5 Ah pack reaches ~4.25% SOC, past the ~5% UV-crossing point;
-    see the comment at the override site). Every other scenario must be
-    unaffected by this special case."""
+    --soc0 0.15. RE-DERIVED (review M4, 2026-08-30): the endurance load dropped
+    3.0 -> SOC_ENDURANCE_LOAD_A 2.2 A (3.0 A overloaded the surviving BT channel
+    past LIMIT_I_BT_MAX 3.0 A for the whole run), so the duration grew in
+    lockstep to preserve delivered charge (645 s x 3.0 A = 1935 A*s vs the new
+    870 s x 2.2 A = 1914 A*s, -1.1%); 880 s total = 10 s before the load ramp +
+    870 s of load. Every other scenario must be unaffected by this special
+    case."""
     plan = rhs.build_plan(_args(only=["soc-depletion"]))
     assert len(plan) == 1
     item = plan[0]
-    assert item["duration_s"] == pytest.approx(650.0)
-    assert item["timeout_s"] == pytest.approx(650.0 + rhs.GRACE_S)
+    assert item["duration_s"] == pytest.approx(880.0)
+    assert item["timeout_s"] == pytest.approx(880.0 + rhs.TIMEOUT_GRACE_S)
     argv = item["argv"]
     assert "--duration" in argv
-    assert argv[argv.index("--duration") + 1] == "650"
+    assert argv[argv.index("--duration") + 1] == "880"
     assert "--soc0" in argv
     assert argv[argv.index("--soc0") + 1] == "0.15"
     # SCENARIOS itself is untouched -- this is purely a build_plan() override.
@@ -666,34 +1348,49 @@ def test_soc_depletion_override_does_not_leak_into_other_scenarios():
     for p in plan:
         if p["kind"] != "scenario" or p["name"] == "soc-depletion":
             continue
+        if p["argv"] is None:
+            # operator_required skip record ('drive' without --with-operator):
+            # no argv is ever built for it.
+            continue
         assert "--soc0" not in p["argv"], p["name"]
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 9. F2: handoff-sag is FAULT_ALLOWED (review-fix round)
+# 9. F2: handoff-sag allow_only includes UV_BUS (review-fix round; migrated
+#    from FAULT_REQUIRED/FAULT_ALLOWED to FAULT_EXPECTATIONS, 2026-08-30)
 # ─────────────────────────────────────────────────────────────────────────
 
 FAULT_UV_BUS = 0x0100   # hil_replay_suite.FAULT_UV_BUS, re-derived for this test file
 
 
 def test_f2_handoff_sag_is_in_fault_allowed():
-    assert "handoff-sag" in rhs.FAULT_ALLOWED
-    assert "handoff-sag" not in rhs.FAULT_REQUIRED
+    assert "handoff-sag" in rhs.FAULT_EXPECTATIONS
+    expect = rhs.FAULT_EXPECTATIONS["handoff-sag"]
+    assert "require" not in expect   # not REQUIRED, only ALLOWED
+    assert expect["allow_only"] & FAULT_UV_BUS
 
 
 def test_f2_judge_scenario_handoff_sag_with_uv_fault_passes_that_check():
     """A UV_BUS fault on handoff-sag is a PLAUSIBLE outcome (TP0178/TP0201-
     class reactive standby pickup), not an unexpected failure -- the
-    fault_allowed check must pass whether or not the fault actually fired."""
-    m_with_fault = _metrics(fault_bits_seen=FAULT_UV_BUS, final_fault_flags=FAULT_UV_BUS)
-    passed, checks = rhs.judge_scenario("handoff-sag", m_with_fault, _events(), _child())
-    fa = [c for c in checks if c["name"] == "fault_allowed"][0]
+    fault_allow_only check must pass whether or not the fault actually fired,
+    as long as the run also reached its own survive_to gate (t=20.0, states
+    {2, 3}) and (M3) its signals_require (FC_BUS_ENABLE opened and stayed
+    open) is satisfied."""
+    signals = _passing_signals("handoff-sag")
+    m_with_fault = _metrics(fault_bits_seen=FAULT_UV_BUS, final_fault_flags=FAULT_UV_BUS,
+                            fault_bits_before_survive=0, state_at_survive=2)
+    passed, checks = rhs.judge_scenario("handoff-sag", m_with_fault, _events(), _child(),
+                                        signals=signals)
+    fa = [c for c in checks if c["name"] == "fault_allow_only"][0]
     assert fa["passed"] is True
     assert passed is True   # nothing else in the default fixture should fail it
 
-    m_clean = _metrics(fault_bits_seen=0, final_fault_flags=0)
-    passed2, checks2 = rhs.judge_scenario("handoff-sag", m_clean, _events(), _child())
-    fa2 = [c for c in checks2 if c["name"] == "fault_allowed"][0]
+    m_clean = _metrics(fault_bits_seen=0, final_fault_flags=0,
+                       fault_bits_before_survive=0, state_at_survive=2)
+    passed2, checks2 = rhs.judge_scenario("handoff-sag", m_clean, _events(), _child(),
+                                          signals=signals)
+    fa2 = [c for c in checks2 if c["name"] == "fault_allow_only"][0]
     assert fa2["passed"] is True
     assert passed2 is True
 
@@ -830,11 +1527,21 @@ def test_pi_live_skip_set_matches_pi_timeline_or_ems_scenarios():
 def test_build_plan_pi_live_produces_skip_records_for_exact_set():
     """F5 ripple: --pi-live now ALSO skip-records the entire replay half, so
     this must filter to the scenario half to keep pinning the original
-    pi_timeline/ems set (the replay skip set is covered separately)."""
+    pi_timeline/ems set (the replay skip set is covered separately).
+
+    'drive' is ALSO skip-recorded under the default args used here, but for
+    an unrelated reason (operator_required, no --with-operator) that has
+    nothing to do with --pi-live -- it is skipped identically with pi_live
+    off, so it is excluded by its distinct 'OPERATOR-REQUIRED' skip_reason
+    prefix rather than folded into the pi_timeline/ems set."""
     plan = rhs.build_plan(_args(pi_live=True))
     skipped = {p["name"] for p in plan
-               if p.get("skip_reason") and p["kind"] == "scenario"}
+               if p.get("skip_reason") and p["kind"] == "scenario"
+               and not p["skip_reason"].startswith("OPERATOR-REQUIRED")}
     assert skipped == PI_LIVE_SKIP_SCENARIOS
+    # sanity: 'drive' IS skipped, but for the operator-required reason.
+    drive = next(p for p in plan if p["name"] == "drive")
+    assert drive["skip_reason"].startswith("OPERATOR-REQUIRED")
 
 
 def test_build_plan_pi_live_skip_records_shape():
@@ -851,11 +1558,17 @@ def test_build_plan_pi_live_skip_records_shape():
 
 
 def test_build_plan_pi_live_non_skip_scenarios_unaffected():
+    """'drive' is excluded from BOTH sides here: it is skip-recorded in both
+    plans (operator_required, no --with-operator given to either), so it
+    never appears in either "not skipped" set and the equality below would
+    otherwise be comparing sets that both already lack it -- excluding it
+    explicitly documents that rather than relying on it happening to cancel
+    out."""
     plan_live = rhs.build_plan(_args(pi_live=True))
     plan_default = rhs.build_plan(_args())
     live_names = {p["name"] for p in plan_live if not p.get("skip_reason")
                   and p["kind"] == "scenario"}
-    default_names = {p["name"] for p in plan_default if p["kind"] == "scenario"}
+    default_names = {p["name"] for p in plan_default if p["kind"] == "scenario"} - {"drive"}
     assert live_names == default_names - PI_LIVE_SKIP_SCENARIOS
 
 
@@ -966,10 +1679,10 @@ def test_full_argv_replay_only_and_pi_live_is_argparse_error():
 
 RATE_HZ = rhs.HIL_DEFAULT_RATE_HZ
 
-
-def _metrics(fault_bits_seen=0, final_fault_flags=0, n_obs=10, rows=10):
-    return {"n_obs": n_obs, "rows": rows, "fault_bits_seen": fault_bits_seen,
-            "final_fault_flags": final_fault_flags, "final_state": 2}
+# NOTE: this section reuses the single `_metrics()` helper defined in section 4
+# above (extended with the grace/survive_to fields) -- it used to shadow that
+# definition with a narrower duplicate of the same name; removed so both
+# sections share one fixture and cannot silently drift apart.
 
 
 def _live_child(duration_s=30.0, achieved_hz=1000.0):
@@ -1033,9 +1746,11 @@ def test_judge_scenario_pi_timeout_not_excused_on_extra_bit_0x8030():
 def test_judge_scenario_comm_loss_still_requires_0x0010_under_both_modes():
     child = _live_child()
     for pi_live in (False, True):
-        # F1/F2: FAULT_REQUIRED still checks against the raw wanted bit
-        # (0x0010) via `seen & want` -- comm-loss is unaffected by the excusal
-        # rewrite because it never reaches the no_unexpected_fault branch.
+        # F1/F2: comm-loss's FAULT_EXPECTATIONS `require` still checks against
+        # the raw wanted bit (0x0010) via `post & require` -- it is unaffected
+        # by the pi_live excusal rewrite because it never reaches the
+        # no_unexpected_fault branch (that branch only runs when the scenario
+        # has no FAULT_EXPECTATIONS entry at all).
         passed, checks = rhs.judge_scenario(
             "comm-loss", _metrics(fault_bits_seen=0x8010, final_fault_flags=0x8010),
             rhs.analyze_events(None), child, pi_live=pi_live, duration_s=30.0)
@@ -1063,9 +1778,9 @@ def test_judge_scenario_pi_timeout_excusal_does_not_mask_other_faults():
 
 
 def test_judge_scenario_pi_timeout_excusal_not_applied_to_fault_required_scenarios():
-    """FAULT_REQUIRED scenarios ('sag', 'comm-loss') use the expected_fault
-    check path, not no_unexpected_fault -- the pi_live excusal branch must
-    never engage there."""
+    """Scenarios with a FAULT_EXPECTATIONS `require` ('sag', 'comm-loss') use
+    the expected_fault/fault_allow_only check path, not no_unexpected_fault --
+    the pi_live excusal branch must never engage there."""
     passed, checks = rhs.judge_scenario(
         "sag", _metrics(fault_bits_seen=0x8100, final_fault_flags=0x8100),
         rhs.analyze_events(None), _live_child(), pi_live=True, duration_s=30.0)

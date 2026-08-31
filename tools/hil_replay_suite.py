@@ -6,6 +6,17 @@ A curated set of REAL bench logs (logs/*.BLG) is replayed at the firmware throug
 `tools/hil_plant_sim.py --replay`, and the resulting per-tick CSV is evaluated
 here against declarative, firmware-version-aware checks.
 
+WHAT THIS HALF ACTUALLY IS (relabelled 2026-08-30, HIL_FINDINGS "Replay half"):
+a **bring-up + fault-decision regression harness**, not a control-response suite.
+Replay mode constructs NO commander, so no replayed run ever reaches State 2: the
+board brings up, sits in Idle, and `current` is 0.000 A for the whole run.  Every
+current-shape check below is therefore vacuously true on a healthy board — they
+are retained as "no SPURIOUS command" assertions (the firmware must not drive on
+an injected stimulus it was never commanded to follow), and they are annotated as
+such in the report, not advertised as controller coverage.  What the half really
+tests is: does the fw v22+ staged bring-up complete on this stimulus, and does the
+fault machinery make the right LATCH decision on it.
+
 Two evaluation MODES (see docs/HIL_REPLAY_LOGS.md for the full policy):
 
   conformance — the log was recorded on firmware whose control semantics match
@@ -46,6 +57,29 @@ import sys
 # them against the repo root derived from this file's location, NOT the CWD —
 # invoking the module from inside tools/ used to report all 26 logs missing.
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# The two host-side timing constants this module has to agree with, imported from
+# the simulator rather than duplicated (there must be ONE definition of each, or
+# the checks here and the suite's drift apart silently).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hil_plant_sim import (                                        # noqa: E402
+    REPLAY_PREAMBLE_S, WARM_RESET_GRACE_S,
+)
+
+# M7 — LOAD-BEARING ORDERING, asserted at import rather than trusted.
+# Fault checks exclude observations before WARM_RESET_GRACE_S (the previous run's
+# inherited settle latch).  If the preamble were SHORTER than that bound, the first
+# (WARM_RESET_GRACE_S - REPLAY_PREAMBLE_S) seconds of every RECORDED trajectory
+# would fall inside the excluded window and any fault the log's own opening samples
+# provoked would be silently dropped — a false PASS with no symptom anywhere.
+# Shortening the preamble without re-deriving the grace bound is exactly the change
+# this catches.
+assert REPLAY_PREAMBLE_S >= WARM_RESET_GRACE_S, (
+    "REPLAY_PREAMBLE_S (%.3f s) must be >= WARM_RESET_GRACE_S (%.3f s): the fault "
+    "checks exclude everything before the grace bound, so a shorter preamble would "
+    "put the start of every recorded trajectory inside the excluded window and drop "
+    "real early faults without a symptom."
+    % (REPLAY_PREAMBLE_S, WARM_RESET_GRACE_S))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Firmware-sourced constants.  VERIFIED against the cited sources — do not
@@ -112,6 +146,16 @@ UV_BUS_DWELL_LATCH_MS = 20.0
 UV_BUS_DWELL_LEAK = 0.05
 UV_BUS_DWELL_DT_CAP_MS = 5.0
 
+# teensy_controller/teensy_controller.ino:1300
+#   #define LIMIT_I_FC_MAX   1.4f   // A (BUS-SIDE) — H-20 2.6 A referred through the boost
+# OPERATOR RULING (a), 2026-08-30: this value STAYS at 1.4 A. It is already
+# slightly above the H-20 fuel cell's theoretical maximum. Recorded bench traces
+# that exceed it did so only because DC bench supplies stood in for the fuel cell,
+# and BENCH_TEST compiles the OC check out — so an OC_FC latch when those traces
+# are replayed at a production build is CORRECT hardware replication, not a
+# regression. Four suite entries are classified on exactly that basis.
+LIMIT_I_FC_MAX_A = 1.4
+
 # teensy_controller/teensy_controller.ino:1363
 #   #define V_BUS_CHARGED_THRESH (V_BUS_NOMINAL - 2.5f)   // 16.0 → 13.5 V
 # The UV fault is ARMED BY THE BUS, not by a state: the injected V_bus must have
@@ -134,6 +178,55 @@ OFF_RAIL_WITHIN_S = 1.0
 # `near_zero_current`: the V_SP_ZERO_THRESH-class expectation — with no velocity
 # setpoint commanded over the HIL link, the firmware must not be driving.
 NEAR_ZERO_I_A = 0.5
+
+# ── Grace window ────────────────────────────────────────────────────────────
+# Every fault check below judges observations at t >= this bound only.  A replay
+# CSV carries the SAME inherited settle latch every scenario CSV does: from fw v23
+# the board warm-resets out of the previous run's ERR_HIL_STALE latch at t ~= 0.5 s,
+# so a run that had nothing to do with it opens showing 0x8010 (or 0x8011 / 0xA010
+# when its predecessor latched something of its own).  19 of the 26 replays in the
+# first fw v23 suite pass FAILed on nothing but that.  Value imported from
+# hil_plant_sim (WARM_RESET_GRACE_S) so this and run_hil_suite.py cannot diverge.
+#
+# Self-guarding, and worth stating: this excludes an observation WINDOW, never a
+# bit value.  A board that stays latched keeps reporting its flags after the bound
+# and still fails.
+REPLAY_GRACE_S = WARM_RESET_GRACE_S
+
+# ── Bring-up gate ───────────────────────────────────────────────────────────
+# Before any substantive check runs, the board must have REACHED Idle (mainState
+# 1).  Without this, a board that never brought up fails every check for the same
+# single reason and the report reads as N independent findings instead of one.
+# Budget: warm-reset recovery at ~0.50 s (HIL_RECOVER_DEBOUNCE_MS) + ~0.12 s of
+# staged bring-up = ~0.62 s measured (HIL_FINDINGS "comm-loss"/"bringup"), and the
+# synthetic preamble (REPLAY_PREAMBLE_S = 2.5 s) holds healthy rails over all of
+# it.  3.5 s is that plus ~1 s of margin, and still well inside the shortest log
+# in the suite (TP0053, ~5 s).  An entry whose POINT is that bring-up fails sets
+# `skip_bringup_gate`.
+BRINGUP_DEADLINE_S = 3.5
+BRINGUP_STATE_IDLE = 1
+
+# ── Time base ───────────────────────────────────────────────────────────────
+# All times in this module — check details, thresholds, the constants above — are
+# SIM-relative, i.e. the `t` column of the CSV verbatim.  The recorded log starts
+# entry_preamble_s(entry) seconds into that axis, so
+#     log time = sim time - entry_preamble_s(entry)
+# and a CSV row with replay_rec == -1 is a preamble row with no source record.
+# No check currently takes a log-relative time window; a future one MUST convert
+# explicitly rather than assume the two axes coincide.
+#
+# The bound is PER ENTRY, not global: an entry with `skip_preamble` replays raw, so
+# its preamble bound is 0.0 and its two axes DO coincide.  Everything that needs to
+# separate "synthetic preamble" from "recorded stimulus" — the stimulus guards (M5)
+# and the rate-based checks (M6) — resolves it through this one function.
+
+
+def entry_preamble_s(entry):
+    """Seconds of synthetic bring-up preamble prepended to THIS entry's replay.
+
+    0.0 for an entry carrying `skip_preamble` (which also passes
+    --replay-no-preamble to the simulator, see build_sim_argv)."""
+    return 0.0 if (entry or {}).get("skip_preamble") else REPLAY_PREAMBLE_S
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Firmware-version deltas that matter when reading a replay result.
@@ -172,6 +265,59 @@ COMPARABLE_FW_MIN = 18
 # ─────────────────────────────────────────────────────────────────────────────
 # The suite.
 # ─────────────────────────────────────────────────────────────────────────────
+# ── The OC_FC reclassification (2026-08-30, operator ruling (a)) ────────────
+# Four entries moved conformance -> deviation this round.  They were classified
+# "clean" from their BENCH behaviour, but they were recorded with DC bench
+# supplies standing in for the H-20 fuel cell AND with BENCH_TEST compiling the OC
+# check out, so their recorded I_fc routinely exceeded LIMIT_I_FC_MAX with nothing
+# on the board to notice.  Replayed at a production (OC-live) build, an OC_FC latch
+# is CORRECT hardware replication — the operator's ruling is explicit that the
+# 1.4 A limit stays, being already slightly above the H-20's theoretical maximum.
+# Scoring them as "must not fault" asserted the opposite of the hardware.
+# Each entry carries an OC stimulus guard (require_stimulus): if the injected I_fc
+# no longer crosses 1.4 A, the entry is reported INCONCLUSIVE rather than passing,
+# the same discipline as the UV trio's.
+# ── The UV pair's injected-I_fc clamp (H1, 2026-08-30) ─────────────────────
+# Both UV-pair logs cross LIMIT_I_FC_MAX 1.4 A BEFORE their bus collapse accumulates
+# the 20 ms of dwell the UV filter needs.  Measured (log time): TP0010 I_fc > 1.4 A
+# at 4.770 s vs UV qualifying at 4.797 s; TP0053 3.929 s vs 4.462 s.  Replayed raw at
+# a production build the board therefore latches OC_FC first, and State 99 FREEZES
+# fault_flags — the UV bit can never be set afterwards, so the UV-latch regression
+# these two logs exist for is destroyed by a fault that is itself correct.
+#
+# The clamp is the resolution, and it is honest under operator ruling (a): those
+# currents came from a DC BENCH SUPPLY standing in for the H-20, which could never
+# source them.  Clamping the injected FC channel to 1.3 A (7 % under the limit)
+# removes a stimulus the real hardware could not produce, and delivers the bus
+# collapse the entries were kept for.  It is DECLARED at every scoring site — the
+# simulator banner, the entry note, this table and the ledger — because it is a
+# deliberate modification of a recorded trajectory: nothing about FC current may be
+# concluded from these two runs.
+#
+# Post-clamp verification (both logs): the UV dwell still qualifies (the clamp
+# touches only I_fc, never V_bus, and _uv_stimulus_qualifies() reads V_bus alone),
+# and no sample can reach 1.4 A, so OC_FC is unreachable by construction.
+UV_PAIR_I_FC_CLAMP_A = 1.3
+# Formatted with (log_name, t_oc_s, t_uv_s); the clamp value is substituted here so
+# an entry cannot quote a number the plumbing does not use.
+UV_PAIR_CLAMP_WHY = (
+    " *** INJECTED I_fc CLAMPED to " + ("%.1f" % UV_PAIR_I_FC_CLAMP_A) + " A *** "
+    "(H1, 2026-08-30): raw, %s's recorded I_fc crosses LIMIT_I_FC_MAX at log "
+    "t=%.3fs while the UV dwell does not qualify until t=%.3fs, so the board latches "
+    "OC_FC first and State 99 freezes fault_flags — UV could never be set and this "
+    "entry's whole purpose was lost. The recorded current came from a DC bench "
+    "supply the real H-20 could never source (operator ruling (a)), so the clamp "
+    "removes an unphysical stimulus rather than excusing the firmware. NO conclusion "
+    "about FC current may be drawn from this run.")
+
+OC_FC_RECLASS_WHY = (
+    "RECLASSIFIED conformance -> deviation (2026-08-30, operator ruling (a), "
+    "HIL_FINDINGS 'Replay half' Class B): %s's recorded I_fc peaks at %.2f A, above "
+    "LIMIT_I_FC_MAX 1.4 A. The bench run did not fault because a DC supply replaced "
+    "the fuel cell and BENCH_TEST compiles FAULT_OC_FC out; a production build "
+    "replicating this hardware MUST latch it. The deviation asserted here is "
+    "exactly that: modern firmware catches what the recording never could.")
+
 # Each entry:
 #   log            short log name (matches the .BLG basename)
 #   path           repo-relative path to the .BLG
@@ -185,17 +331,16 @@ COMPARABLE_FW_MIN = 18
 REPLAY_SUITE = [
     # ── CONFORMANCE — current wheel + control law (fw v18/v19) ───────────────
     {
-        "log": "ML0203", "path": "logs/ML0203.BLG", "mode": "conformance",
+        "log": "ML0203", "path": "logs/ML0203.BLG", "mode": "deviation",
         "fw_version": 18, "blg_version": 6,
-        "classification": "clean 'V' velocity run on the 90-slot wheel",
-        "why": "The reference clean baseline on the currently flashed control law: "
-               "if anything fails here, the failure is in the HIL path, not the log.",
+        "classification": "'V' velocity run on the 90-slot wheel whose recorded "
+                          "I_fc peaks at 2.11 A — above LIMIT_I_FC_MAX",
+        "why": OC_FC_RECLASS_WHY % ("ML0203", 2.11),
         "provisional": False,
         "checks": [
-            {"kind": "no_fault", "name": "no_fault"},
+            {"kind": "fault_latched", "name": "oc_fc_latched",
+             "bit": FAULT_OC_FC, "require_stimulus": True},
             {"kind": "bounded_current", "name": "bounded_current"},
-            {"kind": "no_sustained_rail", "name": "no_sustained_rail",
-             "max_episode_s": SUSTAINED_RAIL_S},
         ],
     },
     {
@@ -226,12 +371,50 @@ REPLAY_SUITE = [
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
-        "log": "ML0217", "path": "logs/ML0217.BLG", "mode": "conformance",
+        # RECLASSIFIED conformance -> deviation (2026-08-30, HIL_FINDINGS 'Replay
+        # half' Class B).  The log was RECORDED WITH A DARK BUS — V_bus ~= 0 for
+        # all 38 s — so it was never a soak case for anything: replayed, the
+        # firmware's staged bring-up cannot pass P1 and times out at
+        # BUS_CHARGE_TIMEOUT_MS into FAULT_INIT_FAIL (.ino:8784-8786).  That is
+        # correct firmware behaviour and now the asserted expectation.
+        #
+        # REPLAYS RAW — `skip_preamble` (H2, 2026-08-30).  The first version of this
+        # entry kept the synthetic preamble, and that made its own expectation
+        # UNREACHABLE: the board completed bring-up on the healthy preamble rails and
+        # then met the dark trajectory as a RUNNING board, which latches UV_BUS at
+        # ~t=2.52 s.  FAULT_INIT_FAIL is raised ONLY by busBringupTick()'s phase
+        # timeouts (.ino:8762-8765, :8784-8786), i.e. only from State 0's bring-up
+        # machine — a running board can never produce it.  Replaying raw restores the
+        # genuine cold-boot-into-darkness test: P0's gate never sees the bus reach
+        # V_PRECHARGE_MIN, and PRECHARGE_TIMEOUT_MS (300 ms, .ino:1466) latches
+        # INIT_FAIL.  ML0217 is a modern BLG v6 with all rail fields present, so it
+        # needs no absent-rail substitution and loses nothing by skipping the
+        # preamble.
+        #
+        # OBSERVABILITY OF THE LATCH (verified): INIT_FAIL fires ~300 ms after
+        # bring-up starts, i.e. BEFORE the 2.0 s grace bound.  It is still scored,
+        # because State 99 is latched and the simulator keeps streaming — no run
+        # boundary, so the fw v23 warm recovery never arms — and fault_flags
+        # therefore reads 0xA000 on every post-grace sample.  The grace filter ORs
+        # over samples, not over edges, so a persistent bit survives it; the check
+        # additionally prints the whole-run first-observation time so the ~0.3 s
+        # event is not misreported as a 2.0 s one.
+        #
+        # Bring-up gate EXEMPT, necessarily: a failing bring-up is the point.
+        # Timestamps are UNSHIFTED for this entry (sim time == log time); every
+        # consumer resolves that through entry_preamble_s().
+        "log": "ML0217", "path": "logs/ML0217.BLG", "mode": "deviation",
         "fw_version": 19, "blg_version": 6,
-        "classification": "largest manual ('K') run on fw v19",
-        "why": "Longest recent stimulus — a duration/soak case for the HIL link.",
+        "classification": "manual ('K') run RECORDED WITH A DARK BUS (V_bus ~ 0 "
+                          "for all 38 s)",
+        "why": "The dark-bus stimulus: the firmware must not accept a dead bus as "
+               "a working one. Bring-up P1 times out at BUS_CHARGE_TIMEOUT_MS and "
+               "FAULT_INIT_FAIL latches (.ino:8784-8786).",
         "provisional": True,
-        "checks": [{"kind": "no_fault", "name": "no_fault"},
+        "skip_bringup_gate": True,
+        "skip_preamble": True,
+        "checks": [{"kind": "fault_latched", "name": "init_fail_latched",
+                    "bit": FAULT_INIT_FAIL, "require_stimulus": False},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
@@ -274,27 +457,33 @@ REPLAY_SUITE = [
         ],
     },
     {
-        "log": "ML0165", "path": "logs/ML0165.BLG", "mode": "conformance",
+        "log": "ML0165", "path": "logs/ML0165.BLG", "mode": "deviation",
         "fw_version": 16, "blg_version": 6,
-        "classification": "rung stepladder, fw v16",
-        "why": "Multi-level stimulus with clean transitions; stability-only conformance.",
+        "classification": "rung stepladder, fw v16; recorded I_fc peaks at 1.52 A "
+                          "— above LIMIT_I_FC_MAX",
+        "why": OC_FC_RECLASS_WHY % ("ML0165", 1.52),
         "provisional": False,
-        "checks": [{"kind": "no_fault", "name": "no_fault"},
+        "checks": [{"kind": "fault_latched", "name": "oc_fc_latched",
+                    "bit": FAULT_OC_FC, "require_stimulus": True},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
-        "log": "ML0169", "path": "logs/ML0169.BLG", "mode": "conformance",
+        "log": "ML0169", "path": "logs/ML0169.BLG", "mode": "deviation",
         "fw_version": 16, "blg_version": 6,
-        "classification": "friction-disturbance rejection, ~2.2 s continuous saturation",
-        "why": "The saturation-endurance case: the firmware must ride the recorded "
-               "saturation episodes out without faulting and come off the rail.",
+        "classification": "friction-disturbance rejection, ~2.2 s continuous "
+                          "saturation; recorded I_fc peaks at 1.88 A — above "
+                          "LIMIT_I_FC_MAX",
+        "why": OC_FC_RECLASS_WHY % ("ML0169", 1.88) + (
+            " NOTE what this costs: ML0169 was the suite's saturation-endurance "
+            "case, and once OC_FC latches the board is in State 99 and the "
+            "returns_off_rail assertion is meaningless, so that check is dropped "
+            "here. Saturation endurance now has no replay representative — a "
+            "recorded run whose I_fc stays under 1.4 A would be needed to restore "
+            "it (see docs/HIL_REPLAY_LOGS.md)."),
         "provisional": False,
-        "checks": [
-            {"kind": "no_fault", "name": "no_fault"},
-            {"kind": "bounded_current", "name": "bounded_current"},
-            {"kind": "returns_off_rail", "name": "returns_off_rail",
-             "level_a": OFF_RAIL_LEVEL_A, "within_s": OFF_RAIL_WITHIN_S},
-        ],
+        "checks": [{"kind": "fault_latched", "name": "oc_fc_latched",
+                    "bit": FAULT_OC_FC, "require_stimulus": True},
+                   {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
         "log": "TP0170", "path": "logs/TP0170.BLG", "mode": "conformance",
@@ -331,7 +520,16 @@ REPLAY_SUITE = [
                           "window, the drag step-change and ~90 saturation episodes",
         "why": "The richest recorded incident in the archive, and the intended H6 "
                "regression: many saturation entries/exits back to back is exactly "
-               "the stimulus class the fw v18 general-Hanus fix targets.",
+               "the stimulus class the fw v18 general-Hanus fix targets. "
+               "L6 KNIFE-EDGE NOTE (measured 2026-08-30): its recorded I_fc PEAKS "
+               "AT 1.354 A — 96.7 % of LIMIT_I_FC_MAX 1.4 A. It stays a conformance entry "
+               "because it does not cross (unlike the four reclassified in §4a of "
+               "the ledger), and it is deliberately NOT moved. But it sits 46 mA "
+               "from flipping class: any re-derivation of the FC limit downward, or "
+               "any change to how the injected I_fc is scaled, turns this entry's "
+               "`no_fault` into a FAIL for a reason that has nothing to do with the "
+               "saturation behaviour it exists to test. Check this number first if "
+               "ML0151 ever starts failing.",
         "provisional": False,
         "checks": [
             {"kind": "no_fault", "name": "no_fault"},
@@ -465,14 +663,22 @@ REPLAY_SUITE = [
         ],
     },
 
-    # ── DEVIATION — the legacy UV trio: the modern firmware MUST latch ───────
+    # ── DEVIATION — the legacy UV PAIR: the modern firmware MUST latch ──────
+    # Was a "trio"; WP0097 was retired from it 2026-08-30 (see its entry below).
+    # Both members are BLG v1/v2 and carry no V_fc/V_batt/V_rgn field at all;
+    # before the synthetic bring-up preamble + absent-rail substitution (2026-08-30,
+    # hil_plant_sim.py) they injected 0 V for those rails, the staged bring-up's P3
+    # gate never saw V_rgn track V_bus, and both latched FAULT_MOT_HOTPLUG at
+    # ~1.09 s — dark and un-armable long before the recorded collapse arrived.
     {
         "log": "TP0010", "path": "logs/TP0010.BLG", "mode": "deviation",
         "fw_version": None, "blg_version": 1,
         "classification": "pre-versioning bus collapse; the old firmware died without faulting",
-        "why": "UV trio member. The fw v5 leaky-dwell UV filter must latch UV_BUS on "
-               "this recorded collapse — that is the whole point of the rework.",
+        "why": "UV pair member. The fw v5 leaky-dwell UV filter must latch UV_BUS on "
+               "this recorded collapse — that is the whole point of the rework."
+               + UV_PAIR_CLAMP_WHY % ("TP0010", 4.770, 4.797),
         "provisional": False,
+        "i_fc_clamp_a": UV_PAIR_I_FC_CLAMP_A,
         "checks": [{"kind": "fault_latched", "name": "uv_bus_latched",
                     "bit": FAULT_UV_BUS, "require_stimulus": True}],
     },
@@ -481,20 +687,44 @@ REPLAY_SUITE = [
         "fw_version": 4, "blg_version": 2,
         "classification": "repetitive source-commutation dropout (~9 ms under / ~51 ms "
                           "over per ~60 ms cycle) that EVADED the fw v4 window filter",
-        "why": "UV trio member and the exact case the dwell integrator was designed "
-               "for: net +6.45 ms per cycle, so it must latch within a few cycles.",
+        "why": "UV pair member and the exact case the dwell integrator was designed "
+               "for: net +6.45 ms per cycle, so it must latch within a few cycles."
+               + UV_PAIR_CLAMP_WHY % ("TP0053", 3.929, 4.462),
         "provisional": False,
+        "i_fc_clamp_a": UV_PAIR_I_FC_CLAMP_A,
         "checks": [{"kind": "fault_latched", "name": "uv_bus_latched",
                     "bit": FAULT_UV_BUS, "require_stimulus": True}],
     },
     {
+        # RETIRED FROM THE UV TRIO (2026-08-30, HIL_FINDINGS 'Replay half'): the
+        # recorded dip supplies only ~18 ms of dwell against the 20 ms
+        # UV_BUS_DWELL_LATCH_MS, and the log ENDS mid-dip — so it is not a valid UV
+        # stimulus for the current filter and the uv_bus_latched check could only
+        # ever report INCONCLUSIVE. The trio is now the PAIR TP0010 + TP0053.
+        # RECLASSIFIED to the OC_FC family instead, where its recorded 3.60 A I_fc
+        # peak — the largest in the archive — makes it the strongest member.
         "log": "WP0097", "path": "logs/WP0097.BLG", "mode": "deviation",
         "fw_version": 5, "blg_version": 3,
-        "classification": "fw v5-era bus collapse",
-        "why": "UV trio member; third independent collapse shape.",
+        "classification": "fw v5-era bus collapse; recorded I_fc peaks at 3.60 A "
+                          "— the archive's largest, far above LIMIT_I_FC_MAX",
+        "why": OC_FC_RECLASS_WHY % ("WP0097", 3.60) + (
+            " L5 CAVEAT — this entry is TIGHT IN TIME (measured 2026-08-30): the "
+            "recorded I_fc crosses 1.4 A only at log t=16.964 s and the log ENDS at "
+            "17.006 s, so the whole OC stimulus is the last 40 ms of the recording. "
+            "There is no margin in current (the peak is 3.60 A, 2.6x the limit) but "
+            "almost none in time: anything that shortens the replay, shifts its "
+            "time base, or trims the tail pushes the crossing off the end and this "
+            "becomes an INCONCLUSIVE stimulus report. That report is the DESIGNED "
+            "failure mode (require_stimulus), so the entry degrades loudly rather "
+            "than silently — but treat any timing change here as fragile."
+            " Retired from the UV pair: its recorded dip gives ~18 ms of dwell "
+            "against the 20 ms latch and the log ends mid-dip, so it was never a "
+            "qualifying UV stimulus (the suite already worded that honestly, but "
+            "kept scoring it). TP0010 and TP0053 remain the UV pair."),
         "provisional": False,
-        "checks": [{"kind": "fault_latched", "name": "uv_bus_latched",
-                    "bit": FAULT_UV_BUS, "require_stimulus": True}],
+        "checks": [{"kind": "fault_latched", "name": "oc_fc_latched",
+                    "bit": FAULT_OC_FC, "require_stimulus": True},
+                   {"kind": "bounded_current", "name": "bounded_current"}],
     },
 ]
 
@@ -511,8 +741,11 @@ REPLAY_EXCLUSIONS = [
      "nor the manoeuvre maps onto anything the current build does."),
     ("fw v3–v8 bulk campaigns (TP0014–TP0134, WP0039–WP0124, PS000x, TEST0001)",
      "Superseded control law and superseded fault logic; replaying dozens of them adds "
-     "runtime, not coverage. Three representatives are kept as the UV trio "
-     "(TP0010, TP0053, WP0097), chosen for three DIFFERENT collapse shapes."),
+     "runtime, not coverage. Three representatives are kept: TP0010 and TP0053 as "
+     "the UV PAIR (two different collapse shapes), and WP0097, which was retired "
+     "from that group on 2026-08-30 — its dip gives only ~18 ms of dwell against "
+     "the 20 ms latch and the log ends mid-dip — and now serves as the largest "
+     "OC_FC stimulus in the archive (3.60 A)."),
     ("hand-spin / manual-wheel diagnostics generally",
      "Stimulus is an operator's hand, not a control scenario: no repeatable property "
      "to assert."),
@@ -540,17 +773,68 @@ REQUIRED_COLUMNS = ("t", "V_bus", "current", "fault_flags")
 class ReplayCsv:
     """Parsed replay CSV: parallel lists, blanks dropped per-series."""
 
-    def __init__(self, rows, columns):
+    def __init__(self, rows, columns, grace_s=REPLAY_GRACE_S,
+                 preamble_s=REPLAY_PREAMBLE_S):
         self.columns = columns
         self.rows = rows
+        self.grace_s = grace_s
+        # M5/M6: where the RECORDED trajectory starts on the sim clock.  Distinct
+        # from grace_s and never interchangeable with it: grace_s is about the
+        # BOARD (the previous run's inherited latch), preamble_s is about the
+        # STIMULUS (rails this module synthesized rather than recorded).
+        self.preamble_s = preamble_s
         # (t, value) series with blanks removed.
         self.current = _series(rows, "t", "current", float)
-        self.faults = _series(rows, "t", "fault_flags", _int_any)
+        # M6: the command series restricted to the RECORDED window.  Rate-based
+        # checks must not dilute their denominator with preamble seconds during
+        # which no recorded stimulus existed — a 2.5 s preamble on a 4 s log
+        # (ML0137) would understate an alternation rate by 1.6x.
+        self.current_recorded = [(t, i) for t, i in self.current if t >= preamble_s]
+        # `faults_all` is every observed fault sample; `faults` is the GRACE-FILTERED
+        # view and is what every check below reads.  The two are separate attributes
+        # rather than a flag so a check cannot silently pick the wrong one: the
+        # unfiltered series is only for reporting what was carried in.
+        self.faults_all = _series(rows, "t", "fault_flags", _int_any)
+        self.faults = [(t, f) for t, f in self.faults_all if t >= grace_s]
+        self.faults_pre_grace = [(t, f) for t, f in self.faults_all if t < grace_s]
         self.v_bus = _series(rows, "t", "V_bus", float)
+        # Injected FC current — the stimulus side, never blank.  Used by
+        # check_fault_latched's OC stimulus guard.
+        self.i_fc = _series(rows, "t", "I_fc", float)
         self.state = _series(rows, "t", "state", _int_any)
         self.n_rows = len(rows)
         self.n_obs = len(self.current)
         self.duration_s = (float(rows[-1]["t"]) - float(rows[0]["t"])) if rows else 0.0
+
+    def first_fault_t(self, bit=None):
+        """L1: WHOLE-RUN first time a fault (or `bit`) was observed, or None.
+
+        Distinct from the times the checks print, which are necessarily the first
+        POST-GRACE observation.  A fault that latches before the grace bound and
+        persists — ML0217's INIT_FAIL at ~0.3 s is the standing example — is
+        correctly scored on its post-grace samples, but reporting 2.0 s as "when it
+        happened" would be wrong; both numbers are shown."""
+        for t, f in self.faults_all:
+            if (f & bit) if bit is not None else f:
+                return t
+        return None
+
+    def carried_in_bits(self):
+        """Fault bits seen ONLY before the grace bound — the predecessor's latch."""
+        pre = 0
+        for _t, f in self.faults_pre_grace:
+            pre |= f
+        post = 0
+        for _t, f in self.faults:
+            post |= f
+        return pre & ~post
+
+    def reached_idle_t(self, deadline_s=BRINGUP_DEADLINE_S):
+        """Sim time the board first reported mainState 1, or None within deadline."""
+        for t, st in self.state:
+            if st == BRINGUP_STATE_IDLE:
+                return t if t <= deadline_s else None
+        return None
 
 
 def _int_any(cell):
@@ -572,7 +856,7 @@ def _series(rows, t_key, key, conv):
     return out
 
 
-def load_replay_csv(csv_path):
+def load_replay_csv(csv_path, preamble_s=REPLAY_PREAMBLE_S):
     with open(csv_path, "r", newline="") as fh:
         reader = csv.DictReader(fh)
         columns = list(reader.fieldnames or [])
@@ -583,7 +867,7 @@ def load_replay_csv(csv_path):
             f"{csv_path} is missing column(s) {missing} — is it a hil_plant_sim CSV?")
     if not rows:
         raise ValueError(f"{csv_path} has no data rows")
-    return ReplayCsv(rows, columns)
+    return ReplayCsv(rows, columns, preamble_s=preamble_s)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -601,14 +885,40 @@ def _fault_names(bits):
     return "|".join(names)
 
 
+def _whole_run_first_note(data, bit=None):
+    """L1: name the WHOLE-RUN first observation when it precedes the grace bound.
+
+    Every time a check prints is necessarily a first POST-GRACE observation.  For a
+    fault that latched earlier and persisted (ML0217's INIT_FAIL at ~0.3 s), that
+    number describes the filter, not the event — so the real one is shown beside
+    it.  Silent when the two coincide."""
+    t0 = data.first_fault_t(bit)
+    if t0 is None or t0 >= data.grace_s:
+        return ""
+    return (f" (whole-run first observation t={t0:.3f}s — it latched BEFORE the "
+            f"{data.grace_s:.1f}s grace bound and PERSISTED, which is why the "
+            f"grace filter still sees it)")
+
+
+def _carried_in_note(data):
+    """Report-only sentence naming the excluded pre-grace bits, or ''."""
+    carried = data.carried_in_bits()
+    if not carried:
+        return ""
+    return (f"; carried-in from the predecessor's settle latch and EXCLUDED: "
+            f"{_fault_names(carried)} (seen only before t={data.grace_s:.1f}s, "
+            f"cleared by the fw v23 grace-window warm reset)")
+
+
 def check_no_fault(data, spec):
-    """fault_flags stays 0 for every observed tick.
+    """fault_flags stays 0 for every observed tick AT OR AFTER the grace bound.
 
     `ignore_bits` lets an entry tolerate a specific bit (none do today; the knob
     exists so a future entry does not need a new check kind)."""
     ignore = int(spec.get("ignore_bits", 0))
     if not data.faults:
-        return False, "no observation frames in the CSV — nothing was observed"
+        return False, (f"no observation frames at or after t={data.grace_s:.1f}s "
+                       f"— nothing was observed")
     worst, worst_t = 0, None
     for t, f in data.faults:
         f &= ~ignore
@@ -617,45 +927,74 @@ def check_no_fault(data, spec):
         worst |= f
     if worst:
         return False, (f"faults raised: 0x{worst:04X} ({_fault_names(worst)}), "
-                       f"first at t={worst_t:.3f}s")
-    return True, f"fault_flags == 0 across {len(data.faults)} observed ticks"
+                       f"first POST-GRACE observation at t={worst_t:.3f}s"
+                       f"{_whole_run_first_note(data, worst)}"
+                       f"{_carried_in_note(data)}")
+    return True, (f"fault_flags == 0 across {len(data.faults)} observed ticks at "
+                  f"t >= {data.grace_s:.1f}s{_carried_in_note(data)}")
 
 
 def check_fault_not_latched(data, spec):
-    """A specific bit must never appear (the negative UV cases)."""
+    """A specific bit must never appear post-grace (the negative UV cases)."""
     bit = int(spec["bit"])
     hits = [(t, f) for t, f in data.faults if f & bit]
     if not data.faults:
-        return False, "no observation frames in the CSV"
+        return False, (f"no observation frames at or after t={data.grace_s:.1f}s")
     if hits:
         return False, (f"{_fault_names(bit)} set at t={hits[0][0]:.3f}s "
                        f"({len(hits)} ticks) — the recorded dip should NOT latch it")
-    return True, f"{_fault_names(bit)} never set across {len(data.faults)} ticks"
+    return True, (f"{_fault_names(bit)} never set across {len(data.faults)} ticks "
+                  f"at t >= {data.grace_s:.1f}s{_carried_in_note(data)}")
 
 
 def check_fault_latched(data, spec):
     """A specific bit must be set, and still set at the end of the run.
 
-    With `require_stimulus` (default True) the injected V_bus is first replayed
-    through the firmware's OWN leaky-dwell filter (LIMIT_V_BUS_MIN /
-    UV_BUS_DWELL_*) to confirm the stimulus actually qualifies.  If it does not,
-    the check FAILS LOUDLY as inconclusive rather than passing or silently
-    excusing the firmware — a suite entry whose stimulus no longer qualifies is
-    a suite bug that must be seen."""
+    With `require_stimulus` (default True) the INJECTED stimulus is first checked
+    against the firmware's own latch criterion for that bit, so a suite entry whose
+    recorded trajectory no longer qualifies FAILS LOUDLY as inconclusive rather
+    than passing, or silently excusing the firmware.  Two stimulus models:
+
+      FAULT_UV_BUS  the V_bus series replayed through the leaky-dwell filter
+                    (LIMIT_V_BUS_MIN / UV_BUS_DWELL_*).
+      FAULT_OC_FC   the I_fc series must actually exceed LIMIT_I_FC_MAX.  The OC
+                    check is a single-sample comparison in the firmware, so this
+                    mirrors it exactly rather than approximating it.
+
+    Anything else with require_stimulus set is a suite authoring error and is
+    reported as such — silently skipping the guard is how an entry's stimulus rots
+    unnoticed."""
     bit = int(spec["bit"])
     if not data.faults:
-        return False, "no observation frames in the CSV"
-    if spec.get("require_stimulus", True) and bit == FAULT_UV_BUS:
-        qualifies, when, peak = _uv_stimulus_qualifies(data)
-        if not qualifies:
-            return False, (
-                f"INCONCLUSIVE: the injected V_bus never accumulates "
-                f"{UV_BUS_DWELL_LATCH_MS:.0f} ms of net dwell below "
-                f"{LIMIT_V_BUS_MIN_V:.1f} V while armed (peak dwell {peak:.1f} ms) — "
-                f"this log is not a UV stimulus for the current filter")
-        stim_t = when
-    else:
-        stim_t = None
+        return False, (f"no observation frames at or after t={data.grace_s:.1f}s")
+    stim_t = None
+    if spec.get("require_stimulus", True):
+        if bit == FAULT_UV_BUS:
+            qualifies, when, peak = _uv_stimulus_qualifies(data)
+            if not qualifies:
+                return False, (
+                    f"INCONCLUSIVE: the injected V_bus never accumulates "
+                    f"{UV_BUS_DWELL_LATCH_MS:.0f} ms of net dwell below "
+                    f"{LIMIT_V_BUS_MIN_V:.1f} V while armed (peak dwell {peak:.1f} ms) — "
+                    f"this log is not a UV stimulus for the current filter")
+            stim_t = when
+        elif bit == FAULT_OC_FC:
+            qualifies, when, peak = _oc_fc_stimulus_qualifies(data)
+            if not qualifies:
+                return False, (
+                    f"INCONCLUSIVE: the injected I_fc never exceeds "
+                    f"LIMIT_I_FC_MAX {LIMIT_I_FC_MAX_A:.2f} A (peak "
+                    f"{peak:.3f} A) — this log is not an OC_FC stimulus, so the "
+                    f"entry's classification no longer matches its own log")
+            stim_t = when
+        else:
+            # L8: no bare fall-through. `bit` is mandatory in the spec (read at the
+            # top of this function), so reaching here means require_stimulus was set
+            # for a bit that has no stimulus model — a suite authoring error, and
+            # silently skipping the guard is how an entry's stimulus rots unnoticed.
+            return False, (f"suite error: require_stimulus is set for "
+                           f"{_fault_names(bit)}, which has no stimulus model here. "
+                           f"Add one, or set require_stimulus: False deliberately.")
     hits = [t for t, f in data.faults if f & bit]
     end_flags = data.faults[-1][1]
     if not hits:
@@ -664,8 +1003,36 @@ def check_fault_latched(data, spec):
     if not (end_flags & bit):
         return False, (f"{_fault_names(bit)} set at t={hits[0]:.3f}s but CLEARED by the "
                        f"end of the run (final 0x{end_flags:04X}) — it must LATCH")
-    return True, (f"{_fault_names(bit)} latched at t={hits[0]:.3f}s"
+    return True, (f"{_fault_names(bit)} latched; first POST-GRACE observation at "
+                  f"t={hits[0]:.3f}s"
+                  + _whole_run_first_note(data, bit)
                   + (f", stimulus qualified from t={stim_t:.3f}s" if stim_t is not None else ""))
+
+
+def _oc_fc_stimulus_qualifies(data):
+    """Does the INJECTED I_fc series actually cross LIMIT_I_FC_MAX?
+
+    Returns (qualifies, t_at_first_crossing, peak_a).  Mirrors the firmware's OC
+    check exactly: detectFaults() compares the single most recent sample against
+    LIMIT_I_FC_MAX, with no dwell filter (unlike the UV path), so a single sample
+    over the limit both latches on the board and qualifies here.
+
+    M5/L2: samples are filtered from `data.preamble_s`, NOT from the grace bound.
+    The two are different questions and the earlier code conflated them: the grace
+    bound is about the BOARD (whose latch is this?), while a stimulus guard asks
+    whether the RECORDED LOG contains the stimulus.  Preamble rails are synthesized
+    by this harness, so letting them arm or qualify anything would be the harness
+    scoring its own input."""
+    peak = 0.0
+    when = None
+    for t, i in data.i_fc:
+        if t < data.preamble_s:
+            continue
+        if i > peak:
+            peak = i
+        if when is None and i > LIMIT_I_FC_MAX_A:
+            when = t
+    return when is not None, when, peak
 
 
 def _uv_stimulus_qualifies(data):
@@ -678,12 +1045,19 @@ def _uv_stimulus_qualifies(data):
     approximated by the bus having reached V_BUS_CHARGED_THRESH at least once
     (.ino:1363) — the switch-state half of the real arming condition is not
     reconstructible from the injected rails alone, which is why this is a
-    stimulus SANITY check and not a firmware model."""
+    stimulus SANITY check and not a firmware model.
+
+    M5: samples before `data.preamble_s` are SKIPPED.  The synthetic preamble holds
+    a healthy 15.95 V, which would ARM the filter on rails this harness invented
+    rather than on anything the log recorded — the arming half of a stimulus guard
+    must come from the stimulus."""
     dwell = 0.0
     peak = 0.0
     armed = False
     prev_t = None
     for t, v in data.v_bus:
+        if t < data.preamble_s:
+            continue
         if v >= V_BUS_CHARGED_THRESH_V:
             armed = True
         if prev_t is None:
@@ -753,13 +1127,22 @@ def check_no_rail_limit_cycle(data, spec):
 
     An alternation is consecutive rail episodes of opposite sign — the ML0137
     signature.  Rate is over the observed span, not the whole CSV, so ticks
-    before the first observation frame do not dilute it."""
+    before the first observation frame do not dilute it.
+
+    M6: and the span is the RECORDED window only (`data.current_recorded`,
+    t >= preamble_s).  This is the one check whose verdict is a RATE, so the
+    synthetic preamble goes straight into its denominator: 2.5 s of preamble on
+    ML0137's ~4 s log would understate the alternation rate by ~1.6x and could
+    pass a genuine limit cycle.  The other command checks are extremal
+    (bounded_current, no_sustained_rail) or per-episode (returns_off_rail) and are
+    unaffected — a quiet preamble adds no episodes and cannot lower a maximum."""
     max_rate = float(spec.get("max_alt_per_s", LIMIT_CYCLE_ALT_PER_S))
     level = float(spec.get("level_a", RAIL_LEVEL_A))
-    if not data.current:
-        return False, "no observation frames in the CSV"
-    span = data.current[-1][0] - data.current[0][0]
-    eps = _rail_episodes(data.current, level)
+    if not data.current_recorded:
+        return False, ("no observation frames in the recorded window "
+                       "(t >= %.1fs)" % data.preamble_s)
+    span = data.current_recorded[-1][0] - data.current_recorded[0][0]
+    eps = _rail_episodes(data.current_recorded, level)
     alts = sum(1 for a, b in zip(eps, eps[1:]) if a[2] != b[2])
     rate = alts / span if span > 0 else float(alts)
     if rate > max_rate:
@@ -894,10 +1277,43 @@ def evaluate_replay_csv(entry, csv_path):
     result["notes"].append(
         "Replay is OPEN LOOP: the plant integrator and the encoder estimator are "
         "bypassed, and I_charge/ag105_status inject as 0.0 A / 0x00 for every BLG "
-        "format v1–v7.")
+        "format v1-v7.")
+    pre_s = entry_preamble_s(entry)
+    if pre_s > 0.0:
+        result["notes"].append(
+            f"Time base: a {pre_s:.1f} s synthetic bring-up preamble "
+            f"(healthy nominal rails) precedes the recorded trajectory, so every "
+            f"time below is SIM-relative and log time = sim time - {pre_s:.1f}s "
+            f"(preamble rows carry replay_rec = -1). Stimulus guards and "
+            f"rate-based checks use the recorded window only.")
+    else:
+        result["notes"].append(
+            "Time base: this entry replays RAW (skip_preamble / "
+            "--replay-no-preamble), so sim time == log time and the board boots "
+            "into the recording's own first samples. A bring-up failure is an "
+            "expected outcome for such an entry, not an artefact.")
+    result["notes"].append(
+        f"Fault checks judge observations at t >= {REPLAY_GRACE_S:.1f}s only — "
+        f"earlier bits are the previous run's inherited settle latch. A fault that "
+        f"latched earlier and PERSISTS is still seen (State 99 is latched and the "
+        f"simulator keeps streaming, so nothing clears it); its whole-run first "
+        f"time is reported alongside the post-grace one.")
+    clamp = entry.get("i_fc_clamp_a")
+    if clamp is not None:
+        result["notes"].append(
+            f"*** INJECTED I_fc CLAMPED to {clamp:.2f} A *** — this entry's "
+            f"recorded trajectory is DELIBERATELY MODIFIED on the FC channel. See "
+            f"the entry's `why` and docs/HIL_REPLAY_LOGS.md for the justification "
+            f"(operator ruling (a)); no conclusion about FC current may be drawn "
+            f"from this run.")
+    result["notes"].append(
+        "PURPOSE: this half is a BRING-UP + FAULT-DECISION regression harness. No "
+        "commander exists in replay mode, so the board never leaves Idle and the "
+        "commanded current is 0 A throughout; the current-shape checks assert only "
+        "that the firmware does NOT drive on an uncommanded stimulus.")
 
     try:
-        data = load_replay_csv(csv_path)
+        data = load_replay_csv(csv_path, preamble_s=entry_preamble_s(entry))
     except (OSError, ValueError) as exc:
         result["checks"].append({"name": "csv", "passed": False, "detail": str(exc)})
         return result
@@ -912,7 +1328,43 @@ def evaluate_replay_csv(entry, csv_path):
             f"{data.n_obs}/{data.n_rows} ticks carry an observation frame; "
             f"{data.duration_s:.2f}s of replay.")
 
+    # ── Bring-up gate ────────────────────────────────────────────────────────
+    # Runs BEFORE the entry's own checks and, on failure, INSTEAD of them.  A board
+    # that never reached Idle fails every downstream check for one single reason,
+    # and reporting that as N independent findings is how the first fw v23 pass
+    # produced 19 identically-shaped false failures.  Report the one true cause and
+    # mark the rest not-run.
     all_passed = True
+    if not entry.get("skip_bringup_gate"):
+        idle_t = data.reached_idle_t()
+        if idle_t is None:
+            last_state = data.state[-1][1] if data.state else None
+            faults_post = 0
+            for _t, f in data.faults:
+                faults_post |= f
+            result["checks"].append({
+                "name": "bringup_reached_idle", "passed": False,
+                "detail": (f"the board never reported mainState "
+                           f"{BRINGUP_STATE_IDLE} (Idle) within "
+                           f"{BRINGUP_DEADLINE_S:.1f}s — BRING-UP FAILED. Last "
+                           f"observed mainState {last_state}, post-grace fault "
+                           f"union {_fault_names(faults_post)}. The entry's own "
+                           f"checks are NOT run: on a board that never came up "
+                           f"they would all fail for this one reason.")})
+            result["notes"].append(
+                "Entry checks SKIPPED — the bring-up gate failed, so nothing "
+                "downstream would have been evidence about the recorded stimulus.")
+            return result
+        result["checks"].append({
+            "name": "bringup_reached_idle", "passed": True,
+            "detail": (f"mainState {BRINGUP_STATE_IDLE} (Idle) first observed at "
+                       f"t={idle_t:.3f}s, inside the {BRINGUP_DEADLINE_S:.1f}s "
+                       f"deadline")})
+    else:
+        result["notes"].append(
+            "Bring-up gate SKIPPED for this entry (skip_bringup_gate): a failing "
+            "bring-up is what it is testing.")
+
     for spec in entry.get("checks", []):
         name = spec.get("name", spec.get("kind", "?"))
         fn = CHECK_KINDS.get(spec.get("kind"))
@@ -948,8 +1400,17 @@ def build_sim_argv(entry, csv_dir):
     instead of running.  Overwriting a same-entry artifact is the intended
     behaviour here; keep the old one by pointing --csv-dir somewhere else."""
     csv_path = os.path.join(csv_dir, f"hil_replay_{entry['log']}.csv")
-    return ["--replay", os.path.join(REPO_ROOT, entry["path"]),
+    argv = ["--replay", os.path.join(REPO_ROOT, entry["path"]),
             "--csv", csv_path, "--force"]
+    # Per-entry stimulus modifiers. Both are declared in the entry table and BOTH
+    # must be mirrored here, or a hand-run replay would silently differ from a
+    # suite-run one and the checks (which resolve the same fields) would be
+    # scoring a different stimulus than the one that was injected.
+    if entry.get("skip_preamble"):
+        argv.append("--replay-no-preamble")
+    if entry.get("i_fc_clamp_a") is not None:
+        argv += ["--replay-i-fc-clamp", "%g" % float(entry["i_fc_clamp_a"])]
+    return argv
 
 
 def replay_csv_path(entry, csv_dir):

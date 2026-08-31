@@ -597,7 +597,16 @@ class Plant:
         at all (the firmware skips them entirely under HIL).
     """
 
-    def __init__(self, electrical=None, soc0=0.7, capacity_ah=BATT_CAPACITY_AH):
+    def __init__(self, electrical=None, soc0=0.7, capacity_ah=BATT_CAPACITY_AH,
+                 ag105_i_max=AG105_I_MAX):
+        # `ag105_i_max` is a SCENARIO PARAMETER (SCENARIOS[...]["chg_i_ceiling_a"]),
+        # in the same class as `vesc_cap_f`: it does not model the firmware, it
+        # sizes the stimulus.  The firmware always configures the 2.5 A profile
+        # (reg 0x00 = 0x01), so AG105_I_MAX stays the default and any override is
+        # a deliberate, documented de-rating for a scenario whose objective is
+        # PATH coverage rather than ceiling validation.  See the charge-fault /
+        # charge-regen entries for the per-scenario current budgets.
+        self.ag105_i_max = float(ag105_i_max)
         self.v = 0.0          # m/s
         self.v_bus = 0.0      # V
         self.i_fc = 0.0
@@ -791,10 +800,11 @@ class Plant:
                 self.ag105_status |= AG105_FLAG_MPPT_EN | AG105_FLAG_PWR_TRACK
         else:
             # Constant-current charging into the 2S pack, ramped first-order toward
-            # the configured 2.5 A ceiling.  The current is fed back into the pack's
+            # `self.ag105_i_max` (AG105_I_MAX 2.5 A unless the scenario de-rates it
+            # via chg_i_ceiling_a).  The current is fed back into the pack's
             # coulomb count (BatterySource, negative = charge), so a long
             # `charge-cruise` run visibly walks V_batt up the OCV curve.
-            self.i_charge += (AG105_I_MAX - self.i_charge) * (dt / AG105_TAU_S)
+            self.i_charge += (self.ag105_i_max - self.i_charge) * (dt / AG105_TAU_S)
             self.ag105_status = AG105_ST_CHARGING | AG105_FLAG_CC
             # MPPT_DISABLE is ACTIVE-LOW: pin HIGH releases the tracking loop, pin LOW
             # inhibits it.  Only the two tracking flags follow it; charging continues either
@@ -843,6 +853,94 @@ REPLAY_FIELD_MAP = [
 REPLAY_I_CHARGE = 0.0
 REPLAY_AG105_STATUS = AG105_ST_DISCONNECT
 
+# ── Absent-rail substitution (2026-08-30, HIL_FINDINGS "Replay half") ────────
+# BLG v1/v2 records carry NO V_fc / V_batt / V_rgn field at all.  Injecting 0.0 V
+# for them — the old behaviour — hands the firmware a DARK board: the staged
+# bring-up's P3 gate reads V_rgn as its motor-node proxy, so it never tracked
+# V_bus and every v1/v2 replay latched FAULT_MOT_HOTPLUG at ~1.09 s, long before
+# the recorded stimulus (a bus collapse) ever arrived.  The zeros were an
+# artefact of the record format, not a property of the recorded run: the bench
+# board plainly had live rails while it was logging.
+#
+# Substituted values are HEALTHY NOMINALS, not measurements, and are only ever
+# used for a field the record does not contain:
+#   V_fc    12.9 V — the FuelCellSource fit's ~13 V-class open-circuit terminal
+#                    (hil_electrical.py FC model; the `steady` scenario settles
+#                    at 12.9156 V, HIL_FINDINGS "steady").
+#   V_batt   7.9 V — 2S pack mid-charge, matching V_BT_OPEN 8.0 V / the `steady`
+#                    scenario's 7.840 V.
+#   V_chg    0.0 V — NOT substituted: an unpowered charger input is the honest
+#                    value (no charger path is open on a bench 'V'/'T' run), and
+#                    it is what the modern records themselves carry.
+#   V_rgn        — DERIVED, not constant: V_rgn's divider sits on V-MOT, which
+#                    follows the bus whenever MOT_PWR is closed (fw v22 topology
+#                    fix, schematic sheet 4).  So an absent V_rgn is replayed as
+#                    the injected V_bus while the board's own observation frame
+#                    shows MOT_PWR closed, and 0 V otherwise.  APPROXIMATION: it
+#                    ignores the ~35 mV RT1987 forward drop and the motor node's
+#                    own RC, neither of which any check here resolves.
+REPLAY_NOMINAL_V_FC = 12.9      # V
+REPLAY_NOMINAL_V_BATT = 7.9     # V
+
+# ── Synthetic bring-up preamble ─────────────────────────────────────────────
+# fw v22+ runs a CLOSED-LOOP staged bring-up (P0-P3) at the start of every HIL
+# run, and it needs healthy rails to complete.  A recorded log begins wherever
+# the operator pressed record — for ML0217 that is a dark bus, and for the whole
+# v1/v2 UV trio it is a run already in progress — so replaying a log RAW asks the
+# bring-up machine to complete on a stimulus that was never designed to feed it.
+# The preamble presents PREAMBLE_S seconds of healthy nominal rails first, then
+# hands over to the recorded trajectory.
+#
+# WHAT IT IS NOT: it does not exercise the bring-up dynamics.  The bus is
+# presented already in regulation, so P0/P1/P2 pass on their minimum dwells;
+# the preamble exists solely so the recorded trajectory is delivered to a board
+# sitting in Idle rather than to one stuck in State 0 or latched in State 99.
+# The `bringup` SCENARIO is where bring-up dynamics are actually tested.
+#
+# LENGTH: 2.5 s, chosen against two bounds, not for round numbers —
+#   * >= WARM_RESET_GRACE_S (2.0 s): the suite excludes faults observed before
+#     the grace bound (they are the previous run's inherited settle latch), so a
+#     shorter preamble would put the first 0.5 s of every RECORDED trajectory
+#     inside the excluded window and silently drop real early stimulus.
+#   * >= the measured warm-reset recovery + bring-up: recovery at ~0.50 s
+#     (HIL_RECOVER_DEBOUNCE_MS) plus ~0.12 s of staged bring-up = ~0.62 s
+#     (HIL_FINDINGS "comm-loss"/"bringup"), so 2.5 s carries ~4x margin.
+# EVERY replay timestamp is shifted by this: sim time t corresponds to log time
+# t - REPLAY_PREAMBLE_S, and `replay_rec` is -1 for every preamble row.
+# PER-ENTRY OPT-OUT (`--replay-no-preamble`, H2): an entry whose POINT is that
+# bring-up FAILS must replay RAW.  With the preamble the board completes bring-up on
+# the synthetic rails and then reacts to the recorded trajectory as a RUNNING board,
+# so a cold-boot-into-darkness fault (FAULT_INIT_FAIL, reachable only from State 0's
+# bring-up machine, .ino:8762-8765) becomes unreachable and the log instead latches
+# whatever the Run-state fault set catches first.  With the flag the timestamps are
+# UNSHIFTED — log time == sim time — and every consumer must use the same per-entry
+# bound (hil_replay_suite.py resolves it with entry_preamble_s()).
+REPLAY_PREAMBLE_S = 2.5
+REPLAY_PREAMBLE_REC = -1        # `replay_rec` sentinel: no source record
+REPLAY_PREAMBLE_V_BUS = 15.95   # V — V_BUS_DROOP_V0, the measured no-load bus
+REPLAY_PREAMBLE_I = 0.05        # A — token per-channel current, well under every
+                                #     OC limit; the preamble asserts nothing about
+                                #     current sharing.
+
+
+def replay_preamble_sensors(t, mot_pwr_closed):
+    """Healthy-rail sensor dict for a preamble tick (see REPLAY_PREAMBLE_S).
+
+    Shaped exactly like Plant.step()'s return value so the transmit path does not
+    care which source produced it."""
+    return {
+        "V_fc": REPLAY_NOMINAL_V_FC,
+        "V_batt": REPLAY_NOMINAL_V_BATT,
+        "V_bus": REPLAY_PREAMBLE_V_BUS,
+        "V_chg": 0.0,
+        "V_rgn": REPLAY_PREAMBLE_V_BUS if mot_pwr_closed else 0.0,
+        "I_fc": REPLAY_PREAMBLE_I,
+        "I_batt": REPLAY_PREAMBLE_I,
+        "v_actual": 0.0,
+        "I_charge": REPLAY_I_CHARGE,
+        "ag105_status": REPLAY_AG105_STATUS,
+    }
+
 # t_us in a BLG is micros() at sample time and wraps every ~71.58 min; the
 # decoder already rejects records whose forward modular step is implausible, so
 # a modular difference is the correct way to rebuild a monotonic time axis.
@@ -852,9 +950,14 @@ _U32 = 1 << 32
 def load_replay(path):
     """Decode a .BLG into a replay source.
 
-    Returns (records, header, warnings) where records is a list of
+    Returns (records, header, warnings, derive_v_rgn) where records is a list of
     (t_seconds_from_start, sensors_dict) with sensors_dict shaped exactly like
-    Plant.step()'s return value.
+    Plant.step()'s return value, and `derive_v_rgn` is True when the record format
+    carries no V_rgn field and the caller must derive it per tick from the injected
+    V_bus and the board's own MOT_PWR bit (see the absent-rail substitution block
+    above).  Absent V_fc/V_batt are substituted with healthy nominals here, once,
+    because they are constants; V_rgn cannot be, because it depends on a switch
+    state only the caller can see.
     """
     # Lazy import: the decoder is only needed in replay mode, and it lives
     # beside this file rather than on the default path.
@@ -881,6 +984,10 @@ def load_replay(path):
     cols = result.csv_header.split(",")
     idx = {name: i for i, name in enumerate(cols)}
     missing = [src for src, _ in REPLAY_FIELD_MAP if src not in idx]
+    # Healthy-nominal substitution for the rails a v1/v2 record simply does not
+    # have.  Anything not named here still injects 0.0 when absent.
+    absent_default = {"V_fc": REPLAY_NOMINAL_V_FC, "V_batt": REPLAY_NOMINAL_V_BATT}
+    derive_v_rgn = "V_rgn" not in idx
 
     records = []
     prev_us = None
@@ -903,7 +1010,7 @@ def load_replay(path):
                 # so 0.0 m/s is the honest injection value.
                 sensors[dst] = float(cell) if cell != "" else 0.0
             else:
-                sensors[dst] = 0.0
+                sensors[dst] = absent_default.get(dst, 0.0)
         sensors["I_charge"] = REPLAY_I_CHARGE
         sensors["ag105_status"] = REPLAY_AG105_STATUS
         records.append((t_us_accum / 1e6, sensors))
@@ -913,11 +1020,23 @@ def load_replay(path):
 
     warnings = []
     if missing:
+        subs = ", ".join(
+            f"{m}={absent_default[m]:.2f} V" for m in missing if m in absent_default)
+        rest = [m for m in missing
+                if m not in absent_default and not (m == "V_rgn" and derive_v_rgn)]
+        detail = []
+        if subs:
+            detail.append(f"substituted with healthy nominals ({subs})")
+        if derive_v_rgn:
+            detail.append("V_rgn DERIVED from the injected V_bus while the board's "
+                          "own MOT_PWR bit is set")
+        if rest:
+            detail.append(f"injected as 0.0: {', '.join(rest)}")
         warnings.append(
             f"format v{result.header['version']} records carry no "
-            f"{', '.join(missing)} field(s) — injected as 0.0")
+            f"{', '.join(missing)} field(s) — " + "; ".join(detail))
     warnings.extend(result.warnings)
-    return records, result.header, warnings
+    return records, result.header, warnings, derive_v_rgn
 
 
 class ReplaySource:
@@ -1231,8 +1350,77 @@ def ems_hold_5050(t, fb):
     }
 
 
+# ── regen-harvest: braking windows ──────────────────────────────────────────
+# (t_start, t_end) in seconds, matching the DESCENDING segments of the
+# `charge-regen` scenario's ems_v_profile.  charge_goal is asserted INSIDE these
+# windows only; see ems_regen_harvest() for why the edges are inset.
+EMS_REGEN_BRAKE_WINDOWS = ((14.0, 16.1), (26.0, 28.1), (37.0, 39.1))
+# Assert charge_goal this long AFTER a braking window opens.  The firmware's
+# chargingControl() (.ino:10026) picks its branch on the COMMANDED motor current:
+# `regenActive = (current < -0.1f)`.  At the instant a ramp starts, `current` is
+# still the positive cruise hold, so charge_goal > 0 there would take the CRUISE
+# branch and call assertFcChargeEnable(true) — opening the FC->charger path and
+# dropping BT off the bus, the exact single-source condition that made the old
+# charge-regen latch OC_FC.  200 ms is ~3 crossover periods at the fw v18 design
+# crossover (17.25 rad/s), by which point the ramp has driven the command
+# negative; measured cruise->brake command reversal is far faster than that.
+EMS_REGEN_CHARGE_LEAD_IN_S = 0.20
+# Release charge_goal this long BEFORE a braking window closes, so the command
+# is still negative when charging stops — the symmetric guard against a cruise
+# branch with charge_goal still high on the way back up.
+EMS_REGEN_CHARGE_LEAD_OUT_S = 0.10
+# Hand the firmware back MODE_SAFE here, so the run closes out Run -> Finish -> Idle
+# instead of ending parked in State 2 (the same F14(b) fix ems_hold_5050 carries).
+# Chosen against charge-regen's own ems_v_profile, which reaches standstill at
+# t = 43.0 and holds it to the 45 s duration: 43.0 leaves 2 s inside the run for
+# Finish -> Idle to complete.
+EMS_REGEN_RUN_EXIT_S = 43.0
+
+
+def ems_regen_harvest(t, fb):
+    """regen-harvest — cruise/brake cycling that harvests on the REGEN path only.
+
+    name       : regen-harvest
+    intent     : reach the four regen-path signals that had NEVER been observed on
+                 hardware (HIL_FINDINGS "charge-regen"): REGEN_ENABLE high with
+                 FC_CHARGE_ENABLE low, MPPT_DISABLE LOW during braking, chopper
+                 activity, and I_charge nonzero fed through REGEN + MOT_PWR.
+    fields     : mode_cmd (SAFE -> HYBRID at EMS_RUN_ENTRY_S, back to SAFE at
+                 EMS_REGEN_RUN_EXIT_S), v_setpoint (the
+                 scenario's ems_v_profile), power_share_setpoint (0.50 constant),
+                 charge_goal (1.0 inside a braking window, 0.0 otherwise).
+    feedback   : uses `fb["t"]` and `fb["v_profile"]` ONLY — trivially portable to
+                 the real Pi (FB_TELEMETRY_EQUIV_KEYS).
+    why not a timeline: a pi_timeline is a STEP function, and a step-down in
+                 v_setpoint rails the drive controller to -12 A for only
+                 ~(dv / 3.3 m/s^2) — 0.8 s even for a 2.7 m/s step — which never
+                 outlasts the Ag105's 0.5 s settle.  Sustained regen needs a
+                 CONTINUOUS commanded deceleration whose rate exceeds the coast
+                 rate a_coast(v) = (F_c + b*v)/m; only an interpolated profile can
+                 produce one, which is why this scenario is EMS-driven.
+    provenance : the profile's 1.0 m/s^2 braking rate vs a_coast(2.5) = 0.953
+                 m/s^2 (F_COULOMB 2.00, B_EFF 0.534, M_EFF 3.5 — the fw v14
+                 constants at the top of this file); Run-entry time from
+                 EMS_RUN_ENTRY_S; 0.50 share is the firmware's own default.
+    """
+    v_sp = fb.get("v_profile")
+    if v_sp is None:
+        v_sp = EMS_DEFAULT_CRUISE_MPS
+    charging = any((a + EMS_REGEN_CHARGE_LEAD_IN_S) <= t
+                   < (b - EMS_REGEN_CHARGE_LEAD_OUT_S)
+                   for a, b in EMS_REGEN_BRAKE_WINDOWS)
+    in_run = EMS_RUN_ENTRY_S <= t < EMS_REGEN_RUN_EXIT_S
+    return {
+        "mode_cmd": MODE_HYBRID if in_run else MODE_SAFE,
+        "power_share_setpoint": 0.50,
+        "v_setpoint": v_sp,
+        "charge_goal": 1.0 if charging else 0.0,
+    }
+
+
 EMS_STRATEGIES = {
     "hold-5050": ems_hold_5050,
+    "regen-harvest": ems_regen_harvest,
 }
 
 EMS_NAMES = list(EMS_STRATEGIES)
@@ -1291,6 +1479,14 @@ SCENARIOS = {
         "description": "plant only; the operator drives the firmware by hand "
                        "('V', 'D', 'Y') over USB (H4)",
         "electrical": "any", "duration_s": 30.0,
+        # HIL_FINDINGS "drive": run UNATTENDED this scenario commands NOTHING —
+        # pi_timeline_entries == 0 and no ems strategy, so the board sits in Idle,
+        # `current` is 0.000 A for all 30,000 rows and the Youla drive loop is
+        # never exercised.  Scoring that as a PASS advertised drive-loop coverage
+        # the run does not have.  run_hil_suite.py renders it SKIPPED unless
+        # --with-operator is given; unattended drive-loop coverage belongs to
+        # `ems-drive-cycle`.
+        "operator_required": True,
     },
     # ── Charging-path scenarios (the firmware's charging path had NO coverage) ──
     "charge-cruise": {
@@ -1304,29 +1500,110 @@ SCENARIOS = {
             (8.0,  {"charge_goal": 1.0}),                 # open FC_CHARGE on INTENT
         ],
     },
+    # ── charge-regen: REDESIGNED 2026-08-30 (HIL_FINDINGS "charge-regen") ──────
+    # The old timeline commanded v_setpoint 1.5 AND charge_goal 1.0 at the SAME
+    # t = 5.0 tick.  Two independent defects followed:
+    #   1. charge_goal > 0 while `current` is still positive takes
+    #      chargingControl()'s CRUISE branch (.ino:10037-10050), which calls
+    #      assertFcChargeEnable(true) and drops BT off the bus by design — so the
+    #      FC channel alone carried the +12 A acceleration ramp PLUS the Ag105
+    #      bring-up, and OC_FC latched at t = 5.585 s, 6.4 s before the first
+    #      braking entry.  100 % of the regen objectives were unreached.
+    #   2. Even without the OC, its brake steps commanded v_setpoint = 0.0, which
+    #      is BELOW V_SP_ZERO_THRESH (0.07 m/s, fw v13): the firmware commands
+    #      0 A and holds the drive controller in reset, so `current` never goes
+    #      negative and regenActive is never true.  Those "brake" segments COAST.
+    # Both are fixed by driving this scenario from an EMS policy instead:
+    # `regen-harvest` supplies a CONTINUOUS deceleration ramp (a step cannot hold
+    # a negative command past the Ag105's 0.5 s settle — see ems_regen_harvest())
+    # and asserts charge_goal only INSIDE a braking window, so the charger is
+    # powered through REGEN + MOT_PWR and FC_CHARGE never opens.
     "charge-regen": {
-        "description": "cruise/brake cycling with charge_goal > 0: MPPT_DISABLE "
-                       "asserted during regen, REGEN vs FC_CHARGE mutual exclusion",
+        "description": "cruise/brake cycling driven by the regen-harvest EMS "
+                       "strategy: charge_goal is asserted ONLY while braking, so "
+                       "the Ag105 is fed through REGEN (never FC_CHARGE) and "
+                       "MPPT_DISABLE is asserted LOW during regen",
         "electrical": "any", "duration_s": 45.0,
-        "pi_timeline": [
-            (0.5,  {"mode_cmd": MODE_SAFE, "charge_goal": 0.0}),
-            (3.0,  {"mode_cmd": MODE_HYBRID}),
-            (5.0,  {"v_setpoint": 1.5, "charge_goal": 1.0}),
-            (12.0, {"v_setpoint": 0.0}),                  # brake: commanded current
-            (18.0, {"v_setpoint": 1.5}),                  # goes negative -> regen
-            (25.0, {"v_setpoint": 0.0}),
-            (31.0, {"v_setpoint": 1.5}),
-            (38.0, {"v_setpoint": 0.0}),
+        "ems": "regen-harvest",
+        # De-rated charge ceiling.  During regen chargingControl() keeps BT on the
+        # bus (.ino:10036), so the charger draw is SHARED: at share 0.50 the FC
+        # channel carries (I_AUX 0.15 + i_charge)/2.  i_motor is ~0 while braking
+        # (the plant floors regen power at 0).  Budget against LIMIT_I_FC_MAX
+        # 1.4 A:  (0.15 + 1.6)/2 = 0.88 A per channel -> 37 % margin.
+        # At the firmware's real 2.5 A profile it would be (0.15 + 2.5)/2 =
+        # 1.33 A, only 5 % under the limit and hostage to any share deviation —
+        # too thin for a scenario whose objective is PATH coverage, not ceiling
+        # validation.  Ceiling validation is charge-cruise's job (which is
+        # EXPECTED to latch OC_FC, per operator ruling (b)).
+        "chg_i_ceiling_a": 1.6,
+        # Piecewise-linear v_setpoint consumed by the strategy via fb["v_profile"].
+        # BRAKING SEGMENTS are the load-bearing part: the commanded deceleration
+        # must EXCEED the coast deceleration a_coast(v) = (F_COULOMB + B_EFF*v)/M_EFF
+        # or the drive controller commands POSITIVE current and there is no regen.
+        #   a_coast(2.5) = (2.00 + 0.534*2.5)/3.5 = 0.953 m/s^2
+        #   commanded    = (2.5 - 0.4)/2.1 s      = 1.000 m/s^2   -> 5 % over
+        # Longer windows are not available: the maximum sustainable braking time
+        # is (v_hi - v_lo)/a_coast(v_hi), i.e. ~2.2 s from 2.5 m/s.  2.1 s of
+        # continuous regen minus the 0.5 s AG105_SETTLE_S leaves 1.6 s of
+        # charging, which is 4 x AG105_TAU_S — enough for I_charge to reach ~98 %
+        # of the ceiling.  Braking windows: 14.0-16.1, 26.0-28.1, 37.0-39.1
+        # (EMS_REGEN_BRAKE_WINDOWS must match these).
+        #   0.0- 3.0   standstill (MODE_SAFE settle; below V_SP_ZERO_THRESH)
+        #   3.0-10.0   accelerate to 2.5 m/s (0.357 m/s^2)
+        #  10.0-14.0   cruise 2.5 m/s
+        #  14.0-16.1   BRAKE 1 -> 0.4 m/s (1.000 m/s^2)
+        #  16.1-18.0   low cruise 0.4 m/s (above V_SP_ZERO_THRESH 0.07)
+        #  18.0-23.0   accelerate to 2.5 m/s (0.42 m/s^2)
+        #  23.0-26.0   cruise
+        #  26.0-28.1   BRAKE 2
+        #  28.1-30.0   low cruise
+        #  30.0-35.0   accelerate
+        #  35.0-37.0   cruise
+        #  37.0-39.1   BRAKE 3
+        #  39.1-41.0   low cruise
+        #  41.0-43.0   ramp to standstill; 43.0-45.0 standstill
+        "ems_v_profile": [
+            (0.0, 0.0), (3.0, 0.0), (10.0, 2.5), (14.0, 2.5),
+            (16.1, 0.4), (18.0, 0.4), (23.0, 2.5), (26.0, 2.5),
+            (28.1, 0.4), (30.0, 0.4), (35.0, 2.5), (37.0, 2.5),
+            (39.1, 0.4), (41.0, 0.4), (43.0, 0.0), (45.0, 0.0),
         ],
     },
     "charge-fault": {
         "description": "charging established, then the charger input rail collapses "
                        "— exercises the GENSTAT decode / charger-loss path",
         "electrical": "any", "duration_s": 40.0,
+        # De-rated charge ceiling so the run SURVIVES to its own t = 20 s stimulus.
+        # HIL_FINDINGS "charge-fault": the run latched OC_FC at t = 5.758 s — 14.25 s
+        # BEFORE the scripted charger-input collapse — so the GENSTAT/charger-loss
+        # path it exists to test was never reached, and the suite PASSed it anyway.
+        # FC-path charging is SINGLE-SOURCE by design (assertFcChargeEnable() drops
+        # BT off the bus, .ino:10046), so the whole bus current lands on FC.
+        # Budget against LIMIT_I_FC_MAX 1.4 A at the 1.0 m/s cruise this scenario
+        # commands:
+        #     i_aux                                     0.150 A
+        #     motor: i_cmd = (F_c + b*v)/K_F = 3.36 A
+        #            p_mech = K_F*i_cmd*v   = 2.53 W
+        #            i_motor = p/(ETA_BOOST*V_bus 15.8) 0.189 A
+        #     charger ceiling                           0.800 A
+        #                                        total  1.139 A  -> 19 % margin
+        # The charger term is deliberately the SIM's stamped draw, which is the
+        # Ag105 OUTPUT current placed on the VCHG node (hil_electrical.py:1256) and
+        # therefore ~1.47x the physical input draw (HIL_FINDINGS "charge-cruise",
+        # sim defect 1 — OUT OF SCOPE here).  Budgeting against the overstated
+        # number is the conservative direction: fixing that defect can only lower
+        # the FC current, never raise it.
+        "chg_i_ceiling_a": 0.8,
         "pi_timeline": [
             (0.5,  {"mode_cmd": MODE_SAFE, "charge_goal": 0.0}),
             (3.0,  {"mode_cmd": MODE_HYBRID}),
-            (5.0,  {"v_setpoint": 1.0, "charge_goal": 1.0}),
+            (5.0,  {"v_setpoint": 1.0}),
+            # charge_goal STAGGERED to t = 8.0, after cruise is established: at
+            # t = 5.0 the drive controller rails to +12 A for the acceleration, and
+            # at 1.0 m/s that rail alone is 0.67 A of bus current on top of the
+            # charger draw.  Same fix family as charge-regen's, and it matches
+            # charge-cruise's own 3 s stagger.
+            (8.0,  {"charge_goal": 1.0}),
         ],
     },
     # ── Source-model scenarios ─────────────────────────────────────────────────
@@ -1337,6 +1614,15 @@ SCENARIOS = {
         "pi_timeline": [
             (0.5,  {"mode_cmd": MODE_SAFE}),
             (3.0,  {"mode_cmd": MODE_HYBRID}),
+            # STAGGERED from the aux step (HIL_FINDINGS "soc-depletion"): the share
+            # rail and the scenario's own +3.0 A load step were authored
+            # independently and both landed on t = 5.0.  The new ~3.15 A draw split
+            # EVENLY across both boosts for one 1 ms tick before the droop could
+            # reapportion, and 1.4705 A — 5 mA over LIMIT_I_FC_MAX — latched OC_FC
+            # on a single sample.  The board then sat dark for the remaining 645 s
+            # and the endurance objective (V_batt walking down the OCV curve) was
+            # never reached.  The share rail now settles first; the load ramps in
+            # from t = 10.0 (see apply_scenario).
             (5.0,  {"power_share_setpoint": 0.0}),   # all load onto the battery
         ],
     },
@@ -1388,15 +1674,59 @@ SCENARIOS = {
         ],
     },
     # ── Hi-fi-only scenarios ───────────────────────────────────────────────────
+    # ── handoff-sag: OPERATING POINT REDESIGNED 2026-08-30 (review M3) ─────────
+    # VERIFIED FROM SOURCE — what actually opens the standby bus switch:
+    #   powerBalance() calls updateShareSetpointCutoff() FIRST, explicitly "BEFORE
+    #   the minimum-load gate and before the governor" (.ino:9377-9385).  At a
+    #   setpoint outside [DROOP_R_MIN 0.15, DROOP_R_MAX 0.85] that latch drives the
+    #   doomed channel's *_BUS_ENABLE LOW (.ino:9231-9257) and freezes the whole
+    #   share loop.  So the 0.60 A (2 * SHARE_MINORITY_I_MIN_A) CLOSED-LOOP entry
+    #   gate governs the CONTROLLER, not the cut — the review's stated mechanism is
+    #   not the one that fires, and the recorded run bears that out (HIL_FINDINGS
+    #   handoff-sag: BT_BUS opened at I_batt = 0.083 A, far under the gate).
+    # Two REAL constraints do bind, and they bracket the operating point:
+    #   (a) the cut is refused unless the DOOMED channel's measured current is
+    #       <= SHARE_CUT_MAX_HANDOFF_A = 0.5 A (.ino:2018, :9235/:9252) — it is a
+    #       one-tick transfer of that whole current onto the survivor.  So the
+    #       pre-rail total must be <= ~1.0 A at a 0.5 split;
+    #   (b) the share loop must be in CLOSED-LOOP mode for the run to mean anything
+    #       as a share test at all, which needs the filtered total > 0.60 A.
+    # Window: pre-rail total in (0.60, 1.00) A.  Chosen 0.74 A:
+    #     I_AUX_A 0.15 + HANDOFF_PRELOAD_A 0.40 + i_motor 0.19 (1.0 m/s cruise)
+    #   -> 0.37 A per channel: 23 % over the governor gate, 26 % under the cut guard.
+    #
+    # RAIL DIRECTION FLIPPED to share 0.0 (BT survives, FC is cut).  At the FC rail
+    # the surviving channel is bounded by LIMIT_I_FC_MAX 1.4 A, which leaves only
+    # ~0.66 A of perturbation budget over the 0.74 A pre-load — too small to excite
+    # the sag the scenario exists for, and the previous +1.5 A step is exactly what
+    # latched OC_FC at +2.2 ms with the bus still 1.05 V above the UV floor.  At the
+    # BT rail the survivor is bounded by LIMIT_I_BT_MAX 3.0 A:
+    #     0.74 + 1.5 = 2.24 A  ->  25 % margin.
+    # The two RT1987 instances are identical in the hi-fi model (same CSS, same
+    # reverse comparator; FC/BT droop symmetric within 2 %), so the MECHANISM under
+    # test is unchanged — only its handedness, which TP0178 does not privilege.
+    #
+    # HONEST SCOPE (verified, and the old description overclaimed): a setpoint-
+    # latched cut drives the switch's ENABLE low, and an EN-low RT1987 does not
+    # conduct at all — there is no reverse-blocked-but-enabled standby state to pick
+    # up from.  The firmware's own re-closers gate on !shareSpCut* (.ino:5423,
+    # :10011, :10036), so they will not re-close it either.  A REACTIVE PICKUP is
+    # therefore NOT reachable from this stimulus in either the firmware or the
+    # model.  What this scenario does test: the cut's load guard, the single-source
+    # sag depth after the handoff, and the UV dwell decision on it.
     "handoff-sag": {
-        "description": "TP0178/TP0201 class: drive the share to a rail so one source "
-                       "goes dark, then perturb — the standby ideal diode picks up "
-                       "only REACTIVELY, after the bus has already sagged",
+        "description": "TP0178/TP0201 class: the share setpoint latch cuts one "
+                       "source off the bus, then a load step probes the "
+                       "single-source sag and the UV dwell decision. NOTE: a "
+                       "reactive standby pickup is NOT reachable from a "
+                       "setpoint-latched cut (the switch is EN-low) — see the "
+                       "scenario comment",
         "electrical": "hifi", "duration_s": 40.0,
         "pi_timeline": [
             (0.5,  {"mode_cmd": MODE_SAFE}),
             (3.0,  {"mode_cmd": MODE_HYBRID}),
-            (6.0,  {"v_setpoint": 1.0, "power_share_setpoint": 1.0}),   # FC-only rail
+            (4.0,  {"v_setpoint": 1.0}),          # cruise first, then the pre-load
+            (6.0,  {"power_share_setpoint": 0.0}),   # BT-only rail: FC is cut
         ],
     },
     "bringup": {
@@ -1405,15 +1735,78 @@ SCENARIOS = {
         "electrical": "hifi", "duration_s": 30.0,
     },
     "scp-inrush": {
-        "description": "RT1987 soft-start foldback MARGIN case: MOT_PWR ramping into "
-                       "the high end of the VESC input envelope (0.9 mF) plus the "
-                       "470 uF local bulk, under load",
+        "description": "RT1987 soft-start foldback + SCP cut: MOT_PWR closes during "
+                       "bring-up P3 into a 5.0 A V-MOT load on the high end of the "
+                       "VESC input envelope (0.9 mF) plus the 470 uF local bulk",
         "electrical": "hifi", "duration_s": 30.0,
         "vesc_cap_f": 0.9e-3,
     },
 }
 
 SCENARIO_NAMES = list(SCENARIOS)
+
+# `soc-depletion`: seconds over which the 3.0 A endurance load ramps in from
+# t = 10.0.  3 s is ~150 share-loop ticks (SHARE_CTRL_PERIOD_US 20000 = 50 Hz)
+# — slow enough that the closed share loop tracks the load rather than being
+# stepped by it, and negligible against the 650 s the suite runs this scenario
+# for.  See apply_scenario().
+SOC_LOAD_RAMP_S = 3.0
+
+# `soc-depletion`: the endurance load, in amps, ramped in from t = 10.
+# BT-SIDE BUDGET (M4 — the FC budgets elsewhere in this file had this discipline
+# and this scenario did not).  The pi_timeline commands power_share_setpoint = 0.0,
+# which is BELOW DROOP_R_MIN 0.15, so updateShareSetpointCutoff() (.ino:9231-9243)
+# does not merely bias the split — it OPENS FC_BUS_ENABLE and hands the whole bus
+# to BT.  There is no SHARE_MINORITY_I_MIN_A floor keeping current on FC; FC is off.
+# So BT alone carries:
+#     I_AUX_A 0.15 + SOC_ENDURANCE_LOAD_A 2.2 = 2.35 A
+# against LIMIT_I_BT_MAX 3.0 A -> 21.7 % margin, held for the whole ~880 s run.
+# At the previous 3.0 A the figure was 3.15 A... no: 0.15 + 3.0 = 3.15 A, ABOVE the
+# 3.0 A limit outright, and even discounting model error it sat at 88-105 % of the
+# limit for 645 s with nobody having written the number down.  2.2 A is the largest
+# value that keeps a stated double-digit margin.
+# The cut itself is gated on the DOOMED channel's measured current
+# (SHARE_CUT_MAX_HANDOFF_A = 0.5 A, .ino:2018): at t = 5 the total is only I_AUX_A,
+# i.e. 0.075 A per channel, so the cut fires immediately and cleanly — which is why
+# the load must ramp in AFTER it (t = 10), not with it.
+# run_hil_suite.py's per-scenario duration override was extended in lockstep so the
+# delivered charge (and therefore the depletion depth) is preserved.
+SOC_ENDURANCE_LOAD_A = 2.2
+
+# `handoff-sag`: the two VBUS loads. Derivations live in the SCENARIOS entry and at
+# the apply_scenario() site; the numbers are named here so both can cite one source.
+HANDOFF_PRELOAD_A = 0.40    # from t = 4.0 — puts the pre-rail total at ~0.74 A
+HANDOFF_STEP_A = 1.5        # at t = 20.0 — the perturbation, against BT's 3.0 A limit
+
+# `scp-inrush`: V-MOT load, in amps, present from t = 0 (see apply_scenario).
+# MAGNITUDE IS DERIVED, NOT CHOSEN — the RT1987 foldback in hil_electrical.py
+# only engages when the soft-start pass current exceeds rt1987_fold_limit(dV):
+#     rt1987_fold_limit(dv) = max(2.5, 8.5 - 0.2909*(dv - 5))  for dv > 5 V
+#   -> at dv = 16 V (MOT_PWR closing onto a node held down by its own load) the
+#      limit is its MINIMUM over the reachable dV range: 5.30 A.
+#      (RT_I_FOLD_LOW = 2.5 A is unreachable: it would need dv > 25.6 V.)
+# The soft-start pass current is  i_phys = c_load*rate + i_load  with
+#     t_ON  = (16/35)*(100/0.0023 - 100) us = 19.8 ms   (CSS_NF["MOT_PWR"] 100 nF)
+#     rate  = 16 V / 19.8 ms                = 808 V/s
+#     c_load = C_MOT_LOCAL 470 uF + c_vesc 900 uF = 1.37 mF
+#     c_load*rate                           = 1.11 A
+#   -> the fold engages for i_load > 5.30 - 1.11 = 4.19 A.
+# 5.0 A gives 15 % margin over that threshold.
+#
+# ⚠️ DEVIATION, recorded deliberately: HIL_FINDINGS "scp-inrush" recommends a
+# ~2.5 A load, "so the sim mechanism fires before the firmware faults".  The
+# arithmetic above says 2.5 A CANNOT fold (2.5 + 1.11 = 3.6 A < 5.30 A) — that
+# recommendation assumed RT_I_FOLD_LOW 2.5 A was the active limit.  And the
+# threshold it does have, 4.19 A, is ABOVE what the board's own OC limits allow
+# on the bus: LIMIT_I_FC_MAX 1.4 + LIMIT_I_BT_MAX 3.0 = 4.4 A.  So in this model
+# an scp_cut and an OC fault are INSEPARABLE, and "fold without faulting" is not
+# a reachable operating point.  Nor is "fold without cutting": once the clamp
+# engages, v_out falls behind the ramp target at ~224 V/s while the fold limit
+# rises only ~0.29 A/V, so i_lag grows ~2.7 A within the 250 us SCP blanking
+# window — every fold reaches RT_SCP_BLANK_S and CUTS.  The scenario is therefore
+# scored on the EVENTS (scp_cut must appear) with the fault outcome allowed but
+# not required; see run_hil_suite.py's FAULT_EXPECTATIONS["scp-inrush"].
+SCP_INRUSH_MOT_LOAD_A = 5.0
 
 
 def apply_scenario(plant, scenario, t):
@@ -1474,14 +1867,41 @@ def apply_scenario(plant, scenario, t):
         # --capacity-ah to bring it inside a bench session.  The model is honest
         # rather than accelerated on purpose: an artificially fast SOC ramp would
         # also fake the RC-pair and Rs(SOC) dynamics the UV path sees.
-        plant.i_aux = I_AUX_A + (3.0 if t >= 5.0 else 0.0)
+        #
+        # STAGGERED + RAMPED (2026-08-30, HIL_FINDINGS "soc-depletion"): the step
+        # used to land on t = 5.0, the same tick as the pi_timeline's
+        # power_share_setpoint = 0.0 rail.  For one tick the ~3.15 A draw split
+        # 50/50 and put 1.4705 A on FC — 5 mA over LIMIT_I_FC_MAX — latching OC_FC
+        # and killing the run 645 s before its objective.  Now the share rail gets
+        # 5 s to settle (so the droop has already put the load on BT, with only
+        # SHARE_MINORITY_I_MIN_A = 0.30 A left on FC), and the load itself ramps in
+        # over SOC_LOAD_RAMP_S instead of stepping, so no single tick can hand a
+        # transient split a full 3 A.
+        plant.i_aux = I_AUX_A + SOC_ENDURANCE_LOAD_A * max(
+            0.0, min(1.0, (t - 10.0) / SOC_LOAD_RAMP_S))
     elif scenario == "handoff-sag":
         # The share rail is commanded by the timeline; the perturbation is a load
         # step at t = 20 s, large enough that the FC channel alone cannot hold the
         # bus.  Whether the standby BT diode picks up cleanly or only after a
         # measurable unsourced gap is the whole observation (hi-fi only — the simple
         # droop node has no ideal-diode dynamics and cannot show it).
-        plant.i_aux = I_AUX_A + (1.5 if t >= 20.0 else 0.0)
+        #
+        # TWO loads, both on VBUS (see the SCENARIOS entry for the full derivation):
+        #   HANDOFF_PRELOAD_A from t = 4.0 — raises the pre-rail total into the
+        #     (0.60, 1.00) A window: above the closed-loop governor gate
+        #     (2*SHARE_MINORITY_I_MIN_A) so the share loop is genuinely closed, and
+        #     below the cut's own SHARE_CUT_MAX_HANDOFF_A 0.5 A per-channel guard so
+        #     the latch is not REFUSED.  Applied at t = 4.0, not t = 0: bring-up P0
+        #     pre-charges the bus through the source switches' body-diode path, and
+        #     an extra 0.4 A of load in that window risks failing the P0 voltage
+        #     gate for reasons that have nothing to do with this test.
+        #   HANDOFF_STEP_A at t = 20.0 — the perturbation.  1.5 A against the
+        #     SURVIVING BT channel: 0.74 + 1.5 = 2.24 A vs LIMIT_I_BT_MAX 3.0 A,
+        #     25 % margin.  (At the FC rail this same step latched OC_FC at +2.2 ms;
+        #     the direction flip is what buys the headroom back — see the entry.)
+        plant.i_aux = (I_AUX_A
+                       + (HANDOFF_PRELOAD_A if t >= 4.0 else 0.0)
+                       + (HANDOFF_STEP_A if t >= 20.0 else 0.0))
     elif scenario == "bringup":
         # Plant only, from dark.  The operator runs the staged bring-up ('G') and
         # watches P0-P3 against the RT1987 delays.
@@ -1495,9 +1915,25 @@ def apply_scenario(plant, scenario, t):
         # VESC input envelope (0.9 mF + the 470 uF local bulk) while the node is
         # already drawing: the ramp current is C*dV/dt on ~1.37 mF, and the load —
         # which must sit BEHIND the switch, on V-MOT, not on VBUS — adds directly
-        # to it.  Close MOT_PWR after t = 8 s (bench 'M', or a Run entry) to see it.  The event log's scp_cut / sw_ring entries are the
-        # observable; an sw_ring with over_absmax True is the boost-death signature.
-        plant.i_mot_extra = 6.0 if t >= 8.0 else 0.0
+        # to it.  The event log's scp_cut / sw_ring entries are the observable; an
+        # sw_ring with over_absmax True is the boost-death signature.
+        #
+        # LOAD MOVED TO t = 0 (2026-08-30, HIL_FINDINGS "scp-inrush"): the old
+        # +6.0 A at t = 8 s arrived when MOT_PWR had ALREADY been ON since t ~ 0.62
+        # (the firmware pre-charges the motor node during bring-up P3, CLAUDE.md
+        # §2 Death 5), and the RT1987 foldback/SCP branch exists ONLY in the SOFT
+        # state.  ZERO scp_cut/fold events fired; the run was a plain bus overload
+        # (6 A > LIMIT_I_FC_MAX + LIMIT_I_BT_MAX = 4.4 A at any share split), which
+        # the board correctly protected itself against — a pass signal misreported
+        # as a failure, and the SCP objective structurally unreachable.
+        #
+        # `i_mot_extra` is applied by Plant.step() ONLY while MOT_PWR is closed, so
+        # declaring it from t = 0 means the load appears exactly at the P3 close —
+        # i.e. MOT_PWR ramps INTO it while still in SOFT, which is the only window
+        # in which the foldback can be reached at all.  See SCP_INRUSH_MOT_LOAD_A
+        # for the magnitude derivation and for why an scp_cut cannot be separated
+        # from an OC fault in this model.
+        plant.i_mot_extra = SCP_INRUSH_MOT_LOAD_A
     return tx_enabled
 
 
@@ -1545,6 +1981,24 @@ def main(argv=None):
                          "(bypasses the plant integrator; open-loop stimulus)")
     ap.add_argument("--replay-speed", type=float, default=1.0,
                     help="replay pacing multiplier (default 1.0 = true wall clock)")
+    ap.add_argument("--replay-no-preamble", action="store_true",
+                    help="replay: SKIP the synthetic bring-up preamble and play the "
+                         "log raw from t = 0. For an entry whose point is that "
+                         "bring-up FAILS (a log recorded with a dark bus): with the "
+                         "preamble the board comes up on the synthetic rails first, "
+                         "so FAULT_INIT_FAIL — reachable only from State 0's "
+                         "bring-up machine — can never fire. Timestamps are "
+                         "UNSHIFTED with this flag.")
+    ap.add_argument("--replay-i-fc-clamp", type=float, default=None,
+                    metavar="AMPS",
+                    help="replay: clamp the injected I_fc to at most AMPS. The "
+                         "recorded currents in the legacy logs came from a DC BENCH "
+                         "SUPPLY standing in for the H-20 fuel cell, which could "
+                         "never source them; a production build replaying them raw "
+                         "latches OC_FC before the recorded stimulus arrives. "
+                         "Clamping delivers the stimulus the log was kept for. "
+                         "DECLARE IT wherever the run is scored — it is a deliberate "
+                         "modification of a recorded trajectory.")
     ap.add_argument("--loop", action="store_true",
                     help="replay: repeat the log until --duration elapses")
     ap.add_argument("--duration", type=float, default=None,
@@ -1617,6 +2071,13 @@ def main(argv=None):
     if args.pi_live and args.replay:
         ap.error("--pi-live has no effect with --replay: replay mode already creates "
                  "no PiCommander, and the replayed rails ignore the Pi's commands")
+    if args.replay_no_preamble and not args.replay:
+        ap.error("--replay-no-preamble only applies to --replay")
+    if args.replay_i_fc_clamp is not None:
+        if not args.replay:
+            ap.error("--replay-i-fc-clamp only applies to --replay")
+        if args.replay_i_fc_clamp <= 0.0:
+            ap.error("--replay-i-fc-clamp must be > 0")
 
     scenario = args.scenario or "steady"
     meta = SCENARIOS[scenario]
@@ -1659,8 +2120,12 @@ def main(argv=None):
         ap.error("--capacity-ah must be > 0")
 
     replay = None
+    replay_derive_v_rgn = False
+    # Effective preamble length for THIS run: the per-entry opt-out collapses it to
+    # zero and leaves every replay timestamp unshifted.
+    replay_preamble_s = 0.0 if args.replay_no_preamble else REPLAY_PREAMBLE_S
     if args.replay:
-        records, blg_header, blg_warnings = load_replay(args.replay)
+        records, blg_header, blg_warnings, replay_derive_v_rgn = load_replay(args.replay)
         replay = ReplaySource(records, speed=args.replay_speed, loop=args.loop)
         fw = blg_header.get("fw_version")
         fw_str = "pre-versioning" if fw is None else str(fw)
@@ -1674,10 +2139,27 @@ def main(argv=None):
               "the flashed firmware's control law may differ (e.g. a v14 'V' "
               "trace is a different control law than v13 — new coefficients and "
               "a x1.34 DC plant gain), so responses will NOT match the log.")
+        if replay_preamble_s > 0.0:
+            print(f"[hil] replay: {replay_preamble_s:.1f} s synthetic bring-up preamble "
+                  f"prepended (healthy nominal rails) — sim time t maps to LOG time "
+                  f"t - {replay_preamble_s:.1f}; replay_rec = {REPLAY_PREAMBLE_REC} "
+                  f"while the preamble runs")
+        else:
+            print("[hil] replay: --replay-no-preamble — the log plays RAW from t = 0 "
+                  "(sim time == LOG time). The board boots into whatever the "
+                  "recording's first samples present, which is the point of this "
+                  "mode; a bring-up failure is an EXPECTED outcome here.")
+        if args.replay_i_fc_clamp is not None:
+            print(f"[hil] replay: *** INJECTED I_fc CLAMPED to "
+                  f"{args.replay_i_fc_clamp:.3f} A *** — the recorded trajectory is "
+                  f"DELIBERATELY MODIFIED on this channel. The recorded currents "
+                  f"came from a DC bench supply the real H-20 could never source; "
+                  f"without the clamp a production build latches OC_FC before the "
+                  f"stimulus this log is kept for arrives.")
         for w in blg_warnings:
             print(f"[hil] replay note: {w}")
         if args.duration is None:
-            args.duration = replay.span / args.replay_speed
+            args.duration = replay_preamble_s + replay.span / args.replay_speed
     if args.duration is None:
         args.duration = 30.0
 
@@ -1697,8 +2179,17 @@ def main(argv=None):
             c_vesc_f=c_vesc)
         print(f"[hil] electrical=hifi trace={args.trace_config} "
               f"C_vesc={c_vesc * 1e6:.0f} uF noise={'on' if args.noise else 'off'}")
+    # Scenario-level Ag105 charge-current ceiling (SCENARIOS[...]["chg_i_ceiling_a"],
+    # same class of knob as vesc_cap_f).  Absent -> the firmware's configured
+    # AG105_I_MAX.  Replay mode has no scenario and no charger model at all.
+    chg_ceiling = AG105_I_MAX if args.replay else float(
+        meta.get("chg_i_ceiling_a", AG105_I_MAX))
+    if chg_ceiling != AG105_I_MAX:
+        print(f"[hil] Ag105 charge-current ceiling DE-RATED to {chg_ceiling:.2f} A "
+              f"for scenario '{scenario}' (firmware configures {AG105_I_MAX:.2f} A; "
+              f"scenario parameter chg_i_ceiling_a — see SCENARIOS)")
     plant = Plant(electrical=electrical, soc0=args.soc0,
-                  capacity_ah=args.capacity_ah)
+                  capacity_ah=args.capacity_ah, ag105_i_max=chg_ceiling)
     # ── Command source ───────────────────────────────────────────────────────
     # replay  : no commander (the rails come from a log; commanding is meaningless)
     # pi-live : no commander — a REAL Pi owns the 22-byte command packet
@@ -1957,6 +2448,9 @@ def main(argv=None):
                 "noise": bool(args.noise),
                 "soc0": args.soc0,
                 "capacity_ah": args.capacity_ah,
+                "chg_i_ceiling_a": chg_ceiling,
+                "replay_preamble_s": replay_preamble_s if args.replay else None,
+                "replay_i_fc_clamp_a": args.replay_i_fc_clamp,
                 "dash": bool(args.dash),
             },
             "constants_hash": constants_hash(meta_const),
@@ -2104,14 +2598,42 @@ def main(argv=None):
                 # below still run — comparing the firmware's live response
                 # against the recorded bench run is the whole point.
                 tx_enabled = True
-                sensors, rec_idx = replay.sample(t)
-                if sensors is None:
-                    note = f"[hil] replay: end of log at t={t:.3f}s"
-                    if dash_on:
-                        deferred_notes.append(note)   # screen is owned; print after stop()
-                    else:
-                        print(note)
-                    break
+                mot_pwr_closed = bool(obs and (obs["switch"] & SW_MOT_PWR))
+                if t < replay_preamble_s:
+                    # Synthetic bring-up preamble: healthy nominal rails so the
+                    # fw v22+ staged bring-up can complete before the recorded
+                    # trajectory starts.  See REPLAY_PREAMBLE_S.
+                    sensors = replay_preamble_sensors(t, mot_pwr_closed)
+                    rec_idx = REPLAY_PREAMBLE_REC
+                else:
+                    sensors, rec_idx = replay.sample(t - replay_preamble_s)
+                    if sensors is None:
+                        note = ("[hil] replay: end of log at t=%.3fs "
+                                "(log time %.3fs)" % (t, t - replay_preamble_s))
+                        if dash_on:
+                            deferred_notes.append(note)   # screen is owned; print after stop()
+                        else:
+                            print(note)
+                        break
+                    # ReplaySource hands back the SAME dict on every zero-order-hold
+                    # tick, so any per-tick modification must copy first or it would
+                    # corrupt the record for every later sample of it.  One copy
+                    # covers both modifications below.
+                    if replay_derive_v_rgn or args.replay_i_fc_clamp is not None:
+                        sensors = dict(sensors)
+                    if replay_derive_v_rgn:
+                        # This record format has no V_rgn.  Derive it from the
+                        # injected V_bus and the board's OWN MOT_PWR bit (fw v22
+                        # topology: the RGN-V divider sits on V-MOT).
+                        sensors["V_rgn"] = sensors["V_bus"] if mot_pwr_closed else 0.0
+                    if args.replay_i_fc_clamp is not None:
+                        # H1: ceiling on the injected FC current.  See the flag's
+                        # help text and the banner above — this MODIFIES the
+                        # recorded trajectory and is declared everywhere it is used.
+                        if sensors["I_fc"] > args.replay_i_fc_clamp:
+                            sensors["I_fc"] = args.replay_i_fc_clamp
+                        elif sensors["I_fc"] < -args.replay_i_fc_clamp:
+                            sensors["I_fc"] = -args.replay_i_fc_clamp
             else:
                 tx_enabled = apply_scenario(plant, scenario, t)
                 sensors = plant.step(dt, obs)

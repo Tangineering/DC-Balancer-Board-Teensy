@@ -77,6 +77,63 @@ def _uniform_rows(t_end, dt, **overrides_fn):
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Bring-up-gate / grace-window / preamble fixture helpers (2026-08-30 repair,
+# updated for the M5/M6 preamble-vs-grace split)
+#
+# evaluate_replay_csv() now runs a BRING-UP GATE before an entry's own checks:
+# the CSV must report mainState BRINGUP_STATE_IDLE (1) at or before
+# BRINGUP_DEADLINE_S, or every downstream check is skipped in favour of one
+# `bringup_reached_idle` failure.
+#
+# TWO separate time bounds now gate content, and they are NOT interchangeable
+# (hil_replay_suite.py's ReplayCsv docstring, M5/M6):
+#   grace_s     (REPLAY_GRACE_S, 2.0 s) -- about the BOARD. ReplayCsv.faults
+#               (read by no_fault / fault_latched's hits+end_flags /
+#               fault_not_latched) is filtered to t >= grace_s at construction.
+#   preamble_s  (REPLAY_PREAMBLE_S, 2.5 s, per-entry via entry_preamble_s())
+#               -- about the STIMULUS. The UV_BUS/OC_FC stimulus-qualification
+#               guards inside check_fault_latched (_uv_stimulus_qualifies /
+#               _oc_fc_stimulus_qualifies) and check_no_rail_limit_cycle's
+#               ReplayCsv.current_recorded are filtered to t >= preamble_s, NOT
+#               grace_s -- a synthetic preamble must not arm or qualify a
+#               stimulus check on rails this harness invented.
+# An import-time assertion in hil_replay_suite.py pins REPLAY_PREAMBLE_S >=
+# WARM_RESET_GRACE_S, so shifting content past preamble_s (the larger bound)
+# always also clears grace_s -- one shift amount is enough for every check
+# kind in this file, including require_stimulus=True fault_latched checks.
+def _bringup_row(t=0.0):
+    """A single observation row that satisfies the bring-up gate on its own:
+    mainState 1 (Idle) well inside BRINGUP_DEADLINE_S, no fault."""
+    return {"t": t, "state": rs.BRINGUP_STATE_IDLE, "fault_flags": 0}
+
+
+def _shift_rows(rows, offset):
+    """New row dicts with every `t` advanced by `offset` (does not mutate)."""
+    return [dict(r, t=r["t"] + offset) for r in rows]
+
+
+def _with_bringup(rows, shift=None):
+    """Prepend a bring-up row and, if `shift` is given, move the rest of
+    `rows` later in time by `shift` first.  Pass shift=rs.REPLAY_PREAMBLE_S for
+    any test whose content must land inside the preamble-filtered stimulus
+    window (which also clears the narrower grace_s bound -- see above)."""
+    if shift:
+        rows = _shift_rows(rows, shift)
+    return [_bringup_row()] + rows
+
+
+def _with_bringup_and_grace(rows):
+    """`_with_bringup` shifted past REPLAY_PREAMBLE_S -- the common case for
+    every fault-bit / stimulus-guarded check kind (no_fault / fault_latched
+    incl. its UV_BUS/OC_FC stimulus qualification / fault_not_latched /
+    no_rail_limit_cycle's current_recorded). Named '..._and_grace' for the
+    existing call sites; the shift amount is preamble_s, the larger of the
+    two bounds, which is why it still works for the plain grace-only checks
+    too."""
+    return _with_bringup(rows, shift=rs.REPLAY_PREAMBLE_S)
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # 1. REPLAY_SUITE integrity
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -146,7 +203,7 @@ def _entry(checks, **extra):
 # -- no_fault ----------------------------------------------------------------
 
 def test_check_no_fault_pass(tmp_path):
-    rows = _uniform_rows(0.5, 0.01, fault_flags=lambda t: 0)
+    rows = _with_bringup_and_grace(_uniform_rows(0.5, 0.01, fault_flags=lambda t: 0))
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
     res = rs.evaluate_replay_csv(_entry([{"kind": "no_fault", "name": "no_fault"}]), str(path))
@@ -154,12 +211,13 @@ def test_check_no_fault_pass(tmp_path):
 
 
 def test_check_no_fault_fail(tmp_path):
-    rows = _uniform_rows(0.5, 0.01, fault_flags=lambda t: rs.FAULT_UV_BUS if t > 0.2 else 0)
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.5, 0.01, fault_flags=lambda t: rs.FAULT_UV_BUS if t > 0.2 else 0))
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
     res = rs.evaluate_replay_csv(_entry([{"kind": "no_fault", "name": "no_fault"}]), str(path))
     assert res["passed"] is False
-    assert "UV_BUS" in res["checks"][0]["detail"]
+    assert "UV_BUS" in res["checks"][-1]["detail"]
 
 
 # -- fault_latched -------------------------------------------------------------
@@ -185,7 +243,7 @@ def _uv_collapse_rows():
 
 
 def test_check_fault_latched_pass(tmp_path):
-    rows = _uv_collapse_rows()
+    rows = _with_bringup_and_grace(_uv_collapse_rows())
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
     spec = {"kind": "fault_latched", "name": "uv_bus_latched",
@@ -195,7 +253,7 @@ def test_check_fault_latched_pass(tmp_path):
 
 
 def test_check_fault_latched_fail_bit_clears_before_end(tmp_path):
-    rows = _uv_collapse_rows()
+    rows = _with_bringup_and_grace(_uv_collapse_rows())
     # Clear the bit on the final row: it must LATCH, not clear.
     rows[-1] = dict(rows[-1])
     rows[-1]["fault_flags"] = 0
@@ -205,11 +263,11 @@ def test_check_fault_latched_fail_bit_clears_before_end(tmp_path):
             "bit": rs.FAULT_UV_BUS, "require_stimulus": True}
     res = rs.evaluate_replay_csv(_entry([spec]), str(path))
     assert res["passed"] is False
-    assert "CLEARED" in res["checks"][0]["detail"]
+    assert "CLEARED" in res["checks"][-1]["detail"]
 
 
 def test_check_fault_latched_fail_never_set(tmp_path):
-    rows = _uv_collapse_rows()
+    rows = _with_bringup_and_grace(_uv_collapse_rows())
     for r in rows:
         r["fault_flags"] = 0
     path = tmp_path / "a.csv"
@@ -218,7 +276,52 @@ def test_check_fault_latched_fail_never_set(tmp_path):
             "bit": rs.FAULT_UV_BUS, "require_stimulus": True}
     res = rs.evaluate_replay_csv(_entry([spec]), str(path))
     assert res["passed"] is False
-    assert "never set" in res["checks"][0]["detail"]
+    assert "never set" in res["checks"][-1]["detail"]
+
+
+# ── L1: whole-run first-observation note ────────────────────────────────────
+
+def test_l1_whole_run_first_note_when_fault_persists_from_before_grace(tmp_path):
+    """A fault that latched BEFORE the grace bound and PERSISTS through it
+    (ML0217's INIT_FAIL at ~0.3 s is the standing real example) is still
+    scored correctly on its post-grace samples -- but the post-grace 'first
+    observation' time describes the FILTER, not the event. L1's whole-run
+    first-observation note must name the real, earlier time."""
+    dt = 0.01
+    early_rows = []
+    t = 0.1
+    while t < rs.REPLAY_PREAMBLE_S + 0.5:
+        early_rows.append({"t": t, "V_bus": 15.9, "fault_flags": rs.FAULT_UV_BUS})
+        t += dt
+    rows = [_bringup_row()] + early_rows
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "fault_latched", "name": "uv_bus_latched",
+            "bit": rs.FAULT_UV_BUS, "require_stimulus": False}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    assert res["passed"] is True
+    detail = res["checks"][-1]["detail"]
+    assert "whole-run first observation t=0.100s" in detail
+    assert "BEFORE the" in detail
+    assert "PERSISTED" in detail
+
+
+def test_l1_whole_run_first_note_absent_when_first_observation_coincides():
+    """The note is SILENT when the whole-run and post-grace first
+    observations are the same instant (a fault that only ever appears after
+    the grace bound) -- it exists specifically for the persisted-from-before
+    case, not as a decoration on every fault_latched pass."""
+    rows = _with_bringup_and_grace(_uv_collapse_rows())
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "a.csv")
+        write_replay_csv(path, rows)
+        spec = {"kind": "fault_latched", "name": "uv_bus_latched",
+                "bit": rs.FAULT_UV_BUS, "require_stimulus": True}
+        res = rs.evaluate_replay_csv(_entry([spec]), path)
+    assert res["passed"] is True
+    detail = res["checks"][-1]["detail"]
+    assert "whole-run first observation" not in detail
 
 
 def test_check_fault_latched_require_stimulus_inconclusive(tmp_path):
@@ -226,20 +329,21 @@ def test_check_fault_latched_require_stimulus_inconclusive(tmp_path):
     LIMIT_V_BUS_MIN the whole time): the stimulus does not qualify, so the
     check must fail LOUDLY as inconclusive rather than pass or silently
     excuse the firmware, even though fault_flags is 0 throughout."""
-    rows = _uniform_rows(0.2, 0.001, V_bus=lambda t: 15.9, fault_flags=lambda t: 0)
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.001, V_bus=lambda t: 15.9, fault_flags=lambda t: 0))
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
     spec = {"kind": "fault_latched", "name": "uv_bus_latched",
             "bit": rs.FAULT_UV_BUS, "require_stimulus": True}
     res = rs.evaluate_replay_csv(_entry([spec]), str(path))
     assert res["passed"] is False
-    assert "INCONCLUSIVE" in res["checks"][0]["detail"]
+    assert "INCONCLUSIVE" in res["checks"][-1]["detail"]
 
 
 # -- fault_not_latched ---------------------------------------------------------
 
 def test_check_fault_not_latched_pass(tmp_path):
-    rows = _uniform_rows(0.2, 0.005, fault_flags=lambda t: 0)
+    rows = _with_bringup_and_grace(_uniform_rows(0.2, 0.005, fault_flags=lambda t: 0))
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
     spec = {"kind": "fault_not_latched", "name": "uv_not_latched", "bit": rs.FAULT_UV_BUS}
@@ -248,20 +352,21 @@ def test_check_fault_not_latched_pass(tmp_path):
 
 
 def test_check_fault_not_latched_fail(tmp_path):
-    rows = _uniform_rows(0.2, 0.005,
-                          fault_flags=lambda t: rs.FAULT_UV_BUS if t > 0.1 else 0)
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.005,
+                      fault_flags=lambda t: rs.FAULT_UV_BUS if t > 0.1 else 0))
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
     spec = {"kind": "fault_not_latched", "name": "uv_not_latched", "bit": rs.FAULT_UV_BUS}
     res = rs.evaluate_replay_csv(_entry([spec]), str(path))
     assert res["passed"] is False
-    assert "should NOT latch" in res["checks"][0]["detail"]
+    assert "should NOT latch" in res["checks"][-1]["detail"]
 
 
 # -- bounded_current -------------------------------------------------------------
 
 def test_check_bounded_current_pass(tmp_path):
-    rows = _uniform_rows(0.2, 0.005, current=lambda t: 5.0)
+    rows = _with_bringup(_uniform_rows(0.2, 0.005, current=lambda t: 5.0))
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
     res = rs.evaluate_replay_csv(_entry([{"kind": "bounded_current", "name": "bc"}]), str(path))
@@ -269,20 +374,21 @@ def test_check_bounded_current_pass(tmp_path):
 
 
 def test_check_bounded_current_fail(tmp_path):
-    rows = _uniform_rows(0.2, 0.005, current=lambda t: 13.0)  # above MOTOR_I_CMD_MAX_A + eps
+    rows = _with_bringup(
+        _uniform_rows(0.2, 0.005, current=lambda t: 13.0))  # above MOTOR_I_CMD_MAX_A + eps
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
     res = rs.evaluate_replay_csv(_entry([{"kind": "bounded_current", "name": "bc"}]), str(path))
     assert res["passed"] is False
-    assert "limit" in res["checks"][0]["detail"]
+    assert "limit" in res["checks"][-1]["detail"]
 
 
 # -- no_sustained_rail -------------------------------------------------------------
 
 def test_check_no_sustained_rail_pass(tmp_path):
     # a short 0.2 s rail episode, well under the 1.0 s default limit
-    rows = _uniform_rows(1.0, 0.01,
-                          current=lambda t: 12.0 if 0.4 <= t < 0.6 else 0.0)
+    rows = _with_bringup(
+        _uniform_rows(1.0, 0.01, current=lambda t: 12.0 if 0.4 <= t < 0.6 else 0.0))
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
     spec = {"kind": "no_sustained_rail", "name": "nsr", "max_episode_s": rs.SUSTAINED_RAIL_S}
@@ -291,13 +397,14 @@ def test_check_no_sustained_rail_pass(tmp_path):
 
 
 def test_check_no_sustained_rail_fail(tmp_path):
-    rows = _uniform_rows(2.0, 0.01, current=lambda t: 12.0 if t >= 0.2 else 0.0)
+    rows = _with_bringup(
+        _uniform_rows(2.0, 0.01, current=lambda t: 12.0 if t >= 0.2 else 0.0))
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
     spec = {"kind": "no_sustained_rail", "name": "nsr", "max_episode_s": rs.SUSTAINED_RAIL_S}
     res = rs.evaluate_replay_csv(_entry([spec]), str(path))
     assert res["passed"] is False
-    assert "exceeds" in res["checks"][0]["detail"]
+    assert "exceeds" in res["checks"][-1]["detail"]
 
 
 # -- no_rail_limit_cycle -------------------------------------------------------------
@@ -310,8 +417,11 @@ def _square_wave(t, freq, level):
 
 
 def test_check_no_rail_limit_cycle_pass(tmp_path):
-    # A single large-signal manoeuvre, not a repeating alternation.
-    rows = _uniform_rows(2.0, 0.01, current=lambda t: 12.0 if t < 1.0 else -12.0)
+    # A single large-signal manoeuvre, not a repeating alternation. Shifted
+    # past preamble_s: check_no_rail_limit_cycle reads current_recorded
+    # (M6), which is filtered to t >= preamble_s, not just grace_s.
+    rows = _with_bringup_and_grace(
+        _uniform_rows(2.0, 0.01, current=lambda t: 12.0 if t < 1.0 else -12.0))
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
     spec = {"kind": "no_rail_limit_cycle", "name": "nrlc", "max_alt_per_s": rs.LIMIT_CYCLE_ALT_PER_S}
@@ -323,7 +433,8 @@ def test_check_no_rail_limit_cycle_fail_2_5hz_case():
     """The ML0137 boxcar-defect signature: a rail-to-rail square wave at
     2.5 Hz (inside the documented 2.3-2.6 Hz range) must be caught."""
     import tempfile
-    rows = _uniform_rows(3.0, 0.001, current=lambda t: _square_wave(t, 2.5, 12.0))
+    rows = _with_bringup_and_grace(
+        _uniform_rows(3.0, 0.001, current=lambda t: _square_wave(t, 2.5, 12.0)))
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "a.csv")
         write_replay_csv(path, rows)
@@ -331,15 +442,15 @@ def test_check_no_rail_limit_cycle_fail_2_5hz_case():
                 "max_alt_per_s": rs.LIMIT_CYCLE_ALT_PER_S}
         res = rs.evaluate_replay_csv(_entry([spec]), path)
     assert res["passed"] is False
-    assert "limit cycle" in res["checks"][0]["detail"]
+    assert "limit cycle" in res["checks"][-1]["detail"]
 
 
 # -- returns_off_rail -------------------------------------------------------------
 
 def test_check_returns_off_rail_pass(tmp_path):
     # Rail from 0.2-0.4s, drops to 0 well within OFF_RAIL_WITHIN_S after.
-    rows = _uniform_rows(1.0, 0.005,
-                          current=lambda t: 12.0 if 0.2 <= t < 0.4 else 0.0)
+    rows = _with_bringup(
+        _uniform_rows(1.0, 0.005, current=lambda t: 12.0 if 0.2 <= t < 0.4 else 0.0))
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
     spec = {"kind": "returns_off_rail", "name": "rr",
@@ -353,8 +464,9 @@ def test_check_returns_off_rail_fail_pinned_to_rail_at_eof():
     longer than within_s, is the windup signature and must fail — NOT be
     excused just because the run happened to end."""
     import tempfile
-    rows = _uniform_rows(3.0, 0.005,
-                          current=lambda t: 12.0 if t >= 0.5 else 0.0)  # 2.5 s pinned
+    rows = _with_bringup(
+        _uniform_rows(3.0, 0.005,
+                      current=lambda t: 12.0 if t >= 0.5 else 0.0))  # 2.5 s pinned
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "a.csv")
         write_replay_csv(path, rows)
@@ -362,24 +474,24 @@ def test_check_returns_off_rail_fail_pinned_to_rail_at_eof():
                 "level_a": rs.OFF_RAIL_LEVEL_A, "within_s": rs.OFF_RAIL_WITHIN_S}
         res = rs.evaluate_replay_csv(_entry([spec]), path)
     assert res["passed"] is False
-    assert "still on the rail" in res["checks"][0]["detail"]
+    assert "still on the rail" in res["checks"][-1]["detail"]
 
 
 def test_check_returns_off_rail_no_episodes_passes_trivially(tmp_path):
-    rows = _uniform_rows(0.5, 0.01, current=lambda t: 0.0)
+    rows = _with_bringup(_uniform_rows(0.5, 0.01, current=lambda t: 0.0))
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
     spec = {"kind": "returns_off_rail", "name": "rr",
             "level_a": rs.OFF_RAIL_LEVEL_A, "within_s": rs.OFF_RAIL_WITHIN_S}
     res = rs.evaluate_replay_csv(_entry([spec]), str(path))
     assert res["passed"] is True
-    assert "no rail episodes" in res["checks"][0]["detail"]
+    assert "no rail episodes" in res["checks"][-1]["detail"]
 
 
 # -- near_zero_current -------------------------------------------------------------
 
 def test_check_near_zero_current_pass(tmp_path):
-    rows = _uniform_rows(0.5, 0.01, current=lambda t: 0.05)
+    rows = _with_bringup(_uniform_rows(0.5, 0.01, current=lambda t: 0.05))
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
     spec = {"kind": "near_zero_current", "name": "nzc", "max_abs_a": rs.NEAR_ZERO_I_A}
@@ -388,13 +500,13 @@ def test_check_near_zero_current_pass(tmp_path):
 
 
 def test_check_near_zero_current_fail_bang_bang(tmp_path):
-    rows = _uniform_rows(0.5, 0.01, current=lambda t: _square_wave(t, 5.0, 12.0))
+    rows = _with_bringup(_uniform_rows(0.5, 0.01, current=lambda t: _square_wave(t, 5.0, 12.0)))
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
     spec = {"kind": "near_zero_current", "name": "nzc", "max_abs_a": rs.NEAR_ZERO_I_A}
     res = rs.evaluate_replay_csv(_entry([spec]), str(path))
     assert res["passed"] is False
-    assert "not driving" in res["checks"][0]["detail"]
+    assert "not driving" in res["checks"][-1]["detail"]
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -429,14 +541,14 @@ def test_evaluate_zero_observation_csv_all_checks_fail_with_note(tmp_path):
 
 
 def test_evaluate_unknown_check_kind_is_a_failure(tmp_path):
-    rows = _uniform_rows(0.2, 0.01, fault_flags=lambda t: 0)
+    rows = _with_bringup(_uniform_rows(0.2, 0.01, fault_flags=lambda t: 0))
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
     entry = _entry([{"kind": "not_a_real_check", "name": "bogus"}])
     res = rs.evaluate_replay_csv(entry, str(path))
     assert res["passed"] is False
-    assert res["checks"][0]["passed"] is False
-    assert "unknown check kind" in res["checks"][0]["detail"]
+    assert res["checks"][-1]["passed"] is False
+    assert "unknown check kind" in res["checks"][-1]["detail"]
 
 
 def test_evaluate_no_checks_defined_fails():
@@ -450,7 +562,7 @@ def test_evaluate_no_checks_defined_fails():
 def test_evaluate_check_raising_exception_is_caught_as_failure(tmp_path, monkeypatch):
     """A check kind whose implementation raises must not propagate past
     evaluate_replay_csv — it is reported as a failure."""
-    rows = _uniform_rows(0.2, 0.01, fault_flags=lambda t: 0)
+    rows = _with_bringup(_uniform_rows(0.2, 0.01, fault_flags=lambda t: 0))
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
 
@@ -461,7 +573,7 @@ def test_evaluate_check_raising_exception_is_caught_as_failure(tmp_path, monkeyp
     entry = _entry([{"kind": "no_fault", "name": "no_fault"}])
     res = rs.evaluate_replay_csv(entry, str(path))
     assert res["passed"] is False
-    assert "synthetic failure" in res["checks"][0]["detail"]
+    assert "synthetic failure" in res["checks"][-1]["detail"]
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -488,6 +600,90 @@ def test_build_sim_argv_matches_replay_csv_path_helper():
     argv = rs.build_sim_argv(entry, "csvs")
     csv_arg = argv[argv.index("--csv") + 1]
     assert csv_arg == rs.replay_csv_path(entry, "csvs")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 4b. H1: UV pair (TP0010/TP0053) i_fc_clamp_a; H2: ML0217 skip_preamble
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_uv_pair_entries_carry_the_i_fc_clamp():
+    index = rs.suite_index()
+    for log in ("TP0010", "TP0053"):
+        entry = index[log]
+        assert entry["i_fc_clamp_a"] == pytest.approx(rs.UV_PAIR_I_FC_CLAMP_A)
+    assert rs.UV_PAIR_I_FC_CLAMP_A == pytest.approx(1.3)
+
+
+def test_only_the_uv_pair_carries_an_i_fc_clamp():
+    for e in rs.REPLAY_SUITE:
+        if e["log"] in ("TP0010", "TP0053"):
+            assert e.get("i_fc_clamp_a") is not None, e["log"]
+        else:
+            assert e.get("i_fc_clamp_a") is None, e["log"]
+
+
+def test_build_sim_argv_emits_replay_i_fc_clamp_for_uv_pair():
+    index = rs.suite_index()
+    for log in ("TP0010", "TP0053"):
+        argv = rs.build_sim_argv(index[log], "/tmp/csvdir")
+        assert "--replay-i-fc-clamp" in argv
+        idx = argv.index("--replay-i-fc-clamp")
+        assert float(argv[idx + 1]) == pytest.approx(rs.UV_PAIR_I_FC_CLAMP_A)
+
+
+def test_build_sim_argv_omits_replay_i_fc_clamp_for_other_entries():
+    entry = rs.suite_index()["ML0151"]
+    assert entry.get("i_fc_clamp_a") is None
+    argv = rs.build_sim_argv(entry, "/tmp/csvdir")
+    assert "--replay-i-fc-clamp" not in argv
+
+
+def test_ml0217_carries_skip_preamble_and_skip_bringup_gate():
+    entry = rs.suite_index()["ML0217"]
+    assert entry.get("skip_preamble") is True
+    assert entry.get("skip_bringup_gate") is True
+    check = entry["checks"][0]
+    assert check["kind"] == "fault_latched"
+    assert check["bit"] == rs.FAULT_INIT_FAIL
+
+
+def test_only_ml0217_carries_skip_preamble():
+    for e in rs.REPLAY_SUITE:
+        if e["log"] == "ML0217":
+            assert e.get("skip_preamble") is True
+        else:
+            assert not e.get("skip_preamble"), e["log"]
+
+
+def test_build_sim_argv_emits_replay_no_preamble_for_ml0217():
+    entry = rs.suite_index()["ML0217"]
+    argv = rs.build_sim_argv(entry, "/tmp/csvdir")
+    assert "--replay-no-preamble" in argv
+
+
+def test_build_sim_argv_omits_replay_no_preamble_for_other_entries():
+    entry = rs.suite_index()["ML0151"]
+    assert not entry.get("skip_preamble")
+    argv = rs.build_sim_argv(entry, "/tmp/csvdir")
+    assert "--replay-no-preamble" not in argv
+
+
+def test_entry_preamble_s_resolver():
+    assert rs.entry_preamble_s(rs.suite_index()["ML0217"]) == pytest.approx(0.0)
+    assert rs.entry_preamble_s(rs.suite_index()["ML0151"]) == pytest.approx(
+        rs.REPLAY_PREAMBLE_S)
+    # Robust to a bare None / missing-dict caller (the function's own docstring
+    # implies this via the `(entry or {})` guard).
+    assert rs.entry_preamble_s(None) == pytest.approx(rs.REPLAY_PREAMBLE_S)
+    assert rs.entry_preamble_s({}) == pytest.approx(rs.REPLAY_PREAMBLE_S)
+
+
+def test_import_time_preamble_ge_grace_assertion_holds():
+    """M7/L3: the module-level assertion (REPLAY_PREAMBLE_S >= WARM_RESET_GRACE_S)
+    already ran at import time -- re-derive it here so a future accidental
+    narrowing of either constant is caught by this test too, not only by a
+    successful `import hil_replay_suite`."""
+    assert rs.REPLAY_PREAMBLE_S >= rs.REPLAY_GRACE_S
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -536,7 +732,7 @@ def test_l7_returns_off_rail_multiple_episodes_all_release_cleanly():
             return 12.0
         return 0.0
 
-    rows = _uniform_rows(2.0, 0.01, current=current)
+    rows = _with_bringup(_uniform_rows(2.0, 0.01, current=current))
     path_ok = "l7_multi_ok.csv"
     import tempfile
     with tempfile.TemporaryDirectory() as d:
@@ -546,7 +742,7 @@ def test_l7_returns_off_rail_multiple_episodes_all_release_cleanly():
                 "level_a": rs.OFF_RAIL_LEVEL_A, "within_s": rs.OFF_RAIL_WITHIN_S}
         res = rs.evaluate_replay_csv(_entry([spec]), path)
     assert res["passed"] is True
-    detail = res["checks"][0]["detail"]
+    detail = res["checks"][-1]["detail"]
     assert "3 rail episode(s)" in detail
 
 
@@ -560,7 +756,7 @@ def test_l7_returns_off_rail_multiple_episodes_last_one_pinned_at_eof():
             return 12.0
         return 0.0
 
-    rows = _uniform_rows(3.5, 0.01, current=current)
+    rows = _with_bringup(_uniform_rows(3.5, 0.01, current=current))
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "l7_multi_pinned.csv")
@@ -569,7 +765,7 @@ def test_l7_returns_off_rail_multiple_episodes_last_one_pinned_at_eof():
                 "level_a": rs.OFF_RAIL_LEVEL_A, "within_s": rs.OFF_RAIL_WITHIN_S}
         res = rs.evaluate_replay_csv(_entry([spec]), path)
     assert res["passed"] is False
-    detail = res["checks"][0]["detail"]
+    detail = res["checks"][-1]["detail"]
     assert "still on the rail" in detail
     assert "t=1.000s" in detail or "t=1.00" in detail
 
@@ -626,7 +822,8 @@ def test_f5_require_stimulus_false_skips_qualification():
     """With require_stimulus=False, a UV_BUS check must not run the leaky-
     dwell stimulus sanity check at all -- a bit that is simply never set
     fails on 'never set', not on 'INCONCLUSIVE'."""
-    rows = _uniform_rows(0.2, 0.001, V_bus=lambda t: 15.9, fault_flags=lambda t: 0)
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.001, V_bus=lambda t: 15.9, fault_flags=lambda t: 0))
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "a.csv")
@@ -635,7 +832,7 @@ def test_f5_require_stimulus_false_skips_qualification():
                 "bit": rs.FAULT_UV_BUS, "require_stimulus": False}
         res = rs.evaluate_replay_csv(_entry([spec]), path)
     assert res["passed"] is False
-    detail = res["checks"][0]["detail"]
+    detail = res["checks"][-1]["detail"]
     assert "INCONCLUSIVE" not in detail
     assert "never set" in detail
 
@@ -644,8 +841,9 @@ def test_f5_require_stimulus_false_passes_if_bit_latches_regardless_of_v_bus():
     """require_stimulus=False + the bit IS latched -> passes even though
     V_bus never actually dipped (the stimulus-sanity gate is skipped
     entirely, not just downgraded)."""
-    rows = _uniform_rows(0.2, 0.001, V_bus=lambda t: 15.9,
-                          fault_flags=lambda t: rs.FAULT_UV_BUS if t > 0.05 else 0)
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.001, V_bus=lambda t: 15.9,
+                      fault_flags=lambda t: rs.FAULT_UV_BUS if t > 0.05 else 0))
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "a.csv")
@@ -656,14 +854,16 @@ def test_f5_require_stimulus_false_passes_if_bit_latches_regardless_of_v_bus():
     assert res["passed"] is True
 
 
-def test_f6_non_uv_bit_skips_qualification_even_with_require_stimulus_true():
-    """The stimulus-qualification gate is hardcoded to `bit == FAULT_UV_BUS`
-    -- a fault_latched check on a DIFFERENT bit (e.g. FAULT_OC_FC) must never
-    invoke the UV-specific dwell-integrator sanity check, even with
-    require_stimulus left at its True default."""
-    rows = _uniform_rows(0.2, 0.001, V_bus=lambda t: 15.9,  # never dips -- would be
-                                                             # INCONCLUSIVE for UV_BUS
-                          fault_flags=lambda t: rs.FAULT_OC_FC if t > 0.05 else 0)
+def test_f6_oc_fc_stimulus_qualifies_when_i_fc_exceeds_limit():
+    """FAULT_OC_FC now has its own stimulus model (2026-08-30): the INJECTED
+    I_fc series must actually exceed LIMIT_I_FC_MAX_A, mirroring the
+    firmware's single-sample OC comparison exactly.  Here it does (I_fc
+    ramps above the limit at the same instant the bit is set), so the check
+    passes and names the qualifying instant -- not INCONCLUSIVE."""
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.001,
+                      I_fc=lambda t: 2.0 if t > 0.05 else 0.1,
+                      fault_flags=lambda t: rs.FAULT_OC_FC if t > 0.05 else 0))
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "a.csv")
@@ -672,11 +872,19 @@ def test_f6_non_uv_bit_skips_qualification_even_with_require_stimulus_true():
                 "bit": rs.FAULT_OC_FC}   # require_stimulus defaults True
         res = rs.evaluate_replay_csv(_entry([spec]), path)
     assert res["passed"] is True
-    assert "INCONCLUSIVE" not in res["checks"][0]["detail"]
+    detail = res["checks"][-1]["detail"]
+    assert "INCONCLUSIVE" not in detail
+    assert "stimulus qualified" in detail
 
 
-def test_f6_non_uv_bit_never_set_fails_without_stimulus_note():
-    rows = _uniform_rows(0.2, 0.001, V_bus=lambda t: 15.9, fault_flags=lambda t: 0)
+def test_f6_oc_fc_stimulus_inconclusive_when_i_fc_never_exceeds_limit():
+    """The bit is set (e.g. carried over from a suite-authoring mistake) but
+    the injected I_fc never actually crosses LIMIT_I_FC_MAX_A -- this is not
+    a valid OC_FC stimulus and the check must fail LOUDLY as INCONCLUSIVE,
+    the same discipline the UV_BUS stimulus model already has."""
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.001, I_fc=lambda t: 0.2,
+                      fault_flags=lambda t: rs.FAULT_OC_FC if t > 0.05 else 0))
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "a.csv")
@@ -684,8 +892,48 @@ def test_f6_non_uv_bit_never_set_fails_without_stimulus_note():
         spec = {"kind": "fault_latched", "name": "oc_fc_latched", "bit": rs.FAULT_OC_FC}
         res = rs.evaluate_replay_csv(_entry([spec]), path)
     assert res["passed"] is False
-    assert "INCONCLUSIVE" not in res["checks"][0]["detail"]
-    assert "stimulus qualifies" not in res["checks"][0]["detail"]
+    detail = res["checks"][-1]["detail"]
+    assert "INCONCLUSIVE" in detail
+    assert f"{rs.LIMIT_I_FC_MAX_A:.2f}" in detail
+
+
+def test_f6_unmodeled_bit_with_require_stimulus_true_is_a_suite_error():
+    """Only FAULT_UV_BUS and FAULT_OC_FC have a stimulus model. A
+    fault_latched check on any other bit with require_stimulus left at its
+    True default (e.g. FAULT_MOT_HOTPLUG) must fail as a SUITE authoring
+    error -- silently skipping the guard is how an entry's stimulus rots
+    unnoticed."""
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.001,
+                      fault_flags=lambda t: rs.FAULT_MOT_HOTPLUG if t > 0.05 else 0))
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "a.csv")
+        write_replay_csv(path, rows)
+        spec = {"kind": "fault_latched", "name": "mot_hotplug_latched",
+                "bit": rs.FAULT_MOT_HOTPLUG}   # require_stimulus defaults True
+        res = rs.evaluate_replay_csv(_entry([spec]), path)
+    assert res["passed"] is False
+    assert "suite error" in res["checks"][-1]["detail"]
+
+
+def test_f6_non_uv_bit_never_set_fails_without_stimulus_note():
+    """require_stimulus explicitly False on an unmodeled bit: no stimulus
+    check runs at all (neither a qualification pass nor a suite error), and
+    a bit that is simply never set fails on 'never set'."""
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.001, V_bus=lambda t: 15.9, fault_flags=lambda t: 0))
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "a.csv")
+        write_replay_csv(path, rows)
+        spec = {"kind": "fault_latched", "name": "oc_fc_latched",
+                "bit": rs.FAULT_OC_FC, "require_stimulus": False}
+        res = rs.evaluate_replay_csv(_entry([spec]), path)
+    assert res["passed"] is False
+    detail = res["checks"][-1]["detail"]
+    assert "INCONCLUSIVE" not in detail
+    assert "never set" in detail
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -697,7 +945,8 @@ def test_evaluate_replay_csv_multiple_check_kinds_aggregation(tmp_path):
     aggregation loop must run every check (not short-circuit on the first
     failure), report each individually, and the unknown kind must fail
     without raising -- overall `passed` is the AND of all three."""
-    rows = _uniform_rows(0.3, 0.005, fault_flags=lambda t: 0, current=lambda t: 13.0)
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.3, 0.005, fault_flags=lambda t: 0, current=lambda t: 13.0))
     path = tmp_path / "a.csv"
     write_replay_csv(path, rows)
     entry = _entry([
@@ -706,7 +955,8 @@ def test_evaluate_replay_csv_multiple_check_kinds_aggregation(tmp_path):
         {"kind": "not_a_real_kind", "name": "bogus"},           # fails (unknown kind)
     ])
     res = rs.evaluate_replay_csv(entry, str(path))
-    assert len(res["checks"]) == 3
+    # + the bring-up gate's own passing check, ahead of the entry's three.
+    assert len(res["checks"]) == 4
     by_name = {c["name"]: c for c in res["checks"]}
     assert by_name["no_fault"]["passed"] is True
     assert by_name["bc"]["passed"] is False

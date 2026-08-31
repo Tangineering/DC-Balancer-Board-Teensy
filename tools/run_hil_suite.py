@@ -18,9 +18,22 @@ WHAT THIS SCRIPT ADDS
      `sys.executable tools/hil_plant_sim.py ...` with a hard timeout, so a wedged
      run is killable and recorded as TIMEOUT instead of hanging the bench session.
   3. Health checks for the SCENARIO half, which — unlike the replay entries — has
-     no declarative checks of its own: observation-frame presence, final
-     fault_flags vs an EXPECTED-fault table, achieved rate, hi-fi substep stats,
-     and electrical event counts from the .events.jsonl sidecar.
+     no declarative checks of its own: observation-frame presence, faults vs the
+     declarative FAULT_EXPECTATIONS table (required bits, allow-only masks,
+     stimulus-time and survive-to gates, required electrical events), achieved
+     rate, hi-fi substep stats, and event counts from the .events.jsonl sidecar.
+
+GRACE-AWARE FAULT SCORING (2026-08-30)
+  Every fault judgement — both halves — is made on observations at
+  t >= WARM_RESET_GRACE_S (imported from hil_plant_sim, the same bound the
+  warm-reset tripwire already used).  From fw v23 the board warm-resets out of the
+  previous run's ERR_HIL_STALE settle latch at t ~= 0.5 s, so EVERY run after the
+  first opens showing 0x8010 — or 0x8011 / 0xA010 when its predecessor latched
+  something of its own — through no fault of its own.  Scoring the whole-run union
+  made 23 of 33 FAILs in the first fw v23 pass artefacts of run ORDER.  REPORT.md
+  still prints the full union, with the carried-in bits named separately.  The
+  rule is self-guarding: a board that STAYS latched shows its bits after the bound
+  and still fails.
   4. REPORT.md + results.json in a timestamped report directory, with every
      child's stdout/stderr captured to a per-run .log.
 
@@ -102,14 +115,29 @@ _REPO = os.path.dirname(_HERE)
 HIL_RESULTS_DIR = os.path.join(_REPO, "HIL Results")
 sys.path.insert(0, _HERE)
 
-from hil_plant_sim import SCENARIOS, TEENSY_PORT_DEFAULT            # noqa: E402
+from hil_plant_sim import (                                        # noqa: E402
+    SCENARIOS, TEENSY_PORT_DEFAULT, WARM_RESET_GRACE_S, REPLAY_PREAMBLE_S,
+    # switch_state bit masks, for FAULT_EXPECTATIONS' signals_require specs.
+    # Imported, never re-declared: they mirror the firmware's switch_state packing
+    # and a second copy here would be a silent divergence waiting to happen.
+    SW_FC_BUS, SW_REGEN,
+)
 from hil_replay_suite import (                                      # noqa: E402
     REPLAY_SUITE, FAULT_NAMES, TARGET_FW_VERSION,
     build_sim_argv, evaluate_replay_csv, replay_csv_path, verify_suite_logs,
+    entry_preamble_s,
+    # Fault bits — imported rather than re-declared so there is ONE table.  Values
+    # are cited against teensy_controller.ino:1149-1166 at their definitions there.
+    FAULT_OC_FC, FAULT_UV_BATT, FAULT_UV_BUS, FAULT_MOT_HOTPLUG,
+    FAULT_PI_TIMEOUT, FAULT_ERROR,
 )
 
 SIM_SCRIPT = os.path.join(_HERE, "hil_plant_sim.py")
-GRACE_S = 30.0                 # timeout = expected duration + this
+# L10: named TIMEOUT_GRACE_S, not GRACE_S. It is the slack added to a child's
+# expected duration before the wrapper kills it, and has NOTHING to do with
+# WARM_RESET_GRACE_S (the fault-scoring grace window imported above). Two unrelated
+# "grace" concepts in one module is exactly the confusion this rename removes.
+TIMEOUT_GRACE_S = 30.0         # timeout = expected duration + this
 DEFAULT_SETTLE_S = 5.0         # >> HIL_ZERO_MS (250 ms); see module docstring
 # Shortest settle pause that still marks a RUN BOUNDARY for the fw v23+ HIL
 # auto-recovery (the firmware needs the link continuously dead for >= 1 s; 1.5 s
@@ -146,31 +174,276 @@ SETTLE_MIN_RECOVER_S = 1.5
 #   the SEPARATE Pi watchdog (checkPiWatchdog(), .ino:4817-4826).  So a real Pi's
 #   command traffic does NOT keep the HIL link alive: when this simulator stops
 #   injecting for 1 s, ERR_HIL_STALE latches exactly as it does without a Pi.
-FAULT_REQUIRED = {
-    "sag": ("docs/HIL_MODE.md H2 — UV_BUS latched by the -5 V / 1 s dip", 0x0100),
-    "comm-loss": ("docs/HIL_MODE.md link-loss — 2 s gap > 250 ms zero stage, "
-                  "ERR_HIL_STALE (FAULT_HIL_LINK aliases FAULT_PI_TIMEOUT 0x0010); "
-                  "unchanged under --pi-live — the stale clock keys on injection "
-                  "frames only (.ino:4970-4976), not on Pi command traffic",
-                  0x0010),
+# ─────────────────────────────────────────────────────────────────────────────
+# FAULT_EXPECTATIONS — one declarative entry per scenario that expects anything
+# other than "no fault at all".
+#
+# REPLACES the old FAULT_REQUIRED / FAULT_ALLOWED pair (2026-08-30).  FAULT_ALLOWED
+# was free text and its check ALWAYS passed: it never compared the observed bits
+# against anything, so it rubber-stamped three runs whose objectives were never
+# reached (HIL_FINDINGS: charge-fault latched OC_FC 14 s before its own stimulus;
+# soc-depletion latched OC_FC instead of the promised UV_BATT and sat dark for
+# 645 s; handoff-sag latched OC_FC 2.2 ms into its perturbation, 1.05 V above the
+# UV floor).  Every field below is CHECKED.
+#
+# Every fault judgement is made on the POST-GRACE union (see analyze_scenario_csv)
+# — bits observed only before WARM_RESET_GRACE_S are the PREVIOUS run's inherited
+# settle latch, which fw v23's between-run recovery clears at t ~= 0.5 s.  This is
+# self-guarding: a board that STAYS latched keeps showing its bits after the grace
+# bound and still fails.
+#
+# Fields (all optional except `source`):
+#   require       bit mask that MUST appear in the post-grace union
+#   allow_only    bit mask of everything that MAY appear; any other post-grace bit
+#                 fails.  Omitted -> only `require` (plus FAULT_ERROR) may appear.
+#   not_before_s  a required bit appearing BEFORE this time did not come from the
+#                 stimulus and fails
+#   survive_to    {"t": X, "states": {...}} — the board must still be un-latched at
+#                 t = X and in one of those mainStates, i.e. it actually reached
+#                 its own stimulus
+#   events_require  event kinds that must appear in the hi-fi .events.jsonl sidecar
+#   signals_require POSITIVE evidence from the CSV that the objective was actually
+#                 reached — a list of specs, see judge_signals()
+#   source        citation.  Do not extend this table from intuition.
+#
+# WHY signals_require EXISTS (review M2).  Every other field here constrains FAULTS,
+# i.e. what must NOT happen.  A scenario can satisfy all of them and still do
+# nothing at all: charge-regen with no braking window ever entered, charge-fault
+# with the charger never actually charging, soc-depletion against a flat SoC.  That
+# is the same rubber-stamp class the old FAULT_ALLOWED table produced, arriving
+# through a different door — and the scenarios redesigned in this round are exactly
+# the ones that could regress into it without a symptom.  A signals_require spec
+# asserts a POSITIVE trace fact, so a scenario that quietly stops exercising its own
+# objective fails instead of passing.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# --pi-live NOTE (verified from source, do not "fix" this):
+#   The comm-loss expectation is UNCHANGED under --pi-live.  The HIL stale clock
+#   keys on ACCEPTED INJECTION FRAMES ONLY: hilLastFrameMs is stamped in
+#   receiveCommands()'s commit block (.ino:4970-4976), which runs only for a
+#   40-byte frame that passed hilParseInjectFrame() and the host lock; and
+#   updateSensors() ages exactly that stamp (.ino:4379-4431).  A 22-byte Pi
+#   command takes the other branch (processPiCommandPacket(), .ino:4835) and
+#   touches only last_rx_ms / pi_ever_connected (.ino:4884-4885), which belong to
+#   the SEPARATE Pi watchdog (checkPiWatchdog(), .ino:4817-4826).  So a real Pi's
+#   command traffic does NOT keep the HIL link alive: when this simulator stops
+#   injecting for 1 s, ERR_HIL_STALE latches exactly as it does without a Pi.
+
+FAULT_EXPECTATIONS = {
+    "sag": {
+        "source": "docs/HIL_MODE.md test H2 — 'mainState 99 and fault_flags with "
+                  "the UV bit set, latched' for the -5 V / 1 s dip past "
+                  "LIMIT_V_BUS_MIN. Measured on hardware at 19.887 ms of dwell vs "
+                  "the 20.0 ms design (HIL_FINDINGS 'sag').",
+        "require": FAULT_UV_BUS,
+        "allow_only": FAULT_UV_BUS | FAULT_ERROR,
+        "not_before_s": 5.0,          # the dip starts at t = 5.0 (apply_scenario)
+    },
+    "comm-loss": {
+        "source": "docs/HIL_MODE.md link-loss — 2 s gap > the 250 ms zero stage, "
+                  "ERR_HIL_STALE (FAULT_HIL_LINK ALIASES FAULT_PI_TIMEOUT 0x0010). "
+                  "Measured latch at 5.251 s vs 5.249 predicted (HIL_FINDINGS "
+                  "'comm-loss'). Unchanged under --pi-live — see the note above.",
+        "require": FAULT_PI_TIMEOUT,
+        "allow_only": FAULT_PI_TIMEOUT | FAULT_ERROR,
+        "not_before_s": 5.0,          # transmission stops at t = 5.0
+    },
+    "charge-cruise": {
+        # OPERATOR RULING (b), 2026-08-30: FC-path charging and hard acceleration
+        # are mutually incompatible on this hardware BY DESIGN — assertFcChargeEnable()
+        # drops BT off the bus (.ino:10046), so a single source carries the whole
+        # cruise load plus the charger.  LIMIT_I_FC_MAX stays 1.4 A (ruling (a): it
+        # is already slightly above the H-20's theoretical maximum).  The OC_FC
+        # latch is therefore the CORRECT validation of that incompatibility, not a
+        # failure — and requiring it makes the scenario assert the design boundary
+        # instead of merely surviving.
+        "source": "operator ruling (b) 2026-08-30 + HIL_FINDINGS 'charge-cruise': "
+                  "measured OC_FC at t = 8.7221 s, I_fc 1.4065 A on a smooth "
+                  "190 ms charger ramp, bus bookkeeping closing to 9 mA",
+        "require": FAULT_OC_FC,
+        "allow_only": FAULT_OC_FC | FAULT_UV_BUS | FAULT_ERROR,
+        # The charge_goal step is at t = 8.0 (SCENARIOS['charge-cruise']). An OC_FC
+        # before that did NOT come from the charging ramp and is a different defect.
+        "not_before_s": 8.0,
+        # ... and it must get there in Run, not by dying during the cruise ramp.
+        "survive_to": {"t": 8.0, "states": {2, 3}},
+    },
+    "charge-regen": {
+        "source": "hil_plant_sim.py SCENARIOS['charge-regen'] (redesigned "
+                  "2026-08-30): charge_goal is asserted ONLY inside a braking "
+                  "window, so the charger is fed through REGEN + MOT_PWR and the "
+                  "single-source FC_CHARGE path never opens. Per-channel budget "
+                  "(0.15 + 1.6)/2 = 0.88 A vs LIMIT_I_FC_MAX 1.4 A.",
+        "allow_only": 0,              # expected completely fault-free
+        # The braking windows start at t = 14.0; reaching the first one in Run is
+        # the whole point (the old design died at 5.585 s, 6.4 s before it).
+        "survive_to": {"t": 14.0, "states": {2, 3}},
+        # M2 — POSITIVE evidence, because "no fault" is satisfied by a run that
+        # simply never brakes. Both of the never-yet-observed regen signals are
+        # asserted directly, inside the first braking window:
+        #   REGEN_ENABLE set  -> chargingControl() actually took its regen branch
+        #                        (.ino:10033), i.e. the commanded current really
+        #                        went below -0.1 A. 500 ticks = 0.5 s of the ~2.1 s
+        #                        window, a floor well clear of edge effects.
+        #   I_charge > 0.5 A  -> the Ag105 was genuinely powered THROUGH that path
+        #                        (REGEN + MOT_PWR) and charging, not merely enabled.
+        #                        0.5 A is well under the 1.6 A ceiling and well over
+        #                        the 0 A an unpowered charger reports.
+        "signals_require": [
+            {"name": "regen_switch", "switch_bit": SW_REGEN, "min_ticks": 500,
+             "t_window": (14.0, 16.1),
+             "label": "REGEN_ENABLE asserted during braking window 1"},
+            {"name": "charge_current", "column": "I_charge", "min_value": 0.5,
+             "t_window": (14.0, 16.1),
+             "label": "I_charge delivered through the REGEN path in window 1"},
+        ],
+    },
+    "charge-fault": {
+        # HIL_FINDINGS 'charge-fault': the PASS was a rubber-stamp — the run
+        # latched OC_FC at 5.758 s, 14.25 s before its own t = 20 s stimulus, and
+        # `fault_allowed` accepted the unrelated latch.  The survive_to gate is the
+        # fix: the board must still be alive and in Run when the charger input
+        # actually collapses.
+        #
+        # WHAT HAPPENS AFTER THE COLLAPSE, and why nothing is REQUIRED here:
+        # apply_scenario() sets plant.chg_fault at t = 20, so the Ag105 goes dark
+        # and reports GENSTAT 000 (Battery Disconnect, 0x00) with I_charge -> 0 —
+        # exactly what the firmware's own failed-read path leaves behind.  Reading
+        # pollAg105()/detectFaults(): FAULT_I2C_CHARGER is not reachable under
+        # HIL_SIM (the I2C transport is skipped entirely and the injected status is
+        # mirrored, CLAUDE.md fw v21/HIL addendum), and 0x00 is a NON-error GENSTAT,
+        # so FAULT_CHARGER_STAT does not fire either.  The correct firmware
+        # response is therefore to drop ag105IsReady(), re-inhibit MPPT and carry
+        # on WITHOUT latching.  A clean run is the expected outcome; the check that
+        # earns its keep is survive_to plus allow_only.
+        "source": "hil_plant_sim.py SCENARIOS['charge-fault'] + apply_scenario() "
+                  "(chg_fault at t = 20); HIL_FINDINGS 'charge-fault' for why the "
+                  "old permissive check rubber-stamped a dead board",
+        "allow_only": 0,
+        "survive_to": {"t": 20.0, "states": {2, 3}},
+        # M2: surviving to t = 20 is necessary but not sufficient — the charger must
+        # actually have been CHARGING before the input collapses, or the collapse
+        # tests nothing. Asserted on the window between the charge_goal step (t = 8)
+        # and the fault injection (t = 20). 0.5 A is comfortably under the 0.8 A
+        # de-rated ceiling and unmistakably above an unpowered charger's 0 A.
+        "signals_require": [
+            {"name": "charging_established", "column": "I_charge", "min_value": 0.5,
+             "t_window": (8.0, 20.0),
+             "label": "charging established before the input collapse"},
+        ],
+    },
+    "soc-depletion": {
+        # HIL_FINDINGS 'soc-depletion': the old check never compared the observed
+        # bit against UV_BATT, so an OC_FC latch at t = 5.001 PASSed while the
+        # endurance objective went unreached for the remaining 645 s.
+        # NOTE the bit value: FAULT_UV_BATT is 0x0002 (.ino:1150), NOT 0x0400 —
+        # 0x0400 is FAULT_OV_CHG.
+        "source": "hil_plant_sim.py SCENARIOS['soc-depletion'] — 'V_batt walks "
+                  "DOWN the OCV curve toward LIMIT_V_BATT_MIN, the honest UV_BATT "
+                  "path'. Whether it ARRIVES inside the run depends on "
+                  "--soc0/--capacity-ah, so UV_BATT is ALLOWED, not required; no "
+                  "fault at all is a PASS and the endurance value stands.",
+        "allow_only": FAULT_UV_BATT | FAULT_ERROR,
+        # The load ramp finishes at t = 13 (apply_scenario: 3 s ramp from t = 10);
+        # anything before that is a transient, not depletion.
+        "survive_to": {"t": 13.0, "states": {2, 3}},
+        # M2: the objective is DEPLETION, and "no fault" is satisfied by a run that
+        # never drew anything. The `soc` column is the coulomb count itself, so a
+        # monotone fall of at least 0.05 (5 % SoC) is direct evidence the endurance
+        # walk happened. Budget at SOC_ENDURANCE_LOAD_A 2.2 A over the suite's ~870 s
+        # of load: 1914 A*s / 18000 A*s = 0.106, so 0.05 is a floor with 2x margin
+        # and survives a shortened --duration without becoming unachievable.
+        "signals_require": [
+            {"name": "soc_fell", "column": "soc", "strictly_decreases_by": 0.05,
+             "label": "battery SoC walked down under the endurance load"},
+        ],
+    },
+    "handoff-sag": {
+        # F2 (kept): this is a live simulation of the TP0178/TP0201 class, whose
+        # RECORDED margin above LIMIT_V_BUS_MIN was only 0.15-0.185 V with a ~10 ms
+        # dwell (half the 20 ms latch window) — see hil_replay_suite.py's TP0178/
+        # TP0201 entries.  A legitimately deeper sag on this scenario's own load
+        # step would correctly latch UV_BUS.  What is NOT acceptable any more is
+        # OC_FC: HIL_FINDINGS 'handoff-sag' showed the +1.5 A step pre-empting the
+        # whole test at +2.2 ms with the bus still 1.05 V above the UV floor. The
+        # step is now +0.8 A (~1.14 A on the FC-only channel), so an OC_FC here
+        # means the perturbation budget is wrong again and must be seen.
+        "source": "hil_replay_suite.py TP0178/TP0201 entries (0.15-0.185 V of "
+                  "recorded margin, ~10 ms dwell vs the 20 ms latch) + "
+                  "HIL_FINDINGS 'handoff-sag' for the OC_FC pre-emption + "
+                  "the operating-point derivation in hil_plant_sim.py's "
+                  "SCENARIOS['handoff-sag'] comment (review M3)",
+        "allow_only": FAULT_UV_BUS | FAULT_ERROR,
+        "survive_to": {"t": 20.0, "states": {2, 3}},
+        # M3: the review's concern was that the scenario might never actually take
+        # a source off the bus, in which case every fault expectation above is
+        # satisfied by a run that tested nothing. VERIFIED MECHANISM: the setpoint
+        # latch in updateShareSetpointCutoff() drives FC_BUS_ENABLE LOW when the
+        # commanded share falls below DROOP_R_MIN 0.15 (.ino:9231-9243) — and it
+        # runs BEFORE the governor (.ino:9377-9385), so the 0.60 A closed-loop entry
+        # gate does not block it. Assert the switch bit is CLEAR for essentially the
+        # whole post-rail window: the rail is commanded at t = 6, and at 1 kHz the
+        # 8-20 s window is ~12000 ticks, so allowing 200 covers the handful of
+        # samples around the transition without admitting a run where the cut never
+        # happened or was re-closed.
+        "signals_require": [
+            {"name": "fc_bus_open", "switch_bit": SW_FC_BUS, "max_ticks": 200,
+             "t_window": (8.0, 20.0),
+             "label": "FC_BUS_ENABLE opened by the share setpoint latch and held "
+                      "open until the perturbation"},
+        ],
+    },
+    "scp-inrush": {
+        # HIL_FINDINGS 'scp-inrush' recommends gating this scenario on the EVENTS
+        # sidecar containing scp_cut rather than on fault flags, because the old
+        # run produced ZERO fold/scp_cut events — MOT_PWR was already ON when the
+        # load arrived, and the foldback branch exists only in the SOFT state.
+        # The load now sits behind MOT_PWR from t = 0, so the P3 close ramps into
+        # it while still in SOFT.
+        #
+        # NO fault is REQUIRED, deliberately: two outcomes race, and which one wins
+        # is not deterministic.  The clamp passes ~5.3 A for the 250 us SCP
+        # blanking window before each cut, so a 1 kHz injection tick samples it
+        # with probability ~250 us / 72 ms per retry cycle (~0.35 %) — over the
+        # 500 ms MOT_CONNECT_TIMEOUT_MS window that is ~1.75 expected hits, i.e.
+        # OC_FC usually but not always fires first.  If it does not, the motor node
+        # never tracks the bus and bring-up P3 times out into FAULT_MOT_HOTPLUG
+        # (.ino:8832-8834).  Both are correct firmware behaviour; allow both,
+        # require neither, and let the events sidecar carry the real assertion.
+        # See SCP_INRUSH_MOT_LOAD_A in hil_plant_sim.py for why an scp_cut cannot
+        # be separated from an OC fault in this model.
+        "source": "HIL_FINDINGS 'scp-inrush' recommendation 3 + "
+                  "hil_electrical.py Rt1987._soft_operating_point()/SCP branch "
+                  "(RT_SCP_BLANK_S 250 us, RT_SCP_RETRY_S 64 ms) + "
+                  "hil_plant_sim.py SCP_INRUSH_MOT_LOAD_A for the 5.0 A derivation",
+        "allow_only": FAULT_OC_FC | FAULT_MOT_HOTPLUG | FAULT_ERROR,
+        "events_require": ["scp_cut"],
+    },
 }
-FAULT_ALLOWED = {
-    "soc-depletion": "UV_BATT if the pack reaches LIMIT_V_BATT_MIN inside the run "
-                     "(depends on --soc0/--capacity-ah) — hil_plant_sim.py SCENARIOS",
-    "charge-fault": "charger-input collapse at t = 20 s may or may not latch, "
-                    "depending on the GENSTAT decode path — hil_plant_sim.py SCENARIOS",
-    # F2: `handoff-sag` is a live simulation of the TP0178/TP0201 class, whose
-    # RECORDED margin above LIMIT_V_BUS_MIN was only 0.15-0.185 V with a ~10 ms
-    # dwell (half the 20 ms latch window) — see hil_replay_suite.py's TP0178/TP0201
-    # entries. A legitimately deeper sag on this scenario's own +1.5 A load step
-    # would correctly latch UV_BUS; without this entry that correct latch would be
-    # misreported as an unexpected-fault FAIL rather than the real hardware-class
-    # behaviour it is.
-    "handoff-sag": "UV_BUS if the standby diode's reactive pickup gap is deep/long "
-                   "enough — TP0178/TP0201 recorded only 0.15-0.185 V of margin "
-                   "with a ~10 ms dwell against the 20 ms latch, so this is a "
-                   "plausible, not anomalous, outcome of this scenario",
-}
+# Everything not listed is expected fault-free (post-grace); a fault there is a
+# finding: steady, step-load, bringup, ems-drive-cycle, drive.
+
+# L3 — LOAD-TIME CONSISTENCY, asserted rather than trusted.
+# Both `not_before_s` and `survive_to.t` are compared against times taken from the
+# POST-GRACE window, so a value at or below WARM_RESET_GRACE_S is not a stricter
+# check — it is a VACUOUS one. `not_before_s` would be trivially satisfied (nothing
+# post-grace can precede the grace bound) and `survive_to` would probe a moment the
+# fault scan never reaches, silently reporting "no observation frame at or after
+# t=X". Neither failure has a symptom at the point of use, so it is caught here, at
+# import, where the table is written.
+for _n, _e in FAULT_EXPECTATIONS.items():
+    _nb = _e.get("not_before_s")
+    assert _nb is None or _nb > WARM_RESET_GRACE_S, (
+        "FAULT_EXPECTATIONS[%r].not_before_s = %r must be > WARM_RESET_GRACE_S "
+        "(%.1f): faults are judged on the post-grace window, so an earlier bound "
+        "is vacuously satisfied rather than stricter." % (_n, _nb, WARM_RESET_GRACE_S))
+    _sv = (_e.get("survive_to") or {}).get("t")
+    assert _sv is None or _sv > WARM_RESET_GRACE_S, (
+        "FAULT_EXPECTATIONS[%r].survive_to.t = %r must be > WARM_RESET_GRACE_S "
+        "(%.1f): the survive probe reads the post-grace scan, so an earlier time "
+        "is never observed and the check degrades to 'no observation frame'."
+        % (_n, _sv, WARM_RESET_GRACE_S))
+del _n, _e, _nb, _sv
 
 # Always-reported open findings (report section 'Known open findings').
 K_DROOP_FINDING = (
@@ -194,6 +467,15 @@ def _suite_mode(args):
     return "pi-live" if getattr(args, "pi_live", False) else "scripted"
 
 
+def _split_bits(bits):
+    """Iterate the individual set bits of a mask, low to high."""
+    b = 1
+    while b <= bits:
+        if bits & b:
+            yield b
+        b <<= 1
+
+
 def fault_names(bits):
     """'UV_BUS|OC_FC' style rendering of a fault_flags word."""
     if not bits:
@@ -209,7 +491,7 @@ def fault_names(bits):
 # Run plan
 # ─────────────────────────────────────────────────────────────────────────────
 
-def blg_duration_estimate_s(path):
+def blg_duration_estimate_s(path, preamble_s=REPLAY_PREAMBLE_S):
     """Rough replay duration from a BLG's size: (bytes - 32 B header)/rec_size at
     1 kHz. Header layout per tools/decode_benchlog.py (HEADER_SIZE 32, record_size
     at byte 5). Used ONLY to size the child's timeout — never reported as fact."""
@@ -222,7 +504,10 @@ def blg_duration_estimate_s(path):
         rec = head[5]
         if rec <= 0:
             return None
-        return max(0.0, (size - 32) / rec / 1000.0)
+        # + the synthetic bring-up preamble hil_plant_sim prepends to this replay,
+        # or the timeout would be short by that much. `preamble_s` is PER ENTRY: a
+        # skip_preamble entry replays raw and adds nothing.
+        return preamble_s + max(0.0, (size - 32) / rec / 1000.0)
     except OSError:
         return None
 
@@ -236,8 +521,33 @@ def build_plan(args):
     pi_live = getattr(args, "pi_live", False)
 
     if not args.replay_only:
+        with_operator = getattr(args, "with_operator", False)
         for name, meta in SCENARIOS.items():
             need = meta.get("electrical", "any")
+            if meta.get("operator_required") and not with_operator:
+                # SKIPPED, not scored (HIL_FINDINGS 'drive'): this scenario's
+                # stimulus is an operator at the USB serial console. Run
+                # unattended it commands nothing at all — the board sits in Idle,
+                # `current` is 0.000 A for the whole run, and the loop the
+                # scenario names is never exercised. Scoring that clean advertises
+                # coverage the run does not have. Same skip-record mechanism as
+                # the --pi-live skips below.
+                plan.append({
+                    "kind": "scenario", "name": name,
+                    "mode": need if need in ("simple", "hifi") else args.electrical_pref,
+                    "electrical_required": need,
+                    "description": meta.get("description", ""),
+                    "duration_s": 0.0, "csv": None, "events": None, "log": None,
+                    "argv": None, "timeout_s": 0.0,
+                    "skip_reason": (
+                        "OPERATOR-REQUIRED: this scenario's stimulus is an "
+                        "operator driving the firmware over USB serial. Run "
+                        "unattended it commands nothing (no pi_timeline, no ems "
+                        "strategy) and proves only that the board idles and the "
+                        "link is healthy. Pass --with-operator to run it anyway, "
+                        "with a human at the console."),
+                })
+                continue
             if pi_live and (meta.get("pi_timeline") or meta.get("ems")):
                 # SKIPPED, not failed: under --pi-live the real Pi owns the 22-byte
                 # command packet, and hil_plant_sim.py refuses a scenario carrying
@@ -280,11 +590,24 @@ def build_plan(args):
                 # curve).  Reaching LIMIT_V_BATT_MIN (~6.2 V) needs SOC to fall to
                 # roughly 0.05 (where the fitted model's Rs(SOC) knee below 15%
                 # steepens the sag enough to cross 6.2 V), i.e. a further ~0.10 of
-                # SOC = 1800 A*s at 3 A = 600 s beyond the 5 s ramp-up -- so this
-                # entry is bumped to --soc0 0.15 and a 650 s duration (5 s ramp +
-                # 645 s of load = ~1935 A*s = ~10.75% SOC, landing at ~4.25% SOC,
-                # comfortably past the ~5% crossing point).
-                dur = 650.0
+                # SOC = 1800 A*s at 3 A = 600 s beyond the ramp-up -- so this entry
+                # is bumped to --soc0 0.15 and a long duration.
+                #
+                # RE-DERIVED 2026-08-30 (review M4).  The endurance load was reduced
+                # 3.0 -> SOC_ENDURANCE_LOAD_A 2.2 A because at 3.0 A the surviving
+                # BT channel carried 3.15 A against LIMIT_I_BT_MAX 3.0 A -- over the
+                # limit outright, for 645 s, with nobody having written the number
+                # down (the FC budgets elsewhere had this discipline; this one did
+                # not).  The DURATION is extended in lockstep so the delivered
+                # charge, and therefore the depletion depth, is preserved:
+                #     old:  645 s x 3.0 A = 1935 A*s
+                #     new:  870 s x 2.2 A = 1914 A*s   (-1.1%)
+                # 880 s total = 10 s before the load ramp + 870 s of load, landing
+                # at ~4.4% SOC, still past the ~5% crossing point.
+                # COST: +230 s (~3.8 min) of suite wall time.  Paid deliberately --
+                # the alternative was keeping the run short and quietly abandoning
+                # the endurance objective the scenario exists for.
+                dur = 880.0
                 argv = [
                     "--scenario", name,
                     "--electrical", mode,
@@ -301,7 +624,7 @@ def build_plan(args):
                 "events": os.path.join(args.out, csv_name) + ".events.jsonl",
                 "log": os.path.join(args.out, "run_scenario_%s.log" % name),
                 "argv": argv,
-                "timeout_s": dur + GRACE_S,
+                "timeout_s": dur + TIMEOUT_GRACE_S,
             })
 
     if not args.scenarios_only:
@@ -326,7 +649,8 @@ def build_plan(args):
                 continue
             csv_path = replay_csv_path(entry, args.out)
             argv = build_sim_argv(entry, args.out)
-            est = blg_duration_estimate_s(os.path.join(_REPO, entry["path"]))
+            est = blg_duration_estimate_s(os.path.join(_REPO, entry["path"]),
+                                          preamble_s=entry_preamble_s(entry))
             plan.append({
                 "kind": "replay", "name": entry["log"], "mode": entry["mode"],
                 "description": entry.get("classification", ""),
@@ -335,7 +659,7 @@ def build_plan(args):
                 "events": None,
                 "log": os.path.join(args.out, "run_replay_%s.log" % entry["log"]),
                 "argv": argv,
-                "timeout_s": (est if est else 120.0) + GRACE_S,
+                "timeout_s": (est if est else 120.0) + TIMEOUT_GRACE_S,
                 "entry": entry,
             })
         if pi_live:
@@ -430,14 +754,42 @@ def parse_child_summary(text):
     return out
 
 
-def analyze_scenario_csv(csv_path):
+def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None):
     """Health metrics from a simulated-mode CSV.
 
     Observation columns are BLANK on every tick before the first observation
     frame arrives (hil_plant_sim's row writer), so 'n_obs' counts rows with a
-    non-blank fault_flags — i.e. ticks the board actually answered."""
+    non-blank fault_flags — i.e. ticks the board actually answered.
+
+    TWO FAULT UNIONS (2026-08-30, HIL_FINDINGS 'step-load'):
+
+      fault_bits_seen        every bit observed anywhere in the run.  Kept, and
+                             still reported verbatim in REPORT.md.
+      fault_bits_post_grace  bits observed at t >= `grace_s` only.
+
+    The distinction exists because from fw v23 the board WARM-RESETS out of the
+    previous run's settle latch at t ~= 0.5 s (HIL_RECOVER_DEBOUNCE_MS), so every
+    run after the first opens with 0x8010 — or 0x8011 / 0xA010 when its
+    predecessor latched something of its own — through no fault of its own.  The
+    whole-run union folded that in and 23 of 33 FAILs in the first fw v23 suite
+    pass were that artefact.  `grace_s` is imported from hil_plant_sim
+    (WARM_RESET_GRACE_S), the SAME bound judge_warm_resets() already used, so the
+    two checks can no longer disagree by construction.
+
+    SELF-GUARDING, deliberately: this excuses only bits that STOPPED.  A board
+    that stays latched keeps reporting its flags after the grace bound and still
+    fails — the exclusion is on the observation WINDOW, never on the bit values.
+
+    `survive_to_t` (a scenario's FAULT_EXPECTATIONS['survive_to']['t']) adds two
+    probes that need a single pass over the rows: `fault_bits_before_survive`
+    (post-grace bits observed strictly before that time) and `state_at_survive`
+    (mainState on the first observed row at or after it)."""
     m = {"csv": csv_path, "rows": 0, "n_obs": 0, "final_fault_flags": None,
-         "fault_bits_seen": 0, "final_state": None, "duration_s": None,
+         "fault_bits_seen": 0, "fault_bits_post_grace": 0,
+         "fault_first_t": {}, "n_obs_post_grace": 0, "last_obs_t": None,
+         "grace_s": grace_s, "survive_to_t": survive_to_t,
+         "fault_bits_before_survive": 0, "state_at_survive": None,
+         "final_state": None, "duration_s": None,
          "substep_hz_min": None, "substep_hz_mean": None, "error": None}
     if not os.path.isfile(csv_path):
         m["error"] = "CSV not written"
@@ -448,9 +800,11 @@ def analyze_scenario_csv(csv_path):
         with open(csv_path, newline="") as fh:
             for row in csv.DictReader(fh):
                 m["rows"] += 1
+                t = None
                 try:
-                    t = float(row.get("t") or "nan")
-                    if t == t:
+                    tv = float(row.get("t") or "nan")
+                    if tv == tv:
+                        t = tv
                         t_first = t if t_first is None else t_first
                         t_last = t
                 except ValueError:
@@ -464,12 +818,36 @@ def analyze_scenario_csv(csv_path):
                         continue
                     m["final_fault_flags"] = bits
                     m["fault_bits_seen"] |= bits
+                    if t is not None:
+                        m["last_obs_t"] = t
                     st = (row.get("state") or "").strip()
+                    state = None
                     if st:
                         try:
-                            m["final_state"] = int(st, 0)
+                            state = int(st, 0)
+                            m["final_state"] = state
                         except ValueError:
                             pass
+                    # A row with no parseable `t` cannot be placed relative to the
+                    # grace bound; treat it as PRE-grace (the conservative side —
+                    # it is excluded from the post-grace union and so can never
+                    # excuse a real in-run fault, only fail to accuse on one).
+                    post = t is not None and t >= grace_s
+                    if post:
+                        m["n_obs_post_grace"] += 1
+                        new = bits & ~m["fault_bits_post_grace"]
+                        m["fault_bits_post_grace"] |= bits
+                        for b in _split_bits(new):
+                            # L4: keyed by fault NAME, not by the raw int. This dict
+                            # is serialized into results.json, where json.dump would
+                            # stringify an int key to "1"/"256" — unreadable, and
+                            # not round-trippable by a consumer that expects ints.
+                            m["fault_first_t"].setdefault(fault_names(b), t)
+                        if survive_to_t is not None:
+                            if t < survive_to_t:
+                                m["fault_bits_before_survive"] |= bits
+                            elif m["state_at_survive"] is None and state is not None:
+                                m["state_at_survive"] = state
                 s = (row.get("elec_substep_hz") or "").strip()
                 if s:
                     try:
@@ -485,6 +863,134 @@ def analyze_scenario_csv(csv_path):
         m["substep_hz_min"] = min(subs)
         m["substep_hz_mean"] = sum(subs) / len(subs)
     return m
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# signals_require — POSITIVE trace assertions (review M2)
+#
+# Each spec is a dict.  Exactly one assertion kind per spec:
+#
+#   {"switch_bit": MASK, "min_ticks": N}   the switch_state bit must be SET on at
+#                                          least N observed ticks
+#   {"switch_bit": MASK, "max_ticks": N}   ... on at most N (used to assert a
+#                                          switch was OPENED and stayed open)
+#   {"column": "I_charge", "min_value": X} some sample must reach >= X
+#   {"column": "soc", "strictly_decreases_by": X}  last - first <= -X
+#
+# Optional on any spec: "t_window": (t0, t1) — restrict to that SIM-time window
+# (t1 may be None for "to the end"), and "label": human text for the report.
+# Every spec is judged only on rows at or after the grace bound, for the same
+# reason the fault checks are: the pre-grace window belongs to the previous run.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
+    """One pass over the CSV collecting exactly what `specs` needs.
+
+    Returns a list parallel to `specs` of measurement dicts; judge_signals() turns
+    those into checks.  Kept separate from analyze_scenario_csv() so a scenario
+    with no signals_require pays nothing."""
+    out = [{"ticks": 0, "peak": None, "first": None, "last": None, "rows": 0}
+           for _ in specs]
+    if not specs or not os.path.isfile(csv_path):
+        return out
+    try:
+        with open(csv_path, newline="") as fh:
+            for row in csv.DictReader(fh):
+                try:
+                    t = float(row.get("t") or "nan")
+                except ValueError:
+                    continue
+                if t != t or t < grace_s:
+                    continue
+                for spec, m in zip(specs, out):
+                    w = spec.get("t_window")
+                    if w and (t < w[0] or (w[1] is not None and t > w[1])):
+                        continue
+                    m["rows"] += 1
+                    if "switch_bit" in spec:
+                        cell = (row.get("switch") or "").strip()
+                        if not cell:
+                            continue
+                        try:
+                            if int(cell, 0) & int(spec["switch_bit"]):
+                                m["ticks"] += 1
+                        except ValueError:
+                            pass
+                        continue
+                    cell = (row.get(spec.get("column", "")) or "").strip()
+                    if not cell:
+                        continue
+                    try:
+                        v = float(cell)
+                    except ValueError:
+                        continue
+                    if m["peak"] is None or v > m["peak"]:
+                        m["peak"] = v
+                    if m["first"] is None:
+                        m["first"] = v
+                    m["last"] = v
+    except OSError as exc:
+        for m in out:
+            m["error"] = str(exc)
+    return out
+
+
+def judge_signals(specs, measured, why):
+    """Turn scan_signals() output into checks.  Pure over its inputs."""
+    checks = []
+    for spec, m in zip(specs, measured):
+        label = spec.get("label") or "signal"
+        name = "signal_%s" % spec.get("name", label.split()[0].lower())
+        win = ("" if not spec.get("t_window") else
+               " in t=[%s, %s]s" % (spec["t_window"][0],
+                                    spec["t_window"][1]
+                                    if spec["t_window"][1] is not None else "end"))
+        if m.get("error"):
+            checks.append({"name": name, "passed": False,
+                           "detail": "could not read the CSV: %s" % m["error"]})
+            continue
+        if not m["rows"]:
+            checks.append({
+                "name": name, "passed": False,
+                "detail": ("no observed rows%s to judge '%s' — the window the "
+                           "objective lives in was never reached (%s)"
+                           % (win, label, why))})
+            continue
+        if "min_ticks" in spec:
+            ok = m["ticks"] >= int(spec["min_ticks"])
+            checks.append({"name": name, "passed": ok,
+                           "detail": ("%s: bit set on %d tick(s)%s, need >= %d (%s)"
+                                      % (label, m["ticks"], win,
+                                         int(spec["min_ticks"]), why))})
+        elif "max_ticks" in spec:
+            ok = m["ticks"] <= int(spec["max_ticks"])
+            checks.append({"name": name, "passed": ok,
+                           "detail": ("%s: bit set on %d tick(s)%s, need <= %d (%s)"
+                                      % (label, m["ticks"], win,
+                                         int(spec["max_ticks"]), why))})
+        elif "min_value" in spec:
+            peak = m["peak"]
+            ok = peak is not None and peak >= float(spec["min_value"])
+            checks.append({"name": name, "passed": ok,
+                           "detail": ("%s: peak %s%s, need >= %g (%s)"
+                                      % (label,
+                                         "unmeasured" if peak is None else "%.4f" % peak,
+                                         win, float(spec["min_value"]), why))})
+        elif "strictly_decreases_by" in spec:
+            need = float(spec["strictly_decreases_by"])
+            have = (None if m["first"] is None or m["last"] is None
+                    else m["first"] - m["last"])
+            ok = have is not None and have >= need
+            checks.append({"name": name, "passed": ok,
+                           "detail": ("%s: fell by %s%s, need >= %g (%s)"
+                                      % (label,
+                                         "unmeasured" if have is None else "%.6f" % have,
+                                         win, need, why))})
+        else:
+            checks.append({"name": name, "passed": False,
+                           "detail": "suite error: signal spec %r declares no "
+                                     "assertion kind" % (spec,)})
+    return checks
 
 
 def read_run_meta(csv_path, launched_at=None):
@@ -731,14 +1237,15 @@ def analyze_events(path):
     return out
 
 
-FAULT_ERROR = 0x8000       # .ino:4501-4503 — triggerFault() ORs this into EVERY
-                            # latched fault, so a lone PI_TIMEOUT/HIL_STALE latch
-                            # is observed as 0x8010, never bare 0x0010.
+# FAULT_ERROR (0x8000) is imported from hil_replay_suite above.  .ino:4501-4503 —
+# triggerFault() ORs it into EVERY latched fault, so a lone PI_TIMEOUT/HIL_STALE
+# latch is observed as 0x8010, never bare 0x0010.
 HIL_DEFAULT_RATE_HZ = 1000.0   # the suite never overrides hil_plant_sim.py's
                                 # --rate default (full_argv appends none)
 
 
-def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None):
+def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
+                   signals=None):
     """Scenario pass/fail. Returns (passed, checks[]) — pure over the inputs."""
     checks = []
 
@@ -751,18 +1258,143 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None)
                   "-DHIL_SIM=1 -DUSE_ETHERNET=1? Right IP/port? On the same L2?",
     })
 
+    # M1: observation_frames alone cannot distinguish "the board answered all run"
+    # from "the board answered for 0.4 s and went silent". The latter would leave an
+    # EMPTY post-grace window, and every post-grace fault check would then pass
+    # vacuously — a board that DIED mid-run reported as clean. The fault scoring is
+    # only as good as the window it scores, so assert the window is non-empty.
+    if obs_ok:
+        post_ok = (metrics.get("n_obs_post_grace") or 0) > 0
+        grace_for_msg = metrics.get("grace_s", WARM_RESET_GRACE_S)
+        checks.append({
+            "name": "observation_frames_post_grace", "passed": post_ok,
+            "detail": ("%d ticks carry an observation frame at t >= %.1fs (the "
+                       "window every fault check is judged on)"
+                       % (metrics.get("n_obs_post_grace") or 0, grace_for_msg))
+                      if post_ok else
+                      ("the board answered %d tick(s) but NONE at or after t=%.1fs "
+                       "— it went silent inside the grace window (last observed "
+                       "t=%s s). The post-grace window is EMPTY, so every fault "
+                       "check below passed on no evidence at all."
+                       % (metrics["n_obs"], grace_for_msg,
+                          "%.3f" % metrics["last_obs_t"]
+                          if metrics.get("last_obs_t") is not None else "?")),
+        })
+
     final = metrics["final_fault_flags"] or 0
     seen = metrics["fault_bits_seen"] or 0
-    if name in FAULT_REQUIRED:
-        why, want = FAULT_REQUIRED[name]
-        got = bool(seen & want)
-        checks.append({"name": "expected_fault", "passed": got,
-                       "detail": "expected %s (%s); observed %s (final %s)"
-                                 % (fault_names(want), why, fault_names(seen),
-                                    fault_names(final))})
-    elif name in FAULT_ALLOWED:
-        checks.append({"name": "fault_allowed", "passed": True,
-                       "detail": "observed %s; %s" % (fault_names(seen), FAULT_ALLOWED[name])})
+    # POST-GRACE union: what this run itself produced.  Bits present ONLY before
+    # the grace bound are the predecessor's settle latch, cleared by fw v23's
+    # between-run warm recovery — see analyze_scenario_csv().
+    post = metrics.get("fault_bits_post_grace") or 0
+    carried = seen & ~post
+    grace_s = metrics.get("grace_s", WARM_RESET_GRACE_S)
+    carried_note = ("" if not carried else
+                    "; carried-in from the predecessor's settle latch: %s "
+                    "(excused — observed only before t=%.1fs and cleared by the "
+                    "grace-window warm reset)" % (fault_names(carried), grace_s))
+    first_t = metrics.get("fault_first_t") or {}
+    expect = FAULT_EXPECTATIONS.get(name)
+
+    if expect is not None:
+        why = expect["source"]
+        require = int(expect.get("require", 0))
+        # `allow_only` defaults to "whatever is required, plus the FAULT_ERROR bit
+        # triggerFault() always ORs in" — never to "anything goes".
+        allow_only = expect.get("allow_only")
+        allow_only = (require | FAULT_ERROR) if allow_only is None else int(allow_only)
+        # L9: defensive and, with the current table, DEAD — every entry that sets
+        # `require` also names FAULT_ERROR in its explicit `allow_only`. Kept so a
+        # future entry cannot declare "require X" and then fail on the 0x8000 bit
+        # triggerFault() unconditionally ORs in beside X (.ino:4501-4503), which is
+        # a mistake with a confusing symptom. Deliberately NOT applied when there is
+        # no `require`: an allow_only-only entry is asserting "clean", and
+        # FAULT_ERROR appearing there is a real finding.
+        allow_only |= FAULT_ERROR if require else 0
+
+        if require:
+            got = (post & require) == require
+            detail = ("expected %s (%s); post-grace union %s (whole-run %s, final %s)%s"
+                      % (fault_names(require), why, fault_names(post),
+                         fault_names(seen), fault_names(final), carried_note))
+            not_before = expect.get("not_before_s")
+            if got and not_before is not None:
+                # L4: first_t is keyed by fault NAME (json-friendly), so look each
+                # required bit up by its own rendered name.
+                early = sorted(b for b in _split_bits(require)
+                               if first_t.get(fault_names(b)) is not None
+                               and first_t[fault_names(b)] < not_before)
+                if early:
+                    got = False
+                    detail += ("; but %s first appeared at t=%.3fs, BEFORE the "
+                               "stimulus at t=%.1fs — it did not come from the "
+                               "stimulus this check is about"
+                               % (fault_names(sum(early)),
+                                  first_t[fault_names(early[0])], not_before))
+                else:
+                    detail += ("; first seen at t=%s s, at or after the t=%.1fs "
+                               "stimulus"
+                               % (", ".join("%.3f" % first_t[fault_names(b)]
+                                            for b in _split_bits(require)
+                                            if fault_names(b) in first_t) or "?",
+                                  not_before))
+            checks.append({"name": "expected_fault", "passed": got, "detail": detail})
+
+        extra = post & ~allow_only
+        checks.append({
+            "name": "fault_allow_only", "passed": extra == 0,
+            "detail": ("post-grace union %s; permitted here: %s (%s)%s%s"
+                       % (fault_names(post),
+                          fault_names(allow_only) if allow_only else "none",
+                          why, carried_note,
+                          "" if extra == 0 else
+                          "  -> UNEXPECTED: %s" % fault_names(extra)))})
+
+        survive = expect.get("survive_to")
+        if survive is not None:
+            t_req = float(survive["t"])
+            states = set(survive.get("states") or ())
+            before = metrics.get("fault_bits_before_survive") or 0
+            st = metrics.get("state_at_survive")
+            ok = before == 0 and (st in states if states else st is not None)
+            reasons = []
+            if before:
+                reasons.append("latched %s BEFORE t=%.1fs, so the run never "
+                               "reached its own stimulus"
+                               % (fault_names(before), t_req))
+            if states and st not in states:
+                reasons.append("mainState at t=%.1fs was %s, not one of %s"
+                               % (t_req, st, sorted(states)))
+            checks.append({
+                "name": "survives_to_stimulus", "passed": ok,
+                "detail": ("un-latched and in mainState %s at t=%.1fs"
+                           % (st, t_req)) if ok
+                          else ("; ".join(reasons) or
+                                "no observation frame at or after t=%.1fs" % t_req)})
+
+        sig_specs = expect.get("signals_require") or []
+        if sig_specs:
+            # `signals` is scan_signals()' output; None means the caller did not
+            # measure. Never silently skip — an unmeasured positive assertion is a
+            # gap, and this table exists because gaps read as passes.
+            if signals is None:
+                checks.append({
+                    "name": "signals_require", "passed": False,
+                    "detail": ("this scenario declares %d positive signal "
+                               "assertion(s) but they were not measured — the "
+                               "caller did not run scan_signals()" % len(sig_specs))})
+            else:
+                checks.extend(judge_signals(sig_specs, signals, why))
+
+        for kind in expect.get("events_require", ()):
+            n = events.get("kinds", {}).get(kind, 0)
+            checks.append({
+                "name": "events_require_%s" % kind, "passed": n > 0,
+                "detail": ("%d '%s' event(s) in the electrical sidecar" % (n, kind))
+                          if n else
+                          ("NO '%s' event in the electrical sidecar — the "
+                           "mechanism this scenario exists to exercise never "
+                           "fired (%s)" % (kind, why))})
     else:
         # F1/F2: under --pi-live the Pi watchdog is outside this harness's
         # control: an operator-driven Pi that stops commanding while the board
@@ -797,7 +1429,14 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None)
         # elimination, not a direct read of which of the two aliased causes
         # fired. A frame extension to carry error_code is future protocol work
         # (see docs/HIL_MODE.md and the manual).
-        exactly_pi_timeout = seen == (FAULT_ERROR | 0x0010)
+        #
+        # 2026-08-30: this whole block is now judged on the POST-GRACE union, not
+        # the whole-run one, for the same reason every other fault check is (see
+        # analyze_scenario_csv).  It matters HERE in particular: the inherited
+        # settle latch is ITSELF 0x8010, so on the whole-run union the "exactly
+        # 0x8010" test fired on every run after the first and the excusal was
+        # deciding about a bit the previous run left behind.
+        exactly_pi_timeout = post == (FAULT_ERROR | FAULT_PI_TIMEOUT)
         summary = child.get("summary") or {}
         tx = summary.get("tx_frames")
         send_errors = summary.get("send_errors")
@@ -810,28 +1449,31 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None)
             and send_errors == 0
         )
         if pi_live and exactly_pi_timeout and not stream_continuous:
-            unexpected = seen   # do NOT excuse — attribution to the Pi is unsafe
+            unexpected = post   # do NOT excuse — attribution to the Pi is unsafe
             excuse_detail = ("  (0x%04X observed but the injection stream had "
                               "gaps or is unmeasured — cannot attribute to the "
-                              "Pi; NOT excused)" % seen)
+                              "Pi; NOT excused)" % post)
         elif stream_continuous:
             unexpected = 0
-            excuse_detail = ("  (PI_TIMEOUT excused under --pi-live: fault union "
-                              "is exactly 0x%04X (FAULT_ERROR|PI_TIMEOUT) and this "
+            excuse_detail = ("  (PI_TIMEOUT excused under --pi-live: post-grace "
+                              "fault union is exactly 0x%04X "
+                              "(FAULT_ERROR|PI_TIMEOUT) and this "
                               "process's own injection stream was continuous "
                               "(tx=%d/%s frames, %d send errors) — the operator's "
                               "Pi owns the command cadence. Residual: the "
                               "observation frame carries no error_code, so "
                               "PI_TIMEOUT vs the aliased HIL_STALE is inferred by "
                               "elimination, not read directly.)"
-                              % (seen, tx, ("%.0f" % expected_tx) if expected_tx
+                              % (post, tx, ("%.0f" % expected_tx) if expected_tx
                                  else "?", send_errors))
         else:
-            unexpected = seen
+            unexpected = post
             excuse_detail = ""
         checks.append({"name": "no_unexpected_fault", "passed": unexpected == 0,
-                       "detail": "fault_flags union over the run = %s%s"
-                                 % (fault_names(seen), excuse_detail)})
+                       "detail": "post-grace fault_flags union = %s "
+                                 "(whole-run union %s)%s%s"
+                                 % (fault_names(post), fault_names(seen),
+                                    carried_note, excuse_detail)})
 
     rate = (child.get("summary") or {}).get("achieved_hz")
     if rate is not None:
@@ -1099,9 +1741,24 @@ def render_report(meta, results):
               % (s.get("tx_frames", "?"), s.get("rx_frames", "?"), s.get("rx_bad", "?"),
                  ("%.1f" % s["achieved_hz"]) if "achieved_hz" in s else "?",
                  ("%.2f" % s["max_overrun_ms"]) if "max_overrun_ms" in s else "?"))
-            A("- final `fault_flags`: `0x%04X` (%s); union over the run: %s; final state: %s"
-              % (m.get("final_fault_flags") or 0, fault_names(m.get("final_fault_flags") or 0),
-                 fault_names(m.get("fault_bits_seen") or 0), m.get("final_state")))
+            # Both unions, always, with the carried-in bits named separately: the
+            # whole-run union is what was OBSERVED, the post-grace union is what
+            # this run PRODUCED, and every check above judges the latter.
+            seen_b = m.get("fault_bits_seen") or 0
+            post_b = m.get("fault_bits_post_grace") or 0
+            carried_b = seen_b & ~post_b
+            A("- final `fault_flags`: `0x%04X` (%s); union over the run: %s; "
+              "POST-GRACE union (t >= %.1fs, what the checks judge): %s; "
+              "final state: %s"
+              % (m.get("final_fault_flags") or 0,
+                 fault_names(m.get("final_fault_flags") or 0),
+                 fault_names(seen_b), m.get("grace_s", WARM_RESET_GRACE_S),
+                 fault_names(post_b), m.get("final_state")))
+            if carried_b:
+                A("  - carried in from the predecessor's settle latch (seen only "
+                  "before t=%.1fs, cleared by the fw v23 grace-window warm "
+                  "reset): %s"
+                  % (m.get("grace_s", WARM_RESET_GRACE_S), fault_names(carried_b)))
             if m.get("substep_hz_mean") is not None:
                 A("- hi-fi substep rate: mean %.0f Hz, min %.0f Hz"
                   % (m["substep_hz_mean"], m["substep_hz_min"]))
@@ -1142,6 +1799,13 @@ def render_report(meta, results):
         A("Recorded bench logs replayed as OPEN-LOOP stimulus (the firmware's commands")
         A("cannot influence the replayed trajectory). Checks are the declarative ones in")
         A("`tools/hil_replay_suite.py`; the notes carry each entry's fw-delta caveat.")
+        A("")
+        A("**What this half is:** a BRING-UP + FAULT-DECISION regression harness.")
+        A("Replay mode constructs no commander, so no run reaches State 2 and the")
+        A("commanded current is 0 A throughout — the current-shape checks assert only")
+        A("that the firmware does not drive on an uncommanded stimulus. Each run is")
+        A("preceded by a %.1f s synthetic bring-up preamble of healthy nominal rails," % REPLAY_PREAMBLE_S)
+        A("so times below are SIM-relative and log time = sim time − %.1f s." % REPLAY_PREAMBLE_S)
         A("")
         for group, title in (("conformance", "### Conformance"),
                              ("deviation", "### Deviation")):
@@ -1310,6 +1974,12 @@ def main(argv=None):
                          "children run with --pi-live and send injection frames only. "
                          "Scenarios carrying their own pi_timeline are SKIPPED (with a "
                          "reason) rather than run against a second command source.")
+    ap.add_argument("--with-operator", action="store_true",
+                    help="also run the scenarios marked operator_required in the "
+                         "SCENARIOS registry ('drive'). They are SKIPPED by "
+                         "default: their stimulus is a human driving the firmware "
+                         "over USB serial, so unattended they command nothing and "
+                         "a clean result proves only that the board idles.")
     ap.add_argument("--list", action="store_true", help="print the run plan and exit")
     ap.add_argument("--dry-run", action="store_true",
                     help="build every argv and write plan.json into the report dir; run nothing")
@@ -1511,13 +2181,20 @@ def _run_plan(plan, args, problems, results, write_outputs):
             item["name"], item["kind"], wr_counts, wr_source)
 
         if item["kind"] == "scenario":
-            metrics = analyze_scenario_csv(item["csv"])
+            expect = FAULT_EXPECTATIONS.get(item["name"]) or {}
+            survive = expect.get("survive_to")
+            metrics = analyze_scenario_csv(
+                item["csv"], survive_to_t=(float(survive["t"]) if survive else None))
             events = analyze_events(item["events"])
+            sig_specs = expect.get("signals_require") or []
+            signals = scan_signals(item["csv"], sig_specs) if sig_specs else None
             passed, checks = judge_scenario(item["name"], metrics, events, child,
                                             pi_live=getattr(args, "pi_live", False),
-                                            duration_s=item.get("duration_s"))
-            key = "obs %d/%d, faults %s" % (metrics["n_obs"], metrics["rows"],
-                                            fault_names(metrics["fault_bits_seen"] or 0))
+                                            duration_s=item.get("duration_s"),
+                                            signals=signals)
+            key = "obs %d/%d, faults %s" % (
+                metrics["n_obs"], metrics["rows"],
+                fault_names(metrics.get("fault_bits_post_grace") or 0))
             res = {"kind": "scenario", "name": item["name"], "mode": item["mode"],
                    "cmd_mode": _suite_mode(args),
                    "electrical_required": item["electrical_required"],

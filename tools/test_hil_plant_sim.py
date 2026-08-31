@@ -597,6 +597,14 @@ BENCHLOG_DIR = os.path.join(HERE, "benchlog_analysis")
 
 
 def _import_make_test_blg():
+    """make_test_blg.py lives in tools/benchlog_analysis/, not tools/ -- HERE
+    (already on sys.path via this file's own import block) never finds it.
+    BUG FOUND while repairing this fixture: BENCHLOG_DIR (above) was defined
+    for exactly this purpose and never wired in, so every replay-CSV test
+    behind this helper skipped with a misleading 'numpy unavailable' message
+    regardless of numpy -- the import failed on the module path, not numpy."""
+    if BENCHLOG_DIR not in sys.path:
+        sys.path.insert(0, BENCHLOG_DIR)
     try:
         import make_test_blg
     except ImportError:
@@ -624,9 +632,11 @@ def test_load_replay_field_mapping_matches_decoder_csv(tmp_path):
     cols = result.csv_header.split(",")
     idx = {name: i for i, name in enumerate(cols)}
 
-    records, header, warnings = hil.load_replay(path)
+    records, header, warnings, derive_v_rgn = hil.load_replay(path)
     assert header["version"] == 3
     assert len(records) == len(result.csv_rows)
+    # v3 carries its own V_rgn column -- nothing to derive.
+    assert derive_v_rgn is False
 
     for (t_s, sensors), csv_row in zip(records, result.csv_rows):
         cells = csv_row.split(",")
@@ -643,8 +653,11 @@ def test_load_replay_blank_v_act_becomes_zero(tmp_path):
     replay must inject 0.0 m/s for those records, not raise or propagate a
     blank string."""
     path = _write_synthetic_blg(tmp_path, fw_version=1, header_v1=True)
-    records, header, warnings = hil.load_replay(path)
+    records, header, warnings, derive_v_rgn = hil.load_replay(path)
     assert header["version"] in (1, 2)
+    # v1/v2 carry NO V_fc/V_batt/V_rgn field at all -- V_rgn must be derived
+    # per tick by the caller (hil_plant_sim's main loop), not injected as 0.0.
+    assert derive_v_rgn is True
     v_actuals = [sensors["v_actual"] for _, sensors in records]
     assert any(v == 0.0 for v in v_actuals), \
         "expected at least one blank/zero v_act sample in the synthetic v1 log"
@@ -653,8 +666,10 @@ def test_load_replay_blank_v_act_becomes_zero(tmp_path):
 
 def test_load_replay_i_charge_and_status_default_zero(tmp_path):
     path = _write_synthetic_blg(tmp_path, fw_version=6, v6=True)
-    records, header, warnings = hil.load_replay(path)
+    records, header, warnings, derive_v_rgn = hil.load_replay(path)
     assert header["version"] == 6
+    # v6 carries its own V_rgn column -- nothing to derive.
+    assert derive_v_rgn is False
     for _, sensors in records:
         assert sensors["I_charge"] == hil.REPLAY_I_CHARGE == 0.0
         assert sensors["ag105_status"] == hil.REPLAY_AG105_STATUS == 0x00
@@ -672,11 +687,93 @@ def test_load_replay_missing_field_warning_names_v_actual_source():
                for _, dst in hil.REPLAY_FIELD_MAP)
 
 
+def test_load_replay_v1v2_substitutes_healthy_nominal_v_fc_v_batt(tmp_path):
+    """v1/v2 records carry NO V_fc/V_batt/V_rgn field at all. V_fc/V_batt are
+    CONSTANTS, so load_replay() substitutes them directly (healthy nominals,
+    not the honest-zero the old behaviour injected -- a dark V_fc/V_batt made
+    the staged bring-up's P1 gate fail on every v1/v2 replay). V_rgn depends
+    on a switch state only the caller can see, so it is NOT substituted here
+    -- it stays the load_replay()-internal 0.0 default and the caller derives
+    it per tick (see the replay_preamble_sensors / derive_v_rgn section)."""
+    path = _write_synthetic_blg(tmp_path, fw_version=1, header_v1=True)
+    records, _header, warnings, derive_v_rgn = hil.load_replay(path)
+    assert derive_v_rgn is True
+    assert records
+    for _t, sensors in records:
+        assert sensors["V_fc"] == pytest.approx(hil.REPLAY_NOMINAL_V_FC)
+        assert sensors["V_batt"] == pytest.approx(hil.REPLAY_NOMINAL_V_BATT)
+        assert sensors["V_rgn"] == pytest.approx(0.0)
+    joined = " ".join(warnings)
+    assert "healthy nominals" in joined
+    assert f"{hil.REPLAY_NOMINAL_V_FC:.2f} V" in joined
+    assert f"{hil.REPLAY_NOMINAL_V_BATT:.2f} V" in joined
+    assert "V_rgn DERIVED" in joined
+
+
+def test_load_replay_v3_plus_carries_its_own_rails_no_substitution(tmp_path):
+    """v3+ records carry their own V_fc/V_batt/V_rgn columns -- the
+    substitution path must not fire, and the warning must not mention it."""
+    path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    _records, _header, warnings, derive_v_rgn = hil.load_replay(path)
+    assert derive_v_rgn is False
+    joined = " ".join(warnings)
+    assert "healthy nominals" not in joined
+    assert "V_rgn DERIVED" not in joined
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 8f. replay_preamble_sensors() -- the synthetic bring-up preamble's per-tick
+#     sensor dict (pure function, no .BLG / numpy needed)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_replay_preamble_sensors_matches_documented_constants():
+    s = hil.replay_preamble_sensors(1.0, mot_pwr_closed=False)
+    assert s["V_fc"] == pytest.approx(hil.REPLAY_NOMINAL_V_FC)
+    assert s["V_batt"] == pytest.approx(hil.REPLAY_NOMINAL_V_BATT)
+    assert s["V_bus"] == pytest.approx(hil.REPLAY_PREAMBLE_V_BUS)
+    assert s["V_chg"] == pytest.approx(0.0)
+    assert s["I_fc"] == pytest.approx(hil.REPLAY_PREAMBLE_I)
+    assert s["I_batt"] == pytest.approx(hil.REPLAY_PREAMBLE_I)
+    assert s["v_actual"] == pytest.approx(0.0)
+    assert s["I_charge"] == hil.REPLAY_I_CHARGE
+    assert s["ag105_status"] == hil.REPLAY_AG105_STATUS
+
+
+def test_replay_preamble_sensors_v_rgn_follows_mot_pwr_closed():
+    """V_rgn's divider sits on V-MOT (fw v22 topology), which follows the bus
+    only while MOT_PWR is closed -- the preamble must mirror that, not
+    default V_rgn to a fixed value regardless of the switch state."""
+    closed = hil.replay_preamble_sensors(1.0, mot_pwr_closed=True)
+    open_ = hil.replay_preamble_sensors(1.0, mot_pwr_closed=False)
+    assert closed["V_rgn"] == pytest.approx(hil.REPLAY_PREAMBLE_V_BUS)
+    assert open_["V_rgn"] == pytest.approx(0.0)
+
+
+def test_replay_preamble_sensors_shape_matches_injection_frame_fields():
+    """Every key an injection frame needs must be present (the function's
+    docstring claims it is 'shaped exactly like Plant.step()'s return
+    value')."""
+    s = hil.replay_preamble_sensors(0.0, mot_pwr_closed=False)
+    required = {"V_fc", "V_batt", "V_bus", "V_chg", "V_rgn", "I_fc", "I_batt",
+                "v_actual", "I_charge", "ag105_status"}
+    assert required <= set(s)
+
+
+def test_replay_preamble_sensors_ignores_t_argument_value():
+    """The preamble is a constant healthy-rail snapshot -- t only selects
+    WHETHER it applies (t < REPLAY_PREAMBLE_S in the main loop), not what
+    values it returns."""
+    a = hil.replay_preamble_sensors(0.0, mot_pwr_closed=False)
+    b = hil.replay_preamble_sensors(hil.REPLAY_PREAMBLE_S - 0.001, mot_pwr_closed=False)
+    assert a == b
+
+
 def test_load_replay_wrap_safe_t_us(tmp_path):
     """A log whose t_us straddles the uint32 micros() wrap must decode to a
     monotonically non-decreasing time axis, not jump backwards or explode."""
     path = _write_synthetic_blg(tmp_path, fw_version=1, header_v1=True, wrap=True)
-    records, header, warnings = hil.load_replay(path)
+    records, header, warnings, derive_v_rgn = hil.load_replay(path)
+    assert derive_v_rgn is True
     times = [t for t, _ in records]
     assert times == sorted(times)
     assert times[0] == 0.0
@@ -795,6 +892,29 @@ def test_main_missing_replay_file_exits(tmp_path):
     missing = str(tmp_path / "does_not_exist.BLG")
     with pytest.raises(SystemExit):
         hil.main(["--replay", missing])
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 5b. H1/H2: --replay-i-fc-clamp / --replay-no-preamble CLI validation
+#     (argparse-level -- these ap.error() before load_replay() ever runs, so
+#     a nonexistent .BLG path is fine here)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_main_replay_i_fc_clamp_requires_replay():
+    with pytest.raises(SystemExit):
+        hil.main(["--scenario", "steady", "--replay-i-fc-clamp", "1.3"])
+
+
+def test_main_replay_i_fc_clamp_must_be_positive():
+    with pytest.raises(SystemExit):
+        hil.main(["--replay", "x.BLG", "--replay-i-fc-clamp", "0"])
+    with pytest.raises(SystemExit):
+        hil.main(["--replay", "x.BLG", "--replay-i-fc-clamp", "-1.3"])
+
+
+def test_main_replay_no_preamble_requires_replay():
+    with pytest.raises(SystemExit):
+        hil.main(["--scenario", "steady", "--replay-no-preamble"])
 
 
 def test_main_bad_magic_replay_file_exits(tmp_path):
@@ -949,12 +1069,18 @@ def test_charge_cruise_timeline_delivers_positive_charge_goal():
     assert saw_positive
 
 
-def test_charge_regen_timeline_delivers_positive_charge_goal():
+def test_charge_regen_is_ems_driven_not_pi_timeline():
+    """REDESIGNED 2026-08-30 (HIL_FINDINGS 'charge-regen'): the old pi_timeline
+    stepped v_setpoint and charge_goal on the SAME tick, which took
+    chargingControl()'s CRUISE branch (single-source FC_CHARGE) instead of the
+    intended REGEN path. charge-regen is now driven by the regen-harvest EMS
+    strategy instead -- see the dedicated section below for the strategy's own
+    behaviour."""
     meta = hil.SCENARIOS["charge-regen"]
-    state = {"charge_goal": 0.0}
-    for _t, fields in meta["pi_timeline"]:
-        state.update(fields)
-    assert state["charge_goal"] > 0.0
+    assert meta.get("ems") == "regen-harvest"
+    assert "pi_timeline" not in meta
+    assert meta["ems"] in hil.EMS_STRATEGIES
+    assert isinstance(meta.get("ems_v_profile"), list) and meta["ems_v_profile"]
 
 
 def test_charge_fault_drops_charger_rail():
@@ -972,6 +1098,182 @@ def test_charge_fault_timeline_establishes_charging_intent():
         state.update(fields)
     assert state["charge_goal"] > 0.0
     assert state["mode_cmd"] == hil.MODE_HYBRID
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 8b. chg_i_ceiling_a: scenario-level Ag105 charge-current de-rate
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_plant_default_ag105_i_max_is_the_firmware_ceiling():
+    plant = hil.Plant()
+    assert plant.ag105_i_max == pytest.approx(hil.AG105_I_MAX)
+
+
+def test_plant_ag105_i_max_overridable_via_constructor():
+    plant = hil.Plant(ag105_i_max=1.6)
+    assert plant.ag105_i_max == pytest.approx(1.6)
+
+
+def test_plant_charge_ramp_converges_toward_ag105_i_max_override():
+    """The CC charging branch ramps i_charge toward self.ag105_i_max, not the
+    module constant AG105_I_MAX -- confirm a de-rated Plant actually converges
+    to the LOWER ceiling, not the firmware's real 2.5 A profile."""
+    plant = hil.Plant(ag105_i_max=0.8)
+    # FC_BUS + AUX_FC_REG keep the bus itself fed (source "live") so V_chg
+    # actually reaches AG105_V_IN_MIN -- FC_CHARGE alone routes an unpowered
+    # bus, which never leaves the module dark (see
+    # test_charger_powered_settle_then_charging_ramp for the same pattern).
+    obs = _obs(switch=hil.SW_FC_CHARGE | hil.SW_FC_BUS, aux=hil.AUX_FC_REG, current=0.0)
+    for _ in range(20000):   # settle window + several AG105_TAU_S at dt=1ms
+        plant.step(1e-3, obs)
+    assert plant.i_charge == pytest.approx(0.8, abs=1e-3)
+    assert plant.i_charge < hil.AG105_I_MAX - 0.1
+
+
+def test_scenarios_chg_i_ceiling_a_only_on_charge_regen_and_charge_fault():
+    for name, meta in hil.SCENARIOS.items():
+        if name == "charge-regen":
+            assert meta["chg_i_ceiling_a"] == pytest.approx(1.6)
+        elif name == "charge-fault":
+            assert meta["chg_i_ceiling_a"] == pytest.approx(0.8)
+        else:
+            assert "chg_i_ceiling_a" not in meta, name
+
+
+def test_main_chg_i_ceiling_a_flows_from_scenario_into_plant_and_meta(tmp_path):
+    """End-to-end: --scenario charge-fault must construct its Plant with the
+    de-rated ceiling and record it (verbatim) in the .meta.json sidecar's
+    resolved config."""
+    csv_path = str(tmp_path / "cf.csv")
+    args = ["--teensy-ip", "127.0.0.1", "--port", "58992", "--bind-port", "0",
+            "--rate", "200", "--scenario", "charge-fault", "--electrical", "simple",
+            "--duration", "0.02", "--csv", csv_path]
+    rc = hil.main(args)
+    assert rc == 0
+    with open(hil.meta_path_for(csv_path)) as fh:
+        meta = json.load(fh)
+    assert meta["config"]["chg_i_ceiling_a"] == pytest.approx(0.8)
+
+
+def test_main_chg_i_ceiling_a_defaults_to_ag105_i_max_when_scenario_omits_it(tmp_path):
+    csv_path = str(tmp_path / "steady.csv")
+    args = ["--teensy-ip", "127.0.0.1", "--port", "58993", "--bind-port", "0",
+            "--rate", "200", "--scenario", "steady", "--electrical", "simple",
+            "--duration", "0.02", "--csv", csv_path]
+    rc = hil.main(args)
+    assert rc == 0
+    with open(hil.meta_path_for(csv_path)) as fh:
+        meta = json.load(fh)
+    assert meta["config"]["chg_i_ceiling_a"] == pytest.approx(hil.AG105_I_MAX)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 8c. soc-depletion aux load: staggered + ramped (2026-08-30)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_soc_depletion_aux_load_zero_before_ramp_starts():
+    plant = hil.Plant()
+    hil.apply_scenario(plant, "soc-depletion", 9.999)
+    assert plant.i_aux == pytest.approx(hil.I_AUX_A)
+
+
+def test_soc_depletion_aux_load_full_after_ramp_completes():
+    """M4 (review-fix round, 2026-08-30): the endurance load dropped 3.0 ->
+    SOC_ENDURANCE_LOAD_A 2.2 A -- at 3.0 A the surviving BT channel carried
+    3.15 A, over LIMIT_I_BT_MAX 3.0 A outright for the whole 645 s run. The
+    suite duration (run_hil_suite.py's soc-depletion special-case) grew in
+    lockstep to preserve the delivered charge."""
+    plant = hil.Plant()
+    hil.apply_scenario(plant, "soc-depletion",
+                       10.0 + hil.SOC_LOAD_RAMP_S + 0.001)
+    assert plant.i_aux == pytest.approx(hil.I_AUX_A + hil.SOC_ENDURANCE_LOAD_A, abs=1e-3)
+    assert hil.SOC_ENDURANCE_LOAD_A == pytest.approx(2.2)
+
+
+def test_soc_depletion_aux_load_ramps_monotonically():
+    plant = hil.Plant()
+    ts = [10.0 + f * hil.SOC_LOAD_RAMP_S for f in (0.0, 0.25, 0.5, 0.75, 1.0)]
+    vals = []
+    for t in ts:
+        hil.apply_scenario(plant, "soc-depletion", t)
+        vals.append(plant.i_aux)
+    assert all(a <= b + 1e-9 for a, b in zip(vals, vals[1:]))
+    assert vals[0] == pytest.approx(hil.I_AUX_A)
+    assert vals[-1] == pytest.approx(hil.I_AUX_A + hil.SOC_ENDURANCE_LOAD_A)
+
+
+def test_soc_depletion_aux_load_never_shares_a_tick_with_the_share_rail_step():
+    """The share-rail pi_timeline step is at t=5.0; the aux ramp must not
+    begin until t=10.0, five seconds later -- the exact regression the
+    2026-08-30 stagger fixes (see the module comment at apply_scenario)."""
+    meta = hil.SCENARIOS["soc-depletion"]
+    share_step_t = next(t for t, fields in meta["pi_timeline"]
+                        if "power_share_setpoint" in fields)
+    assert share_step_t == pytest.approx(5.0)
+    plant = hil.Plant()
+    hil.apply_scenario(plant, "soc-depletion", share_step_t)
+    assert plant.i_aux == pytest.approx(hil.I_AUX_A)   # no load yet
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 8d. scp-inrush: i_mot_extra present from t=0 (2026-08-30)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_scp_inrush_i_mot_extra_present_from_t_zero():
+    plant = hil.Plant()
+    hil.apply_scenario(plant, "scp-inrush", 0.0)
+    assert plant.i_mot_extra == pytest.approx(hil.SCP_INRUSH_MOT_LOAD_A)
+    assert hil.SCP_INRUSH_MOT_LOAD_A == pytest.approx(5.0)
+
+
+def test_scp_inrush_i_mot_extra_constant_across_time():
+    """Unlike the old t=8.0 step, the load is present for the WHOLE run --
+    MOT_PWR's own bring-up close is what gates when it actually applies
+    (Plant.step() only adds i_mot_extra while MOT_PWR is closed)."""
+    plant = hil.Plant()
+    for t in (0.0, 1.0, 8.0, 29.9):
+        hil.apply_scenario(plant, "scp-inrush", t)
+        assert plant.i_mot_extra == pytest.approx(hil.SCP_INRUSH_MOT_LOAD_A)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 8e. handoff-sag: REDESIGNED (review M3, 2026-08-30) -- a HANDOFF_PRELOAD_A
+#     (0.40 A) pre-load from t=4.0 (puts the pre-rail total in the closed-
+#     loop share-governor's window) plus the HANDOFF_STEP_A (1.5 A)
+#     perturbation at t=20.0 (against the surviving BT channel, not FC --
+#     the direction flip from the old FC-side step is what buys the margin
+#     back: 0.74 + 1.5 = 2.24 A vs LIMIT_I_BT_MAX 3.0 A).
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_handoff_sag_i_aux_zero_load_before_preload():
+    plant = hil.Plant()
+    hil.apply_scenario(plant, "handoff-sag", 3.999)
+    assert plant.i_aux == pytest.approx(hil.I_AUX_A)
+
+
+def test_handoff_sag_preload_applied_from_t_4():
+    plant = hil.Plant()
+    hil.apply_scenario(plant, "handoff-sag", 4.0)
+    assert plant.i_aux == pytest.approx(hil.I_AUX_A + hil.HANDOFF_PRELOAD_A)
+    assert hil.HANDOFF_PRELOAD_A == pytest.approx(0.40)
+
+
+def test_handoff_sag_preload_holds_steady_until_the_step():
+    plant = hil.Plant()
+    hil.apply_scenario(plant, "handoff-sag", 19.999)
+    assert plant.i_aux == pytest.approx(hil.I_AUX_A + hil.HANDOFF_PRELOAD_A)
+
+
+def test_handoff_sag_perturbation_is_1_5_a_on_top_of_the_preload():
+    plant = hil.Plant()
+    hil.apply_scenario(plant, "handoff-sag", 19.999)
+    before = plant.i_aux
+    hil.apply_scenario(plant, "handoff-sag", 20.0)
+    after = plant.i_aux
+    assert before == pytest.approx(hil.I_AUX_A + hil.HANDOFF_PRELOAD_A)
+    assert after == pytest.approx(hil.I_AUX_A + hil.HANDOFF_PRELOAD_A + hil.HANDOFF_STEP_A)
+    assert after - before == pytest.approx(hil.HANDOFF_STEP_A)
+    assert hil.HANDOFF_STEP_A == pytest.approx(1.5)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1026,6 +1328,118 @@ def test_csv_schema_replay_mode_unchanged_with_replay_rec_last(tmp_path):
         tmp_path, ["--replay", blg_path, "--duration", "0.02"], name="replay.csv")
     assert header == REPLAY_CSV_HEADER_PIN
     assert header[-1] == "replay_rec"
+
+
+def test_replay_preamble_rows_precede_recorded_trajectory_then_hand_over(tmp_path):
+    """End-to-end (real .BLG through main()): every row before
+    REPLAY_PREAMBLE_S carries replay_rec == REPLAY_PREAMBLE_REC and the
+    documented healthy-nominal V_bus; the run then hands over to the
+    recorded trajectory (a real record index) at/after that time -- the
+    2026-08-30 synthetic bring-up preamble, end to end."""
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    duration = hil.REPLAY_PREAMBLE_S + 0.3
+    header, rows = _run_main_csv(
+        tmp_path, ["--replay", blg_path, "--rate", "100",
+                   "--duration", str(duration)],
+        name="replay_preamble.csv")
+    t_idx = header.index("t")
+    rec_idx = header.index("replay_rec")
+    vbus_idx = header.index("V_bus")
+    assert rows, "sanity: the run must have produced rows"
+
+    preamble_rows = [r for r in rows if float(r[t_idx]) < hil.REPLAY_PREAMBLE_S]
+    assert preamble_rows, "sanity: some rows must fall inside the preamble window"
+    for r in preamble_rows:
+        assert int(r[rec_idx]) == hil.REPLAY_PREAMBLE_REC
+        assert float(r[vbus_idx]) == pytest.approx(hil.REPLAY_PREAMBLE_V_BUS)
+
+    handover_rows = [r for r in rows if float(r[t_idx]) >= hil.REPLAY_PREAMBLE_S]
+    assert handover_rows, "sanity: the run must reach past the preamble"
+    # The handover row is the recorded trajectory taking over -- a real record
+    # index, never the preamble sentinel.
+    assert int(handover_rows[0][rec_idx]) != hil.REPLAY_PREAMBLE_REC
+    assert all(int(r[rec_idx]) != hil.REPLAY_PREAMBLE_REC for r in handover_rows)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 9b. H2: --replay-no-preamble end to end
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_replay_no_preamble_timestamps_unshifted_from_the_first_row(tmp_path):
+    """--replay-no-preamble: sim time == log time from t=0 -- the very FIRST
+    row is already a real recorded index, never REPLAY_PREAMBLE_REC, and no
+    row anywhere reports the healthy-nominal preamble V_bus as an artefact of
+    a preamble window (the log's own V_bus is whatever it is)."""
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    header, rows = _run_main_csv(
+        tmp_path, ["--replay", blg_path, "--replay-no-preamble",
+                   "--rate", "200", "--duration", "0.05"],
+        name="replay_raw.csv")
+    rec_idx = header.index("replay_rec")
+    assert rows, "sanity: the run must have produced rows"
+    assert all(int(r[rec_idx]) != hil.REPLAY_PREAMBLE_REC for r in rows), (
+        "no row may carry the preamble sentinel under --replay-no-preamble")
+
+
+def test_replay_no_preamble_meta_sidecar_records_zero_preamble(tmp_path):
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    csv_path = str(tmp_path / "raw.csv")
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58994", "--bind-port", "0",
+                   "--rate", "200", "--replay", blg_path, "--replay-no-preamble",
+                   "--duration", "0.02", "--csv", csv_path])
+    assert rc == 0
+    with open(hil.meta_path_for(csv_path)) as fh:
+        meta = json.load(fh)
+    assert meta["config"]["replay_preamble_s"] == pytest.approx(0.0)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 9c. H1: --replay-i-fc-clamp end to end (symmetric, both signs)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_replay_i_fc_clamp_bounds_both_signs(tmp_path):
+    """The clamp is symmetric: no injected I_fc sample may exceed +clamp or
+    fall below -clamp, regardless of which direction the recorded current
+    actually went."""
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    clamp = 0.05   # deliberately tiny so the clamp is almost certainly binding
+    header, rows = _run_main_csv(
+        tmp_path, ["--replay", blg_path, "--replay-i-fc-clamp", str(clamp),
+                   "--rate", "200", "--duration", "0.05"],
+        name="replay_clamped.csv")
+    i_fc_idx = header.index("I_fc")
+    assert rows, "sanity: the run must have produced rows"
+    for r in rows:
+        cell = r[i_fc_idx]
+        if cell == "":
+            continue   # preamble/pre-observation rows may be blank
+        v = float(cell)
+        assert -clamp - 1e-6 <= v <= clamp + 1e-6, (
+            f"I_fc={v} escaped the +/-{clamp} A clamp")
+
+
+def test_replay_i_fc_clamp_meta_sidecar_records_the_value(tmp_path):
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    csv_path = str(tmp_path / "clamped.csv")
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58995", "--bind-port", "0",
+                   "--rate", "200", "--replay", blg_path,
+                   "--replay-i-fc-clamp", "1.3", "--duration", "0.02", "--csv", csv_path])
+    assert rc == 0
+    with open(hil.meta_path_for(csv_path)) as fh:
+        meta = json.load(fh)
+    assert meta["config"]["replay_i_fc_clamp_a"] == pytest.approx(1.3)
+
+
+def test_replay_i_fc_clamp_meta_sidecar_none_when_unclamped(tmp_path):
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    csv_path = str(tmp_path / "unclamped.csv")
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58996", "--bind-port", "0",
+                   "--rate", "200", "--replay", blg_path,
+                   "--duration", "0.02", "--csv", csv_path])
+    assert rc == 0
+    with open(hil.meta_path_for(csv_path)) as fh:
+        meta = json.load(fh)
+    assert meta["config"]["replay_i_fc_clamp_a"] is None
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1267,6 +1681,128 @@ def test_ems_hold_5050_uses_v_profile_when_present_else_default_cruise():
 def test_ems_hold_5050_charge_goal_is_zero():
     out = hil.ems_hold_5050(5.0, {"v_profile": None})
     assert out["charge_goal"] == pytest.approx(0.0)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 11b. ems_regen_harvest (charge-regen's EMS strategy, 2026-08-30 redesign)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_ems_strategies_registry_has_regen_harvest():
+    assert "regen-harvest" in hil.EMS_STRATEGIES
+    assert hil.EMS_STRATEGIES["regen-harvest"] is hil.ems_regen_harvest
+    assert "regen-harvest" in hil.EMS_NAMES
+
+
+def test_ems_regen_harvest_power_share_constant_5050():
+    for t in (0.0, 5.0, 15.0, 30.0, 44.0):
+        out = hil.ems_regen_harvest(t, {"v_profile": None})
+        assert out["power_share_setpoint"] == pytest.approx(0.50)
+
+
+def test_ems_regen_harvest_uses_v_profile_when_present_else_default_cruise():
+    out = hil.ems_regen_harvest(15.0, {"v_profile": 0.4})
+    assert out["v_setpoint"] == pytest.approx(0.4)
+    out2 = hil.ems_regen_harvest(15.0, {"v_profile": None})
+    assert out2["v_setpoint"] == pytest.approx(hil.EMS_DEFAULT_CRUISE_MPS)
+
+
+def test_ems_regen_harvest_mode_hybrid_during_run_safe_outside():
+    before = hil.ems_regen_harvest(hil.EMS_RUN_ENTRY_S - 0.01, {"v_profile": None})
+    at_entry = hil.ems_regen_harvest(hil.EMS_RUN_ENTRY_S, {"v_profile": None})
+    mid_run = hil.ems_regen_harvest(20.0, {"v_profile": None})
+    just_before_exit = hil.ems_regen_harvest(
+        hil.EMS_REGEN_RUN_EXIT_S - 0.01, {"v_profile": None})
+    at_exit = hil.ems_regen_harvest(hil.EMS_REGEN_RUN_EXIT_S, {"v_profile": None})
+    well_after = hil.ems_regen_harvest(hil.EMS_REGEN_RUN_EXIT_S + 1.0, {"v_profile": None})
+    assert before["mode_cmd"] == hil.MODE_SAFE
+    assert at_entry["mode_cmd"] == hil.MODE_HYBRID
+    assert mid_run["mode_cmd"] == hil.MODE_HYBRID
+    assert just_before_exit["mode_cmd"] == hil.MODE_HYBRID
+    assert at_exit["mode_cmd"] == hil.MODE_SAFE
+    assert well_after["mode_cmd"] == hil.MODE_SAFE
+
+
+def test_ems_regen_harvest_charge_goal_zero_during_cruise():
+    """Well clear of any braking window (e.g. mid-cruise at t=10.0, before
+    the first window opens at 14.0): charge_goal is 0 -- the whole point of
+    the redesign is that the charger is NOT fed on cruise/acceleration."""
+    out = hil.ems_regen_harvest(10.0, {"v_profile": None})
+    assert out["charge_goal"] == pytest.approx(0.0)
+
+
+def test_ems_regen_harvest_charge_goal_zero_immediately_at_window_open():
+    """At the INSTANT a braking window opens, the commanded motor current is
+    still the positive cruise hold (chargingControl() picks its branch off
+    `current`, not v_setpoint) -- so charge_goal must NOT assert yet. It only
+    asserts EMS_REGEN_CHARGE_LEAD_IN_S later."""
+    t_open, _t_close = hil.EMS_REGEN_BRAKE_WINDOWS[0]
+    out = hil.ems_regen_harvest(t_open, {"v_profile": None})
+    assert out["charge_goal"] == pytest.approx(0.0)
+    just_before_lead_in = hil.ems_regen_harvest(
+        t_open + hil.EMS_REGEN_CHARGE_LEAD_IN_S - 0.001, {"v_profile": None})
+    assert just_before_lead_in["charge_goal"] == pytest.approx(0.0)
+
+
+def test_ems_regen_harvest_charge_goal_one_after_lead_in():
+    t_open, _t_close = hil.EMS_REGEN_BRAKE_WINDOWS[0]
+    at_lead_in = hil.ems_regen_harvest(
+        t_open + hil.EMS_REGEN_CHARGE_LEAD_IN_S, {"v_profile": None})
+    mid_window = hil.ems_regen_harvest(t_open + 1.0, {"v_profile": None})
+    assert at_lead_in["charge_goal"] == pytest.approx(1.0)
+    assert mid_window["charge_goal"] == pytest.approx(1.0)
+
+
+def test_ems_regen_harvest_charge_goal_dropped_before_window_close():
+    """The symmetric guard on the way OUT: charge_goal drops
+    EMS_REGEN_CHARGE_LEAD_OUT_S before the window closes, so the command is
+    already negative (still braking) when charging stops."""
+    _t_open, t_close = hil.EMS_REGEN_BRAKE_WINDOWS[0]
+    just_before_lead_out = hil.ems_regen_harvest(
+        t_close - hil.EMS_REGEN_CHARGE_LEAD_OUT_S - 0.001, {"v_profile": None})
+    at_lead_out = hil.ems_regen_harvest(
+        t_close - hil.EMS_REGEN_CHARGE_LEAD_OUT_S, {"v_profile": None})
+    at_close = hil.ems_regen_harvest(t_close, {"v_profile": None})
+    assert just_before_lead_out["charge_goal"] == pytest.approx(1.0)
+    assert at_lead_out["charge_goal"] == pytest.approx(0.0)
+    assert at_close["charge_goal"] == pytest.approx(0.0)
+
+
+def test_ems_regen_harvest_charge_goal_one_in_every_brake_window():
+    """All three braking windows behave identically, not just the first."""
+    for t_open, t_close in hil.EMS_REGEN_BRAKE_WINDOWS:
+        mid = (t_open + hil.EMS_REGEN_CHARGE_LEAD_IN_S
+               + (t_close - hil.EMS_REGEN_CHARGE_LEAD_OUT_S)) / 2.0
+        out = hil.ems_regen_harvest(mid, {"v_profile": None})
+        assert out["charge_goal"] == pytest.approx(1.0), (t_open, t_close)
+
+
+def test_ems_regen_harvest_charge_goal_zero_between_brake_windows():
+    """Low-cruise segments between braking windows are NOT charging."""
+    (_a0, b0), (a1, _b1) = hil.EMS_REGEN_BRAKE_WINDOWS[0], hil.EMS_REGEN_BRAKE_WINDOWS[1]
+    mid_between = (b0 + a1) / 2.0
+    out = hil.ems_regen_harvest(mid_between, {"v_profile": None})
+    assert out["charge_goal"] == pytest.approx(0.0)
+
+
+def test_ems_regen_harvest_brake_windows_are_descending_segments_of_v_profile():
+    """Every EMS_REGEN_BRAKE_WINDOWS entry must be a genuine DESCENDING
+    segment of charge-regen's own ems_v_profile (the module comment's stated
+    invariant) -- re-derive the profile's descending segments and confirm the
+    windows are among them. NOT asserted the other way: the profile's final
+    41.0-43.0 ramp to standstill also descends but is deliberately excluded
+    from the braking/charging windows (it is the approach to a stop, not a
+    cruise/brake cycle intended for charging), so this is a subset check, not
+    an equality."""
+    profile = hil.SCENARIOS["charge-regen"]["ems_v_profile"]
+    descents = set()
+    for (t0, v0), (t1, v1) in zip(profile, profile[1:]):
+        if v1 < v0:
+            descents.add((t0, t1))
+    assert set(hil.EMS_REGEN_BRAKE_WINDOWS) <= descents
+    # ...and the excluded final ramp-to-standstill really is a descent too,
+    # confirming the subset check is not vacuous.
+    assert (41.0, 43.0) in descents
+    assert (41.0, 43.0) not in hil.EMS_REGEN_BRAKE_WINDOWS
 
 
 def _fake_policy_unknown_field(t, fb):

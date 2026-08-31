@@ -660,15 +660,56 @@ gap at the boundary. On a non-HIL build nothing clears a latch except a board re
 ## 5. Suite runs
 
 ```powershell
-# scripted, everything (13 scenarios + 26 replays)
+# scripted, everything (13 scenarios + 26 replays; `drive` is SKIPPED, see below)
 .venv_hil\Scripts\python.exe tools\run_hil_suite.py --teensy-ip 192.168.1.50
 
 # with the live dashboard on each child (needs a real terminal)
 .venv_hil\Scripts\python.exe tools\run_hil_suite.py --teensy-ip 192.168.1.50 --dashboard
 
+# also run the operator-required scenarios -- BE AT THE CONSOLE
+.venv_hil\Scripts\python.exe tools\run_hil_suite.py --teensy-ip 192.168.1.50 --with-operator
+
 # Mode B: a real Pi drives every scenario
 .venv_hil\Scripts\python.exe tools\run_hil_suite.py --teensy-ip 192.168.1.50 --pi-live --scenarios-only
 ```
+
+**`--with-operator`.** The `drive` scenario is marked `operator_required`: its whole
+stimulus is a human driving the firmware over USB serial (`'V'`, `'D'`, `'Y'`). Run
+unattended it commands nothing at all -- the board sits in Idle, the commanded current
+is 0.000 A for the whole run, and the drive loop is never exercised -- so by default the
+suite renders it **SKIPPED** with a reason rather than scoring a vacuous clean result.
+Pass `--with-operator` only when you are at the console and intend to drive it by hand.
+Unattended drive-loop coverage is `ems-drive-cycle`'s job.
+
+**How faults are scored (2026-08-30).** Two things changed and both affect how a report
+reads:
+
+* **Grace-aware scoring.** Every fault judgement -- scenarios and replays alike -- uses
+  observations at `t >= 2.0 s` only. The board warm-resets out of the previous run's
+  `ERR_HIL_STALE` settle latch at about `t = 0.5 s`, so every run after the first opens
+  showing `0x8010` (or `0x8011` / `0xA010` if its predecessor latched something of its
+  own) through no fault of its own. `REPORT.md` still prints the full whole-run union
+  and names the carried-in bits separately. A board that *stays* latched still fails --
+  the exclusion is on the observation window, never on a bit value.
+* **`FAULT_EXPECTATIONS`.** The old permissive "fault allowed" table always passed, so
+  it rubber-stamped runs that died before reaching their own stimulus. Each scenario now
+  declares what must appear, what may appear, when the stimulus is, and whether the
+  board had to still be alive and in Run to reach it. Notably **`charge-cruise` now
+  REQUIRES an `OC_FC` latch**: FC-path charging and hard acceleration are incompatible
+  on this hardware by design (a single source carries the bus during FC-charge), and the
+  latch is the validation of that boundary, not a failure. `scp-inrush` is scored on an
+  `scp_cut` event appearing in the hi-fi events sidecar rather than on fault flags.
+* **Positive signal checks.** Fault expectations only say what must *not* happen, and a
+  run can satisfy every one of them while exercising nothing. Four scenarios now also
+  assert a trace fact: `charge-regen` (REGEN really asserted during a braking window,
+  and `I_charge` really delivered through it), `charge-fault` (charging established
+  before the input collapses), `soc-depletion` (SoC genuinely fell), `handoff-sag` (the
+  bus switch really opened and stayed open). A `signal_*` failure means the scenario
+  stopped testing its own objective — treat it as seriously as a fault failure.
+* **Longer `soc-depletion`.** Its endurance load dropped 3.0 → 2.2 A (at 3.0 A the
+  surviving battery channel sat above `LIMIT_I_BT_MAX` for the whole run), and its
+  duration rose 650 → 880 s so the depletion depth is unchanged. **The full suite is
+  now ~34.5 min rather than ~30.6.**
 
 Mode tagging: `results.json` / `REPORT.md` carry `mode: "pi-live"` or
 `"scripted"` in the report header and on every per-run record (`cmd_mode`).
@@ -680,7 +721,9 @@ Under `--pi-live`:
   appear in the plan and the report marked `SKIP`, and the result line says how
   many of the "passed" runs were skipped rather than executed.
 * `FAULT_PI_TIMEOUT` (0x0010) is **excused** on scenarios that otherwise expect no
-  fault: the Pi's command cadence is the operator's, not the harness's.
+  fault: the Pi's command cadence is the operator's, not the harness's. The excusal is
+  judged on the post-grace union, so the inherited settle latch (which is *also*
+  `0x8010`) can no longer be mistaken for it.
 * The **comm-loss expectation is unchanged**. Verified from source: the HIL stale
   clock keys on accepted *injection* frames only — `hilLastFrameMs` is stamped in
   `receiveCommands()`'s commit block (`.ino:4970-4976`) and aged in

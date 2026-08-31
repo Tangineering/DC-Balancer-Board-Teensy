@@ -347,14 +347,14 @@ the modelled plant, see **Replay mode** below.) Scenarios:
 | `step-load` | +1.2 A aux load step at t = 5 s — a bus disturbance the share loop must reject |
 | `sag` | −5 V bus disturbance for 1 s at t = 5 s, crossing `LIMIT_V_BUS_MIN` (12.0 V) |
 | `comm-loss` | stops transmitting for **2 s** at t = 5 s, then resumes — long enough to clear fw v23's 1000 ms run boundary with margin, so the warm recovery is part of the test |
-| `drive` | plant only; the operator drives the firmware by hand (`'V'`, `'D'`, `'Y'`) over USB |
+| `drive` **(operator-required)** | plant only; the operator drives the firmware by hand (`'V'`, `'D'`, `'Y'`) over USB. Marked `operator_required` in `SCENARIOS`, so `run_hil_suite.py` renders it **SKIPPED** unless `--with-operator` is given — run unattended it commands nothing and the drive loop is never exercised (that is `ems-drive-cycle`'s job). |
 | `charge-cruise` | Run + cruise + `charge_goal` > 0 via the Pi command timeline — `FC_CHARGE` opens on intent, the Ag105 settles to Charging, MPPT released |
-| `charge-regen` | cruise/brake cycling with `charge_goal` > 0 — `MPPT_DISABLE` asserted during regen, `REGEN` ⇄ `FC_CHARGE` mutual exclusion visible |
-| `charge-fault` | charging established, then the charger input rail collapses at t = 20 s — the GENSTAT decode / charger-loss path |
-| `soc-depletion` | sustained battery-heavy load; `V_batt` walks down the OCV curve toward `LIMIT_V_BATT_MIN` (use `--soc0` / `--capacity-ah` to fit a bench session) |
-| `handoff-sag` **(hi-fi only)** | share driven to a rail so one source goes dark, then perturbed — the TP0178/TP0201 reactive-pickup gap |
+| `charge-regen` | cruise/brake cycling driven by the **`regen-harvest` EMS strategy** (redesigned 2026-08-30). `charge_goal` is asserted **only inside a braking window**, so the Ag105 is fed through `REGEN` + `MOT_PWR` and the single-source `FC_CHARGE` path never opens. Charge ceiling de-rated to 1.6 A (`chg_i_ceiling_a`). |
+| `charge-fault` | charging established (cruise at t = 5, `charge_goal` staggered to t = 8), then the charger input rail collapses at t = 20 s — the GENSTAT decode / charger-loss path. Charge ceiling de-rated to 0.8 A (`chg_i_ceiling_a`) so the FC-path draw stays under `LIMIT_I_FC_MAX` and the run survives to its own stimulus. |
+| `soc-depletion` | sustained battery-heavy load; `V_batt` walks down the OCV curve toward `LIMIT_V_BATT_MIN` (use `--soc0` / `--capacity-ah` to fit a bench session). The share rail (t = 5) and the load (a 3 s ramp from t = 10) are **staggered**: landing both on one tick put 1.47 A on FC for a single sample and latched `OC_FC`. The load itself is **2.2 A**, not 3.0: the setpoint latch cuts FC *off the bus* at `share_sp = 0.0`, so BT alone carries 0.15 + 2.2 = **2.35 A** against `LIMIT_I_BT_MAX` 3.0 A (22 % margin) — at 3.0 A it was 3.15 A, over the limit outright, for the whole run. The suite's duration override rose 650 → 880 s in lockstep so the delivered charge, and the depletion depth, are preserved. |
+| `handoff-sag` **(hi-fi only)** | the share **setpoint latch** cuts one source off the bus, then a +1.5 A step probes the single-source sag and the UV dwell decision. Operating point re-derived 2026-08-30: a +0.40 A pre-load from t = 4 puts the pre-rail total at ~0.74 A — above the 0.60 A closed-loop governor gate, below the cut's own 0.5 A/channel handoff guard — and the rail direction is **share 0.0** (BT survives), because at the FC rail `LIMIT_I_FC_MAX` 1.4 A leaves too little perturbation budget. ⚠️ A *reactive pickup* is **not** reachable from a setpoint-latched cut: the switch is driven EN-low and an EN-low RT1987 does not conduct at all. |
 | `bringup` **(hi-fi only)** | from dark: the firmware's staged bring-up P0–P3 against the real RT1987 t_D(ON) + soft-start delays |
-| `scp-inrush` **(hi-fi only)** | RT1987 soft-start foldback margin on `MOT_PWR` into the top of the VESC input envelope (0.9 mF) under load |
+| `scp-inrush` **(hi-fi only)** | RT1987 soft-start **foldback + SCP cut** on `MOT_PWR` into the top of the VESC input envelope (0.9 mF). The 5.0 A V-MOT load is declared **from t = 0**, so it appears exactly when bring-up P3 closes the switch and the ramp runs into it while still in `SOFT` — the only window in which the foldback branch exists. Scored on `scp_cut` appearing in the events sidecar; see `SCP_INRUSH_MOT_LOAD_A` for why an `scp_cut` and an OC fault cannot be separated in this model. |
 
 `python3 tools/hil_plant_sim.py --list-scenarios` prints this table with the engine each
 scenario needs and its default duration. Scenarios marked **hi-fi only** require
@@ -364,9 +364,12 @@ producing a meaningless trace.
 | Flag | Meaning |
 |---|---|
 | `--electrical {simple,hifi}` | electrical engine (default `simple` — one droop node). `hifi` selects `tools/hil_electrical.py`: TPS61288 average model, RT1987 ideal-diode state machines, a six-node ODE at an adaptive substep rate. See `docs/HIL_PLANT.md` §8. |
+| `--replay-no-preamble` | replay: skip the synthetic bring-up preamble and play the log **raw** from t = 0 (timestamps unshifted). For a log whose point is that bring-up *fails* — with the preamble the board comes up on the synthetic rails first, so `FAULT_INIT_FAIL`, raised only from State 0's bring-up machine, can never fire. |
+| `--replay-i-fc-clamp X` | replay: clamp the injected `I_fc` to at most X amps. **Modifies a recorded trajectory** — for logs whose recorded FC current came from a DC bench supply the real H-20 could never source, and would otherwise latch `OC_FC` before the stimulus the log was kept for arrives. Declared loudly wherever it is used; no FC-current conclusion may be drawn from such a run. |
 | `--trace-config {long,short}` | hi-fi parasitic-inductance set: `long` = as-manufactured FastHenry extraction, `short` = post-bodge (default) |
 | `--vesc-cap-uf X` | hi-fi VESC input capacitance (envelope 200–900 µF, default 500) |
 | `--soc0 X` | initial battery state of charge, 0–1 (default 0.7) |
+| *(scenario field)* `chg_i_ceiling_a` | per-scenario Ag105 charge-current ceiling, in the same class of knob as `vesc_cap_f`: it sizes the **stimulus**, it does not model the firmware (which always configures the 2.5 A profile). Absent → `AG105_I_MAX` 2.5 A. Used by `charge-fault` (0.8 A) and `charge-regen` (1.6 A) so their FC-path draw stays under `LIMIT_I_FC_MAX`; the sim prints a line whenever it is de-rated. |
 | `--capacity-ah X` | battery capacity (default 5.0 Ah) |
 | `--noise` | hi-fi: apply ADC quantization (and any configured sigmas) to the injected values |
 | `--csv PATH` | per-tick CSV log (default: auto-named under `HIL Results/`) |
@@ -464,6 +467,35 @@ exactly as in live simulation. The replay CSV keeps the live schema unchanged an
 **appends one column, `replay_rec`** — the source record index each row was drawn
 from, so a replay CSV lines up against the decoded `.BLG` row-for-row while
 remaining readable by anything that parses the simulated schema.
+
+### Synthetic bring-up preamble (2026-08-30)
+
+Every replay is preceded by **`REPLAY_PREAMBLE_S` = 2.5 s of healthy nominal rails**
+before the recorded trajectory starts. fw v22+ runs a closed-loop staged bring-up
+(P0–P3) at the start of every HIL run and it needs live rails to complete; a recorded
+log begins wherever the operator pressed record, which for some logs is a dark bus and
+for the BLG v1/v2 group is a run already in progress.
+
+- **Every timestamp in a replay CSV is SIM-relative:** log time = `t − 2.5 s`.
+  Preamble rows carry **`replay_rec = -1`** and no source record.
+- The preamble does **not** test bring-up dynamics — the bus is presented already in
+  regulation, so P0/P1/P2 pass on their minimum dwells. That is the `bringup`
+  scenario's job. The preamble exists only so the recorded trajectory reaches a board
+  sitting in Idle.
+- 2.5 s is derived: it must exceed `WARM_RESET_GRACE_S` (2.0 s), so no part of the
+  recorded trajectory falls inside the fault-scoring grace window, and it must exceed
+  the measured warm-reset recovery plus bring-up (~0.62 s).
+
+### Absent rails in BLG v1/v2 (2026-08-30)
+
+BLG v1/v2 records carry **no `V_fc`, `V_batt` or `V_rgn` field**. Injecting `0.0 V`
+handed the firmware a dark board — the staged bring-up's P3 gate reads `V_rgn` as its
+motor-node proxy, so it never tracked `V_bus` and those replays latched
+`FAULT_MOT_HOTPLUG` at ~1.09 s. Absent fields are now supplied as healthy nominals —
+`V_fc` 12.9 V, `V_batt` 7.9 V, `V_chg` left at 0 V (an unpowered charger input is the
+honest value) — and `V_rgn` is **derived**: the injected `V_bus` while the board's own
+`MOT_PWR` bit is set, else 0 V (fw v22 topology: the RGN-V divider sits on V-MOT). The
+derivation ignores the ~35 mV RT1987 forward drop and the motor node's own RC.
 
 ### Firmware-version warning
 
@@ -656,11 +688,46 @@ stdout/stderr lands in a per-run `.log`.
 - a summary table of every run (kind, electrical mode, duration, pass/fail, key metrics);
 - a **scenarios** section. Scenario entries carry no declarative checks, so the runner
   applies its own health criteria: at least one observation frame arrived (zero frames
-  = FAIL, the board is absent), the fault outcome matches an expectation table (`sag`
-  must latch UV_BUS per H2; `comm-loss` must latch `ERR_HIL_STALE`, since its 2 s gap
-  is past the 250 ms zero stage; `soc-depletion` and `charge-fault` are *allowed* to
-  fault; everything else must stay clean), the achieved rate held above 900 Hz, and no
+  = FAIL, the board is absent), the fault outcome matches the declarative
+  **`FAULT_EXPECTATIONS`** table, the achieved rate held above 900 Hz, and no
   `sw_ring` event exceeded the 20 V abs-max;
+- **`FAULT_EXPECTATIONS`** (2026-08-30) replaced the old permissive `FAULT_ALLOWED`
+  free-text table, whose check never compared the observed bits against anything and
+  so rubber-stamped three runs whose objectives were never reached. Each entry may
+  declare: `require` (a bit mask that must appear), `allow_only` (everything that may
+  appear — any other bit fails), `not_before_s` (a required bit appearing before the
+  stimulus time fails: it did not come from the stimulus), `survive_to`
+  (`{"t": X, "states": {2, 3}}` — the board must still be un-latched and in one of
+  those states at `t = X`, i.e. it actually reached its own stimulus), and
+  `events_require` (event kinds that must appear in the hi-fi events sidecar), and
+  **`signals_require`** — POSITIVE evidence from the CSV that the objective was
+  actually reached. Every other field constrains *faults*, i.e. what must not happen,
+  and a scenario can satisfy all of them while doing nothing at all; `signals_require`
+  asserts a trace fact instead (switch-bit tick counts, a column reaching a value, a
+  column falling by an amount, optionally inside a time window). Applied to
+  `charge-regen` (REGEN asserted during braking + `I_charge` actually delivered),
+  `charge-fault` (charging established before the collapse), `soc-depletion` (SoC
+  genuinely fell) and `handoff-sag` (the bus switch really opened and stayed open).
+  Every entry carries a source citation. Current expectations: `sag` requires `UV_BUS`;
+  `comm-loss` requires `ERR_HIL_STALE`; **`charge-cruise` requires `OC_FC`** (operator
+  ruling (b): FC-path charging and hard acceleration are incompatible by design, so
+  the latch is the validation); `charge-regen`, `charge-fault` expect no fault but must
+  survive to their stimulus; `soc-depletion` allows only `UV_BATT`; `handoff-sag`
+  allows only `UV_BUS`; `scp-inrush` requires an `scp_cut` event and allows `OC_FC` or
+  `MOT_HOTPLUG`;
+- **grace-aware fault scoring** (2026-08-30). Every fault judgement, both halves, uses
+  observations at `t ≥ WARM_RESET_GRACE_S` (2.0 s) only. From fw v23 the board
+  warm-resets out of the previous run's `ERR_HIL_STALE` settle latch at `t ≈ 0.5 s`, so
+  every run after the first opens showing `0x8010` (or `0x8011` / `0xA010` when its
+  predecessor latched something of its own) through no fault of its own — 23 of the 33
+  FAILs in the first fw v23 pass were that artefact. `REPORT.md` still prints the full
+  whole-run union, with the carried-in bits named separately. The rule excludes an
+  observation *window*, never a bit value: a board that stays latched shows its bits
+  after the bound and still fails — and a fault that latched *before* the bound and
+  persists is still seen, since the filter ORs over samples rather than edges. A
+  companion check asserts the post-grace window is **non-empty**: a board that
+  answered for 0.4 s and then went silent would otherwise have every fault check pass
+  on no evidence at all;
 - the **mid-run warm-reset tripwire** on every run of both halves. Each child counts the
   `mainState` transitions out of the latched State 99 that it observed, reports them on
   its `[hil] warm resets:` summary line and in its `.meta.json` sidecar, and the runner
