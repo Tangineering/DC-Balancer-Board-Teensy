@@ -1984,3 +1984,65 @@ hil-agent-analysis skill, with two fix rounds between. Commits 817295d → 96123
   operator); FU4 Idle→Run setpoint-arrival synthetic entry; Rs(SOC) calibration vs a
   real 2S pack (still sets soc_latch 0.113); early-exit guard (now minor); analyzer
   exe rebuild; .venv_benchlog pandas/scipy; Pi-bridge v4 parser audit.
+
+---
+
+## Status & session addendum (2026-08-31c, Round A: scp deterministic fold + FU4 synthetic replay entry)
+
+Orchestrated tooling round (two parallel Opus implementers, independent Sonnet test-writer,
+parallel Opus data-integrity + Sonnet contract reviews, orchestrator fix pass). Python
+tooling + one committed data file + docs; FW stays v23; wire protocol frozen. Closes the
+two operator-queued items from the ratification review: the scp deterministic-fold
+stimulus redesign and FU4.
+
+- **scp-inrush is now DETERMINISTIC — the two-outcome check is retired from the table.**
+  Root cause of the old S+1 race (feasibility bench): the flat t=0 load faded in through
+  the plant's 1.0 V Norton load floor (`V_MOT_LOAD_FLOOR`, hil_electrical.py:197), so the
+  fold engaged ~1.3 ms after SOFT entry and the cut landed one tick past admission —
+  racing the firmware's OC teardown at L=1/2. New three-phase stimulus (hil_plant_sim.py
+  `SCP_INRUSH_*` block): the P3 ramp runs UNLOADED; a 6.5 A fold pulse steps in when
+  V-MOT crosses `SCP_INRUSH_ARM_V` 1.2 V mid-soft-start (above the floor -> full current
+  in one substep -> fold binds and CUTS INSIDE THAT SAME 1 kHz TICK, >= 600 us before any
+  board word can arrive); a one-shot latch withdraws it (the 64 ms retry soft-starts
+  clean to ON); a 5.0 A run load at +110 ms latches OC_FC deterministically. The load
+  moved 5.0 -> 6.5 A because at 5.0 A the fold needed v_in > 15.2 V, which the P3 gate
+  (13.5 V) does not guarantee. The one-shot re-arms on the observed mainState 99->non-99
+  edge (review M1 — a forged-boundary warm reset re-runs bring-up and must get a clean
+  phase-1 ramp, not a standing run load). `FAULT_EXPECTATIONS["scp-inrush"]` is
+  single-outcome `events_require` again (count 1, where MOT_PWR); `events_any_of` STAYS
+  in the codebase, table-unused, for future races.
+- **VALIDATED ON HARDWARE + BAND DERIVED LIVE: i_cut = 6.3797373 A BIT-IDENTICAL across
+  three live board runs** (fresh-boot cut at t~0.102; post-latch runs at ~0.602 behind
+  the fw v23 500 ms recovery debounce; full cut->retry->ON->run-load->OC_FC->teardown
+  sequence every time). Band pinned [6.15, 6.55] bracketing the headless substep sweep
+  (6.256-6.398 over n_sub 8-100). The feasibility bench's 5.79-5.88 A figure was its own
+  rig's bring-up-emulation artifact. A `provisional_note` expectation mechanism (renders
+  a [PROVISIONAL: ...] qualifier into events_require check details) was added for
+  not-yet-derived thresholds and the scp key deleted same-day once the band was measured.
+- **FU4 — synthetic Idle->Run setpoint-arrival replay entry `SY0001`** (new SY prefix =
+  synthetic, logs/SY0001.BLG, BLG v3/fw 23, 2500 records, committed + byte-deterministic
+  from stdlib-only tools/gen_fu4_replay_log.py, sha pinned by test). Stimulus: v_sp held
+  2.0 m/s from record 0 (doState1() zeroes v_setpoint on the transition regardless of
+  payload, .ino:5382-5410, so the real setpoint structurally lands on the SECOND 50 Hz
+  packet), step back to 0 at +1.5 s through the V_SP_ZERO_THRESH cutoff; v_actual pinned
+  0 (isolates the setpoint stimulus; open-loop rail during the hold is EXPECTED per the
+  suite's FU5 note). New check kind `steps_onto_rail_within` (|I_cmd| >= 11 A within
+  0.15 s of the preamble boundary; budget includes the Run-transition packet the
+  original 0.08 s spec missed, + packet-loss headroom note). Entry is `provisional` (no
+  drive_min_frac until a first campaign measures the baseline, FU3 precedent). Suite is
+  now 40 runs / 27 replays.
+- **Review round:** 1 HIGH (H1 — the "no not_before_s/survive_to" derivation cited a
+  0.7 s grace window; the constant is 2.0 s, and a require+not_before_s would FAIL
+  against the post-grace-scoped fault_first_t, not vacuously pass — comment rewritten),
+  3 MED (M1 re-arm above; M2 HIL_PLANT.md taught the retired flat load; M3
+  provisional_note), 7 LOW + 2 contract findings — all accepted, all applied
+  (orchestrator-applied directly; L1 rename deferred to a comment fix).
+- **Tests: 738 passed + 25 skipped (.venv_hil, five suites) / 113 (miniforge
+  report-analysis) — orchestrator-rerun.** New coverage: three-phase state machine incl.
+  re-arm-after-reset, single-outcome band edges at the live values, events_any_of
+  synthetic-table mechanism regression, provisional_note suffix mechanism,
+  steps_onto_rail_within three branches, SY0001 sha/header/determinism pins.
+- **Standing items CLOSED: "scp timing redesign (optional)" and "FU4".** Next rounds
+  queued: Round B (DP-informed EMS routes 2+1 + the Gfc H2 metric — research digested,
+  see the round report), Round C (scenario expansion: Y-profile EMS x4, FTP75 per
+  strategy, MPPT tracking, +3 orchestrator proposals).

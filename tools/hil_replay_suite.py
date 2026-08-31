@@ -2,9 +2,17 @@
 """
 hil_replay_suite.py — the replay-based scenario class for the Teensy HIL rig.
 
-A curated set of REAL bench logs (logs/*.BLG) is replayed at the firmware through
+A curated set of bench logs (logs/*.BLG) is replayed at the firmware through
 `tools/hil_plant_sim.py --replay`, and the resulting per-tick CSV is evaluated
 here against declarative, firmware-version-aware checks.
+
+All but one entry is a REAL recording written by the firmware's own SD logger.
+The exception is SY0001, which is SYNTHETIC — authored by
+tools/gen_fu4_replay_log.py because the property it covers (the Idle->Run
+setpoint-arrival transient) is unreachable from any recording: every bench run
+begins at standstill with the setpoint at or near zero.  The `SY` prefix marks
+it, and nothing in it is a measurement.  See docs/HIL_REPLAY_LOGS.md §3f for the
+honesty rules such a log has to follow.
 
 WHAT THIS HALF ACTUALLY IS (relabelled 2026-08-30, HIL_FINDINGS "Replay half";
 amended the same day when command replay landed): a **bring-up + fault-decision
@@ -207,6 +215,36 @@ OFF_RAIL_WITHIN_S = 1.0
 # `near_zero_current`: the V_SP_ZERO_THRESH-class expectation — with no velocity
 # setpoint commanded over the HIL link, the firmware must not be driving.
 NEAR_ZERO_I_A = 0.5
+
+# ── `steps_onto_rail_within` thresholds (FU4, 2026-08-31) ───────────────────
+# The Idle->Run setpoint-arrival assertion: after the recorded trajectory starts
+# (i.e. after the preamble, when the commander switches to MODE_HYBRID and the
+# board leaves Idle), a large commanded setpoint must actually drive the command
+# up to the rail — promptly, and once.  This is the POSITIVE half of the FU4
+# entry; `returns_off_rail` is the negative half.
+#
+# 11.0 A is deliberately BELOW RAIL_LEVEL_A (11.9): the question this check asks
+# is "did the loop respond at full authority", not "did it touch the clamp to
+# four decimals", and pinning it at the rail constant would make the verdict turn
+# on the last 0.9 A of a 12 A command.
+RESET_STEP_LEVEL_A = 11.0
+# The latency budget, worst case, from the preamble boundary:
+#     <= 20 ms   the first MODE_HYBRID packet arrives (50 Hz commander tick,
+#                hil_plant_sim.py:2958-2975) and moves the board Idle -> Run
+#     <= 20 ms   doState1() zeroed v_setpoint on that transition regardless of
+#                payload (teensy_controller.ino:5382-5410), so the real setpoint
+#                can only arrive on the NEXT packet
+#     ~20-40 ms  the freshly reset drive controller rails on the resulting error
+#                (the .ino:5399-5403 figure, for any error above ~26 mm/s)
+#     +  2 ms    DRIVE_CTRL_TS_US gating, + 1 ms observation sampling
+#   = ~83 ms worst case — ASSUMING no packet loss (review L5): each dropped
+#     50 Hz UDP command adds 20 ms; the 1.8x headroom absorbs up to ~3 drops.
+# 0.15 s is ~1.8x that.  DEVIATION FROM THE FU4 SPEC, which proposed 0.08 s: that
+# figure counted the packet latency once and the rail time, but not the Run
+# TRANSITION packet, so it lands exactly ON the worst-case budget with no margin —
+# a knife-edge threshold of precisely the kind §3 of the doc warns against.  The
+# first campaign measures the real value; tighten this then, from data.
+RESET_STEP_WITHIN_S = 0.15
 
 # ── Grace window ────────────────────────────────────────────────────────────
 # Every fault check below judges observations at t >= this bound only.  A replay
@@ -414,6 +452,18 @@ OC_FC_RECLASS_WHY = (
 # Everything else with a live recorded v_sp opts IN, and gains a
 # `drive_loop_stepped` check ordered BEFORE its motor-response checks.
 #
+# ── A FOURTH BUCKET: THE COMMAND IS THE WHOLE STIMULUS (FU4, 2026-08-31) ────
+# SY0001 is not covered by rules 1-3, which all decide whether a RECORDED
+# trajectory should ALSO carry commands. SY0001's rails are constant by
+# construction and assert nothing; its entire stimulus is the recorded v_sp, so
+# `replay_commands: True` is MANDATORY there, not a judgement call — without the
+# flag the entry injects a flat healthy bus and tests nothing at all. Rule 2 is
+# satisfied trivially (the recorded v_sp is real and was authored to be), rule 1
+# does not apply (no fault decision), and rule 3 is satisfied because every check
+# on the entry presumes the loop is running. Any future SYNTHETIC entry inherits
+# this: a generated log whose rails are nominal placeholders MUST replay commands
+# or it is a 5-second run of nothing.
+#
 # ── WHY `no_sustained_rail` IS ABSENT FROM THIS HALF (FU5, 2026-08-31) ──────
 # It is a deliberate omission, not a threshold that was quietly dropped because
 # entries kept failing it. `no_sustained_rail` asserts that no single rail
@@ -432,6 +482,83 @@ OC_FC_RECLASS_WHY = (
 # for any future closed-loop harness.
 REPLAY_SUITE = [
     # ── CONFORMANCE — current wheel + control law (fw v18/v19) ───────────────
+    {
+        # ⚠️ THE ONLY SYNTHETIC ENTRY IN THE SUITE. logs/SY0001.BLG is AUTHORED
+        # by tools/gen_fu4_replay_log.py, not recorded on hardware; the `SY`
+        # prefix exists to keep it distinguishable from the ML/TP/WP/YP/PS
+        # recordings it sits beside in logs/. Nothing in it is a measurement and
+        # nothing in it may be cited as one.
+        "log": "SY0001", "path": "logs/SY0001.BLG", "mode": "conformance",
+        "fw_version": 23, "blg_version": 3,
+        "classification": "SYNTHETIC — Idle->Run setpoint-arrival transient "
+                          "(FU4): v_sp held at 2.0 m/s from record 0, released "
+                          "to 0.0 at log t = 1.5 s, v_actual pinned at 0",
+        "why":
+            "The one operating condition no recorded log covers. doState1() "
+            "zeroes v_setpoint on the Idle->Run transition UNCONDITIONALLY, "
+            "ignoring the triggering packet's payload "
+            "(teensy_controller.ino:5382-5410), so a large setpoint can only "
+            "reach a freshly reset drive controller on the SECOND post-reset "
+            "command packet, <= 20 ms later. Every bench recording in logs/ "
+            "starts at standstill with the setpoint at or near zero, so "
+            "replaying one delivers no such step and the transient is never "
+            "exercised. A log holding 2.0 m/s from record 0 delivers it "
+            "STRUCTURALLY — the firmware's own zeroing supplies the step edge, "
+            "so nothing here has to be timed against an instant the host cannot "
+            "observe. 2.0 m/s is ~77x the ~26 mm/s error at which the drive "
+            "controller's 454.4 A/(m/s) LF gain rails the command, and inside "
+            "the 0.5-3.0 m/s range the rest of the suite replays. The release "
+            "leg exists so the entry can assert the command comes back OFF the "
+            "rail against a DETERMINISTIC bound — with v_actual pinned at 0, "
+            "dropping v_sp to 0 collapses the error through V_SP_ZERO_THRESH "
+            "(.ino:8975), a zero-cutoff rather than a settling transient replay "
+            "could not supply. CONFORMANCE means the usual thing here and no "
+            "more: fw v23 is the flashed target, so no wheel/law caveat "
+            "applies, but the log carries NO recorded response (I_cmd is 0.0 on "
+            "every record, because a board holding v_act at exactly 0 while "
+            "commanding 12 A is physically impossible) — the response under "
+            "test is entirely the live board's, and any recorded-vs-observed "
+            "overlay of this entry is meaningless by construction.",
+        # First campaign; the two thresholds below (RESET_STEP_WITHIN_S, and the
+        # absent drive_min_frac) are derived budgets, not measurements. Clears
+        # once a campaign has measured them.
+        "provisional": True,
+        # MANDATORY, not a rule-1/2/3 judgement — see the fourth bucket in the
+        # decision comment above. The recorded v_sp IS the entire stimulus; the
+        # rails are constant nominals that assert nothing.
+        "replay_commands": True,
+        "checks": [
+            {"kind": "no_fault", "name": "no_fault"},
+            # Ordered before the motor-response checks, per the drive_loop_stepped
+            # convention: if the commands never reached the board, the reader sees
+            # that cause before three downstream checks report on a flat zero.
+            # NO drive_min_frac yet — FU3 precedent: the fraction is set at ~half
+            # a MEASURED window activity, and this entry has never run. Expected
+            # ~0.60 (the 1.5 s arrival leg of a 2.5 s recorded window); add the
+            # floor after the first campaign rather than fitting it from a budget.
+            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
+            # The positive half of the FU4 assertion. after_s is deliberately NOT
+            # set: it defaults to data.preamble_s (2.5 s here), which is the same
+            # bound everything else in the module resolves through
+            # entry_preamble_s() instead of hard-coding.
+            {"kind": "steps_onto_rail_within", "name": "steps_onto_rail_within",
+             "level_a": RESET_STEP_LEVEL_A, "within_s": RESET_STEP_WITHIN_S},
+            {"kind": "bounded_current", "name": "bounded_current"},
+            # The negative half. Window arithmetic, because it is tight: the
+            # release is at log t = 1.5 s = sim t = 4.0 s and the log ends at sim
+            # t = 5.0 s, so OFF_RAIL_WITHIN_S (1.0 s) lands exactly ON the end of
+            # the recorded window. That is sufficient and not marginal — the
+            # V_SP_ZERO_THRESH cutoff is a branch, not a decay, so the observed
+            # release is a few ms, not a few hundred — but any future shortening
+            # of the release leg breaks it. Lengthen the leg, not the threshold.
+            {"kind": "returns_off_rail", "name": "returns_off_rail",
+             "level_a": OFF_RAIL_LEVEL_A, "within_s": OFF_RAIL_WITHIN_S},
+        ],
+        # NOT given a share_loop_actuated check: the authored share_sp is a
+        # constant 0.5, so the MDAC ratio span is ~0 by construction and the
+        # check would fail on a stimulus that was deliberately never applied.
+        # The share axis is not what this entry is for.
+    },
     {
         "log": "ML0203", "path": "logs/ML0203.BLG", "mode": "deviation",
         "fw_version": 18, "blg_version": 6,
@@ -1667,6 +1794,18 @@ NOT_EXERCISED_TAG = (
 MOTOR_RESPONSE_KINDS = frozenset({
     "bounded_current", "no_sustained_rail", "no_rail_limit_cycle",
     "returns_off_rail", "near_zero_current",
+    # FU4: `steps_onto_rail_within` reads its verdict off data.current and is
+    # MEANINGLESS without command replay — with no commander the board never
+    # leaves Idle, the command is identically 0 A, and the check would report a
+    # confident "never crossed" FAIL about a stimulus that was never delivered.
+    # It is in this set so that case carries the NOT EXERCISED explanation.
+    # NOTE the asymmetry with the other members, and it is intended: the tag
+    # never changes `passed`, and this kind FAILS on a flat-zero series where
+    # they pass — so a misuse surfaces as a TAGGED FAIL ("not exercised, and
+    # here is why it could not be"), which is the loud outcome, not a silent
+    # green tick.  (Its own entry sets `replay_commands: True`, so the tag
+    # should never fire there; the membership guards a future reuse.)
+    "steps_onto_rail_within",
 })
 
 # ── drive_loop_stepped thresholds (suite policy, not firmware) ──────────────
@@ -1986,6 +2125,64 @@ def check_near_zero_current(data, spec):
                   f"±{max_abs:.2f} A{_vacuous_suffix(data)}")
 
 
+def check_steps_onto_rail_within(data, spec):
+    """|I_cmd| must first reach level_a within within_s seconds after after_s.
+
+    FU4 (2026-08-31). The POSITIVE half of the Idle->Run setpoint-arrival
+    assertion: a large setpoint delivered across the Run transition must actually
+    produce a full-authority command, and must produce it promptly. A slow first
+    crossing means the setpoint took longer to land than the two-packet mechanic
+    allows (doState1() zeroes v_setpoint on the transition,
+    teensy_controller.ino:5382-5410, so the real value arrives on the SECOND
+    packet); no crossing at all means the loop did not respond to it.
+
+    `after_s` defaults to `data.preamble_s` rather than a literal 2.5, so a
+    `skip_preamble` entry resolves it to 0.0 like everything else that needs the
+    bound — nothing here hard-codes REPLAY_PREAMBLE_S.
+
+    Boundary semantics (deliberate, review L4): both edges are INCLUSIVE — a
+    crossing at exactly `after_s` passes (dt = 0), and one at exactly
+    `after_s + within_s` passes (the test is `dt > within`). Tightening either
+    edge is a semantics change; do not flip them incidentally.
+
+    Deliberately asymmetric with `returns_off_rail`, which asks the opposite
+    question about the SAME episode: this one says the command went UP on the
+    arriving setpoint, that one says it came back DOWN when the setpoint left.
+    Neither contradicts the suite's open-loop rail note (§"WHY
+    `no_sustained_rail` IS ABSENT"): a sustained rail while the recorded error
+    stands is expected here too, and nothing below bounds the episode's LENGTH."""
+    level = float(spec.get("level_a", RESET_STEP_LEVEL_A))
+    within = float(spec.get("within_s", RESET_STEP_WITHIN_S))
+    after = float(spec.get("after_s", data.preamble_s))
+    if not data.current:
+        return False, "no observation frames in the CSV"
+    window = [(t, i) for t, i in data.current if t >= after]
+    if not window:
+        return False, (f"no observation frames at or after t={after:.3f}s — "
+                       f"the board never answered inside the stimulus window")
+    for t, i in window:
+        if abs(i) >= level:
+            dt = t - after
+            if dt > within:
+                return False, (
+                    f"|I_cmd| first reached {level:.1f} A at t={t:.3f}s, "
+                    f"{dt * 1000:.1f} ms after the t={after:.3f}s stimulus start — "
+                    f"later than the {within * 1000:.0f} ms budget. The setpoint "
+                    f"took longer than the two-packet Idle->Run mechanic allows, "
+                    f"or the drive loop responded slowly to it")
+            return True, (
+                f"|I_cmd| reached {level:.1f} A at t={t:.3f}s, {dt * 1000:.1f} ms "
+                f"after the t={after:.3f}s stimulus start (budget "
+                f"{within * 1000:.0f} ms); value {i:+.4f} A"
+                f"{_vacuous_suffix(data)}")
+    peak_t, peak = max(window, key=lambda tv: abs(tv[1]))
+    return False, (
+        f"|I_cmd| NEVER crossed {level:.1f} A after t={after:.3f}s: peak "
+        f"{peak:+.4f} A at t={peak_t:.3f}s over {len(window)} samples. The "
+        f"arriving setpoint produced no full-authority command"
+        f"{_vacuous_suffix(data)}")
+
+
 CHECK_KINDS = {
     "no_fault": check_no_fault,
     "fault_latched": check_fault_latched,
@@ -1997,6 +2194,7 @@ CHECK_KINDS = {
     "near_zero_current": check_near_zero_current,
     "drive_loop_stepped": check_drive_loop_stepped,
     "share_loop_actuated": check_share_loop_actuated,
+    "steps_onto_rail_within": check_steps_onto_rail_within,
 }
 
 

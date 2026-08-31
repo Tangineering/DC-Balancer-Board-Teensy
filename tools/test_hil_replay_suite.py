@@ -12,6 +12,7 @@ checks.
 Run: cd tools && python -m pytest test_hil_replay_suite.py -v
 """
 import csv
+import hashlib
 import os
 import struct
 import sys
@@ -137,8 +138,12 @@ def _with_bringup_and_grace(rows):
 # 1. REPLAY_SUITE integrity
 # ─────────────────────────────────────────────────────────────────────────
 
-def test_suite_has_26_entries():
-    assert len(rs.REPLAY_SUITE) == 26
+def test_suite_has_27_entries():
+    # 12 conformance / 15 deviation (SY0001/FU4 added this round, conformance).
+    assert len(rs.REPLAY_SUITE) == 27
+    modes = [e["mode"] for e in rs.REPLAY_SUITE]
+    assert modes.count("conformance") == 12
+    assert modes.count("deviation") == 15
 
 
 def test_suite_modes_only_conformance_or_deviation():
@@ -624,6 +629,146 @@ def test_check_near_zero_current_fail_bang_bang(tmp_path):
     res = rs.evaluate_replay_csv(_entry([spec]), str(path))
     assert res["passed"] is False
     assert "not driving" in res["checks"][-1]["detail"]
+
+
+# -- steps_onto_rail_within (FU4, 2026-08-31) --------------------------------
+# `skip_preamble` is used throughout this block so `after_s` (which defaults
+# to data.preamble_s) resolves to 0.0 and the stimulus can start at t=0 --
+# the after_s-defaulting behaviour itself is covered separately below.
+
+def test_check_steps_onto_rail_within_prompt_crossing_pass(tmp_path):
+    """|I_cmd| reaches level_a well inside the budget -- PASS, and the detail
+    carries the MEASURED latency."""
+    rows = _with_bringup(_uniform_rows(
+        0.5, 0.001, current=lambda t: 11.5 if t >= 0.05 else 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "steps_onto_rail_within", "name": "sorw",
+            "level_a": 11.0, "within_s": 0.15, "after_s": 0.0}
+    res = rs.evaluate_replay_csv(_entry([spec], skip_preamble=True), str(path))
+    detail = res["checks"][-1]["detail"]
+    assert res["checks"][-1]["passed"] is True
+    assert res["passed"] is True
+    assert "reached 11.0 A at t=0.050" in detail
+    assert "ms after" in detail
+
+
+def test_check_steps_onto_rail_within_late_crossing_fails_with_actual_time(tmp_path):
+    """A crossing that happens, but later than within_s after after_s, must
+    FAIL -- and the detail must carry the ACTUAL crossing time, not just the
+    budget."""
+    rows = _with_bringup(_uniform_rows(
+        0.5, 0.001, current=lambda t: 11.5 if t >= 0.20 else 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "steps_onto_rail_within", "name": "sorw",
+            "level_a": 11.0, "within_s": 0.15, "after_s": 0.0}
+    res = rs.evaluate_replay_csv(_entry([spec], skip_preamble=True), str(path))
+    detail = res["checks"][-1]["detail"]
+    assert res["checks"][-1]["passed"] is False
+    assert res["passed"] is False
+    assert "reached 11.0 A at t=0.200" in detail
+    assert "later than the 150 ms budget" in detail
+
+
+def test_check_steps_onto_rail_within_never_crossing_fails_and_names_the_peak(tmp_path):
+    """|I_cmd| never reaches level_a at all -- FAIL, and the detail must name
+    the PEAK actually observed (the strongest available evidence that the
+    loop did not respond)."""
+    rows = _with_bringup(_uniform_rows(
+        0.5, 0.001, current=lambda t: 4.0 if 0.05 <= t < 0.10 else 0.5))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "steps_onto_rail_within", "name": "sorw",
+            "level_a": 11.0, "within_s": 0.15, "after_s": 0.0}
+    res = rs.evaluate_replay_csv(_entry([spec], skip_preamble=True), str(path))
+    detail = res["checks"][-1]["detail"]
+    assert res["checks"][-1]["passed"] is False
+    assert res["passed"] is False
+    assert "NEVER crossed 11.0 A" in detail
+    assert "peak +4.0000 A" in detail
+
+
+def test_check_steps_onto_rail_within_after_s_defaults_to_preamble_s_normally(tmp_path):
+    """Omitting `after_s` from the spec must resolve to data.preamble_s --
+    2.5 s for a normal entry (no skip_preamble). A crossing right at the
+    preamble boundary (t=preamble_s) is `dt=0`, well inside budget."""
+    rows = _with_bringup(_uniform_rows(
+        3.0, 0.01, current=lambda t: 11.5 if t >= rs.REPLAY_PREAMBLE_S else 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "steps_onto_rail_within", "name": "sorw",
+            "level_a": 11.0, "within_s": 0.15}   # no after_s
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))   # NOT skip_preamble
+    detail = res["checks"][-1]["detail"]
+    assert res["checks"][-1]["passed"] is True
+    assert f"t={rs.REPLAY_PREAMBLE_S:.3f}" in detail
+
+
+def test_check_steps_onto_rail_within_after_s_defaults_to_zero_under_skip_preamble(tmp_path):
+    """The converse: a skip_preamble entry resolves the same omitted
+    `after_s` to 0.0 -- data.preamble_s is 0.0 for it (entry_preamble_s())."""
+    rows = _with_bringup(_uniform_rows(
+        0.5, 0.001, current=lambda t: 11.5 if t >= 0.05 else 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "steps_onto_rail_within", "name": "sorw",
+            "level_a": 11.0, "within_s": 0.15}   # no after_s
+    res = rs.evaluate_replay_csv(_entry([spec], skip_preamble=True), str(path))
+    detail = res["checks"][-1]["detail"]
+    assert res["checks"][-1]["passed"] is True
+    assert "reached 11.0 A at t=0.050" in detail
+
+
+# -- MOTOR_RESPONSE_KINDS / NOT_EXERCISED tagging for steps_onto_rail_within
+# (FU4): a caller that forgets `replay_commands: True` on an entry using this
+# check gets a flat-zero command series (no commander => the board never
+# leaves Idle). check_steps_onto_rail_within's own verdict on a flat-zero
+# series is a hard FAIL ("never crossed") -- membership in MOTOR_RESPONSE_KINDS
+# does not change `passed`, it only PREPENDS the NOT_EXERCISED explanation to
+# the (still-failing) detail, per the asymmetry documented at the set's
+# definition. This is the ACTUAL implemented behaviour: a loud TAGGED FAIL,
+# never a silent tagged pass -- there is no FAIL-vs-tagged-pass ambiguity to
+# report here, the code and its own comment agree.
+
+def test_steps_onto_rail_within_in_motor_response_kinds_set():
+    assert "steps_onto_rail_within" in rs.MOTOR_RESPONSE_KINDS
+
+
+def test_steps_onto_rail_within_not_exercised_tag_on_flat_zero_without_replay_commands(tmp_path):
+    rows = _with_bringup(_uniform_rows(0.5, 0.01, current=lambda t: 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "steps_onto_rail_within", "name": "sorw",
+            "level_a": 11.0, "within_s": 0.15, "after_s": 0.0}
+    res = rs.evaluate_replay_csv(
+        _entry([spec], skip_preamble=True, replay_commands=False), str(path))
+    check = res["checks"][-1]
+    # Implemented behaviour: passed stays False (a TAGGED FAIL), the tag is
+    # PREPENDED to the ordinary "NEVER crossed" detail, not a substitute for it.
+    assert check["passed"] is False
+    assert check["detail"].startswith(rs.NOT_EXERCISED_PREFIX)
+    assert "NEVER crossed 11.0 A" in check["detail"]
+    assert res["passed"] is False
+    assert res["n_checks_not_exercised"] >= 1
+
+
+def test_steps_onto_rail_within_no_tag_when_replay_commands_true_even_if_flat_zero(tmp_path):
+    """The tag is gated on `cmds_replayed is False` -- an entry that DOES set
+    replay_commands never gets the NOT_EXERCISED substitution, even if (e.g.
+    a firmware regression) the command series came back flat zero anyway. It
+    still fails on its own terms (never crossed), just without the tag."""
+    rows = _with_bringup(_uniform_rows(0.5, 0.01, current=lambda t: 0.0))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "steps_onto_rail_within", "name": "sorw",
+            "level_a": 11.0, "within_s": 0.15, "after_s": 0.0}
+    res = rs.evaluate_replay_csv(
+        _entry([spec], skip_preamble=True, replay_commands=True), str(path))
+    check = res["checks"][-1]
+    assert check["passed"] is False
+    assert not check["detail"].startswith(rs.NOT_EXERCISED_PREFIX)
+    assert "NEVER crossed 11.0 A" in check["detail"]
 
 
 # -- drive_loop_stepped (--replay-commands) ----------------------------------
@@ -1149,13 +1294,16 @@ def test_build_sim_argv_omits_replay_i_fc_clamp_for_other_entries():
 REPLAY_COMMANDS_TRUE_SET = {
     "ML0137", "ML0140", "ML0146", "ML0149", "ML0151", "ML0153", "ML0164",
     "ML0165", "ML0169", "ML0203", "YP0152", "YP0166", "YP0196", "YP0214",
+    "SY0001",   # FU4, 2026-08-31: replay_commands is MANDATORY on this entry
+                # (its entire stimulus IS the recorded v_sp) -- see the
+                # "fourth bucket" decision comment in hil_replay_suite.py.
 }
 
 
-def test_replay_suite_replay_commands_true_set_matches_the_14_entries():
+def test_replay_suite_replay_commands_true_set_matches_the_15_entries():
     trues = {e["log"] for e in rs.REPLAY_SUITE if e.get("replay_commands") is True}
     assert trues == REPLAY_COMMANDS_TRUE_SET
-    assert len(trues) == 14
+    assert len(trues) == 15
 
 
 def test_replay_suite_every_entry_declares_replay_commands_as_a_bool():
@@ -1210,15 +1358,41 @@ def test_replay_suite_drive_min_frac_set_matches_true_entries_exactly():
     """Every replay_commands: True entry (which is exactly the set carrying a
     drive_loop_stepped check, per the test above) must ALSO carry a
     drive_min_frac -- FU3 ratcheted every opted-in entry, none was left on
-    the bare absolute floor. Table completeness, not just table correctness."""
+    the bare absolute floor. Table completeness, not just table correctness.
+
+    EXEMPTION, re-keyed 2026-08-31 (FU4): SY0001 is replay_commands True but
+    deliberately has no drive_min_frac yet -- FU3 precedent, the floor is set
+    at ~half a MEASURED window activity and this entry has never run a real
+    campaign. The exemption is keyed on the entry's own `provisional: True`
+    flag (its key presence verified, not just its truthiness), NOT a
+    hardcoded log name -- so any future first-campaign entry (synthetic or
+    real) is exempted the same way automatically, and any entry that is
+    simply missing its ratchet without being marked provisional still fails
+    here. Note `provisional` alone is not sufficient to EARN the exemption
+    (YP0214 is also provisional and DOES carry a drive_min_frac) -- the
+    exemption applies only to entries that are actually missing the ratchet,
+    and requires those to justify the gap with the flag."""
     have_frac = set()
     for e in rs.REPLAY_SUITE:
         for c in e["checks"]:
             if c["kind"] == "drive_loop_stepped" and c.get("drive_min_frac") is not None:
                 have_frac.add(e["log"])
     assert have_frac == set(EXPECTED_DRIVE_MIN_FRAC)
-    assert have_frac == {e["log"] for e in rs.REPLAY_SUITE
-                         if e.get("replay_commands") is True}
+
+    index = rs.suite_index()
+    true_entries = {e["log"] for e in rs.REPLAY_SUITE
+                    if e.get("replay_commands") is True}
+    missing = true_entries - have_frac
+    for log in missing:
+        entry = index[log]
+        assert "provisional" in entry, (
+            f"{log} carries replay_commands but no drive_min_frac, and does "
+            f"not declare `provisional` to justify the gap")
+        assert entry["provisional"] is True, log
+    assert have_frac == true_entries - missing   # tautological by construction;
+    # states the invariant this test actually enforces: EVERY true entry not
+    # exempted-by-provisional-flag must have a drive_min_frac.
+    assert "SY0001" in missing   # sanity: the known current exemption is live
 
 
 def test_replay_suite_drive_min_frac_values_are_roughly_half_the_documented_measurement():
@@ -2012,6 +2186,118 @@ def test_limit_v_bus_max_v_matches_firmware():
     # teensy_controller/teensy_controller.ino:1305 -- LIMIT_V_BUS_MAX =
     # V_BUS_NOMINAL(16.0) + 1.5 = 17.5 V
     assert rs.LIMIT_V_BUS_MAX_V == pytest.approx(17.5)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# gen_fu4_replay_log.py -- the SY0001.BLG generator (FU4, 2026-08-31)
+# ─────────────────────────────────────────────────────────────────────────
+import gen_fu4_replay_log as gen4  # noqa: E402
+import decode_benchlog as dblg     # noqa: E402  (format authority, used to
+                                    # verify the generator's OWN OUTPUT
+                                    # independently of gen4's own constants)
+
+SY0001_PATH = os.path.join(REPO_ROOT, "logs", "SY0001.BLG")
+
+
+def test_gen_fu4_build_blg_is_byte_deterministic():
+    a = gen4.build_blg()
+    b = gen4.build_blg()
+    assert a == b
+    assert hashlib.sha256(a).hexdigest() == hashlib.sha256(b).hexdigest()
+
+
+def test_gen_fu4_sha256_pin_against_committed_logs_sy0001():
+    """The committed logs/SY0001.BLG must be BYTE-IDENTICAL to what the
+    generator produces right now -- imports the module's own builder (no
+    subprocess), so a generator edit that would change the committed file
+    cannot pass silently. If this ever needs to change, regenerate the file
+    with `--force` and re-verify with `--verify-logs`, per the module
+    docstring; it must never be hand-patched to match a stale generator."""
+    assert os.path.isfile(SY0001_PATH), "logs/SY0001.BLG is missing"
+    with open(SY0001_PATH, "rb") as fh:
+        committed = fh.read()
+    generated = gen4.build_blg()
+    assert hashlib.sha256(committed).hexdigest() == hashlib.sha256(generated).hexdigest()
+    assert committed == generated
+
+
+def test_gen_fu4_header_bytes_magic_version_fw():
+    data = gen4.build_blg()
+    res = dblg.decode_blg(data)
+    assert res.header["version"] == 3
+    assert res.header["fw_version"] == 23
+    assert res.header["record_size"] == gen4.RECORD_SIZE_V3
+    assert data[:4] == b"BLG1"
+
+
+def test_gen_fu4_record_count_is_2500():
+    data = gen4.build_blg()
+    res = dblg.decode_blg(data)
+    assert res.records_read == 2500
+    assert len(res.csv_rows) == 2500
+
+
+def test_gen_fu4_v_sp_step_at_t_us_1500000():
+    """v_sp holds 2.0 for records [0, 1500) and steps to 0.0 at record 1500
+    (t_us = 1500000) -- decoded independently through decode_benchlog's own
+    CSV_HEADER_V3 column order, not gen4's own constants."""
+    data = gen4.build_blg()
+    res = dblg.decode_blg(data)
+    cols = res.csv_header.split(",")
+    t_idx = cols.index("t_us")
+    v_sp_idx = cols.index("v_sp")
+    rows = [r.split(",") for r in res.csv_rows]
+    assert rows[1499][t_idx] == "1499000"
+    assert float(rows[1499][v_sp_idx]) == pytest.approx(2.0)
+    assert rows[1500][t_idx] == "1500000"
+    assert float(rows[1500][v_sp_idx]) == pytest.approx(0.0)
+    assert float(rows[0][v_sp_idx]) == pytest.approx(2.0)
+    assert float(rows[2499][v_sp_idx]) == pytest.approx(0.0)
+
+
+def test_gen_fu4_trailer_fields():
+    data = gen4.build_blg()
+    res = dblg.decode_blg(data)
+    assert res.trailer is not None
+    assert res.trailer["records_written"] == 2500
+    assert res.trailer["dropped"] == 0
+    assert res.trailer["close_reason"] == gen4.CLOSE_REASON_COMPLETE
+    assert res.trailer["close_reason_str"] == "complete"
+    assert res.trailer["error_code"] == 0
+    assert res.trailer["abandoned"] == 0
+    assert res.warnings == []   # a clean records_written match raises none
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# SY0001 REPLAY_SUITE entry shape (FU4, 2026-08-31)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_sy0001_entry_present_and_conformance():
+    index = rs.suite_index()
+    assert "SY0001" in index
+    entry = index["SY0001"]
+    assert entry["mode"] == "conformance"
+
+
+def test_sy0001_entry_replay_commands_and_provisional_true():
+    entry = rs.suite_index()["SY0001"]
+    assert entry.get("replay_commands") is True
+    assert entry.get("provisional") is True
+
+
+def test_sy0001_entry_fw_and_blg_version_match_the_committed_file():
+    """The entry's declared fw_version/blg_version must match the header
+    bytes ACTUALLY in logs/SY0001.BLG -- re-derived from the file, not
+    copy-pasted from the generator's constants a second time."""
+    entry = rs.suite_index()["SY0001"]
+    assert entry["fw_version"] == 23
+    assert entry["blg_version"] == 3
+    with open(SY0001_PATH, "rb") as fh:
+        head = fh.read(24)
+    assert head[:4] == b"BLG1"
+    assert head[4] == entry["blg_version"]
+    (fw,) = struct.unpack_from("<H", head, 18)
+    assert fw == entry["fw_version"]
 
 
 if __name__ == "__main__":

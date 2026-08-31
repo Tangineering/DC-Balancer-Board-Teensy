@@ -1,10 +1,15 @@
 # HIL replay suite — log selection
 
-**Maintained document.** This is the curated list of real bench logs (`logs/*.BLG`)
+**Maintained document.** This is the curated list of bench logs (`logs/*.BLG`)
 that are replayed at the firmware through `tools/hil_plant_sim.py --replay` as a
 HIL scenario class, and the reason each one is in (or out of) the suite. It is
 kept in lockstep with `REPLAY_SUITE` in `tools/hil_replay_suite.py` — **if you add
 a log to one, add it to the other** (checklist at the bottom).
+
+> **One entry is SYNTHETIC — `SY0001` (§3f).** Every other log in the suite is a
+> real recording written by the firmware's own SD logger. `SY0001.BLG` is
+> authored by `tools/gen_fu4_replay_log.py`. The `SY` prefix marks that, and no
+> value in it is a measurement.
 
 Companion documents: [`HIL_MODE.md`](HIL_MODE.md) (the wire protocol, the replay
 flags, the fidelity caveat) and [`HIL_PLANT.md`](HIL_PLANT.md) (the simulated
@@ -322,8 +327,16 @@ Three rules decide the flag, and each entry states which one applied:
    carries 3845 rows of nonzero `v_sp`, so replaying the commands would drive the
    motor and contradict the entry outright.
 
-Everything else with a live recorded `v_sp` opts in: **14 of 26** entries
+Everything else with a live recorded `v_sp` opts in: **15 of 27** entries
 (`Cmds` column below).
+
+A **fourth bucket** was added with the synthetic entry (FU4, 2026-08-31): the
+three rules above all decide whether a *recorded* trajectory should **also** carry
+commands. For **SY0001** (§3f) the commands **are** the stimulus — its rails are
+constant nominals that assert nothing — so `replay_commands: True` is *mandatory*
+there, not a judgement call. Any future synthetic entry inherits this: a generated
+log whose rails are nominal placeholders must replay commands or it is a
+five-second run of nothing.
 
 The three `OC_FC` entries opt in and are safe to: `OC_FC` latches off the
 *injected* `I_fc`, which command replay cannot touch, and each has a long
@@ -331,11 +344,61 @@ pre-latch window (measured, log time: ML0203 33.5 s of 43.8 s, ML0165 18.0 s of
 38.6 s, ML0169 2.3 s of 18.7 s — ML0169 is the tightest and the one to check first
 if `drive_loop_stepped` ever starts failing there).
 
+### 3f. Synthetic entries — the `SY` prefix (FU4, 2026-08-31)
+
+`logs/` holds real recordings written by the firmware's SD logger, one prefix per
+profile class (`ML` manual, `TP`/`WP` current profiles, `YP` combined, `PS`).
+**`SY` = SYNTHETIC**: the file was authored by a generator, not recorded. There is
+one such entry, `SY0001`, and the prefix exists so a reader scanning the directory
+can tell it apart without opening it. Nothing in a `SY` log is a measurement; do
+not fit a constant to one or cite a number from one.
+
+| | |
+|---|---|
+| Log | `logs/SY0001.BLG` (170 100 B, BLG v3, `fw_version` 23, 2500 records) |
+| Generator | `tools/gen_fu4_replay_log.py` |
+| Regenerate | `.venv_hil/Scripts/python.exe tools/gen_fu4_replay_log.py --force`, then re-run `--verify-logs` |
+
+**Why one was authored.** FU4 wanted the **Idle → Run setpoint-arrival transient**
+covered. `doState1()` zeroes `v_setpoint` on the Run transition unconditionally,
+ignoring the triggering packet's payload
+(`teensy_controller/teensy_controller.ino:5382-5410`), so a large setpoint reaches
+a freshly reset drive controller only on the **second** post-reset command packet,
+≤ 20 ms later. No recorded log delivers that: every bench run begins at standstill
+with the setpoint at or near zero. Holding `v_sp` at 2.0 m/s from record 0 delivers
+it **structurally** — the firmware's own zeroing supplies the step edge, so nothing
+has to be timed against an instant the host cannot observe.
+
+**Honesty rules the file follows, and any future `SY` log must.**
+
+- **Format v3, not v5/v6/v7.** v3 is the earliest format carrying the four
+  source/node voltages the replay path needs. v5's drive-controller fields
+  (`u_unsat`, `drive_x0`) and v6/v7's encoder diagnostics have no synthetic
+  referent, and inventing them would read as fabricated hardware telemetry.
+  Choosing v3 makes their absence structural rather than a claim to be trusted.
+- **`v_actual` is pinned at 0.0.** Replay is open loop, so any nonzero trajectory
+  would be an invented plant response. Zero is also the honest at-rest
+  precondition for a Run entry. The velocity-valid flag (record `flags` bit1) is
+  set so the decoder emits 0.0 as a real value instead of blanking the column.
+- **`I_cmd` is 0.0 on every record: the log carries NO recorded response.** A board
+  holding `v_act` at exactly 0 while commanding 12 A is physically impossible, so
+  there is no self-consistent response to write down. The response under test is
+  entirely the live board's, and any recorded-vs-observed overlay of this entry
+  (`tools/hil_report_analysis.py`'s response-deviation figure) is meaningless by
+  construction.
+- **Deterministic output.** Record timestamps come from the 1 kHz sample index and
+  the header clock fields are fixed at 0, so regenerating produces a byte-identical
+  file. The log is committed; a generator that diffed on every run would make every
+  regeneration look like a data change.
+- **`replay_commands` is mandatory, not a judgement.** The rails are constant
+  nominals that assert nothing — the recorded `v_sp` is the entire stimulus. This
+  is a fourth bucket alongside the three rules in §3e, stated in the module.
+
 ---
 
 ## 4. The suite
 
-26 entries: **11 conformance, 15 deviation**. `*` = provisional. Check names are the
+27 entries: **12 conformance, 15 deviation**. `*` = provisional. Check names are the
 declarative kinds in `hil_replay_suite.py` (`CHECK_KINDS`). Every entry additionally
 carries the implicit `bringup_reached_idle` gate (3d).
 
@@ -347,6 +410,7 @@ carries the implicit `bringup_reached_idle` gate (3d).
 
 | Log | fw | BLG | Classification | Why | Checks | Cmds |
 |---|---|---|---|---|---|---|
+| **SY0001** * | 23 | 3 | **SYNTHETIC (§3f)** — Idle → Run setpoint-arrival transient: `v_sp` held at 2.0 m/s from record 0, released to 0.0 at log t = 1.5 s, `v_actual` pinned at 0 | The one operating condition no recording covers. `doState1()` zeroes `v_setpoint` on the Run transition regardless of payload (`.ino:5382-5410`), so a large setpoint reaches a freshly reset drive controller only on the **second** packet. Authored, not recorded — no value in it is a measurement | `no_fault`, `drive_loop_stepped`, `steps_onto_rail_within`, `bounded_current`, `returns_off_rail` | **yes** (mandatory) |
 | YP0196 | 18 | 6 | `'Y'` combined drive-cycle + power-share profile | Both loops' stimulus together on the current law | `no_fault`, `bounded_current`, `share_loop_actuated`, `drive_loop_stepped`| **yes** |
 | WP0197 | 18 | 6 | `'W'` combined current + power-share profile | The current-axis twin of `'Y'` — encoder-less share stimulus | `no_fault`, `bounded_current` | no |
 | TP0210 * | 19 | 6 | `'T'` share sweep, handoff-slew build | Most recent share stimulus; nearest to the flashed target | `no_fault`, `bounded_current` | no |
@@ -513,8 +577,12 @@ moves.
 
 Suite-policy thresholds (not firmware) — `SUSTAINED_RAIL_S` 1.0 s,
 `LIMIT_CYCLE_ALT_PER_S` 2.0/s, `OFF_RAIL_LEVEL_A` 10.0 A / `OFF_RAIL_WITHIN_S` 1.0 s,
-`NEAR_ZERO_I_A` 0.5 A, `RAIL_LEVEL_A` 11.9 A, `BRINGUP_DEADLINE_S` 3.5 s — are named
-constants in the module with their rationale at the definition. `REPLAY_GRACE_S` and
+`NEAR_ZERO_I_A` 0.5 A, `RAIL_LEVEL_A` 11.9 A, `BRINGUP_DEADLINE_S` 3.5 s,
+`RESET_STEP_LEVEL_A` 11.0 A / `RESET_STEP_WITHIN_S` 0.15 s — are named
+constants in the module with their rationale at the definition.
+`RESET_STEP_WITHIN_S` is a **derived latency budget, not a measurement** (≤ 20 ms
+Run-transition packet + ≤ 20 ms setpoint packet + 20–40 ms rail time + ~3 ms
+gating ≈ 83 ms worst case, ×1.8); tighten it from campaign data. `REPLAY_GRACE_S` and
 `REPLAY_PREAMBLE_S` are **imported** from `hil_plant_sim` rather than redefined, so the
 two modules cannot drift apart.
 
@@ -577,10 +645,29 @@ passing vacuously.
 4. **Define the checks** from the existing kinds where possible: `no_fault`,
    `fault_latched`, `fault_not_latched`, `bounded_current`, `no_sustained_rail`,
    `no_rail_limit_cycle`, `returns_off_rail`, `near_zero_current`,
-   `drive_loop_stepped`, `share_loop_actuated`. (`no_sustained_rail` exists but is
+   `drive_loop_stepped`, `share_loop_actuated`, `steps_onto_rail_within`.
+   (`no_sustained_rail` exists but is
    **not** for this half — see §3.) A new kind is a
    small pure `(ReplayCsv, spec) -> (bool, str)` function plus a `CHECK_KINDS` entry
    — and a named constant with its rationale for any threshold it introduces.
+
+   *Worked example — `steps_onto_rail_within` (FU4, 2026-08-31), added for SY0001.*
+   It asserts that `|I_cmd|` **first** crosses `level_a` within `within_s` seconds
+   after `after_s`. Four things the step-4 pattern required of it:
+   - **Two named constants with derivations,** not literals in the entry:
+     `RESET_STEP_LEVEL_A` = 11.0 A (deliberately below `RAIL_LEVEL_A` 11.9 — the
+     question is "did the loop respond at full authority", not "did it touch the
+     clamp to four decimals") and `RESET_STEP_WITHIN_S` = 0.15 s (§6).
+   - **`after_s` defaults to `data.preamble_s`,** never a literal 2.5, so a
+     `skip_preamble` entry resolves it to 0.0 like everything else that needs the
+     bound.
+   - **Membership in `MOTOR_RESPONSE_KINDS`,** because the check reads `data.current`
+     and is meaningless without command replay. The asymmetry is intended: the
+     `NOT EXERCISED` tag never changes `passed`, and this kind *fails* on a flat-zero
+     series where the others pass — so a misuse surfaces as a **tagged FAIL**, not a
+     silent green tick.
+   - **It does not contradict the open-loop rail note (§3):** it bounds when the rail
+     is *reached*, never how long the episode lasts.
 4b. **Check the recorded `I_fc` against `LIMIT_I_FC_MAX` (1.4 A) before calling a log
    "clean".** Four entries were miscatalogued for exactly this reason (§4a): a bench
    run recorded with a DC supply in place of the fuel cell, under a `BENCH_TEST`
@@ -626,6 +713,15 @@ passing vacuously.
    All three stimulus modifiers (`skip_preamble`, `i_fc_clamp_a`,
    `replay_commands`) are mirrored by `build_sim_argv()`, so a hand-run replay
    injects exactly what a suite-run one does.
+4d. **If you have to AUTHOR the log, say so in the filename.** Only do this when the
+   property is genuinely unreachable from any recording (FU4's Idle → Run setpoint
+   arrival was — every bench run starts at standstill). Then: use the **`SY`
+   prefix**, commit a **deterministic generator** beside the file, pick the
+   **lowest BLG format** that carries the channels you actually need (so absent
+   diagnostic fields are structural, not a promise), write **no invented plant
+   response**, and state all of it in §3f and in the entry's `why`. A synthetic log
+   whose rails are nominal placeholders **must** set `replay_commands: True` — the
+   commands are its only stimulus.
 5. **Write the open-loop caveat.** If the defect being guarded lives in the estimator
    or the plant, replay cannot test it — `replay_commands` does not change that, it
    only replays a second recorded channel. Say so in `why` (§3 lists the classes).

@@ -650,6 +650,23 @@ class Plant:
         # NOT i_aux (which sits on VBUS): only a load behind the switch loads the
         # switch, which is the whole point of the `scp-inrush` margin case.
         self.i_mot_extra = 0.0
+        # `scp-inrush` scenario bookkeeping (2026-08-31 deterministic redesign).
+        # SCENARIO STATE ONLY — no physics reads these; apply_scenario() owns them
+        # end to end and Plant.step() never looks at them.  They live on the plant
+        # because apply_scenario() is stateless apart from `t` and the plant object,
+        # and the three-phase load needs to remember that the fold pulse already
+        # fired (it must be a ONE-SHOT: the RT1987 retry has to come up clean).
+        # Lifecycle (review M1, 2026-08-31): all three LATCH for the life of the
+        # run and are cleared in exactly one place — the observed mainState
+        # 99 -> non-99 edge in main() (the warm-reset tripwire site) — so a
+        # forged-boundary warm reset that re-runs the bring-up gets a clean
+        # phase-1 ramp instead of ramming the fresh ramp into a standing 5.0 A
+        # run load (the pre-redesign configuration this stimulus exists to
+        # eliminate). The `count == 1` scp_cut pin is per-bring-up; a legitimate
+        # second bring-up produces its own single cut.
+        self.scp_armed = False     # fold pulse applied (latches until reset)
+        self.scp_fired = False     # ...and has since been withdrawn (latched)
+        self.scp_fired_t = None    # sim time at which the pulse was withdrawn
         self.ag105_status = AG105_ST_DISCONNECT
 
     def step(self, dt, obs):
@@ -1867,16 +1884,24 @@ SCENARIOS = {
         "electrical": "hifi", "duration_s": 8.0,
     },
     "scp-inrush": {
-        "description": "RT1987 soft-start foldback + SCP cut: MOT_PWR closes during "
-                       "bring-up P3 into a 5.0 A V-MOT load on the high end of the "
-                       "VESC input envelope (0.9 mF) plus the 470 uF local bulk",
-        # DURATION 30 -> 6 (2026-08-30 trim): last event is the scp_cut at t=0.600 and
-        # the State-99 teardown right behind it. The 64 ms foldback retry is
-        # unreachable with firmware attached (the teardown opens MOT_PWR 54 ms
-        # before the re-arm), which is exactly why events_require pins count == 1 —
-        # so no later cycle is being cut off here. 6 s = last event + ~5 s, leaving
-        # 4 s post-grace for the latch to be observed (the cut itself is PRE-grace,
-        # but the event sidecar is not grace-filtered and State 99 does not clear).
+        "description": "RT1987 soft-start foldback + SCP cut: MOT_PWR ramps up "
+                       "unloaded during bring-up P3, then a 6.5 A V-MOT pulse binds "
+                       "the foldback in one substep; a 5.0 A run load follows the "
+                       "64 ms retry. VESC input envelope 0.9 mF + 470 uF local bulk",
+        # DURATION 6.0, RE-DERIVED 2026-08-31 for the three-phase stimulus (was
+        # derived for the flat load, where the last event was the cut at t = 0.600
+        # and the State-99 teardown right behind it). The sequence is now longer by
+        # design — the 64 ms foldback retry IS reached, because the fold fires
+        # before the firmware can react and the switch is therefore still enabled:
+        #     cut          ~0.600 s   (bring-up P3 close + TD_ON + ~2 ms of ramp)
+        #     retry re-arm  +0.064
+        #     ON            +0.091    (second soft-start into a pre-charged node;
+        #                              measured, headless bench 2026-08-31)
+        #     run load      +0.110    -> OC_FC on the next 1 kHz sample, ~0.711 s
+        #     teardown      +~0.01    -> State 99 latched by ~0.72 s
+        # 6.0 s = last event + ~5.3 s, of which ~4.0 s is post-grace
+        # (WARM_RESET_GRACE_S 2.0) — well past the >= 3 s post-stimulus margin the
+        # trim convention asks for, so the duration does not move.
         "electrical": "hifi", "duration_s": 6.0,
         "vesc_cap_f": 0.9e-3,
     },
@@ -1917,9 +1942,119 @@ SOC_ENDURANCE_LOAD_A = 2.2
 HANDOFF_PRELOAD_A = 0.40    # from t = 4.0 — puts the pre-rail total at ~0.74 A
 HANDOFF_STEP_A = 1.5        # at t = 20.0 — the perturbation, against BT's 3.0 A limit
 
-# `scp-inrush`: V-MOT load, in amps, present from t = 0 (see apply_scenario).
-# MAGNITUDE IS DERIVED, NOT CHOSEN — the RT1987 foldback in hil_electrical.py
-# only engages when the soft-start pass current exceeds rt1987_fold_limit(dV):
+# ── `scp-inrush`: the three-phase V-MOT load ────────────────────────────────
+#
+# HISTORY, compressed (the full narrative is in the git log and in HIL_FINDINGS
+# for campaigns 20260830_203006 and 20260831_{000518,010145,015024,021553}).
+# 2026-08-30: the load moved to t = 0 so MOT_PWR would ramp INTO it during
+# bring-up P3 — the RT1987 foldback/SCP branch exists only in the SOFT state, and
+# the previous "+6 A at t = 8 s" stimulus arrived when the switch had been ON for
+# 7.4 s, so ZERO fold events could ever fire.  A flat 5.0 A load was derived from
+# the fold threshold and shipped.  2026-08-31: campaign round 2 scored zero cuts
+# on a plant trace otherwise bit-identical to round 1's.  Root cause was a
+# ONE-TICK RACE — the fold's cut landed one tick after switch admission
+# (S = MOT_PWR close + RT_TD_ON_S) while the firmware's OC_FC teardown landed at
+# S+L, L = the observation round trip = 1 or 2 ticks of sub-millisecond host/board
+# phase, and the simulator applies the board's switch word BEFORE stepping the
+# solver, so a tie goes to the firmware.  The check was made TWO-OUTCOME
+# (events_any_of) as an interim measure so a coin flip stopped being scored as a
+# board finding.  THAT INTERIM IS NOW RETIRED: the stimulus below wins the race
+# outright, and run_hil_suite.py's expectation is single-outcome again.
+#
+# WHY THE FLAT LOAD COULD NOT WIN THE RACE (bench-measured 2026-08-31).  The
+# scenario load reaches the solver through the H1 bounded Norton stamp,
+#     g_mot = i_motor / max(v[N_MOT], V_MOT_LOAD_FLOOR)     (hil_electrical.py
+#     :1467-1470, floor 1.0 V at :197)
+# so at SOFT entry, with the motor node DARK, the "5.0 A load" is not 5.0 A: the
+# node solve governs it and only the CSS ramp current c_load*rate = 1.106 A
+# actually flows.  The declared load fades in over the ~1.24 ms the node needs to
+# climb past the floor, which pushed fold engagement + the 250 us SCP blanking
+# window out to ~1550-1600 us — one 1 kHz tick PAST the admission tick.  Raising
+# the flat load does not fix this (the ramp is node-governed, not load-governed):
+# the bench bisected the tick-S threshold to ~12.7 A = 1.49x RT_I_FOLD_HIGH 8.5 A,
+# which can never be regulated into at any dV and is a hard short, not the
+# SCP-MARGIN case this scenario is defined to be.
+#
+# THE DETERMINISTIC STIMULUS (bench-validated 2026-08-31, 24/24 runs across the
+# swept substep counts — phase-INDEPENDENT).  Do not load the node during the
+# ramp at all; load it ONCE the node is above the Norton floor, so the full
+# current appears in a SINGLE substep instead of fading in:
+#   Phase 1 (ramp)       i_mot_extra = 0 while V-MOT < SCP_INRUSH_ARM_V.
+#   Phase 2 (fold pulse) at the first tick with V-MOT >= SCP_INRUSH_ARM_V, apply
+#                        SCP_INRUSH_FOLD_LOAD_A.  The node is already above the
+#                        floor, so the Norton conductance carries the whole load
+#                        immediately, the fold binds on the first substep, and the
+#                        250 us blanking window expires ~275-400 us into the SAME
+#                        1 kHz tick — >= 600 us before any board word can arrive.
+#                        The race is not won by a margin, it is not entered.
+#   Phase 3 (run load)   SCP_INRUSH_RUN_LOAD_A from SCP_INRUSH_RUN_S after the
+#                        pulse, i.e. after the 64 ms foldback retry has re-armed
+#                        and the second soft-start has completed to ON.  This
+#                        restores the OC_FC coverage the flat-load design had.
+# The fold pulse is a ONE-SHOT: it is withdrawn on the next apply_scenario() call
+# (the switch is already cut by then), because the retry must soft-start into a
+# clean node or it would simply fold again and the scenario would become a retry
+# oscillator instead of a single measured cut.
+#
+# NOTHING HERE MASKS OR SHAPES SENSOR TRUTH.  This is a plant-side LOAD schedule;
+# the injected rails remain whatever the solver computes from it, the RX-before-
+# step ordering is untouched, and no RT1987 constant moved.
+
+# Arming threshold for the fold pulse, in volts on V-MOT.
+# 20 % above V_MOT_LOAD_FLOOR (hil_electrical.py:197, 1.0 V) — high enough that
+# the bounded Norton stamp is in its linear region and the declared load is the
+# load that flows, low enough to land early in the ~19.8 ms CSS ramp while the
+# switch is still deep in SOFT.  The arming test is evaluated once per 1 kHz tick
+# against the PREVIOUS tick's rails, and the ramp advances 808 V/s * 1 ms =
+# 0.807 V/tick, so the ACTUAL step lands at v_step in [1.2, 2.01] V.  Both ends
+# of that band are carried through the SCP_INRUSH_FOLD_LOAD_A derivation below —
+# the design must hold at the worst corner, not at the nominal.
+SCP_INRUSH_ARM_V = 1.2
+
+# The fold pulse, in amps on V-MOT.  DERIVED AT THE WORST ARMING CORNER.
+# The RT1987 fold engages when the soft-start pass current exceeds
+#     rt1987_fold_limit(dv) = max(2.5, 8.5 - 0.2909*(dv - 5))   for dv > 5 V
+# with dv = v_in - v_out.  At the pulse the pass current is c_load*rate + I where
+# c_load*rate = 1.106 A (see the flat-load arithmetic below), so folding needs
+#     8.5 - 0.2909*(v_in - v_step - 5) < 1.106 + I
+#  -> v_in > v_step + 5 + (8.5 - 1.106 - I)/0.2909.
+# At I = 6.5 A and the WORST corner v_step = 2.01 V that is v_in > 10.08 V,
+# against the bring-up P3 gate's guaranteed V_BUS_CHARGED_THRESH 13.5 V
+# (.ino:1452) — a 3.4 V margin, and the measured bus at P3 is ~15.8 V.
+# At the OLD 5.0 A the same requirement is v_in > 15.23 V, which the P3 gate does
+# NOT guarantee: that is WHY the value moves, not a re-margin for its own sake.
+# 6.5 A is 76 % of RT_I_FOLD_HIGH 8.5 A — an overload the switch could still
+# regulate into at a small enough dV, i.e. a legitimate SCP-margin case and not a
+# hard short (the >= 8.5 A region is unregulatable at ANY dV).
+SCP_INRUSH_FOLD_LOAD_A = 6.5
+
+# The post-retry run load, in amps on V-MOT.  This is the OLD flat-load value,
+# kept deliberately: it is the number whose OC coverage this scenario has always
+# carried.  Split by the droop it drives I_fc/I_bt to 2.07-2.25 A each on the
+# first loaded sample (headless bench 2026-08-31, substep counts 8-100), so
+# LIMIT_I_FC_MAX 1.4 A is exceeded by 48-61 % and OC_FC latches deterministically
+# on that sample.  (LIMIT_I_FC_MAX + LIMIT_I_BT_MAX = 4.4 A, so 5.0 A cannot be
+# carried at any share split — the OC is a property of the load, not of the split.)
+SCP_INRUSH_RUN_LOAD_A = 5.0
+
+# Delay from the fold pulse to the run load, in seconds.
+#   RT_SCP_RETRY_S            64 ms   foldback re-arm after the cut
+# + RT_TD_ON_S                 8 ms   re-admission
+# + the second soft-start     ~19 ms  (the node is still pre-charged to ~v_step,
+#                                      so the ramp completes inside the 19.8 ms
+#                                      t_ON rather than taking all of it)
+# = ON at D+91 ms MEASURED (headless bench 2026-08-31: cut at t = 0.102, ON at
+# t = 0.193, identical for substep counts 8-100).  0.110 s leaves ~19 ms of
+# margin so the run load lands on a switch that is fully ON, not on one still in
+# SOFT — a second fold would break the count == 1 pin in run_hil_suite.py.
+# NOTE (review L2): the delay is anchored at scp_fired_t, the WITHDRAWAL tick —
+# one 1 kHz tick after the pulse the derivation above measures from.  1 ms
+# against the ~19 ms margin; absorbed, stated here so nobody re-derives it.
+SCP_INRUSH_RUN_S = 0.110
+
+# ── Flat-load arithmetic, KEPT: the ramp-current term above is taken from it ──
+# The RT1987 foldback in hil_electrical.py only engages when the soft-start pass
+# current exceeds rt1987_fold_limit(dV):
 #     rt1987_fold_limit(dv) = max(2.5, 8.5 - 0.2909*(dv - 5))  for dv > 5 V
 #   -> at dv = 16 V (MOT_PWR closing onto a node held down by its own load) the
 #      limit is its MINIMUM over the reachable dV range: 5.30 A.
@@ -1929,79 +2064,31 @@ HANDOFF_STEP_A = 1.5        # at t = 20.0 — the perturbation, against BT's 3.0
 #     rate  = 16 V / 19.8 ms                = 808 V/s
 #     c_load = C_MOT_LOCAL 470 uF + c_vesc 900 uF = 1.37 mF
 #     c_load*rate                           = 1.11 A
-#   -> the fold engages for i_load > 5.30 - 1.11 = 4.19 A.
-# 5.0 A gives 15 % margin over that threshold.
+#   -> a FLAT load would have to exceed 5.30 - 1.11 = 4.19 A to fold at all.
+# The 1.11 A ramp term is the piece the phase-2 derivation above reuses; the
+# 4.19 A flat threshold itself is now historical (the pulse does not ramp into
+# a dark node, so it is not the binding condition).
 #
-# ⚠️ DEVIATION, recorded deliberately: HIL_FINDINGS "scp-inrush" recommends a
-# ~2.5 A load, "so the sim mechanism fires before the firmware faults".  The
-# arithmetic above says 2.5 A CANNOT fold (2.5 + 1.11 = 3.6 A < 5.30 A) — that
-# recommendation assumed RT_I_FOLD_LOW 2.5 A was the active limit.  And the
-# threshold it does have, 4.19 A, is ABOVE what the board's own OC limits allow
-# on the bus: LIMIT_I_FC_MAX 1.4 + LIMIT_I_BT_MAX 3.0 = 4.4 A.  So in this model
-# an scp_cut and an OC fault are INSEPARABLE, and "fold without faulting" is not
-# a reachable operating point.  Nor is "fold without cutting": once the clamp
-# engages, v_out falls behind the ramp target at ~224 V/s while the fold limit
-# rises only ~0.29 A/V, so i_lag grows ~2.7 A within the 250 us SCP blanking
-# window — every fold reaches RT_SCP_BLANK_S and CUTS.  The scenario is therefore
-# scored on the EVENTS, with the fault outcome allowed but not required; see
-# run_hil_suite.py's FAULT_EXPECTATIONS["scp-inrush"].  ⚠️ "scp_cut must appear"
-# was true of that scoring until 2026-08-31 and is no longer: the expectation is
-# now TWO-OUTCOME, because whether the fold gets to fire at all is decided by a
-# one-tick race the stimulus cannot win reliably.  See below.
+# TWO CONSEQUENCES THAT SURVIVE THE REDESIGN, both still true:
+#   * An scp_cut and an OC fault are INSEPARABLE in this model.  Any load able to
+#     fold is above what the board's own limits allow on the bus
+#     (LIMIT_I_FC_MAX 1.4 + LIMIT_I_BT_MAX 3.0 = 4.4 A), so "fold without
+#     faulting" is not a reachable operating point.  The phase-3 run load makes
+#     that OC explicit and deterministic rather than incidental.
+#   * "Fold without cutting" is not reachable either: once the clamp engages,
+#     v_out falls behind the ramp target at ~224 V/s while the fold limit rises
+#     only ~0.29 A/V, so i_lag grows ~2.7 A within the 250 us SCP blanking
+#     window — every fold reaches RT_SCP_BLANK_S and CUTS.
 #
-# ⚠️ 2026-08-31 — THIS VALUE IS FRAGILE AND THE FIX IS NOT AVAILABLE HERE.
-# Round 2 of the campaign scored `events_require_scp_cut` FAIL with zero cut
-# events, on a plant trace otherwise bit-identical to round 1's. Root cause is
-# the RX-before-step ordering in main()'s scenario branch (see the comment at
-# that site): the fold's cut lands one tick after switch admission
-# (S = MOT_PWR close + RT_TD_ON_S), the firmware's OC_FC teardown lands at S+L
-# with L = 1 or 2 depending on sub-ms host/board phase, and a tie goes to the
-# firmware. L=2 -> cut fires (campaign 20260830_203006: 6.2852 A; round 1
-# 20260831_000518: 6.290013 A, hardware-corroborated 6.290 A). L=1 -> EN-low
-# preempts the fold at ~4.5565 A, ~85 % of the ~5.36 A fold entry, and nothing
-# is recorded. The 0.076 % "repeat" between those two i_cut figures was two
-# draws of the same coin, NOT evidence of a tight, reproducible measurement.
-#
-# THE OBVIOUS FIX — raise this load until the 250 us blanking window is consumed
-# inside the admission tick, so the cut lands at S and can never race S+1 — WAS
-# DERIVED EMPIRICALLY AND DOES NOT FIT. Headless bench (ElectricalSim driven
-# directly, and again via Plant replaying round 1's own recorded switch stream;
-# substep count PINNED and swept 20-100 to span the real ~57):
-#     load       outcome
-#     5.0 A      no fold at all in the bench; the cut threshold bisects to
-#                ~5.53 A, so the shipped value sits ~9.6 % BELOW its own
-#                trigger. (The real runs did cut, so the shipped path is a few
-#                percent more aggressive than the bench — but single-digit
-#                margin either way is the fragility itself.)
-#     6-12 A     cut lands at S+1: the phase race, unchanged.
-#     ~12.7 A    bisected threshold for a cut at S (phase-INDEPENDENT).
-#     >= 14 A    cut at S on every substep count tested.
-# The tick-S threshold is ~12.7 A = 1.49x RT_I_FOLD_HIGH (8.5 A). A load above
-# RT_I_FOLD_HIGH can never be regulated into at ANY dV, so the switch could
-# never complete soft-start — that is a hard short, not the "legitimate
-# SCP-MARGIN case" this scenario is defined to be. Raising the load to make the
-# check deterministic would therefore destroy the scenario's own identity.
-# The premise of the proposed fix does not hold either: the demand is not
-# c_load*rate + i_load at the first SOFT substep. Measured, the switch current
-# RAMPS at ~0.154 A/substep from ~1.1 A because the node solve governs it, so
-# ~27 substeps elapse before the fold engages regardless of load, and the load
-# only shifts that slightly.
-# RESOLUTION (operator ruling, 2026-08-31): the load STAYS AT 5.0 A and the check
-# became TWO-OUTCOME instead — run_hil_suite.py's FAULT_EXPECTATIONS["scp-inrush"]
-# now scores outcome A (fold fired, L=2, i_cut 6.0-6.6 A) OR outcome B (fold
-# approached, L=1, MOT_PWR ring i_cut 3.5-5.5 A), and NAMES which one occurred.
-# That is not check-laundering: both outcomes are the same correct physics in the
-# two legal orderings of the race, the plant traces are bit-identical up to the
-# tick it resolves, and the board latches OC_FC either way. The defect was that
-# the check scored the coin flip. The full argument lives at that entry.
-# The old 5.0 A and the 6.290 A hardware-corroborated i_cut are therefore NOT
-# retired — no drift was found and no re-margin was applied.
-#
-# OPERATOR-CHOICE ITEM, logged and not attempted: a deterministic fold needs a
-# stimulus TIMING redesign — close MOT_PWR into an ALREADY-LOADED node so the fold
-# engages well before any firmware reaction can reach the tick. The load knob
-# cannot get there, per the table above.
-SCP_INRUSH_MOT_LOAD_A = 5.0
+# ⚠️ PROVISIONAL i_cut BAND.  The flat-load campaigns measured i_cut 6.2852 A
+# (20260830_203006) and 6.290013 A (round 1, 20260831_000518, hardware-
+# corroborated 6.290 A), but those are the OLD stimulus and do not carry over.
+# The feasibility bench for THIS design reproduced i_cut 5.79-5.88 A on its own
+# rig and 5.62-6.61 A analytically across the corners, and could NOT reproduce
+# the live 6.285-6.290 A figures under the old stimulus either — an unresolved
+# emulation offset between the bench harness and the shipped path (documented
+# 2026-08-31).  run_hil_suite.py's band is therefore deliberately wide and must
+# be RE-DERIVED from the first live campaign under this stimulus, then tightened.
 
 
 def apply_scenario(plant, scenario, t):
@@ -2114,22 +2201,45 @@ def apply_scenario(plant, scenario, t):
         # to it.  The event log's scp_cut / sw_ring entries are the observable; an
         # sw_ring with over_absmax True is the boost-death signature.
         #
-        # LOAD MOVED TO t = 0 (2026-08-30, HIL_FINDINGS "scp-inrush"): the old
-        # +6.0 A at t = 8 s arrived when MOT_PWR had ALREADY been ON since t ~ 0.62
-        # (the firmware pre-charges the motor node during bring-up P3, CLAUDE.md
-        # §2 Death 5), and the RT1987 foldback/SCP branch exists ONLY in the SOFT
-        # state.  ZERO scp_cut/fold events fired; the run was a plain bus overload
-        # (6 A > LIMIT_I_FC_MAX + LIMIT_I_BT_MAX = 4.4 A at any share split), which
-        # the board correctly protected itself against — a pass signal misreported
-        # as a failure, and the SCP objective structurally unreachable.
-        #
+        # THREE-PHASE LOAD (2026-08-31 deterministic redesign; the full derivation
+        # and the history it replaces are at SCP_INRUSH_ARM_V / _FOLD_LOAD_A above).
         # `i_mot_extra` is applied by Plant.step() ONLY while MOT_PWR is closed, so
-        # declaring it from t = 0 means the load appears exactly at the P3 close —
-        # i.e. MOT_PWR ramps INTO it while still in SOFT, which is the only window
-        # in which the foldback can be reached at all.  See SCP_INRUSH_MOT_LOAD_A
-        # for the magnitude derivation and for why an scp_cut cannot be separated
-        # from an OC fault in this model.
-        plant.i_mot_extra = SCP_INRUSH_MOT_LOAD_A
+        # every phase below is inert until the bring-up P3 close.
+        #
+        # V-MOT is read from plant.v_rgn: the RGN-V divider sits ON the motor node,
+        # upstream of D-BC-RG (schematic sheet 4, 2026-08-30 topology fix), so v_rgn
+        # IS N_MOT in both electrical modes.  It carries the PREVIOUS tick's solve —
+        # apply_scenario() runs immediately before plant.step() in main() — which is
+        # exactly the intent: the arming test is a 1 kHz observation of the ramp, and
+        # the 0.807 V/tick advance is carried through the SCP_INRUSH_FOLD_LOAD_A
+        # derivation as the [1.2, 2.01] V arming corner.
+        if plant.scp_armed and not plant.scp_fired:
+            # ONE-SHOT withdrawal, the tick after the pulse: the switch has already
+            # cut, and the 64 ms foldback retry must soft-start into a CLEAN node or
+            # the scenario degenerates into a retry oscillator instead of the single
+            # measured cut that run_hil_suite.py pins at count == 1.
+            plant.scp_fired = True
+            plant.scp_fired_t = t
+            plant.i_mot_extra = 0.0
+        elif plant.scp_fired:
+            # Phase 3: the run load, once the retry has completed to ON.  Restores
+            # the OC_FC coverage the flat-load design carried.
+            plant.i_mot_extra = (SCP_INRUSH_RUN_LOAD_A
+                                 if (t - plant.scp_fired_t) >= SCP_INRUSH_RUN_S
+                                 else 0.0)
+        elif plant.v_rgn >= SCP_INRUSH_ARM_V:
+            # Phase 2: the fold pulse.  The node is above the H1 Norton floor, so
+            # the full current appears in ONE substep, the fold binds immediately,
+            # and the 250 us blanking window expires ~275-400 us into THIS 1 kHz
+            # tick — before any board word can arrive.  The one-tick race that made
+            # this scenario's verdict a coin flip is not won here, it is not entered.
+            plant.i_mot_extra = SCP_INRUSH_FOLD_LOAD_A
+            plant.scp_armed = True
+        else:
+            # Phase 1: ramp.  The node must climb UNLOADED — a load declared here
+            # fades in through the bounded Norton stamp and pushes the fold past the
+            # admission tick, which is precisely the defect being fixed.
+            plant.i_mot_extra = 0.0
     return tx_enabled
 
 
@@ -2839,6 +2949,16 @@ def main(argv=None):
                             warm_resets_mid_run += 1
                         if len(warm_reset_times) < WARM_RESET_TIMES_MAX:
                             warm_reset_times.append(round(t, 3))
+                        # Review M1 (2026-08-31): a warm reset re-runs the staged
+                        # bring-up, so the scp-inrush one-shot must re-arm for a
+                        # clean phase-1 ramp — otherwise the second P3 close ramps
+                        # into the standing 5.0 A run load (the pre-redesign
+                        # configuration).  Harmless for every other scenario
+                        # (nothing else reads these fields; `plant` is
+                        # constructed unconditionally, replay included).
+                        plant.scp_armed = False
+                        plant.scp_fired = False
+                        plant.scp_fired_t = None
                     obs = decoded
                     obs_last_t = t          # F11: stamp with sim-clock time, not
                                              # wall time — obs_age_s is measured
@@ -2895,17 +3015,23 @@ def main(argv=None):
                 # autonomous plant event would both act, THE BOARD'S WORD WINS —
                 # a tie goes to the firmware.
                 #
-                # This is not academic: it decides the scp-inrush scenario's
-                # outcome (root-caused 2026-08-31). The RT1987 SCP fold's cut
-                # lands one tick after switch admission (S = MOT_PWR close +
-                # RT_TD_ON_S), while the firmware's OC_FC teardown lands at S+L,
-                # where L is the observation round trip — 1 OR 2 ticks depending
-                # on sub-millisecond host/board phase. At L=2 the fold cuts first
-                # and `scp_cut` fires; at L=1 the teardown's EN-low preempts it
-                # and no event is recorded, from a plant trace that is otherwise
+                # This is not academic: it decided the scp-inrush scenario's
+                # outcome (root-caused 2026-08-31) UNTIL THE 2026-08-31
+                # DETERMINISTIC REDESIGN of that stimulus. Under the old flat
+                # load the RT1987 SCP fold's cut landed one tick after switch
+                # admission (S = MOT_PWR close + RT_TD_ON_S), while the
+                # firmware's OC_FC teardown landed at S+L, where L is the
+                # observation round trip — 1 OR 2 ticks depending on
+                # sub-millisecond host/board phase. At L=2 the fold cut first and
+                # `scp_cut` fired; at L=1 the teardown's EN-low preempted it and
+                # no event was recorded, from a plant trace that was otherwise
                 # bit-identical. Campaign 20260830_203006 and round 1 saw L=2;
                 # round 2 saw L=1 and the scenario failed on a phase coin-flip,
-                # not on anything the board or the model did wrong.
+                # not on anything the board or the model did wrong. The stimulus
+                # now fires the fold INSIDE the admission tick (see the
+                # SCP_INRUSH_ARM_V block), so it no longer enters this race — but
+                # the ordering below is unchanged and still governs every other
+                # same-tick contest.
                 #
                 # Keep this ordering — a plant that ran ahead of the board's own
                 # word would be the less faithful of the two. But any scenario

@@ -1358,24 +1358,164 @@ def test_soc_depletion_aux_load_never_shares_a_tick_with_the_share_rail_step():
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 8d. scp-inrush: i_mot_extra present from t=0 (2026-08-30)
+# 8d. scp-inrush: three-phase deterministic-fold stimulus (2026-08-31
+#     redesign, superseding the flat SCP_INRUSH_MOT_LOAD_A load). Phase 1
+#     (ramp, unloaded) -> Phase 2 (fold pulse, one-shot) -> Phase 3 (run
+#     load, after SCP_INRUSH_RUN_S). Driven directly through apply_scenario()
+#     against plant.v_rgn (== V-MOT per the fw v22 topology fix) and the
+#     plant.scp_armed/scp_fired/scp_fired_t bookkeeping fields.
 # ─────────────────────────────────────────────────────────────────────────
 
-def test_scp_inrush_i_mot_extra_present_from_t_zero():
+def test_scp_inrush_phase1_i_mot_extra_zero_below_arm_voltage():
+    """While V-MOT (plant.v_rgn) is below SCP_INRUSH_ARM_V, the node must
+    ramp UNLOADED -- a load declared here fades in through the bounded
+    Norton stamp and pushes the fold past the admission tick, which is
+    precisely the defect the redesign fixes."""
     plant = hil.Plant()
-    hil.apply_scenario(plant, "scp-inrush", 0.0)
-    assert plant.i_mot_extra == pytest.approx(hil.SCP_INRUSH_MOT_LOAD_A)
-    assert hil.SCP_INRUSH_MOT_LOAD_A == pytest.approx(5.0)
+    for v in (0.0, 0.5, hil.SCP_INRUSH_ARM_V - 0.01):
+        plant.v_rgn = v
+        hil.apply_scenario(plant, "scp-inrush", 1.0)
+        assert plant.i_mot_extra == pytest.approx(0.0)
+        assert plant.scp_armed is False
+        assert plant.scp_fired is False
 
 
-def test_scp_inrush_i_mot_extra_constant_across_time():
-    """Unlike the old t=8.0 step, the load is present for the WHOLE run --
-    MOT_PWR's own bring-up close is what gates when it actually applies
-    (Plant.step() only adds i_mot_extra while MOT_PWR is closed)."""
+def test_scp_inrush_phase2_arms_and_applies_fold_load_at_the_threshold():
+    """The first tick at or above SCP_INRUSH_ARM_V applies the fold pulse
+    and sets scp_armed -- the node is already above the Norton floor, so
+    the full pulse current flows immediately."""
     plant = hil.Plant()
-    for t in (0.0, 1.0, 8.0, 29.9):
-        hil.apply_scenario(plant, "scp-inrush", t)
-        assert plant.i_mot_extra == pytest.approx(hil.SCP_INRUSH_MOT_LOAD_A)
+    plant.v_rgn = hil.SCP_INRUSH_ARM_V
+    hil.apply_scenario(plant, "scp-inrush", 1.0)
+    assert plant.i_mot_extra == pytest.approx(hil.SCP_INRUSH_FOLD_LOAD_A)
+    assert hil.SCP_INRUSH_FOLD_LOAD_A == pytest.approx(6.5)
+    assert plant.scp_armed is True
+    assert plant.scp_fired is False
+
+
+def test_scp_inrush_pulse_is_one_shot_withdrawn_on_the_next_call():
+    """The NEXT apply_scenario() call after the pulse armed must withdraw
+    it: scp_fired/scp_fired_t get set and i_mot_extra returns to 0, because
+    the 64 ms retry must soft-start into a CLEAN node."""
+    plant = hil.Plant()
+    plant.v_rgn = hil.SCP_INRUSH_ARM_V + 0.5
+    hil.apply_scenario(plant, "scp-inrush", 1.000)
+    assert plant.i_mot_extra == pytest.approx(hil.SCP_INRUSH_FOLD_LOAD_A)
+
+    hil.apply_scenario(plant, "scp-inrush", 1.001)
+    assert plant.scp_fired is True
+    assert plant.scp_fired_t == pytest.approx(1.001)
+    assert plant.i_mot_extra == pytest.approx(0.0)
+
+
+def test_scp_inrush_no_rearm_after_fired_even_at_high_v_rgn():
+    """Once fired, a subsequently high v_rgn must never re-apply the fold
+    load -- the pulse is a strict one-shot, not re-armable by voltage."""
+    plant = hil.Plant()
+    plant.v_rgn = hil.SCP_INRUSH_ARM_V + 0.5
+    hil.apply_scenario(plant, "scp-inrush", 1.000)   # arm
+    hil.apply_scenario(plant, "scp-inrush", 1.001)   # withdraw -> fired
+    assert plant.scp_fired is True
+
+    for v in (hil.SCP_INRUSH_ARM_V, 10.0, 16.0):
+        plant.v_rgn = v
+        hil.apply_scenario(plant, "scp-inrush", 1.002)
+        assert plant.i_mot_extra == pytest.approx(0.0)
+        assert plant.scp_armed is True   # latched, but inert once fired
+
+
+def test_scp_inrush_phase3_run_load_boundary_at_scp_inrush_run_s():
+    """Just before scp_fired_t + SCP_INRUSH_RUN_S, i_mot_extra stays 0; at
+    (and past) that boundary the run load applies -- pins the implemented
+    comparison's closure (>=)."""
+    plant = hil.Plant()
+    plant.v_rgn = hil.SCP_INRUSH_ARM_V + 0.5
+    hil.apply_scenario(plant, "scp-inrush", 1.000)   # arm
+    hil.apply_scenario(plant, "scp-inrush", 1.001)   # withdraw -> fired
+    fired_t = plant.scp_fired_t
+
+    # Just before the boundary: still 0.
+    hil.apply_scenario(plant, "scp-inrush", fired_t + hil.SCP_INRUSH_RUN_S - 0.001)
+    assert plant.i_mot_extra == pytest.approx(0.0)
+
+    # At the boundary exactly: the run load applies.
+    hil.apply_scenario(plant, "scp-inrush", fired_t + hil.SCP_INRUSH_RUN_S)
+    assert plant.i_mot_extra == pytest.approx(hil.SCP_INRUSH_RUN_LOAD_A)
+    assert hil.SCP_INRUSH_RUN_LOAD_A == pytest.approx(5.0)
+
+    # Comfortably past the boundary: still the run load.
+    hil.apply_scenario(plant, "scp-inrush", fired_t + hil.SCP_INRUSH_RUN_S + 5.0)
+    assert plant.i_mot_extra == pytest.approx(hil.SCP_INRUSH_RUN_LOAD_A)
+
+
+def test_scp_inrush_reset_of_the_three_fields_re_arms_the_full_sequence():
+    """Review M1 (2026-08-31): a mid-run HIL warm reset (mainState 99 -> 0)
+    re-runs the staged bring-up, so the scp-inrush one-shot must re-arm for
+    a clean second phase-1 ramp -- otherwise the second P3 close ramps into
+    the standing run load instead of an unloaded node. The fix lives in
+    main()'s warm-reset tripwire (hil_plant_sim.py, the `decoded["state"] !=
+    99` transition branch), which clears exactly plant.scp_armed /
+    plant.scp_fired / plant.scp_fired_t -- three plain attribute writes with
+    no other plant/electrical state touched.
+
+    main()'s socket loop itself (argv parsing, UDP recv, the actual 99->0
+    transition detection) is NOT unit-testable at this level -- it needs a
+    live socket and a real board/replay stream. That is a KNOWN, ACCEPTED
+    residual: this test instead pins the RE-ARM SEMANTIC directly, i.e. that
+    clearing those three fields (verbatim what the tripwire does) is
+    SUFFICIENT to restore the stimulus -- by walking phase 1 -> 2 -> 3 to
+    completion once, resetting by hand exactly as the tripwire would, and
+    walking the full sequence a second time on a fresh ramp."""
+    plant = hil.Plant()
+
+    # ── First bring-up: walk the full phase 1 -> 2 -> 3 sequence. ──────────
+    plant.v_rgn = 0.0
+    hil.apply_scenario(plant, "scp-inrush", 0.5)          # phase 1: unloaded ramp
+    assert plant.i_mot_extra == pytest.approx(0.0)
+    plant.v_rgn = hil.SCP_INRUSH_ARM_V + 0.5
+    hil.apply_scenario(plant, "scp-inrush", 1.000)        # phase 2: arm + pulse
+    assert plant.i_mot_extra == pytest.approx(hil.SCP_INRUSH_FOLD_LOAD_A)
+    assert plant.scp_armed is True
+    hil.apply_scenario(plant, "scp-inrush", 1.001)        # one-shot withdrawal
+    assert plant.scp_fired is True
+    fired_t = plant.scp_fired_t
+    assert fired_t is not None
+    hil.apply_scenario(plant, "scp-inrush",
+                       fired_t + hil.SCP_INRUSH_RUN_S)     # phase 3: run load
+    assert plant.i_mot_extra == pytest.approx(hil.SCP_INRUSH_RUN_LOAD_A)
+
+    # ── The warm-reset tripwire's own three lines, verbatim. ────────────────
+    plant.scp_armed = False
+    plant.scp_fired = False
+    plant.scp_fired_t = None
+
+    # ── Second bring-up on a fresh ramp: the full sequence must repeat. ────
+    plant.v_rgn = 0.0
+    hil.apply_scenario(plant, "scp-inrush", 10.5)          # phase 1 again: unloaded
+    assert plant.i_mot_extra == pytest.approx(0.0)
+    assert plant.scp_armed is False
+    assert plant.scp_fired is False
+
+    plant.v_rgn = hil.SCP_INRUSH_ARM_V + 0.5
+    hil.apply_scenario(plant, "scp-inrush", 11.000)        # re-arm at the threshold
+    assert plant.i_mot_extra == pytest.approx(hil.SCP_INRUSH_FOLD_LOAD_A)
+    assert plant.scp_armed is True
+    assert plant.scp_fired is False
+
+    hil.apply_scenario(plant, "scp-inrush", 11.001)        # one-shot withdrawal again
+    assert plant.scp_fired is True
+    assert plant.i_mot_extra == pytest.approx(0.0)
+    fired_t2 = plant.scp_fired_t
+    assert fired_t2 == pytest.approx(11.001)
+
+    # Comfortably (not exactly) past the boundary -- the exact-boundary `>=`
+    # closure is already pinned by
+    # test_scp_inrush_phase3_run_load_boundary_at_scp_inrush_run_s above;
+    # this test is about the RE-ARM, not re-litigating float-precision at the
+    # boundary itself.
+    hil.apply_scenario(plant, "scp-inrush",
+                       fired_t2 + hil.SCP_INRUSH_RUN_S + 0.01)  # run load again
+    assert plant.i_mot_extra == pytest.approx(hil.SCP_INRUSH_RUN_LOAD_A)
 
 
 # ─────────────────────────────────────────────────────────────────────────

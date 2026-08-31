@@ -213,9 +213,13 @@ SETTLE_MIN_RECOVER_S = 1.5
 #                 satisfied when ALL of its event specs pass. The group passes if
 #                 ANY branch does, and the check NAMES the winning branch. For a
 #                 scenario whose result is decided by a race with two legal
-#                 orderings — see scp-inrush, the only user today, whose comment
-#                 carries the not-check-laundering argument this field must always
-#                 be justified by.
+#                 orderings. ⚠️ CURRENTLY UNUSED: its founding (and only) user,
+#                 scp-inrush, MIGRATED OFF IT 2026-08-31 when its stimulus was
+#                 redesigned to win the race outright, so the mechanism is kept for
+#                 future races rather than retired. Any new user must carry the
+#                 not-check-laundering argument that entry used to: enumerate
+#                 ALTERNATIVE legal outcomes of ONE stimulus, never a strict and a
+#                 lenient reading of the same result. Prefer fixing the stimulus.
 #   signals_require POSITIVE evidence from the CSV that the objective was actually
 #                 reached — a list of specs, see judge_signals()
 #   source        citation.  Do not extend this table from intuition.
@@ -456,43 +460,72 @@ FAULT_EXPECTATIONS = {
         ],
     },
     "scp-inrush": {
-        # HIL_FINDINGS 'scp-inrush' recommends gating this scenario on the EVENTS
-        # sidecar containing scp_cut rather than on fault flags, because the old
-        # run produced ZERO fold/scp_cut events — MOT_PWR was already ON when the
-        # load arrived, and the foldback branch exists only in the SOFT state.
-        # The load now sits behind MOT_PWR from t = 0, so the P3 close ramps into
-        # it while still in SOFT.
+        # ── DETERMINISTIC SINGLE-OUTCOME EXPECTATION (2026-08-31 redesign) ──────
+        # This entry was TWO-OUTCOME (events_any_of) for exactly one round, because
+        # the flat 5.0 A load could not win the one-tick race against the firmware's
+        # OC teardown and the check was scoring a coin flip. The STIMULUS was fixed
+        # instead: hil_plant_sim.py's scp-inrush branch is now three-phase — the
+        # motor node ramps UNLOADED, a 6.5 A pulse lands once V-MOT is above the H1
+        # Norton floor, and the fold binds and cuts INSIDE that same 1 kHz tick.
+        # The firmware sees nothing anomalous until the pulse tick (I_fc is
+        # ~0.63 A through the whole ramp — headless bench 2026-08-31, same harness
+        # as the i_cut provenance below), so its reaction cannot land earlier than
+        # pulse+L for any L >= 1 — the race is not won, it is not entered. The
+        # expectation is single-outcome again. Full derivation at
+        # SCP_INRUSH_ARM_V / SCP_INRUSH_FOLD_LOAD_A in hil_plant_sim.py.
         #
-        # NO fault is REQUIRED, but NOT for the reason first written here.
+        # The scenario's objective is unchanged: gate on the EVENTS sidecar
+        # containing scp_cut rather than on fault flags. (The pre-2026-08-30
+        # stimulus put the load on an already-ON switch and produced ZERO fold
+        # events — the foldback branch exists only in the SOFT state.)
         #
-        # THE ORIGINAL DERIVATION WAS WRONG IN PREMISE (corrected 2026-08-30c from
-        # the measured campaign trace). It claimed the over-limit current exists
-        # only inside the 250 us SCP blanking window, giving ~250 us / 72 ms per
-        # retry cycle (~0.35 %) and "~1.75 expected hits" over the 500 ms
-        # MOT_CONNECT_TIMEOUT_MS — i.e. a coin-flip. That is not what happens: the
-        # over-limit current spans the WHOLE SOFT conduction interval, not just the
-        # blanking window. Measured: I_fc carried 1.966 A (> the 1.4 A limit) for
-        # ~0.95 ms, which is >= one 1 kHz sample period, so the firmware's
-        # single-sample OC check is hit on the FIRST fold cycle. OC_FC is
-        # NEAR-DETERMINISTIC, not a race — and the campaign observed exactly that,
-        # with a single cut and no retries.
-        #
-        # The consequence for this table is unchanged, which is why the entry still
-        # requires no fault: FAULT_MOT_HOTPLUG (.ino:8832-8834) remains the outcome
-        # if the OC is ever missed, and both are correct firmware behaviour. What
-        # DID change is the honest reading of the scenario — the sim mechanism fires
-        # roughly 1 ms before the firmware protects itself, and that 1 ms is the
-        # entire margin. Zero retry cycles are observable with firmware attached:
-        # the State-99 teardown pulls MOT_PWR LOW ~10 ms after the fault, 54 ms
-        # before the 64 ms re-arm, so retry-cadence coverage needs a firmware-free
-        # hil_electrical bench, not this scenario.
-        # See SCP_INRUSH_MOT_LOAD_A in hil_plant_sim.py for why an scp_cut cannot
+        # NO fault is REQUIRED — but the OC_FC latch IS now a designed part of the
+        # sequence rather than an incidental one. The phase-3 run load
+        # (SCP_INRUSH_RUN_LOAD_A 5.0 A, applied SCP_INRUSH_RUN_S 110 ms after the
+        # pulse, i.e. after the 64 ms foldback retry has completed to ON) drives
+        # I_fc/I_bt to 2.07-2.25 A each against LIMIT_I_FC_MAX 1.4 A. It is left
+        # ALLOWED rather than REQUIRED because FAULT_MOT_HOTPLUG (.ino:8832-8834)
+        # is the equally-correct firmware outcome if the P3 gate times out first,
+        # and this table must not force one of two correct behaviours.
+        # See the SCP_INRUSH_* block in hil_plant_sim.py for why an scp_cut cannot
         # be separated from an OC fault in this model.
+        #
+        # RETRY CADENCE IS NOW REACHED, unlike under the flat load. The old note
+        # here read "zero retry cycles are observable with firmware attached — the
+        # State-99 teardown pulls MOT_PWR LOW 54 ms before the 64 ms re-arm"; that
+        # was true when the OC latched ~1 ms after the cut. It no longer is: the
+        # fold now fires BEFORE the firmware has any reason to react, so the switch
+        # is still enabled through the retry, and the sequence runs
+        # cut -> re-arm (+64 ms) -> ON (+91 ms) -> run load (+110 ms) -> OC_FC.
+        # The count == 1 pin below is therefore load-timing evidence, not an
+        # artefact of the teardown truncating the cadence.
         "source": "HIL_FINDINGS 'scp-inrush' recommendation 3 + "
                   "hil_electrical.py Rt1987._soft_operating_point()/SCP branch "
                   "(RT_SCP_BLANK_S 250 us, RT_SCP_RETRY_S 64 ms) + "
-                  "hil_plant_sim.py SCP_INRUSH_MOT_LOAD_A for the 5.0 A derivation",
+                  "hil_plant_sim.py SCP_INRUSH_ARM_V / SCP_INRUSH_FOLD_LOAD_A / "
+                  "SCP_INRUSH_RUN_S for the three-phase stimulus derivation "
+                  "(2026-08-31 deterministic redesign)",
         "allow_only": FAULT_OC_FC | FAULT_MOT_HOTPLUG | FAULT_ERROR,
+        # NO `not_before_s` AND NO `survive_to`, and this is a derivation, not an
+        # omission (figures corrected 2026-08-31 review H1 — an earlier draft cited
+        # a 0.7 s grace window; the constant is WARM_RESET_GRACE_S 2.0). The whole
+        # stimulus completes ~1.3 s BEFORE the grace bound:
+        #     P3 close ~0.590 -> TD_ON +8 ms -> ramp ~2 ms -> CUT ~0.601
+        #     retry +64 ms -> ON ~0.692 -> run load ~0.711 -> OC_FC ~0.712
+        # so the only thing the post-grace fault scoring ever sees is the
+        # PERSISTING latch, which `allow_only` above covers. `not_before_s` is
+        # unusable here twice over: it is evaluated only under a `require` (inert
+        # without one), and if a `require` were added, the post-grace-scoped
+        # `fault_first_t` reports the GRACE BOUND (2.0) as the onset for an
+        # in-grace latch while the import assert floors any legal `not_before_s`
+        # strictly above 2.0 — the bound would sit after its own evidence and
+        # FAIL, misleadingly. `survive_to` is unusable because by any legal probe
+        # time the board has already, correctly, latched. The evidence this
+        # scenario can carry is therefore the EVENT sidecar (below), which is not
+        # grace-filtered — that is why the objective was moved onto events in the
+        # first place.
+        # ⚠️ These times MOVED with the redesign: under the flat load the OC
+        # latched ~1 ms after the cut (~0.601), not ~110 ms after it.
         # ⚠️ RE-VERIFIED 2026-08-30d against the TRCB-in-SOFT change, because that
         # change could in principle have stolen this scenario's event: a reverse
         # trip removes the switch from SOFT, and fold/SCP is a SOFT-only mechanism,
@@ -501,13 +534,10 @@ FAULT_EXPECTATIONS = {
         # ElectricalSim at this scenario's own vesc_cap_f, real apply_scenario(),
         # and the actuator word stepped through the firmware's own bring-up gates
         # (busBringupTick(), .ino:8723-8845) evaluated against the plant's rails —
-        # settles it. AT THE P3 CLOSE THE MOTOR NODE IS DARK: the 5 A load holds it
-        # at 0 V, so the differential is
-        #     v_in 15.79 V, v_out 0.00 -> 0.67 V, dv = +13.89 V
-        # i.e. massively FORWARD. There is no reverse condition to trip, and the
-        # measured outcome is exactly the expected one: a single MOT_PWR scp_cut
-        # with i_cut = 6.2852 A, which is 0.07 % from the campaign's on-hardware
-        # 6.290 A and comfortably inside the band below.
+        # settles it. AT THE P3 CLOSE THE MOTOR NODE IS DARK, and under the
+        # three-phase stimulus it stays FORWARD-biased throughout the ramp
+        # (v_in 15.47 V, v_out 0.73 -> 1.54 V). There is no reverse condition to
+        # trip, and the measured outcome is a single MOT_PWR scp_cut.
         # A reverse trip during soft-start needs a PRE-CHARGED node (the comm-loss
         # warm-recovery shape), which P3 never presents — the two cases are
         # structurally different and do not compete.
@@ -516,119 +546,53 @@ FAULT_EXPECTATIONS = {
         # which is the RT1987's advertised function. Verified INERT — cut counts and
         # both bring-up current pins are byte-identical with the branch disabled.)
         #
-        # TIGHTENED 2026-08-30c (campaign follow-up (1)). "at least one scp_cut"
-        # was too loose to be evidence: a 0.3 A cut would have passed it, and so
-        # would a run that cut repeatedly for the wrong reason. All three facts
-        # below were measured on hardware in campaign 20260830_203006 and are
-        # pinned so a drift in any of them is visible:
-        #   count == 1        ON OUTCOME A ONLY (see the two-outcome block below):
-        #                     one cut, at t = 0.600000. More would mean the retry
-        #                     cadence became reachable (it is not, with firmware
-        #                     attached — the State-99 teardown opens MOT_PWR 54 ms
-        #                     before the 64 ms re-arm), so >1 is a real change.
-        #                     Outcome B pins count == 0 instead, which is the same
-        #                     assertion read from the other side of the race.
+        # WHAT IS PINNED, and why each pin is evidence rather than decoration:
+        #   count == 1        exactly one cut. Under the three-phase stimulus the
+        #                     fold pulse is a ONE-SHOT (withdrawn on the next
+        #                     apply_scenario() call), so the 64 ms retry soft-starts
+        #                     into a clean node and completes to ON. A SECOND cut
+        #                     would mean the pulse was not withdrawn or the run load
+        #                     landed while the switch was still in SOFT — both real
+        #                     stimulus regressions. Zero cuts means the fold never
+        #                     engaged, which is the whole objective missing.
+        #                     ⚠️ This pin CHANGED MEANING on 2026-08-31: it used to
+        #                     read "more would mean the retry cadence became
+        #                     reachable (it is not, with firmware attached)". The
+        #                     cadence IS reachable now — see the entry header.
+        #   where MOT_PWR     the same run carries FC_BUS/BT_BUS rings; without the
+        #                     `where` pin a foreign event could satisfy the band by
+        #                     accident. (Kept from the 2026-08-30c tightening,
+        #                     which introduced it on the outcome-B ring.)
         #   over_absmax == 0  no ring above the 20 V abs-max: this scenario must
         #                     exercise the foldback WITHOUT producing the Death-5
-        #                     boost-kill signature. The two 17.72 V rings observed
-        #                     are the teardown's own EN-low openings at ~0.1 A.
-        #                     Asserted on BOTH outcomes (events_forbid_over_absmax
-        #                     is outside the any_of), which is correct: the
-        #                     Death-5 signature is forbidden either way.
-        #   i_cut bands       per outcome — 6.0-6.6 A on the fired cut (A),
-        #                     3.5-5.5 A on the approach ring (B). Derivations in
-        #                     the two-outcome block below.
-        # ── TWO-OUTCOME EXPECTATION (2026-08-31) ────────────────────────────
-        # This scenario's result is decided by a ONE-TICK RACE, and the check now
-        # scores BOTH of its legal orderings instead of only one.
+        #                     boost-kill signature. Measured over_absmax False on
+        #                     the cut ring at every swept substep count.
         #
-        # THE RACE (root-caused 2026-08-31; mechanism documented at the
-        # RX-before-step site in hil_plant_sim.py's main(), bench evidence table at
-        # SCP_INRUSH_MOT_LOAD_A): the RT1987 fold's cut lands one tick after switch
-        # admission (S = MOT_PWR close + RT_TD_ON_S); the firmware's OC_FC teardown
-        # lands at S+L where L = the observation round trip, 1 OR 2 ticks depending
-        # on sub-millisecond host/board phase; and the simulator applies the
-        # observed switch word BEFORE stepping the solver, so a tie goes to the
-        # firmware.
-        #     L=2 -> the fold fires first           -> OUTCOME A
-        #     L=1 -> the teardown's EN-low preempts -> OUTCOME B
-        #
-        # WHY THIS IS NOT CHECK-LAUNDERING. The two outcomes are the SAME correct
-        # physics seen in the two legal orderings of that race — not a strict and a
-        # lenient reading of one result. The plant traces are BIT-IDENTICAL up to
-        # the tick the race resolves; the board's protective behaviour is identical
-        # in both (it latches OC_FC on the over-limit sample either way, which
-        # `fault_allow_only` above already asserts and this entry deliberately does
-        # NOT duplicate); and the switch ends up open either way. The DEFECT was
-        # that the check scored the coin flip — round 2 FAILED on a stimulus that
-        # had behaved correctly. Widening the band would have been laundering;
-        # enumerating the two orderings and NAMING which one occurred is not.
-        #
-        # The check reports the winning outcome, so the L distribution becomes a
-        # TRACKED SIGNAL across campaigns rather than an intermittent red tick.
-        # Outcome A is the STRONGER branch and is kept verbatim: it is the only one
-        # in which the foldback actually fires, so it alone measures i_cut. Outcome
-        # B only witnesses the fold being APPROACHED — a campaign run that only
-        # ever draws B is still a real coverage gap, and should be read as one.
-        #
-        # OPERATOR-CHOICE ITEM, logged and NOT attempted: making the fold
-        # deterministic needs a stimulus TIMING redesign (close MOT_PWR into an
-        # already-loaded node so the fold engages well before any firmware
-        # reaction). The load knob cannot do it — bench-derived, the tick-S
-        # threshold is ~12.7 A = 1.49x RT_I_FOLD_HIGH 8.5 A, which would be a hard
-        # short rather than the inrush-margin case this scenario is defined to be.
-        #
-        # OUTCOME A BAND, i_cut 6.0-6.6 A. Measured 6.290 A = 5.0 A load + ~1.11 A
-        # CSS ramp current + blank-window lag growth, against a fold limit of
-        # 5.36 A at dv ~ 15.15 V. ⚠️ Its ORIGINAL justification is RETIRED: it read
-        # "two campaigns measured the same cut to four significant figures —
-        # 6.2852 A (20260830_203006) and 6.290012976976211 A (round 1,
-        # 20260831_000518), a 0.076 % repeat". Both are the L=2 branch of the same
-        # coin flip, so that repeat measured the ORDERING, not the reproducibility.
-        # The numbers are KEPT because they still bracket both observed cuts and a
-        # headless bench sweep (loads 6-8 A, substep counts 20-100) puts i_cut at
-        # 6.54-6.69 — the right ORDER, not a fit to two draws.
-        #
-        # OUTCOME B BAND, i_cut 3.5-5.5 A on the MOT_PWR ring. Round 2 measured
-        # 4.5565 A. The band comes from the bench's own ramp trajectory rather than
-        # that single point: across the admission window the switch current sweeps
-        # 0 -> ~6.2 A, and a preempt at S+1 necessarily lands in the upper part of
-        # that ramp. The FLOOR 3.5 A sits just under the earliest in-tick value a
-        # preempt can catch; the CEILING 5.5 A sits just above the ~5.36 A fold
-        # entry, because outcome B means the fold was approached and NOT fired — a
-        # ring above the fold limit would have folded instead. `where` pins the
-        # event to MOT_PWR: the same run carries FC_BUS/BT_BUS en_low rings
-        # (0.10-2.07 A across the two campaigns) that would otherwise pool into the
-        # same field_values list and satisfy the band by accident.
-        # The abs-max forbid is unchanged.
-        "events_any_of": [{
-            "name": "events_scp_fold_or_approach",
-            "branches": [
-                {"name": "A_fold_fired",
-                 "label": "the foldback FIRED (L=2: the fold won the one-tick "
-                          "race) — STRONGER evidence, i_cut is measured here",
-                 "why": "campaign 20260830_203006 i_cut 6.2852 A; round 1 "
-                        "20260831_000518 i_cut 6.290013 A; hardware 6.290 A",
-                 "events": [
-                     {"kind": "scp_cut", "count": 1,
-                      "field": "i_cut", "min_value": 6.0, "max_value": 6.6},
-                 ]},
-                {"name": "B_fold_approached",
-                 "label": "WEAKER evidence — the fold was approached, not fired "
-                          "(firmware teardown won the one-tick race; see the "
-                          "RX-before-step note in hil_plant_sim.py)",
-                 "why": "round 2 20260831_010145: 0 scp_cut, MOT_PWR ring at "
-                        "i_cut 4.5565 A = 85 % of the ~5.36 A fold entry. The "
-                        "OC_FC|ERROR latch is asserted by `fault_allow_only` "
-                        "above and deliberately NOT duplicated here",
-                 "events": [
-                     {"kind": "scp_cut", "count": 0},
-                     {"kind": "sw_ring", "where": {"switch": "MOT_PWR"},
-                      "count": 1, "field": "i_cut",
-                      "min_value": 3.5, "max_value": 5.5},
-                 ]},
-            ],
-        }],
+        # i_cut BAND [6.15, 6.55] A — DERIVED FROM LIVE RUNS, 2026-08-31.
+        # Three live board runs under this stimulus (fw v23, HIL build,
+        # HIL Results/HIL Results/scp_band_rederive_{1,2,3}.csv.events.jsonl)
+        # measured i_cut = 6.3797373 A BIT-IDENTICAL across all three — the cut
+        # value is set by the deterministic substep sequence and does not jitter
+        # with host phase, which is itself a validation of the redesign. The band
+        # brackets the headless substep-count sweep envelope (6.256-6.398 A over
+        # n_sub 8-100, implementer bench 2026-08-31) with ~0.1 A of margin on
+        # each side, and still rejects the retired outcome-B approach-ring class
+        # (3.5-5.5 A) and any low-current spurious cut.
+        # History: the band shipped provisional at [5.5, 6.7] for a few hours
+        # because the FEASIBILITY bench's rig had reproduced 5.79-5.88 A — that
+        # figure is now attributed to that rig's own bring-up emulation (it also
+        # could not reproduce the old stimulus's live 6.285-6.290 A); the
+        # implementer's fuller harness and the live board agree.
+        # NOTE the cut TIME varies legitimately: ~0.102 s on a fresh boot,
+        # ~0.602 s when a prior run's latch makes the fw v23 recovery debounce
+        # (500 ms) precede the bring-up. Nothing here pins the time.
+        "events_require": [
+            {"kind": "scp_cut", "where": {"switch": "MOT_PWR"}, "count": 1,
+             "field": "i_cut", "min_value": 6.15, "max_value": 6.55},
+        ],
+        # (`provisional_note` deleted 2026-08-31 same-day: the band above is now
+        # measured, not provisional. The mechanism stays available for future
+        # not-yet-derived thresholds — see the events_require judge loop.)
         "events_forbid_over_absmax": True,
     },
     "bringup": {
@@ -1156,8 +1120,9 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
                                no check reads it — and the honest answer to "when
                                did this actually happen?".
 
-    Measured example, round-1 campaign 20260831_000518: scp-inrush's OC_FC cut is
-    stamped t = 0.600 by its own `scp_cut` event, `fault_first_t` says 2.000371,
+    Measured example, round-1 campaign 20260831_000518 (PRE-redesign stimulus —
+    the timings moved on 2026-08-31, the illustration did not): scp-inrush's OC_FC
+    cut is stamped t = 0.600 by its own `scp_cut` event, `fault_first_t` says 2.000371,
     and `fault_first_t_whole_run` says 0.600-ish. Quote the whole-run one to a
     reader; quote the post-grace one only when explaining a `not_before_s`
     verdict."""
@@ -1218,8 +1183,9 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
                     # post-grace-scoped by design (it feeds `not_before_s`, which
                     # judges the post-grace window), but that makes it report the
                     # GRACE BOUND as the onset time for any fault that latched
-                    # inside the window and persisted: scp-inrush's OC_FC cut is
-                    # measured at t = 0.600 by its own scp_cut event, and
+                    # inside the window and persisted: scp-inrush's OC_FC cut was
+                    # measured at t = 0.600 by its own scp_cut event (PRE-redesign
+                    # stimulus, 2026-08-31 — kept as the illustration), and
                     # `fault_first_t` says 2.000371 (round-1 campaign
                     # 20260831_000518). Both numbers are correct for their own
                     # question; only reporting the first one is what misleads.
@@ -1744,7 +1710,9 @@ def _judge_event_spec(req, events):
 
     `where` exists because `field_values` pools every event of a kind together:
     an scp-inrush run carries three sw_ring events (MOT_PWR plus FC_BUS/BT_BUS),
-    and the two-outcome expectation turns on telling them apart."""
+    and that entry's expectation turns on telling them apart.  (It was introduced
+    2026-08-31 for the two-outcome form of that entry; the entry is single-outcome
+    again since the stimulus redesign, and still pins `where` on its scp_cut.)"""
     spec = {"kind": req} if isinstance(req, str) else dict(req)
     kind = spec["kind"]
     where = spec.get("where") or {}
@@ -1813,8 +1781,10 @@ def analyze_events(path):
                 # FILTER (`where`) instead of only counting. `field_values` below
                 # pools every event of a kind together, which cannot separate the
                 # MOT_PWR sw_ring from the FC_BUS/BT_BUS ones that share it — and
-                # the two-outcome scp-inrush expectation turns on exactly that
-                # distinction. Bounded by construction: these events are rare (3-4
+                # the scp-inrush expectation turns on exactly that distinction
+                # (introduced for its two-outcome form; still load-bearing on the
+                # single-outcome `where` pin it uses since the 2026-08-31 stimulus
+                # redesign). Bounded by construction: these events are rare (3-4
                 # in a whole scp-inrush run), and only scalars are kept.
                 out["events_by_kind"].setdefault(k, []).append(
                     {fn: fv for fn, fv in e.items()
@@ -2005,21 +1975,32 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
         # events_require accepts EITHER a bare kind string (at least one such event)
         # or a dict pinning count and/or a numeric field's plausibility band. The
         # bare form is kept because most future entries will want nothing more.
+        # `provisional_note` (2026-08-31 review M3): a threshold in this entry has
+        # not yet been derived from a live campaign. The note rides the check
+        # detail (pass or fail) so results.json/REPORT.md carry the qualifier —
+        # a first-campaign band miss must read as "threshold not yet derived",
+        # never as a board/plant change. Remove the key when the band is pinned.
+        prov = expect.get("provisional_note")
+        prov_sfx = ("  [PROVISIONAL: %s]" % prov) if prov else ""
         for req in expect.get("events_require", ()):
             ok, observed, problems = _judge_event_spec(req, events)
             kind = (req if isinstance(req, str) else req["kind"])
             checks.append({
                 "name": "events_require_%s" % kind, "passed": ok,
                 "detail": (observed if ok else
-                           "%s — %s (%s)" % (observed, "; ".join(problems), why))})
+                           "%s — %s (%s)" % (observed, "; ".join(problems), why))
+                          + prov_sfx})
 
         # ── events_any_of: ONE stimulus, two legal orderings (2026-08-31) ────
         # A list of BRANCHES; each branch is {"name", "why", "events": [spec,...]}
         # and is satisfied when ALL of its specs pass. The check passes if ANY
         # branch does, and NAMES the branch that did — that label is the tracking
-        # signal (see the scp-inrush entry: it records which side of a one-tick
-        # race the run landed on, so the distribution is visible across
-        # campaigns instead of showing up as an intermittent FAIL).
+        # signal, so a race's distribution is visible across campaigns instead of
+        # showing up as an intermittent FAIL.
+        # ⚠️ NO TABLE ENTRY USES THIS TODAY. Its founding user, scp-inrush,
+        # migrated back to a single-outcome events_require on 2026-08-31 when its
+        # stimulus was redesigned to win the race outright. Kept for future races;
+        # fixing the stimulus is the preferred answer.
         for grp in expect.get("events_any_of", ()):
             branches = list(grp.get("branches") or ())
             results = []

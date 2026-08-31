@@ -42,18 +42,18 @@ def _args(**overrides):
 # 1. build_plan()
 # ─────────────────────────────────────────────────────────────────────────
 
-def test_build_plan_full_count_39_runs():
-    # 13 scenarios (ems-drive-cycle added this round) + 26 replays = 39.
+def test_build_plan_full_count_40_runs():
+    # 13 scenarios + 27 replays (SY0001/FU4 added this round) = 40.
     plan = rhs.build_plan(_args())
-    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 39
+    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 40
     kinds = [p["kind"] for p in plan]
     assert kinds.count("scenario") == 13
-    assert kinds.count("replay") == 26
+    assert kinds.count("replay") == 27
 
 
 def test_build_plan_replay_only():
     plan = rhs.build_plan(_args(replay_only=True))
-    assert len(plan) == 26
+    assert len(plan) == 27
     assert all(p["kind"] == "replay" for p in plan)
 
 
@@ -540,11 +540,17 @@ def _metrics(n_obs=10, rows=10, final_fault_flags=0, fault_bits_seen=0, final_st
 
 
 def _events(over_absmax=0, worst_ring_v=None, worst_over_absmax_ring_v=None,
-           kinds=None, field_values=None):
+           kinds=None, field_values=None, events_by_kind=None):
+    # events_by_kind (2026-08-31): analyze_events()'s real output always
+    # carries this key, and _judge_event_spec() reads a `where`-filtered spec
+    # from it rather than from field_values -- scp-inrush's single-outcome
+    # events_require now pins `where`, so any caller exercising it must pass
+    # events_by_kind explicitly (see _scp_cut_events() below).
     return {"total": 0, "kinds": kinds or {}, "over_absmax": over_absmax,
             "worst_ring_v": worst_ring_v,
             "worst_over_absmax_ring_v": worst_over_absmax_ring_v,
-            "field_values": field_values or {}}
+            "field_values": field_values or {},
+            "events_by_kind": events_by_kind or {}}
 
 
 def _child(status="ok", summary=None):
@@ -786,111 +792,213 @@ def test_judge_scenario_survive_to_fails_on_wrong_state_at_the_gate():
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 4c. events_any_of (2026-08-31): scp-inrush's ONE-TICK-RACE two-outcome
-#     expectation -- events_require moved into branch A, branch B added.
+# 4c. scp-inrush single-outcome events_require (2026-08-31 deterministic-fold
+#     redesign): the ONE-TICK-RACE two-outcome events_any_of form is RETIRED
+#     -- the stimulus now wins the race outright (see the SCP_INRUSH_ARM_V
+#     block in hil_plant_sim.py), so the entry is back to a plain
+#     events_require with a `where` filter. The band was PROVISIONAL at
+#     [5.5, 6.7] A for a few hours (2026-08-31); it is now MEASURED at
+#     [6.15, 6.55] A from three live board runs (i_cut 6.3797373 A
+#     bit-identical across all three) and `provisional_note` was deleted --
+#     see the entry's own comment in run_hil_suite.py.
 # ─────────────────────────────────────────────────────────────────────────
 
-def test_fault_expectations_scp_inrush_no_longer_carries_events_require():
-    """The bare events_require is GONE from scp-inrush -- both outcomes now
-    live inside its single events_any_of group."""
+def test_fault_expectations_scp_inrush_no_longer_carries_events_any_of():
+    """events_any_of is GONE from scp-inrush -- it is a single events_require
+    spec again, single-outcome."""
     expect = rhs.FAULT_EXPECTATIONS["scp-inrush"]
-    assert "events_require" not in expect
-    assert "events_any_of" in expect
-    assert len(expect["events_any_of"]) == 1
-    grp = expect["events_any_of"][0]
-    assert grp["name"] == "events_scp_fold_or_approach"
-    assert {b["name"] for b in grp["branches"]} == {"A_fold_fired", "B_fold_approached"}
+    assert "events_any_of" not in expect
+    assert "events_require" in expect
+    assert len(expect["events_require"]) == 1
 
 
-def test_fault_expectations_scp_inrush_branch_a_events_shape():
-    """Branch A carries exactly the OLD events_require spec (F2's tightened
-    6.0-6.6 A band), just relocated -- the physics didn't change, only where
-    it is scored."""
-    grp = rhs.FAULT_EXPECTATIONS["scp-inrush"]["events_any_of"][0]
-    br_a = next(b for b in grp["branches"] if b["name"] == "A_fold_fired")
-    assert br_a["events"] == [{"kind": "scp_cut", "count": 1,
-                               "field": "i_cut", "min_value": 6.0, "max_value": 6.6}]
-
-
-def test_fault_expectations_scp_inrush_branch_b_events_shape():
-    grp = rhs.FAULT_EXPECTATIONS["scp-inrush"]["events_any_of"][0]
-    br_b = next(b for b in grp["branches"] if b["name"] == "B_fold_approached")
-    assert br_b["events"] == [
-        {"kind": "scp_cut", "count": 0},
-        {"kind": "sw_ring", "where": {"switch": "MOT_PWR"}, "count": 1,
-         "field": "i_cut", "min_value": 3.5, "max_value": 5.5},
+def test_fault_expectations_scp_inrush_events_require_shape():
+    """The single spec: scp_cut, filtered to MOT_PWR, exactly one, i_cut in
+    the MEASURED [6.15, 6.55] A band (derived 2026-08-31 from three live
+    board runs that measured i_cut = 6.3797373 A bit-identical)."""
+    expect = rhs.FAULT_EXPECTATIONS["scp-inrush"]
+    assert expect["events_require"] == [
+        {"kind": "scp_cut", "where": {"switch": "MOT_PWR"}, "count": 1,
+         "field": "i_cut", "min_value": 6.15, "max_value": 6.55},
     ]
 
 
-def test_judge_scenario_scp_inrush_outcome_a_wins_fold_fired(tmp_path):
-    """Outcome A (the fold fired, L=2): one scp_cut in the [6.0, 6.6] A band,
-    no sw_ring events at all. The group must pass, name A_fold_fired as the
-    winner, and carry its 'STRONGER' label text."""
+def _scp_cut_events(i_cut, switch="MOT_PWR", extra=()):
+    """events dict carrying one scp_cut event (plus any `extra` events) with
+    events_by_kind populated -- required because the entry's spec uses
+    `where`, which _judge_event_spec reads from events_by_kind, not
+    field_values (see _judge_event_spec's docstring)."""
+    by_kind = {"scp_cut": [{"switch": switch, "i_cut": i_cut}]}
+    for kind, fields in extra:
+        by_kind.setdefault(kind, []).append(fields)
+    kinds = {k: len(v) for k, v in by_kind.items()}
+    return _events(kinds=kinds, events_by_kind=by_kind)
+
+
+def test_judge_scenario_scp_inrush_passes_inside_the_band_on_mot_pwr():
     m = _metrics(fault_bits_seen=0, final_fault_flags=0)
-    events = _events(kinds={"scp_cut": 1},
-                     field_values={"scp_cut": {"i_cut": [6.29]}})
+    events = _scp_cut_events(6.3797373)   # the actual live-measured value
     passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
-    grp = [c for c in checks if c["name"] == "events_scp_fold_or_approach"][0]
-    assert grp["passed"] is True
-    assert "OUTCOME **A_fold_fired**" in grp["detail"]
-    assert "STRONGER" in grp["detail"]
+    ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
+    assert ev["passed"] is True
     assert passed is True
 
 
-def test_judge_scenario_scp_inrush_outcome_b_wins_fold_approached():
-    """Outcome B (L=1, the teardown preempted the fold): zero scp_cut, one
-    MOT_PWR sw_ring in the [3.5, 5.5] A band. The `where` filter must isolate
-    it from an UNRELATED FC_BUS sw_ring the same run also carries (the exact
-    scenario `where` exists for -- field_values pools all sw_ring events
-    together and cannot tell them apart)."""
+def test_judge_scenario_scp_inrush_band_boundaries():
+    """6.15 and 6.55 A (the measured band edges) pass; just outside either
+    edge fails."""
     m = _metrics(fault_bits_seen=0, final_fault_flags=0)
-    events = _events(kinds={"sw_ring": 2},
-                     field_values={"sw_ring": {"i_cut": [4.5565, 1.2]}})
-    events["events_by_kind"] = {
-        "sw_ring": [{"switch": "MOT_PWR", "i_cut": 4.5565},
-                    {"switch": "FC_BUS", "i_cut": 1.2}],
-    }
-    passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
-    grp = [c for c in checks if c["name"] == "events_scp_fold_or_approach"][0]
-    assert grp["passed"] is True
-    assert "OUTCOME **B_fold_approached**" in grp["detail"]
-    assert "WEAKER" in grp["detail"]
-    assert "sw_ring[switch=MOT_PWR]" in grp["detail"]
-    assert passed is True
+    for i_cut in (6.15, 6.55, 6.3, 6.3797373):
+        events = _scp_cut_events(i_cut)
+        _passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
+        ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
+        assert ev["passed"] is True, i_cut
+
+    for i_cut in (6.149, 6.1, 6.551, 7.0, 5.5):
+        events = _scp_cut_events(i_cut)
+        _passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
+        ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
+        assert ev["passed"] is False, i_cut
 
 
-def test_judge_scenario_scp_inrush_neither_outcome_matches_fails_with_text():
-    """No scp_cut and no sw_ring at all -- neither branch's events pass, and
-    the group must fail with the 'NO outcome matched' text, naming both
-    branches' own problems."""
+def test_judge_scenario_scp_inrush_count_not_1_fails():
+    """Zero cuts, or more than one, both fail the count == 1 pin."""
     m = _metrics(fault_bits_seen=0, final_fault_flags=0)
-    events = _events()   # kinds == {}, field_values == {}
+
+    zero = _events(kinds={}, events_by_kind={})
+    _passed, checks = rhs.judge_scenario("scp-inrush", m, zero, _child())
+    ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
+    assert ev["passed"] is False
+
+    by_kind = {"scp_cut": [{"switch": "MOT_PWR", "i_cut": 6.0},
+                           {"switch": "MOT_PWR", "i_cut": 6.1}]}
+    two = _events(kinds={"scp_cut": 2}, events_by_kind=by_kind)
+    _passed2, checks2 = rhs.judge_scenario("scp-inrush", m, two, _child())
+    ev2 = [c for c in checks2 if c["name"] == "events_require_scp_cut"][0]
+    assert ev2["passed"] is False
+
+
+def test_judge_scenario_scp_inrush_same_band_cut_on_a_different_switch_does_not_satisfy():
+    """A scp_cut IN-BAND on FC_BUS instead of MOT_PWR must NOT satisfy the
+    `where` filter -- the whole point of pinning `where` on this entry."""
+    m = _metrics(fault_bits_seen=0, final_fault_flags=0)
+    events = _scp_cut_events(6.3, switch="FC_BUS")   # 6.3 is inside [6.15, 6.55]
     passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
-    grp = [c for c in checks if c["name"] == "events_scp_fold_or_approach"][0]
-    assert grp["passed"] is False
-    assert grp["detail"].startswith("NO outcome matched")
-    assert "A_fold_fired" in grp["detail"]
-    assert "B_fold_approached" in grp["detail"]
+    ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
+    assert ev["passed"] is False
     assert passed is False
 
 
-def test_judge_scenario_scp_inrush_outcome_a_band_boundaries_and_tightened_rejection():
-    """F2's tightened 6.0-6.6 A band, now scored inside branch A: boundary
-    values pass, values that would have passed the OLD 5.0-8.0 A band (5.5,
-    7.0) now fail branch A -- and since neither the scp_cut count nor the
-    sw_ring event exist for branch B either, the WHOLE group fails."""
-    m = _metrics(fault_bits_seen=0, final_fault_flags=0)
-    for i_cut in (6.0, 6.6, 6.290012976976211):
-        events = _events(kinds={"scp_cut": 1}, field_values={"scp_cut": {"i_cut": [i_cut]}})
-        _passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
-        grp = [c for c in checks if c["name"] == "events_scp_fold_or_approach"][0]
-        assert grp["passed"] is True, i_cut
+# ── `provisional_note` (2026-08-31 review M3; deleted from scp-inrush the
+#    same day once the band was live-measured) ──────────────────────────────
+# A threshold in an entry has not yet been derived from a live campaign; the
+# note rides EVERY events_require check's detail (pass or fail) so
+# results.json/REPORT.md carry the qualifier and a first-campaign band miss
+# reads as "threshold not yet derived", never as a board/plant change. The
+# MECHANISM is tested below against a synthetic expectation only -- scp-inrush
+# itself no longer carries the key (its band is measured, not provisional),
+# so the live-entry tests exercise its ABSENCE instead.
 
-    for i_cut in (5.5, 5.999, 6.601, 7.0):
-        events = _events(kinds={"scp_cut": 1}, field_values={"scp_cut": {"i_cut": [i_cut]}})
-        _passed, checks = rhs.judge_scenario("scp-inrush", m, events, _child())
-        grp = [c for c in checks if c["name"] == "events_scp_fold_or_approach"][0]
-        assert grp["passed"] is False, i_cut
+def test_fault_expectations_scp_inrush_does_not_carry_a_provisional_note():
+    """The band is now MEASURED (three live board runs, i_cut = 6.3797373 A
+    bit-identical), so `provisional_note` was DELETED the same day it was
+    added -- pinned here so a future accidental re-add (e.g. copy-pasting
+    the old comment block) is visible, and so the deletion this test
+    documents was the deliberate act the entry's own comment describes,
+    not a silent drop."""
+    expect = rhs.FAULT_EXPECTATIONS["scp-inrush"]
+    assert "provisional_note" not in expect
+
+
+def test_judge_scenario_scp_inrush_no_provisional_suffix_on_pass_or_fail():
+    """With the key gone, the live scp-inrush entry's events_require check
+    must carry NO [PROVISIONAL: ...] suffix, on either outcome."""
+    m = _metrics(fault_bits_seen=0, final_fault_flags=0)
+
+    passing = _scp_cut_events(6.3797373)   # in the measured band
+    _passed, checks = rhs.judge_scenario("scp-inrush", m, passing, _child())
+    ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
+    assert ev["passed"] is True
+    assert "PROVISIONAL" not in ev["detail"]
+
+    failing = _events(kinds={}, events_by_kind={})
+    _passed2, checks2 = rhs.judge_scenario("scp-inrush", m, failing, _child())
+    ev2 = [c for c in checks2 if c["name"] == "events_require_scp_cut"][0]
+    assert ev2["passed"] is False
+    assert "PROVISIONAL" not in ev2["detail"]
+
+
+_SYNTH_PROVISIONAL_NOTE_NAME = "__synthetic_provisional_note__"
+
+
+def test_judge_scenario_provisional_note_absent_key_adds_no_suffix():
+    """A synthetic entry with NO `provisional_note` key must get a plain
+    detail -- no bracket, no trailing whitespace from a would-be empty
+    suffix. Exercises both the PASS and FAIL side of the same
+    events_require spec, keyed off a synthetic table entry so this does not
+    depend on scp-inrush (or any other live entry) keeping the key at all."""
+    synth = {
+        "source": "test",
+        "events_require": [{"kind": "scp_cut", "count": 1}],
+    }
+    assert "provisional_note" not in synth
+    saved = dict(rhs.FAULT_EXPECTATIONS)
+    rhs.FAULT_EXPECTATIONS[_SYNTH_PROVISIONAL_NOTE_NAME] = synth
+    try:
+        m = _metrics(fault_bits_seen=0, final_fault_flags=0)
+
+        passing = _events(kinds={"scp_cut": 1})
+        _passed, checks = rhs.judge_scenario(
+            _SYNTH_PROVISIONAL_NOTE_NAME, m, passing, _child())
+        ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
+        assert ev["passed"] is True
+        assert "PROVISIONAL" not in ev["detail"]
+        assert not ev["detail"].endswith("]")
+
+        failing = _events()   # no scp_cut at all
+        _passed2, checks2 = rhs.judge_scenario(
+            _SYNTH_PROVISIONAL_NOTE_NAME, m, failing, _child())
+        ev2 = [c for c in checks2 if c["name"] == "events_require_scp_cut"][0]
+        assert ev2["passed"] is False
+        assert "PROVISIONAL" not in ev2["detail"]
+    finally:
+        rhs.FAULT_EXPECTATIONS.clear()
+        rhs.FAULT_EXPECTATIONS.update(saved)
+
+
+def test_judge_scenario_provisional_note_present_key_adds_suffix_to_a_synthetic_entry():
+    """The converse of the previous test: a synthetic entry WITH the key
+    gets the suffix on both outcomes, with the exact note text rendered
+    verbatim -- pins the "  [PROVISIONAL: <note>]" format itself (two
+    leading spaces, colon, verbatim note, closing bracket) independent of
+    scp-inrush's own note wording."""
+    note = "a synthetic threshold, never derived from anything"
+    synth = {
+        "source": "test",
+        "events_require": [{"kind": "scp_cut", "count": 1}],
+        "provisional_note": note,
+    }
+    saved = dict(rhs.FAULT_EXPECTATIONS)
+    rhs.FAULT_EXPECTATIONS[_SYNTH_PROVISIONAL_NOTE_NAME] = synth
+    try:
+        m = _metrics(fault_bits_seen=0, final_fault_flags=0)
+
+        passing = _events(kinds={"scp_cut": 1})
+        _passed, checks = rhs.judge_scenario(
+            _SYNTH_PROVISIONAL_NOTE_NAME, m, passing, _child())
+        ev = [c for c in checks if c["name"] == "events_require_scp_cut"][0]
+        assert ev["passed"] is True
+        assert ev["detail"].endswith("  [PROVISIONAL: %s]" % note)
+
+        failing = _events()
+        _passed2, checks2 = rhs.judge_scenario(
+            _SYNTH_PROVISIONAL_NOTE_NAME, m, failing, _child())
+        ev2 = [c for c in checks2 if c["name"] == "events_require_scp_cut"][0]
+        assert ev2["passed"] is False
+        assert ev2["detail"].endswith("  [PROVISIONAL: %s]" % note)
+    finally:
+        rhs.FAULT_EXPECTATIONS.clear()
+        rhs.FAULT_EXPECTATIONS.update(saved)
 
 
 # -- _judge_event_spec() unit coverage (shared by events_require and every
@@ -965,9 +1073,91 @@ def _validate_events_any_of_group(name, grp):
                 "every event spec needs a kind")
 
 
-def test_events_any_of_validation_accepts_the_live_scp_inrush_group():
-    grp = rhs.FAULT_EXPECTATIONS["scp-inrush"]["events_any_of"][0]
-    _validate_events_any_of_group("scp-inrush", grp)   # must not raise
+def test_events_any_of_validation_accepts_a_well_formed_synthetic_group():
+    """No table entry uses events_any_of today (scp-inrush migrated off it),
+    so the validation predicate is exercised against a synthetic group
+    instead of the live table -- proving the shape it accepts is still a
+    real, satisfiable one."""
+    grp = {"name": "synthetic_group", "branches": [
+        {"name": "a", "events": [{"kind": "scp_cut", "count": 1}]},
+        {"name": "b", "events": [{"kind": "scp_cut", "count": 0}]},
+    ]}
+    _validate_events_any_of_group("synthetic", grp)   # must not raise
+
+
+# ── events_any_of MECHANISM regression (2026-08-31) ─────────────────────────
+# scp-inrush migrated off events_any_of when its stimulus was redesigned to
+# win the one-tick race outright, so the mechanism now has NO live table
+# user. Kept for future races (see the "CURRENTLY UNUSED" comment at its
+# definition in run_hil_suite.py), and exercised here through a SYNTHETIC
+# FAULT_EXPECTATIONS entry -- installed and removed around each test, same
+# convention as test_fault_expectations_allow_only_defaults_to_require_or_error
+# above -- so the branch-naming/no-outcome-text machinery itself does not rot
+# untested just because nothing in the shipped table currently reaches it.
+
+_SYNTH_ANY_OF_NAME = "__synthetic_events_any_of__"
+
+_SYNTH_ANY_OF_ENTRY = {
+    "source": "test",
+    "events_any_of": [{
+        "name": "synthetic_race",
+        "branches": [
+            {"name": "branch_hi", "label": "the STRONGER outcome",
+             "events": [{"kind": "scp_cut", "count": 1,
+                        "field": "i_cut", "min_value": 6.0, "max_value": 6.6}]},
+            {"name": "branch_lo", "label": "the WEAKER outcome",
+             "events": [{"kind": "scp_cut", "count": 0},
+                       {"kind": "sw_ring", "count": 1,
+                        "field": "i_cut", "min_value": 3.5, "max_value": 5.5}]},
+        ],
+    }],
+}
+
+
+def _with_synthetic_any_of_entry():
+    """Context-manager-free install/restore helper (mirrors the existing
+    inline try/finally pattern at test_fault_expectations_allow_only_defaults_
+    to_require_or_error)."""
+    saved = dict(rhs.FAULT_EXPECTATIONS)
+    rhs.FAULT_EXPECTATIONS[_SYNTH_ANY_OF_NAME] = dict(_SYNTH_ANY_OF_ENTRY)
+    return saved
+
+
+def _restore_fault_expectations(saved):
+    rhs.FAULT_EXPECTATIONS.clear()
+    rhs.FAULT_EXPECTATIONS.update(saved)
+
+
+def test_judge_scenario_events_any_of_mechanism_names_the_winning_branch():
+    saved = _with_synthetic_any_of_entry()
+    try:
+        m = _metrics(fault_bits_seen=0, final_fault_flags=0)
+        events = _events(kinds={"scp_cut": 1},
+                         field_values={"scp_cut": {"i_cut": [6.29]}})
+        passed, checks = rhs.judge_scenario(_SYNTH_ANY_OF_NAME, m, events, _child())
+        grp = [c for c in checks if c["name"] == "synthetic_race"][0]
+        assert grp["passed"] is True
+        assert "OUTCOME **branch_hi**" in grp["detail"]
+        assert "the STRONGER outcome" in grp["detail"]
+        assert passed is True
+    finally:
+        _restore_fault_expectations(saved)
+
+
+def test_judge_scenario_events_any_of_mechanism_no_outcome_matched_text():
+    saved = _with_synthetic_any_of_entry()
+    try:
+        m = _metrics(fault_bits_seen=0, final_fault_flags=0)
+        events = _events()   # kinds == {}, field_values == {} -- neither branch
+        passed, checks = rhs.judge_scenario(_SYNTH_ANY_OF_NAME, m, events, _child())
+        grp = [c for c in checks if c["name"] == "synthetic_race"][0]
+        assert grp["passed"] is False
+        assert grp["detail"].startswith("NO outcome matched")
+        assert "branch_hi" in grp["detail"]
+        assert "branch_lo" in grp["detail"]
+        assert passed is False
+    finally:
+        _restore_fault_expectations(saved)
 
 
 def test_events_any_of_validation_rejects_a_one_branch_group():
@@ -1005,18 +1195,19 @@ def test_events_any_of_validation_rejects_a_branch_missing_name_or_events():
 
 def test_judge_scenario_events_forbid_over_absmax_pass_and_fail():
     """scp-inrush must exercise the foldback WITHOUT producing the Death-5
-    boost-kill signature (events_forbid_over_absmax)."""
+    boost-kill signature (events_forbid_over_absmax) -- still enforced under
+    the single-outcome events_require form."""
     m = _metrics(fault_bits_seen=0, final_fault_flags=0)
-    clean_events = _events(over_absmax=0, kinds={"scp_cut": 1},
-                           field_values={"scp_cut": {"i_cut": [6.29]}})
+    clean_events = _scp_cut_events(6.29)
+    clean_events["over_absmax"] = 0
     passed, checks = rhs.judge_scenario("scp-inrush", m, clean_events, _child())
     forbid = [c for c in checks if c["name"] == "events_no_over_absmax"][0]
     assert forbid["passed"] is True
     assert passed is True
 
-    ringing_events = _events(over_absmax=1, worst_over_absmax_ring_v=21.5,
-                             kinds={"scp_cut": 1},
-                             field_values={"scp_cut": {"i_cut": [6.29]}})
+    ringing_events = _scp_cut_events(6.29)
+    ringing_events["over_absmax"] = 1
+    ringing_events["worst_over_absmax_ring_v"] = 21.5
     passed2, checks2 = rhs.judge_scenario("scp-inrush", m, ringing_events, _child())
     forbid2 = [c for c in checks2 if c["name"] == "events_no_over_absmax"][0]
     assert forbid2["passed"] is False
@@ -1036,7 +1227,7 @@ def test_fault_expectations_schema_every_entry_has_a_nonempty_source():
 def test_fault_expectations_schema_only_known_fields():
     known = {"require", "allow_only", "not_before_s", "survive_to",
             "events_require", "events_any_of", "source", "signals_require",
-            "events_forbid_over_absmax"}
+            "events_forbid_over_absmax", "provisional_note"}
     for name, expect in rhs.FAULT_EXPECTATIONS.items():
         assert set(expect) <= known, (name, set(expect) - known)
 
@@ -2841,11 +3032,11 @@ def test_build_plan_pi_live_non_skip_scenarios_unaffected():
     assert live_names == default_names - PI_LIVE_SKIP_SCENARIOS
 
 
-def test_build_plan_pi_live_total_count_still_39():
-    """Skip records still occupy a plan slot -- the total run count (39) is
+def test_build_plan_pi_live_total_count_still_40():
+    """Skip records still occupy a plan slot -- the total run count (40) is
     unchanged under --pi-live, only their kind (executed vs skipped) differs."""
     plan = rhs.build_plan(_args(pi_live=True))
-    assert len(plan) == 39
+    assert len(plan) == 40
 
 
 # ─────────────────────────────────────────────────────────────────────────
