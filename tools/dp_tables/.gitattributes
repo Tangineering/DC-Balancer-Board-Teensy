@@ -1,0 +1,14 @@
+# Generated DP EMS tables are BYTE-DETERMINISTIC artifacts: regenerating one
+# with the same inputs must reproduce the same file, and the generator prints a
+# sha256 so that is checkable.  This repository is developed with
+# core.autocrlf=true, which would store LF in the index and check CRLF out into
+# the working tree — after which a freshly generated table (written with
+# newline="" and explicit \n) no longer matches the checked-out one, and the
+# determinism check reports a spurious difference.
+#
+# `-text` disables all end-of-line conversion for these files, so what is
+# committed is what is checked out is what the generator wrote.
+#
+# Scoped to this directory on purpose: it must not change how any other file in
+# the repository is handled.
+*.csv -text

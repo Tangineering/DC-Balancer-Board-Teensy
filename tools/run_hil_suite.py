@@ -409,6 +409,170 @@ FAULT_EXPECTATIONS = {
              ]},
         ],
     },
+    "ems-soc-band": {
+        # The DP-informed charge-sustaining EMS scenario (2026-08-31).  Its
+        # objective is NOT a fault: it is that the `soc-band` policy's three
+        # branches actually execute, and that the H2 metric accumulates.  "No
+        # fault" alone is satisfied by a run that cruises at 50/50 and never
+        # charges — the same rubber-stamp class signals_require exists for — so
+        # all four assertions below are POSITIVE.
+        #
+        # THE --pi-live TRADE-OFF IS FREE HERE.  Every scenario with an entry in
+        # this table loses judge_scenario()'s --pi-live PI_TIMEOUT excusal (see
+        # the `bringup` entry's note).  This scenario is EMS-driven, so under
+        # --pi-live build_plan() renders it SKIPPED outright (the emulated EMS
+        # layer IS its whole stimulus, and a real Pi replaces it) — it is never
+        # judged in that mode at all, so there is no excusal to forgo.
+        "source": "hil_plant_sim.py SCENARIOS['ems-soc-band'] + the SocBandStrategy "
+                  "docstring and the SOC_BAND_* constants (band half, share span, "
+                  "charge admission) + SOC_BAND_DRAIN_LOAD_A for the SoC-rate and "
+                  "LIMIT_I_FC_MAX budgets. Charge-window budget copied from "
+                  "charge-fault (same 1.0 m/s single-source operating point, same "
+                  "0.8 A de-rated ceiling, 19 % margin on LIMIT_I_FC_MAX).",
+        "allow_only": 0,              # expected completely fault-free
+        # The charge window opens at t = 41 (deceleration ends, trailing slope
+        # window fills by 42.0). Reaching it in Run is the precondition for the
+        # I_charge assertion below meaning anything.
+        "survive_to": {"t": 41.0, "states": {2, 3}},
+        "signals_require": [
+            # 1. The EMS ACTUALLY BIASED the split. Nominal is 0.50 and the
+            #    policy's ceiling is 0.75 (SOC_BAND_SHARE_NOMINAL +
+            #    SOC_BAND_SHARE_SPAN); 0.60 is unreachable without the SoC
+            #    leaving the band, and unmistakable if it did. Window opens at
+            #    the drain's full-load point (t = 13) and runs to the end of the
+            #    charge cruise — deliberately WIDE, because the crossing time
+            #    (t = 24.30) is a MODELLED number, not a measured one: if a
+            #    campaign shows the crossing later than modelled, the fix is the
+            #    SCENARIO's drain magnitude (SOC_BAND_DRAIN_LOAD_A), never this
+            #    threshold.
+            #    ⚠️ ONE SOURCE for 24.30 and for the 34.90 / 41.70 figures used
+            #    below and in the docs: the GENERATOR's matched-model `soc-band`
+            #    walk (`gen_dp_ems_table.py --scenario ems-dp-replay --dry-run`,
+            #    the `band exit t= / share saturation t= / first charge t=`
+            #    line). It is the same model the DP is solved against, so the
+            #    benchmark comparison and these windows cannot drift apart.
+            {"name": "share_biased_to_fc", "column": "cmd_share_sp",
+             "min_value": 0.60, "t_window": (13.0, 54.0),
+             "label": "soc-band commanded a share bias toward the fuel cell"},
+            # 2. ... and the FIRMWARE acted on it. cmd_share_sp is only what the
+            #    host asked for; I_fc is what the board's share loop delivered.
+            #    At the drain phase's ~1.45 A bus total, a 0.50 split is 0.72 A
+            #    and the policy's 0.75 ceiling is 1.09 A, so 0.85 A sits
+            #    unambiguously between the two (and 22 % under LIMIT_I_FC_MAX).
+            #    L1 (review, 2026-08-31) — the SAME caveat as signal #1, which
+            #    it inherits and which was previously stated only there: the
+            #    0.85 A threshold is derived from a MODELLED bus total, and the
+            #    window's start is tied to the same modelled band-exit time
+            #    (t = 24.30). If a campaign misses this check, the fix is the
+            #    SCENARIO's drain magnitude (SOC_BAND_DRAIN_LOAD_A) — which
+            #    moves both the crossing time and the bus total together —
+            #    NEVER this threshold. Lowering it to make a run pass would
+            #    quietly redefine "biased toward FC" as "not quite 50/50".
+            {"name": "fc_current_biased", "column": "I_fc",
+             "min_value": 0.85, "t_window": (13.0, 38.0),
+             "label": "the board's share loop moved current onto FC beyond the "
+                      "nominal split"},
+            # 3. The opportunistic charge window actually charged. Same form and
+            #    same 0.5 A threshold as charge-fault's check: comfortably under
+            #    the 0.8 A de-rated ceiling, unmistakably above an unpowered
+            #    charger's 0 A. Window starts at 44.0 — charge_goal is asserted
+            #    at ~42.0, then AG105_SETTLE_S 0.5 s + ~0.38 s of the
+            #    AG105_TAU_S ramp puts I_charge over 0.5 A by ~42.9.
+            {"name": "charge_window", "column": "I_charge", "min_value": 0.5,
+             "t_window": (44.0, 54.0),
+             "label": "opportunistic FC-path charging established in the low "
+                      "cruise window"},
+            # 4. The H2 metric ran end to end. h2_cum_g is monotone, so the peak
+            #    IS the final value. Budget: the drain phase alone holds the FC
+            #    channel near 0.72-1.09 A of bus current, i.e. ~11-17 W of stack
+            #    power, for ~25 s; at the model's 1.7638e-5 g/s/W DC gain that is
+            #    ~5e-3 g, so 1e-3 g is a ~5x-margin floor that still fails a run
+            #    where the column is absent, zero, or frozen.
+            #    ⚠️ The figure is the Gfc MODEL'S ESTIMATE: the map is
+            #    scale-portable, but the stack is not identified against this
+            #    rig (TODO(calibrate) — H2Consumption banner in
+            #    hil_plant_sim.py). This check asserts that the accounting RAN,
+            #    not that the absolute mass is calibrated.
+            {"name": "h2_accounted", "column": "h2_cum_g", "min_value": 1.0e-3,
+             "label": "the H2 consumption metric accumulated over the run"},
+        ],
+    },
+    "ems-dp-replay": {
+        # The NON-CAUSAL offline-optimal benchmark run (2026-08-31): the same
+        # cycle and the same drain as `ems-soc-band`, driven by a setpoint table
+        # that tools/gen_dp_ems_table.py computed by backward dynamic
+        # programming with full foreknowledge.  Its objective is that the TABLE
+        # WAS ACTUALLY PLAYED and the run stayed clean, so — exactly as for
+        # ems-soc-band — every assertion below is POSITIVE.  "No fault" alone
+        # would be satisfied by a run that never left the 0.50 default.
+        #
+        # --pi-live: EMS-driven, so build_plan() renders it SKIPPED and it is
+        # never judged in that mode; the excusal this table forgoes costs
+        # nothing (see the `bringup` entry's note).
+        "source": "hil_plant_sim.py SCENARIOS['ems-dp-replay'] (a DERIVED entry "
+                  "sharing ems-soc-band's ems_v_profile object and drain load) + "
+                  "the DpReplayStrategy docstring + the SHIPPED TABLE "
+                  "tools/dp_tables/dp_ems_table_ems-dp-replay.csv, whose own "
+                  "header carries the DP-predicted totals. Every threshold below "
+                  "is READ OFF THAT TABLE (share trajectory measured 2026-08-31, "
+                  "`--charger-accounting physical`: 0.2500 at standstill, ramping "
+                  "from t=4.0, at the 0.7500 rail continuously over t=10.6-40.1, "
+                  "~0.5250 through the low cruise, back to 0.2500 by t=55.5; "
+                  "charge_goal is 0 for the ENTIRE run — see the note below).",
+        "allow_only": 0,              # expected completely fault-free
+        # Deep inside the Run window (the strategy hands back MODE_SAFE at
+        # SOC_BAND_RUN_EXIT_S = 58.0), so this asserts the run reached the low
+        # cruise fault-free rather than merely surviving the drain phase.
+        "survive_to": {"t": 50.0, "states": {2, 3}},
+        # WHY THERE IS NO CHARGE CHECK, where `ems-soc-band` has one. It is a
+        # FINDING, not an omission: the DP opens the charger path on ZERO
+        # stages of this cycle. Shifting the split toward the fuel cell buys
+        # 0.405 SoC per gram; running the Ag105 buys 0.169, so opportunistic
+        # charging is simply the worse lever at this rig's numbers. Asserting a
+        # charge window here would assert something the optimum deliberately
+        # does not do.
+        "signals_require": [
+            # 1. THE DP-SPECIFIC assertion, and the sharpest one available:
+            #    the table is at the 0.7500 rail from t = 10.6, whereas the
+            #    causal `soc-band` policy cannot reach 0.75 before its SoC
+            #    deficit saturates at t = 34.90 (the generator's matched-model
+            #    walk — the same single source as the ems-soc-band entry's
+            #    24.30, see the note there). A >= 0.74 command inside t = 12-20 s is
+            #    therefore reachable by the DP TABLE and by nothing else this
+            #    scenario could accidentally be running — the firmware's own
+            #    default is 0.50 and the table's floor is 0.25. This is the
+            #    "is this actually the DP's table?" check.
+            {"name": "dp_early_fc_rail", "column": "cmd_share_sp",
+             "min_value": 0.74, "t_window": (12.0, 20.0),
+             "label": "the DP table's early fuel-cell rail (0.7500 from "
+                      "t=10.6) was commanded — a value soc-band cannot reach "
+                      "before t=34.90"},
+            # 2. ... and the FIRMWARE acted on it. cmd_share_sp is only what
+            #    the host asked for; I_fc is what the board's share loop
+            #    delivered. At the drain phase's ~1.462 A bus total a 0.50
+            #    split is 0.73 A and the table's 0.75 rail is 1.10 A, so
+            #    0.95 A sits unambiguously between the two — and 32 % under
+            #    LIMIT_I_FC_MAX 1.4 A, the same budget the generator's charge
+            #    mask and the ems-soc-band entry both work against.
+            {"name": "dp_fc_current_railed", "column": "I_fc",
+             "min_value": 0.95, "t_window": (14.0, 37.5),
+             "label": "the board's share loop moved current onto FC to the "
+                      "table's commanded rail"},
+            # 3. The H2 metric ran end to end, so the comparison against
+            #    `ems-soc-band` has both halves. h2_cum_g is monotone, so the
+            #    peak IS the final value. Budget: the table's own header
+            #    predicts h2_g_physical = 1.176e-2 g for this cycle, so 2e-3 g
+            #    is a ~6x-margin floor that still fails a run where the column
+            #    is absent, zero or frozen.
+            #    ⚠️ The figure is the Gfc MODEL'S ESTIMATE: scale-portable
+            #    map, stack not identified against this rig (TODO(calibrate) —
+            #    H2Consumption banner in hil_plant_sim.py). This asserts that
+            #    the accounting RAN, not that the absolute mass is calibrated;
+            #    the DP-vs-soc-band RANKING is robust either way.
+            {"name": "dp_h2_accounted", "column": "h2_cum_g", "min_value": 2.0e-3,
+             "label": "the H2 consumption metric accumulated over the run"},
+        ],
+    },
     "handoff-sag": {
         # F2 (kept): this is a live simulation of the TP0178/TP0201 class, whose
         # RECORDED margin above LIMIT_V_BUS_MIN was only 0.15-0.185 V with a ~10 ms
@@ -1133,7 +1297,31 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
          "grace_s": grace_s, "survive_to_t": survive_to_t,
          "fault_bits_before_survive": 0, "state_at_survive": None,
          "final_state": None, "duration_s": None,
-         "substep_hz_min": None, "substep_hz_mean": None, "error": None}
+         "substep_hz_min": None, "substep_hz_mean": None, "error": None,
+         # ── EMS COMPARISON SURFACE (2026-08-31) ─────────────────────────────
+         # Two energy-accounting summaries, collected for ANY scenario whose CSV
+         # carries the columns and left None for every scenario that does not.
+         # Deliberately GENERIC and blank-tolerant rather than keyed to a
+         # scenario name: `h2_cum_g` / `soc` are appended by hil_plant_sim.py in
+         # simulated-plant mode, so every simulated scenario gets them for free
+         # and a replay run (whose CSV has neither) gets None.
+         #   final_h2_cum_g  last non-blank h2_cum_g. The column is a monotone
+         #                   cumulative integral, so the last row IS the total.
+         #                   ⚠️ This is the Gfc MODEL'S ESTIMATE of hydrogen
+         #                   mass. The map is scale-portable; the stack is NOT
+         #                   identified against this rig, TODO(calibrate)
+         #                   (H2Consumption banner in hil_plant_sim.py). Quote
+         #                   an absolute value with that caveat; a RANKING of
+         #                   two runs on this rig is robust regardless.
+         #   delta_soc       last soc minus first soc, i.e. how much charge the
+         #                   run actually spent.
+         # They exist so `ems-soc-band` (causal) and `ems-dp-replay` (the
+         # NON-CAUSAL DP benchmark) can be read side by side in REPORT.md. Read
+         # them as a PAIR: any strategy burns less hydrogen by discharging the
+         # pack harder, so a hydrogen ranking is only valid at matched
+         # delta_soc.
+         "final_h2_cum_g": None, "soc_first": None, "soc_last": None,
+         "delta_soc": None}
     if not os.path.isfile(csv_path):
         m["error"] = "CSV not written"
         return m
@@ -1215,11 +1403,33 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
                         subs.append(float(s))
                     except ValueError:
                         pass
+                # EMS comparison surface. Blank-tolerant on purpose: a scenario
+                # CSV without these columns leaves the metrics None, and a
+                # single unparseable cell is skipped rather than aborting the
+                # scan — these are REPORTING figures, and no check reads them,
+                # so a malformed cell must never cost a run its verdict.
+                h2 = (row.get("h2_cum_g") or "").strip()
+                if h2:
+                    try:
+                        m["final_h2_cum_g"] = float(h2)
+                    except ValueError:
+                        pass
+                sc = (row.get("soc") or "").strip()
+                if sc:
+                    try:
+                        val = float(sc)
+                        if m["soc_first"] is None:
+                            m["soc_first"] = val
+                        m["soc_last"] = val
+                    except ValueError:
+                        pass
     except OSError as exc:
         m["error"] = str(exc)
         return m
     if t_first is not None and t_last is not None:
         m["duration_s"] = t_last - t_first
+    if m["soc_first"] is not None and m["soc_last"] is not None:
+        m["delta_soc"] = m["soc_last"] - m["soc_first"]
     if subs:
         m["substep_hz_min"] = min(subs)
         m["substep_hz_mean"] = sum(subs) / len(subs)
@@ -2418,6 +2628,30 @@ def render_report(meta, results):
             if m.get("substep_hz_mean") is not None:
                 A("- hi-fi substep rate: mean %.0f Hz, min %.0f Hz"
                   % (m["substep_hz_mean"], m["substep_hz_min"]))
+            # EMS comparison surface. Rendered for any run whose CSV carried the
+            # columns, so `ems-soc-band` (causal) and `ems-dp-replay` (the
+            # NON-CAUSAL DP benchmark) line up directly.
+            if m.get("final_h2_cum_g") is not None or m.get("delta_soc") is not None:
+                A("- EMS energy: h2_cum_g %s, delta_soc %s (SoC %s -> %s)"
+                  % (("%.6g" % m["final_h2_cum_g"])
+                     if m.get("final_h2_cum_g") is not None else "—",
+                     ("%+.6f" % m["delta_soc"])
+                     if m.get("delta_soc") is not None else "—",
+                     ("%.6f" % m["soc_first"])
+                     if m.get("soc_first") is not None else "—",
+                     ("%.6f" % m["soc_last"])
+                     if m.get("soc_last") is not None else "—"))
+                A("  - ⚠️ h2_cum_g is the Gfc **model's estimate** of hydrogen "
+                  "mass. The map is scale-portable (operator ruling "
+                  "2026-08-31: `P_fc` in W and the g/s output both ride the "
+                  "system's energy scaling factor), but the coefficients are "
+                  "**not identified against this rig's stack** "
+                  "(`TODO(calibrate)`) — see the H2Consumption banner in "
+                  "`hil_plant_sim.py`. Quote an absolute figure with that "
+                  "caveat; a ranking of two runs on this rig is robust "
+                  "regardless. Read it WITH delta_soc either way: any strategy "
+                  "burns less hydrogen by discharging the pack harder, so a "
+                  "hydrogen ranking is only valid at matched delta_soc.")
             ev = r.get("events", {})
             if ev.get("read_error"):
                 # L9(b): a sidecar that failed to READ must not render as a silent
@@ -2734,7 +2968,7 @@ def main(argv=None):
     # over whatever a replay run injects (replay mode plays recorded rails
     # regardless of what the Pi commands, and — unlike the scenario half — the
     # replay half is not skip-recorded per entry, so --pi-live would silently
-    # run all 26 replays with a live Pi fighting the replayed trajectory).
+    # run all 27 replays with a live Pi fighting the replayed trajectory).
     # --replay-only + --pi-live has NOTHING left to run once the whole replay
     # half is skipped for that reason, so refuse the combination up front
     # rather than producing an empty, confusing plan.
@@ -2930,6 +3164,15 @@ def _run_plan(plan, args, problems, results, write_outputs):
             key = "obs %d/%d, faults %s" % (
                 metrics["n_obs"], metrics["rows"],
                 fault_names(metrics.get("fault_bits_post_grace") or 0))
+            # EMS comparison surface (2026-08-31): only appended when the run
+            # actually produced both figures, so no scenario's summary row grows
+            # a pair of em-dashes it has no use for. Present for every simulated
+            # scenario, which is what lets `ems-soc-band` and `ems-dp-replay` be
+            # compared straight off the summary table.
+            if (metrics.get("final_h2_cum_g") is not None
+                    and metrics.get("delta_soc") is not None):
+                key += ", h2 %.4g g / dSoC %+.5f" % (
+                    metrics["final_h2_cum_g"], metrics["delta_soc"])
             res = {"kind": "scenario", "name": item["name"], "mode": item["mode"],
                    "cmd_mode": _suite_mode(args),
                    "electrical_required": item["electrical_required"],

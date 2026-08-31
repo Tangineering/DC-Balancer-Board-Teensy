@@ -3,3 +3,4 @@ __pycache__/
 .venv_hil/
 
 HIL Results/
+references/EMS/simulink_pdem_output_stochastic_*.mat

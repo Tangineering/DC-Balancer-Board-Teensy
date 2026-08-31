@@ -234,7 +234,16 @@ It carries:
   model-provenance record**: a `K_DROOP_BUS` retune or a `K_F` correction moves
   the hash, so two runs can be compared without anybody having to remember which
   constants were in the tree. The dict itself is included, so the hash is
-  auditable rather than opaque;
+  auditable rather than opaque.
+  **Changelog — 2026-08-31: the hash moved.** The DP-EMS round added **20
+  constant names** (16 `SOC_BAND_*`, plus `H2_GFC_TS_S`,
+  `H2_GFC_DC_GAIN_GPS_PER_W`, `H2_GFC_TAU_DOMINANT_S` and
+  `H2_STATIC_PROXY_GPS_PER_W`). The additions are **purely additive — no
+  pre-existing constant changed value** — but because the hash covers the whole
+  set, a pre-2026-08-31 `constants_hash` is **not comparable** with a later one
+  even on an otherwise identical model. Compare the `constants` dict, not the
+  hash, across that boundary (this is exactly the limitation
+  `collect_model_constants()` documents);
 * `git`: the HEAD revision and a `dirty` flag (nulls if git is unavailable —
   provenance never fails a bench run);
 * `results`: achieved rate, ticks, `csv_rows`, max overrun, frame counters
@@ -382,6 +391,169 @@ Refused combinations (argparse-level, with the reason printed):
 * Exit summary: `pi commands sent: N (EMS hold-5050, N policy evaluations; final
   v_sp=... share_sp=...)`.
 * CSV columns `cmd_v_sp` / `cmd_share_sp` carry what was actually commanded.
+* CSV columns `h2_rate_gps` / `h2_cum_g` carry the hydrogen-consumption metric,
+  and the exit summary prints the cumulative total. ⚠️ These are the **Gfc
+  model's estimate** of hydrogen mass: the map is scale-portable, but the stack
+  is not identified against this rig (`TODO(calibrate)`). See the warning under
+  §3.2.2.
+
+### 3.2.1 The strategies that exist
+
+`--ems` choices come from `EMS_STRATEGIES` in `tools/hil_plant_sim.py`.
+
+| Strategy | Decides | Portable to a real Pi? | Paired scenario |
+|---|---|---|---|
+| `hold-5050` | share pinned at 0.50; `v_setpoint` from the scenario profile; no charging | **Yes** — reads only `t` and `v_profile` | `ems-drive-cycle` |
+| `regen-harvest` | same, plus `charge_goal` **inside braking windows only**, so the Ag105 is fed through REGEN and `FC_CHARGE` never opens | **Yes** — same two keys | `charge-regen` |
+| `soc-band` | deadband-P **share bias** on the SoC error, plus **opportunistic FC-path charging** in cruise | **No, as written** — it closes on `fb["soc"]`, which is plant truth (see the portability list under §3.3) | `ems-soc-band` |
+| `dp-replay` | nothing — it **plays back a table** of `power_share_setpoint` / `charge_goal` computed **offline** by backward dynamic programming with full foreknowledge of the whole cycle | **No, and never** — a Pi has no future. This is a *benchmark*, not a controller | `ems-dp-replay` |
+
+### 3.2.2 `soc-band` and the H2 metric — a walkthrough
+
+```powershell
+.venv_hil\Scripts\python.exe tools\hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario ems-soc-band --dash
+```
+
+`--ems` may be omitted: the scenario declares `soc-band` as its default.
+
+**What the policy does.** It captures the SoC it started at (`SoC0`) on its first
+call and sustains *that* — it does not choose an absolute target. Inside a
+±`SOC_BAND_HALF` deadband the split stays at 0.50. Below the band it shifts load
+toward the **fuel cell** (higher `power_share_setpoint`, so the pack discharges
+more slowly), above it toward the **battery**, proportionally, saturating at
+±0.25 — i.e. the command never leaves `[0.25, 0.75]` and so can never trip the
+firmware's share-cut band `[0.15, 0.85]`. It asserts `charge_goal` only when all
+three of: SoC genuinely below the band, **cruise** (measured from a trailing
+1 s window of setpoints it has already issued — never by looking ahead), and a
+measured source total under the admission threshold. It never charges during
+acceleration (operator ruling (b), 2026-08-30: FC-path charging and hard
+acceleration are incompatible on this hardware by design).
+
+**What you should see**, on the 61 s scenario:
+
+| t (s) | Expect |
+|---|---|
+| 3 | `MODE_HYBRID`; the board leaves Idle |
+| 8–38 | cruise 1.5 m/s with a 1.0 A drain load; `share sp` holds 0.500 while SoC is inside the band |
+| 24.30 | `share sp` starts climbing — SoC has left the band |
+| 34.90 | `share sp` saturates at **0.750**; `I_fc` visibly above `I_bt` |
+| 38–41 | decelerate to 1.0 m/s, drain ramps out; **no** charging (not cruise) |
+| 41.70 | `charge_goal` asserts; `SW_FC_CHARGE` sets and `SW_BT_BUS` clears |
+| ≈ 42.6 | `I_charge` > 0.5 A (0.8 A de-rated ceiling for this scenario) |
+| 54–58 | decelerate to standstill, charging released |
+| 58 | `MODE_SAFE`; Run → Finish → Idle |
+
+Fault-free throughout is the expected outcome.
+
+> ### ⚠️ The H2 numbers are model estimates, not stack-calibrated
+> `Gfc` is the fuel-cell consumption model from the PhD student's FCHEV study
+> (`references/EMS/DPtrial.m:51-52`), fit at full scale (106 kW). It is
+> **scale-portable without adjustment** (operator ruling 2026-08-31): its input
+> (`P_fc`, W) and output (g/s) both ride the system's energy scaling factor, per
+> `references/Systemic_Scaling_of_Powertrain_Models_with_Youla_Driver_Control.pdf`
+> — the `720` in `den[0] = 1044 = 720 × 1.45` is the full-size **fuel cell's
+> OCV**, not a battery term. What it is **not** is identified against this rig's
+> particular stack (`TODO(calibrate)`), and its DC gain implies η = 47.25 % where
+> the same study's static proxy assumes 55 % (+16.4 %). Quote `h2_cum_g` as the
+> model's estimate with that calibration caveat; strategy *rankings* on the same
+> rig are robust regardless. Full statement: `docs/HIL_PLANT.md` §9.3.
+
+### 3.2.3 `dp-replay` — the offline-optimal benchmark
+
+```powershell
+.venv_hil\Scripts\python.exe tools\hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario ems-dp-replay --dash
+```
+
+> ### ⚠️ This is NOT a controller
+> `dp-replay` plays back a **time-indexed setpoint table** computed offline with
+> **full foreknowledge of the entire drive cycle and the entire auxiliary
+> load**. It reads no feedback and reacts to nothing. Its only purpose is to be
+> the **lower-bound reference** the causal strategies are ranked against — "how
+> much did `soc-band` leave on the table?". It is not implementable on the Pi
+> and it is **meaningless against any other profile**, which is why it refuses
+> to start unless the active scenario's profile fingerprint matches the table's.
+
+**Generating the table.** The table is checked in at
+`tools/dp_tables/dp_ems_table_ems-dp-replay.csv`, so a normal run needs no
+extra step. Regenerate it after any change to the `ems-soc-band` /
+`ems-dp-replay` profile or drain constants — the strategy will refuse until you
+do, naming the mismatch:
+
+```powershell
+C:\Users\ricky\miniforge3\python.exe tools\gen_dp_ems_table.py --scenario ems-dp-replay --force
+```
+
+The generator needs **numpy**, so it runs under **miniforge**, not `.venv_hil`
+(which is stdlib-only and is the *simulator's* interpreter). It is offline
+tooling — nothing in the 1 kHz loop imports it. It refuses to overwrite an
+existing table without `--force`, and is byte-deterministic: the same inputs
+produce the same file, and it prints a sha256 so that is checkable.
+
+**One flag you must get right.** `--charger-accounting` selects which hydrogen
+accounting the DP minimises, and it must match the electrical engine the table
+will be replayed under:
+
+| Setting | For | Why |
+|---|---|---|
+| `physical` (default) | `--electrical hifi`, i.e. a **default suite campaign** (`--electrical-pref` is `hifi`) | hi-fi stamps the Ag105's draw on the bus, so the fuel cell genuinely pays for charging |
+| `simple` | `--electrical simple` | simple mode does **not** stamp it, so the logged metric gives pack charge away free — a `physical` table replayed there is beaten by `soc-band` and is not a bound at all |
+
+**What you should see**, on the 61 s scenario (from the shipped `physical`
+table):
+
+| t (s) | Expect |
+|---|---|
+| 3 | `MODE_HYBRID`; the board leaves Idle |
+| 0–4 | `share sp` **0.250** — the DP runs on the battery while the bus is quiet |
+| 4–10.6 | `share sp` ramps up as the drain load comes on |
+| 10.6–40.1 | `share sp` pinned at **0.750**, the fuel-cell rail; `I_fc` ≈ 1.10 A of a ~1.46 A bus total |
+| 41–54 | `share sp` ≈ **0.525** through the low cruise |
+| 54–58 | `share sp` back down to 0.250 |
+| 58 | `MODE_SAFE`; Run → Finish → Idle |
+
+`charge_goal` is **0 for the entire run**, and that is a *result*, not a gap:
+shifting the split toward the fuel cell buys 0.405 SoC per gram of hydrogen
+where running the Ag105 buys 0.169, so opportunistic charging is simply the
+worse lever at this rig's numbers. Fault-free throughout is the expected
+outcome.
+
+The single sharpest tell that the table really was played: `cmd_share_sp` is at
+**0.750 by t ≈ 12 s**, which the causal `soc-band` policy cannot reach before
+t ≈ 35 (its SoC deficit has to saturate first).
+
+### 3.2.4 Comparing EMS strategies
+
+Run `ems-soc-band` (causal) and `ems-dp-replay` (offline-optimal) — the suite
+runs both, on the **same profile, the same drain load and the same object** for
+the speed profile, so nothing but the decision rule differs. Compare on **three
+axes, and never on one alone**:
+
+1. **`h2_cum_g`** — cumulative hydrogen. ⚠️ The model's estimate, stack not
+   identified against this rig (§3.2.2's warning); the *ranking* is robust.
+2. **`delta_soc`** — how much pack charge the run actually spent.
+3. **Share tracking** — did `I_fc` follow `cmd_share_sp`? That is the *firmware's*
+   contribution and is separate from the policy's.
+
+Both of the first two appear in `REPORT.md`'s summary row and in the per-scenario
+block (`EMS energy: h2_cum_g …, delta_soc …`), for **any** scenario whose CSV
+carries the columns.
+
+**Axes 1 and 2 are a PAIR.** Any strategy burns less hydrogen by discharging the
+pack harder, so a hydrogen ranking is only valid at matched `delta_soc`. The
+generator handles this on the prediction side by bisecting its terminal-SoC
+weight until the DP's predicted terminal SoC equals the causal strategy's
+(`--match-terminal-soc`, default `heuristic`); on that matched basis its own
+reduced model predicts the DP **14.3 % below** `soc-band`. The *measured* run
+will not match either prediction exactly, and there is no mechanism forcing the
+two realised runs to land on the same `delta_soc` — so read the measured pair as
+a pair, and treat a hydrogen difference at visibly different `delta_soc` as
+uninterpretable rather than as a ranking.
+
+**Two more caveats before quoting a comparison.** The DP's advantage is computed
+in a *reduced* model (no share loop, no Ag105 settle/ramp, a 0.1 s stage, the
+`Gfc` **DC gain** rather than its 0.22 s dynamics), so it is an estimate of the
+gap, not a measurement of it. And the DP is open loop by construction: it cannot
+react to the board or the plant doing anything the generator did not predict.
 
 ### 3.3 Adding a strategy
 
@@ -665,7 +837,7 @@ gap at the boundary. On a non-HIL build nothing clears a latch except a board re
 ## 5. Suite runs
 
 ```powershell
-# scripted, everything (13 scenarios + 26 replays; `drive` is SKIPPED, see below)
+# scripted, everything (15 scenarios + 27 replays; `drive` is SKIPPED, see below)
 .venv_hil\Scripts\python.exe tools\run_hil_suite.py --teensy-ip 192.168.1.50
 
 # with the live dashboard on each child (needs a real terminal)

@@ -251,8 +251,8 @@ RESET_STEP_WITHIN_S = 0.15
 # CSV carries the SAME inherited settle latch every scenario CSV does: from fw v23
 # the board warm-resets out of the previous run's ERR_HIL_STALE latch at t ~= 0.5 s,
 # so a run that had nothing to do with it opens showing 0x8010 (or 0x8011 / 0xA010
-# when its predecessor latched something of its own).  19 of the 26 replays in the
-# first fw v23 suite pass FAILed on nothing but that.  Value imported from
+# when its predecessor latched something of its own).  19 of the 26 replays THEN
+# IN THE SUITE (27 today) FAILed in the first fw v23 pass on nothing but that.  Value imported from
 # hil_plant_sim (WARM_RESET_GRACE_S) so this and run_hil_suite.py cannot diverge.
 #
 # Self-guarding, and worth stating: this excludes an observation WINDOW, never a

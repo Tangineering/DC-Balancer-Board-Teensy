@@ -73,6 +73,7 @@ do not influence the replayed trajectory.  See docs/HIL_MODE.md "Replay mode".
 """
 
 import argparse
+import bisect
 import csv
 import datetime
 import hashlib
@@ -581,6 +582,181 @@ def mdac_fraction(word: int) -> float:
     return (word & 0x0FFF) / float(MDAC_RES)
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# HYDROGEN-CONSUMPTION METRIC — the Gfc transfer function, discretized
+#
+# ⚠️ MANDATORY BANNER — READ BEFORE QUOTING ANY NUMBER THIS PRODUCES ⚠️
+#
+#   Gfc is a FULL-SCALE (106 kW) fuel-cell hydrogen-consumption model taken
+#   VERBATIM from the PhD student's FCHEV dynamic-programming study.  It is the
+#   commented-out `H2_tf` at references/EMS/DPtrial.m:51-52, with its two scalar
+#   prefactors folded into the coefficients:
+#       num = 2.016 * [2.733, 1.115e6, 1.234e9, 3.211e11]
+#           =         [5.51,  2.248e6, 2.488e9, 6.473e11]
+#       den = 720*1.45 * [1, 1.187e7, 1.948e10, 7.864e12, 3.515e13]
+#           =        [1044, 1.239e10, 2.034e13, 8.21e15,  3.67e16]
+#   Input  u = P_fc in WATTS.  Output y = hydrogen mass rate in g/s.
+#
+#   SCALE PORTABILITY — RESOLVED (operator ruling, 2026-08-31): the 720 in
+#   den[0] = 1044 = 720 * 1.45 is the FULL-SIZE FUEL CELL's OCV (the earlier
+#   reading of it as the battery pack's Em was wrong — both happen to be 720 V
+#   in that model).  The transfer function needs NO adjustment for this rig:
+#   its input (P_fc, W) and output (H2 mass rate, g/s) both ride the system's
+#   energy scaling factor, so the g/s-per-W map is scale-invariant under the
+#   systemic scaling methodology — see
+#   references/Systemic_Scaling_of_Powertrain_Models_with_Youla_Driver_Control.pdf
+#   (Tan, Yadav & Assadian).  H2 numbers from this path are therefore the
+#   model's estimate proper, not merely relative figures.  Remaining caveats,
+#   which are about the MODEL, not the scaling:
+#
+#     1. STACK IDENTIFICATION.  The coefficients were fit for the full-size
+#        stack's consumption behaviour; they have NOT been identified against
+#        THIS stack.  TODO(calibrate) — that is the surviving obligation.
+#     2. EFFICIENCY DISAGREEMENT.  Its DC gain 1.7637602179836514e-05 g/s/W is
+#        1.164x the DP's OWN static proxy `W_H2 = P_fc/(0.55*120000)`
+#        (DPtrial.m:43), i.e. it implies eta = 47.25 % where the same script
+#        assumes 55 % — a +16.4 % disagreement INSIDE one study.  A model
+#        choice to be aware of when comparing against proxy-based numbers.
+#     3. DYNAMICS.  Its dominant time constant is 0.2212 s.  That is a
+#        CONSUMPTION-dynamics claim (fuel delivery / stack thermodynamics) and
+#        is a DIFFERENT quantity from the ELECTRICAL FC_TAU_S = 0.020 s
+#        double-layer lag modelled in hil_electrical.py:405.  The two are not
+#        alternatives and must not be reconciled with each other.  Whether the
+#        full-size consumption lag transfers unchanged to a small stack is
+#        part of caveat 1.
+#
+# ── Discretization: MEASURED, do not revisit ─────────────────────────────────
+# A characterization round (scipy, 2026-08-31) established the CT system is
+# stable and minimum-phase, then compared three discretizations at 1 kHz:
+#   * ZOH modal / parallel-first-order  — max rel err 2.5e-9   ** CHOSEN **
+#   * Tustin                            — REJECTED: maps the 1.887e6 rad/s pole
+#                                         to z = -0.9997, i.e. a permanent
+#                                         ringing mode at Nyquist
+#   * tf2sos cascaded biquads           — REJECTED: 8.2e-3 err, WORSE than
+#                                         Tustin
+# The chosen form is four INDEPENDENT scalar first-order recursions summed.
+# The fourth mode has lambda = 0: it is the ZOH image of the fastest CT pole,
+# not a direct feedthrough (the CT system is strictly proper).
+#
+# DC check: sum(g_i / (1 - lam_i)) = 1.7637602179836473e-05, 4 ulp from the
+# target DC gain above.
+#
+# ── Sample alignment (deviation from the round spec, stated) ─────────────────
+# The spec sketched the tick body as "y = sum(x); then x_i = lam_i*x_i + g_i*u",
+# which reports the state BEFORE this tick's input acts.  The validation vectors
+# it also supplied are the other alignment — y[1] for a 10 W step at n = 0 is
+# 1.4516e-06, not 0 — so step() UPDATES FIRST and then reads out, which
+# reproduces the vectors EXACTLY (worst relative error 3.1e-16 over all ten
+# pinned values).  The two orderings emit the SAME sequence shifted by one
+# sample; this one has no dead tick, which is also the physically sensible
+# reading of "the H2 rate during tick n".
+#
+# VALIDATION VECTORS — 10.0 W step applied from the first tick, zero initial
+# state, Ts = 1e-3, h2_cum = rectangular sum of y*Ts (rtol 1e-9):
+#     n=1     y=1.451648924521401e-06   cum=1.451648924521401e-09
+#     n=10    y=8.825724871566303e-06   cum=5.300056759372415e-08
+#     n=100   y=6.483139460046860e-05   cum=3.565983712066193e-06
+#     n=1000  y=1.744684319758860e-04   cum=1.381066815913307e-04
+#     n=2000  y=1.763552634860608e-04   cum=3.140662654327328e-04
+# ═════════════════════════════════════════════════════════════════════════════
+H2_GFC_TS_S = 1.0e-3              # s      discretization sample period (1 kHz)
+H2_GFC_DC_GAIN_GPS_PER_W = 1.7637602179836514e-05   # g/s per W (CT DC gain)
+H2_GFC_TAU_DOMINANT_S = 0.2212    # s      dominant CT time constant
+# The DP's own static proxy, kept for the comparison in banner point 2 only —
+# nothing computes with it (DPtrial.m:43, `W_H2 = P_fc/(0.55*120000)`).
+H2_STATIC_PROXY_GPS_PER_W = 1.0 / (0.55 * 120000.0)
+# Modal poles (z-plane) and input gains of the ZOH discretization.  TUPLES, so
+# collect_model_constants() does not fingerprint them; the three scalars above
+# do move the fingerprint, which is the intended signal for "the H2 model
+# changed".  Never edit one list without the other — they are one artifact.
+H2_GFC_LAMBDA = (0.9954895536622109, 0.4982126039712872,
+                 0.390405727787838, 0.0)
+H2_GFC_GAIN = (7.90674025708048e-08, -1.110462133471187e-09,
+               6.677840850342943e-08, 4.2954351137707583e-10)
+
+# M4 (review, 2026-08-31): the DC-gain identity that ties the two artifacts
+# together, asserted AT IMPORT.  H2_GFC_DC_GAIN_GPS_PER_W is the number the DP
+# generator imports for its stage cost (gen_dp_ems_table.py D4) while
+# H2_GFC_LAMBDA/H2_GFC_GAIN are what the 1 kHz recursion actually integrates —
+# so a hand-edit of either list that left the scalar alone would silently make
+# the DP objective and the simulator's logged h2_cum_g DIFFERENT MODELS, and
+# every "DP vs soc-band" percentage a comparison of unlike things.  Measured
+# residual today is 4 ulp (2.3e-15 relative), so 1e-13 is a ~40x margin that
+# still catches any real coefficient change.  Cheap: four divides, once.
+_H2_DC_CHECK = sum(g / (1.0 - lam)
+                   for g, lam in zip(H2_GFC_GAIN, H2_GFC_LAMBDA))
+assert abs(_H2_DC_CHECK - H2_GFC_DC_GAIN_GPS_PER_W) \
+       / H2_GFC_DC_GAIN_GPS_PER_W < 1e-13, (
+    "H2 model inconsistency: sum(g/(1-lambda)) = %.17g disagrees with "
+    "H2_GFC_DC_GAIN_GPS_PER_W = %.17g. The modal coefficients and the DC gain "
+    "are ONE artifact (the DP generator imports the scalar, the 1 kHz tick "
+    "runs the recursion); regenerate both together, never edit one."
+    % (_H2_DC_CHECK, H2_GFC_DC_GAIN_GPS_PER_W))
+del _H2_DC_CHECK
+
+
+class H2Consumption:
+    """Discretized Gfc: P_fc [W] in, hydrogen rate [g/s] and cumulative [g] out.
+
+    ⚠️ Read the BANNER above this class before using any value it returns.  The
+    map is SCALE-PORTABLE (operator ruling 2026-08-31: input P_fc in W and
+    output in g/s both ride the system's energy scaling factor), so what it
+    returns is THE MODEL'S ESTIMATE of hydrogen mass — not merely a relative
+    figure.  What it is NOT is identified against THIS stack: quote it with
+    that TODO(calibrate) caveat.  Strategy RANKINGS on the same rig are robust
+    regardless.
+
+    Four independent scalar recursions, summed.  No numpy: this runs inside the
+    1 kHz tick and must stay stdlib and allocation-free.
+    """
+
+    def __init__(self):
+        self.x = [0.0, 0.0, 0.0, 0.0]
+        self.rate_gps = 0.0       # g/s   this tick's output
+        self.cum_g = 0.0          # g     rectangular integral of rate_gps
+
+    def reset(self):
+        self.x = [0.0, 0.0, 0.0, 0.0]
+        self.rate_gps = 0.0
+        self.cum_g = 0.0
+
+    def step(self, p_fc_w, dt=H2_GFC_TS_S):
+        """Advance one tick on P_fc [W]; return this tick's rate in g/s.
+
+        `p_fc_w` is CLAMPED AT ZERO.  Reverse power into the fuel cell is not a
+        physical operating point for this rig (the FC feeds the bus through an
+        ideal-diode switch), and a negative input would produce a negative
+        hydrogen rate — an unphysical CREDIT that would silently flatter any
+        strategy that provoked it.  The clamp is a deliberate nonlinearity on
+        an otherwise linear model, and it is the conservative direction.
+
+        L4 (review, 2026-08-31): on the SHIPPED call path the clamp is
+        BELT-AND-BRACES, not a live guard.  Plant.step() feeds it
+        `FuelCellSource.v_terminal * FuelCellSource.i`, and that source already
+        clamps BOTH factors non-negative, so the product cannot be negative
+        today.  The clamp exists so a future caller — a different source model,
+        a directly-injected P_fc, a test — cannot introduce the credit by
+        accident.  Do not remove it on the strength of the current caller.
+
+        `dt` scales the CUMULATIVE integral only.  The recursion coefficients
+        are pinned to H2_GFC_TS_S = 1 ms; running the sim at another --rate
+        does not re-discretize them, so the rate output would be wrong in the
+        transient (the DC gain is unaffected).  1 kHz is the sim's tick.
+        """
+        u = p_fc_w if p_fc_w > 0.0 else 0.0
+        x = self.x
+        x[0] = H2_GFC_LAMBDA[0] * x[0] + H2_GFC_GAIN[0] * u
+        x[1] = H2_GFC_LAMBDA[1] * x[1] + H2_GFC_GAIN[1] * u
+        x[2] = H2_GFC_LAMBDA[2] * x[2] + H2_GFC_GAIN[2] * u
+        # lam[3] == 0: this mode carries no memory, it is one tick of the
+        # fastest ZOH pole.  Written out rather than folded into a feedthrough
+        # so the four-mode structure stays visible against the coefficients.
+        x[3] = H2_GFC_LAMBDA[3] * x[3] + H2_GFC_GAIN[3] * u
+        self.rate_gps = x[0] + x[1] + x[2] + x[3]
+        self.cum_g += self.rate_gps * dt
+        return self.rate_gps
+
+
 class Plant:
     """
     First-order plant model.
@@ -637,6 +813,13 @@ class Plant:
         # tick whichever mode is selected.
         self.battery = BatterySource(soc0=soc0, capacity_ah=capacity_ah)
         self.fuel_cell = FuelCellSource()
+        # ── Hydrogen-consumption metric (2026-08-31) ─────────────────────────
+        # SIMULATED MODE ONLY, by construction: it is stepped from Plant.step(),
+        # and replay bypasses the plant integrator entirely.  It is a pure
+        # OBSERVER — nothing in the plant, the electrical engine, the injected
+        # frame or any policy reads it back, so it cannot change a trace.
+        # Read the H2Consumption banner before quoting any value.
+        self.h2 = H2Consumption()
         # ── Optional high-fidelity electrical engine ────────────────────────
         self.electrical = electrical
         if electrical is not None:
@@ -845,6 +1028,23 @@ class Plant:
             if aux & AUX_MPPT_DISABLE:
                 self.ag105_status |= AG105_FLAG_MPPT_EN | AG105_FLAG_PWR_TRACK
 
+        # ── Hydrogen consumption ─────────────────────────────────────────────
+        # u = P_fc = STACK power, from plant truth: the FuelCellSource's own
+        # terminal voltage and its own current, both already advanced for this
+        # tick by whichever electrical branch ran (simple mode calls
+        # fuel_cell.update() above; hi-fi mode owns the same object).
+        #
+        # WHY NOT `v_fc * self.i_fc` (which is what the CSV/injection frame
+        # carry): self.i_fc is the BUS-SIDE channel current, i.e. the boost
+        # OUTPUT, while v_fc is the SOURCE-SIDE terminal voltage.  Their product
+        # is a mixed quantity and understates stack power by roughly
+        # V_bus/(eta*V_fc).  Gfc's input is fuel-cell power, so the source-side
+        # pair is the correct one.  CONSEQUENCE, stated because it costs
+        # something: this metric is NOT reconstructible from the CSV's V_fc and
+        # I_fc columns alone — h2_rate_gps/h2_cum_g are logged for exactly that
+        # reason.
+        self.h2.step(self.fuel_cell.v_terminal * self.fuel_cell.i, dt)
+
         return {
             "V_fc": v_fc,
             "V_batt": v_batt,
@@ -858,6 +1058,12 @@ class Plant:
             "ag105_status": self.ag105_status,
             # Appended (never reordered) for the CSV's new `soc` column.
             "soc": self.battery.soc,
+            # Appended (never reordered), 2026-08-31 — the H2 metric.  These are
+            # NOT injected: pack_inject() takes its fields by name and never
+            # sees them, so the wire protocol (40 B) is untouched.  Read the
+            # H2Consumption banner before quoting either value.
+            "h2_rate_gps": self.h2.rate_gps,
+            "h2_cum_g": self.h2.cum_g,
         }
 
 
@@ -1511,9 +1717,663 @@ def ems_regen_harvest(t, fb):
     }
 
 
+# ── soc-band: causal charge-sustaining EMS ──────────────────────────────────
+#
+# ⚠️ SIM-ONLY STRATEGY — NOT PORTABLE TO THE REAL PI AS WRITTEN.
+# It closes on `fb["soc"]`, which is PLANT TRUTH from BatterySource's coulomb
+# count and is deliberately NOT in FB_TELEMETRY_EQUIV_KEYS (see the MODE A block
+# above: the real 2S pack has no SoC output at all, and v4 telemetry carries no
+# SoC field).  Everything else it reads — `t`, `v_profile`, `I_fc`, `I_batt` —
+# IS telemetry-equivalent.  The portable path is a V_batt-based SoC ESTIMATOR
+# on the Pi (OCV lookup plus coulomb counting off the telemetry `I_batt`),
+# feeding this same law unchanged; that estimator is FUTURE WORK and does not
+# exist in this repository.  Do not ship this policy to a Pi and assume the
+# `soc` key will be there.
+#
+# WHAT IT MIRRORS, AND WHAT IT DOES NOT.  The DP study (references/EMS/DPtrial.m,
+# references/EMS/DP_EnergyManagement2.m) minimises hydrogen subject to a
+# charge-sustaining terminal constraint on SoC.  This policy mirrors that
+# OBJECTIVE STRUCTURE — "keep SoC near where it started; when it drifts low,
+# shift load to the fuel cell and recharge opportunistically" — and NOTHING
+# ELSE.  It is CAUSAL (a DP solution is not), it imports no absolute watts and
+# no lambda/co-state value from the MATLAB, and every constant below is in
+# SCALE-CAR units derived from this rig's own numbers.  It is not a DP solution
+# and not an approximation of one.  Its H2 numbers are the Gfc MODEL'S ESTIMATE
+# (the map is scale-portable — H2Consumption banner); the surviving caveat is
+# that the stack is not identified, TODO(calibrate), and rankings against
+# another strategy on this same rig are robust regardless.
+#
+# ── Tunables ────────────────────────────────────────────────────────────────
+# SoC deadband half-width, in SoC fraction.  ⚠️ BENCH-SCALED, deliberately.
+# A vehicle-scale charge-sustaining band is ~0.02 (2 % SoC), and that is the
+# value to restore for any vehicle-level study.  It is unusable on this rig:
+# with a 5 Ah pack, the `ems-soc-band` scenario's drain phase moves SoC at
+# ~1.0e-4 /s (see the scenario entry's budget), so 0.02 would take ~200 s to
+# cross and the policy would sit at nominal share for the whole of a ≤60 s HIL
+# run — i.e. the branch under test would never execute.  0.0015 is crossed
+# ~11.9 s into that drain, leaving ~23 s of biased operation to observe.
+# TODO(calibrate): restore ~0.02 once a pack-scale endurance scenario exists.
+SOC_BAND_HALF = 0.0015
+# Excess beyond the band edge, as a FRACTION of the band half-width, at which
+# the share correction saturates.  0.5 -> full authority one half-band past the
+# edge (0.00225 total deficit here), reached ~7 s after the crossing.
+SOC_BAND_SAT_EXCESS_FRAC = 0.5
+# Nominal split when SoC is inside the band.  0.50 is the firmware's own
+# default power_share_setpoint, and the same value hold-5050 pins.
+SOC_BAND_SHARE_NOMINAL = 0.50
+# Maximum correction either way -> commanded share stays in [0.25, 0.75].
+# Sized against TWO firmware limits, both with margin at the scenario's load:
+#   * updateShareSetpointCutoff() (.ino:9377-9385, latch at .ino:9231-9257)
+#     drives a channel's *_BUS_ENABLE LOW for a setpoint outside
+#     [DROOP_R_MIN 0.15, DROOP_R_MAX 0.85].  Exercising THAT is handoff-sag's
+#     job; this scenario must never trip it, so the span stops 0.10 short of
+#     both rails.
+#   * LIMIT_I_FC_MAX 1.4 A.  At the scenario's ~1.45 A drain-phase bus total,
+#     0.75 puts 1.09 A on FC — 22 % margin.  A larger span would eat it.
+SOC_BAND_SHARE_SPAN = 0.25
+# HARD clamp, applied last and independently of the span above: the share-cut
+# band itself.  Redundant with the span by construction, kept as the assertion
+# that this policy can never command a cut, whatever the span is retuned to.
+SOC_BAND_SHARE_MIN = 0.15
+SOC_BAND_SHARE_MAX = 0.85
+# ── Causal cruise detection ─────────────────────────────────────────────────
+# The profile slope is measured over a TRAILING window of values this policy has
+# ALREADY evaluated — never by looking ahead into `ems_v_profile`.  A real Pi
+# has no future either, and OPERATOR RULING (b) (charging and acceleration are
+# incompatible on this hardware) has to hold on the same information the Pi has.
+SOC_BAND_CRUISE_WINDOW_S = 1.0
+# |dv/dt| at or below this counts as cruise.  The scenario's gentlest RAMP is
+# 0.167 m/s^2 (3.3x this bound) and its cruise segments are exactly flat, so the
+# classification is not marginal.  50 Hz x 1.0 s = 50 samples, so profile noise
+# is not an issue either (the profile is piecewise-linear and noise-free).
+SOC_BAND_CRUISE_SLOPE_MAX = 0.05
+# Below this speed "cruise" is not a meaningful operating point: it is the drive
+# design's own validity floor (CLAUDE.md fw v12: gate-checked for v >= 0.5 m/s).
+SOC_BAND_CRUISE_MIN_MPS = 0.5
+# ── Charge-window admission, with hysteresis ────────────────────────────────
+# Charging on the FC path is SINGLE-SOURCE by design: assertFcChargeEnable()
+# drops BT off the bus (.ino:10046), so the whole bus load plus the charger
+# lands on the FC channel against LIMIT_I_FC_MAX 1.4 A.  The policy therefore
+# admits a charge window only when the measured source total is small.  Both
+# thresholds read `fb["I_fc"] + fb["I_batt"]`, which ARE telemetry-equivalent.
+#   ENTER 0.60 A — at the scenario's 1.0 m/s charge cruise the total is ~0.34 A
+#                  (i_aux 0.15 + i_motor 0.19), so the window opens; during the
+#                  drain phase it is ~1.45 A and stays shut.
+#   EXIT  1.30 A — hysteresis, and a guard.  Once FC_CHARGE opens, the measured
+#                  total JUMPS to the single-source value (~0.34 + the charger's
+#                  ~0.8 A stamped draw = ~1.14 A), which is above ENTER: without
+#                  hysteresis the policy would immediately withdraw charge_goal
+#                  and chatter the path open/closed at 50 Hz.  1.30 A sits
+#                  above that steady value and below LIMIT_I_FC_MAX 1.4 A, so
+#                  the release doubles as an overcurrent backstop.
+#   ⚠️ L9 (review, 2026-08-31) — the "overcurrent backstop" reading holds under
+#   `--electrical hifi` ONLY.  It depends on the charger's draw APPEARING in
+#   `fb["I_fc"] + fb["I_batt"]`, and only the hi-fi engine stamps it on the bus
+#   (hil_electrical.py, `J[N_CHG] -= i_charge`); SIMPLE mode's Plant.step()
+#   computes `i_total = i_motor + i_aux` and never charges the sources for it.
+#   Under `--electrical simple` the measured total therefore does NOT jump when
+#   FC_CHARGE opens, this threshold is never approached, and the release is
+#   plain hysteresis with no current guard behind it.  The FIRMWARE's own
+#   LIMIT_I_FC_MAX check is unaffected either way — it reads the injected rails.
+SOC_BAND_CHARGE_ENTER_ITOT_A = 0.60
+SOC_BAND_CHARGE_EXIT_ITOT_A = 1.30
+# charge_goal is an INTENT, not a current: the firmware maps any value > 0 onto
+# "open the path and let the Ag105 run at its configured ceiling" (see the
+# PiCommander field notes and .ino chargingControl()).  1.0 = full intent.
+SOC_BAND_CHARGE_GOAL = 1.0
+# Hand the firmware back MODE_SAFE here so the run closes out Run -> Finish ->
+# Idle instead of ending parked in State 2 (the F14(b) fix the other two
+# strategies carry).  Chosen against the `ems-soc-band` profile, which reaches
+# standstill at t = 58.0 and holds it to the 61 s duration.
+SOC_BAND_RUN_EXIT_S = 58.0
+
+
+class SocBandStrategy:
+    """soc-band — causal charge-sustaining split, with opportunistic charging.
+
+    name       : soc-band
+    intent     : mirror the DP study's OBJECTIVE STRUCTURE (minimise hydrogen
+                 subject to charge sustenance) with a causal law, so the H2
+                 metric has something to rank.  See the SIM-ONLY banner above.
+    fields     : mode_cmd (SAFE -> HYBRID at EMS_RUN_ENTRY_S, back to SAFE at
+                 SOC_BAND_RUN_EXIT_S), v_setpoint (the scenario's
+                 `ems_v_profile`), power_share_setpoint (deadband-P law on the
+                 SoC error), charge_goal (only in an admitted charge window).
+    feedback   : `t`, `v_profile`, `I_fc`, `I_batt` (all telemetry-equivalent)
+                 and `soc` (PLANT TRUTH — the non-portable term).
+    law        : reference SoC0 is CAPTURED ON THE FIRST CALL, so the policy
+                 sustains wherever the run started rather than chasing an
+                 absolute target it has no business choosing.  Deficit
+                 d = SoC0 - soc.  Inside +/-SOC_BAND_HALF the split is nominal.
+                 Beyond the edge the correction is proportional to the EXCESS,
+                 saturating at SOC_BAND_SHARE_SPAN once the excess reaches
+                 SOC_BAND_SAT_EXCESS_FRAC * SOC_BAND_HALF:
+                     d > +half  ->  share UP   (toward the fuel cell; the pack
+                                    is low, so the FC carries more and the pack
+                                    discharges more slowly)
+                     d < -half  ->  share DOWN (toward the battery)
+                 share = 1.0 is the FC rail and 0.0 the battery rail — the same
+                 convention soc-depletion's timeline uses (`power_share_setpoint
+                 0.0` = "all load onto the battery") and handoff-sag's cut
+                 direction confirms.
+    charging   : charge_goal > 0 requires ALL of — a genuine deficit (below the
+                 band), CRUISE by the causal slope test, and a measured source
+                 total under the admission threshold.  NEVER during
+                 acceleration (operator ruling (b), 2026-08-30).
+
+    STATE.  This is a class rather than a plain function because the law needs
+    three pieces of state: the captured reference SoC, the trailing profile
+    window, and the charge-window hysteresis latch.  EMS_STRATEGIES holds ONE
+    instance, which is correct for the simulator (one policy, one process, one
+    run) and is why reset() exists for anything that reuses it.  A rewind
+    (t going backwards) auto-resets, so a second run in one process cannot
+    inherit the first run's reference.
+    """
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.soc_ref = None         # captured on the first call that sees a SoC
+        self.window = []            # [(t, v_cmd)] trailing profile samples
+        self.charging = False       # charge-window hysteresis latch
+        self.last_t = None
+        self.last_share = SOC_BAND_SHARE_NOMINAL
+        self.last_deficit = 0.0
+
+    # ── helpers, kept separate so a test can drive them directly ────────────
+    def share_for_deficit(self, deficit):
+        """Deadband-P share command for a SoC deficit (SoC0 - soc)."""
+        half = SOC_BAND_HALF
+        excess = abs(deficit) - half
+        if excess <= 0.0:
+            return SOC_BAND_SHARE_NOMINAL
+        sat = SOC_BAND_SAT_EXCESS_FRAC * half
+        frac = 1.0 if excess >= sat else (excess / sat)
+        corr = SOC_BAND_SHARE_SPAN * frac
+        share = SOC_BAND_SHARE_NOMINAL + (corr if deficit > 0.0 else -corr)
+        # Hard clamp last — see SOC_BAND_SHARE_MIN/MAX.
+        return min(SOC_BAND_SHARE_MAX, max(SOC_BAND_SHARE_MIN, share))
+
+    def is_cruising(self, t, v_cmd):
+        """Trailing-window slope test.  Causal: only already-seen samples."""
+        self.window.append((t, v_cmd))
+        while self.window and (t - self.window[0][0]) > SOC_BAND_CRUISE_WINDOW_S:
+            self.window.pop(0)
+        if len(self.window) < 2:
+            return False
+        t0, v0 = self.window[0]
+        span = t - t0
+        # A window that is not yet FULL cannot certify cruise: right after an
+        # acceleration ends, the few samples available are all flat and would
+        # read as cruise while the vehicle is still settling.  Require at least
+        # 90 % of the nominal window.
+        if span < 0.9 * SOC_BAND_CRUISE_WINDOW_S:
+            return False
+        if v_cmd < SOC_BAND_CRUISE_MIN_MPS:
+            return False
+        return abs(v_cmd - v0) / span <= SOC_BAND_CRUISE_SLOPE_MAX
+
+    def __call__(self, t, fb):
+        if self.last_t is not None and t < self.last_t:
+            self.reset()            # rewind => a new run, not this one's tail
+        self.last_t = t
+
+        v_sp = fb.get("v_profile")
+        if v_sp is None:
+            v_sp = EMS_DEFAULT_CRUISE_MPS
+
+        soc = fb.get("soc")
+        if soc is None:
+            # No SoC term available (a feedback view without plant truth): fall
+            # back to the nominal split rather than inventing a reference.  The
+            # policy degrades to hold-5050's share, loudly doing nothing.
+            deficit = 0.0
+        else:
+            if self.soc_ref is None:
+                self.soc_ref = float(soc)
+            deficit = self.soc_ref - float(soc)
+        self.last_deficit = deficit
+        share = self.share_for_deficit(deficit)
+        self.last_share = share
+
+        cruising = self.is_cruising(t, v_sp)
+        i_tot = (fb.get("I_fc") or 0.0) + (fb.get("I_batt") or 0.0)
+        # Deficit gate: only a SoC genuinely BELOW the band justifies opening
+        # the charger path at all.  Inside the band the pack is where it should
+        # be and the path stays shut.
+        #
+        # M6 (review, 2026-08-31) — HYSTERESIS, for the same reason the i_tot
+        # gate above has it.  The deficit is what CHARGING ITSELF drives back
+        # toward zero, so a single threshold makes the gate its own release: at
+        # deficit ~= SOC_BAND_HALF the window opens, the charger closes the
+        # deficit, the gate falls below the threshold and the window shuts —
+        # then the drain reopens it, at 50 Hz.  ENTER at `> SOC_BAND_HALF`
+        # (band-edge crossing, unchanged); HOLD while `> 0.0`, i.e. release
+        # only when the pack is back AT the reference, not merely back inside
+        # the band.  Stated plainly: the SHIPPED `ems-soc-band` scenario cannot
+        # reach the chatter (its charge window is 13 s long and the pack never
+        # recovers the full deficit inside it), so this changes no trace today.
+        # The law is reusable and must not carry a latent 50 Hz chatter mode
+        # into the first scenario whose charge window IS long enough.
+        deficit_gate = deficit > (0.0 if self.charging else SOC_BAND_HALF)
+        if self.charging:
+            self.charging = (deficit_gate and cruising
+                             and i_tot <= SOC_BAND_CHARGE_EXIT_ITOT_A)
+        else:
+            self.charging = (deficit_gate and cruising
+                             and i_tot <= SOC_BAND_CHARGE_ENTER_ITOT_A)
+
+        in_run = EMS_RUN_ENTRY_S <= t < SOC_BAND_RUN_EXIT_S
+        if not in_run:
+            # Outside the Run window nothing may be commanded onto the charger
+            # path: chargingControl() only runs in State 2 anyway, and leaving
+            # the intent asserted across the Run exit would be a command the
+            # firmware silently ignores — i.e. a lie in the CSV's cmd columns.
+            self.charging = False
+        return {
+            "mode_cmd": MODE_HYBRID if in_run else MODE_SAFE,
+            "power_share_setpoint": share,
+            "v_setpoint": v_sp,
+            "charge_goal": SOC_BAND_CHARGE_GOAL if self.charging else 0.0,
+        }
+
+
+# One instance, registered below.  See the SocBandStrategy STATE note.
+ems_soc_band = SocBandStrategy()
+
+
+# ── dp-replay: the NON-CAUSAL offline-optimal benchmark ─────────────────────
+#
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ ⚠️  THIS IS NOT A CONTROLLER.  It plays back a setpoint table computed    ║
+# ║ OFFLINE by tools/gen_dp_ems_table.py with FULL FOREKNOWLEDGE of the       ║
+# ║ entire drive cycle and the entire auxiliary load, by backward dynamic     ║
+# ║ programming.  It reads NO feedback, reacts to NOTHING, and is meaningless ║
+# ║ against any profile or load other than the one its table was generated    ║
+# ║ for.  Its purpose is to be a LOWER-BOUND REFERENCE that the causal        ║
+# ║ strategies (hold-5050, soc-band) are ranked against — the "how much was   ║
+# ║ left on the table?" axis.  It is not portable to the real Pi in any       ║
+# ║ sense: a Pi has no future.                                                ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+#
+# WHAT IT DOES READ.  Exactly one feedback key, `v_profile` — the scenario's own
+# scripted speed profile, which is a HOST-SIDE SCRIPT and not feedback at all
+# (see the MODE A block).  The two energy-management fields it commands
+# (power_share_setpoint, charge_goal) come from the table, indexed by time
+# alone.  It therefore uses NOTHING from FB_TELEMETRY_EQUIV_KEYS and nothing
+# from plant truth; the open-loop-ness is the whole point, and it is why a
+# realised run WILL diverge from the table's predicted SoC trajectory (the
+# board's share loop, the Ag105's settle+ramp and the plant's own drag are all
+# outside the generator's reduced model).
+#
+# THE PROFILE GUARD.  A table is pinned to its scenario by
+# `dp_profile_fingerprint()` (below).  main() binds the active scenario into the
+# strategy before the run starts (bind_scenario()), which is where BOTH failure
+# modes are refused LOUDLY and EARLY:
+#   * the table file is missing/unreadable/malformed  -> refusal at startup
+#   * the active scenario's fingerprint does not match -> refusal at startup
+# A strategy that was never bound raises on its FIRST call rather than silently
+# commanding a 0.5 split, so no path can produce a trace labelled `dp-replay`
+# that is not actually the DP's.
+DP_TABLE_DIR = os.path.join(REPO_ROOT, "tools", "dp_tables")
+DP_TABLE_NAME = "dp_ems_table_%s.csv"
+
+# The scenario metadata fields the fingerprint covers.  Deliberately narrow:
+# these are the inputs the DP's demand model reads (D7 in the generator).  A
+# change to any of them invalidates the table; a change to, say, the
+# description does not.
+DP_FINGERPRINT_META_KEYS = ("ems_v_profile", "duration_s", "chg_i_ceiling_a")
+
+
+def dp_profile_fingerprint(scenario, meta):
+    """sha256 over the scenario inputs a DP table depends on.
+
+    ONE function, used by tools/gen_dp_ems_table.py when it writes a table and
+    by DpReplayStrategy when it loads one — so the generator and the consumer
+    cannot disagree about what "the same profile" means.
+
+    Covers the scenario NAME, the metadata keys in DP_FINGERPRINT_META_KEYS,
+    and the drain-load constants apply_scenario() applies to this scenario
+    (SOC_BAND_DRAIN_*, SOC_LOAD_RAMP_S, I_AUX_A) — retuning the drain changes
+    the demand the DP solved against just as surely as moving a profile point
+    does, and must invalidate the table too.
+
+    The canonical string is built with repr() of plain floats in a FIXED key
+    order, so the digest is stable across runs and platforms."""
+    parts = ["scenario=%s" % scenario]
+    for key in DP_FINGERPRINT_META_KEYS:
+        val = meta.get(key)
+        if key == "ems_v_profile" and val:
+            val = [(float(a), float(b)) for a, b in val]
+        elif val is not None:
+            val = float(val)
+        parts.append("%s=%r" % (key, val))
+    for name, val in (("I_AUX_A", I_AUX_A),
+                      ("SOC_LOAD_RAMP_S", SOC_LOAD_RAMP_S),
+                      ("SOC_BAND_DRAIN_LOAD_A", SOC_BAND_DRAIN_LOAD_A),
+                      ("SOC_BAND_DRAIN_START_S", SOC_BAND_DRAIN_START_S),
+                      ("SOC_BAND_DRAIN_END_S", SOC_BAND_DRAIN_END_S)):
+        parts.append("%s=%r" % (name, float(val)))
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+def load_dp_table(path):
+    """Parse a generated DP table.  Returns (meta_dict, times, shares, goals).
+
+    Format: '#'-comment metadata lines of the form '# key: value', then a
+    't,power_share_setpoint,charge_goal' header and the rows.  Raises
+    ValueError with a pointed message on anything malformed — this runs at
+    startup, where a loud failure is free."""
+    meta = {}
+    times, shares, goals = [], [], []
+    header_seen = False
+    with open(path, "r", encoding="utf-8") as fh:
+        for lineno, raw in enumerate(fh, 1):
+            line = raw.strip()
+            if not line:
+                continue
+            if line.startswith("#"):
+                body = line[1:].strip()
+                if ":" in body:
+                    k, _, v = body.partition(":")
+                    k = k.strip()
+                    # Only the first occurrence wins, so a banner line that
+                    # happens to contain a colon cannot shadow a real key.
+                    if k and k not in meta:
+                        meta[k] = v.strip()
+                continue
+            if not header_seen:
+                if line.replace(" ", "") != "t,power_share_setpoint,charge_goal":
+                    raise ValueError(
+                        "%s:%d: expected the column header "
+                        "'t,power_share_setpoint,charge_goal', got %r"
+                        % (path, lineno, line))
+                header_seen = True
+                continue
+            cols = line.split(",")
+            if len(cols) != 3:
+                raise ValueError("%s:%d: expected 3 columns, got %d"
+                                 % (path, lineno, len(cols)))
+            try:
+                t, s, g = (float(cols[0]), float(cols[1]), float(cols[2]))
+            except ValueError:
+                raise ValueError("%s:%d: non-numeric row %r"
+                                 % (path, lineno, line))
+            if times and t <= times[-1]:
+                raise ValueError("%s:%d: table times must strictly increase "
+                                 "(%r after %r)" % (path, lineno, t, times[-1]))
+            times.append(t)
+            shares.append(s)
+            goals.append(g)
+    if not header_seen:
+        raise ValueError("%s: no column header found — is this a DP table?" % path)
+    if not times:
+        raise ValueError("%s: table has a header but no rows" % path)
+    return meta, times, shares, goals
+
+
+class DpReplayStrategy:
+    """dp-replay — NON-CAUSAL / OFFLINE-OPTIMAL BENCHMARK.  Read the banner above.
+
+    name       : dp-replay
+    intent     : play back tools/dp_tables/dp_ems_table_<scenario>.csv, produced
+                 by tools/gen_dp_ems_table.py's backward dynamic program, so a
+                 campaign can measure how far a CAUSAL strategy sits from the
+                 offline optimum on the same profile.  Compare on three axes:
+                 h2_cum_g, delta_soc, and share tracking — and only ever read
+                 the first two as a PAIR (any strategy burns less hydrogen by
+                 discharging the pack harder).
+    fields     : mode_cmd (SAFE -> HYBRID at EMS_RUN_ENTRY_S, back to SAFE at
+                 the table's own run_exit_s — the same entry/exit shape
+                 hold-5050 uses so the run closes Run -> Finish -> Idle),
+                 v_setpoint (the scenario's `ems_v_profile`, exactly as
+                 hold-5050 takes it), power_share_setpoint and charge_goal
+                 (ZERO-ORDER HOLD lookup in the table at t).
+    feedback   : `t` and `v_profile` only.  NOTHING else — see the banner.
+    """
+
+    def __init__(self, table_dir=None):
+        # NO I/O here: EMS_STRATEGIES is built at import time and constructing
+        # the registry must not touch the disk (or fail because a table has not
+        # been generated yet).  Loading happens in bind_scenario().
+        self.table_dir = table_dir or DP_TABLE_DIR
+        self.reset()
+
+    def reset(self):
+        self.scenario = None
+        self.path = None
+        self.meta = {}
+        self.times = []
+        self.shares = []
+        self.goals = []
+        self.run_exit_s = None
+        self.last_idx = None
+
+    # ── startup binding / refusal ────────────────────────────────────────────
+    #
+    # M1/M2 (review, 2026-08-31): WHAT THIS CHECKS, AND WHY THERE ARE FOUR
+    # CLASSES OF CHECK RATHER THAN ONE FINGERPRINT.
+    #
+    # `profile_fingerprint` (D9) covers the DEMAND — the scenario name, its
+    # speed profile and its drain constants.  It is deliberately narrow, and
+    # three other things can invalidate a table without moving it:
+    #
+    #   (a) THE ACCOUNTING (M1).  `--charger-accounting` selects which of the
+    #       two hydrogen totals the DP MINIMISED, and it must match the
+    #       electrical engine the table is replayed under (generator D11).  A
+    #       `physical` table replayed under `--electrical simple` is not a
+    #       lower bound at all — the causal `soc-band` strategy measurably
+    #       BEATS it on the logged column, because simple mode does not stamp
+    #       the charger's draw on the bus and the metric gives pack charge away
+    #       free.  A "benchmark" the referent beats is worse than none, and it
+    #       fails SILENTLY: the run is clean, the numbers are plausible, and
+    #       the conclusion is backwards.  So the mode is passed in and checked.
+    #   (b) MODEL CONSTANTS (M2).  The generator solves against imported
+    #       simulator constants; the header records each one it used.  If a
+    #       constant is retuned here and the table is not regenerated, the DP
+    #       is the optimum of a DIFFERENT plant than the one being run.
+    #   (c) RUN-TIME ARGUMENTS (M2).  soc0 and capacity are CLI, not constants,
+    #       and the DP's whole trajectory is conditioned on them.  A `--soc0
+    #       0.5` run against a table solved at 0.7 is a meaningless benchmark.
+    #
+    # All of them REFUSE rather than warn, and every message names WHICH value
+    # drifted and the exact regeneration command — the failure mode being
+    # avoided is a run that looks fine and means nothing.
+    def bind_scenario(self, scenario, meta, electrical_mode=None, args=None):
+        """Load and validate this scenario's table.  Raises ValueError to refuse.
+
+        main() calls this before the run starts (the generic `bind_scenario`
+        hook), so every failure mode surfaces as a startup refusal rather than a
+        mid-run crash or, worse, a silently wrong trace.
+
+        `electrical_mode` is the RESOLVED engine ("simple" / "hifi"), not the
+        requested one, and `args` the parsed CLI namespace.  Both are optional
+        so a caller that only wants the profile check (a test, a future tool)
+        keeps working; main() passes both."""
+        path = os.path.join(self.table_dir, DP_TABLE_NAME % scenario)
+        if not os.path.isfile(path):
+            raise ValueError(
+                "the `dp-replay` strategy needs a generated DP table for "
+                "scenario %r and none exists at %s.\n"
+                "  Generate it first (numpy is required, so use miniforge — "
+                "`.venv_hil` is stdlib-only):\n"
+                "      C:/Users/ricky/miniforge3/python.exe "
+                "tools/gen_dp_ems_table.py --scenario %s"
+                % (scenario, path, scenario))
+        table_meta, times, shares, goals = load_dp_table(path)
+
+        want = dp_profile_fingerprint(scenario, meta)
+        got = table_meta.get("profile_fingerprint")
+        if got != want:
+            raise ValueError(
+                "DP table %s was generated for a DIFFERENT profile than the "
+                "scenario now being run.\n"
+                "  table  scenario=%r fingerprint=%s\n"
+                "  active scenario=%r fingerprint=%s\n"
+                "  A DP table is a NON-CAUSAL solution of ONE specific drive "
+                "cycle and auxiliary load; replaying it against another "
+                "profile is not a benchmark, it is noise. Regenerate:\n"
+                "      C:/Users/ricky/miniforge3/python.exe "
+                "tools/gen_dp_ems_table.py --scenario %s --force"
+                % (path, table_meta.get("scenario"), got, scenario, want,
+                   scenario))
+
+        regen = ("      C:/Users/ricky/miniforge3/python.exe "
+                 "tools/gen_dp_ems_table.py --scenario %s --force" % scenario)
+
+        # ── (a) M1: accounting vs the RESOLVED electrical engine ─────────────
+        if electrical_mode is not None:
+            want_acc = "physical" if electrical_mode == "hifi" else "simple"
+            got_acc = table_meta.get("charger_accounting")
+            if got_acc != want_acc:
+                raise ValueError(
+                    "DP table %s was solved with --charger-accounting %r, but "
+                    "this run's electrical engine is %r, which needs %r.\n"
+                    "  The two hydrogen accountings differ by whether the "
+                    "Ag105's bus draw is charged to the fuel cell; hi-fi "
+                    "stamps it and simple does not. A table solved for the "
+                    "OTHER one is not a lower bound on the metric this run "
+                    "will log - under the mismatched pairing the causal "
+                    "`soc-band` strategy beats it, which ranks nothing.\n"
+                    "  Regenerate for this engine:\n"
+                    "%s --charger-accounting %s"
+                    % (path, got_acc, electrical_mode, want_acc,
+                       regen, want_acc))
+
+        # ── (b)/(c) M2: header-recorded values vs the live ones ──────────────
+        if args is not None:
+            # (name in header, live value, kind).  FLOATS are compared with a
+            # tiny relative tolerance: the header round-trips through %r/%.9g
+            # text, so an exact == would fail on formatting alone.
+            checks = [
+                ("soc0", float(args.soc0), "run argument --soc0"),
+                ("capacity_ah", float(args.capacity_ah),
+                 "run argument --capacity-ah"),
+                ("chg_ceiling_a",
+                 float(meta.get("chg_i_ceiling_a", AG105_I_MAX)),
+                 "scenario constant chg_i_ceiling_a"),
+                ("eta_boost", float(ETA_BOOST), "model constant ETA_BOOST"),
+                ("gfc_dc_gain_gps_per_w", float(H2_GFC_DC_GAIN_GPS_PER_W),
+                 "model constant H2_GFC_DC_GAIN_GPS_PER_W"),
+                # NOT CHECKED: `limit_i_fc_max_a`.  The review asked for it,
+                # and there is nothing here to check it against — 1.4 A is a
+                # FIRMWARE limit that gen_dp_ems_table.py mirrors as its own
+                # module constant; hil_plant_sim has no copy, and minting one
+                # would both duplicate the firmware value a third time and move
+                # `constants_hash` for a value the simulator never uses.  The
+                # generator's literal is the single record of it.
+                ("charge_share_value",
+                 float(SOC_BAND_SHARE_NOMINAL + SOC_BAND_SHARE_SPAN),
+                 "DP charge-stage share "
+                 "(= SOC_BAND_SHARE_NOMINAL + SOC_BAND_SHARE_SPAN)"),
+                ("run_exit_s", float(SOC_BAND_RUN_EXIT_S),
+                 "model constant SOC_BAND_RUN_EXIT_S"),
+                # Added by render_table() in the same review round: these three
+                # shape the DP's control grid and its charge mask, so a retune
+                # of any of them invalidates a table that says nothing about it.
+                ("share_span", float(SOC_BAND_SHARE_SPAN),
+                 "model constant SOC_BAND_SHARE_SPAN"),
+                ("cruise_slope_max", float(SOC_BAND_CRUISE_SLOPE_MAX),
+                 "model constant SOC_BAND_CRUISE_SLOPE_MAX"),
+                ("cruise_min_mps", float(SOC_BAND_CRUISE_MIN_MPS),
+                 "model constant SOC_BAND_CRUISE_MIN_MPS"),
+            ]
+            drift = []
+            for key, live, what in checks:
+                raw = table_meta.get(key)
+                if raw is None:
+                    # An OLDER table predating this header line. Refuse rather
+                    # than skip: "the table does not record it" is exactly the
+                    # state in which a drift is invisible.
+                    drift.append("  %-22s table: (absent - table predates this "
+                                 "check)  live: %r   [%s]" % (key, live, what))
+                    continue
+                try:
+                    tv = float(raw)
+                except ValueError:
+                    drift.append("  %-22s table: %r (unparseable)  live: %r   "
+                                 "[%s]" % (key, raw, live, what))
+                    continue
+                scale = max(abs(tv), abs(live), 1e-30)
+                if abs(tv - live) / scale > 1e-9:
+                    drift.append("  %-22s table: %.12g   live: %.12g   [%s]"
+                                 % (key, tv, live, what))
+            if drift:
+                raise ValueError(
+                    "DP table %s was solved against values that no longer "
+                    "match this run.  The table is the optimum of a DIFFERENT "
+                    "problem, so replaying it ranks nothing:\n%s\n"
+                    "  Regenerate (and pass --soc0/--capacity-ah matching the "
+                    "run if those are what drifted):\n%s"
+                    % (path, "\n".join(drift), regen))
+
+        self.scenario = scenario
+        self.path = path
+        self.meta = table_meta
+        self.times = times
+        self.shares = shares
+        self.goals = goals
+        try:
+            self.run_exit_s = float(table_meta["run_exit_s"])
+        except (KeyError, ValueError):
+            raise ValueError("DP table %s carries no usable `run_exit_s` "
+                             "metadata line" % path)
+        return self
+
+    # ── ZOH lookup ───────────────────────────────────────────────────────────
+    def lookup(self, t):
+        """(share, charge_goal) held from the last table row at or before t.
+
+        bisect on the times list rather than dividing by an assumed stage
+        length: the table's spacing is metadata, not a contract, and a
+        generator run with a different --stage-dt must still play back."""
+        i = bisect.bisect_right(self.times, t) - 1
+        if i < 0:
+            i = 0                       # before the first row: hold row 0
+        self.last_idx = i
+        return self.shares[i], self.goals[i]
+
+    def __call__(self, t, fb):
+        if self.path is None:
+            raise RuntimeError(
+                "the `dp-replay` strategy was called without a bound table. "
+                "It is a NON-CAUSAL playback of a scenario-specific DP "
+                "solution and has no meaningful default; bind_scenario() must "
+                "run first (main() does this at startup).")
+        v_sp = fb.get("v_profile")
+        if v_sp is None:
+            v_sp = EMS_DEFAULT_CRUISE_MPS
+        share, goal = self.lookup(t)
+        in_run = EMS_RUN_ENTRY_S <= t < self.run_exit_s
+        return {
+            "mode_cmd": MODE_HYBRID if in_run else MODE_SAFE,
+            "power_share_setpoint": share,
+            # Outside the Run window nothing may be commanded onto the charger
+            # path — chargingControl() only runs in State 2, so leaving the
+            # intent asserted across the Run exit would be a command the
+            # firmware silently ignores (soc-band's reasoning, verbatim).
+            "charge_goal": goal if in_run else 0.0,
+            "v_setpoint": v_sp,
+        }
+
+
+# One instance, registered below.  Construction does NO I/O — see __init__.
+ems_dp_replay = DpReplayStrategy()
+
+
 EMS_STRATEGIES = {
     "hold-5050": ems_hold_5050,
     "regen-harvest": ems_regen_harvest,
+    # ⚠️ SIM-ONLY: soc-band closes on fb["soc"], which is PLANT TRUTH and is NOT
+    # in FB_TELEMETRY_EQUIV_KEYS — it is not portable to a real Pi without a
+    # V_batt-based SoC estimator (future work).  See the banner above the class.
+    "soc-band": ems_soc_band,
+    # ⚠️ NON-CAUSAL / OFFLINE-OPTIMAL BENCHMARK, not a controller and not
+    # portable to any Pi: it replays a table computed offline with full
+    # foreknowledge of ONE drive cycle.  Refuses at startup against any other
+    # profile.  See the banner above DpReplayStrategy.
+    "dp-replay": ems_dp_replay,
 }
 
 EMS_NAMES = list(EMS_STRATEGIES)
@@ -1801,6 +2661,78 @@ SCENARIOS = {
             (32.0, 2.0), (40.0, 2.0), (52.0, 0.0), (60.0, 0.0),
         ],
     },
+    # ── ems-soc-band: the DP-informed charge-sustaining EMS ────────────────────
+    "ems-soc-band": {
+        "description": "61 s drive cycle driven by the `soc-band` EMS strategy: a "
+                       "sustained drain phase walks SoC out of the policy's band so "
+                       "the split biases toward the fuel cell, then a quiet low "
+                       "cruise admits an opportunistic FC-path charge window. "
+                       "Exercises the H2 metric end to end.",
+        # DURATION: last event is SOC_BAND_RUN_EXIT_S = 58.0, where the strategy
+        # commands MODE_SAFE and the board goes Run -> Finish -> Idle within a
+        # tick.  61 s = last event + 3 s, the standing trim rule.  ORDERING:
+        # the profile reaches standstill at t = 58.0 = SOC_BAND_RUN_EXIT_S, and
+        # piecewise() clamps past its last point.
+        "electrical": "any", "duration_s": 61.0,
+        # NO pi_timeline, for ems-drive-cycle's reason: the commands come from
+        # the policy and a timeline here would be silently replaced.
+        "ems": "soc-band",
+        # De-rated charge ceiling, taken from charge-fault's budget verbatim
+        # because the charge window is the same operating point (1.0 m/s cruise,
+        # single-source FC after assertFcChargeEnable() drops BT off the bus):
+        #     i_aux                                     0.150 A
+        #     motor: i_cmd = (F_c + b*v)/K_F = 3.36 A
+        #            p_mech = K_F*i_cmd*v   = 2.53 W
+        #            i_motor = p/(ETA_BOOST*V_bus 15.8) 0.189 A
+        #     charger ceiling                           0.800 A
+        #                                        total  1.139 A  -> 19 % margin
+        #                                        on LIMIT_I_FC_MAX 1.4 A
+        # As in charge-fault, the charger term is the SIM's stamped draw (the
+        # Ag105 OUTPUT current on the VCHG node, ~1.47x the physical input
+        # draw), so the budget errs conservative.
+        "chg_i_ceiling_a": 0.8,
+        # Piecewise-linear v_setpoint.  DESIGNED so the policy's three branches
+        # are separable in the trace, not copied from ems-drive-cycle:
+        #   0.0- 3.0  standstill (MODE_SAFE settle; below V_SP_ZERO_THRESH 0.07)
+        #   3.0- 8.0  ACCELERATE to 1.5 m/s (0.30 m/s^2).  The cruise test must
+        #             reject this segment — operator ruling (b): charge_goal is
+        #             never asserted during acceleration.
+        #   8.0-38.0  cruise 1.5 m/s.  The DRAIN phase (SOC_BAND_DRAIN_* in
+        #             apply_scenario) covers all of it — it ramps in from t = 10
+        #             and only ramps out from t = 38, over the deceleration.
+        #             MEASURED: SoC leaves the band at t = 24.30 and the FC
+        #             bias saturates at t = 34.90.  ⚠️ ONE SOURCE for these
+        #             three timings and the charge onset below, everywhere they
+        #             appear (here, SOC_BAND_DRAIN_LOAD_A's budget, the
+        #             run_hil_suite.py entry, HIL_PLANT.md §6, the user
+        #             manual's §3.2.2 table): the GENERATOR's matched-model
+        #             `soc-band` walk, printed by
+        #               miniforge python tools/gen_dp_ems_table.py \
+        #                   --scenario ems-dp-replay --dry-run
+        #             as `band exit t= / share saturation t= / first charge t=`.
+        #             That walk is the same model the DP is solved against, so
+        #             it is also the walk the benchmark comparison uses; a
+        #             second offline walk would be a second answer.  Charging
+        #             is blocked here by the current-admission threshold
+        #             (~1.45 A total vs the 0.60 A gate), NOT by the cruise
+        #             test — the two gates are deliberately exercised apart.
+        #  38.0-41.0  decelerate 1.5 -> 1.0 m/s (0.167 m/s^2).  GENTLER than the
+        #             coast rate a_coast(1.5) = (2.00 + 0.534*1.5)/3.5 = 0.80
+        #             m/s^2, so the drive command stays POSITIVE and no regen
+        #             branch is entered — this scenario is about the FC path.
+        #  41.0-54.0  cruise 1.0 m/s, drain off: the CHARGE WINDOW.  Measured in
+        #             the same matched-model walk: charge_goal asserts at
+        #             t = 41.70 (the trailing slope window clears the gentle
+        #             deceleration a little before it is fully flushed), then the
+        #             Ag105 settles (AG105_SETTLE_S 0.5 s) and ramps
+        #             (AG105_TAU_S 0.4 s), so I_charge passes 0.5 A by
+        #             t ~= 42.6.  The suite's check window opens at 44.0.
+        #  54.0-58.0  decelerate to 0 (0.25 m/s^2); 58.0-61.0 standstill.
+        "ems_v_profile": [
+            (0.0, 0.0), (3.0, 0.0), (8.0, 1.5), (38.0, 1.5),
+            (41.0, 1.0), (54.0, 1.0), (58.0, 0.0), (61.0, 0.0),
+        ],
+    },
     # ── Hi-fi-only scenarios ───────────────────────────────────────────────────
     # ── handoff-sag: OPERATING POINT REDESIGNED 2026-08-30 (review M3) ─────────
     # VERIFIED FROM SOURCE — what actually opens the standby bus switch:
@@ -1907,6 +2839,71 @@ SCENARIOS = {
     },
 }
 
+# ── ems-dp-replay: the same cycle, driven by the OFFLINE-OPTIMAL table ──────
+#
+# DERIVED, not copied.  Every field that defines the stimulus is taken from the
+# `ems-soc-band` entry BY REFERENCE — `ems_v_profile` is literally the SAME list
+# object, so the two scenarios cannot drift apart and a retune of one is a
+# retune of both.  That is a hard requirement here and not a tidiness
+# preference: the DP table is a solution of ONE profile + ONE auxiliary load,
+# and the whole point of running this scenario is to compare its result against
+# `ems-soc-band` on identical conditions.  apply_scenario() applies the same
+# SOC_BAND_DRAIN_* load to both names for the same reason.
+#
+# ⚠️ The strategy is NON-CAUSAL — see the DpReplayStrategy banner.  It refuses
+# at startup unless tools/dp_tables/dp_ems_table_ems-dp-replay.csv exists and
+# its `profile_fingerprint` matches this entry, so a stale table cannot be
+# replayed silently.  Generate it with:
+#     C:/Users/ricky/miniforge3/python.exe tools/gen_dp_ems_table.py \
+#         --scenario ems-dp-replay
+#
+# DP-PREDICTED TOTALS for the shipped table (the generator's own reduced
+# model, open loop — quoted here as the comparison anchor; the realised run
+# WILL differ, since the board's share loop, the Ag105 settle+ramp and the
+# plant's own drag are outside that model).  The shipped table is generated
+# with `--charger-accounting physical`, which is the accounting a
+# `--electrical hifi` run logs — and run_hil_suite.py's --electrical-pref
+# defaults to hifi, so that is what a default campaign runs.  Both strategies'
+# terminal SoC is MATCHED by construction (the generator bisects LAMBDA_TERM
+# until it is), which is what makes the hydrogen difference readable at all:
+#     h2 (physical)   1.17564e-02 g   vs soc-band 1.37227e-02 g   (-14.33 %)
+#     terminal SoC    0.698006        vs soc-band 0.698005
+# Read the two as a PAIR: a hydrogen comparison is only valid at matched
+# terminal SoC, and any strategy burns less hydrogen by discharging harder.
+# ⚠️ Gfc is scale-portable by design (operator ruling 2026-08-31, systemic
+# scaling paper — see the H2Consumption banner) but not yet identified against
+# THIS stack, so treat absolute grams as the model's estimate pending
+# TODO(calibrate).
+#
+# NOTE, and it is a finding rather than a gap: the DP opens the charger path on
+# ZERO stages of this cycle.  Shifting the split toward the fuel cell buys
+# 0.405 SoC per gram of hydrogen; running the Ag105 buys 0.169.  Opportunistic
+# charging is simply the worse lever at this rig's numbers, which is why the
+# suite entry for this scenario asserts no charge window while `ems-soc-band`'s
+# does.
+SCENARIOS["ems-dp-replay"] = {
+    "description": "The `ems-soc-band` drive cycle and drain load, driven by the "
+                   "NON-CAUSAL `dp-replay` benchmark: a setpoint table computed "
+                   "offline by backward dynamic programming with full "
+                   "foreknowledge of the whole cycle. Not a controller — the "
+                   "offline-optimal reference the causal strategies are ranked "
+                   "against on h2_cum_g, delta_soc and share tracking.",
+    # "hifi", NOT inherited from ems-soc-band's "any" (2026-08-31 review follow-
+    # up): the shipped table is generated with --charger-accounting physical, and
+    # bind_scenario() refuses an accounting/engine mismatch at startup.  Leaving
+    # this "any" made `run_hil_suite.py --electrical-pref simple` a hard child
+    # failure; declaring hifi makes the suite run it hifi under EITHER
+    # preference (the bringup/scp-inrush pattern), which is the engine the table
+    # is derived for.  A simple-engine benchmark needs its own table
+    # (--charger-accounting simple) AND this key widened, together.
+    "electrical": "hifi",
+    "duration_s": SCENARIOS["ems-soc-band"]["duration_s"],
+    "chg_i_ceiling_a": SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"],
+    # THE SAME LIST OBJECT — see the note above.
+    "ems_v_profile": SCENARIOS["ems-soc-band"]["ems_v_profile"],
+    "ems": "dp-replay",
+}
+
 SCENARIO_NAMES = list(SCENARIOS)
 
 # `soc-depletion`: seconds over which the SOC_ENDURANCE_LOAD_A bus-side endurance
@@ -1936,6 +2933,57 @@ SOC_LOAD_RAMP_S = 3.0
 # run_hil_suite.py's per-scenario duration override was extended in lockstep so the
 # delivered charge (and therefore the depletion depth) is preserved.
 SOC_ENDURANCE_LOAD_A = 2.2
+
+# ── `ems-soc-band`: the SoC drain load ──────────────────────────────────────
+# A bus-side load whose ONLY job is to move the coulomb count far enough, fast
+# enough, that the soc-band policy's out-of-band branch executes inside a
+# ~60 s HIL run.  Two constraints bound it, and they are tight:
+#
+#   UPPER — LIMIT_I_FC_MAX 1.4 A.  The drain phase cruises at 1.5 m/s, so the
+#   bus total is I_AUX_A 0.15 + i_motor 0.30 + drain.  Once the SoC leaves the
+#   band the policy biases the split to SOC_BAND_SHARE_NOMINAL +
+#   SOC_BAND_SHARE_SPAN = 0.75, and
+#   the FC channel then carries 0.75 x total.  At drain = 1.0 A:
+#       total = 1.45 A  ->  FC 1.09 A  ->  22 % margin on 1.4 A.
+#   (Also checked the other way: BT carries 0.36 A, above the
+#   SHARE_MINORITY_I_MIN_A 0.30 A governor floor, so the minority channel is
+#   controlled rather than floored.)
+#
+#   LOWER — the SoC must actually cross the band.  Pack-side coulomb current at
+#   the nominal 0.5 split, before the bias engages:
+#       BT bus-side 0.725 A x V_bus 15.8 V = 11.5 W
+#       pack current = 11.5 / (ETA_BOOST 0.85 x V_batt ~7.4 V) = 1.82 A
+#       dSoC/dt = 1.82 / (5 Ah x 3600) = 1.01e-4 /s
+#   so SOC_BAND_HALF 0.0015 is crossed ~11.9 s into the full drain and full
+#   share authority (one more half-band, 0.00075 at the post-bias ~5e-5 /s) is
+#   reached ~7 s after that.  A smaller drain does not cross inside the run.
+#   MEASURED (2026-08-31) in the generator's matched-model `soc-band` walk —
+#   the ONE source for these timings, see the scenario entry's note: band exit
+#   t = 24.30, saturation t = 34.90, peak bus total 1.462 A.  The hand estimate
+#   above brackets the band exit to within ~1 s but runs early on saturation,
+#   because it ignores the ramp-in and the OCV droop; use the walk's figures.
+#
+# Ramped in over SOC_LOAD_RAMP_S for exactly soc-depletion's reason: a stepped
+# multi-amp load splits 50/50 for one tick before the droop reapportions, and
+# that single sample is what latched OC_FC there.  Ramped OUT before the
+# deceleration at t = 38 so the charge window that follows sees a quiet bus.
+SOC_BAND_DRAIN_LOAD_A = 1.0
+SOC_BAND_DRAIN_START_S = 10.0     # ramp in from here (full at +SOC_LOAD_RAMP_S)
+# RAMP-OUT START, and it is load-bearing at exactly this value.  It must NOT be
+# earlier: an offline walk of this scenario (2026-08-31) with the ramp-out at
+# t = 35 admitted a charge window at t = 37.59 — the residual drain had fallen
+# through SOC_BAND_CHARGE_ENTER_ITOT_A while the profile was still at the 1.5 m/s
+# cruise, so the cruise test correctly said "cruise" and the policy opened
+# FC_CHARGE at the WRONG operating point: single-source FC would then carry
+# i_aux 0.15 + residual 0.17 + i_motor 0.30 + charger 0.8 = 1.42 A, OVER
+# LIMIT_I_FC_MAX 1.4 A.  Starting the ramp-out at the deceleration instead keeps
+# the bus loaded through the whole 1.5 m/s cruise (I_total ~1.45 A, far above the
+# 0.60 A admission gate) and empties it during the deceleration, where the cruise
+# test blocks charging anyway.  The window then opens in the 1.0 m/s cruise it
+# was designed for, at the budgeted 0.34 A pre-charge total.
+SOC_BAND_DRAIN_END_S = 38.0       # ramp out from here, off at +SOC_LOAD_RAMP_S
+                                   # = t 41.0, exactly where the low cruise (and
+                                   # the intended charge window) begins
 
 # `handoff-sag`: the two VBUS loads. Derivations live in the SCENARIOS entry and at
 # the apply_scenario() site; the numbers are named here so both can cite one source.
@@ -2138,6 +3186,21 @@ def apply_scenario(plant, scenario, t):
         # Plant carries the ordinary aux load; the whole stimulus is the EMS
         # layer's 50 Hz command stream (see EMS_STRATEGIES / ems_v_profile).
         plant.i_aux = I_AUX_A
+    elif scenario in ("ems-soc-band", "ems-dp-replay"):
+        # BOTH names, deliberately: `ems-dp-replay` is the same cycle and the
+        # same drain driven by the offline-optimal table instead of the causal
+        # policy, and the comparison is only meaningful if the load is
+        # bit-identical.  See the SCENARIOS["ems-dp-replay"] note.
+        # The stimulus is TWO things: the EMS layer's 50 Hz command stream (the
+        # `soc-band` strategy) and this drain load, whose only job is to move the
+        # coulomb count out of the policy's band inside a ~60 s run.  Ramped in
+        # and out over SOC_LOAD_RAMP_S (soc-depletion's lesson: a stepped
+        # multi-amp load splits 50/50 for one tick before the droop reapportions,
+        # and that single sample is enough to latch OC).  Full budget and the
+        # SoC-rate arithmetic are at SOC_BAND_DRAIN_LOAD_A.
+        ramp_in = max(0.0, min(1.0, (t - SOC_BAND_DRAIN_START_S) / SOC_LOAD_RAMP_S))
+        ramp_out = max(0.0, min(1.0, (t - SOC_BAND_DRAIN_END_S) / SOC_LOAD_RAMP_S))
+        plant.i_aux = I_AUX_A + SOC_BAND_DRAIN_LOAD_A * (ramp_in - ramp_out)
     elif scenario == "charge-fault":
         # Charging is established by the timeline; at t = 20 s the charger's INPUT
         # rail collapses (a connector, the FC path browning out).  The Ag105 goes
@@ -2551,6 +3614,32 @@ def main(argv=None):
     if not args.replay and not args.pi_live:
         if ems_name:
             ems_policy = EMS_STRATEGIES[ems_name]
+            # Generic startup binding hook.  A strategy that needs to VALIDATE
+            # itself against the scenario it is about to drive (currently only
+            # `dp-replay`, whose offline table is a solution of ONE specific
+            # profile) implements
+            #     bind_scenario(name, meta, electrical_mode=None, args=None)
+            # and raises to refuse.  The two trailing arguments are part of the
+            # hook contract (M1/M2, 2026-08-31) and are always passed by name.  Refusing HERE means the operator sees the reason before
+            # a single frame is sent, instead of a mid-run crash or — far
+            # worse — a run labelled `dp-replay` whose commands are not the
+            # DP's.  Strategies without the hook are unaffected.
+            binder = getattr(ems_policy, "bind_scenario", None)
+            if binder is not None:
+                try:
+                    # M1: pass the RESOLVED engine, not args.electrical. `hifi`
+                    # is downgraded for --replay (and the local `electrical`
+                    # object is None whenever the simple bus model is what will
+                    # actually run), so the resolved value is what the table's
+                    # charger accounting has to agree with. `args` carries the
+                    # run's --soc0/--capacity-ah for the M2 checks.
+                    binder(scenario, meta,
+                           electrical_mode=("hifi" if electrical is not None
+                                            else "simple"),
+                           args=args)
+                except (ValueError, OSError) as exc:
+                    ap.error("--ems %s cannot run scenario '%s':\n%s"
+                             % (ems_name, scenario, exc))
             if meta.get("pi_timeline"):
                 print(f"[hil] NOTICE: --ems {ems_name} REPLACES scenario "
                       f"'{scenario}''s pi_timeline ({len(meta['pi_timeline'])} "
@@ -2695,6 +3784,17 @@ def main(argv=None):
             # exists (--pi-live: the real Pi's commands are not observable here).
             # Replay mode's schema is untouched — `replay_rec` keeps its index.
             header_row += ["cmd_v_sp", "cmd_share_sp"]
+            # APPEND-only, and UNCONDITIONAL in simulated-plant mode, same rule
+            # as the pair above: the H2 metric is computed by Plant.step() on
+            # every simulated tick, so the two columns are always present and
+            # always populated.  They are NOT added in replay mode — the plant
+            # integrator is bypassed there, so there is no P_fc to consume and a
+            # column of zeros would read as "this run burned no hydrogen".
+            # ⚠️ These are the Gfc MODEL'S ESTIMATE of hydrogen mass. The map
+            # is scale-portable; the stack is NOT identified against this rig
+            # (TODO(calibrate)). Read the H2Consumption banner before quoting
+            # either column, and read h2_cum_g WITH delta_soc.
+            header_row += ["h2_rate_gps", "h2_cum_g"]
         writer.writerow(header_row)
 
     # M3: open the electrical-events sidecar UP FRONT and stream into it as events
@@ -2959,6 +4059,31 @@ def main(argv=None):
                         plant.scp_armed = False
                         plant.scp_fired = False
                         plant.scp_fired_t = None
+                        # L5 (review, 2026-08-31) — WHAT DELIBERATELY SURVIVES
+                        # a mid-run warm reset, stated so the asymmetry above
+                        # does not read as an oversight.  The BOARD restarts;
+                        # the PLANT does not.  Nothing here is reset:
+                        #   * the plant integrator (v, bus state, the hi-fi
+                        #     node network) — the flywheel does not stop
+                        #     spinning because the MCU rebooted, and zeroing it
+                        #     would inject a step the hardware never sees;
+                        #   * `plant.battery.soc` and the coulomb count — the
+                        #     pack's charge is physical state;
+                        #   * `plant.h2` (rate and cum_g) — the hydrogen burned
+                        #     before the reset was still burned, so the metric
+                        #     keeps ACCUMULATING rather than restarting;
+                        #   * the EMS policy's own state (SoC reference,
+                        #     trailing cruise window, charge latch) — the host
+                        #     did not restart either.
+                        # Continuing accumulation is the honest choice: the
+                        # alternative silently discards part of a run's cost.
+                        # The reset is not swept under the rug either — a
+                        # non-whitelisted mid-run warm reset already renders
+                        # the whole run INCONCLUSIVE in run_hil_suite.py, which
+                        # is where "these totals span a board restart" is
+                        # supposed to be caught.  Only `scp_*` re-arms, because
+                        # it tracks a BOARD-side one-shot (the staged bring-up)
+                        # that genuinely does run again.
                     obs = decoded
                     obs_last_t = t          # F11: stamp with sim-clock time, not
                                              # wall time — obs_age_s is measured
@@ -3212,6 +4337,11 @@ def main(argv=None):
                         row.append(f"{commander.state['power_share_setpoint']:.4f}")
                     else:
                         row += ["", ""]
+                    # H2 metric (append-only, unconditional in simulated mode).
+                    # 9 significant digits: the rate is O(1e-4) g/s and the
+                    # cumulative O(1e-3) g, so %.4f would round both to zero.
+                    row.append(f"{sensors.get('h2_rate_gps', 0.0):.9g}")
+                    row.append(f"{sensors.get('h2_cum_g', 0.0):.9g}")
                 writer.writerow(row)
 
             ticks += 1
@@ -3392,6 +4522,12 @@ def main(argv=None):
               f"({args.capacity_ah:g} Ah), V_batt {plant.battery.v_terminal:.3f} V; "
               f"fuel cell {plant.fuel_cell.v_terminal:.3f} V at "
               f"{plant.fuel_cell.i:.3f} A")
+        # H2 metric.  The qualifier is not decoration: Gfc is scale-portable by
+        # design (H2Consumption banner) but not identified against THIS stack,
+        # so the number is the model's estimate pending TODO(calibrate).
+        print(f"[hil] H2 (Gfc model estimate — stack uncalibrated): "
+              f"{plant.h2.cum_g:.6g} g cumulative, "
+              f"final rate {plant.h2.rate_gps:.6g} g/s")
     if electrical is not None:
         summ = electrical.summary()
         # M3: electrical.events is trimmed on every drain, so the durable totals

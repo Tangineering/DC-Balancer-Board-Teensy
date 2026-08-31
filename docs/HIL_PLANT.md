@@ -491,6 +491,8 @@ Selected with `--scenario`; `apply_scenario()` is re-evaluated every tick from `
 | `charge-regen` **(EMS-driven, redesigned 2026-08-30)** | the `regen-harvest` strategy ramps `v_setpoint` 2.5 → 0.4 m/s at **1.0 m/s²** three times, and asserts `charge_goal` **only inside a braking window**. The old design stepped `v_setpoint` to 0, which is below `V_SP_ZERO_THRESH` (0.07 m/s) — the firmware commanded 0 A and those segments **coasted**, never entering regen at all; and it commanded `charge_goal` simultaneously with acceleration, which opened the single-source `FC_CHARGE` path and latched `OC_FC` 6.4 s before the first brake. A *continuous* commanded deceleration exceeding the coast rate `a_coast(v) = (F_c + b·v)/m` is the only way to hold a negative command past the 0.5 s Ag105 settle; a step rails for at most ~0.8 s. | `chargingControl()`'s regen branch and the REGEN ⇄ FC_CHARGE **mutual exclusion** | During each brake: `SW_REGEN` (0x08) set, `SW_FC_CHARGE` **clear** (never both), `MPPT_DISABLE` driven LOW (inhibited). Between brakes the pair swaps back. |
 | `charge-fault` | charging established, then at **t = 20 s** the charger input rail collapses (`plant.chg_fault`) | the charger-loss path: `chargerHasPower()` going false, the settle timer re-arming, the GENSTAT decode in `detectFaults()` | `V_chg` → 0, `I_charge` → 0, `ag105_status` → `0x00` (GENSTAT 000, Battery Disconnect), `ag105IsReady()` drops and the MPPT release is withdrawn. |
 | `soc-depletion` | share commanded fully onto the **battery** at t = 5 s, then `i_aux` **ramps** to +2.2 A over 3 s from t = 10 s (reduced from 3.0 A: `share_sp = 0.0` is below `DROOP_R_MIN`, so `updateShareSetpointCutoff()` cuts FC *off the bus* entirely and BT alone carries 0.15 + load — 3.15 A at the old value, over `LIMIT_I_BT_MAX` 3.0 A; now 2.35 A, 22 % margin. **Suite override re-derived 2026-08-30: `--soc0` 0.20, duration 400 s** — the previous 0.15 / 880 s pair used the 2.2 A *bus-side* load as the coulomb current, when the pack sits behind the boost and delivers ≈ 6.19 A, and it ignored that the `UV_BATT` latch is a *state* condition at `soc_latch ≈ 0.113`, which ends the run. From 0.15 the maximum observable SoC fall was 0.037, below the 0.05 signal threshold at **any** duration; from 0.20 the ceiling is 0.087 = 1.74× it, with the latch expected at ≈ 266 s. The signal gate is now disjunctive — the 0.05 fall **or** a post-ramp `UV_BATT` latch — because the two proofs foreclose each other) (staggered: both landing on one tick put 1.47 A on FC for a single sample — 5 mA over `LIMIT_I_FC_MAX` — and latched `OC_FC` 645 s before the objective) | the honest `LIMIT_V_BATT_MIN` / UV_BATT path, driven by a real coulomb count rather than a step | `V_batt` walks **down the OCV curve** (§9.2) as `soc` falls; `Rs(SOC)` steepens the sag below 15 % SOC. **Practical note:** at 5 Ah a multi-amp draw is a ~100 min run — use `--soc0` (the suite passes **0.20**) and/or `--capacity-ah` to bring it inside a bench session. The model is deliberately *not* accelerated: a faked SOC ramp would also fake the RC-pair and `Rs(SOC)` dynamics the UV path actually sees. |
+| `ems-soc-band` **(EMS-driven, 2026-08-31)** | 61 s profile plus a **1.0 A bus drain** (`SOC_BAND_DRAIN_LOAD_A`, ramped in from t = 10 and out from t = 38) whose only job is to move the coulomb count out of the `soc-band` policy's deadband inside a bench run. Bounded on both sides: large enough that SoC crosses (pack-side ≈ 1.82 A → 1.01e-4 SoC/s, band exit measured t = 24.30), small enough that the policy's 0.75 share ceiling puts only 1.09 A on FC against `LIMIT_I_FC_MAX` 1.4 A (22 % margin). Charge ceiling de-rated to **0.8 A**, charge-fault's budget verbatim. | The **`soc-band`** EMS law (deadband-P share bias + opportunistic FC-path charging), the share loop under a commanded bias, `chargingControl()`'s cruise branch, and the **H2 metric** (§9.3) end to end. | Commanded `cmd_share_sp` walks 0.50 → **0.75** from t = 24.30, saturating at t = 34.90; `I_fc` rises above the nominal half of the bus total; a charge window opens at t = 41.70 in the 1.0 m/s cruise (`SW_FC_CHARGE` set, `SW_BT_BUS` cleared, `I_charge` > 0.5 A by t ≈ 42.6); `h2_cum_g` accumulates ≈ 5e-3 g. **Expected fault-free.** ⚠️ The policy closes on plant-truth SoC and is **not portable to a real Pi** as written — see the `SocBandStrategy` banner in `tools/hil_plant_sim.py`. |
+| `ems-dp-replay` **(EMS-driven, NON-CAUSAL BENCHMARK, 2026-08-31)** | the SAME 61 s profile and the SAME 1.0 A drain as `ems-soc-band` — the scenario entry is *derived* from it and shares the `ems_v_profile` **list object**, and `apply_scenario()` applies one drain branch to both names, so nothing but the decision rule differs. | The **`dp-replay`** playback of an offline dynamic-programming solution (§9.4): the share loop under a commanded rail, and the H2 metric (§9.3) as the comparison surface against `ems-soc-band`. | `cmd_share_sp` **0.250** while the bus is quiet, ramping from t = 4 and **pinned at 0.750 over t = 10.6–40.1** (`I_fc` ≈ 1.10 A of a ~1.46 A bus total), ≈ 0.525 through the low cruise, back to 0.250 by t = 55.5. `charge_goal` is **0 for the whole run** — a result, not a gap (§9.4). **Expected fault-free.** ⚠️ NOT a controller: it reads no feedback, and it refuses to start unless the active scenario's profile fingerprint matches the table's. |
 | `handoff-sag` **(hi-fi only)** | cruise from 4 s with a **+0.40 A pre-load** (pre-rail total ~0.74 A: above the 0.60 A closed-loop governor gate, below the cut's 0.5 A/channel handoff guard), share commanded to **0.0** at 6 s so the **FC** channel is cut, then a **+1.5 A** step at 20 s against the surviving BT channel (2.24 A vs `LIMIT_I_BT_MAX` 3.0 A, 25 % margin) | the share **setpoint latch** (`updateShareSetpointCutoff()`, `.ino:9231-9257`) opening a bus switch, its `SHARE_CUT_MAX_HANDOFF_A` 0.5 A load guard, and the single-source sag + UV dwell decision that follows | Bus switch open and held open, a deeper single-source droop, and either a clean ride or a correctly-latched `UV_BUS`. ⚠️ **Not** a reactive-pickup test: a setpoint-latched cut drives the switch EN-low, and an EN-low RT1987 does not conduct — nor will the firmware re-close it (the re-closers gate on `!shareSpCut*`). The rail direction is BT-surviving because at the FC rail the 1.4 A limit leaves too little perturbation budget to excite anything. Refused under `--electrical simple`. |
 | `bringup` **(hi-fi only)** | none; plant from dark | the firmware's staged bring-up P0–P3 against the **real** RT1987 `t_D(ON)` 8 ms + soft-start ramps (~19.8 ms on the 100 nF switches, ~1.07 ms on the 5.6 nF ones) | Operator runs `'G'`; the phase timings in the USB log should sit outside the switch delays rather than racing them. |
 | `scp-inrush` **(hi-fi only)** | VESC input capacitance forced to the **top of the envelope (0.9 mF)**, and a **three-phase V-MOT load** (behind the switch, *not* `i_aux` on VBUS; 2026-08-31 deterministic redesign): the bring-up P3 ramp runs **unloaded**, a **6.5 A fold pulse** (`SCP_INRUSH_FOLD_LOAD_A`) steps in once V-MOT crosses `SCP_INRUSH_ARM_V` 1.2 V mid-soft-start (above the model's 1.0 V Norton load floor, so the full current appears in one substep and the cut fires inside that same 1 kHz tick — phase-independent of the firmware's OC teardown), a one-shot latch withdraws it, and a **5.0 A run load** at +110 ms latches `OC_FC`. The pre-redesign t = 0 flat 5.0 A load faded in through the Norton floor and its cut raced the firmware's teardown (the 2026-08-31 two-outcome episode); the older-still +6 A at t = 8 s arrived when `MOT_PWR` had been ON since t ≈ 0.62 s, and the foldback branch exists only in `SOFT`: **zero** `scp_cut`/fold events fired. | RT1987 soft-start **foldback** on `MOT_PWR` | `scp_cut` + `sw_ring` entries in the event sidecar. Verified offline: the margin holds at 2 A (soft-start completes, `V_mot` reaches 15.1 V) and breaks at ≥ 4 A into a **64 ms burst-retry cycle** — the Death-5-class ring pattern. **Not** the Death-5 stimulus itself: that was a full-bus hot-plug onto a discharged node, no longer reproducible (`MOT_PWR` carries a 100 nF CSS and the firmware pre-charges the node). This is the nearest *legitimate* case that can still bind the foldback. Ring peaks here stay under the 20 V abs-max because the cut happens at low `V_mot`; a cut at full bus on `--trace-config long` (BT, 3.480 nH) does cross it. |
@@ -524,12 +526,29 @@ mode-dependent until that gap is closed.
 
 ## 7. Data capture
 
+> **`constants_hash` changelog — 2026-08-31: the hash moved.** The DP-EMS round added
+> **20 constant names** to `collect_model_constants()` (16 `SOC_BAND_*`, plus
+> `H2_GFC_TS_S`, `H2_GFC_DC_GAIN_GPS_PER_W`, `H2_GFC_TAU_DOMINANT_S` and
+> `H2_STATIC_PROXY_GPS_PER_W`). The change is **purely additive — no pre-existing
+> constant changed value** — but the hash covers the whole set, so a pre-2026-08-31
+> `constants_hash` is **not comparable** with a later one even for an otherwise
+> identical model. Across that boundary compare the `constants` dict itself, which the
+> sidecar carries for exactly this reason. The sidecar and its fields are described in
+> `docs/HIL_USER_MANUAL.md` §2.5.
+
 ### 7.1 CSV schema (`--csv`)
 
 One row per tick. The base schema is **19 columns and is frozen**; everything since is
 **appended, never reordered**:
 
 - `soc` (col 20) — battery state of charge, 5 dp. **Simulated runs only.**
+- `h2_rate_gps`, `h2_cum_g` (appended last) — **simulated runs only, and
+  unconditional there**: this tick's hydrogen rate (g/s) and the run's cumulative
+  total (g) from the `Gfc` metric, 9 significant digits (the values are O(1e-4) and
+  O(1e-3), so a 4-dp format would round both to zero). Deliberately **absent** in replay
+  mode, where the plant integrator is bypassed and a column of zeros would read as "this
+  run burned no hydrogen". ⚠️ **The Gfc model's estimate** — scale-portable map, stack
+  not identified against this rig (`TODO(calibrate)`); §9.3.
 - `elec_substep_hz`, `elec_events` (cols 21–22) — **`--electrical hifi` only**: the
   honestly-measured substep rate this tick and the cumulative electrical-event count.
 - `replay_rec` — **replay only**, and in replay mode `soc` and the hi-fi columns are
@@ -1094,6 +1113,166 @@ charger reach `AG105_ST_FULL` (GENSTAT 011), which the old SoC-free model never 
 
 Initial SOC is `--soc0` (default 0.7).
 
+### 9.3 Hydrogen consumption — the `Gfc` metric
+
+> ### ⚠️ READ THIS BEFORE QUOTING ANY H2 NUMBER FROM A HIL RUN
+>
+> `Gfc` is a **full-scale (106 kW) fuel-cell hydrogen-consumption model taken verbatim
+> from the PhD student's FCHEV dynamic-programming study**. It is the commented-out
+> `H2_tf` at `references/EMS/DPtrial.m:51-52`, with its two scalar prefactors folded in:
+> `num = [5.51, 2.248e6, 2.488e9, 6.473e11]`,
+> `den = [1044, 1.239e10, 2.034e13, 8.21e15, 3.67e16]`. Input is `P_fc` in **watts**,
+> output is hydrogen rate in **g/s**.
+>
+> **Scale portability — resolved (operator ruling, 2026-08-31).** The `720` in
+> `den[0] = 1044 = 720 × 1.45` is the full-size **fuel cell's OCV** (an earlier reading of
+> it as the battery `Em` — both are 720 V in that model — was wrong). The transfer
+> function needs **no adjustment** for this rig: its input (`P_fc`, W) and output (g/s)
+> both ride the system's energy scaling factor, so the g/s-per-W map is scale-invariant
+> under the systemic scaling methodology
+> (`references/Systemic_Scaling_of_Powertrain_Models_with_Youla_Driver_Control.pdf`,
+> Tan, Yadav & Assadian). H2 figures from this path are the **model's estimate proper**.
+> Remaining caveats — about the model, not the scaling:
+>
+> 1. **Stack identification.** The coefficients were fit for the full-size stack's
+>    consumption behaviour and have **not** been identified against *this* stack.
+>    `TODO(calibrate)` — the surviving obligation, and it covers whether the 0.2212 s
+>    consumption lag transfers unchanged to a small stack.
+> 2. **Efficiency disagreement.** Its DC gain **1.7637602179836514e-05 g/s/W** is
+>    **1.164×** the DP's own static proxy `W_H2 = P_fc/(0.55·120000)` (`DPtrial.m:43`) —
+>    it implies **η = 47.25 %** where the same script assumes 55 %, a **+16.4 %**
+>    disagreement *inside one study*. A model choice to note when comparing against
+>    proxy-based numbers.
+> 3. **Dynamics.** Its dominant time constant **0.2212 s** is a *consumption*-dynamics
+>    claim (fuel delivery / stack thermodynamics) and is a **different quantity** from the
+>    *electrical* `FC_TAU_S = 0.020 s` double-layer lag in `hil_electrical.py:405`. They
+>    are not alternatives and must not be reconciled with each other.
+
+**Discretization (measured; do not revisit).** A characterization round (scipy,
+2026-08-31) established the CT system is stable and minimum-phase, then compared three
+discretizations at 1 kHz:
+
+| Form | Max relative error | Verdict |
+|---|---|---|
+| ZOH modal / parallel first-order | 2.5e-9 | **chosen** |
+| Tustin | — | **rejected**: maps the 1.887e6 rad/s pole to `z = −0.9997`, a permanent ringing mode at Nyquist |
+| `tf2sos` cascaded biquads | 8.2e-3 | **rejected**: worse than Tustin |
+
+The implementation (`H2Consumption` in `tools/hil_plant_sim.py`) is four **independent
+scalar first-order recursions summed**, stdlib only, allocation-free, inside the 1 kHz
+tick. The fourth mode has `λ = 0`: it is the ZOH image of the fastest CT pole, **not** a
+direct feedthrough — the CT system is strictly proper. DC check:
+`Σ gᵢ/(1−λᵢ) = 1.7637602179836473e-05`, 4 ulp from the target gain.
+
+**Input.** `u = P_fc` is **stack** power: `FuelCellSource.v_terminal × FuelCellSource.i`,
+plant truth, both electrical modes. Deliberately *not* the CSV's `V_fc × I_fc` — `I_fc` is
+the **bus-side** channel current (the boost output) while `V_fc` is the source-side
+terminal voltage, so their product understates stack power by roughly
+`V_bus/(η·V_fc)`. **Consequence:** the metric is *not* reconstructible from the CSV's
+voltage and current columns, which is why `h2_rate_gps` and `h2_cum_g` are logged
+(§7.1). Negative `P_fc` is **clamped at zero** — reverse power into the stack is not a
+physical operating point here, and a negative rate would be an unphysical hydrogen
+*credit* that would silently flatter any strategy that provoked it.
+
+**Scope.** Simulated mode only, by construction: it is stepped from `Plant.step()`, and
+`--replay` bypasses the plant integrator. It is a pure **observer** — no plant state, no
+injected frame, no policy and no firmware path reads it back, so enabling it cannot change
+a trace. The wire protocol is untouched (40 B inject / 16 B observe / 22 B command).
+
+### 9.4 The DP-optimal EMS benchmark — `dp-replay` and its table
+
+> ### ⚠️ A BENCHMARK, NOT A CONTROLLER
+> The `dp-replay` strategy plays back a **time-indexed setpoint table** computed
+> **offline**, with **full foreknowledge of the entire drive cycle and the entire
+> auxiliary load**, by backward dynamic programming. It reads no feedback and reacts to
+> nothing. It exists to be the **lower-bound reference** the causal strategies are ranked
+> against, and it is **meaningless against any profile other than the one it was generated
+> for** — which is why it refuses to start on a fingerprint mismatch.
+
+**Generator:** `tools/gen_dp_ems_table.py` (offline; needs **numpy**, so miniforge, not
+`.venv_hil`). **Table:** `tools/dp_tables/dp_ems_table_<scenario>.csv`, checked in,
+byte-deterministic, refuses to overwrite without `--force`.
+
+**Provenance.** The *structure* is ported from the PhD student's MATLAB FCHEV study
+(`references/EMS/DPtrial.m`, `references/EMS/DP_EnergyManagement2.m`): backward Bellman induction
+over an SoC grid with a fuel-cell power control, a hydrogen stage cost, a running
+SoC-deviation penalty and a heavy terminal charge-sustaining penalty. **Nothing numeric is
+imported from it** — that is a 106 kW vehicle and this is a bench rig. The generator's
+module docstring carries the declared port decisions **D1–D11** in full; the ones that
+change what the answer *means* are:
+
+| # | Decision | Why |
+|---|---|---|
+| D1 | **Linear** interpolation of `J(:,k+1)` at `SOC_next`; off-grid transitions are **infeasible**, not clamped | the MATLAB snaps to the nearest grid index (`DP_EnergyManagement2.m:39`), which on its own grid quantizes ~99 % of realistic steps to "no change at all" |
+| D2 | the argmin **policy is stored**; the forward pass is a table lookup | the MATLAB re-solves the whole minimisation forward (`:61-95` duplicates `:23-53`) |
+| D3 | an infeasible state the forward pass **reaches** raises | the MATLAB silently commands `P_fc = 0` (`:96`), handing the demand to the battery — the limit the feasibility test was protecting |
+| D4 | stage cost uses the **`Gfc` DC gain** (§9.3), imported from `hil_plant_sim.py` | makes the objective and the logged `h2_cum_g` the same model; `DPtrial.m:43`'s static proxy disagrees by +16.4 % |
+| D6 | SoC dynamics are the **simulator's `BatterySource`** (OCV table, `Rs(SOC)`, coulomb count) | **operator ruling: match the plant.** The MATLAB's constant `Em = 720 V` lossless pack is retired; the problem becomes nonlinear in the state |
+| D7 | the demand is **derived from the scenario, imported at generation time** | no hand-copied profile — retuning the scenario changes the fingerprint and invalidates the table |
+| D10 | charging is a **discrete second control**, masked to cruise regions and an FC-current budget | on this board a negative pack current can only come from the Ag105, and `assertFcChargeEnable()` drops BT off the bus. Never during acceleration (operator ruling (b)). Precedent: `ems_regen_harvest` windows `charge_goal` off the same profile |
+| D11 | `--charger-accounting` picks which hydrogen total the DP minimises | **must match the electrical engine**: hi-fi stamps the Ag105's bus draw, simple mode does not. A `physical` table judged by the simple-mode metric is *beaten by the causal strategy* and is not a bound at all |
+
+**Two structural choices worth stating separately.**
+
+*The running SoC penalty defaults to **zero**.* The reason this table can be called a lower
+bound is one line: among trajectories ending at the same terminal SoC the terminal penalty
+is identical, so minimising (hydrogen + terminal penalty) is exactly minimising hydrogen.
+A *running* penalty is not identical across those trajectories, so it re-ranks them.
+Measured at the MATLAB's own ratio (`--lambda-dev 0.05`): the SoC-matched DP came out
+**0.07 % worse** in hydrogen than the causal strategy it is meant to bound, purely because
+it was paying a running penalty the causal strategy never paid. The MATLAB structure stays
+reachable via `--lambda-dev`, for SoC-trajectory shaping — not for generating an optimum
+anyone will quote.
+
+*The share control grid is `[0.25, 0.75]`,* the same authority the causal `soc-band` policy
+gives itself. Both halves matter: an unconstrained DP sits at 0.15 and 0.85, i.e. exactly
+**on** the `updateShareSetpointCutoff()` boundary where a float round-trip decides whether
+a bus switch opens (exercising that latch is `handoff-sag`'s job); and a benchmark allowed a
+wider split range than the strategy it bounds measures the range, not the policy.
+
+**Result on the shipped `ems-dp-replay` table** (generator's own reduced model, open loop,
+`--charger-accounting physical`, terminal SoC matched by bisection):
+
+| | DP (`dp-replay`) | causal (`soc-band`) |
+|---|---|---|
+| `h2` (physical) | **1.17564e-02 g** | 1.37227e-02 g |
+| terminal SoC | 0.698006 | 0.698005 |
+
+i.e. **−14.33 %** hydrogen at matched terminal SoC. ⚠️ Both columns are the Gfc model's
+estimates — the map is scale-portable, the stack is not identified against this rig
+(`TODO(calibrate)`, §9.3). The **ranking** is robust regardless; quote the absolute grams
+with that caveat.
+
+**The `soc-band` timing figures come from here, and only from here.** The generator walks
+the real `SocBandStrategy` through the *same* reduced model it solves the DP against
+(`--no-compare-heuristic` skips it), and prints
+`band exit t= / share saturation t= / first charge t=`. Those three numbers —
+**24.30 / 34.90 / 41.70 s** (`I_charge` > 0.5 A by ≈ 42.6 s, after `AG105_SETTLE_S` plus
+the ramp) — are the single source used by the scenario entry in `hil_plant_sim.py`, the
+`SOC_BAND_DRAIN_LOAD_A` budget, the `run_hil_suite.py` check windows, §6's scenario table
+and the user manual's §3.2.2 walkthrough. Reproduce them with:
+
+```
+C:\Users\ricky\miniforge3\python.exe tools\gen_dp_ems_table.py --scenario ems-dp-replay --dry-run
+```
+
+A second independent offline walk would be a second answer; if the scenario is retuned,
+re-read them from this line rather than re-deriving them anywhere else.
+
+**The DP never charges on this cycle**, and that is a finding rather than a gap: shifting
+the split toward the fuel cell buys **0.405 SoC per gram**, running the Ag105 buys **0.169**.
+Opportunistic charging is simply the worse lever at this rig's numbers.
+
+**Fidelity boundary — what the predicted numbers are not.** The generator's model has no
+share loop, no Ag105 settle/ramp, a 0.1 s stage, and uses the `Gfc` **DC gain** rather than
+its 0.2212 s dynamics. Its `V_bus` is the both-sources droop at every stage, including the
+single-source charge windows (a 0.2 % error on a ~15.9 V rail, taken so the demand stays
+independent of the control and the stage cost stays separable). So the −14.33 % is an
+*estimate of the gap*, not a measurement of it, and the realised run will differ. Compare
+the **measured** runs on the report's `h2_cum_g` / `delta_soc` pair, and treat a hydrogen
+difference at visibly different `delta_soc` as uninterpretable.
+
+
 ---
 
 ## 10. `PiCommander` — driving the firmware from the scenario
@@ -1181,4 +1360,7 @@ the *magnitudes* are plausible rather than measured.
 | **Source-model calibration** | §9 is the paper's *form* with rig-fitted parameters. A pack capacity/OCV characterization and an FC polarization sweep would convert most of §9's `TODO(calibrate)` markers into measurements. |
 | **Measured electrical constants** | Close the `TODO(verify)` list — most cheaply `K_DROOP_BUS` and `I_AUX_A`, both directly observable on a healthy bench run; `AG105_TAU_S` and `AG105_V_IN_MIN` (§4.6) need a bench charge cycle instead. |
 | **Decoder bit6 label** | `tools/decode_benchlog.py` should name the HIL provenance bit so a simulated run cannot be mistaken for a measured one downstream. |
+| **H2 model identification** | §9.3. `Gfc` is scale-portable by design (operator ruling 2026-08-31; the `den[0]` provenance question is CLOSED — 720 V is the full-size FC's OCV) but not identified against the actual H-20 class stack. One open item: an identification run against the real stack, which also settles whether the 0.2212 s consumption lag and the η 47.25 %-vs-55 % model choice transfer. |
+| **A closed-loop DP** | §9.4's benchmark is open loop and single-profile: it is a solution of ONE cycle, replayed. The natural next steps are (a) an ECMS/co-state extraction from the DP's own value function, which WOULD be causal and Pi-portable, and (b) regenerating the table under `--charger-accounting simple` whenever a campaign is run with `--electrical simple`, since a table optimised for the wrong accounting is not a bound. |
+| **A portable SoC estimator** | The `soc-band` EMS strategy closes on plant-truth `fb["soc"]`, which no real Pi can see (v4 telemetry has no SoC field). A `V_batt`-based estimator on the Pi (OCV lookup + coulomb counting off the telemetry `I_batt`) would feed the same law unchanged and make the strategy Mode-B portable. Does not exist. |
 | **Battery state of charge / CV taper / MPPT loop** | The Ag105 model (§4.6) is status-level only; a stateful SoC model would let `AG105_ST_FULL` and a genuine CV taper appear in a HIL run. |

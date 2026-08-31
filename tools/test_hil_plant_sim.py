@@ -1129,7 +1129,7 @@ def test_picommander_always_active_50hz_cadence_matches_pi_cmd_hz():
 EXPECTED_SCENARIO_NAMES = {
     "steady", "step-load", "sag", "comm-loss", "drive",
     "charge-cruise", "charge-regen", "charge-fault", "soc-depletion",
-    "ems-drive-cycle",
+    "ems-drive-cycle", "ems-soc-band", "ems-dp-replay",
     "handoff-sag", "bringup", "scp-inrush",
 }
 
@@ -1147,8 +1147,23 @@ def test_scenarios_registry_required_keys():
 
 
 def test_scenarios_hifi_only_set():
+    """`ems-dp-replay` joined this set 2026-08-31 (review follow-up): its
+    shipped table is generated with --charger-accounting physical, which
+    bind_scenario() only accepts under the hifi engine -- declaring "hifi"
+    (rather than inheriting ems-soc-band's "any") makes the suite run it hifi
+    under EITHER --electrical-pref instead of failing a simple-preference
+    child at startup."""
     hifi_only = {name for name, meta in hil.SCENARIOS.items() if meta["electrical"] == "hifi"}
-    assert hifi_only == {"handoff-sag", "bringup", "scp-inrush"}
+    assert hifi_only == {"handoff-sag", "bringup", "scp-inrush", "ems-dp-replay"}
+
+
+def test_ems_soc_band_stays_any_while_ems_dp_replay_is_hifi():
+    """The divergence between the two sibling scenarios is DELIBERATE (item 5,
+    2026-08-31 reconciliation): ems-soc-band has no fixed accounting to match
+    (its CAUSAL strategy just runs), so it stays 'any'; ems-dp-replay's table
+    is accounting-specific and must pin the engine that accounting matches."""
+    assert hil.SCENARIOS["ems-soc-band"]["electrical"] == "any"
+    assert hil.SCENARIOS["ems-dp-replay"]["electrical"] == "hifi"
 
 
 # 2026-08-30 duration trim (Feature D): a literal table pin so a silent revert
@@ -1167,6 +1182,8 @@ EXPECTED_SCENARIO_DURATIONS_S = {
     "charge-fault": 25.0,
     "soc-depletion": 120.0,
     "ems-drive-cycle": 58.0,
+    "ems-soc-band": 61.0,
+    "ems-dp-replay": 61.0,
     "handoff-sag": 24.0,
     "bringup": 8.0,
     "scp-inrush": 6.0,
@@ -1273,10 +1290,16 @@ def test_plant_charge_ramp_converges_toward_ag105_i_max_override():
 
 
 def test_scenarios_chg_i_ceiling_a_only_on_charge_regen_and_charge_fault():
+    """RE-SCOPED (2026-08-31): the two new EMS scenarios ('ems-soc-band' and its
+    derived 'ems-dp-replay') carry the SAME de-rated 0.8 A ceiling as
+    charge-fault -- the ems-soc-band SCENARIOS entry copies it verbatim for the
+    identical single-source-FC operating point.  The invariant this test pins
+    is now "any scenario declaring a charge window carries the de-rate", not
+    "only these two names do"."""
     for name, meta in hil.SCENARIOS.items():
         if name == "charge-regen":
             assert meta["chg_i_ceiling_a"] == pytest.approx(1.6)
-        elif name == "charge-fault":
+        elif name in ("charge-fault", "ems-soc-band", "ems-dp-replay"):
             assert meta["chg_i_ceiling_a"] == pytest.approx(0.8)
         else:
             assert "chg_i_ceiling_a" not in meta, name
@@ -1664,8 +1687,10 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
     header, _rows = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "simple", "--duration", "0.02"])
     # cmd_v_sp/cmd_share_sp are appended UNCONDITIONALLY in simulated-plant
-    # mode (this round), after soc — so soc is now third-from-last.
-    assert header[-3:] == ["soc", "cmd_v_sp", "cmd_share_sp"]
+    # mode, after soc; h2_rate_gps/h2_cum_g (2026-08-31) are appended
+    # UNCONDITIONALLY after THAT pair -- so soc is now fifth-from-last.
+    assert header[-5:] == ["soc", "cmd_v_sp", "cmd_share_sp",
+                           "h2_rate_gps", "h2_cum_g"]
     assert "elec_substep_hz" not in header
     assert "elec_events" not in header
     assert "replay_rec" not in header
@@ -1674,8 +1699,9 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
 def test_csv_schema_hifi_mode_appends_elec_columns(tmp_path):
     header, _rows = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "hifi", "--duration", "0.02"])
-    assert header[-5:] == ["soc", "elec_substep_hz", "elec_events",
-                           "cmd_v_sp", "cmd_share_sp"]
+    assert header[-7:] == ["soc", "elec_substep_hz", "elec_events",
+                           "cmd_v_sp", "cmd_share_sp",
+                           "h2_rate_gps", "h2_cum_g"]
 
 
 REPLAY_CSV_HEADER_PIN = [
@@ -2181,11 +2207,12 @@ def test_m3_hifi_with_csv_creates_events_sidecar(tmp_path):
     # durable cumulative counter, not len(electrical.events) which is
     # trimmed after every drain).
     assert rows, "expected at least one CSV row"
-    # cmd_v_sp/cmd_share_sp are now unconditionally appended after the hifi
-    # elec_* columns in simulated-plant mode (INTENDED, this round), so
-    # elec_events is the third-from-last column, not the last.
-    assert header[-2:] == ["cmd_v_sp", "cmd_share_sp"]
-    elec_events_col = rows[-1][-3]
+    # cmd_v_sp/cmd_share_sp are unconditionally appended after the hifi elec_*
+    # columns in simulated-plant mode, and h2_rate_gps/h2_cum_g (2026-08-31)
+    # are unconditionally appended after THAT pair -- so elec_events is now
+    # fifth-from-last, not third-from-last.
+    assert header[-4:] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps", "h2_cum_g"]
+    elec_events_col = rows[-1][-5]
     assert elec_events_col.strip() != ""
     n_reported = int(elec_events_col)
     with open(sidecar, encoding="utf-8") as fh:
@@ -2749,7 +2776,9 @@ def test_pi_live_csv_cmd_columns_blank(tmp_path):
     header, rows = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "simple",
                    "--duration", "0.02", "--pi-live"])
-    assert header[-2:] == ["cmd_v_sp", "cmd_share_sp"]
+    # h2_rate_gps/h2_cum_g (2026-08-31) are now the last two columns in
+    # simulated-plant mode; cmd_v_sp/cmd_share_sp sit just before them.
+    assert header[-4:] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps", "h2_cum_g"]
     v_idx, share_idx = header.index("cmd_v_sp"), header.index("cmd_share_sp")
     assert rows, "expected at least one CSV row"
     for row in rows:
@@ -3675,6 +3704,867 @@ def test_warm_reset_times_capped_but_count_is_not(tmp_path, monkeypatch):
                                    port=58916)
     assert res["warm_resets_observed"] == 25
     assert len(res["warm_reset_times_s"]) == hil.WARM_RESET_TIMES_MAX == 16
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 13. H2Consumption (Gfc hydrogen-consumption metric, 2026-08-31)
+# ─────────────────────────────────────────────────────────────────────────
+
+# The ten pinned validation vectors from the H2Consumption banner comment: a
+# 10.0 W step applied from the FIRST tick, zero initial state, Ts = 1e-3.
+# rtol 1e-9 per the banner.
+H2_STEP_10W_VECTORS = [
+    # (n, rate_gps, cum_g)
+    (1, 1.451648924521401e-06, 1.451648924521401e-09),
+    (10, 8.825724871566303e-06, 5.300056759372415e-08),
+    (100, 6.483139460046860e-05, 3.565983712066193e-06),
+    (1000, 1.744684319758860e-04, 1.381066815913307e-04),
+    (2000, 1.763552634860608e-04, 3.140662654327328e-04),
+]
+
+
+def test_h2_consumption_10w_step_pinned_validation_vectors():
+    """Drive H2Consumption with the exact banner stimulus (10 W step from the
+    first tick, zero initial state, Ts = H2_GFC_TS_S) and check the rate/
+    cumulative pair at every pinned n against the banner's own vectors."""
+    h2 = hil.H2Consumption()
+    want = dict((n, (rate, cum)) for n, rate, cum in H2_STEP_10W_VECTORS)
+    last_n = max(want)
+    for n in range(1, last_n + 1):
+        rate = h2.step(10.0)
+        if n in want:
+            want_rate, want_cum = want[n]
+            assert rate == pytest.approx(want_rate, rel=1e-9)
+            assert h2.rate_gps == pytest.approx(want_rate, rel=1e-9)
+            assert h2.cum_g == pytest.approx(want_cum, rel=1e-9)
+
+
+def test_h2_consumption_dc_gain_matches_sum_of_modal_gains():
+    """DC check from the banner: sum(g_i / (1 - lam_i)) must equal
+    H2_GFC_DC_GAIN_GPS_PER_W (the banner claims 4 ulp; use a tight rel tol)."""
+    dc = sum(g / (1.0 - lam) for g, lam in zip(hil.H2_GFC_GAIN, hil.H2_GFC_LAMBDA))
+    assert dc == pytest.approx(hil.H2_GFC_DC_GAIN_GPS_PER_W, rel=1e-12)
+
+
+def test_h2_dc_gain_matches_module_import_time_assert_bound():
+    """The module itself re-derives this identity AT IMPORT (M4, review
+    2026-08-31) at rel tol 1e-13 -- since the module imported cleanly, the
+    live constants are already inside that bound; re-derive the SAME check
+    here as a standing pin against the exact tolerance."""
+    dc = sum(g / (1.0 - lam) for g, lam in zip(hil.H2_GFC_GAIN, hil.H2_GFC_LAMBDA))
+    rel_err = abs(dc - hil.H2_GFC_DC_GAIN_GPS_PER_W) / hil.H2_GFC_DC_GAIN_GPS_PER_W
+    assert rel_err < 1e-13
+
+
+def test_h2_dc_gain_import_assert_bound_would_catch_a_perturbed_coefficient():
+    """TRIPWIRE: the M4 import-time assert exists to catch a hand-edit of
+    H2_GFC_LAMBDA/H2_GFC_GAIN that left H2_GFC_DC_GAIN_GPS_PER_W alone (or
+    vice versa).  Reproduce the exact check against a PERTURBED COPY of the
+    real coefficient tuples -- NEVER mutating the live module constants --
+    and confirm the perturbation actually trips the 1e-13 bound.  Without
+    this, the bound could have been silently loosened to something no real
+    drift could ever fail."""
+    lam = list(hil.H2_GFC_LAMBDA)
+    gain = list(hil.H2_GFC_GAIN)
+    # A 1e-9 relative nudge on one gain: comfortably inside the "measured
+    # residual is 4 ulp" scale the banner claims for the REAL coefficients,
+    # but 4 orders of magnitude past the 1e-13 tripwire.
+    gain[0] *= (1.0 + 1e-9)
+    perturbed_dc = sum(g / (1.0 - l) for g, l in zip(gain, lam))
+    rel_err = (abs(perturbed_dc - hil.H2_GFC_DC_GAIN_GPS_PER_W)
+              / hil.H2_GFC_DC_GAIN_GPS_PER_W)
+    assert rel_err >= 1e-13, (
+        "the perturbation must actually trip the import-time bound, or the "
+        "bound is too loose to be a real tripwire")
+    # And confirm the module constants are untouched -- this test must not
+    # leave any global state perturbed for tests that run after it.
+    assert hil.H2_GFC_GAIN[0] == 7.90674025708048e-08
+
+
+def test_h2_consumption_converges_to_dc_gain_at_steady_state():
+    """Run a 10 W step far past the dominant time constant (0.2212 s) and
+    confirm the rate has converged to 10x the DC gain -- an end-to-end
+    functional check of the recursion's steady-state behaviour, not just the
+    early-transient pinned vectors above."""
+    h2 = hil.H2Consumption()
+    for _ in range(20000):          # 20 s, ~90x the 0.2212 s dominant tau
+        h2.step(10.0)
+    assert h2.rate_gps == pytest.approx(10.0 * hil.H2_GFC_DC_GAIN_GPS_PER_W, rel=1e-6)
+
+
+def test_h2_consumption_negative_p_fc_clamps_identically_to_zero():
+    """`p_fc_w` is clamped at zero (banner: reverse power into the FC is not a
+    physical operating point on this rig and must not produce a negative,
+    unphysical hydrogen 'credit').  A negative input must therefore behave
+    EXACTLY like a zero input at every subsequent tick, not merely stay
+    non-negative."""
+    h2_neg = hil.H2Consumption()
+    h2_zero = hil.H2Consumption()
+    for _ in range(50):
+        r_neg = h2_neg.step(-5.0)
+        r_zero = h2_zero.step(0.0)
+        assert r_neg == r_zero
+        assert h2_neg.cum_g == h2_zero.cum_g
+    assert h2_neg.x == h2_zero.x
+
+
+def test_h2_consumption_negative_p_fc_after_positive_history_never_goes_negative():
+    """A negative input arriving AFTER positive history must not manufacture a
+    negative rate either: with u clamped to 0 the recursion just decays the
+    existing (non-negative, for a positive-only history) state."""
+    h2 = hil.H2Consumption()
+    for _ in range(500):
+        h2.step(10.0)
+    assert h2.rate_gps > 0.0
+    prev_cum = h2.cum_g
+    for _ in range(500):
+        rate = h2.step(-10.0)
+        assert rate >= 0.0
+    assert h2.cum_g >= prev_cum        # cum_g is a rectangular integral of a
+                                       # non-negative rate -- must not fall
+
+
+def test_h2_consumption_reset_returns_to_zero_state():
+    h2 = hil.H2Consumption()
+    for _ in range(1000):
+        h2.step(10.0)
+    assert h2.rate_gps > 0.0
+    assert h2.cum_g > 0.0
+    h2.reset()
+    assert h2.x == [0.0, 0.0, 0.0, 0.0]
+    assert h2.rate_gps == 0.0
+    assert h2.cum_g == 0.0
+    # And the recursion behaves like a fresh instance afterward.
+    fresh = hil.H2Consumption()
+    assert h2.step(10.0) == pytest.approx(fresh.step(10.0), rel=1e-12)
+
+
+# ── CSV plumbing (Plant-level, faster than driving the full CLI) ───────────
+
+def test_plant_h2_metric_grows_with_nonzero_fc_current():
+    """h2_rate_gps/h2_cum_g are computed from the FUEL CELL's own terminal
+    voltage and current (fuel_cell.v_terminal * fuel_cell.i), not the bus-side
+    I_fc channel current -- drive a live FC_BUS path and confirm both fields
+    in Plant.step()'s returned dict move, matching plant.h2 exactly."""
+    plant = hil.Plant()
+    obs = _obs(switch=hil.SW_FC_BUS, aux=hil.AUX_FC_REG, current=0.0)
+    out = None
+    for _ in range(200):
+        out = plant.step(1e-3, obs)
+    assert plant.fuel_cell.i > 0.0, "sanity: the FC must actually be sourcing current"
+    assert out["h2_rate_gps"] > 0.0
+    assert out["h2_cum_g"] > 0.0
+    assert out["h2_rate_gps"] == pytest.approx(plant.h2.rate_gps)
+    assert out["h2_cum_g"] == pytest.approx(plant.h2.cum_g)
+
+
+def test_plant_h2_metric_stays_zero_with_no_fc_current():
+    """With no source path live, fuel_cell.i stays 0 and the metric must not
+    drift off zero on its own."""
+    plant = hil.Plant()
+    obs = _obs(switch=0, aux=0, current=0.0)
+    out = None
+    for _ in range(200):
+        out = plant.step(1e-3, obs)
+    assert plant.fuel_cell.i == pytest.approx(0.0, abs=1e-9)
+    assert out["h2_rate_gps"] == pytest.approx(0.0, abs=1e-12)
+    assert out["h2_cum_g"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_csv_schema_sim_mode_h2_columns_populated_numerically(tmp_path):
+    """End-to-end (CLI): the two h2 columns are present AND actually carry
+    numeric (not blank) values on every row of a simulated-plant run."""
+    header, rows = _run_main_csv(
+        tmp_path, ["--scenario", "steady", "--electrical", "simple", "--duration", "0.05"],
+        name="h2sim.csv")
+    rate_idx = header.index("h2_rate_gps")
+    cum_idx = header.index("h2_cum_g")
+    assert rows, "sanity: the run must have produced rows"
+    for row in rows:
+        float(row[rate_idx])           # must parse -- raises on a blank cell
+        float(row[cum_idx])
+
+
+def test_csv_schema_replay_mode_has_no_h2_columns(tmp_path):
+    """Replay bypasses the plant integrator entirely, so there is no P_fc to
+    consume -- the h2 columns must be ABSENT (not present-and-blank) in a
+    replay CSV, matching REPLAY_CSV_HEADER_PIN's documented schema."""
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    header, _rows = _run_main_csv(
+        tmp_path, ["--replay", blg_path, "--duration", "0.02"], name="h2replay.csv")
+    assert "h2_rate_gps" not in header
+    assert "h2_cum_g" not in header
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 14. SocBandStrategy (the `soc-band` EMS strategy, 2026-08-31)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_soc_band_registered_under_its_name():
+    assert hil.EMS_STRATEGIES["soc-band"] is hil.ems_soc_band
+
+
+def test_soc_band_captures_soc_ref_on_first_call_only():
+    policy = hil.SocBandStrategy()
+    policy(3.0, {"t": 3.0, "v_profile": 1.0, "soc": 0.71, "I_fc": 0.0, "I_batt": 0.0})
+    assert policy.soc_ref == pytest.approx(0.71)
+    # A second call with a DIFFERENT soc must not move the captured reference.
+    policy(3.1, {"t": 3.1, "v_profile": 1.0, "soc": 0.65, "I_fc": 0.0, "I_batt": 0.0})
+    assert policy.soc_ref == pytest.approx(0.71)
+
+
+def test_soc_band_deadband_holds_nominal_share_inside_the_band():
+    policy = hil.SocBandStrategy()
+    # Exactly at the reference (deficit 0) and just inside the band edge --
+    # both must return the nominal split, unperturbed.
+    assert policy.share_for_deficit(0.0) == pytest.approx(hil.SOC_BAND_SHARE_NOMINAL)
+    just_inside = hil.SOC_BAND_HALF * 0.99
+    assert policy.share_for_deficit(just_inside) == pytest.approx(hil.SOC_BAND_SHARE_NOMINAL)
+    assert policy.share_for_deficit(-just_inside) == pytest.approx(hil.SOC_BAND_SHARE_NOMINAL)
+
+
+def test_soc_band_proportional_bias_below_band_biases_toward_fc():
+    """A deficit beyond the band's positive edge (SoC has fallen -- pack is
+    LOW) must bias the split UP, toward the fuel cell."""
+    policy = hil.SocBandStrategy()
+    half = hil.SOC_BAND_HALF
+    sat = hil.SOC_BAND_SAT_EXCESS_FRAC * half
+    mid_excess_deficit = half + 0.5 * sat
+    share = policy.share_for_deficit(mid_excess_deficit)
+    assert share > hil.SOC_BAND_SHARE_NOMINAL
+    assert share < hil.SOC_BAND_SHARE_NOMINAL + hil.SOC_BAND_SHARE_SPAN
+
+
+def test_soc_band_proportional_bias_above_band_biases_toward_battery():
+    """The opposite sign: a NEGATIVE deficit beyond the band (SoC above
+    reference) biases DOWN, toward the battery."""
+    policy = hil.SocBandStrategy()
+    half = hil.SOC_BAND_HALF
+    sat = hil.SOC_BAND_SAT_EXCESS_FRAC * half
+    mid_excess_deficit = -(half + 0.5 * sat)
+    share = policy.share_for_deficit(mid_excess_deficit)
+    assert share < hil.SOC_BAND_SHARE_NOMINAL
+    assert share > hil.SOC_BAND_SHARE_NOMINAL - hil.SOC_BAND_SHARE_SPAN
+
+
+def test_soc_band_saturates_at_share_span_and_clamps_to_min_max():
+    policy = hil.SocBandStrategy()
+    half = hil.SOC_BAND_HALF
+    sat = hil.SOC_BAND_SAT_EXCESS_FRAC * half
+    # Exactly at the saturation excess: full span, no more.
+    at_sat = half + sat
+    assert policy.share_for_deficit(at_sat) == pytest.approx(
+        hil.SOC_BAND_SHARE_NOMINAL + hil.SOC_BAND_SHARE_SPAN)
+    # Far beyond saturation: still exactly the span (never more), and the hard
+    # SOC_BAND_SHARE_MIN/MAX clamp is respected independently.
+    way_beyond = half + 100.0 * sat
+    share_hi = policy.share_for_deficit(way_beyond)
+    assert share_hi == pytest.approx(hil.SOC_BAND_SHARE_NOMINAL + hil.SOC_BAND_SHARE_SPAN)
+    assert share_hi <= hil.SOC_BAND_SHARE_MAX
+    share_lo = policy.share_for_deficit(-way_beyond)
+    assert share_lo == pytest.approx(hil.SOC_BAND_SHARE_NOMINAL - hil.SOC_BAND_SHARE_SPAN)
+    assert share_lo >= hil.SOC_BAND_SHARE_MIN
+
+
+def test_soc_band_causal_cruise_gate_blocks_charging_during_acceleration_ruling_b():
+    """Operator ruling (b): charging and acceleration are incompatible on this
+    hardware, and the causal cruise test must enforce it even though the SoC
+    deficit and current admission would otherwise both permit a charge
+    window.  Drive an ACCELERATING profile (rate far above
+    SOC_BAND_CRUISE_SLOPE_MAX) with a low current total and a deficit that
+    grows past the band, and confirm charge_goal is NEVER asserted."""
+    policy = hil.SocBandStrategy()
+    t = hil.EMS_RUN_ENTRY_S
+    dt = 0.02                          # 50 Hz commander cadence
+    v = 0.6
+    soc = 0.70
+    accel_mps2 = 0.30                  # 6x SOC_BAND_CRUISE_SLOPE_MAX
+    for _ in range(400):               # 8 s of continuous acceleration
+        v += accel_mps2 * dt
+        soc -= 0.0002 * dt             # walk the deficit out of the band too
+        fb = {"t": t, "v_profile": v, "soc": soc, "I_fc": 0.05, "I_batt": 0.05}
+        out = policy(t, fb)
+        assert out["charge_goal"] == 0.0, (
+            f"charge_goal asserted during acceleration at t={t:.3f}, "
+            f"v={v:.3f} -- violates operator ruling (b)")
+        t += dt
+    # Sanity: the deficit really did leave the band, so the negative result
+    # above is not vacuous (the deficit gate would otherwise never have opened).
+    assert (policy.soc_ref - soc) > hil.SOC_BAND_HALF
+
+
+def test_soc_band_charge_admission_hysteresis_holds_open_between_thresholds():
+    """Once the charge window opens (i_tot <= ENTER), it must stay open while
+    i_tot climbs above ENTER but stays at or below EXIT -- the hysteresis the
+    module comment describes to prevent 50 Hz chatter -- then actually close
+    once i_tot exceeds EXIT, and NOT reopen at a value between EXIT and
+    ENTER (that is what makes it hysteresis rather than a single threshold)."""
+    policy = hil.SocBandStrategy()
+    dt = 0.02
+    t = hil.EMS_RUN_ENTRY_S
+    v = 1.0
+
+    def tick(i_tot, soc):
+        nonlocal t
+        fb = {"t": t, "v_profile": v, "soc": soc, "I_fc": i_tot / 2.0,
+              "I_batt": i_tot / 2.0}
+        out = policy(t, fb)
+        t += dt
+        return out
+
+    # Warm-up: build the trailing cruise window at a flat v, deficit still 0
+    # (charging must not open yet -- no deficit).
+    for _ in range(60):                # > 1.0 s / dt of flat samples
+        tick(0.1, 0.70)
+    assert policy.charging is False
+
+    # Walk the deficit out of the band, offering a low i_tot (<= ENTER).
+    out = None
+    for _ in range(20):
+        out = tick(0.1, 0.68)
+    assert policy.charging is True
+    assert out["charge_goal"] > 0.0
+
+    # i_tot climbs between ENTER and EXIT: must STAY open (hysteresis).
+    mid = (hil.SOC_BAND_CHARGE_ENTER_ITOT_A + hil.SOC_BAND_CHARGE_EXIT_ITOT_A) / 2.0
+    out = tick(mid, 0.68)
+    assert policy.charging is True
+    assert out["charge_goal"] > 0.0
+
+    # i_tot exceeds EXIT: must close.
+    out = tick(hil.SOC_BAND_CHARGE_EXIT_ITOT_A + 0.05, 0.68)
+    assert policy.charging is False
+    assert out["charge_goal"] == 0.0
+
+    # i_tot back down to the SAME mid value (below EXIT, above ENTER): must
+    # NOT reopen -- this is the asymmetry a single threshold would not have.
+    out = tick(mid, 0.68)
+    assert policy.charging is False
+    assert out["charge_goal"] == 0.0
+
+
+def test_soc_band_deficit_gate_hysteresis_holds_inside_band_releases_at_reference():
+    """M6 (review, 2026-08-31): the DEFICIT gate has hysteresis too, mirroring
+    the i_tot gate above.  ENTER requires deficit > SOC_BAND_HALF (the
+    band-edge crossing, unchanged); once charging is TRUE the gate relaxes to
+    HOLD while deficit > 0.0 -- i.e. it stays latched even after the pack
+    recovers back INSIDE the band, releasing only once the pack is back AT
+    (or above) the captured reference."""
+    policy = hil.SocBandStrategy()
+    dt = 0.02
+    t = hil.EMS_RUN_ENTRY_S
+    v = 1.0
+    soc_ref = 0.70
+
+    def tick(soc):
+        nonlocal t
+        fb = {"t": t, "v_profile": v, "soc": soc, "I_fc": 0.05, "I_batt": 0.05}
+        out = policy(t, fb)
+        t += dt
+        return out
+
+    # Warm-up at deficit 0 -- builds the cruise window, charging must not open.
+    for _ in range(60):
+        tick(soc_ref)
+    assert policy.charging is False
+
+    # Cross the band edge (deficit > SOC_BAND_HALF): charging opens.
+    out = None
+    for _ in range(10):
+        out = tick(soc_ref - hil.SOC_BAND_HALF - 0.0002)
+    assert policy.charging is True
+    assert out["charge_goal"] > 0.0
+
+    # SoC recovers back INSIDE the band (0 < deficit <= SOC_BAND_HALF): the
+    # M6 hold means charging must STAY open here, unlike the pre-M6 law
+    # (ENTER-threshold-only) which would have dropped it the instant the
+    # deficit fell back under SOC_BAND_HALF.
+    inside_band_soc = soc_ref - hil.SOC_BAND_HALF * 0.5
+    assert (soc_ref - inside_band_soc) < hil.SOC_BAND_HALF   # sanity: really inside the band
+    out = tick(inside_band_soc)
+    assert policy.charging is True
+    assert out["charge_goal"] > 0.0
+
+    # SoC reaches exactly the reference (deficit == 0.0): must release.
+    out = tick(soc_ref)
+    assert policy.charging is False
+    assert out["charge_goal"] == 0.0
+
+
+def test_soc_band_deficit_gate_does_not_reopen_inside_band_when_not_already_charging():
+    """The asymmetry that makes M6 hysteresis rather than a wider single
+    threshold: a deficit inside the band (0 < deficit <= SOC_BAND_HALF) must
+    NOT open the window while NOT already charging -- the relaxed >0.0 gate
+    applies only to the HOLD, never to the ENTER."""
+    policy = hil.SocBandStrategy()
+    dt = 0.02
+    t = hil.EMS_RUN_ENTRY_S
+    v = 1.0
+    soc_ref = 0.70
+
+    def tick(soc):
+        nonlocal t
+        fb = {"t": t, "v_profile": v, "soc": soc, "I_fc": 0.05, "I_batt": 0.05}
+        out = policy(t, fb)
+        t += dt
+        return out
+
+    for _ in range(60):
+        tick(soc_ref)
+    assert policy.charging is False
+
+    inside_band_soc = soc_ref - hil.SOC_BAND_HALF * 0.5
+    out = None
+    for _ in range(10):
+        out = tick(inside_band_soc)
+    assert policy.charging is False
+    assert out["charge_goal"] == 0.0
+
+
+def test_soc_band_auto_resets_on_t_rewind():
+    policy = hil.SocBandStrategy()
+    policy(10.0, {"t": 10.0, "v_profile": 1.0, "soc": 0.60, "I_fc": 0.0, "I_batt": 0.0})
+    assert policy.soc_ref == pytest.approx(0.60)
+    assert policy.last_t == pytest.approx(10.0)
+    # Rewind: a second run in the same process must NOT inherit the first
+    # run's captured reference.
+    policy(5.0, {"t": 5.0, "v_profile": 1.0, "soc": 0.72, "I_fc": 0.0, "I_batt": 0.0})
+    assert policy.soc_ref == pytest.approx(0.72)
+    assert policy.charging is False
+    assert policy.window == [(5.0, 1.0)]
+
+
+def test_ems_soc_band_scenario_registered_with_soc_band_strategy():
+    meta = hil.SCENARIOS["ems-soc-band"]
+    assert meta.get("ems") == "soc-band"
+    assert meta["ems"] in hil.EMS_STRATEGIES
+    assert isinstance(meta.get("ems_v_profile"), list) and meta["ems_v_profile"]
+    assert "pi_timeline" not in meta
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 15. dp-replay: load_dp_table(), fingerprint, ZOH lookup, refusal paths
+# ─────────────────────────────────────────────────────────────────────────
+
+def _write_dp_table(path, meta_lines, rows):
+    lines = ["# %s" % line for line in meta_lines]
+    lines.append("t,power_share_setpoint,charge_goal")
+    for t, s, g in rows:
+        lines.append("%r,%r,%r" % (t, s, g))
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        fh.write("\n".join(lines) + "\n")
+
+
+def test_load_dp_table_missing_file_raises_clearly(tmp_path):
+    with pytest.raises(OSError):
+        hil.load_dp_table(str(tmp_path / "nope.csv"))
+
+
+def test_load_dp_table_bad_header_raises_value_error(tmp_path):
+    path = tmp_path / "bad_header.csv"
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("# scenario: x\nt,share,goal\n0.0,0.5,0.0\n")
+    with pytest.raises(ValueError, match="expected the column header"):
+        hil.load_dp_table(str(path))
+
+
+def test_load_dp_table_no_header_at_all_raises_value_error(tmp_path):
+    path = tmp_path / "no_header.csv"
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("# just a comment, no data\n")
+    with pytest.raises(ValueError, match="no column header"):
+        hil.load_dp_table(str(path))
+
+
+def test_load_dp_table_non_monotonic_times_raises_value_error(tmp_path):
+    path = tmp_path / "non_monotonic.csv"
+    _write_dp_table(path, ["scenario: x"],
+                    [(0.0, 0.5, 0.0), (0.2, 0.5, 0.0), (0.1, 0.5, 0.0)])
+    with pytest.raises(ValueError, match="strictly increase"):
+        hil.load_dp_table(str(path))
+
+
+def test_load_dp_table_no_rows_raises_value_error(tmp_path):
+    path = tmp_path / "no_rows.csv"
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("# scenario: x\nt,power_share_setpoint,charge_goal\n")
+    with pytest.raises(ValueError, match="no rows"):
+        hil.load_dp_table(str(path))
+
+
+def test_load_dp_table_wrong_column_count_raises_value_error(tmp_path):
+    path = tmp_path / "bad_cols.csv"
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("# scenario: x\nt,power_share_setpoint,charge_goal\n0.0,0.5\n")
+    with pytest.raises(ValueError, match="3 columns"):
+        hil.load_dp_table(str(path))
+
+
+def test_load_dp_table_valid_file_parses_meta_and_rows(tmp_path):
+    path = tmp_path / "ok.csv"
+    _write_dp_table(path, ["scenario: myscen", "run_exit_s: 58.0",
+                           "profile_fingerprint: deadbeef"],
+                    [(0.0, 0.25, 0.0), (0.1, 0.30, 0.0), (0.2, 0.75, 1.0)])
+    meta, times, shares, goals = hil.load_dp_table(str(path))
+    assert meta["scenario"] == "myscen"
+    assert meta["run_exit_s"] == "58.0"
+    assert meta["profile_fingerprint"] == "deadbeef"
+    assert times == pytest.approx([0.0, 0.1, 0.2])
+    assert shares == pytest.approx([0.25, 0.30, 0.75])
+    assert goals == pytest.approx([0.0, 0.0, 1.0])
+
+
+# ── ZOH lookup edges ────────────────────────────────────────────────────────
+
+def _strategy_with_table(times, shares, goals):
+    s = hil.DpReplayStrategy()
+    s.times, s.shares, s.goals = list(times), list(shares), list(goals)
+    return s
+
+
+def test_dp_replay_lookup_before_first_row_holds_row_zero():
+    s = _strategy_with_table([1.0, 2.0, 3.0], [0.3, 0.5, 0.7], [0.0, 0.0, 1.0])
+    share, goal = s.lookup(0.5)
+    assert (share, goal) == (0.3, 0.0)
+
+
+def test_dp_replay_lookup_exactly_on_a_row_uses_that_row():
+    s = _strategy_with_table([1.0, 2.0, 3.0], [0.3, 0.5, 0.7], [0.0, 0.0, 1.0])
+    share, goal = s.lookup(2.0)
+    assert (share, goal) == (0.5, 0.0)
+
+
+def test_dp_replay_lookup_between_rows_holds_the_last_row_at_or_before_t():
+    s = _strategy_with_table([1.0, 2.0, 3.0], [0.3, 0.5, 0.7], [0.0, 0.0, 1.0])
+    share, goal = s.lookup(2.9)
+    assert (share, goal) == (0.5, 0.0)
+
+
+def test_dp_replay_lookup_after_last_row_holds_the_last_row():
+    s = _strategy_with_table([1.0, 2.0, 3.0], [0.3, 0.5, 0.7], [0.0, 0.0, 1.0])
+    share, goal = s.lookup(100.0)
+    assert (share, goal) == (0.7, 1.0)
+
+
+# ── bind_scenario()/fingerprint refusal paths ───────────────────────────────
+
+def test_dp_replay_call_without_bind_raises_runtime_error():
+    s = hil.DpReplayStrategy()
+    with pytest.raises(RuntimeError, match="without a bound table"):
+        s(3.0, {"t": 3.0, "v_profile": 1.0})
+
+
+def test_dp_replay_bind_scenario_missing_table_file_raises_value_error(tmp_path):
+    s = hil.DpReplayStrategy(table_dir=str(tmp_path))
+    with pytest.raises(ValueError, match="none exists"):
+        s.bind_scenario("no-such-scenario", {"ems_v_profile": [(0.0, 0.0)],
+                                              "duration_s": 10.0})
+
+
+def test_dp_replay_bind_scenario_fingerprint_mismatch_raises_value_error(tmp_path):
+    """The 'tampered profile' refusal: a table exists but was generated for a
+    different profile than the one the active scenario now declares."""
+    meta_a = {"ems_v_profile": [(0.0, 0.0), (10.0, 1.0)], "duration_s": 10.0}
+    fp_a = hil.dp_profile_fingerprint("myscen", meta_a)
+    path = os.path.join(str(tmp_path), hil.DP_TABLE_NAME % "myscen")
+    _write_dp_table(path, ["scenario: myscen", "run_exit_s: 8.0",
+                           "profile_fingerprint: %s" % fp_a],
+                    [(0.0, 0.5, 0.0)])
+    s = hil.DpReplayStrategy(table_dir=str(tmp_path))
+    # A DIFFERENT profile (tampered/retuned) -- the fingerprint must not match.
+    meta_b = {"ems_v_profile": [(0.0, 0.0), (10.0, 2.0)], "duration_s": 10.0}
+    with pytest.raises(ValueError, match="DIFFERENT profile"):
+        s.bind_scenario("myscen", meta_b)
+
+
+def test_dp_replay_bind_scenario_missing_run_exit_s_raises_value_error(tmp_path):
+    meta = {"ems_v_profile": [(0.0, 0.0), (10.0, 1.0)], "duration_s": 10.0}
+    fp = hil.dp_profile_fingerprint("myscen", meta)
+    path = os.path.join(str(tmp_path), hil.DP_TABLE_NAME % "myscen")
+    _write_dp_table(path, ["scenario: myscen", "profile_fingerprint: %s" % fp],
+                    [(0.0, 0.5, 0.0)])
+    s = hil.DpReplayStrategy(table_dir=str(tmp_path))
+    with pytest.raises(ValueError, match="run_exit_s"):
+        s.bind_scenario("myscen", meta)
+
+
+def test_dp_replay_bind_scenario_success_loads_table_and_call_works(tmp_path):
+    meta = {"ems_v_profile": [(0.0, 0.0), (10.0, 1.0)], "duration_s": 10.0}
+    fp = hil.dp_profile_fingerprint("myscen", meta)
+    path = os.path.join(str(tmp_path), hil.DP_TABLE_NAME % "myscen")
+    _write_dp_table(path, ["scenario: myscen", "run_exit_s: 8.0",
+                           "profile_fingerprint: %s" % fp],
+                    [(0.0, 0.4, 0.0), (5.0, 0.6, 1.0)])
+    s = hil.DpReplayStrategy(table_dir=str(tmp_path))
+    s.bind_scenario("myscen", meta)
+    out = s(6.0, {"t": 6.0, "v_profile": 0.5})
+    assert out["power_share_setpoint"] == pytest.approx(0.6)
+    assert out["charge_goal"] == pytest.approx(1.0)
+    assert out["mode_cmd"] == hil.MODE_HYBRID
+    # Past run_exit_s: MODE_SAFE and charge_goal forced to 0 regardless of the
+    # table's row (the "nothing may be commanded onto the charger path outside
+    # Run" rule, verbatim from soc-band).
+    out2 = s(9.0, {"t": 9.0, "v_profile": 0.5})
+    assert out2["mode_cmd"] == hil.MODE_SAFE
+    assert out2["charge_goal"] == 0.0
+
+
+# ── M1/M2 (2026-08-31 reconciliation): bind_scenario() accounting/constant
+#    drift guards, and the electrical_mode=/args= backward-compat contract ──
+
+def _live_table_meta_lines(scenario, fp, charger_accounting="physical",
+                           run_exit_s=None, soc0=0.7, capacity_ah=5.0,
+                           chg_ceiling_a=0.8):
+    """A full set of header lines that agree with the CURRENTLY IMPORTED
+    module constants and the given args -- used as the "everything matches"
+    baseline that individual tests then perturb exactly one field of."""
+    run_exit_s = hil.SOC_BAND_RUN_EXIT_S if run_exit_s is None else run_exit_s
+    return [
+        "scenario: %s" % scenario,
+        "profile_fingerprint: %s" % fp,
+        "run_exit_s: %r" % float(run_exit_s),
+        "charger_accounting: %s" % charger_accounting,
+        "soc0: %r" % float(soc0),
+        "capacity_ah: %r" % float(capacity_ah),
+        "chg_ceiling_a: %r" % float(chg_ceiling_a),
+        "eta_boost: %r" % float(hil.ETA_BOOST),
+        "gfc_dc_gain_gps_per_w: %r" % float(hil.H2_GFC_DC_GAIN_GPS_PER_W),
+        "charge_share_value: %r" % float(hil.SOC_BAND_SHARE_NOMINAL
+                                         + hil.SOC_BAND_SHARE_SPAN),
+        "share_span: %r" % float(hil.SOC_BAND_SHARE_SPAN),
+        "cruise_slope_max: %r" % float(hil.SOC_BAND_CRUISE_SLOPE_MAX),
+        "cruise_min_mps: %r" % float(hil.SOC_BAND_CRUISE_MIN_MPS),
+    ]
+
+
+def _bindable(tmp_path, scenario="myscen", **kw):
+    """Write a fully-agreeing table for `scenario` and return
+    (strategy, meta, args) ready to bind -- kw forwards to
+    _live_table_meta_lines() so a test can perturb exactly one field."""
+    import types
+    meta = {"ems_v_profile": [(0.0, 0.0), (10.0, 1.0)], "duration_s": 10.0,
+            "chg_i_ceiling_a": kw.get("chg_ceiling_a", 0.8)}
+    fp = hil.dp_profile_fingerprint(scenario, meta)
+    path = os.path.join(str(tmp_path), hil.DP_TABLE_NAME % scenario)
+    _write_dp_table(path, _live_table_meta_lines(scenario, fp, **kw),
+                    [(0.0, 0.5, 0.0), (5.0, 0.6, 1.0)])
+    s = hil.DpReplayStrategy(table_dir=str(tmp_path))
+    args = types.SimpleNamespace(soc0=kw.get("soc0", 0.7),
+                                 capacity_ah=kw.get("capacity_ah", 5.0))
+    return s, meta, args
+
+
+def test_dp_replay_bind_scenario_two_arg_call_is_backward_compatible(tmp_path):
+    """Neither electrical_mode nor args is required -- a caller that only
+    wants the profile-fingerprint check (a test, a future tool) must keep
+    working exactly as before this round, with NO M1/M2 checking done."""
+    s, meta, _args = _bindable(tmp_path)
+    s.bind_scenario("myscen", meta)                     # two positional args only
+    assert s.path is not None
+
+
+def test_dp_replay_bind_scenario_accounting_match_passes_with_electrical_mode(tmp_path):
+    s, meta, args = _bindable(tmp_path, charger_accounting="physical")
+    s.bind_scenario("myscen", meta, electrical_mode="hifi", args=args)
+    assert s.path is not None
+
+
+def test_dp_replay_bind_scenario_accounting_mismatch_physical_table_under_simple_engine(tmp_path):
+    s, meta, _args = _bindable(tmp_path, charger_accounting="physical")
+    with pytest.raises(ValueError, match="charger-accounting"):
+        s.bind_scenario("myscen", meta, electrical_mode="simple")
+
+
+def test_dp_replay_bind_scenario_accounting_mismatch_simple_table_under_hifi_engine(tmp_path):
+    """The other direction: a table solved for the simple-mode accounting
+    replayed under the hifi engine must refuse too."""
+    s, meta, _args = _bindable(tmp_path, charger_accounting="simple")
+    with pytest.raises(ValueError, match="charger-accounting"):
+        s.bind_scenario("myscen", meta, electrical_mode="hifi")
+
+
+def test_dp_replay_bind_scenario_args_drift_soc0_names_the_value(tmp_path):
+    """One args-mismatch case (soc0): the run's --soc0 disagrees with the
+    header's recorded soc0 -- must refuse and NAME which value drifted."""
+    s, meta, args = _bindable(tmp_path, soc0=0.7)
+    args.soc0 = 0.5                     # the RUN disagrees with the table
+    with pytest.raises(ValueError) as exc_info:
+        s.bind_scenario("myscen", meta, electrical_mode="hifi", args=args)
+    msg = str(exc_info.value)
+    assert "soc0" in msg
+    assert "0.7" in msg and "0.5" in msg
+
+
+def test_dp_replay_bind_scenario_constant_drift_cruise_slope_max_names_the_value(tmp_path, monkeypatch):
+    """One constant-mismatch case: SOC_BAND_CRUISE_SLOPE_MAX moved since the
+    table was generated (monkeypatched on the module -- the table's header
+    line is written against the ORIGINAL value first, then the live constant
+    is patched out from under it)."""
+    s, meta, args = _bindable(tmp_path)          # header written at the live value
+    monkeypatch.setattr(hil, "SOC_BAND_CRUISE_SLOPE_MAX",
+                        hil.SOC_BAND_CRUISE_SLOPE_MAX + 0.01)
+    with pytest.raises(ValueError) as exc_info:
+        s.bind_scenario("myscen", meta, electrical_mode="hifi", args=args)
+    msg = str(exc_info.value)
+    assert "cruise_slope_max" in msg
+
+
+def test_dp_replay_bind_scenario_absent_header_line_refuses_rather_than_skips(tmp_path):
+    """An OLDER table predating one of the M2 header lines must REFUSE, not
+    silently skip the check that line would have driven -- "the table does
+    not record it" is exactly the state in which a drift is invisible."""
+    import types
+    scenario = "myscen"
+    meta = {"ems_v_profile": [(0.0, 0.0), (10.0, 1.0)], "duration_s": 10.0,
+            "chg_i_ceiling_a": 0.8}
+    fp = hil.dp_profile_fingerprint(scenario, meta)
+    lines = [l for l in _live_table_meta_lines(scenario, fp)
+            if not l.startswith("cruise_min_mps:")]   # drop ONE M2 header line
+    path = os.path.join(str(tmp_path), hil.DP_TABLE_NAME % scenario)
+    _write_dp_table(path, lines, [(0.0, 0.5, 0.0), (5.0, 0.6, 1.0)])
+    s = hil.DpReplayStrategy(table_dir=str(tmp_path))
+    args = types.SimpleNamespace(soc0=0.7, capacity_ah=5.0)
+    with pytest.raises(ValueError) as exc_info:
+        s.bind_scenario(scenario, meta, electrical_mode="hifi", args=args)
+    msg = str(exc_info.value)
+    assert "cruise_min_mps" in msg
+    assert "absent" in msg
+
+
+# ── fingerprint sensitivity ─────────────────────────────────────────────────
+
+def test_dp_profile_fingerprint_changes_when_a_covered_field_changes():
+    base = {"ems_v_profile": [(0.0, 0.0), (10.0, 1.0)], "duration_s": 10.0,
+            "chg_i_ceiling_a": 0.8}
+    fp_base = hil.dp_profile_fingerprint("s", base)
+    variants = [
+        dict(base, ems_v_profile=[(0.0, 0.0), (10.0, 1.5)]),  # profile point moved
+        dict(base, duration_s=11.0),
+        dict(base, chg_i_ceiling_a=1.6),
+    ]
+    for v in variants:
+        assert hil.dp_profile_fingerprint("s", v) != fp_base
+    # The scenario NAME is covered too (it is part of the fingerprint string).
+    assert hil.dp_profile_fingerprint("other", base) != fp_base
+
+
+def test_dp_profile_fingerprint_stable_across_uncovered_field_and_repeats():
+    base = {"ems_v_profile": [(0.0, 0.0), (10.0, 1.0)], "duration_s": 10.0,
+            "description": "some text", "electrical": "any"}
+    fp1 = hil.dp_profile_fingerprint("s", base)
+    fp2 = hil.dp_profile_fingerprint("s", base)
+    assert fp1 == fp2                  # deterministic, repeated calls agree
+    with_desc_changed = dict(base, description="different text entirely")
+    assert hil.dp_profile_fingerprint("s", with_desc_changed) == fp1
+
+
+def test_dp_profile_fingerprint_sensitive_to_drain_load_constants():
+    """The fingerprint also covers the module-level drain-load constants
+    (SOC_BAND_DRAIN_*, SOC_LOAD_RAMP_S, I_AUX_A) -- retuning the drain changes
+    the demand the table was generated against even though no scenario
+    metadata field moved.  Patch one and confirm the digest moves."""
+    meta = {"ems_v_profile": [(0.0, 0.0), (10.0, 1.0)], "duration_s": 10.0}
+    fp_before = hil.dp_profile_fingerprint("s", meta)
+    orig = hil.SOC_BAND_DRAIN_LOAD_A
+    try:
+        hil.SOC_BAND_DRAIN_LOAD_A = orig + 0.5
+        fp_after = hil.dp_profile_fingerprint("s", meta)
+    finally:
+        hil.SOC_BAND_DRAIN_LOAD_A = orig
+    assert fp_after != fp_before
+
+
+# ── the SHIPPED table (dp_tables/dp_ems_table_ems-dp-replay.csv) ────────────
+# This is the drift tripwire for the checked-in artifact: if the scenario, the
+# module constants, or the generator's fingerprinted inputs are retuned
+# without regenerating the table, this test fails loudly instead of a stale
+# table silently going on being replayed.
+
+def test_shipped_dp_table_parses():
+    meta, times, shares, goals = hil.load_dp_table(
+        os.path.join(hil.DP_TABLE_DIR, "dp_ems_table_ems-dp-replay.csv"))
+    assert times, "sanity: the shipped table must have rows"
+    assert len(times) == len(shares) == len(goals)
+    assert meta.get("scenario") == "ems-dp-replay"
+
+
+def test_shipped_dp_table_share_stays_within_the_authority_band():
+    _meta, _times, shares, _goals = hil.load_dp_table(
+        os.path.join(hil.DP_TABLE_DIR, "dp_ems_table_ems-dp-replay.csv"))
+    lo = hil.SOC_BAND_SHARE_NOMINAL - hil.SOC_BAND_SHARE_SPAN
+    hi = hil.SOC_BAND_SHARE_NOMINAL + hil.SOC_BAND_SHARE_SPAN
+    assert min(shares) >= lo - 1e-9
+    assert max(shares) <= hi + 1e-9
+    # 0.25 == lo and 0.75 == hi -- the DP grid spans exactly the band.
+    assert min(shares) == pytest.approx(lo)
+    assert max(shares) == pytest.approx(hi)
+
+
+def test_shipped_dp_table_charge_goal_is_zero_on_every_row():
+    """FINDING recorded in the SCENARIOS["ems-dp-replay"] module comment: the
+    DP opens the charger path on ZERO stages of this cycle (shifting the split
+    toward the fuel cell is the better lever at this rig's numbers).  Pin that
+    finding against the checked-in table itself, so a regeneration that
+    silently starts charging is caught here rather than only in a HIL
+    campaign."""
+    _meta, _times, _shares, goals = hil.load_dp_table(
+        os.path.join(hil.DP_TABLE_DIR, "dp_ems_table_ems-dp-replay.csv"))
+    assert all(g == 0.0 for g in goals)
+
+
+def test_shipped_dp_table_fingerprint_matches_the_live_ems_dp_replay_scenario():
+    """The drift tripwire proper: recompute the fingerprint from the CURRENTLY
+    IMPORTED SCENARIOS['ems-dp-replay'] entry (which shares its profile and
+    drain load with ems-soc-band by construction) and confirm it matches the
+    value baked into the checked-in table's header.  A mismatch means the
+    scenario or a drain constant moved and the table needs `--force`
+    regeneration."""
+    meta, _times, _shares, _goals = hil.load_dp_table(
+        os.path.join(hil.DP_TABLE_DIR, "dp_ems_table_ems-dp-replay.csv"))
+    live_fp = hil.dp_profile_fingerprint("ems-dp-replay", hil.SCENARIOS["ems-dp-replay"])
+    assert meta["profile_fingerprint"] == live_fp
+
+
+def test_shipped_dp_table_soc_band_header_lines_match_live_constants():
+    """M2 tripwire from the ARTIFACT side (item 6, 2026-08-31 reconciliation):
+    the shipped table's three share_span/cruise_slope_max/cruise_min_mps
+    header lines (which shape the DP's control grid and charge mask) must
+    themselves agree with the currently-imported SOC_BAND_* constants -- a
+    drift here means the checked-in table needs `--force` regeneration,
+    independent of (and in addition to) bind_scenario()'s runtime check
+    below."""
+    meta, _times, _shares, _goals = hil.load_dp_table(
+        os.path.join(hil.DP_TABLE_DIR, "dp_ems_table_ems-dp-replay.csv"))
+    assert float(meta["share_span"]) == pytest.approx(hil.SOC_BAND_SHARE_SPAN)
+    assert float(meta["cruise_slope_max"]) == pytest.approx(hil.SOC_BAND_CRUISE_SLOPE_MAX)
+    assert float(meta["cruise_min_mps"]) == pytest.approx(hil.SOC_BAND_CRUISE_MIN_MPS)
+
+
+def test_shipped_dp_table_binds_cleanly_under_the_full_m1_m2_check(tmp_path):
+    """End-to-end drift tripwire: the shipped table must actually PASS
+    bind_scenario()'s full M1 (accounting-vs-engine) and M2 (header-vs-live)
+    checks under exactly the conditions a default HIL campaign runs it under
+    -- electrical_mode='hifi' (SCENARIOS['ems-dp-replay']['electrical'], item
+    5) and the generator's own default --soc0/--capacity-ah.  If this fails,
+    the checked-in table has drifted from the live module and needs
+    regeneration -- the same conclusion the narrower tests above reach
+    piecewise, exercised here through the real consumer path."""
+    import types
+    s = hil.DpReplayStrategy()   # default table_dir == hil.DP_TABLE_DIR
+    args = types.SimpleNamespace(soc0=0.7, capacity_ah=5.0)
+    s.bind_scenario("ems-dp-replay", hil.SCENARIOS["ems-dp-replay"],
+                    electrical_mode=hil.SCENARIOS["ems-dp-replay"]["electrical"],
+                    args=args)
+    assert s.path is not None
+    assert s.times
+
+
+def test_ems_dp_replay_scenario_registered_with_dp_replay_strategy():
+    meta = hil.SCENARIOS["ems-dp-replay"]
+    assert meta.get("ems") == "dp-replay"
+    assert meta["ems"] in hil.EMS_STRATEGIES
+    # DERIVED: the same list OBJECT as ems-soc-band's profile, by construction.
+    assert meta["ems_v_profile"] is hil.SCENARIOS["ems-soc-band"]["ems_v_profile"]
 
 
 if __name__ == "__main__":

@@ -2046,3 +2046,80 @@ stimulus redesign and FU4.
   queued: Round B (DP-informed EMS routes 2+1 + the Gfc H2 metric — research digested,
   see the round report), Round C (scenario expansion: Y-profile EMS x4, FTP75 per
   strategy, MPPT tracking, +3 orchestrator proposals).
+
+---
+
+## Status & session addendum (2026-08-31d, Round B: DP-informed EMS + Gfc H2 metric)
+
+Orchestrated tooling round (two sequential Opus implementers [Route 2 then Route 1],
+independent Sonnet test-writer with a reconciliation pass, parallel Opus data-integrity +
+Sonnet contract reviews, Opus fix round). Python tooling + docs; FW stays v23; wire
+protocol frozen. Implements the operator's DP brief (routes 2+1) + the Gfc H2 transfer
+function.
+
+- **H2 metric (Gfc).** `H2Consumption` in hil_plant_sim.py: the PhD student's Gfc
+  (== the commented-out H2_tf at references/EMS/DPtrial.m:51-52), ZOH modal/parallel
+  first-order at 1 kHz (Tustin REJECTED — the 1.887e6 rad/s pole maps to z=-0.9997
+  Nyquist ringing; tf2sos biquads REJECTED at 8.2e-3 err), update-then-read, input =
+  STACK power (FuelCellSource v_terminal x i, not the bus-side product), ten pinned
+  validation vectors at rtol 1e-9, import-time DC-gain assert (rel 1e-13) tripwires
+  silent coefficient edits. CSV columns h2_rate_gps/h2_cum_g (simulated mode only,
+  append-only tail) + exit summary. **SCALE PORTABILITY RESOLVED (operator ruling
+  2026-08-31): the 720 in den[0]=1044=720x1.45 is the full-size FUEL CELL's OCV, and
+  the TF needs NO adjustment — P_fc (W) in and g/s out both ride the system's energy
+  scaling (references/Systemic_Scaling_of_Powertrain_Models_with_Youla_Driver_Control.pdf,
+  Tan/Yadav/Assadian).** H2 figures are the model's estimate proper; surviving caveat is
+  stack identification only (TODO(calibrate); DC gain implies eta 47.25% vs the DP's own
+  55% static proxy, +16.4% — a model-choice note).
+- **`soc-band` (Route 2)** — causal charge-sustaining EMS strategy: SoC0 capture,
+  +/-SOC_BAND_HALF deadband, proportional share bias saturating at [0.25, 0.75], causal
+  cruise gate (trailing window, never future profile points — operator ruling b), charge
+  admission with dual hysteresis (i_tot 0.60/1.30 A; deficit enter-at-band-edge /
+  hold-to-zero). SIM-ONLY flagged (fb["soc"] is plant truth outside
+  FB_TELEMETRY_EQUIV_KEYS; V_batt-based estimation is the portable path, future work).
+  Scenario `ems-soc-band` (61 s two-cruise-level profile, 1.0 A drain t=10-38,
+  chg_i_ceiling_a 0.8, four signals_require). Route 2's own offline walk caught + fixed
+  a real defect (a charge window admitted at the 1.5 m/s cruise -> single-source FC
+  1.42 A > LIMIT_I_FC_MAX; drain end moved 35->38 s).
+- **`dp-replay` (Route 1)** — offline-optimal benchmark: tools/gen_dp_ems_table.py
+  (miniforge numpy) ports the MATLAB DP's STRUCTURE with three declared defect fixes
+  (linear interpolation of J — nearest-grid quantized away ~99% of realistic steps;
+  stored argmin policy; raise-on-infeasible), solves against the sim's nonlinear
+  BatterySource (declared divergence from the constant-720V lossless MATLAB pack),
+  stage cost on the Gfc DC gain, charging masked to cruise (ruling b), --lambda-dev
+  default 0 (a running penalty re-ranks and broke the lower bound by 0.07% — measured),
+  --match-terminal-soc bisection (residual +1.6e-6). Checked-in table
+  tools/dp_tables/dp_ems_table_ems-dp-replay.csv (byte-deterministic; .gitattributes
+  -text guards CRLF; header carries every consumed tunable) played through the 50 Hz
+  commander by strategy `dp-replay` with startup refusals: profile fingerprint,
+  charger-accounting vs resolved engine, and ten header-vs-live drift comparisons
+  (three constants escape the fingerprint — measured by mutation). Scenario
+  `ems-dp-replay` is hifi-only (accounting match; "any" would hard-fail a simple-pref
+  campaign). Comparison surface: final_h2_cum_g/delta_soc scenario metrics in
+  results.json/REPORT.md.
+- **OFFLINE RESULT: DP -14.33% hydrogen vs soc-band at matched terminal SoC**
+  (1.17564e-2 vs 1.37227e-2 g), and **the DP opens the charger on ZERO stages** — 
+  share-shifting buys 0.405 SoC/gram vs the Ag105's 0.169; a finding, not a gap.
+  **VALIDATED LIVE (first hardware execution of both):** soc-band 0.012842 g, dp-replay
+  0.011640 g (-9.4% live; the DP's live total within 1.0% of its own offline
+  prediction), both 61 s fault-free, share endpoints as designed (0.689 FC-biased vs
+  the table's 0.250 rail).
+- **Reviews:** contract 1 HIGH (the operator's scale-portability ruling needed a
+  9-site sweep beyond the primary banners — applied everywhere incl. the regenerated
+  table + REPORT renderer) + 1 MED; data-integrity 2 HIGH (same sweep; the standing
+  .ino-flags commit exclusion) + 6 MED (accounting runtime guard; fingerprint drift
+  guards; match-residual header lines + hard-fail without --allow-unmatched; the
+  DC-gain assert; constants_hash changelog — the hash MOVED 2026-08-31, 20 additive
+  names, pre-2026-08-31 hashes not comparable; deficit-gate hysteresis) + 9 LOW — all
+  accepted, all applied. Table regenerated: sha256 08ddc077...; comparison numbers
+  UNMOVED.
+- **Tests: 811 passed + 27 skipped (.venv_hil, six suites incl. new
+  test_gen_dp_ems_table.py) / 761 (miniforge incl. report-analysis) — orchestrator-
+  rerun.** references/EMS/ now holds the PhD student's MATLAB (DPtrial,
+  DP_EnergyManagement2, NEW SDP_EnergyManagement2 + TPM.mat — stochastic-DP source
+  material for a future round); the ~330 MB simulink_pdem_output_stochastic_*.mat
+  outputs are gitignored, local-only.
+- **Next: Round C** (scenario expansion: 4 synthetic Y-profile EMS scenarios spanning
+  {0.30/0.70 vs 0/1 share band} x {1 vs 3 m/s Vmax}; FTP75 scaled to 3 m/s peak per
+  EMS strategy; Ag105 MPPT-tracking emulation; +3 orchestrator proposals). The SDP
+  material suggests a future stochastic-DP route beyond Round C.

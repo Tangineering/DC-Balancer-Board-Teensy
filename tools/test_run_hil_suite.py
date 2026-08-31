@@ -43,11 +43,12 @@ def _args(**overrides):
 # ─────────────────────────────────────────────────────────────────────────
 
 def test_build_plan_full_count_40_runs():
-    # 13 scenarios + 27 replays (SY0001/FU4 added this round) = 40.
+    # 15 scenarios (ems-soc-band/ems-dp-replay added 2026-08-31) + 27 replays
+    # (SY0001/FU4 added earlier) = 42.
     plan = rhs.build_plan(_args())
-    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 40
+    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 42
     kinds = [p["kind"] for p in plan]
-    assert kinds.count("scenario") == 13
+    assert kinds.count("scenario") == 15
     assert kinds.count("replay") == 27
 
 
@@ -59,7 +60,7 @@ def test_build_plan_replay_only():
 
 def test_build_plan_scenarios_only():
     plan = rhs.build_plan(_args(scenarios_only=True))
-    assert len(plan) == 13
+    assert len(plan) == 15
     assert all(p["kind"] == "scenario" for p in plan)
 
 
@@ -2975,6 +2976,9 @@ def test_m4_main_keyboardinterrupt_writes_partial_report(tmp_path, monkeypatch):
 PI_LIVE_SKIP_SCENARIOS = {
     "charge-cruise", "charge-regen", "charge-fault", "soc-depletion",
     "handoff-sag", "ems-drive-cycle",
+    # 2026-08-31: both new EMS-driven scenarios join the skip set via their
+    # "ems" metadata key -- same rule as ems-drive-cycle, no new code path.
+    "ems-soc-band", "ems-dp-replay",
 }
 
 
@@ -3033,10 +3037,11 @@ def test_build_plan_pi_live_non_skip_scenarios_unaffected():
 
 
 def test_build_plan_pi_live_total_count_still_40():
-    """Skip records still occupy a plan slot -- the total run count (40) is
-    unchanged under --pi-live, only their kind (executed vs skipped) differs."""
+    """Skip records still occupy a plan slot -- the total run count (42, since
+    the 2026-08-31 addition of ems-soc-band/ems-dp-replay) is unchanged under
+    --pi-live, only their kind (executed vs skipped) differs."""
     plan = rhs.build_plan(_args(pi_live=True))
-    assert len(plan) == 40
+    assert len(plan) == 42
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -4167,6 +4172,250 @@ def test_settle_min_recover_s_is_1_5():
     boundary requirement plus host-jitter margin (module docstring), not an
     arbitrary round number that could silently drift."""
     assert rhs.SETTLE_MIN_RECOVER_S == pytest.approx(1.5)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# EMS energy-accounting round (2026-08-31): H2/soc metrics surface,
+# ems-soc-band / ems-dp-replay FAULT_EXPECTATIONS entries
+# ─────────────────────────────────────────────────────────────────────────
+
+# ── (p) analyze_scenario_csv(): final_h2_cum_g / delta_soc ──────────────────
+
+def test_analyze_scenario_csv_h2_and_soc_metrics_populate_from_synthetic_csv(tmp_path):
+    rows = [
+        {"t": "0.000", "fault_flags": "", "soc": "", "h2_cum_g": ""},
+        {"t": "0.001", "fault_flags": "0", "state": "2", "soc": "0.700000",
+         "h2_cum_g": "0.0000010"},
+        {"t": "0.002", "fault_flags": "0", "state": "2", "soc": "0.699500",
+         "h2_cum_g": "0.0000025"},
+        {"t": "0.003", "fault_flags": "0", "state": "2", "soc": "0.699000",
+         "h2_cum_g": "0.0000040"},
+    ]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows, extra_cols=("h2_cum_g",))
+    m = rhs.analyze_scenario_csv(str(path))
+    assert m["final_h2_cum_g"] == pytest.approx(0.0000040)
+    assert m["soc_first"] == pytest.approx(0.700000)
+    assert m["soc_last"] == pytest.approx(0.699000)
+    assert m["delta_soc"] == pytest.approx(0.699000 - 0.700000)
+
+
+def test_analyze_scenario_csv_h2_and_soc_metrics_none_when_columns_absent(tmp_path):
+    """A CSV without h2_cum_g/soc columns at all (e.g. a replay-mode run)
+    must leave every metric None -- blank-tolerant at the column-absence
+    level, not just at the individual-cell level."""
+    rows = [{"t": "0.000", "fault_flags": "0", "state": "2"},
+            {"t": "0.001", "fault_flags": "0", "state": "2"}]
+    path = tmp_path / "a.csv"
+    # CSV_COLS already carries "soc" -- write it blank on every row so this
+    # exercises "column present but every cell blank", and add no h2_cum_g
+    # column at all to exercise "column absent entirely".
+    _write_scenario_csv(path, rows)
+    m = rhs.analyze_scenario_csv(str(path))
+    assert m["final_h2_cum_g"] is None
+    assert m["soc_first"] is None
+    assert m["soc_last"] is None
+    assert m["delta_soc"] is None
+
+
+def test_analyze_scenario_csv_h2_metric_tolerates_a_single_malformed_cell(tmp_path):
+    """A malformed (non-numeric) h2_cum_g cell must be SKIPPED, not abort the
+    scan or cost the run its verdict -- these are reporting figures, no check
+    reads them."""
+    rows = [
+        {"t": "0.000", "fault_flags": "0", "state": "2", "h2_cum_g": "NOT_A_NUMBER"},
+        {"t": "0.001", "fault_flags": "0", "state": "2", "h2_cum_g": "0.0000050"},
+    ]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows, extra_cols=("h2_cum_g",))
+    m = rhs.analyze_scenario_csv(str(path))
+    assert m["final_h2_cum_g"] == pytest.approx(0.0000050)
+    assert m["error"] is None            # the malformed cell must not abort the scan
+
+
+def test_analyze_scenario_csv_soc_metric_tolerates_a_single_malformed_cell(tmp_path):
+    rows = [
+        {"t": "0.000", "fault_flags": "0", "state": "2", "soc": "0.700000"},
+        {"t": "0.001", "fault_flags": "0", "state": "2", "soc": "GARBAGE"},
+        {"t": "0.002", "fault_flags": "0", "state": "2", "soc": "0.698000"},
+    ]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    m = rhs.analyze_scenario_csv(str(path))
+    assert m["soc_first"] == pytest.approx(0.700000)
+    assert m["soc_last"] == pytest.approx(0.698000)
+    assert m["error"] is None
+
+
+# ── (q) FAULT_EXPECTATIONS shape for the two new entries ────────────────────
+
+def test_fault_expectations_ems_soc_band_entry_shape():
+    assert "ems-soc-band" in rhs.FAULT_EXPECTATIONS
+    entry = rhs.FAULT_EXPECTATIONS["ems-soc-band"]
+    assert entry.get("source")
+    assert entry["allow_only"] == 0
+    assert entry["survive_to"]["t"] == pytest.approx(41.0)
+    assert entry["survive_to"]["states"] == {2, 3}
+    names = {s["name"] for s in entry["signals_require"]}
+    assert names == {"share_biased_to_fc", "fc_current_biased",
+                     "charge_window", "h2_accounted"}
+    for spec in entry["signals_require"]:
+        assert "column" in spec and "min_value" in spec
+        assert spec.get("label")
+
+
+def test_fault_expectations_ems_dp_replay_entry_shape():
+    assert "ems-dp-replay" in rhs.FAULT_EXPECTATIONS
+    entry = rhs.FAULT_EXPECTATIONS["ems-dp-replay"]
+    assert entry.get("source")
+    assert entry["allow_only"] == 0
+    assert entry["survive_to"]["t"] == pytest.approx(50.0)
+    assert entry["survive_to"]["states"] == {2, 3}
+    names = {s["name"] for s in entry["signals_require"]}
+    assert names == {"dp_early_fc_rail", "dp_fc_current_railed", "dp_h2_accounted"}
+    # Unlike ems-soc-band, this entry deliberately carries NO charge-window
+    # assertion (the DP-table finding: it never opens the charger path here).
+    assert "charge_window" not in names
+
+
+def test_fault_expectations_ems_soc_band_and_ems_dp_replay_join_generic_schema_checks():
+    """Both entries must pass the two generic schema invariants every other
+    FAULT_EXPECTATIONS entry is held to (already exercised by
+    test_fault_expectations_schema_every_entry_has_a_nonempty_source and
+    test_fault_expectations_schema_only_known_fields over the whole dict --
+    this re-derives the same check scoped to just the two new names, so a
+    narrowing of those generic tests could not silently stop covering them)."""
+    known = {"require", "allow_only", "not_before_s", "survive_to",
+            "events_require", "events_any_of", "source", "signals_require",
+            "events_forbid_over_absmax", "provisional_note"}
+    for name in ("ems-soc-band", "ems-dp-replay"):
+        entry = rhs.FAULT_EXPECTATIONS[name]
+        assert entry.get("source")
+        assert set(entry) <= known
+
+
+# ── (r) ems-soc-band / ems-dp-replay signals_require: synthetic pass/fail ───
+
+def _spec_by_name(specs, name):
+    return next(s for s in specs if s.get("name") == name)
+
+
+def _mid_t(spec):
+    lo, hi = spec["t_window"]
+    return (lo + hi) / 2.0
+
+
+def _judge_one(spec, rows, extra_cols):
+    """Write `rows` to a temp CSV, scan+judge just this one spec, return the
+    single resulting check dict."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "a.csv")
+        _write_scenario_csv(path, rows, extra_cols=extra_cols)
+        measured = rhs.scan_signals(path, [spec], grace_s=0.0)
+        return rhs.judge_signals([spec], measured, "why")[0]
+
+
+def test_signals_ems_soc_band_share_biased_to_fc_pass_and_fail():
+    spec = _spec_by_name(rhs.FAULT_EXPECTATIONS["ems-soc-band"]["signals_require"],
+                         "share_biased_to_fc")
+    t = _mid_t(spec)
+    passing = [{"t": "%.3f" % t, "fault_flags": "0", "cmd_share_sp": "%.4f" % (spec["min_value"] + 0.05)}]
+    failing = [{"t": "%.3f" % t, "fault_flags": "0", "cmd_share_sp": "%.4f" % (spec["min_value"] - 0.05)}]
+    assert _judge_one(spec, passing, ("cmd_share_sp",))["passed"] is True
+    assert _judge_one(spec, failing, ("cmd_share_sp",))["passed"] is False
+
+
+def test_signals_ems_soc_band_share_biased_to_fc_ignores_samples_outside_t_window():
+    spec = _spec_by_name(rhs.FAULT_EXPECTATIONS["ems-soc-band"]["signals_require"],
+                         "share_biased_to_fc")
+    before = spec["t_window"][0] - 1.0
+    rows = [{"t": "%.3f" % before, "fault_flags": "0",
+             "cmd_share_sp": "%.4f" % (spec["min_value"] + 0.10)}]
+    assert _judge_one(spec, rows, ("cmd_share_sp",))["passed"] is False
+
+
+def test_signals_ems_soc_band_fc_current_biased_pass_and_fail():
+    spec = _spec_by_name(rhs.FAULT_EXPECTATIONS["ems-soc-band"]["signals_require"],
+                         "fc_current_biased")
+    t = _mid_t(spec)
+    passing = [{"t": "%.3f" % t, "fault_flags": "0", "I_fc": "%.4f" % (spec["min_value"] + 0.05)}]
+    failing = [{"t": "%.3f" % t, "fault_flags": "0", "I_fc": "%.4f" % (spec["min_value"] - 0.05)}]
+    assert _judge_one(spec, passing, ())["passed"] is True
+    assert _judge_one(spec, failing, ())["passed"] is False
+
+
+def test_signals_ems_soc_band_charge_window_pass_and_fail():
+    spec = _spec_by_name(rhs.FAULT_EXPECTATIONS["ems-soc-band"]["signals_require"],
+                         "charge_window")
+    t = _mid_t(spec)
+    passing = [{"t": "%.3f" % t, "fault_flags": "0", "I_charge": "%.4f" % (spec["min_value"] + 0.05)}]
+    failing = [{"t": "%.3f" % t, "fault_flags": "0", "I_charge": "0.0"}]
+    assert _judge_one(spec, passing, ())["passed"] is True
+    assert _judge_one(spec, failing, ())["passed"] is False
+
+
+def test_signals_ems_soc_band_h2_accounted_pass_and_fail():
+    """No t_window on this spec -- the check must judge over the whole run."""
+    spec = _spec_by_name(rhs.FAULT_EXPECTATIONS["ems-soc-band"]["signals_require"],
+                         "h2_accounted")
+    assert "t_window" not in spec
+    passing = [{"t": "3.0", "fault_flags": "0", "h2_cum_g": "%.6f" % (spec["min_value"] * 5.0)}]
+    failing = [{"t": "3.0", "fault_flags": "0", "h2_cum_g": "%.6f" % (spec["min_value"] * 0.1)}]
+    assert _judge_one(spec, passing, ("h2_cum_g",))["passed"] is True
+    assert _judge_one(spec, failing, ("h2_cum_g",))["passed"] is False
+
+
+def test_signals_ems_soc_band_full_spec_set_passes_together_on_one_realistic_csv():
+    """A single CSV whose rows satisfy all four ems-soc-band specs at once --
+    the shape a real campaign run's CSV would have to have to pass -- judged
+    with scan_signals()/judge_signals() exactly as the suite would."""
+    specs = rhs.FAULT_EXPECTATIONS["ems-soc-band"]["signals_require"]
+    rows = []
+    for spec in specs:
+        t = _mid_t(spec) if "t_window" in spec else 30.0
+        row = {"t": "%.3f" % t, "fault_flags": "0"}
+        row[spec["column"]] = "%.6f" % (spec["min_value"] * 1.5)
+        rows.append(row)
+    extra = tuple(sorted({s["column"] for s in specs} - {"I_fc", "I_charge", "soc"}))
+    measured = None
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "a.csv")
+        _write_scenario_csv(path, rows, extra_cols=extra)
+        measured = rhs.scan_signals(path, specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert all(c["passed"] for c in checks), checks
+
+
+def test_signals_ems_dp_replay_dp_early_fc_rail_pass_and_fail():
+    spec = _spec_by_name(rhs.FAULT_EXPECTATIONS["ems-dp-replay"]["signals_require"],
+                         "dp_early_fc_rail")
+    t = _mid_t(spec)
+    passing = [{"t": "%.3f" % t, "fault_flags": "0", "cmd_share_sp": "%.4f" % (spec["min_value"] + 0.05)}]
+    failing = [{"t": "%.3f" % t, "fault_flags": "0", "cmd_share_sp": "0.50"}]  # firmware default
+    assert _judge_one(spec, passing, ("cmd_share_sp",))["passed"] is True
+    assert _judge_one(spec, failing, ("cmd_share_sp",))["passed"] is False
+
+
+def test_signals_ems_dp_replay_dp_fc_current_railed_pass_and_fail():
+    spec = _spec_by_name(rhs.FAULT_EXPECTATIONS["ems-dp-replay"]["signals_require"],
+                         "dp_fc_current_railed")
+    t = _mid_t(spec)
+    passing = [{"t": "%.3f" % t, "fault_flags": "0", "I_fc": "%.4f" % (spec["min_value"] + 0.05)}]
+    failing = [{"t": "%.3f" % t, "fault_flags": "0", "I_fc": "%.4f" % (spec["min_value"] - 0.05)}]
+    assert _judge_one(spec, passing, ())["passed"] is True
+    assert _judge_one(spec, failing, ())["passed"] is False
+
+
+def test_signals_ems_dp_replay_dp_h2_accounted_pass_and_fail():
+    spec = _spec_by_name(rhs.FAULT_EXPECTATIONS["ems-dp-replay"]["signals_require"],
+                         "dp_h2_accounted")
+    assert "t_window" not in spec
+    passing = [{"t": "5.0", "fault_flags": "0", "h2_cum_g": "%.6f" % (spec["min_value"] * 5.0)}]
+    failing = [{"t": "5.0", "fault_flags": "0", "h2_cum_g": "0.0"}]
+    assert _judge_one(spec, passing, ("h2_cum_g",))["passed"] is True
+    assert _judge_one(spec, failing, ("h2_cum_g",))["passed"] is False
 
 
 if __name__ == "__main__":

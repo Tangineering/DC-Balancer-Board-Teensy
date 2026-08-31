@@ -305,7 +305,10 @@ def test_without_dash_behavior_unchanged_csv_header_and_scenario_list(tmp_path, 
     import csv as csvmod
     with open(csv_path, newline="") as fh:
         header = next(csvmod.reader(fh))
-    assert header[-3:] == ["soc", "cmd_v_sp", "cmd_share_sp"]  # cmd cols appended by the EMS round
+    # cmd cols appended by the EMS round; h2_rate_gps/h2_cum_g appended after
+    # them by the 2026-08-31 H2-metric round.
+    assert header[-5:] == ["soc", "cmd_v_sp", "cmd_share_sp",
+                           "h2_rate_gps", "h2_cum_g"]
 
     rc2 = hil.main(["--list-scenarios"])
     assert rc2 == 0
