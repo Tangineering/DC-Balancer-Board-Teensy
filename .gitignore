@@ -4,3 +4,8 @@ __pycache__/
 
 HIL Results/
 references/EMS/simulink_pdem_output_stochastic_*.mat
+# Raw Simulink stochastic drive-cycle files (~315 MB, operator-supplied,
+# local-only). Their sha256es are pinned in the TPM provenance sidecars
+# (references/EMS/generated/*.provenance.json), so integrity is verifiable
+# without committing the payloads.
+references/EMS/Pdem_cycles/*.mat

@@ -1,0 +1,397 @@
+{
+  "tool": "tools/tpm_generator.py",
+  "argv": [
+    "--hil"
+  ],
+  "source_matlab": "references/EMS/TPM_generator.m",
+  "generated_utc": "2026-09-01T00:20:47.085561+00:00",
+  "output_mat": "TPM_dt1_hil.mat",
+  "output_mat_sha256": "f74bba543c2b83b93f947cf36a4b0f2f8a8d2da20f7a34520a001e3f82968f0f",
+  "dt_s": 1.0,
+  "time_grid": "0:1.0:1000.0 (MATLAB colon semantics; 1001 points, last t=1000.0)",
+  "cycle_files": [
+    {
+      "path": "references/EMS/Pdem_cycles/simulink_pdem_output_stochastic_V1.mat",
+      "sha256": "87dda778fb57468b29af12a5174656eb8f278455f60b9b36e5d91b16f262bf0f",
+      "bytes": 36368861,
+      "signal_sha256": "d67f1b5429289c7d37a61fcd52dc5ef17d134d11baf0fe311da25d575104028a",
+      "n_pairs": 22,
+      "chosen_meta_index": 583,
+      "duplicate_pair_ordinals": [
+        6
+      ],
+      "dropped_duplicate": false,
+      "n_native": 139252,
+      "t_start": 0.0,
+      "t_end": 1000.0,
+      "n_resampled": 1001,
+      "n_extrapolated": 0,
+      "extrapolated_fraction": 0.0
+    },
+    {
+      "path": "references/EMS/Pdem_cycles/simulink_pdem_output_stochastic_V2.mat",
+      "sha256": "a2ce2cd980d1ee9c9e39b7a2a48c5b1e85d7b46f563d02a054f289f1cce81208",
+      "bytes": 36368863,
+      "signal_sha256": "d67f1b5429289c7d37a61fcd52dc5ef17d134d11baf0fe311da25d575104028a",
+      "n_pairs": 22,
+      "chosen_meta_index": 583,
+      "duplicate_pair_ordinals": [
+        6
+      ],
+      "dropped_duplicate": true,
+      "n_native": 139252,
+      "t_start": 0.0,
+      "t_end": 1000.0,
+      "n_resampled": null,
+      "n_extrapolated": null,
+      "extrapolated_fraction": null
+    },
+    {
+      "path": "references/EMS/Pdem_cycles/simulink_pdem_output_stochastic_V3.mat",
+      "sha256": "976955795ba9cb8aee4b03f0dac75e50d940a8a4736a412062c74c70f48da95a",
+      "bytes": 52936780,
+      "signal_sha256": "2327d1d3d6c2d77c32a8e5d371f7df63370b9e72ea5b965ac4ad90264fbea6c9",
+      "n_pairs": 21,
+      "chosen_meta_index": 558,
+      "duplicate_pair_ordinals": [
+        6
+      ],
+      "dropped_duplicate": false,
+      "n_native": 211713,
+      "t_start": 0.0,
+      "t_end": 600.0,
+      "n_resampled": 601,
+      "n_extrapolated": 0,
+      "extrapolated_fraction": 0.0
+    },
+    {
+      "path": "references/EMS/Pdem_cycles/simulink_pdem_output_stochastic_V4.mat",
+      "sha256": "381ba592031bf647dd19af9e6ddde13dee9b71e7948449f82f9f53c93806f60f",
+      "bytes": 36019043,
+      "signal_sha256": "ae3683eccd5b96d53b82f0cb604f24bd722bd601f235b2ccc76ceffd7c554ffa",
+      "n_pairs": 22,
+      "chosen_meta_index": 583,
+      "duplicate_pair_ordinals": [
+        6
+      ],
+      "dropped_duplicate": false,
+      "n_native": 138043,
+      "t_start": 0.0,
+      "t_end": 1000.0,
+      "n_resampled": 1001,
+      "n_extrapolated": 0,
+      "extrapolated_fraction": 0.0
+    },
+    {
+      "path": "references/EMS/Pdem_cycles/simulink_pdem_output_stochastic_V5.mat",
+      "sha256": "42ca1c942ec5a39e8b85a59f7285de4bc88f6efa6357fbe071ded7fe87a25bba",
+      "bytes": 33954122,
+      "signal_sha256": "5d40a12facfbfd4fc87e24d2657d549cbe4db51107f2d631dddcdfddffc88b6e",
+      "n_pairs": 22,
+      "chosen_meta_index": 583,
+      "duplicate_pair_ordinals": [
+        6
+      ],
+      "dropped_duplicate": false,
+      "n_native": 129835,
+      "t_start": 0.0,
+      "t_end": 1000.0,
+      "n_resampled": 1001,
+      "n_extrapolated": 0,
+      "extrapolated_fraction": 0.0
+    },
+    {
+      "path": "references/EMS/Pdem_cycles/simulink_pdem_output_stochastic_V6.mat",
+      "sha256": "9adf4f697b8176bb636ea91f774cb846c5318bec8166e20571950c7f922d2ee5",
+      "bytes": 32337418,
+      "signal_sha256": "7cad36095baf64402a1a1207b7db872b332df3e3b9dadfb69e0946e4b4930fe9",
+      "n_pairs": 22,
+      "chosen_meta_index": 583,
+      "duplicate_pair_ordinals": [
+        6
+      ],
+      "dropped_duplicate": false,
+      "n_native": 124127,
+      "t_start": 0.0,
+      "t_end": 1000.0,
+      "n_resampled": 1001,
+      "n_extrapolated": 0,
+      "extrapolated_fraction": 0.0
+    },
+    {
+      "path": "references/EMS/Pdem_cycles/simulink_pdem_output_stochastic_V7.mat",
+      "sha256": "faf103ce95c23de1f8be548e025cb16eeafe6264304039f65f4d51fb6128cfc1",
+      "bytes": 30062972,
+      "signal_sha256": "5e8487f9b8bde6e067d25f5d8fb5305c7939514fedc445fa0df47d558303d4c3",
+      "n_pairs": 22,
+      "chosen_meta_index": 583,
+      "duplicate_pair_ordinals": [
+        6
+      ],
+      "dropped_duplicate": false,
+      "n_native": 115184,
+      "t_start": 0.0,
+      "t_end": 1000.0,
+      "n_resampled": 1001,
+      "n_extrapolated": 0,
+      "extrapolated_fraction": 0.0
+    },
+    {
+      "path": "references/EMS/Pdem_cycles/simulink_pdem_output_stochastic_V8.mat",
+      "sha256": "43538ce3e6d161e3cb1b0d8191405660b3cc4516d3695ebed7ef482f8ed49fc6",
+      "bytes": 24179234,
+      "signal_sha256": "35e16313d5515a8c674be3133427c0d4a3114c52c9e8deefda0f262958bacf31",
+      "n_pairs": 22,
+      "chosen_meta_index": 583,
+      "duplicate_pair_ordinals": [
+        6
+      ],
+      "dropped_duplicate": false,
+      "n_native": 92844,
+      "t_start": 0.0,
+      "t_end": 1000.0,
+      "n_resampled": 1001,
+      "n_extrapolated": 0,
+      "extrapolated_fraction": 0.0
+    },
+    {
+      "path": "references/EMS/Pdem_cycles/simulink_pdem_output_stochastic_V9.mat",
+      "sha256": "51fead4d20bb47a8dbed0f9144580a6132515c39bc4862902fe2e1cf86c471c1",
+      "bytes": 23360411,
+      "signal_sha256": "baae0639b6ceb388b8d6624cc07ac570041db5afbd8aead7fba57c85256b29c9",
+      "n_pairs": 22,
+      "chosen_meta_index": 583,
+      "duplicate_pair_ordinals": [
+        6
+      ],
+      "dropped_duplicate": false,
+      "n_native": 89521,
+      "t_start": 0.0,
+      "t_end": 1000.0,
+      "n_resampled": 1001,
+      "n_extrapolated": 0,
+      "extrapolated_fraction": 0.0
+    },
+    {
+      "path": "references/EMS/Pdem_cycles/simulink_pdem_output_stochastic_V10.mat",
+      "sha256": "1d4f9004491ead8edfdde7af28112311b0e2f52f19637ac562ca0e057b65a9fc",
+      "bytes": 23783720,
+      "signal_sha256": "c5429b3d070959e6e8870a8090e6188fb7742ced9dcb1f922de696a16810f190",
+      "n_pairs": 22,
+      "chosen_meta_index": 583,
+      "duplicate_pair_ordinals": [
+        6
+      ],
+      "dropped_duplicate": false,
+      "n_native": 90830,
+      "t_start": 0.0,
+      "t_end": 1000.0,
+      "n_resampled": 1001,
+      "n_extrapolated": 0,
+      "extrapolated_fraction": 0.0
+    }
+  ],
+  "duplicate_signal_groups": [
+    [
+      "references/EMS/Pdem_cycles/simulink_pdem_output_stochastic_V1.mat",
+      "references/EMS/Pdem_cycles/simulink_pdem_output_stochastic_V2.mat"
+    ]
+  ],
+  "signal_identification": "out.simout = last (time, data) float64 pair in the MCOS _ObjectMetadata cell array. Cross-checked per file: the chosen pair's data must be bit-identical to an earlier pair (the logsout 'P_req' element, pair ordinal 6); a file without that duplicate is rejected.",
+  "gate_provenance": {
+    "claim": "At dt=1.0 this tool reproduces references/EMS/TPM_scaled.mat bit-identically (max abs diff 0, 497 nonzeros).",
+    "last_proven": "2026-08-31",
+    "how_to_reprove": "python tools/tpm_generator.py --validate",
+    "note": "The gate is NOT re-run during generation (it would double runtime)."
+  },
+  "scaling": {
+    "m_original_kg": 2242.0,
+    "vmax_original_kph": 130.0,
+    "m_scale_kg": 3.5,
+    "vmax_scale_kph": 10.8,
+    "sm": 0.0015611061552185548,
+    "sl": 0.08307692307692308,
+    "sE": 1.0774403665366404e-05
+  },
+  "interpolation": "scipy CubicSpline bc_type='not-a-knot', extrapolate=True (== MATLAB interp1 'spline','extrap')",
+  "bins": {
+    "n_bins": 25,
+    "edges": "linspace(0, 1, 26)",
+    "convention": "MATLAB discretize, reported 0-based: bin i is [e_i, e_i+1) except the last bin, closed"
+  },
+  "normalization": {
+    "contract": "UNITLESS: bins partition [0,1]; the matrix is invariant to affine rescaling of the demand axis. The SDP consumer owns the energy scaling: map measured P_dem onto [0,1] (this run used the min/max below) and clamp out-of-range to the end bins. A new energy scale changes the SDP lookup map, not this matrix.",
+    "p_dem_scaled_min_w": -1.124773461276723,
+    "p_dem_scaled_max_w": 1.639842192501809
+  },
+  "gamma_rescaling": {
+    "rule": "gamma_eff = gamma_base ** (dt / dt_base); see rescale_gamma(). A discount tuned per 1 s step (the student's 0.95) must be rescaled before solving at any other decision step.",
+    "dt_base_s": 1.0,
+    "example": {
+      "gamma_base": 0.95,
+      "dt_s": 1.0,
+      "gamma_eff": 0.95
+    }
+  },
+  "deviations": {
+    "any_active": true,
+    "active": [
+      "drop_duplicates",
+      "empty_row_policy",
+      "exclude_boundary",
+      "n_bins",
+      "truncate_native"
+    ],
+    "n_bins": 25,
+    "smoothing_alpha": 0.0,
+    "empty_row_policy": "self",
+    "drop_duplicates": true,
+    "truncate_native": true,
+    "exclude_boundary": true,
+    "note": "Any active deviation makes this output NOT comparable to the dt=1.0 parity gate."
+  },
+  "boundary_transition_policy": "EXCLUDED (deviation from TPM_generator.m)",
+  "versions": {
+    "numpy": "2.5.2",
+    "scipy": "1.18.1",
+    "python": "3.13.13"
+  },
+  "results": {
+    "dt": 1.0,
+    "n_bins": 25,
+    "n_samples_total": 8609,
+    "n_grid_points": 1001,
+    "grid_t_last": 1000.0,
+    "resampled_lengths": [
+      1001,
+      601,
+      1001,
+      1001,
+      1001,
+      1001,
+      1001,
+      1001,
+      1001
+    ],
+    "per_file": [
+      {
+        "n_native": 139252,
+        "t_start": 0.0,
+        "t_end": 1000.0,
+        "n_resampled": 1001,
+        "n_extrapolated": 0,
+        "extrapolated_fraction": 0.0
+      },
+      {
+        "n_native": 211713,
+        "t_start": 0.0,
+        "t_end": 600.0,
+        "n_resampled": 601,
+        "n_extrapolated": 0,
+        "extrapolated_fraction": 0.0
+      },
+      {
+        "n_native": 138043,
+        "t_start": 0.0,
+        "t_end": 1000.0,
+        "n_resampled": 1001,
+        "n_extrapolated": 0,
+        "extrapolated_fraction": 0.0
+      },
+      {
+        "n_native": 129835,
+        "t_start": 0.0,
+        "t_end": 1000.0,
+        "n_resampled": 1001,
+        "n_extrapolated": 0,
+        "extrapolated_fraction": 0.0
+      },
+      {
+        "n_native": 124127,
+        "t_start": 0.0,
+        "t_end": 1000.0,
+        "n_resampled": 1001,
+        "n_extrapolated": 0,
+        "extrapolated_fraction": 0.0
+      },
+      {
+        "n_native": 115184,
+        "t_start": 0.0,
+        "t_end": 1000.0,
+        "n_resampled": 1001,
+        "n_extrapolated": 0,
+        "extrapolated_fraction": 0.0
+      },
+      {
+        "n_native": 92844,
+        "t_start": 0.0,
+        "t_end": 1000.0,
+        "n_resampled": 1001,
+        "n_extrapolated": 0,
+        "extrapolated_fraction": 0.0
+      },
+      {
+        "n_native": 89521,
+        "t_start": 0.0,
+        "t_end": 1000.0,
+        "n_resampled": 1001,
+        "n_extrapolated": 0,
+        "extrapolated_fraction": 0.0
+      },
+      {
+        "n_native": 90830,
+        "t_start": 0.0,
+        "t_end": 1000.0,
+        "n_resampled": 1001,
+        "n_extrapolated": 0,
+        "extrapolated_fraction": 0.0
+      }
+    ],
+    "extrapolation_summary": {
+      "n_extrapolated_total": 0,
+      "extrapolated_fraction_of_dataset": 0.0,
+      "files_with_extrapolation": [],
+      "note": "MATLAB parity: interp1(...,'spline','extrap') is retained. Extrapolated samples are numerically near zero and land in the dominant idle bin, inflating idle-state persistence."
+    },
+    "n_transitions_counted": 8600,
+    "exclude_boundary": true,
+    "n_boundary_transitions": 8,
+    "truncate_native": true,
+    "smoothing_alpha": 0.0,
+    "empty_row_policy": "self",
+    "p_dem_scaled_min": -1.124773461276723,
+    "p_dem_scaled_max": 1.639842192501809,
+    "p_dem_raw_min": -104393.10575417103,
+    "p_dem_raw_max": 152197.9539130292,
+    "row_occupancy": [
+      3,
+      3,
+      12,
+      23,
+      25,
+      50,
+      65,
+      109,
+      178,
+      352,
+      6498,
+      539,
+      267,
+      207,
+      110,
+      72,
+      34,
+      22,
+      13,
+      6,
+      3,
+      4,
+      2,
+      1,
+      2
+    ],
+    "zero_rows": [],
+    "diagonal_mass": 0.7624418604651163,
+    "nnz": 211
+  }
+}
