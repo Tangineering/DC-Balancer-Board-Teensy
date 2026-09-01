@@ -18,7 +18,9 @@ It controls:
 
 > The authoritative hardware sources are `references/Scale Car Teensy IO - IO.csv` (pin map),
 > `references/Scale Car Design PCB BOM 20260622.csv` (parts), and the schematic PDF. See
-> `CLAUDE.md` for the reconciliation spec and `PLAN.md` for the implementation plan.
+> `CLAUDE.md` for the reconciliation spec and `PLAN.md` for the implementation plan. For
+> hardware-in-the-loop testing (a bare Teensy against a simulated plant, no PCB needed), see
+> `docs/HIL_MODE.md` (protocol/architecture) and `docs/HIL_USER_MANUAL.md` (operator manual).
 
 ## Hardware interfaces
 
@@ -113,11 +115,20 @@ The State 99 shutdown is a phase machine gated on `millis()` (no blocking `delay
 ## Charger control (Silvertel Ag105)
 
 There is **no charge-current register to program per-mA**. Control is:
-- **I2C config at init** (`initAg105Charger()`): reg `0x00 = 0x01` (2.5 A profile),
-  reg `0x01 = 0x08` (2S / 8.4 V). Stored in EPROM; rewritten every boot.
-- **`MPPT_DISABLE` GPIO (pin 5, active-LOW)**: LOW inhibits the MPPT perturb-and-observe loop
-  (during regen, so it doesn't fight the fast transient); HIGH releases it (cruise/coast
-  harvest).
+- **I2C config is LAZY, not at init** (`pollAg105()`): the charger is unpowered in
+  Init/Idle (no charger power path is open, so it cannot ACK I2C), so reg `0x00 = 0x01`
+  (2.5 A profile) and reg `0x01 = 0x08` (2S / 8.4 V) are written the first time
+  `chargerHasPower()` is true and the `AG105_SETTLE_MS` bring-up window has elapsed and
+  the charger ACKs. Stored in EPROM; the flag re-arms on power loss, so writes are
+  idempotent. **fw v24** adds a dynamic reg `0x02` MPPT input-voltage threshold, written
+  through the same power-gated lazy path with a read-verify-write handshake and an
+  EPROM-wear write-rate budget.
+- **`MPPT_DISABLE` GPIO (pin 5, active-LOW)**: LOW inhibits the MPPT loop (during regen,
+  so it doesn't fight the fast transient); HIGH releases it (cruise/coast harvest). The
+  Ag105's MPPT mechanism is an **input-voltage-threshold regulator** (datasheet p.10),
+  not perturb-and-observe — charging commences only once the input exceeds a threshold
+  set by reg `0x02` (11–33 V, ~0.088 V/count; default 18 V with no MPPTS resistor
+  fitted).
 - **I2C polling** (`pollAg105()` at 50 Hz): reads reg `0x06` (measured charge current,
   0.011 A/count) into `I_charge`, and caches the Table-6 status byte. The Ag105 prepends its
   status byte before any read, so each 1-byte field is read as 2 bytes.
@@ -154,9 +165,14 @@ Manages `MPPT_DISABLE` and the regen/FC-charge/BT-bus switches based on `charge_
 state (`current < -0.1`), and Ag105 readiness — enforcing the FC-charge/regen mutual exclusion.
 
 ### `updateWheelSpeed()` + encoder ISRs
-Encoder counts over a moving time window estimate flywheel speed → `v_actual`. The averaging
-buffer is reset by State 3 between runs so a new run's first samples aren't measured against
-stale timestamps.
+An **edge-period estimator** (fw v12, hardened by the fractional-pitch ledger in fw v15/v17)
+measures the period between same-edge-type quadrature transitions to derive flywheel speed →
+`v_actual`. It replaced the original boxcar (fixed-window sample-counting) estimator, whose
+~113 ms window realized enough group delay to limit-cycle the drive loop at its own crossover.
+Direction comes from the quadrature decode; a ring-invalidation event on a direction flip
+holds the last valid reading (bounded by a stale timeout) rather than emitting a full-scale
+zero step. State 3 resets the estimator between runs so a new run's first samples aren't
+measured against stale timestamps.
 
 ## Safety features
 
@@ -260,6 +276,7 @@ back over serial:
 | `6` | Toggle `BT_SEQUENCE_ENABLE` | |
 | `C` | Toggle `CBAL_DISABLE` | HIGH = OVP bypassed (prints a warning) |
 | `M` | Toggle `MPPT_DISABLE` | HIGH = MPPT harvesting; LOW = inhibited |
+| `N` | Dynamic Ag105 MPPT reg-`0x02` threshold status/verify (fw v24) | read-verify-write handshake against the EPROM-wear write-rate budget; see `CLAUDE.md`'s 2026-09-01a addendum |
 | `G` | Staged bus bring-up | `busBringupTick()` phases P0–P3: bus alone → boosts → dwell → motor node; `X` aborts (stage dark) |
 | `D` | Start/stop simulated drive cycle | requires `MOT_PWR_ENABLE` HIGH and the calibrated velocity chain |
 | `S` | Print status dump (all pins, ADCs, `I_charge`, faults, bench-tool state) | read-only |
@@ -268,7 +285,7 @@ back over serial:
 | `U` | Toggle VESC watch (~2 Hz `[VW]` line, flags fault changes) | **rebound from `W` (2026-08-10)**; auto-paused during profiles and plot mode |
 | `P` | Set power-share setpoint (prompts for a value) | closed-loop: `powerBalance()` drives the MDACs live; needs current flowing |
 | `O` | Set droop ratio 0.15–0.85 (prompts for a value) | open-loop direct MDAC write; no current needed — the calibration entry point |
-| `A` | Set manual motor current in A (prompts) | constant VESC current, bypasses the velocity PI |
+| `A` | Set manual motor current in A (prompts) | constant VESC current, bypasses the drive controller |
 | `V` | Set manual motor velocity in m/s (prompts) | refused until the velocity chain is calibrated |
 | `R` | Start/stop power-share profile sweep | needs `A`/`V` set + `MOT_PWR_ENABLE` HIGH; stop parks switches |
 | `T <Imax> <hold s> <rate A/s>` | Start trapezoidal current profile (one line, e.g. `T 6 5 0.5`) | direct phase-current ramp; `T` alone while running stops it; switches left as-is |
@@ -451,15 +468,22 @@ cd test && make           # or: g++ -std=c++17 -Wall -Wextra -I. -I.. test_main.
 ```
 
 Mocks stub the Teensy/Arduino, Wire, SPI, VESC, and Ethernet APIs. Coverage includes scale-factor
-math, fault detection (incl. GENSTAT decode and UV boot-gating), PI convergence + anti-windup,
-command parsing, telemetry packing (58-byte v4 layout + checksum), the Ag105 init/poll I2C
-sequences, `assertFcChargeEnable()` ordering, `pollAg105()` state gating, `doState0()` init-fault
-handling, the State 98 drive cycle, and the wheel-speed buffer reset. It also covers the SD-card
+math, fault detection (incl. GENSTAT decode and UV boot-gating), the Youla-H drive controller's
+Hanus-conditioned recursion (replay-vector-verified) and its PI fallback's convergence +
+anti-windup, command parsing, telemetry packing (58-byte v4 layout + checksum), the Ag105
+init/poll I2C sequences, `assertFcChargeEnable()` ordering, `pollAg105()` state gating,
+`doState0()` init-fault handling, the State 98 drive cycle, and the edge-period velocity
+estimator (incl. the fractional-pitch ledger and TOCTOU reset fix). It also covers the SD-card
 bench logger: lifecycle on every profile exit path (complete/stop/`X`/`Q`/fault), the 1 kHz
 rate gate, ring-buffer overflow drop-and-count, no-card and mid-run write-error tolerance, file
-naming/collision, the 52-byte record schema, and `K` status output. The `Y` and `W` combined profiles
-(parameter parsing/clip/region walk/exit paths/`YP`+`WP` logging/suppression) are covered too. Run
-before every flash.
+naming/collision, the BLG v7 (106-byte) record schema, and `K` status output. The `Y` and `W`
+combined profiles (parameter parsing/clip/region walk/exit paths/`YP`+`WP` logging/suppression)
+are covered too.
+
+There are **three build targets**: `-DBENCH_TEST=0` (production), `-DBENCH_TEST=1` (bench), and
+the HIL build (`-DHIL_SIM=1 -DUSE_ETHERNET=1`). The test Makefile needs
+`-I../controller_design_MIMO` for the drive-controller replay vectors. Run all before every
+flash.
 
 `tools/decode_benchlog.py` has its own stdlib-only self-test, `tools/test_decode_benchlog.py`
 (no pytest/g++ needed): it generates synthetic `.BLG` files and asserts on the decoder's actual
@@ -475,8 +499,15 @@ python tools/test_decode_benchlog.py
 
 Items marked `TODO(calibrate)` / `TODO(verify)` in the source still need bench values, including:
 - `SCALE_V_CHG` / `SCALE_V_RGN` dividers, and confirmation of the FC/BT/BUS dividers
-- `motorConstant`, the PI gains (`Kp`, `Ki`), and `MOTOR_I_CMD_MAX` (anti-windup bound)
+- the Youla-H drive controller's coefficients are GENERATED (`drive_controller_coeffs.h`) and
+  must never be hand-edited; `MOTOR_I_CMD_MAX` (anti-windup bound) is `constexpr`-pinned against
+  them via `static_assert`. `motorConstant` is **dead on the shipped build**
+  (`USE_YOULA_DRIVE_CONTROLLER` default 1 sends the controller's amps straight through
+  `commandMotorCurrent()`) — the PI + `motorConstant` path survives only as the `=0` fallback.
 - the VBUS bring-up tunables: `V_BUS_CHARGED_THRESH`, `BUS_SETTLE_MS`, `BUS_CHARGE_TIMEOUT_MS`
 - the regen-detection threshold and the State 99 cap-drain / regen-decay delays
-- encoder counts-per-rev mapping to true vehicle speed
+- the disc-to-flywheel coupling was resolved 2026-08-16 (the flywheel's own radius is the rolling
+  radius, `FLYWHEEL_RADIUS_M = 0.0762` m); the encoder wheel is **90 slots / 180 counts per rev**
+  (fw v18+ — this changed from the earlier 120-slot/240-count disc when the operator swapped in
+  the 90-tooth wheel; see `docs/firmware-versions.md` row 18)
 - AD5443 SPI timing/word-format verification against `references/Datasheets/ad5426_5432_5443.pdf`

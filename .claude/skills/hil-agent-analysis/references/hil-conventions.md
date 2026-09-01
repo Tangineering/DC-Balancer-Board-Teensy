@@ -35,8 +35,12 @@ hash-different does not strictly imply model-different; check the commit.
 
 - Interpreter: `.venv_hil\Scripts\python.exe` (stdlib only — NO numpy/pandas). Stream
   row-by-row with `csv.DictReader`; CSVs run 1–95 MB — never Read them directly.
-- Observation columns (`state`, `switch`, `aux`, `fault_flags`, `current`, `mdac_*`) are
-  BLANK on ticks before the first observation frame. Parse with `int(x, 0)` (decimal or
+- Observation columns (`state`, `switch`, `aux`, `fault_flags`, `current`, `mdac_*`,
+  `mppt_thresh_cnt` [fw v24+], `error_code` [fw v25+]) are BLANK on ticks before the
+  first observation frame — `mppt_thresh_cnt`/`error_code` are ALSO blank on any run
+  against a pre-v24/pre-v25 frame (the field does not exist on the wire yet), which
+  reads identically to "no frame received yet"; check the frame-length provenance line
+  before treating a blank column as staleness. Parse with `int(x, 0)` (decimal or
   0x-prefixed both occur).
 - `seq` is uint8 — wrap-aware gap detection (mod 256, NOT mod 65536; 255→0 is normal).
 - `mdac_fc`/`mdac_bt` carry the 0x1000 LOAD_UPDATE command nibble: 5316 = 0x1000|1220 →
@@ -57,12 +61,19 @@ hash-different does not strictly imply model-different; check the commit.
   hil_replay_suite.py (OC_FC 0x0001, UV_BATT 0x0002, UV_BUS 0x0100, PI_TIMEOUT/HIL_LINK
   0x0010, INIT_FAIL 0x2000-family → observed 0xA000 — VERIFY from source, do not trust
   this list).
+- **PI_TIMEOUT vs HIL_LINK discrimination:** both share fault bit 0x0010, so a bare
+  0x8010 union was wire-ambiguous on fw ≤ 24. **From fw v25, `error_code_final` is on
+  the wire** (observation-frame offset 16 — see the observation-column list below) and
+  is the authority: `ERR_PI_TIMEOUT` (0x05) vs `ERR_HIL_STALE` (0x10) settle it
+  directly. On a pre-v25 board (no such byte present), fall back to stream-health
+  *inference* (child tx continuity, send-error count) — the fallback the `--pi-live`
+  excusal and `child_tx_healthy` check use.
 - **Carried-in signature (systematic):** every run after the first opens latched with
   `carried == predecessor_final_fault_flags | 0x0010` (the inter-run settle gap latches
-  the link-stale bit on top of whatever the predecessor ended with). The fw v22/v23
-  recovery warm-resets it at t ≈ 0.500 s (HIL_RECOVER_DEBOUNCE_MS after the run's frames
-  start). Predecessor-clean → 0x8010; predecessor OC → 0x8011; predecessor INIT_FAIL →
-  0xA010; etc.
+  the link-stale bit on top of whatever the predecessor ended with) — this anchor is
+  `CARRIED_IN_LATCH_MAX_S` in the tooling. The fw v22/v23 recovery warm-resets it at
+  t ≈ 0.500 s (HIL_RECOVER_DEBOUNCE_MS after the run's frames start). Predecessor-clean
+  → 0x8010; predecessor OC → 0x8011; predecessor INIT_FAIL → 0xA010; etc.
 - **Grace scoring:** fault checks judge the POST-GRACE union (t ≥ WARM_RESET_GRACE_S =
   2.0 s, inclusive at the boundary); carried-in bits (pre-grace-only) are excused and
   named in check details. Self-guarding: a board still latched shows its bits post-grace.
@@ -100,11 +111,21 @@ hash-different does not strictly imply model-different; check the commit.
 
 ## Known model-fidelity boundaries (do not report as board findings)
 
-- The plant floors regen power at zero — I_charge during braking windows is
-  boost-sourced; SOC falling during "charging" is the tell. Path validation only.
-- The hifi engine implements the DESIGN droop chain (fitted 0.316 Ω shared / 0.633 Ω
-  single, ratio exactly 2.000) — ~4× the bench-measured K_DROOP_BUS 0.074/0.16 V/A.
-  Hifi sag depths are conservative and NOT comparable to bench logs.
+- **Regen is modelled end-to-end** since the regen-fidelity round (WP-C, shipped
+  2026-09-01) — the zero-regen-power floor this section used to describe is gone, and
+  "SOC falling during charging" is no longer a fidelity tell by itself. The surviving
+  gap is the **uncharacterized VESC regen commanded-vs-delivered mapping**
+  (`VESC_REGEN_I_MAX_A` / `ETA_REGEN` — see `WORK_QUEUE.md` §3), which is conservative
+  on both axes; do not read a regen-bearing run against any baseline at or before
+  campaign `hil_report_20260901_080905` (pre-dates the regen model).
+- The hifi engine's DEFAULT droop chain implements the DESIGN values (fitted 0.316 Ω
+  shared / 0.633 Ω single, ratio exactly 2.000) — ~4× the bench-measured K_DROOP_BUS
+  0.074/0.16 V/A. **A `--droop measured` mode now exists** (anchor 0.16 Ω, +8.1% shared
+  residual, ratio 2.182 vs the design's 2.000) — **agents must read the run's droop
+  mode from its argv/sidecar before judging sag comparability**; the ~4× design-vs-bench
+  finding is NOT closed just because the measured mode exists (it is opt-in, not
+  default). Hifi sag depths under the DEFAULT (design) droop chain remain conservative
+  and NOT comparable to bench logs.
 - sw_ring events are analytic-only (never stamped into the node solution); the firmware
   cannot see them. over_absmax=True is the Death-5 signature; sub-absmax rings above
   LIMIT_V_BUS_MAX are recorded but informational.

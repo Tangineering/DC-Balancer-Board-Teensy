@@ -60,17 +60,35 @@ That buys two things the synthetic scenarios cannot:
 ## 2. Policy: conformance vs deviation
 
 The mode of an entry is decided **by the firmware version the log was recorded on**,
-relative to the currently flashed target — **fw v23 = the fw v18 control law + the
-v19 share handoff slew + v20/v21 observability/HIL + the v22/v23 HIL sequencing and
-any-fault run-boundary recovery**. v19–v23 change no control semantics except the
-v19 share handoff slew.
+relative to `TARGET_FW_VERSION` (25) — the bench board is currently **flashed with
+fw v24**; fw v25 is shipped but pending its first flash (see `WORK_QUEUE.md` §0).
+`TARGET_FW_VERSION` = fw v23 (the fw v18 control law + the v19 share handoff slew +
+v20/v21 observability/HIL + the v22/v23 HIL sequencing and any-fault run-boundary
+recovery) **plus the v24 and v25 deltas**: v24 adds the dynamic Ag105 MPPT reg-0x02
+threshold, and v25 adds the r-based bus-cutoff guard fix (both `applyShareRatio()`
+branches) and grows the HIL observation frame 17 → 18 bytes (`error_code`
+appended). **Neither v24 nor v25 changes control semantics for replay purposes** —
+v19–v25 change no control semantics except the v19 share handoff slew.
 
 `TARGET_FW_VERSION` was bumped **21 → 23** on 2026-08-30c: it had never been raised
 for v22 or v23, so every report header claimed "fw v21" while the whole replay half
 in fact depends on the v22 staged bring-up completing and on the v23 between-run
-recovery. `COMPARABLE_FW_MIN` (18) is a **separate** constant and is unchanged, so no
-entry's conformance/deviation classification moves; the only consumer of
-`TARGET_FW_VERSION` is the report header's firmware expectation.
+recovery. It was bumped **23 → 24** and then **24 → 25** on 2026-09-01, in step with
+the corresponding flash/ship events (see §2a below). `COMPARABLE_FW_MIN` (18) is a
+**separate** constant and is unchanged, so no entry's conformance/deviation
+classification moves; the only consumer of `TARGET_FW_VERSION` is the report
+header's firmware expectation.
+
+### 2a. Version bump records
+
+- **23 → 24 (2026-09-01):** fw v24 (dynamic Ag105 MPPT reg-0x02 threshold) flashed
+  to the bench board; observability/threshold-tracking change only, no control-law
+  change, so no replay entry moved mode.
+- **24 → 25 (2026-09-01):** fw v25 shipped (commits b262e98 + 89fbad6): the r-based
+  bus-cutoff guard fix and the 17 → 18 byte observation frame (`error_code` at
+  offset 16). Pending its first flash. Neither change touches replayed control
+  semantics — the guard fix closes a fault-window edge case the replay corpus does
+  not stimulate, and the frame growth is HIL-tooling-only.
 
 | Mode | When | What the firmware must do |
 |---|---|---|

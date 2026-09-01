@@ -1,5 +1,11 @@
 # AGENTS.md — Scale Car DC Balancer Board Firmware Reconciliation
 
+> ⚠️ **SUPERSEDED-AS-STATUS, dated 2026-07-11.** `CLAUDE.md` is the authoritative,
+> continuously-updated project file — read it first. The §1–§9 spec below remains valid as a
+> reconciliation spec, but any status claim, test count, or "current firmware" reference in this
+> file is historical as of 2026-07-11; `CLAUDE.md`'s dated addenda and `docs/firmware-versions.md`
+> carry everything since.
+
 ## Purpose of this task
 
 `teensy_controller.ino` is **stale firmware** written against an earlier board concept. The
@@ -171,11 +177,15 @@ The board uses the **Silvertel Ag105** MPPT battery-charger module. Reconcile ag
 `AG105_Silvertel.pdf` and the BOM (`CHG`). Key behavioral facts that change the firmware:
 
 - **Control is via the `MPPT_DISABLE` GPIO (pin 5), not a current register.** Strategy:
-  assert `MPPT_DISABLE` **active during active braking/regen** (so the slow perturb-and-
-  observe MPPT loop doesn't fight the fast regen transient) and **release it during
+  assert `MPPT_DISABLE` **active during active braking/regen** (so the slow MPPT loop
+  doesn't fight the fast regen transient) and **release it during
   cruise/coast** so the Ag105 harvests. Implement this in `chargingControl()`. **Confirmed
   from PCB schematic: `MPPT_DISABLE` is active-LOW — pulling LOW inhibits the MPPT
-  perturb-and-observe loop; pulling HIGH releases it.** **FC-path bootstrap:** in cruise with
+  loop; pulling HIGH releases it.** **MECHANISM CORRECTED (2026-08-31, datasheet p.10):
+  the Ag105's MPPT is an INPUT-VOLTAGE-THRESHOLD regulator, not perturb-and-observe — charging
+  commences only when the input exceeds a threshold set by an MPPTS resistor or I2C reg 0x02
+  (11–33 V, ~0.088 V/count; default 18 V with MPPTS open). See `CLAUDE.md` §3 for the full,
+  dated correction.** **FC-path bootstrap:** in cruise with
   `charge_goal > 0`, `chargingControl()` opens `FC_CHARGE_ENABLE` on *intent* (not on
   readiness) to power and boot the charger — gating the path on `ag105IsReady()` would
   deadlock, since the charger can't become ready until it is powered. Only the MPPT *release*

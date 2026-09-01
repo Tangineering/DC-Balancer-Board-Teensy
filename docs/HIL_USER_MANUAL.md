@@ -63,7 +63,7 @@ closed-loop tracking.
 > carries a 1 kHz injection stream in one direction and a 1 kHz observation stream
 > in the other, plus 50 Hz commands and 50 Hz telemetry — permanently bidirectional,
 > which is exactly the traffic pattern a hub handles worst. Total offered load is
-> small (~0.5 Mbit/s: 40 B + 17 B at 1 kHz plus 22 B + 58 B at 50 Hz, framing
+> small (~0.5 Mbit/s: 40 B + 18 B at 1 kHz plus 22 B + 58 B at 50 Hz, framing
 > included), so bandwidth is never the constraint — **latency jitter is**, and a
 > switch removes it. Wi-Fi bridges and powerline adapters are worse than a hub;
 > do not use them.
@@ -1134,8 +1134,9 @@ Keys that are **not** — using them makes a strategy simulator-only:
 
 Note the converse too: v4 telemetry carries `power_share_actual` (offset 43) and
 the two droop-gain words (47/49), which `fb` does **not** expose, because the
-17-byte observation frame does not carry them. A portable strategy must not
-depend on them either.
+18-byte observation frame does not carry them (it does carry `error_code`, at
+offset 16 — see §2 above). A portable strategy must not depend on the
+telemetry-only fields either.
 
 ---
 
@@ -1548,15 +1549,19 @@ Say this out loud in any report that uses Mode B:
   (`.ino:4988-5069`, PLAN.md §6b). Whether the Pi bridge parses that layout —
   rather than a v3 layout with everything after offset 51 shifted by one — is an
   **open item**. A silent one-byte desync produces plausible-looking wrong numbers,
-  not an error.
+  not an error. **The Pi bridge source is now available** at
+  `references/EMS/Pi_2026-09-01/` (`teensy_bridge_node_2026-08-17A.py` + ROS2
+  nodes + SDP material, uncommitted) — this audit is the remaining Mode B
+  blocker; see `WORK_QUEUE.md` §2.
 * **Telemetry delivery is address-dependent.** The board sends to a hard-coded
   `192.168.1.100:5000`. A Pi elsewhere on the subnet commands fine and receives
   nothing; that asymmetry is a property of the firmware, not of your setup.
 * **The plant is signal-level only.** No power stage, no real currents, no thermal
-  behaviour. The charger's I2C config writes, the CV taper and the MPPT loop are
-  not simulated (`docs/HIL_MODE.md` Limitations; `docs/HIL_PLANT.md` fidelity
-  boundaries). The simulator-only constants there are `TODO(verify)` and stay that
-  way.
+  behaviour. The Ag105's input-voltage-threshold MPPT mechanism itself **is**
+  modelled, opt-in via `mppt_emulation` (default off; on in `mppt-tracking`) — the
+  charger's I2C config writes and the CV taper remain unsimulated (`docs/HIL_MODE.md`
+  Limitations; `docs/HIL_PLANT.md` fidelity boundaries). The simulator-only
+  constants there are `TODO(verify)` and stay that way.
 * **The encoder estimator is bypassed.** `v_actual` is injected, so nothing in a
   HIL run exercises the edge-period estimator, the fractional-pitch ledger, or the
   encoder front end. Those remain bench-only questions.

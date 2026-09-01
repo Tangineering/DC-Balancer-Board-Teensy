@@ -1,5 +1,8 @@
 # Overnight autonomous session log — 2026-08-30/31
 
+> **CLOSED.** Session ended 2026-09-01 morning; resume commit `5338701`. Later rounds continued
+> in-session — see `CLAUDE.md` addenda 2026-09-01c/d.
+
 Operator stepped away ~22:30 2026-08-30 with instructions: land the command-replay/suite-fix
 round once reviews are clean, commit/push to main, then run 1-5 rounds of run_hil_suite.py
 (all scenarios) with hil-agent-analysis on each, making orchestrated fixes between rounds

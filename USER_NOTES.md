@@ -1,4 +1,7 @@
 # HIL Updates 2026-08-26a
+
+> Every item in this block has shipped — see the `CLAUDE.md` 2026-08-27c addendum.
+
 - Measure K_DROOP_BUS for the plant simulation empirically from previous logs.
 - Let's add an option that can be utilized in certain scenarios to enable high-fidelity electrical simulation. 
     - The high-fidelity electrical simulation should run at the maximum frequency possible on the PC that is running it, and at a separate rate than the 1kHz mechanical plant.

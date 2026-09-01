@@ -246,7 +246,9 @@ bring-up. Nondestructive — hardware survives repeated attempts.
 - Scope, VBUS: never seen above what the operator believed the OV limit to be. **The paradox is
   resolved by the stale limit assumption:** the firmware limit is now **17.0 V**, not 18.5 — a bus
   tracking a 17.4 V boost through the RT1987 (~0 V drop) *is* over the current limit even though it
-  never approaches 18.5 V.
+  never approaches 18.5 V. [Dated supersession, 2026-07-11: the limit was later widened to
+  `V_BUS_NOMINAL + 1.5` = 17.5 V — see the record further down this document, and `CLAUDE.md`
+  §6/its 2026-08-17 addendum for the current value.]
 
 **Diagnosis (leading, UNCONFIRMED):** the BT boost is regulating at the **old 237 k setpoint**
 (design 17.5 V; measured 17.4 V here, 17.7 V in the 2026-07-07 validation), not the retuned

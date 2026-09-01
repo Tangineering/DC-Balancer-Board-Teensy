@@ -1,5 +1,9 @@
 # Firmware Reconciliation Plan — Board Rev 20260622
 
+> Dated pointer (2026-09-01): status, firmware version history, and campaign findings beyond
+> 2026-07-01 live in `CLAUDE.md`'s dated addenda and `docs/firmware-versions.md`, not in this
+> plan — this file is the original reconciliation plan and stays historical past that date.
+
 **Goal:** Bring `teensy_controller.ino` into agreement with the actual 20260622 hardware without
 touching the motor PI, power-share PI, encoder, or UDP framing logic.
 
@@ -82,7 +86,9 @@ pinMode(FC_CHARGE_ENABLE,   OUTPUT); digitalWrite(FC_CHARGE_ENABLE,   LOW);
 pinMode(BT_SEQUENCE_ENABLE, OUTPUT); digitalWrite(BT_SEQUENCE_ENABLE, LOW);
 
 // MPPT_DISABLE (active-LOW): LOW = MPPT loop inhibited (fail-safe: charger off if Teensy resets)
-// Source: user-confirmed from PCB schematic — pulling LOW inhibits the MPPT perturb-and-observe loop.
+// Source: user-confirmed from PCB schematic — pulling LOW inhibits the MPPT loop.
+// [Dated correction, 2026-08-31: the mechanism is an input-voltage-threshold regulator, not
+// perturb-and-observe — datasheet p.10, see CLAUDE.md §3. The polarity/sketch above is unaffected.]
 pinMode(MPPT_DISABLE, OUTPUT); digitalWrite(MPPT_DISABLE, LOW);
 
 // CBAL_DISABLE (pin 9): LOW = balancer/OVP active, HIGH = disabled.
@@ -303,9 +309,12 @@ void initAg105Charger() {
 
 ### 3d. `chargingControl()` — Ag105 logic
 
-Strategy: `MPPT_DISABLE` inhibits the MPPT perturb-and-observe loop during active regen,
+Strategy: `MPPT_DISABLE` inhibits the MPPT loop during active regen,
 released during cruise/coast so Ag105 harvests. The TL431/BSP170P braking chopper handles
 fast regen spikes; do not rely on Ag105 for that.
+[Dated correction, 2026-08-31: the MPPT mechanism is an input-voltage-threshold regulator, not
+perturb-and-observe — datasheet p.10, see CLAUDE.md §3. The enable/release strategy above is
+unaffected.]
 
 ```cpp
 void chargingControl() {
@@ -679,6 +688,7 @@ All commands are single uppercase characters, processed in `doState98()`:
 | `6` | Toggle `BT_SEQUENCE_ENABLE` |
 | `C` | Toggle `CBAL_DISABLE` (HIGH = OVP bypassed; use with caution) |
 | `M` | Toggle `MPPT_DISABLE` (HIGH = MPPT enabled; LOW = inhibited) |
+| `N` | Dynamic Ag105 MPPT reg-`0x02` threshold status/verify (fw v24) |
 | `D` | Start/stop simulated drive cycle (§9c) |
 | `S` | Print status (all pin states, all ADC readings, `I_charge`, bench-tool state) |
 | `I` | Scan the I2C bus |
@@ -1500,7 +1510,8 @@ No Teensy hardware or Arduino IDE needed. Tests should be run locally before eac
 
 | Item | Resolution | Source |
 |------|-----------|--------|
-| `MPPT_DISABLE` GPIO polarity | Active-LOW: LOW inhibits the MPPT perturb-and-observe loop | User-confirmed from PCB schematic |
+| `MPPT_DISABLE` GPIO polarity | Active-LOW: LOW inhibits the MPPT loop | User-confirmed from PCB schematic |
+| MPPT mechanism (dated correction, 2026-08-31) | Input-voltage-threshold regulator (default 18 V, reg 0x02), not perturb-and-observe | `AG105_Silvertel.pdf` p.10; see `CLAUDE.md` §3 |
 | `CBAL_DISABLE` polarity | LOW = balancer/OVP active, HIGH = disabled; no external pull resistor on net; internal pullup needed | User-confirmed from PCB schematic |
 | CHG/RGN voltage dividers | R1=78.7kΩ, R2=10kΩ → Vmax=29.271V → SCALE=29.271/4095 | User-confirmed from PCB schematic |
 | TPS61288 HW OVP threshold | 19V (built-in). `LIMIT_V_BUS_MAX = V_BUS_NOMINAL + 1.5f` = 17.5V (16.0V nominal + 1.5V SW margin) | 2026-07-11 RD1=215k FB retune; nominal bus = 16.0V (15.9V measured no-load). Original 17.5V nominal is stale |

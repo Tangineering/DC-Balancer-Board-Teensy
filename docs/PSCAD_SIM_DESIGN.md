@@ -1,4 +1,4 @@
-# PSCAD simulation design — droop control circuit (board rev 20260622, fw v21)
+# PSCAD simulation design — droop control circuit (board rev 20260622, fw v25 — see `docs/firmware-versions.md` for the current ledger)
 
 > **Companion documents.** [`docs/HIL_PLANT.md`](HIL_PLANT.md) is the plant-side reference for
 > the Python HIL engines (simple + `--electrical hifi`) and is the source of most electrical
@@ -1147,7 +1147,7 @@ Bus-side current draw, matching the Python plant so the two are comparable:
 ```
 f_drive = K_F * I_cmd                                        # the commanded tractive force, N
 m_eff * dv/dt = f_drive - sign(v)*F_c - b_eff*v              # mechanical, control page
-p_mech  = max(0, f_drive * v)                                # REGEN FLOORED AT 0 on the bus side
+p_mech  = max(0, f_drive * v)                                # REGEN FLOORED AT 0 on the bus side ⚠ superseded 2026-09-01 — see the note below
 i_motor = p_mech / (ETA_BOOST * v_bus)   when MOT_PWR closed and v_bus > 1.0 V
 i_total = i_motor + I_AUX_A
 ```
@@ -1168,7 +1168,8 @@ either.
 > still right for the BUS (`MOT_PWR` is an ideal diode and blocks the back-feed); only the
 > mechanism and the "energy stays kinetic" claim have changed.
 >
-> **Why regen is floored at zero on the bus side:** the VESC's Battery Regen Max is a **torque
+> **Why regen WAS floored at zero on the bus side (historical rationale; the bus-side
+> conclusion still holds):** the VESC's Battery Regen Max is a **torque
 > clip, not a dump path** — excess kinetic energy stays kinetic. This is a measurement, not a
 > modelling convenience: at −12 A commanded, ~6 % was delivered (`CLAUDE.md` 2026-08-17b).
 > Energy that *does* reach the board goes to the regen node and the chopper (§4.8), not back

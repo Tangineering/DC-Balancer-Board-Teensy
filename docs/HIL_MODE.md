@@ -50,7 +50,7 @@ whose faults are suppressed tests nothing.
   │                              │                  │  detectFaults()   ← UNMODIFIED│
   │                              │                  │  state machine / controllers  │
   │                              │                  │  sequencing guards, MDAC, VESC│
-  │  Reconstruct actuator state  │   17 B observe   │            │                  │
+  │  Reconstruct actuator state  │   18 B observe   │            │                  │
   │  ◄─────────────────────────── │ ◄──────────────  │            ▼                  │
   │   state, switches, aux pins, │   sync 0xB6      │  hilSendTick() @ 1 kHz        │
   │   I_cmd, MDAC codes, faults  │   1 kHz          │                               │
@@ -129,17 +129,14 @@ checksum. `hil_plant_sim.parse_output()` prints a one-time provenance line namin
 the length the board is speaking, and warns loudly if one run ever sees more than
 one — which would mean a re-flash under the run, or two boards answering one host.
 
-> **⚠️ Tooling lockstep is a HARD PREREQUISITE, not a nicety.**
-> `hil_plant_sim.parse_output()` currently accepts only the 16- and 17-byte
-> lengths and rejects anything else **on length, before the checksum**. Against a
-> fw v25 board that means **every single observation frame is dropped** — not
-> degraded, not missing one field: total blindness. The host never learns
-> `mainState`, `switch_state`, `fault_flags` or the motor command, so every
-> scenario check that reads an observation is unmeasured, the warm-reset
-> tripwire and the `--pi-live` excusal have no data, and the dashboard shows
-> nothing. Note the failure is **one-directional**: injection still works, so
-> the board runs normally and the silence looks like a host problem.
-> **The tooling round MUST land before fw v25 is flashed for any campaign.**
+> **✅ Tooling lockstep landed — commit 89fbad6, 2026-09-01.**
+> `hil_plant_sim.parse_output()` accepts the 16-, 17-, and **18-byte** lengths,
+> selecting the checksum span and whether the trailing byte is data or checksum
+> by length exactly as described above. A fw v25 board's observation frames are
+> read normally: `mainState`, `switch_state`, `fault_flags`, the motor command,
+> and `error_code` are all available to scenario checks, the warm-reset
+> tripwire, the `--pi-live` excusal, and the dashboard. This was the
+> prerequisite for flashing fw v25 for any campaign; it is satisfied.
 
 ## Link-loss behaviour: hold, then zero, then latch — and (fw v22/v23) auto-recover
 
@@ -182,7 +179,8 @@ Two things happen on the *edges* of that staging (added in the fw v21 review rou
 ### Auto-recovery from a latched State 99 (fw v22; widened fw v23)
 
 Under fw v21 that latch was permanent, and stopping the simulator is the normal end
-of an HIL run — so a 38-run suite cost 38 physical power cycles. A HIL build now
+of an HIL run — so a 59-run suite (32 scenarios + 27 replays) cost 59 physical power
+cycles. A HIL build now
 warm-resets itself back to State 0 when the link comes back. This is the **only**
 path out of State 99 anywhere in the firmware, and it exists only under `HIL_SIM`.
 
@@ -752,7 +750,8 @@ rails, unbinds the host and latches `ERR_HIL_STALE`.
 **From fw v22 that latch releases itself.** Once the next run starts streaming, the
 board debounces the link for 500 ms and warm-resets to State 0, then runs the staged
 bring-up on the new run's injected plant — so each run now begins from a *fresh boot
-equivalent*, not from a latched board, and the whole 38-run plan executes without
+equivalent*, not from a latched board, and the whole 59-run plan (32 scenarios + 27
+replays) executes without
 anyone touching the hardware.
 
 **From fw v23 that also covers a run that latched a REAL fault.** Fw v22 admitted
