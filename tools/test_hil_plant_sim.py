@@ -75,17 +75,32 @@ def test_pack_inject_seq_wraps_and_status_masked():
 
 
 def _make_output_frame(seq=5, state=2, sw=0x07, aux=0x0F, current=-3.5,
-                        mdac_fc=0x1ABC, mdac_bt=0x1234, faults=0x0009):
+                        mdac_fc=0x1ABC, mdac_bt=0x1234, faults=0x0009,
+                        mppt_cnt=15):
+    """Observation frame, built INDEPENDENTLY of hil.pack_output().
+
+    Mirrors hilPackOutputFrame() (.ino:3118-3136) field by field so a golden
+    test compares two independent transcriptions of the frame table rather than
+    a function against itself.  `mppt_cnt=None` produces the fw v21-v23 16-byte
+    layout (checksum over bytes 1..14); an int produces the fw v24 17-byte one
+    (byte 15 the reg-0x02 count, checksum over bytes 1..15).
+    """
     body = struct.pack("<BBBBfHHH", seq, state, sw, aux, current,
                         mdac_fc, mdac_bt, faults)
+    if mppt_cnt is not None:
+        body += bytes([int(mppt_cnt) & 0xFF])
     frame = bytes([hil.HIL_SYNC_OUTPUT]) + body
-    frame += bytes([hil.xor_checksum(frame[1:15])])
+    frame += bytes([hil.xor_checksum(body)])
     return frame
 
 
 def test_parse_output_golden_accept():
-    frame = _make_output_frame()
-    assert len(frame) == hil.HIL_OUTPUT_SIZE == 16
+    """fw v24 17-byte frame: every field, including the appended count."""
+    frame = _make_output_frame(mppt_cnt=19)
+    assert len(frame) == hil.HIL_OUTPUT_SIZE == 17
+    # byte 15 is DATA and byte 16 is the checksum over 1..15 (.ino:2911-2938)
+    assert frame[15] == 19
+    assert frame[16] == hil.xor_checksum(frame[1:16])
     decoded = hil.parse_output(frame)
     assert decoded is not None
     assert decoded["seq"] == 5
@@ -96,13 +111,71 @@ def test_parse_output_golden_accept():
     assert decoded["mdac_fc"] == 0x1ABC
     assert decoded["mdac_bt"] == 0x1234
     assert decoded["fault_flags"] == 0x0009
+    assert decoded["mppt_cnt"] == 19
+
+
+def test_parse_output_golden_accept_legacy_16_byte():
+    """fw v21-v23 frame still decodes; every pre-existing offset is unchanged.
+
+    The count is None, NOT 0: 0 is a legal reg-0x02 count (11.0 V), so a zero
+    here would be a fabricated threshold rather than "this firmware cannot say".
+    """
+    frame = _make_output_frame(mppt_cnt=None)
+    assert len(frame) == hil.HIL_OUTPUT_SIZE_LEGACY == 16
+    assert frame[15] == hil.xor_checksum(frame[1:15])
+    decoded = hil.parse_output(frame)
+    assert decoded is not None
+    assert decoded["mppt_cnt"] is None
+    # Every other field is byte-identical to the 17-byte decode.
+    new = hil.parse_output(_make_output_frame(mppt_cnt=19))
+    for k in ("seq", "state", "switch", "aux", "current", "mdac_fc",
+              "mdac_bt", "fault_flags"):
+        assert decoded[k] == new[k]
+
+
+def test_pack_output_matches_the_independent_builder():
+    """hil.pack_output() reproduces the test's own transcription, both lengths."""
+    for cnt in (None, 0, 15, 27, 255):
+        want = _make_output_frame(mppt_cnt=cnt)
+        got = hil.pack_output(5, 2, 0x07, 0x0F, -3.5, 0x1ABC, 0x1234, 0x0009,
+                              mppt_cnt=cnt)
+        assert got == want
+        assert hil.parse_output(got) is not None
+
+
+def test_parse_output_checksum_rejected_at_both_lengths():
+    """A one-bit checksum corruption is rejected on 16- AND 17-byte frames.
+
+    The 17-byte case is the one that matters for this round: the checksum SPAN
+    moved (1..15, not 1..14), so a decoder that kept the old span would accept
+    frames whose count byte is corrupt.
+    """
+    for cnt in (None, 15):
+        frame = bytearray(_make_output_frame(mppt_cnt=cnt))
+        frame[-1] ^= 0x01
+        assert hil.parse_output(bytes(frame)) is None
+    # ... and specifically: corrupting the COUNT byte must invalidate the frame,
+    # which it only can if byte 15 is inside the checksum span.
+    frame = bytearray(_make_output_frame(mppt_cnt=15))
+    frame[15] ^= 0x04
+    assert hil.parse_output(bytes(frame)) is None
 
 
 def test_parse_output_rejects_wrong_length():
-    frame = _make_output_frame()
-    assert hil.parse_output(frame[:-1]) is None
-    assert hil.parse_output(frame + b"\x00") is None
+    """Only 16 and 17 are accepted; 15 and 18 are not.
+
+    Written as explicit lengths rather than "one off the golden frame", because
+    the two ACCEPTED lengths are now adjacent: trimming a byte off a 17-byte
+    frame yields a 16-byte one, whose length is legal and which is rejected on
+    the checksum instead.  That is correct behaviour but a different assertion.
+    """
+    frame = _make_output_frame(mppt_cnt=15)          # 17 B
+    assert hil.parse_output(frame[:15]) is None      # 15 B — too short
+    assert hil.parse_output(frame + b"\x00") is None  # 18 B — too long
     assert hil.parse_output(b"") is None
+    # The 16-byte trim is rejected too, but by the CHECKSUM, not the length.
+    assert len(frame[:16]) == hil.HIL_OUTPUT_SIZE_LEGACY
+    assert hil.parse_output(frame[:16]) is None
 
 
 def test_parse_output_rejects_bad_sync():
@@ -147,13 +220,17 @@ def test_mdac_fraction_zero_code():
 # 2. Plant mechanics
 # ─────────────────────────────────────────────────────────────────────────
 
-def _obs(switch=0, aux=0, current=0.0, mdac_fc=None, mdac_bt=None):
+def _obs(switch=0, aux=0, current=0.0, mdac_fc=None, mdac_bt=None,
+         mppt_cnt=None):
     if mdac_fc is None:
         mdac_fc = hil.MDAC_CMD_LOAD_UPDATE | (hil.MDAC_RES // 2)
     if mdac_bt is None:
         mdac_bt = hil.MDAC_CMD_LOAD_UPDATE | (hil.MDAC_RES // 2)
+    # mppt_cnt DEFAULTS TO None -- what a legacy 16-byte frame decodes to, and
+    # what every test predating fw v24 implicitly assumed. Plant.step() reads it
+    # with .get(), so an obs dict without the key behaves identically.
     return {"switch": switch, "aux": aux, "current": current,
-            "mdac_fc": mdac_fc, "mdac_bt": mdac_bt}
+            "mdac_fc": mdac_fc, "mdac_bt": mdac_bt, "mppt_cnt": mppt_cnt}
 
 
 SW_ALL_LIVE = hil.SW_FC_BUS | hil.SW_BT_BUS | hil.SW_MOT_PWR
@@ -1750,9 +1827,12 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
     # ledger fix queue, MED-1 -- the SDP table's pre-clamp request, blank on a
     # non-SDP run) is appended UNCONDITIONALLY after THAT -- so soc is now
     # seventh-from-last.
-    assert header[-7:] == ["soc", "cmd_v_sp", "cmd_share_sp",
-                           "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
-                           "cmd_share_sp_raw"]
+    # mppt_thresh_cnt (fw v24) is appended AFTER the per-mode blocks, in BOTH
+    # schemas — it is an observed BOARD field, not a plant quantity.
+    assert header[-1] == "mppt_thresh_cnt"
+    assert header[-8:-1] == ["soc", "cmd_v_sp", "cmd_share_sp",
+                             "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
+                             "cmd_share_sp_raw"]
     assert "elec_substep_hz" not in header
     assert "elec_events" not in header
     assert "replay_rec" not in header
@@ -1761,10 +1841,11 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
 def test_csv_schema_hifi_mode_appends_elec_columns(tmp_path):
     header, _rows = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "hifi", "--duration", "0.02"])
-    assert header[-9:] == ["soc", "elec_substep_hz", "elec_events",
-                           "cmd_v_sp", "cmd_share_sp",
-                           "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
-                           "cmd_share_sp_raw"]
+    assert header[-1] == "mppt_thresh_cnt"          # fw v24, appended last
+    assert header[-10:-1] == ["soc", "elec_substep_hz", "elec_events",
+                              "cmd_v_sp", "cmd_share_sp",
+                              "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
+                              "cmd_share_sp_raw"]
 
 
 REPLAY_CSV_HEADER_PIN = [
@@ -1785,9 +1866,15 @@ def test_csv_schema_replay_mode_appends_cmd_columns_after_replay_rec(tmp_path):
     blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
     header, _rows = _run_main_csv(
         tmp_path, ["--replay", blg_path, "--duration", "0.02"], name="replay.csv")
-    assert header == REPLAY_CSV_HEADER_PIN + ["cmd_v_sp", "cmd_share_sp"]
+    # mppt_thresh_cnt (fw v24) is appended after the per-mode block in BOTH
+    # schemas -- unlike every other append in this writer, it is an OBSERVED
+    # BOARD field (observation-frame byte 15) rather than a plant quantity, so
+    # a replay run observes it exactly as a simulated one does. replay_rec
+    # still keeps its established index.
+    assert header == (REPLAY_CSV_HEADER_PIN
+                      + ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt"])
     assert header.index("replay_rec") == REPLAY_CSV_HEADER_PIN.index("replay_rec")
-    assert header[-2:] == ["cmd_v_sp", "cmd_share_sp"]
+    assert header[-3:] == ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt"]
 
 
 def test_replay_preamble_rows_precede_recorded_trajectory_then_hand_over(tmp_path):
@@ -1955,7 +2042,8 @@ def test_replay_commands_csv_header_cmd_columns_after_replay_rec(tmp_path):
     header, _rows = _run_main_csv(
         tmp_path, ["--replay", blg_path, "--replay-commands", "--duration", "0.02"],
         name="replay_cmds.csv")
-    assert header == REPLAY_CSV_HEADER_PIN + ["cmd_v_sp", "cmd_share_sp"]
+    assert header == (REPLAY_CSV_HEADER_PIN
+                      + ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt"])
     assert header.index("replay_rec") == REPLAY_CSV_HEADER_PIN.index("replay_rec")
 
 
@@ -1967,7 +2055,8 @@ def test_replay_plain_csv_header_unchanged_cmd_columns_blank(tmp_path):
     blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
     header, rows = _run_main_csv(
         tmp_path, ["--replay", blg_path, "--duration", "0.02"], name="replay_plain.csv")
-    assert header == REPLAY_CSV_HEADER_PIN + ["cmd_v_sp", "cmd_share_sp"]
+    assert header == (REPLAY_CSV_HEADER_PIN
+                      + ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt"])
     v_sp_idx = header.index("cmd_v_sp")
     share_sp_idx = header.index("cmd_share_sp")
     assert rows, "sanity"
@@ -2276,9 +2365,13 @@ def test_m3_hifi_with_csv_creates_events_sidecar(tmp_path):
     # SDP round) is appended after THAT, and cmd_share_sp_raw (2026-08-31
     # ledger fix queue) is appended after THAT -- so elec_events is now
     # seventh-from-last, not third-from-last.
-    assert header[-6:] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
-                           "h2_cum_g", "h2_sdp_cum_g", "cmd_share_sp_raw"]
-    elec_events_col = rows[-1][-7]
+    assert header[-1] == "mppt_thresh_cnt"          # fw v24, appended last
+    assert header[-7:-1] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
+                             "h2_cum_g", "h2_sdp_cum_g", "cmd_share_sp_raw"]
+    # Resolved BY NAME rather than by a negative index: the fw v24 column
+    # shifted every from-the-end offset by one, which is exactly the breakage
+    # an append-only schema is supposed to avoid downstream.
+    elec_events_col = rows[-1][header.index("elec_events")]
     assert elec_events_col.strip() != ""
     n_reported = int(elec_events_col)
     with open(sidecar, encoding="utf-8") as fh:
@@ -2846,8 +2939,9 @@ def test_pi_live_csv_cmd_columns_blank(tmp_path):
     # cmd_share_sp, and cmd_share_sp_raw (2026-08-31 ledger fix queue) is now
     # the last column in simulated-plant mode -- blank here too, since no SDP
     # policy drives a --pi-live run (no commander is even constructed).
-    assert header[-6:] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
-                           "h2_cum_g", "h2_sdp_cum_g", "cmd_share_sp_raw"]
+    assert header[-1] == "mppt_thresh_cnt"          # fw v24, appended last
+    assert header[-7:-1] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
+                             "h2_cum_g", "h2_sdp_cum_g", "cmd_share_sp_raw"]
     v_idx, share_idx = header.index("cmd_v_sp"), header.index("cmd_share_sp")
     raw_idx = header.index("cmd_share_sp_raw")
     assert rows, "expected at least one CSV row"
@@ -7063,9 +7157,10 @@ def test_csv_header_carries_h2_sdp_cum_g_at_expected_position(tmp_path):
         tmp_path, ["--scenario", "steady", "--electrical", "simple", "--duration", "0.02"])
     # cmd_share_sp_raw (2026-08-31 ledger fix queue) is now appended after
     # h2_sdp_cum_g, so h2_sdp_cum_g is no longer the last column.
-    assert header[-1] == "cmd_share_sp_raw"
-    assert header[-4:] == ["h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
-                           "cmd_share_sp_raw"]
+    assert header[-1] == "mppt_thresh_cnt"          # fw v24, appended last
+    assert header[-2] == "cmd_share_sp_raw"
+    assert header[-5:-1] == ["h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
+                             "cmd_share_sp_raw"]
 
 
 def test_csv_simulated_row_carries_h2_sdp_cum_g_value(tmp_path):
@@ -7119,6 +7214,259 @@ def test_ems_sdp_in_aux_preload_bespoke_set():
     alone, since a passing test suite is what a reader actually checks."""
     assert "ems-sdp" in hil._AUX_PRELOAD_BESPOKE
     assert "aux_preload_a" not in hil.SCENARIOS["ems-sdp"]
+
+
+# =========================================================================
+# fw v24 -- the 17-byte observation frame and the DYNAMIC MPPT threshold
+#
+# Firmware anchors, re-read for this round:
+#   .ino:2911-2938  frame table (byte 15 = mppt_thresh_count, XOR over 1..15)
+#   .ino:1671-1690  AG105_MPPT_VOLTS / the [15, 27] clamp band
+#   .ino:11185-11201  the HIL mirror that recomputes the count each settled tick
+# =========================================================================
+
+def test_ag105_mppt_volts_mapping_matches_the_firmware_encoding():
+    """11.0 V at count 0, 0.088 V/count, 33.0 V at the 250 ceiling."""
+    assert hil.ag105_mppt_volts(0) == pytest.approx(11.0, abs=1e-9)
+    assert hil.ag105_mppt_volts(15) == pytest.approx(12.32, abs=1e-9)
+    assert hil.ag105_mppt_volts(27) == pytest.approx(13.376, abs=1e-9)
+    assert hil.ag105_mppt_volts(250) == pytest.approx(33.0, abs=1e-9)
+    # The band literals are pinned too: they are the firmware's clamp, and a
+    # tooling-side drift from them would silently move every threshold check.
+    assert hil.AG105_MPPT_N_FLOOR == 15
+    assert hil.AG105_MPPT_N_CEIL == 27
+    assert hil.AG105_MPPT_N_MAX == 250
+    assert hil.AG105_MPPT_N_RESISTOR == 0xFF
+    assert hil.AG105_MPPT_V_BASE == 11.0
+    assert hil.AG105_MPPT_V_PER_CNT == 0.088
+
+
+def test_ag105_mppt_volts_refuses_resistor_mode_counts():
+    """>=251 is external-resistor mode and has NO volts value (Ag105 Table 7).
+
+    Extrapolating 11 + 0.088*255 = 33.44 V would invent a threshold the
+    register cannot express, and would make the 0xFF "never written" sentinel
+    look like a deliberate 33 V setting.
+    """
+    for bad in (251, 255, hil.AG105_MPPT_N_RESISTOR, 300, -1):
+        with pytest.raises(ValueError):
+            hil.ag105_mppt_volts(bad)
+
+
+def _run_mppt_gate(mppt_cnt, v_chg, pin_high=True, ticks=None):
+    """Settle a released charger at `v_chg` with the board reporting `mppt_cnt`.
+
+    Returns the last plant output. Uses the same hold-v_bus-by-hand pattern as
+    the other threshold tests (see _mppt_charge_obs).
+    """
+    plant = hil.Plant(ag105_i_max=1.0, mppt_emulation=True)
+    aux = hil.AUX_MPPT_DISABLE if pin_high else 0
+    obs = _obs(switch=hil.SW_FC_CHARGE, aux=aux, mppt_cnt=mppt_cnt)
+    if ticks is None:
+        ticks = int(hil.AG105_SETTLE_S / 1e-3) + 3000
+    out = None
+    for _ in range(ticks):
+        plant.v_bus = v_chg
+        out = plant.step(1e-3, obs)
+    return out
+
+
+def test_mppt_threshold_follows_the_count_the_board_reports():
+    """count 15 -> threshold 12.320 V, so a 13.4 V rail CHARGES.
+
+    This is the fw v24 operating point: the manager clamps at the floor, the
+    threshold lands under the bus, and the module stops refusing.  The SAME
+    rail under the 18 V fallback refuses (next test), so this asserts the
+    count is actually consulted rather than the constant.
+    """
+    out = _run_mppt_gate(mppt_cnt=hil.AG105_MPPT_N_FLOOR, v_chg=13.4)
+    assert out["ag105_status"] & 0x07 == hil.AG105_ST_CHARGING
+    assert out["ag105_status"] & hil.AG105_FLAG_MPPT_EN
+    assert out["ag105_status"] & hil.AG105_FLAG_PWR_TRACK
+    assert out["I_charge"] == pytest.approx(1.0, abs=0.05)
+
+
+def test_mppt_threshold_falls_back_to_18v_without_a_count():
+    """mppt_cnt None (a legacy 16-byte frame) -> the 18 V fallback REFUSES.
+
+    The fw v23 regression case, kept reachable on purpose: the same 13.4 V rail
+    that charges above is exactly the hunt-producing refusal when the firmware
+    cannot tell the host what threshold is in force.
+    """
+    out = _run_mppt_gate(mppt_cnt=None, v_chg=13.4)
+    assert out["ag105_status"] & 0x07 == hil.AG105_ST_LOW_POWER
+    assert out["ag105_status"] & hil.AG105_FLAG_MPPT_EN
+    assert not (out["ag105_status"] & hil.AG105_FLAG_PWR_TRACK)
+    assert out["I_charge"] == pytest.approx(0.0, abs=1e-3)
+
+
+def test_mppt_threshold_resistor_mode_count_uses_the_fallback():
+    """0xFF is external-resistor mode / never written, i.e. the 18 V default.
+
+    The fallback is the PHYSICAL value here, not a placeholder: a module whose
+    register was never written genuinely sits at its factory threshold.
+    """
+    out = _run_mppt_gate(mppt_cnt=hil.AG105_MPPT_N_RESISTOR, v_chg=13.4)
+    assert out["ag105_status"] & 0x07 == hil.AG105_ST_LOW_POWER
+    assert out["I_charge"] == pytest.approx(0.0, abs=1e-3)
+
+
+def test_mppt_threshold_count_is_followed_across_the_rail():
+    """The gate tracks the COUNT, not a constant: same rail, both verdicts.
+
+    13.4 V against count 27 (13.376 V, the clamp ceiling) charges; against
+    count 34 (13.992 V) it refuses.  One count apart in the model's terms, and
+    the outcome flips -- which is what "the threshold is dynamic" means.
+    """
+    charging = _run_mppt_gate(mppt_cnt=hil.AG105_MPPT_N_CEIL, v_chg=13.4)
+    assert charging["ag105_status"] & 0x07 == hil.AG105_ST_CHARGING
+    assert hil.ag105_mppt_volts(hil.AG105_MPPT_N_CEIL) < 13.4
+    refusing = _run_mppt_gate(mppt_cnt=34, v_chg=13.4)
+    assert hil.ag105_mppt_volts(34) > 13.4
+    assert refusing["ag105_status"] & 0x07 == hil.AG105_ST_LOW_POWER
+
+
+def test_mppt_threshold_pin_low_still_bypasses_a_dynamic_threshold():
+    """The threshold belongs to the MPPT regulator, count or no count.
+
+    With MPPT_DISABLE LOW (the regen path's condition) the gate must not apply
+    even when the reported count would put the threshold above the rail.
+    """
+    out = _run_mppt_gate(mppt_cnt=34, v_chg=13.4, pin_high=False)
+    assert out["ag105_status"] & 0x07 == hil.AG105_ST_CHARGING
+
+
+def test_mppt_emulation_off_ignores_the_count_entirely():
+    """A reported count must not make the gate causal where it is switched off.
+
+    Every scenario predating `mppt_emulation` must stay byte-identical under
+    fw v24, and the count arriving on every frame is the new way that could
+    have broken.
+    """
+    plant = hil.Plant(ag105_i_max=1.0)          # mppt_emulation defaults False
+    obs = _obs(switch=hil.SW_FC_CHARGE, aux=hil.AUX_MPPT_DISABLE, mppt_cnt=34)
+    out = None
+    for _ in range(int(hil.AG105_SETTLE_S / 1e-3) + 2000):
+        plant.v_bus = 13.4                      # under the count-34 threshold
+        out = plant.step(1e-3, obs)
+    assert out["ag105_status"] & 0x07 == hil.AG105_ST_CHARGING
+
+
+# ── provenance: which frame protocol is the board speaking ─────────────────
+
+def test_output_provenance_announces_each_length_once(capsys):
+    """One line per length seen; repeats of the same length are silent.
+
+    The announcement lives on the 1 kHz drain path, so it must cost one
+    set-membership test per accepted frame once it has fired -- printing per
+    frame would violate the dashboard lightness contract.
+    """
+    hil.reset_output_provenance()
+    capsys.readouterr()
+    for _ in range(5):
+        assert hil.parse_output(_make_output_frame(mppt_cnt=15)) is not None
+    out = capsys.readouterr().out
+    assert out.count("observation frame:") == 1
+    assert "17 bytes" in out and "fw v24+" in out
+
+
+def test_output_provenance_warns_when_a_run_sees_both_lengths(capsys):
+    """Two lengths in one run is a re-flash under the run, or two boards.
+
+    It is never benign -- the two layouts disagree about what byte 15 means --
+    so the second announcement is a stderr WARNING, not another info line, and
+    it says the count readings are suspect.
+    """
+    hil.reset_output_provenance()
+    capsys.readouterr()
+    assert hil.parse_output(_make_output_frame(mppt_cnt=None)) is not None
+    assert hil.parse_output(_make_output_frame(mppt_cnt=15)) is not None
+    cap = capsys.readouterr()
+    assert "16 bytes" in cap.out and "LEGACY" in cap.out
+    assert "WARNING" in cap.err and "CHANGED mid-run" in cap.err
+    assert "mppt_thresh_cnt" in cap.err
+    # ... and a third frame of either length is silent again.
+    hil.parse_output(_make_output_frame(mppt_cnt=15))
+    hil.parse_output(_make_output_frame(mppt_cnt=None))
+    again = capsys.readouterr()
+    assert again.out == "" and again.err == ""
+
+
+def test_output_provenance_is_not_announced_for_a_rejected_frame(capsys):
+    """A frame that fails sync or checksum is not evidence of a protocol."""
+    hil.reset_output_provenance()
+    capsys.readouterr()
+    bad = bytearray(_make_output_frame(mppt_cnt=15))
+    bad[-1] ^= 0xFF
+    assert hil.parse_output(bytes(bad)) is None
+    assert capsys.readouterr().out == ""
+
+
+# ── the CSV column ────────────────────────────────────────────────────────
+
+def _run_scripted_csv(tmp_path, monkeypatch, frames_by_tick, duration,
+                      rate=1000.0, port=58960):
+    """_run_scripted_warm_reset's sibling: returns the CSV header + rows."""
+    clock = _FakeClock()
+    monkeypatch.setattr(hil.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(hil.time, "sleep", clock.sleep)
+    dt = 1.0 / rate
+    sock = _ScriptedRecvSocket(clock, dt, frames_by_tick)
+    monkeypatch.setattr(hil.socket, "socket", lambda *a, **k: sock)
+    csv_path = str(tmp_path / "run.csv")
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", str(port),
+                   "--bind-port", "0", "--rate", str(rate), "--csv", csv_path,
+                   "--scenario", "steady", "--electrical", "simple",
+                   "--duration", str(duration)])
+    assert rc == 0
+    with open(csv_path, newline="") as fh:
+        reader = csv.reader(fh)
+        header = next(reader)
+        rows = list(reader)
+    return header, rows
+
+
+def test_csv_mppt_thresh_cnt_blank_before_the_first_frame_then_populated(
+        tmp_path, monkeypatch):
+    """Blank until an observation frame lands, then the reported count.
+
+    BLANK MEANS UNKNOWN, and 0 is a legal count (11.0 V), so a zero-fill here
+    would be a fabricated threshold.
+    """
+    frames = {50: _make_output_frame(state=2, mppt_cnt=19)}
+    header, rows = _run_scripted_csv(tmp_path, monkeypatch, frames,
+                                     duration=0.1, port=58961)
+    idx = header.index("mppt_thresh_cnt")
+    assert idx == len(header) - 1                      # appended LAST
+    assert rows[0][idx] == ""                          # no frame yet
+    assert rows[-1][idx] == "19"
+    # 255 is written as 255, not blanked: "external-resistor mode / never
+    # written" is a real, reportable state and the suite scores it.
+    frames = {5: _make_output_frame(state=2, mppt_cnt=0xFF)}
+    _h2, rows2 = _run_scripted_csv(tmp_path / "b", monkeypatch, frames,
+                                   duration=0.05, port=58962)
+    assert rows2[-1][idx] == "255"
+
+
+def test_csv_mppt_thresh_cnt_blank_for_every_row_of_a_legacy_run(
+        tmp_path, monkeypatch):
+    """A fw v21-v23 flash leaves the column blank on EVERY row.
+
+    That is the honest encoding of "this firmware cannot tell us", and it is
+    what makes the suite's mppt_threshold_* checks fail such a run loudly
+    instead of passing it vacuously.
+    """
+    frames = {5: _make_output_frame(state=2, mppt_cnt=None),
+              40: _make_output_frame(state=2, mppt_cnt=None)}
+    header, rows = _run_scripted_csv(tmp_path, monkeypatch, frames,
+                                     duration=0.1, port=58963)
+    idx = header.index("mppt_thresh_cnt")
+    assert rows, "expected CSV rows"
+    assert all(r[idx] == "" for r in rows)
+    # ... while the rest of the frame decoded normally, so the blank is about
+    # the missing byte and not about a dropped link.
+    st = header.index("state")
+    assert any(r[st] == "2" for r in rows)
 
 
 if __name__ == "__main__":

@@ -2704,12 +2704,28 @@ def test_staircase_swept_window_is_6_5_to_26_9():
     assert spec["t_window"] == (6.5, 26.9)
 
 
-def test_mppt_toggle_max_ticks_is_2200():
-    assert rhs._MPPT_TOGGLE_MAX_TICKS == 2200
+def test_mppt_hunt_ceiling_is_retired_for_an_edge_census():
+    """fw v24: the toggle CEILING is gone, replaced by a phase-free edge census.
+
+    The old check (`mppt_not_stuck_high`, max_ticks 2200) asserted the PRESENCE
+    of the fw v23 hunt by excluding the ~3000-tick "stuck released" outcome.
+    Under fw v24 that outcome is the EXPECTED one, so the ceiling could not be
+    re-tuned -- it had to be replaced. Pinned negatively as well as positively:
+    a future round that reinstates the constant should have to delete this.
+    """
+    assert not hasattr(rhs, "_MPPT_TOGGLE_MAX_TICKS")
+    names = {s["name"]
+             for s in rhs.FAULT_EXPECTATIONS["mppt-tracking"]["signals_require"]}
+    assert "mppt_not_stuck_high" not in names
     spec = next(s for s in rhs.FAULT_EXPECTATIONS["mppt-tracking"]["signals_require"]
-               if s["name"] == "mppt_not_stuck_high")
-    assert spec["max_ticks"] == 2200
+               if s["name"] == "mppt_no_hunt")
+    # One rise per cruise-charge window (3), ceiling 8; the fw v23 hunt's 138
+    # toggles are ~69 rises and cannot pass at any duty cycle.
+    assert spec["edge_count_between"] == rhs._MPPT_RISE_BAND == (3, 8)
+    assert spec["edge"] == "rise"
+    assert spec["aux_bit"] == rhs.AUX_MPPT_DISABLE
     assert spec["t_window"] == rhs._MPPT_ALL_CRUISE_W == (16.1, 41.0)
+    assert len(rhs.EMS_MPPT_CRUISE_WINDOWS) == rhs._MPPT_RISE_BAND[0]
 
 
 # ── Assert 1: strictly_decreases_by window must clear every pi_timeline
@@ -3037,12 +3053,98 @@ def test_fault_expectations_pi_silence_requires_pi_timeout():
     assert expect["not_before_s"] == pytest.approx(8.0)
 
 
-def test_fault_expectations_mppt_tracking_asserts_hunt_signature():
-    sig = rhs.FAULT_EXPECTATIONS["mppt-tracking"]["signals_require"]
+def test_fault_expectations_mppt_tracking_asserts_no_hunt_signature():
+    """fw v24 entry shape: the hunt is bounded ABSENT, the threshold is proved.
+
+    Every check whose MEANING inverted is pinned by both names -- the new one
+    present, the retired one gone -- so a partial revert cannot leave a check
+    that reads as fw v23 evidence sitting in a fw v24 entry.
+    """
+    expect = rhs.FAULT_EXPECTATIONS["mppt-tracking"]
+    sig = expect["signals_require"]
     names = {s["name"] for s in sig}
-    assert {"mppt_asserted", "mppt_released", "mppt_not_stuck_high",
-           "charging_occurred", "low_power_seen",
-           "tracking_released_not_tracking"} <= names
+    assert {"mppt_asserted", "mppt_released", "mppt_no_hunt",
+           "charging_occurred", "refusal_absent", "tracking_engaged",
+           "mppt_threshold_written", "mppt_threshold_ceiling",
+           "mppt_threshold_floor"} <= names
+    assert not ({"mppt_not_stuck_high", "low_power_seen",
+                 "tracking_released_not_tracking"} & names)
+    # The bands are DERIVED, not measured on fw v24 -- the first-campaign
+    # calibration convention requires saying so.
+    assert "fw v24" in (expect.get("provisional_note") or "")
+
+    by = {s["name"]: s for s in sig}
+    # Low Power was REQUIRED (>= 50 ticks) under fw v23 and is now bounded
+    # ABSENT: the direction of the bound is the whole inversion.
+    assert by["refusal_absent"]["max_ticks"] == 50
+    assert by["refusal_absent"]["value_equals"] == rhs.AG105_ST_LOW_POWER
+    # MPPT_EN|PWR_TRACK was UNREACHABLE under fw v23 (the old entry asserted
+    # the complement) and is the fw v24 steady state.
+    assert (by["tracking_engaged"]["value_equals"]
+            == rhs.AG105_FLAG_MPPT_EN | rhs.AG105_FLAG_PWR_TRACK)
+    assert by["tracking_engaged"]["min_ticks"] > 0
+
+
+def test_mppt_threshold_specs_read_the_new_column_and_cannot_pass_blank():
+    """The fw v24 count checks: right column, right band, non-vacuous.
+
+    A campaign against a fw v21-v23 flash leaves `mppt_thresh_cnt` entirely
+    blank (16-byte frame -> mppt_cnt None -> blank cell). All three specs must
+    FAIL that run rather than pass it: the tick floor sees zero matching ticks,
+    and both value bounds report "peak unmeasured", which _judge_signal_leaf
+    treats as a failure on BOTH the min and the max side.
+    """
+    by = {s["name"]: s
+          for s in rhs.FAULT_EXPECTATIONS["mppt-tracking"]["signals_require"]}
+    for name in ("mppt_threshold_written", "mppt_threshold_ceiling",
+                 "mppt_threshold_floor"):
+        assert by[name]["column"] == "mppt_thresh_cnt"
+        # Judged after the first write, never across it: the count is
+        # legitimately 0xFF before the manager runs.
+        assert by[name]["t_window"] == rhs._MPPT_THRESH_W
+        assert by[name]["t_window"][0] >= rhs.EMS_MPPT_CRUISE_WINDOWS[0][1]
+    # Bit 7 clear separates a written count (band [15, 27]) from the 0xFF
+    # never-written sentinel without pinning a value nothing has measured.
+    assert by["mppt_threshold_written"]["value_mask"] == 0x80
+    assert by["mppt_threshold_written"]["value_equals"] == 0x00
+    assert rhs.AG105_MPPT_N_RESISTOR & 0x80
+    assert not (rhs.AG105_MPPT_N_FLOOR & 0x80)
+    assert not (rhs.AG105_MPPT_N_CEIL & 0x80)
+    assert by["mppt_threshold_written"]["min_ticks"] == rhs._MPPT_THRESH_MIN_TICKS > 0
+    # The band, in COUNTS, mirroring the firmware's own clamp (.ino:1671-1690).
+    assert by["mppt_threshold_ceiling"]["max_value"] == rhs.AG105_MPPT_N_CEIL == 27
+    assert by["mppt_threshold_floor"]["min_value"] == rhs.AG105_MPPT_N_FLOOR == 15
+    # min_value and max_value must be on SEPARATE specs -- one spec carrying
+    # both silently drops the ceiling (the import guard refuses it).
+    assert "min_value" not in by["mppt_threshold_ceiling"]
+    assert "max_value" not in by["mppt_threshold_floor"]
+
+
+def test_mppt_threshold_specs_judge_blank_and_measured_columns():
+    """Three-branch check of the new specs through _judge_signal_leaf itself."""
+    by = {s["name"]: s
+          for s in rhs.FAULT_EXPECTATIONS["mppt-tracking"]["signals_require"]}
+    # (a) UNMEASURED -- the fw v21-v23 case. All three fail.
+    blank = {"rows": 10, "ticks": 0, "peak": None, "first": None, "last": None,
+             "latch_t": None, "prev_bit": None, "edge_t": None,
+             "run": 0, "max_run": 0, "edges": 0}
+    for name in ("mppt_threshold_written", "mppt_threshold_ceiling",
+                 "mppt_threshold_floor"):
+        ok, why = rhs._judge_signal_leaf(by[name], dict(blank))
+        assert not ok, (name, why)
+    # (b) MEASURED and in band -- a clamped count of 19 held for the window.
+    good = dict(blank, ticks=12000, peak=19.0, first=19.0, last=19.0)
+    for name in ("mppt_threshold_written", "mppt_threshold_ceiling",
+                 "mppt_threshold_floor"):
+        ok, why = rhs._judge_signal_leaf(by[name], dict(good))
+        assert ok, (name, why)
+    # (c) NEVER WRITTEN -- the count stuck at the 0xFF resistor sentinel. The
+    #     tick floor sees no matching ticks and the ceiling sees peak 255.
+    stuck = dict(blank, ticks=0, peak=255.0, first=255.0, last=255.0)
+    ok, _ = rhs._judge_signal_leaf(by["mppt_threshold_written"], dict(stuck))
+    assert not ok
+    ok, why = rhs._judge_signal_leaf(by["mppt_threshold_ceiling"], dict(stuck))
+    assert not ok and "255" in why
 
 
 def test_fault_expectations_charge_to_full_asserts_no_action_baseline():

@@ -134,6 +134,12 @@ from hil_plant_sim import (                                        # noqa: E402
     # references/Datasheets/Ag105_Table6_I2C_Status_Byte.json.
     AG105_ST_LOW_POWER, AG105_ST_FULL, AG105_FLAG_MPPT_EN, AG105_FLAG_PWR_TRACK,
     AG105_FLAG_CV,
+    # Ag105 reg-0x02 (MPPT threshold) encoding + the firmware's clamp band, for
+    # the `mppt_thresh_cnt` column specs (fw v24).  Imported for the same reason
+    # the status bits are: hil_plant_sim mirrors them from .ino:1671-1690, and a
+    # second transcription here would be a silent divergence.
+    AG105_MPPT_N_FLOOR, AG105_MPPT_N_CEIL, AG105_MPPT_N_RESISTOR,
+    ag105_mppt_volts,
     # `mppt-tracking` / `share-staircase` stimulus geometry, so the windows below
     # are DERIVED from the same constants the stimulus is.
     EMS_REGEN_BRAKE_WINDOWS, EMS_MPPT_CRUISE_WINDOWS,
@@ -2432,21 +2438,42 @@ FAULT_EXPECTATIONS["ems-sdp-braking"] = {
 }
 
 
-# ═════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
 # mppt-tracking  —  the Ag105 MPPT input-voltage threshold, closed-loop
 #
-# ⚠️ THIS ENTRY ASSERTS A MODEL PREDICTION, and says so.  With `mppt_emulation`
-# on, the plant refuses to charge while tracking is RELEASED and the input rail
-# is under AG105_MPPT_V_THRESH (18 V default with MPPTS open, datasheet p.10 —
-# NOT perturb-and-observe).  The bus is ~15.95 V, so on the FC path the threshold
-# BINDS, and because the firmware releases tracking only once the charger reports
-# ready (ag105IsReady(), .ino:10249-10255), the two HUNT at the charger's own
-# 50 Hz cadence.  The full loop trace is in ems_mppt_harvest()'s docstring.
+# ⚠️ THE OBJECTIVE INVERTED AT fw v24 (2026-09-01).  Read this before comparing
+# any mppt-tracking result across the fw v23/v24 boundary.
 #
-# CONTINGENT ON R1 (does this board fit an MPPTS resistor setting a threshold
-# below the bus?).  A campaign that does not see the hunt is EVIDENCE ABOUT R1,
-# not a scenario defect — record it as a hardware finding and move the constant
-# and this entry together.
+# fw v23 AND EARLIER.  The module sat at its factory 18 V threshold (MPPTS open,
+# AG105_Silvertel.pdf p.10); the FC path feeds it from the ~15.95 V bus, so the
+# threshold BOUND; and because the firmware releases tracking only once the
+# charger reports ready (ag105IsReady(), .ino:10249-10255), releasing it stopped
+# the charging that made it ready and the two HUNTED.  Campaign 20260831_191509
+# measured that on hardware: 138 MPPT_DISABLE toggles, ~40.05 ms median period.
+# This entry's old checks ASSERTED that hunt — a tick CEILING of 2200 proving the
+# pin toggled, and a FLOOR of 50 ticks of GENSTAT "Low Power" proving the module
+# refused.
+#
+# fw v24.  ag105ManageMpptThreshold() writes reg 0x02 to (windowed-minimum V_chg
+# − AG105_MPPT_MARGIN_V 3.0), quantized DOWN and clamped IN COUNTS to
+# [AG105_MPPT_N_FLOOR 15, AG105_MPPT_N_CEIL 27] = 12.320-13.376 V
+# (.ino:1671-1690).  The clamp CEILING is static_asserted below
+# V_BUS_CHARGED_THRESH less the VBUS→VCHG-IN ideal-diode drop, so a threshold in
+# force can never exceed a bus the staged bring-up called "up".  The module
+# therefore stops refusing, ag105IsReady() holds, and the pin stays released for
+# the rest of each charge window.
+#
+# ⇒ THE HUNT IS NOW THE FAILURE SIGNATURE.  Every check below that asserted its
+#   PRESENCE is replaced by one that bounds its ABSENCE, and the positive
+#   evidence moves to the new observation-frame field: `mppt_thresh_cnt`, the
+#   reg-0x02 count the firmware reports it believes is in force (frame byte 15,
+#   .ino:2911-2938; the HIL mirror that computes it, .ino:11185-11201).
+#
+# R1 IS NO LONGER A CONTINGENCY.  Table 7 encodes reg 0x02 values 0-250 as
+# REGISTER mode and >=251 as the external MPPTS resistor, so a firmware write
+# OVERRIDES any fitted resistor.  Whether the board fits one now only decides the
+# threshold BEFORE the first write, which is the window the count checks below
+# deliberately start after.
 #
 # WINDOWS ARE DERIVED from the imported stimulus geometry, never typed: the
 # braking windows come from EMS_REGEN_BRAKE_WINDOWS and the charge-on-cruise
@@ -2458,120 +2485,210 @@ _MPPT_BRAKE_W = EMS_REGEN_BRAKE_WINDOWS[0]                     # 14.0-16.1
 _MPPT_CRUISE_W = (EMS_MPPT_CRUISE_WINDOWS[0][0] + EMS_MPPT_CRUISE_LEAD_IN_S + 0.1,
                   EMS_MPPT_CRUISE_WINDOWS[0][1] - EMS_MPPT_CRUISE_LEAD_OUT_S - 0.1)
 # ALL THREE cruise-charge windows, for the tick-counting checks: one 1.5 s window
-# is thin once AG105_SETTLE_S (0.5 s) is spent, and the hunt's statistics are
-# better read across all three.
+# is thin once AG105_SETTLE_S (0.5 s) is spent, and the statistics are better read
+# across all three.
 _MPPT_ALL_CRUISE_W = (EMS_MPPT_CRUISE_WINDOWS[0][0],
                       EMS_MPPT_CRUISE_WINDOWS[-1][1])          # 16.1-41.0
-# TICK BUDGETS, all MODELLED from the loop trace above and stated as such.
-#
-# ⚠️ RE-DERIVED 2026-08-31 (review M1).  The earlier derivation used the three
-# cruise PLATEAUS (3 x 1.9 s = 5.7 s) as the budget, but MPPT_DISABLE can only
-# be HIGH inside the windows the STRATEGY actually asserts charge_goal on, which
-# are the plateaus INSET by EMS_MPPT_CRUISE_LEAD_IN_S/_OUT_S:
-#     3 x (1.9 - 0.30 - 0.10) = 3 x 1.5 s = 4.5 s of charge-goal time,
-#     minus 3 x AG105_SETTLE_S (0.5 s)    = 3.0 s in which the pin can be HIGH.
-# Everywhere else in the run the firmware holds it LOW, so the CEILING is 3.0 s
-# = ~3000 ticks at the CSV's 1 kHz row rate, NOT the ~24900-row window span the
-# old note reasoned from.  That is why the old 10000 could never bind: BOTH the
-# hunting outcome and the stuck-high outcome passed it, and the check was inert.
+# THE POST-FIRST-WRITE WINDOW, for the `mppt_thresh_cnt` specs.  The count is
+# 0xFF (AG105_MPPT_N_RESISTOR — external-resistor mode / never written) from boot
+# until the first tick on which the charger is both POWERED and SETTLED, which is
+# ~AG105_SETTLE_S after the first cruise window's charge_goal.  Judging the count
+# from the SECOND cruise window onward puts ~11 s of margin on that instant and
+# keeps these specs from asserting anything about the pre-write value — which is
+# legitimately 0xFF and must not read as a failure.  The count PERSISTS across the
+# unpowered gaps between windows (EPROM semantics: the !powered path re-arms the
+# session but deliberately KEEPS ag105MpptRegCnt, .ino:10769-10775), so the whole
+# span carries a value, not just the charge windows.
+_MPPT_THRESH_W = (EMS_MPPT_CRUISE_WINDOWS[1][0], _MPPT_ALL_CRUISE_W[1])   # 28.1-41.0
+# ~12.9 s of rows at the CSV's 1 kHz rate; 9000 is 70 % of them, leaving room for
+# dropped observation frames while still FAILING LOUDLY on a run whose column is
+# entirely blank — which is exactly what a campaign against a fw v21-v23 flash
+# produces (16-byte frame, no byte 15, parse_output -> mppt_cnt None -> blank
+# cell).  That failure mode is the point of the floor: a legacy run must not pass
+# this entry by carrying no data.
+_MPPT_THRESH_MIN_TICKS = 9000
+# RELEASE FLOOR, RE-DERIVED FOR fw v24 AND DELIBERATELY UNCHANGED AT 300.
+# Expected HIGH ticks are now ~3000, not ~1500: 3 windows x (1.5 s of charge_goal
+# − 0.5 s AG105_SETTLE_S) = 3.0 s, HELD rather than chopped at 50 % duty.  The
+# 1 s MPPT_RELEASE_HOLDOFF_MS does NOT eat into that: it arms only where a
+# release is WITHDRAWN inside the cruise branch (.ino:10609-10616), and in the
+# healthy case no release is ever withdrawn — each window ends through the
+# charge_goal==0 branch, which clears mpptReleased WITHOUT arming the holdoff
+# (.ino:10517-10518).  300 is therefore 10 % of the expectation, with the whole
+# settle window and a full holdoff period of slack on top.
+# WHY NOT RAISE IT.  A floor near 3000 would double as a hunt detector (a hunt
+# yields ~1500), but that assertion now lives in the PHASE-FREE edge census
+# below, which does not depend on duty, on the poll cadence, or on where in a
+# window the release lands.  Keeping this one as the bare "it released at all"
+# proof is the campaign-024231 lesson applied: do not encode a modelled phase in
+# a bound that only has to prove existence.
 _MPPT_TOGGLE_MIN_TICKS = 300
-# THE TWO OUTCOMES THIS CEILING MUST SEPARATE, both re-measured on the offline
-# probe (2026-08-31; the plant's charger branch verbatim against the firmware's
-# 20 ms poll with its one-poll lag, 15.95 V rail, 1.0 A ceiling):
-#     HUNT       pin HIGH 50.0 % of post-settle ticks
-#                -> ~1500 ticks    (i_charge equilibrium 0.472-0.525 A)
-#                ⚠️ RECORD CORRECTED 2026-08-31 (ledger, "record correction"):
-#                this line quoted a full hunt period of 80.0 ms from the offline
-#                probe.  The MEASURED median on hardware is 40.05 ms — campaign
-#                20260831_191509, and the 138 MPPT_DISABLE toggles it counted
-#                over the cruise windows ARITHMETICALLY REQUIRE it (80 ms would
-#                give about half that many).  THE CEILING BELOW IS UNAFFECTED
-#                and was NOT re-derived: this budget counts HIGH TICKS, which
-#                depend only on the DUTY (50 %), not on the period.  A faster
-#                hunt at the same duty lands on the same ~1500 ticks.  The
-#                period only matters where it sets the charger's ramp average,
-#                and the I_charge floor below already quotes the correct ~40 ms.
-#     STUCK HIGH pin released and never withdrawn
-#                -> ~3000 ticks    (the whole post-settle budget above)
-# 2200 sits between them: 1.47x the modelled hunt and 0.73x the stuck-high
-# outcome, so a hunt slower than modelled by up to ~45 % still passes and a pin
-# that simply SAT high cannot.  Move it only with a measurement of the hunt in
-# hand — this ceiling is the entire "it toggled" assertion.
-_MPPT_TOGGLE_MAX_TICKS = 2200
+# EDGE CENSUS BAND — the replacement for the retired _MPPT_TOGGLE_MAX_TICKS 2200.
+#
+# DERIVATION, counting RISES (0 -> 1 on AUX_MPPT_DISABLE) inside
+# _MPPT_ALL_CRUISE_W = 16.1-41.0 s:
+#   * The three cruise-charge windows are EMS_MPPT_CRUISE_WINDOWS inset by
+#     EMS_MPPT_CRUISE_LEAD_IN_S/_OUT_S -> [16.4, 17.9), [28.4, 29.9),
+#     [39.4, 40.9).  Each contributes EXACTLY ONE rise: the pin is LOW at the
+#     window's start (charge_goal is still 0 through the plateau's lead-in, and
+#     the charger is dark for the first AG105_SETTLE_S after FC_CHARGE opens, so
+#     ag105IsReady() is false either way), goes HIGH once the module reports
+#     charging, and stays HIGH until charge_goal drops at the window's end.
+#   * The two braking windows inside the span (26.0-28.1, 37.0-39.1) contribute
+#     NONE: chargingControl()'s regen branch drives MPPT_DISABLE LOW
+#     unconditionally (.ino:10550-10551).
+#   * The census window OPENS with the pin LOW, and the first in-window sample
+#     only ESTABLISHES the level, so no phantom edge is counted.
+# => 3 rises.  The band's FLOOR is that exact prediction: a window that never
+# releases is a real failure, and `mppt_released` is the other half of the same
+# assertion.  The CEILING of 8 admits up to five extra readiness flaps — a
+# GENSTAT transient, one holdoff-bounded re-assert per window — while sitting
+# ~9x below the fw v23 hunt, whose 138 toggles are ~69 rises.  A regression to
+# the hunt cannot pass this band at any duty cycle.
+_MPPT_RISE_BAND = (3, 8)
 FAULT_EXPECTATIONS["mppt-tracking"] = {
     "source": ("AG105_Silvertel.pdf p.10 (MPPT is an INPUT-VOLTAGE THRESHOLD, "
-               "11-33 V settable, 18 V default with MPPTS open) + "
-               "hil_plant_sim.AG105_MPPT_V_THRESH and ems_mppt_harvest() + "
-               ".ino:10037-10050 (chargingControl's cruise else-block) and "
-               ":10249-10255 (ag105IsReady). ⚠️ MODEL PREDICTION, contingent on "
-               "open question R1 (MPPTS resistor unconfirmed)."),
+               "11-33 V settable, 18 V default with MPPTS open) + Table 7 "
+               "(reg 0x02: 0-250 = register mode, >=251 = external resistor — "
+               "which is why a firmware write overrides any fitted MPPTS "
+               "resistor and R1 is no longer a contingency) + .ino:1671-1690 "
+               "(fw v24 clamp band [15, 27] = 12.320-13.376 V), :2911-2938 "
+               "(observation-frame byte 15), :11185-11201 (the HIL mirror that "
+               "computes it), :10586-10622 (chargingControl's cruise else-block) "
+               "and :11284 (ag105IsReady). ⚠️ THE fw v23 HUNT IS NOW THE "
+               "FAILURE SIGNATURE, not the expectation."),
     # Fault-free.  Budget at the 0.4 m/s charge plateaus, where the FC path is
     # SINGLE-SOURCE: I_AUX_A 0.15 + motor ~0.06 + chg_i_ceiling_a 1.0 = 1.21 A
-    # against LIMIT_I_FC_MAX 1.4 A, a 14 % margin.  The hunt REDUCES the mean
-    # charge current below the ceiling, so the margin can only widen.
+    # against LIMIT_I_FC_MAX 1.4 A, a 14 % margin.
+    # ⚠️ THE REALIZED MARGIN NARROWS UNDER fw v24, and this is the one place the
+    # flipped objective costs something: the hunt used to hold the mean charge
+    # current near HALF the ceiling, so the budgeted 1.21 A was never actually
+    # drawn.  A charger that now harvests continuously draws the full ceiling —
+    # which IS the number budgeted, so the derivation stands, but the run no
+    # longer has the hunt's accidental headroom.  A first fw v24 campaign that
+    # latches FAULT_OC_FC here is a BUDGET finding (lower chg_i_ceiling_a), not a
+    # firmware defect.
     "allow_only": 0,
     "survive_to": {"t": EMS_MPPT_CRUISE_WINDOWS[-1][0], "states": {2}},   # 39.1
+    # FIRST CAMPAIGN AGAINST fw v24.  The reg-0x02 count's exact value, the edge
+    # census band and the tracking-engaged floor have never been measured on this
+    # firmware; they are derivations from the .ino clamp arithmetic and the
+    # stimulus geometry.  Calibrate them from the first green run, per the
+    # first-campaign convention, and delete this note when they are measured.
+    "provisional_note": ("fw v24 first campaign — _MPPT_RISE_BAND, the "
+                         "tracking_engaged floor and the mppt_thresh_cnt band "
+                         "are DERIVED, not measured"),
     "signals_require": [
         # 1. MPPT_DISABLE ASSERTED (pin LOW) throughout a braking window.  Two
         #    firmware paths hold it low there and they agree: charge_goal is 0 at
-        #    the window edges (.ino:10007) and the regen branch drives it low
-        #    inside (.ino:10034).  max_ticks 0 is therefore exact, not lenient.
+        #    the window edges (.ino:10516-10518) and the regen branch drives it low
+        #    inside (.ino:10550-10551).  max_ticks 0 is therefore exact, not lenient.
+        #    UNCHANGED at fw v24 — the regen path never presents the threshold,
+        #    so nothing this round did touches it.
         {"name": "mppt_asserted", "aux_bit": AUX_MPPT_DISABLE, "max_ticks": 0,
          "t_window": _MPPT_BRAKE_W,
          "label": "MPPT_DISABLE held LOW (inhibited) across the first braking "
                   "window — the regen path never presents the threshold"},
-        # 2. ... and TOGGLED across the cruise-charge windows.  TWO bounds on one
-        #    quantity, which is the whole assertion: a floor proves the pin was
-        #    RELEASED at all (the firmware got the charger to ready), and a
-        #    ceiling proves it did not simply STAY released — i.e. it hunted.
-        #    Either bound alone is satisfiable by a run that disproves the point.
+        # 2. ... and RELEASED across the cruise-charge windows.  The floor proves
+        #    the firmware reached ag105IsReady() and let the module track; see
+        #    _MPPT_TOGGLE_MIN_TICKS for why it stays at 300 rather than rising to
+        #    match the now-larger expectation.
         {"name": "mppt_released", "aux_bit": AUX_MPPT_DISABLE,
          "min_ticks": _MPPT_TOGGLE_MIN_TICKS, "t_window": _MPPT_ALL_CRUISE_W,
          "label": "MPPT_DISABLE was RELEASED (pin HIGH) during cruise charging — "
                   "the firmware reached ag105IsReady()"},
-        {"name": "mppt_not_stuck_high", "aux_bit": AUX_MPPT_DISABLE,
-         "max_ticks": _MPPT_TOGGLE_MAX_TICKS, "t_window": _MPPT_ALL_CRUISE_W,
-         "label": "... and did NOT stay released — the pin toggled, which is the "
-                  "hunt signature (~1500 ticks; a stuck-high pin shows ~3000)"},
-        # 3. Charging DID occur on the FC path despite the gate.
-        #    ⚠️ THE FLOOR IS DERIVED FROM THE HUNT, NOT FROM THE CEILING.  At a
-        #    ~40 ms period and ~50 % duty against AG105_TAU_S = 0.4 s, I_charge
-        #    equilibrates near HALF the 1.0 A ceiling — roughly 0.5 A, which is
-        #    exactly where a 0.5 floor would be knife-edged.  0.25 is half of the
-        #    modelled equilibrium: clear of zero by a wide margin, and clear of
-        #    the equilibrium by 2x.  A campaign that lands under it is reporting
-        #    a FASTER hunt than modelled, which is a finding about the firmware's
-        #    charger cadence — move this number only with that finding in hand.
+        # 3. THE HUNT IS GONE — the replacement for `mppt_not_stuck_high`, whose
+        #    MEANING inverted rather than its threshold.  A PHASE-FREE edge
+        #    census: one release per charge window and no more.  See
+        #    _MPPT_RISE_BAND for the count.
+        {"name": "mppt_no_hunt", "aux_bit": AUX_MPPT_DISABLE,
+         "edge_count_between": _MPPT_RISE_BAND, "edge": "rise",
+         "t_window": _MPPT_ALL_CRUISE_W,
+         "label": "MPPT_DISABLE rose once per cruise-charge window and did NOT "
+                  "hunt — the fw v23 release/re-assert cycle (~69 rises) is the "
+                  "failure signature this bounds"},
+        # 4. Charging occurred on the FC path.
+        #    ⚠️ FLOOR UNCHANGED AT 0.25 A, AND DELIBERATELY NOT RAISED.  Under
+        #    fw v23 it was half the HUNT equilibrium (~0.5 A); under fw v24 the
+        #    charger should hold near the full 1.0 A ceiling, so 0.25 is now a
+        #    quarter of the expectation and correspondingly slack.  Raising it
+        #    would re-encode a modelled equilibrium in a check whose objective is
+        #    "the FC path delivered charge at all"; the harvest MAGNITUDE is the
+        #    campaign's measurement to report, and the first fw v24 peak is what
+        #    a tighter floor should be derived from.
         {"name": "charging_occurred", "column": "I_charge", "min_value": 0.25,
          "t_window": _MPPT_CRUISE_W,
-         "label": "the FC path delivered charge current despite the threshold "
-                  "gate (>= 0.25 A; ~half the modelled hunt equilibrium)"},
-        # 4. THE LOAD-BEARING NEW BEHAVIOUR: the threshold gate actually BOUND.
-        #    GENSTAT 001 "Low Power" is reachable from NO other path in this
-        #    model, so this check is what separates "MPPT emulation is on" from
-        #    "MPPT emulation did something".  50 ticks = 50 ms, a tenth of one
-        #    hunt half-cycle budget across three windows.
-        {"name": "low_power_seen", "column": "ag105_status",
+         "label": "the FC path delivered charge current (>= 0.25 A; the fw v24 "
+                  "expectation is near the 1.0 A ceiling — report the peak)"},
+        # 5. THE REFUSAL IS ABSENT.  Inversion of the old `low_power_seen`, which
+        #    REQUIRED >= 50 ticks of GENSTAT 001 as proof the gate bound.  With
+        #    the threshold clamped under the rail the module must never report
+        #    Low Power; 50 ticks (50 ms) is allowed for a transient at a release
+        #    edge, where the pin and the model's inhibit latch can disagree for a
+        #    tick or two.  Vacuity companion: `tracking_engaged` below carries a
+        #    positive bound on the same column.
+        {"name": "refusal_absent", "column": "ag105_status",
          "value_mask": AG105_GENSTAT_MASK, "value_equals": AG105_ST_LOW_POWER,
-         "min_ticks": 50, "t_window": _MPPT_ALL_CRUISE_W,
-         "label": "the Ag105 reported GENSTAT 001 (Low Power) — the input-voltage "
-                  "threshold gate BOUND, which no other path in this model can "
-                  "produce"},
-        # 5. ... and the tracking FLAGS followed the pin, in the specific pattern
-        #    the threshold produces.
-        #    ⚠️ DEVIATION FROM THE ORIGINAL SPEC, and the reason is causal: the
-        #    pair MPPT_EN|PWR_TRACK (0x18) is NOT reachable in this scenario.
-        #    PWR_TRACK is set only on the CHARGING branch with the pin HIGH — but
-        #    the pin going HIGH is precisely what moves the model off that branch
-        #    within one plant tick.  What the gate DOES produce is MPPT_EN set
-        #    with PWR_TRACK CLEAR: tracking was released, and the module is
-        #    refusing to track because the rail is under threshold.  That pattern
-        #    is the honest observable and is asserted instead.
-        {"name": "tracking_released_not_tracking", "column": "ag105_status",
-         "value_mask": AG105_TRACK_MASK, "value_equals": AG105_FLAG_MPPT_EN,
-         "min_ticks": 50, "t_window": _MPPT_ALL_CRUISE_W,
-         "label": "MPPT_EN set with PWR_TRACK CLEAR — tracking released, and the "
-                  "module refusing to track below the threshold"},
+         "max_ticks": 50, "t_window": _MPPT_ALL_CRUISE_W,
+         "label": "the Ag105 did NOT report GENSTAT 001 (Low Power) — the "
+                  "input-voltage threshold gate never bound, because fw v24 "
+                  "lowered it under the bus"},
+        # 6. ... and the module TRACKED, which is the positive form.
+        #    ⚠️ THIS PATTERN WAS UNREACHABLE UNDER fw v23, and the old entry said
+        #    so explicitly: MPPT_EN|PWR_TRACK (0x18) is set only on the CHARGING
+        #    branch with the pin HIGH, and under a binding threshold the pin
+        #    going HIGH is exactly what moved the model off that branch within
+        #    one tick.  fw v24 makes it the STEADY STATE, which is why the old
+        #    entry asserted the COMPLEMENT (MPPT_EN with PWR_TRACK clear) and
+        #    this one asserts the pair.  Floor 1500 is ~55 % of the realistic
+        #    ~2700-tick expectation, not half of 3000: each window yields
+        #    ~0.9 s of released, settled charging (1.0 s of released time less
+        #    two 20 ms charger-poll cadence propagation lags at the window
+        #    edges), so 3 windows x 0.9 s = 2.7 s.  The floor also tolerates
+        #    exactly ONE full 1 s MPPT_RELEASE_HOLDOFF_MS arming inside the
+        #    span, not two.  The 1500 VALUE is unchanged; only this derivation
+        #    was wrong.
+        {"name": "tracking_engaged", "column": "ag105_status",
+         "value_mask": AG105_TRACK_MASK,
+         "value_equals": AG105_FLAG_MPPT_EN | AG105_FLAG_PWR_TRACK,
+         "min_ticks": 1500, "t_window": _MPPT_ALL_CRUISE_W,
+         "label": "MPPT_EN and PWR_TRACK both set — tracking released AND the "
+                  "module actually tracking, the pattern fw v23 could not reach"},
+        # 7. THE THRESHOLD MANAGER RAN, read straight off the wire.  This is the
+        #    round's load-bearing new evidence and the only check that separates
+        #    "the hunt is absent because fw v24 fixed it" from "the hunt is
+        #    absent because the charge windows never opened".
+        #    Bit 7 CLEAR is exactly "a written I2C threshold": the clamp band is
+        #    [15, 27] and the not-written sentinel is 0xFF, so masking 0x80
+        #    separates them without pinning a value the campaign has not measured
+        #    yet (the count follows V_chg, which differs between the simple and
+        #    hi-fi engines — and this scenario runs "any").
+        {"name": "mppt_threshold_written", "column": "mppt_thresh_cnt",
+         "value_mask": 0x80, "value_equals": 0x00,
+         "min_ticks": _MPPT_THRESH_MIN_TICKS, "t_window": _MPPT_THRESH_W,
+         "label": "the board reported a WRITTEN reg-0x02 count (bit 7 clear, "
+                  "i.e. not the 0x%02X external-resistor sentinel) — the fw v24 "
+                  "threshold manager ran. A fw v21-v23 flash leaves this column "
+                  "blank and FAILS here." % AG105_MPPT_N_RESISTOR},
+        # 8-9. ... and the count it reported sits inside the firmware's own clamp
+        #    band.  TWO specs, not one: min_value and max_value on a single spec
+        #    silently drop one bound (the import guard refuses that pairing), and
+        #    the two prove different things.  The CEILING is the sharper of the
+        #    two — it is what excludes the 0xFF sentinel and any unclamped write,
+        #    and it is the bound the .ino's own static_assert pins against
+        #    V_BUS_CHARGED_THRESH.  BOTH fail on an UNMEASURED column ("peak
+        #    unmeasured"), so neither can pass a blank run vacuously.
+        {"name": "mppt_threshold_ceiling", "column": "mppt_thresh_cnt",
+         "max_value": AG105_MPPT_N_CEIL, "t_window": _MPPT_THRESH_W,
+         "label": "reg-0x02 count never exceeded AG105_MPPT_N_CEIL %d (%.3f V) — "
+                  "the clamp the .ino static_asserts below V_BUS_CHARGED_THRESH"
+                  % (AG105_MPPT_N_CEIL, ag105_mppt_volts(AG105_MPPT_N_CEIL))},
+        {"name": "mppt_threshold_floor", "column": "mppt_thresh_cnt",
+         "min_value": AG105_MPPT_N_FLOOR, "t_window": _MPPT_THRESH_W,
+         "label": "reg-0x02 count reached AG105_MPPT_N_FLOOR %d (%.3f V) or "
+                  "above — the manager clamped rather than writing a threshold "
+                  "under the bus-min guard"
+                  % (AG105_MPPT_N_FLOOR, ag105_mppt_volts(AG105_MPPT_N_FLOOR))},
     ],
 }
 
@@ -5062,7 +5179,7 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
         #
         #   F2: 0x0010 is BOTH FAULT_PI_TIMEOUT and its alias FAULT_HIL_LINK
         #       (the deliberate alias, .ino:1240-1248; the #define is :1265), and
-#       the 16-byte observation frame carries no
+        #       the 16/17-byte observation frame carries no
         #       error_code to tell them apart (residual noted below and in the
         #       manual). Excusing on the bit alone would also excuse a genuine
         #       injection-link failure. Narrowest defensible rule: excuse ONLY

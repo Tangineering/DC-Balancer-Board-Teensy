@@ -151,29 +151,51 @@ Electrical engine: `"any"` scenarios run under the campaign's `--electrical-pref
 
 ### mppt-tracking (45 s, any engine, EMS `mppt-harvest`, `mppt_emulation` on)
 
-- **Tests:** the Ag105 MPPT input-voltage threshold (18 V default with MPPTS open),
-  made causal for the first time: the regen path holds `MPPT_DISABLE` low, while on
-  the low-cruise FC-path windows the ~15.95 V bus cannot clear the threshold, so the
-  firmware and the module are predicted to hunt.
+⚠️ **THE OBJECTIVE INVERTED AT fw v24 (2026-09-01).** Everything below describes
+the fw v24 expectation; the fw v23 record it replaces is kept at the end.
+
+- **Tests:** the Ag105 MPPT input-voltage threshold made causal, AND — from fw v24
+  — the firmware's **threshold manager**. The regen path holds `MPPT_DISABLE` low.
+  On the low-cruise FC-path windows the module's threshold is whatever count the
+  board reports on observation-frame byte 15: fw v24 writes reg `0x02` to
+  (windowed-min `V_chg` − 3.0 V), clamped in COUNTS to **[15, 27] =
+  12.320–13.376 V**, i.e. under the ~15.95 V bus — so the module stops refusing and
+  cruise harvest HOLDS.
 - **Pass/fail:** fault-free; in Run at t = 39.1; `MPPT_DISABLE` held low for the
-  entire first braking window; the pin both released (≥ 300 ticks high) **and** not
-  stuck released (≤ 10000 ticks) across the cruise windows — the hunt signature;
-  `I_charge` ≥ 0.25 A despite the gate; GENSTAT 001 (Low Power) observed; and
-  MPPT_EN set with PWR_TRACK clear.
-- **Why useful:** this entry asserts a model prediction contingent on open hardware
-  question R1 (is an MPPTS resistor fitted?). A campaign that does not hunt is
-  evidence about R1, recorded as a hardware finding — the scenario converts an open
-  question into a measurable observable.
-- **Baseline, and its repeat class (informational — no check reads the count):**
-  the hunt has now been measured twice. `MPPT_DISABLE` toggles **138**
-  (`hil_report_20260831_191509`) and **134** (`_222036`) — a 2.9 % move — while the
-  median hunt PERIOD repeats to 0.02 % (**40.0575 ms** against the 40.05 ms record).
-  The period is the stable observable and the count is not: the count is the period
-  divided into a window whose ENDS are decided by where the cruise windows fall
-  relative to a toggle, so a sub-period shift at either end changes it by ±1 with
-  nothing physical moving. Read a count move of a few percent as phase; read a
-  PERIOD move as real. The scored bounds (≥ 300 / ≤ 10000 ticks high) are far from
-  both numbers by design.
+  entire first braking window; the pin released (≥ 300 ticks high) across the cruise
+  windows; **`MPPT_DISABLE` rose 3–8 times** in that span (phase-free edge census —
+  one rise per charge window; the fw v23 hunt is ~69); `I_charge` ≥ 0.25 A;
+  **GENSTAT 001 (Low Power) NOT sustained** (≤ 50 ticks, transient only);
+  **`MPPT_EN` and `PWR_TRACK` both set** ≥ 1500 ticks; and, from the new
+  `mppt_thresh_cnt` CSV column, a **written** reg-`0x02` count (bit 7 clear, i.e.
+  not the `0xFF` resistor sentinel) for ≥ 9000 ticks after t = 28.1, with the count
+  inside **[15, 27]**.
+- **Why useful:** it is the only scenario that can tell "the hunt is absent because
+  fw v24 fixed it" from "the hunt is absent because the charge windows never
+  opened" — the threshold count on the wire is the positive evidence, and a run
+  against a fw v21–v23 flash (16-byte frame, blank column) FAILS the count checks
+  loudly instead of passing vacuously. **R1 (is an MPPTS resistor fitted?) is no
+  longer a contingency:** Table 7 encodes reg `0x02` 0–250 as register mode and
+  ≥251 as the resistor, so a firmware write overrides any fitted resistor.
+- **⚠️ Provisional:** the edge band, the `tracking_engaged` floor and the count band
+  are DERIVED from the `.ino` clamp arithmetic and the stimulus geometry, not
+  measured on fw v24. Calibrate them from the first green campaign.
+- **⚠️ The realized FC-path margin narrows.** The budget is unchanged (0.15 aux +
+  ~0.06 motor + 1.0 ceiling = 1.21 A against `LIMIT_I_FC_MAX` 1.4 A, 14 %), but the
+  hunt used to hold the mean charge current near HALF the ceiling, so that budget
+  was never actually drawn. Continuous harvest draws the full ceiling. A first
+  fw v24 campaign latching `FAULT_OC_FC` here is a budget finding (lower
+  `chg_i_ceiling_a`), not a firmware defect.
+- **fw v23 BASELINE, RETIRED (kept because a regression reproduces it):** the hunt
+  was measured twice — `MPPT_DISABLE` toggles **138** (`hil_report_20260831_191509`)
+  and **134** (`_222036`), a 2.9 % move, while the median hunt PERIOD repeated to
+  0.02 % (**40.0575 ms** against the 40.05 ms record). The period was the stable
+  observable and the count was not: the count is the period divided into a window
+  whose ENDS are decided by where the cruise windows fall relative to a toggle, so a
+  sub-period shift at either end changed it by ±1 with nothing physical moving. The
+  scored ceiling was 2200 ticks high; the ~3000-tick "stuck released" outcome it
+  excluded is now the EXPECTED one, which is why it was replaced rather than
+  re-tuned.
 
 ## 5. Source-model endurance
 

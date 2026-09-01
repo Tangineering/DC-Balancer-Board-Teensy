@@ -757,6 +757,13 @@ def hil_charger_and_soc(data, cfg):
     """Charge current, Ag105 status byte, and (when present) SoC / substep rate.
 
     Returns None when the CSV carries no charger columns at all.
+
+    From fw v24 the V_chg panel also carries the MPPT THRESHOLD IN FORCE as a
+    dashed overlay on the same axis, converted from the `mppt_thresh_cnt`
+    column (observation-frame byte 15).  Reading it is the point: the threshold
+    must sit BELOW V_chg, and a run where it does not is the fw v23 refusal that
+    produced the release/re-assert hunt.  Absent or all-blank columns skip the
+    overlay rather than drawing a line at zero.
     """
     t = data["t_s"]
     if "I_charge" not in data and "ag105_status" not in data:
@@ -781,9 +788,36 @@ def hil_charger_and_soc(data, cfg):
     if "V_chg" in data:
         ax2 = ax.twinx()
         ax2.plot(t, data["V_chg"], color=COLORS["V_rgn"],
-                 linewidth=bl_figures.LW_RAW, alpha=0.7)
+                 linewidth=bl_figures.LW_RAW, alpha=0.7, label="V_chg")
         ax2.set_ylabel("V_chg [V]", color=COLORS["V_rgn"], fontsize=10)
         ax2.tick_params(axis="y", colors=COLORS["V_rgn"], labelsize=9)
+        # MPPT THRESHOLD IN FORCE (fw v24).  `mppt_thresh_cnt` is the reg-0x02
+        # count the firmware believes it wrote (observation-frame byte 15); in
+        # VOLTS it is directly comparable to V_chg, and the whole point of the
+        # fw v24 round is that the dashed line must sit BELOW the solid one --
+        # a threshold above V_chg is the refusal that produced the fw v23 hunt.
+        # Drawn on the V_chg axis for exactly that comparison.
+        #
+        # ABSENT / ALL-BLANK COLUMNS ARE A CLEAN SKIP, mirroring the adapter's
+        # all-NaN cmd_* rule: a pre-fw-v24 CSV has no column at all, and a run
+        # against a fw v21-v23 flash has the column but never a value (the
+        # 16-byte frame carries no such byte).  Drawing an empty dashed line
+        # over either would read as "the threshold was zero".
+        thr_cnt = data.get("mppt_thresh_cnt")
+        if thr_cnt is not None and np.any(np.isfinite(thr_cnt)):
+            # Counts >= 251 are external-resistor mode, which has no volts value
+            # of its own (Ag105 Table 7) -- NaN them rather than extrapolating
+            # 11 + 0.088*255 = 33.4 V, a threshold the register cannot express.
+            _ps = _plant_sim_module()      # constants imported, never copied
+            volts = np.full(thr_cnt.shape, np.nan, dtype=np.float64)
+            ok = np.isfinite(thr_cnt) & (thr_cnt <= _ps.AG105_MPPT_N_MAX)
+            volts[ok] = (_ps.AG105_MPPT_V_BASE
+                         + _ps.AG105_MPPT_V_PER_CNT * thr_cnt[ok])
+            if np.any(np.isfinite(volts)):
+                ax2.plot(t, volts, color=COLORS["V_rgn"], linewidth=1.1,
+                         linestyle="--", alpha=0.9,
+                         label="MPPT threshold in force (reg 0x02)")
+                bl_figures._legend(ax2, loc="upper right")
     bl_figures._style_axes(ax, ylabel="Ag105 status byte")
     bl_figures._legend(ax, loc="upper left")
 

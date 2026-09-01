@@ -58,7 +58,15 @@ FAULT_NAMES = (
 
 STATE_NAMES = {0: "INIT", 1: "IDLE", 2: "RUN", 3: "FINISH", 98: "TEST", 99: "ERROR"}
 
-# Bit layout of the 16-byte observation frame's switch/aux bytes
+# Ag105 reg-0x02 threshold count -> volts (fw v24; AG105_MPPT_VOLTS, .ino:1671-1677).
+# Duplicated rather than imported, same rationale as FAULT_NAMES above: 11.0 V at
+# count 0, 0.088 V/count. >=251 (Table 7; 0xFF/AG105_MPPT_N_RESISTOR is the boot
+# value) means "never written / external-resistor mode" and renders as an
+# em-dash, not a bogus volts figure.
+_AG105_MPPT_V0 = 11.0
+_AG105_MPPT_V_PER_CNT = 0.088
+
+# Bit layout of the 16/17-byte observation frame's switch/aux bytes
 # (hil_plant_sim.SW_* / AUX_*; .ino readSwitchState()).
 SWITCH_BITS = (
     (0x01, "FC_BUS"), (0x02, "BT_BUS"), (0x04, "MOT_PWR"),
@@ -356,11 +364,18 @@ class Dashboard:
 
         st = s.get("state")
         add("── board ─────────────────────────────────────────────────", pri=1)
-        add("  state %s  I_cmd %s A  I_chg %s A  ag105 %s"
+        mppt_cnt = s.get("mppt_cnt")
+        if mppt_cnt is None or mppt_cnt >= 251:   # >=251 = external-resistor mode (Table 7)
+            mppt_str = "—"
+        else:
+            mppt_str = "%d (%.2fV)" % (
+                mppt_cnt, _AG105_MPPT_V0 + _AG105_MPPT_V_PER_CNT * mppt_cnt)
+        add("  state %s  I_cmd %s A  I_chg %s A  ag105 %s  mpptCnt=%s"
             % (("%2d %-6s" % (st, STATE_NAMES.get(st, "?"))) if st is not None
                else (DASH + " " * 8),
                _num(s.get("I_cmd")), _num(s.get("I_chg")),
-               "—" if s.get("ag105") is None else "0x%02X" % s["ag105"]))
+               "—" if s.get("ag105") is None else "0x%02X" % s["ag105"],
+               mppt_str))
         # F1: cap the fault names spelled out so a multi-fault line can't
         # blow past the terminal width -- 4 leaves room for the "0x%04X"
         # prefix and a trailing "+k more" even on an 80-col terminal.

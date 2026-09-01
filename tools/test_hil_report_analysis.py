@@ -960,6 +960,111 @@ def test_hil_charger_and_soc_returns_none_without_charger_columns():
     assert hra.hil_charger_and_soc(data, {}) is None
 
 
+# ── fw v24: the MPPT threshold overlay on the V_chg panel ─────────────────
+#
+# `mppt_thresh_cnt` is observation-frame byte 15 -- the Ag105 reg-0x02 count
+# the firmware believes is in force. Converted to volts it is directly
+# comparable to V_chg on the same axis, and the whole point of the fw v24
+# round is that the dashed threshold must sit BELOW the solid rail. Absent
+# and all-blank columns must skip the overlay, not draw a line at zero.
+
+def _charger_data(n=6, thresh=None):
+    data = {"t_s": np.arange(n, dtype=np.float64),
+            "I_charge": np.full(n, 0.9),
+            "ag105_status": np.full(n, float(0x58)),
+            "V_chg": np.full(n, 13.4)}
+    if thresh is not None:
+        data["mppt_thresh_cnt"] = np.asarray(thresh, dtype=np.float64)
+    return data
+
+
+def _threshold_line(fig):
+    """The dashed overlay's Line2D, or None -- searched across every axis
+    (it lives on a twinx, which is a separate Axes on the same figure)."""
+    for ax in fig.axes:
+        for line in ax.get_lines():
+            if line.get_label().startswith("MPPT threshold"):
+                return line
+    return None
+
+
+def test_charger_figure_overlays_the_threshold_when_the_column_has_values():
+    n = 4
+    fig = hra.hil_charger_and_soc(_charger_data(n, thresh=[15] * n), {})
+    assert fig is not None
+    line = _threshold_line(fig)
+    assert line is not None
+    # 11.0 + 0.088 * 15 = 12.32 V -- and it is UNDER the 13.4 V rail, which is
+    # the fw v24 condition the overlay exists to make readable.
+    ys = np.asarray(line.get_ydata(), dtype=np.float64)
+    assert np.allclose(ys, 12.32)
+    assert np.all(ys < 13.4)
+    assert line.get_linestyle() == "--"
+
+
+def test_charger_figure_skips_the_overlay_when_the_column_is_absent():
+    """A pre-fw-v24 CSV has no such column at all -- clean skip, figure fine."""
+    fig = hra.hil_charger_and_soc(_charger_data(), {})
+    assert fig is not None
+    assert _threshold_line(fig) is None
+
+
+def test_charger_figure_skips_the_overlay_when_the_column_is_all_blank():
+    """A fw v21-v23 flash produces the column but never a value (16-byte
+    frame -> mppt_cnt None -> blank cell -> NaN). Drawing an empty dashed
+    line there would read as 'the threshold was zero'."""
+    n = 5
+    fig = hra.hil_charger_and_soc(_charger_data(n, thresh=[np.nan] * n), {})
+    assert fig is not None
+    assert _threshold_line(fig) is None
+
+
+def test_charger_figure_nans_resistor_mode_counts_rather_than_extrapolating():
+    """Counts >= 251 are external-resistor mode and have no volts value.
+
+    Plotting 11 + 0.088*255 = 33.4 V would invent a threshold the register
+    cannot express. The in-band samples still plot; the 255s are gaps.
+    """
+    fig = hra.hil_charger_and_soc(
+        _charger_data(4, thresh=[255, 255, 19, 19]), {})
+    line = _threshold_line(fig)
+    assert line is not None
+    ys = np.asarray(line.get_ydata(), dtype=np.float64)
+    assert np.isnan(ys[0]) and np.isnan(ys[1])
+    assert np.allclose(ys[2:], 11.0 + 0.088 * 19)
+
+
+def test_charger_figure_skips_the_overlay_when_every_count_is_resistor_mode():
+    """All-0xFF is 'never written' -- no threshold volts exist to draw."""
+    fig = hra.hil_charger_and_soc(_charger_data(3, thresh=[255] * 3), {})
+    assert fig is not None
+    assert _threshold_line(fig) is None
+
+
+def test_load_and_adapt_tolerate_the_new_column(tmp_path):
+    """The loader is name-resolved, so a new column needs no loader change --
+    pinned anyway, because that tolerance is what lets the schema grow.
+
+    The adapter must simply IGNORE it: `mppt_thresh_cnt` has no
+    decode_benchlog equivalent, so it belongs to the raw-HIL dict the
+    HIL_FIGURES builders read, not to the adapted benchlog dict.
+    """
+    csv_path = tmp_path / "run.csv"
+    with open(csv_path, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["t", "V_bus", "I_fc", "I_batt", "current",
+                    "ag105_status", "mppt_thresh_cnt"])
+        w.writerow(["0.000", "15.9", "0.5", "0.5", "1.0", "0x58", ""])
+        w.writerow(["0.001", "15.9", "0.5", "0.5", "1.0", "0x58", "15"])
+    data = hra.load_hil_csv(csv_path)
+    assert "mppt_thresh_cnt" in data
+    assert np.isnan(data["mppt_thresh_cnt"][0])      # blank -> NaN, not 0
+    assert data["mppt_thresh_cnt"][1] == 15.0
+    adapted = hra.adapt_to_benchlog(data)
+    assert "mppt_thresh_cnt" not in adapted
+    assert "I_cmd" in adapted                        # the adapter still works
+
+
 # ── hil_share_raw_vs_emitted: the pre-clamp request (SDP round) ────────────
 #
 # Under sdp-v2 every table value in (0.85, 1.0] emits the SAME clamped 0.8500,

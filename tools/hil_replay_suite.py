@@ -324,8 +324,20 @@ FW_DELTA_NOTES = {
     21:   "fw v21: HIL mode; no control-semantics change vs v18/v19.",
     22:   "fw v22: HIL sequential runs (State-0 injection-link wait gate + closed-loop "
           "staged bring-up under HIL_SIM); no control-semantics change.",
-    23:   "fw v23: HIL any-fault run-boundary recovery; no control-semantics change. "
-          "THE FLASHED TARGET.",
+    23:   "fw v23: HIL any-fault run-boundary recovery; no control-semantics change.",
+    24:   "fw v24: dynamic Ag105 MPPT threshold (reg 0x02) + charger-path UV backoff "
+          "+ a 17-byte observation frame. SAME WHEEL AND SAME DRIVE LAW as v18-v23 "
+          "(the round touched the charger, the MPPT pin policy and the HIL frame "
+          "only — no encoder constant, no drive coefficient, no change to the "
+          "sequencing GUARDS; one new automatic path action (the UV backoff) — see "
+          "below), so v_act and every drive-channel comparison carries across "
+          "unchanged. The one behaviour a replay could meet is the UV backoff: "
+          "V_bus under 12.8 V for 15 ms now CLOSES FC_CHARGE_ENABLE, re-opening "
+          "above 13.6 V — the backoff dwell (AG105_CHG_BACKOFF_DWELL_MS, .ino:1764) "
+          "is 15 ms, kept under the 20 ms UV_BUS_DWELL_LATCH_MS so it cannot "
+          "pre-empt the UV latch. It can only close a path that is already open, "
+          "and the UV-collapse stimuli replay with charge_goal 0, so no entry's "
+          "expectations move. THE FLASHED TARGET.",
 }
 
 # The firmware version currently flashed / targeted by this suite.
@@ -338,7 +350,12 @@ FW_DELTA_NOTES = {
 # (meta["target_fw"], rendered in REPORT.md); COMPARABLE_FW_MIN (18) is a SEPARATE
 # constant and is unchanged, so no entry's conformance/stability classification
 # moves. FW_DELTA_NOTES gains v22/v23 rows below.
-TARGET_FW_VERSION = 23
+# 23 -> 24 (2026-09-01): fw v24 is flashed (dynamic Ag105 MPPT threshold + the
+# 17-byte observation frame).  This constant feeds the REPORT header's firmware
+# expectation only; COMPARABLE_FW_MIN stays 18 because v24 changed no encoder
+# constant and no drive coefficient, so no entry's conformance/stability
+# classification moves.
+TARGET_FW_VERSION = 24
 # Logs at or above this fw version share the current control law AND wheel.
 COMPARABLE_FW_MIN = 18
 

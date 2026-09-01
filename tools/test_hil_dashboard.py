@@ -114,7 +114,7 @@ def test_render_survives_missing_and_none_keys(monkeypatch):
         "v_sp": None, "v_act": None,
         "share_sp": None, "share_act": None,
         "V_bus": None, "I_tot": None, "I_fc": None, "I_bt": None,
-        "I_chg": None, "ag105": None,
+        "I_chg": None, "ag105": None, "mppt_cnt": None,
         "state": None, "switch": None, "aux": None,
         "I_cmd": None, "faults": None,
         "hifi_hz": None, "hifi_events": 0, "hifi_chopper_w": None,
@@ -133,6 +133,45 @@ def test_render_survives_obs_none_fields(monkeypatch):
     text, error = _run_dashboard_tick(monkeypatch, snap)
     assert error is None
     assert "HIL dashboard" in text
+
+
+def _wide_terminal(monkeypatch):
+    """Several sandboxed/CI stdouts report a near-zero terminal size, which
+    the renderer's row-count clamp (max(rows-1, 5)) can shrink to as few as
+    5 lines -- dropping even nominally 'always keep' (pri=0) rows past the
+    5th. Pin a generous size so these content-specific tests assert on what
+    the renderer produces on a normal terminal, not on the row-count clamp
+    itself (which has its own dedicated narrow-terminal tests elsewhere)."""
+    monkeypatch.setattr(hd.shutil, "get_terminal_size", lambda *_a, **_k: (120, 40))
+
+
+def test_render_mppt_cnt_shows_count_and_volts(monkeypatch):
+    """fw v24 reg-0x02 threshold count: a real count renders as 'N (V.VVV)'
+    using AG105_MPPT_VOLTS (11.0 + 0.088*N)."""
+    _wide_terminal(monkeypatch)
+    text, error = _run_dashboard_tick(monkeypatch, {"mppt_cnt": 20})
+    assert error is None
+    # 11.0 + 0.088*20 = 12.76
+    assert "mpptCnt=20 (12.76V)" in text
+
+
+def test_render_mppt_cnt_none_is_em_dash(monkeypatch):
+    _wide_terminal(monkeypatch)
+    text, error = _run_dashboard_tick(monkeypatch, {"mppt_cnt": None})
+    assert error is None
+    assert "mpptCnt=—" in text
+
+
+def test_render_mppt_cnt_resistor_mode_is_em_dash(monkeypatch):
+    """>=251 (Table 7) is external-resistor mode / never-written, not a real
+    threshold count -- must not render as a bogus volts figure."""
+    _wide_terminal(monkeypatch)
+    text, error = _run_dashboard_tick(monkeypatch, {"mppt_cnt": 255})
+    assert error is None
+    assert "mpptCnt=—" in text
+    text2, error2 = _run_dashboard_tick(monkeypatch, {"mppt_cnt": 251})
+    assert error2 is None
+    assert "mpptCnt=—" in text2
 
 
 def test_render_survives_garbage_types_without_propagating(monkeypatch):
@@ -310,9 +349,12 @@ def test_without_dash_behavior_unchanged_csv_header_and_scenario_list(tmp_path, 
     # THAT by the 2026-08-31 SDP round; cmd_share_sp_raw appended after THAT
     # by the 2026-08-31 ledger fix queue (MED-1, the SDP table's pre-clamp
     # request, blank on this non-SDP run).
-    assert header[-7:] == ["soc", "cmd_v_sp", "cmd_share_sp",
-                           "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
-                           "cmd_share_sp_raw"]
+    # mppt_thresh_cnt appended after all of them by the fw v24 lockstep round
+    # (observation-frame byte 15; appended in BOTH schemas, so it is last).
+    assert header[-1] == "mppt_thresh_cnt"
+    assert header[-8:-1] == ["soc", "cmd_v_sp", "cmd_share_sp",
+                             "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
+                             "cmd_share_sp_raw"]
 
     rc2 = hil.main(["--list-scenarios"])
     assert rc2 == 0
@@ -390,6 +432,7 @@ def test_snapshot_dict_keys_and_share_act_none_at_negligible_current(
         "v_sp", "v_act", "share_sp", "share_act",
         "V_bus", "I_tot", "I_fc", "I_bt",
         "switch", "aux", "state", "faults",
+        "mppt_cnt",
     }
     for snap in dash.snapshots:
         assert required_keys <= set(snap.keys())

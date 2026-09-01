@@ -2899,15 +2899,20 @@ def test_vacuous_tag_absent_when_current_is_not_all_zero(tmp_path):
 # TARGET_FW_VERSION / LIMIT_V_BUS_MAX_V (item 2)
 # ─────────────────────────────────────────────────────────────────────────
 
-def test_target_fw_version_is_23():
-    """21 -> 23 (2026-08-30): fw v22 (HIL sequential runs) and fw v23 (any-
-    fault run-boundary recovery) are both load-bearing for this suite -- the
-    whole replay half depends on the v22 staged bring-up completing and the
-    v23 between-run recovery, so the target must say what it actually runs
-    against. COMPARABLE_FW_MIN is a SEPARATE constant and stays at 18."""
-    assert rs.TARGET_FW_VERSION == 23
+def test_target_fw_version_is_24():
+    """21 -> 23 -> 24. The target must say what it actually runs against: the
+    board carries fw v24 (dynamic Ag105 MPPT threshold + the 17-byte
+    observation frame). COMPARABLE_FW_MIN is a SEPARATE constant and stays at
+    18 -- v24 changed no encoder constant and no drive coefficient, so no
+    entry's conformance/stability classification moves."""
+    assert rs.TARGET_FW_VERSION == 24
     assert rs.COMPARABLE_FW_MIN == 18
     assert 22 in rs.FW_DELTA_NOTES and 23 in rs.FW_DELTA_NOTES
+    assert 24 in rs.FW_DELTA_NOTES
+    # The v24 row must say the drive law and the wheel did NOT move, because
+    # that is the claim every replay comparison across the boundary rests on.
+    note = rs.FW_DELTA_NOTES[24]
+    assert "SAME WHEEL AND SAME DRIVE LAW" in note
 
 
 def test_limit_v_bus_max_v_matches_firmware():

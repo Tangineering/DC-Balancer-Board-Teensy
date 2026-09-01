@@ -63,7 +63,7 @@ closed-loop tracking.
 > carries a 1 kHz injection stream in one direction and a 1 kHz observation stream
 > in the other, plus 50 Hz commands and 50 Hz telemetry — permanently bidirectional,
 > which is exactly the traffic pattern a hub handles worst. Total offered load is
-> small (~0.5 Mbit/s: 40 B + 16 B at 1 kHz plus 22 B + 58 B at 50 Hz, framing
+> small (~0.5 Mbit/s: 40 B + 17 B at 1 kHz plus 22 B + 58 B at 50 Hz, framing
 > included), so bandwidth is never the constraint — **latency jitter is**, and a
 > switch removes it. Wi-Fi bridges and powerline adapters are worse than a hub;
 > do not use them.
@@ -508,31 +508,38 @@ pauses). A full default campaign now estimates at **~34 min** (45 min with
 .venv_hil\Scripts\python.exe tools\hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario share-staircase --dash
 ```
 
-**`mppt-tracking` — and the one thing to check before trusting it.**
+**`mppt-tracking` — what a good run looks like on fw v24.**
 ⚠️ **The Ag105's MPPT is an input-voltage THRESHOLD, not a perturb-and-observe
 tracker** (`AG105_Silvertel.pdf` p.10; the P&O wording elsewhere in this repo is
 lore). Charging commences only above a threshold, settable 11–33 V by an **MPPTS
 resistor** or I2C register `0x02`, and **defaulting to 18 V with MPPTS open**.
 
 This scenario turns that threshold on in the plant model, which makes
-`MPPT_DISABLE` causally load-bearing for the first time. On a ~15.95 V bus the FC
-charge path **cannot clear an 18 V threshold**, and the firmware releases tracking
-only once the charger reports ready — so releasing it is exactly what stops the
-charging that made it ready. The model predicts a **hunt**: **~40.05 ms** period (MEASURED median, campaign `20260831_191509`; the offline probe's 80.0 ms was a mis-derivation), ~50 %
-duty, `I_charge` sitting near half the configured ceiling.
+`MPPT_DISABLE` causally load-bearing. **The threshold the model applies is the
+one the BOARD reports** — observation-frame byte 15 carries the reg-`0x02` count
+fw v24 believes it wrote, and the CSV column `mppt_thresh_cnt` logs it.
 
-**Open question R1, and what to do about it:** *does this board fit an MPPTS
-resistor?* An off-board **MPPTSEL** header exists on the schematic and its contents
-are unconfirmed. If you can check it, do — it decides this scenario's meaning:
+**⚠️ THE OBJECTIVE INVERTED AT fw v24.** Under fw v23 the module sat at 18 V, a
+~15.95 V bus could never clear it, and the firmware and the module **hunted** —
+138 `MPPT_DISABLE` toggles at a ~40.05 ms median period, campaign
+`20260831_191509`. fw v24 writes reg `0x02` to (windowed-min `V_chg` − 3.0 V),
+clamped in counts to **[15, 27] = 12.320–13.376 V**, i.e. under the bus. So:
 
-* **No resistor fitted** → the 18 V default holds, and the predicted hunt is a real
-  hardware finding: cruise-time harvesting on the FC path cannot hold on this bus.
-* **A resistor setting a lower threshold** → the hunt should NOT appear, and the run
-  going clean is the *correct* result. Report it, and
-  `hil_plant_sim.AG105_MPPT_V_THRESH` and the scenario's expectations move together.
+* **Expected (good):** `mppt_thresh_cnt` non-blank and inside 15–27; `MPPT_DISABLE`
+  rising **once per cruise-charge window** (3 rises, band 3–8); no GENSTAT 001
+  Low Power; `MPPT_EN` **and** `PWR_TRACK` both set while charging; `I_charge`
+  near the 1.0 A ceiling rather than half of it.
+* **A hunt is now a FAILURE** — it means the manager did not run, could not write,
+  or gave up (in which case `chargingControl()` holds MPPT inhibited for the
+  session, so expect a HELD-LOW pin rather than a toggling one).
+* **A blank `mppt_thresh_cnt` column means you are running against fw v21–v23**
+  (16-byte frame, no byte 15). The suite fails that loudly instead of passing
+  vacuously — check the flash, not the scenario.
 
-Either way, a `mppt-tracking` result is evidence about the hardware. Do not treat a
-missing hunt as a tooling bug.
+**R1 (does the board fit an MPPTS resistor?) is no longer a contingency.** Table 7
+encodes reg `0x02` 0–250 as *register* mode and ≥251 as the resistor, so a firmware
+write overrides any fitted resistor. Checking the MPPTSEL header is still worth
+doing for the record, but it no longer decides this scenario's meaning.
 
 **`charge-to-full` — the suite passes `--soc0 0.990`; a hand run must too.**
 The Ag105's Fully-Charged branch needs `soc >= 0.995`, and no campaign has ever
@@ -1095,7 +1102,7 @@ Keys that are **not** — using them makes a strategy simulator-only:
 
 Note the converse too: v4 telemetry carries `power_share_actual` (offset 43) and
 the two droop-gain words (47/49), which `fb` does **not** expose, because the
-16-byte observation frame does not carry them. A portable strategy must not
+17-byte observation frame does not carry them. A portable strategy must not
 depend on them either.
 
 ---

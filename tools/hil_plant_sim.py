@@ -35,7 +35,7 @@ Wire protocol (mirrored from teensy_controller.ino, fw v21 — keep in lockstep)
   no longer matches the firmware's length dispatch and is dropped unread, so an
   old simulator against a new flash shows accepts stuck at zero.)
 
-  Observation frame (Teensy -> host), 16 bytes, little-endian
+  Observation frame (Teensy -> host), 17 bytes from fw v24, little-endian
     0  u8    sync 0xB6
     1  u8    seq echo (last accepted injection seq)
     2  u8    mainState
@@ -46,7 +46,19 @@ Wire protocol (mirrored from teensy_controller.ino, fw v21 — keep in lockstep)
     9  u16   last MDAC word, FC channel
    11  u16   last MDAC word, BT channel
    13  u16   fault_flags
-   15  u8    XOR checksum over bytes 1..14
+   15  u8    mppt_thresh_count  APPENDED fw v24 (.ino:2911-2938) — the Ag105
+                  reg-0x02 count the firmware BELIEVES is in force
+                  (ag105MpptRegCnt).  0xFF = external-resistor mode / never
+                  written (AG105_MPPT_N_RESISTOR, the boot value); 0..250 map
+                  to 11.0 + 0.088*N volts (AG105_MPPT_VOLTS, .ino:1671-1677).
+   16  u8    XOR checksum over bytes 1..15
+
+  BOTH LENGTHS ARE ACCEPTED.  A 16-byte frame is the fw v21-v23 layout (XOR over
+  bytes 1..14 at byte 15) and decodes with `mppt_cnt` None; every pre-existing
+  offset is identical in the two, so the length alone selects the checksum span
+  and whether byte 15 is data or the checksum.  parse_output() prints a one-time
+  provenance line naming the length the board is actually speaking, and prints
+  again — loudly — if a single run ever sees both.
 
 Stdlib only — socket, struct, time, argparse, csv.  No numpy.
 
@@ -87,12 +99,21 @@ import sys
 import time
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Protocol constants — must match teensy_controller.ino (fw v21)
+# Protocol constants — must match teensy_controller.ino (fw v24)
 # ─────────────────────────────────────────────────────────────────────────────
 HIL_SYNC_INJECT = 0xB5
 HIL_SYNC_OUTPUT = 0xB6
 HIL_INJECT_SIZE = 40
-HIL_OUTPUT_SIZE = 16
+# OBSERVATION FRAME LENGTH IS VERSIONED (fw v24, .ino:2930-2938 HIL_OUTPUT_SIZE).
+# 17 is the current layout; 16 is fw v21-v23 and is still decoded, because a
+# simulator that silently drops every frame from an older flash presents as
+# "the board is dead" rather than "the board is old".  The two differ ONLY in
+# the tail: byte 15 is the appended mppt_thresh_count in the 17-byte frame and
+# the checksum in the 16-byte one, so the checksum SPAN is length-derived and
+# every field below offset 15 parses identically.
+HIL_OUTPUT_SIZE = 17            # fw v24 and later
+HIL_OUTPUT_SIZE_LEGACY = 16     # fw v21-v23
+HIL_OUTPUT_SIZES = (HIL_OUTPUT_SIZE_LEGACY, HIL_OUTPUT_SIZE)
 
 TEENSY_PORT_DEFAULT = 5001          # local_port in the .ino
 
@@ -177,19 +198,47 @@ AG105_V_IN_MIN = 8.0         # V     input rail below which the module cannot ch
 # drives one GPIO either way — but a plant model that claims to emulate MPPT
 # must emulate the mechanism the part actually has.
 #
-# TODO(verify) — OPEN OPERATOR QUESTION (R1): whether this board fits an MPPTS
-# resistor is UNCONFIRMED.  An off-board MPPTSEL header exists on the schematic;
-# its contents are unknown.  With the header open the threshold is the 18 V
-# default modelled here.  If a resistor sets a LOWER threshold, this constant and
-# the `mppt-tracking` scenario's expectations move TOGETHER — the scenario's
-# predicted hunt is contingent on R1, and a campaign that does not see the hunt
-# is evidence about R1, not a scenario defect.
-AG105_MPPT_V_THRESH = 18.0   # V     input rail above which tracking permits charging
+# ⚠️ THIS CONSTANT IS NOW ONLY THE FALLBACK (fw v24, 2026-09-01).  The threshold
+# the model applies is whatever the BOARD says is in force: the observation
+# frame's byte 15 (`mppt_cnt`) carries the reg-0x02 count the firmware believes
+# it has written, and ag105_mppt_volts() converts it.  This 18.0 is used ONLY
+# when there is no count to use —
+#     * `mppt_cnt` is 0xFF / >250: external-resistor mode or never written, which
+#       IS the datasheet default of 18 V with MPPTS open;
+#     * `mppt_cnt` is None: a legacy 16-byte frame (fw v21-v23), whose firmware
+#       had no threshold manager and therefore left the module at its default;
+#     * no observation frame has arrived yet.
+# In all three the module is genuinely at its factory threshold, so the fallback
+# is the physical value, not a placeholder.
+#
+# R1 — RESOLVED AS A DESIGN DEPENDENCY (fw v24).  Table 7's own encoding settles
+# it: reg 0x02 values 0-250 select REGISTER mode and >=251 selects the resistor,
+# so a firmware write OVERRIDES any fitted MPPTS resistor.  Whether the board
+# fits one is now documentation, not a contingency — once the firmware has
+# written a count, the fitted resistor cannot decide the threshold.  It still
+# matters for the pre-write window, which is exactly the fallback above.
+AG105_MPPT_V_THRESH = 18.0   # V     FALLBACK threshold (module default, MPPTS open)
+# Register 0x02 encoding, from Ag105_Table7_I2C_Parameters.json / AG105_Silvertel.pdf
+# Table 7, mirrored from the firmware's own constants (.ino:1671-1677) so the two
+# cannot drift: 11 V at count 0, 0.088 V/count, 0..250 = I2C threshold,
+# >=251 = external-resistor mode (0xFF is the factory default).
+AG105_MPPT_V_BASE = 11.0        # V     threshold at count 0
+AG105_MPPT_V_PER_CNT = 0.088    # V/count
+AG105_MPPT_N_MAX = 250          # highest count that still means "I2C threshold"
+AG105_MPPT_N_RESISTOR = 0xFF    # >=251 = external-resistor mode
+# The firmware's clamp band (.ino AG105_MPPT_N_FLOOR / _N_CEIL) — 12.320 V to
+# 13.376 V.  Not used by the model (it applies whatever count the board reports,
+# clamped or not); mirrored here so the suite's threshold-band expectation and
+# the report figure have one source for the band.
+AG105_MPPT_N_FLOOR = 15
+AG105_MPPT_N_CEIL = 27
 # TODO(verify): chatter guard on the threshold COMPARISON only (not on the pin).
 # No datasheet hysteresis figure is published; 0.5 V is a modelling choice sized
-# to be well above the simple engine's bus ripple and well below the ~2 V gap
-# between the 15.95 V bus and the 18 V threshold, so it cannot decide the
-# scenario's outcome either way.
+# to be well above the simple engine's bus ripple and well below the gap between
+# the bus and whichever threshold is in force, so it cannot decide the scenario's
+# outcome either way.  It was sized against the ~2 V fw v23 gap (15.95 V bus vs
+# the 18 V default); under fw v24's clamped 12.320 V the gap is ~3.6 V, so the
+# same 0.5 V is if anything further from deciding anything.
 AG105_MPPT_V_HYST = 0.5      # V
 
 # MDAC word format (AD5443): control nibble 0x1 = load-and-update, then a 12-bit code.
@@ -612,15 +661,65 @@ def pack_inject(seq, v_fc, v_batt, v_bus, v_chg, v_rgn, i_fc, i_batt, v_actual,
     return bytes([HIL_SYNC_INJECT]) + body + bytes([xor_checksum(body)])
 
 
+# One-time provenance state for parse_output().  Module-level rather than a
+# closure so a test can reset it, and so the 1 kHz drain path pays exactly one
+# set-membership test per accepted frame (the dashboard lightness contract: no
+# I/O and no allocation on the hot path once the length has been announced).
+_OBS_LENGTHS_SEEN = set()
+
+
+def reset_output_provenance():
+    """Forget which frame lengths have been announced (tests; a fresh run)."""
+    _OBS_LENGTHS_SEEN.clear()
+
+
+def _announce_output_length(n: int) -> None:
+    """Print the board's observation-frame protocol once per length seen.
+
+    A run that sees BOTH lengths saw the firmware CHANGE UNDER IT — a re-flash
+    mid-run, or two boards answering one host.  That is never benign (the two
+    layouts disagree about what byte 15 means), so the second announcement is
+    explicitly a warning rather than another informational line.
+    """
+    if n in _OBS_LENGTHS_SEEN:
+        return
+    first = not _OBS_LENGTHS_SEEN
+    _OBS_LENGTHS_SEEN.add(n)
+    label = ("fw v24+ (mppt_thresh_count present)" if n == HIL_OUTPUT_SIZE
+             else "fw v21-v23 LEGACY (no mppt_thresh_count)")
+    if first:
+        print("[hil] observation frame: %d bytes — %s" % (n, label))
+    else:
+        print("[hil] WARNING: observation frame length CHANGED mid-run to %d "
+              "bytes — %s. Both %s have now been seen; the board was re-flashed "
+              "under this run, or two boards are answering this host. Every "
+              "mppt_thresh_cnt reading in this CSV is suspect."
+              % (n, label, sorted(_OBS_LENGTHS_SEEN)), file=sys.stderr)
+
+
 def parse_output(data: bytes):
-    """Validate and decode a 16-byte observation frame; return a dict or None."""
-    if len(data) != HIL_OUTPUT_SIZE or data[0] != HIL_SYNC_OUTPUT:
+    """Validate and decode a 16- or 17-byte observation frame; dict or None.
+
+    17 bytes is the fw v24 layout (checksum over 1..15 at byte 16, byte 15 the
+    Ag105 reg-0x02 count the firmware believes is in force).  16 bytes is the
+    fw v21-v23 layout (checksum over 1..14 at byte 15) and yields
+    `mppt_cnt` None — the honest value for "this firmware cannot tell us".
+    Every other field sits at the same offset in both.
+    """
+    n = len(data)
+    if n not in HIL_OUTPUT_SIZES or data[0] != HIL_SYNC_OUTPUT:
         return None
-    if xor_checksum(data[1:HIL_OUTPUT_SIZE - 1]) != data[HIL_OUTPUT_SIZE - 1]:
+    if xor_checksum(data[1:n - 1]) != data[n - 1]:
         return None
     seq, state, sw, aux = data[1], data[2], data[3], data[4]
     (current,) = struct.unpack_from("<f", data, 5)
     mdac_fc, mdac_bt, faults = struct.unpack_from("<HHH", data, 9)
+    # Provenance costs ONE set-membership test per accepted frame once the
+    # length has been announced -- the call is inside the branch, not before
+    # it, so the steady-state 1 kHz path never enters a function for it
+    # (the dashboard lightness contract).
+    if n not in _OBS_LENGTHS_SEEN:
+        _announce_output_length(n)
     return {
         "seq": seq,
         "state": state,
@@ -630,7 +729,44 @@ def parse_output(data: bytes):
         "mdac_fc": mdac_fc,
         "mdac_bt": mdac_bt,
         "fault_flags": faults,
+        # int on a 17-byte frame, None on a legacy one.  Consumers MUST treat
+        # None as "unknown", never as a count: 0 is a valid count (11.0 V).
+        "mppt_cnt": data[15] if n == HIL_OUTPUT_SIZE else None,
     }
+
+
+def pack_output(seq, state, sw, aux, current, mdac_fc, mdac_bt, faults,
+                mppt_cnt=None) -> bytes:
+    """Build an observation frame, mirroring hilPackOutputFrame() (.ino:3118-3136).
+
+    `mppt_cnt=None` produces the 16-byte fw v21-v23 frame; an int produces the
+    17-byte fw v24 frame.  Test/diagnostic helper — the simulator never sends
+    observation frames, it only receives them.
+    """
+    body = struct.pack("<BBBBfHHH", seq & 0xFF, state & 0xFF, sw & 0xFF,
+                       aux & 0xFF, current, mdac_fc & 0xFFFF,
+                       mdac_bt & 0xFFFF, faults & 0xFFFF)
+    if mppt_cnt is not None:
+        body += bytes([int(mppt_cnt) & 0xFF])
+    return bytes([HIL_SYNC_OUTPUT]) + body + bytes([xor_checksum(body)])
+
+
+def ag105_mppt_volts(count) -> float:
+    """Ag105 reg-0x02 count -> threshold volts.  AG105_MPPT_VOLTS, .ino:1671-1677.
+
+    11.0 V at count 0, 0.088 V/count, up to 33.0 V at the AG105_MPPT_N_MAX 250
+    that still means "I2C threshold".  Counts >= 251 (AG105_MPPT_N_RESISTOR
+    0xFF is the factory default) mean EXTERNAL-RESISTOR MODE and have no volts
+    of their own — the caller must branch on that BEFORE calling here, which is
+    why this raises rather than extrapolating a fictional threshold.
+    """
+    n = int(count)
+    if not (0 <= n <= AG105_MPPT_N_MAX):
+        raise ValueError(
+            "reg-0x02 count %d is not an I2C threshold (0..%d); >=251 is "
+            "external-resistor mode and has no volts value"
+            % (n, AG105_MPPT_N_MAX))
+    return AG105_MPPT_V_BASE + AG105_MPPT_V_PER_CNT * n
 
 
 def mdac_fraction(word: int) -> float:
@@ -894,11 +1030,14 @@ class Plant:
         tracking FLAGS in the status byte and has no effect on charging, which is
         why the pin has never been causally load-bearing in this rig.  With
         `mppt_emulation=True` the part's actual mechanism is modelled at LAYER 1:
-        an INPUT-VOLTAGE THRESHOLD (AG105_MPPT_V_THRESH, datasheet p.10), NOT a
-        perturb-and-observe tracker — see the constant's banner, including the R1
-        open question about the MPPTS resistor.  The tracking DYNAMICS (how the
-        module walks its operating point once above the threshold) are still not
-        modelled at all.
+        an INPUT-VOLTAGE THRESHOLD (datasheet p.10), NOT a perturb-and-observe
+        tracker.  From fw v24 the threshold VALUE is the board's own: it is read
+        off the observation frame's reg-0x02 count (`obs["mppt_cnt"]`) through
+        ag105_mppt_volts(), and AG105_MPPT_V_THRESH is only the fallback for a
+        frame that carries no count.  The tracking DYNAMICS (how the module walks
+        its operating point once above the threshold) are still not modelled at
+        all, and neither are the I2C WRITES that set the count — the firmware's
+        own HIL mirror short-circuits those too (.ino:11185-11201).
     """
 
     def __init__(self, electrical=None, soc0=0.7, capacity_ah=BATT_CAPACITY_AH,
@@ -1119,6 +1258,18 @@ class Plant:
         # commences only above an input-voltage threshold, 18 V by default with
         # MPPTS open.  See the AG105_MPPT_V_THRESH banner, including R1.
         #
+        # THE THRESHOLD IS DYNAMIC FROM fw v24.  The firmware writes reg 0x02 and
+        # reports the count it believes is in force on observation-frame byte 15
+        # (.ino:2911-2938; the HIL mirror that computes it is .ino:11185-11201).
+        # `obs["mppt_cnt"]` is therefore the module's ACTUAL threshold as far as
+        # this model is concerned, and the 18 V constant applies only when there
+        # is no count (legacy frame / resistor mode / no frame yet).
+        thresh_cnt = obs.get("mppt_cnt") if obs else None
+        if thresh_cnt is None or int(thresh_cnt) > AG105_MPPT_N_MAX:
+            mppt_v_thresh = AG105_MPPT_V_THRESH
+        else:
+            mppt_v_thresh = ag105_mppt_volts(thresh_cnt)
+        #
         # THE ASYMMETRY IS THE DATASHEET'S OWN, not a modelling shortcut: the
         # threshold belongs to the MPPT regulator, so it binds only while
         # tracking is RELEASED.  MPPT_DISABLE is ACTIVE-LOW, so:
@@ -1131,9 +1282,9 @@ class Plant:
         if not (self.mppt_emulation and chg_powered and (aux & AUX_MPPT_DISABLE)):
             self.mppt_inhibited = False
         elif self.mppt_inhibited:
-            if v_chg_in >= AG105_MPPT_V_THRESH + AG105_MPPT_V_HYST:
+            if v_chg_in >= mppt_v_thresh + AG105_MPPT_V_HYST:
                 self.mppt_inhibited = False
-        elif v_chg_in < AG105_MPPT_V_THRESH:
+        elif v_chg_in < mppt_v_thresh:
             self.mppt_inhibited = True
 
         if not chg_powered:
@@ -2021,13 +2172,14 @@ def ems_mppt_harvest(t, fb):
     """mppt-harvest — regen-harvest plus FC-path charge windows at low cruise.
 
     name       : mppt-harvest
-    intent     : make MPPT_DISABLE CAUSALLY LOAD-BEARING for the first time.  With
-                 `mppt_emulation` on (SCENARIOS["mppt-tracking"]), the plant's
-                 Ag105 refuses to charge while tracking is RELEASED and the input
-                 rail is below AG105_MPPT_V_THRESH.  The bus is ~15.95 V and the
-                 datasheet default threshold is 18 V, so the FC path cannot clear
-                 it — and the firmware releases tracking only once the charger
-                 reports ready.
+    intent     : make MPPT_DISABLE CAUSALLY LOAD-BEARING.  With `mppt_emulation`
+                 on (SCENARIOS["mppt-tracking"]), the plant's Ag105 refuses to
+                 charge while tracking is RELEASED and the input rail is below
+                 the threshold IN FORCE — which from fw v24 is whatever count the
+                 board reports on observation-frame byte 15, not a fixed 18 V.
+                 The objective is therefore INVERTED from fw v23: the run must
+                 show the firmware lowering the threshold under the bus and
+                 harvesting, NOT hunting.
     fields     : mode_cmd (SAFE -> HYBRID at EMS_RUN_ENTRY_S, back to SAFE at the
                  scenario's ems_run_exit_s), v_setpoint (the scenario's
                  ems_v_profile), power_share_setpoint (0.50 constant), charge_goal
@@ -2035,14 +2187,33 @@ def ems_mppt_harvest(t, fb):
     feedback   : `fb["t"]`, `fb["v_profile"]` and the scenario's ems_run_exit_s
                  ONLY — portable to the real Pi (FB_TELEMETRY_EQUIV_KEYS).
 
-    ⚠️ THE PREDICTED CLOSED-LOOP BEHAVIOUR IS A HUNT, and it is this model's
-    PREDICTION rather than an observation.  Contingent on R1 (see
-    AG105_MPPT_V_THRESH): if the board fits an MPPTS resistor setting a threshold
-    below the bus voltage, none of this happens and the run harvests normally.
+    ⚠️ THE HUNT IS fw v23 HISTORY, AND IS NOW THE FAILURE SIGNATURE.  fw v24's
+    threshold manager writes reg 0x02 to (windowed-minimum V_chg − 3.0 V),
+    quantized DOWN and clamped in COUNTS to [15, 27] = 12.320-13.376 V
+    (.ino:1671-1690).  Under this scenario's FC-charge windows the target tracks
+    the charger input rail three volts down, and in BOTH engines it lands inside
+    this band — below the rail either way, but the exact count follows V_chg
+    (rigid ~15.95 V bus in SIMPLE mode vs a charger-draw-sagged ~13.3-13.5 V rail
+    in HIFI mode) and differs between engines, which is why the suite's checks
+    bound the [15, 27] band rather than a single value.  The threshold in force
+    stays comfortably under the rail either way.  The module therefore never
+    refuses, ag105IsReady() holds, and MPPT_DISABLE stays released for the rest
+    of each charge window.
+    The .ino's own AG105_MPPT_N_CEIL static_assert is what makes this structural
+    rather than incidental: the ceiling is pinned below V_BUS_CHARGED_THRESH less
+    the VBUS→VCHG-IN ideal-diode drop, so a released threshold can never exceed a
+    bus the bring-up called "up".
 
-    Under the 18 V default the loop closes like this, at the firmware's own
-    50 Hz charger cadence (CHARGING_CTRL_PERIOD_US 20000, and pollAg105() on the
-    same 20 ms telemetry gate, .ino:4406-4412):
+    A CAMPAIGN THAT STILL SEES TOGGLING IS A FINDING, not a scenario defect: it
+    means the manager did not run, did not write, or FAILED (in which case
+    chargingControl() holds MPPT inhibited for the session, .ino:10613-10617 — a
+    HELD-LOW pin, not a hunt).  The suite's edge census bounds it either way.
+
+    THE fw v23 LOOP, KEPT FOR THE RECORD because the suite's tick budgets below
+    were derived from it and a regression would reproduce it.  Under a threshold
+    ABOVE the bus, at the firmware's 50 Hz charger cadence
+    (CHARGING_CTRL_PERIOD_US 20000, and pollAg105() on the same 20 ms telemetry
+    gate, .ino:4406-4412):
         charge_goal>0, charger dark  -> MPPT_DISABLE LOW (not ready)
         threshold does not apply     -> module settles (0.5 s), then CHARGING
         firmware sees CHARGING       -> ag105IsReady() -> MPPT_DISABLE HIGH
@@ -2075,11 +2246,16 @@ def ems_mppt_harvest(t, fb):
         minus 3 x AG105_SETTLE_S = 3.0 s in which the pin can be HIGH.
     So ~1500 ticks hunting at 50 % duty, against ~3000 if it released and stayed
     released.  (The retired figures were 5.7 s / 4.2 s, taken from the
-    un-inset plateaus.)
+    un-inset plateaus.)  ⚠️ UNDER fw v24 THE EXPECTED OUTCOME IS THE ~3000-TICK
+    ONE — the number the fw v23 entry treated as the failure — which is precisely
+    why the old ceiling had to be replaced rather than re-tuned.
 
-    THE FINDING THIS PREDICTS, if R1 resolves to "no resistor": cruise-time
-    harvesting on the FC path CANNOT hold on a 15.95 V bus with MPPT released.
-    That is a statement about the HARDWARE, and the point of running it.
+    THE FINDING THIS NOW PREDICTS: cruise-time harvesting on the FC path HOLDS,
+    because the firmware lowered the module's own threshold under the bus.  The
+    proof obligations are the reg-0x02 count on the wire (landing in the
+    [15, 27] = 12.320-13.376 V clamp band — the exact count follows V_chg and
+    differs between engines, so the obligation is the band, not a value) and
+    the ABSENCE of the refusal signature, not the presence of a hunt.
     """
     v_sp = fb.get("v_profile")
     if v_sp is None:
@@ -4709,12 +4885,13 @@ def ems_frontier_eligible(strategy_name):
 #                that predate it — handoff-sag, soc-depletion, ems-soc-band —
 #                keep their own branches.  See scenario_aux_preload_a().
 #   mppt_emulation : optional bool — model the Ag105's MPPT INPUT-VOLTAGE
-#                THRESHOLD (AG105_MPPT_V_THRESH, datasheet p.10), so
-#                MPPT_DISABLE becomes causally load-bearing instead of a
-#                flag-only control.  ABSENT/False is the default and leaves the
-#                charger branch byte-identical, which is why every pre-2026-08-31
-#                scenario is unaffected.  See Plant.__init__ and the constant's
-#                banner (incl. the R1 open question).
+#                THRESHOLD (datasheet p.10) so MPPT_DISABLE becomes causally
+#                load-bearing instead of a flag-only control.  The threshold
+#                VALUE comes from the board (observation-frame reg-0x02 count,
+#                fw v24); AG105_MPPT_V_THRESH is only the no-count fallback.
+#                ABSENT/False is the default and leaves the charger branch
+#                byte-identical, which is why every pre-2026-08-31 scenario is
+#                unaffected.  See Plant.__init__ and the constant's banner.
 #   sdp_soc_ref_offset : optional float — SDP strategies ONLY (any name in
 #                SDP_STRATEGY_NAMES).  Places the run's
 #                STARTING SoC this far ABOVE the policy's target node (negative
@@ -5962,18 +6139,21 @@ SCENARIOS["ems-sdp-braking"] = {
 # THE FIRST SCENARIO IN WHICH MPPT_DISABLE DOES ANYTHING.  Everywhere else in
 # this suite the pin only sets two flags in the status byte, so nothing the
 # firmware does with it can be validated.  Here `mppt_emulation` turns on the
-# part's real mechanism — an INPUT-VOLTAGE THRESHOLD, 18 V by default with MPPTS
-# open (AG105_Silvertel.pdf p.10; NOT perturb-and-observe, see the
-# AG105_MPPT_V_THRESH banner) — and the pin becomes causal.
+# part's real mechanism — an INPUT-VOLTAGE THRESHOLD (AG105_Silvertel.pdf p.10;
+# NOT perturb-and-observe) — and the pin becomes causal.
 #
-# ⚠️ THIS SCENARIO ASSERTS A PREDICTION, not a previously-observed behaviour, and
-# the prediction is CONTINGENT ON R1 (does this board fit an MPPTS resistor?).
-# Under the 18 V default the firmware and the module HUNT: the firmware releases
-# tracking only once the charger reports ready, and releasing it is exactly what
-# stops the charging that made it ready.  The full loop trace and the ~40 ms
-# period are derived in ems_mppt_harvest()'s docstring.  A campaign that does NOT
-# see the hunt is evidence about R1 — a lower threshold set by a fitted resistor
-# — and must be read as a hardware finding, not as a scenario defect.
+# ⚠️ THE OBJECTIVE INVERTED AT fw v24 (2026-09-01).  Under fw v23 the module sat
+# at its 18 V default, the ~15.95 V bus could never clear it, and the firmware
+# and the module HUNTED — 138 MPPT_DISABLE toggles at a ~40 ms period, measured
+# on hardware in campaign 20260831_191509.  fw v24 writes reg 0x02 to a threshold
+# BELOW the bus (target = windowed-min V_chg − 3.0 V, clamped in COUNTS to
+# [15, 27] = 12.320-13.376 V, .ino:1671-1690), so the module stops refusing.
+# THE HUNT IS NOW THE FAILURE SIGNATURE, and the reg-0x02 count the board reports
+# on observation-frame byte 15 (CSV `mppt_thresh_cnt`) is the positive evidence
+# that the manager ran.  R1 is no longer a contingency: Table 7 encodes 0-250 as
+# REGISTER mode and >=251 as the resistor, so a firmware write OVERRIDES any
+# fitted MPPTS resistor.  The fw v23 loop is kept for regression reference in
+# ems_mppt_harvest()'s docstring.
 #
 # WHY THE LOW-CRUISE PLATEAUS ONLY.  The threshold can only bind on the FC path
 # (charger fed from the ~15.95 V bus with tracking released); the regen path
@@ -5988,18 +6168,22 @@ SCENARIOS["ems-sdp-braking"] = {
 # bus), not measurements.
 SCENARIOS["mppt-tracking"] = {
     "description": ("45 s cruise/brake cycling with the Ag105's MPPT "
-                    "INPUT-VOLTAGE THRESHOLD emulated (18 V default, datasheet "
-                    "p.10): charge_goal is asserted on the braking windows (regen "
-                    "path, MPPT inhibited) AND on the low-cruise plateaus (FC "
-                    "path, MPPT released) — where the 15.95 V bus cannot clear "
-                    "the threshold, so the firmware and the module are predicted "
-                    "to HUNT. Contingent on R1 (MPPTS resistor unconfirmed)."),
+                    "INPUT-VOLTAGE THRESHOLD emulated at the count the BOARD "
+                    "reports (fw v24 reg 0x02; 18 V default only until it "
+                    "writes): charge_goal is asserted on the braking windows "
+                    "(regen path, MPPT inhibited) AND on the low-cruise plateaus "
+                    "(FC path, MPPT released) — where fw v24's threshold clamps "
+                    "into [15, 27] = 12.320-13.376 V, under the bus, so harvest "
+                    "HOLDS and the fw v23 hunt must NOT reappear."),
     # "any": the threshold gate is a comparison against the charger's input rail,
     # which both engines produce.  ⚠️ In SIMPLE mode V_chg is rigidly V_bus
     # whenever a charger path is closed (no series impedance, no charger draw
     # pulling the rail down), so the threshold sees a stiffer rail than the hi-fi
-    # engine's.  Both are far below 18 V, so the verdict is the same either way —
-    # but do not read a MARGIN to the threshold off a simple-mode run.
+    # engine's.  Under fw v24 the threshold in force lands in the [15, 27] band
+    # (12.320-13.376 V; exact count differs by engine) and BOTH engines' rails
+    # sit above it, so the verdict is the same either way — but the MARGIN
+    # differs (the hi-fi rail sags under charger draw and is the one to quote),
+    # and do not read a margin to the threshold off a simple-mode run.
     "electrical": "any",
     "duration_s": 45.0,
     "ems": "mppt-harvest",
@@ -6039,10 +6223,14 @@ SCENARIOS["mppt-tracking"] = {
 # against LIMIT_I_FC_MAX 1.4 A, an 18 % margin, sustained for 120 s.  THE COST,
 # stated rather than discovered: this run exercises the DRIVE channel not at all.
 #
-# ⚠️ mppt_emulation IS DELIBERATELY OFF HERE.  With it on, the 18 V threshold
-# would block charging on this very path and the run could never reach FULL —
-# the two scenarios test different things and must not be merged.  `mppt-tracking`
-# owns the threshold gate; this one owns the FULL/CV path.
+# ⚠️ mppt_emulation IS DELIBERATELY OFF HERE, and it STAYS off under fw v24.
+# The two scenarios test different things and must not be merged: `mppt-tracking`
+# owns the threshold gate, this one owns the FULL/CV path.  Under fw v23 leaving
+# it on would have blocked charging outright (18 V default over a 15.95 V bus)
+# and the run could never have reached FULL.  Under fw v24 the clamped ~12.320 V
+# threshold would no longer block it — but this scenario runs at STANDSTILL with
+# the charger fed continuously, so it would spend the whole run above threshold
+# and the gate would still be inert here.  Off is the honest configuration.
 #
 # WHAT THE FIRMWARE DOES ON FULL: deliberately NOTHING, and that is asserted
 # POSITIVELY rather than assumed.  ag105IsReady() ACCEPTS FULL (.ino:10249-10255)
@@ -6786,6 +6974,12 @@ def apply_scenario(plant, scenario, t):
 
 
 def main(argv=None):
+    # LOW-5 (fw v24 tooling-lockstep review): defence in depth for same-process
+    # reuse (e.g. a test harness calling main() more than once) -- without this
+    # a second run would inherit _OBS_LENGTHS_SEEN from the first and could
+    # silently skip the observation-frame-length announcement (and, if the two
+    # runs' boards disagree, the both-lengths-seen warning below).
+    reset_output_provenance()
     ap = argparse.ArgumentParser(description="HIL plant simulator for the Teensy balancer board")
     ap.add_argument("--teensy-ip", default="192.168.1.50", help="board IP (default 192.168.1.50)")
     ap.add_argument("--port", type=int, default=TEENSY_PORT_DEFAULT,
@@ -7082,9 +7276,13 @@ def main(argv=None):
     if mppt_emu:
         print(f"[hil] Ag105 MPPT INPUT-VOLTAGE THRESHOLD emulated for scenario "
               f"'{scenario}': charging is inhibited while MPPT_DISABLE is HIGH "
-              f"(tracking released) and V_chg < {AG105_MPPT_V_THRESH:.1f} V "
-              f"(+{AG105_MPPT_V_HYST:.1f} V hysteresis). Datasheet p.10 default; "
-              f"TODO(verify) R1 — MPPTS resistor unconfirmed.")
+              f"(tracking released) and V_chg is under the threshold IN FORCE "
+              f"(+{AG105_MPPT_V_HYST:.1f} V hysteresis). From fw v24 that is the "
+              f"reg-0x02 count the board reports on observation-frame byte 15 "
+              f"(clamp band {ag105_mppt_volts(AG105_MPPT_N_FLOOR):.3f}"
+              f"-{ag105_mppt_volts(AG105_MPPT_N_CEIL):.3f} V); "
+              f"{AG105_MPPT_V_THRESH:.1f} V is used only until a count arrives "
+              f"or if the board reports external-resistor mode.")
     plant = Plant(electrical=electrical, soc0=args.soc0,
                   capacity_ah=args.capacity_ah, ag105_i_max=chg_ceiling,
                   mppt_emulation=mppt_emu)
@@ -7366,6 +7564,21 @@ def main(argv=None):
             # summary's counters.  This column is the table's ACTUAL request,
             # held between decisions exactly as the emitted one is.
             header_row += ["cmd_share_sp_raw"]
+        # ── mppt_thresh_cnt — APPENDED LAST, BOTH MODES (fw v24, 2026-09-01) ──
+        # The Ag105 reg-0x02 count the FIRMWARE reports it believes is in force,
+        # straight off observation-frame byte 15.  It is an observed board field
+        # like `state`/`switch`/`aux`, not a plant quantity, so unlike every
+        # block above it belongs to BOTH schemas — a replay run observes the
+        # board just as a simulated one does.  It is therefore appended after the
+        # per-mode blocks, keeping `replay_rec` and every other established index
+        # exactly where it was.
+        # BLANK means UNKNOWN, never zero: blank on every row before the first
+        # observation frame, and on EVERY row of a run against fw v21-v23, whose
+        # 16-byte frame has no such byte (parse_output -> mppt_cnt None).  0 is a
+        # legal count (11.0 V), so a zero here would be a fabricated threshold.
+        # 255 is the honest "external-resistor mode / never written" value and is
+        # written as 255.
+        header_row += ["mppt_thresh_cnt"]
         writer.writerow(header_row)
 
     # M3: open the electrical-events sidecar UP FRONT and stream into it as events
@@ -7960,6 +8173,11 @@ def main(argv=None):
                         "" if (sdp_raw_src is None
                                or sdp_raw_src.last_share_raw is None)
                         else f"{sdp_raw_src.last_share_raw:.4f}")
+                # mppt_thresh_cnt (fw v24) — appended in BOTH modes, see the
+                # header comment.  Blank when there is no observation frame yet
+                # or the frame was the 16-byte legacy layout; never 0-filled.
+                row.append("" if (obs is None or obs.get("mppt_cnt") is None)
+                           else int(obs["mppt_cnt"]))
                 writer.writerow(row)
 
             ticks += 1
@@ -7989,6 +8207,10 @@ def main(argv=None):
                     "V_bus": sensors["V_bus"], "I_tot": i_tot,
                     "I_fc": i_fc, "I_bt": i_bt,
                     "I_chg": sensors["I_charge"], "ag105": sensors["ag105_status"],
+                    # fw v24 reg-0x02 threshold count (observation-frame byte 15).
+                    # None on a legacy 16-byte frame or before the first frame;
+                    # plain scalar, no I/O — the lightness contract holds.
+                    "mppt_cnt": obs.get("mppt_cnt") if obs else None,
                     "state": obs["state"] if obs else None,
                     "switch": obs["switch"] if obs else None,
                     "aux": obs["aux"] if obs else None,
@@ -8095,6 +8317,14 @@ def main(argv=None):
           f"(target {args.rate:.0f} Hz), max overrun {max_overrun * 1e3:.2f} ms")
     print(f"[hil] tx={tx_frames} frames, rx={rx_frames} frames, {rx_bad} malformed, "
           f"send_errors={send_errors}")
+    # LOW-7: both observation-frame lengths in one run means the firmware
+    # CHANGED UNDER US -- a re-flash mid-run, or two boards answering one
+    # host (see _announce_output_length()'s docstring). _OBS_LENGTHS_SEEN is
+    # reset at the top of main(), so this reflects only THIS run.
+    if len(_OBS_LENGTHS_SEEN) > 1:
+        print(f"[hil] *** both observation-frame lengths seen this run "
+              f"({sorted(_OBS_LENGTHS_SEEN)} bytes) -- the firmware changed "
+              f"mid-run, or two boards answered one host ***")
     # Printed UNCONDITIONALLY (including the 0/0 case) so run_hil_suite.py can
     # parse it deterministically and tell "none observed" apart from "this sim
     # build has no tripwire".
