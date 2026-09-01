@@ -2578,3 +2578,57 @@ night.
   pair is literally the frontier check's FAIL fixture); v1↔v2↔v3 rules are in the
   docs. The overnight decisions and their reversal paths are itemized in
   OVERNIGHT_LOG.md.
+
+---
+
+## Status & session addendum (2026-09-01c, fw v24 flashed: tooling lockstep + campaign 080905 — the applyShareRatio() guard gap)
+
+The operator flashed fw v24; the blocking tooling-lockstep round shipped (commit
+739ff64: dual-length 16/17 B observation-frame parse, count-driven MPPT emulation
+with 18 V fallback, `mppt_thresh_cnt` CSV column both schemas, mppt-tracking
+expectation flip hunt→no-hunt, FW_DELTA_NOTES[24]/TARGET_FW_VERSION 24; review
+3 MED + 7 LOW all applied — notably the stale 60 ms backoff-dwell figure (truth:
+15 ms, .ino:1764; the .ino:32 changelog line still carries 60 and is queued);
+tests 1217+26 / 129). Then the FIRST fw v24 campaign ran: **55/56 + drive SKIP**
+(hil_report_20260901_080905; HIL_FINDINGS.md + HIL_SUMMARY.md in the folder).
+
+- **fw v24 VALIDATED in emulation:** the MPPT hunt is GONE (68 rises → 3 exactly
+  as derived; refusal ticks 1481 → 0; three ~0.98 s clean releases vs the 40 ms
+  hunt), cruise harvest exactly DOUBLED (2.005×; brake-window coulombs identical
+  to 4 dp), threshold-count arithmetic exact vs `.ino` at 15 quantization
+  boundaries, observed count band [15,19] — the FLOOR binds ~85 % of harvest
+  (V_chg sags to ~14.45 V → effective margin 2.13 V, not 3.0). OC_FC margin
+  16.9 % (the review's MED-3 budget risk did not trip). 17 B frame clean over
+  ~1.3 M frames; v23→v24 drive-law comparability empirically confirmed
+  (indistinguishable from the v23→v23 repeat-noise floor). ⚠️ The HIL mirror
+  bypasses the write policy/deadband/session ratchet/EPROM budget — those remain
+  BENCH-ONLY unvalidated; never cite HIL count motion as write-budget evidence.
+- **THE FINDING (BOARD-REAL, fw-version-independent): the r-based bus cutoff in
+  `applyShareRatio()` is UNGUARDED** — no |I_doomed| ≤ SHARE_CUT_MAX_HANDOFF_A
+  term (that guard exists only on the setpoint-latch path, fw v6) and no
+  survivor-conducting term. In ems-sdp-braking it opened FC_BUS (the only
+  conducting source, i_cut 0.6371 A) 5 ms after BT_BUS restore — inside BT's
+  8 ms RT1987 TD_ON — at a charge-window close: bus 14.56 → 12.40 V in 3 ms,
+  reactive BT pickup, share slew, I_batt 4.64 A → OC_BT latch (fault response
+  CORRECT). Mechanism: during every FC-charge window BT_BUS is held LOW, the
+  share loop winds r onto DROOP_R_MIN = 0.15000 EXACTLY (zero margin, identical
+  in C3/C4), and the window close makes the pinned cut actionable the same tick
+  BT returns; hit = sub-ms tick alignment (2/5 closes vs 0/18 in C3+C4,
+  p ≈ 0.04 — fw v24 loop-phase shift is a HYPOTHESIS only; the share code is
+  byte-identical, the UV backoff provably never armed, mppt_emulation off).
+  A second NON-FATAL instance same run (t = 20.172, BT_BUS, 0.7438 A). No other
+  instance campaign-wide (full events.jsonl sweep; the other >0.5 A en_low cuts
+  are benign State-99 teardowns). **fw v25 candidate queued in WORK_QUEUE.md
+  §0a** (guard both r-based branches + survivor-HIGH < 8 ms blanking +
+  regression); the ems-sdp-braking expectation is deliberately NOT relaxed.
+- **Every other verdict verified right-for-the-right-reason** (dedicated Opus
+  agents on mppt-tracking + the FAIL, consolidated Sonnet pass, adversarial
+  Opus replay audit): replay half 27/27 REAL (137 checks, 0 untagged-vacuous),
+  carried-in latch chain exact 55/55 + 27/27, scp i_cut bit-exact 9-for-9,
+  ems-sdp h2 0.012542582 bit-exact (8 ppm record extends across the flash),
+  frontier PASS 0.9003×/1.0000×, charge-cruise OC_FC bit-identical current Δ4 ms
+  vs C4. Fix queue (2 MED + LOW batch incl. the mppt first-campaign calibration
+  pins) in the ledger and WORK_QUEUE §0a.
+- Tests at close: 1217 + 26 (.venv_hil five suites), 129 (miniforge
+  report-analysis). Firmware suites untouched this round (fw v24's 3787/175/4268
+  stand from commit f8050e1).

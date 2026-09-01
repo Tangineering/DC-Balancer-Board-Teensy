@@ -1,4 +1,35 @@
-# Work queue — updated 2026-09-01 (post-overnight)
+# Work queue — updated 2026-09-01 (post fw v24 campaign 080905)
+
+## 0a. NEW from campaign 080905 (the first fw v24 campaign — 55/56)
+
+- **fw v25 candidate (safety-class, HIGHEST — operator ruling needed):** the
+  r-based bus cutoff in `applyShareRatio()` (.ino:10208-10211 FC / :10228-10234
+  BT) has NO current guard and NO survivor-conducting guard. It opened
+  FC_BUS_ENABLE (only conducting source, i_cut 0.6371 A > SHARE_CUT_MAX_HANDOFF_A
+  0.5) inside BT_BUS's 8 ms RT1987 TD_ON at an ems-sdp-braking charge-window
+  close → bus to 12.40 V → I_batt 4.64 A → OC_BT latch (board response correct).
+  Zero-margin operating point (r = DROOP_R_MIN exactly) is standard during every
+  FC-charge window; C3/C4 passed on tick alignment (0/18 vs 2/5, p ≈ 0.04).
+  Fix spec (queued in hil_report_20260901_080905/HIL_FINDINGS.md): extend the
+  |I_doomed| ≤ 0.5 A guard to both r-based branches; add a survivor-HIGH < 8 ms
+  / |I_survivor| ≈ 0 blanking term; host-native regression (BT held LOW by
+  FC_CHARGE, r wound to DROOP_R_MIN, release, share tick 5 ms later → FC_BUS
+  stays HIGH). Also fold in: the .ino:32 changelog 60 → 15 ms dwell correction
+  and the two P&O-comment leftovers if any remain.
+- **Suite fix round (ready to orchestrate):** F1 MED (mppt threshold_written
+  passes on a carried-in count → phase-free column-motion check); R-MED-1
+  (TP0010 i_bt_clamp_a 2.8 A or ordering assertion — the BT twin of
+  UV_PAIR_I_FC_CLAMP_A); LOW batch — mppt-tracking calibration pins (rise (3,5),
+  tracking_engaged 2400, charging_occurred 0.70 A, threshold_written 12600,
+  +count-peak ≤ 21 tripwire, refusal 20, drop provisional_note), F2 floor-check
+  min-over-window semantics, F3 comment, F4 I_fc ≤ 1.30 tripwire, R-LOW-1
+  ML0151 OC-margin pin (1.20, 1.40], R-LOW-3 replay_source fw/sha stamp,
+  optional sw_ring en_low > 0.5 A tripwire, F5 hil-conventions.md additions
+  (hazard signature + i_cut observable + HIL-mirror write-policy boundary),
+  FW_DELTA_NOTES tighter backoff-unreachable wording.
+- fw v24 flash acceptance: DONE in emulation (hunt gone, harvest 2.005×, frame
+  clean). Real-Ag105 items (first-write counts, power-cycle zero-write, EPROM
+  budget) remain BENCH-ONLY — the HIL mirror does not exercise the write path.
 
 Overnight progress (see OVERNIGHT_LOG.md for the full decision log): §1's S1/S2/S3
 SHIPPED and hardware-calibrated (campaign 024231); §2's fw v24 PREPARED (commit
@@ -7,16 +38,12 @@ sdp_policy_v3 shipped after the charge-economics finding (charging is loss-makin
 rig scale — see the 2026-09-01b CLAUDE.md addendum); the EMS frontier check is live.
 Four campaigns run, zero board defects.
 
-## 0. NEW since the original queue (do these first)
+## 0. NEW since the original queue
 
-- **fw v24 tooling-lockstep round (BLOCKS the fw v24 flash):** the simulator still
-  emulates the fixed 18 V MPPT threshold and does not parse the 17 B observation
-  frame. Needed: frame length-detection (16 B legacy fallback + flag),
-  mppt_emulation consuming the observed threshold count, mppt-tracking expectation
-  flip (≤6 toggles, threshold-band checks, the released-and-refusing prohibition),
-  charger-figure threshold trace. Then: flash fw v24 (edit HIL_SIM 0→1 as usual)
-  and run the acceptance sequence in the fw v24 design docs (first-write ~21/22
-  counts, power-cycle zero-write, hunt-gone).
+- **fw v24 tooling-lockstep round — ✅ SHIPPED 2026-09-01 (commit 739ff64)** and
+  validated by campaign 080905 (see §0a): dual-length frame parse, count-driven
+  MPPT emulation, `mppt_thresh_cnt` column, expectation flip. fw v24 is flashed
+  and campaign-proven.
 - **Bench steps fw v24 wants:** R1 MPPTSEL inspection (documentation-grade now);
   the MPPTD-disabled-charge behavior verification (the two designers read the
   datasheet oppositely; gates the ag105ReleaseOk() upgrade); Silvertel EPROM
