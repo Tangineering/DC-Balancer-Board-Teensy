@@ -286,3 +286,96 @@ def test_generated_table_is_loadable_and_bindable_by_dp_replay_strategy(tmp_path
     assert strategy.times
     out = strategy(30.0, {"t": 30.0, "v_profile": 1.5})
     assert 0.0 <= out["power_share_setpoint"] <= 1.0
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 2026-08-31 wave 2: scenario_drain_a() generic aux_preload_a agreement, and
+# --run-exit's per-scenario resolution (main() reads args.run_exit=None as
+# "resolve from the scenario's ems_run_exit_s").
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_scenario_drain_a_generic_branch_calls_scenario_aux_preload_a(monkeypatch):
+    """A scenario outside the bespoke ('ems-soc-band', 'ems-dp-replay') pair
+    goes through the GENERIC branch, which is now I_AUX_A +
+    hil.scenario_aux_preload_a(scenario, t) -- the exact function
+    apply_scenario()'s own fall-through branch calls, so the DP solves
+    against the load the run will actually see.
+
+    A fabricated scenario (not a real SCENARIOS entry) isolates the generic
+    branch from any bespoke one that might otherwise claim the name."""
+    fake = "test-generic-scenario-2026-08-31"
+    monkeypatch.setitem(hil.SCENARIOS, fake, {"aux_preload_a": 0.75})
+    for t in (0.0, hil.AUX_PRELOAD_START_S - 1.0, hil.AUX_PRELOAD_START_S,
+             hil.AUX_PRELOAD_START_S + hil.SOC_LOAD_RAMP_S / 2.0,
+             hil.AUX_PRELOAD_START_S + hil.SOC_LOAD_RAMP_S + 5.0):
+        want = hil.I_AUX_A + hil.scenario_aux_preload_a(fake, t)
+        assert gen.scenario_drain_a(fake, t) == pytest.approx(want), t
+
+
+def test_scenario_drain_a_generic_branch_zero_when_no_aux_preload_declared():
+    """A scenario with NO aux_preload_a key (every scenario that predates the
+    2026-08-31 key, and mppt-tracking/charge-to-full which deliberately take
+    the generic branch without declaring one) drains exactly I_AUX_A -- the
+    generic term is 0.0 for it, matching the pre-key behaviour byte for
+    byte."""
+    for name in ("mppt-tracking", "charge-to-full"):
+        assert "aux_preload_a" not in hil.SCENARIOS[name]
+        for t in (0.0, 10.0, 100.0):
+            assert gen.scenario_drain_a(name, t) == pytest.approx(hil.I_AUX_A)
+
+
+def test_scenario_drain_a_ems_soc_band_bespoke_branch_unaffected():
+    """ems-soc-band/ems-dp-replay keep their OWN hardcoded ramp arithmetic --
+    the generic aux_preload_a mechanism must not silently graft itself onto
+    the bespoke branch (neither scenario declares the key, so this is also a
+    belt-and-braces check that the branch selection is still by name)."""
+    assert "aux_preload_a" not in hil.SCENARIOS["ems-soc-band"]
+    for t in (0.0, hil.SOC_BAND_DRAIN_START_S, hil.SOC_BAND_DRAIN_START_S + 5.0,
+             hil.SOC_BAND_DRAIN_END_S + 5.0):
+        ramp_in = max(0.0, min(1.0, (t - hil.SOC_BAND_DRAIN_START_S) / hil.SOC_LOAD_RAMP_S))
+        ramp_out = max(0.0, min(1.0, (t - hil.SOC_BAND_DRAIN_END_S) / hil.SOC_LOAD_RAMP_S))
+        want = hil.I_AUX_A + hil.SOC_BAND_DRAIN_LOAD_A * (ramp_in - ramp_out)
+        assert gen.scenario_drain_a("ems-soc-band", t) == pytest.approx(want), t
+
+
+def test_run_exit_default_resolves_from_scenario_ems_run_exit_s(tmp_path):
+    """--run-exit omitted: main() resolves it from the SCENARIO's own
+    `ems_run_exit_s` when it declares one (mppt-tracking: 43.0, ==
+    EMS_REGEN_RUN_EXIT_S) rather than falling back to the bare
+    SOC_BAND_RUN_EXIT_S constant -- the resolution this generator must agree
+    with is DpReplayStrategy's M2 header check on the consumer side."""
+    out = str(tmp_path / "mppt.csv")
+    assert gen.main(["--scenario", "mppt-tracking", "--stage-dt", "1.0",
+                     "--soc-step", "5e-5", "--n-share", "5",
+                     "--match-terminal-soc", "none", "--out", out]) == 0
+    text = open(out, encoding="utf-8").read()
+    assert ("# run_exit_s: %r" % float(hil.SCENARIOS["mppt-tracking"]["ems_run_exit_s"])) in text
+    assert "# run_exit_s: 43.0" in text
+
+
+def test_run_exit_default_falls_back_to_model_constant_when_scenario_declares_none():
+    """A scenario declaring no `ems_run_exit_s` (ems-soc-band, unaffected by
+    this round) still resolves to the bare SOC_BAND_RUN_EXIT_S constant --
+    the pre-2026-08-31 behaviour, byte for byte."""
+    assert hil.SCENARIOS["ems-soc-band"].get("ems_run_exit_s") is None
+    out = "run_exit_fallback_tmp.csv"
+    try:
+        assert gen.main(_COARSE_ARGV + ["--out", out, "--force"]) == 0
+        text = open(out, encoding="utf-8").read()
+        assert ("# run_exit_s: %r" % float(hil.SOC_BAND_RUN_EXIT_S)) in text
+    finally:
+        if os.path.exists(out):
+            os.remove(out)
+
+
+def test_run_exit_explicit_flag_overrides_scenario_default(tmp_path):
+    """An explicit --run-exit still wins over the scenario's own
+    `ems_run_exit_s` -- the None-default only supplies a value when the
+    operator did not name one."""
+    out = str(tmp_path / "mppt_override.csv")
+    assert gen.main(["--scenario", "mppt-tracking", "--stage-dt", "1.0",
+                     "--soc-step", "5e-5", "--n-share", "5",
+                     "--match-terminal-soc", "none", "--run-exit", "20.0",
+                     "--out", out]) == 0
+    text = open(out, encoding="utf-8").read()
+    assert "# run_exit_s: 20.0" in text

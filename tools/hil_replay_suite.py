@@ -1089,7 +1089,7 @@ REPLAY_SUITE = [
     {
         "log": "YP0166", "path": "logs/YP0166.BLG", "mode": "deviation",
         "fw_version": 16, "blg_version": 6,
-        "classification": "mid-run v = 0 injection at true 1.49 m/s → ±12 A rail pair "
+        "classification": "mid-run v = 0 injection at true 1.49 m/s -> +/-12 A rail pair "
                           "within 12 ms (the fw v17 TOCTOU race)",
         "why": "A full-scale velocity step straight into the ~454 A/(m/s) LF gain. The "
                "modern firmware must produce a BOUNDED transient that comes back off "
@@ -1123,7 +1123,7 @@ REPLAY_SUITE = [
     {
         "log": "TP0201", "path": "logs/TP0201.BLG", "mode": "deviation",
         "fw_version": 18, "blg_version": 6,
-        "classification": "share-rail handoff gap, bus 15.86 → 12.185 V",
+        "classification": "share-rail handoff gap, bus 15.86 -> 12.185 V",
         "why": "The deepest recorded handoff sag. It stays 0.185 V above "
                "LIMIT_V_BUS_MIN for ~10 ms, i.e. inside the 20 ms dwell, so the "
                "firmware must NOT latch UV. CAVEAT: the fw v19 handoff SLEW that "

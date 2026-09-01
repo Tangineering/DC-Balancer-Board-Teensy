@@ -426,10 +426,16 @@ def pack_current_from_bus_power(p_bt_bus_w, soc):
 def scenario_drain_a(scenario, t):
     """The scenario's bus-side auxiliary load [A] at time t.
 
-    Mirrors apply_scenario()'s `ems-soc-band` branch term for term.  Returns
-    I_AUX_A alone for a scenario with no drain."""
+    Mirrors apply_scenario()'s `ems-soc-band` branch term for term, and its
+    GENERIC `aux_preload_a` branch by calling the same function the simulator
+    does — so a DP table is always solved against the load the run will
+    actually apply.  Returns I_AUX_A alone for a scenario with neither.
+
+    The generic term was added 2026-08-31 with the `aux_preload_a` key.  It is
+    0.0 for every scenario that predates the key, `ems-dp-replay` included, so
+    the shipped table's demand is unchanged."""
     if scenario not in ("ems-soc-band", "ems-dp-replay"):
-        return sim.I_AUX_A
+        return sim.I_AUX_A + sim.scenario_aux_preload_a(scenario, t)
     ramp_in = max(0.0, min(1.0, (t - sim.SOC_BAND_DRAIN_START_S) / sim.SOC_LOAD_RAMP_S))
     ramp_out = max(0.0, min(1.0, (t - sim.SOC_BAND_DRAIN_END_S) / sim.SOC_LOAD_RAMP_S))
     return sim.I_AUX_A + sim.SOC_BAND_DRAIN_LOAD_A * (ramp_in - ramp_out)
@@ -938,9 +944,14 @@ def main(argv=None):
                          "run_hil_suite.py campaign); 'simple' omits it, "
                          "matching --electrical simple. Both totals are "
                          "reported either way.")
-    ap.add_argument("--run-exit", type=float, default=sim.SOC_BAND_RUN_EXIT_S,
-                    help="time the strategy hands back MODE_SAFE (default %g, "
-                         "SOC_BAND_RUN_EXIT_S)" % sim.SOC_BAND_RUN_EXIT_S)
+    # DEFAULT RESOLVED AFTER PARSING, not here: a scenario may declare its own
+    # `ems_run_exit_s` (2026-08-31), and argparse cannot see which scenario was
+    # selected while it is building its defaults. None means "resolve from the
+    # scenario"; the resolution is a few lines below, next to the meta lookup.
+    ap.add_argument("--run-exit", type=float, default=None,
+                    help="time the strategy hands back MODE_SAFE (default: the "
+                         "scenario's `ems_run_exit_s` if it declares one, else "
+                         "%g = SOC_BAND_RUN_EXIT_S)" % sim.SOC_BAND_RUN_EXIT_S)
     ap.add_argument("--no-compare-heuristic", dest="compare_heuristic",
                     action="store_false",
                     help="skip the matched-model `soc-band` reference walk")
@@ -952,6 +963,13 @@ def main(argv=None):
         ap.error("unknown scenario %r (known: %s)"
                  % (args.scenario, ", ".join(sorted(sim.SCENARIOS))))
     meta = sim.SCENARIOS[args.scenario]
+    if args.run_exit is None:
+        # Resolved per-scenario; must agree with what DpReplayStrategy's M2
+        # header check computes on the consumer side, or a freshly-generated
+        # table would be refused by the run it was generated for.
+        args.run_exit = float(sim.SOC_BAND_RUN_EXIT_S
+                              if meta.get("ems_run_exit_s") is None
+                              else meta["ems_run_exit_s"])
     if args.n_share < 2:
         ap.error("--n-share must be >= 2")
     if args.soc_step <= 0 or args.stage_dt <= 0 or args.capacity_ah <= 0:

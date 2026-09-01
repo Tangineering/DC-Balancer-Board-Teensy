@@ -19,7 +19,7 @@ sys.path.insert(0, HERE)
 
 import run_hil_suite as rhs  # noqa: E402
 import hil_replay_suite as hrs  # noqa: E402
-from hil_plant_sim import SCENARIOS  # noqa: E402
+from hil_plant_sim import SCENARIOS, AG105_ST_CHARGING  # noqa: E402
 from hil_replay_suite import REPLAY_SUITE  # noqa: E402
 
 
@@ -43,12 +43,17 @@ def _args(**overrides):
 # ─────────────────────────────────────────────────────────────────────────
 
 def test_build_plan_full_count_40_runs():
-    # 15 scenarios (ems-soc-band/ems-dp-replay added 2026-08-31) + 27 replays
-    # (SY0001/FU4 added earlier) = 42.
+    # 25 scenarios (2026-08-31 wave 2 added the ems-y-* quartet,
+    # ems-ftp75-5050/-socband, mppt-tracking, charge-to-full, pi-silence and
+    # share-staircase -- 15 + 10 = 25) + 27 replays (SY0001/FU4 added
+    # earlier) = 52. Every scenario occupies a plan slot even when it is
+    # rendered as a SKIP record (operator-required / --pi-live /
+    # --with-ftp75), so this count is a plan-slot count, not a
+    # will-actually-run count.
     plan = rhs.build_plan(_args())
-    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 42
+    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 52
     kinds = [p["kind"] for p in plan]
-    assert kinds.count("scenario") == 15
+    assert kinds.count("scenario") == 25
     assert kinds.count("replay") == 27
 
 
@@ -60,7 +65,7 @@ def test_build_plan_replay_only():
 
 def test_build_plan_scenarios_only():
     plan = rhs.build_plan(_args(scenarios_only=True))
-    assert len(plan) == 15
+    assert len(plan) == 25
     assert all(p["kind"] == "scenario" for p in plan)
 
 
@@ -87,9 +92,11 @@ def test_build_plan_only_and_skip_combine():
 
 
 def test_build_plan_only_pattern_matches_scenario_glob():
+    # 2026-08-31 wave 2: charge-to-full joins the charge-* glob family.
     plan = rhs.build_plan(_args(only=["charge-*"]))
     names = {p["name"] for p in plan}
-    assert names == {"charge-cruise", "charge-regen", "charge-fault"}
+    assert names == {"charge-cruise", "charge-regen", "charge-fault",
+                     "charge-to-full"}
 
 
 def test_build_plan_electrical_pref_resolution_any_scenarios():
@@ -179,14 +186,23 @@ def test_build_plan_drive_runs_under_with_operator():
 
 def test_build_plan_with_operator_does_not_affect_other_scenarios():
     """--with-operator only changes 'drive' -- every other scenario's plan
-    entry is identical with or without it."""
+    entry is identical with or without it.
+
+    The two ems-ftp75-* scenarios are excluded from the "no skip_reason"
+    assertion: they are skip-recorded under DEFAULT args too (the
+    --with-ftp75 gate, unrelated to --with-operator), so they carry a
+    skip_reason on both sides of this comparison -- their argv equality is
+    still asserted."""
     plan_default = {p["name"]: p for p in rhs.build_plan(_args()) if p["kind"] == "scenario"}
     plan_operator = {p["name"]: p for p in rhs.build_plan(_args(with_operator=True))
                      if p["kind"] == "scenario"}
+    ftp75 = {"ems-ftp75-5050", "ems-ftp75-socband"}
     for name in plan_default:
         if name == "drive":
             continue
         assert plan_default[name]["argv"] == plan_operator[name]["argv"], name
+        if name in ftp75:
+            continue
         assert not plan_default[name].get("skip_reason")
         assert not plan_operator[name].get("skip_reason")
 
@@ -560,16 +576,25 @@ def _child(status="ok", summary=None):
 
 def _leaf_measurement_pass(spec):
     """A single leaf-spec measurement (M2) that just clears its own assertion
-    kind (>= for min_ticks/min_value/strictly_decreases_by, <= for max_ticks,
-    a latch at exactly after_t for fault_latch_bit)."""
+    kind (>= for min_ticks/min_value/strictly_decreases_by, <= for
+    max_ticks/max_value, a latch at exactly after_t for fault_latch_bit, an
+    edge at exactly after_t + max_ms/2 for the switch_fall_latency_ms kind
+    -- 2026-08-31 wave 2 additions: max_value and max_ms/edge_t)."""
     m = {"rows": 10, "ticks": 0, "peak": None, "first": None, "last": None,
-         "latch_t": None}
-    if "min_ticks" in spec:
+         "latch_t": None, "prev_bit": None, "edge_t": None}
+    if "max_ms" in spec:
+        after = float(spec.get("after_t", 0.0))
+        lim = float(spec["max_ms"])
+        m["edge_t"] = after + (lim / 2.0) / 1000.0   # comfortably inside the bound
+        m["prev_bit"] = 0 if spec.get("edge", "fall") == "fall" else 1
+    elif "min_ticks" in spec:
         m["ticks"] = int(spec["min_ticks"])
     elif "max_ticks" in spec:
         m["ticks"] = int(spec["max_ticks"])
     elif "min_value" in spec:
         m["peak"] = float(spec["min_value"])
+    elif "max_value" in spec:
+        m["peak"] = float(spec["max_value"])
     elif "strictly_decreases_by" in spec:
         need = float(spec["strictly_decreases_by"])
         m["first"] = need
@@ -583,7 +608,7 @@ def _leaf_measurement_fail(spec):
     """The converse: unmeasured (zero rows), which judge_signals() fails on
     'never reached' for every leaf-spec kind, including fault_latch_bit."""
     return {"rows": 0, "ticks": 0, "peak": None, "first": None, "last": None,
-            "latch_t": None}
+            "latch_t": None, "prev_bit": None, "edge_t": None}
 
 
 def _signals_from(scenario_name, leaf_builder):
@@ -1228,7 +1253,10 @@ def test_fault_expectations_schema_every_entry_has_a_nonempty_source():
 def test_fault_expectations_schema_only_known_fields():
     known = {"require", "allow_only", "not_before_s", "survive_to",
             "events_require", "events_any_of", "source", "signals_require",
-            "events_forbid_over_absmax", "provisional_note"}
+            "events_forbid_over_absmax", "provisional_note",
+            # 2026-08-31 wave 2: the entry-level continuity assertion used by
+            # pi-silence -- see child_stream_continuity() / judge_scenario().
+            "child_tx_healthy"}
     for name, expect in rhs.FAULT_EXPECTATIONS.items():
         assert set(expect) <= known, (name, set(expect) - known)
 
@@ -2036,6 +2064,686 @@ def test_judge_scenario_missing_rate_skips_that_check():
     assert passed is True
 
 
+# ═════════════════════════════════════════════════════════════════════════
+# 2026-08-31 wave 2 -- Round C, test-writer coverage: the five new
+# signals_require check kinds, child_stream_continuity(), and the new
+# scenarios' FAULT_EXPECTATIONS shape.
+# ═════════════════════════════════════════════════════════════════════════
+
+# ── aux_bit (the aux-byte analogue of switch_bit) ───────────────────────────
+
+def test_scan_signals_aux_bit_min_ticks_pass(tmp_path):
+    rows = [{"t": "1.0", "aux": str(rhs.AUX_MPPT_DISABLE), "fault_flags": "0"},
+            {"t": "1.1", "aux": str(rhs.AUX_MPPT_DISABLE), "fault_flags": "0"},
+            {"t": "1.2", "aux": "0", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "mppt", "aux_bit": rhs.AUX_MPPT_DISABLE, "min_ticks": 2}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+    assert "bit set on 2 tick(s)" in checks[0]["detail"]
+
+
+def test_scan_signals_aux_bit_max_ticks_fail_stayed_high_too_long(tmp_path):
+    rows = [{"t": "1.0", "aux": str(rhs.AUX_MPPT_DISABLE), "fault_flags": "0"},
+            {"t": "1.1", "aux": str(rhs.AUX_MPPT_DISABLE), "fault_flags": "0"},
+            {"t": "1.2", "aux": str(rhs.AUX_MPPT_DISABLE), "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "mppt_asserted", "aux_bit": rhs.AUX_MPPT_DISABLE, "max_ticks": 0}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is False
+    assert "bit set on 3 tick(s)" in checks[0]["detail"]
+
+
+def test_scan_signals_aux_bit_is_a_separate_column_from_switch_bit(tmp_path):
+    """A switch_bit numeric value that happens to equal AUX_MPPT_DISABLE must
+    NOT be read from the `switch` column when the spec says `aux_bit` -- the
+    bit_col resolution must key strictly off which field name is present."""
+    rows = [{"t": "1.0", "switch": str(rhs.AUX_MPPT_DISABLE), "aux": "0",
+            "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "mppt", "aux_bit": rhs.AUX_MPPT_DISABLE, "min_ticks": 1}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    # aux is 0, so this must NOT pass even though `switch` carries the value.
+    assert checks[0]["passed"] is False
+
+
+# ── value_mask / value_equals (masked-integer equality; ag105_status GENSTAT
+#    and flag bits, transcribed as a HEX STRING "0x.." in the real CSV) ─────
+
+def test_scan_signals_value_mask_genstat_pass(tmp_path):
+    status_low_power_mppt_en = hex(rhs.AG105_ST_LOW_POWER | rhs.AG105_FLAG_MPPT_EN)
+    rows = [{"t": "1.0", "ag105_status": status_low_power_mppt_en, "fault_flags": "0"},
+            {"t": "1.1", "ag105_status": hex(AG105_ST_CHARGING), "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "low_power", "column": "ag105_status",
+             "value_mask": rhs.AG105_GENSTAT_MASK, "value_equals": rhs.AG105_ST_LOW_POWER,
+             "min_ticks": 1}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+    assert "masked value matched on 1 tick(s)" in checks[0]["detail"]
+
+
+def test_scan_signals_value_mask_genstat_fail_never_matched(tmp_path):
+    rows = [{"t": "1.0", "ag105_status": hex(AG105_ST_CHARGING), "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "low_power", "column": "ag105_status",
+             "value_mask": rhs.AG105_GENSTAT_MASK, "value_equals": rhs.AG105_ST_LOW_POWER,
+             "min_ticks": 1}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is False
+
+
+def test_scan_signals_value_mask_tracking_flag_pair(tmp_path):
+    """MPPT_EN set, PWR_TRACK clear -- the exact pattern the threshold gate
+    produces (mask over both bits, equals ONLY the MPPT_EN bit)."""
+    val = rhs.AG105_ST_LOW_POWER | rhs.AG105_FLAG_MPPT_EN
+    rows = [{"t": "1.0", "ag105_status": hex(val), "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "tracking_released_not_tracking", "column": "ag105_status",
+             "value_mask": rhs.AG105_TRACK_MASK, "value_equals": rhs.AG105_FLAG_MPPT_EN,
+             "min_ticks": 1}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+
+
+def test_scan_signals_value_mask_trap_a_plain_min_value_on_a_hex_column_measures_nothing(tmp_path):
+    """THE TRAP the value_mask kind exists to close, reproduced directly: a
+    plain min_value spec on ag105_status (a hex-string column) must measure
+    ZERO rows -- float() raises on "0x02" and the sample is silently
+    skipped -- confirming a min_value spec on this column is unusable and
+    value_mask really is required, not merely convenient."""
+    rows = [{"t": "1.0", "ag105_status": hex(AG105_ST_CHARGING), "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "trap", "column": "ag105_status", "min_value": 0.0}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    # `rows` counts every row reached (window/grace admitted); float() raising
+    # on the hex string happens AFTER that count and only leaves `peak`
+    # unmeasured -- so "unmeasured" shows up as peak is None, not rows == 0.
+    assert measured[0]["rows"] == 1
+    assert measured[0]["peak"] is None
+
+
+# ── max_value (a CEILING -- "nothing exceeded X") ───────────────────────────
+
+def test_scan_signals_max_value_pass_stays_under_ceiling(tmp_path):
+    rows = [{"t": "1.0", "I_charge": "0.02", "fault_flags": "0"},
+            {"t": "1.1", "I_charge": "0.04", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "tapered", "column": "I_charge", "max_value": 0.05}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+    assert "peak 0.0400" in checks[0]["detail"]
+
+
+def test_scan_signals_max_value_fail_one_sample_exceeds(tmp_path):
+    rows = [{"t": "1.0", "I_charge": "0.02", "fault_flags": "0"},
+            {"t": "1.1", "I_charge": "0.30", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "tapered", "column": "I_charge", "max_value": 0.05}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is False
+    assert "peak 0.3000" in checks[0]["detail"]
+
+
+def test_scan_signals_max_value_unmeasured_fails_not_vacuously_passes(tmp_path):
+    """No parseable samples in the window -- 'nothing exceeded X' must NOT be
+    satisfied by an absence of evidence."""
+    rows = [{"t": "1.0", "I_charge": "", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "tapered", "column": "I_charge", "max_value": 0.05}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is False
+    assert "unmeasured" in checks[0]["detail"]
+
+
+def test_scan_signals_max_value_equality_at_the_boundary_passes(tmp_path):
+    rows = [{"t": "1.0", "I_charge": "0.05", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "tapered", "column": "I_charge", "max_value": 0.05}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+
+
+# ── switch_fall_latency_ms (the `max_ms` kind -- latency measurement) ──────
+
+def test_scan_signals_latency_fall_measured_and_within_bound(tmp_path):
+    rows = [{"t": "9.5", "switch": str(rhs.SW_BT_BUS), "fault_flags": "0"},
+            {"t": "10.0", "switch": "0", "fault_flags": "0"},   # falls at t=10.0
+            {"t": "10.5", "switch": "0", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "bt_cut_latency", "switch_bit": rhs.SW_BT_BUS,
+             "after_t": 9.9, "max_ms": 200.0, "t_window": (9.0, 11.0)}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+    assert "MEASURED fall latency" in checks[0]["detail"]
+    assert "100.00 ms" in checks[0]["detail"]   # (10.0 - 9.9) * 1000
+
+
+def test_scan_signals_latency_fall_exceeds_bound_fails(tmp_path):
+    rows = [{"t": "9.5", "switch": str(rhs.SW_BT_BUS), "fault_flags": "0"},
+            {"t": "10.5", "switch": "0", "fault_flags": "0"}]   # 600 ms after after_t
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "bt_cut_latency", "switch_bit": rhs.SW_BT_BUS,
+             "after_t": 9.9, "max_ms": 200.0, "t_window": (9.0, 11.0)}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is False
+
+
+def test_scan_signals_latency_rise_edge_variant(tmp_path):
+    rows = [{"t": "9.5", "switch": "0", "fault_flags": "0"},
+            {"t": "10.0", "switch": str(rhs.SW_BT_BUS), "fault_flags": "0"}]  # rises
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "bt_restore_latency", "switch_bit": rhs.SW_BT_BUS, "edge": "rise",
+             "after_t": 9.9, "max_ms": 200.0, "t_window": (9.0, 11.0)}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+    assert "MEASURED rise latency" in checks[0]["detail"]
+
+
+def test_scan_signals_latency_no_transition_fails_with_last_level(tmp_path):
+    """The bit never transitions inside the window -- 'no transition' with
+    the last observed level reported, not a false 0 ms."""
+    rows = [{"t": "9.5", "switch": str(rhs.SW_BT_BUS), "fault_flags": "0"},
+            {"t": "10.5", "switch": str(rhs.SW_BT_BUS), "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "bt_cut_latency", "switch_bit": rhs.SW_BT_BUS,
+             "after_t": 9.9, "max_ms": 200.0, "t_window": (9.0, 11.0)}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is False
+    assert "no fall transition" in checks[0]["detail"]
+    assert "HIGH" in checks[0]["detail"]
+
+
+def test_scan_signals_latency_edge_before_after_t_is_ignored_not_spurious_zero(tmp_path):
+    """An edge occurring BEFORE after_t must not register as a 0 ms latency
+    -- prev_bit tracks it, but edge_t is only ever set for a transition AT or
+    after after_t."""
+    rows = [{"t": "5.0", "switch": str(rhs.SW_BT_BUS), "fault_flags": "0"},
+            {"t": "5.5", "switch": "0", "fault_flags": "0"},   # falls BEFORE after_t
+            {"t": "9.9", "switch": "0", "fault_flags": "0"},   # already low at after_t
+            {"t": "10.5", "switch": "0", "fault_flags": "0"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "bt_cut_latency", "switch_bit": rhs.SW_BT_BUS,
+             "after_t": 9.9, "max_ms": 200.0, "t_window": (4.0, 11.0)}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is False
+    assert "no fall transition" in checks[0]["detail"]
+
+
+def test_fault_expectations_switch_fall_latency_specs_pass_the_import_time_shape_asserts():
+    """Belt and braces: every switch_fall_latency_ms spec actually shipped in
+    FAULT_EXPECTATIONS (share-staircase's four) satisfies the module's own
+    import-time shape asserts -- re-checked here as an explicit test rather
+    than only implicitly by the module having imported successfully."""
+    found = 0
+    for name, expect in rhs.FAULT_EXPECTATIONS.items():
+        for spec in expect.get("signals_require") or []:
+            if "max_ms" in spec:
+                found += 1
+                assert spec.get("switch_bit") is not None or spec.get("aux_bit") is not None, name
+                assert spec.get("after_t") is not None
+                assert spec.get("edge", "fall") in ("fall", "rise")
+                assert spec["t_window"][0] < spec["after_t"]
+    assert found == 4   # share-staircase's four latency checks
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Fix-round reconciliation (2026-08-31, post-GO): staircase_swept's window
+# move, the MPPT toggle ceiling retune, and regression coverage for the four
+# new import-time shape asserts the fix round added.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_staircase_swept_window_is_6_5_to_26_9():
+    """H2 fix: the window opens at 6.5, not 6.0 -- opening AT the t=6.0
+    pi_timeline entry sampled the PRE-step value ~19 times in 20 (the ZOH'd
+    cmd_share_sp column only updates on a 50 Hz command tick landing exactly
+    on that millisecond), making staircase_swept a chronic false-FAIL of a
+    correct board."""
+    spec = next(s for s in rhs.FAULT_EXPECTATIONS["share-staircase"]["signals_require"]
+               if s["name"] == "staircase_swept")
+    assert spec["t_window"] == (6.5, 26.9)
+
+
+def test_mppt_toggle_max_ticks_is_2200():
+    assert rhs._MPPT_TOGGLE_MAX_TICKS == 2200
+    spec = next(s for s in rhs.FAULT_EXPECTATIONS["mppt-tracking"]["signals_require"]
+               if s["name"] == "mppt_not_stuck_high")
+    assert spec["max_ticks"] == 2200
+    assert spec["t_window"] == rhs._MPPT_ALL_CRUISE_W == (16.1, 41.0)
+
+
+# ── Assert 1: strictly_decreases_by window must clear every pi_timeline
+#    entry time by >= PI_CMD_PERIOD_S (run_hil_suite.py ~:1760-1775). ──────
+#
+# The predicate is reproduced here rather than re-triggered via a module
+# reload (the guard runs once, at FAULT_EXPECTATIONS build time, over data
+# baked into the module at import) -- the reproduction is anchored against
+# REAL data (rhs.PI_CMD_PERIOD_S, share-staircase's actual pi_timeline) so it
+# is not just testing itself, and the "real data passes" cross-check is the
+# fidelity anchor: the module already imported cleanly, so every REAL entry
+# must satisfy this predicate today.
+
+def _strictly_decreases_window_clears_timeline(t_window_start, pi_timeline):
+    return all(abs(float(t_window_start) - float(et)) >= rhs.PI_CMD_PERIOD_S
+              for et, _fields in pi_timeline)
+
+
+def test_strictly_decreases_by_phase_guard_rejects_the_pre_fix_window():
+    """The negative case the fix round named directly: the pre-fix
+    staircase_swept window (t_window[0] = 6.0) sits EXACTLY on
+    share-staircase's own t=6.0 pi_timeline entry (0 s clear, < the 0.02 s
+    PI_CMD_PERIOD_S bound) -- this is what a real import-time guard run
+    against that window would have rejected."""
+    timeline = SCENARIOS["share-staircase"]["pi_timeline"]
+    entry_times = [t for t, _fields in timeline]
+    assert 6.0 in entry_times
+    assert _strictly_decreases_window_clears_timeline(6.0, timeline) is False
+
+
+def test_strictly_decreases_by_phase_guard_accepts_the_shipped_window():
+    timeline = SCENARIOS["share-staircase"]["pi_timeline"]
+    assert _strictly_decreases_window_clears_timeline(6.5, timeline) is True
+
+
+def test_strictly_decreases_by_phase_guard_every_real_spec_is_compliant():
+    """Every strictly_decreases_by spec actually shipped in FAULT_EXPECTATIONS
+    must clear its scenario's pi_timeline (if any) by the command period --
+    the module imported cleanly, so this must hold; re-checked explicitly."""
+    checked = 0
+    for name, expect in rhs.FAULT_EXPECTATIONS.items():
+        timeline = (SCENARIOS.get(name) or {}).get("pi_timeline") or ()
+        for spec in expect.get("signals_require") or []:
+            arms = [spec] + list(spec.get("any_of") or ())
+            for sub in arms:
+                if "strictly_decreases_by" not in sub or not sub.get("t_window"):
+                    continue
+                checked += 1
+                assert _strictly_decreases_window_clears_timeline(
+                    sub["t_window"][0], timeline), (name, sub.get("name"))
+    assert checked > 0
+
+
+# ── Assert 2: a max_ms spec may not also carry min_ticks/max_ticks
+#    (run_hil_suite.py ~:1808-1815). ───────────────────────────────────────
+
+def test_max_ms_spec_with_tick_bounds_would_be_rejected():
+    """Mirrors the guard's predicate directly (it is a plain set-intersection
+    check, safe to reproduce faithfully without a module reload) and confirms
+    it on both a synthetic violation and the real shipped specs."""
+    def _violates(spec):
+        return "max_ms" in spec and bool({"min_ticks", "max_ticks"} & set(spec))
+
+    bad = {"name": "x", "switch_bit": rhs.SW_BT_BUS, "after_t": 1.0, "max_ms": 40.0,
+           "min_ticks": 5, "t_window": (0.0, 2.0)}
+    assert _violates(bad) is True
+
+    good = {"name": "x", "switch_bit": rhs.SW_BT_BUS, "after_t": 1.0, "max_ms": 40.0,
+           "t_window": (0.0, 2.0)}
+    assert _violates(good) is False
+
+    # Every REAL max_ms spec in the module must be clean (it imported).
+    for name, expect in rhs.FAULT_EXPECTATIONS.items():
+        for spec in expect.get("signals_require") or []:
+            for sub in [spec] + list(spec.get("any_of") or ()):
+                assert not _violates(sub), (name, sub.get("name"))
+
+
+# ── Assert 3: a max_ticks-only bit/column spec needs a same-signal companion
+#    with a positive bound, or an explicit vacuity_note
+#    (run_hil_suite.py ~:1776-1807). ────────────────────────────────────────
+
+_BOUND_KEYS = ("min_ticks", "min_value", "strictly_decreases_by",
+              "max_ms", "fault_latch_bit", "any_of")
+
+
+def _signal_identity(sub):
+    if "switch_bit" in sub:
+        return ("switch_bit", sub["switch_bit"])
+    if "aux_bit" in sub:
+        return ("aux_bit", sub["aux_bit"])
+    return ("column", sub.get("column"))
+
+
+def _max_ticks_only_has_companion_or_note(sub, siblings):
+    if "max_ticks" not in sub or any(k in sub for k in _BOUND_KEYS):
+        return True   # not a max_ticks-only spec at all
+    if sub.get("vacuity_note"):
+        return True
+    sig = _signal_identity(sub)
+    for other in siblings:
+        if other is sub:
+            continue
+        if _signal_identity(other) == sig and any(k in other for k in _BOUND_KEYS):
+            return True
+    return False
+
+
+def test_max_ticks_only_companion_guard_rejects_an_isolated_spec():
+    isolated = {"name": "x", "switch_bit": rhs.SW_FC_BUS, "max_ticks": 10,
+               "t_window": (0.0, 5.0)}
+    assert _max_ticks_only_has_companion_or_note(isolated, [isolated]) is False
+
+
+def test_max_ticks_only_companion_guard_accepts_a_positive_bound_companion():
+    top = {"name": "top", "switch_bit": rhs.SW_FC_BUS, "max_ticks": 10,
+          "t_window": (0.0, 5.0)}
+    companion = {"name": "bottom", "switch_bit": rhs.SW_FC_BUS, "min_ticks": 1,
+                "t_window": (5.0, 10.0)}
+    assert _max_ticks_only_has_companion_or_note(top, [top, companion]) is True
+
+
+def test_max_ticks_only_companion_guard_accepts_an_explicit_vacuity_note():
+    isolated = {"name": "x", "switch_bit": rhs.SW_FC_BUS, "max_ticks": 10,
+               "t_window": (0.0, 5.0), "vacuity_note": "covered elsewhere"}
+    assert _max_ticks_only_has_companion_or_note(isolated, [isolated]) is True
+
+
+def test_handoff_sag_fc_bus_open_keeps_its_vacuity_note():
+    """The fix round's ONE explicit escape hatch -- must not be silently
+    removed by a future edit (that would make the entry the guard's target,
+    not its documented exception)."""
+    spec = next(s for s in rhs.FAULT_EXPECTATIONS["handoff-sag"]["signals_require"]
+               if s["name"] == "fc_bus_open")
+    assert spec.get("vacuity_note")
+    assert "survive_to" in spec["vacuity_note"]
+    assert _max_ticks_only_has_companion_or_note(
+        spec, rhs.FAULT_EXPECTATIONS["handoff-sag"]["signals_require"]) is True
+
+
+def test_max_ticks_only_companion_guard_every_real_spec_is_compliant():
+    """Every max_ticks-only spec actually shipped satisfies the guard -- the
+    module imported cleanly, so this must hold; re-checked explicitly rather
+    than trusted implicitly."""
+    checked = 0
+    for name, expect in rhs.FAULT_EXPECTATIONS.items():
+        siblings = expect.get("signals_require") or []
+        flat_siblings = []
+        for s in siblings:
+            flat_siblings.append(s)
+            flat_siblings.extend(s.get("any_of") or ())
+        for spec in siblings:
+            for sub in [spec] + list(spec.get("any_of") or ()):
+                if "max_ticks" in sub and not any(k in sub for k in _BOUND_KEYS):
+                    checked += 1
+                    assert _max_ticks_only_has_companion_or_note(sub, flat_siblings), (
+                        name, sub.get("name"))
+    assert checked > 0
+    # mppt_asserted (max_ticks=0, no other bound key) has a real companion:
+    # mppt_released shares its aux_bit and carries min_ticks.
+    mppt_asserted = next(s for s in rhs.FAULT_EXPECTATIONS["mppt-tracking"]["signals_require"]
+                         if s["name"] == "mppt_asserted")
+    assert "max_ticks" in mppt_asserted and "vacuity_note" not in mppt_asserted
+
+
+# ── child_stream_continuity() ───────────────────────────────────────────────
+
+def test_child_stream_continuity_healthy_stream_passes():
+    child = _child(summary={"tx_frames": 1000, "send_errors": 0})
+    ok, detail = rhs.child_stream_continuity(child, duration_s=1.0)
+    assert ok is True
+    assert "1000/1000 frames" in detail
+
+
+def test_child_stream_continuity_98_percent_boundary_passes():
+    expected = rhs.HIL_DEFAULT_RATE_HZ * 10.0
+    child = _child(summary={"tx_frames": int(0.98 * expected), "send_errors": 0})
+    ok, _detail = rhs.child_stream_continuity(child, duration_s=10.0)
+    assert ok is True
+
+
+def test_child_stream_continuity_below_98_percent_fails():
+    expected = rhs.HIL_DEFAULT_RATE_HZ * 10.0
+    child = _child(summary={"tx_frames": int(0.90 * expected), "send_errors": 0})
+    ok, _detail = rhs.child_stream_continuity(child, duration_s=10.0)
+    assert ok is False
+
+
+def test_child_stream_continuity_any_send_error_fails_even_at_full_tx():
+    child = _child(summary={"tx_frames": 100000, "send_errors": 1})
+    ok, detail = rhs.child_stream_continuity(child, duration_s=1.0)
+    assert ok is False
+    assert "1 send error(s)" in detail
+
+
+def test_child_stream_continuity_missing_fields_is_unmeasured_none_not_false():
+    """F2: an older sim build with no `send_errors` field must report
+    UNMEASURED (None), which the caller must treat as unverifiable -- never
+    silently 'zero send errors'."""
+    child = _child(summary={"tx_frames": 1000})   # no send_errors key
+    ok, detail = rhs.child_stream_continuity(child, duration_s=1.0)
+    assert ok is None
+    assert "UNMEASURED" in detail
+
+
+def test_child_stream_continuity_no_duration_is_unmeasured():
+    child = _child(summary={"tx_frames": 1000, "send_errors": 0})
+    ok, _detail = rhs.child_stream_continuity(child, duration_s=None)
+    assert ok is None
+
+
+def test_child_stream_continuity_no_child_summary_is_unmeasured():
+    ok, _detail = rhs.child_stream_continuity({"status": "ok"}, duration_s=1.0)
+    assert ok is None
+
+
+# ── child_tx_healthy entry-level assertion (pi-silence) ─────────────────────
+
+def test_judge_scenario_child_tx_healthy_true_when_stream_continuous():
+    assert rhs.FAULT_EXPECTATIONS["pi-silence"]["child_tx_healthy"] is True
+    m = _metrics(fault_bits_seen=rhs.FAULT_PI_TIMEOUT, final_fault_flags=rhs.FAULT_PI_TIMEOUT,
+                fault_bits_before_survive=0, state_at_survive=2, survive_to_t=8.0)
+    child = _child(summary={"tx_frames": 14000, "send_errors": 0})
+    signals = _passing_signals("pi-silence")
+    passed, checks = rhs.judge_scenario("pi-silence", m, _events(), child,
+                                        signals=signals, duration_s=14.0)
+    healthy = [c for c in checks if c["name"] == "child_tx_healthy"][0]
+    assert healthy["passed"] is True
+
+
+def test_judge_scenario_child_tx_healthy_false_when_stream_dropped():
+    m = _metrics(fault_bits_seen=rhs.FAULT_PI_TIMEOUT, final_fault_flags=rhs.FAULT_PI_TIMEOUT,
+                fault_bits_before_survive=0, state_at_survive=2, survive_to_t=8.0)
+    child = _child(summary={"tx_frames": 10, "send_errors": 0})   # far below 98%
+    signals = _passing_signals("pi-silence")
+    passed, checks = rhs.judge_scenario("pi-silence", m, _events(), child,
+                                        signals=signals, duration_s=14.0)
+    healthy = [c for c in checks if c["name"] == "child_tx_healthy"][0]
+    assert healthy["passed"] is False
+    assert passed is False
+
+
+def test_judge_scenario_child_tx_healthy_unmeasured_fails_as_a_check_not_silently():
+    m = _metrics(fault_bits_seen=rhs.FAULT_PI_TIMEOUT, final_fault_flags=rhs.FAULT_PI_TIMEOUT,
+                fault_bits_before_survive=0, state_at_survive=2, survive_to_t=8.0)
+    child = _child(summary={})   # no tx_frames/send_errors at all
+    signals = _passing_signals("pi-silence")
+    passed, checks = rhs.judge_scenario("pi-silence", m, _events(), child,
+                                        signals=signals, duration_s=14.0)
+    healthy = [c for c in checks if c["name"] == "child_tx_healthy"][0]
+    assert healthy["passed"] is False
+    assert passed is False
+
+
+def test_scenarios_without_child_tx_healthy_get_no_such_check():
+    assert "child_tx_healthy" not in rhs.FAULT_EXPECTATIONS["sag"]
+    m = _metrics(fault_bits_seen=rhs.FAULT_UV_BUS, final_fault_flags=rhs.FAULT_UV_BUS)
+    passed, checks = rhs.judge_scenario("sag", m, _events(), _child(),
+                                        signals=_passing_signals("sag"))
+    assert not any(c["name"] == "child_tx_healthy" for c in checks)
+
+
+def test_pi_live_excusal_and_child_tx_healthy_share_one_implementation():
+    """The --pi-live PI_TIMEOUT excusal (judge_scenario's pi_live branch) and
+    the child_tx_healthy signal check must agree about what 'continuous'
+    means, because both attribute a fault to a live Pi rather than to the HIL
+    link -- verified behaviourally: identical child summaries must produce
+    identical continuity verdicts through both paths at the boundary."""
+    below_expected = int(0.90 * rhs.HIL_DEFAULT_RATE_HZ * 10.0)
+    child = _child(summary={"tx_frames": below_expected, "send_errors": 0})
+    cont_ok, _detail = rhs.child_stream_continuity(child, duration_s=10.0)
+    assert cont_ok is False
+    # And through judge_scenario's --pi-live excusal path on a scenario whose
+    # post-grace union is EXACTLY FAULT_ERROR|PI_TIMEOUT (the only union the
+    # excusal ever considers):
+    m = _metrics(final_fault_flags=rhs.FAULT_ERROR | rhs.FAULT_PI_TIMEOUT,
+                fault_bits_seen=rhs.FAULT_ERROR | rhs.FAULT_PI_TIMEOUT)
+    passed, checks = rhs.judge_scenario("charge-cruise", m, _events(), child,
+                                        pi_live=True, duration_s=10.0,
+                                        signals=_passing_signals("charge-cruise"))
+    fa = [c for c in checks if c["name"] == "fault_allow_only"][0]
+    # NOT continuous -> NOT excused -> the unexpected union fails fault_allow_only.
+    assert fa["passed"] is False
+
+
+# ── FAULT_EXPECTATIONS shape: the new entries ───────────────────────────────
+
+def test_fault_expectations_has_all_ten_new_entries():
+    for name in ("ems-y-b30-v1", "ems-y-b30-v3", "ems-y-b00-v1", "ems-y-b00-v3",
+                "ems-ftp75-5050", "ems-ftp75-socband",
+                "mppt-tracking", "charge-to-full", "pi-silence", "share-staircase"):
+        assert name in rhs.FAULT_EXPECTATIONS, name
+        assert rhs.FAULT_EXPECTATIONS[name].get("source"), name
+
+
+def test_fault_expectations_ems_y_b00_variants_assert_cut_and_restore_switches():
+    for name in ("ems-y-b00-v1", "ems-y-b00-v3"):
+        sig = rhs.FAULT_EXPECTATIONS[name]["signals_require"]
+        names = {s["name"] for s in sig}
+        assert {"bt_bus_cut", "bt_bus_restored", "fc_bus_cut", "fc_bus_restored"} <= names
+
+
+def test_fault_expectations_ems_y_b30_variants_assert_fc_current_biased_not_switches():
+    for name in ("ems-y-b30-v1", "ems-y-b30-v3"):
+        sig = rhs.FAULT_EXPECTATIONS[name]["signals_require"]
+        names = {s["name"] for s in sig}
+        assert "fc_current_biased" in names
+        assert "bt_bus_cut" not in names
+
+
+def test_fault_expectations_ems_ftp75_socband_allows_oc_fc():
+    expect = rhs.FAULT_EXPECTATIONS["ems-ftp75-socband"]
+    assert expect["allow_only"] & rhs.FAULT_OC_FC
+    assert "require" not in expect
+
+
+def test_fault_expectations_ems_ftp75_5050_is_fault_free():
+    expect = rhs.FAULT_EXPECTATIONS["ems-ftp75-5050"]
+    assert expect["allow_only"] == 0
+
+
+def test_fault_expectations_pi_silence_requires_pi_timeout():
+    expect = rhs.FAULT_EXPECTATIONS["pi-silence"]
+    assert expect["require"] == rhs.FAULT_PI_TIMEOUT
+    assert expect["not_before_s"] == pytest.approx(8.0)
+
+
+def test_fault_expectations_mppt_tracking_asserts_hunt_signature():
+    sig = rhs.FAULT_EXPECTATIONS["mppt-tracking"]["signals_require"]
+    names = {s["name"] for s in sig}
+    assert {"mppt_asserted", "mppt_released", "mppt_not_stuck_high",
+           "charging_occurred", "low_power_seen",
+           "tracking_released_not_tracking"} <= names
+
+
+def test_fault_expectations_charge_to_full_asserts_no_action_baseline():
+    sig = rhs.FAULT_EXPECTATIONS["charge-to-full"]["signals_require"]
+    names = {s["name"] for s in sig}
+    assert "fc_charge_still_open" in names
+    assert "reached_full" in names
+    assert "cv_flag" in names
+    assert "current_tapered" in names
+
+
+def test_fault_expectations_share_staircase_asserts_both_cuts_and_all_four_latencies():
+    sig = rhs.FAULT_EXPECTATIONS["share-staircase"]["signals_require"]
+    names = {s["name"] for s in sig}
+    assert {"bt_bus_cut", "bt_bus_restored", "fc_bus_cut", "fc_bus_restored",
+           "bt_cut_latency", "bt_restore_latency",
+           "fc_cut_latency", "fc_restore_latency"} <= names
+
+
+# ── --with-ftp75 ─────────────────────────────────────────────────────────────
+
+def test_build_plan_ftp75_scenarios_skipped_by_default():
+    plan = rhs.build_plan(_args())
+    for name in rhs.FTP75_SCENARIOS:
+        item = next(p for p in plan if p["name"] == name)
+        assert item["kind"] == "scenario"
+        assert item["argv"] is None
+        assert "LONG-CYCLE" in item["skip_reason"]
+
+
+def test_build_plan_with_ftp75_flag_runs_them():
+    plan = rhs.build_plan(_args(with_ftp75=True))
+    for name in rhs.FTP75_SCENARIOS:
+        item = next(p for p in plan if p["name"] == name)
+        assert item["argv"] is not None
+        assert not item.get("skip_reason")
+
+
+def test_build_plan_with_ftp75_does_not_affect_non_ftp75_scenarios():
+    plan_default = {p["name"]: p for p in rhs.build_plan(_args()) if p["kind"] == "scenario"}
+    plan_ftp75 = {p["name"]: p for p in rhs.build_plan(_args(with_ftp75=True))
+                 if p["kind"] == "scenario"}
+    for name in plan_default:
+        if name in rhs.FTP75_SCENARIOS:
+            continue
+        assert plan_default[name]["argv"] == plan_ftp75[name]["argv"], name
+
+
+def test_build_plan_pi_live_skips_ftp75_regardless_of_with_ftp75():
+    """Ordering matters: the --pi-live gate is checked BEFORE --with-ftp75, so
+    under both flags together the ftp75 scenarios are still skip-recorded,
+    with the pi-live reason (not the ftp75 one)."""
+    plan = rhs.build_plan(_args(pi_live=True, with_ftp75=True))
+    for name in rhs.FTP75_SCENARIOS:
+        item = next(p for p in plan if p["name"] == name)
+        assert item["argv"] is None
+        assert "pi-live" in item["skip_reason"].lower()
+        assert "LONG-CYCLE" not in item["skip_reason"]
+
+
+def test_full_argv_with_ftp75_flag_not_passed_through_to_child():
+    """--with-ftp75 is a run_hil_suite.py PLANNING flag (which scenarios enter
+    the plan at all) -- it must not leak into the child simulator's argv,
+    which knows nothing about it."""
+    plan = rhs.build_plan(_args(with_ftp75=True))
+    item = next(p for p in plan if p["name"] == "ems-ftp75-5050")
+    argv = rhs.full_argv(item, _args(with_ftp75=True))
+    assert "--with-ftp75" not in argv
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # 5. analyze_events()
 # ─────────────────────────────────────────────────────────────────────────
@@ -2579,15 +3287,33 @@ def test_soc_depletion_signal_spec_is_disjunctive_any_of_two_arms():
 
 
 def test_soc_depletion_override_does_not_leak_into_other_scenarios():
+    """soc-depletion overrides --soc0 to 0.20 (a low-SoC UV-latch stimulus);
+    charge-to-full overrides it to 0.990 (a next-to-FULL stimulus, 2026-08-31
+    wave 2). Both are legitimate per-scenario overrides and both are excluded
+    here -- the assertion is that NEITHER leaks into any OTHER scenario's
+    argv."""
     plan = rhs.build_plan(_args())
+    overridden = {"soc-depletion", "charge-to-full"}
     for p in plan:
-        if p["kind"] != "scenario" or p["name"] == "soc-depletion":
+        if p["kind"] != "scenario" or p["name"] in overridden:
             continue
         if p["argv"] is None:
-            # operator_required skip record ('drive' without --with-operator):
-            # no argv is ever built for it.
+            # operator_required / --pi-live / --with-ftp75 skip record: no
+            # argv is ever built for it.
             continue
         assert "--soc0" not in p["argv"], p["name"]
+
+
+def test_charge_to_full_soc0_override():
+    """charge-to-full's own argv carries the 0.990 override (arithmetic at
+    the scenario's FAULT_EXPECTATIONS entry: 0.995 - 0.990 = 90 A*s of
+    headroom to the Fully-Charged branch at the 1.0 A ceiling)."""
+    plan = rhs.build_plan(_args())
+    item = next(p for p in plan if p["name"] == "charge-to-full")
+    assert item["argv"] is not None
+    assert "--soc0" in item["argv"]
+    idx = item["argv"].index("--soc0")
+    assert item["argv"][idx + 1] == "0.990"
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -2979,6 +3705,19 @@ PI_LIVE_SKIP_SCENARIOS = {
     # 2026-08-31: both new EMS-driven scenarios join the skip set via their
     # "ems" metadata key -- same rule as ems-drive-cycle, no new code path.
     "ems-soc-band", "ems-dp-replay",
+    # 2026-08-31 wave 2: six more join via the SAME two metadata keys, no new
+    # code path either.  Four via "ems": the ems-y-* quartet (each carries
+    # "ems": "y-b*"), mppt-tracking ("ems": "mppt-harvest"), and pi-silence
+    # ("ems": "hold-5050"). Two via "pi_timeline": charge-to-full and
+    # share-staircase. The ems-ftp75-* pair is EMS-driven too (their "ems" is
+    # "hold-5050"/"soc-band") and so is caught by the same rule -- they are
+    # NOT listed separately because build_plan() orders the --pi-live gate
+    # BEFORE the --with-ftp75 gate (see the scenario_aux_preload_a-adjacent
+    # comment in build_plan()), so under --pi-live they are skip-recorded for
+    # the pi-live reason regardless of --with-ftp75.
+    "ems-y-b30-v1", "ems-y-b30-v3", "ems-y-b00-v1", "ems-y-b00-v3",
+    "mppt-tracking", "pi-silence", "charge-to-full", "share-staircase",
+    "ems-ftp75-5050", "ems-ftp75-socband",
 }
 
 
@@ -3037,11 +3776,11 @@ def test_build_plan_pi_live_non_skip_scenarios_unaffected():
 
 
 def test_build_plan_pi_live_total_count_still_40():
-    """Skip records still occupy a plan slot -- the total run count (42, since
-    the 2026-08-31 addition of ems-soc-band/ems-dp-replay) is unchanged under
+    """Skip records still occupy a plan slot -- the total run count (52, since
+    the 2026-08-31 wave-2 addition of ten more scenarios) is unchanged under
     --pi-live, only their kind (executed vs skipped) differs."""
     plan = rhs.build_plan(_args(pi_live=True))
-    assert len(plan) == 42
+    assert len(plan) == 52
 
 
 # ─────────────────────────────────────────────────────────────────────────

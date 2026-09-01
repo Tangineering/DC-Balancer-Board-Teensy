@@ -171,11 +171,20 @@ The board uses the **Silvertel Ag105** MPPT battery-charger module. Reconcile ag
 `AG105_Silvertel.pdf` and the BOM (`CHG`). Key behavioral facts that change the firmware:
 
 - **Control is via the `MPPT_DISABLE` GPIO (pin 5), not a current register.** Strategy:
-  assert `MPPT_DISABLE` **active during active braking/regen** (so the slow perturb-and-
-  observe MPPT loop doesn't fight the fast regen transient) and **release it during
+  assert `MPPT_DISABLE` **active during active braking/regen** (so the slow MPPT loop
+  doesn't fight the fast regen transient) and **release it during
   cruise/coast** so the Ag105 harvests. Implement this in `chargingControl()`. **Confirmed
   from PCB schematic: `MPPT_DISABLE` is active-LOW — pulling LOW inhibits the MPPT
-  perturb-and-observe loop; pulling HIGH releases it.** **FC-path bootstrap:** in cruise with
+  loop; pulling HIGH releases it.** **MECHANISM CORRECTED (2026-08-31, datasheet
+  p.10): the Ag105's MPPT is an INPUT-VOLTAGE-THRESHOLD regulator, not perturb-and-observe
+  (earlier "P&O" wording here and in two .ino comments was unsourced lore) — charging
+  commences only when the input exceeds a threshold set by an MPPTS resistor or I2C reg
+  0x02 (11-33 V, ~0.088 V/count; DEFAULT 18 V with MPPTS open). ⚠️ OPEN HARDWARE QUESTION
+  (R1): VCHG-IN is fed from the ~15.95 V bus, firmware never writes reg 0x02, and the
+  schematic's MPPTSEL sits on an unverified off-board header — if nothing is fitted, the
+  released Ag105 may never charge from this bus (firmware would hunt release/re-assert);
+  the fix would be writing reg 0x02 to ~12 V in a future firmware round. The two stale
+  .ino comments (~:10029, :10047) are to be corrected in the next firmware round.** **FC-path bootstrap:** in cruise with
   `charge_goal > 0`, `chargingControl()` opens `FC_CHARGE_ENABLE` on *intent* (not on
   readiness) to power and boot the charger — gating the path on `ag105IsReady()` would
   deadlock, since the charger can't become ready until it is powered. Only the MPPT *release*
@@ -2123,3 +2132,92 @@ function.
   {0.30/0.70 vs 0/1 share band} x {1 vs 3 m/s Vmax}; FTP75 scaled to 3 m/s peak per
   EMS strategy; Ag105 MPPT-tracking emulation; +3 orchestrator proposals). The SDP
   material suggests a future stochastic-DP route beyond Round C.
+
+---
+
+## Status & session addendum (2026-08-31e, Round C: scenario expansion — Y-profiles, FTP75, MPPT, watchdog, staircase, charge-to-full)
+
+Orchestrated tooling round in two implementation waves (Opus x2), independent Sonnet
+test-writer (synchronized hold-and-reconcile across the fix round), Opus data-integrity +
+Sonnet contract reviews (the latter with two verification sub-agents), Opus fix round.
+Python tooling + committed data + docs; FW stays v23; wire protocol frozen. Ten new
+scenarios (15 -> 21 registered; plan 52 runs), two prerequisites, five check-kind
+extensions, one datasheet correction, one open hardware question.
+
+- **Prerequisites:** per-scenario `ems_run_exit_s` (module run-exit constants would have
+  ended a 350 s cycle at t=55) and generic `aux_preload_a` (ramped; import-assert refuses
+  it on bespoke-branch and dp-replay scenarios — the DP fingerprint does not cover it,
+  deferred until a second DP table lands). Existing scenarios byte-identical.
+- **Four `ems-y-*` scenarios**: the firmware's 16-region State-98 'Y' COMBINED_PROFILE
+  (.ino:3162-3179) transcribed verbatim (assert-pinned, 40000 ms) with
+  `advanceComboRegion()` semantics reproduced exactly (clip AFTER interpolation), one
+  factory over {b 0.30/0.00} x {Vmax 1/3}. Split-by-band objectives: b30 + 0.60 A preload
+  = genuinely closed-loop share tracking; b00 unloaded = setpoint-latch cut/restore
+  topology coverage — the RESTORE assertions are the suite's first-ever latch-release
+  checks. **Live: BT cut 22.021/restore 23.503, FC cut 34.311 (predicted 34.31)/restore
+  36.51 — millisecond agreement, fault-free.**
+- **Two `ems-ftp75-*` scenarios** (hold-5050, soc-band) on the FIRST 340 s of the EPA
+  FTP75 (operator-directed, matching references/Systemic_Scaling_...pdf; the cut lands in
+  a native standstill, 0 mph from t=333). Raw ftpcol.txt committed under
+  references/drive_cycles/ (sha-pinned, .gitattributes -text guards autocrlf — review M2)
+  -> stdlib generator -> generated tools/ftp75_profile.py (234 points, err 4.4e-16,
+  import-bound to its generator's constants so a stale/hand-edited module is an
+  ImportError — review M3). Peak 56.7 mph @ t=240 -> 3.0 m/s. FTP75_PRELOAD_A 0.65
+  (closed-loop gate 100% of the run). socband variant allows OC_FC (ruling b; mechanism
+  is the share-bias-at-peak transient — the preload forecloses the charge window, NOT the
+  spec'd charging path). Suite gate `--with-ftp75` (default OFF; SKIP records; +11.7 min).
+  DP-table variant deferred (~21 min offline; generalizations landed).
+- **Ag105 MPPT CORRECTED + EMULATED; open hardware question R1.** Datasheet p.10: the
+  MPPT is an INPUT-VOLTAGE-THRESHOLD regulator (default 18 V, MPPTS open), NOT
+  perturb-and-observe — CLAUDE.md §3 corrected (see the dated note there), the two stale
+  .ino comments (:10029, :10047) deferred to the next firmware round. Threshold gate
+  emulated behind `mppt_emulation` (default False, existing traces byte-identical). NEW
+  scenario `mppt-tracking` (mppt-harvest strategy, cruise + braking charge windows):
+  **the predicted release/re-assert HUNT is CONFIRMED ON HARDWARE — 138 MPPT_DISABLE
+  toggles, 80 ms period, status 0x09 released-and-refusing observed.** Under the
+  datasheet-default threshold, cruise harvest CANNOT hold on a 15.95 V bus: if no MPPTS
+  resistor is fitted (R1, operator to check the MPPTSEL header), the real charger hunts
+  the same way and the fix is firmware writing reg 0x02 (~12 V).
+- **`pi-silence`**: the Pi watchdog's FIRST-EVER exercise — injection alive, commands
+  muted at t=8 (PiCommander.mute_after). **Live: carried-in latch cleared at 0.501 s,
+  watchdog re-latch at 8.498 s (PI_TIMEOUT_MS 500 + phase), motor halted, State 99 held**
+  (injection alive -> no fw v23 run boundary -> latch persists, as derived). New
+  `child_tx_healthy` check (shared child_stream_continuity() with the --pi-live excusal)
+  is the PI_TIMEOUT-vs-HIL_STALE discriminator (same 0x8010 bit; error_code still not on
+  the observation frame — standing protocol item).
+- **`share-staircase`**: two-phase characterization (governor rails at 1.2 A: I_fc swept
+  0.915 -> 0.300 live vs predicted 0.90/0.30; cut/restore excursions at 0.55 A). New
+  `switch_fall_latency_ms` check kind (+ edge:"rise") turns the closed handoff-latency
+  tracker into per-campaign measured data — live latencies 16/15/4/17 ms, all in the
+  [0,20)+L model. Premise corrected in-source: the 20 ms is COMMAND-ARRIVAL phase
+  (PI_CMD_HZ 50), not a firmware tick (SHARE_CTRL_TS_US is 1000 us).
+- **`charge-to-full`**: first-ever FULL/CV coverage (suite --soc0 0.990 override). **Live:
+  GENSTAT FULL at t=100.32 (predicted ~100), CV flag, full taper, FC_CHARGE held open —
+  the firmware's documented no-action-on-FULL baseline asserted positively.**
+- **Check-kind extensions** (all with import-shape asserts): aux_bit, value_mask/
+  value_equals (closes the hex-string ag105_status float() silent-skip trap),
+  signals-side max_value (unmeasured FAILS), switch_fall_latency_ms, child_tx_healthy.
+  Plus: strictly_decreases_by windows must clear pi_timeline entries by >= one command
+  period (review H2 — the staircase check opened ON its stimulus and lost the 50 Hz
+  phase race ~19/20), max_ticks-only bit specs need a companion or vacuity_note, max_ms
+  specs refuse stray tick bounds. `run_hil_suite --list` cp1252 crash fixed permanently
+  (stdout/stderr utf-8 reconfigure + the two replay-description arrows -> ASCII).
+- **Reviews:** data-integrity 2 HIGH (the standing .ino staging exclusion; H2 above) +
+  4 MED (M1 mppt toggle ceiling re-derived 10000->2200 vs the reachable 3000; M2
+  .gitattributes; M3 generator binding; M4 dp-replay/preload guard) + 9 LOW; contract
+  (with sub-agents): Y-table CLEAN row-by-row (both reviewers independently), 3 MED
+  (two .ino citation fixes; constants_hash changelog — 19 additive names enumerated by
+  running the collector, pre-Round-C hashes not comparable) + LOWs. All accepted, all
+  applied.
+- **Tests: 927 passed + 27 skipped (.venv_hil, six suites) / 1233 (miniforge, all
+  tools/) — orchestrator-rerun.** Live smokes: all six board-testable new scenarios ran
+  against fw v23 with the designed outcomes (details above); the four ems-y/ftp75
+  variants not smoked live (b30-v1, b00-v3, both ftp75) exercise the same code paths.
+- **Untracked, other-session-owned, deliberately NOT committed:** tools/tpm_generator.py
+  + test, references/EMS/TPM_{fullsize,scaled}.mat + TPM_generator.m + Pdem_cycles/ +
+  generated/ (and the Round-B TPM.mat is deleted in that workstream), docs/
+  HIL_SCENARIOS.md, PSCAD/. The owning session should commit them.
+- **Next:** first full campaign over the 52-run plan (the new entries' modelled
+  thresholds calibrate there); R1 answer (MPPTSEL header) settles the mppt-tracking
+  expectation + the reg-0x02 firmware question; FTP75 DP table when wanted
+  (--with-ftp75 + ~21 min offline solve).

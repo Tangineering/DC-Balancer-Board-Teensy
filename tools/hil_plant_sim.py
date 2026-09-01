@@ -164,6 +164,33 @@ AG105_SETTLE_S = 0.5         # s     matches AG105_SETTLE_MS in the .ino
 AG105_TAU_S = 0.4            # s     first-order ramp of the measured current
 AG105_V_IN_MIN = 8.0         # V     input rail below which the module cannot charge
 
+# ── MPPT input-voltage threshold (Layer 1 emulation, 2026-08-31) ────────────
+# ⚠️ DATASHEET CORRECTION.  The Ag105's MPPT is an INPUT-VOLTAGE-THRESHOLD
+# regulator, NOT a perturb-and-observe tracker.  AG105_Silvertel.pdf p.10:
+# charging commences only when the input voltage exceeds a threshold, settable
+# 11-33 V through an MPPTS resistor or I2C register 0x02, and DEFAULTING TO 18 V
+# with MPPTS open.  The "perturb-and-observe" wording that appears in
+# teensy_controller.ino's comments and in CLAUDE.md Sec 3 is repo lore with no
+# datasheet backing; it is corrected in the tooling docs and in the Plant
+# docstring below.  Nothing in the FIRMWARE depends on the distinction — it
+# drives one GPIO either way — but a plant model that claims to emulate MPPT
+# must emulate the mechanism the part actually has.
+#
+# TODO(verify) — OPEN OPERATOR QUESTION (R1): whether this board fits an MPPTS
+# resistor is UNCONFIRMED.  An off-board MPPTSEL header exists on the schematic;
+# its contents are unknown.  With the header open the threshold is the 18 V
+# default modelled here.  If a resistor sets a LOWER threshold, this constant and
+# the `mppt-tracking` scenario's expectations move TOGETHER — the scenario's
+# predicted hunt is contingent on R1, and a campaign that does not see the hunt
+# is evidence about R1, not a scenario defect.
+AG105_MPPT_V_THRESH = 18.0   # V     input rail above which tracking permits charging
+# TODO(verify): chatter guard on the threshold COMPARISON only (not on the pin).
+# No datasheet hysteresis figure is published; 0.5 V is a modelling choice sized
+# to be well above the simple engine's bus ripple and well below the ~2 V gap
+# between the 15.95 V bus and the 18 V threshold, so it cannot decide the
+# scenario's outcome either way.
+AG105_MPPT_V_HYST = 0.5      # V
+
 # MDAC word format (AD5443): control nibble 0x1 = load-and-update, then a 12-bit code.
 MDAC_CMD_LOAD_UPDATE = 0x1000
 MDAC_RES = 4095
@@ -241,6 +268,36 @@ from hil_electrical import (                                   # noqa: E402
     BatterySource, FuelCellSource, ElectricalSim, NoiseConfig,
     BATT_CAPACITY_AH, C_VESC_DEFAULT,
 )
+# GENERATED module — tools/gen_ftp75_profile.py, from the committed EPA raw
+# file references/drive_cycles/ftpcol.txt (sha256 verified at generation).
+# Never hand-edited; regenerate instead.  See the `ems-ftp75-*` scenarios.
+from ftp75_profile import (                                    # noqa: E402
+    FTP75_PROFILE, FTP75_T_END, FTP75_RAW_SHA256, FTP75_SCALE_MPH_TO_MPS,
+)
+# ...and the GENERATOR, imported purely to BIND the generated module to it.
+# gen_ftp75_profile's module scope is constants and pure functions only (its
+# argparse surface is entirely inside main()), so importing it costs nothing and
+# opens no files.  Without this binding a hand-edited or stale ftp75_profile.py
+# is indistinguishable from a freshly generated one: the table would silently
+# become "some numbers" rather than "the EPA bytes times one constant", which is
+# the entire reason the generator exists (see its docstring, and the fw v8
+# slot-count transcription lesson in CLAUDE.md).  Two equalities are enough to
+# pin the chain end to end — the RAW INPUT (sha256 of ftpcol.txt) and the ONE
+# TRANSFORM applied to it (the mph -> m/s scale).
+import gen_ftp75_profile                                       # noqa: E402
+if (FTP75_RAW_SHA256 != gen_ftp75_profile.RAW_SHA256
+        or FTP75_SCALE_MPH_TO_MPS != gen_ftp75_profile.SCALE_MPH_TO_MPS):
+    raise ImportError(
+        "tools/ftp75_profile.py is STALE or HAND-EDITED - it does not match "
+        "tools/gen_ftp75_profile.py.\n"
+        "  raw sha256 : generated %s\n"
+        "               generator %s\n"
+        "  mph->m/s   : generated %r\n"
+        "               generator %r\n"
+        "Regenerate with:\n"
+        "    .venv_hil/Scripts/python.exe tools/gen_ftp75_profile.py --force"
+        % (FTP75_RAW_SHA256, gen_ftp75_profile.RAW_SHA256,
+           FTP75_SCALE_MPH_TO_MPS, gen_ftp75_profile.SCALE_MPH_TO_MPS))
 
 # ── Output artifact convention ──────────────────────────────────────────────
 # Every HIL artifact this tool writes lands under "<repo>/HIL Results" unless the
@@ -783,14 +840,22 @@ class Plant:
         FC code, get more FC current) without claiming the true gain.
       * The Ag105 charger is modelled at the STATUS level only: input power in ->
         settle delay -> "Charging" with a first-order current ramp toward the 2.5 A
-        configured ceiling.  There is no battery state of charge, no CV taper and no
-        MPPT perturb-and-observe loop; MPPT_DISABLE only clears the tracking flags in
-        the status byte.  The I2C transport and the config handshake are not modelled
-        at all (the firmware skips them entirely under HIL).
+        configured ceiling.  CV taper exists only as the SoC-triggered Fully-Charged
+        branch.  The I2C transport and the config handshake are not modelled at all
+        (the firmware skips them entirely under HIL).
+      * MPPT: by DEFAULT (`mppt_emulation=False`) MPPT_DISABLE only clears the two
+        tracking FLAGS in the status byte and has no effect on charging, which is
+        why the pin has never been causally load-bearing in this rig.  With
+        `mppt_emulation=True` the part's actual mechanism is modelled at LAYER 1:
+        an INPUT-VOLTAGE THRESHOLD (AG105_MPPT_V_THRESH, datasheet p.10), NOT a
+        perturb-and-observe tracker — see the constant's banner, including the R1
+        open question about the MPPTS resistor.  The tracking DYNAMICS (how the
+        module walks its operating point once above the threshold) are still not
+        modelled at all.
     """
 
     def __init__(self, electrical=None, soc0=0.7, capacity_ah=BATT_CAPACITY_AH,
-                 ag105_i_max=AG105_I_MAX):
+                 ag105_i_max=AG105_I_MAX, mppt_emulation=False):
         # `ag105_i_max` is a SCENARIO PARAMETER (SCENARIOS[...]["chg_i_ceiling_a"]),
         # in the same class as `vesc_cap_f`: it does not model the firmware, it
         # sizes the stimulus.  The firmware always configures the 2.5 A profile
@@ -799,6 +864,15 @@ class Plant:
         # PATH coverage rather than ceiling validation.  See the charge-fault /
         # charge-regen entries for the per-scenario current budgets.
         self.ag105_i_max = float(ag105_i_max)
+        # `mppt_emulation` is a SCENARIO PARAMETER in the same class as
+        # `ag105_i_max` (SCENARIOS[...]["mppt_emulation"]).  DEFAULT FALSE, so
+        # every scenario that predates it produces a byte-identical trace: the
+        # threshold gate below is the only code it reaches, and it is skipped
+        # entirely when the flag is clear.
+        self.mppt_emulation = bool(mppt_emulation)
+        # Latched inhibit state for the threshold comparison's hysteresis.  Only
+        # meaningful when `mppt_emulation` is set; see the charger branch.
+        self.mppt_inhibited = False
         self.v = 0.0          # m/s
         self.v_bus = 0.0      # V
         self.i_fc = 0.0
@@ -993,11 +1067,59 @@ class Plant:
         else:
             self.chg_powered_s = 0.0
 
+        # ── MPPT input-voltage threshold (Layer 1, opt-in) ───────────────────
+        # THE PART'S ACTUAL MECHANISM (AG105_Silvertel.pdf p.10): charging
+        # commences only above an input-voltage threshold, 18 V by default with
+        # MPPTS open.  See the AG105_MPPT_V_THRESH banner, including R1.
+        #
+        # THE ASYMMETRY IS THE DATASHEET'S OWN, not a modelling shortcut: the
+        # threshold belongs to the MPPT regulator, so it binds only while
+        # tracking is RELEASED.  MPPT_DISABLE is ACTIVE-LOW, so:
+        #   pin HIGH (bit set) = tracking released -> the threshold applies;
+        #   pin LOW            = tracking inhibited -> it does not, and the
+        #                        existing constant-current behaviour is verbatim.
+        # Hysteresis is on the VOLTAGE COMPARISON only (release needs
+        # thresh + hyst, inhibit needs < thresh), never on the pin — the pin is
+        # the firmware's output and this model must not filter it.
+        if not (self.mppt_emulation and chg_powered and (aux & AUX_MPPT_DISABLE)):
+            self.mppt_inhibited = False
+        elif self.mppt_inhibited:
+            if v_chg_in >= AG105_MPPT_V_THRESH + AG105_MPPT_V_HYST:
+                self.mppt_inhibited = False
+        elif v_chg_in < AG105_MPPT_V_THRESH:
+            self.mppt_inhibited = True
+
         if not chg_powered:
             # Input removed: the module is dark.  0x00 is what the firmware's own failed-read
             # path leaves behind, and it decodes as GENSTAT "Battery Disconnect".
             self.i_charge = 0.0
             self.ag105_status = AG105_ST_DISCONNECT
+        elif self.mppt_inhibited and self.chg_powered_s >= AG105_SETTLE_S:
+            # Powered and settled, tracking RELEASED, but the input rail is below
+            # the MPPT threshold: the module does not commence charging.  Current
+            # decays on the same AG105_TAU_S the ramp uses, and GENSTAT reports
+            # 001 "Low Power" — which is NOT one of ag105IsReady()'s accepted
+            # states, so the firmware sees the charger drop out of readiness.
+            #
+            # MPPT_EN is set (the pin released it) but PWR_TRACK is CLEAR: the
+            # module is not tracking input power, it is refusing to.  That flag
+            # pair — 0x08 with bit 4 low — is the observable this whole gate adds,
+            # and it cannot be produced by any other path in this model.
+            #
+            # The `chg_powered_s >= AG105_SETTLE_S` term keeps the bring-up window
+            # ahead of this branch: a module still settling reports Bring-Up
+            # Charge regardless of the pin, exactly as before.
+            #
+            # L1 (review 2026-08-31) — PRECEDENCE: this branch sits AHEAD of the
+            # `soc >= 0.995` FULL branch, so a full pack whose input rail is
+            # under the threshold with tracking released reports LOW_POWER, not
+            # FULL.  That ordering is the physical one (a module refusing to
+            # draw input power is not charging to full), and it is UNREACHABLE
+            # in every shipped scenario: `mppt_emulation` is on only in
+            # `mppt-tracking`, whose soc0 is nowhere near 0.995, and
+            # `charge-to-full` deliberately leaves it off.
+            self.i_charge += (0.0 - self.i_charge) * (dt / AG105_TAU_S)
+            self.ag105_status = AG105_ST_LOW_POWER | AG105_FLAG_MPPT_EN
         elif self.chg_powered_s < AG105_SETTLE_S:
             # Bring-up window (AG105_SETTLE_MS in the .ino).  Report Bring-Up Charge with no
             # current yet, so ag105IsReady() stays false until the module is genuinely up —
@@ -1409,7 +1531,7 @@ class PiCommander:
     PI_CMD_HZ = 50.0
 
     def __init__(self, timeline, rate_hz=PI_CMD_HZ, policy=None, policy_name=None,
-                 always_active=False):
+                 always_active=False, mute_after=None):
         self.timeline = sorted(timeline or [], key=lambda e: e[0])
         self.period = 1.0 / rate_hz
         self.next_tx = 0.0
@@ -1440,6 +1562,26 @@ class PiCommander:
         # and held-field semantics are identical) and defaults False, so every
         # existing construction behaves byte-for-byte as before.
         self.always_active = bool(always_active)
+        # ── `pi-silence`: stop commanding at a scripted time ─────────────────
+        # WHY THIS EXISTS.  The firmware's Pi watchdog (checkPiWatchdog,
+        # .ino:4976-4985, called unconditionally from loop() at :4381) stamps
+        # `last_rx_ms` ONLY in the 22-byte command branch (:5043-5044).  It is
+        # therefore fully INDEPENDENT of the injection stream's own staleness
+        # clock (`hilLastFrameMs`, :5132) — and until now nothing in this suite
+        # could exercise it, because apply_scenario()'s `tx_enabled` gates BOTH
+        # streams together (:4172 injection, :4192 commands) and `comm-loss`
+        # kills both at once.  Muting the COMMANDER alone, with injection
+        # continuing at full rate, is the only stimulus that isolates it.
+        #
+        # None (the default) means "never mute", so every existing construction
+        # is byte-identical.  A muted tick returns None WITHOUT advancing
+        # `next_tx`, `counter` or `sent` — the commander goes silent, it does not
+        # accumulate a backlog to burst out later.
+        self.mute_after = None if mute_after is None else float(mute_after)
+
+    def muted(self, t):
+        """True once this commander has gone permanently silent (`mute_after`)."""
+        return self.mute_after is not None and t >= self.mute_after
 
     def active(self):
         """True if this commander will ever transmit (timeline, EMS policy, or an
@@ -1454,6 +1596,14 @@ class PiCommander:
         for an EMS policy.  It is invoked ONLY on a due commander tick (50 Hz), not
         on every 1 kHz sim tick — assembling the view is the caller's cost and there
         is no reason to pay it 20x over."""
+        if self.muted(t):
+            # `pi-silence`: the emulated Pi has stopped.  Return BEFORE the
+            # timeline walk and before any counter moves — a dead Pi neither
+            # advances its own script nor queues packets.  `self.state` freezes
+            # at whatever it last sent, which is what the cmd_* CSV columns
+            # should show ("what this process last commanded"), and `sent` stops
+            # rising so the exit summary reports the real packet count.
+            return None
         while self.idx < len(self.timeline) and self.timeline[self.idx][0] <= t:
             self.state.update(self.timeline[self.idx][1])
             self.last_applied = self.timeline[self.idx]
@@ -1590,6 +1740,34 @@ EMS_DEFAULT_CRUISE_MPS = 1.2
 EMS_RUN_ENTRY_S = 3.0
 
 
+# ── Per-scenario Run-exit override (2026-08-31) ─────────────────────────────
+# Every strategy below carries its OWN Run-exit constant, derived against the
+# ONE scenario it was written for (EMS_RUN_EXIT_S 55.0 against ems-drive-cycle,
+# EMS_REGEN_RUN_EXIT_S 43.0 against charge-regen, SOC_BAND_RUN_EXIT_S 58.0
+# against ems-soc-band).  That is fine while a strategy has one scenario and
+# fatal the moment it has two: `hold-5050` on a 350 s FTP-75 cycle would hand
+# back MODE_SAFE at t = 55 and spend the remaining 295 s parked in Idle,
+# commanding a drive cycle nobody is driving.
+#
+# A scenario may therefore declare `ems_run_exit_s`, which reaches the policy
+# through fb["ems_run_exit_s"].  A scenario that declares nothing puts None on
+# the key and every strategy falls back to its own constant, so EVERY EXISTING
+# SCENARIO IS BYTE-IDENTICAL — the override is opt-in per scenario, not a
+# reinterpretation of the constants.
+#
+# It is deliberately NOT in FB_TELEMETRY_EQUIV_KEYS: like `v_profile`, it is a
+# HOST-SIDE SCRIPT parameter and not feedback at all.  A real Pi decides its own
+# mission length; it does not read one off a packet.
+def ems_run_exit(fb, default):
+    """The Run-exit time this policy should use: the scenario's override if it
+    declared one, else the strategy's own constant.
+
+    Explicit None test, not `or`: a scenario declaring 0.0 (a degenerate but
+    legal "never enter Run") must not silently fall back to 55 s."""
+    val = fb.get("ems_run_exit_s")
+    return float(default) if val is None else float(val)
+
+
 # F14(b): the time ems_hold_5050 hands the firmware back MODE_SAFE, closing the
 # drive cycle out (Run -> Finish -> Idle) instead of ending the run parked in
 # State 2. Chosen against ems-drive-cycle's own ems_v_profile, which reaches
@@ -1627,7 +1805,7 @@ def ems_hold_5050(t, fb):
     v_sp = fb.get("v_profile")
     if v_sp is None:
         v_sp = EMS_DEFAULT_CRUISE_MPS
-    in_run = EMS_RUN_ENTRY_S <= t < EMS_RUN_EXIT_S
+    in_run = EMS_RUN_ENTRY_S <= t < ems_run_exit(fb, EMS_RUN_EXIT_S)
     return {
         "mode_cmd": MODE_HYBRID if in_run else MODE_SAFE,
         "power_share_setpoint": 0.50,
@@ -1708,12 +1886,123 @@ def ems_regen_harvest(t, fb):
     charging = any((a + EMS_REGEN_CHARGE_LEAD_IN_S) <= t
                    < (b - EMS_REGEN_CHARGE_LEAD_OUT_S)
                    for a, b in EMS_REGEN_BRAKE_WINDOWS)
-    in_run = EMS_RUN_ENTRY_S <= t < EMS_REGEN_RUN_EXIT_S
+    in_run = EMS_RUN_ENTRY_S <= t < ems_run_exit(fb, EMS_REGEN_RUN_EXIT_S)
     return {
         "mode_cmd": MODE_HYBRID if in_run else MODE_SAFE,
         "power_share_setpoint": 0.50,
         "v_setpoint": v_sp,
         "charge_goal": 1.0 if charging else 0.0,
+    }
+
+
+# ── mppt-harvest: regen-harvest PLUS low-cruise FC-path charge windows ──────
+#
+# A VARIANT of `regen-harvest`, sharing its profile and its braking windows.
+# ⚠️ `ems_regen_harvest` is NOT modified and NOT called from here: `charge-regen`
+# has pinned measurements across five campaigns, and a shared implementation
+# would let a change made for this scenario move that scenario's stimulus.  The
+# two policies share CONSTANTS (EMS_REGEN_BRAKE_WINDOWS and the two lead times)
+# and the scenario shares the ems_v_profile LIST OBJECT, which is the level at
+# which sharing is safe.
+#
+# WHAT IT ADDS: charge_goal is ALSO asserted on the profile's LOW-CRUISE
+# PLATEAUS (0.4 m/s, between the braking windows).  There the commanded motor
+# current is positive, so chargingControl() takes its CRUISE branch
+# (the cruise else-block, .ino:10037-10050): FC_CHARGE_ENABLE opens, BT drops
+# off the bus, and the
+# charger is fed from VBUS — which is the ONLY path on this board that presents
+# the MPPT threshold with a rail it can fail.  The regen path feeds the charger
+# from V-MOT with MPPT_DISABLE held LOW, where the threshold does not apply by
+# construction.
+EMS_MPPT_CRUISE_WINDOWS = ((16.1, 18.0), (28.1, 30.0), (39.1, 41.0))
+# Inset from the plateau edges.  IN: 0.3 s, longer than regen's 0.2 s lead-in,
+# because the command must have gone POSITIVE again after a braking ramp before
+# charge_goal may be asserted — asserting it while `current < -0.1` would take
+# the regen branch and never open FC_CHARGE.  OUT: 0.1 s, released before the
+# next acceleration ramp begins.
+EMS_MPPT_CRUISE_LEAD_IN_S = 0.30
+EMS_MPPT_CRUISE_LEAD_OUT_S = 0.10
+
+
+def ems_mppt_harvest(t, fb):
+    """mppt-harvest — regen-harvest plus FC-path charge windows at low cruise.
+
+    name       : mppt-harvest
+    intent     : make MPPT_DISABLE CAUSALLY LOAD-BEARING for the first time.  With
+                 `mppt_emulation` on (SCENARIOS["mppt-tracking"]), the plant's
+                 Ag105 refuses to charge while tracking is RELEASED and the input
+                 rail is below AG105_MPPT_V_THRESH.  The bus is ~15.95 V and the
+                 datasheet default threshold is 18 V, so the FC path cannot clear
+                 it — and the firmware releases tracking only once the charger
+                 reports ready.
+    fields     : mode_cmd (SAFE -> HYBRID at EMS_RUN_ENTRY_S, back to SAFE at the
+                 scenario's ems_run_exit_s), v_setpoint (the scenario's
+                 ems_v_profile), power_share_setpoint (0.50 constant), charge_goal
+                 (1.0 inside a BRAKING window or a LOW-CRUISE window, else 0.0).
+    feedback   : `fb["t"]`, `fb["v_profile"]` and the scenario's ems_run_exit_s
+                 ONLY — portable to the real Pi (FB_TELEMETRY_EQUIV_KEYS).
+
+    ⚠️ THE PREDICTED CLOSED-LOOP BEHAVIOUR IS A HUNT, and it is this model's
+    PREDICTION rather than an observation.  Contingent on R1 (see
+    AG105_MPPT_V_THRESH): if the board fits an MPPTS resistor setting a threshold
+    below the bus voltage, none of this happens and the run harvests normally.
+
+    Under the 18 V default the loop closes like this, at the firmware's own
+    50 Hz charger cadence (CHARGING_CTRL_PERIOD_US 20000, and pollAg105() on the
+    same 20 ms telemetry gate, .ino:4406-4412):
+        charge_goal>0, charger dark  -> MPPT_DISABLE LOW (not ready)
+        threshold does not apply     -> module settles (0.5 s), then CHARGING
+        firmware sees CHARGING       -> ag105IsReady() -> MPPT_DISABLE HIGH
+        threshold now applies, 15.95 < 18 -> LOW_POWER, current decays
+        firmware sees LOW_POWER      -> not ready -> MPPT_DISABLE LOW
+        ... and round again.
+    chargingControl() acts on the PREVIOUS poll's status, so the firmware's
+    decision LAGS the module by one poll in BOTH directions: the half-cycle is
+    2 charger ticks (~40 ms) and the FULL PERIOD is 4 (~80 ms), at ~50 % duty.
+    Against AG105_TAU_S = 0.4 s that is a ~5 % move per half-cycle, so I_charge
+    does not collapse — it equilibrates near HALF the configured ceiling with
+    visible ripple.  The scenario's signal checks are derived from that
+    equilibrium, not from the ceiling.
+
+    MEASURED against this model (offline probe, 2026-08-31, FC-charge branch on a
+    15.95 V bus at a 1.0 A ceiling): full period 80.0 ms, pin HIGH 50.0 % of
+    ticks, GENSTAT "Low Power" on 50.0 %, MPPT_EN-without-PWR_TRACK on 50.0 %,
+    I_charge equilibrium 0.465-0.525 A.  Those are the numbers the suite's signal
+    thresholds are set against.  ⚠️ They are the MODEL's, not hardware's.
+    (Re-run 2026-08-31 review round, same harness: period 80.0 ms, duty 50.0 %,
+    equilibrium 0.472-0.525 A — reproduced.)
+
+    THE WINDOW BUDGET, because the suite's tick ceilings are derived from it and
+    an earlier draft of them used the wrong figure.  MPPT_DISABLE can only be
+    HIGH where THIS strategy asserts charge_goal on the cruise path, i.e. inside
+    EMS_MPPT_CRUISE_WINDOWS INSET by the two lead times, not across the whole
+    plateaus:
+        3 x (1.9 - EMS_MPPT_CRUISE_LEAD_IN_S - EMS_MPPT_CRUISE_LEAD_OUT_S)
+          = 3 x 1.5 s = 4.5 s of charge-goal time,
+        minus 3 x AG105_SETTLE_S = 3.0 s in which the pin can be HIGH.
+    So ~1500 ticks hunting at 50 % duty, against ~3000 if it released and stayed
+    released.  (The retired figures were 5.7 s / 4.2 s, taken from the
+    un-inset plateaus.)
+
+    THE FINDING THIS PREDICTS, if R1 resolves to "no resistor": cruise-time
+    harvesting on the FC path CANNOT hold on a 15.95 V bus with MPPT released.
+    That is a statement about the HARDWARE, and the point of running it.
+    """
+    v_sp = fb.get("v_profile")
+    if v_sp is None:
+        v_sp = EMS_DEFAULT_CRUISE_MPS
+    braking = any((a + EMS_REGEN_CHARGE_LEAD_IN_S) <= t
+                  < (b - EMS_REGEN_CHARGE_LEAD_OUT_S)
+                  for a, b in EMS_REGEN_BRAKE_WINDOWS)
+    cruising = any((a + EMS_MPPT_CRUISE_LEAD_IN_S) <= t
+                   < (b - EMS_MPPT_CRUISE_LEAD_OUT_S)
+                   for a, b in EMS_MPPT_CRUISE_WINDOWS)
+    in_run = EMS_RUN_ENTRY_S <= t < ems_run_exit(fb, EMS_REGEN_RUN_EXIT_S)
+    return {
+        "mode_cmd": MODE_HYBRID if in_run else MODE_SAFE,
+        "power_share_setpoint": 0.50,
+        "v_setpoint": v_sp,
+        "charge_goal": 1.0 if (braking or cruising) else 0.0,
     }
 
 
@@ -1964,7 +2253,7 @@ class SocBandStrategy:
             self.charging = (deficit_gate and cruising
                              and i_tot <= SOC_BAND_CHARGE_ENTER_ITOT_A)
 
-        in_run = EMS_RUN_ENTRY_S <= t < SOC_BAND_RUN_EXIT_S
+        in_run = EMS_RUN_ENTRY_S <= t < ems_run_exit(fb, SOC_BAND_RUN_EXIT_S)
         if not in_run:
             # Outside the Run window nothing may be commanded onto the charger
             # path: chargingControl() only runs in State 2 anyway, and leaving
@@ -2023,7 +2312,12 @@ DP_TABLE_NAME = "dp_ems_table_%s.csv"
 # these are the inputs the DP's demand model reads (D7 in the generator).  A
 # change to any of them invalidates the table; a change to, say, the
 # description does not.
+# ⚠️ `aux_preload_a` is a DEMAND INPUT and is deliberately NOT in this tuple —
+# adding it would invalidate the shipped tables in tools/dp_tables/.  The
+# combination is refused at import instead; see the M4 note just above
+# SCENARIO_NAMES for the full reasoning and the condition to revisit it.
 DP_FINGERPRINT_META_KEYS = ("ems_v_profile", "duration_s", "chg_i_ceiling_a")
+
 
 
 def dp_profile_fingerprint(scenario, meta):
@@ -2267,8 +2561,17 @@ class DpReplayStrategy:
                  float(SOC_BAND_SHARE_NOMINAL + SOC_BAND_SHARE_SPAN),
                  "DP charge-stage share "
                  "(= SOC_BAND_SHARE_NOMINAL + SOC_BAND_SHARE_SPAN)"),
-                ("run_exit_s", float(SOC_BAND_RUN_EXIT_S),
-                 "model constant SOC_BAND_RUN_EXIT_S"),
+                # RESOLVED per-scenario value, not the bare model constant: a
+                # scenario may override the Run exit with `ems_run_exit_s`
+                # (2026-08-31), and the DP's own stage grid is solved against
+                # whatever the run will actually use. Comparing against the
+                # constant would pass a table solved for a DIFFERENT mission
+                # length on any scenario that declares an override.
+                ("run_exit_s",
+                 float(SOC_BAND_RUN_EXIT_S if meta.get("ems_run_exit_s") is None
+                       else meta["ems_run_exit_s"]),
+                 "scenario key `ems_run_exit_s` (default: model constant "
+                 "SOC_BAND_RUN_EXIT_S)"),
                 # Added by render_table() in the same review round: these three
                 # shape the DP's control grid and its charge mask, so a retune
                 # of any of them invalidates a table that says nothing about it.
@@ -2362,9 +2665,223 @@ class DpReplayStrategy:
 ems_dp_replay = DpReplayStrategy()
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# ── y-*: the firmware's own 'Y' combined profile, driven from the EMS layer ──
+#
+# WHAT THIS IS.  A HOST-SIDE re-implementation of the firmware's State-98 'Y'
+# combined drive-cycle + power-share profile (PLAN.md Sec 9h,
+# teensy_controller.ino:3162-3179 for the table and :7806-7836 for the region
+# walk), commanded through the ordinary 22-byte Pi command packet instead of
+# the USB serial console.
+#
+# WHY REBUILD IT ON THE HOST.  The firmware's 'Y' needs an operator at a serial
+# console, so it is `operator_required` territory and cannot run in an
+# unattended HIL campaign at all.  Driving the same 16-region table from the
+# EMS layer makes the profile's cross-coupling excitation — the whole reason
+# the table exists — available to `run_hil_suite.py`.
+#
+# ⚠️ WHAT IS AND IS NOT THE SAME AS A FIRMWARE 'Y' RUN.
+#   SAME: the table, verbatim; the interpolation; the clip-AFTER-interpolation
+#         rule and its intended kink; the region boundaries.
+#   NOT THE SAME: the RATE.  The firmware walks the table on its main loop
+#         (~1 kHz) and assigns v_setpoint/power_share_setpoint directly; here
+#         the walk is evaluated at PiCommander.PI_CMD_HZ = 50 Hz and the values
+#         travel over UDP, so both axes are 20 ms staircases.
+#         * The motor axis: the table's steepest ramp is region 4, 0.4 of Vmax
+#           over 4.0 s = 0.1*Vmax per second, so one 20 ms step is 0.002*Vmax —
+#           2 mm/s at Vmax 1, 6 mm/s at Vmax 3, against the drive loop's
+#           e_sat ~= 26.4 mm/s (CLAUDE.md fw v18). Region 7's step at its own
+#           entry is a genuine STEP in the firmware too, so nothing is lost
+#           there. Worst-case quantisation is ~12 mm/s at Vmax 3 across a
+#           boundary where the firmware would also step.
+#         * The share axis: the firmware's share loop ticks at 50 Hz
+#           (SHARE_CTRL_PERIOD_US 20000), so a 50 Hz command staircase is at
+#           the loop's own rate — the share axis is not degraded at all.
+#   NOT THE SAME: the firmware's 'Y' also logs to SD and owns the motor through
+#         haltMotorOutput(); none of that applies to a Pi-commanded run.
+#
+# ONE TABLE, ONE WALK.  The firmware keeps ONE table and ONE region walk for
+# 'Y' and 'W' precisely so their shapes cannot drift (.ino:7845-7850). The same
+# discipline applies across the language boundary: this module has ONE table
+# and ONE `y_profile_at()`, and the four registered strategies are closures
+# over (vmax, b) produced by ONE factory. A second copy of the table here would
+# be a shape that drifts from the firmware's silently.
+# ═════════════════════════════════════════════════════════════════════════════
+
+# EXTRACTED VERBATIM from teensy_controller.ino:3162-3179 (COMBINED_PROFILE[]).
+# (duration_ms, v_start, v_end, s_start, s_end); v normalised [0..1] and scaled
+# by Vmax at runtime, s an ABSOLUTE FC share clipped to [b, 1-b] at runtime.
+# Steps land at region ENTRY: a region whose start differs from the previous
+# region's end IS the step.
+COMBINED_PROFILE = (
+    (2000, 0.0, 0.0, 0.50, 0.50),   #  0: settle
+    (4000, 0.0, 0.6, 0.50, 0.50),   #  1: v ramp up (solo)
+    (2000, 0.6, 0.6, 0.50, 0.50),   #  2: buffer
+    (3000, 0.6, 0.6, 0.65, 0.65),   #  3: s step up (solo, intermediate)
+    (4000, 0.6, 1.0, 0.65, 0.35),   #  4: BOTH ramp (v up, s down) — interaction
+    (2000, 1.0, 0.3, 0.35, 0.35),   #  5: buffer + v ramp DOWN to excursion load
+    (1500, 0.3, 0.3, 1.00, 1.00),   #  6: s step to the hi bound (brief)
+    (3500, 0.3, 1.0, 0.35, 0.35),   #  7: s step down at LOW load, then v ramps
+    (3000, 0.5, 0.5, 0.65, 0.65),   #  8: BOTH step (v down, s up) — interaction
+    (2000, 0.5, 0.5, 0.65, 0.65),   #  9: buffer
+    (3000, 0.5, 0.5, 0.65, 0.00),   # 10: s ramp down to the lo bound (solo)
+    (1500, 0.5, 0.5, 0.00, 0.00),   # 11: lo-bound check (brief)
+    (1500, 0.5, 0.5, 0.50, 0.50),   # 12: s step up, recovery to mid
+    (2000, 0.2, 0.2, 0.50, 0.50),   # 13: v step down (solo)
+    (3000, 0.2, 0.0, 0.50, 0.50),   # 14: v coast-down ramp
+    (2000, 0.0, 0.0, 0.50, 0.50),   # 15: end hold -> natural completion
+)
+COMBINED_PROFILE_MS = sum(r[0] for r in COMBINED_PROFILE)
+# The firmware's own documented total (PLAN.md Sec 9h: "a 16-region, 40 s
+# table").  Pinned rather than trusted: a mistyped duration is invisible in a
+# trace but moves every signal window in the suite entries downstream.
+assert COMBINED_PROFILE_MS == 40000, (
+    "COMBINED_PROFILE durations sum to %d ms, not the firmware's 40000 — the "
+    "table was mistranscribed from teensy_controller.ino:3162-3179"
+    % COMBINED_PROFILE_MS)
+COMBINED_PROFILE_S = COMBINED_PROFILE_MS / 1000.0
+
+
+def y_profile_at(t_rel, vmax, b):
+    """(v_setpoint, share_setpoint) for the 'Y' table at `t_rel` seconds in.
+
+    Reproduces advanceComboRegion() (.ino:7806-7836) exactly:
+      * `tau = elapsed / duration` inside the region, in [0, 1) — a region's END
+        value is NEVER emitted; the next region's START value supplies it, which
+        is how a step is encoded (start != previous end) and why the walk needs
+        no special case for one.
+      * BOTH axes interpolate linearly on the same tau.
+      * The share is CLIPPED AFTER interpolation, to [b, 1-b].  Never before: a
+        ramp crossing the bound must run at its normal slope and then FLATTEN
+        there.  Pre-scaling the waypoints into the band would change every slope
+        in the table.  The resulting kink is intended behaviour.
+
+    Outside the table: before it, region 0's start (standstill, 0.50 share);
+    at or after COMBINED_PROFILE_S, region 15's start — which IS standstill at
+    0.50 share, i.e. the same values the firmware's natural completion leaves
+    behind.
+
+    DELIBERATE DIFFERENCE from the firmware, and it is invisible at this
+    resolution: the firmware SKIPS one tick at each region boundary (it returns
+    COMBO_TICK_BOUNDARY and emits nothing).  That is one 1 ms main-loop tick
+    there and would be one 20 ms command here; reproducing it would hold a
+    stale setpoint for 20 ms at 15 boundaries for no benefit.  This function is
+    total: every t_rel yields a value."""
+    ms = t_rel * 1000.0
+    if ms <= 0.0:
+        rg = COMBINED_PROFILE[0]
+        return rg[1] * vmax, min(max(rg[3], b), 1.0 - b)
+    cum = 0.0
+    for dur, v0, v1, s0, s1 in COMBINED_PROFILE:
+        if ms < cum + dur:
+            tau = (ms - cum) / dur
+            v = (v0 + tau * (v1 - v0)) * vmax
+            s_abs = s0 + tau * (s1 - s0)
+            return v, min(max(s_abs, b), 1.0 - b)
+        cum += dur
+    rg = COMBINED_PROFILE[-1]
+    return rg[1] * vmax, min(max(rg[3], b), 1.0 - b)
+
+
+# The 'Y' table starts this many seconds into the run: EMS_RUN_ENTRY_S (3.0)
+# plus 2 s inside Run before anything moves.  The table's own region 0 is a 2 s
+# settle as well, so the board sees 4 s of standstill after entering Run before
+# the first ramp — ample for the drive controller's Idle->Run reset to land.
+EMS_Y_START_S = 5.0
+# Absolute times the table occupies: 5.0 .. 45.0 s.
+EMS_Y_END_S = EMS_Y_START_S + COMBINED_PROFILE_S
+# MODE_SAFE 1 s after the table completes (it ends at standstill, so there is
+# nothing to wind down), leaving the scenario duration's remaining 3 s for
+# Run -> Finish -> Idle.  Declared per-scenario as `ems_run_exit_s`.
+EMS_Y_RUN_EXIT_S = EMS_Y_END_S + 1.0        # 46.0
+EMS_Y_DURATION_S = EMS_Y_RUN_EXIT_S + 3.0   # 49.0
+
+# The bus preload the CLOSED-LOOP ('b30') variants carry, in amps, on top of
+# I_AUX_A.  DERIVATION — it exists to keep the firmware's share loop closed:
+#   * The governor arms the closed share loop only above 2*SHARE_MINORITY_I_MIN_A
+#     = 0.60 A of measured source total.  Without a preload the 'Y' table's own
+#     load spans 0.150-1.407 A (measured against the Plant/droop model at
+#     Vmax 3) and sits BELOW the gate through every standstill and low-speed
+#     region — a share-tracking assertion there would be measuring feedforward.
+#   * With +0.60 A the total spans 0.750-2.011 A, i.e. above the gate for the
+#     WHOLE table including its standstill regions (the binding case is
+#     I_AUX_A 0.15 + 0.60 = 0.750 A, 25 % clear of the gate).
+#   * Headroom: the worst per-channel current is FC at region 4's entry, where
+#     the table commands share 0.65 on a Vmax-3 load — 0.836 A against
+#     LIMIT_I_FC_MAX 1.4 A, a 40 % margin.  At Vmax 1 the same point is 0.565 A.
+# ⚠️ These are the MODEL's currents (M_EFF/K_F/F_COULOMB/B_EFF + the droop bus,
+# constants at the top of this file), not measurements. A campaign that misses
+# the fc_current_biased check should move THIS number, never the check.
+Y_AUX_LOAD_A = 0.60
+
+
+def make_ems_y(vmax, b):
+    """Build a `y-*` policy closure for one (Vmax, share bound) pair.
+
+    ONE factory, for the firmware's own reason (.ino:7845-7850): four
+    hand-written policies over one table would be four shapes that drift."""
+    def _policy(t, fb):
+        v_sp, share = y_profile_at(t - EMS_Y_START_S, vmax, b)
+        in_run = EMS_RUN_ENTRY_S <= t < ems_run_exit(fb, EMS_Y_RUN_EXIT_S)
+        return {
+            "mode_cmd": MODE_HYBRID if in_run else MODE_SAFE,
+            "power_share_setpoint": share,
+            "v_setpoint": v_sp,
+            # Charging is out of scope for this profile: the table rails the
+            # share to both bounds, and assertFcChargeEnable() drops BT off the
+            # bus, so a charge window here would collide with the cut the
+            # profile is deliberately exercising.
+            "charge_goal": 0.0,
+        }
+    _policy.__doc__ = (
+        "y-b%02d-v%g — the firmware's 'Y' combined profile (16 regions, %g s) "
+        "at Vmax %g m/s and share bound b = %.2f, commanded from the EMS "
+        "layer.\n\n"
+        "    fields   : mode_cmd (SAFE -> HYBRID at EMS_RUN_ENTRY_S, back to "
+        "SAFE at the scenario's ems_run_exit_s), v_setpoint and "
+        "power_share_setpoint (both from y_profile_at()), charge_goal (0.0).\n"
+        "    feedback : reads ONLY fb['t'] and the scenario's ems_run_exit_s. "
+        "It is therefore trivially portable to the real Pi — it depends on "
+        "nothing outside FB_TELEMETRY_EQUIV_KEYS.\n"
+        "    source   : teensy_controller.ino:3162-3179 (table), :7806-7836 "
+        "(walk), PLAN.md Sec 9h."
+        % (round(b * 100), vmax, COMBINED_PROFILE_S, vmax, b))
+    return _policy
+
+
+# The four registered variants.  TWO AXES, one objective each:
+#   b = 0.30  the firmware's own documented 'Y' bound.  The share never leaves
+#             [0.30, 0.70], so it never crosses DROOP_R_MIN/MAX and NO cut can
+#             occur; paired with Y_AUX_LOAD_A the share loop is closed for the
+#             whole table, and the objective is closed-loop SHARE TRACKING.
+#   b = 0.00  no bound: the table's regions 6 and 11 command 1.00 and 0.00
+#             outright, which is outside [DROOP_R_MIN 0.15, DROOP_R_MAX 0.85]
+#             and DOES trip updateShareSetpointCutoff().  The objective is the
+#             CUT-AND-RESTORE topology, so these variants carry NO preload —
+#             the cut's own SHARE_CUT_MAX_HANDOFF_A 0.5 A per-channel guard
+#             REFUSES the latch above that current, and a preload would put the
+#             load exactly where the latch is refused.
+#             ⚠️ CONSEQUENCE, stated rather than hidden: without the preload the
+#             Vmax-1 variant's source total never reaches the 0.60 A governor
+#             gate, so its share loop runs OPEN-LOOP FEEDFORWARD for the whole
+#             run. That is correct for a topology test and wrong for a tracking
+#             one — do not read share-tracking numbers off a b00 run.
+#   Vmax 1 / 3  the low and high ends of the drive channel's exercised range
+#             (3.0 m/s is ML0169's measured hold, CLAUDE.md fw v16).
+ems_y_b30_v1 = make_ems_y(1.0, 0.30)
+ems_y_b30_v3 = make_ems_y(3.0, 0.30)
+ems_y_b00_v1 = make_ems_y(1.0, 0.00)
+ems_y_b00_v3 = make_ems_y(3.0, 0.00)
+
+
 EMS_STRATEGIES = {
     "hold-5050": ems_hold_5050,
     "regen-harvest": ems_regen_harvest,
+    # `regen-harvest` plus FC-path charge windows at low cruise, for the
+    # `mppt-tracking` scenario.  A SEPARATE function, deliberately: charge-regen's
+    # measurements are pinned across five campaigns and must not move because
+    # this scenario's windows did.  See ems_mppt_harvest().
+    "mppt-harvest": ems_mppt_harvest,
     # ⚠️ SIM-ONLY: soc-band closes on fb["soc"], which is PLANT TRUTH and is NOT
     # in FB_TELEMETRY_EQUIV_KEYS — it is not portable to a real Pi without a
     # V_batt-based SoC estimator (future work).  See the banner above the class.
@@ -2374,6 +2891,14 @@ EMS_STRATEGIES = {
     # foreknowledge of ONE drive cycle.  Refuses at startup against any other
     # profile.  See the banner above DpReplayStrategy.
     "dp-replay": ems_dp_replay,
+    # The firmware's own 'Y' combined drive-cycle + power-share table (16
+    # regions, 40 s), commanded from the EMS layer instead of the USB console.
+    # All four read ONLY fb["t"] and the scenario's ems_run_exit_s, so all four
+    # are portable to a real Pi.  See make_ems_y() and the banner above it.
+    "y-b30-v1": ems_y_b30_v1,
+    "y-b30-v3": ems_y_b30_v3,
+    "y-b00-v1": ems_y_b00_v1,
+    "y-b00-v3": ems_y_b00_v3,
 }
 
 EMS_NAMES = list(EMS_STRATEGIES)
@@ -2395,6 +2920,31 @@ EMS_NAMES = list(EMS_STRATEGIES)
 #   ems        : optional default --ems strategy name for this scenario
 #   ems_v_profile : optional [(t, v_setpoint)] speed profile an EMS strategy may
 #                consume via fb["v_profile"] (piecewise-linear, clamped)
+#   ems_run_exit_s : optional float — the time the EMS strategy hands the
+#                firmware back MODE_SAFE, reaching the policy as
+#                fb["ems_run_exit_s"].  ABSENT means the strategy uses its own
+#                constant (EMS_RUN_EXIT_S / EMS_REGEN_RUN_EXIT_S /
+#                SOC_BAND_RUN_EXIT_S), which is why every pre-2026-08-31
+#                scenario is unaffected.  See ems_run_exit().
+#   aux_preload_a : optional float — a constant bus load in amps added to
+#                I_AUX_A, ramped in over SOC_LOAD_RAMP_S from
+#                AUX_PRELOAD_START_S.  Applied generically by
+#                apply_scenario()'s fall-through branch (and mirrored by
+#                gen_dp_ems_table.scenario_drain_a()); the three bespoke loads
+#                that predate it — handoff-sag, soc-depletion, ems-soc-band —
+#                keep their own branches.  See scenario_aux_preload_a().
+#   mppt_emulation : optional bool — model the Ag105's MPPT INPUT-VOLTAGE
+#                THRESHOLD (AG105_MPPT_V_THRESH, datasheet p.10), so
+#                MPPT_DISABLE becomes causally load-bearing instead of a
+#                flag-only control.  ABSENT/False is the default and leaves the
+#                charger branch byte-identical, which is why every pre-2026-08-31
+#                scenario is unaffected.  See Plant.__init__ and the constant's
+#                banner (incl. the R1 open question).
+#   pi_mute_after_s : optional float — the emulated Pi commander goes
+#                PERMANENTLY SILENT at this time while the injection stream keeps
+#                running at full rate, isolating the firmware's Pi watchdog from
+#                the HIL link's own staleness clock.  ABSENT means "never mute".
+#                See PiCommander.mute_after.
 #   warm_resets_expected : optional int — how many MID-RUN HIL warm resets
 #                (mainState 99 -> 0) this scenario legitimately produces.  Absent
 #                means zero, and run_hil_suite.py marks any run that shows one
@@ -2904,7 +3454,454 @@ SCENARIOS["ems-dp-replay"] = {
     "ems": "dp-replay",
 }
 
+# ── ems-y-*: the firmware's 'Y' combined profile, four variants ─────────────
+#
+# DERIVED, not hand-written: every one of the four is built from the SAME
+# (vmax, b) pair its strategy is, and every timing field comes from the
+# EMS_Y_* constants next to make_ems_y().  Editing a duration here without
+# moving those constants would be a scenario that ends before its own table
+# does, which is why nothing below is a literal.
+#
+# THE TWO BANDS ARE DIFFERENT EXPERIMENTS, and the load split follows from that
+# (operator adjudication, 2026-08-31) — see the make_ems_y() registration block
+# for the full argument:
+#   b30  + Y_AUX_LOAD_A preload -> CLOSED-LOOP SHARE TRACKING.  Share stays in
+#        [0.30, 0.70], no cut is possible, and the preload holds the source
+#        total above the 0.60 A governor gate for the whole table.
+#   b00  + NO preload           -> CUT-AND-RESTORE TOPOLOGY.  Regions 6 and 11
+#        command 1.00 and 0.00, outside [DROOP_R_MIN, DROOP_R_MAX], so
+#        updateShareSetpointCutoff() opens BT_BUS and then FC_BUS.  A preload
+#        would put the per-channel current above the cut's own
+#        SHARE_CUT_MAX_HANDOFF_A 0.5 A guard and the latch would be REFUSED.
+#        The price, stated: the Vmax-1 variant runs open-loop feedforward.
+for _vmax, _b in ((1.0, 0.30), (3.0, 0.30), (1.0, 0.00), (3.0, 0.00)):
+    _tag = "y-b%02d-v%g" % (round(_b * 100), _vmax)
+    SCENARIOS["ems-" + _tag] = {
+        "description": (
+            "%.0f s: the firmware's own 'Y' combined drive-cycle + power-share "
+            "table (16 regions, %.0f s, .ino:3162-3179) commanded from the EMS "
+            "layer at Vmax %g m/s, share bound b = %.2f. %s"
+            % (EMS_Y_DURATION_S, COMBINED_PROFILE_S, _vmax, _b,
+               ("Closed-loop share tracking: the +%.2f A preload holds the "
+                "source total above the 0.60 A governor gate and the bound "
+                "keeps the share inside [DROOP_R_MIN, DROOP_R_MAX], so no cut "
+                "occurs." % Y_AUX_LOAD_A) if _b else
+               ("Cut-and-restore topology: regions 6 and 11 command share 1.00 "
+                "and 0.00, tripping updateShareSetpointCutoff() both ways. NO "
+                "preload (the cut's 0.5 A/channel guard would refuse the "
+                "latch), so the share loop runs open-loop feedforward."))),
+        # "any": the profile exercises the SETPOINT-side cut latch and the share
+        # loop, neither of which needs the ideal-diode dynamics. Running it in
+        # both engines is a free cross-check.
+        "electrical": "any",
+        "duration_s": EMS_Y_DURATION_S,
+        "ems": _tag,
+        # Per-scenario Run exit: the table ends at t = EMS_Y_END_S, well before
+        # any strategy's own constant would fire. See ems_run_exit().
+        "ems_run_exit_s": EMS_Y_RUN_EXIT_S,
+        # NO ems_v_profile: this profile's strategy generates BOTH axes from the
+        # firmware's table. fb["v_profile"] is None and the policy never reads it.
+        **({"aux_preload_a": Y_AUX_LOAD_A} if _b else {}),
+    }
+del _vmax, _b, _tag
+
+# ── ems-ftp75-*: the EPA FTP-75 study segment ───────────────────────────────
+#
+# THE PROFILE.  `tools/ftp75_profile.py` is GENERATED by
+# `tools/gen_ftp75_profile.py` from the committed EPA raw file
+# `references/drive_cycles/ftpcol.txt` (sha256 verified at generation time).
+# It is the cycle's FIRST 340 SECONDS — the segment of the scaled-vehicle study
+# references/Systemic_Scaling_of_Powertrain_Models_with_Youla_Driver_Control.pdf
+# (operator direction, 2026-08-31), not a trim of Phase 1 chosen for run length
+# — rescaled by ONE constant (3.0/56.7 m/s per mph, so the 56.7 mph peak at raw
+# t = 240 s lands on 3.0 m/s) and shifted to start at t = 5.0 s.  t = 340 falls
+# in a NATIVE idle segment (0 mph from raw t = 333), so the table ends at rest
+# and carries no synthetic ramp-down tail.  No dynamic-similarity claim is made
+# by the scaling: it is a range map onto the speeds this bench has driven
+# (3.0 m/s is ML0169's measured hold, CLAUDE.md fw v16).
+#
+# WHAT THESE TWO SCENARIOS ARE FOR.  Every EMS scenario before them runs a
+# hand-authored 8-point profile.  A standard cycle is the first stimulus long
+# enough and varied enough to be an ENDURANCE test of the EMS layer rather than
+# a transient one: 345 s of continuous 50 Hz commanding, ~30 accelerate/cruise/
+# decelerate/idle cycles, and an H2 total accumulated over something a reader
+# outside this project recognises.
+#
+# COST, stated up front: 350 s each, so the pair adds ~11.7 min to a campaign
+# that is otherwise ~34 min. That is why run_hil_suite.py gates them behind
+# --with-ftp75 and renders them SKIPPED by default.
+#
+# THE PRELOAD, and the trade-off it forces.  FTP75_PRELOAD_A is 0.65 A:
+#   * WHY IT IS THERE. Measured against the Plant/droop model over the whole
+#     segment, the cycle's own load leaves the source total below the 0.60 A
+#     governor gate through every idle segment, and the FTP is roughly a third
+#     idle. With +0.65 A the total is 0.800 A at standstill — 33 % above the
+#     gate — and 100.00 % of the post-ramp run (t >= 7.5 s) is above it, so the
+#     share loop is genuinely CLOSED for the whole cycle.
+#   * HEADROOM. Peak source total is 1.613 A at t = 245 s (the cycle peak);
+#     at hold-5050's 0.50 split that is 0.807 A per channel, 42 % under
+#     LIMIT_I_FC_MAX 1.4 A. Under `soc-band`, whose share ceiling is 0.75, the
+#     same peak is 1.210 A — 14 % of margin left, which is why that scenario's
+#     suite entry ALLOWS OC_FC (see run_hil_suite.py FAULT_EXPECTATIONS).
+#   * ⚠️ WHAT IT COSTS. `soc-band` admits a charge window only below
+#     SOC_BAND_CHARGE_ENTER_ITOT_A = 0.60 A of source total, and the preload
+#     puts the FLOOR at 0.800 A. The preload therefore FORECLOSES the charge
+#     window on ems-ftp75-socband, by construction: that scenario exercises the
+#     policy's share-bias branch over a long cycle, NOT its charging branch
+#     (`ems-soc-band` remains the home of the charge-window assertion). Stated
+#     here rather than discovered from a trace with no charge in it.
+#   * These are the MODEL's currents (M_EFF/K_F/F_COULOMB/B_EFF and the droop
+#     bus), not measurements. A campaign that misses a share-tracking check
+#     should move THIS number, never the check.
+FTP75_PRELOAD_A = 0.65
+# MODE_SAFE 1 s after the table's last point (t = 345.0), then 4 s for
+# Run -> Finish -> Idle.  The table already ends at rest — raw t = 333 onward is
+# 0 mph, so the last 7 s of it are a native idle — which is why 1 s of margin
+# is enough here rather than the usual 3 s after a moving stimulus.  Both
+# declared per-scenario; without `ems_run_exit_s` hold-5050 would hand back
+# MODE_SAFE at t = 55 and idle for the other 295 s.
+FTP75_RUN_EXIT_S = FTP75_T_END + 1.0        # 346.0
+FTP75_DURATION_S = FTP75_RUN_EXIT_S + 4.0   # 350.0
+
+for _name, _ems, _what in (
+    ("ems-ftp75-5050", "hold-5050",
+     "constant 50/50 split, so any share deviation belongs to the firmware's "
+     "share loop and the plant and never to the EMS"),
+    ("ems-ftp75-socband", "soc-band",
+     "the causal charge-sustaining policy over a long cycle: the SoC deficit "
+     "walks the split toward the fuel cell. Its CHARGING branch is out of "
+     "reach here by construction — see FTP75_PRELOAD_A"),
+):
+    SCENARIOS[_name] = {
+        "description": ("%.0f s EPA FTP-75 study segment (raw t = 0..340 s "
+                        "inclusive, 341 samples at 1 Hz; scaled "
+                        "to a 3.0 m/s peak) driven by the `%s` EMS strategy: %s. "
+                        "Gated behind run_hil_suite.py --with-ftp75."
+                        % (FTP75_DURATION_S, _ems, _what)),
+        "electrical": "any",
+        "duration_s": FTP75_DURATION_S,
+        "ems": _ems,
+        # THE SAME LIST OBJECT for both, as ems-dp-replay shares ems-soc-band's:
+        # the two scenarios differ only in the strategy driving them, and a
+        # comparison between them is meaningless on different stimuli.
+        "ems_v_profile": FTP75_PROFILE,
+        "ems_run_exit_s": FTP75_RUN_EXIT_S,
+        "aux_preload_a": FTP75_PRELOAD_A,
+    }
+del _name, _ems, _what
+
+# gen_dp_ems_table.py note: a DP table for an FTP-75 scenario is FUTURE WORK.
+# The solver's cost is stage-count-dominated and this cycle is ~6x the length
+# of `ems-dp-replay`'s (~21 min offline, measured 2026-08-31), so it is a
+# deliberate deferral rather than a gap. Nothing blocks it: the generator's
+# demand model already reads `aux_preload_a` through
+# scenario_aux_preload_a(), and its --run-exit already resolves from
+# `ems_run_exit_s`, so a table can be generated whenever the run time is worth
+# paying.
+
+# ── mppt-tracking: the Ag105 MPPT input-voltage threshold, closed-loop ──────
+#
+# THE FIRST SCENARIO IN WHICH MPPT_DISABLE DOES ANYTHING.  Everywhere else in
+# this suite the pin only sets two flags in the status byte, so nothing the
+# firmware does with it can be validated.  Here `mppt_emulation` turns on the
+# part's real mechanism — an INPUT-VOLTAGE THRESHOLD, 18 V by default with MPPTS
+# open (AG105_Silvertel.pdf p.10; NOT perturb-and-observe, see the
+# AG105_MPPT_V_THRESH banner) — and the pin becomes causal.
+#
+# ⚠️ THIS SCENARIO ASSERTS A PREDICTION, not a previously-observed behaviour, and
+# the prediction is CONTINGENT ON R1 (does this board fit an MPPTS resistor?).
+# Under the 18 V default the firmware and the module HUNT: the firmware releases
+# tracking only once the charger reports ready, and releasing it is exactly what
+# stops the charging that made it ready.  The full loop trace and the ~40 ms
+# period are derived in ems_mppt_harvest()'s docstring.  A campaign that does NOT
+# see the hunt is evidence about R1 — a lower threshold set by a fitted resistor
+# — and must be read as a hardware finding, not as a scenario defect.
+#
+# WHY THE LOW-CRUISE PLATEAUS ONLY.  The threshold can only bind on the FC path
+# (charger fed from the ~15.95 V bus with tracking released); the regen path
+# holds MPPT_DISABLE LOW by construction, where the threshold does not apply.
+# The FC path is SINGLE-SOURCE — assertFcChargeEnable() drops BT off the bus —
+# so the whole load lands on FC.  Budget at the 0.4 m/s plateau against
+# LIMIT_I_FC_MAX 1.4 A:
+#       I_AUX_A 0.15 + motor ~0.06 + chg_i_ceiling_a 1.0  =  1.21 A   (14 % margin)
+# The 2.5 m/s cruise segments would add ~0.6 A of motor draw and latch OC_FC,
+# which is why the charge windows are on the LOW plateaus and the ceiling is
+# de-rated to 1.0 A.  ⚠️ MODEL currents (M_EFF/K_F/F_COULOMB/B_EFF + the droop
+# bus), not measurements.
+SCENARIOS["mppt-tracking"] = {
+    "description": ("45 s cruise/brake cycling with the Ag105's MPPT "
+                    "INPUT-VOLTAGE THRESHOLD emulated (18 V default, datasheet "
+                    "p.10): charge_goal is asserted on the braking windows (regen "
+                    "path, MPPT inhibited) AND on the low-cruise plateaus (FC "
+                    "path, MPPT released) — where the 15.95 V bus cannot clear "
+                    "the threshold, so the firmware and the module are predicted "
+                    "to HUNT. Contingent on R1 (MPPTS resistor unconfirmed)."),
+    # "any": the threshold gate is a comparison against the charger's input rail,
+    # which both engines produce.  ⚠️ In SIMPLE mode V_chg is rigidly V_bus
+    # whenever a charger path is closed (no series impedance, no charger draw
+    # pulling the rail down), so the threshold sees a stiffer rail than the hi-fi
+    # engine's.  Both are far below 18 V, so the verdict is the same either way —
+    # but do not read a MARGIN to the threshold off a simple-mode run.
+    "electrical": "any",
+    "duration_s": 45.0,
+    "ems": "mppt-harvest",
+    "mppt_emulation": True,
+    "chg_i_ceiling_a": 1.0,
+    # Declared explicitly even though it equals the strategy's own constant: the
+    # scenario's Run window is a property of the scenario, and `ems-y-*` set the
+    # precedent that an EMS scenario states its own.
+    "ems_run_exit_s": EMS_REGEN_RUN_EXIT_S,
+    # THE SAME LIST OBJECT as `charge-regen`: the braking windows in
+    # EMS_REGEN_BRAKE_WINDOWS and the cruise plateaus in EMS_MPPT_CRUISE_WINDOWS
+    # are both read off THIS profile, and a second copy here would let one drift.
+    "ems_v_profile": SCENARIOS["charge-regen"]["ems_v_profile"],
+}
+
+# ── charge-to-full: the Ag105 Fully-Charged / CV path, and the firmware's
+#    deliberate NO-ACTION response to it ───────────────────────────────────────
+#
+# NOTHING IN THIS SUITE HAS EVER REACHED AG105_ST_FULL.  The branch exists
+# (Plant.step(), `soc >= 0.995`) but the largest SoC RISE any campaign has
+# produced is ~0.0009, against the 0.29 that soc0 0.70 would need.  The only way
+# to reach it in a bench-length run is to START next to it, which is what the
+# suite's --soc0 0.990 override does (mirroring soc-depletion's).
+#
+# ARITHMETIC.  0.995 - 0.990 = 0.005 of a 5 Ah pack = 0.005 * 18000 A·s = 90 A·s.
+# At the 1.0 A ceiling below that is 90 s of charging, so FULL is expected at
+# roughly t = 100 (charging established ~t = 9 after the timeline's charge_goal
+# at t = 8 plus AG105_SETTLE_S).  MEASURED against this model (offline probe,
+# 2026-08-31): FULL at t = 98.90 s, CV flag set, I_charge under 0.05 A by
+# t = 100.09 s.  The 130 s duration leaves ~30 s to observe the taper and the
+# firmware's response.
+#
+# WHY STANDSTILL, AND WHAT IT COSTS.  v_setpoint is 0.0 throughout, below
+# V_SP_ZERO_THRESH (0.07 m/s), so the firmware commands 0 A and the drive loop is
+# held in reset.  That is what makes the FC-path budget work — the charge path is
+# single-source, so the budget is I_AUX_A 0.15 + 0 motor + 1.0 ceiling = 1.15 A
+# against LIMIT_I_FC_MAX 1.4 A, an 18 % margin, sustained for 120 s.  THE COST,
+# stated rather than discovered: this run exercises the DRIVE channel not at all.
+#
+# ⚠️ mppt_emulation IS DELIBERATELY OFF HERE.  With it on, the 18 V threshold
+# would block charging on this very path and the run could never reach FULL —
+# the two scenarios test different things and must not be merged.  `mppt-tracking`
+# owns the threshold gate; this one owns the FULL/CV path.
+#
+# WHAT THE FIRMWARE DOES ON FULL: deliberately NOTHING, and that is asserted
+# POSITIVELY rather than assumed.  ag105IsReady() ACCEPTS FULL (.ino:10249-10255)
+# so MPPT stays released; chargingControl() never reads GENSTAT at all, so
+# FC_CHARGE_ENABLE stays open; FULL is not an error GENSTAT in detectFaults()
+# (.ino:4952-4960); and LIMIT_V_BATT_MAX 10.0 V is not approached by an 8.4 V
+# pack.  The suite's `fc_charge_still_open` check pins that no-action baseline so
+# a future policy change to it is visible as a diff rather than as a surprise.
+#
+# OUT OF SCOPE: the CHARGER_STAT pin (6).  It is on NEITHER HIL frame — the aux
+# byte carries only MPPT_DISABLE and CBAL_DISABLE (.ino:2823) — and
+# chargingControl() does not read it.  Its Fully-Charged signature (50 % duty,
+# 2 s period, Ag105_Table5_Status_Output.json) is therefore unobservable here.
+# Carrying it would be a frame extension, i.e. future protocol work.
+SCENARIOS["charge-to-full"] = {
+    "description": ("130 s standstill FC-path charge from --soc0 0.990: the "
+                    "first run in this suite to reach Ag105 GENSTAT 011 (Fully "
+                    "Charged) with the CV flag, and to pin the firmware's "
+                    "deliberate no-action response to it. No drive-channel "
+                    "coverage — v_setpoint is 0 throughout."),
+    "electrical": "any",
+    "duration_s": 130.0,
+    # De-rated for the single-source FC-path budget above; ceiling validation is
+    # charge-cruise's job.
+    "chg_i_ceiling_a": 1.0,
+    "pi_timeline": [
+        (0.5, {"mode_cmd": MODE_SAFE}),
+        (3.0, {"mode_cmd": MODE_HYBRID}),
+        # Standstill and the firmware's own default split.  The share loop is not
+        # under test here (the source total never reaches the 0.60 A governor
+        # gate at this load, so it runs open-loop feedforward — stated, not
+        # discovered from a trace).
+        (5.0, {"v_setpoint": 0.0, "power_share_setpoint": 0.5}),
+        # Charging on intent.  chargingControl() opens FC_CHARGE on charge_goal
+        # alone (never on readiness — the charger cannot become ready until it is
+        # powered), so this is the whole stimulus.
+        (8.0, {"charge_goal": 1.0}),
+    ],
+}
+
+# ── pi-silence: the firmware's Pi watchdog, isolated from the HIL link ───────
+#
+# A VERIFIED COVERAGE GAP, closed.  checkPiWatchdog() (.ino:4976-4985, called
+# unconditionally from loop() at :4381) latches FAULT_PI_TIMEOUT after
+# PI_TIMEOUT_MS = 500 in State 2/3 once a Pi has ever connected.  Its clock,
+# `last_rx_ms`, is stamped ONLY by the 22-byte command branch (:5043-5044) and is
+# fully independent of the injection stream's `hilLastFrameMs` (:5132).  Nothing
+# in this suite could exercise it: apply_scenario()'s `tx_enabled` gates BOTH
+# streams (:4172 injection, :4192 commands), and `comm-loss` kills both together
+# — which trips the HIL staleness path, not the Pi watchdog.  `pi_mute_after_s`
+# stops the COMMANDER alone.
+#
+# WHY hold-5050 AT ITS 1.2 m/s DEFAULT CRUISE: the halt must be OBSERVABLE.  At
+# 1.2 m/s the model's hold current is ~3.5 A, so the fault's motor cut-off is a
+# multi-amp fall in `current` rather than a change from zero to zero.  The
+# scenario declares no ems_v_profile, so the strategy falls back to
+# EMS_DEFAULT_CRUISE_MPS — that fallback IS the setpoint here, not an accident.
+#
+# ⚠️ fw v23 RECOVERY INTERPLAY (verified).  The INJECTION stream keeps running at
+# full rate, so no HIL RUN BOUNDARY (HIL_RUN_BOUNDARY_MS 1000 of link silence,
+# anchored at hilLastFrameMs) is ever formed and the State-99 latch persists to
+# the end of the run.  `warm_resets_expected` is therefore deliberately OMITTED:
+# a mid-run warm reset here would prove the stimulus was contaminated — and it
+# would also DESTROY the test, because hilWarmReset() clears `pi_ever_connected`
+# (:5610), which disarms the very watchdog under test.
+SCENARIOS["pi-silence"] = {
+    "description": ("14 s cruise at 1.2 m/s in which the emulated Pi stops "
+                    "commanding at t = 8.0 while the injection stream keeps "
+                    "running at full rate — the only stimulus that isolates the "
+                    "firmware's Pi watchdog (PI_TIMEOUT_MS 500) from the HIL "
+                    "link's own staleness clock. FAULT_PI_TIMEOUT is REQUIRED."),
+    # "any": a command-stream timeout is a firmware-side timer; neither engine's
+    # electrical detail participates.
+    "electrical": "any",
+    "duration_s": 14.0,
+    "ems": "hold-5050",
+    # NO ems_run_exit_s: hold-5050's own EMS_RUN_EXIT_S (55.0) is past this run's
+    # end, which is exactly what is wanted — the board must still be in State 2
+    # when the Pi goes quiet, or the watchdog is not armed.
+    "pi_mute_after_s": 8.0,
+}
+
+# ── share-staircase: the share governor's rails, and the cut/restore latency ──
+#
+# TWO PHASES, AT TWO DIFFERENT LOADS, and the split is forced rather than chosen.
+# The two objectives are mutually exclusive at any single load:
+#   PHASE A (t = 6..28, I_tot ~ 1.2 A) — GOVERNOR CHARACTERISATION.  The closed
+#       share loop needs the source total above 2*SHARE_MINORITY_I_MIN_A = 0.60 A,
+#       and at 1.2 A the governor's rails sit at SHARE_MINORITY_I_MIN_A/I_tot =
+#       [0.25, 0.75].  The staircase steps 0.80 -> 0.20 in 0.10 increments, so its
+#       two ENDS are outside those rails and its middle is inside: the clip band
+#       that campaign TP0170-0180 measured incidentally becomes a DESIGNED
+#       observable, swept in both directions in one run.
+#   PHASE B (t = 33..44, I_tot ~ 0.55 A) — THE CUT AND ITS RESTORE.  The setpoint
+#       excursions 0.95 and 0.05 are outside [DROOP_R_MIN 0.15, DROOP_R_MAX 0.85],
+#       so updateShareSetpointCutoff() (.ino:9231-9257) opens BT_BUS and then
+#       FC_BUS.  The latch is REFUSED unless the DOOMED channel carries
+#       <= SHARE_CUT_MAX_HANDOFF_A = 0.5 A (.ino:9234, :9250), and at Phase A's
+#       1.2 A a 50/50 split is 0.60 A — over the guard, so the cut would DEFER.
+#       At 0.55 A the worst case is 0.275 A, clear by 45 %.
+# Hence the load DROP at t = 29: the governor cannot be characterised at a load
+# where the cut fires, and the cut cannot fire at a load where the governor is
+# best characterised.
+#
+# MOTOR-FREE BY CONSTRUCTION: v_setpoint is 0.0 for the whole run, below
+# V_SP_ZERO_THRESH (0.07 m/s), so the drive loop is held in reset and every amp
+# on the bus is the scripted aux load.  A drive transient would move I_tot and
+# therefore move the governor rails mid-staircase, which would make every step's
+# clip level a different number.
+#
+# ⚠️ CORRECTED PREMISE on the cut LATENCY (campaign round 3/4, CLAUDE.md
+# 2026-08-31b).  The observed [0, 20) ms spread is COMMAND-ARRIVAL PHASE — the
+# 50 Hz PiCommander cadence (PI_CMD_HZ) — NOT a firmware tick.  powerBalance()
+# and its cutoff run at POWER_BAL_PERIOD_US = 1000 us (SHARE_CTRL_TS_US is also
+# 1000 us), so the firmware contributes ~1 ms, not ~20.  Changing PI_CMD_HZ would
+# move this distribution; changing a firmware tick would barely touch it.
+SCENARIOS["share-staircase"] = {
+    "description": ("47 s two-phase, motor-free share sweep: a 0.80 -> 0.20 "
+                    "staircase at I_tot ~ 1.2 A (the governor's [0.25, 0.75] "
+                    "rails become a designed observable), then a load drop to "
+                    "~0.55 A and four out-of-band excursions that cut and RESTORE "
+                    "BT_BUS and FC_BUS — with the cut/restore latency measured."),
+    # "any": the setpoint-latched cutoff is firmware logic and the governor rails
+    # are firmware arithmetic; neither needs ideal-diode dynamics.  Running it in
+    # both engines is a free cross-check.  (The hi-fi engine's own reactive
+    # pick-up is handoff-sag's subject, not this one's.)
+    "electrical": "any",
+    "duration_s": 47.0,
+    "pi_timeline": [
+        (0.5, {"mode_cmd": MODE_SAFE}),
+        (3.0, {"mode_cmd": MODE_HYBRID}),
+        # Standstill for the whole run; 0.50 is the firmware's own default split.
+        (5.0, {"v_setpoint": 0.0, "power_share_setpoint": 0.50}),
+        # PHASE A staircase: 0.10 every 3 s.  3 s is ~150 share-loop ticks at
+        # SHARE_CTRL_TS_US 1000 us and 150 command periods at PI_CMD_HZ — long
+        # enough that each step's settled value, not its transient, is what the
+        # trace shows.
+        (6.0, {"power_share_setpoint": 0.80}),    # above the 0.75 rail
+        (9.0, {"power_share_setpoint": 0.70}),
+        (12.0, {"power_share_setpoint": 0.60}),
+        (15.0, {"power_share_setpoint": 0.50}),
+        (18.0, {"power_share_setpoint": 0.40}),
+        (21.0, {"power_share_setpoint": 0.30}),
+        (24.0, {"power_share_setpoint": 0.20}),   # below the 0.25 rail
+        (27.0, {"power_share_setpoint": 0.50}),   # recentre before the load drop
+        # (t = 29: STAIRCASE_LOAD_A drops to STAIRCASE_LOAD_B, ramped over
+        #  SOC_LOAD_RAMP_S by apply_scenario() — see the branch there.)
+        # PHASE B excursions, 3 s apart so each cut and each restore is measured
+        # in isolation.  33 -> BT_BUS cut (sp > DROOP_R_MAX); 36 -> restore;
+        # 39 -> FC_BUS cut (sp < DROOP_R_MIN); 42 -> restore.
+        (33.0, {"power_share_setpoint": 0.95}),
+        (36.0, {"power_share_setpoint": 0.50}),
+        (39.0, {"power_share_setpoint": 0.05}),
+        (42.0, {"power_share_setpoint": 0.50}),
+        # Close the run out Run -> Finish -> Idle, leaving 3 s.
+        (44.0, {"mode_cmd": MODE_SAFE}),
+    ],
+}
+
+# ── M4 (review 2026-08-31): the one key that is a DEMAND INPUT and is NOT in the
+# fingerprint.  `aux_preload_a` is applied by apply_scenario()'s generic
+# fall-through branch and changes the bus load the DP solved against just as
+# surely as `ems_v_profile` does — so a `dp-replay` scenario that declared one
+# would be pinned to a fingerprint that does not cover its own demand, and the
+# guard would happily accept a table generated for a different load.
+#
+# IT IS NOT IN DP_FINGERPRINT_META_KEYS ON PURPOSE, and that is future work
+# rather than an oversight: adding a key changes the canonical string
+# dp_profile_fingerprint() hashes, which invalidates the SHIPPED table in
+# tools/dp_tables/ and costs a ~21 min regeneration.  There is exactly one
+# dp-replay scenario today and it declares no preload, so the key would buy
+# nothing.  Add it — and regenerate — when a SECOND DP scenario lands.
+#
+# Until then, refuse the combination at import so the gap cannot be reached
+# silently.  This is deliberately checked against the SCENARIOS registry rather
+# than inside dp_profile_fingerprint(): the function is also called by
+# tools/gen_dp_ems_table.py, and a startup refusal there would read as a
+# generator bug rather than as a registry one.
+for _dpn, _dpm in SCENARIOS.items():
+    if _dpm.get("ems") == "dp-replay":
+        assert "aux_preload_a" not in _dpm, (
+            "SCENARIOS[%r] is a dp-replay scenario AND declares `aux_preload_a`. "
+            "That key is a DEMAND INPUT the DP solves against, but it is not in "
+            "DP_FINGERPRINT_META_KEYS (see the note there), so the table guard "
+            "would not notice a preload change. Either add the key to "
+            "DP_FINGERPRINT_META_KEYS and REGENERATE every table in "
+            "tools/dp_tables/ (~21 min), or express the load through a branch "
+            "apply_scenario() already fingerprints (the SOC_BAND_DRAIN_* "
+            "constants)." % _dpn)
+del _dpn, _dpm
+
 SCENARIO_NAMES = list(SCENARIOS)
+
+# `aux_preload_a` is applied ONLY by apply_scenario()'s generic fall-through
+# branch, so declaring it on a scenario that has a bespoke branch of its own
+# would be silently ignored — a stimulus that is not what the registry says it
+# is, with no symptom anywhere. Refuse at import instead. The list is every
+# scenario name apply_scenario() matches explicitly; extending that dispatch
+# without extending this list is the one way to reintroduce the gap.
+_AUX_PRELOAD_BESPOKE = frozenset({
+    "steady", "step-load", "sag", "comm-loss", "drive", "charge-cruise",
+    "charge-regen", "ems-drive-cycle", "ems-soc-band", "ems-dp-replay",
+    "charge-fault", "soc-depletion", "handoff-sag", "bringup", "scp-inrush",
+    # 2026-08-31 wave 2: `mppt-tracking` and `charge-to-full` carry the plain
+    # I_AUX_A load and take the GENERIC branch, so they are NOT listed.
+    # `share-staircase` needs a load that DROPS mid-run (the generic
+    # `aux_preload_a` ramps in once and stays), so it has a bespoke branch and
+    # must be listed here or a preload declared on it would be silently ignored.
+    "share-staircase",
+})
+for _n, _m in SCENARIOS.items():
+    assert not (_m.get("aux_preload_a") and _n in _AUX_PRELOAD_BESPOKE), (
+        "SCENARIOS[%r] declares aux_preload_a, but apply_scenario() dispatches "
+        "%r to a bespoke branch that never reads it — the load would be "
+        "silently absent from the run. Fold the preload into that branch, or "
+        "remove the bespoke branch." % (_n, _n))
+del _n, _m
 
 # `soc-depletion`: seconds over which the SOC_ENDURANCE_LOAD_A bus-side endurance
 # load ramps in from t = 10.0.  3 s is ~150 share-loop ticks (SHARE_CTRL_PERIOD_US
@@ -3139,6 +4136,82 @@ SCP_INRUSH_RUN_S = 0.110
 # be RE-DERIVED from the first live campaign under this stimulus, then tightened.
 
 
+# ── Generic per-scenario auxiliary preload (2026-08-31) ─────────────────────
+# Three scenarios grew their own bespoke bus load — HANDOFF_PRELOAD_A,
+# SOC_BAND_DRAIN_LOAD_A, SOC_ENDURANCE_LOAD_A — each with its own hardcoded
+# branch in apply_scenario().  A fourth kind of scenario (the `ems-y-*` and
+# `ems-ftp75-*` EMS runs) needs the same thing for a stated reason: the
+# firmware's share loop only CLOSES above 2*SHARE_MINORITY_I_MIN_A = 0.60 A of
+# source total, and an EMS cycle at this rig's motor currents sits below that
+# for much of its length, so a share-tracking objective without a preload
+# measures feedforward.
+#
+# Rather than a fifth hardcoded branch, a scenario may declare `aux_preload_a`
+# and get the same treatment generically.
+#
+# RAMPED, NOT STEPPED, and that is the soc-depletion lesson rather than a
+# preference: a stepped multi-amp bus load splits 50/50 for the one tick before
+# the droop reapportions it, and a single sample at that split is enough to
+# latch OC_FC (campaign 20260830_214819 — 1.4705 A on FC, 5 mA over
+# LIMIT_I_FC_MAX, killing a run 645 s before its objective).  The ramp reuses
+# SOC_LOAD_RAMP_S, and starts at AUX_PRELOAD_START_S for handoff-sag's reason:
+# bring-up P0 pre-charges the bus through the source switches' body-diode path,
+# and extra load inside that window risks failing the P0 voltage gate for
+# reasons that have nothing to do with the scenario under test.
+AUX_PRELOAD_START_S = 4.0
+
+
+# ── `share-staircase`: the two-phase bus load ───────────────────────────────
+# BESPOKE rather than `aux_preload_a`, for one reason: the generic key ramps a
+# load IN once and holds it, and this scenario needs the load to come DOWN
+# mid-run.  The two phases' loads and the reason they cannot be one load are
+# derived in full at SCENARIOS["share-staircase"].
+#
+# PHASE A, 1.05 A on top of I_AUX_A 0.15 -> I_tot ~ 1.20 A.  Chosen so the
+# governor's rails, SHARE_MINORITY_I_MIN_A / I_tot = 0.30/1.20, land on the round
+# numbers 0.25 and 0.75 — the staircase's 0.10 steps then straddle them cleanly
+# instead of clipping halfway through a step.  It is also 2.0x the closed-loop
+# entry gate (2*SHARE_MINORITY_I_MIN_A = 0.60 A), so the loop cannot drop back to
+# open-loop feedforward on a transient.  Per-channel worst case at the 0.80
+# command is the 0.75 rail: 0.90 A vs LIMIT_I_FC_MAX 1.4 A, 36 % margin.
+STAIRCASE_LOAD_A = 1.05
+# PHASE B, 0.40 A -> I_tot ~ 0.55 A.  Two constraints, and only a narrow band
+# satisfies both:
+#   * BELOW the cut's SHARE_CUT_MAX_HANDOFF_A 0.5 A per-channel guard even at a
+#     50/50 split (0.275 A, 45 % clear), or the latch is REFUSED and the scenario
+#     measures a deferral instead of a cut;
+#   * ABOVE the closed-loop EXIT hysteresis (SHARE_GOV_OL_HYST_A -> 0.55 A of
+#     filtered total) only MARGINALLY — 0.55 A sits ON it, so Phase B is expected
+#     to run at or just under the open-loop boundary.  THAT IS ACCEPTED AND
+#     STATED: Phase B's objective is the SETPOINT-latched cutoff, which is
+#     evaluated from the commanded setpoint (.ino:9231) and does not require the
+#     closed loop at all.  Do not read share-TRACKING numbers off Phase B; Phase A
+#     is where the loop is unambiguously closed.
+STAIRCASE_LOAD_B = 0.40
+# The load transition.  Placed at t = 29, between the staircase's recentre at
+# t = 27 and the first excursion at t = 33, and RAMPED over SOC_LOAD_RAMP_S for
+# soc-depletion's reason: a stepped multi-amp change splits 50/50 for the one
+# tick before the droop reapportions it.  Ramping DOWN is the benign direction,
+# but the ramp costs nothing and keeps the two directions symmetric.
+STAIRCASE_DROP_S = 29.0
+
+
+def scenario_aux_preload_a(scenario, t):
+    """The scenario's declared `aux_preload_a`, ramped in, at time t [A].
+
+    0.0 for a scenario that declares none — which is EVERY scenario that
+    predates this key, so the existing hardcoded branches in apply_scenario()
+    are untouched and their traces are byte-identical.
+
+    Read by apply_scenario() and, so the offline DP solves against the same
+    demand the run will see, by gen_dp_ems_table.scenario_drain_a()."""
+    preload = (SCENARIOS.get(scenario) or {}).get("aux_preload_a")
+    if not preload:
+        return 0.0
+    ramp = (t - AUX_PRELOAD_START_S) / SOC_LOAD_RAMP_S
+    return float(preload) * max(0.0, min(1.0, ramp))
+
+
 def apply_scenario(plant, scenario, t):
     """
     Mutate the plant for the active scenario at time t and return this tick's
@@ -3248,6 +4321,23 @@ def apply_scenario(plant, scenario, t):
         plant.i_aux = (I_AUX_A
                        + (HANDOFF_PRELOAD_A if t >= 4.0 else 0.0)
                        + (HANDOFF_STEP_A if t >= 20.0 else 0.0))
+    elif scenario == "share-staircase":
+        # TWO-PHASE bus load: STAIRCASE_LOAD_A ramped in from AUX_PRELOAD_START_S,
+        # then DROPPED to STAIRCASE_LOAD_B from STAIRCASE_DROP_S.  Both edges ramp
+        # over SOC_LOAD_RAMP_S.  The full derivation — including why one load
+        # cannot serve both objectives — is at the two constants and at
+        # SCENARIOS["share-staircase"].
+        #
+        # BESPOKE rather than `aux_preload_a` because that key ramps a load in
+        # ONCE and holds it; there is no generic way to express a drop, and
+        # inventing one for a single scenario would be a second mechanism to keep
+        # correct.  `share-staircase` is therefore listed in
+        # _AUX_PRELOAD_BESPOKE, so declaring `aux_preload_a` on it is refused at
+        # import rather than silently ignored.
+        ramp_in = max(0.0, min(1.0, (t - AUX_PRELOAD_START_S) / SOC_LOAD_RAMP_S))
+        ramp_dn = max(0.0, min(1.0, (t - STAIRCASE_DROP_S) / SOC_LOAD_RAMP_S))
+        plant.i_aux = I_AUX_A + (STAIRCASE_LOAD_A * ramp_in
+                                 - (STAIRCASE_LOAD_A - STAIRCASE_LOAD_B) * ramp_dn)
     elif scenario == "bringup":
         # Plant only, from dark.  The operator runs the staged bring-up ('G') and
         # watches P0-P3 against the RT1987 delays.
@@ -3303,6 +4393,14 @@ def apply_scenario(plant, scenario, t):
             # fades in through the bounded Norton stamp and pushes the fold past the
             # admission tick, which is precisely the defect being fixed.
             plant.i_mot_extra = 0.0
+    else:
+        # GENERIC branch, reached only by a scenario with no bespoke behaviour
+        # of its own — today the `ems-y-*` and `ems-ftp75-*` EMS scenarios.
+        # Every scenario named above takes an earlier branch, so adding this
+        # changed none of their traces.  A scenario that declares no
+        # `aux_preload_a` gets exactly I_AUX_A, which is what the fall-through
+        # left behind before this branch existed.
+        plant.i_aux = I_AUX_A + scenario_aux_preload_a(scenario, t)
     return tx_enabled
 
 
@@ -3412,9 +4510,11 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     if args.list_scenarios:
-        print(f"{'scenario':<16} {'engine':<7} {'dur':>6}  description")
+        # Column widened 16 -> 20 for the `ems-ftp75-socband` / `ems-y-b30-v1`
+        # families; the longest name is 17 characters.
+        print(f"{'scenario':<20} {'engine':<7} {'dur':>6}  description")
         for name, meta in SCENARIOS.items():
-            print(f"{name:<16} {meta['electrical']:<7} {meta['duration_s']:>5.0f}s  "
+            print(f"{name:<20} {meta['electrical']:<7} {meta['duration_s']:>5.0f}s  "
                   f"{meta['description']}")
         return 0
     if args.replay and args.scenario:
@@ -3593,8 +4693,25 @@ def main(argv=None):
         print(f"[hil] Ag105 charge-current ceiling DE-RATED to {chg_ceiling:.2f} A "
               f"for scenario '{scenario}' (firmware configures {AG105_I_MAX:.2f} A; "
               f"scenario parameter chg_i_ceiling_a — see SCENARIOS)")
+    # Scenario-level MPPT threshold emulation (SCENARIOS[...]["mppt_emulation"]),
+    # same plumbing class as chg_i_ceiling_a.  Absent/False -> the charger branch
+    # behaves exactly as it did before the key existed.  Replay mode has no
+    # scenario and no charger model at all.
+    mppt_emu = bool(meta.get("mppt_emulation")) and not args.replay
+    if mppt_emu:
+        print(f"[hil] Ag105 MPPT INPUT-VOLTAGE THRESHOLD emulated for scenario "
+              f"'{scenario}': charging is inhibited while MPPT_DISABLE is HIGH "
+              f"(tracking released) and V_chg < {AG105_MPPT_V_THRESH:.1f} V "
+              f"(+{AG105_MPPT_V_HYST:.1f} V hysteresis). Datasheet p.10 default; "
+              f"TODO(verify) R1 — MPPTS resistor unconfirmed.")
     plant = Plant(electrical=electrical, soc0=args.soc0,
-                  capacity_ah=args.capacity_ah, ag105_i_max=chg_ceiling)
+                  capacity_ah=args.capacity_ah, ag105_i_max=chg_ceiling,
+                  mppt_emulation=mppt_emu)
+    # Scenario-level Pi-commander mute (SCENARIOS[...]["pi_mute_after_s"]).  Read
+    # ONCE here and handed to whichever commander is constructed below; None (the
+    # default, and every scenario but `pi-silence`) means "never mute".  Not
+    # applicable in replay mode, which has no scenario.
+    pi_mute_after = None if args.replay else meta.get("pi_mute_after_s")
     # ── Command source ───────────────────────────────────────────────────────
     # replay             : no commander (the rails come from a log)
     # replay + --replay-commands : commander driven by the LOG's recorded
@@ -3644,18 +4761,31 @@ def main(argv=None):
                 print(f"[hil] NOTICE: --ems {ems_name} REPLACES scenario "
                       f"'{scenario}''s pi_timeline ({len(meta['pi_timeline'])} "
                       f"entries) — the timeline is not played at all")
-            commander = PiCommander(None, policy=ems_policy, policy_name=ems_name)
+            commander = PiCommander(None, policy=ems_policy, policy_name=ems_name,
+                                    mute_after=pi_mute_after)
             print(f"[hil] EMS strategy: {ems_name} at "
                   f"{PiCommander.PI_CMD_HZ:.0f} Hz"
                   + (f", v_setpoint profile: {len(meta['ems_v_profile'])} points"
                      if meta.get("ems_v_profile") else
-                     f", constant cruise {EMS_DEFAULT_CRUISE_MPS:g} m/s "
-                     f"(scenario defines no ems_v_profile)"))
+                     f", no ems_v_profile (a strategy that reads one falls back "
+                     f"to a constant {EMS_DEFAULT_CRUISE_MPS:g} m/s cruise; the "
+                     f"`y-*` strategies generate their own v_setpoint)")
+                  + (f", Run exit t={meta['ems_run_exit_s']:g}s"
+                     if meta.get("ems_run_exit_s") is not None else "")
+                  + (f", aux preload +{meta['aux_preload_a']:g}A"
+                     if meta.get("aux_preload_a") else ""))
         else:
-            commander = PiCommander(meta.get("pi_timeline"))
+            commander = PiCommander(meta.get("pi_timeline"),
+                                    mute_after=pi_mute_after)
             if commander.timeline:
                 print(f"[hil] pi-command timeline: {len(commander.timeline)} entries, "
                       f"{PiCommander.PI_CMD_HZ:.0f} Hz")
+    if commander is not None and commander.mute_after is not None:
+        print(f"[hil] Pi commander MUTES at t={commander.mute_after:g}s "
+              f"(scenario key pi_mute_after_s): the 22-byte command stream stops "
+              f"PERMANENTLY while the injection stream keeps running at full "
+              f"rate. The board's Pi watchdog (PI_TIMEOUT_MS 500, armed in "
+              f"State 2/3) is the thing under test.")
     if args.pi_live:
         print("[hil] PI-LIVE: no commands are sent by this process. A real Pi must "
               "drive the 22-byte command packet, or the board stays in Idle "
@@ -4251,6 +5381,11 @@ def main(argv=None):
                             "soc": sensors.get("soc"),
                             # scenario profile (host-side script, not feedback at all)
                             "v_profile": piecewise(meta.get("ems_v_profile"), t),
+                            # scenario Run-exit override (host-side script, like
+                            # v_profile — NOT telemetry). None when the scenario
+                            # declares none, in which case every strategy falls
+                            # back to its own constant. See ems_run_exit().
+                            "ems_run_exit_s": meta.get("ems_run_exit_s"),
                             # observation frame — NOT in v4 telemetry except `switch`
                             # (offset 52) and `fault_flags` (offset 53)
                             "state": obs["state"] if obs else None,

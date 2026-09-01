@@ -244,6 +244,15 @@ It carries:
   even on an otherwise identical model. Compare the `constants` dict, not the
   hash, across that boundary (this is exactly the limitation
   `collect_model_constants()` documents);
+  **Changelog — 2026-08-31 (Round C): the hash moved again.** The wave-2
+  scenario round added **19** more names: `AG105_MPPT_V_THRESH`, `AG105_MPPT_V_HYST`, `COMBINED_PROFILE_S`, `COMBINED_PROFILE_MS`, `EMS_MPPT_CRUISE_LEAD_IN_S`, `EMS_MPPT_CRUISE_LEAD_OUT_S`, `EMS_Y_START_S`, `EMS_Y_END_S`, `EMS_Y_DURATION_S`, `EMS_Y_RUN_EXIT_S`, `Y_AUX_LOAD_A`, `FTP75_DURATION_S`, `FTP75_T_END`, `FTP75_PRELOAD_A`, `FTP75_RUN_EXIT_S`, `FTP75_SCALE_MPH_TO_MPS`, `STAIRCASE_LOAD_A`, `STAIRCASE_LOAD_B`, `STAIRCASE_DROP_S`.
+  Purely additive again — no pre-existing constant changed value, none removed.
+  `FTP75_SCALE_MPH_TO_MPS` is there incidentally: the generator-binding check
+  added this round re-exports it into `hil_plant_sim`'s namespace, so the
+  collector now sees a constant that already governed the FTP-75 stimulus. The
+  boundaries compound — a **pre-Round-C** hash is not comparable with a later
+  one, and neither is a pre-2026-08-31 one; compare the `constants` dict across
+  either;
 * `git`: the HEAD revision and a `dirty` flag (nulls if git is unavailable —
   provenance never fails a bench run);
 * `results`: achieved rate, ticks, `csv_rows`, max overrun, frame counters
@@ -407,6 +416,145 @@ Refused combinations (argparse-level, with the reason printed):
 | `regen-harvest` | same, plus `charge_goal` **inside braking windows only**, so the Ag105 is fed through REGEN and `FC_CHARGE` never opens | **Yes** — same two keys | `charge-regen` |
 | `soc-band` | deadband-P **share bias** on the SoC error, plus **opportunistic FC-path charging** in cruise | **No, as written** — it closes on `fb["soc"]`, which is plant truth (see the portability list under §3.3) | `ems-soc-band` |
 | `dp-replay` | nothing — it **plays back a table** of `power_share_setpoint` / `charge_goal` computed **offline** by backward dynamic programming with full foreknowledge of the whole cycle | **No, and never** — a Pi has no future. This is a *benchmark*, not a controller | `ems-dp-replay` |
+| `y-b30-v1`, `y-b30-v3`, `y-b00-v1`, `y-b00-v3` | **both** axes of the firmware's own `'Y'` combined profile (16 regions, 40 s — the table at `.ino:3162-3179`), at Vmax 1 or 3 m/s and share bound b = 0.30 or 0.00; no charging | **Yes** — read only `t` (and the scenario's `ems_run_exit_s`) | `ems-y-b30-v1` … `ems-y-b00-v3` |
+| `mppt-harvest` | `regen-harvest` plus `charge_goal` on the **low-cruise plateaus** as well, so the charger is also fed through the **FC path** — where the Ag105's MPPT input-voltage threshold can bind | **Yes** — same two keys as `regen-harvest` | `mppt-tracking` |
+
+The four `y-*` strategies are built by ONE factory, `make_ems_y(vmax, b)`, over ONE
+copy of the firmware's table — the same discipline the firmware itself keeps for
+`'Y'` and `'W'` (`.ino:7845-7850`). Two bands, two different experiments:
+**b = 0.30** (with a +0.60 A preload) keeps the share inside
+`[DROOP_R_MIN, DROOP_R_MAX]` and the loop closed, so the objective is share
+*tracking*; **b = 0.00** (no preload) rails the share to 1.00 and 0.00 and
+exercises the *cut-and-restore* topology instead. Do not read share-tracking
+numbers off a `b00` run — at Vmax 1 that loop is open-loop feedforward.
+
+### 3.2.1a The FTP-75 scenarios, and the `--with-ftp75` gate
+
+Two scenarios drive the **EPA FTP-75** cycle at raw **t = 0..340 s inclusive**
+(341 samples at 1 Hz) — the segment of
+`references/Systemic_Scaling_of_Powertrain_Models_with_Youla_Driver_Control.pdf`
+— scaled so its 56.7 mph peak lands on 3.0 m/s:
+
+```
+.venv_hil\Scripts\python.exe tools\hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario ems-ftp75-5050 --dash
+.venv_hil\Scripts\python.exe tools\hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario ems-ftp75-socband --dash
+```
+
+Each runs **350 s**. `run_hil_suite.py` therefore renders both **SKIPPED** unless
+you pass `--with-ftp75`:
+
+```
+.venv_hil\Scripts\python.exe tools\run_hil_suite.py --teensy-ip 192.168.1.50 --with-ftp75
+```
+
+That is a run-time gate (~11.7 min for the pair, on a campaign that is otherwise
+~34 min), not a coverage judgement — nothing about the board or the link blocks
+them.
+
+The speed profile is **generated, never hand-edited**. `tools/gen_ftp75_profile.py`
+reads the committed EPA file `references/drive_cycles/ftpcol.txt`, verifies its
+sha256, slices and scales it, and writes `tools/ftp75_profile.py`. That file's
+CRLF bytes are held in place by `references/drive_cycles/.gitattributes`
+(`* -text`), so the sha256 gate survives a checkout on any platform; and
+`hil_plant_sim.py` imports the generator to compare the two, so a stale or
+hand-edited `ftp75_profile.py` is an **import error**, not a silent wrong
+stimulus:
+
+```
+.venv_hil\Scripts\python.exe tools\gen_ftp75_profile.py --force
+```
+
+Two things to know before reading an `ems-ftp75-socband` trace:
+
+* Both scenarios carry a **+0.65 A** bus preload, which holds the source total
+  above the firmware's 0.60 A closed-loop governor gate for the whole cycle.
+* That same preload puts the source-total floor at **0.800 A**, above
+  `soc-band`'s 0.60 A charge-admission threshold, so the policy's **charging
+  branch cannot open** on this scenario. It exercises the share-bias branch over
+  a long cycle; `ems-soc-band` remains the home of the charge-window assertion.
+* `ems-ftp75-socband` **allows `OC_FC`**. At the policy's 0.75 share ceiling the
+  cycle peak puts 1.21 A on the FC channel — 14 % under `LIMIT_I_FC_MAX` — so a
+  drive-controller transient near the peak can spend the rest. A single-channel
+  overload there is the designed outcome, not a defect.
+
+### 3.2.1b The four wave-2 scenarios (2026-08-31)
+
+Four scenarios were added after the FTP-75 pair. None needs a flag; together they
+add about **4.5 minutes** to a campaign (45 + 130 + 14 + 47 s, plus four settle
+pauses). A full default campaign now estimates at **~34 min** (45 min with
+`--with-ftp75`); `run_hil_suite.py --list` prints the current figure.
+
+```
+.venv_hil\Scripts\python.exe tools\hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario mppt-tracking --dash
+.venv_hil\Scripts\python.exe tools\hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario charge-to-full --soc0 0.990 --dash
+.venv_hil\Scripts\python.exe tools\hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario pi-silence --dash
+.venv_hil\Scripts\python.exe tools\hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario share-staircase --dash
+```
+
+**`mppt-tracking` — and the one thing to check before trusting it.**
+⚠️ **The Ag105's MPPT is an input-voltage THRESHOLD, not a perturb-and-observe
+tracker** (`AG105_Silvertel.pdf` p.10; the P&O wording elsewhere in this repo is
+lore). Charging commences only above a threshold, settable 11–33 V by an **MPPTS
+resistor** or I2C register `0x02`, and **defaulting to 18 V with MPPTS open**.
+
+This scenario turns that threshold on in the plant model, which makes
+`MPPT_DISABLE` causally load-bearing for the first time. On a ~15.95 V bus the FC
+charge path **cannot clear an 18 V threshold**, and the firmware releases tracking
+only once the charger reports ready — so releasing it is exactly what stops the
+charging that made it ready. The model predicts a **hunt**: ~80 ms period, ~50 %
+duty, `I_charge` sitting near half the configured ceiling.
+
+**Open question R1, and what to do about it:** *does this board fit an MPPTS
+resistor?* An off-board **MPPTSEL** header exists on the schematic and its contents
+are unconfirmed. If you can check it, do — it decides this scenario's meaning:
+
+* **No resistor fitted** → the 18 V default holds, and the predicted hunt is a real
+  hardware finding: cruise-time harvesting on the FC path cannot hold on this bus.
+* **A resistor setting a lower threshold** → the hunt should NOT appear, and the run
+  going clean is the *correct* result. Report it, and
+  `hil_plant_sim.AG105_MPPT_V_THRESH` and the scenario's expectations move together.
+
+Either way, a `mppt-tracking` result is evidence about the hardware. Do not treat a
+missing hunt as a tooling bug.
+
+**`charge-to-full` — the suite passes `--soc0 0.990`; a hand run must too.**
+The Ag105's Fully-Charged branch needs `soc >= 0.995`, and no campaign has ever
+raised SoC by more than ~0.0009. Starting at 0.990 leaves ~90 s of charging at this
+scenario's 1.0 A ceiling, so **Fully Charged is expected around t = 100** of the
+130 s run. `run_hil_suite.py` supplies the override automatically; **a standalone
+run at the default `--soc0 0.7` will never reach FULL** and every one of its signal
+checks will fail for that reason alone. The run is at standstill throughout, so it
+exercises no drive-channel behaviour at all.
+
+**`pi-silence` — expect a `PI_TIMEOUT` fault; that is the pass condition.**
+The emulated Pi stops commanding at t = 8.0 while the injection stream keeps
+running, which is the only stimulus that reaches the firmware's Pi watchdog without
+also tripping the HIL link's own staleness path. The board **should** latch
+`FAULT_PI_TIMEOUT` about 500 ms later and stay latched to the end of the run; the
+motor command should fall from its ~3.5 A cruise hold to zero. Two things to know:
+
+* The 0x0010 bit is **shared** with `FAULT_HIL_LINK`, and the observation frame
+  carries no `error_code`. The suite therefore also checks that this process's own
+  injection stream was continuous (`child_tx_healthy`) — the attribution to the Pi
+  is an inference by elimination, not a direct read.
+* A **mid-run warm reset** here invalidates the run: it clears `pi_ever_connected`
+  and disarms the very watchdog under test. The suite marks such a run
+  INCONCLUSIVE.
+
+**`share-staircase` — the latency numbers are the point.**
+A motor-free two-phase sweep. Phase A (t = 6–28, bus load ~1.2 A) walks the share
+setpoint 0.80 → 0.20 in 0.10 steps, deliberately straddling the governor's clip
+rails at **[0.25, 0.75]**. The load then drops to ~0.55 A and Phase B (t = 33–44)
+commands 0.95 / 0.50 / 0.05 / 0.50, cutting and then **restoring** `BT_BUS` and
+`FC_BUS`. The load has to drop between the phases: at 1.2 A the cut's own
+0.5 A/channel handoff guard would refuse the latch.
+
+The report prints **four measured cut/restore latencies**. Those values are the
+deliverable; the 40 ms bound beside them is a regression tripwire. ⚠️ If a run
+exceeds it, that is the finding — **do not raise the bound to make the run green.**
+The latency is dominated by **command-arrival phase** (the emulated Pi's 50 Hz
+cadence), not by a firmware tick: `POWER_BAL_PERIOD_US` and `SHARE_CTRL_TS_US` are
+both 1000 µs.
 
 ### 3.2.2 `soc-band` and the H2 metric — a walkthrough
 

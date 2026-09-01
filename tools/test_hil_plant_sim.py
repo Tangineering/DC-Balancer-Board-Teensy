@@ -1131,6 +1131,10 @@ EXPECTED_SCENARIO_NAMES = {
     "charge-cruise", "charge-regen", "charge-fault", "soc-depletion",
     "ems-drive-cycle", "ems-soc-band", "ems-dp-replay",
     "handoff-sag", "bringup", "scp-inrush",
+    # 2026-08-31 wave 2: ten more registered scenarios.
+    "ems-y-b30-v1", "ems-y-b30-v3", "ems-y-b00-v1", "ems-y-b00-v3",
+    "ems-ftp75-5050", "ems-ftp75-socband",
+    "mppt-tracking", "charge-to-full", "pi-silence", "share-staircase",
 }
 
 
@@ -1187,6 +1191,17 @@ EXPECTED_SCENARIO_DURATIONS_S = {
     "handoff-sag": 24.0,
     "bringup": 8.0,
     "scp-inrush": 6.0,
+    # 2026-08-31 wave 2.
+    "ems-y-b30-v1": 49.0,
+    "ems-y-b30-v3": 49.0,
+    "ems-y-b00-v1": 49.0,
+    "ems-y-b00-v3": 49.0,
+    "ems-ftp75-5050": 350.0,
+    "ems-ftp75-socband": 350.0,
+    "mppt-tracking": 45.0,
+    "charge-to-full": 130.0,
+    "pi-silence": 14.0,
+    "share-staircase": 47.0,
 }
 
 
@@ -1295,12 +1310,20 @@ def test_scenarios_chg_i_ceiling_a_only_on_charge_regen_and_charge_fault():
     charge-fault -- the ems-soc-band SCENARIOS entry copies it verbatim for the
     identical single-source-FC operating point.  The invariant this test pins
     is now "any scenario declaring a charge window carries the de-rate", not
-    "only these two names do"."""
+    "only these two names do".
+
+    RE-SCOPED AGAIN (2026-08-31 wave 2): mppt-tracking and charge-to-full both
+    de-rate to 1.0 A for the SAME reason -- both are single-source FC-path
+    charge windows and both cite LIMIT_I_FC_MAX budget arithmetic in their
+    SCENARIOS docstrings/comments (mppt-tracking: 1.21 A of 1.4 A at the
+    0.4 m/s plateau; charge-to-full: 1.15 A of 1.4 A at standstill)."""
     for name, meta in hil.SCENARIOS.items():
         if name == "charge-regen":
             assert meta["chg_i_ceiling_a"] == pytest.approx(1.6)
         elif name in ("charge-fault", "ems-soc-band", "ems-dp-replay"):
             assert meta["chg_i_ceiling_a"] == pytest.approx(0.8)
+        elif name in ("mppt-tracking", "charge-to-full"):
+            assert meta["chg_i_ceiling_a"] == pytest.approx(1.0)
         else:
             assert "chg_i_ceiling_a" not in meta, name
 
@@ -4565,6 +4588,783 @@ def test_ems_dp_replay_scenario_registered_with_dp_replay_strategy():
     assert meta["ems"] in hil.EMS_STRATEGIES
     # DERIVED: the same list OBJECT as ems-soc-band's profile, by construction.
     assert meta["ems_v_profile"] is hil.SCENARIOS["ems-soc-band"]["ems_v_profile"]
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# 2026-08-31 wave 2 -- Round C, test-writer coverage.
+# ═════════════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────────────────
+# W1.1 -- COMBINED_PROFILE, pinned literally against the firmware's own
+# 16-region table (teensy_controller.ino:3162-3179).  A self-consistent copy
+# is invisible to every other test in this file (the fw v8 lesson quoted at
+# the top of hil_plant_sim.COMBINED_PROFILE's comment) -- this is the ONE
+# place that types the firmware's numbers out again, independently.
+# ─────────────────────────────────────────────────────────────────────────
+
+_FW_COMBINED_PROFILE = (
+    (2000, 0.0, 0.0, 0.50, 0.50),
+    (4000, 0.0, 0.6, 0.50, 0.50),
+    (2000, 0.6, 0.6, 0.50, 0.50),
+    (3000, 0.6, 0.6, 0.65, 0.65),
+    (4000, 0.6, 1.0, 0.65, 0.35),
+    (2000, 1.0, 0.3, 0.35, 0.35),
+    (1500, 0.3, 0.3, 1.00, 1.00),
+    (3500, 0.3, 1.0, 0.35, 0.35),
+    (3000, 0.5, 0.5, 0.65, 0.65),
+    (2000, 0.5, 0.5, 0.65, 0.65),
+    (3000, 0.5, 0.5, 0.65, 0.00),
+    (1500, 0.5, 0.5, 0.00, 0.00),
+    (1500, 0.5, 0.5, 0.50, 0.50),
+    (2000, 0.2, 0.2, 0.50, 0.50),
+    (3000, 0.2, 0.0, 0.50, 0.50),
+    (2000, 0.0, 0.0, 0.50, 0.50),
+)
+
+
+def test_combined_profile_matches_firmware_table_literally():
+    assert hil.COMBINED_PROFILE == _FW_COMBINED_PROFILE
+    assert len(hil.COMBINED_PROFILE) == 16
+
+
+def test_combined_profile_sum_is_40000_ms():
+    assert sum(r[0] for r in hil.COMBINED_PROFILE) == 40000
+    assert hil.COMBINED_PROFILE_MS == 40000
+    assert hil.COMBINED_PROFILE_S == pytest.approx(40.0)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# W1.2 -- y_profile_at(): interpolation, region-end-never-emitted, and
+# clip-AFTER-interpolation semantics.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_y_profile_at_region0_start_is_standstill_mid_share():
+    v, s = hil.y_profile_at(0.0, vmax=2.0, b=0.30)
+    assert v == pytest.approx(0.0)
+    assert s == pytest.approx(0.50)
+
+
+def test_y_profile_at_before_table_clamps_to_region0_start():
+    v, s = hil.y_profile_at(-5.0, vmax=2.0, b=0.30)
+    assert v == pytest.approx(0.0)
+    assert s == pytest.approx(0.50)
+
+
+def test_y_profile_at_after_table_returns_region15_start_values():
+    """region 15 (the trailing hold) starts at standstill/0.50 share -- the
+    SAME values the firmware's natural completion leaves behind, and
+    y_profile_at() is TOTAL (every t_rel yields a value, unlike the
+    firmware's own walk which stops advancing past the table)."""
+    v, s = hil.y_profile_at(hil.COMBINED_PROFILE_S + 100.0, vmax=2.0, b=0.30)
+    assert v == pytest.approx(0.0)
+    assert s == pytest.approx(0.50)
+    # exactly at the end is the same case (>= the last region's start).
+    v2, s2 = hil.y_profile_at(hil.COMBINED_PROFILE_S, vmax=2.0, b=0.30)
+    assert v2 == pytest.approx(0.0)
+    assert s2 == pytest.approx(0.50)
+
+
+def test_y_profile_at_linear_interp_midway_through_region1():
+    """Region 1 (2..6 s): v ramps 0.0 -> 0.6 of vmax, share holds 0.50.  At
+    the region's midpoint (t_rel = 4.0) the ramp is exactly half done."""
+    v, s = hil.y_profile_at(4.0, vmax=3.0, b=0.0)
+    assert v == pytest.approx(0.3 * 3.0)
+    assert s == pytest.approx(0.50)
+
+
+def test_y_profile_at_region_end_value_never_emitted():
+    """tau is in [0, 1): the region-1 END value (0.6*vmax) is never returned
+    from INSIDE region 1 -- it is only ever the region-2 START value, which
+    is identical here (0.6, 0.6) so the walk is continuous, but the
+    computation must come from region 2's tau=0, not region 1's tau=1."""
+    region1_end_abs_ms = sum(r[0] for r in hil.COMBINED_PROFILE[:2])  # 6000
+    just_inside_region1 = (region1_end_abs_ms - 1) / 1000.0
+    v_inside, _s = hil.y_profile_at(just_inside_region1, vmax=1.0, b=0.0)
+    assert v_inside < 0.6 - 1e-6          # tau < 1 inside region 1
+    at_boundary = region1_end_abs_ms / 1000.0
+    v_at, _s2 = hil.y_profile_at(at_boundary, vmax=1.0, b=0.0)
+    assert v_at == pytest.approx(0.6)     # region 2's tau=0 start, same value
+
+
+def test_y_profile_at_share_clip_flattens_after_interpolation_not_before():
+    """Region 10 (32..35 s) ramps share 0.65 -> 0.00 at its own slope.  With
+    b=0.30 the runtime clip is [0.30, 0.70]: the ramp must run at the FULL
+    UNCLIPPED slope until it crosses 0.30, then FLATTEN there -- pre-scaling
+    the waypoints into the band would change the slope everywhere, not just
+    produce the kink after the crossing."""
+    b = 0.30
+    r10_start_ms = sum(r[0] for r in hil.COMBINED_PROFILE[:10])   # 27000
+    r10_dur_ms = hil.COMBINED_PROFILE[10][0]                      # 3000
+    # The unclipped line crosses 0.30 at tau = (0.65-0.30)/0.65 = 0.5385.
+    tau_cross = (0.65 - b) / 0.65
+    t_before = (r10_start_ms + (tau_cross - 0.05) * r10_dur_ms) / 1000.0
+    t_after = (r10_start_ms + (tau_cross + 0.05) * r10_dur_ms) / 1000.0
+    _v1, s_before = hil.y_profile_at(t_before, vmax=1.0, b=b)
+    _v2, s_after = hil.y_profile_at(t_after, vmax=1.0, b=b)
+    # Just before the crossing the unclipped line is still (barely) above b;
+    # just after, the FLATTENED value must sit exactly at the clip floor.
+    assert s_before > b
+    assert s_after == pytest.approx(b, abs=1e-9)
+
+
+def test_y_profile_at_scales_v_by_vmax():
+    for vmax in (1.0, 3.0, 5.5):
+        v, _s = hil.y_profile_at(4.0, vmax=vmax, b=0.0)   # region 1 midpoint
+        assert v == pytest.approx(0.3 * vmax)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# W1.3 -- make_ems_y(): closure fields, mode transitions, fb consumption.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_make_ems_y_fields_present_and_charge_goal_zero():
+    policy = hil.make_ems_y(2.0, 0.30)
+    out = policy(hil.EMS_Y_START_S + 4.0, {"t": hil.EMS_Y_START_S + 4.0})
+    assert set(out) == {"mode_cmd", "power_share_setpoint", "v_setpoint", "charge_goal"}
+    assert out["charge_goal"] == pytest.approx(0.0)
+
+
+def test_make_ems_y_v_and_share_match_y_profile_at_directly():
+    policy = hil.make_ems_y(2.5, 0.20)
+    t = hil.EMS_Y_START_S + 10.0
+    out = policy(t, {"t": t})
+    v_want, s_want = hil.y_profile_at(t - hil.EMS_Y_START_S, 2.5, 0.20)
+    assert out["v_setpoint"] == pytest.approx(v_want)
+    assert out["power_share_setpoint"] == pytest.approx(s_want)
+
+
+def test_make_ems_y_mode_steps_at_run_entry_and_its_own_run_exit():
+    policy = hil.make_ems_y(1.0, 0.30)
+    before = policy(hil.EMS_RUN_ENTRY_S - 0.01, {"t": hil.EMS_RUN_ENTRY_S - 0.01})
+    at_entry = policy(hil.EMS_RUN_ENTRY_S, {"t": hil.EMS_RUN_ENTRY_S})
+    just_before_exit = policy(hil.EMS_Y_RUN_EXIT_S - 0.01,
+                              {"t": hil.EMS_Y_RUN_EXIT_S - 0.01})
+    at_exit = policy(hil.EMS_Y_RUN_EXIT_S, {"t": hil.EMS_Y_RUN_EXIT_S})
+    assert before["mode_cmd"] == hil.MODE_SAFE
+    assert at_entry["mode_cmd"] == hil.MODE_HYBRID
+    assert just_before_exit["mode_cmd"] == hil.MODE_HYBRID
+    assert at_exit["mode_cmd"] == hil.MODE_SAFE
+
+
+def test_make_ems_y_only_reads_fb_t_and_ems_run_exit_s():
+    """Portability claim in the factory's docstring: a minimal fb carrying
+    ONLY 't' (no 'v_profile', no 'soc', nothing else) must not raise -- the
+    y-* strategies generate both axes from the table, not from feedback."""
+    policy = hil.make_ems_y(1.0, 0.0)
+    out = policy(20.0, {"t": 20.0})
+    assert out["v_setpoint"] is not None
+    # An explicit scenario override changes the exit point.
+    out2 = policy(20.0, {"t": 20.0, "ems_run_exit_s": 5.0})
+    assert out2["mode_cmd"] == hil.MODE_SAFE   # 20.0 >= the 5.0 override
+
+
+def test_make_ems_y_registered_variants_use_the_one_factory():
+    for name, vmax, b in (("y-b30-v1", 1.0, 0.30), ("y-b30-v3", 3.0, 0.30),
+                          ("y-b00-v1", 1.0, 0.00), ("y-b00-v3", 3.0, 0.00)):
+        assert name in hil.EMS_STRATEGIES
+        policy = hil.EMS_STRATEGIES[name]
+        t = hil.EMS_Y_START_S + 4.0
+        out = policy(t, {"t": t})
+        v_want, s_want = hil.y_profile_at(t - hil.EMS_Y_START_S, vmax, b)
+        assert out["v_setpoint"] == pytest.approx(v_want), name
+        assert out["power_share_setpoint"] == pytest.approx(s_want), name
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# W1.4 -- ems_run_exit(): declared-key / absent-key / explicit-0.0 semantics,
+# and the three consumer strategies.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_ems_run_exit_absent_key_falls_back_to_default():
+    assert hil.ems_run_exit({"t": 0.0}, 55.0) == pytest.approx(55.0)
+    assert hil.ems_run_exit({"ems_run_exit_s": None}, 55.0) == pytest.approx(55.0)
+
+
+def test_ems_run_exit_declared_value_wins():
+    assert hil.ems_run_exit({"ems_run_exit_s": 12.5}, 55.0) == pytest.approx(12.5)
+
+
+def test_ems_run_exit_explicit_zero_is_not_treated_as_absent():
+    """The docstring is explicit about this: an `or`-based fallback would
+    treat a legally-declared 0.0 as falsy and silently substitute the
+    default -- ems_run_exit() must use an is-None test instead."""
+    assert hil.ems_run_exit({"ems_run_exit_s": 0.0}, 55.0) == pytest.approx(0.0)
+
+
+def test_ems_hold_5050_uses_scenario_run_exit_override():
+    just_before = hil.ems_hold_5050(9.99, {"v_profile": None, "ems_run_exit_s": 10.0})
+    at = hil.ems_hold_5050(10.0, {"v_profile": None, "ems_run_exit_s": 10.0})
+    assert just_before["mode_cmd"] == hil.MODE_HYBRID
+    assert at["mode_cmd"] == hil.MODE_SAFE
+    # Absent key: falls back to the strategy's own EMS_RUN_EXIT_S, unaffected.
+    at_default_exit = hil.ems_hold_5050(10.0, {"v_profile": None})
+    assert at_default_exit["mode_cmd"] == hil.MODE_HYBRID
+
+
+def test_ems_regen_harvest_uses_scenario_run_exit_override():
+    just_before = hil.ems_regen_harvest(9.99, {"v_profile": None, "ems_run_exit_s": 10.0})
+    at = hil.ems_regen_harvest(10.0, {"v_profile": None, "ems_run_exit_s": 10.0})
+    assert just_before["mode_cmd"] == hil.MODE_HYBRID
+    assert at["mode_cmd"] == hil.MODE_SAFE
+
+
+def test_soc_band_strategy_uses_scenario_run_exit_override():
+    """SocBandStrategy is a stateful callable (ems_soc_band); build a fresh
+    instance so this test does not share captured state with any other."""
+    strategy = hil.SocBandStrategy()
+    fb_common = {"t": 0.0, "v_profile": None, "soc": 0.70,
+                "i_fc": 0.0, "i_bt": 0.0, "current": 0.0}
+    strategy(hil.EMS_RUN_ENTRY_S, dict(fb_common, t=hil.EMS_RUN_ENTRY_S,
+                                       ems_run_exit_s=10.0))
+    just_before = strategy(9.99, dict(fb_common, t=9.99, ems_run_exit_s=10.0))
+    at = strategy(10.0, dict(fb_common, t=10.0, ems_run_exit_s=10.0))
+    assert just_before["mode_cmd"] == hil.MODE_HYBRID
+    assert at["mode_cmd"] == hil.MODE_SAFE
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# W1.5 -- aux_preload_a / scenario_aux_preload_a(): ramp shape and the
+# import-time bespoke-scenario refusal mechanism.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_scenario_aux_preload_a_zero_for_scenario_with_no_key():
+    for t in (0.0, 4.0, 10.0, 100.0):
+        assert hil.scenario_aux_preload_a("steady", t) == pytest.approx(0.0)
+
+
+def test_scenario_aux_preload_a_ramp_shape():
+    """Before AUX_PRELOAD_START_S: 0. During the SOC_LOAD_RAMP_S ramp:
+    linear. After: the full declared value."""
+    preload = hil.SCENARIOS["ems-y-b30-v1"]["aux_preload_a"]
+    assert preload == pytest.approx(hil.Y_AUX_LOAD_A)
+    before = hil.scenario_aux_preload_a("ems-y-b30-v1", hil.AUX_PRELOAD_START_S - 1.0)
+    assert before == pytest.approx(0.0)
+    midway = hil.scenario_aux_preload_a(
+        "ems-y-b30-v1", hil.AUX_PRELOAD_START_S + hil.SOC_LOAD_RAMP_S / 2.0)
+    assert midway == pytest.approx(preload / 2.0, abs=1e-9)
+    after = hil.scenario_aux_preload_a(
+        "ems-y-b30-v1", hil.AUX_PRELOAD_START_S + hil.SOC_LOAD_RAMP_S + 10.0)
+    assert after == pytest.approx(preload)
+
+
+def test_aux_preload_bespoke_set_contains_the_documented_scenarios():
+    bespoke = hil._AUX_PRELOAD_BESPOKE
+    for name in ("steady", "step-load", "sag", "comm-loss", "drive",
+                "charge-cruise", "charge-regen", "ems-drive-cycle",
+                "ems-soc-band", "ems-dp-replay", "charge-fault",
+                "soc-depletion", "handoff-sag", "bringup", "scp-inrush",
+                "share-staircase"):
+        assert name in bespoke, name
+    # mppt-tracking / charge-to-full deliberately do NOT need the bespoke
+    # branch (they take the generic one, with no aux_preload_a declared).
+    assert "mppt-tracking" not in bespoke
+    assert "charge-to-full" not in bespoke
+
+
+def test_aux_preload_bespoke_scenarios_declare_no_aux_preload_a():
+    """The invariant the module-level assert enforces at import time (a
+    bespoke-branch scenario declaring aux_preload_a would have its load
+    silently dropped) -- re-checked here so a future edit that adds the key
+    to a bespoke scenario without removing it from the set fails a normal
+    test run, not just a fresh interpreter import."""
+    for name in hil._AUX_PRELOAD_BESPOKE:
+        assert not hil.SCENARIOS.get(name, {}).get("aux_preload_a"), name
+
+
+def test_aux_preload_bespoke_refusal_would_fire_for_a_bespoke_scenario_with_the_key():
+    """Replicates the exact guard expression from the module (not the
+    module's own assert, which already ran at import) against a FABRICATED
+    violation, so this test documents and pins what the guard actually
+    checks."""
+    fake_meta = {"aux_preload_a": 1.0}
+    name = next(iter(hil._AUX_PRELOAD_BESPOKE))
+    would_violate = bool(fake_meta.get("aux_preload_a")) and name in hil._AUX_PRELOAD_BESPOKE
+    assert would_violate is True
+
+
+def test_apply_scenario_generic_branch_applies_aux_preload_a():
+    """apply_scenario()'s fall-through branch (reached by ems-y-*/ems-ftp75-*,
+    today's only generic-branch scenarios) sets plant.i_aux from
+    I_AUX_A + scenario_aux_preload_a() -- confirmed end to end through the
+    real dispatcher, not just the helper function in isolation."""
+    plant = hil.Plant()
+    t = hil.AUX_PRELOAD_START_S + hil.SOC_LOAD_RAMP_S + 10.0
+    hil.apply_scenario(plant, "ems-y-b30-v1", t)
+    want = hil.I_AUX_A + hil.Y_AUX_LOAD_A
+    assert plant.i_aux == pytest.approx(want)
+
+
+def test_apply_scenario_generic_branch_no_preload_declared_is_plain_i_aux():
+    plant = hil.Plant()
+    hil.apply_scenario(plant, "ems-y-b00-v1", 100.0)   # b00: no aux_preload_a
+    assert plant.i_aux == pytest.approx(hil.I_AUX_A)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# W1.6 -- ftp75_profile.py (generated module) and its generator.
+# ─────────────────────────────────────────────────────────────────────────
+
+import ftp75_profile as _ftp75           # noqa: E402
+import gen_ftp75_profile as _gen_ftp75   # noqa: E402
+
+
+def test_ftp75_profile_point_count_matches_module_header():
+    assert len(_ftp75.FTP75_PROFILE) == 234 == _ftp75.FTP75_POINTS
+    assert _ftp75.FTP75_RAW_SAMPLES == 341
+
+
+def test_ftp75_profile_starts_at_rest_at_the_shifted_origin():
+    t0, v0 = _ftp75.FTP75_PROFILE[0]
+    assert t0 == pytest.approx(_gen_ftp75.PROFILE_START_S) == pytest.approx(5.0)
+    assert v0 == pytest.approx(0.0)
+    assert t0 == pytest.approx(_ftp75.FTP75_T_START)
+
+
+def test_ftp75_profile_ends_at_rest():
+    t_last, v_last = _ftp75.FTP75_PROFILE[-1]
+    assert v_last == pytest.approx(0.0)
+    assert t_last == pytest.approx(_ftp75.FTP75_T_END)
+    assert t_last == pytest.approx(_gen_ftp75.PROFILE_START_S
+                                   + _gen_ftp75.SEGMENT_END_S)
+
+
+def test_ftp75_profile_peak_is_3_0_mps_at_the_scaled_time():
+    assert _ftp75.FTP75_PEAK_MPS == pytest.approx(3.0)
+    assert _ftp75.FTP75_PEAK_T == pytest.approx(245.0)   # 240 raw + 5 shift
+    assert max(v for _t, v in _ftp75.FTP75_PROFILE) == pytest.approx(3.0)
+
+
+def test_ftp75_profile_t_is_strictly_monotonic():
+    ts = [t for t, _v in _ftp75.FTP75_PROFILE]
+    assert all(a < b for a, b in zip(ts, ts[1:]))
+
+
+def test_ftp75_t_end_used_by_scenario_run_exit_arithmetic():
+    """FTP75_RUN_EXIT_S / FTP75_DURATION_S in hil_plant_sim.py are DERIVED
+    from FTP75_T_END, not re-typed -- confirm the scenario's own declared
+    values agree."""
+    meta = hil.SCENARIOS["ems-ftp75-5050"]
+    assert meta["ems_run_exit_s"] == pytest.approx(_ftp75.FTP75_T_END + 1.0)
+    assert meta["duration_s"] == pytest.approx(_ftp75.FTP75_T_END + 1.0 + 4.0)
+
+
+def test_gen_ftp75_profile_regeneration_is_deterministic_and_matches_committed(tmp_path):
+    """Two independent generator runs produce byte-identical output, and both
+    match the committed tools/ftp75_profile.py -- the property the module's
+    own docstring claims (subprocess-free: this drives the generator's pure
+    functions directly, mirroring how ftp75_profile.py itself is produced)."""
+    rows, digest = _gen_ftp75.read_raw(_gen_ftp75.RAW_PATH)
+    assert digest == _gen_ftp75.RAW_SHA256
+    segment = _gen_ftp75.slice_segment(rows)
+    full = [(float(t) + _gen_ftp75.PROFILE_START_S, float(mph) * _gen_ftp75.SCALE_MPH_TO_MPS)
+           for (t, mph) in segment]
+    reduced1 = _gen_ftp75.decimate_collinear(full)
+    reduced2 = _gen_ftp75.decimate_collinear(full)
+    assert reduced1 == reduced2
+    worst_err, worst_t = _gen_ftp75.max_reconstruction_error(reduced1, full)
+    assert worst_err <= _gen_ftp75.RECON_ERR_MAX
+    text1 = _gen_ftp75.render_module(reduced1, full, digest, worst_err, worst_t)
+    text2 = _gen_ftp75.render_module(reduced2, full, digest, worst_err, worst_t)
+    assert text1 == text2
+    with open(_gen_ftp75.OUT_PATH, "r", encoding="utf-8") as fh:
+        committed = fh.read()
+    assert text1 == committed
+    # Round-trips to the SAME points hil_plant_sim's ftp75_profile module has.
+    assert reduced1 == _ftp75.FTP75_PROFILE
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Fix-round reconciliation (2026-08-31, post-GO):
+#   hil_plant_sim.py import-binds ftp75_profile's provenance constants to
+#   gen_ftp75_profile's own (ImportError on mismatch), and refuses
+#   aux_preload_a on any ems=="dp-replay" scenario.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_hil_plant_sim_binds_ftp75_sha256_and_scale_to_the_generator():
+    """The import-time chain hil_plant_sim.py checks (raises ImportError on
+    mismatch, so this module could not have imported cleanly otherwise) --
+    re-verified explicitly rather than trusted implicitly, and pinned against
+    BOTH sources independently (the generated module and the generator) so a
+    future edit to only one side is caught here too."""
+    assert hil.FTP75_RAW_SHA256 == _gen_ftp75.RAW_SHA256 == _ftp75.FTP75_RAW_SHA256
+    assert hil.FTP75_SCALE_MPH_TO_MPS == _gen_ftp75.SCALE_MPH_TO_MPS \
+        == _ftp75.FTP75_SCALE_MPH_TO_MPS
+
+
+def test_ftp75_import_bind_predicate_would_reject_a_mismatch():
+    """Mirrors hil_plant_sim.py's own import-time predicate directly (a
+    two-equality OR, safe to reproduce faithfully) -- confirms it correctly
+    flags a hand-edited/stale sha256 or scale, which is exactly the failure
+    mode the binding exists to catch (the fw v8 slot-count transcription
+    lesson: a self-consistent wrong copy is invisible to every other test)."""
+    def _stale(raw_sha, scale):
+        return (raw_sha != _gen_ftp75.RAW_SHA256
+                or scale != _gen_ftp75.SCALE_MPH_TO_MPS)
+
+    assert _stale(hil.FTP75_RAW_SHA256, hil.FTP75_SCALE_MPH_TO_MPS) is False
+    assert _stale("0" * 64, hil.FTP75_SCALE_MPH_TO_MPS) is True
+    assert _stale(hil.FTP75_RAW_SHA256, hil.FTP75_SCALE_MPH_TO_MPS * 2.0) is True
+
+
+def test_dp_replay_scenarios_declare_no_aux_preload_a():
+    """The import-time refusal (hil_plant_sim.py, near SCENARIOS['ems-dp-
+    replay']): any scenario whose `ems` is 'dp-replay' declaring
+    `aux_preload_a` would be pinned to a fingerprint that does not cover its
+    own demand -- re-checked here explicitly. The module imported cleanly,
+    so today's registry must already comply; this also guards the ONE
+    dp-replay scenario that exists today by name."""
+    found = 0
+    for name, meta in hil.SCENARIOS.items():
+        if meta.get("ems") == "dp-replay":
+            found += 1
+            assert "aux_preload_a" not in meta, name
+    assert found >= 1
+    assert "aux_preload_a" not in hil.SCENARIOS["ems-dp-replay"]
+
+
+def test_dp_replay_aux_preload_a_guard_would_reject_a_violation():
+    """Mirrors the guard's predicate directly (a plain membership check) and
+    confirms it flags a synthetic dp-replay scenario carrying the key --
+    exactly the gap ('the table guard would not notice a preload change')
+    the refusal exists to close."""
+    def _violates(meta):
+        return meta.get("ems") == "dp-replay" and "aux_preload_a" in meta
+
+    assert _violates({"ems": "dp-replay", "aux_preload_a": 0.5}) is True
+    assert _violates({"ems": "dp-replay"}) is False
+    assert _violates({"ems": "hold-5050", "aux_preload_a": 0.5}) is False
+    # Every real SCENARIOS entry must be clean (it imported).
+    for name, meta in hil.SCENARIOS.items():
+        assert not _violates(meta), name
+
+
+def test_gen_ftp75_profile_slice_segment_rejects_a_moving_tail():
+    """The end-at-rest assertion this generator relies on to skip a synthetic
+    ramp-down tail: a synthetic segment whose tail is NOT at rest must be
+    refused loudly rather than silently emitting a step-to-zero stimulus."""
+    rows = [(t, 0.0) for t in range(0, _gen_ftp75.SEGMENT_IDLE_FROM_S)]
+    rows += [(t, 5.0) for t in range(_gen_ftp75.SEGMENT_IDLE_FROM_S,
+                                     _gen_ftp75.SEGMENT_END_S + 1)]
+    with pytest.raises(ValueError, match="not at rest"):
+        _gen_ftp75.slice_segment(rows)
+
+
+def test_gen_ftp75_profile_slice_segment_accepts_a_synthetic_idle_tail():
+    rows = [(t, 10.0 if t < _gen_ftp75.SEGMENT_IDLE_FROM_S else 0.0)
+           for t in range(0, _gen_ftp75.SEGMENT_END_S + 1)]
+    out = _gen_ftp75.slice_segment(rows)
+    assert len(out) == _gen_ftp75.SEGMENT_END_S + 1
+    assert out[-1] == (_gen_ftp75.SEGMENT_END_S, 0.0)
+
+
+def test_gen_ftp75_profile_slice_segment_rejects_non_contiguous_rows():
+    rows = [(0, 0.0), (1, 0.0), (3, 0.0)]   # gap: t=2 missing
+    with pytest.raises(ValueError, match="contiguous"):
+        _gen_ftp75.slice_segment(rows)
+
+
+def test_gen_ftp75_profile_decimate_collinear_drops_exact_linear_interior_points():
+    points = [(0.0, 0.0), (1.0, 1.0), (2.0, 2.0), (3.0, 3.0)]   # y = x, exact
+    reduced = _gen_ftp75.decimate_collinear(points)
+    assert reduced == [(0.0, 0.0), (3.0, 3.0)]
+
+
+def test_gen_ftp75_profile_decimate_collinear_keeps_a_genuine_corner():
+    points = [(0.0, 0.0), (1.0, 5.0), (2.0, 0.0)]   # a spike, not collinear
+    reduced = _gen_ftp75.decimate_collinear(points)
+    assert reduced == points
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# W2.10 -- Ag105 MPPT input-voltage threshold emulation (Plant-level).
+# ─────────────────────────────────────────────────────────────────────────
+
+def _mppt_charge_obs(pin_high, i_charge_current=0.0):
+    """SW_FC_CHARGE ALONE (no SW_FC_BUS): chg_fed only needs SW_FC_CHARGE
+    (or REGEN+MOT_PWR), and NOT asserting SW_FC_BUS keeps the droop bus
+    regulator out of the loop entirely -- with SW_FC_BUS set the droop model
+    recomputes v_bus toward V_BUS_DROOP_V0 every tick and a directly-assigned
+    plant.v_bus above/at a hand-picked threshold would be silently
+    overwritten. The caller holds plant.v_bus by hand every tick instead
+    (the same pattern test_charger_sag_below_input_floor_drops_it uses)."""
+    aux = hil.AUX_MPPT_DISABLE if pin_high else 0
+    return _obs(switch=hil.SW_FC_CHARGE, aux=aux, current=i_charge_current)
+
+
+def test_mppt_emulation_default_off_ignores_the_threshold():
+    """Default Plant() (mppt_emulation=False): even a bus WELL below
+    AG105_MPPT_V_THRESH with the pin HIGH must charge exactly as the
+    pre-2026-08-31 model did (no GENSTAT Low-Power branch reachable)."""
+    plant = hil.Plant(ag105_i_max=1.0)   # mppt_emulation defaults False
+    obs = _mppt_charge_obs(pin_high=True)
+    out = None
+    for _ in range(int(hil.AG105_SETTLE_S / 1e-3) + 2000):
+        plant.v_bus = hil.V_BUS_NOMINAL   # 16.0, well under the 18.0 threshold
+        out = plant.step(1e-3, obs)
+    assert out["ag105_status"] & 0x07 == hil.AG105_ST_CHARGING
+    assert out["I_charge"] == pytest.approx(1.0, abs=0.05)
+
+
+def test_mppt_emulation_on_threshold_inhibits_charging_below_bus():
+    """mppt_emulation=True, pin HIGH (tracking released), bus below
+    threshold: the module must NOT charge -- GENSTAT Low Power, MPPT_EN set
+    with PWR_TRACK clear, and I_charge decays toward 0."""
+    plant = hil.Plant(ag105_i_max=1.0, mppt_emulation=True)
+    obs = _mppt_charge_obs(pin_high=True)
+    out = None
+    for _ in range(int(hil.AG105_SETTLE_S / 1e-3) + 3000):
+        plant.v_bus = hil.V_BUS_NOMINAL   # 16.0 < 18.0
+        out = plant.step(1e-3, obs)
+    assert out["ag105_status"] & 0x07 == hil.AG105_ST_LOW_POWER
+    assert out["ag105_status"] & hil.AG105_FLAG_MPPT_EN
+    assert not (out["ag105_status"] & hil.AG105_FLAG_PWR_TRACK)
+    assert out["I_charge"] == pytest.approx(0.0, abs=1e-3)
+
+
+def test_mppt_emulation_on_pin_low_bypasses_the_threshold():
+    """The threshold belongs to the MPPT REGULATOR, so it must apply ONLY
+    while tracking is released (pin HIGH). Pin LOW (inhibited, the regen
+    path's condition) must charge normally even below 18 V."""
+    plant = hil.Plant(ag105_i_max=1.0, mppt_emulation=True)
+    obs = _mppt_charge_obs(pin_high=False)
+    out = None
+    for _ in range(int(hil.AG105_SETTLE_S / 1e-3) + 2000):
+        plant.v_bus = hil.V_BUS_NOMINAL
+        out = plant.step(1e-3, obs)
+    assert out["ag105_status"] & 0x07 == hil.AG105_ST_CHARGING
+    assert out["I_charge"] == pytest.approx(1.0, abs=0.05)
+
+
+def test_mppt_emulation_on_above_threshold_charges_normally():
+    plant = hil.Plant(ag105_i_max=1.0, mppt_emulation=True)
+    obs = _mppt_charge_obs(pin_high=True)
+    out = None
+    for _ in range(int(hil.AG105_SETTLE_S / 1e-3) + 2000):
+        plant.v_bus = hil.AG105_MPPT_V_THRESH + 2.0   # comfortably above 18 V
+        out = plant.step(1e-3, obs)
+    assert out["ag105_status"] & 0x07 == hil.AG105_ST_CHARGING
+    assert out["I_charge"] == pytest.approx(1.0, abs=0.05)
+
+
+def test_mppt_emulation_hysteresis_release_needs_thresh_plus_hyst():
+    """Once inhibited, the module must NOT release at exactly
+    AG105_MPPT_V_THRESH -- only at THRESH + HYST or above (the comparison
+    hysteresis, on the voltage only, never on the pin)."""
+    plant = hil.Plant(ag105_i_max=1.0, mppt_emulation=True)
+    obs = _mppt_charge_obs(pin_high=True)
+    for _ in range(int(hil.AG105_SETTLE_S / 1e-3) + 1000):
+        plant.v_bus = hil.V_BUS_NOMINAL
+        plant.step(1e-3, obs)
+    assert plant.mppt_inhibited is True
+
+    # Just BELOW thresh+hyst (but AT/above the bare threshold): still
+    # inhibited -- needs the hysteresis margin too, not just the threshold.
+    # 0.05 V of margin comfortably clears the ~0.02 V/tick bleed the simple
+    # droop model's unregulated-bus branch applies BEFORE v_chg is read on
+    # this same tick (no FC_BUS/BT_BUS is closed here), so an exact-boundary
+    # assignment is not what is being pinned -- the hysteresis GAP is.
+    plant.v_bus = hil.AG105_MPPT_V_THRESH + hil.AG105_MPPT_V_HYST - 0.05
+    out = plant.step(1e-3, obs)
+    assert plant.mppt_inhibited is True
+    assert out["ag105_status"] & 0x07 == hil.AG105_ST_LOW_POWER
+
+    # Clearly AT/above THRESH + HYST: releases.
+    plant.v_bus = hil.AG105_MPPT_V_THRESH + hil.AG105_MPPT_V_HYST + 0.05
+    out2 = plant.step(1e-3, obs)
+    assert plant.mppt_inhibited is False
+
+
+def test_mppt_emulation_inhibit_clears_when_charger_loses_power():
+    """The gate's first guard (`not (mppt_emulation and chg_powered and pin)`)
+    must clear mppt_inhibited unconditionally when the charger goes dark --
+    it must not stay latched across a power cycle."""
+    plant = hil.Plant(ag105_i_max=1.0, mppt_emulation=True)
+    obs = _mppt_charge_obs(pin_high=True)
+    for _ in range(int(hil.AG105_SETTLE_S / 1e-3) + 1000):
+        plant.v_bus = hil.V_BUS_NOMINAL
+        plant.step(1e-3, obs)
+    assert plant.mppt_inhibited is True
+    dark_obs = _obs(switch=0, aux=0, current=0.0)
+    plant.step(1e-3, dark_obs)
+    assert plant.mppt_inhibited is False
+
+
+def test_mppt_emulation_hunt_closed_loop_toggles_and_equilibrates(monkeypatch=None):
+    """A minimal host-side reproduction of the firmware's own poll-and-decide
+    loop from ems_mppt_harvest()'s docstring: MPPT_DISABLE is set HIGH iff
+    the LAST poll's GENSTAT was a ready state (Charging or Full), polled
+    every 20 ms (CHARGING_CTRL_PERIOD_US). Confirms at least one full
+    HIGH<->LOW hunt cycle and that I_charge settles to a band clearly between
+    0 and the configured ceiling (not stuck at either rail) -- the physical
+    behaviour the MPPT threshold gate predicts."""
+    ceiling = 1.0
+    plant = hil.Plant(ag105_i_max=ceiling, mppt_emulation=True)
+    plant.v_bus = hil.V_BUS_NOMINAL   # below the 18 V threshold
+    dt = 1e-3
+    poll_period = 0.02
+    pin_high = False
+    t = 0.0
+    next_poll = poll_period
+    edges = []
+    last_pin = None
+    i_hist = []
+    statuses_seen = set()
+    for _ in range(6000):   # 6 s
+        t += dt
+        aux = hil.AUX_FC_REG | (hil.AUX_MPPT_DISABLE if pin_high else 0)
+        obs = _obs(switch=hil.SW_FC_CHARGE | hil.SW_FC_BUS, aux=aux, current=0.0)
+        out = plant.step(dt, obs)
+        statuses_seen.add(out["ag105_status"] & 0x07)
+        if t >= next_poll:
+            next_poll += poll_period
+            ready = (out["ag105_status"] & 0x07) in (hil.AG105_ST_CHARGING, hil.AG105_ST_FULL)
+            pin_high = ready
+        if last_pin is not None and last_pin != pin_high:
+            edges.append(t)
+        last_pin = pin_high
+        if t > 3.0:   # discard the initial bring-up transient
+            i_hist.append(out["I_charge"])
+
+    # It genuinely HUNTS: several toggles, not a pin that simply stayed put.
+    assert len(edges) >= 5
+    # Both the "ready" and the "gated" GENSTAT states were actually reached.
+    assert hil.AG105_ST_CHARGING in statuses_seen
+    assert hil.AG105_ST_LOW_POWER in statuses_seen
+    # I_charge equilibrates in a band clearly inside (0, ceiling) -- not
+    # pinned to either rail, matching the docstring's "does not collapse,
+    # equilibrates near half the ceiling" prediction with generous margin.
+    mean_i = sum(i_hist) / len(i_hist)
+    assert 0.15 * ceiling < mean_i < 0.85 * ceiling
+    assert min(i_hist) > 0.0
+    assert max(i_hist) < ceiling
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# W2.11 -- PiCommander.mute_after / muted().
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_pi_commander_mute_after_default_none_never_mutes():
+    pc = hil.PiCommander([(0.0, {"mode_cmd": hil.MODE_SAFE})])
+    assert pc.mute_after is None
+    assert pc.muted(0.0) is False
+    assert pc.muted(1e9) is False
+
+
+def test_pi_commander_muted_returns_true_at_and_after_mute_after():
+    pc = hil.PiCommander(None, policy=hil.ems_hold_5050, mute_after=8.0)
+    assert pc.muted(7.999) is False
+    assert pc.muted(8.0) is True
+    assert pc.muted(20.0) is True
+
+
+def test_pi_commander_muted_tick_returns_none_and_freezes_counters():
+    pc = hil.PiCommander(None, policy=hil.ems_hold_5050, mute_after=8.0)
+    pkt_before = pc.tick(7.0, lambda: {"t": 7.0})
+    assert pkt_before is not None
+    sent_before = pc.sent
+    idx_before = pc.idx
+    state_snapshot = dict(pc.state)
+
+    pkt_muted = pc.tick(9.0, lambda: {"t": 9.0})
+    assert pkt_muted is None
+    assert pc.sent == sent_before          # no packet counted as sent
+    assert pc.idx == idx_before            # no timeline advance
+    assert pc.state == state_snapshot      # frozen at the last-sent state
+
+    # Still muted arbitrarily far in the future -- does not un-mute.
+    assert pc.tick(500.0, lambda: {"t": 500.0}) is None
+
+
+def test_pi_commander_mute_after_does_not_affect_active():
+    """A muted commander was still ACTIVE before it muted -- active() reports
+    whether the commander will EVER transmit at all, not its current mute
+    state, so it must stay True (mirroring a real Pi that WAS connected)."""
+    pc = hil.PiCommander(None, policy=hil.ems_hold_5050, mute_after=0.0)
+    assert pc.active() is True
+
+
+def test_pi_commander_mute_after_with_timeline_freezes_mid_script():
+    timeline = [(0.0, {"mode_cmd": hil.MODE_SAFE}),
+               (5.0, {"v_setpoint": 2.0}),
+               (10.0, {"v_setpoint": 4.0})]
+    pc = hil.PiCommander(timeline, mute_after=6.0)
+    pc.tick(5.5, lambda: {"t": 5.5})
+    assert pc.state["v_setpoint"] == pytest.approx(2.0)
+    # Muted before the t=10.0 entry would have applied.
+    out = pc.tick(11.0, lambda: {"t": 11.0})
+    assert out is None
+    assert pc.state["v_setpoint"] == pytest.approx(2.0)   # never advanced to 4.0
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# W2 -- new-scenario metadata shape checks (the ones not covered above via
+# EXPECTED_SCENARIO_NAMES/_DURATIONS_S or the aux-preload section).
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_mppt_tracking_scenario_shape():
+    meta = hil.SCENARIOS["mppt-tracking"]
+    assert meta["ems"] == "mppt-harvest"
+    assert meta["mppt_emulation"] is True
+    assert meta["ems_v_profile"] is hil.SCENARIOS["charge-regen"]["ems_v_profile"]
+
+
+def test_charge_to_full_scenario_shape():
+    meta = hil.SCENARIOS["charge-to-full"]
+    assert meta.get("mppt_emulation") is not True   # deliberately off
+    assert meta.get("pi_timeline")
+    v_sp_entries = [e for e in meta["pi_timeline"] if "v_setpoint" in e[1]]
+    assert v_sp_entries and v_sp_entries[0][1]["v_setpoint"] == pytest.approx(0.0)
+    charge_entries = [e for e in meta["pi_timeline"] if e[1].get("charge_goal")]
+    assert charge_entries
+
+
+def test_pi_silence_scenario_shape():
+    meta = hil.SCENARIOS["pi-silence"]
+    assert meta["ems"] == "hold-5050"
+    assert meta["pi_mute_after_s"] == pytest.approx(8.0)
+    assert "ems_run_exit_s" not in meta   # deliberately absent (see comment)
+
+
+def test_share_staircase_scenario_shape():
+    meta = hil.SCENARIOS["share-staircase"]
+    assert "share-staircase" in hil._AUX_PRELOAD_BESPOKE
+    assert "aux_preload_a" not in meta
+    timeline_setpoints = [e[1]["power_share_setpoint"]
+                          for e in meta["pi_timeline"]
+                          if "power_share_setpoint" in e[1]]
+    assert 0.80 in timeline_setpoints
+    assert 0.20 in timeline_setpoints
+    assert 0.95 in timeline_setpoints
+    assert 0.05 in timeline_setpoints
+
+
+def test_apply_scenario_share_staircase_two_phase_load():
+    plant = hil.Plant()
+    # Phase A (fully ramped in, before the drop at STAIRCASE_DROP_S).
+    hil.apply_scenario(plant, "share-staircase",
+                       hil.AUX_PRELOAD_START_S + hil.SOC_LOAD_RAMP_S + 1.0)
+    assert plant.i_aux == pytest.approx(hil.I_AUX_A + hil.STAIRCASE_LOAD_A)
+    # Phase B (fully dropped, well after STAIRCASE_DROP_S + the ramp).
+    hil.apply_scenario(plant, "share-staircase",
+                       hil.STAIRCASE_DROP_S + hil.SOC_LOAD_RAMP_S + 1.0)
+    assert plant.i_aux == pytest.approx(hil.I_AUX_A + hil.STAIRCASE_LOAD_B)
+    # Before any ramp: plain I_AUX_A.
+    hil.apply_scenario(plant, "share-staircase", 0.0)
+    assert plant.i_aux == pytest.approx(hil.I_AUX_A)
+
+
+def test_pi_live_ems_scenarios_would_be_skipped_by_run_hil_suite():
+    """The four new scenarios join the --pi-live skip set via the SAME two
+    metadata keys run_hil_suite.build_plan() already dispatches on
+    (`pi_timeline` or `ems`) -- confirmed here at the metadata level so a
+    future rename of either key is caught in this file too, not only in
+    tools/test_run_hil_suite.py."""
+    for name in ("ems-y-b30-v1", "ems-y-b30-v3", "ems-y-b00-v1", "ems-y-b00-v3",
+                "mppt-tracking", "pi-silence", "ems-ftp75-5050", "ems-ftp75-socband"):
+        meta = hil.SCENARIOS[name]
+        assert meta.get("ems"), name
+    for name in ("charge-to-full", "share-staircase"):
+        assert hil.SCENARIOS[name].get("pi_timeline"), name
 
 
 if __name__ == "__main__":

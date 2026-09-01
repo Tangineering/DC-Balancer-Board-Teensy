@@ -1,0 +1,18 @@
+# The EPA raw drive-cycle file is a BYTE-EXACT provenance artifact: its sha256
+# (9791a45a7fb2415de0bf01948b96e8aeff499bfd63744a8c6ca781ae88826f8a, 17689
+# bytes) is verified by tools/gen_ftp75_profile.py before it will emit
+# tools/ftp75_profile.py, and hil_plant_sim.py refuses to import a generated
+# module whose recorded sha does not match the generator's.
+#
+# ftpcol.txt is CRLF as published.  This repository is developed with
+# core.autocrlf=true, which would store LF in the index — after which any
+# checkout on a platform that does not convert back (Linux, macOS, CI, or a
+# clone with autocrlf=false) yields a 15812-byte LF file whose sha256 is NOT
+# the recorded one, and the generator refuses to run at all.
+#
+# `* -text` disables end-of-line conversion for everything in this directory, so
+# what is committed is what is checked out is what the EPA published.
+#
+# Scoped to this directory on purpose, mirroring tools/dp_tables/.gitattributes:
+# it must not change how any other file in the repository is handled.
+* -text
