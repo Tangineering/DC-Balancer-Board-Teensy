@@ -18,21 +18,60 @@
      HIL_LINK now discriminate directly off the wire (offset 16) rather than by
      inference.
 
-## 1. OPERATOR RULING NEEDED — FTP75 preload split (0.45 vs 0.65)
+## 1. EMS test-program goals (operator directive, 2026-09-01 — supersedes the
+##    FTP75 preload ruling)
 
-Two options, unresolved:
-- (a) run the SDP leg at 0.65 — costs OC_FC margin; or
-- (b) add a fourth SDP leg at 0.65 alongside the existing legs.
+1. **Remove the auxiliary preload entirely — `aux_preload_a` → 0 for ALL
+   scenarios.** Keep the mechanism in the code; zero every scenario's value
+   (incl. `FTP75_PRELOAD_A` 0.65/0.45). Rationale (operator): part of what is
+   under test is how the actual firmware behaves against the simulated ACTUAL
+   load when the Pi commands drive cycles + EMS strategies — including the
+   sub-0.55 A open-loop-hold stretches the preload was masking; those are now
+   test content, not a nuisance. Consequences to handle: (a) this RESOLVES the
+   FTP75 preload split by construction (all legs at 0 — the frontier
+   stimulus-coherence check passes); (b) every closed-loop-gated expectation
+   calibrated under a preload (FTP75 legs, ems-soc-band/-sdp entries, the
+   closed-loop-fraction checks) must be re-derived for gate-dropout stretches —
+   a baseline-era boundary for preloaded scenarios; (c) offline walks must
+   model the open-loop hold (the standing walk rule). SCOPE NOTE for the
+   implementer: this ruling names `aux_preload_a`; scenario-specific STIMULUS
+   drains (the soc-band/soc-depletion drains, share-staircase loads,
+   Y_AUX_LOAD_A) are a different mechanism — confirm with the operator before
+   touching those.
+2. **ΔSoC-matched post-hoc DP in the run analysis.** For each HIL run that
+   executes a drive cycle, the analysis pipeline runs (or looks up) a DP solve
+   on the SAME cycle constrained to the run's own measured ΔSoC
+   (`gen_dp_ems_table.py --match-terminal-soc` bisection exists), giving a
+   direct ΔSoC-matched hydrogen comparison per run. Mind the documented
+   boundaries: the DP demand model has no regen term and (post item 1) no
+   preload; accounting mode must match the run's electrical mode.
+3. **α-sweep for the SDP strategies.** The full-scale SDP study used
+   α ∈ [100, 1000]; scale by the Round-B coulombic-energy factor
+   (500 → 0.2569444, i.e. ×5.139e-4) → bench bounds ≈ [0.0514, 0.514]. Solve
+   20 log-spaced points (log spacing already densifies the low end; the
+   current lever-calibrated α = 0.16296 falls inside the range and should be
+   one anchor point). Deliverable: 20 policy artifacts + an offline
+   walk/selected-run evaluation of h2-vs-ΔSoC across the sweep.
+4. **EMS strategy comparison deliverable.** Primary metric: percent deviation
+   from the corresponding ΔSoC-matched DP (item 2 is the prerequisite), across
+   all strategies and cycles (61 s, FTP75, the braking/interior scenarios).
+5. **Experimental MPC / stochastic-MPC EMS that models the GOVERNOR.** The SDP
+   family ignores the firmware's delivery nonlinearities (the 0.55 A open-loop
+   hold — newly exposed by item 1, the minority-current governor clip, share
+   slew, cut latches). Build an MPC (deterministic first, then stochastic via
+   the TPM demand model) whose prediction model includes the governor's
+   share-delivery map. Source material: references/EMS/
+   SDP_EnergyManagement_Governor2.m + main_SDP_governor_convexfc.m (the PhD
+   student's governor/convex-FC formulation, committed 567a3ed) and the TPM
+   toolchain (tools/tpm_generator.py, TPM_dt1_hil.mat).
 
 ## 2. Pi bridge v4 parser audit — UNBLOCKED
 
-Bridge source is now available at `references/EMS/Pi_2026-09-01/`
-(`teensy_bridge_node_2026-08-17A.py` + ROS2 nodes + SDP material), uncommitted.
-Two next-session items:
-- commit decision (bring the bridge source into the repo, or leave it referenced
-  in place — operator call);
-- the v4-parser audit itself (58 B layout, checksum XOR bytes 1–56, `charger_status`
-  at offset 51) → gates the first `--pi-live` campaign.
+Bridge source is committed at `references/EMS/Pi_2026-09-01/`
+(`teensy_bridge_node_2026-08-17A.py` + ROS2 nodes + SDP material, commit
+567a3ed). Remaining item: the v4-parser audit itself (58 B layout, checksum XOR
+bytes 1–56, `charger_status` at offset 51) → gates the first `--pi-live`
+campaign.
 
 ## 3. Bench items feeding new TODO(verify)s
 
