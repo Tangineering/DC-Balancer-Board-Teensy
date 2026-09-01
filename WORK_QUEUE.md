@@ -58,11 +58,11 @@ Does the charger lever now clear the 0.31 SoC/g `sdp` charge-revisit condition
 under the regen model? Measured 0.156 SoC/g under the (now-retired) floored plant —
 the floor is gone as of WP-C. Run this before the next SDP re-solve.
 
-## 6. Untracked operator decisions
+## 6. Untracked operator decisions — RESOLVED 2026-09-01 (commit 567a3ed)
 
-- `PSCAD/` — provenance unconfirmed, deliberately not committed.
-- `references/EMS/Pi_2026-09-01/` — the Pi bridge source drop, see §2.
-- The two new SDP `.m` files — untracked, owning session should commit or fold in.
+- `PSCAD/`, `references/EMS/Pi_2026-09-01/` and the two SDP `.m` files are now
+  TRACKED (operator-approved). The worktree deliberately keeps exactly one thing
+  uncommitted: the two `.ino` build-flag lines (`BENCH_TEST 0` / `HIL_SIM 1`).
 
 ## 7. Housekeeping
 
