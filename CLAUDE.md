@@ -2632,3 +2632,98 @@ tests 1217+26 / 129). Then the FIRST fw v24 campaign ran: **55/56 + drive SKIP**
 - Tests at close: 1217 + 26 (.venv_hil five suites), 129 (miniforge
   report-analysis). Firmware suites untouched this round (fw v24's 3787/175/4268
   stand from commit f8050e1).
+
+---
+
+## Status & session addendum (2026-09-01d, fw v25 + regen-fidelity round: share-cut guards, 18 B frame, regen model, DP/droop/figure extensions)
+
+Large orchestrated round in five work packages (operator-approved scope 2026-09-01),
+executed with parallel implementers on disjoint files, per-package reviews, and
+combined fix rounds. Commits b262e98 (fw v25) + 89fbad6 (tooling). **fw v25 is
+COMMITTED and NOT FLASHED; the flash prerequisite (18 B sim lockstep) is now met —
+the next flash carries v25 alone (edit HIL_SIM 0→1 as usual).**
+
+- **fw v25 (WP-A): the campaign-080905 hazard is closed.** Both r-based cut branches
+  in applyShareRatio() gained the fw v6 load guard (|I_doomed| ≤ 0.5 A), and BOTH cut
+  paths gained survivor-turn-on blanking: writeBusSwitch() chokepoint (all 26
+  FC/BT_BUS_ENABLE write sites) timestamps rising edges; cuts refused while the
+  survivor's edge is younger than SHARE_CUT_SURVIVOR_BLANK_MS **30 ms** (review H1:
+  t_D_ON 8 ms + 100 nF CSS soft-start tON 19.8 ms per the repo's own RT1987 model;
+  TODO(calibrate) with the asymmetric failure direction stated — do not shorten on
+  the model alone). Refused cuts fall through to a SLEW-LIMITED band-edge clip on
+  the controller path only (shareRatioFromController marker — the reviewer's literal
+  fix was wrong: powerBalanceLive is State-98-only); one-shot operator writes land
+  exactly as commanded. Observation frame 17 → **18 B** (error_code at offset 16,
+  XOR 1..16) — PI_TIMEOUT vs HIL_STALE finally wire-distinguishable. Diagnostics:
+  load-/blank-refused TICK counters in the 'S' dump (episode counts they are not).
+  .ino:32 + ledger row 24 backoff dwell corrected 60 → 15 ms. Tests 3842/175/4324.
+- **Regen-fidelity plant model (WP-C): the regen power floor is GONE.** Braking
+  energy now flows kinetic → VESC (clipped at VESC_REGEN_I_MAX_A 1.5 A — one number
+  sets braking force AND electrical return; ETA_REGEN 0.80; both TODO(verify)) →
+  N_MOT bounded-Norton → chopper linear clamp (coalesced chopper_clamp events with
+  energy accounting — the chopper-coverage item's enabler) → D-BC-RG → Ag105 → pack.
+  Two latent model bugs fixed en route: the bare 1/47 chopper stamp could not hold
+  18.1 V (chattered), and the RT1987 ON stamp went NEGATIVE for dv < 35 mV (a closed
+  MOT_PWR silently absorbed the harvest) — strict_forward now on MOT_PWR/REGEN/
+  FC_CHARGE only; **the scp i_cut record verified bit-identical to 17 digits**, the
+  FC/BT boost-OR links deliberately unscoped (parallel-source handoff A/B is future
+  bench work). New scenario **regen-harvest-true** (S3-full un-tabled; commanded
+  decel unachievable by design so the controller rails). **Baseline era:** the
+  ems-y quartet (brakes at −12 A → force 2.7× less under the clip), charge-regen,
+  mppt-tracking regen windows and regen-harvest-true are NOT comparable with
+  campaigns ≤ 080905; the EMS objective set, all h2 totals, the frontier and all 27
+  replays measured out of blast radius. Honest magnitudes: at the 1.5 A clip a
+  braking window returns single-digit joules; SoC still falls net.
+- **fw v25 sim lockstep + suite batch (WP-B):** 16/17/18 B parse, error_code CSV
+  column/dashboard, wire-first 0x8010 attribution (the documented "error_code not
+  on the frame" residual is CLOSED; stream-health inference kept as the pre-v25
+  fallback). Campaign-080905 batch landed: column_range_at_least + floor_min_value
+  + i_fc_max_in_band + min_rows check kinds, mppt calibration pins de-provisionalized,
+  TP0010 i_bt_clamp_a 2.8 (TP0053 measured 2.345 — deliberately unclamped),
+  ML0151 margin pin, blg sha stamps, and the **share_cut_load_hazard tripwire**
+  (review-hardened: whole-run-minus-carried-in anchor with TEARDOWN_LEAD_MS 5 ms —
+  teardown cuts lead their latch by 0.095-0.117 ms vs ≥ 13.8 ms for genuine hazards;
+  gated on TARGET_FW_VERSION ≥ 25 AND a per-run 18 B observation). Operator rulings
+  implemented: ems-ftp75-socband OC_FC allowance RETIRED (h2 two-sided
+  [0.070, 0.115]); new **v-bus-sense-offset** scenario is the UV-dwell objective's
+  home (8 ms no-latch + 60 ms latch probes bracketing the 20 ms dwell; stall-margin
+  hardened + cadence de-vacuation). fw v25 expectation-impact review: NO measured
+  pin moves (staircase cuts are setpoint-path and 3 s apart); ems-sdp-braking's
+  fault-free expectation becomes reachable again — its FAIL record is fw ≤ 24.
+- **EMS extensions (WP-E):** scenario **ems-ftp75-dp** + regenerated DP tables — a
+  real generator bug found (chg_ceiling_a header default 0.0 vs solve default 2.5
+  would have refused ANY new table; one shared resolver now) — data rows
+  byte-identical, −14.33 % and the FTP75 DP≈soc-band tie reproduce; EMS_FRONTIERS
+  registry adds the drive-cycle tuple (vs_reference ≤ 1.02 — the offline result is
+  a TIE, do not demand a win) with a stimulus-coherence precondition that currently
+  renders it **UNVERIFIED: ems-ftp75-sdp runs 0.45 A preload vs the siblings'
+  0.65 A** — OPERATOR RULING OUTSTANDING: (a) run the SDP leg at 0.65 (costs its
+  measured OC_FC margin) or (b) add a fourth SDP leg at 0.65. **--droop
+  {design,measured}** hifi mode (opt-in, default design bit-identical): single
+  scaling point over the droop term (copper 0.033 Ω fixed), single-source anchored
+  0.16003 V/A; the shared regime lands +8.1 % off the bench fit because the network
+  ratio is structurally 2.000 vs the fit's 2.182 — residual ASSERTED by test; the
+  ~4× K_DROOP open finding is NOT closed by this mode and says so.
+- **Figures (WP-D):** new hil_h2_and_soc figure (Gfc cumulative + sdp static-proxy
+  overlay / SoC with ΔSoC) + backfill over all 14 report folders (full renders
+  191509 onward; SoC-only degraded with an honest annotation for pre-Round-B
+  folders; replays skip). The DP-vs-live-plant boundary is now documented at
+  build_demand: the DP's demand model has NO regen term — deliberate, magnitude
+  unquantified for the live comparison.
+- **Reviews across the round:** WP-A 2 HIGH + 3 MED + 3 LOW; WP-C 1 HIGH + 5 MED;
+  WP-E 1 HIGH + 4 MED; WP-B 2 HIGH + 2 MED — all applied; three reviewer fix texts
+  were themselves wrong and corrected under the deviation license with evidence
+  (powerBalanceLive scope, the post-grace anchor vs scp-inrush's in-grace latch,
+  the 2.30 V collapse bound).
+- **Tests at close (orchestrator-rerun): 1344 + 28 (.venv_hil five suites), 138 +
+  179 (miniforge), 3842/175/4324 firmware.** Plan is now 32 scenarios / 59 runs.
+- **Operator items:** flash fw v25 (prerequisite met) → the first fw v25 campaign
+  is a triple validation (guard end-to-end via ems-sdp-braking completing, the
+  regen-model baseline recalibration, the 18 B attribution); rule on the FTP75
+  preload split; **the Pi bridge source ARRIVED** (references/EMS/Pi_2026-09-01/,
+  uncommitted — teensy_bridge_node_2026-08-17A.py + ROS2 EMS nodes + Pi-side SDP)
+  — the Mode B v4-parser audit is UNBLOCKED and queued for the next session. Bench
+  items feeding the new TODO(verify)s: VESC regen commanded-vs-delivered mapping
+  (sets VESC_REGEN_I_MAX_A + ETA_REGEN), the 30 ms blanking calibration, MPPTD-
+  disabled-charge semantics, Silvertel EPROM endurance. Future protocol flags:
+  sw_ring state field; the refused-cut counters are not on the observation frame.
