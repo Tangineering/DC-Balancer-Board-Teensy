@@ -1,6 +1,53 @@
 /*
  * teensy_controller.ino — Scale Car DC Balancer Board, Rev 20260622
  *
+ * fw v24 (2026-08-31) — DYNAMIC Ag105 MPPT INPUT-VOLTAGE THRESHOLD. The Ag105's MPPT is a
+ *   THRESHOLD regulator, not a perturb-and-observe tracker (AG105_Silvertel.pdf §2.9): charging
+ *   only commences once V_CHG-IN exceeds a threshold set by an MPPTS resistor or I2C reg 0x02,
+ *   and the factory default is 18 V. This board feeds V_CHG-IN from the ~15.95 V bus, so a
+ *   released Ag105 with the default threshold never charges — ag105IsReady() stays false,
+ *   chargingControl() re-asserts MPPT_DISABLE, and the firmware hunts (~40 ms period, measured
+ *   on the HIL bench 2026-08-31, mppt-tracking scenario). This round adds:
+ *     (a) A threshold MANAGER (ag105ManageMpptThreshold(), driven from pollAg105()'s ACK path).
+ *         It observes a windowed MINIMUM of V_chg while the FC→charger path is the sole feed,
+ *         targets (min − 3.0 V) quantized DOWN and clamped in COUNTS to [15, 27] = 12.320 to
+ *         13.376 V, and writes reg 0x02 only under monotone non-increasing rules: take over
+ *         from external-resistor mode; ratchet DOWN (guard-armed, ≤2/session, ≥30 s apart);
+ *         raise to the floor if the register is below it. Two static_asserts pin the band: the
+ *         ceiling must stay below V_BUS_CHARGED_THRESH LESS the VBUS→VCHG-IN ideal-diode drop
+ *         (AG105_CHG_PATH_DROP_V — the two thresholds are on different rails), the floor clear
+ *         of LIMIT_V_BUS_MIN. Writes go through the existing read-verify-write helper, are
+ *         capped at 8 per boot (charged at the ATTEMPT, physical writes only), held FAILED for
+ *         the rest of the boot after 6 failed evaluations, and are confirmed by an independent
+ *         readback on the NEXT poll tick — no blocking wait is added anywhere. The manager runs
+ *         only in State 2, or State 98 with a drive cycle running.
+ *     (b) A 0xFF DISCRIMINATOR. §2.11.5 makes the Ag105 report 0xFF on EVERY measurement while
+ *         it is below its own threshold, so a reg-0x02 readback of 0xFF is ambiguous between
+ *         genuine resistor mode and that sentinel. Reg 0x07 (Measured Input Voltage, 0.141
+ *         V/count) cross-checked against the board's CHG_VOLTAGE ADC resolves it; an
+ *         undecidable evaluation DEFERS (≤3, 1 s apart) and then FAILS SAFE — MPPT held
+ *         inhibited for the session, no fault latched.
+ *     (c) An MPPT RELEASE HOLDOFF (1 s) in chargingControl(), bounding any residual hunt to
+ *         ≤1 Hz regardless of how the MPPTD-disabled charge semantics actually behave.
+ *     (d) A firmware UV BACKOFF on the charger path: V_bus under 12.8 V for 60 ms closes
+ *         FC_CHARGE_ENABLE (through assertFcChargeEnable(), restoring BT to the bus); it
+ *         re-opens only above 13.6 V. Hysteresis, so a bus sitting at the trip cannot chatter.
+ *     (e) COMPANION FIX: a 0xFF on the reg-0x06 measured-current read is the same §2.11.5
+ *         sentinel (255 × 0.011 = 2.805 A, above the 2.5 A configured ceiling — not a reachable
+ *         reading). I_charge now goes to 0.0 with a new ag105MeasUnavailable diagnostic flag
+ *         instead of shipping a plausible 2.8 A into telemetry and the BLG. GENSTAT /
+ *         ag105IsReady() are untouched.
+ *     (f) State-98 'N' command (status / force a threshold / restore resistor mode — the ONLY
+ *         path that may raise above the floor), an MPPT block in the 'S' dump, and correction
+ *         of the two stale "perturb-and-observe" comments in chargingControl().
+ *   PROTOCOL: the HIL observation frame grows 16 → 17 bytes (mppt_thresh_count appended at
+ *   offset 15; XOR span 1..15). That is the ONLY wire change — v4/58-byte telemetry, the 22-byte
+ *   command packet, the 40-byte injection frame and BLG record v7/106 B are byte-identical.
+ *   tools/hil_plant_sim.py must be updated in lockstep; that is a SEPARATE tooling round.
+ *   Under HIL_SIM with a live link the manager is NEVER called (it is an I2C state machine and
+ *   that path must touch Wire zero times); the believed count is mirrored by fiat from the
+ *   injected V_chg, exactly as ag105Configured already is.
+ *
  * CHANGELOG vs. pre-20260622 firmware:
  *  - Pin map rebuilt from Scale_Car_Teensy_IO__IO.csv (CSV is authoritative).
  *  - CHARGER_ENABLE/CHARGER_OK/CHRG_CURRENT renamed; 9 new pins added (27–32, 9, 38, 39).
@@ -1601,6 +1648,138 @@ typedef enum : uint8_t {
 // window elapses, an I2C NACK is treated as "still booting", not a fault.
 #define AG105_SETTLE_MS 500u   // TODO(calibrate): Ag105 bring-up time before I2C is trusted
 
+// ── Ag105 MPPT input-voltage threshold management (fw v24) ───────────────────
+// MECHANISM (AG105_Silvertel.pdf §2.9, p.10 — NOT perturb-and-observe):
+//   "The MPPT voltage setting configures the threshold voltage of between 11V and 33V that must
+//    be present across the input of the Ag105 before charging will commence. This can be set
+//    either by connecting a resistor between the MPPTS and V_IN- pins, or via I2C. If left open
+//    circuit the default threshold voltage will be 18V".
+// So the Ag105 refuses to charge until V_CHG-IN exceeds the threshold, and (§2.11.5) reports
+// 0xFF on every measurement register while it is below it. On this board V_CHG-IN is fed from
+// the ~15.95 V bus through FC_CHARGE_ENABLE, which is BELOW the 18 V default — the released
+// charger never charges, ag105IsReady() stays false, chargingControl() re-asserts MPPT_DISABLE,
+// and the firmware hunts (the ~40 ms release/re-assert cycle reproduced on the HIL bench,
+// 2026-08-31, mppt-tracking scenario). Writing register 0x02 to a threshold BELOW the bus is
+// the fix; this block is the constant set for the manager that does it.
+//
+// Register 0x02 encoding — Source: Ag105_Table7_I2C_Parameters.json field 0x02 and
+// AG105_Silvertel.pdf Table 7 (p.13): "0-250: sets the MPPT voltage between 11-33V;
+// >=251: external resistor", approximate scaling factor 0.088 V/count, DEFAULT 0xFF
+// (= external-resistor mode), stored in EPROM (so a write persists across power cycles and
+// re-writing the same value is idempotent — see ag105WriteConfigRegVerified()).
+#define AG105_REG_MPPT_V      0x02    // MPPT Voltage (R/W, EPROM)
+#define AG105_MPPT_V_BASE     11.0f   // V at count 0
+#define AG105_MPPT_V_PER_CNT  0.088f  // V per count (Table 7 scaling factor)
+#define AG105_MPPT_N_MAX      250     // highest count that still means "I2C threshold" (33.0 V)
+#define AG105_MPPT_N_RESISTOR 0xFF    // >=251 = external-resistor mode; 0xFF is the factory default
+
+// Threshold volts for a given register count, and the inverse (see ag105MpptCountFromVolts()).
+#define AG105_MPPT_VOLTS(n) (AG105_MPPT_V_BASE + AG105_MPPT_V_PER_CNT * (float)(n))
+
+// Target = (windowed MINIMUM observed V_chg) − MARGIN, clamped into [FLOOR, CEIL] IN COUNTS.
+#define AG105_MPPT_MARGIN_V   3.0f    // V — headroom below the observed input floor
+#define AG105_MPPT_N_FLOOR    15      // 12.320 V — never command a threshold below this
+#define AG105_MPPT_N_CEIL     27      // 13.376 V — never command a threshold above this
+
+// RAIL CROSSING (fw v24 review M6). V_BUS_CHARGED_THRESH is measured on VBUS; the Ag105's
+// threshold is compared against VCHG-IN. The two are separated by the RT1987 ideal-diode
+// controller D-BC-FC, whose forward drop is NOT a PN-junction Vf: the RT1987 servos the pass
+// FET's V_DS to its ~35 mV forward regulation point and otherwise conducts through R_ON
+// (RT1987 datasheet, forward-regulation section). AG105_CHG_PATH_DROP_V is that 35 mV plus an
+// allowance for I*R_ON at the ~1 A the charger draws.
+// TODO(verify): measure VBUS − VCHG-IN on the bench while charging, and confirm the D-BC-FC
+// part/R_ON against the 20260622 schematic sheet 4.
+#define AG105_CHG_PATH_DROP_V 0.05f   // V — VBUS → VCHG-IN drop across the FC-charge ideal diode
+
+// ── The two invariants the clamp exists to enforce ──────────────────────────
+// CEIL: the threshold must sit BELOW the bus-up level the staged bring-up gates on, MINUS the
+// VBUS→VCHG-IN path drop (the two thresholds live on different rails — see above). If the
+// threshold could exceed it, a bus that is legitimately "up" would still be under the MPPT
+// threshold and the release/re-assert hunt above returns — the very failure this feature fixes.
+// V_BUS_CHARGED_THRESH is the bring-up's own bus-up threshold (13.5 V at V_BUS_NOMINAL 16.0).
+static_assert(AG105_MPPT_VOLTS(AG105_MPPT_N_CEIL) <= V_BUS_CHARGED_THRESH - AG105_CHG_PATH_DROP_V,
+              "Ag105 MPPT ceiling must stay below the bus-up threshold less the charge-path drop");
+// FLOOR: the threshold must sit ABOVE the undervoltage trip with margin, so the Ag105 stops
+// drawing before FAULT_UV_BUS does. A threshold at or below LIMIT_V_BUS_MIN would let the
+// charger keep pulling the bus straight into the UV latch.
+static_assert(AG105_MPPT_VOLTS(AG105_MPPT_N_FLOOR) > LIMIT_V_BUS_MIN + 0.25f,
+              "Ag105 MPPT floor must stay clear of LIMIT_V_BUS_MIN");
+static_assert(AG105_MPPT_N_FLOOR <= AG105_MPPT_N_CEIL,
+              "Ag105 MPPT floor must not exceed the ceiling");
+
+// Write policy. Deadband stops a 1-LSB ADC wobble from burning an EPROM write cycle; the
+// remaining limiters bound EPROM wear and make the manager provably non-oscillatory.
+#define AG105_MPPT_DEADBAND_CNT   3       // counts (0.264 V) — no write inside this band
+#define AG105_MPPT_OBS_SKIP_MS    150u    // ms after the FC-charge path opens before sampling
+                                          // (RT1987 soft-start + Ag105 inrush settle)
+#define AG105_MPPT_OBS_MS         400u    // ms of windowed-minimum V_chg accumulation
+#define AG105_MPPT_GUARD_V        0.5f    // V — "input is approaching the threshold" proximity
+#define AG105_MPPT_GUARD_DWELL_MS 1000u   // ms that proximity must persist to arm a ratchet
+#define AG105_MPPT_MIN_WRITE_MS   30000u  // ms — minimum spacing between EPROM writes
+#define AG105_MPPT_RATCHETS_MAX   2       // ratchet-down writes allowed per powered session
+#define AG105_MPPT_WRITES_PER_BOOT 8      // hard cap on EPROM writes since boot (all causes)
+#define AG105_MPPT_RETRIES        2       // I2C write/verify attempts before FAILED
+// BOOT-SCOPED GIVE-UP (fw v24 review H1). AG105_MPPT_FAILS_PER_BOOT bounds how many times the
+// manager may re-enter its whole evaluate/write cycle across DIFFERENT powered sessions before it
+// stops trying for the rest of the boot. Without it a charger power path that opens and closes
+// repeatedly re-arms a failing manager every time (ag105MpptResetSession() clears the per-session
+// FAILED state by design), so a persistently unreadable or unwritable reg 0x02 would keep
+// spending I2C slots and — through the takeover rule — EPROM write attempts, forever.
+#define AG105_MPPT_FAILS_PER_BOOT 6       // FAILED evaluations since boot before the manager is
+                                          // held FAILED for the rest of the boot
+
+// 0xFF DISCRIMINATOR. §2.11.5: "If the input voltage is below 9 volts or the Ag105 reports an
+// error state, for example dropping below MPPT threshold voltage, all measures transmitted will
+// be 0xFF." A reg-0x02 readback of 0xFF is therefore AMBIGUOUS: it is either genuine
+// external-resistor mode, or the module's blanket unavailable sentinel. Register 0x07 (Measured
+// Input Voltage, 0.141 V/count) resolves it: if 0x07 reads a plausible value (<= 0xFE) that
+// AGREES with the board's own CHG_VOLTAGE ADC, the module is NOT in the all-0xFF condition and
+// the 0xFF in 0x02 is genuine.
+#define AG105_REG_VIN_MEAS      0x07    // Measured Input Voltage (read-only)
+#define AG105_VIN_MEAS_SCALE    0.141f  // V/count — Table 7 field 0x07 scaling factor
+#define AG105_MPPT_VIN_XCHECK_V 1.0f    // TODO(calibrate): agreement band between reg 0x07 and
+                                        // V_chg. 0.141 V/count quantization plus the CHG_VOLTAGE
+                                        // divider tolerance are both well inside 1 V, but the
+                                        // real spread has never been measured on hardware.
+#define AG105_MPPT_DEFERS_MAX   3       // ambiguous evaluations tolerated before FAILED
+#define AG105_MPPT_DEFER_MS     1000u   // ms between deferred re-evaluations
+
+// ── Firmware-side undervoltage backoff for the charger path (fw v24) ────────
+// Independent of the Ag105's own threshold: the module's response to a sagging input is slow
+// and (per §2.11.5) becomes unobservable exactly when it matters, so the firmware closes
+// FC_CHARGE_ENABLE itself while the bus is still above LIMIT_V_BUS_MIN. Hysteresis, not a single
+// trip level, so a bus sitting at the backoff point cannot chatter the RT1987.
+//
+// WHAT THIS DOES AND DOES NOT DO (fw v24 review M4). This is NOT a pre-emption of FAULT_UV_BUS
+// and must not be described as one. It protects the 12.0–12.8 V hover band: a bus that settles
+// there under charger load never reaches the UV dwell integrator's trip, but it is also not a
+// bus that should be feeding an Ag105 — so the firmware sheds that load early in a SLOW sag. A
+// FAST collapse still latches FAULT_UV_BUS first, and deliberately so: chargingControl() runs on
+// a 20 ms control period, while detectFaults() runs every main-loop tick, so the fault path is
+// strictly the faster of the two and catching a genuine collapse is the fault's job, not this
+// layer's. The dwell below is chosen under one control period AND under UV_BUS_DWELL_LATCH_MS so
+// the backoff is never the reason a real UV event is seen late.
+#define AG105_CHG_BACKOFF_V       12.8f  // V — V_bus below this (sustained) closes FC_CHARGE
+#define AG105_CHG_RESUME_V        13.6f  // V — V_bus above this re-permits FC_CHARGE
+#define AG105_CHG_BACKOFF_DWELL_MS 15u   // ms of sustained sag before backing off
+static_assert(AG105_CHG_BACKOFF_DWELL_MS < UV_BUS_DWELL_LATCH_MS,
+              "Charger UV backoff dwell must be shorter than the UV latch dwell");
+static_assert(AG105_CHG_BACKOFF_V > AG105_MPPT_VOLTS(AG105_MPPT_N_FLOOR),
+              "Backoff must fire before the bus falls under the lowest commandable threshold");
+static_assert(AG105_CHG_RESUME_V > AG105_CHG_BACKOFF_V + 0.5f,
+              "Backoff hysteresis band must be at least 0.5 V wide");
+
+// MPPT release holdoff. chargingControl() re-asserts MPPT_DISABLE whenever ag105IsReady() goes
+// false while released; without a holdoff that re-assert can be followed immediately by another
+// release, which is the hunt loop the threshold fix is meant to remove. This bounds any residual
+// hunt to <= 1 Hz under EITHER reading of the MPPTD-disabled charge semantics — §2.9 says "The
+// MPPT can be enabled or disabled without restarting the module or terminating charge", but
+// there is no hardware ground truth for that on this board yet.
+// TODO(verify): bench step — release MPPT while charging, confirm charge is not terminated.
+// With the ceiling invariant above, a refusal-to-charge is unreachable in normal cruise, so this
+// is defence in depth rather than the primary mechanism.
+#define MPPT_RELEASE_HOLDOFF_MS   1000u  // ms after a readiness-driven re-assert before releasing
+
 // ── Telemetry ─────────────────────────────────────────────────────────────────
 // Protocol v4 packet is 58 bytes; Pi bridge must match this version.
 #define TELEMETRY_VERSION 4
@@ -2308,6 +2487,63 @@ bool     ag105DataValid    = false;    // true while ag105_status_raw/I_charge r
 bool     ag105Configured   = false;    // true once 0x00/0x01 written this powered session
 bool     ag105HadPower     = false;    // power on/off edge detector for the settle timer
 uint32_t ag105PowerOnMs    = 0;        // millis() when input power was first observed (settle base)
+
+// ── Ag105 MPPT threshold manager (fw v24) ────────────────────────────────────
+// State machine driven from pollAg105()'s successful-ACK path; see ag105ManageMpptThreshold().
+// These are diagnostic or manager-internal with ONE exception (fw v24 review, correctness-F6 /
+// safety-L4): ag105MpptState == AG105_MPPT_FAILED is read by chargingControl(), where it holds
+// MPPT_DISABLE LOW (MPPT inhibited) for the rest of the powered session. No other field here
+// reaches a pin.
+enum Ag105MpptState : uint8_t {
+    AG105_MPPT_IDLE    = 0,   // no window running (charger unpowered, or FC-charge path shut)
+    AG105_MPPT_OBSERVE = 1,   // accumulating the windowed minimum of V_chg
+    AG105_MPPT_READ    = 2,   // reading reg 0x02 then reg 0x07, one transaction per tick
+    AG105_MPPT_WRITE   = 3,   // an EPROM write is due this tick
+    AG105_MPPT_VERIFY  = 4,   // independent readback on the tick AFTER the write
+    AG105_MPPT_DONE    = 5,   // threshold settled; only a ratchet re-opens a window
+    AG105_MPPT_FAILED  = 6    // gave up for this session — MPPT stays inhibited, no fault
+};
+uint8_t  ag105MpptState      = AG105_MPPT_IDLE;
+uint8_t  ag105MpptReadPhase  = 0;        // 0 = reg 0x02 due, 1 = reg 0x07 due
+bool     ag105MpptPathOpen   = false;    // last fcChargePathIsPowering() level (edge detector)
+uint32_t ag105MpptPathOpenMs = 0;        // millis() the FC-charge path last opened
+uint32_t ag105MpptObsStartMs = 0;        // millis() the current observation window started
+float    ag105MpptVchgMin    = 0.0f;     // windowed minimum of V_chg [V]
+uint16_t ag105MpptObsSamples = 0;        // samples folded into ag105MpptVchgMin
+uint8_t  ag105MpptTargetCnt  = 0;        // last computed target count (diagnostic)
+uint8_t  ag105MpptRegCnt     = AG105_MPPT_N_RESISTOR;  // count the firmware BELIEVES is in 0x02
+bool     ag105MpptRegKnown   = false;    // false until reg 0x02 has been read or written once
+uint8_t  ag105MpptVinRaw     = 0;        // last reg 0x07 raw byte (diagnostic / discriminator)
+bool     ag105MpptVinValid   = false;    // reg 0x07 was read successfully and is <= 0xFE
+uint8_t  ag105MpptPendingCnt = 0;        // value handed to the in-flight write
+bool     ag105MpptWriteIsRatchet = false;// the in-flight write is a rule-(b) ratchet-down
+uint8_t  ag105MpptAttempts   = 0;        // write/verify attempts on the in-flight write
+uint8_t  ag105MpptWrites     = 0;        // physical EPROM write ATTEMPTS since boot, all causes
+                                         // (automatic manager + State-98 'N'). Counted at the
+                                         // attempt, so a failed write still spends budget; a
+                                         // skip-if-equal no-op does not (fw v24 review H1).
+uint8_t  ag105MpptFails      = 0;        // evaluations that ended in FAILED since boot
+uint8_t  ag105MpptRatchets   = 0;        // ratchet-down writes this powered session
+uint8_t  ag105MpptDefers     = 0;        // consecutive ambiguous (0xFF-undecidable) evaluations
+uint32_t ag105MpptDeferMs    = 0;        // millis() of the last defer
+uint32_t ag105MpptLastWriteMs = 0;       // millis() of the last EPROM write
+bool     ag105MpptHaveWritten = false;   // false until the first write, so MIN_WRITE_MS is not
+                                         // charged against millis() == 0 at boot
+uint32_t ag105MpptGuardSinceMs = 0;      // millis() proximity to the threshold began
+bool     ag105MpptGuardSinceKnown = false;// false until proximity has been observed at least once,
+                                         // so a genuine millis()==0 timestamp is not mistaken for
+                                         // "no dwell running" (fw v24 review M5 / correctness-F3;
+                                         // same pattern as ag105MpptHaveWritten)
+bool     ag105MpptGuardArmed   = false;  // proximity has persisted GUARD_DWELL_MS
+bool     ag105MeasUnavailable  = false;  // last reg 0x06 read returned the §2.11.5 0xFF sentinel
+
+// MPPT release holdoff state (chargingControl(); see MPPT_RELEASE_HOLDOFF_MS).
+bool     mpptReleased        = false;    // MPPT_DISABLE is currently HIGH by readiness
+uint32_t mpptHoldoffUntilMs  = 0;        // no readiness-driven release before this millis()
+
+// Firmware undervoltage backoff for the FC→charger path (see AG105_CHG_BACKOFF_V).
+bool     chgBackoffActive    = false;    // FC_CHARGE held closed by the backoff layer
+uint32_t chgBackoffLowSince  = 0;        // millis() V_bus first went under the backoff level
 uint16_t fault_flags       = 0;        // bitmask of active fault conditions (see FAULT_* defines)
 uint8_t  error_code        = ERR_NONE; // primary cause of State-99 entry — latches on first fault
 uint8_t  error_source_state = 0;       // mainState at time of first fault (for diagnosis)
@@ -2530,7 +2766,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 23
+#define FW_VERSION 24
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -2672,7 +2908,7 @@ uint16_t       pkt_counter_T = 0;
 // and settled, so initAg105Charger()'s read-verify-write sequence and its ERR_INIT_FAIL /
 // ERR_I2C_CHARGER paths are NOT exercised in a HIL build. Those remain bench-only.
 //
-// OUTPUT FRAME (Teensy -> simulator), 16 bytes, little-endian:
+// OUTPUT FRAME (Teensy -> simulator), 17 bytes, little-endian:
 //   off | size | field
 //   ----+------+---------------------------------------------------------------
 //    0  |  1   | sync 0xB6
@@ -2685,11 +2921,21 @@ uint16_t       pkt_counter_T = 0;
 //    9  |  2   | last MDAC code written to the FC channel (raw 16-bit SPI word)
 //   11  |  2   | last MDAC code written to the BT channel
 //   13  |  2   | fault_flags
-//   15  |  1   | XOR checksum over bytes 1..14
+//   15  |  1   | mppt_thresh_count — the Ag105 reg-0x02 count the firmware BELIEVES is in
+//       |      |   force, i.e. ag105MpptRegCnt. 0xFF means external-resistor mode / never
+//       |      |   written (AG105_MPPT_N_RESISTOR); 0..250 map to 11 + 0.088*N volts. APPENDED
+//       |      |   fw v24 — every offset above is unchanged.
+//   16  |  1   | XOR checksum over bytes 1..15
+//
+// OUTPUT FRAME SIZE 16 -> 17 (fw v24). This is the ONLY wire protocol this round changes: the
+// v4/58-byte telemetry packet, the 22-byte Pi command packet, the 40-byte injection frame and
+// the BLG v7 record are all byte-identical. Consumption of the new byte on the simulator side is
+// a SEPARATE tooling round — tools/hil_plant_sim.py currently reads a fixed 16-byte observation
+// frame and must be updated in lockstep before an HIL campaign is run against fw v24.
 #define HIL_SYNC_INJECT   0xB5u
 #define HIL_SYNC_OUTPUT   0xB6u
 #define HIL_INJECT_SIZE   40
-#define HIL_OUTPUT_SIZE   16
+#define HIL_OUTPUT_SIZE   17
 #define HIL_STALE_MS      50u    // injection older than this -> hold last values, flag stale
 #define HIL_ZERO_MS       250u   // ...and older than THIS -> force safe zeros (dead link)
 #define HIL_SEND_PERIOD_MS 1u    // observation frame rate (1 kHz)
@@ -2869,10 +3115,12 @@ bool hilParseInjectFrame(const uint8_t *buf, int len, HilInjectFrame &out) {
     return true;
 }
 
-// Packs the 16-byte observation frame. Pure, for the same testability reason.
+// Packs the 17-byte observation frame. Pure, for the same testability reason.
+// `mpptCnt` is APPENDED (fw v24) at offset 15 — see the frame table above.
 void hilPackOutputFrame(uint8_t *buf, uint8_t seqEcho, uint8_t stateByte,
                         uint8_t switchState, uint8_t auxState, float motorCurrent,
-                        uint16_t mdacFC, uint16_t mdacBT, uint16_t faults) {
+                        uint16_t mdacFC, uint16_t mdacBT, uint16_t faults,
+                        uint8_t mpptCnt) {
     int idx = 0;
     buf[idx++] = (uint8_t)HIL_SYNC_OUTPUT;
     buf[idx++] = seqEcho;
@@ -2883,6 +3131,7 @@ void hilPackOutputFrame(uint8_t *buf, uint8_t seqEcho, uint8_t stateByte,
     memcpy(&buf[idx], &mdacFC, 2); idx += 2;
     memcpy(&buf[idx], &mdacBT, 2); idx += 2;
     memcpy(&buf[idx], &faults, 2); idx += 2;
+    buf[idx++] = mpptCnt;
     buf[idx++] = hilChecksum(buf, HIL_OUTPUT_SIZE);
 }
 
@@ -2902,7 +3151,8 @@ void hilSendTick() {
     uint8_t frame[HIL_OUTPUT_SIZE];
     hilPackOutputFrame(frame, hilInject.seq, (uint8_t)mainState,
                        readSwitchState(), readHilAuxState(), current,
-                       mdacLastCodeFC, mdacLastCodeBT, fault_flags);
+                       mdacLastCodeFC, mdacLastCodeBT, fault_flags,
+                       ag105MpptRegCnt);
     Udp.beginPacket(hilHostIp, hilHostPort);
     Udp.write(frame, HIL_OUTPUT_SIZE);
     Udp.endPacket();
@@ -3303,7 +3553,13 @@ enum PendingInput {
     // Manual SD logging: "1" / "0" / empty. The EMPTY line is meaningful here (it means "print
     // status", the pre-fw-v9 behaviour of a bare 'K'), so this prompt — like the two combined
     // ones — must be dispatched ahead of handlePendingInputChar()'s shared empty-line cancel.
-    PEND_K_PARAMS
+    PEND_K_PARAMS,
+    // Ag105 MPPT threshold (fw v24): "" = status block, "<volts>" = forced write, "R" = restore
+    // external-resistor mode. The empty line is meaningful (status), so this prompt is dispatched
+    // ahead of the shared empty-line cancel, exactly like PEND_K_PARAMS. 'R'/'r' is the one
+    // NON-numeric character any prompt accepts, so doState98()'s input filter carries a scoped
+    // exception for it (the same shape as PEND_TRAP_PARAMS' sweep-list punctuation).
+    PEND_N_PARAMS
 };
 PendingInput pendingInput = PEND_NONE;
 // 96 bytes (was 32, grown 2026-08-11 for the 'T' sweep list): the worst legal trapezoid line is
@@ -3327,9 +3583,26 @@ void initEsc();
 bool initAg105Charger();
 bool ag105ReadConfigReg(uint8_t reg, uint8_t &out);
 bool ag105WriteConfigRegVerified(uint8_t reg, uint8_t want);
+// Tri-state result of a config-register write (fw v24 review H1): did it actually spend an EPROM
+// cycle? Only AG105_WR_WROTE and AG105_WR_FAIL are charged against AG105_MPPT_WRITES_PER_BOOT.
+enum Ag105WriteResult : uint8_t {
+    AG105_WR_FAIL    = 0,   // read, write or read-back failed — an EPROM cycle MAY have been spent
+    AG105_WR_SKIPPED = 1,   // register already held the wanted value — no EPROM cycle
+    AG105_WR_WROTE   = 2    // value differed, was written, and read back correct
+};
+Ag105WriteResult ag105WriteConfigRegChecked(uint8_t reg, uint8_t want);
 void pollAg105();
 bool ag105IsReady();
 bool chargerHasPower();
+bool fcChargePathIsPowering();
+// Ag105 MPPT threshold manager (fw v24)
+uint8_t ag105MpptCountFromVolts(float volts);
+float   ag105MpptVoltsFromCount(uint8_t count);
+uint8_t ag105MpptClampCount(uint8_t count);
+void    ag105MpptResetSession();
+void    ag105ManageMpptThreshold();
+void    printMpptStatus();
+void    parseMpptLine(const char *line);
 void updateSensors();
 void updateWheelSpeed();
 void encoderVelReset();
@@ -4329,6 +4602,8 @@ void setup() {
     // Fail-safe: charger cannot harvest if Teensy resets mid-run.
     // Source: user-confirmed from PCB schematic.
     pinMode(MPPT_DISABLE, OUTPUT); digitalWrite(MPPT_DISABLE, LOW);
+    mpptReleased       = false;   // fw v24: keep the release-holdoff mirror consistent with the pin
+    chgBackoffLowSince = millis();// fw v24: the UV-backoff dwell starts from boot, not from 0
 
     // CBAL_DISABLE (pin 9): LOW = balancer/OVP active, HIGH = disabled.
     // No external pull resistor on CB-DISABLE net (direct GPIO connection — source: PCB schematic).
@@ -5397,6 +5672,14 @@ void doState1() {
         // minutes after the previous Run ended. Carrying it in makes the very first Run tick a
         // live current command derived from history that is no longer true.
         resetDriveControlState();
+        // fw v24 safety-L2: the charger UV-backoff hysteresis is Run-scoped state and must start
+        // this Run from scratch. Idle does not call chargingControl(), so chgBackoffLowSince
+        // would otherwise still hold a timestamp from the PREVIOUS Run — arbitrarily far in the
+        // past — and the first Run tick with V_bus under 12.8 V would trip the backoff instantly
+        // instead of after AG105_CHG_BACKOFF_DWELL_MS of sustained sag. A latched-true
+        // chgBackoffActive would likewise carry into a Run whose bus is perfectly healthy.
+        chgBackoffActive   = false;
+        chgBackoffLowSince = millis();
         // ...and zero the setpoint with it. The reset alone is NOT enough: doState3() (Finish)
         // does not clear v_setpoint, so the Pi's last commanded speed survives Run→Finish→Idle.
         // A freshly reset controller meeting a stale non-zero setpoint sees the full error on
@@ -5478,6 +5761,8 @@ void doState3() {
     assertFcChargeEnable(false);           // ensure FC→charger path is closed
     digitalWrite(REGEN_ENABLE, LOW);       // ensure regen path is closed
     digitalWrite(MPPT_DISABLE, LOW);       // inhibit MPPT (active-LOW) until next Run
+    mpptReleased = false;                  // fw v24: state action, not a readiness flap — the
+                                           // next Run's first release is not held off
     // FC_BUS / BT_BUS / MOT_PWR and the boosts intentionally stay ON — bus + motor node remain armed.
 
     // Clear the wheel-speed averaging buffers so the next run starts fresh (stale timestamps from
@@ -5622,6 +5907,17 @@ void hilWarmReset() {
     ag105PowerOnMs   = 0;
     ag105_status_raw = 0;
     I_charge         = 0.0f;
+    // fw v24: the MPPT manager's per-session state and the charger-path backoff/holdoff mirrors.
+    // ag105MpptWrites / ag105MpptFails are BOOT-scoped and deliberately survive a warm reset —
+    // the EPROM-wear budget must not be refilled by a recovery, or a fault loop could spend it
+    // repeatedly. ag105MpptRegCnt survives too: it describes the module's EPROM, which a
+    // software-only warm reset cannot change.
+    ag105MpptResetSession();
+    ag105MeasUnavailable = false;
+    mpptReleased         = false;
+    mpptHoldoffUntilMs   = millis();
+    chgBackoffActive     = false;
+    chgBackoffLowSince   = millis();
 
     // ── State-98 bench-tool residue ──────────────────────────────────────────
     // State 98 is reachable from Idle ('T'), so a fault taken during a bench profile lands here
@@ -5751,6 +6047,7 @@ void doState99() {
             if (millis() - phaseStart < 10) break;   // TODO(calibrate): regen current decay time
             digitalWrite(REGEN_ENABLE, LOW);     // close regen path
             digitalWrite(MPPT_DISABLE, LOW);     // inhibit MPPT (active-LOW)
+            mpptReleased = false;                // fw v24: mirror follows the pin
             // All paths closed — now safe to disable boosts (body-diode back-feed hazard cleared)
             digitalWrite(FC_REG_ENABLE, LOW);
             digitalWrite(BT_REG_ENABLE, LOW);
@@ -5868,6 +6165,9 @@ void doState99() {
 //   S — print status snapshot
 //   K [1|0] — SD bench logger: empty = status (card, file, record/drop counts),
 //             1 = start a MANUAL log (MLnnnn.BLG), 0 = stop it
+//   N [<volts>|R] — Ag105 MPPT input-voltage threshold (reg 0x02): empty = status block,
+//             <volts> = force a threshold write (11–33 V, quantized down), R = restore
+//             external-resistor mode (0xFF). Charger must be powered.
 //   I — scan I2C bus (lists ACKing addresses; Ag105 expected at 0x30)
 //   H/? — print this command list
 //   Q — exit → State 1 (MOT_PWR_ENABLE forced LOW)
@@ -5888,6 +6188,10 @@ void printTestHelp() {
     Serial.println("  C - toggle CBAL_DISABLE      M - toggle MPPT_DISABLE");
     Serial.println("  G - staged bring-up (bus->boosts->motor node; 'X' aborts)   D - start/stop drive cycle");
     Serial.println("  S - print status snapshot    I - scan I2C bus");
+    Serial.println("  N [<volts>|R] - Ag105 MPPT threshold (reg 0x02): empty = status,");
+    Serial.println("      <volts> = force write (11-33V, quantized down), R = resistor mode");
+    Serial.println("      NOTE: 'N R' hands the threshold back to the MPPTS resistor. The firmware");
+    Serial.println("      re-takes I2C control on the next charger POWER CYCLE, not immediately.");
     Serial.println("  E - read VESC FW+telemetry   U - toggle VESC watch (~2Hz, flags faults)");
     Serial.println("      ** the VESC watch MOVED from 'W' to 'U' (\"UART watch\") — 'W' is now a");
     Serial.println("         motor profile below **");
@@ -5952,8 +6256,12 @@ void doState98() {
             // (2026-08-11). Scoped to PEND_TRAP_PARAMS on purpose: at every other prompt those
             // keys are still meaningless, and the cancel-on-unexpected-key rule is what stops a
             // stray keystroke from being absorbed into a value the operator can't see echoed.
+            // The MPPT prompt additionally accepts 'R'/'r' (fw v24), its "restore external-resistor
+            // mode" token. Scoped the same way and for the same reason as the sweep-list chars:
+            // at every other prompt 'R' must keep cancelling (it is the power-share profile key).
             if (isNumericEntryChar(cmd) || cmd == '\n' || cmd == '\r' ||
-                (pendingInput == PEND_TRAP_PARAMS && isSweepListChar(cmd))) {
+                (pendingInput == PEND_TRAP_PARAMS && isSweepListChar(cmd)) ||
+                (pendingInput == PEND_N_PARAMS && (cmd == 'R' || cmd == 'r'))) {
                 handlePendingInputChar(cmd);
                 handleAsCommand = false;
             } else {
@@ -6076,6 +6384,12 @@ void doState98() {
             case 'm':
                 pin = MPPT_DISABLE; cur = digitalRead(pin);
                 digitalWrite(pin, !cur);
+                // Keep the release mirror consistent with the pin (fw v24 safety-L1). mpptReleased
+                // is chargingControl()'s belief about MPPT_DISABLE; a manual toggle that left it
+                // stale meant the next chargingControl() tick could skip the holdoff arm (it only
+                // arms on a released->inhibited transition it believes in) or skip a release it
+                // thought had already happened.
+                mpptReleased = (!cur == HIGH);
                 Serial.print("MPPT_DISABLE -> "); Serial.print(!cur);
                 Serial.println((!cur) ? " (MPPT enabled/harvesting)" : " (MPPT inhibited)");
                 break;
@@ -6171,6 +6485,15 @@ void doState98() {
                 // parseKLogLine()'s own bringupActive guard.
                 pendingInput = PEND_K_PARAMS;
                 Serial.print("SD log [1=start 0=stop, empty=status]: ");
+                if (plotModeActive) Serial.println();   // see 'P' — plot-line concat guard
+                break;
+            case 'N':
+            case 'n':
+                // Ag105 MPPT threshold (fw v24). Like 'K', NOT in the bring-up lockout above: the
+                // empty-line form is a read-only status print. The WRITE forms are refused at
+                // parse time by parseMpptLine()'s own bringupActive / profile guards.
+                pendingInput = PEND_N_PARAMS;
+                Serial.print("Ag105 MPPT [<volts>=force, R=resistor mode, empty=status]: ");
                 if (plotModeActive) Serial.println();   // see 'P' — plot-line concat guard
                 break;
             case 'I':
@@ -8196,6 +8519,11 @@ void handlePendingInputChar(char c) {
             parseKLogLine(inputBuf);
             return;
         }
+        // 'N' (fw v24) — same reason as 'K': an empty line is the STATUS request, not a cancel.
+        if (which == PEND_N_PARAMS) {
+            parseMpptLine(inputBuf);
+            return;
+        }
         if (inputBuf[0] == '\0') {
             Serial.println("(no value entered — cancelled)");
             return;
@@ -8242,6 +8570,174 @@ void handlePendingInputChar(char c) {
     }
 }
 
+// ── State-98 'N': Ag105 MPPT threshold (fw v24) ──────────────────────────────
+// Prints the manager's whole observable state. Called by the bare 'N' line and folded into the
+// 'S' dump, so the two can never disagree.
+void printMpptStatus() {
+    Serial.println("--- Ag105 MPPT threshold ---");
+    Serial.print("state=");
+    switch (ag105MpptState) {
+        case AG105_MPPT_IDLE:    Serial.print("IDLE");    break;
+        case AG105_MPPT_OBSERVE: Serial.print("OBSERVE"); break;
+        case AG105_MPPT_READ:    Serial.print("READ");    break;
+        case AG105_MPPT_WRITE:   Serial.print("WRITE");   break;
+        case AG105_MPPT_VERIFY:  Serial.print("VERIFY");  break;
+        case AG105_MPPT_DONE:    Serial.print("DONE");    break;
+        case AG105_MPPT_FAILED:  Serial.print("FAILED");  break;
+        default:                 Serial.print("?");       break;
+    }
+    Serial.print("  writes="); Serial.print(ag105MpptWrites);
+    Serial.print("/");         Serial.print((int)AG105_MPPT_WRITES_PER_BOOT);
+    Serial.print("  fails=");  Serial.print(ag105MpptFails);
+    Serial.print("/");         Serial.print((int)AG105_MPPT_FAILS_PER_BOOT);
+    Serial.print("  ratchets="); Serial.print(ag105MpptRatchets);
+    Serial.print("/");           Serial.print((int)AG105_MPPT_RATCHETS_MAX);
+    Serial.print("  defers=");   Serial.println(ag105MpptDefers);
+
+    Serial.print("reg0x02=");
+    if (!ag105MpptRegKnown) {
+        Serial.print("(never read)");
+    } else if (ag105MpptRegCnt > (uint8_t)AG105_MPPT_N_MAX) {
+        Serial.print(ag105MpptRegCnt);
+        Serial.print(" (>=251: external-resistor mode)");
+    } else {
+        Serial.print(ag105MpptRegCnt);
+        Serial.print(" = "); Serial.print(ag105MpptVoltsFromCount(ag105MpptRegCnt), 3);
+        Serial.print(" V");
+    }
+    Serial.print("   target="); Serial.print(ag105MpptTargetCnt);
+    Serial.print(" = ");        Serial.print(ag105MpptVoltsFromCount(ag105MpptTargetCnt), 3);
+    Serial.println(" V");
+
+    Serial.print("V_chg_min="); Serial.print(ag105MpptVchgMin, 3);
+    Serial.print("V (n=");      Serial.print(ag105MpptObsSamples);
+    Serial.print(")  band=[");  Serial.print(ag105MpptVoltsFromCount(AG105_MPPT_N_FLOOR), 3);
+    Serial.print("V .. ");      Serial.print(ag105MpptVoltsFromCount(AG105_MPPT_N_CEIL), 3);
+    Serial.print("V] (cnt ");   Serial.print((int)AG105_MPPT_N_FLOOR);
+    Serial.print("..");         Serial.print((int)AG105_MPPT_N_CEIL);
+    Serial.println(")");
+
+    Serial.print("reg0x07=");
+    if (!ag105MpptVinValid) {
+        Serial.print("0x"); Serial.print(ag105MpptVinRaw, HEX);
+        Serial.print(" (not corroborating)");
+    } else {
+        Serial.print(ag105MpptVinRaw);
+        Serial.print(" = "); Serial.print(AG105_VIN_MEAS_SCALE * (float)ag105MpptVinRaw, 3);
+        Serial.print("V vs V_chg="); Serial.print(V_chg, 3); Serial.print("V");
+    }
+    Serial.print("   meas_unavail="); Serial.print(ag105MeasUnavailable);
+    Serial.print("   guard=");        Serial.print(ag105MpptGuardArmed);
+    Serial.print("   released=");     Serial.print(mpptReleased);
+    Serial.print("   chg_backoff=");  Serial.println(chgBackoffActive);
+}
+
+// 'N' line command (fw v24): "" = status block, "<volts>" = FORCE a threshold write,
+// "R" = restore external-resistor mode (0xFF). Same single-line, whole-line-or-nothing
+// strictness as 'T'/'Y'/'W'/'K'.
+//
+// The forced write is the ONLY path that may RAISE the threshold above AG105_MPPT_N_FLOOR: the
+// automatic manager is monotone non-increasing by design (see the write rules), and an operator
+// characterising the MPPT knee needs to walk the threshold UP. It still counts against
+// AG105_MPPT_WRITES_PER_BOOT, so an operator cannot spend the EPROM budget invisibly.
+void parseMpptLine(const char *line) {
+    const char *p = line;
+    while (*p == ' ') p++;
+
+    if (*p == '\0') { printMpptStatus(); return; }   // bare "N" + newline
+
+    bool restore = (*p == 'R' || *p == 'r');
+    float volts  = 0.0f;
+    if (restore) {
+        p++;
+        while (*p == ' ') p++;
+        if (*p != '\0') { Serial.println("ERROR: N takes <volts>, R, or nothing"); return; }
+    } else {
+        char *end = NULL;
+        volts = strtod(p, &end);
+        if (end == p) { Serial.println("ERROR: N takes <volts>, R, or nothing"); return; }
+        p = end;
+        while (*p == ' ') p++;
+        if (*p != '\0') { Serial.println("ERROR: N takes <volts>, R, or nothing"); return; }
+    }
+
+    // Guards, in the same spirit as parseKLogLine()'s: this path does blocking-ish I2C
+    // (three transactions) and must not land inside a millis()-deadline-sequenced machine or
+    // steal a poll slot from a running profile.
+    if (bringupActive) {
+        Serial.println("REFUSED: staged bring-up in progress — bring the bus up first");
+        return;
+    }
+    if (driveCycleActive || powerShareProfileActive || trapProfileActive ||
+        combinedProfileActive || wProfileActive || tsweepActive ||
+        plotArmTarget != PLOT_ARM_NONE) {
+        Serial.println("REFUSED: a profile is running/armed — stop it first");
+        return;
+    }
+    if (!chargerHasPower()) {
+        Serial.println("REFUSED: Ag105 is unpowered (open FC_CHARGE with '5') — it cannot ACK");
+        return;
+    }
+    if (ag105MpptWrites >= (uint8_t)AG105_MPPT_WRITES_PER_BOOT) {
+        Serial.println("REFUSED: Ag105 MPPT write budget for this boot is spent");
+        return;
+    }
+
+    uint8_t want;
+    if (restore) {
+        want = (uint8_t)AG105_MPPT_N_RESISTOR;
+    } else {
+        // Clamp to the register's own 11–33 V span (NOT to [N_FLOOR, N_CEIL] — the point of the
+        // command is to reach outside the automatic band), then quantize DOWN like every other
+        // conversion in this feature.
+        if (volts < AG105_MPPT_V_BASE) volts = AG105_MPPT_V_BASE;
+        if (volts > AG105_MPPT_VOLTS(AG105_MPPT_N_MAX)) volts = AG105_MPPT_VOLTS(AG105_MPPT_N_MAX);
+        want = ag105MpptCountFromVolts(volts);
+    }
+
+#if HIL_SIM
+    if (hilHaveFrame) {
+        // No Ag105, no Wire. Mirror the belief so the observation frame's byte 15 tracks the
+        // operator's intent, exactly as pollAg105()'s HIL branch mirrors the config handshake.
+        ag105MpptRegCnt   = want;
+        ag105MpptRegKnown = true;
+        ag105MpptState    = AG105_MPPT_DONE;
+        ag105MpptDefers   = 0;   // an operator-settled threshold clears any defer streak (F4)
+        Serial.print("[MPPT] (HIL: mirrored, no I2C) reg 0x02 -> "); Serial.println(want);
+        return;
+    }
+#endif
+
+    // Budget is charged at the ATTEMPT and only for a PHYSICAL write, exactly as the automatic
+    // manager does (fw v24 review H1 / safety-L5): a failed forced write still spends an EPROM
+    // cycle, while re-forcing a value the register already holds spends none.
+    Ag105WriteResult wr = ag105WriteConfigRegChecked(AG105_REG_MPPT_V, want);
+    if (wr != AG105_WR_SKIPPED) ag105MpptWrites++;
+    if (wr == AG105_WR_FAIL) {
+        ag105MpptFails++;
+        Serial.println("ERROR: Ag105 reg 0x02 write/verify failed");
+        return;
+    }
+    ag105MpptLastWriteMs  = millis();
+    ag105MpptHaveWritten  = true;
+    ag105MpptRegCnt       = want;
+    ag105MpptRegKnown     = true;
+    ag105MpptDefers       = 0;   // the register is now known good — clear any defer streak (F4)
+    ag105MpptGuardArmed   = false;
+    ag105MpptGuardSinceMs = 0;
+    ag105MpptGuardSinceKnown = false;
+    // A forced write settles the session: the automatic manager must not immediately ratchet the
+    // operator's value away. A ratchet is still reachable, but only through the guard's sustained
+    // proximity AND the AG105_MPPT_MIN_WRITE_MS spacing this write just re-anchored.
+    ag105MpptState = AG105_MPPT_DONE;
+    Serial.print("[MPPT] forced reg 0x02 -> "); Serial.print(want);
+    if (want > (uint8_t)AG105_MPPT_N_MAX) {
+        Serial.println(" (external-resistor mode restored)");
+    } else {
+        Serial.print(" ("); Serial.print(ag105MpptVoltsFromCount(want), 3); Serial.println(" V)");
+    }
+}
+
 void printTestStatus() {
     Serial.println("=== State 98 Status ===");
     Serial.print("FW_VERSION:         "); Serial.println(FW_VERSION);
@@ -8258,6 +8754,7 @@ void printTestStatus() {
     Serial.print("CHARGER_STAT:       "); Serial.println(digitalRead(CHARGER_STAT));
     Serial.print("charger_powered:    "); Serial.println(chargerHasPower());
     Serial.print("ag105Configured:    "); Serial.println(ag105Configured);
+    printMpptStatus();   // fw v24 — Ag105 reg 0x02 manager (also reachable on its own via 'N')
     Serial.println("--- ADC ---");
     Serial.print("V_fc=");   Serial.print(V_fc,   3); Serial.print("V  ");
     Serial.print("V_batt="); Serial.print(V_batt, 3); Serial.print("V  ");
@@ -8629,6 +9126,7 @@ void safeAllSwitches() {
     digitalWrite(FC_BUS_ENABLE,  LOW);
     digitalWrite(MOT_PWR_ENABLE, LOW);
     digitalWrite(MPPT_DISABLE,   LOW);    // inhibit MPPT (active-LOW)
+    mpptReleased = false;                 // fw v24: mirror follows the pin
     // The bus switches are now open by state action, not by the share
     // controller -- clear the cutoff flags so applyShareRatio() will not
     // "re-enter" a switch it no longer owns. The setpoint latches go with them
@@ -10002,9 +10500,23 @@ void setDroopMdac(float fc_gain, float bt_gain) {
 }
 
 void chargingControl() {
+    // ── Firmware undervoltage backoff for the charger path (fw v24) ──────────
+    // Evaluated FIRST and unconditionally, so the hysteresis state tracks the bus even on ticks
+    // where charge_goal is 0 and the path is shut anyway — otherwise the dwell timer would only
+    // start once charging was already commanded. Pure state update; no pin is written here.
+    // Non-blocking and allocation-free, so detectFaults() is unaffected.
+    uint32_t chgNow = millis();
+    if (V_bus >= AG105_CHG_BACKOFF_V) chgBackoffLowSince = chgNow;   // dwell restarts
+    if (!chgBackoffActive && (chgNow - chgBackoffLowSince) >= AG105_CHG_BACKOFF_DWELL_MS)
+        chgBackoffActive = true;
+    if (chgBackoffActive && V_bus > AG105_CHG_RESUME_V)
+        chgBackoffActive = false;
+
     // charge_goal == 0 → Pi wants no charging; inhibit everything
     if (charge_goal <= 0.05f) {
         digitalWrite(MPPT_DISABLE, LOW);   // inhibit MPPT (active-LOW: LOW = inhibit)
+        mpptReleased = false;              // deliberate mode change, not a readiness flap — no
+                                           // holdoff is armed (fw v24)
         assertFcChargeEnable(false);
         digitalWrite(REGEN_ENABLE, LOW);
         // share setpoint latch owns this switch — see updateShareSetpointCutoff() (2026-08-12)
@@ -10026,14 +10538,50 @@ void chargingControl() {
     bool regenActive = (current < -0.1f);   // TODO(calibrate): regen detection threshold
 
     if (regenActive) {
-        // Fast regen: inhibit MPPT so slow perturb-and-observe doesn't fight the transient.
+        // Fast regen: inhibit MPPT so the slow input-voltage-threshold regulator does not fight
+        // the transient. (MECHANISM CORRECTED fw v24 — AG105_Silvertel.pdf §2.9: the Ag105's MPPT
+        // is a threshold regulator that gates the start of charging on V_CHG-IN, NOT a
+        // perturb-and-observe tracker. The earlier "perturb-and-observe" wording here was
+        // unsourced lore; the conclusion — inhibit during regen — is unchanged.)
         // TL431/BSP170P braking chopper is the primary fast clamp — do not rely on Ag105 here.
         // REGEN_ENABLE and BT_BUS_ENABLE are not mutually exclusive; BT stays on the bus.
         assertFcChargeEnable(false);         // FC_CHARGE must be OFF before REGEN can go HIGH
         digitalWrite(REGEN_ENABLE, HIGH);    // open regen → charger path
         digitalWrite(MPPT_DISABLE, LOW);     // inhibit MPPT during regen (active-LOW)
+        mpptReleased = false;                // deliberate mode change — no holdoff armed (fw v24)
         // share setpoint latch owns this switch — see updateShareSetpointCutoff() (2026-08-12)
         if (!shareSpCutBT) digitalWrite(BT_BUS_ENABLE, HIGH);   // BT continues contributing to VBUS during regen
+    } else if (chgBackoffActive) {
+        // ── UV BACKOFF (fw v24) ──────────────────────────────────────────────
+        // V_bus has been under AG105_CHG_BACKOFF_V for AG105_CHG_BACKOFF_DWELL_MS. Close the
+        // FC→charger path so the Ag105 stops loading a sagging bus, and — if it is safe — put BT
+        // back on the bus.
+        //
+        // ORDERING (fw v24 review, correctness-F6): this branch is NOT identical to the
+        // charge_goal==0 branch above — that one drives REGEN_ENABLE LOW with a bare
+        // digitalWrite AFTER assertFcChargeEnable(false), this one drives it LOW BEFORE. The
+        // difference is inert: assertFcChargeEnable(false) only ever drives FC_CHARGE_ENABLE
+        // LOW, REGEN_ENABLE is already LOW on this path (the else-if chain means regen is not
+        // active on this tick), and no ordering rule constrains two independent OPENING writes.
+        // What matters is that FC_CHARGE goes through the guard, which it does in both.
+        digitalWrite(REGEN_ENABLE, LOW);
+        assertFcChargeEnable(false);
+        digitalWrite(MPPT_DISABLE, LOW);     // charger is about to lose input power anyway
+        mpptReleased = false;
+        // BT RE-CLOSE IS CONDITIONAL (fw v24 review M2/M3). Two independent reasons to refuse:
+        //   • shareSpCutBT — the share setpoint latch owns this switch (updateShareSetpointCutoff(),
+        //     2026-08-12) and the backoff must not steal it back from under the latch;
+        //   • busHotPlugUnsafe(BT_REG_ENABLE) — this branch fires exactly when V_bus is under
+        //     12.8 V, i.e. under V_BUS_CHARGED_THRESH, which is the Death-5 hot-plug condition
+        //     (docs/boost-bringup-debug.md): closing an ideal-diode switch onto a discharged or
+        //     sagging node drives the RT1987 into foldback and has already destroyed boosts on
+        //     this board. Mirrors the same V_BUS_CHARGED_THRESH gate the share latch uses on its
+        //     own restore path.
+        // When either refuses, the backoff DEGRADES TO LOAD-SHEDDING ONLY — which is the primary
+        // relief anyway: closing the charger path is what stops the Ag105 loading the bus. BT
+        // returns later, either through this same site once the bus recovers above
+        // V_BUS_CHARGED_THRESH, or through the share latch's own release.
+        if (!shareSpCutBT && !busHotPlugUnsafe(BT_REG_ENABLE)) digitalWrite(BT_BUS_ENABLE, HIGH);
     } else {
         // Cruise/coast: close regen path and harvest via the FC→charger path.
         digitalWrite(REGEN_ENABLE, LOW);
@@ -10044,9 +10592,34 @@ void chargingControl() {
         // mutual-exclusion hazard is preserved. This is the only place BT_BUS_ENABLE goes LOW
         // in Run.
         assertFcChargeEnable(true);
-        // Release the slow perturb-and-observe MPPT loop ONLY once the charger reports ready,
-        // so it doesn't run during bring-up (active-LOW: HIGH = enabled, LOW = inhibited).
-        digitalWrite(MPPT_DISABLE, chargerReady ? HIGH : LOW);
+        // Release the MPPT input-voltage-threshold regulator ONLY once the charger reports ready,
+        // so it does not run during bring-up (active-LOW: HIGH = enabled, LOW = inhibited).
+        // (MECHANISM CORRECTED fw v24 — see the regen branch above; the release RULE is unchanged.)
+        //
+        // RELEASE HOLDOFF (fw v24). Re-asserting because ag105IsReady() went false, then
+        // releasing again on the very next tick, is the ~40 ms hunt loop measured on the HIL
+        // bench. MPPT_RELEASE_HOLDOFF_MS bounds any residual hunt to <= 1 Hz. With the
+        // AG105_MPPT_N_CEIL invariant the refusal-to-charge that drives the hunt is unreachable
+        // in normal cruise, so this is defence in depth, not the primary fix.
+        // A FAILED threshold manager holds the MPPT inhibited for the rest of the powered
+        // session (fw v24). Rationale: FAILED means the firmware does not know what threshold is
+        // in force — either reg 0x02 could not be read/written, or its 0xFF could not be
+        // disambiguated from the §2.11.5 unavailable sentinel. Releasing on an unknown threshold
+        // is exactly the hunt this round removes, and an inhibited MPPT simply forgoes harvest.
+        // No fault is latched: this is a degraded-harvest condition, not a hazard. The state
+        // re-arms on the next charger power cycle (ag105MpptResetSession()).
+        if (!chargerReady || ag105MpptState == AG105_MPPT_FAILED) {
+            if (mpptReleased) {
+                mpptReleased       = false;
+                mpptHoldoffUntilMs = millis() + MPPT_RELEASE_HOLDOFF_MS;
+            }
+            digitalWrite(MPPT_DISABLE, LOW);
+        } else if (!mpptReleased && (int32_t)(millis() - mpptHoldoffUntilMs) < 0) {
+            digitalWrite(MPPT_DISABLE, LOW);     // ready, but still inside the holdoff window
+        } else {
+            mpptReleased = true;
+            digitalWrite(MPPT_DISABLE, HIGH);
+        }
     }
 }
 
@@ -10112,19 +10685,31 @@ bool ag105ReadConfigReg(uint8_t reg, uint8_t &out) {
 // docs/VESC_MOTOR_INTEGRATION.md §11 asks for exactly this read-verify-then-write-if-different.
 // Returns false if the register cannot be read, cannot be written, or still reads wrong after the
 // write.
-bool ag105WriteConfigRegVerified(uint8_t reg, uint8_t want) {
+// Tri-state form of ag105WriteConfigRegVerified() (fw v24 review H1). The EPROM-wear budget must
+// be charged at the ATTEMPT — a write that ACKs but does not stick still consumed a write cycle,
+// and counting only on success let a failing write retry without ever spending budget. But it
+// must NOT be charged for the skip-if-equal branch, which touches no EPROM at all. The boolean
+// wrapper below keeps every other caller byte-identical.
+Ag105WriteResult ag105WriteConfigRegChecked(uint8_t reg, uint8_t want) {
     uint8_t got = 0;
-    if (!ag105ReadConfigReg(reg, got)) return false;
-    if (got == want) return true;              // already correct — no EPROM write
+    if (!ag105ReadConfigReg(reg, got)) return AG105_WR_FAIL;
+    if (got == want) return AG105_WR_SKIPPED;  // already correct — no EPROM write
 
     Wire.beginTransmission(AG105_ADDR);
     Wire.write(reg);
     Wire.write(want);
-    if (Wire.endTransmission() != 0) return false;
+    if (Wire.endTransmission() != 0) return AG105_WR_FAIL;
 
     // Verify: prove the value actually landed rather than trusting the ACK.
-    if (!ag105ReadConfigReg(reg, got)) return false;
-    return got == want;
+    if (!ag105ReadConfigReg(reg, got)) return AG105_WR_FAIL;
+    return (got == want) ? AG105_WR_WROTE : AG105_WR_FAIL;
+}
+
+bool ag105WriteConfigRegVerified(uint8_t reg, uint8_t want) {
+    // Behaviour-preserving delegation (fw v24 review H1): AG105_WR_SKIPPED and AG105_WR_WROTE are
+    // both the old `true`; AG105_WR_FAIL is the old `false`. Callers that do not care whether an
+    // EPROM cycle was actually spent are unchanged.
+    return ag105WriteConfigRegChecked(reg, want) != AG105_WR_FAIL;
 }
 
 bool initAg105Charger() {
@@ -10142,6 +10727,405 @@ bool initAg105Charger() {
     if (!ag105WriteConfigRegVerified(AG105_REG_VBATT_CFG, AG105_VAL_2S)) return false;
 
     return true;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Ag105 MPPT INPUT-VOLTAGE THRESHOLD MANAGER (fw v24)
+// ═════════════════════════════════════════════════════════════════════════════
+// Constants, datasheet citations and the two static_assert invariants are at the
+// "Ag105 MPPT input-voltage threshold management" constants block.
+
+// Volts -> register count. FLOORS toward zero deliberately: every rounding decision in this
+// feature biases the SAFE direction, and for the threshold "safe" is lower (a threshold that is
+// too low merely harvests slightly less optimally; one that is too high refuses to charge and
+// restarts the hunt). Sub-base volts clamp to 0; over-range clamps to AG105_MPPT_N_MAX BEFORE
+// returning, so the caller can never hand a resistor-mode code (>=251) to the range clamp.
+uint8_t ag105MpptCountFromVolts(float volts) {
+    if (!(volts > AG105_MPPT_V_BASE)) return 0;                 // also catches NaN
+    float counts = (volts - AG105_MPPT_V_BASE) / AG105_MPPT_V_PER_CNT;
+    if (counts >= (float)AG105_MPPT_N_MAX) return (uint8_t)AG105_MPPT_N_MAX;
+    return (uint8_t)counts;                                     // C truncation == floor for >= 0
+}
+
+float ag105MpptVoltsFromCount(uint8_t count) {
+    return AG105_MPPT_VOLTS(count);
+}
+
+// Range clamp, applied in COUNTS after the conversion (never in volts — clamping in volts and
+// then quantizing can land one count outside the band).
+uint8_t ag105MpptClampCount(uint8_t count) {
+    if (count < (uint8_t)AG105_MPPT_N_FLOOR) return (uint8_t)AG105_MPPT_N_FLOOR;
+    if (count > (uint8_t)AG105_MPPT_N_CEIL)  return (uint8_t)AG105_MPPT_N_CEIL;
+    return count;
+}
+
+// Re-arm the per-powered-session state. Called from the same !powered block that re-arms
+// ag105Configured, so the manager's session and the charger's config session are by construction
+// the same session. Boot-scoped counters (ag105MpptWrites, ag105MpptFails) are deliberately NOT
+// cleared here — the writes-per-boot cap must survive power cycling of the charger, or an
+// FC_CHARGE path that opens and closes repeatedly would reset the EPROM-wear budget every time.
+// ag105MpptRegCnt / ag105MpptRegKnown are also kept: the register lives in EPROM and does not
+// change when the module loses input power, so the belief stays valid across the gap.
+// BOOT-SCOPED FAILURE (fw v24 review H1): once ag105MpptFails reaches AG105_MPPT_FAILS_PER_BOOT
+// the manager stays FAILED across session resets. This function therefore CANNOT clear that
+// condition — it re-adopts FAILED here, and ag105ManageMpptThreshold() re-asserts it every tick.
+void ag105MpptResetSession() {
+    ag105MpptState      = (ag105MpptFails >= (uint8_t)AG105_MPPT_FAILS_PER_BOOT)
+                              ? AG105_MPPT_FAILED : AG105_MPPT_IDLE;
+    ag105MpptReadPhase  = 0;
+    ag105MpptPathOpen   = false;
+    ag105MpptObsSamples = 0;
+    ag105MpptVchgMin    = 0.0f;
+    ag105MpptRatchets   = 0;
+    ag105MpptDefers     = 0;
+    ag105MpptAttempts   = 0;
+    ag105MpptGuardArmed = false;
+    // The dwell timestamp goes with the armed flag (fw v24 review M5 / correctness-F3): leaving a
+    // stale ag105MpptGuardSinceMs behind meant the FIRST proximate tick of the next powered
+    // session could arm the guard instantly against a dwell measured in the previous one.
+    ag105MpptGuardSinceMs    = 0;
+    ag105MpptGuardSinceKnown = false;
+    ag105MpptVinValid   = false;
+}
+
+// Charge one undecidable evaluation against the defer budget and return the state the caller
+// should adopt: AG105_MPPT_IDLE to re-observe after AG105_MPPT_DEFER_MS, or AG105_MPPT_FAILED
+// once AG105_MPPT_DEFERS_MAX consecutive undecidables have accumulated. Shared by the reg-0x02
+// 0xFF discriminator and by the READ-side transport failures (fw v24 safety-L7), so the two
+// cannot drift apart: an unreadable register and an undiscriminated 0xFF are the same condition
+// from the manager's point of view — it does not know what threshold is in force.
+static uint8_t mpptChargeDeferOrFail(uint32_t now, const char *failMsg) {
+    ag105MpptDefers++;
+    ag105MpptDeferMs = now;
+    if (ag105MpptDefers >= (uint8_t)AG105_MPPT_DEFERS_MAX) {
+        ag105MpptFails++;
+        Serial.println(failMsg);
+        return AG105_MPPT_FAILED;
+    }
+    return AG105_MPPT_IDLE;
+}
+
+// One tick of the threshold manager. Called ONLY from pollAg105()'s successful-ACK path, after
+// the lazy-config block and only while ag105Configured — so the charger is powered, settled and
+// demonstrably ACKing before a single transaction is spent here.
+//
+// I2C BUDGET. Every state costs at most ONE register access per 50 Hz tick, except AG105_MPPT_WRITE,
+// which spends one ag105WriteConfigRegVerified() call (read, conditional write, read-back).
+// That is the documented exception to the "one added transaction per poll tick" rule: it is
+// bounded to AG105_MPPT_WRITES_PER_BOOT occurrences since boot, spaced AG105_MPPT_MIN_WRITE_MS
+// apart, and it does no blocking wait — the independent confirmation happens on the NEXT tick in
+// AG105_MPPT_VERIFY rather than behind a delay().
+void ag105ManageMpptThreshold() {
+    uint32_t now = millis();
+
+    // ── FC-charge path edge tracking ─────────────────────────────────────────
+    // Sampling is valid only while the FC path alone is feeding the charger: with REGEN_ENABLE
+    // HIGH the regen node is also driving V_CHG-IN, so V_chg is not the FC bus's contribution and
+    // a threshold derived from it would be wrong on the next cruise.
+    bool pathPowering = fcChargePathIsPowering();
+    if (pathPowering && !ag105MpptPathOpen) ag105MpptPathOpenMs = now;
+    ag105MpptPathOpen = pathPowering;
+
+    // BOOT-SCOPED GIVE-UP (fw v24 review H1). ag105MpptResetSession() deliberately re-arms the
+    // per-session FAILED state, so a charger power path that opens and closes repeatedly gives a
+    // persistently broken reg 0x02 an unlimited number of fresh attempts. Once the manager has
+    // failed AG105_MPPT_FAILS_PER_BOOT evaluations since boot the condition is treated as a
+    // property of the hardware, not of the session, and re-asserted here on every tick —
+    // ag105MpptResetSession() cannot clear it because ag105MpptFails is boot-scoped.
+    if (ag105MpptFails >= (uint8_t)AG105_MPPT_FAILS_PER_BOOT)
+        ag105MpptState = AG105_MPPT_FAILED;
+
+    if (ag105MpptState == AG105_MPPT_FAILED) return;   // held for the session; see below
+
+    // NEVER during an error teardown. doState99() phase 0 deliberately opens FC_CHARGE_ENABLE to
+    // drain VBUS into the charger, which looks exactly like a cruise harvest to the path test
+    // above — but the V_chg seen there is a decaying capacitor, not an operating point, and a
+    // threshold derived from it would be wrong. The phases are millis()-deadline sequenced, so
+    // this also keeps the manager's transactions out of the teardown entirely.
+    if (mainState == 99) { ag105MpptState = AG105_MPPT_IDLE; return; }
+
+    // ── Attended-operation gate (fw v24 review M7) ───────────────────────────
+    // The manager may spend EPROM write cycles without anyone asking it to, so it runs only where
+    // the vehicle is genuinely operating: State 2 (Run), or State 98 with a drive cycle running —
+    // the one State-98 mode that executes the real chargingControl()/powerBalance() set and can
+    // therefore present a representative V_chg. A bench operator sitting in State 98 poking
+    // switches must not have the threshold rewritten behind them; manual threshold work goes
+    // through the State-98 'N' command only, which is explicit, budget-counted and logged.
+    if (!(mainState == 2 || (mainState == 98 && driveCycleActive))) return;
+
+    // ── Ratchet guard (runs in every state) ──────────────────────────────────
+    // "Proximity" = the observed input has come within AG105_MPPT_GUARD_V of the threshold the
+    // firmware believes is in force. That is the condition under which the Ag105 is about to stop
+    // charging (§2.9) and start the release/re-assert hunt, so it is the only condition that
+    // justifies spending another EPROM write to ratchet the threshold DOWN.
+    if (pathPowering && ag105MpptRegKnown && ag105MpptRegCnt <= (uint8_t)AG105_MPPT_N_MAX &&
+        (V_chg - ag105MpptVoltsFromCount(ag105MpptRegCnt)) <= AG105_MPPT_GUARD_V) {
+        // ag105MpptGuardSinceKnown, not a ==0 sentinel: millis() really is 0 for the first
+        // millisecond after boot, and a dwell that started there would otherwise be re-stamped on
+        // every tick and never arm (fw v24 review M5 / correctness-F3).
+        if (!ag105MpptGuardSinceKnown) { ag105MpptGuardSinceMs = now; ag105MpptGuardSinceKnown = true; }
+        if (!ag105MpptGuardArmed && (now - ag105MpptGuardSinceMs) >= AG105_MPPT_GUARD_DWELL_MS)
+            ag105MpptGuardArmed = true;
+    } else {
+        ag105MpptGuardSinceMs    = 0;      // proximity broken — dwell restarts from scratch
+        ag105MpptGuardSinceKnown = false;
+    }
+
+    switch (ag105MpptState) {
+
+    case AG105_MPPT_IDLE:
+        if (!pathPowering) return;
+        if ((now - ag105MpptPathOpenMs) < AG105_MPPT_OBS_SKIP_MS) return;  // let the path settle
+        // A deferred (0xFF-undecidable) evaluation waits AG105_MPPT_DEFER_MS before re-observing,
+        // so three defers span ~3 s rather than three back-to-back 400 ms windows.
+        if (ag105MpptDefers > 0 && (now - ag105MpptDeferMs) < AG105_MPPT_DEFER_MS) return;
+        ag105MpptObsStartMs = now;
+        ag105MpptVchgMin    = V_chg;
+        ag105MpptObsSamples = 1;
+        ag105MpptState      = AG105_MPPT_OBSERVE;
+        return;
+
+    case AG105_MPPT_OBSERVE:
+        // Abandon the window if the path shuts: a partial window straddling a path close would
+        // fold the collapsing V_chg into the minimum and drive the target to the floor.
+        if (!pathPowering) { ag105MpptState = AG105_MPPT_IDLE; ag105MpptObsSamples = 0; return; }
+        if (V_chg < ag105MpptVchgMin) ag105MpptVchgMin = V_chg;
+        if (ag105MpptObsSamples < 0xFFFF) ag105MpptObsSamples++;
+        if ((now - ag105MpptObsStartMs) >= AG105_MPPT_OBS_MS) {
+            ag105MpptReadPhase = 0;
+            ag105MpptState     = AG105_MPPT_READ;
+        }
+        return;
+
+    case AG105_MPPT_READ: {
+        if (!pathPowering) { ag105MpptState = AG105_MPPT_IDLE; return; }
+
+        if (ag105MpptReadPhase == 0) {          // tick 1 of 2 — the threshold register itself
+            uint8_t got = 0;
+            if (!ag105ReadConfigReg(AG105_REG_MPPT_V, got)) {
+                // Transport hiccup. pollAg105() owns the FAULT decision, but the manager must not
+                // retry this forever: a dead register read is just as undecidable as an
+                // undiscriminated 0xFF, so it spends the SAME defer budget (fw v24 safety-L7).
+                ag105MpptState = mpptChargeDeferOrFail(now,
+                    "WARN: Ag105 MPPT reg 0x02 could not be read — threshold left alone, "
+                    "MPPT held inhibited");
+                return;
+            }
+            ag105MpptRegCnt   = got;
+            ag105MpptRegKnown = true;
+            ag105MpptReadPhase = 1;
+            return;                              // one transaction per tick
+        }
+
+        // tick 2 of 2 — the 0xFF discriminator's evidence (Measured Input Voltage, reg 0x07)
+        uint8_t vin = 0;
+        if (!ag105ReadConfigReg(AG105_REG_VIN_MEAS, vin)) {
+            ag105MpptState = mpptChargeDeferOrFail(now,
+                "WARN: Ag105 MPPT reg 0x07 could not be read — threshold left alone, "
+                "MPPT held inhibited");
+            return;
+        }
+        ag105MpptVinRaw   = vin;
+        ag105MpptVinValid = (vin <= 0xFE);
+
+        // ── EVALUATE ─────────────────────────────────────────────────────────
+        uint8_t target = ag105MpptClampCount(
+                             ag105MpptCountFromVolts(ag105MpptVchgMin - AG105_MPPT_MARGIN_V));
+        ag105MpptTargetCnt = target;
+
+        bool wantWrite   = false;
+        bool isRatchet   = false;
+        uint8_t want     = target;
+
+        // A readable, in-range register settles the ambiguity outright — clear the defer streak
+        // so a past ambiguity cannot keep charging the IDLE re-entry a AG105_MPPT_DEFER_MS pause.
+        if (ag105MpptRegCnt <= (uint8_t)AG105_MPPT_N_MAX) ag105MpptDefers = 0;
+
+        if (ag105MpptRegCnt > (uint8_t)AG105_MPPT_N_MAX) {
+            // (a) external-resistor mode (>=251) — OR the §2.11.5 all-0xFF unavailable sentinel.
+            // Resolve with reg 0x07 against the board's own CHG_VOLTAGE ADC.
+            bool discriminated = ag105MpptVinValid &&
+                                 (fabsf(AG105_VIN_MEAS_SCALE * (float)ag105MpptVinRaw - V_chg)
+                                      <= AG105_MPPT_VIN_XCHECK_V);
+            if (!discriminated) {
+                ag105MpptRegKnown = false;   // the 0xFF we just stored is not trustworthy
+                // Re-observe after a pause; the module may simply be under its own threshold
+                // right now, which is exactly the condition this feature removes.
+                ag105MpptState = mpptChargeDeferOrFail(now,
+                    "WARN: Ag105 MPPT reg 0x02 reads 0xFF and reg 0x07 does not "
+                    "corroborate — threshold left alone, MPPT held inhibited");
+                return;
+            }
+            ag105MpptDefers = 0;
+            wantWrite = true;                 // genuine resistor mode -> take I2C control
+        } else if (ag105MpptRegCnt < (uint8_t)AG105_MPPT_N_FLOOR) {
+            // (c) below the floor — the ONLY automatic rule that RAISES the threshold. A
+            // threshold under the floor lets the charger pull the bus toward LIMIT_V_BUS_MIN.
+            wantWrite = true;
+            want      = (uint8_t)AG105_MPPT_N_FLOOR;
+        } else if (ag105MpptRegCnt > (uint8_t)(target + AG105_MPPT_DEADBAND_CNT)) {
+            // (b) ratchet DOWN. Gated three ways so this can never become a write loop:
+            //   - the guard must have observed sustained proximity to the current threshold,
+            //   - at most AG105_MPPT_RATCHETS_MAX per powered session,
+            //   - at least AG105_MPPT_MIN_WRITE_MS since the last write of any kind.
+            // NO PING-PONG: rule (b) writes `target`, which is already clamped to
+            // [N_FLOOR, N_CEIL], so rule (c) can never fire on a value rule (b) wrote; and after
+            // the write regCnt == target, so (b)'s own strict `> target + DEADBAND` is false.
+            bool spaced = !ag105MpptHaveWritten || (now - ag105MpptLastWriteMs) >= AG105_MPPT_MIN_WRITE_MS;
+            if (ag105MpptGuardArmed && ag105MpptRatchets < (uint8_t)AG105_MPPT_RATCHETS_MAX && spaced) {
+                wantWrite = true;
+                isRatchet = true;
+            }
+        }
+        // (d) otherwise: inside the deadband and inside the band — nothing to do.
+
+        if (!wantWrite) { ag105MpptState = AG105_MPPT_DONE; return; }
+
+        if (ag105MpptWrites >= (uint8_t)AG105_MPPT_WRITES_PER_BOOT) {
+            ag105MpptFails++;
+            ag105MpptState = AG105_MPPT_FAILED;
+            Serial.println("WARN: Ag105 MPPT write budget for this boot is spent — "
+                           "threshold left as-is, MPPT held inhibited");
+            return;
+        }
+
+        ag105MpptPendingCnt     = want;
+        ag105MpptWriteIsRatchet = isRatchet;
+        ag105MpptAttempts       = 0;
+        ag105MpptState          = AG105_MPPT_WRITE;
+        return;
+    }
+
+    case AG105_MPPT_WRITE: {
+        // ag105WriteConfigRegChecked() is read-first / skip-if-equal / read-back, so an
+        // already-correct register costs no EPROM cycle and still reports success.
+        //
+        // EPROM BUDGET IS CHARGED HERE, AT THE ATTEMPT (fw v24 review H1). The old code counted
+        // in AG105_MPPT_VERIFY, i.e. only on a write that landed — so a write that ACKed but did
+        // not stick, or one that failed its read-back, consumed a real EPROM cycle for free and
+        // could be retried without ever moving the counter. AG105_WR_SKIPPED is deliberately NOT
+        // charged: it touches no EPROM at all.
+        // Re-check the cap here too, not only in EVALUATE: a retry re-enters this state without
+        // passing through EVALUATE, and each retry now spends budget.
+        if (ag105MpptWrites >= (uint8_t)AG105_MPPT_WRITES_PER_BOOT) {
+            ag105MpptFails++;
+            ag105MpptState = AG105_MPPT_FAILED;
+            Serial.println("WARN: Ag105 MPPT write budget for this boot is spent — "
+                           "threshold left as-is, MPPT held inhibited");
+            return;
+        }
+        ag105MpptAttempts++;
+        Ag105WriteResult wr = ag105WriteConfigRegChecked(AG105_REG_MPPT_V, ag105MpptPendingCnt);
+        if (wr != AG105_WR_SKIPPED) ag105MpptWrites++;
+        if (wr != AG105_WR_FAIL) {
+            ag105MpptState = AG105_MPPT_VERIFY;   // independent readback NEXT tick, no delay()
+        } else if (ag105MpptAttempts >= (uint8_t)AG105_MPPT_RETRIES) {
+            ag105MpptFails++;
+            ag105MpptState = AG105_MPPT_FAILED;
+            Serial.println("WARN: Ag105 MPPT threshold write failed — MPPT held inhibited");
+        }
+        return;
+    }
+
+    case AG105_MPPT_VERIFY: {
+        // A deferred (0xFF-undecidable) readback waits AG105_MPPT_DEFER_MS before re-reading, so
+        // the re-reads span seconds rather than three back-to-back 20 ms ticks (fw v24 M1).
+        if (ag105MpptDefers > 0 && (now - ag105MpptDeferMs) < AG105_MPPT_DEFER_MS) return;
+
+        uint8_t got = 0;
+        if (!ag105ReadConfigReg(AG105_REG_MPPT_V, got)) {
+            // The read-back is as undecidable as an undiscriminated 0xFF; charge it against the
+            // same defer budget (fw v24 safety-L7) as well as the write-retry budget.
+            ag105MpptDefers++;
+            ag105MpptDeferMs = now;
+            if (ag105MpptAttempts >= (uint8_t)AG105_MPPT_RETRIES ||
+                ag105MpptDefers   >= (uint8_t)AG105_MPPT_DEFERS_MAX) {
+                ag105MpptFails++;
+                ag105MpptState = AG105_MPPT_FAILED;
+                Serial.println("WARN: Ag105 MPPT threshold verify read failed — MPPT held inhibited");
+            } else {
+                ag105MpptState = AG105_MPPT_WRITE;   // retry the whole write
+            }
+            return;
+        }
+
+        // 0xFF READ-BACK IS UNDECIDABLE, NOT A MISMATCH (fw v24 review M1). §2.11.5: while the
+        // module is below its own MPPT threshold (or below 9 V input) EVERY measurement it
+        // transmits reads 0xFF — and the very first write of this feature is made precisely when
+        // the module is still refusing to charge, so a 0xFF here is the EXPECTED reading of a
+        // write that landed perfectly. Treating it as "did not stick" retried a good write and
+        // then declared FAILED. Any value we could legitimately have written is <= N_MAX (250),
+        // so a 0xFF readback against an in-range pending count carries no information: re-read on
+        // a later tick under the defer budget, WITHOUT re-writing, and do not disturb the belief.
+        if (got == (uint8_t)AG105_MPPT_N_RESISTOR &&
+            ag105MpptPendingCnt <= (uint8_t)AG105_MPPT_N_MAX) {
+            if (ag105MpptDefers + 1 >= (uint8_t)AG105_MPPT_DEFERS_MAX) {
+                ag105MpptDefers++;
+                ag105MpptDeferMs = now;
+                ag105MpptFails++;
+                ag105MpptState = AG105_MPPT_FAILED;
+                Serial.println("WARN: Ag105 MPPT threshold read-back stayed 0xFF — cannot confirm "
+                               "the write, MPPT held inhibited");
+            } else {
+                ag105MpptDefers++;
+                ag105MpptDeferMs = now;      // stay in VERIFY; re-read after DEFER_MS, no re-write
+            }
+            return;
+        }
+
+        ag105MpptRegCnt   = got;
+        ag105MpptRegKnown = true;
+        if (got != ag105MpptPendingCnt) {
+            if (ag105MpptAttempts >= (uint8_t)AG105_MPPT_RETRIES) {
+                ag105MpptFails++;
+                ag105MpptState = AG105_MPPT_FAILED;
+                Serial.println("WARN: Ag105 MPPT threshold did not stick — MPPT held inhibited");
+            } else {
+                ag105MpptState = AG105_MPPT_WRITE;
+            }
+            return;
+        }
+        // Landed. Re-anchor the spacing timer and drop the ratchet guard so the next ratchet
+        // needs a fresh GUARD_DWELL_MS of proximity to the NEW threshold. The EPROM budget was
+        // already charged in AG105_MPPT_WRITE, at the attempt (fw v24 review H1).
+        ag105MpptDefers       = 0;    // a decidable read-back clears any 0xFF defer streak
+        ag105MpptLastWriteMs  = now;
+        ag105MpptHaveWritten  = true;
+        ag105MpptGuardArmed   = false;
+        ag105MpptGuardSinceMs = 0;
+        ag105MpptGuardSinceKnown = false;
+        // Only a ratchet-down consumes the per-session ratchet budget; the initial
+        // resistor-mode takeover (a) and the floor raise (c) each happen at most once and are
+        // bounded by AG105_MPPT_WRITES_PER_BOOT instead.
+        if (ag105MpptWriteIsRatchet) ag105MpptRatchets++;
+        Serial.print("[MPPT] Ag105 reg 0x02 -> "); Serial.print(got);
+        Serial.print(" ("); Serial.print(ag105MpptVoltsFromCount(got), 3);
+        Serial.println(" V)");
+        ag105MpptState = AG105_MPPT_DONE;
+        return;
+    }
+
+    case AG105_MPPT_DONE:
+        // Settled. Only the ratchet guard re-opens a window, and only when a ratchet could
+        // actually be spent — otherwise DONE would loop through OBSERVE/READ forever, burning
+        // two I2C reads every 550 ms for a write that is never allowed.
+        // A threshold already parked AT (or within the deadband of) the floor cannot be ratcheted
+        // further DOWN — rule (b) requires regCnt > target + DEADBAND, and target is itself
+        // clamped to >= N_FLOOR — so re-opening a window there is a guaranteed-fruitless
+        // OBSERVE/READ loop costing two I2C reads every ~550 ms (fw v24 safety-L3).
+        if (ag105MpptGuardArmed &&
+            ag105MpptRegKnown &&
+            ag105MpptRegCnt   > (uint8_t)(AG105_MPPT_N_FLOOR + AG105_MPPT_DEADBAND_CNT) &&
+            ag105MpptRatchets < (uint8_t)AG105_MPPT_RATCHETS_MAX &&
+            ag105MpptWrites   < (uint8_t)AG105_MPPT_WRITES_PER_BOOT &&
+            (!ag105MpptHaveWritten || (now - ag105MpptLastWriteMs) >= AG105_MPPT_MIN_WRITE_MS)) {
+            ag105MpptState = AG105_MPPT_IDLE;
+        }
+        return;
+
+    default:
+        return;
+    }
 }
 
 void pollAg105() {
@@ -10180,14 +11164,40 @@ void pollAg105() {
             ag105DataValid   = false;
             ag105_status_raw = 0;
             I_charge         = 0.0f;
+            ag105MeasUnavailable = false;
+            ag105MpptResetSession();   // same session boundary as ag105Configured (fw v24)
             return;
         }
 
         ag105_status_raw = hilInject.ag105_status;
         ag105DataValid   = true;
         I_charge         = hilInject.I_charge;
+        // The 0xFF unavailable sentinel (§2.11.5) is a property of the I2C READ, and there is no
+        // read here — the simulator injects amps directly. Mirrored as "available" by fiat, the
+        // same class of statement as ag105Configured below.
+        ag105MeasUnavailable = false;
 
-        if (millis() - ag105PowerOnMs >= AG105_SETTLE_MS) ag105Configured = true;
+        if (millis() - ag105PowerOnMs >= AG105_SETTLE_MS) {
+            // MPPT threshold, mirrored by fiat (fw v24). ag105ManageMpptThreshold() is NOT called
+            // under an active HIL link — it is an I2C state machine and this path must touch Wire
+            // zero times (same rule as the config handshake). Instead the believed count is set
+            // to what the manager's own rule would have produced from the injected V_chg, so the
+            // observation frame's byte 15 carries a meaningful value for the host. The write
+            // policy, the 0xFF discriminator and the EPROM budget are all BENCH-ONLY and are not
+            // exercised by an HIL build.
+            //
+            // RECOMPUTED EVERY SETTLED TICK (fw v24 review correctness-F1 / safety-L6). The
+            // original one-shot `if (!ag105Configured)` froze the mirror at whatever V_chg the
+            // very first settled tick happened to carry, so observation-frame byte 15 was a
+            // constant for the rest of the run and told the host nothing about its own injected
+            // world. The real manager re-evaluates as V_chg moves; the mirror now does too.
+            ag105MpptRegCnt    = ag105MpptClampCount(
+                                     ag105MpptCountFromVolts(V_chg - AG105_MPPT_MARGIN_V));
+            ag105MpptTargetCnt = ag105MpptRegCnt;
+            ag105MpptRegKnown  = true;
+            ag105MpptState     = AG105_MPPT_DONE;
+            ag105Configured = true;
+        }
         return;
     }
 #endif
@@ -10204,6 +11214,10 @@ void pollAg105() {
         // alongside a positive, plausible-looking I_charge while the charger was unpowered.
         // (docs/design-review-2026-07-28.md P2-1.)
         I_charge        = 0.0f;
+        ag105MeasUnavailable = false;
+        // fw v24: the MPPT manager's session ends with the charger's config session — same
+        // block, by construction, so the two can never disagree about which session they are in.
+        ag105MpptResetSession();
     }
     ag105HadPower = powered;
 
@@ -10223,13 +11237,33 @@ void pollAg105() {
     if (Wire.requestFrom((uint8_t)AG105_ADDR, (uint8_t)2) == 2) {
         ag105_status_raw = Wire.read();      // Table 6 status byte (always first)
         ag105DataValid   = true;             // raw byte is live — even if it is 0x00 (Battery Disconnect)
-        I_charge = Wire.read() * 0.011f;    // A; scale: 0.011 A/count (Table 7 field 0x06)
+        uint8_t ichgRaw  = (uint8_t)Wire.read();
+        // 0xFF UNAVAILABLE SENTINEL (fw v24) — AG105_Silvertel.pdf §2.11.5: "If the input voltage
+        // is below 9 volts or the Ag105 reports an error state, for example dropping below MPPT
+        // threshold voltage, all measures transmitted will be 0xFF." 255 counts x 0.011 A/count
+        // = 2.805 A, which is ABOVE the 2.5 A ceiling this firmware configures (reg 0x00 = 0x01),
+        // so it is not a reachable measurement — it is the sentinel. Reporting it as a charge
+        // current put a plausible 2.8 A into telemetry and the BLG at exactly the moments the
+        // charger was least able to measure anything. GENSTAT / ag105IsReady() are untouched:
+        // the status byte is not a measurement and stays authoritative.
+        if (ichgRaw == 0xFF) {
+            I_charge             = 0.0f;
+            ag105MeasUnavailable = true;
+        } else {
+            I_charge             = ichgRaw * 0.011f;  // A; scale 0.011 A/count (Table 7 field 0x06)
+            ag105MeasUnavailable = false;
+        }
 
         // Lazy configuration: the charger is now powered, settled, and ACKing. Write the
         // 2.5A / 2S-8.4V profile once per power session (EPROM persists; re-write idempotent).
         if (settled && !ag105Configured) {
             if (initAg105Charger()) ag105Configured = true;
             else if (faultArmed)    triggerFault(FAULT_INIT_FAIL, ERR_INIT_FAIL);
+        } else if (ag105Configured) {
+            // fw v24: MPPT input-voltage threshold management. Deliberately in the `else` arm so
+            // the tick that spends initAg105Charger()'s transactions does not also spend the
+            // manager's — the two never share a 20 ms slot.
+            ag105ManageMpptThreshold();
         }
     } else {
         // NAK or bus error. Mark charger data stale via ag105DataValid (NOT by zeroing the raw
@@ -10241,6 +11275,7 @@ void pollAg105() {
         ag105DataValid   = false;
         ag105_status_raw = 0;
         I_charge         = 0.0f;   // never leave a stale current next to a "no data" status byte
+        ag105MeasUnavailable = false;   // "no data at all" is not the 0xFF measurement sentinel
         if (faultArmed)
             triggerFault(FAULT_I2C_CHARGER, ERR_I2C_CHARGER);
     }
@@ -10261,6 +11296,16 @@ inline bool ag105IsReady() {
 inline bool chargerHasPower() {
     return digitalRead(FC_CHARGE_ENABLE) ||
            (digitalRead(REGEN_ENABLE) && digitalRead(MOT_PWR_ENABLE));
+}
+
+// True when the FC→charger path is the SOLE feed to V_CHG-IN (fw v24). Stricter than
+// chargerHasPower(): the MPPT threshold manager derives the threshold from V_chg, and with
+// REGEN_ENABLE HIGH the regen node also drives that rail through D-BC-RG, so the observed
+// voltage is no longer the FC bus's contribution. The two switches are mutually exclusive by
+// assertFcChargeEnable()'s guard, so this is normally just FC_CHARGE_ENABLE — the REGEN term is
+// the assertion that the guard held, not a second operating mode.
+inline bool fcChargePathIsPowering() {
+    return digitalRead(FC_CHARGE_ENABLE) && !digitalRead(REGEN_ENABLE);
 }
 
 

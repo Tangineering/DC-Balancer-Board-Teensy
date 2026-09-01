@@ -20,6 +20,13 @@ struct MockWireClass {
     // Write capture
     std::vector<I2CWriteRecord> write_log;
 
+    // TOTAL transaction counter (fw v24 review correctness-F5). write_log only records 2-byte
+    // config WRITES, so "write_log is empty" is satisfied both by a path that touched the bus
+    // not at all and by one that did a dozen READS — which made every "touches Wire zero times"
+    // assertion in the HIL tests vacuous. This counts EVERY bus transaction: one per
+    // beginTransmission() and one per requestFrom().
+    unsigned long transactions = 0;
+
     // Rx injection — push bytes here before a requestFrom/read call
     std::queue<uint8_t> rx_queue;
 
@@ -50,6 +57,7 @@ struct MockWireClass {
     void begin()      {}
 
     void beginTransmission(uint8_t addr) {
+        transactions++;
         _tx_addr = addr;
         _tx_buf.clear();
     }
@@ -78,6 +86,7 @@ struct MockWireClass {
 
     // Returns the number of bytes available to read (mimic Arduino)
     uint8_t requestFrom(uint8_t /*addr*/, uint8_t count) {
+        transactions++;
         if (fail_next_requestfrom) {
             fail_next_requestfrom = false;
             return 0;   // simulate NAK / no bytes available
@@ -99,6 +108,7 @@ struct MockWireClass {
 
     void reset() {
         write_log.clear();
+        transactions = 0;
         while (!rx_queue.empty()) rx_queue.pop();
         _tx_buf.clear();
         _tx_addr = 0;
