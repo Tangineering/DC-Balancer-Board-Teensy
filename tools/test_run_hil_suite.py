@@ -45,17 +45,18 @@ def _args(**overrides):
 # ─────────────────────────────────────────────────────────────────────────
 
 def test_build_plan_full_count_40_runs():
-    # 26 scenarios (25 as of 2026-08-31 wave 2: the ems-y-* quartet,
+    # 29 scenarios (25 as of 2026-08-31 wave 2: the ems-y-* quartet,
     # ems-ftp75-5050/-socband, mppt-tracking, charge-to-full, pi-silence and
-    # share-staircase -- 15 + 10 = 25 -- plus `ems-sdp`, added by the SDP
-    # round) + 27 replays (SY0001/FU4 added earlier) = 53. Every scenario
-    # occupies a plan slot even when it is rendered as a SKIP record
+    # share-staircase -- 15 + 10 = 25 -- plus `ems-sdp` from the SDP round,
+    # plus ems-ftp75-sdp / ems-sdp-cross / ems-sdp-braking from the
+    # SDP-interior round) + 27 replays (SY0001/FU4 added earlier) = 56. Every
+    # scenario occupies a plan slot even when it is rendered as a SKIP record
     # (operator-required / --pi-live / --with-ftp75), so this count is a
     # plan-slot count, not a will-actually-run count.
     plan = rhs.build_plan(_args())
-    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 53
+    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 56
     kinds = [p["kind"] for p in plan]
-    assert kinds.count("scenario") == 26
+    assert kinds.count("scenario") == 29
     assert kinds.count("replay") == 27
 
 
@@ -67,7 +68,7 @@ def test_build_plan_replay_only():
 
 def test_build_plan_scenarios_only():
     plan = rhs.build_plan(_args(scenarios_only=True))
-    assert len(plan) == 26
+    assert len(plan) == 29
     assert all(p["kind"] == "scenario" for p in plan)
 
 
@@ -190,7 +191,8 @@ def test_build_plan_with_operator_does_not_affect_other_scenarios():
     """--with-operator only changes 'drive' -- every other scenario's plan
     entry is identical with or without it.
 
-    The two ems-ftp75-* scenarios are excluded from the "no skip_reason"
+    The ems-ftp75-* scenarios (three since 2026-08-31: the -sdp variant
+    joined FTP75_SCENARIOS) are excluded from the "no skip_reason"
     assertion: they are skip-recorded under DEFAULT args too (the
     --with-ftp75 gate, unrelated to --with-operator), so they carry a
     skip_reason on both sides of this comparison -- their argv equality is
@@ -198,7 +200,7 @@ def test_build_plan_with_operator_does_not_affect_other_scenarios():
     plan_default = {p["name"]: p for p in rhs.build_plan(_args()) if p["kind"] == "scenario"}
     plan_operator = {p["name"]: p for p in rhs.build_plan(_args(with_operator=True))
                      if p["kind"] == "scenario"}
-    ftp75 = {"ems-ftp75-5050", "ems-ftp75-socband"}
+    ftp75 = rhs.FTP75_SCENARIOS
     for name in plan_default:
         if name == "drive":
             continue
@@ -1092,8 +1094,13 @@ def test_ems_sdp_provisional_note_is_gone_now_the_bands_are_measured():
     names = {s.get("name") for s in expect["signals_require"]}
     for name in ("sdp_table_interior_at_high_demand",
                  "sdp_table_rail_at_low_demand",
-                 "sdp_charge_window_opened"):
+                 # `sdp_charge_window_opened` was REPLACED by its inverse when
+                 # the entry was rebound to the calibrated v3 artifact
+                 # (2026-09-01): the policy has no charge cell to command, so
+                 # the old check would be a guaranteed FAIL on a correct board.
+                 "charge_path_never_opens"):
         assert name in names
+    assert "sdp_charge_window_opened" not in names
 
 
 def test_ems_sdp_calibrated_bands_match_the_campaign_measurements():
@@ -1119,11 +1126,20 @@ def test_ems_sdp_calibrated_bands_match_the_campaign_measurements():
     rail = by["sdp_table_rail_at_low_demand"]["min_value"]
     assert rail == pytest.approx(0.999)
     assert 0.95 < rail <= 1.000000
-    # 5: valid in BOTH the chattering and the held regime — that is the point.
-    ticks = by["sdp_charge_window_opened"]["min_ticks"]
-    assert ticks == 4000
-    assert ticks < 8652          # measured, chattering (campaign 20260831_222036)
-    assert ticks < 16000         # predicted, under the minimum-dwell hysteresis
+    # 5: the charge axis INVERTED with the v3 rebinding (2026-09-01). The
+    # calibrated artifact declines the charge action endogenously, so the
+    # assertion is that the path NEVER opens — max_ticks 0, exact rather than
+    # lenient (chargingControl() opens FC_CHARGE only on charge_goal > 0, and
+    # the table's charge map is identically zero).
+    never = by["charge_path_never_opens"]
+    assert never["switch_bit"] == rhs.SW_FC_CHARGE
+    assert never["max_ticks"] == 0
+    assert "min_ticks" not in never
+    # No t_window: "never" is asserted over the WHOLE post-grace run.
+    assert "t_window" not in never
+    # max_ticks-only specs must justify their vacuity; there is deliberately no
+    # companion positive bound on this bit (that is what must NOT happen).
+    assert never["vacuity_note"]
 
 
 # -- _judge_event_spec() unit coverage (shared by events_require and every
@@ -3847,6 +3863,12 @@ PI_LIVE_SKIP_SCENARIOS = {
     "ems-ftp75-5050", "ems-ftp75-socband",
     # 2026-08-31 SDP round: `ems-sdp` joins via the same "ems" metadata key
     # ("ems": "sdp-v1") -- no new code path.
+    # 2026-08-31 SDP-interior round: three more join the same way ("ems":
+    # "sdp-v2").  `ems-ftp75-sdp` is in FTP75_SCENARIOS as well, and is listed
+    # here for the same reason its two siblings are not listed separately --
+    # the --pi-live gate is ordered FIRST, so it is skip-recorded for the
+    # pi-live reason regardless of --with-ftp75.
+    "ems-ftp75-sdp", "ems-sdp-cross", "ems-sdp-braking",
     "ems-sdp",
 }
 
@@ -3906,11 +3928,12 @@ def test_build_plan_pi_live_non_skip_scenarios_unaffected():
 
 
 def test_build_plan_pi_live_total_count_still_40():
-    """Skip records still occupy a plan slot -- the total run count (53, since
-    the 2026-08-31 SDP round's addition of `ems-sdp`) is unchanged under
-    --pi-live, only their kind (executed vs skipped) differs."""
+    """Skip records still occupy a plan slot -- the total run count (56, since
+    the 2026-08-31 SDP-interior round's three `sdp_soc_ref_offset` scenarios)
+    is unchanged under --pi-live, only their kind (executed vs skipped)
+    differs."""
     plan = rhs.build_plan(_args(pi_live=True))
-    assert len(plan) == 53
+    assert len(plan) == 56
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -5316,11 +5339,15 @@ def test_fault_expectations_ems_sdp_entry_shape():
     # `sdp_table_interior_floor` joined the set when campaign 20260831_222036
     # calibrated the interior band and made it TWO-SIDED (the ceiling alone was
     # one-sided: a demand axis collapsing DOWNWARD satisfied it vacuously).
+    # `charge_path_never_opens` REPLACED `sdp_charge_window_opened` on
+    # 2026-09-01 when the leg was rebound to the calibrated `sdp-v3` artifact
+    # (zero charge cells, declined endogenously) — the inverse assertion, and
+    # a guaranteed FAIL under v2 rather than a vacuous pass.
     assert names == {"sdp_drive_commanded", "sdp_clamped_rail_commanded",
                      "sdp_table_interior_at_high_demand",
                      "sdp_table_interior_floor",
                      "sdp_table_rail_at_low_demand",
-                     "sdp_charge_window_opened",
+                     "charge_path_never_opens",
                      "sdp_fc_current_biased", "sdp_h2_accounted",
                      "sdp_student_h2_axis"}
     by_name = {s["name"]: s for s in entry["signals_require"]}
@@ -5333,9 +5360,9 @@ def test_fault_expectations_ems_sdp_entry_shape():
     assert by_name["sdp_table_rail_at_low_demand"]["column"] == "cmd_share_sp_raw"
     assert by_name["sdp_table_rail_at_low_demand"]["min_value"] == pytest.approx(0.999)
     assert by_name["sdp_table_rail_at_low_demand"]["t_window"] == (44.0, 54.0)
-    assert by_name["sdp_charge_window_opened"]["switch_bit"] == rhs.SW_FC_CHARGE
-    assert by_name["sdp_charge_window_opened"]["min_ticks"] == 4000
-    assert by_name["sdp_charge_window_opened"]["t_window"] == (41.0, 58.0)
+    assert by_name["charge_path_never_opens"]["switch_bit"] == rhs.SW_FC_CHARGE
+    assert by_name["charge_path_never_opens"]["max_ticks"] == 0
+    assert "t_window" not in by_name["charge_path_never_opens"]
     duration = SCENARIOS["ems-sdp"]["duration_s"]
     for spec in entry["signals_require"]:
         window = spec.get("t_window")
@@ -5679,21 +5706,30 @@ def test_y_b00_variants_get_no_share_clip_bands():
                              "itot_above_governor_break_even"})
 
 
-def test_y_b30_v1_alone_carries_the_preload_budget_tripwire():
-    """b30-v1 is the tighter variant (6.4 % of I_tot headroom over the
-    governor's 1.000 A break-even, against v3's 18 %), so one tripwire on it
-    catches a Y_AUX_LOAD_A cut for both."""
+def test_both_b30_variants_carry_the_preload_budget_tripwire():
+    """SYMMETRY, 2026-09-01 (campaign 20260901_000816 fix queue item 4).
+
+    The check used to run on b30-v1 alone, on the argument that one tripwire on
+    the tighter variant catches a cut in the SHARED Y_AUX_LOAD_A. That holds for
+    the shared constant and fails for anything that moves the two variants apart
+    (a per-variant load, a Vmax retune, a governor change biting at one speed).
+    ONE floor serves both: it is derived from the governor's break-even, which
+    is a property of the CLIP and not of Vmax; the variants differ only in the
+    margin they carry over it, and both margins are now stated."""
     assert rhs._Y_ITOT_FLOOR_A == pytest.approx(1.02)
-    v1 = {s["name"]: s for s in
-          rhs.FAULT_EXPECTATIONS["ems-y-b30-v1"]["signals_require"]}
-    v3 = {s["name"] for s in
-          rhs.FAULT_EXPECTATIONS["ems-y-b30-v3"]["signals_require"]}
-    spec = v1["itot_above_governor_break_even"]
-    assert spec["sum_of"] == ["I_fc", "I_batt"]
-    assert spec["t_window"] == rhs._Y_HI_BOUND_W
-    assert "itot_above_governor_break_even" not in v3
-    # Above the governor break-even, below the measured 1.0644 A minimum.
-    assert 1.000 < spec["min_value"] < 1.0644
+    for vmax, measured in ((1.0, 1.0644), (3.0, 1.1836)):
+        by = {s["name"]: s for s in
+              rhs.FAULT_EXPECTATIONS["ems-y-b30-v%g" % vmax]["signals_require"]}
+        spec = by["itot_above_governor_break_even"]
+        assert spec["sum_of"] == ["I_fc", "I_batt"]
+        assert spec["t_window"] == rhs._Y_HI_BOUND_W
+        assert spec["min_value"] == pytest.approx(rhs._Y_ITOT_FLOOR_A)
+        # Above the governor break-even, below THIS variant's measured minimum.
+        assert 1.000 < spec["min_value"] < measured
+        assert rhs._Y_ITOT_MEASURED_MIN_A[vmax] == pytest.approx(measured)
+        # The measured value and its margin are in the check's own detail line,
+        # so a reader does not have to go to a ledger for them.
+        assert ("%.4f" % measured) in spec["label"]
 
 
 def test_y_aux_load_a_is_085():
@@ -5824,3 +5860,659 @@ def test_key_metrics_warm_reset_label_unmeasured_renders_question_marks(monkeypa
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# The three SDP-interior scenarios (2026-08-31): entry shapes, and the
+# window arithmetic that makes their share-crossing claims mean anything.
+#
+# WHAT THESE PIN, and why it is not covered by the import-time asserts:
+# importing the module already checks every t_window against the scenario's
+# duration and refuses the malformed spec shapes.  What it CANNOT check is
+# the RELATION between two windows on the same column -- and that relation
+# IS the assertion in all three entries: a ceiling before a band and a floor
+# after it is what pins a crossing INSIDE the band.  A future edit that
+# overlapped the two windows would still import cleanly and would assert
+# nothing at all.
+# ─────────────────────────────────────────────────────────────────────────
+
+import hil_plant_sim as hil  # noqa: E402  (constants + piecewise for the walks)
+
+SDP_INTERIOR_SCENARIOS = ("ems-ftp75-sdp", "ems-sdp-cross", "ems-sdp-braking")
+
+
+def test_sdp_interior_entries_are_fault_free_and_provisional():
+    for name in SDP_INTERIOR_SCENARIOS:
+        entry = rhs.FAULT_EXPECTATIONS[name]
+        assert entry.get("source"), name
+        assert "require" not in entry, name
+        # FAULT-FREE, all three. `ems-ftp75-sdp` is deliberately STRICTER than
+        # its ems-ftp75-socband sibling (which ALLOWS OC_FC): its preload was
+        # re-derived down to 0.45 A so the fuel-cell branch keeps 18.5 % at the
+        # cycle peak, because an OC_FC latch would truncate the run at exactly
+        # the post-flip half it exists to observe.
+        assert entry["allow_only"] == 0, name
+        # FIRST-CAMPAIGN bands: every threshold comes from an offline walk.
+        assert entry.get("provisional_note"), name
+        assert entry["survive_to"]["states"] == {2, 3}, name
+
+
+def test_ems_ftp75_sdp_entry_pins_the_flip_inside_its_band():
+    entry = rhs.FAULT_EXPECTATIONS["ems-ftp75-sdp"]
+    names = {s["name"] for s in entry["signals_require"]}
+    assert names == {"sdpftp_drive_commanded", "sdpftp_low_rail_early",
+                     "sdpftp_high_rail_late", "sdpftp_raw_battery_branch",
+                     "sdpftp_raw_fc_branch", "sdpftp_fc_floored_early",
+                     "sdpftp_fc_carried_late", "sdpftp_h2_accounted",
+                     "sdpftp_h2_bounded"}
+    by = {s["name"]: s for s in entry["signals_require"]}
+    early = by["sdpftp_low_rail_early"]
+    late = by["sdpftp_high_rail_late"]
+    assert early["column"] == late["column"] == "cmd_share_sp"
+    # A CEILING before the band and a FLOOR after it -- the construction that
+    # pins the crossing without a transition-detecting check kind.
+    assert early["max_value"] == pytest.approx(rhs._SDP_LOW_RAIL_CEIL)
+    assert late["min_value"] == pytest.approx(rhs._SDP_HIGH_RAIL_FLOOR)
+    # ... and the two windows must not overlap, or nothing is pinned.
+    assert early["t_window"][1] <= late["t_window"][0]
+    # The band itself: the walk's 195.9 s flip +/-20 % of the drain.
+    assert (early["t_window"][1], late["t_window"][0]) == (150.0, 250.0)
+
+
+def test_ems_ftp75_sdp_raw_column_checks_separate_the_two_table_branches():
+    """The clamped column cannot identify the ARTIFACT's branch (0.90/0.95/
+    1.00 all emit as 0.8500), so the pre-clamp column carries that half."""
+    by = {s["name"]: s
+          for s in rhs.FAULT_EXPECTATIONS["ems-ftp75-sdp"]["signals_require"]}
+    lo = by["sdpftp_raw_battery_branch"]
+    hi = by["sdpftp_raw_fc_branch"]
+    assert lo["column"] == hi["column"] == "cmd_share_sp_raw"
+    assert lo["max_value"] == pytest.approx(rhs._SDP_RAW_LOW_CEIL)
+    assert hi["min_value"] == pytest.approx(rhs._SDP_RAW_HIGH_FLOOR)
+    # The bands must straddle the whole ladder gap: the table's values are
+    # {0.00} on one branch and {0.90, 0.95, 1.00} on the other. M1: the floor
+    # must ADMIT the fuel-cell branch's SMALLEST value, 0.90 (demand bin 24) --
+    # the old `0.90 < hi["min_value"]` was the defect, not the guard.
+    assert lo["max_value"] < 0.90
+    assert hi["min_value"] < 0.90
+    assert lo["max_value"] < hi["min_value"]
+    assert lo["t_window"][1] <= hi["t_window"][0]
+
+
+def test_ems_ftp75_sdp_raw_floor_admits_the_bin_24_request():
+    """M1. The table's fuel-cell branch requests 1.00, except 0.95 in demand
+    bins 22-23 and 0.90 in BIN 24 -- and the FTP-75 walk's peak demand sits only
+    ~4 % below the bin-24 lower edge, well inside this entry's own +/-20 %
+    model-sensitivity band. A floor above 0.90 therefore fails a CORRECT board
+    the first time a sample lands in the top bin."""
+    hi = {s["name"]: s
+          for s in rhs.FAULT_EXPECTATIONS["ems-ftp75-sdp"]["signals_require"]
+          }["sdpftp_raw_fc_branch"]
+    for request in (0.90, 0.95, 1.00):
+        assert request >= hi["min_value"], (
+            "a raw fuel-cell-branch request of %.2f must pass the floor"
+            % request)
+    # ... and the battery branch's 0.00 still cannot.
+    assert 0.00 < hi["min_value"]
+    # A run whose post-flip window sits ENTIRELY in bin 24 (peak request 0.90)
+    # passes the real leaf judge; under the old 0.94 floor it did not.
+    ok, _text = rhs._judge_signal_leaf({"min_value": hi["min_value"]},
+                                       {"rows": 3, "peak": 0.90})
+    assert ok
+    assert not rhs._judge_signal_leaf({"min_value": 0.94},
+                                      {"rows": 3, "peak": 0.90})[0]
+
+
+def test_ems_ftp75_sdp_board_side_checks_bracket_the_governor_floor():
+    """The commanded 0.15 is always BELOW the minority governor's floor at
+    this cycle's currents, so the DELIVERED FC current is pinned at
+    SHARE_MINORITY_I_MIN_A = 0.300 A on the battery-heavy branch and at
+    I_tot - 0.300 on the fuel-cell one.  The ceiling and the floor must
+    therefore straddle both, and the ceiling must sit under the 0.8275 A the
+    constant-0.50 ems-ftp75-5050 control peaks at (or it discriminates
+    nothing)."""
+    by = {s["name"]: s
+          for s in rhs.FAULT_EXPECTATIONS["ems-ftp75-sdp"]["signals_require"]}
+    early = by["sdpftp_fc_floored_early"]
+    late = by["sdpftp_fc_carried_late"]
+    assert early["column"] == late["column"] == "I_fc"
+    assert early["max_value"] == pytest.approx(0.45)
+    assert 0.30 < early["max_value"] < 0.8275
+    assert late["min_value"] == pytest.approx(1.00)
+    assert late["min_value"] > early["max_value"]
+    # ... and still clear of LIMIT_I_FC_MAX, so a pass cannot be confused
+    # with an overcurrent.
+    assert late["min_value"] < 0.75 * 1.4
+
+
+def test_ems_sdp_cross_entry_shape_and_charge_cycle_checks():
+    entry = rhs.FAULT_EXPECTATIONS["ems-sdp-cross"]
+    names = {s["name"] for s in entry["signals_require"]}
+    assert names == {"sdpx_low_rail_early", "sdpx_high_rail_late",
+                     "sdpx_raw_battery_branch", "sdpx_charge_cycled",
+                     "sdpx_charge_released_between",
+                     "sdpx_charging_established"}
+    by = {s["name"]: s for s in entry["signals_require"]}
+    # The crossing construction, as on ems-ftp75-sdp.
+    assert by["sdpx_low_rail_early"]["t_window"][1] <= \
+        by["sdpx_high_rail_late"]["t_window"][0]
+    # The charge LIMIT CYCLE needs both halves: ticks accumulated across the
+    # cruise, AND a released window between two of them. A min_ticks-only
+    # entry would pass on one long latched window -- the failure mode the
+    # minimum-dwell hysteresis could plausibly introduce.
+    on = by["sdpx_charge_cycled"]
+    off = by["sdpx_charge_released_between"]
+    assert on["switch_bit"] == off["switch_bit"] == rhs.SW_FC_CHARGE
+    assert on["min_ticks"] == 12000 and off["max_ticks"] == 2000
+    # The "released" window must lie INSIDE the "cycled" window, or it is
+    # asserting the absence of charging somewhere the entry never claimed any.
+    assert on["t_window"][0] <= off["t_window"][0]
+    assert off["t_window"][1] <= on["t_window"][1]
+    # ... and the max_ticks spec has its positive companion on the SAME switch
+    # bit, which is what keeps it out of the import-time vacuity guard.
+    assert "vacuity_note" not in off
+
+
+def test_ems_sdp_braking_entry_holds_the_share_axis_still():
+    """The attribution claim ("every charge transition is demand-driven")
+    rests on the share command being provably constant, so it is asserted
+    from BOTH sides -- as two specs, since one spec carrying min_value and
+    max_value silently drops the ceiling."""
+    entry = rhs.FAULT_EXPECTATIONS["ems-sdp-braking"]
+    by = {s["name"]: s for s in entry["signals_require"]}
+    lo = by["sdpb_share_rail_held"]
+    hi = by["sdpb_share_never_crossed"]
+    assert lo["column"] == hi["column"] == "cmd_share_sp"
+    assert lo["min_value"] == pytest.approx(rhs._SDP_HIGH_RAIL_FLOOR)
+    assert hi["max_value"] == pytest.approx(0.86)
+    assert lo["t_window"] == hi["t_window"]
+    # The ceiling must exclude the battery-heavy branch's emitted 0.15 by a
+    # wide margin, and the floor must exclude the firmware's own 0.50 default.
+    assert hi["max_value"] < 1.0 and lo["min_value"] > 0.75
+
+
+def test_ems_sdp_braking_charge_windows_correlate_with_the_low_plateaus():
+    """ON across the run and OFF inside two of the 2.2 m/s cruise holds is
+    what "the demand axis decided it" means in a trace.  The two OFF windows
+    must fall inside actual cruise holds of the scenario's own profile, or
+    they assert nothing about the correlation."""
+    entry = rhs.FAULT_EXPECTATIONS["ems-sdp-braking"]
+    by = {s["name"]: s for s in entry["signals_require"]}
+    on = by["sdpb_charge_in_low_windows"]
+    assert on["switch_bit"] == rhs.SW_FC_CHARGE and on["min_ticks"] == 25000
+    prof = SCENARIOS["ems-sdp-braking"]["ems_v_profile"]
+    hi_mps = hil.SDP_BRAKE_CRUISE_HI_MPS
+    for tag in ("sdpb_charge_off_in_cruise_2", "sdpb_charge_off_in_cruise_3"):
+        spec = by[tag]
+        assert spec["switch_bit"] == rhs.SW_FC_CHARGE
+        assert spec["max_ticks"] == 500
+        t0, t1 = spec["t_window"]
+        # The whole window is at the HIGH cruise level, i.e. in a
+        # charge-forbidden demand bin by construction.
+        for t in (t0, (t0 + t1) / 2.0, t1):
+            assert hil.piecewise(prof, t) == pytest.approx(hi_mps), (tag, t)
+    # The charger-current floor must sit under this scenario's own de-rated
+    # ceiling, or it could never be reached.
+    assert by["sdpb_charging_established"]["min_value"] < \
+        SCENARIOS["ems-sdp-braking"]["chg_i_ceiling_a"]
+
+
+def test_sdp_interior_scenarios_all_carry_expectation_entries():
+    """A scenario with no entry is scored "expected fault-free" and asserts
+    nothing positive -- the rubber-stamp class these three exist to avoid."""
+    for name in SDP_INTERIOR_SCENARIOS:
+        assert name in rhs.FAULT_EXPECTATIONS, name
+        assert rhs.FAULT_EXPECTATIONS[name]["signals_require"], name
+
+
+def test_ems_ftp75_sdp_joined_the_with_ftp75_gate():
+    """350 s, same cost argument as its two siblings -- and the gate is a SET
+    rather than a name prefix, so joining it is an explicit act."""
+    assert "ems-ftp75-sdp" in rhs.FTP75_SCENARIOS
+    assert len(rhs.FTP75_SCENARIOS) == 3
+    plan = {p["name"]: p for p in rhs.build_plan(_args()) if p["kind"] == "scenario"}
+    assert "LONG-CYCLE" in plan["ems-ftp75-sdp"]["skip_reason"]
+    plan_on = {p["name"]: p for p in rhs.build_plan(_args(with_ftp75=True))
+               if p["kind"] == "scenario"}
+    assert not plan_on["ems-ftp75-sdp"].get("skip_reason")
+
+
+def test_sdp_interior_scenarios_are_skipped_under_pi_live():
+    """All three are EMS-driven, so the existing "ems" metadata rule skips
+    them -- no new code path, and the ftp75 one is skipped for the PI-LIVE
+    reason (that gate is ordered first) rather than the long-cycle one."""
+    plan = {p["name"]: p for p in rhs.build_plan(_args(pi_live=True))
+            if p["kind"] == "scenario"}
+    for name in SDP_INTERIOR_SCENARIOS:
+        assert "--pi-live" in plan[name]["skip_reason"], name
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE EMS FRONTIER CROSS-RUN CHECK (2026-09-01)
+#
+# The check exists because campaign 20260901_000816 shipped 53/53 PASS with a
+# 9.9 pp policy regression in it, so the load-bearing tests here are the two
+# FIXTURE REPLAYS: the recorded numbers of that campaign must FAIL, and the
+# recorded numbers of the campaign before it (20260831_222036) must PASS. A
+# check that cannot reproduce the verdict on the data that motivated it is not
+# a check.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# CAMPAIGN 2 (hil_report_20260901_000816) -- the REGRESSION that motivated the
+# check. sdp-v2 charged, and its charging is loss-making at this rig's scale.
+_C2_LEGS = {"ems-sdp":       (0.0161914, -0.00077),
+            "ems-soc-band":  (0.0128472, -0.00206),
+            "ems-dp-replay": (0.0116404, -0.00203)}
+# CAMPAIGN 1 (hil_report_20260831_222036) -- the leg ON the frontier.
+# L4: the reference and bound legs carry that campaign's ACTUAL recorded
+# totals to full precision. The 0.0128475 / 0.0116403 this fixture used to hold
+# were the rounded figures quoted in prose; a fixture whose job is to replay a
+# campaign must replay the campaign's own numbers, or a future threshold edit is
+# checked against a number no run ever produced.
+_C1_LEGS = {"ems-sdp":       (0.0131881, -0.00148),
+            "ems-soc-band":  (0.0128520889, -0.00206),
+            "ems-dp-replay": (0.0116398977, -0.00203)}
+
+
+def _frontier_results(legs, **overrides):
+    """Scenario result dicts carrying only what evaluate_ems_frontier() reads.
+
+    `overrides` maps a scenario name to a dict merged into its record (or to
+    None to omit the leg entirely), so a test can express "this leg was
+    skipped / failed / never ran" without building a whole run."""
+    out = []
+    for name, (h2, dsoc) in legs.items():
+        over = overrides.get(name, {}) if overrides else {}
+        if over is None:
+            continue
+        rec = {"kind": "scenario", "name": name, "passed": True,
+               "metrics": {"final_h2_cum_g": h2, "delta_soc": dsoc}}
+        rec.update(over)
+        out.append(rec)
+    return out
+
+
+def test_eq_h2_credits_a_smaller_discharge_and_charges_a_larger_one():
+    """SIGN CHECK, and it is the one thing a reader can get backwards.
+
+    On the campaign-2 numbers the SDP leg discharged 0.00129 SoC LESS than the
+    reference; that surplus charge is hydrogen it did not have to burn, so it
+    is CREDITED 0.00315 g at lambda 0.41 -- and the leg is STILL above the
+    reference, which is the finding."""
+    eq = rhs.ems_eq_h2(0.0161914, -0.00077, -0.00206, 0.41)
+    assert eq == pytest.approx(0.0161914 - 0.00129 / 0.41, rel=1e-9)
+    assert eq < 0.0161914
+    assert eq > 0.0128472           # still worse than the reference's own total
+    # The mirror: a leg that discharged HARDER is charged for the difference.
+    assert rhs.ems_eq_h2(0.0128472, -0.00335, -0.00206, 0.41) == \
+        pytest.approx(0.0128472 + 0.00129 / 0.41, rel=1e-9)
+    # The reference leg's own correction is identically zero.
+    assert rhs.ems_eq_h2(0.0128472, -0.00206, -0.00206, 0.41) == \
+        pytest.approx(0.0128472)
+
+
+def test_frontier_FAILS_on_the_campaign_2_regression_numbers():
+    """The regression the check exists for: BOTH assertions must fail."""
+    rec = rhs.evaluate_ems_frontier(_frontier_results(_C2_LEGS))
+    assert rec["verdict"] == "FAIL"
+    assert rec["passed"] is False
+    nom = rec["per_lambda"][0]
+    assert nom["passed_vs_reference"] is False
+    assert nom["passed_vs_bound"] is False
+    # ... and it fails at EVERY lambda in the band, so it is not knife-edge.
+    assert all(p["passed"] is False for p in rec["per_lambda"])
+    assert "OFF the frontier" in rec["reason"]
+    # The measured ratios, so a threshold edit that quietly rescued this case
+    # would show up here.
+    assert rec["vs_reference"] == pytest.approx(1.0154, abs=5e-4)
+    assert rec["vs_bound"] == pytest.approx(1.1278, abs=5e-4)
+
+
+def test_frontier_PASSES_on_the_campaign_1_numbers():
+    """The calibrated leg ON the frontier: -8.4 % against the heuristic and
+    +1.8 % over the non-causal bound, stable across the lambda band."""
+    rec = rhs.evaluate_ems_frontier(_frontier_results(_C1_LEGS))
+    assert rec["verdict"] == "PASS"
+    assert rec["passed"] is True
+    assert all(p["passed"] for p in rec["per_lambda"])
+    # L4: re-pinned against the campaign's ACTUAL totals (see _C1_LEGS).
+    assert rec["vs_reference"] == pytest.approx(0.91607, abs=5e-5)
+    assert rec["vs_bound"] == pytest.approx(1.01787, abs=5e-5)
+    # A PASS is not exit-affecting, and neither is the flag load-bearing here --
+    # pinned so the H1 split cannot silently start marking passes.
+    assert rec["exit_affecting"] is False
+
+
+@pytest.mark.parametrize("override,fragment", [
+    ({"ems-sdp": None}, "not in this run's plan"),
+    ({"ems-soc-band": {"skipped": True, "skip_reason": "--pi-live"}},
+     "SKIPPED"),
+    ({"ems-dp-replay": {"passed": False}}, "did NOT pass its own checks"),
+    ({"ems-sdp": {"metrics": {}}}, "no h2_cum_g / delta_soc"),
+])
+def test_frontier_UNVERIFIED_when_a_leg_is_missing_or_unusable(override,
+                                                               fragment):
+    """A missing leg is NAMED and counts as not-passing -- never silent. A
+    silently dropped leg is exactly how the campaign-2 regression went
+    unnoticed."""
+    rec = rhs.evaluate_ems_frontier(_frontier_results(_C1_LEGS, **override))
+    assert rec["verdict"] == "UNVERIFIED"
+    assert rec["passed"] is False
+    assert any(fragment in m for m in rec["missing"]), rec["missing"]
+    # The named leg is in the reason, so the REPORT.md headline row says which.
+    assert fragment in rec["reason"]
+
+
+@pytest.mark.parametrize("override,expected", [
+    # NOT exit-affecting: nothing RAN that is unusable.
+    ({"ems-sdp": None}, False),
+    ({"ems-soc-band": {"skipped": True, "skip_reason": "--pi-live"}}, False),
+    # Exit-affecting: the leg ran and its numbers cannot be used.
+    ({"ems-dp-replay": {"passed": False}}, True),
+    ({"ems-sdp": {"metrics": {}}}, True),
+])
+def test_frontier_exit_affecting_splits_the_UNVERIFIED_causes(override,
+                                                              expected):
+    """H1. UNVERIFIED covers two different situations and only one is a defect:
+    a leg nobody exercised (not planned / skipped) vs a leg that ran and came
+    back unusable. The verdict and the rendering are identical; the flag is
+    what the exit code may act on."""
+    rec = rhs.evaluate_ems_frontier(_frontier_results(_C1_LEGS, **override))
+    assert rec["verdict"] == "UNVERIFIED"
+    assert rec["passed"] is False
+    assert rec["exit_affecting"] is expected
+
+
+def test_frontier_pi_live_style_skip_plan_is_UNVERIFIED_but_not_exit_affecting():
+    """H1, the case that motivated it: a --pi-live campaign skips EVERY
+    EMS-driven scenario, so all three legs are explicit SKIPs. The frontier is
+    honestly UNVERIFIED and NAMED -- and the run is not failed for behaving
+    exactly as --pi-live documents."""
+    skipped = {n: {"skipped": True,
+                   "skip_reason": "--pi-live: EMS-driven scenario"}
+               for n in rhs.EMS_FRONTIER.values()}
+    rec = rhs.evaluate_ems_frontier(_frontier_results(_C1_LEGS, **skipped))
+    assert rec["verdict"] == "UNVERIFIED"
+    assert rec["exit_affecting"] is False
+    for name in rhs.EMS_FRONTIER.values():
+        assert any(name in m and "SKIPPED" in m for m in rec["missing"])
+
+
+def test_frontier_names_a_pending_leg_as_pending_not_as_unplanned():
+    """M4. Every intermediate rewrite of a full campaign's results.json sees
+    legs the plan CONTAINS and has not reached yet. Blaming the plan for them
+    ("not in this run's plan") is simply false, and a partial report is exactly
+    where a reader is least able to check."""
+    results = _frontier_results(_C1_LEGS, **{"ems-dp-replay": None})
+    planned = set(rhs.EMS_FRONTIER.values())
+    rec = rhs.evaluate_ems_frontier(results, planned)
+    assert rec["verdict"] == "UNVERIFIED"
+    assert rec["exit_affecting"] is False
+    assert any("planned but not yet run" in m for m in rec["missing"])
+    assert not any("not in this run's plan" in m for m in rec["missing"])
+    # Without the plan set, the old wording is still what an unplanned leg gets.
+    rec_noplan = rhs.evaluate_ems_frontier(results)
+    assert any("not in this run's plan" in m for m in rec_noplan["missing"])
+    # A leg genuinely outside the plan keeps the unplanned wording even when a
+    # plan set IS supplied.
+    rec_other = rhs.evaluate_ems_frontier(results, {"steady", "ems-sdp"})
+    assert any("not in this run's plan" in m for m in rec_other["missing"])
+
+
+def test_frontier_refuses_a_non_positive_eq_h2():
+    """L5. The SoC correction is unbounded below, so a leg that ended far
+    enough ABOVE the reference is credited more hydrogen than it burned. The
+    ratios then carry no meaning -- and a zero denominator reaches a `%.4f` on
+    a None. Refuse the comparison instead."""
+    legs = dict(_C1_LEGS)
+    # +0.006 SoC above the reference at lambda 0.41 is a ~14.6 mg credit
+    # against a ~13.2 mg total: eq-H2 goes negative. Still inside the 0.010
+    # matched-dSoC precondition, so this is genuinely reachable.
+    legs["ems-sdp"] = (0.0131881, -0.00206 + 0.006)
+    rec = rhs.evaluate_ems_frontier(_frontier_results(legs))
+    assert rec["verdict"] == "UNVERIFIED"
+    assert rec["passed"] is False
+    assert rec["exit_affecting"] is True
+    assert "NOT POSITIVE" in rec["reason"]
+    assert "ems-sdp" in rec["reason"]
+    # No ratios are published from a refused comparison.
+    assert "per_lambda" not in rec
+
+
+def test_frontier_returns_None_when_no_leg_was_planned_at_all():
+    """A replay-only or subset run makes no claim -- manufacturing an
+    UNVERIFIED record for a plan that never intended the comparison is noise,
+    and would fail every scenarios-only invocation."""
+    assert rhs.evaluate_ems_frontier([]) is None
+    assert rhs.evaluate_ems_frontier(
+        [{"kind": "replay", "name": "ML0146", "passed": True, "metrics": {}},
+         {"kind": "scenario", "name": "steady", "passed": True,
+          "metrics": {"final_h2_cum_g": 0.01, "delta_soc": -0.001}}]) is None
+
+
+def test_frontier_UNVERIFIED_when_the_legs_are_not_at_matched_soc():
+    """The eq-H2 correction is a LINEAR extrapolation at one exchange rate. A
+    leg 0.05 SoC away from the reference is a different experiment, not a leg
+    to be corrected."""
+    legs = dict(_C1_LEGS)
+    legs["ems-sdp"] = (0.0131881, -0.00206 + 0.05)
+    rec = rhs.evaluate_ems_frontier(_frontier_results(legs))
+    assert rec["verdict"] == "UNVERIFIED"
+    assert rec["passed"] is False
+    assert "matched-dSoC" in rec["reason"]
+    assert rec["dsoc_gap"] == pytest.approx(0.05)
+    # The comparison is NOT made -- no ratios are published from a precondition
+    # failure, so nobody can quote one.
+    assert "per_lambda" not in rec
+
+
+def test_frontier_KNIFE_EDGE_when_the_verdict_flips_inside_the_lambda_band():
+    """lambda is known to ~1.5 %, so a verdict that depends on where inside the
+    measured band it is read is not a result. Constructed by solving for the h2
+    that puts the vs-reference ratio exactly on the 0.98 threshold at the
+    NOMINAL lambda: the correction term then moves the ratio across the
+    threshold in opposite directions at the two band edges.
+
+    The BOUND leg is loosened here on purpose. `passed` is the AND of both
+    assertions, so a candidate sitting exactly on the reference threshold would
+    also have to clear 1.06x the bound to make the flip observable -- otherwise
+    the vs-bound arm fails at every lambda and the verdict is a uniform FAIL,
+    which would test nothing about the band."""
+    ref_h2, ref_dsoc = _C1_LEGS["ems-soc-band"]
+    dsoc = -0.00148
+    lam = rhs.EMS_EQ_H2_LAMBDA_SOC_PER_G
+    # eq_cand(lam_nom) == 0.98 * eq_ref  =>  h2 = 0.98*ref_h2 + (dsoc-ref)/lam
+    h2 = rhs.EMS_FRONTIER_VS_REFERENCE_MAX * ref_h2 + (dsoc - ref_dsoc) / lam
+    legs = dict(_C1_LEGS)
+    legs["ems-sdp"] = (h2, dsoc)
+    legs["ems-dp-replay"] = (0.0122, -0.00203)
+    rec = rhs.evaluate_ems_frontier(_frontier_results(legs))
+    assert all(p["passed_vs_bound"] for p in rec["per_lambda"])
+    assert rec["verdict"] == "KNIFE-EDGE"
+    assert rec["passed"] is False
+    assert "FLIPS inside the measured lambda band" in rec["reason"]
+    # Both outcomes are genuinely present across the three evaluated lambdas.
+    assert {p["passed"] for p in rec["per_lambda"]} == {True, False}
+
+
+def _renderable(results):
+    """Fill in the fields render_report() needs, so a crafted frontier result
+    set can be pushed through main()."""
+    for r in results:
+        r.setdefault("mode", "hifi")
+        r.setdefault("electrical_required", "any")
+        r.setdefault("description", "")
+        r.setdefault("duration_s", 61.0)
+        r.setdefault("checks", [])
+        r.setdefault("notes", [])
+        r.setdefault("events", {})
+        r.setdefault("key_metrics", "")
+        r.setdefault("child", {"status": "ok", "summary": {}, "returncode": 0,
+                               "wall_s": 1.0, "log": "x.log"})
+    return results
+
+
+@pytest.mark.parametrize("legs_name,only,expect_rc", [
+    # H1 + the review's untested-behavior #1: the frontier verdict's coupling to
+    # main()'s exit code, which was previously only reasoned about.
+    #   FAIL              -> 1   (the regression the check exists for)
+    ("c2", ["ems-sdp", "ems-soc-band", "ems-dp-replay"], 1),
+    #   PASS              -> 0
+    ("c1", ["ems-sdp", "ems-soc-band", "ems-dp-replay"], 0),
+    #   UNVERIFIED, not exit-affecting -> 0.  A one-leg plan never intended the
+    #   comparison; failing it contradicted the docstring and broke --pi-live.
+    ("c1", ["ems-soc-band"], 0),
+])
+def test_main_exit_code_follows_the_frontier_verdict(tmp_path, monkeypatch,
+                                                     legs_name, only,
+                                                     expect_rc):
+    legs = {"c1": _C1_LEGS, "c2": _C2_LEGS}[legs_name]
+    wanted = set(only)
+    crafted = _renderable(_frontier_results(
+        {k: v for k, v in legs.items() if k in wanted}))
+
+    def fake_run_plan(plan, args, problems, results, write_outputs):
+        results.extend(crafted)
+        return results, None
+
+    monkeypatch.setattr(rhs, "_run_plan", fake_run_plan)
+    argv = ["--out", str(tmp_path), "--scenarios-only"]
+    for name in only:
+        argv += ["--only", name]
+    assert rhs.main(argv) == expect_rc
+    loaded = json.loads((tmp_path / "results.json").read_text(encoding="utf-8"))
+    assert "ems_frontier" in loaded
+
+
+def test_frontier_scores_only_frontier_eligible_scenarios():
+    """The demonstration legs are excluded BY CONSTRUCTION: they are not in
+    EMS_FRONTIER at all, so adding them to a plan cannot move the verdict."""
+    base = rhs.evaluate_ems_frontier(_frontier_results(_C1_LEGS))
+    with_demo = rhs.evaluate_ems_frontier(
+        _frontier_results(_C1_LEGS) + [
+            {"kind": "scenario", "name": "ems-sdp-cross", "passed": True,
+             "metrics": {"final_h2_cum_g": 99.0, "delta_soc": +0.5}},
+            {"kind": "scenario", "name": "ems-sdp-braking", "passed": True,
+             "metrics": {"final_h2_cum_g": 99.0, "delta_soc": +0.5}}])
+    assert with_demo["verdict"] == base["verdict"] == "PASS"
+    assert with_demo["eq_h2"] == base["eq_h2"]
+
+
+def test_frontier_roles_name_the_three_ruled_scenarios():
+    assert set(rhs.EMS_FRONTIER) == {"reference", "candidate", "bound"}
+    assert rhs.EMS_FRONTIER["reference"] == "ems-soc-band"
+    assert rhs.EMS_FRONTIER["candidate"] == "ems-sdp"
+    assert rhs.EMS_FRONTIER["bound"] == "ems-dp-replay"
+    # Every frontier leg's own EMS strategy must be frontier_eligible, or the
+    # check would be ranking a run the report simultaneously banners as a
+    # demonstration.
+    for name in rhs.EMS_FRONTIER.values():
+        strategy = SCENARIOS[name]["ems"]
+        assert rhs.ems_frontier_eligible(strategy), (name, strategy)
+
+
+def test_frontier_constants_are_the_measured_ones():
+    assert rhs.EMS_EQ_H2_LAMBDA_SOC_PER_G == pytest.approx(0.41)
+    assert rhs.EMS_EQ_H2_LAMBDA_BAND == (0.409, 0.415)
+    lo, hi = rhs.EMS_EQ_H2_LAMBDA_BAND
+    assert lo < rhs.EMS_EQ_H2_LAMBDA_SOC_PER_G < hi
+    assert rhs.EMS_FRONTIER_VS_REFERENCE_MAX == pytest.approx(0.98)
+    assert rhs.EMS_FRONTIER_VS_BOUND_MAX == pytest.approx(1.06)
+    assert rhs.EMS_FRONTIER_DSOC_MATCH_MAX == pytest.approx(0.010)
+
+
+# -- the demonstration banner ------------------------------------------------
+
+def test_demonstration_banner_only_on_non_frontier_ems_scenarios():
+    for name in ("ems-sdp-cross", "ems-sdp-braking"):
+        banner = rhs.ems_demonstration_banner(name)
+        assert banner and "DYNAMICS DEMONSTRATION" in banner
+        assert "sdp-v2" in banner
+    # The frontier legs, and the calibrated FTP-75 leg, carry NO banner.
+    for name in ("ems-sdp", "ems-soc-band", "ems-dp-replay", "ems-ftp75-sdp"):
+        assert rhs.ems_demonstration_banner(name) is None
+    # A scenario with no EMS strategy at all is not banner territory.
+    assert rhs.ems_demonstration_banner("steady") is None
+    assert rhs.ems_demonstration_banner("no-such-scenario") is None
+
+
+def test_demonstration_banner_prefers_the_runs_recorded_strategy():
+    """L7. `--ems` overrides the scenario registry's default, so a run of
+    `ems-sdp` (registry default `sdp-v3`, frontier-eligible) may actually have
+    played `sdp-v2`. The banner must describe what RAN."""
+    assert rhs.ems_demonstration_banner("ems-sdp") is None
+    banner = rhs.ems_demonstration_banner("ems-sdp", "sdp-v2")
+    assert banner and "DYNAMICS DEMONSTRATION" in banner
+    assert "sdp-v2" in banner
+    # ... and the converse: a demonstration scenario re-bound to an eligible
+    # strategy carries no banner.
+    assert rhs.ems_demonstration_banner("ems-sdp-cross", "sdp-v3") is None
+    # No recorded strategy -> the registry default, unchanged behaviour.
+    assert "sdp-v2" in rhs.ems_demonstration_banner("ems-sdp-cross")
+
+
+def test_demonstration_banner_calls_an_unknown_strategy_unclassified():
+    """L8. A strategy name this checkout does not register is neither eligible
+    nor a registered demonstration; the demonstration banner would assert a
+    `frontier_eligible: False` entry that does not exist."""
+    banner = rhs.ems_demonstration_banner("ems-sdp", "sdp-v9-from-the-future")
+    assert banner and "unclassified" in banner
+    assert "sdp-v9-from-the-future" in banner
+    assert "DYNAMICS DEMONSTRATION" not in banner
+
+
+def test_demonstration_banner_appends_the_per_strategy_role_note():
+    """L9. "Not on the frontier" covers two different things: a policy
+    demonstration that pursues an objective and loses, and a stimulus with no
+    objective at all. The note distinguishes them."""
+    demo = rhs.ems_demonstration_banner("ems-sdp-cross")     # sdp-v2
+    stim = rhs.ems_demonstration_banner("ems-sdp", "hold-5050")
+    assert "LOSS-MAKING POLICY DEMONSTRATION" in demo
+    assert "STIMULUS WITH NO OBJECTIVE" in stim
+    assert "LOSS-MAKING" not in stim
+    # Rendered AFTER the shared banner, as a continuation of the same blockquote.
+    assert demo.index("DYNAMICS DEMONSTRATION") < demo.index("ROLE:")
+    assert "\n>\n> " in demo
+    # Every non-eligible strategy carries one, so no off-frontier run is left
+    # with the ambiguous banner alone.
+    for name, meta in rhs.EMS_STRATEGY_META.items():
+        if not meta.get("frontier_eligible"):
+            assert meta.get("role_note"), name
+
+
+def test_report_renders_the_frontier_table_and_the_demonstration_banner():
+    results = _frontier_results(_C2_LEGS)
+    for r in results:
+        r.update(mode="hifi", electrical_required="any", description="",
+                 duration_s=61.0, checks=[], notes=[], events={},
+                 child={"status": "ok", "summary": {}, "returncode": 0,
+                        "wall_s": 1.0, "log": "x.log"}, key_metrics="")
+    results.append({
+        "kind": "scenario", "name": "ems-sdp-cross", "passed": True,
+        "mode": "hifi", "electrical_required": "any", "description": "",
+        "duration_s": 200.0, "checks": [], "notes": [], "events": {},
+        "metrics": {"final_h2_cum_g": 0.02, "delta_soc": -0.001},
+        "child": {"status": "ok", "summary": {}, "returncode": 0,
+                  "wall_s": 1.0, "log": "x.log"}, "key_metrics": ""})
+    md = rhs.render_report({"date": "x"}, results)
+    assert "## EMS frontier - FAIL" in md.replace("—", "-")
+    assert "lambda provenance" in md
+    assert "TODO(calibrate)" in md          # the Gfc footnote
+    assert "DYNAMICS DEMONSTRATION" in md
+    # The three legs are in the table, by role.
+    for name in rhs.EMS_FRONTIER.values():
+        assert "`%s` | " % name in md
+
+
+def test_report_renders_UNVERIFIED_without_a_ratio_table():
+    results = _frontier_results(_C1_LEGS, **{"ems-dp-replay": None})
+    for r in results:
+        r.update(mode="hifi", electrical_required="any", description="",
+                 duration_s=61.0, checks=[], notes=[], events={},
+                 child={"status": "ok", "summary": {}, "returncode": 0,
+                        "wall_s": 1.0, "log": "x.log"}, key_metrics="")
+    md = rhs.render_report({"date": "x"}, results)
+    assert "## EMS frontier - UNVERIFIED" in md.replace("—", "-")
+    assert "UNVERIFIED leg: ems-dp-replay" in md
+    # No lambda-sensitivity table: no comparison was made.
+    assert "Lambda sensitivity" not in md

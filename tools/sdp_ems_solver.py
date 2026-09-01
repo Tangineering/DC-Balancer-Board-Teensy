@@ -204,6 +204,83 @@ D11. THE DEMAND MAP IS THE CONSUMER'S, NOT THE SIDECAR'S  (2026-08-31,
     charge_forbidden_bins (the FC current budget), which is no longer
     vacuous at 25 W the way it was at 1.64 W.
 
+D12. ALPHA IS CALIBRATED AGAINST BOTH LEVERS, NOT ONE  (2026-09-01,
+    adjudicated; OVERNIGHT_LOG.md "SDP charge-economics adjudication").
+    *This is what separates sdp_policy_v3.json from v2, and it is the only
+    decision in this file that was shipped WRONG and then corrected.*
+
+    THE DEFECT.  v1/v2 shipped alpha = 0.2569444 from D2's marginal-rate
+    derivation.  That derivation preserves a SHARE-AXIS invariant carried over
+    from SDP_EnergyManagement2.m - and the MATLAB source HAS NO CHARGE
+    CONTROL.  The charge action is this port's own addition (D5), and it was
+    never checked against the alpha the port inherited.  Under v2 the solver
+    asserted charge_goal in 294 cells; campaign scoring, which prices SoC at
+    the MEASURED share lever 1/0.412 = 2.427 g/SoC, read every one of them as
+    a loss.
+
+    THE MECHANISM, in closed form.  A lever L is an exchange rate in SoC per
+    gram of hydrogen.  Value iteration prices SoC at the discounted shadow
+    price alpha/(1 - gamma) g/SoC, so an action is TAKEN exactly when
+
+        L  >  (1 - gamma) / alpha                       [the admission bound]
+
+    At v2's numbers the bound is 0.05/0.2569444 = 0.1946 SoC/g while the
+    modelled charge lever is L_chg = 0.2090 - it clears by 7.4 %, so charging
+    is admitted.  A sweep confirms the flip at alpha ~ 0.2393, i.e. exactly
+    (1 - gamma)/L_chg.  Nothing about the charger is mispriced; the SHADOW
+    PRICE is, and it is mispriced by having been calibrated on one lever only.
+
+    WHAT THE LOSS CHAIN DOES *NOT* EXPLAIN, since it was the first hypothesis
+    and it is wrong.  The two levers share the hydrogen basis k = 1/(eta*Q_LHV)
+    exactly, so k CANCELS from their ratio:
+
+        L_share / L_chg = V_bus / V_pack  (model: 15.95/7.4 -> ratio 0.4640)
+
+    against a measured ratio 0.2364/0.412 = 0.5738.  The model is therefore
+    CONSERVATIVE about charging by 19 %, not optimistic: no efficiency term,
+    no accounting basis and no eta_fc choice can produce the observed
+    over-charging, because every one of them scales BOTH levers together.
+
+    THE FIX - TWO-SIDED CALIBRATION.  alpha is now placed at the GEOMETRIC
+    MEAN of the two levers' admission thresholds:
+
+        alpha = (1 - gamma) / sqrt(L_share * L_chg)     [--alpha-mode lever]
+              = 0.05 / sqrt(0.4504505 * 0.2089864)
+              = 0.1629624
+
+    which is the unique alpha whose admission bound sits equidistant (in log
+    lever) from the two levers, so neither axis is calibrated against and the
+    other left unchecked.  Under it the bound is 0.3068 SoC/g: the share lever
+    (0.4505 modelled, 0.412 measured) clears it, the charge lever (0.2090
+    modelled, 0.2364 measured) does not.  CHARGING IS THEREFORE REJECTED
+    ENDOGENOUSLY, by the economics, not by a mask - `--forbid-charge` exists
+    but is deliberately NOT the shipped mechanism, because a mask records no
+    reason and cannot revise itself.
+
+    THE KNIFE-EDGE, stated because it is the honest part.  v2's alpha sat
+    0.1946 against a lever of 0.2090: a 7 % miss, not a gross one.  The two
+    admission windows the tripwire below enforces are correspondingly narrow -
+    model (0.1110, 0.2393), measured (0.1214, 0.2115) - and the shipped alpha
+    clears both edges by 27-47 %.  Any future change to the pack voltage, the
+    bus voltage, the capacity or gamma moves the windows, and the pre-solve
+    assert is what makes that visible instead of silent.
+
+    HONESTY AMENDMENT (adjudicated, and it is the reason the MEASURED levers
+    below are documentation rather than the alpha source): the shipped alpha
+    is MODEL-anchored - it is computed from this script's own constants, so it
+    is reproducible from the file without reference to any campaign.  The
+    measured-lever variant, alpha = 0.05/sqrt(0.412*0.2364) = 0.1602130, was
+    solved and VERIFIED to produce a BIT-IDENTICAL policy table.  The choice
+    between them is therefore free, and the model-anchored one is taken.
+
+    THE REVISIT CONDITION, which is what a calibrated alpha buys over a mask.
+    Charging returns to the policy ENDOGENOUSLY the moment the charger's real
+    lever exceeds (1 - gamma)/alpha = 0.3068 SoC/g - e.g. after the R1 MPPT
+    threshold question is answered and fw v24 writes Ag105 reg 0x02, or if the
+    charger is replaced.  Nothing in this file needs editing for that to
+    happen; the measured lever simply has to move, and the artifact records
+    the bound it must cross.
+
 ============================================================================
 WHAT THIS MODEL DOES NOT CONTAIN
 ============================================================================
@@ -232,12 +309,28 @@ WHAT THIS MODEL DOES NOT CONTAIN
     RUNS measured on the same column, at matched terminal SoC.
 
 Usage:
-    # regenerate the SHIPPED artifact (tools/sdp_policies/sdp_policy_v2.json,
-    # demand map 0..25 W - D11):
+    # regenerate the SHIPPED artifact (tools/sdp_policies/sdp_policy_v3.json,
+    # demand map 0..25 W - D11; alpha two-sided-calibrated - D12):
     C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py --force
+    # reproduce v2's economics (the shipped-and-corrected alpha, D12); the
+    # window assert refuses it without the explicit override:
+    C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
+        --alpha-mode marginal --allow-out-of-window \
+        --out tools/sdp_policies/sdp_policy_v2.json --force
     # reproduce the v1 mapping (ideal-scaling span from the TPM sidecar):
     C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
-        --demand-map-sidecar --out tools/sdp_policies/sdp_policy_v1.json --force
+        --demand-map-sidecar --alpha-mode marginal --allow-out-of-window \
+        --out tools/sdp_policies/sdp_policy_v1.json --force
+
+⚠️ `meta.argv` IN THE SHIPPED v3 ARTIFACT IS `[]`, not the command above.  It
+records `sys.argv[1:]` of the invocation that baked the file, and that
+invocation passed no flags (every value came from the defaults) — so an EMPTY
+argv is the correct, faithful record of a default `--force` regeneration, NOT a
+missing field.  Do not "fix" it by editing the JSON: `meta` is outside the
+policy block, so a hand-edit would not move the policy-block sha256
+(0443febf…) that identifies the artifact, and the file would then claim a
+provenance no run produced.  Regenerate with the documented command instead if
+a populated argv is ever wanted, and check the policy sha has NOT moved.
 
 Requires numpy + scipy (miniforge).  `.venv_hil` is stdlib-only - it is the
 SIMULATOR's interpreter, not this one.  This script is OFFLINE tooling:
@@ -267,11 +360,14 @@ from tpm_generator import rescale_gamma                              # noqa: E40
 # ---------------------------------------------------------------------------
 DEFAULT_TPM = os.path.join(REPO_ROOT, "references", "EMS", "generated",
                            "TPM_dt1_hil.mat")
-DEFAULT_OUT = os.path.join(_HERE, "sdp_policies", "sdp_policy_v2.json")
+DEFAULT_OUT = os.path.join(_HERE, "sdp_policies", "sdp_policy_v3.json")
 # The SCHEMA is the FILE FORMAT contract between this script and
 # hil_plant_sim.py's load_sdp_policy(); it is NOT the artifact's version.  v2
-# changes the demand MAP (D11), not the shape of the document, so the schema
-# stays `sdp-policy-v1` and the existing consumer parses both files unchanged.
+# changes the demand MAP (D11) and v3 the alpha CALIBRATION (D12) - neither
+# changes the shape of the document, so the schema stays `sdp-policy-v1` and
+# the existing consumer parses all three files unchanged.  (v3 ADDS keys under
+# `alpha` and `actions`; the consumer reads `alpha.value` and the policy
+# tables, so additive fields are compatible by construction.)
 SCHEMA = "sdp-policy-v1"
 
 # ── THE DEMAND MAP (D11).  Watts -> the normalized [0, 1] TPM bin axis. ──────
@@ -371,6 +467,24 @@ MAX_ITER_DEFAULT = 5000
 # TPM moves the cut with the data.
 CHARGE_QUANTILE = 0.90
 
+# ── MEASURED LEVERS (D12).  Hardware exchange rates, SoC per gram of H2. ────
+# These are DOCUMENTATION and the source of the MEASURED admission window that
+# the pre-solve tripwire checks against.  They are deliberately NOT the source
+# of the shipped alpha, which is computed from this script's own model
+# constants so that it is reproducible from the file alone (D12's honesty
+# amendment).  The measured-lever alpha, 0.05/sqrt(0.412*0.2364) = 0.1602130,
+# was solved and verified to produce a BIT-IDENTICAL policy table.
+#
+# SHARE lever: campaign hil_report_20260831_191509 measured 0.409-0.415 SoC/g
+# on TWO independent stimuli (the 61 s ems cycle and the 340 s FTP75, 2.3 %
+# apart); the offline DP solve predicted 0.405.  0.412 is the midpoint.
+EMS_LEVER_SHARE_SOC_PER_G = 0.412
+# CHARGE lever: the C1->C2 marginal accounting across campaigns 20260831_222036
+# and 20260901_000816 (the offline figure was 0.169; 0.2364 is the marginal
+# rate the two campaigns bracket).  The Ag105 is the ~1.74x WORSE lever, which
+# is the whole finding.
+EMS_LEVER_CHARGE_SOC_PER_G = 0.2364
+
 # Full-size reference numbers, used ONLY by the alpha derivation below.
 # SDP_EnergyManagement2.m:8-10, :16.
 FULL_SIZE_ALPHA = 500.0
@@ -381,6 +495,31 @@ FULL_SIZE_P_DEM_MIN_W = -50000.0
 
 
 ALPHA_DERIVATION = """\
+THE SHIPPED DERIVATION IS `lever` (D12).  alpha is placed at the geometric
+mean of the two control levers' admission thresholds,
+
+    alpha = (1 - gamma) / sqrt(L_share * L_chg)
+
+with both levers computed from THIS SCRIPT'S OWN constants as SoC per gram:
+
+    L_share = 1 / (k * V_pack * C_As)      k = 1/(eta_fc * Q_LHV)  [g/J]
+    L_chg   = 1 / (k * V_bus  * C_As)      C_As = capacity_Ah * 3600
+
+An action is taken exactly when its lever exceeds (1 - gamma)/alpha, so this
+placement leaves BOTH levers checked against the shadow price instead of one.
+The full argument, including what went wrong under the derivation below, is
+D12 at the top of this file.
+
+============================================================================
+THE PREVIOUS DERIVATION (`marginal`) - SHIPPED IN v1/v2, AND FAILED.
+============================================================================
+Kept reachable (--alpha-mode marginal) because it regenerates v1/v2's
+economics, and kept in full because it is the record of how the defect got in:
+it preserves a SHARE-AXIS invariant carried over from SDP_EnergyManagement2.m,
+a source that HAS NO CHARGE CONTROL, and the charge action this port adds
+(D5) was never checked against it.  The result priced SoC at 5.139 g/SoC and
+admitted the Ag105 at 294 cells.  See D12.
+
 alpha does not transfer verbatim.  The stage cost is
 
     stage(s) = W_H2 + alpha * |SOC_next - SOC_target|,   W_H2 = P_fc/(eta*Q_LHV)
@@ -447,13 +586,74 @@ cell with charge_goal never asserted - pure hydrogen greed with the SoC axis
 inert.  That degeneracy is the reason the marginal-rate derivation is the
 default; --alpha-mode level reproduces it for inspection.
 
-Note on the boost efficiency: P_fc here is a BUS-SIDE power, so both marginal
-rates above are referred to the bus.  Referring both to the stack instead
-multiplies the hydrogen rate by 1/ETA_BOOST and leaves the SoC rate alone,
-which WOULD move the balance - but it moves it identically at full size, where
-the same reduction is made, so the ported ratio is unaffected.  What the
-omission does cost is that J is not a hydrogen PREDICTION; this artifact ships
-a policy, not a gram figure."""
+Note on the boost efficiency, CORRECTED 2026-09-01 (D12).  P_fc here is a
+BUS-SIDE power, so every rate above is referred to the bus.  Referring them to
+the stack instead multiplies the hydrogen rate by 1/ETA_BOOST and leaves the
+SoC rate alone.  The claim this note used to make - that the resulting shift is
+absorbed because full size makes the same reduction, "so the ported ratio is
+unaffected" - is true ONLY of the SHARE-VS-SHARE trade the ported ratio
+describes.  It is FALSE of the CHARGE-VS-ALPHA trade, and the difference is the
+whole of D12: a uniform 1/ETA_BOOST billing on the hydrogen term is
+argmin-equivalent to scaling alpha by ETA_BOOST, which moves the admission
+bound (1 - gamma)/alpha by 1/ETA_BOOST and FLIPS the charge decision at the
+v1/v2 alpha.  A convention that cancels on one axis does not automatically
+cancel on another that the source it was ported from did not have.  What the
+omission still costs, unchanged: J is not a hydrogen PREDICTION; this artifact
+ships a policy, not a gram figure."""
+
+
+# ---------------------------------------------------------------------------
+# The lever algebra (D12)
+# ---------------------------------------------------------------------------
+def model_levers(v_pack=V_PACK_NOMINAL_V, v_bus=V_BUS_NOMINAL_V,
+                 capacity_ah=BATT_CAPACITY_AH, eta_fc=ETA_FC,
+                 q_lhv=Q_LHV_J_PER_G):
+    """(L_share, L_chg) in SoC per gram of hydrogen, from MODEL constants.
+
+    A lever is `SoC gained (or not spent) per gram of hydrogen burnt`:
+
+        share:  shifting one joule from the FC onto the pack costs
+                1/(eta*Q_LHV) g of hydrogen NOT burnt, and spends
+                1/(V_pack*C_As) of SoC  ->  L = 1/(k * V_pack * C_As)
+        charge: one joule delivered to the charger costs the same k grams and
+                buys 1/(V_bus*C_As) of SoC, because the charge current is
+                billed at the BUS voltage while it lands in the pack at the
+                PACK voltage  ->  L = 1/(k * V_bus * C_As)
+
+    The hydrogen basis k CANCELS from their ratio (L_share/L_chg = V_bus/V_pack),
+    which is why no efficiency or accounting convention can explain the v2
+    over-charging - see D12.
+    """
+    k = 1.0 / (eta_fc * q_lhv)
+    cap_as = capacity_ah * 3600.0
+    return (1.0 / (k * v_pack * cap_as), 1.0 / (k * v_bus * cap_as))
+
+
+def admission_window(one_minus_gamma, lever_hi, lever_lo):
+    """The open interval of alpha that ADMITS `lever_hi` and REJECTS `lever_lo`.
+
+    Value iteration prices SoC at alpha/(1-gamma) g/SoC, so a lever L is taken
+    exactly when L > (1-gamma)/alpha.  Admitting the better lever and rejecting
+    the worse one therefore bounds alpha to
+
+        ( (1-gamma)/lever_hi ,  (1-gamma)/lever_lo )
+
+    Returned as (lo, hi) with lo < hi.  Requires lever_hi > lever_lo > 0.
+    """
+    if not (lever_hi > lever_lo > 0.0):
+        raise ValueError("admission_window needs lever_hi > lever_lo > 0, got "
+                         "%r, %r" % (lever_hi, lever_lo))
+    return (one_minus_gamma / lever_hi, one_minus_gamma / lever_lo)
+
+
+def alpha_lever(one_minus_gamma, lever_hi, lever_lo):
+    """The two-sided-calibrated alpha: the geometric mean of the window's ends.
+
+    Equivalently (1-gamma)/sqrt(lever_hi*lever_lo) - the alpha whose admission
+    bound is equidistant in log-lever from the two controls (D12).
+    """
+    lo, hi = admission_window(one_minus_gamma, lever_hi, lever_lo)
+    return (lo * hi) ** 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -759,12 +959,27 @@ def main(argv=None):
     ap.add_argument("--alpha", type=float, default=None,
                     help="explicit SoC-deviation weight, overriding "
                          "--alpha-mode (see the ALPHA_DERIVATION note)")
-    ap.add_argument("--alpha-mode", default="marginal",
-                    choices=["marginal", "level"],
-                    help="how alpha is re-derived from the full-size 500 "
-                         "(default marginal). 'level' reproduces the REJECTED "
-                         "power-span scaling, which collapses the policy to "
-                         "pure hydrogen greed - kept for inspection only.")
+    ap.add_argument("--alpha-mode", default="lever",
+                    choices=["lever", "marginal", "level"],
+                    help="how alpha is derived (default lever - D12's "
+                         "two-sided lever calibration, the SHIPPED value). "
+                         "'marginal' is the share-axis-only derivation SHIPPED "
+                         "IN v1/v2 AND FAILED (it admits the Ag105 charge "
+                         "lever; needs --allow-out-of-window). 'level' "
+                         "reproduces the REJECTED power-span scaling, which "
+                         "collapses the policy to pure hydrogen greed - kept "
+                         "for inspection only.")
+    ap.add_argument("--allow-out-of-window", action="store_true",
+                    help="permit an alpha OUTSIDE the lever admission windows "
+                         "(D12). Required to reproduce v1/v2's economics; "
+                         "without it a mispriced alpha is a hard refusal, "
+                         "which is the tripwire that would have caught v2.")
+    ap.add_argument("--forbid-charge", action="store_true",
+                    help="mask the charge action in EVERY demand bin. "
+                         "Available, but NOT the shipped mechanism: under the "
+                         "default alpha charging is rejected ENDOGENOUSLY by "
+                         "the economics (D12), which records a reason and "
+                         "self-revises; a mask does neither.")
     ap.add_argument("--soc-n", type=int, default=SOC_GRID_N,
                     help="SoC grid points (default %d)" % SOC_GRID_N)
     ap.add_argument("--soc-min", type=float, default=SOC_GRID_MIN)
@@ -800,6 +1015,9 @@ def main(argv=None):
         ap.error("--soc-n and --share-n must be >= 2")
     if not (args.soc_min < args.soc_target < args.soc_max):
         ap.error("--soc-target must lie strictly inside [--soc-min, --soc-max]")
+    if args.alpha is not None and args.alpha <= 0.0:
+        ap.error("--alpha must be > 0 (it is a price; the admission bound "
+                 "(1-gamma)/alpha is undefined at 0)")
     if not 0.0 < args.charge_quantile <= 1.0:
         ap.error("--charge-quantile must be in (0, 1]")
     if args.demand_map is not None and args.demand_map_sidecar:
@@ -861,21 +1079,72 @@ def main(argv=None):
     gamma = rescale_gamma(args.gamma_base, args.dt, 1.0)
 
     # ── alpha (D2) ───────────────────────────────────────────────────────────
+    one_minus_gamma = 1.0 - gamma
+    l_share, l_chg = model_levers(capacity_ah=args.capacity_ah)
+    win_model = admission_window(one_minus_gamma, l_share, l_chg)
+    win_meas = admission_window(one_minus_gamma, EMS_LEVER_SHARE_SOC_PER_G,
+                                EMS_LEVER_CHARGE_SOC_PER_G)
+
     alpha_marginal = FULL_SIZE_ALPHA * (V_PACK_NOMINAL_V * args.capacity_ah) \
         / (FULL_SIZE_EM_V * FULL_SIZE_Q_AH)
     alpha_level = FULL_SIZE_ALPHA * p_max / FULL_SIZE_P_DEM_MAX_W
+    alpha_two_sided = alpha_lever(one_minus_gamma, l_share, l_chg)
     if args.alpha is not None:
         alpha = float(args.alpha)
+        alpha_mode_used = "explicit"
         alpha_rationale = ("EXPLICIT --alpha %r, overriding the derivation "
                            "below.\n\n%s" % (alpha, ALPHA_DERIVATION))
     elif args.alpha_mode == "level":
         alpha = alpha_level
+        alpha_mode_used = "level"
         alpha_rationale = ("--alpha-mode level: the REJECTED power-span "
                            "scaling, present for inspection.\n\n%s"
                            % ALPHA_DERIVATION)
-    else:
+    elif args.alpha_mode == "marginal":
         alpha = alpha_marginal
+        alpha_mode_used = "marginal"
+        alpha_rationale = ("--alpha-mode marginal: the share-axis-only "
+                           "derivation SHIPPED IN v1/v2 AND FAILED (D12) - it "
+                           "prices SoC at alpha/(1-gamma) = %.4f g/SoC, an "
+                           "admission bound of %.4f SoC/g, which the modelled "
+                           "charge lever %.4f clears.\n\n%s"
+                           % (alpha_marginal / one_minus_gamma,
+                              one_minus_gamma / alpha_marginal, l_chg,
+                              ALPHA_DERIVATION))
+    else:
+        alpha = alpha_two_sided
+        alpha_mode_used = "lever"
         alpha_rationale = ALPHA_DERIVATION
+
+    # ── the D12 tripwire, BEFORE any solve ──────────────────────────────────
+    # The shipped alpha must lie STRICTLY inside both admission windows: the
+    # modelled one (this script's own constants) and the measured one (the
+    # campaign levers).  Outside either, the policy prices at least one control
+    # against a lever it was never calibrated on - which is exactly how v2's
+    # 294 charge cells got shipped.
+    in_model = win_model[0] < alpha < win_model[1]
+    in_meas = win_meas[0] < alpha < win_meas[1]
+    if not (in_model and in_meas) and not args.allow_out_of_window:
+        which = []
+        if not in_model:
+            which.append("MODEL (%.6f, %.6f)" % win_model)
+        if not in_meas:
+            which.append("MEASURED (%.6f, %.6f)" % win_meas)
+        print(
+            "[sdp] REFUSING to solve: alpha = %.9g (mode %s) lies OUTSIDE the "
+            "%s lever admission window%s (D12).\n"
+            "[sdp]   A lever L is TAKEN iff L > (1-gamma)/alpha = %.6f SoC/g. "
+            "Levers: share %.4f model / %.4f measured; charge %.4f model / "
+            "%.4f measured.\n"
+            "[sdp]   This is the tripwire that would have caught "
+            "sdp_policy_v2.json. Use --alpha-mode lever, or pass "
+            "--allow-out-of-window to reproduce a historical artifact."
+            % (alpha, alpha_mode_used, " and ".join(which),
+               "" if len(which) == 1 else "s", one_minus_gamma / alpha,
+               l_share, EMS_LEVER_SHARE_SOC_PER_G,
+               l_chg, EMS_LEVER_CHARGE_SOC_PER_G),
+            file=sys.stderr)
+        return 2
 
     # ── grids ────────────────────────────────────────────────────────────────
     soc_grid = np.linspace(args.soc_min, args.soc_max, args.soc_n)
@@ -885,6 +1154,27 @@ def main(argv=None):
 
     forbidden, chg_info = charge_forbidden_bins(
         side, p_centers, args.charge_quantile, chg_a)
+    # L6: the DERIVED count, kept before the blanket mask can overwrite it, so
+    # the summary line below can report both numbers instead of printing
+    # "%d by dwell, %d by budget -> %d forbidden" with a total that is neither
+    # their union nor related to them.
+    derived_forbidden = list(forbidden)
+    n_forbidden_derived = len(derived_forbidden)
+    if args.forbid_charge:
+        # The blanket mask.  Unioned with the derived set rather than replacing
+        # it, so `charge_forbidden_bins` keeps one meaning in the artifact:
+        # "bins in which the policy may never assert charge_goal".
+        # (No flag is stored on `chg_info` here: the artifact's
+        # `actions.forbid_charge_all` is written from `args.forbid_charge`
+        # directly at the emit site, and nothing ever read a copy on this dict.)
+        forbidden = sorted(set(range(n_bin)) | set(derived_forbidden))
+    # UNION SEMANTICS, asserted rather than assumed: the mask may only ever ADD
+    # forbidden bins.  A future edit that replaced the derived set instead of
+    # unioning it would silently re-admit a bin the dwell or FC-budget rule
+    # forbids, which is the one thing this variable must never do.
+    assert set(forbidden) >= set(derived_forbidden), (
+        "the charge mask dropped derived-forbidden bins %r"
+        % sorted(set(derived_forbidden) - set(forbidden)))
     chg_allowed = np.ones(n_bin, dtype=bool)
     chg_allowed[forbidden] = False
 
@@ -897,14 +1187,48 @@ def main(argv=None):
           "[%.9g, %.9g] W" % (side_min, side_max))
     print("[sdp] gamma_base %g @ dt %g s -> gamma_eff %.12g"
           % (args.gamma_base, args.dt, gamma))
-    print("[sdp] alpha = %.12g  (mode %s; marginal %.12g, level %.12g)"
-          % (alpha, "explicit" if args.alpha is not None else args.alpha_mode,
-             alpha_marginal, alpha_level))
+    print("[sdp] alpha = %.12g  (mode %s; lever %.12g, marginal %.12g, "
+          "level %.12g)"
+          % (alpha, alpha_mode_used, alpha_two_sided, alpha_marginal,
+             alpha_level))
+    # ── D12 acceptance report: the lever economics this alpha implies ────────
+    bound = one_minus_gamma / alpha
+    print("[sdp] levers (SoC/g): share %.6f model / %.6f measured; "
+          "charge %.6f model / %.6f measured"
+          % (l_share, EMS_LEVER_SHARE_SOC_PER_G,
+             l_chg, EMS_LEVER_CHARGE_SOC_PER_G))
+    print("[sdp] shadow price alpha/(1-gamma) = %.6f g/SoC -> admission "
+          "threshold (1-gamma)/alpha = %.6f SoC/g" % (alpha / one_minus_gamma,
+                                                      bound))
+    for name, lev_m, lev_meas in (
+            ("share ", l_share, EMS_LEVER_SHARE_SOC_PER_G),
+            ("charge", l_chg, EMS_LEVER_CHARGE_SOC_PER_G)):
+        print("[sdp]   %s: model %s (%.6f vs %.6f), measured %s (%.6f)"
+              % (name, "ADMIT " if lev_m > bound else "REJECT", lev_m, bound,
+                 "ADMIT " if lev_meas > bound else "REJECT", lev_meas))
+    print("[sdp] admission windows: model (%.6f, %.6f) %s; "
+          "measured (%.6f, %.6f) %s"
+          % (win_model[0], win_model[1], "IN" if in_model else "OUT",
+             win_meas[0], win_meas[1], "IN" if in_meas else "OUT"))
+    if not (in_model and in_meas):
+        print("[sdp] WARNING: alpha is OUT of a lever admission window and "
+              "--allow-out-of-window was given - this artifact reproduces a "
+              "historical economics, it is not the shipped calibration (D12).",
+              file=sys.stderr)
+    if args.forbid_charge:
+        print("[sdp] --forbid-charge: the charge action is MASKED in all %d "
+              "bins (not the shipped mechanism - see D12)" % n_bin)
+    # L6: the derived union is reported as the derived union.  The blanket mask
+    # is reported SEPARATELY, as the override it is — folding it into this line
+    # made the printed total disagree with both of its own components.
     print("[sdp] charge admission: dwell cut at bin %d (cum %.4f), "
-          "%d bins forbidden by dwell, %d by FC budget -> %d forbidden"
+          "%d bins forbidden by dwell, %d by FC budget -> %d forbidden "
+          "(derived)%s"
           % (chg_info["cut_bin"], chg_info["cum_dwell_at_cut"],
              chg_info["n_forbidden_by_dwell"],
-             chg_info["n_forbidden_by_fc_budget"], len(forbidden)))
+             chg_info["n_forbidden_by_fc_budget"], n_forbidden_derived,
+             ("; --forbid-charge OVERRIDES this to all %d bins" % n_bin)
+             if args.forbid_charge else ""))
 
     # ── solve ────────────────────────────────────────────────────────────────
     stage, soc_next, _feas = build_stage(
@@ -1001,7 +1325,41 @@ def main(argv=None):
             "effective": float(gamma),
             "rule": "gamma_eff = gamma_base ** (dt/dt_base)",
         },
-        "alpha": {"value": float(alpha), "rationale": alpha_rationale},
+        # D12.  `value` keeps its v1/v2 meaning and position; everything else
+        # in this block is ADDITIVE provenance, so a consumer that reads only
+        # `alpha.value` is unaffected by the recalibration.
+        "alpha": {
+            "value": float(alpha),
+            "mode": alpha_mode_used,
+            "candidates": {
+                "lever": float(alpha_two_sided),
+                "marginal": float(alpha_marginal),
+                "level": float(alpha_level),
+            },
+            "levers_soc_per_g": {
+                "share_model": float(l_share),
+                "charge_model": float(l_chg),
+                "share_measured": EMS_LEVER_SHARE_SOC_PER_G,
+                "charge_measured": EMS_LEVER_CHARGE_SOC_PER_G,
+                "measured_source":
+                    "share 0.409-0.415 on two stimuli, campaign "
+                    "hil_report_20260831_191509; charge C1->C2 marginal "
+                    "accounting, campaigns 20260831_222036 / 20260901_000816",
+            },
+            "admission": {
+                "shadow_price_g_per_soc": float(alpha / one_minus_gamma),
+                "threshold_soc_per_g": float(one_minus_gamma / alpha),
+                "window_model": [float(win_model[0]), float(win_model[1])],
+                "window_measured": [float(win_meas[0]), float(win_meas[1])],
+                "in_window_model": bool(in_model),
+                "in_window_measured": bool(in_meas),
+                "allow_out_of_window": bool(args.allow_out_of_window),
+                "rule": "a lever L is taken iff L > (1-gamma)/alpha; charging "
+                        "returns to the policy endogenously if the charger's "
+                        "measured lever ever exceeds threshold_soc_per_g",
+            },
+            "rationale": alpha_rationale,
+        },
         "soc": {
             "target": float(args.soc_target),
             "grid_min": float(args.soc_min),
@@ -1014,6 +1372,11 @@ def main(argv=None):
             "charge_goal_values": [0.0, 1.0],
             "charge_forbidden_bins": forbidden,
             "charge_i_ceiling_a": chg_a,
+            # D12: TRUE only under the explicit --forbid-charge mask.  On the
+            # shipped artifact this is False and the charge action is available
+            # in the admitted bins but never chosen - the difference between
+            # "forbidden" and "not worth it" is the whole point.
+            "forbid_charge_all": bool(args.forbid_charge),
         },
         "solver": {
             "iterations": int(iters),

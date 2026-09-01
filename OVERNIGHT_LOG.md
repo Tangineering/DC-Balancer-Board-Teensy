@@ -244,3 +244,41 @@ tooling round's full change list against its report before dropping stash@{0}.
 Process lesson for the retrospective/skill: parallel agents sharing one working tree
 must be forbidden from tree-wide git operations (stash/reset/checkout) — scope the
 prohibition explicitly in every implementer brief.
+
+## SDP charge-economics adjudication (second decision pair)
+
+Both agents REFUTED the loss-chain hypothesis with identical arithmetic (the levers'
+hydrogen basis cancels: model charge/share ratio = V_pack/V_bus = 0.4640 vs measured
+0.5738 - the model is CONSERVATIVE about charging). Root cause, both agents, closed
+form: the stage cost's shadow price of SoC is alpha/(1-gamma) = 5.139 g/SoC, an
+ABSOLUTE admission threshold of 0.1946 SoC/g; the modeled charge lever 0.2090
+clears it by 7.4% (sweep-confirmed flip at alpha ~0.2393). The ported alpha
+preserved a share-axis invariant from a source (SDP_EnergyManagement2.m) that HAS
+NO CHARGE CONTROL - the added control was never checked against the shadow price.
+The scorer prices SoC at 1/0.41 = 2.439 g/SoC; the solver at 5.139 - a 2.107x
+disagreement, and every lever priced inside (0.1946, 0.41) SoC/g is taken by the
+solver and scored as a loss. The Ag105 (measured 0.2364) is exactly there.
+
+RULING (adjudicated): Opus's mechanism with Fable's honesty amendment.
+- alpha re-derived by two-sided lever calibration: alpha = (1-gamma)/sqrt(L_share x
+  L_chg) computed from the SOLVER'S OWN model constants (0.1629624; verified
+  bit-identical policy to the measured-lever variant 0.1602130) -> charging rejected
+  ENDOGENOUSLY (0 charge cells), share map unchanged at the operating rows (30 cells
+  differ, all SoC rows 1-2). Fable's mask (--forbid-charge) is added as a flag but
+  is NOT the shipped mechanism - the calibrated alpha records the reason and
+  self-revises (charging returns if the charger lever ever exceeds (1-gamma)/alpha
+  = 0.307 SoC/g - the physics-anchored revisit condition, e.g. post-R1/fw v24).
+- Import-time assert: shipped alpha strictly inside BOTH admission windows (model
+  (0.1110, 0.2393) and measured (0.1214, 0.2115)) - the tripwire that would have
+  caught v2.
+- Artifacts: sdp_policy_v3.json (benchmark, ems-sdp + S1); sdp_policy_v2.json
+  BYTE-UNCHANGED, role carried in the strategy registry (frontier_eligible False),
+  serving S2/S3 as dynamics demonstrations with the non-benchmark banner. The
+  dwell hysteresis stays (load-bearing for v2 legs, inert under v3).
+- Scoring: EMS_FRONTIER cross-run check (eq-H2 at lambda 0.41: sdp <= 0.98x
+  soc-band AND <= 1.06x dp-replay; KNIFE-EDGE rendering across lambda 0.409-0.415;
+  matched-dSoC precondition; missing leg -> UNVERIFIED, never silent) + the
+  charge_path_never_opens tripwire on the v3 leg + the demonstration banner.
+- Tests must show the frontier check FAILS on the C2 numbers and PASSES on C1.
+Reversal path: --alpha-mode marginal regenerates the v2 economics; v2 itself is
+untouched.

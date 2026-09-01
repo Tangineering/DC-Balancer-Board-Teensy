@@ -142,6 +142,11 @@ from hil_plant_sim import (                                        # noqa: E402
     # guard below.  Imported (not re-typed) for the same reason every other
     # stimulus constant here is: moving PI_CMD_HZ must move the guard with it.
     PiCommander,
+    # EMS strategy ROLES (2026-09-01).  Imported, never re-declared: the roles
+    # are a property of the strategies, and a second copy here would let a
+    # demonstration strategy be scored on the frontier after somebody moved the
+    # role and not this file.
+    EMS_STRATEGY_META, ems_frontier_eligible,
 )
 # One emulated-Pi command period.
 #
@@ -210,7 +215,9 @@ SETTLE_MIN_RECOVER_S = 1.5
 # `ems-ftp75-`-named scenario that was short enough to belong in the default
 # campaign, and gating a scenario out of every campaign by accident is exactly
 # the kind of coverage loss that leaves no symptom.
-FTP75_SCENARIOS = frozenset({"ems-ftp75-5050", "ems-ftp75-socband"})
+# `ems-ftp75-sdp` joined 2026-08-31: same 350 s cycle, same cost argument.
+FTP75_SCENARIOS = frozenset({"ems-ftp75-5050", "ems-ftp75-socband",
+                             "ems-ftp75-sdp"})
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Which scenarios EXPECT the board to latch a fault.
@@ -310,6 +317,18 @@ FTP75_SCENARIOS = frozenset({"ems-ftp75-5050", "ems-ftp75-socband"})
 
 FAULT_EXPECTATIONS = {
     "sag": {
+        # REGEN-TEARDOWN EVENT CLASSIFICATION: SETTLED, 2026-09-01.  Campaign
+        # 20260831_222036 raised a LOW against this scenario's State-99 teardown
+        # — its electrical-event sidecar classified the teardown as an
+        # FC_CHARGE `sw_ring` plus a REGEN `reverse_block`, where the `comm-loss`
+        # reference run of the same teardown produced a single REGEN `sw_ring`,
+        # and the hypothesis was sub-millisecond timing nondeterminism (the
+        # scp-inrush L-race class, on the REGEN-teardown path).  Campaign
+        # 20260901_000816 REFUTED it: sag's teardown reproduced the comm-loss
+        # reference's four-event pattern BIT-IDENTICALLY to 16 significant
+        # digits, 2-for-2.  The residual is ULP-level numeric noise in the
+        # solver, not a race, and no check keys on the classification.
+        # Reopen only on a THIRD pattern, or on a numeric difference above ULP.
         "source": "docs/HIL_MODE.md test H2 — 'mainState 99 and fault_flags with "
                   "the UV bit set, latched' for the -5 V / 1 s dip past "
                   "LIMIT_V_BUS_MIN. Measured on hardware at 19.887 ms of dwell vs "
@@ -696,6 +715,59 @@ FAULT_EXPECTATIONS = {
         ],
     },
     "ems-sdp": {
+        # ═══ REBOUND TO `sdp-v3`, THE CALIBRATED BENCHMARK (2026-09-01) ══════
+        # THE RULING (OVERNIGHT_LOG.md, "SDP charge-economics adjudication").
+        # Campaign 20260901_000816 measured this leg OFF the EMS frontier: it
+        # burned +12.78 % over the DP bound and 1.54 % more than the `soc-band`
+        # heuristic at matched delta_soc, and the cause was its CHARGE ACTION.
+        # Two independent agents closed the arithmetic: v2's stage cost prices
+        # SoC at a shadow price alpha/(1-gamma) = 5.139 g/SoC, i.e. an
+        # ABSOLUTE admission threshold of 0.1946 SoC/g, while the campaign
+        # measures the Ag105 charge lever at 0.2364 SoC/g and the SHARE lever
+        # at 0.409-0.415. Every lever priced inside (0.1946, 0.41) is TAKEN by
+        # the solver and SCORED AS A LOSS — and the Ag105 sits exactly there.
+        # The ported alpha had preserved a share-axis invariant from a source
+        # (SDP_EnergyManagement2.m) that HAS NO CHARGE CONTROL.
+        #
+        # THE FIX, and it is in the ARTIFACT, not in this table: alpha was
+        # re-derived by two-sided lever calibration
+        # (alpha = (1-gamma)/sqrt(L_share * L_chg) = 0.1629624), and the charge
+        # action is then rejected ENDOGENOUSLY — sdp_policy_v3.json's
+        # `policy.charge_goal` is ZERO in all 101 x 25 cells with
+        # `actions.forbid_charge_all` FALSE. Nothing was masked; the optimizer
+        # declined. It self-revises: charging returns if the charger's measured
+        # lever ever exceeds (1-gamma)/alpha = 0.30682 SoC/g (post-R1 / fw v24
+        # is the plausible route).
+        #
+        # WHAT MOVED IN THIS ENTRY, and it is exactly one axis:
+        #   * `sdp_charge_window_opened` is DELETED. Under v3 that check is a
+        #     GUARANTEED FAIL, not a vacuous pass — the policy has no charge
+        #     cell to command — so keeping it would fail a correct board.
+        #   * `charge_path_never_opens` REPLACES it, asserting the opposite and
+        #     for the same reason: the endogenous rejection is this artifact's
+        #     defining behaviour and must be OBSERVED, not assumed.
+        #   * THE SHARE AXIS IS UNCHANGED. v2 and v3 differ in `policy.share`
+        #     on SoC rows 1-2 ONLY (30 cells of 2525), and this scenario's
+        #     trajectory starts ON the target node (row 50) and falls ~0.0017,
+        #     so checks 1-4 and 6-8 below are arithmetically the same
+        #     assertions against the same table values. ⚠️ They were CALIBRATED
+        #     on v2 campaigns; the first v3 campaign is expected to REPEAT them
+        #     (in particular `sdp_clamped_rail_commanded`'s 0.84 floor and the
+        #     0.95/1.00 raw pair), and a miss there is a finding about the
+        #     rebinding, not a threshold to relax.
+        #   * PROVENANCE: policy-block sha256 0443febf… (recipe
+        #     sha256(json.dumps(doc["policy"], sort_keys=True)); the FILE sha
+        #     moves on every regeneration and lives in the CSV meta sidecar's
+        #     `config.sdp_policy` instead). v2's 740c802e… is now the DYNAMICS
+        #     DEMONSTRATION artifact, kept byte-frozen for `ems-sdp-cross` /
+        #     `ems-sdp-braking` (see EMS_STRATEGY_META).
+        #   * SCORING: this leg is `frontier_eligible` and is one of the three
+        #     runs the EMS_FRONTIER cross-run check compares — the scoring gap
+        #     the campaign found (a 9.9 pp policy regression passed clean).
+        #
+        # Everything below this line predates the rebinding and is the v2-era
+        # derivation, kept because it is what the share thresholds are read off.
+        # ─────────────────────────────────────────────────────────────────────
         # The CAUSAL stochastic-DP leg (2026-08-31): the same cycle and the same
         # drain as `ems-soc-band` and `ems-dp-replay` (all three share ONE
         # ems_v_profile object and the SOC_BAND_DRAIN_* branch), driven by a
@@ -784,8 +856,14 @@ FAULT_EXPECTATIONS = {
                   "hardware-envelope clamp, and its PREDICTED BEHAVIOUR block, "
                   "which is where the 0.8500 emission, the raw-request span and "
                   "the charge window below are derived) + the SHIPPED artifact "
-                  "tools/sdp_policies/sdp_policy_v2.json (policy-block sha256 "
-                  "740c802e…) + tools/sdp_ems_solver.py D11 (the demand map). "
+                  "tools/sdp_policies/sdp_policy_v3.json (policy-block sha256 "
+                  "0443febf…, THE CALIBRATED BENCHMARK — the v2 artifact "
+                  "740c802e… the share thresholds were measured on is now the "
+                  "frozen DYNAMICS DEMONSTRATION for ems-sdp-cross/-braking; "
+                  "the two share maps differ on SoC rows 1-2 only, which this "
+                  "trajectory does not reach) + OVERNIGHT_LOG.md 'SDP "
+                  "charge-economics adjudication' (the rebinding ruling) "
+                  "+ tools/sdp_ems_solver.py D11 (the demand map). "
                   "Current budgets from SOC_BAND_DRAIN_LOAD_A's LIMIT_I_FC_MAX "
                   "arithmetic, the firmware's own setpoint governor "
                   "(.ino:9556-9568), and the solver's charge mask.",
@@ -823,7 +901,7 @@ FAULT_EXPECTATIONS = {
             #    not policy output.
             {"name": "sdp_drive_commanded", "column": "cmd_v_sp",
              "min_value": 1.45, "t_window": (12.0, 30.0),
-             "label": "the sdp-v2 policy commanded the profile's 1.5 m/s cruise"},
+             "label": "the SDP policy commanded the profile's 1.5 m/s cruise"},
             # 2. THE ACTUATED LEVEL. The artifact's action at
             #    (soc_rel <= target) is the FC rail, emitted at the
             #    hardware-envelope clamp as 0.8500 — a value NOTHING else driving
@@ -932,57 +1010,61 @@ FAULT_EXPECTATIONS = {
              "label": "the table's request returns to the 1.00 rail at low "
                       "demand — with check 3, a measured span across the "
                       "demand axis"},
-            # 5. THE INTERIOR ACTUATED ON THE OTHER CONTROL — A CHARGE WINDOW,
-            #    which v1 could not reach BY CONSTRUCTION (its clamp pinned every
-            #    decision into bin 24, and the solver forbids charging there).
-            #    This is the strongest v1/v2 discriminator in the entry: it is a
-            #    different ACTION selected by the demand axis, visible on the
-            #    BOARD's own switch word rather than on a host column.
-            #    DERIVATION. Under the 25 W map the solver's FC-current budget
-            #    (its rule (b)) forbids charging above bin 5 and the dwell rule
-            #    forbids bins 12+, so `charge_goal` = 1 exactly in bins 0-5
-            #    (P_dem < 6.0 W) below the relative target. The walk lands that
-            #    on t = 41.0..58.0 — the same post-drain low cruise
-            #    `ems-soc-band` charges in, arrived at from a different rule.
-            #    THRESHOLD, CALIBRATED (campaign 20260831_222036): min_ticks
-            #    4000 = 4.0 s of FC_CHARGE_ENABLE high anywhere in the window,
-            #    raised from the pre-campaign 500.
-            #    ⚠️ 4000 IS DELIBERATELY VALID IN BOTH REGIMES, because this
-            #    scenario's charge behaviour changed in the same round the
-            #    threshold was calibrated:
-            #      CHATTERING (what 20260831_222036 measured, 9 windows of
-            #        ~1 s over t = 41..58):            8652 ticks -> 2.2x margin
-            #      HELD (what the SDP_CHG_MIN_DWELL_S hysteresis added to
-            #        hil_plant_sim.py this round produces — one continuous
-            #        window):                        ~16000 ticks -> 4.0x margin
-            #    A floor that only suited the held regime would have been
-            #    un-runnable against the very campaign that calibrated it, and
-            #    one that only suited the chattering regime would go stale the
-            #    moment the fix landed. 4000 clears both, so the check survives
-            #    the transition and still fails a run in which the policy's
-            #    charge action never reached the board at all.
-            #    ⚠️ THE 1 Hz CHATTER — measured, then fixed consumer-side.
-            #    Opening the charger path adds its ~0.8 A to I_fc, so the
-            #    measured P_dem jumps ~5.6 W -> ~18.3 W = bin 18, which is
-            #    charge-FORBIDDEN, so the next 1 s decision withdraws the intent
-            #    and the path closes. Measured: 9 windows, period 2.0125 s, a
-            #    4.63x harvest-efficiency loss and 9x a >17.5 V BT_BUS restore
-            #    ring. The minimum-dwell hysteresis (hil_plant_sim.py, the
-            #    SDP_CHG_* block) now latches the intent and subtracts the
-            #    charger's own draw from the measured demand. Neither state
-            #    exceeds a current limit (budget in the header), and `ems-y-b00`
-            #    exercises the same cut and restore fault-free at a heavier
-            #    load.
-            #    ⚠️ WHY THIS IS A SWITCH CHECK AND NOT `ems-soc-band`'s
-            #    I_charge >= 0.5 A: the Ag105 may never reach chargerReady
-            #    inside a 1 s open window, so an I_charge floor could fail a
-            #    perfectly correct board. What is asserted is that the POLICY
-            #    commanded the path open and the FIRMWARE opened it.
-            {"name": "sdp_charge_window_opened", "switch_bit": SW_FC_CHARGE,
-             "min_ticks": 4000, "t_window": (41.0, 58.0),
-             "label": "the v2 policy's low-demand charge action reached the "
-                      "board — FC_CHARGE_ENABLE opened in the post-drain "
-                      "cruise, which the v1 artifact could not command"},
+            # 5. THE CHARGE ACTION IS DECLINED, AND THE BOARD NEVER SEES ONE.
+            #    ⚠️ THIS CHECK IS THE INVERSE OF THE ONE IT REPLACES.  Until
+            #    2026-09-01 this slot held `sdp_charge_window_opened`
+            #    (FC_CHARGE_ENABLE high for >= 4000 ticks over t = 41..58),
+            #    which was the strongest v1/v2 discriminator in the entry.
+            #    Under the CALIBRATED v3 artifact that check is a GUARANTEED
+            #    FAIL rather than a vacuous pass: `policy.charge_goal` is zero
+            #    in all 101 x 25 cells, so there is no charge action for the
+            #    policy to command and no window for the firmware to open.
+            #    Deleting it and asserting the opposite is therefore the only
+            #    honest move — the endogenous rejection is what this artifact
+            #    IS, and an artifact's defining behaviour must be observed.
+            #    DERIVATION OF `max_ticks: 0` — EXACT, NOT LENIENT.  The
+            #    firmware opens FC_CHARGE_ENABLE only from chargingControl()'s
+            #    charge branch, which requires `charge_goal > 0` on the wire
+            #    (.ino:10034).  The policy emits `charge_goal` straight from
+            #    the table (SdpStrategy.decide(); the dwell latch can only HOLD
+            #    an intent the table already raised), and the table's charge
+            #    map is identically zero — so a SINGLE tick of FC_CHARGE high
+            #    on this run means either the artifact is not the one the
+            #    strategy claims, or a command the policy never issued reached
+            #    the board.  Both are findings, and neither has a tolerance.
+            #    NO `t_window`: the assertion is over the WHOLE post-grace run
+            #    (scan_signals() already starts at WARM_RESET_GRACE_S), because
+            #    "never" is the claim.  The v2-era 41..58 s window was the
+            #    window the ACTION was predicted in; there is no such window
+            #    now, and scoping a "never" assertion to one would leave the
+            #    rest of the run unasserted.
+            #    ⚠️ WHAT THIS CANNOT SEE — the HOST side.  There is no
+            #    `cmd_charge_goal` CSV column (hil_plant_sim.py's simulated
+            #    schema carries `cmd_v_sp`/`cmd_share_sp`/`cmd_share_sp_raw`
+            #    only), so the commanded intent is not observable offline and
+            #    the companion "the policy never ASKED" assertion cannot be
+            #    written today.  What IS asserted is the board-side outcome,
+            #    which is the one that matters for the harvest accounting; the
+            #    host-side intent is covered by the SdpStrategy exit summary's
+            #    `charge dwell latches 0`.  Adding the column is an append-only
+            #    schema change and is the natural follow-up if a campaign ever
+            #    needs to separate "the policy asked and the board refused"
+            #    from "the policy never asked".
+            {"name": "charge_path_never_opens", "switch_bit": SW_FC_CHARGE,
+             "max_ticks": 0,
+             "vacuity_note":
+                 "the `switch` column cannot be blank on a run that reaches "
+                 "State 2: every other check in this entry (survive_to, "
+                 "sdp_fc_current_biased, the cmd_* floors) fails on a run with "
+                 "no observation frames, so a zero tick count here cannot be "
+                 "'the column was never written'. There is deliberately no "
+                 "companion positive bound on SW_FC_CHARGE — a positive bound "
+                 "is exactly what this artifact must NOT produce.",
+             "label": "the CALIBRATED policy never opened the charger path — "
+                      "the Ag105 charge lever (0.2364 SoC/g) is below the "
+                      "artifact's own 0.30682 SoC/g admission threshold, so "
+                      "the action is declined ENDOGENOUSLY (zero charge cells, "
+                      "forbid_charge_all False)"},
             # 6. ... AND THE FIRMWARE ACTED ON THE SHARE — the "cmd_share_sp is
             #    only what the host asked for" half both sibling entries carry.
             #    Derivation, and it is the GOVERNED value rather than the
@@ -1439,7 +1521,27 @@ _Y_SHARE_CLIP_TOL = 0.005
 # The 1.02 A floor sits 2 % above break-even and 4.2 % under the v1 minimum, so
 # a preload cut below ~1.0 A fails HERE, loudly, instead of quietly re-routing
 # what the share bands are measuring.
+#
+# ⚠️ NOW ON BOTH b30 VARIANTS (2026-09-01, campaign 20260901_000816 fix queue
+# item 4 — SYMMETRY).  The check originally ran on b30-v1 alone, on the
+# argument that one tripwire on the tighter of two variants sharing one
+# Y_AUX_LOAD_A is enough to catch a preload cut.  That argument holds for a cut
+# in the SHARED constant and fails for anything that moves the two variants
+# apart — a per-variant load change, a Vmax retune shifting the motor's own
+# contribution, or a governor change biting at one speed and not the other.
+# The v3 variant's own minimum was MEASURED at 1.1836 A across both campaigns
+# (bit-stable), which clears the same 1.02 A floor by 16.0 % (against v1's
+# 4.4 %), so the ONE floor is honest on both and no second constant is needed:
+# the floor is derived from the GOVERNOR's break-even (2 * SHARE_MINORITY_I_MIN_A
+# / (1 - b) = 1.000 A at the 0.70/0.30 clip), which is a property of the clip
+# and not of Vmax.  The two variants differ only in how much margin they carry
+# over it, and both margins are now stated rather than one being assumed.
 _Y_ITOT_FLOOR_A = 1.02
+# The MEASURED per-variant minima over the hi window, campaigns 20260831_222036
+# and 20260901_000816 (bit-stable across both).  Carried as data so the margin
+# each variant actually has is in the check's own detail line rather than only
+# in a ledger.
+_Y_ITOT_MEASURED_MIN_A = {1.0: 1.0644, 3.0: 1.1836}
 
 for _vmax, _b in ((1.0, 0.30), (3.0, 0.30), (1.0, 0.00), (3.0, 0.00)):
     _n = "ems-y-b%02d-v%g" % (round(_b * 100), _vmax)
@@ -1515,20 +1617,21 @@ for _vmax, _b in ((1.0, 0.30), (3.0, 0.30), (1.0, 0.00), (3.0, 0.00)):
              "label": "... and did not go under it — the runtime clip held at "
                       "%.2f, not the commanded 0.00" % _b},
         ]
-        if _vmax == 1.0:
-            # 9 (b30-v1 only). THE PRELOAD BUDGET — see _Y_ITOT_FLOOR_A. Only
-            # on the Vmax-1 variant: it is the one with real exposure (6.4 % of
-            # I_tot headroom over break-even against v3's 18 %), and one
-            # tripwire on the tighter of two variants sharing one Y_AUX_LOAD_A
-            # is enough to catch a preload cut.
-            _sig.append(
-                {"name": "itot_above_governor_break_even",
-                 "sum_of": ["I_fc", "I_batt"],
-                 "min_value": _Y_ITOT_FLOOR_A, "t_window": _Y_HI_BOUND_W,
-                 "label": "the source total stayed above the closed-loop "
-                          "governor's break-even (>= %.2f A), so the share "
-                          "bands above measure the setpoint clip and not the "
-                          "governor" % _Y_ITOT_FLOOR_A})
+        # 9 (BOTH b30 variants since 2026-09-01). THE PRELOAD BUDGET — see
+        # _Y_ITOT_FLOOR_A for the derivation and for why the symmetry argument
+        # replaced the old "one tripwire on the tighter variant" one.
+        _sig.append(
+            {"name": "itot_above_governor_break_even",
+             "sum_of": ["I_fc", "I_batt"],
+             "min_value": _Y_ITOT_FLOOR_A, "t_window": _Y_HI_BOUND_W,
+             "label": "the source total stayed above the closed-loop "
+                      "governor's break-even (>= %.2f A; this variant "
+                      "measured %.4f A, %.1f %% of margin), so the share "
+                      "bands above measure the setpoint clip and not the "
+                      "governor"
+                      % (_Y_ITOT_FLOOR_A, _Y_ITOT_MEASURED_MIN_A[_vmax],
+                         100.0 * (_Y_ITOT_MEASURED_MIN_A[_vmax]
+                                  / _Y_ITOT_FLOOR_A - 1.0))})
     else:
         # 4-7 (b00 only). THE CUT-AND-RESTORE TOPOLOGY, both directions and
         # both channels. Region 6 commands share 1.00, above DROOP_R_MAX 0.85,
@@ -1807,6 +1910,353 @@ FAULT_EXPECTATIONS["ems-ftp75-socband"] = {
                   "9.16e-2 g, and unreachable by a truncated run, so this "
                   "bound is sound under every outcome the entry allows"
                   % _FTP_H2_CEILING_SOCBAND},
+    ],
+}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# THE THREE SDP-INTERIOR SCENARIOS (2026-08-31)
+#
+# WHAT THEY ARE FOR, in one paragraph.  Every `ems-sdp` run before this round
+# started EXACTLY on the policy's target node and could only discharge, so the
+# bang-bang table sat on its fuel-cell branch and the wire carried ONE constant
+# clamped 0.8500 for the whole run.  The three scenarios below use the new
+# `sdp_soc_ref_offset` scenario key (SdpStrategy.set_soc_ref_offset()) to place
+# the run's starting SoC on a CHOSEN side of the switching node, so the
+# policy's own decision surfaces become observable:
+#   ems-ftp75-sdp    starts ABOVE the node on the 340 s FTP-75 cycle: the wire
+#                    carries the battery-heavy branch (0.15) for ~200 s, then
+#                    ONE sharp step to 0.85 as the cycle's drain crosses the
+#                    boundary.  Pure share axis — no charge stage is reachable.
+#   ems-sdp-cross    starts ABOVE the node at a LOW-DEMAND operating point: the
+#                    same downward share crossing, then the CHARGE threshold's
+#                    minimum-dwell limit cycle.
+#   ems-sdp-braking  starts BELOW the node: the share is pinned at 0.85 all run
+#                    BY DESIGN, so every charge transition is attributable to
+#                    the DEMAND axis — charging on each low-speed plateau, off
+#                    on each cruise.
+#
+# ⚠️ ALL THREE ARE FIRST-CAMPAIGN PROVISIONAL.  Their thresholds come from
+# OFFLINE WALKS (method and full results in the SCENARIOS entries in
+# hil_plant_sim.py), not from measurement, and every entry below carries a
+# `provisional_note` to say so.  The walks use the gen_dp_ems_table.py reduced
+# demand model — the same model the DP benchmark is solved against — and the
+# ems-ftp75-sdp one is additionally cross-checked against the MEASURED
+# `ems-ftp75-5050` trace of campaign 20260901_000816, which runs +2.6 % hot
+# against the model (the documented FTP75_PRELOAD_A gain offset).
+#
+# ⚠️ AND ONE STRUCTURAL FINDING THEY ENCODE: an UPWARD share crossing is not
+# attempted on this rig.  Raising SoC through the 1e-3-wide dead band around
+# the target node inside one SDP_CHG_MIN_DWELL_S latch needs a PACK-SIDE charge
+# ceiling above 2.25 A.  ⚠️ The "immediate OC_FC" this note used to assert is a
+# SIMULATOR-referencing statement: the sim's charger takes the same number of
+# amps from the bus as it puts into the pack (it does not conserve power), so
+# 2.25 A reads straight against the bus-side LIMIT_I_FC_MAX 1.4 A.  On hardware
+# the Ag105 converts — 2.25 A into a 2S pack is a bus-side draw nearer 1.25 A —
+# so the real margin is on the order of 10-15 %, not the factor the sim shows.
+# Nothing below asserts a return to the battery-heavy branch.  A future retune
+# that wants one must re-derive the HARDWARE-side current budget first (see the
+# referencing note at the ems-sdp-cross block in hil_plant_sim.py); it is a
+# narrow exclusion, not an impossible one.
+# ═════════════════════════════════════════════════════════════════════════════
+
+# The share command's two emitted levels, and the bands around them.  ONE
+# source for all three entries: the clamp is SOC_BAND_SHARE_MIN/MAX (0.15/0.85)
+# and both values are exactly representable through the float32 UDP round trip,
+# so +/-0.01 is pure margin rather than a rounding allowance.
+_SDP_LOW_RAIL_CEIL = 0.16       # "the battery-heavy branch, sustained"
+_SDP_HIGH_RAIL_FLOOR = 0.84     # "the fuel-cell branch was reached"
+# The RAW (pre-clamp) table request on each branch.  0.00 above the node;
+# 1.00 below it, except 0.95 in demand bins 22-23 and 0.90 in DEMAND BIN 24,
+# the top bin of the [0, 25] W consumer map.
+#
+# ⚠️ THE FLOOR IS 0.89, NOT 0.94, AND BIN 24 IS THE WHOLE REASON.  The earlier
+# 0.94 was written as "separates the branches whatever bin the run is in",
+# which is not true of bin 24: that bin's raw request IS 0.90 and would fail a
+# 0.94 floor.  The exposure is not hypothetical — the FTP-75 walk's peak demand
+# is only ~4 % below the bin-24 lower edge (22.4 W model, ~23.0 W at the
+# measured +2.6 % offset, against a 24.0 W edge), so a model error well inside
+# this entry's own +/-20 % sensitivity band puts a sample in bin 24.  0.89
+# clears every value the FUEL-CELL branch can request (0.90 / 0.95 / 1.00) and
+# is still 0.88 above the battery branch's 0.00, so the two branches remain
+# separated by nearly the whole axis.  The 0.00 side keeps its 0.01 ceiling and
+# is a value NO other scenario in this suite can put on the wire.
+_SDP_RAW_LOW_CEIL = 0.01
+_SDP_RAW_HIGH_FLOOR = 0.89
+
+FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
+    "source": ("hil_plant_sim.py SCENARIOS['ems-ftp75-sdp'] and its offline "
+               "walk (the FTP75_SDP_* constants carry the full derivation: "
+               "flip time and its +/-10 %/+/-20 % drain sensitivity, both "
+               "branches' governed currents, and why the preload is 0.45 A "
+               "here and 0.65 A on the two sibling FTP-75 scenarios) + "
+               "SdpStrategy.set_soc_ref_offset() for what the offset does + "
+               "the PLAYED artifact tools/sdp_policies/sdp_policy_v3.json "
+               "(policy-block sha256 0443febf…, THE CALIBRATED BENCHMARK; the "
+               "actions below were read off v2 (740c802e…), which is identical "
+               "on SoC rows 3+ — the two differ in 30 cells on rows 1-2 and "
+               "this trajectory spans rows ~63 down to ~44; see the row-diff "
+               "test) read directly for the two "
+               "branches' actions. Current budgets against LIMIT_I_FC_MAX 1.4 "
+               "A / LIMIT_I_BT_MAX 3.0 A through the firmware's minority "
+               "governor (.ino:9556-9568)."),
+    "provisional_note": (
+        "FIRST-CAMPAIGN bands: every threshold here is read off an OFFLINE "
+        "WALK, not a measurement. The flip-time band (150, 250) s is "
+        "deliberately +/-20 % of the walk's 195.9 s because the flip time is "
+        "an INTEGRAL of the drain and is the most model-sensitive number in "
+        "the entry; the h2 band is wider still. Re-derive both from the first "
+        "campaign and tighten, and delete this note when they are measured — "
+        "the ems-sdp and scp-inrush precedent."),
+    # FAULT-FREE, and this one is stricter than its FTP-75 siblings on purpose:
+    # `ems-ftp75-socband` ALLOWS OC_FC because its 0.75 share ceiling leaves
+    # only ~11 % of margin at the cycle peak. Here the preload was re-derived
+    # DOWN to 0.45 A precisely so the 0.85 branch keeps 17.5 % at that peak
+    # (the ADDITIVE composition of the measured span — see the FTP75_SDP
+    # preload derivation in hil_plant_sim.py; the 18.5 % this line used to
+    # quote scaled the model's FC branch instead, which understates the peak),
+    # because an OC_FC latch would truncate the run at the point the scenario
+    # exists to observe — the post-flip half. So an OC_FC here is a real
+    # finding, not a design boundary.
+    "allow_only": 0,
+    # Past the whole flip band, fault-free: the run must reach its own
+    # post-flip half, not merely survive the low-rail phase.
+    "survive_to": {"t": 260.0, "states": {2, 3}},
+    "signals_require": [
+        # 1. THE EMS LAYER ACTUALLY COMMANDED THE CYCLE. The v_setpoint axis is
+        #    scenario script, not policy output, so this is the same "did the
+        #    50 Hz stream carry the profile" check the sibling entries make —
+        #    placed on the cycle's own 3.0 m/s peak at t = 245.
+        {"name": "sdpftp_drive_commanded", "column": "cmd_v_sp",
+         "min_value": 2.90, "t_window": (230.0, 260.0),
+         "label": "the SDP policy commanded the FTP-75 cycle's 3.0 m/s peak"},
+        # 2. THE BATTERY-HEAVY BRANCH, SUSTAINED — a CEILING, so it asserts
+        #    that NO in-window sample exceeded the low rail. This is the first
+        #    time anything in this suite has put 0.15 on the wire from the SDP
+        #    policy, and it is only reachable by starting above the node.
+        #    The window closes at 150 s, the bottom of the flip band.
+        {"name": "sdpftp_low_rail_early", "column": "cmd_share_sp",
+         "max_value": _SDP_LOW_RAIL_CEIL, "t_window": (20.0, 150.0),
+         "label": "the SDP policy commanded its BATTERY-HEAVY branch for the "
+                  "whole pre-flip phase (no sample above the 0.15 clamp)"},
+        # 3. ... AND THE FUEL-CELL BRANCH AFTER THE BAND. With check 2 this
+        #    pins the transition inside (150, 250) s without needing a
+        #    transition-detecting check kind: the command is provably at one
+        #    rail before the band and provably reaches the other after it.
+        {"name": "sdpftp_high_rail_late", "column": "cmd_share_sp",
+         "min_value": _SDP_HIGH_RAIL_FLOOR, "t_window": (250.0, 340.0),
+         "label": "... and switched to the FUEL-CELL branch (0.85) after the "
+                  "predicted flip band — with the check above, a measured "
+                  "crossing inside t = 150..250 s"},
+        # 4-5. THE SAME SPAN ON THE PRE-CLAMP COLUMN, which is where the
+        #    TABLE's own request is visible. 0.00 is a value the clamp hides
+        #    entirely from `cmd_share_sp` (it emits 0.15 either way if the
+        #    policy ever railed low for another reason), so these two are the
+        #    checks that identify the ARTIFACT's branch rather than the
+        #    emitted level.
+        {"name": "sdpftp_raw_battery_branch", "column": "cmd_share_sp_raw",
+         "max_value": _SDP_RAW_LOW_CEIL, "t_window": (20.0, 150.0),
+         "label": "the table's PRE-CLAMP request was its 0.00 battery rail — "
+                  "a value no other scenario in this suite can produce"},
+        {"name": "sdpftp_raw_fc_branch", "column": "cmd_share_sp_raw",
+         "min_value": _SDP_RAW_HIGH_FLOOR, "t_window": (250.0, 340.0),
+         "label": "... and returned to its fuel-cell rail (1.00/0.95, or 0.90 "
+                  "in demand bin 24) after the flip"},
+        # 6. THE BOARD ACTED ON THE BATTERY-HEAVY BRANCH. A CEILING on I_fc,
+        #    and the derivation is the governor rather than the command: the
+        #    commanded 0.15 is always below SHARE_MINORITY_I_MIN_A / I_tot at
+        #    this cycle's currents (I_tot peaks at 1.41 A -> floor 0.213), so
+        #    the DELIVERED FC current is pinned at the 0.300 A minority floor
+        #    for the whole pre-flip phase. The constant-0.50 `ems-ftp75-5050`
+        #    control peaks at 0.8275 A over a comparable window and the 0.85
+        #    branch reaches 1.11 A, so a 0.45 A ceiling separates the
+        #    battery-heavy branch from anything else this cycle can do.
+        #    ⚠️ WHAT A PASS PROVES (inherited from every sibling entry): the
+        #    plant splits bus current in proportion to the MDAC CODE RATIO
+        #    (HIL_PLANT.md 4.7 — sign- and monotonicity-preserving, WRONG
+        #    GAIN), so this asserts the firmware->MDAC arithmetic, not
+        #    share-loop gain.
+        {"name": "sdpftp_fc_floored_early", "column": "I_fc",
+         "max_value": 0.45, "t_window": (30.0, 150.0),
+         "label": "the board delivered the battery-heavy split — I_fc held at "
+                  "the 0.300 A minority-governor floor, never near the "
+                  "0.8275 A the constant-0.50 sibling reaches"},
+        # 7. ... AND ON THE FUEL-CELL BRANCH. The mirror image at the cycle
+        #    peak: I_fc = I_tot - 0.300 = 1.112 A (model) / 1.141 A (at the
+        #    measured +2.6 % offset). Floor 1.00 A is 10 % under the model
+        #    value, unreachable by the battery-heavy branch by a factor of
+        #    three, and still 28 % under LIMIT_I_FC_MAX so a pass can never be
+        #    confused with an overcurrent.
+        {"name": "sdpftp_fc_carried_late", "column": "I_fc",
+         "min_value": 1.00, "t_window": (235.0, 260.0),
+         "label": "the board delivered the fuel-cell split at the cycle peak "
+                  "(governed I_tot - 0.300 A)"},
+        # 8-9. THE H2 ACCOUNTING RAN, AND STAYED BOUNDED. Budget from the walk:
+        #    ~0.30 A on FC for the ~190 s pre-flip phase (4.7 W bus, 5.5 W
+        #    stack) and ~0.8 A for the ~150 s after it (12.5 W bus, 14.7 W
+        #    stack), at the model's 1.7638e-5 g/s/W DC gain -> ~1.8e-2 +
+        #    ~3.9e-2 = ~5.7e-2 g. The band is DELIBERATELY WIDE (2.85x below,
+        #    2.1x above) because the split of the run between the two branches
+        #    is exactly the model-sensitive flip time; tighten it from the
+        #    first campaign. ⚠️ Gfc is scale-portable by design but not
+        #    identified against this stack (TODO(calibrate), H2Consumption
+        #    banner), so this asserts the accounting RAN, not an absolute mass.
+        {"name": "sdpftp_h2_accounted", "column": "h2_cum_g", "min_value": 2.0e-2,
+         "label": "the H2 consumption metric accumulated over the cycle "
+                  "(walk predicts ~5.7e-2 g)"},
+        {"name": "sdpftp_h2_bounded", "column": "h2_cum_g", "max_value": 0.12,
+         "label": "... and stayed under 0.12 g, so a scale or accumulation "
+                  "error in the metric fails here instead of reading as a "
+                  "result"},
+    ],
+}
+
+FAULT_EXPECTATIONS["ems-sdp-cross"] = {
+    "source": ("hil_plant_sim.py SCENARIOS['ems-sdp-cross'] and the SDP_CROSS_* "
+               "constants (the two cruise levels and why each one is where it "
+               "is, the walk's flip time and charge-window schedule, and the "
+               "single-source charge budget) + the shared derivation block "
+               "above the two SDP_CROSS/SDP_BRAKE scenarios in hil_plant_sim.py "
+               "for why an UPWARD share crossing is unreachable + "
+               "SdpStrategy.set_soc_ref_offset() and the SDP_CHG_* "
+               "minimum-dwell block."),
+    "provisional_note": (
+        "FIRST-CAMPAIGN bands from an OFFLINE WALK. The share-flip band "
+        "(25, 65) s and the charge-window tick floor are both driven by the "
+        "modelled pack current, which is the least certain quantity here; the "
+        "windows are sized at roughly +/-50 % of the walk's 43.85 s flip and "
+        "50 % of its 25.2 s of charging. Re-derive and tighten from the first "
+        "campaign, then delete this note."),
+    "allow_only": 0,
+    # Deep enough to contain the walk's THIRD charge window (172.9-180.9 s):
+    # the limit cycle, not merely its first pass, is what the scenario is for.
+    "survive_to": {"t": 180.0, "states": {2, 3}},
+    "signals_require": [
+        # 1-2. THE DOWNWARD SHARE CROSSING, pinned by the same two-window
+        #    construction as ems-ftp75-sdp's: a ceiling before the band and a
+        #    floor after it. Walk flip t = 43.85 s.
+        {"name": "sdpx_low_rail_early", "column": "cmd_share_sp",
+         "max_value": _SDP_LOW_RAIL_CEIL, "t_window": (5.0, 25.0),
+         "label": "the run opened on the SDP table's battery-heavy branch "
+                  "(commanded share at the 0.15 clamp)"},
+        {"name": "sdpx_high_rail_late", "column": "cmd_share_sp",
+         "min_value": _SDP_HIGH_RAIL_FLOOR, "t_window": (65.0, 190.0),
+         "label": "... and crossed the SHARE threshold to the fuel-cell branch "
+                  "(0.85) — with the check above, a crossing inside "
+                  "t = 25..65 s"},
+        # 3. The pre-clamp column on the opening branch, for ems-ftp75-sdp's
+        #    reason: 0.00 identifies the ARTIFACT's branch, which the clamped
+        #    column cannot.
+        {"name": "sdpx_raw_battery_branch", "column": "cmd_share_sp_raw",
+         "max_value": _SDP_RAW_LOW_CEIL, "t_window": (5.0, 25.0),
+         "label": "the table's PRE-CLAMP request was its 0.00 battery rail"},
+        # 4. THE CHARGE LIMIT CYCLE REACHED THE BOARD. Walk: three windows of
+        #    one SDP_CHG_MIN_DWELL_S each over t = 70..190, i.e. ~25200 ticks
+        #    at the CSV's 1 kHz rate. Floor 12000 is 48 % of that — it survives
+        #    losing a whole window to timing, and cannot be met by a run in
+        #    which the policy never admitted charging at all.
+        {"name": "sdpx_charge_cycled", "switch_bit": SW_FC_CHARGE,
+         "min_ticks": 12000, "t_window": (70.0, 190.0),
+         "label": "the policy's SoC-driven charge action reached the board — "
+                  "FC_CHARGE_ENABLE open for >= 12 s across the low cruise"},
+        # 5. ... AND IT IS A CYCLE, NOT ONE LONG WINDOW. The walk's gap between
+        #    the first and second windows is t = 83.8..115.3; this ceiling sits
+        #    inside it with ~5 s of clearance at each end. A run whose charge
+        #    intent latched ON and stayed there — the failure mode the
+        #    minimum-dwell hysteresis could plausibly introduce — fails here.
+        #    ⚠️ THE MOST TIMING-SENSITIVE CHECK IN THE ENTRY: it asserts the
+        #    ABSENCE of a window at a modelled instant. Its companion (check 4)
+        #    carries the positive bound on the same switch bit, so a blank
+        #    column cannot satisfy it vacuously.
+        {"name": "sdpx_charge_released_between", "switch_bit": SW_FC_CHARGE,
+         "max_ticks": 2000, "t_window": (90.0, 108.0),
+         "label": "... and the charge intent was RELEASED between windows — "
+                  "the dwell latch is a hysteresis, not a hold-forever"},
+        # 6. THE CHARGER ACTUALLY CHARGED. Peak-over-window, so any one of the
+        #    three windows satisfies it. Each is SDP_CHG_MIN_DWELL_S = 8 s
+        #    long against AG105_SETTLE_S 0.5 s + AG105_TAU_S 0.4 s, so I_charge
+        #    reaches the 0.8 A ceiling with room to spare. Floor 0.5 A is
+        #    `ems-soc-band`'s own, comfortably under the ceiling and
+        #    unmistakably above an unpowered charger's 0 A.
+        {"name": "sdpx_charging_established", "column": "I_charge",
+         "min_value": 0.5, "t_window": (78.0, 190.0),
+         "label": "the Ag105 delivered current inside the dwell windows"},
+        # 7. NO SHARE-SIDE BOARD CHECK, and it is a stated gap rather than an
+        #    omission: at this scenario's 0.67 A high-cruise total the
+        #    governor's minority floor clips BOTH branches to within 0.07 A of
+        #    each other (0.300 A on FC at the low rail, 0.367 A at the high
+        #    one), so no I_fc threshold can discriminate them. The board-side
+        #    evidence here is the CHARGE path; ems-ftp75-sdp is where the share
+        #    command is checked against delivered current.
+    ],
+}
+
+FAULT_EXPECTATIONS["ems-sdp-braking"] = {
+    "source": ("hil_plant_sim.py SCENARIOS['ems-sdp-braking'] and the "
+               "SDP_BRAKE_* constants — in particular SDP_BRAKE_ACCEL_S and "
+               "SDP_BRAKE_CHG_CEILING_A, which are BOTH current-budget "
+               "constants sized against the one-decision charge overhang into "
+               "the acceleration out of each low plateau + the shared "
+               "derivation block above the two scenarios."),
+    "provisional_note": (
+        "FIRST-CAMPAIGN bands from an OFFLINE WALK. The charge windows here "
+        "are DEMAND-driven and therefore land on the profile's own fixed "
+        "instants, so these bands are the least model-sensitive of the three "
+        "SDP-interior entries — but the tick floors and the I_charge level "
+        "are still predictions. Re-derive from the first campaign and delete "
+        "this note."),
+    "allow_only": 0,
+    # Past the third of four braking cycles.
+    "survive_to": {"t": 100.0, "states": {2, 3}},
+    "signals_require": [
+        # 1-2. THE SHARE AXIS IS HELD STILL, asserted from BOTH sides. This is
+        #    what licenses the attribution in checks 3-5: with the commanded
+        #    share provably constant at the 0.85 clamp, every FC_CHARGE
+        #    transition in the trace was decided by the DEMAND axis. Two specs
+        #    rather than one because a single spec carrying min_value and
+        #    max_value silently drops the ceiling (the import-time guard
+        #    refuses that shape).
+        {"name": "sdpb_share_rail_held", "column": "cmd_share_sp",
+         "min_value": _SDP_HIGH_RAIL_FLOOR, "t_window": (5.0, 125.0),
+         "label": "the policy commanded its fuel-cell branch (0.85 clamp)"},
+        {"name": "sdpb_share_never_crossed", "column": "cmd_share_sp",
+         "max_value": 0.86, "t_window": (5.0, 125.0),
+         "label": "... and NEVER crossed to the battery-heavy branch — which "
+                  "is what makes every charge transition below attributable "
+                  "to the demand axis alone"},
+        # 3. CHARGING HAPPENED, ACROSS THE LOW PLATEAUS. Walk: four windows of
+        #    ~12.5 s, 50.1 s in total. Floor 25000 ticks = 50 % of that, so
+        #    losing a whole plateau still passes and a run with no charging at
+        #    all cannot.
+        {"name": "sdpb_charge_in_low_windows", "switch_bit": SW_FC_CHARGE,
+         "min_ticks": 25000, "t_window": (10.0, 125.0),
+         "label": "the policy opened FC_CHARGE across the low-speed plateaus "
+                  "(>= 25 s of the walk's 50.1 s)"},
+        # 4-5. ... AND NOT DURING THE CRUISES. Two of the four 2.2 m/s holds,
+        #    inset by 2 s at each end so a deceleration's own admit-then-drop
+        #    blip (see the scenario comment) cannot leak in. The walk shows
+        #    ZERO charge ticks inside either. max_ticks 500 = 0.5 s of a 7-8 s
+        #    window, which admits one late release without admitting a window.
+        #    Both have check 3 as their positive companion on the same switch
+        #    bit, so a blank column cannot satisfy them vacuously.
+        #    ⚠️ THE CORRELATION IS THE OBJECTIVE: charge ON in the low windows
+        #    (check 3) and OFF in the cruises (these two) is what "the demand
+        #    axis decided it" means in a trace.
+        {"name": "sdpb_charge_off_in_cruise_2", "switch_bit": SW_FC_CHARGE,
+         "max_ticks": 500, "t_window": (41.0, 48.0),
+         "label": "FC_CHARGE closed through the second 2.2 m/s cruise "
+                  "(P_dem ~10.6 W = bin 10, charge-forbidden)"},
+        {"name": "sdpb_charge_off_in_cruise_3", "switch_bit": SW_FC_CHARGE,
+         "max_ticks": 500, "t_window": (72.0, 79.0),
+         "label": "... and through the third one"},
+        # 6. THE CHARGER ACTUALLY CHARGED. Ceiling here is
+        #    SDP_BRAKE_CHG_CEILING_A = 0.7 A (de-rated for the acceleration
+        #    overhang), and each window is ~12.5 s against 0.9 s of settle plus
+        #    ramp, so I_charge reaches it. Floor 0.4 A: 43 % under the ceiling,
+        #    unmistakably above an unpowered charger.
+        {"name": "sdpb_charging_established", "column": "I_charge",
+         "min_value": 0.4, "t_window": (25.0, 125.0),
+         "label": "the Ag105 delivered current inside the low-plateau windows"},
     ],
 }
 
@@ -2701,16 +3151,16 @@ def build_plan(args):
                 continue
             if name in FTP75_SCENARIOS and not with_ftp75:
                 # SKIPPED, not scored, and for a COST reason rather than a
-                # coverage one: these two are 350 s each — ~11.7 min for the
-                # pair against a ~34 min campaign — so they are opt-in. Same
+                # coverage one: these are 350 s each — ~17.5 min for the three
+                # against a ~23 min campaign — so they are opt-in. Same
                 # skip-record mechanism as the two gates above, so the report
                 # shows the gap instead of quietly shortening the plan.
                 #
-                # ORDERED AFTER the --pi-live gate deliberately: both scenarios
-                # are EMS-driven, so under --pi-live they are skipped WHATEVER
-                # --with-ftp75 says, and the honest reason is the pi-live one.
-                # Reporting "pass --with-ftp75 to run both" there would name a
-                # flag that could not make the run happen.
+                # ORDERED AFTER the --pi-live gate deliberately: all three
+                # scenarios are EMS-driven, so under --pi-live they are skipped
+                # WHATEVER --with-ftp75 says, and the honest reason is the
+                # pi-live one. Reporting "pass --with-ftp75 to run them" there
+                # would name a flag that could not make the run happen.
                 plan.append({
                     "kind": "scenario", "name": name,
                     "mode": need if need in ("simple", "hifi") else args.electrical_pref,
@@ -2720,9 +3170,9 @@ def build_plan(args):
                     "argv": None, "timeout_s": 0.0,
                     "skip_reason": (
                         "LONG-CYCLE: the EPA FTP-75 study segment runs %.0f s, "
-                        "and the pair adds ~%.1f min to the campaign. Nothing "
+                        "and the set adds ~%.1f min to the campaign. Nothing "
                         "about the board or the link blocks it — pass "
-                        "--with-ftp75 to run both."
+                        "--with-ftp75 to run them."
                         % (float(meta.get("duration_s", 0.0)),
                            sum(float((SCENARIOS.get(n) or {}).get("duration_s", 0.0))
                                for n in FTP75_SCENARIOS) / 60.0)),
@@ -3665,6 +4115,31 @@ def read_run_meta(csv_path, launched_at=None):
     return doc
 
 
+def child_launched_at(child):
+    """The child's launch timestamp as a datetime, or None if unparseable."""
+    raw_launch = (child or {}).get("launched_at")
+    if not raw_launch:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(str(raw_launch))
+    except (TypeError, ValueError):
+        return None
+
+
+def run_ems_strategy(csv_path, child):
+    """The EMS strategy name the CHILD RECORDED for this run, or None.
+
+    L7: read from the run's own meta sidecar rather than inferred from the
+    scenario registry, because `--ems` can override the registry's default and
+    the report must describe the strategy that actually ran. Falls back to None
+    (not to the default) when the sidecar is absent or stale — the caller then
+    uses the registry, which is the honest "we only know the default" answer.
+    """
+    meta = read_run_meta(csv_path, child_launched_at(child))
+    name = meta.get("ems_strategy")
+    return name if isinstance(name, str) and name else None
+
+
 def warm_reset_count(csv_path, child):
     """Mid-run warm resets for one run: (dict, source).
 
@@ -3674,14 +4149,7 @@ def warm_reset_count(csv_path, child):
     whose sidecar and stdout are both unusable.  Unmeasured must never render as
     zero: the whole point of the tripwire is that the damage it detects does not
     show up in the run's own outcome."""
-    launched_at = None
-    raw_launch = (child or {}).get("launched_at")
-    if raw_launch:
-        try:
-            launched_at = datetime.datetime.fromisoformat(str(raw_launch))
-        except (TypeError, ValueError):
-            launched_at = None
-    meta = read_run_meta(csv_path, launched_at)
+    meta = read_run_meta(csv_path, child_launched_at(child))
     res = meta.get("results") or {}
     if isinstance(res.get("warm_resets_mid_run"), int):
         return ({"mid_run": res["warm_resets_mid_run"],
@@ -4459,6 +4927,363 @@ def _row(cells):
     return "| " + " | ".join(str(c) for c in cells) + " |"
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# THE EMS FRONTIER CHECK — a CROSS-RUN assertion (2026-09-01)
+#
+# WHY IT EXISTS.  Campaign 20260901_000816 shipped 53/53 PASS while the SDP leg
+# had moved 12.78 % OFF the DP bound and 1.54 % WORSE than the `soc-band`
+# heuristic — a 9.9 pp policy regression that passed clean, because every check
+# in the suite is PER-RUN and an energy-management result is a COMPARISON.  No
+# per-run threshold can express "this policy is no longer competitive"; the
+# quantity only exists across three runs of one stimulus.
+#
+# THE COMPARISON, and it has to be at MATCHED SoC.  Any strategy burns less
+# hydrogen by discharging the pack harder, so raw `h2_cum_g` ranks nothing.
+# The suite's standing rule ("read it WITH delta_soc") is made arithmetic here
+# by converting the SoC difference to its hydrogen equivalent at the measured
+# exchange rate:
+#
+#     eq_H2(run) = h2(run) - (dSoC(run) - dSoC(reference)) / lambda
+#
+# with `soc-band` as the reference leg (dSoC(ref) - dSoC(ref) = 0, so its own
+# eq-H2 is its raw h2).  SIGN, stated because it is the one thing a reader can
+# get backwards: a leg that ENDS HIGHER than the reference (a smaller
+# discharge, dSoC less negative) is CREDITED its surplus SoC — that charge is
+# hydrogen it did not have to burn — and a leg that discharged harder is
+# CHARGED for the difference.  On the campaign-2 numbers the SDP leg discharged
+# 0.00129 SoC LESS than soc-band, worth 0.00315 g at lambda 0.41, so its
+# 0.0161914 g total is credited down to 0.0130451 g — and it is still 1.54 %
+# above the reference's 0.0128472 g, which is precisely the finding: the leg
+# bought that SoC at the Ag105's 0.2364 SoC/g and is being scored at 0.41.
+#
+# LAMBDA: the SHARE lever, MEASURED, not modelled.  Campaign 20260831_191509
+# priced share-shifting at 0.409-0.415 SoC/g on TWO independent stimuli (the
+# 61 s cycle and the 340 s FTP-75, 2.3 % apart; the offline DP solve says
+# 0.405).  0.41 is the round centre of that band.  It is the SHARE lever
+# specifically because share-shifting is the exchange every leg on this
+# frontier can actually make; the Ag105 charge lever (0.2364 SoC/g) is a
+# DIFFERENT and worse rate, which is the whole finding the v3 artifact encodes.
+EMS_EQ_H2_LAMBDA_SOC_PER_G = 0.41
+# The measured band the verdict must be STABLE across.  A verdict that flips
+# inside it is not a result — it is a coin flip on a constant we know only to
+# ~1.5 % — so such a run renders KNIFE-EDGE: neither PASS nor FAIL, and NOT
+# counted as passing.  Deliberately not a "pass if any lambda passes" rule.
+EMS_EQ_H2_LAMBDA_BAND = (0.409, 0.415)
+
+# The three legs, by role.  Keyed by role rather than listed, because each one
+# means something different in the arithmetic and a bare list would let a
+# reader mistake the bound for a competitor.
+EMS_FRONTIER = {
+    # The CAUSAL HEURISTIC, and the eq-H2 REFERENCE: every other leg's SoC
+    # correction is measured against this run's delta_soc.
+    "reference": "ems-soc-band",
+    # The leg UNDER TEST — the causal optimal-by-construction policy.
+    "candidate": "ems-sdp",
+    # The NON-CAUSAL LOWER BOUND: not implementable, not a competitor, and the
+    # candidate is allowed to sit above it by a stated margin.
+    "bound": "ems-dp-replay",
+}
+
+# THE TWO ASSERTIONS, and why each number is what it is.
+#
+#   <= 0.98 x reference.  The candidate is an OPTIMAL-BY-CONSTRUCTION policy
+#   against a causal heuristic; "no worse" is too weak a claim to be worth
+#   running, and the campaign that motivated this check failed at 1.0154 x.
+#   0.98 asks for a 2 % improvement — comfortably inside the 8.39 % the first
+#   calibrated campaign measured, and outside the ~0.05 % run-to-run repeat
+#   spread of the h2 totals.
+EMS_FRONTIER_VS_REFERENCE_MAX = 0.98
+#   <= 1.06 x bound.  The DP leg has full foreknowledge of the cycle, so the
+#   causal leg CANNOT reach it and the bound is a proximity claim, not a
+#   ranking. 6 % is anchored on campaign 20260831_222036's measured +1.79 %,
+#   with room for the SoC-correction term's own uncertainty.
+#   ⚠️ INTENT, recorded so it is not lost: TIGHTEN TO 1.03 after two campaigns
+#   on the v3 artifact have measured the candidate's actual spread. 1.06 is a
+#   first-campaign bound on a leg whose calibrated behaviour has never run.
+EMS_FRONTIER_VS_BOUND_MAX = 1.06
+# MATCHED-dSoC PRECONDITION.  The eq-H2 correction is a LINEAR extrapolation at
+# one exchange rate; it is credible over a small SoC gap and not over a large
+# one.  0.010 SoC is ~5x the largest gap any campaign has produced (0.00129)
+# and ~14 % of a 61 s run's total swing, so a run that exceeds it is not a
+# leg to be corrected — it is a different experiment, and the check says
+# UNVERIFIED rather than pretending the arithmetic still holds.
+EMS_FRONTIER_DSOC_MATCH_MAX = 0.010
+
+
+def ems_eq_h2(h2, dsoc, dsoc_ref, lam):
+    """SoC-corrected hydrogen: h2 minus the SoC surplus priced at `lam`.
+
+    Pure arithmetic, split out so a test can drive it on recorded campaign
+    numbers without building result dicts."""
+    return float(h2) - (float(dsoc) - float(dsoc_ref)) / float(lam)
+
+
+def _ems_frontier_leg(results, name):
+    """The one scenario result for `name`, or None."""
+    for r in results:
+        if r.get("kind") == "scenario" and r.get("name") == name:
+            return r
+    return None
+
+
+def evaluate_ems_frontier(results, planned_names=None):
+    """Score the EMS frontier across `results`.  PURE.
+
+    Returns None when NO frontier leg was planned at all (a scenarios-only
+    subset, a replay-only run, `--pi-live`): there is nothing to say, and
+    manufacturing an UNVERIFIED record for a plan that never intended the
+    comparison would be noise.  Once ANY leg ran, a missing/faulted/skipped
+    sibling is UNVERIFIED and NAMED — never silent, because a silently dropped
+    leg is exactly how the regression this check exists for went unnoticed.
+
+    `planned_names` (M4) is the set of run names the CURRENT plan contains.
+    Supplying it lets a PARTIAL report distinguish "this leg is not in the
+    plan" from "this leg is in the plan and has not run yet" — the second is
+    what every intermediate rewrite of a full campaign's results.json says, and
+    blaming the plan for it is simply wrong.
+
+    Verdicts:
+      PASS        both assertions hold at every lambda in the band.
+      FAIL        at least one fails at every lambda in the band.
+      KNIFE-EDGE  the verdict flips inside the measured lambda band — not a
+                  result either way; counts as NOT passing.
+      UNVERIFIED  a leg is missing, skipped, faulted, or lacks its energy
+                  metrics; or the candidate's delta_soc is too far from the
+                  reference's for the linear correction to be credible.
+
+    `exit_affecting` (H1) splits the not-passing verdicts by whether the SUITE'S
+    EXIT CODE should reflect them, because "UNVERIFIED" covers two different
+    situations and only one of them is a defect:
+
+      False  nothing RAN that is unusable — every absent leg is absent from the
+             plan, or was explicitly SKIPPED (`--pi-live`, a filtered plan, a
+             partial report's not-yet-run legs). The report still says
+             UNVERIFIED, loudly and by name; the run is not failed for it.
+             This is the documented `--pi-live` behaviour, which the exit path
+             used to contradict by returning 1 on a clean skip-only campaign.
+      True   a leg RAN and its numbers cannot be used (own checks failed, no
+             energy metrics), the matched-dSoC precondition failed, an eq-H2
+             came out non-positive, or the verdict itself is FAIL/KNIFE-EDGE.
+
+    Rendering does NOT branch on the flag: an UNVERIFIED frontier reads the
+    same either way, and the difference is only in what the exit code claims.
+    """
+    legs, missing = {}, []
+    exit_affecting = False
+    any_planned = False
+    planned = set(planned_names or ())
+    for role, name in EMS_FRONTIER.items():
+        r = _ems_frontier_leg(results, name)
+        if r is None:
+            # M4: a leg the plan CONTAINS but has not reached yet is a property
+            # of the rewrite instant, not of the plan. Only a leg genuinely
+            # absent from the plan gets blamed on the plan.
+            if name in planned:
+                missing.append("%s (%s): planned but not yet run (partial "
+                               "report)" % (name, role))
+            else:
+                missing.append("%s (%s): not in this run's plan" % (name, role))
+            continue
+        any_planned = True
+        m = r.get("metrics") or {}
+        if r.get("skipped"):
+            missing.append("%s (%s): SKIPPED — %s"
+                           % (name, role, r.get("skip_reason") or "no reason"))
+            continue
+        if not r.get("passed"):
+            # A leg that failed its own checks may have truncated, latched, or
+            # run a different trajectory than the comparison assumes. Its
+            # numbers are not comparable and must not be quietly used.
+            missing.append("%s (%s): the run did NOT pass its own checks, so "
+                           "its energy totals are not comparable"
+                           % (name, role))
+            exit_affecting = True
+            continue
+        if m.get("final_h2_cum_g") is None or m.get("delta_soc") is None:
+            missing.append("%s (%s): no h2_cum_g / delta_soc in the CSV"
+                           % (name, role))
+            exit_affecting = True
+            continue
+        legs[role] = {"name": name, "h2": float(m["final_h2_cum_g"]),
+                      "dsoc": float(m["delta_soc"])}
+    if not any_planned:
+        return None
+
+    rec = {
+        "lambda_soc_per_g": EMS_EQ_H2_LAMBDA_SOC_PER_G,
+        "lambda_band": list(EMS_EQ_H2_LAMBDA_BAND),
+        "vs_reference_max": EMS_FRONTIER_VS_REFERENCE_MAX,
+        "vs_bound_max": EMS_FRONTIER_VS_BOUND_MAX,
+        "roles": dict(EMS_FRONTIER),
+        "legs": legs, "missing": missing,
+        "exit_affecting": exit_affecting,
+    }
+    if missing:
+        rec.update(verdict="UNVERIFIED", passed=False,
+                   reason="the frontier needs all three legs; "
+                          + "; ".join(missing))
+        return rec
+
+    ref, cand, bound = legs["reference"], legs["candidate"], legs["bound"]
+    dsoc_ref = ref["dsoc"]
+    gap = abs(cand["dsoc"] - dsoc_ref)
+    gap_bound = abs(bound["dsoc"] - dsoc_ref)
+    rec["dsoc_gap"] = gap
+    rec["dsoc_gap_bound"] = gap_bound
+    if max(gap, gap_bound) > EMS_FRONTIER_DSOC_MATCH_MAX:
+        rec.update(
+            verdict="UNVERIFIED", passed=False, exit_affecting=True,
+            reason=("the SoC-correction is a LINEAR extrapolation and this "
+                    "run's legs are %.5f / %.5f SoC apart from the reference, "
+                    "over the %.3f matched-dSoC precondition — the legs are "
+                    "not the same experiment, so no eq-H2 comparison is made"
+                    % (gap, gap_bound, EMS_FRONTIER_DSOC_MATCH_MAX)))
+        return rec
+
+    # L5: a NON-POSITIVE eq-H2 on any leg makes the ratios meaningless (a
+    # negative denominator flips the sense of every `<=` below, and a zero one
+    # is a ZeroDivisionError dodged into a None that the FAIL branch's "%.4f"
+    # then crashes on). It is reachable: the SoC correction is unbounded below,
+    # so a leg that ended far enough ABOVE the reference is credited more
+    # hydrogen than it burned. Refuse the comparison rather than publish a
+    # sign-inverted one.
+    lam_lo = min([EMS_EQ_H2_LAMBDA_SOC_PER_G] + list(EMS_EQ_H2_LAMBDA_BAND))
+    lam_hi = max([EMS_EQ_H2_LAMBDA_SOC_PER_G] + list(EMS_EQ_H2_LAMBDA_BAND))
+    nonpos = []
+    for lam in (lam_lo, lam_hi):
+        for role, v in legs.items():
+            if ems_eq_h2(v["h2"], v["dsoc"], dsoc_ref, lam) <= 0.0:
+                nonpos.append("%s (%s) at lambda %.3f" % (v["name"], role, lam))
+    if nonpos:
+        rec.update(
+            verdict="UNVERIFIED", passed=False, exit_affecting=True,
+            reason=("the SoC-corrected hydrogen is NOT POSITIVE for %s — the "
+                    "correction credited a leg more hydrogen than it burned, "
+                    "so the eq-H2 RATIOS carry no meaning and no comparison is "
+                    "made. Read the raw h2_cum_g / delta_soc pairs directly."
+                    % "; ".join(sorted(set(nonpos)))))
+        return rec
+
+    # Evaluate at the nominal lambda AND at both band edges. The nominal is
+    # what gets reported; the edges decide whether the verdict is a result.
+    lambdas = [EMS_EQ_H2_LAMBDA_SOC_PER_G] + list(EMS_EQ_H2_LAMBDA_BAND)
+    per_lambda = []
+    for lam in lambdas:
+        eq = {role: ems_eq_h2(v["h2"], v["dsoc"], dsoc_ref, lam)
+              for role, v in legs.items()}
+        ok_ref = eq["candidate"] <= EMS_FRONTIER_VS_REFERENCE_MAX * eq["reference"]
+        ok_bnd = eq["candidate"] <= EMS_FRONTIER_VS_BOUND_MAX * eq["bound"]
+        per_lambda.append({
+            "lambda": lam, "eq_h2": eq,
+            "vs_reference": (eq["candidate"] / eq["reference"]
+                             if eq["reference"] else None),
+            "vs_bound": (eq["candidate"] / eq["bound"]
+                         if eq["bound"] else None),
+            "passed_vs_reference": bool(ok_ref),
+            "passed_vs_bound": bool(ok_bnd),
+            "passed": bool(ok_ref and ok_bnd)})
+    rec["per_lambda"] = per_lambda
+    rec["eq_h2"] = per_lambda[0]["eq_h2"]
+    rec["vs_reference"] = per_lambda[0]["vs_reference"]
+    rec["vs_bound"] = per_lambda[0]["vs_bound"]
+
+    verdicts = {p["passed"] for p in per_lambda}
+    if len(verdicts) > 1:
+        rec.update(
+            verdict="KNIFE-EDGE", passed=False, exit_affecting=True,
+            reason=("the verdict FLIPS inside the measured lambda band "
+                    "[%.3f, %.3f] SoC/g (%s) — lambda is known to ~1.5 %%, so "
+                    "a result that depends on where inside the band it is read "
+                    "is not a result. Neither PASS nor FAIL; treat the legs as "
+                    "tied and widen the stimulus or the campaign count."
+                    % (EMS_EQ_H2_LAMBDA_BAND[0], EMS_EQ_H2_LAMBDA_BAND[1],
+                       ", ".join("%.3f:%s" % (p["lambda"],
+                                              "pass" if p["passed"] else "fail")
+                                 for p in per_lambda))))
+        return rec
+
+    nom = per_lambda[0]
+    if nom["passed"]:
+        rec.update(verdict="PASS", passed=True,
+                   reason=("eq-H2 %.7g g vs reference %.7g g (%.4f x, need "
+                           "<= %.2f) and vs bound %.7g g (%.4f x, need "
+                           "<= %.2f), stable across the lambda band"
+                           % (nom["eq_h2"]["candidate"],
+                              nom["eq_h2"]["reference"], nom["vs_reference"],
+                              EMS_FRONTIER_VS_REFERENCE_MAX,
+                              nom["eq_h2"]["bound"], nom["vs_bound"],
+                              EMS_FRONTIER_VS_BOUND_MAX)))
+    else:
+        broke = []
+        if not nom["passed_vs_reference"]:
+            broke.append("vs the `%s` heuristic %.4f x (need <= %.2f)"
+                         % (ref["name"], nom["vs_reference"],
+                            EMS_FRONTIER_VS_REFERENCE_MAX))
+        if not nom["passed_vs_bound"]:
+            broke.append("vs the `%s` bound %.4f x (need <= %.2f)"
+                         % (bound["name"], nom["vs_bound"],
+                            EMS_FRONTIER_VS_BOUND_MAX))
+        rec.update(verdict="FAIL", passed=False, exit_affecting=True,
+                   reason=("the `%s` leg is OFF the frontier at matched "
+                           "delta_soc: %s. This is a POLICY finding, not a "
+                           "board one — no per-run check can see it."
+                           % (cand["name"], "; ".join(broke))))
+    return rec
+
+
+# The banner a NON-frontier EMS run carries in the report.  One text, so the
+# claim cannot drift between the summary and the per-run block.
+EMS_DEMONSTRATION_BANNER = (
+    "**DYNAMICS DEMONSTRATION — not on the EMS frontier.** This run's strategy "
+    "(`%s`) is registered `frontier_eligible: False` in "
+    "`hil_plant_sim.EMS_STRATEGY_META`: it is exercised for the MECHANISM it "
+    "puts on the wire, not as an energy-management result. Its `h2_cum_g` and "
+    "`delta_soc` are measurements of that mechanism and must NOT be ranked "
+    "against the frontier legs (`%s`) — the EMS frontier check excludes this "
+    "run by construction.")
+
+# L8: a strategy name the run RECORDED but this checkout does not register.
+# It is neither eligible nor a registered demonstration, and the demonstration
+# banner would assert a `frontier_eligible: False` entry that does not exist —
+# so it gets its own honest text instead of being asserted into either camp.
+EMS_UNCLASSIFIED_BANNER = (
+    "**EMS role: unclassified (`%s` unknown to this checkout).** The run "
+    "recorded a strategy name that is not in `hil_plant_sim.EMS_STRATEGY_META` "
+    "here, so no role can be read off it. Its `h2_cum_g` / `delta_soc` are "
+    "NOT scored on the EMS frontier — an unregistered strategy is one nobody "
+    "has placed a role on.")
+
+
+def ems_demonstration_banner(scenario_name, recorded_strategy=None):
+    """The banner text for a scenario driven by a non-frontier EMS strategy, or
+    None for a scenario that is not EMS-driven or whose strategy IS eligible.
+
+    L7: `recorded_strategy` — the strategy the CHILD recorded in its meta
+    sidecar — WINS over the scenario registry's default. The two disagree
+    whenever a run was launched with an explicit `--ems`, and the banner must
+    describe the strategy that actually ran, not the one the table defaults to.
+    """
+    strategy = recorded_strategy or (SCENARIOS.get(scenario_name) or {}).get("ems")
+    if not strategy:
+        return None
+    meta = EMS_STRATEGY_META.get(strategy)
+    if meta is None:
+        return EMS_UNCLASSIFIED_BANNER % strategy
+    if meta.get("frontier_eligible"):
+        return None
+    text = EMS_DEMONSTRATION_BANNER % (
+        strategy, ", ".join("`%s`" % n for n in sorted(EMS_FRONTIER.values())))
+    # L9: the per-strategy role note, rendered AFTER the shared banner. The
+    # banner says "not on the frontier"; the note says WHICH KIND of
+    # off-frontier run this is — a policy demonstration that is deliberately
+    # loss-making is a different thing from a stimulus with no objective at all,
+    # and a reader who cannot tell them apart mis-reads both.
+    note = meta.get("role_note")
+    if note:
+        text += "\n>\n> %s" % note
+    return text
+
+
 def render_report(meta, results):
     """Build REPORT.md from the collected result dicts. Pure function."""
     L = []
@@ -4525,6 +5350,10 @@ def render_report(meta, results):
                          "and are listed per run; re-running clears only the "
                          "inconclusive part." % ninc_failed)
         A(_row(["INCONCLUSIVE", " ".join(parts)]))
+    frontier = evaluate_ems_frontier(results)
+    if frontier is not None:
+        A(_row(["EMS frontier", "**%s** — %s"
+                % (frontier["verdict"], frontier["reason"])]))
     if meta.get("aborted"):
         A(_row(["ABORTED", meta["aborted"]]))
     if meta.get("partial"):
@@ -4552,6 +5381,81 @@ def render_report(meta, results):
                 r.get("key_metrics", "")]))
     A("")
 
+    # ── EMS frontier (cross-run) ─────────────────────────────────────────────
+    if frontier is not None:
+        A("## EMS frontier — %s" % frontier["verdict"])
+        A("")
+        A("A CROSS-RUN check: an energy-management result is a COMPARISON, so no")
+        A("per-run threshold can express it. Legs are compared on **SoC-corrected**")
+        A("hydrogen, `eq_H2 = h2 - (dSoC - dSoC(reference)) / lambda`, with")
+        A("`%s` as the reference." % EMS_FRONTIER["reference"])
+        A("")
+        A("> %s" % frontier["reason"])
+        A("")
+        if frontier.get("legs"):
+            A(_row(["leg", "role", "h2_cum_g [g]", "delta_soc",
+                    "eq-H2 [g]", "vs bound", "vs reference"]))
+            A(_row(["---"] * 7))
+            eq = frontier.get("eq_h2") or {}
+            for role in ("reference", "candidate", "bound"):
+                leg = frontier["legs"].get(role)
+                if leg is None:
+                    continue
+                e = eq.get(role)
+                eb = eq.get("bound")
+                er = eq.get("reference")
+                A(_row([
+                    "`%s`" % leg["name"], role,
+                    "%.7g" % leg["h2"], "%+.6f" % leg["dsoc"],
+                    ("%.7g" % e) if e is not None else "—",
+                    ("%.4f x" % (e / eb)) if (e is not None and eb) else "—",
+                    ("%.4f x" % (e / er)) if (e is not None and er) else "—"]))
+            A("")
+        for miss in frontier.get("missing") or []:
+            A("- UNVERIFIED leg: %s" % miss)
+        if frontier.get("missing"):
+            A("")
+        if frontier.get("per_lambda"):
+            A("Lambda sensitivity (the verdict must be stable across the "
+              "measured band):")
+            A("")
+            A(_row(["lambda [SoC/g]", "eq-H2 candidate [g]", "vs reference",
+                    "vs bound", "verdict"]))
+            A(_row(["---"] * 5))
+            for p in frontier["per_lambda"]:
+                A(_row(["%.3f" % p["lambda"],
+                        "%.7g" % p["eq_h2"]["candidate"],
+                        ("%.4f x" % p["vs_reference"])
+                        if p["vs_reference"] is not None else "—",
+                        ("%.4f x" % p["vs_bound"])
+                        if p["vs_bound"] is not None else "—",
+                        "pass" if p["passed"] else "fail"]))
+            A("")
+        A("**lambda provenance.** %.3f SoC/g is the MEASURED share lever: "
+          "campaign 20260831_191509 priced share-shifting at 0.409-0.415 SoC/g "
+          "on two independent stimuli (the 61 s cycle and the 340 s FTP-75, "
+          "2.3 %% apart; the offline DP solve says 0.405). The band "
+          "[%.3f, %.3f] is that measurement, and a verdict that flips inside it "
+          "renders KNIFE-EDGE — neither PASS nor FAIL — rather than being read "
+          "off the centre. Thresholds: candidate <= %.2f x reference and "
+          "<= %.2f x bound; the second is a FIRST-CAMPAIGN bound on the "
+          "calibrated artifact and is intended to tighten to 1.03 once two "
+          "campaigns have measured its spread."
+          % (EMS_EQ_H2_LAMBDA_SOC_PER_G, EMS_EQ_H2_LAMBDA_BAND[0],
+             EMS_EQ_H2_LAMBDA_BAND[1], EMS_FRONTIER_VS_REFERENCE_MAX,
+             EMS_FRONTIER_VS_BOUND_MAX))
+        A("")
+        A("⚠️ `h2_cum_g` is the Gfc **model's estimate** of hydrogen mass. The "
+          "map is scale-portable, but the coefficients are **not identified "
+          "against this rig's stack** (`TODO(calibrate)` — the H2Consumption "
+          "banner in `hil_plant_sim.py`). Every number above is therefore a "
+          "RANKING on one rig, which is robust, and not an absolute mass.")
+        A("")
+        A("Runs whose EMS strategy is `frontier_eligible: False` are excluded "
+          "from this comparison by construction and carry a demonstration "
+          "banner in their own block below.")
+        A("")
+
     # ── Scenarios ────────────────────────────────────────────────────────────
     scen = [r for r in results if r["kind"] == "scenario"]
     if scen:
@@ -4567,6 +5471,13 @@ def render_report(meta, results):
             A("")
             if r.get("description"):
                 A("*%s*" % r["description"])
+                A("")
+            # A run driven by a NON-frontier EMS strategy says so here, before
+            # any of its numbers are read: its h2/delta_soc pair is a
+            # measurement of a mechanism, not a competitive score.
+            _demo = ems_demonstration_banner(r["name"], r.get("ems_strategy"))
+            if _demo:
+                A("> %s" % _demo)
                 A("")
             if r.get("inconclusive_reason"):
                 A("> **INCONCLUSIVE.** %s" % r["inconclusive_reason"])
@@ -5051,6 +5962,11 @@ def main(argv=None):
         print("\n[dry-run] plan written to %s" % os.path.join(args.out, "plan.json"))
         return 0
 
+    # M4: what the plan CONTAINS, so an intermediate (partial) frontier record
+    # can say "planned but not yet run" instead of blaming the plan for a leg
+    # that simply has not been reached yet.
+    planned_names = {p["name"] for p in plan}
+
     problems = verify_suite_logs(_REPO)
     if problems and not args.scenarios_only:
         print("[suite] WARNING: replay-suite log verification found %d problem(s):"
@@ -5083,8 +5999,16 @@ def main(argv=None):
         # M4: rewrite BOTH files after every run (not just once at the very end),
         # so a Ctrl-C or a hard kill loses at most the run in flight, never the
         # whole session's worth of already-completed results.
+        # The cross-run EMS frontier verdict is recorded ALONGSIDE the per-run
+        # results, not inside any of them: it is a property of the set. Written
+        # on every rewrite so a partial report carries the honest UNVERIFIED
+        # rather than nothing.
+        payload = {"meta": meta_now, "results": results_now}
+        frontier_now = evaluate_ems_frontier(results_now, planned_names)
+        if frontier_now is not None:
+            payload["ems_frontier"] = frontier_now
         with open(os.path.join(args.out, "results.json"), "w", encoding="utf-8") as fh:
-            json.dump({"meta": meta_now, "results": results_now}, fh, indent=2, default=str)
+            json.dump(payload, fh, indent=2, default=str)
         with open(os.path.join(args.out, "REPORT.md"), "w", encoding="utf-8") as fh:
             fh.write(render_report(meta_now, results_now))
 
@@ -5117,6 +6041,16 @@ def main(argv=None):
           % (npass, len(results), inc_note,
              os.path.join(args.out, "REPORT.md")))
 
+    # The cross-run EMS frontier verdict. Printed and SCORED separately from the
+    # run tally: it is not a run, so folding it into "%d/%d passed" would make
+    # the run count disagree with the plan. Anything but PASS is not-passing —
+    # UNVERIFIED and KNIFE-EDGE included, because both mean the comparison the
+    # campaign was run for was not made.
+    frontier = evaluate_ems_frontier(results, planned_names)
+    if frontier is not None:
+        print("[suite] EMS frontier: %s — %s"
+              % (frontier["verdict"], frontier["reason"]))
+
     if interrupted:
         return 130
     if aborted:
@@ -5130,6 +6064,21 @@ def main(argv=None):
         print("[suite] every planned run was SKIPPED — nothing was exercised "
               "against the board; treating this as a failing suite run", file=sys.stderr)
         return 1
+    # H1: only an EXIT-AFFECTING frontier verdict fails the run. A frontier that
+    # is UNVERIFIED purely because its legs were never planned or were
+    # explicitly SKIPPED (a `--pi-live` campaign, a filtered plan) is the
+    # DOCUMENTED behaviour of those modes — failing them here contradicted this
+    # function's own docstring and turned every clean `--pi-live` run into an
+    # exit 1. The report still renders the UNVERIFIED verdict either way.
+    if frontier is not None and not frontier["passed"]:
+        if frontier.get("exit_affecting", True):
+            print("[suite] the EMS frontier check did not pass (%s) — treating "
+                  "this as a failing suite run" % frontier["verdict"],
+                  file=sys.stderr)
+            return 1
+        print("[suite] the EMS frontier is %s because no leg of it was "
+              "exercised (not planned / explicitly skipped) — reported, not "
+              "scored" % frontier["verdict"], file=sys.stderr)
     return 0 if npass == len(results) and results else 1
 
 
@@ -5216,6 +6165,9 @@ def _run_plan(plan, args, problems, results, write_outputs):
                    "description": item["description"], "duration_s": item["duration_s"],
                    "passed": passed, "checks": checks, "notes": [],
                    "metrics": metrics, "events": events, "child": child,
+                   # L7: the strategy the CHILD recorded, so the demonstration
+                   # banner describes what ran rather than the registry default.
+                   "ems_strategy": run_ems_strategy(item["csv"], child),
                    "csv": item["csv"], "events_path": item["events"],
                    "log_path": item["log"], "key_metrics": key}
             no_obs = metrics["n_obs"] == 0

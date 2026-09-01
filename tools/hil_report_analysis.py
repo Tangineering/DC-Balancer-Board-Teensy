@@ -119,6 +119,29 @@ def _replay_suite_module():
     return hil_replay_suite
 
 
+def ems_strategy_role(strategy_name):
+    """("frontier"|"demonstration"|None) for an EMS strategy name.
+
+    Reads hil_plant_sim.EMS_STRATEGY_META, not a copy: this module renders
+    reports for runs the CURRENT checkout produced, and a run's own meta
+    sidecar records the strategy name it used, so the role lookup is the one
+    place the two must agree.  Returns None for a run with no EMS strategy and
+    for a strategy this checkout does not know — an unknown name gets NO role
+    label rather than being asserted into either camp, since the honest reading
+    of "a strategy that no longer exists here" is "unclassified".
+    """
+    if not strategy_name:
+        return None
+    try:
+        meta = _plant_sim_module().EMS_STRATEGY_META
+    except (ImportError, AttributeError):     # older sim in the checkout
+        return None
+    if strategy_name not in meta:
+        return None
+    return "frontier" if meta[strategy_name].get("frontier_eligible") \
+        else "demonstration"
+
+
 def switch_bits():
     """[(mask, name)] for the observation frame's switch byte, ordered LSB
     first. Names are the SW_* constant names from hil_plant_sim, verbatim."""
@@ -1225,6 +1248,12 @@ def analyze_run(run, report_dir, results_json, no_move=False, force=False):
         "duration_s": (float(hil["t_s"][-1]) if hil["t_s"].size else 0.0),
         "meta_mode": meta.get("mode"),
         "meta_status": meta.get("status"),
+        # The EMS strategy this run was driven by, and its ROLE (2026-09-01).
+        # Recorded from the run's OWN meta sidecar, so a re-analysis of an old
+        # report names the strategy that ran rather than the one the scenario
+        # currently declares.
+        "ems_strategy": meta.get("ems_strategy"),
+        "ems_role": ems_strategy_role(meta.get("ems_strategy")),
         "suite_passed": (suite or {}).get("passed"),
         "suite_mode": (suite or {}).get("mode"),
         "suite_cmd_mode": (suite or {}).get("cmd_mode"),
@@ -1453,6 +1482,19 @@ def render_run_markdown(a):
                                   ("FAIL" if a.get("suite_passed") is False
                                    else "—")),
          ""]
+    if a.get("ems_strategy"):
+        L.insert(-1, "- EMS strategy: `%s`%s"
+                 % (a["ems_strategy"],
+                    "" if not a.get("ems_role") else " (%s)" % a["ems_role"]))
+    if a.get("ems_role") == "demonstration":
+        # Said BEFORE any of this run's numbers are read: its h2/delta_soc pair
+        # measures a mechanism, not a competitive energy-management score, and
+        # run_hil_suite.py's EMS frontier check excludes it by construction.
+        L += ["> **DYNAMICS DEMONSTRATION — not on the EMS frontier.** The "
+              "strategy `%s` is registered `frontier_eligible: False`; this "
+              "run is exercised for the MECHANISM it puts on the wire. Do NOT "
+              "rank its `h2_cum_g` / `delta_soc` against the frontier legs."
+              % a["ems_strategy"], ""]
 
     if a.get("suite_checks"):
         L += ["## Suite checks", "", "| check | result | detail |",

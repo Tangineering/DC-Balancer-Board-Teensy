@@ -1137,6 +1137,8 @@ EXPECTED_SCENARIO_NAMES = {
     "mppt-tracking", "charge-to-full", "pi-silence", "share-staircase",
     # 2026-08-31 SDP round: the online stochastic-DP policy scenario.
     "ems-sdp",
+    # 2026-08-31 SDP-interior round: the three `sdp_soc_ref_offset` scenarios.
+    "ems-ftp75-sdp", "ems-sdp-cross", "ems-sdp-braking",
 }
 
 
@@ -1208,6 +1210,12 @@ EXPECTED_SCENARIO_DURATIONS_S = {
     # duration_s (SCENARIOS["ems-sdp"]["duration_s"] = SCENARIOS["ems-soc-band"]
     # ["duration_s"]).
     "ems-sdp": 61.0,
+    # 2026-08-31 SDP-interior round.  `ems-ftp75-sdp` shares FTP75_DURATION_S
+    # with the other two FTP-75 scenarios; the other two carry their own
+    # SDP_CROSS_DURATION_S / SDP_BRAKE_DURATION_S.
+    "ems-ftp75-sdp": 350.0,
+    "ems-sdp-cross": 200.0,
+    "ems-sdp-braking": 134.0,
 }
 
 
@@ -1331,10 +1339,25 @@ def test_scenarios_chg_i_ceiling_a_only_on_charge_regen_and_charge_fault():
     for name, meta in hil.SCENARIOS.items():
         if name == "charge-regen":
             assert meta["chg_i_ceiling_a"] == pytest.approx(1.6)
-        elif name in ("charge-fault", "ems-soc-band", "ems-dp-replay", "ems-sdp"):
+        elif name in ("charge-fault", "ems-soc-band", "ems-dp-replay", "ems-sdp",
+                      # RE-SCOPED AGAIN (2026-08-31 SDP-interior round): both
+                      # of these read the ceiling off ems-soc-band's entry the
+                      # same way ems-sdp does.  On `ems-ftp75-sdp` it is
+                      # declared but INERT (no charge-admissible stage is
+                      # reachable there) — carried so a future profile change
+                      # cannot silently run the charger at AG105_I_MAX.
+                      "ems-sdp-cross", "ems-ftp75-sdp"):
             assert meta["chg_i_ceiling_a"] == pytest.approx(0.8)
         elif name in ("mppt-tracking", "charge-to-full"):
             assert meta["chg_i_ceiling_a"] == pytest.approx(1.0)
+        elif name == "ems-sdp-braking":
+            # DE-RATED FURTHER: the charge latch can still be open one decision
+            # into the acceleration out of a low plateau, and that current adds
+            # to the charger's on the single-source FC channel.  Half of that
+            # budget is this ceiling and half is SDP_BRAKE_ACCEL_S.
+            assert meta["chg_i_ceiling_a"] == pytest.approx(
+                hil.SDP_BRAKE_CHG_CEILING_A)
+            assert hil.SDP_BRAKE_CHG_CEILING_A == pytest.approx(0.7)
         else:
             assert "chg_i_ceiling_a" not in meta, name
 
@@ -5659,7 +5682,7 @@ def _write_sdp_policy(path, doc):
 def _sdp_strategy_with_policy(tmp_path, doc=None, **doc_overrides):
     """A fresh SdpStrategy bound to a tmp_path policy dir, pre-loaded."""
     doc = doc if doc is not None else _minimal_sdp_policy_doc(**doc_overrides)
-    _write_sdp_policy(tmp_path / hil.SDP_POLICY_FILE, doc)
+    _write_sdp_policy(tmp_path / hil.SDP_POLICY_FILE_V2, doc)
     strategy = hil.SdpStrategy(policy_dir=str(tmp_path))
     strategy.load()
     return strategy
@@ -5715,7 +5738,7 @@ def test_load_sdp_policy_edges_not_spanning_0_1_raises_value_error(tmp_path):
 
 
 def test_load_sdp_policy_valid_doc_parses_cleanly(tmp_path):
-    path = tmp_path / hil.SDP_POLICY_FILE
+    path = tmp_path / hil.SDP_POLICY_FILE_V2
     _write_sdp_policy(path, _minimal_sdp_policy_doc())
     pol = hil.load_sdp_policy(str(path))
     assert pol["schema"] == hil.SDP_POLICY_SCHEMA
@@ -5728,7 +5751,7 @@ def test_load_sdp_policy_valid_doc_parses_cleanly(tmp_path):
 def test_load_sdp_policy_unmodified_shipped_artifact_still_loads():
     """The value-validation round (_grid_2d's lo/hi/allowed checks) must not
     have tightened the loader against the artifact it ships with."""
-    pol = hil.load_sdp_policy(os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE))
+    pol = hil.load_sdp_policy(os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V2))
     assert pol["schema"] == hil.SDP_POLICY_SCHEMA
     assert pol["n_soc"] > 0 and pol["n_bins"] > 0
 
@@ -5748,7 +5771,7 @@ def _doc_with_charge_goal_cell(row, col, value):
 
 
 def test_load_sdp_policy_refuses_non_finite_share_naming_row_and_column(tmp_path):
-    path = tmp_path / hil.SDP_POLICY_FILE
+    path = tmp_path / hil.SDP_POLICY_FILE_V2
     _write_sdp_policy(path, _doc_with_share_cell(1, 0, float("nan")))
     with pytest.raises(ValueError, match=r"policy\.share\[1\]\[0\]") as exc:
         hil.load_sdp_policy(str(path))
@@ -5756,7 +5779,7 @@ def test_load_sdp_policy_refuses_non_finite_share_naming_row_and_column(tmp_path
 
 
 def test_load_sdp_policy_refuses_infinite_share_naming_row_and_column(tmp_path):
-    path = tmp_path / hil.SDP_POLICY_FILE
+    path = tmp_path / hil.SDP_POLICY_FILE_V2
     _write_sdp_policy(path, _doc_with_share_cell(2, 1, float("inf")))
     with pytest.raises(ValueError, match=r"policy\.share\[2\]\[1\]") as exc:
         hil.load_sdp_policy(str(path))
@@ -5764,7 +5787,7 @@ def test_load_sdp_policy_refuses_infinite_share_naming_row_and_column(tmp_path):
 
 
 def test_load_sdp_policy_refuses_share_above_one_naming_row_and_column(tmp_path):
-    path = tmp_path / hil.SDP_POLICY_FILE
+    path = tmp_path / hil.SDP_POLICY_FILE_V2
     _write_sdp_policy(path, _doc_with_share_cell(0, 1, 1.5))
     with pytest.raises(ValueError, match=r"policy\.share\[0\]\[1\]") as exc:
         hil.load_sdp_policy(str(path))
@@ -5772,7 +5795,7 @@ def test_load_sdp_policy_refuses_share_above_one_naming_row_and_column(tmp_path)
 
 
 def test_load_sdp_policy_refuses_share_below_zero_naming_row_and_column(tmp_path):
-    path = tmp_path / hil.SDP_POLICY_FILE
+    path = tmp_path / hil.SDP_POLICY_FILE_V2
     _write_sdp_policy(path, _doc_with_share_cell(0, 0, -0.1))
     with pytest.raises(ValueError, match=r"policy\.share\[0\]\[0\]") as exc:
         hil.load_sdp_policy(str(path))
@@ -5780,7 +5803,7 @@ def test_load_sdp_policy_refuses_share_below_zero_naming_row_and_column(tmp_path
 
 
 def test_load_sdp_policy_refuses_charge_goal_not_in_allowed_set_naming_row_and_column(tmp_path):
-    path = tmp_path / hil.SDP_POLICY_FILE
+    path = tmp_path / hil.SDP_POLICY_FILE_V2
     _write_sdp_policy(path, _doc_with_charge_goal_cell(2, 0, 0.5))
     with pytest.raises(ValueError, match=r"policy\.charge_goal\[2\]\[0\]") as exc:
         hil.load_sdp_policy(str(path))
@@ -5788,7 +5811,7 @@ def test_load_sdp_policy_refuses_charge_goal_not_in_allowed_set_naming_row_and_c
 
 
 def test_load_sdp_policy_refuses_non_finite_charge_goal_naming_row_and_column(tmp_path):
-    path = tmp_path / hil.SDP_POLICY_FILE
+    path = tmp_path / hil.SDP_POLICY_FILE_V2
     _write_sdp_policy(path, _doc_with_charge_goal_cell(1, 1, float("nan")))
     with pytest.raises(ValueError, match=r"policy\.charge_goal\[1\]\[1\]") as exc:
         hil.load_sdp_policy(str(path))
@@ -5796,7 +5819,7 @@ def test_load_sdp_policy_refuses_non_finite_charge_goal_naming_row_and_column(tm
 
 
 def test_load_sdp_policy_refuses_non_numeric_share_cell_naming_row_and_column(tmp_path):
-    path = tmp_path / hil.SDP_POLICY_FILE
+    path = tmp_path / hil.SDP_POLICY_FILE_V2
     _write_sdp_policy(path, _doc_with_share_cell(0, 0, "not-a-number"))
     with pytest.raises(ValueError, match=r"policy\.share\[0\]\[0\]") as exc:
         hil.load_sdp_policy(str(path))
@@ -5804,7 +5827,7 @@ def test_load_sdp_policy_refuses_non_numeric_share_cell_naming_row_and_column(tm
 
 
 def test_load_sdp_policy_refuses_non_numeric_charge_goal_cell_naming_row_and_column(tmp_path):
-    path = tmp_path / hil.SDP_POLICY_FILE
+    path = tmp_path / hil.SDP_POLICY_FILE_V2
     _write_sdp_policy(path, _doc_with_charge_goal_cell(0, 1, None))
     with pytest.raises(ValueError, match=r"policy\.charge_goal\[0\]\[1\]") as exc:
         hil.load_sdp_policy(str(path))
@@ -5821,7 +5844,7 @@ def test_load_sdp_policy_charge_goal_accepts_only_exactly_zero_or_one(tmp_path):
     ok["policy"]["charge_goal"][0][0] = 0.0
     import tempfile
     with tempfile.TemporaryDirectory() as td:
-        p = os.path.join(td, hil.SDP_POLICY_FILE)
+        p = os.path.join(td, hil.SDP_POLICY_FILE_V2)
         _write_sdp_policy(p, ok)
         pol = hil.load_sdp_policy(p)
         assert pol["charge_goal"][2][1] == pytest.approx(1.0)
@@ -5829,7 +5852,7 @@ def test_load_sdp_policy_charge_goal_accepts_only_exactly_zero_or_one(tmp_path):
 
     bad = _doc_with_charge_goal_cell(0, 0, 1.0 - 1e-9)
     with tempfile.TemporaryDirectory() as td:
-        p = os.path.join(td, hil.SDP_POLICY_FILE)
+        p = os.path.join(td, hil.SDP_POLICY_FILE_V2)
         _write_sdp_policy(p, bad)
         with pytest.raises(ValueError, match="INTENT"):
             hil.load_sdp_policy(p)
@@ -5838,7 +5861,7 @@ def test_load_sdp_policy_charge_goal_accepts_only_exactly_zero_or_one(tmp_path):
 # ── load_sdp_policy(): provenance (round 2, item 2) ─────────────────────────
 
 def test_load_sdp_policy_returns_provenance_fields(tmp_path):
-    path = tmp_path / hil.SDP_POLICY_FILE
+    path = tmp_path / hil.SDP_POLICY_FILE_V2
     doc = _minimal_sdp_policy_doc()
     _write_sdp_policy(path, doc)
     pol = hil.load_sdp_policy(str(path))
@@ -5850,7 +5873,7 @@ def test_load_sdp_policy_returns_provenance_fields(tmp_path):
 
 
 def test_load_sdp_policy_policy_sha256_matches_recomputed_digest(tmp_path):
-    path = tmp_path / hil.SDP_POLICY_FILE
+    path = tmp_path / hil.SDP_POLICY_FILE_V2
     doc = _minimal_sdp_policy_doc()
     _write_sdp_policy(path, doc)
     pol = hil.load_sdp_policy(str(path))
@@ -5887,12 +5910,12 @@ def test_sdp_strategy_provenance_is_none_until_bind_scenario(tmp_path):
 
 def test_sdp_strategy_provenance_populated_after_bind_scenario(tmp_path):
     doc = _minimal_sdp_policy_doc()
-    _write_sdp_policy(tmp_path / hil.SDP_POLICY_FILE, doc)
+    _write_sdp_policy(tmp_path / hil.SDP_POLICY_FILE_V2, doc)
     strategy = hil.SdpStrategy(policy_dir=str(tmp_path))
     assert strategy.provenance is None
     strategy.bind_scenario("ems-sdp", hil.SCENARIOS["ems-sdp"])
     assert strategy.provenance is not None
-    assert strategy.provenance["path"] == str(tmp_path / hil.SDP_POLICY_FILE)
+    assert strategy.provenance["path"] == str(tmp_path / hil.SDP_POLICY_FILE_V2)
     import hashlib
     assert strategy.provenance["policy_sha256"] == hashlib.sha256(
         json.dumps(doc["policy"], sort_keys=True).encode("utf-8")).hexdigest()
@@ -5910,7 +5933,7 @@ def test_sdp_provenance_records_the_demand_map(tmp_path):
     doc = _minimal_sdp_policy_doc(
         normalization={"p_dem_min_w": 0.0, "p_dem_max_w": 25.0,
                        "demand_map_source": src})
-    _write_sdp_policy(tmp_path / hil.SDP_POLICY_FILE, doc)
+    _write_sdp_policy(tmp_path / hil.SDP_POLICY_FILE_V2, doc)
     strategy = hil.SdpStrategy(policy_dir=str(tmp_path))
     strategy.bind_scenario("ems-sdp", hil.SCENARIOS["ems-sdp"])
     prov = strategy.provenance
@@ -5923,7 +5946,7 @@ def test_sdp_provenance_demand_map_source_is_none_on_an_older_artifact(tmp_path)
     """`demand_map_source` is prose the solver only started recording later;
     an artifact without it must load and record None, not raise."""
     strategy = hil.SdpStrategy(policy_dir=str(tmp_path))
-    _write_sdp_policy(tmp_path / hil.SDP_POLICY_FILE, _minimal_sdp_policy_doc())
+    _write_sdp_policy(tmp_path / hil.SDP_POLICY_FILE_V2, _minimal_sdp_policy_doc())
     strategy.bind_scenario("ems-sdp", hil.SCENARIOS["ems-sdp"])
     assert strategy.provenance["demand_map_source"] is None
     assert strategy.provenance["p_dem_min_w"] == pytest.approx(-1.0)
@@ -5933,7 +5956,7 @@ def test_shipped_sdp_policy_carries_a_demand_map_source():
     """The SHIPPED v2 artifact records its own map in words — the field the
     provenance block above exists to surface."""
     pol = hil.load_sdp_policy(os.path.join(hil.SDP_POLICY_DIR,
-                                           hil.SDP_POLICY_FILE))
+                                           hil.SDP_POLICY_FILE_V2))
     assert pol["p_dem_max_w"] == pytest.approx(25.0)
     assert pol["demand_map_source"]
 
@@ -5955,7 +5978,10 @@ def test_main_ems_sdp_run_records_sdp_policy_block_in_meta_config(tmp_path):
         meta = json.load(fh)
     block = meta["config"].get("sdp_policy")
     assert block is not None
-    assert block["path"] == os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE)
+    # `ems-sdp` is the BENCHMARK leg and plays the CALIBRATED v3 artifact
+    # (2026-09-01 charge-economics ruling); the sidecar must name that file, not
+    # the frozen v2 demonstration artifact.
+    assert block["path"] == os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V3)
     assert len(block["file_sha256"]) == 64
     assert len(block["policy_sha256"]) == 64
     assert block["n_soc"] > 0 and block["n_bins"] > 0
@@ -6444,6 +6470,426 @@ def test_sdp_auto_resets_on_t_rewind(tmp_path):
     assert strategy.soc_ref == pytest.approx(0.62)
 
 
+# ── sdp_soc_ref_offset: the SoC-axis placement binding (SDP-interior round) ──
+#
+# WHY THIS BLOCK EXISTS.  The offset decides WHICH BRANCH of a bang-bang policy
+# a run starts on, and it leaves NO trace in the CSV of its own -- a run bound
+# with the wrong offset looks exactly like a correct run of a different
+# scenario.  So the binding, its survival across reset(), and every refusal are
+# pinned here rather than inferred from a campaign.
+
+def test_sdp_soc_ref_offset_defaults_to_zero_and_captures_soc0(tmp_path):
+    """The default reproduces the pre-2026-08-31 capture exactly."""
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    assert strategy.soc_ref_offset == 0.0
+    fb = {"t": hil.EMS_RUN_ENTRY_S, "v_profile": 1.0, "soc": 0.70,
+          "V_bus": 16.0, "I_fc": 0.0, "I_batt": 0.0}
+    strategy(hil.EMS_RUN_ENTRY_S, fb)
+    assert strategy.soc_ref == pytest.approx(0.70)
+    assert strategy.soc_relative(0.70) == pytest.approx(
+        strategy.policy["soc_target"])
+
+
+def test_sdp_soc_ref_offset_positive_starts_above_the_target_node(tmp_path):
+    """soc_ref = soc0 - delta, so the FIRST lookup lands at target + delta."""
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    strategy.set_soc_ref_offset(0.02)
+    fb = {"t": hil.EMS_RUN_ENTRY_S, "v_profile": 1.0, "soc": 0.70,
+          "V_bus": 16.0, "I_fc": 0.0, "I_batt": 0.0}
+    strategy(hil.EMS_RUN_ENTRY_S, fb)
+    assert strategy.soc_ref == pytest.approx(0.68)
+    assert strategy.soc_relative(0.70) == pytest.approx(
+        strategy.policy["soc_target"] + 0.02)
+    # ... and the mapping stays a pure TRANSLATION: a later SoC is shifted by
+    # the same constant, not rescaled.
+    assert strategy.soc_relative(0.69) == pytest.approx(
+        strategy.policy["soc_target"] + 0.01)
+
+
+def test_sdp_soc_ref_offset_negative_starts_below_the_target_node(tmp_path):
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    strategy.set_soc_ref_offset(-0.005)
+    fb = {"t": hil.EMS_RUN_ENTRY_S, "v_profile": 1.0, "soc": 0.70,
+          "V_bus": 16.0, "I_fc": 0.0, "I_batt": 0.0}
+    strategy(hil.EMS_RUN_ENTRY_S, fb)
+    assert strategy.soc_ref == pytest.approx(0.705)
+    assert strategy.soc_relative(0.70) == pytest.approx(
+        strategy.policy["soc_target"] - 0.005)
+
+
+def test_sdp_soc_ref_offset_survives_reset_because_it_is_a_binding(tmp_path):
+    """A BINDING, like the loaded artifact -- not run state.  bind_scenario()
+    calls reset() BEFORE setting it, and __call__ auto-resets on a rewind, so a
+    reset that cleared the offset would silently return a second run in one
+    process to the un-offset behaviour."""
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    strategy.set_soc_ref_offset(0.013)
+    strategy.reset()
+    assert strategy.soc_ref_offset == pytest.approx(0.013)
+    fb = {"t": 10.0, "v_profile": 1.0, "soc": 0.70, "V_bus": 1.0,
+          "I_fc": 0.0, "I_batt": 0.0}
+    strategy(10.0, fb)
+    assert strategy.soc_ref == pytest.approx(0.687)
+    strategy(5.0, dict(fb, t=5.0, soc=0.62))     # rewind -> auto reset
+    assert strategy.soc_ref == pytest.approx(0.607)
+
+
+def test_sdp_soc_ref_offset_refuses_beyond_the_grid_half_span(tmp_path):
+    """REFUSED, not clamped: past the usable half-span the first decision is
+    clamped onto a grid EDGE by soc_relative() and the run does not start at
+    the requested offset at all -- which is invisible in the trace."""
+    strategy = _sdp_strategy_with_policy(tmp_path)   # target 0.60 on [0.55, 0.65]
+    assert strategy.set_soc_ref_offset(0.05) == pytest.approx(0.05)
+    assert strategy.set_soc_ref_offset(-0.05) == pytest.approx(-0.05)
+    with pytest.raises(ValueError, match="usable half-span"):
+        strategy.set_soc_ref_offset(0.0501)
+    with pytest.raises(ValueError, match="usable half-span"):
+        strategy.set_soc_ref_offset(-0.0501)
+
+
+def test_sdp_soc_ref_offset_limit_follows_an_off_centre_target(tmp_path):
+    """The bound is min(target - grid_min, grid_max - target), which equals
+    half the span only for a centred target -- the shipped artifact's case."""
+    doc = _minimal_sdp_policy_doc()
+    doc["soc"] = {"target": 0.56, "grid_min": 0.55, "grid_max": 0.65,
+                  "grid": [0.55, 0.60, 0.65]}
+    strategy = _sdp_strategy_with_policy(tmp_path, doc=doc)
+    assert strategy.set_soc_ref_offset(0.01) == pytest.approx(0.01)
+    with pytest.raises(ValueError, match="usable half-span"):
+        strategy.set_soc_ref_offset(0.02)
+
+
+def test_sdp_soc_ref_offset_refuses_non_finite_and_non_numeric(tmp_path):
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    with pytest.raises(ValueError, match="finite"):
+        strategy.set_soc_ref_offset(float("nan"))
+    with pytest.raises(ValueError, match="finite"):
+        strategy.set_soc_ref_offset(float("inf"))
+    with pytest.raises(ValueError, match="must be a number"):
+        strategy.set_soc_ref_offset("0.01")
+    # ... and the binding is untouched by a refusal.
+    assert strategy.soc_ref_offset == 0.0
+
+
+def test_sdp_bind_scenario_reads_the_scenario_key(tmp_path):
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    strategy.bind_scenario("ems-sdp-cross", {"sdp_soc_ref_offset": 0.0025})
+    assert strategy.soc_ref_offset == pytest.approx(0.0025)
+    assert strategy.provenance["soc_ref_offset"] == pytest.approx(0.0025)
+
+
+def test_sdp_bind_scenario_without_the_key_restores_zero(tmp_path):
+    """One EMS_STRATEGIES instance serves every scenario in a process, so a
+    binding left over from a previous bind must not leak into the next."""
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    strategy.bind_scenario("ems-sdp-cross", {"sdp_soc_ref_offset": 0.0025})
+    strategy.bind_scenario("ems-sdp", {})
+    assert strategy.soc_ref_offset == 0.0
+    assert strategy.provenance["soc_ref_offset"] == 0.0
+
+
+def test_sdp_bind_scenario_refuses_an_out_of_range_scenario_key(tmp_path):
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    with pytest.raises(ValueError, match="usable half-span"):
+        strategy.bind_scenario("bogus", {"sdp_soc_ref_offset": 0.5})
+
+
+def test_sdp_summary_line_reports_the_offset(tmp_path):
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    strategy.set_soc_ref_offset(0.013)
+    fb = {"t": hil.EMS_RUN_ENTRY_S, "v_profile": 1.0, "soc": 0.70,
+          "V_bus": 1.0, "I_fc": 0.0, "I_batt": 0.0}
+    strategy(hil.EMS_RUN_ENTRY_S, fb)
+    assert "offset +0.0130" in strategy.summary_line()
+
+
+def test_sdp_soc_ref_offset_key_only_on_sdp_strategy_scenarios():
+    """The registry-wide invariant the import-time assert enforces: the key is
+    read ONLY by SdpStrategy.bind_scenario(), so on any other scenario it would
+    be a stimulus the registry claims and the run does not have.
+
+    ROLE-BASED since 2026-09-01 — the guard tests membership in
+    SDP_STRATEGY_NAMES, not equality with one name, so a second (or third) SDP
+    artifact cannot leave it silently narrow."""
+    for name, meta in hil.SCENARIOS.items():
+        if "sdp_soc_ref_offset" in meta:
+            assert meta.get("ems") in hil.SDP_STRATEGY_NAMES, name
+
+
+# ── The three SDP-interior scenarios: walk-pinned registry constants ─────────
+#
+# Every number here comes from the offline walks recorded in the SCENARIOS
+# entries.  They are pinned LITERALLY because a scenario whose offset or load
+# drifted would still run, still be fault-free, and simply stop exercising the
+# branch it exists for -- exactly the class of silent coverage loss the wheel
+# slot-count lesson (CLAUDE.md fw v8) is about.
+
+# ── Strategy roles + the two-artifact split (2026-09-01) ────────────────────
+
+def test_ems_strategy_meta_covers_every_registered_strategy():
+    """The property a single registry would have given for free — pinned here
+    too, because the import assert only runs when the module is imported by a
+    process that would otherwise have crashed later."""
+    assert set(hil.EMS_STRATEGY_META) == set(hil.EMS_STRATEGIES)
+    for name, meta in hil.EMS_STRATEGY_META.items():
+        assert isinstance(meta["frontier_eligible"], bool), name
+
+
+def test_frontier_roles_are_the_ruled_ones():
+    """The ruling (OVERNIGHT_LOG.md, SDP charge-economics adjudication): the
+    frontier is soc-band / dp-replay / sdp-v3, and sdp-v2 is a DEMONSTRATION."""
+    eligible = {n for n in hil.EMS_STRATEGIES if hil.ems_frontier_eligible(n)}
+    assert eligible == {"soc-band", "dp-replay", "sdp-v3"}
+    assert hil.ems_frontier_eligible("sdp-v2") is False
+    # An unregistered name is NOT eligible — admitting an unknown strategy to a
+    # ranking by default is the failure the table exists to prevent.
+    assert hil.ems_frontier_eligible("no-such-strategy") is False
+
+
+def test_sdp_instances_bind_their_own_artifacts_and_certificate_flags():
+    v2, v3 = hil.EMS_STRATEGIES["sdp-v2"], hil.EMS_STRATEGIES["sdp-v3"]
+    assert (v2.name, v2.policy_file) == ("sdp-v2", hil.SDP_POLICY_FILE_V2)
+    assert (v3.name, v3.policy_file) == ("sdp-v3", hil.SDP_POLICY_FILE_V3)
+    # The frontier-scored leg demands the certificate; the demonstration leg
+    # must not claim it.
+    assert v3.require_calibrated_benchmark is True
+    assert v2.require_calibrated_benchmark is False
+    assert hil.SDP_STRATEGY_NAMES == frozenset({"sdp-v2", "sdp-v3"})
+
+
+def test_shipped_v3_artifact_carries_the_calibrated_benchmark_certificate():
+    """The QUADRUPLE, on the real shipped file: lever alpha, inside BOTH
+    admission windows, and the zero charge map is ENDOGENOUS (not masked)."""
+    pol = hil.load_sdp_policy(
+        os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V3), "sdp-v3")
+    hil.sdp_assert_calibrated_benchmark(pol, "sdp-v3")     # must not raise
+    raw = pol["raw"]
+    assert raw["alpha"]["mode"] == "lever"
+    assert raw["alpha"]["admission"]["in_window_model"] is True
+    assert raw["alpha"]["admission"]["in_window_measured"] is True
+    assert raw["actions"]["forbid_charge_all"] is False
+    # ENDOGENOUS rejection: zero charge cells in the whole 101 x 25 table.
+    assert sum(1 for row in pol["charge_goal"] for v in row if v > 0.0) == 0
+    # The DECISION LAW's identity, as quoted in the comments and the docs.
+    assert pol["policy_sha256"] == (
+        "0443febf240a9f5c207c42595f5841d2842496ac786c4d5342f1f8dfe33c61a2")
+
+
+def test_shipped_v2_artifact_would_FAIL_the_benchmark_certificate():
+    """The tripwire that would have caught v2: it is the artifact the ruling
+    disqualified, so binding it to a frontier-scored strategy must RAISE."""
+    pol = hil.load_sdp_policy(
+        os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V2), "sdp-v2")
+    with pytest.raises(ValueError, match="CALIBRATED BENCHMARK"):
+        hil.sdp_assert_calibrated_benchmark(pol, "sdp-v2")
+    # ... and it is BYTE-FROZEN as the demonstration artifact: its charge map
+    # still has cells for ems-sdp-cross / ems-sdp-braking to actuate.
+    assert sum(1 for row in pol["charge_goal"] for v in row if v > 0.0) > 0
+    assert pol["policy_sha256"] == (
+        "740c802e99dde3f53fad74d1844481f1030f11345a7ba8c9269014bbe2280087")
+
+
+@pytest.mark.parametrize("broken", [
+    {"alpha": {"mode": "marginal"}},
+    {"alpha": {"admission": {"in_window_model": False}}},
+    {"alpha": {"admission": {"in_window_measured": False}}},
+    {"actions": {"forbid_charge_all": True}},
+])
+def test_benchmark_certificate_rejects_each_broken_leg(broken):
+    """Each arm of the quadruple is load-bearing on its own."""
+    raw = {"alpha": {"mode": "lever",
+                     "admission": {"in_window_model": True,
+                                   "in_window_measured": True}},
+           "actions": {"forbid_charge_all": False}}
+    for key, patch in broken.items():
+        for sub, val in patch.items():
+            if isinstance(val, dict):
+                raw[key][sub].update(val)
+            else:
+                raw[key][sub] = val
+    with pytest.raises(ValueError, match="CALIBRATED BENCHMARK"):
+        hil.sdp_assert_calibrated_benchmark({"path": "x", "raw": raw}, "sdp-v3")
+
+
+def test_v2_and_v3_share_maps_are_identical_over_the_S1_soc_rows():
+    """THE WALK-TRANSFER VERIFICATION for `ems-ftp75-sdp` (S1).
+
+    S1's offline walk was measured against v2 and was NOT re-run when the
+    scenario was rebound to v3 -- because the two baked share maps agree
+    exactly over every SoC row the trajectory visits.  S1 starts at
+    soc_rel = target + 0.013 (row 63 on the shipped 101-node, 1e-3 grid) and
+    falls dSoC = -0.0187 to ~row 44, so rows 44..63 are what matters; the two
+    artifacts differ in the share on rows 1-2 ONLY.
+
+    The row span is asserted with margin (30..80) rather than at 44/63: the
+    claim this test defends is "the differing rows are nowhere near the
+    trajectory", and pinning the exact endpoints would make it fail on a
+    harmless offset retune while proving nothing extra."""
+    v2 = hil.load_sdp_policy(
+        os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V2), "sdp-v2")
+    v3 = hil.load_sdp_policy(
+        os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V3), "sdp-v3")
+    assert v2["n_soc"] == v3["n_soc"] and v2["n_bins"] == v3["n_bins"]
+    differing = [i for i in range(v2["n_soc"])
+                 if v2["share"][i] != v3["share"][i]]
+    assert differing == [1, 2], differing
+    # The S1 span, derived from the scenario's own constants rather than
+    # retyped, so a retune of either moves this test with it.
+    grid = v3["soc_grid"]
+    top = v3["soc_target"] + hil.FTP75_SDP_SOC_REF_OFFSET
+    bot = top - 0.0187                       # the walk's dSoC over the cycle
+    i_top = min(range(len(grid)), key=lambda i: abs(grid[i] - top))
+    i_bot = min(range(len(grid)), key=lambda i: abs(grid[i] - bot))
+    assert 30 <= i_bot <= i_top <= 80
+    assert all(i not in differing for i in range(i_bot, i_top + 1))
+    # CHARGE: v2's cells live in demand bins 0-5 only, and S1's walk never
+    # falls below bin 9 in Run -- so v3's zero map removes cells the trajectory
+    # could not reach either way.
+    v2_charge_bins = {j for i in range(v2["n_soc"]) for j in range(v2["n_bins"])
+                      if v2["charge_goal"][i][j] > 0.0}
+    assert v2_charge_bins and max(v2_charge_bins) <= 5
+    assert not any(v > 0.0 for row in v3["charge_goal"] for v in row)
+
+
+def test_ems_ftp75_sdp_registry_shape():
+    meta = hil.SCENARIOS["ems-ftp75-sdp"]
+    # Rebound to the CALIBRATED artifact 2026-09-01. The v2-derived offline walk
+    # transfers verbatim: the two share maps are identical at every SoC row from
+    # 3 up, and this scenario spans rows ~44-63 (see the row-diff test below).
+    assert meta["ems"] == "sdp-v3"
+    assert meta["sdp_soc_ref_offset"] == pytest.approx(0.013)
+    assert hil.FTP75_SDP_SOC_REF_OFFSET == pytest.approx(0.013)
+    # SHARED STIMULUS: the same profile LIST OBJECT as the other two FTP-75
+    # scenarios, so the three cannot drift apart.
+    assert meta["ems_v_profile"] is hil.SCENARIOS["ems-ftp75-5050"]["ems_v_profile"]
+    assert meta["ems_run_exit_s"] == pytest.approx(hil.FTP75_RUN_EXIT_S)
+    assert meta["duration_s"] == pytest.approx(hil.FTP75_DURATION_S)
+
+
+def test_ems_ftp75_sdp_preload_is_de_rated_below_its_siblings():
+    """0.45 A, not 0.65 A, and the reason is the FUEL-CELL branch: at 0.65 the
+    governed peak I_fc = I_tot - SHARE_MINORITY_I_MIN_A is 1.313 A (model) /
+    1.355 A (measured), i.e. ~3 % under LIMIT_I_FC_MAX -- an OC_FC that would
+    truncate the run at exactly the post-flip half it exists to observe."""
+    assert hil.FTP75_SDP_PRELOAD_A == pytest.approx(0.45)
+    assert hil.FTP75_SDP_PRELOAD_A < hil.FTP75_PRELOAD_A
+    assert hil.SCENARIOS["ems-ftp75-sdp"]["aux_preload_a"] == pytest.approx(
+        hil.FTP75_SDP_PRELOAD_A)
+    # The walk's model peak source total at this preload, and the governed FC
+    # branch peak that follows from it, with double-digit margin on 1.4 A.
+    i_tot_peak_model = 1.4123
+    i_fc_peak = i_tot_peak_model - 0.30       # SHARE_MINORITY_I_MIN_A
+    assert i_fc_peak < 0.85 * 1.4
+
+
+def test_ems_sdp_cross_registry_shape():
+    meta = hil.SCENARIOS["ems-sdp-cross"]
+    assert meta["ems"] == "sdp-v2"
+    assert meta["sdp_soc_ref_offset"] == pytest.approx(hil.SDP_CROSS_SOC_REF_OFFSET)
+    assert hil.SDP_CROSS_SOC_REF_OFFSET == pytest.approx(0.0025)
+    assert meta["duration_s"] == pytest.approx(200.0)
+    assert meta["ems_run_exit_s"] == pytest.approx(196.0)
+    # No preload: the low cruise must stay inside charge-admissible bin 5.
+    assert "aux_preload_a" not in meta
+    # The two cruise levels, and the profile's shape around them.
+    prof = meta["ems_v_profile"]
+    assert prof[0] == (0.0, 0.0)
+    assert hil.piecewise(prof, 40.0) == pytest.approx(hil.SDP_CROSS_CRUISE_HI_MPS)
+    assert hil.piecewise(prof, 120.0) == pytest.approx(hil.SDP_CROSS_CRUISE_LO_MPS)
+
+
+def test_ems_sdp_cross_low_cruise_demand_is_charge_admissible():
+    """The whole scenario turns on the low cruise landing in a bin the solver
+    allows charging in (bins 0-5, P_dem < 6.0 W).  Walk: 0.337 A of source
+    total on a ~15.9 V bus = 5.37 W, 11 % under the bin-6 edge."""
+    v = hil.SDP_CROSS_CRUISE_LO_MPS
+    p_mech = (hil.F_COULOMB + hil.B_EFF * v) * v
+    v_bus = hil.V_BUS_DROOP_V0
+    for _ in range(4):
+        i_tot = p_mech / (hil.ETA_BOOST * v_bus) + hil.I_AUX_A
+        v_bus = hil.V_BUS_DROOP_V0 - hil.K_DROOP_BUS_SHARED * i_tot
+    p_dem = v_bus * i_tot
+    assert p_dem == pytest.approx(5.37, abs=0.15)
+    assert p_dem < 6.0
+
+
+def test_ems_sdp_braking_registry_shape():
+    meta = hil.SCENARIOS["ems-sdp-braking"]
+    assert meta["ems"] == "sdp-v2"
+    assert meta["sdp_soc_ref_offset"] == pytest.approx(-0.005)
+    assert hil.SDP_BRAKE_SOC_REF_OFFSET == pytest.approx(-0.005)
+    assert meta["duration_s"] == pytest.approx(134.0)
+    assert meta["ems_run_exit_s"] == pytest.approx(126.0)
+    assert "aux_preload_a" not in meta
+    assert meta["chg_i_ceiling_a"] == pytest.approx(0.7)
+
+
+def test_ems_sdp_braking_profile_is_built_from_its_constants():
+    """The profile is GENERATED from the SDP_BRAKE_* constants, and the
+    generator asserts that its last low plateau ends exactly at the Run exit --
+    so MODE_SAFE lands on a flat segment and no charge window is cut mid-dwell
+    by the handback."""
+    prof = hil.SCENARIOS["ems-sdp-braking"]["ems_v_profile"]
+    assert prof[-1] == (hil.SDP_BRAKE_DURATION_S, 0.0)
+    assert hil.piecewise(prof, hil.SDP_BRAKE_RUN_EXIT_S) == pytest.approx(
+        hil.SDP_BRAKE_CRUISE_LO_MPS)
+    # Four full braking cycles, each a hi hold -> decel -> lo hold (-> accel).
+    hi = sum(1 for _, v in prof if v == pytest.approx(hil.SDP_BRAKE_CRUISE_HI_MPS))
+    lo = sum(1 for _, v in prof if v == pytest.approx(hil.SDP_BRAKE_CRUISE_LO_MPS))
+    assert hil.SDP_BRAKE_CYCLES == 4
+    # One waypoint at the top of the opening ramp, then one per cycle at the
+    # end of each hi hold, less the accel the last cycle does not have.
+    assert hi == 2 * hil.SDP_BRAKE_CYCLES
+    assert lo == 2 * hil.SDP_BRAKE_CYCLES
+
+
+def test_ems_sdp_braking_low_plateau_outlasts_the_charge_dwell():
+    """A plateau shorter than SDP_CHG_MIN_DWELL_S plus the Ag105's settle and
+    ramp could not produce a measurable charge window at all."""
+    assert hil.SDP_BRAKE_LO_HOLD_S > (hil.SDP_CHG_MIN_DWELL_S
+                                      + hil.AG105_SETTLE_S + hil.AG105_TAU_S)
+
+
+def test_ems_sdp_braking_accel_rate_is_a_current_budget_constant():
+    """SDP_BRAKE_ACCEL_S and SDP_BRAKE_CHG_CEILING_A are BOTH sized against the
+    one-decision charge overhang into the acceleration out of a low plateau:
+    the cruise guard withdraws the latch only at the NEXT decision, so the
+    accel current adds to the charger's on the single-source FC channel.  At
+    0.40 m/s^2 the walk's worst case is 1.379 A -- 1.5 % under LIMIT_I_FC_MAX.
+    """
+    accel_rate = ((hil.SDP_BRAKE_CRUISE_HI_MPS - hil.SDP_BRAKE_CRUISE_LO_MPS)
+                  / hil.SDP_BRAKE_ACCEL_S)
+    assert accel_rate == pytest.approx(0.20)
+    assert hil.SDP_BRAKE_CHG_CEILING_A == pytest.approx(0.7)
+    # The walk's peak, re-derived from the two constants: one decision period
+    # into the ramp, plus the charger, must clear LIMIT_I_FC_MAX by >= 10 %.
+    v = hil.SDP_BRAKE_CRUISE_LO_MPS + accel_rate * 1.0
+    p_mech = (hil.M_EFF * accel_rate + hil.F_COULOMB + hil.B_EFF * v) * v
+    v_bus = hil.V_BUS_DROOP_V0
+    for _ in range(4):
+        i_tot = p_mech / (hil.ETA_BOOST * v_bus) + hil.I_AUX_A
+        v_bus = hil.V_BUS_DROOP_V0 - hil.K_DROOP_BUS_SHARED * i_tot
+    assert i_tot + hil.SDP_BRAKE_CHG_CEILING_A < 0.90 * 1.4
+
+
+def test_sdp_interior_scenarios_are_sdp_driven_and_ems_gated():
+    """All three are EMS-driven, so build_plan() skips them under --pi-live
+    through the existing "ems" metadata rule -- no new code path.
+
+    ROLES SPLIT 2026-09-01: S1 (ems-ftp75-sdp) is a pure SHARE-axis test and
+    moved to the calibrated `sdp-v3`; S2/S3 exist to actuate the policy's
+    CHARGE threshold and must stay on `sdp-v2`, whose artifact still HAS charge
+    cells -- on v3 they would be testing a mechanism the policy declined."""
+    for name in ("ems-ftp75-sdp", "ems-sdp-cross", "ems-sdp-braking"):
+        meta = hil.SCENARIOS[name]
+        assert meta["ems"] in hil.SDP_STRATEGY_NAMES
+        assert meta["electrical"] == "any"
+        assert "pi_timeline" not in meta
+    assert hil.SCENARIOS["ems-ftp75-sdp"]["ems"] == "sdp-v3"
+    assert hil.SCENARIOS["ems-sdp-cross"]["ems"] == "sdp-v2"
+    assert hil.SCENARIOS["ems-sdp-braking"]["ems"] == "sdp-v2"
+
+
 # ── Mode emission (item 15) ──────────────────────────────────────────────
 
 def test_sdp_mode_emission_hybrid_at_start_safe_at_run_exit(tmp_path):
@@ -6576,7 +7022,8 @@ def test_ems_sdp_scenario_shares_ems_soc_band_stimulus_by_reference():
     assert sdp["ems_v_profile"] is soc_band["ems_v_profile"]
     assert sdp["duration_s"] == pytest.approx(soc_band["duration_s"])
     assert sdp["chg_i_ceiling_a"] == pytest.approx(soc_band["chg_i_ceiling_a"])
-    assert sdp["ems"] == "sdp-v2"
+    # THE BENCHMARK LEG -> the CALIBRATED artifact (2026-09-01).
+    assert sdp["ems"] == "sdp-v3"
     assert sdp["electrical"] == "any"
 
 

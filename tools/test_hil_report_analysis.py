@@ -1651,3 +1651,58 @@ def test_end_to_end_synthetic_report_full_artifact_set_and_idempotent(
     # No stray parent-level copies were created by the second pass.
     parent_csvs = list(d.glob("hil_*.csv"))
     assert parent_csvs == []
+
+
+# ---------------------------------------------------------------------------
+# EMS strategy ROLE labelling (2026-09-01)
+# ---------------------------------------------------------------------------
+
+def _analysis_stub(**over):
+    a = {"folder": "scenario_ems-sdp_hifi", "kind": "scenario",
+         "electrical_mode": "hifi", "meta_mode": "scenario_hifi",
+         "meta_status": "completed", "rows": 10, "duration_s": 1.0,
+         "obs_coverage": 1.0, "obs_frames": 10, "final_state": 2,
+         "fault_union": 0, "fault_names": [], "grace_s": 2.0,
+         "fault_union_post_grace": 0, "fault_names_post_grace": [],
+         "suite_passed": True, "suite_checks": [],
+         "figures": [], "skipped_figures": [], "warnings": []}
+    a.update(over)
+    return a
+
+
+def test_ems_strategy_role_reads_the_sim_registry():
+    """The role is LOOKED UP, never copied -- a second table here could let a
+    demonstration run be labelled a frontier one after somebody moved the role
+    in hil_plant_sim and not here."""
+    assert hra.ems_strategy_role("sdp-v3") == "frontier"
+    assert hra.ems_strategy_role("soc-band") == "frontier"
+    assert hra.ems_strategy_role("dp-replay") == "frontier"
+    assert hra.ems_strategy_role("sdp-v2") == "demonstration"
+    assert hra.ems_strategy_role("hold-5050") == "demonstration"
+    # No strategy at all, and a strategy this checkout does not know: NO label
+    # rather than an assertion into either camp.
+    assert hra.ems_strategy_role(None) is None
+    assert hra.ems_strategy_role("") is None
+    assert hra.ems_strategy_role("strategy-from-an-older-checkout") is None
+
+
+def test_render_run_markdown_labels_a_demonstration_run():
+    md = hra.render_run_markdown(
+        _analysis_stub(folder="scenario_ems-sdp-cross_hifi",
+                       ems_strategy="sdp-v2", ems_role="demonstration"))
+    assert "- EMS strategy: `sdp-v2` (demonstration)" in md
+    assert "DYNAMICS DEMONSTRATION" in md
+    assert "frontier_eligible: False" in md
+
+
+def test_render_run_markdown_labels_a_frontier_run_without_the_banner():
+    md = hra.render_run_markdown(
+        _analysis_stub(ems_strategy="sdp-v3", ems_role="frontier"))
+    assert "- EMS strategy: `sdp-v3` (frontier)" in md
+    assert "DYNAMICS DEMONSTRATION" not in md
+
+
+def test_render_run_markdown_omits_the_line_for_a_non_ems_run():
+    md = hra.render_run_markdown(_analysis_stub(folder="scenario_steady_hifi"))
+    assert "EMS strategy" not in md
+    assert "DYNAMICS DEMONSTRATION" not in md

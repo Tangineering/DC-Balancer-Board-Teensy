@@ -2833,7 +2833,15 @@ class DpReplayStrategy:
 ems_dp_replay = DpReplayStrategy()
 
 
-# ── sdp-v2: the ONLINE stochastic-DP policy (causal, state-feedback) ────────
+# ── sdp-v2 / sdp-v3: the ONLINE stochastic-DP policy (causal, state-feedback)
+#
+# ⚠️ TWO REGISTERED INSTANCES OF ONE CLASS since 2026-09-01.  Everything below
+# describes the MECHANISM and is true of both; what differs is the baked
+# artifact and the role — `sdp-v3` is the calibrated BENCHMARK (frontier-scored)
+# and `sdp-v2` is the byte-frozen DYNAMICS DEMONSTRATION.  The block at
+# SDP_POLICY_FILE_V2/V3 has that split, and EMS_STRATEGY_META carries the roles.
+# Where the prose below says "sdp-v2" it is quoting a v2-era measurement; the
+# per-artifact differences are called out at each such site.
 #
 # ⚠️ SIM-ONLY STRATEGY — NOT PORTABLE TO THE REAL PI AS WRITTEN, for exactly
 # `soc-band`'s reason: it closes on `fb["soc"]`, which is PLANT TRUTH from
@@ -3010,7 +3018,43 @@ ems_dp_replay = DpReplayStrategy()
 #      keeps it, `clamped_share` counts it, the exit summary prints both, and
 #      the `cmd_share_sp_raw` CSV column carries it per tick.
 SDP_POLICY_DIR = os.path.join(REPO_ROOT, "tools", "sdp_policies")
-SDP_POLICY_FILE = "sdp_policy_v2.json"
+# ── TWO ARTIFACTS, TWO ROLES (2026-09-01, the charge-economics ruling) ──────
+# There is no longer ONE shipped SDP artifact, so there is no longer a module
+# global naming it: each SdpStrategy instance is PARAMETERIZED by its file, and
+# EMS_STRATEGY_META records which role that file plays.  The two roles are not
+# interchangeable and the difference is not cosmetic:
+#
+#   sdp_policy_v3.json  THE CALIBRATED BENCHMARK, `sdp-v3`, frontier_eligible.
+#     alpha re-derived by two-sided lever calibration
+#     (alpha = (1-gamma)/sqrt(L_share * L_chg) = 0.1629624 from the solver's own
+#     model constants), which makes the Ag105 charge action UNPROFITABLE AT THIS
+#     RIG'S SCALE and therefore rejects it ENDOGENOUSLY: the baked
+#     `policy.charge_goal` is ZERO in every one of its 101 x 25 cells, and
+#     `actions.forbid_charge_all` is FALSE — nothing masked the action, the
+#     optimizer declined it.  Charging returns to the policy on its own if the
+#     charger's measured lever ever exceeds (1-gamma)/alpha = 0.30682 SoC/g
+#     (the physics-anchored revisit condition, e.g. post-R1 / fw v24).
+#     POLICY-BLOCK sha256 0443febf… (recipe below; the FILE sha moves on every
+#     regeneration and is recorded per run in the CSV meta sidecar instead).
+#     ⚠️ The share map is IDENTICAL to v2's at every SoC row from 3 upward —
+#     the two artifacts differ in the share only on rows 1-2 (30 cells), which
+#     no shipped scenario's trajectory reaches.  That is why every v2-derived
+#     offline walk transfers to a v3 leg verbatim; see the ems-ftp75-sdp entry.
+#
+#   sdp_policy_v2.json  THE DYNAMICS DEMONSTRATION, `sdp-v2`, NOT
+#     frontier_eligible.  BYTE-FROZEN: it is kept exactly as shipped so the
+#     `ems-sdp-cross` / `ems-sdp-braking` scenarios — which exist to put the
+#     policy's CHARGE threshold on the wire — keep a policy that has charge
+#     cells to command.  Its alpha (0.2569444, the "marginal" scaling) prices
+#     SoC at a shadow price of 5.139 g/SoC, i.e. an admission threshold of
+#     0.1946 SoC/g that the Ag105's 0.2364 clears — so it charges, and the
+#     charging is measurably LOSS-MAKING against the campaign-measured 0.41
+#     SoC/g share lever.  A run on this artifact demonstrates the mechanism; it
+#     does NOT rank as an energy-management result, which is exactly what
+#     `frontier_eligible: False` says and what run_hil_suite.py's demonstration
+#     banner repeats to the reader.
+SDP_POLICY_FILE_V2 = "sdp_policy_v2.json"
+SDP_POLICY_FILE_V3 = "sdp_policy_v3.json"
 SDP_POLICY_SCHEMA = "sdp-policy-v1"
 # Hand the firmware back MODE_SAFE at the same time `soc-band` does.  DERIVED,
 # not a literal: `ems-sdp` shares `ems-soc-band`'s profile object, so its
@@ -3088,8 +3132,23 @@ SDP_DEFAULT_DECISION_DT_S = 1.0
 # re-latching at 57.04.  In closed loop the charger stays powered across an
 # expiry and the subtraction holds.  Take ~15000-16000 ticks as the prediction
 # and the window COUNT as 1-2; the first campaign after this lands is what
-# turns either into a fact.  (The suite's `sdp_charge_window_opened` floor of
-# 4000 ticks is deliberately valid in BOTH regimes — see its derivation.)
+# turns either into a fact.  (⚠️ The suite check this note used to cite,
+# `sdp_charge_window_opened`, was DELETED when `ems-sdp` was rebound to the
+# `sdp-v3` artifact — that policy has no charge cell to command, so the tick
+# floor now lives on the two scenarios that still play a charging artifact:
+# `sdpx_charge_cycled` (ems-sdp-cross) and `sdpb_charge_in_low_windows`
+# (ems-sdp-braking), both in run_hil_suite.py.)
+#
+# ⚠️ THE LATCH COUNTER IS NOT A WINDOW COUNTER (ledger note, campaign
+# 20260901_000816).  `chg_holds` in the exit summary counts LATCHES — every
+# rising-edge admission, including one taken on the tick a previous dwell
+# expired.  The BOARD's FC_CHARGE_ENABLE window count is what the switch word
+# shows, and a hold that expires and immediately re-latches on the corrected
+# demand is 2 latches and ONE continuous window.  That is the mechanism working,
+# not a discrepancy: campaign 20260901_000816 measured 2 latches over 15086
+# continuous FC_CHARGE ticks against 9 windows / 8652 ticks without the block.
+# Never quote `chg_holds` as a window count, and never derive a chatter rate
+# from it; read the switch trace for that.
 #
 # 8.0 s = 3.98x the MEASURED 2.0125 s chatter cycle, so a hold cannot be a
 # longer version of the same hunt, and 47 % of the ~17 s window, so the window
@@ -3110,7 +3169,7 @@ SDP_CHG_ABORT_FAULT_MASK = 0x8000
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# THE ARTIFACT CONTRACT — tools/sdp_policies/<SDP_POLICY_FILE>
+# THE ARTIFACT CONTRACT — tools/sdp_policies/<policy_file>
 #
 # ⚠️ `schema` IS THE FILE FORMAT, NOT THE ARTIFACT VERSION.  The shipped file
 # is sdp_policy_v2.json and it declares schema "sdp-policy-v1", because v2
@@ -3193,13 +3252,18 @@ def _sdp_require(obj, key, path, kind=None):
     return obj[key]
 
 
-def load_sdp_policy(path):
+def load_sdp_policy(path, name="sdp-v2"):
     """Parse and VALIDATE a baked SDP policy.  Returns a plain dict.
+
+    `name` is the STRATEGY name this artifact is being loaded for, and it only
+    ever appears in error text — two strategies now load two different files
+    (see the SDP_POLICY_FILE_V2/V3 block), so a refusal that named a fixed
+    strategy would point the reader at the wrong run.
 
     Every failure raises ValueError with a pointed message: this runs at
     startup, where a loud failure is free, and the alternative — a strategy that
-    silently degrades to a 0.5 split — would produce a trace labelled `sdp-v2`
-    that is not the SDP's.  Same discipline as load_dp_table()."""
+    silently degrades to a 0.5 split — would produce a trace labelled with a
+    policy name that is not the policy's.  Same discipline as load_dp_table()."""
     try:
         # Read BYTES, then parse: the same single read gives the file-identity
         # digest for the run's provenance record (MED-2) without a second pass
@@ -3209,12 +3273,12 @@ def load_sdp_policy(path):
         doc = json.loads(blob.decode("utf-8"))
     except OSError as exc:
         raise ValueError(
-            "the `sdp-v2` strategy needs its baked policy at %s and it could "
+            "the `%s` strategy needs its baked policy at %s and it could "
             "not be read (%s).\n"
             "  Generate it first (numpy is required, so use miniforge — "
             "`.venv_hil` is stdlib-only):\n"
             "      C:/Users/ricky/miniforge3/python.exe "
-            "tools/sdp_ems_solver.py" % (path, exc))
+            "tools/sdp_ems_solver.py" % (name, path, exc))
     except ValueError as exc:               # json.JSONDecodeError subclasses it
         raise ValueError("SDP policy artifact %s is not valid JSON: %s"
                          % (path, exc))
@@ -3228,9 +3292,9 @@ def load_sdp_policy(path):
             "SDP policy artifact %s declares schema %r; this consumer "
             "implements %r ONLY. A schema bump is a contract change and must "
             "be made in tools/sdp_ems_solver.py and here TOGETHER — replaying "
-            "an unknown schema would be a trace labelled `sdp-v2` whose "
+            "an unknown schema would be a trace labelled `%s` whose "
             "semantics nobody has checked."
-            % (path, schema, SDP_POLICY_SCHEMA))
+            % (path, schema, SDP_POLICY_SCHEMA, name))
 
     soc = _sdp_require(doc, "soc", path)
     if not isinstance(soc, dict):
@@ -3421,6 +3485,69 @@ def load_sdp_policy(path):
     }
 
 
+def sdp_assert_calibrated_benchmark(pol, name):
+    """Refuse an artifact that is not THE CALIBRATED BENCHMARK.  Raises.
+
+    THE CERTIFICATE, and it is a QUADRUPLE because no single field carries the
+    claim (2026-09-01 ruling, OVERNIGHT_LOG.md "SDP charge-economics
+    adjudication"):
+
+      alpha.mode == "lever"          the SoC price was set by TWO-SIDED LEVER
+                                     CALIBRATION, not by a scaling argument
+                                     that never met the charge action.
+      alpha.admission.in_window_model      the shipped alpha lies strictly
+      alpha.admission.in_window_measured   inside BOTH admission windows — the
+                                     tripwire that would have caught v2, whose
+                                     alpha prices SoC at 5.139 g/SoC and takes
+                                     every lever above 0.1946 SoC/g, the Ag105
+                                     (0.2364) included.
+      actions.forbid_charge_all is False   the zero charge map is ENDOGENOUS.
+                                     If a future artifact is generated with the
+                                     `--forbid-charge` MASK instead, its zero
+                                     charge cells prove nothing about the
+                                     economics, and a leg carrying it must not
+                                     be presented as the calibrated benchmark.
+
+    WHY AT LOAD, CONSUMER-SIDE.  The solver is free to emit any artifact it
+    likes; what must never happen is a run LABELLED `sdp-v3` — and scored on
+    the EMS frontier — that is playing a policy nobody calibrated.  Every
+    symptom of that mistake is invisible in the trace: the share map is
+    identical outside SoC rows 1-2, so the only observable difference is a
+    charge window that either appears or does not, and "no window" is also what
+    a correct benchmark run looks like on a scenario that never admits one.
+    """
+    doc = (pol.get("raw") or {})
+    alpha = doc.get("alpha") or {}
+    admission = alpha.get("admission") or {}
+    actions = doc.get("actions") or {}
+    problems = []
+    if alpha.get("mode") != "lever":
+        problems.append("alpha.mode is %r, not 'lever'" % (alpha.get("mode"),))
+    if admission.get("in_window_model") is not True:
+        problems.append("alpha.admission.in_window_model is %r, not True"
+                        % (admission.get("in_window_model"),))
+    if admission.get("in_window_measured") is not True:
+        problems.append("alpha.admission.in_window_measured is %r, not True"
+                        % (admission.get("in_window_measured"),))
+    if actions.get("forbid_charge_all"):
+        problems.append("actions.forbid_charge_all is %r — the charge map was "
+                        "MASKED, not declined by the optimizer"
+                        % (actions.get("forbid_charge_all"),))
+    if problems:
+        raise ValueError(
+            "SDP policy artifact %s is bound to `%s`, which run_hil_suite.py "
+            "scores on the EMS FRONTIER and therefore requires THE CALIBRATED "
+            "BENCHMARK certificate — and this artifact does not carry it:\n"
+            "    %s\n"
+            "Regenerate with the calibrated alpha:\n"
+            "    C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py "
+            "--alpha-mode lever --out %s --force\n"
+            "or bind this strategy to a NON-frontier role in "
+            "EMS_STRATEGY_META (see `sdp-v2`, the dynamics demonstration)."
+            % (pol.get("path"), name, "\n    ".join(problems),
+               pol.get("path")))
+
+
 def sdp_bin_index(x, edges):
     """MATLAB `discretize` bin for x in the NORMALIZED demand coordinate.
 
@@ -3441,9 +3568,13 @@ def sdp_bin_index(x, edges):
 
 
 class SdpStrategy:
-    """sdp-v2 — ONLINE stochastic-DP policy lookup.  Read the banner above.
+    """ONLINE stochastic-DP policy lookup.  Read the banner above.
 
-    name       : sdp-v2
+    name       : `sdp-v3` (the calibrated BENCHMARK, frontier-scored) or
+                 `sdp-v2` (the byte-frozen DYNAMICS DEMONSTRATION) — ONE class,
+                 two registered instances differing only in their artifact and
+                 their role.  See the SDP_POLICY_FILE_V2/V3 block and
+                 EMS_STRATEGY_META.
     intent     : a CAUSAL state-feedback policy computed offline over a
                  stochastic demand model, so a campaign can rank a causal
                  optimal-by-construction law between the causal heuristic
@@ -3473,24 +3604,106 @@ class SdpStrategy:
     of the file, not of the run — reloading it per run would be I/O for
     nothing).  A rewind (t going backwards) auto-resets, so a second run in one
     process cannot inherit the first run's captured SoC reference.
+    `soc_ref_offset` is a BINDING, not run state, and survives reset() for the
+    same reason the artifact does — see set_soc_ref_offset().
     """
 
-    def __init__(self, policy_dir=None):
+    def __init__(self, name="sdp-v2", policy_file=None, policy_dir=None,
+                 require_calibrated_benchmark=False):
         # NO I/O here: EMS_STRATEGIES is built at import time and constructing
         # the registry must not touch the disk (or fail because the policy has
         # not been generated yet).  Loading happens in bind_scenario(), or
         # lazily on the first call for a direct caller — ONCE either way.
+        #
+        # PARAMETERIZED BY ITS ARTIFACT (2026-09-01).  There is no module-level
+        # "the SDP policy file" any more: two instances play two different
+        # artifacts in two different roles, and a global would make the role a
+        # property of the process rather than of the strategy.  `name` is the
+        # registry key and appears in every message and summary line, so a
+        # trace can never be labelled with a strategy it did not run.
+        self.name = name
+        self.policy_file = policy_file or SDP_POLICY_FILE_V2
+        self.require_calibrated_benchmark = bool(require_calibrated_benchmark)
         self.policy_dir = policy_dir or SDP_POLICY_DIR
         self.policy = None
         # Filled by bind_scenario(); None for a strategy that was only ever
         # called directly (a test, a probe), which is also how main() decides
         # whether there is anything to write into the meta sidecar.
         self.provenance = None
+        # ── soc_ref_offset (delta), 2026-08-31 ──────────────────────────────
+        # NOT run state: it is set once by bind_scenario() from the scenario's
+        # `sdp_soc_ref_offset` key and must survive reset(), exactly as the
+        # loaded artifact does. 0.0 reproduces every pre-2026-08-31 run
+        # bit-identically. See set_soc_ref_offset() for what it means.
+        self.soc_ref_offset = 0.0
         self.reset()
 
     @property
     def path(self):
-        return os.path.join(self.policy_dir, SDP_POLICY_FILE)
+        return os.path.join(self.policy_dir, self.policy_file)
+
+    def set_soc_ref_offset(self, delta):
+        """Place the run's STARTING SoC `delta` ABOVE the policy's target node.
+
+        WHAT IT DOES.  The SoC0-relative mapping (banner above) captures
+        `soc_ref = soc0` on the first decision and looks the table up at
+        `soc_target + (soc - soc_ref)`, so a run's FIRST decision lands exactly
+        ON the target node.  With an offset the capture becomes
+            soc_ref = soc0 - delta   ==>   soc_rel(t=0) = soc_target + delta
+        i.e. a POSITIVE delta starts the run `delta` ABOVE the target and a
+        negative one starts it below.  Nothing else in the lookup changes: the
+        mapping stays a pure translation of the SoC axis.
+
+        WHY IT EXISTS.  The table is BANG-BANG in the share about the target
+        node (point 1 of the PREDICTED BEHAVIOUR block), and a run that starts
+        ON that node and only discharges never leaves the FC-rail side — every
+        `ems-sdp` campaign to date emitted ONE constant clamped 0.8500 for the
+        whole run.  Starting above the node puts the policy on its OTHER branch
+        (table 0.00, emitted at the SOC_BAND_SHARE_MIN clamp as 0.15), and the
+        run's own discharge then walks it across the switching boundary — so
+        the switching law itself becomes observable on the wire, once, at a
+        time the scenario's drain sets.  Starting BELOW the node instead pins
+        the share at the rail so that every charge transition in the trace is
+        attributable to the DEMAND axis alone.
+
+        VALIDATION, and it is a REFUSAL rather than a clamp.  |delta| may not
+        exceed the shorter side of the grid about the target,
+        `min(target - grid_min, grid_max - target)` — 0.05 for the shipped
+        artifact, whose target is centred, i.e. half the grid span.  Beyond
+        that the FIRST decision would already be clamped onto a grid EDGE by
+        soc_relative(), so the run would start at whatever action the edge node
+        carries (for the shipped artifact the floor node 0.550 is the solver's
+        clamp-tie degeneracy, 0.00) and the requested offset would not be the
+        operating point at all.  Silently clamping would produce a trace
+        labelled with an offset it never had."""
+        pol = self.load()
+        # A NUMBER, not something float() happens to parse: the value comes
+        # from a registry literal, and a string "0.01" there would be a
+        # scenario key nobody meant to write as text.
+        if isinstance(delta, bool) or not isinstance(delta, (int, float)):
+            raise ValueError("sdp_soc_ref_offset must be a number, got %r"
+                             % (delta,))
+        d = float(delta)
+        if not math.isfinite(d):
+            raise ValueError("sdp_soc_ref_offset must be finite, got %r" % (d,))
+        lim = min(pol["soc_target"] - pol["soc_min"],
+                  pol["soc_max"] - pol["soc_target"])
+        # The tolerance is a FLOATING-POINT allowance, not slack in the rule:
+        # the shipped artifact's own half-span evaluates to 0.049999999999999934,
+        # so an offset written as exactly 0.05 would be refused by an equality
+        # test that is arithmetically satisfied.
+        if abs(d) > lim + 1e-9:
+            raise ValueError(
+                "sdp_soc_ref_offset %.6g exceeds the usable half-span of this "
+                "artifact's SoC grid (%.6g = min(target %.3f - grid_min %.3f, "
+                "grid_max %.3f - target %.3f)). The first decision would be "
+                "clamped onto a grid EDGE by soc_relative(), so the run would "
+                "not start at the requested offset at all — refused rather "
+                "than clamped, because a clamped start is invisible in the "
+                "trace." % (d, lim, pol["soc_target"], pol["soc_min"],
+                            pol["soc_max"], pol["soc_target"]))
+        self.soc_ref_offset = d
+        return d
 
     def reset(self):
         """Per-RUN state.  The loaded artifact is not run state and survives."""
@@ -3534,7 +3747,14 @@ class SdpStrategy:
     def load(self):
         """Load the artifact ONCE.  Raises ValueError to refuse."""
         if self.policy is None:
-            self.policy = load_sdp_policy(self.path)
+            pol = load_sdp_policy(self.path, self.name)
+            # The certificate is checked ON THE LOAD, not in bind_scenario():
+            # a direct caller (a test, a probe) that never binds must not be
+            # able to drive an uncertified artifact through a frontier-scored
+            # strategy either.
+            if self.require_calibrated_benchmark:
+                sdp_assert_calibrated_benchmark(pol, self.name)
+            self.policy = pol
         return self.policy
 
     def bind_scenario(self, scenario, meta, electrical_mode=None, args=None):
@@ -3552,6 +3772,12 @@ class SdpStrategy:
         second one true — see the banner)."""
         pol = self.load()
         self.reset()
+        # The scenario's SoC-axis placement (2026-08-31).  Read AFTER reset()
+        # because the offset is a BINDING, not run state — reset() must not
+        # clear it, and a scenario that declares nothing gets 0.0, i.e. the
+        # pre-2026-08-31 behaviour byte for byte.  A malformed value raises,
+        # which main() turns into a startup refusal.
+        self.set_soc_ref_offset(meta.get("sdp_soc_ref_offset") or 0.0)
         # MED-2: the run's provenance record for THIS artifact, stashed here and
         # copied into the CSV's meta sidecar by main(). It is the answer to
         # "which policy produced these numbers" — a question the CSV alone
@@ -3579,6 +3805,11 @@ class SdpStrategy:
             "p_dem_min_w": pol["p_dem_min_w"],
             "p_dem_max_w": pol["p_dem_max_w"],
             "demand_map_source": pol["demand_map_source"],
+            # The scenario's SoC-axis placement. Recorded because it decides
+            # WHICH BRANCH of a bang-bang policy the run starts on, so two
+            # traces of the same artifact at different offsets are two
+            # different experiments — and the CSV carries no other trace of it.
+            "soc_ref_offset": self.soc_ref_offset,
         }
         print("[hil] SDP policy: %s (%d SoC nodes x %d demand bins, target "
               "SoC %.3f on [%.3f, %.3f], demand %.3f..%.3f W, decisions every "
@@ -3591,9 +3822,29 @@ class SdpStrategy:
               "%s"
               % (pol["policy_sha256"], pol["file_sha256"][:16] + "…",
                  pol["generated_utc"] or "(not recorded)"))
-        print("[hil] NOTE: `sdp-v2` is SIM-ONLY (it closes on plant-truth SoC, "
+        print("[hil] NOTE: `%s` is SIM-ONLY (it closes on plant-truth SoC, "
               "not telemetry) and regulates around the CAPTURED soc0, not the "
-              "artifact's absolute target — see the banner above SdpStrategy.")
+              "artifact's absolute target — see the banner above SdpStrategy."
+              % self.name)
+        if self.require_calibrated_benchmark:
+            print("[hil]   role: CALIBRATED BENCHMARK — frontier_eligible, "
+                  "scored by run_hil_suite.py's EMS frontier check. Charge "
+                  "cells in this artifact: %d (0 = the charge action was "
+                  "declined ENDOGENOUSLY, forbid_charge_all False)."
+                  % sum(1 for row in pol["charge_goal"] for v in row if v > 0.0))
+        else:
+            print("[hil]   role: DYNAMICS DEMONSTRATION — NOT frontier_eligible. "
+                  "This artifact's alpha admits the Ag105 charge lever, which "
+                  "the campaign-measured exchange rate prices as loss-making, "
+                  "so its h2/delta_soc pair is NOT an energy-management result.")
+        if self.soc_ref_offset:
+            print("[hil]   soc_ref_offset %+.4f — the run STARTS %.4f %s the "
+                  "policy's target node, so its first decisions are on the "
+                  "%s branch of the bang-bang law (see set_soc_ref_offset())"
+                  % (self.soc_ref_offset, abs(self.soc_ref_offset),
+                     "ABOVE" if self.soc_ref_offset > 0 else "BELOW",
+                     "battery-heavy 0.00->0.15" if self.soc_ref_offset > 0
+                     else "fuel-cell 1.00->0.85"))
         return self
 
     # ── helpers, kept separate so a test can drive them directly ────────────
@@ -3756,7 +4007,11 @@ class SdpStrategy:
             soc_rel = pol["soc_target"]
         else:
             if self.soc_ref is None:
-                self.soc_ref = float(soc)
+                # The captured reference, SHIFTED DOWN by the binding's offset:
+                # soc_rel(first decision) = soc_target + soc_ref_offset. The
+                # default 0.0 reproduces the original capture exactly. See
+                # set_soc_ref_offset().
+                self.soc_ref = float(soc) - self.soc_ref_offset
             soc_rel = self.soc_relative(soc)
         # DEMAND = bus power, from TELEMETRY-EQUIVALENT keys only (V_bus, I_fc,
         # I_batt are all in FB_TELEMETRY_EQUIV_KEYS). NOT the fuel cell's stack
@@ -3814,7 +4069,7 @@ class SdpStrategy:
             # A direct caller (a test, a future tool) that never went through
             # bind_scenario(). Load ONCE, here — and still LOUDLY: a missing or
             # malformed artifact raises rather than defaulting to a 0.5 split,
-            # so no path can produce a trace labelled `sdp-v2` that is not the
+            # so no path can produce a trace labelled with this strategy's
             # policy's. main() binds at startup, so a bench run never reaches
             # this branch.
             self.load()
@@ -3872,16 +4127,18 @@ class SdpStrategy:
         if not self.decisions:
             return None
         n = self.decisions
-        return ("[hil] sdp-v2: %d decisions, demand bin clamped HIGH on %d "
+        return ("[hil] " + self.name + ": %d decisions, demand bin clamped HIGH on %d "
                 "(%.1f %%) and LOW on %d (%.1f %%) — a high clamp rate means "
                 "the bench's bus power sat above the artifact's modelled "
                 "demand range, so only the SoC axis carried information; under "
-                "the v2 map that is a SIGNAL to re-solve, not the contract it "
-                "was under v1; SHARE clamped to the "
+                "the shipped 0..25 W consumer map that is a SIGNAL to re-solve "
+                "at a wider map, not the contract it was under the retired v1 "
+                "ideal-scaling map; SHARE clamped to the "
                 "hardware envelope [%.2f, %.2f] on %d decision(s) (%.1f %%) — "
                 "the table asked for a rail there and a rail cuts the minority "
                 "source off the bus, so the emitted value is clipped; soc_ref "
-                "%s, final share %.4f (table asked %.4f), charge_goal %.4f; "
+                "%s (offset %+.4f), final share %.4f (table asked %.4f), "
+                "charge_goal %.4f; "
                 "charge dwell latches %d (%.1f s each, self-load subtracted), "
                 "early drops %d%s"
                 % (n, self.clamped_high, 100.0 * self.clamped_high / n,
@@ -3889,15 +4146,20 @@ class SdpStrategy:
                    SOC_BAND_SHARE_MIN, SOC_BAND_SHARE_MAX, self.clamped_share,
                    100.0 * self.clamped_share / n,
                    ("%.6f" % self.soc_ref) if self.soc_ref is not None
-                   else "(never seen)",
+                   else "(never seen)", self.soc_ref_offset,
                    self.last_share, self.last_share_raw, self.last_goal,
                    self.chg_holds, SDP_CHG_MIN_DWELL_S, self.chg_hold_drops,
                    ("" if self.chg_hold_drop_reason is None
                     else " (last: %s)" % self.chg_hold_drop_reason)))
 
 
-# One instance, registered below.  Construction does NO I/O — see __init__.
-ems_sdp_v2 = SdpStrategy()
+# TWO instances, registered below.  Construction does NO I/O — see __init__ —
+# so having two costs nothing at import, and each loads its own artifact the
+# first time it is actually bound or called.  They share every line of logic;
+# what differs is the artifact and the ROLE (EMS_STRATEGY_META).
+ems_sdp_v2 = SdpStrategy("sdp-v2", SDP_POLICY_FILE_V2)
+ems_sdp_v3 = SdpStrategy("sdp-v3", SDP_POLICY_FILE_V3,
+                         require_calibrated_benchmark=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -4188,7 +4450,13 @@ EMS_STRATEGIES = {
     # defined on any profile.  Refuses at startup if its baked policy is
     # missing or malformed.  See the banner above SdpStrategy — in particular
     # the SoC0-RELATIVE regulation decision and the demand-axis clamp.
+    # ⚠️ TWO ROLES since 2026-09-01, and the names are not interchangeable:
+    # `sdp-v3` is THE CALIBRATED BENCHMARK (frontier-scored, zero charge cells
+    # by ENDOGENOUS rejection) and `sdp-v2` is the byte-frozen DYNAMICS
+    # DEMONSTRATION whose charge cells the `ems-sdp-cross`/`ems-sdp-braking`
+    # scenarios exist to actuate.  EMS_STRATEGY_META below carries the roles.
     "sdp-v2": ems_sdp_v2,
+    "sdp-v3": ems_sdp_v3,
     # The firmware's own 'Y' combined drive-cycle + power-share table (16
     # regions, 40 s), commanded from the EMS layer instead of the USB console.
     # All four read ONLY fb["t"] and the scenario's ems_run_exit_s, so all four
@@ -4200,6 +4468,154 @@ EMS_STRATEGIES = {
 }
 
 EMS_NAMES = list(EMS_STRATEGIES)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# EMS STRATEGY ROLES (2026-09-01)
+#
+# A SIBLING registry keyed by the same names rather than a change of
+# EMS_STRATEGIES' value type: `--ems` dispatch, every scenario's `ems` key and
+# every test call site consume EMS_STRATEGIES[name] AS A CALLABLE, and turning
+# it into a dict would touch all of them for metadata none of them read.  The
+# import assert below pins the two registries to the same key set, which is the
+# property a single dict would have given for free.
+#
+#   policy_file        the baked artifact this strategy plays, or None for a
+#                      strategy that computes its own commands.  Recorded so a
+#                      reader can see WHICH file a name binds without opening
+#                      the class, and so a future artifact swap has one place
+#                      to be reviewed.  (`dp-replay` is None here: its table is
+#                      selected PER SCENARIO by fingerprint, not by a fixed
+#                      file, and naming one would be a lie about the binding.)
+#   frontier_eligible  whether a run of this strategy may be scored on the EMS
+#                      FRONTIER (run_hil_suite.py's EMS_FRONTIER / eq-H2 check).
+#
+# WHAT `frontier_eligible: False` MEANS, because it is a claim about the RUN and
+# not about the code: the strategy is exercised for the MECHANISM it puts on
+# the wire, and its hydrogen/SoC pair is not an energy-management result that
+# belongs in a ranking.  `sdp-v2` is the case that forced the field — its alpha
+# admits an Ag105 charge lever the campaign-measured exchange rate prices as
+# loss-making, so its h2 total is a demonstration of the charge threshold, not
+# a competitive score.  The frontier check EXCLUDES such runs by construction
+# and the report renders them under a demonstration banner rather than silently
+# omitting them.
+# L9: `role_note` — WHY a strategy is off the frontier, per strategy.  The
+# shared demonstration banner says "not on the frontier"; this says which KIND
+# of off-frontier run it is, and the two kinds are not interchangeable:
+#   * a POLICY DEMONSTRATION (sdp-v2) has an energy objective and pursues it —
+#     its h2/delta_soc pair is a real, measurable, and deliberately LOSS-MAKING
+#     result, kept because the mechanism it exercises is the point;
+#   * a STIMULUS (hold-5050, the y-* replays, regen-/mppt-harvest) has NO
+#     objective at all — its h2/delta_soc pair is an artefact of a fixed
+#     command profile and ranking it against anything is a category error.
+# Optional: a strategy with no note renders the shared banner alone.
+_Y_PROFILE_ROLE_NOTE = (
+    "ROLE: a STIMULUS WITH NO OBJECTIVE — the firmware's own State-98 'Y' "
+    "table replayed from the EMS layer. It commands a fixed setpoint pair on a "
+    "schedule and optimizes nothing; its energy totals describe the table.")
+EMS_STRATEGY_META = {
+    "hold-5050":     {"policy_file": None, "frontier_eligible": False,
+                      "role_note": "ROLE: a STIMULUS WITH NO OBJECTIVE — a "
+                                   "constant 0.5 split. It optimizes nothing, "
+                                   "so its energy totals are a property of the "
+                                   "cycle, not of a policy."},
+    "regen-harvest": {"policy_file": None, "frontier_eligible": False,
+                      "role_note": "ROLE: a STIMULUS WITH NO OBJECTIVE — it "
+                                   "opens the charge path inside scripted "
+                                   "braking windows to exercise the path, and "
+                                   "makes no energy claim."},
+    "mppt-harvest":  {"policy_file": None, "frontier_eligible": False,
+                      "role_note": "ROLE: a STIMULUS WITH NO OBJECTIVE — it "
+                                   "exists to provoke the Ag105 MPPT "
+                                   "release/re-assert hunt, and makes no "
+                                   "energy claim."},
+    # The causal HEURISTIC leg — the frontier's reference point (the eq-H2
+    # arithmetic is anchored on its delta_soc).
+    "soc-band":      {"policy_file": None, "frontier_eligible": True},
+    # The NON-CAUSAL lower bound.  On the frontier as the bound, not as a
+    # controller: it is not implementable and the check compares AGAINST it.
+    "dp-replay":     {"policy_file": None, "frontier_eligible": True},
+    # THE DYNAMICS DEMONSTRATION — see the banner above and
+    # SDP_POLICY_FILE_V2's block.
+    "sdp-v2":        {"policy_file": SDP_POLICY_FILE_V2,
+                      "frontier_eligible": False,
+                      "role_note": "ROLE: a LOSS-MAKING POLICY DEMONSTRATION — "
+                                   "unlike the stimulus legs this one DOES "
+                                   "optimize an objective, and its objective's "
+                                   "alpha prices SoC low enough that it opens "
+                                   "the Ag105 charger. That charging is "
+                                   "measurably loss-making at this rig's scale "
+                                   "(campaign 20260901_000816 measured the leg "
+                                   "9.9 pp off the frontier), which is exactly "
+                                   "the mechanism the run exists to show. Its "
+                                   "h2/delta_soc pair is a real result about a "
+                                   "policy that was NOT calibrated for this "
+                                   "rig — not a competitive score, and not an "
+                                   "artefact either."},
+    # THE CALIBRATED BENCHMARK.
+    "sdp-v3":        {"policy_file": SDP_POLICY_FILE_V3,
+                      "frontier_eligible": True},
+    # The firmware's 'Y' table replayed from the EMS layer: a STIMULUS, not an
+    # energy-management law — it commands a fixed profile and has no objective.
+    "y-b30-v1":      {"policy_file": None, "frontier_eligible": False,
+                      "role_note": _Y_PROFILE_ROLE_NOTE},
+    "y-b30-v3":      {"policy_file": None, "frontier_eligible": False,
+                      "role_note": _Y_PROFILE_ROLE_NOTE},
+    "y-b00-v1":      {"policy_file": None, "frontier_eligible": False,
+                      "role_note": _Y_PROFILE_ROLE_NOTE},
+    "y-b00-v3":      {"policy_file": None, "frontier_eligible": False,
+                      "role_note": _Y_PROFILE_ROLE_NOTE},
+}
+
+# The property a single registry would have given for free.  A strategy added
+# to one dict and not the other is either a nameless role (the frontier check
+# would silently treat it as ineligible) or a role with no strategy.
+assert set(EMS_STRATEGY_META) == set(EMS_STRATEGIES), (
+    "EMS_STRATEGY_META and EMS_STRATEGIES must cover the SAME strategy names; "
+    "meta-only %r, strategy-only %r"
+    % (sorted(set(EMS_STRATEGY_META) - set(EMS_STRATEGIES)),
+       sorted(set(EMS_STRATEGIES) - set(EMS_STRATEGY_META))))
+for _mn, _mm in EMS_STRATEGY_META.items():
+    assert isinstance(_mm.get("frontier_eligible"), bool), (
+        "EMS_STRATEGY_META[%r] must declare `frontier_eligible` as a bool — "
+        "a missing/None value would read as 'not on the frontier' by accident "
+        "rather than by decision." % (_mn,))
+    # A strategy that plays a baked artifact must NAME it, so the role table is
+    # the one place a reader checks which file a name binds.
+    _inst = EMS_STRATEGIES[_mn]
+    if isinstance(_inst, SdpStrategy):
+        assert _mm.get("policy_file") == _inst.policy_file, (
+            "EMS_STRATEGY_META[%r].policy_file is %r but the registered "
+            "strategy plays %r — the role table would name the wrong artifact."
+            % (_mn, _mm.get("policy_file"), _inst.policy_file))
+        # A frontier-scored SDP leg MUST demand the calibrated-benchmark
+        # certificate: without it, an uncertified artifact could be scored on
+        # the frontier and nothing in the trace would show it (see
+        # sdp_assert_calibrated_benchmark()).
+        assert _mm["frontier_eligible"] == _inst.require_calibrated_benchmark, (
+            "EMS_STRATEGY_META[%r]: frontier_eligible %r disagrees with the "
+            "strategy's require_calibrated_benchmark %r. A frontier-scored SDP "
+            "leg must carry the certificate, and a demonstration leg must not "
+            "claim it." % (_mn, _mm["frontier_eligible"],
+                           _inst.require_calibrated_benchmark))
+del _mn, _mm, _inst
+
+# The strategy names backed by an SdpStrategy instance — i.e. the ones whose
+# bind_scenario() reads `sdp_soc_ref_offset`.  Derived from the registry rather
+# than written out, so registering a third SDP artifact cannot leave the
+# scenario-key guard below silently narrow.
+SDP_STRATEGY_NAMES = frozenset(
+    n for n, f in EMS_STRATEGIES.items() if isinstance(f, SdpStrategy))
+
+
+def ems_frontier_eligible(strategy_name):
+    """Whether a run of `strategy_name` may be scored on the EMS frontier.
+
+    Unknown names are NOT eligible: an unregistered strategy is one nobody has
+    placed a role on, and admitting it to a ranking by default is exactly the
+    failure this table exists to prevent."""
+    return bool((EMS_STRATEGY_META.get(strategy_name) or {})
+                .get("frontier_eligible"))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -4238,6 +4654,16 @@ EMS_NAMES = list(EMS_STRATEGIES)
 #                charger branch byte-identical, which is why every pre-2026-08-31
 #                scenario is unaffected.  See Plant.__init__ and the constant's
 #                banner (incl. the R1 open question).
+#   sdp_soc_ref_offset : optional float — SDP strategies ONLY (any name in
+#                SDP_STRATEGY_NAMES).  Places the run's
+#                STARTING SoC this far ABOVE the policy's target node (negative
+#                = below), so the scenario chooses WHICH BRANCH of the
+#                bang-bang table the run begins on.  ABSENT means 0.0, i.e. the
+#                original "start exactly on the target node" behaviour.  Refused
+#                at startup beyond the grid's usable half-span, and refused AT
+#                IMPORT on a scenario whose strategy is not an SdpStrategy
+#                (where it would be read by nobody).  See
+#                SdpStrategy.set_soc_ref_offset().
 #   pi_mute_after_s : optional float — the emulated Pi commander goes
 #                PERMANENTLY SILENT at this time while the injection stream keeps
 #                running at full rate, isolating the firmware's Pi watchdog from
@@ -4777,16 +5203,32 @@ SCENARIOS["ems-dp-replay"] = {
 #
 # `electrical: "any"`, NOT "hifi".  `ems-dp-replay` is hifi-only because its
 # table's hydrogen ACCOUNTING must match the engine (bind_scenario() refuses a
-# mismatch).  Nothing equivalent binds here: `sdp-v2` is causal state feedback
+# mismatch).  Nothing equivalent binds here: `sdp-v3` is causal state feedback
 # with no offline objective to agree with, so both engines are legal and running
 # it under either preference is a free cross-check.
 #
 # ⚠️ SIM-ONLY strategy (plant-truth SoC) and its demand axis clamps to the end
 # bins for much of this cycle — both are the SdpStrategy banner's business, and
 # the exit summary's clamp counters are how a run reports it.
+# ── BOUND TO `sdp-v3` SINCE 2026-09-01 (the charge-economics ruling) ────────
+# This is THE BENCHMARK LEG of the three-way comparison, so it must play the
+# CALIBRATED artifact.  What changed and what did not:
+#   * WHAT CHANGED: the charge action.  v2 charged in bins 0-5 below the
+#     relative target (the t = 41..58 window every threshold in the suite entry
+#     was calibrated against); v3's charge map is ZERO everywhere, by ENDOGENOUS
+#     rejection — the calibrated alpha prices the Ag105's 0.2364 SoC/g lever
+#     below its own 0.30682 SoC/g admission threshold.  This leg therefore now
+#     asserts that FC_CHARGE NEVER opens (run_hil_suite.py's
+#     `charge_path_never_opens`), which is the exact opposite check and is a
+#     GUARANTEED FAIL under v2 — the binding and the expectation move together
+#     or not at all.
+#   * WHAT DID NOT: the share axis.  v2 and v3 differ in `policy.share` only on
+#     SoC rows 1-2 (30 cells of 2525), which this scenario's trajectory
+#     (soc_rel starts ON the target node, row 50, and falls ~0.0017) does not
+#     come near.  Every share threshold in the suite entry is unmoved.
 SCENARIOS["ems-sdp"] = {
     "description": "The `ems-soc-band` drive cycle and drain load, driven by "
-                   "the CAUSAL `sdp-v2` policy: a state-indexed setpoint table "
+                   "the CAUSAL `sdp-v3` policy: a state-indexed setpoint table "
                    "computed offline by stochastic dynamic programming and "
                    "looked up at run time on (SoC, demand bin). The causal "
                    "optimal-by-construction leg between the `soc-band` "
@@ -4796,7 +5238,8 @@ SCENARIOS["ems-sdp"] = {
     "chg_i_ceiling_a": SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"],
     # THE SAME LIST OBJECT — see the note above.
     "ems_v_profile": SCENARIOS["ems-soc-band"]["ems_v_profile"],
-    "ems": "sdp-v2",
+    # THE CALIBRATED BENCHMARK artifact — see the block above this entry.
+    "ems": "sdp-v3",
 }
 
 # ── ems-y-*: the firmware's 'Y' combined profile, four variants ─────────────
@@ -4968,6 +5411,152 @@ for _name, _ems, _what in (
     }
 del _name, _ems, _what
 
+# ── ems-ftp75-sdp: the FTP-75 segment with the SDP policy STARTED ABOVE ITS
+#    TARGET, so the bang-bang share law switches once, mid-cycle ────────────
+#
+# WHAT IS NEW HERE, and it is one thing.  Every `ems-sdp`-family run before this
+# one started EXACTLY on the policy's target node and could only discharge, so
+# the table sat on its fuel-cell branch for the whole run and the wire carried
+# ONE constant clamped 0.8500 (SdpStrategy's PREDICTED BEHAVIOUR block, point
+# 1).  This scenario declares `sdp_soc_ref_offset` (see
+# SdpStrategy.set_soc_ref_offset()), which starts the run FTP75_SDP_SOC_REF_
+# OFFSET above the node — on the table's OTHER branch, action 0.00, emitted at
+# the SOC_BAND_SHARE_MIN clamp as 0.15 — and lets the cycle's own drain walk it
+# across the switching boundary.  The observable is a SINGLE, SHARP transition
+# of `cmd_share_sp` from 0.15 to 0.85 part-way through the cycle: the policy's
+# switching law itself, which nothing in the suite has ever put on the wire.
+#
+# THE OFFLINE WALK (2026-08-31) that every number below comes from.  The
+# strategy's own decision path (soc0 capture with the offset, soc_relative(),
+# demand_bin(), the table lookup, clamp_share()) stepped at 20 Hz over the
+# gen_dp_ems_table.py demand model of THIS profile and preload — the same
+# reduced model the DP benchmark is solved against — with the pack integrated
+# through hil_electrical.BatterySource and the firmware's minority-current
+# governor applied to the delivered split.  Cross-checked against the MEASURED
+# `ems-ftp75-5050` trace of campaign 20260901_000816: the model's peak source
+# total is 1.613 A against a measured 1.6551 A, the documented +2.6 % gain
+# offset of the FTP75_PRELOAD_A block, and nothing below depends on which of
+# the two is used except by that ratio.
+#
+#   FLIP TIME:            t = 195.9 s   (model).  Sensitivity is the whole
+#     answer here, because the flip time is an INTEGRAL of the drain: a +/-10 %
+#     error in the pack current moves it to 180 s / 205 s, and +/-20 % to
+#     158 s / 216 s.  The suite's transition band is (150, 250) accordingly.
+#   RAW TABLE REQUESTS:   {0.00} before the flip, {1.00, 0.95} after (0.95 in
+#     bin 22, the cycle's own peak).  EMITTED: {0.15, 0.85}.
+#   CHARGING:             NONE, by construction — the walk's demand never falls
+#     below bin 9 inside the Run window (P_dem 9.6..22.4 W) and the solver
+#     forbids charging above bin 5.  This scenario is a PURE share-axis test.
+#
+# ⚠️ CURRENT BUDGETS, both branches, at FTP75_SDP_PRELOAD_A (derivation there):
+#   * BATTERY-HEAVY branch (commanded 0.15).  The commanded value is ALWAYS
+#     below the governor's minority floor SHARE_MINORITY_I_MIN_A / I_tot at
+#     this cycle's currents (I_tot peaks at 1.41 A, so the floor is 0.213), so
+#     the DELIVERED split is the floor: I_fc is pinned at exactly 0.300 A and
+#     the battery carries the rest — peak I_bt 0.676 A, 77 % under
+#     LIMIT_I_BT_MAX 3.0 A.  The battery-heavy side is nowhere near a limit.
+#   * FUEL-CELL branch (commanded 0.85).  Mirror image: the governor clips to
+#     1 - I_min/I_tot, so I_fc = I_tot - 0.300 and its peak is at the CYCLE
+#     PEAK — 1.4123 - 0.300 = 1.1123 A model.  MEASURED, and the composition
+#     matters: the measured source total is ADDITIVE (I_AUX_A 0.15 + preload
+#     0.45 + the cycle's own 0.8546 A peak = 1.4546 A), so the governed FC peak
+#     is 1.4546 - 0.300 = 1.1546 A, i.e. 17.5 % under LIMIT_I_FC_MAX 1.4 A.
+#     ⚠️ Do NOT scale the model's FC branch by the +2.6 % offset instead
+#     (1.1123 x 1.026 = 1.141 A -> 18.5 %): that applies the offset to the
+#     0.300 A governor floor as well, which is a firmware constant and does not
+#     move with the drive model, and it understates the peak by 14 mA.  This is
+#     the binding constraint of the whole scenario and it is what sized the
+#     preload.
+# ── ARTIFACT: `sdp-v3`, AND THE WALK TRANSFERS VERBATIM (2026-09-01) ────────
+# The walk above was measured against `sdp_policy_v2.json`.  This entry was
+# rebound to the CALIBRATED BENCHMARK artifact in the charge-economics round,
+# and the walk was NOT re-run — because a direct row-by-row diff of the two
+# baked tables shows it does not need to be.  VERIFIED, not assumed:
+#
+#   SHARE MAP.  `policy.share` is byte-identical between v2 and v3 at EVERY SoC
+#   row from index 3 upward; the two artifacts differ in 30 cells, all on rows
+#   1 and 2.  This scenario's trajectory spans rows 63 (soc_rel = target +
+#   0.013 at t = 0) down to ~44 (target + 0.013 - 0.0187 at the cycle end), so
+#   it never comes within 41 rows of a differing cell.  Every number in the
+#   walk — the 0.15/0.85 emitted pair, the {0.00} / {1.00, 0.95} raw requests,
+#   the t = 195.9 s flip and its (150, 250) s band — is therefore the SAME
+#   under v3, arithmetically and not merely approximately.
+#
+#   CHARGE MAP.  v2 carries charge cells on rows 1-49 in demand bins 0-5 only;
+#   v3 carries none anywhere.  This scenario's walk shows the demand never
+#   falling below bin 9 inside the Run window (P_dem 9.6..22.4 W), so it reached
+#   no charge cell under v2 either — the rebinding removes cells the trajectory
+#   could not visit.  "NO charge stage is reachable" was already this entry's
+#   claim; under v3 it is additionally true by construction.
+#
+# CONSEQUENCE: this scenario stays a PURE SHARE-AXIS test, its FAULT_EXPECTATIONS
+# thresholds are unmoved, and it is frontier-eligible by strategy — though the
+# frontier CHECK scores only the three legs of the one shared stimulus
+# (`ems-sdp` / `ems-soc-band` / `ems-dp-replay`), not this cycle.
+FTP75_SDP_SOC_REF_OFFSET = 0.013
+# THE PRELOAD, RE-DERIVED FOR THIS SCENARIO — 0.45 A, not the 0.65 A the other
+# two FTP-75 runs use, and the reason is the fuel-cell branch above.
+#   * WHY IT CANNOT BE 0.65.  At that preload the model's peak source total is
+#     1.613 A (measured 1.6551 A) and the FC branch's governed peak is
+#     I_tot - 0.300 = 1.313 A model / 1.355 A measured — 3.2 % under
+#     LIMIT_I_FC_MAX.  A drive transient anywhere near t = 244 spends that, and
+#     an OC_FC latch TRUNCATES the run at exactly the point the scenario exists
+#     to observe.  `ems-ftp75-socband` accepts that risk (its entry allows
+#     OC_FC); this one must not, because a truncated run has no post-flip half.
+#   * WHY 0.45.  The cycle's own contribution is bounded: the measured trace's
+#     source total spans I_AUX_A + preload + [0.0156, 0.8546] A.  Solving the
+#     FC branch for a 15 % margin gives preload <= 0.485 A, and 0.45 A leaves
+#     17.5 % (the additive composition above: 0.15 + 0.45 + 0.8546 - 0.300 =
+#     1.1546 A against 1.4 A).
+#   * WHAT IT COSTS, stated.  The preload exists on the sibling scenarios to
+#     hold the source total above the share loop's 2*SHARE_MINORITY_I_MIN_A =
+#     0.60 A CLOSED-LOOP ENTRY gate through the cycle's idle segments.  At
+#     0.45 A the model's idle total is 0.600 A — ON the entry gate — and the
+#     measured one is 0.6156 A, 2.6 % over it.  That margin is thin, and the
+#     honest claim is the one the EXIT threshold supports rather than the entry
+#     one: the loop closes on the cycle's first acceleration (t ~ 25 s, total
+#     ~1.0 A) and only re-opens below 2*SHARE_MINORITY_I_MIN_A -
+#     SHARE_GOV_OL_HYST_A = 0.55 A, which the measured idle total clears by
+#     12 %.  So the loop is expected CLOSED for the whole cycle after its first
+#     acceleration; what is NOT claimed is a margin on the entry gate itself.
+#   * These are the MODEL's currents (M_EFF/K_F/F_COULOMB/B_EFF + the droop
+#     bus) scaled by one measured offset.  A campaign that misses a check
+#     should move THIS number, never the check.
+FTP75_SDP_PRELOAD_A = 0.45
+SCENARIOS["ems-ftp75-sdp"] = {
+    "description": ("%.0f s EPA FTP-75 study segment (the SAME profile object "
+                    "as the other two FTP-75 scenarios) driven by the causal "
+                    "`sdp-v3` policy started %+.3f SoC ABOVE its target node: "
+                    "the table begins on its battery-heavy branch (commanded "
+                    "share 0.15), the cycle's own drain walks the state across "
+                    "the switching boundary, and `cmd_share_sp` steps ONCE to "
+                    "0.85 mid-cycle. The first scenario in which the SDP "
+                    "policy's bang-bang share law is visible on the wire. "
+                    "Gated behind run_hil_suite.py --with-ftp75."
+                    % (FTP75_DURATION_S, FTP75_SDP_SOC_REF_OFFSET)),
+    # "any": nothing here needs the ideal-diode dynamics — the observable is a
+    # commanded setpoint and the governed split that follows it.  Running it
+    # under either engine is a free cross-check, as on `ems-sdp`.
+    "electrical": "any",
+    "duration_s": FTP75_DURATION_S,
+    # THE CALIBRATED BENCHMARK artifact.  The v2-derived offline walk above
+    # transfers VERBATIM — see the row-diff verification at
+    # FTP75_SDP_SOC_REF_OFFSET.
+    "ems": "sdp-v3",
+    # THE SAME LIST OBJECT as the other two FTP-75 scenarios: the three differ
+    # only in the strategy driving them, and a comparison between them is
+    # meaningless on different stimuli.
+    "ems_v_profile": FTP75_PROFILE,
+    "ems_run_exit_s": FTP75_RUN_EXIT_S,
+    "aux_preload_a": FTP75_SDP_PRELOAD_A,
+    "sdp_soc_ref_offset": FTP75_SDP_SOC_REF_OFFSET,
+    # Inherited from `ems-sdp`, and INERT here: the walk shows no charge-
+    # admissible stage anywhere in the Run window (see above).  Declared so a
+    # future profile change that DOES admit one cannot silently run the charger
+    # at AG105_I_MAX.
+    "chg_i_ceiling_a": SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"],
+}
+
 # gen_dp_ems_table.py note: a DP table for an FTP-75 scenario is FUTURE WORK.
 # The solver's cost is stage-count-dominated and this cycle is ~6x the length
 # of `ems-dp-replay`'s (~21 min offline, measured 2026-08-31), so it is a
@@ -4976,6 +5565,264 @@ del _name, _ems, _what
 # scenario_aux_preload_a(), and its --run-exit already resolves from
 # `ems_run_exit_s`, so a table can be generated whenever the run time is worth
 # paying.
+
+# ── ems-sdp-cross / ems-sdp-braking: the SDP policy's two thresholds ────────
+#
+# THE ARTIFACT HAS TWO SWITCHING SURFACES ON THE SoC AXIS, one node apart, and
+# they are what these two scenarios separate.  Read off the shipped
+# sdp_policy_v2.json directly (101 nodes, spacing 1e-3, target node 50 =
+# 0.600), at every demand bin:
+#     node >= 51  (soc_rel > 0.6005)   share 0.00 -> emitted 0.15,  charge 0
+#     node == 50  (0.5995 .. 0.6005)   share 1.00 -> emitted 0.85,  charge 0
+#     node <= 49  (soc_rel < 0.5995)   share 1.00 -> emitted 0.85,  charge 1
+#                                      in the charge-admissible bins 0-5 only
+# So the SHARE threshold and the CHARGE threshold are DIFFERENT surfaces, and
+# node 50 is a 1e-3-wide dead band that carries the fuel-cell share with NO
+# charging.
+#
+# ⚠️ AN UPWARD SHARE CROSSING IS NOT REACHABLE ON THIS RIG, and the scenarios
+# below are shaped by that finding rather than around it.  A share flip back to
+# the battery-heavy branch needs soc_rel to rise through the WHOLE of node 50,
+# and the only mechanism that raises SoC is the charger — which the table
+# switches OFF the moment soc_rel enters node 50.  The most a single charge
+# admission can bank is one SDP_CHG_MIN_DWELL_S latch:
+#     8.0 s * chg_i_ceiling_a / (5 Ah * 3600) SoC
+# which clears the 1e-3 node width only for a ceiling above 2.25 A.
+#
+# ⚠️ REFERENCING, stated because the two sides of that comparison are measured
+# at DIFFERENT NODES and an earlier version of this block compared them
+# directly.  `chg_i_ceiling_a` is a PACK-SIDE current: it is what the Ag105
+# pushes into the 2S pack, and it is the current the SoC integral above
+# consumes (BatterySource coulomb-counts `i_bt_src - i_charge`).
+# LIMIT_I_FC_MAX 1.4 A is a BUS-SIDE current: the firmware reads the INA253 on
+# the fuel-cell boost's output at ~15.95 V.
+#   * IN THE SIMULATOR the two are the same number.  Plant.step() puts
+#     `i_charge` amps into the pack AND (in hi-fi) draws `i_charge` amps at the
+#     charger node, so the model's charger does NOT conserve power: at a ~7.4 V
+#     pack against a 15.95 V bus it burns ~2.16x the energy it banks.  The
+#     "I_aux 0.15 + 2.25 = 2.4 A against 1.4 A" arithmetic is that model's
+#     referencing, and it is why the exclusion LOOKS enormous here.
+#   * ON HARDWARE the Ag105 is a converter.  2.25 A into a 2S pack at ~8.4 V is
+#     ~18.9 W, which at 15.95 V and a realistic conversion efficiency is a
+#     BUS-side draw of ~1.25 A, not 2.25 A.  Against LIMIT_I_FC_MAX that is a
+#     margin of order 10-15 % (~14 % at the efficiency the datasheet supports),
+#     and adding the ~0.15 A aux load closes most of it.
+# So the upward crossing IS still excluded on hardware — but NARROWLY, by
+# roughly the width of the conversion-efficiency assumption, not by the 71 %
+# the sim-side comparison suggests.  A future retune that wants the upward
+# crossing therefore needs the HARDWARE-side budget re-derived first (and the
+# sim's charger power model fixed, or the sim will refuse a case the board
+# would accept); it is not the flatly-impossible thing this block used to
+# claim.  Nothing below asserts an upward crossing, and none of the shipped
+# scenarios attempts one: the share axis crosses ONCE, downward.
+#
+# WHAT EACH OF THE TWO DOES, and why they are not one scenario:
+#   ems-sdp-cross    starts ABOVE the target (positive offset) at a LOW-DEMAND
+#                    operating point.  It gets the downward SHARE crossing AND
+#                    then the CHARGE threshold's own limit cycle — charge on,
+#                    dwell, off, decay, on — with the share pinned at the rail
+#                    after the flip.  The mechanism under test is the SoC axis.
+#   ems-sdp-braking  starts BELOW the target (negative offset) and NEVER
+#                    crosses back, so the share command is a constant 0.85 for
+#                    the whole run BY DESIGN.  With the SoC axis held still,
+#                    every charge transition in the trace is attributable to
+#                    the DEMAND axis alone — which is the point: the profile's
+#                    braking / low-speed windows admit charging and its cruise
+#                    segments forbid it.
+#
+# ⚠️ HONEST CAPTION, and it applies to BOTH but especially to the braking one:
+# THE SoC RISE IS FC-FED, NOT HARVESTED FROM REGEN.  The plant floors regen
+# power at zero (`p_mech = max(0, F*v)`, Plant.step — regen is a torque clip on
+# this rig, CLAUDE.md 2026-08-17b), and the charge path these scenarios open is
+# FC_CHARGE_ENABLE, fed from the bus by the fuel cell.  What is validated is
+# the POLICY'S CHARGE DECISION in the low-demand windows a deceleration
+# produces, NOT regen capture.  Regen harvest needs the regen-fidelity model
+# round, which is tabled.
+#
+# BOTH walks are the ems-ftp75-sdp walk's method (see there): the strategy's
+# own decision path over the gen_dp_ems_table demand model of the declared
+# profile, pack integrated through BatterySource, the firmware's minority
+# governor applied to the delivered split, 20 Hz, 2026-08-31.  Every number
+# below is PROVISIONAL until the first campaign measures it.
+
+# ── ems-sdp-cross ───────────────────────────────────────────────────────────
+# +0.0025 places the start 2.5 nodes above the target: the run opens on the
+# battery-heavy branch, and the drain there is fast (the commanded 0.15 puts
+# ~0.85 of the total on the battery) so the flip does not eat the run.
+SDP_CROSS_SOC_REF_OFFSET = 0.0025
+# The profile is TWO CRUISE LEVELS and the split is load-bearing:
+#   * 2.2 m/s until SDP_CROSS_DECEL_S.  Source total ~0.67 A, so P_dem ~10.6 W
+#     = bin 10 — CHARGE-FORBIDDEN, and above the 0.60 A closed-loop entry gate,
+#     which matters because the governor's minority floor then keeps 0.30 A on
+#     the standby channel.  That floor is what makes BOTH the pre-flip drain
+#     and the post-flip node-50 traverse fast enough to fit in a bench run: at
+#     the low-demand level alone the traverse takes ~145 s, and the scenario
+#     would be a 5-minute run for one charge window.
+#   * 1.0 m/s afterwards.  Source total ~0.34 A -> P_dem 5.37 W = bin 5, the
+#     top charge-admissible bin, and `ems-soc-band`'s own validated charge
+#     operating point (its measured 5.593 W).  Margin to the bin-6 edge is
+#     11 %; a demand above it simply forbids charging, which the run would show
+#     as a missing window rather than as a hazard.
+SDP_CROSS_CRUISE_HI_MPS = 2.2
+SDP_CROSS_CRUISE_LO_MPS = 1.0
+SDP_CROSS_DECEL_S = 70.0          # 2.2 -> 1.0 over the next 5 s (0.24 m/s^2)
+SDP_CROSS_RUN_EXIT_S = 196.0
+SDP_CROSS_DURATION_S = 200.0
+# ⚠️ WALK RESULT (PROVISIONAL, 2026-08-31):
+#     share 0.15 -> 0.85 at t = 43.85 (the only share transition of the run)
+#     charge windows, sustained: 75.4-83.8, 115.3-123.7, 172.9-180.9 s
+#       — three, each one SDP_CHG_MIN_DWELL_S long, period ~50-57 s (the dwell
+#       plus the time the node-50 decay takes to give back what the dwell
+#       banked: 8 s * 0.8 A / 18000 = 3.6e-4 SoC at ~6.9e-6 /s)
+#     ONE 1.05 s admit-then-drop at t = 73.3, INSIDE the deceleration: the
+#       demand falls into bin 5 before the ramp finishes, the table admits, and
+#       charge_hold_status()'s SDP_CHG_CRUISE_DELTA_MPS guard withdraws it on
+#       the next decision because the drive has left the admitted cruise.  That
+#       is the guard doing exactly its job and it is EXPECTED, not a defect —
+#       it is also the only live exercise the early-drop branch has ever had.
+#       Not asserted: its existence depends on where the SoC crossing lands
+#       relative to the ramp, which is model-timing.
+#     peak I_fc 1.1372 A at t = 83.7 (single-source FC carrying the 0.337 A
+#       load plus the 0.8 A ceiling) -> 18.8 % under LIMIT_I_FC_MAX 1.4 A, i.e.
+#       `ems-soc-band`'s validated 1.139 A operating point to three digits.
+#     peak I_bt 0.6087 A (the accel to 2.2 m/s) -> 80 % under LIMIT_I_BT_MAX.
+#     SoC 0.700000 -> 0.697195.
+SCENARIOS["ems-sdp-cross"] = {
+    "description": ("%.0f s two-level cruise driven by the causal `sdp-v2` "
+                    "policy started %+.4f SoC ABOVE its target node: the run "
+                    "opens on the table's battery-heavy branch (commanded "
+                    "share 0.15), crosses the SHARE threshold downward to 0.85 "
+                    "at t ~ 44 s, then settles into the CHARGE threshold's own "
+                    "limit cycle — three minimum-dwell charge windows on the "
+                    "low cruise. The upward share crossing is not attempted on "
+                    "this rig (it would need a >2.25 A PACK-side charge "
+                    "ceiling, whose bus-side draw leaves only ~10-15 %% under "
+                    "LIMIT_I_FC_MAX); see the scenario comment for the "
+                    "pack-vs-bus referencing."
+                    % (SDP_CROSS_DURATION_S, SDP_CROSS_SOC_REF_OFFSET)),
+    "electrical": "any",
+    "duration_s": SDP_CROSS_DURATION_S,
+    "ems": "sdp-v2",
+    "sdp_soc_ref_offset": SDP_CROSS_SOC_REF_OFFSET,
+    # `ems-soc-band`'s de-rated ceiling, and for its reason: the charge window
+    # is the SAME single-source 1.0 m/s operating point (see the budget above).
+    "chg_i_ceiling_a": SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"],
+    "ems_run_exit_s": SDP_CROSS_RUN_EXIT_S,
+    # No `aux_preload_a`: the low cruise must stay inside charge-admissible
+    # bin 5 (P_dem < 6.0 W = 0.376 A of source total), and I_AUX_A alone plus
+    # the 1.0 m/s motor draw is already 0.337 A of that.  A preload here would
+    # forbid the charge window the scenario exists for.
+    "ems_v_profile": [
+        (0.0, 0.0), (3.0, 0.0),
+        (8.0, SDP_CROSS_CRUISE_HI_MPS),
+        (SDP_CROSS_DECEL_S, SDP_CROSS_CRUISE_HI_MPS),
+        (SDP_CROSS_DECEL_S + 5.0, SDP_CROSS_CRUISE_LO_MPS),
+        (SDP_CROSS_RUN_EXIT_S, SDP_CROSS_CRUISE_LO_MPS),
+        (SDP_CROSS_DURATION_S, 0.0),
+    ],
+}
+
+# ── ems-sdp-braking ─────────────────────────────────────────────────────────
+# -0.005 = five nodes below the target.  Sized against the walk's own net SoC
+# rise: the four charge windows bank ~2.0e-3 and the cruise segments give back
+# ~1.7e-3, so soc_rel ends ~3.4e-4 above where it started and stays 4.2e-3
+# clear of the node-50 boundary.  A smaller offset would let a long campaign
+# drift into the dead band and lose the last window; a much larger one buys
+# nothing and walks toward the grid floor's clamp-tie degeneracy at 0.550.
+SDP_BRAKE_SOC_REF_OFFSET = -0.005
+SDP_BRAKE_CRUISE_HI_MPS = 2.2     # P_dem ~10.6 W = bin 10, charge FORBIDDEN
+SDP_BRAKE_CRUISE_LO_MPS = 1.0     # P_dem  ~5.4 W = bin 5,  charge admissible
+SDP_BRAKE_HI_HOLD_S = 10.0
+SDP_BRAKE_DECEL_S = 3.0           # 2.2 -> 1.0, 0.40 m/s^2
+SDP_BRAKE_LO_HOLD_S = 12.0        # >= SDP_CHG_MIN_DWELL_S + AG105 settle+ramp
+# THE ACCELERATION OUT OF THE LOW PLATEAU IS A CURRENT-BUDGET CONSTANT, not a
+# drive-cycle preference.  The charge latch is withdrawn by the cruise guard
+# only at the NEXT decision, so the charger can still be open for up to one
+# decision_dt_s (1 s) INTO the acceleration, and the accel current adds to the
+# charger's on the single-source FC channel.  At 0.40 m/s^2 the walk's worst
+# case is I_tot 0.58 + 0.8 = 1.379 A — 1.5 % under LIMIT_I_FC_MAX, i.e. an
+# OC_FC coin flip.  At SDP_BRAKE_ACCEL_S = 6.0 s (0.20 m/s^2) AND the de-rated
+# ceiling below the same worst case is 1.1671 A, 16.6 % under the limit.  Both
+# knobs move that peak; neither alone is enough.
+SDP_BRAKE_ACCEL_S = 6.0
+SDP_BRAKE_CYCLES = 4
+SDP_BRAKE_CHG_CEILING_A = 0.7
+# Cycle = hold + decel + low hold + accel, minus the last cycle's accel.
+SDP_BRAKE_RUN_EXIT_S = (8.0 + SDP_BRAKE_CYCLES * (
+    SDP_BRAKE_HI_HOLD_S + SDP_BRAKE_DECEL_S + SDP_BRAKE_LO_HOLD_S
+    + SDP_BRAKE_ACCEL_S) - SDP_BRAKE_ACCEL_S)          # 126.0
+SDP_BRAKE_DURATION_S = SDP_BRAKE_RUN_EXIT_S + 8.0      # 134.0
+
+
+def _sdp_brake_profile():
+    """The braking profile, BUILT from the SDP_BRAKE_* constants.
+
+    A literal table would let a constant and the profile drift apart, and the
+    per-segment slopes are exactly what the current budget above is derived
+    against."""
+    prof = [(0.0, 0.0), (3.0, 0.0), (8.0, SDP_BRAKE_CRUISE_HI_MPS)]
+    t = 8.0
+    for i in range(SDP_BRAKE_CYCLES):
+        t += SDP_BRAKE_HI_HOLD_S
+        prof.append((t, SDP_BRAKE_CRUISE_HI_MPS))
+        t += SDP_BRAKE_DECEL_S
+        prof.append((t, SDP_BRAKE_CRUISE_LO_MPS))
+        t += SDP_BRAKE_LO_HOLD_S
+        prof.append((t, SDP_BRAKE_CRUISE_LO_MPS))
+        if i < SDP_BRAKE_CYCLES - 1:
+            t += SDP_BRAKE_ACCEL_S
+            prof.append((t, SDP_BRAKE_CRUISE_HI_MPS))
+    # The last low plateau ends exactly at the Run exit, so MODE_SAFE lands on
+    # a flat segment and no charge window is cut mid-dwell by the handback.
+    assert abs(t - SDP_BRAKE_RUN_EXIT_S) < 1e-9, (
+        "the SDP_BRAKE_* constants and SDP_BRAKE_RUN_EXIT_S disagree: the "
+        "profile ends at %.3f s, the Run exit is %.3f s" % (t, SDP_BRAKE_RUN_EXIT_S))
+    prof.append((t + 4.0, 0.0))
+    prof.append((SDP_BRAKE_DURATION_S, 0.0))
+    return prof
+
+
+# ⚠️ WALK RESULT (PROVISIONAL, 2026-08-31):
+#     share command CONSTANT 0.8500 for the whole run (by design — see above),
+#       raw table request constant 1.00
+#     charge windows, sustained: 21.3-34.4, 52.2-64.8, 83.7-96.3, 114.2-126.0 s
+#       — one per low plateau, four of four, ~12.5 s each, 50.1 s of charging
+#       in total; ZERO charge ticks inside the four 2.2 m/s cruise holds
+#     five ~1.05 s admit-then-drop blips (t = 3.05, 19.3, 50.2, 81.7, 112.1):
+#       one at Run entry (standstill is bin 2, admissible, and the accel then
+#       trips the cruise guard) and one per deceleration, same SDP_CHG_CRUISE_
+#       DELTA_MPS mechanism as `ems-sdp-cross`'s.  Expected, harmless (each is
+#       shorter than AG105_SETTLE_S, so no charge is actually delivered), and
+#       not asserted.
+#     peak I_fc 1.1671 A at t = 34.4 (the one-decision overhang into the
+#       accel — see SDP_BRAKE_ACCEL_S) -> 16.6 % under LIMIT_I_FC_MAX
+#     peak I_bt 0.3000 A (the governor's minority floor, all run) -> 90 % under
+#       LIMIT_I_BT_MAX
+#     SoC 0.700000 -> 0.699662, i.e. very nearly charge-sustained.
+SCENARIOS["ems-sdp-braking"] = {
+    "description": ("%.0f s of %d braking cycles (%.1f -> %.1f m/s and back) "
+                    "driven by the causal `sdp-v2` policy started %+.4f SoC "
+                    "BELOW its target node, so the share command is a constant "
+                    "0.85 and every charge transition is attributable to the "
+                    "DEMAND axis alone: the policy opens FC_CHARGE on each "
+                    "low-speed plateau and closes it on each cruise. NOTE the "
+                    "SoC rise is FUEL-CELL-FED through FC_CHARGE, not regen "
+                    "harvest — the plant floors regen power at zero."
+                    % (SDP_BRAKE_DURATION_S, SDP_BRAKE_CYCLES,
+                       SDP_BRAKE_CRUISE_HI_MPS, SDP_BRAKE_CRUISE_LO_MPS,
+                       SDP_BRAKE_SOC_REF_OFFSET)),
+    "electrical": "any",
+    "duration_s": SDP_BRAKE_DURATION_S,
+    "ems": "sdp-v2",
+    "sdp_soc_ref_offset": SDP_BRAKE_SOC_REF_OFFSET,
+    # DE-RATED below `ems-soc-band`'s 0.8 A: half of the SDP_BRAKE_ACCEL_S
+    # budget (see there).  The other half is the acceleration rate.
+    "chg_i_ceiling_a": SDP_BRAKE_CHG_CEILING_A,
+    "ems_run_exit_s": SDP_BRAKE_RUN_EXIT_S,
+    # No preload, for `ems-sdp-cross`'s reason: the low plateaus must stay
+    # inside charge-admissible bin 5.
+    "ems_v_profile": _sdp_brake_profile(),
+}
 
 # ── mppt-tracking: the Ag105 MPPT input-voltage threshold, closed-loop ──────
 #
@@ -5253,6 +6100,23 @@ for _dpn, _dpm in SCENARIOS.items():
             "apply_scenario() already fingerprints (the SOC_BAND_DRAIN_* "
             "constants)." % _dpn)
 del _dpn, _dpm
+
+# `sdp_soc_ref_offset` is read ONLY by SdpStrategy.bind_scenario(), so on any
+# other scenario it is a stimulus that is not what the registry says it is —
+# the same failure mode `_AUX_PRELOAD_BESPOKE` guards below, and with the same
+# absence of any symptom at the point of use.  Refuse at import.
+for _sn, _sm in SCENARIOS.items():
+    # ROLE-BASED, not name-based (2026-09-01): the key is read by
+    # SdpStrategy.bind_scenario(), so what matters is whether the scenario's
+    # strategy IS an SdpStrategy — not which of the registered SDP artifacts it
+    # plays.  A name test went stale the moment a second SDP name existed.
+    assert (("sdp_soc_ref_offset" not in _sm)
+            or _sm.get("ems") in SDP_STRATEGY_NAMES), (
+        "SCENARIOS[%r] declares `sdp_soc_ref_offset` but its `ems` is %r. The "
+        "key is read only by SdpStrategy.bind_scenario(), so it would be "
+        "silently ignored — the run would start ON the policy's target node "
+        "and the trace would carry no sign of the difference." % (_sn, _sm.get("ems")))
+del _sn, _sm
 
 SCENARIO_NAMES = list(SCENARIOS)
 

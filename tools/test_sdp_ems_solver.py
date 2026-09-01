@@ -246,11 +246,12 @@ def shipped_policy_v2():
         return json.load(fh)
 
 
-def test_default_out_and_sdp_policy_file_point_at_v2():
-    """DEFAULT_OUT moved to sdp_policy_v2.json (D11); SCHEMA is the FILE
-    FORMAT and stays sdp-policy-v1 on purpose -- v2 changed the demand MAP,
-    not the document shape, so the same schema string covers both files."""
-    assert os.path.basename(solver.DEFAULT_OUT) == "sdp_policy_v2.json"
+def test_default_out_points_at_v3_and_schema_is_unchanged():
+    """DEFAULT_OUT moved to sdp_policy_v3.json (D12); SCHEMA is the FILE
+    FORMAT and stays sdp-policy-v1 on purpose -- v2 changed the demand MAP and
+    v3 the alpha CALIBRATION, neither the document shape, so the same schema
+    string covers all three files."""
+    assert os.path.basename(solver.DEFAULT_OUT) == "sdp_policy_v3.json"
     assert solver.SCHEMA == "sdp-policy-v1"
 
 
@@ -320,6 +321,135 @@ def test_shipped_v2_alpha_unchanged_from_v1(shipped_policy_v2, shipped_policy):
     assert shipped_policy_v2["alpha"]["value"] == pytest.approx(0.2569444444444444)
     assert shipped_policy_v2["alpha"]["value"] == pytest.approx(
         shipped_policy["alpha"]["value"])
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 3d. v3 artifact (D12 two-sided alpha calibration, 2026-09-01 adjudication):
+#     tools/sdp_policies/sdp_policy_v3.json is the SHIPPED benchmark
+#     artifact. v1 and v2 stay checked in, BYTE-UNTOUCHED -- v2's policy
+#     digest is cited in two campaign ledgers, so a regeneration that moved
+#     it would invalidate published results. Same discipline as above: read
+#     the FILE, never a fresh solve.
+# ─────────────────────────────────────────────────────────────────────────
+
+SHIPPED_POLICY_V3_PATH = os.path.join(HERE, "sdp_policies", "sdp_policy_v3.json")
+
+
+@pytest.fixture(scope="session")
+def shipped_policy_v3():
+    assert os.path.isfile(SHIPPED_POLICY_V3_PATH), (
+        "the shipped v3 artifact %r is missing -- regenerate with "
+        "tools/sdp_ems_solver.py --force before running this suite"
+        % SHIPPED_POLICY_V3_PATH)
+    with open(SHIPPED_POLICY_V3_PATH, "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def test_shipped_v3_policy_block_digest_pin(shipped_policy_v3):
+    """The v3 decision-law identity, same recipe as the v1/v2 pins."""
+    import hashlib
+    digest = hashlib.sha256(
+        json.dumps(shipped_policy_v3["policy"], sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    assert digest == "0443febf240a9f5c207c42595f5841d2842496ac786c4d5342f1f8dfe33c61a2"
+
+
+def test_shipped_v3_alpha_is_the_two_sided_lever_value_in_both_windows(shipped_policy_v3):
+    a = shipped_policy_v3["alpha"]
+    assert a["value"] == pytest.approx(ALPHA_LEVER_SHIPPED, rel=1e-12)
+    assert a["mode"] == "lever"
+    assert a["admission"]["in_window_model"] is True
+    assert a["admission"]["in_window_measured"] is True
+    assert a["admission"]["allow_out_of_window"] is False
+    assert a["admission"]["window_model"] == pytest.approx(WINDOW_MODEL, abs=5e-7)
+    assert a["admission"]["window_measured"] == pytest.approx(WINDOW_MEASURED,
+                                                             abs=5e-7)
+    # The revisit condition D12 promises: the bound the charger's measured
+    # lever must cross for charging to return endogenously.
+    assert a["admission"]["threshold_soc_per_g"] == pytest.approx(0.30681920600332,
+                                                                 rel=1e-9)
+    lv = a["levers_soc_per_g"]
+    assert lv["share_model"] == pytest.approx(L_SHARE_MODEL, rel=1e-12)
+    assert lv["charge_model"] == pytest.approx(L_CHG_MODEL, rel=1e-12)
+    assert lv["share_measured"] == solver.EMS_LEVER_SHARE_SOC_PER_G
+    assert lv["charge_measured"] == solver.EMS_LEVER_CHARGE_SOC_PER_G
+    assert a["candidates"]["marginal"] == pytest.approx(ALPHA_MARGINAL_V2)
+
+
+def test_shipped_v3_has_zero_charge_enabled_cells_and_no_mask(shipped_policy_v3):
+    """Charging is rejected ENDOGENOUSLY: the charge action is available in
+    bins 0-5 and simply never chosen. `forbid_charge_all` False is what
+    separates that from a mask (D12)."""
+    goal = np.array(shipped_policy_v3["policy"]["charge_goal"])
+    assert (goal == 0.0).all()
+    assert shipped_policy_v3["actions"]["forbid_charge_all"] is False
+    forbidden = set(shipped_policy_v3["actions"]["charge_forbidden_bins"])
+    assert forbidden == set(range(6, 25))
+    n_bins = goal.shape[1]
+    assert [j for j in range(n_bins) if j not in forbidden] == [0, 1, 2, 3, 4, 5]
+
+
+def test_shipped_v3_share_table_differs_from_v2_in_exactly_the_clamp_rows(
+        shipped_policy_v3, shipped_policy_v2):
+    """The adjudicated acceptance property: the alpha recalibration must NOT
+    disturb the share map where ems-sdp actually operates. Exactly 30 cells
+    move, ALL of them in SoC rows 1-2 (the D3 clamp-boundary region); the
+    operating rows ~48-50 are untouched."""
+    s2 = np.array(shipped_policy_v2["policy"]["share"])
+    s3 = np.array(shipped_policy_v3["policy"]["share"])
+    assert s2.shape == s3.shape
+    rows, _cols = np.nonzero(s2 != s3)
+    assert rows.size == 30
+    assert set(rows.tolist()) == {1, 2}
+    for r in (48, 49, 50):
+        assert (s2[r] == s3[r]).all()
+    # ...and the charge tables differ on every cell v2 had enabled.
+    c2 = np.array(shipped_policy_v2["policy"]["charge_goal"])
+    assert int((c2 > 0.0).sum()) == 294
+
+
+def test_shipped_v3_non_degenerate_on_both_axes(shipped_policy_v3):
+    """Both acceptance spreads are PRESERVED across the recalibration:
+    0.100 across demand bins at the SoC-target row, 1.000 across SoC at the
+    dominant idle bin 10."""
+    share = np.array(shipped_policy_v3["policy"]["share"])
+    soc_grid = np.array(shipped_policy_v3["soc"]["grid"])
+    i_tgt = int(np.abs(soc_grid - shipped_policy_v3["soc"]["target"]).argmin())
+    row = share[i_tgt]
+    col = share[:, 10]
+    assert row.max() - row.min() == pytest.approx(0.100, abs=1e-9)
+    assert col.max() - col.min() == pytest.approx(1.000, abs=1e-9)
+
+
+def test_shipped_v3_converged_and_shares_v2_demand_map(shipped_policy_v3):
+    """v3 changes alpha ONLY -- the D11 demand map, the grid and the schema
+    are v2's, so a v2-vs-v3 comparison isolates the economics."""
+    assert shipped_policy_v3["solver"]["converged"] is True
+    assert shipped_policy_v3["solver"]["final_delta"] < \
+        shipped_policy_v3["solver"]["tolerance"]
+    norm = shipped_policy_v3["normalization"]
+    assert norm["p_dem_min_w"] == pytest.approx(0.0)
+    assert norm["p_dem_max_w"] == pytest.approx(25.0)
+    assert shipped_policy_v3["schema"] == "sdp-policy-v1"
+    assert shipped_policy_v3["soc"]["n"] == 101
+    assert len(shipped_policy_v3["actions"]["share_ladder"]) == 21
+
+
+def test_v1_and_v2_artifacts_still_load_under_the_unchanged_schema(
+        shipped_policy, shipped_policy_v2, shipped_policy_v3):
+    """v3 ADDS keys under `alpha`/`actions`; the older artifacts lack them and
+    must still parse. A consumer keyed on `alpha.value` + the policy tables
+    reads all three."""
+    for doc in (shipped_policy, shipped_policy_v2, shipped_policy_v3):
+        assert doc["schema"] == solver.SCHEMA == "sdp-policy-v1"
+        assert isinstance(doc["alpha"]["value"], float)
+        assert len(doc["policy"]["share"]) == doc["soc"]["n"]
+        assert len(doc["policy"]["charge_goal"]) == doc["soc"]["n"]
+    # The additive fields exist ONLY on v3 -- pinned so a future round cannot
+    # backfill them into the frozen artifacts without noticing.
+    assert "mode" not in shipped_policy["alpha"]
+    assert "mode" not in shipped_policy_v2["alpha"]
+    assert "forbid_charge_all" not in shipped_policy_v2["actions"]
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -480,8 +610,12 @@ def test_alpha_mode_level_collapses_share_spread_to_zero(tmp_path):
     is required here to reproduce the v1-era degenerate case the module
     documents."""
     out = tmp_path / "level.json"
+    # alpha_level under the sidecar map (0.01366) is far BELOW the D12
+    # admission windows, so the tripwire refuses it without the explicit
+    # historical-reproduction override.
     rc = solver.main(_REDUCED_ARGV + ["--alpha-mode", "level",
-                                      "--demand-map-sidecar", "--out", str(out)])
+                                      "--demand-map-sidecar",
+                                      "--allow-out-of-window", "--out", str(out)])
     assert rc == 0
     with open(out, encoding="utf-8") as fh:
         doc = json.load(fh)
@@ -493,22 +627,228 @@ def test_alpha_mode_level_collapses_share_spread_to_zero(tmp_path):
         / solver.FULL_SIZE_P_DEM_MAX_W)
 
 
-def test_alpha_mode_marginal_default_yields_nonzero_spread(reduced_policy):
+def test_alpha_mode_lever_default_yields_nonzero_spread(reduced_policy):
+    """The DEFAULT is now `lever` (D12), not `marginal`."""
     share = np.array(reduced_policy["policy"]["share"])
     assert share.max() > share.min()
-    assert reduced_policy["alpha"]["value"] == pytest.approx(
+    assert reduced_policy["alpha"]["mode"] == "lever"
+    assert reduced_policy["alpha"]["value"] == pytest.approx(0.1629624189805737)
+
+
+def test_alpha_mode_marginal_still_reachable_with_the_override(tmp_path):
+    """The failed v1/v2 derivation stays REACHABLE (it regenerates their
+    economics) but only behind --allow-out-of-window."""
+    out = tmp_path / "marginal.json"
+    rc = solver.main(_REDUCED_ARGV + ["--alpha-mode", "marginal",
+                                      "--allow-out-of-window", "--out", str(out)])
+    assert rc == 0
+    with open(out, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    assert doc["alpha"]["mode"] == "marginal"
+    assert doc["alpha"]["value"] == pytest.approx(
         solver.FULL_SIZE_ALPHA * (solver.V_PACK_NOMINAL_V * solver.BATT_CAPACITY_AH)
         / (solver.FULL_SIZE_EM_V * solver.FULL_SIZE_Q_AH))
+    assert doc["alpha"]["admission"]["in_window_model"] is False
+    assert doc["alpha"]["admission"]["allow_out_of_window"] is True
 
 
 def test_explicit_alpha_overrides_alpha_mode(tmp_path):
     out = tmp_path / "explicit_alpha.json"
+    # 0.1 is below both windows -- an explicit alpha is not exempt from the
+    # tripwire, which is the point of it.
     rc = solver.main(_REDUCED_ARGV + ["--alpha", "0.1", "--alpha-mode", "level",
-                                      "--out", str(out)])
+                                      "--allow-out-of-window", "--out", str(out)])
     assert rc == 0
     with open(out, encoding="utf-8") as fh:
         doc = json.load(fh)
     assert doc["alpha"]["value"] == pytest.approx(0.1)
+    assert doc["alpha"]["mode"] == "explicit"
+
+
+def test_explicit_alpha_must_be_positive(tmp_path, capsys):
+    """(1-gamma)/alpha is undefined at 0; argparse refuses before any solve."""
+    out = tmp_path / "zero.json"
+    with pytest.raises(SystemExit):
+        solver.main(_REDUCED_ARGV + ["--alpha", "0", "--out", str(out)])
+    assert "--alpha must be > 0" in capsys.readouterr().err
+    assert not out.exists()
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 5b. D12 -- the lever algebra, the admission-window tripwire, the knife-edge
+#     flip bracket, and --forbid-charge.
+# ─────────────────────────────────────────────────────────────────────────
+
+# The shipped numbers, pinned as literals rather than recomputed from the
+# helpers: a helper that changed its own formula would otherwise agree with
+# itself.  Derivations are in D12 / ALPHA_DERIVATION.
+ALPHA_LEVER_SHIPPED = 0.1629624189805737
+L_SHARE_MODEL = 0.4504504504504504
+L_CHG_MODEL = 0.20898641588296765
+WINDOW_MODEL = (0.111000, 0.239250)
+WINDOW_MEASURED = (0.121359, 0.211506)
+# The FAILED v1/v2 alpha and the sweep-confirmed flip point (1-gamma)/L_chg.
+ALPHA_MARGINAL_V2 = 0.2569444444444444
+ALPHA_JUST_BELOW_FLIP = 0.239
+
+
+def test_model_levers_match_the_pinned_values_and_their_ratio_is_v_bus_over_v_pack():
+    """D12's k-cancellation, made executable: the hydrogen basis drops out of
+    the levers' ratio entirely, which is why no efficiency or accounting
+    convention can explain v2's over-charging."""
+    l_share, l_chg = solver.model_levers()
+    assert l_share == pytest.approx(L_SHARE_MODEL, rel=1e-12)
+    assert l_chg == pytest.approx(L_CHG_MODEL, rel=1e-12)
+    assert l_chg / l_share == pytest.approx(
+        solver.V_PACK_NOMINAL_V / solver.V_BUS_NOMINAL_V, rel=1e-12)
+    # ...and it is INDEPENDENT of eta_fc / Q_LHV, the two constants the
+    # refuted loss-chain hypothesis blamed.
+    alt = solver.model_levers(eta_fc=0.4725, q_lhv=1.0e5)
+    assert alt[1] / alt[0] == pytest.approx(l_chg / l_share, rel=1e-12)
+
+
+def test_measured_lever_constants_are_the_campaign_values():
+    assert solver.EMS_LEVER_SHARE_SOC_PER_G == 0.412
+    assert solver.EMS_LEVER_CHARGE_SOC_PER_G == 0.2364
+    # The finding itself: the charger is the WORSE lever on BOTH bases.
+    assert solver.EMS_LEVER_CHARGE_SOC_PER_G < solver.EMS_LEVER_SHARE_SOC_PER_G
+    assert L_CHG_MODEL < L_SHARE_MODEL
+
+
+def test_admission_windows_and_shipped_alpha_lie_strictly_inside_both():
+    one_minus_gamma = 1.0 - 0.95
+    win_model = solver.admission_window(one_minus_gamma, L_SHARE_MODEL,
+                                        L_CHG_MODEL)
+    win_meas = solver.admission_window(one_minus_gamma,
+                                       solver.EMS_LEVER_SHARE_SOC_PER_G,
+                                       solver.EMS_LEVER_CHARGE_SOC_PER_G)
+    assert win_model == pytest.approx(WINDOW_MODEL, abs=5e-7)
+    assert win_meas == pytest.approx(WINDOW_MEASURED, abs=5e-7)
+
+    alpha = solver.alpha_lever(one_minus_gamma, L_SHARE_MODEL, L_CHG_MODEL)
+    assert alpha == pytest.approx(ALPHA_LEVER_SHIPPED, rel=1e-12)
+    assert win_model[0] < alpha < win_model[1]
+    assert win_meas[0] < alpha < win_meas[1]
+    # And the FAILED alpha is outside the model window on the CHARGE side --
+    # the single fact the tripwire exists to catch.
+    assert ALPHA_MARGINAL_V2 > win_model[1]
+    assert ALPHA_MARGINAL_V2 > win_meas[1]
+
+
+def test_admission_window_rejects_a_degenerate_lever_pair():
+    with pytest.raises(ValueError):
+        solver.admission_window(0.05, 0.2, 0.4)          # hi <= lo
+    with pytest.raises(ValueError):
+        solver.admission_window(0.05, 0.4, 0.0)          # lo not > 0
+
+
+def test_window_assert_refuses_an_out_of_window_alpha_without_the_override(tmp_path, capsys):
+    """THE TRIPWIRE. --alpha-mode marginal at default gamma is exactly the
+    v1/v2 configuration; it must fail LOUDLY and write nothing."""
+    out = tmp_path / "refused.json"
+    rc = solver.main(_REDUCED_ARGV + ["--alpha-mode", "marginal",
+                                      "--out", str(out)])
+    assert rc == 2
+    assert not out.exists()
+    err = capsys.readouterr().err
+    assert "REFUSING to solve" in err
+    assert "MODEL" in err and "MEASURED" in err
+    assert "D12" in err
+
+
+def test_window_assert_also_refuses_an_alpha_below_both_windows(tmp_path, capsys):
+    out = tmp_path / "refused_low.json"
+    rc = solver.main(_REDUCED_ARGV + ["--alpha", "0.05", "--out", str(out)])
+    assert rc == 2
+    assert not out.exists()
+    assert "REFUSING to solve" in capsys.readouterr().err
+
+
+def test_window_assert_passes_for_the_default_lever_mode(tmp_path):
+    out = tmp_path / "ok.json"
+    assert solver.main(_REDUCED_ARGV + ["--out", str(out)]) == 0
+    with open(out, encoding="utf-8") as fh:
+        adm = json.load(fh)["alpha"]["admission"]
+    assert adm["in_window_model"] is True
+    assert adm["in_window_measured"] is True
+    assert adm["allow_out_of_window"] is False
+
+
+def test_knife_edge_flip_bracket_at_the_full_default_grid(tmp_path):
+    """THE REGRESSION THAT PINS THE DEFECT. On the FULL shipped grid:
+    alpha = 0.2569444 (v1/v2) admits the Ag105 in 294 cells; alpha = 0.239,
+    just below the (1-gamma)/L_chg = 0.23925 flip point, admits it in none.
+    A change that silently moved the flip bracket -- a different V_bus, pack
+    capacity, gamma, or charge accounting -- would break exactly here."""
+    def _charge_cells(alpha):
+        out = tmp_path / ("flip_%s.json" % alpha)
+        rc = solver.main(["--alpha", repr(alpha), "--allow-out-of-window",
+                          "--out", str(out)])
+        assert rc == 0
+        with open(out, encoding="utf-8") as fh:
+            goal = json.load(fh)["policy"]["charge_goal"]
+        return sum(1 for row in goal for v in row if v > 0.0)
+
+    assert _charge_cells(ALPHA_MARGINAL_V2) == 294
+    assert _charge_cells(ALPHA_JUST_BELOW_FLIP) == 0
+
+
+def test_forbid_charge_yields_zero_charge_cells_at_any_alpha(tmp_path):
+    """--forbid-charge is the MASK: it must hold even at the alpha that
+    otherwise admits charging in 294 cells."""
+    out = tmp_path / "masked.json"
+    rc = solver.main(_REDUCED_ARGV + ["--forbid-charge", "--alpha",
+                                      repr(ALPHA_MARGINAL_V2),
+                                      "--allow-out-of-window", "--out", str(out)])
+    assert rc == 0
+    with open(out, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    goal = np.array(doc["policy"]["charge_goal"])
+    assert (goal == 0.0).all()
+    n_bins = doc["demand_bins"]["n"]
+    assert doc["actions"]["charge_forbidden_bins"] == list(range(n_bins))
+    assert doc["actions"]["forbid_charge_all"] is True
+
+
+def test_forbid_charge_is_a_UNION_and_keeps_every_derived_bin(tmp_path,
+                                                              capsys):
+    """L6 / untested-behavior #6: `--forbid-charge` UNIONS the blanket mask with
+    the dwell + FC-budget set rather than replacing it, so
+    `actions.charge_forbidden_bins` keeps ONE meaning in the artifact. Pinned
+    against the derived set from the SAME reduced solve, and against the summary
+    line, whose derived count used to be overwritten by the mask's total (so it
+    printed "N by dwell, M by budget -> all_bins forbidden", a total unrelated
+    to either component)."""
+    plain = tmp_path / "plain.json"
+    masked = tmp_path / "masked.json"
+    argv = _REDUCED_ARGV + ["--alpha", repr(ALPHA_MARGINAL_V2),
+                            "--allow-out-of-window"]
+    assert solver.main(argv + ["--out", str(plain)]) == 0
+    derived_line = capsys.readouterr().out
+    assert solver.main(argv + ["--forbid-charge", "--out", str(masked)]) == 0
+    masked_line = capsys.readouterr().out
+
+    with open(plain, encoding="utf-8") as fh:
+        derived = set(json.load(fh)["actions"]["charge_forbidden_bins"])
+    with open(masked, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    n_bins = doc["demand_bins"]["n"]
+    got = set(doc["actions"]["charge_forbidden_bins"])
+    assert derived, "sanity: the derived rules must forbid SOMETHING here"
+    assert derived <= got                       # union, never a replacement
+    assert got == set(range(n_bins))
+    # The summary line reports the DERIVED count, and names the override.
+    assert "-> %d forbidden (derived)" % len(derived) in derived_line
+    assert "-> %d forbidden (derived)" % len(derived) in masked_line
+    assert "OVERRIDES this to all %d bins" % n_bins in masked_line
+    assert "OVERRIDES" not in derived_line
+
+
+def test_default_solve_does_not_set_forbid_charge_all(reduced_policy):
+    """The shipped artifact rejects charging ENDOGENOUSLY, not by mask -- the
+    distinction D12 turns on. If this ever flips to True the artifact has
+    stopped recording a reason."""
+    assert reduced_policy["actions"]["forbid_charge_all"] is False
 
 
 # ─────────────────────────────────────────────────────────────────────────

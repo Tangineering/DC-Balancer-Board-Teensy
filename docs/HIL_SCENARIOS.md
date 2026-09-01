@@ -193,6 +193,51 @@ Electrical engine: `"any"` scenarios run under the campaign's `--electrical-pref
 
 ## 6. EMS (Mode A) scenarios
 
+### 6.0 Strategy roles, and the cross-run EMS frontier check
+
+Every EMS strategy carries a **role** in `hil_plant_sim.EMS_STRATEGY_META`
+(`policy_file` + `frontier_eligible`), and the role decides how a run's energy
+numbers may be read.
+
+| role | strategies | what a run's `h2_cum_g` / `delta_soc` mean |
+|---|---|---|
+| **frontier** (`frontier_eligible: True`) | `soc-band` (causal heuristic, the eq-H2 **reference**), `sdp-v3` (causal calibrated policy, the **candidate**), `dp-replay` (non-causal offline **bound**) | an energy-management result, ranked by the frontier check below |
+| **demonstration** (`frontier_eligible: False`) | `sdp-v2`, `hold-5050`, `regen-harvest`, `mppt-harvest`, the four `y-*` profiles | a measurement of the MECHANISM the run puts on the wire — **not** a competitive score. These runs are excluded from the frontier check by construction and carry a demonstration banner in REPORT.md and in their per-run `ANALYSIS.md`. |
+
+**The EMS frontier check** (`run_hil_suite.py`, `evaluate_ems_frontier()`) is the
+suite's only CROSS-RUN assertion. It exists because an energy-management result is a
+comparison and no per-run threshold can express one: campaign `20260901_000816`
+shipped 53/53 PASS with a 9.9 pp policy regression in it. Legs are compared on
+SoC-corrected hydrogen,
+
+```
+eq_H2(run) = h2(run) - (dSoC(run) - dSoC(ems-soc-band)) / lambda
+```
+
+so a leg that ends with more charge left is **credited** the hydrogen it did not
+have to burn. `lambda = 0.41 SoC/g` is the MEASURED share lever (campaign
+`20260831_191509` priced share-shifting at 0.409–0.415 SoC/g on two independent
+stimuli; the offline DP solve says 0.405). The two assertions are
+
+- `eq_H2(ems-sdp) <= 0.98 x eq_H2(ems-soc-band)` — the optimal-by-construction leg
+  must beat the heuristic by at least 2 %, and
+- `eq_H2(ems-sdp) <= 1.06 x eq_H2(ems-dp-replay)` — it must stay near the
+  non-causal bound it cannot reach. ⚠️ 1.06 is a first-campaign bound on the
+  calibrated artifact; the intent is to **tighten it to 1.03** after two `sdp-v3`
+  campaigns have measured the leg's spread.
+
+Verdicts other than PASS: **KNIFE-EDGE** when the verdict flips anywhere inside the
+measured lambda band \[0.409, 0.415] (lambda is known to ~1.5 %, so such a result is
+not a result — neither PASS nor FAIL); **UNVERIFIED** when a leg is missing, skipped,
+or failed its own checks, or when the legs' `delta_soc` differ by more than 0.010 SoC
+(the correction is a linear extrapolation and is not credible over a large gap).
+Anything but PASS counts as a failing suite run and is NAMED in REPORT.md — a
+silently dropped leg is exactly how the regression above went unnoticed.
+
+⚠️ `h2_cum_g` is the Gfc **model's estimate**. The map is scale-portable, but the
+coefficients are not identified against this rig's stack (`TODO(calibrate)`), so
+every frontier number is a RANKING on one rig and not an absolute mass.
+
 ### ems-drive-cycle (58 s, any engine, EMS `hold-5050`)
 
 - **Tests:** a full accelerate / two-level cruise / decelerate / stop drive cycle
@@ -231,6 +276,124 @@ Electrical engine: `"any"` scenarios run under the campaign's `--electrical-pref
 - **Why useful:** matched-terminal-SoC hydrogen comparison against `ems-soc-band`
   (−14.33 % offline, −9.4 % live) is the thesis-level EMS result; the startup
   fingerprint refusals guarantee the table and the stimulus cannot drift apart.
+
+### ems-sdp (61 s, any engine, EMS `sdp-v3` — THE BENCHMARK LEG)
+
+- **Tests:** the identical cycle and drain again (the same profile list object as
+  `ems-soc-band` and `ems-dp-replay`), driven by the causal stochastic-DP policy —
+  a table indexed by STATE (SoC x demand bin) baked offline by
+  `tools/sdp_ems_solver.py`. It is the causal optimal-by-construction leg between
+  the `soc-band` heuristic and the non-causal `dp-replay` bound.
+- **Pass/fail:** fault-free; in Run at t = 50; the profile's 1.5 m/s cruise
+  commanded; `cmd_share_sp` >= 0.84 (the policy's fuel-cell rail, emitted at the
+  0.85 hardware-envelope clamp — a level neither sibling can reach); the PRE-CLAMP
+  `cmd_share_sp_raw` measured two-sided at the interior 0.95 on the drain plateau
+  and back at the 1.00 rail on the low cruise (the checks that identify the v2
+  demand map, since every table value clamps to the same emitted 0.8500);
+  **`FC_CHARGE_ENABLE` never opens** (`max_ticks: 0`, whole post-grace run);
+  `I_fc` >= 1.00 A; and the two hydrogen accumulators.
+- **Why useful:** the third leg of the three-way EMS comparison on one stimulus,
+  and the one leg `run_hil_suite.py`'s **EMS frontier check** scores as the
+  candidate (eq-H2 at lambda 0.41, against `ems-soc-band` and `ems-dp-replay`).
+- **⚠️ REBOUND TO `sdp-v3` (2026-09-01, the charge-economics ruling).** Campaign
+  `20260901_000816` measured this leg OFF the frontier: +12.78 % over the DP
+  bound and 1.54 % worse than the heuristic, because v2's alpha admits the
+  Ag105 charge lever (0.2364 SoC/g) below its own 0.1946 SoC/g admission
+  threshold while the campaign prices share-shifting at 0.409-0.415. The
+  artifact `tools/sdp_policies/sdp_policy_v3.json` (policy-block sha256
+  `0443febf…`) re-derives alpha by two-sided lever calibration and the charge
+  action is then declined **ENDOGENOUSLY** — zero charge cells in all 101 x 25,
+  `forbid_charge_all` FALSE. So the old `sdp_charge_window_opened` check is now
+  its inverse, `charge_path_never_opens`. **The share axis is unchanged:** v2
+  and v3 differ in `policy.share` on SoC rows 1-2 only, which this trajectory
+  (row 50, falling ~0.0017) never reaches — but every share band above was
+  CALIBRATED on v2 campaigns and the first v3 campaign is expected to repeat
+  them.
+
+### ems-ftp75-sdp (350 s, any engine, EMS `sdp-v3`, gated behind `--with-ftp75`)
+
+- **Tests:** the SDP policy's **bang-bang share law**, on the same FTP-75 profile
+  object as the other two FTP-75 scenarios. The scenario key
+  `sdp_soc_ref_offset = +0.013` starts the run 0.013 SoC **above** the policy's
+  target node, i.e. on the table's battery-heavy branch (raw action 0.00, emitted
+  at the clamp as 0.15); the cycle's own drain then walks the state across the
+  switching boundary and the command steps ONCE to 0.85. Every `ems-sdp`-family
+  run before this round started exactly on the node and could only discharge, so
+  the wire carried one constant 0.8500 for the whole run.
+  The preload is **0.45 A**, not the siblings' 0.65 A: at 0.65 the fuel-cell
+  branch's governed peak is 1.355 A, 3.2 % under `LIMIT_I_FC_MAX`, and an OC_FC
+  latch would truncate the run at exactly its post-flip half.
+- **Pass/fail:** fault-free (`allow_only: 0`, stricter than the socband sibling
+  deliberately); in Run at t = 260; the 3.0 m/s peak commanded; `cmd_share_sp`
+  never above 0.16 over (20, 150) s and reaching 0.84 over (250, 340) s — together
+  a measured crossing inside **t = 150..250 s**; the same span on
+  `cmd_share_sp_raw` (<= 0.01 then **>= 0.89** — the floor must admit demand bin
+  24's 0.90 request, not just the 0.95/1.00 pair), which is what identifies the TABLE's
+  branch rather than the emitted level; `I_fc` <= 0.45 A early (the commanded 0.15
+  is below the minority governor's floor, so delivered FC is pinned at 0.300 A)
+  and >= 1.00 A at the cycle peak; `h2_cum_g` in [0.020, 0.12] g.
+- **Why useful:** the only run in the suite that puts the SDP policy's switching
+  law itself on the wire. ⚠️ Every band is FIRST-CAMPAIGN PROVISIONAL, from an
+  offline walk; the flip-time band is +/-20 % of the walk's 195.9 s because the
+  flip time is an integral of the drain.
+- **⚠️ REBOUND TO `sdp-v3` (2026-09-01), AND THE WALK TRANSFERS VERBATIM.** The
+  offline walk was measured against v2 and was NOT re-run, because a row-by-row
+  diff of the two baked tables shows it does not need to be: `policy.share` is
+  identical at every SoC row from 3 upward (the artifacts differ in 30 cells,
+  all on rows 1-2), and this scenario spans rows ~63 down to ~44. Every number
+  above — the 0.15/0.85 emitted pair, the {0.00} / {1.00, 0.95} raw requests,
+  the 195.9 s flip and its (150, 250) s band — is arithmetically the same under
+  v3. On the CHARGE axis, v2's cells sit in demand bins 0-5 only and this
+  walk's demand never falls below bin 9 in Run, so v3's zero map removes cells
+  the trajectory could not visit either way: "no charge stage is reachable" was
+  already the claim, and under v3 it is additionally true by construction.
+
+### ems-sdp-cross (200 s, any engine, EMS `sdp-v2` — DEMONSTRATION)
+
+- **Tests:** both of the artifact's SoC switching surfaces in one run. A two-level
+  cruise (2.2 m/s to t = 70, then 1.0 m/s) with `sdp_soc_ref_offset = +0.0025`
+  gives the downward SHARE crossing at t ≈ 44 s, and the low cruise — P_dem
+  5.37 W, the top charge-admissible bin — then produces the CHARGE threshold's own
+  minimum-dwell limit cycle: three ~8 s windows about 50–57 s apart.
+  ⚠️ An UPWARD share crossing is **not reachable on this rig**: raising SoC through
+  the 1e-3-wide dead band around the target node inside one `SDP_CHG_MIN_DWELL_S`
+  latch needs a charge ceiling above 2.25 A, which on the single-source FC path is
+  an immediate OC_FC. Nothing here asserts one.
+- **Pass/fail:** fault-free; in Run at t = 180; `cmd_share_sp` at the 0.15 clamp
+  over (5, 25) s and reaching 0.84 over (65, 190) s (a crossing inside 25..65 s);
+  `cmd_share_sp_raw` <= 0.01 early; `FC_CHARGE_ENABLE` open >= 12 s across the low
+  cruise **and** released for all but 2 s of (90, 108) s — the pair is what makes
+  it a cycle rather than one latched window; `I_charge` >= 0.5 A.
+- **Why useful:** the first live exercise of the charge dwell latch as a
+  hysteresis, and of `charge_hold_status()`'s cruise-guard early drop (one ~1 s
+  admit-then-drop lands inside the deceleration by construction — expected, and
+  deliberately not asserted). No board-side share check is possible at this
+  operating point and the entry says so: the governor clips both branches to
+  within 0.07 A of each other at 0.67 A of total. ⚠️ FIRST-CAMPAIGN PROVISIONAL.
+
+### ems-sdp-braking (134 s, any engine, EMS `sdp-v2` — DEMONSTRATION)
+
+- **Tests:** the policy's charge decision on the **demand axis alone**. Four
+  braking cycles (10 s at 2.2 m/s, 3 s decel to 1.0 m/s, 12 s plateau, 6 s accel
+  back) with `sdp_soc_ref_offset = -0.005`, which pins the share command at a
+  constant 0.85 for the whole run by design — so with the SoC axis held still,
+  every FC_CHARGE transition is attributable to demand: the plateaus are bin 5
+  (charge-admissible) and the cruises bin 10 (forbidden).
+  ⚠️ **The SoC rise is fuel-cell-fed through FC_CHARGE, not regen harvest.** The
+  plant floors regen power at zero, so this validates the policy's decel-window
+  charge behaviour and NOT regen capture.
+- **Pass/fail:** fault-free; in Run at t = 100; `cmd_share_sp` bounded in
+  [0.84, 0.86] for the whole run (asserted from both sides — that bound is what
+  licenses the attribution); `FC_CHARGE_ENABLE` open >= 25 s of the walk's 50.1 s
+  across the plateaus and closed for all but 0.5 s inside two of the 2.2 m/s
+  cruise holds; `I_charge` >= 0.4 A.
+- **Why useful:** the correlation — charging ON in the low windows and OFF in the
+  cruises — is the cleanest available attribution of a policy action to the demand
+  axis. The charge ceiling (0.7 A) and the acceleration rate (0.20 m/s²) are both
+  **current-budget constants**: the cruise guard withdraws the charge latch only
+  at the NEXT decision, so the charger can still be open one second into an
+  acceleration, and at 0.40 m/s² with the usual 0.8 A ceiling that peak is 1.379 A
+  — 1.5 % under `LIMIT_I_FC_MAX`. ⚠️ FIRST-CAMPAIGN PROVISIONAL.
 
 ### ems-y-b30-v1 / ems-y-b30-v3 (49 s, any engine, preloaded)
 
@@ -287,6 +450,9 @@ Electrical engine: `"any"` scenarios run under the campaign's `--electrical-pref
 
 ### ems-ftp75-5050 / ems-ftp75-socband (350 s each, any engine, gated behind `--with-ftp75`)
 
+*(`ems-ftp75-sdp` is the third member of this gated set and has its own entry
+above, with the EMS scenarios it belongs to.)*
+
 - **Tests:** the first 340 s of the EPA FTP-75 cycle, scaled to a 3.0 m/s peak,
   driven by `hold-5050` and `soc-band` respectively — an endurance test of the EMS
   layer (~30 accelerate/cruise/decelerate/idle cycles, 345 s of continuous 50 Hz
@@ -311,8 +477,8 @@ Electrical engine: `"any"` scenarios run under the campaign's `--electrical-pref
   remaining 298 s** — past that point the run tests the firmware's share loop under
   one fixed setpoint, not the policy's law.
 - **Why useful:** the longest accounting runs in the suite, on a cycle a reader
-  outside the project recognises; skipped by default purely on run time (~11.7 min
-  for the pair).
+  outside the project recognises; skipped by default purely on run time (~17.5 min
+  for the three, `ems-ftp75-sdp` included).
 
 ## 7. Share-loop and topology scenarios
 
