@@ -9,3 +9,4 @@ references/EMS/simulink_pdem_output_stochastic_*.mat
 # (references/EMS/generated/*.provenance.json), so integrity is verifiable
 # without committing the payloads.
 references/EMS/Pdem_cycles/*.mat
+test/rv_*.exe
