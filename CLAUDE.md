@@ -2221,3 +2221,104 @@ extensions, one datasheet correction, one open hardware question.
   thresholds calibrate there); R1 answer (MPPTSEL header) settles the mppt-tracking
   expectation + the reg-0x02 firmware question; FTP75 DP table when wanted
   (--with-ftp75 + ~21 min offline solve).
+
+---
+
+## Status & session addendum (2026-08-31f, TPM toolchain: Markov demand-transition generator)
+
+Parallel EMS-strategizing session's round, committed and recorded here by the SDP session
+that consumed it (the TPM session deferred its addendum). Commit db6e7ce; Python tooling
+only, FW stays v23.
+
+- **tools/tpm_generator.py (miniforge numpy/scipy; NOT .venv_hil):** Python port of the
+  PhD student's references/EMS/TPM_generator.m. Decodes the ten opaque MCOS Simulink
+  Pdem cycle files (~315 MB, gitignored, sha256es pinned in the sidecars), replicates
+  MATLAB interp1-spline/discretize/colon semantics, and at dt=1.0 reproduces
+  TPM_scaled.mat BIT-IDENTICALLY (`--validate` gate; sE cancels under normalization so
+  TPM_fullsize.mat is the same matrix). Library API: load_pdem_cycle, build_tpm,
+  rescale_gamma (gamma_eff = gamma_base**(dt/dt_base)), matlab_discretize, SM/SL/SE.
+  104 tests (tools/test_tpm_generator.py, miniforge pytest).
+- **Artifacts in references/EMS/generated/** (each with a .provenance.json sidecar):
+  `TPM_dt1_hil.mat` is the primary SDP input — 25x25, `--hil` preset (V2 dropped as a
+  bit-identical duplicate of V1, V3 truncated to its native 600 s, cross-file boundary
+  transitions excluded, empty rows = self-transition), 0 zero rows, diagonal mass 76.2%.
+  Also dt0p5, and parity artifacts incl. TPM_scaled_dt0p02.mat (99.0% diagonal — why
+  20 ms is the wrong decision step). Sidecars carry the UNITLESS contract: bins
+  partition normalized [0,1]; the CONSUMER owns energy scaling via
+  `normalization.p_dem_scaled_min_w/max_w` (-1.1248/+1.6398 W), clamping out-of-range
+  to end bins. Sidecar JSONs are LF-normalized with a `* -text` .gitattributes (SDP
+  round fix MED-1) so recorded hashes are checkout-independent.
+- docs/HIL_SCENARIOS.md (suite scenario catalog) landed with this round.
+
+---
+
+## Status & session addendum (2026-08-31g, SDP EMS strategy: sdp-v1 + ems-sdp + H2 proxy)
+
+Orchestrated tooling round (two parallel Opus implementers, Sonnet test-writer x2 rounds,
+parallel Opus data-integrity + Sonnet contract reviews, sequenced fix rounds). Python
+tooling + docs; FW stays v23; wire protocol frozen. Ports the PhD student's
+references/EMS/SDP_EnergyManagement2.m onto the HIL sim, consuming the TPM toolchain.
+
+- **tools/sdp_ems_solver.py (new, miniforge):** infinite-horizon value iteration over
+  (SoC grid 101 pts [0.55,0.65] x 25 TPM demand bins) from TPM_dt1_hil.mat + sidecar
+  (min/max read at solve time per the operator ruling), gamma 0.95 via rescale_gamma,
+  declared decisions D1-D10. **D1 is load-bearing: per-1s-step |dSoC| is 4.4e-5 vs 1e-3
+  grid spacing, so nearest-grid transitions (the MATLAB's min-abs rule) move NOTHING —
+  measured: the un-interpolated policy is share=0 everywhere.** J is linearly
+  interpolated over SoC (the Round-B DP fix, again). **alpha re-derived 500 ->
+  0.2569444** via coulombic-energy scaling (500 x (7.4V x 5Ah)/(720V x 100Ah)) — the
+  marginal rate preserving the full-size trade-off; the level-form alternative (0.01367)
+  is measurably degenerate (share=0 everywhere; --alpha-mode level keeps it reachable).
+  Actions: 21-step share ladder x charge_goal {0,1}; operator ruling (b) baked as
+  charge_forbidden_bins 12-24 (dwell-quantile 0.90 + an FC-budget rule). Converged 455
+  sweeps, delta 9.8e-13. Bakes tools/sdp_policies/sdp_policy_v1.json (schema
+  sdp-policy-v1; policy-block sha256 dbe42d1b... — the STABLE identity; the byte sha
+  moves with generated_utc on every --force, never pin it).
+- **sdp-v1 strategy (hil_plant_sim.py, stdlib):** SIM-ONLY (fb["soc"] is plant truth).
+  SoC0-RELATIVE regulation (soc_rel = 0.6 + soc - soc0, soc-band's capture convention)
+  so ems-sdp runs at default soc0 0.7 and is three-way comparable. 1 s decision ZOH
+  under the 50 Hz commander. P_dem = V_bus x (I_fc + I_batt) (telemetry-equivalent keys
+  only), normalized via the artifact's sidecar-derived min/max, END-BIN CLAMPED —
+  **real bus demand (~1-20 W) exceeds the ideal-scaling range (-1.12..+1.64 W), so
+  residency pins to bin 24 in practice; counted and reported, a scale-fidelity boundary
+  not a bug.** **Hardware-envelope share clamp [0.15, 0.85]** (soc-band's exact clamp;
+  fix round): the raw table rails at 1.0, which cuts BT_BUS and runs single-source FC
+  into LIMIT_I_FC_MAX (OC_FC at ~13 s, run truncated — the original design, reworked).
+  Clamped: governed I_fc 1.16 A at the 1.45 A drain peak, 17% OC margin, fault-free
+  full-length run; last_share_raw + clamp counter keep the rail visible. Loader
+  validates finiteness + ranges (a NaN share would otherwise emit 0.15 via max()
+  semantics; a raw NaN charge_goal diverges logged-vs-board state). Per-run provenance:
+  bind_scenario() shas the artifact; meta sidecar gains config.sdp_policy for sdp-v1
+  runs. Known documented degeneracy: the SoC-grid FLOOR node (row 0) commands share 0.0
+  (D3 clamp-tie, tie-break picks least-hydrogen) — unreachable in ems-sdp (needs 0.05
+  SoC fall vs ~0.006), pinned by test.
+- **h2_sdp_cum_g CSV column:** the student's static proxy P_fc_stack/(0.5 x 120000),
+  same clamped input as the Gfc integrator by construction (one step(), one reset());
+  proxy under-reads Gfc ~5.5%. Suite metric final_h2_sdp_cum_g alongside final_h2_cum_g.
+  The solver's J is BUS-side P_fc; never difference a J against a logged hydrogen total.
+- **ems-sdp scenario:** stimulus IDENTICAL to ems-soc-band (same profile list object,
+  duration 61 s, ceiling 0.8 A, drain branch) — the comparison set is now
+  soc-band (causal heuristic) / sdp-v1 (causal optimal-policy) / dp-replay (non-causal
+  bound) on one stimulus. FAULT_EXPECTATIONS: fault-free, survive_to t=50, five signal
+  checks incl. cmd_share_sp >= 0.84 (discriminates vs 0.75 and 0.50) and I_fc >= 1.00 A.
+  Charging is structurally unreachable here (bin 24 is forbidden) — asserted, not hoped.
+- **Reviews:** contract — 1 MED (undeclared convergence-ordering deviation -> D10: the
+  MATLAB's break-before-update keeps a one-sweep-stale J, likely its own bug) + the
+  floor-node banner falsity + gamma dt_base note; data-integrity — 4 MED (checkout-
+  dependent sidecar sha -> LF + -text fix; missing per-run artifact recording; the alpha
+  rationale's "~31x smaller" was wrong in VALUE AND DIRECTION (per watt-second the rig
+  moves 1946x MORE; the true figure is the 18.8x per-stage ratio) -> artifact
+  regenerated; loader finiteness/range) + LOWs incl. the .gitattributes overclaim. All
+  accepted, all applied. Reviewer perturbation sweep: the charge decision is ROBUST
+  (600 charge cells under +/-5% alpha, 0.5-0.9 A ceiling, 12-16.5 V bus, -20% capacity;
+  flips only at 1.2 A where the FC-budget rule forbids all) — supersedes the
+  implementer's "knife-edge ~1.07" impression.
+- **Tests: 984 passed + 26 skipped (.venv_hil five-suite set) / 147 (miniforge:
+  sdp_ems_solver + gen_dp_ems_table + tpm_generator) / 113 (report-analysis) —
+  orchestrator-rerun.** Provenance pins: tpm.sha256 + sidecar sha vs the tree, the
+  policy-block digest, the floor-node exception.
+- **Untested residuals (declared):** bind_scenario's banner/ignored-args, the solver's
+  load_sidecar error branches.
+- **Next:** full campaign (all scenarios incl. --with-ftp75) with live
+  hil-agent-analysis, then a higher-level utility evaluation of the HIL suite for the
+  EMS-testing mission (operator-queued in this round's brief).

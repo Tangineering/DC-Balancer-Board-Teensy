@@ -636,6 +636,176 @@ FAULT_EXPECTATIONS = {
              "label": "the H2 consumption metric accumulated over the run"},
         ],
     },
+    "ems-sdp": {
+        # The CAUSAL stochastic-DP leg (2026-08-31): the same cycle and the same
+        # drain as `ems-soc-band` and `ems-dp-replay` (all three share ONE
+        # ems_v_profile object and the SOC_BAND_DRAIN_* branch), driven by a
+        # STATE-indexed policy baked by tools/sdp_ems_solver.py.
+        #
+        # THRESHOLDS ARE READ OFF THE SHIPPED ARTIFACT, the same discipline the
+        # `ems-dp-replay` entry states for its table — and they must be
+        # RE-DERIVED, never relaxed, if tools/sdp_ems_solver.py regenerates it.
+        # Measured offline 2026-08-31 against POLICY-BLOCK sha256 dbe42d1b…
+        # (recipe: sha256(json.dumps(doc["policy"], sort_keys=True)) — the
+        # DECISION LAW, stable across a --force regeneration that did not change
+        # it; the artifact's FILE sha moves on every regeneration because it
+        # carries `generated_utc`, so quoting one here would go stale on a
+        # no-op re-run. The per-run file sha is in the CSV's meta sidecar,
+        # config.sdp_policy):
+        #   * at the clamped TOP demand bin the action is bang-bang about the
+        #     target — share 1.00 for every SoC node in (0.550, 0.600], 0.00
+        #     above it AND at the exact grid-floor node 0.550 (a solver-side
+        #     clamp-tie degeneracy, its D3/D8, not a second switching point).
+        #     The floor node is UNREACHABLE here — it needs SoC to fall 0.05
+        #     below the captured soc0 against this run's ~0.006 — but a longer
+        #     or heavier-drain reuse of `sdp-v1` could reach it and would
+        #     command the most-discharging split there; the clamp emits that as
+        #     0.15, in band, so no OC reasoning below changes;
+        #   * the SoC0-relative mapping starts a run AT that node, and this
+        #     scenario's SoC only falls, so the TABLE asks for 1.00 throughout —
+        #     and SdpStrategy.clamp_share() emits it as **0.8500**, the
+        #     hardware-envelope clamp [SOC_BAND_SHARE_MIN, SOC_BAND_SHARE_MAX]
+        #     that SocBandStrategy applies for the same reason. 1.00 would put
+        #     the setpoint outside [DROOP_R_MIN, DROOP_R_MAX], cut BT off the
+        #     bus and run single-source FC into this scenario's ~1.45 A drain,
+        #     past LIMIT_I_FC_MAX — an OC latch that would TRUNCATE the run and
+        #     with it the three-way hydrogen comparison the scenario exists for.
+        #     Every threshold below is against the CLAMPED command;
+        #   * `charge_goal` is 0.00 in every row of that column (the solver marks
+        #     demand bins 12-24 charge-forbidden), so NO charge window is
+        #     reachable here — asserting one would assert something the artifact
+        #     structurally cannot do. Same shape of argument as the dp-replay
+        #     entry's "why there is no charge check".
+        # ⚠️ The FIRST campaign is what turns these from offline predictions into
+        # measured facts. A miss on any of them is a claim about the artifact or
+        # the strategy, not a board finding — check the commanded share in the
+        # CSV's cmd_share_sp column before touching anything on the board.
+        "source": "hil_plant_sim.py SCENARIOS['ems-sdp'] (a DERIVED entry sharing "
+                  "ems-soc-band's ems_v_profile object and SOC_BAND_DRAIN_* load) "
+                  "+ the SdpStrategy banner (SoC0-relative regulation, the "
+                  "demand-axis clamp, the decision cadence, the clamp_share() "
+                  "hardware-envelope clamp, and the PREDICTED BEHAVIOUR block, "
+                  "which is where the 0.8500 command and the zero-charge "
+                  "property below are derived) + the SHIPPED artifact "
+                  "tools/sdp_policies/sdp_policy_v1.json. Current budgets from "
+                  "SOC_BAND_DRAIN_LOAD_A's LIMIT_I_FC_MAX arithmetic and the "
+                  "firmware's own setpoint governor (.ino:9556-9568).",
+        # FAULT-FREE, mirroring `ems-soc-band` and `ems-dp-replay`. The OC_FC
+        # this entry previously ALLOWED was a consequence of emitting the
+        # table's 1.00 rail; the hardware-envelope clamp removes it at the
+        # source, and the margin is stated rather than hoped for:
+        #     commanded 0.85 -> the firmware's governor clips an in-band
+        #     setpoint to [I_min/I_tot, 1 - I_min/I_tot] = [0.205, 0.795] at
+        #     this scenario's measured 1.462 A drain peak, so I_fc = 1.162 A —
+        #     17 % under LIMIT_I_FC_MAX 1.4 A — and the BT minority sits at
+        #     exactly SHARE_MINORITY_I_MIN_A 0.30 A, governed rather than
+        #     starved. Ungoverned (below the 0.60 A closed-loop entry gate the
+        #     raw 0.85 is fed forward) the worst case is 0.85 x 0.60 = 0.51 A.
+        #     No cut is attempted at all, so SHARE_CUT_MAX_HANDOFF_A never
+        #     enters. An OC_FC here is therefore a REAL finding, not the
+        #     designed outcome — which is exactly why nothing is allowed.
+        "allow_only": 0,              # expected completely fault-free
+        # Deep inside the Run window (the strategy hands back MODE_SAFE at
+        # SDP_RUN_EXIT_S = SOC_BAND_RUN_EXIT_S = 58.0), the same depth
+        # `ems-dp-replay` asserts: the run must reach the low cruise fault-free,
+        # not merely survive the drain phase.
+        "survive_to": {"t": 50.0, "states": {2, 3}},
+        "signals_require": [
+            # 1. THE EMS LAYER ACTUALLY COMMANDED. The v_setpoint axis comes
+            #    straight from the scenario's ems_v_profile, which holds 1.5 m/s
+            #    over t = 8..38. A run where the policy failed to bind, or where
+            #    the 50 Hz stream never carried its setpoints, cannot reach 1.45.
+            #    Measured on the HOST's command column: it asserts the EMS
+            #    layer's own output, independently of anything the board does
+            #    with it (check 3 is the board-side half).
+            {"name": "sdp_drive_commanded", "column": "cmd_v_sp",
+             "min_value": 1.45, "t_window": (12.0, 30.0),
+             "label": "the sdp-v1 policy commanded the profile's 1.5 m/s cruise"},
+            # 2. THE SDP-SPECIFIC assertion — "is this actually the policy's
+            #    table?", the analogue of dp_early_fc_rail. The artifact's action
+            #    at (soc_rel <= target, top demand bin) is the FC RAIL, emitted
+            #    at the hardware-envelope clamp as 0.8500 — a value NOTHING else
+            #    driving this cycle commands: the firmware's own default is 0.50,
+            #    `soc-band`'s ceiling is 0.75 (SOC_BAND_SHARE_NOMINAL +
+            #    SOC_BAND_SHARE_SPAN) and the DP table's rail is 0.75 as well.
+            #    Floor 0.84 sits just under the emitted value and a clear 0.09
+            #    above the nearest thing any sibling strategy can reach.
+            #    Window 5.0-54.0: from Run entry (3.0) plus a decision cadence to
+            #    the end of the low cruise — the command is expected to be HELD
+            #    for the whole run, so a wide window is honest here (unlike the
+            #    sibling entries, whose commands are trajectories).
+            #    ⚠️ If a campaign measures the RAW 1.0000 in this column instead,
+            #    the clamp is not being applied — that is a defect in
+            #    SdpStrategy.clamp_share(), not a board finding, and the run
+            #    would also be expected to latch OC_FC.
+            #    ⚠️ WHAT THIS CHECK CANNOT SEE: any regenerated top-bin action in
+            #    (0.85, 1.0] emits the SAME clamped 0.8500, so a policy re-solve
+            #    that moved the action within that interval passes identically
+            #    and is invisible here. The per-run `config.sdp_policy` block in
+            #    the CSV's meta sidecar (file and policy-block sha256) is the
+            #    discriminator; this check asserts the ACTUATED level, not the
+            #    artifact's identity.
+            {"name": "sdp_clamped_rail_commanded", "column": "cmd_share_sp",
+             "min_value": 0.84, "t_window": (5.0, 54.0),
+             "label": "the SDP policy's fuel-cell rail, emitted at the 0.8500 "
+                      "hardware-envelope clamp — a level neither soc-band nor "
+                      "the DP table (both 0.75) can reach"},
+            # 3. ... AND THE FIRMWARE ACTED ON IT — the "cmd_share_sp is only
+            #    what the host asked for" half both sibling entries carry.
+            #    Derivation, and it is the GOVERNED value rather than the
+            #    commanded one: an in-band 0.85 is clipped by the firmware's own
+            #    setpoint governor to 1 - I_min/I_tot (.ino:9556-9568), which at
+            #    the drain plateau's measured 1.462 A total is 0.795, so the
+            #    delivered I_fc is ~1.16 A. Against the firmware's default 0.50
+            #    split at the same load (0.73 A) the two are far apart, and
+            #    1.00 A sits between them with ~14 % of margin below the
+            #    prediction — while staying 29 % under LIMIT_I_FC_MAX 1.4 A, so
+            #    a pass can never be confused with an overcurrent.
+            #    Window 20.0-38.0 is the drain plateau: after the ramp completes
+            #    at 13.0 (plus settling) and before the ramp-out at 38.0.
+            #    L3 (inherited from both sibling entries) — WHAT A PASS PROVES.
+            #    The plant splits bus current in proportion to the MDAC CODE
+            #    RATIO (HIL_PLANT.md §4.7: sign- and monotonicity-preserving,
+            #    WRONG GAIN), so this floor asserts the firmware->MDAC
+            #    arithmetic, NOT share-loop gain validation.
+            {"name": "sdp_fc_current_biased", "column": "I_fc",
+             "min_value": 1.00, "t_window": (20.0, 38.0),
+             "label": "the board's share loop moved current onto FC to the "
+                      "governed level of the commanded 0.85"},
+            # 4. ... and the accounting saw it. h2_cum_g is monotone, so the peak
+            #    IS the final value. Budget for the FULL 61 s run (this scenario
+            #    is expected to complete, not to truncate): over the ~25 s drain
+            #    plateau the FC channel carries ~0.795 x 1.46 A = 1.16 A at
+            #    V_bus ~15.85 -> ~18.4 W of bus power, ~21.6 W at the stack
+            #    through ETA_BOOST 0.85, i.e. ~3.8e-4 g/s at the model's
+            #    1.7638e-5 g/s/W DC gain and ~9.5e-3 g over the plateau alone;
+            #    the accel, ramp and low-cruise segments add a few e-3 more.
+            #    1.0e-3 g is therefore the same threshold and the same ~10x
+            #    margin class as the ems-soc-band entry's h2_accounted, and it
+            #    still fails a run where the column is absent, zero or frozen.
+            #    ⚠️ The figure is the Gfc MODEL'S ESTIMATE (scale-portable map,
+            #    stack not identified against this rig — H2Consumption banner).
+            #    This asserts that the accounting RAN, not that the mass is
+            #    calibrated.
+            {"name": "sdp_h2_accounted", "column": "h2_cum_g",
+             "min_value": 1.0e-3,
+             "label": "the H2 consumption metric accumulated over the run"},
+            # 5. THE STUDENT'S AXIS WAS PLUMBED. `min_value: 0.0` is a DELIBERATE
+            #    plumbing assertion, not a magnitude one: an absent or unparseable
+            #    column measures "peak unmeasured" and FAILS (_judge_signal_leaf),
+            #    while any parseable sample passes. It therefore asserts that
+            #    h2_sdp_cum_g exists and is being written on this run, WITHOUT
+            #    duplicating check 4's magnitude budget on a second model of the
+            #    same quantity (which would fail twice for one cause).
+            #    ⚠️ h2_sdp_cum_g is a SECOND MODEL of h2_cum_g's quantity on the
+            #    SAME P_fc input (the student's static proxy, eta_fc 0.5). It
+            #    under-reads Gfc by ~5.5 % at steady state by construction; the
+            #    gap between the two columns is arithmetic, never a finding.
+            {"name": "sdp_student_h2_axis", "column": "h2_sdp_cum_g",
+             "min_value": 0.0,
+             "label": "the student's static-proxy H2 column was written"},
+        ],
+    },
     "handoff-sag": {
         # F2 (kept): this is a live simulation of the TP0178/TP0201 class, whose
         # RECORDED margin above LIMIT_V_BUS_MIN was only 0.15-0.185 V with a ~10 ms
@@ -2358,6 +2528,18 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
          #                   (H2Consumption banner in hil_plant_sim.py). Quote
          #                   an absolute value with that caveat; a RANKING of
          #                   two runs on this rig is robust regardless.
+         #   final_h2_sdp_cum_g  last non-blank h2_sdp_cum_g — the SAME total on
+         #                   the STUDENT'S static-proxy model (P_fc/(0.5*120000),
+         #                   SDP_EnergyManagement2.m), computed by
+         #                   hil_plant_sim.py from the SAME P_fc input as
+         #                   h2_cum_g. It exists so a number from this rig can be
+         #                   read next to the student's SDP/DP work without
+         #                   either side re-deriving the other's model.
+         #                   ⚠️ IT IS A SECOND MODEL, NOT A SECOND MEASUREMENT:
+         #                   the proxy under-reads Gfc by ~5.5 % at steady state
+         #                   BY CONSTRUCTION (47.25 % vs 50 % assumed
+         #                   efficiency), so the gap between the two columns is
+         #                   arithmetic, never a finding. Rank runs on ONE axis.
          #   delta_soc       last soc minus first soc, i.e. how much charge the
          #                   run actually spent.
          # They exist so `ems-soc-band` (causal) and `ems-dp-replay` (the
@@ -2365,7 +2547,8 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
          # them as a PAIR: any strategy burns less hydrogen by discharging the
          # pack harder, so a hydrogen ranking is only valid at matched
          # delta_soc.
-         "final_h2_cum_g": None, "soc_first": None, "soc_last": None,
+         "final_h2_cum_g": None, "final_h2_sdp_cum_g": None,
+         "soc_first": None, "soc_last": None,
          "delta_soc": None}
     if not os.path.isfile(csv_path):
         m["error"] = "CSV not written"
@@ -2457,6 +2640,16 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
                 if h2:
                     try:
                         m["final_h2_cum_g"] = float(h2)
+                    except ValueError:
+                        pass
+                # Same treatment for the student's-axis total: blank-tolerant,
+                # absent on any CSV that predates the column (and on every
+                # replay CSV), and read by NO check — a malformed cell must
+                # never cost a run its verdict.
+                h2s = (row.get("h2_sdp_cum_g") or "").strip()
+                if h2s:
+                    try:
+                        m["final_h2_sdp_cum_g"] = float(h2s)
                     except ValueError:
                         pass
                 sc = (row.get("soc") or "").strip()
@@ -3819,6 +4012,15 @@ def render_report(meta, results):
                      if m.get("soc_first") is not None else "—",
                      ("%.6f" % m["soc_last"])
                      if m.get("soc_last") is not None else "—"))
+                if m.get("final_h2_sdp_cum_g") is not None:
+                    A("  - student's static-proxy axis: h2_sdp_cum_g %.6g "
+                      "(`P_fc/(0.5*120000)`, SDP_EnergyManagement2.m) — a "
+                      "SECOND MODEL of the same quantity on the SAME `P_fc` "
+                      "input, **not** a cross-check of h2_cum_g: the proxy "
+                      "under-reads Gfc by ~5.5 %% at steady state by "
+                      "construction. Rank runs on ONE axis; the gap between "
+                      "the two columns is arithmetic."
+                      % m["final_h2_sdp_cum_g"])
                 A("  - ⚠️ h2_cum_g is the Gfc **model's estimate** of hydrogen "
                   "mass. The map is scale-portable (operator ruling "
                   "2026-08-31: `P_fc` in W and the g/s output both ride the "

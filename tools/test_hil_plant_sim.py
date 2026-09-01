@@ -1135,6 +1135,8 @@ EXPECTED_SCENARIO_NAMES = {
     "ems-y-b30-v1", "ems-y-b30-v3", "ems-y-b00-v1", "ems-y-b00-v3",
     "ems-ftp75-5050", "ems-ftp75-socband",
     "mppt-tracking", "charge-to-full", "pi-silence", "share-staircase",
+    # 2026-08-31 SDP round: the online stochastic-DP policy scenario.
+    "ems-sdp",
 }
 
 
@@ -1202,6 +1204,10 @@ EXPECTED_SCENARIO_DURATIONS_S = {
     "charge-to-full": 130.0,
     "pi-silence": 14.0,
     "share-staircase": 47.0,
+    # 2026-08-31 SDP round: derived by reference from ems-soc-band's own
+    # duration_s (SCENARIOS["ems-sdp"]["duration_s"] = SCENARIOS["ems-soc-band"]
+    # ["duration_s"]).
+    "ems-sdp": 61.0,
 }
 
 
@@ -1316,11 +1322,16 @@ def test_scenarios_chg_i_ceiling_a_only_on_charge_regen_and_charge_fault():
     de-rate to 1.0 A for the SAME reason -- both are single-source FC-path
     charge windows and both cite LIMIT_I_FC_MAX budget arithmetic in their
     SCENARIOS docstrings/comments (mppt-tracking: 1.21 A of 1.4 A at the
-    0.4 m/s plateau; charge-to-full: 1.15 A of 1.4 A at standstill)."""
+    0.4 m/s plateau; charge-to-full: 1.15 A of 1.4 A at standstill).
+
+    RE-SCOPED AGAIN (2026-08-31 SDP round): `ems-sdp` is DERIVED BY REFERENCE
+    from `ems-soc-band` (its SCENARIOS entry reads
+    `chg_i_ceiling_a": SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"]` verbatim,
+    same as `ems-dp-replay`), so it joins that group at 0.8 A too."""
     for name, meta in hil.SCENARIOS.items():
         if name == "charge-regen":
             assert meta["chg_i_ceiling_a"] == pytest.approx(1.6)
-        elif name in ("charge-fault", "ems-soc-band", "ems-dp-replay"):
+        elif name in ("charge-fault", "ems-soc-band", "ems-dp-replay", "ems-sdp"):
             assert meta["chg_i_ceiling_a"] == pytest.approx(0.8)
         elif name in ("mppt-tracking", "charge-to-full"):
             assert meta["chg_i_ceiling_a"] == pytest.approx(1.0)
@@ -1711,9 +1722,10 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
         tmp_path, ["--scenario", "steady", "--electrical", "simple", "--duration", "0.02"])
     # cmd_v_sp/cmd_share_sp are appended UNCONDITIONALLY in simulated-plant
     # mode, after soc; h2_rate_gps/h2_cum_g (2026-08-31) are appended
-    # UNCONDITIONALLY after THAT pair -- so soc is now fifth-from-last.
-    assert header[-5:] == ["soc", "cmd_v_sp", "cmd_share_sp",
-                           "h2_rate_gps", "h2_cum_g"]
+    # UNCONDITIONALLY after THAT pair, and h2_sdp_cum_g (2026-08-31 SDP round)
+    # is appended UNCONDITIONALLY after THAT -- so soc is now sixth-from-last.
+    assert header[-6:] == ["soc", "cmd_v_sp", "cmd_share_sp",
+                           "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g"]
     assert "elec_substep_hz" not in header
     assert "elec_events" not in header
     assert "replay_rec" not in header
@@ -1722,9 +1734,9 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
 def test_csv_schema_hifi_mode_appends_elec_columns(tmp_path):
     header, _rows = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "hifi", "--duration", "0.02"])
-    assert header[-7:] == ["soc", "elec_substep_hz", "elec_events",
+    assert header[-8:] == ["soc", "elec_substep_hz", "elec_events",
                            "cmd_v_sp", "cmd_share_sp",
-                           "h2_rate_gps", "h2_cum_g"]
+                           "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g"]
 
 
 REPLAY_CSV_HEADER_PIN = [
@@ -2231,11 +2243,13 @@ def test_m3_hifi_with_csv_creates_events_sidecar(tmp_path):
     # trimmed after every drain).
     assert rows, "expected at least one CSV row"
     # cmd_v_sp/cmd_share_sp are unconditionally appended after the hifi elec_*
-    # columns in simulated-plant mode, and h2_rate_gps/h2_cum_g (2026-08-31)
-    # are unconditionally appended after THAT pair -- so elec_events is now
-    # fifth-from-last, not third-from-last.
-    assert header[-4:] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps", "h2_cum_g"]
-    elec_events_col = rows[-1][-5]
+    # columns in simulated-plant mode, h2_rate_gps/h2_cum_g (2026-08-31) are
+    # unconditionally appended after THAT pair, and h2_sdp_cum_g (2026-08-31
+    # SDP round) is appended after THAT -- so elec_events is now
+    # sixth-from-last, not third-from-last.
+    assert header[-5:] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
+                           "h2_cum_g", "h2_sdp_cum_g"]
+    elec_events_col = rows[-1][-6]
     assert elec_events_col.strip() != ""
     n_reported = int(elec_events_col)
     with open(sidecar, encoding="utf-8") as fh:
@@ -2799,9 +2813,11 @@ def test_pi_live_csv_cmd_columns_blank(tmp_path):
     header, rows = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "simple",
                    "--duration", "0.02", "--pi-live"])
-    # h2_rate_gps/h2_cum_g (2026-08-31) are now the last two columns in
-    # simulated-plant mode; cmd_v_sp/cmd_share_sp sit just before them.
-    assert header[-4:] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps", "h2_cum_g"]
+    # h2_rate_gps/h2_cum_g/h2_sdp_cum_g (2026-08-31) are now the last three
+    # columns in simulated-plant mode; cmd_v_sp/cmd_share_sp sit just before
+    # them.
+    assert header[-5:] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
+                           "h2_cum_g", "h2_sdp_cum_g"]
     v_idx, share_idx = header.index("cmd_v_sp"), header.index("cmd_share_sp")
     assert rows, "expected at least one CSV row"
     for row in rows:
@@ -5365,6 +5381,655 @@ def test_pi_live_ems_scenarios_would_be_skipped_by_run_hil_suite():
         assert meta.get("ems"), name
     for name in ("charge-to-full", "share-staircase"):
         assert hil.SCENARIOS[name].get("pi_timeline"), name
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# sdp-v1: load_sdp_policy() refusals, sdp_bin_index(), SdpStrategy behaviour,
+# H2Consumption's second (student-proxy) accumulator, CSV/scenario plumbing.
+# Stage-2 test-writer round, 2026-08-31 SDP round.
+# ─────────────────────────────────────────────────────────────────────────
+
+def _minimal_sdp_policy_doc(**overrides):
+    """A tiny but SCHEMA-VALID sdp-policy-v1 doc: 3 SoC nodes x 2 demand bins.
+
+    Deliberately small so a test can enumerate every cell by hand.  Row i is
+    SoC grid[i], column j is demand bin j.  `share` climbs with SoC row so a
+    test can distinguish rows; `charge_goal` is 1.0 only at (row 2, bin 1) so
+    a non-degenerate charge cell exists without complicating share."""
+    doc = {
+        "schema": hil.SDP_POLICY_SCHEMA,
+        "decision_dt_s": 1.0,
+        "soc": {"target": 0.60, "grid_min": 0.55, "grid_max": 0.65,
+                "grid": [0.55, 0.60, 0.65]},
+        "normalization": {"p_dem_min_w": -1.0, "p_dem_max_w": 1.0},
+        "demand_bins": {"edges": [0.0, 0.5, 1.0],
+                        "convention": hil.SDP_BIN_CONVENTION},
+        "policy": {
+            "share": [[0.10, 0.90], [0.20, 0.80], [0.30, 0.70]],
+            "charge_goal": [[0.0, 0.0], [0.0, 0.0], [0.0, 1.0]],
+        },
+    }
+    for k, v in overrides.items():
+        doc[k] = v
+    return doc
+
+
+def _write_sdp_policy(path, doc):
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh)
+
+
+def _sdp_strategy_with_policy(tmp_path, doc=None, **doc_overrides):
+    """A fresh SdpStrategy bound to a tmp_path policy dir, pre-loaded."""
+    doc = doc if doc is not None else _minimal_sdp_policy_doc(**doc_overrides)
+    _write_sdp_policy(tmp_path / hil.SDP_POLICY_FILE, doc)
+    strategy = hil.SdpStrategy(policy_dir=str(tmp_path))
+    strategy.load()
+    return strategy
+
+
+# ── load_sdp_policy(): refusals (item 9) ────────────────────────────────────
+
+def test_load_sdp_policy_missing_file_raises_value_error(tmp_path):
+    with pytest.raises(ValueError, match="could not be read"):
+        hil.load_sdp_policy(str(tmp_path / "nope.json"))
+
+
+def test_load_sdp_policy_wrong_schema_id_raises_value_error(tmp_path):
+    path = tmp_path / "bad_schema.json"
+    _write_sdp_policy(path, _minimal_sdp_policy_doc(schema="sdp-policy-v2"))
+    with pytest.raises(ValueError, match="schema"):
+        hil.load_sdp_policy(str(path))
+
+
+def test_load_sdp_policy_wrong_policy_shape_raises_value_error(tmp_path):
+    """A `share` row with the wrong number of entries (must equal n_bins,
+    i.e. len(edges) - 1) must be refused, not silently truncated/padded."""
+    path = tmp_path / "bad_shape.json"
+    doc = _minimal_sdp_policy_doc()
+    doc["policy"]["share"] = [[0.10, 0.90, 0.50], [0.20, 0.80], [0.30, 0.70]]
+    _write_sdp_policy(path, doc)
+    with pytest.raises(ValueError, match="n_bins"):
+        hil.load_sdp_policy(str(path))
+
+
+def test_load_sdp_policy_wrong_demand_bins_convention_raises_value_error(tmp_path):
+    """The loader implements ONE binning convention and refuses any other,
+    even a plausible-sounding one -- the docstring's whole point is that the
+    alternatives differ only at the edges, where a wrong guess is invisible."""
+    path = tmp_path / "bad_convention.json"
+    _write_sdp_policy(path, _minimal_sdp_policy_doc(
+        demand_bins={"edges": [0.0, 0.5, 1.0], "convention": "first-closed"}))
+    with pytest.raises(ValueError, match="convention"):
+        hil.load_sdp_policy(str(path))
+
+
+def test_load_sdp_policy_edges_not_spanning_0_1_raises_value_error(tmp_path):
+    """`edges` must be in the NORMALIZED [0, 1] coordinate -- a watt-space
+    grid (or any other non-normalized range) is refused rather than guessed
+    at, per THE ARTIFACT CONTRACT block."""
+    path = tmp_path / "bad_edges.json"
+    doc = _minimal_sdp_policy_doc()
+    doc["demand_bins"] = {"edges": [-1.0, 0.0, 1.0],
+                          "convention": hil.SDP_BIN_CONVENTION}
+    _write_sdp_policy(path, doc)
+    with pytest.raises(ValueError, match="NORMALIZED"):
+        hil.load_sdp_policy(str(path))
+
+
+def test_load_sdp_policy_valid_doc_parses_cleanly(tmp_path):
+    path = tmp_path / hil.SDP_POLICY_FILE
+    _write_sdp_policy(path, _minimal_sdp_policy_doc())
+    pol = hil.load_sdp_policy(str(path))
+    assert pol["schema"] == hil.SDP_POLICY_SCHEMA
+    assert pol["n_soc"] == 3 and pol["n_bins"] == 2
+    assert pol["soc_target"] == pytest.approx(0.60)
+    assert pol["share"][2][1] == pytest.approx(0.70)
+    assert pol["charge_goal"][2][1] == pytest.approx(1.0)
+
+
+def test_load_sdp_policy_unmodified_shipped_artifact_still_loads():
+    """The value-validation round (_grid_2d's lo/hi/allowed checks) must not
+    have tightened the loader against the artifact it ships with."""
+    pol = hil.load_sdp_policy(os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE))
+    assert pol["schema"] == hil.SDP_POLICY_SCHEMA
+    assert pol["n_soc"] > 0 and pol["n_bins"] > 0
+
+
+# ── load_sdp_policy(): _grid_2d value validation (round 2, item 1) ─────────
+
+def _doc_with_share_cell(row, col, value):
+    doc = _minimal_sdp_policy_doc()
+    doc["policy"]["share"][row][col] = value
+    return doc
+
+
+def _doc_with_charge_goal_cell(row, col, value):
+    doc = _minimal_sdp_policy_doc()
+    doc["policy"]["charge_goal"][row][col] = value
+    return doc
+
+
+def test_load_sdp_policy_refuses_non_finite_share_naming_row_and_column(tmp_path):
+    path = tmp_path / hil.SDP_POLICY_FILE
+    _write_sdp_policy(path, _doc_with_share_cell(1, 0, float("nan")))
+    with pytest.raises(ValueError, match=r"policy\.share\[1\]\[0\]") as exc:
+        hil.load_sdp_policy(str(path))
+    assert "non-finite" in str(exc.value)
+
+
+def test_load_sdp_policy_refuses_infinite_share_naming_row_and_column(tmp_path):
+    path = tmp_path / hil.SDP_POLICY_FILE
+    _write_sdp_policy(path, _doc_with_share_cell(2, 1, float("inf")))
+    with pytest.raises(ValueError, match=r"policy\.share\[2\]\[1\]") as exc:
+        hil.load_sdp_policy(str(path))
+    assert "non-finite" in str(exc.value)
+
+
+def test_load_sdp_policy_refuses_share_above_one_naming_row_and_column(tmp_path):
+    path = tmp_path / hil.SDP_POLICY_FILE
+    _write_sdp_policy(path, _doc_with_share_cell(0, 1, 1.5))
+    with pytest.raises(ValueError, match=r"policy\.share\[0\]\[1\]") as exc:
+        hil.load_sdp_policy(str(path))
+    assert "outside the legal range" in str(exc.value)
+
+
+def test_load_sdp_policy_refuses_share_below_zero_naming_row_and_column(tmp_path):
+    path = tmp_path / hil.SDP_POLICY_FILE
+    _write_sdp_policy(path, _doc_with_share_cell(0, 0, -0.1))
+    with pytest.raises(ValueError, match=r"policy\.share\[0\]\[0\]") as exc:
+        hil.load_sdp_policy(str(path))
+    assert "outside the legal range" in str(exc.value)
+
+
+def test_load_sdp_policy_refuses_charge_goal_not_in_allowed_set_naming_row_and_column(tmp_path):
+    path = tmp_path / hil.SDP_POLICY_FILE
+    _write_sdp_policy(path, _doc_with_charge_goal_cell(2, 0, 0.5))
+    with pytest.raises(ValueError, match=r"policy\.charge_goal\[2\]\[0\]") as exc:
+        hil.load_sdp_policy(str(path))
+    assert "INTENT" in str(exc.value)
+
+
+def test_load_sdp_policy_refuses_non_finite_charge_goal_naming_row_and_column(tmp_path):
+    path = tmp_path / hil.SDP_POLICY_FILE
+    _write_sdp_policy(path, _doc_with_charge_goal_cell(1, 1, float("nan")))
+    with pytest.raises(ValueError, match=r"policy\.charge_goal\[1\]\[1\]") as exc:
+        hil.load_sdp_policy(str(path))
+    assert "non-finite" in str(exc.value)
+
+
+def test_load_sdp_policy_refuses_non_numeric_share_cell_naming_row_and_column(tmp_path):
+    path = tmp_path / hil.SDP_POLICY_FILE
+    _write_sdp_policy(path, _doc_with_share_cell(0, 0, "not-a-number"))
+    with pytest.raises(ValueError, match=r"policy\.share\[0\]\[0\]") as exc:
+        hil.load_sdp_policy(str(path))
+    assert "not a number" in str(exc.value)
+
+
+def test_load_sdp_policy_refuses_non_numeric_charge_goal_cell_naming_row_and_column(tmp_path):
+    path = tmp_path / hil.SDP_POLICY_FILE
+    _write_sdp_policy(path, _doc_with_charge_goal_cell(0, 1, None))
+    with pytest.raises(ValueError, match=r"policy\.charge_goal\[0\]\[1\]") as exc:
+        hil.load_sdp_policy(str(path))
+    assert "not a number" in str(exc.value)
+
+
+def test_load_sdp_policy_charge_goal_accepts_only_exactly_zero_or_one(tmp_path):
+    """Belt-and-braces on the allowed-set boundary: 0.0 and 1.0 pass, and
+    values that would be 'close enough' under a looser check (e.g. 1.0 minus
+    a tiny epsilon) are refused -- charge_goal is an INTENT with no clamp on
+    the wire, so there is no such thing as an almost-legal value."""
+    ok = _minimal_sdp_policy_doc()
+    ok["policy"]["charge_goal"][2][1] = 1.0
+    ok["policy"]["charge_goal"][0][0] = 0.0
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        p = os.path.join(td, hil.SDP_POLICY_FILE)
+        _write_sdp_policy(p, ok)
+        pol = hil.load_sdp_policy(p)
+        assert pol["charge_goal"][2][1] == pytest.approx(1.0)
+        assert pol["charge_goal"][0][0] == pytest.approx(0.0)
+
+    bad = _doc_with_charge_goal_cell(0, 0, 1.0 - 1e-9)
+    with tempfile.TemporaryDirectory() as td:
+        p = os.path.join(td, hil.SDP_POLICY_FILE)
+        _write_sdp_policy(p, bad)
+        with pytest.raises(ValueError, match="INTENT"):
+            hil.load_sdp_policy(p)
+
+
+# ── load_sdp_policy(): provenance (round 2, item 2) ─────────────────────────
+
+def test_load_sdp_policy_returns_provenance_fields(tmp_path):
+    path = tmp_path / hil.SDP_POLICY_FILE
+    doc = _minimal_sdp_policy_doc()
+    _write_sdp_policy(path, doc)
+    pol = hil.load_sdp_policy(str(path))
+    assert set(("file_sha256", "policy_sha256", "generated_utc", "tpm_sha256")) <= set(pol)
+    assert pol["generated_utc"] is None          # the minimal doc has no key
+    assert pol["tpm_sha256"] is None              # ... nor a `tpm` block
+    assert len(pol["file_sha256"]) == 64
+    assert len(pol["policy_sha256"]) == 64
+
+
+def test_load_sdp_policy_policy_sha256_matches_recomputed_digest(tmp_path):
+    path = tmp_path / hil.SDP_POLICY_FILE
+    doc = _minimal_sdp_policy_doc()
+    _write_sdp_policy(path, doc)
+    pol = hil.load_sdp_policy(str(path))
+    import hashlib
+    want = hashlib.sha256(
+        json.dumps(doc["policy"], sort_keys=True).encode("utf-8")).hexdigest()
+    assert pol["policy_sha256"] == want
+
+
+def test_load_sdp_policy_policy_sha256_stable_across_a_file_sha_change():
+    """policy_sha256 is the DECISION-LAW digest and must be INVARIANT to
+    everything outside doc["policy"] -- confirmed by writing the SAME policy
+    block under two different generated_utc stamps (which changes the file
+    bytes, hence file_sha256) and requiring policy_sha256 to match."""
+    doc_a = _minimal_sdp_policy_doc(generated_utc="2026-01-01T00:00:00Z")
+    doc_b = _minimal_sdp_policy_doc(generated_utc="2026-12-31T23:59:59Z")
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        pa = os.path.join(td, "a.json")
+        pb = os.path.join(td, "b.json")
+        _write_sdp_policy(pa, doc_a)
+        _write_sdp_policy(pb, doc_b)
+        pol_a = hil.load_sdp_policy(pa)
+        pol_b = hil.load_sdp_policy(pb)
+    assert pol_a["file_sha256"] != pol_b["file_sha256"]
+    assert pol_a["policy_sha256"] == pol_b["policy_sha256"]
+    assert pol_a["generated_utc"] != pol_b["generated_utc"]
+
+
+def test_sdp_strategy_provenance_is_none_until_bind_scenario(tmp_path):
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    assert strategy.provenance is None
+
+
+def test_sdp_strategy_provenance_populated_after_bind_scenario(tmp_path):
+    doc = _minimal_sdp_policy_doc()
+    _write_sdp_policy(tmp_path / hil.SDP_POLICY_FILE, doc)
+    strategy = hil.SdpStrategy(policy_dir=str(tmp_path))
+    assert strategy.provenance is None
+    strategy.bind_scenario("ems-sdp", hil.SCENARIOS["ems-sdp"])
+    assert strategy.provenance is not None
+    assert strategy.provenance["path"] == str(tmp_path / hil.SDP_POLICY_FILE)
+    import hashlib
+    assert strategy.provenance["policy_sha256"] == hashlib.sha256(
+        json.dumps(doc["policy"], sort_keys=True).encode("utf-8")).hexdigest()
+    assert strategy.provenance["n_soc"] == 3
+    assert strategy.provenance["n_bins"] == 2
+    assert strategy.provenance["decision_dt_s"] == pytest.approx(1.0)
+
+
+# ── meta sidecar config.sdp_policy block (round 2, item 2) ─────────────────
+
+def test_main_ems_sdp_run_records_sdp_policy_block_in_meta_config(tmp_path):
+    """End-to-end (real shipped policy, real main()): the .meta.json sidecar's
+    config.sdp_policy block must be present for an sdp-v1 run and must carry
+    the file/policy digests -- mirrors the chg_i_ceiling_a end-to-end pattern
+    already used for other scenario-conditional config fields."""
+    csv_path = str(tmp_path / "sdp.csv")
+    args = ["--teensy-ip", "127.0.0.1", "--port", "58991", "--bind-port", "0",
+            "--rate", "200", "--scenario", "ems-sdp", "--electrical", "simple",
+            "--duration", "0.02", "--csv", csv_path]
+    rc = hil.main(args)
+    assert rc == 0
+    with open(hil.meta_path_for(csv_path)) as fh:
+        meta = json.load(fh)
+    block = meta["config"].get("sdp_policy")
+    assert block is not None
+    assert block["path"] == os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE)
+    assert len(block["file_sha256"]) == 64
+    assert len(block["policy_sha256"]) == 64
+    assert block["n_soc"] > 0 and block["n_bins"] > 0
+    assert block["decision_dt_s"] == pytest.approx(1.0)
+
+
+def test_main_non_sdp_run_has_no_sdp_policy_block_in_meta_config(tmp_path):
+    csv_path = str(tmp_path / "steady.csv")
+    args = ["--teensy-ip", "127.0.0.1", "--port", "58994", "--bind-port", "0",
+            "--rate", "200", "--scenario", "steady", "--electrical", "simple",
+            "--duration", "0.02", "--csv", csv_path]
+    rc = hil.main(args)
+    assert rc == 0
+    with open(hil.meta_path_for(csv_path)) as fh:
+        meta = json.load(fh)
+    assert "sdp_policy" not in meta["config"]
+
+
+# ── sdp_bin_index(): matlab-discretize convention (item 10) ─────────────────
+
+def test_sdp_bin_index_matlab_discretize_convention():
+    edges = [0.0, 0.25, 0.5, 0.75, 1.0]     # 4 bins
+    # Interior value strictly inside a bin.
+    assert hil.sdp_bin_index(0.10, edges) == 0
+    assert hil.sdp_bin_index(0.60, edges) == 2
+    # Value EXACTLY at an interior edge goes to the UPPER bin's start
+    # ([e_i, e_{i+1})): 0.25 belongs to bin 1, not bin 0.
+    assert hil.sdp_bin_index(0.25, edges) == 1
+    assert hil.sdp_bin_index(0.5, edges) == 2
+    assert hil.sdp_bin_index(0.75, edges) == 3
+    # The LAST bin is closed: 1.0 lands in bin 3, not off the end.
+    assert hil.sdp_bin_index(1.0, edges) == 3
+    # Below 0 / above 1 clamp into the end bins (caller is assumed to have
+    # already clamped x into [edges[0], edges[-1]], but the function itself
+    # must not misbehave if handed something outside that range).
+    assert hil.sdp_bin_index(-0.5, edges) == 0
+    assert hil.sdp_bin_index(1.5, edges) == 3
+
+
+# ── SdpStrategy.soc_relative(): SoC0-relative mapping (item 11) ─────────────
+
+def test_sdp_soc_relative_first_call_captures_soc0(tmp_path):
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    fb = {"t": hil.EMS_RUN_ENTRY_S, "v_profile": 1.0, "soc": 0.70,
+         "V_bus": 16.0, "I_fc": 0.0, "I_batt": 0.0}
+    strategy(hil.EMS_RUN_ENTRY_S, fb)
+    assert strategy.soc_ref == pytest.approx(0.70)
+
+
+def test_sdp_soc_relative_below_soc0_maps_below_target(tmp_path):
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    strategy.soc_ref = 0.70
+    rel = strategy.soc_relative(0.68)          # 0.02 below soc0
+    assert rel == pytest.approx(strategy.policy["soc_target"] - 0.02)
+    assert rel < strategy.policy["soc_target"]
+
+
+def test_sdp_soc_relative_clamps_at_grid_bounds(tmp_path):
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    strategy.soc_ref = 0.70
+    # Far below soc0: would map far below grid_min (0.55) -- must clamp there.
+    assert strategy.soc_relative(0.10) == pytest.approx(0.55)
+    # Far above soc0: would map far above grid_max (0.65) -- must clamp there.
+    assert strategy.soc_relative(2.00) == pytest.approx(0.65)
+
+
+# ── SdpStrategy decision cadence (item 12) ──────────────────────────────────
+
+def test_sdp_decision_cadence_holds_within_a_stage_and_redecides_on_boundary(tmp_path):
+    """decision_dt_s = 1.0 in the minimal doc: two calls inside the same 1 s
+    window must return the IDENTICAL commanded share (no re-decision), and a
+    call that crosses the boundary must re-decide -- driven here by moving
+    the demand bin between calls so a stale hold vs a fresh decision is
+    distinguishable in the output."""
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    t0 = hil.EMS_RUN_ENTRY_S
+    # bin 0 (low demand): p_dem = V_bus*(I_fc+I_batt) = -1.0 W, exactly the
+    # doc's p_dem_min_w -> normalized x = 0.0, unambiguously bin 0.
+    fb_low = {"t": t0, "v_profile": 1.0, "soc": 0.60, "V_bus": 1.0,
+             "I_fc": -1.0, "I_batt": 0.0}
+    out0 = strategy(t0, fb_low)
+    assert strategy.last_bin == 0
+    share_after_first_decision = out0["power_share_setpoint"]
+
+    # A second call 0.1 s later, well inside the 1.0 s stage, but with a
+    # DIFFERENT demand that would select bin 1 if a decision were taken --
+    # the held share must be UNCHANGED and last_bin must not move.
+    fb_high = {"t": t0 + 0.1, "v_profile": 1.0, "soc": 0.60, "V_bus": 16.0,
+              "I_fc": 1.0, "I_batt": 1.0}
+    out1 = strategy(t0 + 0.1, fb_high)
+    assert strategy.last_bin == 0                     # no re-decision yet
+    assert out1["power_share_setpoint"] == pytest.approx(share_after_first_decision)
+
+    # A third call past the stage boundary (t0 + 1.0) with the SAME high
+    # demand: must re-decide, and the bin must move to 1.
+    out2 = strategy(t0 + 1.0, fb_high)
+    assert strategy.last_bin == 1
+    assert out2["power_share_setpoint"] != pytest.approx(share_after_first_decision)
+
+
+# ── SdpStrategy.clamp_share(): hardware-envelope clamp (item 13) ────────────
+
+def test_sdp_clamp_share_rail_values_clamp_to_hardware_envelope(tmp_path):
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    assert strategy.clamp_share(1.0) == pytest.approx(hil.SOC_BAND_SHARE_MAX)
+    assert strategy.clamp_share(0.0) == pytest.approx(hil.SOC_BAND_SHARE_MIN)
+
+
+def test_sdp_clamp_share_in_range_passes_through_unchanged(tmp_path):
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    assert strategy.clamp_share(0.50) == pytest.approx(0.50)
+    assert strategy.clamp_share(hil.SOC_BAND_SHARE_MIN) == pytest.approx(hil.SOC_BAND_SHARE_MIN)
+    assert strategy.clamp_share(hil.SOC_BAND_SHARE_MAX) == pytest.approx(hil.SOC_BAND_SHARE_MAX)
+
+
+def test_sdp_clamp_share_counter_increments_only_on_an_actual_clamp(tmp_path):
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    assert strategy.clamped_share == 0
+    strategy.clamp_share(0.50)                 # in range: no clamp
+    assert strategy.clamped_share == 0
+    strategy.clamp_share(1.0)                  # rail: clamps
+    assert strategy.clamped_share == 1
+    strategy.clamp_share(0.0)                  # other rail: clamps
+    assert strategy.clamped_share == 2
+    strategy.clamp_share(0.83, count=False)    # count=False must not increment
+    assert strategy.clamped_share == 2
+
+
+def test_sdp_clamp_share_last_share_raw_preserves_the_table_value(tmp_path):
+    """decide() keeps the UNCLAMPED table value in last_share_raw even though
+    last_share is clamped -- the vacuity check the task calls out: a broken
+    clamp that emitted the raw 1.0 unchanged must be DISTINGUISHABLE from
+    0.85, and from soc-band's own ceiling of 0.75."""
+    strategy = _sdp_strategy_with_policy(
+        tmp_path, doc=_minimal_sdp_policy_doc(
+            **{"policy": {"share": [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0]],
+                          "charge_goal": [[0.0, 0.0]] * 3}}))
+    fb = {"t": hil.EMS_RUN_ENTRY_S, "v_profile": 1.0, "soc": 0.60,
+         "V_bus": 1.0, "I_fc": 0.0, "I_batt": 0.0}
+    strategy(hil.EMS_RUN_ENTRY_S, fb)
+    assert strategy.last_share_raw == pytest.approx(1.0)
+    assert strategy.last_share == pytest.approx(hil.SOC_BAND_SHARE_MAX)
+    assert strategy.last_share != pytest.approx(1.0)
+    assert strategy.last_share != pytest.approx(0.75)      # soc-band's own ceiling
+
+
+# ── Registration and reset semantics (item 14) ──────────────────────────────
+
+def test_sdp_v1_registered_under_its_name():
+    assert hil.EMS_STRATEGIES["sdp-v1"] is hil.ems_sdp_v1
+
+
+def test_sdp_reset_clears_soc0_capture_and_counters(tmp_path):
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    fb = {"t": hil.EMS_RUN_ENTRY_S, "v_profile": 1.0, "soc": 0.70,
+         "V_bus": 1.0, "I_fc": 0.0, "I_batt": 0.0}
+    strategy(hil.EMS_RUN_ENTRY_S, fb)
+    strategy.clamp_share(1.0)          # bump clamped_share
+    strategy.demand_bin(2.0)           # bump clamped_high (2.0 > p_dem_max_w 1.0)
+    assert strategy.soc_ref is not None
+    assert strategy.decisions > 0
+    assert strategy.clamped_share > 0
+    assert strategy.clamped_high > 0
+
+    strategy.reset()
+    assert strategy.soc_ref is None
+    assert strategy.decisions == 0
+    assert strategy.clamped_share == 0
+    assert strategy.clamped_high == 0
+    assert strategy.clamped_low == 0
+    assert strategy.last_t is None
+    assert strategy.next_decision_t is None
+    # The loaded ARTIFACT must survive reset() -- it is a property of the
+    # file, not of the run (re-loading it per run would be I/O for nothing).
+    assert strategy.policy is not None
+
+
+def test_sdp_auto_resets_on_t_rewind(tmp_path):
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    fb = {"t": 10.0, "v_profile": 1.0, "soc": 0.70, "V_bus": 1.0,
+         "I_fc": 0.0, "I_batt": 0.0}
+    strategy(10.0, fb)
+    assert strategy.soc_ref == pytest.approx(0.70)
+    # Rewind: a second run in the same process must not inherit the first
+    # run's captured reference.
+    strategy(5.0, dict(fb, t=5.0, soc=0.62))
+    assert strategy.soc_ref == pytest.approx(0.62)
+
+
+# ── Mode emission (item 15) ──────────────────────────────────────────────
+
+def test_sdp_mode_emission_hybrid_at_start_safe_at_run_exit(tmp_path):
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    fb_common = {"v_profile": 1.0, "soc": 0.60, "V_bus": 1.0,
+                "I_fc": 0.0, "I_batt": 0.0}
+    at_entry = strategy(hil.EMS_RUN_ENTRY_S, dict(fb_common, t=hil.EMS_RUN_ENTRY_S))
+    assert at_entry["mode_cmd"] == hil.MODE_HYBRID
+
+    exit_t = hil.SDP_RUN_EXIT_S
+    just_before = strategy(exit_t - 0.01, dict(fb_common, t=exit_t - 0.01))
+    assert just_before["mode_cmd"] == hil.MODE_HYBRID
+    at_exit = strategy(exit_t, dict(fb_common, t=exit_t))
+    assert at_exit["mode_cmd"] == hil.MODE_SAFE
+
+
+def test_sdp_mode_emission_uses_scenario_run_exit_override(tmp_path):
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    fb = {"v_profile": 1.0, "soc": 0.60, "V_bus": 1.0, "I_fc": 0.0,
+         "I_batt": 0.0, "ems_run_exit_s": 10.0}
+    strategy(hil.EMS_RUN_ENTRY_S, dict(fb, t=hil.EMS_RUN_ENTRY_S))
+    just_before = strategy(9.99, dict(fb, t=9.99))
+    at = strategy(10.0, dict(fb, t=10.0))
+    assert just_before["mode_cmd"] == hil.MODE_HYBRID
+    assert at["mode_cmd"] == hil.MODE_SAFE
+
+
+def test_sdp_charge_goal_withheld_outside_run_window(tmp_path):
+    """Outside the Run window (before EMS_RUN_ENTRY_S / at-or-after exit)
+    charge_goal must be forced to 0.0 even if the table would otherwise ask
+    for it -- chargingControl() only runs in State 2, so asserting the
+    intent across the boundary would be a command the firmware ignores."""
+    strategy = _sdp_strategy_with_policy(
+        tmp_path, doc=_minimal_sdp_policy_doc(
+            **{"policy": {"share": [[0.5, 0.5]] * 3,
+                          "charge_goal": [[1.0, 1.0]] * 3}}))
+    fb = {"v_profile": 1.0, "soc": 0.60, "V_bus": 1.0, "I_fc": 0.0, "I_batt": 0.0}
+    before_run = strategy(hil.EMS_RUN_ENTRY_S - 1.0, dict(fb, t=hil.EMS_RUN_ENTRY_S - 1.0))
+    assert before_run["charge_goal"] == 0.0
+    in_run = strategy(hil.EMS_RUN_ENTRY_S, dict(fb, t=hil.EMS_RUN_ENTRY_S))
+    assert in_run["charge_goal"] == pytest.approx(1.0)
+    after_exit = strategy(hil.SDP_RUN_EXIT_S, dict(fb, t=hil.SDP_RUN_EXIT_S))
+    assert after_exit["charge_goal"] == 0.0
+
+
+# ── H2Consumption's SDP student-proxy accumulator (item 16) ─────────────────
+
+def test_h2_sdp_proxy_matches_p_over_eta_q_lhv_exactly_for_constant_input():
+    h2 = hil.H2Consumption()
+    p_fc_w = 2.0
+    n_ticks = 500
+    for _ in range(n_ticks):
+        h2.step(p_fc_w, dt=hil.H2_GFC_TS_S)
+    expected = p_fc_w * n_ticks * hil.H2_GFC_TS_S / (0.5 * 120000.0)
+    assert h2.proxy_cum_g == pytest.approx(expected, rel=1e-12)
+    assert h2.proxy_rate_gps == pytest.approx(p_fc_w * hil.H2_SDP_PROXY_GPS_PER_W)
+
+
+def test_h2_gfc_and_sdp_proxy_diverge_by_roughly_the_dc_gain_ratio_at_steady_state():
+    """Run long enough for the Gfc modal recursion to settle near its DC gain,
+    then confirm the two models' RATES differ by close to the documented
+    ratio (0.945 -- the student's 0.5 assumed efficiency vs Gfc's implied
+    47.25 %), not by some unrelated factor -- i.e. that h2_cum_g and
+    h2_sdp_cum_g really are two different models of the SAME p_fc_w input,
+    not two disconnected numbers."""
+    h2 = hil.H2Consumption()
+    p_fc_w = 3.0
+    for _ in range(20000):                 # 20 s @ 1 kHz -- well past the
+        h2.step(p_fc_w, dt=hil.H2_GFC_TS_S)  # slowest mode's time constant
+    gfc_rate = h2.rate_gps
+    proxy_rate = h2.proxy_rate_gps
+    assert gfc_rate == pytest.approx(p_fc_w * hil.H2_GFC_DC_GAIN_GPS_PER_W, rel=1e-6)
+    ratio = proxy_rate / gfc_rate
+    assert ratio == pytest.approx(0.945, abs=0.01)
+
+
+def test_h2_reset_clears_both_accumulators():
+    h2 = hil.H2Consumption()
+    for _ in range(100):
+        h2.step(1.0, dt=hil.H2_GFC_TS_S)
+    assert h2.cum_g > 0.0
+    assert h2.proxy_cum_g > 0.0
+    h2.reset()
+    assert h2.x == [0.0, 0.0, 0.0, 0.0]
+    assert h2.rate_gps == 0.0
+    assert h2.cum_g == 0.0
+    assert h2.proxy_rate_gps == 0.0
+    assert h2.proxy_cum_g == 0.0
+
+
+def test_h2_sdp_proxy_negative_p_fc_clamps_to_zero_same_as_gfc():
+    """The shared clamp-at-zero applies to BOTH models from the SAME `u` --
+    a negative p_fc_w must not produce a negative proxy rate either."""
+    h2 = hil.H2Consumption()
+    h2.step(-5.0, dt=hil.H2_GFC_TS_S)
+    assert h2.rate_gps == pytest.approx(0.0)
+    assert h2.proxy_rate_gps == pytest.approx(0.0)
+    assert h2.proxy_cum_g == pytest.approx(0.0)
+
+
+# ── CSV column presence (item 17) ────────────────────────────────────────
+
+def test_csv_header_carries_h2_sdp_cum_g_at_expected_position(tmp_path):
+    header, _rows = _run_main_csv(
+        tmp_path, ["--scenario", "steady", "--electrical", "simple", "--duration", "0.02"])
+    assert header[-1] == "h2_sdp_cum_g"
+    assert header[-3:] == ["h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g"]
+
+
+def test_csv_simulated_row_carries_h2_sdp_cum_g_value(tmp_path):
+    header, rows = _run_main_csv(
+        tmp_path, ["--scenario", "steady", "--electrical", "simple", "--duration", "0.02"])
+    idx = header.index("h2_sdp_cum_g")
+    assert rows
+    for row in rows:
+        assert row[idx].strip() != ""
+        float(row[idx])            # must parse
+
+
+# ── Scenario identity (item 18) ─────────────────────────────────────────
+
+def test_ems_sdp_scenario_shares_ems_soc_band_stimulus_by_reference():
+    sdp = hil.SCENARIOS["ems-sdp"]
+    soc_band = hil.SCENARIOS["ems-soc-band"]
+    # THE SAME LIST OBJECT, not merely an equal one -- the module comment's
+    # explicit claim.
+    assert sdp["ems_v_profile"] is soc_band["ems_v_profile"]
+    assert sdp["duration_s"] == pytest.approx(soc_band["duration_s"])
+    assert sdp["chg_i_ceiling_a"] == pytest.approx(soc_band["chg_i_ceiling_a"])
+    assert sdp["ems"] == "sdp-v1"
+    assert sdp["electrical"] == "any"
+
+
+def test_apply_scenario_ems_sdp_takes_the_shared_drain_branch():
+    """apply_scenario()'s drain branch matches ("ems-soc-band", "ems-dp-replay",
+    "ems-sdp") -- confirmed here by driving the SAME t through all three names
+    and requiring byte-identical plant.i_aux, mirroring the SoC-band/DP-replay
+    identity the module comment states."""
+    t = hil.SOC_BAND_DRAIN_START_S + hil.SOC_LOAD_RAMP_S / 2.0
+    plant_sdp = hil.Plant()
+    plant_socband = hil.Plant()
+    plant_dp = hil.Plant()
+    hil.apply_scenario(plant_sdp, "ems-sdp", t)
+    hil.apply_scenario(plant_socband, "ems-soc-band", t)
+    hil.apply_scenario(plant_dp, "ems-dp-replay", t)
+    assert plant_sdp.i_aux == pytest.approx(plant_socband.i_aux)
+    assert plant_sdp.i_aux == pytest.approx(plant_dp.i_aux)
+    # Sanity: the drain load actually moved i_aux off the bare I_AUX_A floor,
+    # so the equality above is not vacuously true of every scenario.
+    assert plant_sdp.i_aux > hil.I_AUX_A
+
+
+def test_ems_sdp_in_aux_preload_bespoke_set():
+    """`ems-sdp` must be listed in _AUX_PRELOAD_BESPOKE (it shares the
+    SOC_BAND_DRAIN_* bespoke branch, not the generic aux_preload_a one) --
+    re-derived directly here rather than trusting the import-time assert
+    alone, since a passing test suite is what a reader actually checks."""
+    assert "ems-sdp" in hil._AUX_PRELOAD_BESPOKE
+    assert "aux_preload_a" not in hil.SCENARIOS["ems-sdp"]
 
 
 if __name__ == "__main__":

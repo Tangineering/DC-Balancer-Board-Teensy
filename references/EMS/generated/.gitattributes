@@ -1,0 +1,5 @@
+# Generated TPM artifacts and provenance sidecars: byte-hashed by consumers
+# (tools/sdp_ems_solver.py bakes sidecar_sha256 into its policy artifact), so
+# autocrlf must not rewrite the JSON between checkouts (same rule as
+# tools/dp_tables/). The .mat files are binary and unaffected either way.
+* -text

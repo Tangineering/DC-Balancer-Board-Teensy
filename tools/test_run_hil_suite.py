@@ -43,17 +43,17 @@ def _args(**overrides):
 # ─────────────────────────────────────────────────────────────────────────
 
 def test_build_plan_full_count_40_runs():
-    # 25 scenarios (2026-08-31 wave 2 added the ems-y-* quartet,
+    # 26 scenarios (25 as of 2026-08-31 wave 2: the ems-y-* quartet,
     # ems-ftp75-5050/-socband, mppt-tracking, charge-to-full, pi-silence and
-    # share-staircase -- 15 + 10 = 25) + 27 replays (SY0001/FU4 added
-    # earlier) = 52. Every scenario occupies a plan slot even when it is
-    # rendered as a SKIP record (operator-required / --pi-live /
-    # --with-ftp75), so this count is a plan-slot count, not a
-    # will-actually-run count.
+    # share-staircase -- 15 + 10 = 25 -- plus `ems-sdp`, added by the SDP
+    # round) + 27 replays (SY0001/FU4 added earlier) = 53. Every scenario
+    # occupies a plan slot even when it is rendered as a SKIP record
+    # (operator-required / --pi-live / --with-ftp75), so this count is a
+    # plan-slot count, not a will-actually-run count.
     plan = rhs.build_plan(_args())
-    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 52
+    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 53
     kinds = [p["kind"] for p in plan]
-    assert kinds.count("scenario") == 25
+    assert kinds.count("scenario") == 26
     assert kinds.count("replay") == 27
 
 
@@ -65,7 +65,7 @@ def test_build_plan_replay_only():
 
 def test_build_plan_scenarios_only():
     plan = rhs.build_plan(_args(scenarios_only=True))
-    assert len(plan) == 25
+    assert len(plan) == 26
     assert all(p["kind"] == "scenario" for p in plan)
 
 
@@ -3718,6 +3718,9 @@ PI_LIVE_SKIP_SCENARIOS = {
     "ems-y-b30-v1", "ems-y-b30-v3", "ems-y-b00-v1", "ems-y-b00-v3",
     "mppt-tracking", "pi-silence", "charge-to-full", "share-staircase",
     "ems-ftp75-5050", "ems-ftp75-socband",
+    # 2026-08-31 SDP round: `ems-sdp` joins via the same "ems" metadata key
+    # ("ems": "sdp-v1") -- no new code path.
+    "ems-sdp",
 }
 
 
@@ -3776,11 +3779,11 @@ def test_build_plan_pi_live_non_skip_scenarios_unaffected():
 
 
 def test_build_plan_pi_live_total_count_still_40():
-    """Skip records still occupy a plan slot -- the total run count (52, since
-    the 2026-08-31 wave-2 addition of ten more scenarios) is unchanged under
+    """Skip records still occupy a plan slot -- the total run count (53, since
+    the 2026-08-31 SDP round's addition of `ems-sdp`) is unchanged under
     --pi-live, only their kind (executed vs skipped) differs."""
     plan = rhs.build_plan(_args(pi_live=True))
-    assert len(plan) == 52
+    assert len(plan) == 53
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -5155,6 +5158,155 @@ def test_signals_ems_dp_replay_dp_h2_accounted_pass_and_fail():
     failing = [{"t": "5.0", "fault_flags": "0", "h2_cum_g": "0.0"}]
     assert _judge_one(spec, passing, ("h2_cum_g",))["passed"] is True
     assert _judge_one(spec, failing, ("h2_cum_g",))["passed"] is False
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# ems-sdp: FAULT_EXPECTATIONS entry shape (item 19) and
+# final_h2_sdp_cum_g metric extraction (item 20). Stage-2 test-writer round,
+# 2026-08-31 SDP round.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_fault_expectations_ems_sdp_entry_shape():
+    """Importing run_hil_suite.py already ran every import-time spec assert
+    over this entry (t_window/not_before_s/survive_to bounds, the known-
+    fields schema check) -- collection succeeding is half this test. The
+    other half pins the entry's OWN shape so a future edit that silently
+    dropped a field or widened allow_only is caught here, not just by a
+    live campaign."""
+    assert "ems-sdp" in rhs.FAULT_EXPECTATIONS
+    entry = rhs.FAULT_EXPECTATIONS["ems-sdp"]
+    assert entry.get("source")
+    assert "require" not in entry
+    assert entry["allow_only"] == 0
+    assert entry["survive_to"]["t"] == pytest.approx(50.0)
+    assert entry["survive_to"]["states"] == {2, 3}
+    names = {s["name"] for s in entry["signals_require"]}
+    assert names == {"sdp_drive_commanded", "sdp_clamped_rail_commanded",
+                     "sdp_fc_current_biased", "sdp_h2_accounted",
+                     "sdp_student_h2_axis"}
+    duration = SCENARIOS["ems-sdp"]["duration_s"]
+    for spec in entry["signals_require"]:
+        window = spec.get("t_window")
+        if window is not None:
+            lo, hi = window
+            assert 0.0 <= lo < hi <= duration, spec["name"]
+
+
+def test_signals_ems_sdp_drive_commanded_pass_and_fail():
+    spec = _spec_by_name(rhs.FAULT_EXPECTATIONS["ems-sdp"]["signals_require"],
+                         "sdp_drive_commanded")
+    t = _mid_t(spec)
+    passing = [{"t": "%.3f" % t, "fault_flags": "0", "cmd_v_sp": "%.4f" % (spec["min_value"] + 0.05)}]
+    failing = [{"t": "%.3f" % t, "fault_flags": "0", "cmd_v_sp": "%.4f" % (spec["min_value"] - 0.05)}]
+    assert _judge_one(spec, passing, ("cmd_v_sp",))["passed"] is True
+    assert _judge_one(spec, failing, ("cmd_v_sp",))["passed"] is False
+
+
+def test_signals_ems_sdp_clamped_rail_commanded_pass_and_fail():
+    """The SDP-specific assertion: the emitted command must sit at/above the
+    0.84 floor just under clamp_share()'s 0.8500 hardware-envelope clamp --
+    NOT at soc-band's 0.75 ceiling or the DP table's 0.75 rail, both of which
+    must FAIL this check (the vacuity guard the task calls out)."""
+    spec = _spec_by_name(rhs.FAULT_EXPECTATIONS["ems-sdp"]["signals_require"],
+                         "sdp_clamped_rail_commanded")
+    t = _mid_t(spec)
+    passing = [{"t": "%.3f" % t, "fault_flags": "0", "cmd_share_sp": "0.8500"}]
+    failing_socband_ceiling = [{"t": "%.3f" % t, "fault_flags": "0", "cmd_share_sp": "0.75"}]
+    failing_default = [{"t": "%.3f" % t, "fault_flags": "0", "cmd_share_sp": "0.50"}]
+    assert _judge_one(spec, passing, ("cmd_share_sp",))["passed"] is True
+    assert _judge_one(spec, failing_socband_ceiling, ("cmd_share_sp",))["passed"] is False
+    assert _judge_one(spec, failing_default, ("cmd_share_sp",))["passed"] is False
+
+
+def test_signals_ems_sdp_fc_current_biased_pass_and_fail():
+    spec = _spec_by_name(rhs.FAULT_EXPECTATIONS["ems-sdp"]["signals_require"],
+                         "sdp_fc_current_biased")
+    t = _mid_t(spec)
+    passing = [{"t": "%.3f" % t, "fault_flags": "0", "I_fc": "%.4f" % (spec["min_value"] + 0.05)}]
+    failing = [{"t": "%.3f" % t, "fault_flags": "0", "I_fc": "%.4f" % (spec["min_value"] - 0.05)}]
+    assert _judge_one(spec, passing, ())["passed"] is True
+    assert _judge_one(spec, failing, ())["passed"] is False
+
+
+def test_signals_ems_sdp_h2_accounted_pass_and_fail():
+    spec = _spec_by_name(rhs.FAULT_EXPECTATIONS["ems-sdp"]["signals_require"],
+                         "sdp_h2_accounted")
+    assert "t_window" not in spec
+    passing = [{"t": "5.0", "fault_flags": "0", "h2_cum_g": "%.6f" % (spec["min_value"] * 5.0)}]
+    failing = [{"t": "5.0", "fault_flags": "0", "h2_cum_g": "0.0"}]
+    assert _judge_one(spec, passing, ("h2_cum_g",))["passed"] is True
+    assert _judge_one(spec, failing, ("h2_cum_g",))["passed"] is False
+
+
+def test_signals_ems_sdp_student_h2_axis_is_a_plumbing_check_not_a_magnitude_one():
+    """min_value: 0.0 -- ANY parseable sample passes (however small), while a
+    genuinely absent/unparseable column fails. This is check 5's own
+    documented distinction from check 4's magnitude budget."""
+    spec = _spec_by_name(rhs.FAULT_EXPECTATIONS["ems-sdp"]["signals_require"],
+                         "sdp_student_h2_axis")
+    assert spec["min_value"] == pytest.approx(0.0)
+    assert "t_window" not in spec
+    tiny = [{"t": "5.0", "fault_flags": "0", "h2_sdp_cum_g": "0.0000001"}]
+    assert _judge_one(spec, tiny, ("h2_sdp_cum_g",))["passed"] is True
+    absent = [{"t": "5.0", "fault_flags": "0", "h2_sdp_cum_g": ""}]
+    assert _judge_one(spec, absent, ("h2_sdp_cum_g",))["passed"] is False
+
+
+# ── analyze_scenario_csv(): final_h2_sdp_cum_g (item 20) ────────────────────
+
+def test_analyze_scenario_csv_final_h2_sdp_cum_g_populates_from_synthetic_csv(tmp_path):
+    rows = [
+        {"t": "0.000", "fault_flags": "", "h2_sdp_cum_g": ""},
+        {"t": "0.001", "fault_flags": "0", "state": "2", "h2_sdp_cum_g": "0.0000008"},
+        {"t": "0.002", "fault_flags": "0", "state": "2", "h2_sdp_cum_g": "0.0000021"},
+        {"t": "0.003", "fault_flags": "0", "state": "2", "h2_sdp_cum_g": "0.0000035"},
+    ]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows, extra_cols=("h2_sdp_cum_g",))
+    m = rhs.analyze_scenario_csv(str(path))
+    assert m["final_h2_sdp_cum_g"] == pytest.approx(0.0000035)
+
+
+def test_analyze_scenario_csv_final_h2_sdp_cum_g_none_when_column_absent(tmp_path):
+    """A CSV without h2_sdp_cum_g at all (e.g. a replay-mode run, or any CSV
+    predating the SDP round) must leave the metric None -- the same
+    column-absence tolerance final_h2_cum_g already carries."""
+    rows = [{"t": "0.000", "fault_flags": "0", "state": "2"},
+            {"t": "0.001", "fault_flags": "0", "state": "2"}]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    m = rhs.analyze_scenario_csv(str(path))
+    assert m["final_h2_sdp_cum_g"] is None
+
+
+def test_analyze_scenario_csv_final_h2_sdp_cum_g_tolerates_a_single_malformed_cell(tmp_path):
+    rows = [
+        {"t": "0.000", "fault_flags": "0", "state": "2", "h2_sdp_cum_g": "NOT_A_NUMBER"},
+        {"t": "0.001", "fault_flags": "0", "state": "2", "h2_sdp_cum_g": "0.0000009"},
+    ]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows, extra_cols=("h2_sdp_cum_g",))
+    m = rhs.analyze_scenario_csv(str(path))
+    assert m["final_h2_sdp_cum_g"] == pytest.approx(0.0000009)
+    assert m["error"] is None
+
+
+def test_analyze_scenario_csv_final_h2_sdp_cum_g_distinct_from_final_h2_cum_g(tmp_path):
+    """The two columns are two DIFFERENT models on the same input -- a
+    metrics extractor that accidentally aliased one column to the other
+    would pass every test above individually; this pins that a single row
+    carrying BOTH columns at DIFFERENT values populates BOTH metrics
+    independently."""
+    rows = [
+        {"t": "0.001", "fault_flags": "0", "state": "2",
+         "h2_cum_g": "0.0000100", "h2_sdp_cum_g": "0.0000095"},
+    ]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows, extra_cols=("h2_cum_g", "h2_sdp_cum_g"))
+    m = rhs.analyze_scenario_csv(str(path))
+    assert m["final_h2_cum_g"] == pytest.approx(0.0000100)
+    assert m["final_h2_sdp_cum_g"] == pytest.approx(0.0000095)
+    assert m["final_h2_cum_g"] != pytest.approx(m["final_h2_sdp_cum_g"])
 
 
 if __name__ == "__main__":

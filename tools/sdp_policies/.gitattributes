@@ -1,0 +1,6 @@
+# Generated policy artifacts: the POLICY/solver/alpha/gamma blocks are
+# deterministic for identical inputs, but the file carries a generation
+# timestamp (generated_utc) and argv, so the whole file is NOT byte-identical
+# across regenerations. Consumers quote the file's sha256; autocrlf must not
+# rewrite it between checkouts (same rule as tools/dp_tables/).
+* -text

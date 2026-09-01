@@ -78,6 +78,7 @@ import csv
 import datetime
 import hashlib
 import json
+import math
 import os
 import socket
 import struct
@@ -751,6 +752,38 @@ assert abs(_H2_DC_CHECK - H2_GFC_DC_GAIN_GPS_PER_W) \
     % (_H2_DC_CHECK, H2_GFC_DC_GAIN_GPS_PER_W))
 del _H2_DC_CHECK
 
+# ── The STUDENT'S STATIC PROXY (the SDP/DP stage cost), 2026-08-31 ───────────
+#
+# WHAT IT IS.  `W_H2 = P_fc / (eta_fc * Q_LHV_H2)` — the algebraic hydrogen
+# model the PhD student's dynamic programs minimise
+# (references/EMS/SDP_EnergyManagement2.m:12-13 and its `W_H2` stage cost;
+# DPtrial.m:43 uses the same form at eta_fc = 0.55).  It is a CONSTANT-
+# EFFICIENCY map: no dynamics, no memory, one multiply.
+#
+# WHY IT IS LOGGED ALONGSIDE Gfc RATHER THAN INSTEAD OF IT.  The two answer
+# different questions and neither supersedes the other:
+#   * `h2_cum_g` (Gfc) is the DYNAMIC map this simulator integrates and the one
+#     `tools/gen_dp_ems_table.py` solves its stage cost against, so it is the
+#     axis on which THIS repository's strategies are ranked.
+#   * `h2_sdp_cum_g` (this proxy) is the axis the STUDENT's SDP/DP work is
+#     stated on, so a number from a run here can be read next to a number from
+#     that work without either side re-deriving the other's model.
+# ⚠️ THEY ARE NOT INTERCHANGEABLE, and the offset is systematic rather than
+# noise: Gfc's DC gain 1.7638e-5 g/s/W implies an efficiency of 47.25 %, while
+# this proxy assumes 50 %, so the PROXY UNDER-READS by ~5.5 % relative to Gfc at
+# steady state (1/(0.5*120000) = 1.6667e-5 g/s/W, i.e. 0.945x).  Both are model
+# ESTIMATES against an UNIDENTIFIED stack (TODO(calibrate) — the H2Consumption
+# banner applies verbatim to this column too).  Compare runs on ONE axis; never
+# quote a difference between the two columns as a physical result.
+#
+# ⚠️ eta_fc = 0.5, NOT the 0.55 of H2_STATIC_PROXY_GPS_PER_W above.  The two
+# constants are different studies' numbers (SDP vs DPtrial) and are deliberately
+# kept apart rather than reconciled by this file — reconciling them would be a
+# modelling decision neither study made.
+H2_SDP_PROXY_ETA_FC = 0.5             # SDP_EnergyManagement2.m:12
+H2_SDP_PROXY_Q_LHV_J_PER_G = 120000.0  # SDP_EnergyManagement2.m:13 (J/g)
+H2_SDP_PROXY_GPS_PER_W = 1.0 / (H2_SDP_PROXY_ETA_FC * H2_SDP_PROXY_Q_LHV_J_PER_G)
+
 
 class H2Consumption:
     """Discretized Gfc: P_fc [W] in, hydrogen rate [g/s] and cumulative [g] out.
@@ -771,11 +804,19 @@ class H2Consumption:
         self.x = [0.0, 0.0, 0.0, 0.0]
         self.rate_gps = 0.0       # g/s   this tick's output
         self.cum_g = 0.0          # g     rectangular integral of rate_gps
+        # The student's static proxy, carried HERE rather than in a second
+        # object so it is structurally impossible for the two models to be fed
+        # different inputs: one step(), one clamped `u`, two accumulators.  See
+        # the H2_SDP_PROXY_* banner above.
+        self.proxy_rate_gps = 0.0   # g/s
+        self.proxy_cum_g = 0.0      # g
 
     def reset(self):
         self.x = [0.0, 0.0, 0.0, 0.0]
         self.rate_gps = 0.0
         self.cum_g = 0.0
+        self.proxy_rate_gps = 0.0
+        self.proxy_cum_g = 0.0
 
     def step(self, p_fc_w, dt=H2_GFC_TS_S):
         """Advance one tick on P_fc [W]; return this tick's rate in g/s.
@@ -811,6 +852,12 @@ class H2Consumption:
         x[3] = H2_GFC_LAMBDA[3] * x[3] + H2_GFC_GAIN[3] * u
         self.rate_gps = x[0] + x[1] + x[2] + x[3]
         self.cum_g += self.rate_gps * dt
+        # The student's static proxy on the SAME clamped `u` (two multiplies).
+        # Deliberately fed from `u`, not from p_fc_w: the zero-clamp is part of
+        # the input definition, and letting the two models see different inputs
+        # is exactly the confound this shared step() exists to prevent.
+        self.proxy_rate_gps = u * H2_SDP_PROXY_GPS_PER_W
+        self.proxy_cum_g += self.proxy_rate_gps * dt
         return self.rate_gps
 
 
@@ -1186,6 +1233,11 @@ class Plant:
             # H2Consumption banner before quoting either value.
             "h2_rate_gps": self.h2.rate_gps,
             "h2_cum_g": self.h2.cum_g,
+            # Appended (never reordered), 2026-08-31 — the STUDENT'S STATIC
+            # PROXY on the same P_fc input.  A SECOND MODEL of the same
+            # quantity, not a second measurement: read one axis at a time (see
+            # the H2_SDP_PROXY_* banner).
+            "h2_sdp_cum_g": self.h2.proxy_cum_g,
         }
 
 
@@ -2665,6 +2717,775 @@ class DpReplayStrategy:
 ems_dp_replay = DpReplayStrategy()
 
 
+# ── sdp-v1: the ONLINE stochastic-DP policy (causal, state-feedback) ────────
+#
+# ⚠️ SIM-ONLY STRATEGY — NOT PORTABLE TO THE REAL PI AS WRITTEN, for exactly
+# `soc-band`'s reason: it closes on `fb["soc"]`, which is PLANT TRUTH from
+# BatterySource's coulomb count and is deliberately NOT in
+# FB_TELEMETRY_EQUIV_KEYS (the real 2S pack has no SoC output, and v4 telemetry
+# carries no SoC field).  Its OTHER input — bus power from `V_bus`, `I_fc` and
+# `I_batt` — IS telemetry-equivalent.  The portable path is the same one named
+# above the SocBandStrategy: a V_batt-based SoC ESTIMATOR on the Pi feeding this
+# same lookup unchanged.  That estimator is FUTURE WORK and does not exist here.
+#
+# WHAT IT IS, AND HOW IT DIFFERS FROM `dp-replay`.  `dp-replay` plays a table
+# indexed by TIME, computed with full foreknowledge of ONE cycle; it is a
+# non-causal lower-bound reference and is meaningless on any other profile.
+# THIS strategy plays a table indexed by STATE — (SoC, demand bin) — computed
+# offline by tools/sdp_ems_solver.py over a stochastic demand model.  The
+# offline solve is not causal, but the RESULTING POLICY IS: at run time it reads
+# only the present state, has no clock-indexed schedule, and is therefore
+# defined on any profile.  That is the whole point of carrying it alongside the
+# other two: hold-5050 (trivial) < soc-band (causal heuristic) <= sdp-v1 (causal
+# optimal-by-construction) <= dp-replay (non-causal bound).
+#
+# ── DESIGN DECISION: SoC0-RELATIVE REGULATION (read this before comparing) ───
+# The baked policy regulates around `soc.target` (0.6 — the SDP study's own
+# target, SDP_EnergyManagement2.m:56 `SOC_penalty = alpha*abs(SOC_next - 0.6)`),
+# while every EMS scenario in this suite starts at --soc0 0.7.  Applied
+# absolutely, the policy would spend the whole run trying to WALK THE PACK DOWN
+# 0.10 SoC — an operating mode nothing else in the suite is doing, and one that
+# makes an h2_cum_g comparison against soc-band meaningless (a strategy that
+# deliberately discharges burns less hydrogen; see the "read it WITH delta_soc"
+# rule everywhere in this file).
+#
+# So the SoC axis is SHIFTED, not the policy: on the first call the strategy
+# CAPTURES soc0 exactly as SocBandStrategy captures its reference, and thereafter
+# looks the table up at
+#     soc_rel = soc_target + (soc - soc0),  clamped to [grid_min, grid_max]
+# i.e. the policy charge-sustains around WHERE THIS RUN STARTED.  Consequences,
+# stated rather than buried:
+#   * `ems-sdp`, `ems-soc-band` and `ems-dp-replay` are three-way comparable on
+#     the identical stimulus at the default --soc0, because all three sustain
+#     around the same captured/actual start point.
+#   * The mapping is a pure TRANSLATION, so the policy's SHAPE (its deadband,
+#     its bias direction, its saturation) is preserved exactly; what is lost is
+#     any absolute-SoC meaning the solver's grid edges carried (e.g. a table
+#     that biases harder near an absolute 0.55 floor now does so 0.10 above it).
+#   * A study that WANTS absolute regulation must not use this strategy as-is —
+#     it is a deliberate reinterpretation of the artifact, not a transparent
+#     replay of it.
+#
+# ── DEMAND-AXIS FIDELITY BOUNDARY (operator-ruled, NOT a bug) ────────────────
+# The baked demand grid comes from the study's ideally-scaled demand range,
+# which on this rig is roughly -1.12 .. +1.64 W.  The bus power this bench
+# actually measures at cruise is ~1-20 W — well ABOVE that range for much of the
+# envelope — so the normalized demand CLAMPS TO THE TOP BIN through most of a
+# run.  OPERATOR RULING: clamp to the end bins; the artifact's own sidecar owns
+# the demand map, and this consumer must not invent a rescaling of it.  The
+# clamp is therefore CONTRACT, and the honest reporting of it is the
+# `clamped_high`/`clamped_low` decision counters printed in the exit summary —
+# a run whose decisions are ~100 % clamped high is one where the demand axis
+# carried no information and only the SoC axis was live.  That is a scale-model
+# fidelity boundary of the artifact, not a defect of this code.
+#
+# ── PREDICTED BEHAVIOUR ON `ems-sdp`, measured offline against the SHIPPED
+#    artifact — POLICY-BLOCK sha256 dbe42d1b… (recipe:
+#    sha256(json.dumps(doc["policy"], sort_keys=True)); the FILE sha is NOT
+#    quoted anywhere, because `generated_utc` moves it on every regeneration
+#    even when the decision law is byte-identical — the per-run file sha lives
+#    in the CSV's meta sidecar instead), 101 SoC nodes x 25 bins, 2026-08-31.
+#    Quoted
+#    here because three separate consequences follow from the artifact's own
+#    structure rather than from anything this file does, and a reader meeting
+#    them in a trace should not have to rediscover them:
+#
+#   1. THE POLICY IS BANG-BANG AND THE RUN STARTS ON ITS SWITCHING BOUNDARY.
+#      At the clamped top demand bin the action flips at exactly the target:
+#      share = 1.00 for every SoC node in (0.550, 0.600], and 0.00 for every
+#      node above it — AND at the exact grid-FLOOR node 0.550, which is a
+#      solver-side clamp-tie degeneracy (documented there as D3/D8), not a
+#      second switching point.  ⚠️ THE FLOOR NODE IS UNREACHABLE IN `ems-sdp`:
+#      landing on it needs the measured SoC to fall 0.05 below the captured
+#      soc0, against this run's ~0.006 — but a LONGER or HEAVIER-DRAIN reuse of
+#      `sdp-v1` could reach it, and would there command the MOST-discharging
+#      split at the moment the pack is most depleted.  No OC reasoning breaks
+#      if it does: 0.00 is emitted as 0.15 by the clamp below, in band, no cut.
+#      The SoC0-relative mapping puts a run's FIRST decision precisely on the
+#      target node.  Here that is benign in one direction only — this scenario's
+#      SoC falls monotonically, so soc_rel stays on the 1.00 side — but a
+#      scenario that CHARGES would walk soc_rel back across the boundary and
+#      the commanded share would flip at the decision cadence.  BOUNDED, not
+#      removed, by the emission clamp in point 3: such a flip runs between 0.85
+#      and 0.15 rather than between the rails, so it can never cut a source off
+#      the bus — but it is still a 0.70-wide setpoint step every second.  That
+#      is the artifact's shape, not chatter introduced here; a future charging
+#      scenario on this strategy needs it looked at first.
+#   2. THIS SCENARIO CANNOT COMMAND CHARGING, and not because of the SoC axis:
+#      the solver marks demand bins 12-24 charge-forbidden, the clamp pins
+#      every decision to bin 24, and `charge_goal` is 0.00 in EVERY row of that
+#      column.  A charge window is therefore unreachable BY CONSTRUCTION here —
+#      which is why the suite entry asserts none (the same reasoning
+#      `ems-dp-replay`'s entry states for its own zero-charge table).
+#      AND IT IS ROBUST, not incidental: a reviewer perturbation sweep
+#      (2026-08-31) re-solved 600 charge cells under +/-1 % and +/-5 % alpha,
+#      0.5-0.9 A charge ceilings, 12-16.5 V bus and +/-1 % / -20 % capacity, and
+#      the charge DECISION flipped only at a 1.2 A ceiling — where the
+#      FC-budget rule forbids charging outright anyway.  So "no charge window"
+#      is a property of the problem at this rig's numbers, and a re-solve at
+#      slightly different constants is not expected to produce one.
+#   3. THE TABLE'S 1.00 IS EMITTED AS 0.85 — the HARDWARE-ENVELOPE CLAMP in
+#      clamp_share(), which is soc-band's own clamp applied for soc-band's own
+#      reason.  1.00 is outside [DROOP_R_MIN 0.15, DROOP_R_MAX 0.85], where
+#      updateShareSetpointCutoff() (.ino:9231-9257) opens BT_BUS_ENABLE and the
+#      FC channel would go single-source into this scenario's ~1.45 A drain —
+#      above LIMIT_I_FC_MAX 1.4 A, i.e. an OC_FC latch part-way through the
+#      drain ramp, which would TRUNCATE the run and with it the three-way
+#      hydrogen comparison the scenario exists for.  At the clamp the run is
+#      instead a sustained FC-heavy but LEGAL split: 0.85 x 1.45 = 1.23 A on FC
+#      (12 % under the limit), tightened further by the firmware's own governor,
+#      which clips an in-band setpoint to [I_min/I_tot, 1 - I_min/I_tot] =
+#      [0.207, 0.793] at that load (.ino:9556-9568) — so the DELIVERED split is
+#      ~0.793 and I_fc ~1.16 A, 17 % of margin, with the BT minority at exactly
+#      SHARE_MINORITY_I_MIN_A 0.30 A.  The rail the table asked for is not
+#      hidden: `last_share_raw` keeps it and `clamped_share` counts it, both in
+#      the exit summary.
+SDP_POLICY_DIR = os.path.join(REPO_ROOT, "tools", "sdp_policies")
+SDP_POLICY_FILE = "sdp_policy_v1.json"
+SDP_POLICY_SCHEMA = "sdp-policy-v1"
+# Hand the firmware back MODE_SAFE at the same time `soc-band` does.  DERIVED,
+# not a literal: `ems-sdp` shares `ems-soc-band`'s profile object, so its
+# standstill is at the same instant and a different exit time would make the two
+# runs different missions.
+SDP_RUN_EXIT_S = SOC_BAND_RUN_EXIT_S
+# Decision cadence FALLBACK, in seconds, used only if the artifact omits
+# `decision_dt_s`.  The artifact is the authority; this exists so the failure
+# mode of an older sidecar is a documented 1 Hz rather than a KeyError deep in
+# the run.  1.0 s is the study's own stage length.
+SDP_DEFAULT_DECISION_DT_S = 1.0
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# THE ARTIFACT CONTRACT — tools/sdp_policies/sdp_policy_v1.json
+#
+# Produced by tools/sdp_ems_solver.py; consumed ONLY here.  Written out in full
+# because the producer and the consumer are separate programs and a schema that
+# lives in neither one's head is a schema that drifts.
+#
+#   {
+#     "schema": "sdp-policy-v1",          REQUIRED, exact match
+#     "decision_dt_s": 1.0,               stage length the policy was solved for
+#     "soc": {                            the SoC axis
+#        "target":   0.60,                the value the policy regulates toward
+#        "grid_min": 0.55,                inclusive low edge of the SoC grid
+#        "grid_max": 0.65,                inclusive high edge
+#        "grid":     [...]                OPTIONAL explicit grid; when absent a
+#     },                                  uniform linspace(min, max, n_soc) is
+#                                         reconstructed from the array height
+#     "normalization": {                  demand normalization range, in WATTS
+#        "p_dem_min_w": -1.124773461276723,
+#        "p_dem_max_w":  1.639842192501809
+#     },
+#     "demand_bins": {
+#        "edges": [0.0, ..., 1.0],        n_bins+1 NORMALIZED bin edges in
+#                                         [0, 1] (see the space note below)
+#        "convention": "matlab-discretize-last-closed"
+#     },
+#     "policy": {
+#        "share":       [[...], ...],     n_soc x n_bins  power_share_setpoint
+#        "charge_goal": [[...], ...]      n_soc x n_bins  charge_goal
+#     }
+#   }
+#
+# Everything else the solver writes — provenance, the TPM hashes, the alpha
+# derivation, the action ladder, the solver's convergence record — is CARRIED,
+# NOT CONSUMED.  This loader reads only the keys above, so the solver stays free
+# to record whatever it likes without breaking playback.
+#
+# EDGE SPACE.  `edges` are in the NORMALIZED demand coordinate
+# x = (P_dem - p_dem_min_w)/(p_dem_max_w - p_dem_min_w), i.e. they must start at
+# 0.0 and end at 1.0.  Normalized rather than watts on purpose: the watt range
+# is already carried by `normalization`, and two independent copies of it would
+# be two things to keep in step.  The loader REFUSES edges that do not span
+# [0, 1] rather than guessing which space they are in.
+#
+# BINNING.  MATLAB `discretize` convention (the artifact declares it as
+# `demand_bins.convention`, and the loader REFUSES any other value rather than
+# silently applying this one): bin i is [e_i, e_{i+1}) for every i but the last,
+# which is CLOSED [e_n-1, e_n].  x is clamped into [0, 1] first, so a demand
+# outside the modelled range lands in an end bin by construction (the fidelity
+# boundary above).
+#
+# ARRAY ORIENTATION.  Row = SoC index (ascending SoC), column = demand bin
+# (ascending demand).  Both arrays must be the SAME shape; the loader checks it.
+# ═════════════════════════════════════════════════════════════════════════════
+
+# The one binning convention this consumer implements (sdp_bin_index()).  The
+# artifact declares its own; a mismatch is refused rather than assumed, because
+# the two plausible alternatives (first-closed, or a bin-centre nearest rule)
+# differ ONLY at the edges — i.e. exactly where this rig's clamped demand always
+# lands, so a wrong assumption would be invisible in every trace.
+SDP_BIN_CONVENTION = "matlab-discretize-last-closed"
+
+
+def _sdp_require(obj, key, path, kind=None):
+    """Fetch a required artifact key or raise ValueError naming its location."""
+    if not isinstance(obj, dict) or key not in obj:
+        raise ValueError(
+            "SDP policy artifact %s is missing the required key %r%s. See THE "
+            "ARTIFACT CONTRACT block in hil_plant_sim.py (above SdpStrategy) "
+            "for the full schema, and regenerate with "
+            "tools/sdp_ems_solver.py." % (path, key, kind or ""))
+    return obj[key]
+
+
+def load_sdp_policy(path):
+    """Parse and VALIDATE a baked SDP policy.  Returns a plain dict.
+
+    Every failure raises ValueError with a pointed message: this runs at
+    startup, where a loud failure is free, and the alternative — a strategy that
+    silently degrades to a 0.5 split — would produce a trace labelled `sdp-v1`
+    that is not the SDP's.  Same discipline as load_dp_table()."""
+    try:
+        # Read BYTES, then parse: the same single read gives the file-identity
+        # digest for the run's provenance record (MED-2) without a second pass
+        # over the file at startup.
+        with open(path, "rb") as fh:
+            blob = fh.read()
+        doc = json.loads(blob.decode("utf-8"))
+    except OSError as exc:
+        raise ValueError(
+            "the `sdp-v1` strategy needs its baked policy at %s and it could "
+            "not be read (%s).\n"
+            "  Generate it first (numpy is required, so use miniforge — "
+            "`.venv_hil` is stdlib-only):\n"
+            "      C:/Users/ricky/miniforge3/python.exe "
+            "tools/sdp_ems_solver.py" % (path, exc))
+    except ValueError as exc:               # json.JSONDecodeError subclasses it
+        raise ValueError("SDP policy artifact %s is not valid JSON: %s"
+                         % (path, exc))
+    if not isinstance(doc, dict):
+        raise ValueError("SDP policy artifact %s must be a JSON object, got %s"
+                         % (path, type(doc).__name__))
+
+    schema = doc.get("schema")
+    if schema != SDP_POLICY_SCHEMA:
+        raise ValueError(
+            "SDP policy artifact %s declares schema %r; this consumer "
+            "implements %r ONLY. A schema bump is a contract change and must "
+            "be made in tools/sdp_ems_solver.py and here TOGETHER — replaying "
+            "an unknown schema would be a trace labelled `sdp-v1` whose "
+            "semantics nobody has checked."
+            % (path, schema, SDP_POLICY_SCHEMA))
+
+    soc = _sdp_require(doc, "soc", path)
+    if not isinstance(soc, dict):
+        raise ValueError("SDP policy artifact %s: `soc` must be an object "
+                         "carrying target/grid_min/grid_max" % path)
+    target = float(_sdp_require(soc, "target", path, " (inside `soc`)"))
+    gmin = float(_sdp_require(soc, "grid_min", path, " (inside `soc`)"))
+    gmax = float(_sdp_require(soc, "grid_max", path, " (inside `soc`)"))
+    if not (gmax > gmin):
+        raise ValueError("SDP policy artifact %s: soc.grid_max (%r) must "
+                         "exceed soc.grid_min (%r)" % (path, gmax, gmin))
+    if not (gmin <= target <= gmax):
+        raise ValueError("SDP policy artifact %s: soc.target %r lies outside "
+                         "the grid [%r, %r] — the policy could never regulate "
+                         "to it" % (path, target, gmin, gmax))
+
+    norm = _sdp_require(doc, "normalization", path)
+    p_min = float(_sdp_require(norm, "p_dem_min_w", path,
+                               " (inside `normalization`)"))
+    p_max = float(_sdp_require(norm, "p_dem_max_w", path,
+                               " (inside `normalization`)"))
+    if not (p_max > p_min):
+        raise ValueError("SDP policy artifact %s: normalization.p_dem_max_w "
+                         "(%r) must exceed p_dem_min_w (%r)"
+                         % (path, p_max, p_min))
+
+    bins = _sdp_require(doc, "demand_bins", path)
+    convention = bins.get("convention")
+    if convention != SDP_BIN_CONVENTION:
+        raise ValueError(
+            "SDP policy artifact %s declares demand_bins.convention %r; this "
+            "consumer implements %r ONLY. The conventions differ only at the "
+            "bin EDGES — which is exactly where this rig's clamped demand "
+            "always lands — so assuming one would be invisible in every trace."
+            % (path, convention, SDP_BIN_CONVENTION))
+    edges = [float(e) for e in _sdp_require(bins, "edges", path,
+                                            " (inside `demand_bins`)")]
+    if len(edges) < 2:
+        raise ValueError("SDP policy artifact %s: `edges` needs at least 2 "
+                         "entries, got %d" % (path, len(edges)))
+    if any(b <= a for a, b in zip(edges, edges[1:])):
+        raise ValueError("SDP policy artifact %s: `edges` must strictly "
+                         "increase" % path)
+    # The [0, 1] span IS the declaration that these are normalized edges. A
+    # tolerance rather than == because the artifact round-trips through JSON
+    # text; anything looser would silently accept a watt-space grid.
+    if abs(edges[0]) > 1e-9 or abs(edges[-1] - 1.0) > 1e-9:
+        raise ValueError(
+            "SDP policy artifact %s: demand_bins.edges must span the "
+            "NORMALIZED demand coordinate [0.0, 1.0] (got [%.6g, %.6g]). The "
+            "watt range belongs in `normalization` — see THE ARTIFACT "
+            "CONTRACT block." % (path, edges[0], edges[-1]))
+    n_bins = len(edges) - 1
+
+    policy = _sdp_require(doc, "policy", path)
+
+    # MED-4 (review, 2026-08-31) — VALUE VALIDATION, AND WHY IT IS AT LOAD.
+    # Both arrays reach the wire, and a bad cell is SILENT in both directions:
+    #   * a non-finite SHARE passes clamp_share() as 0.15 (Python's max/min
+    #     return the non-NaN operand), so it books as an ordinary
+    #     hardware-envelope clamp and the trace looks like a deliberate
+    #     battery-heavy command;
+    #   * a non-finite or out-of-range CHARGE_GOAL is emitted RAW — the field
+    #     has no clamp — and the firmware's own isfinite guard HOLDS the
+    #     previous value, so the logged `cmd_*` column and the board's actual
+    #     state diverge with nothing anywhere saying so.
+    # Refusing at load costs one startup pass and removes both.
+    # DELIBERATELY NOT CHECKED: membership in the solver's own action ladder
+    # (`actions.share_ladder`). The ladder is the solver's search grid, not a
+    # contract on the emitted value, and pinning to it would refuse a future
+    # artifact that legitimately interpolates or re-grids.
+    def _grid_2d(key, lo=None, hi=None, allowed=None):
+        raw = _sdp_require(policy, key, path, " (inside `policy`)")
+        if not isinstance(raw, list) or not raw:
+            raise ValueError("SDP policy artifact %s: policy.%s must be a "
+                             "non-empty list of rows" % (path, key))
+        out = []
+        for i, row in enumerate(raw):
+            if not isinstance(row, list) or len(row) != n_bins:
+                raise ValueError(
+                    "SDP policy artifact %s: policy.%s row %d has %s entries; "
+                    "every row must have exactly n_bins = %d (len(edges) - 1)"
+                    % (path, key, i,
+                       len(row) if isinstance(row, list) else "non-list",
+                       n_bins))
+            vals = []
+            for j, v in enumerate(row):
+                try:
+                    fv = float(v)
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        "SDP policy artifact %s: policy.%s[%d][%d] is %r, "
+                        "which is not a number" % (path, key, i, j, v))
+                if not math.isfinite(fv):
+                    raise ValueError(
+                        "SDP policy artifact %s: policy.%s[%d][%d] is %r "
+                        "(non-finite). A NaN/Inf action reaches the command "
+                        "packet: a share would clamp to %.2f and read as a "
+                        "deliberate command, and a charge_goal is emitted raw "
+                        "and HELD by the firmware's isfinite guard, so the "
+                        "logged command and the board's state would silently "
+                        "disagree." % (path, key, i, j, fv,
+                                       SOC_BAND_SHARE_MIN))
+                if lo is not None and not (lo <= fv <= hi):
+                    raise ValueError(
+                        "SDP policy artifact %s: policy.%s[%d][%d] is %r, "
+                        "outside the legal range [%g, %g]"
+                        % (path, key, i, j, fv, lo, hi))
+                if allowed is not None and fv not in allowed:
+                    raise ValueError(
+                        "SDP policy artifact %s: policy.%s[%d][%d] is %r; this "
+                        "field is an INTENT and the only legal values are %s "
+                        "(the firmware maps any value > 0 onto 'open the path "
+                        "and let the Ag105 run at its configured ceiling', so "
+                        "an intermediate number is not a smaller charge — it "
+                        "is an unchecked value on the wire)."
+                        % (path, key, i, j, fv,
+                           " / ".join("%g" % a for a in sorted(allowed))))
+            vals = [float(v) for v in row]
+            out.append(vals)
+        return out
+
+    # share is a RATIO in [0, 1]; charge_goal is a two-valued INTENT.
+    share = _grid_2d("share", lo=0.0, hi=1.0)
+    goal = _grid_2d("charge_goal", allowed=(0.0, 1.0))
+    if len(share) != len(goal):
+        raise ValueError("SDP policy artifact %s: policy.share has %d rows and "
+                         "policy.charge_goal has %d — they index the same SoC "
+                         "grid and must match" % (path, len(share), len(goal)))
+    n_soc = len(share)
+
+    grid = soc.get("grid")
+    if grid is None:
+        # Uniform reconstruction. n_soc == 1 is degenerate but legal (a
+        # SoC-independent policy); the single node sits at grid_min.
+        if n_soc == 1:
+            grid = [gmin]
+        else:
+            step = (gmax - gmin) / (n_soc - 1)
+            grid = [gmin + step * i for i in range(n_soc)]
+    else:
+        grid = [float(v) for v in grid]
+        if len(grid) != n_soc:
+            raise ValueError("SDP policy artifact %s: soc.grid has %d entries "
+                             "but the policy arrays have %d rows"
+                             % (path, len(grid), n_soc))
+        if any(b <= a for a, b in zip(grid, grid[1:])):
+            raise ValueError("SDP policy artifact %s: soc.grid must strictly "
+                             "increase" % path)
+
+    # ── Two digests, because they answer two different questions (MED-2) ─────
+    # file_sha256   IDENTITY OF THIS FILE. Moves on every regeneration, since
+    #               the artifact carries `generated_utc` and the solver's own
+    #               prose — so it answers "exactly which bytes produced this
+    #               run" and nothing else. Recorded per run in the meta sidecar.
+    # policy_sha256 IDENTITY OF THE DECISION LAW. sha256 over
+    #               json.dumps(doc["policy"], sort_keys=True) — the two action
+    #               grids and nothing else — so it is STABLE across a --force
+    #               regeneration that did not change the policy. This is the
+    #               digest to QUOTE in a comment or a doc; a byte sha quoted
+    #               there goes stale the next time anyone re-runs the solver.
+    return {
+        "path": path, "schema": schema,
+        "file_sha256": hashlib.sha256(blob).hexdigest(),
+        "policy_sha256": hashlib.sha256(
+            json.dumps(doc["policy"], sort_keys=True).encode("utf-8")
+        ).hexdigest(),
+        "generated_utc": doc.get("generated_utc"),
+        "tpm_sha256": (doc.get("tpm") or {}).get("sha256")
+                      if isinstance(doc.get("tpm"), dict) else None,
+        "decision_dt_s": float(doc.get("decision_dt_s",
+                                       SDP_DEFAULT_DECISION_DT_S)),
+        "soc_target": target, "soc_min": gmin, "soc_max": gmax,
+        "soc_grid": grid, "n_soc": n_soc, "n_bins": n_bins,
+        "p_dem_min_w": p_min, "p_dem_max_w": p_max,
+        "edges": edges, "share": share, "charge_goal": goal,
+        "convention": convention,
+        # CARRIED, NOT CONSUMED — the solver's own provenance record (TPM hash,
+        # the alpha derivation, the action ladder, convergence), kept so the
+        # startup banner and any future sidecar can quote it without this
+        # loader having to know what is in it.
+        "raw": doc,
+    }
+
+
+def sdp_bin_index(x, edges):
+    """MATLAB `discretize` bin for x in the NORMALIZED demand coordinate.
+
+    Written out rather than reached for bisect: the half-open/closed asymmetry
+    at the top edge is the whole subtlety, and it is worth being able to read
+    it.  `x` is assumed already clamped into [edges[0], edges[-1]] by the
+    caller, which is where the clamp is COUNTED (see SdpStrategy)."""
+    n = len(edges) - 1
+    # bisect_right gives the first edge strictly greater than x, so index-1 is
+    # the half-open bin [e_i, e_{i+1}).  The final bin is CLOSED, so x exactly
+    # at the top edge folds back into it instead of running off the end.
+    i = bisect.bisect_right(edges, x) - 1
+    if i < 0:
+        return 0
+    if i >= n:
+        return n - 1
+    return i
+
+
+class SdpStrategy:
+    """sdp-v1 — ONLINE stochastic-DP policy lookup.  Read the banner above.
+
+    name       : sdp-v1
+    intent     : a CAUSAL state-feedback policy computed offline over a
+                 stochastic demand model, so a campaign can rank a causal
+                 optimal-by-construction law between the causal heuristic
+                 (`soc-band`) and the non-causal bound (`dp-replay`) on one
+                 stimulus.
+    fields     : mode_cmd (SAFE -> HYBRID at EMS_RUN_ENTRY_S, back to SAFE at
+                 the scenario's ems_run_exit_s / SDP_RUN_EXIT_S),
+                 v_setpoint (the scenario's `ems_v_profile`, exactly as
+                 hold-5050 and soc-band take it), power_share_setpoint and
+                 charge_goal (table lookup on (SoC, demand bin), recomputed at
+                 the artifact's `decision_dt_s` and HELD between decisions; the
+                 share is CLAMPED to the hardware envelope
+                 [SOC_BAND_SHARE_MIN, SOC_BAND_SHARE_MAX] on emission — see
+                 clamp_share(), and note the raw table value is kept and
+                 counted, not erased).
+    feedback   : `t`, `v_profile`, `V_bus`, `I_fc`, `I_batt` (all
+                 telemetry-equivalent) and `soc` (PLANT TRUTH — the non-portable
+                 term; see the SIM-ONLY banner).
+    ⚠️ SIM-ONLY, and the demand axis clamps — both are in the banner above the
+       class.  The clamp counters are reported in the exit summary.
+
+    STATE.  A class for SocBandStrategy's reasons and one more: the loaded
+    artifact.  EMS_STRATEGIES holds ONE instance; reset() clears the per-run
+    state and DELIBERATELY KEEPS the loaded policy (the artifact is a property
+    of the file, not of the run — reloading it per run would be I/O for
+    nothing).  A rewind (t going backwards) auto-resets, so a second run in one
+    process cannot inherit the first run's captured SoC reference.
+    """
+
+    def __init__(self, policy_dir=None):
+        # NO I/O here: EMS_STRATEGIES is built at import time and constructing
+        # the registry must not touch the disk (or fail because the policy has
+        # not been generated yet).  Loading happens in bind_scenario(), or
+        # lazily on the first call for a direct caller — ONCE either way.
+        self.policy_dir = policy_dir or SDP_POLICY_DIR
+        self.policy = None
+        # Filled by bind_scenario(); None for a strategy that was only ever
+        # called directly (a test, a probe), which is also how main() decides
+        # whether there is anything to write into the meta sidecar.
+        self.provenance = None
+        self.reset()
+
+    @property
+    def path(self):
+        return os.path.join(self.policy_dir, SDP_POLICY_FILE)
+
+    def reset(self):
+        """Per-RUN state.  The loaded artifact is not run state and survives."""
+        self.soc_ref = None         # captured on the first call that sees a SoC
+        self.last_t = None
+        self.next_decision_t = None
+        self.decisions = 0
+        self.clamped_high = 0       # decisions whose demand exceeded the model
+        self.clamped_low = 0        # ... or fell below it
+        self.clamped_share = 0      # decisions whose table action was outside
+                                     # the hardware envelope — see clamp_share()
+        self.last_share = SOC_BAND_SHARE_NOMINAL
+        self.last_share_raw = SOC_BAND_SHARE_NOMINAL
+        self.last_goal = 0.0
+        self.last_bin = None
+        self.last_soc_rel = None
+
+    # ── loading / startup refusal ───────────────────────────────────────────
+    def load(self):
+        """Load the artifact ONCE.  Raises ValueError to refuse."""
+        if self.policy is None:
+            self.policy = load_sdp_policy(self.path)
+        return self.policy
+
+    def bind_scenario(self, scenario, meta, electrical_mode=None, args=None):
+        """Generic startup hook (see main()).  Loads and validates the policy.
+
+        Unlike DpReplayStrategy's binder this does NOT check the scenario: an
+        SDP policy is indexed by STATE, not by time, so it is defined on any
+        profile and there is nothing here that could go stale against one.  The
+        hook is still implemented so a missing or malformed artifact is refused
+        BEFORE a frame is sent rather than mid-run.
+
+        The trailing arguments are part of the hook contract and are accepted
+        and ignored deliberately: `--electrical` and `--soc0` do not change
+        which policy is correct (the SoC0-relative mapping is what makes the
+        second one true — see the banner)."""
+        pol = self.load()
+        self.reset()
+        # MED-2: the run's provenance record for THIS artifact, stashed here and
+        # copied into the CSV's meta sidecar by main(). It is the answer to
+        # "which policy produced these numbers" — a question the CSV alone
+        # cannot answer, because a regenerated artifact changes the commands
+        # without changing the schema, the scenario or any constant the model
+        # fingerprint covers.
+        self.provenance = {
+            "path": pol["path"],
+            "file_sha256": pol["file_sha256"],
+            "policy_sha256": pol["policy_sha256"],
+            "policy_sha256_recipe":
+                "sha256(json.dumps(doc['policy'], sort_keys=True))",
+            "generated_utc": pol["generated_utc"],
+            "n_soc": pol["n_soc"],
+            "n_bins": pol["n_bins"],
+            "decision_dt_s": pol["decision_dt_s"],
+            "tpm_sha256": pol["tpm_sha256"],
+        }
+        print("[hil] SDP policy: %s (%d SoC nodes x %d demand bins, target "
+              "SoC %.3f on [%.3f, %.3f], demand %.3f..%.3f W, decisions every "
+              "%.3g s)"
+              % (pol["path"], pol["n_soc"], pol["n_bins"], pol["soc_target"],
+                 pol["soc_min"], pol["soc_max"], pol["p_dem_min_w"],
+                 pol["p_dem_max_w"], pol["decision_dt_s"]))
+        print("[hil]   policy sha256 %s (the DECISION LAW; stable across a "
+              "regeneration that did not change it), file sha256 %s, generated "
+              "%s"
+              % (pol["policy_sha256"], pol["file_sha256"][:16] + "…",
+                 pol["generated_utc"] or "(not recorded)"))
+        print("[hil] NOTE: `sdp-v1` is SIM-ONLY (it closes on plant-truth SoC, "
+              "not telemetry) and regulates around the CAPTURED soc0, not the "
+              "artifact's absolute target — see the banner above SdpStrategy.")
+        return self
+
+    # ── helpers, kept separate so a test can drive them directly ────────────
+    def soc_relative(self, soc):
+        """Table-space SoC for a measured one: target + (soc - soc0), clamped."""
+        pol = self.policy
+        rel = pol["soc_target"] + (float(soc) - float(self.soc_ref))
+        return min(pol["soc_max"], max(pol["soc_min"], rel))
+
+    def soc_index(self, soc_rel):
+        """NEAREST grid node.  Nearest, not interpolated, is correct for a
+        LOOKUP: the policy is a piecewise-constant control law and blending two
+        neighbouring actions would command a split neither one chose.  (The
+        interpolation requirement in the DP work is SOLVER-side, on the
+        cost-to-go J, and is a different question.)  Linear scan is fine at
+        ~101 nodes and once per decision_dt_s."""
+        grid = self.policy["soc_grid"]
+        best, best_d = 0, abs(grid[0] - soc_rel)
+        for i in range(1, len(grid)):
+            d = abs(grid[i] - soc_rel)
+            if d < best_d:
+                best, best_d = i, d
+        return best
+
+    def demand_bin(self, p_dem_w, count=True):
+        """Normalized-and-clamped demand bin for a bus power, in watts.
+
+        `count` drives the clamp diagnostics, so a test (or a caller probing
+        the map) can look a value up without polluting the run's counters."""
+        pol = self.policy
+        span = pol["p_dem_max_w"] - pol["p_dem_min_w"]
+        x = (float(p_dem_w) - pol["p_dem_min_w"]) / span
+        if x < 0.0:
+            x = 0.0
+            if count:
+                self.clamped_low += 1
+        elif x > 1.0:
+            x = 1.0
+            if count:
+                self.clamped_high += 1
+        return sdp_bin_index(x, pol["edges"])
+
+    def clamp_share(self, raw, count=True):
+        """HARDWARE-ENVELOPE CLAMP on the emitted share.  ACTUATION-SIDE ONLY.
+
+        SocBandStrategy applies exactly this clamp
+        (SOC_BAND_SHARE_MIN/MAX = 0.15/0.85), described there as "the assertion
+        that this policy can never command a cut, whatever the span is retuned
+        to".  The same reasoning binds harder here, because this policy's action
+        ladder INCLUDES both rails: a commanded share outside
+        [DROOP_R_MIN 0.15, DROOP_R_MAX 0.85] makes
+        updateShareSetpointCutoff() (.ino:9231-9257, strict `<`/`>` — 0.15 and
+        0.85 themselves are IN band) open the minority channel's bus switch, and
+        the surviving channel then carries the WHOLE bus against its own OC
+        limit.
+
+        WHY IT IS NOT A POLICY CHANGE.  The baked table is untouched and stays
+        faithful to the MATLAB; what is clamped is the SETPOINT THIS RIG CAN
+        PHYSICALLY ACTUATE.  The solver's model has no bus-switch topology and
+        no per-channel current limit, so its rails are legal in ITS problem and
+        illegal in this one — the clamp is where those two envelopes meet, and
+        nothing else about the lookup is altered.  The raw value stays visible:
+        `last_share_raw` holds it and `clamped_share` counts how often the rails
+        were commanded, both reported in the exit summary, so "the policy wants
+        the rail" remains a readable finding rather than being erased.
+
+        MARGIN AT THE CLAMP (this rig, `ems-sdp`'s own drain peak ~1.45 A):
+          * FC at 0.85          -> 1.23 A, 12 % under LIMIT_I_FC_MAX 1.4 A. The
+            firmware's own governor tightens it further — for an IN-BAND
+            setpoint it clips to [I_min/I_tot, 1 - I_min/I_tot] =
+            [0.207, 0.793] at that load (.ino:9556-9568) — so the DELIVERED
+            split is ~0.793 and I_fc ~1.16 A, 17 % of margin.
+          * BT minority at the same point: 0.207 x 1.45 = 0.30 A, i.e. exactly
+            SHARE_MINORITY_I_MIN_A by construction — the minority channel is
+            governed, not floored off.
+          * SHARE_CUT_MAX_HANDOFF_A (0.5 A) never enters: it gates the CUT, and
+            an in-band setpoint never attempts one.
+        """
+        lo, hi = SOC_BAND_SHARE_MIN, SOC_BAND_SHARE_MAX
+        out = min(hi, max(lo, float(raw)))
+        if count and out != float(raw):
+            self.clamped_share += 1
+        return out
+
+    def decide(self, fb):
+        """One decision: measure, look up, latch.  Returns (share, goal)."""
+        pol = self.policy
+        soc = fb.get("soc")
+        if soc is None:
+            # No SoC term available (a feedback view without plant truth). The
+            # SoC axis is HALF this policy's state, so rather than invent a
+            # reference the strategy holds at the middle of the grid — the
+            # honest "I cannot see this axis" position — and the run's own
+            # trace shows a flat command. Same degradation philosophy as
+            # SocBandStrategy's deficit = 0.0 fallback.
+            soc_rel = pol["soc_target"]
+        else:
+            if self.soc_ref is None:
+                self.soc_ref = float(soc)
+            soc_rel = self.soc_relative(soc)
+        # DEMAND = bus power, from TELEMETRY-EQUIVALENT keys only (V_bus, I_fc,
+        # I_batt are all in FB_TELEMETRY_EQUIV_KEYS). NOT the fuel cell's stack
+        # power and not the motor's mechanical power: the study's P_dem is the
+        # load the two sources between them have to meet, which on this board is
+        # the bus node.
+        p_dem = ((fb.get("V_bus") or 0.0)
+                 * ((fb.get("I_fc") or 0.0) + (fb.get("I_batt") or 0.0)))
+        i_soc = self.soc_index(soc_rel)
+        i_bin = self.demand_bin(p_dem)
+        self.decisions += 1
+        self.last_soc_rel = soc_rel
+        self.last_bin = i_bin
+        # RAW table action kept alongside the emitted one — see clamp_share().
+        self.last_share_raw = pol["share"][i_soc][i_bin]
+        self.last_share = self.clamp_share(self.last_share_raw)
+        self.last_goal = pol["charge_goal"][i_soc][i_bin]
+        return self.last_share, self.last_goal
+
+    def __call__(self, t, fb):
+        if self.policy is None:
+            # A direct caller (a test, a future tool) that never went through
+            # bind_scenario(). Load ONCE, here — and still LOUDLY: a missing or
+            # malformed artifact raises rather than defaulting to a 0.5 split,
+            # so no path can produce a trace labelled `sdp-v1` that is not the
+            # policy's. main() binds at startup, so a bench run never reaches
+            # this branch.
+            self.load()
+        if self.last_t is not None and t < self.last_t:
+            self.reset()            # rewind => a new run, not this one's tail
+        self.last_t = t
+
+        v_sp = fb.get("v_profile")
+        if v_sp is None:
+            v_sp = EMS_DEFAULT_CRUISE_MPS
+
+        # DECISION CADENCE. The policy callable runs at PiCommander.PI_CMD_HZ
+        # (50 Hz) but the table was solved for stages of `decision_dt_s`, so the
+        # lookup is recomputed only on a stage boundary and the two commanded
+        # ENERGY fields are HELD in between — which is what a stage-based policy
+        # means. mode_cmd and v_setpoint are recomputed EVERY tick regardless:
+        # they are not policy outputs (the profile and the Run window are
+        # host-side script), and holding them would quantize the drive setpoint
+        # to 1 s steps for no reason.
+        if self.next_decision_t is None or t >= self.next_decision_t:
+            self.decide(fb)
+            dt = self.policy["decision_dt_s"]
+            # Anchor on `t`, not on the previous boundary: a late first call (or
+            # a 50 Hz tick that lands just past a boundary) must not accumulate
+            # a backlog of missed stages to fire back-to-back.
+            self.next_decision_t = t + dt
+
+        in_run = EMS_RUN_ENTRY_S <= t < ems_run_exit(fb, SDP_RUN_EXIT_S)
+        return {
+            "mode_cmd": MODE_HYBRID if in_run else MODE_SAFE,
+            "power_share_setpoint": self.last_share,
+            "v_setpoint": v_sp,
+            # Outside the Run window nothing may be commanded onto the charger
+            # path — chargingControl() only runs in State 2, so leaving the
+            # intent asserted across the Run exit would be a command the
+            # firmware silently ignores (soc-band's and dp-replay's reasoning,
+            # verbatim).
+            "charge_goal": self.last_goal if in_run else 0.0,
+        }
+
+    def summary_line(self):
+        """One line for the exit summary, or None if the policy never ran.
+
+        The clamp counters are the point: they are the only place a reader
+        learns that the demand axis was saturated for the run, which is the
+        artifact's known scale-model fidelity boundary (banner above)."""
+        if not self.decisions:
+            return None
+        n = self.decisions
+        return ("[hil] sdp-v1: %d decisions, demand bin clamped HIGH on %d "
+                "(%.1f %%) and LOW on %d (%.1f %%) — a high clamp rate means "
+                "the bench's bus power sat above the artifact's modelled "
+                "demand range, so only the SoC axis carried information "
+                "(operator-ruled contract, not a defect); SHARE clamped to the "
+                "hardware envelope [%.2f, %.2f] on %d decision(s) (%.1f %%) — "
+                "the table asked for a rail there and a rail cuts the minority "
+                "source off the bus, so the emitted value is clipped; soc_ref "
+                "%s, final share %.4f (table asked %.4f), charge_goal %.4f"
+                % (n, self.clamped_high, 100.0 * self.clamped_high / n,
+                   self.clamped_low, 100.0 * self.clamped_low / n,
+                   SOC_BAND_SHARE_MIN, SOC_BAND_SHARE_MAX, self.clamped_share,
+                   100.0 * self.clamped_share / n,
+                   ("%.6f" % self.soc_ref) if self.soc_ref is not None
+                   else "(never seen)",
+                   self.last_share, self.last_share_raw, self.last_goal))
+
+
+# One instance, registered below.  Construction does NO I/O — see __init__.
+ems_sdp_v1 = SdpStrategy()
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # ── y-*: the firmware's own 'Y' combined profile, driven from the EMS layer ──
 #
@@ -2891,6 +3712,14 @@ EMS_STRATEGIES = {
     # foreknowledge of ONE drive cycle.  Refuses at startup against any other
     # profile.  See the banner above DpReplayStrategy.
     "dp-replay": ems_dp_replay,
+    # ⚠️ SIM-ONLY: sdp-v1 closes on fb["soc"] (PLANT TRUTH, not in
+    # FB_TELEMETRY_EQUIV_KEYS) exactly as soc-band does, so it is not portable
+    # to a real Pi without a V_batt-based SoC estimator (future work).  CAUSAL,
+    # unlike dp-replay: the table is indexed by STATE, not by time, so it is
+    # defined on any profile.  Refuses at startup if its baked policy is
+    # missing or malformed.  See the banner above SdpStrategy — in particular
+    # the SoC0-RELATIVE regulation decision and the demand-axis clamp.
+    "sdp-v1": ems_sdp_v1,
     # The firmware's own 'Y' combined drive-cycle + power-share table (16
     # regions, 40 s), commanded from the EMS layer instead of the USB console.
     # All four read ONLY fb["t"] and the scenario's ems_run_exit_s, so all four
@@ -3454,6 +4283,53 @@ SCENARIOS["ems-dp-replay"] = {
     "ems": "dp-replay",
 }
 
+# ── ems-sdp: the same cycle, driven by the ONLINE stochastic-DP policy ──────
+#
+# DERIVED FROM `ems-soc-band` BY REFERENCE, exactly as `ems-dp-replay` is and
+# for the same hard reason: the three scenarios exist to be COMPARED, and a
+# comparison on different stimuli is not one.  `ems_v_profile` is literally the
+# SAME LIST OBJECT all three share, `duration_s` and `chg_i_ceiling_a` are read
+# off the soc-band entry rather than retyped, and apply_scenario() applies the
+# SAME SOC_BAND_DRAIN_* load to this name (the drain branch matches all three
+# names, and this scenario is listed in _AUX_PRELOAD_BESPOKE so a preload
+# declared here could not be silently ignored).  Retuning one retunes all three.
+#
+# THE THREE-WAY COMPARISON, and what each leg is for:
+#   ems-soc-band   causal heuristic        (SocBandStrategy)
+#   ems-sdp        causal, optimal by construction over a stochastic demand
+#                  model, computed offline and played by STATE  (SdpStrategy)
+#   ems-dp-replay  NON-CAUSAL lower bound, computed offline with full
+#                  foreknowledge and played by TIME  (DpReplayStrategy)
+# Read h2_cum_g WITH delta_soc in all three: any strategy burns less hydrogen by
+# discharging the pack harder.  Note the DP leg's terminal SoC is MATCHED to
+# soc-band's by construction (the generator bisects for it) while THIS leg's is
+# not — its charge sustenance is whatever the policy delivers, which is part of
+# what the run measures.
+#
+# `electrical: "any"`, NOT "hifi".  `ems-dp-replay` is hifi-only because its
+# table's hydrogen ACCOUNTING must match the engine (bind_scenario() refuses a
+# mismatch).  Nothing equivalent binds here: `sdp-v1` is causal state feedback
+# with no offline objective to agree with, so both engines are legal and running
+# it under either preference is a free cross-check.
+#
+# ⚠️ SIM-ONLY strategy (plant-truth SoC) and its demand axis clamps to the end
+# bins for much of this cycle — both are the SdpStrategy banner's business, and
+# the exit summary's clamp counters are how a run reports it.
+SCENARIOS["ems-sdp"] = {
+    "description": "The `ems-soc-band` drive cycle and drain load, driven by "
+                   "the CAUSAL `sdp-v1` policy: a state-indexed setpoint table "
+                   "computed offline by stochastic dynamic programming and "
+                   "looked up at run time on (SoC, demand bin). The causal "
+                   "optimal-by-construction leg between the `soc-band` "
+                   "heuristic and the non-causal `dp-replay` bound.",
+    "electrical": "any",
+    "duration_s": SCENARIOS["ems-soc-band"]["duration_s"],
+    "chg_i_ceiling_a": SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"],
+    # THE SAME LIST OBJECT — see the note above.
+    "ems_v_profile": SCENARIOS["ems-soc-band"]["ems_v_profile"],
+    "ems": "sdp-v1",
+}
+
 # ── ems-y-*: the firmware's 'Y' combined profile, four variants ─────────────
 #
 # DERIVED, not hand-written: every one of the four is built from the SAME
@@ -3887,6 +4763,10 @@ SCENARIO_NAMES = list(SCENARIOS)
 _AUX_PRELOAD_BESPOKE = frozenset({
     "steady", "step-load", "sag", "comm-loss", "drive", "charge-cruise",
     "charge-regen", "ems-drive-cycle", "ems-soc-band", "ems-dp-replay",
+    # 2026-08-31: `ems-sdp` shares the SOC_BAND_DRAIN_* bespoke branch with the
+    # two entries above (identical stimulus is the whole point), so a preload
+    # declared on it would be silently ignored — it belongs in this list.
+    "ems-sdp",
     "charge-fault", "soc-depletion", "handoff-sag", "bringup", "scp-inrush",
     # 2026-08-31 wave 2: `mppt-tracking` and `charge-to-full` carry the plain
     # I_AUX_A load and take the GENERIC branch, so they are NOT listed.
@@ -4259,11 +5139,13 @@ def apply_scenario(plant, scenario, t):
         # Plant carries the ordinary aux load; the whole stimulus is the EMS
         # layer's 50 Hz command stream (see EMS_STRATEGIES / ems_v_profile).
         plant.i_aux = I_AUX_A
-    elif scenario in ("ems-soc-band", "ems-dp-replay"):
-        # BOTH names, deliberately: `ems-dp-replay` is the same cycle and the
-        # same drain driven by the offline-optimal table instead of the causal
-        # policy, and the comparison is only meaningful if the load is
-        # bit-identical.  See the SCENARIOS["ems-dp-replay"] note.
+    elif scenario in ("ems-soc-band", "ems-dp-replay", "ems-sdp"):
+        # ALL THREE names, deliberately: `ems-dp-replay` is the same cycle and
+        # the same drain driven by the offline-optimal table instead of the
+        # causal policy, and `ems-sdp` (2026-08-31) is the same again driven by
+        # the causal state-indexed SDP policy.  The three-way comparison is only
+        # meaningful if the load is bit-identical.  See the
+        # SCENARIOS["ems-dp-replay"] and SCENARIOS["ems-sdp"] notes.
         # The stimulus is TWO things: the EMS layer's 50 Hz command stream (the
         # `soc-band` strategy) and this drain load, whose only job is to move the
         # coulomb count out of the policy's band inside a ~60 s run.  Ramped in
@@ -4925,6 +5807,16 @@ def main(argv=None):
             # (TODO(calibrate)). Read the H2Consumption banner before quoting
             # either column, and read h2_cum_g WITH delta_soc.
             header_row += ["h2_rate_gps", "h2_cum_g"]
+            # APPEND-only, unconditional in simulated mode, same rule again:
+            # the STUDENT'S STATIC PROXY (P_fc/(0.5*120000)) on the SAME P_fc
+            # input h2_cum_g integrates — a SECOND MODEL of one quantity, so
+            # the two columns are comparable to their own axes and NOT to each
+            # other (the proxy under-reads Gfc by ~5.5 % at steady state by
+            # construction).  See the H2_SDP_PROXY_* banner.  No rate column:
+            # the rate is `h2_sdp_cum_g` differentiated and the proxy is
+            # memoryless, so it would carry no information the cumulative does
+            # not — unlike Gfc, whose rate is a dynamic state.
+            header_row += ["h2_sdp_cum_g"]
         writer.writerow(header_row)
 
     # M3: open the electrical-events sidecar UP FRONT and stream into it as events
@@ -5045,6 +5937,20 @@ def main(argv=None):
                 "replay_i_fc_clamp_a": args.replay_i_fc_clamp,
                 "replay_commands": bool(args.replay_commands) if args.replay else None,
                 "dash": bool(args.dash),
+                # MED-2 (review, 2026-08-31) — WHICH BAKED POLICY DROVE THIS RUN.
+                # Present ONLY for an `sdp-v1` run and absent otherwise, so no
+                # other scenario's sidecar grows a null field. Nothing else in
+                # this document can identify the artifact: `constants_hash`
+                # covers module constants, not a JSON file on disk, so a
+                # regenerated policy would change every command in the run
+                # while leaving the whole sidecar identical. Both digests are
+                # carried — the file sha for byte identity, the policy-block
+                # sha for the DECISION LAW (stable across a regeneration that
+                # did not change it, and the one to compare across campaigns).
+                **({"sdp_policy": ems_policy.provenance}
+                   if (ems_name == "sdp-v1"
+                       and getattr(ems_policy, "provenance", None))
+                   else {}),
             },
             "constants_hash": constants_hash(meta_const),
             "constants": meta_const,
@@ -5477,6 +6383,8 @@ def main(argv=None):
                     # cumulative O(1e-3) g, so %.4f would round both to zero.
                     row.append(f"{sensors.get('h2_rate_gps', 0.0):.9g}")
                     row.append(f"{sensors.get('h2_cum_g', 0.0):.9g}")
+                    # Same 9 significant digits, same reason (O(1e-3) g).
+                    row.append(f"{sensors.get('h2_sdp_cum_g', 0.0):.9g}")
                 writer.writerow(row)
 
             ticks += 1
@@ -5663,6 +6571,21 @@ def main(argv=None):
         print(f"[hil] H2 (Gfc model estimate — stack uncalibrated): "
               f"{plant.h2.cum_g:.6g} g cumulative, "
               f"final rate {plant.h2.rate_gps:.6g} g/s")
+        # The student's axis, on the SAME P_fc input. Printed on its own line
+        # with its own model named, so the two totals cannot be read as a
+        # measurement and its disagreement.
+        print(f"[hil] H2 (student static proxy, eta_fc "
+              f"{H2_SDP_PROXY_ETA_FC:g} / Q_LHV "
+              f"{H2_SDP_PROXY_Q_LHV_J_PER_G:g} J/g — a DIFFERENT MODEL of the "
+              f"same quantity, not a cross-check): {plant.h2.proxy_cum_g:.6g} g "
+              f"cumulative")
+    # sdp-v1's demand-clamp diagnostics (None unless that strategy ran).
+    if commander is not None and commander.policy is not None:
+        _sdp_line = getattr(commander.policy, "summary_line", None)
+        if _sdp_line is not None:
+            _line = _sdp_line()
+            if _line:
+                print(_line)
     if electrical is not None:
         summ = electrical.summary()
         # M3: electrical.events is trimmed on every drain, so the durable totals
