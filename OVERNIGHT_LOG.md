@@ -282,3 +282,71 @@ RULING (adjudicated): Opus's mechanism with Fable's honesty amendment.
 - Tests must show the frontier check FAILS on the C2 numbers and PASSES on C1.
 Reversal path: --alpha-mode marginal regenerates the v2 economics; v2 itself is
 untouched.
+
+## Campaign count decision
+
+Stopping at FOUR full campaigns (authorization was "up to five"). Campaign 4 ran the
+fully-calibrated stack 56/56 green with the frontier PASS reproducing Campaign 3 to
+~0.2% — a fifth would only add repeat datapoints to already-multi-campaign-pinned
+quantities, while the remaining mandate (morning digest, retrospective, the
+overnight-process skill) still needs the time. The suite+analysis+fix cycle count
+stands at 4 campaigns / 3 fix rounds / 2 decision pairs.
+
+---
+
+# MORNING DIGEST — read this first (2026-09-01, ~05:45)
+
+Everything below happened autonomously after your last message; every commit is on
+main and pushed. The board ran fw v23 all night and is NOT reflashed. Nothing was
+lost, nothing destructive was done; the two .ino operator flag lines are untouched
+and uncommitted, PSCAD/ untouched.
+
+## What you asked for, and where it stands
+
+1. WORK_QUEUE.md worked: S1/S2/S3 interior scenarios SHIPPED + hardware-calibrated;
+   fw v24 PREPARED (commit 128dc40, tests 3787/175/4268 green, NOT flashed - a
+   tooling-lockstep round is the flash prerequisite, queued in WORK_QUEUE.md 0);
+   FTP75 DP table BAKED; Pi-bridge audit BLOCKED (source not in repo); measured-
+   droop mode not reached (queued).
+2. FOUR full campaigns (of the authorized five - stop reasoning logged above), each
+   live-analyzed: C1 53/53, C2 53/53, C3 55/56 (1 scenario-gap FAIL, root-caused +
+   fixed), C4 56/56 clean validation. ZERO board defects across ~218 runs.
+3. Judgment calls via dual decision pairs, twice (fw v24 MPPT design; the SDP
+   charge-economics ruling) - adjudications + reversal paths logged above.
+4. This digest + the retrospective/skill (repo .claude/skills/, committed last).
+
+## The night's headline findings (detail: CLAUDE.md addenda 2026-09-01a/b + the
+   four HIL_FINDINGS.md ledgers)
+
+- **Ag105 charging is loss-making at rig scale** (0.2364 SoC/g vs the 0.41 share
+  lever). The chatter fix made charging efficient and thereby exposed it; the DP
+  bound has said "never charge" since Round B. Root cause: the ported alpha's SoC
+  shadow price was never tested against the ADDED charge control. sdp_policy_v3
+  (calibrated alpha, endogenous never-charge) restores the frontier - the v3 leg
+  lands ON the DP bound (1.0000x) and beats soc-band by 10%.
+- **The SDP artifact's switching surfaces were measured on hardware** within 1e-5
+  SoC of their grid nodes; S1's share flip landed within 1.35% of the offline walk.
+- **A new strategy-authoring rule from a real walk failure:** below 0.55 A total
+  the firmware runs open-loop HOLD - a policy commanding 0.85 got 0.166 delivered.
+  Documented in the manual + plant docs.
+- **fw v24 found a latent telemetry bug** (Ag105 0xFF sentinel read as
+  I_charge = 2.805 A) and resolved R1's precedence question from Table 7 encoding.
+- Repeatability at close: comm-loss re-close 9-for-9 bit-exact, scp i_cut 8-for-8,
+  sag dwell 5-sample band unwidened.
+
+## Decisions you may want to review/reverse (all reversible, reversal paths above)
+
+1. sdp-v2 -> minimum-dwell hysteresis (kept; now serves the demonstration legs).
+2. sdp_policy_v3 as the benchmark artifact (alpha 0.1629624); v2 byte-frozen for
+   S2/S3. Reverse: rebind ems-sdp to sdp-v2 + delete the frontier fixtures.
+3. The frontier check's vs-bound arm documented as a lever-class detector (do not
+   tighten to 1.03 on charge-free readings).
+4. fw v24's adjudicated design incl. the 1 s release holdoff instead of Fable's
+   release-semantics change (gated on the MPPTD bench verification).
+5. Stopped at 4 campaigns.
+
+## Your bench list for today (also WORK_QUEUE.md 0)
+
+fw v24 tooling-lockstep round -> flash fw v24 -> acceptance sequence; R1 MPPTSEL
+inspection; MPPTD-disabled-charge verification; Silvertel EPROM endurance query;
+pull the Pi bridge source into the repo (or audit on the Pi) to unblock Mode B.

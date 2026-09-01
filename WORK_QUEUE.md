@@ -1,12 +1,30 @@
-# Work queue — 2026-08-31
+# Work queue — updated 2026-09-01 (post-overnight)
 
-This document lists all queued work items as of 2026-08-31. It excludes the round in
-flight (campaign-191509 fix queue + SDP demand-map re-normalization), which completes
-this session. Items appear in the recommended execution order from
-`HIL Results/HIL_SUITE_EVALUATION_20260831.md`, amended by the operator rulings made
-after that evaluation.
+Overnight progress (see OVERNIGHT_LOG.md for the full decision log): §1's S1/S2/S3
+SHIPPED and hardware-calibrated (campaign 024231); §2's fw v24 PREPARED (commit
+128dc40, NOT flashed); the FTP75 DP table BAKED (drive-cycle-scale DP≈soc-band tie);
+sdp_policy_v3 shipped after the charge-economics finding (charging is loss-making at
+rig scale — see the 2026-09-01b CLAUDE.md addendum); the EMS frontier check is live.
+Four campaigns run, zero board defects.
 
-## 1. SDP interior scenario round (next tooling round — operator-approved)
+## 0. NEW since the original queue (do these first)
+
+- **fw v24 tooling-lockstep round (BLOCKS the fw v24 flash):** the simulator still
+  emulates the fixed 18 V MPPT threshold and does not parse the 17 B observation
+  frame. Needed: frame length-detection (16 B legacy fallback + flag),
+  mppt_emulation consuming the observed threshold count, mppt-tracking expectation
+  flip (≤6 toggles, threshold-band checks, the released-and-refusing prohibition),
+  charger-figure threshold trace. Then: flash fw v24 (edit HIL_SIM 0→1 as usual)
+  and run the acceptance sequence in the fw v24 design docs (first-write ~21/22
+  counts, power-cycle zero-write, hunt-gone).
+- **Bench steps fw v24 wants:** R1 MPPTSEL inspection (documentation-grade now);
+  the MPPTD-disabled-charge behavior verification (the two designers read the
+  datasheet oppositely; gates the ag105ReleaseOk() upgrade); Silvertel EPROM
+  endurance query.
+- **S4 solver feasibility masking** (demand above FC max) — still tabled; the v3
+  solver's action-mask machinery (--forbid-charge) is a partial precedent.
+
+## 1. SDP interior scenario round — ✅ SHIPPED overnight (calibrated, campaign 024231)
 
 Goal: move the SDP strategy off the FC rail so the commanded share itself varies on
 the wire. Builds on the `sdp_policy_v2.json` artifact.
@@ -22,7 +40,7 @@ the wire. Builds on the `sdp_policy_v2.json` artifact.
 Also derive expectations that score the flips (share-step edges, charge windows, SoC
 crossing), with offline walks to predict flip times.
 
-## 2. fw v24 firmware round: dynamic Ag105 MPPT threshold (operator ruling 2026-08-31)
+## 2. fw v24 firmware round — ✅ PREPARED overnight (commit 128dc40, NOT flashed; see §0 for the tooling-lockstep prerequisite)
 
 - Manage reg 0x02 (11–33 V, ~0.088 V/count, default 18 V) **dynamically**: droop sags
   the bus (TP0178 reached 12.15 V; hifi charge windows ~13.4 V), so a static
@@ -45,10 +63,12 @@ crossing), with offline walks to predict flip times.
 2. `drive` scenario has never run (operator-gated): run one campaign with
    `--with-operator` when present at the bench.
 
-## 4. Pi bridge v4 parser audit → Mode B
+## 4. Pi bridge v4 parser audit → Mode B (BLOCKED overnight: bridge source not in repo)
 
 Audit the Raspberry Pi bridge's v4 telemetry parser (58-byte layout, offset table in
-PLAN.md §6b) — the single blocker for Mode B. Then run the first `--pi-live` campaign
+PLAN.md §6b) — the single blocker for Mode B. The bridge source lives on the Pi, not
+in this repo, so the audit needs the Pi's filesystem (operator: pull the bridge code
+into the repo or run the audit on the Pi). Then the first `--pi-live` campaign
 re-running the EMS set through the real Pi.
 
 ## 5. First v2 campaign (after the in-flight round lands)

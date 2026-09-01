@@ -2448,3 +2448,133 @@ docs; FW stays v23; wire protocol frozen.
   decision pair adjudicated by the orchestrator, up to five suite+analysis+fix cycles
   on the current fw v23 flash, fw v24 prepared but NOT flashed; decisions and findings
   in OVERNIGHT_LOG.md.
+
+---
+
+## Status & session addendum (2026-09-01a, fw v24: dynamic Ag105 MPPT threshold — PREPARED, NOT FLASHED)
+
+Overnight autonomous firmware round (operator-prescribed dual-design decision pair:
+Fable-high + Opus-xhigh, orchestrator-adjudicated; then implementer → test-writer →
+two-lens reviews → fix round). **fw v24 (commit 128dc40; NOT flashed — the board ran
+fw v23 all night; flash requires the usual HIL_SIM edit).** Ledger row 24.
+
+- **Both designers independently resolved R1 from Table 7's own encoding:** reg 0x02
+  values 0–250 select register mode, ≥251 the MPPTS resistor — a firmware write
+  overrides any fitted resistor, so R1 is documentation, not a design dependency.
+  Both also found a LATENT TELEMETRY BUG: below-threshold refusal makes ALL Ag105
+  measurement registers read 0xFF (DS §2.11.5), which pollAg105() converted to a
+  bogus I_charge = 2.805 A — fixed (0xFF sentinel → I_charge 0, ag105MeasUnavailable
+  flag).
+- **Adjudicated design:** V_chg (pin 38) windowed-MINIMUM tracking, sampled only
+  while FC_CHARGE powers the charger; target = V_chg_min − 3.0 V quantized DOWN,
+  clamped to counts [15 = 12.320 V floor, 27 = 13.376 V ceiling] — the ceiling is
+  static_assert-anchored to V_BUS_CHARGED_THRESH minus the RT1987 ideal-diode path
+  drop (~35 mV servo, NOT a PN Vf — reviewer's 0.4 V assumption corrected), the
+  formal no-hunt invariant. Monotone-lower session ratchet (≤2/session, 30 s apart,
+  deadband 3 counts, ≤8 physical writes/boot counted AT ATTEMPT + a boot-scoped
+  fail gate — the safety review's H1: the original budget missed failing writes and
+  refilled on charger power cycles). reg-0x07 cross-check discriminates the 0xFF
+  read ambiguity; VERIFY treats a 0xFF readback as undecidable (M1 — else the
+  flagship first write self-scores as failure and disables harvest). MPPTD-disabled
+  charge semantics are UNVERIFIED on hardware (the two designers read the datasheet
+  OPPOSITELY) — so no release-logic semantic change shipped; a 1 s MPPT_DISABLE
+  release holdoff bounds any residual hunt to ≤1 Hz under either reading, with
+  Fable's ag105ReleaseOk() proposal recorded as the upgrade pending a bench step.
+  Layered UV protection: firmware backoff closes FC_CHARGE at 12.8 V/15 ms dwell
+  (hover-band protection — it CANNOT pre-empt the 20 ms UV latch on a fast
+  collapse, and says so), resume 13.6 V, gated vs busHotPlugUnsafe + the share
+  latch (Death-5 conservatism). HIL observation frame 16 → **17 B** (mppt count at
+  offset 15, live-mirrored per tick under HIL_SIM); State-98 **'N'** command; 'S'
+  dump block; the two stale P&O comments corrected. EPROM endurance is NOT in the
+  datasheet — TODO(verify: Silvertel); the structural lifetime bound is ~236 writes.
+- **Reviews:** safety 1 HIGH + 7 MED + 8 LOW; correctness 1 MED-HIGH (the HIL
+  mirror was one-shot; now live) + the mock_wire transaction counter (the zero-Wire
+  tests were structurally vacuous) — all applied. test/mppt_assert_probes.sh pins
+  the static_asserts (compile-fail mutation probes, 6/6).
+- **Tests: 3787 production + 175 bench + 4268 HIL — all green, orchestrator-rebuilt.**
+- **Tooling lockstep NOT yet done** (deliberately): the simulator still emulates the
+  fixed 18 V threshold and does not parse the 17 B frame — a pre-flash tooling round
+  (frame length-detection, mppt_emulation reads the observed count, mppt-tracking
+  expectation flip to ≤6 toggles + threshold-band checks) is REQUIRED before the
+  first fw v24 HIL campaign. Queued in WORK_QUEUE.md.
+- Operator items: R1 MPPTSEL inspection (now documentation-grade); the MPPTD-
+  disabled-charge bench verification; flash order per WORK_QUEUE.
+
+---
+
+## Status & session addendum (2026-09-01b, overnight campaigns 1–4: sdp_policy_v3, the charge-economics finding, interior scenarios, frontier check)
+
+Overnight autonomous session (operator instructions 2026-08-31 evening; full decision
+log in OVERNIGHT_LOG.md; commits d5d72e3 → 9cbf83c → 128dc40 → 6971a73 → 1ba2bd9 +
+the close-out). Four full campaigns on the fw v23 flash, each live-analyzed under the
+hil-agent-analysis discipline; two dual-agent decision pairs; zero board defects all
+night.
+
+- **Campaign 1 (222036, 53/53):** second fully-green campaign; first on sdp_policy_v2
+  — every offline-walk prediction confirmed to the digit; the predicted FC_CHARGE
+  chatter MEASURED (9×1 s windows, 2.0125 s period, 4.63× harvest loss); three-way
+  eq-H2 dp 0.011567 < sdp-v2 0.011773 (+1.79 %) < soc-band 0.012852; replay audit
+  0 untagged-vacuous (was 7.5 %) and caught the fix round's own ML0217 wrong-gate
+  attribution (P0/300 ms, not P1/800 ms — re-anchored to an elapsed-from-State-0
+  band). Chatter ruling: 8 s min-dwell hysteresis, consumer-side.
+- **Campaign 2 (000816, 53/53):** hysteresis validated to the digit (2 windows /
+  15086 ticks; harvest 7.72×; the self-load-subtracted bin proven by a double-dwell
+  window) — **and it exposed that Ag105 charging is LOSS-MAKING at rig scale**:
+  sdp-v2 fell off the frontier (+12.78 % over the DP bound, worse than soc-band;
+  implied lever 0.2364 SoC/g vs the 0.41 exchange rate; the DP charges on ZERO
+  stages). No check asserted frontier position — 15/15 passed. Decision pair #2:
+  both agents REFUTED the loss-chain hypothesis (the levers' hydrogen basis
+  cancels; the model is CONSERVATIVE about charging) and converged on the true
+  defect: **the ported α sets a SoC shadow price (α/(1−γ) = 5.14 g/SoC) whose
+  admission threshold the added charge control was never tested against** — the
+  ported invariant came from a MATLAB source with no charger. Ruling:
+  **sdp_policy_v3** — α re-derived by two-sided lever calibration ((1−γ)/√(L_share·
+  L_chg) = 0.1629624, from the solver's own constants; window tripwire asserts α
+  inside both admission windows), charging rejected ENDOGENOUSLY (0 cells; share
+  map identical at operating rows; sha 0443febf…); v2 kept BYTE-FROZEN as the
+  demonstration artifact for the dynamics scenarios (frontier_eligible False,
+  banner-rendered). Revisit condition: charging returns on its own if the charger
+  lever ever exceeds 0.31 SoC/g (e.g. post-fw v24). **Standing rule (new): any
+  control ADDED to a ported objective must be checked against the shadow price the
+  port's α implies.**
+- **SDP interior scenarios (operator-approved S1/S2/S3) + EMS frontier check
+  shipped** (6971a73): `soc_ref_offset` strategy parameter; ems-ftp75-sdp (S1,
+  δ +0.013 above target → mid-run share flip), ems-sdp-cross (S2, downward
+  crossing + charge-threshold limit cycle — the UPWARD share crossing is infeasible
+  on this artifact: the two switching surfaces sit one grid node apart and crossing
+  up inside a dwell needs 2.4 A single-source FC), ems-sdp-braking (S3,
+  decel-plateau charge windows; HONEST caption — SoC rise is FC-fed, regen power is
+  floored in the plant). EMS_FRONTIER cross-run eq-H2 check (≤0.98× soc-band,
+  ≤1.06× dp; KNIFE-EDGE λ-band; exit-affecting UNVERIFIED split — the combined
+  review's H1 caught that the first version failed clean --pi-live campaigns).
+  FTP75 DP table baked (dp_ems_table_ems-ftp75-5050.csv): **DP vs soc-band −0.01 %
+  at matched terminal SoC — the DP's advantage lives on the low-demand cycle, not
+  the drive cycle.**
+- **Campaign 3 (024231, 55/56 + 1 scenario-gap FAIL):** the frontier check's first
+  live PASS — **the v3 leg landed ON the DP bound (1.0000×) and beat soc-band by
+  10 %**; ems-sdp h2 matches the campaign-191509 share-only leg to **8 ppm** (two
+  artifacts, identical command, identical energy); the artifact's two switching
+  surfaces measured on hardware within 1e-5 SoC of their grid nodes; S1's flip
+  landed at 198.5 s vs the walk's 195.9 (+1.35 %). The FAIL was S2's phase-locked
+  absence check: the walk's limit-cycle period was wrong 5.7× — root cause: **below
+  the 0.55 A gate the firmware runs OPEN-LOOP HOLD and delivered share 0.1656
+  against the commanded 0.85** (designed behavior; now a documented
+  strategy-authoring rule — walks must model the hold). Frontier honesty caveat:
+  the vs-bound arm is STRUCTURALLY ~1.0 for charge-free candidates (both points
+  differ only along the share lever, and λ IS that lever's rate) — it detects
+  lever-class deviations (as in C2), not optimality; do not tighten it on
+  charge-free readings. Calibration round (1ba2bd9): phase-free replacement checks
+  (new `max_continuous_ticks` + `edge_count_between` kinds), all S1/S2/S3 pins
+  de-provisionalized from measurement, three new OC-margin tripwires (S3's dwell
+  overhang peaks I_fc 1.2617 A — the suite's tightest margin, 9.9 %, now asserted).
+- **Campaign 4 (validation of the calibrated stack)** — results in OVERNIGHT_LOG.md's
+  morning digest.
+- **Repeatability ledger across the night:** comm-loss re-close 0.3696 A/ch
+  8-for-8 bit-exact; scp i_cut 7-for-7 bit-exact; ftp75 h2 bit-identical across
+  campaigns; sag dwell band 19.70–20.13 ms over 4 samples; the sag REGEN-teardown
+  event classification settled (bit-identical to the comm-loss reference).
+- **Tests at close: 1196 + 26 stdlib / 302 miniforge / 3787 + 175 + 4268 firmware.**
+- ⚠️ Comparability: pre-2026-09-01 `ems-sdp` h2/ΔSoC pairs are the v2 law (the C2
+  pair is literally the frontier check's FAIL fixture); v1↔v2↔v3 rules are in the
+  docs. The overnight decisions and their reversal paths are itemized in
+  OVERNIGHT_LOG.md.
