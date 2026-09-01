@@ -53,10 +53,12 @@ def test_build_plan_full_count_40_runs():
     # scenario occupies a plan slot even when it is rendered as a SKIP record
     # (operator-required / --pi-live / --with-ftp75), so this count is a
     # plan-slot count, not a will-actually-run count.
+    # WP-C (2026-09-01): +1 scenario, `regen-harvest-true` -> 30 scenarios, 57 slots.
     plan = rhs.build_plan(_args())
-    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 56
+    # WP-B: +v-bus-sense-offset (the UV-dwell objective's own home)
+    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 59
     kinds = [p["kind"] for p in plan]
-    assert kinds.count("scenario") == 29
+    assert kinds.count("scenario") == 32
     assert kinds.count("replay") == 27
 
 
@@ -68,7 +70,8 @@ def test_build_plan_replay_only():
 
 def test_build_plan_scenarios_only():
     plan = rhs.build_plan(_args(scenarios_only=True))
-    assert len(plan) == 29
+    assert len(plan) == 32      # WP-C: +regen-harvest-true; WP-E: +ems-ftp75-dp;
+                                # WP-B: +v-bus-sense-offset
     assert all(p["kind"] == "scenario" for p in plan)
 
 
@@ -528,7 +531,8 @@ def test_analyze_scenario_csv_boundary_t_just_before_grace_s_excluded(tmp_path):
 def _metrics(n_obs=10, rows=10, final_fault_flags=0, fault_bits_seen=0, final_state=2,
              fault_bits_post_grace=None, fault_first_t=None, grace_s=None,
              survive_to_t=None, fault_bits_before_survive=0, state_at_survive=None,
-             n_obs_post_grace=None, last_obs_t=None):
+             n_obs_post_grace=None, last_obs_t=None, error_code_post_grace=None,
+             error_code_final=None, fault_first_t_whole_run=None):
     """Build an analyze_scenario_csv()-shaped metrics dict.
 
     By default `fault_bits_post_grace` mirrors `fault_bits_seen` (no carried-in
@@ -551,13 +555,24 @@ def _metrics(n_obs=10, rows=10, final_fault_flags=0, fault_bits_seen=0, final_st
             "fault_bits_post_grace": (fault_bits_seen if fault_bits_post_grace is None
                                       else fault_bits_post_grace),
             "fault_first_t": fault_first_t or {},
+            # B-L3: the WHOLE-RUN first-sighting map, which the
+            # `share_cut_load_hazard` tripwire anchors its teardown cutoff on
+            # (minus the carried-in window). Empty by default -> no anchor ->
+            # nothing is excluded as teardown, which is the conservative
+            # reading for every test that does not care.
+            "fault_first_t_whole_run": fault_first_t_whole_run or {},
             "final_state": final_state,
             "grace_s": rhs.WARM_RESET_GRACE_S if grace_s is None else grace_s,
             "survive_to_t": survive_to_t,
             "fault_bits_before_survive": fault_bits_before_survive,
             "state_at_survive": state_at_survive,
             "n_obs_post_grace": n_obs_post_grace,
-            "last_obs_t": last_obs_t}
+            "last_obs_t": last_obs_t,
+            # fw v25 wire attribution. None (the DEFAULT) is a pre-v25
+            # board -- so every pre-existing test keeps exercising the
+            # stream-health inference path unchanged.
+            "error_code_post_grace": error_code_post_grace,
+            "error_code_final": error_code_final}
 
 
 def _events(over_absmax=0, worst_ring_v=None, worst_over_absmax_ring_v=None,
@@ -1200,6 +1215,93 @@ def test_judge_event_spec_bare_string_form_still_works():
     ok, observed, problems = rhs._judge_event_spec("scp_cut", events)
     assert ok is True
     assert "1 'scp_cut' event(s)" in observed
+
+
+# -- M3 (2026-09-01): `total_of` -- SUM across all coalesced episodes ------
+
+def test_judge_event_spec_total_of_sums_across_episodes_and_passes():
+    """The whole point of `total_of`: a floor no SINGLE episode individually
+    clears can still pass when the SUM does -- this is exactly the tail-episode
+    false-FAIL `events_require`'s per-episode ALL quantifier produced."""
+    events = {"kinds": {"chopper_clamp": 3}, "field_values": {},
+             "events_by_kind": {"chopper_clamp": [
+                 {"energy_j": 0.12}, {"energy_j": 0.15}, {"energy_j": 0.02},
+             ]}}
+    spec = {"total_of": "chopper_clamp", "field": "energy_j", "min_value": 0.25}
+    ok, observed, problems = rhs._judge_event_spec(spec, events)
+    assert ok is True
+    assert problems == []
+    assert "0.2900" in observed
+
+
+def test_judge_event_spec_total_of_below_min_value_fails():
+    events = {"kinds": {"chopper_clamp": 2}, "field_values": {},
+             "events_by_kind": {"chopper_clamp": [
+                 {"energy_j": 0.05}, {"energy_j": 0.03},
+             ]}}
+    spec = {"total_of": "chopper_clamp", "field": "energy_j", "min_value": 0.3}
+    ok, observed, problems = rhs._judge_event_spec(spec, events)
+    assert ok is False
+    assert "below min_value" in problems[0]
+
+
+def test_judge_event_spec_total_of_no_matching_events_sums_to_zero():
+    """No events of the kind at all -> total 0.0, judged like any other total
+    below a positive floor -- not a separate 'no such event' branch (that
+    branch belongs to the per-event `count`/absence path, not this one)."""
+    events = {"kinds": {}, "field_values": {}, "events_by_kind": {}}
+    spec = {"total_of": "chopper_clamp", "field": "energy_j", "min_value": 0.3}
+    ok, observed, problems = rhs._judge_event_spec(spec, events)
+    assert ok is False
+    assert "= 0.0000" in observed
+
+
+def test_judge_event_spec_total_of_respects_where_filter():
+    events = {"kinds": {"sw_ring": 2}, "field_values": {},
+             "events_by_kind": {"sw_ring": [
+                 {"switch": "MOT_PWR", "energy_j": 0.4},
+                 {"switch": "FC_BUS", "energy_j": 0.9},
+             ]}}
+    spec = {"total_of": "sw_ring", "where": {"switch": "MOT_PWR"},
+           "field": "energy_j", "min_value": 0.3, "max_value": 0.5}
+    ok, observed, problems = rhs._judge_event_spec(spec, events)
+    assert ok is True
+
+
+def test_regen_harvest_true_events_require_uses_total_of_not_per_episode_all():
+    """M3 regression: the fixed entry must not regress to a per-episode ALL
+    quantifier on the 0.3 J floor -- that was the defect."""
+    entry = rhs.FAULT_EXPECTATIONS["regen-harvest-true"]
+    reqs = entry["events_require"]
+    totals = [r for r in reqs if isinstance(r, dict) and "total_of" in r]
+    assert len(totals) == 1
+    assert totals[0]["total_of"] == "chopper_clamp"
+    assert totals[0]["field"] == "energy_j"
+    assert totals[0]["min_value"] == 0.3
+    # And the per-episode floor left behind is deliberately much looser than
+    # 0.3 J -- it exists only to catch a fully-missing/degenerate episode.
+    per_episode = [r for r in reqs if isinstance(r, dict) and r.get("kind")
+                  == "chopper_clamp" and "field" in r]
+    assert per_episode and per_episode[0]["min_value"] < 0.3
+
+
+def test_judge_scenario_regen_harvest_true_events_require_no_keyerror():
+    """End-to-end: judge_scenario's events_require loop must not KeyError
+    building a check name for a `total_of` spec (it has no `kind` key) --
+    exercised through the actual regen-harvest-true FAULT_EXPECTATIONS entry,
+    which carries one since the M3 fix."""
+    child = _child()
+    metrics = _metrics(fault_bits_seen=0, final_fault_flags=0, final_state=2)
+    events = _events(kinds={"chopper_clamp": 2}, events_by_kind={
+        "chopper_clamp": [{"energy_j": 0.2}, {"energy_j": 0.2}],
+    })
+    ok, checks = rhs.judge_scenario("regen-harvest-true", metrics, events,
+                                    child, signals={})
+    names = [c["name"] for c in checks]
+    assert "events_require_total_chopper_clamp" in names
+    total_check = [c for c in checks
+                  if c["name"] == "events_require_total_chopper_clamp"][0]
+    assert total_check["passed"] is True
 
 
 # -- events_any_of import-time validation (direct predicate re-derivation,
@@ -2719,9 +2821,10 @@ def test_mppt_hunt_ceiling_is_retired_for_an_edge_census():
     assert "mppt_not_stuck_high" not in names
     spec = next(s for s in rhs.FAULT_EXPECTATIONS["mppt-tracking"]["signals_require"]
                if s["name"] == "mppt_no_hunt")
-    # One rise per cruise-charge window (3), ceiling 8; the fw v23 hunt's 138
-    # toggles are ~69 rises and cannot pass at any duty cycle.
-    assert spec["edge_count_between"] == rhs._MPPT_RISE_BAND == (3, 8)
+    # One rise per cruise-charge window (3), ceiling CALIBRATED 8 -> 5 from
+    # campaign 080905 (measured exactly 3); the fw v23 hunt's 138 toggles are
+    # ~69 rises and cannot pass at any duty cycle.
+    assert spec["edge_count_between"] == rhs._MPPT_RISE_BAND == (3, 5)
     assert spec["edge"] == "rise"
     assert spec["aux_bit"] == rhs.AUX_MPPT_DISABLE
     assert spec["t_window"] == rhs._MPPT_ALL_CRUISE_W == (16.1, 41.0)
@@ -3036,10 +3139,30 @@ def test_fault_expectations_ems_y_b30_variants_assert_fc_current_biased_not_swit
         assert "bt_bus_cut" not in names
 
 
-def test_fault_expectations_ems_ftp75_socband_allows_oc_fc():
+def test_fault_expectations_ems_ftp75_socband_is_fault_free():
+    """The OC_FC allowance is RETIRED (operator ruling, 2026-09-01).
+
+    It went unused in all six campaigns that ran this scenario (peak I_fc
+    1.2413 A, holding the derivation's 14 % margin), and while it stood it
+    silently excused the one fault this scenario is most likely to produce AND
+    forced the h2 floor down to a vacuous 5e-3. Pinned NEGATIVELY as well:
+    re-adding the bit must break this test, not quietly widen the entry.
+    """
     expect = rhs.FAULT_EXPECTATIONS["ems-ftp75-socband"]
-    assert expect["allow_only"] & rhs.FAULT_OC_FC
+    # B-L1 (2026-09-01): 0, not FAULT_ERROR. The retirement removed the OC_FC
+    # bit but left the FAULT_ERROR umbrella, which excuses the "latched State
+    # 99" companion bit triggerFault() ORs onto EVERY latch -- so any fault at
+    # all still passed. 0 is what the sibling fault-free entries carry.
+    assert expect["allow_only"] == 0
+    assert not (expect["allow_only"] & rhs.FAULT_OC_FC)
     assert "require" not in expect
+    # It must match the fault-free siblings, not merely be non-zero-free.
+    for sib in ("ems-ftp75-5050", "ems-ftp75-dp"):
+        assert rhs.FAULT_EXPECTATIONS[sib]["allow_only"] == expect["allow_only"]
+    # Operator ruling (b) itself is UNCHANGED -- charge-cruise still requires
+    # OC_FC under it. Retiring the allowance here is a scenario-scoped judgement
+    # about hedging, not a reversal of the ruling.
+    assert rhs.FAULT_EXPECTATIONS["charge-cruise"]["require"] & rhs.FAULT_OC_FC
 
 
 def test_fault_expectations_ems_ftp75_5050_is_fault_free():
@@ -3069,14 +3192,20 @@ def test_fault_expectations_mppt_tracking_asserts_no_hunt_signature():
            "mppt_threshold_floor"} <= names
     assert not ({"mppt_not_stuck_high", "low_power_seen",
                  "tracking_released_not_tracking"} & names)
-    # The bands are DERIVED, not measured on fw v24 -- the first-campaign
-    # calibration convention requires saying so.
-    assert "fw v24" in (expect.get("provisional_note") or "")
+    # CALIBRATED 2026-09-01 from campaign 080905. The entry-level
+    # provisional_note now covers exactly ONE bound and must NAME it, rather
+    # than re-provisionalising the nine that are measured.
+    _prov = expect.get("provisional_note") or ""
+    assert "mppt_threshold_moved" in _prov
+    assert "fw v24 first campaign" not in _prov
 
     by = {s["name"]: s for s in sig}
     # Low Power was REQUIRED (>= 50 ticks) under fw v23 and is now bounded
     # ABSENT: the direction of the bound is the whole inversion.
-    assert by["refusal_absent"]["max_ticks"] == 50
+    # CALIBRATED 50 -> 20 (campaign 080905 measured ZERO refusal ticks; fw v23
+    # measured 1481). The DIRECTION of the bound is the inversion; the value is
+    # now measurement-backed.
+    assert by["refusal_absent"]["max_ticks"] == 20
     assert by["refusal_absent"]["value_equals"] == rhs.AG105_ST_LOW_POWER
     # MPPT_EN|PWR_TRACK was UNREACHABLE under fw v23 (the old entry asserted
     # the complement) and is the fw v24 steady state.
@@ -3113,11 +3242,18 @@ def test_mppt_threshold_specs_read_the_new_column_and_cannot_pass_blank():
     assert by["mppt_threshold_written"]["min_ticks"] == rhs._MPPT_THRESH_MIN_TICKS > 0
     # The band, in COUNTS, mirroring the firmware's own clamp (.ino:1671-1690).
     assert by["mppt_threshold_ceiling"]["max_value"] == rhs.AG105_MPPT_N_CEIL == 27
-    assert by["mppt_threshold_floor"]["min_value"] == rhs.AG105_MPPT_N_FLOOR == 15
+    # F2: the FLOOR is judged on the in-window MINIMUM, not the peak. With
+    # `min_value` it was vacuously true for any run whose maximum cleared 15 --
+    # including one that spent the whole window under the clamp.
+    assert "min_value" not in by["mppt_threshold_floor"]
+    assert by["mppt_threshold_floor"]["floor_min_value"] == rhs.AG105_MPPT_N_FLOOR == 15
     # min_value and max_value must be on SEPARATE specs -- one spec carrying
     # both silently drops the ceiling (the import guard refuses it).
     assert "min_value" not in by["mppt_threshold_ceiling"]
     assert "max_value" not in by["mppt_threshold_floor"]
+    # The OPERATING-POINT tripwire is a SEPARATE check from the firmware clamp:
+    # 21 may be re-derived from measurement, 27 is the invariant and never moves.
+    assert by["mppt_threshold_peak_tripwire"]["max_value"] == 21 < rhs.AG105_MPPT_N_CEIL
 
 
 def test_mppt_threshold_specs_judge_blank_and_measured_columns():
@@ -3125,7 +3261,8 @@ def test_mppt_threshold_specs_judge_blank_and_measured_columns():
     by = {s["name"]: s
           for s in rhs.FAULT_EXPECTATIONS["mppt-tracking"]["signals_require"]}
     # (a) UNMEASURED -- the fw v21-v23 case. All three fail.
-    blank = {"rows": 10, "ticks": 0, "peak": None, "first": None, "last": None,
+    blank = {"rows": 10, "ticks": 0, "peak": None, "trough": None,
+             "first": None, "last": None,
              "latch_t": None, "prev_bit": None, "edge_t": None,
              "run": 0, "max_run": 0, "edges": 0}
     for name in ("mppt_threshold_written", "mppt_threshold_ceiling",
@@ -3133,18 +3270,398 @@ def test_mppt_threshold_specs_judge_blank_and_measured_columns():
         ok, why = rhs._judge_signal_leaf(by[name], dict(blank))
         assert not ok, (name, why)
     # (b) MEASURED and in band -- a clamped count of 19 held for the window.
-    good = dict(blank, ticks=12000, peak=19.0, first=19.0, last=19.0)
+    good = dict(blank, ticks=rhs._MPPT_THRESH_MIN_TICKS, peak=19.0, trough=15.0,
+                first=15.0, last=19.0)
     for name in ("mppt_threshold_written", "mppt_threshold_ceiling",
                  "mppt_threshold_floor"):
         ok, why = rhs._judge_signal_leaf(by[name], dict(good))
         assert ok, (name, why)
     # (c) NEVER WRITTEN -- the count stuck at the 0xFF resistor sentinel. The
     #     tick floor sees no matching ticks and the ceiling sees peak 255.
-    stuck = dict(blank, ticks=0, peak=255.0, first=255.0, last=255.0)
+    stuck = dict(blank, ticks=0, peak=255.0, trough=255.0,
+                 first=255.0, last=255.0)
     ok, _ = rhs._judge_signal_leaf(by["mppt_threshold_written"], dict(stuck))
     assert not ok
     ok, why = rhs._judge_signal_leaf(by["mppt_threshold_ceiling"], dict(stuck))
     assert not ok and "255" in why
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# F1/F2 (campaign 080905): the two MINIMUM-side signal kinds.
+# ─────────────────────────────────────────────────────────────────────────
+
+def _leaf_m(**kw):
+    base = {"rows": 10, "ticks": 0, "peak": None, "trough": None,
+            "first": None, "last": None, "latch_t": None, "prev_bit": None,
+            "edge_t": None, "run": 0, "max_run": 0, "edges": 0}
+    base.update(kw)
+    return base
+
+
+def test_column_range_at_least_three_branches():
+    """(a) motion, (b) a FROZEN carried-in constant, (c) unmeasured."""
+    spec = {"column": "mppt_thresh_cnt", "column_range_at_least": 2}
+    ok, why = rhs._judge_signal_leaf(spec, _leaf_m(peak=19.0, trough=15.0))
+    assert ok and "range 4.0000" in why
+    # THE CASE THE KIND EXISTS FOR: the count carried in from the predecessor
+    # run and never moved. A LEVEL check passes here; a range check cannot.
+    ok, why = rhs._judge_signal_leaf(spec, _leaf_m(peak=15.0, trough=15.0))
+    assert not ok and "range 0.0000" in why
+    ok, why = rhs._judge_signal_leaf(spec, _leaf_m())
+    assert not ok and "unmeasured" in why
+
+
+def test_floor_min_value_judges_the_minimum_not_the_peak():
+    """The F2 defect, reproduced: a column that touches 19 once but otherwise
+    sits at 9 PASSES `min_value` and must FAIL `floor_min_value`."""
+    m = _leaf_m(peak=19.0, trough=9.0)
+    ok, _ = rhs._judge_signal_leaf({"column": "c", "min_value": 15}, dict(m))
+    assert ok, "min_value judges the peak -- this is the vacuity being fixed"
+    ok, why = rhs._judge_signal_leaf({"column": "c", "floor_min_value": 15}, dict(m))
+    assert not ok and "minimum 9.0000" in why
+    ok, _ = rhs._judge_signal_leaf({"column": "c", "floor_min_value": 15},
+                                   _leaf_m(peak=19.0, trough=15.0))
+    assert ok
+    ok, why = rhs._judge_signal_leaf({"column": "c", "floor_min_value": 15}, _leaf_m())
+    assert not ok and "unmeasured" in why
+
+
+def test_scan_signals_tracks_the_trough(tmp_path):
+    """The scanner must record the in-window MINIMUM, on the plain-column path
+    and on the derived (`sum_of`) one -- both feed the two new kinds."""
+    csv_path = tmp_path / "s.csv"
+    with open(csv_path, "w", newline="") as fh:
+        fh.write("t,fault_flags,mppt_thresh_cnt,I_fc,I_batt\n")
+        for t, c, a, b in ((3.0, 19, 0.4, 0.6), (4.0, 15, 0.1, 0.2),
+                           (5.0, 17, 0.3, 0.3)):
+            fh.write("%.1f,0x0000,%d,%.1f,%.1f\n" % (t, c, a, b))
+    specs = [{"name": "r", "column": "mppt_thresh_cnt", "column_range_at_least": 2},
+             {"name": "s", "sum_of": ["I_fc", "I_batt"], "floor_min_value": 0.2}]
+    m = rhs.scan_signals(str(csv_path), specs)
+    assert m[0]["trough"] == 15.0 and m[0]["peak"] == 19.0
+    assert m[1]["trough"] == pytest.approx(0.3)   # 0.1+0.2, the smallest sum
+
+
+def test_minimum_side_kinds_are_refused_beside_a_peak_bound():
+    """Import guard: the dispatcher tests these kinds FIRST, so pairing one
+    with min_value/max_value would silently discard the peak bound."""
+    for bad in ({"name": "x", "column": "c", "column_range_at_least": 2,
+                 "max_value": 9},
+                {"name": "x", "column": "c", "floor_min_value": 1,
+                 "min_value": 2},
+                {"name": "x", "column": "c", "column_range_at_least": 2,
+                 "floor_min_value": 1}):
+        with pytest.raises(AssertionError):
+            rhs._assert_signal_spec_shapes("fake", {"signals_require": [bad]})
+    # ...and a kind with no column at all cannot read anything.
+    with pytest.raises(AssertionError):
+        rhs._assert_signal_spec_shapes(
+            "fake", {"signals_require": [{"name": "x", "floor_min_value": 1}]})
+    # The well-formed shapes pass.
+    rhs._assert_signal_spec_shapes(
+        "fake", {"signals_require": [{"name": "x", "column": "c",
+                                      "column_range_at_least": 2},
+                                     {"name": "y", "column": "c",
+                                      "floor_min_value": 1}]})
+
+
+def test_mppt_tracking_carries_the_080905_calibration_batch():
+    """Every pin the campaign measured, asserted by value so a silent revert
+    to the derived provisional numbers fails here."""
+    by = {s["name"]: s
+          for s in rhs.FAULT_EXPECTATIONS["mppt-tracking"]["signals_require"]}
+    assert by["charging_occurred"]["min_value"] == 0.70    # meas peak 0.8815
+    assert by["tracking_engaged"]["min_ticks"] == 2400     # meas 2902
+    assert by["refusal_absent"]["max_ticks"] == 20         # meas 0
+    assert rhs._MPPT_THRESH_MIN_TICKS == 12600             # meas 12900/12900
+    assert rhs._MPPT_RISE_BAND == (3, 5)                   # meas 3
+    # F1: the carried-in-count witness.
+    assert by["mppt_threshold_moved"]["column_range_at_least"] == 2  # meas 4
+    # F4: the OC budget, between the measurement (1.1638) and the limit (1.4).
+    assert by["mppt_fc_headroom"]["column"] == "I_fc"
+    assert 1.1638 < by["mppt_fc_headroom"]["max_value"] == 1.30 < 1.4
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# fw v25 suite-wide share-cut hazard tripwire
+# ─────────────────────────────────────────────────────────────────────────
+
+def _sw_ring(t, switch, i_cut, reason="en_low"):
+    return {"t": t, "kind": "sw_ring", "switch": switch, "reason": reason,
+            "i_cut": i_cut, "peak_v": 16.0, "over_absmax": False}
+
+
+def _events_with(rings):
+    ev = rhs.analyze_events(None)
+    ev["events_by_kind"] = {"sw_ring": list(rings)}
+    return ev
+
+
+def _hazard_check(metrics, rings):
+    _p, checks = rhs.judge_scenario("steady", metrics, _events_with(rings),
+                                    _live_child(), duration_s=30.0)
+    return next(c for c in checks if c["name"] == "share_cut_load_hazard")
+
+
+def test_share_cut_hazard_fires_on_a_loaded_bus_switch_cut():
+    """The campaign-080905 signature: FC_BUS opened at 0.6371 A, above
+    SHARE_CUT_MAX_HANDOFF_A 0.5, with no fault yet latched."""
+    # error_code_final=0 = a clean fw v25 readback (B-M1's second gate).
+    c = _hazard_check(_metrics(error_code_final=0), [_sw_ring(12.0, "FC_BUS", 0.6371)])
+    assert c["passed"] is False
+    assert "0.6371" in c["detail"] and "FC_BUS" in c["detail"]
+
+
+def test_share_cut_hazard_ignores_light_cuts_and_non_bus_switches():
+    """Cuts at light load past the blanking window are unchanged in effect
+    under fw v25, and MOT_PWR/REGEN are not share paths at all."""
+    c = _hazard_check(_metrics(error_code_final=0),
+                      [_sw_ring(12.0, "FC_BUS", 0.42),
+                       _sw_ring(13.0, "MOT_PWR", 4.0),
+                       _sw_ring(14.0, "BT_BUS", 0.9, reason="scp_cut")])
+    assert c["passed"] is True
+    assert "SKIPPED" not in c["detail"]      # it really ran
+
+
+def test_share_cut_hazard_excludes_state99_teardown_by_the_fault_time():
+    """A teardown opens a loaded bus switch legitimately. The event carries no
+    state field, so the discrimination is temporal -- on a LEAD WINDOW, at or
+    after (this run's own first fault - TEARDOWN_LEAD_MS)."""
+    m = _metrics(fault_bits_seen=0x8080, fault_first_t=None,
+                 error_code_final=0)
+    m["fault_first_t_whole_run"] = {"OC_BT": 20.0}
+    assert _hazard_check(m, [_sw_ring(20.5, "BT_BUS", 3.0)])["passed"] is True
+    # ...but the cut that CAUSED the fault lands strictly before the latch and
+    # is still caught -- which is the 080905 case itself.
+    assert _hazard_check(m, [_sw_ring(19.99, "FC_BUS", 0.6371)])["passed"] is False
+
+
+def test_share_cut_hazard_survives_a_carried_in_latch_and_a_tight_teardown():
+    """B-L3: the ONE fixture that both original defects fail.
+
+    It reproduces what EVERY real run actually looks like, which neither
+    pre-fix implementation could handle:
+
+      * a CARRIED-IN latch at t = 0.0013 -- the predecessor run's fault,
+        inherited through the fw v23 warm reset and present in the very first
+        observation. B-H1's anchor (the raw whole-run minimum) is pinned there,
+        so its cutoff excluded the WHOLE RUN and the tripwire was vacuous: the
+        hazard below would have PASSED.
+      * a benign State-99 TEARDOWN cut leading its own latch by 0.1 ms -- the
+        measured separation (0.095-0.117 ms across campaign 20260901_080905),
+        which is the observation round-trip, not physics. B-H2's proposed
+        exact-anchor cutoff would have FAILED this benign cut.
+      * a genuine share-path HAZARD 14 ms before that latch, the measured
+        >= 13.8 ms lead.
+
+    The fixed logic must do all three at once: exclude the teardown, catch the
+    hazard, and not be defeated by the carried-in latch."""
+    m = _metrics(fault_bits_seen=0x8080, error_code_final=0)
+    m["fault_first_t_whole_run"] = {
+        "PI_TIMEOUT/HIL_LINK": 0.0013,        # carried in from the predecessor
+        "ERROR(latched State 99)": 0.0013,
+        "OC_BT": 20.0000,                     # this run's OWN fault
+    }
+    # The post-grace map is deliberately LATE here (2.0 = the grace bound), the
+    # way it reads for any fault latched inside the grace window; the tripwire
+    # must not anchor on it.
+    m["fault_first_t"] = {"OC_BT": 2.0}
+
+    teardown = _sw_ring(19.9999, "BT_BUS", 3.0)     # 0.1 ms before the latch
+    hazard = _sw_ring(19.9860, "FC_BUS", 0.6371)    # 14.0 ms before it
+
+    # 1. The benign teardown alone must PASS (fails under an exact-anchor
+    #    cutoff -- the B-H2 defect).
+    assert _hazard_check(m, [teardown])["passed"] is True
+    # 2. The hazard alone must FAIL (passes under a whole-run-minimum cutoff
+    #    pinned at the carried-in 0.0013 -- the B-H1 defect).
+    c = _hazard_check(m, [hazard])
+    assert c["passed"] is False
+    assert "0.6371" in c["detail"] and "FC_BUS" in c["detail"]
+    # 3. Together: the hazard is named and the teardown is not.
+    c = _hazard_check(m, [hazard, teardown])
+    assert c["passed"] is False
+    assert "FC_BUS" in c["detail"]
+    assert "19.9999" not in c["detail"]
+
+    # And the cutoff really is the lead window, not the anchor itself.
+    cut = 20.0000 - rhs.TEARDOWN_LEAD_MS / 1000.0
+    assert _hazard_check(m, [_sw_ring(cut + 0.0001, "FC_BUS", 3.0)])["passed"] is True
+    assert _hazard_check(m, [_sw_ring(cut - 0.0001, "FC_BUS", 3.0)])["passed"] is False
+
+
+def test_share_cut_hazard_teardown_lead_sits_between_the_measured_populations():
+    """The window must stay clear of BOTH measured populations, or it starts
+    scoring one of them wrong: teardown cuts lead by 0.095-0.117 ms (campaign
+    20260901_080905's four) and genuine hazards by >= 13.8 ms."""
+    assert 0.117 < rhs.TEARDOWN_LEAD_MS < 13.8
+    # And with real margin on each side, not merely between them.
+    assert rhs.TEARDOWN_LEAD_MS > 2.0 * 0.117      # clear of the round trip
+    assert rhs.TEARDOWN_LEAD_MS < 13.8 / 2.0       # clear of the hazards
+    # The carried-in filter must exclude a first-observation latch (~1.3 ms)
+    # while admitting anything a run could plausibly cause itself.
+    assert 0.0013 < rhs.CARRIED_IN_LATCH_MAX_S < 0.5
+
+
+def test_share_cut_hazard_is_fw_gated_and_says_so(monkeypatch):
+    """fw <= 24 legitimately produces the event; the check must render as an
+    explicit SKIP rather than silently vanish."""
+    monkeypatch.setattr(rhs, "TARGET_FW_VERSION", 24)
+    c = _hazard_check(_metrics(error_code_final=0), [_sw_ring(12.0, "FC_BUS", 3.0)])
+    assert c["passed"] is True
+    assert "SKIPPED" in c["detail"] and "fw v25" in c["detail"]
+    assert "TARGET_FW_VERSION is 24" in c["detail"]
+
+
+def test_share_cut_hazard_also_requires_a_per_run_firmware_readback():
+    """B-M1: TARGET_FW_VERSION is a DECLARATION and can be stale. error_code
+    arrived on the 18-byte observation frame in fw v25, so its presence is
+    positive evidence -- and a clean v25 board reads 0, not None, so 0 must
+    NOT be mistaken for 'absent'."""
+    hazard = [_sw_ring(12.0, "FC_BUS", 3.0)]
+    # No readback -> SKIP, naming which condition declined.
+    c = _hazard_check(_metrics(error_code_final=None), hazard)
+    assert c["passed"] is True
+    assert "SKIPPED" in c["detail"] and "error_code_final" in c["detail"]
+    # A clean v25 board (error_code 0) is a readback -> the check runs.
+    c = _hazard_check(_metrics(error_code_final=0), hazard)
+    assert c["passed"] is False
+    # ...as is a non-zero one.
+    c = _hazard_check(_metrics(error_code_final=0x10), hazard)
+    assert c["passed"] is False
+
+
+def test_share_cut_guard_constants_match_the_firmware():
+    assert rhs.SHARE_CUT_MAX_HANDOFF_A == 0.5       # .ino:2237
+    assert rhs.SHARE_CUT_SURVIVOR_BLANK_MS == 30    # .ino:3353
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# v-bus-sense-offset: the UV dwell threshold, asserted from both sides
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_v_bus_sense_offset_entry_brackets_the_dwell_threshold():
+    """The point of the scenario is that it bounds UV_BUS_DWELL_LATCH_MS from
+    BELOW as well as above -- which `sag` (1 s under the limit) cannot."""
+    expect = rhs.FAULT_EXPECTATIONS["v-bus-sense-offset"]
+    assert expect["require"] == rhs.FAULT_UV_BUS
+    assert expect["allow_only"] == rhs.FAULT_UV_BUS | rhs.FAULT_ERROR
+    # THE LOWER-SIDE ASSERTION. not_before_s must sit strictly between the two
+    # excursions: after excursion 1 (so a latch on 12 ms of dwell FAILS) and
+    # before excursion 2 (so the real latch is not rejected).
+    assert hil.V_BUS_UV_PROBE_1[1] < expect["not_before_s"] < hil.V_BUS_UV_PROBE_2[0]
+    # ...and it must be post-grace, or it asserts nothing.
+    assert expect["not_before_s"] > rhs.WARM_RESET_GRACE_S
+    # B-M2: `not_before_s` is an ABSENCE assertion and passes for free on a
+    # probe that never happened, so the entry must also carry the cadence
+    # census that says probe 1 WAS delivered -- on probe 1's own window.
+    cad = [s for s in expect["signals_require"] if "min_rows" in s]
+    assert len(cad) == 1, "the probe-1 cadence de-vacuation check is missing"
+    assert cad[0]["t_window"] == hil.V_BUS_UV_PROBE_1
+    # Floor must be reachable at 1 kHz over an 8 ms window but strict enough to
+    # catch a stall well below the ~12 ms that could corrupt the verdict.
+    n_ticks = round((hil.V_BUS_UV_PROBE_1[1] - hil.V_BUS_UV_PROBE_1[0]) * 1000.0)
+    assert 0 < cad[0]["min_rows"] <= n_ticks
+    assert n_ticks - cad[0]["min_rows"] <= 2      # <= 2 ms of slack
+
+
+def test_v_bus_sense_offset_probe_geometry_brackets_20ms():
+    """The two excursions must straddle the firmware's 20 ms threshold with
+    real margin. A geometry edit that put both on one side would leave the
+    entry passing while proving nothing."""
+    d1 = (hil.V_BUS_UV_PROBE_1[1] - hil.V_BUS_UV_PROBE_1[0]) * 1000.0
+    d2 = (hil.V_BUS_UV_PROBE_2[1] - hil.V_BUS_UV_PROBE_2[0]) * 1000.0
+    # B-M2 (2026-09-01): probe 1 is 8 ms, shortened from 12 for host-stall
+    # margin. Pinned literally, both sides -- a geometry edit must come here.
+    assert d1 == pytest.approx(8.0)
+    assert d2 == pytest.approx(60.0)
+    assert d1 < 20.0 < d2
+    # B-M2: the stall margin the shortening bought. The firmware HOLDS the last
+    # injected value for HIL_STALE_MS, so a host stall inside probe 1 lengthens
+    # the DELIVERED dwell; the margin to the 20 ms threshold is what a stall
+    # must exceed to corrupt the verdict. At 12 ms it was 8; require >= 10.
+    assert 20.0 - d1 >= 10.0
+    # LEAK INDEPENDENCE: excursion 1 leaves d1 ms in the accumulator, and
+    # UV_BUS_DWELL_LEAK 0.05 drains it over d1/0.05 ms of healthy bus. The gap
+    # must clear that, or excursion 2 latches on the PAIR and the threshold is
+    # not what was measured.
+    gap_ms = (hil.V_BUS_UV_PROBE_2[0] - hil.V_BUS_UV_PROBE_1[1]) * 1000.0
+    assert gap_ms > 5.0 * (d1 / 0.05)
+    # Depth: clear of the limit, not on it.
+    assert hil.V_BUS_UV_PROBE_DEPTH_V <= -3.0
+
+
+def test_v_bus_sense_offset_is_hifi_because_the_mode_is_the_design():
+    """simple mode makes the offset a REAL disturbance the sources respond to,
+    which would confound a dwell measurement with a current transient. hifi's
+    offset is sense-path-only, so it perturbs only the quantity under test."""
+    assert hil.SCENARIOS["v-bus-sense-offset"]["electrical"] == "hifi"
+
+
+def test_v_bus_sense_offset_stimulus_walks_the_offset(monkeypatch):
+    """apply_scenario drives the offset on for each excursion and off between
+    -- and OFF is genuinely zero, not a smaller sag."""
+    class _P:
+        v_bus_offset = None
+        i_aux = 0.0
+    pl = _P()
+    for t, want in ((4.999, 0.0),
+                    (5.000, hil.V_BUS_UV_PROBE_DEPTH_V),
+                    (5.007, hil.V_BUS_UV_PROBE_DEPTH_V),
+                    (5.008, 0.0),              # exclusive upper bound
+                    (5.012, 0.0),              # B-M2: probe 1 is 8 ms now
+                    (6.500, 0.0),
+                    (7.999, 0.0),
+                    (8.000, hil.V_BUS_UV_PROBE_DEPTH_V),
+                    (8.059, hil.V_BUS_UV_PROBE_DEPTH_V),
+                    (8.060, 0.0),
+                    (11.0, 0.0)):
+        hil.apply_scenario(pl, "v-bus-sense-offset", t)
+        assert pl.v_bus_offset == pytest.approx(want), t
+
+
+def test_handoff_sag_no_longer_claims_the_uv_objective_is_homeless():
+    """The note retargets rather than being deleted -- a reader arriving at
+    handoff-sag for a UV number must be sent to the scenario that measures it."""
+    src = rhs.FAULT_EXPECTATIONS["handoff-sag"]
+    blob = " ".join(str(v) for v in src.values())
+    # The entry still permits UV_BUS (the class it models did sag that far)...
+    assert src["allow_only"] & rhs.FAULT_UV_BUS
+    # ...but the scenario that OWNS the objective now exists.
+    assert "v-bus-sense-offset" in rhs.FAULT_EXPECTATIONS
+    assert "v-bus-sense-offset" in hil.SCENARIOS
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# fw v25 expectation-impact: the derivation, pinned
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_fw25_blanking_cannot_reach_any_pinned_cut_sequence():
+    """The review's arithmetic, as a test. Every pinned cut in the table is
+    separated from the nearest preceding bus-switch RESTORE by far more than
+    SHARE_CUT_SURVIVOR_BLANK_MS, so no measured latency or tick pin moves.
+
+    A future entry that cuts within the blanking window of a restore must fail
+    here and be re-derived, rather than silently drifting."""
+    blank_s = rhs.SHARE_CUT_SURVIVOR_BLANK_MS / 1000.0
+    # share-staircase holds each excursion 3 s, i.e. EXACTLY 100x the blanking
+    # window -- hence >=, not >. Its cuts are BT 33 / restore 36 / FC 39 /
+    # restore 42.
+    assert rhs._SS_FC_CUT_T - rhs._SS_BT_RESTORE_T >= 100 * blank_s
+    assert rhs._SS_BT_RESTORE_T - rhs._SS_BT_CUT_T >= 100 * blank_s
+    # ems-y-*: the FC cut (~34.3) against the BT restore window (~23.5-27.0).
+    assert rhs._Y_FC_RESTORE_W[0] - rhs._Y_BT_RESTORE_W[1] > 100 * blank_s
+
+
+def test_ems_sdp_braking_expectation_is_not_weakened_for_fw25():
+    """The guards make the existing fault-free expectation REACHABLE; they are
+    not a reason to admit the fault it used to produce."""
+    expect = rhs.FAULT_EXPECTATIONS["ems-sdp-braking"]
+    # `allow_only == 0` already says it, but pin the specific bit the fw <= 24
+    # FAIL produced so a future widening cannot slip it back in unnoticed.
+    assert expect["allow_only"] == 0
+    FAULT_OC_BT = 0x0080          # .ino FAULT_* defines
+    assert not (expect["allow_only"] & FAULT_OC_BT)
 
 
 def test_fault_expectations_charge_to_full_asserts_no_action_baseline():
@@ -4217,6 +4734,8 @@ PI_LIVE_SKIP_SCENARIOS = {
     "ems-y-b30-v1", "ems-y-b30-v3", "ems-y-b00-v1", "ems-y-b00-v3",
     "mppt-tracking", "pi-silence", "charge-to-full", "share-staircase",
     "ems-ftp75-5050", "ems-ftp75-socband",
+    # WP-E 2026-09-01: `ems-ftp75-dp` joins via "ems": "dp-replay", same rule.
+    "ems-ftp75-dp",
     # 2026-08-31 SDP round: `ems-sdp` joins via the same "ems" metadata key
     # ("ems": "sdp-v1") -- no new code path.
     # 2026-08-31 SDP-interior round: three more join the same way ("ems":
@@ -4226,6 +4745,9 @@ PI_LIVE_SKIP_SCENARIOS = {
     # pi-live reason regardless of --with-ftp75.
     "ems-ftp75-sdp", "ems-sdp-cross", "ems-sdp-braking",
     "ems-sdp",
+    # WP-C (2026-09-01): joins via the SAME "ems" metadata key
+    # ("ems": "regen-harvest-hard") -- no new code path.
+    "regen-harvest-true",
 }
 
 
@@ -4289,7 +4811,7 @@ def test_build_plan_pi_live_total_count_still_40():
     is unchanged under --pi-live, only their kind (executed vs skipped)
     differs."""
     plan = rhs.build_plan(_args(pi_live=True))
-    assert len(plan) == 56
+    assert len(plan) == 59      # WP-C: +regen-harvest-true; WP-B: +v-bus-sense-offset
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -4441,7 +4963,108 @@ def test_judge_scenario_pi_timeout_not_excused_with_gappy_injection_stream():
     assert passed_live is False
     fault_check = next(c for c in checks_live if c["name"] == "no_unexpected_fault")
     assert fault_check["passed"] is False
-    assert "gaps" in fault_check["detail"]
+    # fw v25: the wording moved to attribute_shared_0x8010()'s vocabulary. The
+    # substance is unchanged -- a discontinuous stream on a pre-v25 board is
+    # unattributable, so the fault is NOT excused.
+    assert "not continuous" in fault_check["detail"]
+    assert "cannot attribute" in fault_check["detail"]
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# fw v25: 0x8010 attribution READS THE WIRE, and only infers as a fallback.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_attribute_shared_0x8010_prefers_the_wire_over_stream_health():
+    """The payoff case, and the one the old inference got WRONG.
+
+    A board reporting ERR_HIL_STALE while THIS process's tx counters look
+    perfect is stating something real -- the datagrams left this host and did
+    not arrive.  The pre-v25 inference would have concluded "stream continuous,
+    therefore PI_TIMEOUT" and excused a genuine link failure.
+    """
+    cause, src, detail = rhs.attribute_shared_0x8010(
+        _metrics(error_code_post_grace=rhs.ERR_HIL_STALE), _live_child(), 30.0)
+    assert cause == "hil"
+    assert src == rhs.ATTRIB_WIRE
+    assert "ERR_HIL_STALE" in detail
+    # ...and the mirror: the wire says PI_TIMEOUT even with a GAPPY stream,
+    # where the inference would have refused to attribute at all.
+    cause, src, _ = rhs.attribute_shared_0x8010(
+        _metrics(error_code_post_grace=rhs.ERR_PI_TIMEOUT), _gappy_child(), 30.0)
+    assert (cause, src) == ("pi", rhs.ATTRIB_WIRE)
+
+
+def test_attribute_shared_0x8010_third_code_is_undecided_not_guessed():
+    """A first cause that is neither of the two aliased ones means the 0x0010
+    bit (if set) was a LATER OR.  Falling back to stream health there would
+    manufacture an attribution the board contradicts."""
+    cause, src, detail = rhs.attribute_shared_0x8010(
+        _metrics(error_code_post_grace=0x09), _live_child(), 30.0)   # ERR_UV_BUS
+    assert cause is None
+    assert src == rhs.ATTRIB_WIRE
+    assert "ERR_UV_BUS" in detail
+
+
+def test_attribute_shared_0x8010_falls_back_to_inference_on_a_pre_v25_board():
+    """No error_code on the wire -> the pre-v25 semantics, LABELLED as such."""
+    cause, src, detail = rhs.attribute_shared_0x8010(
+        _metrics(), _live_child(), 30.0)
+    assert (cause, src) == ("pi", rhs.ATTRIB_INFERRED)
+    assert "INFERRED" in detail
+    cause, src, _ = rhs.attribute_shared_0x8010(_metrics(), _gappy_child(), 30.0)
+    assert (cause, src) == (None, rhs.ATTRIB_INFERRED)
+    # Unmeasured is neither verdict, and is flagged as unknown rather than
+    # silently treated as a gap.
+    cause, src, _ = rhs.attribute_shared_0x8010(
+        _metrics(), {"status": "ok", "summary": {}}, 30.0)
+    assert (cause, src) == (None, rhs.ATTRIB_UNKNOWN)
+
+
+def test_judge_scenario_pi_live_excusal_refused_when_the_wire_says_hil_stale():
+    """End-to-end: the excusal now fails a run the pre-v25 harness excused."""
+    passed, checks = rhs.judge_scenario(
+        "steady",
+        _metrics(fault_bits_seen=0x8010, final_fault_flags=0x8010,
+                 error_code_post_grace=rhs.ERR_HIL_STALE),
+        rhs.analyze_events(None), _live_child(), pi_live=True, duration_s=30.0)
+    assert passed is False
+    fc = next(c for c in checks if c["name"] == "no_unexpected_fault")
+    assert fc["passed"] is False
+    assert "wire" in fc["detail"] and "ERR_HIL_STALE" in fc["detail"]
+
+
+def test_judge_scenario_pi_live_excusal_granted_when_the_wire_says_pi_timeout():
+    passed, checks = rhs.judge_scenario(
+        "steady",
+        _metrics(fault_bits_seen=0x8010, final_fault_flags=0x8010,
+                 error_code_post_grace=rhs.ERR_PI_TIMEOUT),
+        rhs.analyze_events(None), _gappy_child(), pi_live=True, duration_s=30.0)
+    fc = next(c for c in checks if c["name"] == "no_unexpected_fault")
+    assert fc["passed"] is True
+    assert "excused" in fc["detail"] and "wire" in fc["detail"]
+    assert passed is True
+
+
+def test_analyze_scenario_csv_reads_error_code_post_grace_only(tmp_path):
+    """The post-grace scoping is not cosmetic: a carried-in settle latch from
+    the PREVIOUS run is still on the wire inside the grace window, and reading
+    it would attribute the predecessor's fault to this run."""
+    csv_path = tmp_path / "r.csv"
+    grace = rhs.WARM_RESET_GRACE_S
+    with open(csv_path, "w", newline="") as fh:
+        fh.write("t,fault_flags,state,error_code\n")
+        fh.write("0.10,0x8010,99,16\n")                  # carried-in, pre-grace
+        fh.write("%.3f,0x0000,1,0\n" % (grace + 0.5))    # cleared, post-grace
+    m = rhs.analyze_scenario_csv(str(csv_path))
+    assert m["error_code_final"] == 0
+    assert m["error_code_post_grace"] == 0
+    # A CSV with no such column at all leaves BOTH None -- unknown, not clean.
+    csv2 = tmp_path / "s.csv"
+    with open(csv2, "w", newline="") as fh:
+        fh.write("t,fault_flags,state\n0.10,0x0000,1\n")
+    m2 = rhs.analyze_scenario_csv(str(csv2))
+    assert m2["error_code_final"] is None
+    assert m2["error_code_post_grace"] is None
 
 
 def test_judge_scenario_pi_timeout_not_excused_on_extra_bit_0x8030():
@@ -6113,12 +6736,12 @@ def test_ftp75_5050_h2_band_is_two_specs_045_to_085():
     assert ceiling["max_value"] == pytest.approx(0.085)
 
 
-def test_ftp75_socband_h2_band_is_ceiling_only_asymmetric():
-    """soc-band's band is DELIBERATELY asymmetric: only a ceiling at 0.115,
-    plus the old conservative 5e-3 floor (unmoved) -- a real floor at the
-    ledger's 0.070 would fail a run that correctly latched OC_FC and
-    truncated early, since h2_cum_g freezes at the latch. See the module
-    comment at _FTP_H2_CEILING_SOCBAND for the full argument."""
+def test_ftp75_socband_h2_band_is_now_two_sided():
+    """The asymmetry is retired WITH the OC_FC allowance, and the two changes
+    are coupled: the 5e-3 floor existed ONLY because a truncated run was an
+    allowed outcome. With the run required to complete, the floor can finally
+    bracket the measurement (9.159e-2, bit-identical across six campaigns)
+    instead of asserting that the accounting ran at all."""
     sig = rhs.FAULT_EXPECTATIONS["ems-ftp75-socband"]["signals_require"]
     h2_specs = [s for s in sig if s.get("column") == "h2_cum_g"]
     assert len(h2_specs) == 2
@@ -6126,8 +6749,16 @@ def test_ftp75_socband_h2_band_is_ceiling_only_asymmetric():
         assert not ("min_value" in s and "max_value" in s), s["name"]
     floor = next(s for s in h2_specs if "min_value" in s)
     ceiling = next(s for s in h2_specs if "max_value" in s)
-    assert floor["min_value"] == pytest.approx(5.0e-3)
+    assert floor["min_value"] == pytest.approx(rhs._FTP_H2_FLOOR_SOCBAND) == pytest.approx(0.070)
     assert ceiling["max_value"] == pytest.approx(0.115)
+    # The band must BRACKET the measurement with real margin on both sides --
+    # a floor above it, or a ceiling below it, would fail a correct board.
+    assert floor["min_value"] < 9.159e-2 < ceiling["max_value"]
+    assert floor["min_value"] < 0.80 * 9.159e-2
+    assert ceiling["max_value"] > 1.20 * 9.159e-2
+    # The vacuous floor must be GONE from this entry (it stays as the 5050
+    # variant's own constant, which is a different question).
+    assert floor["min_value"] != pytest.approx(rhs._FTP_H2_FLOOR)
 
 
 def _min_value_max_value_shape_is_refused(spec):
@@ -6604,7 +7235,9 @@ def test_ems_ftp75_sdp_joined_the_with_ftp75_gate():
     """350 s, same cost argument as its two siblings -- and the gate is a SET
     rather than a name prefix, so joining it is an explicit act."""
     assert "ems-ftp75-sdp" in rhs.FTP75_SCENARIOS
-    assert len(rhs.FTP75_SCENARIOS) == 3
+    # WP-E: `ems-ftp75-dp` (the drive-cycle frontier BOUND) joined 2026-09-01.
+    assert "ems-ftp75-dp" in rhs.FTP75_SCENARIOS
+    assert len(rhs.FTP75_SCENARIOS) == 4
     plan = {p["name"]: p for p in rhs.build_plan(_args()) if p["kind"] == "scenario"}
     assert "LONG-CYCLE" in plan["ems-ftp75-sdp"]["skip_reason"]
     plan_on = {p["name"]: p for p in rhs.build_plan(_args(with_ftp75=True))
@@ -7146,3 +7779,498 @@ def test_report_renders_UNVERIFIED_without_a_ratio_table():
     assert "UNVERIFIED leg: ems-dp-replay" in md
     # No lambda-sensitivity table: no comparison was made.
     assert "Lambda sensitivity" not in md
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# WP-E — THE SECOND EMS FRONTIER (drive-cycle scale) and the `--droop` wiring
+# ═════════════════════════════════════════════════════════════════════════
+
+FTP75_SPEC = next(f for f in rhs.EMS_FRONTIERS if f["id"] == "ftp75")
+CYCLE61_SPEC = next(f for f in rhs.EMS_FRONTIERS if f["id"] == "cycle61")
+
+
+def _ftp_results(legs, **over):
+    """Scenario result dicts for the FTP-75 frontier's three legs."""
+    out = []
+    for role, name in FTP75_SPEC["roles"].items():
+        h2, dsoc = legs[role]
+        r = {"kind": "scenario", "name": name, "passed": True,
+             "metrics": {"final_h2_cum_g": h2, "delta_soc": dsoc}}
+        r.update(over.get(name, {}))
+        out.append(r)
+    return out
+
+
+def test_frontier_registry_shape_and_thresholds():
+    """The two tuples carry SEPARATE thresholds, and that separation is the
+    point: the 61 s cycle's optimum beats its reference by 14 %, while the
+    OFFLINE drive-cycle solve measured the DP at -0.01 % -- a TIE. Applying
+    0.98 at drive-cycle scale would fail a correct candidate."""
+    assert [f["id"] for f in rhs.EMS_FRONTIERS] == ["cycle61", "ftp75"]
+    assert CYCLE61_SPEC["vs_reference_max"] == 0.98
+    assert FTP75_SPEC["vs_reference_max"] == 1.02      # does NOT assume a win
+    assert FTP75_SPEC["vs_bound_max"] == CYCLE61_SPEC["vs_bound_max"] == 1.06
+    assert FTP75_SPEC["provisional_note"] and "PROVISIONAL" in \
+        FTP75_SPEC["provisional_note"]
+    assert CYCLE61_SPEC["provisional_note"] is None
+    assert FTP75_SPEC["roles"] == {"reference": "ems-ftp75-socband",
+                                   "candidate": "ems-ftp75-sdp",
+                                   "bound": "ems-ftp75-dp"}
+    # The 61 s roles object is the SAME dict the module constant names, so the
+    # two records of it cannot drift.
+    assert CYCLE61_SPEC["roles"] is rhs.EMS_FRONTIER
+
+
+def test_frontier_ftp75_is_unverified_today_for_the_documented_stimulus_split():
+    """THE KNOWN DEFECT, asserted rather than left to be discovered mid-
+    campaign. `ems-ftp75-sdp` runs FTP75_SDP_PRELOAD_A (0.45 A) while the
+    other two legs run FTP75_PRELOAD_A (0.65 A), so the three are not one
+    experiment: eq-H2 corrects for SoC, not for demand, and the candidate
+    would win by ~0.2 A of avoided load. A second, INERT split rides along
+    (the reference leg declares no Ag105 cap while the two policy legs cap at
+    0.8 A) and is reported rather than whitelisted -- "inert" is a measurement
+    on one campaign's trace, not a property of the registry.
+
+    The check must refuse the comparison and NAME both keys -- and, because
+    both splits are documented and their resolutions are operator decisions,
+    must NOT fail the campaign for them."""
+    rec = rhs.evaluate_ems_frontier(
+        _ftp_results({"reference": (0.09, -0.002),
+                      "candidate": (0.08, -0.002),
+                      "bound": (0.089, -0.002)}), spec=FTP75_SPEC)
+    assert rec["verdict"] == "UNVERIFIED"
+    assert rec["passed"] is False
+    assert rec["exit_affecting"] is False
+    by_key = {m["key"]: m["values"] for m in rec["stimulus_mismatch"]}
+    assert set(by_key) == {"aux_preload_a", "chg_i_ceiling_a"}
+    assert by_key["aux_preload_a"]["ems-ftp75-sdp"] == pytest.approx(0.45)
+    assert by_key["aux_preload_a"]["ems-ftp75-socband"] == pytest.approx(0.65)
+    assert by_key["chg_i_ceiling_a"]["ems-ftp75-socband"] is None
+    assert by_key["chg_i_ceiling_a"]["ems-ftp75-dp"] == pytest.approx(0.8)
+    assert "same stimulus" in rec["reason"]
+    # No comparison was attempted: none of the eq-H2 machinery ran.
+    assert "per_lambda" not in rec and "eq_h2" not in rec
+
+
+def test_frontier_stimulus_mismatch_helper_is_registry_derived():
+    """Knowable BEFORE a run starts -- which is the point, a campaign should
+    not spend 17 minutes producing numbers that were never comparable."""
+    assert rhs.ems_frontier_stimulus_mismatches(CYCLE61_SPEC["roles"]) == []
+    mism = rhs.ems_frontier_stimulus_mismatches(FTP75_SPEC["roles"])
+    assert [k for k, _ in mism] == ["aux_preload_a", "chg_i_ceiling_a"]
+    # Reported in EMS_FRONTIER_STIMULUS_KEYS order, so the report reads the
+    # same way every campaign.
+    assert [k for k, _ in mism] == [k for k in rhs.EMS_FRONTIER_STIMULUS_KEYS
+                                    if k in dict(mism)]
+    # A role naming a scenario this checkout does not register is SKIPPED, not
+    # reported as a mismatch (evaluate_ems_frontier already reports it missing,
+    # and double-counting would say "stimulus split" when it is absence).
+    assert rhs.ems_frontier_stimulus_mismatches(
+        {"reference": "ems-soc-band", "candidate": "no-such-scenario",
+         "bound": "ems-dp-replay"}) == []
+
+
+def test_frontier_stimulus_profile_compared_by_value_not_identity():
+    """The shipped FTP-75 scenarios deliberately share ONE list object, but a
+    future leg built from an EQUAL copy is still the same stimulus and must
+    not be refused for it."""
+    roles = {"reference": "_wpe_a", "candidate": "_wpe_b", "bound": "_wpe_c"}
+    base = {"ems_v_profile": [(0.0, 0.0), (5.0, 1.0)], "duration_s": 61.0,
+            "ems_run_exit_s": 55.0, "aux_preload_a": 0.6,
+            "chg_i_ceiling_a": 0.8}
+    saved = {n: SCENARIOS.get(n) for n in roles.values()}
+    try:
+        for n in roles.values():
+            # A DISTINCT but EQUAL profile list for each.
+            SCENARIOS[n] = dict(base, ems_v_profile=list(base["ems_v_profile"]))
+        assert rhs.ems_frontier_stimulus_mismatches(roles) == []
+        SCENARIOS["_wpe_b"] = dict(base, ems_v_profile=[(0.0, 0.0), (5.0, 2.0)])
+        assert [k for k, _ in rhs.ems_frontier_stimulus_mismatches(roles)] \
+            == ["ems_v_profile"]
+    finally:
+        for n, v in saved.items():
+            if v is None:
+                SCENARIOS.pop(n, None)
+            else:
+                SCENARIOS[n] = v
+
+
+def _coherent_results(legs):
+    """Three SYNTHETIC legs sharing one stimulus, and a spec pointing at them.
+
+    Synthetic rather than "swap the candidate for `ems-ftp75-5050`": the two
+    causal FTP-75 legs do not agree with the DP leg on `chg_i_ceiling_a`
+    either, so no combination of SHIPPED scenarios is stimulus-coherent today.
+    These fixtures therefore exercise the arithmetic the real tuple cannot
+    reach until an operator picks a resolution."""
+    names = {"reference": "_wpe_ref", "candidate": "_wpe_cand",
+             "bound": "_wpe_bound"}
+    stim = {"ems_v_profile": [(0.0, 0.0), (100.0, 3.0)], "duration_s": 350.0,
+            "ems_run_exit_s": 346.0, "aux_preload_a": 0.65,
+            "chg_i_ceiling_a": 0.8}
+    for n in names.values():
+        SCENARIOS[n] = dict(stim)
+    spec = dict(FTP75_SPEC, roles=names)
+    out = [{"kind": "scenario", "name": names[role], "passed": True,
+            "metrics": {"final_h2_cum_g": h, "delta_soc": d}}
+           for role, (h, d) in legs.items()]
+    return out, spec, list(names.values())
+
+
+def _drop_synthetic(names):
+    for n in names:
+        SCENARIOS.pop(n, None)
+
+
+def test_frontier_ftp75_numbers_pass_at_the_offline_tie():
+    """NUMBERS-PASS fixture at the OFFLINE result the band was derived from:
+    the DP ties `soc-band` at matched terminal SoC (-0.01 %). A candidate
+    sitting at parity must PASS a 1.02 band -- under the 61 s tuple's 0.98 it
+    would FAIL, which is exactly why the thresholds are per-frontier."""
+    results, spec, names = _coherent_results({
+        "reference": (0.09160, -0.00200),
+        "candidate": (0.09159, -0.00200),   # the -0.01 % tie
+        "bound": (0.09159, -0.00200)})
+    try:
+        rec = rhs.evaluate_ems_frontier(results, spec=spec)
+        assert rec["verdict"] == "PASS", rec["reason"]
+        assert rec["passed"] is True
+        assert "stimulus_mismatch" not in rec
+        assert rec["vs_reference"] == pytest.approx(0.99989, abs=1e-4)
+        assert rec["id"] == "ftp75"
+        assert rec["provisional_note"]
+        # The SAME numbers FAIL under the 61 s tuple's stricter band -- the
+        # claim that the split thresholds are load-bearing.
+        strict = dict(spec, vs_reference_max=0.98)
+        assert rhs.evaluate_ems_frontier(results, spec=strict)["verdict"] == "FAIL"
+    finally:
+        _drop_synthetic(names)
+
+
+def test_frontier_ftp75_numbers_fail_when_the_candidate_is_materially_worse():
+    """NUMBERS-FAIL fixture. 1.02 is not "anything goes": a candidate 5 %
+    worse than the causal heuristic at matched SoC is a policy regression and
+    must fail, at every lambda in the band."""
+    results, spec, names = _coherent_results({
+        "reference": (0.09160, -0.00200),
+        "candidate": (0.09618, -0.00200),   # +5.0 %
+        "bound": (0.09000, -0.00200)})
+    try:
+        rec = rhs.evaluate_ems_frontier(results, spec=spec)
+        assert rec["verdict"] == "FAIL"
+        assert rec["exit_affecting"] is True
+        assert "_wpe_ref" in rec["reason"]
+        assert all(not p["passed"] for p in rec["per_lambda"])
+    finally:
+        _drop_synthetic(names)
+
+
+def test_frontier_ftp75_planned_skip_is_unverified_and_not_exit_affecting():
+    """PLANNED-SKIP fixture. All four FTP-75 scenarios are --with-ftp75-gated,
+    so a campaign WITHOUT the flag skip-records them. That is the documented
+    behaviour of the flag, not a defect: UNVERIFIED and named, but the run is
+    not failed for it.
+
+    Checked on a stimulus-COHERENT synthetic tuple so the verdict comes from
+    the skip and not from the real tuple's preload split (which is tested
+    separately and would mask this path)."""
+    results, spec, names = _coherent_results({
+        "reference": (0.09, -0.002), "candidate": (0.09, -0.002),
+        "bound": (0.09, -0.002)})
+    try:
+        for r in results:
+            r["skipped"] = True
+            r["skip_reason"] = "LONG-CYCLE: pass --with-ftp75 to run them"
+        rec = rhs.evaluate_ems_frontier(results, spec=spec)
+        assert rec["verdict"] == "UNVERIFIED"
+        assert rec["exit_affecting"] is False
+        assert len(rec["missing"]) == 3
+        assert all("SKIPPED" in m for m in rec["missing"])
+    finally:
+        _drop_synthetic(names)
+
+
+def test_frontier_ftp75_absent_from_a_plan_contributes_no_record():
+    """A campaign without --with-ftp75 whose FTP-75 legs are not in the plan
+    at all gets ONE frontier record, not two: manufacturing an UNVERIFIED
+    record for a comparison the plan never intended is noise, and that rule
+    is unchanged from the single-frontier behaviour."""
+    legs = {"reference": ("ems-soc-band", 0.0128, -0.0020),
+            "candidate": ("ems-sdp", 0.0125, -0.0017),
+            "bound": ("ems-dp-replay", 0.0116, -0.0020)}
+    results = [{"kind": "scenario", "name": n, "passed": True,
+                "metrics": {"final_h2_cum_g": h, "delta_soc": d}}
+               for n, h, d in legs.values()]
+    recs = rhs.evaluate_ems_frontiers(results)
+    assert [r["id"] for r in recs] == ["cycle61"]
+
+
+def test_frontier_both_tuples_render_when_both_are_present():
+    """With the FTP-75 half planned, BOTH records exist -- and both reach the
+    report, each with its own verdict and its own label."""
+    results = [{"kind": "scenario", "name": n, "passed": True,
+                "metrics": {"final_h2_cum_g": h, "delta_soc": d}}
+               for n, h, d in (("ems-soc-band", 0.0128, -0.0020),
+                               ("ems-sdp", 0.0125, -0.0017),
+                               ("ems-dp-replay", 0.0116, -0.0020))]
+    results += _ftp_results({"reference": (0.0916, -0.0020),
+                             "candidate": (0.0900, -0.0020),
+                             "bound": (0.0899, -0.0020)})
+    recs = rhs.evaluate_ems_frontiers(results)
+    assert [r["id"] for r in recs] == ["cycle61", "ftp75"]
+    for r in results:
+        r.setdefault("mode", "hifi")
+        r.setdefault("electrical_required", "any")
+        r.setdefault("description", "")
+        r.setdefault("duration_s", 61.0)
+        r.setdefault("checks", [])
+        r.setdefault("notes", [])
+        r.setdefault("events", {})
+        r.setdefault("child", {"status": "ok", "summary": {}, "returncode": 0,
+                               "wall_s": 1.0, "log": "x.log"})
+        r.setdefault("key_metrics", "")
+    md = rhs.render_report({"date": "x"}, results).replace("—", "-")
+    assert "61 s synthetic cycle" in md
+    assert "340 s EPA FTP-75 drive cycle" in md
+    assert "PROVISIONAL" in md
+    assert "STIMULUS SPLIT" in md
+    assert "aux_preload_a" in md
+
+
+def test_frontier_results_json_keeps_the_singular_key_pointing_at_cycle61():
+    """Back-compatibility: every existing consumer of results.json reads
+    `ems_frontier`, and it must keep meaning the 61 s tuple now that a list
+    exists alongside it."""
+    results = [{"kind": "scenario", "name": n, "passed": True,
+                "metrics": {"final_h2_cum_g": h, "delta_soc": d}}
+               for n, h, d in (("ems-soc-band", 0.0128, -0.0020),
+                               ("ems-sdp", 0.0125, -0.0017),
+                               ("ems-dp-replay", 0.0116, -0.0020))]
+    recs = rhs.evaluate_ems_frontiers(results)
+    assert recs[0]["id"] == rhs.EMS_FRONTIERS[0]["id"] == "cycle61"
+    assert recs[0]["roles"] == rhs.EMS_FRONTIER
+
+
+# ── --droop wire-through ────────────────────────────────────────────────────
+
+def test_droop_default_adds_no_flag_to_any_child():
+    """Every campaign on record ran the design chain; stamping an explicit
+    `--droop design` into every child's argv would make this campaign's
+    recorded command lines differ from theirs for no behavioural reason."""
+    plan = rhs.build_plan(_args(with_ftp75=True))
+    for p in plan:
+        assert "--droop" not in (p.get("argv") or []), p["name"]
+
+
+def test_droop_measured_reaches_every_scenario_child_including_rebuilt_argvs():
+    """The append must sit AFTER the per-scenario branches that REBUILD argv
+    (soc-depletion and charge-to-full), or exactly those two runs would
+    silently keep the design chain."""
+    plan = rhs.build_plan(_args(with_ftp75=True, droop="measured"))
+    scen = [p for p in plan if p["kind"] == "scenario"
+            and not p.get("skip_reason")]
+    assert scen
+    for p in scen:
+        argv = p["argv"]
+        assert argv[argv.index("--droop") + 1] == "measured", p["name"]
+    for name in ("soc-depletion", "charge-to-full"):
+        p = next(x for x in scen if x["name"] == name)
+        assert "--droop" in p["argv"], name
+
+
+def test_droop_is_never_passed_to_the_replay_half():
+    """A replay entry's thresholds were derived from design-mode sag depths;
+    moving the bus rail under them would fail correct boards. A measured-mode
+    replay campaign needs its bands re-derived first."""
+    plan = rhs.build_plan(_args(droop="measured"))
+    for p in plan:
+        if p["kind"] == "replay":
+            assert "--droop" not in (p.get("argv") or []), p["name"]
+
+
+def test_report_states_which_droop_mode_the_campaign_ran():
+    """The standing K_DROOP finding is about a 4x gap between two droop
+    realizations, so a report that does not say which one it ran leaves every
+    sag figure in it unplaceable."""
+    md_design = rhs.render_report({"date": "x", "droop_mode": "design"}, [])
+    assert "--droop design" in md_design
+    assert "4x DEEPER" in md_design
+    md_meas = rhs.render_report({"date": "x", "droop_mode": "measured"}, [])
+    assert "--droop measured" in md_meas
+    assert "EXPLAINS NOTHING" in md_meas
+    assert "Droop realization (scenario half)" in md_meas
+    # A campaign predating the key reads as design, which is what it was.
+    assert "--droop design" in rhs.render_report({"date": "x"}, [])
+
+
+def test_droop_mode_note_covers_every_registered_mode():
+    assert set(rhs.K_DROOP_MODE_NOTE) == set(rhs.DROOP_MODES)
+
+
+def test_frontier_stimulus_split_does_not_mask_a_genuinely_failed_leg():
+    """SELF-REVIEW FIX (WP-E). The stimulus precondition is evaluated before
+    the legs are compared, and its `exit_affecting` is FALSE on the FTP-75
+    tuple by design. It must therefore be OR'd with the leg-derived flag, or a
+    campaign in which a leg RAN AND FAILED ITS OWN CHECKS would be excused by
+    a documented stimulus split -- the exact class of silent pass this whole
+    check exists to prevent."""
+    results = _ftp_results({"reference": (0.09, -0.002),
+                            "candidate": (0.08, -0.002),
+                            "bound": (0.089, -0.002)},
+                           **{"ems-ftp75-dp": {"passed": False}})
+    rec = rhs.evaluate_ems_frontier(results, spec=FTP75_SPEC)
+    assert rec["verdict"] == "UNVERIFIED"
+    assert rec["exit_affecting"] is True
+    # The failed leg is still NAMED, not swallowed by the stimulus branch.
+    assert any("did NOT pass its own checks" in m for m in rec["missing"])
+    assert rec["stimulus_mismatch"]
+    # ... and with every leg healthy the same split is NOT exit-affecting.
+    clean = rhs.evaluate_ems_frontier(
+        _ftp_results({"reference": (0.09, -0.002),
+                      "candidate": (0.08, -0.002),
+                      "bound": (0.089, -0.002)}), spec=FTP75_SPEC)
+    assert clean["exit_affecting"] is False
+
+
+def test_frontier_cycle61_stimulus_split_would_be_exit_affecting():
+    """The two tuples differ here on purpose: the 61 s legs are documented to
+    share ONE stimulus object, so a split there is a regression and must fail
+    the campaign -- unlike the FTP-75 tuple's known, operator-owned split."""
+    assert CYCLE61_SPEC["stimulus_mismatch_exit_affecting"] is True
+    assert FTP75_SPEC["stimulus_mismatch_exit_affecting"] is False
+    saved = SCENARIOS["ems-sdp"]
+    try:
+        SCENARIOS["ems-sdp"] = dict(saved, aux_preload_a=0.9)
+        results = [{"kind": "scenario", "name": n, "passed": True,
+                    "metrics": {"final_h2_cum_g": 0.012, "delta_soc": -0.002}}
+                   for n in CYCLE61_SPEC["roles"].values()]
+        rec = rhs.evaluate_ems_frontier(results, spec=CYCLE61_SPEC)
+        assert rec["verdict"] == "UNVERIFIED"
+        assert rec["exit_affecting"] is True
+    finally:
+        SCENARIOS["ems-sdp"] = saved
+
+
+# ── ems-ftp75-dp FAULT_EXPECTATIONS entry (WP-E) ────────────────────────────
+
+def test_ems_ftp75_dp_expectation_entry_shape():
+    """IMPORT-SHAPE PIN. Mirrors `ems-ftp75-5050`'s shape, because the two
+    share a stimulus -- and asserts the ONE place they deliberately differ."""
+    e = rhs.FAULT_EXPECTATIONS["ems-ftp75-dp"]
+    ref = rhs.FAULT_EXPECTATIONS["ems-ftp75-5050"]
+    assert e["allow_only"] == 0                       # fault-free, like 5050
+    assert e["survive_to"] == ref["survive_to"]       # same cycle, same t
+    assert e["source"]
+    names = [c["name"] for c in e["signals_require"]]
+    assert names == ["ftpdp_peak_commanded", "ftpdp_fc_carried",
+                     "ftpdp_table_commanded", "ftpdp_table_low_rail",
+                     "ftpdp_h2_accounted", "ftpdp_h2_bounded"]
+    by = {c["name"]: c for c in e["signals_require"]}
+    # The stimulus check is the sibling's, verbatim -- same profile, same peak.
+    assert by["ftpdp_peak_commanded"]["min_value"] == 2.85
+    assert by["ftpdp_peak_commanded"]["t_window"] == rhs._FTP_PEAK_W
+    # The ONE deliberate loosening: the sibling's split is pinned at 0.50, this
+    # one's is chosen by the table and can floor at its own 0.25 rail.
+    assert by["ftpdp_fc_carried"]["min_value"] == 0.35
+    assert by["ftpdp_fc_carried"]["min_value"] < \
+        {c["name"]: c for c in ref["signals_require"]}["ftp_fc_carried"]["min_value"]
+
+
+def test_ems_ftp75_dp_expectation_asserts_the_table_actually_drove_the_run():
+    """THE CHECK THAT MAKES THE BOUND LEG MEAN ANYTHING. Without it the run
+    passes identically whether the DP table reached the wire or a constant
+    0.50 split did -- and a silently un-driven bound leg makes the whole
+    frontier verdict meaningless while every per-run check stays green.
+
+    Both rails are asserted, so a run that replayed only the table's upper
+    half (or dropped commands) fails too."""
+    by = {c["name"]: c
+          for c in rhs.FAULT_EXPECTATIONS["ems-ftp75-dp"]["signals_require"]}
+    hi = by["ftpdp_table_commanded"]
+    lo = by["ftpdp_table_low_rail"]
+    assert hi["column"] == lo["column"] == "cmd_share_sp"
+    # A constant-0.50 fallback satisfies NEITHER rail -- that is the point.
+    assert hi["min_value"] > 0.50 and lo["max_value"] < 0.50
+    # ... and both rails are inside the table's own [0.25, 0.75] control span,
+    # so a correctly replayed table satisfies both.
+    assert 0.25 <= lo["max_value"] and hi["min_value"] <= 0.75
+    # E-H1: THE WINDOWS MUST NOT OVERLAP. `max_value` judges the window's PEAK,
+    # so a low-rail ceiling sharing the high-rail window asserts "the peak over
+    # a window whose peak is 0.75 is <= 0.30" -- unsatisfiable, and the two
+    # checks become mutually exclusive. The low rail is the table's OPENING, so
+    # its window must close where the high-rail window opens.
+    assert lo["t_window"][1] <= hi["t_window"][0]
+
+
+def test_ems_ftp75_dp_rail_checks_pass_together_on_the_tables_own_trajectory():
+    """E-H1 REGRESSION. Checks 3 and 4 are judged against the DP table's OWN
+    share column -- the exact trajectory a correct replay puts on the wire --
+    and BOTH must pass. Before the window fix, check 4 carried check 3's
+    (5.0, 340.0) window, which contains no low-rail stage at all, so no
+    correct run could ever satisfy both.
+
+    Reads the committed table rather than a synthetic fixture: the windows are
+    a claim ABOUT THAT FILE, and a synthetic trajectory would let the file and
+    the claim drift apart."""
+    path = os.path.join(os.path.dirname(os.path.abspath(rhs.__file__)),
+                        "dp_tables", "dp_ems_table_ems-ftp75-dp.csv")
+    if not os.path.isfile(path):
+        pytest.skip("generated DP table not present")
+    rows = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            if line.startswith("#"):
+                continue
+            rows.append(line)
+    tr = [(float(r["t"]), float(r["power_share_setpoint"]))
+          for r in csv.DictReader(rows)]
+    assert tr, "table parsed empty"
+
+    by = {c["name"]: c
+          for c in rhs.FAULT_EXPECTATIONS["ems-ftp75-dp"]["signals_require"]}
+
+    def _peak(window):
+        # scan_signals() floors every window at WARM_RESET_GRACE_S; mirror that
+        # or this fixture judges rows the real scan never sees.
+        vals = [s for t, s in tr
+                if window[0] <= t <= window[1] and t >= rhs.WARM_RESET_GRACE_S]
+        return (max(vals) if vals else None), len(vals)
+
+    hi, lo = by["ftpdp_table_commanded"], by["ftpdp_table_low_rail"]
+    hi_peak, hi_n = _peak(hi["t_window"])
+    lo_peak, lo_n = _peak(lo["t_window"])
+    assert hi_n and lo_n, "a rail window sees no table stages at all"
+    assert hi_peak >= hi["min_value"], (hi_peak, hi["min_value"])
+    assert lo_peak <= lo["max_value"], (lo_peak, lo["max_value"])
+    # The low-rail window must carry real evidence, not one boundary sample.
+    assert lo_n >= 20
+
+
+def test_ems_ftp75_dp_h2_band_is_the_union_of_the_measured_siblings():
+    """The band is NOT the DP's own reduced-model prediction (0.0949435 g at a
+    matched terminal SoC of 0.685895): that is an open-loop optimum of a
+    different accounting and would import the reduced model's whole error
+    budget into a live metric. It is the union of the two MEASURED siblings'
+    bands, on the structural argument that this leg runs their stimulus with a
+    split that lies between theirs by construction."""
+    by = {c["name"]: c
+          for c in rhs.FAULT_EXPECTATIONS["ems-ftp75-dp"]["signals_require"]}
+    lo = by["ftpdp_h2_accounted"]["min_value"]
+    hi = by["ftpdp_h2_bounded"]["max_value"]
+    assert (lo, hi) == (0.045, 0.115)
+    assert lo == rhs._FTP_H2_BAND_5050[0]
+    assert hi == rhs._FTP_H2_CEILING_SOCBAND
+    # Two SPECS, never one leaf carrying both bounds: `_judge_signal_leaf`
+    # tests min before max and would silently drop the ceiling.
+    assert "max_value" not in by["ftpdp_h2_accounted"]
+    assert "min_value" not in by["ftpdp_h2_bounded"]
+    # PROVISIONAL, and it says so where a report reader will see it.
+    assert all("PROVISIONAL" in by[n]["label"]
+               for n in ("ftpdp_h2_accounted", "ftpdp_h2_bounded"))
+
+
+def test_every_ftp75_scenario_has_an_expectation_entry():
+    """A --with-ftp75 scenario with no entry scores on the runner's default,
+    which is not what any of these runs mean."""
+    for name in rhs.FTP75_SCENARIOS:
+        assert name in rhs.FAULT_EXPECTATIONS, name

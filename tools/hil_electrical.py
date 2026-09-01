@@ -125,6 +125,7 @@ R_D2 = 10e3             # ohm   FB bottom
 R_INJ = 53.6e3          # ohm   droop injection resistor
 R_SHUNT = 2e-3          # ohm   INA253 integrated shunt (a fixed physical droop)
 RE_MAX = K_SNS * A_V * R_D1 / R_INJ          # 2.014 ohm at g = 1
+
 _P_PAR = R_D2 * R_INJ / (R_D2 + R_INJ)
 H1 = _P_PAR / (R_D1 + _P_PAR)                # FB gain from the boost output node
 H2 = H1 * R_D1 / R_INJ                       # FB gain from the op-amp injection
@@ -149,6 +150,82 @@ RT_SS_PRECHARGED_V = 1.0
 RT_I_FOLD_LOW = 2.5     # A     limit while VOUT < 2 V rising
 RT_I_FOLD_HIGH = 8.5    # A     limit at dV <= 5 V
 RT_DV_FOLD_KNEE = 5.0   # V     dV at which the limit reaches RT_I_FOLD_HIGH
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DROOP REALIZATION MODE — `design` (default) vs `measured`   (2026-09-01, WP-E)
+# ─────────────────────────────────────────────────────────────────────────────
+# THE STANDING OPEN FINDING IS UNCHANGED AND IS NOT RESOLVED BY THIS SWITCH.
+# The realized bus droop measured on hardware is ~4x BELOW what the MDAC droop
+# chain above predicts:
+#
+#     DESIGN (this engine, fitted from a live HIL trace 2026-08-30c)
+#         0.316 ohm both sources / 0.633 ohm single, ratio exactly 2.000
+#     MEASURED (bench fit of TP0170-0180 excl. TP0178, ML0165, ML0169, fw v16)
+#         0.074 V/A both sources / 0.1615 V/A single, V0 = 15.95 V
+#
+# `measured` mode makes the hi-fi engine REPRODUCE the bench numbers.  It does
+# NOT explain the gap: it is a single empirical scale factor on the realized
+# droop resistance, applied at the one point the chain becomes a resistance,
+# and everything else in the network (RT1987 machines, soft-start/TRCB, the
+# chopper, the sources, the OPA197 ceiling) is untouched.  Anyone reconciling
+# the FB-node superposition against the bench fit is still doing the work this
+# banner has always described; `measured` mode only lets a scenario be run on
+# the bench's sag depths in the meantime.
+#
+# THE ANCHOR, and why it is the SINGLE-SOURCE regime.  One scalar cannot land
+# both regimes: the network is a parallel Thevenin pair, so its shared/single
+# ratio is STRUCTURALLY exactly 2.000, while the bench fit's is
+# 0.1615/0.0740 = 2.182.  The scale is therefore anchored on the regime the
+# bench measured most tightly — single-source, 0.1615 +/- 0.001 V/A (0.6 %) —
+# and the residual is pushed onto the shared regime, 0.0740 +/- 0.004 V/A
+# (5.4 %), where it lands at +8.1 %, i.e. ~1.5 sigma of that fit's own stated
+# uncertainty.  Anchoring the other way would have put single-source 8.4 % off
+# a value known to 0.6 %, i.e. ~13 sigma.  Both residuals are the SAME
+# structural fact — the ratio disagreement — and neither anchor removes it.
+#
+# THE SCALE IS NOT A RATIO OF THE TWO END-TO-END NUMBERS, and the difference
+# matters by 15 %.  Only the MDAC droop term `RE_MAX*g` is rescalable; the
+# series path in front of it — the boost's Thevenin R_OUT, the ideal-diode
+# R_ON, and the INA253 shunt — is fixed physical copper that the droop code
+# does not set and that no rescale may touch.  So the scale is taken over the
+# DROOP TERM ALONE, with that floor subtracted from both sides:
+#
+#     s = (K_meas_single - R_FIXED) / (K_design_single - R_FIXED)
+#
+# Applying the naive end-to-end ratio 0.16/0.633 instead lands the single-
+# source regime at 0.1847 V/A (+15 %) — the floor would be scaled down along
+# with the droop and then re-added at full size.  Verified by test at three
+# currents in each regime.
+#: unscalable series resistance between a channel's regulated node and the bus,
+#: at DC: the boost Thevenin term, the RT1987 pass FET, and the sense shunt.
+#: The 0.010 term is Boost.R_OUT, repeated as a literal because the class is
+#: defined far below this constants block; a test pins the two equal.
+DROOP_FIXED_SERIES_OHM = 0.010 + RT_R_ON + R_SHUNT    # 0.033 ohm
+#: hi-fi single-source droop realized at DESIGN scale, ohm, at the nominal
+#: g_code = 0.298 (the MDAC fraction the firmware commands at share r = 0.5).
+#: FITTED from a live HIL trace (2026-08-30c) at 0.633 and reproduced by this
+#: engine's own DC solve at 0.63287 — pinned by test.
+DROOP_DESIGN_SINGLE_OHM = 0.63287
+#: bench-measured single-source bus droop, V/A.  Pinned equal to
+#: hil_plant_sim.K_DROOP_BUS_SINGLE by test (hil_electrical must not import
+#: hil_plant_sim — the dependency runs the other way).
+DROOP_MEASURED_SINGLE_OHM = 0.16
+#: the scale `--droop measured` applies to every channel's realized droop
+#: resistance.  `--droop design` applies 1.0 and is byte-identical to every
+#: run recorded before this switch existed.
+DROOP_SCALE = {
+    "design": 1.0,
+    "measured": ((DROOP_MEASURED_SINGLE_OHM - DROOP_FIXED_SERIES_OHM)
+                 / (DROOP_DESIGN_SINGLE_OHM - DROOP_FIXED_SERIES_OHM)),
+}
+DROOP_MODES = tuple(DROOP_SCALE)
+#: the `--droop` CLI default, single-sourced here (E-M3, 2026-09-01).  Both
+#: hil_plant_sim.py and run_hil_suite.py declare their flag with it, and
+#: hil_plant_sim's scenario-vs-CLI resolution decides "the operator passed
+#: --droop explicitly" by comparing the parsed value against it — so the
+#: default and that comparison cannot drift apart.
+DROOP_MODE_DEFAULT = "design"
+assert DROOP_MODE_DEFAULT in DROOP_SCALE
 
 # Soft-start capacitors per switch (schematic 20260622).
 CSS_NF = {
@@ -214,6 +291,61 @@ V_NODE_RUNAWAY_MULT = 2.0   # x V_ABSMAX  hard backstop: a node past this after 
 V_CHOPPER_TRIP = 18.1       # V     bench-calibrated clamp level (see above)
 R_CHOPPER = 47.0            # ohm   47 Ω dump resistor
 P_CHOPPER_MAX_W = 20.0      # W     resistor power rating (BOM R-SHUNT, 20 W)
+# WP-C (2026-09-01) — THE CHOPPER IS A LINEAR CLAMP, NOT A BARE SWITCHED RESISTOR.
+# The TL431 drives the BSP170P's gate in its linear region, so the dump current
+# rises FROM ZERO as the node passes V_CHOPPER_TRIP instead of stepping to
+# V/47 the instant it does.  Modelled as a stiff Norton clamp of effective
+# resistance R_CHOPPER_REG, saturating at the dump resistor's own V/R_CHOPPER
+# (the FET fully enhanced).  Two reasons this replaces the old bare 1/R stamp:
+#   * PHYSICS: the bench observation is "V_rgn HELD at 18.1 V" (CLAUDE.md
+#     2026-08-17b).  A bare 1/47 shunt cannot hold 18.1 V against anything less
+#     than 0.385 A — it pulls the node straight back under the trip, so a small
+#     regen source chatters across the threshold at the substep rate instead of
+#     being clamped.  The regulator holds the level for ANY dump current up to
+#     18.1/47 = 0.385 A, which is exactly what was seen.
+#   * SCOPE: this stamp only differs from the old one ABOVE 18.1 V on N_MOT, a
+#     state no pre-WP-C stimulus could reach (regen power was floored at zero and
+#     the bus runs at ~16 V), so no existing trace moves.
+# TODO(verify): R_CHOPPER_REG is a modelling choice, not a measurement — it is the
+# clamp's small-signal output resistance.  0.5 Ω makes the clamp stiff (0.19 V of
+# droop at the 0.385 A saturation point) without making the node solve stiff.
+R_CHOPPER_REG = 0.5         # ohm   TL431/BSP170P linear-regulation output resistance
+# Coalescing window for the per-episode `chopper_clamp` event (below) and for the
+# `reverse_block` events a regen episode provokes on MOT_PWR.  Both are substep-rate
+# phenomena: without coalescing a 2 s braking window emits tens of thousands of
+# identical dicts into events.jsonl.
+EVENT_COALESCE_S = 0.005    # s
+
+
+def chopper_dump_current(v_node):
+    """Dump current [A] drawn by the regen chopper at node voltage `v_node`.
+
+    Zero below the clamp; linear-regulating above it; saturating at the 47 Ω dump
+    resistor once the pass FET is fully enhanced.  One function so the stamp, the
+    dissipation check and the simple-mode lumped model in hil_plant_sim.py cannot
+    disagree about what the chopper does.
+    """
+    if v_node <= V_CHOPPER_TRIP:
+        return 0.0
+    return min((v_node - V_CHOPPER_TRIP) / R_CHOPPER_REG, v_node / R_CHOPPER)
+
+
+# ── Regen source (WP-C, 2026-09-01) ─────────────────────────────────────────
+# Braking energy arrives on N_MOT as a power source (see hil_plant_sim.py's
+# VESC_REGEN_I_MAX_A / ETA_REGEN block for where the number comes from).  The
+# stamp is BOUNDED in the H1 sense (2026-08-30d: an ideal source into an open node
+# ran the solver to ~10 kV and manufactured a false Death-5 verdict): it is a
+# Norton pair referenced to the PREVIOUS substep's node voltage, sized so that it
+# delivers exactly the requested current at v == v_prev and exactly ZERO at
+# V_REGEN_OC_MAX.  The node therefore cannot be driven past V_REGEN_OC_MAX by this
+# element under any solve, with no clamping, no event and no discontinuity.
+# TODO(verify): V_REGEN_OC_MAX stands in for the VESC's own DC-link overvoltage
+# cutback, which has never been characterized on this rig.  20.0 V is the abs-max
+# the ring estimator already uses; it is comfortably above the 18.1 V chopper clamp,
+# so the CHOPPER stays the operative limiter (which is the physical design).
+V_REGEN_OC_MAX = V_ABSMAX   # V    open-circuit bound of the regen Norton source
+REGEN_I_SRC_MAX_A = 20.0    # A    absolute cap on the stamped source current, so
+                            #      p/v cannot explode as V-MOT approaches zero
 
 # Sources — see the SOURCE MODELS block further down (FuelCellSource /
 # BatterySource).  These remain as the fallback/legacy scalars: V_FC_OPEN is the
@@ -602,8 +734,12 @@ class Rt1987:
     ON (forward regulation servo + fast reverse comparator).
     """
 
-    def __init__(self, name, n_in, n_out, css_nf, c_load_f, r_series=0.0):
+    def __init__(self, name, n_in, n_out, css_nf, c_load_f, r_series=0.0,
+                 strict_forward=False):
         self.name = name
+        #: WP-C: block conduction below the forward-regulation point instead of
+        #: letting the linear branch deliver reverse current.  See stamp().
+        self.strict_forward = bool(strict_forward)
         self.n_in = n_in
         self.n_out = n_out
         self.css_nf = css_nf
@@ -633,6 +769,30 @@ class Rt1987:
         #: node voltages it is compared against (see _soft_operating_point()).
         #: update() always precedes stamp() within a substep, so this is fresh.
         self._h = 0.0
+        #: WP-C: last emitted reverse_block dict + its time, for coalescing.  A
+        #: regen episode on V-MOT reverse-blocks MOT_PWR and re-arms it every few
+        #: substeps by construction (that IS the ideal diode doing its job), so the
+        #: raw event stream is tens of thousands of identical dicts.  Coalesced
+        #: events carry a `repeats` count and a `t_end`; the FIRST of a burst keeps
+        #: its own timestamp, so nothing that reads event times moves.
+        self._rev_last_ev = None
+        self._rev_last_t = None
+
+    def _reverse_event(self, events, t_now, dv, during=None):
+        """Emit (or coalesce into) a reverse_block event.  See _rev_last_ev."""
+        if (self._rev_last_ev is not None and self._rev_last_t is not None
+                and (t_now - self._rev_last_t) <= EVENT_COALESCE_S):
+            self._rev_last_ev["repeats"] = self._rev_last_ev.get("repeats", 1) + 1
+            self._rev_last_ev["t_end"] = t_now
+            self._rev_last_ev["dv"] = dv
+            self._rev_last_t = t_now
+            return
+        ev = {"t": t_now, "kind": "reverse_block", "switch": self.name, "dv": dv}
+        if during is not None:
+            ev["during"] = during
+        events.append(ev)
+        self._rev_last_ev = ev
+        self._rev_last_t = t_now
 
     # -- stamping -----------------------------------------------------------
     def stamp(self, G, J, v, en):
@@ -685,6 +845,59 @@ class Rt1987:
             J[self.n_in] -= min(i_fold, max(0.0, i_phys))
             return
         # ON: forward branch with the 35 mV regulation offset, i = (dv - V_FWD)/R.
+        #
+        # WP-C (2026-09-01) — NO REVERSE CONDUCTION IS STAMPED.  The RT1987 in ON
+        # is a REGULATED ideal diode: its gate is servoed to hold +35 mV forward,
+        # not saturated, so a reverse current collapses the differential and the
+        # reverse comparator opens the FET within t_FRC ~ 0.5 us — two orders of
+        # magnitude shorter than one substep (~30 us).  Stamping the link as a
+        # symmetric R_ON resistor let up to |RT_V_REV|/R_ON = 2.38 A of reverse
+        # current flow for a whole substep before the state machine noticed, which
+        # is what made a regen episode back-feed VBUS through a closed MOT_PWR
+        # instead of lifting V-MOT.  The bench falsifies that directly: sustained
+        # regen drove V_rgn 13.3 -> 18.1 V with V_BUS UNMOVED (CLAUDE.md
+        # 2026-08-17b) — 2.38 A into the measured single-source droop would have
+        # moved the bus ~0.4 V.  Between 0 and RT_V_REV the part is still ON and
+        # still un-tripped; it simply carries no current, so V-MOT can rise the
+        # comparator's own 50 mV before the state machine opens the switch on the
+        # next substep.  The forward branch is untouched, so the TP0178/TP0201
+        # reactive-pickup handoff behaviour is unchanged.
+        # The threshold is the FORWARD REGULATION POINT, not zero volts: the linear
+        # branch below is i = (dv - RT_V_FWD)/R, which is already NEGATIVE for any
+        # dv under 35 mV.  Guarding at v_out > v_in would leave a 35 mV window of
+        # unphysical reverse conduction — and that window is exactly where a regen
+        # source parks the motor node, so it was enough on its own to hide the whole
+        # effect (measured: V-MOT pinned 31 mV UNDER the bus for a 3 s braking run,
+        # with the bus quietly absorbing the harvest through a diode that should
+        # have been blocking, and V_rgn never reaching the chopper).
+        #
+        # ⚠️ SCOPED DEVIATION, and deliberately not applied engine-wide.  The same
+        # correction on the two boost-OR links (FC_BUS/BT_BUS) is a DIFFERENT
+        # experiment: those two switches feed one node from two sources whose
+        # outputs sit within millivolts of each other, so removing the sub-35 mV
+        # reverse path changes which channel blocks during a hand-off.  Measured
+        # cost of applying it there: the hardware-corroborated cold-start pin moves
+        # 0.2224 -> 0.2245 A (+0.9 %) and BT_BUS ends a bring-up OFF rather than ON.
+        # ⚠️ L5 (reviewer, 2026-09-01) INDEPENDENT RE-VERIFICATION of the two
+        # implementer-claimed numbers, via a standalone A/B script exercising this
+        # code path directly (scratch, not committed): the +0.9 % cold-start pin
+        # move (0.2224 -> 0.2245 A) REPRODUCED EXACTLY. The "BT_BUS ends a
+        # bring-up OFF" claim did NOT reproduce under either of two tested
+        # stimuli — a plain P0-only cold bring-up (both channels ended ON in
+        # BOTH the baseline and strict_forward configurations) and an
+        # asymmetric-droop-code bring-up (code_fc=0.9/code_bt=0.1, both channels
+        # still ended ON in both configurations). This does not falsify the
+        # claim — the implementer's own stimulus (a genuine parallel-source
+        # hand-off scenario) was not reproduced here and may differ from both
+        # attempts above — but it is UNVERIFIED as stated; re-verify against the
+        # implementer's actual stimulus before relying on it.
+        # That is a parallel-source hand-off question and needs its own A/B round
+        # against the bench; it is FLAGGED here, not shipped.  `strict_forward` is
+        # therefore set only on the links whose DOWNSTREAM node carries an active
+        # source (MOT_PWR: the VESC; REGEN/FC_CHARGE: the shared VCHG-IN node they
+        # both drive), which is the only place the distinction is load-bearing.
+        if self.strict_forward and (v_in - v_out) < RT_V_FWD:
+            return
         r = RT_R_ON + self.r_series
         g = 1.0 / r
         G[self.n_in][self.n_in] += g
@@ -990,9 +1203,7 @@ class Rt1987:
             # vanished from the network.  Checked BEFORE the SCP/completion logic
             # below because a reverse event is faster (0.5 us) than either.
             if (v_in - v_out) < RT_V_REV:
-                events.append({"t": t_now, "kind": "reverse_block",
-                               "switch": self.name, "dv": v_in - v_out,
-                               "during": "soft_start"})
+                self._reverse_event(events, t_now, v_in - v_out, "soft_start")
                 self.state = "OFF"
                 self.t_state = 0.0
                 self.t_clamped = 0.0
@@ -1027,8 +1238,7 @@ class Rt1987:
             # Fast reverse comparator: off within 0.5 us, auto-restart WITHOUT
             # soft-start once forward again.
             if (v_in - v_out) < RT_V_REV:
-                events.append({"t": t_now, "kind": "reverse_block", "switch": self.name,
-                               "dv": v_in - v_out})
+                self._reverse_event(events, t_now, v_in - v_out)
                 self.state = "OFF"
                 self.t_state = 0.0
                 self.t_retry = 0.0
@@ -1129,10 +1339,15 @@ class Boost:
     #: output.  TODO(verify): not extracted from the datasheet in this repo.
     I_OUT_MAX = 6.0
 
-    def __init__(self, name, node, c_out):
+    def __init__(self, name, node, c_out, droop_scale=1.0):
         self.name = name
         self.node = node
         self.c_out = c_out
+        #: THE ONE SCALING POINT of the droop realization (see DROOP_SCALE).
+        #: 1.0 is the DESIGN chain and is the default everywhere; anything else
+        #: is an empirical rescale of the realized droop resistance and does
+        #: NOT change the chain's structure, its clip, or the network.
+        self.droop_scale = float(droop_scale)
         self.v_src = 0.0
         self.v_target = 0.0
         self.r_droop = 0.0
@@ -1182,9 +1397,24 @@ class Boost:
         # loop gain is R_e/R_link ~ 26 per substep — it oscillated rail-to-rail and
         # produced tens of thousands of spurious reverse-blocking events.  Implicit
         # is both the correct physics and the only stable form at these substep rates.
-        self.r_droop = max(0.0, RE_MAX * g_code)
+        #
+        # `self.droop_scale` (2026-09-01) is 1.0 for the DESIGN chain — the
+        # expression is then arithmetically identical to every run recorded
+        # before the mode existed — and DROOP_SCALE["measured"] when the run
+        # asked for the bench-measured realization.  It is the ONLY point the
+        # mode touches; see the DROOP_SCALE banner for the anchor and for what
+        # the mode does and does not claim.
+        self.r_droop = max(0.0, RE_MAX * g_code * self.droop_scale)
         # OPA197 output ceiling on the bodged 5 V rail caps the achievable droop
         # excursion at (R_D1/R_inj)*V_OP_CEIL; beyond it the droop stops growing.
+        # DELIBERATELY NOT SCALED with `droop_scale`: the ceiling is a hard
+        # op-amp output voltage mapped through the FB divider, and the mode
+        # makes no claim about where the gap lives, so the less invented of the
+        # two readings is kept.  The choice is INERT in practice — the ceiling
+        # is (215k/53.6k)*4.9 = 19.66 V of droop excursion, which at the design
+        # 0.60 ohm/channel needs ~32.8 A and in measured mode ~130 A.  Neither
+        # is reachable behind I_OUT_MAX = 6.0 A, so no shipped trace can
+        # distinguish the two readings.
         drop_max = (R_D1 / R_INJ) * V_OP_CEIL
         if self.r_droop * max(i_ch, 0.0) > drop_max:
             self.v_clip = drop_max
@@ -1246,9 +1476,16 @@ class ElectricalSim:
     BUDGET_FRAC = 0.65
 
     def __init__(self, trace_config="short", noise=None, c_vesc_f=C_VESC_DEFAULT,
-                 fuel_cell=None, battery=None):
+                 fuel_cell=None, battery=None, droop_mode="design"):
         if trace_config not in TRACE_L_NH:
             raise ValueError(f"trace_config must be one of {sorted(TRACE_L_NH)}")
+        if droop_mode not in DROOP_SCALE:
+            raise ValueError("droop_mode must be one of %s" % (DROOP_MODES,))
+        # DEFAULT "design": every baseline recorded before this switch existed
+        # is reproduced bit-for-bit, which is the load-bearing property (a
+        # regression test pins it).  See the DROOP_SCALE banner.
+        self.droop_mode = droop_mode
+        self.droop_scale = DROOP_SCALE[droop_mode]
         self.trace_config = trace_config
         self.trace_l = TRACE_L_NH[trace_config]
         self.noise = noise
@@ -1264,8 +1501,10 @@ class ElectricalSim:
             C_MOT_LOCAL + c_vesc_f, C_CHG_NODE, C_RGN_NODE,
         ]
 
-        self.boost_fc = Boost("FC", N_OFC, C_BOOST_OUT_FC)
-        self.boost_bt = Boost("BT", N_OBT, C_BOOST_OUT_BT)
+        self.boost_fc = Boost("FC", N_OFC, C_BOOST_OUT_FC,
+                              droop_scale=self.droop_scale)
+        self.boost_bt = Boost("BT", N_OBT, C_BOOST_OUT_BT,
+                              droop_scale=self.droop_scale)
 
         self.switches = {
             "FC_BUS": Rt1987("FC_BUS", N_OFC, N_BUS, CSS_NF["FC_BUS"], C_VBUS,
@@ -1273,7 +1512,7 @@ class ElectricalSim:
             "BT_BUS": Rt1987("BT_BUS", N_OBT, N_BUS, CSS_NF["BT_BUS"], C_VBUS,
                              r_series=R_SHUNT),
             "MOT_PWR": Rt1987("MOT_PWR", N_BUS, N_MOT, CSS_NF["MOT_PWR"],
-                              C_MOT_LOCAL + c_vesc_f),
+                              C_MOT_LOCAL + c_vesc_f, strict_forward=True),
             # TOPOLOGY FIX (2026-08-30, schematic sheet 4 + operator): D-BC-RG's
             # OUTPUT joins D-BC-FC's output at the shared VCHG-IN node into the
             # Ag105 (CHG-V divider senses that node), so REGEN links MOT -> CHG.
@@ -1286,9 +1525,10 @@ class ElectricalSim:
             # shared load is not double-counted in the network solve (one node, one
             # capacitor); only the per-switch ramp timing is optimistic.  Bounded
             # inaccuracy: the 5.6 nF CSS gives a ~1 ms ramp either way.  Accepted.
-            "REGEN": Rt1987("REGEN", N_MOT, N_CHG, CSS_NF["REGEN"], C_CHG_NODE),
+            "REGEN": Rt1987("REGEN", N_MOT, N_CHG, CSS_NF["REGEN"], C_CHG_NODE,
+                            strict_forward=True),
             "FC_CHARGE": Rt1987("FC_CHARGE", N_BUS, N_CHG, CSS_NF["FC_CHARGE"],
-                                C_CHG_NODE),
+                                C_CHG_NODE, strict_forward=True),
             # BT_SEQ gates the pack into the BT boost INPUT; it is not a node link in
             # this six-node network, so it is tracked only for its enable state.
             "BT_SEQ": Rt1987("BT_SEQ", N_OBT, N_OBT, CSS_NF["BT_SEQ"], 1e-6),
@@ -1319,8 +1559,15 @@ class ElectricalSim:
         self.v_bus_sense_offset = 0.0
         self.i_charge_into_pack = 0.0   # A, set by Plant: Ag105 -> pack (charging)
         self.chopper_active = False
-        self.chopper_peak_w = 0.0       # W, worst instantaneous V_rgn^2/R while clamping
+        self.chopper_peak_w = 0.0       # W, worst instantaneous V_rgn*i_dump while clamping
         self._chopper_over = False      # once-per-excursion latch for chopper_over_power
+        # ── WP-C regen accounting ───────────────────────────────────────────
+        self.p_regen_w = 0.0            # W, electrical power injected on N_MOT this tick
+        self.regen_energy_j = 0.0       # J, cumulative electrical energy injected
+        self.chopper_energy_j = 0.0     # J, cumulative energy burnt in the clamp
+        self.chopper_episodes = 0       # count of coalesced clamp episodes
+        self._chop_ev = None            # in-flight chopper_clamp event dict
+        self._chop_end_t = None         # time the last episode stopped conducting
         self.numeric_fault = False      # M2: sticky -- set once, never cleared
         self.neg_clamp_count = 0        # M2: diagnostic counter of negative-node clamps
 
@@ -1340,6 +1587,10 @@ class ElectricalSim:
         code_fc = float(actuators.get("code_fc", 0.0))
         code_bt = float(actuators.get("code_bt", 0.0))
         i_charge = float(actuators.get("i_charge_a", 0.0))
+        # WP-C: electrical regen power arriving on V-MOT this tick [W], >= 0.
+        # Absent key == 0.0, so every pre-WP-C caller (and every test that builds
+        # its own actuator dict) keeps its exact behaviour.
+        self.p_regen_w = max(0.0, float(actuators.get("p_regen_w", 0.0)))
 
         n = self._n_sub
         h = dt / n
@@ -1468,6 +1719,25 @@ class ElectricalSim:
         if i_motor:
             g_mot = i_motor / max(v[N_MOT], V_MOT_LOAD_FLOOR)
             G[N_MOT][N_MOT] += g_mot
+        # ── Regen source on V-MOT (WP-C, 2026-09-01) ────────────────────────
+        # Braking energy off the flywheel, delivered by the VESC into the motor
+        # node.  Bounded Norton (see the V_REGEN_OC_MAX banner): the pair
+        # (g_reg, i_reg + g_reg*v_prev) delivers exactly i_reg at v == v_prev and
+        # exactly zero at V_REGEN_OC_MAX, so the element is strictly passive above
+        # that bound and cannot run the node away the way the pre-H1 ideal motor
+        # source did.  Note this element is deliberately NOT gated on MOT_PWR: the
+        # VESC hangs on V-MOT and the plant only reports regen power while the
+        # switch is closed (that is where f_drive is gated), so gating twice would
+        # hide a plant/engine disagreement instead of exposing it.
+        i_regen_stamped = 0.0
+        if self.p_regen_w > 0.0:
+            v_prev = max(v[N_MOT], V_MOT_LOAD_FLOOR)
+            headroom = V_REGEN_OC_MAX - v_prev
+            if headroom > 0.0:
+                i_regen_stamped = min(self.p_regen_w / v_prev, REGEN_I_SRC_MAX_A)
+                g_reg = i_regen_stamped / headroom
+                G[N_MOT][N_MOT] += g_reg
+                J[N_MOT] += i_regen_stamped + g_reg * v_prev
         if i_charge:
             # The charger input is the single shared VCHG-IN node — both the
             # FC-charge and regen paths land there (schematic sheet 4).
@@ -1482,17 +1752,39 @@ class ElectricalSim:
         # ~0.03-0.06 V of bus sag.  That is small enough to be consistent with the
         # bench observation "V_rgn 13.3 -> 18.1 V held, V_bus unmoved"
         # (CLAUDE.md 2026-08-17b) rather than contradicting it.
+        # WP-C: linear-regulating clamp (see the R_CHOPPER_REG banner).  Stamped
+        # from the previous substep's node voltage like every other mode decision
+        # in this engine.  Below saturation it is a Norton clamp referenced to
+        # V_CHOPPER_TRIP (i = (v - trip)/R_reg); at and above saturation it
+        # degrades to the bare dump resistor, which is the pre-WP-C stamp.
         self.chopper_active = v[N_MOT] > V_CHOPPER_TRIP
         if self.chopper_active:
-            G[N_MOT][N_MOT] += 1.0 / R_CHOPPER
+            g_reg = 1.0 / R_CHOPPER_REG
+            if (v[N_MOT] - V_CHOPPER_TRIP) * g_reg >= v[N_MOT] / R_CHOPPER:
+                G[N_MOT][N_MOT] += 1.0 / R_CHOPPER          # FET saturated
+            else:
+                G[N_MOT][N_MOT] += g_reg
+                J[N_MOT] += g_reg * V_CHOPPER_TRIP
 
         new_v = _solve(G, J)
+        # WP-C regen energy actually DELIVERED into the node this substep, from the
+        # Norton pair's own constitutive law i(v) = i_reg + g_reg*(v_prev - v).
+        if i_regen_stamped > 0.0 and math.isfinite(new_v[N_MOT]):
+            v_prev = max(v[N_MOT], V_MOT_LOAD_FLOOR)
+            g_reg = i_regen_stamped / (V_REGEN_OC_MAX - v_prev)
+            i_del = max(0.0, i_regen_stamped + g_reg * (v_prev - new_v[N_MOT]))
+            self.regen_energy_j += i_del * max(0.0, new_v[N_MOT]) * h
         # Chopper dissipation check — THE reason the chopper is simulated at all:
         # whether V_rgn^2 / 47 Ω ever exceeds the dump resistor's 20 W rating.
         # Computed from the SOLVED node voltage (the clamp conductance above was
         # stamped from the pre-solve voltage, so this is the consistent pairing).
         if self.chopper_active and math.isfinite(new_v[N_MOT]):
-            p_chop = (new_v[N_MOT] ** 2) / R_CHOPPER
+            # WP-C: dissipation is v * i_dump through the SHARED clamp law, so the
+            # regulating region is accounted honestly instead of being charged the
+            # saturated v^2/R.  At saturation the two forms coincide exactly.
+            p_chop = max(0.0, new_v[N_MOT]) * chopper_dump_current(new_v[N_MOT])
+            self.chopper_energy_j += p_chop * h
+            self._chopper_episode(p_chop, new_v[N_MOT], h)
             if p_chop > self.chopper_peak_w:
                 self.chopper_peak_w = p_chop
             if p_chop > P_CHOPPER_MAX_W:
@@ -1541,6 +1833,35 @@ class ElectricalSim:
         if bt_active:
             self.boost_bt.post_solve(self.v)
 
+    # ── chopper episode bookkeeping (WP-C) ───────────────────────────────────
+    def _chopper_episode(self, p_chop, v_node, h):
+        """Fold this conducting substep into a coalesced `chopper_clamp` event.
+
+        ONE event per braking episode, not one per substep: a clamp that is holding
+        a node conducts on every substep for the whole episode, and the raw stream
+        would be tens of thousands of dicts.  Consecutive conducting substeps
+        separated by less than EVENT_COALESCE_S are the same episode (the clamp
+        legitimately drops out for a substep or two whenever the source current
+        dips under the regulator's demand).  `chopper_clamp` is a NEW kind and is
+        deliberately distinct from `chopper_over_power`, which the suite scores as
+        a FAILURE — a clamp doing its job is an objective, not a defect.
+        """
+        if (self._chop_ev is not None and self._chop_end_t is not None
+                and (self.t - self._chop_end_t) <= EVENT_COALESCE_S):
+            ev = self._chop_ev
+        else:
+            ev = {"t": self.t, "kind": "chopper_clamp", "node": "MOT",
+                  "dur_s": 0.0, "energy_j": 0.0, "peak_w": 0.0, "peak_v": 0.0}
+            self.events.append(ev)
+            self._chop_ev = ev
+            self.chopper_episodes += 1
+        ev["dur_s"] += h
+        ev["energy_j"] += p_chop * h
+        ev["peak_w"] = max(ev["peak_w"], p_chop)
+        ev["peak_v"] = max(ev["peak_v"], v_node)
+        ev["t_end"] = self.t
+        self._chop_end_t = self.t
+
     # ── outputs ──────────────────────────────────────────────────────────────
     def _rails(self, sw):
         v = self.v
@@ -1588,5 +1909,9 @@ class ElectricalSim:
             "trace_config": self.trace_config,
             "numeric_fault": self.numeric_fault,          # M2: sticky
             "neg_clamp_count": self.neg_clamp_count,      # M2: diagnostic
-            "chopper_peak_w": self.chopper_peak_w,        # worst V_rgn^2/R while clamping
+            "chopper_peak_w": self.chopper_peak_w,        # worst V_rgn*i_dump while clamping
+            # WP-C energy accounting (see docs/HIL_PLANT.md "Regen model").
+            "regen_energy_j": self.regen_energy_j,
+            "chopper_energy_j": self.chopper_energy_j,
+            "chopper_episodes": self.chopper_episodes,
         }

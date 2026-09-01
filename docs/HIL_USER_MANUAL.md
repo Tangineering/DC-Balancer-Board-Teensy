@@ -134,6 +134,33 @@ netmask 255.255.255.0, no gateway required
 `HIL_SIM=1` without `USE_ETHERNET=1` is a compile error by design (`.ino:2575-2578`):
 the injection and observation frames live on the UDP socket.
 
+> ### ⚠ fw v25 changes the observation frame — update the tooling BEFORE you flash
+>
+> The observation frame grows **17 → 18 bytes** at fw v25 (`error_code` appended at
+> offset 16; the XOR span becomes bytes 1..16). The simulator validates frames by
+> length, so a **fw v25 board talking to a pre-fw-v25 checkout is observation-blind**:
+> every frame is length-rejected, the run presents as *"the board never answered"*, and
+> `run_hil_suite` fails it on `observation_frames`. This is not a subtle degradation —
+> nothing works.
+>
+> **The fix is already in this checkout.** `tools/hil_plant_sim.py` accepts 16-, 17- and
+> 18-byte frames with a length-derived checksum span, so it speaks to fw v21–v23,
+> fw v24 and fw v25 boards alike. Confirm it before a campaign: the simulator prints one
+> provenance line naming the length the board is speaking —
+> `[hil] observation frame: 18 bytes — fw v25+ (mppt_thresh_count + error_code present)`.
+> A line saying *17 bytes* against a board you believe is fw v25 means the flash did not
+> take.
+>
+> **What the new byte buys.** `FAULT_PI_TIMEOUT` and `FAULT_HIL_LINK` share fault bit
+> `0x0010` and `fault_flags` is protocol-frozen, so a `0x8010` union was wire-ambiguous
+> between *"the Pi watchdog fired"* and *"the injection link died"*. `error_code` is the
+> **latched first cause** — `triggerFault()` records it exactly once, where it only ORs
+> bits into `fault_flags` — so `ERR_PI_TIMEOUT` (0x05) and `ERR_HIL_STALE` (0x10) are now
+> distinct. The suite reads it directly (see §7's `pi-silence` note and the `--pi-live`
+> excusal) and falls back to the older stream-health *inference* only on a pre-v25 board.
+> The dashboard renders it on the faults line as `err=…`; an em-dash there means the
+> board's frame has no such byte, never *"no error"*.
+
 **The source defaults to `#define HIL_SIM 0` — an ordinary flash is a normal bench
 build.** The Arduino IDE does not pass `-D` flags, so an HIL flash means **editing that
 line in `teensy_controller.ino` to `1`** (or building from the command line with
@@ -557,10 +584,13 @@ also tripping the HIL link's own staleness path. The board **should** latch
 `FAULT_PI_TIMEOUT` about 500 ms later and stay latched to the end of the run; the
 motor command should fall from its ~3.5 A cruise hold to zero. Two things to know:
 
-* The 0x0010 bit is **shared** with `FAULT_HIL_LINK`, and the observation frame
-  carries no `error_code`. The suite therefore also checks that this process's own
-  injection stream was continuous (`child_tx_healthy`) — the attribution to the Pi
-  is an inference by elimination, not a direct read.
+* The 0x0010 bit is **shared** with `FAULT_HIL_LINK`. The suite settles which one
+  fired with the `child_tx_healthy` check. **From fw v25 that is a direct read**:
+  observation-frame byte 16 carries the latched first cause, so `ERR_PI_TIMEOUT`
+  (0x05) and `ERR_HIL_STALE` (0x10) are distinct on the wire. On a fw v21–v24
+  board the check falls back to the older inference by elimination — this
+  process's own injection stream was continuous, so a HIL-link explanation is
+  implausible — and the check's detail line names which of the two decided.
 * A **mid-run warm reset** here invalidates the run: it clears `pi_ever_connected`
   and disarms the very watchdog under test. The suite marks such a run
   INCONCLUSIVE.
@@ -922,7 +952,9 @@ run would not start at the requested offset at all.
   constant 0.85 all run **by design** and every `FC_CHARGE` transition is
   attributable to the demand axis: charging on each low-speed plateau, closed on
   each 2.2 m/s cruise. ⚠️ **The SoC rise is fuel-cell-fed through `FC_CHARGE`,
-  not regen harvest** — the plant floors regen power at zero.
+  not regen harvest** — this policy never opens the REGEN path. (The "the plant
+  floors regen power at zero" reason this line used to give was SUPERSEDED
+  2026-09-01 by WP-C; see `docs/HIL_PLANT.md` §3.4.)
 
 > **An UPWARD share crossing is not reachable on this rig, and no scenario
 > pretends otherwise.** Raising SoC through the 1e-3-wide dead band around the

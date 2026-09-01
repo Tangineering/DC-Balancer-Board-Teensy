@@ -217,6 +217,43 @@ latch, because the clamp touches `I_fc` only and the UV filter reads `V_bus` alo
 
 **No conclusion about FC current may be drawn from these two runs.**
 
+### 3b-ter. Injected `I_batt` clamp — `i_bt_clamp_a` (2026-09-01)
+
+**TP0010 alone** additionally carries a clamp on the injected BT current
+(`--replay-i-bt-clamp`), for exactly the reason the FC clamp above exists and under the
+same operator ruling (a). Measured on the decoded logs:
+
+| Log | recorded \|`I_batt`\| peak | vs `LIMIT_I_BT_MAX` 3.0 A | clamp |
+|---|---|---|---|
+| TP0010 | **3.586 A** | 120 % of limit | **2.8 A** (6.7 % under, the same fractional margin the FC clamp takes) |
+| TP0053 | 2.345 A | 78 % — under the limit | **none** |
+
+Replayed raw at a production build TP0010 latches `OC_BT` before its recorded UV
+collapse can be scored, and State 99 then freezes `fault_flags` — destroying the entry
+in precisely the way the un-clamped FC channel did. **TP0053 deliberately gets no BT
+clamp:** its peak is well under the limit, and clamping a trajectory that needs no
+clamping would modify a recording for nothing. The two UV-pair entries therefore differ
+in their stimulus modifiers, and they differ *by measurement*.
+
+**No conclusion about BT current may be drawn from the TP0010 run either.**
+
+### 3b-quater. Recorded-stimulus band pins (2026-09-01)
+
+Two check kinds assert that a recorded stimulus still *is* what an entry's
+classification assumes, so a decode, rescale or substitution change fails by name
+instead of silently turning an entry into a tautology or into a different class:
+
+- **`v_bus_min_in_band(min_v, max_v]`** — the recorded `V_bus` MINIMUM. Carried by
+  TP0178/TP0201, whose `fault_not_latched(UV_BUS)` is vacuous on its own (their floors
+  never cross the limit).
+- **`i_fc_max_in_band[min_a, max_a]`** — the recorded \|`I_fc`\| MAXIMUM, new this round.
+  Carried by **ML0151**, band **[1.20, 1.40] A**: its recorded peak is **1.354 A**,
+  96.7 % of `LIMIT_I_FC_MAX`, so the entry sits **46 mA** from flipping out of the
+  conformance class. That knife-edge was documented in prose in the entry's `why` and
+  asserted by nothing; now the ceiling *is* the firmware limit (crossing it makes this a
+  deviation-class OC stimulus) and the floor sits 11 % below the measurement (drifting
+  down means the near-limit condition the entry documents is gone).
+
 ### 3c. Grace window — inherited settle latch (2026-08-30)
 
 Every fault check judges observations at **`t ≥ WARM_RESET_GRACE_S` (2.0 s)** only.

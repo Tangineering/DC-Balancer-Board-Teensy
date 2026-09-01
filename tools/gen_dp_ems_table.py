@@ -450,6 +450,14 @@ def build_demand(scenario, meta, times, dt):
         p_mech = max(0, F*v)            one-signed, matching Plant.step's floor
                                         (regen is a torque clip on this rig, not
                                         a dump path — CLAUDE.md 2026-08-17b)
+
+    ⚠️ REGEN DIVERGENCE, stated (E-M2, 2026-09-01): the DP's demand model has NO
+    regen term (p_mech = max(0, F*v)); the live plant now injects regen power —
+    divergence deliberate, magnitude unquantified; the live comparison inherits
+    it.  Directionally the DP therefore over-states demand on every decelerating
+    stage, so its hydrogen total is a bound computed against a slightly harder
+    cycle than the board actually sees.  Quantifying it needs a regen-fidelity
+    model that does not exist yet.
     ELECTRICS:
         i_motor = p_mech/(ETA_BOOST*V_bus);  I_total = i_motor + i_aux(t)
         V_bus   = V_BUS_DROOP_V0 - K_DROOP_BUS_SHARED*I_total
@@ -809,7 +817,17 @@ def render_table(scenario, meta, args, fingerprint, times, share, charge,
     A("# ── model ────────────────────────────────────────────────────────────")
     A("# soc0: %r" % args.soc0)
     A("# capacity_ah: %r" % args.capacity_ah)
-    A("# chg_ceiling_a: %r" % float(meta.get("chg_i_ceiling_a", 0.0)))
+    # DEFAULT-MISMATCH BUG, fixed 2026-09-01 (WP-E).  This line recorded a 0.0
+    # default while main() SOLVED with `sim.AG105_I_MAX` for the same absent
+    # key, so a scenario that declares no `chg_i_ceiling_a` produced a table
+    # whose header said "no charging was available" over a solution in which
+    # 2.5 A was.  It is not cosmetic: DpReplayStrategy.bind_scenario()'s drift
+    # guard compares this line against `meta.get("chg_i_ceiling_a",
+    # AG105_I_MAX)` and REFUSED such a table at startup — which is how the
+    # defect was found (the committed `ems-ftp75-5050` table carries 0.0 and
+    # would never have loaded).  E-L1 (2026-09-01) hoisted the resolution into
+    # `sim.dp_chg_ceiling_a()`, which all three sites now call.
+    A("# chg_ceiling_a: %r" % sim.dp_chg_ceiling_a(meta))
     A("# gfc_dc_gain_gps_per_w: %r" % sim.H2_GFC_DC_GAIN_GPS_PER_W)
     A("# eta_boost: %r" % sim.ETA_BOOST)
     A("# limit_i_fc_max_a: %r" % LIMIT_I_FC_MAX_A)
@@ -826,6 +844,19 @@ def render_table(scenario, meta, args, fingerprint, times, share, charge,
     A("# share_span: %r" % float(sim.SOC_BAND_SHARE_SPAN))
     A("# cruise_slope_max: %r" % float(sim.SOC_BAND_CRUISE_SLOPE_MAX))
     A("# cruise_min_mps: %r" % float(sim.SOC_BAND_CRUISE_MIN_MPS))
+    # ── NOT RECORDED, and why: ETA_REGEN / VESC_REGEN_I_MAX_A (E-M2) ─────────
+    # These two govern the LIVE plant's regen injection.  They are deliberately
+    # NOT in this header and NOT in the drift guard, on the same rule the
+    # `limit_i_fc_max_a` note below uses: the guard's job is to refuse a table
+    # solved against values that no longer hold, and neither constant ENTERS THE
+    # SOLVE — build_demand() has no regen term at all (p_mech = max(0, F*v)), so
+    # retuning either one cannot make this table the optimum of a different
+    # problem.  What they DO move is the live trajectory the table is replayed
+    # against, i.e. the size of the deliberate divergence documented in
+    # build_demand()'s docstring.  Recording them here would assert a
+    # dependency the solve does not have; the honest place for them is that
+    # divergence note.  ⚠️ If a future generator ever gives the demand model a
+    # regen term, BOTH must move into this header and into the guard.
     A("#")
     A("# ── tunables ─────────────────────────────────────────────────────────")
     A("# charger_accounting: %s" % args.charger_accounting)
@@ -985,7 +1016,7 @@ def main(argv=None):
     n_stages = int(round(duration / dt))
     times = np.arange(n_stages + 1) * dt          # N+1 rows: ZOH defined at the end
     cap_as = args.capacity_ah * 3600.0
-    chg_a = float(meta.get("chg_i_ceiling_a", sim.AG105_I_MAX))
+    chg_a = sim.dp_chg_ceiling_a(meta)      # E-L1: one shared resolution
 
     v, a, p_dem, v_bus, i_total, cruise = build_demand(
         args.scenario, meta, times, dt)

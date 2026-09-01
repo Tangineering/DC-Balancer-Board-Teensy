@@ -193,17 +193,117 @@ bug that commands current into an unpowered motor path produces no motion here �
 is the correct observable. With either condition false, `f_drive = 0.0`, and the body
 coasts down under friction alone (and the zero-crossing guard applies).
 
-### 3.4 The regen floor
+### 3.4 The regen model (WP-C, 2026-09-01)
 
-Motor bus draw is computed from `p_mech = max(0.0, f_drive · v)` — **mechanical power is
-floored at zero**. This is a modelling decision, not an oversight: on this rig the VESC's
-Battery Regen Max setting (1.5 A) is a **torque clip, not a dump path** — the 2026-08-17b
-log round found only ~6 % of a −12 A commanded regen actually delivered, with the excess
-energy remaining kinetic and the surplus appearing on `V_rgn` at the TL431/BSP170P chopper
-clamp rather than on the bus. Modelling regen as negative bus current would therefore be
-*less* faithful than flooring it. The consequence, stated plainly: **no HIL run returns
-energy to the bus**, so nothing here exercises a regen-driven bus rise, and the charger
-path sees no regen energy either (§4.5).
+**This section replaces "The regen floor".** Until WP-C the plant computed motor bus draw
+as `p_mech = max(0.0, f_drive · v)` and applied the **unclipped** braking force
+mechanically. That was wrong twice over: the braking force was overstated, and the energy
+it removed from the flywheel vanished from the model entirely. Braking energy now flows end
+to end —
+
+```
+flywheel kinetic energy
+   → VESC (regen-side current clipped at VESC_REGEN_I_MAX_A)
+   → V-MOT node                      ← the RGN-V divider and the chopper sit here
+   → TL431/BSP170P chopper clamp     ← the FAST path; burns what the charger cannot take
+   → D-BC-RG → VCHG-IN → Ag105       ← the SLOW path; banks the rest
+   → pack coulomb count (SoC)
+```
+
+**Force/energy consistency.** The regen side of the command is clipped *before* it becomes
+force, so one number sets both the braking force and the electrical return:
+
+| Term | Value | Provenance |
+|---|---|---|
+| `VESC_REGEN_I_MAX_A` | 1.5 A | **`TODO(verify)`.** The bench Battery Regen Max setting (operator, 2026-08-16). Logs 153–162 measured −12 A commanded against ~6 % delivered (CLAUDE.md 2026-08-17b). The commanded-vs-delivered **mapping** was never characterized, and the setting is *battery*-referred while `i_cmd` is *motor*-referred; the model applies it directly to the motor-side command. **M5 (reviewer, 2026-09-01):** this is CONSERVATIVE on both the force axis and the harvest axis, not "conservative-force / optimistic-harvest" as previously stated — at 3 m/s the motor-referred cap yields 2.71 W of motor-side regen power, which maps to only ~0.17 A on the battery side, well below the ~0.7 A battery-side current the same logs actually measured; both directions of the mapping undercount versus what was observed. Closed by the queued "VESC regen-ceiling characterization" bench item. |
+| `ETA_REGEN` | 0.80 | **`TODO(verify)`.** Round-trip mechanical→electrical efficiency (motor copper/iron, inverter conduction/switching, link ESR). A modelling choice in the `ETA_BOOST` (0.85) class, de-rated for the harder braking corner. Same bench item. |
+| `R_CHOPPER_REG` | 0.5 Ω | **`TODO(verify)`.** The TL431/BSP170P clamp's small-signal output resistance. The clamp is a **linear regulator**, not a switched 47 Ω shunt: a bare shunt cannot hold 18.1 V against anything under 0.385 A, so it chatters across the threshold instead of clamping. 0.5 Ω is stiff (0.19 V of droop at the saturation point) without stiffening the node solve. |
+| `V_REGEN_OC_MAX` | 20.0 V | **`TODO(verify)`.** Stands in for the VESC's own DC-link overvoltage cutback, never characterized on this rig. It is the abs-max the ring estimator already uses, comfortably above the 18.1 V clamp, so the **chopper stays the operative limiter** — which is the physical design. |
+| `V_CHOPPER_TRIP` / `R_CHOPPER` / `P_CHOPPER_MAX_W` | 18.1 V / 47 Ω / 20 W | Unchanged — bench-calibrated clamp level (2026-08-27) and the BOM dump resistor. |
+
+**The energy balance the model asserts** (written at the site in `Plant.step()` and pinned
+by `test_regen_energy_balance` in both engines):
+
+```
+ΔKE                       = W_friction + ∫|p_shaft| dt
+∫|p_shaft| dt · ETA_REGEN = E_regen_electrical
+E_regen_electrical        = E_chopper + E_charger + ΔE(C_MOT_NODE)
+```
+
+The old floor violated the second line by setting its right-hand side to zero.
+
+**Where the energy actually goes, and why that is not a tuning knob.** `MOT_PWR` is an
+ideal diode, so regen current cannot flow back into VBUS: it charges the motor node until
+the chopper clamps at 18.1 V. That reproduces the bench observation — *V_rgn 13.3 → 18.1 V
+held, V_bus unmoved* (CLAUDE.md 2026-08-17b) — and the residual bus coupling is bounded by
+the RT1987's own 50 mV reverse-comparator band, i.e. the ~0.03–0.06 V the engine's chopper
+banner predicts. Meanwhile the Ag105 is dark for its first `AG105_SETTLE_S` (0.5 s) and
+then ramps on `AG105_TAU_S` (0.4 s), so the **first half-second of every braking window is
+burnt in the chopper, not banked**. That asymmetry — fast clamp primary, slow charger
+secondary — *falls out* of the model; it is not hardcoded anywhere.
+
+**Honest magnitudes.** At the 1.5 A clip the braking force is only `K_F · 1.5` = 1.13 N
+against 2.00 N of Coulomb friction alone, so most of the flywheel's energy still leaves as
+friction and a 3.0 → 0.4 m/s window returns **single-digit joules**. Pack SoC across a
+braking window is still a **net fall** (the bus load outweighs the harvest). Read the
+harvest off `I_charge`, the `chopper_clamp` event's `energy_j`, and the plant's
+`regen_energy_j` / `e_brake_mech_j` counters — never off SoC direction.
+
+**Charger input-power cap.** On the REGEN-fed path the Ag105's ceiling is
+`min(configured profile, available input power)`; fed from the bus through `FC_CHARGE` it
+is the configured profile verbatim, exactly as before. Without the cap the charger would
+draw its 2.5 A profile out of a 3 W brake. The bias runs in **both directions, and they do
+not cancel**: `p_regen_w` is the power available **pre-chopper**, so the cap is
+**optimistic** by the chopper's own efficiency/share factor — some of that power is lost
+across the chopper before it ever reaches the Ag105 input — while separately the cap is
+input-referred and compared against an output-referred target, which **understates** the
+harvest by roughly `v_in/v_pack ≈ 2×` — the conservative direction. Left in place rather
+than papered over with an unmeasured converter efficiency (`TODO(verify)`).
+
+**Observability.** The hi-fi engine emits one coalesced **`chopper_clamp`** event per
+braking episode (`dur_s`, `energy_j`, `peak_w`, `peak_v`) and reports `regen_energy_j`,
+`chopper_energy_j` and `chopper_episodes` in `summary()`. `chopper_clamp` is deliberately a
+*different kind* from `chopper_over_power`, which the suite scores as a **failure** — a
+clamp doing its job is an objective, not a defect. `reverse_block` events are coalesced the
+same way (a regen episode reverse-blocks and re-arms `MOT_PWR` every few substeps by
+construction).
+
+**⚠️ BASELINE ERA.** Every regen-path trace recorded in campaign `20260831_080905` or
+earlier was taken under the floor and is **not comparable** with a post-WP-C run — even the
+velocity trace differs, since the braking force is now clipped.
+
+**Regen-affected scenario enumeration (MEASURED, reviewer H1, 2026-09-01).** An offline walk
+of every EMS objective and all 27 replay entries against the -1.5 A regen clip found:
+`regen-harvest-true`, `charge-regen`, `mppt-tracking`, and all four `ems-y-*` scenarios
+(`ems-y-b00-v1`, `ems-y-b00-v3`, `ems-y-b30-v1`, `ems-y-b30-v3`) genuinely brake to -12 A for
+328-971 ticks past the clip (braking force drops 9.05 N -> 1.13 N, i.e. deceleration at
+3 m/s is 2.7x less) and so ARE regen-affected. `ems-sdp-braking` is explicitly **excluded**
+from that list despite braking every plateau: it measured **zero** ticks below the -1.5 A
+clip, so its charge windows are FC-fed through `FC_CHARGE` on the decel plateaus (see its
+own HONEST CAPTION in the scenario table), not regen harvest. Everything else in the EMS
+objective set — `ems-ftp75-*` (all variants), `ems-sdp`, `ems-soc-band`, `ems-dp-replay`,
+`ems-sdp-cross`, `ems-drive-cycle`, `soc-depletion`, `charge-to-full` — and all 27 replay
+entries measured **0** ticks past the regen clip, so their H2/SoC totals and the EMS
+frontier comparison are unaffected by the WP-C change.
+
+For those unaffected scenarios: the plant's drive direction is byte-identical (the
+`i_cmd >= 0` identity branch is unchanged), pinned by
+`test_drive_direction_is_bit_identical_to_the_pre_wpc_model`. The hifi ON-state stamp does
+change, but only where `dv < 35 mV` — bounded to (a) SOFT->ON handover transients (<= 90.6 mV
+one-tick deviation, decaying to zero within <= 16 ticks, with no state or event change), and
+(b) a bus collapse with `MOT_PWR` closed (the State-99 teardown regime: `ΔV_bus` up to
+2.30 V, producing 2 new `reverse_block` events — this is intended physics, not a
+regression). Deep sag with the boosts still on measures bit-identical to the pre-WP-C model.
+
+**Scoped deviation, flagged not shipped.** The ideal-diode correction that stops a closed
+switch conducting *reverse* below its 35 mV forward-regulation point is applied only to the
+links whose downstream node carries an active source (`MOT_PWR`, `REGEN`, `FC_CHARGE`).
+Applying it to the two boost-OR links is a different experiment — it moves the
+hardware-corroborated cold-start pin 0.2224 → 0.2245 A (+0.9 %, INDEPENDENTLY VERIFIED,
+reviewer L5, 2026-09-01) and changes which channel blocks during a hand-off (this half of
+the claim did NOT reproduce under two tested cold-start stimuli — see the L5 note in
+`hil_electrical.py`'s `strict_forward` block; UNVERIFIED as stated) — and needs its own A/B
+round against the bench.
 
 ---
 
@@ -279,7 +379,8 @@ steady operating point), **ML0165** and **ML0169**, all fw v16.
 > | | droop | what a sag figure means |
 > |---|---|---|
 > | `--electrical simple` | bench-measured 0.074 / 0.16 V/A | comparable to a recorded bench log |
-> | `--electrical hifi` | design 0.316 / 0.633 Ω | **~4× deeper sag for the same load** |
+> | `--electrical hifi --droop design` *(default)* | design 0.316 / 0.633 Ω | **~4× deeper sag for the same load**, and what EVERY campaign on record ran |
+> | `--electrical hifi --droop measured` *(opt-in, 2026-09-01)* | rescaled to the bench fit: **0.160 Ω single / 0.080 Ω shared** | comparable to a bench log, and **not** comparable to any other campaign in the archive |
 >
 > **Read hi-fi sag depths as CONSERVATIVE**: a UV or sag test that passes in hi-fi
 > passes with margin on the real bus. **Do not compare them to a bench log or to a
@@ -298,6 +399,50 @@ steady operating point), **ML0165** and **ML0169**, all fw v16.
 > droop from the FB-node superposition and therefore reproduces the *design* number.
 > Running the same scenario in both modes displays the discrepancy directly, which is
 > the most useful thing this document can do with an unresolved finding.
+>
+> **`--droop measured` (2026-09-01) DOES NOT CLOSE THIS FINDING.** The hi-fi engine
+> can now be asked to realize the bench droop instead of the design one. That makes
+> hi-fi sag depths comparable with a bench log, which is the whole point of the
+> switch; it explains nothing. Mechanically it is a **single empirical scale factor**
+> (`hil_electrical.DROOP_SCALE`) applied at the one point the MDAC chain becomes a
+> resistance, `Boost.update()`'s `r_droop = RE_MAX · g · droop_scale`. Nothing else in
+> the network moves — the RT1987 state machines, soft-start/TRCB, the chopper, the
+> sources, the OPA197 ceiling and every other constant are untouched, and a test pins
+> a `design`-mode solved operating point BIT-IDENTICAL to a pre-switch one.
+>
+> **The scale is taken over the DROOP TERM ALONE, and that matters by 15 %.** Only
+> `RE_MAX · g` is rescalable; the series path in front of it — `Boost.R_OUT` 0.010 Ω,
+> `RT_R_ON` 0.021 Ω, `R_SHUNT` 0.002 Ω, `DROOP_FIXED_SERIES_OHM` = 0.033 Ω — is fixed
+> physical copper the droop code does not set. So
+> `s = (0.16 − 0.033) / (0.63287 − 0.033) = 0.21171`. The naive end-to-end ratio
+> `0.16 / 0.633` instead lands the single-source regime at 0.1847 V/A, +15 %, because
+> it scales the floor down and then re-adds it at full size.
+>
+> **A residual is left, and it is asserted rather than hidden.** One scalar cannot
+> land both regimes: the network is a parallel Thévenin pair, so its shared/single
+> ratio is **structurally exactly 2.000**, while the bench fit's is
+> 0.1615 / 0.0740 = **2.182**. The scale is anchored on the regime the bench measured
+> most tightly — single-source, 0.1615 ± 0.001 V/A (0.6 %) — so the residual falls on
+> the shared regime at **0.0800 V/A, +8.1 % over the measured 0.0740 ± 0.004** (5.4 %),
+> i.e. ~1.5σ of that fit's own uncertainty. Anchoring the other way would have put
+> single-source 8.4 % off a value known to 0.6 %, ~13σ. Both residuals are the same
+> structural fact and neither anchor removes it. Measured, by DC solve at four
+> currents per regime: design **0.31644 / 0.63287 Ω**, measured **0.08002 / 0.16003**.
+>
+> **Provenance and scope.** `run_hil_suite.py --droop {design,measured}` (default
+> `design`) passes the flag to the SCENARIO half only — every replay entry's
+> thresholds were calibrated against design-mode sag depths, so a measured-mode
+> replay campaign needs its bands re-derived first, which is an operator decision.
+> Every CSV's meta sidecar records `config.droop_mode` / `droop_scale` /
+> `droop_applied` **unconditionally**, default included, so a report reader can place
+> any sag figure on one side of this finding; REPORT.md states the campaign's mode in
+> its header table and again under the standing finding. `V₀` is a property of the FB
+> chain and does not move with the mode (15.867 V either way) — the bench intercept
+> 15.95 V remains a separate ~0.08 V discrepancy this switch does not address.
+>
+> Scenario entries may override the mode with a `droop_mode` key (the
+> `mppt_emulation` pattern); **no shipped scenario sets it**, so the hook costs
+> nothing until a measured-vs-design comparison scenario is wanted.
 
 With **no** live source the node is not forced to zero — it decays as an RC through the
 bulk capacitance:
@@ -506,7 +651,7 @@ firmware's HIL branch skips it entirely and just injects the resulting numbers.
 | **No boost-converter dynamics.** The bus is algebraic in `I_total`; there is no voltage loop, no RHP zero, no compensator lag. | Nothing here reproduces the boost-death class of failure, the τ_r lag the share-loop plant is built on, or a converter's transient response. Do not fit `τ_r` or any converter parameter against a HIL trace. |
 | **No RT1987 turn-on transient.** A switch bit change takes effect within the same tick. | The *ordering* of switch operations is fully observable at 1 ms; the *hot-plug energy* that killed a boost (Death 5) is not modelled at all. A HIL pass says the sequencing logic is right, not that a real closure would be survivable. |
 | **Split proportional to MDAC code ratio.** Sign- and monotonicity-preserving, wrong gain. | Share-loop *logic* testable; share-loop *tuning* not. |
-| **Regen floored at zero (§3.4).** | No bus rise under braking, so the `REGEN_ENABLE`+`MOT_PWR_ENABLE` charger-power path (§4.6) can be exercised, but never with genuine regen energy behind it; no `V_rgn` excursion beyond the bus value, so the chopper clamp behaviour seen in the bench logs cannot appear. |
+| **Regen modelled end to end (§3.4, WP-C 2026-09-01) — but on THREE unmeasured constants.** The floor is gone: braking energy reaches the chopper and the Ag105. `VESC_REGEN_I_MAX_A`, `ETA_REGEN` and `R_CHOPPER_REG` are all `TODO(verify)`. | The regen PATH, the chopper clamp and the energy BALANCE are now genuine HIL results. The MAGNITUDES are not: a harvest figure from a HIL run inherits the 1.5 A clip's unmeasured commanded-vs-delivered mapping and the 0.80 efficiency guess. Quote the ratio (what fraction the chopper burnt vs the charger banked), not the absolute joules. Bus-side regen rise is still absent by construction, and correctly so — `MOT_PWR` is an ideal diode. |
 | **Charger status-level only; MPPT modelled at the THRESHOLD, not the tracking.** `I_charge` and `ag105_status` are injected (§4.6), so `chargingControl()`'s readiness gating and the GENSTAT fault check are live and testable. SoC and the CV/Fully-Charged branch are modelled (§4.2). **MPPT (2026-08-31, scoped; dynamic from fw v24):** with `mppt_emulation` the part's real mechanism — the **input-voltage threshold** (datasheet p.10; **not** perturb-and-observe) — IS modelled at the value the BOARD reports (observation-frame byte 15), and `MPPT_DISABLE` becomes causal. The **tracking dynamics** (how the module walks its operating point once above the threshold) are **not** modelled, and neither is the I2C transport or config handshake. Off by default. | Sequencing and status-decode logic around the charger are meaningful HIL results, and so is the *threshold gate*'s interaction with the firmware's readiness-gated MPPT release (`mppt-tracking`). Charger **tuning** and **harvest-efficiency** results are still not available. ⚠️ The `mppt-tracking` **hunt is fw v23 history and is now the FAILURE signature** — fw v24 lowers the threshold under the bus, so the scenario asserts harvest holding, not hunting. |
 | **Single lumped bus node.** No wiring impedance, no per-source bus segment, no capacitance between nodes. | Handoff-gap phenomena of the TP0178 class (a source dropping out and the other ideal diode picking up only reactively) are not reproduced faithfully; the split here is instantaneous. |
 | **No sensor noise, no quantization, no ADC path.** | Steady-state error in a HIL drive run validates the loop's *structure*, not its noise rejection. There is no encoder jitter, so the current-side chatter seen on the bench cannot appear. |
@@ -553,6 +698,7 @@ Selected with `--scenario`; `apply_scenario()` is re-evaluated every tick from `
 |---|---|---|---|
 | `steady` | `i_aux` held at 0.15 A | quiescent baseline: bring-up, Idle, telemetry, the link itself | `V_bus` ≈ `V_BUS_DROOP_V0` (15.95 V) − `k`·`I_total` with the F1-corrected, mode-aware `k` (§4.2: `K_DROOP_BUS_SHARED` 0.074 V/A with both sources live, `K_DROOP_BUS_SINGLE` 0.1615 V/A with one) — at `i_aux` = 0.15 A alone that is a sub-30 mV droop either way, i.e. `V_bus` stays within noise of 15.95 V; `fault_flags == 0`; observation `state` settles at 1 (Idle); simulator rx rate ≈ 1 kHz. This is H1. |
 | `step-load` | `i_aux` → 0.15 + **1.2 A** at t = 5 s (step, held) | share loop's disturbance rejection: `I_total` steps, both source currents rise, the droop node sags by `k`·1.2 A — **0.074·1.2 ≈ 0.089 V** with both sources live (the common case), or **0.1615·1.2 ≈ 0.194 V** if only one is (the old single source-agnostic 0.35 V/A figure this table used to quote is retired — see §4.2) | Share loop moves the MDAC codes to restore `power_share_actual` toward its setpoint; the split ratio visibly tracks. Note §4.4 — the *direction* is meaningful, the *gain* is not. |
+| `v-bus-sense-offset` **(hifi only)** | `v_bus_offset` = **−5.0 V** for `5.000 ≤ t < 5.012` s (12 ms) and again for `8.000 ≤ t < 8.060` s (60 ms) | `UV_BUS_DWELL_LATCH_MS` (20 ms) from BOTH sides — the first excursion must not latch, the second must | ≈ 10.9 V measured, 1.1 V clear of the limit, so the dwell accrues at the full 1 ms/tick and no sample sits on the boundary. The 3 s gap is 12.5× the 240 ms the `UV_BUS_DWELL_LEAK` 0.05 needs to drain the first excursion, so the second latches on its own 60 ms. **hifi is required, not preferred:** here the offset is sense-path-only (§ the `v_bus_sense_offset` asymmetry below), so nothing but the measured rail moves — in simple mode the same offset is a real disturbance the sources answer, and the dwell measurement would be confounded by the current transient it causes. |
 | `sag` | `v_bus_offset` = **−5.0 V** for `5.0 ≤ t < 6.0` s | the **real** undervoltage path: `LIMIT_V_BUS_MIN` 12.0 V with the `UV_BUS_DWELL_*` leaky-integrator filter (`UV_BUS_DWELL_LATCH_MS` 20 ms net dwell to latch) | ≈ 16 − 5 ≈ 11 V, ~1 V under the limit, for 1 s — far past the 20 ms dwell. Expect `mainState` → **99**, the UV bit latched in `fault_flags`, and the switch bitmask going to the State-99 safe combination. Crucially, **no fault before the dwell elapses**. This is H2. Requires the bus to be armed (`uvBusArmed`), i.e. the bring-up must have reached `V_BUS_CHARGED_THRESH` first. |
 | `comm-loss` | transmit suppressed for `5.0 ≤ t < 6.0` s; the plant keeps integrating and logging | the two-stage hold-then-zero in `updateSensors()` | ≤ 50 ms: unchanged. 50–250 ms: values **held**, `hilStale` set, and on the **stale entry edge** `haltMotorOutput()` stands the actuator down (setpoint zeroed, Youla state reset, 0 A sent) — the sensors stay held so a missed tick cannot latch a bogus UV fault. > 250 ms: all seven rails and `v_actual` forced to zero, host unbound, and `triggerFault(FAULT_HIL_LINK, ERR_HIL_STALE)` latched — `ERR_HIL_STALE` = 0x10 disambiguates the deliberate `FAULT_PI_TIMEOUT` bit alias. On resume the link re-locks and the accept count resumes. This is H3. |
 | `drive` **(operator-required)** | none; `i_aux` at nominal. `run_hil_suite.py` renders this SKIPPED unless `--with-operator` is given — unattended it commands nothing. | whatever the operator commands over USB serial (`'V'`, `'D'`, `'Y'`, `'W'`, State-98 generally) | The plant just stays honest underneath a hand-driven run. `v_actual` in the CSV should converge on the setpoint with no sustained ±12 A rail chatter; `current` should show the Hanus-conditioned ramp and release. This is H4 — and since the model has no encoder noise, it validates the loop's *structure*, not its tuning. |
@@ -574,7 +720,7 @@ Selected with `--scenario`; `apply_scenario()` is re-evaluated every tick from `
 | `ems-ftp75-5050`, `ems-ftp75-socband` **(EMS-driven, opt-in, 2026-08-31)** | the **EPA FTP-75** cycle at raw t = 0..340 s inclusive, 341 samples at 1 Hz (the segment of `references/Systemic_Scaling_of_Powertrain_Models_with_Youla_Driver_Control.pdf`; the raw EPA file is committed at `references/drive_cycles/ftpcol.txt` and `tools/gen_ftp75_profile.py` verifies its sha256 before generating `tools/ftp75_profile.py` — 341 raw samples decimated to 234 points, worst reconstruction error 4.4e-16 m/s). Scaled by ONE constant, 3.0/56.7 m/s per mph, so the 56.7 mph peak lands on 3.0 m/s; shifted to start at t = 5.0; ends at rest (the trace is 0 mph from raw t = 333, so no synthetic tail is appended). 350 s each, `aux_preload_a` **+0.65 A** (`FTP75_PRELOAD_A`) which puts 100.00 % of the post-ramp run above the 0.60 A governor gate at a 0.800 A floor. | The EMS layer as an **endurance** test rather than a transient one: 345 s of continuous 50 Hz commanding, ~30 accelerate/cruise/decelerate/idle cycles, and an H2 total over a cycle a reader outside this project recognises. | `cmd_v_sp` reaches 3.0 m/s at t = 245; peak source total 1.613 A, so `hold-5050`'s fixed 0.50 split puts **0.807 A** on a channel (42 % under `LIMIT_I_FC_MAX`) and `soc-band`'s 0.75 ceiling puts **1.210 A** (14 %); `h2_cum_g` ≈ 5.5e-2 g (`hold-5050`) / 8.2e-2 g (`soc-band` saturated). `ems-ftp75-5050` is expected **fault-free**; `ems-ftp75-socband` **ALLOWS `OC_FC`** — at a 0.75 split a drive-controller transient near the peak spends the remaining margin, and a single-channel overload is the designed outcome (operator ruling (b)), not a defect. ⚠️ The 0.800 A floor is ABOVE `SOC_BAND_CHARGE_ENTER_ITOT_A` 0.60 A, so the policy's **charging branch cannot open here** — by construction, stated so it is not read off a trace as an absence. |
 | `mppt-tracking` **(EMS-driven, 2026-08-31)** | the `charge-regen` speed profile (**the same list object** — a comparison across the two is only meaningful on one stimulus) driven by `mppt-harvest`: `charge_goal` on the braking windows (regen path, `MPPT_DISABLE` held LOW by the firmware's own regen branch) **and** on the 0.4 m/s low-cruise plateaus (FC path, tracking released). `mppt_emulation` **True**; `chg_i_ceiling_a` **1.0 A**. The FC path is single-source (`assertFcChargeEnable()` drops BT off the bus), so the budget is 0.15 aux + ~0.06 motor + 1.0 charge = **1.21 A**, 14 % under `LIMIT_I_FC_MAX`. `mppt-harvest` is a SEPARATE function from `regen-harvest`, deliberately: `charge-regen` has pinned measurements across five campaigns and must not move because this scenario's windows did. | The **MPPT input-voltage threshold** against the firmware's readiness-gated MPPT release — the first scenario in which `MPPT_DISABLE` does anything causal. From fw v24 it also exercises the **threshold manager**: the FC path feeds the charger from the ~15.95 V bus, and the firmware must lower reg `0x02` under it rather than hunt against the 18 V default. | ⚠️ **THE OBJECTIVE INVERTED AT fw v24 — the hunt below is now the FAILURE signature.** fw v24's manager writes reg `0x02` to (windowed-min `V_chg` − 3.0 V), clamped in counts to **[15, 27] = 12.320–13.376 V** (`.ino:1671-1690`), so the module stops refusing, `ag105IsReady()` holds and the pin stays released. The suite's retired 2200-tick ceiling is replaced by a phase-free **edge census** (3–8 rises across the cruise windows), the Low-Power check is inverted to an absence bound, `MPPT_EN|PWR_TRACK` — unreachable under fw v23 — becomes the steady state, and the new `mppt_thresh_cnt` column is the positive evidence the manager ran. **THE fw v23 RECORD, kept because a regression reproduces it:** the firmware releases tracking only once the charger reports ready (`ag105IsReady()`, `.ino:10249-10255`), and releasing it is exactly what stopped the charging that made it ready, so the two **hunted**. Measured on hardware (campaign `20260831_191509`): full period **~40.05 ms** median — ⚠️ RECORD CORRECTED 2026-08-31, this line quoted the offline probe's 80.0 ms, which the campaign's 138 MPPT_DISABLE toggles over the cruise windows arithmetically rule out (80 ms would give about half that many). The firmware acts on the previous 50 Hz poll, so it lags by one tick in each direction. Pin HIGH 50.0 % of ticks, GENSTAT 001 on 50.0 %, `MPPT_EN`-without-`PWR_TRACK` on 50.0 %, `I_charge` equilibrium **0.465–0.525 A** — near half the ceiling, which is why the suite's `charging_occurred` floor is 0.25 A and not 0.5. The pin can only be HIGH inside the strategy's INSET cruise-charge windows, i.e. 3 × 1.5 s less 3 × `AG105_SETTLE_S` = **3.0 s**, so the hunt is ~1500 ticks and a stuck-high pin ~3000 — the retired `mppt_not_stuck_high` ceiling was **2200** between them. ⚠️ Under fw v24 the ~3000-tick outcome is the EXPECTED one, which is why that ceiling had to be replaced rather than re-tuned. **Expected fault-free**, though the realized FC-path margin narrows: the hunt used to hold the mean charge current near half the ceiling, and continuous harvest draws the full 1.0 A that the 1.21 A budget already assumes. |
 | `charge-to-full` **(2026-08-31)** | `pi_timeline`: MODE_SAFE 0.5, MODE_HYBRID 3.0, `v_setpoint` **0.0** and share 0.5 at 5.0, `charge_goal` 1.0 at 8.0. 130 s, `chg_i_ceiling_a` **1.0 A**, and the suite overrides **`--soc0 0.990`** (the second such override, mirroring `soc-depletion`'s — which starts LOW to reach a UV latch where this one starts next to FULL). 0.995 − 0.990 = 0.005 of a 5 Ah pack = 90 A·s = **90 s** at the ceiling, so FULL is expected ~t = 100. Standstill is load-bearing: `v_setpoint` 0 < `V_SP_ZERO_THRESH` means 0 A to the motor, which is what makes the single-source budget 0.15 + 1.0 = **1.15 A** (18 % margin) work for 120 s. ⚠️ `mppt_emulation` is deliberately **OFF**, and stays off under fw v24 — the 18 V gate would have blocked this very path outright, and the fw v24 clamped threshold would simply be inert on a continuously-fed standstill charge. | The Ag105 **Fully-Charged / CV** branch, never reached by any prior campaign (largest SoC rise on record ~0.0009 against the ~0.29 that `--soc0 0.7` needs), and the firmware's deliberate **no-action** response to it. | `I_charge` ≥ 0.8 A in CC (t = 10–60); GENSTAT **011** and the **CV** flag held ≥ 500 ticks after t = 60; `I_charge` ≤ 0.05 A after t = 125 (the new `max_value` ceiling kind); and `SW_FC_CHARGE` **still set** after t = 110 — the no-action baseline made visible, so a future policy change to it fails a check instead of surprising a reader. **Expected fault-free.** ⚠️ Zero drive-channel coverage. `CHARGER_STAT` (pin 6) is on neither HIL frame and `chargingControl()` does not read it, so its Fully-Charged blink signature is out of scope; carrying it would be a frame extension. |
-| `pi-silence` **(EMS-driven, 2026-08-31)** | `hold-5050` with **no `ems_v_profile`**, so it falls back to `EMS_DEFAULT_CRUISE_MPS` = 1.2 m/s — that fallback IS the setpoint here, chosen because the model's ~3.5 A hold current makes the motor cut-off unmistakable. The commander goes **permanently silent at t = 8.0** (`pi_mute_after_s`): `PiCommander.tick()` returns `None` without advancing its timeline, counter or `next_tx`, so a dead Pi neither scripts nor queues. The **injection** stream keeps running at full rate. 14 s. | The firmware's **Pi watchdog** (`checkPiWatchdog()`, `.ino:4976-4985`, `PI_TIMEOUT_MS` 500, armed in State 2/3 once `pi_ever_connected`), isolated from the HIL link. Its clock is stamped **only** by the 22-byte command branch (`:5043-5044`); every prior stimulus gated both streams together (`apply_scenario`'s `tx_enabled`, `:4172`/`:4192`) and tripped the HIL staleness path instead. | **`FAULT_PI_TIMEOUT` REQUIRED**, `not_before_s` 8.0, in State 2 at t = 7.5. Plus `motor_halted`: commanded `current` falls ≥ 2.0 A across the latch — the fault's consequence, not just its flag. ⚠️ 0x0010 is shared with `FAULT_HIL_LINK` and the observation frame carries no `error_code`, so the entry declares **`child_tx_healthy`**: a continuous injection stream rules the alias out **by elimination**, not by direct read. Injection never stops, so no fw v23 run boundary forms and the latch persists; a mid-run warm reset would prove contamination *and* clear `pi_ever_connected`, disarming the watchdog under test — which is why `warm_resets_expected` is deliberately absent. |
+| `pi-silence` **(EMS-driven, 2026-08-31)** | `hold-5050` with **no `ems_v_profile`**, so it falls back to `EMS_DEFAULT_CRUISE_MPS` = 1.2 m/s — that fallback IS the setpoint here, chosen because the model's ~3.5 A hold current makes the motor cut-off unmistakable. The commander goes **permanently silent at t = 8.0** (`pi_mute_after_s`): `PiCommander.tick()` returns `None` without advancing its timeline, counter or `next_tx`, so a dead Pi neither scripts nor queues. The **injection** stream keeps running at full rate. 14 s. | The firmware's **Pi watchdog** (`checkPiWatchdog()`, `.ino:4976-4985`, `PI_TIMEOUT_MS` 500, armed in State 2/3 once `pi_ever_connected`), isolated from the HIL link. Its clock is stamped **only** by the 22-byte command branch (`:5043-5044`); every prior stimulus gated both streams together (`apply_scenario`'s `tx_enabled`, `:4172`/`:4192`) and tripped the HIL staleness path instead. | **`FAULT_PI_TIMEOUT` REQUIRED**, `not_before_s` 8.0, in State 2 at t = 7.5. Plus `motor_halted`: commanded `current` falls ≥ 2.0 A across the latch — the fault's consequence, not just its flag. ⚠️ 0x0010 is shared with `FAULT_HIL_LINK`, so the entry declares **`child_tx_healthy`**. From **fw v25** that is a DIRECT READ of frame byte 16 (`ERR_PI_TIMEOUT` 0x05 vs `ERR_HIL_STALE` 0x10); on fw v21–v24 it falls back to the older inference **by elimination** (a continuous injection stream rules the alias out). Injection never stops, so no fw v23 run boundary forms and the latch persists; a mid-run warm reset would prove contamination *and* clear `pi_ever_connected`, disarming the watchdog under test — which is why `warm_resets_expected` is deliberately absent. |
 | `share-staircase` **(2026-08-31)** | **Motor-free** (`v_setpoint` 0 for the whole run — a drive transient would move I_tot and therefore move the governor rails mid-staircase). **Two loads**, a bespoke `apply_scenario()` branch because the generic `aux_preload_a` ramps a load in once and cannot bring it back down: `STAIRCASE_LOAD_A` **+1.05 A** from t = 4 (I_tot **1.20 A**, so the rails land on the round 0.25/0.75), dropped to `STAIRCASE_LOAD_B` **+0.40 A** at t = 29 (I_tot **0.55 A**), both edges ramped over `SOC_LOAD_RAMP_S`. Timeline: 0.80 → 0.20 in 0.10 steps every 3 s from t = 6, recentre 0.50 at 27, then 0.95 / 0.50 / 0.05 / 0.50 at 33 / 36 / 39 / 42. | **Phase A** — the governor's clip band `SHARE_MINORITY_I_MIN_A/I_tot` = [0.25, 0.75], measured only incidentally by campaign TP0170–0180, swept deliberately in both directions. **Phase B** — `updateShareSetpointCutoff()`'s **cut AND restore** on both channels, with the latency of each. The two loads cannot be one: at 1.20 A a 50/50 split is 0.60 A, over the cut's `SHARE_CUT_MAX_HANDOFF_A` 0.5 A guard, so the latch would **defer** rather than fire. | `cmd_share_sp` reaches 0.80 and sweeps ≥ 0.55 down; `I_fc` ≥ 0.80 A at the top step (the 0.75 rail on 1.20 A is 0.90 A; a run that ignored the command and held 0.50 would show 0.60) and falls ≥ 0.50 A across the sweep; `SW_BT_BUS` and `SW_FC_BUS` each **cut and restored**; and **four latency measurements** via `switch_fall_latency_ms` (both `fall` and `rise` edges), tripwire 40 ms. **Expected fault-free** (worst channel 0.90 A vs 1.4 A). ⚠️ The measured latency is the **deliverable**; the bound is a regression tripwire and must never be raised to make a run pass. Corrected premise: the [0, 20) ms spread is **command-arrival phase** at `PI_CMD_HZ` 50, not a firmware tick — `POWER_BAL_PERIOD_US` and `SHARE_CTRL_TS_US` are both 1000 µs. ⚠️ Phase B's 0.55 A sits ON the closed-loop exit hysteresis, so do not read share-*tracking* numbers off it; Phase A is where the loop is unambiguously closed. |
 
 Three scenario notes. First, `sag` injects an **offset on the bus node**, not a source

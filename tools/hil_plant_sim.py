@@ -35,7 +35,7 @@ Wire protocol (mirrored from teensy_controller.ino, fw v21 — keep in lockstep)
   no longer matches the firmware's length dispatch and is dropped unread, so an
   old simulator against a new flash shows accepts stuck at zero.)
 
-  Observation frame (Teensy -> host), 17 bytes from fw v24, little-endian
+  Observation frame (Teensy -> host), 18 bytes from fw v25, little-endian
     0  u8    sync 0xB6
     1  u8    seq echo (last accepted injection seq)
     2  u8    mainState
@@ -51,14 +51,21 @@ Wire protocol (mirrored from teensy_controller.ino, fw v21 — keep in lockstep)
                   (ag105MpptRegCnt).  0xFF = external-resistor mode / never
                   written (AG105_MPPT_N_RESISTOR, the boot value); 0..250 map
                   to 11.0 + 0.088*N volts (AG105_MPPT_VOLTS, .ino:1671-1677).
-   16  u8    XOR checksum over bytes 1..15
+   16  u8    error_code  APPENDED fw v25 (.ino:2968-2978) — the LATCHED
+                  first-cause ErrorCode_t (.ino:1645-1670), 0 = ERR_NONE.
+                  triggerFault() latches the FIRST CAUSE here while it only ORs
+                  bits into fault_flags, so this is what separates
+                  ERR_PI_TIMEOUT (0x05) from ERR_HIL_STALE (0x10) on the shared
+                  0x0010 fault bit.
+   17  u8    XOR checksum over bytes 1..16
 
-  BOTH LENGTHS ARE ACCEPTED.  A 16-byte frame is the fw v21-v23 layout (XOR over
-  bytes 1..14 at byte 15) and decodes with `mppt_cnt` None; every pre-existing
-  offset is identical in the two, so the length alone selects the checksum span
-  and whether byte 15 is data or the checksum.  parse_output() prints a one-time
+  ALL THREE LENGTHS ARE ACCEPTED.  16 bytes is fw v21-v23 (XOR over 1..14 at
+  byte 15, no mppt_thresh_count, no error_code); 17 is fw v24 (XOR over 1..15 at
+  byte 16, no error_code); 18 is fw v25+.  Every pre-existing offset is identical
+  in all three, so the length alone selects the checksum span and whether the
+  tail bytes are data or the checksum.  parse_output() prints a one-time
   provenance line naming the length the board is actually speaking, and prints
-  again — loudly — if a single run ever sees both.
+  again — loudly — if a single run ever sees more than one.
 
 Stdlib only — socket, struct, time, argparse, csv.  No numpy.
 
@@ -104,16 +111,55 @@ import time
 HIL_SYNC_INJECT = 0xB5
 HIL_SYNC_OUTPUT = 0xB6
 HIL_INJECT_SIZE = 40
-# OBSERVATION FRAME LENGTH IS VERSIONED (fw v24, .ino:2930-2938 HIL_OUTPUT_SIZE).
-# 17 is the current layout; 16 is fw v21-v23 and is still decoded, because a
-# simulator that silently drops every frame from an older flash presents as
-# "the board is dead" rather than "the board is old".  The two differ ONLY in
-# the tail: byte 15 is the appended mppt_thresh_count in the 17-byte frame and
-# the checksum in the 16-byte one, so the checksum SPAN is length-derived and
-# every field below offset 15 parses identically.
-HIL_OUTPUT_SIZE = 17            # fw v24 and later
+# OBSERVATION FRAME LENGTH IS VERSIONED (fw v25, .ino:2955-2981 HIL_OUTPUT_SIZE).
+# 18 is the current layout; 17 (fw v24) and 16 (fw v21-v23) are still decoded,
+# because a simulator that silently drops every frame from an older flash
+# presents as "the board is dead" rather than "the board is old".  The three
+# differ ONLY in the tail — byte 15 is mppt_thresh_count from fw v24, byte 16 is
+# error_code from fw v25 — so the checksum SPAN is length-derived and every
+# field below the appended tail parses identically in all three.
+HIL_OUTPUT_SIZE = 18            # fw v25 and later
+HIL_OUTPUT_SIZE_V24 = 17        # fw v24
 HIL_OUTPUT_SIZE_LEGACY = 16     # fw v21-v23
-HIL_OUTPUT_SIZES = (HIL_OUTPUT_SIZE_LEGACY, HIL_OUTPUT_SIZE)
+HIL_OUTPUT_SIZES = (HIL_OUTPUT_SIZE_LEGACY, HIL_OUTPUT_SIZE_V24, HIL_OUTPUT_SIZE)
+
+# ErrorCode_t (.ino:1645-1670).  APPEND-ONLY by firmware contract, so an unknown
+# value here means "newer firmware than this tool", never "corrupt" — consumers
+# render the raw hex and say so rather than dropping the reading.
+ERROR_CODE_NAMES = {
+    0x00: "ERR_NONE",
+    0x01: "ERR_OC_FC",
+    0x02: "ERR_UV_BATT",
+    0x03: "ERR_OV_BUS",
+    0x04: "ERR_SWITCH_CONFLICT",
+    0x05: "ERR_PI_TIMEOUT",
+    0x06: "ERR_OV_BATT",
+    0x07: "ERR_UV_FC",
+    0x08: "ERR_OC_BT",
+    0x09: "ERR_UV_BUS",
+    0x0A: "ERR_OV_RGN",
+    0x0B: "ERR_OV_CHG",
+    0x0C: "ERR_I2C_CHARGER",
+    0x0D: "ERR_CHARGER_STAT",
+    0x0E: "ERR_INIT_FAIL",
+    0x0F: "ERR_MOT_HOTPLUG",
+    0x10: "ERR_HIL_STALE",
+}
+# The two codes that share fault bit 0x0010 and that fw v25's frame extension
+# exists to separate.  Named here so every consumer (dashboard, suite excusal,
+# pi-silence attribution) cites one definition.
+ERR_PI_TIMEOUT = 0x05
+ERR_HIL_STALE = 0x10
+
+
+def error_code_name(code) -> str:
+    """'ERR_UV_BUS (0x09)' — or '0x21 (unknown)' for a code newer than this tool."""
+    if code is None:
+        return "unknown"
+    n = int(code) & 0xFF
+    known = ERROR_CODE_NAMES.get(n)
+    return ("%s (0x%02X)" % (known, n)) if known else ("0x%02X (unknown)" % n)
+
 
 TEENSY_PORT_DEFAULT = 5001          # local_port in the .ino
 
@@ -258,6 +304,50 @@ F_COULOMB = 2.00     # N       thermal Coulomb friction (2.00 +/- 0.42 N)
 B_EFF = 0.534        # N*s/m   viscous drag
 V_STICTION = 0.02    # m/s     |v| below which the Coulomb term is treated as static
 
+# ── Regen / braking energy path (WP-C, 2026-09-01) ──────────────────────────
+# BEFORE THIS ROUND the plant floored regen power at zero (`p_mech = max(0, F*v)`)
+# while applying the UNCLIPPED braking force mechanically.  That was wrong on two
+# counts at once: the braking force was overstated (the VESC's Battery Regen Max
+# really does clip regen torque) and the energy it removed from the flywheel simply
+# vanished from the model.  Braking now flows end to end: kinetic energy -> VESC
+# regen -> V-MOT -> (chopper clamp burns the fast excess) -> D-BC-RG -> VCHG-IN ->
+# Ag105 -> pack coulomb count.
+#
+# TODO(verify) — VESC_REGEN_I_MAX_A.  The bench setting is Battery Regen Max
+# 1.5 A (operator, 2026-08-16), and logs 153-162 measured -12 A COMMANDED against
+# ~6 % delivered (CLAUDE.md 2026-08-17b), i.e. ~0.7 A of the 12 A actually
+# returned.  The commanded-vs-delivered MAPPING has never been characterized, and
+# the setting is BATTERY-referred while `i_cmd` is MOTOR-referred; this model
+# applies the number directly to the motor-side command.  M5 (reviewer,
+# 2026-09-01) corrected the direction of this bias: it is CONSERVATIVE on BOTH
+# the force axis AND the harvest axis, not "conservative-force /
+# optimistic-harvest" as previously stated here.  At 3 m/s the motor-referred
+# 1.5 A cap yields 2.71 W of motor-side regen power, which maps to only
+# ~0.17 A on the battery side — well BELOW the ~0.7 A battery-side current
+# bench logs 153-162 actually measured. Both directions of the mapping
+# undercount versus what was observed. Closing it needs the queued "VESC
+# regen-ceiling characterization" bench item.
+VESC_REGEN_I_MAX_A = 1.5     # A   regen-side clip on the commanded motor current
+# TODO(verify) — ETA_REGEN.  Round-trip mechanical->electrical efficiency of the
+# regen path: motor copper + iron loss, inverter conduction/switching loss, and the
+# 470 uF link ESR.  0.80 is the reciprocal-of-ETA_BOOST class figure the drive
+# direction already uses (ETA_BOOST 0.85) de-rated for the harder braking corner;
+# it is a modelling choice, not a measurement, and the same bench item closes it.
+ETA_REGEN = 0.80             # -   mechanical braking power -> electrical, at V-MOT
+
+# Lumped simple-mode motor-node model (hi-fi solves the real network instead).
+# The RT1987 in MOT_PWR is an IDEAL DIODE: it conducts bus->motor, and its reverse
+# comparator opens it once the motor node rises RT_V_REV (50 mV) above the bus.
+# So regen current does NOT flow back into VBUS — it charges the motor node until
+# the chopper clamps it, which is precisely the bench observation "V_rgn 13.3 ->
+# 18.1 V held, V_bus unmoved" (CLAUDE.md 2026-08-17b).  The residual bus coupling
+# through that 50 mV comparator band is the ~0.03-0.06 V the hi-fi engine's own
+# banner predicts; simple mode does not resolve it and holds V_bus unmoved.
+# (literal rather than C_VESC_DEFAULT: this block sits ABOVE the hil_electrical
+#  import.  Same value, pinned equal by test.)
+C_MOT_NODE_F = 500e-6           # F   V-MOT bulk (link + VESC input caps); this is
+                                #     hil_electrical.C_VESC_DEFAULT, pinned by test
+
 # Electrical.  V_BUS_NOMINAL and the rails below are the .ino's own constants
 # (V_BUS_NOMINAL 16.0f; LIMIT_V_BUS_MIN 12.0f; LIMIT_V_BATT_MIN 6.2f; 2S pack
 # 7.4-8.4 V; the H-20 fuel cell is a ~13 V-class source with LIMIT_V_FC_MIN 6.0f).
@@ -294,6 +384,19 @@ V_BUS_NOMINAL = 16.0     # V   the firmware's own constant; kept for reference
 # charge-regen's 0.49 V sag under 1.54 A is exactly 1.54 * 0.316 — arithmetic, not an
 # anomaly.  Closing the gap means reconciling hil_electrical's FB-node superposition
 # against the measured fit; until then this banner is the disclosure.
+#
+# ⚠️ MEASURED MODE AVAILABLE (2026-09-01, `--droop measured`) — AND IT DOES NOT
+# CLOSE THIS FINDING.  The hi-fi engine can now be asked to realize the BENCH
+# droop instead of the design one (hil_electrical.DROOP_SCALE, a single
+# empirical scale factor on each channel's realized droop resistance).  That
+# makes hi-fi sag depths comparable with a bench log, which is the whole point
+# of the switch; it EXPLAINS NOTHING.  The 4x gap between the MDAC droop chain
+# and the bench fit is exactly as open as it was, and the mode adds a second
+# open detail of its own: the network's shared/single ratio is structurally
+# 2.000 while the bench fit's is 2.182, so one scalar cannot land both regimes
+# (the anchor and the residual are stated at DROOP_SCALE).  `--droop design`
+# remains the DEFAULT, so every existing baseline and every recorded campaign
+# number is unaffected.
 K_DROOP_BUS_SHARED = 0.074   # V/A  both sources live
 K_DROOP_BUS_SINGLE = 0.16    # V/A  exactly one source live
 V_BUS_DROOP_V0 = 15.95       # V    measured no-load intercept
@@ -317,6 +420,16 @@ sys.path.insert(0, _HERE)
 from hil_electrical import (                                   # noqa: E402
     BatterySource, FuelCellSource, ElectricalSim, NoiseConfig,
     BATT_CAPACITY_AH, C_VESC_DEFAULT,
+    # WP-C regen path: ONE definition of the chopper law and of the regen
+    # source's bounds, shared by both electrical modes so they cannot drift.
+    V_CHOPPER_TRIP, R_CHOPPER, chopper_dump_current,
+    V_REGEN_OC_MAX, REGEN_I_SRC_MAX_A,
+    # WP-E droop realization mode.  DROOP_SCALE is the mode -> scale map and
+    # DROOP_MODES its key tuple (the `--droop` choices); both live in
+    # hil_electrical because that is where the droop chain is realized.
+    # DROOP_MODE_DEFAULT is the `--droop` default, single-sourced there so the
+    # flag's default and the "was --droop passed explicitly" test cannot drift.
+    DROOP_SCALE, DROOP_MODES, DROOP_MODE_DEFAULT,
 )
 # GENERATED module — tools/gen_ftp75_profile.py, from the committed EPA raw
 # file references/drive_cycles/ftpcol.txt (sha256 verified at generation).
@@ -644,6 +757,34 @@ def write_meta_sidecar(csv_path: str, payload: dict) -> bool:
     return ok
 
 
+# ── `v-bus-sense-offset` stimulus geometry (2026-09-01) ─────────────────────
+# Module-level so run_hil_suite.py's expectation windows are DERIVED from the
+# same numbers the stimulus is, rather than re-typed. Moving an excursion here
+# moves the checks that judge it.
+V_BUS_UV_PROBE_DEPTH_V = -5.0
+V_BUS_UV_PROBE_1 = (5.0, 5.008)     # 8 ms — under UV_BUS_DWELL_LATCH_MS 20
+V_BUS_UV_PROBE_2 = (8.0, 8.060)     # 60 ms — over it, by 3x
+#
+# ⚠️ PROBE 1 IS 8 ms, NOT 12 (B-M2, 2026-09-01) — HOST-STALL ROBUSTNESS.
+# The excursion is delivered by injection frames, and the firmware's stale
+# handling HOLDS THE LAST VALUE for HIL_STALE_MS = 50 ms. So a host-side
+# scheduling stall INSIDE the excursion does not pause the stimulus: the board
+# keeps integrating the sagged rail it was last told about, and the realized
+# dwell is the excursion's wall-clock length, stall included.
+#   * at 12 ms the margin to the 20 ms latch threshold was 8 ms, and a >= 8 ms
+#     stall inside a 12 ms window pushed the dwell over 20 ms and latched —
+#     rendering as a FAILED sub-threshold probe, i.e. misread as a FIRMWARE
+#     REGRESSION when the actual cause was the host.
+#   * at 8 ms the margin is 12 ms, a 1.5x improvement, and the falsifying power
+#     is unchanged: the pass bracket becomes (8, 60] ms, which still falsifies a
+#     5 ms threshold (a 5 ms filter latches on this probe) and any no-filter
+#     implementation.
+# The residual is not eliminated, only bounded: a >= 12 ms stall still corrupts
+# the probe. The de-vacuation check `uv_probe1_cadence` in run_hil_suite.py
+# makes that case render as "stimulus not delivered" rather than as a UV
+# verdict — see the FAULT_EXPECTATIONS["v-bus-sense-offset"] entry.
+
+
 def xor_checksum(payload: bytes) -> int:
     """XOR over the given bytes (callers pass the span between sync and checksum)."""
     c = 0
@@ -685,26 +826,30 @@ def _announce_output_length(n: int) -> None:
         return
     first = not _OBS_LENGTHS_SEEN
     _OBS_LENGTHS_SEEN.add(n)
-    label = ("fw v24+ (mppt_thresh_count present)" if n == HIL_OUTPUT_SIZE
-             else "fw v21-v23 LEGACY (no mppt_thresh_count)")
+    label = {
+        HIL_OUTPUT_SIZE: "fw v25+ (mppt_thresh_count + error_code present)",
+        HIL_OUTPUT_SIZE_V24: "fw v24 (mppt_thresh_count, NO error_code)",
+        HIL_OUTPUT_SIZE_LEGACY: "fw v21-v23 LEGACY (no mppt_thresh_count, no error_code)",
+    }.get(n, "UNRECOGNISED")
     if first:
         print("[hil] observation frame: %d bytes — %s" % (n, label))
     else:
         print("[hil] WARNING: observation frame length CHANGED mid-run to %d "
               "bytes — %s. Both %s have now been seen; the board was re-flashed "
               "under this run, or two boards are answering this host. Every "
-              "mppt_thresh_cnt reading in this CSV is suspect."
+              "mppt_thresh_cnt and error_code reading in this CSV is suspect."
               % (n, label, sorted(_OBS_LENGTHS_SEEN)), file=sys.stderr)
 
 
 def parse_output(data: bytes):
-    """Validate and decode a 16- or 17-byte observation frame; dict or None.
+    """Validate and decode a 16-, 17- or 18-byte observation frame; dict or None.
 
-    17 bytes is the fw v24 layout (checksum over 1..15 at byte 16, byte 15 the
-    Ag105 reg-0x02 count the firmware believes is in force).  16 bytes is the
-    fw v21-v23 layout (checksum over 1..14 at byte 15) and yields
-    `mppt_cnt` None — the honest value for "this firmware cannot tell us".
-    Every other field sits at the same offset in both.
+    18 bytes is the fw v25 layout (checksum over 1..16 at byte 17; byte 15 the
+    Ag105 reg-0x02 count the firmware believes is in force, byte 16 the LATCHED
+    first-cause error_code).  17 bytes is fw v24 (checksum over 1..15) and yields
+    `error_code` None.  16 bytes is fw v21-v23 (checksum over 1..14) and yields
+    both `mppt_cnt` and `error_code` None — the honest value for "this firmware
+    cannot tell us".  Every other field sits at the same offset in all three.
     """
     n = len(data)
     if n not in HIL_OUTPUT_SIZES or data[0] != HIL_SYNC_OUTPUT:
@@ -731,23 +876,37 @@ def parse_output(data: bytes):
         "fault_flags": faults,
         # int on a 17-byte frame, None on a legacy one.  Consumers MUST treat
         # None as "unknown", never as a count: 0 is a valid count (11.0 V).
-        "mppt_cnt": data[15] if n == HIL_OUTPUT_SIZE else None,
+        "mppt_cnt": data[15] if n >= HIL_OUTPUT_SIZE_V24 else None,
+        # Same discipline: None is "this firmware cannot tell us", NOT ERR_NONE.
+        # 0 is a legal value (no fault latched), so a 0-fill would read as
+        # "the board is clean" on a board that never said so.
+        "error_code": data[16] if n >= HIL_OUTPUT_SIZE else None,
     }
 
 
 def pack_output(seq, state, sw, aux, current, mdac_fc, mdac_bt, faults,
-                mppt_cnt=None) -> bytes:
-    """Build an observation frame, mirroring hilPackOutputFrame() (.ino:3118-3136).
+                mppt_cnt=None, error_code=None) -> bytes:
+    """Build an observation frame, mirroring hilPackOutputFrame().
 
-    `mppt_cnt=None` produces the 16-byte fw v21-v23 frame; an int produces the
-    17-byte fw v24 frame.  Test/diagnostic helper — the simulator never sends
-    observation frames, it only receives them.
+    Length is chosen by which optional tail fields are supplied, longest-first:
+      mppt_cnt None                     -> 16 bytes (fw v21-v23)
+      mppt_cnt int, error_code None     -> 17 bytes (fw v24)
+      mppt_cnt int, error_code int      -> 18 bytes (fw v25+)
+    `error_code` without `mppt_cnt` is not a frame any firmware emits (the two
+    bytes are adjacent and append-only), so it raises rather than fabricating a
+    layout the board cannot produce.  Test/diagnostic helper — the simulator
+    never sends observation frames, it only receives them.
     """
+    if mppt_cnt is None and error_code is not None:
+        raise ValueError("error_code requires mppt_cnt: no firmware emits a "
+                         "frame with byte 16 present and byte 15 absent")
     body = struct.pack("<BBBBfHHH", seq & 0xFF, state & 0xFF, sw & 0xFF,
                        aux & 0xFF, current, mdac_fc & 0xFFFF,
                        mdac_bt & 0xFFFF, faults & 0xFFFF)
     if mppt_cnt is not None:
         body += bytes([int(mppt_cnt) & 0xFF])
+    if error_code is not None:
+        body += bytes([int(error_code) & 0xFF])
     return bytes([HIL_SYNC_OUTPUT]) + body + bytes([xor_checksum(body)])
 
 
@@ -1086,6 +1245,16 @@ class Plant:
             electrical.fuel_cell = self.fuel_cell
             electrical.battery = self.battery
         # ── Ag105 charger model state ───────────────────────────────────────
+        # ── WP-C regen accounting (both electrical modes) ───────────────────
+        # p_regen_w is this tick's mechanical->electrical braking power at V-MOT;
+        # the rest are cumulative energies, kept so a run can be audited against the
+        # balance written out in Plant.step().  Nothing in the model READS them
+        # back — they are observers, like h2.
+        self.p_regen_w = 0.0              # W
+        self.regen_energy_j = 0.0         # J  handed to the electrical side
+        self.e_brake_mech_j = 0.0         # J  taken off the flywheel by the VESC
+        self.regen_chopper_w = 0.0        # W  simple mode only (hi-fi: engine)
+        self.regen_chopper_energy_j = 0.0 # J  simple mode only (hi-fi: engine)
         self.i_charge = 0.0           # A   measured charge current (reg 0x06 equivalent)
         self.chg_powered_s = 0.0      # s   time the charger input has been continuously live
         self.chg_fault = False        # scenario-driven charger-input collapse
@@ -1126,7 +1295,13 @@ class Plant:
 
         # ── Mechanical ───────────────────────────────────────────────────────
         bus_up = self.v_bus > 5.0
-        f_drive = K_F * i_cmd if (mot_live and bus_up) else 0.0
+        # WP-C: the REGEN side of the command is clipped by the VESC's Battery
+        # Regen Max before it becomes force, so the braking force and the
+        # electrical return are derived from ONE number.  The drive side is
+        # untouched (`i_cmd >= 0` takes the identity branch), which is what keeps
+        # every pre-WP-C drive trace bit-identical.
+        i_cmd_eff = i_cmd if i_cmd >= 0.0 else max(i_cmd, -VESC_REGEN_I_MAX_A)
+        f_drive = K_F * i_cmd_eff if (mot_live and bus_up) else 0.0
         if abs(self.v) < V_STICTION:
             # Static-friction deadband: no breakaway until the drive force exceeds F_c.
             if abs(f_drive) <= F_COULOMB:
@@ -1146,11 +1321,32 @@ class Plant:
 
         # ── Electrical ───────────────────────────────────────────────────────
         # Motor bus draw from mechanical power, through the boost efficiency.
-        p_mech = max(0.0, f_drive * self.v)      # regen (negative) is floored at 0 here:
-                                                 # the VESC's Battery Regen Max is a torque
-                                                 # clip on this rig, not a dump path (see
-                                                 # CLAUDE.md 2026-08-17b) — excess energy
-                                                 # stays kinetic rather than returning to bus.
+        #
+        # ── WP-C ENERGY BALANCE (2026-09-01) ────────────────────────────────
+        # Shaft power p_shaft = f_drive * v splits by SIGN, and the two halves are
+        # different physics, not two cases of one formula:
+        #   p_shaft >= 0  MOTORING.  Power is drawn from the bus through the boost
+        #                 stage: i_motor = p_shaft / (ETA_BOOST * V_bus).  Verbatim
+        #                 pre-WP-C behaviour, byte for byte.
+        #   p_shaft <  0  BRAKING.  The flywheel gives up |p_shaft| of kinetic power,
+        #                 of which ETA_REGEN reaches V-MOT electrically and the rest
+        #                 is motor/inverter loss.  The mechanical half is ALREADY
+        #                 accounted: f_drive carries the clipped braking force and the
+        #                 velocity integration above has already applied it.
+        # The balance this model asserts, and which test_regen_energy_balance pins:
+        #     ΔKE = W_friction + ∫|p_shaft| dt
+        #     ∫|p_shaft| dt * ETA_REGEN = E_regen_electrical
+        #     E_regen_electrical = E_chopper + E_charger + ΔE(C_MOT_NODE)
+        # i.e. nothing is created and nothing vanishes; the old floor violated the
+        # second line by setting its right-hand side to zero.
+        p_shaft = f_drive * self.v
+        p_mech = p_shaft if p_shaft > 0.0 else 0.0
+        self.p_regen_w = (-p_shaft) * ETA_REGEN if p_shaft < 0.0 else 0.0
+        # Mode-independent accounting: what the mechanical side HANDED to the
+        # electrical side.  Where it went is mode-specific (the chopper term below
+        # in simple mode; ElectricalSim's own counters in hi-fi).
+        self.regen_energy_j += self.p_regen_w * dt
+        self.e_brake_mech_j += (-p_shaft) * dt if p_shaft < 0.0 else 0.0
         if mot_live and self.v_bus > 1.0:
             i_motor = p_mech / (ETA_BOOST * self.v_bus)
         else:
@@ -1181,6 +1377,10 @@ class Plant:
                 "sw": sw, "aux": aux, "i_motor_a": i_motor,
                 "code_fc": code_fc, "code_bt": code_bt,
                 "i_charge_a": self.i_charge,
+                # WP-C: braking power, stamped as a bounded Norton source on N_MOT.
+                # The plant owns the mechanical->electrical conversion (it owns
+                # ETA_REGEN and the clip); the engine owns where the power goes.
+                "p_regen_w": self.p_regen_w,
             })
             self.v_bus = rails["V_bus"]
             self.i_fc = rails["I_fc"]
@@ -1189,6 +1389,11 @@ class Plant:
             self.v_rgn = rails["V_rgn"]
             v_fc = rails["V_fc"]
             v_batt = rails["V_batt"]
+            # Mirror the engine's chopper accounting onto the plant so both modes
+            # expose the same two names to a test or a CSV consumer.
+            self.regen_chopper_energy_j = self.electrical.chopper_energy_j
+            self.regen_chopper_w = (self.v_rgn *
+                                    chopper_dump_current(self.v_rgn))
         else:
             # ── Simple droop node ───────────────────────────────────────────
             if fc_live or bt_live:
@@ -1234,10 +1439,46 @@ class Plant:
             # proxy, so the old SW_REGEN gating made every bring-up fail P3.
             # V_chg is the shared VCHG-IN node, fed by EITHER path switch
             # (FC_CHARGE from the bus; REGEN from V-MOT, which needs MOT_PWR up).
-            self.v_rgn = self.v_bus if (sw & SW_MOT_PWR) else 0.0
-            chg_fed = bool(sw & SW_FC_CHARGE) or \
-                (bool(sw & SW_REGEN) and bool(sw & SW_MOT_PWR))
-            self.v_chg = self.v_bus if chg_fed else 0.0
+            #
+            # WP-C: with regen power present the motor node LEAVES the bus.  The
+            # MOT_PWR RT1987 blocks reverse (see the C_MOT_NODE_F banner), so the
+            # injected current charges C_MOT_NODE_F until the chopper clamps —
+            # integrated as a genuine first-order node rather than snapped to the
+            # clamp, so the model reproduces the bench RAMP (V_rgn 13.3 -> 18.1 V)
+            # and not just its endpoint.  With no regen this reduces EXACTLY to the
+            # pre-WP-C line above.
+            mot_closed = bool(sw & SW_MOT_PWR)
+            chg_fed = bool(sw & SW_FC_CHARGE) or (bool(sw & SW_REGEN) and mot_closed)
+            if not mot_closed:
+                self.v_rgn = 0.0
+            elif self.p_regen_w <= 0.0:
+                self.v_rgn = self.v_bus
+            else:
+                v_node = max(self.v_rgn, self.v_bus, 1.0)
+                # Same bounded source law as the hi-fi stamp: capped current, and
+                # zero delivery at the V_REGEN_OC_MAX open-circuit bound.
+                i_reg = min(self.p_regen_w / v_node, REGEN_I_SRC_MAX_A)
+                if v_node > V_CHOPPER_TRIP:
+                    # Taper to zero at the open-circuit bound (the VESC's own
+                    # DC-link cutback).  Below the clamp the source is unfolded,
+                    # exactly as the hi-fi Norton is at its operating point.
+                    span = V_REGEN_OC_MAX - V_CHOPPER_TRIP
+                    i_reg *= max(0.0, min(1.0, (V_REGEN_OC_MAX - v_node) / span))
+                # Sinks on the node: the charger (only when the REGEN path is the
+                # one feeding it) and the chopper.
+                i_sink = self.i_charge if (bool(sw & SW_REGEN) and
+                                           not (sw & SW_FC_CHARGE)) else 0.0
+                i_sink += chopper_dump_current(v_node)
+                v_node += ((i_reg - i_sink) / C_MOT_NODE_F) * dt
+                # The node cannot fall below the bus: MOT_PWR conducts FORWARD, so
+                # the bus back-fills it the moment regen stops supporting it.
+                self.v_rgn = max(self.v_bus, min(v_node, V_REGEN_OC_MAX))
+            self.regen_chopper_w = (self.v_rgn * chopper_dump_current(self.v_rgn)
+                                    if mot_closed else 0.0)
+            self.regen_chopper_energy_j += self.regen_chopper_w * dt
+            self.v_chg = self.v_rgn if (bool(sw & SW_REGEN) and mot_closed
+                                        and not (sw & SW_FC_CHARGE)) else \
+                (self.v_bus if chg_fed else 0.0)
 
         # ── Ag105 charger ────────────────────────────────────────────────────
         # Power gating mirrors the firmware's chargerHasPower(): FC_CHARGE closed, or
@@ -1340,7 +1581,29 @@ class Plant:
             # via chg_i_ceiling_a).  The current is fed back into the pack's
             # coulomb count (BatterySource, negative = charge), so a long
             # `charge-cruise` run visibly walks V_batt up the OCV curve.
-            self.i_charge += (self.ag105_i_max - self.i_charge) * (dt / AG105_TAU_S)
+            #
+            # WP-C: the ceiling is min(configured profile, INPUT POWER AVAILABLE).
+            # It binds ONLY on the regen-fed path: with FC_CHARGE closed the bus
+            # (fuel cell + pack) is the input and is effectively unlimited at these
+            # currents, so that branch is verbatim pre-WP-C.  Fed through REGEN
+            # alone, the input is the braking power and nothing else — a charger
+            # that drew its 2.5 A profile from a 3 W brake would be manufacturing
+            # energy.  The cap is INPUT-referred (p/v_in) and compared against an
+            # OUTPUT-referred target, which understates the harvest by roughly
+            # v_in/v_pack; that is the CONSERVATIVE direction and is left in place
+            # rather than papered over with an unmeasured converter efficiency.
+            # TODO(verify): an Ag105 input->output efficiency would sharpen this.
+            i_target = self.ag105_i_max
+            if (sw & SW_REGEN) and not (sw & SW_FC_CHARGE):
+                i_target = min(i_target, self.p_regen_w / max(v_chg_in, 1.0))
+            self.i_charge += (i_target - self.i_charge) * (dt / AG105_TAU_S)
+            if i_target < self.ag105_i_max:
+                # HARD clamp on top of the first-order ramp.  The ramp LAGS, so a
+                # falling brake (which every braking window is) would leave the
+                # charger drawing yesterday's current out of today's smaller
+                # source — energy creation by discretization.  The ramp still owns
+                # the RISING edge, which is the physical one (AG105_TAU_S).
+                self.i_charge = min(self.i_charge, i_target)
             self.ag105_status = AG105_ST_CHARGING | AG105_FLAG_CC
             # MPPT_DISABLE is ACTIVE-LOW: pin HIGH releases the tracking loop, pin LOW
             # inhibits it.  Only the two tracking flags follow it; charging continues either
@@ -1568,6 +1831,15 @@ def load_replay(path):
         result = decode_blg(data)
     except ValueError as exc:
         raise SystemExit(f"[hil] {path} is not a decodable .BLG: {exc}")
+
+    # R-LOW-3 (2026-09-01): stamp the SOURCE FILE's digest into the header the
+    # caller records in the run sidecar.  Without it a replay artifact names its
+    # source only by PATH, and a path is not evidence: a re-recorded or
+    # re-generated .BLG at the same path makes every historical replay result
+    # unreproducible with no symptom anywhere.  Computed over the raw bytes
+    # already in hand, so it costs one hash of a file that was read regardless.
+    result.header["file_sha256"] = hashlib.sha256(data).hexdigest()
+    result.header["file_bytes"] = len(data)
 
     cols = result.csv_header.split(",")
     idx = {name: i for i, name in enumerate(cols)}
@@ -2099,19 +2371,24 @@ def ems_regen_harvest(t, fb):
                  charge_goal (1.0 inside a braking window, 0.0 otherwise).
     feedback   : uses `fb["t"]` and `fb["v_profile"]` ONLY — trivially portable to
                  the real Pi (FB_TELEMETRY_EQUIV_KEYS).
-    ⚠️ WHAT THE REGEN WINDOWS DO AND DO NOT SHOW (measured 2026-08-30c).  The
-                 plant FLOORS regen power at zero (`p_mech = max(0.0, ...)` in
-                 Plant.step(); the VESC's Battery Regen Max is a torque clip on this
-                 rig, not a dump path — CLAUDE.md 2026-08-17b).  So the energy the
-                 Ag105 receives during a braking window is NOT recovered kinetic
-                 energy: it is sourced from the BOOSTS, through the bus, via
-                 REGEN + MOT_PWR.  This scenario therefore validates the regen
-                 POWER PATH and the firmware's branch selection — REGEN high with
-                 FC_CHARGE low, MPPT_DISABLE LOW, I_charge delivered through that
-                 path — and says NOTHING about energy recovery or round-trip
-                 efficiency.  The tell is in the trace: battery SoC DECREASES across
-                 a regen window rather than rising.  Do not quote a charge figure
-                 from this scenario as harvested energy.
+    ⚠️ WHAT THE REGEN WINDOWS SHOW — REWRITTEN FOR WP-C (2026-09-01).  The
+                 caption this replaces said the plant floored regen power at zero
+                 and that the charge seen here was bus-sourced, not harvested.
+                 THAT IS NO LONGER TRUE: braking energy now flows end to end
+                 (VESC_REGEN_I_MAX_A / ETA_REGEN block at the top of this file), so
+                 the I_charge in a braking window IS recovered kinetic energy,
+                 capped by the power actually available at VCHG-IN.  What is still
+                 true and still worth reading twice: the harvest is SMALL.  The
+                 regen-side clip is 1.5 A, i.e. ~1.13 N of braking force, so a
+                 2.5 -> 0.4 m/s window returns single-digit joules; most of the
+                 flywheel's kinetic energy still leaves through friction, and most
+                 of what the VESC does return is burnt in the TL431 chopper during
+                 the Ag105's 0.5 s settle rather than reaching the pack.  Pack SoC
+                 across a window is therefore still a NET FALL (the bus load
+                 outweighs the harvest); the harvest is read off I_charge and the
+                 energy counters, not off SoC.  ⚠️ BASELINE ERA: regen-path traces
+                 from campaigns <= 20260831_080905 were taken under the floor and
+                 are NOT comparable with post-WP-C runs.
     why not a timeline: a pi_timeline is a STEP function, and a step-down in
                  v_setpoint rails the drive controller to -12 A for only
                  ~(dv / 3.3 m/s^2) — 0.8 s even for a 2.7 m/s step — which never
@@ -2131,6 +2408,80 @@ def ems_regen_harvest(t, fb):
                    < (b - EMS_REGEN_CHARGE_LEAD_OUT_S)
                    for a, b in EMS_REGEN_BRAKE_WINDOWS)
     in_run = EMS_RUN_ENTRY_S <= t < ems_run_exit(fb, EMS_REGEN_RUN_EXIT_S)
+    return {
+        "mode_cmd": MODE_HYBRID if in_run else MODE_SAFE,
+        "power_share_setpoint": 0.50,
+        "v_setpoint": v_sp,
+        "charge_goal": 1.0 if charging else 0.0,
+    }
+
+
+# ── regen-harvest-hard: HARD braking, for genuine energy capture (WP-C) ─────
+#
+# A SEPARATE policy from `ems_regen_harvest`, for the same reason mppt-harvest is
+# separate: `charge-regen` has pinned measurements across five campaigns and must
+# not move.  Everything about the shape is different anyway.
+#
+# WHY A NEW PROFILE.  charge-regen commands 1.000 m/s^2 against a coast rate of
+# 0.953 m/s^2 — 5 % over — which is all it needs to hold the drive command
+# NEGATIVE and take the firmware's regen branch.  But the FORCE that buys is
+# m*(a_cmd - a_coast) = 3.5*0.047 = 0.16 N, so the CAPTURED POWER is ~0.5 W and
+# the harvest is in the millijoules.  That was invisible while regen was floored;
+# with WP-C it is the difference between a path test and an energy test.  This
+# profile commands 2.5 m/s^2 from 3.0 m/s, which the rig CANNOT achieve: the
+# regen clip caps the braking force at K_F * VESC_REGEN_I_MAX_A = 1.13 N, so the
+# realized decel is (1.13 + F_c + B_EFF*v)/M_EFF ~ 1.35 m/s^2 and the drive
+# controller sits on its negative rail — clipped to 1.5 A — for the whole window.
+# THE COMMANDED RATE BEING UNACHIEVABLE IS THE DESIGN, not an oversight: it is
+# what guarantees a full-clip regen for the whole window instead of a controller
+# that trims back toward coast.
+EMS_REGENTRUE_BRAKE_WINDOWS = ((14.0, 15.5), (26.0, 27.5), (38.0, 39.5))
+EMS_REGENTRUE_HI_MPS = 3.0
+EMS_REGENTRUE_LO_MPS = 0.4
+EMS_REGENTRUE_RUN_EXIT_S = 44.0
+
+
+def ems_regen_harvest_hard(t, fb):
+    """regen-harvest-hard — hard-braking cycling that HARVESTS kinetic energy.
+
+    name       : regen-harvest-hard
+    intent     : the WP-C energy test.  Where `regen-harvest` proves the regen
+                 POWER PATH exists, this one puts measurable joules through it:
+                 the VESC sits on its regen clip for the whole braking window, the
+                 TL431 chopper burns the harvest while the Ag105 settles, and the
+                 Ag105 takes it afterwards.  Objectives are a chopper_clamp episode
+                 and I_charge delivered through REGEN + MOT_PWR.
+    fields     : mode_cmd, power_share_setpoint (0.50), v_setpoint (the scenario's
+                 `ems_v_profile`), charge_goal (1.0 inside a braking window).
+    feedback   : `fb["t"]` and `fb["v_profile"]` ONLY (FB_TELEMETRY_EQUIV_KEYS).
+    firmware modes assumed, per segment — the sub-0.55 A open-loop-hold rule
+                 (a walk that skips this has been wrong twice):
+                   standstill 0-3 s   Idle/MODE_SAFE; v_setpoint 0 is under
+                                      V_SP_ZERO_THRESH 0.07, so the firmware
+                                      commands 0 A and holds the drive controller
+                                      in reset.  No share loop, no regen.
+                   accel/cruise       Run, drive controller closed-loop, share loop
+                                      CLOSED (I_tot at 3.0 m/s cruise is
+                                      (F_c + B_EFF*v)/K_F = 4.78 A of motor current
+                                      -> ~0.90 A of bus current + 0.15 A aux, over
+                                      the 0.55 A open-loop-hold gate).
+                   braking windows    Run, drive controller on its NEGATIVE rail;
+                                      motor bus draw is ZERO (no motoring term), so
+                                      I_tot falls to ~0.15 A aux and the share loop
+                                      drops into OPEN-LOOP HOLD.  The share command
+                                      is still 0.50 and still logged; the DELIVERED
+                                      split is frozen at whatever the preceding
+                                      cruise left.  Nothing here scores the split.
+                   low cruise 0.4 m/s Run, above V_SP_ZERO_THRESH; I_tot ~0.30 A,
+                                      so still open-loop hold.
+    """
+    v_sp = fb.get("v_profile")
+    if v_sp is None:
+        v_sp = EMS_DEFAULT_CRUISE_MPS
+    charging = any((a + EMS_REGEN_CHARGE_LEAD_IN_S) <= t
+                   < (b - EMS_REGEN_CHARGE_LEAD_OUT_S)
+                   for a, b in EMS_REGENTRUE_BRAKE_WINDOWS)
+    in_run = EMS_RUN_ENTRY_S <= t < ems_run_exit(fb, EMS_REGENTRUE_RUN_EXIT_S)
     return {
         "mode_cmd": MODE_HYBRID if in_run else MODE_SAFE,
         "power_share_setpoint": 0.50,
@@ -2581,11 +2932,45 @@ DP_TABLE_NAME = "dp_ems_table_%s.csv"
 # these are the inputs the DP's demand model reads (D7 in the generator).  A
 # change to any of them invalidates the table; a change to, say, the
 # description does not.
-# ⚠️ `aux_preload_a` is a DEMAND INPUT and is deliberately NOT in this tuple —
-# adding it would invalidate the shipped tables in tools/dp_tables/.  The
-# combination is refused at import instead; see the M4 note just above
-# SCENARIO_NAMES for the full reasoning and the condition to revisit it.
-DP_FINGERPRINT_META_KEYS = ("ems_v_profile", "duration_s", "chg_i_ceiling_a")
+# `aux_preload_a` JOINED THIS TUPLE 2026-09-01 (WP-E), on the exact condition
+# its own deferral note stated: "add it — and regenerate — when a SECOND DP
+# scenario lands".  `ems-ftp75-dp` is that scenario, and it declares
+# FTP75_PRELOAD_A, so the key had to become fingerprinted or the guard would
+# have accepted a table solved against a different bus load.  Both tables in
+# tools/dp_tables/ were regenerated in the same change; the import-time refusal
+# that stood in for the coverage is retired.
+#
+# ⚠️ SCOPE OF THE COVERAGE (E-L4, 2026-09-01).  Between them the fingerprint and
+# bind_scenario()'s drift guard cover the DECLARED keys — the ones named in this
+# tuple and in the table header.  A demand-shaping key added to NEITHER set is
+# still INVISIBLE to both: the fingerprint does not hash it, the guard does not
+# compare it, and a table solved before it existed loads clean.  The guards make
+# a KNOWN input's drift loud; they cannot make an UNDECLARED input's drift
+# detectable.  Adding a scenario key that changes the demand therefore means
+# adding it HERE (or to the header) in the same change — that is a rule about
+# the author's discipline, not a property the mechanism enforces.
+DP_FINGERPRINT_META_KEYS = ("ems_v_profile", "duration_s", "chg_i_ceiling_a",
+                            "aux_preload_a")
+
+
+def dp_chg_ceiling_a(meta):
+    """The Ag105 charge-current ceiling a DP table is solved / replayed against.
+
+    ONE resolution of `chg_i_ceiling_a`'s default (E-L1, 2026-09-01), used at
+    all THREE sites that need it: gen_dp_ems_table.py's `render_table()` header
+    line, its `main()` solve, and DpReplayStrategy.bind_scenario()'s drift
+    guard.  A scenario that declares no ceiling gets AG105_I_MAX — the value the
+    firmware configures.
+
+    It is a function rather than a bare constant because the resolution takes
+    the scenario metadata; the DEFAULT is the shared part, and it is the part
+    that already drifted once.  Until 2026-09-01 `render_table()` wrote a 0.0
+    default while `main()` solved with AG105_I_MAX for the same absent key, so
+    the header said "no charging was available" over a solution in which 2.5 A
+    was — and the drift guard, comparing the two, refused the table at startup.
+    Three call sites reading one expression cannot reproduce that."""
+    v = meta.get("chg_i_ceiling_a")
+    return AG105_I_MAX if v is None else float(v)
 
 
 
@@ -2871,8 +3256,7 @@ class DpReplayStrategy:
                 ("soc0", float(args.soc0), "run argument --soc0"),
                 ("capacity_ah", float(args.capacity_ah),
                  "run argument --capacity-ah"),
-                ("chg_ceiling_a",
-                 float(meta.get("chg_i_ceiling_a", AG105_I_MAX)),
+                ("chg_ceiling_a", dp_chg_ceiling_a(meta),
                  "scenario constant chg_i_ceiling_a"),
                 ("eta_boost", float(ETA_BOOST), "model constant ETA_BOOST"),
                 ("gfc_dc_gain_gps_per_w", float(H2_GFC_DC_GAIN_GPS_PER_W),
@@ -4671,6 +5055,8 @@ EMS_STRATEGIES = {
     # measurements are pinned across five campaigns and must not move because
     # this scenario's windows did.  See ems_mppt_harvest().
     "mppt-harvest": ems_mppt_harvest,
+    # WP-C: hard braking for genuine energy capture — see ems_regen_harvest_hard().
+    "regen-harvest-hard": ems_regen_harvest_hard,
     # ⚠️ SIM-ONLY: soc-band closes on fb["soc"], which is PLANT TRUTH and is NOT
     # in FB_TELEMETRY_EQUIV_KEYS — it is not portable to a real Pi without a
     # V_batt-based SoC estimator (future work).  See the banner above the class.
@@ -4761,6 +5147,11 @@ EMS_STRATEGY_META = {
                                    "opens the charge path inside scripted "
                                    "braking windows to exercise the path, and "
                                    "makes no energy claim."},
+    "regen-harvest-hard": {"policy_file": None, "frontier_eligible": False,
+                           "role_note": "ROLE: a STIMULUS WITH NO OBJECTIVE — it "
+                                        "brakes hard enough to put measurable "
+                                        "joules through the regen path, and makes "
+                                        "no energy-management claim."},
     "mppt-harvest":  {"policy_file": None, "frontier_eligible": False,
                       "role_note": "ROLE: a STIMULUS WITH NO OBJECTIVE — it "
                                    "exists to provoke the Ag105 MPPT "
@@ -4939,6 +5330,41 @@ SCENARIOS = {
         # post-grace (not_before_s 5.0 > WARM_RESET_GRACE_S 2.0).
         "electrical": "any", "duration_s": 9.0,
     },
+    # ── THE UV-DWELL OBJECTIVE'S HOME (2026-09-01, operator ruling) ─────────
+    # MOVED OUT OF `handoff-sag`, which could never deliver it: its bus floor is
+    # reached on the BT rail behind an OC_BT latch, so the dwell decision was
+    # never the thing being measured there.
+    #
+    # OBJECTIVE: assert UV_BUS_DWELL_LATCH_MS (20 ms, .ino:1460) FROM BOTH
+    # SIDES in one run — a sub-threshold excursion that must NOT latch, then a
+    # supra-threshold one that MUST. A one-sided test cannot tell a correct
+    # 20 ms threshold from a 5 ms one or from no filter at all.
+    #
+    # WHY hifi, and it is the load-bearing choice: `v_bus_offset` is
+    # SENSE-PATH-ONLY under the hi-fi engine (ElectricalSim.v_bus_sense_offset,
+    # added in _rails() and never seen by the node/diode/chopper network),
+    # whereas in simple mode the same offset is a REAL algebraic disturbance on
+    # V_bus that the sources then respond to. The firmware's dwell integrator
+    # reads the MEASURED rail either way, so both modes deliver the excursion —
+    # but only hifi perturbs NOTHING ELSE. In simple mode the sag would move the
+    # source currents, the droop split and the charger gate at the same time,
+    # and a dwell-threshold measurement would be confounded by every one of
+    # them. "any" is therefore wrong here: the mode IS the experiment design.
+    #
+    # TIMING, and why the two excursions are 3 s apart. The filter is LEAKY:
+    # time at or above the limit drains the accumulator at UV_BUS_DWELL_LEAK
+    # (0.05) x dt, so the 8 ms left by excursion 1 needs 8/0.05 = 160 ms of
+    # healthy bus to drain. 3 s is 18.7x that, so excursion 2 starts from a
+    # genuinely empty accumulator and latches on its OWN 60 ms rather than on
+    # the pair's sum. Without the gap the run would still latch, but it would
+    # prove nothing about the threshold.
+    "v-bus-sense-offset": {
+        "description": "two sensed-V_bus excursions below LIMIT_V_BUS_MIN — "
+                       "8 ms (must NOT latch) then 60 ms (must latch): the "
+                       "UV_BUS_DWELL_LATCH_MS 20 ms threshold from both sides",
+        # hifi is REQUIRED, not preferred — see above.
+        "electrical": "hifi", "duration_s": 12.0,
+    },
     "comm-loss": {
         "description": "stops transmitting for 2 s at t = 5 s — hold-then-zero, "
                        "then the fw v23+ run-boundary warm recovery (H3)",
@@ -5012,7 +5438,13 @@ SCENARIOS = {
         # De-rated charge ceiling.  During regen chargingControl() keeps BT on the
         # bus (.ino:10036), so the charger draw is SHARED: at share 0.50 the FC
         # channel carries (I_AUX 0.15 + i_charge)/2.  i_motor is ~0 while braking
-        # (the plant floors regen power at 0).  Budget against LIMIT_I_FC_MAX
+        # (WP-C 2026-09-01: i_motor is zero while braking because the MOTORING
+        # term is zero, not because regen is floored — regen power now leaves on
+        # the V-MOT node instead, and never appears as bus draw, so this budget is
+        # unchanged.  It is if anything more conservative now: the regen-fed
+        # charger is additionally capped by the harvest available at VCHG-IN, so
+        # the 1.6 A ceiling is an upper bound the run no longer reaches.)
+        # Budget against LIMIT_I_FC_MAX
         # 1.4 A:  (0.15 + 1.6)/2 = 0.88 A per channel -> 37 % margin.
         # At the firmware's real 2.5 A profile it would be (0.15 + 2.5)/2 =
         # 1.33 A, only 5 % under the limit and hostage to any share deviation —
@@ -5052,6 +5484,61 @@ SCENARIOS = {
             (28.1, 0.4), (30.0, 0.4), (35.0, 2.5), (37.0, 2.5),
             (39.1, 0.4), (41.0, 0.4), (43.0, 0.0), (45.0, 0.0),
         ],
+    },
+    # ── regen-harvest-true: WP-C, the tabled S3-full, un-tabled 2026-09-01 ────
+    # The energy counterpart of `charge-regen`.  Same shape, three differences,
+    # each load-bearing:
+    #   1. HARD braking (2.5 m/s^2 commanded from 3.0 m/s, unachievable by design)
+    #      so the VESC sits on its regen clip for the whole window — see
+    #      ems_regen_harvest_hard() for the force arithmetic.
+    #   2. `electrical: hifi` is REQUIRED, not preferred: the chopper objective is
+    #      an events.jsonl `chopper_clamp` episode, and only the hi-fi engine emits
+    #      events.  Simple mode models the same clamp (Plant.step's lumped node)
+    #      but has nowhere to report an episode.
+    #   3. soc0 is left at the run default: the harvest is single-digit joules
+    #      against a pack that is simultaneously carrying the bus, so pack SoC
+    #      still FALLS across the run.  Nothing here scores SoC direction; the
+    #      harvest is read off I_charge, chopper_clamp energy_j and the plant's
+    #      regen_energy_j counter.
+    "regen-harvest-true": {
+        "description": "hard cyclic braking with the REGEN + MOT_PWR path open: "
+                       "genuine kinetic-energy capture — the TL431 chopper clamps "
+                       "V-MOT at 18.1 V while the Ag105 settles, then the Ag105 "
+                       "takes what is left. WP-C regen-fidelity scenario",
+        "electrical": "hifi", "duration_s": 46.0,
+        "ems": "regen-harvest-hard",
+        # Same de-rating rationale as charge-regen (per-channel budget against
+        # LIMIT_I_FC_MAX 1.4 A).  It is an upper bound the run cannot reach: the
+        # regen-fed charger is additionally capped by the harvest available at
+        # VCHG-IN, which peaks around 0.2 A.
+        "chg_i_ceiling_a": 1.6,
+        # Windows must match EMS_REGENTRUE_BRAKE_WINDOWS (14-15.5, 26-27.5,
+        # 38-39.5) — pinned by test, because a profile and a policy window
+        # drifting apart has cost two rounds already.
+        # WINDOW LENGTH IS DERIVED, not round: the commanded rate must EXCEED the
+        # rate the rig can actually achieve, or the drive controller trims back
+        # toward coast instead of sitting on its regen rail.  Achievable decel is
+        # (K_F*VESC_REGEN_I_MAX_A + F_c + B_EFF*v)/M_EFF = (1.13 + 2.00 + 1.60)/3.5
+        # = 1.352 m/s^2 at 3.0 m/s.  1.5 s commands (3.0-0.4)/1.5 = 1.733 m/s^2,
+        # 28 % over.  (2.0 s would command 1.300 — 4 % UNDER, i.e. achievable, and
+        # the whole objective would evaporate.  This is the arithmetic the pin
+        # protects.)  The realized deceleration therefore OVERRUNS its window by
+        # ~0.4 s into the low-cruise segment, which is harmless: regen simply
+        # lasts longer than the charge window that sits inside it.
+        #   0.0- 3.0  standstill      3.0-11.0 accelerate to 3.0 m/s
+        #  11.0-14.0  cruise 3.0     14.0-15.5 BRAKE 1 (1.733 m/s^2 commanded)
+        #  15.5-18.0  low cruise 0.4 18.0-23.0 accelerate
+        #  23.0-26.0  cruise         26.0-27.5 BRAKE 2
+        #  27.5-30.0  low cruise     30.0-35.0 accelerate
+        #  35.0-38.0  cruise         38.0-39.5 BRAKE 3
+        #  39.5-42.0  low cruise     42.0-44.0 ramp down; 44.0-46.0 standstill
+        "ems_v_profile": [
+            (0.0, 0.0), (3.0, 0.0), (11.0, 3.0), (14.0, 3.0),
+            (15.5, 0.4), (18.0, 0.4), (23.0, 3.0), (26.0, 3.0),
+            (27.5, 0.4), (30.0, 0.4), (35.0, 3.0), (38.0, 3.0),
+            (39.5, 0.4), (42.0, 0.4), (44.0, 0.0), (46.0, 0.0),
+        ],
+        "ems_run_exit_s": EMS_REGENTRUE_RUN_EXIT_S,
     },
     "charge-fault": {
         "description": "charging established, then the charger input rail collapses "
@@ -5807,14 +6294,67 @@ SCENARIOS["ems-ftp75-sdp"] = {
     "chg_i_ceiling_a": SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"],
 }
 
-# gen_dp_ems_table.py note: a DP table for an FTP-75 scenario is FUTURE WORK.
-# The solver's cost is stage-count-dominated and this cycle is ~6x the length
-# of `ems-dp-replay`'s (~21 min offline, measured 2026-08-31), so it is a
-# deliberate deferral rather than a gap. Nothing blocks it: the generator's
-# demand model already reads `aux_preload_a` through
-# scenario_aux_preload_a(), and its --run-exit already resolves from
-# `ems_run_exit_s`, so a table can be generated whenever the run time is worth
-# paying.
+# ── ems-ftp75-dp: the FTP-75 segment's NON-CAUSAL LOWER BOUND ───────────────
+#
+# The deferral note that stood here ("a DP table for an FTP-75 scenario is
+# FUTURE WORK ... ~21 min offline") is CLOSED, 2026-09-01 (WP-E).  This is the
+# drive-cycle twin of `ems-dp-replay`: the same 340 s stimulus the other three
+# `ems-ftp75-*` scenarios run, driven by a table computed offline with full
+# foreknowledge of the whole cycle and of the auxiliary load.
+#
+# THE STIMULUS IS `ems-ftp75-5050`/`-socband`'s, TERM FOR TERM — the same
+# FTP75_PROFILE list object, the same FTP75_RUN_EXIT_S, and the same
+# FTP75_PRELOAD_A (0.65 A), NOT `ems-ftp75-sdp`'s FTP75_SDP_PRELOAD_A (0.45 A).
+# A bound is only a bound over the demand it solved, so it takes the load of
+# the legs it bounds.  ⚠️ That is also the reason the drive-cycle EMS frontier
+# does NOT currently evaluate: its candidate leg `ems-ftp75-sdp` runs the
+# 0.45 A preload, so the three legs are not one experiment.  See
+# EMS_FRONTIER_FTP75 in run_hil_suite.py for the full statement and the two
+# operator resolutions.
+#
+# WHY `chg_i_ceiling_a` IS DECLARED HERE and not on the 5050/socband siblings:
+# on those two the charger is unreachable by construction (hold-5050 never
+# commands `charge_goal`; soc-band's charge branch is foreclosed by the
+# preload, measured campaign 20260831_191509), so the ceiling is inert and its
+# absence costs nothing.  A DP table is different — the solver decides charging
+# for itself, so an undeclared ceiling would hand the offline-optimal leg a
+# 2.5 A lever the causal legs never had.  0.8 A is `ems-dp-replay`'s and
+# `ems-ftp75-sdp`'s value; it is fingerprinted, so it cannot drift silently.
+#
+# THE TABLE: tools/dp_tables/dp_ems_table_ems-ftp75-dp.csv, ~21 min to solve
+# (stage-count-dominated; ~6x `ems-dp-replay`'s cycle).  Regenerate with
+#     C:/Users/ricky/miniforge3/python.exe tools/gen_dp_ems_table.py \
+#         --scenario ems-ftp75-dp --force
+# "hifi", for `ems-dp-replay`'s reason exactly: the shipped table is solved
+# --charger-accounting physical and bind_scenario() refuses the mismatch.
+#
+# ⚠️ `tools/dp_tables/dp_ems_table_ems-ftp75-5050.csv` IS NOW ORPHANED and can
+# never load: its `profile_fingerprint` is keyed to the scenario name
+# `ems-ftp75-5050`, which is not a dp-replay scenario, and it was computed
+# under the pre-WP-E key tuple that did not cover `aux_preload_a`. Nothing is
+# lost by deleting it — the new table's DATA ROWS were verified BYTE-IDENTICAL
+# to it (3501 rows, independently re-solved 2026-09-01), so it is the same
+# solution under a covered fingerprint. It is left in place rather than
+# deleted here because removing a committed artifact is an operator decision.
+SCENARIOS["ems-ftp75-dp"] = {
+    "description": ("%.0f s EPA FTP-75 study segment (the SAME profile object "
+                    "and the SAME %.2f A preload as `ems-ftp75-5050` and "
+                    "`ems-ftp75-socband`) driven by the NON-CAUSAL "
+                    "`dp-replay` benchmark: a setpoint table computed offline "
+                    "by backward dynamic programming with full foreknowledge "
+                    "of the cycle. Not a controller — the offline-optimal "
+                    "lower bound the causal drive-cycle strategies are ranked "
+                    "against. Gated behind run_hil_suite.py --with-ftp75."
+                    % (FTP75_DURATION_S, FTP75_PRELOAD_A)),
+    "electrical": "hifi",
+    "duration_s": FTP75_DURATION_S,
+    "ems": "dp-replay",
+    # THE SAME LIST OBJECT as the other three FTP-75 scenarios.
+    "ems_v_profile": FTP75_PROFILE,
+    "ems_run_exit_s": FTP75_RUN_EXIT_S,
+    "aux_preload_a": FTP75_PRELOAD_A,
+    "chg_i_ceiling_a": SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"],
+}
 
 # ── ems-sdp-cross / ems-sdp-braking: the SDP policy's two thresholds ────────
 #
@@ -5881,13 +6421,13 @@ SCENARIOS["ems-ftp75-sdp"] = {
 #                    segments forbid it.
 #
 # ⚠️ HONEST CAPTION, and it applies to BOTH but especially to the braking one:
-# THE SoC RISE IS FC-FED, NOT HARVESTED FROM REGEN.  The plant floors regen
-# power at zero (`p_mech = max(0, F*v)`, Plant.step — regen is a torque clip on
-# this rig, CLAUDE.md 2026-08-17b), and the charge path these scenarios open is
-# FC_CHARGE_ENABLE, fed from the bus by the fuel cell.  What is validated is
-# the POLICY'S CHARGE DECISION in the low-demand windows a deceleration
-# produces, NOT regen capture.  Regen harvest needs the regen-fidelity model
-# round, which is tabled.
+# THE SoC RISE IS FC-FED.  Not because regen is floored — WP-C (2026-09-01)
+# removed that floor and braking energy now flows end to end — but because the
+# charge path THESE scenarios open is FC_CHARGE_ENABLE, fed from the bus by the
+# fuel cell.  The policy never opens REGEN, so no harvested joule can reach the
+# pack here whatever the plant models.  What is validated is the POLICY'S CHARGE
+# DECISION in the low-demand windows a deceleration produces, NOT regen capture;
+# `regen-harvest-true` is the scenario that exercises capture.
 #
 # BOTH walks are the ems-ftp75-sdp walk's method (see there): the strategy's
 # own decision path over the gen_dp_ems_table demand model of the declared
@@ -6117,7 +6657,7 @@ SCENARIOS["ems-sdp-braking"] = {
                     "DEMAND axis alone: the policy opens FC_CHARGE on each "
                     "low-speed plateau and closes it on each cruise. NOTE the "
                     "SoC rise is FUEL-CELL-FED through FC_CHARGE, not regen "
-                    "harvest — the plant floors regen power at zero."
+                    "harvest — this policy never opens the REGEN path."
                     % (SDP_BRAKE_DURATION_S, SDP_BRAKE_CYCLES,
                        SDP_BRAKE_CRUISE_HI_MPS, SDP_BRAKE_CRUISE_LO_MPS,
                        SDP_BRAKE_SOC_REF_OFFSET)),
@@ -6390,37 +6930,43 @@ SCENARIOS["share-staircase"] = {
     ],
 }
 
-# ── M4 (review 2026-08-31): the one key that is a DEMAND INPUT and is NOT in the
-# fingerprint.  `aux_preload_a` is applied by apply_scenario()'s generic
-# fall-through branch and changes the bus load the DP solved against just as
-# surely as `ems_v_profile` does — so a `dp-replay` scenario that declared one
-# would be pinned to a fingerprint that does not cover its own demand, and the
-# guard would happily accept a table generated for a different load.
+# ── M4 (review 2026-08-31), CLOSED 2026-09-01 (WP-E) ────────────────────────
+# `aux_preload_a` is applied by apply_scenario()'s generic fall-through branch
+# and changes the bus load the DP solved against just as surely as
+# `ems_v_profile` does.  It used to be absent from DP_FINGERPRINT_META_KEYS,
+# and the gap was held shut by an import-time refusal of the COMBINATION
+# (dp-replay scenario + declared preload) rather than by coverage.
 #
-# IT IS NOT IN DP_FINGERPRINT_META_KEYS ON PURPOSE, and that is future work
-# rather than an oversight: adding a key changes the canonical string
-# dp_profile_fingerprint() hashes, which invalidates the SHIPPED table in
-# tools/dp_tables/ and costs a ~21 min regeneration.  There is exactly one
-# dp-replay scenario today and it declares no preload, so the key would buy
-# nothing.  Add it — and regenerate — when a SECOND DP scenario lands.
+# `ems-ftp75-dp` is the second DP scenario the deferral note named, and it
+# declares FTP75_PRELOAD_A, so the refusal would have blocked it.  The key is
+# now IN the fingerprint and both tables in tools/dp_tables/ were regenerated,
+# which is the fix the note prescribed.  The assertion is deliberately NOT
+# replaced by a weaker one: coverage in dp_profile_fingerprint() is strictly
+# stronger than a registry-shape check, because it catches a preload RETUNE as
+# well as a preload declaration.
 #
-# Until then, refuse the combination at import so the gap cannot be reached
-# silently.  This is deliberately checked against the SCENARIOS registry rather
-# than inside dp_profile_fingerprint(): the function is also called by
-# tools/gen_dp_ems_table.py, and a startup refusal there would read as a
-# generator bug rather than as a registry one.
+# The inverse guard below (`_DP_FINGERPRINT_KEYS_COVER_DEMAND`) pins that
+# every demand key a dp-replay scenario may declare IS fingerprinted, so a
+# future demand key added to a DP scenario cannot silently repeat the gap.
+_DP_DEMAND_META_KEYS = frozenset({"ems_v_profile", "duration_s",
+                                  "chg_i_ceiling_a", "aux_preload_a",
+                                  "ems_run_exit_s"})
+_uncovered = ()
 for _dpn, _dpm in SCENARIOS.items():
     if _dpm.get("ems") == "dp-replay":
-        assert "aux_preload_a" not in _dpm, (
-            "SCENARIOS[%r] is a dp-replay scenario AND declares `aux_preload_a`. "
-            "That key is a DEMAND INPUT the DP solves against, but it is not in "
-            "DP_FINGERPRINT_META_KEYS (see the note there), so the table guard "
-            "would not notice a preload change. Either add the key to "
+        _uncovered = sorted((_DP_DEMAND_META_KEYS & set(_dpm))
+                            - set(DP_FINGERPRINT_META_KEYS)
+                            # `ems_run_exit_s` is covered by the drift guard's
+                            # own `run_exit_s` header check rather than by the
+                            # fingerprint, which is equally binding.
+                            - {"ems_run_exit_s"})
+        assert not _uncovered, (
+            "SCENARIOS[%r] is a dp-replay scenario and declares the DEMAND "
+            "key(s) %s, which DP_FINGERPRINT_META_KEYS does not cover — the "
+            "table guard would not notice a change to them. Add them to "
             "DP_FINGERPRINT_META_KEYS and REGENERATE every table in "
-            "tools/dp_tables/ (~21 min), or express the load through a branch "
-            "apply_scenario() already fingerprints (the SOC_BAND_DRAIN_* "
-            "constants)." % _dpn)
-del _dpn, _dpm
+            "tools/dp_tables/." % (_dpn, ", ".join(_uncovered)))
+del _dpn, _dpm, _uncovered
 
 # `sdp_soc_ref_offset` is read ONLY by SdpStrategy.bind_scenario(), so on any
 # other scenario it is a stimulus that is not what the registry says it is —
@@ -6438,6 +6984,27 @@ for _sn, _sm in SCENARIOS.items():
         "silently ignored — the run would start ON the policy's target node "
         "and the trace would carry no sign of the difference." % (_sn, _sm.get("ems")))
 del _sn, _sm
+
+# `droop_mode` (WP-E) is read only when a HI-FI engine is constructed, so on a
+# scenario that declares `electrical: "simple"` it would be silently ignored —
+# a stimulus that is not what the registry says it is, with no symptom
+# anywhere, which is the failure mode `_AUX_PRELOAD_BESPOKE` and the
+# `sdp_soc_ref_offset` guard below both exist to close. An invalid VALUE is
+# refused at run time by main(), but at import is where a typo is cheapest.
+# No shipped scenario declares the key; the guard is here so the first one
+# that does cannot declare it wrongly.
+for _drn, _drm in SCENARIOS.items():
+    if "droop_mode" in _drm:
+        assert _drm["droop_mode"] in DROOP_SCALE, (
+            "SCENARIOS[%r] declares droop_mode=%r, which is not one of %s"
+            % (_drn, _drm["droop_mode"], list(DROOP_MODES)))
+        assert _drm.get("electrical") != "simple", (
+            "SCENARIOS[%r] declares `droop_mode` but is `electrical: simple`. "
+            "The key is read only when a hi-fi ElectricalSim is constructed, "
+            "so it would be silently ignored — the simple model has no droop "
+            "chain to rescale and already uses the BENCH-measured "
+            "K_DROOP_BUS_* constants." % _drn)
+del _drn, _drm
 
 SCENARIO_NAMES = list(SCENARIOS)
 
@@ -6799,6 +7366,27 @@ def apply_scenario(plant, scenario, t):
         # Bus disturbance dip at t = 5 s, 1 s long, deep enough to cross
         # LIMIT_V_BUS_MIN (12.0 V) and exercise the real UV fault path.
         plant.v_bus_offset = -5.0 if 5.0 <= t < 6.0 else 0.0
+    elif scenario == "v-bus-sense-offset":
+        # TWO excursions, both -5.0 V (the same depth `sag` uses: ~15.9 - 5.0 =
+        # ~10.9 V measured, 1.1 V clear of LIMIT_V_BUS_MIN 12.0, so the
+        # crossing is unambiguous and no tick sits on the boundary).
+        #   #1  t = [5.000, 5.008)  =   8 ms  -> dwell reaches ~8 ms, 60 % under
+        #                                       UV_BUS_DWELL_LATCH_MS 20. NO latch.
+        #                                       (12 ms until 2026-09-01; shortened
+        #                                       for host-stall margin — see the
+        #                                       V_BUS_UV_PROBE_1 note.)
+        #   #2  t = [8.000, 8.060)  =  60 ms  -> dwell crosses 20 ms at ~8.020
+        #                                       and the board latches FAULT_UV_BUS.
+        # The 3 s gap lets the leak drain excursion 1 completely (see the
+        # SCENARIOS comment). Excursion 2 is held 3x longer than the threshold
+        # so the latch instant is decided by the FILTER, not by the excursion
+        # ending underneath it.
+        if V_BUS_UV_PROBE_1[0] <= t < V_BUS_UV_PROBE_1[1]:
+            plant.v_bus_offset = V_BUS_UV_PROBE_DEPTH_V
+        elif V_BUS_UV_PROBE_2[0] <= t < V_BUS_UV_PROBE_2[1]:
+            plant.v_bus_offset = V_BUS_UV_PROBE_DEPTH_V
+        else:
+            plant.v_bus_offset = 0.0
     elif scenario == "comm-loss":
         # Stop transmitting for 2 s at t = 5 s: exercises the firmware's two-stage
         # hold-then-zero (HIL_STALE_MS 50, HIL_ZERO_MS 250) AND, on fw v23+, the
@@ -7004,6 +7592,15 @@ def main(argv=None):
                     help="electrical engine: 'simple' droop node (default) or 'hifi' "
                          "(tools/hil_electrical.py — TPS61288 average model, RT1987 "
                          "switch state machines, node ODE at an adaptive substep rate)")
+    ap.add_argument("--droop", default=DROOP_MODE_DEFAULT,
+                    choices=list(DROOP_MODES),
+                    help="hi-fi droop realization: 'design' (default) realizes "
+                         "the MDAC droop chain as designed (~0.316 ohm shared / "
+                         "0.633 single); 'measured' rescales it to the BENCH fit "
+                         "(0.074 / 0.16 V/A). Opt-in, and it does NOT explain "
+                         "the ~4x gap between them — see the K_DROOP_BUS banner. "
+                         "Ignored under --electrical simple, which already uses "
+                         "the measured constants")
     ap.add_argument("--trace-config", default="short", choices=["long", "short"],
                     help="hi-fi parasitic-inductance set: 'long' = as-manufactured "
                          "FastHenry extraction (FC 1.538 nH / BT 3.480 nH), 'short' = "
@@ -7055,6 +7652,16 @@ def main(argv=None):
                          "Clamping delivers the stimulus the log was kept for. "
                          "DECLARE IT wherever the run is scored — it is a deliberate "
                          "modification of a recorded trajectory.")
+    ap.add_argument("--replay-i-bt-clamp", type=float, default=None,
+                    metavar="AMPS",
+                    help="replay: clamp the injected I_batt to at most AMPS. The "
+                         "BT twin of --replay-i-fc-clamp, and it exists for the "
+                         "same reason: TP0010's recorded I_batt peaks at 3.586 A, "
+                         "above LIMIT_I_BT_MAX 3.0 A, from a DC bench supply "
+                         "standing in for the pack. Replayed raw at a production "
+                         "build the board latches OC_BT before the recorded UV "
+                         "collapse arrives, and State 99 freezes fault_flags. "
+                         "DECLARE IT wherever the run is scored.")
     ap.add_argument("--loop", action="store_true",
                     help="replay: repeat the log until --duration elapses")
     ap.add_argument("--duration", type=float, default=None,
@@ -7145,6 +7752,11 @@ def main(argv=None):
             ap.error("--replay-i-fc-clamp only applies to --replay")
         if args.replay_i_fc_clamp <= 0.0:
             ap.error("--replay-i-fc-clamp must be > 0")
+    if args.replay_i_bt_clamp is not None:
+        if not args.replay:
+            ap.error("--replay-i-bt-clamp only applies to --replay")
+        if args.replay_i_bt_clamp <= 0.0:
+            ap.error("--replay-i-bt-clamp must be > 0")
 
     scenario = args.scenario or "steady"
     meta = SCENARIOS[scenario]
@@ -7236,6 +7848,13 @@ def main(argv=None):
                   f"came from a DC bench supply the real H-20 could never source; "
                   f"without the clamp a production build latches OC_FC before the "
                   f"stimulus this log is kept for arrives.")
+        if args.replay_i_bt_clamp is not None:
+            print(f"[hil] replay: *** INJECTED I_batt CLAMPED to "
+                  f"{args.replay_i_bt_clamp:.3f} A *** — the recorded trajectory "
+                  f"is DELIBERATELY MODIFIED on this channel. Same justification "
+                  f"as the FC clamp: the recorded pack current came from a DC "
+                  f"bench supply, and without the clamp a production build "
+                  f"latches OC_BT before the recorded stimulus arrives.")
         for w in blg_warnings:
             print(f"[hil] replay note: {w}")
         if args.duration is None:
@@ -7249,6 +7868,41 @@ def main(argv=None):
     sock.bind(("", args.bind_port))
     dest = (args.teensy_ip, args.port)
 
+    # ── Droop realization mode (WP-E) ────────────────────────────────────────
+    # Resolution order: a scenario may declare `droop_mode` and it WINS over the
+    # CLI DEFAULT, but an EXPLICIT --droop on the command line wins over the
+    # scenario (an operator asking for a comparison must not be silently
+    # overruled by a registry key).  No shipped scenario declares the key today
+    # — the hook exists so a future measured-vs-design comparison scenario needs
+    # no plumbing.
+    #
+    # E-L5 (2026-09-01): this comment used to claim it mirrored
+    # `mppt_emulation`'s pattern.  It does not — `mppt_emulation` is a scenario
+    # key with NO CLI flag at all, so there is no default-vs-explicit interplay
+    # to mirror.  The pattern below is new here.
+    #
+    # E-M3 (2026-09-01): "explicit" is decided by comparing the parsed value
+    # against the parser's DECLARED DEFAULT, not by sniffing argv for the exact
+    # token "--droop".  The old sniff missed every prefix form argparse accepts
+    # — `--droop=measured`, and the unambiguous abbreviations `--droo`,
+    # `--dro` — so an operator using any of them was silently overruled by the
+    # scenario key, which is precisely the outcome this branch exists to
+    # prevent.  The comparison has one benign corner: passing the default value
+    # explicitly (`--droop design`) is indistinguishable from not passing it,
+    # so a scenario key would win.  That is the safe direction — it selects the
+    # scenario's declared mode over a request for the mode that is already the
+    # default — and it cannot silently discard a non-default request.
+    droop_mode = args.droop
+    _droop_from = "--droop"
+    _droop_default = DROOP_MODE_DEFAULT
+    if not args.replay and meta.get("droop_mode") and args.droop == _droop_default:
+        droop_mode = str(meta["droop_mode"])
+        _droop_from = "scenario key droop_mode"
+        if droop_mode not in DROOP_SCALE:
+            raise SystemExit("[hil] SCENARIOS[%r] declares droop_mode=%r, "
+                             "which is not one of %s"
+                             % (scenario, droop_mode, list(DROOP_MODES)))
+
     electrical = None
     if args.electrical == "hifi" and not args.replay:
         c_vesc = (args.vesc_cap_uf * 1e-6) if args.vesc_cap_uf is not None \
@@ -7256,9 +7910,28 @@ def main(argv=None):
         electrical = ElectricalSim(
             trace_config=args.trace_config,
             noise=NoiseConfig() if args.noise else None,
-            c_vesc_f=c_vesc)
+            c_vesc_f=c_vesc,
+            droop_mode=droop_mode)
         print(f"[hil] electrical=hifi trace={args.trace_config} "
-              f"C_vesc={c_vesc * 1e6:.0f} uF noise={'on' if args.noise else 'off'}")
+              f"C_vesc={c_vesc * 1e6:.0f} uF noise={'on' if args.noise else 'off'} "
+              f"droop={droop_mode} (x{DROOP_SCALE[droop_mode]:.5f}, "
+              f"from {_droop_from})")
+        if droop_mode == "measured":
+            # ASCII only: this stream is cp1252 on the bench PC's console.
+            print("[hil] WARNING: droop=measured RESCALES the realized droop to the "
+                  "BENCH fit (0.074 V/A shared / 0.16 single). Sag depths are "
+                  "then comparable with a bench log and NOT with any campaign "
+                  "run in the default `design` mode. The ~4x design-vs-bench "
+                  "gap is NOT explained by this switch - see the K_DROOP_BUS "
+                  "banner in hil_plant_sim.py.")
+    elif droop_mode != "design":
+        # Loud rather than silently ignored: --droop measured on a simple-mode
+        # run reads as a request that was honoured, and it was not (the simple
+        # model ALREADY uses the measured constants, so there is nothing to
+        # rescale). Recorded in the sidecar as `applied: false` below.
+        print("[hil] NOTE: --droop %s has no effect under --electrical %s — "
+              "the simple model already uses the BENCH-measured "
+              "K_DROOP_BUS_* constants." % (droop_mode, args.electrical))
     # Scenario-level Ag105 charge-current ceiling (SCENARIOS[...]["chg_i_ceiling_a"],
     # same class of knob as vesc_cap_f).  Absent -> the firmware's configured
     # AG105_I_MAX.  Replay mode has no scenario and no charger model at all.
@@ -7579,6 +8252,19 @@ def main(argv=None):
         # 255 is the honest "external-resistor mode / never written" value and is
         # written as 255.
         header_row += ["mppt_thresh_cnt"]
+        # ── error_code — APPENDED LAST, BOTH SCHEMAS (fw v25, 2026-09-01) ────
+        # Observation-frame byte 16: the LATCHED first-cause ErrorCode_t.  Same
+        # class as mppt_thresh_cnt above (an observed board field, not a plant
+        # quantity), so the same rules: both schemas, appended after it so every
+        # established index is untouched, and BLANK means UNKNOWN.
+        # BLANK, never 0: 0 is ERR_NONE ("nothing latched"), so a 0-fill on a
+        # fw v21-v24 run — whose frame has no such byte — would read as a
+        # positive statement of board health the board never made.
+        # WHY IT MATTERS: FAULT_PI_TIMEOUT and FAULT_HIL_LINK share fault bit
+        # 0x0010, so fault_flags alone cannot say whether the Pi watchdog fired
+        # or the injection link died.  error_code can (ERR_PI_TIMEOUT 0x05 vs
+        # ERR_HIL_STALE 0x10) — see run_hil_suite.judge_scenario().
+        header_row += ["error_code"]
         writer.writerow(header_row)
 
     # M3: open the electrical-events sidecar UP FRONT and stream into it as events
@@ -7674,7 +8360,14 @@ def main(argv=None):
                 "records": len(replay.records),
                 "span_s": round(replay.span, 6),
                 "blg_version": blg_header.get("version"),
+                # None is HONEST here and is not the R-LOW-3 gap: a BLG v1 log
+                # (TP0010) predates the header's fw_version field entirely, so
+                # there is no version to record.  The gap R-LOW-3 closed is the
+                # DIGEST below — the only field that identifies WHICH bytes were
+                # replayed, as opposed to which path they were read from.
                 "blg_fw_version": blg_header.get("fw_version"),
+                "blg_sha256": blg_header.get("file_sha256"),
+                "blg_bytes": blg_header.get("file_bytes"),
                 # --replay-commands: were the log's recorded v_sp/share_sp also
                 # replayed as Pi command packets?  A replay CSV whose `current`
                 # column is non-zero is only interpretable alongside this flag.
@@ -7689,6 +8382,16 @@ def main(argv=None):
                 "rate_hz": args.rate,
                 "electrical": args.electrical,
                 "trace_config": args.trace_config if args.electrical == "hifi" else None,
+                # WP-E: WHICH DROOP REALIZATION THIS RUN USED. Recorded
+                # UNCONDITIONALLY (not only when non-default) because a REPORT
+                # reader comparing two runs' sag depths needs to be able to
+                # tell design from measured on BOTH of them — a key that is
+                # absent on the default reads as "old tool", not as "design".
+                # `applied` is false when the mode was requested but the run
+                # had no hi-fi engine to apply it to.
+                "droop_mode": droop_mode,
+                "droop_scale": DROOP_SCALE[droop_mode],
+                "droop_applied": electrical is not None,
                 "vesc_cap_f": (getattr(electrical, "c_vesc", None)
                                if electrical is not None else None),
                 "noise": bool(args.noise),
@@ -7697,6 +8400,7 @@ def main(argv=None):
                 "chg_i_ceiling_a": chg_ceiling,
                 "replay_preamble_s": replay_preamble_s if args.replay else None,
                 "replay_i_fc_clamp_a": args.replay_i_fc_clamp,
+                "replay_i_bt_clamp_a": args.replay_i_bt_clamp,
                 "replay_commands": bool(args.replay_commands) if args.replay else None,
                 "dash": bool(args.dash),
                 # MED-2 (review, 2026-08-31) — WHICH BAKED POLICY DROVE THIS RUN.
@@ -7929,7 +8633,8 @@ def main(argv=None):
                     # tick, so any per-tick modification must copy first or it would
                     # corrupt the record for every later sample of it.  One copy
                     # covers both modifications below.
-                    if replay_derive_v_rgn or args.replay_i_fc_clamp is not None:
+                    if (replay_derive_v_rgn or args.replay_i_fc_clamp is not None
+                            or args.replay_i_bt_clamp is not None):
                         sensors = dict(sensors)
                     if replay_derive_v_rgn:
                         # This record format has no V_rgn.  Derive it from the
@@ -7944,6 +8649,15 @@ def main(argv=None):
                             sensors["I_fc"] = args.replay_i_fc_clamp
                         elif sensors["I_fc"] < -args.replay_i_fc_clamp:
                             sensors["I_fc"] = -args.replay_i_fc_clamp
+                    if args.replay_i_bt_clamp is not None:
+                        # R-MED-1: the BT twin of the clamp above.  Symmetric
+                        # (both signs) for the same reason: LIMIT_I_BT_MAX is
+                        # judged on the magnitude, so a large NEGATIVE recorded
+                        # sample latches OC_BT exactly as a positive one does.
+                        if sensors["I_batt"] > args.replay_i_bt_clamp:
+                            sensors["I_batt"] = args.replay_i_bt_clamp
+                        elif sensors["I_batt"] < -args.replay_i_bt_clamp:
+                            sensors["I_batt"] = -args.replay_i_bt_clamp
             else:
                 # ── RX-BEFORE-STEP ORDERING, and what it decides ────────────
                 # `obs` here is the MOST RECENT observation frame, received at the
@@ -8178,6 +8892,11 @@ def main(argv=None):
                 # or the frame was the 16-byte legacy layout; never 0-filled.
                 row.append("" if (obs is None or obs.get("mppt_cnt") is None)
                            else int(obs["mppt_cnt"]))
+                # error_code (fw v25) — appended in BOTH modes, see the header
+                # comment.  Blank when there is no observation frame yet or the
+                # frame predates fw v25; never 0-filled (0 is ERR_NONE).
+                row.append("" if (obs is None or obs.get("error_code") is None)
+                           else int(obs["error_code"]))
                 writer.writerow(row)
 
             ticks += 1
@@ -8216,6 +8935,11 @@ def main(argv=None):
                     "aux": obs["aux"] if obs else None,
                     "I_cmd": obs["current"] if obs else None,
                     "faults": obs["fault_flags"] if obs else 0,
+                    # fw v25 latched first-cause code (observation-frame byte
+                    # 16).  None before the first frame and on any pre-v25
+                    # board; the dashboard renders that as '—', never as
+                    # ERR_NONE.  Plain scalar — lightness contract holds.
+                    "error_code": obs.get("error_code") if obs else None,
                     "hifi_hz": electrical.achieved_substep_hz if electrical else None,
                     "hifi_events": elec_events_total,
                     "hifi_chopper_w": electrical.chopper_peak_w if electrical else None,

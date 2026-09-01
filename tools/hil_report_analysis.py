@@ -908,10 +908,95 @@ def hil_share_raw_vs_emitted(data, cfg):
     return fig
 
 
+def hil_h2_and_soc(data, cfg):
+    """Estimated hydrogen consumption (Gfc) and battery SoC, stacked on t.
+
+    Returns None (a clean skip) unless `soc` is present with at least one
+    real value -- SoC is the anchor signal: a replay CSV has neither soc nor
+    any h2 column, and a plain (non-EMS) simulated run has soc but no h2
+    columns at all (the Gfc integrator is EMS-strategy tooling, landed
+    2026-08-31, Round B).
+
+    When `soc` is present but every h2 column is absent/all-NaN (a
+    pre-2026-08-31 campaign), the top panel is NOT left empty -- an explicit
+    annotation says so, per the project's "no silent empty axis" honesty
+    rule (mirrors the charger figure's MPPT-overlay skip comment above).
+    """
+    t = data["t_s"]
+    if "soc" not in data or not np.any(np.isfinite(data["soc"])):
+        return None
+
+    h2_cum = data.get("h2_cum_g")
+    have_h2 = h2_cum is not None and np.any(np.isfinite(h2_cum))
+    h2_sdp = data.get("h2_sdp_cum_g")
+    have_h2_sdp = h2_sdp is not None and np.any(np.isfinite(h2_sdp))
+    h2_rate = data.get("h2_rate_gps")
+    have_h2_rate = h2_rate is not None and np.any(np.isfinite(h2_rate))
+
+    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=bl_figures.FIGSIZE_STACK2,
+                                   sharex=True)
+
+    if have_h2:
+        ax0.plot(t, h2_cum, color=COLORS["V_bus"], linewidth=bl_figures.LW_FILT,
+                 label="h2_cum_g (Gfc integral)")
+        final_h2 = float(h2_cum[np.isfinite(h2_cum)][-1])
+        ax0.text(0.01, 0.92, "final h2_cum_g = %.6f g" % final_h2,
+                 transform=ax0.transAxes, color=TEXT_COLOR, fontsize=9,
+                 va="top")
+        if have_h2_sdp:
+            ax0.plot(t, h2_sdp, color=COLORS["u_unsat"],
+                     linewidth=bl_figures.LW_RAW, linestyle="--",
+                     label="h2_sdp_cum_g (static proxy: "
+                           "P_fc_stack / (0.5*120 kW))")
+            final_sdp = float(h2_sdp[np.isfinite(h2_sdp)][-1])
+            ax0.text(0.01, 0.83, "final h2_sdp_cum_g = %.6f g" % final_sdp,
+                     transform=ax0.transAxes, color=TEXT_COLOR, fontsize=9,
+                     va="top")
+        if have_h2_rate:
+            axr = ax0.twinx()
+            axr.plot(t, h2_rate, color=COLORS["edge_expected"], linewidth=0.8,
+                     alpha=0.6, label="h2_rate_gps")
+            axr.set_ylabel("h2_rate_gps", color=COLORS["edge_expected"],
+                           fontsize=10)
+            axr.tick_params(axis="y", colors=COLORS["edge_expected"],
+                            labelsize=9)
+        bl_figures._style_axes(ax0, ylabel="H2 consumed, cumulative [g]")
+        bl_figures._legend(ax0, loc="upper left")
+    else:
+        bl_figures._style_axes(ax0, ylabel="H2 consumed, cumulative [g]")
+        ax0.text(0.5, 0.5,
+                 "H2 columns not present in this log "
+                 "(pre-2026-08-31 tooling)",
+                 transform=ax0.transAxes, color=TEXT_COLOR, fontsize=10,
+                 ha="center", va="center")
+        ax0.set_xticks([])
+        ax0.set_yticks([])
+
+    soc = data["soc"]
+    ax1.plot(t, soc, color=COLORS["I_batt"], linewidth=bl_figures.LW_FILT,
+             label="soc")
+    finite = np.isfinite(soc)
+    soc0 = float(soc[finite][0])
+    soc_end = float(soc[finite][-1])
+    ax1.axhline(soc0, color=COLORS["I_batt"], alpha=0.35, linewidth=0.9,
+               linestyle="--")
+    ax1.text(0.01, 0.92,
+             "soc0 = %.6f, final = %.6f (delta_soc = %.6f)"
+             % (soc0, soc_end, soc_end - soc0),
+             transform=ax1.transAxes, color=TEXT_COLOR, fontsize=9, va="top")
+    bl_figures._style_axes(ax1, ylabel="SoC [-]")
+    ax1.set_xlabel("Time [s]", color=TEXT_COLOR, fontsize=10)
+
+    _hil_suptitle(fig, cfg, "hydrogen consumption and battery SoC")
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    return fig
+
+
 HIL_FIGURES = [
     ("hil_state_and_switches", hil_state_and_switches),
     ("hil_charger_and_soc", hil_charger_and_soc),
     ("hil_share_raw_vs_emitted", hil_share_raw_vs_emitted),
+    ("hil_h2_and_soc", hil_h2_and_soc),
 ]
 
 

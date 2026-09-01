@@ -1350,5 +1350,349 @@ def test_td_on_enters_soft_immediately_when_differential_already_admissible():
     assert sw.state == "SOFT"
 
 
+# =============================================================================
+# WP-C (2026-09-01) - regen fidelity: the chopper law, the bounded regen stamp,
+# and the strict-forward ideal-diode scoping.
+# =============================================================================
+
+def test_chopper_dump_current_law_three_regions():
+    """Zero below the clamp, linear-regulating above it, saturating at V/47."""
+    assert he.chopper_dump_current(15.0) == 0.0
+    assert he.chopper_dump_current(he.V_CHOPPER_TRIP) == 0.0
+    v = he.V_CHOPPER_TRIP + 0.05
+    assert he.chopper_dump_current(v) == pytest.approx(0.05 / he.R_CHOPPER_REG)
+    assert he.chopper_dump_current(40.0) == pytest.approx(40.0 / he.R_CHOPPER)
+    assert he.chopper_dump_current(v) < v / he.R_CHOPPER
+
+
+def test_chopper_holds_the_clamp_for_any_current_under_saturation():
+    """THE REASON the bare 1/47 stamp was replaced: a bare shunt cannot hold
+    18.1 V against a sub-0.385 A source -- it pulls the node under the trip and
+    chatters at the substep rate. The regulator holds it, which is what the
+    bench measured (V_rgn 13.3 -> 18.1 V HELD)."""
+    i_src = 0.15
+    assert i_src < he.V_CHOPPER_TRIP / he.R_CHOPPER
+    v = he.V_CHOPPER_TRIP + i_src * he.R_CHOPPER_REG
+    assert he.chopper_dump_current(v) == pytest.approx(i_src)
+    assert v == pytest.approx(18.175, abs=1e-3)
+
+
+def _regen_rig(sw_bits, p_regen_w, ticks=1200):
+    """Run the engine standalone with a regen source on V-MOT."""
+    e = he.ElectricalSim()
+    act = {"sw": sw_bits, "aux": AUX_FC_REG | AUX_BT_REG, "i_motor_a": 0.0,
+           "code_fc": 0.5, "code_bt": 0.5, "i_charge_a": 0.0,
+           "p_regen_w": p_regen_w}
+    rails = None
+    for _ in range(ticks):
+        rails = e.step(1e-3, act)
+    return e, rails
+
+
+def test_regen_lifts_v_mot_to_the_chopper_clamp_with_the_bus_unmoved():
+    """The bench signature (CLAUDE.md 2026-08-17b): sustained regen drove
+    V_rgn 13.3 -> 18.1 V with V_bus UNMOVED. Both halves are asserted."""
+    sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ | SW_MOT_PWR
+    e, rails = _regen_rig(sw, p_regen_w=3.0)
+    assert rails["V_rgn"] > he.V_CHOPPER_TRIP
+    assert rails["V_rgn"] < he.V_CHOPPER_TRIP + 0.5
+    assert 15.0 < rails["V_bus"] < 16.2
+    assert e.switches["MOT_PWR"].state == "OFF"
+    assert e.chopper_energy_j > 0.0
+    assert e.chopper_episodes >= 1
+
+
+def test_regen_chopper_clamp_event_is_emitted_and_coalesced():
+    """ONE event per episode, not one per substep -- and a DISTINCT kind from
+    chopper_over_power, which the suite scores as a FAILURE."""
+    sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ | SW_MOT_PWR
+    e, _ = _regen_rig(sw, p_regen_w=3.0, ticks=800)
+    clamps = [ev for ev in e.events if ev["kind"] == "chopper_clamp"]
+    assert len(clamps) == 1, "substep-rate event spam is not coalesced"
+    ev = clamps[0]
+    assert ev["energy_j"] > 0.0
+    assert ev["dur_s"] > 0.1
+    assert ev["peak_v"] > he.V_CHOPPER_TRIP
+    assert ev["peak_w"] == pytest.approx(
+        ev["peak_v"] * he.chopper_dump_current(ev["peak_v"]), rel=1e-6)
+    assert not [x for x in e.events if x["kind"] == "chopper_over_power"]
+    assert ev["peak_w"] < he.P_CHOPPER_MAX_W
+
+
+def test_regen_stamp_is_bounded_into_an_isolated_node():
+    """H1 regression (2026-08-30d): an unbounded source into an open node ran
+    the solver to ~10 kV and manufactured a false Death-5 verdict."""
+    e, rails = _regen_rig(0, p_regen_w=500.0, ticks=500)
+    assert rails["V_rgn"] <= he.V_REGEN_OC_MAX + 1e-6
+    assert not [x for x in e.events if x["kind"] == "node_runaway"]
+    assert not e.numeric_fault
+
+
+def test_regen_reaches_the_charger_node_when_the_regen_switch_is_closed():
+    """With REGEN closed the harvest reaches VCHG-IN; with it open the chopper
+    takes everything and VCHG-IN stays dark."""
+    base = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ | SW_MOT_PWR
+    _, open_rails = _regen_rig(base, p_regen_w=3.0)
+    assert open_rails["V_chg"] < 1.0
+    _, closed_rails = _regen_rig(base | SW_REGEN, p_regen_w=3.0)
+    assert closed_rails["V_chg"] > he.V_CHOPPER_TRIP - 0.5
+
+
+def test_strict_forward_is_scoped_to_the_source_bearing_links():
+    """SCOPED DEVIATION, pinned so it cannot silently spread. Applying the
+    forward-regulation block to the boost-OR links moves a hardware-corroborated
+    cold-start pin (0.2224 -> 0.2245 A) and changes which channel blocks during a
+    hand-off; that is its own A/B round. See Rt1987.stamp()."""
+    e = he.ElectricalSim()
+    strict = {n for n, s in e.switches.items()
+              if getattr(s, "strict_forward", False)}
+    assert strict == {"MOT_PWR", "REGEN", "FC_CHARGE"}
+    assert e.switches["FC_BUS"].strict_forward is False
+    assert e.switches["BT_BUS"].strict_forward is False
+
+
+def test_strict_forward_blocks_the_sub_35mv_reverse_window():
+    """The bug this fixes: the linear branch i = (dv - RT_V_FWD)/R is NEGATIVE
+    for any dv under 35 mV, so a closed MOT_PWR quietly absorbed the harvest into
+    the bus and V-MOT never reached the clamp (measured: pinned 31 mV UNDER the
+    bus for a 3 s braking run)."""
+    strict = he.Rt1987("S", 0, 1, css_nf=100.0, c_load_f=35e-6,
+                       strict_forward=True)
+    loose = he.Rt1987("L", 0, 1, css_nf=100.0, c_load_f=35e-6)
+    v = [16.000, 16.020]
+    strict.state = "ON"
+    loose.state = "ON"
+    G = [[0.0, 0.0], [0.0, 0.0]]
+    J = [0.0, 0.0]
+    strict.stamp(G, J, v, None)
+    assert G == [[0.0, 0.0], [0.0, 0.0]] and J == [0.0, 0.0]
+    G2 = [[0.0, 0.0], [0.0, 0.0]]
+    J2 = [0.0, 0.0]
+    loose.stamp(G2, J2, v, None)
+    assert G2 != [[0.0, 0.0], [0.0, 0.0]]
+
+
+def test_reverse_block_events_are_coalesced():
+    """A regen episode reverse-blocks and re-arms MOT_PWR every few substeps by
+    construction; the raw stream is tens of thousands of identical dicts."""
+    sw = he.Rt1987("MOT_PWR", 0, 1, css_nf=100.0, c_load_f=35e-6)
+    events = []
+    for i in range(50):
+        sw._reverse_event(events, t_now=i * 1e-4, dv=-0.06)
+    assert len(events) == 1
+    assert events[0]["repeats"] == 50
+    assert events[0]["t"] == 0.0
+    sw._reverse_event(events, t_now=1.0, dv=-0.06)
+    assert len(events) == 2
+
+
+def test_pre_wpc_actuator_dicts_are_inert():
+    """Every pre-WP-C caller omits p_regen_w; the engine must behave exactly as
+    before -- this is what keeps the non-regen scenario traces byte-identical."""
+    e = he.ElectricalSim()
+    act = {"sw": SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ,
+           "aux": AUX_FC_REG | AUX_BT_REG, "i_motor_a": 0.3,
+           "code_fc": 0.5, "code_bt": 0.5, "i_charge_a": 0.0}
+    for _ in range(200):
+        e.step(1e-3, act)
+    assert e.p_regen_w == 0.0
+    assert e.regen_energy_j == 0.0
+    assert e.chopper_energy_j == 0.0
+    assert e.chopper_episodes == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# WP-E — DROOP REALIZATION MODE (`design` default vs `measured`)
+#
+# The load-bearing tests here are (a) the DC recompute in BOTH regimes at
+# THREE currents each, which is the only thing that shows `measured` mode
+# actually lands on the bench fit, and (b) the default-mode byte-identity
+# guard, which is what makes the switch safe to ship over an archive of
+# design-mode campaigns.
+#
+# Every step pins `_n_sub` per this file's convention: the DC operating point
+# is substep-convergent, and an adaptive count on a starved host is not.
+# ─────────────────────────────────────────────────────────────────────────
+
+#: the MDAC fraction the firmware commands at share r = 0.5. The design droop
+#: figures (0.316 / 0.633 ohm) are quoted at THIS g, not at g = 1.
+_DROOP_G_NOMINAL = 0.298
+#: currents the DC fit is taken at. Three loaded points plus the no-load
+#: intercept, spanning the range a bench log covers (~0.17-1.37 A of source
+#: total after the fixed housekeeping draw).
+_DROOP_I_MOTOR = (0.0, 0.4, 0.8, 1.2)
+_DROOP_SETTLE_TICKS = 1200      # 1.2 s: >> the 100 us voltage-loop lag and
+                                # >> the 8 ms RT1987 TD_ON + soft-start
+
+
+def _droop_dc_fit(mode, both_sources):
+    """Least-squares (K, V0) of V_bus against the SOURCE TOTAL, from solved
+    DC operating points.  Returns (K_ohm, V0, points)."""
+    sw = he.SW_FC_BUS | he.SW_MOT_PWR | he.SW_BT_SEQ
+    if both_sources:
+        sw |= he.SW_BT_BUS
+    aux = AUX_FC_REG | AUX_BT_REG
+    pts = []
+    for i_mot in _DROOP_I_MOTOR:
+        e = he.ElectricalSim(trace_config="short", droop_mode=mode)
+        rails = None
+        for _ in range(_DROOP_SETTLE_TICKS):
+            rails = _pin_and_step(e, 1e-3, _actuators(
+                sw=sw, aux=aux, i_motor_a=i_mot,
+                code_fc=_DROOP_G_NOMINAL, code_bt=_DROOP_G_NOMINAL))
+        pts.append((rails["I_fc"] + rails["I_batt"], rails["V_bus"]))
+    n = len(pts)
+    sx = sum(p[0] for p in pts)
+    sy = sum(p[1] for p in pts)
+    sxx = sum(p[0] ** 2 for p in pts)
+    sxy = sum(p[0] * p[1] for p in pts)
+    k = -(n * sxy - sx * sy) / (n * sxx - sx * sx)
+    return k, (sy + k * sx) / n, pts
+
+
+def test_droop_modes_registry_shape():
+    assert he.DROOP_MODES == ("design", "measured")
+    assert he.DROOP_SCALE["design"] == 1.0
+    assert 0.0 < he.DROOP_SCALE["measured"] < 1.0
+
+
+def test_droop_fixed_series_term_matches_the_parts_it_names():
+    """The scale subtracts an UNSCALABLE series floor from both sides. If that
+    floor drifts from the resistances it claims to be, the scale silently
+    stops landing on the bench fit -- so pin it to its three sources. The
+    0.010 term is repeated as a literal in the constants block because the
+    `Boost` class is defined far below it."""
+    assert he.Boost.R_OUT == pytest.approx(0.010)
+    assert he.DROOP_FIXED_SERIES_OHM == pytest.approx(
+        he.Boost.R_OUT + he.RT_R_ON + he.R_SHUNT)
+    assert he.DROOP_FIXED_SERIES_OHM == pytest.approx(0.033)
+
+
+def test_droop_design_mode_reproduces_the_documented_design_figures():
+    """0.316 ohm shared / 0.633 single, ratio exactly 2.000 -- the numbers the
+    2026-08-30c live-trace fit recorded and every campaign in the archive ran.
+    This is the value `DROOP_DESIGN_SINGLE_OHM` is the denominator of."""
+    k_both, v0_both, _ = _droop_dc_fit("design", True)
+    k_single, v0_single, _ = _droop_dc_fit("design", False)
+    assert k_both == pytest.approx(0.316, abs=0.002)
+    assert k_single == pytest.approx(0.633, abs=0.002)
+    assert k_single / k_both == pytest.approx(2.000, abs=0.002)
+    assert k_single == pytest.approx(he.DROOP_DESIGN_SINGLE_OHM, rel=2e-3)
+    # V0 is a property of the FB chain and must NOT move with the regime.
+    assert v0_both == pytest.approx(v0_single, abs=1e-3)
+
+
+def test_droop_measured_mode_lands_on_the_bench_single_source_fit():
+    """THE ANCHOR REGIME. 0.16 V/A, measured on the bench to +/- 0.001 (0.6 %),
+    so the 1 % tolerance is inside that measurement's own uncertainty and not
+    a slack band. This is the assertion the scale is DEFINED to satisfy, and
+    it fails if the fixed-series subtraction is ever dropped -- the naive
+    end-to-end ratio 0.16/0.633 lands at 0.1847 V/A, +15 %."""
+    k, v0, pts = _droop_dc_fit("measured", False)
+    assert k == pytest.approx(he.DROOP_MEASURED_SINGLE_OHM, rel=0.01)
+    # THREE loaded points plus the intercept, and the fit must be a LINE
+    # rather than an average: every point within 3 mV of it.
+    assert len(pts) == 4
+    for i_tot, v_bus in pts:
+        assert abs(v_bus - (v0 - k * i_tot)) < 3e-3, (i_tot, v_bus)
+
+
+def test_droop_measured_mode_shared_regime_residual_is_the_documented_8_percent():
+    """THE RESIDUAL REGIME, asserted rather than hidden. One scalar cannot land
+    both: the network is a parallel Thevenin pair (ratio structurally 2.000)
+    while the bench fit's ratio is 0.1615/0.0740 = 2.182. Anchored on the
+    tightly measured single-source regime, the shared regime comes out ~8 %
+    ABOVE the bench 0.074 -- about 1.5 sigma of that fit's own +/- 0.004.
+    If a future change makes this land ON 0.074 the ratio problem was solved,
+    and this test SHOULD fail so the banner gets rewritten rather than the
+    result quietly absorbed."""
+    k_both, _, pts = _droop_dc_fit("measured", True)
+    k_single, _, _ = _droop_dc_fit("measured", False)
+    assert len(pts) == 4
+    assert k_both == pytest.approx(0.0800, abs=0.001)
+    assert k_both / 0.074 == pytest.approx(1.081, abs=0.02)
+    assert k_single / k_both == pytest.approx(2.000, abs=0.002)
+
+
+def test_droop_default_mode_is_design_and_solved_point_is_bit_identical():
+    """THE NON-REGRESSION GUARD, in two parts of DIFFERENT strength.
+
+    (1) INTRA-PROCESS EQUIVALENCE. An ElectricalSim constructed the OLD way (no
+        droop argument) solves to EXACTLY the same node voltages as one that
+        asks for `design` -- bit for bit, not approximately. This proves the
+        two CONSTRUCTION PATHS agree, and nothing more: both sims run the
+        engine as it is right now, so a change that moved BOTH would pass.
+
+    (2) ABSOLUTE PIN (E-M4, 2026-09-01). The solved bus node is therefore also
+        pinned as a repr() LITERAL, generated once from this engine and checked
+        in. THIS is the arm that actually protects the archive: every campaign
+        on record ran the design chain, and a change that moves this number
+        moves what a re-run of any of them would produce. Part (1) alone could
+        not see that.
+
+        A failure of (2) with (1) still passing is not automatically a bug --
+        it says the design-mode solution moved, and whether that is a fix or a
+        regression is a judgement call. Re-pin it ONLY with that judgement
+        made, and say in the commit what moved it."""
+    sw = he.SW_FC_BUS | he.SW_BT_BUS | he.SW_MOT_PWR | he.SW_BT_SEQ
+    aux = AUX_FC_REG | AUX_BT_REG
+    act = _actuators(sw=sw, aux=aux, i_motor_a=0.6,
+                     code_fc=_DROOP_G_NOMINAL, code_bt=_DROOP_G_NOMINAL)
+    old = he.ElectricalSim(trace_config="short")
+    new = he.ElectricalSim(trace_config="short", droop_mode="design")
+    assert old.droop_mode == "design" and old.droop_scale == 1.0
+    r_old = r_new = None
+    for _ in range(300):
+        r_old = _pin_and_step(old, 1e-3, act)
+        r_new = _pin_and_step(new, 1e-3, act)
+    assert r_old == r_new                     # every rail, exactly
+    assert old.v == new.v                     # every node, exactly
+    assert old.boost_fc.r_droop == new.boost_fc.r_droop
+    # Part (2): the ABSOLUTE pin. Generated once from this engine at this
+    # actuator point (sw = FC_BUS|BT_BUS|MOT_PWR|BT_SEQ, both regs on,
+    # i_motor 0.6 A, both droop codes at _DROOP_G_NOMINAL, 300 x 1 ms) and
+    # written here as a repr() literal, so the guard survives across processes
+    # and across changes that would move both construction paths together.
+    assert repr(r_old["V_bus"]) == "15.624602041790853"
+
+
+def test_droop_measured_mode_actually_moves_the_solution():
+    """The mirror of the guard above: `measured` must NOT be a no-op, or the
+    plumbing could be wired to nothing and every other test here would still
+    pass on the design numbers."""
+    sw = he.SW_FC_BUS | he.SW_BT_BUS | he.SW_MOT_PWR | he.SW_BT_SEQ
+    act = _actuators(sw=sw, aux=AUX_FC_REG | AUX_BT_REG, i_motor_a=0.6,
+                     code_fc=_DROOP_G_NOMINAL, code_bt=_DROOP_G_NOMINAL)
+    d = he.ElectricalSim(trace_config="short", droop_mode="design")
+    m = he.ElectricalSim(trace_config="short", droop_mode="measured")
+    rd = rm = None
+    for _ in range(300):
+        rd = _pin_and_step(d, 1e-3, act)
+        rm = _pin_and_step(m, 1e-3, act)
+    # measured droop is ~4x shallower, so the bus must sit HIGHER under load.
+    assert rm["V_bus"] > rd["V_bus"] + 0.05
+    assert m.boost_fc.r_droop < d.boost_fc.r_droop
+
+
+def test_droop_mode_touches_nothing_but_the_droop():
+    """Structural: the mode must not have leaked into the switch machines, the
+    chopper, or the sources. Constructed identically apart from `droop_mode`,
+    the two sims must agree on every RT1987's parameters and on the sources."""
+    d = he.ElectricalSim(trace_config="short", droop_mode="design")
+    m = he.ElectricalSim(trace_config="short", droop_mode="measured")
+    assert set(d.switches) == set(m.switches)
+    for name in d.switches:
+        a, b = d.switches[name], m.switches[name]
+        assert (a.css_nf, a.c_load, a.r_series) == (b.css_nf, b.c_load, b.r_series)
+    assert d.battery.soc == m.battery.soc
+    assert d.boost_fc.R_OUT == m.boost_fc.R_OUT
+    assert d.boost_fc.TAU_R == m.boost_fc.TAU_R
+
+
+def test_invalid_droop_mode_rejected():
+    with pytest.raises(ValueError):
+        he.ElectricalSim(trace_config="short", droop_mode="bench")
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

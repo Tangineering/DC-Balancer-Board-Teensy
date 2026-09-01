@@ -1162,6 +1162,12 @@ one number doing two physically unrelated jobs (converter efficiency into the bu
 power into mechanical power). Give them separate project parameters if you intend to sweep
 either.
 
+> ⚠️ **SUPERSEDED 2026-09-01 (WP-C):** the Python plant no longer floors regen. It clips the
+> regen-side motor current at `VESC_REGEN_I_MAX_A` (1.5 A) and routes the resulting power to
+> V-MOT, the chopper and the Ag105 — see `docs/HIL_PLANT.md` §3.4. The conclusion below is
+> still right for the BUS (`MOT_PWR` is an ideal diode and blocks the back-feed); only the
+> mechanism and the "energy stays kinetic" claim have changed.
+>
 > **Why regen is floored at zero on the bus side:** the VESC's Battery Regen Max is a **torque
 > clip, not a dump path** — excess kinetic energy stays kinetic. This is a measurement, not a
 > modelling convenience: at −12 A commanded, ~6 % was delivered (`CLAUDE.md` 2026-08-17b).
@@ -1200,8 +1206,10 @@ either.
   parallel conductance) and a node-runaway backstop at 2×`V_ABSMAX`.
 - The VESC layers — the **6.0 A forward cap**, the **1.5 A regen clip**, and the **428 ms
   reversal dead window** — are **optional behavioral overlays**, default ON for HIL
-  comparison. None of them is in the Python plant (which floors regen at 0 and models no
-  forward cap), so **turning them on makes PSCAD deviate from the HIL plant by design**;
+  comparison. ⚠️ **UPDATED 2026-09-01 (WP-C):** the **1.5 A regen clip is now IN the Python
+  plant** (`VESC_REGEN_I_MAX_A`), so that overlay no longer creates a deviation — the forward
+  cap and the reversal dead window still do. **Turning those on makes PSCAD deviate from the
+  HIL plant by design**;
   record which setting produced each comparison run.
 
 > **The dead window is characterized, not explained.** ≈ 428 ms of near-zero delivered current

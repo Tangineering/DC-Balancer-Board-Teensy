@@ -64,6 +64,39 @@ Electrical engine: `"any"` scenarios run under the campaign's `--electrical-pref
 - **Why useful:** it validates the leaky UV-dwell integrator and the latch path
   end to end, with the injected stimulus making the dwell timing exactly repeatable.
 
+### v-bus-sense-offset (12 s, hifi only)
+
+- **Tests:** the `UV_BUS_DWELL_LATCH_MS` threshold (20 ms of net accumulated
+  under-limit dwell, `.ino:1460`) **from both sides**, in one run. Two sensed-`V_bus`
+  excursions of −5.0 V take the measured rail to ≈ 10.9 V: the first lasts **12 ms**
+  (t = 5.000–5.012) and must **not** latch; the second lasts **60 ms**
+  (t = 8.000–8.060) and must. The 3 s gap lets `UV_BUS_DWELL_LEAK` (0.05) drain the
+  first excursion's residue completely — it needs 12 / 0.05 = 240 ms of healthy bus,
+  and gets 3 s — so the second excursion latches on its own 60 ms rather than on the
+  pair's sum.
+- **Pass/fail:** `FAULT_UV_BUS` is required with `not_before_s` = **7.0** — placed
+  between the two excursions, so a board that latched on 12 ms of dwell fails here
+  rather than passing as "it latched". Three positive signals: the excursion was
+  genuinely below the limit for its whole duration; the bus recovered clear of the
+  limit for the whole 3 s gap; and the latch (bit **plus** `FAULT_ERROR`) landed at or
+  after the second excursion opened. Latch-instant band is **provisional** — derived
+  from the geometry, not yet measured on this board.
+- **Engine: hifi is required, and the mode is the experiment design.** Under the hi-fi
+  engine `v_bus_offset` is **sense-path-only** (`ElectricalSim.v_bus_sense_offset`,
+  added in `_rails()` and never seen by the node/diode/chopper network), so it perturbs
+  the one quantity under test and nothing else. In simple mode the same offset is a
+  real algebraic disturbance that the sources respond to, which would move the source
+  currents, the droop split and the charger gate at the same time and confound the
+  dwell measurement with all three.
+- **Why useful:** this is the **home of the UV-dwell objective**, moved here in 2026-09
+  from `handoff-sag`, which could never deliver it — that scenario's bus floor is
+  reached on the BT rail behind an `OC_BT` latch, and the two must-NOT-latch replay
+  entries (TP0178/TP0201) never cross the limit at all, so they accumulate 0.0 ms and
+  are a *voltage* margin rather than a dwell one. `sag` holds the bus under the limit
+  for a full second and latches, which a 5 ms threshold — or no filter at all — would
+  also do. Only a paired sub- and supra-threshold excursion falsifies both failure
+  directions.
+
 ## 3. Link-loss and watchdog scenarios
 
 ### comm-loss (12 s, any engine, `warm_resets_expected: 1`)
@@ -118,9 +151,52 @@ Electrical engine: `"any"` scenarios run under the campaign's `--electrical-pref
   (t = 14.0) in Run; `REGEN_ENABLE` must be set for ≥ 0.5 s inside braking window 1;
   and `I_charge` must exceed 0.5 A through that path. Charge ceiling is de-rated to
   1.6 A so the shared draw keeps a 37 % per-channel margin.
-- **Why useful:** the only end-to-end regen-charging coverage in the suite. The
-  original scripted design coasted instead of braking and latched OC before its
-  first braking window; the positive signal checks prevent that regression class.
+- **Why useful:** the regen PATH coverage — the firmware's branch selection
+  (REGEN high with FC_CHARGE low, `MPPT_DISABLE` low) under a stimulus that
+  genuinely holds a negative command. The original scripted design coasted
+  instead of braking and latched OC before its first braking window; the positive
+  signal checks prevent that regression class.
+- ⚠️ **Caption corrected by WP-C (2026-09-01):** this entry used to say the
+  charge seen here was bus-sourced because the plant floored regen power. The
+  floor is gone (`docs/HIL_PLANT.md` §3.4) and the current IS harvested. What is
+  still true is that this scenario's 1.000 m/s² command is only 5 % over the
+  coast rate, so the captured force is ~0.16 N and the harvest is in the
+  millijoules — it is a **path** test. `regen-harvest-true` is the **energy**
+  test. ⚠️ Pre-WP-C traces of this scenario are not comparable with post-WP-C
+  ones (the braking force is now clipped).
+
+### regen-harvest-true (46 s, **hi-fi required**, EMS `regen-harvest-hard`)
+
+- **Tests:** genuine kinetic-energy capture, end to end. Three hard braking
+  windows (3.0 → 0.4 m/s commanded at 1.733 m/s², which the rig **cannot**
+  achieve — the regen clip caps the braking force at `K_F · VESC_REGEN_I_MAX_A`
+  = 1.13 N, so the realized decel is ~1.352 m/s² and the drive controller sits on
+  its negative rail for the whole window). `charge_goal` is asserted inside each
+  window, so the Ag105 is fed through REGEN + MOT_PWR.
+- **Why hi-fi is REQUIRED, not preferred:** the chopper objective is an
+  `events.jsonl` `chopper_clamp` episode, and only the hi-fi engine emits events.
+  Simple mode models the same clamp (`Plant.step()`'s lumped V-MOT node) but has
+  nowhere to report an episode.
+- **Pass/fail:** fault-free; in Run at t = 14.0; `REGEN_ENABLE` set for ≥ 0.5 s
+  inside braking window 1; `I_charge` ≥ 0.04 A through that path (harvested, not
+  bus-sourced); `V_rgn` ≥ 17.0 V inside the window (the bench signature — V-MOT
+  lifting toward the 18.1 V clamp with V_bus unmoved); and at least one
+  `chopper_clamp` event carrying ≥ 0.3 J.
+- ⚠️ **Bands are `provisional`** — derived from the WP-C offline walk
+  (2026-09-01), not from a campaign. Re-derive them after the first live run.
+  The walk measured one coalesced clamp episode of 1.298 J per window, peak V-MOT
+  18.15 V, and `I_charge` ~0.08 A once the Ag105 settles; the bands sit at
+  roughly half those values so a degraded path fails while walk-vs-board
+  modelling error does not.
+- ⚠️ **Do not read SoC direction here.** The harvest is single-digit joules
+  against a pack simultaneously carrying the bus, so pack SoC still falls across
+  the run. Read `I_charge`, the clamp event's `energy_j`, and the plant's
+  `regen_energy_j` counter.
+- **Why useful:** the first scenario in the suite with energy behind the regen
+  path, and the only coverage of the chopper clamp — the queued "chopper
+  coverage" item. It also asserts the physical asymmetry the board is designed
+  around: the TL431 chopper is the fast primary clamp and the Ag105 the slow
+  secondary, so the first ~0.5 s of each window is burnt rather than banked.
 
 ### charge-fault (25 s, any engine)
 
@@ -177,15 +253,37 @@ the fw v24 expectation; the fw v23 record it replaces is kept at the end.
   loudly instead of passing vacuously. **R1 (is an MPPTS resistor fitted?) is no
   longer a contingency:** Table 7 encodes reg `0x02` 0–250 as register mode and
   ≥251 as the resistor, so a firmware write overrides any fitted resistor.
-- **⚠️ Provisional:** the edge band, the `tracking_engaged` floor and the count band
-  are DERIVED from the `.ino` clamp arithmetic and the stimulus geometry, not
-  measured on fw v24. Calibrate them from the first green campaign.
+- **✅ CALIBRATED (2026-09-01, campaign `hil_report_20260901_080905` — 15/15 PASS).**
+  Every band above is now measurement-backed: rise census **(3, 5)** (measured 3, the
+  exact structural prediction); `tracking_engaged` **2400** (measured 2902);
+  `charging_occurred` **0.70 A** (measured peak 0.8815, and above the fw v23 hunt's own
+  0.4848 peak, so a hunt regression fails it too); `threshold_written` **12600**
+  (measured 12900/12900); `refusal_absent` **20** (measured 0, against fw v23's 1481);
+  observed count band **[15, 19]**. Two additions came out of the same campaign:
+  a **`column_range_at_least` ≥ 2** witness (`mppt_threshold_moved`), because the count
+  PERSISTS across runs — it carried in at 15 from the predecessor, so the level check
+  alone would pass on a run in which the manager never executed — and an **`I_fc` ≤
+  1.30 A** tripwire (`mppt_fc_headroom`, measured peak 1.1638), because the OC budget
+  below is this scenario's tightest margin and was unasserted until a latch. The
+  `mppt_threshold_floor` check also changed KIND: `min_value` judges the *peak* and was
+  vacuously true, so it now uses `floor_min_value`, which judges the in-window minimum.
+  Only the range bound stays provisional (one hi-fi campaign; the ratchet span depends
+  on how far `V_chg` sags under charge, and the simple engine's sag is unmeasured).
+- **⚠️ HIL-MIRROR BOUNDARY.** Under `HIL_SIM` the reg-0x02 count is computed by the
+  mirror from the clamp arithmetic and published on frame byte 15 — the real write path
+  is bypassed. An HIL run validates the arithmetic, the clamp band and the frame
+  plumbing; it says NOTHING about the write policy, the deadband, the ≤2-per-session
+  ratchet or the ≤8-per-boot EPROM budget. The campaign's 5-step-per-second ratchet is a
+  mirror artifact and must never be cited as write-budget evidence.
 - **⚠️ The realized FC-path margin narrows.** The budget is unchanged (0.15 aux +
   ~0.06 motor + 1.0 ceiling = 1.21 A against `LIMIT_I_FC_MAX` 1.4 A, 14 %), but the
   hunt used to hold the mean charge current near HALF the ceiling, so that budget
   was never actually drawn. Continuous harvest draws the full ceiling. A first
   fw v24 campaign latching `FAULT_OC_FC` here is a budget finding (lower
-  `chg_i_ceiling_a`), not a firmware defect.
+  `chg_i_ceiling_a`), not a firmware defect. **Measured 2026-09-01: it did not — peak
+  `I_fc` 1.1638 A, a 16.9 % margin, 3.8 % *under* the budget** — and that margin is now
+  asserted directly by the `mppt_fc_headroom` tripwire rather than left to the fault
+  path.
 - **fw v23 BASELINE, RETIRED (kept because a regression reproduces it):** the hunt
   was measured twice — `MPPT_DISABLE` toggles **138** (`hil_report_20260831_191509`)
   and **134** (`_222036`), a 2.9 % move, while the median hunt PERIOD repeated to
@@ -255,6 +353,55 @@ or failed its own checks, or when the legs' `delta_soc` differ by more than 0.01
 (the correction is a linear extrapolation and is not credible over a large gap).
 Anything but PASS counts as a failing suite run and is NAMED in REPORT.md — a
 silently dropped leg is exactly how the regression above went unnoticed.
+
+**A second frontier, at drive-cycle scale (2026-09-01).** The check is now a
+registry (`run_hil_suite.EMS_FRONTIERS`) rather than one tuple, and the second
+entry runs the same three roles over the 340 s FTP-75 segment:
+
+| id | reference | candidate | bound | vs reference | vs bound |
+|---|---|---|---|---|---|
+| `cycle61` | `ems-soc-band` | `ems-sdp` | `ems-dp-replay` | ≤ 0.98 x | ≤ 1.06 x |
+| `ftp75` | `ems-ftp75-socband` | `ems-ftp75-sdp` | `ems-ftp75-dp` | ≤ 1.02 x | ≤ 1.06 x |
+
+⚠️ **The drive-cycle bands do NOT assume the DP wins, and that is the
+substantive difference.** The offline solve measured the DP at **−0.01 % vs
+`soc-band` at matched terminal SoC** on this cycle — a tie, not the −14.33 %
+the 61 s cycle shows. The DP's advantage lives on the low-demand synthetic
+cycle, where share-shifting has room to move. Demanding a 2 % improvement at
+drive-cycle scale would therefore fail a CORRECT candidate against a reference
+the optimum itself only ties, so `vs_reference_max` is **1.02** — "not
+materially worse", which is the whole available claim at this scale. The number
+is **PROVISIONAL** (derived from the offline tie plus the ~0.05 % run-to-run h2
+spread, not measured) and is rendered with that qualifier; re-derive it from the
+first campaign that evaluates the tuple.
+
+**Stimulus coherence, and why the drive-cycle frontier does not evaluate
+today.** eq-H2 corrects for SoC, not for demand, so legs that ran different
+stimuli are ranked on the stimulus difference. A precondition now checks the
+legs' `ems_v_profile` / `duration_s` / `ems_run_exit_s` / `aux_preload_a` /
+`chg_i_ceiling_a` against the registry BEFORE any comparison — knowable before
+a run starts, which matters when the alternative is 17 minutes of
+incomparable numbers. It finds two splits in the FTP-75 tuple:
+
+1. **The load-bearing one.** `ems-ftp75-sdp` runs `FTP75_SDP_PRELOAD_A` =
+   0.45 A while the reference and bound run `FTP75_PRELOAD_A` = 0.65 A. The
+   candidate carries 0.20 A less housekeeping load for 340 s — roughly 1.1 kJ
+   of bus energy it never supplies — so it would "win" on avoided load.
+   Resolutions, both operator decisions: run the SDP leg at 0.65 A (but 0.45 A
+   was derived from a measured current budget protecting the OC_FC margin), or
+   add a fourth SDP FTP-75 leg at 0.65 A and leave the existing one as the
+   dynamics demonstration it is.
+2. **An inert one, reported rather than whitelisted.** The two policy legs cap
+   the Ag105 at 0.8 A; the reference leg declares no cap and would run at
+   2.5 A. It never bites today — the preload forecloses `soc-band`'s charge
+   branch on this cycle — but "inert" is a measurement on one campaign's trace,
+   not a property of the registry.
+
+So the `ftp75` frontier renders **UNVERIFIED, naming both keys and both
+values**, and — because both splits are documented and their resolutions are
+operator decisions — it does **not** fail the campaign. The `cycle61` tuple's
+own coherence IS exit-affecting: its three legs are documented to share one
+stimulus object, so a split there would be a regression.
 
 ⚠️ `h2_cum_g` is the Gfc **model's estimate**. The map is scale-portable, but the
 coefficients are not identified against this rig's stack (`TODO(calibrate)`), so
@@ -435,9 +582,12 @@ every frontier number is a RANKING on one rig and not an absolute mass.
   constant 0.85 for the whole run by design — so with the SoC axis held still,
   every FC_CHARGE transition is attributable to demand: the plateaus are bin 5
   (charge-admissible) and the cruises bin 10 (forbidden).
-  ⚠️ **The SoC rise is fuel-cell-fed through FC_CHARGE, not regen harvest.** The
-  plant floors regen power at zero, so this validates the policy's decel-window
-  charge behaviour and NOT regen capture.
+  ⚠️ **The SoC rise is fuel-cell-fed through FC_CHARGE, not regen harvest** —
+  not because regen is floored (WP-C 2026-09-01 removed that floor) but because
+  this policy never opens the REGEN path, so no harvested joule can reach the
+  pack here whatever the plant models. This validates the policy's decel-window
+  charge behaviour and NOT regen capture; `regen-harvest-true` is the capture
+  scenario.
 - **Pass/fail:** fault-free; in Run at t = 100; `cmd_share_sp` bounded in
   [0.84, 0.86] for the whole run (asserted from both sides — that bound is what
   licenses the attribution); `FC_CHARGE_ENABLE` open >= 45 s across the plateaus
@@ -535,24 +685,62 @@ above, with the EMS scenarios it belongs to.)*
   charge window by construction.
 - **Pass/fail:** *5050:* fault-free; in Run at t = 300; the 3.0 m/s peak commanded
   at t ≈ 245; `I_fc` ≥ 0.70 A at the peak; `h2_cum_g` in the measured band
-  **[0.045, 0.085] g** (measured 6.47 × 10⁻²). *socband:* `FAULT_OC_FC` additionally
-  allowed (the 0.75 share ceiling leaves only **11.3 %** of peak margin against the
-  measured 1.2414 A — the model budget under-predicts currents by a systematic
-  +2.6 % — and an OC there is the correct hardware response, operator ruling (b));
-  share bias ≥ 0.60 commanded and `I_fc` ≥ **0.95 A** delivered over (30, 340) s
+  **[0.045, 0.085] g** (measured 6.47 × 10⁻²). *socband:* **fault-free** — the
+  `FAULT_OC_FC` allowance was RETIRED 2026-09-01 by operator ruling. It had covered the
+  0.75 share ceiling leaving only **11.3 %** of peak margin against the measured
+  1.2414 A, and an OC there would indeed be the correct hardware response under ruling
+  (b) — but six campaigns have run this scenario and the allowance went **unused in
+  every one**, while it silently excused the one fault the scenario is most likely to
+  produce. Ruling (b) itself is unchanged (`charge-cruise` still *requires* OC_FC under
+  it); what changed is only that this scenario is not the place to hedge. If a campaign
+  latches OC_FC here now, the finding is a budget one — `FTP75_PRELOAD_A`, or the peak
+  margin eroding — and deserves to be seen. Share bias ≥ 0.60 commanded and `I_fc` ≥ **0.95 A** delivered over (30, 340) s
   (re-derived AGAIN 2026-08-31: `min_value` is a PEAK-over-window test, and the
   constant-0.50 `ems-ftp75-5050` sibling peaks at 0.8275 A over the same window, so
   any floor at or below that discriminates nothing; 0.95 A sits 15 % above it and
   23 % below the measured socband peak 1.2414 A. The earlier 0.70 A and 0.55 A
   figures were derived against instants rather than window peaks);
-  `h2_cum_g` keeps the conservative 5 × 10⁻³ g floor (an allowed OC_FC latch
-  truncates the total) plus a **0.115 g ceiling** (measured 9.16 × 10⁻²).
+  `h2_cum_g` in a **two-sided [0.070, 0.115] g band** around the measured
+  9.159 × 10⁻² (−24 % / +26 %). The old vacuous 5 × 10⁻³ floor existed only because a
+  truncated run was an allowed outcome; retiring the OC_FC allowance removes that
+  outcome, so the run now always reaches t = 345 and the floor can finally bracket the
+  measurement. The 9.159 × 10⁻² figure is **bit-identical across all six campaigns**
+  that have run this scenario.
   ⚠️ `soc-band` **saturates its bias at 0.75 by t = 46.8 s and holds it for the
   remaining 298 s** — past that point the run tests the firmware's share loop under
   one fixed setpoint, not the policy's law.
 - **Why useful:** the longest accounting runs in the suite, on a cycle a reader
-  outside the project recognises; skipped by default purely on run time (~17.5 min
-  for the three, `ems-ftp75-sdp` included).
+  outside the project recognises; skipped by default purely on run time (~23 min
+  for the four, `ems-ftp75-sdp` and `ems-ftp75-dp` included).
+
+### ems-ftp75-dp (350 s, **hifi only**, EMS `dp-replay`, gated behind `--with-ftp75`)
+
+- **Tests:** the drive-cycle twin of `ems-dp-replay` — the same FTP-75 stimulus
+  the other three `ems-ftp75-*` scenarios run, driven by a setpoint table solved
+  offline by backward dynamic programming with full foreknowledge of the cycle
+  and of the auxiliary load. It is the **non-causal lower bound** leg of the
+  `ftp75` EMS frontier, not a controller.
+- **Stimulus:** the same `FTP75_PROFILE` list object, the same
+  `FTP75_RUN_EXIT_S`, and the same `FTP75_PRELOAD_A` = 0.65 A as
+  `ems-ftp75-5050`/`-socband` — **not** `ems-ftp75-sdp`'s 0.45 A. A bound is
+  only a bound over the demand it solved. `chg_i_ceiling_a` is declared at 0.8 A
+  here (unlike the causal siblings, where the cap is unreachable): a DP table
+  decides charging for itself, so an undeclared ceiling would hand the
+  offline-optimal leg a 2.5 A lever the legs it bounds never had.
+- **hifi only,** for `ems-dp-replay`'s reason exactly: the shipped table is
+  solved `--charger-accounting physical`, which only a hi-fi run's `h2_cum_g`
+  matches, and `bind_scenario()` refuses the mismatch at startup.
+- **The table:** `tools/dp_tables/dp_ems_table_ems-ftp75-dp.csv`, ~30 min to
+  solve. Regenerate with
+  `C:/Users/ricky/miniforge3/python.exe tools/gen_dp_ems_table.py --scenario ems-ftp75-dp --force`.
+  The strategy refuses to start unless the table's `profile_fingerprint` matches
+  the live scenario AND ten header-recorded model values match the live ones.
+- **Pass/fail:** fault-free; in Run at t = 300; the 3.0 m/s peak commanded at
+  t ≈ 245; `I_fc` carried at the peak; `h2_cum_g` inside a PROVISIONAL band
+  around the DP's own predicted total (see the entry in `FAULT_EXPECTATIONS`).
+- **Why useful:** without it the drive-cycle frontier has no lower bound, and a
+  causal policy's drive-cycle result can only be compared with a heuristic —
+  which cannot say how much was left on the table.
 
 ## 7. Share-loop and topology scenarios
 
@@ -570,9 +758,16 @@ above, with the EMS scenarios it belongs to.)*
   the whole (8, 20) s window (≤ 200 set ticks), proving the cut actually happened
   and held. The 2 s gap between the cruise step and the rail command is
   load-bearing: the drive transient must settle below the 0.5 A cut guard first.
-- **Why useful:** live reproduction of a recorded bench hazard class, and the only
-  scenario that measures the single-source sag against the UV dwell on the hi-fi
-  droop model.
+- **Why useful:** live reproduction of a recorded bench hazard class, and the
+  single-source sag depth on the hi-fi droop model.
+- **⚠️ THE UV-DWELL OBJECTIVE MOVED OUT (2026-09-01, operator ruling).** This scenario
+  never delivered it and could not: its bus floor is reached on the BT rail behind an
+  `OC_BT` latch (measured min `V_bus` 14.43 V, 2.43 V above the limit), so the dwell
+  decision was never the thing being measured. **`v-bus-sense-offset` is its home now**
+  — it walks the *sensed* rail below the limit for a controlled 12 ms and then 60 ms and
+  so asserts `UV_BUS_DWELL_LATCH_MS` from both sides. Read no UV-threshold number off
+  this scenario. The `FAULT_UV_BUS` allowance stays here as class-modelling
+  permissiveness, not as coverage.
 
 ### share-staircase (47 s, any engine)
 

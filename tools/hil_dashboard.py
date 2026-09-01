@@ -58,6 +58,19 @@ FAULT_NAMES = (
 
 STATE_NAMES = {0: "INIT", 1: "IDLE", 2: "RUN", 3: "FINISH", 98: "TEST", 99: "ERROR"}
 
+# ErrorCode_t names (fw v25 observation-frame byte 16; .ino:1645-1670).
+# Duplicated rather than imported, same rationale as FAULT_NAMES above; keep in
+# step with hil_plant_sim.ERROR_CODE_NAMES.  The enum is APPEND-ONLY by firmware
+# contract, so an unknown value means "newer firmware than this tool" and is
+# rendered raw rather than dropped.
+ERROR_CODE_NAMES = {
+    0x00: "NONE", 0x01: "OC_FC", 0x02: "UV_BATT", 0x03: "OV_BUS",
+    0x04: "SWITCH_CONFLICT", 0x05: "PI_TIMEOUT", 0x06: "OV_BATT",
+    0x07: "UV_FC", 0x08: "OC_BT", 0x09: "UV_BUS", 0x0A: "OV_RGN",
+    0x0B: "OV_CHG", 0x0C: "I2C_CHARGER", 0x0D: "CHARGER_STAT",
+    0x0E: "INIT_FAIL", 0x0F: "MOT_HOTPLUG", 0x10: "HIL_STALE",
+}
+
 # Ag105 reg-0x02 threshold count -> volts (fw v24; AG105_MPPT_VOLTS, .ino:1671-1677).
 # Duplicated rather than imported, same rationale as FAULT_NAMES above: 11.0 V at
 # count 0, 0.088 V/count. >=251 (Table 7; 0xFF/AG105_MPPT_N_RESISTOR is the boot
@@ -99,6 +112,20 @@ def decode_faults(flags, max_names=None):
         shown = names[:max_names]
         return ", ".join(shown) + ", +%d more" % (len(names) - max_names)
     return ", ".join(names)
+
+
+def decode_error_code(code):
+    """None -> '—' (fw < v25: the frame has no such byte, NOT 'no fault').
+
+    0 renders as 'NONE(0x00)' — a positive statement that the board latched
+    nothing — which is exactly why an absent byte must not render the same way.
+    An unrecognised value renders '0x%02X?' rather than being suppressed.
+    """
+    if code is None:
+        return DASH
+    n = int(code) & 0xFF
+    known = ERROR_CODE_NAMES.get(n)
+    return ("%s(0x%02X)" % (known, n)) if known else ("0x%02X?" % n)
 
 
 def sparkline(values, lo=None, hi=None, width=None):
@@ -379,8 +406,13 @@ class Dashboard:
         # F1: cap the fault names spelled out so a multi-fault line can't
         # blow past the terminal width -- 4 leaves room for the "0x%04X"
         # prefix and a trailing "+k more" even on an 80-col terminal.
-        add("  faults 0x%04X  %s"
-            % (s.get("faults") or 0, decode_faults(s.get("faults") or 0, max_names=4)))
+        # fw v25: err= is the LATCHED FIRST CAUSE, which fault_flags cannot give
+        # — bit 0x0010 is shared by PI_TIMEOUT and HIL_LINK.  '—' means the
+        # board's frame predates fw v25, never "no error".  The name cap drops
+        # 4 -> 3 to pay for the err= field on an 80-col terminal.
+        add("  faults 0x%04X  %s  err=%s"
+            % (s.get("faults") or 0, decode_faults(s.get("faults") or 0, max_names=3),
+               decode_error_code(s.get("error_code"))))
         if s.get("hifi_hz") is not None:
             add("  hifi   %.1f kHz substep   events %d   chopper peak %s W"
                 % (s["hifi_hz"] / 1e3, s.get("hifi_events", 0),

@@ -282,6 +282,41 @@ def test_decode_faults_unknown_bit_falls_back_to_hex():
     assert hd.decode_faults(huge) == "0x%04X" % huge
 
 
+def test_decode_error_code_none_is_not_err_none():
+    """The distinction the whole column rests on: '-' (the frame has no such
+    byte) and NONE(0x00) (the board latched nothing) are different facts."""
+    assert hd.decode_error_code(None) == hd.DASH
+    assert hd.decode_error_code(0) == "NONE(0x00)"
+    assert hd.decode_error_code(0x05) == "PI_TIMEOUT(0x05)"
+    assert hd.decode_error_code(0x10) == "HIL_STALE(0x10)"
+    # APPEND-ONLY enum: an unrecognised code means newer firmware, so it is
+    # rendered raw rather than suppressed.
+    assert hd.decode_error_code(0x7F) == "0x7F?"
+
+
+def test_dashboard_error_code_names_agree_with_hil_plant_sim():
+    """Two copies of the firmware enum exist (leaf-module rule); they must not
+    drift.  The dashboard uses short labels, so compare on VALUES and on the
+    substring, not on equality of the strings."""
+    for val, name in hil.ERROR_CODE_NAMES.items():
+        assert val in hd.ERROR_CODE_NAMES
+        assert hd.ERROR_CODE_NAMES[val] == name[len("ERR_"):]
+    assert set(hd.ERROR_CODE_NAMES) == set(hil.ERROR_CODE_NAMES)
+
+
+def test_render_fault_line_carries_the_error_code(monkeypatch):
+    _wide_terminal(monkeypatch)
+    text, error = _run_dashboard_tick(
+        monkeypatch, {"faults": 0x8010, "error_code": 0x10, "state": 99})
+    assert error is None
+    assert "err=HIL_STALE(0x10)" in text
+    # A pre-v25 board renders the em-dash on the same line -- never NONE.
+    text, error = _run_dashboard_tick(
+        monkeypatch, {"faults": 0x8010, "error_code": None, "state": 99})
+    assert error is None
+    assert ("err=" + hd.DASH) in text
+
+
 def test_state_names_covers_required_states():
     for s in (0, 1, 2, 3, 98, 99):
         assert s in hd.STATE_NAMES
@@ -351,8 +386,8 @@ def test_without_dash_behavior_unchanged_csv_header_and_scenario_list(tmp_path, 
     # request, blank on this non-SDP run).
     # mppt_thresh_cnt appended after all of them by the fw v24 lockstep round
     # (observation-frame byte 15; appended in BOTH schemas, so it is last).
-    assert header[-1] == "mppt_thresh_cnt"
-    assert header[-8:-1] == ["soc", "cmd_v_sp", "cmd_share_sp",
+    assert header[-2:] == ["mppt_thresh_cnt", "error_code"]
+    assert header[-9:-2] == ["soc", "cmd_v_sp", "cmd_share_sp",
                              "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
                              "cmd_share_sp_raw"]
 

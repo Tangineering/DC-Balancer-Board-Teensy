@@ -84,9 +84,10 @@ crossing), with offline walks to predict flip times.
 
 ## 3. Operator bench actions
 
-1. **R1 (standing):** inspect the MPPTSEL header. Unfitted (or > ~15.9 V) → the real
-   charger hunts and fw v24 is required; fitted ≤ ~12–15 V → no firmware change,
-   update the simulator's emulated threshold instead.
+1. **R1 — CLOSED AS MOOT (operator ruling 2026-09-01):** firmware actively writes
+   reg 0x02 (values 0–250 select register mode and override any fitted MPPTS
+   resistor, Table 7), so the header's population no longer changes behavior.
+   No inspection needed.
 2. `drive` scenario has never run (operator-gated): run one campaign with
    `--with-operator` when present at the bench.
 
@@ -135,6 +136,17 @@ re-running the EMS set through the real Pi.
   12.7 % — recorded as unreconciled).
 - `ems-ftp75-socband` h2 floor stays loose until its OC_FC allowance is retired or
   the entry grows a completed-run-only branch.
+
+## 6b. Rulings received 2026-09-01 (this round implements them)
+
+- UV-dwell objective: MOVED to a new `v_bus_sense_offset` scenario (handoff-sag
+  keeps its share-cut validation role) — WP-B.
+- ems-ftp75-socband: OC_FC allowance RETIRED; h2 floor tightens two-sided — WP-B.
+- Observation frame: grow 17 → 18 B with `error_code` at offset 16 — fw v25 (WP-A)
+  + sim lockstep (WP-B).
+- FTP75 DP leg + measured-droop hifi mode: both IN (WP-E).
+- Regen-fidelity plant model: IN (WP-C) — un-tables S3-full and chopper coverage.
+- Pi bridge source: still pending operator access (Mode B stays blocked).
 
 ## 7. Operator decisions outstanding
 

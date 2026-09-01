@@ -1777,6 +1777,99 @@ def test_build_sim_argv_omits_replay_i_fc_clamp_for_other_entries():
     assert "--replay-i-fc-clamp" not in argv
 
 
+# ── R-MED-1 (campaign 080905): TP0010's BT twin of the FC clamp ────────────
+
+def test_tp0010_alone_carries_the_i_bt_clamp():
+    """MEASURED, not assumed: TP0010's |I_batt| peaks at 3.5861 A against
+    LIMIT_I_BT_MAX 3.0 and would latch OC_BT before the UV collapse is scored.
+    TP0053's peaks at 2.3451 A and deliberately gets NO clamp -- clamping a
+    trajectory that needs no clamping would modify a recording for nothing."""
+    index = rs.suite_index()
+    assert index["TP0010"]["i_bt_clamp_a"] == pytest.approx(rs.UV_PAIR_I_BT_CLAMP_A)
+    assert index["TP0053"].get("i_bt_clamp_a") is None
+    for e in rs.REPLAY_SUITE:
+        if e["log"] != "TP0010":
+            assert e.get("i_bt_clamp_a") is None, e["log"]
+    # The clamp must sit UNDER the firmware limit or it does not remove the
+    # OC stimulus it exists to remove.
+    assert rs.UV_PAIR_I_BT_CLAMP_A < 3.0
+
+
+def test_tp0010_declares_the_bt_clamp_in_its_why():
+    """Every deliberate trajectory modification is DECLARED at every scoring
+    site -- table, argv, banner, note. This is the table half."""
+    why = rs.suite_index()["TP0010"]["why"]
+    assert "I_batt" in why and "CLAMPED" in why
+    assert "3.586" in why          # the measurement that justifies it
+    assert "TP0053" in why         # ...and why its twin does not get one
+
+
+def test_build_sim_argv_mirrors_the_i_bt_clamp():
+    """A modifier declared in the table and not mirrored here means a hand-run
+    replay silently differs from a suite-run one."""
+    argv = rs.build_sim_argv(rs.suite_index()["TP0010"], "/tmp/csvdir")
+    idx = argv.index("--replay-i-bt-clamp")
+    assert float(argv[idx + 1]) == pytest.approx(rs.UV_PAIR_I_BT_CLAMP_A)
+    assert "--replay-i-bt-clamp" not in rs.build_sim_argv(
+        rs.suite_index()["TP0053"], "/tmp/csvdir")
+
+
+# ── R-LOW-1: ML0151's OC knife-edge, asserted rather than narrated ─────────
+
+class _FakeReplayData:
+    def __init__(self, i_fc, preamble_s=0.0):
+        self.i_fc = i_fc
+        self.preamble_s = preamble_s
+
+
+def test_i_fc_max_in_band_three_branches():
+    spec = {"min_a": 1.20, "max_a": 1.40}
+    ok, why = rs.check_i_fc_max_in_band(
+        _FakeReplayData([(1.0, 0.8), (2.0, 1.354)]), spec)
+    assert ok and "1.3540" in why
+    # ABOVE: the entry has become a deviation-class OC stimulus.
+    ok, why = rs.check_i_fc_max_in_band(
+        _FakeReplayData([(1.0, 1.45)]), spec)
+    assert not ok and "ABOVE" in why
+    # BELOW: the near-limit condition the entry documents is gone.
+    ok, why = rs.check_i_fc_max_in_band(
+        _FakeReplayData([(1.0, 0.4)]), spec)
+    assert not ok and "BELOW" in why
+    # UNMEASURED: absent stimulus is not a pass.
+    ok, why = rs.check_i_fc_max_in_band(_FakeReplayData([]), spec)
+    assert not ok and "absent" in why
+
+
+def test_i_fc_max_in_band_reads_magnitude_and_skips_the_preamble():
+    """LIMIT_I_FC_MAX is judged on |I_fc| in the firmware, and the synthetic
+    preamble's currents are this harness's invention, not the stimulus."""
+    spec = {"min_a": 1.20, "max_a": 1.40}
+    ok, why = rs.check_i_fc_max_in_band(
+        _FakeReplayData([(1.0, -1.30)], preamble_s=0.0), spec)
+    assert ok and "1.3000" in why
+    # A big preamble sample must not be read as the stimulus peak.
+    ok, _ = rs.check_i_fc_max_in_band(
+        _FakeReplayData([(1.0, 9.0), (3.0, 1.30)], preamble_s=2.5), spec)
+    assert ok
+
+
+def test_ml0151_pins_its_oc_knife_edge():
+    entry = rs.suite_index()["ML0151"]
+    pin = next(c for c in entry["checks"] if c["kind"] == "i_fc_max_in_band")
+    # Measured peak 1.354 A; ceiling IS the firmware limit, floor 11 % below.
+    assert pin["max_a"] == pytest.approx(rs.LIMIT_I_FC_MAX_A) == pytest.approx(1.4)
+    assert pin["min_a"] == pytest.approx(1.20)
+    assert pin["min_a"] < 1.354
+    # Registered in the dispatcher, and its field set pinned by the shape
+    # guard -- a field typed onto the wrong kind reads as an assertion and is
+    # silently ignored, which is what that guard exists to catch.
+    assert rs.CHECK_KINDS["i_fc_max_in_band"] is rs.check_i_fc_max_in_band
+    # The import-time field guard knows the kind (it runs over the whole
+    # table at import, so a stray field on this check would have refused the
+    # module load).
+    rs._assert_check_spec_shapes()
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # 4c. --replay-commands: REPLAY_SUITE table pins / build_sim_argv mirroring
 # ─────────────────────────────────────────────────────────────────────────
@@ -2899,20 +2992,39 @@ def test_vacuous_tag_absent_when_current_is_not_all_zero(tmp_path):
 # TARGET_FW_VERSION / LIMIT_V_BUS_MAX_V (item 2)
 # ─────────────────────────────────────────────────────────────────────────
 
-def test_target_fw_version_is_24():
-    """21 -> 23 -> 24. The target must say what it actually runs against: the
-    board carries fw v24 (dynamic Ag105 MPPT threshold + the 17-byte
-    observation frame). COMPARABLE_FW_MIN is a SEPARATE constant and stays at
-    18 -- v24 changed no encoder constant and no drive coefficient, so no
-    entry's conformance/stability classification moves."""
-    assert rs.TARGET_FW_VERSION == 24
+def test_target_fw_version_is_25():
+    """21 -> 23 -> 24 -> 25. The target must say what it actually runs against:
+    fw v25 (share-cut handoff guards + the 18-byte observation frame).
+    COMPARABLE_FW_MIN is a SEPARATE constant and stays at 18 -- neither v24 nor
+    v25 changed an encoder constant or a drive coefficient, so no entry's
+    conformance/stability classification moves."""
+    assert rs.TARGET_FW_VERSION == 25
     assert rs.COMPARABLE_FW_MIN == 18
-    assert 22 in rs.FW_DELTA_NOTES and 23 in rs.FW_DELTA_NOTES
-    assert 24 in rs.FW_DELTA_NOTES
-    # The v24 row must say the drive law and the wheel did NOT move, because
-    # that is the claim every replay comparison across the boundary rests on.
-    note = rs.FW_DELTA_NOTES[24]
-    assert "SAME WHEEL AND SAME DRIVE LAW" in note
+    for v in (22, 23, 24, 25):
+        assert v in rs.FW_DELTA_NOTES
+    # The v24 and v25 rows must both say the drive law and the wheel did NOT
+    # move -- that is the claim every replay comparison across the boundary
+    # rests on.
+    for v in (24, 25):
+        assert "SAME WHEEL AND SAME DRIVE LAW" in rs.FW_DELTA_NOTES[v]
+
+
+def test_fw25_delta_note_states_the_expectation_relevant_guard_consequence():
+    """The v25 row is not a changelog echo: a replay reader must be able to see
+    from it WHICH observable moved.  The guards make an en_low bus-switch
+    sw_ring above SHARE_CUT_MAX_HANDOFF_A a hazard signature rather than a
+    normal event, and the note has to say so or the suite-wide tripwire looks
+    arbitrary."""
+    note = rs.FW_DELTA_NOTES[25]
+    assert "SHARE_CUT_MAX_HANDOFF_A" in note
+    assert "SHARE_CUT_SURVIVOR_BLANK_MS" in note
+    assert "en_low" in note and "NO LONGER OCCUR" in note
+    # ...and that a refused cut is NOT a fault, so a reader does not go hunting
+    # for a flag that never gets set.
+    assert "not a fault" in note
+    # State-99 teardown must be excluded explicitly -- those cuts are not share
+    # cuts and legitimately open a loaded switch.
+    assert "TEARDOWN" in note
 
 
 def test_limit_v_bus_max_v_matches_firmware():

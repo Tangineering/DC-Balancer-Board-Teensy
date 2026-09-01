@@ -335,9 +335,35 @@ FW_DELTA_NOTES = {
           "V_bus under 12.8 V for 15 ms now CLOSES FC_CHARGE_ENABLE, re-opening "
           "above 13.6 V — the backoff dwell (AG105_CHG_BACKOFF_DWELL_MS, .ino:1764) "
           "is 15 ms, kept under the 20 ms UV_BUS_DWELL_LATCH_MS so it cannot "
-          "pre-empt the UV latch. It can only close a path that is already open, "
-          "and the UV-collapse stimuli replay with charge_goal 0, so no entry's "
-          "expectations move. THE FLASHED TARGET.",
+          "pre-empt the UV latch. IT IS UNREACHABLE BY ANY REPLAY ENTRY, and by "
+          "a STRUCTURAL argument rather than a numeric one (tightened "
+          "2026-09-01): chargingControl() runs only in State 2 and in the "
+          "State-98 profiles, and no replay entry whose injected V_bus goes "
+          "below 12.8 V ever reaches State 2 — the UV-collapse stimuli are the "
+          "only sub-12.8 V entries and they replay with charge_goal 0, so "
+          "FC_CHARGE_ENABLE is never open for the backoff to close. No entry's "
+          "expectations move.",
+    25:   "fw v25: SHARE-CUT HANDOFF GUARDS + an 18-byte observation frame. SAME "
+          "WHEEL AND SAME DRIVE LAW as v18-v24 — the round touched the share-cut "
+          "guards, one HIL frame byte and nothing else — so v_act and every "
+          "drive-channel comparison carries across unchanged, and no encoder "
+          "constant or drive coefficient moved. WHAT CHANGED, and it is "
+          "EXPECTATION-RELEVANT: a share cut is now REFUSED when the doomed "
+          "channel carries more than SHARE_CUT_MAX_HANDOFF_A (0.5 A) — the "
+          "r-based path never had that guard before (.ino:10435/10466) — and "
+          "REFUSED on BOTH paths while the SURVIVOR's bus switch rose less than "
+          "SHARE_CUT_SURVIVOR_BLANK_MS (30 ms, .ino:3353) ago, because a switch "
+          "just commanded HIGH is still inside the RT1987 t_D_ON + CSS "
+          "soft-start and delivers no current yet. A refused cut is not a fault "
+          "and sets no flag: it falls through to the band-edge droop clip, with "
+          "the ratio slew limiter re-armed (.ino:10495), and is retried every "
+          "tick. CONSEQUENCE FOR REPLAY EXPECTATIONS: on a share path, an "
+          "en_low sw_ring on FC_BUS/BT_BUS with i_cut above 0.5 A should NO "
+          "LONGER OCCUR — that is exactly the hazard the guards close, and the "
+          "suite asserts its absence for fw >= 25 (see the "
+          "share_cut_load_hazard tripwire). State-99 TEARDOWN cuts are NOT "
+          "share cuts and are unaffected. Cuts at light load past the blanking "
+          "window are unchanged in effect. THE FLASHED TARGET.",
 }
 
 # The firmware version currently flashed / targeted by this suite.
@@ -355,7 +381,12 @@ FW_DELTA_NOTES = {
 # expectation only; COMPARABLE_FW_MIN stays 18 because v24 changed no encoder
 # constant and no drive coefficient, so no entry's conformance/stability
 # classification moves.
-TARGET_FW_VERSION = 24
+# 24 -> 25 (2026-09-01): fw v25 is the target (share-cut handoff guards + the
+# 18-byte observation frame).  Same reasoning as the 23 -> 24 bump: this constant
+# feeds the REPORT header's firmware expectation only, and COMPARABLE_FW_MIN
+# stays 18 because v25 changed no encoder constant and no drive coefficient, so
+# no entry's conformance/stability classification moves.
+TARGET_FW_VERSION = 25
 # Logs at or above this fw version share the current control law AND wheel.
 COMPARABLE_FW_MIN = 18
 
@@ -395,6 +426,26 @@ COMPARABLE_FW_MIN = 18
 # touches only I_fc, never V_bus, and _uv_stimulus_qualifies() reads V_bus alone),
 # and no sample can reach 1.4 A, so OC_FC is unreachable by construction.
 UV_PAIR_I_FC_CLAMP_A = 1.3
+# ── TP0010's BT twin (R-MED-1, campaign 080905) ────────────────────────────
+# The same defect, on the other channel, and MEASURED rather than assumed:
+# TP0010's recorded |I_batt| peaks at 3.5861 A against LIMIT_I_BT_MAX 3.0 A,
+# so a production build replaying it raw latches OC_BT and State 99 freezes
+# fault_flags before the recorded UV collapse can be scored -- destroying the
+# entry exactly as the un-clamped FC channel did.
+# 2.8 A is 6.7 % under the limit, the same fractional margin the FC clamp
+# takes (1.3 vs 1.4). Same operator ruling (a): the recorded pack current came
+# from a DC bench supply, so the clamp removes an unphysical stimulus.
+# TP0053 DELIBERATELY DOES NOT GET THIS: its |I_batt| peaks at 2.3451 A, well
+# under the limit, so a clamp there would modify a trajectory for no reason.
+# The two UV-pair entries therefore differ in their modifiers, by measurement.
+UV_PAIR_I_BT_CLAMP_A = 2.8
+UV_PAIR_BT_CLAMP_WHY = (
+    " *** INJECTED I_batt ALSO CLAMPED to " + ("%.1f" % UV_PAIR_I_BT_CLAMP_A)
+    + " A *** (R-MED-1, 2026-09-01): TP0010's recorded |I_batt| peaks at "
+    "3.586 A, above LIMIT_I_BT_MAX 3.0 A, and would latch OC_BT before the UV "
+    "collapse is scored -- the BT twin of the FC clamp above, under the same "
+    "operator ruling (a). NO conclusion about BT current may be drawn from "
+    "this run either. TP0053 needs no such clamp (measured peak 2.345 A).")
 # Formatted with (log_name, t_oc_s, t_uv_s); the clamp value is substituted here so
 # an entry cannot quote a number the plumbing does not use.
 UV_PAIR_CLAMP_WHY = (
@@ -1020,6 +1071,16 @@ REPLAY_SUITE = [
                     # threshold (round-1 campaign 20260831_000518);
                     # floor set at half that.
                     "drive_min_frac": 0.45},
+            # R-LOW-1 (2026-09-01): the knife-edge in this entry's `why` is now
+            # ASSERTED rather than only narrated.  Measured peak 1.354 A;
+            # the band is (1.20, 1.40] -- the ceiling is LIMIT_I_FC_MAX itself
+            # (crossing it makes this a deviation-class OC stimulus) and the
+            # floor is 11 % below the measurement, enough that decode/rescale
+            # noise cannot trip it while a stimulus that stopped being a near
+            # miss does.  Same shape and the same rationale as the
+            # `uv_margin_pinned` band on TP0178/TP0201.
+            {"kind": "i_fc_max_in_band", "name": "oc_margin_pinned",
+             "min_a": 1.20, "max_a": 1.40},
             {"kind": "bounded_current", "name": "bounded_current"},
             {"kind": "returns_off_rail", "name": "returns_off_rail",
              "level_a": OFF_RAIL_LEVEL_A, "within_s": OFF_RAIL_WITHIN_S},
@@ -1318,9 +1379,11 @@ REPLAY_SUITE = [
         "classification": "pre-versioning bus collapse; the old firmware died without faulting",
         "why": "UV pair member. The fw v5 leaky-dwell UV filter must latch UV_BUS on "
                "this recorded collapse — that is the whole point of the rework."
-               + UV_PAIR_CLAMP_WHY % ("TP0010", 4.770, 4.797),
+               + UV_PAIR_CLAMP_WHY % ("TP0010", 4.770, 4.797)
+               + UV_PAIR_BT_CLAMP_WHY,
         "provisional": False,
         "i_fc_clamp_a": UV_PAIR_I_FC_CLAMP_A,
+        "i_bt_clamp_a": UV_PAIR_I_BT_CLAMP_A,
         # RULE 1, and DELIBERATE for this pair specifically: the entry's whole
         # verdict is a UV fault DECISION on an ALREADY-MODIFIED trajectory
         # (i_fc_clamp_a). A replayed command stream is a second stimulus over that,
@@ -1546,6 +1609,7 @@ def _assert_check_spec_shapes():
         "share_loop_actuated": {"min_span", "min_samples"},
         "steps_onto_rail_within": {"level_a", "within_s", "after_s"},
         "v_bus_min_in_band": {"min_v", "max_v"},
+        "i_fc_max_in_band": {"min_a", "max_a"},
         "latch_precedes_uv": {"bit", "min_lead_ms"},
     }
     for e in REPLAY_SUITE:
@@ -2052,6 +2116,71 @@ def _v_bus_min_recorded(data):
         return None, None
     t, v = min(window, key=lambda tv: tv[1])
     return t, v
+
+
+def _i_fc_max_recorded(data):
+    """(t, |I_fc|) at the RECORDED-window maximum, or (None, None).
+
+    Restricted to t >= data.preamble_s for the same reason _v_bus_min_recorded()
+    is: the synthetic preamble's currents are this harness's invention and a
+    question about the STIMULUS must be answered from the stimulus.
+    MAGNITUDE, because LIMIT_I_FC_MAX is judged on |I_fc| in the firmware."""
+    window = [(t, abs(v)) for t, v in data.i_fc if t >= data.preamble_s]
+    if not window:
+        return None, None
+    return max(window, key=lambda tv: tv[1])
+
+
+def check_i_fc_max_in_band(data, spec):
+    """The recorded |I_fc| MAXIMUM lands inside [min_a, max_a] — a KNIFE-EDGE PIN.
+
+    R-LOW-1 (campaign 080905).  ML0151 is a CONFORMANCE entry whose recorded
+    I_fc peaks at 1.354 A, 96.7 % of LIMIT_I_FC_MAX 1.4 A — 46 mA from flipping
+    the entry into the OC-latch class.  Its `why` said so in prose and nothing
+    asserted it, so any change to the decode, the rescale or the FC limit would
+    have turned the entry's `no_fault` into a FAIL for a reason unrelated to the
+    saturation behaviour it exists to test.
+
+    The pin bites in BOTH directions, exactly like `v_bus_min_in_band`:
+
+      UPPER bound — the peak reaching the limit means the entry is no longer a
+        conformance case at all and its classification must be re-derived.
+        Failing HERE names that, instead of leaving a reader to work out why a
+        `no_fault` check on a saturation regression started failing.
+      LOWER bound — a peak that drifted well DOWN means the near-limit
+        condition this entry documents is gone, so the knife-edge note in its
+        `why` is stale and the OC-margin coverage it silently provided is gone
+        too.
+
+    It asserts the STIMULUS, not the board — a separate check, deliberately.
+
+    Spec fields: `min_a` (inclusive floor, required), `max_a` (inclusive
+    ceiling, required)."""
+    lo_a, hi_a = float(spec["min_a"]), float(spec["max_a"])
+    t, i = _i_fc_max_recorded(data)
+    if i is None:
+        return False, (f"no I_fc samples at or after t={data.preamble_s:.1f}s — "
+                       f"the recorded stimulus is absent, so its peak cannot be "
+                       f"pinned")
+    where = (f"peak |I_fc| {i:.4f} A at t={t:.3f}s "
+             f"({i / LIMIT_I_FC_MAX_A * 100:.1f} % of LIMIT_I_FC_MAX "
+             f"{LIMIT_I_FC_MAX_A:.1f} A)")
+    if i < lo_a:
+        return False, (f"{where} is BELOW the {lo_a:.2f} A floor this entry pins: "
+                       f"the recorded peak has drifted away from the limit, so "
+                       f"this entry no longer carries the near-limit condition "
+                       f"its `why` documents and the OC margin it implicitly "
+                       f"covered is unasserted")
+    if i > hi_a:
+        return False, (f"{where} is ABOVE the {hi_a:.2f} A ceiling this entry "
+                       f"pins: the recorded stimulus now crosses (or is about to "
+                       f"cross) LIMIT_I_FC_MAX, so this is a DEVIATION-class "
+                       f"OC stimulus and the entry's conformance classification "
+                       f"must be re-derived before its verdict means anything")
+    return True, (f"{where}, inside the pinned band [{lo_a:.2f}, {hi_a:.2f}] A — "
+                  f"the knife-edge documented in this entry's `why` is now "
+                  f"asserted, with {(LIMIT_I_FC_MAX_A - i) * 1000:.0f} mA of "
+                  f"headroom to the limit")
 
 
 def check_v_bus_min_in_band(data, spec):
@@ -2854,6 +2983,7 @@ CHECK_KINDS = {
     "share_loop_actuated": check_share_loop_actuated,
     "steps_onto_rail_within": check_steps_onto_rail_within,
     "v_bus_min_in_band": check_v_bus_min_in_band,
+    "i_fc_max_in_band": check_i_fc_max_in_band,
 }
 
 # Deferred from the guard block above: this one needs CHECK_KINDS, which only
@@ -2940,6 +3070,13 @@ def evaluate_replay_csv(entry, csv_path):
             f"the entry's `why` and docs/HIL_REPLAY_LOGS.md for the justification "
             f"(operator ruling (a)); no conclusion about FC current may be drawn "
             f"from this run.")
+    bt_clamp = entry.get("i_bt_clamp_a")
+    if bt_clamp is not None:
+        result["notes"].append(
+            f"*** INJECTED I_batt CLAMPED to {bt_clamp:.2f} A *** — this entry's "
+            f"recorded trajectory is DELIBERATELY MODIFIED on the BT channel too "
+            f"(R-MED-1). Same justification as the FC clamp; no conclusion about "
+            f"BT current may be drawn from this run.")
     # PURPOSE is per-entry from 2026-08-30: an entry carrying `replay_commands`
     # DOES reach State 2 and DOES step both loops, so the blanket "no commander
     # exists in replay mode" sentence would be false for it.
@@ -3108,8 +3245,8 @@ def build_sim_argv(entry, csv_dir):
     csv_path = os.path.join(csv_dir, f"hil_replay_{entry['log']}.csv")
     argv = ["--replay", os.path.join(REPO_ROOT, entry["path"]),
             "--csv", csv_path, "--force"]
-    # Per-entry stimulus modifiers. ALL THREE (skip_preamble, i_fc_clamp_a,
-    # replay_commands) are declared in the entry table and ALL THREE must be
+    # Per-entry stimulus modifiers. ALL FOUR (skip_preamble, i_fc_clamp_a,
+    # i_bt_clamp_a, replay_commands) are declared in the entry table and ALL FOUR must be
     # mirrored here, or a hand-run replay would silently differ from a suite-run
     # one and the checks (which resolve the same fields) would be scoring a
     # different stimulus than the one that was injected.
@@ -3117,6 +3254,8 @@ def build_sim_argv(entry, csv_dir):
         argv.append("--replay-no-preamble")
     if entry.get("i_fc_clamp_a") is not None:
         argv += ["--replay-i-fc-clamp", "%g" % float(entry["i_fc_clamp_a"])]
+    if entry.get("i_bt_clamp_a") is not None:
+        argv += ["--replay-i-bt-clamp", "%g" % float(entry["i_bt_clamp_a"])]
     if entry.get("replay_commands"):
         # Third mirrored modifier: without it the entry's drive_loop_stepped check
         # would fail against a run that was never given commands, and its

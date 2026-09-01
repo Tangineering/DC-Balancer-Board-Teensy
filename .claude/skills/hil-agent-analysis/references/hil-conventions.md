@@ -108,8 +108,55 @@ hash-different does not strictly imply model-different; check the commit.
 - sw_ring events are analytic-only (never stamped into the node solution); the firmware
   cannot see them. over_absmax=True is the Death-5 signature; sub-absmax rings above
   LIMIT_V_BUS_MAX are recorded but informational.
+- **`sw_ring.i_cut` is a DECISIVE observable, not colour** (F5, campaign 080905). It is
+  the current the switch was carrying at the instant it opened, and it is what turned an
+  ems-sdp-braking OC_BT from "a fault happened" into a located firmware defect in one
+  reading. Read it on every sw_ring before reasoning about a bus event.
+- **HAZARD SIGNATURE — `reason: en_low` on `FC_BUS`/`BT_BUS` with `i_cut` > 0.5 A**
+  (SHARE_CUT_MAX_HANDOFF_A). That is a share cut opening a CONDUCTING source. On fw ≤ 24
+  it is the known defect (campaign 080905: FC_BUS cut at 0.6371 A, 5 ms into BT_BUS's
+  ~8 ms RT1987 t_D_ON; V_bus fell 14.56 → 12.40 V in 3 ms and I_batt overshot to 4.64 A).
+  On **fw ≥ 25 it must not occur at all** — the r-based cut path gained the 0.5 A load
+  guard and both paths gained 30 ms survivor-turn-on blanking — and `run_hil_suite`
+  asserts its absence suite-wide as `share_cut_load_hazard`.
+  ⚠️ DISCRIMINATE from a State-99 TEARDOWN cut, which legitimately opens a loaded bus
+  switch and emits an identical event shape. The event carries no state field, so the
+  discrimination is temporal, on a **LEAD WINDOW** — to apply it by hand:
+
+      cutoff = first_own_fault − TEARDOWN_LEAD_MS        (TEARDOWN_LEAD_MS = 5.0 ms)
+      event t ≥ cutoff  →  teardown (exclude)
+      event t <  cutoff  →  share-path hazard
+
+  where `first_own_fault` is the earliest **whole-run** fault sighting later than
+  ~0.10 s. Both refinements are load-bearing:
+  - **Not the post-grace map** as the anchor. It is the right scope for judging
+    expectations, but a fault that latched inside WARM_RESET_GRACE_S (2.0 s) and
+    persisted is reported at the grace bound — scp-inrush's designed OC_FC latches at
+    t = 0.717 and the post-grace map says 2.000, 1.28 s late, which drags the cutoff past
+    that run's own teardown cuts and false-FAILs them.
+  - **Not the raw whole-run map** either: every real run inherits its predecessor's latch
+    at ~1.3 ms, which would put the cutoff before everything and exclude the whole run.
+  - **Not an exact anchor.** The lead window exists because the solver timestamps a cut
+    slightly before the latch it accompanies (the latch comes back over the ~1.9 ms
+    observation round-trip). MEASURED SEPARATION, campaign 20260901_080905: teardown cuts
+    lead their latch by **0.095–0.117 ms**; genuine share-path hazards lead by **≥ 13.8 ms**.
+    5.0 ms sits ~2.6× above the round-trip floor and ~2.8× below the smallest real hazard.
+
+  A share cut that CAUSED a fault still lands well before its own latch and is caught.
+  Residual: a share cut arriving after an UNRELATED fault is still missed.
 - Under HIL_SIM, pollAg105() is mirrored by fiat — I2C config writes are NOT exercised;
   Ag105 lazy re-config claims need real hardware.
+- **THE MPPT-THRESHOLD MIRROR BOUNDARY** (fw v24+). The HIL mirror computes
+  `mppt_thresh_cnt` from the clamp arithmetic and publishes it on observation-frame byte
+  15, bypassing the real write path entirely. What an HIL run VALIDATES: the arithmetic,
+  the clamp band [15, 27], and the frame plumbing. What it does NOT touch: the write
+  POLICY, the deadband, the ≤2-per-session ratchet, the ≤8-per-boot EPROM budget, and the
+  read-verify-write handshake. So COUNT MOTION IS A MIRROR ARTIFACT — campaign 080905's
+  5-step-per-second ratchet is not write-budget evidence and must never be cited as such.
+  The count also PERSISTS across the unpowered gaps between charge windows and across
+  runs (`hilWarmReset()` preserves `ag105MpptRegCnt`; EPROM preserves the register), so a
+  reading present in a run is not evidence that THIS run wrote it — only a change in the
+  value within the run is.
 - The Ag105 charger input-draw stamping and MPPT input-power limiting have known gaps —
   check HIL_PLANT.md's current state before treating FC-draw magnitudes as physical.
 

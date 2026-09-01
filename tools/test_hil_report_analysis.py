@@ -1128,6 +1128,116 @@ def test_hil_share_raw_vs_emitted_is_registered():
     assert "hil_share_raw_vs_emitted" in dict(hra.HIL_FIGURES)
 
 
+# ── hil_h2_and_soc: hydrogen consumption + battery SoC (WP-D) ─────────────
+
+def _h2_soc_data(n=None, soc=None, h2_cum=None, h2_sdp=None, h2_rate=None):
+    if n is None:
+        for candidate in (soc, h2_cum, h2_sdp, h2_rate):
+            if candidate is not None:
+                n = len(candidate)
+                break
+        else:
+            n = 6
+    data = {"t_s": np.arange(n, dtype=np.float64)}
+    if soc is not None:
+        data["soc"] = np.asarray(soc, dtype=np.float64)
+    if h2_cum is not None:
+        data["h2_cum_g"] = np.asarray(h2_cum, dtype=np.float64)
+    if h2_sdp is not None:
+        data["h2_sdp_cum_g"] = np.asarray(h2_sdp, dtype=np.float64)
+    if h2_rate is not None:
+        data["h2_rate_gps"] = np.asarray(h2_rate, dtype=np.float64)
+    return data
+
+
+def test_hil_h2_and_soc_skips_when_soc_absent():
+    """A replay CSV carries neither soc nor h2 columns -- clean skip."""
+    data = {"t_s": np.arange(4, dtype=np.float64)}
+    assert hra.hil_h2_and_soc(data, {}) is None
+
+
+def test_hil_h2_and_soc_skips_when_soc_all_nan():
+    data = _h2_soc_data(soc=[np.nan] * 4)
+    assert hra.hil_h2_and_soc(data, {}) is None
+
+
+def test_hil_h2_and_soc_renders_both_columns_present():
+    soc = np.linspace(0.70, 0.68, 6)
+    h2 = np.linspace(0.0, 0.012345, 6)
+    h2_sdp = np.linspace(0.0, 0.013000, 6)
+    data = _h2_soc_data(soc=soc, h2_cum=h2, h2_sdp=h2_sdp)
+    fig = hra.hil_h2_and_soc(data, {})
+    assert fig is not None
+    ax0, ax1 = fig.axes[0], fig.axes[-1]
+    # final-value + delta_soc annotations are the headline numbers
+    texts0 = " ".join(t.get_text() for t in ax0.texts)
+    texts1 = " ".join(t.get_text() for t in ax1.texts)
+    assert "0.012345" in texts0
+    assert "0.013000" in texts0
+    assert "delta_soc" in texts1
+    assert "-0.020000" in texts1 or "-0.02" in texts1
+
+
+def test_hil_h2_and_soc_soc_only_degraded_render_has_annotation():
+    """Pre-2026-08-31 campaigns carry soc with no h2 columns at all. The H2
+    panel must render an explicit note, never a silently empty axes."""
+    data = _h2_soc_data(soc=np.linspace(0.65, 0.64, 5))
+    fig = hra.hil_h2_and_soc(data, {})
+    assert fig is not None
+    ax0 = fig.axes[0]
+    texts0 = " ".join(t.get_text() for t in ax0.texts)
+    assert "not present" in texts0
+    assert "2026-08-31" in texts0
+
+
+def test_hil_h2_and_soc_proxy_overlay_absent_when_h2_sdp_missing():
+    soc = np.linspace(0.70, 0.69, 5)
+    h2 = np.linspace(0.0, 0.005, 5)
+    data = _h2_soc_data(soc=soc, h2_cum=h2)
+    fig = hra.hil_h2_and_soc(data, {})
+    assert fig is not None
+    ax0 = fig.axes[0]
+    labels = [line.get_label() for line in ax0.get_lines()]
+    assert not any("h2_sdp_cum_g" in lbl for lbl in labels)
+
+
+def test_hil_h2_and_soc_proxy_overlay_skipped_when_all_nan():
+    soc = np.linspace(0.70, 0.69, 5)
+    h2 = np.linspace(0.0, 0.005, 5)
+    data = _h2_soc_data(soc=soc, h2_cum=h2, h2_sdp=[np.nan] * 5)
+    fig = hra.hil_h2_and_soc(data, {})
+    assert fig is not None
+    ax0 = fig.axes[0]
+    labels = [line.get_label() for line in ax0.get_lines()]
+    assert not any("h2_sdp_cum_g" in lbl for lbl in labels)
+
+
+def test_hil_h2_and_soc_h2_rate_overlay_present_when_column_has_values():
+    soc = np.linspace(0.70, 0.69, 5)
+    h2 = np.linspace(0.0, 0.005, 5)
+    rate = np.full(5, 0.0002)
+    data = _h2_soc_data(soc=soc, h2_cum=h2, h2_rate=rate)
+    fig = hra.hil_h2_and_soc(data, {})
+    assert fig is not None
+    # A twinx axes was added for the rate overlay: more than the base 2 axes.
+    assert len(fig.axes) >= 3
+
+
+def test_hil_h2_and_soc_soc0_marker_uses_first_finite_sample():
+    """soc0 must come from the first FINITE sample, not index 0 blindly."""
+    soc = np.array([np.nan, 0.70, 0.69, 0.68])
+    h2 = np.array([np.nan, 0.0, 0.003, 0.006])
+    data = _h2_soc_data(n=4, soc=soc, h2_cum=h2)
+    fig = hra.hil_h2_and_soc(data, {})
+    ax1 = fig.axes[-1]
+    texts1 = " ".join(t.get_text() for t in ax1.texts)
+    assert "soc0 = 0.700000" in texts1
+
+
+def test_hil_h2_and_soc_is_registered():
+    assert "hil_h2_and_soc" in dict(hra.HIL_FIGURES)
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # 8. suite_result_for (F2)
 # ─────────────────────────────────────────────────────────────────────────

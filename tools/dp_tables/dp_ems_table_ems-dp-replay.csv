@@ -19,7 +19,7 @@
 # command: python tools/gen_dp_ems_table.py --scenario ems-dp-replay --soc0 0.7 --capacity-ah 5.0 --stage-dt 0.1 --lambda-dev 0.0 --lambda-term 1.0 --n-share 41 --soc-step 5e-06 --charger-accounting physical --run-exit 58.0 --match-terminal-soc heuristic --match-tol 2e-06
 # generator: tools/gen_dp_ems_table.py
 # scenario: ems-dp-replay
-# profile_fingerprint: 9241676ef423f011d7eb0ce990f847f96040882b23bd77d9e1864ee8c6071250
+# profile_fingerprint: 02683031af95f0775489ca40ff5dc32a3b57a39e9786650150a2077168050d18
 # duration_s: 61.0
 # stage_dt_s: 0.1
 # run_entry_s: 3.0
