@@ -2174,7 +2174,9 @@ extensions, one datasheet correction, one open hardware question.
   emulated behind `mppt_emulation` (default False, existing traces byte-identical). NEW
   scenario `mppt-tracking` (mppt-harvest strategy, cruise + braking charge windows):
   **the predicted release/re-assert HUNT is CONFIRMED ON HARDWARE — 138 MPPT_DISABLE
-  toggles, 80 ms period, status 0x09 released-and-refusing observed.** Under the
+  toggles, ~40 ms period (the "80 ms" first recorded here was a mis-derivation —
+  corrected by the 2026-08-31 campaign's measured 40.05 ms median, which the
+  toggle count itself requires), status 0x09 released-and-refusing observed.** Under the
   datasheet-default threshold, cruise harvest CANNOT hold on a 15.95 V bus: if no MPPTS
   resistor is fitted (R1, operator to check the MPPTSEL header), the real charger hunts
   the same way and the fix is firmware writing reg 0x02 (~12 V).
@@ -2322,3 +2324,49 @@ references/EMS/SDP_EnergyManagement2.m onto the HIL sim, consuming the TPM toolc
 - **Next:** full campaign (all scenarios incl. --with-ftp75) with live
   hil-agent-analysis, then a higher-level utility evaluation of the HIL suite for the
   EMS-testing mission (operator-queued in this round's brief).
+
+---
+
+## Status & session addendum (2026-08-31h, campaign 191509: first full post-A/B/C+SDP campaign + suite evaluation)
+
+Full 53-run campaign (`--with-ftp75`; drive operator-gated SKIP) live-analyzed under
+the hil-agent-analysis skill (10 per-run agents + adversarial replay audit + tool
+pass). **52 PASS / 0 FAIL / 0 INCONCLUSIVE — every scenario verdict recomputed
+right-for-the-right-reason; zero scoring defects; zero board defects.** Ledger:
+`HIL Results/hil_report_20260831_191509/HIL_FINDINGS.md`; digest HIL_SUMMARY.md;
+program evaluation `HIL Results/HIL_SUITE_EVALUATION_20260831.md`.
+
+- **EMS lever pricing hardware-measured on two independent stimuli:** share-shift
+  0.409-0.415 SoC/g (61 s cycle AND 340 s FTP75, 2.3% apart; offline 0.405);
+  Ag105 charging ~0.156 SoC/g (offline 0.169) — charging confirmed the ~2.6x
+  worse lever. h2 totals repeat Round-B smokes to <0.05%.
+- **Three-way EMS on one stimulus:** sdp-v1 0.0125424 g/-0.00166 SoC beat soc-band
+  0.0128475/-0.00206 on both axes; dp-replay 0.0116403/-0.00203 (-9.40%);
+  dp-vs-sdp sit on the same frontier (equivalent-H2 0.003% apart). HONESTY:
+  sdp-v1 emitted a constant clamped 0.85 (demand pinned to TPM bin 24 ~98% of
+  decisions under the ruled sidecar map) — plumbing/provenance validated, policy
+  interior unreachable. Operator decision queued: re-normalized consumer demand
+  map (+ re-solve) vs accepting a constant-0.85 benchmark leg.
+- **Firsts validated:** scp i_cut 6.3797373196569644 A now 4/4 bit-exact; fw v23
+  any-fault recovery cleared a carried ERR_PI_TIMEOUT (fw v22 would have refused);
+  latch-RESTORE both channels/directions; watchdog latch triple-attributed
+  (485-vs-250 ms discriminator); FULL/CV repeat to 0.01%; MPPT hunt reproduced;
+  FTP75 drive tracking p95 2.96 mm/s incl. the 3 m/s peak; observation round-trip
+  floor L ~= 1.9 ms measured; SY0001 rail step 27.92 ms vs 150 ms budget.
+- **Fix queue (ranked, in the ledger): 5 MED** — ems-sdp coverage companion;
+  dp-table sidecar provenance block; cmd_* CSV column semantics doc (columns move
+  at the NOMINAL timeline instant, not the send tick); uv_not_latched on
+  TP0178/TP0201 vacuous-untagged (+ the TP0178 "10 ms dwell" record correction);
+  fc_bus_restored knife-edge (min_ticks 1500 = 100% of its window — one dropped
+  frame fails a correct board) — **plus LOWs** (FTP75 threshold bands + preload
+  budget -2.6%; socband_fc_carried re-derivation (governor falsifies its idle
+  justification); Y_AUX_LOAD_A ~0.85 for a deliverable b30 bound; SY0001
+  drive_min_frac 0.30 de-provisionalization; first-boot fault-bit variability
+  note (0xA010 this time — third distinct signature); key_metrics warm-reset
+  label). The mppt "80 ms" record error is corrected in place (true period 40 ms).
+- **Suite evaluation verdict** (full document in HIL Results/): ready TODAY for
+  relative EMS ranking (Mode A) + firmware preemption; one audit away (Pi v4
+  parser) from Mode B; one calibration away (Gfc stack identification) from
+  absolute H2 prediction. Recommended order: fix round -> Pi parser audit ->
+  Mode-B EMS-trio campaign -> SDP re-normalization -> measured-droop sim mode ->
+  stack ID.
