@@ -109,3 +109,24 @@ the two-outcome scp expectation; `82c8f75` (== HEAD before the close-out commit)
 the state all of rounds 3–4 validated. The four report folders (000518, 010145,
 015024, 021553) are local-only (HIL Results/ gitignored) — each carries HIL_FINDINGS
 + HIL_SUMMARY.
+
+---
+
+# Overnight autonomous session log — 2026-08-31/09-01
+
+Operator instructions (2026-08-31 evening): work through WORK_QUEUE.md autonomously;
+judgment calls decided by a Fable-high + Opus-xhigh decision pair, adjudicated by the
+orchestrator; all changes via streamlined orchestrated rounds; up to FIVE cycles of
+run_hil_suite (fw v23 on the board — NOT reflashed) + live hil-agent-analysis + fix
+rounds; fw v24 (dynamic Ag105 MPPT threshold) PREPARED and host-native-tested but not
+flashed; findings logged here for morning review. Session starts from commit d5d72e3
+(fix round + sdp_policy_v2).
+
+## Campaign 1 (first v2 campaign)
+
+Launched immediately after d5d72e3. Purpose: calibrate the three provisional ems-sdp
+v2 checks (raw-share interior, low-demand rail, charge window), observe the predicted
+~1 Hz FC_CHARGE chatter, validate the fix round's re-derived thresholds
+(_Y_FC_FLOOR {0.50, 0.66} measured, socband 0.95, fc_bus_restored 900,
+v_bus_min_in_band on TP0178/TP0201), full plan + --with-ftp75, no --with-operator
+(drive SKIPs by design).
