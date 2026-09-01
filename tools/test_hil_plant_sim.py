@@ -6798,6 +6798,72 @@ def test_ems_sdp_cross_registry_shape():
     assert hil.piecewise(prof, 120.0) == pytest.approx(hil.SDP_CROSS_CRUISE_LO_MPS)
 
 
+def _hil_source():
+    with open(hil.__file__, encoding="utf-8") as fh:
+        return fh.read()
+
+
+def test_ems_sdp_cross_description_carries_the_measured_schedule():
+    """The description is what a report reader sees first, and it used to
+    promise "three minimum-dwell charge windows" at a walked ~52 s period.
+    Campaign 20260901_024231 measured NINE windows at 16.13 s -- the walk was
+    wrong by 5.7x -- so the retired number must not survive anywhere in the
+    string a reader is handed."""
+    desc = hil.SCENARIOS["ems-sdp-cross"]["description"]
+    assert "nine minimum-dwell charge windows" in desc
+    assert "16.13 s period" in desc
+    assert "20260901_024231" in desc
+    assert "42.3 s" in desc                    # the measured flip
+    assert "three minimum-dwell" not in desc
+    assert "t ~ 44 s" not in desc
+
+
+def test_sdp_cross_walk_comment_records_the_measurement_and_the_root_cause():
+    """The walk's charge period was wrong because it applied the CLOSED-LOOP
+    minority governor at an operating point the firmware runs in OPEN-LOOP
+    HOLD. That is the second walk error from this one cause, so the number and
+    the mechanism are both pinned: a future edit that quietly restores the old
+    decay rate fails here."""
+    src = _hil_source()
+    assert "-3.90e-5 SoC/s" in src
+    assert "16.13 s" in src
+    assert "0.1656" in src                     # delivered share vs commanded
+    assert ".ino:9933" in src                  # the open-loop drop-out gate
+    # The retired rate survives ONLY inside the block that is labelled
+    # SUPERSEDED, and the retired period claim is gone from the live text.
+    assert "period ~50-57 s.  RETIRED" in src
+    assert "WALK RESULT (SUPERSEDED" in src
+    assert "WALK RESULT (PROVISIONAL" not in src
+
+
+def test_strategy_authoring_note_states_the_0_55_a_share_authority_boundary():
+    """The standing lesson for policy AND walk authors: below the firmware's
+    0.55 A open-loop drop-out a commanded share is accepted, logged, and NOT
+    acted on. Two walks in this codebase have now been wrong for this one
+    reason."""
+    src = _hil_source()
+    assert "SHARE AUTHORITY DISAPPEARS BELOW 0.55 A" in src
+    assert "ACCEPTED, LOGGED, and NOT ACTED ON" in src
+    assert ".ino:2181/2205" in src
+    # It is reachable from the registry a strategy author edits, not only from
+    # the Mode A block far above it.
+    assert "BEFORE ADDING ONE: read the SHARE AUTHORITY DISAPPEARS" in src
+
+
+def test_sdp_chg_block_predicts_ems_sdp_cross_not_the_retired_ems_sdp():
+    """`ems-sdp` was rebound to the sdp-v3 artifact, which has no charge cell
+    at all, so a PREDICTED-BEHAVIOUR paragraph aimed at it is dead text. It is
+    retargeted to `ems-sdp-cross` with that scenario's measured schedule -- and
+    with the window-ending mechanism named, which is the SoC surface there, not
+    the self-load subtraction that made `ems-sdp`'s window continuous."""
+    src = _hil_source()
+    assert "MEASURED BEHAVIOUR under this block — `ems-sdp-cross`" in src
+    assert "PREDICTED BEHAVIOUR under this block, `ems-sdp`" not in src
+    assert "WINDOW-ENDING MECHANISM THERE IS THE SoC SURFACE" in src
+    assert "64103 ticks set of 120000" in src
+    assert "sdpx_charge_max_hold" in src
+
+
 def test_ems_sdp_cross_low_cruise_demand_is_charge_admissible():
     """The whole scenario turns on the low cruise landing in a bin the solver
     allows charging in (bins 0-5, P_dem < 6.0 W).  Walk: 0.337 A of source

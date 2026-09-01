@@ -325,17 +325,26 @@ every frontier number is a RANKING on one rig and not an absolute mass.
   latch would truncate the run at exactly its post-flip half.
 - **Pass/fail:** fault-free (`allow_only: 0`, stricter than the socband sibling
   deliberately); in Run at t = 260; the 3.0 m/s peak commanded; `cmd_share_sp`
-  never above 0.16 over (20, 150) s and reaching 0.84 over (250, 340) s — together
-  a measured crossing inside **t = 150..250 s**; the same span on
+  never above 0.16 over (20, 185) s and reaching 0.84 over (212, 340) s — together
+  a measured crossing inside **t = 185..212 s**; the same span on
   `cmd_share_sp_raw` (<= 0.01 then **>= 0.89** — the floor must admit demand bin
   24's 0.90 request, not just the 0.95/1.00 pair), which is what identifies the TABLE's
-  branch rather than the emitted level; `I_fc` <= 0.45 A early (the commanded 0.15
+  branch rather than the emitted level; `I_fc` <= 0.35 A early (the commanded 0.15
   is below the minority governor's floor, so delivered FC is pinned at 0.300 A)
-  and >= 1.00 A at the cycle peak; `h2_cum_g` in [0.020, 0.12] g.
+  and >= 1.08 A at the cycle peak; `I_batt` <= 0.90 A run-wide (a tripwire on the
+  branch handover, where its peak lands); `h2_cum_g` in [0.056, 0.070] g.
 - **Why useful:** the only run in the suite that puts the SDP policy's switching
-  law itself on the wire. ⚠️ Every band is FIRST-CAMPAIGN PROVISIONAL, from an
-  offline walk; the flip-time band is +/-20 % of the walk's 195.9 s because the
-  flip time is an integral of the drain.
+  law itself on the wire.
+- **✔ CALIBRATED (campaign `20260901_024231`), the `provisional_note` deleted.**
+  Measured: flip at **t = 198.537 s** (walk 195.9, +1.35 %), one transition, both
+  rails on the wire; raw 0.00 flat pre-flip and 1.00 with 0.95 dips post-flip
+  (**bin 24 was not entered**, so the 0.89 raw floor stays at its boundary-case
+  value rather than being tightened to the measured 0.95); `I_fc` peaks 0.3039 A
+  pre-flip and 1.1516 A at the cycle peak; `I_batt` peaks 0.7117 A at the flip;
+  `h2_cum_g` 0.0621749 g. This is the walk's best result — an integral quantity
+  landing inside 1.4 % — and it is the one SDP-interior scenario whose drain is
+  carried by a **closed** share loop throughout, which is exactly what
+  `ems-sdp-cross`'s walk did not have.
 - **⚠️ REBOUND TO `sdp-v3` (2026-09-01), AND THE WALK TRANSFERS VERBATIM.** The
   offline walk was measured against v2 and was NOT re-run, because a row-by-row
   diff of the two baked tables shows it does not need to be: `policy.share` is
@@ -352,24 +361,49 @@ every frontier number is a RANKING on one rig and not an absolute mass.
 
 - **Tests:** both of the artifact's SoC switching surfaces in one run. A two-level
   cruise (2.2 m/s to t = 70, then 1.0 m/s) with `sdp_soc_ref_offset = +0.0025`
-  gives the downward SHARE crossing at t ≈ 44 s, and the low cruise — P_dem
+  gives the downward SHARE crossing at t = 42.3 s, and the low cruise — P_dem
   5.37 W, the top charge-admissible bin — then produces the CHARGE threshold's own
-  minimum-dwell limit cycle: three ~8 s windows about 50–57 s apart.
+  minimum-dwell limit cycle: **nine ~8 s windows at a 16.13 s period** (measured,
+  campaign `20260901_024231`; the offline walk predicted three at ~52 s, see
+  below).
   ⚠️ An UPWARD share crossing is **not reachable on this rig**: raising SoC through
   the 1e-3-wide dead band around the target node inside one `SDP_CHG_MIN_DWELL_S`
   latch needs a charge ceiling above 2.25 A, which on the single-source FC path is
   an immediate OC_FC. Nothing here asserts one.
 - **Pass/fail:** fault-free; in Run at t = 180; `cmd_share_sp` at the 0.15 clamp
-  over (5, 25) s and reaching 0.84 over (65, 190) s (a crossing inside 25..65 s);
-  `cmd_share_sp_raw` <= 0.01 early; `FC_CHARGE_ENABLE` open >= 12 s across the low
-  cruise **and** released for all but 2 s of (90, 108) s — the pair is what makes
-  it a cycle rather than one latched window; `I_charge` >= 0.5 A.
+  over (5, 35) s and reaching 0.84 over (50, 190) s (a crossing inside 35..50 s);
+  `cmd_share_sp_raw` <= 0.01 early. The charge limit cycle is asserted by **four
+  phase-free properties** over (70, 190) s: `FC_CHARGE_ENABLE` open >= 45 s
+  (`sdpx_charge_cycled`), no single window longer than **9.0 s**
+  (`sdpx_charge_max_hold` — the 8.0 s dwell plus one decision stage), the switch
+  set on at most 84000 of the window's 120000 ticks (`sdpx_charge_released_fraction`
+  — a released fraction of at least 0.30), and **6–12 rising edges**
+  (`sdpx_charge_window_count`). Plus `I_charge` >= 0.75 A and `I_fc` <= 1.28 A.
 - **Why useful:** the first live exercise of the charge dwell latch as a
   hysteresis, and of `charge_hold_status()`'s cruise-guard early drop (one ~1 s
   admit-then-drop lands inside the deceleration by construction — expected, and
-  deliberately not asserted). No board-side share check is possible at this
-  operating point and the entry says so: the governor clips both branches to
-  within 0.07 A of each other at 0.67 A of total. ⚠️ FIRST-CAMPAIGN PROVISIONAL.
+  deliberately not asserted). No board-side **share-branch** check is possible at
+  this operating point and the entry says so: the governor clips both branches to
+  within 0.07 A of each other at 0.67 A of total.
+- **✔ CALIBRATED (campaign `20260901_024231`), the `provisional_note` deleted —
+  and this scenario is where the round's one FAILURE came from.** Measured: flip
+  **42.292 s**; **9 charge windows**, period **16.13 s**, gaps 8.04–8.08 s
+  (σ 17 ms), 64103 of 120000 ticks set (released fraction 0.466), longest hold
+  **8.085 s** = dwell + 1.1 %; `I_charge` reached its full 0.8000 A ceiling;
+  `I_fc` peaked 1.1920 A (14.9 % under `LIMIT_I_FC_MAX`). Both switching surfaces
+  were located for the first time — share at SoC 0.69800, charge at 0.69700, both
+  on the predicted grid nodes.
+- **⚠️ THE RETIRED CHECK, AND THE LESSON.** `sdpx_charge_released_between`
+  asserted the ABSENCE of a charge window over t = 90..108 s, an instant taken
+  from the walk's ~52 s period. The board's period is 16.13 s — **the walk was
+  wrong by 5.7×** — so the window sat on top of a charge window and failed a
+  correct board. Root cause: the walk applied the firmware's **closed-loop**
+  minority governor at a 1.0 m/s cruise drawing I_tot ≈ 0.355 A, below the
+  firmware's 0.55 A open-loop drop-out. The board holds its last converged split
+  there and **delivered 0.1656 against the commanded 0.85**, so the pack drained
+  at −3.90e-5 SoC/s rather than the walked ~6.9e-6. Phase-locked absence
+  assertions are now discouraged in favour of `max_continuous_ticks` /
+  `edge_count_between`; see the strategy-authoring note in `hil_plant_sim.py`.
 
 ### ems-sdp-braking (134 s, any engine, EMS `sdp-v2` — DEMONSTRATION)
 
@@ -384,16 +418,34 @@ every frontier number is a RANKING on one rig and not an absolute mass.
   charge behaviour and NOT regen capture.
 - **Pass/fail:** fault-free; in Run at t = 100; `cmd_share_sp` bounded in
   [0.84, 0.86] for the whole run (asserted from both sides — that bound is what
-  licenses the attribution); `FC_CHARGE_ENABLE` open >= 25 s of the walk's 50.1 s
-  across the plateaus and closed for all but 0.5 s inside two of the 2.2 m/s
-  cruise holds; `I_charge` >= 0.4 A.
+  licenses the attribution); `FC_CHARGE_ENABLE` open >= 45 s across the plateaus
+  and closed for all but 0.1 s inside two of the 2.2 m/s cruise holds;
+  `I_charge` >= 0.65 A; `I_fc` <= 1.32 A; and **8–10 rising edges** of
+  FC_CHARGE over (2.5, 130) s — a CENSUS composed as four plateau windows plus
+  4–6 cruise-guard early drops (`sdpb_charge_edge_census`).
 - **Why useful:** the correlation — charging ON in the low windows and OFF in the
   cruises — is the cleanest available attribution of a policy action to the demand
   axis. The charge ceiling (0.7 A) and the acceleration rate (0.20 m/s²) are both
   **current-budget constants**: the cruise guard withdraws the charge latch only
   at the NEXT decision, so the charger can still be open one second into an
   acceleration, and at 0.40 m/s² with the usual 0.8 A ceiling that peak is 1.379 A
-  — 1.5 % under `LIMIT_I_FC_MAX`. ⚠️ FIRST-CAMPAIGN PROVISIONAL.
+  — 1.5 % under `LIMIT_I_FC_MAX`.
+- **✔ CALIBRATED (campaign `20260901_024231`), the `provisional_note` deleted —
+  and this walk was RIGHT, for a stated reason.** These windows are DEMAND-driven,
+  so they land on the profile's own fixed instants rather than on an integrated
+  drain (contrast `ems-sdp-cross` above). Measured: four sustained windows of
+  four, **52.479 s** of charging (walk 50.1, +4.7 %), longest 13.108 s, **zero**
+  ticks inside both asserted cruise windows, and the walk's **five** cruise-guard
+  early drops to the instant (t = 3.008 / 19.175 / 50.390 / 81.624 / 112.842) —
+  the first live exercise of that branch, now censused. `I_charge` reached its
+  full 0.7000 A ceiling.
+- **⚠️ THE TIGHTEST OC MARGIN IN THE SUITE, now asserted.** Measured peak `I_fc`
+  **1.2617 A** at t = 65.51, in the one-decision charge overhang into an
+  acceleration — **9.9 % under `LIMIT_I_FC_MAX`**, and 8.1 % above what the walk
+  modelled. `sdpb_fc_peak_bounded` (1.32 A) is the tripwire against a retune
+  eating that margin without tripping an OC_FC latch. Never raise it to make a
+  run green: the two knobs that move the peak are the charge ceiling and the
+  acceleration rate.
 
 ### ems-y-b30-v1 / ems-y-b30-v3 (49 s, any engine, preloaded)
 

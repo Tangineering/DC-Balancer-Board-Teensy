@@ -1936,10 +1936,29 @@ FAULT_EXPECTATIONS["ems-ftp75-socband"] = {
 #                    the DEMAND axis — charging on each low-speed plateau, off
 #                    on each cruise.
 #
-# ⚠️ ALL THREE ARE FIRST-CAMPAIGN PROVISIONAL.  Their thresholds come from
-# OFFLINE WALKS (method and full results in the SCENARIOS entries in
-# hil_plant_sim.py), not from measurement, and every entry below carries a
-# `provisional_note` to say so.  The walks use the gen_dp_ems_table.py reduced
+# ⚠️ ALL THREE ARE NOW CALIBRATED — campaign 20260901_024231, the first campaign
+# to run them.  Every threshold below was re-derived against that campaign's
+# measured trace and the `provisional_note` on all three entries was DELETED
+# (the ems-sdp and scp-inrush precedent).  Each moved bound carries its measured
+# value and the campaign id in place.  What the walks got right and wrong, since
+# it decides how much to trust the next one:
+#   * ems-ftp75-sdp   flip 195.9 walked vs 198.537 measured (+1.35 %).
+#   * ems-sdp-braking DEMAND-driven windows, so they land on the profile's own
+#                     instants: 50.1 s walked vs 52.479 s measured (+4.7 %),
+#                     four windows of four, zero cruise ticks, five early drops.
+#   * ems-sdp-cross   the ONE FAILURE. Flip 43.85 walked vs 42.292 measured
+#                     (-3.5 %), but the CHARGE LIMIT CYCLE's period was walked
+#                     at ~52 s against a measured 16.13 s — wrong by 5.7x,
+#                     because the walk applied the closed-loop minority governor
+#                     at an operating point the firmware runs in OPEN-LOOP HOLD.
+#                     Root cause and the standing lesson for anyone writing a
+#                     walk: the strategy-authoring note in hil_plant_sim.py.
+# THE STRUCTURAL LESSON, and it now has its own check kind: the failing check
+# asserted the ABSENCE of a window at a MODELLED INSTANT.  Phase-locked absence
+# assertions fail correct boards whenever the walk's period is wrong; prefer
+# `max_continuous_ticks` / `edge_count_between` (see the signals_require kind
+# table) which bound the same property without claiming to know the phase.
+# The walks use the gen_dp_ems_table.py reduced
 # demand model — the same model the DP benchmark is solved against — and the
 # ems-ftp75-sdp one is additionally cross-checked against the MEASURED
 # `ems-ftp75-5050` trace of campaign 20260901_000816, which runs +2.6 % hot
@@ -2000,14 +2019,6 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
                "branches' actions. Current budgets against LIMIT_I_FC_MAX 1.4 "
                "A / LIMIT_I_BT_MAX 3.0 A through the firmware's minority "
                "governor (.ino:9556-9568)."),
-    "provisional_note": (
-        "FIRST-CAMPAIGN bands: every threshold here is read off an OFFLINE "
-        "WALK, not a measurement. The flip-time band (150, 250) s is "
-        "deliberately +/-20 % of the walk's 195.9 s because the flip time is "
-        "an INTEGRAL of the drain and is the most model-sensitive number in "
-        "the entry; the h2 band is wider still. Re-derive both from the first "
-        "campaign and tighten, and delete this note when they are measured — "
-        "the ems-sdp and scp-inrush precedent."),
     # FAULT-FREE, and this one is stricter than its FTP-75 siblings on purpose:
     # `ems-ftp75-socband` ALLOWS OC_FC because its 0.75 share ceiling leaves
     # only ~11 % of margin at the cycle peak. Here the preload was re-derived
@@ -2035,8 +2046,15 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
         #    time anything in this suite has put 0.15 on the wire from the SDP
         #    policy, and it is only reachable by starting above the node.
         #    The window closes at 150 s, the bottom of the flip band.
+        #    ⚠️ MEASURED (campaign 20260901_024231): the flip landed at
+        #    t = 198.537 s (walk 195.9, +1.35 %) — ONE transition, both rails on
+        #    the wire. The band is DE-PROVISIONALIZED from the walk's +/-20 %
+        #    (150, 250) to (185, 212): 6.8 % of slack below the measurement and
+        #    6.8 % above it, i.e. five times the walk-vs-board disagreement the
+        #    campaign actually measured, and still far tighter than a band that
+        #    admits a flip anywhere in the middle third of the cycle.
         {"name": "sdpftp_low_rail_early", "column": "cmd_share_sp",
-         "max_value": _SDP_LOW_RAIL_CEIL, "t_window": (20.0, 150.0),
+         "max_value": _SDP_LOW_RAIL_CEIL, "t_window": (20.0, 185.0),
          "label": "the SDP policy commanded its BATTERY-HEAVY branch for the "
                   "whole pre-flip phase (no sample above the 0.15 clamp)"},
         # 3. ... AND THE FUEL-CELL BRANCH AFTER THE BAND. With check 2 this
@@ -2044,10 +2062,11 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
         #    transition-detecting check kind: the command is provably at one
         #    rail before the band and provably reaches the other after it.
         {"name": "sdpftp_high_rail_late", "column": "cmd_share_sp",
-         "min_value": _SDP_HIGH_RAIL_FLOOR, "t_window": (250.0, 340.0),
+         "min_value": _SDP_HIGH_RAIL_FLOOR, "t_window": (212.0, 340.0),
          "label": "... and switched to the FUEL-CELL branch (0.85) after the "
-                  "predicted flip band — with the check above, a measured "
-                  "crossing inside t = 150..250 s"},
+                  "flip band — with the check above, a measured crossing "
+                  "inside t = 185..212 s (measured 198.537 s, campaign "
+                  "024231)"},
         # 4-5. THE SAME SPAN ON THE PRE-CLAMP COLUMN, which is where the
         #    TABLE's own request is visible. 0.00 is a value the clamp hides
         #    entirely from `cmd_share_sp` (it emits 0.15 either way if the
@@ -2055,13 +2074,22 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
         #    checks that identify the ARTIFACT's branch rather than the
         #    emitted level.
         {"name": "sdpftp_raw_battery_branch", "column": "cmd_share_sp_raw",
-         "max_value": _SDP_RAW_LOW_CEIL, "t_window": (20.0, 150.0),
+         "max_value": _SDP_RAW_LOW_CEIL, "t_window": (20.0, 185.0),
          "label": "the table's PRE-CLAMP request was its 0.00 battery rail — "
                   "a value no other scenario in this suite can produce"},
+        # ⚠️ THE 0.89 FLOOR IS KEPT AT ITS BOUNDARY-CASE VALUE, deliberately,
+        # even though campaign 20260901_024231 measured a post-flip MINIMUM of
+        # 0.95 and a peak of 1.00 — demand BIN 24 was never entered on that run.
+        # The floor guards the boundary case, not the measurement: the cycle's
+        # peak demand sits ~4 % below the bin-24 lower edge, so a model or load
+        # change well inside this entry's own sensitivity puts a sample in the
+        # bin whose request IS 0.90. Tightening to the measured 0.95 would fail
+        # a correct board the first time that happens. See _SDP_RAW_HIGH_FLOOR.
         {"name": "sdpftp_raw_fc_branch", "column": "cmd_share_sp_raw",
-         "min_value": _SDP_RAW_HIGH_FLOOR, "t_window": (250.0, 340.0),
+         "min_value": _SDP_RAW_HIGH_FLOOR, "t_window": (212.0, 340.0),
          "label": "... and returned to its fuel-cell rail (1.00/0.95, or 0.90 "
-                  "in demand bin 24) after the flip"},
+                  "in demand bin 24) after the flip (measured post-flip "
+                  "minimum 0.95, campaign 024231)"},
         # 6. THE BOARD ACTED ON THE BATTERY-HEAVY BRANCH. A CEILING on I_fc,
         #    and the derivation is the governor rather than the command: the
         #    commanded 0.15 is always below SHARE_MINORITY_I_MIN_A / I_tot at
@@ -2076,36 +2104,65 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
         #    (HIL_PLANT.md 4.7 — sign- and monotonicity-preserving, WRONG
         #    GAIN), so this asserts the firmware->MDAC arithmetic, not
         #    share-loop gain.
+        #    ⚠️ MEASURED (campaign 20260901_024231): peak I_fc 0.3039 A over
+        #    this window — 1.3 % above the 0.300 A governor floor, i.e. the
+        #    floor exactly. The walk-era 0.45 A ceiling had 48 % of unused
+        #    headroom; 0.35 A is 15 % above the measurement and still 2.4x under
+        #    the 0.8275 A the constant-0.50 sibling reaches, so it keeps its
+        #    discriminating power and now also fails a run in which the governor
+        #    floor itself moved.
         {"name": "sdpftp_fc_floored_early", "column": "I_fc",
-         "max_value": 0.45, "t_window": (30.0, 150.0),
+         "max_value": 0.35, "t_window": (30.0, 150.0),
          "label": "the board delivered the battery-heavy split — I_fc held at "
                   "the 0.300 A minority-governor floor, never near the "
-                  "0.8275 A the constant-0.50 sibling reaches"},
+                  "0.8275 A the constant-0.50 sibling reaches (measured peak "
+                  "0.3039 A, campaign 024231)"},
         # 7. ... AND ON THE FUEL-CELL BRANCH. The mirror image at the cycle
         #    peak: I_fc = I_tot - 0.300 = 1.112 A (model) / 1.141 A (at the
-        #    measured +2.6 % offset). Floor 1.00 A is 10 % under the model
-        #    value, unreachable by the battery-heavy branch by a factor of
-        #    three, and still 28 % under LIMIT_I_FC_MAX so a pass can never be
-        #    confused with an overcurrent.
+        #    measured +2.6 % offset).
+        #    ⚠️ MEASURED (campaign 20260901_024231): peak 1.1516 A over this
+        #    window (0.9 % above the offset-corrected model). Floor raised from
+        #    1.00 to 1.08 A = 6.2 % under the measurement, still 3.6x what the
+        #    battery-heavy branch can reach, and 23 % under LIMIT_I_FC_MAX so a
+        #    pass can never be confused with an overcurrent.
         {"name": "sdpftp_fc_carried_late", "column": "I_fc",
-         "min_value": 1.00, "t_window": (235.0, 260.0),
+         "min_value": 1.08, "t_window": (235.0, 260.0),
          "label": "the board delivered the fuel-cell split at the cycle peak "
-                  "(governed I_tot - 0.300 A)"},
+                  "(governed I_tot - 0.300 A; measured peak 1.1516 A, campaign "
+                  "024231)"},
+        # 7b. THE BATTERY CHANNEL'S OWN CEILING (new, campaign 024231). The
+        #    scenario's whole-run peak I_batt is 0.7117 A and it lands AT THE
+        #    FLIP (t = 198.53), where the branch hands over: 76 % under
+        #    LIMIT_I_BT_MAX 3.0 A. A run-wide ceiling of 0.90 A is 26 % above
+        #    the measurement, so it is a REGRESSION TRIPWIRE on the handover
+        #    transient rather than a limit claim — the BT channel has never been
+        #    bounded on this entry at all, and a share-loop or governor change
+        #    that pushed current onto it would previously have gone unseen.
+        {"name": "sdpftp_bt_peak_bounded", "column": "I_batt",
+         "max_value": 0.90, "t_window": (5.0, 340.0),
+         "label": "the battery channel stayed bounded through the branch "
+                  "handover (measured whole-run peak 0.7117 A at the flip, "
+                  "vs LIMIT_I_BT_MAX 3.0 A, campaign 024231)"},
         # 8-9. THE H2 ACCOUNTING RAN, AND STAYED BOUNDED. Budget from the walk:
         #    ~0.30 A on FC for the ~190 s pre-flip phase (4.7 W bus, 5.5 W
         #    stack) and ~0.8 A for the ~150 s after it (12.5 W bus, 14.7 W
         #    stack), at the model's 1.7638e-5 g/s/W DC gain -> ~1.8e-2 +
-        #    ~3.9e-2 = ~5.7e-2 g. The band is DELIBERATELY WIDE (2.85x below,
-        #    2.1x above) because the split of the run between the two branches
-        #    is exactly the model-sensitive flip time; tighten it from the
-        #    first campaign. ⚠️ Gfc is scale-portable by design but not
-        #    identified against this stack (TODO(calibrate), H2Consumption
-        #    banner), so this asserts the accounting RAN, not an absolute mass.
-        {"name": "sdpftp_h2_accounted", "column": "h2_cum_g", "min_value": 2.0e-2,
+        #    ~3.9e-2 = ~5.7e-2 g.
+        #    ⚠️ MEASURED (campaign 20260901_024231): 0.0621749 g, 9.1 % above
+        #    the walk. The band is DE-PROVISIONALIZED from the walk-era
+        #    [0.020, 0.120] (2.85x below / 2.1x above, which could not fail
+        #    anything) to [0.056, 0.070] — -10 %/+13 % of the measurement, wide
+        #    enough for the flip time's own +/-7 % band (the flip decides the
+        #    split of the run between a ~4.7 W and a ~12.5 W branch) and narrow
+        #    enough that a scale error of 2x fails.
+        #    ⚠️ Gfc is scale-portable by design but not identified against this
+        #    stack (TODO(calibrate), H2Consumption banner), so this asserts the
+        #    accounting RAN and REPEATED, not an absolute mass.
+        {"name": "sdpftp_h2_accounted", "column": "h2_cum_g", "min_value": 5.6e-2,
          "label": "the H2 consumption metric accumulated over the cycle "
-                  "(walk predicts ~5.7e-2 g)"},
-        {"name": "sdpftp_h2_bounded", "column": "h2_cum_g", "max_value": 0.12,
-         "label": "... and stayed under 0.12 g, so a scale or accumulation "
+                  "(measured 0.0621749 g, campaign 024231)"},
+        {"name": "sdpftp_h2_bounded", "column": "h2_cum_g", "max_value": 7.0e-2,
+         "label": "... and stayed under 0.070 g, so a scale or accumulation "
                   "error in the metric fails here instead of reading as a "
                   "result"},
     ],
@@ -2114,80 +2171,143 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
 FAULT_EXPECTATIONS["ems-sdp-cross"] = {
     "source": ("hil_plant_sim.py SCENARIOS['ems-sdp-cross'] and the SDP_CROSS_* "
                "constants (the two cruise levels and why each one is where it "
-               "is, the walk's flip time and charge-window schedule, and the "
-               "single-source charge budget) + the shared derivation block "
+               "is, the MEASURED flip time and charge-window schedule of "
+               "campaign 20260901_024231, and the single-source charge budget; "
+               "the retired walk and why it was wrong are recorded there too) "
+               "+ the shared derivation block "
                "above the two SDP_CROSS/SDP_BRAKE scenarios in hil_plant_sim.py "
                "for why an UPWARD share crossing is unreachable + "
                "SdpStrategy.set_soc_ref_offset() and the SDP_CHG_* "
                "minimum-dwell block."),
-    "provisional_note": (
-        "FIRST-CAMPAIGN bands from an OFFLINE WALK. The share-flip band "
-        "(25, 65) s and the charge-window tick floor are both driven by the "
-        "modelled pack current, which is the least certain quantity here; the "
-        "windows are sized at roughly +/-50 % of the walk's 43.85 s flip and "
-        "50 % of its 25.2 s of charging. Re-derive and tighten from the first "
-        "campaign, then delete this note."),
     "allow_only": 0,
-    # Deep enough to contain the walk's THIRD charge window (172.9-180.9 s):
-    # the limit cycle, not merely its first pass, is what the scenario is for.
+    # Deep enough to contain the LATER passes of the charge limit cycle: the
+    # cycle, not merely its first window, is what the scenario is for. (The
+    # walk's "third window at 172.9-180.9 s" this line used to cite was part of
+    # the retired ~52 s period; the board runs 9 windows at 16.13 s — the
+    # measured schedule is in the `sdpx_charge_*` derivations below.)
     "survive_to": {"t": 180.0, "states": {2, 3}},
     "signals_require": [
         # 1-2. THE DOWNWARD SHARE CROSSING, pinned by the same two-window
         #    construction as ems-ftp75-sdp's: a ceiling before the band and a
-        #    floor after it. Walk flip t = 43.85 s.
+        #    floor after it.
+        #    ⚠️ MEASURED (campaign 20260901_024231): the flip landed at
+        #    t = 42.292 s (walk 43.85, -3.5 %). The band is DE-PROVISIONALIZED
+        #    from the walk's +/-50 % (25, 65) to (35, 50) — 17 % of slack below
+        #    the measurement and 18 % above it, which covers the walk-vs-board
+        #    disagreement itself with margin to spare.
         {"name": "sdpx_low_rail_early", "column": "cmd_share_sp",
-         "max_value": _SDP_LOW_RAIL_CEIL, "t_window": (5.0, 25.0),
+         "max_value": _SDP_LOW_RAIL_CEIL, "t_window": (5.0, 35.0),
          "label": "the run opened on the SDP table's battery-heavy branch "
                   "(commanded share at the 0.15 clamp)"},
         {"name": "sdpx_high_rail_late", "column": "cmd_share_sp",
-         "min_value": _SDP_HIGH_RAIL_FLOOR, "t_window": (65.0, 190.0),
+         "min_value": _SDP_HIGH_RAIL_FLOOR, "t_window": (50.0, 190.0),
          "label": "... and crossed the SHARE threshold to the fuel-cell branch "
                   "(0.85) — with the check above, a crossing inside "
-                  "t = 25..65 s"},
+                  "t = 35..50 s (measured 42.292 s, campaign 024231)"},
         # 3. The pre-clamp column on the opening branch, for ems-ftp75-sdp's
         #    reason: 0.00 identifies the ARTIFACT's branch, which the clamped
         #    column cannot.
         {"name": "sdpx_raw_battery_branch", "column": "cmd_share_sp_raw",
-         "max_value": _SDP_RAW_LOW_CEIL, "t_window": (5.0, 25.0),
+         "max_value": _SDP_RAW_LOW_CEIL, "t_window": (5.0, 35.0),
          "label": "the table's PRE-CLAMP request was its 0.00 battery rail"},
-        # 4. THE CHARGE LIMIT CYCLE REACHED THE BOARD. Walk: three windows of
-        #    one SDP_CHG_MIN_DWELL_S each over t = 70..190, i.e. ~25200 ticks
-        #    at the CSV's 1 kHz rate. Floor 12000 is 48 % of that — it survives
-        #    losing a whole window to timing, and cannot be met by a run in
-        #    which the policy never admitted charging at all.
+        # 4. THE CHARGE LIMIT CYCLE REACHED THE BOARD.
+        #    ⚠️ MEASURED (campaign 20260901_024231): 64103 ticks of
+        #    FC_CHARGE_ENABLE over t = 70..190 s — 9 windows at a 16.13 s
+        #    period, 53.4 % of the window. The walk predicted 3 windows /
+        #    ~25200 ticks; its 12000-tick floor was therefore 19 % of the truth
+        #    and COULD NOT FAIL. Raised to 45000 = 70 % of the measurement,
+        #    which still survives losing three whole windows to timing.
         {"name": "sdpx_charge_cycled", "switch_bit": SW_FC_CHARGE,
-         "min_ticks": 12000, "t_window": (70.0, 190.0),
+         "min_ticks": 45000, "t_window": (70.0, 190.0),
          "label": "the policy's SoC-driven charge action reached the board — "
-                  "FC_CHARGE_ENABLE open for >= 12 s across the low cruise"},
-        # 5. ... AND IT IS A CYCLE, NOT ONE LONG WINDOW. The walk's gap between
-        #    the first and second windows is t = 83.8..115.3; this ceiling sits
-        #    inside it with ~5 s of clearance at each end. A run whose charge
-        #    intent latched ON and stayed there — the failure mode the
-        #    minimum-dwell hysteresis could plausibly introduce — fails here.
-        #    ⚠️ THE MOST TIMING-SENSITIVE CHECK IN THE ENTRY: it asserts the
-        #    ABSENCE of a window at a modelled instant. Its companion (check 4)
-        #    carries the positive bound on the same switch bit, so a blank
-        #    column cannot satisfy it vacuously.
-        {"name": "sdpx_charge_released_between", "switch_bit": SW_FC_CHARGE,
-         "max_ticks": 2000, "t_window": (90.0, 108.0),
-         "label": "... and the charge intent was RELEASED between windows — "
-                  "the dwell latch is a hysteresis, not a hold-forever"},
-        # 6. THE CHARGER ACTUALLY CHARGED. Peak-over-window, so any one of the
-        #    three windows satisfies it. Each is SDP_CHG_MIN_DWELL_S = 8 s
-        #    long against AG105_SETTLE_S 0.5 s + AG105_TAU_S 0.4 s, so I_charge
-        #    reaches the 0.8 A ceiling with room to spare. Floor 0.5 A is
-        #    `ems-soc-band`'s own, comfortably under the ceiling and
-        #    unmistakably above an unpowered charger's 0 A.
+                  "FC_CHARGE_ENABLE open for >= 45 s across the low cruise "
+                  "(measured 64.103 s, campaign 024231)"},
+        # 5. ... AND IT IS A CYCLE, NOT ONE LONG WINDOW — asserted PHASE-FREE.
+        #    ⚠️ THIS REPLACES `sdpx_charge_released_between`, THE ONE FAIL OF
+        #    CAMPAIGN 20260901_024231. That check asserted the ABSENCE of a
+        #    charge window over t = 90..108 s, an instant taken from the walk's
+        #    ~52 s limit-cycle period. The board's period is 16.13 s — the walk
+        #    was wrong by 5.7x (root cause in the SDP_CROSS_* block in
+        #    hil_plant_sim.py: it applied the closed-loop minority governor at a
+        #    cruise the firmware runs in OPEN-LOOP HOLD) — so the window sat on
+        #    top of a charge window and failed a CORRECT board.
+        #    The objective is unchanged: "the dwell latch is a hysteresis, not a
+        #    hold-forever". The three checks below express it without a phase
+        #    claim, so a period change moves the numbers, not the verdict.
+        #    (a) LONGEST CONTINUOUS HOLD. SDP_CHG_MIN_DWELL_S is 8.0 s and the
+        #    measured longest hold is 8.085 s (dwell + 1.1 %, i.e. the dwell
+        #    plus the decision quantum). 9000 ticks = 9.0 s = dwell + 12.5 %,
+        #    so a latch that failed to release is caught at the first extra
+        #    decision stage while decision-phase jitter is not.
+        {"name": "sdpx_charge_max_hold", "switch_bit": SW_FC_CHARGE,
+         "max_continuous_ticks": 9000, "t_window": (70.0, 190.0),
+         "label": "... and no single charge window outlasted the 8.0 s "
+                  "minimum dwell by more than one decision stage — the latch "
+                  "is a hysteresis, not a hold-forever (measured longest hold "
+                  "8.085 s, campaign 024231)"},
+        # 6. (b) THE RELEASED FRACTION. The complement of check 4's count over
+        #    the same window: released = 1 - ticks/120000. Measured 0.466, and
+        #    the objective band is [0.30, 0.70] released — i.e. FC_CHARGE set
+        #    on 36000..84000 of the window's 120000 ticks. The FLOOR of that
+        #    band is carried by check 4 at the stricter 45000 (released
+        #    <= 0.625), so this spec is the CEILING half: a run that charged
+        #    for more than 70 % of the low cruise has stopped cycling, which no
+        #    total-tick floor can see.
+        {"name": "sdpx_charge_released_fraction", "switch_bit": SW_FC_CHARGE,
+         "max_ticks": 84000, "t_window": (70.0, 190.0),
+         "label": "... and the charger was RELEASED for at least 30 % of the "
+                  "low cruise (measured released fraction 0.466 — 64103 of "
+                  "120000 ticks set, campaign 024231)"},
+        # 7. (c) THE WINDOW COUNT, straight off the switch trace. 9 rising
+        #    edges measured over t = 70..190 s; [6, 12] is -33 %/+33 % of that,
+        #    which brackets a period anywhere in 10..20 s. This is the check
+        #    that distinguishes "one long window" (1 edge) from "the limit
+        #    cycle" without naming an instant.
+        {"name": "sdpx_charge_window_count", "switch_bit": SW_FC_CHARGE,
+         "edge_count_between": (6, 12), "edge": "rise",
+         "t_window": (70.0, 190.0),
+         "label": "... across 6-12 distinct charge windows (measured 9, i.e. a "
+                  "16.13 s period, campaign 024231)"},
+        # 8. THE CHARGER ACTUALLY CHARGED. Peak-over-window, so any one window
+        #    satisfies it. Each is SDP_CHG_MIN_DWELL_S = 8 s long against
+        #    AG105_SETTLE_S 0.5 s + AG105_TAU_S 0.4 s, so I_charge reaches the
+        #    0.8 A ceiling with room to spare.
+        #    ⚠️ MEASURED 0.8000 A exactly (the scenario's own chg_i_ceiling_a),
+        #    so the walk-era 0.5 A floor was 37 % low. Raised to 0.75 A = 94 %
+        #    of the ceiling: it still cannot be met by an unpowered charger or
+        #    by a window too short to settle, and it now also fails a run whose
+        #    charger only reached a fraction of its programmed ceiling.
         {"name": "sdpx_charging_established", "column": "I_charge",
-         "min_value": 0.5, "t_window": (78.0, 190.0),
-         "label": "the Ag105 delivered current inside the dwell windows"},
-        # 7. NO SHARE-SIDE BOARD CHECK, and it is a stated gap rather than an
-        #    omission: at this scenario's 0.67 A high-cruise total the
-        #    governor's minority floor clips BOTH branches to within 0.07 A of
-        #    each other (0.300 A on FC at the low rail, 0.367 A at the high
-        #    one), so no I_fc threshold can discriminate them. The board-side
-        #    evidence here is the CHARGE path; ems-ftp75-sdp is where the share
-        #    command is checked against delivered current.
+         "min_value": 0.75, "t_window": (78.0, 190.0),
+         "label": "the Ag105 delivered its full 0.8 A ceiling inside the dwell "
+                  "windows (measured 0.8000 A, campaign 024231)"},
+        # 9. THE SINGLE-SOURCE CHARGE BUDGET, now measured rather than argued.
+        #    With FC_CHARGE_ENABLE open, assertFcChargeEnable() drops BT off the
+        #    bus and the FC channel alone carries the ~0.34 A load plus the
+        #    0.8 A charger. MEASURED peak I_fc 1.1920 A at t = 79.90 —
+        #    14.9 % under LIMIT_I_FC_MAX 1.4 A, and equal to `ems-soc-band`'s
+        #    own validated 1.1920 A at the same operating point. The ceiling
+        #    1.28 A is 7.4 % above the measurement and 8.6 % under the limit, so
+        #    it trips BEFORE an OC_FC latch would and names the cause.
+        {"name": "sdpx_fc_peak_bounded", "column": "I_fc",
+         "max_value": 1.28, "t_window": (5.0, 190.0),
+         "label": "the single-source FC channel stayed inside its charge-window "
+                  "budget (measured peak 1.1920 A vs LIMIT_I_FC_MAX 1.4 A, "
+                  "campaign 024231)"},
+        # 10. NO SHARE-BRANCH DISCRIMINATION FROM I_fc, and it is a stated gap
+        #    rather than an omission: at this scenario's 0.67 A high-cruise
+        #    total the governor's minority floor clips BOTH branches to within
+        #    0.07 A of each other (0.300 A on FC at the low rail, 0.367 A at
+        #    the high one), so no I_fc threshold can tell them apart. Check 9
+        #    above is a BUDGET ceiling, not a branch discriminator. The
+        #    board-side evidence for the share command is ems-ftp75-sdp's.
+        #    ⚠️ AND THE DELIVERED SPLIT HERE IS NOT THE COMMANDED ONE: the low
+        #    cruise runs at I_tot ~ 0.355 A, below the firmware's 0.55 A
+        #    open-loop drop-out (.ino:9933), so the board holds its last
+        #    converged split (measured delivered share 0.1656 against the
+        #    commanded 0.85) instead of tracking. That is designed behaviour and
+        #    it is exactly what the retired walk failed to model — see the
+        #    strategy-authoring note in hil_plant_sim.py.
     ],
 }
 
@@ -2198,13 +2318,6 @@ FAULT_EXPECTATIONS["ems-sdp-braking"] = {
                "constants sized against the one-decision charge overhang into "
                "the acceleration out of each low plateau + the shared "
                "derivation block above the two scenarios."),
-    "provisional_note": (
-        "FIRST-CAMPAIGN bands from an OFFLINE WALK. The charge windows here "
-        "are DEMAND-driven and therefore land on the profile's own fixed "
-        "instants, so these bands are the least model-sensitive of the three "
-        "SDP-interior entries — but the tick floors and the I_charge level "
-        "are still predictions. Re-derive from the first campaign and delete "
-        "this note."),
     "allow_only": 0,
     # Past the third of four braking cycles.
     "survive_to": {"t": 100.0, "states": {2, 3}},
@@ -2225,38 +2338,96 @@ FAULT_EXPECTATIONS["ems-sdp-braking"] = {
                   "is what makes every charge transition below attributable "
                   "to the demand axis alone"},
         # 3. CHARGING HAPPENED, ACROSS THE LOW PLATEAUS. Walk: four windows of
-        #    ~12.5 s, 50.1 s in total. Floor 25000 ticks = 50 % of that, so
-        #    losing a whole plateau still passes and a run with no charging at
-        #    all cannot.
+        #    ~12.5 s, 50.1 s in total.
+        #    ⚠️ MEASURED (campaign 20260901_024231): 52479 ticks over this
+        #    window, four windows, longest 13.108 s — the walk to within 4.7 %,
+        #    which is what "DEMAND-driven, so it lands on the profile's own
+        #    fixed instants" was predicting. Floor raised 25000 -> 45000 = 86 %
+        #    of the measurement: it still absorbs one shortened plateau (a whole
+        #    lost plateau now fails, which is the point — losing one of four is
+        #    a finding, not tolerance).
         {"name": "sdpb_charge_in_low_windows", "switch_bit": SW_FC_CHARGE,
-         "min_ticks": 25000, "t_window": (10.0, 125.0),
+         "min_ticks": 45000, "t_window": (10.0, 125.0),
          "label": "the policy opened FC_CHARGE across the low-speed plateaus "
-                  "(>= 25 s of the walk's 50.1 s)"},
+                  "(>= 45 s; measured 52.479 s over four windows, campaign "
+                  "024231)"},
         # 4-5. ... AND NOT DURING THE CRUISES. Two of the four 2.2 m/s holds,
         #    inset by 2 s at each end so a deceleration's own admit-then-drop
         #    blip (see the scenario comment) cannot leak in. The walk shows
-        #    ZERO charge ticks inside either. max_ticks 500 = 0.5 s of a 7-8 s
-        #    window, which admits one late release without admitting a window.
+        #    ZERO charge ticks inside either.
+        #    ⚠️ MEASURED (campaign 20260901_024231): 0 ticks in BOTH windows,
+        #    exactly as walked. The walk-era 500-tick allowance (0.5 s of a
+        #    7-8 s window) was slack nothing has ever used, so it is tightened
+        #    to 100 ticks = 0.1 s. That still admits a single late release
+        #    landing inside the window's opening tick or two, and it is far
+        #    below anything the Ag105 could act on (AG105_SETTLE_S is 0.5 s).
         #    Both have check 3 as their positive companion on the same switch
         #    bit, so a blank column cannot satisfy them vacuously.
         #    ⚠️ THE CORRELATION IS THE OBJECTIVE: charge ON in the low windows
         #    (check 3) and OFF in the cruises (these two) is what "the demand
         #    axis decided it" means in a trace.
         {"name": "sdpb_charge_off_in_cruise_2", "switch_bit": SW_FC_CHARGE,
-         "max_ticks": 500, "t_window": (41.0, 48.0),
+         "max_ticks": 100, "t_window": (41.0, 48.0),
          "label": "FC_CHARGE closed through the second 2.2 m/s cruise "
-                  "(P_dem ~10.6 W = bin 10, charge-forbidden)"},
+                  "(P_dem ~10.6 W = bin 10, charge-forbidden; measured 0 "
+                  "ticks, campaign 024231)"},
         {"name": "sdpb_charge_off_in_cruise_3", "switch_bit": SW_FC_CHARGE,
-         "max_ticks": 500, "t_window": (72.0, 79.0),
-         "label": "... and through the third one"},
+         "max_ticks": 100, "t_window": (72.0, 79.0),
+         "label": "... and through the third one (measured 0 ticks, campaign "
+                  "024231)"},
         # 6. THE CHARGER ACTUALLY CHARGED. Ceiling here is
         #    SDP_BRAKE_CHG_CEILING_A = 0.7 A (de-rated for the acceleration
         #    overhang), and each window is ~12.5 s against 0.9 s of settle plus
-        #    ramp, so I_charge reaches it. Floor 0.4 A: 43 % under the ceiling,
-        #    unmistakably above an unpowered charger.
+        #    ramp, so I_charge reaches it.
+        #    ⚠️ MEASURED (campaign 20260901_024231): 0.7000 A exactly, i.e. the
+        #    programmed ceiling, reached by t = 25.52 s. Floor raised 0.4 ->
+        #    0.65 A = 93 % of the ceiling, so the check now also fails a run
+        #    whose charger reached only a fraction of what it was told to.
         {"name": "sdpb_charging_established", "column": "I_charge",
-         "min_value": 0.4, "t_window": (25.0, 125.0),
-         "label": "the Ag105 delivered current inside the low-plateau windows"},
+         "min_value": 0.65, "t_window": (25.0, 125.0),
+         "label": "the Ag105 delivered its full 0.7 A de-rated ceiling inside "
+                  "the low-plateau windows (measured 0.7000 A, campaign "
+                  "024231)"},
+        # 7. THE TIGHTEST OC MARGIN IN THE SUITE, now asserted (new, campaign
+        #    20260901_024231). MEASURED peak I_fc 1.2617 A at t = 65.51 — in
+        #    the ONE-DECISION CHARGE OVERHANG into the acceleration out of a low
+        #    plateau, which is exactly the transient SDP_BRAKE_ACCEL_S (6.0 s)
+        #    and SDP_BRAKE_CHG_CEILING_A (0.7 A) were both sized against. That
+        #    is 9.9 % under LIMIT_I_FC_MAX 1.4 A, the smallest margin any
+        #    scenario in this suite runs at, and until now it was UNASSERTED:
+        #    an OC_FC would have been caught by `allow_only: 0`, but a retune
+        #    that ate the margin down to 1 % without tripping would not.
+        #    The ceiling 1.32 A is 4.6 % above the measurement and 5.7 % under
+        #    the limit, so it trips BEFORE the board faults and names the cause.
+        #    ⚠️ NEVER raise it to make a run green: the margin outgrowing this
+        #    bound IS the finding, and the two knobs that move it are named
+        #    above.
+        {"name": "sdpb_fc_peak_bounded", "column": "I_fc",
+         "max_value": 1.32, "t_window": (5.0, 130.0),
+         "label": "the single-source FC channel stayed inside the charge "
+                  "overhang budget (measured peak 1.2617 A, 9.9 % under "
+                  "LIMIT_I_FC_MAX 1.4 A, campaign 024231)"},
+        # 8. THE CRUISE-GUARD EARLY-DROP BRANCH, censused. The walk predicted
+        #    five ~1.05 s admit-then-drop blips (Run entry, plus one per
+        #    deceleration) on top of the four sustained plateau windows, and
+        #    campaign 20260901_024231 MEASURED exactly that: 9 rising edges of
+        #    FC_CHARGE over t = 2.5..130 s, at 3.008 / 19.175 / 50.390 / 81.624
+        #    / 112.842 (drops) and 21.195 / 52.411 / 83.644 / 114.862 (windows).
+        #    Until this campaign the early-drop branch had NEVER been exercised
+        #    on hardware, and it is still nothing else's business to observe it.
+        #    ⚠️ THIS IS A CENSUS, NOT A DROP COUNTER. The edge kind cannot tell
+        #    a 1 s blip from a 13 s window, so the band is composed:
+        #        4 sustained windows (pinned by checks 3-5) + [4, 6] early drops
+        #        = [8, 10] rising edges.
+        #    Read it WITH check 3: if the tick total and the two cruise windows
+        #    are right, the four sustained windows are accounted for and the
+        #    remainder of this count IS the drop count.
+        {"name": "sdpb_charge_edge_census", "switch_bit": SW_FC_CHARGE,
+         "edge_count_between": (8, 10), "edge": "rise",
+         "t_window": (2.5, 130.0),
+         "label": "FC_CHARGE opened 8-10 times — the four plateau windows plus "
+                  "4-6 cruise-guard early drops (measured 9 = 4 + 5, campaign "
+                  "024231)"},
     ],
 }
 
@@ -2869,7 +3040,16 @@ for _n, _e in FAULT_EXPECTATIONS.items():
 # `switch_fall_latency_ms` whose window opens at or after its own `after_t` has no
 # pre-edge level to compare against, so it can only ever report "no transition" —
 # which reads as a board finding rather than as a table defect.
-for _n, _e in FAULT_EXPECTATIONS.items():
+#
+# A FUNCTION rather than an inline loop (2026-09-01) so a test can drive the
+# guard over ONE synthetic spec.  The guards are the only thing standing between
+# a malformed spec and a campaign that measures nothing, so they need coverage of
+# their own — and duplicating them in the test file would let the two drift.
+def _assert_signal_spec_shapes(_n, _e):
+    """Assert the shape of every signals_require spec in ONE expectation entry.
+
+    Raises AssertionError with a message naming the entry and the spec.  Pure:
+    reads the entry, SCENARIOS, and module constants, and writes nothing."""
     for _i, _spec in enumerate(_e.get("signals_require") or ()):
         for _sub in [_spec] + list(_spec.get("any_of") or ()):
             _tag = _sub.get("name") or _spec.get("name") or "signal[%d]" % _i
@@ -2947,9 +3127,57 @@ for _n, _e in FAULT_EXPECTATIONS.items():
             # blank column), or an explicit `vacuity_note` stating why the column
             # cannot be blank here.  Cheapest sound form: companions are matched
             # on the watched signal's identity, not on their semantics.
+            # ── 2026-09-01 kinds: max_continuous_ticks / edge_count_between ───
+            # Same rule as every other bound here: a malformed spec must fail at
+            # IMPORT, not silently measure nothing mid-campaign.
+            if "max_continuous_ticks" in _sub:
+                assert not ({"min_ticks", "max_ticks", "max_ms",
+                             "edge_count_between"} & set(_sub)), (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: "
+                    "`max_continuous_ticks` is its own assertion kind and "
+                    "_judge_signal_leaf() returns on it BEFORE the tick and "
+                    "latency bounds, so anything written beside it is silently "
+                    "dropped. Split it into two specs." % (_n, _tag))
+                assert ("switch_bit" in _sub) or ("aux_bit" in _sub) \
+                    or ("value_mask" in _sub), (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: "
+                    "`max_continuous_ticks` counts a run of SET/MATCHING ticks, "
+                    "so it needs a `switch_bit`, an `aux_bit`, or a `value_mask` "
+                    "to watch." % (_n, _tag))
+                assert int(_sub["max_continuous_ticks"]) >= 0, (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: a negative "
+                    "`max_continuous_ticks` can never be satisfied." % (_n, _tag))
+            if "edge_count_between" in _sub:
+                assert not ({"min_ticks", "max_ticks", "max_ms",
+                             "max_continuous_ticks"} & set(_sub)), (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: "
+                    "`edge_count_between` is its own assertion kind; a tick or "
+                    "latency bound written beside it is silently dropped. Split "
+                    "it into two specs." % (_n, _tag))
+                assert ("switch_bit" in _sub) or ("aux_bit" in _sub), (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: "
+                    "`edge_count_between` counts transitions of a BIT, so it "
+                    "needs a `switch_bit` or an `aux_bit`." % (_n, _tag))
+                _band = tuple(_sub["edge_count_between"])
+                assert len(_band) == 2, (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: "
+                    "`edge_count_between` is an INCLUSIVE (lo, hi) pair."
+                    % (_n, _tag))
+                assert 0 <= int(_band[0]) <= int(_band[1]), (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: "
+                    "`edge_count_between` needs 0 <= lo <= hi; %r is empty or "
+                    "negative and can never be satisfied." % (_n, _tag, _band))
+                assert _sub.get("edge", "rise") in ("rise", "fall"), (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: `edge` must be "
+                    "'rise' or 'fall'." % (_n, _tag))
             _bound_keys = ("min_ticks", "min_value", "strictly_decreases_by",
-                           "max_ms", "fault_latch_bit", "any_of")
-            if "max_ticks" in _sub and not any(_k in _sub for _k in _bound_keys):
+                           "max_ms", "fault_latch_bit", "any_of",
+                           "edge_count_between")
+            # `max_continuous_ticks` joins `max_ticks` in the vacuity family: a
+            # blank or absent column has a longest run of ZERO and satisfies it
+            # without the observable ever having been recorded.
+            if any(_k in _sub for _k in ("max_ticks", "max_continuous_ticks")) \
+                    and not any(_k in _sub for _k in _bound_keys):
                 _sig_id = ("switch_bit", _sub["switch_bit"]) if "switch_bit" in _sub \
                     else ("aux_bit", _sub["aux_bit"]) if "aux_bit" in _sub \
                     else ("column", _sub.get("column"))
@@ -2962,14 +3190,16 @@ for _n, _e in FAULT_EXPECTATIONS.items():
                             continue
                         if any(_k in _osub for _k in _bound_keys):
                             _companion = True
+                _kind = ("max_continuous_ticks" if "max_continuous_ticks" in _sub
+                         else "max_ticks")
                 assert _companion or _sub.get("vacuity_note"), (
-                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: `max_ticks` is "
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: `%s` is "
                     "its only assertion, and a blank or absent %s=%r column "
                     "satisfies it with zero matching ticks. Add a companion "
                     "spec on the same signal carrying a positive bound "
                     "(min_ticks/min_value/max_ms/...), or a `vacuity_note` "
                     "saying why the column cannot be blank in this run."
-                    % (_n, _tag, _sig_id[0], _sig_id[1]))
+                    % (_n, _tag, _kind, _sig_id[0], _sig_id[1]))
             assert_derived_source_shape(_n, _tag, _sub)
             if "max_ms" in _sub:
                 # L5: the latency kind is SELECTED by `max_ms` and ignores tick
@@ -2999,6 +3229,10 @@ for _n, _e in FAULT_EXPECTATIONS.items():
                     % (_n, _tag, _sub.get("after_t")))
     assert isinstance(_e.get("child_tx_healthy", False), bool), (
         "FAULT_EXPECTATIONS[%r].child_tx_healthy must be a bool." % _n)
+
+
+for _n, _e in FAULT_EXPECTATIONS.items():
+    _assert_signal_spec_shapes(_n, _e)
 del _n, _e
 
 for _n, _e in FAULT_EXPECTATIONS.items():
@@ -3724,6 +3958,33 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
 #       edge before T is ignored (`prev_bit` still tracks it, so a switch that
 #       was already low at T yields "no transition", not a spurious 0 ms).
 #
+# ── 2026-09-01 additions (campaign 024231 calibration round) ────────────────
+#   {"switch_bit"|"aux_bit"|"column"+value_mask: ..., "max_continuous_ticks": N}
+#       The LONGEST CONTINUOUS RUN of set/matching ticks in the window must be
+#       <= N.  ⚠️ WHY IT EXISTS, because it is the lesson of the one FAIL of
+#       campaign 20260901_024231: `sdpx_charge_released_between` asserted the
+#       ABSENCE of a charge window over a MODELLED instant (t = 90..108 s, from
+#       an offline walk's ~52 s limit-cycle period).  The board's real period is
+#       16.13 s, so the assertion sat on top of a window and failed a correct
+#       run.  A longest-run bound expresses the same objective — "the dwell
+#       latch is a hysteresis, not a hold-forever" — WITHOUT claiming to know
+#       the phase.  Prefer it over any windowed absence assertion whenever the
+#       property is "no single episode may last longer than X".
+#       A BLANK row neither extends nor breaks a run (it carries no level), so a
+#       dropped observation frame cannot split one hold into two.
+#       Vacuity-prone in the same way `max_ticks` is (a blank column has a
+#       longest run of zero), so it obeys the same companion rule below.
+#
+#   {"switch_bit"|"aux_bit": MASK, "edge_count_between": (LO, HI),
+#    "edge": "rise"|"fall"}
+#       EDGE CENSUS — the number of qualifying transitions in the window must be
+#       in the INCLUSIVE band [LO, HI].  The band is ONE key on purpose: a spec
+#       carrying two bound keys silently drops one (see the min_value+max_value
+#       guard), and a count deserves one verdict.  Default edge is "rise".
+#       The first in-window sample only ESTABLISHES the level, so a window that
+#       opens with the bit already set does not count a phantom edge — the count
+#       is of transitions observed, never of windows inferred.
+#
 # ── ENTRY-LEVEL (not a signals_require spec) ────────────────────────────────
 #   FAULT_EXPECTATIONS[name]["child_tx_healthy"] = True
 #       Asserts THIS process's own injection stream was continuous over the run
@@ -3785,7 +4046,17 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
                 # watched bit (None until a non-blank row is seen — so an edge is
                 # only ever recorded against a KNOWN previous level) and the sim
                 # time of the first qualifying transition.
-                "prev_bit": None, "edge_t": None}
+                "prev_bit": None, "edge_t": None,
+                # `max_continuous_ticks` state (2026-09-01): `run` is the run
+                # LENGTH in progress, `max_run` the longest one seen.  A BLANK
+                # row neither extends nor breaks a run — it carries no level, so
+                # treating it as a break would report a hold as two shorter ones
+                # every time an observation frame was dropped.
+                "run": 0, "max_run": 0,
+                # `edge_count_between` state: how many qualifying transitions the
+                # window contained.  Counted against `prev_bit`, exactly as the
+                # latency kind does, so a blank row cannot forge an edge.
+                "edges": 0}
 
     tree = _flatten_signal_specs(specs)
     leaves = _leaf_signal_specs(specs)
@@ -3870,8 +4141,25 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
                                     and t >= float(spec.get("after_t", 0.0))):
                                 m["edge_t"] = t
                             m["prev_bit"] = cur
+                        elif "edge_count_between" in spec:
+                            # EDGE CENSUS (2026-09-01).  Counts qualifying
+                            # transitions inside the window; the FIRST in-window
+                            # sample establishes the level and can never be an
+                            # edge, so a window that opens with the bit already
+                            # set counts that window, not a phantom edge.
+                            want = 1 if spec.get("edge", "rise") == "rise" else 0
+                            if (m["prev_bit"] is not None
+                                    and m["prev_bit"] != cur and cur == want):
+                                m["edges"] += 1
+                            m["prev_bit"] = cur
                         else:
                             m["ticks"] += cur
+                            if cur:
+                                m["run"] += 1
+                                if m["run"] > m["max_run"]:
+                                    m["max_run"] = m["run"]
+                            else:
+                                m["run"] = 0
                         continue
                     # ── DERIVED SCALARS (2026-08-31): `sum_of` / `ratio_of` ──
                     # Some quantities the campaign reasons in are not CSV
@@ -3933,6 +4221,11 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
                             continue
                         if (iv & int(spec["value_mask"])) == int(spec["value_equals"]):
                             m["ticks"] += 1
+                            m["run"] += 1
+                            if m["run"] > m["max_run"]:
+                                m["max_run"] = m["run"]
+                        else:
+                            m["run"] = 0
                         continue
                     try:
                         v = float(cell)
@@ -3987,6 +4280,31 @@ def _judge_signal_leaf(spec, m):
     # value_mask spec counts ticks the masked field MATCHED.  Same arithmetic,
     # and saying "bit set" about a GENSTAT equality would be wrong.
     what = "masked value matched on" if "value_mask" in spec else "bit set on"
+    if "max_continuous_ticks" in spec:
+        # LONGEST CONTINUOUS RUN (2026-09-01).  A TOTAL tick bound cannot tell a
+        # limit cycle from one long hold, and a windowed absence assertion —
+        # `sdpx_charge_released_between`, the check this kind replaces — pins a
+        # release to a MODELLED INSTANT and fails a correct board the moment the
+        # walk's period is wrong (campaign 024231: the walk was wrong by 5.7x).
+        # The longest run is PHASE-FREE: it bounds the hold without claiming to
+        # know when the releases happen.
+        lim = int(spec["max_continuous_ticks"])
+        have = int(m.get("max_run", 0))
+        kind = "matching" if "value_mask" in spec else "set"
+        return (have <= lim,
+                "longest CONTINUOUS run %d %s tick(s)%s (%d %s in total), "
+                "need <= %d" % (have, kind, win, m["ticks"], kind, lim))
+    if "edge_count_between" in spec:
+        # EDGE CENSUS, an INCLUSIVE band in ONE spec.  Written as a single
+        # `(lo, hi)` key rather than min/max siblings for the reason the
+        # min_value+max_value guard exists: two bound keys in one spec silently
+        # drop one of them, and a count wants ONE verdict, not two.
+        lo, hi = (int(v) for v in spec["edge_count_between"])
+        which = spec.get("edge", "rise")
+        n = int(m.get("edges", 0))
+        return (lo <= n <= hi,
+                "counted %d %s edge(s)%s, need %d..%d inclusive"
+                % (n, which, win, lo, hi))
     if "min_ticks" in spec:
         return (m["ticks"] >= int(spec["min_ticks"]),
                 "%s %d tick(s)%s, need >= %d"
@@ -4997,9 +5315,34 @@ EMS_FRONTIER_VS_REFERENCE_MAX = 0.98
 #   causal leg CANNOT reach it and the bound is a proximity claim, not a
 #   ranking. 6 % is anchored on campaign 20260831_222036's measured +1.79 %,
 #   with room for the SoC-correction term's own uncertainty.
-#   ⚠️ INTENT, recorded so it is not lost: TIGHTEN TO 1.03 after two campaigns
-#   on the v3 artifact have measured the candidate's actual spread. 1.06 is a
-#   first-campaign bound on a leg whose calibrated behaviour has never run.
+#
+#   ⚠️ WHAT THIS ARM ACTUALLY DETECTS — re-described after its FIRST live
+#   evaluation (campaign 20260901_024231, which returned 1.0000 x).  When BOTH
+#   legs are CHARGE-FREE, the vs-bound ratio is STRUCTURALLY ~1.0 and is NOT
+#   evidence of optimality.  The arithmetic: two charge-free runs differ only
+#   along the SHARE lever, so their (h2, dSoC) pair moves along that lever's own
+#   exchange line — and lambda IS that lever's rate.  eq-H2 subtracts the SoC
+#   difference AT lambda, so it subtracts exactly the difference the two points
+#   have, and the corrected totals coincide.  Campaign 024231 measured the
+#   implied lever between candidate and bound at 0.41021 SoC/g against
+#   lambda = 0.410: agreement to 0.05 %, which is the degeneracy, not a result.
+#   That number is rendered as `implied_lever_soc_per_g` below so a reader can
+#   see WHY the ratio is 1.0 rather than inferring a near-optimal policy.
+#   So the arm is a LEVER-CLASS DETECTOR, not an optimality gate: it fires when
+#   the candidate reaches its result through a lever priced DIFFERENTLY from
+#   lambda — which is precisely what campaign 20260901_000816's failing SDP leg
+#   did, buying SoC through the Ag105 at 0.2364 SoC/g and being scored at 0.41.
+#   The DISCRIMINATING arm on a charge-free reading is vs-reference.
+#
+#   ⚠️ DO NOT TIGHTEN 1.06 -> 1.03 ON A CHARGE-FREE READING.  The earlier
+#   "TIGHTEN TO 1.03 after two campaigns" intent is AMENDED, not carried: a
+#   campaign in which the candidate never opens the charger measures the
+#   degeneracy above and NOT the candidate's spread, so tightening on it would
+#   buy no detection power and would make the arm fail on nothing but the
+#   SoC-correction's own numerical noise.  Tighten only against campaigns whose
+#   candidate leg USED a second lever (a non-zero charge-window count on the
+#   candidate), and re-derive the number from the implied-lever spread those
+#   campaigns show.
 EMS_FRONTIER_VS_BOUND_MAX = 1.06
 # MATCHED-dSoC PRECONDITION.  The eq-H2 correction is a LINEAR extrapolation at
 # one exchange rate; it is credible over a small SoC gap and not over a large
@@ -5130,6 +5473,18 @@ def evaluate_ems_frontier(results, planned_names=None):
     gap_bound = abs(bound["dsoc"] - dsoc_ref)
     rec["dsoc_gap"] = gap
     rec["dsoc_gap_bound"] = gap_bound
+    # THE IMPLIED LEVER between candidate and bound: d(dSoC)/d(h2) across the two
+    # legs, in the same SoC/g units as lambda.  Rendered, not asserted — it is
+    # the number that explains a vs-bound ratio rather than a bound on one.  A
+    # value equal to lambda means the two legs differ only along the SHARE lever
+    # and their eq-H2 totals MUST coincide (see the EMS_FRONTIER_VS_BOUND_MAX
+    # banner); a value far from lambda means a second, differently-priced lever
+    # is in play, which is what the vs-bound arm exists to catch.  None when the
+    # two legs burnt indistinguishable hydrogen (the ratio is then undefined,
+    # not infinite).
+    _dh2 = cand["h2"] - bound["h2"]
+    rec["implied_lever_soc_per_g"] = (
+        None if abs(_dh2) < 1e-12 else (cand["dsoc"] - bound["dsoc"]) / _dh2)
     if max(gap, gap_bound) > EMS_FRONTIER_DSOC_MATCH_MAX:
         rec.update(
             verdict="UNVERIFIED", passed=False, exit_affecting=True,
@@ -5431,6 +5786,23 @@ def render_report(meta, results):
                         if p["vs_bound"] is not None else "—",
                         "pass" if p["passed"] else "fail"]))
             A("")
+        # The implied lever — rendered whenever both legs are present, because
+        # it is what makes a vs-bound ratio READABLE (see the
+        # EMS_FRONTIER_VS_BOUND_MAX banner).
+        if frontier.get("implied_lever_soc_per_g") is not None:
+            _il = frontier["implied_lever_soc_per_g"]
+            A("**implied lever, candidate vs bound: %.5f SoC/g** "
+              "(lambda = %.3f). This is d(delta_soc)/d(h2_cum_g) between the "
+              "two legs. When it agrees with lambda, the two legs differ only "
+              "along the SHARE lever and their SoC-corrected totals MUST "
+              "coincide — a **vs bound** ratio near 1.00 is then STRUCTURAL, "
+              "not a proximity-to-optimal result, and the discriminating arm "
+              "is **vs reference**. The vs-bound arm detects a candidate that "
+              "reached its result through a lever priced differently from "
+              "lambda (e.g. the Ag105 charge lever at ~0.24 SoC/g), which is "
+              "the regression it was built for."
+              % (_il, EMS_EQ_H2_LAMBDA_SOC_PER_G))
+            A("")
         A("**lambda provenance.** %.3f SoC/g is the MEASURED share lever: "
           "campaign 20260831_191509 priced share-shifting at 0.409-0.415 SoC/g "
           "on two independent stimuli (the 61 s cycle and the 340 s FTP-75, "
@@ -5438,9 +5810,11 @@ def render_report(meta, results):
           "[%.3f, %.3f] is that measurement, and a verdict that flips inside it "
           "renders KNIFE-EDGE — neither PASS nor FAIL — rather than being read "
           "off the centre. Thresholds: candidate <= %.2f x reference and "
-          "<= %.2f x bound; the second is a FIRST-CAMPAIGN bound on the "
-          "calibrated artifact and is intended to tighten to 1.03 once two "
-          "campaigns have measured its spread."
+          "<= %.2f x bound; the second is a LEVER-CLASS detector rather than "
+          "an optimality gate, and it is NOT to be tightened on a campaign "
+          "whose candidate never opened the charger — on such a reading its "
+          "ratio is structurally ~1.00, because both legs then move along the "
+          "share lever alone and lambda is that lever's own rate."
           % (EMS_EQ_H2_LAMBDA_SOC_PER_G, EMS_EQ_H2_LAMBDA_BAND[0],
              EMS_EQ_H2_LAMBDA_BAND[1], EMS_FRONTIER_VS_REFERENCE_MAX,
              EMS_FRONTIER_VS_BOUND_MAX))

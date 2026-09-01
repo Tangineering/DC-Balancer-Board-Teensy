@@ -1752,6 +1752,47 @@ class PiCommander:
 # internally — droop_enable is the reserved/discarded byte (.ino:4880-4881),
 # not a real policy decision, and returning it now raises like any other
 # unknown key.
+#
+# ── ⚠️ SHARE AUTHORITY DISAPPEARS BELOW 0.55 A (2026-09-01) ──────────────────
+# READ THIS BEFORE WRITING A POLICY THAT COMMANDS AN FC-HEAVY OR BT-HEAVY SPLIT
+# AT LOW LOAD, AND BEFORE WALKING ONE OFFLINE.
+#
+# The firmware's share loop is GATED ON SOURCE CURRENT.  It enters closed loop
+# above 2 * SHARE_MINORITY_I_MIN_A = 0.60 A of source total and drops out below
+# 0.60 - SHARE_GOV_OL_HYST_A = 0.55 A (.ino:2181/2205, gate at :9933).  In
+# OPEN-LOOP mode the firmware does not write the MDACs at all: it HOLDS the last
+# split the closed loop converged to (.ino:9937 onward, `droopSlew_prev`).  So
+# below 0.55 A of total source current:
+#
+#     power_share_setpoint is ACCEPTED, LOGGED, and NOT ACTED ON.
+#
+# The command still appears on the wire and in `cmd_share_sp`; the DELIVERED
+# split is whatever was standing when the load fell away.  This is DESIGNED
+# behaviour — re-commanding a split during a coast-down slams the droop gains,
+# which is the transient the whole open-loop family exists to remove — and it is
+# not a defect to be worked around.
+#
+# WHAT IT MEANS FOR A POLICY: at low cruise your share decision does not change
+# the pack's drain rate, so any policy whose regulation depends on share
+# authority (an SoC band, an SDP table indexed on SoC) is running open loop in
+# exactly the regime it thinks it is acting in.  Size the scenario's load — see
+# `aux_preload_a` — if the policy needs authority, or accept the hold and say so.
+#
+# WHAT IT MEANS FOR A WALK: model the hold.  TWO offline walks in this codebase
+# have now been wrong for this one reason, the second badly:
+#   * campaign 20260901_024231, `ems-sdp-cross`: the walk applied the CLOSED-LOOP
+#     minority governor at a 1.0 m/s cruise drawing I_tot ~ 0.355 A. The board
+#     delivered share 0.1656 against the commanded 0.85, so the real drain was
+#     -3.90e-5 SoC/s against the walk's ~6.9e-6, and the predicted charge-window
+#     period of ~52 s was measured at 16.13 s — wrong by 5.7x. The suite check
+#     built on that period asserted the ABSENCE of a window at a modelled
+#     instant, and failed a CORRECT board.
+#   * the `y-b00` variants: same cause, benign consequence (the note in
+#     make_ems_y() records that those runs are open-loop feedforward and that
+#     share AMPLITUDE must not be read off them).
+# A walk that assumes the commanded split is the delivered one is measuring a
+# firmware that does not exist. Compute I_tot at each step, compare it against
+# the 0.55 A drop-out, and hold the split below it.
 # ═════════════════════════════════════════════════════════════════════════════
 
 # Promoted from the comment table above to a named, importable constant (test-
@@ -3117,27 +3158,41 @@ SDP_DEFAULT_DECISION_DT_S = 1.0
 # SDP_CHG_MIN_DWELL_S = 8 s the exposure is bounded, and this scenario's charge
 # window is a flat 1.0 m/s cruise whose only load excursion IS the charger.
 #
-# PREDICTED BEHAVIOUR under this block, `ems-sdp`: ONE window from t ~ 41 to the
-# Run exit at 58 (~16000 ticks of FC_CHARGE_ENABLE high), replacing nine ~1 s
-# ones.  DERIVED FROM AN OFFLINE WALK over campaign 20260831_222036's own
-# recorded ems-sdp trace, stepped at the artifact's 1 s cadence:
+# MEASURED BEHAVIOUR under this block — `ems-sdp-cross`, campaign
+# 20260901_024231.  ⚠️ THIS PARAGRAPH USED TO PREDICT `ems-sdp` AND IS RETARGETED:
+# `ems-sdp` was rebound to the `sdp-v3` artifact, which has no charge cell to
+# command at all (endogenous never-charge, validated live), so that scenario can
+# no longer exercise this block.  `ems-sdp-cross` and `ems-sdp-braking` are the
+# two scenarios that still play a charging artifact, and the first one is where
+# the hysteresis was actually observed:
+#     NINE windows over t = 70..190 s, period 16.13 s (gaps 8.04-8.08 s,
+#     sigma 17 ms), 64103 ticks set of 120000, longest continuous hold 8.085 s
+#     = SDP_CHG_MIN_DWELL_S + 1.1 %.
+# ⚠️ AND THE WINDOW-ENDING MECHANISM THERE IS THE SoC SURFACE, NOT THE SELF-LOAD
+# SUBTRACTION.  On `ems-sdp` the hunt was a demand-bin feedback loop and part 2
+# of this block (the subtraction) is what made the window continuous.  On
+# `ems-sdp-cross` the policy is regulating ACROSS the charge switching surface
+# at SoC 0.69700: a dwell banks 3.6e-4 SoC, that carries soc_rel back above the
+# surface, the table stops asking to charge, the node-50 decay gives it back in
+# 8.08 s, and the next decision re-admits.  Each window therefore ends because
+# the STATE crossed a surface — the longest hold is the dwell plus one decision
+# quantum, i.e. the latch is not even the binding constraint — and the observed
+# period is set by the DRAIN RATE at the low cruise, which is why walking that
+# drain wrongly cost a check (see the SDP_CROSS_* block).
+# The suite checks that carry these numbers are `sdpx_charge_cycled`,
+# `sdpx_charge_max_hold`, `sdpx_charge_released_fraction` and
+# `sdpx_charge_window_count` (ems-sdp-cross) and `sdpb_charge_in_low_windows`
+# (ems-sdp-braking), all in run_hil_suite.py.
+#
+# The ORIGINAL `ems-sdp` walk, kept because it is what sized the constant: over
+# campaign 20260831_222036's own recorded ems-sdp trace, stepped at the
+# artifact's 1 s cadence,
 #     WITHOUT this block (the shipped v2 behaviour)   9 windows,  8968 ticks
 #     WITH it                                         2 windows, 14972 ticks
-# The baseline row reproduces the campaign's measured nine windows and their
-# 2.0125 s period EXACTLY, which is what makes the other row trustworthy.
-# ⚠️ THE WALK IS OPEN LOOP, and its residual second window is an artifact of
-# that rather than a prediction: it replays the CHATTERING run's `I_charge`, so
-# at the t = 55.04 expiry the recorded charger happened to be OFF, the
-# subtraction had nothing to remove, and that stage read high demand before
-# re-latching at 57.04.  In closed loop the charger stays powered across an
-# expiry and the subtraction holds.  Take ~15000-16000 ticks as the prediction
-# and the window COUNT as 1-2; the first campaign after this lands is what
-# turns either into a fact.  (⚠️ The suite check this note used to cite,
-# `sdp_charge_window_opened`, was DELETED when `ems-sdp` was rebound to the
-# `sdp-v3` artifact — that policy has no charge cell to command, so the tick
-# floor now lives on the two scenarios that still play a charging artifact:
-# `sdpx_charge_cycled` (ems-sdp-cross) and `sdpb_charge_in_low_windows`
-# (ems-sdp-braking), both in run_hil_suite.py.)
+# and the baseline row reproduced that campaign's measured nine windows and
+# their 2.0125 s period EXACTLY.  Campaign 20260901_000816 then measured 2
+# latches over 15086 continuous FC_CHARGE ticks on the real board, inside the
+# walk's predicted range.
 #
 # ⚠️ THE LATCH COUNTER IS NOT A WINDOW COUNTER (ledger note, campaign
 # 20260901_000816).  `chg_holds` in the exit summary counts LATCHES — every
@@ -4426,6 +4481,12 @@ ems_y_b00_v1 = make_ems_y(1.0, 0.00)
 ems_y_b00_v3 = make_ems_y(3.0, 0.00)
 
 
+# ⚠️ BEFORE ADDING ONE: read the SHARE AUTHORITY DISAPPEARS BELOW 0.55 A note in
+# the MODE A block above.  A policy commanding an FC-heavy or BT-heavy split at a
+# source total under 0.55 A gets the LAST CONVERGED split, not its command — the
+# firmware holds in open-loop mode by design — and an offline walk that assumes
+# otherwise has been wrong twice, most recently by 5.7x on `ems-sdp-cross`
+# (campaign 20260901_024231).
 EMS_STRATEGIES = {
     "hold-5050": ems_hold_5050,
     "regen-harvest": ems_regen_harvest,
@@ -5441,9 +5502,21 @@ del _name, _ems, _what
 #   FLIP TIME:            t = 195.9 s   (model).  Sensitivity is the whole
 #     answer here, because the flip time is an INTEGRAL of the drain: a +/-10 %
 #     error in the pack current moves it to 180 s / 205 s, and +/-20 % to
-#     158 s / 216 s.  The suite's transition band is (150, 250) accordingly.
+#     158 s / 216 s.  The suite's transition band WAS (150, 250) accordingly.
+#     ⚠️ MEASURED t = 198.537 s (campaign 20260901_024231, +1.35 % on the
+#     walk), so the band was tightened to (185, 212) — see the de-provisionalized
+#     `sdpftp_low_rail_early` / `sdpftp_high_rail_late` derivations in
+#     run_hil_suite.py.  This is the walk's best result: an INTEGRAL quantity
+#     landing inside 1.4 %, on the one of the three SDP-interior scenarios whose
+#     drain is carried by a CLOSED share loop throughout (see the preload's
+#     "WHAT IT COSTS" note) — which is exactly the condition the `ems-sdp-cross`
+#     walk did not have and got 5.7x wrong for.
 #   RAW TABLE REQUESTS:   {0.00} before the flip, {1.00, 0.95} after (0.95 in
 #     bin 22, the cycle's own peak).  EMITTED: {0.15, 0.85}.
+#     ⚠️ MEASURED (campaign 20260901_024231): raw 0.00 flat pre-flip, 1.00 with
+#     0.95 dips post-flip — bin 24 was NOT entered on that run.  The suite's raw
+#     floor stays at 0.89 anyway, because it guards the bin-24 boundary case the
+#     cycle's peak demand sits ~4 % below; see `sdpftp_raw_fc_branch`.
 #   CHARGING:             NONE, by construction — the walk's demand never falls
 #     below bin 9 inside the Run window (P_dem 9.6..22.4 W) and the solver
 #     forbids charging above bin 5.  This scenario is a PURE share-axis test.
@@ -5642,8 +5715,17 @@ SCENARIOS["ems-ftp75-sdp"] = {
 # BOTH walks are the ems-ftp75-sdp walk's method (see there): the strategy's
 # own decision path over the gen_dp_ems_table demand model of the declared
 # profile, pack integrated through BatterySource, the firmware's minority
-# governor applied to the delivered split, 20 Hz, 2026-08-31.  Every number
-# below is PROVISIONAL until the first campaign measures it.
+# governor applied to the delivered split, 20 Hz, 2026-08-31.  Campaign
+# 20260901_024231 has since MEASURED both, and each walk block below now carries
+# its measurement beside its prediction.
+#
+# ⚠️ AND THE METHOD HAS ONE KNOWN DEFECT, found by that campaign: "the firmware's
+# minority governor applied to the delivered split" is only the right model
+# ABOVE the firmware's 0.55 A open-loop drop-out.  Below it the board holds the
+# last converged split and the commanded share is not acted on at all — which is
+# why the `ems-sdp-cross` charge period came out 5.7x wrong while the
+# demand-driven `ems-sdp-braking` schedule came out right to 4.7 %.  Any future
+# walk must model the hold; see the SHARE AUTHORITY note in the MODE A block.
 
 # ── ems-sdp-cross ───────────────────────────────────────────────────────────
 # +0.0025 places the start 2.5 nodes above the target: the run opens on the
@@ -5668,12 +5750,44 @@ SDP_CROSS_CRUISE_LO_MPS = 1.0
 SDP_CROSS_DECEL_S = 70.0          # 2.2 -> 1.0 over the next 5 s (0.24 m/s^2)
 SDP_CROSS_RUN_EXIT_S = 196.0
 SDP_CROSS_DURATION_S = 200.0
-# ⚠️ WALK RESULT (PROVISIONAL, 2026-08-31):
+# ⚠️ MEASURED, campaign 20260901_024231 (the first campaign to run this
+# scenario).  The walk below it is kept because ONE of its two predictions was
+# right and the other one's failure is the round's standing lesson.
+#     share 0.15 -> 0.85 at t = 42.292 (the only share transition of the run;
+#       walk 43.85, -3.5 %)
+#     charge windows: NINE over t = 70..190, period 16.13 s, gaps 8.04-8.08 s
+#       (sigma 17 ms); 64103 of the window's 120000 ticks set (released
+#       fraction 0.466); longest continuous hold 8.085 s = SDP_CHG_MIN_DWELL_S
+#       + 1.1 %, i.e. the dwell plus one decision quantum.  Whole run: 9
+#       windows, ~65.5 k ticks.
+#     peak I_fc 1.1920 A at t = 79.90 (14.9 % under LIMIT_I_FC_MAX 1.4 A) —
+#       equal to `ems-soc-band`'s own validated peak at the same operating
+#       point.  I_charge reached its full 0.8000 A ceiling.
+#     the two switching surfaces, measured for the first time: share surface at
+#       SoC 0.69800 (flip at 0.69798), charge surface at 0.69700 (windows open
+#       0.696980-0.697000, close 0.697300-0.697320) — both on the predicted
+#       grid nodes.
+#
+# ⚠️ THE WALK'S CHARGE PERIOD WAS WRONG BY 5.7x, AND THE REASON IS REUSABLE.
+# It predicted three windows at a ~50-57 s period; the board runs nine at
+# 16.13 s.  The period is the dwell PLUS the time the node-50 decay takes to
+# give back what the dwell banked (8 s * 0.8 A / 18000 = 3.6e-4 SoC), so it is
+# set entirely by the DRAIN RATE at the low cruise — and the walk modelled that
+# drain with the firmware's CLOSED-LOOP minority governor applied to the
+# commanded 0.85.  The firmware does not run closed-loop there: the 1.0 m/s
+# cruise draws I_tot ~ 0.355 A, below the 0.55 A open-loop drop-out
+# (.ino:9933), so the share loop HOLDS its last converged split and the board
+# DELIVERED 0.1656 against the commanded 0.85.  The pack therefore drains at
+# -3.90e-5 SoC/s, not the walk's ~6.9e-6, and 3.6e-4 SoC is given back in
+# 8.08 s rather than in ~45.  The arithmetic closes exactly.  This is the
+# SECOND walk error from this one cause; the standing note for policy and walk
+# authors is at the end of the MODE A block above.
+#
+# ⚠️ WALK RESULT (SUPERSEDED, 2026-08-31, kept for the record):
 #     share 0.15 -> 0.85 at t = 43.85 (the only share transition of the run)
 #     charge windows, sustained: 75.4-83.8, 115.3-123.7, 172.9-180.9 s
-#       — three, each one SDP_CHG_MIN_DWELL_S long, period ~50-57 s (the dwell
-#       plus the time the node-50 decay takes to give back what the dwell
-#       banked: 8 s * 0.8 A / 18000 = 3.6e-4 SoC at ~6.9e-6 /s)
+#       — three, each one SDP_CHG_MIN_DWELL_S long, period ~50-57 s.  RETIRED:
+#       see the measurement and the root cause above.
 #     ONE 1.05 s admit-then-drop at t = 73.3, INSIDE the deceleration: the
 #       demand falls into bin 5 before the ramp finishes, the table admits, and
 #       charge_hold_status()'s SDP_CHG_CRUISE_DELTA_MPS guard withdraws it on
@@ -5692,9 +5806,11 @@ SCENARIOS["ems-sdp-cross"] = {
                     "policy started %+.4f SoC ABOVE its target node: the run "
                     "opens on the table's battery-heavy branch (commanded "
                     "share 0.15), crosses the SHARE threshold downward to 0.85 "
-                    "at t ~ 44 s, then settles into the CHARGE threshold's own "
-                    "limit cycle — three minimum-dwell charge windows on the "
-                    "low cruise. The upward share crossing is not attempted on "
+                    "at t = 42.3 s, then settles into the CHARGE threshold's "
+                    "own limit cycle — nine minimum-dwell charge windows at a "
+                    "16.13 s period across the low cruise (measured, campaign "
+                    "20260901_024231). The upward share crossing is not "
+                    "attempted on "
                     "this rig (it would need a >2.25 A PACK-side charge "
                     "ceiling, whose bus-side draw leaves only ~10-15 %% under "
                     "LIMIT_I_FC_MAX); see the scenario comment for the "
@@ -5782,7 +5898,24 @@ def _sdp_brake_profile():
     return prof
 
 
-# ⚠️ WALK RESULT (PROVISIONAL, 2026-08-31):
+# ⚠️ MEASURED, campaign 20260901_024231 — THE WALK BELOW WAS RIGHT, and it is
+# right for a stated reason: these charge windows are DEMAND-driven, so they
+# land on the profile's own fixed instants rather than on an integrated drain
+# (contrast `ems-sdp-cross`, whose SoC-driven period the same walk missed by
+# 5.7x).  Measured against the walk:
+#     four sustained windows of four, 52.479 s of FC_CHARGE over t = 10..125
+#       (walk 50.1 s, +4.7 %), longest 13.108 s; ZERO ticks inside both
+#       asserted 2.2 m/s cruise windows, as walked
+#     FIVE cruise-guard early drops, at t = 3.008 / 19.175 / 50.390 / 81.624 /
+#       112.842 — the walk's five, to the instant.  FIRST live exercise of that
+#       branch; the census is `sdpb_charge_edge_census` (9 rising edges = 4 + 5)
+#     peak I_fc 1.2617 A at t = 65.51 in the one-decision overhang — 9.9 %
+#       under LIMIT_I_FC_MAX 1.4 A, the tightest margin in the suite (walk
+#       1.1671 A, so the real overhang costs 8.1 % more than modelled).  Now
+#       asserted by `sdpb_fc_peak_bounded` at 1.32 A.
+#     I_charge reached its full 0.7000 A de-rated ceiling.
+#
+# ⚠️ WALK RESULT (2026-08-31, CONFIRMED by the campaign above):
 #     share command CONSTANT 0.8500 for the whole run (by design — see above),
 #       raw table request constant 1.00
 #     charge windows, sustained: 21.3-34.4, 52.2-64.8, 83.7-96.3, 114.2-126.0 s

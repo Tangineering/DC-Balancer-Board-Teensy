@@ -924,11 +924,27 @@ run would not start at the requested offset at all.
 > `I_aux 0.15 + 2.25 = 2.4 A` against `LIMIT_I_FC_MAX` 1.4 A — an immediate
 > `OC_FC`. The share axis crosses **once, downward**.
 
-> ⚠️ **All three are FIRST-CAMPAIGN PROVISIONAL.** Every threshold in their
-> `FAULT_EXPECTATIONS` entries comes from an offline walk of the strategy's own
-> decision path over the reduced demand model, not from measurement. Re-derive
-> and tighten them from the first campaign, and delete the `provisional_note`
-> when you do (the `ems-sdp` and `scp-inrush` precedent).
+> ✔ **All three are CALIBRATED as of campaign `20260901_024231`**, the first
+> campaign to run them. Every threshold was re-derived against that campaign's
+> measured trace and the `provisional_note` was deleted from all three (the
+> `ems-sdp` and `scp-inrush` precedent); each moved bound carries its measured
+> value and the campaign id in place. How the walks did:
+>
+> * `ems-ftp75-sdp` — flip 195.9 walked vs **198.537 measured**, +1.35 %.
+> * `ems-sdp-braking` — DEMAND-driven windows land on the profile's own
+>   instants: 50.1 s walked vs **52.479 s measured**, +4.7 %, four windows of
+>   four, zero cruise ticks, and the walk's five early drops to the instant.
+> * `ems-sdp-cross` — the one failure. The flip was fine (-3.5 %) but the CHARGE
+>   limit cycle's period was walked at ~52 s against a measured **16.13 s**,
+>   wrong by **5.7×**, because the walk assumed the share loop was closed at an
+>   operating point where the firmware holds open-loop (§3.3, "Share authority
+>   disappears below 0.55 A").
+>
+> **The structural lesson:** the check that failed asserted the ABSENCE of a
+> window at a *modelled instant*. Phase-locked absence assertions fail correct
+> boards whenever the walk's period is wrong. Prefer the phase-free kinds —
+> `max_continuous_ticks` and `edge_count_between` — which bound the same
+> property without claiming to know when the transitions happen.
 
 ### 3.2.4 Comparing EMS strategies
 
@@ -1020,6 +1036,33 @@ Contract:
   `charge_goal`, `mode_cmd`) are accepted — `droop_enable` is the reserved
   byte (`.ino:4880-4881`) and is not a legal EMS-policy return, same as any
   other unknown key.
+
+**⚠️ Share authority disappears below 0.55 A — read this before commanding a
+split.** The firmware's share loop is gated on **source current**. It enters
+closed loop above `2 · SHARE_MINORITY_I_MIN_A` = 0.60 A of total source current
+and drops out below `0.60 − SHARE_GOV_OL_HYST_A` = **0.55 A**
+(`.ino:2181`/`:2205`, gate at `:9933`). In open-loop mode the firmware does not
+write the MDACs at all — it **holds** the last split the closed loop converged
+to. So below 0.55 A:
+
+> `power_share_setpoint` is **accepted, logged, and not acted on.** The command
+> still appears on the wire and in the CSV's `cmd_share_sp` column; the delivered
+> split is whatever was standing when the load fell away.
+
+This is designed behaviour — re-commanding a split during a coast-down slams the
+droop gains — and it is not a defect to work around. What it means for you:
+
+* **Writing a policy.** At low cruise your share decision does not change the
+  pack's drain rate. A policy that regulates on SoC (a deadband, an SDP table)
+  will be running open loop in exactly the regime it believes it is acting in.
+  If it needs authority, give the scenario an `aux_preload_a` that holds the
+  total above the gate; otherwise accept the hold and say so in the docstring.
+* **Walking a policy offline.** Model the hold. Compute `I_tot` at each step,
+  compare it against 0.55 A, and freeze the split below it. Two walks in this
+  codebase have been wrong for this one reason — the second badly: campaign
+  `20260901_024231` measured a **delivered share of 0.1656 against a commanded
+  0.85** on `ems-sdp-cross`'s 0.355 A cruise, which made the walked charge-window
+  period wrong by **5.7×** and failed a suite check on a correct board.
 
 **Portability — read this before using `fb`.** `fb` is deliberately richer than
 what a real Pi can see. The Pi receives only the 58-byte v4 telemetry packet
@@ -1356,9 +1399,27 @@ the `y-*` profiles, ...) is excluded by construction and carries a
 `ANALYSIS.md`: its energy numbers measure a mechanism, not a competitive score.
 ⚠️ `h2_cum_g` is the Gfc model's estimate and its coefficients are not
 identified against this rig's stack (`TODO(calibrate)`), so the frontier is a
-RANKING on one rig, never an absolute mass. The `1.06 x` bound is a
-first-campaign figure on the calibrated artifact and is intended to tighten to
-`1.03` after two `sdp-v3` campaigns.
+RANKING on one rig, never an absolute mass.
+
+**⚠️ How to read the `vs bound` arm — it is a lever-class detector, not an
+optimality gate.** When both the candidate and the DP bound are **charge-free**,
+their ratio is **structurally ~1.00** and proves nothing about optimality: two
+charge-free runs differ only along the SHARE lever, `lambda` *is* that lever's
+rate, so the eq-H2 correction subtracts exactly the difference they have and the
+corrected totals coincide. The frontier section renders an **implied lever**
+line — `d(delta_soc)/d(h2_cum_g)` between candidate and bound — so you can see
+this: campaign `20260901_024231` returned `1.0000 x` with an implied lever of
+**0.41021 SoC/g** against `lambda = 0.410`, agreement to 0.05 %. On such a
+reading the discriminating arm is **vs reference** (0.9003 there). The vs-bound
+arm fires when the candidate reached its result through a lever priced
+differently from lambda — which is exactly what campaign `20260901_000816`'s
+failing leg did, buying SoC through the Ag105 at ~0.24 SoC/g.
+
+Consequently the earlier intent to tighten `1.06 x` to `1.03` is **amended, not
+carried**: never tighten it on a campaign whose candidate never opened the
+charger, because such a reading measures the degeneracy above rather than the
+candidate's spread. Tighten only against campaigns whose candidate used a second
+lever, and re-derive the number from the implied-lever spread they show.
 
 Mode tagging: `results.json` / `REPORT.md` carry `mode: "pi-live"` or
 `"scripted"` in the report header and on every per-run record (`cmd_mode`).
