@@ -2370,3 +2370,81 @@ program evaluation `HIL Results/HIL_SUITE_EVALUATION_20260831.md`.
   absolute H2 prediction. Recommended order: fix round -> Pi parser audit ->
   Mode-B EMS-trio campaign -> SDP re-normalization -> measured-droop sim mode ->
   stack ID.
+
+---
+
+## Status & session addendum (2026-08-31i, fix round + SDP demand-map re-normalization: sdp_policy_v2)
+
+Orchestrated tooling round (two sequential Opus implementers, Sonnet test-writer, parallel
+Opus data-integrity + Sonnet contract reviews, Opus fix round) implementing the
+campaign-191509 fix queue AND the operator-approved SDP scale-gap fix. Python tooling +
+docs; FW stays v23; wire protocol frozen.
+
+- **SDP demand map is now CONSUMER-OWNED at rig scale (solver decision D11).**
+  `sdp_ems_solver.py --demand-map MIN MAX` (default **[0, 25] W**, from campaign-191509
+  measured P_dem 0–22.887 W; `--demand-map-sidecar` keeps the old path and reproduces
+  v1's policy block BIT-IDENTICALLY — the re-map is provably the only change). Re-solved
+  → `tools/sdp_policies/sdp_policy_v2.json` (455 sweeps; policy-block sha
+  `740c802e99dd…`; charge_forbidden_bins [12..24]→**[6..24]** — the FC-budget rule
+  finally binds at real watts; 294 charge-enabled cells vs v1's 0; share ladder
+  {0, 0.90, 0.95, 1.00}). Strategy renamed **`sdp-v1` → `sdp-v2`** (no alias — a
+  results.json can never silently mix laws); alpha unchanged (map-invariant). Offline
+  walk over the campaign trace: **13 demand bins visited (v1: 1), zero clamps, a
+  charge window t = 41–58 s** that v1 structurally could not produce. HONESTY: the
+  emitted share is STILL a constant 0.8500 — every table value exceeds the [0.15, 0.85]
+  hardware clamp; the bang-bang is structural (piecewise-linear stage cost → vertex
+  optima). Discriminators are therefore (a) the new **`cmd_share_sp_raw`** CSV tail
+  column (pre-clamp table request; None-seeded, blank until the first decision) and
+  (b) the **FC_CHARGE switch actually opening** — both scored in the re-derived 8-check
+  ems-sdp entry, whose three new checks carry a `provisional_note` (first-campaign
+  thresholds; rendering extended so provisional qualifiers ride signals_require too,
+  not just events). ⚠️ Derived prediction: **~1 Hz FC_CHARGE chatter** (memoryless
+  policy, no hysteresis; charger draw pushes demand into a forbidden bin) — within all
+  current budgets; hysteresis is an operator decision if the first v2 campaign shows it
+  undesirable. ⚠️ Campaign-191509 sdp-v1 EMS totals are a DIFFERENT DECISION LAW — never
+  quote them against v2 runs.
+- **Fix queue: all 16 items landed.** Highlights: `config.dp_table` sidecar provenance
+  (file sha + LF-normalized data-rows-only `table_sha256`, positional header exclusion);
+  TP0178/TP0201 uv_not_latched de-vacuated via new replay check kind
+  `v_bus_min_in_band` (12.0, 12.30] — and the TP0178 record CORRECTED: the "10 ms
+  dwell" did not survive replay (V_bus floor 12.1489 V is ABOVE the limit, dwell
+  0.0 ms); `fault_latched` gained `not_before_s` (ML0217 0.5 s) computed from the
+  PERSISTED latch only (review DI-MED-4: the raw whole-run first sighting reads a
+  predecessor's carried-in latch and would false-FAIL a back-to-back rerun);
+  share-staircase fc_bus_restored 1500→**900** (the 60 % restore-margin rule; measured
+  1500/1500 = knife-edge); socband_fc_carried 0.55→**0.95 A** re-derived
+  peak-over-window (review DI-MED-1: 0.70 was beaten by the constant-0.50 sibling's own
+  0.8275 A window peak); **Y_AUX_LOAD_A 0.60→0.85** (b30 bounds deliverable for the
+  first time — at 0.60 BOTH bounds were structurally unreachable) with `_Y_FC_BIAS_W`
+  narrowed to R3 and `_Y_FC_FLOOR` re-derived FROM MEASUREMENT to {1.0: 0.50,
+  3.0: 0.66} (the modelled {0.58, 0.80} would have failed a correct board — campaign
+  true-run R3 peaks 0.5659/0.7606 A); FTP75 h2 totals now two-sided bands as TWO specs
+  each (a new import guard REFUSES min_value+max_value on one spec — `_judge_signal_leaf`
+  tests min before max and silently drops the ceiling); SY0001 de-provisionalized
+  (drive_min_frac 0.30); mppt 40 ms record fixed in the three prose docs too;
+  key_metrics label; first-boot variability + charge-sag doc notes.
+- **Reviews:** contract lens 2 MED + 1 LOW; data-integrity lens **5 MED + 8 LOW, no
+  HIGH** — every finding accepted except the cmd_share_sp_raw analysis figure (queued).
+  The data-integrity lens recomputed every changed threshold against the campaign CSVs
+  and reproduced the v2 artifact bit-exactly from source; both reviewers confirmed the
+  rename sweep, the no-laundering rule, and the CRLF-safety of the new digests.
+- **Tests: 1042 passed + 26 skipped (.venv_hil, five suites) / 272 (miniforge, four
+  suites) — orchestrator-rerun.** ~50 new tests across solver CLI/artifact pins, digest
+  stability, check-kind branches, import guards, provenance blocks, and the
+  carried-in/persisted regression.
+- **`WORK_QUEUE.md` (repo root, NEW)** is the operator-facing queue: SDP interior
+  scenario round (S1 soc_ref-offset FTP75 flip, S2 charge-and-cross limit cycle,
+  S3-partial braking-heavy cycle; S4 demand-above-FC-max TABLED pending solver
+  action-feasibility masking; true regen harvest TABLED pending the regen-fidelity
+  model), **fw v24 dynamic Ag105 MPPT threshold** (operator ruling 2026-08-31: droop
+  sags the bus, so reg 0x02 must track dynamically; EPROM-wear budget + hysteresis
+  deadband + power-gated writes + ~12.3 V floor; R1 MPPTSEL check still gates the
+  value; also fixes the two stale P&O .ino comments), Pi-bridge v4 parser audit →
+  Mode B, measured-droop sim mode, Gfc stack ID, FTP75 DP table, and standing
+  housekeeping.
+- **Next:** first v2 campaign calibrates the three provisional ems-sdp checks and
+  observes the predicted chatter. Overnight autonomous plan authorized by the operator
+  (2026-08-31): work WORK_QUEUE.md, judgment calls via a Fable-high + Opus-xhigh
+  decision pair adjudicated by the orchestrator, up to five suite+analysis+fix cycles
+  on the current fw v23 flash, fw v24 prepared but NOT flashed; decisions and findings
+  in OVERNIGHT_LOG.md.

@@ -225,6 +225,171 @@ def test_shipped_artifact_floor_node_clamp_tie_exception(shipped_policy):
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# 3b. v2 artifact (D11 demand-map re-normalization, 2026-08-31 ledger round):
+#     tools/sdp_policies/sdp_policy_v2.json is now the SHIPPED consumer
+#     artifact (DEFAULT_OUT / SDP_POLICY_FILE) -- v1 stays checked in,
+#     untouched, for reproduction only. Same discipline as the v1 pins
+#     above: read the FILE, not a fresh solve, so a regeneration that
+#     silently changed the shipped decision law is caught here.
+# ─────────────────────────────────────────────────────────────────────────
+
+SHIPPED_POLICY_V2_PATH = os.path.join(HERE, "sdp_policies", "sdp_policy_v2.json")
+
+
+@pytest.fixture(scope="session")
+def shipped_policy_v2():
+    assert os.path.isfile(SHIPPED_POLICY_V2_PATH), (
+        "the shipped v2 artifact %r is missing -- regenerate with "
+        "tools/sdp_ems_solver.py --force before running this suite"
+        % SHIPPED_POLICY_V2_PATH)
+    with open(SHIPPED_POLICY_V2_PATH, "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def test_default_out_and_sdp_policy_file_point_at_v2():
+    """DEFAULT_OUT moved to sdp_policy_v2.json (D11); SCHEMA is the FILE
+    FORMAT and stays sdp-policy-v1 on purpose -- v2 changed the demand MAP,
+    not the document shape, so the same schema string covers both files."""
+    assert os.path.basename(solver.DEFAULT_OUT) == "sdp_policy_v2.json"
+    assert solver.SCHEMA == "sdp-policy-v1"
+
+
+def test_shipped_v2_policy_block_digest_pin(shipped_policy_v2):
+    """The v2 policy-block sha256 -- the decision-law identity a run's
+    config.sdp_policy sidecar block is compared against. Same recipe as the
+    v1 pin above: sha256(json.dumps(doc["policy"], sort_keys=True))."""
+    import hashlib
+    digest = hashlib.sha256(
+        json.dumps(shipped_policy_v2["policy"], sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    assert digest == "740c802e99dde3f53fad74d1844481f1030f11345a7ba8c9269014bbe2280087"
+
+
+def test_shipped_v2_charge_forbidden_bins_is_6_through_24():
+    """D11: under the wider [0, 25] W map the solver's own FC-current budget
+    (rule (b)) newly forbids charging above bin 5, so the forbidden set
+    widens from v1's [12..24] to v2's [6..24] -- 19 bins, not 13."""
+    with open(SHIPPED_POLICY_V2_PATH, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    forbidden = doc["actions"]["charge_forbidden_bins"]
+    assert forbidden == list(range(6, 25))
+
+
+def test_shipped_v2_share_value_set_is_000_090_095_100(shipped_policy_v2):
+    """v1's table only ever emits {0.00, 1.00} (a pure two-value rail); v2's
+    demand axis is live enough to put TWO interior ladder steps (0.90, 0.95)
+    into the value set -- this is the artifact-level fact `cmd_share_sp_raw`
+    exists to make visible on a live run (run_hil_suite.py's
+    sdp_table_interior_at_high_demand / sdp_table_rail_at_low_demand)."""
+    share = shipped_policy_v2["policy"]["share"]
+    values = {round(v, 4) for row in share for v in row}
+    assert values == {0.0, 0.90, 0.95, 1.0}
+
+
+def test_shipped_v2_floor_node_is_all_zero_and_an_interior_row_is_not(shipped_policy_v2):
+    """The D3/D8 floor-node clamp-tie degeneracy (row 0, SoC == grid_min)
+    still resolves to the battery-favoring 0.0 -- and under v2 it does so
+    across the WHOLE row, not just the clamped top bin, since 0.0 is also
+    the action at every bin below the target's clamp region at this SoC.
+    An interior row (5) is NOT all-zero, so the floor-node check is not
+    trivially satisfied by an artifact that emits 0.0 everywhere."""
+    share = shipped_policy_v2["policy"]["share"]
+    assert all(v == pytest.approx(0.0) for v in share[0])
+    assert any(v != pytest.approx(0.0) for v in share[5])
+
+
+def test_shipped_v2_normalization_block_shape_and_demand_map_source(shipped_policy_v2):
+    """The v2 `normalization` block carries FIVE keys (D11): the map
+    actually used (p_dem_min_w/max_w = 0.0/25.0), `demand_map_source`
+    naming its provenance, and the sidecar's own numbers preserved beside
+    it for a v1-vs-v2 diff -- never silently dropped or renamed."""
+    norm = shipped_policy_v2["normalization"]
+    assert set(norm) == {"p_dem_min_w", "p_dem_max_w", "demand_map_source",
+                         "sidecar_p_dem_min_w", "sidecar_p_dem_max_w"}
+    assert norm["p_dem_min_w"] == pytest.approx(0.0)
+    assert norm["p_dem_max_w"] == pytest.approx(25.0)
+    assert isinstance(norm["demand_map_source"], str) and norm["demand_map_source"]
+    assert norm["sidecar_p_dem_min_w"] == pytest.approx(-1.124773461276723)
+    assert norm["sidecar_p_dem_max_w"] == pytest.approx(1.639842192501809)
+
+
+def test_shipped_v2_alpha_unchanged_from_v1(shipped_policy_v2, shipped_policy):
+    """D11: alpha has no demand-axis term (it is derived from the pack's
+    coulombic energy alone), so re-mapping the demand axis must NOT move
+    it -- v1 and v2 carry the identical value."""
+    assert shipped_policy_v2["alpha"]["value"] == pytest.approx(0.2569444444444444)
+    assert shipped_policy_v2["alpha"]["value"] == pytest.approx(
+        shipped_policy["alpha"]["value"])
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 3c. --demand-map / --demand-map-sidecar CLI surface
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_demand_map_and_demand_map_sidecar_are_mutually_exclusive(tmp_path, capsys):
+    out = tmp_path / "bad.json"
+    with pytest.raises(SystemExit):
+        solver.main(_REDUCED_ARGV + ["--demand-map", "0", "10",
+                                     "--demand-map-sidecar", "--out", str(out)])
+    err = capsys.readouterr().err
+    assert "mutually exclusive" in err
+    assert not out.exists()
+
+
+def test_demand_map_max_must_exceed_min(tmp_path, capsys):
+    out = tmp_path / "bad.json"
+    with pytest.raises(SystemExit):
+        solver.main(_REDUCED_ARGV + ["--demand-map", "10", "10", "--out", str(out)])
+    err = capsys.readouterr().err
+    assert "MAX_W must exceed MIN_W" in err
+    assert not out.exists()
+
+    with pytest.raises(SystemExit):
+        solver.main(_REDUCED_ARGV + ["--demand-map", "10", "5", "--out", str(out)])
+    assert not out.exists()
+
+
+def test_explicit_demand_map_is_recorded_verbatim(tmp_path):
+    out = tmp_path / "explicit_map.json"
+    rc = solver.main(_REDUCED_ARGV + ["--demand-map", "1.5", "40.0", "--out", str(out)])
+    assert rc == 0
+    with open(out, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    norm = doc["normalization"]
+    assert norm["p_dem_min_w"] == pytest.approx(1.5)
+    assert norm["p_dem_max_w"] == pytest.approx(40.0)
+    assert "explicit --demand-map" in norm["demand_map_source"]
+    # The sidecar's OWN numbers are still recorded, even though they were
+    # not the map used -- D11's "carried, not consumed" contract.
+    assert norm["sidecar_p_dem_min_w"] == pytest.approx(-1.124773461276723)
+    assert norm["sidecar_p_dem_max_w"] == pytest.approx(1.639842192501809)
+
+
+def test_demand_map_sidecar_flag_uses_the_sidecar_span(tmp_path):
+    out = tmp_path / "sidecar_map.json"
+    rc = solver.main(_REDUCED_ARGV + ["--demand-map-sidecar", "--out", str(out)])
+    assert rc == 0
+    with open(out, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    norm = doc["normalization"]
+    assert norm["p_dem_min_w"] == pytest.approx(norm["sidecar_p_dem_min_w"])
+    assert norm["p_dem_max_w"] == pytest.approx(norm["sidecar_p_dem_max_w"])
+    assert "sidecar" in norm["demand_map_source"].lower()
+
+
+def test_default_demand_map_is_0_to_25_when_neither_flag_given(tmp_path):
+    out = tmp_path / "default_map.json"
+    rc = solver.main(_REDUCED_ARGV + ["--out", str(out)])
+    assert rc == 0
+    with open(out, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    norm = doc["normalization"]
+    assert norm["p_dem_min_w"] == pytest.approx(0.0)
+    assert norm["p_dem_max_w"] == pytest.approx(25.0)
+    assert norm["demand_map_source"] == solver.DEMAND_MAP_DEFAULT_SOURCE
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # 4. Interp-J regression: the SoC transition genuinely sub-grid-spacing, and
 #    the interpolation used against it splits weight between two nodes
 #    rather than snapping to one (the D1 correctness fix, made executable).
@@ -306,8 +471,17 @@ def test_interpolation_splits_weight_across_two_grid_nodes_for_a_sub_spacing_ste
 # ─────────────────────────────────────────────────────────────────────────
 
 def test_alpha_mode_level_collapses_share_spread_to_zero(tmp_path):
+    """The REJECTED `level` mode collapses under the TINY sidecar demand span
+    (-1.125 .. +1.640 W): alpha_level = 500 * 1.6398/60000 = 0.01366, small
+    enough that the SoC penalty dominates the whole cell.  Under the SHIPPED
+    v2 default map (0, 25 W) alpha_level recomputes to 500*25/60000 = 0.2083
+    (solver D11 / the rejected-alternative note) -- large enough that the
+    collapse this test is pinning no longer happens, so --demand-map-sidecar
+    is required here to reproduce the v1-era degenerate case the module
+    documents."""
     out = tmp_path / "level.json"
-    rc = solver.main(_REDUCED_ARGV + ["--alpha-mode", "level", "--out", str(out)])
+    rc = solver.main(_REDUCED_ARGV + ["--alpha-mode", "level",
+                                      "--demand-map-sidecar", "--out", str(out)])
     assert rc == 0
     with open(out, encoding="utf-8") as fh:
         doc = json.load(fh)

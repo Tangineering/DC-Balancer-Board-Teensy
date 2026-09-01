@@ -226,13 +226,24 @@ Electrical engine: `"any"` scenarios run under the campaign's `--electrical-pref
 
 - **Tests:** the firmware's own 16-region 'Y' combined drive-cycle + power-share
   table, commanded from the EMS layer at Vmax 1 or 3 m/s with share bound b = 0.30.
-  The preload holds the source total above the 0.60 A governor gate, so this is
-  **closed-loop share tracking**.
+  The **0.85 A** preload (`Y_AUX_LOAD_A`, raised from 0.60 A on 2026-08-31) holds the
+  source total in 1.00–2.27 A, above the 0.60 A governor gate, so this is
+  **closed-loop share tracking**. ⚠️ At the old 0.60 A the firmware's
+  minority-current governor clipped the share to 0.624 / 0.672 at region 6 — *below*
+  the table's own 0.70 clip — so the hi bound was **undeliverable** and b30 runs
+  characterised the governor instead. b30 results do **not** compare across that
+  change; b00 (no preload) is unaffected.
 - **Pass/fail:** fault-free; survive to the end of the last moving region (t = 43)
   in Run; the share axis reaches its 0.70 clip in region 6 and sweeps back down by
   ≥ 0.30 across region 10; the motor axis reaches 0.95·Vmax at the region-7 ramp
-  top; and `I_fc` exceeds a per-Vmax floor (0.45 / 0.60 A) proving the board acted
-  on the bias. All windows are derived from the imported region table, not typed.
+  top; and `I_fc` exceeds a per-Vmax floor (**0.50 / 0.66 A**) over region 3 alone
+  (13.0–16.0 s, where v is held constant so only the share command moves `I_fc`),
+  proving the board acted on the bias. ⚠️ Both the window and the floors were
+  RE-DERIVED FROM MEASUREMENT on 2026-08-31 (campaign `hil_report_20260831_191509`):
+  the previous (13–20 s) window swallowed region 4's ramp, where a plain 0.50 split
+  alone reaches 0.49 / 0.92 A, and the modelled 0.58 / 0.80 floors sat ABOVE the true
+  run's own region-3 peaks (0.5659 / 0.7606 A). All windows are derived from the
+  imported region table, not typed.
 - **Why useful:** exercises the two loops' cross-coupling on the firmware's own
   profile geometry, with the clip band as a designed observable.
 
@@ -242,7 +253,13 @@ Electrical engine: `"any"` scenarios run under the campaign's `--electrical-pref
   0.00, outside [`DROOP_R_MIN`, `DROOP_R_MAX`], so `updateShareSetpointCutoff()`
   cuts and then restores each bus switch — **cut-and-restore topology**. No preload
   (a preload would exceed the cut's 0.5 A/channel guard), so the share loop runs
-  open-loop feedforward.
+  open-loop feedforward — entirely at Vmax 1, and for ~4/5 of the run at Vmax 3
+  (only **20.6 %** above the gate, campaign `hil_report_20260831_191509`; the model
+  walk over the TABLE alone gives **12.7 %** — a different denominator, and the two
+  have NOT been reconciled: take 20.6 % as the measurement and 12.7 % as an
+  independent order-of-magnitude agreement, not as a discrepancy anyone has
+  explained). Cut/restore
+  verdicts are sound; share *amplitude* read off these runs is not.
 - **Pass/fail:** fault-free; the same two axis sweeps and the motor-peak check as
   b30; plus four switch assertions — BT_BUS cut in region 6 and restored in
   region 7, FC_BUS cut in regions 10/11 and restored in regions 12/13.
@@ -259,11 +276,22 @@ Electrical engine: `"any"` scenarios run under the campaign's `--electrical-pref
   closed through the cycle's idle segments; it also forecloses the `soc-band`
   charge window by construction.
 - **Pass/fail:** *5050:* fault-free; in Run at t = 300; the 3.0 m/s peak commanded
-  at t ≈ 245; `I_fc` ≥ 0.70 A at the peak; `h2_cum_g` ≥ 5 × 10⁻³ g. *socband:*
-  `FAULT_OC_FC` additionally allowed (the 0.75 share ceiling leaves only 14 % of
-  peak margin, and an OC there is the correct hardware response — operator ruling
-  (b)); share bias ≥ 0.60 commanded and `I_fc` ≥ 0.55 A delivered over (30, 340) s;
-  same H2 floor.
+  at t ≈ 245; `I_fc` ≥ 0.70 A at the peak; `h2_cum_g` in the measured band
+  **[0.045, 0.085] g** (measured 6.47 × 10⁻²). *socband:* `FAULT_OC_FC` additionally
+  allowed (the 0.75 share ceiling leaves only **11.3 %** of peak margin against the
+  measured 1.2414 A — the model budget under-predicts currents by a systematic
+  +2.6 % — and an OC there is the correct hardware response, operator ruling (b));
+  share bias ≥ 0.60 commanded and `I_fc` ≥ **0.95 A** delivered over (30, 340) s
+  (re-derived AGAIN 2026-08-31: `min_value` is a PEAK-over-window test, and the
+  constant-0.50 `ems-ftp75-5050` sibling peaks at 0.8275 A over the same window, so
+  any floor at or below that discriminates nothing; 0.95 A sits 15 % above it and
+  23 % below the measured socband peak 1.2414 A. The earlier 0.70 A and 0.55 A
+  figures were derived against instants rather than window peaks);
+  `h2_cum_g` keeps the conservative 5 × 10⁻³ g floor (an allowed OC_FC latch
+  truncates the total) plus a **0.115 g ceiling** (measured 9.16 × 10⁻²).
+  ⚠️ `soc-band` **saturates its bias at 0.75 by t = 46.8 s and holds it for the
+  remaining 298 s** — past that point the run tests the firmware's share loop under
+  one fixed setpoint, not the policy's law.
 - **Why useful:** the longest accounting runs in the suite, on a cycle a reader
   outside the project recognises; skipped by default purely on run time (~11.7 min
   for the pair).

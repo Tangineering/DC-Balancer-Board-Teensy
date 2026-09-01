@@ -307,9 +307,12 @@ def test_without_dash_behavior_unchanged_csv_header_and_scenario_list(tmp_path, 
         header = next(csvmod.reader(fh))
     # cmd cols appended by the EMS round; h2_rate_gps/h2_cum_g appended after
     # them by the 2026-08-31 H2-metric round; h2_sdp_cum_g appended after
-    # THAT by the 2026-08-31 SDP round.
-    assert header[-6:] == ["soc", "cmd_v_sp", "cmd_share_sp",
-                           "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g"]
+    # THAT by the 2026-08-31 SDP round; cmd_share_sp_raw appended after THAT
+    # by the 2026-08-31 ledger fix queue (MED-1, the SDP table's pre-clamp
+    # request, blank on this non-SDP run).
+    assert header[-7:] == ["soc", "cmd_v_sp", "cmd_share_sp",
+                           "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
+                           "cmd_share_sp_raw"]
 
     rc2 = hil.main(["--list-scenarios"])
     assert rc2 == 0

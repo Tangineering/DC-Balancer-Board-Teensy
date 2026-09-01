@@ -441,6 +441,158 @@ def test_check_fault_latched_require_stimulus_inconclusive(tmp_path):
     assert "INCONCLUSIVE" in res["checks"][-1]["detail"]
 
 
+# -- fault_latched `not_before_s` (2026-08-31 ledger fix queue) — WHICH
+#    mechanism latched, not just that one did. Three branches: the latch is
+#    earlier than the bound (FAIL, wrong mechanism), the latch is at/after
+#    the bound (PASS), and the spec carries no bound at all (old behavior,
+#    unaffected by timing). `_uv_collapse_rows()` latches at a known,
+#    reproducible offset from its own start (collapse_start=0.05s,
+#    bit-set at 0.05+0.022=0.072s), which lands at
+#    REPLAY_PREAMBLE_S + 0.072s once shifted by `_with_bringup_and_grace`.
+
+def test_check_fault_latched_not_before_s_fails_when_latch_is_earlier(tmp_path):
+    rows = _with_bringup_and_grace(_uv_collapse_rows())
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    latch_t = rs.REPLAY_PREAMBLE_S + 0.072
+    spec = {"kind": "fault_latched", "name": "uv_bus_latched",
+            "bit": rs.FAULT_UV_BUS, "require_stimulus": False,
+            "not_before_s": latch_t + 0.030}   # bound AFTER the real latch
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    assert res["passed"] is False
+    detail = res["checks"][-1]["detail"]
+    assert "LATCHED at t=" in detail
+    assert "EARLIER than" in detail
+
+
+def test_check_fault_latched_not_before_s_passes_when_latch_is_at_or_after(tmp_path):
+    rows = _with_bringup_and_grace(_uv_collapse_rows())
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    latch_t = rs.REPLAY_PREAMBLE_S + 0.072
+    spec = {"kind": "fault_latched", "name": "uv_bus_latched",
+            "bit": rs.FAULT_UV_BUS, "require_stimulus": False,
+            "not_before_s": latch_t - 0.030}   # bound BEFORE the real latch
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    assert res["passed"] is True
+
+
+def test_check_fault_latched_without_not_before_s_is_the_old_timing_agnostic_behavior(tmp_path):
+    """Absent `not_before_s`: the check must not care WHEN the latch happened
+    at all -- pinned by re-running the exact "earlier" stimulus above with
+    the key simply omitted and confirming it now PASSES."""
+    rows = _with_bringup_and_grace(_uv_collapse_rows())
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "fault_latched", "name": "uv_bus_latched",
+            "bit": rs.FAULT_UV_BUS, "require_stimulus": False}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    assert res["passed"] is True
+    assert "not_before_s" not in spec
+
+
+# -- fault_latched `not_before_s`: CARRIED-IN vs PERSISTED (DI-MED-4) ───────
+#    The bound is evaluated against the WHOLE-RUN first latched observation,
+#    which back-to-back in a campaign can be the PREVIOUS run's settle latch —
+#    still on the wire until the fw v23 warm reset clears it at ~0.5 s. The
+#    two pre-grace stories are separated exactly as `_whole_run_first_note`
+#    separates them: still set on the last pre-grace sample = PERSISTED (this
+#    run's own latch, and the bound must see it); gone by then = CARRIED-IN
+#    (the predecessor's, and the bound must skip it).
+
+def _latched_rows(spans, bit=None):
+    """Rows at 10 ms spacing over `spans` = [(t0, t1, latched_bool), ...]."""
+    bit = rs.FAULT_UV_BUS if bit is None else bit
+    rows = []
+    for t0, t1, on in spans:
+        t = t0
+        while t < t1 - 1e-9:
+            rows.append({"t": round(t, 4),
+                         "fault_flags": (bit | rs.FAULT_ERROR) if on else 0})
+            t += 0.01
+    return rows
+
+
+def test_check_fault_latched_not_before_s_skips_a_carried_in_predecessor_latch(tmp_path):
+    """DI-MED-4 REGRESSION. A carried-in latch at t=0.1 that is CLEARED well
+    before the 2.0 s grace bound must not be read as this run's latch: the
+    bound is 2.0 s and the run's own latch is at 2.6 s, so this PASSES. Under
+    the pre-fix raw whole-run scan it FAILED with a wrong-mechanism message —
+    the ML0217 back-to-back scenario."""
+    rows = ([_bringup_row(0.0)]
+            + _latched_rows([(0.1, 0.5, True),      # predecessor's settle latch
+                             (0.5, 2.0, False),     # cleared by the warm reset
+                             (2.0, 2.6, False),
+                             (2.6, 3.2, True)]))    # THIS run's latch
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "fault_latched", "name": "uv_bus_latched",
+            "bit": rs.FAULT_UV_BUS, "require_stimulus": False,
+            "not_before_s": 2.0}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    detail = res["checks"][-1]["detail"]
+    assert res["passed"] is True, detail
+    assert "whole-run latch at t=2.6" in detail
+
+
+def test_check_fault_latched_not_before_s_still_sees_a_persisted_early_latch(tmp_path):
+    """The other half of the same rule: an early latch that is STILL SET on the
+    last pre-grace sample is THIS run's, so the bound must still see it and
+    FAIL. Without this, DI-MED-4's fix would have silently turned every
+    pre-grace latch into a post-grace one."""
+    rows = ([_bringup_row(0.0)]
+            + _latched_rows([(0.1, 3.2, True)]))    # latched early and holds
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "fault_latched", "name": "uv_bus_latched",
+            "bit": rs.FAULT_UV_BUS, "require_stimulus": False,
+            "not_before_s": 2.0}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    detail = res["checks"][-1]["detail"]
+    assert res["passed"] is False, detail
+    assert "EARLIER than" in detail
+
+
+def test_persisted_latch_t_helper_matches_the_whole_run_note_classification(tmp_path):
+    """The helper and `_whole_run_first_note` must agree on which story a
+    pre-grace sighting tells — they are two consumers of one rule, and a
+    disagreement is how a report says PERSISTED while the bound treats it as
+    carried-in."""
+    carried = ([_bringup_row(0.0)]
+               + _latched_rows([(0.1, 0.5, True), (0.5, 2.6, False),
+                                (2.6, 3.2, True)]))
+    persisted = [_bringup_row(0.0)] + _latched_rows([(0.1, 3.2, True)])
+    for rows, expect_t, expect_word in ((carried, 2.6, "carried-in"),
+                                        (persisted, 0.1, "PERSISTED")):
+        data = rs.ReplayCsv([{k: str(v) for k, v in r.items()} for r in rows],
+                            ["t", "fault_flags"])
+        assert rs._persisted_latch_t(data, rs.FAULT_UV_BUS) == pytest.approx(
+            expect_t, abs=0.011)
+        assert expect_word in rs._whole_run_first_note(data, rs.FAULT_UV_BUS)
+
+
+# -- fault_latched `not_before_s`: ML0217's real entry ──────────────────────
+
+def test_ml0217_fault_latched_entry_pins_not_before_s_05():
+    entry = rs.suite_index()["ML0217"]
+    spec = next(c for c in entry["checks"] if c["kind"] == "fault_latched")
+    assert spec["not_before_s"] == pytest.approx(0.5)
+
+
+# -- fault_latched every real not_before_s spec satisfies the import-time
+#    positivity guard (re-derived directly, not just trusted from a clean
+#    import — see _assert_check_spec_shapes()) ──────────────────────────────
+
+def test_every_real_not_before_s_spec_is_strictly_positive():
+    checked = 0
+    for e in rs.REPLAY_SUITE:
+        for c in e["checks"]:
+            if "not_before_s" in c:
+                checked += 1
+                assert float(c["not_before_s"]) > 0.0, (e["log"], c["name"])
+    assert checked > 0
+
+
 # -- fault_not_latched ---------------------------------------------------------
 
 def test_check_fault_not_latched_pass(tmp_path):
@@ -1341,6 +1493,11 @@ EXPECTED_DRIVE_MIN_FRAC = {
     "ML0149": 0.34, "ML0165": 0.20, "ML0169": 0.04, "YP0152": 0.44,
     "ML0151": 0.45, "ML0137": 0.27, "ML0140": 0.35, "ML0153": 0.32,
     "ML0164": 0.35, "YP0166": 0.44,
+    # DE-PROVISIONALIZED 2026-08-31 (ledger fix queue, FU4): SY0001 has now
+    # run a real campaign (20260831_191509, drive activity 0.5914 of the
+    # recorded window) and carries a measured floor like every other entry --
+    # see the module's own comment at the SY0001 entry.
+    "SY0001": 0.30,
 }
 
 
@@ -1360,18 +1517,17 @@ def test_replay_suite_drive_min_frac_set_matches_true_entries_exactly():
     drive_min_frac -- FU3 ratcheted every opted-in entry, none was left on
     the bare absolute floor. Table completeness, not just table correctness.
 
-    EXEMPTION, re-keyed 2026-08-31 (FU4): SY0001 is replay_commands True but
-    deliberately has no drive_min_frac yet -- FU3 precedent, the floor is set
-    at ~half a MEASURED window activity and this entry has never run a real
-    campaign. The exemption is keyed on the entry's own `provisional: True`
-    flag (its key presence verified, not just its truthiness), NOT a
-    hardcoded log name -- so any future first-campaign entry (synthetic or
-    real) is exempted the same way automatically, and any entry that is
-    simply missing its ratchet without being marked provisional still fails
-    here. Note `provisional` alone is not sufficient to EARN the exemption
-    (YP0214 is also provisional and DOES carry a drive_min_frac) -- the
-    exemption applies only to entries that are actually missing the ratchet,
-    and requires those to justify the gap with the flag."""
+    UPDATED 2026-08-31 (ledger fix queue): SY0001 was the last entry missing
+    its ratchet (its first campaign had not landed at FU4 time); it is now
+    de-provisionalized (`provisional: False`) and carries a measured
+    drive_min_frac like every other opted-in entry (see EXPECTED_DRIVE_MIN_FRAC
+    above), so the set-equality check below now covers ALL true entries with
+    no residual exemption. The exemption MECHANISM is kept (keyed on the
+    entry's own `provisional: True` flag, its key presence verified rather
+    than just its truthiness, not a hardcoded log name) so a future
+    first-campaign entry is exempted automatically and an entry that is
+    simply missing its ratchet without declaring `provisional` still fails
+    here -- there just happens to be nothing exempted by it right now."""
     have_frac = set()
     for e in rs.REPLAY_SUITE:
         for c in e["checks"]:
@@ -1392,7 +1548,10 @@ def test_replay_suite_drive_min_frac_set_matches_true_entries_exactly():
     assert have_frac == true_entries - missing   # tautological by construction;
     # states the invariant this test actually enforces: EVERY true entry not
     # exempted-by-provisional-flag must have a drive_min_frac.
-    assert "SY0001" in missing   # sanity: the known current exemption is live
+    # 2026-08-31: SY0001 was the only entry ever exempted here, and it is now
+    # de-provisionalized (see the test docstring), so `missing` is currently
+    # empty -- asserted directly rather than re-hardcoding the old exemption.
+    assert missing == set()
 
 
 def test_replay_suite_drive_min_frac_values_are_roughly_half_the_documented_measurement():
@@ -1405,8 +1564,12 @@ def test_replay_suite_drive_min_frac_values_are_roughly_half_the_documented_meas
     import re
     src = inspect.getsource(rs)
     # "measured 0.696 of the recorded window over threshold ... drive_min_frac": 0.35
+    # "over threshold" wraps across a comment-line boundary for most entries
+    # but sits on one line for SY0001's (2026-08-31) -- both are the same
+    # phrase, so the whitespace between the two words is intentionally
+    # permissive (inline space OR a newline back into the next `#` line).
     pattern = re.compile(
-        r'measured (\d+\.\d+) of the recorded window over\s*\n\s*#\s*threshold.*?'
+        r'measured (\d+\.\d+) of the recorded window over[\s#]+threshold.*?'
         r'"drive_min_frac":\s*([\d.]+)', re.DOTALL)
     matches = pattern.findall(src)
     assert len(matches) == len(EXPECTED_DRIVE_MIN_FRAC), (
@@ -1823,6 +1986,233 @@ def test_metrics_empty_csv_reports_none_fields_not_raising(tmp_path):
     assert m["final_fault_flags"] is None
     assert m["last_obs_t"] is None
     assert m["n_obs"] == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# check_v_bus_min_in_band (2026-08-31 ledger fix queue) — the de-vacuation
+# guard for TP0178/TP0201's must-NOT-latch claim. Six branches: below the
+# floor (FAIL), exactly at the floor (FAIL, EXCLUSIVE), inside the band
+# (PASS), exactly at the ceiling (PASS, INCLUSIVE), above the ceiling
+# (FAIL), and a dip confined to the synthetic preamble (excluded from the
+# recorded-window minimum entirely).
+# ─────────────────────────────────────────────────────────────────────────
+
+def _v_bus_min_entry(v_bus_after_preamble, min_v=12.0, max_v=12.30,
+                     dip_in_preamble=None):
+    """A CSV whose V_bus after the preamble sits at a single controlled
+    value (the recorded-window minimum this check reads), optionally with a
+    much lower dip confined to BEFORE the preamble boundary to probe the
+    exclusion. Returns (data, spec)."""
+    rows = []
+    if dip_in_preamble is not None:
+        rows.append({"t": 0.1, "V_bus": dip_in_preamble, "fault_flags": 0})
+    rows = _with_bringup(rows, shift=None) if rows else [_bringup_row()]
+    tail = _shift_rows(
+        _uniform_rows(0.05, 0.01, V_bus=lambda t: v_bus_after_preamble,
+                     fault_flags=lambda t: 0),
+        rs.REPLAY_PREAMBLE_S)
+    rows = rows + tail
+    return rows, {"kind": "v_bus_min_in_band", "name": "uv_margin_pinned",
+                  "min_v": min_v, "max_v": max_v}
+
+
+def test_v_bus_min_in_band_below_floor_fails(tmp_path):
+    rows, spec = _v_bus_min_entry(11.9)
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    passed, detail = rs.check_v_bus_min_in_band(data, spec)
+    assert passed is False
+    assert "AT OR BELOW" in detail
+
+
+def test_v_bus_min_in_band_exactly_at_floor_fails_exclusive(tmp_path):
+    rows, spec = _v_bus_min_entry(12.0)
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    passed, detail = rs.check_v_bus_min_in_band(data, spec)
+    assert passed is False
+    assert "AT OR BELOW" in detail
+
+
+def test_v_bus_min_in_band_inside_band_passes(tmp_path):
+    rows, spec = _v_bus_min_entry(12.15)
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    passed, detail = rs.check_v_bus_min_in_band(data, spec)
+    assert passed is True
+    assert "near-miss band" in detail
+
+
+def test_v_bus_min_in_band_exactly_at_ceiling_passes_inclusive(tmp_path):
+    rows, spec = _v_bus_min_entry(12.30)
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    passed, detail = rs.check_v_bus_min_in_band(data, spec)
+    assert passed is True
+
+
+def test_v_bus_min_in_band_above_ceiling_fails(tmp_path):
+    rows, spec = _v_bus_min_entry(12.5)
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    passed, detail = rs.check_v_bus_min_in_band(data, spec)
+    assert passed is False
+    assert "ABOVE" in detail
+
+
+def test_v_bus_min_in_band_excludes_a_dip_confined_to_the_preamble(tmp_path):
+    """A deep dip (5.0 V, well below the floor) that occurs BEFORE the
+    preamble boundary must not be seen by this check at all -- the reported
+    minimum must be the post-preamble constant (15.9 V, well above the
+    ceiling), proving the dip was excluded rather than merely outweighed."""
+    rows, spec = _v_bus_min_entry(15.9, dip_in_preamble=5.0)
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    passed, detail = rs.check_v_bus_min_in_band(data, spec)
+    assert passed is False
+    assert "ABOVE" in detail
+    assert "15.9" in detail
+    assert "5.0" not in detail.split("V vs")[0]   # the excluded dip never appears as "the" minimum
+
+
+# -- TP0178/TP0201 real entry shape pins -------------------------------------
+
+def test_tp0178_and_tp0201_entries_pin_the_same_uv_margin_band():
+    index = rs.suite_index()
+    for log in ("TP0178", "TP0201"):
+        entry = index[log]
+        names = {c["name"] for c in entry["checks"]}
+        assert {"no_fault", "uv_not_latched", "uv_margin_pinned"} <= names
+        vband = next(c for c in entry["checks"] if c["kind"] == "v_bus_min_in_band")
+        assert vband["min_v"] == pytest.approx(12.0)
+        assert vband["max_v"] == pytest.approx(12.30)
+        fnl = next(c for c in entry["checks"] if c["kind"] == "fault_not_latched")
+        assert fnl["bit"] == rs.FAULT_UV_BUS
+        assert entry["replay_commands"] is False
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Import-time guards: negative tests. Both guards read the module-global
+# REPLAY_SUITE with no arguments, so a violating case is tested by
+# monkeypatching that global to a synthetic bad list and invoking the guard
+# function directly -- the module already imported cleanly against the REAL
+# table, so this is the only way to exercise the guard's failure branch at
+# all without editing hil_replay_suite.py (out of scope for this file).
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_assert_uv_not_latched_entries_rejects_a_pin_free_uv_entry(monkeypatch):
+    bad_entry = {
+        "log": "SYN_BAD", "checks": [
+            {"kind": "fault_not_latched", "name": "uv_not_latched",
+             "bit": rs.FAULT_UV_BUS},
+            # no v_bus_min_in_band check at all -- the exact TP0178/TP0201
+            # pre-fix defect this guard was written to catch.
+        ],
+    }
+    monkeypatch.setattr(rs, "REPLAY_SUITE", [bad_entry])
+    with pytest.raises(AssertionError, match="does not pin its own stimulus"):
+        rs._assert_uv_not_latched_entries()
+
+
+def test_assert_uv_not_latched_entries_rejects_a_band_missing_max_v(monkeypatch):
+    bad_entry = {
+        "log": "SYN_BAD2", "checks": [
+            {"kind": "fault_not_latched", "name": "uv_not_latched",
+             "bit": rs.FAULT_UV_BUS},
+            {"kind": "v_bus_min_in_band", "name": "uv_margin_pinned",
+             "min_v": 12.0},   # max_v missing
+        ],
+    }
+    monkeypatch.setattr(rs, "REPLAY_SUITE", [bad_entry])
+    with pytest.raises(AssertionError, match="needs an explicit `max_v`"):
+        rs._assert_uv_not_latched_entries()
+
+
+def test_assert_uv_not_latched_entries_rejects_min_v_not_less_than_max_v(monkeypatch):
+    bad_entry = {
+        "log": "SYN_BAD3", "checks": [
+            {"kind": "fault_not_latched", "name": "uv_not_latched",
+             "bit": rs.FAULT_UV_BUS},
+            {"kind": "v_bus_min_in_band", "name": "uv_margin_pinned",
+             "min_v": 12.30, "max_v": 12.0},   # inverted
+        ],
+    }
+    monkeypatch.setattr(rs, "REPLAY_SUITE", [bad_entry])
+    with pytest.raises(AssertionError, match="min_v < max_v"):
+        rs._assert_uv_not_latched_entries()
+
+
+def test_assert_uv_not_latched_entries_accepts_a_correctly_pinned_entry(monkeypatch):
+    """Converse: the guard must NOT raise on a correctly-shaped entry, so the
+    negative tests above are pinning the actual defect and not merely a
+    function that always raises."""
+    good_entry = {
+        "log": "SYN_GOOD", "checks": [
+            {"kind": "fault_not_latched", "name": "uv_not_latched",
+             "bit": rs.FAULT_UV_BUS},
+            {"kind": "v_bus_min_in_band", "name": "uv_margin_pinned",
+             "min_v": 12.0, "max_v": 12.30},
+        ],
+    }
+    monkeypatch.setattr(rs, "REPLAY_SUITE", [good_entry])
+    rs._assert_uv_not_latched_entries()   # must not raise
+
+
+def test_assert_check_spec_shapes_rejects_a_field_typed_onto_the_wrong_kind(monkeypatch):
+    """The exact failure mode the guard exists for: `max_v` (a
+    v_bus_min_in_band field) misplaced onto a `no_fault` check reads as an
+    assertion via .get() and is silently ignored without this guard."""
+    bad_entry = {
+        "log": "SYN_BAD4", "checks": [
+            {"kind": "no_fault", "name": "no_fault", "max_v": 12.30},
+        ],
+    }
+    monkeypatch.setattr(rs, "REPLAY_SUITE", [bad_entry])
+    with pytest.raises(AssertionError, match="does not read"):
+        rs._assert_check_spec_shapes()
+
+
+def test_assert_check_spec_shapes_rejects_an_unknown_check_kind(monkeypatch):
+    bad_entry = {
+        "log": "SYN_BAD5", "checks": [
+            {"kind": "not_a_real_kind", "name": "bogus"},
+        ],
+    }
+    monkeypatch.setattr(rs, "REPLAY_SUITE", [bad_entry])
+    with pytest.raises(AssertionError, match="unknown check kind"):
+        rs._assert_check_spec_shapes()
+
+
+def test_assert_check_spec_shapes_rejects_a_non_positive_not_before_s(monkeypatch):
+    bad_entry = {
+        "log": "SYN_BAD6", "checks": [
+            {"kind": "fault_latched", "name": "x", "bit": rs.FAULT_UV_BUS,
+             "not_before_s": 0.0},
+        ],
+    }
+    monkeypatch.setattr(rs, "REPLAY_SUITE", [bad_entry])
+    with pytest.raises(AssertionError, match="not_before_s. must be positive"):
+        rs._assert_check_spec_shapes()
+
+
+def test_assert_check_spec_shapes_accepts_a_correctly_shaped_entry(monkeypatch):
+    good_entry = {
+        "log": "SYN_GOOD2", "checks": [
+            {"kind": "no_fault", "name": "no_fault"},
+            {"kind": "v_bus_min_in_band", "name": "uv_margin_pinned",
+             "min_v": 12.0, "max_v": 12.30},
+            {"kind": "fault_latched", "name": "x", "bit": rs.FAULT_UV_BUS,
+             "not_before_s": 0.5},
+        ],
+    }
+    monkeypatch.setattr(rs, "REPLAY_SUITE", [good_entry])
+    rs._assert_check_spec_shapes()   # must not raise
 
 
 # -- FU2: switch_transitions ------------------------------------------------
@@ -2279,10 +2669,16 @@ def test_sy0001_entry_present_and_conformance():
     assert entry["mode"] == "conformance"
 
 
-def test_sy0001_entry_replay_commands_and_provisional_true():
+def test_sy0001_entry_replay_commands_true_and_no_longer_provisional():
+    """DE-PROVISIONALIZED 2026-08-31 (ledger fix queue): campaign
+    20260831_191509 is SY0001's first real run, so `provisional` is now
+    False and the entry carries a measured `drive_min_frac` (pinned in
+    EXPECTED_DRIVE_MIN_FRAC / test_replay_suite_drive_min_frac_table_pin)."""
     entry = rs.suite_index()["SY0001"]
     assert entry.get("replay_commands") is True
-    assert entry.get("provisional") is True
+    assert entry.get("provisional") is False
+    dls = next(c for c in entry["checks"] if c["kind"] == "drive_loop_stepped")
+    assert dls.get("drive_min_frac") == pytest.approx(0.30)
 
 
 def test_sy0001_entry_fw_and_blg_version_match_the_committed_file():

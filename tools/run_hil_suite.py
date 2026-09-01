@@ -143,9 +143,25 @@ from hil_plant_sim import (                                        # noqa: E402
     # stimulus constant here is: moving PI_CMD_HZ must move the guard with it.
     PiCommander,
 )
-# One emulated-Pi command period.  The CSV's `cmd_*` columns are the 1 kHz ZOH
-# of the last command actually SENT, so a sample taken within one period of a
-# pi_timeline entry time may still carry the PREVIOUS value.
+# One emulated-Pi command period.
+#
+# ── WHAT THE `cmd_*` CSV COLUMNS ACTUALLY ARE (corrected 2026-08-31, ledger
+#    fix queue, "contract/doc") ────────────────────────────────────────────────
+# They are the 1 kHz ZOH of the commander's INTENDED state at the NOMINAL
+# timeline instant — NOT of the last command actually SENT.  PiCommander.tick()
+# walks the timeline (`while ... timeline[idx][0] <= t: state.update(...)`) on
+# EVERY 1 kHz tick, BEFORE the `t < self.next_tx` send gate returns
+# (hil_plant_sim.py, PiCommander.tick), and the CSV row is written from
+# `commander.state`.  So the column steps within one 1 ms tick of the timeline
+# entry time, while the 22-byte packet carrying that value leaves up to one
+# command period (20 ms) later, and its consequence appears in the OBSERVED
+# columns a further ~1.9 ms of observation round trip after that.
+#
+# CONSEQUENCE FOR A LATENCY READER: a switch/current edge measured against a
+# `cmd_*` edge INCLUDES the command-arrival phase.  Reading the columns as
+# "when the packet left" attributes that phase to zero and under-reports the
+# board's own latency budget by up to 20 ms — which is exactly the [0, 20) ms
+# spread `share-staircase` and the handoff-sag tracker measure.
 PI_CMD_PERIOD_S = 1.0 / PiCommander.PI_CMD_HZ
 # GENSTAT occupies bits 0-2 of the Table 6 status byte; the flags are bits 3-7.
 # Declared here (not in the sim) because it is a MASK for the value_mask specs,
@@ -468,12 +484,35 @@ FAULT_EXPECTATIONS = {
         # --pi-live build_plan() renders it SKIPPED outright (the emulated EMS
         # layer IS its whole stimulus, and a real Pi replaces it) — it is never
         # judged in that mode at all, so there is no excusal to forgo.
+        # ── THE CHARGE WINDOW SAGS THE BUS, AND THE 0.8 A DE-RATE IS WHAT KEEPS
+        #    IT LEGAL (measured, campaign 20260831_191509) ─────────────────────
+        # Opening FC_CHARGE takes BT off the bus (assertFcChargeEnable), so the
+        # window runs SINGLE-SOURCE, and hi-fi's single-source droop drops V_bus
+        # to 13.435 V — 12 % above LIMIT_V_BUS_MIN 12.0 V. That is real margin,
+        # but it is not much, and it is the reason the inherited 0.8 A ceiling is
+        # LOAD-BEARING rather than cosmetic: the sag scales with the charger
+        # current, so restoring the Ag105's 2.5 A capability here would put the
+        # rail through the UV limit and latch the scenario. Any future change to
+        # `chg_i_ceiling_a` on this scenario must re-derive the sag first.
+        #
+        # ⚠️ DO NOT READ 13.435 V AS A HARDWARE PREDICTION. The hi-fi engine
+        # implements the DESIGN droop chain (0.316/0.633 ohm, ratio exactly
+        # 2.000), which is ~4x the MEASURED bench K_DROOP_BUS (0.074 shared /
+        # 0.16 single) — the standing open finding recorded at K_DROOP_BUS in
+        # hil_plant_sim.py and in every campaign REPORT.md. On the real board the
+        # same window would sag roughly a quarter as far. The number above is a
+        # WORST-CASE bound within the design chain and is the right one for
+        # sizing the ceiling; it is the wrong one for predicting a bench trace,
+        # and sag DEPTHS are not comparable between the two engines at all.
         "source": "hil_plant_sim.py SCENARIOS['ems-soc-band'] + the SocBandStrategy "
                   "docstring and the SOC_BAND_* constants (band half, share span, "
                   "charge admission) + SOC_BAND_DRAIN_LOAD_A for the SoC-rate and "
                   "LIMIT_I_FC_MAX budgets. Charge-window budget copied from "
                   "charge-fault (same 1.0 m/s single-source operating point, same "
-                  "0.8 A de-rated ceiling, 19 % margin on LIMIT_I_FC_MAX).",
+                  "0.8 A de-rated ceiling, 19 % margin on LIMIT_I_FC_MAX); the "
+                  "de-rate is load-bearing for the 13.435 V single-source sag "
+                  "under the hi-fi DESIGN droop (~4x the measured bench chain — "
+                  "not a hardware prediction; see the block above).",
         "allow_only": 0,              # expected completely fault-free
         # The charge window opens at t = 41 (deceleration ends, trailing slope
         # window fills by 42.0). Reaching it in Run is the precondition for the
@@ -642,73 +681,121 @@ FAULT_EXPECTATIONS = {
         # ems_v_profile object and the SOC_BAND_DRAIN_* branch), driven by a
         # STATE-indexed policy baked by tools/sdp_ems_solver.py.
         #
-        # THRESHOLDS ARE READ OFF THE SHIPPED ARTIFACT, the same discipline the
-        # `ems-dp-replay` entry states for its table — and they must be
-        # RE-DERIVED, never relaxed, if tools/sdp_ems_solver.py regenerates it.
-        # Measured offline 2026-08-31 against POLICY-BLOCK sha256 dbe42d1b…
-        # (recipe: sha256(json.dumps(doc["policy"], sort_keys=True)) — the
-        # DECISION LAW, stable across a --force regeneration that did not change
-        # it; the artifact's FILE sha moves on every regeneration because it
-        # carries `generated_utc`, so quoting one here would go stale on a
-        # no-op re-run. The per-run file sha is in the CSV's meta sidecar,
-        # config.sdp_policy):
-        #   * at the clamped TOP demand bin the action is bang-bang about the
-        #     target — share 1.00 for every SoC node in (0.550, 0.600], 0.00
-        #     above it AND at the exact grid-floor node 0.550 (a solver-side
-        #     clamp-tie degeneracy, its D3/D8, not a second switching point).
-        #     The floor node is UNREACHABLE here — it needs SoC to fall 0.05
-        #     below the captured soc0 against this run's ~0.006 — but a longer
-        #     or heavier-drain reuse of `sdp-v1` could reach it and would
-        #     command the most-discharging split there; the clamp emits that as
-        #     0.15, in band, so no OC reasoning below changes;
-        #   * the SoC0-relative mapping starts a run AT that node, and this
-        #     scenario's SoC only falls, so the TABLE asks for 1.00 throughout —
-        #     and SdpStrategy.clamp_share() emits it as **0.8500**, the
-        #     hardware-envelope clamp [SOC_BAND_SHARE_MIN, SOC_BAND_SHARE_MAX]
-        #     that SocBandStrategy applies for the same reason. 1.00 would put
-        #     the setpoint outside [DROOP_R_MIN, DROOP_R_MAX], cut BT off the
-        #     bus and run single-source FC into this scenario's ~1.45 A drain,
-        #     past LIMIT_I_FC_MAX — an OC latch that would TRUNCATE the run and
-        #     with it the three-way hydrogen comparison the scenario exists for.
-        #     Every threshold below is against the CLAMPED command;
-        #   * `charge_goal` is 0.00 in every row of that column (the solver marks
-        #     demand bins 12-24 charge-forbidden), so NO charge window is
-        #     reachable here — asserting one would assert something the artifact
-        #     structurally cannot do. Same shape of argument as the dp-replay
-        #     entry's "why there is no charge check".
-        # ⚠️ The FIRST campaign is what turns these from offline predictions into
-        # measured facts. A miss on any of them is a claim about the artifact or
-        # the strategy, not a board finding — check the commanded share in the
-        # CSV's cmd_share_sp column before touching anything on the board.
+        # ⚠️ RE-DERIVED 2026-08-31 FOR THE v2 DEMAND MAP.  The entry's own
+        # contract is that thresholds are READ OFF THE SHIPPED ARTIFACT and
+        # RE-DERIVED, never relaxed, when the solver regenerates it — and it
+        # just did.  WHAT MOVED, in one paragraph, because a v1 campaign trace
+        # and a v2 one are two different decision laws:
+        #     v1 (POLICY-BLOCK sha256 dbe42d1b…) was solved against the TPM
+        #     sidecar's IDEAL-SCALING demand span, -1.125 .. +1.640 W.  This
+        #     rig's measured bus power is 0 .. 22.887 W, so campaign
+        #     hil_report_20260831_191509 clamped ~98 % of decisions into the top
+        #     bin: the demand axis carried NO information and the strategy
+        #     emitted one constant clamped share for the whole run.  The
+        #     plumbing was validated; the policy interior was never addressed.
+        #     v2 (POLICY-BLOCK sha256 740c802e…, the SHIPPED artifact
+        #     tools/sdp_policies/sdp_policy_v2.json) is the SAME TPM re-solved
+        #     against a [0.0, 25.0] W consumer demand map (solver D11).
+        # The three checks that used to assert the constant-0.85 emission are
+        # therefore no longer the artifact's discriminator — 0.85 is STILL what
+        # is emitted (see the clamp note below), so the old check would pass
+        # identically under both artifacts and prove nothing about the re-map.
+        # The interior-actuation evidence moved to `cmd_share_sp_raw` and to the
+        # charge window, both below.
+        #
+        # ALL v2 THRESHOLDS COME FROM ONE OFFLINE WALK (2026-08-31): the
+        # strategy's own decision path — soc0 capture, soc_relative(),
+        # demand_bin(), the table lookup, clamp_share() — stepped at the
+        # artifact's 1 s cadence over the RECORDED P_dem and SoC trace of the
+        # campaign's `ems-sdp` run.  Its results, which every number below is
+        # read off:
+        #     61 decisions, ZERO clamps either way, 13 distinct demand bins
+        #       (0, 2-7, 9, 10, 12, 16, 17, 22) vs v1's single bin 24;
+        #     TABLE request 0.95 for t = 13..38 (bin 22, the drain plateau) and
+        #       1.00 everywhere else — the demand axis moving the action;
+        #     EMITTED share 0.8500 for all 61 decisions (every one of the
+        #       table's values 0.90/0.95/1.00 is above SOC_BAND_SHARE_MAX);
+        #     charge_goal = 1 for t = 41.0 .. 58.0 (the post-drain 1.0 m/s low
+        #       cruise; bins 2-5, P_dem 2.62 .. 5.59 W).
+        # ⚠️ THE WALK IS OPEN LOOP.  It steps a v1 run's recorded trace, so it
+        # cannot contain the plant's response to a command v2 issues and v1 did
+        # not — which is precisely the charge window.  The chatter note on
+        # `sdp_charge_window_opened` is DERIVED, not measured, and the first v2
+        # campaign is what turns it into a fact.
+        #
+        # ⚠️ CURRENT BUDGET, RE-CHECKED FOR v2, both operating points:
+        #   * SHARE.  Unchanged from v1, because the emitted value is unchanged:
+        #     an in-band 0.85 is clipped by the firmware's own governor to
+        #     [I_min/I_tot, 1 - I_min/I_tot] = [0.202, 0.798] at this scenario's
+        #     measured 1.4866 A drain peak, so I_fc = 1.1866 A — 15.2 % under
+        #     LIMIT_I_FC_MAX 1.4 A — with the BT minority at exactly
+        #     SHARE_MINORITY_I_MIN_A 0.30 A, governed rather than starved.
+        #     (⚠️ DI-LOW-3: 1.4866 / 1.1866 A / 15.2 % are the campaign
+        #     20260831_191509 MEASURED peaks over the t = 20..38 plateau; the
+        #     1.462 / 1.162 A / 17 % this block used to quote were the
+        #     pre-campaign ESTIMATE.)  No
+        #     cut is attempted, so SHARE_CUT_MAX_HANDOFF_A never enters.
+        #   * CHARGING (NEW under v2).  With FC_CHARGE_ENABLE open,
+        #     assertFcChargeEnable() has dropped BT off the bus and the FC
+        #     channel alone carries the load plus the charger:
+        #         5.593 W / 15.95 V = 0.351 A + chg_i_ceiling_a 0.800 A
+        #                                      = 1.151 A  -> 18 % margin
+        #     which is `ems-soc-band`'s own validated charge-window budget at
+        #     the same operating point (its 1.139 A / 19 %).  The solver's
+        #     charge mask bounds the general case at the bin's UPPER edge too:
+        #     6.0 W / 15.95 + 0.8 = 1.176 A, under its CHARGE_FC_MARGIN * 1.4 =
+        #     1.19 A ceiling.  So `allow_only: 0` still holds and an OC_FC here
+        #     remains a REAL finding.
+        #
+        # RETIRED, deliberately: the queued BT_BUS switch_transitions / cut-
+        # latency check.  It was raised against v1's 3.8 ms self-heal at
+        # t ~ 10.38 s, which came from the SETPOINT-LATCH path
+        # (updateShareSetpointCutoff()).  Under v2 the emitted share is 0.8500
+        # throughout — inside [DROOP_R_MIN, DROOP_R_MAX], strict `<`/`>` — so
+        # that path is never entered and the check would assert a mechanism that
+        # cannot fire.  BT_BUS *does* still get cut and restored here, but by
+        # assertFcChargeEnable() on the charge window, at a cadence the walk
+        # cannot predict (see the chatter note); calibrating a count or a
+        # latency for it is the FIRST v2 CAMPAIGN's job, not a guess made here.
         "source": "hil_plant_sim.py SCENARIOS['ems-sdp'] (a DERIVED entry sharing "
                   "ems-soc-band's ems_v_profile object and SOC_BAND_DRAIN_* load) "
-                  "+ the SdpStrategy banner (SoC0-relative regulation, the "
-                  "demand-axis clamp, the decision cadence, the clamp_share() "
-                  "hardware-envelope clamp, and the PREDICTED BEHAVIOUR block, "
-                  "which is where the 0.8500 command and the zero-charge "
-                  "property below are derived) + the SHIPPED artifact "
-                  "tools/sdp_policies/sdp_policy_v1.json. Current budgets from "
-                  "SOC_BAND_DRAIN_LOAD_A's LIMIT_I_FC_MAX arithmetic and the "
-                  "firmware's own setpoint governor (.ino:9556-9568).",
-        # FAULT-FREE, mirroring `ems-soc-band` and `ems-dp-replay`. The OC_FC
-        # this entry previously ALLOWED was a consequence of emitting the
-        # table's 1.00 rail; the hardware-envelope clamp removes it at the
-        # source, and the margin is stated rather than hoped for:
-        #     commanded 0.85 -> the firmware's governor clips an in-band
-        #     setpoint to [I_min/I_tot, 1 - I_min/I_tot] = [0.205, 0.795] at
-        #     this scenario's measured 1.462 A drain peak, so I_fc = 1.162 A —
-        #     17 % under LIMIT_I_FC_MAX 1.4 A — and the BT minority sits at
-        #     exactly SHARE_MINORITY_I_MIN_A 0.30 A, governed rather than
-        #     starved. Ungoverned (below the 0.60 A closed-loop entry gate the
-        #     raw 0.85 is fed forward) the worst case is 0.85 x 0.60 = 0.51 A.
-        #     No cut is attempted at all, so SHARE_CUT_MAX_HANDOFF_A never
-        #     enters. An OC_FC here is therefore a REAL finding, not the
-        #     designed outcome — which is exactly why nothing is allowed.
-        "allow_only": 0,              # expected completely fault-free
+                  "+ the SdpStrategy banner (SoC0-relative regulation, the v1->v2 "
+                  "demand re-map, the decision cadence, the clamp_share() "
+                  "hardware-envelope clamp, and its PREDICTED BEHAVIOUR block, "
+                  "which is where the 0.8500 emission, the raw-request span and "
+                  "the charge window below are derived) + the SHIPPED artifact "
+                  "tools/sdp_policies/sdp_policy_v2.json (policy-block sha256 "
+                  "740c802e…) + tools/sdp_ems_solver.py D11 (the demand map). "
+                  "Current budgets from SOC_BAND_DRAIN_LOAD_A's LIMIT_I_FC_MAX "
+                  "arithmetic, the firmware's own setpoint governor "
+                  "(.ino:9556-9568), and the solver's charge mask.",
+        # FAULT-FREE, mirroring `ems-soc-band` and `ems-dp-replay` — and the
+        # budgets above are re-checked for BOTH of v2's operating points, so
+        # nothing is allowed.
+        "allow_only": 0,
+        # DI-MED-5 — FIRST-CAMPAIGN THRESHOLDS, declared as such. Three of the
+        # signal checks below carry bands that no v2 campaign has ever produced:
+        # `sdp_table_interior_at_high_demand` and `sdp_table_rail_at_low_demand`
+        # are read off the OPEN-LOOP offline walk over a v1 run's recorded
+        # trace (header above), and `sdp_charge_window_opened` additionally
+        # rides the PREDICTED ~1 Hz open/close chatter, which the walk cannot
+        # contain because the walk has no plant response to a command v1 never
+        # issued. A miss on any of the three must read as "threshold not yet
+        # derived", never as a board or plant change.
+        # DELETE THIS KEY after the first v2 campaign pins the bands from
+        # measurement — the scp-inrush precedent (its `provisional_note` was
+        # removed same-day once the i_cut band was measured live).
+        "provisional_note":
+            "first-campaign thresholds: sdp_table_interior_at_high_demand, "
+            "sdp_table_rail_at_low_demand and sdp_charge_window_opened are "
+            "derived from an OPEN-LOOP offline walk over a v1 trace (the "
+            "charge-window tick count additionally from the PREDICTED ~1 Hz "
+            "chatter), not from a measured v2 run",
         # Deep inside the Run window (the strategy hands back MODE_SAFE at
         # SDP_RUN_EXIT_S = SOC_BAND_RUN_EXIT_S = 58.0), the same depth
         # `ems-dp-replay` asserts: the run must reach the low cruise fault-free,
-        # not merely survive the drain phase.
+        # not merely survive the drain phase.  Under v2 this is also what makes
+        # the charge window reachable at all — it opens at t = 41.
         "survive_to": {"t": 50.0, "states": {2, 3}},
         "signals_require": [
             # 1. THE EMS LAYER ACTUALLY COMMANDED. The v_setpoint axis comes
@@ -717,15 +804,17 @@ FAULT_EXPECTATIONS = {
             #    the 50 Hz stream never carried its setpoints, cannot reach 1.45.
             #    Measured on the HOST's command column: it asserts the EMS
             #    layer's own output, independently of anything the board does
-            #    with it (check 3 is the board-side half).
+            #    with it (check 6, `sdp_fc_current_biased`, is the board-side
+            #    half).
+            #    UNCHANGED by the v2 re-map — the drive axis is scenario script,
+            #    not policy output.
             {"name": "sdp_drive_commanded", "column": "cmd_v_sp",
              "min_value": 1.45, "t_window": (12.0, 30.0),
-             "label": "the sdp-v1 policy commanded the profile's 1.5 m/s cruise"},
-            # 2. THE SDP-SPECIFIC assertion — "is this actually the policy's
-            #    table?", the analogue of dp_early_fc_rail. The artifact's action
-            #    at (soc_rel <= target, top demand bin) is the FC RAIL, emitted
-            #    at the hardware-envelope clamp as 0.8500 — a value NOTHING else
-            #    driving this cycle commands: the firmware's own default is 0.50,
+             "label": "the sdp-v2 policy commanded the profile's 1.5 m/s cruise"},
+            # 2. THE ACTUATED LEVEL. The artifact's action at
+            #    (soc_rel <= target) is the FC rail, emitted at the
+            #    hardware-envelope clamp as 0.8500 — a value NOTHING else driving
+            #    this cycle commands: the firmware's own default is 0.50,
             #    `soc-band`'s ceiling is 0.75 (SOC_BAND_SHARE_NOMINAL +
             #    SOC_BAND_SHARE_SPAN) and the DP table's rail is 0.75 as well.
             #    Floor 0.84 sits just under the emitted value and a clear 0.09
@@ -734,35 +823,123 @@ FAULT_EXPECTATIONS = {
             #    the end of the low cruise — the command is expected to be HELD
             #    for the whole run, so a wide window is honest here (unlike the
             #    sibling entries, whose commands are trajectories).
-            #    ⚠️ If a campaign measures the RAW 1.0000 in this column instead,
-            #    the clamp is not being applied — that is a defect in
-            #    SdpStrategy.clamp_share(), not a board finding, and the run
-            #    would also be expected to latch OC_FC.
-            #    ⚠️ WHAT THIS CHECK CANNOT SEE: any regenerated top-bin action in
-            #    (0.85, 1.0] emits the SAME clamped 0.8500, so a policy re-solve
-            #    that moved the action within that interval passes identically
-            #    and is invisible here. The per-run `config.sdp_policy` block in
-            #    the CSV's meta sidecar (file and policy-block sha256) is the
-            #    discriminator; this check asserts the ACTUATED level, not the
-            #    artifact's identity.
+            #    ⚠️ WHAT THIS CHECK CANNOT SEE, and it is now the POINT rather
+            #    than a footnote: every table value in (0.85, 1.0] emits the SAME
+            #    clamped 0.8500, so this check passes IDENTICALLY under v1 and
+            #    v2 and says nothing about which demand map is in force. It
+            #    asserts the ACTUATED LEVEL only. Checks 3 and 4 are the ones
+            #    that discriminate the artifact; `config.sdp_policy` in the CSV's
+            #    meta sidecar (file + policy-block sha256) is its identity.
+            #    ⚠️ If a campaign measures a RAW 1.0000 in THIS column, the clamp
+            #    is not being applied — a defect in SdpStrategy.clamp_share(),
+            #    not a board finding, and the run would also latch OC_FC.
             {"name": "sdp_clamped_rail_commanded", "column": "cmd_share_sp",
              "min_value": 0.84, "t_window": (5.0, 54.0),
              "label": "the SDP policy's fuel-cell rail, emitted at the 0.8500 "
                       "hardware-envelope clamp — a level neither soc-band nor "
                       "the DP table (both 0.75) can reach"},
-            # 3. ... AND THE FIRMWARE ACTED ON IT — the "cmd_share_sp is only
-            #    what the host asked for" half both sibling entries carry.
+            # 3. THE POLICY INTERIOR ACTUATED, HALF ONE — the demand axis moved
+            #    the TABLE's request off its rail on the drain plateau.
+            #    `cmd_share_sp_raw` is the PRE-clamp column added in this same
+            #    round for exactly this purpose: the emitted column cannot show
+            #    it, because 0.95 and 1.00 both clamp to 0.8500.
+            #    DERIVATION. On t = 13..38 the walk's measured P_dem is
+            #    22.87 W, which normalizes to x = 0.9150 and lands in bin 22
+            #    ([0.88, 0.92) = [22.0, 23.0) W). The v2 table's action there is
+            #    the interior 0.95 (bins 22-23; bin 24 is 0.90), against 1.00 in
+            #    every lower bin. Ceiling 0.97 is the midpoint of that 0.05 gap.
+            #    A CEILING, not a floor: `max_value` fails if ANY sample in the
+            #    window exceeds it, so a run whose demand fell back into bin 21
+            #    or below — or a v1 artifact, whose top-bin action is 1.00
+            #    everywhere — FAILS here. That is the intent.
+            #    ROBUSTNESS: the check tolerates bins 22, 23 and 24 (0.95, 0.95,
+            #    0.90), so it survives the plateau drifting UP by any amount; it
+            #    needs P_dem to fall below 22.0 W (3.8 % under the measured
+            #    22.87) to fail spuriously. Window 20.0-36.0 is the settled
+            #    interior of the plateau — after the drain ramp completes at
+            #    13.0 with margin, before the ramp-out at 38.0.
+            {"name": "sdp_table_interior_at_high_demand",
+             "column": "cmd_share_sp_raw", "max_value": 0.97,
+             "t_window": (20.0, 36.0),
+             "label": "the v2 demand axis moved the table off its rail on the "
+                      "drain plateau — the pre-clamp request is the interior "
+                      "0.95, which a v1 (ideal-scaling map) artifact cannot "
+                      "produce"},
+            # 4. THE POLICY INTERIOR ACTUATED, HALF TWO — and the request comes
+            #    BACK to the rail when the demand falls. Paired with check 3
+            #    this asserts a SPAN in the table's request across the run,
+            #    which is the whole claim the re-map makes.
+            #    DERIVATION: over the post-drain 1.0 m/s cruise the walk's
+            #    P_dem is 5.59 W -> bin 5, whose action is 1.00 at every SoC
+            #    node below the relative target. Floor 0.99 sits between 1.00
+            #    and the next ladder step down (0.95). Window 44.0-54.0 is
+            #    `ems-soc-band`'s own charge-window window, chosen for the same
+            #    reason: the drain has fully ramped out and the cruise is
+            #    settled.
+            #    ⚠️ This check is INSENSITIVE to the chatter described on check
+            #    5: whether the charger path is open (bin ~18) or closed
+            #    (bin 5), the table's action at a sub-target SoC node is 1.00 in
+            #    both, so neither state can fail it.
+            {"name": "sdp_table_rail_at_low_demand",
+             "column": "cmd_share_sp_raw", "min_value": 0.99,
+             "t_window": (44.0, 54.0),
+             "label": "the table's request returns to the 1.00 rail at low "
+                      "demand — with check 3, a measured span across the "
+                      "demand axis"},
+            # 5. THE INTERIOR ACTUATED ON THE OTHER CONTROL — A CHARGE WINDOW,
+            #    which v1 could not reach BY CONSTRUCTION (its clamp pinned every
+            #    decision into bin 24, and the solver forbids charging there).
+            #    This is the strongest v1/v2 discriminator in the entry: it is a
+            #    different ACTION selected by the demand axis, visible on the
+            #    BOARD's own switch word rather than on a host column.
+            #    DERIVATION. Under the 25 W map the solver's FC-current budget
+            #    (its rule (b)) forbids charging above bin 5 and the dwell rule
+            #    forbids bins 12+, so `charge_goal` = 1 exactly in bins 0-5
+            #    (P_dem < 6.0 W) below the relative target. The walk lands that
+            #    on t = 41.0..58.0 — the same post-drain low cruise
+            #    `ems-soc-band` charges in, arrived at from a different rule.
+            #    THRESHOLD. min_ticks 500 = 0.5 s of FC_CHARGE_ENABLE high
+            #    anywhere in the window. Deliberately loose: a SINGLE 1 s
+            #    decision already gives ~1000 ticks, so the floor carries 2x
+            #    margin against the worst case the chatter below can produce.
+            #    ⚠️ PREDICTED 1 Hz CHATTER, derived not measured. Opening the
+            #    charger path adds its ~0.8 A to I_fc, so the measured P_dem
+            #    jumps ~5.6 W -> ~18.3 W = bin 18, which is charge-FORBIDDEN, so
+            #    the next 1 s decision withdraws the intent and the path closes.
+            #    The policy is memoryless in the demand bin and has no
+            #    hysteresis (`soc-band` avoids exactly this with its dual i_tot
+            #    gate), so ~8 open/close cycles are expected over the window,
+            #    each costing a BT_BUS cut and restore through
+            #    assertFcChargeEnable(). Neither state exceeds a current limit
+            #    (budget in the header), and `ems-y-b00` exercises the same cut
+            #    and restore fault-free at a heavier load.
+            #    ⚠️ WHY THIS IS A SWITCH CHECK AND NOT `ems-soc-band`'s
+            #    I_charge >= 0.5 A: the Ag105 may never reach chargerReady
+            #    inside a 1 s open window, so an I_charge floor could fail a
+            #    perfectly correct board. What is asserted is that the POLICY
+            #    commanded the path open and the FIRMWARE opened it.
+            {"name": "sdp_charge_window_opened", "switch_bit": SW_FC_CHARGE,
+             "min_ticks": 500, "t_window": (41.0, 58.0),
+             "label": "the v2 policy's low-demand charge action reached the "
+                      "board — FC_CHARGE_ENABLE opened in the post-drain "
+                      "cruise, which the v1 artifact could not command"},
+            # 6. ... AND THE FIRMWARE ACTED ON THE SHARE — the "cmd_share_sp is
+            #    only what the host asked for" half both sibling entries carry.
             #    Derivation, and it is the GOVERNED value rather than the
             #    commanded one: an in-band 0.85 is clipped by the firmware's own
             #    setpoint governor to 1 - I_min/I_tot (.ino:9556-9568), which at
-            #    the drain plateau's measured 1.462 A total is 0.795, so the
-            #    delivered I_fc is ~1.16 A. Against the firmware's default 0.50
-            #    split at the same load (0.73 A) the two are far apart, and
-            #    1.00 A sits between them with ~14 % of margin below the
-            #    prediction — while staying 29 % under LIMIT_I_FC_MAX 1.4 A, so
+            #    the drain plateau's measured 1.4866 A total is 0.798, so the
+            #    delivered I_fc is 1.1866 A (campaign 20260831_191509; DI-LOW-3
+            #    — 1.462 A / ~1.16 A here was the pre-campaign estimate).
+            #    Against the firmware's default 0.50 split at the same load
+            #    (0.743 A) the two are far apart, and 1.00 A sits between them
+            #    with 15.7 % of margin below the measured value — while staying
+            #    28.6 % under LIMIT_I_FC_MAX 1.4 A, so
             #    a pass can never be confused with an overcurrent.
             #    Window 20.0-38.0 is the drain plateau: after the ramp completes
-            #    at 13.0 (plus settling) and before the ramp-out at 38.0.
+            #    at 13.0 (plus settling) and before the ramp-out at 38.0. The v2
+            #    charge window opens at 41.0, OUTSIDE this window, so the
+            #    single-source charging operating point never enters it.
             #    L3 (inherited from both sibling entries) — WHAT A PASS PROVES.
             #    The plant splits bus current in proportion to the MDAC CODE
             #    RATIO (HIL_PLANT.md §4.7: sign- and monotonicity-preserving,
@@ -772,7 +949,7 @@ FAULT_EXPECTATIONS = {
              "min_value": 1.00, "t_window": (20.0, 38.0),
              "label": "the board's share loop moved current onto FC to the "
                       "governed level of the commanded 0.85"},
-            # 4. ... and the accounting saw it. h2_cum_g is monotone, so the peak
+            # 7. ... and the accounting saw it. h2_cum_g is monotone, so the peak
             #    IS the final value. Budget for the FULL 61 s run (this scenario
             #    is expected to complete, not to truncate): over the ~25 s drain
             #    plateau the FC channel carries ~0.795 x 1.46 A = 1.16 A at
@@ -780,6 +957,11 @@ FAULT_EXPECTATIONS = {
             #    through ETA_BOOST 0.85, i.e. ~3.8e-4 g/s at the model's
             #    1.7638e-5 g/s/W DC gain and ~9.5e-3 g over the plateau alone;
             #    the accel, ramp and low-cruise segments add a few e-3 more.
+            #    UNMOVED by the v2 re-map: the drain plateau's delivered split is
+            #    the governed 0.795 under both artifacts, so the dominant term of
+            #    this budget is identical. The v2 charge window ADDS fuel-cell
+            #    burn (the charger's draw is billed to FC), which moves the total
+            #    UP and away from a floor.
             #    1.0e-3 g is therefore the same threshold and the same ~10x
             #    margin class as the ems-soc-band entry's h2_accounted, and it
             #    still fails a run where the column is absent, zero or frozen.
@@ -790,12 +972,12 @@ FAULT_EXPECTATIONS = {
             {"name": "sdp_h2_accounted", "column": "h2_cum_g",
              "min_value": 1.0e-3,
              "label": "the H2 consumption metric accumulated over the run"},
-            # 5. THE STUDENT'S AXIS WAS PLUMBED. `min_value: 0.0` is a DELIBERATE
+            # 8. THE STUDENT'S AXIS WAS PLUMBED. `min_value: 0.0` is a DELIBERATE
             #    plumbing assertion, not a magnitude one: an absent or unparseable
             #    column measures "peak unmeasured" and FAILS (_judge_signal_leaf),
             #    while any parseable sample passes. It therefore asserts that
             #    h2_sdp_cum_g exists and is being written on this run, WITHOUT
-            #    duplicating check 4's magnitude budget on a second model of the
+            #    duplicating check 7's magnitude budget on a second model of the
             #    same quantity (which would fail twice for one cause).
             #    ⚠️ h2_sdp_cum_g is a SECOND MODEL of h2_cum_g's quantity on the
             #    SAME P_fc input (the student's static proxy, eta_fc 0.5). It
@@ -831,8 +1013,14 @@ FAULT_EXPECTATIONS = {
         # scenario models a class whose recorded members did sag that far, not
         # because this run can; the UV objective needs its own home (a
         # v_bus_sense_offset scenario), which is an open item, not a silent gap.
-        "source": "hil_replay_suite.py TP0178/TP0201 entries (0.15-0.185 V of "
-                  "recorded margin, ~10 ms dwell vs the 20 ms latch) + "
+        # RECORD CORRECTED 2026-08-31 (ledger fix queue): the "~10 ms dwell vs
+        # the 20 ms latch" this line used to quote did not survive replay. Both
+        # recorded floors (12.1489 / 12.1853 V) stay ABOVE LIMIT_V_BUS_MIN, so
+        # the leaky integrator accumulates 0.0 ms — the margin is a VOLTAGE
+        # margin, not a dwell one.
+        "source": "hil_replay_suite.py TP0178/TP0201 entries (0.149-0.185 V of "
+                  "recorded margin ABOVE the limit, hence 0.0 ms of "
+                  "accumulated dwell against the 20 ms latch) + "
                   "HIL_FINDINGS 'handoff-sag' for the OC_FC pre-emption + "
                   "the operating-point derivation in hil_plant_sim.py's "
                   "SCENARIOS['handoff-sag'] comment (review M3)",
@@ -1102,7 +1290,7 @@ _Y_EDGE_S = 0.2
 _Y_HI_BOUND_W = (_YR[6][0] + _Y_EDGE_S, _YR[6][1] - _Y_EDGE_S)     # 22.2-23.3
 _Y_SWEEP_DOWN_W = (_YR[10][0], _YR[11][0] + 0.9)                   # 32.0-35.9
 _Y_V_PEAK_W = (_YR[7][1] - 0.5, _YR[7][1])                         # 26.5-27.0
-_Y_FC_BIAS_W = (_YR[3][0], _YR[4][1])                              # 13.0-20.0
+_Y_FC_BIAS_W = (_YR[3][0], _YR[3][1])                              # 13.0-16.0
 _Y_BT_RESTORE_W = (_YR[7][0] + 0.5, _YR[7][1])                     # 24.0-27.0
 _Y_LO_BOUND_W = (_YR[10][1] - 0.4, _YR[11][1] - 0.2)               # 34.6-36.3
 _Y_FC_RESTORE_W = (_YR[12][0] + 0.5, _YR[13][0] + 1.0)             # 37.0-39.0
@@ -1111,19 +1299,36 @@ _Y_FC_RESTORE_W = (_YR[12][0] + 0.5, _YR[13][0] + 1.0)             # 37.0-39.0
 # import-time assert wants a bound strictly inside the duration anyway.
 _Y_SURVIVE_T = _YR[14][1]                                          # 43.0
 
-# Per-variant I_fc floors for the b30 closed-loop check, measured against the
-# Plant/droop model over the whole table (constants at the top of
-# hil_plant_sim.py). The binding point is R4's ENTRY, where the table commands
-# share 0.65 on the run's largest steady load:
-#     Vmax 1: source total 0.869 A -> I_fc 0.565 A   (floor 0.45, 20 % below)
-#     Vmax 3: source total 1.286 A -> I_fc 0.836 A   (floor 0.60, 28 % below)
-# A 0.50 split at those totals would be 0.435 A / 0.643 A, so each floor also
-# sits ABOVE what a run that ignored the share command entirely would show —
-# which is the whole point of the check.
-# ⚠️ MODELLED, not measured. A campaign that misses this should move
-# Y_AUX_LOAD_A (which moves the totals) or the profile, NEVER this floor:
-# lowering it to go green redefines "biased toward FC" as "not quite 50/50".
-_Y_FC_FLOOR = {1.0: 0.45, 3.0: 0.60}
+# Per-variant I_fc floors for the b30 closed-loop check, over _Y_FC_BIAS_W.
+#
+# ⚠️ WINDOW NARROWED 2026-08-31 (DI-MED-2): (13.0, 20.0) -> R3 ALONE
+# (13.0, 16.0), and the floors RE-DERIVED FROM MEASURED DATA with it.
+# R3 holds v constant at 0.6*Vmax with share commanded 0.65, so within it the
+# only thing that moves I_fc is the share command — which is what the check
+# claims to prove. The old window also swallowed R4, where BOTH axes ramp
+# (v up, share DOWN): the load rises fast enough there that a 0.50 split alone
+# reaches 0.4915 A / 0.9217 A, ABOVE the Vmax-1 floor and above any Vmax-3
+# floor the true run could carry — so over (13, 20) the "above the 0.50-split"
+# claim below was not literally true. Confined to R3 it is.
+#
+# MEASURED, campaign 20260831_191509 (ems-y-b30-v1 / -v3, hifi), over R3:
+#
+#                 peak I_fc    peak 0.50-split   floor    below   above
+#                 (true run)   (same window)     here     peak    split
+#     Vmax 1      0.5659 A     0.4353 A          0.50     11.6 %  14.9 %
+#     Vmax 3      0.7606 A     0.5850 A          0.66     13.2 %  12.8 %
+#
+# Each floor is placed at the geometric mean of the pair it separates, so the
+# margin against a false PASS (a run that ignored the command) and against a
+# false FAIL (the true run) are balanced. The previous pair (0.58 / 0.80) was
+# MODELLED at Y_AUX_LOAD_A 0.85 A and reads ABOVE the true run's own R3 peaks —
+# it survived only because the old window included R4's ramp. The model
+# over-predicts these currents by ~15-20 %; the measured numbers supersede it.
+#
+# A campaign that misses this should move Y_AUX_LOAD_A (which moves the totals)
+# or the profile, NEVER this floor: lowering it to go green redefines "biased
+# toward FC" as "not quite 50/50", and the split column above is the bound.
+_Y_FC_FLOOR = {1.0: 0.50, 3.0: 0.66}
 
 for _vmax, _b in ((1.0, 0.30), (3.0, 0.30), (1.0, 0.00), (3.0, 0.00)):
     _n = "ems-y-b%02d-v%g" % (round(_b * 100), _vmax)
@@ -1220,7 +1425,16 @@ for _vmax, _b in ((1.0, 0.30), (3.0, 0.30), (1.0, 0.00), (3.0, 0.00)):
         # a source off the bus twice, but at their own (unpreloaded) load — the
         # totals span 0.150-1.407 A — so no channel approaches LIMIT_I_FC_MAX
         # 1.4 A or LIMIT_I_BT_MAX 3.0 A even single-sourced, and the bus never
-        # approaches LIMIT_V_BUS_MIN.
+        # approaches LIMIT_V_BUS_MIN.  The b30 variants carry Y_AUX_LOAD_A on
+        # top: at 0.85 A their worst channel currents are 0.999 A on FC (28.7 %
+        # under the limit) and 1.475 A on BT (51 % under), so fault-free is the
+        # expectation there too — derivation at Y_AUX_LOAD_A.
+        #
+        # ⚠️ b30 STIMULUS CHANGED 2026-08-31 (Y_AUX_LOAD_A 0.60 -> 0.85 A, to
+        # make the hi bound deliverable at all).  b30 currents, governor rails
+        # and the _Y_FC_FLOOR pair below all moved with it, so b30 results from
+        # campaign 20260831_191509 and earlier are NOT comparable with later
+        # ones.  b00 carries no preload and is unaffected.
         "allow_only": 0,
         "survive_to": {"t": _Y_SURVIVE_T, "states": {2, 3}},
         "signals_require": _sig,
@@ -1244,13 +1458,51 @@ _FTP_PEAK_W = (240.0, 250.0)      # the cycle peak, emitted t = 245.0 s
 # past the peak, so this asserts the run actually got through the cycle's
 # hardest part rather than merely starting it.
 _FTP_SURVIVE_T = 300.0
-# h2_cum_g is monotone, so a peak IS the final value. The model integrates
-# 5.46e-2 g over the full hold-5050 run (8.19e-2 g at soc-band's 0.75 ceiling),
-# so 5e-3 g is a ~11x-margin floor that still fails a run where the column is
-# absent, zero or frozen. ⚠️ Gfc MODEL ESTIMATE: the map is scale-portable, the
-# stack is NOT identified against this rig (TODO(calibrate) — the H2Consumption
-# banner in hil_plant_sim.py). This asserts the accounting RAN.
+# h2_cum_g is monotone, so a peak IS the final value.
+#
+# ── MEASURED (campaign 20260831_191509), replacing the modelled predictions ──
+# The block used to quote the model's 5.46e-2 g (hold-5050) / 8.19e-2 g
+# (soc-band) and assert a single 5e-3 g floor against them — a ~11x margin that
+# only ever said "the column is not absent, zero or frozen". The campaign
+# measured:
+#       ems-ftp75-5050      6.47e-2 g      (model 5.46e-2, +18.5 %)
+#       ems-ftp75-socband   9.16e-2 g      (model 8.19e-2, +11.8 %)
+# Both above the model in the same direction, consistent with the +2.6 %
+# current-budget offset recorded at FTP75_PRELOAD_A plus the share bias sitting
+# at its ceiling for longer than the steady-state walk assumes. The measured
+# numbers are now the reference; the modelled ones are superseded.
+#
+# ⚠️ TWO SPECS PER BAND, NOT ONE. `min_value` and `max_value` are evaluated by a
+# chain of `if ... return` in _judge_signal_leaf(), and `min_value` is tested
+# FIRST — so a single spec carrying both keys silently drops the ceiling. Each
+# band below is therefore written as a floor spec plus a separate ceiling spec.
+#
+# ⚠️ Gfc MODEL ESTIMATE, unchanged: the map is scale-portable, the stack is NOT
+# identified against this rig (TODO(calibrate) — the H2Consumption banner in
+# hil_plant_sim.py). A band on this column asserts that the accounting ran AND
+# that it landed where two campaigns of the same model say it should; it is not
+# a claim about grams of real hydrogen.
+#
+# hold-5050: [0.045, 0.085] around the measured 6.47e-2 — 30 % below, 31 % above.
+# Safe as a two-sided band because this scenario is expected FAULT-FREE, so the
+# run always reaches t = 345 and the total is always the whole cycle's.
+_FTP_H2_BAND_5050 = (0.045, 0.085)
+# soc-band: the ceiling only, at the ledger's 0.115 (26 % above the measured
+# 9.16e-2).
+#
+# ⚠️ DELIBERATE ASYMMETRY — THE LEDGER'S 0.070 FLOOR IS NOT APPLIED, and the
+# reason is in this scenario's own expectation. `ems-ftp75-socband` ALLOWS
+# OC_FC (operator ruling (b)), and an OC_FC latch STOPS the run: the board goes
+# to State 99, the cycle does not finish, and h2_cum_g freezes at whatever it
+# had reached. A latch at t = 200 leaves ~4e-2 g and a floor of 0.070 would FAIL
+# it — failing a run for doing exactly what the entry says is correct. A ceiling
+# has no such problem: truncation can only make the total SMALLER, so the
+# ceiling stays sound under every allowed outcome. The floor therefore stays at
+# the old conservative 5e-3 ("the accounting ran"), and it stays there until
+# either the OC_FC allowance is retired or the entry grows a
+# completed-run-only branch. Stated rather than silently narrowed.
 _FTP_H2_FLOOR = 5.0e-3
+_FTP_H2_CEILING_SOCBAND = 0.115
 
 FAULT_EXPECTATIONS["ems-ftp75-5050"] = {
     "source": ("hil_plant_sim.py SCENARIOS['ems-ftp75-5050'] + the generated "
@@ -1285,11 +1537,20 @@ FAULT_EXPECTATIONS["ems-ftp75-5050"] = {
         {"name": "ftp_fc_carried", "column": "I_fc", "min_value": 0.70,
          "t_window": _FTP_PEAK_W,
          "label": "the FC channel carried its half of the peak load"},
-        # 3. The H2 metric ran end to end over a 345 s cycle — the longest
-        #    accounting run in the suite, and the reason these scenarios exist.
+        # 3-4. The H2 metric ran end to end over a 345 s cycle — the longest
+        #    accounting run in the suite, and the reason these scenarios exist —
+        #    AND landed in its measured band. Two specs, because one spec cannot
+        #    carry both bounds (see _FTP_H2_BAND_5050).
         {"name": "ftp_h2_accounted", "column": "h2_cum_g",
-         "min_value": _FTP_H2_FLOOR,
-         "label": "the H2 consumption metric accumulated over the cycle"},
+         "min_value": _FTP_H2_BAND_5050[0],
+         "label": "the H2 consumption metric accumulated over the cycle "
+                  "(>= %.3f g; measured 6.47e-2)" % _FTP_H2_BAND_5050[0]},
+        {"name": "ftp_h2_bounded", "column": "h2_cum_g",
+         "max_value": _FTP_H2_BAND_5050[1],
+         "label": "... and stayed under %.3f g — a ceiling the measured "
+                  "6.47e-2 clears by 31 %%, so a scale or accumulation error "
+                  "in the metric fails here instead of being read as a result"
+                  % _FTP_H2_BAND_5050[1]},
     ],
 }
 
@@ -1332,13 +1593,43 @@ FAULT_EXPECTATIONS["ems-ftp75-socband"] = {
         {"name": "socband_share_biased", "column": "cmd_share_sp",
          "min_value": 0.60, "t_window": (30.0, 340.0),
          "label": "soc-band commanded a share bias toward the fuel cell"},
-        # 2. ... and the BOARD acted on it. At the model's 0.800 A standstill
-        #    total a 0.75 split is 0.600 A and a 0.50 split is 0.400 A, so
-        #    0.55 A separates the two even in the cycle's idle segments — and
-        #    the window is wide enough that a moving segment satisfies it
-        #    comfortably. Deliberately NOT tied to the peak window: an OC_FC
-        #    latch is allowed here, so a check that could only be satisfied
-        #    after t = 240 would fail every run that legitimately latched.
+        # 2. ... and the BOARD acted on it.
+        #    ⚠️ RE-DERIVED 2026-08-31 (ledger, "check derivation"): 0.55 -> 0.70.
+        #    THE OLD DERIVATION WAS WRONG, and its arithmetic ignored the
+        #    governor.  It read: "at the model's 0.800 A standstill total a 0.75
+        #    split is 0.600 A and a 0.50 split is 0.400 A, so 0.55 A separates
+        #    the two even in the cycle's idle segments".  It does not.  At
+        #    I_tot = 0.800 A the firmware's minority-current governor clips the
+        #    share to [SHARE_MINORITY_I_MIN_A/I_tot, 1 - SHARE_MINORITY_I_MIN_A/
+        #    I_tot] = [0.375, 0.625], so a COMMANDED 0.75 DELIVERS 0.625 x 0.800
+        #    = 0.500 A, not 0.600 A — and campaign 20260831_191509 measured the
+        #    idle governed value at 0.516 A.  The old floor was therefore
+        #    UNREACHABLE in exactly the segments it claimed to cover; the check
+        #    only ever passed on moving ones, which nobody had written down.
+        #
+        #    ⚠️ RE-DERIVED AGAIN 2026-08-31 (DI-MED-1): 0.70 -> 0.95, and the
+        #    discrimination claim restated in the terms the check is actually
+        #    evaluated in.  `min_value` is a PEAK-over-window test: the run
+        #    passes if ANY sample in (30, 340) clears the floor, so what the
+        #    floor has to separate is the WINDOW PEAK of a commanding run from
+        #    the WINDOW PEAK of a run that ignored the share command — not the
+        #    two values at some chosen instant.  The old 0.70 could not do that.
+        #
+        #    NEW ARITHMETIC (campaign 20260831_191509, both FTP-75 runs; the
+        #    ems-ftp75-5050 sibling IS the "ignored the command" control — same
+        #    profile, same FTP75_PRELOAD_A, share held at a constant 0.50):
+        #      ems-ftp75-5050    peak I_fc over (30, 340) = 0.8275 A @ t = 244.0
+        #      ems-ftp75-socband peak I_fc over (30, 340) = 1.2414 A @ t = 244.0
+        #    Any floor <= 0.8275 A is therefore satisfied by the 0.50 control
+        #    and discriminates NOTHING.  0.95 A sits 15 % above the control peak
+        #    and 23 % below the measured socband peak, so it cannot be reached
+        #    without the share bias and is not knife-edged against it either.
+        #    STILL DELIBERATELY NOT TIED TO A PEAK-ONLY WINDOW: an OC_FC latch
+        #    is allowed here, and the window opens at t = 30, so a run that
+        #    legitimately latched after clearing the floor still passes.  What
+        #    the check does NOT claim is coverage of the idle segments; under
+        #    the governor no floor above 0.516 A can have that, and pretending
+        #    otherwise is what the previous correction removed.
         #    L3 (review 2026-08-31) — WHAT A PASS ACTUALLY PROVES. The
         #    plant splits the bus current in proportion to the MDAC CODE
         #    RATIO (HIL_PLANT.md §4.7: sign- and monotonicity-preserving,
@@ -1348,16 +1639,27 @@ FAULT_EXPECTATIONS["ems-ftp75-socband"] = {
         #    GAIN validation: the amps here are the model's response to the
         #    codes, not the board's real droop chain (see also the
         #    K_DROOP_BUS design-vs-measured x4 finding).
-        {"name": "socband_fc_carried", "column": "I_fc", "min_value": 0.55,
+        {"name": "socband_fc_carried", "column": "I_fc", "min_value": 0.95,
          "t_window": (30.0, 340.0),
          "label": "the board's share loop moved current onto FC beyond the "
-                  "nominal split"},
-        # 3. The H2 metric ran end to end. Same floor as the 5050 variant, and
-        #    conservative for the same reason: even a run that latched OC_FC at
-        #    t = 200 has integrated ~4e-2 g by then.
+                  "nominal split (window PEAK >= 0.95 A; the constant-0.50 "
+                  "ems-ftp75-5050 control peaks at 0.8275 A over the same "
+                  "window, so nothing below that discriminates)"},
+        # 3-4. The H2 metric ran end to end, and stayed bounded. ASYMMETRIC BAND
+        #    on purpose: the floor stays at the conservative 5e-3 because this
+        #    entry ALLOWS OC_FC and a latch truncates the total, while the
+        #    ceiling is the measured one. Full derivation at
+        #    _FTP_H2_CEILING_SOCBAND.
         {"name": "ftp_h2_accounted", "column": "h2_cum_g",
          "min_value": _FTP_H2_FLOOR,
-         "label": "the H2 consumption metric accumulated over the cycle"},
+         "label": "the H2 consumption metric accumulated over the cycle "
+                  "(conservative floor: an allowed OC_FC latch truncates it)"},
+        {"name": "ftp_h2_bounded", "column": "h2_cum_g",
+         "max_value": _FTP_H2_CEILING_SOCBAND,
+         "label": "... and stayed under %.3f g — 26 %% above the measured "
+                  "9.16e-2 g, and unreachable by a truncated run, so this "
+                  "bound is sound under every outcome the entry allows"
+                  % _FTP_H2_CEILING_SOCBAND},
     ],
 }
 
@@ -1408,8 +1710,19 @@ _MPPT_TOGGLE_MIN_TICKS = 300
 # THE TWO OUTCOMES THIS CEILING MUST SEPARATE, both re-measured on the offline
 # probe (2026-08-31; the plant's charger branch verbatim against the firmware's
 # 20 ms poll with its one-poll lag, 15.95 V rail, 1.0 A ceiling):
-#     HUNT       full period 80.0 ms, pin HIGH 50.0 % of post-settle ticks
+#     HUNT       pin HIGH 50.0 % of post-settle ticks
 #                -> ~1500 ticks    (i_charge equilibrium 0.472-0.525 A)
+#                ⚠️ RECORD CORRECTED 2026-08-31 (ledger, "record correction"):
+#                this line quoted a full hunt period of 80.0 ms from the offline
+#                probe.  The MEASURED median on hardware is 40.05 ms — campaign
+#                20260831_191509, and the 138 MPPT_DISABLE toggles it counted
+#                over the cruise windows ARITHMETICALLY REQUIRE it (80 ms would
+#                give about half that many).  THE CEILING BELOW IS UNAFFECTED
+#                and was NOT re-derived: this budget counts HIGH TICKS, which
+#                depend only on the DUTY (50 %), not on the period.  A faster
+#                hunt at the same duty lands on the same ~1500 ticks.  The
+#                period only matters where it sets the charger's ramp average,
+#                and the I_charge floor below already quotes the correct ~40 ms.
 #     STUCK HIGH pin released and never withdrawn
 #                -> ~3000 ticks    (the whole post-settle budget above)
 # 2200 sits between them: 1.47x the modelled hunt and 0.73x the stuck-high
@@ -1720,20 +2033,25 @@ FAULT_EXPECTATIONS["share-staircase"] = {
         # 2. ... and SWEPT the whole range down to 0.20.  0.80 - 0.20 = 0.60
         #    commanded; 0.55 is a floor clear of the float32 round trip and of
         #    the 20 ms staircase, and unreachable by a partial sweep.
-        #    ⚠️ THE WINDOW OPENS AT 6.5, NOT AT 6.0, AND THAT IS LOAD-BEARING
-        #    (H2, review 2026-08-31).  `strictly_decreases_by` compares the LAST
-        #    in-window sample against the FIRST, and the 0.80 step is commanded
-        #    at t = 6.0 by a commander running at PiCommander.PI_CMD_HZ = 50 Hz.
-        #    The CSV's `cmd_*` columns are the 1 kHz ZOH of the last command
-        #    actually SENT, so the row at t = 6.000 still carries the previous
-        #    0.50 unless the command tick lands on that exact millisecond —
-        #    p ~= 1/20.  With the window opening at 6.0 the fall was therefore
-        #    0.50 - 0.20 = 0.30 < 0.55 on ~19 runs in 20: a chronic FAIL of a
-        #    correct board.  Opening at 6.5 (the 0.80 step holds until t = 9.0)
-        #    makes the first sample 0.80 deterministically and the fall 0.60,
-        #    9 % over the floor.  The general rule is enforced at import below:
-        #    a `strictly_decreases_by` window must open at least one command
-        #    period clear of every pi_timeline entry time.
+        #    ⚠️ THE WINDOW OPENS AT 6.5, NOT AT 6.0.  `strictly_decreases_by`
+        #    compares the LAST in-window sample against the FIRST, and the 0.80
+        #    step is commanded at t = 6.0, so the opening edge decides which
+        #    level the fall is measured FROM.  Opening at 6.5 (the 0.80 step
+        #    holds until t = 9.0) makes the first sample 0.80 with a 0.5 s
+        #    margin and the fall 0.60, 9 % over the floor.
+        #    ⚠️ CORRECTED MECHANISM (2026-08-31, ledger "contract/doc").  The
+        #    original note here justified the offset with a probability: it
+        #    claimed the `cmd_*` columns are the ZOH of the last command SENT,
+        #    so the row at t = 6.000 would still carry 0.50 on ~19 runs in 20 —
+        #    "a chronic FAIL of a correct board".  THAT MECHANISM IS WRONG, and
+        #    the chronic-FAIL claim with it: the columns step at the NOMINAL
+        #    timeline instant (see PI_CMD_PERIOD_S above — the timeline walk
+        #    runs before the 50 Hz send gate), so a window opening at 6.0 would
+        #    sample 0.80 within one 1 ms tick and measure the full 0.60 fall.
+        #    The 6.5 opening is KEPT: half a second of margin against tick
+        #    phase, float rounding on the wall-clock `t` axis, and any future
+        #    change to when the walk runs, at zero cost to what is asserted.
+        #    The general rule is still enforced at import below.
         {"name": "staircase_swept", "column": "cmd_share_sp",
          "strictly_decreases_by": 0.55, "t_window": (6.5, 26.9),
          "label": "the staircase swept 0.80 -> 0.20, crossing BOTH governor rails"},
@@ -1771,6 +2089,14 @@ FAULT_EXPECTATIONS["share-staircase"] = {
         #      cut never happened.  The restore window is 2.5 s -> min_ticks 1500
         #      (60 % of it), so a late release still passes but an absent one
         #      cannot.
+        #      ⚠️ 60 % IS THE STANDARD FOR EVERY RESTORE FLOOR IN THIS SUITE,
+        #      and it is a MARGIN rule, not a tuning knob: the observation
+        #      stream drops ~1 frame per run, so a floor at 100 % of its window
+        #      fails a correct board on a dropped frame.  BT's 1500/2500 already
+        #      followed it; FC's did not until 2026-08-31 (see its comment
+        #      below).  `ems-y-b00-*`'s two restore floors sit at 67 % and 50 %
+        #      of their windows and were checked at the same time — both already
+        #      clear of the rule, both left alone.
         {"name": "bt_bus_cut", "switch_bit": SW_BT_BUS, "max_ticks": 100,
          "t_window": (_SS_BT_CUT_T + 0.5, _SS_BT_RESTORE_T - 0.2),
          "label": "BT_BUS_ENABLE cut by the setpoint latch at share 0.95 "
@@ -1783,7 +2109,18 @@ FAULT_EXPECTATIONS["share-staircase"] = {
          "t_window": (_SS_FC_CUT_T + 0.5, _SS_FC_RESTORE_T - 0.2),
          "label": "FC_BUS_ENABLE cut by the setpoint latch at share 0.05 "
                   "(< DROOP_R_MIN)"},
-        {"name": "fc_bus_restored", "switch_bit": SW_FC_BUS, "min_ticks": 1500,
+        # ⚠️ 1500 -> 900 (2026-08-31, ledger "knife-edge threshold").  This
+        # window is (_SS_FC_RESTORE_T + 0.5, 44.0) = (42.5, 44.0) = 1.5 s, i.e.
+        # 1500 rows at the CSV's 1 kHz rate, and the floor was ALSO 1500 —
+        # 100 % of the window, not the 60 % its sibling `bt_bus_restored`
+        # documents and uses (1500 of a 2.5 s / 2500-row window).  Campaign
+        # 20260831_191509 measured exactly 1500/1500 here, which is a PASS with
+        # ZERO margin: one dropped observation frame in-window fails a correct
+        # board, and each run drops ~1 frame.  900 is 60 % of 1500, restoring
+        # the sibling's stated intent — still far above anything an absent
+        # restore could produce (0 ticks) or a very late one (a release at
+        # t = 43.5 leaves 500).
+        {"name": "fc_bus_restored", "switch_bit": SW_FC_BUS, "min_ticks": 900,
          "t_window": (_SS_FC_RESTORE_T + 0.5, 44.0),
          "label": "FC_BUS_ENABLE RESTORED once the setpoint returned to 0.50"},
         # 9-12. THE FOUR LATENCIES.  The `edge` field carries the RISE variant:
@@ -1916,17 +2253,28 @@ for _n, _e in FAULT_EXPECTATIONS.items():
             # ── H2 (review 2026-08-31): `strictly_decreases_by` window phase ──
             # The kind compares the LAST in-window sample against the FIRST, so
             # its window's OPENING EDGE is load-bearing in a way a min_value
-            # window's is not.  The emulated Pi commands at PI_CMD_HZ = 50 and
-            # the CSV's `cmd_*` columns are the 1 kHz ZOH of the last command
-            # SENT, so a window opening AT a pi_timeline entry time samples the
-            # PREVIOUS value with probability ~19/20 — which is how
-            # `share-staircase`'s staircase_swept came to be a chronic FAIL of a
-            # correct board.  Require the opening edge to clear every entry time
-            # of THAT scenario's timeline by at least one command period.  A
-            # spec with no t_window is exempt (it scans the whole run, so there
-            # is no opening edge to mis-phase), and so is a scenario with no
-            # pi_timeline (EMS-driven scenarios command from a policy, not a
+            # window's is not.  Require the opening edge to clear every entry
+            # time of THAT scenario's timeline by at least one command period.
+            # A spec with no t_window is exempt (it scans the whole run, so
+            # there is no opening edge to mis-phase), and so is a scenario with
+            # no pi_timeline (EMS-driven scenarios command from a policy, not a
             # stepped table).
+            #
+            # ⚠️ CORRECTED RATIONALE (2026-08-31, ledger "contract/doc"), and
+            # the rule is KEPT rather than dropped.  This guard was originally
+            # justified by the claim that the `cmd_*` columns are the ZOH of the
+            # last command SENT, so a window opening AT an entry time would
+            # sample the PREVIOUS value "with probability ~19/20".  That is not
+            # how the columns work — they step at the NOMINAL entry instant (see
+            # PI_CMD_PERIOD_S at the top of this file), so the real exposure is
+            # ONE 1 kHz TICK of walk/write phase plus float rounding on the
+            # wall-clock `t` axis, not a whole command period.  The rule stays
+            # because the margin it buys is free, because it also protects the
+            # OBSERVED-side columns (whose response genuinely does lag the
+            # nominal instant by the command phase plus the observation round
+            # trip), and because a table entry authored ON a step edge is
+            # fragile regardless of which mechanism is doing the biting.  The
+            # assertion message below is worded accordingly.
             if "strictly_decreases_by" in _sub:
                 _w = _sub.get("t_window")
                 _tl = (SCENARIOS.get(_n) or {}).get("pi_timeline") or ()
@@ -1937,12 +2285,28 @@ for _n, _e in FAULT_EXPECTATIONS.items():
                             "`strictly_decreases_by` t_window opening at %r is "
                             "within one command period (%.3f s at "
                             "PI_CMD_HZ = %.0f) of the pi_timeline entry at %r. "
-                            "The first in-window sample is then the PRE-step "
-                            "value ~19 times in 20 and the measured fall is "
-                            "short by a whole step. Open the window clear of "
-                            "the entry (inside the step's own hold)."
+                            "The first in-window sample is then decided by "
+                            "tick phase against the step edge, so the measured "
+                            "fall can be short by a whole step. Open the "
+                            "window clear of the entry (inside the step's own "
+                            "hold)."
                             % (_n, _tag, _w[0], PI_CMD_PERIOD_S,
                                PiCommander.PI_CMD_HZ, _et))
+            # ── 2026-08-31: min_value + max_value in ONE spec is a SILENT DROP ─
+            # _judge_signal_leaf() dispatches through a chain of
+            # `if ... return`, and `min_value` is tested BEFORE `max_value`, so a
+            # spec carrying both keys evaluates the FLOOR ONLY and the ceiling
+            # never runs — a bound that reads as asserted and is not. Found while
+            # banding the FTP-75 h2_cum_g checks (which are written as two specs
+            # for exactly this reason). Refuse the shape rather than reorder the
+            # dispatcher: two specs also give the report two named verdicts
+            # instead of one, which is what a reader of a band wants.
+            assert not ("min_value" in _sub and "max_value" in _sub), (
+                "FAULT_EXPECTATIONS[%r].signals_require[%r] carries BOTH "
+                "`min_value` and `max_value`. _judge_signal_leaf() returns on "
+                "the first bound it matches and tests min_value first, so the "
+                "ceiling would be silently ignored. Split the band into two "
+                "specs (a floor and a ceiling) on the same column." % (_n, _tag))
             # ── L4: a max_ticks-only bit/value spec is vacuity-prone ──────────
             # "the signal was LOW/absent for at most N ticks" is satisfied by a
             # column that is BLANK or missing entirely (zero matching ticks), so
@@ -3527,6 +3891,19 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
                           else ("; ".join(reasons) or
                                 "no observation frame at or after t=%.1fs" % t_req)})
 
+        # `provisional_note` (2026-08-31 review M3): a threshold in this entry has
+        # not yet been derived from a live campaign. The note rides the check
+        # detail (pass or fail) so results.json/REPORT.md carry the qualifier —
+        # a first-campaign band miss must read as "threshold not yet derived",
+        # never as a board/plant change. Remove the key when the band is pinned.
+        # DI-MED-5: computed HERE rather than at the events loop, because
+        # `signals_require` checks carry provisional thresholds too (ems-sdp's
+        # first-campaign bands are signal checks, not event ones) and rendering
+        # the qualifier onto only half the checks is how a provisional number
+        # gets read as a derived one.
+        prov = expect.get("provisional_note")
+        prov_sfx = ("  [PROVISIONAL: %s]" % prov) if prov else ""
+
         sig_specs = expect.get("signals_require") or []
         if sig_specs:
             # `signals` is scan_signals()' output; None means the caller did not
@@ -3537,9 +3914,12 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
                     "name": "signals_require", "passed": False,
                     "detail": ("this scenario declares %d positive signal "
                                "assertion(s) but they were not measured — the "
-                               "caller did not run scan_signals()" % len(sig_specs))})
+                               "caller did not run scan_signals()" % len(sig_specs))
+                              + prov_sfx})
             else:
-                checks.extend(judge_signals(sig_specs, signals, why))
+                for _c in judge_signals(sig_specs, signals, why):
+                    _c["detail"] = _c.get("detail", "") + prov_sfx
+                    checks.append(_c)
 
         # child_tx_healthy (2026-08-31): THIS process's own injection stream was
         # continuous.  Declared by a scenario whose objective is a COMMAND-side
@@ -3561,13 +3941,8 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
         # events_require accepts EITHER a bare kind string (at least one such event)
         # or a dict pinning count and/or a numeric field's plausibility band. The
         # bare form is kept because most future entries will want nothing more.
-        # `provisional_note` (2026-08-31 review M3): a threshold in this entry has
-        # not yet been derived from a live campaign. The note rides the check
-        # detail (pass or fail) so results.json/REPORT.md carry the qualifier —
-        # a first-campaign band miss must read as "threshold not yet derived",
-        # never as a board/plant change. Remove the key when the band is pinned.
-        prov = expect.get("provisional_note")
-        prov_sfx = ("  [PROVISIONAL: %s]" % prov) if prov else ""
+        # `prov_sfx` (the `provisional_note` qualifier) is built above, next to
+        # the signals block, and rides these details too.
         for req in expect.get("events_require", ()):
             ok, observed, problems = _judge_event_spec(req, events)
             kind = (req if isinstance(req, str) else req["kind"])
@@ -4680,8 +5055,21 @@ def _run_plan(plan, args, problems, results, write_outputs):
              % (wr_counts.get("mid_run"),
                 "; also FAILED %d check(s)" % other_failures if other_failures else ""))
             if wr_reason is not None else
-            ("warm resets %s" % ("?" if wr_counts.get("mid_run") is None
-                                 else wr_counts["mid_run"])))
+            # LOW (2026-08-31 ledger fix queue) — LABEL, not semantics.  The
+            # number rendered here has always been the MID-RUN count (resets
+            # after WARM_RESET_GRACE_S), which is the one the tripwire scores;
+            # `warm_resets_observed` is the whole-run count and is the one a
+            # reader intuitively expects behind the words "warm resets".  Every
+            # sequential-campaign run legitimately shows 1 observed / 0 mid-run,
+            # so the bare label read as "no warm reset happened" on a board that
+            # had just performed one.  Both numbers are now named.  The SCORED
+            # quantity is unchanged: the tripwire, `passed`, and the
+            # results.json fields all still key on mid_run alone.
+            ("mid-run warm resets %s (of %s observed)"
+             % ("?" if wr_counts.get("mid_run") is None
+                else wr_counts["mid_run"],
+                "?" if wr_counts.get("observed") is None
+                else wr_counts["observed"])))
 
         results.append(res)
         print("    -> %s (%s)"

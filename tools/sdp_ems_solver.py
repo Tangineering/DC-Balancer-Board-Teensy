@@ -30,10 +30,8 @@ The TPM is consumed as delivered infrastructure:
     references/EMS/generated/TPM_dt1_hil.mat  (+ its .provenance.json sidecar)
 built by tools/tpm_generator.py.  The matrix is UNITLESS: its bins partition
 [0, 1] and it is invariant to affine rescaling of the demand axis.  THIS
-SCRIPT owns the energy scaling, and reads it from the sidecar at solve time
-(`normalization.p_dem_scaled_min_w` / `p_dem_scaled_max_w`) rather than
-hardcoding it, so regenerating the TPM against a different cycle set changes
-the policy through the same channel it changes the matrix.
+SCRIPT owns the energy scaling — see D11 for WHICH map is in force and why the
+sidecar's is no longer the default.
 
 ============================================================================
 DECLARED PORT DECISIONS  (each states the MATLAB behaviour and why it moved)
@@ -159,6 +157,53 @@ D10. THE CONVERGENCE BREAK IS TAKEN AFTER THE UPDATE, NOT BEFORE IT.
     exactly the delta the test just found to be under it, i.e. under 1e-12 g
     here - and `solver.final_delta` is the delta of the sweep that was KEPT.
 
+D11. THE DEMAND MAP IS THE CONSUMER'S, NOT THE SIDECAR'S  (2026-08-31,
+    operator-ruled; this is what separates sdp_policy_v2.json from v1).
+    The TPM's own sidecar carries an IDEAL-SCALING normalization block
+    (p_dem_scaled_min_w -1.124773 W, p_dem_scaled_max_w +1.639842 W): the
+    full-size cycles' demand span carried through the systemic-scaling ratio.
+    v1 solved against it, and the ONLINE consumer (SdpStrategy in
+    tools/hil_plant_sim.py) then measured this rig's ACTUAL bus power
+    P_dem = V_bus*(I_fc + I_batt) at 0 .. 22.887 W - an ORDER OF MAGNITUDE
+    above the modelled span.  Campaign hil_report_20260831_191509 measured the
+    consequence: the normalized demand clamped to the top bin on ~98 % of
+    decisions, the policy interior was never addressed, and `sdp-v1` emitted a
+    single constant clamped share for the whole run.  The plumbing and the
+    provenance were validated; the POLICY was not exercised.
+
+    The unitless-TPM contract already anticipates this: the matrix describes
+    TRANSITIONS between quantiles of a demand distribution and is invariant to
+    an affine rescaling of the axis, so the CONSUMER owns the map from watts
+    onto [0, 1].  The fix is therefore a re-map plus a re-solve of the SAME
+    matrix, not a new TPM.
+
+    DEMAND_MAP_DEFAULT_W = (0.0, 25.0) is the shipped map.  Derivation:
+      * upper 25.0 W = the campaign's measured maximum 22.887 W (the ems-sdp
+        and ems-soc-band CSVs' P_dem p95 is 22.876 W; the ems drive-cycle
+        peaks at 14.758 W) plus ~9 % headroom, rounded to a round number so it
+        reads as a DECLARED ENVELOPE rather than a fitted statistic.  A demand
+        above it still clamps into bin 24 - the clamp is not removed, it is
+        moved out to the edge of the measured envelope where it belongs.
+      * lower 0.0 W because this rig's INA253s see only FORWARD boost current
+        (D4): P_dem as the consumer computes it is >= 0 by construction, so a
+        negative low edge would spend bins on a region no run can visit.  It
+        also makes the regen-bin degeneracy of D4 unreachable rather than
+        merely unlikely: with p_min = 0 no bin centre is negative.
+    A DIFFERENT map is a DIFFERENT POLICY.  --demand-map re-states it
+    explicitly and --demand-map-sidecar reproduces v1's mapping; whichever is
+    used is recorded in the artifact under `normalization` (the map ACTUALLY
+    USED, which is the block the consumer reads) with `demand_map_source`
+    naming its provenance and `sidecar_p_dem_*_w` preserving the sidecar's own
+    numbers beside it, so no field silently changes meaning between v1 and v2.
+
+    WHAT DOES NOT MOVE: the TPM matrix, its bin edges, the dwell distribution
+    behind `charge_forbidden_bins`' rule (a), gamma, and alpha - which is
+    derived from the pack's coulombic energy (D2) and has no demand-axis term
+    at all.  WHAT DOES: every watt-denominated quantity - the bin centres, the
+    stage cost's P_fc and its hydrogen, the per-stage dSoC, and rule (b) of
+    charge_forbidden_bins (the FC current budget), which is no longer
+    vacuous at 25 W the way it was at 1.64 W.
+
 ============================================================================
 WHAT THIS MODEL DOES NOT CONTAIN
 ============================================================================
@@ -187,8 +232,12 @@ WHAT THIS MODEL DOES NOT CONTAIN
     RUNS measured on the same column, at matched terminal SoC.
 
 Usage:
-    C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py
+    # regenerate the SHIPPED artifact (tools/sdp_policies/sdp_policy_v2.json,
+    # demand map 0..25 W - D11):
     C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py --force
+    # reproduce the v1 mapping (ideal-scaling span from the TPM sidecar):
+    C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
+        --demand-map-sidecar --out tools/sdp_policies/sdp_policy_v1.json --force
 
 Requires numpy + scipy (miniforge).  `.venv_hil` is stdlib-only - it is the
 SIMULATOR's interpreter, not this one.  This script is OFFLINE tooling:
@@ -218,8 +267,21 @@ from tpm_generator import rescale_gamma                              # noqa: E40
 # ---------------------------------------------------------------------------
 DEFAULT_TPM = os.path.join(REPO_ROOT, "references", "EMS", "generated",
                            "TPM_dt1_hil.mat")
-DEFAULT_OUT = os.path.join(_HERE, "sdp_policies", "sdp_policy_v1.json")
+DEFAULT_OUT = os.path.join(_HERE, "sdp_policies", "sdp_policy_v2.json")
+# The SCHEMA is the FILE FORMAT contract between this script and
+# hil_plant_sim.py's load_sdp_policy(); it is NOT the artifact's version.  v2
+# changes the demand MAP (D11), not the shape of the document, so the schema
+# stays `sdp-policy-v1` and the existing consumer parses both files unchanged.
 SCHEMA = "sdp-policy-v1"
+
+# ── THE DEMAND MAP (D11).  Watts -> the normalized [0, 1] TPM bin axis. ──────
+# The SHIPPED map, measured against campaign hil_report_20260831_191509 (see
+# D11 for the full derivation and for what the sidecar's own block is).
+DEMAND_MAP_DEFAULT_W = (0.0, 25.0)
+DEMAND_MAP_DEFAULT_SOURCE = (
+    "consumer demand map, campaign 20260831_191509 measured P_dem 0-22.887 W "
+    "(V_bus*(I_fc+I_batt) on the ems-sdp / ems-soc-band CSVs; p95 22.876 W, "
+    "drive-cycle peaks 14.758 W) + ~9 % headroom, rounded to 25.0 W")
 
 
 # ---------------------------------------------------------------------------
@@ -352,8 +414,19 @@ decision problem structurally identical to the full-size one in the
 (SoC, normalized demand) coordinates the TPM already works in - which is the
 correct meaning of "port the structure, not the numbers".
 
-REJECTED ALTERNATIVE (measured, --alpha-mode level): scaling alpha by the
-POWER-SPAN ratio instead,
+ALPHA IS INVARIANT TO THE DEMAND MAP (D11).  The marginal derivation above has
+no demand-axis term - only the pack's coulombic energy - so re-mapping watts
+onto the bin axis does NOT move alpha, and the shipped value is the same
+0.2569444444444444 in sdp_policy_v1.json and sdp_policy_v2.json.  The rejected
+`level` mode below IS map-dependent (it divides by the map's own maximum), and
+the numbers quoted for it are the SIDECAR map's; under the shipped 25.0 W map
+it recomputes to 500*25/60000 = 0.20833, which is a different number for the
+same rejected reason.  The paragraph is kept as written because it is a record
+of the derivation, not of a shipped value.
+
+REJECTED ALTERNATIVE (measured, --alpha-mode level; figures below are for the
+SIDECAR map, see the note above): scaling alpha by the POWER-SPAN ratio
+instead,
 
     alpha_level = 500 * (p_dem_max_scaled / P_dem_max_full)
                 = 500 * 1.639842192501809 / 60000 = 0.013665
@@ -660,7 +733,20 @@ def main(argv=None):
                          "sit beside it)")
     ap.add_argument("--out", default=DEFAULT_OUT,
                     help="output path (default tools/sdp_policies/"
-                         "sdp_policy_v1.json)")
+                         "sdp_policy_v2.json — the SHIPPED artifact)")
+    ap.add_argument("--demand-map", nargs=2, type=float, default=None,
+                    metavar=("MIN_W", "MAX_W"),
+                    help="the map from bus watts onto the TPM's normalized "
+                         "[0, 1] demand axis (default %g %g — see D11). A "
+                         "DIFFERENT MAP IS A DIFFERENT POLICY."
+                         % DEMAND_MAP_DEFAULT_W)
+    ap.add_argument("--demand-map-sidecar", action="store_true",
+                    help="use the TPM sidecar's own normalization block "
+                         "(p_dem_scaled_min_w/max_w) as the demand map "
+                         "instead of the default. This is the IDEAL-SCALING "
+                         "span sdp_policy_v1.json was solved against; on this "
+                         "rig it clamps ~98 %% of decisions into the top bin "
+                         "(D11), so it is kept for reproduction only.")
     ap.add_argument("--force", action="store_true",
                     help="overwrite an existing artifact (refused otherwise)")
     ap.add_argument("--dt", type=float, default=DECISION_DT_S,
@@ -716,6 +802,11 @@ def main(argv=None):
         ap.error("--soc-target must lie strictly inside [--soc-min, --soc-max]")
     if not 0.0 < args.charge_quantile <= 1.0:
         ap.error("--charge-quantile must be in (0, 1]")
+    if args.demand_map is not None and args.demand_map_sidecar:
+        ap.error("--demand-map and --demand-map-sidecar are mutually exclusive "
+                 "- they are two ways of answering the same question")
+    if args.demand_map is not None and not args.demand_map[1] > args.demand_map[0]:
+        ap.error("--demand-map MAX_W must exceed MIN_W")
 
     tpm_path = os.path.abspath(args.tpm)
     if not os.path.isfile(tpm_path):
@@ -724,12 +815,27 @@ def main(argv=None):
     sidecar_path, side = load_sidecar(tpm_path)
     n_bin = tpm.shape[0]
 
-    # ── energy scaling, from the sidecar (never hardcoded) ──────────────────
-    p_min = float(side["normalization"]["p_dem_scaled_min_w"])
-    p_max = float(side["normalization"]["p_dem_scaled_max_w"])
-    if not p_max > p_min:
+    # ── energy scaling: THE DEMAND MAP (D11) ────────────────────────────────
+    # The sidecar's block is ALWAYS read - it is validated, reported, and
+    # recorded beside the map actually used - but it is no longer the default
+    # source of the map. See D11.
+    side_min = float(side["normalization"]["p_dem_scaled_min_w"])
+    side_max = float(side["normalization"]["p_dem_scaled_max_w"])
+    if not side_max > side_min:
         ap.error("sidecar normalization is degenerate (min %r >= max %r)"
-                 % (p_min, p_max))
+                 % (side_min, side_max))
+    if args.demand_map_sidecar:
+        p_min, p_max = side_min, side_max
+        map_source = ("TPM sidecar normalization block "
+                      "(p_dem_scaled_min_w/max_w) - the IDEAL-SCALING span; "
+                      "--demand-map-sidecar, reproduces sdp_policy_v1.json's "
+                      "mapping")
+    elif args.demand_map is not None:
+        p_min, p_max = float(args.demand_map[0]), float(args.demand_map[1])
+        map_source = "explicit --demand-map %.9g %.9g" % (p_min, p_max)
+    else:
+        p_min, p_max = DEMAND_MAP_DEFAULT_W
+        map_source = DEMAND_MAP_DEFAULT_SOURCE
     n_declared = side["bins"].get("n_bins")
     if n_declared is not None and int(n_declared) != n_bin:
         ap.error("sidecar declares %d bins but the matrix is %dx%d"
@@ -784,9 +890,11 @@ def main(argv=None):
 
     print("[sdp] TPM %s (%dx%d, row-stochastic)"
           % (os.path.relpath(tpm_path, REPO_ROOT), n_bin, n_bin))
-    print("[sdp] energy scaling from sidecar: P_dem in [%.9g, %.9g] W; "
-          "bin centres %.6g .. %.6g W" % (p_min, p_max, p_centers[0],
-                                          p_centers[-1]))
+    print("[sdp] demand map: P_dem in [%.9g, %.9g] W; bin centres "
+          "%.6g .. %.6g W" % (p_min, p_max, p_centers[0], p_centers[-1]))
+    print("[sdp]   source: %s" % map_source)
+    print("[sdp]   sidecar's own block (recorded, not necessarily used): "
+          "[%.9g, %.9g] W" % (side_min, side_max))
     print("[sdp] gamma_base %g @ dt %g s -> gamma_eff %.12g"
           % (args.gamma_base, args.dt, gamma))
     print("[sdp] alpha = %.12g  (mode %s; marginal %.12g, level %.12g)"
@@ -869,7 +977,19 @@ def main(argv=None):
                                             REPO_ROOT).replace("\\", "/"),
             "sidecar_sha256": sha256_file(sidecar_path),
         },
-        "normalization": {"p_dem_min_w": p_min, "p_dem_max_w": p_max},
+        # THE MAP ACTUALLY USED - this is the block hil_plant_sim.py's
+        # load_sdp_policy() reads, and its meaning is unchanged from v1: watts
+        # -> the normalized demand coordinate.  What changed (D11) is WHERE the
+        # numbers come from, so the provenance is carried IN the same block
+        # rather than replacing any existing field: `demand_map_source` names
+        # it, and `sidecar_p_dem_*_w` preserve the sidecar's own numbers beside
+        # it so a v1-vs-v2 diff shows the map move explicitly.
+        "normalization": {
+            "p_dem_min_w": p_min, "p_dem_max_w": p_max,
+            "demand_map_source": map_source,
+            "sidecar_p_dem_min_w": side_min,
+            "sidecar_p_dem_max_w": side_max,
+        },
         "demand_bins": {
             "n": int(n_bin),
             "edges": [float(e) for e in edges],

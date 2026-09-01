@@ -101,7 +101,7 @@ from hil_plant_sim import (                                        # noqa: E402
 # reviewer): a `skip_preamble` entry has NO preamble, so its recorded stimulus
 # starts at t = 0 and its first WARM_RESET_GRACE_S seconds sit inside the excluded
 # fault window by construction.  ML0217 is safe only because its INIT_FAIL latches
-# at ~0.3 s and PERSISTS for the remaining 37.6 s, so the post-grace samples still
+# at ~0.80 s and PERSISTS for the remaining 37.2 s, so the post-grace samples still
 # carry it.  An entry whose expected fault were TRANSIENT and early would be
 # scored on an empty window and pass on nothing at all.  Any skip_preamble entry
 # must therefore assert that its expectation is persistent — see
@@ -519,10 +519,20 @@ REPLAY_SUITE = [
             "commanding 12 A is physically impossible) — the response under "
             "test is entirely the live board's, and any recorded-vs-observed "
             "overlay of this entry is meaningless by construction.",
-        # First campaign; the two thresholds below (RESET_STEP_WITHIN_S, and the
-        # absent drive_min_frac) are derived budgets, not measurements. Clears
-        # once a campaign has measured them.
-        "provisional": True,
+        # DE-PROVISIONALIZED 2026-08-31 (ledger fix queue) — the entry has now
+        # run. Campaign 20260831_191509 measured the rail step at 28.3 ms
+        # (results.json `steps_onto_rail_within`: the rail edge at t = 2.528 s
+        # against the t = 2.500 s stimulus start; DI-LOW-4 — the 27.92 ms this
+        # line used to quote was an intermediate figure, and the 5.3x-margin
+        # statement below is unchanged by the correction)
+        # against the 150 ms budget (5.3x margin) and drive activity at 59.14 %
+        # of the recorded window (predicted ~0.60). `drive_min_frac` is set from
+        # that measurement below; RESET_STEP_WITHIN_S is DELIBERATELY held at
+        # 0.15 s for one more campaign before tightening toward the ~0.06 s the
+        # single datapoint suggests — one run does not establish the spread, and
+        # the FU5 precedent is that a budget-derived bound stays until a
+        # distribution replaces it, not until a first sample lands under it.
+        "provisional": False,
         # MANDATORY, not a rule-1/2/3 judgement — see the fourth bucket in the
         # decision comment above. The recorded v_sp IS the entire stimulus; the
         # rails are constant nominals that assert nothing.
@@ -532,11 +542,13 @@ REPLAY_SUITE = [
             # Ordered before the motor-response checks, per the drive_loop_stepped
             # convention: if the commands never reached the board, the reader sees
             # that cause before three downstream checks report on a flat zero.
-            # NO drive_min_frac yet — FU3 precedent: the fraction is set at ~half
-            # a MEASURED window activity, and this entry has never run. Expected
-            # ~0.60 (the 1.5 s arrival leg of a 2.5 s recorded window); add the
-            # floor after the first campaign rather than fitting it from a budget.
-            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped"},
+            # FU3: measured 0.5914 of the recorded window over threshold
+            # (campaign 20260831_191509 — the first run of this entry, and within
+            # 1.4 % of the ~0.60 predicted from the 1.5 s arrival leg of a 2.5 s
+            # recorded window); floor set at ~half that, as every other opted-in
+            # entry's is.
+            {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
+             "drive_min_frac": 0.30},
             # The positive half of the FU4 assertion. after_s is deliberately NOT
             # set: it defaults to data.preamble_s (2.5 s here), which is the same
             # bound everything else in the module resolves through
@@ -690,19 +702,26 @@ REPLAY_SUITE = [
         # ~t=2.52 s.  FAULT_INIT_FAIL is raised ONLY by busBringupTick()'s phase
         # timeouts (.ino:8762-8765, :8784-8786), i.e. only from State 0's bring-up
         # machine — a running board can never produce it.  Replaying raw restores the
-        # genuine cold-boot-into-darkness test: P0's gate never sees the bus reach
-        # V_PRECHARGE_MIN, and PRECHARGE_TIMEOUT_MS (300 ms, .ino:1466) latches
-        # INIT_FAIL.  ML0217 is a modern BLG v6 with all rail fields present, so it
-        # needs no absent-rail substitution and loses nothing by skipping the
-        # preamble.
+        # genuine cold-boot-into-darkness test.  ML0217 is a modern BLG v6 with all
+        # rail fields present, so it needs no absent-rail substitution and loses
+        # nothing by skipping the preamble.
         #
-        # OBSERVABILITY OF THE LATCH (verified): INIT_FAIL fires ~300 ms after
-        # bring-up starts, i.e. BEFORE the 2.0 s grace bound.  It is still scored,
+        # ⚠️ WHICH GATE FAILS — RECORD CORRECTED 2026-08-31.  This block used to
+        # say the run dies on P0: "P0's gate never sees the bus reach
+        # V_PRECHARGE_MIN, and PRECHARGE_TIMEOUT_MS (300 ms, .ino:1466) latches
+        # INIT_FAIL", with the latch at "~300 ms".  Campaign 20260831_191509
+        # MEASURED the latch at t = 0.8015 s, which is P1's BUS_CHARGE_TIMEOUT_MS
+        # (800 ms, .ino:1381) plus staging phase, not P0's 300 ms.  The
+        # `not_before_s: 0.5` bound on the check below now PINS that
+        # distinction, so the two gates can no longer be confused again.
+        #
+        # OBSERVABILITY OF THE LATCH (verified): INIT_FAIL fires at ~0.80 s,
+        # i.e. BEFORE the 2.0 s grace bound.  It is still scored,
         # because State 99 is latched and the simulator keeps streaming — no run
         # boundary, so the fw v23 warm recovery never arms — and fault_flags
         # therefore reads 0xA000 on every post-grace sample.  The grace filter ORs
         # over samples, not over edges, so a persistent bit survives it; the check
-        # additionally prints the whole-run first-observation time so the ~0.3 s
+        # additionally prints the whole-run first-observation time so the ~0.80 s
         # event is not misreported as a 2.0 s one.
         #
         # Bring-up gate EXEMPT, necessarily: a failing bring-up is the point.
@@ -725,12 +744,29 @@ REPLAY_SUITE = [
         "replay_commands": False,
         # Required alongside skip_preamble (see _assert_skip_preamble_entries()):
         # this entry's first 2.0 s of RECORDED stimulus sit inside the excluded
-        # fault window, so it is only scorable because INIT_FAIL latches at ~0.3 s
-        # and HOLDS for the remaining 37.6 s. Measured on hardware, campaign
-        # 20260830_203006.
+        # fault window, so it is only scorable because INIT_FAIL latches at ~0.80 s
+        # and HOLDS for the remaining 37.2 s. Measured on hardware, campaign
+        # 20260830_203006; re-measured at 0.8015 s in campaign 20260831_191509
+        # (see the P0-vs-P1 correction above).
         "persistent_fault": True,
         "checks": [{"kind": "fault_latched", "name": "init_fail_latched",
-                    "bit": FAULT_INIT_FAIL, "require_stimulus": False},
+                    "bit": FAULT_INIT_FAIL, "require_stimulus": False,
+                    # LOW (2026-08-31 ledger fix queue) — WHICH BRING-UP GATE.
+                    # FAULT_INIT_FAIL is raised by BOTH of busBringupTick()'s
+                    # phase timeouts, so a bare latch check cannot say whether
+                    # the dark bus failed P0's precharge gate
+                    # (PRECHARGE_TIMEOUT_MS 300 ms, .ino:1466) or P1's charge
+                    # gate (BUS_CHARGE_TIMEOUT_MS 800 ms, .ino:1381) — two
+                    # different findings about the firmware, one bit.
+                    # MEASURED, campaign 20260831_191509: the latch lands at
+                    # t = 0.8015 s = the 800 ms P1 timeout plus staging phase.
+                    # 0.5 s is the DISCRIMINATOR: comfortably above the 300 ms
+                    # P0 alternative (+0.20 s) and comfortably below the
+                    # measured P1 latch (-0.30 s), so a shift to the other gate
+                    # fails here instead of passing as "INIT_FAIL, as expected".
+                    # Timestamps are UNSHIFTED for this entry (skip_preamble),
+                    # so the bound is in log time directly.
+                    "not_before_s": 0.5},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
@@ -741,6 +777,10 @@ REPLAY_SUITE = [
         "provisional": True,
         # Same 'Y' class as YP0196/YP0152/YP0166: both command axes live
         # (30719 nonzero v_sp rows, 19697 rows with share_sp off 0.5).
+        #
+        # ⚠️ INCIDENTAL SHARE-CUTOFF TRANSITIONS ARE NOT SCORED here either —
+        # this entry's count swung 8 -> 0 across the same two campaigns. Full
+        # reasoning, and where cutoff coverage actually lives, at YP0166 below.
         "replay_commands": True,
         "checks": [{"kind": "no_fault", "name": "no_fault"},
                    {"kind": "share_loop_actuated", "name": "share_loop_actuated",
@@ -945,10 +985,21 @@ REPLAY_SUITE = [
     {
         "log": "TP0178", "path": "logs/TP0178.BLG", "mode": "conformance",
         "fw_version": 16, "blg_version": 6,
-        "classification": "handoff bus sag to 12.15 V — 0.15 V above LIMIT_V_BUS_MIN, "
-                          "10 ms dwell (half the 20 ms latch)",
+        # ⚠️ CLASSIFICATION CORRECTED 2026-08-31 (ledger fix queue).  This
+        # entry used to read "10 ms dwell (half the 20 ms latch)", carried over
+        # from the original bench note.  THAT DID NOT SURVIVE REPLAY: measured
+        # over the recorded window, the floor is 12.1489 V — it never crosses
+        # LIMIT_V_BUS_MIN 12.0 V at all, the leaky dwell integrator accumulates
+        # 0.0 ms, and the sub-12.15 V excursion itself is only 1-3 ms wide.  The
+        # "10 ms dwell" figure described a sub-threshold sag that does not exist
+        # in this trace; do not reinstate it.
+        "classification": "handoff bus sag to 12.1489 V — 0.1489 V (1.24 %) ABOVE "
+                          "LIMIT_V_BUS_MIN, so 0.0 ms of accumulated UV dwell",
         "why": "The NEGATIVE UV case: the recorded dip must NOT latch UV_BUS. Pairs "
-               "with the legacy UV trio, which must.",
+               "with the legacy UV pair, which must. ⚠️ The must-NOT-latch half is "
+               "VACUOUS on this stimulus by construction (the floor stays above the "
+               "limit, so no board could latch) — `v_bus_min_in_band` is what makes "
+               "the entry bite, by pinning the floor into the near-miss band.",
         "provisional": False,
         # RULE 1 (fault-path purity) AND rule 2: this entry's verdict is a
         # must-NOT-latch fault DECISION, and its 'T'-profile recording has v_sp
@@ -957,6 +1008,19 @@ REPLAY_SUITE = [
         "checks": [
             {"kind": "no_fault", "name": "no_fault"},
             {"kind": "fault_not_latched", "name": "uv_not_latched", "bit": FAULT_UV_BUS},
+            # THE DE-VACUATION PIN (required at import by
+            # _assert_uv_not_latched_entries).  Band from the MEASURED floor,
+            # campaign hil_report_20260831_191509: 12.1489 V.
+            #   lower  12.0  = LIMIT_V_BUS_MIN, EXCLUSIVE — the moment the
+            #          recorded floor reaches it this stops being a
+            #          must-NOT-latch case and the entry needs re-deriving.
+            #          Margin today: +0.1489 V (1.24 %).
+            #   upper  12.30, INCLUSIVE — 0.151 V of headroom above the measured
+            #          floor, i.e. as much room above as the limit is below, so
+            #          ordinary decode/rescale noise cannot trip it while a
+            #          stimulus that stopped being a near miss does.
+            {"kind": "v_bus_min_in_band", "name": "uv_margin_pinned",
+             "min_v": 12.0, "max_v": 12.30},
         ],
     },
 
@@ -1098,6 +1162,21 @@ REPLAY_SUITE = [
         # "A BOUNDED transient that comes back off the rail" is the entry's whole
         # claim and needs the loop running to mean anything. 'Y' class: 30723
         # nonzero v_sp rows, 19606 rows with share_sp off 0.5.
+        #
+        # ⚠️ INCIDENTAL SHARE-CUTOFF TRANSITIONS HERE ARE NOT SCORED, and are not
+        # a stable observable (F2, campaign 20260831_191509). This entry's
+        # replayed share_sp wanders across DROOP_R_MIN/DROOP_R_MAX, so
+        # updateShareSetpointCutoff() opens and closes a bus switch some number
+        # of times as a SIDE EFFECT — and the count swung 46 -> 0 between round 4
+        # and campaign 20260831_191509 with nothing changed. The boundary
+        # crossing depends on where the open-loop share PI's windup happens to
+        # sit when the setpoint arrives, which is command-arrival-phase
+        # sensitive; a band around it would be fitting noise. Cutoff coverage is
+        # DELIBERATE elsewhere — `share-staircase` (cut + restore + four
+        # latencies at a designed load) and `ems-y-b00-*` (both channels, both
+        # directions) — so nothing is lost by leaving it unscored here. Do not
+        # add a transition-count check to this entry without first establishing
+        # the distribution across several campaigns.
         "replay_commands": True,
         "checks": [
             {"kind": "no_fault", "name": "no_fault"},
@@ -1123,12 +1202,17 @@ REPLAY_SUITE = [
     {
         "log": "TP0201", "path": "logs/TP0201.BLG", "mode": "deviation",
         "fw_version": 18, "blg_version": 6,
-        "classification": "share-rail handoff gap, bus 15.86 -> 12.185 V",
-        "why": "The deepest recorded handoff sag. It stays 0.185 V above "
-               "LIMIT_V_BUS_MIN for ~10 ms, i.e. inside the 20 ms dwell, so the "
-               "firmware must NOT latch UV. CAVEAT: the fw v19 handoff SLEW that "
-               "mitigates the gap acts on the plant, which replay bypasses — the "
-               "mitigation is not exercisable open-loop, only the fault decision is.",
+        "classification": "share-rail handoff gap, bus 15.86 -> 12.1853 V",
+        # ⚠️ WORDING CORRECTED 2026-08-31 alongside TP0178's (ledger fix queue):
+        # the sag stays ABOVE the limit, so there is no dwell to be "inside".
+        # Measured floor 12.1853 V, accumulated dwell 0.0 ms.
+        "why": "The deepest recorded handoff sag. Its floor is 0.1853 V ABOVE "
+               "LIMIT_V_BUS_MIN, so the leaky dwell integrator never accumulates "
+               "and the firmware must NOT latch UV. CAVEAT: the fw v19 handoff SLEW "
+               "that mitigates the gap acts on the plant, which replay bypasses — "
+               "the mitigation is not exercisable open-loop, only the fault "
+               "decision is. ⚠️ Like TP0178, the must-NOT-latch half is VACUOUS on "
+               "this stimulus; `v_bus_min_in_band` is what makes the entry bite.",
         "provisional": False,
         # RULE 1 (fault-path purity) AND rule 2: a must-NOT-latch fault decision,
         # recorded by a 'T' profile whose v_sp is identically 0 (12961 rows).
@@ -1136,6 +1220,15 @@ REPLAY_SUITE = [
         "checks": [
             {"kind": "no_fault", "name": "no_fault"},
             {"kind": "fault_not_latched", "name": "uv_not_latched", "bit": FAULT_UV_BUS},
+            # THE DE-VACUATION PIN — see TP0178 for the full derivation. Band
+            # from the MEASURED floor, campaign hil_report_20260831_191509:
+            # 12.1853 V, i.e. +0.1853 V (1.54 %) over LIMIT_V_BUS_MIN. The SAME
+            # band as TP0178 deliberately: the two entries are the same claim on
+            # two logs whose floors differ by 37 mV, and one band that brackets
+            # both is easier to reason about than two nearly-identical ones.
+            # Headroom above this floor is 0.115 V.
+            {"kind": "v_bus_min_in_band", "name": "uv_margin_pinned",
+             "min_v": 12.0, "max_v": 12.30},
         ],
     },
 
@@ -1257,7 +1350,7 @@ def _assert_skip_preamble_entries():
     recorded stimulus starts at t = 0, so its first WARM_RESET_GRACE_S seconds are
     inside the excluded fault window by construction, and only a PERSISTENT expected
     fault survives to be scored.  ML0217 is safe for exactly that reason and no
-    other: INIT_FAIL latches at ~0.3 s and holds for the remaining 37.6 s.
+    other: INIT_FAIL latches at ~0.80 s and holds for the remaining 37.2 s.
 
     An entry added later whose expected fault is transient and early would be judged
     on an empty window and PASS on nothing.  So a skip_preamble entry must say, in
@@ -1282,7 +1375,96 @@ def _assert_skip_preamble_entries():
             f"skip_preamble entry proves nothing about the excluded window.")
 
 
+def _assert_uv_not_latched_entries():
+    """Import-time guard: a must-NOT-latch UV entry must PIN ITS STIMULUS.
+
+    MED (2026-08-31 ledger fix queue).  `fault_not_latched` on FAULT_UV_BUS is
+    the one check kind in this module that can be VACUOUSLY TRUE without any
+    tag saying so: if the recorded floor never reaches LIMIT_V_BUS_MIN, the
+    firmware's dwell integrator accumulates 0.0 ms and no board could fail it.
+    Campaign `hil_report_20260831_191509` found exactly that on TP0178 and
+    TP0201 — two green ticks asserting nothing.
+
+    The fix is structural rather than per-entry: any entry making the
+    must-NOT-latch UV claim must ALSO carry a `v_bus_min_in_band` check, which
+    pins the recorded floor into a near-miss band and so fails loudly the day
+    the stimulus moves in either direction.  Enforced here so a future UV entry
+    cannot be added without the pin.
+
+    Deliberately scoped to FAULT_UV_BUS: it is the only bit whose firmware test
+    is a DWELL over a threshold on a rail this CSV carries, and therefore the
+    only one whose stimulus can be pinned this way from the trace alone."""
+    for e in REPLAY_SUITE:
+        checks = e.get("checks", [])
+        if not any(c.get("kind") == "fault_not_latched"
+                   and int(c.get("bit", 0)) == FAULT_UV_BUS for c in checks):
+            continue
+        log = e.get("log")
+        pins = [c for c in checks if c.get("kind") == "v_bus_min_in_band"]
+        assert pins, (
+            f"REPLAY_SUITE[{log!r}] claims UV_BUS must NOT latch but does not "
+            f"pin its own stimulus. That check is vacuously true whenever the "
+            f"recorded V_bus floor stays above LIMIT_V_BUS_MIN "
+            f"{LIMIT_V_BUS_MIN_V:.1f} V — which is the case for every such entry "
+            f"in the suite today. Add a `v_bus_min_in_band` check with the "
+            f"entry's measured floor so a stimulus change fails loudly.")
+        for c in pins:
+            assert "max_v" in c, (
+                f"REPLAY_SUITE[{log!r}]: a `v_bus_min_in_band` check needs an "
+                f"explicit `max_v` — the ceiling is what stops the entry "
+                f"degenerating into 'any healthy bus also does not latch UV'.")
+            assert float(c.get("min_v", LIMIT_V_BUS_MIN_V)) < float(c["max_v"]), (
+                f"REPLAY_SUITE[{log!r}]: `v_bus_min_in_band` needs "
+                f"min_v < max_v; got {c.get('min_v', LIMIT_V_BUS_MIN_V)!r} and "
+                f"{c['max_v']!r}.")
+
+
+def _assert_check_spec_shapes():
+    """Import-time shape guard for the per-check spec fields.
+
+    Cheap, and it catches the failure mode this module is most exposed to: a
+    field typed onto the WRONG check kind reads as an assertion and is silently
+    ignored, because every check reads its spec with `.get()`."""
+    _KNOWN = {
+        "no_fault": {"ignore_bits"},
+        "fault_latched": {"bit", "require_stimulus", "not_before_s"},
+        "fault_not_latched": {"bit"},
+        "bounded_current": {"limit_a"},
+        "no_sustained_rail": {"max_episode_s", "level_a"},
+        "no_rail_limit_cycle": {"max_alt_per_s", "level_a"},
+        "returns_off_rail": {"level_a", "within_s", "rail_level_a"},
+        "near_zero_current": {"max_abs_a"},
+        "drive_loop_stepped": {"min_abs_a", "min_samples", "drive_min_frac"},
+        "share_loop_actuated": {"min_span", "min_samples"},
+        "steps_onto_rail_within": {"level_a", "within_s", "after_s"},
+        "v_bus_min_in_band": {"min_v", "max_v"},
+    }
+    for e in REPLAY_SUITE:
+        log = e.get("log")
+        for c in e.get("checks", []):
+            kind = c.get("kind")
+            assert kind in CHECK_KINDS, (
+                f"REPLAY_SUITE[{log!r}]: unknown check kind {kind!r}.")
+            extra = set(c) - {"kind", "name"} - _KNOWN.get(kind, set())
+            assert not extra, (
+                f"REPLAY_SUITE[{log!r}] check {c.get('name')!r} (kind {kind!r}) "
+                f"carries field(s) {sorted(extra)} that this kind does not read. "
+                f"Every check reads its spec with .get(), so a misplaced field "
+                f"is silently ignored rather than rejected — which is exactly "
+                f"how an entry comes to look like it asserts more than it does. "
+                f"Move the field to a kind that reads it, or add it to "
+                f"_assert_check_spec_shapes()._KNOWN if the kind now supports it.")
+            # `not_before_s` is only meaningful once a latch time exists.
+            if "not_before_s" in c:
+                assert float(c["not_before_s"]) > 0.0, (
+                    f"REPLAY_SUITE[{log!r}]: `not_before_s` must be positive; a "
+                    f"bound at or below 0 asserts nothing.")
+
+
 _assert_skip_preamble_entries()
+_assert_uv_not_latched_entries()
+# _assert_check_spec_shapes() reads CHECK_KINDS, which is built after the check
+# functions further down; it is CALLED at the bottom of this module, not here.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1346,7 +1528,7 @@ class ReplayCsv:
 
         Distinct from the times the checks print, which are necessarily the first
         POST-GRACE observation.  A fault that latches before the grace bound and
-        persists — ML0217's INIT_FAIL at ~0.3 s is the standing example — is
+        persists — ML0217's INIT_FAIL at ~0.80 s is the standing example — is
         correctly scored on its post-grace samples, but reporting 2.0 s as "when it
         happened" would be wrong; both numbers are shown."""
         for t, f in self.faults_all:
@@ -1508,7 +1690,7 @@ def _whole_run_first_note(data, bit=None):
 
       PERSISTED   the bit is still set on the LAST pre-grace sample, so it latched
                   early and the grace filter is looking at that same latch.
-                  ML0217's INIT_FAIL at ~0.3 s is the standing example.
+                  ML0217's INIT_FAIL at ~0.80 s is the standing example.
       CARRIED-IN  the bit was set early and is GONE by the end of the pre-grace
                   window — the predecessor run's settle latch, cleared by the fw v23
                   warm reset at t ~= 0.5 s.  The post-grace sighting is then a
@@ -1533,6 +1715,34 @@ def _whole_run_first_note(data, bit=None):
     return (f" (also seen at t={t0:.3f}s but CLEARED by t={last_pre[0]:.3f}s — that "
             f"earlier sighting is the predecessor run's carried-in settle latch, NOT "
             f"this one; the post-grace occurrence is a separate, later event)")
+
+
+def _persisted_latch_t(data, bit):
+    """WHOLE-RUN first LATCHED observation of `bit`, EXCLUDING a carried-in one.
+
+    DI-MED-4.  `check_fault_latched`'s `not_before_s` bound needs "when did THIS
+    run latch", and the raw whole-run first sighting cannot answer that: a
+    predecessor run's settle latch is still on the wire for the first ~0.5 s
+    until the fw v23 warm reset clears it, so back-to-back suite runs would hand
+    the bound a timestamp from the PREVIOUS run — and on ML0217, whose bound
+    separates P0's PRECHARGE_TIMEOUT_MS from P1's BUS_CHARGE_TIMEOUT_MS, that
+    reads as "a different firmware path raised the same bit sooner" and FAILS a
+    correct board with a wrong-mechanism message.
+
+    The classification rule is `_whole_run_first_note`'s, reused rather than
+    re-invented so the two can never disagree: an early sighting is PERSISTED
+    when the latch is STILL SET on the last pre-grace sample, and CARRIED-IN
+    when it is gone by then.  A carried-in latch is skipped and the first
+    post-grace latched observation is returned instead."""
+    def latched(f):
+        return bool(f & bit) and bool(f & FAULT_ERROR)
+    first = next((t for t, f in data.faults_all if latched(f)), None)
+    if first is None or first >= data.grace_s:
+        return first
+    last_pre = data.faults_pre_grace[-1] if data.faults_pre_grace else None
+    if last_pre is not None and not latched(last_pre[1]):
+        return next((t for t, f in data.faults if latched(f)), None)
+    return first
 
 
 def _carried_in_note(data):
@@ -1614,8 +1824,99 @@ def check_fault_not_latched(data, spec):
                 f"{len(indicated)} tick(s) from t={indicated[0]:.3f}s without ever "
                 f"latching — allowed here (this check promises no LATCH), but a "
                 f"`no_fault` check on the same entry will fail on it")
+    margin = ""
+    if bit == FAULT_UV_BUS:
+        # MED (2026-08-31 ledger fix queue): SAY HOW CLOSE THE STIMULUS CAME.
+        # On TP0178/TP0201 this check is VACUOUS — their recorded minima never
+        # cross LIMIT_V_BUS_MIN at all, so the dwell integrator accumulates
+        # 0.0 ms and no possible firmware could fail the check. That is not
+        # visible from a green tick, so the margin is printed alongside it, and
+        # the companion `v_bus_min_in_band` check (required at import for every
+        # entry carrying this pair) is what makes a stimulus change LOUD.
+        lo_t, lo = _v_bus_min_recorded(data)
+        if lo is not None:
+            _q, _w, peak = _uv_stimulus_qualifies(data)
+            margin = (f"; STIMULUS MARGIN: min V_bus {lo:.4f} V at t={lo_t:.3f}s, "
+                      f"{lo - LIMIT_V_BUS_MIN_V:+.4f} V vs LIMIT_V_BUS_MIN "
+                      f"{LIMIT_V_BUS_MIN_V:.1f} V, peak accumulated dwell "
+                      f"{peak:.1f} ms vs the {UV_BUS_DWELL_LATCH_MS:.0f} ms latch"
+                      + (" — the recorded floor never crosses the limit, so this "
+                         "check is VACUOUS on this stimulus (see "
+                         "`v_bus_min_in_band`)" if lo >= LIMIT_V_BUS_MIN_V else ""))
     return True, (f"{_fault_names(bit)} never latched across {len(data.faults)} "
-                  f"ticks at t >= {data.grace_s:.1f}s{note}{_carried_in_note(data)}")
+                  f"ticks at t >= {data.grace_s:.1f}s{note}{margin}"
+                  f"{_carried_in_note(data)}")
+
+
+def _v_bus_min_recorded(data):
+    """(t, V_bus) at the RECORDED-window minimum, or (None, None).
+
+    Restricted to t >= data.preamble_s for the M5 reason every stimulus reader
+    in this module is: the synthetic preamble holds a healthy 15.95 V that this
+    harness invented, and a question about the STIMULUS must be answered from
+    the stimulus.  (A high preamble cannot move a minimum, but the restriction
+    is stated so a future preamble change cannot silently move one.)"""
+    window = [(t, v) for t, v in data.v_bus if t >= data.preamble_s]
+    if not window:
+        return None, None
+    t, v = min(window, key=lambda tv: tv[1])
+    return t, v
+
+
+def check_v_bus_min_in_band(data, spec):
+    """The recorded V_bus MINIMUM lands inside (min_v, max_v].
+
+    MED (2026-08-31 ledger fix queue) — THE DE-VACUATION GUARD FOR THE
+    must-NOT-latch UV ENTRIES.  `fault_not_latched` on TP0178/TP0201 asserts
+    that a recorded sag does not latch UV_BUS, and campaign
+    `hil_report_20260831_191509` found it cannot fail: those logs' minima are
+    12.1489 V and 12.1853 V, which never cross LIMIT_V_BUS_MIN 12.0 V, so the
+    firmware's dwell integrator accumulates 0.0 ms and no board could latch.
+    The check was passing on a stimulus that was never applied.
+
+    THIS check is the one that bites, and it bites in BOTH directions:
+
+      LOWER bound, EXCLUSIVE at LIMIT_V_BUS_MIN — if a future decode, rescale
+        or absent-rail substitution pushed the injected floor UNDER the limit,
+        the entry would silently become a might-latch case and its `no_fault`
+        companion would start failing for a reason nobody wrote down. Failing
+        HERE names the cause.
+      UPPER bound, INCLUSIVE — if the floor drifted well ABOVE the limit the
+        entry would stop being a near-miss at all: a 15 V trace also "does not
+        latch UV", and the entry would have quietly become a tautology.
+
+    It asserts the STIMULUS, not the board, so it is deliberately a separate
+    check rather than a tightening of `fault_not_latched`: the two answer
+    different questions and a reader should see both verdicts.
+
+    Spec fields: `min_v` (exclusive floor, default LIMIT_V_BUS_MIN_V), `max_v`
+    (inclusive ceiling, required)."""
+    lo_v = float(spec.get("min_v", LIMIT_V_BUS_MIN_V))
+    hi_v = float(spec["max_v"])
+    t, v = _v_bus_min_recorded(data)
+    if v is None:
+        return False, (f"no V_bus samples at or after t={data.preamble_s:.1f}s — "
+                       f"the recorded stimulus is absent, so its floor cannot be "
+                       f"pinned")
+    where = (f"min V_bus {v:.4f} V at t={t:.3f}s ({v - LIMIT_V_BUS_MIN_V:+.4f} V "
+             f"vs LIMIT_V_BUS_MIN {LIMIT_V_BUS_MIN_V:.1f} V)")
+    if v <= lo_v:
+        return False, (f"{where} is AT OR BELOW the {lo_v:.2f} V floor this entry "
+                       f"pins: the recorded sag now crosses the UV limit, so this "
+                       f"is no longer a must-NOT-latch stimulus and the entry's "
+                       f"classification must be re-derived before its verdict "
+                       f"means anything")
+    if v > hi_v:
+        return False, (f"{where} is ABOVE the {hi_v:.2f} V ceiling this entry pins: "
+                       f"the recorded floor has drifted away from the limit, so the "
+                       f"companion `fault_not_latched` check is no longer a "
+                       f"near-miss assertion but a tautology any healthy bus "
+                       f"satisfies")
+    return True, (f"{where}, inside the pinned near-miss band "
+                  f"({lo_v:.2f}, {hi_v:.2f}] V — the sag stays above the limit "
+                  f"with {(v - LIMIT_V_BUS_MIN_V) / LIMIT_V_BUS_MIN_V * 100:.2f} % "
+                  f"margin, which is what makes `fault_not_latched` a real "
+                  f"near-miss case and not a tautology")
 
 
 def check_fault_latched(data, spec):
@@ -1685,6 +1986,48 @@ def check_fault_latched(data, spec):
         return False, (f"{_fault_names(bit)} latched at t={hits[0]:.3f}s but was "
                        f"CLEARED by the end of the run (final 0x{end_flags:04X}) — "
                        f"it must LATCH and hold")
+    # ── `not_before_s`: WHICH mechanism latched, not just that one did ──────
+    # LOW (2026-08-31 ledger fix queue).  A bare `fault_latched` says the bit is
+    # set and holds; it cannot distinguish two firmware paths that raise the SAME
+    # bit at different times.  ML0217 is the case: FAULT_INIT_FAIL is raised by
+    # busBringupTick()'s phase timeouts, and P0's PRECHARGE_TIMEOUT_MS (300 ms)
+    # and P1's BUS_CHARGE_TIMEOUT_MS (800 ms) both produce it — so "INIT_FAIL
+    # latched" alone would pass whether the dark bus failed the precharge gate or
+    # the charge gate, which are different findings about the firmware.
+    #
+    # Evaluated against the WHOLE-RUN first latched observation, deliberately:
+    # `hits[0]` is the first POST-GRACE one, which on a skip_preamble entry is
+    # just the grace bound and carries no information about when the latch
+    # actually happened.
+    #
+    # ⚠️ But the whole-run first sighting is taken through _persisted_latch_t()
+    # (DI-MED-4), which drops a CARRIED-IN latch — the predecessor run's, still
+    # on the wire until the fw v23 warm reset clears it at t ~= 0.5 s. Back to
+    # back in a campaign, a suite run that follows a latched one would otherwise
+    # hand this bound the PREVIOUS run's timestamp: on ML0217 (bound at P1's
+    # 800 ms BUS_CHARGE_TIMEOUT_MS) a carried-in 0x8100 at t ~= 0.1 s reads as
+    # "P0's 300 ms precharge path fired instead" and FAILS a correct board with
+    # a wrong-mechanism message.
+    #
+    # NO CEILING, and that is a considered omission rather than an oversight:
+    # INIT_FAIL can only be raised from State 0's bring-up machine, which runs
+    # once at the start of the run, so a "latched too late" outcome has no
+    # mechanism.  A ceiling would assert something the firmware's structure
+    # already guarantees.
+    not_before = spec.get("not_before_s")
+    latch_t = _persisted_latch_t(data, bit)
+    if not_before is not None:
+        if latch_t is None:
+            return False, (f"{_fault_names(bit)} has a `not_before_s` bound but no "
+                           f"whole-run latched observation was found — the check "
+                           f"cannot say which mechanism fired")
+        if latch_t < float(not_before):
+            return False, (
+                f"{_fault_names(bit)} LATCHED at t={latch_t:.4f}s, EARLIER than "
+                f"the {float(not_before):.3f}s this entry pins. The bit is right "
+                f"but the mechanism is not the one classified — a different "
+                f"firmware path raised the same bit sooner, and the entry's "
+                f"`why` no longer describes what happened")
     lead = ""
     if indicated and indicated[0] < hits[0]:
         lead = (f" (transiently indicated {1000.0 * (hits[0] - indicated[0]):.0f} ms "
@@ -1692,7 +2035,11 @@ def check_fault_latched(data, spec):
     return True, (f"{_fault_names(bit)} LATCHED (bit + FAULT_ERROR); first "
                   f"POST-GRACE latched observation at t={hits[0]:.3f}s{lead}"
                   + _whole_run_first_note(data, bit)
-                  + (f", stimulus qualified from t={stim_t:.3f}s" if stim_t is not None else ""))
+                  + (f", stimulus qualified from t={stim_t:.3f}s" if stim_t is not None else "")
+                  + ("" if not_before is None else
+                     f"; whole-run latch at t={latch_t:.4f}s, "
+                     f"{latch_t - float(not_before):+.4f}s vs the "
+                     f"{float(not_before):.3f}s mechanism bound"))
 
 
 def _oc_fc_stimulus_qualifies(data):
@@ -2195,7 +2542,13 @@ CHECK_KINDS = {
     "drive_loop_stepped": check_drive_loop_stepped,
     "share_loop_actuated": check_share_loop_actuated,
     "steps_onto_rail_within": check_steps_onto_rail_within,
+    "v_bus_min_in_band": check_v_bus_min_in_band,
 }
+
+# Deferred from the guard block above: this one needs CHECK_KINDS, which only
+# exists now.  Still import-time, so the failure mode it catches is still a
+# refusal to load rather than a silently ignored field at score time.
+_assert_check_spec_shapes()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

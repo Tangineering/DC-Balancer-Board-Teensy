@@ -1722,10 +1722,14 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
         tmp_path, ["--scenario", "steady", "--electrical", "simple", "--duration", "0.02"])
     # cmd_v_sp/cmd_share_sp are appended UNCONDITIONALLY in simulated-plant
     # mode, after soc; h2_rate_gps/h2_cum_g (2026-08-31) are appended
-    # UNCONDITIONALLY after THAT pair, and h2_sdp_cum_g (2026-08-31 SDP round)
-    # is appended UNCONDITIONALLY after THAT -- so soc is now sixth-from-last.
-    assert header[-6:] == ["soc", "cmd_v_sp", "cmd_share_sp",
-                           "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g"]
+    # UNCONDITIONALLY after THAT pair, h2_sdp_cum_g (2026-08-31 SDP round) is
+    # appended UNCONDITIONALLY after THAT, and cmd_share_sp_raw (2026-08-31
+    # ledger fix queue, MED-1 -- the SDP table's pre-clamp request, blank on a
+    # non-SDP run) is appended UNCONDITIONALLY after THAT -- so soc is now
+    # seventh-from-last.
+    assert header[-7:] == ["soc", "cmd_v_sp", "cmd_share_sp",
+                           "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
+                           "cmd_share_sp_raw"]
     assert "elec_substep_hz" not in header
     assert "elec_events" not in header
     assert "replay_rec" not in header
@@ -1734,9 +1738,10 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
 def test_csv_schema_hifi_mode_appends_elec_columns(tmp_path):
     header, _rows = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "hifi", "--duration", "0.02"])
-    assert header[-8:] == ["soc", "elec_substep_hz", "elec_events",
+    assert header[-9:] == ["soc", "elec_substep_hz", "elec_events",
                            "cmd_v_sp", "cmd_share_sp",
-                           "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g"]
+                           "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
+                           "cmd_share_sp_raw"]
 
 
 REPLAY_CSV_HEADER_PIN = [
@@ -2244,12 +2249,13 @@ def test_m3_hifi_with_csv_creates_events_sidecar(tmp_path):
     assert rows, "expected at least one CSV row"
     # cmd_v_sp/cmd_share_sp are unconditionally appended after the hifi elec_*
     # columns in simulated-plant mode, h2_rate_gps/h2_cum_g (2026-08-31) are
-    # unconditionally appended after THAT pair, and h2_sdp_cum_g (2026-08-31
-    # SDP round) is appended after THAT -- so elec_events is now
-    # sixth-from-last, not third-from-last.
-    assert header[-5:] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
-                           "h2_cum_g", "h2_sdp_cum_g"]
-    elec_events_col = rows[-1][-6]
+    # unconditionally appended after THAT pair, h2_sdp_cum_g (2026-08-31
+    # SDP round) is appended after THAT, and cmd_share_sp_raw (2026-08-31
+    # ledger fix queue) is appended after THAT -- so elec_events is now
+    # seventh-from-last, not third-from-last.
+    assert header[-6:] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
+                           "h2_cum_g", "h2_sdp_cum_g", "cmd_share_sp_raw"]
+    elec_events_col = rows[-1][-7]
     assert elec_events_col.strip() != ""
     n_reported = int(elec_events_col)
     with open(sidecar, encoding="utf-8") as fh:
@@ -2813,16 +2819,19 @@ def test_pi_live_csv_cmd_columns_blank(tmp_path):
     header, rows = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "simple",
                    "--duration", "0.02", "--pi-live"])
-    # h2_rate_gps/h2_cum_g/h2_sdp_cum_g (2026-08-31) are now the last three
-    # columns in simulated-plant mode; cmd_v_sp/cmd_share_sp sit just before
-    # them.
-    assert header[-5:] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
-                           "h2_cum_g", "h2_sdp_cum_g"]
+    # h2_rate_gps/h2_cum_g/h2_sdp_cum_g (2026-08-31) sit after cmd_v_sp/
+    # cmd_share_sp, and cmd_share_sp_raw (2026-08-31 ledger fix queue) is now
+    # the last column in simulated-plant mode -- blank here too, since no SDP
+    # policy drives a --pi-live run (no commander is even constructed).
+    assert header[-6:] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
+                           "h2_cum_g", "h2_sdp_cum_g", "cmd_share_sp_raw"]
     v_idx, share_idx = header.index("cmd_v_sp"), header.index("cmd_share_sp")
+    raw_idx = header.index("cmd_share_sp_raw")
     assert rows, "expected at least one CSV row"
     for row in rows:
         assert row[v_idx] == ""
         assert row[share_idx] == ""
+        assert row[raw_idx] == ""
 
 
 def test_ems_csv_cmd_columns_populated(tmp_path):
@@ -4606,6 +4615,234 @@ def test_ems_dp_replay_scenario_registered_with_dp_replay_strategy():
     assert meta["ems_v_profile"] is hil.SCENARIOS["ems-soc-band"]["ems_v_profile"]
 
 
+# ── dp_table_digests(): file vs table sha stability (2026-08-31 ledger fix) ──
+
+def test_dp_table_digests_file_sha_moves_but_table_sha_does_not_on_a_header_edit(tmp_path):
+    """The whole point of the split: file_sha256 is byte identity (moves on
+    ANY edit incl. the header/banner), table_sha256 is the SETPOINT LAW
+    (data rows only, header + column line excluded) and must NOT move when
+    only a comment/metadata line changes."""
+    path = tmp_path / "table.csv"
+    path.write_text(
+        "# scenario: myscen\n"
+        "# generated_utc: 2026-08-31T00:00:00Z\n"
+        "t,power_share_setpoint,charge_goal\n"
+        "0.0,0.50,0.0\n"
+        "1.0,0.60,1.0\n",
+        encoding="utf-8")
+    file_sha_1, table_sha_1 = hil.dp_table_digests(str(path))
+
+    # Re-emit with a DIFFERENT banner/generated_utc but IDENTICAL data rows.
+    path.write_text(
+        "# scenario: myscen\n"
+        "# generated_utc: 2026-08-31T12:00:00Z  (regenerated, header only)\n"
+        "# command: tools/gen_dp_ems_table.py --force\n"
+        "t,power_share_setpoint,charge_goal\n"
+        "0.0,0.50,0.0\n"
+        "1.0,0.60,1.0\n",
+        encoding="utf-8")
+    file_sha_2, table_sha_2 = hil.dp_table_digests(str(path))
+
+    assert file_sha_1 != file_sha_2
+    assert table_sha_1 == table_sha_2
+    assert len(file_sha_1) == len(table_sha_1) == 64
+
+
+def test_dp_table_digests_table_sha_moves_when_a_data_row_moves(tmp_path):
+    path = tmp_path / "table.csv"
+    path.write_text(
+        "# scenario: myscen\n"
+        "t,power_share_setpoint,charge_goal\n"
+        "0.0,0.50,0.0\n"
+        "1.0,0.60,1.0\n",
+        encoding="utf-8")
+    _file_sha_1, table_sha_1 = hil.dp_table_digests(str(path))
+
+    path.write_text(
+        "# scenario: myscen\n"
+        "t,power_share_setpoint,charge_goal\n"
+        "0.0,0.50,0.0\n"
+        "1.0,0.61,1.0\n",     # one setpoint changed
+        encoding="utf-8")
+    _file_sha_2, table_sha_2 = hil.dp_table_digests(str(path))
+
+    assert table_sha_1 != table_sha_2
+
+
+def test_dp_table_digests_excludes_the_header_positionally_not_by_its_text(tmp_path):
+    """DI-LOW-2: the column header is dropped as the FIRST non-'#' line,
+    whatever it says. Under the old literal match a renamed column would have
+    been hashed as if it were a data row, moving the SETPOINT-LAW digest
+    without a single setpoint changing."""
+    rows = "0.0,0.50,0.0\n1.0,0.60,1.0\n"
+    a = tmp_path / "a.csv"
+    b = tmp_path / "b.csv"
+    a.write_text("# scen\nt,power_share_setpoint,charge_goal\n" + rows,
+                 encoding="utf-8")
+    b.write_text("# scen\ntime_s,share,charge\n" + rows, encoding="utf-8")
+    assert hil.dp_table_digests(str(a))[1] == hil.dp_table_digests(str(b))[1]
+
+
+def test_shipped_dp_table_sha_is_unchanged_by_the_header_exclusion_refactor():
+    """The refactor must exclude exactly the lines the literal match did, so
+    the shipped table's recorded law digest is pinned literally here."""
+    path = os.path.join(hil.DP_TABLE_DIR, "dp_ems_table_ems-dp-replay.csv")
+    _file_sha, table_sha = hil.dp_table_digests(path)
+    assert table_sha == (
+        "5ad85569d9572fac4a5c44cb5ee2633f743b5cd3c41d24a2a01984973bf830b2")
+
+
+def test_dp_table_digests_raises_oserror_on_missing_file(tmp_path):
+    with pytest.raises(OSError):
+        hil.dp_table_digests(str(tmp_path / "nope.csv"))
+
+
+def test_shipped_dp_table_digests_are_stable_64char_hex():
+    path = os.path.join(hil.DP_TABLE_DIR, "dp_ems_table_ems-dp-replay.csv")
+    file_sha, table_sha = hil.dp_table_digests(path)
+    assert len(file_sha) == len(table_sha) == 64
+    int(file_sha, 16); int(table_sha, 16)     # must parse as hex
+    # A second read must reproduce the SAME digests (pure function of the
+    # file's own bytes, no hidden state).
+    file_sha_2, table_sha_2 = hil.dp_table_digests(path)
+    assert (file_sha, table_sha) == (file_sha_2, table_sha_2)
+
+
+# ── DpReplayStrategy.provenance, populated by bind_scenario() ──────────────
+
+def test_dp_replay_provenance_populated_end_to_end():
+    """bind_scenario() on the real shipped table must fill `provenance` with
+    the fields the CSV meta sidecar's config.dp_table block records --
+    checked directly against dp_table_digests() on the same file so the two
+    computations cannot silently disagree."""
+    import types
+    s = hil.DpReplayStrategy()
+    args = types.SimpleNamespace(soc0=0.7, capacity_ah=5.0)
+    s.bind_scenario("ems-dp-replay", hil.SCENARIOS["ems-dp-replay"],
+                    electrical_mode=hil.SCENARIOS["ems-dp-replay"]["electrical"],
+                    args=args)
+    assert s.provenance is not None
+    path = os.path.join(hil.DP_TABLE_DIR, "dp_ems_table_ems-dp-replay.csv")
+    file_sha, table_sha = hil.dp_table_digests(path)
+    assert s.provenance["path"] == s.path
+    assert s.provenance["file_sha256"] == file_sha
+    assert s.provenance["table_sha256"] == table_sha
+    assert s.provenance["scenario"] == "ems-dp-replay"
+    assert s.provenance["n_rows"] == len(s.times)
+    assert s.provenance["charger_accounting"]
+    assert s.provenance["command"]
+
+
+def test_dp_replay_provenance_is_none_before_bind_scenario():
+    s = hil.DpReplayStrategy()
+    assert s.provenance is None
+
+
+# ── meta sidecar config.dp_table block ──────────────────────────────────────
+
+def test_main_ems_dp_replay_run_records_dp_table_block_in_meta_config(tmp_path):
+    """End-to-end (real shipped table, real main()): the .meta.json sidecar's
+    config.dp_table block must be present for a dp-replay run and must carry
+    the same digests dp_table_digests() computes directly -- closes the
+    provenance asymmetry campaign 20260831_191509 found (an ems-dp-replay
+    folder had no way to verify which table produced its numbers)."""
+    csv_path = str(tmp_path / "dp.csv")
+    args = ["--teensy-ip", "127.0.0.1", "--port", "58992", "--bind-port", "0",
+            "--rate", "200", "--scenario", "ems-dp-replay", "--electrical", "hifi",
+            "--duration", "0.02", "--csv", csv_path]
+    rc = hil.main(args)
+    assert rc == 0
+    with open(hil.meta_path_for(csv_path)) as fh:
+        meta = json.load(fh)
+    block = meta["config"].get("dp_table")
+    assert block is not None
+    path = os.path.join(hil.DP_TABLE_DIR, "dp_ems_table_ems-dp-replay.csv")
+    file_sha, table_sha = hil.dp_table_digests(path)
+    assert block["file_sha256"] == file_sha
+    assert block["table_sha256"] == table_sha
+    assert block["scenario"] == "ems-dp-replay"
+    assert block["n_rows"] > 0
+
+
+def test_main_non_dp_run_has_no_dp_table_block_in_meta_config(tmp_path):
+    csv_path = str(tmp_path / "steady2.csv")
+    args = ["--teensy-ip", "127.0.0.1", "--port", "58995", "--bind-port", "0",
+            "--rate", "200", "--scenario", "steady", "--electrical", "simple",
+            "--duration", "0.02", "--csv", csv_path]
+    rc = hil.main(args)
+    assert rc == 0
+    with open(hil.meta_path_for(csv_path)) as fh:
+        meta = json.load(fh)
+    assert "dp_table" not in meta["config"]
+
+
+def test_main_ems_sdp_run_has_no_dp_table_block_but_has_sdp_policy(tmp_path):
+    """The two provenance blocks are keyed by STRATEGY TYPE, not by "any EMS
+    ran" -- an sdp-v2 run must not grow a dp_table block, and a dp-replay run
+    (tested above) must not grow an sdp_policy block."""
+    csv_path = str(tmp_path / "sdp2.csv")
+    args = ["--teensy-ip", "127.0.0.1", "--port", "58996", "--bind-port", "0",
+            "--rate", "200", "--scenario", "ems-sdp", "--electrical", "simple",
+            "--duration", "0.02", "--csv", csv_path]
+    rc = hil.main(args)
+    assert rc == 0
+    with open(hil.meta_path_for(csv_path)) as fh:
+        meta = json.load(fh)
+    assert "dp_table" not in meta["config"]
+    assert "sdp_policy" in meta["config"]
+
+
+# ── --ems sdp-v1 is no longer a valid choice ────────────────────────────────
+
+def test_ems_sdp_v1_flag_rejected_as_invalid_choice():
+    with pytest.raises(SystemExit):
+        hil.main(["--teensy-ip", "127.0.0.1", "--port", "58997", "--bind-port", "0",
+                   "--rate", "200", "--scenario", "ems-sdp", "--electrical", "simple",
+                   "--duration", "0.02", "--ems", "sdp-v1"])
+
+
+def test_ems_sdp_v2_is_a_valid_ems_name():
+    assert "sdp-v2" in hil.EMS_NAMES
+    assert "sdp-v1" not in hil.EMS_NAMES
+
+
+# ── cmd_share_sp_raw column: value formatting and blank-on-non-SDP ─────────
+
+def test_cmd_share_sp_raw_is_4dp_on_an_sdp_run(tmp_path):
+    header, rows = _run_main_csv(
+        tmp_path, ["--scenario", "ems-sdp", "--electrical", "simple", "--duration", "0.05"])
+    idx = header.index("cmd_share_sp_raw")
+    assert rows
+    seen_nonblank = False
+    for row in rows:
+        val = row[idx]
+        if val.strip() != "":
+            seen_nonblank = True
+            # exactly 4 places after the decimal point, per the header comment.
+            assert len(val.split(".")[-1]) == 4, val
+            float(val)   # must parse
+    assert seen_nonblank
+
+
+def test_cmd_share_sp_raw_is_blank_on_a_non_sdp_ems_run(tmp_path):
+    header, rows = _run_main_csv(
+        tmp_path, ["--scenario", "ems-drive-cycle", "--electrical", "simple",
+                   "--duration", "0.05", "--ems", "hold-5050"])
+    idx = header.index("cmd_share_sp_raw")
+    assert rows
+    for row in rows:
+        assert row[idx] == ""
+
+
+def test_cmd_share_sp_raw_is_blank_when_no_commander_at_all(tmp_path):
+    header, rows = _run_main_csv(
+        tmp_path, ["--scenario", "steady", "--electrical", "simple", "--duration", "0.02"])
+    idx = header.index("cmd_share_sp_raw")
+    assert rows
+    for row in rows:
+        assert row[idx] == ""
+
+
 # ═════════════════════════════════════════════════════════════════════════
 # 2026-08-31 wave 2 -- Round C, test-writer coverage.
 # ═════════════════════════════════════════════════════════════════════════
@@ -5664,6 +5901,43 @@ def test_sdp_strategy_provenance_populated_after_bind_scenario(tmp_path):
     assert strategy.provenance["decision_dt_s"] == pytest.approx(1.0)
 
 
+def test_sdp_provenance_records_the_demand_map(tmp_path):
+    """DI-MED-3: the sidecar's claim to identify WHICH DEMAND MAP a trace ran
+    rested on a reader recognising a sha — v1 and v2 declare the same schema
+    and differ chiefly in `normalization`. The three demand-map fields must be
+    carried through the loader into the per-run provenance record."""
+    src = "a synthetic demand map, recorded for this test"
+    doc = _minimal_sdp_policy_doc(
+        normalization={"p_dem_min_w": 0.0, "p_dem_max_w": 25.0,
+                       "demand_map_source": src})
+    _write_sdp_policy(tmp_path / hil.SDP_POLICY_FILE, doc)
+    strategy = hil.SdpStrategy(policy_dir=str(tmp_path))
+    strategy.bind_scenario("ems-sdp", hil.SCENARIOS["ems-sdp"])
+    prov = strategy.provenance
+    assert prov["p_dem_min_w"] == pytest.approx(0.0)
+    assert prov["p_dem_max_w"] == pytest.approx(25.0)
+    assert prov["demand_map_source"] == src
+
+
+def test_sdp_provenance_demand_map_source_is_none_on_an_older_artifact(tmp_path):
+    """`demand_map_source` is prose the solver only started recording later;
+    an artifact without it must load and record None, not raise."""
+    strategy = hil.SdpStrategy(policy_dir=str(tmp_path))
+    _write_sdp_policy(tmp_path / hil.SDP_POLICY_FILE, _minimal_sdp_policy_doc())
+    strategy.bind_scenario("ems-sdp", hil.SCENARIOS["ems-sdp"])
+    assert strategy.provenance["demand_map_source"] is None
+    assert strategy.provenance["p_dem_min_w"] == pytest.approx(-1.0)
+
+
+def test_shipped_sdp_policy_carries_a_demand_map_source():
+    """The SHIPPED v2 artifact records its own map in words — the field the
+    provenance block above exists to surface."""
+    pol = hil.load_sdp_policy(os.path.join(hil.SDP_POLICY_DIR,
+                                           hil.SDP_POLICY_FILE))
+    assert pol["p_dem_max_w"] == pytest.approx(25.0)
+    assert pol["demand_map_source"]
+
+
 # ── meta sidecar config.sdp_policy block (round 2, item 2) ─────────────────
 
 def test_main_ems_sdp_run_records_sdp_policy_block_in_meta_config(tmp_path):
@@ -5828,10 +6102,41 @@ def test_sdp_clamp_share_last_share_raw_preserves_the_table_value(tmp_path):
     assert strategy.last_share != pytest.approx(0.75)      # soc-band's own ceiling
 
 
+def test_sdp_last_share_raw_is_none_until_the_first_decision(tmp_path):
+    """DI-LOW-6: `last_share_raw` is the PRE-CLAMP TABLE REQUEST, and before
+    the first decision the table has requested nothing. A seeded 0.50 would be
+    written into `cmd_share_sp_raw` as a request the policy can never make (its
+    action set here is {0.0, 1.0}). `last_share` IS seeded — something must go
+    on the wire — so the two are asserted apart."""
+    strategy = _sdp_strategy_with_policy(
+        tmp_path, doc=_minimal_sdp_policy_doc(
+            **{"policy": {"share": [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0]],
+                          "charge_goal": [[0.0, 0.0]] * 3}}))
+    assert strategy.last_share_raw is None
+    assert strategy.last_share == pytest.approx(hil.SOC_BAND_SHARE_NOMINAL)
+    fb = {"t": hil.EMS_RUN_ENTRY_S, "v_profile": 1.0, "soc": 0.60,
+          "V_bus": 1.0, "I_fc": 0.0, "I_batt": 0.0}
+    strategy(hil.EMS_RUN_ENTRY_S, fb)
+    assert strategy.last_share_raw == pytest.approx(1.0)
+    # ... and a reset returns it to "no request yet", not to a seed.
+    strategy.reset()
+    assert strategy.last_share_raw is None
+
+
+def test_sdp_summary_line_is_none_before_any_decision(tmp_path):
+    """The only other reader of last_share_raw formats it with %.4f, which a
+    None would raise on — it is guarded by the decisions==0 early return, and
+    that guard is pinned here rather than assumed."""
+    strategy = _sdp_strategy_with_policy(tmp_path)
+    assert strategy.last_share_raw is None
+    assert strategy.summary_line() is None
+
+
 # ── Registration and reset semantics (item 14) ──────────────────────────────
 
-def test_sdp_v1_registered_under_its_name():
-    assert hil.EMS_STRATEGIES["sdp-v1"] is hil.ems_sdp_v1
+def test_sdp_v2_registered_under_its_name():
+    assert hil.EMS_STRATEGIES["sdp-v2"] is hil.ems_sdp_v2
+    assert "sdp-v1" not in hil.EMS_STRATEGIES
 
 
 def test_sdp_reset_clears_soc0_capture_and_counters(tmp_path):
@@ -5976,8 +6281,11 @@ def test_h2_sdp_proxy_negative_p_fc_clamps_to_zero_same_as_gfc():
 def test_csv_header_carries_h2_sdp_cum_g_at_expected_position(tmp_path):
     header, _rows = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "simple", "--duration", "0.02"])
-    assert header[-1] == "h2_sdp_cum_g"
-    assert header[-3:] == ["h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g"]
+    # cmd_share_sp_raw (2026-08-31 ledger fix queue) is now appended after
+    # h2_sdp_cum_g, so h2_sdp_cum_g is no longer the last column.
+    assert header[-1] == "cmd_share_sp_raw"
+    assert header[-4:] == ["h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
+                           "cmd_share_sp_raw"]
 
 
 def test_csv_simulated_row_carries_h2_sdp_cum_g_value(tmp_path):
@@ -6000,7 +6308,7 @@ def test_ems_sdp_scenario_shares_ems_soc_band_stimulus_by_reference():
     assert sdp["ems_v_profile"] is soc_band["ems_v_profile"]
     assert sdp["duration_s"] == pytest.approx(soc_band["duration_s"])
     assert sdp["chg_i_ceiling_a"] == pytest.approx(soc_band["chg_i_ceiling_a"])
-    assert sdp["ems"] == "sdp-v1"
+    assert sdp["ems"] == "sdp-v2"
     assert sdp["electrical"] == "any"
 
 

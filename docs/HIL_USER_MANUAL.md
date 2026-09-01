@@ -229,13 +229,16 @@ It carries:
 * `argv` verbatim and a `config` block with the *resolved* run parameters
   (duration, rate, electrical engine, trace config, VESC capacitance, noise,
   `soc0`, capacity, board IP/port);
-* `config.sdp_policy` — **`--ems sdp-v1` runs only**, absent otherwise: which
+* `config.sdp_policy` — **`--ems sdp-v2` runs only**, absent otherwise: which
   baked policy drove the run (`path`, `file_sha256`, `policy_sha256` plus the
   recipe that produced it, `generated_utc`, the grid shape, `decision_dt_s` and
   the source TPM's sha256). It is here because nothing else in this document
   can identify the artifact — `constants_hash` covers module constants, not a
   JSON file on disk, so a regenerated policy would change every command in the
-  run while leaving the rest of the sidecar identical (§3.2.3a);
+  run while leaving the rest of the sidecar identical (§3.2.3a). ⚠️ It is also
+  the **only** place a trace says which *demand map* it ran: `sdp_policy_v1.json`
+  and `sdp_policy_v2.json` declare the same `schema`, so `policy_sha256` and the
+  artifact's own `normalization` block are what separate them;
 * `constants` — every module-level numeric constant of `hil_plant_sim.py` and
   `hil_electrical.py` — and `constants_hash`, a sha256 over them. **This is the
   model-provenance record**: a `K_DROOP_BUS` retune or a `K_F` correction moves
@@ -423,7 +426,7 @@ Refused combinations (argparse-level, with the reason printed):
 | `regen-harvest` | same, plus `charge_goal` **inside braking windows only**, so the Ag105 is fed through REGEN and `FC_CHARGE` never opens | **Yes** — same two keys | `charge-regen` |
 | `soc-band` | deadband-P **share bias** on the SoC error, plus **opportunistic FC-path charging** in cruise | **No, as written** — it closes on `fb["soc"]`, which is plant truth (see the portability list under §3.3) | `ems-soc-band` |
 | `dp-replay` | nothing — it **plays back a table** of `power_share_setpoint` / `charge_goal` computed **offline** by backward dynamic programming with full foreknowledge of the whole cycle | **No, and never** — a Pi has no future. This is a *benchmark*, not a controller | `ems-dp-replay` |
-| `sdp-v1` | looks `power_share_setpoint` / `charge_goal` up in a **state-indexed** policy — (SoC, demand bin) — baked offline by stochastic dynamic programming (`tools/sdp_ems_solver.py`), recomputed every `decision_dt_s` (1 s) and held between decisions | **No, as written** — same reason as `soc-band`: it closes on `fb["soc"]`, which is plant truth. *Causal*, though, unlike `dp-replay`: the lookup is on the present state, so it is defined on any profile | `ems-sdp` |
+| `sdp-v2` | looks `power_share_setpoint` / `charge_goal` up in a **state-indexed** policy — (SoC, demand bin) — baked offline by stochastic dynamic programming (`tools/sdp_ems_solver.py`, artifact `sdp_policy_v2.json`), recomputed every `decision_dt_s` (1 s) and held between decisions. ⚠️ Named `sdp-v2` since 2026-08-31: the CODE is unchanged, but it now loads the re-mapped `v2` artifact, and a strategy name claiming `v1` while playing `v2` would be a contract lie (§3.2.3a) | **No, as written** — same reason as `soc-band`: it closes on `fb["soc"]`, which is plant truth. *Causal*, though, unlike `dp-replay`: the lookup is on the present state, so it is defined on any profile | `ems-sdp` |
 | `y-b30-v1`, `y-b30-v3`, `y-b00-v1`, `y-b00-v3` | **both** axes of the firmware's own `'Y'` combined profile (16 regions, 40 s — the table at `.ino:3162-3179`), at Vmax 1 or 3 m/s and share bound b = 0.30 or 0.00; no charging | **Yes** — read only `t` (and the scenario's `ems_run_exit_s`) | `ems-y-b30-v1` … `ems-y-b00-v3` |
 | `mppt-harvest` | `regen-harvest` plus `charge_goal` on the **low-cruise plateaus** as well, so the charger is also fed through the **FC path** — where the Ag105's MPPT input-voltage threshold can bind | **Yes** — same two keys as `regen-harvest` | `mppt-tracking` |
 
@@ -509,7 +512,7 @@ This scenario turns that threshold on in the plant model, which makes
 `MPPT_DISABLE` causally load-bearing for the first time. On a ~15.95 V bus the FC
 charge path **cannot clear an 18 V threshold**, and the firmware releases tracking
 only once the charger reports ready — so releasing it is exactly what stops the
-charging that made it ready. The model predicts a **hunt**: ~80 ms period, ~50 %
+charging that made it ready. The model predicts a **hunt**: **~40.05 ms** period (MEASURED median, campaign `20260831_191509`; the offline probe's 80.0 ms was a mis-derivation), ~50 %
 duty, `I_charge` sitting near half the configured ceiling.
 
 **Open question R1, and what to do about it:** *does this board fit an MPPTS
@@ -677,7 +680,7 @@ The single sharpest tell that the table really was played: `cmd_share_sp` is at
 **0.750 by t ≈ 12 s**, which the causal `soc-band` policy cannot reach before
 t ≈ 35 (its SoC deficit has to saturate first).
 
-### 3.2.3a `sdp-v1` — the causal stochastic-DP policy
+### 3.2.3a `sdp-v2` — the causal stochastic-DP policy
 
 ```
 .venv_hil\Scripts\python.exe tools\hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario ems-sdp --dash
@@ -685,7 +688,14 @@ t ≈ 35 (its SoC deficit has to saturate first).
 
 Same cycle and same drain load as `ems-soc-band` and `ems-dp-replay` — all three
 share **one** `ems_v_profile` object — so the three are directly comparable.
-`--ems` may be omitted; the scenario declares `sdp-v1`.
+`--ems` may be omitted; the scenario declares `sdp-v2`.
+
+> **Renamed 2026-08-31, `sdp-v1` → `sdp-v2`.** The strategy CODE did not change;
+> the ARTIFACT it loads did (see the demand-map box below). The name moved with
+> it because a strategy that says `v1` while playing `v2` is a contract lie, and
+> `ems_strategy` in `results.json` / `REPORT.md` is the most visible thing
+> separating a pre-re-map campaign from a post-re-map one. `--ems sdp-v1` is no
+> longer a valid strategy name — there is deliberately no alias.
 
 Where `dp-replay` plays a table indexed by **time**, this one plays a policy
 indexed by **state**: `(SoC, demand bin)`. The offline solve is not causal, but
@@ -694,7 +704,7 @@ defined on any profile. The lookup runs once per `decision_dt_s` (1 s, from the
 artifact) and the two energy fields are held between decisions; `v_setpoint` and
 `mode_cmd` still update every 20 ms.
 
-The artifact is `tools/sdp_policies/sdp_policy_v1.json`, produced by
+The artifact is `tools/sdp_policies/sdp_policy_v2.json`, produced by
 `tools/sdp_ems_solver.py`. The strategy **refuses at startup** if it is missing
 or malformed — including a non-finite or out-of-range action, which would
 otherwise reach the wire silently — rather than falling back to a 0.5 split.
@@ -706,13 +716,16 @@ are printed at bind time and written to the CSV's meta sidecar under
 `config.sdp_policy`:
 
 * **policy-block sha256** — `sha256(json.dumps(doc["policy"], sort_keys=True))`,
-  currently `dbe42d1b…`. This is the **decision law**, and it is stable across a
+  currently `740c802e…` (the retired `v1` artifact's was `dbe42d1b…`; both files
+  declare the same `schema`, so this digest and the artifact's `normalization`
+  block are the only things that tell a `v1` trace from a `v2` one). This is the
+  **decision law**, and it is stable across a
   `--force` regeneration that did not change it. Quote this one.
 * **file sha256** — byte identity of the file. It moves on *every* regeneration,
   since the artifact carries `generated_utc`, so it belongs in a run record and
   never in a comment.
 
-Three things to know before reading a trace, all of them consequences of the
+Five things to know before reading a trace, all of them consequences of the
 artifact and of one design decision, not of the board:
 
 * **It regulates around the SoC this run STARTED at, not the artifact's 0.60.**
@@ -722,27 +735,71 @@ artifact and of one design decision, not of the board:
   length deliberately walking the pack down 0.10 SoC, and no hydrogen comparison
   against `soc-band` would mean anything. The mapping is a pure translation, so
   the policy's shape survives — but absolute-SoC meaning does not.
-* **The demand axis clamps.** The artifact's modelled demand span is
-  −1.125 … +1.640 W; this bench measures ~1–20 W of bus power at cruise, so most
-  decisions land in the **top bin**. That is the operator-ruled contract (clamp,
-  do not rescale), and the exit summary reports it honestly:
-  `[hil] sdp-v1: N decisions, demand bin clamped HIGH on … (…%)`. A ~100 % clamp
-  rate means only the SoC axis carried information that run.
-* **On this cycle the table asks for the FC rail (1.00), which is emitted as
-  0.8500, and it never charges.** At the clamped top bin the shipped policy is
-  bang-bang about its target — 1.00 for SoC nodes in (0.550, 0.600], 0.00 above
-  it *and* at the exact grid-floor node 0.550 (a solver-side clamp-tie
-  degeneracy, its D3/D8, not a second switching point; unreachable here, since
-  it needs SoC to fall 0.05 below the captured `soc0` against this run's ~0.006
-  — but a longer or heavier-drain reuse of `sdp-v1` could reach it, where the
-  policy would command the most-discharging split; the clamp emits that as
-  0.15, in band, so nothing about the current margins changes). `charge_goal`
-  is 0 in every row of that column (the solver marks demand bins 12–24
-  charge-forbidden), and that is **robust rather than incidental**: a reviewer
-  perturbation sweep (2026-08-31) re-solved 600 charge cells under ±1 %/±5 %
-  α, 0.5–0.9 A ceilings, 12–16.5 V bus and ±1 %/−20 % capacity, and the charge
-  decision flipped only at a 1.2 A ceiling, where the FC-budget rule forbids
-  charging anyway. The emitted share is clipped to
+* **The demand map was re-mapped on 2026-08-31, and that is what `v2` is.**
+  `sdp_policy_v1.json` was solved against the TPM sidecar's *ideal-scaling*
+  demand span, −1.125 … +1.640 W. This bench measures `P_dem = V_bus·(I_fc +
+  I_batt)` at **0 … 22.887 W** — an order of magnitude above it — so campaign
+  `hil_report_20260831_191509` clamped **~98 % of decisions into the top bin**:
+  the demand axis carried no information and the strategy emitted one constant
+  share for a whole run. The plumbing was validated; the policy was not
+  exercised. The TPM is unitless by contract (its bins partition a quantile
+  axis), so the fix was a **re-map plus a re-solve of the same matrix**:
+  `sdp_policy_v2.json` uses a **[0.0, 25.0] W** consumer demand map — the
+  measured maximum plus ~9 % headroom, derived in `tools/sdp_ems_solver.py`'s
+  decision **D11**. Offline against the same recorded trace: **61 decisions,
+  zero clamps, 13 distinct demand bins.**
+  The clamp is not removed, only moved out to the edge of the measured
+  envelope, and the exit summary still reports it:
+  `[hil] sdp-v2: N decisions, demand bin clamped HIGH on … (…%)`. **What the
+  counter MEANS has changed:** under `v1` a ~100 % high-clamp rate was the
+  expected reading; under `v2` any appreciable clamp rate means this rig has
+  moved outside the map the shipped policy was solved for, and the answer is a
+  re-solve at a wider map (`--demand-map MIN MAX`), not a wider tolerance.
+  `--demand-map-sidecar` reproduces the `v1` mapping if you need to.
+* **The table asks 0.95 or 1.00, and BOTH are emitted as 0.8500 — so read
+  `cmd_share_sp_raw`, not `cmd_share_sp`.** The share law is bang-bang by
+  construction: the stage cost is piecewise-linear in the share, so its minimum
+  over [0, 1] sits at a vertex, and the whole table takes only
+  {0.00, 0.90, 0.95, 1.00}. Above the (relative) target the action is 0.00; at
+  or below it 1.00, except in the top three demand bins where the kink moves
+  inside the ladder (0.95 in bins 22–23, 0.90 in bin 24). The offline walk of
+  this cycle gets **0.95 over the drain plateau (t = 13…38, bin 22) and 1.00
+  elsewhere** — the demand axis genuinely moving the action — but every one of
+  those values is above `SOC_BAND_SHARE_MAX`, so the *emitted* command is a
+  constant 0.8500 either way. ⚠️ **`cmd_share_sp` therefore cannot tell a `v1`
+  run from a `v2` one, or a live demand axis from a saturated one.** The
+  pre-clamp `cmd_share_sp_raw` CSV column (added in the same round, for exactly
+  this) is the one that shows the table's actual request.
+  The grid-floor node 0.550 reads 0.00 — a solver-side clamp-tie degeneracy
+  (its D3/D8), not a second switching point, and unreachable here since it needs
+  SoC to fall 0.05 below the captured `soc0` against this run's ~0.0017.
+  ⚠️ Note the SoC axis cannot be explored by changing `--soc0`: the mapping is
+  soc0-**relative**, so `soc_rel` starts at the target whatever `soc0` is. Only
+  a longer or heavier-drain run reaches the floor, and only net charging walks
+  it the other way.
+* **⚠️ NEW UNDER `v2`: this cycle now opens a charge window.** Under the 25 W
+  map the solver's own FC-current budget forbids charging above bin 5 and its
+  dwell rule above bin 11, so `charge_goal` = 1 exactly in bins 0–5
+  (`P_dem` < 6.0 W) at any SoC node below the relative target. The walk lands it
+  on **t = 41…58** — the same post-drain 1.0 m/s cruise `soc-band` charges in,
+  reached by a completely different rule. Current budget is `soc-band`'s own,
+  validated at this operating point: with `FC_CHARGE_ENABLE` open,
+  `assertFcChargeEnable()` drops BT off the bus and FC alone carries
+  5.593 W / 15.95 V = 0.351 A plus the 0.800 A ceiling = **1.151 A, 18 % under
+  `LIMIT_I_FC_MAX`**.
+  **Expect ~1 Hz chatter of `FC_CHARGE_ENABLE`** (derived, not yet measured):
+  opening the path adds ~0.8 A to `I_fc`, so the measured `P_dem` jumps
+  ~5.6 → ~18.3 W = bin 18, which is charge-forbidden, and the next 1 s decision
+  withdraws the intent. The policy is memoryless in the demand bin and has no
+  hysteresis — `soc-band` avoids exactly this with its dual `i_tot` gate — so
+  ~8 open/close cycles are expected over the window, each costing a BT_BUS cut
+  and restore. Neither state exceeds a current limit, and `ems-y-b00` exercises
+  the same cut and restore fault-free at a heavier load. **Do not expect
+  `I_charge` to reach `soc-band`'s 0.5 A**: the Ag105 may never reach
+  `chargerReady` inside a 1 s open window, which is why the suite check on this
+  scenario asserts the *switch*, not the current. The first `v2` campaign is
+  what turns this prediction into a measurement.
+* The emitted share is clipped to
   `[SOC_BAND_SHARE_MIN, SOC_BAND_SHARE_MAX] = [0.15, 0.85]`, the **same
   hardware-envelope clamp `soc-band` applies**: a rail sits outside
   `[DROOP_R_MIN, DROOP_R_MAX]`, where the setpoint cut opens the minority
@@ -798,6 +855,15 @@ above binds hardest on this leg: the SDP policy holds a **0.85 FC-heavy split**
 for the whole run (§3.2.3a) and so is expected to spend visibly less pack charge
 than the other two, which is precisely the trade a hydrogen number alone would
 hide. Read its `delta_soc` first.
+
+⚠️ **Under the `v2` artifact this leg also charges** (§3.2.3a), which moves both
+axes at once: the charger's draw is billed to the fuel cell, so `h2_cum_g` goes
+**up**, while the coulombs returned to the pack make `delta_soc` **less
+negative**. Neither move is a ranking on its own. ⚠️ **Do not compare a `v2`
+`ems-sdp` total against the `v1` numbers from campaign
+`hil_report_20260831_191509`** (0.0125424 g / −0.00166 SoC): those were produced
+by a different decision law. The `ems-soc-band` and `ems-dp-replay` legs are
+unaffected by the re-map and remain comparable across the boundary.
 
 **Two more caveats before quoting a comparison.** The DP's advantage is computed
 in a *reduced* model (no share loop, no Ag105 settle/ramp, a 0.1 s stage, the

@@ -1027,6 +1027,70 @@ def test_judge_scenario_provisional_note_present_key_adds_suffix_to_a_synthetic_
         rhs.FAULT_EXPECTATIONS.update(saved)
 
 
+def test_judge_scenario_provisional_note_rides_signals_require_checks_too():
+    """DI-MED-5: `provisional_note` used to render onto events_require details
+    ONLY, so an entry whose provisional thresholds are SIGNAL checks (ems-sdp's
+    are) rendered them as if they were derived. Every signal check must carry
+    the same suffix, on pass and on fail."""
+    note = "a synthetic signal threshold, never derived from anything"
+    synth = {
+        "source": "test",
+        "signals_require": [{"name": "synthetic_floor", "column": "I_fc",
+                             "min_value": 1.0,
+                             "label": "a synthetic signal floor"}],
+        "provisional_note": note,
+    }
+    saved = dict(rhs.FAULT_EXPECTATIONS)
+    rhs.FAULT_EXPECTATIONS[_SYNTH_PROVISIONAL_NOTE_NAME] = synth
+    try:
+        m = _metrics(fault_bits_seen=0, final_fault_flags=0)
+        for signals in (_passing_signals(_SYNTH_PROVISIONAL_NOTE_NAME),
+                        _failing_signals(_SYNTH_PROVISIONAL_NOTE_NAME)):
+            _passed, checks = rhs.judge_scenario(
+                _SYNTH_PROVISIONAL_NOTE_NAME, m, _events(), _child(),
+                signals=signals)
+            sig = [c for c in checks if c["name"].startswith("signal_")]
+            assert sig
+            for c in sig:
+                assert c["detail"].endswith("  [PROVISIONAL: %s]" % note)
+        # ... and the UNMEASURED branch carries it as well: a provisional
+        # threshold that was never measured must not read as a derived gap.
+        _passed2, checks2 = rhs.judge_scenario(
+            _SYNTH_PROVISIONAL_NOTE_NAME, m, _events(), _child(), signals=None)
+        gap = [c for c in checks2 if c["name"] == "signals_require"][0]
+        assert gap["passed"] is False
+        assert gap["detail"].endswith("  [PROVISIONAL: %s]" % note)
+    finally:
+        rhs.FAULT_EXPECTATIONS.clear()
+        rhs.FAULT_EXPECTATIONS.update(saved)
+
+
+def test_judge_scenario_no_provisional_note_leaves_signal_details_plain():
+    """The converse: without the key, no signal check may gain a bracket."""
+    m = _metrics(fault_bits_seen=0, final_fault_flags=0,
+                 fault_bits_before_survive=0, state_at_survive=2)
+    _passed, checks = rhs.judge_scenario(
+        "soc-depletion", m, _events(), _child(),
+        signals=_passing_signals("soc-depletion"))
+    for c in [c for c in checks if c["name"].startswith("signal_")]:
+        assert "PROVISIONAL" not in c["detail"]
+
+
+def test_ems_sdp_entry_declares_its_first_campaign_thresholds_provisional():
+    """DI-MED-5, the live half: ems-sdp's three first-campaign bands come from
+    an OPEN-LOOP walk over a v1 trace, so the entry must carry the note that
+    says so — and it names all three checks, which is what makes a band miss
+    readable as 'threshold not yet derived'."""
+    expect = rhs.FAULT_EXPECTATIONS["ems-sdp"]
+    note = expect.get("provisional_note")
+    assert note
+    for name in ("sdp_table_interior_at_high_demand",
+                 "sdp_table_rail_at_low_demand",
+                 "sdp_charge_window_opened"):
+        assert name in note
+        assert any(s.get("name") == name for s in expect["signals_require"])
+
+
 # -- _judge_event_spec() unit coverage (shared by events_require and every
 #    events_any_of branch) --------------------------------------------------
 
@@ -5181,9 +5245,27 @@ def test_fault_expectations_ems_sdp_entry_shape():
     assert entry["survive_to"]["t"] == pytest.approx(50.0)
     assert entry["survive_to"]["states"] == {2, 3}
     names = {s["name"] for s in entry["signals_require"]}
+    # Re-derived 2026-08-31 for the v2 demand map: two new checks discriminate
+    # the table's INTERIOR actuation (cmd_share_sp_raw, invisible on the
+    # emitted cmd_share_sp column since every table value clamps to the same
+    # 0.8500), and a third asserts the charge window the v1 artifact could
+    # never reach at all.
     assert names == {"sdp_drive_commanded", "sdp_clamped_rail_commanded",
+                     "sdp_table_interior_at_high_demand",
+                     "sdp_table_rail_at_low_demand",
+                     "sdp_charge_window_opened",
                      "sdp_fc_current_biased", "sdp_h2_accounted",
                      "sdp_student_h2_axis"}
+    by_name = {s["name"]: s for s in entry["signals_require"]}
+    assert by_name["sdp_table_interior_at_high_demand"]["column"] == "cmd_share_sp_raw"
+    assert by_name["sdp_table_interior_at_high_demand"]["max_value"] == pytest.approx(0.97)
+    assert by_name["sdp_table_interior_at_high_demand"]["t_window"] == (20.0, 36.0)
+    assert by_name["sdp_table_rail_at_low_demand"]["column"] == "cmd_share_sp_raw"
+    assert by_name["sdp_table_rail_at_low_demand"]["min_value"] == pytest.approx(0.99)
+    assert by_name["sdp_table_rail_at_low_demand"]["t_window"] == (44.0, 54.0)
+    assert by_name["sdp_charge_window_opened"]["switch_bit"] == rhs.SW_FC_CHARGE
+    assert by_name["sdp_charge_window_opened"]["min_ticks"] == 500
+    assert by_name["sdp_charge_window_opened"]["t_window"] == (41.0, 58.0)
     duration = SCENARIOS["ems-sdp"]["duration_s"]
     for spec in entry["signals_require"]:
         window = spec.get("t_window")
@@ -5307,6 +5389,192 @@ def test_analyze_scenario_csv_final_h2_sdp_cum_g_distinct_from_final_h2_cum_g(tm
     assert m["final_h2_cum_g"] == pytest.approx(0.0000100)
     assert m["final_h2_sdp_cum_g"] == pytest.approx(0.0000095)
     assert m["final_h2_cum_g"] != pytest.approx(m["final_h2_sdp_cum_g"])
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Stage-2 additions, 2026-08-31 (campaign-191509 fix-queue round): the
+# share-staircase fc_bus_restored re-derivation, the ems-y-* Y_AUX_LOAD_A
+# re-derivation (_Y_FC_FLOOR), socband_fc_carried's re-derivation, the FTP-75
+# two-spec h2 band (+ the import-time min_value/max_value refusal), and the
+# key_metrics warm-reset label rendering.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_share_staircase_fc_bus_restored_min_ticks_is_900():
+    """1500 -> 900 (60 % of its 1.5 s / 1500-row window, matching the 60 %
+    margin rule every OTHER restore floor in this suite already follows --
+    bt_bus_restored is 1500 of a 2500-row window). The old 1500/1500 floor was
+    100 % of the window and campaign 20260831_191509 measured exactly that:
+    a pass with zero margin against a single dropped observation frame."""
+    spec = next(s for s in rhs.FAULT_EXPECTATIONS["share-staircase"]["signals_require"]
+               if s["name"] == "fc_bus_restored")
+    assert spec["switch_bit"] == rhs.SW_FC_BUS
+    assert spec["min_ticks"] == 900
+    lo, hi = spec["t_window"]
+    assert hi - lo == pytest.approx(1.5)
+    assert spec["min_ticks"] / ((hi - lo) * 1000.0) == pytest.approx(0.60)
+
+
+def test_socband_fc_carried_threshold_is_095():
+    """0.70 -> 0.95 A (DI-MED-1).  `min_value` is a PEAK-over-window test, so
+    the floor must separate the socband run's window peak (measured 1.2414 A)
+    from the CONSTANT-0.50 ems-ftp75-5050 sibling's (0.8275 A) -- anything at or
+    below 0.8275 is satisfied by a run that ignored the share command entirely.
+    The sibling peak is pinned here too, because it is the number that makes
+    this floor a discriminator rather than a decoration."""
+    spec = next(s for s in rhs.FAULT_EXPECTATIONS["ems-ftp75-socband"]["signals_require"]
+               if s["name"] == "socband_fc_carried")
+    assert spec["column"] == "I_fc"
+    assert spec["min_value"] == pytest.approx(0.95)
+    # 15 % over the measured control peak, 23 % under the measured socband peak.
+    assert spec["min_value"] > 0.8275
+    assert spec["min_value"] < 1.2414
+    assert spec["t_window"] == (30.0, 340.0)
+
+
+def test_y_fc_floor_table_re_derived_from_measurement():
+    """DI-MED-2: _Y_FC_BIAS_W narrowed to R3 alone (13.0-16.0), where v is held
+    constant so only the share command moves I_fc, and _Y_FC_FLOOR re-derived
+    from campaign 20260831_191509's measured R3 peaks (0.5659 / 0.7606 A true
+    run, 0.4353 / 0.5850 A for a 0.50 split).  The modelled 0.58/0.80 pair sat
+    ABOVE the true run's own R3 peaks and survived only because the old window
+    swallowed R4's ramp."""
+    assert rhs._Y_FC_BIAS_W == (13.0, 16.0)
+    assert rhs._Y_FC_FLOOR == {1.0: 0.50, 3.0: 0.66}
+    # Each floor sits strictly between "a 0.50 split" and "the measured run".
+    for vmax, split_peak, true_peak in ((1.0, 0.4353, 0.5659),
+                                        (3.0, 0.5850, 0.7606)):
+        floor = rhs._Y_FC_FLOOR[vmax]
+        assert split_peak < floor < true_peak
+        spec = next(s for s in rhs.FAULT_EXPECTATIONS["ems-y-b30-v%g" % vmax]
+                    ["signals_require"] if s["name"] == "fc_current_biased")
+        assert spec["min_value"] == pytest.approx(floor)
+        assert spec["t_window"] == rhs._Y_FC_BIAS_W
+
+
+def test_y_aux_load_a_is_085():
+    from hil_plant_sim import Y_AUX_LOAD_A
+    assert Y_AUX_LOAD_A == pytest.approx(0.85)
+
+
+# ── FTP-75 h2_cum_g band: two specs, not one ────────────────────────────────
+
+def test_ftp75_5050_h2_band_is_two_specs_045_to_085():
+    """hold-5050's h2_cum_g band is now a FLOOR spec and a separate CEILING
+    spec (2026-08-31 fix queue A-item): min_value and max_value dispatch
+    through _judge_signal_leaf()'s if/return chain, min_value first, so a
+    single spec carrying both would silently drop the ceiling -- confirmed
+    directly below, and the module's own import-time assert refuses the
+    shape entirely (negative test further down)."""
+    sig = rhs.FAULT_EXPECTATIONS["ems-ftp75-5050"]["signals_require"]
+    h2_specs = [s for s in sig if s.get("column") == "h2_cum_g"]
+    assert len(h2_specs) == 2
+    for s in h2_specs:
+        assert not ("min_value" in s and "max_value" in s), s["name"]
+    floor = next(s for s in h2_specs if "min_value" in s)
+    ceiling = next(s for s in h2_specs if "max_value" in s)
+    assert floor["min_value"] == pytest.approx(0.045)
+    assert ceiling["max_value"] == pytest.approx(0.085)
+
+
+def test_ftp75_socband_h2_band_is_ceiling_only_asymmetric():
+    """soc-band's band is DELIBERATELY asymmetric: only a ceiling at 0.115,
+    plus the old conservative 5e-3 floor (unmoved) -- a real floor at the
+    ledger's 0.070 would fail a run that correctly latched OC_FC and
+    truncated early, since h2_cum_g freezes at the latch. See the module
+    comment at _FTP_H2_CEILING_SOCBAND for the full argument."""
+    sig = rhs.FAULT_EXPECTATIONS["ems-ftp75-socband"]["signals_require"]
+    h2_specs = [s for s in sig if s.get("column") == "h2_cum_g"]
+    assert len(h2_specs) == 2
+    for s in h2_specs:
+        assert not ("min_value" in s and "max_value" in s), s["name"]
+    floor = next(s for s in h2_specs if "min_value" in s)
+    ceiling = next(s for s in h2_specs if "max_value" in s)
+    assert floor["min_value"] == pytest.approx(5.0e-3)
+    assert ceiling["max_value"] == pytest.approx(0.115)
+
+
+def _min_value_max_value_shape_is_refused(spec):
+    """Re-derivation of the module's own import-time guard (run_hil_suite.py,
+    the FAULT_EXPECTATIONS validation loop): a single signals_require spec
+    must never carry BOTH min_value and max_value, because
+    _judge_signal_leaf() tests min_value first and returns, silently
+    dropping the ceiling. Reproduced here (rather than re-triggered via a
+    module reload, which the codebase's own convention for these import-time
+    guards avoids -- see _strictly_decreases_window_clears_timeline above)
+    and cross-checked against real data below."""
+    return not ("min_value" in spec and "max_value" in spec)
+
+
+def test_min_value_max_value_guard_rejects_the_combined_shape():
+    """The negative case: a spec carrying both keys on one column IS exactly
+    the shape the FTP-75 band was split to avoid, and the re-derived
+    predicate must reject it."""
+    bad_spec = {"name": "bogus_band", "column": "h2_cum_g",
+               "min_value": 0.045, "max_value": 0.085}
+    assert _min_value_max_value_shape_is_refused(bad_spec) is False
+
+
+def test_min_value_max_value_guard_accepts_the_split_shape():
+    floor = {"name": "bogus_floor", "column": "h2_cum_g", "min_value": 0.045}
+    ceiling = {"name": "bogus_ceiling", "column": "h2_cum_g", "max_value": 0.085}
+    assert _min_value_max_value_shape_is_refused(floor) is True
+    assert _min_value_max_value_shape_is_refused(ceiling) is True
+
+
+def test_min_value_max_value_guard_every_real_spec_is_compliant():
+    """Every signals_require spec actually shipped in FAULT_EXPECTATIONS must
+    satisfy the re-derived predicate -- the module imported cleanly (it would
+    have raised AssertionError otherwise), so this must hold; re-checked
+    explicitly rather than trusted only implicitly."""
+    checked = 0
+    for name, expect in rhs.FAULT_EXPECTATIONS.items():
+        for spec in expect.get("signals_require") or []:
+            checked += 1
+            assert _min_value_max_value_shape_is_refused(spec), (name, spec["name"])
+    assert checked > 0
+
+
+# ── key_metrics warm-reset label: "mid-run warm resets N (of M observed)" ──
+
+def test_key_metrics_warm_reset_label_names_both_counts(monkeypatch):
+    """LOW (2026-08-31 ledger fix queue): the rendered label used to read
+    bare "N mid-run warm reset(s)", which a reader could misread as the
+    whole-run count. It now names BOTH the scored mid-run count and the
+    whole-run observed count explicitly. The SCORED quantity (the tripwire,
+    `passed`, results.json) is still mid_run alone -- only the label grew."""
+    def fake_run_child(item, args):
+        return {"status": "ok", "returncode": 0, "wall_s": 0.01, "log": item["log"],
+                "summary": {"achieved_hz": 1000.0}}
+
+    def fake_warm_reset_count(csv_path, child):
+        return {"mid_run": 0, "observed": 1, "times": [0.4]}, "meta.json"
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+    monkeypatch.setattr(rhs, "warm_reset_count", fake_warm_reset_count)
+
+    args = _args(only=["steady"], keep_going=True, settle_s=0.0)
+    plan = rhs.build_plan(args)
+    results, _aborted = rhs._run_plan(plan, args, [], [], lambda m, r: None)
+    r = results[0]
+    assert "mid-run warm resets 0 (of 1 observed)" in r["key_metrics"]
+
+
+def test_key_metrics_warm_reset_label_unmeasured_renders_question_marks(monkeypatch):
+    def fake_run_child(item, args):
+        return {"status": "ok", "returncode": 0, "wall_s": 0.01, "log": item["log"],
+                "summary": {"achieved_hz": 1000.0}}
+
+    def fake_warm_reset_count(csv_path, child):
+        return {"mid_run": None, "observed": None, "times": None}, "unmeasured"
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+    monkeypatch.setattr(rhs, "warm_reset_count", fake_warm_reset_count)
+
+    args = _args(only=["steady"], keep_going=True, settle_s=0.0)
+    plan = rhs.build_plan(args)
+    results, _aborted = rhs._run_plan(plan, args, [], [], lambda m, r: None)
+    r = results[0]
+    assert "mid-run warm resets ? (of ? observed)" in r["key_metrics"]
 
 
 if __name__ == "__main__":
