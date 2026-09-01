@@ -6132,6 +6132,274 @@ def test_sdp_summary_line_is_none_before_any_decision(tmp_path):
     assert strategy.summary_line() is None
 
 
+# ── Charge-window minimum-dwell hysteresis (2026-08-31) ─────────────────────
+#
+# The defect: the policy is memoryless in the demand bin, so opening the
+# charger path feeds ~0.8 A back into its own P_dem input, the next 1 s
+# decision sees a charge-FORBIDDEN bin and withdraws, and the path chatters.
+# Campaign 20260831_222036 measured 9 windows at a 2.0125 s period, costing a
+# 4.63x harvest-efficiency loss and 9x a >17.5 V BT_BUS restore ring.
+#
+# The fixture inverts the minimal doc's charge cell onto the LOW-demand bin,
+# matching the real artifact's structure (the solver admits charging only in
+# bins 0-5), so "opening the charger raises demand out of the charge bin" is
+# reproducible on a 2-bin table.
+
+def _sdp_charge_doc():
+    """Charge admitted at (SoC row 2, demand bin 0) — LOW demand only."""
+    doc = _minimal_sdp_policy_doc()
+    doc["policy"]["charge_goal"] = [[0.0, 0.0], [0.0, 0.0], [1.0, 0.0]]
+    return doc
+
+
+def _sdp_charge_fb(t, p_dem, i_charge=0.0, soc=0.75, **extra):
+    """A feedback view landing on SoC row 2 (soc_ref 0.70 + 0.05) with the
+    requested BUS power. V_bus = 1.0 keeps p_dem == I_fc numerically, so a
+    test reads its own stimulus straight off the argument."""
+    fb = {"t": t, "v_profile": 1.0, "soc": soc, "V_bus": 1.0,
+          "I_fc": p_dem, "I_batt": 0.0, "I_charge": i_charge,
+          "fault_flags": 0}
+    fb.update(extra)
+    return fb
+
+
+def _sdp_charge_strategy(tmp_path):
+    s = _sdp_strategy_with_policy(tmp_path, doc=_sdp_charge_doc())
+    s.soc_ref = 0.70          # capture explicitly so soc 0.75 -> row 2
+    return s
+
+
+def test_sdp_charge_intent_latches_for_the_minimum_dwell(tmp_path):
+    """A rising charge decision arms a dwell, and the intent is HELD across a
+    demand excursion that would otherwise withdraw it on the very next stage —
+    the chatter's first half-cycle."""
+    s = _sdp_charge_strategy(tmp_path)
+    share, goal = s.decide(_sdp_charge_fb(10.0, p_dem=-0.5), t=10.0)
+    assert goal == pytest.approx(hil.SOC_BAND_CHARGE_GOAL)
+    assert s.chg_holds == 1
+    assert s.chg_hold_until == pytest.approx(10.0 + hil.SDP_CHG_MIN_DWELL_S)
+    # Demand now reads HIGH with no charger current to explain it (bin 1,
+    # whose table action is charge_goal 0) — the hold must pin it anyway.
+    _share, goal = s.decide(_sdp_charge_fb(11.0, p_dem=+0.5), t=11.0)
+    assert goal == pytest.approx(hil.SOC_BAND_CHARGE_GOAL)
+    assert s.last_bin == 1              # the bin genuinely moved ...
+    assert s.chg_holds == 1             # ... and no new dwell was armed
+    del share
+
+
+def test_sdp_charge_hold_releases_at_the_dwell_and_re_evaluates(tmp_path):
+    """The latch is a MINIMUM dwell, not a permanent one: once it expires the
+    table decides again, and a genuinely high demand withdraws the intent."""
+    s = _sdp_charge_strategy(tmp_path)
+    s.decide(_sdp_charge_fb(10.0, p_dem=-0.5), t=10.0)
+    t_end = 10.0 + hil.SDP_CHG_MIN_DWELL_S
+    _share, goal = s.decide(_sdp_charge_fb(t_end, p_dem=+0.5), t=t_end)
+    assert goal == 0.0
+    assert s.chg_hold_until is None
+    assert s.chg_hold_drop_reason == "dwell expired"
+    # An EXPIRY is not an early drop — the counter must separate the two.
+    assert s.chg_hold_drops == 0
+
+
+def test_sdp_charge_hold_status_reports_three_distinct_outcomes(tmp_path):
+    """"expired" and "dropped" need OPPOSITE treatment (an expiry re-decides on
+    the corrected demand and may re-arm; a drop is a withdrawal that may not),
+    so collapsing them to a bool costs the mechanism its point."""
+    s = _sdp_charge_strategy(tmp_path)
+    assert s.charge_hold_status(10.0, _sdp_charge_fb(10.0, -0.5)) is None
+    s.decide(_sdp_charge_fb(10.0, p_dem=-0.5), t=10.0)
+    assert s.charge_hold_status(11.0, _sdp_charge_fb(11.0, -0.5)) == "active"
+    t_end = 10.0 + hil.SDP_CHG_MIN_DWELL_S
+    assert s.charge_hold_status(t_end, _sdp_charge_fb(t_end, -0.5)) == "expired"
+    s.decide(_sdp_charge_fb(20.0, p_dem=-0.5), t=20.0)      # re-arm
+    fb = _sdp_charge_fb(21.0, -0.5,
+                        fault_flags=hil.SDP_CHG_ABORT_FAULT_MASK)
+    assert s.charge_hold_status(21.0, fb) == "dropped"
+
+
+def test_sdp_charge_expiry_tick_still_subtracts_the_self_load(tmp_path):
+    """REGRESSION for the defect the three-outcome refactor fixed. If the
+    EXPIRY tick reads raw demand, the re-decision sees the charger's own draw
+    as load, withdraws, and the dwell has only made the chatter slower — which
+    is exactly what the offline walk showed at its residual window boundary."""
+    s = _sdp_charge_strategy(tmp_path)
+    s.decide(_sdp_charge_fb(10.0, p_dem=-0.5), t=10.0)
+    t_end = 10.0 + hil.SDP_CHG_MIN_DWELL_S
+    # Raw +0.5 is bin 1 (no charge); minus the charger's own 1.0 W it is bin 0.
+    _share, goal = s.decide(
+        _sdp_charge_fb(t_end, p_dem=+0.5, i_charge=1.0), t=t_end)
+    assert s.last_bin == 0
+    assert goal == pytest.approx(hil.SOC_BAND_CHARGE_GOAL)
+    assert s.chg_hold_drop_reason == "dwell expired"
+    assert s.chg_holds == 2          # continuous on the board, 2 latches here
+
+
+def test_sdp_charge_early_drop_does_not_subtract_or_re_arm(tmp_path):
+    """The converse, and why a drop is not an expiry: subtracting on a drop
+    would help the policy re-admit the very window it just refused."""
+    s = _sdp_charge_strategy(tmp_path)
+    s.decide(_sdp_charge_fb(10.0, p_dem=-0.5), t=10.0)
+    _share, goal = s.decide(
+        _sdp_charge_fb(11.0, p_dem=+0.5, i_charge=1.0,
+                       fault_flags=hil.SDP_CHG_ABORT_FAULT_MASK), t=11.0)
+    assert s.last_bin == 1           # raw demand, NOT corrected
+    assert goal == 0.0
+    assert s.chg_holds == 1          # no new dwell armed on the drop tick
+
+
+def test_sdp_charge_hold_subtracts_the_chargers_own_draw(tmp_path):
+    """Part 2 of the mechanism, and the part that makes the hold a FIX rather
+    than a delay: during a hold the bin is recomputed on
+    P_dem - V_bus*I_charge, so the policy stops reading its own charger as
+    load and re-latches on expiry instead of withdrawing."""
+    s = _sdp_charge_strategy(tmp_path)
+    s.decide(_sdp_charge_fb(10.0, p_dem=-0.5), t=10.0)
+    # Raw demand +0.5 (bin 1) but 1.0 W of it IS the charger -> -0.5 (bin 0).
+    # -0.5 is inside this table's own domain (p_dem_min_w -1.0), which is what
+    # the floor clamps to — a hard 0 floor would land on bin 1 and mask the
+    # subtraction entirely on any map with a negative lower edge.
+    s.decide(_sdp_charge_fb(11.0, p_dem=+0.5, i_charge=1.0), t=11.0)
+    assert s.last_bin == 0
+    # ... so at expiry the table still says charge, and a NEW dwell arms:
+    # one continuous window on the board, two latches in the counter.
+    t_end = 10.0 + hil.SDP_CHG_MIN_DWELL_S
+    _share, goal = s.decide(
+        _sdp_charge_fb(t_end, p_dem=+0.5, i_charge=1.0), t=t_end)
+    assert goal == pytest.approx(hil.SOC_BAND_CHARGE_GOAL)
+    assert s.chg_holds == 2
+
+
+def test_sdp_charge_subtraction_only_applies_during_a_hold(tmp_path):
+    """Outside a hold the demand is read raw. Subtracting always would let a
+    charger that is ON (because the FIRMWARE has the path open) hide real load
+    from a decision that has not admitted a window."""
+    s = _sdp_charge_strategy(tmp_path)
+    s.decide(_sdp_charge_fb(10.0, p_dem=+0.5, i_charge=1.0), t=10.0)
+    assert s.last_bin == 1
+    assert s.chg_hold_until is None
+
+
+def test_sdp_charge_hold_drops_early_on_a_board_fault(tmp_path):
+    """Holding an intent into State 99 asserts a command chargingControl()
+    will never see, and the window's admission is plainly no longer true."""
+    s = _sdp_charge_strategy(tmp_path)
+    s.decide(_sdp_charge_fb(10.0, p_dem=-0.5), t=10.0)
+    _share, goal = s.decide(
+        _sdp_charge_fb(11.0, p_dem=+0.5,
+                       fault_flags=hil.SDP_CHG_ABORT_FAULT_MASK | 0x0001),
+        t=11.0)
+    assert goal == 0.0
+    assert s.chg_hold_until is None
+    assert s.chg_hold_drops == 1
+    assert s.chg_hold_drop_reason == "board faulted"
+
+
+def test_sdp_charge_hold_drops_early_when_the_drive_leaves_cruise(tmp_path):
+    """OPERATOR RULING (b): charging and acceleration are incompatible on this
+    hardware, so a window admitted on a cruise does not survive the drive
+    leaving it. Measured against the profile speed at ADMISSION."""
+    s = _sdp_charge_strategy(tmp_path)
+    s.decide(_sdp_charge_fb(10.0, p_dem=-0.5), t=10.0)   # admitted at 1.0 m/s
+    assert s.chg_hold_v_ref == pytest.approx(1.0)
+    # Demand HIGH as well, so the post-drop re-evaluation genuinely withdraws
+    # rather than re-admitting on the same tick (which would hide the drop).
+    fb = _sdp_charge_fb(11.0, p_dem=+0.5)
+    fb["v_profile"] = 1.0 + 2.0 * hil.SDP_CHG_CRUISE_DELTA_MPS
+    _share, goal = s.decide(fb, t=11.0)
+    assert goal == 0.0
+    assert s.chg_hold_drop_reason == "drive left the admitted cruise"
+
+
+def test_sdp_charge_hold_survives_a_speed_move_inside_the_deadband(tmp_path):
+    """The converse: a cruise that is merely not perfectly flat must not drop
+    a window. SDP_CHG_CRUISE_DELTA_MPS is 2x the cruise-slope bound per
+    decision stage, so a genuine hold never trips it."""
+    s = _sdp_charge_strategy(tmp_path)
+    s.decide(_sdp_charge_fb(10.0, p_dem=-0.5), t=10.0)
+    fb = _sdp_charge_fb(11.0, p_dem=+0.5)
+    fb["v_profile"] = 1.0 + 0.5 * hil.SDP_CHG_CRUISE_DELTA_MPS
+    _share, goal = s.decide(fb, t=11.0)
+    assert goal == pytest.approx(hil.SOC_BAND_CHARGE_GOAL)
+    assert s.chg_hold_drops == 0
+
+
+def test_sdp_charge_hold_cleared_outside_the_run_window(tmp_path):
+    """A latch surviving the Run exit is invisible state that could re-assert
+    charge_goal on a Run RE-entry it was never admitted for. __call__ clears
+    it; the emission is zeroed there regardless, so only the STATE is at
+    stake."""
+    s = _sdp_charge_strategy(tmp_path)
+    t_run = hil.EMS_RUN_ENTRY_S + 1.0
+    s(t_run, _sdp_charge_fb(t_run, p_dem=-0.5))
+    assert s.chg_hold_until is not None
+    t_out = hil.SDP_RUN_EXIT_S + 1.0
+    out = s(t_out, _sdp_charge_fb(t_out, p_dem=-0.5))
+    assert out["charge_goal"] == 0.0
+    assert s.chg_hold_until is None
+
+
+def test_sdp_charge_hold_is_inert_without_a_clock(tmp_path):
+    """A feedback view with no clock cannot support a dwell. The degradation
+    is documented: the policy behaves exactly as it did before the hysteresis,
+    rather than latching forever off a None."""
+    s = _sdp_charge_strategy(tmp_path)
+    fb = _sdp_charge_fb(10.0, p_dem=-0.5)
+    del fb["t"]
+    _share, goal = s.decide(fb, t=None)
+    assert goal == pytest.approx(1.0)     # the TABLE's value, un-latched
+    assert s.chg_hold_until is None
+    assert s.chg_holds == 0
+
+
+def test_sdp_charge_hold_state_is_cleared_by_reset(tmp_path):
+    """Per-run state. A rewind auto-resets, so a second run in one process
+    must not inherit the first's latch."""
+    s = _sdp_charge_strategy(tmp_path)
+    s.decide(_sdp_charge_fb(10.0, p_dem=-0.5), t=10.0)
+    assert s.chg_hold_until is not None
+    s.reset()
+    for attr in ("chg_hold_until", "chg_hold_v_ref", "chg_hold_drop_reason"):
+        assert getattr(s, attr) is None
+    assert s.chg_holds == 0 and s.chg_hold_drops == 0
+
+
+def test_sdp_charge_dwell_constant_is_four_chatter_cycles():
+    """8.0 s is derived, not chosen: 3.98x the MEASURED 2.0125 s chatter period
+    (campaign 20260831_222036) so a hold cannot be a slower version of the
+    same hunt, and 47 % of the ~17 s charge window so the window still
+    contains a full re-decision. The bounds below are the DERIVATION, kept
+    loose in both directions because the constant is deliberately round rather
+    than fitted to 8.05."""
+    assert hil.SDP_CHG_MIN_DWELL_S == pytest.approx(8.0)
+    assert hil.SDP_CHG_MIN_DWELL_S >= 3.5 * 2.0125
+    assert hil.SDP_CHG_MIN_DWELL_S < 17.0
+    # The dwell must also exceed the decision cadence, or it holds nothing.
+    assert hil.SDP_CHG_MIN_DWELL_S > hil.SDP_DEFAULT_DECISION_DT_S
+
+
+def test_sdp_charge_hysteresis_leaves_the_artifact_untouched(tmp_path):
+    """CONSUMER-SIDE ONLY. The hold changes what is EMITTED, never what the
+    table says — `last_share_raw` and the share path must be identical with
+    and without a hold in force."""
+    s = _sdp_charge_strategy(tmp_path)
+    s.decide(_sdp_charge_fb(10.0, p_dem=-0.5), t=10.0)
+    held = (s.last_share_raw, s.last_share)
+    s2 = _sdp_charge_strategy(tmp_path)
+    s2.decide(_sdp_charge_fb(10.0, p_dem=-0.5), t=None)   # no dwell possible
+    assert (s2.last_share_raw, s2.last_share) == held
+
+
+def test_sdp_summary_line_reports_the_dwell_latches(tmp_path):
+    """The counters are the only place a reader learns the hold is in force,
+    and `chg_holds` != physical windows by design (a re-latch on the corrected
+    demand is one continuous window on the board)."""
+    s = _sdp_charge_strategy(tmp_path)
+    s.decide(_sdp_charge_fb(10.0, p_dem=-0.5), t=10.0)
+    line = s.summary_line()
+    assert "charge dwell latches 1" in line
+    assert "self-load subtracted" in line
+
+
 # ── Registration and reset semantics (item 14) ──────────────────────────────
 
 def test_sdp_v2_registered_under_its_name():

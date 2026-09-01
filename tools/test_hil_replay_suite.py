@@ -571,26 +571,364 @@ def test_persisted_latch_t_helper_matches_the_whole_run_note_classification(tmp_
         assert expect_word in rs._whole_run_first_note(data, rs.FAULT_UV_BUS)
 
 
-# -- fault_latched `not_before_s`: ML0217's real entry ──────────────────────
+# -- fault_latched `latch_elapsed_band_s`: ML0217's real entry ──────────────
 
-def test_ml0217_fault_latched_entry_pins_not_before_s_05():
+def test_ml0217_fault_latched_entry_pins_the_p0_elapsed_band():
+    """F1 (campaign 20260831_222036). ML0217's bring-up gate is P0
+    (PRECHARGE_TIMEOUT_MS 300 ms), measured ELAPSED from the State-0 entry —
+    NOT the absolute 0.5 s the previous fix round pinned, which discriminated
+    nothing because both candidate gates land past it.
+
+    The band's endpoints are asserted literally, and so is the exclusion that
+    is its whole purpose: 300 ms must be inside it and P1's 800 ms outside."""
     entry = rs.suite_index()["ML0217"]
     spec = next(c for c in entry["checks"] if c["kind"] == "fault_latched")
-    assert spec["not_before_s"] == pytest.approx(0.5)
+    assert "not_before_s" not in spec
+    lo, hi = spec["latch_elapsed_band_s"]
+    assert (lo, hi) == pytest.approx((0.20, 0.45))
+    assert spec["elapsed_from_state"] == 0
+    assert lo <= 0.300 <= hi          # P0, the classified gate
+    assert not (lo <= 0.800 <= hi)    # P1, the gate this band must exclude
 
 
-# -- fault_latched every real not_before_s spec satisfies the import-time
-#    positivity guard (re-derived directly, not just trusted from a clean
-#    import — see _assert_check_spec_shapes()) ──────────────────────────────
+def test_ml0217_band_brackets_both_campaign_measurements():
+    """301.3 ms (campaign 20260831_222036) and 301.1 ms (20260831_191509) are
+    the two measurements the band was derived from; both must sit inside it
+    with room, or the band is fitted rather than derived."""
+    spec = next(c for c in rs.suite_index()["ML0217"]["checks"]
+                if c["kind"] == "fault_latched")
+    lo, hi = spec["latch_elapsed_band_s"]
+    for measured in (0.3013, 0.3011):
+        assert lo < measured < hi
+        assert measured - lo > 0.05 and hi - measured > 0.05
 
-def test_every_real_not_before_s_spec_is_strictly_positive():
-    checked = 0
+
+# -- every real timing bound satisfies its import-time shape guard
+#    (re-derived directly, not just trusted from a clean import — see
+#    _assert_check_spec_shapes()) ───────────────────────────────────────────
+
+def test_every_real_latch_timing_bound_is_well_formed():
+    """`not_before_s` has no real user today (F1 retired ML0217's), so it is
+    checked opportunistically; the elapsed band DOES and is required to exist,
+    or this test would go quietly vacuous the way the one it replaced did."""
+    bands = 0
     for e in rs.REPLAY_SUITE:
         for c in e["checks"]:
             if "not_before_s" in c:
-                checked += 1
                 assert float(c["not_before_s"]) > 0.0, (e["log"], c["name"])
-    assert checked > 0
+            if "latch_elapsed_band_s" in c:
+                bands += 1
+                lo, hi = c["latch_elapsed_band_s"]
+                assert 0.0 <= float(lo) < float(hi), (e["log"], c["name"])
+            if "elapsed_from_state" in c:
+                assert "latch_elapsed_band_s" in c, (e["log"], c["name"])
+    assert bands > 0
+
+
+# -- fault_latched `latch_elapsed_band_s`: behaviour ────────────────────────
+
+_LATCHED = rs.FAULT_UV_BUS | rs.FAULT_ERROR
+# What the board really carries in on ML0217: the fresh child link-handshake
+# blip, a DIFFERENT bit from the one under test.
+_CARRIED = 0x0010 | rs.FAULT_ERROR
+
+
+def _state_rows(spans):
+    """(t0, t1, state, fault_flags) spans at 10 ms, as observation rows."""
+    rows = []
+    for t0, t1, state, flags in spans:
+        t = t0
+        while t < t1 - 1e-9:
+            rows.append({"t": round(t, 4), "state": state,
+                         "fault_flags": int(flags)})
+            t += 0.01
+    return rows
+
+
+def _elapsed_spec(band=(0.20, 0.45), **extra):
+    spec = {"kind": "fault_latched", "name": "init_fail_latched",
+            "bit": rs.FAULT_UV_BUS, "require_stimulus": False,
+            "latch_elapsed_band_s": band}
+    spec.update(extra)
+    return spec
+
+
+def test_latch_elapsed_band_passes_on_the_ml0217_shape(tmp_path):
+    """The real ML0217 shape, synthesized: latched from the predecessor, warm
+    reset into State 0 at 0.50, own latch at 0.80 — 300 ms elapsed."""
+    rows = _state_rows([(0.0, 0.50, 99, _CARRIED),   # predecessor's blip
+                        (0.50, 0.80, 0, 0),          # warm reset -> bring-up
+                        (0.80, 3.2, 99, _LATCHED)])  # P0 timeout latches
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    res = rs.evaluate_replay_csv(
+        _entry([_elapsed_spec()], skip_bringup_gate=True), str(path))
+    detail = res["checks"][-1]["detail"]
+    assert res["passed"] is True, detail
+    assert "300.0 ms after the mainState 0 entry" in detail
+
+
+def test_latch_elapsed_band_fails_the_other_bring_up_gate(tmp_path):
+    """The exclusion the band exists for: a latch 800 ms after the State-0
+    entry (P1's BUS_CHARGE_TIMEOUT_MS) must FAIL, even though its ABSOLUTE
+    time (1.30 s) is later than the 0.5 s bound the previous fix round used —
+    i.e. the old bound passed exactly this case."""
+    rows = _state_rows([(0.0, 0.50, 99, _CARRIED),
+                        (0.50, 1.30, 0, 0),
+                        (1.30, 3.2, 99, _LATCHED)])
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    res = rs.evaluate_replay_csv(
+        _entry([_elapsed_spec()], skip_bringup_gate=True), str(path))
+    detail = res["checks"][-1]["detail"]
+    assert res["passed"] is False, detail
+    assert "800.0 ms after the mainState 0 entry" in detail
+    assert "OUTSIDE the [200, 450] ms band" in detail
+
+
+def test_latch_elapsed_band_fails_a_latch_too_early_for_any_gate(tmp_path):
+    """The floor is not decoration: 100 ms after the State-0 entry is before
+    either bring-up timeout could have expired."""
+    rows = _state_rows([(0.0, 0.50, 99, _CARRIED),
+                        (0.50, 0.60, 0, 0),
+                        (0.60, 3.2, 99, _LATCHED)])
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    res = rs.evaluate_replay_csv(
+        _entry([_elapsed_spec()], skip_bringup_gate=True), str(path))
+    assert res["passed"] is False
+    assert "OUTSIDE" in res["checks"][-1]["detail"]
+
+
+def test_latch_elapsed_band_excludes_a_carried_in_latch_from_the_measurement(tmp_path):
+    """_persisted_latch_t()'s carried-in branch, in the elapsed frame — where
+    getting it wrong is worse than a wrong bound: the predecessor's latch
+    PRECEDES the State-0 entry, so a raw whole-run scan would compute a
+    NEGATIVE elapsed time and fail a correct board.
+
+    Structurally unreachable in today's plan order (no run ML0217 can follow
+    leaves INIT_FAIL latched), which is why it is unit-tested here and nowhere
+    else.
+
+    The predecessor's latch carries THE SAME BIT — that is what makes this a
+    carried-in case rather than an unrelated one — and this run's own latch is
+    post-grace, which is the shape _persisted_latch_t() can discriminate."""
+    rows = _state_rows([(0.0, 0.50, 99, _LATCHED),   # predecessor's own latch
+                        (0.50, 2.50, 1, 0),          # cleared by the warm reset
+                        (2.50, 2.80, 0, 0),          # THIS run's bring-up
+                        (2.80, 4.5, 99, _LATCHED)])  # ... and its P0 timeout
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    # The raw first sighting is the carried-in one at t=0.0 ...
+    assert data.first_fault_t(rs.FAULT_UV_BUS) == pytest.approx(0.0, abs=0.011)
+    # ... which PRECEDES the State-0 anchor at 2.50, so measuring from it would
+    # give a NEGATIVE elapsed time.  The persisted helper reports 2.80 instead.
+    assert rs._persisted_latch_t(data, rs.FAULT_UV_BUS) == pytest.approx(
+        2.80, abs=0.011)
+    res = rs.evaluate_replay_csv(
+        _entry([_elapsed_spec()], skip_bringup_gate=True), str(path))
+    detail = res["checks"][-1]["detail"]
+    assert res["passed"] is True, detail
+    assert "300.0 ms after the mainState 0 entry" in detail
+
+
+def test_latch_elapsed_band_anchors_on_the_LAST_state0_entry(tmp_path):
+    """Two warm resets in one run: the anchor must be the one the latch
+    actually followed (0.90), not the first State-0 entry (0.20). Anchoring on
+    the first would read 900 ms and report the wrong gate."""
+    rows = _state_rows([(0.0, 0.20, 99, 0),
+                        (0.20, 0.40, 0, 0),          # first bring-up, no latch
+                        (0.40, 0.90, 1, 0),          # ran, then reset again
+                        (0.90, 1.20, 0, 0),
+                        (1.20, 3.2, 99, _LATCHED)])  # 300 ms after the SECOND
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    res = rs.evaluate_replay_csv(
+        _entry([_elapsed_spec()], skip_bringup_gate=True), str(path))
+    detail = res["checks"][-1]["detail"]
+    assert res["passed"] is True, detail
+    assert "entry at t=0.9000s" in detail
+
+
+def test_latch_elapsed_band_fails_loudly_with_no_anchor(tmp_path):
+    """No State-0 entry at all — a latch that is the predecessor's and was
+    never cleared. The check must refuse rather than invent an anchor."""
+    rows = _state_rows([(0.0, 3.2, 99, _LATCHED)])
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    res = rs.evaluate_replay_csv(
+        _entry([_elapsed_spec()], skip_bringup_gate=True), str(path))
+    detail = res["checks"][-1]["detail"]
+    assert res["passed"] is False, detail
+    assert "never reported an ENTRY into mainState 0" in detail
+
+
+def test_latch_elapsed_band_honours_a_non_default_anchor_state(tmp_path):
+    """`elapsed_from_state` selects the anchor; anchoring the same trace on
+    State 1 instead of State 0 measures a different interval."""
+    rows = _state_rows([(0.0, 0.50, 99, 0),
+                        (0.50, 0.80, 0, 0),
+                        (0.80, 1.10, 1, 0),          # Idle entry at 0.80
+                        (1.10, 3.2, 99, _LATCHED)])  # 300 ms after Idle
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    ok = rs.evaluate_replay_csv(
+        _entry([_elapsed_spec(elapsed_from_state=1)], skip_bringup_gate=True),
+        str(path))
+    assert ok["passed"] is True, ok["checks"][-1]["detail"]
+    # The same trace anchored on State 0 is 600 ms — outside the band.
+    bad = rs.evaluate_replay_csv(
+        _entry([_elapsed_spec()], skip_bringup_gate=True), str(path))
+    assert bad["passed"] is False
+
+
+def test_latch_elapsed_band_import_guard_refuses_a_degenerate_band(monkeypatch):
+    """The import-shape guard is the only thing standing between a typo and a
+    band that silently stops discriminating."""
+    for bad in ((0.45, 0.20), (0.30, 0.30), (-0.1, 0.4)):
+        monkeypatch.setattr(
+            rs, "REPLAY_SUITE",
+            [{"log": "SYN_BAND", "checks": [_elapsed_spec(band=bad)]}])
+        with pytest.raises(AssertionError, match="0 <= lo < hi"):
+            rs._assert_check_spec_shapes()
+
+
+def test_latch_elapsed_band_import_guard_accepts_the_real_shape(monkeypatch):
+    """Converse, so the negative above pins the defect and not a function that
+    always raises."""
+    monkeypatch.setattr(
+        rs, "REPLAY_SUITE",
+        [{"log": "SYN_BAND_OK", "checks": [_elapsed_spec()]}])
+    rs._assert_check_spec_shapes()          # must not raise
+
+
+# -- latch_precedes_uv (F4, WP0097's reclassification premise) ──────────────
+
+def _oc_then_uv_rows(oc_t, uv_t, t_end=None):
+    """OC_FC latches at `oc_t`; the injected V_bus drops under
+    LIMIT_V_BUS_MIN at `uv_t` (None = never).  10 ms rows, shifted past the
+    preamble so the stimulus window sees them."""
+    t_end = t_end or (max(oc_t, uv_t or 0.0) + 0.5)
+    rows = []
+    t = 0.0
+    while t < t_end - 1e-9:
+        rows.append({
+            "t": round(rs.REPLAY_PREAMBLE_S + t, 4),
+            "state": 2,
+            "V_bus": 11.0 if (uv_t is not None and t >= uv_t) else 15.9,
+            "fault_flags": (rs.FAULT_OC_FC | rs.FAULT_ERROR) if t >= oc_t else 0,
+        })
+        t += 0.01
+    return [_bringup_row(0.0)] + rows
+
+
+def _uv_order_spec(min_lead_ms=10.0):
+    return {"kind": "latch_precedes_uv", "name": "oc_precedes_uv",
+            "bit": rs.FAULT_OC_FC, "min_lead_ms": min_lead_ms}
+
+
+def test_latch_precedes_uv_passes_when_the_oc_leads(tmp_path):
+    """WP0097's measured shape: OC latches ~22 ms before the bus goes sub-12."""
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, _oc_then_uv_rows(oc_t=1.00, uv_t=1.03))
+    res = rs.evaluate_replay_csv(_entry([_uv_order_spec()]), str(path))
+    detail = res["checks"][-1]["detail"]
+    assert res["passed"] is True, detail
+    assert "lead of +30.00 ms" in detail
+
+
+def test_latch_precedes_uv_fails_when_the_bus_collapses_first(tmp_path):
+    """The failure the check exists for: the same green 'OC_FC latched' verdict
+    off the wrong mechanism."""
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, _oc_then_uv_rows(oc_t=1.05, uv_t=1.00))
+    res = rs.evaluate_replay_csv(_entry([_uv_order_spec()]), str(path))
+    detail = res["checks"][-1]["detail"]
+    assert res["passed"] is False, detail
+    assert "SHORT of the 10 ms" in detail
+
+
+def test_latch_precedes_uv_fails_a_collapsed_but_positive_lead(tmp_path):
+    """A 10 ms floor, not a sign test: a 5 ms lead is ordered correctly and
+    still refused, because at that separation the attribution is not safe."""
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, _oc_then_uv_rows(oc_t=1.00, uv_t=1.005))
+    res = rs.evaluate_replay_csv(_entry([_uv_order_spec()]), str(path))
+    assert res["passed"] is False
+
+
+def test_latch_precedes_uv_passes_when_the_bus_never_collapses(tmp_path):
+    """No competing mechanism at all is strictly stronger than leading one,
+    and the detail must say which case it reported."""
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, _oc_then_uv_rows(oc_t=1.00, uv_t=None))
+    res = rs.evaluate_replay_csv(_entry([_uv_order_spec()]), str(path))
+    detail = res["checks"][-1]["detail"]
+    assert res["passed"] is True, detail
+    assert "absent, not merely later" in detail
+
+
+def test_latch_precedes_uv_fails_with_no_latch(tmp_path):
+    """An ordering assertion with nothing to order is not evidence."""
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, _oc_then_uv_rows(oc_t=99.0, uv_t=1.00, t_end=2.0))
+    res = rs.evaluate_replay_csv(_entry([_uv_order_spec()]), str(path))
+    detail = res["checks"][-1]["detail"]
+    assert res["passed"] is False, detail
+    assert "never LATCHED" in detail
+
+
+def test_latch_precedes_uv_ignores_the_synthetic_preamble(tmp_path):
+    """M5/L2: the harness's own preamble rails must never decide a stimulus
+    question. A sub-12 V sample INSIDE the preamble is not the recorded
+    collapse and must not shorten the measured lead."""
+    rows = _oc_then_uv_rows(oc_t=1.00, uv_t=None)
+    for r in rows:
+        if 0.5 < r["t"] < 1.0:          # inside REPLAY_PREAMBLE_S (2.5 s)
+            r["V_bus"] = 5.0
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    res = rs.evaluate_replay_csv(_entry([_uv_order_spec()]), str(path))
+    assert res["passed"] is True, res["checks"][-1]["detail"]
+
+
+def test_wp0097_entry_carries_the_ordering_check():
+    """The real entry: the reclassification's premise is asserted, paired with
+    the latch it orders, at the floor derived from the 22.37 ms measurement."""
+    entry = rs.suite_index()["WP0097"]
+    spec = next(c for c in entry["checks"] if c["kind"] == "latch_precedes_uv")
+    assert spec["bit"] == rs.FAULT_OC_FC
+    assert spec["min_lead_ms"] == pytest.approx(10.0)
+    assert spec["min_lead_ms"] < 22.37          # the measured lead
+    assert any(c["kind"] == "fault_latched" and c["bit"] == rs.FAULT_OC_FC
+               for c in entry["checks"])
+
+
+def test_latch_precedes_uv_import_guard_needs_a_positive_lead(monkeypatch):
+    monkeypatch.setattr(rs, "REPLAY_SUITE", [{
+        "log": "SYN_ORDER",
+        "checks": [{"kind": "fault_latched", "name": "oc", "bit": rs.FAULT_OC_FC,
+                    "require_stimulus": False},
+                   _uv_order_spec(min_lead_ms=0.0)]}])
+    with pytest.raises(AssertionError, match="positive `min_lead_ms`"):
+        rs._assert_check_spec_shapes()
+
+
+def test_latch_precedes_uv_import_guard_needs_the_paired_latch(monkeypatch):
+    monkeypatch.setattr(rs, "REPLAY_SUITE", [{
+        "log": "SYN_ORDER2", "checks": [_uv_order_spec()]}])
+    with pytest.raises(AssertionError, match="orders a latch it does not"):
+        rs._assert_check_spec_shapes()
+
+
+def test_elapsed_from_state_without_a_band_is_refused(monkeypatch):
+    spec = {"kind": "fault_latched", "name": "x", "bit": rs.FAULT_UV_BUS,
+            "require_stimulus": False, "elapsed_from_state": 0}
+    monkeypatch.setattr(rs, "REPLAY_SUITE",
+                        [{"log": "SYN_ANCHOR", "checks": [spec]}])
+    with pytest.raises(AssertionError, match="names the anchor"):
+        rs._assert_check_spec_shapes()
 
 
 # -- fault_not_latched ---------------------------------------------------------

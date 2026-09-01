@@ -130,3 +130,117 @@ v2 checks (raw-share interior, low-demand rail, charge window), observe the pred
 (_Y_FC_FLOOR {0.50, 0.66} measured, socband 0.95, fc_bus_restored 900,
 v_bus_min_in_band on TP0178/TP0201), full plan + --with-ftp75, no --with-operator
 (drive SKIPs by design).
+
+## fw v24 design adjudication (Fable-high vs Opus-xhigh decision pair, per operator process)
+
+Both agents independently found: (1) Table 7 field 0x02 encodes register-vs-resistor
+precedence in the VALUE (0-250 = register wins; >=251 = resistor) — R1 is thereby
+downgraded from a design dependency to a documentation item; (2) a latent telemetry
+defect: below-threshold refusal makes ALL Ag105 measurement registers read 0xFF
+(DS 2.11.5), which pollAg105() converts to a bogus I_charge = 2.805 A; (3) the HIL
+observation frame must grow 16->17 B to carry the threshold count; (4) no UDP v4 or
+BLG v7 bump is warranted.
+
+ADJUDICATED DESIGN (synthesis, Opus structure as the base):
+- Tracking source: V_chg (pin 38) windowed MINIMUM, sampled only while
+  FC_CHARGE_ENABLE HIGH and REGEN_ENABLE LOW (Opus — it IS the compared node, and
+  the sampling gate coincides exactly with writability). Fable's V_bus EMA rejected:
+  V_bus over-reads by the ideal-diode drop and is healthy precisely when the charger
+  is unwritable.
+- Control law: target = V_chg_min - 3.0 V, quantized DOWN, clamped to counts
+  [15 = 12.320 V floor, 28 = 13.464 V ceiling]; ceiling anchored to
+  V_BUS_CHARGED_THRESH by static_assert — the formal no-hunt invariant (threshold
+  can never exceed an operational bus). Fable's 14.96 V ceiling rejected (admits
+  refusal windows in deep sag).
+- Write policy: Opus's monotone non-increasing session-evaluated ratchet (lower-only,
+  <=2/session, 30 s min interval, deadband 3 counts, writes-per-boot cap 8, verified
+  writes via the existing read-first helper) — structural LIFETIME bound of 236
+  writes, independent of the unstated EPROM endurance. Fable's rate-based 10 s
+  policy rejected (bound depends on the unverified endurance figure).
+- 0xFF read ambiguity on reg 0x02: Opus's reg-0x07 cross-check discriminator adopted.
+- Layered UV protection: Opus's firmware backoff (close FC_CHARGE at 12.8 V,
+  resume 13.6 V, 60 ms dwell) adopted as the arbitrating layer.
+- Release-logic: ADJUDICATOR SYNTHESIS. Fable root-caused the observed hunt as the
+  chargingControl release loop (release -> GENSTAT Low Power -> ag105IsReady() false
+  -> re-assert at 20 ms cadence) and proposed treating Low-Power-while-released as
+  non-error. Opus kept the fw v23 logic and relies on the ceiling invariant. The two
+  designs read the MPPTD-disabled charge semantics OPPOSITELY (Fable: LOW = no
+  harvest; Opus: LOW = harvest-ungated, DS "without terminating charge") — the
+  datasheet supports Opus's reading but there is NO hardware ground truth yet (the
+  real Ag105 has never charged on this board). Ruling: do NOT ship a semantic change
+  that depends on the unverified reading. Instead add a MPPT_DISABLE re-release
+  HOLDOFF (>= 1 s after a not-ready re-assert) — correct under EITHER semantics,
+  bounds any residual hunt to <= 1 Hz (vs 25 Hz), and composes with the ceiling
+  invariant that makes refusal unreachable in normal operation. Fable's
+  ag105ReleaseOk() proposal is RECORDED as the candidate upgrade, gated on the new
+  bench-acceptance step that verifies MPPTD-disabled charge behavior on real
+  hardware.
+- Also adopted: Opus's State-98 'N' command (bare print / N <volts> force-write /
+  N R restore resistor mode), 'S' dump block, companion I_charge 0xFF sentinel fix,
+  static_assert tripwire set, sim lockstep plan (mppt_emulation reads the observed
+  threshold; scenario expectation flip with provisional_note; 17 B frame with
+  length-based version detection), and both agents' bench acceptance sequences
+  (merged).
+
+## Campaign 1 headline + one adjudicated decision (chatter hysteresis)
+
+ems-sdp v2 first live execution: PASS right-for-the-right-reason, offline-walk
+predictions confirmed to the digit, provisional trio calibrated. Three-way eq-H2:
+dp 0.011567 < sdp-v2 0.011773 (+1.79%) < soc-band 0.012852 (+11.11%) — the SDP leg
+is now a genuine causal-policy benchmark, -8.39% vs the heuristic.
+
+DECISION (would normally be an operator call; taken tonight on measured evidence,
+reversible in one commit): the predicted FC_CHARGE chatter measured at 9 cycles /
+2.0125 s period with a 4.63x harvest-efficiency loss (54% of each window lost to
+Ag105 detect+settle), 9x multiplication of a >LIMIT_V_BUS_MAX BT_BUS opening ring,
+and the safety objection to sustained-open REFUTED by soc-band's own 12.5 s window
+at 14.9% margin on the same operating point. Ruling: add a MINIMUM-DWELL hysteresis
+to sdp-v2's charge admission (consumer side, strategy code only — the solver
+artifact/policy is untouched; the sim's decision layer holds charge_goal for a
+minimum dwell once opened, and holds closed similarly) in the post-campaign fix
+round, with the ems-sdp charge-window check kept TICK-based (survives the change in
+the stronger direction). No dual-agent pair convened: the measurement answers the
+question; both design docs and the analysis agent independently converge on
+consumer-side hysteresis. Reverse by deleting the dwell constants in
+hil_plant_sim.py's SdpStrategy if you prefer the memoryless policy.
+
+## Campaign 1 complete + two parallel fix rounds
+
+Campaign 1 (hil_report_20260831_222036): 53/53 PASS, 0 untagged-vacuous replay
+checks; ledger + HIL_SUMMARY.md written; hil_report_analysis 52 runs 0 errors.
+The replay audit caught ONE defect in the earlier fix round's own work: ML0217's
+not_before_s attributes the INIT_FAIL gate to P1/800 ms when it is P0/300 ms from
+the warm-reset State-0 entry, and the absolute 0.5 s bound discriminates nothing
+(fix running: elapsed-anchor band [0.20,0.45] s).
+
+fw v24 review adjudication: safety lens 1 HIGH (EPROM budget uncounted on failing
+writes + refilled by session cycling) + 7 MED (VERIFY ignores the 0xFF sentinel and
+can fail the flagship first write; backoff BT re-close is the busHotPlugUnsafe
+precondition -> gated like the S5 share-latch restore; 60 ms dwell cannot pre-empt
+the 20 ms UV latch -> 15 ms + ordering static_assert + honest hover-band comment;
+stale guard timestamp across sessions; ceiling assert crossed rails - but the drop
+is the RT1987 ideal-diode servo ~35 mV, NOT the reviewer's assumed 0.4 V PN diode
+(deviation documented) -> ceiling 28->27; manager unattended in State 98 -> gated
+to Run/drive-cycle) + 8 LOW; correctness lens 1 MED-HIGH (HIL mirror one-shot ->
+live per-tick mirror + varying-V_chg test) + findings on counter semantics, test
+vacuity (mock_wire gains a transaction counter), absent compile probes (committed
+as test/mppt_assert_probes.sh). ALL accepted; fix agent running.
+
+Campaign-1 tooling fix round (parallel, disjoint files): ML0217 re-anchor, TP0053
+burst-quantized band, the RULED sdp-v2 charge hysteresis (8 s min-dwell +
+self-load-subtracted bin during the hold), ems-sdp provisional pins calibrated +
+provisional_note deleted, WP0097 ordering assertion, b30 hardening (clip bands,
+floors {0.65,0.85}, I_tot companion), carried-in wording, doc notes, raw-share
+figure.
+
+## Incident: fw v24 fix agent ran `git stash push` mid-round (recovered)
+
+While diagnosing a silent-compile-failure gotcha, the firmware fix agent stashed the
+whole working tree — including the PARALLEL tooling agent's in-flight
+tools/hil_replay_suite.py — then restored its own files from stash@{0} and left the
+stash IN PLACE as a safety net (pop was refused because the tooling agent had
+rewritten the file since; nothing was forced). Orchestrator action: verify the
+tooling round's full change list against its report before dropping stash@{0}.
+Process lesson for the retrospective/skill: parallel agents sharing one working tree
+must be forbidden from tree-wide git operations (stash/reset/checkout) — scope the
+prohibition explicitly in every implementer brief.

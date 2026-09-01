@@ -960,6 +960,69 @@ def test_hil_charger_and_soc_returns_none_without_charger_columns():
     assert hra.hil_charger_and_soc(data, {}) is None
 
 
+# ── hil_share_raw_vs_emitted: the pre-clamp request (SDP round) ────────────
+#
+# Under sdp-v2 every table value in (0.85, 1.0] emits the SAME clamped 0.8500,
+# so `cmd_share_sp` alone cannot distinguish one demand map from another.
+# `cmd_share_sp_raw` is the column that can, and nothing plotted it.
+
+def _share_raw_data(raw, n=6):
+    return {"t_s": np.arange(n, dtype=np.float64),
+            "cmd_share_sp_raw": np.asarray(raw, dtype=np.float64),
+            "cmd_share_sp": np.full(n, 0.85),
+            "I_fc": np.full(n, 0.85), "I_batt": np.full(n, 0.15)}
+
+
+def test_hil_share_raw_vs_emitted_renders_when_the_raw_column_has_values():
+    # Two in band (0.85 itself is IN — the firmware's cutoff is strict), one
+    # over the high clamp, one under the low one.
+    fig = hra.hil_share_raw_vs_emitted(
+        _share_raw_data([0.85, 0.50, 1.00, 0.05], n=4), {})
+    assert fig is not None
+    # The clamp count is the figure's headline number, so it is asserted.
+    assert "2/4 samples clamped" in fig._suptitle.get_text()
+
+
+def test_hil_share_raw_vs_emitted_skips_when_the_column_is_absent():
+    """A clean skip, not a figure drawn on nothing — the column is written
+    only by strategies that HAVE a pre-clamp request."""
+    data = {"t_s": np.arange(3, dtype=np.float64),
+            "cmd_share_sp": np.full(3, 0.5)}
+    assert hra.hil_share_raw_vs_emitted(data, {}) is None
+
+
+def test_hil_share_raw_vs_emitted_skips_an_all_nan_column():
+    """Every non-SDP run carries the column BLANK, which loads as all-NaN. A
+    figure there would be an empty axes with a confident title."""
+    n = 4
+    data = {"t_s": np.arange(n, dtype=np.float64),
+            "cmd_share_sp_raw": np.full(n, np.nan)}
+    assert hra.hil_share_raw_vs_emitted(data, {}) is None
+
+
+def test_hil_share_raw_vs_emitted_counts_only_finite_samples():
+    """A partly-blank column must report its clamp count over the samples that
+    exist, not over the row count."""
+    n = 6
+    raw = np.array([np.nan, np.nan, 1.0, 0.5, 0.5, np.nan])
+    data = _share_raw_data(raw, n)
+    fig = hra.hil_share_raw_vs_emitted(data, {})
+    assert "1/3 samples clamped" in fig._suptitle.get_text()
+
+
+def test_hil_share_raw_vs_emitted_clamp_band_matches_the_firmware_band():
+    """The shaded band is the firmware's own cutoff band (.ino:9231-9257) and
+    SocBandStrategy/SdpStrategy's emission clamp. Pinned literally: these are
+    duplicated in this module on purpose (an offline report must not relabel
+    an older trace with this checkout's constants), so nothing else would
+    catch a drift."""
+    assert (hra.SHARE_CLAMP_LO, hra.SHARE_CLAMP_HI) == (0.15, 0.85)
+
+
+def test_hil_share_raw_vs_emitted_is_registered():
+    assert "hil_share_raw_vs_emitted" in dict(hra.HIL_FIGURES)
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # 8. suite_result_for (F2)
 # ─────────────────────────────────────────────────────────────────────────

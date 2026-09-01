@@ -7,9 +7,11 @@ exercises only the pure/offline functions per the fence in the task.
 Run: cd tools && python -m pytest test_run_hil_suite.py -v
 """
 import argparse
+import csv
 import datetime
 import json
 import os
+import re
 import sys
 
 import pytest
@@ -1076,19 +1078,52 @@ def test_judge_scenario_no_provisional_note_leaves_signal_details_plain():
         assert "PROVISIONAL" not in c["detail"]
 
 
-def test_ems_sdp_entry_declares_its_first_campaign_thresholds_provisional():
-    """DI-MED-5, the live half: ems-sdp's three first-campaign bands come from
-    an OPEN-LOOP walk over a v1 trace, so the entry must carry the note that
-    says so — and it names all three checks, which is what makes a band miss
-    readable as 'threshold not yet derived'."""
+def test_ems_sdp_provisional_note_is_gone_now_the_bands_are_measured():
+    """DI-MED-5 CLOSED. Campaign 20260831_222036 was the first live
+    sdp_policy_v2 run and measured all three previously-provisional bands, so
+    the note must be REMOVED — a provisional marker left on a calibrated
+    threshold trains readers to discount every band in the entry.
+
+    The three checks themselves must still exist: deleting the note by
+    deleting the checks would satisfy the first half of this test and gut the
+    entry."""
     expect = rhs.FAULT_EXPECTATIONS["ems-sdp"]
-    note = expect.get("provisional_note")
-    assert note
+    assert expect.get("provisional_note") is None
+    names = {s.get("name") for s in expect["signals_require"]}
     for name in ("sdp_table_interior_at_high_demand",
                  "sdp_table_rail_at_low_demand",
                  "sdp_charge_window_opened"):
-        assert name in note
-        assert any(s.get("name") == name for s in expect["signals_require"])
+        assert name in names
+
+
+def test_ems_sdp_calibrated_bands_match_the_campaign_measurements():
+    """The measured values, pinned against the bands derived from them
+    (campaign 20260831_222036): cmd_share_sp_raw is exactly 0.950000 over the
+    interior window and exactly 1.000000 over the rail window, and the charge
+    window carries 8652 ticks chattering / ~16000 held."""
+    by = {s["name"]: s for s in rhs.FAULT_EXPECTATIONS["ems-sdp"]["signals_require"]}
+    # 3 + 3b: a TWO-SIDED band, written as two specs because
+    # _judge_signal_leaf() would silently drop a ceiling written beside a floor.
+    assert by["sdp_table_interior_at_high_demand"]["max_value"] == pytest.approx(0.960)
+    assert by["sdp_table_interior_floor"]["min_value"] == pytest.approx(0.940)
+    assert (by["sdp_table_interior_floor"]["t_window"]
+            == by["sdp_table_interior_at_high_demand"]["t_window"])
+    for spec in (by["sdp_table_interior_at_high_demand"],
+                 by["sdp_table_interior_floor"]):
+        assert spec["column"] == "cmd_share_sp_raw"
+        assert not ({"min_value", "max_value"} <= set(spec))
+    assert by["sdp_table_interior_floor"]["min_value"] <= 0.950000
+    assert by["sdp_table_interior_at_high_demand"]["max_value"] >= 0.950000
+    # 4: the rail, tightened onto the measured exact 1.0 and still clear of the
+    # 0.95 ladder step it must exclude.
+    rail = by["sdp_table_rail_at_low_demand"]["min_value"]
+    assert rail == pytest.approx(0.999)
+    assert 0.95 < rail <= 1.000000
+    # 5: valid in BOTH the chattering and the held regime — that is the point.
+    ticks = by["sdp_charge_window_opened"]["min_ticks"]
+    assert ticks == 4000
+    assert ticks < 8652          # measured, chattering (campaign 20260831_222036)
+    assert ticks < 16000         # predicted, under the minimum-dwell hysteresis
 
 
 # -- _judge_event_spec() unit coverage (shared by events_require and every
@@ -3213,22 +3248,50 @@ def test_render_report_replay_metrics_block_final_flags_and_unions_rendered():
 
 def test_render_report_replay_metrics_block_carried_in_sub_line_when_bit_cleared_pre_grace():
     """A bit seen only BEFORE the grace bound (present in the whole-run union,
-    absent from the post-grace union) must get the dedicated 'carried in from
-    the predecessor's settle latch' sub-line -- the exact scenario A5/M2 exist
-    to surface."""
+    absent from the post-grace union) must get the dedicated pre-grace sub-line
+    -- the exact scenario A5/M2 exist to surface.
+
+    WORDING (2026-08-31): the line used to attribute the bits to "the
+    PREDECESSOR'S settle latch", which the CSV cannot support and which was
+    false on most runs it printed for. It now names the mechanism it can see
+    and implies nothing about the predecessor -- and the test asserts the old
+    claim is GONE, not merely that some line appeared."""
     seen = rhs.FAULT_UV_BUS | rhs.FAULT_ERROR
     results = [_fake_replay_result(metrics=_replay_metrics(
         final_fault_flags=0, fault_bits_seen=seen, fault_bits_post_grace=0))]
     report = rhs.render_report(_fake_meta(), results)
-    assert "carried in from the predecessor's settle latch" in report
-    assert "cleared by the fw v23 grace-window warm reset" in report
+    assert "pre-grace reconnect transient" in report
+    assert "not distinguishable here" in report
+    assert "carried in from the predecessor" not in report
 
 
 def test_render_report_replay_metrics_block_no_carried_in_line_when_unions_match():
     results = [_fake_replay_result(metrics=_replay_metrics(
         final_fault_flags=0, fault_bits_seen=0, fault_bits_post_grace=0))]
     report = rhs.render_report(_fake_meta(), results)
-    assert "carried in from the predecessor's settle latch" not in report
+    assert "pre-grace reconnect transient" not in report
+
+
+def test_judge_scenario_carried_note_does_not_claim_a_predecessor_latch():
+    """Campaign 20260831_222036, flagged by three analysis agents: the
+    `fault_allow_only` detail asserted "carried-in from the predecessor's
+    settle latch" on runs whose predecessor ended CLEAN (7 of 8 across two
+    batches). The dominant pre-grace bit is 0x8010, generated FRESH by each
+    child's own link handshake — so the wording must name what is observed and
+    stop attributing it. Both halves matter: the honest clause present, and the
+    unsupportable claim gone."""
+    metrics = _metrics(fault_bits_seen=0x8010, fault_bits_post_grace=0,
+                       final_fault_flags=0)
+    # Both branches of judge_scenario carry the note: an entry WITH an
+    # expectation (fault_allow_only) and one without (no_unexpected_fault).
+    for scenario, check_name in (("charge-fault", "fault_allow_only"),
+                                 ("steady", "no_unexpected_fault")):
+        _passed, checks = rhs.judge_scenario(scenario, metrics, _events(),
+                                             _child())
+        detail = next(c["detail"] for c in checks if c["name"] == check_name)
+        assert "pre-grace reconnect transient" in detail, scenario
+        assert "predecessor state NOT implied" in detail, scenario
+        assert "predecessor's settle latch" not in detail, scenario
 
 
 def test_render_report_replay_metrics_block_load_failure_form():
@@ -5250,21 +5313,28 @@ def test_fault_expectations_ems_sdp_entry_shape():
     # emitted cmd_share_sp column since every table value clamps to the same
     # 0.8500), and a third asserts the charge window the v1 artifact could
     # never reach at all.
+    # `sdp_table_interior_floor` joined the set when campaign 20260831_222036
+    # calibrated the interior band and made it TWO-SIDED (the ceiling alone was
+    # one-sided: a demand axis collapsing DOWNWARD satisfied it vacuously).
     assert names == {"sdp_drive_commanded", "sdp_clamped_rail_commanded",
                      "sdp_table_interior_at_high_demand",
+                     "sdp_table_interior_floor",
                      "sdp_table_rail_at_low_demand",
                      "sdp_charge_window_opened",
                      "sdp_fc_current_biased", "sdp_h2_accounted",
                      "sdp_student_h2_axis"}
     by_name = {s["name"]: s for s in entry["signals_require"]}
     assert by_name["sdp_table_interior_at_high_demand"]["column"] == "cmd_share_sp_raw"
-    assert by_name["sdp_table_interior_at_high_demand"]["max_value"] == pytest.approx(0.97)
+    assert by_name["sdp_table_interior_at_high_demand"]["max_value"] == pytest.approx(0.960)
     assert by_name["sdp_table_interior_at_high_demand"]["t_window"] == (20.0, 36.0)
+    assert by_name["sdp_table_interior_floor"]["column"] == "cmd_share_sp_raw"
+    assert by_name["sdp_table_interior_floor"]["min_value"] == pytest.approx(0.940)
+    assert by_name["sdp_table_interior_floor"]["t_window"] == (20.0, 36.0)
     assert by_name["sdp_table_rail_at_low_demand"]["column"] == "cmd_share_sp_raw"
-    assert by_name["sdp_table_rail_at_low_demand"]["min_value"] == pytest.approx(0.99)
+    assert by_name["sdp_table_rail_at_low_demand"]["min_value"] == pytest.approx(0.999)
     assert by_name["sdp_table_rail_at_low_demand"]["t_window"] == (44.0, 54.0)
     assert by_name["sdp_charge_window_opened"]["switch_bit"] == rhs.SW_FC_CHARGE
-    assert by_name["sdp_charge_window_opened"]["min_ticks"] == 500
+    assert by_name["sdp_charge_window_opened"]["min_ticks"] == 4000
     assert by_name["sdp_charge_window_opened"]["t_window"] == (41.0, 58.0)
     duration = SCENARIOS["ems-sdp"]["duration_s"]
     for spec in entry["signals_require"]:
@@ -5433,22 +5503,197 @@ def test_socband_fc_carried_threshold_is_095():
 
 def test_y_fc_floor_table_re_derived_from_measurement():
     """DI-MED-2: _Y_FC_BIAS_W narrowed to R3 alone (13.0-16.0), where v is held
-    constant so only the share command moves I_fc, and _Y_FC_FLOOR re-derived
-    from campaign 20260831_191509's measured R3 peaks (0.5659 / 0.7606 A true
-    run, 0.4353 / 0.5850 A for a 0.50 split).  The modelled 0.58/0.80 pair sat
-    ABOVE the true run's own R3 peaks and survived only because the old window
-    swallowed R4's ramp."""
+    constant so only the share command moves I_fc.
+
+    ⚠️ RE-DERIVED AGAIN 2026-08-31 against campaign 20260831_222036, the first
+    campaign at the SHIPPED Y_AUX_LOAD_A 0.85 A. The previous pair
+    (0.50 / 0.66) was fitted to 20260831_191509's RETIRED 0.60 A preload and is
+    ~30 % loose against the current stimulus. Measured R3 peaks now:
+    0.7289 / 0.9243 A true run, 0.5605 / 0.7110 A for a 0.50 split."""
     assert rhs._Y_FC_BIAS_W == (13.0, 16.0)
-    assert rhs._Y_FC_FLOOR == {1.0: 0.50, 3.0: 0.66}
+    assert rhs._Y_FC_FLOOR == {1.0: 0.65, 3.0: 0.85}
     # Each floor sits strictly between "a 0.50 split" and "the measured run".
-    for vmax, split_peak, true_peak in ((1.0, 0.4353, 0.5659),
-                                        (3.0, 0.5850, 0.7606)):
+    for vmax, split_peak, true_peak in ((1.0, 0.5605, 0.7289),
+                                        (3.0, 0.7110, 0.9243)):
         floor = rhs._Y_FC_FLOOR[vmax]
         assert split_peak < floor < true_peak
         spec = next(s for s in rhs.FAULT_EXPECTATIONS["ems-y-b30-v%g" % vmax]
                     ["signals_require"] if s["name"] == "fc_current_biased")
         assert spec["min_value"] == pytest.approx(floor)
         assert spec["t_window"] == rhs._Y_FC_BIAS_W
+
+
+# ── derived value sources: `sum_of` / `ratio_of` (2026-08-31) ───────────────
+
+def _scan_one(tmp_path, spec, rows, cols):
+    path = tmp_path / "d.csv"
+    with open(path, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols)
+        w.writeheader()
+        for r in rows:
+            w.writerow(r)
+    return rhs.judge_signals([spec], rhs.scan_signals(str(path), [spec]), "why")[0]
+
+
+def _cur_rows(pairs, t0=10.0):
+    return [{"t": "%.3f" % (t0 + i * 0.001), "I_fc": "" if a is None else a,
+             "I_batt": "" if b is None else b}
+            for i, (a, b) in enumerate(pairs)]
+
+
+_CUR_COLS = ["t", "I_fc", "I_batt"]
+
+
+def test_ratio_of_measures_the_delivered_share(tmp_path):
+    """share_act = I_fc / (I_fc + I_batt) — invariant to the load, which is
+    exactly what an ampere floor cannot be."""
+    spec = {"name": "r", "ratio_of": ["I_fc", "I_batt"], "min_value": 0.695,
+            "t_window": (9.0, 11.0), "label": "share"}
+    # The same 0.70 split at two very different loads.
+    chk = _scan_one(tmp_path, spec, _cur_rows([("0.700", "0.300"),
+                                               ("2.800", "1.200")]), _CUR_COLS)
+    assert chk["passed"] is True
+    assert "peak 0.7000" in chk["detail"]
+
+
+def test_ratio_of_ceiling_catches_an_overshoot(tmp_path):
+    spec = {"name": "r", "ratio_of": ["I_fc", "I_batt"], "max_value": 0.705,
+            "t_window": (9.0, 11.0), "label": "share"}
+    chk = _scan_one(tmp_path, spec, _cur_rows([("0.700", "0.300"),
+                                               ("0.900", "0.100")]), _CUR_COLS)
+    assert chk["passed"] is False
+    assert "peak 0.9000" in chk["detail"]
+
+
+def test_ratio_of_skips_rows_under_ratio_min_den(tmp_path):
+    """A ratio taken on ~0 A of total current is noise, not a share. The 50 mA
+    mask is the one hil_report_analysis.py uses to derive share_act."""
+    spec = {"name": "r", "ratio_of": ["I_fc", "I_batt"], "max_value": 0.705,
+            "t_window": (9.0, 11.0), "label": "share"}
+    # A 0.001/0.000 row would read as a share of 1.0 and fail the ceiling.
+    chk = _scan_one(tmp_path, spec, _cur_rows([("0.700", "0.300"),
+                                               ("0.001", "0.000")]), _CUR_COLS)
+    assert chk["passed"] is True
+
+
+def test_ratio_of_skips_a_row_with_any_column_blank(tmp_path):
+    """A partial sum is a different quantity, not a smaller one — a row with
+    I_batt blank must be dropped whole, not read as I_fc/I_fc = 1.0."""
+    spec = {"name": "r", "ratio_of": ["I_fc", "I_batt"], "max_value": 0.705,
+            "t_window": (9.0, 11.0), "label": "share"}
+    chk = _scan_one(tmp_path, spec, _cur_rows([("0.700", "0.300"),
+                                               ("0.700", None)]), _CUR_COLS)
+    assert chk["passed"] is True
+
+
+def test_sum_of_measures_the_source_total(tmp_path):
+    spec = {"name": "s", "sum_of": ["I_fc", "I_batt"], "min_value": 1.02,
+            "t_window": (9.0, 11.0), "label": "itot"}
+    ok = _scan_one(tmp_path, spec, _cur_rows([("0.745", "0.320")]), _CUR_COLS)
+    assert ok["passed"] is True and "peak 1.0650" in ok["detail"]
+    low = _scan_one(tmp_path, spec, _cur_rows([("0.600", "0.300")]), _CUR_COLS)
+    assert low["passed"] is False
+
+
+def test_derived_source_with_no_rows_fails_not_passes(tmp_path):
+    """The table's standing rule: a gap must never read as a pass."""
+    spec = {"name": "s", "sum_of": ["I_fc", "I_batt"], "min_value": 1.02,
+            "t_window": (90.0, 91.0), "label": "itot"}
+    chk = _scan_one(tmp_path, spec, _cur_rows([("0.745", "0.320")]), _CUR_COLS)
+    assert chk["passed"] is False
+
+
+def _run_signal_shape_guard(spec):
+    """Drive the import-time derived-source guard over one spec."""
+    rhs.assert_derived_source_shape("SYN", spec.get("name", "x"), spec)
+
+
+def test_derived_source_shape_guards():
+    """Every malformed derived-source spelling must be refused at IMPORT, since
+    each of them fails silently at score time: a `column` beside the derived
+    source reads as an assertion and is ignored, a one-column ratio is
+    identically 1.0, and a bound-less spec asserts nothing at all."""
+    bad = [
+        ({"name": "x", "sum_of": ["I_fc", "I_batt"],
+          "ratio_of": ["I_fc", "I_batt"], "min_value": 1.0},
+         "alternative value sources"),
+        ({"name": "x", "sum_of": ["I_fc", "I_batt"], "column": "I_fc",
+          "min_value": 1.0}, "would read as an assertion"),
+        ({"name": "x", "ratio_of": ["I_fc"], "min_value": 0.5},
+         "at least two columns"),
+        ({"name": "x", "sum_of": ["I_fc", "I_batt"]}, "needs a value bound"),
+        ({"name": "x", "column": "I_fc", "min_value": 1.0,
+          "ratio_min_den": 0.05}, "read only by `ratio_of`"),
+    ]
+    for spec, msg in bad:
+        with pytest.raises(AssertionError, match=re.escape(msg)):
+            _run_signal_shape_guard(spec)
+
+
+def test_derived_source_shape_guard_accepts_the_real_specs():
+    """Converse: every derived-source spec actually shipped in the table
+    survives the guard — otherwise the negatives above pin nothing."""
+    n = 0
+    for name, expect in rhs.FAULT_EXPECTATIONS.items():
+        for spec in expect.get("signals_require") or ():
+            if "sum_of" in spec or "ratio_of" in spec:
+                n += 1
+                _run_signal_shape_guard(spec)      # must not raise
+    assert n >= 9        # 4 share bands x2 variants + 1 I_tot floor
+
+
+# ── ems-y b30: the delivered-clip bands and the preload budget ──────────────
+
+def test_y_b30_share_clip_bands_are_pinned_at_the_measured_levels():
+    """Campaign 20260831_222036 delivered 0.7000/0.3000 EXACTLY on both
+    variants; the bands are +/-0.005 around each clip level."""
+    assert rhs._Y_SHARE_CLIP_TOL == pytest.approx(0.005)
+    for vmax in (1.0, 3.0):
+        by = {s["name"]: s for s in
+              rhs.FAULT_EXPECTATIONS["ems-y-b30-v%g" % vmax]["signals_require"]}
+        assert by["share_hi_delivered"]["min_value"] == pytest.approx(0.695)
+        assert by["share_hi_not_overshot"]["max_value"] == pytest.approx(0.705)
+        assert by["share_lo_delivered"]["max_value"] == pytest.approx(0.305)
+        assert by["share_lo_not_undershot"]["min_value"] == pytest.approx(0.295)
+        for n in ("share_hi_delivered", "share_hi_not_overshot"):
+            assert by[n]["t_window"] == rhs._Y_HI_BOUND_W
+            assert by[n]["ratio_of"] == ["I_fc", "I_batt"]
+        for n in ("share_lo_delivered", "share_lo_not_undershot"):
+            assert by[n]["t_window"] == rhs._Y_LO_BOUND_W
+        # The two clip levels are 0.40 apart, so the bands cannot overlap —
+        # a band wide enough to admit the other clip would assert nothing.
+        assert by["share_lo_not_undershot"]["min_value"] > 0.0
+        assert (by["share_hi_delivered"]["min_value"]
+                > by["share_lo_delivered"]["max_value"] + 0.30)
+
+
+def test_y_b00_variants_get_no_share_clip_bands():
+    """The clip bands belong to b30. b00 cuts a source off the bus at each
+    bound, so I_batt (or I_fc) goes to zero there and the RATIO rails to
+    0/1 — a band around 1.00/0.00 would be asserting the cut, which the
+    bt_bus_cut / fc_bus_cut switch checks already do properly."""
+    for vmax in (1.0, 3.0):
+        names = {s["name"] for s in
+                 rhs.FAULT_EXPECTATIONS["ems-y-b00-v%g" % vmax]["signals_require"]}
+        assert not (names & {"share_hi_delivered", "share_lo_delivered",
+                             "itot_above_governor_break_even"})
+
+
+def test_y_b30_v1_alone_carries_the_preload_budget_tripwire():
+    """b30-v1 is the tighter variant (6.4 % of I_tot headroom over the
+    governor's 1.000 A break-even, against v3's 18 %), so one tripwire on it
+    catches a Y_AUX_LOAD_A cut for both."""
+    assert rhs._Y_ITOT_FLOOR_A == pytest.approx(1.02)
+    v1 = {s["name"]: s for s in
+          rhs.FAULT_EXPECTATIONS["ems-y-b30-v1"]["signals_require"]}
+    v3 = {s["name"] for s in
+          rhs.FAULT_EXPECTATIONS["ems-y-b30-v3"]["signals_require"]}
+    spec = v1["itot_above_governor_break_even"]
+    assert spec["sum_of"] == ["I_fc", "I_batt"]
+    assert spec["t_window"] == rhs._Y_HI_BOUND_W
+    assert "itot_above_governor_break_even" not in v3
+    # Above the governor break-even, below the measured 1.0644 A minimum.
+    assert 1.000 < spec["min_value"] < 1.0644
 
 
 def test_y_aux_load_a_is_085():

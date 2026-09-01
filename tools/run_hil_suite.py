@@ -395,6 +395,26 @@ FAULT_EXPECTATIONS = {
         # response is therefore to drop ag105IsReady(), re-inhibit MPPT and carry
         # on WITHOUT latching.  A clean run is the expected outcome; the check that
         # earns its keep is survive_to plus allow_only.
+        #
+        # ⚠️ CROSS-CAMPAIGN PIN EXPECTATIONS: everything on this run repeats to
+        # sub-0.01 s EXCEPT the post-collapse MPPT_DISABLE release, which is NOT
+        # BIT-EXACT BY DESIGN.  Do not open a finding on it.
+        #   REPEATABLE (treat a move as real):  GENSTAT collapse at t = 20.0001
+        #     (57 us across campaigns), the I_charge ceiling hold at 0.8000 A
+        #     exact, the ceiling window to sub-0.01 s.
+        #   NOT REPEATABLE (a ~35 % spread is the healthy reading): the delay
+        #     from the collapse to MPPT_DISABLE going high — MEASURED 20.36 /
+        #     26 / 30.16 ms across campaigns 20260830_203006 / 20260831_191509 /
+        #     20260831_222036.
+        #   MECHANISM: the firmware releases on a V_chg condition, and after the
+        #   input collapses V_chg decays onto a near-asymptote settling tail
+        #   (~0.1 mV/tick at the crossing). A quantity crossing a threshold at
+        #   0.1 mV/tick moves ~10 ms for a 1 uV numerical difference, so the
+        #   crossing TIME is a poor observable while the DECISION it reports is
+        #   robust. Nothing here scores it; it is recorded so a campaign
+        #   analysis reads the spread as the asymptote and not as drift.
+        #   If a future check ever needs this instant, the fix is sim-side
+        #   (widen the release condition's margin), not a band on the timing.
         "source": "hil_plant_sim.py SCENARIOS['charge-fault'] + apply_scenario() "
                   "(chg_fault at t = 20); HIL_FINDINGS 'charge-fault' for why the "
                   "old permissive check rubber-stamped a dead board",
@@ -773,24 +793,17 @@ FAULT_EXPECTATIONS = {
         # budgets above are re-checked for BOTH of v2's operating points, so
         # nothing is allowed.
         "allow_only": 0,
-        # DI-MED-5 — FIRST-CAMPAIGN THRESHOLDS, declared as such. Three of the
-        # signal checks below carry bands that no v2 campaign has ever produced:
-        # `sdp_table_interior_at_high_demand` and `sdp_table_rail_at_low_demand`
-        # are read off the OPEN-LOOP offline walk over a v1 run's recorded
-        # trace (header above), and `sdp_charge_window_opened` additionally
-        # rides the PREDICTED ~1 Hz open/close chatter, which the walk cannot
-        # contain because the walk has no plant response to a command v1 never
-        # issued. A miss on any of the three must read as "threshold not yet
-        # derived", never as a board or plant change.
-        # DELETE THIS KEY after the first v2 campaign pins the bands from
-        # measurement — the scp-inrush precedent (its `provisional_note` was
-        # removed same-day once the i_cut band was measured live).
-        "provisional_note":
-            "first-campaign thresholds: sdp_table_interior_at_high_demand, "
-            "sdp_table_rail_at_low_demand and sdp_charge_window_opened are "
-            "derived from an OPEN-LOOP offline walk over a v1 trace (the "
-            "charge-window tick count additionally from the PREDICTED ~1 Hz "
-            "chatter), not from a measured v2 run",
+        # CALIBRATED 2026-08-31 and the `provisional_note` DELETED — campaign
+        # 20260831_222036 was the first live sdp_policy_v2 run and measured all
+        # three of the previously-provisional checks
+        # (`sdp_table_interior_at_high_demand`, `sdp_table_rail_at_low_demand`,
+        # `sdp_charge_window_opened`). Every offline-walk prediction was
+        # confirmed to the digit: raw requests exactly {0.95, 1.00}, the 0.95
+        # plateau at 13.077-38.262 s against a predicted 13-38, charge_goal at
+        # t = 41.306 against a predicted ~41. The bands below are now read off
+        # MEASUREMENT; each carries its measured value and its margin. Same
+        # precedent as scp-inrush, whose note was removed once its i_cut band
+        # was measured live.
         # Deep inside the Run window (the strategy hands back MODE_SAFE at
         # SDP_RUN_EXIT_S = SOC_BAND_RUN_EXIT_S = 58.0), the same depth
         # `ems-dp-replay` asserts: the run must reach the low cruise fault-free,
@@ -858,20 +871,46 @@ FAULT_EXPECTATIONS = {
             #    22.87) to fail spuriously. Window 20.0-36.0 is the settled
             #    interior of the plateau — after the drain ramp completes at
             #    13.0 with margin, before the ramp-out at 38.0.
+            #
+            #    ⚠️ CALIBRATED, AND MADE TWO-SIDED (campaign 20260831_222036).
+            #    MEASURED: cmd_share_sp_raw is EXACTLY 0.950000 on all 16000
+            #    in-window samples — min and max identical, the plateau is one
+            #    bin throughout. The ceiling alone was one-sided and VACUITY-
+            #    PRONE in one specific direction: a run whose demand axis
+            #    collapsed DOWNWARD (a lower bin, whose action is smaller, or a
+            #    column that went blank-then-parsed-low) satisfies "peak <=
+            #    0.97" while asserting nothing about the interior. The added
+            #    floor spec closes it. Both bands are +/-0.010 around the
+            #    measured 0.950, which is 5x the 0.002 gap to the next ladder
+            #    step down (0.90 -> the 0.05 gap is what the ceiling separates)
+            #    and far wider than any float32 round trip.
+            #    TWO SPECS, not one: _judge_signal_leaf() tests min_value FIRST
+            #    and returns, so a single spec carrying both keys drops the
+            #    ceiling silently (the import-time guard refuses the shape).
             {"name": "sdp_table_interior_at_high_demand",
-             "column": "cmd_share_sp_raw", "max_value": 0.97,
+             "column": "cmd_share_sp_raw", "max_value": 0.960,
              "t_window": (20.0, 36.0),
              "label": "the v2 demand axis moved the table off its rail on the "
                       "drain plateau — the pre-clamp request is the interior "
                       "0.95, which a v1 (ideal-scaling map) artifact cannot "
                       "produce"},
+            #    3b. The floor half of the same band — see the calibration note
+            #    on 3. Peak-based like every value spec here, so it asserts that
+            #    the in-window MAXIMUM reached 0.940: a run whose raw request
+            #    fell to a lower ladder step for the whole window fails here,
+            #    which is the one-sided gap the ceiling could not see.
+            {"name": "sdp_table_interior_floor",
+             "column": "cmd_share_sp_raw", "min_value": 0.940,
+             "t_window": (20.0, 36.0),
+             "label": "... and did not collapse BELOW the interior 0.95 either "
+                      "— the floor half of the measured two-sided band"},
             # 4. THE POLICY INTERIOR ACTUATED, HALF TWO — and the request comes
             #    BACK to the rail when the demand falls. Paired with check 3
             #    this asserts a SPAN in the table's request across the run,
             #    which is the whole claim the re-map makes.
             #    DERIVATION: over the post-drain 1.0 m/s cruise the walk's
             #    P_dem is 5.59 W -> bin 5, whose action is 1.00 at every SoC
-            #    node below the relative target. Floor 0.99 sits between 1.00
+            #    node below the relative target. Floor 0.999 sits between 1.00
             #    and the next ladder step down (0.95). Window 44.0-54.0 is
             #    `ems-soc-band`'s own charge-window window, chosen for the same
             #    reason: the drain has fully ramped out and the cruise is
@@ -880,8 +919,15 @@ FAULT_EXPECTATIONS = {
             #    5: whether the charger path is open (bin ~18) or closed
             #    (bin 5), the table's action at a sub-target SoC node is 1.00 in
             #    both, so neither state can fail it.
+            #    ⚠️ CALIBRATED (campaign 20260831_222036). MEASURED: exactly
+            #    1.000000 on all 10000 in-window samples. Floor tightened
+            #    0.99 -> 0.999, which is still 0.049 clear of the 0.95 ladder
+            #    step it must exclude and 0.001 under the measured value — a
+            #    float32 UDP round trip of 1.0 is exact, so no round-trip
+            #    allowance is needed here (unlike the ems-y `share_hi_clip`
+            #    band, whose value is not representable).
             {"name": "sdp_table_rail_at_low_demand",
-             "column": "cmd_share_sp_raw", "min_value": 0.99,
+             "column": "cmd_share_sp_raw", "min_value": 0.999,
              "t_window": (44.0, 54.0),
              "label": "the table's request returns to the 1.00 rail at low "
                       "demand — with check 3, a measured span across the "
@@ -898,28 +944,42 @@ FAULT_EXPECTATIONS = {
             #    (P_dem < 6.0 W) below the relative target. The walk lands that
             #    on t = 41.0..58.0 — the same post-drain low cruise
             #    `ems-soc-band` charges in, arrived at from a different rule.
-            #    THRESHOLD. min_ticks 500 = 0.5 s of FC_CHARGE_ENABLE high
-            #    anywhere in the window. Deliberately loose: a SINGLE 1 s
-            #    decision already gives ~1000 ticks, so the floor carries 2x
-            #    margin against the worst case the chatter below can produce.
-            #    ⚠️ PREDICTED 1 Hz CHATTER, derived not measured. Opening the
-            #    charger path adds its ~0.8 A to I_fc, so the measured P_dem
-            #    jumps ~5.6 W -> ~18.3 W = bin 18, which is charge-FORBIDDEN, so
-            #    the next 1 s decision withdraws the intent and the path closes.
-            #    The policy is memoryless in the demand bin and has no
-            #    hysteresis (`soc-band` avoids exactly this with its dual i_tot
-            #    gate), so ~8 open/close cycles are expected over the window,
-            #    each costing a BT_BUS cut and restore through
-            #    assertFcChargeEnable(). Neither state exceeds a current limit
-            #    (budget in the header), and `ems-y-b00` exercises the same cut
-            #    and restore fault-free at a heavier load.
+            #    THRESHOLD, CALIBRATED (campaign 20260831_222036): min_ticks
+            #    4000 = 4.0 s of FC_CHARGE_ENABLE high anywhere in the window,
+            #    raised from the pre-campaign 500.
+            #    ⚠️ 4000 IS DELIBERATELY VALID IN BOTH REGIMES, because this
+            #    scenario's charge behaviour changed in the same round the
+            #    threshold was calibrated:
+            #      CHATTERING (what 20260831_222036 measured, 9 windows of
+            #        ~1 s over t = 41..58):            8652 ticks -> 2.2x margin
+            #      HELD (what the SDP_CHG_MIN_DWELL_S hysteresis added to
+            #        hil_plant_sim.py this round produces — one continuous
+            #        window):                        ~16000 ticks -> 4.0x margin
+            #    A floor that only suited the held regime would have been
+            #    un-runnable against the very campaign that calibrated it, and
+            #    one that only suited the chattering regime would go stale the
+            #    moment the fix landed. 4000 clears both, so the check survives
+            #    the transition and still fails a run in which the policy's
+            #    charge action never reached the board at all.
+            #    ⚠️ THE 1 Hz CHATTER — measured, then fixed consumer-side.
+            #    Opening the charger path adds its ~0.8 A to I_fc, so the
+            #    measured P_dem jumps ~5.6 W -> ~18.3 W = bin 18, which is
+            #    charge-FORBIDDEN, so the next 1 s decision withdraws the intent
+            #    and the path closes. Measured: 9 windows, period 2.0125 s, a
+            #    4.63x harvest-efficiency loss and 9x a >17.5 V BT_BUS restore
+            #    ring. The minimum-dwell hysteresis (hil_plant_sim.py, the
+            #    SDP_CHG_* block) now latches the intent and subtracts the
+            #    charger's own draw from the measured demand. Neither state
+            #    exceeds a current limit (budget in the header), and `ems-y-b00`
+            #    exercises the same cut and restore fault-free at a heavier
+            #    load.
             #    ⚠️ WHY THIS IS A SWITCH CHECK AND NOT `ems-soc-band`'s
             #    I_charge >= 0.5 A: the Ag105 may never reach chargerReady
             #    inside a 1 s open window, so an I_charge floor could fail a
             #    perfectly correct board. What is asserted is that the POLICY
             #    commanded the path open and the FIRMWARE opened it.
             {"name": "sdp_charge_window_opened", "switch_bit": SW_FC_CHARGE,
-             "min_ticks": 500, "t_window": (41.0, 58.0),
+             "min_ticks": 4000, "t_window": (41.0, 58.0),
              "label": "the v2 policy's low-demand charge action reached the "
                       "board — FC_CHARGE_ENABLE opened in the post-drain "
                       "cruise, which the v1 artifact could not command"},
@@ -1328,7 +1388,58 @@ _Y_SURVIVE_T = _YR[14][1]                                          # 43.0
 # A campaign that misses this should move Y_AUX_LOAD_A (which moves the totals)
 # or the profile, NEVER this floor: lowering it to go green redefines "biased
 # toward FC" as "not quite 50/50", and the split column above is the bound.
-_Y_FC_FLOOR = {1.0: 0.50, 3.0: 0.66}
+#
+# ⚠️ RE-DERIVED 2026-08-31 (campaign 20260831_222036) — the FIRST campaign at
+# Y_AUX_LOAD_A 0.85 A, i.e. the first whose b30 numbers are the shipped
+# stimulus's.  The pair above (0.50 / 0.66) was fitted to campaign
+# 20260831_191509, which ran the RETIRED 0.60 A preload; against the 0.85 A
+# stimulus it is loose by ~30 %.  MEASURED over R3, campaign 20260831_222036:
+#
+#                 peak I_fc    floor here    margin below the peak
+#     Vmax 1      0.7289 A     0.65          10.9 %
+#     Vmax 3      0.9243 A     0.85           8.9 %
+#
+# The margins are deliberately tighter than the 191509 pair's ~12-15 %: with
+# the share_act band added below, THIS check is no longer the only thing
+# asserting the share bias, so it can afford to be a real regression tripwire
+# on the current magnitude rather than a wide sanity bound.  The same rule
+# still applies — a campaign that misses this moves the LOAD or the profile,
+# never the floor.
+_Y_FC_FLOOR = {1.0: 0.65, 3.0: 0.85}
+
+# ── b30 share-clip bands, campaign 20260831_222036 ──────────────────────────
+# The b30 pair exists to prove the runtime clip [b, 1-b] is DELIVERED, and
+# until this campaign nothing asserted the delivered value: `fc_current_biased`
+# asserts an AMPERE floor, which moves with the load and cannot distinguish
+# "the share loop delivered 0.70" from "the bus drew more".
+#
+# MEASURED share_act = I_fc / (I_fc + I_batt) — the delivered split, derived
+# from the CSV's own current columns via the `ratio_of` value source:
+#     hi window (region 6, share commanded 1.00 -> clipped to 0.70)
+#         b30-v1  0.69985 .. 0.70027      b30-v3  0.69991 .. 0.70012
+#     lo window (regions 10/11, 0.00 -> clipped to 0.30)
+#         b30-v1  0.29986 .. 0.30016      b30-v3  0.29996 .. 0.30004
+# Both bounds are DELIVERED EXACTLY, both variants — so the band is +/-0.005
+# around each clip level, ~12x the widest observed excursion (0.00027) and
+# still an order of magnitude inside the 0.40 gap between the two clip levels.
+#
+# ⚠️ PEAK-BASED, like every value bound in this table: `min_value` and
+# `max_value` both test the in-window MAXIMUM, so the pair asserts that the
+# maximum LANDED in the band. A run that reached the clip and then collapsed is
+# not caught by these two (the b30 entry's other checks and the fault gate
+# cover that); a run that never reached the clip, or overshot it, is.
+_Y_SHARE_CLIP_TOL = 0.005
+# Y_AUX_LOAD_A must keep the SOURCE TOTAL above the firmware's closed-loop
+# governor gate (SHARE_MINORITY_I_MIN_A 0.30 A on each side => break-even
+# I_tot 1.000 A at the 0.70/0.30 clip), or the governor re-engages and clips
+# the delivered share BEFORE the setpoint latch does — silently turning the
+# bands above into assertions about the governor instead.
+# MEASURED, campaign 20260831_222036, over the hi window: I_tot 1.0644 A min
+# (b30-v1, the tighter variant — only 6.4 % of headroom) and 1.1837 A (b30-v3).
+# The 1.02 A floor sits 2 % above break-even and 4.2 % under the v1 minimum, so
+# a preload cut below ~1.0 A fails HERE, loudly, instead of quietly re-routing
+# what the share bands are measuring.
+_Y_ITOT_FLOOR_A = 1.02
 
 for _vmax, _b in ((1.0, 0.30), (3.0, 0.30), (1.0, 0.00), (3.0, 0.00)):
     _n = "ems-y-b%02d-v%g" % (round(_b * 100), _vmax)
@@ -1382,6 +1493,42 @@ for _vmax, _b in ((1.0, 0.30), (3.0, 0.30), (1.0, 0.00), (3.0, 0.00)):
              "min_value": _Y_FC_FLOOR[_vmax], "t_window": _Y_FC_BIAS_W,
              "label": "the board's share loop moved current onto FC beyond the "
                       "nominal split (>= %.2f A)" % _Y_FC_FLOOR[_vmax]})
+        # 5-8 (b30 only). THE CLIP LEVELS, DELIVERED — see _Y_SHARE_CLIP_TOL.
+        # These are what `fc_current_biased` cannot say: a RATIO is invariant
+        # to the load, so it separates "the share loop delivered 0.70" from
+        # "the bus drew more current at a 0.50 split".
+        _sig += [
+            {"name": "share_hi_delivered", "ratio_of": ["I_fc", "I_batt"],
+             "min_value": _hi - _Y_SHARE_CLIP_TOL, "t_window": _Y_HI_BOUND_W,
+             "label": "the DELIVERED share reached the high clip (%.2f) in "
+                      "region 6" % _hi},
+            {"name": "share_hi_not_overshot", "ratio_of": ["I_fc", "I_batt"],
+             "max_value": _hi + _Y_SHARE_CLIP_TOL, "t_window": _Y_HI_BOUND_W,
+             "label": "... and did not exceed it — the runtime clip held at "
+                      "%.2f, not the commanded 1.00" % _hi},
+            {"name": "share_lo_delivered", "ratio_of": ["I_fc", "I_batt"],
+             "max_value": _b + _Y_SHARE_CLIP_TOL, "t_window": _Y_LO_BOUND_W,
+             "label": "the DELIVERED share came down to the low clip (%.2f) in "
+                      "regions 10/11" % _b},
+            {"name": "share_lo_not_undershot", "ratio_of": ["I_fc", "I_batt"],
+             "min_value": _b - _Y_SHARE_CLIP_TOL, "t_window": _Y_LO_BOUND_W,
+             "label": "... and did not go under it — the runtime clip held at "
+                      "%.2f, not the commanded 0.00" % _b},
+        ]
+        if _vmax == 1.0:
+            # 9 (b30-v1 only). THE PRELOAD BUDGET — see _Y_ITOT_FLOOR_A. Only
+            # on the Vmax-1 variant: it is the one with real exposure (6.4 % of
+            # I_tot headroom over break-even against v3's 18 %), and one
+            # tripwire on the tighter of two variants sharing one Y_AUX_LOAD_A
+            # is enough to catch a preload cut.
+            _sig.append(
+                {"name": "itot_above_governor_break_even",
+                 "sum_of": ["I_fc", "I_batt"],
+                 "min_value": _Y_ITOT_FLOOR_A, "t_window": _Y_HI_BOUND_W,
+                 "label": "the source total stayed above the closed-loop "
+                          "governor's break-even (>= %.2f A), so the share "
+                          "bands above measure the setpoint clip and not the "
+                          "governor" % _Y_ITOT_FLOOR_A})
     else:
         # 4-7 (b00 only). THE CUT-AND-RESTORE TOPOLOGY, both directions and
         # both channels. Region 6 commands share 1.00, above DROOP_R_MAX 0.85,
@@ -2149,6 +2296,40 @@ FAULT_EXPECTATIONS["share-staircase"] = {
     ],
 }
 
+def assert_derived_source_shape(scenario, tag, spec):
+    """Import-time shape guard for the `sum_of` / `ratio_of` value sources.
+
+    A FUNCTION rather than inline in the guard loop below, unlike its
+    neighbours, because every malformed spelling it refuses fails SILENTLY at
+    score time and the negative cases therefore need direct test coverage:
+      * `sum_of` AND `ratio_of` — two value sources, one slot;
+      * a `column` beside either — the derived source wins in scan_signals(),
+        so the column reads as an assertion and is ignored;
+      * a one-column `ratio_of` — identically 1.0, a tautology dressed as a
+        share assertion (and an empty list is a divide by zero);
+      * no value bound at all — a measurement with nothing asserted;
+      * `ratio_min_den` on a spec with no `ratio_of` to read it.
+    Raises AssertionError, naming the scenario and the spec."""
+    where = "FAULT_EXPECTATIONS[%r].signals_require[%r]" % (scenario, tag)
+    if "sum_of" in spec or "ratio_of" in spec:
+        assert not ("sum_of" in spec and "ratio_of" in spec), (
+            "%s carries both `sum_of` and `ratio_of`; they are alternative "
+            "value sources." % where)
+        assert "column" not in spec, (
+            "%s carries a `column` beside a derived value source. The derived "
+            "one wins in the scanner, so the `column` would read as an "
+            "assertion and be ignored." % where)
+        cols = spec.get("sum_of") or spec.get("ratio_of")
+        assert isinstance(cols, (list, tuple)) and len(cols) >= 2, (
+            "%s: a derived value source needs at least two columns; got %r. A "
+            "one-column ratio is identically 1.0." % (where, cols))
+        assert any(k in spec for k in ("min_value", "max_value",
+                                       "strictly_decreases_by")), (
+            "%s: a derived value source needs a value bound to assert." % where)
+    assert not ("ratio_min_den" in spec and "ratio_of" not in spec), (
+        "%s: `ratio_min_den` is read only by `ratio_of`." % where)
+
+
 # Everything not listed is expected fault-free (post-grace); a fault there is a
 # finding: steady, step-load, ems-drive-cycle, drive.
 #
@@ -2339,6 +2520,7 @@ for _n, _e in FAULT_EXPECTATIONS.items():
                     "(min_ticks/min_value/max_ms/...), or a `vacuity_note` "
                     "saying why the column cannot be blank in this run."
                     % (_n, _tag, _sig_id[0], _sig_id[1]))
+            assert_derived_source_shape(_n, _tag, _sub)
             if "max_ms" in _sub:
                 # L5: the latency kind is SELECTED by `max_ms` and ignores tick
                 # bounds entirely, so a tick bound written beside it is silently
@@ -3241,6 +3423,53 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
                         else:
                             m["ticks"] += cur
                         continue
+                    # ── DERIVED SCALARS (2026-08-31): `sum_of` / `ratio_of` ──
+                    # Some quantities the campaign reasons in are not CSV
+                    # columns: the source total I_tot = I_fc + I_batt, and the
+                    # DELIVERED share share_act = I_fc / I_tot. Both were being
+                    # asserted only indirectly, through per-channel current
+                    # floors that move whenever the load does — so a check
+                    # written to pin "the board delivered 0.70" had to be
+                    # written as "I_fc exceeded 0.74 A", which a load change
+                    # falsifies for reasons that have nothing to do with the
+                    # share loop.
+                    #   sum_of:   [c0, c1, ...]  -> sum of the columns
+                    #   ratio_of: [c0, c1, ...]  -> c0 / sum(all of them)
+                    # Both feed the ordinary peak/first/last machinery, so
+                    # min_value / max_value / strictly_decreases_by all apply
+                    # unchanged. A row with ANY named column blank or
+                    # unparseable is skipped whole — a partial sum is not a
+                    # smaller sum, it is a different quantity.
+                    # `ratio_min_den` (default 0.05 A) skips rows whose
+                    # denominator is too small for the ratio to mean anything;
+                    # it is the same 50 mA mask hil_report_analysis.py uses to
+                    # derive share_act, kept identical on purpose.
+                    if "sum_of" in spec or "ratio_of" in spec:
+                        cols = spec.get("sum_of") or spec["ratio_of"]
+                        vals = []
+                        for c in cols:
+                            cell = (row.get(c) or "").strip()
+                            if not cell:
+                                break
+                            try:
+                                vals.append(float(cell))
+                            except ValueError:
+                                break
+                        if len(vals) != len(cols):
+                            continue
+                        if "sum_of" in spec:
+                            v = sum(vals)
+                        else:
+                            den = sum(vals)
+                            if abs(den) < float(spec.get("ratio_min_den", 0.05)):
+                                continue
+                            v = vals[0] / den
+                        if m["peak"] is None or v > m["peak"]:
+                            m["peak"] = v
+                        if m["first"] is None:
+                            m["first"] = v
+                        m["last"] = v
+                        continue
                     cell = (row.get(spec.get("column", "")) or "").strip()
                     if not cell:
                         continue
@@ -3808,10 +4037,29 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
     post = metrics.get("fault_bits_post_grace") or 0
     carried = seen & ~post
     grace_s = metrics.get("grace_s", WARM_RESET_GRACE_S)
+    # ⚠️ WORDING CORRECTED 2026-08-31 (campaign 20260831_222036; three analysis
+    # agents flagged it independently).  This detail used to say "carried-in
+    # from the PREDECESSOR'S SETTLE LATCH", which claims something the suite
+    # does not know and which was FALSE on most runs it was printed for — in
+    # batches 3 and 6 of that campaign, 7 of 8 predecessors ended CLEAN and the
+    # sentence still named their settle latch.
+    #
+    # WHAT IS ACTUALLY OBSERVED, and all this line may claim: bits present
+    # before the grace bound and absent after it.  The dominant contributor is
+    # not inherited at all — the 0x8010 (HIL_STALE|ERROR) term is generated
+    # FRESH by each child's own link handshake, because the board sees no
+    # injection frames for the first moments after the simulator restarts.  A
+    # genuinely inherited latch is ALSO possible (the fw v23 run-boundary warm
+    # recovery clears one inside this same window, and campaign
+    # 20260831_222036's ems-drive-cycle saw exactly that: 0x8012 =
+    # soc-depletion's real UV_BATT latch | 0x8010).  The two are
+    # INDISTINGUISHABLE from this run's CSV alone, so the wording names the
+    # mechanism it can see and implies nothing about the predecessor.
     carried_note = ("" if not carried else
-                    "; carried-in from the predecessor's settle latch: %s "
-                    "(excused — observed only before t=%.1fs and cleared by the "
-                    "grace-window warm reset)" % (fault_names(carried), grace_s))
+                    "; pre-grace reconnect transient: %s (excused — observed "
+                    "only before t=%.1fs and gone after it; predecessor state "
+                    "NOT implied, see judge_scenario)"
+                    % (fault_names(carried), grace_s))
     first_t = metrics.get("fault_first_t") or {}
     expect = FAULT_EXPECTATIONS.get(name)
 
@@ -4367,9 +4615,15 @@ def render_report(meta, results):
                  fault_names(seen_b), m.get("grace_s", WARM_RESET_GRACE_S),
                  fault_names(post_b), m.get("final_state")))
             if carried_b:
-                A("  - carried in from the predecessor's settle latch (seen only "
-                  "before t=%.1fs, cleared by the fw v23 grace-window warm "
-                  "reset): %s"
+                # Wording matches judge_scenario()'s `carried_note` — see the
+                # correction recorded there. These bits are observed pre-grace
+                # and gone after it; the dominant contributor is each child's
+                # own fresh link-handshake blip, NOT an inherited latch, and
+                # the CSV cannot tell the two apart.
+                A("  - pre-grace reconnect transient (seen only before "
+                  "t=%.1fs and gone after it; a fresh link-handshake blip "
+                  "and/or a predecessor latch cleared by the fw v23 warm "
+                  "reset — not distinguishable here): %s"
                   % (m.get("grace_s", WARM_RESET_GRACE_S), fault_names(carried_b)))
             if m.get("substep_hz_mean") is not None:
                 A("- hi-fi substep rate: mean %.0f Hz, min %.0f Hz"
@@ -4546,9 +4800,11 @@ def render_report(meta, results):
                          fault_names(post_b), rm.get("final_state")))
                     carried_b = seen_b & ~post_b
                     if carried_b:
-                        A("  - carried in from the predecessor's settle latch "
-                          "(seen only before t=%.1fs, cleared by the fw v23 "
-                          "grace-window warm reset): %s"
+                        A("  - pre-grace reconnect transient (seen only "
+                          "before t=%.1fs and gone after it; a fresh "
+                          "link-handshake blip and/or a predecessor latch "
+                          "cleared by the fw v23 warm reset — not "
+                          "distinguishable here): %s"
                           % (rm.get("grace_s", WARM_RESET_GRACE_S),
                              fault_names(carried_b)))
                 elif rm.get("error"):

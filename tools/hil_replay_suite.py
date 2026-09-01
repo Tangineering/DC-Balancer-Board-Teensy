@@ -691,8 +691,8 @@ REPLAY_SUITE = [
         # RECLASSIFIED conformance -> deviation (2026-08-30, HIL_FINDINGS 'Replay
         # half' Class B).  The log was RECORDED WITH A DARK BUS — V_bus ~= 0 for
         # all 38 s — so it was never a soak case for anything: replayed, the
-        # firmware's staged bring-up cannot pass P1 and times out at
-        # BUS_CHARGE_TIMEOUT_MS into FAULT_INIT_FAIL (.ino:8784-8786).  That is
+        # firmware's staged bring-up cannot pass P0 and times out at
+        # PRECHARGE_TIMEOUT_MS into FAULT_INIT_FAIL (.ino:8762-8765).  That is
         # correct firmware behaviour and now the asserted expectation.
         #
         # REPLAYS RAW — `skip_preamble` (H2, 2026-08-30).  The first version of this
@@ -706,14 +706,32 @@ REPLAY_SUITE = [
         # rail fields present, so it needs no absent-rail substitution and loses
         # nothing by skipping the preamble.
         #
-        # ⚠️ WHICH GATE FAILS — RECORD CORRECTED 2026-08-31.  This block used to
-        # say the run dies on P0: "P0's gate never sees the bus reach
-        # V_PRECHARGE_MIN, and PRECHARGE_TIMEOUT_MS (300 ms, .ino:1466) latches
-        # INIT_FAIL", with the latch at "~300 ms".  Campaign 20260831_191509
-        # MEASURED the latch at t = 0.8015 s, which is P1's BUS_CHARGE_TIMEOUT_MS
-        # (800 ms, .ino:1381) plus staging phase, not P0's 300 ms.  The
-        # `not_before_s: 0.5` bound on the check below now PINS that
-        # distinction, so the two gates can no longer be confused again.
+        # ⚠️ WHICH GATE FAILS — IT IS P0, AND THE ORIGINAL RECORD IS RESTORED.
+        #
+        # HISTORY, because this statement has now been reversed twice and a
+        # reader deserves to know which way is settled.  The block originally
+        # said P0 (PRECHARGE_TIMEOUT_MS 300 ms, .ino:1466).  The 20260831_191509
+        # fix round overturned that to P1 (BUS_CHARGE_TIMEOUT_MS 800 ms,
+        # .ino:1381) by reading an ABSOLUTE latch timestamp of 0.8015 s — and
+        # that reasoning was wrong, as campaign 20260831_222036's replay audit
+        # (F1) proved.  Two independent reasons:
+        #   1. THE FRAME WAS WRONG.  Bring-up phase timeouts are measured from
+        #      `bringupPhaseStart`, re-stamped on the State-0 entry, not from
+        #      the sim clock's zero.  In this campaign the board enters State 0
+        #      at t = 0.5001 s (the fw v23 run-boundary warm reset clearing the
+        #      predecessor's latch) and latches at t = 0.8014 s: ELAPSED
+        #      301.3 ms — P0's 300 ms gate, to 0.4 %.  Campaign 20260831_191509
+        #      gives 301.1 ms by the same arithmetic, so the two campaigns never
+        #      disagreed; only the frame did.
+        #   2. P1 IS UNREACHABLE HERE ANYWAY.  P1 is entered only once phase 0
+        #      passes, and phase 0's gate is the bus reaching V_PRECHARGE_MIN —
+        #      which a dark bus (V_bus ~ 0 for all 38 s) can never meet.  The
+        #      run cannot get past P0 to time out on P1.
+        # And the absolute bound could not have caught either error: both
+        # candidate gates land past 0.8 s absolute on a run whose State-0 entry
+        # is itself at ~0.5 s, so `not_before_s: 0.5` discriminated NOTHING.
+        # The check below pins the ELAPSED time instead
+        # (`latch_elapsed_band_s`), which is the frame the firmware measures in.
         #
         # OBSERVABILITY OF THE LATCH (verified): INIT_FAIL fires at ~0.80 s,
         # i.e. BEFORE the 2.0 s grace bound.  It is still scored,
@@ -732,8 +750,9 @@ REPLAY_SUITE = [
         "classification": "manual ('K') run RECORDED WITH A DARK BUS (V_bus ~ 0 "
                           "for all 38 s)",
         "why": "The dark-bus stimulus: the firmware must not accept a dead bus as "
-               "a working one. Bring-up P1 times out at BUS_CHARGE_TIMEOUT_MS and "
-               "FAULT_INIT_FAIL latches (.ino:8784-8786).",
+               "a working one. Bring-up P0 never sees V_PRECHARGE_MIN, so "
+               "PRECHARGE_TIMEOUT_MS (300 ms) expires and FAULT_INIT_FAIL "
+               "latches (.ino:8762-8765).",
         "provisional": True,
         "skip_bringup_gate": True,
         "skip_preamble": True,
@@ -746,27 +765,36 @@ REPLAY_SUITE = [
         # this entry's first 2.0 s of RECORDED stimulus sit inside the excluded
         # fault window, so it is only scorable because INIT_FAIL latches at ~0.80 s
         # and HOLDS for the remaining 37.2 s. Measured on hardware, campaign
-        # 20260830_203006; re-measured at 0.8015 s in campaign 20260831_191509
-        # (see the P0-vs-P1 correction above).
+        # 20260830_203006; absolute latch 0.8015 s in campaign 20260831_191509
+        # and 0.8014 s in 20260831_222036 — but the MECHANISM is the elapsed
+        # figure, see the P0-vs-P1 correction above.
         "persistent_fault": True,
         "checks": [{"kind": "fault_latched", "name": "init_fail_latched",
                     "bit": FAULT_INIT_FAIL, "require_stimulus": False,
-                    # LOW (2026-08-31 ledger fix queue) — WHICH BRING-UP GATE.
+                    # WHICH BRING-UP GATE, asserted in the firmware's own frame.
                     # FAULT_INIT_FAIL is raised by BOTH of busBringupTick()'s
                     # phase timeouts, so a bare latch check cannot say whether
                     # the dark bus failed P0's precharge gate
                     # (PRECHARGE_TIMEOUT_MS 300 ms, .ino:1466) or P1's charge
                     # gate (BUS_CHARGE_TIMEOUT_MS 800 ms, .ino:1381) — two
                     # different findings about the firmware, one bit.
-                    # MEASURED, campaign 20260831_191509: the latch lands at
-                    # t = 0.8015 s = the 800 ms P1 timeout plus staging phase.
-                    # 0.5 s is the DISCRIMINATOR: comfortably above the 300 ms
-                    # P0 alternative (+0.20 s) and comfortably below the
-                    # measured P1 latch (-0.30 s), so a shift to the other gate
-                    # fails here instead of passing as "INIT_FAIL, as expected".
-                    # Timestamps are UNSHIFTED for this entry (skip_preamble),
-                    # so the bound is in log time directly.
-                    "not_before_s": 0.5},
+                    #
+                    # MEASURED, ELAPSED FROM THE STATE-0 ENTRY (the anchor at
+                    # which the firmware itself re-stamps `bringupPhaseStart`):
+                    #     campaign 20260831_222036   301.3 ms  (0.8014 - 0.5001)
+                    #     campaign 20260831_191509   301.1 ms
+                    # Both are P0's 300 ms gate to within 0.5 %.
+                    #
+                    # BAND [0.20, 0.45] s brackets 300 ms by -33 % / +50 % —
+                    # orders of magnitude more than the 0.2 ms of campaign-to-
+                    # campaign spread, and more than any plausible staging
+                    # phase — while EXCLUDING P1's 800 ms outright, which is the
+                    # whole point. The floor is not decoration: it excludes a
+                    # latch raised before any bring-up gate could have expired.
+                    "latch_elapsed_band_s": (0.20, 0.45),
+                    # State 0 = Init. Written out rather than defaulted so the
+                    # anchor is visible beside the band it scales.
+                    "elapsed_from_state": 0},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
@@ -1188,6 +1216,34 @@ REPLAY_SUITE = [
                     # ACTUATION ONLY - see check_share_loop_actuated:
                     # open-loop replay winds the share PI regardless,
                     # so setpoint TRACKING is deliberately not asserted.
+                    #
+                    # ⚠️ THE SPAN IS BIMODAL ON THIS ENTRY — do not band it, and
+                    # do not read a move between the two values as a regression
+                    # (F3, campaign 20260831_222036, second datapoint).
+                    # Measured spans: 0.546/0.550 (campaigns 20260831_000518 /
+                    # _222036) and 0.697 (20260831_191509). The two modes have
+                    # DIFFERENT MECHANISMS, which is why no single band is
+                    # honest:
+                    #     ~0.55  the replayed share_sp's own profile rail (the
+                    #            recording spans 0.300-0.700, i.e. 0.40 of
+                    #            setpoint, which the open-loop PI's windup
+                    #            carries a little past);
+                    #     ~0.70  a run in which the wandering setpoint also
+                    #            REACHED the firmware's cutoff clamp, so the
+                    #            MDAC ratio is driven to a rail rather than
+                    #            tracking, and the span is the clamp's, not the
+                    #            profile's.
+                    # Which mode a campaign lands in is decided by the same
+                    # command-arrival-phase sensitivity that makes the cutoff
+                    # TRANSITION COUNT unstable here (note above) — it is the
+                    # same phenomenon read on a different observable. The 0.20
+                    # floor is BELOW BOTH modes by a factor of ~2.7, which is
+                    # exactly why it is the right assertion for this entry: it
+                    # says the loop actuated, and declines to say how far.
+                    # Clamp-reaching coverage is DELIBERATE elsewhere —
+                    # `share-staircase` and `ems-y-b00-*` — so the bimodality
+                    # costs the suite no coverage. (F3's band-vs-doc question is
+                    # the operator's; the conservative doc option is in force.)
                     },
                    {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
                     # FU3: measured 0.887 of the recorded window over
@@ -1268,6 +1324,23 @@ REPLAY_SUITE = [
                + UV_PAIR_CLAMP_WHY % ("TP0053", 3.929, 4.462),
         "provisional": False,
         "i_fc_clamp_a": UV_PAIR_I_FC_CLAMP_A,
+        # ⚠️ REPEAT CLASS: ±~100 ms, BURST-QUANTIZED — do NOT read a shifted
+        # latch instant here as a regression (F2, campaign 20260831_222036).
+        # TP0053's collapse is REPETITIVE, not sustained: only 8.3 % of its
+        # samples sit under LIMIT_V_BUS_MIN, arriving in short bursts of ~9 ms
+        # under / ~51 ms over per ~60 ms cycle (the classification above). The
+        # leaky dwell integrator therefore accumulates in steps and crosses
+        # UV_BUS_DWELL_LATCH_MS *inside a burst*, so the latch instant SNAPS to
+        # whichever burst carries it over — one burst of slack is a ~60 ms move
+        # for a stimulus that has not changed at all. Campaign 20260831_222036
+        # measured +59 ms against 20260831_191509, one burst period, exactly
+        # this quantization.
+        # ⚠️ NOT the class TP0010 is in. TP0010's collapse is CONTINUOUS, its
+        # dwell crossing is a smooth ramp, and it moved ~0 ms across the same
+        # campaign pair — treat ±3 ms as its band and ±~100 ms as this one's.
+        # NO CHECK PINS THE INSTANT on either entry (the check asserts the LATCH,
+        # not when), so this is a records fix: it exists so the next campaign's
+        # analysis does not open a finding on a number that is behaving.
         # RULE 1, same reasoning as TP0010: clamped UV-latch stimulus stays PURE.
         # Recorded v_sp is identically 0 (4585 rows).
         "replay_commands": False,
@@ -1309,6 +1382,23 @@ REPLAY_SUITE = [
         "replay_commands": False,
         "checks": [{"kind": "fault_latched", "name": "oc_fc_latched",
                     "bit": FAULT_OC_FC, "require_stimulus": True},
+                   # F4 (campaign 20260831_222036) — the RECLASSIFICATION's own
+                   # premise, asserted. This entry left the UV pair because its
+                   # dip peaks at 18.65 ms of dwell against the 20 ms latch, so
+                   # the bus collapse is a near miss BEHIND an overcurrent, and
+                   # the verdict is only attributable while the OC comes first.
+                   # MEASURED, campaign 20260831_222036: OC latches at
+                   # t=19.4654 s, the injected V_bus first goes under 12.0 V at
+                   # t=19.4878 s — a 22.37 ms lead (19 sub-12 V samples, min
+                   # 6.12 V).
+                   # FLOOR 10 ms = 45 % of the measured lead. Loose on purpose:
+                   # the lead is a property of the RECORDING (two fixed events
+                   # in one log) and the only things that can move it are a
+                   # time-base or clamp change, which would move it by far more
+                   # than a millisecond. What must never pass is a lead that has
+                   # collapsed or inverted.
+                   {"kind": "latch_precedes_uv", "name": "oc_precedes_uv",
+                    "bit": FAULT_OC_FC, "min_lead_ms": 10.0},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
 ]
@@ -1427,7 +1517,8 @@ def _assert_check_spec_shapes():
     ignored, because every check reads its spec with `.get()`."""
     _KNOWN = {
         "no_fault": {"ignore_bits"},
-        "fault_latched": {"bit", "require_stimulus", "not_before_s"},
+        "fault_latched": {"bit", "require_stimulus", "not_before_s",
+                          "latch_elapsed_band_s", "elapsed_from_state"},
         "fault_not_latched": {"bit"},
         "bounded_current": {"limit_a"},
         "no_sustained_rail": {"max_episode_s", "level_a"},
@@ -1438,6 +1529,7 @@ def _assert_check_spec_shapes():
         "share_loop_actuated": {"min_span", "min_samples"},
         "steps_onto_rail_within": {"level_a", "within_s", "after_s"},
         "v_bus_min_in_band": {"min_v", "max_v"},
+        "latch_precedes_uv": {"bit", "min_lead_ms"},
     }
     for e in REPLAY_SUITE:
         log = e.get("log")
@@ -1459,6 +1551,36 @@ def _assert_check_spec_shapes():
                 assert float(c["not_before_s"]) > 0.0, (
                     f"REPLAY_SUITE[{log!r}]: `not_before_s` must be positive; a "
                     f"bound at or below 0 asserts nothing.")
+            # F1: the elapsed band is a TWO-SIDED mechanism discriminator, so a
+            # degenerate or inverted pair would silently stop discriminating.
+            if "latch_elapsed_band_s" in c:
+                _b = c["latch_elapsed_band_s"]
+                assert isinstance(_b, (tuple, list)) and len(_b) == 2, (
+                    f"REPLAY_SUITE[{log!r}]: `latch_elapsed_band_s` must be a "
+                    f"(lo, hi) pair in seconds; got {_b!r}.")
+                assert 0.0 <= float(_b[0]) < float(_b[1]), (
+                    f"REPLAY_SUITE[{log!r}]: `latch_elapsed_band_s` needs "
+                    f"0 <= lo < hi; got {_b!r}. A one-sided or inverted band "
+                    f"cannot separate an EARLIER gate from a LATER one, which "
+                    f"is the only thing this bound is for.")
+            assert not ("elapsed_from_state" in c
+                        and "latch_elapsed_band_s" not in c), (
+                f"REPLAY_SUITE[{log!r}]: `elapsed_from_state` names the anchor "
+                f"for `latch_elapsed_band_s` and is read by nothing else.")
+            # F4: an ordering check without a positive lead asserts only "not
+            # strictly after", which every simultaneous-sample case satisfies.
+            if kind == "latch_precedes_uv":
+                assert float(c.get("min_lead_ms", 0.0)) > 0.0, (
+                    f"REPLAY_SUITE[{log!r}]: `latch_precedes_uv` needs a "
+                    f"positive `min_lead_ms`; a zero lead passes on a tie, "
+                    f"which is the ambiguous case the check exists to refuse.")
+                assert any(o.get("kind") == "fault_latched"
+                           and int(o.get("bit", -1)) == int(c["bit"])
+                           for o in e.get("checks", [])), (
+                    f"REPLAY_SUITE[{log!r}]: `latch_precedes_uv` orders a latch "
+                    f"it does not itself assert. Pair it with the "
+                    f"`fault_latched` check on the same bit, or the entry can "
+                    f"report an ordering for a fault nothing required.")
 
 
 _assert_skip_preamble_entries()
@@ -1631,6 +1753,37 @@ class ReplayCsv:
                 return t if t <= deadline_s else None
         return None
 
+    def state_entry_t(self, want, before_t=None):
+        """Sim time of the LAST observed ENTRY into mainState `want`, at or
+        before `before_t` (whole run when None).  None if there is none.
+
+        F1 (campaign 20260831_222036) — the ANCHOR for an elapsed-time bound.
+        A bring-up phase timeout is measured by the firmware from
+        `bringupPhaseStart`, which is re-stamped on the State-0 entry, so an
+        ABSOLUTE timestamp on a suite run cannot say which phase timed out:
+        every run in a campaign starts latched from the predecessor and only
+        reaches State 0 when the fw v23 run-boundary warm reset fires, at a time
+        that is a property of the HOST's inter-run gap, not of the firmware.
+        The observed 99 -> 0 transition is that anchor, and it is already in the
+        CSV's `state` column.
+
+        ENTRY EDGE, i.e. a sample at `want` whose predecessor is not: the LAST
+        one at or before `before_t` wins, so a run that reached State 0 more
+        than once (a second warm reset) is anchored on the reset the latch
+        actually followed.  A run whose FIRST observed sample is already at
+        `want` counts as an entry there — there is no earlier evidence to
+        distinguish "entered just now" from "has been here all along", and the
+        caller prints the anchor time so the reader can see which it was."""
+        out = None
+        prev = None
+        for t, st in self.state:
+            if before_t is not None and t > before_t:
+                break
+            if st == want and prev != want:
+                out = t
+            prev = st
+        return out
+
 
 def _int_any(cell):
     """fault_flags / state may be printed decimal or 0x-prefixed."""
@@ -1720,14 +1873,24 @@ def _whole_run_first_note(data, bit=None):
 def _persisted_latch_t(data, bit):
     """WHOLE-RUN first LATCHED observation of `bit`, EXCLUDING a carried-in one.
 
-    DI-MED-4.  `check_fault_latched`'s `not_before_s` bound needs "when did THIS
-    run latch", and the raw whole-run first sighting cannot answer that: a
-    predecessor run's settle latch is still on the wire for the first ~0.5 s
-    until the fw v23 warm reset clears it, so back-to-back suite runs would hand
-    the bound a timestamp from the PREVIOUS run — and on ML0217, whose bound
-    separates P0's PRECHARGE_TIMEOUT_MS from P1's BUS_CHARGE_TIMEOUT_MS, that
-    reads as "a different firmware path raised the same bit sooner" and FAILS a
-    correct board with a wrong-mechanism message.
+    DI-MED-4.  `check_fault_latched`'s `not_before_s` and `latch_elapsed_band_s`
+    bounds both need "when did THIS run latch", and the raw whole-run first
+    sighting cannot answer that: a predecessor run's settle latch is still on
+    the wire for the first ~0.5 s until the fw v23 warm reset clears it, so
+    back-to-back suite runs would hand the bound a timestamp from the PREVIOUS
+    run — and on ML0217, whose band separates P0's PRECHARGE_TIMEOUT_MS from
+    P1's BUS_CHARGE_TIMEOUT_MS, that reads as "a different firmware path raised
+    the same bit sooner" and FAILS a correct board with a wrong-mechanism
+    message.  Under the elapsed band it is worse than wrong: a carried-in latch
+    PRECEDES the State-0 entry it would be measured from, so the elapsed time
+    comes out NEGATIVE and lands outside any band.
+
+    ⚠️ STRUCTURALLY UNREACHABLE IN THE CURRENT PLAN ORDER, and kept anyway.  No
+    run that ML0217 can follow in build_plan()'s order leaves a latched
+    FAULT_INIT_FAIL behind, so this branch has never fired on a real campaign
+    and is covered by UNIT TESTS ONLY.  It stays because the guard is free,
+    because the plan order is not a contract, and because the failure it
+    prevents is a confident wrong-mechanism verdict rather than a visible error.
 
     The classification rule is `_whole_run_first_note`'s, reused rather than
     re-invented so the two can never disagree: an early sighting is PERSISTED
@@ -1746,13 +1909,24 @@ def _persisted_latch_t(data, bit):
 
 
 def _carried_in_note(data):
-    """Report-only sentence naming the excluded pre-grace bits, or ''."""
+    """Report-only sentence naming the excluded pre-grace bits, or ''.
+
+    ⚠️ WORDING CORRECTED 2026-08-31 (campaign 20260831_222036), in lockstep
+    with run_hil_suite.judge_scenario()'s copy — the two are read side by side
+    in one REPORT.md and must not tell different stories.  The sentence used to
+    assert "carried-in from the PREDECESSOR'S settle latch", which the CSV
+    cannot support and which was false on most runs it printed for: the
+    dominant pre-grace bit is 0x8010 (HIL_STALE|ERROR), generated FRESH by each
+    child's own link handshake, not inherited.  An inherited latch IS also
+    possible and looks identical here, so the note names what it observes."""
     carried = data.carried_in_bits()
     if not carried:
         return ""
-    return (f"; carried-in from the predecessor's settle latch and EXCLUDED: "
-            f"{_fault_names(carried)} (seen only before t={data.grace_s:.1f}s, "
-            f"cleared by the fw v23 grace-window warm reset)")
+    return (f"; pre-grace reconnect transient, EXCLUDED: "
+            f"{_fault_names(carried)} (seen only before t={data.grace_s:.1f}s "
+            f"and gone after it — a fresh link-handshake blip and/or a "
+            f"predecessor latch cleared by the fw v23 warm reset; the two are "
+            f"indistinguishable from this CSV, so neither is claimed)")
 
 
 def check_no_fault(data, spec):
@@ -1986,36 +2160,100 @@ def check_fault_latched(data, spec):
         return False, (f"{_fault_names(bit)} latched at t={hits[0]:.3f}s but was "
                        f"CLEARED by the end of the run (final 0x{end_flags:04X}) — "
                        f"it must LATCH and hold")
-    # ── `not_before_s`: WHICH mechanism latched, not just that one did ──────
-    # LOW (2026-08-31 ledger fix queue).  A bare `fault_latched` says the bit is
-    # set and holds; it cannot distinguish two firmware paths that raise the SAME
-    # bit at different times.  ML0217 is the case: FAULT_INIT_FAIL is raised by
-    # busBringupTick()'s phase timeouts, and P0's PRECHARGE_TIMEOUT_MS (300 ms)
-    # and P1's BUS_CHARGE_TIMEOUT_MS (800 ms) both produce it — so "INIT_FAIL
-    # latched" alone would pass whether the dark bus failed the precharge gate or
-    # the charge gate, which are different findings about the firmware.
+    # ── TIMING BOUNDS: WHICH mechanism latched, not just that one did ───────
+    # A bare `fault_latched` says the bit is set and holds; it cannot
+    # distinguish two firmware paths that raise the SAME bit at different times.
+    # ML0217 is the case: FAULT_INIT_FAIL is raised by busBringupTick()'s phase
+    # timeouts, and P0's PRECHARGE_TIMEOUT_MS (300 ms) and P1's
+    # BUS_CHARGE_TIMEOUT_MS (800 ms) both produce it — so "INIT_FAIL latched"
+    # alone would pass whether the dark bus failed the precharge gate or the
+    # charge gate, which are different findings about the firmware.
     #
-    # Evaluated against the WHOLE-RUN first latched observation, deliberately:
-    # `hits[0]` is the first POST-GRACE one, which on a skip_preamble entry is
-    # just the grace bound and carries no information about when the latch
-    # actually happened.
+    # TWO BOUNDS, and `latch_elapsed_band_s` is the one to reach for.
+    #   latch_elapsed_band_s  ELAPSED from a named mainState entry — the frame
+    #                         the firmware measures phase timeouts in.  Two
+    #                         sided, so it excludes an earlier AND a later gate.
+    #   not_before_s          ABSOLUTE floor on the sim clock.  Sound only where
+    #                         the sim clock's zero and the board's own reference
+    #                         for the mechanism coincide, which on a warm-reset
+    #                         run they do not (F1, campaign 20260831_222036: the
+    #                         board reaches State 0 at ~0.5 s, so BOTH candidate
+    #                         gates land past a 0.5 s absolute floor and the
+    #                         bound discriminated nothing).  No entry uses it
+    #                         today; it is kept for a future mechanism whose
+    #                         reference genuinely is the start of the run.
+    #
+    # Both are evaluated against the WHOLE-RUN first latched observation,
+    # deliberately: `hits[0]` is the first POST-GRACE one, which on a
+    # skip_preamble entry is just the grace bound and carries no information
+    # about when the latch actually happened.
     #
     # ⚠️ But the whole-run first sighting is taken through _persisted_latch_t()
     # (DI-MED-4), which drops a CARRIED-IN latch — the predecessor run's, still
-    # on the wire until the fw v23 warm reset clears it at t ~= 0.5 s. Back to
-    # back in a campaign, a suite run that follows a latched one would otherwise
-    # hand this bound the PREVIOUS run's timestamp: on ML0217 (bound at P1's
-    # 800 ms BUS_CHARGE_TIMEOUT_MS) a carried-in 0x8100 at t ~= 0.1 s reads as
-    # "P0's 300 ms precharge path fired instead" and FAILS a correct board with
-    # a wrong-mechanism message.
+    # on the wire until the fw v23 warm reset clears it at t ~= 0.5 s.  See that
+    # function for why, and for why the branch is unreachable in today's plan
+    # order and kept regardless.
     #
-    # NO CEILING, and that is a considered omission rather than an oversight:
-    # INIT_FAIL can only be raised from State 0's bring-up machine, which runs
-    # once at the start of the run, so a "latched too late" outcome has no
-    # mechanism.  A ceiling would assert something the firmware's structure
-    # already guarantees.
+    # NO CEILING ON `not_before_s`, and that is a considered omission rather
+    # than an oversight: INIT_FAIL can only be raised from State 0's bring-up
+    # machine, which runs once at the start of the run, so a "latched too late"
+    # outcome has no mechanism.  A ceiling would assert something the firmware's
+    # structure already guarantees.  `latch_elapsed_band_s` carries one anyway,
+    # because in ITS frame the two gates are 300 ms and 800 ms after the SAME
+    # anchor and a ceiling is the only thing that separates them.
     not_before = spec.get("not_before_s")
+    band = spec.get("latch_elapsed_band_s")
     latch_t = _persisted_latch_t(data, bit)
+    # ── `latch_elapsed_band_s`: the same question, asked in the right frame ──
+    # F1, campaign 20260831_222036 (the audit of the 20260831_191509 fix round).
+    # An ABSOLUTE bound on a bring-up latch is not a discriminator, and on
+    # ML0217 it was asserted as one and got the mechanism backwards.  The
+    # firmware measures every bring-up phase timeout from `bringupPhaseStart`,
+    # re-stamped on the State-0 entry, so the quantity that NAMES the gate is
+    # ELAPSED time from that entry — never the sim clock, whose zero is the
+    # host's and not the board's.
+    #
+    # `elapsed_from_state` (default 0 = State 0 / Init) names the anchor state;
+    # the band is (lo, hi) in seconds, both INCLUSIVE, and both ends are needed:
+    # a floor alone cannot exclude a LATER gate and a ceiling alone cannot
+    # exclude an EARLIER one, which is exactly the pair of confusions this bound
+    # exists to prevent.
+    #
+    # `latch_t` comes through _persisted_latch_t() for the same reason
+    # `not_before_s` does — and here a carried-in latch is worse than merely
+    # wrong: it PRECEDES the anchor, so the elapsed time comes out NEGATIVE.
+    elapsed_note = ""
+    if band is not None:
+        lo_s, hi_s = float(band[0]), float(band[1])
+        if latch_t is None:
+            return False, (f"{_fault_names(bit)} has a `latch_elapsed_band_s` "
+                           f"bound but no whole-run latched observation was "
+                           f"found — the check cannot say which mechanism fired")
+        anchor_state = int(spec.get("elapsed_from_state", 0))
+        anchor = data.state_entry_t(anchor_state, before_t=latch_t)
+        if anchor is None:
+            return False, (
+                f"{_fault_names(bit)} latched at t={latch_t:.4f}s but the run "
+                f"never reported an ENTRY into mainState {anchor_state} before "
+                f"it, so the elapsed-time bound has no anchor. Either the board "
+                f"never re-entered State {anchor_state} (no warm recovery — in "
+                f"which case the latch is the PREDECESSOR's) or the `state` "
+                f"column is absent")
+        elapsed = latch_t - anchor
+        if not (lo_s <= elapsed <= hi_s):
+            return False, (
+                f"{_fault_names(bit)} LATCHED {elapsed * 1000.0:.1f} ms after "
+                f"the mainState {anchor_state} entry at t={anchor:.4f}s (latch "
+                f"t={latch_t:.4f}s), OUTSIDE the "
+                f"[{lo_s * 1000.0:.0f}, {hi_s * 1000.0:.0f}] ms band this entry "
+                f"pins. The bit is right but the mechanism is not the one "
+                f"classified — a different firmware timeout raised the same "
+                f"bit, and the entry's `why` no longer describes what happened")
+        elapsed_note = (
+            f"; whole-run latch at t={latch_t:.4f}s, {elapsed * 1000.0:.1f} ms "
+            f"after the mainState {anchor_state} entry at t={anchor:.4f}s, "
+            f"inside the [{lo_s * 1000.0:.0f}, {hi_s * 1000.0:.0f}] ms "
+            f"mechanism band")
     if not_before is not None:
         if latch_t is None:
             return False, (f"{_fault_names(bit)} has a `not_before_s` bound but no "
@@ -2039,7 +2277,8 @@ def check_fault_latched(data, spec):
                   + ("" if not_before is None else
                      f"; whole-run latch at t={latch_t:.4f}s, "
                      f"{latch_t - float(not_before):+.4f}s vs the "
-                     f"{float(not_before):.3f}s mechanism bound"))
+                     f"{float(not_before):.3f}s mechanism bound")
+                  + elapsed_note)
 
 
 def _oc_fc_stimulus_qualifies(data):
@@ -2530,8 +2769,63 @@ def check_steps_onto_rail_within(data, spec):
         f"{_vacuous_suffix(data)}")
 
 
+def check_latch_precedes_uv(data, spec):
+    """The named fault LATCHED before the injected bus fell under LIMIT_V_BUS_MIN.
+
+    F4 (campaign 20260831_222036).  WP0097 was reclassified out of the UV pair
+    and into the OC_FC family because its recorded dip supplies only ~18.65 ms
+    of dwell against UV_BUS_DWELL_LATCH_MS 20 ms — so it is an OC stimulus that
+    happens to carry a near-miss bus collapse behind it.  That reclassification
+    is only SAFE while the OC latch genuinely comes FIRST: if a future clamp,
+    time-base change or filter retune let the bus collapse arrive first, the
+    entry would still report "OC_FC latched" — off the wrong mechanism, with the
+    same green verdict.  Nothing asserted the ordering; this does.
+
+    Semantics.  `bit` names the fault; `min_lead_ms` is the required margin by
+    which its latch must PRECEDE the first injected sample under
+    LIMIT_V_BUS_MIN.  Samples before `data.preamble_s` are excluded — the
+    preamble rails are this harness's own synthesis and must never decide a
+    stimulus question (M5/L2, as in `_oc_fc_stimulus_qualifies`).
+
+    A run whose injected bus NEVER goes under the limit passes and says so: the
+    competing mechanism is absent entirely, which is strictly stronger than
+    leading it.  A run with no latch FAILS — the companion `fault_latched` check
+    reports the same thing, and an ordering assertion with nothing to order is
+    not evidence."""
+    bit = int(spec["bit"])
+    lead_ms = float(spec.get("min_lead_ms", 0.0))
+    latch_t = _persisted_latch_t(data, bit)
+    below = [t for t, v in data.v_bus
+             if t >= data.preamble_s and v < LIMIT_V_BUS_MIN_V]
+    if latch_t is None:
+        return False, (f"{_fault_names(bit)} never LATCHED, so there is no "
+                       f"ordering to assert — see the companion latch check")
+    if not below:
+        return True, (
+            f"{_fault_names(bit)} LATCHED at t={latch_t:.4f}s and the injected "
+            f"V_bus never fell under LIMIT_V_BUS_MIN {LIMIT_V_BUS_MIN_V:.1f} V "
+            f"after t={data.preamble_s:.1f}s (min "
+            f"{min((v for t, v in data.v_bus if t >= data.preamble_s), default=float('nan')):.4f} V) "
+            f"— the competing UV mechanism is absent, not merely later")
+    lead = below[0] - latch_t
+    where = (f"{_fault_names(bit)} LATCHED at t={latch_t:.4f}s; the injected "
+             f"V_bus first fell under {LIMIT_V_BUS_MIN_V:.1f} V at "
+             f"t={below[0]:.4f}s — a lead of {lead * 1000.0:+.2f} ms")
+    if lead < lead_ms / 1000.0:
+        return False, (
+            f"{where}, SHORT of the {lead_ms:.0f} ms this entry requires. The "
+            f"bus collapse now arrives with the overcurrent (or before it), so "
+            f"a latch on this entry can no longer be attributed to the OC "
+            f"stimulus its classification rests on — re-derive the entry before "
+            f"reading its verdict")
+    return True, (f"{where}, at or above the {lead_ms:.0f} ms this entry "
+                  f"requires — the overcurrent is unambiguously the latching "
+                  f"mechanism, not the bus collapse behind it")
+
+
 CHECK_KINDS = {
     "no_fault": check_no_fault,
+    "latch_precedes_uv": check_latch_precedes_uv,
     "fault_latched": check_fault_latched,
     "fault_not_latched": check_fault_not_latched,
     "bounded_current": check_bounded_current,

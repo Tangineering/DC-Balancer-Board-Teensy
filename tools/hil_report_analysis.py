@@ -785,9 +785,76 @@ def hil_charger_and_soc(data, cfg):
     return fig
 
 
+# The hardware-envelope clamp SdpStrategy.clamp_share() applies on emission,
+# which is also SocBandStrategy's [SOC_BAND_SHARE_MIN, SOC_BAND_SHARE_MAX] and
+# the firmware's [DROOP_R_MIN, DROOP_R_MAX] cutoff band (.ino:9231-9257, strict
+# `<`/`>`, so the endpoints themselves are IN band).  Duplicated as literals
+# rather than imported: this module renders reports offline, from CSVs whose
+# producing sim may be any revision, and a band drawn from THIS checkout's
+# constants would silently relabel an older trace.
+SHARE_CLAMP_LO = 0.15
+SHARE_CLAMP_HI = 0.85
+
+
+def hil_share_raw_vs_emitted(data, cfg):
+    """The policy's PRE-clamp request against what it actually commanded.
+
+    Queued from the SDP round and earned by campaign 20260831_222036: under the
+    sdp-v2 policy every table value in (0.85, 1.0] emits the SAME clamped
+    0.8500, so `cmd_share_sp` alone cannot distinguish one demand map from
+    another, or a live demand axis from a saturated one.  `cmd_share_sp_raw`
+    is the column that can, and nothing plotted it.
+
+    Returns None (a clean skip) unless the CSV carries `cmd_share_sp_raw` with
+    at least one real value — it is written only by strategies that HAVE a
+    pre-clamp request, and is blank on every other run.
+    """
+    raw = data.get("cmd_share_sp_raw")
+    if raw is None or not np.any(np.isfinite(raw)):
+        return None
+    t = data["t_s"]
+    fig, ax = plt.subplots(figsize=(10, 4.0))
+
+    # The band is the readable part of the figure: raw INSIDE it means the
+    # clamp did nothing, raw OUTSIDE it means the policy asked for a rail that
+    # would have cut a source off the bus.
+    ax.axhspan(SHARE_CLAMP_LO, SHARE_CLAMP_HI, color=COLORS["share"],
+               alpha=0.08, zorder=0)
+    for level in (SHARE_CLAMP_LO, SHARE_CLAMP_HI):
+        ax.axhline(level, color=COLORS["share"], alpha=0.45, linewidth=0.9,
+                   linestyle="--", zorder=1)
+
+    ax.step(t, raw, where="post", color=COLORS["V_bus"],
+            linewidth=1.3, label="cmd_share_sp_raw (table request, pre-clamp)")
+    if "cmd_share_sp" in data:
+        ax.step(t, data["cmd_share_sp"], where="post", color=COLORS["I_fc"],
+                linewidth=1.3, label="cmd_share_sp (emitted)")
+    if "I_fc" in data and "I_batt" in data:
+        ax.plot(t, share_actual(data["I_fc"], data["I_batt"]),
+                color=COLORS["velocity"], linewidth=bl_figures.LW_RAW,
+                alpha=0.85, label="share_act = I_fc/I_tot (delivered)")
+
+    n_clamped = int(np.count_nonzero(
+        np.isfinite(raw) & ((raw < SHARE_CLAMP_LO) | (raw > SHARE_CLAMP_HI))))
+    n_real = int(np.count_nonzero(np.isfinite(raw)))
+    # Headroom above 1.0 so a legend in the upper-left cannot sit on the rail
+    # the raw request spends most of its time at.
+    ax.set_ylim(-0.08, 1.28)
+    bl_figures._style_axes(ax, ylabel="Power share [-]")
+    ax.set_xlabel("Time [s]", color=TEXT_COLOR, fontsize=10)
+    bl_figures._legend(ax, loc="upper left")
+    _hil_suptitle(
+        fig, cfg,
+        "share: table request vs emitted (clamp [%.2f, %.2f]; %d/%d samples "
+        "clamped)" % (SHARE_CLAMP_LO, SHARE_CLAMP_HI, n_clamped, n_real))
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    return fig
+
+
 HIL_FIGURES = [
     ("hil_state_and_switches", hil_state_and_switches),
     ("hil_charger_and_soc", hil_charger_and_soc),
+    ("hil_share_raw_vs_emitted", hil_share_raw_vs_emitted),
 ]
 
 

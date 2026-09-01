@@ -2972,23 +2972,24 @@ ems_dp_replay = DpReplayStrategy()
 #      1.4 A.  The solver's rule (b) bounds the general case at the bin's upper
 #      edge too: 6.0 W / 15.95 + 0.8 = 1.176 A, under its own
 #      CHARGE_FC_MARGIN * 1.4 = 1.19 A ceiling.
-#      ⚠️ PREDICTED 1 Hz CHATTER OF FC_CHARGE_ENABLE, derived not measured (the
-#      walk is open loop and its recorded trace never charged): opening the
-#      charger path ADDS its ~0.8 A to I_fc, so the measured P_dem jumps from
-#      ~5.6 W to ~18.3 W, which is bin 18 — charge-FORBIDDEN — so the NEXT 1 s
-#      decision withdraws `charge_goal`, the path closes, the demand falls back
-#      into bin 5, and the window re-opens.  The policy is memoryless in the
-#      demand bin and has NO hysteresis (`soc-band` avoids exactly this with its
-#      dual i_tot gate), so ~8 open/close cycles over t = 41..58 are expected,
-#      each costing a BT_BUS cut and restore through assertFcChargeEnable().
+#      ⚠️ THE 1 Hz CHATTER OF FC_CHARGE_ENABLE — PREDICTED HERE, THEN MEASURED,
+#      THEN FIXED CONSUMER-SIDE.  Opening the charger path ADDS its ~0.8 A to
+#      I_fc, so the measured P_dem jumps from ~5.6 W to ~18.3 W, which is bin 18
+#      — charge-FORBIDDEN — so the NEXT 1 s decision withdraws `charge_goal`,
+#      the path closes, the demand falls back into bin 5, and the window
+#      re-opens.  Campaign 20260831_222036 measured exactly that: 9 windows over
+#      t = 41..58, period 2.0125 s, at a 4.63x harvest-efficiency cost and 9x a
+#      >17.5 V BT_BUS restore ring.
+#      The MINIMUM-DWELL HYSTERESIS in the SDP_CHG_* block above now suppresses
+#      it — a latch on the emitted intent plus subtraction of the charger's own
+#      draw from the measured demand, both ACTUATION-side, with the artifact
+#      untouched.  Expected behaviour is now ONE continuous window t ~ 41..58.
 #      Neither state exceeds a current limit (the budget above holds in the open
-#      state and the closed state is the ordinary split), and the same cut and
+#      state and the closed state is the ordinary split; `soc-band` holds this
+#      same point open for 12.5 s with 14.9 % margin), and the same cut and
 #      restore is exercised fault-free by `ems-y-b00` at a heavier load — but
-#      the Ag105 may never reach `chargerReady` inside a 1 s window, so DO NOT
-#      assert `I_charge` on this scenario the way `ems-soc-band`'s entry does.
-#      The first campaign is what turns this prediction into a measurement.
-#      Adding hysteresis would be a reinterpretation of the artifact and is
-#      deliberately NOT done here.
+#      the Ag105 may never reach `chargerReady` promptly, so DO NOT assert
+#      `I_charge` on this scenario the way `ems-soc-band`'s entry does.
 #   4. THE TABLE'S RAIL IS EMITTED AS 0.85 — the HARDWARE-ENVELOPE CLAMP in
 #      clamp_share(), which is soc-band's own clamp applied for soc-band's own
 #      reason, and unchanged by the re-map.  1.00 is outside
@@ -3021,6 +3022,91 @@ SDP_RUN_EXIT_S = SOC_BAND_RUN_EXIT_S
 # mode of an older sidecar is a documented 1 Hz rather than a KeyError deep in
 # the run.  1.0 s is the study's own stage length.
 SDP_DEFAULT_DECISION_DT_S = 1.0
+
+# ── Charge-window minimum-dwell hysteresis (2026-08-31, ruled) ──────────────
+# ⚠️ CONSUMER-SIDE ONLY.  The baked artifact is UNTOUCHED — no table value, no
+# solver input and no policy sha moves with this block.  What is added is a
+# hold on the ACTUATION of `charge_goal`, in exactly the place `soc-band`
+# carries its own dual-i_tot hysteresis, and for the identical reason.
+#
+# THE DEFECT IT FIXES (PREDICTED at v2 design time, then MEASURED — campaign
+# 20260831_222036, the first live sdp_policy_v2 run).  The policy is memoryless
+# in the demand bin, so opening the charger path feeds back into its own input:
+# FC_CHARGE_ENABLE high adds the Ag105's ~0.8 A to I_fc, the measured
+# P_dem = V_bus*(I_fc + I_batt) jumps ~5.6 W -> ~18.3 W, that bin is
+# charge-FORBIDDEN, the next 1 s decision withdraws the intent, the path closes,
+# the demand falls back, and the window re-opens.  A single-tick ZOH hunt.
+# Measured: 9 FC_CHARGE windows over t = 41..58, period 2.0125 s (sigma 10 ms).
+#
+# WHAT THE CHATTER COSTS, measured rather than argued:
+#   * HARVEST.  The Ag105 spends ~540 ms of each ~1 s open window on detect +
+#     settle, so it harvests 0.1603 A per open-second against `soc-band`'s
+#     sustained 0.7421 — a 4.63x efficiency loss (1.39 vs 9.30 A*s banked).
+#   * TRANSIENTS.  Each cycle costs a BT_BUS cut and restore through
+#     assertFcChargeEnable(), and each restore rings the bus to 17.70-17.76 V —
+#     over LIMIT_V_BUS_MAX 17.5 V, under the 19 V TPS61288 OVP.  The chatter
+#     multiplies a near-limit transient NINE times for 13 % of soc-band's
+#     charging SoC.
+# The safety objection to holding the path open instead was REFUTED by
+# measurement in the same campaign: `soc-band` holds this exact operating point
+# open for 12.5 s continuously with I_fc peaking at 1.1920 A, 14.9 % under
+# LIMIT_I_FC_MAX — and `ems-sdp`'s own governed peak is 1.1866 A.
+#
+# THE MECHANISM, and why it is the simplest sound one.  Two parts:
+#   1. LATCH.  Once a decision emits charge_goal = 1, hold it for
+#      SDP_CHG_MIN_DWELL_S regardless of what the bin says next.
+#   2. SELF-LOAD SUBTRACTION.  During the hold, the bin is recomputed on
+#      P_dem_ex_chg = P_dem - V_bus*I_charge (floored at 0) — the demand the
+#      LOAD presents, with the charger's own draw removed.  Without this the
+#      hold would merely defer the hunt: at expiry the policy would still be
+#      reading its own charger as demand and would still withdraw.  With it,
+#      the post-expiry decision sees bin ~5 again and re-latches, so the
+#      window is CONTINUOUS rather than merely slower.
+# The share axis is untouched by both parts on this scenario's trajectory (every
+# table value it produces clamps to the same 0.8500), so the hold changes the
+# charge actuation and nothing else.
+#
+# EARLY DROP, deliberately narrow — a fault, or the drive leaving the cruise the
+# window was admitted on.  Both are conditions under which the ADMISSION itself
+# is no longer valid, which is different from the bin moving because of the
+# charger.  A demand rise from the LOAD does not drop the hold: at
+# SDP_CHG_MIN_DWELL_S = 8 s the exposure is bounded, and this scenario's charge
+# window is a flat 1.0 m/s cruise whose only load excursion IS the charger.
+#
+# PREDICTED BEHAVIOUR under this block, `ems-sdp`: ONE window from t ~ 41 to the
+# Run exit at 58 (~16000 ticks of FC_CHARGE_ENABLE high), replacing nine ~1 s
+# ones.  DERIVED FROM AN OFFLINE WALK over campaign 20260831_222036's own
+# recorded ems-sdp trace, stepped at the artifact's 1 s cadence:
+#     WITHOUT this block (the shipped v2 behaviour)   9 windows,  8968 ticks
+#     WITH it                                         2 windows, 14972 ticks
+# The baseline row reproduces the campaign's measured nine windows and their
+# 2.0125 s period EXACTLY, which is what makes the other row trustworthy.
+# ⚠️ THE WALK IS OPEN LOOP, and its residual second window is an artifact of
+# that rather than a prediction: it replays the CHATTERING run's `I_charge`, so
+# at the t = 55.04 expiry the recorded charger happened to be OFF, the
+# subtraction had nothing to remove, and that stage read high demand before
+# re-latching at 57.04.  In closed loop the charger stays powered across an
+# expiry and the subtraction holds.  Take ~15000-16000 ticks as the prediction
+# and the window COUNT as 1-2; the first campaign after this lands is what
+# turns either into a fact.  (The suite's `sdp_charge_window_opened` floor of
+# 4000 ticks is deliberately valid in BOTH regimes — see its derivation.)
+#
+# 8.0 s = 3.98x the MEASURED 2.0125 s chatter cycle, so a hold cannot be a
+# longer version of the same hunt, and 47 % of the ~17 s window, so the window
+# still contains at least one full re-decision.  A round 8 rather than a fitted
+# 8.05: the quantity it must clear is an order of magnitude away in both
+# directions, so a spuriously precise constant would imply a precision the
+# derivation does not have.
+SDP_CHG_MIN_DWELL_S = 8.0
+# The drive has "left cruise" when the commanded profile speed has moved this
+# far from its value when the window was admitted.  0.10 m/s is twice
+# SOC_BAND_CRUISE_SLOPE_MAX * 1 s, i.e. a move no cruise-classified segment can
+# make within one decision stage — so a genuine flat hold never trips it while
+# the profile's gentlest ramp (0.167 m/s^2) clears it in 0.6 s.
+SDP_CHG_CRUISE_DELTA_MPS = 0.10
+# FAULT_ERROR (.ino) — triggerFault() ORs it into fault_flags on every latch, so
+# it is the one bit that means "the board is in State 99" regardless of cause.
+SDP_CHG_ABORT_FAULT_MASK = 0x8000
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -3368,7 +3454,9 @@ class SdpStrategy:
                  v_setpoint (the scenario's `ems_v_profile`, exactly as
                  hold-5050 and soc-band take it), power_share_setpoint and
                  charge_goal (table lookup on (SoC, demand bin), recomputed at
-                 the artifact's `decision_dt_s` and HELD between decisions; the
+                 the artifact's `decision_dt_s` and HELD between decisions, with
+                 a MINIMUM-DWELL hysteresis on the charge intent — see the
+                 SDP_CHG_* block; the
                  share is CLAMPED to the hardware envelope
                  [SOC_BAND_SHARE_MIN, SOC_BAND_SHARE_MAX] on emission — see
                  clamp_share(), and note the raw table value is kept and
@@ -3427,6 +3515,20 @@ class SdpStrategy:
         self.last_goal = 0.0
         self.last_bin = None
         self.last_soc_rel = None
+        # ── minimum-dwell charge hysteresis (see the SDP_CHG_* block) ───────
+        # `chg_hold_until` is the decision-clock time the latch expires (None =
+        # not holding); `chg_hold_v_ref` is the commanded profile speed the
+        # window was admitted on, against which the early-drop test measures.
+        self.chg_hold_until = None
+        self.chg_hold_v_ref = None
+        # Diagnostics only, reported in the exit summary. `chg_holds` counts
+        # LATCHES, not physical windows: a hold that expires and immediately
+        # re-latches on the corrected demand is 2 here and ONE continuous
+        # FC_CHARGE window on the board — which is the whole intent, so the two
+        # numbers are supposed to differ.
+        self.chg_holds = 0
+        self.chg_hold_drops = 0
+        self.chg_hold_drop_reason = None
 
     # ── loading / startup refusal ───────────────────────────────────────────
     def load(self):
@@ -3576,9 +3678,73 @@ class SdpStrategy:
             self.clamped_share += 1
         return out
 
-    def decide(self, fb):
-        """One decision: measure, look up, latch.  Returns (share, goal)."""
+    def charge_hold_status(self, t, fb):
+        """State of the minimum-dwell charge latch at `t`, dropping it if due.
+
+        Returns one of:
+          None        no latch was in force.
+          "active"    the latch holds; the intent is pinned high.
+          "expired"   the dwell ran out; the table decides again THIS tick, on
+                      the corrected demand, and may re-arm.
+          "dropped"   an early exit (fault, or the drive left the admitted
+                      cruise); the intent is withdrawn and may NOT re-arm on
+                      the same tick.
+        Three outcomes rather than a bool because "expired" and "dropped" need
+        opposite treatment and collapsing them costs the mechanism its point:
+        an EXPIRY must still see the self-load-subtracted demand, or the
+        re-decision reads the charger's own draw as load, withdraws, and the
+        hold has merely made the chatter slower — which is precisely the
+        outcome the offline walk showed at its one residual window boundary.
+        A DROP must not, because a drop is a deliberate withdrawal and
+        subtracting would help it re-admit the window it just refused.
+
+        Pure decision logic, split out so a test can drive every exit without
+        stepping a run.  Called ONCE per decision, from decide()."""
+        if self.chg_hold_until is None or t is None:
+            return None
+        flags = fb.get("fault_flags")
+        if flags is not None and (int(flags) & SDP_CHG_ABORT_FAULT_MASK):
+            # The board is latched. Holding an intent into State 99 asserts a
+            # command chargingControl() will never see, and the window's
+            # admission (a healthy cruise) is plainly no longer true.
+            # Tested BEFORE expiry: a fault landing on an expiry tick is a
+            # withdrawal, not a re-decision.
+            self._drop_charge_hold("board faulted")
+            return "dropped"
+        v_now = fb.get("v_profile")
+        if (v_now is not None and self.chg_hold_v_ref is not None
+                and abs(float(v_now) - self.chg_hold_v_ref)
+                > SDP_CHG_CRUISE_DELTA_MPS):
+            # OPERATOR RULING (b), the same one `soc-band`'s causal cruise gate
+            # enforces: charging and acceleration are incompatible on this
+            # hardware. A window admitted on a cruise does not survive the
+            # drive leaving it.
+            self._drop_charge_hold("drive left the admitted cruise")
+            return "dropped"
+        if t >= self.chg_hold_until:
+            self._drop_charge_hold("dwell expired")
+            return "expired"
+        return "active"
+
+    def _drop_charge_hold(self, reason):
+        self.chg_hold_until = None
+        self.chg_hold_v_ref = None
+        self.chg_hold_drop_reason = reason
+        if reason != "dwell expired":
+            self.chg_hold_drops += 1
+
+    def decide(self, fb, t=None):
+        """One decision: measure, look up, latch.  Returns (share, goal).
+
+        `t` is the decision-clock time, used ONLY by the charge hysteresis.
+        __call__ passes it; a direct caller may omit it and falls back to
+        fb["t"] (telemetry-equivalent), which is what the 50 Hz commander puts
+        there.  With neither, the hold is inert and the policy behaves exactly
+        as it did before this block — an honest degradation, not a silent one:
+        a feedback view with no clock cannot support a dwell."""
         pol = self.policy
+        if t is None:
+            t = fb.get("t")
         soc = fb.get("soc")
         if soc is None:
             # No SoC term available (a feedback view without plant truth). The
@@ -3599,6 +3765,21 @@ class SdpStrategy:
         # the bus node.
         p_dem = ((fb.get("V_bus") or 0.0)
                  * ((fb.get("I_fc") or 0.0) + (fb.get("I_batt") or 0.0)))
+        # ── minimum-dwell hysteresis, part 2: SELF-LOAD SUBTRACTION ─────────
+        # While a charge latch is in force the policy must not read its own
+        # charger as demand — that feedback IS the chatter (see the SDP_CHG_*
+        # block). V_bus * I_charge is the charger's draw at the bus node, the
+        # same node p_dem is measured on; both terms are telemetry-equivalent.
+        # Floored at the ARTIFACT'S OWN p_dem_min_w, not at 0: the two products
+        # are measured independently, so a sub-milliwatt negative residue would
+        # otherwise clamp LOW inside demand_bin() and be counted as a demand-map
+        # excursion it is not. (For the shipped v2 artifact the two are the same
+        # number — its map starts at 0.0 W — but a map with a negative floor
+        # would be distorted by a hard 0, so the domain is what bounds this.)
+        hold = self.charge_hold_status(t, fb)
+        if hold in ("active", "expired"):
+            p_chg = ((fb.get("V_bus") or 0.0) * (fb.get("I_charge") or 0.0))
+            p_dem = max(pol["p_dem_min_w"], p_dem - p_chg)
         i_soc = self.soc_index(soc_rel)
         i_bin = self.demand_bin(p_dem)
         self.decisions += 1
@@ -3607,7 +3788,25 @@ class SdpStrategy:
         # RAW table action kept alongside the emitted one — see clamp_share().
         self.last_share_raw = pol["share"][i_soc][i_bin]
         self.last_share = self.clamp_share(self.last_share_raw)
-        self.last_goal = pol["charge_goal"][i_soc][i_bin]
+        goal = pol["charge_goal"][i_soc][i_bin]
+        # ── minimum-dwell hysteresis, part 1: THE LATCH ─────────────────────
+        # A hold in force pins the intent HIGH whatever the table now says; a
+        # fresh table request opens a new one. Note the asymmetry, and it is
+        # deliberate: only a rising edge arms a dwell, so the policy can still
+        # decline to charge for as long as it likes.
+        if hold == "active":
+            goal = SOC_BAND_CHARGE_GOAL
+        elif hold == "dropped":
+            # An early drop is a deliberate withdrawal. Letting the table
+            # re-admit on the same tick would make the fault and cruise exits
+            # no-ops whenever the (uncorrected) demand still reads low.
+            goal = 0.0
+        elif goal > 0.0 and t is not None:
+            self.chg_hold_until = float(t) + SDP_CHG_MIN_DWELL_S
+            self.chg_hold_v_ref = (None if fb.get("v_profile") is None
+                                   else float(fb["v_profile"]))
+            self.chg_holds += 1
+        self.last_goal = goal
         return self.last_share, self.last_goal
 
     def __call__(self, t, fb):
@@ -3636,7 +3835,7 @@ class SdpStrategy:
         # host-side script), and holding them would quantize the drive setpoint
         # to 1 s steps for no reason.
         if self.next_decision_t is None or t >= self.next_decision_t:
-            self.decide(fb)
+            self.decide(fb, t)
             dt = self.policy["decision_dt_s"]
             # Anchor on `t`, not on the previous boundary: a late first call (or
             # a 50 Hz tick that lands just past a boundary) must not accumulate
@@ -3644,6 +3843,12 @@ class SdpStrategy:
             self.next_decision_t = t + dt
 
         in_run = EMS_RUN_ENTRY_S <= t < ems_run_exit(fb, SDP_RUN_EXIT_S)
+        if not in_run and self.chg_hold_until is not None:
+            # Outside Run the intent is zeroed on emission below, so a surviving
+            # latch would be invisible state that could re-assert charge_goal on
+            # a Run RE-entry it was never admitted for. Cleared here rather than
+            # in decide(), which does not know the Run window.
+            self._drop_charge_hold("outside the Run window")
         return {
             "mode_cmd": MODE_HYBRID if in_run else MODE_SAFE,
             "power_share_setpoint": self.last_share,
@@ -3676,14 +3881,19 @@ class SdpStrategy:
                 "hardware envelope [%.2f, %.2f] on %d decision(s) (%.1f %%) — "
                 "the table asked for a rail there and a rail cuts the minority "
                 "source off the bus, so the emitted value is clipped; soc_ref "
-                "%s, final share %.4f (table asked %.4f), charge_goal %.4f"
+                "%s, final share %.4f (table asked %.4f), charge_goal %.4f; "
+                "charge dwell latches %d (%.1f s each, self-load subtracted), "
+                "early drops %d%s"
                 % (n, self.clamped_high, 100.0 * self.clamped_high / n,
                    self.clamped_low, 100.0 * self.clamped_low / n,
                    SOC_BAND_SHARE_MIN, SOC_BAND_SHARE_MAX, self.clamped_share,
                    100.0 * self.clamped_share / n,
                    ("%.6f" % self.soc_ref) if self.soc_ref is not None
                    else "(never seen)",
-                   self.last_share, self.last_share_raw, self.last_goal))
+                   self.last_share, self.last_share_raw, self.last_goal,
+                   self.chg_holds, SDP_CHG_MIN_DWELL_S, self.chg_hold_drops,
+                   ("" if self.chg_hold_drop_reason is None
+                    else " (last: %s)" % self.chg_hold_drop_reason)))
 
 
 # One instance, registered below.  Construction does NO I/O — see __init__.

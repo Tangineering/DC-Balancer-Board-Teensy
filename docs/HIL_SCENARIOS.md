@@ -164,6 +164,16 @@ Electrical engine: `"any"` scenarios run under the campaign's `--electrical-pref
   question R1 (is an MPPTS resistor fitted?). A campaign that does not hunt is
   evidence about R1, recorded as a hardware finding — the scenario converts an open
   question into a measurable observable.
+- **Baseline, and its repeat class (informational — no check reads the count):**
+  the hunt has now been measured twice. `MPPT_DISABLE` toggles **138**
+  (`hil_report_20260831_191509`) and **134** (`_222036`) — a 2.9 % move — while the
+  median hunt PERIOD repeats to 0.02 % (**40.0575 ms** against the 40.05 ms record).
+  The period is the stable observable and the count is not: the count is the period
+  divided into a window whose ENDS are decided by where the cruise windows fall
+  relative to a toggle, so a sub-period shift at either end changes it by ±1 with
+  nothing physical moving. Read a count move of a few percent as phase; read a
+  PERIOD move as real. The scored bounds (≥ 300 / ≤ 10000 ticks high) are far from
+  both numbers by design.
 
 ## 5. Source-model endurance
 
@@ -266,6 +276,14 @@ Electrical engine: `"any"` scenarios run under the campaign's `--electrical-pref
 - **Why useful:** the restore assertions are novel coverage — before these entries,
   nothing in the suite had ever checked that the setpoint latch releases, only that
   it takes.
+- **Undocumented asymmetry, recorded not explained (campaign
+  `hil_report_20260831_222036`):** b00-v3 emits an `sw_ring` sidecar event on the
+  FC_BUS cut and b00-v1 does not, on otherwise identical switch sequencing. The
+  plausible reading is that at Vmax 1 the channel current at the cut is below the
+  hi-fi engine's ring-detection threshold, so the same physical cut produces no
+  event — but nobody has verified that, and no check reads the event either way.
+  Do not treat a missing FC_BUS ring on the low-speed variant as a finding until
+  it is.
 
 ### ems-ftp75-5050 / ems-ftp75-socband (350 s each, any engine, gated behind `--with-ftp75`)
 

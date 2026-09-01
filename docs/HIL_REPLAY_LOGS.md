@@ -276,6 +276,20 @@ must drop `no_fault` — it must not weaken the pair. TP0178/TP0201 pass today b
 their recorded minima (12.1489 / 12.1853 V) never cross `LIMIT_V_BUS_MIN` at all, so
 neither check goes near the seam.
 
+⚠️ **What the TP0178/TP0201 de-vacuation actually bought (campaign
+`hil_report_20260831_222036`, replay audit).** Adding `v_bus_min_in_band` made the
+pair non-vacuous, but it is worth being exact about *what* it asserts: the band pins
+the **STIMULUS**, not the board's undervoltage behaviour. It says the recorded sag
+still lands in the near-miss window it was chosen for — so if a clamp, a time-base
+change or a re-recording moved the floor across 12.0 V (or away from the limit
+entirely), the entry fails loudly instead of passing as "did not latch, as expected".
+It does **not** exercise the UV latch: on a stimulus that never crosses the limit,
+the leaky-dwell integrator never accumulates and there is nothing for the firmware to
+decide. The pair therefore carries **no substantive UV-latch assertion**, and none is
+wanted here — positive UV coverage lives in the UV pair (TP0010 / TP0053), which must
+latch. Read a green TP0178/TP0201 as "the near-miss stimulus is intact", never as
+"the UV filter was tested and behaved".
+
 ### 3d. Bring-up gate (2026-08-30)
 
 Before any of an entry's own checks run, the board must have reported **mainState 1
@@ -438,10 +452,32 @@ carries the implicit `bringup_reached_idle` gate (3d).
 | ML0153 | 14 | 5 | T/2 basin — `v_act` corrupted to ~2× true | `no_fault`, `bounded_current`. **Caveat:** the basin fix is in the estimator, which replay bypasses — not testable open-loop, `drive_loop_stepped`| **yes** |
 | ML0164 | 16 | 6 | x2 **rounding** basin, locked breakaway-to-stop | `no_fault`, `bounded_current`. Same caveat, `drive_loop_stepped`| **yes** |
 | TP0171 | 16 | 6 | reset re-seeded *into* the x2 basin (~15 ms recovery) | `no_fault`, `bounded_current`. Same caveat | no |
-| YP0166 | 16 | 6 | mid-run `v = 0` injection at a true 1.49 m/s → ±12 A rail pair within 12 ms (the fw v17 TOCTOU race) | `no_fault`, `bounded_current`, `returns_off_rail` — a full-scale velocity step straight into the ~454 A/(m/s) LF gain must give a **bounded** transient that releases, `share_loop_actuated`, `drive_loop_stepped`| **yes** |
+| YP0166 | 16 | 6 | mid-run `v = 0` injection at a true 1.49 m/s → ±12 A rail pair within 12 ms (the fw v17 TOCTOU race) | `no_fault`, `bounded_current`, `returns_off_rail` — a full-scale velocity step straight into the ~454 A/(m/s) LF gain must give a **bounded** transient that releases, `share_loop_actuated` (⚠️ **span is BIMODAL** — see below), `drive_loop_stepped`| **yes** |
 | TP0201 | 18 | 6 | share-rail handoff gap, bus 15.86 → **12.1853 V** | `no_fault`, `fault_not_latched(UV_BUS)`, `v_bus_min_in_band(12.0, 12.30]` — the floor sits 0.1853 V (1.54 %) **above** the limit, so the dwell integrator never accumulates and no latch is possible (⚠️ record corrected 2026-08-31: not "~10 ms inside the 20 ms dwell"). `fault_not_latched` is therefore **vacuous** here; the band pin is what bites. **Caveat:** the fw v19 handoff *slew* that mitigates the gap acts on the plant, which replay bypasses; only the fault decision is exercisable | no |
 | TP0010 | — (pre-versioning) | 1 | bus collapse the old firmware died on **without faulting** | `fault_latched(UV_BUS)` — the fw v5 leaky-dwell filter must latch. That is the whole point of the rework | no |
-| TP0053 | 4 | 2 | repetitive source-commutation dropout (~9 ms under / ~51 ms over per ~60 ms cycle) that **evaded** the fw v4 window filter | `fault_latched(UV_BUS)` — the exact case the dwell integrator was designed for: net +6.45 ms per cycle, so it must latch within a few cycles | no |
+| TP0053 | 4 | 2 | repetitive source-commutation dropout (~9 ms under / ~51 ms over per ~60 ms cycle) that **evaded** the fw v4 window filter | `fault_latched(UV_BUS)` — the exact case the dwell integrator was designed for: net +6.45 ms per cycle, so it must latch within a few cycles. ⚠️ **Repeat class ±~100 ms, burst-quantized** — see below | no |
+
+**YP0166's `share_loop_actuated` span is BIMODAL — do not band it (2026-08-31, F3,
+second datapoint).** Measured spans of the MDAC ratio `r = BT/(FC+BT)`: **0.546 /
+0.550** (campaigns `_000518` / `_222036`) and **0.697** (`_191509`). The two modes
+have different mechanisms, which is why no single band is honest:
+
+- **~0.55** — the replayed `share_sp`'s own profile rail. The recording spans
+  0.300–0.700, i.e. 0.40 of setpoint, which the open-loop share PI's windup carries
+  a little past.
+- **~0.70** — a run in which the wandering setpoint *also reached* the firmware's
+  cutoff clamp, so the MDAC ratio is driven to a rail rather than tracking, and the
+  span measured is the clamp's, not the profile's.
+
+Which mode a campaign lands in is decided by the same command-arrival-phase
+sensitivity that makes this entry's cutoff *transition count* unstable (which swung
+46 → 0 between campaigns with nothing changed, and is deliberately unscored here) —
+the same phenomenon read on a different observable. The scored floor is **0.20**,
+below both modes by ~2.7×, and that is exactly the right assertion for this entry: it
+says the loop actuated and declines to say how far. Clamp-reaching coverage is
+deliberate elsewhere — `share-staircase` and `ems-y-b00-*` — so the bimodality costs
+the suite no coverage. (Whether to band it or leave it documented is the operator's
+call; the conservative doc option is in force.)
 
 ### 4a. Deviation — the OC_FC reclassification (operator ruling (a), 2026-08-30)
 
@@ -450,7 +486,7 @@ carries the implicit `bringup_reached_idle` gate (3d).
 | ML0203 | 18 | 6 | 2.11 A | `fault_latched(OC_FC)` + `require_stimulus`, `bounded_current`, `share_loop_actuated`, `drive_loop_stepped`| **yes** |
 | ML0165 | 16 | 6 | 1.52 A | same, `drive_loop_stepped`| **yes** |
 | ML0169 | 16 | 6 | 1.88 A | same, `drive_loop_stepped`| **yes** |
-| WP0097 | 5 | 3 | **3.60 A** (archive maximum) | same — but see the timing caveat below | no |
+| WP0097 | 5 | 3 | **3.60 A** (archive maximum) | same, **plus `latch_precedes_uv(OC_FC, min_lead_ms 10)`** — the reclassification's own premise, asserted (see below) — but also see the timing caveat below | no |
 
 These four were classified "clean" from their **bench** behaviour. They were recorded
 with **DC bench supplies standing in for the H-20 fuel cell**, and `BENCH_TEST`
@@ -471,6 +507,32 @@ base or trims the tail pushes the crossing off the end and the entry becomes an
 (`require_stimulus`), so it degrades loudly — but treat any timing change here as
 fragile.
 
+**WP0097's reclassification premise is now ASSERTED (2026-08-31, campaign
+`hil_report_20260831_222036` F4).** This entry left the UV pair because its recorded
+dip supplies only **18.65 ms** of dwell against the 20 ms `UV_BUS_DWELL_LATCH_MS` —
+so it is an OC stimulus with a *near-miss bus collapse behind it*. That is only a
+safe classification while the `OC_FC` latch genuinely comes **first**: if a future
+clamp, time-base change or filter retune let the bus collapse arrive first, the entry
+would still report "OC_FC latched", off the wrong mechanism, with the same green
+verdict. Nothing asserted the ordering. The new `latch_precedes_uv` check does:
+measured, the OC latches at t = 19.4654 s and the injected `V_bus` first goes under
+12.0 V at t = 19.4878 s — a **22.37 ms lead** (19 sub-12 V samples, min 6.12 V) —
+against a floor of 10 ms, 45 % of the measurement. The floor is loose on purpose: the
+lead is a property of the *recording* (two fixed events in one log), so only a
+time-base or clamp change can move it, and by far more than a millisecond. What must
+never pass is a lead that has collapsed or inverted.
+
+**TP0053's latch INSTANT is burst-quantized — do not read a shift as a regression
+(2026-08-31, F2).** Only 8.3 % of its samples sit under `LIMIT_V_BUS_MIN`, and they
+arrive in short bursts, so the leaky dwell integrator accumulates in steps and
+crosses the latch threshold *inside a burst*: one burst of slack is a ~60 ms move for
+a stimulus that has not changed. Campaign `_222036` measured **+59 ms** against
+`_191509`, exactly one burst period. Its repeat class is therefore **±~100 ms**.
+TP0010 is **not** in that class — its collapse is continuous, its dwell crossing is a
+smooth ramp, and it moved ~0 ms across the same campaign pair (±3 ms). No check pins
+the instant on either entry; this is a records note so the next campaign's analysis
+does not open a finding on a number that is behaving.
+
 **ML0151 is a knife-edge conformance pass — do not move it.** Its recorded `I_fc`
 peaks at **1.354 A, 96.7 % of the 1.4 A limit** (measured 2026-08-30). It stays a
 conformance entry because it does not *cross*, and that is deliberate. But it sits
@@ -489,13 +551,32 @@ endurance now has no replay representative.** Restoring it needs a recorded run 
 
 | Log | fw | BLG | Recorded defect | Check | Cmds |
 |---|---|---|---|---|---|
-| ML0217 * | 19 | 6 | **recorded with a dark bus** — measured `V_bus` max **0.35 V** over all 38 s | `fault_latched(INIT_FAIL)`, `bounded_current`; `skip_bringup_gate`, `skip_preamble` | no |
+| ML0217 * | 19 | 6 | **recorded with a dark bus** — measured `V_bus` max **0.35 V** over all 38 s | `fault_latched(INIT_FAIL, latch_elapsed_band_s [0.20, 0.45] s from the State-0 entry — pins P0, excludes P1)`, `bounded_current`; `skip_bringup_gate`, `skip_preamble` | no |
 
 It was never the "duration/soak case" it was catalogued as. Replayed, the staged
-bring-up cannot pass P1 and times out at `BUS_CHARGE_TIMEOUT_MS` into
-`FAULT_INIT_FAIL` (`.ino:8784-8786`) — correct firmware behaviour, and now the
+bring-up cannot pass **P0** and times out at `PRECHARGE_TIMEOUT_MS` into
+`FAULT_INIT_FAIL` (`.ino:8762-8765`) — correct firmware behaviour, and now the
 asserted expectation. It is the one entry exempt from the bring-up gate (3d),
 necessarily: a failing bring-up is the point.
+
+**Which gate — settled 2026-08-31, and the check now pins it.** `FAULT_INIT_FAIL`
+is raised by *both* of `busBringupTick()`'s phase timeouts, so "INIT_FAIL latched"
+alone cannot say whether the dark bus failed P0's precharge gate
+(`PRECHARGE_TIMEOUT_MS` 300 ms) or P1's charge gate (`BUS_CHARGE_TIMEOUT_MS`
+800 ms) — two different findings about the firmware, one bit. A fix round in
+campaign `hil_report_20260831_191509` briefly overturned the P0 reading in favour
+of P1, on an **absolute** latch timestamp of 0.8015 s; campaign `_222036`'s replay
+audit showed that reasoning was wrong twice over. The firmware measures phase
+timeouts from `bringupPhaseStart`, re-stamped on the **State-0 entry**, and on a
+suite run the board only reaches State 0 when the fw v23 run-boundary warm reset
+fires — at ~0.5 s, a property of the host's inter-run gap. In that frame the latch
+is **301.3 ms** after the State-0 entry (`_222036`) and **301.1 ms** (`_191509`):
+P0's 300 ms gate, to 0.4 %, in both. P1 is unreachable here regardless — it is
+entered only once phase 0 passes, and phase 0's gate is the bus reaching
+`V_PRECHARGE_MIN`, which a dark bus never does. The check's bound is therefore
+`latch_elapsed_band_s` **[0.20, 0.45] s measured from the State-0 entry**, which
+brackets 300 ms and excludes 800 ms. The absolute bound it replaced discriminated
+nothing: both candidate gates land past 0.5 s absolute.
 
 **This entry replays RAW (`skip_preamble`).** The first version of it kept the
 synthetic preamble, and that made its own expectation *unreachable*: the board
@@ -645,7 +726,8 @@ passing vacuously.
 4. **Define the checks** from the existing kinds where possible: `no_fault`,
    `fault_latched`, `fault_not_latched`, `bounded_current`, `no_sustained_rail`,
    `no_rail_limit_cycle`, `returns_off_rail`, `near_zero_current`,
-   `drive_loop_stepped`, `share_loop_actuated`, `steps_onto_rail_within`.
+   `drive_loop_stepped`, `share_loop_actuated`, `steps_onto_rail_within`,
+   `v_bus_min_in_band`, `latch_precedes_uv`.
    (`no_sustained_rail` exists but is
    **not** for this half — see §3.) A new kind is a
    small pure `(ReplayCsv, spec) -> (bool, str)` function plus a `CHECK_KINDS` entry
