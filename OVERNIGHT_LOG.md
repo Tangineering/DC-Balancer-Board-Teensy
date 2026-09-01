@@ -350,3 +350,72 @@ and uncommitted, PSCAD/ untouched.
 fw v24 tooling-lockstep round -> flash fw v24 -> acceptance sequence; R1 MPPTSEL
 inspection; MPPTD-disabled-charge verification; Silvertel EPROM endurance query;
 pull the Pi bridge source into the repo (or audit on the Pi) to unblock Mode B.
+
+---
+
+# RETROSPECTIVE — the overnight process itself (feeds .claude/skills/overnight-autonomous-session)
+
+## What worked, with evidence
+
+1. **Dual decision pairs for judgment calls.** Both invocations (fw v24 MPPT design;
+   SDP charge economics) produced convergent root-cause diagnoses with complementary
+   mechanisms, and the DISAGREEMENTS were themselves findings: the designers read
+   the MPPTD-disabled-charge semantics oppositely, which exposed an unverified
+   hardware assumption that then shaped the adjudication (ship the semantics-
+   agnostic holdoff, gate the semantic change on a bench step). Adjudication as
+   synthesis (Opus structure + Fable honesty amendment) beat picking a winner.
+2. **Streamlined orchestration held quality.** Compressing implementer/test-writer
+   into one stage and running a combined review lens still caught one HIGH per
+   round (the frontier exit-1 regression; the EPROM budget hole; the one-shot HIL
+   mirror). The deviation license kept working: two reviewer-supplied "fixes" were
+   themselves wrong (the 0.4 V PN-diode assumption; the literal keep-floors
+   instruction) and implementers correctly deviated with documentation.
+3. **Analysis effort scaled DOWN with accumulated baselines.** C1: six batch agents
+   + an adversarial audit (first campaign on new scoring). C2-C4: one consolidated
+   agent each. The right-for-the-right-reason standard transferred; cost fell ~5x
+   with no verdict-quality loss (C4's light pass still recomputed everything it
+   asserted).
+4. **The measure-pin-validate loop is the engine.** provisional_note -> first
+   campaign measures -> pins recalibrated -> next campaign validates ran TWICE to
+   completion overnight, and the campaign-fix-campaign cadence surfaced a modeling
+   finding (charge economics) that no static review could have.
+5. **Decision logging with reversal paths** made autonomy safe: every operator-class
+   call in this file names its commit and its undo.
+
+## What failed, and the correction the skill bakes in
+
+1. **The stash incident.** Two implementers shared one working tree; one ran
+   `git stash push` and briefly stashed the other's in-flight edits. Recovered, but
+   only luck kept it cheap. Correction: EVERY parallel-agent brief carries an
+   explicit tree-wide-git-operation ban (stash/reset/checkout), and truly
+   overlapping file sets are sequenced, not parallelized.
+2. **Watcher mechanics.** Twice I backgrounded a watcher with an inline `&`
+   (untracked, output lost, a duplicate racing the tracked one). Correction: only
+   harness-tracked backgrounding; and live per-run dispatch is reserved for
+   first-execution campaigns - validation campaigns batch at completion.
+3. **The tool-pass/analyst race (C3).** I dispatched the analyst before
+   hil_report_analysis.py reorganized the folder. It coped, but the C2 brief had
+   the mid-move warning and C3's did not. Correction: tool pass FIRST, always,
+   the moment the suite completes; analysts get stable subfolder paths.
+4. **A fix round shipped a wrong record correction** (ML0217 P1 attribution) that
+   only the adversarial replay audit caught a campaign later. Correction: record/
+   attribution edits meet the same evidence standard as analyses - recomputed from
+   raw data, never from adjacent comments; and the audit stage is non-optional
+   after any scoring-semantics change.
+5. **Phase-locked provisional checks are fragile.** S2's absence-at-a-modelled-
+   instant assertion failed on a 5.7x walk period error while the mechanism it
+   guarded was working. Correction: first-campaign checks prefer phase-free
+   properties (max continuous hold, fractions, counts); position assertions only
+   for measured, multi-campaign-stable quantities.
+6. **Walks must model firmware mode boundaries.** Two separate walk errors traced
+   to the same cause (the sub-0.55 A open-loop hold). Correction: the strategy-
+   authoring notes are now a required input to any scenario walk, and every walk
+   states which firmware mode (closed-loop/open-loop/hold) it assumes per segment.
+
+## Economics (for future scaling judgment)
+
+~20 subagents, 2 decision pairs, 4 campaigns (~4 h board time), 3 tooling fix
+rounds + 1 firmware round, ~5M subagent tokens. The pipeline was never the
+bottleneck; board time was. Parallelizing an orchestrated round against a running
+campaign (fw v24 during C1) was the single biggest wall-clock win and is safe
+exactly when the file sets are disjoint (firmware vs tools/).

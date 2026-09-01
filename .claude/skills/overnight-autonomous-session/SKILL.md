@@ -1,0 +1,120 @@
+---
+name: overnight-autonomous-session
+description: Run an unattended multi-campaign HIL work session — WORK_QUEUE execution, campaign/analysis/fix cycles, dual-agent decision pairs, decision logging with reversal paths, and a morning digest. Invoke when the operator authorizes overnight/away autonomous work.
+---
+
+# Overnight autonomous session
+
+Process for running this project unattended for hours: working WORK_QUEUE.md, running
+up to N HIL campaigns with analysis and fix rounds between them, resolving judgment
+calls without the operator, and leaving a reviewable record. Distilled from the
+2026-08-31/09-01 session (4 campaigns, ~218 runs, 2 decision pairs, 5 commits, zero
+board defects, zero destructive actions) and its retrospective (OVERNIGHT_LOG.md,
+same date — read it; every rule below cites a failure or a win from that night).
+
+## Trigger and mandate
+
+The operator explicitly authorizes autonomous work ("overnight plan", "while I'm
+away") with: a scope (usually WORK_QUEUE.md), a campaign budget ("up to five"), a
+judgment-call protocol (see Decision pairs), and any hard constraints (e.g. "firmware
+ready but NOT flashed"). Absent an explicit budget or protocol, ask before the
+operator leaves — do not infer a mandate.
+
+## Standing guardrails (non-negotiable, in EVERY agent brief)
+
+- The two `.ino` build-flag lines (BENCH_TEST/HIL_SIM operator flip) are never
+  committed and never git-restored. Committing the `.ino` = flip to repo defaults →
+  commit → flip back, then verify the worktree diff is exactly the two lines.
+- `PSCAD/` (and anything provenance-unconfirmed) stays uncommitted. `HIL Results/`
+  is gitignored — ledgers live there, never in a commit.
+- **No tree-wide git operations by ANY subagent** (stash/reset/checkout — the stash
+  incident). State it in every implementer brief. Truly overlapping file sets are
+  sequenced, never parallelized; disjoint sets (firmware vs tools/) may run in
+  parallel and that is the biggest wall-clock win.
+- During a live campaign `tools/*.py` is edit-frozen (children import fresh per
+  run). Firmware, docs, CLAUDE.md, new data files are safe.
+- Background work only via harness-tracked backgrounding — never an inline `&`
+  (untracked, output lost, duplicate races).
+- Nothing destructive, nothing flashed, no protocol/wire changes unless the mandate
+  names them. When in doubt whether an action is in-mandate: log it as a decision
+  with a reversal path, or defer it to the morning list.
+
+## Session skeleton
+
+1. **Init:** append a session header to OVERNIGHT_LOG.md (mandate verbatim, start
+   commit); verify board reachability; confirm the tree is committed/pushed before
+   the first campaign.
+2. **The cycle** (repeat within the campaign budget):
+   a. Launch the full suite (background, tracked). Note the report folder.
+   b. While it runs: parallel orchestrated rounds on DISJOINT files only
+      (firmware during a campaign is ideal); otherwise draft docs/specs.
+   c. On completion: **tool pass (hil_report_analysis.py) FIRST, always** — then
+      dispatch analysis against the stable subfolders (the C3 race).
+   d. Analysis effort scales with novelty: first campaign on new scoring/scenarios
+      → per-batch agents + the adversarial replay audit (the hil-agent-analysis
+      skill, LIVE dispatch); validation campaigns → one consolidated agent, light
+      pass, still recomputing everything it asserts. The right-for-the-right-reason
+      standard never relaxes; the agent count does.
+   e. Ledger (HIL_FINDINGS.md) + digest in the report folder; adjudicate the fix
+      queue; run the fix round (streamlined orchestration below); rerun both
+      interpreter suites yourself; commit + push in logical chunks.
+   f. Next campaign validates the fixes. Stop early when a campaign is clean AND
+      the marginal campaign would only add repeat datapoints — log the stop
+      decision with reasoning (the stop-at-four precedent).
+3. **Close-out:** CLAUDE.md addenda (per the addendum-rotation convention),
+   WORK_QUEUE.md refresh (mark shipped/blocked, add discovered prerequisites),
+   the MORNING DIGEST, final commit/push, then the retrospective.
+
+## Streamlined orchestration (away-mode variant of orchestrated-feature)
+
+Implementer (Opus, writes its own tests) → combined or two-lens review → fix agent →
+orchestrator rerun of every affected suite. What is NOT streamlined away: the review
+stage (it caught one HIGH per round all night), the deviation license (reviewer fix
+text was wrong twice; implementers must be free to deviate with documentation), the
+orchestrator's own rerun-and-verify, and the adversarial audit after any
+scoring-semantics change (the ML0217 lesson: a fix round shipped a wrong record
+attribution that only the next audit caught). Fix rounds that edit RECORDS or
+attributions meet the analysis evidence standard — recomputed from raw data, never
+from adjacent comments.
+
+## Decision pairs (operator-prescribed judgment protocol)
+
+For a genuine judgment call: two independent agents on different models (Fable +
+Opus), identical decision prompt carrying every measured number and the artifacts to
+consult; the orchestrator adjudicates. Adjudicate by SYNTHESIS, not winner-picking —
+and treat disagreements as data (opposite readings of the MPPTD semantics exposed an
+unverified hardware assumption, which itself shaped the ruling). Skip the pair only
+when measurement has already answered the question decisively (the chatter-hysteresis
+ruling); say so in the log either way. Every ruling gets an OVERNIGHT_LOG entry with:
+the evidence, the ruling, and the REVERSAL PATH (a one-commit undo the operator can
+take in the morning).
+
+## Scenario/check design rules (paid for in failures)
+
+- First-campaign checks prefer PHASE-FREE properties: max continuous hold,
+  fractions, counts, bands on levels. A position/absence assertion at a
+  model-predicted instant fails on model error while the mechanism works (the S2
+  FAIL: walk period wrong 5.7×).
+- Offline walks must state which firmware MODE they assume per segment; the
+  sub-0.55 A open-loop hold broke two walks the same way. The strategy-authoring
+  notes are required walk inputs.
+- provisional_note on every unmeasured band; the first campaign is the calibration
+  source; delete the note when pinning. Never widen a threshold to pass a known
+  artifact.
+- Cross-run/frontier metrics: state what the metric structurally CANNOT distinguish
+  (the vs-bound arm is ~1.0 for any charge-free candidate) before anyone reads a
+  1.0000 as optimality.
+
+## Logging discipline
+
+OVERNIGHT_LOG.md gets, as they happen: decisions (with reversal paths), incidents
+(with the correction adopted), campaign headlines, adjudications. The MORNING DIGEST
+is written last but placed prominently: what was asked vs delivered, headline
+findings with pointers, the reversible-decisions list, and the operator's bench list
+for today. The digest cites; it never contains numbers absent from a ledger.
+
+## Close the loop
+
+End with a retrospective in OVERNIGHT_LOG.md (what worked with evidence, what failed
+with the correction, economics) — and fold any NEW failure mode into this skill so
+the next session inherits it.
