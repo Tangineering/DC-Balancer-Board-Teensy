@@ -1,0 +1,55 @@
+<Meta name="droop_t1">
+  <messagelist>
+    <message id="256164410" status="normal" label="build" groupid="400002" scope="" classid="MessageObj"><![CDATA[Begin compiling with PSCAD Version Free]]></message>
+    <message id="589232795" status="normal" label="build" groupid="100006" link="droop_t1.map" scope="droop_t1.map" classid="FileNavigator"><![CDATA[Generating 'C:\Users\Public\Documents\PSCAD\Free\Examples\PowerElectronics\\droop_t1.gf132_x86\droop_t1.map'.]]><file scope="" line="-1">C:\Users\Public\Documents\PSCAD\Free\Examples\PowerElectronics\\droop_t1.gf132_x86\droop_t1.map</file></message>
+    <message id="1623780128" status="normal" label="build" groupid="100015" scope="" classid="MessageObj"><![CDATA[The total number of live nodes: 5]]></message>
+    <message id="205216400" status="normal" label="build" groupid="0" link="SConstruct" scope="SConstruct" classid="FileNavigator"><![CDATA[Coding .mak file: 'C:\Users\Public\Documents\PSCAD\Free\Examples\PowerElectronics\\droop_t1.gf132_x86\\SConstruct']]><file scope="" line="-1">C:\Users\Public\Documents\PSCAD\Free\Examples\PowerElectronics\\droop_t1.gf132_x86\\SConstruct</file></message>
+    <message id="378488787" status="normal" label="build" groupid="100001" scope="" classid="MessageObj"><![CDATA[Non-professional licenses are limited to a single, electrical subsystem. Subsystem splitting has been internally disabled for this simulation.]]></message>
+    <message id="894596028" status="normal" label="build" groupid="400000" scope="" classid="MessageObj"><![CDATA[Time for Compile: 2776ms  Make: 0ms]]></message>
+    <message id="1988591711" status="normal" label="build" groupid="400000" scope="" classid="MessageObj"><![CDATA[Solve Time = 16ms]]></message>
+    <message id="1848591656" status="normal" label="build" groupid="100016" scope="" classid="MessageObj"><![CDATA[Will execute (1): call C:\Program Files (x86)\GFortran\13.2\x86\bin\gf132vars.bat]]></message>
+    <message id="1954173096" status="normal" label="build" groupid="100016" scope="" classid="MessageObj"><![CDATA[Will execute (1): call "C:\Program Files (x86)\GFortran\13.2\x86\bin\gf132vars.bat"]]></message>
+    <message id="43849507" status="normal" label="build" groupid="100016" scope="" classid="MessageObj"><![CDATA[Will execute (2): "C:\Program Files (x86)\PSCAD\5.1 Free\bin\win64\Python.exe" -m SCons]]></message>
+    <message id="301476988" status="normal" label="build" groupid="100016" scope="" classid="MessageObj"><![CDATA[Will execute (2): "C:\Users\Public\Documents\PSCAD\Free\Examples\PowerElectronics\\droop_t1.gf132_x86\droop_t1_mak.bat"]]></message>
+    <message id="2034713555" status="normal" label="build" groupid="100005" scope="" classid="MessageObj"><![CDATA[Creating EMTDC executable...]]></message>
+    <message status="normal" label="build" scope="droop_t1" groupid="100004"><![CDATA[C:\Users\Public\Documents\PSCAD\Free\Examples\PowerElectronics\droop_t1.gf132_x86>call "C:\Program Files (x86)\GFortran\13.2\x86\bin\gf132vars.bat" 
+]]></message>
+    <message status="normal" label="build" scope="droop_t1" groupid="100004"><![CDATA[scons: Reading SConscript files ...
+]]></message>
+    <message status="normal" label="build" scope="droop_t1" groupid="100004"><![CDATA[scons: done reading SConscript files.
+]]></message>
+    <message status="normal" label="build" scope="droop_t1" groupid="100004"><![CDATA[scons: Building targets ...
+]]></message>
+    <message status="normal" label="build" scope="droop_t1" groupid="100004"><![CDATA["C:\Program Files (x86)\GFortran\13.2\x86\bin\gfortran.exe" -o Main_1.o -c -ffree-form -fdefault-real-8 -fdefault-double-8 -xf95-cpp-input -Wconversion -O2 -I. "-IC:\Program Files (x86)\PSCAD\5.1 Free\emtdc\gf132_x86\inc" "-IC:\Program Files (x86)\PSCAD\5.1 Free\emtdc\gf132_x86" "-IC:\Program Files (x86)\PSCAD\5.1 Free\emtdc\gf132_x86\windows" Main.f
+]]></message>
+    <message status="normal" label="build" scope="droop_t1" groupid="100004"><![CDATA["C:\Program Files (x86)\GFortran\13.2\x86\bin\gcc.exe" -o droop_t1.exe -fopenmp -O2 "C:\Program Files (x86)\PSCAD\5.1 Free\emtdc\gf132_x86\windows\main.obj" DS_0.o Main_1.o DroopBoost_2.o "C:\Program Files (x86)\PSCAD\5.1 Free\emtdc\gf132_x86\windows\emtdc.lib" -lgfortran -lstdc++ -lquadmath -lwsock32
+]]></message>
+    <message status="normal" label="build" scope="droop_t1" groupid="100004"><![CDATA[scons: done building targets.
+]]></message>
+    <message id="1224105373" status="normal" label="build" groupid="400003" scope="" classid="MessageObj"><![CDATA[Finished compiling with PSCAD Version Free]]></message>
+  </messagelist>
+  <ViewContext>
+    <Window defn="droop_t1:Main" call="0" />
+  </ViewContext>
+  <List classid="View">
+    <View name="Main" zoomscale="1.87501" scrollx="0" scrolly="45" />
+    <View name="Module_1" zoomscale="2.92969" scrollx="0" scrolly="0" />
+    <View name="DroopChain" zoomscale="2.92969" scrollx="0" scrolly="0" />
+    <View name="DroopBoost" zoomscale="2.92969" scrollx="0" scrolly="0" />
+  </List>
+  <Output device="EMTDC" version="2010" date="2026/08/30" time="21:43:26.000000">
+    <Domain name="Time" unit="s" mult="0.0" skew="0.0">
+      <Sample rate="1000000.0" end="2000" />
+    </Domain>
+    <List classid="Analog">
+      <Analog name="Main(0):Vbus_fc" index="1" gindex="100663297" id="244789126:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+      <Analog name="Main(0):Ibt" index="2" gindex="100663298" id="1991820167:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+      <Analog name="Main(0):Vbus_bt" index="3" gindex="100663299" id="1799133627:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+      <Analog name="Main(0):Ifc" index="4" gindex="100663300" id="263781895:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+      <Analog name="Main(0):Vbus" index="5" gindex="100663301" id="1349772624:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+      <Analog name="Main(0):Itot" index="6" gindex="100663302" id="1549551793:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+      <Analog name="Main(0):r_act" index="7" gindex="100663303" id="1342886315:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    </List>
+    <List classid="Digital" />
+  </Output>
+</Meta>

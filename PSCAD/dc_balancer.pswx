@@ -1,0 +1,14 @@
+<workspace name="dc_balancer" version="5.1.0" crc="89093313">
+  <projects>
+    <project type="project" name="droop_t1" filepath="..\..\..\..\..\Users\Public\Documents\PSCAD\Free\Examples\PowerElectronics\droop_t1.pscx" open="true" />
+  </projects>
+  <simulations />
+  <pmr />
+  <messagegrid expanded="">
+    <column name="Icon" />
+    <column name="Id" />
+    <column name="Component" />
+    <column name="Namespace" />
+    <column name="Description" />
+  </messagegrid>
+</workspace>
