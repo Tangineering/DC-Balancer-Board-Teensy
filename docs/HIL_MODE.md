@@ -99,7 +99,7 @@ decodes as NaN/Inf (`I_charge` included; an XOR checksum passes plenty of bit pa
 NaN reaching `v_actual` poisons the drive controller's recursion permanently).
 Rejections are counted and shown in the `'S'` dump.
 
-### Observation frame — Teensy → host, 17 bytes (fw v24), little-endian
+### Observation frame — Teensy → host, 18 bytes (fw v25), little-endian
 
 | Offset | Size | Field | Notes |
 |--------|------|-------|-------|
@@ -113,18 +113,33 @@ Rejections are counted and shown in the `'S'` dump.
 | 11 | 2 | MDAC code BT | ditto |
 | 13 | 2 | `fault_flags` | uint16 |
 | 15 | 1 | `mppt_thresh_count` | **APPENDED fw v24.** The Ag105 reg-0x02 count the firmware *believes* is in force (`ag105MpptRegCnt`). `0xFF` = external-resistor mode / never written (`AG105_MPPT_N_RESISTOR`, the boot value); `0..250` map to `11.0 + 0.088·N` volts. Clamp band `[15, 27]` = 12.320–13.376 V |
-| 16 | 1 | XOR checksum | over bytes 1–15 |
+| 16 | 1 | `error_code` | **APPENDED fw v25.** The latched `ErrorCode_t` first-cause code (`0` = `ERR_NONE`). `FAULT_PI_TIMEOUT` and `FAULT_HIL_LINK` share fault bit `0x0010` — `fault_flags` is protocol-frozen and has no free bit — so a `0x8010` union was wire-indistinguishable between the Pi watchdog and a stale injection link. `triggerFault()` ORs bits into `fault_flags` but latches only the FIRST CAUSE here, so `ERR_PI_TIMEOUT` vs `ERR_HIL_STALE` (`0x10`) separates them at the source |
+| 17 | 1 | XOR checksum | over bytes 1–16 |
 
 Sent at 1 kHz from `loop()`, but only **after the first accepted injection frame**
 (before that there is no host address to send to) and only when `networkUp`.
 
-**Both lengths are accepted by the host.** A **16-byte** frame is the fw v21–v23
-layout (checksum over bytes 1–14 at byte 15, no `mppt_thresh_count`) and decodes
-with `mppt_cnt` `None`; every pre-existing offset is identical in the two, so the
-length alone selects the checksum span and whether byte 15 is data or the
+**The frame is append-only, and the host selects the layout by LENGTH.** A
+**16-byte** frame is the fw v21–v23 layout (checksum over bytes 1–14 at byte 15,
+no `mppt_thresh_count`, decoding with `mppt_cnt` `None`); a **17-byte** frame is
+fw v24 (checksum over bytes 1–15 at byte 16, no `error_code`); **18 bytes** is
+fw v25. Every pre-existing offset is identical across all three, so the length
+alone selects the checksum span and whether the trailing byte is data or the
 checksum. `hil_plant_sim.parse_output()` prints a one-time provenance line naming
-the length the board is speaking, and warns loudly if one run ever sees both —
-which would mean a re-flash under the run, or two boards answering one host.
+the length the board is speaking, and warns loudly if one run ever sees more than
+one — which would mean a re-flash under the run, or two boards answering one host.
+
+> **⚠️ Tooling lockstep is a HARD PREREQUISITE, not a nicety.**
+> `hil_plant_sim.parse_output()` currently accepts only the 16- and 17-byte
+> lengths and rejects anything else **on length, before the checksum**. Against a
+> fw v25 board that means **every single observation frame is dropped** — not
+> degraded, not missing one field: total blindness. The host never learns
+> `mainState`, `switch_state`, `fault_flags` or the motor command, so every
+> scenario check that reads an observation is unmeasured, the warm-reset
+> tripwire and the `--pi-live` excusal have no data, and the dashboard shows
+> nothing. Note the failure is **one-directional**: injection still works, so
+> the board runs normally and the silence looks like a host problem.
+> **The tooling round MUST land before fw v25 is flashed for any campaign.**
 
 ## Link-loss behaviour: hold, then zero, then latch — and (fw v22/v23) auto-recover
 

@@ -1,6 +1,46 @@
 /*
  * teensy_controller.ino — Scale Car DC Balancer Board, Rev 20260622
  *
+ * fw v25 (2026-09-01) — SHARE-CUT HANDOFF GUARDS: LOAD-AWARE r-BASED CUT + SURVIVOR-TURN-ON
+ *   BLANKING. Campaign hil_report_20260901_080905 latched ERR_OC_BT on a share cut that opened
+ *   the only CONDUCTING source 5 ms after the survivor's bus switch closed. Every FC-charge
+ *   window holds BT_BUS_ENABLE LOW (assertFcChargeEnable()'s mutual-exclusion guard), so the
+ *   share loop winds r onto DROOP_R_MIN exactly, with zero margin; at window close BT_BUS
+ *   returns and applyShareRatio()'s r-based cutoff — which saw both switches HIGH and r still
+ *   below the band — cut FC at I_fc = 0.6371 A while BT was inside the RT1987's ~8 ms t_D_ON
+ *   turn-on delay delivering 0 A. V_bus fell 14.56 -> 12.40 V in 3 ms on bus capacitance, BT's
+ *   ideal diode picked up reactively, the share slew overshot I_batt to 4.64 A, and OC_BT
+ *   latched (correctly — the fault caught a real overcurrent). Two independent holes:
+ *     (a) LOAD GUARD, r-BASED PATH. The setpoint-latch cut got SHARE_CUT_MAX_HANDOFF_A (0.5 A)
+ *         in fw v6; the r-based twin never did, and the shareCutDeferred* suppression only
+ *         covers OUT-OF-BAND SETPOINTS — here the setpoint (0.85) was in band, so no deferral
+ *         existed to suppress anything. Both r-based branches now gate on the doomed channel's
+ *         measured current, and a blocked cut falls through to the band-edge droop clip exactly
+ *         like the pre-existing last-source guard: no cut, no latch, no new flag, droop authority
+ *         stays live, retried every tick.
+ *     (b) SURVIVOR-TURN-ON BLANKING, BOTH PATHS. A switch just commanded HIGH is not yet a
+ *         current source (RT1987 t_D_ON ~8 ms, DS §17.4/§17.6 Table 1, plus CSS soft-start), so
+ *         "the doomed channel is light" is not sufficient — the setpoint-latch path had the load
+ *         guard and the same dark-survivor hole. Every write to FC_BUS_ENABLE / BT_BUS_ENABLE now
+ *         goes through the writeBusSwitch() chokepoint, which timestamps LOW->HIGH transitions;
+ *         a cut is refused while the SURVIVOR's rising edge is younger than
+ *         SHARE_CUT_SURVIVOR_BLANK_MS (30 ms = t_D_ON ~8 ms + the 100 nF CSS soft-start ramp
+ *         tON = (VIN/35)*(CSS_nF/0.0023 - 100) us = 19.8 ms at 16 V, rounded up). The helper
+ *         adds no other behaviour — teardown
+ *         ordering (safeAllSwitches(), doState99()) is byte-for-byte unchanged, since HIGH->LOW
+ *         writes only forward. A switch already HIGH with no recorded edge is NOT blanked.
+ *     (c) DIAGNOSTICS: shareCutRefusedLoad / shareCutRefusedBlank counters plus the two rise
+ *         ages in the State-98 'S' dump. No control path reads them.
+ *   Cuts at light load past the blanking window are unchanged in effect. The re-entry logic,
+ *   hysteresis, deferral machinery, DROOP_R_MIN/MAX and both PI/Youla controllers are untouched.
+ *   PROTOCOL: the HIL observation frame grows 17 -> 18 bytes (error_code appended at offset 16;
+ *   XOR span 1..16), because FAULT_PI_TIMEOUT and FAULT_HIL_LINK share fault bit 0x0010 and were
+ *   wire-indistinguishable. v4/58-byte telemetry, the 22-byte command packet, the 40-byte
+ *   injection frame and BLG v7/106 B are byte-identical. tools/hil_plant_sim.py must learn the
+ *   18-byte length in lockstep; that is a SEPARATE tooling round.
+ *   Also corrected here: the fw v24 changelog entry (d) below said the charger UV backoff dwell
+ *   was 60 ms; AG105_CHG_BACKOFF_DWELL_MS is 15 ms.
+ *
  * fw v24 (2026-08-31) — DYNAMIC Ag105 MPPT INPUT-VOLTAGE THRESHOLD. The Ag105's MPPT is a
  *   THRESHOLD regulator, not a perturb-and-observe tracker (AG105_Silvertel.pdf §2.9): charging
  *   only commences once V_CHG-IN exceeds a threshold set by an MPPTS resistor or I2C reg 0x02,
@@ -29,7 +69,7 @@
  *         inhibited for the session, no fault latched.
  *     (c) An MPPT RELEASE HOLDOFF (1 s) in chargingControl(), bounding any residual hunt to
  *         ≤1 Hz regardless of how the MPPTD-disabled charge semantics actually behave.
- *     (d) A firmware UV BACKOFF on the charger path: V_bus under 12.8 V for 60 ms closes
+ *     (d) A firmware UV BACKOFF on the charger path: V_bus under 12.8 V for 15 ms closes
  *         FC_CHARGE_ENABLE (through assertFcChargeEnable(), restoring BT to the bus); it
  *         re-opens only above 13.6 V. Hysteresis, so a bus sitting at the trip cannot chatter.
  *     (e) COMPANION FIX: a 0xFF on the reg-0x06 measured-current read is the same §2.11.5
@@ -2766,7 +2806,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 24
+#define FW_VERSION 25
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -2908,7 +2948,7 @@ uint16_t       pkt_counter_T = 0;
 // and settled, so initAg105Charger()'s read-verify-write sequence and its ERR_INIT_FAIL /
 // ERR_I2C_CHARGER paths are NOT exercised in a HIL build. Those remain bench-only.
 //
-// OUTPUT FRAME (Teensy -> simulator), 17 bytes, little-endian:
+// OUTPUT FRAME (Teensy -> simulator), 18 bytes, little-endian:
 //   off | size | field
 //   ----+------+---------------------------------------------------------------
 //    0  |  1   | sync 0xB6
@@ -2925,17 +2965,25 @@ uint16_t       pkt_counter_T = 0;
 //       |      |   force, i.e. ag105MpptRegCnt. 0xFF means external-resistor mode / never
 //       |      |   written (AG105_MPPT_N_RESISTOR); 0..250 map to 11 + 0.088*N volts. APPENDED
 //       |      |   fw v24 — every offset above is unchanged.
-//   16  |  1   | XOR checksum over bytes 1..15
+//   16  |  1   | error_code (ErrorCode_t; the LATCHED first-cause code, 0 = ERR_NONE). APPENDED
+//       |      |   fw v25 — every offset above is unchanged.
+//   17  |  1   | XOR checksum over bytes 1..16
 //
-// OUTPUT FRAME SIZE 16 -> 17 (fw v24). This is the ONLY wire protocol this round changes: the
-// v4/58-byte telemetry packet, the 22-byte Pi command packet, the 40-byte injection frame and
-// the BLG v7 record are all byte-identical. Consumption of the new byte on the simulator side is
-// a SEPARATE tooling round — tools/hil_plant_sim.py currently reads a fixed 16-byte observation
-// frame and must be updated in lockstep before an HIL campaign is run against fw v24.
+// OUTPUT FRAME SIZE 17 -> 18 (fw v25). WHY: FAULT_PI_TIMEOUT and FAULT_HIL_LINK share fault bit
+// 0x0010 (fault_flags is protocol-frozen and has no free bit), so a 0x8010 union on the wire was
+// indistinguishable between "the Pi watchdog fired" and "the injection link went stale". The host
+// had to infer it from its own transmit statistics. error_code separates them at the source —
+// ERR_PI_TIMEOUT vs ERR_HIL_STALE (0x10) — because triggerFault() latches the FIRST CAUSE there
+// while it only ORs bits into fault_flags.
+// This is the ONLY wire protocol this round changes: the v4/58-byte telemetry packet, the 22-byte
+// Pi command packet, the 40-byte injection frame and the BLG v7 record are all byte-identical.
+// Consumption of the new byte on the simulator side is a SEPARATE tooling round —
+// tools/hil_plant_sim.py accepts 16- and 17-byte frames with a length-derived checksum span and
+// must learn 18 before an HIL campaign is run against fw v25.
 #define HIL_SYNC_INJECT   0xB5u
 #define HIL_SYNC_OUTPUT   0xB6u
 #define HIL_INJECT_SIZE   40
-#define HIL_OUTPUT_SIZE   17
+#define HIL_OUTPUT_SIZE   18
 #define HIL_STALE_MS      50u    // injection older than this -> hold last values, flag stale
 #define HIL_ZERO_MS       250u   // ...and older than THIS -> force safe zeros (dead link)
 #define HIL_SEND_PERIOD_MS 1u    // observation frame rate (1 kHz)
@@ -3115,12 +3163,13 @@ bool hilParseInjectFrame(const uint8_t *buf, int len, HilInjectFrame &out) {
     return true;
 }
 
-// Packs the 17-byte observation frame. Pure, for the same testability reason.
-// `mpptCnt` is APPENDED (fw v24) at offset 15 — see the frame table above.
+// Packs the 18-byte observation frame. Pure, for the same testability reason.
+// `mpptCnt` is at offset 15 (fw v24); `errCode` is APPENDED (fw v25) at offset 16 — see the
+// frame table above.
 void hilPackOutputFrame(uint8_t *buf, uint8_t seqEcho, uint8_t stateByte,
                         uint8_t switchState, uint8_t auxState, float motorCurrent,
                         uint16_t mdacFC, uint16_t mdacBT, uint16_t faults,
-                        uint8_t mpptCnt) {
+                        uint8_t mpptCnt, uint8_t errCode) {
     int idx = 0;
     buf[idx++] = (uint8_t)HIL_SYNC_OUTPUT;
     buf[idx++] = seqEcho;
@@ -3132,6 +3181,7 @@ void hilPackOutputFrame(uint8_t *buf, uint8_t seqEcho, uint8_t stateByte,
     memcpy(&buf[idx], &mdacBT, 2); idx += 2;
     memcpy(&buf[idx], &faults, 2); idx += 2;
     buf[idx++] = mpptCnt;
+    buf[idx++] = errCode;
     buf[idx++] = hilChecksum(buf, HIL_OUTPUT_SIZE);
 }
 
@@ -3152,7 +3202,7 @@ void hilSendTick() {
     hilPackOutputFrame(frame, hilInject.seq, (uint8_t)mainState,
                        readSwitchState(), readHilAuxState(), current,
                        mdacLastCodeFC, mdacLastCodeBT, fault_flags,
-                       ag105MpptRegCnt);
+                       ag105MpptRegCnt, error_code);
     Udp.beginPacket(hilHostIp, hilHostPort);
     Udp.write(frame, HIL_OUTPUT_SIZE);
     Udp.endPacket();
@@ -3228,7 +3278,10 @@ bool  shareSpCutBT = false;
 //
 // WHY IT EXISTS: without it the deferral leaks the very cut it refused. The blocked entry returns
 // false, the loop runs closed-loop at an OUT-OF-BAND setpoint, the controller drives r out of
-// band, and applyShareRatio()'s r-based cutoff — which has NO current guard — performs the same
+// band, and applyShareRatio()'s r-based cutoff — which HAD no current guard until fw v25 (it now
+// carries the same SHARE_CUT_MAX_HANDOFF_A ceiling, so this particular handoff can no longer leak
+// through it; the OWNERSHIP argument below is what still makes the deferral load-bearing) —
+// performs the same
 // 1.3-1.5 A handoff ~10-30 ms later, claimed as shareIso* instead of shareSpCut*. That claim is
 // invisible to the external re-closers (doState2()/chargingControl() gate on !shareSpCut*), so
 // they re-close the switch, the self-heal drops the orphaned claim, and the r-cutoff re-fires:
@@ -3251,6 +3304,116 @@ bool  shareSpCutBT = false;
 // band in the first place.
 bool  shareCutDeferredFC = false;
 bool  shareCutDeferredBT = false;
+
+// ── Bus-switch write CHOKEPOINT + survivor-turn-on blanking (fw v25, 2026-09-01) ──────────────
+//
+// WHY. Campaign hil_report_20260901_080905 latched ERR_OC_BT on a share cut that fired 5 ms after
+// the survivor's bus switch closed. Sequence: every FC-charge window holds BT_BUS_ENABLE LOW
+// (assertFcChargeEnable()'s mutual-exclusion guard), the share loop winds r down onto DROOP_R_MIN
+// exactly (zero margin, because the FC channel is the only feed and the measured share pins at
+// 1.0), and at window close chargingControl() restores BT_BUS. On that SAME tick applyShareRatio()
+// saw both switches HIGH, the pinned r still below DROOP_R_MIN, and cut FC — the only CONDUCTING
+// source, carrying I_fc = 0.6371 A — while BT was still inside the RT1987's t_D_ON turn-on delay
+// and delivering 0 A. V_bus fell 14.56 → 12.40 V in 3 ms on bus capacitance alone; BT's ideal
+// diode picked up reactively and the share slew overshot I_batt to 4.64 A; OC_BT latched
+// (correctly — the fault caught a real overcurrent).
+//
+// TWO INDEPENDENT HOLES, both closed in fw v25:
+//   (1) the r-based cutoff in applyShareRatio() had NO load guard at all. The setpoint-latch path
+//       got SHARE_CUT_MAX_HANDOFF_A in fw v6; the r-based twin never did, and the
+//       shareCutDeferred* suppression only covers OUT-OF-BAND SETPOINTS — here the setpoint was
+//       0.85, comfortably in band, so no deferral existed to suppress anything.
+//   (2) NEITHER path knew whether the SURVIVOR was actually conducting yet. A switch that has just
+//       been commanded HIGH is not a current source: the RT1987 has a turn-on delay t_D_ON of
+//       ~8 ms (RT1987 datasheet §17.4/§17.6, Table 1) before the pass FET is enhanced, plus CSS
+//       soft-start ramp time after it. Handing the whole bus to a switch inside that window drops
+//       the bus onto capacitance, exactly as observed.
+//
+// MECHANISM. Every write to FC_BUS_ENABLE / BT_BUS_ENABLE in this file goes through
+// writeBusSwitch(), which timestamps LOW→HIGH transitions. A cut is then refused while the
+// SURVIVOR's rising edge is younger than SHARE_CUT_SURVIVOR_BLANK_MS. The helper adds NO other
+// behaviour — teardown ordering (safeAllSwitches(), doState99()) is byte-for-byte unchanged,
+// because a HIGH→LOW write only forwards to digitalWrite().
+// DERIVATION (ms). Conduction onset at a bus switch is NOT t_D_ON alone — it is the enable delay
+// PLUS the CSS soft-start ramp:
+//   t_D_ON  ~8 ms typ                                         (RT1987 DS §17.4/§17.6, Table 1)
+//   tON     = (VIN/35) * (CSS_nF/0.0023 - 100) us             (RT1987 DS soft-start formula)
+// FC_BUS and BT_BUS both carry CSS = 100 nF, so at the 16 V bus tON = (16/35)*(100/0.0023 - 100)
+// = 19.8 ms; 8 + 19.8 = 27.8 ms, rounded up to 30. Through essentially that whole ramp a survivor
+// closing onto an ALREADY-ENERGIZED bus is held off by the TRCB reverse comparator (its output
+// starts below the bus it is being asked to feed), so it sources no current — which is exactly the
+// dark-survivor condition this window exists to cover. The 5.6 nF switches (REGEN, FC_CHARGE,
+// BT_SEQ; tON ~1.07 ms) are never share-cut survivors, so their much shorter ramp does not enter.
+// TODO(calibrate) — FAILURE DIRECTION IS ASYMMETRIC, and the value is deliberately conservative:
+// too SHORT leaves a residual dark-survivor handoff, i.e. the hil_report_20260901_080905 bus
+// collapse in miniature; too LONG only extends a slew-limited sit at the band-edge droop clip with
+// both channels on the bus, which is the pre-cut steady state and is safe. Measure the FC/BT
+// conduction onset on the bench (V_bus and the two channel currents against the rising edge)
+// before shortening this. Do not shorten it on the model alone.
+const uint32_t SHARE_CUT_SURVIVOR_BLANK_MS = 30u;
+
+// Last recorded LOW→HIGH transition of each bus switch. The "seen" flags give the boot / never-
+// risen semantics: a switch that is already HIGH with no recorded edge (bring-up wrote it before
+// any blanking consumer existed, or the operator closed it) is NOT blanked — an unknown edge is
+// treated as old, never as fresh. Ages are computed with wrap-safe unsigned arithmetic
+// (millis() - ts), so the 49.7-day rollover is a non-event.
+uint32_t busSwitchRiseMsFC   = 0;
+uint32_t busSwitchRiseMsBT   = 0;
+bool     busSwitchRiseSeenFC = false;
+bool     busSwitchRiseSeenBT = false;
+
+// Diagnostics only — nothing in any control path reads these (fw v8 observability doctrine).
+// Shared by BOTH cut paths (the r-based branches in applyShareRatio() and the setpoint-latch
+// entries in updateShareSetpointCutoff()); the 'S' dump prints them next to the share block.
+// COUNTING SEMANTICS (fw v25 review M3): these are TICK counts, not episode counts — one
+// increment per refused EVALUATION, so a guard that blocks the same cut for 30 consecutive ticks
+// adds 30. Read a rising RATE as "a refusal is standing", never as "N distinct handoffs were
+// prevented". KNOWN AND ACCEPTED: one main-loop tick can charge shareCutRefusedBlank TWICE, once
+// from updateShareSetpointCutoff()'s entry and once from applyShareRatio()'s r-based branch, since
+// both run in the same powerBalance() call and both consult the same window. Neither counter is
+// cleared by hilWarmReset() (they are boot-cumulative diagnostics, like the encoder edge counts).
+uint32_t shareCutRefusedLoad  = 0;   // refused because the DOOMED channel was carrying too much
+uint32_t shareCutRefusedBlank = 0;   // refused because the SURVIVOR had only just turned on
+
+// TRUE for exactly one applyShareRatio() call: the one powerBalance() makes from the CONTROLLER
+// path. Consumed (cleared) at the top of applyShareRatio(), so any other caller — the State-98 'O'
+// open-loop write, the run-completion restore, the guard fallback — reads false.
+//
+// WHY IT IS NOT powerBalanceLive (fw v25 review M2, deviation with evidence): powerBalanceLive is
+// a STATE-98-ONLY flag (declared with the State-98 bench globals, set by
+// setPowerShareSetpointLive(), cleared by applyOpenLoopDroop()). In production State 2 doState2()
+// calls powerBalance()/powerBalanceGated() directly and powerBalanceLive stays FALSE, so gating on
+// it would have disabled the refused-cut slew clamp on exactly the production controller path the
+// clamp exists to protect. This flag names the call origin instead of the operating mode.
+bool shareRatioFromController = false;
+
+// THE chokepoint. Forwards to digitalWrite() unconditionally and records the rising edge.
+void writeBusSwitch(int pin, int level) {
+    bool wasHigh = (digitalRead(pin) == HIGH);
+    digitalWrite(pin, level);
+    if (level == HIGH && !wasHigh) {
+        if (pin == FC_BUS_ENABLE) {
+            busSwitchRiseMsFC   = millis();
+            busSwitchRiseSeenFC = true;
+        } else if (pin == BT_BUS_ENABLE) {
+            busSwitchRiseMsBT   = millis();
+            busSwitchRiseSeenBT = true;
+        }
+    }
+}
+
+// True while `pin` (the SURVIVOR of a proposed cut) is inside its turn-on blanking window.
+bool busSwitchBlanked(int pin) {
+    if (pin == FC_BUS_ENABLE) {
+        return busSwitchRiseSeenFC &&
+               (millis() - busSwitchRiseMsFC) < SHARE_CUT_SURVIVOR_BLANK_MS;
+    }
+    if (pin == BT_BUS_ENABLE) {
+        return busSwitchRiseSeenBT &&
+               (millis() - busSwitchRiseMsBT) < SHARE_CUT_SURVIVOR_BLANK_MS;
+    }
+    return false;
+}
 
 // ── State 98 bench tools: VESC read-back ('E' one-shot / 'U' watch) ────────────────────────────
 // The firmware is otherwise write-only to the VESC (setCurrent()); these are the only reads.
@@ -4591,8 +4754,8 @@ void setup() {
 
     // Path switches — all LOW at boot (fail-safe; 10kΩ EN-to-GND bodge resistors also pull LOW)
     // Firmware still drives explicit levels early so we don't rely solely on passive resistors.
-    pinMode(FC_BUS_ENABLE,      OUTPUT); digitalWrite(FC_BUS_ENABLE,      LOW);
-    pinMode(BT_BUS_ENABLE,      OUTPUT); digitalWrite(BT_BUS_ENABLE,      LOW);
+    pinMode(FC_BUS_ENABLE,      OUTPUT); writeBusSwitch(FC_BUS_ENABLE,      LOW);
+    pinMode(BT_BUS_ENABLE,      OUTPUT); writeBusSwitch(BT_BUS_ENABLE,      LOW);
     pinMode(MOT_PWR_ENABLE,     OUTPUT); digitalWrite(MOT_PWR_ENABLE,     LOW);
     pinMode(REGEN_ENABLE,       OUTPUT); digitalWrite(REGEN_ENABLE,       LOW);
     pinMode(FC_CHARGE_ENABLE,   OUTPUT); digitalWrite(FC_CHARGE_ENABLE,   LOW);
@@ -5703,7 +5866,7 @@ void doState2() {
     // an unguarded re-assert here re-closed FC_BUS ≤20ms after the latch opened it, while the
     // latch kept powerBalance() frozen and ratio re-entry disabled — both channels back on the
     // bus at the band-edge ratio with every mitigation inoperative (the TP0016/TP0037 condition).
-    if (!shareSpCutFC) digitalWrite(FC_BUS_ENABLE, HIGH);    // FC regulator → VBUS always on in Run
+    if (!shareSpCutFC) writeBusSwitch(FC_BUS_ENABLE, HIGH);    // FC regulator → VBUS always on in Run
 
     // VBUS → VESC/motor. Normally already HIGH (connected in State-0 P3, kept on through Idle),
     // so this is an idempotent no-op. Under the 2026-08-03 doctrine the guard refuses only when
@@ -5806,7 +5969,8 @@ void hilWarmReset() {
                    "command state and the bring-up machine are back at boot values (warm reset #");
     Serial.print(hilWarmResetCount);
     Serial.println("). Boot-monotonic diagnostics (encoder edge counters, HIL frame counters, "
-                   "OV/UV transient counts) are NOT cleared — they stay cumulative across runs.");
+                   "OV/UV transient counts, the fw v25 share-cut refusal tick counters) are NOT "
+                   "cleared — they stay cumulative across runs.");
 
     // ── Fault / error latches ────────────────────────────────────────────────
     fault_flags        = 0;
@@ -6022,8 +6186,8 @@ void doState99() {
         case 0:
             commandMotorCurrent(0);
             // Phase 1: Bleed VBUS capacitor energy into charger
-            digitalWrite(FC_BUS_ENABLE, LOW);    // disconnect FC regulator from VBUS
-            digitalWrite(BT_BUS_ENABLE, LOW);    // disconnect BT regulator from VBUS
+            writeBusSwitch(FC_BUS_ENABLE, LOW);    // disconnect FC regulator from VBUS
+            writeBusSwitch(BT_BUS_ENABLE, LOW);    // disconnect BT regulator from VBUS
             // S7 (2026-08-12): both bus switches are open by state action. assertFcChargeEnable()
             // below clears only the BT pair, so clear the FC pair here too — the post-mortem
             // switch/flag state reported out of State 99 must be truthful.
@@ -6314,7 +6478,7 @@ void doState98() {
                 if (!cur && busHotPlugUnsafe(FC_REG_ENABLE)) {
                     Serial.println("REFUSED: FC boost is ON and VBUS is low — hot-plug risk. Use 'G' to bring up the bus.");
                 } else {
-                    digitalWrite(FC_BUS_ENABLE, !cur);
+                    writeBusSwitch(FC_BUS_ENABLE, !cur);
                     shareIsoFC   = false;   // operator owns the switch now — no auto re-entry
                     shareSpCutFC = false;   // and no setpoint latch holding it (2026-08-12):
                                             // the latch would otherwise keep blocking re-entry
@@ -6334,7 +6498,7 @@ void doState98() {
                 } else if (!cur && busHotPlugUnsafe(BT_REG_ENABLE)) {
                     Serial.println("REFUSED: BT boost is ON and VBUS is low — hot-plug risk. Use 'G' to bring up the bus.");
                 } else {
-                    digitalWrite(BT_BUS_ENABLE, !cur);
+                    writeBusSwitch(BT_BUS_ENABLE, !cur);
                     shareIsoBT   = false;   // operator owns the switch now — no auto re-entry
                     shareSpCutBT = false;   // and no setpoint latch holding it (2026-08-12) —
                                             // mirror of the '1' handler above
@@ -8965,6 +9129,25 @@ void printTestStatus() {
     Serial.println();
     Serial.print("share sp-cut latch: ");
     Serial.println(shareSpCutFC ? "FC" : (shareSpCutBT ? "BT" : "none"));
+    // fw v25: the two share-cut REFUSAL counters, summed over BOTH cut paths (the r-based
+    // branches in applyShareRatio() and the setpoint-latch entries in updateShareSetpointCutoff()).
+    // "load" = the doomed channel was carrying more than SHARE_CUT_MAX_HANDOFF_A; "blank" = the
+    // survivor's bus switch had risen less than SHARE_CUT_SURVIVOR_BLANK_MS ago and was still
+    // inside the RT1987 turn-on delay. A rising blank count at every FC-charge window CLOSE is the
+    // hil_report_20260901_080905 signature being caught rather than executed. Diagnostic only.
+    // TICK counts, not episode counts (review M3): one increment per refused EVALUATION, so a
+    // standing refusal adds one per 1 kHz tick. A single tick can charge the blanking counter
+    // twice (setpoint entry + r-based branch, both consulting the same window) — known, accepted.
+    Serial.print("share cuts refused: load-refused ticks="); Serial.print(shareCutRefusedLoad);
+    Serial.print("  blank-refused ticks=");                  Serial.print(shareCutRefusedBlank);
+    Serial.print("  (blank window ");          Serial.print(SHARE_CUT_SURVIVOR_BLANK_MS);
+    Serial.println(" ms)");
+    Serial.print("bus switch rise age: FC=");
+    if (busSwitchRiseSeenFC) { Serial.print(millis() - busSwitchRiseMsFC); Serial.print(" ms"); }
+    else                     { Serial.print("never"); }
+    Serial.print("  BT=");
+    if (busSwitchRiseSeenBT) { Serial.print(millis() - busSwitchRiseMsBT); Serial.println(" ms"); }
+    else                     { Serial.println("never"); }
     // fw v5: which share-loop MODE is running, and the filtered total current that decides it —
     // the operator needs to know whether a run's droop split came from the Youla controller or
     // from the open-loop setpoint feedforward before reading anything into its share trace.
@@ -9089,10 +9272,10 @@ void assertFcChargeEnable(bool enable) {
         if ((shareSpCutFC || shareIsoFC) && digitalRead(FC_BUS_ENABLE) == LOW) {
             shareIsoFC   = false;
             shareSpCutFC = false;
-            digitalWrite(FC_BUS_ENABLE, HIGH);
+            writeBusSwitch(FC_BUS_ENABLE, HIGH);
         }
         // Cut BT contribution to VBUS first, then close regen path, then open FC→charger path
-        digitalWrite(BT_BUS_ENABLE, LOW);    // disconnect BT from VBUS before routing FC → charger
+        writeBusSwitch(BT_BUS_ENABLE, LOW);    // disconnect BT from VBUS before routing FC → charger
         // BT_BUS is now owned by the charge path: clear any share-controller
         // isolation claim on it, or applyShareRatio()'s re-entry would close
         // BT_BUS while FC_CHARGE is HIGH — the illegal switch combination.
@@ -9122,8 +9305,8 @@ void assertFcChargeEnable(bool enable) {
 void safeAllSwitches() {
     assertFcChargeEnable(false);          // close FC→charger path via the guard
     digitalWrite(REGEN_ENABLE,   LOW);
-    digitalWrite(BT_BUS_ENABLE,  LOW);
-    digitalWrite(FC_BUS_ENABLE,  LOW);
+    writeBusSwitch(BT_BUS_ENABLE,  LOW);
+    writeBusSwitch(FC_BUS_ENABLE,  LOW);
     digitalWrite(MOT_PWR_ENABLE, LOW);
     digitalWrite(MPPT_DISABLE,   LOW);    // inhibit MPPT (active-LOW)
     mpptReleased = false;                 // fw v24: mirror follows the pin
@@ -9234,8 +9417,8 @@ BringupStatus busBringupTick(bool doInit) {
             digitalWrite(FC_REG_ENABLE,  LOW);
             digitalWrite(BT_REG_ENABLE,  LOW);
             digitalWrite(MOT_PWR_ENABLE, LOW);
-            digitalWrite(FC_BUS_ENABLE,  HIGH);   // switches first — RT1987s soft-start the bus
-            digitalWrite(BT_BUS_ENABLE,  HIGH);   //   to ~max(V_fc, V_batt) via body-diode path
+            writeBusSwitch(FC_BUS_ENABLE,  HIGH);   // switches first — RT1987s soft-start the bus
+            writeBusSwitch(BT_BUS_ENABLE,  HIGH);   //   to ~max(V_fc, V_batt) via body-diode path
             // S6 (2026-08-12): the bring-up takes OWNERSHIP of the whole topology, so no share-
             // loop isolation claim may survive it. Both switches are now closed by state action;
             // a latch left set here would be orphaned (frozen share loop with both channels on
@@ -9354,8 +9537,8 @@ void busBringupAbort() {
     digitalWrite(MOT_PWR_ENABLE, LOW);
     digitalWrite(FC_REG_ENABLE,  LOW);
     digitalWrite(BT_REG_ENABLE,  LOW);
-    digitalWrite(FC_BUS_ENABLE,  LOW);
-    digitalWrite(BT_BUS_ENABLE,  LOW);
+    writeBusSwitch(FC_BUS_ENABLE,  LOW);
+    writeBusSwitch(BT_BUS_ENABLE,  LOW);
     // S6 (2026-08-12): both switches are open by state action — the bring-up owns the topology,
     // so clear every share-loop claim. A latch surviving the abort would freeze the share loop
     // on the next run (same argument as safeAllSwitches()).
@@ -9649,7 +9832,7 @@ static bool updateShareSetpointCutoff() {
         if (V_bus >= V_BUS_CHARGED_THRESH && digitalRead(FC_REG_ENABLE) == HIGH) {
             // Re-close FC onto a regulated bus; BT is still HIGH (the entry
             // guard proved it), so the bus is never left unsourced mid-swap.
-            digitalWrite(FC_BUS_ENABLE, HIGH);
+            writeBusSwitch(FC_BUS_ENABLE, HIGH);
             shareIsoFC       = false;   // topology claim released with the latch
             shareSpCutFC     = false;
             releasedThisTick = true;
@@ -9675,7 +9858,7 @@ static bool updateShareSetpointCutoff() {
             // profiles' control-call set), so an FC-charge tick has already cleared shareSpCutBT
             // via assertFcChargeEnable(true) and this branch cannot be reached with FC_CHARGE
             // asserted. Any future caller MUST preserve that ordering.
-            digitalWrite(BT_BUS_ENABLE, HIGH);
+            writeBusSwitch(BT_BUS_ENABLE, HIGH);
             shareIsoBT       = false;
             shareSpCutBT     = false;
             releasedThisTick = true;
@@ -9712,9 +9895,15 @@ static bool updateShareSetpointCutoff() {
     //     the loop actively migrates load OFF the doomed channel toward the survivor. Without that
     //     clip the reference stays out of band (the governor's floor clip is in-band-gated) and no
     //     migration happens at all;
-    //   - applyShareRatio() suppresses its own r-based cutoff on that side, because that cutoff
-    //     has NO current guard and would otherwise execute the refused handoff a few ticks later
-    //     under the wrong ownership flag (see the shareCutDeferred* block comment).
+    //   - applyShareRatio() suppresses its own r-based cutoff on that side. That cutoff HAD no
+    //     current guard until fw v25 and would then have executed the refused handoff outright;
+    //     it now carries the same SHARE_CUT_MAX_HANDOFF_A ceiling, so the load half of that
+    //     argument is retired. The suppression REMAINS load-bearing for the OWNERSHIP half: an
+    //     r-based cut claims shareIso*, not shareSpCut*, and the external re-closers gate on
+    //     !shareSpCut* only — so a cut taken there (e.g. once migration drops the current under
+    //     the ceiling on the r path a tick before this one re-evaluates) would be re-closed,
+    //     self-healed as orphaned, and re-cut: the TP0053-class cycling. "One owner per
+    //     setpoint" (see the shareCutDeferred* block comment).
     // The cut then fires here on a later tick, once the migration has pulled the doomed channel's
     // current under the threshold.
     //
@@ -9729,8 +9918,18 @@ static bool updateShareSetpointCutoff() {
         if (sp < DROOP_R_MIN) {
             if (digitalRead(FC_BUS_ENABLE) == HIGH &&
                 digitalRead(BT_BUS_ENABLE) == HIGH) {
-                if (fabsf(I_fc) <= SHARE_CUT_MAX_HANDOFF_A) {
-                    digitalWrite(FC_BUS_ENABLE, LOW);   // BT stays HIGH and keeps its
+                if (fabsf(I_fc) <= SHARE_CUT_MAX_HANDOFF_A &&
+                    busSwitchBlanked(BT_BUS_ENABLE)) {
+                    // SURVIVOR-TURN-ON BLANKING (fw v25). The load guard below has always been
+                    // here; the DARK-SURVIVOR hole it does not cover is the same one that bit the
+                    // r-based path in hil_report_20260901_080905, so it is closed symmetrically.
+                    // A survivor inside the RT1987's t_D_ON is not a current source at all, so
+                    // "the doomed channel is light" is not sufficient. NO latch, NO deferral flag
+                    // (this is a ≤15 ms transient, not a load refusal — the entry simply re-runs
+                    // next tick), just live governed control for one more tick.
+                    shareCutRefusedBlank++;
+                } else if (fabsf(I_fc) <= SHARE_CUT_MAX_HANDOFF_A) {
+                    writeBusSwitch(FC_BUS_ENABLE, LOW);   // BT stays HIGH and keeps its
                                                         // droop gain — the bus feed is
                                                         // handed over, never dropped
                     shareIsoFC   = true;   // topology owner (telemetry/status truth)
@@ -9740,18 +9939,23 @@ static bool updateShareSetpointCutoff() {
                     // when the last-source guard is what blocked: that fall-through predates
                     // fw v6 and keeps its existing semantics.
                     shareCutDeferredFC = true;
+                    shareCutRefusedLoad++;              // fw v25: same diagnostic as the r-path
                 }
             }
         } else if (sp > DROOP_R_MAX) {
             if (digitalRead(BT_BUS_ENABLE) == HIGH &&
                 digitalRead(FC_BUS_ENABLE) == HIGH) {
-                if (fabsf(I_batt) <= SHARE_CUT_MAX_HANDOFF_A) {
-                    digitalWrite(BT_BUS_ENABLE, LOW);   // FC stays HIGH and keeps its
+                if (fabsf(I_batt) <= SHARE_CUT_MAX_HANDOFF_A &&
+                    busSwitchBlanked(FC_BUS_ENABLE)) {
+                    shareCutRefusedBlank++;             // fw v25 — mirror of the FC branch
+                } else if (fabsf(I_batt) <= SHARE_CUT_MAX_HANDOFF_A) {
+                    writeBusSwitch(BT_BUS_ENABLE, LOW);   // FC stays HIGH and keeps its
                                                         // droop gain (see above)
                     shareIsoBT   = true;
                     shareSpCutBT = true;
                 } else {
                     shareCutDeferredBT = true;          // mirror of the FC branch
+                    shareCutRefusedLoad++;
                 }
             }
         }
@@ -10146,6 +10350,7 @@ void powerBalance() {
     // [DROOP_R_MIN, DROOP_R_MAX] physical-droop clip, the channel cutoff for
     // ratios outside it, and the re-entry hysteresis all live inside
     // applyShareRatio().
+    shareRatioFromController = true;   // fw v25: consumed at the top of applyShareRatio()
     applyShareRatio(droopRatio);
 }
 
@@ -10174,6 +10379,16 @@ void powerBalance() {
 void applyShareRatio(float ratio) {
     float r = constrain(ratio, 0.0f, 1.0f);
 
+    // fw v25: set by either r-based branch below when a cut was WANTED but REFUSED (load guard or
+    // survivor blanking). It re-arms the ratio slew limiter for the band-edge clip at the bottom
+    // of this function — see the comment there for why that is necessary and was not before.
+    bool cutRefusedThisCall = false;
+
+    // fw v25: consume the controller-path marker (see its declaration). Read once, cleared here,
+    // so every caller after powerBalance()'s own call reads false.
+    const bool fromController = shareRatioFromController;
+    shareRatioFromController  = false;
+
     // LAST-SOURCE GUARD: a channel may be cut ONLY while the other channel's
     // bus switch is closed — the controller must never darken the bus. This
     // matters for the pathological-but-real case of a disconnected source:
@@ -10193,10 +10408,12 @@ void applyShareRatio(float ratio) {
     // DEFERRED-CUT SUPPRESSION (fw v6 review S1): while updateShareSetpointCutoff() has an
     // outstanding deferral on a side, this function's r-based cutoff for that side is suppressed.
     // The setpoint latch owns every out-of-band setpoint ("one owner per setpoint"), it refused
-    // this exact cut on load, and the r-based cutoff has no current guard — letting it fire would
-    // execute the refused 1.3-1.5 A handoff a few ticks later AND claim it as shareIso*, which the
-    // external re-closers cannot see (they gate on !shareSpCut*), producing re-close/re-cut
-    // cycling. The channel instead sits at its band-edge droop gain; that rail-saturated dropout
+    // this exact cut on load. Until fw v25 the r-based cutoff HAD no current guard, so letting it
+    // fire would have executed the refused 1.3-1.5 A handoff outright; it now carries the same
+    // SHARE_CUT_MAX_HANDOFF_A ceiling, and that half of the argument is retired. The suppression
+    // survives on the OWNERSHIP half alone: a cut taken here claims shareIso*, which the external
+    // re-closers cannot see (they gate on !shareSpCut*), so they re-close it, the self-heal drops
+    // the orphaned claim, and it re-cuts — TP0053-class re-close/re-cut cycling. The channel instead sits at its band-edge droop gain; that rail-saturated dropout
     // cycle is the documented accepted residual.
     // NOTE the flags are per-tick derived in updateShareSetpointCutoff(), so a ONE-SHOT caller of
     // this function (operator 'O', the guard fallback, the completion restore) reads at most one
@@ -10207,8 +10424,22 @@ void applyShareRatio(float ratio) {
     if (!shareIsoFC && r < DROOP_R_MIN && !shareCutDeferredFC) {
         if (digitalRead(FC_BUS_ENABLE) == HIGH &&
             digitalRead(BT_BUS_ENABLE) == HIGH) {
-            digitalWrite(FC_BUS_ENABLE, LOW);
-            shareIsoFC = true;
+            // LOAD-AWARE HANDOFF GUARD + SURVIVOR-TURN-ON BLANKING (fw v25, 2026-09-01).
+            // Both are the same guards the setpoint-latch entry uses; this r-based twin had
+            // NEITHER until now. Evidence: campaign hil_report_20260901_080905 cut FC at
+            // I_fc = 0.6371 A, 5 ms after BT_BUS's rising edge, and collapsed the bus (see the
+            // writeBusSwitch() block comment). Blocked → NO cut, NO latch, NO flag: fall straight
+            // through to the band-edge droop clip below, exactly like the last-source guard. r
+            // stays out of band, so the cut is simply retried on the next tick once the load has
+            // migrated or the survivor has finished turning on.
+            if (fabsf(I_fc) > SHARE_CUT_MAX_HANDOFF_A) {
+                shareCutRefusedLoad++;  cutRefusedThisCall = true;
+            } else if (busSwitchBlanked(BT_BUS_ENABLE)) {
+                shareCutRefusedBlank++; cutRefusedThisCall = true;
+            } else {
+                writeBusSwitch(FC_BUS_ENABLE, LOW);
+                shareIsoFC = true;
+            }
         }
     } else if (shareIsoFC && !shareSpCutFC &&
                r >= DROOP_R_MIN + SHARE_CUTOFF_HYST &&
@@ -10221,7 +10452,7 @@ void applyShareRatio(float ratio) {
         // ratio hysteresis must not re-enter it. TP0015 hunted at ~20 Hz exactly
         // here — the standing share error wound r back over the 0.01 threshold
         // every cycle. Release is the setpoint's job (updateShareSetpointCutoff).
-        digitalWrite(FC_BUS_ENABLE, HIGH);
+        writeBusSwitch(FC_BUS_ENABLE, HIGH);
         shareIsoFC = false;
     }
 
@@ -10229,8 +10460,17 @@ void applyShareRatio(float ratio) {
     if (!shareIsoBT && r > DROOP_R_MAX && !shareCutDeferredBT) {
         if (digitalRead(BT_BUS_ENABLE) == HIGH &&
             digitalRead(FC_BUS_ENABLE) == HIGH) {
-            digitalWrite(BT_BUS_ENABLE, LOW);
-            shareIsoBT = true;
+            // Mirror of the FC branch above (fw v25): load guard on the DOOMED channel (I_batt),
+            // turn-on blanking on the SURVIVOR (FC_BUS_ENABLE). Blocked → fall through to the
+            // band-edge clip, no latch, no flag.
+            if (fabsf(I_batt) > SHARE_CUT_MAX_HANDOFF_A) {
+                shareCutRefusedLoad++;  cutRefusedThisCall = true;
+            } else if (busSwitchBlanked(FC_BUS_ENABLE)) {
+                shareCutRefusedBlank++; cutRefusedThisCall = true;
+            } else {
+                writeBusSwitch(BT_BUS_ENABLE, LOW);
+                shareIsoBT = true;
+            }
         }
     } else if (shareIsoBT && !shareSpCutBT &&
                r <= DROOP_R_MAX - SHARE_CUTOFF_HYST &&
@@ -10238,7 +10478,7 @@ void applyShareRatio(float ratio) {
                digitalRead(BT_REG_ENABLE) == HIGH) {
         // !shareSpCutBT, and BT_REG_ENABLE HIGH (S5 back-feed guard) — mirror of the FC branch
         // above (2026-08-12).
-        digitalWrite(BT_BUS_ENABLE, HIGH);
+        writeBusSwitch(BT_BUS_ENABLE, HIGH);
         shareIsoBT = false;
     }
 
@@ -10251,6 +10491,35 @@ void applyShareRatio(float ratio) {
     // the span where both MDAC gains stay ≤ 1 (g = K_DROOP/(RE_MAX·r); see
     // the K_DROOP block comment).
     float rc = constrain(r, DROOP_R_MIN, DROOP_R_MAX);
+
+    // ── fw v25: RE-ARM THE SLEW LIMITER ON A REFUSED CUT ─────────────────────────────────────
+    // powerBalance()'s ratio slew limiter DELIBERATELY passes an out-of-band commanded ratio
+    // through UNLIMITED, on the stated reasoning that such a ratio becomes a TOPOLOGY action (the
+    // cutoff), not an MDAC write, so slewing it would only delay the hysteresis crossing while the
+    // gains sit pinned at the band edge anyway. Introducing the fw v25 guards falsifies that
+    // premise: a REFUSED cut turns exactly that unslewed out-of-band ratio into an MDAC write at
+    // the band edge. Measured on the host suite before this clamp was added: droopSlew_prev
+    // stepped 0.8129 -> 0.8500 in ONE tick (0.037, ~1.9x DROOP_RATIO_SLEW_PER_TICK), and from a
+    // mid-band seed the same path can slam 0.5 -> 0.85 in one write — precisely the antiphase MDAC
+    // slam DROOP_RATIO_SLEW_PER_TICK exists to prevent (TP0010/TP0013 dropout transients).
+    // So on a refusal — and ONLY on a refusal — re-apply this tick's ceiling here, walking from
+    // droopSlew_prev exactly as the upstream limiter would have. Every other caller is unchanged:
+    // an in-band controller ratio was already slewed upstream, and the one-shot operator/state
+    // writes ('O', the completion restore) do not set the flag unless they themselves proposed a
+    // cut that was refused — in which case the channel stays on the bus and creeping toward the
+    // rail is the conservative behaviour anyway.
+    // CONTROLLER PATH ONLY (fw v25 review M2). One-shot operator/state writes must land exactly
+    // where commanded in a single call — the doctrine stated at droopSlew_prev below — so the
+    // State-98 'O' open-loop droop write and the run-completion restore are NOT clamped even when
+    // their ratio proposed a cut that was refused. They keep landing at the band edge in one call;
+    // only the 1 kHz controller path, whose upstream limiter skipped the out-of-band ratio, is
+    // walked.
+    if (cutRefusedThisCall && fromController) {
+        rc = constrain(rc,
+                       droopSlew_prev - shareSlewStepThisTick,
+                       droopSlew_prev + shareSlewStepThisTick);
+        rc = constrain(rc, DROOP_R_MIN, DROOP_R_MAX);
+    }
 
     // Record the ratio actually applied to the MDACs (limit-cycle mitigation,
     // 2026-08-11). The slew LIMITING lives in powerBalance() — the controller
@@ -10520,7 +10789,7 @@ void chargingControl() {
         assertFcChargeEnable(false);
         digitalWrite(REGEN_ENABLE, LOW);
         // share setpoint latch owns this switch — see updateShareSetpointCutoff() (2026-08-12)
-        if (!shareSpCutBT) digitalWrite(BT_BUS_ENABLE, HIGH); // BT contributes to VBUS when not FC-charging
+        if (!shareSpCutBT) writeBusSwitch(BT_BUS_ENABLE, HIGH); // BT contributes to VBUS when not FC-charging
         return;
     }
 
@@ -10550,7 +10819,7 @@ void chargingControl() {
         digitalWrite(MPPT_DISABLE, LOW);     // inhibit MPPT during regen (active-LOW)
         mpptReleased = false;                // deliberate mode change — no holdoff armed (fw v24)
         // share setpoint latch owns this switch — see updateShareSetpointCutoff() (2026-08-12)
-        if (!shareSpCutBT) digitalWrite(BT_BUS_ENABLE, HIGH);   // BT continues contributing to VBUS during regen
+        if (!shareSpCutBT) writeBusSwitch(BT_BUS_ENABLE, HIGH);   // BT continues contributing to VBUS during regen
     } else if (chgBackoffActive) {
         // ── UV BACKOFF (fw v24) ──────────────────────────────────────────────
         // V_bus has been under AG105_CHG_BACKOFF_V for AG105_CHG_BACKOFF_DWELL_MS. Close the
@@ -10581,7 +10850,7 @@ void chargingControl() {
         // relief anyway: closing the charger path is what stops the Ag105 loading the bus. BT
         // returns later, either through this same site once the bus recovers above
         // V_BUS_CHARGED_THRESH, or through the share latch's own release.
-        if (!shareSpCutBT && !busHotPlugUnsafe(BT_REG_ENABLE)) digitalWrite(BT_BUS_ENABLE, HIGH);
+        if (!shareSpCutBT && !busHotPlugUnsafe(BT_REG_ENABLE)) writeBusSwitch(BT_BUS_ENABLE, HIGH);
     } else {
         // Cruise/coast: close regen path and harvest via the FC→charger path.
         digitalWrite(REGEN_ENABLE, LOW);

@@ -164,6 +164,18 @@ static void reset_test_state() {
     // stale true from an earlier case.
     shareCutDeferredFC = false;
     shareCutDeferredBT = false;
+    // fw v25: the bus-switch write chokepoint's rising-edge timestamps and the two share-cut
+    // refusal counters. "seen" false is the never-risen / boot state, in which a switch that is
+    // already HIGH is NOT blanked — which is exactly what most fixtures want, since they set the
+    // bus switches with raw digitalWrite() rather than through writeBusSwitch(). A fixture that
+    // needs the blanking window must drive the survivor through writeBusSwitch() itself.
+    busSwitchRiseMsFC    = 0;
+    busSwitchRiseMsBT    = 0;
+    busSwitchRiseSeenFC  = false;
+    busSwitchRiseSeenBT  = false;
+    shareCutRefusedLoad  = 0;
+    shareCutRefusedBlank = 0;
+    shareRatioFromController = false;   // fw v25 review M2: the controller-path call marker
     // .ino State-98 trapezoid SHARE-SETPOINT SWEEP ('T … [t,r1..rn]'). Cleared here rather than
     // relying on tsweepFinish()/tsweepCancel(): a case that leaves a sweep mid-cool-down would
     // otherwise fire a trapezoid inside the NEXT case's first doState98() tick.
@@ -1245,7 +1257,7 @@ static void test_hil_pack_output_frame() {
     uint8_t buf[HIL_OUTPUT_SIZE] = {};
     float motorCurrent = -4.5f;
     uint16_t mdacFC = 0x1234, mdacBT = 0xABCD, faults = 0x8001;
-    hilPackOutputFrame(buf, 0x33, 2, 0x15, 0x0A, motorCurrent, mdacFC, mdacBT, faults, 0x1C);
+    hilPackOutputFrame(buf, 0x33, 2, 0x15, 0x0A, motorCurrent, mdacFC, mdacBT, faults, 0x1C, 0x42);
 
     check(buf[0] == HIL_SYNC_OUTPUT, "hilPackOutputFrame: offset 0 sync 0xB6");
     check(buf[1] == 0x33,            "hilPackOutputFrame: offset 1 seq echo");
@@ -1264,9 +1276,19 @@ static void test_hil_pack_output_frame() {
     check(read_flt == faults,  "hilPackOutputFrame: offset 13 fault_flags");
     // fw v24: mppt_thresh_count appended at 15, checksum moved to 16 (span 1..15).
     check(buf[15] == 0x1C,     "hilPackOutputFrame: offset 15 mppt_thresh_count");
-    check(HIL_OUTPUT_SIZE == 17, "hilPackOutputFrame: observation frame is 17 bytes (fw v24)");
-    check(buf[16] == xor_checksum_span(buf, 1, 16),
-          "hilPackOutputFrame: offset 16 checksum spans bytes 1..15");
+    // fw v25: error_code appended at 16, checksum moved to 17 (span 1..16). Every offset above is
+    // unchanged — the frame is append-only and the host selects the layout by LENGTH.
+    check(buf[16] == 0x42,     "hilPackOutputFrame: offset 16 error_code (fw v25)");
+    check(HIL_OUTPUT_SIZE == 18, "hilPackOutputFrame: observation frame is 18 bytes (fw v25)");
+    check(buf[17] == xor_checksum_span(buf, 1, 17),
+          "hilPackOutputFrame: offset 17 checksum spans bytes 1..16");
+    // The checksum must actually COVER the new byte: flipping error_code alone has to change it.
+    uint8_t buf2[HIL_OUTPUT_SIZE] = {};
+    hilPackOutputFrame(buf2, 0x33, 2, 0x15, 0x0A, motorCurrent, mdacFC, mdacBT, faults, 0x1C, 0x43);
+    check(buf2[17] != buf[17],
+          "hilPackOutputFrame: the checksum span includes offset 16 (error_code changes it)");
+    check(memcmp(buf, buf2, 16) == 0,
+          "hilPackOutputFrame: bytes 0..15 are byte-identical to the fw v24 layout (append-only)");
 }
 
 static void test_hil_read_switch_state_matches_telemetry() {
@@ -2030,7 +2052,8 @@ static void test_hil_wiring_send_tick() {
     check(sentBT  == mdacLastCodeBT, "hilSendTick: MDAC BT code matches the live mirror");
     check(sentFlt == fault_flags,    "hilSendTick: fault_flags matches the live global");
     check(out[15] == ag105MpptRegCnt, "hilSendTick: mppt_thresh_count (offset 15) matches ag105MpptRegCnt (fw v24)");
-    check(out[16] == xor_checksum_span(out, 1, 16), "hilSendTick: checksum valid over bytes 1..15 (fw v24)");
+    check(out[16] == error_code, "hilSendTick: error_code (offset 16) matches the live global (fw v25)");
+    check(out[17] == xor_checksum_span(out, 1, 17), "hilSendTick: checksum valid over bytes 1..16 (fw v25)");
 
     // 1 ms cadence gate: calling again in the SAME millis must not resend.
     Udp.reset();
@@ -4295,7 +4318,7 @@ static void test_share_handoff_mode_constants() {
           "constants: (setup) SHARE_GOV_FILT_ALPHA is the EMA weight the handoff filters share "
           "with the governor's load filter");
     // fw v23 (any-fault run-boundary-gated HIL recovery): stale pin updated.
-    check(FW_VERSION == 24, "pin: FW_VERSION == 24");
+    check(FW_VERSION == 25, "pin: FW_VERSION == 25");
 }
 
 // DARK seed (item B3): resetShareControlState() (and reset_test_state()'s mirror of it) seeds
@@ -4947,6 +4970,11 @@ static void test_share_ratio_cutoff() {
           "cutoff: re-entry proceeds once the bus is charged again");
 
     // r = 1: symmetric BT cutoff.
+    // fw v25 fixture ripple: the FC re-entry just above went through writeBusSwitch(), so FC —
+    // the SURVIVOR of the BT cut about to be requested — is inside its turn-on blanking window.
+    // Age it out; this test is about the cutoff mapping, not about the blanking guard (which has
+    // its own tests).
+    g_mock_millis += SHARE_CUT_SURVIVOR_BLANK_MS;
     applyShareRatio(1.0f);
     check(digitalRead(BT_BUS_ENABLE) == LOW && shareIsoBT,
           "cutoff: r=1 opens BT_BUS_ENABLE");
@@ -5261,6 +5289,10 @@ static void test_share_setpoint_cutoff_side_flip() {
     // Next tick: BT latches (setpoint is still 0.90, both switches now HIGH — entry guard
     // satisfied).
     I_fc = 1.0f; I_batt = 0.0f;
+    // fw v25 fixture ripple: the FC release above closed FC_BUS through writeBusSwitch(), so the
+    // survivor of the pending BT latch is inside its turn-on blanking window. Age it out — this
+    // test is about the one-tick-apart flip ordering, not about the blanking guard.
+    g_mock_millis += SHARE_CUT_SURVIVOR_BLANK_MS;
     t += 1000; g_mock_micros = t; powerBalance();
     check(shareSpCutBT && digitalRead(BT_BUS_ENABLE) == LOW,
           "side flip: BT latches on the next tick");
@@ -5449,6 +5481,321 @@ static void test_share_setpoint_cutoff_handoff_guard_release_unaffected() {
     check(digitalRead(BT_BUS_ENABLE) == HIGH && !shareSpCutBT && !shareIsoBT,
           "handoff guard/release: the release proceeds on the very next in-band tick despite a "
           "large standing current -- the guard is entry-only");
+}
+
+// ══ fw v25: LOAD GUARD ON THE r-BASED CUT + SURVIVOR-TURN-ON BLANKING ═════════════════════════
+//
+// Regression fixture for campaign hil_report_20260901_080905: an FC-charge window holds BT_BUS
+// LOW, the share loop winds r onto DROOP_R_MIN exactly (the measured share is topology-pinned at
+// 1.0, so there is zero margin), and at window close BT_BUS returns. On that same tick the r-based
+// cutoff saw both switches HIGH and cut FC — the only CONDUCTING source, at I_fc = 0.6371 A —
+// while BT was still inside the RT1987's ~8 ms t_D_ON delivering 0 A. Bus 14.56 → 12.40 V in 3 ms,
+// reactive BT pickup overshot I_batt to 4.64 A, ERR_OC_BT latched.
+//
+// The fixture drives BT_BUS HIGH through writeBusSwitch() (the chokepoint), which is what makes
+// the rising edge observable at all — a raw digitalWrite() leaves the "never risen" state, in
+// which a switch is deliberately NOT blanked.
+static void setup_charge_window_close_fixture(float i_fc, float i_batt) {
+    reset_test_state();
+    g_mock_millis = 100000;                 // well away from 0, so ages are unambiguous
+    digitalWrite(FC_BUS_ENABLE, HIGH);      // FC has been the sole feed all window
+    digitalWrite(BT_BUS_ENABLE, LOW);       // ...because assertFcChargeEnable() held BT off
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    digitalWrite(BT_REG_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = i_fc; I_batt = i_batt;
+    power_share_setpoint = 0.85f;           // IN BAND — no setpoint latch, no deferral flag
+}
+
+static void test_share_r_cutoff_blanking_fc(void) {
+    test_group("fw v25: r-based FC cut is refused inside the survivor's turn-on blanking window");
+
+    // (i) THE OBSERVED FAILURE. Window closes, BT_BUS rises, a share tick lands 5 ms later.
+    setup_charge_window_close_fixture(0.6371f, 0.0f);   // the campaign's own I_fc
+    writeBusSwitch(BT_BUS_ENABLE, HIGH);               // window close restores BT
+    check(busSwitchRiseSeenBT && busSwitchRiseMsBT == g_mock_millis,
+          "blanking/FC: the chokepoint recorded BT_BUS's rising edge");
+    g_mock_millis += 5;                                 // 5 ms — inside t_D_ON, BT delivers 0 A
+    applyShareRatio(0.0f);                              // r pinned at/below DROOP_R_MIN
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareIsoFC,
+          "blanking/FC: the only conducting source is NOT cut 5 ms after the survivor turned on "
+          "(hil_report_20260901_080905 regression)");
+    // The campaign's own I_fc (0.6371 A) is ALSO above SHARE_CUT_MAX_HANDOFF_A, and the load guard
+    // is evaluated first, so this particular tick is charged to the LOAD counter. Both guards
+    // independently refuse the observed failure — recorded as such rather than asserting a
+    // discriminator the data does not support.
+    check(shareCutRefusedLoad == 1 && shareCutRefusedBlank == 0,
+          "blanking/FC: the campaign's 0.6371 A trips the LOAD guard first (both guards would "
+          "have refused this cut independently)");
+    check(!SPI.transfer_log.empty(),
+          "blanking/FC: droop gains stay live — the blocked cut falls through to the band-edge "
+          "clip and still writes the MDACs");
+
+    // (ii) PAST the blanking window, but STILL over the load guard → still refused.
+    g_mock_millis += SHARE_CUT_SURVIVOR_BLANK_MS;       // now well outside the window
+    check(!busSwitchBlanked(BT_BUS_ENABLE), "(setup) the blanking window has expired");
+    uint32_t blankBefore = shareCutRefusedBlank;
+    applyShareRatio(0.0f);
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareIsoFC,
+          "load guard/FC: I_fc = 0.6371 A > SHARE_CUT_MAX_HANDOFF_A still refuses the r-based cut "
+          "(the hole fw v6 closed on the setpoint path but not on this one)");
+    check(shareCutRefusedLoad == 2 && shareCutRefusedBlank == blankBefore,
+          "load guard/FC: charged to the LOAD counter, not the blanking counter");
+
+    // BLANKING IN ISOLATION: a LIGHT doomed channel (the load guard would allow the cut) inside
+    // the survivor's turn-on window. This is the case only the fw v25 blanking guard catches, and
+    // it is the mechanism that made the campaign failure destructive — the survivor was dark.
+    setup_charge_window_close_fixture(0.1f, 0.0f);
+    writeBusSwitch(BT_BUS_ENABLE, HIGH);
+    g_mock_millis += SHARE_CUT_SURVIVOR_BLANK_MS - 1;   // last millisecond INSIDE the window
+    applyShareRatio(0.0f);
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareIsoFC,
+          "blanking-only/FC: a light-load cut is still refused while the survivor is dark");
+    check(shareCutRefusedBlank == 1 && shareCutRefusedLoad == 0,
+          "blanking-only/FC: charged to the BLANKING counter — the load guard would have allowed "
+          "this cut");
+    g_mock_millis += 1;                                  // exactly at the window edge
+    check(!busSwitchBlanked(BT_BUS_ENABLE),
+          "blanking-only/FC: the window is exclusive — age == SHARE_CUT_SURVIVOR_BLANK_MS is out");
+    applyShareRatio(0.0f);
+    check(digitalRead(FC_BUS_ENABLE) == LOW && shareIsoFC,
+          "blanking-only/FC: the cut fires on the first tick past the window");
+
+    // (iii) BEHAVIOUR PRESERVATION: light load, past the window → the cut proceeds exactly as
+    // it always has.
+    I_fc = 0.1f;
+    applyShareRatio(0.0f);
+    check(digitalRead(FC_BUS_ENABLE) == LOW && shareIsoFC,
+          "behaviour preserved/FC: a light-load cut past the blanking window still fires and "
+          "claims shareIsoFC");
+    check(digitalRead(BT_BUS_ENABLE) == HIGH,
+          "behaviour preserved/FC: the survivor stays on the bus");
+}
+
+static void test_share_r_cutoff_blanking_bt_mirror(void) {
+    test_group("fw v25: r-based BT cut mirrors the load guard and the blanking window");
+
+    // Mirror image: FC is the survivor and has just turned on; BT is doomed and heavily loaded.
+    reset_test_state();
+    g_mock_millis = 100000;
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    digitalWrite(FC_BUS_ENABLE, LOW);
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    digitalWrite(BT_REG_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.0f; I_batt = 0.7f;
+    power_share_setpoint = 0.5f;
+
+    writeBusSwitch(FC_BUS_ENABLE, HIGH);
+    g_mock_millis += 5;
+    applyShareRatio(1.0f);                              // r above DROOP_R_MAX → BT is doomed
+    check(digitalRead(BT_BUS_ENABLE) == HIGH && !shareIsoBT,
+          "blanking/BT: no cut while the FC survivor is inside its turn-on window");
+    check(shareCutRefusedLoad == 1 && shareCutRefusedBlank == 0,
+          "blanking/BT: I_batt = 0.7 A trips the LOAD guard first (evaluated before blanking)");
+
+    g_mock_millis += SHARE_CUT_SURVIVOR_BLANK_MS;
+    applyShareRatio(1.0f);
+    check(digitalRead(BT_BUS_ENABLE) == HIGH && !shareIsoBT,
+          "load guard/BT: I_batt = 0.7 A > SHARE_CUT_MAX_HANDOFF_A refuses the cut past the "
+          "blanking window");
+    check(shareCutRefusedLoad == 2, "load guard/BT: counted as a load refusal");
+
+    // Blanking in isolation on the BT side: light doomed channel, dark FC survivor.
+    reset_test_state();
+    g_mock_millis = 200000;
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    digitalWrite(FC_BUS_ENABLE, LOW);
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    digitalWrite(BT_REG_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.0f; I_batt = 0.15f;
+    writeBusSwitch(FC_BUS_ENABLE, HIGH);
+    g_mock_millis += 5;
+    applyShareRatio(1.0f);
+    check(digitalRead(BT_BUS_ENABLE) == HIGH && !shareIsoBT,
+          "blanking-only/BT: a light-load cut is refused while the FC survivor is dark");
+    check(shareCutRefusedBlank == 1 && shareCutRefusedLoad == 0,
+          "blanking-only/BT: charged to the BLANKING counter");
+
+    I_batt = 0.2f;
+    g_mock_millis += SHARE_CUT_SURVIVOR_BLANK_MS;
+    applyShareRatio(1.0f);
+    check(digitalRead(BT_BUS_ENABLE) == LOW && shareIsoBT,
+          "behaviour preserved/BT: a light-load cut past the window fires and claims shareIsoBT");
+}
+
+// The blanking window is applied to the SETPOINT-LATCH entries too (they had the load guard from
+// fw v6 but the identical dark-survivor hole). Refused → NO latch, NO deferral flag: this is a
+// ≤15 ms transient, not a load refusal, so the entry simply re-runs on the next tick.
+static void test_share_setpoint_cutoff_blanking(void) {
+    test_group("fw v25: the setpoint-latch entry is blanked on the survivor's turn-on too");
+
+    reset_test_state();
+    g_mock_millis = 100000;
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, LOW);
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    digitalWrite(BT_REG_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.1f; I_batt = 0.0f;             // light — the fw v6 load guard would ALLOW this cut
+    power_share_setpoint = 0.10f;           // < DROOP_R_MIN → FC is doomed by the setpoint
+
+    writeBusSwitch(BT_BUS_ENABLE, HIGH);    // survivor just turned on
+    g_mock_millis += 5;
+    bool frozen = updateShareSetpointCutoff();
+    check(!frozen && !shareSpCutFC && !shareIsoFC && digitalRead(FC_BUS_ENABLE) == HIGH,
+          "sp blanking: no latch fires while the BT survivor is inside its turn-on window");
+    check(shareCutRefusedBlank == 1, "sp blanking: counted in shareCutRefusedBlank");
+    check(!shareCutDeferredFC,
+          "sp blanking: NO deferral flag — a blanking refusal is a transient, not a load refusal "
+          "(the deferral machinery is reserved for SHARE_CUT_MAX_HANDOFF_A)");
+
+    // Past the window, the same tick's inputs latch normally — behaviour preservation.
+    g_mock_millis += SHARE_CUT_SURVIVOR_BLANK_MS;
+    frozen = updateShareSetpointCutoff();
+    check(frozen && shareSpCutFC && shareIsoFC && digitalRead(FC_BUS_ENABLE) == LOW,
+          "sp blanking: past the window the latch fires exactly as in fw v24");
+    check(shareCutRefusedBlank == 1, "sp blanking: no further refusal counted");
+}
+
+// A REFUSED cut must not become an unslewed MDAC slam. powerBalance()'s ratio slew limiter passes
+// out-of-band ratios through unlimited on the premise that they become a TOPOLOGY action, not an
+// MDAC write; the fw v25 guards falsify that premise, so applyShareRatio() re-applies this tick's
+// ceiling at the band-edge clip when — and only when — a cut was refused.
+static void test_refused_cut_band_edge_clip_is_slewed(void) {
+    test_group("fw v25: a refused cut's band-edge clip is slew-limited, not slammed");
+
+    // Closed-loop walk with a sustained in-band error that drives the CONTROLLER ratio out of
+    // band while the doomed channel is heavily loaded — the pre-clamp measurement on this exact
+    // fixture stepped droopSlew_prev 0.8129 -> 0.8500 in one tick (0.037, ~1.9x the ceiling).
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 1.6f; I_batt = 2.4f;            // I_tot 4.0 A; BT far above SHARE_CUT_MAX_HANDOFF_A
+    power_share_setpoint = 0.60f;
+    uint32_t t = 0;
+    float prev = droopSlew_prev, maxStep = 0.0f;
+    for (int i = 0; i < 100; i++) {
+        t += 1000; g_mock_micros = t;
+        powerBalance();
+        float step = fabsf(droopSlew_prev - prev);
+        if (step > maxStep) maxStep = step;
+        prev = droopSlew_prev;
+    }
+    check(shareCutRefusedLoad > 0,
+          "(setup) the run really does drive r out of band and get its cut refused on load");
+    check(digitalRead(BT_BUS_ENABLE) == HIGH && !shareIsoBT,
+          "refused-cut slew: BT stays on the bus for the whole run (the guard held)");
+    check(maxStep <= DROOP_RATIO_SLEW_PER_TICK + 1e-5f,
+          "refused-cut slew: no tick's applied ratio moves more than DROOP_RATIO_SLEW_PER_TICK — "
+          "the band-edge clip after a refusal walks, it does not slam");
+    check(fabsf(droopSlew_prev - DROOP_R_MAX) < 1e-5f,
+          "refused-cut slew: the ratio still REACHES the band edge — limited, not frozen");
+
+    // ONE-SHOT PATHS ARE NOT CLAMPED (review M2). The State-98 'O' open-loop droop write is a
+    // deliberate operator action and must land exactly where commanded in ONE call, even when its
+    // ratio proposed a cut that the load guard refused.
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    digitalWrite(BT_REG_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.0f; I_batt = 3.0f;            // BT far above the handoff ceiling → its cut is refused
+    droopSlew_prev = 0.5f;                 // mid-band start: an unclamped landing is a 0.35 jump
+    applyOpenLoopDroop(1.0f);              // operator 'O 1.0' — out of band, BT doomed
+    check(shareCutRefusedLoad == 1 && digitalRead(BT_BUS_ENABLE) == HIGH && !shareIsoBT,
+          "one-shot 'O': the cut is refused on load (BT stays on the bus)");
+    check(fabsf(droopSlew_prev - DROOP_R_MAX) < 1e-5f,
+          "one-shot 'O': lands at the band edge in ONE call — the refused-cut slew clamp is "
+          "controller-path only (review M2)");
+    check(!powerBalanceLive,
+          "one-shot 'O': and it did so with powerBalanceLive false, which is ALSO the production "
+          "State-2 value — proving the clamp cannot be gated on that flag");
+}
+
+// The chokepoint must see EVERY writer of the two bus-switch pins. This drives the classes a host
+// test can reach and asserts the timestamp moved: without full coverage the blanking guard reads
+// a stale (or never-set) edge and silently degrades to fw v24 behaviour.
+static void test_bus_switch_chokepoint_coverage(void) {
+    test_group("fw v25: writeBusSwitch() chokepoint records every reachable writer class");
+
+    // (a) direct helper semantics: LOW→HIGH stamps; HIGH→HIGH does NOT re-stamp (a re-assert of
+    // an already-closed switch is not a turn-on event and must not extend the blanking window);
+    // HIGH→LOW never stamps.
+    reset_test_state();
+    g_mock_millis = 50000;
+    writeBusSwitch(FC_BUS_ENABLE, HIGH);
+    check(busSwitchRiseSeenFC && busSwitchRiseMsFC == 50000, "chokepoint: LOW→HIGH stamps");
+    g_mock_millis = 50010;
+    writeBusSwitch(FC_BUS_ENABLE, HIGH);
+    check(busSwitchRiseMsFC == 50000, "chokepoint: HIGH→HIGH does not re-stamp");
+    writeBusSwitch(FC_BUS_ENABLE, LOW);
+    check(busSwitchRiseMsFC == 50000, "chokepoint: HIGH→LOW does not stamp");
+    check(!busSwitchBlanked(BT_BUS_ENABLE),
+          "chokepoint: a never-risen switch is NOT blanked (boot semantics)");
+
+    // Wrap-safe age arithmetic: a timestamp taken just before the millis() rollover must read as
+    // fresh, not as ~49 days old.
+    reset_test_state();
+    g_mock_millis = 0xFFFFFFFAu;
+    writeBusSwitch(BT_BUS_ENABLE, HIGH);
+    g_mock_millis = 5;                       // wrapped; true elapsed = 11 ms
+    check(busSwitchBlanked(BT_BUS_ENABLE),
+          "chokepoint: unsigned age arithmetic is wrap-safe across the millis() rollover");
+
+    // (b) the SETPOINT-LATCH RELEASE writer in updateShareSetpointCutoff() — a distinct writer
+    // class from applyShareRatio()'s hysteresis re-entry below.
+    // DEVIATION FROM THE ROUND SPEC (source wins): the spec named "assertFcChargeEnable restore"
+    // as a converted writer class. assertFcChargeEnable(false) does NOT restore BT to the bus —
+    // it only drops FC_CHARGE_ENABLE (.ino, the `else` arm of assertFcChargeEnable()); the BT
+    // restore at an FC-charge window close belongs to chargingControl() (three sites, all
+    // converted). The release writer below is exercised instead.
+    reset_test_state();
+    g_mock_millis = 60000;
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, LOW);
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    digitalWrite(BT_REG_ENABLE, HIGH);
+    V_bus = 16.0f;
+    shareSpCutBT = true; shareIsoBT = true;  // BT latched by an out-of-band setpoint
+    power_share_setpoint = 0.5f;             // back in band → release
+    updateShareSetpointCutoff();
+    check(digitalRead(BT_BUS_ENABLE) == HIGH && !shareSpCutBT,
+          "(setup) the setpoint-latch release re-closed BT");
+    check(busSwitchRiseSeenBT && busSwitchRiseMsBT == 60000,
+          "chokepoint: the setpoint-latch release write is stamped");
+    check(busSwitchBlanked(BT_BUS_ENABLE),
+          "chokepoint: a cut proposed on this tick would be blanked");
+
+    // (c) the share path's own re-entry writer.
+    reset_test_state();
+    g_mock_millis = 70000;
+    digitalWrite(FC_BUS_ENABLE, LOW);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    V_bus = 16.0f;
+    shareIsoFC = true;
+    applyShareRatio(0.5f);                   // in-band → hysteresis re-entry closes FC
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareIsoFC, "(setup) FC re-entered the bus");
+    check(busSwitchRiseSeenFC && busSwitchRiseMsFC == 70000,
+          "chokepoint: applyShareRatio()'s re-entry write is stamped");
+
+    // (d) safeAllSwitches(): timestamps must be untouched (HIGH→LOW only) and the teardown must
+    // behave exactly as before — the helper adds nothing to fault paths.
+    reset_test_state();
+    g_mock_millis = 80000;
+    writeBusSwitch(FC_BUS_ENABLE, HIGH);
+    writeBusSwitch(BT_BUS_ENABLE, HIGH);
+    uint32_t fcTs = busSwitchRiseMsFC, btTs = busSwitchRiseMsBT;
+    g_mock_millis = 80100;
+    safeAllSwitches();
+    check(digitalRead(FC_BUS_ENABLE) == LOW && digitalRead(BT_BUS_ENABLE) == LOW,
+          "chokepoint: safeAllSwitches() still opens both bus switches");
+    check(busSwitchRiseMsFC == fcTs && busSwitchRiseMsBT == btTs,
+          "chokepoint: a teardown stamps nothing — the helper only timestamps rising edges");
 }
 
 // ─── fw v6 review S1: the BLOCKED→DEFERRED mechanism (shareCutDeferredFC/BT) ──────────────────
@@ -9022,8 +9369,48 @@ static void test_mppt_hil_frame_default() {
     check(ag105MpptRegCnt == (uint8_t)AG105_MPPT_N_RESISTOR,
           "reset: ag105MpptRegCnt defaults to AG105_MPPT_N_RESISTOR (0xFF) — a never-read belief");
     uint8_t buf[HIL_OUTPUT_SIZE];
-    hilPackOutputFrame(buf, 0, 0, 0, 0, 0.0f, 0, 0, 0, ag105MpptRegCnt);
+    hilPackOutputFrame(buf, 0, 0, 0, 0, 0.0f, 0, 0, 0, ag105MpptRegCnt, error_code);
     check(buf[15] == 0xFF, "hilPackOutputFrame: offset 15 carries the 0xFF pre-read default");
+}
+
+// ─── fw v25: the appended error_code byte carries the LATCHED first cause ─────────────────────
+// FAULT_PI_TIMEOUT and FAULT_HIL_LINK share fault bit 0x0010, so fault_flags alone cannot say
+// which fired. error_code can, because triggerFault() latches first-cause there.
+static void test_hil_frame_error_code_byte() {
+    test_group("HIL (fw v25): observation frame offset 16 carries error_code");
+    reset_test_state();
+
+    uint8_t buf[HIL_OUTPUT_SIZE];
+    check(error_code == ERR_NONE, "(setup) a clean board has error_code == ERR_NONE");
+    hilPackOutputFrame(buf, 0, 0, 0, 0, 0.0f, 0, 0, 0, ag105MpptRegCnt, error_code);
+    check(buf[16] == 0, "clean board: offset 16 is 0 (ERR_NONE)");
+
+    // Latch a fault the way the firmware does, then re-pack: the byte must name the CAUSE, and
+    // the 0x8010 union in fault_flags must be the ambiguous quantity the byte disambiguates.
+    triggerFault(FAULT_HIL_LINK, ERR_HIL_STALE);
+    hilPackOutputFrame(buf, 0, (uint8_t)mainState, 0, 0, 0.0f, 0, 0, fault_flags,
+                       ag105MpptRegCnt, error_code);
+    uint16_t read_flt = 0;
+    memcpy(&read_flt, &buf[13], 2);
+    check(read_flt == 0x8010,
+          "latched HIL_STALE: fault_flags on the wire is 0x8010 (the ambiguous union)");
+    check(buf[16] == (uint8_t)ERR_HIL_STALE,
+          "latched HIL_STALE: offset 16 disambiguates it as ERR_HIL_STALE");
+    check((uint8_t)ERR_HIL_STALE != (uint8_t)ERR_PI_TIMEOUT,
+          "ERR_HIL_STALE and ERR_PI_TIMEOUT are distinct codes — the byte is a real discriminator");
+    check(buf[17] == xor_checksum_span(buf, 1, 17),
+          "latched frame: checksum still spans bytes 1..16");
+
+    // The PI-watchdog twin latches the SAME fault bit with a different code.
+    reset_test_state();
+    triggerFault(FAULT_PI_TIMEOUT, ERR_PI_TIMEOUT);
+    hilPackOutputFrame(buf, 0, (uint8_t)mainState, 0, 0, 0.0f, 0, 0, fault_flags,
+                       ag105MpptRegCnt, error_code);
+    memcpy(&read_flt, &buf[13], 2);
+    check(read_flt == 0x8010,
+          "latched PI_TIMEOUT: identical 0x8010 fault_flags — bit 0x0010 is shared");
+    check(buf[16] == (uint8_t)ERR_PI_TIMEOUT,
+          "latched PI_TIMEOUT: offset 16 names ERR_PI_TIMEOUT, not ERR_HIL_STALE");
 }
 
 // ─── 8. State-98 'N' command parsing ──────────────────────────────────────────
@@ -19805,6 +20192,7 @@ int main() {
     test_mppt_uv_backoff();
     test_mppt_sentinel_fix();
     test_mppt_hil_frame_default();
+    test_hil_frame_error_code_byte();
     test_mppt_n_command_syntax();
     test_mppt_n_command_write_and_restore();
     test_mppt_n_command_refusals();
@@ -19931,6 +20319,11 @@ int main() {
     test_share_setpoint_cutoff_handoff_guard_bt_mirror();
     test_share_setpoint_cutoff_handoff_guard_boundary();
     test_share_setpoint_cutoff_handoff_guard_release_unaffected();
+    test_share_r_cutoff_blanking_fc();
+    test_share_r_cutoff_blanking_bt_mirror();
+    test_share_setpoint_cutoff_blanking();
+    test_refused_cut_band_edge_clip_is_slewed();
+    test_bus_switch_chokepoint_coverage();
     test_share_cut_deferred_suppresses_r_cutoff_sustained();
     test_share_cut_deferred_clips_reference_to_band_edge();
     test_share_cut_deferred_clears_and_latches_per_tick();
