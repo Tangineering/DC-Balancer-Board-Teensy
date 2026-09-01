@@ -65,6 +65,33 @@
    student's governor/convex-FC formulation, committed 567a3ed) and the TPM
    toolchain (tools/tpm_generator.py, TPM_dt1_hil.mat).
 
+6. **Converter-asymmetry calibration → plant model** (operator note, from
+   USER_NOTES.md): the simulated plant is idealized-symmetric — in
+   hil_report_20260831_021553/scenario_ems-drive-cycle_hifi a commanded share
+   of exactly 0.50 DELIVERS exactly 0.50, whereas the real converters have
+   open-loop deviations (component tolerances + loop asymmetry between the FC
+   and BT boost chains) that force r_cmd off 0.50 to hold a true 50/50 split
+   in closed loop. Task: mine the SD-card bench logs (logs/*.BLG, the
+   benchlog-analysis toolkit; r_cmd = gBT/(gFC+gBT)) plus the operator's own
+   reported open-loop share measurements for the actual open-loop deviation,
+   then build the OBSERVED asymmetry into the electrical plant model so the
+   share controller works against a plant as close as possible to the real
+   one. Related existing evidence: the bench droop fit's shared/single ratio
+   is 2.182 vs the network's structural 2.000 (the measured-droop mode's
+   asserted +8.1 % residual), and the standing ~4× K_DROOP open finding —
+   this item may explain or subsume parts of both.
+7. **General physics review of the HIL plant against real SD-log data**
+   (operator note): a systematic pass over the plant model (droop chain,
+   source models, RT1987 machines, chopper, charger, mechanical) comparing
+   each modeled behavior against the bench BLG record where data exists, and
+   upgrading the model where the logs show a measurable, repeatable deviation.
+   Candidate inputs: the benchlog rounds ML0146-ML0217, the droop/handoff
+   traces, the sag/UV events, item 6's asymmetry findings. Deliverable: a
+   findings table (modeled vs measured vs action) — the adversarial-doc-review
+   loop is a good vehicle. Also reconciles the standing ems-y b00-v3
+   gate-fraction discrepancy (campaign 20.6 % vs walk 12.7 %) if the cause is
+   plant-side.
+
 ## 2. Pi bridge v4 parser audit — UNBLOCKED
 
 Bridge source is committed at `references/EMS/Pi_2026-09-01/`
