@@ -609,7 +609,7 @@ def test_dwell_latch_counters():
 def test_warm_start_orders_the_incumbent_first():
     p = M.Planner()
     p.incumbent = (0, 6, 3)
-    order = p._enumeration_order(len(p.ladder), 3)
+    order = p._enumeration_order(range(len(p.ladder)), 3)
     assert order[0] == (0, 6, 3)
     # And outward in ladder distance from it.
     d = [sum(abs(c[i] - p.incumbent[i]) for i in range(3)) for c in order]
@@ -810,7 +810,9 @@ def test_decision_timing_over_a_61s_loop(variant):
     # multiple is 3 rather than 2 because on a loaded host the check that ENDS a
     # solve can be preceded by a delivery-table build, and a 2x band flakes
     # without a defect to show for it (L12).
-    assert tm["solve_ms_max"] <= s.budget_ms * 3.0, tm
+    # The budget is per-decision since 2026-09-02, so the bound is the LARGEST
+    # budget any decision was given, not a constant of the configuration.
+    assert tm["solve_ms_max"] <= tm["budget_ms_max"] * 3.0, tm
 
 
 def test_timing_reports_the_candidate_maximum():
@@ -849,7 +851,7 @@ def test_summary_line_reports_the_diagnostics():
         t += 0.02
     line = s.summary_line()
     assert line and line.startswith("[hil] mpc-det:")
-    for token in ("decisions", "budget expired", "share prediction error",
+    for token in ("decisions", "expired on", "ladder", "points min/median/max", "share prediction error",
                   "shadow governor", "terminal price", "PREVIEW, NOT CAUSAL"):
         assert token in line
     assert s.share_pred is not None
@@ -956,6 +958,7 @@ def test_an_empty_roll_job_does_not_wipe_the_standing_table():
 
     class _Empty:
         table = {}
+        handoff = {}
         stage_key = [3, 4, 5]
         dropped_transitions = 0
 
@@ -966,6 +969,7 @@ def test_an_empty_roll_job_does_not_wipe_the_standing_table():
 
     class _Job:
         table = {(5, 1): 0.31}
+        handoff = {(5, 1): False}
         stage_key = [3, 4, 5]
         dropped_transitions = 2
 
@@ -1354,6 +1358,734 @@ def test_stages_past_the_preview_end_are_counted():
     assert pre.i_tot[19][-1] == pytest.approx(prev.i_total[-1])
     inside = M.precompute_stages(prev, 0, 5, mode_seed=M.STAGE_CLOSED)
     assert inside.beyond_preview == 0
+
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 14. The open-loop FEEDFORWARD stage model (2026-09-02).
+#
+#     The firmware's open-loop branch HOLDS only while a closed-loop run stands
+#     and the setpoint has not moved; otherwise it slews the applied ratio
+#     toward the setpoint and WRITES the MDACs.  Every test below scores the
+#     model against a full 1 kHz `GovernorModel` roll of the same stage, which
+#     is the only reference this repository accepts for a delivery claim.
+# ═════════════════════════════════════════════════════════════════════════════
+def _open_preview(i_tot_a, n_stages=6):
+    """A preview whose source total sits in the OPEN-loop regime throughout."""
+    return _synthetic_preview(lambda t: i_tot_a, n_stages=n_stages)
+
+
+def _roll_open_stage(prev, pre, stage, share, r0, acted, run, i_tot_a,
+                     dark=False):
+    """Stage-mean delivered share from a full 1 kHz roll of one OPEN stage.
+
+    The governor is seeded with the same three firmware variables the stage
+    model is seeded with - the applied ratio, `share_actedSp` and
+    `shareClosedLoopRun` - so the comparison isolates the stage model."""
+    g = gm.GovernorModel(dt_s=M.GOV_TICK_S, seed_r=r0)
+    st = g.state
+    st.r_prev = r0
+    st.acted_sp = acted
+    st.closed_loop_run = run
+    st.closed_loop_mode = False
+    st.filt_total = i_tot_a
+    # The conduction-aware slew mode is seeded EXPLICITLY rather than left to
+    # warm up: its filters start at zero, so an unseeded roll spends its first
+    # ticks on the handoff ceiling for a reason that has nothing to do with the
+    # stage under test.
+    st.dark_fc = st.dark_bt = bool(dark)
+    st.handoff_i_fc_filt = 0.5 * i_tot_a
+    st.handoff_i_bt_filt = 0.5 * i_tot_a
+    st.handoff_prev_ratio = r0
+    n_sub = len(pre.i_tot[stage])
+    ticks_per_sub = int(round(M.DECISION_DT_S / n_sub / M.GOV_TICK_S))
+    delivered = r0
+    acc = 0.0
+    nn = 0
+    t = 0.0
+    for sub in range(n_sub):
+        i_tot = pre.i_tot[stage][sub]
+        for _ in range(ticks_per_sub):
+            i_fc = delivered * i_tot
+            o = g.step(share, i_fc, i_tot - i_fc, True, True, t)
+            delivered = g.delivered_share(o.r_applied, i_tot, True, True)
+            acc += delivered
+            nn += 1
+            t += M.GOV_TICK_S
+    return acc / nn, g.state.r_prev
+
+
+def test_open_feedforward_stage_matches_a_full_roll():
+    """A CHANGED setpoint on an open stage slews; the model must follow it."""
+    i_tot = 0.40                       # below the 0.55 A release, above 0.075
+    prev = _open_preview(i_tot)
+    pre = M.precompute_stages(prev, 0, 6, mode_seed=M.STAGE_OPEN)
+    assert all(m == M.STAGE_OPEN for m in pre.mode[0]), "fixture is not open"
+    p = M.Planner()
+    si = 0                             # ladder point 0.25
+    s = p.ladder[si]
+    r0, acted = 0.50, 0.70             # the acted setpoint differs from s
+    tab = p.delivery_table(pre, {}, r0, [False] * 6, sp_acted=acted,
+                           run_seed=True)[0]
+    rolled, _ = _roll_open_stage(prev, pre, 0, s, r0, acted, True, i_tot)
+    # EXACT, not approximate: on the full ceiling the ramp is the arithmetic
+    # series `ramp_mean()` sums, so the model and the roll agree to the last bit.
+    assert tab[0][si] == pytest.approx(rolled, abs=1e-12), (
+        "feedforward stage mean %.6f against a full roll's %.6f"
+        % (tab[0][si], rolled))
+    # ...and it must be materially different from the HOLD the old model made.
+    hold = p.delivery_table(pre, {}, r0, [False] * 6)[0]
+    assert hold[0][si] == pytest.approx(r0)
+    assert abs(hold[0][si] - rolled) > 0.10
+
+
+def test_open_hold_stage_matches_a_full_roll():
+    """An UNCHANGED setpoint on an open stage holds; nothing is written."""
+    i_tot = 0.40
+    prev = _open_preview(i_tot)
+    pre = M.precompute_stages(prev, 0, 6, mode_seed=M.STAGE_OPEN)
+    p = M.Planner()
+    si = 0
+    s = p.ladder[si]
+    r0 = 0.50
+    tab = p.delivery_table(pre, {}, r0, [False] * 6, sp_acted=s,
+                           run_seed=True)[0]
+    rolled, r_end = _roll_open_stage(prev, pre, 0, s, r0, s, True, i_tot)
+    assert rolled == pytest.approx(r0, abs=1e-12), "the roll did not HOLD"
+    assert r_end == pytest.approx(r0, abs=1e-12)
+    assert tab[0][si] == pytest.approx(rolled, abs=1e-12)
+
+
+def test_a_cleared_run_flag_slews_even_on_an_unchanged_setpoint():
+    """`shareClosedLoopRun` false is the OTHER way into the feedforward branch."""
+    i_tot = 0.40
+    prev = _open_preview(i_tot)
+    pre = M.precompute_stages(prev, 0, 6, mode_seed=M.STAGE_OPEN)
+    p = M.Planner()
+    si = 0
+    s = p.ladder[si]
+    r0 = 0.50
+    tab = p.delivery_table(pre, {}, r0, [False] * 6, sp_acted=s,
+                           run_seed=False)[0]
+    rolled, _ = _roll_open_stage(prev, pre, 0, s, r0, s, False, i_tot)
+    assert tab[0][si] == pytest.approx(rolled, abs=1e-12)
+    assert abs(tab[0][si] - r0) > 0.10, "the model held where the firmware slews"
+
+
+def test_the_handoff_ceiling_slows_the_modelled_ramp():
+    """A roll that ended DARK selects the 0.002/tick ceiling for that stage."""
+    i_tot = 0.20                       # both channels under SHARE_HANDOFF_MIN_A
+    prev = _open_preview(i_tot)
+    pre = M.precompute_stages(prev, 0, 6, mode_seed=M.STAGE_OPEN)
+    p = M.Planner()
+    si = 0
+    s = p.ladder[si]
+    r0, acted = 0.75, 0.75
+    key = (pre.stage_key[0], si)
+    slow = p.delivery_table(pre, {}, r0, [False] * 6, sp_acted=acted,
+                            run_seed=False, handoff={key: True})[0]
+    fast = p.delivery_table(pre, {}, r0, [False] * 6, sp_acted=acted,
+                            run_seed=False)[0]
+    rolled, _ = _roll_open_stage(prev, pre, 0, s, r0, acted, False, i_tot,
+                                 dark=True)
+    # The handoff ceiling is ten times slower, so the stage mean sits HIGHER:
+    # the ramp spends longer near its 0.75 start.
+    assert slow[0][si] > fast[0][si] + 1e-3
+    # Not exact: the dwell allowance is spent on MOVING ticks and the release
+    # to the full ceiling therefore lands one tick apart from the model's.
+    assert slow[0][si] == pytest.approx(rolled, abs=5e-4), (
+        "handoff stage mean %.6f against a full roll's %.6f"
+        % (slow[0][si], rolled))
+    assert abs(fast[0][si] - rolled) > abs(slow[0][si] - rolled)
+
+
+def test_ramp_mean_equals_a_tick_loop():
+    """The closed form is the arithmetic series a per-tick loop would sum."""
+    import random
+    rng = random.Random(20260902)
+    for _ in range(200):
+        r0 = rng.uniform(0.0, 1.0)
+        tgt = rng.uniform(M.DROOP_R_MIN, M.DROOP_R_MAX)
+        n = rng.choice((1, 7, 100, 250))
+        dwell = rng.choice((0, 5, 175))
+        slow = rng.choice((None, M.SLEW_HANDOFF_PER_TICK))
+        mean, end, dw = M.ramp_mean(r0, tgt, n, step_slow=slow,
+                                    dwell_left=dwell)
+        # The reference: one tick at a time, exactly as the firmware writes.
+        r = r0
+        acc = 0.0
+        left = dwell
+        for _k in range(n):
+            step = (M.SLEW_HANDOFF_PER_TICK
+                    if (slow is not None and left > 0)
+                    else M.SLEW_FULL_PER_TICK)
+            nxt = min(max(tgt, r - step), r + step)
+            if slow is not None and left > 0 and abs(nxt - r) > 1e-15:
+                left -= 1
+            r = nxt
+            acc += r
+        assert mean == pytest.approx(acc / n, abs=1e-12)
+        assert end == pytest.approx(r, abs=1e-12)
+        assert dw == left
+
+
+def test_the_feedforward_branch_is_inert_without_the_seeds():
+    """BYTE IDENTITY: no seeds, or a seed pair that HOLDS, is the old table."""
+    prof = lambda t: 1.2 if t < 3.0 else 0.35
+    prev = _synthetic_preview(prof, n_stages=10)
+    pre = M.precompute_stages(prev, 0, 10, mode_seed=M.STAGE_CLOSED)
+    p = M.Planner()
+    base = p.delivery_table(pre, {}, 0.5, [False] * 10)
+    for si in range(len(p.ladder)):
+        # A seed pair naming THIS ladder point holds on every open sub-sample,
+        # so the column it builds must be bit-identical to the hold-only one.
+        held = p.delivery_table(pre, {}, 0.5, [False] * 10,
+                                sp_acted=p.ladder[si], run_seed=True)
+        for tab_new, tab_old in zip(held, base):
+            assert tab_new[0][si] == tab_old[0][si]
+            for j in range(10):
+                assert tab_new[j][si] == tab_old[j][si]
+    none_seeded = p.delivery_table(pre, {}, 0.5, [False] * 10, sp_acted=None,
+                                   run_seed=True)
+    assert none_seeded[0] == base[0]
+    assert p.delivery_table(pre, {}, 0.5, [False] * 10, sp_acted=0.4,
+                            run_seed=None)[0] == base[0]
+
+
+def test_the_asymmetry_map_is_inert_at_dv0_zero():
+    """dv0 = 0 degenerates the droop map to the identity, bit-for-bit."""
+    prof = lambda t: 1.2 if t < 3.0 else 0.35
+    prev = _synthetic_preview(prof, n_stages=10)
+    pre = M.precompute_stages(prev, 0, 10, mode_seed=M.STAGE_CLOSED)
+    a = M.Planner(dv0_v=0.0).delivery_table(pre, {}, 0.5, [False] * 10,
+                                            sp_acted=0.4, run_seed=True)
+    b = M.Planner().delivery_table(pre, {}, 0.5, [False] * 10,
+                                   sp_acted=0.4, run_seed=True)
+    assert a[0] == b[0] and a[1] == b[1] and a[2] == b[2]
+    c = M.Planner(dv0_v=0.030223).delivery_table(pre, {}, 0.5, [False] * 10,
+                                                 sp_acted=0.4, run_seed=True)
+    assert c[0] != a[0], "a non-zero dv0 left the delivered share unchanged"
+
+
+def test_the_strategy_seeds_the_branch_from_the_shadow_governor():
+    """The two seeds reaching `solve()` are the shadow governor's own state."""
+    seen = {}
+    s = _bound()
+    orig = s.planner.solve
+
+    def spy(*a, **kw):
+        seen.update(kw)
+        return orig(*a, **kw)
+
+    s.planner.solve = spy
+    s.shadow.model.state.acted_sp = 0.3125
+    s.shadow.model.state.closed_loop_run = True
+    s.decide(20.0, {"soc": 0.7, "I_fc": 0.3, "I_batt": 0.3, "V_bus": 15.9,
+                    "v_profile": 1.5})
+    assert seen["sp_acted"] == pytest.approx(0.3125)
+    assert seen["run_seed"] is True
+    assert seen["handoff"] is s.r_handoff
+
+
+def test_the_roll_carry_is_skipped_on_a_feedforward_stage():
+    """r_hold is a HELD-command result and must not overwrite a modelled slew."""
+    i_tot = 0.40
+    prev = _open_preview(i_tot)
+    pre = M.precompute_stages(prev, 0, 6, mode_seed=M.STAGE_OPEN)
+    p = M.Planner()
+    si = 0
+    key = (pre.stage_key[0], si)
+    # HOLD: the roll's carry is consumed, exactly as before.
+    held = p.delivery_table(pre, {key: 0.11}, 0.5, [False] * 6,
+                            sp_acted=p.ladder[si], run_seed=True)[0]
+    assert held[1][si] == pytest.approx(0.11)
+    # FEEDFORWARD: the modelled ramp is the carry, and 0.11 is ignored.
+    ff = p.delivery_table(pre, {key: 0.11}, 0.5, [False] * 6,
+                          sp_acted=0.70, run_seed=True)[0]
+    assert ff[1][si] != pytest.approx(0.11)
+    assert ff[1][si] == pytest.approx(p.ladder[si], abs=1e-9)
+
+
+def test_the_roll_job_publishes_a_handoff_flag():
+    """The roll records the conduction-handoff state it ended in."""
+    prof = lambda t: 1.2 if t < 5.0 else 0.35
+    prev = _synthetic_preview(prof, n_stages=10)
+    pre = M.precompute_stages(prev, 0, 10, mode_seed=M.STAGE_CLOSED)
+    job = M.RollJob(pre, [0.25, 0.5, 0.75])
+    job.run_all()
+    assert set(job.handoff) == set(job.table)
+    assert all(isinstance(v, bool) for v in job.handoff.values())
+
+
+def test_disabling_the_feedforward_branch_raises_the_prediction_error():
+    """MUTATION: the branch is what carries the Gate-1 improvement.
+
+    The fixture is a 61 s closed loop over the `ems-soc-band` preview, driven the
+    way the walk drives it, and the scored quantity is the strategy's own
+    `share_pred_err` - the Gate-1 metric, not a new one."""
+    def _run(disable):
+        s = _bound()
+        if disable:
+            orig = M.Planner.delivery_table
+
+            def patched(self, pre, r_hold, r_seed, charge_stages,
+                        i_tot_oc=None, soc_hint=0.6, sp_acted=None,
+                        run_seed=None, handoff=None, active=None):
+                return orig(self, pre, r_hold, r_seed, charge_stages, i_tot_oc,
+                            soc_hint, None, None, None, active)
+            s.planner.delivery_table = patched.__get__(s.planner, M.Planner)
+        g = gm.GovernorModel(dt_s=M.GOV_TICK_S,
+                             seed_r=sim.SOC_BAND_SHARE_NOMINAL)
+        prev = s.preview
+        delivered = sim.SOC_BAND_SHARE_NOMINAL
+        t = 0.0
+        n_sub = int(round(0.02 / M.GOV_TICK_S))
+        while t < 61.0:
+            k = prev.index(t)
+            i_tot = prev.i_total[k]
+            i_fc = delivered * i_tot
+            out = s(t, {"soc": 0.7, "I_fc": i_fc, "I_batt": i_tot - i_fc,
+                        "V_bus": prev.v_bus[k], "I_charge": 0.0,
+                        "v_profile": 1.5})
+            share = float(out["power_share_setpoint"])
+            for i in range(n_sub):
+                i_fc = delivered * i_tot
+                o = g.step(share, i_fc, i_tot - i_fc, True, True,
+                           t + i * M.GOV_TICK_S)
+                delivered = g.delivered_share(o.r_applied, i_tot, True, True)
+            t += 0.02
+        return s.timing()["share_pred_err_mean"], s.share_pred_err_max
+
+    on_mean, on_max = _run(False)
+    off_mean, off_max = _run(True)
+    assert on_mean is not None and off_mean is not None
+    assert on_mean < 5e-3, "the shipped model missed the Gate 1 band"
+    assert off_mean > 5e-3, "the mutation did not raise the error"
+    assert off_mean > 5.0 * on_mean
+    assert off_max > on_max
+
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 15. The adaptive solve budget and the transition-aware ladder coarsening
+#     (2026-09-02).
+# ═════════════════════════════════════════════════════════════════════════════
+def test_derive_budget_ms_is_the_callback_bound():
+    """The derivation is the banner's arithmetic, term for term."""
+    b = M.derive_budget_ms(roll_slice_ms=2.0, surface_ms=0.2, rollout_ms=0.01,
+                           command_period_ms=20.0, margin_ms=2.0,
+                           floor_ms=0.0, ceiling_ms=1e6)
+    assert b == pytest.approx(20.0 - 2.0 - 2.0 - 0.2 - 0.01)
+    # Every term SPENDS budget: raising any of the four lowers the result.
+    for kw in ({"roll_slice_ms": 3.0}, {"surface_ms": 1.2},
+               {"rollout_ms": 1.01}, {"margin_ms": 3.0}):
+        base = {"roll_slice_ms": 2.0, "surface_ms": 0.2, "rollout_ms": 0.01,
+                "margin_ms": 2.0, "floor_ms": 0.0, "ceiling_ms": 1e6}
+        base.update(kw)
+        assert M.derive_budget_ms(**base) < b - 0.9
+
+
+def test_derive_budget_ms_clamps_and_falls_back_to_the_nominals():
+    """A pathological measurement can neither starve nor monopolise the search."""
+    assert M.derive_budget_ms(roll_slice_ms=100.0) == M.BUDGET_MS_FLOOR
+    assert M.derive_budget_ms(roll_slice_ms=0.0, surface_ms=0.0,
+                              rollout_ms=0.0) == M.BUDGET_MS_CEILING
+    # With nothing measured the nominal terms of the banner are used.
+    assert M.derive_budget_ms() == pytest.approx(
+        min(M.BUDGET_MS_CEILING,
+            M.COMMAND_PERIOD_MS - M.BUDGET_MARGIN_MS
+            - (M.ROLL_BUDGET_MS_DEFAULT + M.ROLL_CHUNK_OVERSHOOT_MS)
+            - M.SURFACE_MS_NOMINAL - M.ROLLOUT_MS_NOMINAL))
+
+
+def test_an_explicit_budget_takes_precedence_over_the_derivation():
+    """The `mpc_budget_ms` scenario key must still work, and must win."""
+    fixed = M.MpcStrategy("mpc-det", budget_ms=7.5)
+    assert fixed.budget_ms_fixed is True
+    assert fixed.adaptive_budget is False
+    adaptive = M.MpcStrategy("mpc-det")
+    assert adaptive.budget_ms is None and adaptive.adaptive_budget is True
+    # ...and the scenario key reaches the constructor through the same name.
+    kw = sim.mpc_configure_kwargs(
+        type("A", (), {"mpc_max_candidates": None})(), {"mpc_budget_ms": 15.0})
+    assert kw["budget_ms"] == pytest.approx(15.0)
+
+    s = _bound(budget_ms=7.5)
+    prev = s.preview
+    t = 0.0
+    while t < 4.0:
+        k = prev.index(t)
+        s(t, {"soc": 0.7, "V_bus": prev.v_bus[k], "I_fc": 0.5 * prev.i_total[k],
+              "I_batt": 0.5 * prev.i_total[k], "v_profile": 1.5})
+        t += 0.02
+    assert set(s.budget_ms_all) == {7.5}, "the fixed budget was not honoured"
+
+
+def test_the_adaptive_budget_is_reported_per_decision():
+    s = _bound()
+    prev = s.preview
+    t = 0.0
+    while t < 6.0:
+        k = prev.index(t)
+        s(t, {"soc": 0.7, "V_bus": prev.v_bus[k], "I_fc": 0.5 * prev.i_total[k],
+              "I_batt": 0.5 * prev.i_total[k], "v_profile": 1.5})
+        t += 0.02
+    tm = s.timing()
+    assert tm["budget_adaptive"] is True
+    assert tm["decisions"] == len(s.budget_ms_all)
+    assert M.BUDGET_MS_FLOOR <= tm["budget_ms_min"] <= tm["budget_ms_median"]
+    assert tm["budget_ms_median"] <= tm["budget_ms_max"] <= M.BUDGET_MS_CEILING
+    assert tm["ladder_points_min"] >= 3
+    assert tm["ladder_points_max"] <= len(s.planner.ladder)
+    assert "budget" in s.summary_line() and "ladder" in s.summary_line()
+
+
+def test_coarsen_ladder_is_pure_and_deterministic():
+    """Same arguments, same answer - and no wall clock is read."""
+    args = dict(n_levels=7, n_blocks=3, n_options=3, incumbent=(3, 3, 3),
+                budget_ms=10.0, n_transitions=0, candidate_cost_ms=0.0162)
+    first = M.coarsen_ladder(**args)
+    for _ in range(20):
+        assert M.coarsen_ladder(**args) == first
+    assert first == tuple(sorted(set(first))), "the result is not sorted"
+
+
+def test_coarsen_ladder_fits_the_full_enumeration_in_the_budget():
+    """M1: the REALISED set is what must fit, and it is asserted exactly.
+
+    The earlier form of this test budgeted the rule's nominal size and allowed
+    the realised set to overrun it by 2.2x, which is how a nominal four came to
+    be admitted on an allowance sized for 64 candidates and then walk 125."""
+    for budget in (4.0, 7.5, 10.0, 15.0):
+        for n_opt in (1, 2, 3):
+            for inc in (None, (4, 4, 4), (0, 6, 3)):
+                act = M.coarsen_ladder(7, 3, n_opt, incumbent=inc,
+                                       budget_ms=budget,
+                                       candidate_cost_ms=0.0162)
+                allow = M.LADDER_ENUM_SAFETY * budget / 0.0162
+                smallest = M.coarse_ladder_set(7, min(M.LADDER_SIZES), inc)
+                if n_opt * len(smallest) ** 3 > allow:
+                    # Nothing fits; the floor set is returned and the budget
+                    # expiry is what reports it.
+                    assert act == smallest
+                    continue
+                assert n_opt * len(act) ** 3 <= allow, (budget, n_opt, inc, act)
+
+
+def test_every_ladder_size_is_reachable_and_distinct():
+    """M1: no dead entry.  A size whose realised set duplicates a larger one's
+    can never be selected, because selection walks the sizes descending and
+    stops at the first realised set that fits."""
+    seen = {}
+    for k in M.LADDER_SIZES:
+        got = M.coarse_ladder_set(7, k)
+        assert got not in seen.values(), (
+            "size %r realises the same set as size %r" % (k, seen))
+        seen[k] = got
+    # ...and the one that WAS dead is gone: a nominal four realises the
+    # five-point set, because the centre is always unioned in.
+    assert 4 not in M.LADDER_SIZES
+    assert M.coarse_ladder_set(7, 4) == M.coarse_ladder_set(7, 5)
+
+
+def test_a_transition_heavy_horizon_coarsens_sooner():
+    """The transition count halves the allowance, by the roll cap's definition."""
+    quiet = M.coarsen_ladder(7, 3, 3, budget_ms=15.0, n_transitions=0,
+                             candidate_cost_ms=0.0097)
+    heavy = M.coarsen_ladder(7, 3, 3, budget_ms=15.0,
+                             n_transitions=M.RollJob.MAX_TRANSITIONS,
+                             candidate_cost_ms=0.0097)
+    assert len(quiet) == 7, "the quiet horizon should not coarsen here"
+    assert len(heavy) < 7, "the transition-heavy horizon did not coarsen"
+
+
+def test_the_coarse_ladder_keeps_the_rails_the_centre_and_the_incumbent():
+    """THE INCUMBENT-RETENTION INVARIANT: the shifted incumbent stays a candidate."""
+    n = 7
+    for inc in (None, (0, 0, 0), (6, 6, 6), (1, 5, 2), (3, 4, 1)):
+        act = M.coarsen_ladder(n, 3, 3, incumbent=inc, budget_ms=6.0,
+                               candidate_cost_ms=0.0162)
+        assert 0 in act and n - 1 in act, "a rail was dropped"
+        assert (n - 1) // 2 in act, "the centre was dropped"
+        for v in (inc or ()):
+            assert v in act, "an incumbent block value was dropped"
+
+
+def test_the_enumeration_walks_only_the_active_set_and_starts_at_the_incumbent():
+    p = M.Planner()
+    p.incumbent = (0, 6, 3)
+    active = M.coarsen_ladder(7, 3, 3, incumbent=p.incumbent, budget_ms=5.0,
+                              candidate_cost_ms=0.0162)
+    order = p._enumeration_order(active, 3)
+    assert order[0] == (0, 6, 3), "the warm start is not the incumbent"
+    assert len(order) == len(active) ** 3
+    for cand in order:
+        assert all(c in active for c in cand)
+
+
+def test_a_coarsened_solve_returns_a_candidate_from_the_active_set():
+    prev = _synthetic_preview(lambda t: 1.2, n_stages=20)
+    pre = M.precompute_stages(prev, 0, 20, mode_seed=M.STAGE_CLOSED)
+    p = M.Planner()
+    active = (0, 3, 6)
+    dec = p.solve(0.7, 0.7, pre, {}, 0.5, [[False] * 20], active=active)
+    assert dec.ladder_points == 3
+    assert dec.share in [p.ladder[i] for i in active]
+    assert dec.candidates <= 27
+
+
+def test_the_coarsening_does_not_move_the_walk_totals():
+    """MEASURED: on the registered stimulus the coarser search commits the same
+    plan, so the coarsening buys wall clock and an uncut search, not a
+    different trajectory.  A change here is a finding, not a failure."""
+    # `ems_walk` reaches gen_dp_ems_table, which needs numpy, so this one runs
+    # under miniforge and SKIPS under `.venv_hil` like the other walk-backed
+    # checks in this file.
+    pytest.importorskip("numpy")
+    ems_walk = pytest.importorskip("ems_walk")
+    out = {}
+    for label, kw in (("full", {"coarsen_ladder_enabled": False,
+                                "budget_ms": 1e5}),
+                      ("coarse", {"budget_ms": 15.0,
+                                  "candidate_cost_ms": 0.0162})):
+        r = ems_walk.walk("mpc-det", SCEN, soc0=0.7, governor=True,
+                          strategy_kwargs=dict(kw))
+        out[label] = (round(r.h2_g, 9), round(r.delta_soc, 9))
+    assert out["full"] == out["coarse"], out
+
+
+def test_a_frozen_sub_sample_holds_whatever_the_setpoint_did():
+    """The minimum-load gate returns BEFORE the loop-mode decision (.ino:10099).
+
+    A sub-sample under `SHARE_I_TOT_MIN_A` writes nothing, so a changed setpoint
+    must NOT be modelled as a feedforward slew there."""
+    i_tot = 0.5 * gm.GOV_CONST["SHARE_I_TOT_MIN_A"]      # 0.0375 A, frozen
+    prev = _open_preview(i_tot)
+    pre = M.precompute_stages(prev, 0, 6, mode_seed=M.STAGE_OPEN)
+    assert all(m == M.STAGE_FROZEN for m in pre.mode[0]), "fixture is not frozen"
+    p = M.Planner()
+    si, r0 = 0, 0.50
+    tab = p.delivery_table(pre, {}, r0, [False] * 6, sp_acted=0.70,
+                           run_seed=True)[0]
+    assert tab[0][si] == pytest.approx(r0), (
+        "a frozen stage slewed: modelled %.6f against the standing %.4f"
+        % (tab[0][si], r0))
+    # ...and a full roll agrees: the governor writes nothing at this load.
+    g = gm.GovernorModel(dt_s=M.GOV_TICK_S, seed_r=r0)
+    g.state.acted_sp = 0.70
+    g.state.closed_loop_run = True
+    for k in range(1000):
+        g.step(p.ladder[si], r0 * i_tot, (1.0 - r0) * i_tot, True, True,
+               k * M.GOV_TICK_S)
+    assert g.state.r_prev == pytest.approx(r0)
+    assert g.state.mode_counts[gm.MODE_FROZEN] == 1000
+
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 16. The fix round of 2026-09-02: the search width is wall-clock-free.
+# ═════════════════════════════════════════════════════════════════════════════
+def test_index_five_is_reachable_from_a_coarsened_decision():
+    """H1: the cruise share 0.6667 must not be structurally unreachable.
+
+    At seven levels the evenly-spaced rule can only produce {0,2,3,4,6} or
+    {0,3,6}, so indices 1 and 5 appear in NO coarse set.  Index 5 is 0.6667, the
+    share `mpc-det` commands through cruise.  The incumbent's NEIGHBOURS are
+    unioned in so any index is one coarsened decision from an adjacent one."""
+    p = M.Planner()
+    assert p.ladder[5] == pytest.approx(0.6666666666666666)
+    bare = M.coarse_ladder_set(7, 5)
+    assert 5 not in bare and 1 not in bare, "the fixture no longer bites"
+    for inc in ((4, 4, 4), (6, 6, 6), (4, 6, 4)):
+        act = M.coarsen_ladder(7, 3, 3, incumbent=inc, budget_ms=10.0)
+        assert 5 in act, "0.6667 unreachable from incumbent %r: %r" % (inc, act)
+    # ...and symmetrically for index 1 (0.3333) from either side.
+    for inc in ((0, 0, 0), (2, 2, 2)):
+        act = M.coarsen_ladder(7, 3, 3, incumbent=inc, budget_ms=10.0)
+        assert 1 in act, "0.3333 unreachable from incumbent %r: %r" % (inc, act)
+
+
+def test_the_coarse_set_only_ever_grows_with_the_unions():
+    """Every union ADDS points; none may remove one."""
+    for k in M.LADDER_SIZES:
+        base = set(M.coarse_ladder_set(7, k))
+        for inc in (None, (0,), (3,), (5, 5, 5), (0, 3, 6)):
+            got = set(M.coarse_ladder_set(7, k, inc))
+            assert base <= got
+            assert got <= set(range(7))
+        assert {0, 6, 3} <= base, "a rail or the centre was dropped"
+
+
+def test_the_search_width_reads_no_clock():
+    """H1: `coarsen_ladder()` is a pure function and `decide()` feeds it the
+    NOMINAL constant, never the measured per-candidate cost.
+
+    The measurement is captured and asserted to be reported, not consumed: a
+    strategy whose measured cost is driven far above the nominal must still
+    produce the same active set."""
+    seen = []
+    s = _bound(budget_ms=15.0)
+    orig = s.planner.solve
+
+    def spy(*a, **kw):
+        seen.append(kw.get("active"))
+        return orig(*a, **kw)
+
+    s.planner.solve = spy
+    prev = s.preview
+    t = 0.0
+    while t < 8.0:
+        k = prev.index(t)
+        # Poison the measured cost between callbacks.  It must not move the
+        # active set, because nothing on that path reads it.
+        s._rollout_ms = 10.0
+        s(t, {"soc": 0.7, "V_bus": prev.v_bus[k], "I_fc": 0.5 * prev.i_total[k],
+              "I_batt": 0.5 * prev.i_total[k], "v_profile": 1.5})
+        t += 0.02
+    poisoned = list(seen)
+
+    seen2 = []
+    s2 = _bound(budget_ms=15.0)
+    orig2 = s2.planner.solve
+
+    def spy2(*a, **kw):
+        seen2.append(kw.get("active"))
+        return orig2(*a, **kw)
+
+    s2.planner.solve = spy2
+    t = 0.0
+    while t < 8.0:
+        k = prev.index(t)
+        s2(t, {"soc": 0.7, "V_bus": prev.v_bus[k],
+               "I_fc": 0.5 * prev.i_total[k],
+               "I_batt": 0.5 * prev.i_total[k], "v_profile": 1.5})
+        t += 0.02
+    assert poisoned == seen2, "the measured per-candidate cost moved the search"
+    tm = s.timing()
+    assert tm["candidate_cost_ms_nominal"] == pytest.approx(
+        M.CANDIDATE_COST_MS_NOMINAL)
+    assert tm["candidate_cost_ms_seen"] > 0.0
+    assert isinstance(tm["candidate_cost_over_nominal"], bool)
+
+
+def test_a_slow_host_is_reported_not_absorbed():
+    """H1: `candidate_cost_over_nominal` is the visible signal of a host the
+    projection did not size for."""
+    s = _bound(budget_ms=15.0)
+    prev = s.preview
+    t = 0.0
+    while t < 4.0:
+        k = prev.index(t)
+        s(t, {"soc": 0.7, "V_bus": prev.v_bus[k], "I_fc": 0.5 * prev.i_total[k],
+              "I_batt": 0.5 * prev.i_total[k], "v_profile": 1.5})
+        t += 0.02
+    s.candidate_cost_ms_seen = M.CANDIDATE_COST_MS_NOMINAL * 3.0
+    assert s.timing()["candidate_cost_over_nominal"] is True
+    s.candidate_cost_ms_seen = M.CANDIDATE_COST_MS_NOMINAL * 0.5
+    assert s.timing()["candidate_cost_over_nominal"] is False
+
+
+def test_the_census_and_trajectory_are_wall_clock_free():
+    """H1, end to end: a fixed budget makes the whole search width a function of
+    the configuration, so the census and the committed plan are pinned.
+
+    Both runs are driven by the same deterministic loop; nothing here reads the
+    clock except the budget, which is fixed."""
+    def _run():
+        s = _bound(budget_ms=15.0)
+        prev = s.preview
+        shares = []
+        t = 0.0
+        while t < 61.0:
+            k = prev.index(t)
+            out = s(t, {"soc": 0.7 - 1e-5 * (t / 0.02),
+                        "V_bus": prev.v_bus[k],
+                        "I_fc": 0.5 * prev.i_total[k],
+                        "I_batt": 0.5 * prev.i_total[k], "v_profile": 1.5})
+            shares.append(round(float(out["power_share_setpoint"]), 12))
+            t += 0.02
+        return tuple(s.ladder_points_all), tuple(shares)
+
+    a = _run()
+    b = _run()
+    assert a[0] == b[0], "the ladder census moved between two identical runs"
+    assert a[1] == b[1], "the commanded share sequence moved"
+
+
+def test_derive_budget_raw_ms_is_unclamped_and_the_floor_is_counted():
+    """M2: the floor is a DEVIATION from the callback bound, and it says so."""
+    raw = M.derive_budget_raw_ms(roll_slice_ms=18.0, surface_ms=0.2,
+                                 rollout_ms=0.01)
+    assert raw < 0.0, raw
+    assert M.derive_budget_ms(roll_slice_ms=18.0, surface_ms=0.2,
+                              rollout_ms=0.01) == M.BUDGET_MS_FLOOR
+    # ...and the clamped function is exactly the raw one clamped.
+    for roll in (0.0, 1.0, 2.3, 12.0, 18.0):
+        assert M.derive_budget_ms(roll_slice_ms=roll) == pytest.approx(
+            min(M.BUDGET_MS_CEILING,
+                max(M.BUDGET_MS_FLOOR, M.derive_budget_raw_ms(roll_slice_ms=roll))))
+
+    # `__call__()` overwrites the measured slice on every callback, so the
+    # starved callback is produced at the derivation itself: a bound that comes
+    # back negative must be COUNTED, not silently floored.
+    s = _bound()
+    prev = s.preview
+    real = M.derive_budget_raw_ms
+    M.derive_budget_raw_ms = lambda *a, **kw: -2.2
+    try:
+        t = 0.0
+        while t < 4.0:
+            k = prev.index(t)
+            s(t, {"soc": 0.7, "V_bus": prev.v_bus[k],
+                  "I_fc": 0.5 * prev.i_total[k],
+                  "I_batt": 0.5 * prev.i_total[k], "v_profile": 1.5})
+            t += 0.02
+    finally:
+        M.derive_budget_raw_ms = real
+    tm = s.timing()
+    assert tm["decisions"] > 0
+    assert tm["budget_floor_binding"] == tm["decisions"]
+    assert tm["budget_ms_max"] == pytest.approx(M.BUDGET_MS_FLOOR)
+
+    clean = _bound()
+    prev = clean.preview
+    t = 0.0
+    while t < 4.0:
+        k = prev.index(t)
+        clean(t, {"soc": 0.7, "V_bus": prev.v_bus[k],
+                  "I_fc": 0.5 * prev.i_total[k],
+                  "I_batt": 0.5 * prev.i_total[k], "v_profile": 1.5})
+        t += 0.02
+    assert clean.timing()["budget_floor_binding"] == 0
+
+
+def test_the_committed_plan_is_insensitive_to_the_projection():
+    """H1, the defect measured directly: sweep the per-candidate projection and
+    watch the committed hydrogen.
+
+    Before the fix this sweep contained an 8.29 % cliff at 0.03717 ms, because a
+    coarsened decision could not reach ladder index 5 and the cruise share moved
+    from 0.6667 to 0.75.  With the incumbent's neighbours unioned in, a 5x sweep
+    of the projection moves the total by well under a per cent and the cruise
+    share does not move at all.  A regression here is the return of the cliff."""
+    pytest.importorskip("numpy")
+    ems_walk = pytest.importorskip("ems_walk")
+    out = []
+    for cost in (0.0097, 0.0300, 0.0500):
+        r = ems_walk.walk("mpc-det", SCEN, soc0=0.7, governor=True,
+                          strategy_kwargs={"budget_ms": 15.0,
+                                           "candidate_cost_ms": cost})
+        cruise = sum(1 for x in r.share_cmd if abs(x - 0.6666666666666666) < 1e-9)
+        out.append((cost, r.h2_g, cruise))
+    base = out[0][1]
+    for cost, h2, cruise in out:
+        assert abs(h2 - base) / base <= 5e-3, (
+            "projection %.4f moved the committed hydrogen by %.3f %%"
+            % (cost, 100.0 * (h2 - base) / base))
+        assert cruise == out[0][2], (
+            "projection %.4f moved the cruise-share command count %d -> %d"
+            % (cost, out[0][2], cruise))
+    assert out[0][2] > 100, "the fixture no longer commands the cruise share"
 
 
 if __name__ == "__main__":       # pragma: no cover

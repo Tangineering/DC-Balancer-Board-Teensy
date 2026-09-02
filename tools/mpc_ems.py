@@ -68,15 +68,90 @@ PREDICTION MODEL (adjudication section 2.1, the hybrid ruling)
 3. CLOSED-STAGE ALGEBRAIC SURROGATE.  On a closed-loop stage the delivered
    share is ``clip(s, lo, 1-lo)`` with ``lo = min(0.5, 0.30/I_tot)``
    (candidate_opus Property B: mean error 8.2e-4, maximum 1.49e-2 over 145
-   closed stages).  NO SURROGATE IS WRITTEN FOR THE OPEN-LOOP BRANCH; that is
-   the branch two earlier walks in this repository got wrong, and item 2 is
-   what replaces it.
+   closed stages).
 4. SHADOW GOVERNOR.  One ``GovernorModel`` is ticked at 1 kHz between feedback
    samples and corrected from the observation each 50 Hz call, so the committed
    governor state is never surrogate-propagated across a decision.
+5. OPEN-LOOP SUBMODE MODEL (2026-09-02).  The firmware's open-loop branch has
+   TWO submodes and the first shipped version of this file modelled only one.
+   It HOLDS while a closed-loop run stands and the commanded setpoint has not
+   moved by more than ``SHARE_SP_CHANGE_EPS``; on any other open tick it takes
+   the slew-limited FEEDFORWARD branch, walks the applied ratio toward the
+   setpoint at ``DROOP_RATIO_SLEW_PER_TICK`` (or the conduction-handoff ceiling
+   ``DROOP_RATIO_SLEW_HANDOFF_PER_TICK``), clips it to
+   ``[DROOP_R_MIN, DROOP_R_MAX]`` and WRITES the MDACs.  A receding-horizon
+   controller re-commands every stage, so every re-command landing in an open
+   stage enters FEEDFORWARD, and that is the class of stage the shipped Gate 1
+   failure sat in.  ``delivery_table()`` now models both submodes: the ramp is
+   integrated in closed form by ``ramp_mean()``, the transition rolls of item 2
+   supply the carry on HELD stages only, and the whole branch is UNREACHABLE
+   unless ``sp_acted`` and ``run_seed`` are supplied, so a caller that does not
+   name the governor's setpoint state gets the pre-2026-09-02 table bit for bit.
+   Measured on the `ems-soc-band` stimulus walk, Gate 1 moves from a mean
+   absolute delivered-share error of 0.010334 (maximum 0.25000) to 0.000095
+   (maximum 0.00356) against the 5e-03 acceptance, so both the mean and the
+   maximum are now inside it.  The survey behind the change, including the
+   rejected instantaneous dark-flag proxy and the `_roll_begin()` handoff-state
+   seeding defect the round also closed, is
+   ``docs/modeling/mpc_design_20260902_nonlinearities.md``.
+
+6. ADAPTIVE SOLVE BUDGET AND LADDER COARSENING (2026-09-02).  The solve budget
+   is derived per decision from the callback bound's own terms - the measured
+   roll slice, the measured 50 Hz surface work and the previous decision's
+   measured per-candidate cost - against the 20 ms command period with a 2 ms
+   margin (``derive_budget_ms()``).  Where even that budget cannot hold the FULL
+   enumeration, ``coarsen_ladder()`` restricts the search to a coarser subset of
+   the ladder that CAN be enumerated completely, always keeping both rails, the
+   centre and the incumbent's block values.  The reason for preferring a coarse
+   complete search to a cut full one is that the enumeration is ordered outward
+   from the incumbent, so an expiry drops the candidates FURTHEST from standing
+   still and is therefore biased, while a coarse search is merely coarse.
+   Measured on the offline stimuli: budget expiry falls from 88.5 % to 0.0 % of
+   decisions on ``ems-mpc-cross``, from 21.3 % to 0.0 % on ``ems-mpc`` and from
+   4.9 % to 0.0 % on ``ems-mpc-sto``, at a BIT-IDENTICAL committed trajectory on
+   every leg - so what the change buys is an uncut search and 27 % less median
+   wall clock, not a better plan.  An explicit ``budget_ms`` -
+   which is what the ``mpc_budget_ms`` scenario key supplies - disables the
+   derivation and TAKES PRECEDENCE.
 
 HONEST LIMITS
 -------------
+* THE SEARCH WIDTH IS PROJECTED ON A CONSTANT, NOT ON A MEASUREMENT (H1, fix
+  round of 2026-09-02).  It was the measured per-candidate cost for one round,
+  and that made the COMMITTED PLAN host-dependent: the review measured an 8.29 %
+  move in `ems-soc-band` hydrogen between a projection of 0.030 ms and one of
+  0.0372 ms per candidate, with the budget-expiry count zero at both.
+  ``coarsen_ladder()`` now reads ``CANDIDATE_COST_MS_NOMINAL``, the measurement
+  is reported by ``timing()`` beside a ``candidate_cost_over_nominal`` flag, and
+  the incumbent's NEIGHBOURS are unioned into the coarse set so that no ladder
+  index - in particular index 5, the 0.6667 cruise share - is structurally
+  unreachable.  What remains host-dependent is the adaptive BUDGET, and the
+  width still moves with it in the coarse steps ``LADDER_SIZES`` allows; an
+  explicit ``budget_ms`` removes even that, and ``max_candidates`` bounds the
+  search outright.
+* THE CONVERTER ASYMMETRY IS MODELLED, AND ONLY BECAUSE THE RUN PASSES IT.
+  ``dv0_v`` maps the open-loop applied ratio to a delivered share through
+  ``GovernorModel.delivered_share()`` and reaches the delivery table, the shadow
+  governor and every roll.  The constructor default is 0.0, which is a SYMMETRIC
+  plant and not a shipped choice: the value comes from
+  ``hil_plant_sim.resolve_asymmetry_dv0_v()`` through ``mpc_configure_kwargs()``,
+  which refuses loudly rather than silently predicting on a symmetric plant if
+  this module has no such argument.  The closed loop absorbs the offset by
+  integral action, so the cost of getting it wrong is confined to open stages -
+  and it is large there: on a walk whose plant carries dv0 = 0.030223 V the
+  Gate 1 mean is 0.036175 with the map inert and 0.000317 with it matched, at no
+  change in the committed trajectory (0.016211 against 0.000323 at the plant's
+  own dv0 of 0.013522 V).  A WALK is the one caller that still has to pass it by
+  hand: ``ems_walk.walk()`` builds the strategy from ``strategy_kwargs`` and does
+  not consult ``mpc_configure_kwargs()``, so a walk on an asymmetric plant must
+  name ``dv0_v`` itself.
+* ``mpc-sto`` FAILS GATE 1 ON THE MEASURED PLANT, at a mean of 0.009019 against
+  the 5e-03 band, where ``mpc-det`` reads 0.000323.  The residual is ONE
+  ``open_hold`` stage carrying 0.118574 and its mechanism is the stochastic
+  variant's own conditional-mean demand forecast, not the delivery model: a
+  forecast that calls a stage closed where the plant leaves it open puts a whole
+  stage of commanded share into the wrong arm.  Every registered stimulus is
+  deterministic, so that forecast has nothing to average over.
 * The demand model has NO REGEN TERM (inherited from ``build_demand()``), so
   the controller over-states demand on every decelerating stage and under-values
   coasting.  The live plant has injected regen since the WP-C round, so the
@@ -246,12 +321,99 @@ SDP_V3_ADMISSION_SOC_PER_G = SDP_ONE_MINUS_GAMMA / SDP_ALPHA_V3       # 0.306819
 BUDGET_MS_DEFAULT = 10.0
 ROLL_BUDGET_MS_DEFAULT = 2.0
 
+# ── THE ADAPTIVE SOLVE BUDGET (2026-09-02) ──────────────────────────────────
+# The banner above is the callback bound, and it was being spent as a FIXED
+# 10 ms whatever the rest of the callback actually cost.  Campaign C measured
+# the consequence: `ems-mpc-cross` ran a median solve of 10.002 ms and expired
+# the budget on 57.4 % of its decisions, and an expiry returns the shifted
+# incumbent - so the search was being truncated toward standing still on the one
+# leg whose stimulus most needs it.  The response is to derive the budget from
+# the SAME arithmetic the banner states, per decision, rather than to patch one
+# scenario's number.
+#
+# Every term below is a NAMED constant with its measurement, and
+# `derive_budget_ms()` is the derivation.  The per-scenario `mpc_budget_ms` key
+# still works and TAKES PRECEDENCE: an explicit budget disables the derivation
+# entirely, which is also what makes a run bit-reproducible (M6).
+COMMAND_PERIOD_MS = 20.0        # 1000 / PiCommander.PI_CMD_HZ, restated
+BUDGET_MARGIN_MS = 2.0          # the stated headroom against the command period
+SURFACE_MS_NOMINAL = 0.17       # the 50 Hz surface's own work, measured
+ROLLOUT_MS_NOMINAL = 0.012      # one candidate rollout of expiry overshoot
+ROLL_CHUNK_OVERSHOOT_MS = 0.296  # one TICK_CHUNK of roll-slice overshoot
+BUDGET_MS_FLOOR = 4.0           # never search less than this
+BUDGET_MS_CEILING = 15.0        # `ems-mpc-cross`'s hand-set budget (5f1cfed)
+
+# ── THE LADDER COARSENING (2026-09-02) ──────────────────────────────────────
+# Second line of defence, for a decision whose FULL enumeration does not fit the
+# derived budget: walk a coarser subset of the ladder so the enumeration
+# completes instead of being cut.  A cut search is biased (the enumeration is
+# ordered outward from the incumbent, so the candidates it drops are the ones
+# furthest from standing still); a coarse search is not, it is merely coarse.
+#
+# ── THE PER-CANDIDATE COST IS A CONSTANT, DELIBERATELY (H1, review of
+# 2026-09-02) ───────────────────────────────────────────────────────────────
+# The first version of this code passed the PREVIOUS decision's measured
+# `solve_ms / candidates`, and that made the COMMITTED PLAN host-dependent,
+# which is the M6 property this repository has already had to defend once.  The
+# review measured the cliff: on `ems-soc-band` at a 15 ms budget, a projected
+# cost at or under 0.030 ms keeps the full ladder and commits h2 0.009717712,
+# while one at or above 0.03717 ms (= 0.85 * 15 / 343) coarsens and commits
+# 0.010523689, 8.29 % more hydrogen, with the budget-expiry count still zero.
+# The measured cost on one host spanned 0.0097 to 0.0261 ms across legs and
+# configurations, so a 1.4x slower machine moved the headline number silently.
+#
+# The projection is therefore a NAMED CONSTANT and the measurement is a
+# DIAGNOSTIC.  0.0300 ms is the slowest per-candidate cost observed in this
+# round (0.0261 ms) plus 15 %, the same headroom factor `LADDER_ENUM_SAFETY`
+# and the overcurrent margin use.  `timing()` reports the nominal, the largest
+# cost actually measured, and a flag when the measurement exceeded the nominal,
+# so a host slow enough to invalidate the projection is VISIBLE rather than
+# silently re-planned around.
+#
+# A caller may still pin its own value through `candidate_cost_ms`; nothing
+# reads the clock for this quantity.
+CANDIDATE_COST_MS_NOMINAL = 0.0300
+LADDER_ENUM_SAFETY = 0.85
+# Ladder sizes the coarsening may select, largest first.  Three is the floor:
+# the two rails and the centre, which is the smallest set that still spans the
+# band and still contains the incumbent after the union below.
+#
+# FOUR IS ABSENT ON PURPOSE (M1, same review).  The realised set always carries
+# the centre, so at seven levels a nominal four ({0, 2, 4, 6} plus the centre 3)
+# is the SAME five-point set a nominal five produces - it was admitted on an
+# allowance sized for 64 candidates per option and then walked 125.  Selection
+# is now made on the REALISED set size, which makes the entry not merely
+# harmless but unreachable, so it is removed rather than left as dead weight.
+LADDER_SIZES = (7, 5, 3)
+
 # Governor constants read through governor_model, never re-typed.
 GOV_ENTRY_A = 2.0 * gov_mod.GOV_CONST["SHARE_MINORITY_I_MIN_A"]        # 0.60 A
 GOV_RELEASE_A = GOV_ENTRY_A - gov_mod.GOV_CONST["SHARE_GOV_OL_HYST_A"]  # 0.55 A
 GOV_MIN_LOAD_A = gov_mod.GOV_CONST["SHARE_I_TOT_MIN_A"]                # 0.075 A
 GOV_MINORITY_A = gov_mod.GOV_CONST["SHARE_MINORITY_I_MIN_A"]           # 0.30 A
 GOV_TICK_S = gov_mod.GOV_CONST["POWER_BAL_PERIOD_US"] * 1e-6           # 1 ms
+
+# ── THE OPEN-LOOP FEEDFORWARD SUBMODE (2026-09-02) ──────────────────────────
+# The firmware's open-loop branch has TWO submodes, not one (docs/HIL_PLANT.md
+# section 4.4; governor_model._open_loop()).  It HOLDS only while a closed-loop
+# run is standing AND the commanded setpoint has not moved by more than
+# SHARE_SP_CHANGE_EPS AND no isolation is outstanding.  On any other open tick
+# it takes the slew-limited FEEDFORWARD branch, which writes the MDACs: the
+# applied ratio walks toward the raw setpoint at DROOP_RATIO_SLEW_PER_TICK per
+# 1 kHz tick, or at DROOP_RATIO_SLEW_HANDOFF_PER_TICK while the conduction-aware
+# slew mode holds a channel dark, and is clipped to [DROOP_R_MIN, DROOP_R_MAX].
+# A receding-horizon controller re-commands every stage, so every re-command
+# landing in an open stage enters FEEDFORWARD.  These five constants are the
+# whole submode; all five are READ from governor_model, never re-typed.
+SHARE_SP_CHANGE_EPS = gov_mod.GOV_CONST["SHARE_SP_CHANGE_EPS"]         # 1e-4
+SLEW_FULL_PER_TICK = gov_mod.GOV_CONST["DROOP_RATIO_SLEW_PER_TICK"]    # 0.02
+SLEW_HANDOFF_PER_TICK = gov_mod.GOV_CONST[
+    "DROOP_RATIO_SLEW_HANDOFF_PER_TICK"]                               # 0.002
+HANDOFF_DWELL_MAX_TICKS = gov_mod.GOV_CONST[
+    "SHARE_HANDOFF_DWELL_MAX_TICKS"]                                   # 175
+HANDOFF_DARK_A = gov_mod.GOV_CONST["SHARE_HANDOFF_MIN_A"]              # 0.15 A
+DROOP_R_MIN = gov_mod.GOV_CONST["DROOP_R_MIN"]                         # 0.15
+DROOP_R_MAX = gov_mod.GOV_CONST["DROOP_R_MAX"]                         # 0.85
 
 # Stage mode classes.  Named here rather than reusing governor_model.MODE_*
 # because these are PREVIEW classes over a whole stage, not per-tick firmware
@@ -800,6 +962,11 @@ class RollJob:
         self.stage_key = list(pre.stage_key)
         self.cursor = 0
         self.table = {}
+        # Parallel to `table`: True where the roll ENDED in the conduction-
+        # handoff slew mode, i.e. `updateShareSlewMode()` had a channel dark and
+        # the 0.002/tick ceiling was in force.  The feedforward stage model
+        # reads it to pick the tick ceiling for the stages the roll covers.
+        self.handoff = {}
         self.rolls = 0
         self.chunks = 0
         self._cur = None            # a partially-rolled item, resumed next call
@@ -830,6 +997,7 @@ class RollJob:
             if self._roll_chunk(self._cur, self.TICK_CHUNK):
                 j, si = self.items[self.cursor]
                 self.table[(self.stage_key[j], si)] = self._cur["r_end"]
+                self.handoff[(self.stage_key[j], si)] = self._cur["handoff_end"]
                 self._cur = None
                 self.cursor += 1
                 self.rolls += 1
@@ -879,12 +1047,32 @@ class RollJob:
         if run_entry or pre.mode[j][0] == STAGE_CLOSED:
             g.state.closed_loop_run = True
             g.state.acted_sp = s
+        # ── SEEDING THE CONDUCTION-HANDOFF STATE (2026-09-02) ───────────────
+        # `updateShareSlewMode()`'s two channel filters and its two dark flags
+        # are RUN state, and `GovernorState` starts them at zero and True.  A
+        # roll that inherits those defaults spends its opening ticks on the
+        # 0.002/tick handoff ceiling, and can END dark, for a reason that is the
+        # seeding and not the stage: measured on `ems-soc-band`, 104 of 196
+        # published roll entries carried a handoff flag under the default
+        # seeding, and consulting that flag COST Gate 1 - 0.000329 mean against
+        # 0.000095 with the flag ignored.  This is the same class of defect as
+        # the mis-seeded hold flag the review of 2026-09-02 found, and the same
+        # remedy: seed the state from the stage's own entry currents.
+        i_tot0 = pre.i_tot[j][0]
+        g.state.handoff_i_fc_filt = abs(seed * i_tot0)
+        g.state.handoff_i_bt_filt = abs((1.0 - seed) * i_tot0)
+        g.state.dark_fc = (g.state.handoff_i_fc_filt
+                           < gov_mod.GOV_CONST["SHARE_HANDOFF_MIN_A"])
+        g.state.dark_bt = (g.state.handoff_i_bt_filt
+                           < gov_mod.GOV_CONST["SHARE_HANDOFF_MIN_A"])
+        g.state.handoff_prev_ratio = seed
         n_sub = len(pre.i_tot[j])
         ticks = int(round(self.dt_dec / self.tick_s))
         return {"j": j, "s": s, "g": g, "delivered": seed, "tk": 0,
                 "ticks": ticks, "n_sub": n_sub,
                 "per": max(1, ticks // n_sub),
-                "charging": bool(self.charge_stage(j)), "r_end": seed}
+                "charging": bool(self.charge_stage(j)), "r_end": seed,
+                "handoff_end": False}
 
     def _roll_chunk(self, st, n_ticks):
         """Advance a seeded roll by at most ``n_ticks``.  True when complete."""
@@ -906,6 +1094,7 @@ class RollJob:
         st["tk"] = end
         st["delivered"] = delivered
         st["r_end"] = g.state.r_prev
+        st["handoff_end"] = bool(g.state.dark_fc or g.state.dark_bt)
         return end >= st["ticks"]
 
     def _roll(self, j, si):
@@ -1011,6 +1200,211 @@ def huber(delta_soc, rho, delta=TERMINAL_DELTA_SOC):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# The open-loop FEEDFORWARD ramp, in closed form.
+# ─────────────────────────────────────────────────────────────────────────────
+def ramp_mean(r0, target, n_ticks, step_fast=SLEW_FULL_PER_TICK,
+              step_slow=None, dwell_left=0):
+    """Mean applied ratio over ``n_ticks`` of a slew-limited feedforward.
+
+    Returns ``(mean_ratio, end_ratio, dwell_left_after)``.
+
+    The firmware writes one ratio per 1 kHz tick, and the ratio after tick ``k``
+    is ``r0 + sign * min(k * step, |target - r0|)`` for whichever step ceiling
+    ``updateShareSlewMode()`` selected on that tick.  The mean over a whole
+    sub-sample is therefore an arithmetic series, and this function evaluates it
+    in closed form rather than ticking: a per-tick loop would cost 100 evaluations
+    per sub-sample and the decision budget of section 2.2 does not have them.
+
+    ``step_slow`` is the conduction-handoff ceiling.  It applies for at most
+    ``dwell_left`` MOVING ticks, which is ``SHARE_HANDOFF_DWELL_MAX_TICKS``
+    counted down by ``_slew_mode()``'s motion gate; the full ceiling resumes when
+    the allowance is spent.  Passing ``step_slow=None`` selects the full ceiling
+    throughout."""
+    n = int(n_ticks)
+    if n <= 0:
+        return float(r0), float(r0), int(dwell_left)
+    r = float(r0)
+    d = float(target) - r
+    if d == 0.0:
+        return r, r, int(dwell_left)
+    sgn = 1.0 if d > 0.0 else -1.0
+    d = abs(d)
+    acc = 0.0
+    left = n
+    dw = int(dwell_left)
+    segments = []
+    if step_slow is not None and step_slow > 0.0 and dw > 0:
+        segments.append((float(step_slow), dw))
+    segments.append((float(step_fast), n))
+    for step, cap in segments:
+        if left <= 0 or d <= 0.0:
+            break
+        m = min(left, cap, int(math.ceil(d / step - 1e-12)))
+        if m <= 0:
+            continue
+        full = min(m, int(math.floor(d / step + 1e-12)))
+        # Ticks 1..full take a whole step; any remaining tick of this segment
+        # lands exactly on the target.
+        acc += m * r + sgn * (step * full * (full + 1) / 2.0 + (m - full) * d)
+        moved = min(m * step, d)
+        r += sgn * moved
+        d -= moved
+        left -= m
+        if step_slow is not None and step == step_slow:
+            dw -= m
+    if left > 0:
+        acc += left * r
+    return acc / n, r, max(0, dw)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The adaptive budget and the ladder coarsening.
+# ─────────────────────────────────────────────────────────────────────────────
+def derive_budget_raw_ms(roll_slice_ms=None, surface_ms=None, rollout_ms=None,
+                         command_period_ms=COMMAND_PERIOD_MS,
+                         margin_ms=BUDGET_MARGIN_MS):
+    """The callback bound's own arithmetic, UNCLAMPED.
+
+    Split out from `derive_budget_ms()` so a caller can tell a budget the bound
+    produced from one the floor imposed (M2, review of 2026-09-02).  A negative
+    or tiny value here means the rest of the callback has already spent the
+    command period, and the floor the clamped function applies is then a
+    DEVIATION FROM THE BOUND rather than an application of it."""
+    roll = (ROLL_BUDGET_MS_DEFAULT + ROLL_CHUNK_OVERSHOOT_MS
+            if roll_slice_ms is None else float(roll_slice_ms))
+    surf = SURFACE_MS_NOMINAL if surface_ms is None else float(surface_ms)
+    roll_out = ROLLOUT_MS_NOMINAL if rollout_ms is None else float(rollout_ms)
+    return float(command_period_ms) - float(margin_ms) - roll - surf - roll_out
+
+
+def derive_budget_ms(roll_slice_ms=None, surface_ms=None, rollout_ms=None,
+                     command_period_ms=COMMAND_PERIOD_MS,
+                     margin_ms=BUDGET_MARGIN_MS,
+                     floor_ms=BUDGET_MS_FLOOR, ceiling_ms=BUDGET_MS_CEILING):
+    """The solve budget for one decision, from the callback bound's own terms.
+
+    The bound stated at ``BUDGET_MS_DEFAULT`` is
+
+        budget + one rollout of overshoot
+              + the roll slice + one chunk of overshoot
+              + the 50 Hz surface's own work            <=  the command period
+
+    so the budget is what the command period has left after the other three
+    terms and a stated margin.  Each term is MEASURED where the caller has a
+    measurement and falls back to its nominal constant where it does not; the
+    result is clamped to ``[floor_ms, ceiling_ms]`` so a pathological measurement
+    can neither starve the search nor spend the whole period on it.
+
+    ⚠️ THE FLOOR IS NOT PART OF THE BOUND (M2, review of 2026-09-02).  Once the
+    rest of the callback costs more than ``command_period_ms - margin_ms -
+    floor_ms``, the floor keeps the search alive at the price of a callback total
+    that EXCEEDS the command period - a roll slice of 18 ms puts the total at
+    22.2 ms.  `derive_budget_raw_ms()` returns the unclamped value so the caller
+    can tell the two apart, and `MpcStrategy.timing()` reports
+    ``budget_floor_binding`` as the count of decisions on which it did.
+
+    ⚠️ THE RESULT IS WALL-CLOCK DERIVED, and a trajectory that depends on it is
+    host-dependent in exactly the way review M6 names.  The levers against that
+    are unchanged: an explicit ``budget_ms`` disables this function outright, and
+    ``max_candidates`` bounds the search deterministically whatever the clock
+    says.  The SEARCH WIDTH no longer is: `coarsen_ladder()` projects on a named
+    constant, never on a measurement."""
+    b = derive_budget_raw_ms(roll_slice_ms, surface_ms, rollout_ms,
+                             command_period_ms, margin_ms)
+    return min(float(ceiling_ms), max(float(floor_ms), b))
+
+
+def coarse_ladder_set(n_levels, k, incumbent=None):
+    """The REALISED ladder-index set for a nominal coarse size ``k``.
+
+    Three unions, and each has a reason:
+
+    * the two RAILS and the CENTRE, so the set always spans the band and always
+      contains a middle point whatever ``k`` is;
+    * ``k`` evenly spaced indices, which is the coarsening proper;
+    * the incumbent's block indices AND THEIR IMMEDIATE NEIGHBOURS.
+
+    The neighbours are the H1 fix of the review of 2026-09-02.  At seven levels
+    the evenly-spaced rule can only ever produce ``{0, 2, 3, 4, 6}`` or
+    ``{0, 3, 6}``, so indices 1 and 5 are STRUCTURALLY UNREACHABLE on a
+    coarsened decision - and index 5 is 0.6667, the cruise share `mpc-det`
+    actually commands on 260 of 610 commands over `ems-soc-band`.  Unioning the
+    incumbent alone lets the controller HOLD such a point but never REACH one,
+    which is a ratchet, not a coarsening.  With the neighbours in, any index is
+    two coarsened decisions away from any other."""
+    n_levels = int(n_levels)
+    idx = {0, n_levels - 1, (n_levels - 1) // 2}
+    k = int(k)
+    if k > 1:
+        for i in range(k):
+            idx.add(int(round(i * (n_levels - 1) / float(k - 1))))
+    for v in (incumbent or ()):
+        v = int(v)
+        if 0 <= v < n_levels:
+            for w in (v - 1, v, v + 1):
+                if 0 <= w < n_levels:
+                    idx.add(w)
+    return tuple(sorted(i for i in idx if 0 <= i < n_levels))
+
+
+def coarsen_ladder(n_levels, n_blocks, n_options, incumbent=None,
+                   budget_ms=BUDGET_MS_DEFAULT, n_transitions=0,
+                   transition_heavy=None, sizes=LADDER_SIZES,
+                   candidate_cost_ms=CANDIDATE_COST_MS_NOMINAL,
+                   safety=LADDER_ENUM_SAFETY):
+    """The ladder INDICES this decision's enumeration walks.
+
+    Returns a sorted tuple of indices into the planner's fixed ladder.  The
+    ladder itself never changes - the roll table is keyed on ``(stage key, ladder
+    index)`` and a ladder that moved under it would silently re-point every
+    entry - so the coarsening restricts the SEARCH and nothing else.
+
+    The rule is: take the largest admissible ladder size whose REALISED set - the
+    one `coarse_ladder_set()` builds, unions and all - has a full enumeration
+    ``n_options * len(set) ** n_blocks`` fitting ``safety * budget_ms /
+    candidate_cost_ms``, halving that allowance on a TRANSITION-HEAVY horizon
+    (at least ``transition_heavy`` previewed transition stages, which defaults to
+    the roll cap ``RollJob.MAX_TRANSITIONS`` - a horizon with more transitions
+    than the roll table can carry is one whose callback has least room).
+
+    ⚠️ THE SELECTION IS ON THE REALISED SET, NOT ON ``k`` (M1, review of
+    2026-09-02).  The unions can only ever ADD points, so budgeting a nominal
+    ``k`` and then walking a larger set is a projection that is wrong in the one
+    direction the budget cannot absorb.
+
+    PURE, AND WALL-CLOCK-FREE.  ``candidate_cost_ms`` defaults to a named
+    constant and no caller passes a measurement, so with a fixed ``budget_ms``
+    the whole rule is a function of the configuration.  Under the adaptive
+    budget the width still moves with the budget, but only in the coarse steps
+    this size list allows."""
+    n_levels = int(n_levels)
+    full = tuple(range(n_levels))
+    if n_levels < 3 or n_blocks < 1:
+        return full
+    heavy = (RollJob.MAX_TRANSITIONS if transition_heavy is None
+             else int(transition_heavy))
+    allowance = float(safety) * float(budget_ms) / float(candidate_cost_ms)
+    if int(n_transitions) >= heavy:
+        allowance *= 0.5
+    admissible = sorted({k for k in sizes if 3 <= k <= n_levels}, reverse=True)
+    if not admissible:
+        return full
+    chosen = None
+    for k in admissible:
+        cand = coarse_ladder_set(n_levels, k, incumbent)
+        if int(n_options) * len(cand) ** int(n_blocks) <= allowance:
+            chosen = cand
+            break
+    if chosen is None:
+        # Nothing fits.  The smallest set is the floor: a search that cannot be
+        # made to fit is still run, and the budget expiry reports it.
+        chosen = coarse_ladder_set(n_levels, admissible[-1], incumbent)
+    if len(chosen) >= n_levels:
+        return full
+    return chosen
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # The planner.
 # ─────────────────────────────────────────────────────────────────────────────
 @dataclass
@@ -1028,6 +1422,7 @@ class Decision:
     pruned: int = 0
     share_pred: float = 0.5       # predicted DELIVERED share of stage 0
     feasible: bool = True
+    ladder_points: int = 0        # ladder points this decision's search walked
 
 
 class Planner:
@@ -1043,7 +1438,7 @@ class Planner:
                  max_candidates=None,
                  eta_chg=chg_mod.ETA_CHG_DEFAULT, chg_a=0.8,
                  cap_as=5.0 * 3600.0, h2_map="proxy", h2_convex=None,
-                 dt_dec=DECISION_DT_S):
+                 dt_dec=DECISION_DT_S, dv0_v=0.0, ff_dark_model=False):
         if sum(blocks) != horizon:
             raise ValueError("move blocks %r do not sum to the horizon %d"
                              % (blocks, horizon))
@@ -1088,6 +1483,36 @@ class Planner:
         self.incumbent = None      # the previous decision's block share indices
         self.incumbent_charge = 0
         self._order_cache = {}
+        # ── THE ASYMMETRY MAP (item 7 of the nonlinearity survey) ───────────
+        # `dv0_v` is the converter-asymmetry offset the plant runs with.  At the
+        # module default of 0.0 the droop map degenerates to the identity, so
+        # the delivered share and the applied ratio are the same number and
+        # every table below is bit-identical to the pre-2026-09-02 one.  A
+        # non-zero value maps the OPEN-loop ratio through
+        # `governor_model.GovernorModel.delivered_share()`; the CLOSED loop
+        # corrects the offset out by integral action, so its surrogate is
+        # unchanged in either case.
+        self.dv0_v = float(dv0_v)
+        self._map = (None if self.dv0_v == 0.0
+                     else gov_mod.GovernorModel(dt_s=GOV_TICK_S,
+                                                dv0_v=self.dv0_v))
+        # ── THE HANDOFF CEILING, AND WHY THE DEFAULT IS `False` ────────────
+        # `updateShareSlewMode()` selects the 0.002/tick ceiling while a channel
+        # is DARK, and the dark flags are FILTERED (0.05/tick) with hysteresis
+        # (live 0.20 A, dark 0.15 A).  `True` adds an INSTANTANEOUS proxy for
+        # them, evaluated on the sub-sample's own entry currents.  It is a
+        # proxy, and it was measured to be a worse one than trusting the roll's
+        # own flag alone: Gate 1 on `ems-soc-band` reads 0.000315 mean with the
+        # proxy and 0.000095 without it, because the proxy declares a channel
+        # dark where the filter's hysteresis has already released it and the
+        # modelled ramp is then ten times too slow.  The roll's flag, which is
+        # the real filtered state at a rolled stage's end, is consulted in
+        # either setting.
+        self.ff_dark_model = bool(ff_dark_model)
+        # Diagnostics: how much of the table the new branch actually built.
+        self.ff_cells = 0
+        self.hold_cells = 0
+        self.closed_cells = 0
 
     # -- stage cost ---------------------------------------------------------
     def h2_rate_gps(self, p_fc_stack_w):
@@ -1104,8 +1529,26 @@ class Planner:
         return a0 + a1 * p_fc_stack_w + a2 * p_fc_stack_w * p_fc_stack_w
 
     # -- the control-independent delivered-share table ----------------------
+    # -- the two open-loop submodes ----------------------------------------
+    def _alpha(self, r, i_tot):
+        """Delivered share for an applied ratio, under the asymmetry map."""
+        if self._map is None:
+            return r
+        return self._map.delivered_share(r, i_tot, True, True)
+
+    def _ratio_for(self, alpha, i_tot):
+        """The applied ratio whose delivered share is ``alpha`` - the inverse.
+
+        Reaches `GovernorModel._ratio_for_delivered()` deliberately: it is the
+        exact inverse of the map `_alpha()` uses, and re-deriving the quadratic
+        here would be a second copy of a law that has one authority."""
+        if self._map is None:
+            return alpha
+        return self._map._ratio_for_delivered(alpha, i_tot)
+
     def delivery_table(self, pre, r_hold, r_seed, charge_stages, i_tot_oc=None,
-                       soc_hint=0.6):
+                       soc_hint=0.6, sp_acted=None, run_seed=None,
+                       handoff=None, active=None):
         """Per (stage, ladder point): delivered share, FC power, BT power, feasibility.
 
         This is the whole search model.  It is built ONCE per decision, so the
@@ -1128,7 +1571,56 @@ class Planner:
         ``viol_tab`` carries the WORST constraint violation in amperes for each
         (stage, ladder point), 0.0 where the point is feasible.  It is what the
         infeasible fallback (L5) minimises, so an infeasible decision commands
-        the least-violating point available rather than the bottom rail."""
+        the least-violating point available rather than the bottom rail.
+
+        ── THE OPEN-LOOP SUBMODE MODEL (2026-09-02) ────────────────────────
+        ``sp_acted`` is the setpoint the firmware last ACTED on
+        (``share_actedSp``) and ``run_seed`` is the standing ``shareClosedLoopRun``
+        flag, both read from the shadow governor.  Supplied together they select
+        the feedforward-aware model: an open sub-sample HOLDS only while a
+        closed-loop run stands and the ladder point equals the acted setpoint,
+        and otherwise slews the applied ratio toward the setpoint at the tick
+        ceiling ``ramp_mean()`` integrates.  ``handoff`` optionally maps
+        ``(stage key, ladder index)`` to True where a roll ended in the
+        conduction-handoff slew mode.
+
+        ⚠️ TWO OF THE FIRMWARE'S THREE HOLD CONDITIONS ARE MODELLED, NOT THREE
+        (L1, review of 2026-09-02).  `_open_loop()` holds on a standing run AND
+        an unchanged setpoint AND ``!(shareIsoFC || shareIsoBT)`` (.ino:10173).
+        This table models the first two.  An outstanding isolation is a state the
+        table has no seed for - it is a consequence of a cut, and the ladder band
+        ``[0.25, 0.75]`` is chosen so that no candidate can cause one - and where
+        it does arise the transition rolls carry the real flag, because they run
+        the real `GovernorModel`.  A stage the model holds and the firmware slews
+        for this reason is therefore possible only after a cut the search cannot
+        command.
+
+        ⚠️ THE MODELLED RAMP IS NOT BAND-CUT (L2, same review).  ``carried``
+        walks freely in [0, 1] and the delivered share follows the droop map,
+        while `applyShareRatio()` takes a channel OFF THE BUS once the ratio
+        leaves ``[DROOP_R_MIN, DROOP_R_MAX]`` and the firmware then delivers a
+        rail.  The two agree wherever the ratio stays in band, which is
+        everywhere the search can command it; they diverge only when ``r_seed``
+        is already out of band - after a cut - for the few ticks the ramp needs
+        to re-enter, about 5 of the 100 ticks in a sub-sample at the full
+        ceiling.
+
+        ⚠️ BOTH SEEDS DEFAULT TO None, AND THE BRANCH IS THEN UNREACHABLE.  With
+        either seed absent every open sub-sample is treated as a HOLD, which is
+        the pre-2026-09-02 model exactly - bit-for-bit, not approximately - so a
+        caller that does not supply the governor's setpoint state gets the table
+        it always got."""
+        ff_enabled = (sp_acted is not None and run_seed is not None)
+        handoff = handoff or {}
+        # ``active`` restricts the table to the ladder points this decision's
+        # enumeration will actually visit (the coarsening of `coarsen_ladder`).
+        # The columns left out are never read - `solve()` walks the same set -
+        # and the ladder itself is untouched, so the roll table's keys still
+        # mean what they meant.
+        cols = (tuple(range(len(self.ladder))) if active is None
+                else tuple(int(i) for i in active))
+        ticks_per_sub = max(1, int(round(self.dt_dec / len(pre.i_tot[0])
+                                         / GOV_TICK_S))) if pre.n else 1
         n_s = len(self.ladder)
         d_tab = [[0.0] * n_s for _ in range(pre.n)]
         pfc_tab = [[0.0] * n_s for _ in range(pre.n)]
@@ -1136,9 +1628,17 @@ class Planner:
         ok_tab = [[True] * n_s for _ in range(pre.n)]
         viol_tab = [[0.0] * n_s for _ in range(pre.n)]
         v_chg = pack_charge_voltage(soc_hint, self.chg_a)
-        for si in range(n_s):
+        for si in cols:
             s = self.ladder[si]
             carried = r_seed
+            acted = sp_acted
+            run_flag = bool(run_seed)
+            # The setpoint the open-loop branch actually drives toward: the raw
+            # command clipped to the actuator band by applyShareRatio().
+            s_ff = min(max(s, DROOP_R_MIN), DROOP_R_MAX)
+            # F1 idle: an out-of-band setpoint is never actuated in open loop
+            # (.ino:10197), so such a ladder point can only ever HOLD.
+            s_in_band = (DROOP_R_MIN <= s <= DROOP_R_MAX)
             for j in range(pre.n):
                 n_sub = len(pre.i_tot[j])
                 oc_scale = ((i_tot_oc[j] / pre.i_tot_mean[j])
@@ -1149,6 +1649,11 @@ class Planner:
                     # ratio winds onto DROOP_R_MIN, which the next transition
                     # roll picks up (CLAUDE.md 2026-09-01c).
                     carried = gov_mod.GOV_CONST["DROOP_R_MIN"]
+                    # The loop is RUNNING through the window - topology-pinned,
+                    # not held - so the acted setpoint tracks the command and a
+                    # stage that follows the window can HOLD.
+                    acted = s
+                    run_flag = True
                     # PER SUB-SAMPLE, like the discharge branch (L4): the bound
                     # is an instantaneous current limit, and judging it on the
                     # stage MEAN admits a stage whose peak is over the margin.
@@ -1166,13 +1671,64 @@ class Planner:
                     continue
                 acc_d = acc_fc = acc_bt = 0.0
                 worst = 0.0
+                # The conduction-handoff dwell allowance, RE-ARMED PER STAGE.
+                # The firmware's counter is a run-length quantity that survives a
+                # stage boundary, so this is optimistic by at most one stage's
+                # worth of allowance (175 ticks of 1000).  It is a simplification
+                # and not a fidelity claim; the stage-mean effect of it is under
+                # the 1.34e-04 the handoff comparison test measures.
+                dwell_left = HANDOFF_DWELL_MAX_TICKS
+                ff_used = False
+                ho = bool(handoff.get((pre.stage_key[j], si)))
                 for sub in range(n_sub):
+                    i_tot_sub = pre.i_tot[j][sub]
                     if pre.mode[j][sub] == STAGE_CLOSED:
                         lo = pre.lo[j][sub]
                         d = min(max(s, lo), 1.0 - lo)
-                        carried = d
+                        carried = self._ratio_for(d, i_tot_sub)
+                        self.closed_cells += 1
+                        acted = s
+                        run_flag = True
+                    elif (not ff_enabled or not s_in_band
+                          or pre.mode[j][sub] == STAGE_FROZEN
+                          or (run_flag
+                              and abs(s - acted) <= SHARE_SP_CHANGE_EPS)):
+                        # HOLD.  No MDAC write; the standing split stands.
+                        #
+                        # THREE WAYS IN, and the third is not the open-loop
+                        # branch at all: below `SHARE_I_TOT_MIN_A` the firmware's
+                        # minimum-load gate returns before the loop-mode decision
+                        # is even taken (.ino:10099), so a frozen sub-sample
+                        # writes nothing whatever the setpoint did.  Routing it
+                        # to the feedforward arm would model a slew on a
+                        # standstill.
+                        d = self._alpha(carried, i_tot_sub)
+                        self.hold_cells += 1
                     else:
-                        d = carried
+                        # OPEN FEEDFORWARD.  The ratio slews toward the raw
+                        # setpoint at the tick ceiling; the command has been
+                        # acted on, so `closed_loop_run` clears and every later
+                        # open tick stays on this branch until a closed-loop run
+                        # re-arms the hold.
+                        step_slow = None
+                        if ho or (self.ff_dark_model
+                                  and (carried * i_tot_sub < HANDOFF_DARK_A
+                                       or (1.0 - carried) * i_tot_sub
+                                       < HANDOFF_DARK_A)):
+                            step_slow = SLEW_HANDOFF_PER_TICK
+                        r_mean, carried, dwell_left = ramp_mean(
+                            carried, s_ff, ticks_per_sub,
+                            step_fast=SLEW_FULL_PER_TICK,
+                            step_slow=step_slow, dwell_left=dwell_left)
+                        # The asymmetry map is evaluated at the sub-sample's mean
+                        # ratio.  It is EXACT at dv0 = 0 (the map is the
+                        # identity) and second-order in the map's curvature
+                        # otherwise.
+                        d = self._alpha(r_mean, i_tot_sub)
+                        run_flag = False
+                        acted = s
+                        ff_used = True
+                        self.ff_cells += 1
                     acc_d += d
                     acc_fc += d * pre.p_dem[j][sub]
                     acc_bt += (1.0 - d) * pre.p_dem[j][sub]
@@ -1180,7 +1736,14 @@ class Planner:
                     worst = max(worst, d * i_tot - I_FC_MAX_A,
                                 (1.0 - d) * i_tot - I_BT_MAX_A)
                 key = (pre.stage_key[j], si)
-                if key in r_hold:
+                # THE ROLL'S CARRY IS A HELD-COMMAND RESULT.  `_roll_begin()`
+                # seeds `acted_sp` with the ladder point and `closed_loop_run`
+                # true, so the roll models the command as HELD across the
+                # transition.  Where this stage actually took the feedforward
+                # branch that assumption does not hold, and the ramp integrated
+                # above is the better carry - so the override is skipped there
+                # rather than overwriting a modelled slew with a held roll.
+                if key in r_hold and not ff_used:
                     carried = r_hold[key]
                 d_tab[j][si] = acc_d / n_sub
                 pfc_tab[j][si] = acc_fc / n_sub
@@ -1227,7 +1790,8 @@ class Planner:
 
     # -- enumeration --------------------------------------------------------
     def solve(self, soc0, soc_ref, pre, r_hold, r_seed, charge_options,
-              i_tot_oc=None, budget_ms=None):
+              i_tot_oc=None, budget_ms=None, sp_acted=None, run_seed=None,
+              handoff=None, active=None):
         """Search the candidate set.  Returns a ``Decision``.
 
         ``charge_options`` is a list of per-stage boolean lists, the first of
@@ -1239,6 +1803,10 @@ class Planner:
         budget_s = (self.budget_ms if budget_ms is None else float(budget_ms)) * 1e-3
         n_s = len(self.ladder)
         nb = len(self.blocks)
+        cols = (tuple(range(n_s)) if active is None
+                else tuple(sorted(set(int(i) for i in active))))
+        if not cols:
+            raise ValueError("the active ladder set is empty")
 
         # THE INFEASIBLE FALLBACK, stated: if no candidate is feasible the
         # decision keeps this seed - the lowest ladder point, no charge, which
@@ -1247,10 +1815,11 @@ class Planner:
         # decision that commanded nothing would leave the previous share
         # standing without saying so.
         best = Decision(cost=float("inf"))
-        best.share = self.ladder[0]
-        best.plan_share = [self.ladder[0]] * pre.n
+        best.share = self.ladder[cols[0]]
+        best.plan_share = [self.ladder[cols[0]]] * pre.n
         best.plan_charge = list(charge_options[0])
-        order = self._enumeration_order(n_s, nb)
+        best.ladder_points = len(cols)
+        order = self._enumeration_order(cols, nb)
         n_eval = 0
         pruned = 0
         hit = False
@@ -1265,7 +1834,9 @@ class Planner:
                 hit = True
                 break
             tabs = self.delivery_table(pre, r_hold, r_seed, cs, i_tot_oc,
-                                       soc_hint=soc0)
+                                       soc_hint=soc0, sp_acted=sp_acted,
+                                       run_seed=run_seed, handoff=handoff,
+                                       active=cols)
             if oi == 0:
                 tabs0 = tabs
             for block_idx in order:
@@ -1302,8 +1873,8 @@ class Planner:
         # and on a battery-side violation it is the worst point on the ladder.
         if not math.isfinite(best.cost) and tabs0 is not None:
             viol = tabs0[4]
-            worst = [max(viol[j][si] for j in range(pre.n)) for si in range(n_s)]
-            si_best = min(range(n_s), key=lambda i: (worst[i], i))
+            worst = {si: max(viol[j][si] for j in range(pre.n)) for si in cols}
+            si_best = min(cols, key=lambda i: (worst[i], i))
             best.share = self.ladder[si_best]
             best.plan_share = [self.ladder[si_best]] * pre.n
             best.share_pred = tabs0[0][0][si_best]
@@ -1316,7 +1887,7 @@ class Planner:
         best.solve_ms = (time.perf_counter() - t0) * 1e3
         return best
 
-    def _enumeration_order(self, n_s, nb):
+    def _enumeration_order(self, cols, nb):
         """Candidates ordered outward in ladder distance from the incumbent.
 
         THE SHIFT IS DEGENERATE HERE, and that is a property of the
@@ -1331,11 +1902,18 @@ class Planner:
         The ordering is cached on the seed: it is a pure function of
         ``(n_s, nb, seed)`` and rebuilding 343 tuples per decision is work the
         budget of section 2.2 should not be spending."""
-        seed = self.incumbent if self.incumbent is not None else (n_s // 2,) * nb
-        seed = tuple(min(n_s - 1, max(0, int(x))) for x in seed[:nb])
+        cols = tuple(int(i) for i in cols)
+        mid = cols[len(cols) // 2]
+        seed = self.incumbent if self.incumbent is not None else (mid,) * nb
+        # An incumbent index outside the active set is snapped to the nearest
+        # active one, so the warm start still starts near where the last
+        # decision left off.  `coarsen_ladder()` unions the incumbent in, so
+        # this only ever fires for a caller that supplied its own active set.
+        seed = tuple(min(cols, key=lambda c, x=int(x): (abs(c - x), c))
+                     for x in seed[:nb])
         if len(seed) < nb:
             seed = seed + (seed[-1],) * (nb - len(seed))
-        key = (n_s, nb, seed)
+        key = (cols, nb, seed)
         cached = self._order_cache.get(key)
         if cached is not None:
             return cached
@@ -1345,14 +1923,14 @@ class Planner:
             if len(prefix) == nb:
                 all_idx.append(tuple(prefix))
                 return
-            for i in range(n_s):
+            for i in cols:
                 rec(prefix + [i])
 
         rec([])
         all_idx.sort(key=lambda c: (sum(abs(c[i] - seed[i]) for i in range(nb)),
                                     c))
-        # Bounded: one entry per distinct seed, and there are n_s**nb seeds at
-        # most.  Cleared wholesale rather than grown without bound.
+        # Bounded: one entry per distinct (active set, seed) pair.  Cleared
+        # wholesale rather than grown without bound.
         if len(self._order_cache) > 64:
             self._order_cache.clear()
         self._order_cache[key] = all_idx
@@ -1416,6 +1994,16 @@ class ShadowGovernor:
     def closed(self):
         return bool(self.model.state.closed_loop_mode)
 
+    @property
+    def acted_sp(self):
+        """``share_actedSp`` - the setpoint the open-loop branch compares against."""
+        return float(self.model.state.acted_sp)
+
+    @property
+    def closed_loop_run(self):
+        """``shareClosedLoopRun`` - the flag that makes an unchanged setpoint HOLD."""
+        return bool(self.model.state.closed_loop_run)
+
     def observe(self, fb):
         """Correct the model from one feedback sample."""
         r_obs = gov_mod.r_from_codes(fb.get("mdac_fc"), fb.get("mdac_bt"))
@@ -1478,11 +2066,14 @@ class MpcStrategy:
     def __init__(self, name="mpc-det", variant="det", horizon=HORIZON_N,
                  blocks=MOVE_BLOCKS, share_band=SHARE_BAND_DP,
                  share_levels=SHARE_LEVELS, terminal_price_mode="metric",
-                 budget_ms=BUDGET_MS_DEFAULT,
+                 budget_ms=None,
                  roll_budget_ms=ROLL_BUDGET_MS_DEFAULT, max_candidates=None,
+                 adaptive_budget=True, coarsen_ladder_enabled=True,
+                 candidate_cost_ms=None,
                  h2_map="proxy", h2_convex=None, dv0_v=0.0,
                  soc_ref_offset=0.0, eta_chg=chg_mod.ETA_CHG_DEFAULT,
-                 tpm_path=None, preview_dt_s=PREVIEW_DT_S):
+                 tpm_path=None, preview_dt_s=PREVIEW_DT_S,
+                 ff_dark_model=False):
         if variant not in ("det", "sto"):
             raise ValueError("variant must be 'det' or 'sto'")
         self.name = name
@@ -1492,13 +2083,35 @@ class MpcStrategy:
         self.share_band = (float(share_band[0]), float(share_band[1]))
         self.share_levels = int(share_levels)
         self.terminal_price_mode = terminal_price_mode
-        self.budget_ms = float(budget_ms)
+        # ── THE BUDGET, AND WHICH OF THE TWO IT IS ─────────────────────────
+        # `budget_ms=None` (the default since 2026-09-02) selects the ADAPTIVE
+        # budget of `derive_budget_ms()`.  An explicit value - which is what the
+        # per-scenario `mpc_budget_ms` key and the `--mpc-budget-ms` flag both
+        # supply - is a FIXED budget and TAKES PRECEDENCE, exactly as before.
+        # `self.budget_ms` therefore reads None on an adaptive strategy, and
+        # `budget_ms_fixed` is the predicate rather than a comparison against
+        # the default.
+        self.budget_ms = (None if budget_ms is None else float(budget_ms))
+        self.budget_ms_fixed = (budget_ms is not None)
+        self.adaptive_budget = bool(adaptive_budget) and not self.budget_ms_fixed
+        self.coarsen_ladder_enabled = bool(coarsen_ladder_enabled)
+        # PINNING THE PROJECTION.  None selects `CANDIDATE_COST_MS_NOMINAL`,
+        # which is a CONSTANT: nothing on this path reads the clock, so with a
+        # fixed `budget_ms` as well the search width is bit-reproducible across
+        # hosts.  An explicit value overrides the constant, for a caller that has
+        # profiled its own host and wants to say so.
+        self.candidate_cost_ms = (None if candidate_cost_ms is None
+                                  else float(candidate_cost_ms))
+        self.candidate_cost_ms_used = (CANDIDATE_COST_MS_NOMINAL
+                                       if self.candidate_cost_ms is None
+                                       else self.candidate_cost_ms)
         self.roll_budget_ms = float(roll_budget_ms)
         self.max_candidates = (None if max_candidates is None
                                else int(max_candidates))
         self.h2_map = h2_map
         self.h2_convex = h2_convex
         self.dv0_v = float(dv0_v)
+        self.ff_dark_model = bool(ff_dark_model)
         self.soc_ref_offset = float(soc_ref_offset)
         self.eta_chg = chg_mod.check_eta_chg(eta_chg)
         self.preview_dt_s = float(preview_dt_s)
@@ -1537,12 +2150,27 @@ class MpcStrategy:
                                      seed_r=sim.SOC_BAND_SHARE_NOMINAL)
         self.roll_job = None
         self.r_hold = {}
+        self.r_handoff = {}
         self.budget_hits = 0
         self.cap_hits = 0
         self.incumbent_retained = 0
         self.solve_ms_last = 0.0
         self.solve_ms_max = 0.0
         self.solve_ms_all = []
+        # Per-decision budget and search width (2026-09-02).
+        self.budget_ms_all = []
+        self.ladder_points_all = []
+        self.coarsened_decisions = 0
+        self.budget_floor_binding = 0
+        self.candidate_cost_ms_seen = 0.0
+        self.transition_stages_last = 0
+        # The two measured callback terms the budget derivation consumes.  Both
+        # are the LAST callback's, not an average: the derivation is a bound on
+        # the callback about to run, and a mean would under-state a slice that
+        # has just grown.
+        self._roll_slice_ms = None
+        self._surface_ms = None
+        self._rollout_ms = None
         self.share_pred = None
         self.share_pred_err = None
         self.share_pred_err_max = 0.0
@@ -1621,12 +2249,16 @@ class MpcStrategy:
                                share_band=self.share_band,
                                share_levels=self.share_levels,
                                terminal_mode=self.terminal_price_mode,
-                               budget_ms=self.budget_ms,
+                               budget_ms=(BUDGET_MS_DEFAULT
+                                          if self.budget_ms is None
+                                          else self.budget_ms),
                                max_candidates=self.max_candidates,
                                eta_chg=self.eta_chg,
                                chg_a=chg_a,
                                cap_as=self.cap_as,
-                               h2_map=self.h2_map, h2_convex=self.h2_convex)
+                               h2_map=self.h2_map, h2_convex=self.h2_convex,
+                               dv0_v=self.dv0_v,
+                               ff_dark_model=self.ff_dark_model)
         if self.variant == "sto":
             self._load_tpm()
         self.provenance = self._provenance()
@@ -1722,7 +2354,17 @@ class MpcStrategy:
             "h2_model": self.h2_map,
             "eta_fc_proxy": ETA_FC_PROXY,
             "eta_chg": self.eta_chg,
+            # None means ADAPTIVE: the per-decision budget is derived by
+            # `derive_budget_ms()` and reported in `timing()` as the
+            # budget_ms_min/median/max triple, because it is no longer a
+            # constant of the run.
             "budget_ms": self.budget_ms,
+            "budget_adaptive": self.adaptive_budget,
+            "budget_margin_ms": BUDGET_MARGIN_MS,
+            "budget_floor_ms": BUDGET_MS_FLOOR,
+            "budget_ceiling_ms": BUDGET_MS_CEILING,
+            "coarsen_ladder": self.coarsen_ladder_enabled,
+            "candidate_cost_ms": self.candidate_cost_ms,
             "roll_budget_ms": self.roll_budget_ms,
             "roll_tick_chunk": RollJob.TICK_CHUNK,
             "max_transitions": RollJob.MAX_TRANSITIONS,
@@ -1780,8 +2422,11 @@ class MpcStrategy:
             self.rolls_empty += 1
             return
         self.r_hold.update(job.table)
+        self.r_handoff.update(job.handoff)
         k_min = min(job.stage_key) if job.stage_key else 0
         self.r_hold = {k: v for k, v in self.r_hold.items() if k[0] >= k_min}
+        self.r_handoff = {k: v for k, v in self.r_handoff.items()
+                          if k[0] >= k_min}
         self.rolls_published += 1
         self.roll_dropped_transitions += job.dropped_transitions
 
@@ -1922,9 +2567,69 @@ class MpcStrategy:
                                     charge_stage=lambda j, o=charge_options[-1]: o[j])
             self.rolls_started += 1
 
+        # THE OPEN-LOOP SUBMODE SEEDS.  `share_actedSp` and `shareClosedLoopRun`
+        # are the two firmware variables that decide whether an open tick HOLDS
+        # or takes the feedforward slew, and the shadow governor is the committed
+        # estimate of both.  Passing them is what arms the feedforward-aware
+        # stage model; without them the planner falls back to the hold-only
+        # table (see `delivery_table`).
+        # ── THE ADAPTIVE BUDGET (2026-09-02) ───────────────────────────────
+        # Derived from the callback bound's own terms, with this callback's
+        # measured roll slice and surface work and the previous decision's
+        # measured per-candidate cost.  A fixed `budget_ms` short-circuits it.
+        if self.adaptive_budget:
+            raw_ms = derive_budget_raw_ms(roll_slice_ms=self._roll_slice_ms,
+                                          surface_ms=self._surface_ms,
+                                          rollout_ms=self._rollout_ms)
+            budget_ms = min(BUDGET_MS_CEILING, max(BUDGET_MS_FLOOR, raw_ms))
+            # M2: the floor is a DEVIATION from the callback bound, not an
+            # application of it - past this point the callback total exceeds the
+            # command period.  Counted so `timing()` can say so.
+            if raw_ms < BUDGET_MS_FLOOR:
+                self.budget_floor_binding += 1
+        else:
+            budget_ms = (BUDGET_MS_DEFAULT if self.budget_ms is None
+                         else self.budget_ms)
+
+        # ── THE LADDER COARSENING ──────────────────────────────────────────
+        # A pure function of the ladder size, the block count, this decision's
+        # charge-option count, the previewed transition count and the budget.
+        n_trans = sum(1 for j in range(pre.n) if pre.transition[j])
+        self.transition_stages_last = n_trans
+        active = None
+        if self.coarsen_ladder_enabled:
+            active = coarsen_ladder(len(self.planner.ladder),
+                                    len(self.planner.blocks),
+                                    len(charge_options),
+                                    incumbent=self.planner.incumbent,
+                                    budget_ms=budget_ms,
+                                    n_transitions=n_trans,
+                                    candidate_cost_ms=(
+                                        self.candidate_cost_ms
+                                        or CANDIDATE_COST_MS_NOMINAL))
+            if len(active) >= len(self.planner.ladder):
+                active = None
+
         dec = self.planner.solve(soc, self.soc_ref, pre, self.r_hold,
                                  self.shadow.r, charge_options,
-                                 i_tot_oc=i_tot_oc)
+                                 i_tot_oc=i_tot_oc, budget_ms=budget_ms,
+                                 sp_acted=self.shadow.acted_sp,
+                                 run_seed=self.shadow.closed_loop_run,
+                                 handoff=self.r_handoff, active=active)
+        self.budget_ms_all.append(budget_ms)
+        self.ladder_points_all.append(dec.ladder_points)
+        if active is not None:
+            self.coarsened_decisions += 1
+        # The per-candidate cost.  TWO USES, and only one of them is a control
+        # input: the next budget derivation charges it as its one rollout of
+        # expiry overshoot (a wall-clock term of a wall-clock budget), and
+        # `timing()` reports the largest value seen so a host too slow for
+        # `CANDIDATE_COST_MS_NOMINAL` is visible.  It does NOT reach
+        # `coarsen_ladder()` any more (H1).
+        if dec.candidates:
+            self._rollout_ms = dec.solve_ms / float(dec.candidates)
+            self.candidate_cost_ms_seen = max(self.candidate_cost_ms_seen,
+                                              self._rollout_ms)
         self.decisions += 1
         self.candidates_last = dec.candidates
         self.candidates_min = (dec.candidates if self.candidates_min is None
@@ -2000,10 +2705,34 @@ class MpcStrategy:
         # decisions, and the decision that follows consumes whatever is
         # standing.  Running it here rather than inside decide() is what gives
         # the job its 50 slices per second instead of one.
+        _t_surface0 = time.perf_counter()
+        _t_roll = 0.0
         if self.roll_job is not None:
-            if self.roll_job.advance(self.roll_budget_ms * 1e-3):
+            _t0 = time.perf_counter()
+            done = self.roll_job.advance(self.roll_budget_ms * 1e-3)
+            _t_roll = (time.perf_counter() - _t0) * 1e3
+            if done:
                 self._publish_roll(self.roll_job)
                 self.roll_job = None
+        # MEASURED, not assumed: the roll slice is what it cost including its
+        # one-chunk overshoot, and the surface work is everything this callback
+        # does outside the slice and the decision.  Both are taken BEFORE the
+        # decision gate below and are therefore consumed by THIS callback's own
+        # budget derivation, not by the next one - which is the point, since the
+        # bound they enforce is a bound on this callback (L3, review of
+        # 2026-09-02).  The one term that IS carried from the previous decision
+        # is the per-candidate rollout cost, which cannot be known before the
+        # search it describes has run.
+        #
+        # TWO KNOWN OPTIMISMS, both bounded and both stated rather than
+        # corrected.  A callback with no roll job in flight measures a slice cost
+        # of zero, and the decision it may then take creates one - so the FIRST
+        # callback after a publication under-charges the slice by at most
+        # `roll_budget_ms` plus one chunk.  And the surface measurement stops at
+        # the decision gate, so the command dictionary's own construction is not
+        # counted.  Both are far inside the 2 ms margin the derivation holds
+        # back, and the 15 ms ceiling bounds the result independently.
+        self._roll_slice_ms = _t_roll
 
         # ── the prediction claim, ACCUMULATED OVER THE STAGE (L1) ──────────
         # `share_pred` is the mean DELIVERED share the model predicts for the
@@ -2019,6 +2748,8 @@ class MpcStrategy:
                 self._stage_share_sum += i_fc / tot
                 self._stage_share_n += 1
 
+        self._surface_ms = ((time.perf_counter() - _t_surface0) * 1e3
+                            - _t_roll)
         if self.next_decision_t is None or t >= self.next_decision_t:
             self.decide(t, fb)
             # Anchor on `t`: a late call must not accumulate a backlog of missed
@@ -2045,11 +2776,60 @@ class MpcStrategy:
                     "candidates_max": None,
                     "rolls_published": 0, "rolls_empty": 0,
                     "roll_dropped_transitions": 0,
+                    "budget_ms_min": None, "budget_ms_median": None,
+                    "budget_ms_max": None, "budget_adaptive": self.adaptive_budget,
+                    "ladder_points_min": None, "ladder_points_median": None,
+                    "ladder_points_max": None, "coarsened_decisions": 0,
+                    "budget_floor_binding": 0,
+                    "candidate_cost_ms_nominal": self.candidate_cost_ms_used,
+                    "candidate_cost_ms_seen": 0.0,
+                    "candidate_cost_over_nominal": False,
                     "share_pred_err_mean": None, "share_pred_err_max": 0.0}
+
+        def _stats(xs):
+            """min / median / max of a per-decision series."""
+            if not xs:
+                return None, None, None
+            ys = sorted(xs)
+            m = len(ys)
+            return ys[0], (ys[m // 2] if m % 2
+                           else 0.5 * (ys[m // 2 - 1] + ys[m // 2])), ys[-1]
+
         xs = sorted(self.solve_ms_all)
         n = len(xs)
         med = xs[n // 2] if n % 2 else 0.5 * (xs[n // 2 - 1] + xs[n // 2])
+        b_lo, b_med, b_hi = _stats(self.budget_ms_all)
+        l_lo, l_med, l_hi = _stats(self.ladder_points_all)
         return {"solve_ms_median": med, "solve_ms_max": xs[-1],
+                # THE BUDGET ACTUALLY SPENT, per decision (2026-09-02).  With
+                # the adaptive derivation the budget is no longer a constant of
+                # the run, so a reader cannot recover it from the configuration
+                # and the three figures are reported beside the expiry count
+                # they explain.
+                "budget_ms_min": b_lo, "budget_ms_median": b_med,
+                "budget_ms_max": b_hi,
+                "budget_adaptive": self.adaptive_budget,
+                # THE SEARCH WIDTH, per decision.  `coarsened_decisions` counts
+                # the decisions whose enumeration walked a proper subset of the
+                # ladder so that the FULL enumeration of that subset fitted the
+                # budget - the alternative being a cut search, which is biased
+                # toward the incumbent rather than merely coarse.
+                "ladder_points_min": l_lo, "ladder_points_median": l_med,
+                "ladder_points_max": l_hi,
+                "coarsened_decisions": self.coarsened_decisions,
+                # M2: the decisions on which the floor, not the bound, set the
+                # budget.  Nonzero means the callback total exceeded the 20 ms
+                # command period on that many decisions.
+                "budget_floor_binding": self.budget_floor_binding,
+                # H1: the search width is projected on the NOMINAL and the
+                # measurement is reported beside it.  `over_nominal` true means
+                # this host is slower than the projection assumed, so a decision
+                # the rule sized to fit may not have - visible, rather than
+                # silently re-planned around.
+                "candidate_cost_ms_nominal": self.candidate_cost_ms_used,
+                "candidate_cost_ms_seen": self.candidate_cost_ms_seen,
+                "candidate_cost_over_nominal": (
+                    self.candidate_cost_ms_seen > self.candidate_cost_ms_used),
                 "decisions": n, "budget_hits": self.budget_hits,
                 # M6: the per-decision candidate count sits NEXT TO the expiry
                 # counter, so a reader can tell a search that finished from one
@@ -2074,7 +2854,12 @@ class MpcStrategy:
         return ("[hil] " + self.name + ": %d decisions, solve %.2f ms median / "
                 "%.2f ms max, %s candidates on the last decision (fewest %s, "
                 "most %s, deterministic cap %s, cut by it on %d), budget "
-                "expired on "
+                "%s %.2f / %.2f / %.2f ms min/median/max (floor bound the "
+                "budget on %d - on those the callback total EXCEEDS the 20 ms "
+                "command period), ladder %s/%s/%s "
+                "points min/median/max (coarsened on %d; the width is projected "
+                "on a NOMINAL %.4f ms per candidate and the largest measured "
+                "was %.4f ms%s), expired on "
                 "%d (%.1f %%) — an expiry returns "
                 "the shifted incumbent, which is feasible and was validated one "
                 "second earlier, so a nonzero count is a WARNING about the "
@@ -2094,6 +2879,16 @@ class MpcStrategy:
                    tm["candidates_max"],
                    ("none" if self.max_candidates is None
                     else "%d" % self.max_candidates), self.cap_hits,
+                   ("adaptive" if self.adaptive_budget else "fixed"),
+                   tm["budget_ms_min"], tm["budget_ms_median"],
+                   tm["budget_ms_max"], tm["budget_floor_binding"],
+                   tm["ladder_points_min"], tm["ladder_points_median"],
+                   tm["ladder_points_max"], tm["coarsened_decisions"],
+                   tm["candidate_cost_ms_nominal"],
+                   tm["candidate_cost_ms_seen"],
+                   (" - OVER the nominal, so this host is slower than the "
+                    "projection assumed"
+                    if tm["candidate_cost_over_nominal"] else ""),
                    self.budget_hits,
                    100.0 * self.budget_hits / self.decisions,
                    self.incumbent_retained,

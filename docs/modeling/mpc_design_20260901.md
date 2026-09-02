@@ -630,6 +630,79 @@ therefore wrong about the board, not merely about the governor model, and the
 fallback named above is the correct response. The 0.30 prediction-error band on the
 live checks is kept.
 
+### 6.6 The feedforward-aware stage model, and Gate 1 (2026-09-02)
+
+The fallback named above was NOT taken. The fourth configuration named alongside
+it - "an open-stage model that slews the carried ratio toward the commanded share
+when the command has changed" - was implemented instead, and it closes the gate.
+`Planner.delivery_table()` now models BOTH open-loop submodes: it holds under the
+firmware's own three conditions (`shareClosedLoopRun` standing, the setpoint
+within `SHARE_SP_CHANGE_EPS` of `share_actedSp`, no isolation outstanding) and
+otherwise integrates the slew-limited feedforward ramp in closed form. The
+transition rolls of section 2.2 are integrated rather than replaced: their carry
+is consumed on a held stage and skipped on a slewed one, and they additionally
+publish the conduction-handoff state they ended in.
+
+Gate 1 on `ems-soc-band` moves from a mean absolute delivered-share error of
+**0.010334** (maximum 0.250000) to **0.000095** (maximum 0.003560), so BOTH the
+mean and the maximum now sit inside the 5e-03 acceptance and **Gate 1 PASSES**;
+`mpc-sto` moves from 0.007071 to 0.003931. Part of that came from a second
+seeding defect the round found in `_roll_begin()`: the conduction-handoff filters
+and dark flags were inherited from `GovernorState`'s defaults rather than seeded
+from the stage's entry currents, so 104 of 196 published roll entries carried a
+spurious handoff flag and consulting it cost 0.000234 of the Gate 1 mean.
+Gate 2 was re-run in the same session with the branch enabled and disabled: the
+`soc-band` and `sdp-v4` reference legs are unmoved, `ems-mpc` reads
+0.009910 g / -0.002747 SoC / 0.016610 g equivalent against 0.010429 / -0.002537 /
+0.016616, and `ems-mpc-sto` reads 0.008729 / -0.003233 / 0.016615 against
+0.009313 / -0.002998 / 0.016625. The offline ranking is unchanged in substance and
+`mpc-det`'s equivalent-hydrogen margin over `sdp-v4` widens from 0.090 % to
+0.126 %. The median solve time rises by 0.047 ms at an unchanged budget-expiry
+count.
+
+The survey that accompanies the change enumerates the other ten firmware
+nonlinearities on the path from the commanded share to the delivered current,
+ranks them by the Gate 1 error each removes against its callback cost, and records
+one measurement that has not been acted on: the converter asymmetry. On a walk
+whose plant carries the measured `dv0` of 0.013522 V the Gate 1 mean is 0.016211
+with the controller's map inert and 0.000323 with it matched, at a bit-identical
+committed trajectory, and no registration passes the run's `dv0` to the strategy.
+Full record, including the rejected instantaneous dark-flag proxy and the reversal
+path: **`docs/modeling/mpc_design_20260902_nonlinearities.md`**.
+
+**The search budget, same date, second ruling.** The fixed 10 ms budget of
+section 2.2 is replaced by a per-decision derivation from that section's own
+callback bound (`derive_budget_ms()`), and a decision whose FULL enumeration still
+does not fit walks a coarser subset of the ladder that does
+(`coarsen_ladder()`), always keeping both rails, the centre and the incumbent's
+block values. The reason is that the enumeration is ordered outward from the
+incumbent, so a budget expiry drops the candidates furthest from standing still
+and is biased, while a coarse search is merely coarse. Measured offline on three
+legs in one session: budget expiry falls from 88.5 % to 0.0 % of decisions on
+`ems-mpc-cross`, from 21.3 % to 0.0 % on `ems-mpc` and from 4.9 % to 0.0 % on
+`ems-mpc-sto`, and the median solve on `ems-mpc-cross` falls from 10.01 ms to
+4.15 ms. ⚠️ **The committed trajectory does not move**: hydrogen,
+state-of-charge change and equivalent hydrogen are identical to six decimals
+across a fixed 10 ms, a fixed 15 ms, an adaptive and the shipped configuration on
+every leg, and an unbudgeted run commits the same plan. What the change buys is an
+uncut search, not a better one, on these stimuli. An explicit `budget_ms` - the
+`mpc_budget_ms` scenario key - still takes precedence; no scenario declares one
+any more, `ems-mpc-cross`'s 15 ms stopgap having been removed in the same round.
+
+⚠️ **The first version of the coarsening made the committed plan host-dependent,
+and the review of the same date caught it.** The search width was projected on the
+previous decision's MEASURED per-candidate cost, and on `ems-soc-band` a
+projection at or above 0.03717 ms coarsened the ladder and committed 8.29 % more
+hydrogen with the budget-expiry count still zero. Two structural facts made the
+move that large: at seven levels the evenly-spaced rule can only produce
+`{0, 2, 3, 4, 6}` or `{0, 3, 6}`, so index 5 — the 0.6667 cruise share `mpc-det`
+commands on 260 of 610 commands — was unreachable. The projection is now the named
+constant `CANDIDATE_COST_MS_NOMINAL`, the measurement is reported beside a
+`candidate_cost_over_nominal` flag, and the incumbent's NEIGHBOURS are unioned
+into the coarse set. After the fix the ladder census and the committed trajectory
+reproduce EXACTLY over three repeats of each of the three MPC legs. Full record
+and reproducibility discussion: the same note, section 4.
+
 ⚠️ **One caveat travels with every MPC reading from that campaign.** The
 343-candidate cap enumerates the no-charge axis first, so on a capped decision the
 search truncates **before** the charge axis is reached (13 of `ems-mpc-sto`'s
@@ -956,9 +1029,12 @@ and catches all fourteen.
 
 ## 10. Risks
 
-1. The surrogate misprices open-loop stages, and this is now a MEASURED FAILURE
-   rather than a risk. The mean absolute delivered-share error on `ems-soc-band`
-   is 0.00971 against a Gate 1 band of 5e-03, the maximum is 0.25000, and
+1. The surrogate misprices open-loop stages. **CLOSED 2026-09-02 by the
+   feedforward-aware stage model of section 6.6; Gate 1 now reads 0.000095 mean
+   and 0.003560 maximum and PASSES.** The record of the failure is kept below
+   because it is what selected the fix. The mean absolute delivered-share error
+   on `ems-soc-band`
+   was 0.00971 against a Gate 1 band of 5e-03, the maximum was 0.25000, and
    50.6 % of that stimulus sits in the open-loop regime. Section 6.5 gives the
    mechanism: the surrogate and the roll both model a HOLD, and a re-command
    landing in an open stage produces a feedforward slew instead. **Confirmed on
@@ -967,9 +1043,23 @@ and catches all fourteen.
    `docs/HIL_PLANT.md` §4.4): closed-loop prediction is exact at a median error
    of 1e-5, every open-loop stage carries the error at a mean of 0.045–0.061,
    and the firmware's open-loop branch demonstrably writes the MDACs through a
-   slew limiter rather than holding. The mitigations are the per-decision commit
-   state and the fallback the design already names, rolling the full governor on
-   open stages with a reduced candidate set.
+   slew limiter rather than holding. The mitigation taken was NOT the full-roll
+   fallback but the cheaper fourth configuration the same section named, an
+   open-stage model of the slew itself (section 6.6).
+1b. **CLOSED the same day.** The converter asymmetry was the largest measured
+   delivery-model error - 0.016211 mean at the plant's own `dv0` of 0.013522 V
+   against 0.000323 with the map matched - and it is now in the prediction model:
+   `hil_plant_sim.resolve_asymmetry_dv0_v()` gives the run's injected offset one
+   owner and `mpc_configure_kwargs()` passes it to the strategy.
+1c. **`mpc-sto` FAILS Gate 1 on the measured plant**, at a mean of 0.009019
+   against the 5e-03 band (`mpc-det` reads 0.000323 there). The residual is one
+   `open_hold` stage carrying 0.118574, and its mechanism is the stochastic
+   variant's own conditional-mean demand forecast rather than the delivery model:
+   a forecast that calls a stage closed where the plant leaves it open puts a
+   whole stage of commanded share into the wrong arm. Every registered stimulus
+   is deterministic, so the forecast has nothing to average over. Stated limit;
+   the response is a stimulus drawn from the transition matrix, not a change to
+   the delivery model.
 2. The terminal price is a choice spanning 38 % across its three candidates
    (section 4).
 3. The charger-efficiency change moves the charge lever across the SDP's

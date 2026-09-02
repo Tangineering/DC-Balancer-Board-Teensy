@@ -6179,6 +6179,37 @@ ems_mpc_sto = _MpcProxy("mpc-sto")
 MPC_CAMPAIGN_MAX_CANDIDATES = 1029
 
 
+def resolve_asymmetry_dv0_v(asymmetry_mode, electrical=None, plant=None):
+    """The converter-asymmetry DeltaV0 the run ACTUALLY injects, in volts.
+
+    ONE OWNER FOR ONE QUANTITY.  The banner, the sidecar's `config.asymmetry`
+    block and the MPC's plant model must all quote the same number, and before
+    this helper each site recomputed it: the banner from `electrical` or the
+    mode, the sidecar from `plant` or `electrical`.  A reader comparing a
+    banner against a sidecar was comparing two derivations.
+
+    Resolution order, and why it is this order:
+
+    - a HI-FI engine, when one exists, is the authority.  It holds the two
+      Boost objects that carry the offset, and its `asym_dv0_v` is already net
+      of the sense-arm subtraction `--noise` forces (`asymmetry_dv0_v()`).
+    - the PLANT, in simple mode, for the same reason: the static asymmetry law
+      of `_apply_simple_asymmetry()` reads `plant.asym_dv0_v` directly.
+    - failing both (the banner runs BEFORE the plant is constructed), the mode
+      alone: `off` injects nothing, and anything else injects the fitted value
+      at zero INA offsets.
+
+    PURE.  `--asymmetry off` resolves to exactly 0.0 on every branch, which is
+    the property the MPC's `dv0_v=0.0` shipped default has to keep meaning."""
+    if electrical is not None:
+        return float(electrical.asym_dv0_v)
+    if plant is not None:
+        return float(plant.asym_dv0_v)
+    if asymmetry_mode == "off":
+        return 0.0
+    return float(asymmetry_dv0_v(0.0, 0.0))
+
+
 def parse_share_band(text):
     """`"LO,HI"` -> (lo, hi), refusing anything a ladder cannot be built on.
 
@@ -6195,11 +6226,16 @@ def parse_share_band(text):
     return (lo, hi)
 
 
-def mpc_configure_kwargs(args, meta):
+def mpc_configure_kwargs(args, meta, dv0_v=None):
     """The `--mpc-*` flags and the scenario's own MPC keys, as constructor
     kwargs.  PURE.  Every flag defaults to None and every None is DROPPED, so
-    an untouched command line yields `{}` and the strategy is built exactly as
-    the design ships it."""
+    an untouched command line reproduces the shipped controller — with ONE
+    exception, `dv0_v`, which is always resolved and always passed (see below).
+
+    `dv0_v` names the converter-asymmetry offset the PLANT injects.  A caller
+    that has the run's engines resolves it once and hands it in; `None` means
+    "resolve it from `args` alone", which is what a test or an ad-hoc caller
+    without an engine gets."""
     out = {}
     for flag, kw in (("mpc_horizon", "horizon"),
                      ("mpc_share_levels", "share_levels"),
@@ -6247,6 +6283,39 @@ def mpc_configure_kwargs(args, meta):
                 "mpc_ems.MpcStrategy has no `max_candidates` argument; the run "
                 "would be wall-clock bounded and NOT reproducible")
         out["max_candidates"] = int(cap)
+    # ── THE CONVERTER ASYMMETRY, MODELLED (2026-09-02) ─────────────────────
+    # THE ONE KWARG THAT IS ALWAYS PASSED, and deliberately not a flag.  It is
+    # not a controller tuning choice; it is a PROPERTY OF THE PLANT THIS RUN
+    # DRIVES, and the planner maps the open-loop droop ratio through
+    # `GovernorModel.delivered_share()` with it.  Left at the shipped 0.0 the
+    # MPC's open-stage share prediction error measures 0.016211 against the
+    # plant's own dV0 of 0.013522 V, and 0.000323 with it passed — the largest
+    # remaining prediction-error term, and the operator's standing ruling is
+    # that the MPC must model as many firmware/plant nonlinearities as it can.
+    #
+    # ⚠️ IT MUST BE THE VALUE THE RUN INJECTS, NOT THE FITTED CONSTANT.  Under
+    # `--noise` the sense-arm equivalent is subtracted (`asymmetry_dv0_v()`),
+    # so the injected residual is near zero; a planner handed ASYM_DV0_V there
+    # would model an asymmetry the plant does not have.  `main()` therefore
+    # hands in the engine-resolved value and this fallback is used only by a
+    # caller that has no engine.
+    #
+    # A CHECKOUT WHOSE `mpc_ems` PREDATES THE ARGUMENT is tolerated only while
+    # the asymmetry is OFF, where dropping the kwarg changes nothing.  With a
+    # live asymmetry it is refused loudly: running a plant-unaware planner
+    # against an asymmetric plant is the defect this key exists to close.
+    if dv0_v is None:
+        dv0_v = resolve_asymmetry_dv0_v(
+            getattr(args, "asymmetry", ASYMMETRY_MODE_DEFAULT))
+    dv0_v = float(dv0_v)
+    if mpc_supports_kwarg("dv0_v"):
+        out["dv0_v"] = dv0_v
+    elif dv0_v != 0.0:
+        raise ValueError(
+            "this run injects a converter asymmetry of %+.6f V but this "
+            "checkout's mpc_ems.MpcStrategy has no `dv0_v` argument; the "
+            "planner would predict the delivered share on a symmetric plant"
+            % dv0_v)
     # NOT read here: `mpc_soc_ref_offset`.  MpcStrategy.bind_scenario() reads it
     # off `meta` itself (it is a BINDING, applied after reset()), exactly as
     # SdpStrategy.bind_scenario() reads `sdp_soc_ref_offset`.  Passing it as a
@@ -8350,22 +8419,14 @@ SCENARIOS["ems-mpc-cross"] = {
     "ems_v_profile": SCENARIOS["ems-sdp-cross"]["ems_v_profile"],
     # DETERMINISTIC CANDIDATE CAP — see MPC_CAMPAIGN_MAX_CANDIDATES.
     "mpc_max_candidates": MPC_CAMPAIGN_MAX_CANDIDATES,
-    # SOLVE BUDGET 10 -> 15 ms, THIS LEG ONLY (2026-09-02, campaign
-    # hil_report_20260902_041414). MEASURED after the candidate cap was lifted
-    # to 1029: this leg's MEDIAN solve reaches the 10 ms budget and 57.4 % of
-    # its decisions expire, against 6.6 % on `ems-mpc` and 10.3 % on
-    # `ems-ftp75-mpc` — i.e. most of this run is commanded by a shifted
-    # incumbent rather than by a fresh plan. The SEARCH is deliberately
-    # unchanged; only the time it is given moves.
-    # THE CALLBACK ARITHMETIC, in the terms of mpc_ems.BUDGET_MS_DEFAULT's own
-    # note: a decision callback costs at most the budget (15.0) + one candidate
-    # rollout of overshoot (0.012) + a roll slice (ROLL_BUDGET_MS_DEFAULT 2.0)
-    # + one chunk of overshoot (0.296, measured) + the 50 Hz surface's own work
-    # (0.17, measured) = 17.478 ms, against the 20 ms command period and the
-    # 18 ms working bound. It fits with 2.5 ms of margin on the period; at
-    # 16 ms it would not clear the 18 ms bound, which is why the step stops
-    # here.
-    "mpc_budget_ms": 15.0,
+    # NO `mpc_budget_ms` KEY ANY MORE (removed 2026-09-02, nonlinearity round).
+    # This leg carried 15.0 ms because at the 10 ms default it expired on
+    # 57.4 % of its decisions once the candidate cap was lifted to 1029. The
+    # ADAPTIVE budget and the ladder coarsening removed that expiry AT THE
+    # DEFAULT: 0 % expiry at a 7.41 ms median solve. A scenario key that no
+    # longer changes anything is worse than an absent one, because it reads as
+    # a still-measured need. The KEY MECHANISM itself is unchanged and still
+    # tested (`mpc_configure_kwargs()`); only this leg's declaration is gone.
 }
 
 # ── mppt-tracking: the Ag105 MPPT input-voltage threshold, closed-loop ──────
@@ -9790,12 +9851,7 @@ def main(argv=None):
         # rather than read off `plant` because the banner precedes its
         # construction.  Hi-fi carries the F2 droop scaling; simple mode does
         # not (see the Plant asymmetry block for why).
-        if electrical is not None:
-            _asym_dv0 = electrical.asym_dv0_v
-        elif asymmetry_mode == "off":
-            _asym_dv0 = 0.0
-        else:
-            _asym_dv0 = asymmetry_dv0_v(0.0, 0.0)
+        _asym_dv0 = resolve_asymmetry_dv0_v(asymmetry_mode, electrical)
         print("[hil] asymmetry=%s (injected dV0 %+.6f V, droop_scale_fc %.4f, "
               "noise=%s)"
               % (asymmetry_mode, _asym_dv0, ASYM_DROOP_SCALE_FC
@@ -9887,7 +9943,14 @@ def main(argv=None):
             # for it (it is a placement on the SoC axis, i.e. a property of the
             # scenario, exactly as `sdp_soc_ref_offset` is).
             if isinstance(ems_policy, _MpcProxy):
-                _mk = mpc_configure_kwargs(args, meta)
+                # The asymmetry the PLANT of this run injects, resolved off the
+                # engines that were just constructed (never off the fitted
+                # constant — `--noise` moves it) and handed to the planner so
+                # its open-loop share prediction is made on the plant it drives.
+                _mk = mpc_configure_kwargs(
+                    args, meta,
+                    dv0_v=resolve_asymmetry_dv0_v(asymmetry_mode, electrical,
+                                                  plant))
                 ems_policy.configure(**_mk)
                 if _mk:
                     print("[hil] MPC overrides: "

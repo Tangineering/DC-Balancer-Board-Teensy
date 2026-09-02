@@ -9998,21 +9998,36 @@ def _mpc_ns(**over):
     base = dict(mpc_horizon=None, mpc_share_band=None, mpc_share_levels=None,
                 mpc_budget_ms=None, mpc_roll_budget_ms=None,
                 mpc_terminal_price=None, mpc_h2_map=None,
-                mpc_max_candidates=None)
+                mpc_max_candidates=None,
+                # The plant switch the planner's asymmetry model is resolved
+                # from. Present on the real parser (`--asymmetry`), so a
+                # namespace that omitted it would test a code path main() never
+                # takes.
+                asymmetry=hil.ASYMMETRY_MODE_DEFAULT)
     base.update(over)
     return argparse.Namespace(**base)
+
+
+def _mpc_dv0(kw):
+    """`dv0_v` out of a kwargs dict, so the assertions below read as one line."""
+    return kw["dv0_v"]
 
 
 def test_mpc_configure_kwargs_defaults_to_the_shipped_design():
     """Every `--mpc-*` flag defaults to None and every None is DROPPED, so an
     untouched command line reproduces the shipped controller exactly. That is
-    the property that makes a scenario's `ems` key alone reproducible."""
-    # `{}` on a scenario that declares no MPC key at all...
-    assert hil.mpc_configure_kwargs(_mpc_ns(), {}) == {}
-    # ...and on a registered leg, ONLY the deterministic candidate cap, which is
-    # a scenario declaration rather than a controller default.
+    the property that makes a scenario's `ems` key alone reproducible.
+
+    `dv0_v` is the ONE exception and is always present: it is not a tuning
+    choice but a property of the plant the run drives (2026-09-02)."""
+    # Nothing but the asymmetry on a scenario that declares no MPC key at all...
+    assert hil.mpc_configure_kwargs(_mpc_ns(), {}) == {
+        "dv0_v": hil.ASYM_DV0_V}
+    # ...and on a registered leg, that plus ONLY the deterministic candidate
+    # cap, which is a scenario declaration rather than a controller default.
     assert hil.mpc_configure_kwargs(_mpc_ns(), hil.SCENARIOS["ems-mpc"]) == {
-        "max_candidates": hil.MPC_CAMPAIGN_MAX_CANDIDATES}
+        "max_candidates": hil.MPC_CAMPAIGN_MAX_CANDIDATES,
+        "dv0_v": hil.ASYM_DV0_V}
     # The scenario's own SoC placement is NOT smuggled in here: the strategy's
     # bind_scenario() reads it off `meta`, so passing it as a constructor kwarg
     # too would give one quantity two owners.
@@ -10021,22 +10036,28 @@ def test_mpc_configure_kwargs_defaults_to_the_shipped_design():
 
 
 def test_mpc_budget_ms_scenario_key_is_the_fallback_not_an_override():
-    """Campaign C item 2: `ems-mpc-cross` expired on 57.4 % of its decisions at
-    the 10 ms default after the cap lift, so that leg alone carries 15 ms. The
-    key is a FALLBACK — a command-line budget still wins — and every other leg
-    keeps mpc_ems.BUDGET_MS_DEFAULT untouched."""
+    """The KEY MECHANISM, which outlived the one leg that used it.
+
+    `ems-mpc-cross` carried 15.0 ms because it expired on 57.4 % of its
+    decisions at the 10 ms default once the candidate cap was lifted. The
+    adaptive budget and the ladder coarsening removed that expiry AT THE
+    DEFAULT (0 % at a 7.41 ms median), so the key was removed from that leg on
+    2026-09-02 — but the fallback itself is still how a per-stimulus budget
+    would be declared, so it is pinned here against a synthetic meta dict."""
     import mpc_ems
-    assert hil.SCENARIOS["ems-mpc-cross"]["mpc_budget_ms"] == 15.0
-    kw = hil.mpc_configure_kwargs(_mpc_ns(), hil.SCENARIOS["ems-mpc-cross"])
-    assert kw["budget_ms"] == 15.0
-    for leg in ("ems-mpc", "ems-mpc-sto", "ems-ftp75-mpc"):
+    # NO registered leg declares one any more: a key that changes nothing reads
+    # as a measured need.
+    for leg in MPC_SCENARIOS:
         assert "mpc_budget_ms" not in hil.SCENARIOS[leg]
         assert "budget_ms" not in hil.mpc_configure_kwargs(
             _mpc_ns(), hil.SCENARIOS[leg])
-    # The flag wins over the scenario key.
+    # The mechanism: a scenario key is the FALLBACK...
+    assert hil.mpc_configure_kwargs(
+        _mpc_ns(), {"mpc_budget_ms": 15.0})["budget_ms"] == 15.0
+    # ...and the flag still wins over it.
     assert hil.mpc_configure_kwargs(
         _mpc_ns(mpc_budget_ms=4.0),
-        hil.SCENARIOS["ems-mpc-cross"])["budget_ms"] == 4.0
+        {"mpc_budget_ms": 15.0})["budget_ms"] == 4.0
     # THE CALLBACK BOUND, recomputed here so a future budget change cannot
     # quietly outgrow the 20 ms command period: budget + one candidate rollout
     # of overshoot (0.012 ms) + the roll slice + one chunk of overshoot
@@ -10074,7 +10095,8 @@ def test_mpc_flags_reach_the_constructor_kwargs():
                 mpc_terminal_price="metric", mpc_h2_map="proxy"), {})
     assert kw == {"horizon": 8, "share_band": (0.30, 0.70), "share_levels": 5,
                   "budget_ms": 3.0, "roll_budget_ms": 0.5,
-                  "terminal_price_mode": "metric", "h2_map": "proxy"}
+                  "terminal_price_mode": "metric", "h2_map": "proxy",
+                  "dv0_v": hil.ASYM_DV0_V}
 
 
 def test_mpc_flags_exist_on_the_command_line():
@@ -10114,6 +10136,83 @@ def test_mpc_max_candidates_is_refused_when_the_strategy_has_none():
     else:
         with pytest.raises(ValueError, match="max_candidates"):
             hil.mpc_configure_kwargs(ns, {})
+
+
+# ── the converter asymmetry reaches the planner (2026-09-02) ───────────────
+def test_resolve_asymmetry_dv0_v_is_one_owner_for_one_quantity():
+    """The banner, the sidecar and the MPC must quote the SAME injected dV0.
+
+    Mode alone (the banner's own case, which runs before the plant exists),
+    then each engine in the order the resolver states."""
+    assert hil.resolve_asymmetry_dv0_v("off") == 0.0
+    assert hil.resolve_asymmetry_dv0_v("measured") == hil.ASYM_DV0_V
+    # A hi-fi engine is the authority when one exists...
+    class _Elec:
+        asym_dv0_v = 0.007
+    assert hil.resolve_asymmetry_dv0_v("measured", _Elec()) == 0.007
+    # ...and the plant is, in simple mode, where the static law reads it.
+    class _Plant:
+        asym_dv0_v = 0.011
+    assert hil.resolve_asymmetry_dv0_v("measured", None, _Plant()) == 0.011
+    # An engine OUTRANKS the plant: `--noise` nets the sense arm out of the
+    # hi-fi value and the simple plant never sees that subtraction.
+    assert hil.resolve_asymmetry_dv0_v(
+        "measured", _Elec(), _Plant()) == 0.007
+
+
+def test_mpc_planner_is_given_the_asymmetry_the_run_injects():
+    """The largest remaining open-stage prediction-error term. At the shipped
+    `dv0_v=0.0` the MPC's open-stage share prediction error measures 0.016211
+    against the plant's own 0.013522 V, and 0.000323 with it passed."""
+    # Default asymmetry -> the fitted offset reaches the constructor kwargs...
+    assert _mpc_dv0(hil.mpc_configure_kwargs(
+        _mpc_ns(), hil.SCENARIOS["ems-mpc"])) == hil.ASYM_DV0_V == 0.013522
+    # ...and `--asymmetry off` resolves to EXACTLY 0.0, which is the shipped
+    # default's meaning: no asymmetry modelled because none is injected.
+    assert _mpc_dv0(hil.mpc_configure_kwargs(
+        _mpc_ns(asymmetry="off"), hil.SCENARIOS["ems-mpc"])) == 0.0
+    # An explicit value from the caller (main() hands in the ENGINE-resolved
+    # one, which `--noise` moves) overrides the args-only fallback.
+    assert _mpc_dv0(hil.mpc_configure_kwargs(
+        _mpc_ns(), {}, dv0_v=0.004)) == 0.004
+    assert _mpc_dv0(hil.mpc_configure_kwargs(
+        _mpc_ns(asymmetry="off"), {}, dv0_v=0.004)) == 0.004
+
+
+def test_mpc_main_resolves_dv0_off_the_engines_not_off_the_constant():
+    """The call site's shape, asserted on the source: a planner handed
+    ASYM_DV0_V on a `--noise` run would model an asymmetry the plant nets out,
+    so main() must resolve it through the engines it just built."""
+    src = open(os.path.join(HERE, "hil_plant_sim.py"), encoding="utf-8").read()
+    assert ("dv0_v=resolve_asymmetry_dv0_v(asymmetry_mode, electrical,\n"
+            "                                                  plant)") in src
+
+
+def test_mpc_sidecar_records_the_dv0_it_was_built_with():
+    """`config.mpc` is `mpc_src.provenance` verbatim, so the planner's own
+    provenance is what a reader gets. The value must be the one passed."""
+    proxy = hil._MpcProxy("mpc-det")
+    proxy.configure(**hil.mpc_configure_kwargs(
+        _mpc_ns(), hil.SCENARIOS["ems-mpc"]))
+    prov = proxy.bind_scenario("ems-mpc", hil.SCENARIOS["ems-mpc"])
+    assert prov["dv0_v"] == hil.ASYM_DV0_V
+    # ...and the symmetric plant records 0.0 rather than omitting the key.
+    proxy_off = hil._MpcProxy("mpc-det")
+    proxy_off.configure(**hil.mpc_configure_kwargs(
+        _mpc_ns(asymmetry="off"), hil.SCENARIOS["ems-mpc"]))
+    prov_off = proxy_off.bind_scenario("ems-mpc", hil.SCENARIOS["ems-mpc"])
+    assert prov_off["dv0_v"] == 0.0
+
+
+def test_mpc_cross_no_longer_declares_a_solve_budget():
+    """Removed 2026-09-02: the adaptive budget and the ladder coarsening took
+    that leg to 0 % expiry at a 7.41 ms median, so the 15 ms key changed
+    nothing and read as a still-measured need."""
+    assert "mpc_budget_ms" not in hil.SCENARIOS["ems-mpc-cross"]
+    src = open(os.path.join(HERE, "hil_plant_sim.py"), encoding="utf-8").read()
+    assert '"mpc_budget_ms": 15.0' not in src
+    # The KEY is still read — the mechanism outlived its one user.
+    assert '"mpc_budget_ms"' in src
 
 
 def test_mpc_proxy_configure_refuses_after_the_build():
