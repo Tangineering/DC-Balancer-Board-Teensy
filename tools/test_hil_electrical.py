@@ -2184,3 +2184,92 @@ def test_charger_stamp_is_inert_on_a_dark_node():
     # ...and the charger contributed NOTHING to the clamp count. The retired
     # current-source form roughly DOUBLED it (one extra catch per substep).
     assert e.neg_clamp_count == e0.neg_clamp_count
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# PLANT-R1-N4 — is the reported I_fc an honest INA253 proxy?
+#
+# Finding (docs/reviews/hil-plant/ledger.md): "FC_BUS.i as an INA proxy may
+# under-report a bus load step by half at one operating point."  Resolved
+# REJECTED: the "half" is the two-source share split, not a sense-point defect.
+# These tests pin the probe's central quantities so the resolution stays
+# reproducible from the suite.  Probe: tools/probes/probe_n4_ina_proxy.py.
+# ─────────────────────────────────────────────────────────────────────────
+
+_N4_PROBE_PATH = os.path.join(HERE, "probes", "probe_n4_ina_proxy.py")
+
+
+def _load_n4_probe():
+    import importlib.util
+    if not os.path.exists(_N4_PROBE_PATH):
+        pytest.skip("PLANT-R1-N4 probe not present")
+    spec = importlib.util.spec_from_file_location("probe_n4_ina_proxy",
+                                                  _N4_PROBE_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.fixture(scope="module")
+def n4_probe():
+    return _load_n4_probe()
+
+
+def test_plant_r1_n4_reported_i_fc_is_the_true_ina_branch_current(n4_probe):
+    """The sensor the firmware receives IS the solved INA-shunt branch current,
+    lagged exactly one substep (Rt1987.i is refreshed at the top of update()).
+
+    The board's INA253A1 sits between the TPS61288 output and the RT1987 input
+    (schematic sheets 1-2), which is the same branch the engine reports.  Pinned:
+    the reported value at substep k equals the branch current solved at k-1.
+    """
+    p = n4_probe
+    _e, rows, n_pre = p.run_case(0.60, 0.5, 0, settle_ticks=250, window_ticks=20)
+    # Check across the whole transient, not just one sample.
+    for k in range(n_pre, len(rows) - 1):
+        assert abs(rows[k + 1]["i_rep_fc"] - rows[k]["i_ina_fc"]) < 1e-9
+        assert abs(rows[k + 1]["i_rep_bt"] - rows[k]["i_ina_bt"]) < 1e-9
+
+
+def test_plant_r1_n4_bus_and_boost_node_charge_balance_closes(n4_probe):
+    """Every current into VBUS and into the FC boost-output node sums to zero
+    across the load step, so no branch is missing from the sense-point account."""
+    p = n4_probe
+    _e, rows, n_pre = p.run_case(0.60, 0.5, 0, settle_ticks=250, window_ticks=20)
+    for r in rows[n_pre:n_pre + p.N_SUB]:
+        bus = (r["i_ina_fc"] + r["i_ina_bt"] - r["i_mot_pwr"] - r["i_aux"]
+               - r["i_c_bus"] - r["i_bleed_bus"])
+        ofc = (r["i_out_fc"] - r["i_ina_fc"] - r["i_c_ofc"]
+               - r["v_ofc"] / he.R_NODE_BLEED)
+        assert abs(bus) < 1e-9, "VBUS node residual %.3e A" % bus
+        assert abs(ofc) < 1e-9, "boost-output node residual %.3e A" % ofc
+
+
+def test_plant_r1_n4_first_firmware_sample_carries_the_whole_channel_step(n4_probe):
+    """At the 1 kHz sample the firmware actually reads, the reported step is
+    within 2 % of the boost's own output step -- not half of it."""
+    p = n4_probe
+    _e, rows, n_pre = p.run_case(0.60, 0.5, 0, settle_ticks=250, window_ticks=20)
+    res = p.analyse(rows, n_pre, "mid / 1-tick step")
+    assert 0.98 <= res["ratio_rep_out_tick1"] <= 1.02
+    assert 0.99 <= res["ratio_rep_out_set"] <= 1.01
+
+
+def test_plant_r1_n4_half_step_is_the_share_split_not_a_sense_defect(n4_probe):
+    """THE central pin.  With both sources bussed at share 0.5 each channel
+    reports ~0.51 of the whole bus step (the split).  With BT_BUS open the FC
+    channel reports ~1.00 of the same step.  A sense-point defect would survive
+    the single-source control; the share split cannot."""
+    p = n4_probe
+    _e, rows, n_pre = p.run_case(0.60, 0.5, 0, settle_ticks=250, window_ticks=20)
+    f_fc, f_bt = p.share_of_bus_step(rows, n_pre, 0.5)
+    assert 0.45 <= f_fc <= 0.55
+    assert 0.45 <= f_bt <= 0.55
+    assert 0.98 <= f_fc + f_bt <= 1.02
+
+    _e2, rows2, n_pre2 = p.run_case(0.60, 0.5, 0, settle_ticks=250,
+                                    window_ticks=20, sw=p.SW_FC_ONLY,
+                                    aux=he.AUX_FC_REG)
+    s_fc, s_bt = p.share_of_bus_step(rows2, n_pre2, 0.5)
+    assert s_fc >= 0.97, "single-source FC step fraction %.4f" % s_fc
+    assert s_bt == 0.0

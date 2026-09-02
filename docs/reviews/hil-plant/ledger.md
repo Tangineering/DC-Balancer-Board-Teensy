@@ -17,4 +17,4 @@ stated explicitly in the run record.
 | PLANT-R1-F8 | accepted (minor) | 15 of 17 line citations stale, one wrong file | Symbol + pinning-test references |
 | PLANT-R1-N2 | accepted (minor) | mppt peak-tripwire note predicted 21-22; measured 19 because the floor binds | V_chg +0.487 V mean; windowed-min − 3 V < 12.32 V |
 | PLANT-R1-N1 | accepted (nit) | Dangling fragment at :768 | Repair |
-| PLANT-R1-N4 | open (unverified) | FC_BUS.i INA proxy may under-report a bus load step by half at one point | Needs a reproducible operating-point test |
+| PLANT-R1-N4 | rejected (2026-09-02) | `FC_BUS.i` is an honest INA253 proxy; the "half" is the two-source share split, not a sense-point defect | Sense points coincide (schematic sheets 1-2); reported step is 0.9931 of the boost-output step at the first 1 kHz sample and 1.0005 settled, invariant over 3 operating points and both step shapes; single-source control recovers 0.9990 of the whole bus step; node charge balance closes to 3.9e-13 A. Probe `tools/probes/probe_n4_ina_proxy.py`; pins in `tools/test_hil_electrical.py` (4 tests). See run-001 "N4 resolution" |

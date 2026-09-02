@@ -19,6 +19,13 @@ authority over this file if they disagree — update this file when they diverge
 - Per run: `hil_scenario_<name>_<mode>.csv` / `hil_replay_<LOG>.csv` (1 kHz rows),
   `<csv>.meta.json` sidecar, `<csv>.events.jsonl` (hifi only), `run_<kind>_<name>.log`.
 - `REPORT.md` — human rendering; under `--dashboard` the rate gate is SKIPPED-and-labeled.
+- `EMS_COMPARISON.md` + `ems_comparison.json` + `ems_comparison/*.png` — written by
+  `tools/hil_ems_comparison.py` (also invoked, lookup-only, at the end of every
+  `hil_report_analysis.py` pass): per drive stimulus, the strategy trade-off figure, the
+  overlaid h2/SoC traces, and the eq-H2 ranking table against the matched-DP bound. Every
+  number in the MD comes from `ems_comparison.json`; the **Commentary section is written
+  by a human** and is the only hand-written part of the file. A regenerate reads that
+  section back and carries it forward, so re-running the stage never loses it.
 
 ## Sidecar (`<csv>.meta.json`)
 

@@ -84,6 +84,16 @@
   },
   {
    "converged": true,
+   "created_utc": "2026-09-02T19:24:30Z",
+   "h2_dp_g": 0.0220420713374325,
+   "key": "cb129a532617edcbf00e50b92d3d990b14de2dbe1d00d5f0f955972ab7b7fb5a",
+   "non_target_hash": "17de0b78ed6e05732566b11f5c6c2c4bd1ca33b9b3e83bf85f1f84dab5f5e075",
+   "scenario": "ems-ftp75-mpc",
+   "target_soc": 0.68619,
+   "target_soc_q": 0.68619
+  },
+  {
+   "converged": true,
    "created_utc": "2026-09-02T01:00:31Z",
    "h2_dp_g": 0.061685812781303244,
    "key": "17bac84aab15d98e1624dfd5298d9b361abe6a877cfd1073ca9346bb9201478e",
@@ -111,6 +121,16 @@
    "scenario": "ems-ftp75-socband",
    "target_soc": 0.68467,
    "target_soc_q": 0.68467
+  },
+  {
+   "converged": true,
+   "created_utc": "2026-09-02T19:13:09Z",
+   "h2_dp_g": 0.03941390418548993,
+   "key": "6b8b6d21e6f9d54a51d964d61f4cf2b1aff82ba8eca211622097e07f1693d544",
+   "non_target_hash": "1a668f456e0d8ff056a3acebb75cffffa34267a318615ef416ee4867a395f313",
+   "scenario": "ems-ftp75-socband",
+   "target_soc": 0.69325,
+   "target_soc_q": 0.69325
   },
   {
    "converged": true,

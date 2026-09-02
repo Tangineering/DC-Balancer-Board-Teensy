@@ -50,6 +50,13 @@ proposes a fix.
    after `results.json` reports `"partial": false`. Caveats the tool already encodes
    (trust its markings, do not re-derive): post-grace vs whole-run fault unions,
    open-loop replay semantics, pre-v18 different-law `*` and unknown-fw `?` markers.
+   The pass also renders the **EMS-strategy comparison** (`tools/hil_ems_comparison.py`)
+   whenever two or more EMS runs share one drive stimulus: `EMS_COMPARISON.md`,
+   `ems_comparison.json` and `ems_comparison/*.png`, linked from `ANALYSIS_SUMMARY.md`.
+   It runs in **lookup mode only** here — it never solves a matched-DP bound, so a leg
+   with no cached bound renders `no_cached_solve` and is filled in at Stage 4. A
+   `--runs` invocation skips the stage entirely, because a subset would silently drop
+   legs from a ranking document.
 
 1. Read this skill's `references/hil-conventions.md` (the anti-artifact block) and the
    PREVIOUS campaign's `HIL_FINDINGS.md` — it is the baseline every regression brief
@@ -144,6 +151,19 @@ When the suite completes (`partial: false`) and all agents have reported:
 0. LIVE mode: run `tools/hil_report_analysis.py` on the folder now (see Stage 0 item 0)
    — the per-run figures and deviation metrics feed the FINAL SUMMARY, and the
    reorganized subfolders are the layout the summary's file references should use.
+0b. **Close the EMS-strategy comparison.** If any FTP-75 or other EMS leg in
+   `ems_comparison.json` carries a bound status other than `ok`, run the solve pass:
+   `python tools/hil_ems_comparison.py "HIL Results/hil_report_<ts>" --matched-dp solve
+   --matched-dp-allow-long --force` (miniforge python; **one FTP-75 bound costs of the
+   order of 12 min wall**, solves run sequentially, and the results persist to
+   `tools/dp_db/` so a re-run is a cache hit). Do NOT run it concurrently with a live
+   suite or with an energy-tolerance test — the hi-fi engine's substep is wall-clock
+   adaptive. Then write the **Commentary** section of `EMS_COMPARISON.md` BY HAND,
+   replacing the `<!-- COMMENTARY: orchestrator fills this in -->` marker, sourcing every
+   claim from `HIL_FINDINGS.md`. The rest of the document is generated: never hand-edit
+   a table or a figure reference, and the Commentary carries no number that is absent
+   from `ems_comparison.json`. A later regenerate READS THE COMMENTARY BACK and carries
+   it forward verbatim, so re-running the stage after the Commentary is written is safe.
 1. Append a **FINAL SUMMARY** section to `HIL_FINDINGS.md`: corrected scoreboard (with
    the suite's own tally if they differ), hardware firsts, repeatability results, the
    FAIL classifications, cross-cutting discoveries, the ranked fix queue, and the

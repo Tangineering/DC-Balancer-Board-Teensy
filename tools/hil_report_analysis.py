@@ -125,6 +125,17 @@ def _replay_suite_module():
     return hil_replay_suite
 
 
+def _ems_comparison_module():
+    """tools/hil_ems_comparison.py, imported lazily.
+
+    Deferred because that module imports THIS one: resolving the cycle at
+    call time rather than at import time keeps both modules importable on
+    their own.
+    """
+    import hil_ems_comparison
+    return hil_ems_comparison
+
+
 def ems_strategy_role(strategy_name):
     """("frontier"|"demonstration"|None) for an EMS strategy name.
 
@@ -2515,8 +2526,15 @@ def _render_matched_dp_summary(analyses):
     return L
 
 
-def render_summary_markdown(meta, analyses, errors):
-    """ANALYSIS_SUMMARY.md body for a whole report."""
+def render_summary_markdown(meta, analyses, errors, ems_comparison=None):
+    """ANALYSIS_SUMMARY.md body for a whole report.
+
+    `ems_comparison` is the relative path of the EMS-strategy comparison
+    document when hil_ems_comparison rendered one for this campaign, and None
+    when the campaign holds no comparable group. The link is emitted only in
+    the first case: a link to a file that was never written is worse than no
+    link at all.
+    """
     L = ["# HIL report analysis summary", "",
          "- report date: %s" % meta.get("date", "—"),
          "- target fw: v%s" % meta.get("target_fw", "—"),
@@ -2583,6 +2601,17 @@ def render_summary_markdown(meta, analyses, errors):
           "separate rows.", ""]
 
     L += _render_matched_dp_summary(analyses)
+
+    if ems_comparison:
+        L += ["## EMS strategy comparison", "",
+              "The cross-strategy comparison of this campaign's "
+              "energy-management runs, grouped by drive stimulus, is in "
+              "[%s](%s). Its figures are under `%s/` and every number it "
+              "quotes is in `%s`."
+              % (ems_comparison, ems_comparison,
+                 _ems_comparison_module().FIGURE_SUBDIR,
+                 _ems_comparison_module().JSON_NAME),
+              ""]
 
     if errors:
         L += ["## Errors", ""]
@@ -2768,12 +2797,40 @@ def analyze_report(report_dir, only=None, no_move=False, force=False,
             continue
         _save(fig, out)
 
+    # ── EMS-STRATEGY COMPARISON STAGE ───────────────────────────────────────
+    # Runs AFTER every per-run analysis.json exists, because it reads those
+    # files rather than the in-memory analyses, and BEFORE ANALYSIS_SUMMARY.md
+    # is written, so the summary can link only a document that exists.
+    #
+    # ALWAYS in `lookup` mode: a matched-DP solve is tens of minutes for one
+    # FTP-75 leg, and a routine analysis pass must never silently become that.
+    # A missing bound renders as a status in the comparison table; the operator
+    # fills it in with an explicit
+    # `hil_ems_comparison.py --matched-dp solve --matched-dp-allow-long` pass.
+    #
+    # A `--runs` invocation is skipped outright: the comparison ranks runs
+    # against each other, and a subset rewrite would silently drop legs from a
+    # published document.
+    ems_doc = None
+    if not only:
+        try:
+            payload = _ems_comparison_module().build_ems_comparison(
+                report_dir, matched_dp="lookup", matched_dp_tol=matched_dp_tol,
+                matched_dp_strict=matched_dp_strict, force=force, log=log)
+            if payload:
+                ems_doc = _ems_comparison_module().MARKDOWN_NAME
+        except Exception as exc:            # never fail the analysis pass
+            log("[hil_report_analysis] EMS comparison stage failed: %s: %s"
+                % (type(exc).__name__, exc))
+            traceback.print_exc(file=sys.stderr)
+
     write_json_atomic(report_dir / "analysis_summary.json",
                       {"meta": meta,
                        "runs": analyses,
                        "errors": [{"run": n, "error": m} for n, m in errors]})
     write_text_atomic(report_dir / "ANALYSIS_SUMMARY.md",
-                      render_summary_markdown(meta, analyses, errors))
+                      render_summary_markdown(meta, analyses, errors,
+                                              ems_comparison=ems_doc))
     return analyses, errors
 
 
