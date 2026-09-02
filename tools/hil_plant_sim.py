@@ -1322,6 +1322,16 @@ class Plant:
         self.e_brake_mech_j = 0.0         # J  taken off the flywheel by the VESC
         self.regen_chopper_w = 0.0        # W  simple mode only (hi-fi: engine)
         self.regen_chopper_energy_j = 0.0 # J  simple mode only (hi-fi: engine)
+        # ── Per-tick power balance (2026-09-01f) ────────────────────────────
+        # Observers only; see the block at the end of step() for the identity
+        # they express and the named residual terms.  Seeded to 0.0 so a Plant
+        # that has never stepped reads as "no power anywhere", which is true.
+        self.p_mot_w = 0.0
+        self.p_fc_w = 0.0
+        self.p_batt_w = 0.0
+        self.p_chop_w = 0.0
+        self.p_aux_w = 0.0
+        self.p_bal_w = 0.0
         self.i_charge = 0.0           # A   measured charge current (reg 0x06 equivalent)
         self.chg_powered_s = 0.0      # s   time the charger input has been continuously live
         self.chg_fault = False        # scenario-driven charger-input collapse
@@ -1726,6 +1736,96 @@ class Plant:
         # reason.
         self.h2.step(self.fuel_cell.v_terminal * self.fuel_cell.i, dt)
 
+        # ── Per-tick power balance (2026-09-01f, both electrical modes) ──────
+        # Pure OBSERVERS.  Nothing in the plant, the electrical engine, the
+        # injection frame or any policy reads these back, so they cannot change a
+        # trace — the same contract the h2 and regen-energy counters hold.
+        #
+        # THE IDENTITY THE OPERATOR ASKED FOR, and the honest form of it:
+        #     p_mot = p_fc + p_batt + p_chop + p_bal
+        # `p_bal` is written out so a consumer can test the identity per tick
+        # without recomputing it.  It is NOT zero, and the named terms it
+        # contains are, in descending magnitude:
+        #   1. the auxiliary housekeeping load, -p_aux (I_AUX_A plus any scenario
+        #      preload/drain, on VBUS).  It is the dominant component and is
+        #      written out as its own column so a reader can subtract it.
+        #   2. THE CHARGER, and it is NOT an efficiency term.  ⚠️ This model's
+        #      Ag105 is a 1:1 CURRENT transfer element: hil_electrical.py:1949
+        #      stamps `J[N_CHG] -= i_charge` and :1855 hands the pack THE SAME
+        #      `i_charge`, so the model destroys i_charge*(V_chg - V_batt) by
+        #      construction.  Measured on the 6 s probe: 1.4 A * 7.9 V =
+        #      11.06 W against a residual of 11.08 W — the whole charge-window
+        #      residual, to two decimals.  A real buck at eta ~ 0.9 would draw
+        #      ~0.79 A from a 15 V bus to deliver 1.4 A at 7.9 V, so THE PLANT
+        #      OVER-DRAWS THE BUS BY ROUGHLY 1.8x WHILE CHARGING.
+        #      TODO(verify: Ag105 eta).  Consequence, stated because it is
+        #      load-bearing elsewhere: this over-draw bills the sources for
+        #      hydrogen the real charger would not cost, so it bears directly on
+        #      campaign 20260901_000816's "Ag105 charging is loss-making at rig
+        #      scale" conclusion and on the measured charge lever L_chg =
+        #      0.2364 SoC/g behind sdp_policy_v3's alpha calibration.  ⚠️ SIMPLE
+        #      MODE IS THE OPPOSITE ERROR: Plant.step() computes
+        #      `i_total = i_motor + i_aux` (see the line above and the banner at
+        #      :2897) and never charges the sources for the charger at all, so
+        #      pack charge there is FREE energy and the residual flips sign.
+        #      Neither is corrected here — the plant is not changed by an
+        #      observer, and the choice is an operator decision.
+        #   3. bulk-capacitor storage, d/dt(0.5*C*V^2) on the VBUS 470 uF and, in
+        #      hi-fi, on the other node capacitances.
+        #   4. the hi-fi motor stamp's own transient term.  The load is stamped
+        #      as a conductance g_mot = i_motor/v_prev (hil_electrical.py:1925),
+        #      so the solved tick actually draws i_motor*v_new^2/v_prev while
+        #      p_mot books i_motor*v_new — a difference of
+        #      i_motor*v_new*(v_new - v_prev)/v_prev.  With (3) this is what
+        #      makes the motoring residual peak near 13 W during bring-up while
+        #      its steady-state mean is under 0.4 W.
+        #   5. RT1987 ideal-diode drops, i_motor*(V_bus - V_rgn): SMALL, <= 35 mW
+        #      at 1 A (the servo holds ~35 mV, not a PN Vf).
+        # A reader who wants only 2-5 reads `p_bal_w - p_aux_w`.
+        #
+        # WHY p_mot IS BOOKED AT V-MOT AND NOT AT VBUS: the REGEN SIGN, not the
+        # diode drop.  Braking power enters the network at N_MOT and leaves
+        # through REGEN to the charger, never back through MOT_PWR (the RT1987
+        # blocks reverse).  A VBUS booking, V_bus*i_motor, is therefore
+        # IDENTICALLY ZERO throughout every braking window — it would show no
+        # returned energy at all.  The RT1987 drop that item 5 adds to the
+        # residual is the price of that correctness, and it is negligible.
+        #
+        # MOTORING AND BRAKING NEVER OVERLAP: p_mech is p_shaft clipped at zero
+        # and p_regen_w is (-p_shaft)*ETA_REGEN clipped at zero, from ONE
+        # p_shaft, so at most one of the two is non-zero on any tick.  i_motor is
+        # therefore zero whenever p_regen_w is positive, and the two branches of
+        # p_mot_w below are exclusive by construction, not by convention.
+        #   motoring: +i_motor * v_rgn  (the draw the V-MOT node presents)
+        #   braking:  -p_regen_w        (electrical power returned at V-MOT)
+        # i_motor also carries `i_mot_extra`, the scenario load BEHIND MOT_PWR,
+        # which sits on the same node.
+        self.p_mot_w = (i_motor * self.v_rgn) - self.p_regen_w
+        # BUS-SIDE fuel-cell power.  This is NOT the stack power the Gfc
+        # hydrogen metric integrates (that is v_terminal*i on the SOURCE side,
+        # see the H2Consumption call above); the two differ by the boost
+        # efficiency and the boost's voltage ratio.  Do not substitute one for
+        # the other.
+        self.p_fc_w = self.v_bus * self.i_fc
+        # NET pack power: the bus-side draw of the battery boost, minus the power
+        # the Ag105 delivers into the pack TERMINALS (the pack's own I^2*R sits
+        # inside that boundary and is not separated out).  The charge term uses
+        # `i_charge` and
+        # the pack TERMINAL voltage — the same current the SoC integrator is
+        # given in both engines (simple mode: battery.update(dt, i_bt_src -
+        # i_charge); hi-fi: ElectricalSim's identical line with
+        # i_charge_into_pack) — so this column and the `soc` column tell one
+        # story.  Charging therefore drives p_batt_w negative.
+        self.p_batt_w = self.v_bus * self.i_batt - v_batt * self.i_charge
+        # Braking-shunt dissipation.  Both engines populate regen_chopper_w: hi-fi
+        # mirrors it from the engine's own clamp above, simple mode integrates it
+        # on the motor node.
+        self.p_chop_w = self.regen_chopper_w
+        # Auxiliary housekeeping load on VBUS, including any scenario preload or
+        # drain.  The largest known residual component.
+        self.p_aux_w = self.v_bus * self.i_aux
+        self.p_bal_w = self.p_mot_w - (self.p_fc_w + self.p_batt_w + self.p_chop_w)
+
         return {
             "V_fc": v_fc,
             "V_batt": v_batt,
@@ -1750,6 +1850,16 @@ class Plant:
             # quantity, not a second measurement: read one axis at a time (see
             # the H2_SDP_PROXY_* banner).
             "h2_sdp_cum_g": self.h2.proxy_cum_g,
+            # Appended (never reordered), 2026-09-01f — the per-tick power
+            # balance.  Also NOT injected: pack_inject() takes its fields by
+            # name, so the 40-byte wire protocol is untouched.  Read the block
+            # at the end of step() before quoting the residual.
+            "p_mot_w": self.p_mot_w,
+            "p_fc_w": self.p_fc_w,
+            "p_batt_w": self.p_batt_w,
+            "p_chop_w": self.p_chop_w,
+            "p_aux_w": self.p_aux_w,
+            "p_bal_w": self.p_bal_w,
         }
 
 
@@ -8517,6 +8627,19 @@ def main(argv=None):
         # or the injection link died.  error_code can (ERR_PI_TIMEOUT 0x05 vs
         # ERR_HIL_STALE 0x10) — see run_hil_suite.judge_scenario().
         header_row += ["error_code"]
+        # ── power balance — APPENDED LAST, BOTH SCHEMAS (2026-09-01f) ────────
+        # Six watt columns computed by Plant.step() (see the block before its
+        # return): the motor-node power, the two source powers, the chopper
+        # dissipation, the auxiliary load, and the residual of the identity
+        #     p_mot = p_fc + p_batt + p_chop + p_bal
+        # They belong to the SIMULATED plant only, but they are appended after
+        # the per-mode blocks and declared in BOTH schemas so the tail position
+        # of every column is one fixed index, exactly as `mppt_thresh_cnt` and
+        # `error_code` are.  On a replay run the plant integrator is bypassed, so
+        # every row is BLANK — never 0, which would read as "this run moved no
+        # power" when in truth the model was never asked.
+        header_row += ["p_mot_w", "p_fc_w", "p_batt_w",
+                       "p_chop_w", "p_aux_w", "p_bal_w"]
         writer.writerow(header_row)
 
     # M3: open the electrical-events sidecar UP FRONT and stream into it as events
@@ -9186,6 +9309,16 @@ def main(argv=None):
                 # frame predates fw v25; never 0-filled (0 is ERR_NONE).
                 row.append("" if (obs is None or obs.get("error_code") is None)
                            else int(obs["error_code"]))
+                # Power balance (2026-09-01f) — appended in BOTH schemas, see
+                # the header comment.  Populated on every simulated tick (the
+                # plant computes them unconditionally, like the h2 pair) and
+                # BLANK on every replay row, where no plant ran.  6 decimals:
+                # the columns span roughly 1e-2 to 1e2 W and the residual is
+                # read against the aux term, which is O(1 W).
+                for _pk in ("p_mot_w", "p_fc_w", "p_batt_w",
+                            "p_chop_w", "p_aux_w", "p_bal_w"):
+                    _pv = sensors.get(_pk)
+                    row.append("" if _pv is None else f"{_pv:.6f}")
                 writer.writerow(row)
 
             ticks += 1

@@ -118,6 +118,23 @@ class WalkResult:
     charge_windows: list = field(default_factory=list)
     notes: list = field(default_factory=list)
 
+    # -- per-stage signal trace (ADDITIVE, 2026-09-01) ------------------------
+    # Filled only when ``trace=True``; every field defaults to an empty list, so
+    # a consumer written against the earlier WalkResult is unaffected. The
+    # fields exist so a HIL-schema CSV can be synthesized from an OFFLINE walk
+    # and pushed through the report figure builders. They carry the reduced
+    # model's own quantities and nothing more - see FIDELITY BOUNDARIES above.
+    soc: list = field(default_factory=list)          # pack SoC at stage start
+    i_fc: list = field(default_factory=list)         # A, fuel-cell channel
+    i_batt: list = field(default_factory=list)       # A, battery channel
+    v_bus: list = field(default_factory=list)        # V, shared-droop bus
+    i_charge: list = field(default_factory=list)     # A, charger draw (0 outside)
+    p_fc_bus_w: list = field(default_factory=list)   # W, FC bus-side power billed
+    h2_cum_g: list = field(default_factory=list)     # g, cumulative Gfc hydrogen
+    sw_fc_charge: list = field(default_factory=list) # 1 inside a charge window
+    mdac_fc: list = field(default_factory=list)      # governor MDAC word, FC
+    mdac_bt: list = field(default_factory=list)      # governor MDAC word, BT
+
     def summary(self) -> str:
         lines = [
             "h2 (Gfc, physical) : %.9f g" % self.h2_g,
@@ -387,6 +404,7 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
     next_cmd = 0.0
     in_window = False
     window_t0 = None
+    last_out = None
 
     for k in range(n_stages):
         t = float(times[k])
@@ -448,7 +466,7 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
                     sw_bt = False
                 else:
                     sw_bt = True if not g.state.sp_cut_bt else g.state.sw_bt
-                o = g.step(share, i_fc, float(i_total[k]) - i_fc,
+                o = last_out = g.step(share, i_fc, float(i_total[k]) - i_fc,
                            sw_fc, sw_bt, ts,
                            charge_path_owns_bt=charge_now)
                 delivered = g.delivered_share(o.r_applied, float(i_total[k]),
@@ -462,6 +480,7 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
             delivered = share
             r_now = share
 
+        soc_stage_start = soc
         if charge_now:
             if not in_window:
                 in_window, window_t0 = True, t
@@ -487,6 +506,27 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
             res.share_cmd.append(share)
             res.share_delivered.append(stage_share)
             res.r_applied.append(r_now)
+            # ADDITIVE signal trace. Inside a charge window chargingControl()
+            # holds BT_BUS LOW, so the fuel cell is the single source and also
+            # feeds the charger; outside one the stage split applies.
+            if charge_now:
+                trace_i_fc = float(i_total[k]) + chg_a
+                trace_i_batt = 0.0
+            else:
+                trace_i_fc = stage_share * float(i_total[k])
+                trace_i_batt = float(i_total[k]) - trace_i_fc
+            res.soc.append(soc_stage_start)
+            res.i_fc.append(trace_i_fc)
+            res.i_batt.append(trace_i_batt)
+            res.v_bus.append(float(v_bus[k]))
+            res.i_charge.append(chg_a if charge_now else 0.0)
+            res.p_fc_bus_w.append(float(p_fc_bus))
+            res.h2_cum_g.append(res.h2_g)
+            res.sw_fc_charge.append(1 if charge_now else 0)
+            # The governor's own MDAC words. With the governor disabled there
+            # is no write path to report, so the words stay absent (None).
+            res.mdac_fc.append(None if last_out is None else last_out.code_fc)
+            res.mdac_bt.append(None if last_out is None else last_out.code_bt)
 
     if in_window:
         res.charge_windows.append((window_t0, float(times[n_stages])))

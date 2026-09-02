@@ -330,3 +330,66 @@ def test_governed_sdp_v3_walk_on_ems_sdp_completes_with_open_hold_and_h2_pin():
     # tight tolerance here would make this test a change-detector on any of
     # those upstream artifacts rather than a check that the walk still runs.
     assert got.h2_g == pytest.approx(0.0126, rel=0.05)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Additive per-stage trace fields (2026-09-01: soc/i_fc/i_batt/v_bus/i_charge/
+# p_fc_bus_w/h2_cum_g/sw_fc_charge/mdac_fc/mdac_bt)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_TRACE_FIELDS = ("soc", "i_fc", "i_batt", "v_bus", "i_charge", "p_fc_bus_w",
+                 "h2_cum_g", "sw_fc_charge", "mdac_fc", "mdac_bt")
+
+
+def test_trace_fields_default_empty_on_bare_walkresult():
+    r = ew.WalkResult()
+    for name in _TRACE_FIELDS:
+        assert getattr(r, name) == []
+
+
+def test_trace_fields_unset_with_trace_false():
+    got = ew.walk("soc-band", "ems-soc-band", governor=False, trace=False)
+    for name in _TRACE_FIELDS:
+        assert getattr(got, name) == [], name
+    # Scalar summary outputs are unaffected by trace=False.
+    assert got.h2_g > 0.0
+    assert got.soc_final is not None
+
+
+def test_trace_fields_lengths_match_t_with_trace_true():
+    got = ew.walk("soc-band", "ems-sdp", governor=True, soc0=0.7, trace=True)
+    n = len(got.t)
+    assert n > 0
+    for name in _TRACE_FIELDS:
+        assert len(getattr(got, name)) == n, name
+
+
+def test_trace_h2_cum_g_last_equals_h2_g():
+    got = ew.walk("soc-band", "ems-sdp", governor=True, soc0=0.7, trace=True)
+    assert got.h2_cum_g[-1] == got.h2_g
+
+
+def test_trace_sw_fc_charge_consistent_with_charge_windows():
+    got = ew.walk("soc-band", "ems-sdp", governor=True, soc0=0.7, trace=True)
+    assert set(got.sw_fc_charge) <= {0, 1}
+    in_any_window = [
+        any(t0 <= t < t1 for t0, t1 in got.charge_windows)
+        for t in got.t
+    ]
+    # sw_fc_charge[k] == 1 exactly on the stages the recorded charge windows
+    # cover (both derived from the same charge_now flag inside walk()).
+    got_flags = [bool(v) for v in got.sw_fc_charge]
+    assert got_flags == in_any_window
+
+
+def test_trace_regression_anchor_governor_false_matches_heuristic_walk_exactly():
+    # Same anchor as test_walk_soc_band_no_governor_matches_heuristic_walk_
+    # exactly above, re-checked with trace=True explicit -- the additive
+    # trace fields must not perturb the pre-existing scalar outputs.
+    scenario = "ems-soc-band"
+    got = ew.walk("soc-band", scenario, soc0=0.7, governor=False, trace=True)
+    got_notrace = ew.walk("soc-band", scenario, soc0=0.7, governor=False,
+                          trace=False)
+    assert got.h2_g == got_notrace.h2_g
+    assert got.h2_plant_g == got_notrace.h2_plant_g
+    assert got.soc_final == got_notrace.soc_final

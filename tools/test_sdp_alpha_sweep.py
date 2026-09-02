@@ -3,6 +3,7 @@
 Run: C:/Users/ricky/miniforge3/python.exe -m pytest tools/test_sdp_alpha_sweep.py -q
 """
 
+import csv
 import hashlib
 import json
 import os
@@ -514,3 +515,753 @@ def test_cmd_solve_writes_manifest_naming_and_respects_existing_file(
     assert rc3 == 0
     for argv in calls:
         assert "--force" in argv
+
+
+# ===========================================================================
+# Stage-2 additions (2026-09-01): refine/plots subcommands, refinement grid,
+# manifest.refinement block, WalkResult trace fields, HIL CSV synthesis.
+# ===========================================================================
+
+MANIFEST_PATH = os.path.join(SWEEP_DIR, "manifest.json")
+HAVE_MANIFEST = os.path.isfile(MANIFEST_PATH)
+
+
+def _load_manifest():
+    with open(MANIFEST_PATH, encoding="utf-8") as f:
+        return json.load(f)
+
+
+# ---------------------------------------------------------------------------
+# bisect_boundary against a stub solver
+# ---------------------------------------------------------------------------
+
+class _StubBisectSolver(object):
+    """A fake sdp_ems_solver whose 'policy' crosses a boundary at alpha=0.20."""
+
+    THRESHOLD = 0.20
+
+    @classmethod
+    def main(cls, argv):
+        alpha = float(argv[argv.index("--alpha") + 1])
+        out_path = argv[argv.index("--out") + 1]
+        above = alpha >= cls.THRESHOLD
+        doc = {
+            "policy": {
+                "share": [[1.0 if above else 0.0, 0.0]],
+                "charge_goal": [[1 if above else 0, 0]],
+            },
+        }
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+        return 0
+
+
+def test_bisect_boundary_result_inside_bracket_and_converges(tmp_path):
+    tmp_path_file = str(tmp_path / "probe.json")
+    result = sweep.bisect_boundary(
+        _StubBisectSolver, "degeneracy", tmp_path_file,
+        bracket=(0.10, 0.30), rel_tol=1e-6)
+    lo, hi = 0.10, 0.30
+    assert lo < result["alpha"] < hi
+    assert result["interval"][0] <= result["alpha"] <= result["interval"][1]
+    assert result["rel_width"] <= 1e-6
+    # Converges to the stub's known threshold.
+    assert result["alpha"] == pytest.approx(_StubBisectSolver.THRESHOLD, abs=1e-4)
+    # Solve count is bounded: not unbounded, and consistent with a bisection
+    # from a ~3x bracket down to 1e-6 relative width (~2 verification solves
+    # plus roughly log2(0.2/1e-6) refinement solves).
+    assert 2 <= result["solves"] <= 40
+
+
+def test_bisect_boundary_non_straddling_bracket_raises(tmp_path):
+    tmp_path_file = str(tmp_path / "probe.json")
+    # Both ends above the stub's threshold -> predicate True at both ends ->
+    # does not straddle.
+    with pytest.raises(RuntimeError):
+        sweep.bisect_boundary(
+            _StubBisectSolver, "degeneracy", tmp_path_file,
+            bracket=(0.25, 0.30), rel_tol=1e-6)
+    # Both ends below -> predicate False at both ends -> does not straddle.
+    with pytest.raises(RuntimeError):
+        sweep.bisect_boundary(
+            _StubBisectSolver, "degeneracy", tmp_path_file,
+            bracket=(0.05, 0.10), rel_tol=1e-6)
+
+
+def test_bisect_boundary_charge_predicate_stub(tmp_path):
+    tmp_path_file = str(tmp_path / "probe.json")
+    result = sweep.bisect_boundary(
+        _StubBisectSolver, "charge", tmp_path_file,
+        bracket=(0.10, 0.30), rel_tol=1e-5)
+    assert result["alpha"] == pytest.approx(_StubBisectSolver.THRESHOLD, abs=1e-3)
+    assert result["rel_width"] <= 1e-5
+
+
+# ---------------------------------------------------------------------------
+# refined_alphas / build_refined_grid
+# ---------------------------------------------------------------------------
+
+def test_refined_alphas_ten_points_ascending():
+    alphas = sweep.refined_alphas(0.10)
+    assert len(alphas) == 10
+    assert alphas == sorted(alphas)
+
+
+def test_refined_alphas_rel_offset_exact_for_refine_deltas():
+    b = 0.111
+    alphas = sweep.refined_alphas(b)
+    below = alphas[:5]
+    above = alphas[5:]
+    deltas_desc = sorted(sweep.REFINE_DELTAS, reverse=True)
+    for a, d in zip(below, deltas_desc):
+        assert a == pytest.approx(b * (1.0 - d), rel=1e-12)
+    deltas_asc = sorted(sweep.REFINE_DELTAS)
+    for a, d in zip(above, deltas_asc):
+        assert a == pytest.approx(b * (1.0 + d), rel=1e-12)
+    # All below points are < b, all above points are > b.
+    assert all(a < b for a in below)
+    assert all(a > b for a in above)
+
+
+def test_build_refined_grid_indices_consecutive_side_labels_not_anchor():
+    boundaries = {"degeneracy": 0.111, "charge": 0.239}
+    grid = sweep.build_refined_grid(boundaries, idx_start=21)
+    assert len(grid) == 20
+    idxs = [p["idx"] for p in grid]
+    assert idxs == list(range(21, 41))
+    for p in grid:
+        assert p["is_anchor"] is False
+        assert p["origin"] == "refined"
+        b = boundaries[p["boundary"]]
+        expected_side = "below" if p["alpha"] < b else "above"
+        assert p["side"] == expected_side
+        expected_offset = (p["alpha"] - b) / b
+        assert p["rel_offset"] == pytest.approx(expected_offset, abs=1e-12)
+    # First 10 belong to "degeneracy" (REFINE_ORDER[0]), next 10 to "charge".
+    assert all(p["boundary"] == "degeneracy" for p in grid[:10])
+    assert all(p["boundary"] == "charge" for p in grid[10:])
+
+
+def test_build_refined_grid_missing_boundary_skipped():
+    grid = sweep.build_refined_grid({"charge": 0.239}, idx_start=21)
+    assert len(grid) == 10
+    assert all(p["boundary"] == "charge" for p in grid)
+    assert [p["idx"] for p in grid] == list(range(21, 31))
+
+
+# ---------------------------------------------------------------------------
+# Manifest: shape, boundary values, spacing.deltas, regeneration, shas
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(not HAVE_MANIFEST, reason="manifest.json not present")
+class TestRefinementManifest:
+
+    def test_schema_unchanged_points_21_refinement_points_20(self):
+        m = _load_manifest()
+        assert m["schema"] == "sdp-alpha-sweep-v1"
+        assert len(m["points"]) == 21
+        assert len(m["refinement"]["points"]) == 20
+
+    def test_boundary_values_inside_modelled_admission_window(self):
+        m = _load_manifest()
+        b = m["refinement"]["boundaries"]
+        deg = b["degeneracy"]["alpha"]
+        chg = b["charge"]["alpha"]
+        assert deg == pytest.approx(0.111000013, abs=5.1e-8)
+        assert chg == pytest.approx(0.239249990, abs=1.1e-7)
+        # Both boundary values lie inside the modelled admission window
+        # (0.111000, 0.239250), within 1e-6 of either end.
+        lo, hi = 0.111000, 0.239250
+        assert lo - 1e-6 <= deg <= hi + 1e-6
+        assert lo - 1e-6 <= chg <= hi + 1e-6
+
+    def test_boundaries_have_names_intervals_matching_alpha(self):
+        m = _load_manifest()
+        for name, b in m["refinement"]["boundaries"].items():
+            assert b["name"] == name
+            lo, hi = b["interval"]
+            assert lo <= b["alpha"] <= hi
+
+    def test_spacing_deltas_equals_refine_deltas(self):
+        m = _load_manifest()
+        deltas = m["refinement"]["spacing"]["deltas"]
+        assert list(deltas) == [float(d) for d in sweep.REFINE_DELTAS]
+
+    def test_refined_grid_from_manifest_regenerates_filenames(self):
+        grid = sweep.refined_grid_from_manifest()
+        assert len(grid) == 20
+        m = _load_manifest()
+        recorded_files = {e["idx"]: os.path.basename(e["file"])
+                          for e in m["refinement"]["points"]}
+        for p in grid:
+            assert sweep.point_filename(p) == recorded_files[p["idx"]]
+
+    def test_every_refined_artifact_sha_matches(self):
+        m = _load_manifest()
+        for entry in m["refinement"]["points"]:
+            full = os.path.join(REPO_ROOT, entry["file"])
+            assert os.path.isfile(full), entry["file"]
+            assert sweep.sha256_file(full) == entry["file_sha256"], entry["file"]
+
+    def test_idx_21_to_25_degenerate_and_zero_charge_cells(self):
+        m = _load_manifest()
+        by_idx = {e["idx"]: e for e in m["refinement"]["points"]}
+        for i in range(21, 26):
+            assert by_idx[i]["n_charge_cells"] == 0, i
+            hist = by_idx[i]["share_ladder_histogram"]
+            assert hist == {"0.0000": pytest.approx(1.0)}, i
+
+    def test_idx_26_to_35_non_degenerate_zero_charge_cells(self):
+        m = _load_manifest()
+        by_idx = {e["idx"]: e for e in m["refinement"]["points"]}
+        for i in range(26, 36):
+            assert by_idx[i]["n_charge_cells"] == 0, i
+            hist = by_idx[i]["share_ladder_histogram"]
+            assert not (len(hist) == 1 and "0.0000" in hist
+                        and hist["0.0000"] == pytest.approx(1.0)), i
+
+    def test_idx_36_to_40_charge_cells_positive(self):
+        m = _load_manifest()
+        by_idx = {e["idx"]: e for e in m["refinement"]["points"]}
+        for i in range(36, 41):
+            assert by_idx[i]["n_charge_cells"] > 0, i
+
+    def test_idx_40_policy_sha_matches_sdp_policy_v2(self):
+        m = _load_manifest()
+        by_idx = {e["idx"]: e for e in m["refinement"]["points"]}
+        v2_path = os.path.join(REPO_ROOT, "tools", "sdp_policies",
+                               "sdp_policy_v2.json")
+        with open(v2_path, encoding="utf-8") as f:
+            v2 = json.load(f)
+        expected = hashlib.sha256(
+            json.dumps(v2["policy"], sort_keys=True).encode("utf-8")).hexdigest()
+        assert by_idx[40]["policy_sha256"] == expected
+
+
+# ---------------------------------------------------------------------------
+# cmd_solve preserves an existing refinement block
+# ---------------------------------------------------------------------------
+
+def _cmd_solve_fixture(tmp_path, monkeypatch, gamma=0.95):
+    """Common setup for the cmd_solve/refinement-identity tests below: a fake
+    SWEEP_DIR/MANIFEST_PATH and a stub solver that always reports `gamma`, so
+    the caller controls whether a stamped identity matches a fresh solve's."""
+    fake_sweep_dir = str(tmp_path / "sweep_dir")
+    os.makedirs(fake_sweep_dir, exist_ok=True)
+    monkeypatch.setattr(sweep, "SWEEP_DIR", fake_sweep_dir)
+    monkeypatch.setattr(sweep, "MANIFEST_PATH",
+                        os.path.join(fake_sweep_dir, "manifest.json"))
+
+    win_model, win_meas = sweep._windows_from_anchor()
+
+    class _StubSolver(object):
+        @staticmethod
+        def main(argv):
+            out_path = argv[argv.index("--out") + 1]
+            alpha = float(argv[argv.index("--alpha") + 1])
+            doc = {
+                "alpha": {"value": alpha, "mode": "explicit", "admission": {
+                    "window_model": list(win_model),
+                    "window_measured": list(win_meas)}},
+                "solver": {"converged": True, "iterations": 1,
+                          "final_delta": 1e-13},
+                "actions": {"charge_forbidden_bins": []},
+                "policy": {"share": [[0.0]], "charge_goal": [[0]]},
+                "gamma": gamma,
+            }
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(doc, f)
+            return 0
+
+    monkeypatch.setattr(sweep, "_import_solver", lambda: _StubSolver)
+    return fake_sweep_dir, os.path.join(fake_sweep_dir, "manifest.json")
+
+
+def _fresh_solve_identity(gamma):
+    """The `solver_identity` a stub solve with this `gamma` will produce --
+    tpm_sha256 is read from the REAL repo TPM file, same as cmd_solve does."""
+    tpm_abs = os.path.join(REPO_ROOT,
+                           "references/EMS/generated/TPM_dt1_hil.mat")
+    return sweep.solver_identity(sweep.sha256_file(tpm_abs), gamma)
+
+
+class _ArgsNoForce(object):
+    force = False
+    only = None
+
+
+class _ArgsForce(object):
+    force = True
+    only = None
+
+
+def test_cmd_solve_preserves_refinement_with_matching_identity(
+        tmp_path, monkeypatch):
+    fake_sweep_dir, manifest_path = _cmd_solve_fixture(
+        tmp_path, monkeypatch, gamma=0.95)
+    rc = sweep.cmd_solve(_ArgsNoForce())
+    assert rc == 0
+
+    # Stamp a refinement block whose identity matches THIS solve's (gamma
+    # 0.95, same demand map, the same real TPM file cmd_solve itself hashes).
+    with open(manifest_path, encoding="utf-8") as f:
+        manifest = json.load(f)
+    manifest["refinement"] = {"purpose": "sentinel", "points": [],
+                              "identity": _fresh_solve_identity(0.95)}
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f)
+
+    # Re-solving under the SAME identity (--force, same stub gamma) must
+    # preserve the block.
+    rc2 = sweep.cmd_solve(_ArgsForce())
+    assert rc2 == 0
+    with open(manifest_path, encoding="utf-8") as f:
+        manifest2 = json.load(f)
+    assert manifest2.get("refinement", {}).get("purpose") == "sentinel"
+
+
+@pytest.mark.parametrize("stamp_identity", [False, True])
+def test_cmd_solve_drops_refinement_with_missing_or_mismatched_identity(
+        tmp_path, monkeypatch, capsys, stamp_identity):
+    fake_sweep_dir, manifest_path = _cmd_solve_fixture(
+        tmp_path, monkeypatch, gamma=0.95)
+    rc = sweep.cmd_solve(_ArgsNoForce())
+    assert rc == 0
+
+    with open(manifest_path, encoding="utf-8") as f:
+        manifest = json.load(f)
+    block = {"purpose": "sentinel", "points": []}
+    if stamp_identity:
+        # Mismatched: a different gamma than the fresh re-solve below uses.
+        block["identity"] = _fresh_solve_identity(0.50)
+    # else: no "identity" key at all -- the "unstamped block" case.
+    manifest["refinement"] = block
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f)
+
+    # Re-solve under gamma 0.95 again (fixture's stub always reports 0.95),
+    # so an identity stamped for gamma 0.50 mismatches, and a missing
+    # identity has nothing to match at all -- both must be DROPPED.
+    rc2 = sweep.cmd_solve(_ArgsForce())
+    assert rc2 == 0
+    with open(manifest_path, encoding="utf-8") as f:
+        manifest2 = json.load(f)
+    assert "refinement" not in manifest2 or manifest2["refinement"] is None
+    if stamp_identity:
+        assert "WARNING" in capsys.readouterr().err
+
+
+def test_build_manifest_refinement_none_omits_key():
+    entries = [{"idx": 0, "alpha": 0.05}]
+    manifest = sweep.build_manifest(
+        entries, "path", "sha", 0.95, {"verdict": "MATCH"}, refinement=None)
+    assert "refinement" not in manifest
+
+
+def test_build_manifest_refinement_present_included_verbatim():
+    entries = [{"idx": 0, "alpha": 0.05}]
+    ref = {"purpose": "x", "points": [1, 2, 3]}
+    manifest = sweep.build_manifest(
+        entries, "path", "sha", 0.95, {"verdict": "MATCH"}, refinement=ref)
+    assert manifest["refinement"] is ref
+
+
+# ---------------------------------------------------------------------------
+# evaluation_rows origin defaults / --include
+# ---------------------------------------------------------------------------
+
+def test_evaluation_rows_origin_defaults_to_original():
+    grid = sweep.build_grid()
+    anchor_idx = [p["idx"] for p in grid if p["is_anchor"]][0]
+    results = {p["idx"]: (p, _FakeResult(0.01, 0.0095, -0.001, {}, []))
+              for p in grid}
+    rows = sweep.evaluation_rows(results, anchor_idx)
+    assert all(r["origin"] == "original" for r in rows)
+    assert all(r["boundary"] == "" and r["side"] == "" for r in rows)
+
+
+def test_evaluation_rows_origin_refined_from_point_dict():
+    point = {"idx": 21, "alpha": 0.1, "is_anchor": False, "origin": "refined",
+            "boundary": "degeneracy", "side": "below"}
+    results = {21: (point, _FakeResult(0.01, 0.0095, -0.001, {}, []))}
+    rows = sweep.evaluation_rows(results, 21)
+    assert rows[0]["origin"] == "refined"
+    assert rows[0]["boundary"] == "degeneracy"
+    assert rows[0]["side"] == "below"
+
+
+def test_evaluation_rows_dsoc_ref_override_prices_refined_like_all():
+    """MED-2: a table with no anchor of its own (the refined-only selection)
+    must be priced against the SAME dSoC reference as the combined ("all")
+    table, via the explicit `dsoc_ref` override -- not against its own
+    lowest-index row's dSoC, which would make the two tables' eq-H2 columns
+    incomparable. Pin: idx 26's eq-H2 is IDENTICAL whether it is walked as
+    part of the refined-only results dict or the combined one, given the
+    same anchor-derived dsoc_ref passed explicitly to both calls."""
+    grid = sweep.build_grid() + sweep.build_refined_grid(
+        {"degeneracy": 0.111, "charge": 0.239}, idx_start=21)
+    anchor_idx = [p["idx"] for p in grid if p["is_anchor"]][0]
+    anchor_dsoc = -0.00234  # the anchor's own dSoC (walked once, externally)
+
+    def _mk(idx, alpha, h2_g, dsoc):
+        return _FakeResult(h2_g, h2_g * 0.95, dsoc, {}, [])
+
+    all_results = {p["idx"]: (p, _mk(p["idx"], p["alpha"], 0.012, -0.0019))
+                   for p in grid}
+    refined_only = {p["idx"]: (p, _mk(p["idx"], p["alpha"], 0.012, -0.0019))
+                    for p in grid if p["idx"] >= 21}
+    assert 26 in refined_only and 26 in all_results
+
+    # The "all" table has its own anchor, so dsoc_ref is implicit there.
+    rows_all = sweep.evaluation_rows(all_results, anchor_idx, anchor_dsoc)
+    # The "refined" table has NO anchor point of its own; it must be passed
+    # the SAME anchor_dsoc explicitly (as cmd_evaluate's MED-2 fix does).
+    refined_ref_idx = min(refined_only)
+    rows_refined = sweep.evaluation_rows(refined_only, refined_ref_idx,
+                                         anchor_dsoc)
+
+    eq_h2_all_26 = [r["eq_h2_g"] for r in rows_all if r["idx"] == 26][0]
+    eq_h2_refined_26 = [r["eq_h2_g"] for r in rows_refined
+                        if r["idx"] == 26][0]
+    assert eq_h2_all_26 == pytest.approx(eq_h2_refined_26, abs=1e-15)
+    # And both equal the hand-computed value against the shared reference.
+    expected = sweep.eq_h2(0.012, -0.0019, anchor_dsoc)
+    assert eq_h2_all_26 == pytest.approx(expected, abs=1e-15)
+
+
+def test_evaluation_rows_dsoc_ref_none_falls_back_to_anchor_own_delta_soc():
+    """Without an explicit dsoc_ref (the default, `None`), evaluation_rows
+    keeps its original behaviour: price against results[anchor_idx]'s own
+    delta_soc."""
+    grid = sweep.build_grid()
+    anchor_idx = [p["idx"] for p in grid if p["is_anchor"]][0]
+    results = {p["idx"]: (p, _FakeResult(0.01, 0.0095, -0.001 - 1e-5 * p["idx"],
+                                         {}, []))
+              for p in grid}
+    rows = sweep.evaluation_rows(results, anchor_idx)
+    anchor_row = [r for r in rows if r["idx"] == anchor_idx][0]
+    assert anchor_row["eq_h2_g"] == pytest.approx(
+        results[anchor_idx][1].h2_g, abs=1e-15)
+
+
+def test_emit_eval_suffix_filenames(tmp_path):
+    rows = [{"idx": 0, "alpha": 0.1, "is_anchor": True, "h2_g": 0.01,
+             "delta_soc": -0.001, "soc_final": 0.699, "eq_h2_g": 0.01,
+             "charge_windows": 0, "mode_fractions": "{}", "origin": "original",
+             "boundary": "", "side": ""}]
+    out_dir = str(tmp_path / "out")
+    os.makedirs(out_dir, exist_ok=True)
+    sweep._emit_eval(out_dir, "ems-sdp", rows, suffix="refined_")
+    assert os.path.isfile(os.path.join(out_dir, "sweep_eval_refined_ems-sdp.csv"))
+    assert os.path.isfile(os.path.join(out_dir, "sweep_eval_refined_ems-sdp.md"))
+    assert os.path.isfile(
+        os.path.join(out_dir, "sweep_h2_vs_dsoc_refined_ems-sdp.png"))
+
+
+# ---------------------------------------------------------------------------
+# HIL_CSV_COLUMNS vs the live simulated hi-fi header (hil_plant_sim.py)
+# ---------------------------------------------------------------------------
+
+def _derive_simulated_header(electrical_hifi):
+    """Reconstruct a simulated (non-replay) CSV header order directly from
+    tools/hil_plant_sim.py's source text, rather than copying the sweep
+    module's own HIL_CSV_COLUMNS list back at itself. This walks the
+    `header_row = [...]` / `.append(...)` / `+= [...]` statements inside
+    main()'s `if args.csv:` block in file order, dropping the `if replay:`
+    branch (never taken for a simulated run) and either keeping or dropping
+    the `elec_substep_hz`/`elec_events` pair depending on `electrical_hifi`
+    (True: --electrical hifi, so `electrical is not None`; False: the
+    --electrical=simple default, `electrical is None`).
+    """
+    import re
+    sim_path = os.path.join(REPO_ROOT, "tools", "hil_plant_sim.py")
+    with open(sim_path, encoding="utf-8") as f:
+        text = f.read()
+
+    header_start = text.index("header_row = [")
+    tail = text.index("writer.writerow(header_row)", header_start)
+    block = text[header_start:tail]
+
+    # A simulated run is never `--replay`, so `replay` is falsy.  Drop the
+    # ENTIRE `if replay: ... else:` branch's if-side (it duplicates
+    # cmd_v_sp/cmd_share_sp under a different guard, which would double-count
+    # them if only the "replay_rec" line were skipped) by cutting the text
+    # between "if replay:" and the following "else:" out of the block.
+    if_replay = block.index("if replay:")
+    else_at = block.index("else:", if_replay)
+    block = block[:if_replay] + block[else_at + len("else:"):]
+
+    cols = []
+    for line in block.splitlines():
+        if not electrical_hifi and ('"elec_substep_hz"' in line
+                                    or '"elec_events"' in line):
+            continue  # electrical-is-not-None-only branch
+        for m in re.finditer(r'"([A-Za-z0-9_]+)"', line):
+            cols.append(m.group(1))
+    return cols
+
+
+def _derive_simulated_default_header():
+    return _derive_simulated_header(electrical_hifi=False)
+
+
+def test_hil_csv_columns_omits_elec_columns_for_default_electrical_mode():
+    """HIL_CSV_COLUMNS carries `elec_substep_hz`/`elec_events` unconditionally,
+    but the live header only emits that pair under `--electrical hifi`
+    (`electrical is not None`); the default `--electrical simple` run
+    (`electrical is None`, hil_plant_sim.py's own default) omits them. This
+    is therefore a REAL, independent mismatch against the default mode --
+    not the xfail below, which is about the hifi-mode comparison."""
+    default_header = _derive_simulated_header(electrical_hifi=False)
+    assert "elec_substep_hz" not in default_header
+    assert "elec_events" not in default_header
+    assert "elec_substep_hz" in sweep.HIL_CSV_COLUMNS
+    assert "elec_events" in sweep.HIL_CSV_COLUMNS
+
+
+def test_hil_csv_columns_matches_hifi_simulated_header_or_xfails():
+    """HIL_CSV_COLUMNS carries elec_substep_hz/elec_events unconditionally,
+    which matches the `--electrical hifi` header shape (not the default
+    `simple` one -- see the test above), so that is the correct live header
+    to compare HIL_CSV_COLUMNS against."""
+    derived = _derive_simulated_header(electrical_hifi=True)
+    if derived != sweep.HIL_CSV_COLUMNS:
+        pytest.xfail(
+            "HIL_CSV_COLUMNS (tools/sdp_alpha_sweep.py) does not match the "
+            "live `--electrical hifi` simulated CSV header derived from "
+            "tools/hil_plant_sim.py's own `header_row` assembly. As of this "
+            "checkout the live header carries six additional trailing "
+            "columns (p_mot_w, p_fc_w, p_batt_w, p_chop_w, p_aux_w, p_bal_w) "
+            "added by a concurrent 2026-09-01f feature "
+            "('power balance -- APPENDED LAST, BOTH SCHEMAS') that "
+            "HIL_CSV_COLUMNS does not carry. derived=%r vs "
+            "HIL_CSV_COLUMNS=%r" % (derived, sweep.HIL_CSV_COLUMNS))
+
+
+def test_hil_csv_columns_prefix_matches_derived_hifi_header():
+    """Independent of the xfail above: whatever the derived hifi header's
+    extra tail is, HIL_CSV_COLUMNS must be an exact PREFIX of it (no
+    reordering, no missing interior column) -- so a future column insertion
+    in the middle of the schema is a real defect, not something this prefix
+    check silently tolerates."""
+    derived = _derive_simulated_header(electrical_hifi=True)
+    n = len(sweep.HIL_CSV_COLUMNS)
+    assert derived[:n] == sweep.HIL_CSV_COLUMNS, (
+        "HIL_CSV_COLUMNS diverges from the live hifi header before its own "
+        "length, not just at the tail: derived=%r" % derived)
+
+
+# ---------------------------------------------------------------------------
+# synthesize_hil_csv round-trip
+# ---------------------------------------------------------------------------
+
+class _FakeSimModule(object):
+    SW_FC_BUS = 0x01
+    SW_MOT_PWR = 0x02
+    SW_BT_SEQ = 0x04
+    SW_BT_BUS = 0x08
+    SW_FC_CHARGE = 0x10
+    AG105_ST_CHARGING = 0x01
+    AG105_FLAG_CC = 0x02
+    AG105_ST_DISCONNECT = 0x00
+    AUX_FC_REG = 0x01
+    AUX_BT_REG = 0x02
+
+    @staticmethod
+    def piecewise(prof, t):
+        return 1.5
+
+
+class _FakeTraceResult(object):
+    def __init__(self, n):
+        self.t = [0.02 * k for k in range(n)]
+        self.soc = [0.7 - 0.0001 * k for k in range(n)]
+        self.i_fc = [1.0 + 0.01 * k for k in range(n)]
+        self.i_batt = [0.5] * n
+        self.v_bus = [16.0] * n
+        self.i_charge = [0.2 if k % 3 == 0 else 0.0 for k in range(n)]
+        self.p_fc_bus_w = [20.0] * n
+        self.h2_cum_g = [1e-5 * k for k in range(n)]
+        self.sw_fc_charge = [1 if k % 3 == 0 else 0 for k in range(n)]
+        self.mdac_fc = [100 + k for k in range(n)]
+        self.mdac_bt = [None if k % 4 == 0 else 200 + k for k in range(n)]
+        self.share_cmd = [0.85] * n
+
+
+def test_synthesize_hil_csv_raises_without_trace(tmp_path):
+    empty = _FakeTraceResult(0)
+    empty.t = []
+    with pytest.raises(ValueError):
+        sweep.synthesize_hil_csv(str(tmp_path / "x.csv"), empty,
+                                 _FakeSimModule, {}, 0.02)
+
+
+def test_synthesize_hil_csv_switch_word_and_ag105_status(tmp_path):
+    n = 6
+    r = _FakeTraceResult(n)
+    csv_path = str(tmp_path / "trace.csv")
+    rows_written = sweep.synthesize_hil_csv(csv_path, r, _FakeSimModule,
+                                             {"ems_v_profile": [(0.0, 0.0)]}, 0.02)
+    assert rows_written == n
+
+    with open(csv_path, encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader)
+        rows = list(reader)
+    assert header == sweep.HIL_CSV_COLUMNS
+    assert len(rows) == n
+
+    idx = {name: i for i, name in enumerate(header)}
+    F = _FakeSimModule
+    for k, row in enumerate(rows):
+        fc_charge = bool(r.sw_fc_charge[k])
+        switch = int(row[idx["switch"]])
+        expected_base = F.SW_FC_BUS | F.SW_MOT_PWR | F.SW_BT_SEQ
+        if fc_charge:
+            assert switch & F.SW_FC_CHARGE
+            assert not (switch & F.SW_BT_BUS)
+        else:
+            assert switch & F.SW_BT_BUS
+            assert not (switch & F.SW_FC_CHARGE)
+        assert switch & expected_base == expected_base
+
+        status = int(row[idx["ag105_status"]], 16)
+        if fc_charge:
+            assert status == (F.AG105_ST_CHARGING | F.AG105_FLAG_CC)
+        else:
+            assert status == F.AG105_ST_DISCONNECT
+
+        # Blank columns read back as blank strings here, and NaN once loaded
+        # through hil_report_analysis (covered by the round-trip test below).
+        for col in ("V_fc", "V_batt", "V_chg", "V_rgn", "current"):
+            assert row[idx[col]] == ""
+
+        # mdac_bt is None on every k % 4 == 0 stage -> blank column.
+        if r.mdac_bt[k] is None:
+            assert row[idx["mdac_bt"]] == ""
+        else:
+            assert row[idx["mdac_bt"]] == str(r.mdac_bt[k])
+
+
+@pytest.mark.skipif(not HAVE_ANCHOR, reason="numpy / hil deps not confirmed present")
+def test_synthesize_hil_csv_round_trips_through_hil_report_analysis(tmp_path):
+    pytest.importorskip("numpy")
+    if _HERE not in sys.path:
+        sys.path.insert(0, _HERE)
+    try:
+        import hil_plant_sim as real_sim
+        import hil_report_analysis as hra
+    except ImportError as exc:
+        pytest.skip("hil_plant_sim/hil_report_analysis not importable: %s" % exc)
+
+    n = 5
+    r = _FakeTraceResult(n)
+    csv_path = str(tmp_path / "trace.csv")
+    sweep.synthesize_hil_csv(csv_path, r, real_sim, {}, 0.02)
+
+    hil = hra.load_hil_csv(csv_path)
+    hil = hra.attach_derived(hil)
+    data = hra.adapt_to_benchlog(hil)
+    # Round-trip did not raise, and blank numeric columns came back as NaN.
+    assert data is not None
+    v_fc = hil.get("V_fc")
+    if v_fc is not None:
+        assert all(np.isnan(x) for x in np.atleast_1d(v_fc))
+
+
+# ---------------------------------------------------------------------------
+# Plot files exist under docs/modeling/sdp_alpha_sweep_20260901/plots/
+# ---------------------------------------------------------------------------
+
+PLOTS_ROOT = os.path.join(REPO_ROOT, "docs", "modeling",
+                          "sdp_alpha_sweep_20260901", "plots")
+
+
+def _plot_filenames():
+    """The PNG basenames render_walk_figures writes, derived from
+    sweep.PLOT_BUILDERS rather than hardcoded -- so a rename of the builder
+    key (e.g. to "walk_currents_and_share") is picked up automatically
+    instead of silently going stale."""
+    prefix = getattr(sweep, "PLOT_PREFIX", "")
+    return ["%s%s.png" % (prefix, name) for name in sweep.PLOT_BUILDERS]
+
+
+@pytest.mark.skipif(not os.path.isdir(os.path.join(PLOTS_ROOT, "ems-sdp")),
+                    reason="plots/ems-sdp/ not present")
+def test_plot_files_exist_for_every_ems_sdp_point():
+    scenario_dir = os.path.join(PLOTS_ROOT, "ems-sdp")
+    grid = sweep.all_points("all")
+    filenames = _plot_filenames()
+    missing = []
+    for point in grid:
+        pdir = os.path.join(scenario_dir, sweep.plot_dir_name(point))
+        if not os.path.isdir(pdir):
+            missing.append(pdir)
+            continue
+        for fn in filenames:
+            if not os.path.isfile(os.path.join(pdir, fn)):
+                missing.append(os.path.join(pdir, fn))
+        if not os.path.isfile(os.path.join(pdir, "walk_trace.csv")):
+            missing.append(os.path.join(pdir, "walk_trace.csv"))
+    assert not missing, "missing plot artifacts: %r" % missing[:10]
+
+
+def test_plot_files_exist_for_ems_ftp75_sdp_points_present_on_disk():
+    """The implementer may concurrently be re-rendering this folder, so this
+    checks only the point directories that ACTUALLY EXIST on disk right now
+    (never asserting existence of the folder itself, unlike the ems-sdp test
+    above, which is the fully-rendered reference scenario) -- a mid-render
+    scenario must not fail this test, but any directory that IS present must
+    be complete."""
+    scenario_dir = os.path.join(PLOTS_ROOT, "ems-ftp75-sdp")
+    if not os.path.isdir(scenario_dir):
+        pytest.skip("plots/ems-ftp75-sdp/ not present")
+    filenames = _plot_filenames()
+    missing = []
+    checked = 0
+    for entry in sorted(os.listdir(scenario_dir)):
+        pdir = os.path.join(scenario_dir, entry)
+        if not os.path.isdir(pdir):
+            continue
+        checked += 1
+        for fn in filenames:
+            if not os.path.isfile(os.path.join(pdir, fn)):
+                missing.append(os.path.join(pdir, fn))
+        if not os.path.isfile(os.path.join(pdir, "walk_trace.csv")):
+            missing.append(os.path.join(pdir, "walk_trace.csv"))
+    assert checked > 0, "expected at least one rendered point directory"
+    assert not missing, "missing plot artifacts: %r" % missing[:10]
+
+
+@pytest.mark.skipif(not os.path.isdir(PLOTS_ROOT), reason="plots/ not present")
+def test_plot_run_name_carries_provenance_markers():
+    point = {"idx": 5, "alpha": 0.094215}
+    name = sweep.plot_run_name(point, "ems-sdp")
+    assert "OFFLINE GOVERNOR WALK" in name
+    assert "not a board run" in name
+
+
+# ---------------------------------------------------------------------------
+# Doc image links resolve
+# ---------------------------------------------------------------------------
+
+DOC_PATH = os.path.join(REPO_ROOT, "docs", "modeling",
+                        "sdp_alpha_sweep_20260901.md")
+
+
+@pytest.mark.skipif(not os.path.isfile(DOC_PATH),
+                    reason="sdp_alpha_sweep_20260901.md not present")
+def test_doc_image_links_all_resolve():
+    import re
+    with open(DOC_PATH, encoding="utf-8") as f:
+        text = f.read()
+    doc_dir = os.path.dirname(DOC_PATH)
+    links = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", text)
+    assert links, "expected at least one image link in the doc"
+    missing = []
+    for link in links:
+        target = link.split("#", 1)[0].split("?", 1)[0]
+        full = os.path.normpath(os.path.join(doc_dir, target))
+        if not os.path.isfile(full):
+            missing.append(link)
+    assert not missing, "unresolved image links: %r" % missing

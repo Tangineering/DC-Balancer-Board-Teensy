@@ -2640,3 +2640,145 @@ def test_era_overrides_omits_the_preload_when_the_run_era_is_unknown():
                               hra._plant_sim_module().SCENARIOS["ems-soc-band"],
                               None, "unknown")
     assert "aux_preload_a" not in over
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# hil_power_balance (2026-09-01f, Stage-2 independent coverage)
+# ─────────────────────────────────────────────────────────────────────────
+#
+# Two data paths (see the builder's own docstring): NATIVE, when a CSV from
+# this diff onward carries the six p_*_w columns, and BACKFILL, for every
+# older campaign/replay CSV, which derives what it can from V_bus/I_fc/
+# I_batt/V_rgn/current and says so in the panel annotation.
+
+def _pbal_native_data(n=6, p_mot=None, p_fc=None, p_batt=None, p_chop=None,
+                       p_aux=None, p_bal=None):
+    t = np.arange(n, dtype=np.float64)
+    return {
+        "t_s": t,
+        "p_mot_w": (np.linspace(5.0, 6.0, n) if p_mot is None
+                    else np.asarray(p_mot, dtype=np.float64)),
+        "p_fc_w": (np.linspace(2.0, 2.5, n) if p_fc is None
+                   else np.asarray(p_fc, dtype=np.float64)),
+        "p_batt_w": (np.linspace(1.0, 1.2, n) if p_batt is None
+                     else np.asarray(p_batt, dtype=np.float64)),
+        "p_chop_w": (np.zeros(n) if p_chop is None
+                     else np.asarray(p_chop, dtype=np.float64)),
+        "p_aux_w": (np.full(n, 2.35) if p_aux is None
+                    else np.asarray(p_aux, dtype=np.float64)),
+        "p_bal_w": (np.full(n, -2.35) if p_bal is None
+                    else np.asarray(p_bal, dtype=np.float64)),
+    }
+
+
+def test_hil_power_balance_is_registered_after_h2_and_soc():
+    """Item 7: registered, and specifically AFTER hil_h2_and_soc -- the two
+    figures are meant to be read together (H2/SoC narrative, then where the
+    watts went), so the ordering is part of the contract, not incidental."""
+    names = [n for n, _ in hra.HIL_FIGURES]
+    assert "hil_power_balance" in names
+    assert names.index("hil_power_balance") == names.index("hil_h2_and_soc") + 1
+    assert dict(hra.HIL_FIGURES)["hil_power_balance"] is hra.hil_power_balance
+
+
+def test_hil_power_balance_native_schema_renders_with_no_legacy_note():
+    """Item 8: with the six p_*_w columns present, the figure renders and
+    carries no "legacy"/"pre-2026-09-01f" qualifier anywhere -- that text is
+    reserved for the backfill path."""
+    data = _pbal_native_data()
+    fig = hra.hil_power_balance(data, {})
+    assert fig is not None
+    all_text = " ".join(t.get_text() for ax in fig.axes for t in ax.texts)
+    assert "legacy" not in all_text.lower()
+    assert "pre-2026-09-01f" not in all_text
+
+
+def test_hil_power_balance_skips_when_no_relevant_columns_present():
+    """Item 8: neither the native trio nor V_bus/I_fc/I_batt present -- a
+    clean skip, not a figure drawn on nothing."""
+    data = {"t_s": np.arange(4, dtype=np.float64)}
+    assert hra.hil_power_balance(data, {}) is None
+
+
+def test_hil_power_balance_skips_when_v_bus_present_but_i_fc_absent():
+    """Item 8: a partial legacy set (V_bus alone, no I_fc) must not attempt
+    the backfill arithmetic -- it would divide/multiply against a missing
+    signal instead of declining cleanly."""
+    n = 4
+    data = {"t_s": np.arange(n, dtype=np.float64), "V_bus": np.full(n, 16.0)}
+    assert hra.hil_power_balance(data, {}) is None
+
+
+def test_hil_power_balance_backfill_from_legacy_columns_has_annotation():
+    """Item 8: a pre-2026-09-01f CSV (V_bus/I_fc/I_batt/V_rgn/current, no
+    p_*_w columns at all) still renders, via the derived path, with the
+    "pre-2026-09-01f CSV" qualifier the builder's docstring promises."""
+    n = 6
+    data = {
+        "t_s": np.arange(n, dtype=np.float64),
+        "V_bus": np.full(n, 16.0),
+        "I_fc": np.full(n, 0.5),
+        "I_batt": np.full(n, 0.5),
+        "V_rgn": np.full(n, 16.0),
+        "current": np.full(n, 2.0),
+    }
+    fig = hra.hil_power_balance(data, {})
+    assert fig is not None
+    all_text = " ".join(t.get_text() for ax in fig.axes for t in ax.texts)
+    assert "pre-2026-09-01f CSV" in all_text
+
+
+def test_hil_power_balance_all_zero_p_mot_renders_zero_mean_branch():
+    """Item 8: an all-zero p_mot_w column must not divide by zero computing
+    the residual's "% of mean |p_mot|" headline -- it takes the documented
+    "mean |p_mot| is zero" branch instead."""
+    n = 5
+    data = _pbal_native_data(
+        n=n, p_mot=np.zeros(n), p_fc=np.zeros(n), p_batt=np.zeros(n),
+        p_chop=np.zeros(n), p_aux=np.zeros(n), p_bal=np.zeros(n))
+    fig = hra.hil_power_balance(data, {})
+    assert fig is not None
+    ax1 = fig.axes[-1]
+    texts = " ".join(t.get_text() for t in ax1.texts)
+    assert "mean |p_mot| is zero" in texts
+
+
+def _write_pbal_scenario_csv(path, n=10, dt=0.05):
+    """A new-schema hil_scenario_*.csv: SCEN_HEADER plus the six p_*_w tail
+    columns this diff appends, written directly (rather than through
+    make_scenario_csv, which predates the diff and does not carry them) so
+    the end-to-end test exercises the real load -> adapt -> render path on a
+    file shaped exactly like the writer in tools/hil_plant_sim.py now
+    produces."""
+    header = SCEN_HEADER + ["p_mot_w", "p_fc_w", "p_batt_w",
+                            "p_chop_w", "p_aux_w", "p_bal_w"]
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(header)
+        for i in range(n):
+            t = i * dt
+            row = [t, i, 13.0, 8.0, 16.0, 13.0, 16.0, 0.5, 0.5,
+                   1.0 + 0.01 * i, 0.1, "0x00", 2, 0x3F, 0x0F, 1.2,
+                   _mdac_word(0.3), _mdac_word(0.3), 0, 0.5, 30000.0, 0,
+                   1.0 + 0.01 * i, 0.5,
+                   8.0, 4.0, 4.0, 0.0, 2.4, -0.4]
+            assert len(row) == len(header)
+            w.writerow(row)
+    return path
+
+
+def test_hil_power_balance_end_to_end_writes_png(tmp_path):
+    """Item 9: run_standard_figures over a real (loaded + adapted) new-schema
+    CSV must render and save hil_power_balance.png alongside the other
+    figures, exactly as it does for any other HIL_FIGURES builder."""
+    p = tmp_path / "s.csv"
+    _write_pbal_scenario_csv(p, n=10)
+    hil_data = hra.attach_derived(hra.load_hil_csv(p))
+    data = hra.adapt_to_benchlog(hil_data)
+    dest = tmp_path / "out"
+    dest.mkdir()
+    cfg = {"_run_name": "test", "filters": {}}
+    saved, skipped = hra.run_standard_figures(data, hil_data, cfg, dest, p)
+    assert "hil_power_balance" in saved, (
+        "hil_power_balance missing from saved; skipped=%r" % skipped)
+    assert (dest / "hil_power_balance.png").exists()

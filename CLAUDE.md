@@ -1027,3 +1027,49 @@ online H2 proxy η 0.4; α-sweep all 21 then operator picks 3; DP results databa
   points; item 5 (governor-aware MPC — the governor model + walk are its prediction model; H2 proxy
   η 0.4); item 7 physics review (seeded: the chopper accounting defect, the mppt mirror REGEN
   exclusion, the comm-loss RT1987 ON-stamp shift, the ftp75-dp −2.15 % table-fidelity gap).
+
+---
+
+## Status & session addendum (2026-09-01f, power-balance figure + refined α-sweep)
+
+Two operator-requested tooling items, orchestrated (two parallel Opus implementers on disjoint
+files, Sonnet test-writers, Opus physics/data-integrity reviews, fix rounds). Python tooling + docs
++ data; **FW stays v25; wire protocol frozen**; branch `round-20260901f` merged to main.
+
+- **Power-balance figure `hil_power_balance` in every HIL report.** Six append-only CSV columns
+  computed in `Plant.step()` for BOTH engines (after `error_code`, so no older offset moves; blank on
+  replay rows): `p_mot_w` = i_motor·V_rgn − p_regen_w (motor node; + draw, − regen; the two branches
+  are exclusive by construction), `p_fc_w` = V_bus·I_fc (bus side — NOT the stack power Gfc uses),
+  `p_batt_w` = V_bus·I_batt − V_batt·i_charge (net; the charge term is the same current/voltage pair
+  the SoC integrator gets), `p_chop_w`, `p_aux_w` = V_bus·i_aux, `p_bal_w` (per-tick residual). The
+  figure plots the four terms + the sum, and a residual panel naming the known components. The
+  identity is EXACT in simple-mode motoring (aux is the whole residual); hi-fi motoring residual
+  −0.375 W mean after aux (RT1987 drops ≤ 35 mW, 470 µF storage, the conductance-stamp transient).
+  **Physics finding exposed by the column (HIGH, operator decision queued):** the hi-fi Ag105 is a
+  1:1 CURRENT-transfer element (J[N_CHG] −= i_charge; the pack receives the same current), so it
+  destroys i_charge·(V_chg − V_batt) — the −11 W charge-window residual (1.4 A × 7.9 V = 11.06 W) —
+  and over-draws the bus ~1.8× vs a real buck at η ≈ 0.9; this bears on the campaign-000816
+  "charging is loss-making" conclusion and on L_chg 0.2364 SoC/g behind sdp_policy_v3's α. The
+  simple engine treats charging as free energy (documented; hifi-only campaigns unaffected); the
+  frontier stimulus-coherence check now also compares the resolved electrical mode. Legacy CSVs
+  (every campaign ≤ 151156) get a source-powers-only rendering with an explicit annotation — the
+  VESC `current` column is a PHASE-current command, not bus current, so no motor proxy is drawn.
+  Backfilled across all 14 report folders.
+- **Refined α-sweep.** Both transition points bisected through the solver: share-map degeneracy at
+  **α = 0.111000013** (±5.1e-8) and charge admission at **0.239249990** (±1.1e-7) — exactly the two
+  ends of the modelled admission window ((1−γ)/L_share, (1−γ)/L_chg). That is the solver's own
+  closed form re-measured; what the bisection establishes is that the SoC grid, the J interpolation
+  and the forbidden-bin mask do not displace the analytic threshold (≤ 1.2e-7 relative). Twenty new
+  artifacts (indices 21–40; b × (1 ∓ {0.5, 1, 2, 4, 8} %)) with a stamped `refinement` manifest
+  block; 41 points evaluated on ems-sdp and ems-ftp75-sdp (zero-preload era). Within a leg the walk
+  totals coincide to 8 decimals although the policy tables differ (26 vs 30: 130 of 2525 cells) — the
+  walk trajectory never visits a differing cell, so a live run would not discriminate within a leg
+  either. Per-point `walk_currents_and_share.png` / `walk_hil_charger_and_soc.png` (122 files)
+  synthesized from the offline governor walk through the report figure builders (suptitle "OFFLINE
+  GOVERNOR WALK … not a board run"; `walk_` prefix so no campaign glob ingests them); the document
+  embeds one pair per leg and the immediate neighbours of each boundary, plus clustered h2-vs-ΔSoC
+  and h2-vs-α step figures. The refined table is priced against the anchor's ΔSoC (a first version
+  used idx 21 — fixed).
+- **Tests at close (orchestrator-rerun):** `.venv_hil` tools/ **1580 passed + 51 skipped**; miniforge (thirteen numpy suites incl. test_hil_plant_sim and test_figures) **1278 passed + 1 skipped**. One pre-existing WP-C assertion (engine vs plant regen energy ≤ +1 nJ) was relaxed to +1e-4 relative: the hi-fi substep rate is wall-clock adaptive, so a loaded host can exceed it by a few ppm (measured +8 ppm; exact in isolation). Firmware untouched.
+- **Next:** operator decision on the charger-efficiency model (WORK_QUEUE §5); campaign 2; the three
+  live α points (one per leg — ems-sdp discriminates, the drive cycle does not).

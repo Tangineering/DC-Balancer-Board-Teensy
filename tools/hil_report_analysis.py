@@ -992,11 +992,181 @@ def hil_h2_and_soc(data, cfg):
     return fig
 
 
+def hil_power_balance(data, cfg):
+    """Per-tick power balance: motor, sources, chopper, and the residual.
+
+    Two panels on a shared time axis.  The top panel carries the four power
+    terms and, dashed, their sum `p_fc + p_batt + p_chop`; the bottom panel
+    carries the residual `p_bal = p_mot - (p_fc + p_batt + p_chop)` with the
+    auxiliary load overlaid and `p_bal - p_aux` beside it.
+
+    THE IDENTITY IS NOT EXACT, AND THE FIGURE SAYS SO.  The residual's named
+    components, in descending magnitude, are the auxiliary housekeeping load
+    (`I_AUX_A` plus any scenario preload or drain, on VBUS -- plotted, so it
+    can be subtracted by eye), the charger-path efficiency terms (`p_batt`
+    subtracts the power delivered INTO the pack while the power the charger
+    DRAWS sits on the bus side), bulk-capacitor storage, and the RT1987
+    ideal-diode drops between VBUS and the V-MOT node.
+
+    TWO DATA PATHS, and the annotation states which one rendered:
+
+    1. NEW SCHEMA (a simulator CSV from 2026-09-01f onward) carries the six
+       `p_*_w` columns and every term above is the plant's own arithmetic.
+    2. BACKFILL, for every campaign up to and including `20260901_151156` and
+       for every replay CSV.  ONLY the two source powers are derivable:
+           p_fc  = V_bus * I_fc          (exact, same definition)
+           p_batt= V_bus * I_batt        (GROSS: no charge term is available,
+                                          so a charge window reads as pure draw)
+       The motor, regen, charging and chopper terms are NOT derivable, so this
+       path draws no motor trace and NO RESIDUAL PANEL at all; the lower axes
+       carries the explanatory annotation instead.  ⚠️ A `V_rgn * current`
+       motor proxy was tried and removed: `current` is the VESC PHASE-current
+       command (up to 12 A), not a bus-side current, and it over-read by 4-6x,
+       producing a residual that read as a real imbalance.  On a REPLAY CSV
+       `current` is the bench log's recorded command, the same class of
+       quantity and equally unusable as a power.
+
+    Returns None (a clean skip) only when neither path is available, i.e. when
+    `V_bus`, `I_fc` and `I_batt` are all absent or all-NaN.  A present-but-empty
+    axis is never drawn (project honesty rule).
+    """
+    t = data["t_s"]
+
+    def _col(name):
+        arr = data.get(name)
+        if arr is not None and np.any(np.isfinite(arr)):
+            return arr
+        return None
+
+    p_mot = _col("p_mot_w")
+    p_fc = _col("p_fc_w")
+    p_batt = _col("p_batt_w")
+    p_chop = _col("p_chop_w")
+    p_aux = _col("p_aux_w")
+    p_bal = _col("p_bal_w")
+    native = p_mot is not None and p_fc is not None and p_batt is not None
+
+    if not native:
+        # ── LEGACY BACKFILL: the two SOURCE powers, and nothing else ────────
+        # A motor proxy `V_rgn * current` was tried here and REMOVED (fix
+        # round, 2026-09-01f).  `current` is the VESC PHASE-current command,
+        # up to 12 A, NOT a bus-side current, so the proxy over-read by 4-6x:
+        # 70-100 W against 5-25 W of real source power on campaign
+        # `hil_report_20260831_000518`, i.e. a mean residual of +44 W (188 % of
+        # the proxy's own mean) that READ AS A GENUINE IMBALANCE.  An
+        # annotation does not rescue a trace that wrong, so the honest
+        # rendering omits it, and the residual panel goes with it — a residual
+        # against an absent motor term is not defined.
+        v_bus, i_fc, i_batt = _col("V_bus"), _col("I_fc"), _col("I_batt")
+        if v_bus is None or i_fc is None or i_batt is None:
+            return None
+        p_fc = v_bus * i_fc
+        p_batt = v_bus * i_batt
+        p_sum = p_fc + p_batt
+
+        fig, (ax0, ax1) = plt.subplots(2, 1, figsize=bl_figures.FIGSIZE_STACK2,
+                                       sharex=True)
+        ax0.axhline(0.0, color=TEXT_COLOR, alpha=0.35, linewidth=0.8)
+        ax0.plot(t, p_fc, color=COLORS["I_fc"], linewidth=bl_figures.LW_RAW,
+                 label="p_fc (V_bus * I_fc)")
+        ax0.plot(t, p_batt, color=COLORS["I_batt"],
+                 linewidth=bl_figures.LW_RAW,
+                 label="p_batt (V_bus * I_batt, GROSS: no charge term)")
+        ax0.plot(t, p_sum, color=COLORS["u_unsat"],
+                 linewidth=bl_figures.LW_RAW, linestyle="--",
+                 label="p_fc + p_batt")
+        bl_figures._style_axes(ax0, ylabel="Power [W]")
+        bl_figures._legend(ax0, loc="upper left")
+
+        # The lower axes carries the annotation INSTEAD of a residual trace:
+        # never a silent empty axis (project honesty rule), and clear of the
+        # upper panel's legend.
+        bl_figures._style_axes(ax1, ylabel="Residual power [W]")
+        ax1.text(0.5, 0.5,
+                 "motor, regen, charging and chopper terms not derivable from "
+                 "legacy columns\n(pre-2026-09-01f CSV; `current` is the VESC "
+                 "phase-current command, not bus current)",
+                 transform=ax1.transAxes, color=TEXT_COLOR, fontsize=10,
+                 ha="center", va="center")
+        # Y ticks only: the axes SHARE x, so clearing the x ticks here would
+        # strip the time axis off the upper panel as well and leave the figure
+        # with no time reference at all.
+        ax1.set_yticks([])
+        ax1.set_xlabel("Time [s]", color=TEXT_COLOR, fontsize=10)
+
+        _hil_suptitle(fig, cfg,
+                      "power balance: source powers only (legacy CSV)")
+        fig.tight_layout(rect=(0, 0, 1, 0.96))
+        return fig
+
+    # ── NEW SCHEMA ──────────────────────────────────────────────────────────
+    # The six columns are written as one block, so `native` above establishes
+    # the whole set.  The defensive fallbacks below cost nothing and close a
+    # real inconsistency: if a hand-edited or truncated CSV lost `p_chop_w` or
+    # `p_bal_w` alone, the logged residual would no longer be the residual of
+    # the plotted sum.  Recompute it whenever any term is missing.
+    zeros = np.zeros(t.shape, dtype=np.float64)
+    p_chop_arr = p_chop if p_chop is not None else zeros
+    p_sum = p_fc + p_batt + p_chop_arr
+    if p_bal is None or p_chop is None:
+        p_bal = p_mot - p_sum
+
+    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=bl_figures.FIGSIZE_STACK2,
+                                   sharex=True)
+
+    ax0.axhline(0.0, color=TEXT_COLOR, alpha=0.35, linewidth=0.8)
+    ax0.plot(t, p_mot, color=COLORS["I_cmd"], linewidth=bl_figures.LW_FILT,
+             label="p_mot_w (motor node; + draw, - regen)")
+    ax0.plot(t, p_fc, color=COLORS["I_fc"], linewidth=bl_figures.LW_RAW,
+             label="p_fc_w (V_bus * I_fc)")
+    ax0.plot(t, p_batt, color=COLORS["I_batt"], linewidth=bl_figures.LW_RAW,
+             label="p_batt_w (+ sourcing, - charging)")
+    if p_chop is not None:
+        ax0.plot(t, p_chop, color=COLORS["V_rgn"], linewidth=bl_figures.LW_RAW,
+                 label="p_chop_w (braking shunt)")
+    ax0.plot(t, p_sum, color=COLORS["u_unsat"], linewidth=bl_figures.LW_RAW,
+             linestyle="--", label="p_fc + p_batt + p_chop")
+    bl_figures._style_axes(ax0, ylabel="Power [W]")
+    bl_figures._legend(ax0, loc="upper left")
+
+    ax1.axhline(0.0, color=TEXT_COLOR, alpha=0.35, linewidth=0.8)
+    ax1.plot(t, p_bal, color=COLORS["V_bus"], linewidth=bl_figures.LW_FILT,
+             label="p_bal_w = p_mot - (p_fc + p_batt + p_chop)")
+    if p_aux is not None:
+        ax1.plot(t, -p_aux, color=COLORS["edge_expected"],
+                 linewidth=bl_figures.LW_RAW, label="-p_aux_w (V_bus * i_aux)")
+        ax1.plot(t, p_bal + p_aux, color=COLORS["V_chg"],
+                 linewidth=bl_figures.LW_RAW, linestyle="--",
+                 label="p_bal_w + p_aux_w (charger, storage, RT1987 drops)")
+    finite = np.isfinite(p_bal)
+    if np.any(finite):
+        mean_bal = float(np.mean(p_bal[finite]))
+        max_bal = float(np.max(np.abs(p_bal[finite])))
+        mot_finite = np.isfinite(p_mot)
+        mean_mot = (float(np.mean(np.abs(p_mot[mot_finite])))
+                    if np.any(mot_finite) else 0.0)
+        pct = ("%.1f %% of mean |p_mot|" % (100.0 * max_bal / mean_mot)
+               if mean_mot > 1e-9 else "mean |p_mot| is zero")
+        ax1.text(0.01, 0.06,
+                 "residual: mean %+.4f W, max |.| %.4f W (%s)"
+                 % (mean_bal, max_bal, pct),
+                 transform=ax1.transAxes, color=TEXT_COLOR, fontsize=9,
+                 va="bottom")
+    bl_figures._style_axes(ax1, ylabel="Residual power [W]")
+    ax1.set_xlabel("Time [s]", color=TEXT_COLOR, fontsize=10)
+    bl_figures._legend(ax1, loc="upper left")
+
+    _hil_suptitle(fig, cfg, "power balance: motor vs sources, chopper, residual")
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    return fig
+
+
 HIL_FIGURES = [
     ("hil_state_and_switches", hil_state_and_switches),
     ("hil_charger_and_soc", hil_charger_and_soc),
     ("hil_share_raw_vs_emitted", hil_share_raw_vs_emitted),
     ("hil_h2_and_soc", hil_h2_and_soc),
+    ("hil_power_balance", hil_power_balance),
 ]
 
 

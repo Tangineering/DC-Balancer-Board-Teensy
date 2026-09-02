@@ -1008,6 +1008,75 @@ One row per tick. The base schema is **19 columns and is frozen**; everything si
   `hil_report_20260831_191509` could only diagnose the `v1` clamp saturation
   from the exit summary's counters. Read this column, not `cmd_share_sp`, to
   answer "did the policy interior actuate".
+- `p_mot_w`, `p_fc_w`, `p_batt_w`, `p_chop_w`, `p_aux_w`, `p_bal_w` (appended
+  **last, after `error_code`**, 2026-09-01f) — the per-tick power balance in
+  watts, 6 dp. Declared in **both schemas** so their tail indices are fixed, but
+  populated on **simulated ticks only**: a replay bypasses the plant integrator,
+  so every replay row is **blank**, never `0`. `p_mot_w` is the electrical power
+  at the **V-MOT node** — `+ i_motor·V_rgn` while motoring, `− p_regen_w` while
+  braking. The two branches are exclusive by construction: `p_mech` and
+  `p_regen_w` are the positive and negative halves of one `p_shaft`, so at most
+  one is non-zero on any tick. **V-MOT is the correct node because of the regen
+  sign, not the diode drop:** braking power enters the network at `N_MOT` and
+  leaves through `REGEN`, never back through `MOT_PWR` (the RT1987 blocks
+  reverse), so a VBUS booking `V_bus·i_motor` would be **identically zero
+  throughout every braking window** and would show no returned energy at all.
+  `p_fc_w` is the **bus-side** fuel-cell power
+  `V_bus·I_fc`; it is **not** the stack power `Gfc` integrates (§9.3 uses
+  `v_terminal·i` on the source side), and the two differ by the boost efficiency
+  and voltage ratio. `p_batt_w` is the **net** pack power, `V_bus·I_batt` minus
+  `V_batt·i_charge` — power into the pack **terminals**, with the pack's own I²R
+  inside that boundary; the current is the same one the SoC integrator is
+  given in both engines, so this column and `soc` tell one story, and charging
+  drives it negative. `p_chop_w` is the braking-shunt dissipation. `p_aux_w` is
+  the housekeeping load `V_bus·i_aux`, including any scenario preload or drain.
+  `p_bal_w` is the residual `p_mot − (p_fc + p_batt + p_chop)`, written out so a
+  consumer can test the identity per tick without recomputing it.
+
+  ⚠️ **The identity is not exact, and the residual's components are named.** In
+  descending magnitude:
+
+  1. **The auxiliary load** — hence `p_aux_w` as its own column; subtract it first.
+  2. **The charger, and it is NOT an efficiency term.** This model's Ag105 is a
+     **1:1 current transfer element**: `hil_electrical.py:1949` stamps
+     `J[N_CHG] -= i_charge` and `:1855` hands the pack **the same** `i_charge`,
+     so the model destroys `i_charge·(V_chg − V_batt)` by construction. Measured
+     on the probe below: `1.4 A × 7.9 V = 11.06 W` against a residual of
+     **11.08 W** — the whole charge-window residual, to two decimals. A real buck
+     at η ≈ 0.9 would draw ≈ 0.79 A from a 15 V bus to deliver 1.4 A at 7.9 V, so
+     **the plant over-draws the bus by roughly 1.8× while charging**.
+     `TODO(verify: Ag105 η)`. ⚠️ **Simple mode is the opposite error:**
+     `Plant.step()` computes `i_total = i_motor + i_aux`
+     (`hil_plant_sim.py:1448`, banner at `:2897`) and never charges the sources
+     for the charger at all, so pack charge there is **free energy** and the
+     charge-window residual **flips sign**. Neither is corrected — an observer
+     column does not change the plant, and which way to fix it is an operator
+     decision.
+  3. **Bulk-capacitor storage**, `d/dt(½CV²)` on the VBUS 470 µF and, in hi-fi,
+     the other node capacitances.
+  4. **The hi-fi motor stamp's transient term.** The load is a conductance
+     `g_mot = i_motor/v_prev` (`hil_electrical.py:1925`), so the solved tick
+     draws `i_motor·v_new²/v_prev` while `p_mot_w` books `i_motor·v_new` — a
+     difference of `i_motor·v_new·(v_new − v_prev)/v_prev`. With (3) this is what
+     makes the motoring residual peak near 13 W during bring-up while its
+     steady-state mean stays under 0.4 W.
+  5. **RT1987 ideal-diode drops**, `i_motor·(V_bus − V_rgn)` — small, ≤ 35 mW at
+     1 A (the servo holds ~35 mV, not a PN V_f).
+
+  Measured on a 6 s motoring → braking → charging probe: in simple mode the
+  motoring residual is `p_bal + p_aux = 0.0000 W` **exactly**, the braking mean is
+  −0.67 W, and the charge-window mean is +11.1 W; in hi-fi the same three are
+  −0.37 W, −0.73 W and −11.1 W.
+
+  ⚠️ **This bears on a published EMS conclusion.** The over-draw in (2) bills the
+  sources for hydrogen a real charger would not cost, so campaign
+  `20260901_000816`'s finding that **Ag105 charging is loss-making at rig scale**,
+  and the measured charge lever **L_chg = 0.2364 SoC/g** behind `sdp_policy_v3`'s
+  two-sided α calibration, both rest on a charger model that is pessimistic by
+  roughly the factor above. The finding's *direction* is not in question — the
+  share lever is 0.409–0.415 SoC/g, well clear — but its *margin* is
+  model-dependent and must not be quoted as measured physics until the η term is
+  resolved.
 - `cmd_v_sp`, `cmd_share_sp` (appended, unconditional within each mode) — what the
   emulated Pi commander **intended to be commanding at this tick**, blank when no
   commander exists (`--pi-live`, or a plain `--replay`). ⚠️ **They move at the

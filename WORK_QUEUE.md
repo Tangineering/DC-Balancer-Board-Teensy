@@ -81,6 +81,7 @@ fault word (bitwise OR needed). Pi-side SoC is a V_batt LUT — not comparable w
 
 ## 5. Open analysis questions
 
+- **Charger efficiency model (found by the power-balance column, 2026-09-01f) — OPERATOR DECISION.** The hi-fi Ag105 is a 1:1 CURRENT-transfer element (J[N_CHG] -= i_charge; the pack receives the same current), so it destroys i_charge·(V_chg − V_batt) and over-draws the bus ~1.8× versus a real buck at η ≈ 0.9 (a 15 V bus would supply ≈ 0.79 A to deliver 1.4 A at 7.9 V). This bears on the campaign-000816 "charging is loss-making at rig scale" conclusion and on L_chg 0.2364 SoC/g behind sdp_policy_v3's α: an η-conserving charger stamp would make charging ~1.8× cheaper in bus energy. Decide: keep (document) or re-model, then re-derive the charge lever and re-solve the SDP α. The simple engine separately treats charging as free energy (i_total never includes the charger draw, hil_plant_sim.py:1448) — documented, hifi-only campaigns are unaffected.
 - Does the charger lever clear the 0.31 SoC/g `sdp` charge-revisit condition under the regen model?
   Campaign 151156 measured charge-regen at ~39 mC/window (regen-fed, −97 % vs the bus-fed era); a
   marginal SoC/g derivation across two campaigns is needed (no automated metric) — after campaign 2.
@@ -109,6 +110,14 @@ fault word (bitwise OR needed). Pi-side SoC is a V_batt LUT — not comparable w
   add an opt-in share-stimulus replay entry if guard coverage from the replay half is wanted.
 - Governor model: `conv_tau_s` fit reported (shallow optimum 5–10 ms), not adopted; ems-sdp-braking is
   outside the model's fidelity claim (charge-window ratio wind-down dynamics).
+
+## Shipped 2026-09-01f (follow-on round)
+
+- `hil_power_balance` figure in every HIL report + six append-only power columns (both engines);
+  backfilled across all 14 report folders (legacy CSVs: source powers only).
+- Refined α-sweep: both transition points bisected (0.111000 / 0.239250 = the admission-window ends),
+  20 refined artifacts (idx 21–40), walk-synthesized plots per point, h2-vs-α step figures, doc §10–11.
+- Found: the hi-fi Ag105 is a 1:1 current-transfer element (charger-efficiency decision, §5).
 
 ## Shipped this round (2026-09-01e)
 

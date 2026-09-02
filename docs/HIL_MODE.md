@@ -355,6 +355,15 @@ auditable), the git revision, and the run's results. It is written once before
 the loop with `"status": "running"` and rewritten at exit — a killed run still
 leaves a record. See `docs/HIL_USER_MANUAL.md` §2.5 for the full schema.
 
+The CSV column list itself is documented in `docs/HIL_PLANT.md` §7.1. Columns are
+only ever **appended**, never reordered, so an existing parser that reads by index
+keeps working. The most recent appendices are `mppt_thresh_cnt` (fw v24),
+`error_code` (fw v25) and, last, the six per-tick power columns `p_mot_w`,
+`p_fc_w`, `p_batt_w`, `p_chop_w`, `p_aux_w` and `p_bal_w` (2026-09-01f). All three
+appendices are declared in **both** the simulated and replay schemas so their tail
+indices are fixed; the power columns are blank on every replay row, where no plant
+integrator ran.
+
 Two additional command sources exist and are documented in
 [`docs/HIL_USER_MANUAL.md`](HIL_USER_MANUAL.md): `--ems STRATEGY` (Mode A — an
 emulated Pi EMS policy replaces the scenario's `pi_timeline`) and `--pi-live`

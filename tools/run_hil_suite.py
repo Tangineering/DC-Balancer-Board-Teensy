@@ -7235,18 +7235,33 @@ EMS_FRONTIER_STIMULUS_KEYS = ("ems_v_profile", "duration_s", "ems_run_exit_s",
                               "aux_preload_a", "chg_i_ceiling_a")
 
 
-def ems_frontier_stimulus_mismatches(roles):
-    """Keys on which the legs of one frontier disagree.  PURE, registry-only.
+def ems_frontier_stimulus_mismatches(roles, modes=None):
+    """Keys on which the legs of one frontier disagree.  PURE.
 
     Returns a list of (key, {leg_name: value}) for every stimulus key the legs
     do not agree on, in EMS_FRONTIER_STIMULUS_KEYS order.  A leg this checkout
     does not register is skipped — `evaluate_ems_frontier` already reports a
     missing leg, and inventing a mismatch for it would double-count.
 
-    Read from SCENARIOS rather than from the run records because a stimulus is
-    a property of the PLAN, so the mismatch is knowable before a single run
-    starts — and must be, or a campaign spends 17 minutes producing numbers
-    that cannot be compared."""
+    The registry keys are read from SCENARIOS rather than from the run records
+    because a stimulus is a property of the PLAN, so the mismatch is knowable
+    before a single run starts — and must be, or a campaign spends 17 minutes
+    producing numbers that cannot be compared.
+
+    `modes` is the optional exception, and it is deliberately RESOLVED rather
+    than registry-read (M3, 2026-09-01f).  Pass {leg_name: run record "mode"}
+    and an extra `electrical_resolved` key is compared.  It CANNOT come from
+    SCENARIOS: `ems-soc-band`, `ems-sdp` and the FTP-75 legs all declare
+    `"electrical": "any"`, so the declared field agrees while the runs need not
+    — a `--electrical-pref simple` campaign resolves an `"any"` leg to simple
+    and a `"hifi"`-pinned leg (`ems-dp-replay`) to hifi.  That split is not
+    cosmetic: SIMPLE MODE DOES NOT CHARGE THE SOURCES FOR THE Ag105
+    (`hil_plant_sim.py:1448`), so a charging leg run there harvests FREE energy
+    and would be ranked against a hi-fi DP bound that paid for every coulomb.
+    Comparing the declared field instead would fire on every mixed
+    `"any"`/`"hifi"` frontier even when both legs actually ran hifi, so the
+    resolved value is the only correct one.  Omit `modes` (the default) and the
+    function is registry-only exactly as before."""
     names = [n for n in roles.values() if n in SCENARIOS]
     out = []
     for key in EMS_FRONTIER_STIMULUS_KEYS:
@@ -7254,6 +7269,14 @@ def ems_frontier_stimulus_mismatches(roles):
         first = next(iter(vals.values()), None) if vals else None
         if any(v != first for v in vals.values()):
             out.append((key, vals))
+    if modes:
+        # Only legs that actually reported a mode: a leg with no record yet is
+        # `missing`, and a None here would read as a mismatch against a real
+        # mode.  Appended last so the established key order is untouched.
+        vals = {n: modes[n] for n in names if modes.get(n)}
+        first = next(iter(vals.values()), None) if vals else None
+        if any(v != first for v in vals.values()):
+            out.append(("electrical_resolved", vals))
     return out
 
 # THE TWO ASSERTIONS, and why each number is what it is.
@@ -7435,7 +7458,16 @@ def evaluate_ems_frontier(results, planned_names=None, spec=None):
     # profiles would be ranked on the stimulus difference. Registry-derived, so
     # it fires even on a partial report — a campaign should not spend 17 minutes
     # producing numbers that were never comparable.
-    stim = ems_frontier_stimulus_mismatches(roles)
+    # M3: the RESOLVED electrical mode joins the registry keys. Read off each
+    # leg's own run record, so it reflects what ran rather than what the
+    # scenario declared — see the function's docstring for why the declared
+    # field cannot serve.
+    _modes = {}
+    for _name in roles.values():
+        _r = _ems_frontier_leg(results, _name)
+        if _r is not None and _r.get("mode"):
+            _modes[_name] = _r["mode"]
+    stim = ems_frontier_stimulus_mismatches(roles, modes=_modes)
     if stim:
         rec["stimulus_mismatch"] = [
             {"key": k, "values": {n: (list(v) if isinstance(v, list) else v)
