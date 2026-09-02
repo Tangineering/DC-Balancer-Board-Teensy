@@ -569,3 +569,7 @@ fixes → campaign → MPC (deterministic, then stochastic) → campaign → α 
   so campaign B measures the real board-side prediction error; the fallback (full governor rolls
   on open stages, ~8 candidates - design §3.5) or a feedforward-aware stage model is a MORNING
   decision. Reversal: drop the four ems-mpc* scenarios from the plan (one commit).
+- **Campaign B launched** (commit 887933f; `--with-ftp75 --with-alpha`; plan 39 + FTP-75 + alpha
+  legs incl. the four ems-mpc* legs). tools/ is edit-frozen until it completes. Python suites at
+  launch: .venv_hil 1761 passed / 59 skipped (after re-pinning two stale tests); miniforge 2022
+  passed / 1 skipped. Firmware suites untouched (fw v25's 3842/175/4324 stand).

@@ -2358,3 +2358,286 @@ docs; FW stays v23; wire protocol frozen.
 
 ---
 
+
+## Rotated 2026-09-02 (fw v24–v25 flash era: MPPT threshold, share-cut guards, regen fidelity, campaigns 080905/151156) — every load-bearing fact verified to survive in docs/firmware-versions.md, docs/HIL_PLANT.md, WORK_QUEUE.md, or a campaign ledger
+
+## Status & session addendum (2026-09-01a, fw v24: dynamic Ag105 MPPT threshold — PREPARED, NOT FLASHED)
+
+Overnight autonomous firmware round (operator-prescribed dual-design decision pair:
+Fable-high + Opus-xhigh, orchestrator-adjudicated; then implementer → test-writer →
+two-lens reviews → fix round). **fw v24 (commit 128dc40; NOT flashed — the board ran
+fw v23 all night; flash requires the usual HIL_SIM edit).** Ledger row 24.
+
+- **Both designers independently resolved R1 from Table 7's own encoding:** reg 0x02
+  values 0–250 select register mode, ≥251 the MPPTS resistor — a firmware write
+  overrides any fitted resistor, so R1 is documentation, not a design dependency.
+  Both also found a LATENT TELEMETRY BUG: below-threshold refusal makes ALL Ag105
+  measurement registers read 0xFF (DS §2.11.5), which pollAg105() converted to a
+  bogus I_charge = 2.805 A — fixed (0xFF sentinel → I_charge 0, ag105MeasUnavailable
+  flag).
+- **Adjudicated design:** V_chg (pin 38) windowed-MINIMUM tracking, sampled only
+  while FC_CHARGE powers the charger; target = V_chg_min − 3.0 V quantized DOWN,
+  clamped to counts [15 = 12.320 V floor, 27 = 13.376 V ceiling] — the ceiling is
+  static_assert-anchored to V_BUS_CHARGED_THRESH minus the RT1987 ideal-diode path
+  drop (~35 mV servo, NOT a PN Vf — reviewer's 0.4 V assumption corrected), the
+  formal no-hunt invariant. Monotone-lower session ratchet (≤2/session, 30 s apart,
+  deadband 3 counts, ≤8 physical writes/boot counted AT ATTEMPT + a boot-scoped
+  fail gate — the safety review's H1: the original budget missed failing writes and
+  refilled on charger power cycles). reg-0x07 cross-check discriminates the 0xFF
+  read ambiguity; VERIFY treats a 0xFF readback as undecidable (M1 — else the
+  flagship first write self-scores as failure and disables harvest). MPPTD-disabled
+  charge semantics are UNVERIFIED on hardware (the two designers read the datasheet
+  OPPOSITELY) — so no release-logic semantic change shipped; a 1 s MPPT_DISABLE
+  release holdoff bounds any residual hunt to ≤1 Hz under either reading, with
+  Fable's ag105ReleaseOk() proposal recorded as the upgrade pending a bench step.
+  Layered UV protection: firmware backoff closes FC_CHARGE at 12.8 V/15 ms dwell
+  (hover-band protection — it CANNOT pre-empt the 20 ms UV latch on a fast
+  collapse, and says so), resume 13.6 V, gated vs busHotPlugUnsafe + the share
+  latch (Death-5 conservatism). HIL observation frame 16 → **17 B** (mppt count at
+  offset 15, live-mirrored per tick under HIL_SIM); State-98 **'N'** command; 'S'
+  dump block; the two stale P&O comments corrected. EPROM endurance is NOT in the
+  datasheet — TODO(verify: Silvertel); the structural lifetime bound is ~236 writes.
+- **Reviews:** safety 1 HIGH + 7 MED + 8 LOW; correctness 1 MED-HIGH (the HIL
+  mirror was one-shot; now live) + the mock_wire transaction counter (the zero-Wire
+  tests were structurally vacuous) — all applied. test/mppt_assert_probes.sh pins
+  the static_asserts (compile-fail mutation probes, 6/6).
+- **Tests: 3787 production + 175 bench + 4268 HIL — all green, orchestrator-rebuilt.**
+- **Tooling lockstep NOT yet done** (deliberately): the simulator still emulates the
+  fixed 18 V threshold and does not parse the 17 B frame — a pre-flash tooling round
+  (frame length-detection, mppt_emulation reads the observed count, mppt-tracking
+  expectation flip to ≤6 toggles + threshold-band checks) is REQUIRED before the
+  first fw v24 HIL campaign. Queued in WORK_QUEUE.md.
+- Operator items: R1 MPPTSEL inspection (now documentation-grade); the MPPTD-
+  disabled-charge bench verification; flash order per WORK_QUEUE.
+
+---
+
+## Status & session addendum (2026-09-01b, overnight campaigns 1–4: sdp_policy_v3, the charge-economics finding, interior scenarios, frontier check)
+
+Overnight autonomous session (operator instructions 2026-08-31 evening; full decision
+log in OVERNIGHT_LOG.md; commits d5d72e3 → 9cbf83c → 128dc40 → 6971a73 → 1ba2bd9 +
+the close-out). Four full campaigns on the fw v23 flash, each live-analyzed under the
+hil-agent-analysis discipline; two dual-agent decision pairs; zero board defects all
+night.
+
+- **Campaign 1 (222036, 53/53):** second fully-green campaign; first on sdp_policy_v2
+  — every offline-walk prediction confirmed to the digit; the predicted FC_CHARGE
+  chatter MEASURED (9×1 s windows, 2.0125 s period, 4.63× harvest loss); three-way
+  eq-H2 dp 0.011567 < sdp-v2 0.011773 (+1.79 %) < soc-band 0.012852; replay audit
+  0 untagged-vacuous (was 7.5 %) and caught the fix round's own ML0217 wrong-gate
+  attribution (P0/300 ms, not P1/800 ms — re-anchored to an elapsed-from-State-0
+  band). Chatter ruling: 8 s min-dwell hysteresis, consumer-side.
+- **Campaign 2 (000816, 53/53):** hysteresis validated to the digit (2 windows /
+  15086 ticks; harvest 7.72×; the self-load-subtracted bin proven by a double-dwell
+  window) — **and it exposed that Ag105 charging is LOSS-MAKING at rig scale**:
+  sdp-v2 fell off the frontier (+12.78 % over the DP bound, worse than soc-band;
+  implied lever 0.2364 SoC/g vs the 0.41 exchange rate; the DP charges on ZERO
+  stages). No check asserted frontier position — 15/15 passed. Decision pair #2:
+  both agents REFUTED the loss-chain hypothesis (the levers' hydrogen basis
+  cancels; the model is CONSERVATIVE about charging) and converged on the true
+  defect: **the ported α sets a SoC shadow price (α/(1−γ) = 5.14 g/SoC) whose
+  admission threshold the added charge control was never tested against** — the
+  ported invariant came from a MATLAB source with no charger. Ruling:
+  **sdp_policy_v3** — α re-derived by two-sided lever calibration ((1−γ)/√(L_share·
+  L_chg) = 0.1629624, from the solver's own constants; window tripwire asserts α
+  inside both admission windows), charging rejected ENDOGENOUSLY (0 cells; share
+  map identical at operating rows; sha 0443febf…); v2 kept BYTE-FROZEN as the
+  demonstration artifact for the dynamics scenarios (frontier_eligible False,
+  banner-rendered). Revisit condition: charging returns on its own if the charger
+  lever ever exceeds 0.31 SoC/g (e.g. post-fw v24). **Standing rule (new): any
+  control ADDED to a ported objective must be checked against the shadow price the
+  port's α implies.**
+- **SDP interior scenarios (operator-approved S1/S2/S3) + EMS frontier check
+  shipped** (6971a73): `soc_ref_offset` strategy parameter; ems-ftp75-sdp (S1,
+  δ +0.013 above target → mid-run share flip), ems-sdp-cross (S2, downward
+  crossing + charge-threshold limit cycle — the UPWARD share crossing is infeasible
+  on this artifact: the two switching surfaces sit one grid node apart and crossing
+  up inside a dwell needs 2.4 A single-source FC), ems-sdp-braking (S3,
+  decel-plateau charge windows; HONEST caption — SoC rise is FC-fed, regen power is
+  floored in the plant). EMS_FRONTIER cross-run eq-H2 check (≤0.98× soc-band,
+  ≤1.06× dp; KNIFE-EDGE λ-band; exit-affecting UNVERIFIED split — the combined
+  review's H1 caught that the first version failed clean --pi-live campaigns).
+  FTP75 DP table baked (dp_ems_table_ems-ftp75-5050.csv): **DP vs soc-band −0.01 %
+  at matched terminal SoC — the DP's advantage lives on the low-demand cycle, not
+  the drive cycle.**
+- **Campaign 3 (024231, 55/56 + 1 scenario-gap FAIL):** the frontier check's first
+  live PASS — **the v3 leg landed ON the DP bound (1.0000×) and beat soc-band by
+  10 %**; ems-sdp h2 matches the campaign-191509 share-only leg to **8 ppm** (two
+  artifacts, identical command, identical energy); the artifact's two switching
+  surfaces measured on hardware within 1e-5 SoC of their grid nodes; S1's flip
+  landed at 198.5 s vs the walk's 195.9 (+1.35 %). The FAIL was S2's phase-locked
+  absence check: the walk's limit-cycle period was wrong 5.7× — root cause: **below
+  the 0.55 A gate the firmware runs OPEN-LOOP HOLD and delivered share 0.1656
+  against the commanded 0.85** (designed behavior; now a documented
+  strategy-authoring rule — walks must model the hold). Frontier honesty caveat:
+  the vs-bound arm is STRUCTURALLY ~1.0 for charge-free candidates (both points
+  differ only along the share lever, and λ IS that lever's rate) — it detects
+  lever-class deviations (as in C2), not optimality; do not tighten it on
+  charge-free readings. Calibration round (1ba2bd9): phase-free replacement checks
+  (new `max_continuous_ticks` + `edge_count_between` kinds), all S1/S2/S3 pins
+  de-provisionalized from measurement, three new OC-margin tripwires (S3's dwell
+  overhang peaks I_fc 1.2617 A — the suite's tightest margin, 9.9 %, now asserted).
+- **Campaign 4 (validation of the calibrated stack)** — results in OVERNIGHT_LOG.md's
+  morning digest.
+- **Repeatability ledger across the night:** comm-loss re-close 0.3696 A/ch
+  8-for-8 bit-exact; scp i_cut 7-for-7 bit-exact; ftp75 h2 bit-identical across
+  campaigns; sag dwell band 19.70–20.13 ms over 4 samples; the sag REGEN-teardown
+  event classification settled (bit-identical to the comm-loss reference).
+- **Tests at close: 1196 + 26 stdlib / 302 miniforge / 3787 + 175 + 4268 firmware.**
+- ⚠️ Comparability: pre-2026-09-01 `ems-sdp` h2/ΔSoC pairs are the v2 law (the C2
+  pair is literally the frontier check's FAIL fixture); v1↔v2↔v3 rules are in the
+  docs. The overnight decisions and their reversal paths are itemized in
+  OVERNIGHT_LOG.md.
+
+---
+
+## Status & session addendum (2026-09-01c, fw v24 flashed: tooling lockstep + campaign 080905 — the applyShareRatio() guard gap)
+
+The operator flashed fw v24; the blocking tooling-lockstep round shipped (commit
+739ff64: dual-length 16/17 B observation-frame parse, count-driven MPPT emulation
+with 18 V fallback, `mppt_thresh_cnt` CSV column both schemas, mppt-tracking
+expectation flip hunt→no-hunt, FW_DELTA_NOTES[24]/TARGET_FW_VERSION 24; review
+3 MED + 7 LOW all applied — notably the stale 60 ms backoff-dwell figure (truth:
+15 ms, .ino:1764; the .ino:32 changelog line still carries 60 and is queued
+(corrected in fw v25, commit b262e98));
+tests 1217+26 / 129). Then the FIRST fw v24 campaign ran: **55/56 + drive SKIP**
+(hil_report_20260901_080905; HIL_FINDINGS.md + HIL_SUMMARY.md in the folder).
+
+- **fw v24 VALIDATED in emulation:** the MPPT hunt is GONE (68 rises → 3 exactly
+  as derived; refusal ticks 1481 → 0; three ~0.98 s clean releases vs the 40 ms
+  hunt), cruise harvest exactly DOUBLED (2.005×; brake-window coulombs identical
+  to 4 dp), threshold-count arithmetic exact vs `.ino` at 15 quantization
+  boundaries, observed count band [15,19] — the FLOOR binds ~85 % of harvest
+  (V_chg sags to ~14.45 V → effective margin 2.13 V, not 3.0). OC_FC margin
+  16.9 % (the review's MED-3 budget risk did not trip). 17 B frame clean over
+  ~1.3 M frames; v23→v24 drive-law comparability empirically confirmed
+  (indistinguishable from the v23→v23 repeat-noise floor). ⚠️ The HIL mirror
+  bypasses the write policy/deadband/session ratchet/EPROM budget — those remain
+  BENCH-ONLY unvalidated; never cite HIL count motion as write-budget evidence.
+- **THE FINDING (BOARD-REAL, fw-version-independent): the r-based bus cutoff in
+  `applyShareRatio()` is UNGUARDED** — no |I_doomed| ≤ SHARE_CUT_MAX_HANDOFF_A
+  term (that guard exists only on the setpoint-latch path, fw v6) and no
+  survivor-conducting term. In ems-sdp-braking it opened FC_BUS (the only
+  conducting source, i_cut 0.6371 A) 5 ms after BT_BUS restore — inside BT's
+  8 ms RT1987 TD_ON — at a charge-window close: bus 14.56 → 12.40 V in 3 ms,
+  reactive BT pickup, share slew, I_batt 4.64 A → OC_BT latch (fault response
+  CORRECT). Mechanism: during every FC-charge window BT_BUS is held LOW, the
+  share loop winds r onto DROOP_R_MIN = 0.15000 EXACTLY (zero margin, identical
+  in C3/C4), and the window close makes the pinned cut actionable the same tick
+  BT returns; hit = sub-ms tick alignment (2/5 closes vs 0/18 in C3+C4,
+  p ≈ 0.04 — fw v24 loop-phase shift is a HYPOTHESIS only; the share code is
+  byte-identical, the UV backoff provably never armed, mppt_emulation off).
+  A second NON-FATAL instance same run (t = 20.172, BT_BUS, 0.7438 A). No other
+  instance campaign-wide (full events.jsonl sweep; the other >0.5 A en_low cuts
+  are benign State-99 teardowns). **fw v25 candidate queued in WORK_QUEUE.md
+  §0a** (guard both r-based branches + survivor-HIGH < 8 ms blanking +
+  regression); the ems-sdp-braking expectation is deliberately NOT relaxed.
+- **Every other verdict verified right-for-the-right-reason** (dedicated Opus
+  agents on mppt-tracking + the FAIL, consolidated Sonnet pass, adversarial
+  Opus replay audit): replay half 27/27 REAL (137 checks, 0 untagged-vacuous),
+  carried-in latch chain exact 55/55 + 27/27, scp i_cut bit-exact 9-for-9,
+  ems-sdp h2 0.012542582 bit-exact (8 ppm record extends across the flash),
+  frontier PASS 0.9003×/1.0000×, charge-cruise OC_FC bit-identical current Δ4 ms
+  vs C4. Fix queue (2 MED + LOW batch incl. the mppt first-campaign calibration
+  pins) in the ledger and WORK_QUEUE §0a.
+- Tests at close: 1217 + 26 (.venv_hil five suites), 129 (miniforge
+  report-analysis). Firmware suites untouched this round (fw v24's 3787/175/4268
+  stand from commit f8050e1).
+
+---
+
+## Status & session addendum (2026-09-01d, fw v25 + regen-fidelity round: share-cut guards, 18 B frame, regen model, DP/droop/figure extensions)
+
+Large orchestrated round in five work packages (operator-approved scope 2026-09-01),
+executed with parallel implementers on disjoint files, per-package reviews, and
+combined fix rounds. Commits b262e98 (fw v25) + 89fbad6 (tooling). **fw v25 is
+COMMITTED and NOT FLASHED; the flash prerequisite (18 B sim lockstep) is now met —
+the next flash carries v25 alone (edit HIL_SIM 0→1 as usual).**
+
+- **fw v25 (WP-A): the campaign-080905 hazard is closed.** Both r-based cut branches
+  in applyShareRatio() gained the fw v6 load guard (|I_doomed| ≤ 0.5 A), and BOTH cut
+  paths gained survivor-turn-on blanking: writeBusSwitch() chokepoint (all 26
+  FC/BT_BUS_ENABLE write sites) timestamps rising edges; cuts refused while the
+  survivor's edge is younger than SHARE_CUT_SURVIVOR_BLANK_MS **30 ms** (review H1:
+  t_D_ON 8 ms + 100 nF CSS soft-start tON 19.8 ms per the repo's own RT1987 model;
+  TODO(calibrate) with the asymmetric failure direction stated — do not shorten on
+  the model alone). Refused cuts fall through to a SLEW-LIMITED band-edge clip on
+  the controller path only (shareRatioFromController marker — the reviewer's literal
+  fix was wrong: powerBalanceLive is State-98-only); one-shot operator writes land
+  exactly as commanded. Observation frame 17 → **18 B** (error_code at offset 16,
+  XOR 1..16) — PI_TIMEOUT vs HIL_STALE finally wire-distinguishable. Diagnostics:
+  load-/blank-refused TICK counters in the 'S' dump (episode counts they are not).
+  .ino:32 + ledger row 24 backoff dwell corrected 60 → 15 ms. Tests 3842/175/4324.
+- **Regen-fidelity plant model (WP-C): the regen power floor is GONE.** Braking
+  energy now flows kinetic → VESC (clipped at VESC_REGEN_I_MAX_A 1.5 A — one number
+  sets braking force AND electrical return; ETA_REGEN 0.80; both TODO(verify)) →
+  N_MOT bounded-Norton → chopper linear clamp (coalesced chopper_clamp events with
+  energy accounting — the chopper-coverage item's enabler) → D-BC-RG → Ag105 → pack.
+  Two latent model bugs fixed en route: the bare 1/47 chopper stamp could not hold
+  18.1 V (chattered), and the RT1987 ON stamp went NEGATIVE for dv < 35 mV (a closed
+  MOT_PWR silently absorbed the harvest) — strict_forward now on MOT_PWR/REGEN/
+  FC_CHARGE only; **the scp i_cut record verified bit-identical to 17 digits**, the
+  FC/BT boost-OR links deliberately unscoped (parallel-source handoff A/B is future
+  bench work). New scenario **regen-harvest-true** (S3-full un-tabled; commanded
+  decel unachievable by design so the controller rails). **Baseline era:** the
+  ems-y quartet (brakes at −12 A → force 2.7× less under the clip), charge-regen,
+  mppt-tracking regen windows and regen-harvest-true are NOT comparable with
+  campaigns ≤ 080905; the EMS objective set, all h2 totals, the frontier and all 27
+  replays measured out of blast radius. Honest magnitudes: at the 1.5 A clip a
+  braking window returns single-digit joules; SoC still falls net.
+- **fw v25 sim lockstep + suite batch (WP-B):** 16/17/18 B parse, error_code CSV
+  column/dashboard, wire-first 0x8010 attribution (the documented "error_code not
+  on the frame" residual is CLOSED; stream-health inference kept as the pre-v25
+  fallback). Campaign-080905 batch landed: column_range_at_least + floor_min_value
+  + i_fc_max_in_band + min_rows check kinds, mppt calibration pins de-provisionalized,
+  TP0010 i_bt_clamp_a 2.8 (TP0053 measured 2.345 — deliberately unclamped),
+  ML0151 margin pin, blg sha stamps, and the **share_cut_load_hazard tripwire**
+  (review-hardened: whole-run-minus-carried-in anchor with TEARDOWN_LEAD_MS 5 ms —
+  teardown cuts lead their latch by 0.095-0.117 ms vs ≥ 13.8 ms for genuine hazards;
+  gated on TARGET_FW_VERSION ≥ 25 AND a per-run 18 B observation). Operator rulings
+  implemented: ems-ftp75-socband OC_FC allowance RETIRED (h2 two-sided
+  [0.070, 0.115]); new **v-bus-sense-offset** scenario is the UV-dwell objective's
+  home (8 ms no-latch + 60 ms latch probes bracketing the 20 ms dwell; stall-margin
+  hardened + cadence de-vacuation). fw v25 expectation-impact review: NO measured
+  pin moves (staircase cuts are setpoint-path and 3 s apart); ems-sdp-braking's
+  fault-free expectation becomes reachable again — its FAIL record is fw ≤ 24.
+- **EMS extensions (WP-E):** scenario **ems-ftp75-dp** + regenerated DP tables — a
+  real generator bug found (chg_ceiling_a header default 0.0 vs solve default 2.5
+  would have refused ANY new table; one shared resolver now) — data rows
+  byte-identical, −14.33 % and the FTP75 DP≈soc-band tie reproduce; EMS_FRONTIERS
+  registry adds the drive-cycle tuple (vs_reference ≤ 1.02 — the offline result is
+  a TIE, do not demand a win) with a stimulus-coherence precondition that currently
+  renders it **UNVERIFIED: ems-ftp75-sdp runs 0.45 A preload vs the siblings'
+  0.65 A** — OPERATOR RULING OUTSTANDING: (a) run the SDP leg at 0.65 (costs its
+  measured OC_FC margin) or (b) add a fourth SDP leg at 0.65. **--droop
+  {design,measured}** hifi mode (opt-in, default design bit-identical): single
+  scaling point over the droop term (copper 0.033 Ω fixed), single-source anchored
+  0.16003 V/A; the shared regime lands +8.1 % off the bench fit because the network
+  ratio is structurally 2.000 vs the fit's 2.182 — residual ASSERTED by test; the
+  ~4× K_DROOP open finding is NOT closed by this mode and says so.
+- **Figures (WP-D):** new hil_h2_and_soc figure (Gfc cumulative + sdp static-proxy
+  overlay / SoC with ΔSoC) + backfill over all 14 report folders (full renders
+  191509 onward; SoC-only degraded with an honest annotation for pre-Round-B
+  folders; replays skip). The DP-vs-live-plant boundary is now documented at
+  build_demand: the DP's demand model has NO regen term — deliberate, magnitude
+  unquantified for the live comparison.
+- **Reviews across the round:** WP-A 2 HIGH + 3 MED + 3 LOW; WP-C 1 HIGH + 5 MED;
+  WP-E 1 HIGH + 4 MED; WP-B 2 HIGH + 2 MED — all applied; three reviewer fix texts
+  were themselves wrong and corrected under the deviation license with evidence
+  (powerBalanceLive scope, the post-grace anchor vs scp-inrush's in-grace latch,
+  the 2.30 V collapse bound).
+- **Tests at close (orchestrator-rerun): 1344 + 28 (.venv_hil five suites), 138 +
+  179 (miniforge), 3842/175/4324 firmware.** Plan is now 32 scenarios / 59 runs.
+- **Operator items:** flash fw v25 (prerequisite met) → the first fw v25 campaign
+  is a triple validation (guard end-to-end via ems-sdp-braking completing, the
+  regen-model baseline recalibration, the 18 B attribution); rule on the FTP75
+  preload split; **the Pi bridge source ARRIVED** (references/EMS/Pi_2026-09-01/,
+  uncommitted — teensy_bridge_node_2026-08-17A.py + ROS2 EMS nodes + Pi-side SDP)
+  — the Mode B v4-parser audit is UNBLOCKED and queued for the next session. Bench
+  items feeding the new TODO(verify)s: VESC regen commanded-vs-delivered mapping
+  (sets VESC_REGEN_I_MAX_A + ETA_REGEN), the 30 ms blanking calibration, MPPTD-
+  disabled-charge semantics, Silvertel EPROM endurance. Future protocol flags:
+  sw_ring state field; the refused-cut counters are not on the observation frame.
+
+---
+
