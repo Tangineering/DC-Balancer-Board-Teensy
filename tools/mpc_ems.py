@@ -32,13 +32,20 @@ module's functions, and ``tools/test_mpc_ems.py`` asserts their equality with
 the numpy originals to 1e-12 in both charger eras.  That test is the mechanism
 that keeps the two from drifting.
 
+⚠️ THE DRIFT GUARD RUNS ONLY UNDER AN INTERPRETER THAT HAS NUMPY.  The equality
+   tests import ``gen_dp_ems_table`` and SKIP when the import fails, so a run of
+   the suite under ``.venv_hil`` (stdlib only) reports them as skipped and
+   passes.  A change to either model must be checked under miniforge, where the
+   four equality tests actually execute; the stdlib run alone does NOT establish
+   that the two models still agree.
+
 MODEL COMPOSITION
 -----------------
 ``build_demand()``          ported here as ``build_demand()``          (D7)
 ``scenario_drain_a()``      ported here as ``scenario_drain_a()``
 ``charge_mask()``           ported here as ``charge_mask()``           (D10)
-``step_discharge()``        ported here, scalar                       (D6)
-``step_charge()``           ported here, scalar                       (D11/D12)
+``step_discharge()``        ported here as ``_dp_step_discharge()``     (D6)
+``step_charge()``           ported here as ``_dp_step_charge()``   (D11/D12)
 ``charger_power``           imported verbatim (stdlib)
 ``governor_model``          imported verbatim (stdlib) - the delivery model
 ``hil_plant_sim.SDP_CHG_*`` imported - the charge dwell latch's constants
@@ -206,8 +213,15 @@ LEVER_CHG_ETA_SOC_PER_G = chg_mod.ETA_CHG_DEFAULT * LEVER_SHARE_SOC_PER_G  # 0.3
 # lever EXCEEDS it, so the v3 alpha admits charging in the eta era.
 SDP_V3_ADMISSION_SOC_PER_G = SDP_ONE_MINUS_GAMMA / SDP_ALPHA_V3       # 0.3068192
 
-# Real-time budgets (adjudication section 2.2).
-BUDGET_MS_DEFAULT = 12.0
+# Real-time budgets (adjudication section 2.2).  THE CALLBACK BOUND, and how
+# these two numbers are chosen (M1, review of 2026-09-02): a decision callback
+# costs at most `BUDGET_MS_DEFAULT` plus one candidate rollout of overshoot
+# (12 us), a roll slice of `ROLL_BUDGET_MS_DEFAULT` plus one chunk of overshoot
+# (0.296 ms measured), and the 50 Hz surface's own work (0.17 ms measured) -
+# 12.5 ms against the 20 ms command period.  The budget was 12.0 ms until the
+# review; 10.0 ms buys 2 ms of headroom at no cost in search depth (budget
+# expiry on 4 of 61 decisions at either value on `ems-soc-band`).
+BUDGET_MS_DEFAULT = 10.0
 ROLL_BUDGET_MS_DEFAULT = 2.0
 
 # Governor constants read through governor_model, never re-typed.
@@ -227,6 +241,20 @@ STAGE_FROZEN = "frozen"
 # The stochastic variant's chance-constraint quantile
 # (sdp_ems_solver.CHARGE_QUANTILE, the same 0.90 the solver uses for admission).
 STO_OC_QUANTILE = 0.90
+
+# Transition-matrix validation tolerances, restated from
+# sdp_ems_solver.load_tpm() (`np.allclose(rows, 1.0, atol=1e-9)` and
+# `(tpm < -1e-15).any()`), so the two readers accept exactly the same files.
+TPM_ROW_SUM_TOL = 1e-9
+TPM_TOL = 1e-15
+
+# The SDP artifact whose demand map the stochastic variant classifies against.
+# READ, not re-typed (M3, review of 2026-09-02): the bin a measured bus power
+# lands in must be the bin `sdp-v3` would have used, and the artifact is the
+# only authority on that.  The constants below are the ASSERTION the loader
+# makes against the file, not the source of the values.
+SDP_POLICY_FOR_DEMAND_MAP = "sdp_policy_v3.json"
+DEMAND_MAP_W_EXPECTED = (0.0, 25.0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -274,7 +302,7 @@ def pack_current_from_bus_power(p_bt_bus_w, soc):
     return p_bt_bus_w / (sim.ETA_BOOST * v1)
 
 
-def step_discharge(soc, share, p_dem, v_bus, dt, cap_as):
+def _dp_step_discharge(soc, share, p_dem, v_bus, dt, cap_as):
     """One stage on the split control.  Returns ``(soc_next, h2_g, h2_plant_g)``."""
     sim = _load_sim()
     p_fc_bus = share * p_dem
@@ -285,7 +313,7 @@ def step_discharge(soc, share, p_dem, v_bus, dt, cap_as):
     return soc_next, h2, h2
 
 
-def step_charge(soc, p_dem, v_bus, chg_a, dt, cap_as, eta_chg=None):
+def _dp_step_charge(soc, p_dem, v_bus, chg_a, dt, cap_as, eta_chg=None):
     """One stage on the charge control.  Returns ``(soc_next, h2_g, h2_plant_g)``.
 
     D12: the pack receives ``chg_a`` in BOTH eras - the efficiency sits on the
@@ -332,7 +360,8 @@ def scenario_drain_a(scenario, t, aux_preload_a=None):
 # `ems-soc-band` stimulus MUST be added here AND to
 # gen_dp_ems_table.SOC_BAND_DRAIN_SCENARIOS at registration - the B2 defect of
 # 2026-09-01 was exactly that omission.
-SOC_BAND_DRAIN_SCENARIOS = ("ems-soc-band", "ems-dp-replay", "ems-sdp")
+SOC_BAND_DRAIN_SCENARIOS = ("ems-soc-band", "ems-dp-replay", "ems-sdp",
+                            "ems-mpc", "ems-mpc-sto")
 
 
 def build_demand(scenario, meta, times, dt, aux_preload_a=None):
@@ -522,7 +551,22 @@ def load_tpm(path, name="TPM"):
     if rows != cols:
         raise ValueError("%s[%s] is %dx%d, not square" % (path, name, rows, cols))
     # MATLAB is column-major: element (i, j) sits at j*rows + i.
-    return [[data[j * rows + i] for j in range(cols)] for i in range(rows)]
+    tpm = [[data[j * rows + i] for j in range(cols)] for i in range(rows)]
+    # The two checks sdp_ems_solver.load_tpm() makes, ported (M7, review of
+    # 2026-09-02).  A matrix that is not row-stochastic is not a transition
+    # matrix, and the forecast built from one is a number with no meaning; the
+    # tolerance is the solver's own.
+    for i, row in enumerate(tpm):
+        neg = [j for j, x in enumerate(row) if x < -TPM_TOL]
+        if neg:
+            raise ValueError("%s[%s] row %d holds negative probabilities at "
+                             "columns %s" % (path, name, i, neg[:8]))
+        rs = math.fsum(row)
+        if abs(rs - 1.0) > TPM_ROW_SUM_TOL:
+            raise ValueError("%s[%s] row %d sums to %.12g, not 1 (tolerance "
+                             "%g): this is not a transition matrix"
+                             % (path, name, i, rs, TPM_ROW_SUM_TOL))
+    return tpm
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -575,24 +619,62 @@ class StagePrecompute:
     # across the callbacks), by which time the horizon has receded and a
     # relative key would silently point at the WRONG stage.
     stage_key: list = field(default_factory=list)
+    # The governor mode standing as each stage OPENS, i.e. the last sub-sample
+    # of the stage before it (``mode_seed`` for stage 0).
+    mode_entry: list = field(default_factory=list)
+    # STICKY: has a closed-loop run occurred at or before this stage's opening?
+    # A transition roll needs it.  `closed_loop_run` - the flag that makes an
+    # UNCHANGED setpoint HOLD instead of slewing the MDACs - is set by a
+    # closed-loop run and cleared ONLY by a setpoint change
+    # (governor_model._open_loop, .ino:10147-10213), so it survives an arbitrary
+    # number of open stages.  A roll assumes the command is HELD across the
+    # transition (candidate_fable section 2.2), and under a held command the
+    # flag therefore never clears - which is what makes this sticky rather than
+    # a copy of `mode_entry`.
+    run_entry: list = field(default_factory=list)
+    # Sub-samples whose preview index was clamped to the end of the run (L6).
+    beyond_preview: int = 0
 
 
 def precompute_stages(prev, k0, horizon, dt_dec=DECISION_DT_S,
-                      mode_seed=STAGE_CLOSED):
+                      mode_seed=STAGE_CLOSED, chg_seed=None):
     """Classify ``horizon`` decision stages from preview sample ``k0``.
 
     ``mode_seed`` is the governor's mode as the horizon opens; the hysteresis is
     carried forward from it, so a horizon that starts inside a closed-loop run
-    does not re-derive the entry threshold from nothing."""
+    does not re-derive the entry threshold from nothing.  ``chg_seed`` is the
+    charge mask's standing value at the same instant, for the same reason.
+
+    ``transition[j]`` marks a stage a roll must cover.  A stage qualifies on a
+    GOVERNOR mode change (0.60 A upward, 0.55 A downward) OR on a CHARGE-MASK
+    edge: a window opening or closing takes BT off or back onto the bus, which
+    moves the ratio exactly as a mode change does (adjudication section 2.1
+    names all four classes; the charge pair was missing until M5, review of
+    2026-09-02).
+
+    ⚠️ BEYOND THE PREVIEW the sample index is CLAMPED to the last one, and
+    ``beyond_preview`` counts the sub-samples that fall there.  On every
+    registered stimulus the profile ends at standstill, so the clamped sample
+    carries the auxiliary load alone (``I_AUX_A`` plus any declared preload) -
+    the clamp and "hold I_AUX_A" are the same model here.  They would NOT be
+    the same on a profile ending under load, and no such profile is registered
+    for this strategy (design document section 9)."""
     n_sub = int(round(dt_dec / prev.dt))
     out = StagePrecompute(n=horizon)
     mode = mode_seed
+    run_seen = (mode_seed == STAGE_CLOSED)
+    chg_state = chg_seed
     npv = len(prev.times)
     for j in range(horizon):
         it, pd, vb, lo, md, ok = [], [], [], [], [], True
+        out.mode_entry.append(mode)
+        out.run_entry.append(run_seen)
         changed = False
         for s in range(n_sub):
-            k = min(npv - 1, k0 + j * n_sub + s)
+            k_raw = k0 + j * n_sub + s
+            k = min(npv - 1, k_raw)
+            if k_raw >= npv:
+                out.beyond_preview += 1
             i_tot = prev.i_total[k]
             # Settled-filter classification with the firmware's own hysteresis
             # (.ino:10126-10145): entry at 0.60 A, release at 0.55 A.
@@ -605,12 +687,20 @@ def precompute_stages(prev, k0, horizon, dt_dec=DECISION_DT_S,
             if m != mode:
                 changed = True
             mode = m if m != STAGE_FROZEN else mode
+            if m == STAGE_CLOSED:
+                run_seen = True
             it.append(i_tot)
             pd.append(prev.p_dem[k])
             vb.append(prev.v_bus[k])
             lo.append(min(0.5, GOV_MINORITY_A / i_tot) if i_tot > 0.0 else 0.5)
             md.append(m)
-            ok = ok and prev.chg_ok[k]
+            c = bool(prev.chg_ok[k])
+            if chg_state is None:
+                chg_state = c
+            elif c != chg_state:
+                changed = True
+                chg_state = c
+            ok = ok and c
         out.i_tot.append(it)
         out.p_dem.append(pd)
         out.v_bus.append(vb)
@@ -618,7 +708,16 @@ def precompute_stages(prev, k0, horizon, dt_dec=DECISION_DT_S,
         out.mode.append(md)
         out.chg_ok.append(ok)
         out.transition.append(changed)
-        out.stage_key.append(k0 + j * n_sub)
+        # THE ABSOLUTE STAGE KEY, on the DECISION grid rather than the preview
+        # grid.  A key of `k0 + j*n_sub` is a preview-sample index, and the
+        # decisions do not land on the preview grid: they fire at 1.02 s
+        # intervals (section 1.1), so `k0` advances by 9, 10 or 11 samples and a
+        # table written at one decision missed the next decision's keys on two
+        # deltas out of three.  Measured lookup hit rate 5.39 % against the
+        # 8.75 % the transition census allows; keying on the stage's own start
+        # time recovers it.  Ties at the half-sample are one-stage shifts, which
+        # is the same approximation the preview-sample key already made.
+        out.stage_key.append(int(round((k0 + j * n_sub) * prev.dt / dt_dec)))
         out.p_dem_mean.append(sum(pd) / len(pd))
         out.v_bus_mean.append(sum(vb) / len(vb))
         out.i_tot_mean.append(sum(it) / len(it))
@@ -658,29 +757,60 @@ class RollJob:
         self.tick_s = float(tick_s)
         self.charge_stage = charge_stage or (lambda j: False)
         cap = self.MAX_TRANSITIONS if max_transitions is None else int(max_transitions)
-        stages = [j for j in range(pre.n) if pre.transition[j]][:cap]
+        # The CHARGE-OPTION boundary is a transition class too (M5): the option
+        # this job is built for takes BT off the bus at the window it opens and
+        # puts it back at the close, and the ratio standing at each edge is what
+        # the following open stages carry.  `pre.transition` already carries the
+        # PREVIEW's own chg_ok edges; this adds the edges of the OPTION.
+        cand = set(j for j in range(pre.n) if pre.transition[j])
+        prev_c = None
+        for j in range(pre.n):
+            c = bool(self.charge_stage(j))
+            if prev_c is not None and c != prev_c:
+                cand.add(j)
+            prev_c = c
+        ordered = sorted(cand)
+        stages = ordered[:cap]
         self.transition_stages = stages
-        self.dropped_transitions = sum(1 for j in range(pre.n)
-                                       if pre.transition[j]) - len(stages)
+        self.dropped_transitions = len(ordered) - len(stages)
         self.items = [(j, si) for j in stages
                       for si in range(len(self.ladder))]
         self.stage_key = list(pre.stage_key)
         self.cursor = 0
         self.table = {}
         self.rolls = 0
+        self.chunks = 0
+        self._cur = None            # a partially-rolled item, resumed next call
 
     @property
     def done(self):
         return self.cursor >= len(self.items)
 
+    # PER-TICK CHUNKING (M1, review of 2026-09-02).  One item is 1000 governor
+    # ticks and cost 2.761 ms measured, so an `advance()` that checked the clock
+    # only BETWEEN items overran a 2.0 ms slice by more than the slice itself,
+    # and the callback bound derived from it was not the bound.  The roll is now
+    # resumable at TICK_CHUNK granularity, so an overrun is bounded by the cost
+    # of one chunk instead of the cost of one item.
+    TICK_CHUNK = 100
+
     def advance(self, budget_s):
-        """Run work items for at most ``budget_s`` seconds of wall clock."""
+        """Run work for at most ``budget_s`` seconds of wall clock.
+
+        Progress is GUARANTEED: at least one chunk runs per call, so a zero
+        budget still advances and the job can never livelock."""
         t0 = time.perf_counter()
         while self.cursor < len(self.items):
-            j, si = self.items[self.cursor]
-            self.table[(self.stage_key[j], si)] = self._roll(j, si)
-            self.cursor += 1
-            self.rolls += 1
+            if self._cur is None:
+                j, si = self.items[self.cursor]
+                self._cur = self._roll_begin(j, si)
+            self.chunks += 1
+            if self._roll_chunk(self._cur, self.TICK_CHUNK):
+                j, si = self.items[self.cursor]
+                self.table[(self.stage_key[j], si)] = self._cur["r_end"]
+                self._cur = None
+                self.cursor += 1
+                self.rolls += 1
             if time.perf_counter() - t0 >= budget_s:
                 break
         return self.done
@@ -691,8 +821,8 @@ class RollJob:
             self.advance(1e9)
         return self.table
 
-    def _roll(self, j, si):
-        """One exact 1 kHz roll of stage ``j`` under ladder point ``si``.
+    def _roll_begin(self, j, si):
+        """Seed one exact 1 kHz roll of stage ``j`` under ladder point ``si``.
 
         The governor is seeded with the CLOSED-LOOP delivered ratio for this
         ladder point at the stage's entry current, which is the assumption
@@ -708,26 +838,60 @@ class RollJob:
         # Enter the stage already in a converged closed-loop run when the
         # preview says the stage opens closed; otherwise let the model decide.
         g.state.filt_total = pre.i_tot[j][0]
+        # ── SEEDING THE HOLD FLAG ──────────────────────────────────────────
+        # `closed_loop_run` is what makes the firmware's open-loop branch HOLD a
+        # converged split instead of slewing the MDACs toward the setpoint.  It
+        # is set by a closed-loop run and cleared ONLY by a setpoint change, so
+        # under this roll's held-command assumption it is STICKY - `run_entry`.
+        # Seeding it from THIS stage's opening mode alone (the shipped code
+        # until the review of 2026-09-02) made every roll of an already-open
+        # stage take the feedforward branch and return the commanded share, i.e.
+        # it predicted a slew the firmware does not perform.  Measured on
+        # `ems-soc-band` that mis-seeding cost a Gate 1 mean of 0.00562 against
+        # 0.00390 for a table that was never consulted at all: the roll table
+        # was ACTIVELY WORSE than no table.
+        run_entry = (pre.run_entry[j] if pre.run_entry
+                     else pre.mode[j][0] == STAGE_CLOSED)
         if pre.mode[j][0] == STAGE_CLOSED:
             g.state.closed_loop_mode = True
+        if run_entry or pre.mode[j][0] == STAGE_CLOSED:
             g.state.closed_loop_run = True
             g.state.acted_sp = s
         n_sub = len(pre.i_tot[j])
         ticks = int(round(self.dt_dec / self.tick_s))
-        per = max(1, ticks // n_sub)
-        delivered = seed
-        charging = bool(self.charge_stage(j))
-        for tk in range(ticks):
+        return {"j": j, "s": s, "g": g, "delivered": seed, "tk": 0,
+                "ticks": ticks, "n_sub": n_sub,
+                "per": max(1, ticks // n_sub),
+                "charging": bool(self.charge_stage(j)), "r_end": seed}
+
+    def _roll_chunk(self, st, n_ticks):
+        """Advance a seeded roll by at most ``n_ticks``.  True when complete."""
+        pre = self.pre
+        j, s, g = st["j"], st["s"], st["g"]
+        per, n_sub = st["per"], st["n_sub"]
+        charging = st["charging"]
+        sw_bt = not charging
+        delivered = st["delivered"]
+        end = min(st["ticks"], st["tk"] + int(n_ticks))
+        for tk in range(st["tk"], end):
             sub = min(n_sub - 1, tk // per)
             i_tot = pre.i_tot[j][sub]
             i_fc = delivered * i_tot
-            sw_fc = True
-            sw_bt = not charging
-            o = g.step(s, i_fc, i_tot - i_fc, sw_fc, sw_bt,
+            o = g.step(s, i_fc, i_tot - i_fc, True, sw_bt,
                        tk * self.tick_s, charge_path_owns_bt=charging)
             delivered = g.delivered_share(o.r_applied, i_tot,
                                           o.fc_bus_req, o.bt_bus_req)
-        return g.state.r_prev
+        st["tk"] = end
+        st["delivered"] = delivered
+        st["r_end"] = g.state.r_prev
+        return end >= st["ticks"]
+
+    def _roll(self, j, si):
+        """One complete roll, unsliced - the equality reference for the tests."""
+        st = self._roll_begin(j, si)
+        while not self._roll_chunk(st, st["ticks"]):
+            pass
+        return st["r_end"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -836,6 +1000,8 @@ class Decision:
     cost: float = float("inf")
     solve_ms: float = 0.0
     budget_hit: bool = False
+    cap_hit: bool = False
+    worst_violation_a: float = 0.0
     candidates: int = 0
     pruned: int = 0
     share_pred: float = 0.5       # predicted DELIVERED share of stage 0
@@ -852,6 +1018,7 @@ class Planner:
     def __init__(self, *, horizon=HORIZON_N, blocks=MOVE_BLOCKS,
                  share_band=SHARE_BAND_DP, share_levels=SHARE_LEVELS,
                  terminal_mode="metric", budget_ms=BUDGET_MS_DEFAULT,
+                 max_candidates=None,
                  eta_chg=chg_mod.ETA_CHG_DEFAULT, chg_a=0.8,
                  cap_as=5.0 * 3600.0, h2_map="proxy", h2_convex=None,
                  dt_dec=DECISION_DT_S):
@@ -869,6 +1036,16 @@ class Planner:
         self.terminal_mode = terminal_mode
         self.rho = terminal_price(terminal_mode)
         self.budget_ms = float(budget_ms)
+        # M6 (review of 2026-09-02).  A wall-clock budget makes the trajectory
+        # HOST-DEPENDENT: the same command line on a slower machine cuts the
+        # search at a different candidate and can commit a different share.
+        # `max_candidates` is the deterministic secondary cap a campaign leg
+        # sets so its trajectory is reproducible; the wall-clock budget then
+        # only ever fires as the safety net it was meant to be.  None = no cap.
+        self.max_candidates = (None if max_candidates is None
+                               else int(max_candidates))
+        if self.max_candidates is not None and self.max_candidates < 1:
+            raise ValueError("max_candidates must be at least 1")
         self.eta_chg = chg_mod.check_eta_chg(eta_chg)
         self.chg_a = float(chg_a)
         self.cap_as = float(cap_as)
@@ -905,7 +1082,8 @@ class Planner:
         return a0 + a1 * p_fc_stack_w + a2 * p_fc_stack_w * p_fc_stack_w
 
     # -- the control-independent delivered-share table ----------------------
-    def delivery_table(self, pre, r_hold, r_seed, charge_stages, i_tot_oc=None):
+    def delivery_table(self, pre, r_hold, r_seed, charge_stages, i_tot_oc=None,
+                       soc_hint=0.6):
         """Per (stage, ladder point): delivered share, FC power, BT power, feasibility.
 
         This is the whole search model.  It is built ONCE per decision, so the
@@ -916,36 +1094,56 @@ class Planner:
         what the previous decision's table supplies while a new roll is being
         sliced.  ``i_tot_oc`` optionally supplies a per-stage source total to
         judge the overcurrent constraint against, which is how the stochastic
-        variant tightens the bound to a quantile without changing the cost."""
+        variant tightens the bound to a quantile without changing the cost.
+
+        ``soc_hint`` is the state of charge the charger's PACK-side voltage is
+        evaluated at (L4).  It is a hint and not a state: the table is built once
+        per decision while the rollouts walk the SoC forward, so the exact value
+        is the decision's own starting point rather than a fixed 0.6.  The
+        residual is second-order - across the +-0.05 SoC a decision's horizon
+        can traverse, the pack voltage moves under 0.2 V.
+
+        ``viol_tab`` carries the WORST constraint violation in amperes for each
+        (stage, ladder point), 0.0 where the point is feasible.  It is what the
+        infeasible fallback (L5) minimises, so an infeasible decision commands
+        the least-violating point available rather than the bottom rail."""
         n_s = len(self.ladder)
         d_tab = [[0.0] * n_s for _ in range(pre.n)]
         pfc_tab = [[0.0] * n_s for _ in range(pre.n)]
         pbt_tab = [[0.0] * n_s for _ in range(pre.n)]
         ok_tab = [[True] * n_s for _ in range(pre.n)]
+        viol_tab = [[0.0] * n_s for _ in range(pre.n)]
+        v_chg = pack_charge_voltage(soc_hint, self.chg_a)
         for si in range(n_s):
             s = self.ladder[si]
             carried = r_seed
             for j in range(pre.n):
+                n_sub = len(pre.i_tot[j])
+                oc_scale = ((i_tot_oc[j] / pre.i_tot_mean[j])
+                            if (i_tot_oc and pre.i_tot_mean[j] > 0.0) else 1.0)
                 if charge_stages[j]:
                     # BT is off the bus: the fuel cell is the single source and
                     # also feeds the charger.  The traction split is 1.0 and the
                     # ratio winds onto DROOP_R_MIN, which the next transition
                     # roll picks up (CLAUDE.md 2026-09-01c).
                     carried = gov_mod.GOV_CONST["DROOP_R_MIN"]
-                    i_chg_bus = chg_mod.charger_bus_current_a(
-                        self.chg_a, pre.v_bus_mean[j],
-                        pack_charge_voltage(0.6, self.chg_a), self.eta_chg)
-                    i_fc = (i_tot_oc[j] if i_tot_oc else pre.i_tot_mean[j]) + i_chg_bus
+                    # PER SUB-SAMPLE, like the discharge branch (L4): the bound
+                    # is an instantaneous current limit, and judging it on the
+                    # stage MEAN admits a stage whose peak is over the margin.
+                    worst = 0.0
+                    for sub in range(n_sub):
+                        i_chg_bus = chg_mod.charger_bus_current_a(
+                            self.chg_a, pre.v_bus[j][sub], v_chg, self.eta_chg)
+                        i_fc = pre.i_tot[j][sub] * oc_scale + i_chg_bus
+                        worst = max(worst, i_fc - I_FC_MAX_A)
                     d_tab[j][si] = 1.0
                     pfc_tab[j][si] = pre.p_dem_mean[j]
                     pbt_tab[j][si] = 0.0
-                    ok_tab[j][si] = i_fc <= I_FC_MAX_A
+                    ok_tab[j][si] = worst <= 0.0
+                    viol_tab[j][si] = max(0.0, worst)
                     continue
                 acc_d = acc_fc = acc_bt = 0.0
-                n_sub = len(pre.i_tot[j])
-                feasible = True
-                oc_scale = ((i_tot_oc[j] / pre.i_tot_mean[j])
-                            if (i_tot_oc and pre.i_tot_mean[j] > 0.0) else 1.0)
+                worst = 0.0
                 for sub in range(n_sub):
                     if pre.mode[j][sub] == STAGE_CLOSED:
                         lo = pre.lo[j][sub]
@@ -957,23 +1155,24 @@ class Planner:
                     acc_fc += d * pre.p_dem[j][sub]
                     acc_bt += (1.0 - d) * pre.p_dem[j][sub]
                     i_tot = pre.i_tot[j][sub] * oc_scale
-                    if d * i_tot > I_FC_MAX_A or (1.0 - d) * i_tot > I_BT_MAX_A:
-                        feasible = False
+                    worst = max(worst, d * i_tot - I_FC_MAX_A,
+                                (1.0 - d) * i_tot - I_BT_MAX_A)
                 key = (pre.stage_key[j], si)
                 if key in r_hold:
                     carried = r_hold[key]
                 d_tab[j][si] = acc_d / n_sub
                 pfc_tab[j][si] = acc_fc / n_sub
                 pbt_tab[j][si] = acc_bt / n_sub
-                ok_tab[j][si] = feasible
-        return d_tab, pfc_tab, pbt_tab, ok_tab
+                ok_tab[j][si] = worst <= 0.0
+                viol_tab[j][si] = max(0.0, worst)
+        return d_tab, pfc_tab, pbt_tab, ok_tab, viol_tab
 
     # -- one candidate ------------------------------------------------------
     def _rollout(self, soc0, soc_ref, pre, tabs, charge_stages, block_idx,
                  bound):
         """Cost of one move-blocked candidate, abandoned above ``bound``."""
         sim = _load_sim()
-        d_tab, pfc_tab, pbt_tab, ok_tab = tabs
+        d_tab, pfc_tab, pbt_tab, ok_tab, _viol = tabs
         soc = soc0
         cost = 0.0
         stage = 0
@@ -1018,8 +1217,6 @@ class Planner:
         budget_s = (self.budget_ms if budget_ms is None else float(budget_ms)) * 1e-3
         n_s = len(self.ladder)
         nb = len(self.blocks)
-        tabs_by_opt = [self.delivery_table(pre, r_hold, r_seed, cs, i_tot_oc)
-                       for cs in charge_options]
 
         # THE INFEASIBLE FALLBACK, stated: if no candidate is feasible the
         # decision keeps this seed - the lowest ladder point, no charge, which
@@ -1035,8 +1232,20 @@ class Planner:
         n_eval = 0
         pruned = 0
         hit = False
+        cap_hit = False
+        tabs0 = None
         for oi, cs in enumerate(charge_options):
-            tabs = tabs_by_opt[oi]
+            # M1: the delivery tables are BUILT INSIDE the budget and one option
+            # at a time, with the clock checked between them.  Building all of
+            # them up front spent budget the expiry check could not see, and the
+            # no-charge option (index 0) is the one an expiry must always have.
+            if oi > 0 and time.perf_counter() - t0 >= budget_s:
+                hit = True
+                break
+            tabs = self.delivery_table(pre, r_hold, r_seed, cs, i_tot_oc,
+                                       soc_hint=soc0)
+            if oi == 0:
+                tabs0 = tabs
             for block_idx in order:
                 cost, soc_n, d0 = self._rollout(soc0, soc_ref, pre, tabs, cs,
                                                 block_idx, best.cost)
@@ -1052,12 +1261,30 @@ class Planner:
                     best.plan_charge = list(cs)
                     self.incumbent = tuple(block_idx)
                     self.incumbent_charge = oi
+                if (self.max_candidates is not None
+                        and n_eval >= self.max_candidates):
+                    cap_hit = True
+                    break
                 if time.perf_counter() - t0 >= budget_s:
                     hit = True
                     break
-            if hit:
+            if hit or cap_hit:
                 break
+        # ── THE INFEASIBLE FALLBACK (L5) ───────────────────────────────────
+        # Not the bottom rail: the ladder point whose WORST constraint violation
+        # over the horizon is smallest, judged on the no-charge option.  A rail
+        # is the least fuel-cell-loaded command but not the least-violating one,
+        # and on a battery-side violation it is the worst point on the ladder.
+        if not math.isfinite(best.cost) and tabs0 is not None:
+            viol = tabs0[4]
+            worst = [max(viol[j][si] for j in range(pre.n)) for si in range(n_s)]
+            si_best = min(range(n_s), key=lambda i: (worst[i], i))
+            best.share = self.ladder[si_best]
+            best.plan_share = [self.ladder[si_best]] * pre.n
+            best.share_pred = tabs0[0][0][si_best]
+            best.worst_violation_a = worst[si_best]
         best.candidates = n_eval
+        best.cap_hit = cap_hit
         best.pruned = pruned
         best.budget_hit = hit
         best.feasible = math.isfinite(best.cost)
@@ -1207,7 +1434,8 @@ class ShadowGovernor:
 class MpcStrategy:
     """Governor-aware receding-horizon EMS.  Same surface as ``SdpStrategy``.
 
-    ``bind_scenario(scenario, meta)``, ``reset()``, ``__call__(t, fb)``,
+    ``bind_scenario(scenario, meta, electrical_mode=None, args=None)``,
+    ``reset()``, ``__call__(t, fb)``,
     ``summary_line()`` and a ``provenance`` attribute, so registration in
     ``hil_plant_sim.EMS_STRATEGIES`` and a branch in ``ems_walk._instantiate()``
     are the whole plumbing (see the design document's registration section).
@@ -1219,7 +1447,7 @@ class MpcStrategy:
                  blocks=MOVE_BLOCKS, share_band=SHARE_BAND_DP,
                  share_levels=SHARE_LEVELS, terminal_price_mode="metric",
                  budget_ms=BUDGET_MS_DEFAULT,
-                 roll_budget_ms=ROLL_BUDGET_MS_DEFAULT,
+                 roll_budget_ms=ROLL_BUDGET_MS_DEFAULT, max_candidates=None,
                  h2_map="proxy", h2_convex=None, dv0_v=0.0,
                  soc_ref_offset=0.0, eta_chg=chg_mod.ETA_CHG_DEFAULT,
                  tpm_path=None, preview_dt_s=PREVIEW_DT_S):
@@ -1234,6 +1462,8 @@ class MpcStrategy:
         self.terminal_price_mode = terminal_price_mode
         self.budget_ms = float(budget_ms)
         self.roll_budget_ms = float(roll_budget_ms)
+        self.max_candidates = (None if max_candidates is None
+                               else int(max_candidates))
         self.h2_map = h2_map
         self.h2_convex = h2_convex
         self.dv0_v = float(dv0_v)
@@ -1243,10 +1473,18 @@ class MpcStrategy:
         self.tpm_path = tpm_path
         self.tpm = None
         self.tpm_edges = None
-        self.tpm_map_w = (0.0, 25.0)     # sdp_ems_solver.DEMAND_MAP_DEFAULT_W
+        # All three are OVERWRITTEN from the SDP artifact at _load_tpm() (M3),
+        # which only the `sto` variant calls.  The seed value is the shipped
+        # artifact's map, and it is also the ASSERTION the loader makes against
+        # whatever file it reads (DEMAND_MAP_W_EXPECTED).
+        self.tpm_map_w = DEMAND_MAP_W_EXPECTED
+        self.demand_map_source = None
+        self.demand_map_path = None
         self.provenance = None
         self.scenario = None
         self.meta = None
+        self.electrical_mode = None
+        self.cap_as = BATT_CAPACITY_AH * 3600.0
         self.preview = None
         self.planner = None
         self.reset()
@@ -1268,6 +1506,7 @@ class MpcStrategy:
         self.roll_job = None
         self.r_hold = {}
         self.budget_hits = 0
+        self.cap_hits = 0
         self.incumbent_retained = 0
         self.solve_ms_last = 0.0
         self.solve_ms_max = 0.0
@@ -1275,18 +1514,53 @@ class MpcStrategy:
         self.share_pred = None
         self.share_pred_err = None
         self.share_pred_err_max = 0.0
+        self.share_pred_err_sum = 0.0
+        self.share_pred_err_n = 0
+        self._stage_share_sum = 0.0
+        self._stage_share_n = 0
+        self.rolls_started = 0
+        self.rolls_published = 0
+        self.rolls_empty = 0
+        self.roll_dropped_transitions = 0
+        self.candidates_last = None
+        self.candidates_min = None
         self.infeasible_decisions = 0
         self.clamped_bin_high = 0
         self.clamped_bin_low = 0
         if self.planner is not None:
             self.planner.incumbent = None
 
-    def bind_scenario(self, scenario, meta):
-        """Build the preview and the planner for one scenario."""
+    def bind_scenario(self, scenario, meta, electrical_mode=None, args=None):
+        """Build the preview and the planner for one scenario.
+
+        The two trailing arguments are the generic startup hook's contract
+        (``main()`` passes them BY NAME, so a signature without them is a
+        TypeError at campaign time).  ``electrical_mode`` is accepted and
+        recorded but not consumed: the prediction model is the scenario's
+        demand preview, which the bus engine does not change.  ``args`` IS
+        consumed - its ``capacity_ah`` is the pack the run actually integrates,
+        and a planner sized on the module default while the plant runs another
+        capacity would mis-price every SoC term (the M2 check SdpStrategy makes
+        for the same reason).
+
+        The scenario may also declare ``mpc_soc_ref_offset``, the placement on
+        the SoC axis, exactly as ``sdp_soc_ref_offset`` is a scenario property
+        rather than a command-line one.  It is read AFTER ``reset()`` because
+        the offset is a BINDING, not run state."""
         sim = _load_sim()
         self.scenario = scenario
         self.meta = meta
+        self.electrical_mode = electrical_mode
         self.reset()
+        cap_ah = BATT_CAPACITY_AH
+        if args is not None and getattr(args, "capacity_ah", None):
+            cap_ah = float(args.capacity_ah)
+            if cap_ah <= 0.0:
+                raise ValueError("capacity_ah must be positive, got %r" % (cap_ah,))
+        self.cap_as = cap_ah * 3600.0
+        offset = meta.get("mpc_soc_ref_offset")
+        if offset is not None:
+            self.soc_ref_offset = float(offset)
         chg_a = sim.dp_chg_ceiling_a(meta)
         run_exit_s = float(sim.SOC_BAND_RUN_EXIT_S
                            if meta.get("ems_run_exit_s") is None
@@ -1310,9 +1584,11 @@ class MpcStrategy:
                                share_band=self.share_band,
                                share_levels=self.share_levels,
                                terminal_mode=self.terminal_price_mode,
-                               budget_ms=self.budget_ms, eta_chg=self.eta_chg,
+                               budget_ms=self.budget_ms,
+                               max_candidates=self.max_candidates,
+                               eta_chg=self.eta_chg,
                                chg_a=chg_a,
-                               cap_as=BATT_CAPACITY_AH * 3600.0,
+                               cap_as=self.cap_as,
                                h2_map=self.h2_map, h2_convex=self.h2_convex)
         if self.variant == "sto":
             self._load_tpm()
@@ -1327,9 +1603,64 @@ class MpcStrategy:
         self.tpm = load_tpm(path)
         self.tpm_path = path
         n = len(self.tpm)
-        # The SDP artifact's own bin edges on the normalized [0, 1] axis, so a
-        # measured bus power classifies into the SAME bin sdp-v3 would use.
-        self.tpm_edges = [i / float(n) for i in range(n + 1)]
+        # ── THE DEMAND MAP AND THE BIN EDGES, READ FROM THE ARTIFACT ────────
+        # M3 (review of 2026-09-02).  The map (`normalization.p_dem_min_w` /
+        # `p_dem_max_w`) and the NORMALIZED edges (`demand_bins.edges`) were
+        # hard-coded here as (0, 25) W and a uniform 1/n partition.  Both
+        # happen to be right for `sdp_policy_v3.json`, and that is precisely
+        # the failure mode: a regenerated artifact with a different map would
+        # have moved sdp-v3's bins and left this strategy classifying against
+        # the old one, with nothing in either trace to show it.  The file is
+        # now the source and the constants are the assertion.
+        self.demand_map_source = None
+        try:
+            self._read_demand_map()
+        except (OSError, ValueError, KeyError) as exc:
+            raise ValueError(
+                "mpc-sto cannot read the demand map from %s: %s.  The bin a "
+                "measured bus power lands in must be the bin sdp-v3 would "
+                "use, and no default for it is invented here."
+                % (SDP_POLICY_FOR_DEMAND_MAP, exc))
+        if len(self.tpm_edges) - 1 != n:
+            raise ValueError(
+                "the SDP artifact declares %d demand bins but %s is %dx%d: the "
+                "policy and the transition matrix are not the same demand map"
+                % (len(self.tpm_edges) - 1, os.path.basename(path), n, n))
+
+    def _read_demand_map(self):
+        """Load `normalization` and `demand_bins.edges` from the SDP artifact."""
+        import json                       # stdlib
+        pol_path = os.path.join(_TOOLS, "sdp_policies",
+                                SDP_POLICY_FOR_DEMAND_MAP)
+        with open(pol_path, "r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+        norm = doc["normalization"]
+        lo = float(norm["p_dem_min_w"])
+        hi = float(norm["p_dem_max_w"])
+        if not hi > lo:
+            raise ValueError("p_dem_max_w %r must exceed p_dem_min_w %r"
+                             % (hi, lo))
+        edges = [float(e) for e in doc["demand_bins"]["edges"]]
+        if len(edges) < 2 or any(b <= a for a, b in zip(edges, edges[1:])):
+            raise ValueError("demand_bins.edges must be strictly increasing")
+        if abs(edges[0]) > 1e-9 or abs(edges[-1] - 1.0) > 1e-9:
+            raise ValueError("demand_bins.edges must span [0, 1], got "
+                             "[%r, %r]" % (edges[0], edges[-1]))
+        # THE ASSERTION.  The shipped artifact's map is the one every measured
+        # figure in the design document was taken against; a file that moved it
+        # is a file this strategy has not been evaluated on, and it says so
+        # rather than silently repricing the forecast.
+        if (abs(lo - DEMAND_MAP_W_EXPECTED[0]) > 1e-9
+                or abs(hi - DEMAND_MAP_W_EXPECTED[1]) > 1e-9):
+            raise ValueError(
+                "the artifact's demand map is (%g, %g) W but this strategy's "
+                "measured figures were taken against (%g, %g) W: re-measure "
+                "before moving the constant"
+                % ((lo, hi) + DEMAND_MAP_W_EXPECTED))
+        self.tpm_map_w = (lo, hi)
+        self.tpm_edges = edges
+        self.demand_map_source = norm.get("demand_map_source")
+        self.demand_map_path = pol_path
 
     def _provenance(self):
         """The sidecar's ``config.mpc`` block (adjudication section 2.6)."""
@@ -1356,6 +1687,9 @@ class MpcStrategy:
             "eta_chg": self.eta_chg,
             "budget_ms": self.budget_ms,
             "roll_budget_ms": self.roll_budget_ms,
+            "roll_tick_chunk": RollJob.TICK_CHUNK,
+            "max_transitions": RollJob.MAX_TRANSITIONS,
+            "max_candidates": self.max_candidates,
             "soc_ref_offset": self.soc_ref_offset,
             "dv0_v": self.dv0_v,
             "governor_commit": True,
@@ -1369,6 +1703,8 @@ class MpcStrategy:
             },
             "scenario": self.scenario,
             "chg_i_ceiling_a": getattr(self, "chg_a", None),
+            "capacity_ah": self.cap_as / 3600.0,
+            "electrical_mode": self.electrical_mode,
         }
         if self.h2_map == "convex":
             prov["h2_convex"] = dict(self.h2_convex or {})
@@ -1377,7 +1713,32 @@ class MpcStrategy:
             prov["tpm_n_bins"] = len(self.tpm) if self.tpm else None
             prov["oc_quantile"] = STO_OC_QUANTILE
             prov["demand_map_w"] = list(self.tpm_map_w)
+            prov["demand_map_path"] = self.demand_map_path
+            prov["demand_map_source"] = self.demand_map_source
+            prov["demand_bin_edges_n"] = (None if self.tpm_edges is None
+                                          else len(self.tpm_edges) - 1)
         return prov
+
+    # -- the roll table -----------------------------------------------------
+    def _publish_roll(self, job):
+        """Fold a completed roll job into ``r_hold``.
+
+        H2 (review of 2026-09-02).  This used to be ``self.r_hold = job.table``,
+        which WIPED the standing table whenever the completed job carried no
+        items - and a job carries no items whenever the horizon holds no
+        transition, which on `ems-soc-band` is 8 consecutive decisions.  The
+        table is now MERGED, and only keys whose absolute stage has receded past
+        the job's own horizon start are dropped.  Both halves matter: a merge
+        without the prune grows without bound over a run, and a replacement
+        without the merge throws away rolls that are still current."""
+        if not job.table:
+            self.rolls_empty += 1
+            return
+        self.r_hold.update(job.table)
+        k_min = min(job.stage_key) if job.stage_key else 0
+        self.r_hold = {k: v for k, v in self.r_hold.items() if k[0] >= k_min}
+        self.rolls_published += 1
+        self.roll_dropped_transitions += job.dropped_transitions
 
     # -- the stochastic demand path ----------------------------------------
     def _bin_of(self, p_dem_w):
@@ -1454,6 +1815,19 @@ class MpcStrategy:
         if self.variant == "sto":
             p_meas = ((fb.get("V_bus") or 0.0)
                       * ((fb.get("I_fc") or 0.0) + (fb.get("I_batt") or 0.0)))
+            # SELF-LOAD SUBTRACTION (M2, review of 2026-09-02), term for term
+            # SdpStrategy's: while a charge hold is in force the strategy must
+            # not read its OWN charger as demand.  That feedback is the chatter
+            # the campaign-000816 hysteresis round removed; a forecast built on
+            # it classifies a charging cruise as a high-demand bin and predicts
+            # the demand its own decision created.  Floored at the demand map's
+            # own minimum, not at 0, because the two products are measured
+            # independently and a sub-milliwatt negative residue would be
+            # counted as a map excursion it is not.
+            hold_now = self.latch.status(t, fb)
+            if hold_now in ("active", "expired"):
+                p_chg = ((fb.get("V_bus") or 0.0) * (fb.get("I_charge") or 0.0))
+                p_meas = max(self.tpm_map_w[0], p_meas - p_chg)
             means, quants = self._tpm_forecast(self._bin_of(p_meas))
             for j in range(pre.n):
                 vb = pre.v_bus_mean[j]
@@ -1470,7 +1844,9 @@ class MpcStrategy:
                         else 0.0 for j in range(pre.n)]
 
         # ── the charge candidates (adjudication section 2.3) ────────────────
-        hold = self.latch.status(t, fb)
+        # `status()` has side effects (it is what DROPS a latch), so it is
+        # evaluated exactly once per decision and the result reused.
+        hold = hold_now if self.variant == "sto" else self.latch.status(t, fb)
         latched = self.latch.stages_remaining(t) if hold == "active" else 0
         charge_options = [[False] * pre.n]
         if latched:
@@ -1489,30 +1865,52 @@ class MpcStrategy:
             if sum(seg) > dwell:
                 charge_options.append(seg)
 
-        # ── the sliced transition rolls ────────────────────────────────────
-        if self.roll_job is None or self.roll_job.done:
+        # ── the transition rolls: CREATED here, SLICED in __call__ ─────────
+        # H1 (review of 2026-09-02).  `advance()` used to be called from HERE,
+        # which is the 1 Hz decision path, so the job received ONE slice per
+        # DECISION rather than one per 50 Hz callback and the table almost never
+        # completed - r_hold was empty on 38 of 61 decisions.  The slice now
+        # runs in __call__() ahead of the decision gate; this path only CREATES
+        # the job, and only when none is in flight.
+        if self.roll_job is None:
             self.roll_job = RollJob(pre, self.planner.ladder, dv0_v=self.dv0_v,
                                     charge_stage=lambda j, o=charge_options[-1]: o[j])
-        if self.roll_job.advance(self.roll_budget_ms * 1e-3):
-            self.r_hold = self.roll_job.table
-            self.roll_job = None
+            self.rolls_started += 1
 
         dec = self.planner.solve(soc, self.soc_ref, pre, self.r_hold,
                                  self.shadow.r, charge_options,
                                  i_tot_oc=i_tot_oc)
         self.decisions += 1
+        self.candidates_last = dec.candidates
+        self.candidates_min = (dec.candidates if self.candidates_min is None
+                               else min(self.candidates_min, dec.candidates))
         self.solve_ms_last = dec.solve_ms
         self.solve_ms_all.append(dec.solve_ms)
         self.solve_ms_max = max(self.solve_ms_max, dec.solve_ms)
         if dec.budget_hit:
             self.budget_hits += 1
+        if dec.cap_hit:
+            self.cap_hits += 1
         if not dec.feasible:
             self.infeasible_decisions += 1
         if dec.share == self.last_share and dec.charge == (self.last_goal > 0.0):
             self.incumbent_retained += 1
 
-        # Predicted delivered share of the stage about to run, scored against
-        # the delivered share measured at the NEXT decision.
+        # ── the stage prediction, SCORED (L1) ──────────────────────────────
+        # The claim is a STAGE-MEAN delivered share, so it is scored against the
+        # mean of the samples accumulated across the stage that has just run,
+        # not against one sample at this instant.
+        if self.share_pred is not None and self._stage_share_n:
+            err = abs(self.share_pred
+                      - self._stage_share_sum / self._stage_share_n)
+            self.share_pred_err = err
+            self.share_pred_err_max = max(self.share_pred_err_max, err)
+            self.share_pred_err_sum += err
+            self.share_pred_err_n += 1
+        self._stage_share_sum = 0.0
+        self._stage_share_n = 0
+        # Predicted delivered share of the stage about to run, scored at the
+        # NEXT decision by the block above.
         self.share_pred = dec.share_pred
 
         share = dec.share
@@ -1549,15 +1947,30 @@ class MpcStrategy:
         self.shadow.tick_to(t, self.last_share, fb, charging=charging)
         self.shadow.observe(fb)
 
-        # The prediction error of the LAST decision, measured now.
+        # ── THE ROLL SLICE, at 50 Hz and AHEAD of the decision gate (H1) ────
+        # This is the mechanism the adjudication's section 2.2 specifies: the
+        # transition table is built across the callbacks of the second BETWEEN
+        # decisions, and the decision that follows consumes whatever is
+        # standing.  Running it here rather than inside decide() is what gives
+        # the job its 50 slices per second instead of one.
+        if self.roll_job is not None:
+            if self.roll_job.advance(self.roll_budget_ms * 1e-3):
+                self._publish_roll(self.roll_job)
+                self.roll_job = None
+
+        # ── the prediction claim, ACCUMULATED OVER THE STAGE (L1) ──────────
+        # `share_pred` is the mean DELIVERED share the model predicts for the
+        # whole stage, so the honest error is against the stage's MEAN measured
+        # share, not against whichever 20 ms sample the next decision happens to
+        # land on.  The samples are accumulated here and scored once per
+        # decision, in decide().
         if self.share_pred is not None:
             i_fc = abs(float(fb.get("I_fc") or 0.0))
             i_bt = abs(float(fb.get("I_batt") or 0.0))
             tot = i_fc + i_bt
             if tot > GOV_MIN_LOAD_A and not charging:
-                self.share_pred_err = abs(self.share_pred - i_fc / tot)
-                self.share_pred_err_max = max(self.share_pred_err_max,
-                                              self.share_pred_err)
+                self._stage_share_sum += i_fc / tot
+                self._stage_share_n += 1
 
         if self.next_decision_t is None or t >= self.next_decision_t:
             self.decide(t, fb)
@@ -1580,33 +1993,64 @@ class MpcStrategy:
         """Decision-timing statistics for the sidecar's finalize block."""
         if not self.solve_ms_all:
             return {"solve_ms_median": None, "solve_ms_max": None,
-                    "decisions": 0, "budget_hits": 0}
+                    "decisions": 0, "budget_hits": 0, "cap_hits": 0,
+                    "candidates_last": None, "candidates_min": None,
+                    "rolls_published": 0, "rolls_empty": 0,
+                    "roll_dropped_transitions": 0,
+                    "share_pred_err_mean": None, "share_pred_err_max": 0.0}
         xs = sorted(self.solve_ms_all)
         n = len(xs)
         med = xs[n // 2] if n % 2 else 0.5 * (xs[n // 2 - 1] + xs[n // 2])
         return {"solve_ms_median": med, "solve_ms_max": xs[-1],
-                "decisions": n, "budget_hits": self.budget_hits}
+                "decisions": n, "budget_hits": self.budget_hits,
+                # M6: the per-decision candidate count sits NEXT TO the expiry
+                # counter, so a reader can tell a search that finished from one
+                # that was cut - and, with `max_candidates` set, that the cut
+                # was the deterministic one rather than the wall clock's.
+                "cap_hits": self.cap_hits,
+                "candidates_last": self.candidates_last,
+                "candidates_min": self.candidates_min,
+                "rolls_published": self.rolls_published,
+                "rolls_empty": self.rolls_empty,
+                "roll_dropped_transitions": self.roll_dropped_transitions,
+                "share_pred_err_mean": (
+                    self.share_pred_err_sum / self.share_pred_err_n
+                    if self.share_pred_err_n else None),
+                "share_pred_err_max": self.share_pred_err_max}
 
     def summary_line(self):
         if not self.decisions:
             return None
         tm = self.timing()
         return ("[hil] " + self.name + ": %d decisions, solve %.2f ms median / "
-                "%.2f ms max, budget expired on %d (%.1f %%) — an expiry returns "
+                "%.2f ms max, %s candidates on the last decision (fewest %s, "
+                "deterministic cap %s, cut by it on %d), budget expired on "
+                "%d (%.1f %%) — an expiry returns "
                 "the shifted incumbent, which is feasible and was validated one "
                 "second earlier, so a nonzero count is a WARNING about the "
                 "search depth and not about the command; incumbent retained on "
-                "%d; share prediction error max %.4f (predicted minus delivered "
-                "stage share, charge windows excluded — the claim this strategy "
-                "makes, reported as a level); shadow governor %d ticks, %d MDAC "
+                "%d; roll table published %d times (%d completed jobs held no "
+                "transition and were merged as no-ops, %d transitions dropped "
+                "by the cap of %d); share prediction error %s mean / %.4f max "
+                "(predicted minus delivered STAGE-MEAN share, charge windows "
+                "excluded — the claim this strategy makes, reported as a "
+                "level); shadow governor %d ticks, %d MDAC "
                 "corrections, %d current-derived corrections, %d mode "
                 "mismatches; charge dwell latches %d, early drops %d%s; "
                 "terminal price %s = %.6f g/SoC in the eta_fc %.2f proxy basis; "
                 "preview %s%s"
                 % (self.decisions, tm["solve_ms_median"], tm["solve_ms_max"],
+                   tm["candidates_last"], tm["candidates_min"],
+                   ("none" if self.max_candidates is None
+                    else "%d" % self.max_candidates), self.cap_hits,
                    self.budget_hits,
                    100.0 * self.budget_hits / self.decisions,
-                   self.incumbent_retained, self.share_pred_err_max,
+                   self.incumbent_retained,
+                   tm["rolls_published"], tm["rolls_empty"],
+                   tm["roll_dropped_transitions"], RollJob.MAX_TRANSITIONS,
+                   ("n/a" if tm["share_pred_err_mean"] is None
+                    else "%.4f" % tm["share_pred_err_mean"]),
+                   self.share_pred_err_max,
                    self.shadow.ticks, self.shadow.mdac_corrections,
                    self.shadow.current_corrections, self.shadow.mode_mismatch,
                    self.latch.holds, self.latch.drops,

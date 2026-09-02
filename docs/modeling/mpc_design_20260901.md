@@ -8,8 +8,9 @@ each measured number cites the candidate that measured it. Numbers measured in
 this implementation round are marked as such and were taken on the host named in
 section 6.4.
 
-The strategy is not yet registered. Section 8 is the registration step list for
-the next agent; nothing outside the two new files was modified in this round.
+The strategy is REGISTERED as of 2026-09-02. Section 8 was the registration
+step list and now records where each item landed, what deviated from it, and the
+two offline gates that were run.
 
 ---
 
@@ -30,6 +31,14 @@ discount inside the horizon (adjudication section 1). The decision period is the
 `decision_dt_s` of the shipped stochastic-dynamic-programming artifact and the
 `dt` of the demand transition-probability matrix, so every strategy in the
 comparison shares one stage clock.
+
+The decisions LAND at 1.02 s, not at 1.00 s. The next decision instant is
+anchored on the call that served the last one, so a late call cannot accumulate
+a backlog of missed stages to fire back to back, and the commands are issued on
+a 50 Hz grid whose first sample at or after 1.00 s is 1.02 s. `SdpStrategy` has
+the same clock and the same 2 % slip, so the two strategies remain comparable on
+it. The slip is why the roll table is keyed on the decision grid rather than on
+the preview grid; see section 2.4.
 
 The horizon objective is the hydrogen mass burnt over the horizon plus a
 terminal state-of-charge price. Equation (1) states it over stages
@@ -104,7 +113,7 @@ is not equality-tested against its original. Table 2 lists the composition.
 | speed, acceleration, demand, bus voltage, source total, cruise | `gen_dp_ems_table.build_demand()` | scalar port, `build_demand()` |
 | auxiliary load | `gen_dp_ems_table.scenario_drain_a()` | scalar port |
 | charge admissibility | `gen_dp_ems_table.charge_mask()` | scalar port |
-| pack and hydrogen step | `step_discharge()`, `step_charge()` | scalar ports |
+| pack and hydrogen step | `_dp_step_discharge()`, `_dp_step_charge()` | scalar ports |
 | charger bus draw | `tools/charger_power.py` | imported verbatim |
 | delivered share | `governor_model.GovernorModel` | imported verbatim |
 | charge dwell latch | `SdpStrategy.charge_hold_status()` | re-implemented on imported constants |
@@ -113,7 +122,13 @@ is not equality-tested against its original. Table 2 lists the composition.
 in the first four rows is therefore re-expressed as scalar stdlib code, and
 `tools/test_mpc_ems.py` asserts equality with the numpy original to 1e-12
 relative, in both charger eras and on three registered scenarios. That test is
-the mechanism that keeps the two from drifting. The pack constants are imported
+the mechanism that keeps the two from drifting.
+
+⚠️ THE DRIFT GUARD RUNS ONLY UNDER AN INTERPRETER THAT HAS NUMPY. The equality
+tests import `gen_dp_ems_table` and SKIP when that import fails, so the suite run
+under `.venv_hil` reports four skips and passes. A change to either model must be
+checked under miniforge, where the four equality tests actually execute. The
+stdlib run alone does not establish that the two models still agree. The pack constants are imported
 from `hil_electrical`, which the dynamic-program generator also imports, so the
 two models cannot be pointed at different batteries.
 
@@ -162,22 +177,50 @@ Every previewed mode transition is rolled through the real `GovernorModel` at
 `r_hold` for that stage and that ladder point (candidate_fable section 2.2, item
 2; adjudication section 2.1). Open stages carry the value.
 
+A stage qualifies as a transition on any of FOUR classes: the 0.60 A upward
+crossing, the 0.55 A downward crossing, and a charge window opening or closing.
+The charge pair reaches the classifier two ways, and both are needed. The
+PREVIEW's own `chg_ok` edges enter `precompute_stages()`, because a window that
+the mask opens or closes takes the battery off or back onto the bus; and the
+CHARGE OPTION's own edges enter `RollJob`, because a candidate that charges for
+eight stages moves the battery at stage 8 whatever the mask says beyond it.
+
 The roll seeds the governor with the closed-loop delivered ratio for its ladder
 point at the stage entry current, which encodes the assumption that the command
-is held across the transition. The test suite reproduces one such roll
-independently and requires bit-exact agreement.
+is held across the transition. It also seeds `closed_loop_run`, the flag that
+makes the firmware's open-loop branch HOLD a converged split instead of slewing
+the multiplying DACs toward the setpoint. That flag is STICKY: a closed-loop run
+sets it and only a setpoint change clears it, so under the roll's own held-
+command assumption it never clears, and `run_entry` carries it. Seeding it from
+the stage's OWN opening mode instead made every roll of an already-open stage
+take the feedforward branch and return the commanded share, which is a slew the
+firmware does not perform. The test suite reproduces one such roll independently
+and requires bit-exact agreement.
 
-The table is keyed on the ABSOLUTE preview sample of the stage start, not on the
-horizon-relative index. The rolls are sliced across callbacks, so a table
-computed at one decision may still be in use one or two decisions later, by
-which time the horizon has receded. A relative key would then point silently at
-the wrong stage.
+The table is keyed on the ABSOLUTE stage index on the DECISION grid, not on the
+horizon-relative index and not on the preview sample. The rolls are sliced across
+callbacks, so a table computed at one decision may still be in use one or two
+decisions later, by which time the horizon has receded, and a relative key would
+then point silently at the wrong stage. A PREVIEW-SAMPLE key, which is what the
+first implementation used, fails for a second reason: the decisions land at
+1.02 s (section 1.1) while the preview grid is 0.1 s, so the preview index of a
+horizon start advances by 9, 10 or 11 samples and a table written at one decision
+missed the next decision's keys on two of the three deltas. The measured lookup
+hit rate was 5.39 % against the 8.05 % the transition census allows; keying on
+the stage's own start time recovers the difference.
 
 The number of rolled transitions per decision is capped at four, which is the
 adjudication's own arithmetic in section 2.1. A preview carrying more of them
 has the first four rolled, which are the transitions nearest the present and
 therefore the ones the executed first move depends on. A later transition
 carries the standing ratio until the horizon recedes onto it.
+
+The cap does not bind on the registered stimulus. Over the 61 decisions of
+`ems-soc-band` the census counts 1.75 transition stages per horizon and a
+maximum of 3, of which 61 are governor-class crossings and 46 are charge-mask
+edges; no decision reaches the cap, so nothing is dropped. The `dropped`
+count is nevertheless reported per run, because a stimulus with a faster share
+authority would reach it silently otherwise.
 
 ⚠️ One roll table serves all charge candidates in a decision, and it is computed
 against the most aggressive charge option. A decision that commits to a shorter
@@ -261,7 +304,7 @@ is constant within a block. The block lengths are geometric because prediction
 confidence decays with horizon index and only the first block is ever executed.
 
 The share alphabet is a seven-point uniform ladder spanning the band of section
-1.3. Seven points give a resolution of 0.0833, which is 121 mA of fuel-cell
+1.3. Seven points give a resolution of 0.0833, which is 117 mA of fuel-cell
 current per step at the stimuli's drain-phase source total.
 
 The charge axis carries three window candidates where the mask admits the first
@@ -364,9 +407,42 @@ compares the reader against `scipy.io.loadmat` element for element at zero
 tolerance, and pins the matrix's 25 bins, 211 non-zeros and 0.762 diagonal mass
 against the provenance sidecar.
 
-The demand axis map is the artifact's 0 to 25 W, so the stochastic variant and
-`sdp-v3` classify a measured bus power into the same bin. The two clamp counters
-are reported for the reason the SDP strategy reports them.
+`load_tpm()` also makes the two checks `sdp_ems_solver.load_tpm()` makes, at the
+solver's own tolerances: every row sums to 1 within 1e-9, and no entry is below
+-1e-15. A matrix failing either is not a transition matrix, and the forecast
+built from one is a number with no meaning.
+
+The demand axis map and the bin edges are READ from the shipped policy artifact
+(`normalization.p_dem_min_w`, `normalization.p_dem_max_w` and
+`demand_bins.edges` of `sdp_policy_v3.json`), so the stochastic variant and
+`sdp-v3` classify a measured bus power into the same bin by construction rather
+than by coincidence. The module's own 0 to 25 W is the ASSERTION the loader makes
+against the file: an artifact that moved the map is refused, because the measured
+figures in this document were taken against that map. The artifact's
+`demand_map_source` string is carried into the provenance block. The two clamp
+counters are reported for the reason the SDP strategy reports them.
+
+While a charge hold is in force the measured demand has the strategy's OWN
+charger draw subtracted from it, `V_bus * I_charge`, floored at the map's own
+minimum. This is `SdpStrategy`'s self-load subtraction term for term, and it
+exists for the reason campaign 20260901_000816 found: a policy that reads its own
+charger as demand forecasts the demand its own decision created.
+
+### 5.1 The transition matrix on THIS stimulus
+
+The 0.762 diagonal mass quoted for the matrix is OCCUPANCY-WEIGHTED over the
+vehicle log the matrix was fitted on, and the registered stimulus does not sit
+where that mass is. On `ems-soc-band` the modal demand bin is bin 23, which holds
+250 of the 611 preview samples, and that bin's self-transition probability is
+EXACTLY zero. One step from bin 23 the conditional mean falls from the bin centre
+of 23.5 W to 21.5 W.
+
+The consequence is stated rather than mitigated: `mpc-sto` systematically
+UNDER-predicts this stimulus's cruise demand, by about 2 W on the first step. A
+`mpc-sto` leg that under-charges relative to `mpc-det` is therefore expected, and
+is a property of the matrix rather than of the horizon. The test suite pins the
+modal bin, its occupancy and its zero self-transition, so a re-fitted matrix
+cannot move them silently.
 
 ⚠️ Three limits stand. The matrix's shape is a vehicle's, not this rig's. Its
 diagonal mass of 0.762 at 1 s makes short-horizon prediction close to a
@@ -391,15 +467,39 @@ the adaptive high-fidelity substeps, and pickling per decision, and the budget
 arithmetic does not require it.
 
 Budget expiry returns the incumbent and increments a counter, which appears in
-the exit summary. The default budget is 12.0 ms.
+the exit summary. The default budget is 10.0 ms; section 6.4 derives it.
+
+⚠️ A WALL-CLOCK BUDGET MAKES THE TRAJECTORY HOST-DEPENDENT. The search is cut by
+a `perf_counter()` reading, so the same command line on a slower machine can cut
+at a different candidate and commit a different share. An MPC leg must therefore
+NEVER be cited in a repeatability ledger the way the bit-exact `scp` cut current
+or the `ems-sdp` hydrogen total are cited, and a bit-difference between two MPC
+runs of the same command is not by itself evidence of a defect. The deterministic
+secondary cap `max_candidates` exists for a campaign leg that needs
+reproducibility: with it set, the search stops at a fixed candidate count and the
+wall-clock budget only ever fires as the safety net it was meant to be. The
+per-decision candidate count is reported next to the expiry counter, so a reader
+can tell a search that finished from one that was cut, and by which cap.
 
 ### 6.2 Slicing
 
 The transition rolls are computed control-independently once per decision and
-sliced across callbacks at 2.0 ms per call. The search uses the previous
-decision's roll table until the new one completes. The budget is checked after
-an item, so the job always advances and cannot livelock. The test suite drives a
-four-transition, seven-point job to completion within 50 callbacks.
+sliced across callbacks at 2.0 ms per call. The slice runs in the 50 Hz command
+callback, ahead of the decision gate; the decision path only CREATES the job. The
+search uses the previous decision's roll table until the new one completes.
+
+The budget is checked after a CHUNK of 100 governor ticks, not after a whole
+1 s roll. One roll is 1000 ticks and costs 2.554 ms, so a per-item check overran
+a 2.0 ms slice by more than the slice itself and the callback bound derived from
+it was not a bound. The measured worst slice at a 2.0 ms budget is 2.296 ms, an
+overshoot of one chunk. Progress is still guaranteed: at least one chunk runs per
+call, so a zero budget advances and the job cannot livelock.
+
+The completed table is published by MERGE, and only keys whose absolute stage has
+receded past the job's own horizon start are dropped. Both halves are load
+bearing. A replacement wipes the standing table whenever the completed job
+carried no items, which happens whenever the horizon holds no transition; a merge
+without the prune grows without bound over a run.
 
 ### 6.3 Why a blocking solve is unacceptable
 
@@ -415,36 +515,91 @@ The following were measured in this implementation round under
 
 | Item | Measured |
 |---|---|
-| one `GovernorModel.step()` tick, closed-loop branch | 2.761 microseconds |
-| one full 1 kHz roll of one 1 s stage | 2.761 ms |
+| one `GovernorModel.step()` tick, closed-loop branch | 2.694 microseconds |
+| one full 1 kHz roll of one 1 s stage | 2.554 ms |
 | one control-independent precompute, 20 stages | 56.7 microseconds |
 | one delivery table, 20 stages by 7 ladder points | 301 microseconds |
 | one candidate rollout, 20 stages | 12.3 microseconds |
-| one roll job, one transition, 7 ladder points | 19.2 ms |
+| one roll slice at the 2.0 ms budget, worst | 2.296 ms |
+| the 50 Hz surface's own work on a decision callback | 0.17 ms |
 
 Candidate_opus measured 2.721 microseconds for the governor tick, so the two
-agree to 1.5 %.
+agree to 1.0 %.
 
 Over a 61 s inline loop on the `ems-soc-band` stimulus at the 50 Hz command
 rate, the deterministic variant makes 61 decisions at a median solve time of
-4.6 ms and a maximum of 12.0 ms, with the maximum set by the budget. The
-stochastic variant measures 4.5 ms median and 8.9 ms maximum. Budget expiry
-occurred on 5 of 61 decisions for the deterministic variant and on none for the
-stochastic variant. The largest single callback, including a roll slice, was
-14.9 ms, which is inside the 20 ms command period.
+4.63 ms and a maximum of 10.01 ms, the maximum set by the budget. The stochastic
+variant measures 4.58 ms median and 9.15 ms maximum. Budget expiry occurred on
+4 of 61 decisions for the deterministic variant and on none for the stochastic
+variant. The largest single callback observed was 10.18 ms for the deterministic
+variant and 9.69 ms for the stochastic one.
+
+THE CALLBACK BOUND is not that observation, because on this stimulus every roll
+job completes before the next decision and the two costs never coincide. The
+bound is their sum, and each term is measured: 10.01 ms of solve, 2.296 ms of
+roll slice, and 0.17 ms of surface work, which is 12.5 ms against the 20 ms
+command period. That arithmetic is why the default budget is 10.0 ms rather than
+the 12.0 ms of the first implementation. Lowering it costs nothing in search
+depth on this stimulus, since budget expiry stands at 4 of 61 decisions at either
+value, and it buys 2 ms of margin. The per-item roll granularity of the first
+implementation made the same arithmetic read 10.01 + 5.32 + 0.17, because the
+slice could overrun by a whole 2.554 ms roll rather than by a 0.27 ms chunk.
+
+The search evaluates 343 candidates per charge option, which is the full ladder
+cube for seven levels and three move blocks; on the registered stimulus the
+minimum over the run is also 343, so the enumeration completes on every decision
+that does not expire.
 
 ### 6.5 Measured prediction accuracy
 
 The delivered share predicted for the executed stage was compared against a full
-1 kHz `GovernorModel` roll of the same committed command sequence, over the
-whole `ems-soc-band` stimulus. The mean absolute error is 0.00384 over 61 stages
-and the maximum is 0.16605.
+1 kHz `GovernorModel` roll of the same committed command sequence, over the whole
+`ems-soc-band` stimulus. The prediction is a STAGE-MEAN delivered share, so it is
+scored against the mean of the samples accumulated across the stage rather than
+against whichever 20 ms sample the next decision lands on.
 
-The mean satisfies candidate_opus's Gate 1 band of 5e-03, which remains
-PROVISIONAL until a governed walk measures it. The maximum sits in the open-loop
-class the design predicts it would: 51.2 % of this stimulus's preview samples
-carry a source total below the 0.55 A release threshold, so the commanded share
-is inert over half the run.
+| Configuration | mean | max | worst stage's mode |
+|---|---|---|---|
+| roll table never consulted | 0.00390 | 0.16667 | `open_feedforward` |
+| roll table consulted, mis-seeded hold flag | 0.00562 | 0.25000 | `open_feedforward` |
+| roll table consulted, as shipped | 0.00971 | 0.25000 | `open_feedforward` |
+
+The per-mode census of the shipped configuration is 30 closed stages at a mean of
+0.00308, 13 `open_hold` stages at exactly zero, and 18 `open_feedforward` stages
+at a mean of 0.02776. The roll table is now actually present when it is
+consulted: it holds 10.4 entries on the average decision, at most 21, and is
+empty on 1 of the 61 decisions, against 38 of 61 empty before the review. The
+stochastic variant measures 0.00595 mean and 0.16133 maximum on the same
+comparison, which is LOWER than the deterministic variant's - it commands a
+smoother share sequence because its conditional-mean demand path is smoother,
+not because it predicts the governor better. Every stage of the error is in the open-loop class the
+design predicts it would be in: 50.6 % of this stimulus's preview samples carry a
+source total below the 0.55 A release threshold, so the commanded share is inert
+over half the run.
+
+⚠️ THE SHIPPED CONFIGURATION FAILS candidate_opus's Gate 1 band of 5e-03, and the
+first row of that table is the number the first implementation reported. That row
+was measured on a controller whose roll table was never consulted, because the
+slice ran once per decision instead of once per callback and the table was
+overwritten empty; the review of 2026-09-02 established that a mutation removing
+the table entirely left the whole suite green. With the table live and the
+governor's hold flag seeded faithfully, the same measurement reads 0.00971.
+
+The mechanism is stated rather than tuned away. The open-stage surrogate models a
+HOLD: it carries the standing ratio, and the roll that produces that ratio itself
+assumes the command is held across the transition. The firmware's open-loop
+branch holds only while the setpoint does not change, and a receding-horizon
+controller re-commands every 1.02 s. Each re-command that lands in an open stage
+drops the governor out of hold into a feedforward slew that neither the surrogate
+nor the roll represents, and those are exactly the 18 stages carrying the error.
+The table's value is therefore not established on this stimulus, and no claim is
+made for it. Two consequences follow. First, Gate 1 is now a FAILING gate, and
+the fallback it selects is the one the design already names: roll the full
+governor on open stages with a reduced candidate set. Second, the fallback should
+be evaluated against a fourth configuration, an open-stage model that slews the
+carried ratio toward the commanded share when the command has changed, which is
+cheaper than a full roll and addresses the measured class directly. Neither is in
+this round.
 
 ---
 
@@ -517,7 +672,7 @@ Four limits belong in the report rather than being discovered afterwards.
 2. Preview and causality are not separated by the metric (section 1.2).
 3. The metric cannot see the open-loop hold. Two controllers commanding
    different shares through a sub-0.55 A window deliver the same split. On
-   `ems-soc-band` 51.2 % of the preview is below that line and on the FTP-75
+   `ems-soc-band` 50.6 % of the preview is below that line and on the FTP-75
    Run window the measured figure is 64.5 %, so a large fraction of each cycle
    is share-blind. An improvement confined to that region is unmeasurable, and a
    regression confined to it is equally invisible.
@@ -528,7 +683,110 @@ Four limits belong in the report rather than being discovered afterwards.
 
 ## 8. Registration: the step list for the next agent
 
-Nothing below was done in this round. Each item is additive.
+**STATUS: items 1 to 10 are DONE (2026-09-02); item 11 is partly done.** Each
+item below carries the `file:line` of its registration. Line numbers are as of
+the registration commit and are a starting point, not an anchor; the symbol
+names beside them are the anchor.
+
+| item | where | note |
+|---|---|---|
+| 1 strategy registry | `tools/hil_plant_sim.py:6018` `_MpcProxy`, `:6122` the two instances, `:6256` `EMS_STRATEGIES`, `:6397` `EMS_STRATEGY_META` | lazy proxy, no import cycle, no import-time I/O |
+| 2 scenarios | `:8211` `ems-mpc`, `:8228` `ems-mpc-sto`, `:8243` `ems-mpc-cross`, `:7579` `ems-ftp75-mpc`; `tools/run_hil_suite.py:342` `FTP75_SCENARIOS` | `ems-mpc-sto` added beyond the item's three |
+| 3 drain whitelist | `tools/hil_plant_sim.py:7326`, `tools/gen_dp_ems_table.py:500`, `tools/ems_walk.py:203` | all three mirrors carry `ems-mpc` / `ems-mpc-sto`; `tools/mpc_ems.py:363` was extended by the concurrent review round |
+| 4 feedback view | `tools/hil_plant_sim.py:10695` | `mdac_fc` / `mdac_bt` added to `_fb()` |
+| 5 CSV columns | `:10078` header, `:10819` row | after `p_chg_loss_w`, blank elsewhere and on replay |
+| 6 sidecar | `:10303` `config.mpc`, `:10377` the `timing()` merge at finalize | |
+| 7 command-line flags | `:9280` onward, resolved by `mpc_configure_kwargs()` at `:6142` | all default to None, i.e. to the constructor's own value; `--mpc-max-candidates` added beyond the item's seven |
+| 8 `ems_walk._instantiate()` | `tools/ems_walk.py:297` | re-instantiates through `mpc_ems.make_mpc()` |
+| 9 suite expectations | `tools/run_hil_suite.py:3702` `_mpc_expectation()` and the four entries below it; `:8043` `cycle61-mpc`, `ftp75-mpc` | every band carries a `provisional_note` |
+| 10 `dp_db` prefill | `ems-mpc` stored at the Gate-2 terminal SoC; `ems-mpc-cross` stored; the FTP-75 leg is **pending** | see below |
+| 11 gates + campaign | Gates 2 and 3 run (the table below); Gate 1 and the supervised campaign are **not** done | |
+
+**Deviations, each with its reason.**
+
+1. **The third drain mirror was extended by another agent.** This round was forbidden to edit `tools/mpc_ems.py` while a concurrent review round held it, so it extended only `hil_plant_sim`, `gen_dp_ems_table` and `ems_walk` and reported the third as required. That review round then added the two names at `tools/mpc_ems.py:363`, so the mirror assertion in `tools/test_mpc_ems.py` holds. `ems-mpc-cross` is deliberately absent from all four, exactly as `ems-sdp-cross` is.
+2. **`max_continuous_ticks` on a current threshold is not expressible.** Section
+   7.3 asks for it on the fuel-cell current above the margin, but that kind
+   needs a switch bit, an aux bit or a masked integer — the suite has no
+   numeric-threshold run kind. A `max_value` ceiling at the planner's own
+   1.19 A margin expresses the same budget claim; adding a check kind was out of
+   scope for a registration round.
+3. **`edge_count_between` is asserted on `SW_FC_CHARGE`, not on the
+   `charge_goal` column,** for the same reason: the kind counts transitions of a
+   bit. The switch is the board-side manifestation of the charge intent.
+4. **The prediction-error ceilings are 0.30, not 0.10.** The walk measures peaks
+   of 0.209, 0.168, 0.168 and 0.186 across the four legs. The walk's feedback
+   view carries no MDAC words, so its shadow governor is corrected only from the
+   measured current split, which identifies the applied ratio only above the
+   0.60 A closed-loop gate; a campaign feeds `mdac_fc`/`mdac_bt` (item 4) and
+   should read lower. One uniform ceiling on the conservative side, tightened
+   onto the first measurement.
+5. **No `dp_db` entry is prefilled for `ems-ftp75-mpc`.** Its matched solve is a
+   job of tens of minutes and the FTP-75 bound leg's own table is stale, so the
+   entry is deferred rather than stored against a stimulus that is about to be
+   regenerated.
+
+**Gate 2 (`ems_walk.walk(..., governor=True, dv0_v=0.030223)`, soc0 0.7,
+2026-09-02, three repeats per leg reproducing to six decimals).** The walk's
+plant IS the controller's prediction model, so these numbers show the plumbing
+works and the plan is self-consistent; they do not score the controller
+(section 7.1).
+
+| leg | strategy | h2 (g) | ΔSoC | eq-H2 (λ 0.41) | open-hold | share range |
+|---|---|---|---|---|---|---|
+| `ems-soc-band` | `soc-band` | 0.012264 | −0.002002 | 0.017146 | 0.118 | 0.250 |
+| `ems-dp-replay` | `dp-replay` | 0.011900 | −0.001936 | 0.016622 | 0.000 | 0.500 |
+| `ems-sdp` | `sdp-v4` | 0.012729 | −0.001600 | 0.016631 | 0.338 | 0.000 |
+| `ems-mpc` | `mpc-det` | 0.005095 | −0.004760 | 0.016705 | 0.338 | 0.250 |
+| `ems-mpc-sto` | `mpc-sto` | 0.008501 | −0.003334 | 0.016633 | 0.010 | 0.167 |
+| `ems-mpc-cross` | `mpc-det` | 0.014134 | −0.006007 | 0.028786 | 0.629 | 0.250 |
+| `ems-ftp75-socband` | `soc-band` | 0.041873 | −0.006306 | 0.057254 | 0.097 | 0.250 |
+| `ems-ftp75-sdp` | `sdp-v4` | 0.019918 | −0.014691 | 0.055750 | 0.097 | 0.700 |
+| `ems-ftp75-mpc` | `mpc-det` | 0.023771 | −0.013112 | 0.055751 | 0.020 | 0.333 |
+| `ems-ftp75-dp` | `dp-replay` | — | — | — | — | — |
+
+`cycle61-mpc` reads vs_reference **0.9743** and vs_bound **1.0050**; `ftp75-mpc`
+reads vs_reference **0.9738** and has no vs_bound prediction, because the shipped
+`dp_ems_table_ems-ftp75-dp.csv` carries a stale stimulus fingerprint and refuses
+to walk until it is regenerated. The prediction of section 7.1 held: the
+available headroom is small, and the vs-bound arm sits where section 7.4.1 says
+a charge-free candidate's arm sits.
+
+**The pair is the result, and the hydrogen alone is not.** Three repeats of each
+walk reproduce the totals above to six decimals, but raising the search budget
+from the shipped 12 ms to 1e5 ms moves `ems-mpc-cross`'s hydrogen by −21 %
+(0.014134 → 0.011163) while its equivalent hydrogen moves by 0.13 % (0.028786 →
+0.028750). A deeper search buys hydrogen with state of charge. Every
+`h2_cum_g` band in the suite is therefore a scale and accumulation tripwire; the
+equivalent-hydrogen total is the search-invariant quantity, and the frontier
+check computes it across runs rather than per run.
+
+The same effect separates the two variants on one stimulus. `mpc-sto`'s pair on
+`ems-mpc-sto` differs from `mpc-det`'s on `ems-mpc` — 0.008501 / −0.003334
+against 0.005095 / −0.004760 — while the two equivalent totals agree to 0.4 %.
+The certainty-equivalent demand path and the 90 % overcurrent quantile move the
+plan along the share lever without moving its value, which is the expected
+outcome on a stimulus that is not a draw from the matrix.
+
+The ΔSoC-matched dynamic-programming bound for `ems-mpc` at the walk's own
+terminal state is **0.005060 g** (`tools/dp_db`, key `da5d76a7f0779364`) against
+the walk's 0.005095 g — 0.69 % above the bound, which is the consistency check a
+plan is allowed to pass, and not a result about the controller. The
+`ems-mpc-cross` entry is stored at key `e9d9c021b52e763a`.
+
+**Gate 3, the governor-hold audit.** The open-hold column above is the fraction
+of each walk spent below the firmware's 0.55 A open-loop drop-out, where the
+commanded share is not acted on. Read it as a caveat on each leg, not as a
+score: `ems-mpc-cross` at **0.629** is two thirds share-blind, so an improvement
+or a regression confined to that region is invisible to any metric
+(section 7.4.3). ⚠️ The two 61 s legs sit on OPPOSITE sides of that line — 0.338
+for `mpc-det` against 0.010 for `mpc-sto` on the identical cycle — because the
+two plans command different splits at the same demand. The two runs are
+therefore not interchangeable evidence about the governor, and a comparison of
+their share-tracking quality is not a comparison of the same experiment.
+
+Nothing below was done in the round that wrote this document. Each item is
+additive.
 
 1. `tools/hil_plant_sim.py`, strategy registry. Add lazy proxies
    `EMS_STRATEGIES["mpc-det"]` and `EMS_STRATEGIES["mpc-sto"]` that import
@@ -578,8 +836,8 @@ Nothing below was done in this round. Each item is additive.
 
 ## 9. Deviations from the adjudication
 
-Three items were not implemented exactly as ruled, and each is recorded at its
-site in the code as well as here.
+Six items are not implemented exactly as ruled, and each is recorded at its site
+in the code as well as here.
 
 1. The multiplying-DAC correction of the shadow governor falls back to the
    measured delivered share, because the feedback view does not carry the two
@@ -589,17 +847,65 @@ site in the code as well as here.
    residual.
 3. The transition rolls are capped at four per decision. The adjudication's own
    arithmetic assumes at most four, so the cap makes the slice bound structural
-   rather than an assumption about the preview. Section 2.4 states what a
-   dropped transition costs.
+   rather than an assumption about the preview. The cap DOES NOT BIND on the
+   registered stimulus: over the 61 decisions of `ems-soc-band` the maximum is
+   3 transition stages per horizon and the mean is 1.75, of which 61 are
+   governor-class crossings and 46 are charge-mask edges, so no decision drops
+   anything. The dropped count is reported per run all the same.
+4. The default decision budget is 10.0 ms, not the 12.0 ms of the first
+   implementation, and the roll slice is checked at a 100-tick chunk rather than
+   between whole rolls. Both changes follow from the callback arithmetic of
+   section 6.4, which the per-roll granularity made unsound.
+5. The search accepts a deterministic secondary cap, `max_candidates`, which the
+   adjudication does not specify. A wall-clock budget alone makes the committed
+   trajectory host-dependent; section 6.1 states the consequence for a
+   repeatability ledger and the cap is what a campaign leg sets to avoid it.
+   The default is no cap, so an untouched command line is the adjudicated
+   search.
+6. THE PREDICTION MODEL DOES NOT MEET GATE 1. Section 6.5 gives the measurement,
+   the mechanism and the two follow-ons. The adjudication's ruling stands - the
+   transition rolls replace a hand-written open-loop surrogate - but the ruling's
+   premise, that the roll removes the 0.2484 open-stage error class, is not
+   confirmed on this stimulus, and the earlier measurement that appeared to
+   confirm it was taken on a controller that never consulted the table.
+
+### 9.1 What the review of 2026-09-02 changed
+
+The review found four defects that the original suite could not see, and five
+mutations that survived it. Recorded here because each changes a number this
+document reports.
+
+1. The roll slice ran on the 1 Hz decision path rather than the 50 Hz callback,
+   so a job received one slice per decision. The table was empty on 38 of 61
+   decisions.
+2. A completed job with no items published an EMPTY table by replacement, wiping
+   whatever stood.
+3. `bind_scenario()` did not accept the hook's two trailing arguments, which
+   `main()` passes by name. Registration would have raised `TypeError` before a
+   frame was sent. The binder now also reads the run's `capacity_ah` and the
+   scenario's `mpc_soc_ref_offset`.
+4. The roll table was keyed on the preview grid while the decisions land on a
+   1.02 s grid, so two of the three index deltas missed every key.
+
+The five surviving mutations were: dropping the minority clip from the delivery
+table, dropping the charger's bus power from the charge stage cost, flipping the
+charge state-of-charge sign, never consulting the roll table, and zeroing the
+terminal cost. Each now has a consumption test. The mutation battery run at the
+close of the round covers fourteen mutations, including the four defects above,
+and catches all fourteen.
 
 ---
 
 ## 10. Risks
 
-1. The surrogate misprices open-loop stages. The measured maximum error is
-   0.16605 in delivered share on `ems-soc-band`, and 51.2 % of that stimulus
-   sits in the open-loop regime. Mitigations are Gate 1, the per-decision commit
-   state, and the fallback of rolling the full governor on open stages.
+1. The surrogate misprices open-loop stages, and this is now a MEASURED FAILURE
+   rather than a risk. The mean absolute delivered-share error on `ems-soc-band`
+   is 0.00971 against a Gate 1 band of 5e-03, the maximum is 0.25000, and
+   50.6 % of that stimulus sits in the open-loop regime. Section 6.5 gives the
+   mechanism: the surrogate and the roll both model a HOLD, and a re-command
+   landing in an open stage produces a feedforward slew instead. The mitigations
+   are the per-decision commit state and the fallback the design already names,
+   rolling the full governor on open stages with a reduced candidate set.
 2. The terminal price is a choice spanning 38 % across its three candidates
    (section 4).
 3. The charger-efficiency change moves the charge lever across the SDP's

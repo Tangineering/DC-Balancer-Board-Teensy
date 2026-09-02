@@ -528,3 +528,44 @@ fixes → campaign → MPC (deterministic, then stochastic) → campaign → α 
   legs in one run (`--with-ftp75 --with-alpha`), because tools/ is edit-frozen during a campaign
   and a separate MPC campaign would cost the night an hour; every new leg is provisional-banded
   and scenario-isolated, so attribution stays per-leg.
+- WP-1B2b landed (612 plant tests + 3 pending-regen fingerprint failures): sdp-v4 registered and
+  frontier-eligible; sdp-v3 demoted (old-era, retained); ems-sdp + ems-ftp75-sdp rebound. v3/v4
+  share maps differ on 76/2525 cells, all on SoC rows 0.552-0.555 (45+ nodes below the target) -
+  walk-derived expectations transfer verbatim. DEVIATIONS ACCEPTED: ems-sdp-cross/-braking stay on
+  sdp-v2 (they actuate the CHARGE threshold; v4's charge map is all-zero like v3's - the eta-era
+  home for that mechanism is ems-sdp-alpha-charge); alpha legs run under a dedicated `sdp-sweep`
+  strategy (non-frontier by construction; an import guard refuses sdp_policy_file on any
+  frontier-eligible strategy). Certificate allowance: eta-era null measured window accepted only
+  with window_intent + charge_measured_is_projection + charger block; bare null still fails.
+  DP-table era guard both directions. Fingerprint omits eta_chg when None (02683031/403c5e71 back).
+  Commits: 390f554, e653e90, 6702920, d70a620. MPC registration dispatched.
+- MPC core review (commit 6702920): 4 HIGH (the transition-roll slicer advanced once per DECISION
+  not per callback -> r_hold empty on 38/61 decisions, the adjudicated hybrid was inert; an empty
+  roll job wiped the table; bind_scenario signature does not match the binder contract ->
+  TypeError at registration; 5 of 9 targeted mutations survive the 43 tests) + 7 MED (real-time
+  margin 16.5 ms not 14.9; mpc-sto bins its own charger draw; demand map hardcoded; the 0.762
+  diagonal caveat is inapplicable - the stimulus sits in bin 23 whose self-transition is 0; charge
+  window edges not a transition class; budget expiry is host-dependent; TPM reader unvalidated)
+  + 12 LOW. All accepted (M1 ruling: per-tick chunking of the roll + lower budget so worst
+  callback < 18 ms). Verified correct: objective/terminal units, levers, SoC integration, dwell,
+  TPM orientation, MAT reader, clip fidelity, shadow-governor gating, Gate-1 reproduction.
+  Fix agent dispatched (H3 first; registration agent notified).
+- WP-1B1 fix round applied (307 miniforge / 56+16 stdlib): backward pass era-correct (lambda 3.5:
+  old 0 stages 0.012521819 g, eta 157 stages 0.015344009 g; old era byte-identical); db CLI alive;
+  16/16 records reachable; all three tables regenerated - data rows IDENTICAL, only the fingerprint
+  line moved back (02683031 / 50fe8c40 / 403c5e71). Walk traced I_fc in a charge window 1.1372 ->
+  0.7894 A. Admission margin recorded as sqrt(eta) = 0.93808, convention-free.
+- MPC fix round applied (65 tests; mutation battery 14/14 caught). Slicer at the callback rate
+  (r_hold on 60/61 decisions), merge-publish, bind signature, per-tick roll chunking (worst
+  callback 10.17 ms at budget 10 ms), self-load subtraction, demand map from the artifact,
+  charge-window transition class (46 of 107 transitions; cap of 4 never binds), max_candidates
+  cap, TPM validation, modal-bin finding (T[23][23] = 0 on the soc-band stimulus).
+- **FINDING + DECISION: Gate 1 FAILS with the roll table consulted** - ems-soc-band mean 0.00971
+  (band 5e-3) / max 0.25000; the earlier 0.00389 was measured with the table inert. Mechanism:
+  a 1 Hz re-command landing in an open-loop stage drops the governor into a feedforward slew
+  neither the surrogate nor the roll (which assumes a held command) represents; the 18
+  open_feedforward stages carry the error. DECISION: ship mpc-det/mpc-sto LIVE tonight with the
+  failing gate recorded and mpc_share_pred_err banded at 0.30 provisional from this measurement,
+  so campaign B measures the real board-side prediction error; the fallback (full governor rolls
+  on open stages, ~8 candidates - design §3.5) or a feedforward-aware stage model is a MORNING
+  decision. Reversal: drop the four ems-mpc* scenarios from the plan (one commit).
