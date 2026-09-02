@@ -7696,6 +7696,84 @@ def ems_demonstration_banner(scenario_name, recorded_strategy=None):
     return text
 
 
+CAMPAIGN_META_NAME = "campaign_meta.json"
+
+
+def _iso_local(t):
+    """A POSIX timestamp as ISO-8601 with a local UTC offset, seconds precision.
+
+    Same convention (and the same truncation to the second) as run_child()'s
+    "launched_at" stamp, so a campaign_meta.json time and a per-run time can be
+    compared literally without re-parsing either into a different resolution."""
+    return (datetime.datetime.fromtimestamp(t)
+            .replace(microsecond=0).astimezone().isoformat(timespec="seconds"))
+
+
+def _fmt_hms(seconds):
+    """Seconds as h:mm:ss (hours unpadded). None/negative -> "?"."""
+    if seconds is None:
+        return "?"
+    try:
+        s = int(round(float(seconds)))
+    except (TypeError, ValueError):
+        return "?"
+    if s < 0:
+        return "?"
+    return "%d:%02d:%02d" % (s // 3600, (s % 3600) // 60, s % 60)
+
+
+def build_campaign_meta(args, argv, plan, results, started_t, finished_t,
+                        completed):
+    """Campaign-level wall-clock metadata (the payload of campaign_meta.json).
+
+    Pure function: every input is passed in, so a test can pin the arithmetic
+    without a clock.  `wall_s_runs_sum` is the sum of the per-run `wall_s`
+    values run_child() already records; `wall_s_overhead` is everything the
+    campaign spent OUTSIDE a child — the settle pauses, the pre-run tool passes,
+    board resets, and the report rendering itself.  A SKIPPED run launches no
+    child, so it counts toward `n_runs_planned` but not `n_runs_executed`."""
+    runs_sum = 0.0
+    executed = 0
+    for r in results:
+        if r.get("skipped"):
+            continue
+        executed += 1
+        runs_sum += (r.get("child") or {}).get("wall_s") or 0.0
+    total = max(0.0, finished_t - started_t)
+    return {
+        "started_at": _iso_local(started_t),
+        "finished_at": _iso_local(finished_t),
+        "wall_s_total": total,
+        "wall_hms_total": _fmt_hms(total),
+        "wall_s_runs_sum": runs_sum,
+        "wall_s_overhead": total - runs_sum,
+        "n_runs_planned": len(plan),
+        "n_runs_executed": executed,
+        # False whenever the campaign did not reach the end of its plan (Ctrl-C,
+        # an abort, or a short result list): the timestamps below are then the
+        # times of the ABORT, not of a completed campaign, and nothing should
+        # read them as a runtime figure for the full plan.
+        "completed": bool(completed),
+        "out": args.out,
+        "argv": list(argv),
+    }
+
+
+def write_campaign_meta(out_dir, campaign):
+    """Write campaign_meta.json into the report folder. Never raises on a
+    rendering problem the campaign itself should survive -- an I/O error here
+    must not turn a finished campaign into a crash, so the caller's finally
+    path stays intact."""
+    path = os.path.join(out_dir, CAMPAIGN_META_NAME)
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(campaign, fh, indent=2, default=str)
+    except OSError as exc:
+        print("[suite] WARNING: could not write %s: %s" % (path, exc),
+              file=sys.stderr)
+    return path
+
+
 def render_report(meta, results):
     """Build REPORT.md from the collected result dicts. Pure function."""
     L = []
@@ -7735,6 +7813,31 @@ def render_report(meta, results):
                            if _asym == "measured" else
                            "  — symmetric plant (the pre-C1 baseline)")]))
     A(_row(["Settle pause between runs", "%s s" % meta.get("settle_s")]))
+    # Campaign wall-clock. Present only on the FINAL rewrite (the intermediate
+    # per-run rewrites have no finish time yet), so a partial REPORT.md simply
+    # omits the row rather than carrying a runtime that is not one.
+    _camp = meta.get("campaign_timing") or {}
+    if _camp:
+        A(_row(["Campaign runtime",
+                "%s (%.0f s total; %.0f s in runs, %.0f s overhead — settle "
+                "pauses, tool passes, board resets)%s"
+                % (_fmt_hms(_camp.get("wall_s_total")),
+                   _camp.get("wall_s_total") or 0.0,
+                   _camp.get("wall_s_runs_sum") or 0.0,
+                   _camp.get("wall_s_overhead") or 0.0,
+                   "" if _camp.get("completed")
+                   # Deliberately no emoji here: this row renders on the
+                   # PARTIAL report, which the M4 regression test reads back
+                   # with the platform default encoding (cp1252 on the bench
+                   # PC) — a non-cp1252 glyph on an aborted report is an
+                   # unreadable file on exactly the machine that aborts.
+                   else "  — ABORTED campaign: this is the time to the abort, "
+                        "not a full-plan runtime")]))
+        A(_row(["Campaign window",
+                "%s → %s (%d of %d planned run(s) executed)"
+                % (_camp.get("started_at", "?"), _camp.get("finished_at", "?"),
+                   _camp.get("n_runs_executed", 0),
+                   _camp.get("n_runs_planned", 0))]))
     if meta.get("dashboard"):
         # F3: --dashboard hands children the real terminal for stdout, so the
         # per-run summary columns below (and the achieved-rate check) cannot
@@ -8244,6 +8347,8 @@ def render_report(meta, results):
     A(_row(["`REPORT.md`", "—", "this report"]))
     A(_row(["`results.json`", "—", "machine-readable results"]))
     A(_row(["`plan.json`", "—", "the run plan (also written by --dry-run)"]))
+    A(_row(["`%s`" % CAMPAIGN_META_NAME, "—",
+            "campaign wall-clock metadata (start/finish, run vs overhead time)"]))
     A("")
     return "\n".join(L) + "\n"
 
@@ -8436,6 +8541,15 @@ def main(argv=None):
         print_plan(plan, args)
         return 0
 
+    # Campaign clock. Started here — the instant the report folder is claimed
+    # and plan.json is stamped — so campaign_meta.json's window matches the
+    # folder's own name and plan.json's mtime rather than starting somewhere
+    # inside argument parsing.  --list returns above and never starts a clock.
+    campaign_t0 = time.time()
+    # The suite's own argv, as parsed: what would have to be re-run to reproduce
+    # this campaign.  sys.argv[1:] when main() was entered from the CLI.
+    suite_argv = list(argv) if argv is not None else list(sys.argv[1:])
+
     os.makedirs(args.out, exist_ok=True)
     plan_json = [{k: v for k, v in p.items() if k != "entry"} for p in plan]
     for p, pj in zip(plan, plan_json):
@@ -8524,7 +8638,19 @@ def main(argv=None):
         interrupted = True
         print("\n[suite] interrupted (Ctrl-C) — writing partial results", file=sys.stderr)
     finally:
+        partial = bool(interrupted or aborted or len(results) < len(plan))
+        # Written from the SAME finally path that guarantees results.json and
+        # REPORT.md, so an aborted campaign still records its window — with
+        # completed=False and a finished_at that is the abort time.
+        campaign = build_campaign_meta(args, suite_argv, plan, results,
+                                       campaign_t0, time.time(),
+                                       completed=not partial)
+        write_campaign_meta(args.out, campaign)
         meta = make_meta(aborted, interrupted or len(results) < len(plan))
+        # Carried on meta purely so render_report() stays a pure function of
+        # (meta, results); it is not part of the results.json meta contract any
+        # consumer parses by fixed key set.
+        meta["campaign_timing"] = campaign
         write_outputs(meta, results)
 
     npass = sum(1 for r in results if r["passed"])

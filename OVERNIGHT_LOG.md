@@ -422,3 +422,42 @@ rounds + 1 firmware round, ~5M subagent tokens. The pipeline was never the
 bottleneck; board time was. Parallelizing an orchestrated round against a running
 campaign (fw v24 during C1) was the single biggest wall-clock win and is safe
 exactly when the file sets are disjoint (firmware vs tools/).
+
+---
+
+# Overnight autonomous session log — 2026-09-01/02
+
+Start commit `668d281` (main). Operator brief (2026-09-01 evening), verbatim rulings:
+1. Ag105 charge efficiency: datasheet 88 % typ (25 °C, 12 Vin, 3S; we run 15–16 Vin, 2S) —
+   use 0.88 static unless a written justification says otherwise.
+2. Apply η to the simple engine too.
+3. Implement the efficiency change BEFORE running the next campaign.
+4. α rule: solve the η-era matched DP first; pick the rule that agrees with the DP.
+5. Live α points: midpoint of each leg from the η-era sweep (orchestrator picks).
+6. MPC: deterministic first, stochastic second; may run live as an EMS strategy vs SDP and DP.
+7. Physics review after ≥ 1 campaign with the η change; fixes allowed before the next
+   campaign; document physics changes and the MPC design thoroughly (operator's review focus).
+8. Track campaign wall-clock runtime as report-folder metadata.
+Budget: up to 5 campaigns. Standing rules: memory `operator-rulings-2026-09-01e` (branch then
+merge to main; tools/ frozen during a live campaign; PSCAD/, the .ino flag flip and
+references/ never committed).
+
+Board: fw v25, HIL build, `--teensy-ip 192.168.1.50 --port 5001`.
+
+Plan: WP-1 η = 0.88 (plant A ∥ DP/SDP/walk B1 → B2 solves/artifacts/α rule → C bands +
+scenario rebinding + runtime metadata) → campaign B (η era) → analysis → physics review +
+fixes → campaign → MPC (deterministic, then stochastic) → campaign → α points → campaign.
+
+## Decisions (with reversal paths)
+
+- 2026-09-01 evening: operator re-flashed the Teensy (fw v25, HIL build) and left. Autonomous
+  mode from here. Agents in flight: WP-1A (plant η), WP-1B1 (DP/SDP/walk/db η), suite runtime
+  metadata, MPC design pair (Opus + Fable).
+- **MPC design pair adjudicated** (docs/modeling/mpc_design_20260901/adjudication.md; both
+  candidates and the brief kept beside it). Synthesis: Opus's in-callback anytime search and
+  closed-stage surrogate; Fable's transition-stage exact rolls, shadow governor and
+  three-window charge enumeration; Huber terminal at the metric price (2.881 g/SoC in the
+  proxy basis, dead band 0.0015); certainty-equivalent demand plus 90 % quantile OC tightening
+  for `mpc-sto`. Worker process REJECTED (a risk to the 1 kHz loop the budget arithmetic does
+  not require). Reversal: one commit. Implementation starts after WP-1A/B1 land (it imports the
+  charger-power helper).

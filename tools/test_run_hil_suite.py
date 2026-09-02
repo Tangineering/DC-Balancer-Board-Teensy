@@ -9070,3 +9070,174 @@ def test_mppt_brake_window_count_28_fails(tmp_path):
     # 28 clears the floor (>= 27) but exceeds the ceiling (<= 27).
     assert by_name["signal_mppt_threshold_braking_mirror_artifact_ceiling"] is False
     assert by_name["signal_mppt_threshold_braking_mirror_artifact"] is True
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Campaign-level wall-clock metadata (campaign_meta.json, 2026-09-01).
+#
+# A campaign's total runtime was recorded NOWHERE: per-run wall_s existed,
+# plan.json stamped the start by its mtime alone, and the ~67-minute figure
+# for hil_report_20260901_151156 could only be recovered by differencing
+# file timestamps.  These pin the new file's content, the h:mm:ss rendering
+# in REPORT.md, and -- load-bearing -- that the file is still written when
+# the campaign aborts partway, with completed=False.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_fmt_hms_renders_hours_minutes_seconds():
+    assert rhs._fmt_hms(0) == "0:00:00"
+    assert rhs._fmt_hms(59.4) == "0:00:59"
+    assert rhs._fmt_hms(61) == "0:01:01"
+    # The reference campaign: 15:11:56 -> 16:19:11 is 67 min 15 s.
+    assert rhs._fmt_hms(67 * 60 + 15) == "1:07:15"
+    assert rhs._fmt_hms(3600) == "1:00:00"
+    assert rhs._fmt_hms(None) == "?"
+    assert rhs._fmt_hms(-1) == "?"
+
+
+def test_build_campaign_meta_arithmetic_and_skip_accounting():
+    """wall_s_overhead is total minus the sum of per-run wall_s, and a SKIPPED
+    run counts as planned but NOT executed (it launches no child at all)."""
+    args = _args(out="/tmp/report")
+    # A REALISTIC epoch: _iso_local() calls astimezone(), which on Windows
+    # cannot resolve a local offset for a near-epoch naive datetime (OSError 22).
+    # 2025-08-24T00:26:40Z, plus 100 s.
+    t0 = 1756000000.0
+    plan = [{"name": "a"}, {"name": "b"}, {"name": "c"}]
+    results = [
+        {"name": "a", "child": {"wall_s": 10.0}},
+        {"name": "b", "child": {"wall_s": 20.0}},
+        {"name": "c", "skipped": True, "child": {"wall_s": None}},
+    ]
+    cm = rhs.build_campaign_meta(args, ["--only", "a"], plan, results,
+                                 started_t=t0, finished_t=t0 + 100.0,
+                                 completed=True)
+    assert cm["wall_s_total"] == 100.0
+    assert cm["wall_s_runs_sum"] == 30.0
+    assert cm["wall_s_overhead"] == 70.0
+    assert cm["n_runs_planned"] == 3
+    assert cm["n_runs_executed"] == 2
+    assert cm["completed"] is True
+    assert cm["argv"] == ["--only", "a"]
+    assert cm["wall_hms_total"] == "0:01:40"
+    # Same ISO-8601-with-offset convention as the per-run "launched_at" stamp:
+    # seconds precision, and an offset is present.
+    parsed = datetime.datetime.fromisoformat(cm["started_at"])
+    assert parsed.utcoffset() is not None
+    assert parsed.microsecond == 0
+    assert (datetime.datetime.fromisoformat(cm["finished_at"])
+            - parsed).total_seconds() == 100.0
+
+
+def test_build_campaign_meta_is_json_serializable(tmp_path):
+    args = _args(out=str(tmp_path))
+    cm = rhs.build_campaign_meta(args, ["--out", str(tmp_path)], [{"name": "a"}],
+                                 [{"name": "a", "child": {"wall_s": 1.5}}],
+                                 started_t=1756000000.0,
+                                 finished_t=1756000002.0,
+                                 completed=False)
+    path = rhs.write_campaign_meta(str(tmp_path), cm)
+    assert os.path.basename(path) == rhs.CAMPAIGN_META_NAME
+    loaded = json.loads((tmp_path / rhs.CAMPAIGN_META_NAME).read_text(encoding="utf-8"))
+    assert loaded == cm
+    assert loaded["completed"] is False
+
+
+def test_campaign_meta_written_end_to_end(tmp_path, monkeypatch):
+    """A completed campaign writes campaign_meta.json next to plan.json, with
+    the executed-run count and the suite argv, and REPORT.md carries the
+    runtime row plus the new appendix entry."""
+    def fake_run_child(item, args):
+        return {"status": "ok", "returncode": 0, "wall_s": 0.25, "log": item["log"],
+                "summary": {"achieved_hz": 1000.0}}
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+    # --keep-going for the same reason as the K4 tests: the fake child writes no
+    # CSV, so the run fails its checks; the campaign metadata is what is pinned.
+    rhs.main(["--out", str(tmp_path), "--only", "steady", "--keep-going"])
+
+    meta_path = tmp_path / rhs.CAMPAIGN_META_NAME
+    assert meta_path.is_file()
+    cm = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert cm["n_runs_planned"] == 1
+    assert cm["n_runs_executed"] == 1
+    assert cm["wall_s_runs_sum"] == pytest.approx(0.25)
+    assert cm["wall_s_total"] > 0.0
+    # NOT `total >= runs_sum`: the mocked child returns a wall_s it never
+    # actually spent, so the identity below is what this test can pin. On a
+    # real campaign the overhead is positive by construction.
+    assert cm["wall_s_overhead"] == pytest.approx(
+        cm["wall_s_total"] - cm["wall_s_runs_sum"])
+    assert cm["completed"] is True
+    assert "--only" in cm["argv"] and "steady" in cm["argv"]
+    assert cm["out"] == os.path.abspath(str(tmp_path))
+    assert cm["wall_hms_total"] == rhs._fmt_hms(cm["wall_s_total"])
+
+    report = (tmp_path / "REPORT.md").read_text(encoding="utf-8")
+    assert "Campaign runtime" in report
+    assert cm["wall_hms_total"] in report
+    assert "Campaign window" in report
+    # The appendix lists it alongside plan.json.
+    assert "`%s`" % rhs.CAMPAIGN_META_NAME in report
+    # results.json carries the same block (render_report reads it from meta).
+    loaded = json.loads((tmp_path / "results.json").read_text(encoding="utf-8"))
+    assert loaded["meta"]["campaign_timing"] == cm
+
+
+def test_campaign_meta_written_on_keyboardinterrupt_with_completed_false(
+        tmp_path, monkeypatch):
+    """The load-bearing case: an aborted campaign must still record its window,
+    flagged completed=False so the runtime is not read as a full-plan figure."""
+    def boom(plan, args, problems, results, write_outputs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(rhs, "_run_plan", boom)
+    rc = rhs.main(["--out", str(tmp_path), "--only", "steady"])
+    assert rc == 130
+
+    cm = json.loads((tmp_path / rhs.CAMPAIGN_META_NAME).read_text(encoding="utf-8"))
+    assert cm["completed"] is False
+    assert cm["n_runs_executed"] == 0
+    assert cm["n_runs_planned"] == 1
+    assert cm["wall_s_runs_sum"] == 0.0
+    report = (tmp_path / "REPORT.md").read_text(encoding="utf-8")
+    assert "ABORTED campaign" in report
+
+
+def test_campaign_meta_written_when_every_run_is_skipped(tmp_path, monkeypatch):
+    """An all-skips plan executes nothing: planned counts them, executed does
+    not, and wall_s_runs_sum stays 0."""
+    def fake_run_child(item, args):
+        raise AssertionError("no child should ever be launched")
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+    rhs.main(["--out", str(tmp_path), "--pi-live", "--scenarios-only",
+              "--only", "charge-cruise"])
+    cm = json.loads((tmp_path / rhs.CAMPAIGN_META_NAME).read_text(encoding="utf-8"))
+    assert cm["n_runs_planned"] >= 1
+    assert cm["n_runs_executed"] == 0
+    assert cm["wall_s_runs_sum"] == 0.0
+
+
+def test_dry_run_writes_plan_json_but_no_campaign_meta(tmp_path):
+    """--dry-run keeps its existing behaviour (it writes plan.json) and must NOT
+    gain a campaign_meta.json: no campaign ran, so there is no runtime."""
+    rc = rhs.main(["--out", str(tmp_path), "--dry-run", "--only", "steady"])
+    assert rc == 0
+    assert (tmp_path / "plan.json").is_file()
+    assert not (tmp_path / rhs.CAMPAIGN_META_NAME).exists()
+
+
+def test_list_writes_nothing(tmp_path):
+    """--list writes no report folder content at all -- unchanged by this
+    round, pinned so campaign_meta.json cannot leak into it later."""
+    rc = rhs.main(["--out", str(tmp_path), "--list", "--only", "steady"])
+    assert rc == 0
+    assert not (tmp_path / rhs.CAMPAIGN_META_NAME).exists()
+    assert not (tmp_path / "plan.json").exists()
+
+
+def test_render_report_omits_runtime_row_without_timing():
+    """An intermediate (mid-campaign) rewrite has no finish time yet: the row is
+    omitted rather than rendered with a placeholder runtime."""
+    text = rhs.render_report({"settle_s": 1.0}, [])
+    assert "Campaign runtime" not in text
