@@ -1,67 +1,103 @@
-# Work queue — updated post round 2026-09-02 (Ag105 η = 0.88, η-era DP/SDP, MPC live, campaign B analysed, physics review closed, campaign C running)
+# Work queue — updated post round 2026-09-02 (Ag105 η = 0.88, η-era DP/SDP, MPC live, campaigns B and C analysed, physics review closed, session closed out)
 
-## 0. NEXT — operator review, then the MPC fallback decision, then campaign C's analysis
+## 0. NEXT — operator review, in this order
 
-1. **Review this round** (CLAUDE.md addendum 2026-09-02; OVERNIGHT_LOG.md §2026-09-01/02 and its
-   MORNING DIGEST; the campaign-B ledger `HIL Results/hil_report_20260902_011926/HIL_FINDINGS.md`
-   + `HIL_SUMMARY.md`). Four items carry the operator's own review focus:
-   - **Physics.** `docs/HIL_PLANT.md` §4.6, §4.6.1 and §4.6.2: the charger is now an energy converter
-     at `ETA_CHG` = 0.88 in both engines, stamped as a chord conductance with an 8.0 V floor, with an
-     output-referred regen cap that is deliberately NOT netted against the chopper. The six-item
-     reversal path is in §4.6.2; `ETA_CHG` = 1.0 alone does not revert the round. Read it together
-     with the adversarial review's three majors (`docs/reviews/hil-plant/run-001-2026-09-02.md`
-     §Adjudication): **F2** — the "6.5 % bus-sourced regen leak" was misattributed and is
-     0.088059 J / 0.118 W of post-clamp-release bus-fed CHARGING through a forward-conducting
-     `MOT_PWR`, so the co-solve `TODO(verify)` is retired; **F4** — open loop has two submodes and the
-     slew-limited FEEDFORWARD does write the MDACs (356 write ticks on `ems-y-b00-v3`), which is the
-     MPC Gate-1 mechanism; **F1** — observation-frame byte 15 is a fiat mirror under `HIL_SIM`
-     (11.8 % of ticks differ, max 12 counts) and two suite labels asserted the manager ran.
-   - **MPC design, the live calibration reading, and the cap caveat.**
-     `docs/modeling/mpc_design_20260901.md` §6.5, §8 and §9. Gate 1 FAILS offline with the roll table
-     consulted (mean 0.00971, max 0.25000, band 5e-03) and the round shipped `mpc-det` / `mpc-sto`
-     live with that recorded. **Campaign B measured the board-side error and it is the designed
-     structure:** closed-loop prediction exact (median 1e-5 on both stimuli), all error open-loop
-     (`ems-mpc` mean 0.06054 / max 0.21893 open against 0.00418 / 0.124 closed; `ems-ftp75-mpc` over
-     345 decisions), live max under the offline Gate-1 0.25 — keep the 0.30 band. ⚠️ **Cap caveat:**
-     at `MPC_CAMPAIGN_MAX_CANDIDATES` 343 = 7³ = one charge option's enumeration, with no-charge
-     enumerated first, the cap truncated BEFORE the charge axis on every capped decision (13 of 61 on
-     `mpc-sto`), so **no "the MPC chose not to charge" reading is supported by campaign B**; the cap
-     is 1029 from `6c28dd2` and campaign C is the first run in which the charge axis is reachable.
-   - **The measured lever pair and the α question.** Campaign B's first η-era measurement:
-     **L_chg 0.33214 / L_share 0.41688 SoC/g, ratio 0.797.** The projected inversion is REFUTED and
-     the model's ordering holds, so the UNDECIDABLE window is answerable; the end-to-end charge
-     round-trip on the board is **0.797, not η = 0.88** (bus sag 15.76 → 14.15 V billed to the charge
-     leg — plant physics, not the solver). ⚠️ Under the measured levers `sdp_policy_v4`'s α 0.118326
-     sits **1.4 % below** the measured admission window (0.11994, 0.15055), and a measured-lever
-     re-solve gives α ≈ 0.13434. **HOLD α for campaign C's second reading** — one measurement is not
-     a re-solve basis.
-   - **The power-on INIT_FAIL.** Campaign B's first run (`steady`) opened with a latch already set on
-     the board — **0xa010 / error_code 0x0e INIT_FAIL at t = 0** — after the evening re-flash, and it
-     self-cleared in grace. The power-on path deserves a look; it is the only board-side observation
-     of the night that is not explained.
-   - *(Superseded review item: the `regen-harvest-true` floor lowering, max_of 1.0 → 0.65 J and
-     total_of 3.0 → 1.9 J, is measured out — campaign B read 1.5810 J max_of and 6.3525 J total_of,
-     2.4× and 3.3× the floors. The A1 calibration re-pin from the board, 2.109–2.133 J/window and
-     6.35 J/run, is queued below.)*
-2. **MPC fallback decision (morning).** Either adopt the design's own fallback — full governor rolls
-   on open-loop stages with a reduced candidate set, `mpc_design_20260901.md` §3.5 and §7.1 — or
-   build a feedforward-aware stage model, or accept the surrogate and keep `mpc_share_pred_err` as a
-   measured band. The board-side reading above is the input: the surrogate is exact where it is
-   closed-loop and carries all of its error in the open-loop stages the F4 finding named.
-   Reversal if the legs are to be withdrawn: drop the four `ems-mpc*` scenarios, one commit.
-3. **Campaign C (`hil_report_20260902_041414`) — LAUNCHED from `6c28dd2`, analysis pending.** It
-   validates the cp1252/finalize fix on the five re-run legs, the numeric `min_ticks`, the mppt
-   peak-form pin, the socband tripwire split, the `substep_resolution` gate and the MPC cap 1029
-   with the charge axis reachable; and it takes the **second reading of the η-era levers** while
-   re-pinning the asymmetry-era baselines (scp `i_cut`, comm-loss on BOTH channels, the
-   soc-depletion latch). Run its analysis under hil-agent-analysis. Also de-provisionalise from it:
-   the OC ceilings whose predicted peaks fell (sdp-cross ~0.84 A, sdp-braking ~0.95 A, mppt ~0.72 A —
-   the last two had no η-era run at all, because their legs never launched) and the MPC bands.
+The session is closed. Two campaigns ran of a budget of five; campaign C is analysed and its fix
+round is committed (`5f1cfed`). Read `OVERNIGHT_LOG.md` §MORNING DIGEST (FINAL) first, then the
+CLAUDE.md addendum 2026-09-02, then the two ledgers
+(`HIL Results/hil_report_20260902_011926/` and `.../hil_report_20260902_041414/`). Six items need a
+decision or a read, in this order:
 
-## 0a. Campaign-B fix queue — shipped and carried
+1. **The physics change record and the review's three majors.** `docs/HIL_PLANT.md` §4.6.1–§4.6.2 and
+   `docs/reviews/hil-plant/run-001-2026-09-02.md` §Adjudication. Details below.
+2. **The MPC design, its live calibration reading, and the fallback decision.** Item 2 below.
+3. **The lever measurement and the α re-solve decision.** Two campaigns now agree; α ≈ 0.1343 on the
+   measured levers. Item 3 below.
+4. **The FTP-75 socband result and the frontier tie.** The socband leg's FAIL was the settling-hold
+   defect, fixed in `5f1cfed`; on a ≥ 5 ms guard it passes at 0.6930 A. sdp-v4 and the MPC read within
+   0.015 % on FTP-75, inside the ~50 ppm repeatability floor — TIED, do not rank.
+5. **The `regen-harvest-true` floor restoration.** The WP-1C lowering (max_of 1.0 → 0.65 J, total_of
+   3.0 → 1.9 J) is measured out: campaign B read 1.5810 / 6.3525 J and campaign C 1.5938 / 6.3578 J.
+   Restore the floors from the board figures (calibration batch below).
+6. **The candidate-cap and budget-expiry finding.** Lifting `MPC_CAMPAIGN_MAX_CANDIDATES` to 1029 made
+   the charge axis reachable (`cut_by_cap` 0 on all four legs) but pushed `ems-mpc-cross` to expire the
+   10 ms budget on **57.4 %** of decisions. `5f1cfed` raises that leg to `mpc_budget_ms` 15 ms and
+   reports `candidates_max`; confirm the budget rather than the cap is the right lever.
 
-Source: `HIL Results/hil_report_20260902_011926/HIL_FINDINGS.md` §FINAL SUMMARY (ranked queue) and
-the per-batch fix lists A1-*, A2-*, A3 F1–F8, A4-*, A5-*. All items were tooling; none were firmware.
+Detail on items 1–3, then two actions that follow from them:
+- **Physics.** `docs/HIL_PLANT.md` §4.6, §4.6.1 and §4.6.2: the charger is now an energy converter
+  at `ETA_CHG` = 0.88 in both engines, stamped as a chord conductance with an 8.0 V floor, with an
+  output-referred regen cap that is deliberately NOT netted against the chopper. The six-item
+  reversal path is in §4.6.2; `ETA_CHG` = 1.0 alone does not revert the round. Read it together
+  with the adversarial review's three majors (`docs/reviews/hil-plant/run-001-2026-09-02.md`
+  §Adjudication): **F2** — the "6.5 % bus-sourced regen leak" was misattributed and is
+  0.088059 J / 0.118 W of post-clamp-release bus-fed CHARGING through a forward-conducting
+  `MOT_PWR`, so the co-solve `TODO(verify)` is retired; **F4** — open loop has two submodes and the
+  slew-limited FEEDFORWARD does write the MDACs (356 write ticks on `ems-y-b00-v3`), which is the
+  MPC Gate-1 mechanism; **F1** — observation-frame byte 15 is a fiat mirror under `HIL_SIM`
+  (11.8 % of ticks differ, max 12 counts) and two suite labels asserted the manager ran.
+- **MPC design, the live calibration reading, and the cap caveat.**
+  `docs/modeling/mpc_design_20260901.md` §6.5, §8 and §9. Gate 1 FAILS offline with the roll table
+  consulted (mean 0.00971, max 0.25000, band 5e-03) and the round shipped `mpc-det` / `mpc-sto`
+  live with that recorded. **Campaign B measured the board-side error and it is the designed
+  structure:** closed-loop prediction exact (median 1e-5 on both stimuli), all error open-loop
+  (`ems-mpc` mean 0.06054 / max 0.21893 open against 0.00418 / 0.124 closed; `ems-ftp75-mpc` over
+  345 decisions), live max under the offline Gate-1 0.25 — keep the 0.30 band. ⚠️ **Cap caveat:**
+  at `MPC_CAMPAIGN_MAX_CANDIDATES` 343 = 7³ = one charge option's enumeration, with no-charge
+  enumerated first, the cap truncated BEFORE the charge axis on every capped decision (13 of 61 on
+  `mpc-sto`), so **no "the MPC chose not to charge" reading is supported by campaign B**. The cap
+  is 1029 from `6c28dd2`; campaign C ran at that cap with `cut_by_cap` 0 on all four legs, so the
+  caveat is LIFTED and FC_CHARGE rises 0/0/0/0 now reads as a decision. ⚠️ **The cap lift moved the
+  binding constraint to the budget:** `ems-mpc-cross`'s median solve is 10.002 ms and 57.4 % of its
+  decisions expire the 10 ms budget (`ems-mpc` 6.6 %, `ems-ftp75-mpc` 10.3 %, `mpc-sto` 0 %). Expiry
+  returns the shifted incumbent, so no unsafe command is issued; `5f1cfed` sets that leg's
+  `mpc_budget_ms` to 15 ms and reports `candidates_max`.
+- **The measured lever pair and the α decision.** Two campaigns now agree: campaign B read
+  **L_chg 0.33214 / L_share 0.41688 SoC/g** and campaign C **0.331758 / 0.416896** (−0.114 % /
+  +0.004 %, ratio 0.7958). The projected inversion is REFUTED and the model's ordering holds; the
+  end-to-end charge round-trip on the board is **0.797, not η = 0.88** (bus sag 15.76 → 14.15 V
+  billed to the charge leg — plant physics, not the solver). ⚠️ `sdp_policy_v4`'s α 0.118326 sits
+  **1.34 % below** the measured admission window (0.11993, 0.15071) in BOTH readings. **The hold is
+  released: a measured-lever re-solve to α ≈ 0.1343 is now an operator decision**, and the eq-H2
+  ordering (greedy +1.125 %, charge +3.829 % against the calibrated leg) reproduced exactly.
+- *(Closed review item: the power-on INIT_FAIL. Campaign B's first run opened at 0xa010 /
+  `error_code` 0x0e after the evening re-flash; it did NOT recur in campaign C, whose first run
+  opened at 0x8011 = campaign B's last latch word, so the chain holds across the campaign boundary
+  and the observation is attributed to the re-flash's power-on path.)*
+- *(Superseded review item: the `regen-harvest-true` floor lowering, max_of 1.0 → 0.65 J and
+  total_of 3.0 → 1.9 J, is measured out — campaign B read 1.5810 / 6.3525 J and campaign C
+  1.5938 / 6.3578 J. The calibration re-pin from the board is queued below.)*
+- **MPC fallback decision (still open).** Either adopt the design's own fallback — full governor rolls
+  on open-loop stages with a reduced candidate set, `mpc_design_20260901.md` §3.5 and §7.1 — or
+  build a feedforward-aware stage model, or accept the surrogate and keep `mpc_share_pred_err` as a
+  measured band. The board-side reading is the input: the surrogate is exact where it is closed-loop
+  and carries all of its error in the open-loop stages the F4 finding named, and campaign C reproduced
+  that structure to the digit (closed median 1e-5, open max 0.21894 against B's 0.21893).
+  Reversal if the legs are to be withdrawn: drop the four `ems-mpc*` scenarios, one commit.
+- **De-provisionalise from campaign C.** The OC ceilings that had no η-era run in campaign B are now
+  measured (`ems-sdp-cross`, `ems-sdp-braking`, `mppt-tracking`), as are the MPC bands. Pin them from
+  `hil_report_20260902_041414` before the next campaign.
+
+## 0a. Campaign B and C fix queues — shipped and carried
+
+Sources: `HIL Results/hil_report_20260902_011926/HIL_FINDINGS.md` §FINAL SUMMARY (ranked queue) and
+the per-batch fix lists A1-*, A2-*, A3 F1–F8, A4-*, A5-*; the fix-round review of `6c28dd2`; and
+`HIL Results/hil_report_20260902_041414/HIL_FINDINGS.md` §FINAL SUMMARY. All items were tooling; none
+were firmware.
+
+**SHIPPED in `5f1cfed` (post-campaign fix round; review 2 HIGH + 3 MED + 9 LOW, all accepted):**
+- HIGH — socband charge-window mask **settling hold** (`exclude_hold_ms`, 10 ms on both arms; import
+  guard refuses a hold without the mask). This closes the one FAIL campaign C produced.
+- HIGH — a test for the **finalize-in-`finally`** path, which the campaign-B round shipped uncovered.
+- MED — `substep_resolution` becomes a **WARNING** and fails only on a sustained collapse fraction
+  above 0.1 % of the run; `n_sub_last` logged (campaign C: 0 sub-gate ticks, min n 11 against gate 8).
+- MED — the `finally` teardown is **guarded item by item**, so a bad glyph in a deferred note cannot
+  skip the finalize.
+- MED — `mpc_h2` **informational** on `ems-mpc-cross`, `candidates_max` on the summary line, and a
+  per-scenario `mpc_budget_ms` (cross 15 ms).
+- LOW batch — mppt pin trimmed to (37.75, 38.44) in `min_value` + `min_ticks` form; `not_exercised`
+  derived from `replay_commands`; census scalars only in `results.json`; the asymmetry-era anchors
+  block; the teardown-lead band documented as **0.04–0.55 ms**; the `HIL_PLANT.md` substep sentence.
 
 **SHIPPED in `6c28dd2` (tooling fix round; docs half in `7026e3b`):**
 - HIGH — cp1252: ASCII summary and warning text, a lossless console, sidecar/event finalization moved
@@ -78,8 +114,11 @@ the per-batch fix lists A1-*, A2-*, A3 F1–F8, A4-*, A5-*. All items were tooli
 - MED — matched-DP prefill of the seven η-era EMS keys (era_overrides `eta_chg` 0.88) and the
   regen-bearing label: dp-replay −0.20 %, sdp −0.35 %, soc-band +3.87 %, ftp75-5050 +5.73 %,
   -dp +4.35 %, -sdp +8.53 %, -socband +7.45 %.
-- MED — replay half: a `share_cut_census` entry that is a NOTE rather than a scored check (baseline
-  163 cuts / max 0.6608 A) and `not_exercised` markers so an unexercised check reads as a count.
+- MED — replay half: a `share_cut_census` entry that is a NOTE rather than a scored check and
+  `not_exercised` markers so an unexercised check reads as a count. ⚠️ The baseline under the tool's
+  own definition is campaign C's **118 cuts / 6 over the own row / 2 over the previous row / peak
+  0.5722 A**; campaign B's hand-derived 163 / 8 / 4 / 0.6608 A used a different definition and the two
+  are not comparable.
 - MED — `substep_resolution` gate (n_min ≥ 8) with `elec_substep_n` logged (review F6 code item).
 - MED — conventions: `asymmetry` added to the run-era fields; the bus-draw ratio marked
   probe-point-specific (0.5565 → 0.64 at a 14.1 V bus); the replay share-guard coverage statement
@@ -88,14 +127,16 @@ the per-batch fix lists A1-*, A2-*, A3 F1–F8, A4-*, A5-*. All items were tooli
 - LOW/record — the η-era measured levers recorded in `measured_levers()` (α unchanged).
 
 **CARRIED (open):**
-- **Re-runs and re-pins that need campaign C.** The asymmetry-era baselines are unpinned until a
-  second reading reproduces them: `scp-inrush` `i_cut` 6.362275 A, `comm-loss` re-close on BOTH
-  channels (0.3802 / 0.3381 A about the 0.35915 A mean), the `soc-depletion` UV_BATT latch
-  270.977072 s. Likewise the OC ceilings for `ems-sdp-cross` / `-braking`, which have no η-era run.
-- **`ems-mpc-cross` and `ems-mpc-sto` walk re-derivation, cap-lifted.** The cross leg's −0.13 % h2
-  miss is a REAL divergence and the band must NOT be widened; re-derive both walks at cap 1029 and
-  re-band from campaign C. The `mpc-sto` walk is the suspect on its own −13.2 % (det matched its
-  walk to +0.05 % on the other two stimuli).
+- *(Closed: the asymmetry-era re-pins. Campaign C reproduced `scp-inrush` `i_cut`
+  **6.362274641096594 A bit-exact to 16 digits**, `handoff-sag` bit-exact, `comm-loss` re-close on both
+  channels 0.3801 / 0.3379 A, and the `soc-depletion` UV_BATT latch at 270.976079 s (3.7 ppm). The
+  anchors block shipped in `5f1cfed`.)*
+- **`ems-mpc-cross` and `ems-mpc-sto` walk re-derivation, cap-lifted — STILL OPEN and now urgent.**
+  Both walks must be re-derived at cap 1029 and 15 ms and the legs re-banded. The cross band must NOT
+  be widened to pass: the leg read −0.13 % of the floor in campaign B and +0.10 % in campaign C, so the
+  band edge sits inside the MPC's own non-reproducibility and the check is a coin flip as written — it
+  is informational (`5f1cfed`) only until the re-walk lands. The `mpc-sto` walk is the suspect on its
+  own −13.2 % (det matched its walk to +0.05 % on the other two stimuli).
 - **Per-stage DP residual check.** `ems-ftp75-dp` reads −4.14 % h2 and +19.6 % ΔSoC against its own
   correctly-paired table (widened from −2.15 % / +4.8 %). Build the per-stage `cmd_share_sp`-versus-
   table residual check; attribution (PLANT-R1-F5) is the open-loop hold, not `Gfc` dynamics.
@@ -110,10 +151,12 @@ the per-batch fix lists A1-*, A2-*, A3 F1–F8, A4-*, A5-*. All items were tooli
   `docs/HIL_REPLAY_LOGS.md` and `docs/modeling/mpc_design_20260901.md` still carry `file:line`
   forms). Audit them before any is used as provenance. ⚠️ The 56 figure is the fix round's own count
   and has not been reproduced from the documents.
-- **FTP-75 frontier λ-sensitivity caveat.** The `ftp75` tuple is UNVERIFIED (its socband reference
-  failed its own checks) and, on the reading it would have given, **49.6 % of the candidate's eq-H2
-  is the λ correction** — a ΔSoC gap 21× cycle61's. Do not quote the FTP-75 ranking until the
-  reference passes, and never quote it without the λ-sensitivity statement.
+- **FTP-75 frontier λ-sensitivity caveat.** Both `ftp75` tuples are still UNVERIFIED, in campaign C
+  only through the socband reference's predicted FAIL; on the readings they would have given, sdp-v4
+  reads 0.96632 / 0.99863 and the MPC 0.96617 / 0.99849 — **within 0.015 %, inside the ~50 ppm
+  repeatability floor: TIED, do not rank**. And **49.6 % of the candidate's eq-H2 is the λ correction**
+  (a ΔSoC gap 21× cycle61's), so never quote an FTP-75 ranking without the λ-sensitivity statement.
+  The settling-hold fix (`5f1cfed`) should let the reference pass on the next campaign.
 - **Replay sub-5 ms cut chatter (INVESTIGATE-LOW).** 58 of ML0203's 119 in-Run cuts follow a dwell
   under 5 ms (min 0.5 ms, BT_BUS chatter at the band edge), and ML0151 cuts a channel 2.0 ms after
   its own rise — inside an unfinished CSS soft-start that the survivor-keyed blanking does not
@@ -153,8 +196,10 @@ the per-batch fix lists A1-*, A2-*, A3 F1–F8, A4-*, A5-*. All items were tooli
    FAILS on `ems-soc-band` (§0 item 2). Every band carries a `provisional_note` and is calibrated
    from campaign B. **Ran live in campaign B:** `mpc-det` ties sdp-v4 on the 61 s cycle, the
    board-side prediction error is exact closed-loop and entirely open-loop otherwise, and the
-   information ablation is measured (`mpc-sto` −22.5 % h2 at +38.7 % drain). ⚠️ No charge-behaviour
-   conclusion is supported until the cap-1029 re-runs land (§0a).
+   information ablation is measured (`mpc-sto` −22.5 % h2 at +38.7 % drain). **Campaign C ran at cap
+   1029 with `cut_by_cap` 0 on all four legs**, so the charge-behaviour reading is now supported (0
+   FC_CHARGE rises) and the frontier tuple is certified at 0.9606× / 1.0007×. Open: the budget expiry on
+   `ems-mpc-cross` (§0 item 6) and the cap-lifted walk re-band (§0a).
 6. **Converter asymmetry — DONE (2026-09-01e A4 + C1).** ΔV0 and ρ adopted as the M2 consistent pair,
    default-on, `--asymmetry off` byte-identical. The +8.1 % shared/single residual and the ~4×
    `K_DROOP` finding stay open. Bench `TODO(calibrate)`: an 'O' open-loop share sweep above 0.60 A.
@@ -235,9 +280,11 @@ sim-only strategies.
   +0.33 % / −1.2 %. Attribution (PLANT-R1-F5): the generator has no share loop or governor, and at
   zero preload the firmware's sub-0.55 A open-loop behaviour covers 64.5 % of the FTP-75 Run window.
   The dynamic-versus-DC `Gfc` difference is only 0.01–0.03 % and does NOT explain it.
-- Does the charger lever clear the 0.31 SoC/g `sdp` charge-revisit condition in the η era? The model
-  now puts `L_chg` at 0.396396 SoC/g, above that trigger, while `sdp_policy_v4` still rejects charging
-  endogenously at α 0.118326. The question is settled by measurement, not arithmetic.
+- Does the charger lever clear the 0.31 SoC/g `sdp` charge-revisit condition in the η era? **Measured
+  twice and yes:** `L_chg` 0.33214 (campaign B) and 0.331758 SoC/g (campaign C), against a model value
+  of 0.396396 and a trigger of 0.31. `sdp_policy_v4` nonetheless rejects charging endogenously at
+  α 0.118326, and the measured admission window puts that α 1.34 % too low — which is the α re-solve
+  decision in §0 item 3, not a separate question.
 - `ems-y` b00-v3 gate fraction (campaign 20.6 % against walk 12.7 %) — the governor walk can settle it.
   ⚠️ **20.6 % does not reproduce** (2026-09-02): three recomputations give 16.98 / 19.33 / 19.13 %.
   A raw instantaneous `I_total` < 0.55 A proxy reads 68.3 % and is not comparable with either — the
@@ -245,6 +292,9 @@ sim-only strategies.
 
 ## 6. Housekeeping
 
+- **CLAUDE.md is 78 KB after the 2026-09-02 addendum**, despite two rotations this session
+  (`c4abc39`, `faecc58`). The addendum is current and must not rotate yet; rotate the 2026-08-16c and
+  2026-08-25 addenda at the next opportunity, keeping the three bodge records in place.
 - Campaign ledgers live in the gitignored `HIL Results/`; promote one to a committed skill exemplar?
 - Rebuild the benchlog analyzer exe (pending since fw v18; `asymmetry_fit` is not part of the exe).
 - The `.venv_hil` stdlib / miniforge numpy split stands (run `tools/` under `.venv_hil` with
@@ -295,9 +345,23 @@ sim-only strategies.
   + `docs/reviews/hil-plant/ledger.md`): three major (F1 byte-15 fiat mirror, F2 the misattributed
   regen "leak", F4 the open-loop feedforward submode), five minor, one nit, `PLANT-R1-N4` open.
 - **Campaign-B fix rounds** — docs `7026e3b`, tooling `6c28dd2` (§0a lists the scoring-semantics
-  changes); suites at close 1795 stdlib / 1997 numpy green.
+  changes); suites at that point 1795 stdlib / 1997 numpy green.
+- **Campaign C (`hil_report_20260902_041414`)** — 66 planned, 65 executed + `drive` SKIP, wall 1:22:26;
+  suite tally 65/66, **corrected to 65 of 65 executed runs correct, zero board defects**; the single
+  FAIL is the settling-hold defect the fix-round review predicted. It validated every campaign-B fix on
+  the board, took the **second η-era lever reading** (stable to 0.114 %), certified the **MPC frontier**
+  (0.9606× / 1.0007×, tying sdp-v4), re-pinned the **asymmetry-era anchors** (`scp` `i_cut` bit-exact to
+  16 digits), and corrected three standing records: the h2 repeatability floor to **~50 ppm** (the 8 ppm
+  and 0.79 ppm records retired), the replay census baseline to **118/6/2/0.5722 A**, and the
+  teardown-lead band to **0.04–0.55 ms**. New finding: the MPC budget expires on 57.4 % of
+  `ems-mpc-cross`'s decisions once the candidate cap is lifted.
+- **Post-campaign fix round `5f1cfed`** (§0a) — the settling hold, the finalize test, the substep
+  warning, the guarded teardown, the informational `mpc_h2` with a per-scenario budget.
 - Commits `dec059b`, `390f554`, `e653e90`, `6702920`, `d70a620`, `a932f83`, `887933f` (campaign B
-  launched from it), `7026e3b`, `6c28dd2` (campaign C launched from it).
+  launched from it), `71fecb6`, `c4abc39`, `7026e3b`, `6c28dd2` (campaign C launched from it),
+  `76253ee`, `faecc58`, `b28f501`, `5f1cfed`, plus this close-out — 16 on main.
+- **Suites at close:** `.venv_hil` 1810 passed / 61 skipped; miniforge 2209 passed / 1 skipped (16
+  suites). Firmware untouched — fw v25's 3842 / 175 / 4324 stand.
 
 ## Shipped 2026-09-01f (follow-on round)
 

@@ -427,6 +427,9 @@ exactly when the file sets are disjoint (firmware vs tools/).
 
 # Overnight autonomous session log — 2026-09-01/02
 
+> **CLOSED.** Session ended 2026-09-02 morning; last work commit `5f1cfed`.
+> **Read `## MORNING DIGEST (FINAL)` at the end of this file first; the retrospective follows it.**
+
 Start commit `668d281` (main). Operator brief (2026-09-01 evening), verbatim rulings:
 1. Ag105 charge efficiency: datasheet 88 % typ (25 °C, 12 Vin, 3S; we run 15–16 Vin, 2S) —
    use 0.88 static unless a written justification says otherwise.
@@ -632,102 +635,6 @@ fixes → campaign → MPC (deterministic, then stochastic) → campaign → α 
   channels, soc-depletion latch) with a second reading of the eta-era levers. Fix-round review
   running in parallel (read-only); its findings apply after the campaign.
 
-## MORNING DIGEST (draft — campaign C pending)
-
-This digest is a draft. Campaign C (`HIL Results/hil_report_20260902_041414`) was still running when
-it was written. Every claim below carries a pointer. No number appears here that is not in a ledger,
-a report folder, or a committed document.
-
-### What you asked for, and what was delivered
-
-Your brief carried eight verbatim rulings (this log, §2026-09-01/02 header). Status of each:
-
-1. Ag105 charge efficiency 0.88 static — DELIVERED. `ETA_CHG` = 0.88 in `tools/hil_electrical.py`;
-   the physics record is `docs/HIL_PLANT.md` §4.6.1.
-2. η applied to the simple engine too — DELIVERED. Both engines bill the charger through one rule
-   (CLAUDE.md addendum 2026-09-02, first bullet).
-3. Efficiency change before the next campaign — DELIVERED. Commits `390f554` and `e653e90` precede
-   campaign B's launch commit `887933f`.
-4. α follows the η-era matched DP — DELIVERED. The DP charges on zero stages, so `--alpha-mode lever`
-   shipped as `sdp_policy_v4.json` (CLAUDE.md addendum, the RULING bullet).
-5. Live α points at each leg midpoint — DELIVERED. Picks idx 3 / 7 / 14 in
-   `tools/sdp_policies/sweep_20260902_eta088/live_picks.json`; all three ran and all three passed.
-6. MPC deterministic first, stochastic second, live against SDP and DP — DELIVERED. Four scenarios
-   registered; `ems-mpc` and `ems-mpc-sto` both ran in campaign B.
-7. Physics review after at least one η campaign — DELIVERED. Record
-   `docs/reviews/hil-plant/run-001-2026-09-02.md`; ledger `docs/reviews/hil-plant/ledger.md`.
-8. Campaign wall-clock as report metadata — DELIVERED. `campaign_meta.json` in every report folder.
-
-Two campaigns were run against a budget of five. Campaign B is analysed and its fix round is
-committed. Campaign C is running and is unanalysed.
-
-### Headline findings
-
-Pointers: `HIL Results/hil_report_20260902_011926/HIL_SUMMARY.md` for the digest form, the same
-folder's `HIL_FINDINGS.md` for per-batch evidence, and the CLAUDE.md addendum 2026-09-02 for the
-committed record.
-
-1. **Zero board defects.** The suite scored 58 of 66. Analysis corrected the reading to 65 of 65
-   executed runs behaving correctly (`HIL_FINDINGS.md` §FINAL SUMMARY). Five of the eight FAILs are
-   one console-encoding defect. Two are suite scoring defects present in both eras. One is a
-   walk-fidelity gap. One, `ems-mpc-cross`, is a genuine divergence and must not be widened.
-2. **The η = 0.88 charger model is validated on every independently measurable axis**
-   (`HIL_FINDINGS.md` §A1 batch verdict), including the charger bus draw on hardware within 0.5 % of
-   the model at a sagged bus (§A3, `ems-sdp-alpha-charge` against `-cal` at the same instant).
-3. **First live η-era lever measurement** (§A3, "THE η-ERA LEVER MEASUREMENT"). The model's ordering
-   is confirmed and the projected inversion is refuted. Two consequences reach your desk: the
-   end-to-end charge round-trip on the board is not η, because bus sag is billed to the charge leg;
-   and `sdp_policy_v4`'s α sits just below the measured admission window. See the bench list.
-4. **First live governor-aware MPC** (§A3). The deterministic variant ties `sdp-v4` on the 61 s
-   cycle. The prediction error has exactly the designed structure: exact where the stage is
-   closed-loop, and carrying all of its error in the open-loop stages. That is the same mechanism the
-   physics review confirmed independently (`run-001-2026-09-02.md` §Adjudication, PLANT-R1-F4).
-   ⚠️ The candidate cap truncated before the charge axis, so no charge-behaviour conclusion is
-   supported yet.
-5. **A double era boundary against campaign 151156** (§A2 era warning, §A4 headline). That campaign
-   predates both the charger change and the converter-asymmetry default. Three repeatability records
-   break, and all three break in the plant, not in the strategy.
-6. **The physics review found three major items** (`run-001-2026-09-02.md` §Adjudication). The
-   "regen leak" was misattributed; the open-loop mode writes the MDACs after all; observation-frame
-   byte 15 is a fiat mirror under `HIL_SIM`. One item, `PLANT-R1-N4`, remains open-unverified.
-7. **Coverage cost.** The encoding defect cost the η era its charge-admission limit-cycle run and its
-   only designed challenge to the fw v25 share-cut guard (`HIL_SUMMARY.md` §Coverage cost). Campaign
-   C re-runs both legs.
-
-### Reversible decisions
-
-Each decision below was taken without you and each has a one-commit undo.
-
-| Decision | Where it is recorded | One-commit undo |
-|---|---|---|
-| α follows the DP: `sdp_policy_v4` ships and `ems-sdp*` is rebound to it | this log, "RULING (operator rule 4…)" | Rebind the `ems-sdp*` scenarios to `sdp-v3`, which stays registered as an old-era policy |
-| MPC shipped live with Gate 1 recorded as failing | this log, "FINDING + DECISION: Gate 1 FAILS…" | Drop the four `ems-mpc*` scenarios from the plan |
-| Physics M3: the regen cap stays output-referred and is NOT netted against the chopper | this log, "WP-1A fix round applied", M3 ruling | Adopt the netted form (it destroys 0.64 J hi-fi / 1.43 J simple of genuine harvest, and a pre-existing WP-C test fails under it) |
-| Fingerprint reachability: `dp_profile_fingerprint()` omits `eta_chg` when it is None | this log, WP-1B1 review rulings, H3 | Include the key, and accept that all 16 database records are orphaned |
-| The three DP tables regenerated as η-era solves | this log, WP-1B1 landing note | Restore the old-era fixture, whose regeneration is byte-identical |
-| `regen-harvest-true` chopper floors restored downward on measurement | this log, WP-1C landing note | Return the floors to 0.65 J and 1.9 J |
-| The replay share-cut census ships as a NOTE, not a scored check | WORK_QUEUE.md §0a, shipped list | Promote it to a check row with a threshold |
-
-### Operator bench list for today
-
-These are the measurements no amount of analysis can supply. Full context in WORK_QUEUE.md §3.
-
-1. **Ag105 charge efficiency at our operating point.** The datasheet's 88 % typ is stated at 25 °C,
-   12 Vin and 3S. The rig runs 15–16 Vin into a 2S pack. Measure input and output power there.
-2. **The measured charge round-trip against η.** Campaign B measured 0.797 end to end where the
-   model uses 0.88 (`HIL_FINDINGS.md` §A3). The shortfall is attributed to bus sag billed to the
-   charge leg. A bench reading separates that attribution from a genuine converter-efficiency error.
-3. **The power-on INIT_FAIL.** Campaign B's first run opened with a latch already set after your
-   evening re-flash, and it self-cleared in grace (`HIL_SUMMARY.md` §Worth reviewing manually;
-   `HIL_FINDINGS.md` §A5 operator note). Look at the power-on path.
-4. **MPPTD-disabled-charge semantics.** Still unverified on hardware. Two designers read the
-   datasheet oppositely, and the firmware carries a holdoff instead of a semantic change.
-5. **The 30 ms survivor blanking against a real RT1987 turn-on.** HIL validated the logic against
-   the modelled `t_D_ON` only. The failure direction is asymmetric. Never shorten it on the model.
-6. **VESC regen commanded-versus-delivered mapping.** It sets `VESC_REGEN_I_MAX_A` and `ETA_REGEN`,
-   both of which carry `TODO(verify)`.
-7. **An open-loop share sweep ('O' command) above 0.60 A.** The asymmetry fit has no open-loop
-   feedforward window in the corpus, so the fit rests on closed-loop windows alone.
 - Fix-round review (6c28dd2): 2 HIGH (the socband charge-window mask lacks a post-close settling
   hold -> ems-ftp75-socband WILL false-FAIL campaign C at 0.8628 A, the charger decay tail; the
   finalize-in-finally has zero test coverage) + 3 MED (substep gate should be a label; the binder's
@@ -749,3 +656,199 @@ These are the measurements no amount of analysis can supply. Full context in WOR
   (the 8 ppm / 0.79 ppm records retired); NEW MED: MPC budget expiry after the cap lift (cross
   57.4 %); the cross h2 floor sits inside the MPC's own spread. Campaign B's power-on INIT_FAIL did
   not recur (re-flash path). Routed to the running fix agent.
+- **Post-campaign fix round landed (5f1cfed)** — the fix-round review's 2 HIGH + 3 MED + 9 LOW plus
+  campaign C's own queue. Four items are operator-class and each has a one-commit undo (digest table):
+  the socband settling hold (exclude_hold_ms 10); the substep gate downgraded to a warning that fails
+  only above a 0.1 % collapse fraction; ems-mpc-cross raised to mpc_budget_ms 15 ms; and mpc_h2 made
+  informational on that leg until the cap-lifted walk re-band. Tests at close: .venv_hil 1810 passed /
+  61 skipped; miniforge 2209 passed / 1 skipped (16 suites); firmware untouched (fw v25's
+  3842/175/4324).
+- **Campaign count decision: STOPPED AT TWO** (authorization was up to five). Campaign C was clean —
+  65 of 65 executed runs correct, every campaign-B fix validated, the single FAIL predicted in advance
+  — and every quantity a third campaign would touch now has two agreeing readings. The remaining
+  mandate (close-out documentation, the skill update, the digest and retrospective) needed the time,
+  and the α re-solve, the MPC fallback and the physics record are operator decisions that should
+  precede the next campaign rather than follow it. Cycle count for the session: 2 campaigns /
+  5 fix rounds / 1 decision pair.
+
+---
+
+## MORNING DIGEST (FINAL)
+
+Session closed at commit `5f1cfed` plus this close-out; 16 commits, all on main. Two campaigns ran
+against a budget of five. Both are analysed, both fix rounds are committed, and the board carries no
+defect from either. Every number below appears in a ledger, a report folder, a committed document or
+a commit message; each claim carries its pointer.
+
+**What to read first:** this digest, then the CLAUDE.md addendum 2026-09-02, then the two ledgers
+(`HIL Results/hil_report_20260902_011926/` and `.../hil_report_20260902_041414/`), then WORK_QUEUE.md
+§0 for the decisions that need you.
+
+### What you asked for, and what was delivered
+
+Your brief carried eight verbatim rulings (this log, §2026-09-01/02 header). Status of each:
+
+1. Ag105 charge efficiency 0.88 static — DELIVERED. `ETA_CHG` = 0.88 in `tools/hil_electrical.py`;
+   the physics record is `docs/HIL_PLANT.md` §4.6.1.
+2. η applied to the simple engine too — DELIVERED. Both engines bill the charger through one rule
+   (CLAUDE.md addendum 2026-09-02, first bullet).
+3. Efficiency change before the next campaign — DELIVERED. Commits `390f554` and `e653e90` precede
+   campaign B's launch commit `887933f`.
+4. α follows the η-era matched DP — DELIVERED. The DP charges on zero stages, so `--alpha-mode lever`
+   shipped as `sdp_policy_v4.json` (CLAUDE.md addendum, the RULING bullet). ⚠️ Two live readings now
+   put that α below the measured admission window; see finding 3.
+5. Live α points at each leg midpoint — DELIVERED. Picks idx 3 / 7 / 14 in
+   `tools/sdp_policies/sweep_20260902_eta088/live_picks.json`; all three ran and passed in both
+   campaigns.
+6. MPC deterministic first, stochastic second, live against SDP and DP — DELIVERED. Four scenarios
+   registered; all four ran in campaign C with the candidate cap lifted, and the frontier tuple is
+   certified.
+7. Physics review after at least one η campaign — DELIVERED. Record
+   `docs/reviews/hil-plant/run-001-2026-09-02.md`; ledger `docs/reviews/hil-plant/ledger.md`.
+8. Campaign wall-clock as report metadata — DELIVERED. `campaign_meta.json` in every report folder;
+   campaign B 1:16:45, campaign C 1:22:26.
+
+Campaign budget: 2 of 5 used. The session stopped after campaign C because C was clean and a third
+campaign would have added repeat datapoints to quantities two readings already pin, while your review
+of the physics record, the MPC design and the α question governs what runs next (the stop-at-four
+precedent, 2026-09-01).
+
+### Headline findings
+
+Pointers: the two `HIL_SUMMARY.md` digests for the headline form, the paired `HIL_FINDINGS.md` for
+per-run evidence, and the CLAUDE.md addendum 2026-09-02 for the committed record.
+
+1. **Zero board defects across both campaigns.** The suite scored 58 of 66 and then 65 of 66;
+   analysis corrected both readings to 65 of 65 executed runs behaving correctly. Campaign B's eight
+   FAILs were one console-encoding defect (five runs), two scoring defects, and one walk-fidelity
+   gap, plus one genuine MPC divergence. Campaign C's single FAIL is the settling-hold defect the
+   fix-round review predicted before launch.
+2. **The η = 0.88 charger model is validated on every independently measurable axis**, including the
+   charger bus draw on hardware within 0.5 % of the model at a sagged 14.15 V bus (campaign B
+   `HIL_FINDINGS.md` §A1, §A3).
+3. **The η-era lever pair is measured twice and stable.** L_chg 0.33214 then 0.331758 SoC/g; L_share
+   0.41688 then 0.416896; ratio 0.797 then 0.7958. The projected inversion is refuted and the model's
+   ordering holds. Two consequences reach your desk: the end-to-end charge round-trip on the board is
+   0.797, not η, because bus sag is billed to the charge leg; and `sdp_policy_v4`'s α sits 1.34 %
+   below the measured admission window (0.11993, 0.15071) in BOTH readings, so the measured-lever
+   re-solve to **α ≈ 0.1343** is now an actionable operator decision.
+4. **The governor-aware MPC ran live and its frontier reading is certified.** `cycle61-mpc` reads
+   0.9606× against soc-band and 1.0007× against the DP bound, tying sdp-v4's 0.9615× / 1.0016×; on
+   FTP-75 the two are within 0.015 %, inside the repeatability floor, and must not be ranked. The
+   prediction error has exactly the designed structure — exact where the stage is closed-loop, all of
+   it in the open-loop stages — and reproduced to the digit across campaigns.
+5. **Lifting the MPC candidate cap moved the binding constraint to the solve budget.** At cap 1029
+   `cut_by_cap` is 0 on all four legs, so "the MPC declined to charge" is finally a supported reading;
+   but `ems-mpc-cross`'s median solve is 10.002 ms and 57.4 % of its decisions expire the 10 ms budget.
+   Expiry returns the shifted incumbent, so no unsafe command is issued. Fixed in `5f1cfed` by a
+   per-scenario `mpc_budget_ms` of 15 ms on that leg plus `candidates_max` reporting.
+6. **The fw v25 share-cut guard held a second time, now at its designed operating point.** At each
+   heavy BT restore `r` pins at `DROOP_R_MIN`, the cut is refused, and the slew carries `r` off the
+   band edge; peak `I_batt` 0.43–0.48 A where the pre-guard campaign 080905 reached 4.64 A, and
+   `V_bus` rises where it once collapsed. Zero hazard cuts campaign-wide.
+7. **Three standing records were corrected by measurement.** The same-config h2 repeatability floor
+   is ~50 ppm, not 8 ppm — so no frontier margin under ~0.1 % is resolved; the replay share-cut census
+   baseline under the tool's own definition is 118 / 6 / 2 / 0.5722 A; and the teardown-lead band is
+   0.04–0.55 ms. The asymmetry-era anchors are re-pinned, `scp` `i_cut` bit-exact to 16 digits.
+8. **The physics review found three major items** (`run-001-2026-09-02.md` §Adjudication). The "regen
+   leak" was misattributed; the open-loop feedforward submode does write the MDACs; observation-frame
+   byte 15 is a fiat mirror under `HIL_SIM`. One item, `PLANT-R1-N4`, remains open-unverified.
+9. **Campaign B's power-on INIT_FAIL did not recur.** Campaign C's first run opened with campaign B's
+   last latch word, so the carried-in chain holds across the campaign boundary and the observation is
+   attributed to the re-flash's power-on path. That operator item is closed.
+
+### Reversible decisions
+
+Each decision was taken without you and each has a one-commit undo.
+
+| Decision | Where it is recorded | One-commit undo |
+|---|---|---|
+| α follows the DP: `sdp_policy_v4` ships and `ems-sdp*` is rebound to it | this log, "RULING (operator rule 4…)" | Rebind the `ems-sdp*` scenarios to `sdp-v3`, which stays registered as an old-era policy |
+| MPC shipped live with Gate 1 recorded as failing | this log, "FINDING + DECISION: Gate 1 FAILS…" | Drop the four `ems-mpc*` scenarios from the plan |
+| Physics M3: the regen cap stays output-referred and is NOT netted against the chopper | this log, "WP-1A fix round applied", M3 ruling | Adopt the netted form (it destroys 0.64 J hi-fi / 1.43 J simple of genuine harvest, and a pre-existing WP-C test fails under it) |
+| Fingerprint reachability: `dp_profile_fingerprint()` omits `eta_chg` when it is None | this log, WP-1B1 review rulings, H3 | Include the key, and accept that all 16 database records are orphaned |
+| The three DP tables regenerated as η-era solves | this log, WP-1B1 landing note | Restore the old-era fixture, whose regeneration is byte-identical |
+| `regen-harvest-true` chopper floors lowered on measurement | this log, WP-1C landing note | Return the floors to 1.0 J and 3.0 J; the board reads 1.59 J and 6.36 J, so restoring them upward is the queued calibration item |
+| The replay share-cut census ships as a NOTE, not a scored check | WORK_QUEUE.md §0a, shipped list | Promote it to a check row with a threshold |
+| The socband charge-window mask gains a 10 ms settling hold | `5f1cfed`; review H1 | Set `exclude_hold_ms` to 0 and accept the charger decay tail in the charge-free arm |
+| `substep_resolution` becomes a warning, failing only above a 0.1 % collapse fraction | `5f1cfed`; review M1 | Restore the hard gate at n_min ≥ 8 |
+| `ems-mpc-cross` runs at a 15 ms solve budget | `5f1cfed`; campaign C finding | Return the leg to the shared 10 ms budget and accept 57.4 % expiry |
+| `mpc_h2` is informational on `ems-mpc-cross` | `5f1cfed`; campaign C fix queue | Restore it as a scored check, with the band edge inside the MPC's own spread |
+
+### Your bench list for today
+
+These are the measurements no amount of analysis can supply. Full context in WORK_QUEUE.md §3.
+
+1. **Ag105 charge efficiency at our operating point.** The datasheet's 88 % typ is stated at 25 °C,
+   12 Vin and 3S. The rig runs 15–16 Vin into a 2S pack. Measure input and output power there.
+2. **The measured charge round-trip against η.** Two campaigns measured 0.797 end to end where the
+   model uses 0.88. The shortfall is attributed to bus sag billed to the charge leg. A bench reading
+   separates that attribution from a genuine converter-efficiency error.
+3. **MPPTD-disabled-charge semantics.** Still unverified on hardware. Two designers read the
+   datasheet oppositely, and the firmware carries a holdoff instead of a semantic change.
+4. **The 30 ms survivor blanking against a real RT1987 turn-on.** HIL validated the logic against the
+   modelled `t_D_ON` only. The failure direction is asymmetric. Never shorten it on the model.
+5. **VESC regen commanded-versus-delivered mapping.** It sets `VESC_REGEN_I_MAX_A` and `ETA_REGEN`,
+   both of which carry `TODO(verify)`.
+6. **An open-loop share sweep ('O' command) above 0.60 A.** The asymmetry fit has no open-loop
+   feedforward window in the corpus, so the fit rests on closed-loop windows alone.
+7. **Silvertel EPROM endurance.** Still `TODO(verify: Silvertel)`; the structural lifetime bound is
+   ~236 writes.
+
+---
+
+# RETROSPECTIVE — the 2026-09-01/02 session (feeds .claude/skills/overnight-autonomous-session)
+
+## What worked, with evidence
+
+1. **Reviewing a fix round before its validating campaign.** The review of `6c28dd2` predicted the
+   exact FAIL campaign C would produce, with the number (0.8628 A, the charger decay tail) and the
+   guard that recovers it (≥ 5 ms). One FAIL therefore arrived as a known artefact rather than an
+   investigation, and the fix was written before the analysis started. This is the single highest-
+   leverage process change of the night and is now in the skill.
+2. **A validation campaign priced correctly.** Campaign C was analysed by one consolidated agent that
+   recomputed every number it asserted, against campaign B's per-batch fan-out of five agents plus an
+   adversarial replay audit. The verdict quality held — the consolidated pass found a NEW MED (the
+   budget expiry) that no expectation was watching for.
+3. **Parallelism on disjoint files against a running campaign.** The adversarial physics review of
+   `HIL_PLANT.md` ran read-only while campaign B executed, and the campaign-B fix round's docs and
+   tooling halves ran as separate agents on disjoint files (`7026e3b` and `6c28dd2`). Neither
+   collided with the `tools/` edit freeze.
+4. **Second readings settle questions that one reading only raises.** The α question, the lever pair,
+   the limit-cycle period, the guard behaviour and every asymmetry-era anchor moved from provisional
+   to actionable purely because a second same-config campaign ran. The 8 ppm repeatability record was
+   also retired this way: it was a one-campaign coincidence, and the true floor is ~50 ppm.
+5. **Decision logging with reversal paths.** Every operator-class call in this file names its commit
+   and its undo, and the digest's table is assembled from those entries rather than from memory.
+
+## What failed, and the correction adopted
+
+1. **The Windows console is cp1252.** One non-cp1252 glyph in a suite print killed five of 66 runs:
+   two legs never launched (the exception was swallowed as a bind failure) and three MPC legs
+   completed their runs then crashed before sidecar finalization. Correction: tool-side prints stay
+   ASCII, the console is made lossless, finalization moved into a guarded `finally`, and the binder's
+   `except` was narrowed. Subagent smoke runs cannot catch this class — their pipes are UTF-8.
+2. **Long shell heredocs break the tool wrapper.** Two agent launches were lost this way. Correction:
+   write files with the Write tool and keep Bash heredocs short and free of nested quoting.
+3. **"Same as baseline" written from memory was wrong for 16 runs.** The comparison campaign predated
+   BOTH the charger change and the converter-asymmetry default, so a first draft attributed
+   asymmetry-era drift to the charger. Correction: every analysis brief states every run-era field
+   that moved since the baseline, read from the sidecars, not recalled.
+4. **The adjudicated MPC mechanism shipped inert.** The transition-roll slicer advanced once per
+   decision instead of once per callback, leaving the roll table empty on 38 of 61 decisions, so the
+   hybrid the decision pair produced was not actually running when its gate was first measured.
+   Correction: a mutation battery on the new module, and a gate result is only quotable once the path
+   it exercises is proven live — the honest reading was to ship with the gate recorded as FAILING.
+5. **A scoring spec the judge could not satisfy failed a correct board.** A `column` + `min_ticks`
+   pairing was structurally unimplemented, and a mppt pin's window overhung the plateau it cited.
+   Correction: an import guard refuses any pairing the judge cannot honour, and a pin is calibrated
+   against the campaign it cites. A mask on a switch bit needs a settling hold for currents that decay
+   after the bit clears — the defect that produced campaign C's only FAIL.
+
+## Economics (for future scaling judgment)
+
+About 35 subagents, 1 decision pair (the MPC design), 2 campaigns totalling roughly 2 h 40 min of
+board time, 5 fix rounds, 16 commits. Board time was again the bottleneck, and the two biggest
+wall-clock wins were unchanged from the previous session: running orchestrated rounds on disjoint
+files against a live campaign, and folding several work packages into one campaign because `tools/`
+is edit-frozen while a campaign runs.
