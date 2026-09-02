@@ -497,3 +497,12 @@ fixes → campaign → MPC (deterministic, then stochastic) → campaign → α 
   in HIL_PLANT.md 4.6.2 with TODO(verify), and a test caps it at 0.15 J / 12 %. Chord-conductance
   stamp: identical settled numbers, neg_clamp 0. Floor 8 V (bound 2.983 A). constants_hash now
   6a88d04ba8a36e61. Reversal: HIL_PLANT.md 4.6.2 six-item list.
+- WP-1B2a landed: tools/sdp_policies/sdp_policy_v4.json (lever, eta 0.88, alpha 0.11832639757736393,
+  0 charge cells, policy sha 8ca7dcee... - CORRECTION: the "6c4843bb" quoted above from B1's report
+  was a transcription error; v3 reproduced bit-identically first). Eta-era sweep folder
+  sweep_20260902_eta088/ (41 artifacts; boundaries 0.111000 / 0.126136 hold to 5.7e-8 rel).
+  Legs: greedy 0-6,21-25; calibrated 7,8,26-35 (eq-H2 minimum on BOTH stimuli; the drive cycle
+  now discriminates legs); charge-admitting 9-20,36-40 (+4.01 % eq-H2 on ems-sdp). Live picks
+  (live_picks.json): greedy idx 3 alpha 0.07394; cal idx 7 = the anchor (leg midpoint coincides
+  structurally); charge idx 14 alpha 0.24841 (591 cells). Doc: docs/modeling/
+  sdp_alpha_sweep_eta088_20260902.md. Four additive sweep-script fixes (era-aware bisection etc.).

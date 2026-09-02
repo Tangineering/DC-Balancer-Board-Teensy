@@ -1,0 +1,89 @@
+{
+  "schema": "sdp-alpha-live-picks-v1",
+  "generated_utc": "2026-09-02T06:37:19.092333Z",
+  "source": "WP-1B2a; docs/modeling/sdp_alpha_sweep_eta088_20260902.md",
+  "sweep_dir": "tools/sdp_policies/sweep_20260902_eta088",
+  "eta_chg": 0.88,
+  "eq_h2_lambda_soc_per_g": 0.41,
+  "eq_h2_reference": "the v4 anchor point (idx 7) SoC change on the same scenario",
+  "selection_rule": "the geometric midpoint of each behaviour leg's alpha range over the sweep points that exist, resolved to the nearest existing point in log-alpha",
+  "walk_strategy": "sdp-v2",
+  "picks": {
+    "ems-sdp-alpha-greedy": {
+      "index": 3,
+      "alpha": 0.07393632425798587,
+      "leg": "greedy",
+      "policy_file": "tools/sdp_policies/sweep_20260902_eta088/alpha_03_0.073936.json",
+      "policy_sha": "2ababa984f4a158a225cbd8113b57ff0ef639aca302506a66c2122043822c834",
+      "file_sha256": "212f7ea973804c783f58eb6bec2982af224486557bf64bced0288196f3811c0c",
+      "charge_cells": 0,
+      "walk_h2_g": {
+        "ems-sdp": 0.004093022760826734,
+        "ems-ftp75-sdp": 0.01620530033247811
+      },
+      "walk_dsoc": {
+        "ems-sdp": -0.005176397843953517,
+        "ems-ftp75-sdp": -0.016210301949876937
+      },
+      "walk_eq_h2_g": {
+        "ems-sdp": 0.012692423507297892,
+        "ems-ftp75-sdp": 0.019348464513299385
+      },
+      "walk_charge_windows": {
+        "ems-sdp": 0,
+        "ems-ftp75-sdp": 0
+      }
+    },
+    "ems-sdp-alpha-cal": {
+      "index": 7,
+      "alpha": 0.11832639757736393,
+      "leg": "calibrated",
+      "policy_file": "tools/sdp_policies/sweep_20260902_eta088/alpha_07_0.118326.json",
+      "policy_sha": "8ca7dceeeaeb16257aa18eb889d3d76df38dbe10ea94e8574249984c078fd770",
+      "file_sha256": "e7da6efd25db9b63a60b5eb5b32888d874e69e15c4938ab94807680a82f0a6b2",
+      "charge_cells": 0,
+      "walk_h2_g": {
+        "ems-sdp": 0.012602735460289607,
+        "ems-ftp75-sdp": 0.019346973918359447
+      },
+      "walk_dsoc": {
+        "ems-sdp": -0.0016506435379003426,
+        "ems-ftp75-sdp": -0.014921604635740215
+      },
+      "walk_eq_h2_g": {
+        "ems-sdp": 0.012602735460289607,
+        "ems-ftp75-sdp": 0.019346973918359447
+      },
+      "walk_charge_windows": {
+        "ems-sdp": 0,
+        "ems-ftp75-sdp": 0
+      },
+      "note": "the leg midpoint coincides with the sweep anchor to 1.3e-5 in log-alpha, so the anchor is the pick; this artifact's policy block is identical to tools/sdp_policies/sdp_policy_v4.json's (policy sha 8ca7dcee...)"
+    },
+    "ems-sdp-alpha-charge": {
+      "index": 14,
+      "alpha": 0.248412614262588,
+      "leg": "charge_admitting",
+      "policy_file": "tools/sdp_policies/sweep_20260902_eta088/alpha_14_0.248413.json",
+      "policy_sha": "00dede9db9a610d6419876a7f01a204e7df3392862d8c2ac19eaffc5d60457f5",
+      "file_sha256": "8dac73df3fd4a017d2b05071cc3d5bb7a41f1fbae417e8dc97c63f4fed75e4be",
+      "charge_cells": 591,
+      "walk_h2_g": {
+        "ems-sdp": 0.015064731516112779,
+        "ems-ftp75-sdp": 0.020032978965187395
+      },
+      "walk_dsoc": {
+        "ems-sdp": -0.0008482194729190207,
+        "ems-ftp75-sdp": -0.014691882663919187
+      },
+      "walk_eq_h2_g": {
+        "ems-sdp": 0.013107599650304676,
+        "ems-ftp75-sdp": 0.019472681472940984
+      },
+      "walk_charge_windows": {
+        "ems-sdp": 1,
+        "ems-ftp75-sdp": 1
+      }
+    }
+  }
+}

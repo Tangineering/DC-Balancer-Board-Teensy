@@ -494,3 +494,24 @@ value and the fixed delta list. The manifest's additive `refinement` block
 records the brackets, the intervals, the solve counts, the spacing rule and the
 20 point summaries. `manifest["points"]` remains the original 21 entries, so a
 consumer pinned to the first sweep reads exactly what it read before.
+
+---
+
+## 12. Charger era of this document (added 2026-09-02)
+
+Every artifact, boundary, and evaluation table above was solved and walked
+against the **1:1 current-transfer** charger, in which one delivered amp costs
+`V_bus` watts. The plant now models an energy-conserving converter at
+`ETA_CHG = 0.88`, in which one delivered amp costs `V_pack / eta_chg` watts.
+
+The successor document, `docs/modeling/sdp_alpha_sweep_eta088_20260902.md`,
+repeats this procedure in that era. It ships `sdp_policy_v4.json` and the sweep
+folder `tools/sdp_policies/sweep_20260902_eta088/`, and it selects the three
+live campaign points.
+
+The artifacts of `tools/sdp_policies/sweep_20260901/` remain valid policies and
+are not retracted. Their hydrogen pricing is old-era, however, so the h2, dSoC,
+and eq-H2 columns above must not be differenced against the successor
+document's. The comparability rule is stated in Section 8 of that document. The
+charge boundary moved from 0.239250 to 0.126136; the degeneracy boundary at
+0.111000 is era-invariant, because the share lever never touches the charger.
