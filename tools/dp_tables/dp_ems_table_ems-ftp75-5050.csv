@@ -19,7 +19,7 @@
 # command: python tools/gen_dp_ems_table.py --scenario ems-ftp75-5050 --soc0 0.7 --capacity-ah 5.0 --stage-dt 0.1 --lambda-dev 0.0 --lambda-term 1.0 --n-share 41 --soc-step 5e-06 --charger-accounting physical --run-exit 346.0 --match-terminal-soc heuristic --match-tol 2e-06 --eta-chg 0.88
 # generator: tools/gen_dp_ems_table.py
 # scenario: ems-ftp75-5050
-# profile_fingerprint: f83226f494400000c5e9998e661ccf8c9888112a88dbf4da228581dc5bf61b20
+# profile_fingerprint: 50fe8c406440537ecef84b8b813b711d1b492c05a874617b888a1181edabbee9
 # duration_s: 350.0
 # stage_dt_s: 0.1
 # run_entry_s: 3.0

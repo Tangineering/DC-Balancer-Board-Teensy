@@ -145,46 +145,6 @@ D10. CHARGING IS A DISCRETE SECOND CONTROL, MASKED BY THE PROFILE.
     in hil_plant_sim.py asserts charge_goal only inside EMS_REGEN_BRAKE_WINDOWS,
     which are likewise read off the scenario's own ems_v_profile.
 
-D12. THE CHARGER'S BUS DRAW HAS TWO ERAS, AND THE ERA IS AN INPUT.
-    Until 2026-09-01 the simulator's hi-fi Ag105 was a 1:1 CURRENT-TRANSFER
-    element (hil_electrical.py, `J[N_CHG] -= i_charge`): the pack received
-    exactly the current the bus supplied, so a charge stage cost the bus
-    V_bus*i_chg watts and the model destroyed i_chg*(V_chg - V_batt).  The
-    plant is now an energy-conserving converter at a static charge efficiency,
-    so the same charge current costs
-
-        P_in = V_pack * i_chg / eta_chg
-
-    which is NOT the old expression at eta = 1 - the old one billed at the BUS
-    voltage and the new one bills at the PACK voltage.  Both eras are
-    reachable and the era is selected EXPLICITLY, never by an efficiency
-    value: `eta_chg = None` is the old era, a float is the new one.  Every
-    site that prices the charger - the stage cost, the FC-budget charge mask
-    and the reachability walk - goes through tools/charger_power.py so the
-    three cannot disagree.  --eta-chg selects the era on the command line and
-    the header records it as `eta_chg`; a scenario meta that declares the key
-    supplies it otherwise.  DEFAULT: absent -> the OLD era, so a table
-    generated before this change regenerates byte-identically (pinned by
-    test_old_era_regeneration_reproduces_the_pre_change_table_byte_for_byte
-    against a stored fixture).
-
-    ⚠️ THE COMMITTED TABLES IN tools/dp_tables/ ARE ETA-ERA TABLES: they were
-    regenerated with `--eta-chg 0.88` in this round, because the plant they
-    are replayed against bills the charger that way, and a table solved in one
-    era is not a bound on a run measured in the other.  NOTHING REFUSES A
-    MISMATCH: a live scenario declares no `eta_chg`, so `dp_profile_
-    fingerprint()` hashes the same sentinel in both eras (hil_plant_sim.
-    dp_eta_chg) and the drift guard cannot separate them.  The `# eta_chg:`
-    header line, this generator's startup WARNING, and the test that pins the
-    line in every committed table are the whole record.
-
-    V_pack HERE IS THE PACK TERMINAL VOLTAGE AT THE CHARGE CURRENT,
-    OCV(SoC) + i_chg*rs(SoC), not a flat nominal: D6 already models the full
-    OCV curve and the series resistance, and the charger sees the terminal.
-    The rs term is 0.064 V at 0.8 A on a ~7.86 V pack (0.8 %); the OCV term is
-    the one that matters (7.86 V at SoC 0.7 against a 7.4 V 2S nominal, 6 %).
-    ⚠️ TODO(verify): the plant's own charge model must bill at the same node.
-
 D11. THE CHARGER'S ENERGY IS ACCOUNTED TWO WAYS, AND THE OBJECTIVE PICKS ONE.
     In the simulator's SIMPLE electrical mode the Ag105's input draw is NOT
     stamped on the bus (Plant.step's `i_total = i_motor + i_aux`), so a charge
@@ -219,6 +179,49 @@ D11. THE CHARGER'S ENERGY IS ACCOUNTED TWO WAYS, AND THE OBJECTIVE PICKS ONE.
         `simple` the DP charges on every stage the mask admits — which is an
         artefact of the simple-mode bus model, NOT an energy-management
         insight, and must not be read as "the optimal charging policy".
+
+D12. THE CHARGER'S BUS DRAW HAS TWO ERAS, AND THE ERA IS AN INPUT.
+    Until 2026-09-01 the simulator's hi-fi Ag105 was a 1:1 CURRENT-TRANSFER
+    element (hil_electrical.py, `J[N_CHG] -= i_charge`): the pack received
+    exactly the current the bus supplied, so a charge stage cost the bus
+    V_bus*i_chg watts and the model destroyed i_chg*(V_chg - V_batt).  The
+    plant is now an energy-conserving converter at a static charge efficiency,
+    so the same charge current costs
+
+        P_in = V_pack * i_chg / eta_chg
+
+    which is NOT the old expression at eta = 1 - the old one billed at the BUS
+    voltage and the new one bills at the PACK voltage.  Both eras are
+    reachable and the era is selected EXPLICITLY, never by an efficiency
+    value: `eta_chg = None` is the old era, a float is the new one.  Every
+    site that prices the charger - the stage cost, the FC-budget charge mask
+    and the reachability walk - goes through tools/charger_power.py so the
+    three cannot disagree.  --eta-chg selects the era on the command line and
+    the header records it as `eta_chg`; a scenario meta that declares the key
+    supplies it otherwise.  DEFAULT: absent -> the OLD era, so a table
+    generated before this change regenerates byte-identically (pinned by
+    test_old_era_regeneration_reproduces_the_pre_change_table_byte_for_byte
+    against a stored fixture).
+
+    ⚠️ THE COMMITTED TABLES IN tools/dp_tables/ ARE ETA-ERA TABLES: they were
+    regenerated with `--eta-chg 0.88` in this round, because the plant they
+    are replayed against bills the charger that way, and a table solved in one
+    era is not a bound on a run measured in the other.  THE LOADER REFUSES AN
+    ERA MISMATCH: `DpReplayStrategy.bind_scenario()` compares the table's
+    `# eta_chg:` header (absent = the old era) against `plant_eta_chg()`
+    BEFORE the fingerprint check and raises.  It has to be a separate check
+    because the FINGERPRINT cannot see the era: a live scenario declares no
+    `eta_chg`, so `dp_profile_fingerprint()` hashes the same sentinel in both
+    eras (hil_plant_sim.dp_eta_chg).  This generator's startup warning is the
+    GENERATOR-SIDE notice of the same fact, and the test that pins the header
+    line in every committed table is the third record.
+
+    V_pack HERE IS THE PACK TERMINAL VOLTAGE AT THE CHARGE CURRENT,
+    OCV(SoC) + i_chg*rs(SoC), not a flat nominal: D6 already models the full
+    OCV curve and the series resistance, and the charger sees the terminal.
+    The rs term is 0.064 V at 0.8 A on a ~7.86 V pack (0.8 %); the OCV term is
+    the one that matters (7.86 V at SoC 0.7 against a 7.4 V 2S nominal, 6 %).
+    ⚠️ TODO(verify): the plant's own charge model must bill at the same node.
 
 ════════════════════════════════════════════════════════════════════════════
 COMPARING THE RESULT TO A CAUSAL STRATEGY
@@ -489,7 +492,13 @@ def pack_current_from_bus_power(p_bt_bus_w, soc):
 # (measured 0.0034 g against the campaign's 0.0125 g).  The generated
 # `ems-dp-replay` table is unaffected — that scenario was already in the list —
 # and is byte-identical across the fix.
-SOC_BAND_DRAIN_SCENARIOS = ("ems-soc-band", "ems-dp-replay", "ems-sdp")
+# EXTENDED 2026-09-02 with the two MPC legs that share `ems-soc-band`'s stimulus
+# OBJECT (`ems-mpc`, `ems-mpc-sto`).  Same argument as the B2 fix above: a DP
+# baseline solved for one of them against HALF the demand would be a bound the
+# run cannot honestly be scored against.  `ems-mpc-cross` is absent, exactly as
+# `ems-sdp-cross` is — it carries no SoC-band drain.
+SOC_BAND_DRAIN_SCENARIOS = ("ems-soc-band", "ems-dp-replay", "ems-sdp",
+                            "ems-mpc", "ems-mpc-sto")
 
 
 def scenario_drain_a(scenario, t, aux_preload_a=None):
@@ -608,7 +617,7 @@ def charge_mask(times, p_dem, v_bus, cruise, chg_ceiling_a, run_exit_s,
     reference pack voltage is a single scalar (the solve's initial SoC) rather
     than the trajectory's, because this mask must stay state-INDEPENDENT for
     the stage cost to remain separable."""
-    check_eta_chg(eta_chg)
+    eta_chg = check_eta_chg(eta_chg)     # L8: validate AND normalise
     if eta_chg is not None and v_pack_ref is None:
         raise ValueError("charge_mask needs v_pack_ref when eta_chg is set "
                          "(the new era bills the charger at the PACK voltage)")
@@ -663,9 +672,12 @@ def reachable_soc_window(soc0, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
     """[lo, hi] SoC bounds over the two extreme admissible policies.
 
     `eta_chg` (D12) reaches only the hydrogen totals inside step_charge, not
-    the SoC transition, so the window itself is era-invariant; it is threaded
-    through so a walk cannot be run against a different charger model than the
-    solve it sizes."""
+    the SoC transition, so GIVEN THE SAME MASK the window is era-invariant; it
+    is threaded through so a walk cannot be run against a different charger
+    model than the solve it sizes.  The mask itself is NOT era-invariant - the
+    eta era's smaller bus draw admits charging at more stages (measured on
+    ems-dp-replay: 129 -> 157 admitted stages, and the SoC grid it sizes 1746
+    -> 1764 points) - so the two eras' windows do differ, through `chg_ok`."""
     lo = hi = soc0
     s = soc0
     for k in range(len(p_dem)):        # all-battery: the deepest discharge
@@ -737,7 +749,15 @@ def solve_dp(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
         # D11: which bus power the charge stage is billed for.  `physical`
         # charges the FC for the charger's draw; `simple` omits it, mirroring
         # the simple-mode plant's own bus node (and its logged h2_cum_g).
-        p_fc_charge = (P + V * chg_a) if charger_accounting == "physical" else P
+        # D12: the charger era must be priced HERE, not only in the forward
+        # pass.  The Bellman recursion CHOOSES the policy from this number, so
+        # billing the old 1:1 current-transfer power while the forward pass
+        # reports the eta-era one selects an old-era policy and scores it in the
+        # new era.  `charger_bus_power_w` broadcasts over the SoC rows through
+        # `v_pack_chg`; in the old era it returns `V * chg_a` exactly, so the
+        # pre-2026-09-01 tables stay byte-identical.
+        p_fc_charge = (P + charger_bus_power_w(chg_a, V, v_pack_chg, eta_chg)) \
+            if charger_accounting == "physical" else P
         stage[:, m] = sim.H2_GFC_DC_GAIN_GPS_PER_W * \
             (p_fc_charge / sim.ETA_BOOST) * dt
         feas[:, m] = bool(chg_ok[k])
@@ -1169,12 +1189,13 @@ def render_table(scenario, meta, args, fingerprint, times, share, charge,
     # 2.5 A was.  It is not cosmetic: DpReplayStrategy.bind_scenario()'s drift
     # guard compares this line against `meta.get("chg_i_ceiling_a",
     # AG105_I_MAX)` and REFUSED such a table at startup — which is how the
-    # defect was found (the committed `ems-ftp75-5050` table carries 0.0 and
-    # would never have loaded).  E-L1 (2026-09-01) hoisted the resolution into
+    # defect was found: the then-committed `ems-ftp75-5050` table carried 0.0
+    # and would never have loaded.  It now carries 2.5, from the regeneration
+    # that fix required.  E-L1 (2026-09-01) hoisted the resolution into
     # `sim.dp_chg_ceiling_a()`, which all three sites now call.
     A("# chg_ceiling_a: %r" % sim.dp_chg_ceiling_a(meta))
     # D12, and it is EMITTED ONLY IN THE NEW ERA on purpose.  Adding an
-    # `eta_chg: none` line to every table would move the bytes of all eight
+    # `eta_chg: none` line to every table would move the bytes of all three
     # committed tables without changing a single number in them; the absence
     # of the line is the old era's record, and the docstring's D12 says so.
     if args.eta_chg is not None:
@@ -1397,14 +1418,16 @@ def main(argv=None):
     except ValueError as exc:
         ap.error(str(exc))
     # CROSS-CHECK against the plant this table will be replayed under.  The
-    # two can disagree silently: the generator's default is the OLD era (an
-    # archived run must be reproducible), while the simulator bills every new
-    # run at hil_electrical.ETA_CHG.  A table solved in one era and replayed
-    # in the other is not a bound on anything, and NOTHING refuses it - the
-    # profile fingerprint cannot separate the two, because a live scenario
-    # declares no `eta_chg` and both sides therefore hash the same sentinel
-    # (hil_plant_sim.dp_eta_chg).  The `# eta_chg:` header line and this
-    # warning are the whole record, so the warning is loud.
+    # two can disagree silently HERE: the generator's default is the OLD era
+    # (an archived run must be reproducible), while the simulator bills every
+    # new run at hil_electrical.ETA_CHG.  The mismatch is NOT silent at LOAD
+    # time - `DpReplayStrategy.bind_scenario()` refuses an era mismatch
+    # outright, before it even checks the fingerprint - so this is the
+    # GENERATOR-SIDE notice of the same fact: it reports at solve time what
+    # the loader would otherwise report at the start of a campaign.  The
+    # profile fingerprint is not what catches it and cannot be: a live
+    # scenario declares no `eta_chg`, so both eras hash the same sentinel
+    # (hil_plant_sim.dp_eta_chg).
     _live_eta = getattr(sim, "ETA_CHG", None)
     if _live_eta is not None:
         _live = float(_live_eta)
@@ -1412,8 +1435,8 @@ def main(argv=None):
             print("[dp] WARNING: solving at charger era %s while the plant "
                   "bills new runs at eta_chg = %r.\n"
                   "[dp]          A table solved in one charger era is not a "
-                  "bound on a run measured in the other, and no drift guard "
-                  "catches it.\n"
+                  "bound on a run measured in the other; the plant's loader "
+                  "REFUSES such a table at campaign start.\n"
                   "[dp]          Pass --eta-chg %r to solve the era the plant "
                   "will replay this table under."
                   % (era_label(args.eta_chg), _live, _live), file=sys.stderr)

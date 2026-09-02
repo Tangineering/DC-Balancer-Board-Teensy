@@ -432,6 +432,18 @@ entry runs the same three roles over the 340 s FTP-75 segment:
 |---|---|---|---|---|---|
 | `cycle61` | `ems-soc-band` | `ems-sdp` | `ems-dp-replay` | ≤ 0.98 x | ≤ 1.06 x |
 | `ftp75` | `ems-ftp75-socband` | `ems-ftp75-sdp` | `ems-ftp75-dp` | ≤ 1.02 x | ≤ 1.06 x |
+| `cycle61-mpc` | `ems-soc-band` | `ems-mpc` | `ems-dp-replay` | ≤ 0.98 x | ≤ 1.06 x |
+| `ftp75-mpc` | `ems-ftp75-socband` | `ems-ftp75-mpc` | `ems-ftp75-dp` | ≤ 1.02 x | ≤ 1.06 x |
+
+The two MPC tuples (2026-09-02) reuse their sibling's reference, bound and
+thresholds verbatim; only the CANDIDATE differs, so the difference between the
+`cycle61` and `cycle61-mpc` records is the difference between `sdp-v4` and
+`mpc-det` and nothing else. Both carry
+`stimulus_mismatch_exit_affecting: False` for one campaign, exactly as `ftp75`
+does. ⚠️ Their vs-bound arm is **structurally near 1.0**: `mpc-det` opens zero
+charge windows in every Gate-2 walk, so it and the bound differ only along the
+share lever — and the eq-H2 exchange rate IS that lever's rate. Do not tighten
+`vs_bound_max` on a charge-free reading; see §6.1.
 
 ⚠️ **The drive-cycle bands do NOT assume the DP wins, and that is the
 substantive difference.** The offline solve measured the DP at **−0.01 % vs
@@ -925,6 +937,120 @@ above, with the EMS scenarios it belongs to.)*
 - **Why useful:** without it the drive-cycle frontier has no lower bound, and a
   causal policy's drive-cycle result can only be compared with a heuristic —
   which cannot say how much was left on the table.
+
+### 6.1 The MPC legs (2026-09-02)
+
+Four scenarios drive the governor-aware receding-horizon EMS of
+`tools/mpc_ems.py`. The design and its adjudication are
+`docs/modeling/mpc_design_20260901.md` and
+`docs/modeling/mpc_design_20260901/adjudication.md`; §8 of the design is the
+registration step list these four implement. Every leg REUSES an existing
+stimulus object, so no new stimulus is validated in the same campaign as a new
+controller.
+
+Three facts apply to all four and are not repeated per entry.
+
+- **`mpc-det` is a PREVIEW strategy, not a causal one.** It reconstructs the
+  demand from the scenario's own `ems_v_profile`, which no Raspberry Pi has. The
+  CONTROL it emits is portable — the two energy fields of the 22-byte packet —
+  but the preview is not, and a result must never be reported as causal.
+- **An MPC run is NOT bit-reproducible.** The planner's search is bounded by
+  wall clock (`--mpc-budget-ms`, `--mpc-roll-budget-ms`), so a loaded campaign
+  host explores fewer candidates and can return a different — still feasible,
+  still validated — command. Never enter an MPC run in a repeatability ledger
+  beside the `scp` i_cut or `ems-sdp` h2 records. `--mpc-max-candidates`, where
+  the strategy offers it, is the lever that makes a leg deterministic.
+- **The offline walk cannot score the MPC.** Its plant IS the controller's
+  prediction model — the inverse-crime condition — so every band below asserts
+  that the accounting ran at the right scale, never that the policy is good.
+
+- **Gate 1 of the design's evaluation plan FAILS offline, and the legs ship
+  with that recorded.** The prediction surrogate's delivered-share error on
+  the `ems-soc-band` stimulus is mean 0.0097 / max 0.25000 against a 5e-03
+  acceptance; the worst stages are `open_feedforward`, where a 1 Hz re-command
+  landing in an open-loop stage triggers a governor feedforward slew neither
+  model represents. `mpc_share_pred_err` is therefore banded at 0.30 from that
+  offline measurement, and the first campaign is its calibration reading.
+- **Each leg declares `mpc_max_candidates` = 343**
+  (`hil_plant_sim.MPC_CAMPAIGN_MAX_CANDIDATES`), the full enumeration at the
+  shipped ladder, so the wall clock cannot change the candidate count. It does
+  not make the run bit-reproducible: the roll-table slicing and the board are
+  still wall-clock bounded.
+
+Three diagnostic CSV columns are written on these runs and are BLANK on every
+other: `mpc_solve_ms` (the last decision's search time), `mpc_share_pred_err`
+(|predicted − delivered| stage share, the claim the strategy makes) and
+`mpc_budget_hit` (0/1, whether the last decision fell back to the shifted
+incumbent). The sidecar carries `config.mpc`, the resolved configuration plus
+the decision-timing statistics merged in at finalize.
+
+#### ems-mpc (61 s, any engine, EMS `mpc-det` — FRONTIER CANDIDATE)
+
+- **Tests:** the `ems-soc-band` cycle and drain, planned rather than
+  band-switched. The candidate leg of the `cycle61-mpc` frontier tuple, ranked
+  against the same reference and bound `ems-sdp` is.
+- **Pass/fail:** fault-free; in Run at t = 50; `cmd_share_sp` inside the ladder's
+  own [0.25, 0.75]; `I_fc` under the planner's 1.19 A margin; at most 4
+  `FC_CHARGE` openings; `h2_cum_g` inside the Gate-2 walk's ±25 % band
+  (walk 0.010429 g at ΔSoC −0.002537); `cmd_share_sp` must MOVE by ≥ 0.20, so a
+  constant-command controller cannot pass; every decision under 20 ms.
+- **Why useful:** it is the only leg on which the MPC, the SDP and the DP are
+  ranked on one stimulus. The ΔSoC-matched DP bound at the walk's own terminal
+  state is 0.010418 g (`tools/dp_db`), 0.10 % below the walk.
+
+#### ems-mpc-sto (61 s, any engine, EMS `mpc-sto` — DEMONSTRATION)
+
+- **Tests:** the same 61 s stimulus with the scenario preview replaced by the
+  demand transition matrix's conditional mean and the overcurrent bound
+  tightened to that distribution's 90 % quantile.
+- **Pass/fail:** the `ems-mpc` list, with its own walk pair (0.009313 g at
+  ΔSoC −0.002998) and a ≥ 0.16 share-motion floor.
+- ⚠️ **NOT a frontier leg,** and it carries a demonstration banner. No stimulus
+  in this suite is a draw from that matrix — it is a road vehicle's, and its
+  0.762 diagonal makes short-horizon prediction near-persistence — so a ranking
+  against `soc-band` would measure the mismatch between the stimulus and the
+  matrix rather than the policy.
+- **Why useful:** its Gate-2 pair differs from `mpc-det`'s on the identical
+  stimulus (0.009313 / −0.002998 against 0.010429 / −0.002537) while the two
+  equivalent-hydrogen totals agree to 0.05 %: the certainty-equivalent demand
+  path and the 90 % overcurrent quantile move the plan along the share lever
+  without moving its value. ⚠️ Its open-loop hold fraction is **0.338** against
+  `mpc-det`'s **0.223** on the same cycle, so the two runs are NOT
+  interchangeable evidence about the governor.
+
+#### ems-mpc-cross (200 s, any engine, EMS `mpc-det`)
+
+- **Tests:** the `ems-sdp-cross` two-level cruise with `mpc_soc_ref_offset` at
+  that scenario's +0.0025. Where the SDP's table FLIPS across its switching
+  surface, the MPC's terminal price BIASES a plan, so the observable is a
+  continuous walk of the commanded share, over a 0.25 range, rather than one
+  sharp transition.
+- **Pass/fail:** fault-free; in Run at t = 180; the `ems-mpc` bands over
+  (5, 190) s with `h2_cum_g` around the walk's 0.014134 g and `cmd_share_sp`
+  moving by ≥ 0.12.
+- ⚠️ **Phase-free checks only.** The 1 Hz decision clock is not locked to the
+  stimulus, and a phase-locked check has already failed a correct board on this
+  very stimulus (campaign `20260901_024231`).
+- ⚠️ The walk's open-loop hold fraction here is **0.629**, the highest of the
+  four: most of this run is share-blind by construction, so an improvement or a
+  regression confined to it is unmeasurable. This leg is also the round's
+  search-depth evidence: a 1e5 ms budget moves its hydrogen −21 % while its
+  equivalent hydrogen moves 0.13 %, which is why every `h2_cum_g` band is a
+  scale tripwire and the eq-H2 total is the search-invariant quantity.
+
+#### ems-ftp75-mpc (350 s, any engine, EMS `mpc-det`, gated behind `--with-ftp75`)
+
+- **Tests:** the FTP-75 study segment, planned. The candidate leg of the
+  `ftp75-mpc` frontier tuple; every stimulus key is the sibling FTP-75 legs' by
+  reference — the same profile object, Run exit, zero preload and 0.8 A ceiling.
+- **Pass/fail:** the `ems-mpc` list over (10, 340) s, `h2_cum_g` around the
+  walk's 0.023771 g, share motion ≥ 0.16, prediction error ≤ 0.30.
+- ⚠️ Its walk eq-H2 (0.055751) lands within 2e-6 g of `ems-ftp75-sdp`'s: two
+  controllers reach the same value by different pairs, which is what the eq-H2
+  metric is for. 64.5 % of this cycle's Run window sits below the 0.55 A
+  open-loop line, where the delivered split does not follow the command.
+- ⚠️ No `dp_db` entry is prefilled for this leg: its matched solve is a job of
+  tens of minutes and the FTP-75 bound leg's own table is stale.
 
 ## 7. Share-loop and topology scenarios
 

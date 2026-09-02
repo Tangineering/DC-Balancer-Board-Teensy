@@ -5985,6 +5985,243 @@ ems_y_b00_v1 = make_ems_y(1.0, 0.00)
 ems_y_b00_v3 = make_ems_y(3.0, 0.00)
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# ── mpc-det / mpc-sto: the governor-aware receding-horizon EMS ──────────────
+#
+# WHAT THIS IS.  `tools/mpc_ems.py` implements a 20-stage, 1 Hz receding-horizon
+# controller over the pack SoC whose PREDICTION MODEL carries the firmware's own
+# share governor, so the plan it optimises is a plan of DELIVERED splits rather
+# than of commanded ones.  Design and adjudication:
+#   docs/modeling/mpc_design_20260901.md
+#   docs/modeling/mpc_design_20260901/adjudication.md
+#
+# WHY A LAZY PROXY AND NOT AN INSTANCE.  Every other strategy in the registry is
+# constructed at import time because its constructor does no I/O.  `mpc_ems`
+# imports `governor_model`, `gen_dp_ems_table` and `charger_model`, and the
+# `mpc-sto` variant reads a MATLAB TPM off disk; importing it HERE would create
+# an import cycle (mpc_ems imports THIS module through `_load_sim()`) and would
+# put file I/O on every `import hil_plant_sim`.  The proxy therefore imports
+# inside `bind_scenario()` / `__call__()` — the registration step list of the
+# design document, item 1 — and is otherwise a transparent forwarder: `main()`
+# reads `.provenance`, `.summary_line()` and the three CSV attributes off it
+# exactly as it reads them off an `SdpStrategy`.
+#
+# ⚠️ `mpc-det` IS A PREVIEW STRATEGY, NOT A CAUSAL ONE.  It reconstructs the
+# demand from the scenario's own `ems_v_profile`, which no Raspberry Pi has.
+# Its commands are the 22-byte packet's two energy fields and nothing else, so
+# the CONTROL is portable; the PREVIEW is not.  Design document section 1.2.
+#
+# ⚠️ THE INVERSE-CRIME CONDITION.  An offline `ems_walk` of this strategy runs
+# the controller's own prediction model as the plant, so a walk can only show
+# that the plumbing works and that the plan is self-consistent.  Only the live
+# high-fidelity campaign scores it.  Design document section 7.1, Gate 2.
+class _MpcProxy:
+    """Lazy, import-cycle-free stand-in for `mpc_ems.MpcStrategy`.
+
+    Constructing one does NO import and NO I/O, so it is safe at module import.
+    The real strategy is built on the first `bind_scenario()` (or, for a caller
+    that never binds, on the first `__call__()`, which then raises the
+    strategy's own "bound scenario required" error — the honest failure)."""
+
+    def __init__(self, name):
+        self.name = name
+        self.impl = None
+        # Constructor overrides from the command line (`--mpc-*`).  Applied at
+        # BUILD time, so `main()` can set them after this module is imported.
+        self.kwargs = {}
+        # The forwarded surface, pre-declared so a reader of a CSV row or a
+        # sidecar can see what exists before a run has bound anything.
+        self.provenance = None
+
+    # -- construction -------------------------------------------------------
+    def _build(self):
+        if self.impl is None:
+            import mpc_ems                      # noqa: F401  (lazy by design)
+            self.impl = mpc_ems.make_mpc(self.name, **self.kwargs)
+        return self.impl
+
+    def configure(self, **kwargs):
+        """Record constructor overrides.  Refuses after the strategy is built:
+        a half-configured planner is worse than a loud failure."""
+        if self.impl is not None:
+            raise RuntimeError("%s is already built; configure() must run "
+                               "before bind_scenario()" % self.name)
+        self.kwargs.update({k: v for k, v in kwargs.items() if v is not None})
+        return self.kwargs
+
+    # -- the strategy surface ----------------------------------------------
+    def bind_scenario(self, scenario, meta, electrical_mode=None, args=None):
+        """The generic startup hook.  `electrical_mode` / `args` are part of the
+        hook contract and are ACCEPTED AND DROPPED: the MPC's prediction model
+        is the scenario's demand preview, which neither argument changes.  A
+        signature that omitted them would make `main()`'s keyword call a
+        TypeError at campaign time."""
+        impl = self._build()
+        self.provenance = impl.bind_scenario(scenario, meta)
+        return self.provenance
+
+    def reset(self):
+        if self.impl is not None:
+            self.impl.reset()
+
+    def __call__(self, t, fb):
+        return self._build()(t, fb)
+
+    def summary_line(self):
+        return None if self.impl is None else self.impl.summary_line()
+
+    def timing(self):
+        return None if self.impl is None else self.impl.timing()
+
+    # -- the three CSV columns (design document section 8, item 5) ----------
+    # Read through `getattr` at the row site, exactly as `cmd_share_sp_raw` is,
+    # so a non-MPC run writes a BLANK rather than a fabricated 0.
+    @property
+    def solve_ms_last(self):
+        return None if self.impl is None else self.impl.solve_ms_last
+
+    @property
+    def share_pred_err(self):
+        return None if self.impl is None else self.impl.share_pred_err
+
+    @property
+    def budget_hit_last(self):
+        """The LAST DECISION's budget flag, held until the next decision.
+
+        `mpc_ems.MpcStrategy` keeps a cumulative `budget_hits` counter and the
+        per-decision flag lives on the `Decision` object, which does not
+        survive `decide()`.  Deriving the flag from the counter's motion is
+        exact — the counter increments once per budget-expired decision and
+        never otherwise — and needs no change to that module."""
+        return None if self.impl is None else self._budget_hit_held
+
+    # Held state for the derivation above.  None until the first decision, so
+    # the column is BLANK before the controller has decided anything — never 0,
+    # which would read as "the budget was met" on a run that had not solved yet.
+    _budget_hit_held = None
+    _hits_seen = 0
+    _decisions_seen = 0
+
+    def observe_decision(self):
+        """Called once per simulated tick by the CSV row site.  Cheap: two
+        integer reads and a comparison.  When the DECISION counter has moved
+        since the last tick, the held flag becomes 1 if the BUDGET-HIT counter
+        moved with it and 0 otherwise; between decisions the flag stands."""
+        if self.impl is None:
+            return
+        d, n = self.impl.decisions, self.impl.budget_hits
+        if d < self._decisions_seen:            # a reset(): a new run
+            self._budget_hit_held = None
+            self._hits_seen = 0
+        elif d > self._decisions_seen:
+            self._budget_hit_held = 1 if n > self._hits_seen else 0
+            self._hits_seen = n
+        self._decisions_seen = d
+
+
+ems_mpc_det = _MpcProxy("mpc-det")
+ems_mpc_sto = _MpcProxy("mpc-sto")
+
+# ── THE DETERMINISTIC CANDIDATE CAP FOR A CAMPAIGN LEG (2026-09-02) ─────────
+# THE PROBLEM IT SOLVES.  The planner's search is bounded by WALL CLOCK
+# (`budget_ms`), so a loaded campaign host evaluates fewer candidates than an
+# idle one and can return a different — still feasible, still validated —
+# command.  `max_candidates` is a SECOND, deterministic bound: the search stops
+# after this many evaluations whatever the clock says, so two runs of one leg
+# explore the same set.
+#
+# WHY 343 AND NOT A ROUND NUMBER.  It is the full enumeration at the shipped
+# ladder and move-block structure (7 share levels over 3 move blocks, 7**3), so
+# the cap is EXHAUSTIVE at the shipped configuration and constrains nothing —
+# it removes the clock's influence without removing any candidate.  ⚠️ A
+# `--mpc-share-levels` or `--mpc-horizon` override changes the enumeration size
+# and this constant does NOT follow it; a leg run with either flag is capped
+# below its own enumeration and is a different experiment. State that when you
+# use one.
+#
+# ⚠️ IT DOES NOT MAKE AN MPC RUN BIT-REPRODUCIBLE END TO END. The cap bounds the
+# candidate COUNT; the roll-table slicing (`roll_budget_ms`) is still wall-clock
+# bounded, and the board's own timing is not deterministic either. An MPC run
+# must never enter a repeatability ledger beside the `scp` i_cut or `ems-sdp` h2
+# records.
+MPC_CAMPAIGN_MAX_CANDIDATES = 343
+
+
+def parse_share_band(text):
+    """`"LO,HI"` -> (lo, hi), refusing anything a ladder cannot be built on.
+
+    PURE, and it raises ValueError rather than returning a sentinel: an
+    unparseable band silently falling back to the default would run a campaign
+    under the shipped controller while the operator believed otherwise."""
+    parts = [p.strip() for p in str(text).split(",")]
+    if len(parts) != 2:
+        raise ValueError("--mpc-share-band takes LO,HI; got %r" % (text,))
+    lo, hi = float(parts[0]), float(parts[1])
+    if not (0.0 <= lo < hi <= 1.0):
+        raise ValueError("--mpc-share-band needs 0 <= LO < HI <= 1; got %r"
+                         % (text,))
+    return (lo, hi)
+
+
+def mpc_configure_kwargs(args, meta):
+    """The `--mpc-*` flags and the scenario's own MPC keys, as constructor
+    kwargs.  PURE.  Every flag defaults to None and every None is DROPPED, so
+    an untouched command line yields `{}` and the strategy is built exactly as
+    the design ships it."""
+    out = {}
+    for flag, kw in (("mpc_horizon", "horizon"),
+                     ("mpc_share_levels", "share_levels"),
+                     ("mpc_budget_ms", "budget_ms"),
+                     ("mpc_roll_budget_ms", "roll_budget_ms"),
+                     ("mpc_terminal_price", "terminal_price_mode"),
+                     ("mpc_h2_map", "h2_map")):
+        v = getattr(args, flag, None)
+        if v is not None:
+            out[kw] = v
+    band = getattr(args, "mpc_share_band", None)
+    if band is not None:
+        out["share_band"] = parse_share_band(band)
+    # A DETERMINISTIC candidate cap, when the strategy offers one.  It is the
+    # only lever that makes an MPC run reproducible — the search is otherwise
+    # bounded by WALL CLOCK, so a loaded campaign host explores fewer candidates
+    # than an idle one.  Passed only if the constructor accepts it, so this
+    # module works against a `mpc_ems` that predates the cap; refused loudly if
+    # the operator asked for one and the strategy has none, because silently
+    # dropping it would leave the run non-reproducible while the command line
+    # said otherwise.
+    cap = getattr(args, "mpc_max_candidates", None)
+    if cap is None:
+        # SCENARIO DEFAULT.  Every registered MPC leg declares it, so a campaign
+        # run is deterministic without an operator remembering a flag; an
+        # ad-hoc `--ems mpc-det` on some other scenario keeps the constructor's
+        # own default (no cap), which is the shipped controller.
+        cap = (meta or {}).get("mpc_max_candidates")
+    if cap is not None:
+        if not mpc_supports_kwarg("max_candidates"):
+            raise ValueError(
+                "--mpc-max-candidates was given but this checkout's "
+                "mpc_ems.MpcStrategy has no `max_candidates` argument; the run "
+                "would be wall-clock bounded and NOT reproducible")
+        out["max_candidates"] = int(cap)
+    # NOT read here: `mpc_soc_ref_offset`.  MpcStrategy.bind_scenario() reads it
+    # off `meta` itself (it is a BINDING, applied after reset()), exactly as
+    # SdpStrategy.bind_scenario() reads `sdp_soc_ref_offset`.  Passing it as a
+    # constructor kwarg as well would give one quantity two owners.
+    return out
+
+
+def mpc_supports_kwarg(name):
+    """Whether this checkout's `mpc_ems.MpcStrategy` accepts `name`.  Imports
+    lazily, for _MpcProxy's reasons, and returns False if the module is absent
+    (a checkout without the MPC still imports this one)."""
+    try:
+        import inspect
+        import mpc_ems
+        return name in inspect.signature(mpc_ems.MpcStrategy).parameters
+    except Exception:
+        return False
+
+
 # ⚠️ BEFORE ADDING ONE: read the SHARE AUTHORITY DISAPPEARS BELOW 0.55 A note in
 # the MODE A block above.  A policy commanding an FC-heavy or BT-heavy split at a
 # source total under 0.55 A gets the LAST CONVERGED split, not its command — the
@@ -6042,6 +6279,12 @@ EMS_STRATEGIES = {
     "y-b30-v3": ems_y_b30_v3,
     "y-b00-v1": ems_y_b00_v1,
     "y-b00-v3": ems_y_b00_v3,
+    # ⚠️ SIM-ONLY for the same reason `soc-band` and the SDP family are: the
+    # planner closes on fb["soc"], which is PLANT TRUTH.  `mpc-det` additionally
+    # reads the scenario's own speed profile as PREVIEW — see the _MpcProxy
+    # banner.  Both are LAZY PROXIES, not instances.
+    "mpc-det": ems_mpc_det,
+    "mpc-sto": ems_mpc_sto,
 }
 
 EMS_NAMES = list(EMS_STRATEGIES)
@@ -6175,6 +6418,33 @@ EMS_STRATEGY_META = {
                       "role_note": _Y_PROFILE_ROLE_NOTE},
     "y-b00-v3":      {"policy_file": None, "frontier_eligible": False,
                       "role_note": _Y_PROFILE_ROLE_NOTE},
+    # THE GOVERNOR-AWARE RECEDING-HORIZON CONTROLLER (2026-09-02).
+    # `policy_file` is None: `mpc-det` bakes no artifact at all, and `mpc-sto`
+    # reads a TPM rather than a policy table — the key names the POLICY FILE a
+    # strategy plays, and a transition-probability matrix is a model input, not
+    # a decision law.  Its path is recorded in the sidecar's `config.mpc`
+    # (`tpm_path`), which is where a reader of a `mpc-sto` run looks.
+    "mpc-det":       {"policy_file": None, "frontier_eligible": True},
+    "mpc-sto":       {"policy_file": None,
+                      "frontier_eligible": False,
+                      "role_note":
+                          "ROLE: THE STOCHASTIC VARIANT, NOT YET A FRONTIER "
+                          "CANDIDATE — it optimizes the same objective as "
+                          "`mpc-det` but replaces the scenario preview with the "
+                          "demand TPM's conditional mean and tightens the "
+                          "overcurrent bound to that distribution's 90 % "
+                          "quantile (adjudication section 2.5). It has no "
+                          "registered frontier tuple because no stimulus in "
+                          "this suite is a draw from that TPM — the matrix is a "
+                          "road vehicle's and its 0.762 diagonal makes "
+                          "short-horizon prediction near-persistence — so a "
+                          "ranking against `soc-band` would measure the "
+                          "mismatch between the stimulus and the matrix, not "
+                          "the policy. Its h2/delta_soc pair is a real "
+                          "measurement OF THE STOCHASTIC LAW on a deterministic "
+                          "stimulus. Promote it to frontier_eligible when it "
+                          "has a stimulus it is a candidate on, and not "
+                          "before."},
 }
 
 # The property a single registry would have given for free.  A strategy added
@@ -7076,8 +7346,16 @@ SDP_ALPHA_SCENARIOS = tuple(sorted(
 # walk is run on them — but an offline walk of an `ems-sdp-alpha-*` scenario
 # would model HALF its demand until they are extended.  ems_walk.py already
 # reports the coverage gap rather than assuming it away.
+# `ems-mpc` / `ems-mpc-sto` (2026-09-02) share `ems-soc-band`'s stimulus OBJECT
+# and are ranked against `ems-soc-band` and `ems-dp-replay` on the `cycle61-mpc`
+# frontier tuple, so they MUST carry the identical load — the B2 defect of
+# 2026-09-01 was this omission for `ems-sdp`, and it halved that scenario's
+# modelled demand.  `ems-mpc-cross` is deliberately absent, exactly as
+# `ems-sdp-cross` is: its two cruise levels ARE the stimulus.  BOTH offline
+# mirrors named above carry these two names as well.
 SOC_BAND_DRAIN_SCENARIO_NAMES = ("ems-soc-band", "ems-dp-replay",
-                                 "ems-sdp") + SDP_ALPHA_SCENARIOS
+                                 "ems-sdp", "ems-mpc",
+                                 "ems-mpc-sto") + SDP_ALPHA_SCENARIOS
 
 # ── ems-y-*: the firmware's 'Y' combined profile, four variants ─────────────
 #
@@ -7319,6 +7597,40 @@ del _name, _ems, _what
 # commands `charge_goal`, so the ceiling there would be dead declaration.
 SCENARIOS["ems-ftp75-socband"]["chg_i_ceiling_a"] = (
     SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"])
+
+# ── ems-ftp75-mpc: the FTP-75 segment driven by the MPC (2026-09-02) ────────
+# Registered HERE rather than inside the loop above because the loop's three
+# legs predate it and their tuple is quoted in the ledger; appending a fourth
+# element to it would move nothing but would make the diff read as a change to
+# the three. Every stimulus key is the siblings' BY REFERENCE — the same
+# profile object, the same Run exit, the same zero preload, the same 0.8 A
+# ceiling — because `ftp75-mpc`'s whole purpose is a comparison against them.
+# Gated behind run_hil_suite.py --with-ftp75 (FTP75_SCENARIOS).
+SCENARIOS["ems-ftp75-mpc"] = {
+    "description": ("%.0f s EPA FTP-75 study segment (raw t = 0..340 s "
+                    "inclusive, 341 samples at 1 Hz; scaled to a 3.0 m/s peak) "
+                    "driven by the governor-aware `mpc-det` receding-horizon "
+                    "controller: a 20-stage, 1 Hz plan over the pack SoC whose "
+                    "prediction model carries the firmware's share governor. "
+                    "⚠️ PREVIEW, NOT CAUSAL — the demand is reconstructed from "
+                    "this profile. The candidate leg of the `ftp75-mpc` "
+                    "frontier tuple. Gated behind run_hil_suite.py "
+                    "--with-ftp75." % FTP75_DURATION_S),
+    "electrical": "any",
+    "duration_s": FTP75_DURATION_S,
+    "ems": "mpc-det",
+    # THE SAME LIST OBJECT as the three sibling legs.
+    "ems_v_profile": FTP75_PROFILE,
+    "ems_run_exit_s": FTP75_RUN_EXIT_S,
+    "aux_preload_a": FTP75_PRELOAD_A,
+    # By reference off the leg assigned immediately above — `ems-ftp75-sdp` and
+    # `ems-ftp75-dp` are registered further down this file and are not yet in
+    # the registry at this point; all three carry the same 0.8 A, and the
+    # frontier's stimulus-coherence precondition asserts that they do.
+    "chg_i_ceiling_a": SCENARIOS["ems-ftp75-socband"]["chg_i_ceiling_a"],
+    # DETERMINISTIC CANDIDATE CAP — see MPC_CAMPAIGN_MAX_CANDIDATES.
+    "mpc_max_candidates": MPC_CAMPAIGN_MAX_CANDIDATES,
+}
 
 # ── ems-ftp75-sdp: the FTP-75 segment with the SDP policy STARTED ABOVE ITS
 #    TARGET, so the bang-bang share law switches once, mid-cycle ────────────
@@ -7879,6 +8191,123 @@ SCENARIOS["ems-sdp-braking"] = {
     "ems_v_profile": _sdp_brake_profile(),
 }
 
+# ═════════════════════════════════════════════════════════════════════════════
+# ── ems-mpc / ems-mpc-sto / ems-mpc-cross: THE MPC's LIVE SCENARIOS ─────────
+#    (2026-09-02; `ems-ftp75-mpc` is registered with the FTP-75 family above)
+#
+# ONE RULE GOVERNS ALL FOUR, and it is the reason none of them declares a
+# profile of its own: EVERY leg REUSES AN EXISTING STIMULUS OBJECT, so no new
+# stimulus is validated in the same campaign as a new controller.  Design
+# document section 7.2, adjudication section 2.6.
+#
+#   ems-mpc        the `ems-soc-band` 61 s cycle and drain, driven by `mpc-det`.
+#                  This is the FRONTIER CANDIDATE: the `cycle61-mpc` tuple ranks
+#                  it against `ems-soc-band` (reference) and `ems-dp-replay`
+#                  (bound), which are the SAME three objects `ems-sdp` is
+#                  ranked on.
+#   ems-mpc-sto    the same 61 s stimulus driven by `mpc-sto`.  NOT a frontier
+#                  leg — see EMS_STRATEGY_META's role note: no stimulus here is
+#                  a draw from the TPM, so the run measures the stochastic law
+#                  on a deterministic cycle and nothing more.
+#   ems-mpc-cross  the `ems-sdp-cross` two-level cruise, driven by `mpc-det`.
+#                  It reuses that scenario's `soc_ref_offset` MECHANISM: the MPC
+#                  has its own `soc_ref_offset` constructor argument with the
+#                  same meaning (where the run starts relative to the SoC
+#                  reference the controller regulates to), so the same +0.0025
+#                  places the run on the same side of the same surface.  What
+#                  the two scenarios do with that placement is NOT the same: the
+#                  SDP's is a table lookup that flips, the MPC's is a terminal
+#                  price that biases a plan, so the observable here is a
+#                  CONTINUOUS walk of the commanded share rather than a single
+#                  sharp flip.  That is the point of running it.
+#
+# ⚠️ WHY NO BRAKING LEG.  `governor_model` does not license its fidelity claim
+# over `ems-sdp-braking`'s post-window transients, and the MPC's plan is only as
+# good as that model.  A braking stimulus is registered after the post-window
+# prediction is validated, not before.  Design document section 7.2.
+#
+# ⚠️ ALL FOUR ARE `electrical: "any"`.  Nothing in the MPC's decision path needs
+# the ideal-diode dynamics — the planner reads currents, voltages and SoC, all
+# of which both engines produce — so running under either preference is a free
+# cross-check, exactly as `ems-sdp` is.  Note the CONSEQUENCE the frontier check
+# already enforces: the simple engine does not charge the sources for the Ag105,
+# so a frontier comparison must resolve to the SAME engine on all three legs
+# (`ems_frontier_stimulus_mismatches`'s `electrical_resolved` key).
+#
+# ⚠️ THE DRAIN.  `ems-mpc` and `ems-mpc-sto` share `ems-soc-band`'s stimulus,
+# which INCLUDES the SoC-band drain — so both are in SOC_BAND_DRAIN_SCENARIO_
+# NAMES above and in the two offline mirrors named there.  `ems-mpc-cross` is
+# NOT, for exactly the reason `ems-sdp-cross` is not: its two cruise levels are
+# the stimulus, and adding a 1.0 A drain would put the low cruise above the
+# charge-admissible demand bin the scenario exists to sit in.
+SCENARIOS["ems-mpc"] = {
+    "description": "The `ems-soc-band` drive cycle and drain load, driven by "
+                   "the governor-aware `mpc-det` receding-horizon controller: "
+                   "a 20-stage, 1 Hz plan over the pack SoC whose prediction "
+                   "model carries the firmware's own share governor, so it "
+                   "plans DELIVERED splits rather than commanded ones. "
+                   "⚠️ PREVIEW, NOT CAUSAL: the demand is reconstructed from "
+                   "the scenario's own speed profile. The frontier candidate "
+                   "of the `cycle61-mpc` tuple.",
+    "electrical": "any",
+    "duration_s": SCENARIOS["ems-soc-band"]["duration_s"],
+    "chg_i_ceiling_a": SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"],
+    # THE SAME LIST OBJECT — see `ems-dp-replay`'s note.
+    "ems_v_profile": SCENARIOS["ems-soc-band"]["ems_v_profile"],
+    # DETERMINISTIC CANDIDATE CAP — see MPC_CAMPAIGN_MAX_CANDIDATES.
+    "mpc_max_candidates": MPC_CAMPAIGN_MAX_CANDIDATES,
+    "ems": "mpc-det",
+}
+
+SCENARIOS["ems-mpc-sto"] = {
+    "description": "The `ems-soc-band` drive cycle and drain load, driven by "
+                   "the STOCHASTIC `mpc-sto` variant: the same horizon "
+                   "objective with the scenario preview replaced by the demand "
+                   "transition matrix's conditional mean, and the overcurrent "
+                   "bound tightened to that distribution's 90 % quantile. "
+                   "NOT a frontier leg — no stimulus in this suite is a draw "
+                   "from that matrix.",
+    "electrical": "any",
+    "duration_s": SCENARIOS["ems-soc-band"]["duration_s"],
+    "chg_i_ceiling_a": SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"],
+    "ems_v_profile": SCENARIOS["ems-soc-band"]["ems_v_profile"],
+    # DETERMINISTIC CANDIDATE CAP — see MPC_CAMPAIGN_MAX_CANDIDATES.
+    "mpc_max_candidates": MPC_CAMPAIGN_MAX_CANDIDATES,
+    "ems": "mpc-sto",
+}
+
+SCENARIOS["ems-mpc-cross"] = {
+    "description": ("%.0f s two-level cruise — the `ems-sdp-cross` stimulus — "
+                    "driven by `mpc-det` started %+.4f SoC above the reference "
+                    "it regulates to. The SDP's table flips sharply across its "
+                    "switching surface; the MPC's terminal price biases a plan, "
+                    "so the observable is a CONTINUOUS walk of the commanded "
+                    "share across the same operating region. Phase-free checks "
+                    "only: the decision clock is not locked to the stimulus."
+                    % (SDP_CROSS_DURATION_S, SDP_CROSS_SOC_REF_OFFSET)),
+    "electrical": "any",
+    "duration_s": SDP_CROSS_DURATION_S,
+    "ems": "mpc-det",
+    # ⚠️ A DIFFERENT KEY FROM `ems-sdp-cross`'s `sdp_soc_ref_offset`, and
+    # deliberately so: that key is read ONLY by SdpStrategy.bind_scenario()
+    # (there is an import-time assert to that effect), so declaring it here
+    # would be a silently-dead key. `mpc_soc_ref_offset` is read by
+    # MpcStrategy.bind_scenario() off this dict, exactly as its SDP twin is —
+    # it is a BINDING, applied after reset(), not a constructor argument and
+    # not a command-line one. The VALUE is the SDP scenario's, by reference,
+    # because the two scenarios place the run at the same point of the same
+    # axis.
+    "mpc_soc_ref_offset": SDP_CROSS_SOC_REF_OFFSET,
+    "chg_i_ceiling_a": SCENARIOS["ems-sdp-cross"]["chg_i_ceiling_a"],
+    "ems_run_exit_s": SDP_CROSS_RUN_EXIT_S,
+    # No `aux_preload_a` and NOT in the SoC-band drain list — see the block
+    # above and `ems-sdp-cross`'s own note.
+    # THE SAME LIST OBJECT as `ems-sdp-cross`'s profile.
+    "ems_v_profile": SCENARIOS["ems-sdp-cross"]["ems_v_profile"],
+    # DETERMINISTIC CANDIDATE CAP — see MPC_CAMPAIGN_MAX_CANDIDATES.
+    "mpc_max_candidates": MPC_CAMPAIGN_MAX_CANDIDATES,
+}
+
 # ── mppt-tracking: the Ag105 MPPT input-voltage threshold, closed-loop ──────
 #
 # THE FIRST SCENARIO IN WHICH MPPT_DISABLE DOES ANYTHING.  Everywhere else in
@@ -8189,6 +8618,29 @@ for _sn, _sm in SCENARIOS.items():
         "silently ignored — the run would start ON the policy's target node "
         "and the trace would carry no sign of the difference." % (_sn, _sm.get("ems")))
 del _sn, _sm
+
+# `mpc_soc_ref_offset` (2026-09-02) is the MPC's exact analogue, and it gets the
+# same guard for the same reason: it is read only by mpc_configure_kwargs(),
+# which main() calls only for an `_MpcProxy` strategy, so on any other scenario
+# it is a silently-dead key and the run would start ON the reference rather than
+# beside it — with nothing in the trace to say so.
+MPC_STRATEGY_NAMES = frozenset(
+    n for n, f in EMS_STRATEGIES.items() if isinstance(f, _MpcProxy))
+for _sn, _sm in SCENARIOS.items():
+    for _mk in ("mpc_soc_ref_offset", "mpc_max_candidates"):
+        assert ((_mk not in _sm) or _sm.get("ems") in MPC_STRATEGY_NAMES), (
+            "SCENARIOS[%r] declares `%s` but its `ems` is %r. The key is read "
+            "only on an MPC strategy, so it would be silently ignored."
+            % (_sn, _mk, _sm.get("ems")))
+    # ...and the converse, which is the one that costs a campaign: an MPC leg
+    # WITHOUT the cap is wall-clock bounded, so two runs of it explore
+    # different candidate sets and the leg is not even self-comparable.
+    assert ((_sm.get("ems") not in MPC_STRATEGY_NAMES)
+            or _sm.get("mpc_max_candidates") is not None), (
+        "SCENARIOS[%r] drives an MPC strategy but declares no "
+        "`mpc_max_candidates`; a campaign leg must carry the deterministic cap "
+        "(see MPC_CAMPAIGN_MAX_CANDIDATES)." % (_sn,))
+del _sn, _sm, _mk
 
 # `sdp_policy_file` (2026-09-02) is read by the same binder, and carries a
 # SECOND restriction the offset does not: it may not override the artifact of a
@@ -8861,6 +9313,50 @@ def main(argv=None):
     ap.add_argument("--noise", action="store_true",
                     help="hi-fi: apply ADC quantization (and any configured sigmas) to "
                          "the injected values")
+    # ── MPC strategy overrides (2026-09-02) ─────────────────────────────────
+    # EVERY ONE DEFAULTS TO None, and None means "use the constructor's own
+    # default", which is the shipped design.  That is the property the design
+    # document's registration item 7 asks for: a scenario's `ems` key ALONE
+    # reproduces the shipped controller, and any deviation from it is visible
+    # on the command line AND in the sidecar's `config.mpc` (which is written
+    # from the strategy's own provenance, so it records the RESOLVED value
+    # whether it came from a flag or from the default).
+    # Ignored, with no error, on a run whose strategy is not an MPC — the same
+    # treatment `--vesc-cap-uf` gets under `--electrical simple`.
+    ap.add_argument("--mpc-horizon", type=int, default=None,
+                    help="MPC: decision stages in the horizon (default 20 at "
+                         "1.0 s per stage)")
+    ap.add_argument("--mpc-share-band", default=None, metavar="LO,HI",
+                    help="MPC: the share ladder's closed interval, e.g. "
+                         "'0.25,0.75' (default: the DP's band)")
+    ap.add_argument("--mpc-share-levels", type=int, default=None,
+                    help="MPC: how many share levels the ladder carries "
+                         "(default 7)")
+    ap.add_argument("--mpc-budget-ms", type=float, default=None,
+                    help="MPC: per-decision search budget in ms (default 12.0). "
+                         "On expiry the planner returns the SHIFTED INCUMBENT, "
+                         "which is feasible and was validated one second "
+                         "earlier — an expiry is a warning about search depth, "
+                         "not about the command")
+    ap.add_argument("--mpc-roll-budget-ms", type=float, default=None,
+                    help="MPC: per-decision budget in ms for the SLICED "
+                         "governor transition rolls (default 2.0)")
+    ap.add_argument("--mpc-terminal-price", default=None,
+                    help="MPC: terminal SoC price mode (default 'metric'; the "
+                         "alternative prices the terminal state on the SDP's "
+                         "own shadow price)")
+    ap.add_argument("--mpc-max-candidates", type=int, default=None,
+                    help="MPC: cap the per-decision candidate count, making the "
+                         "search DETERMINISTIC and the run reproducible. "
+                         "Without it the search is bounded by wall clock and "
+                         "an MPC run must never enter a repeatability ledger. "
+                         "Refused if this checkout's mpc_ems has no such "
+                         "argument")
+    ap.add_argument("--mpc-h2-map", default=None,
+                    help="MPC: stage hydrogen map, 'proxy' (default, the "
+                         "operator-ruled eta_fc 0.40 online proxy) or 'convex' "
+                         "(REFUSED unless its three stack coefficients are "
+                         "supplied)")
     ap.add_argument("--replay", default=None, metavar="PATH.BLG",
                     help="replay a recorded bench log as injection frames "
                          "(bypasses the plant integrator; open-loop stimulus)")
@@ -9281,6 +9777,21 @@ def main(argv=None):
     if not args.replay and not args.pi_live:
         if ems_name:
             ems_policy = EMS_STRATEGIES[ems_name]
+            # MPC constructor overrides, applied BEFORE the binding hook below
+            # because bind_scenario() is what BUILDS the strategy (and the
+            # planner it configures).  `mpc_configure_kwargs()` drops every
+            # None, so an untouched command line reproduces the shipped design
+            # exactly; a scenario may also declare `mpc_soc_ref_offset`, which
+            # a command-line flag does not override because there is no flag
+            # for it (it is a placement on the SoC axis, i.e. a property of the
+            # scenario, exactly as `sdp_soc_ref_offset` is).
+            if isinstance(ems_policy, _MpcProxy):
+                _mk = mpc_configure_kwargs(args, meta)
+                ems_policy.configure(**_mk)
+                if _mk:
+                    print("[hil] MPC overrides: "
+                          + ", ".join("%s=%r" % kv
+                                      for kv in sorted(_mk.items())))
             # Generic startup binding hook.  A strategy that needs to VALIDATE
             # itself against the scenario it is about to drive (currently only
             # `dp-replay`, whose offline table is a solution of ONE specific
@@ -9346,6 +9857,10 @@ def main(argv=None):
     # `cmd_share_sp_raw` column, because dp-replay emits its table value
     # unclamped.
     dp_table_src = ems_policy if isinstance(ems_policy, DpReplayStrategy) else None
+    # The MPC's diagnostics source, resolved by TYPE for the same reason the two
+    # above are.  Consumed by the three CSV columns and by `config.mpc` in the
+    # sidecar; None on every other run, which blanks all three columns.
+    mpc_src = ems_policy if isinstance(ems_policy, _MpcProxy) else None
     if commander is not None and commander.mute_after is not None:
         print(f"[hil] Pi commander MUTES at t={commander.mute_after:g}s "
               f"(scenario key pi_mute_after_s): the 22-byte command stream stops "
@@ -9581,6 +10096,32 @@ def main(argv=None):
         # power" when in truth the model was never asked.
         header_row += ["p_mot_w", "p_fc_w", "p_batt_w",
                        "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w"]
+        # ── MPC diagnostics — APPENDED AFTER `p_chg_loss_w`, BOTH SCHEMAS ────
+        #    (2026-09-02; design document section 8 item 5, adjudication 2.6)
+        # Three columns, all BLANK on a run whose strategy is not an MPC and on
+        # every replay row — read through `getattr` off the strategy instance
+        # exactly as `cmd_share_sp_raw` is, so a non-MPC run writes nothing
+        # rather than a fabricated 0.
+        #   mpc_solve_ms       the LAST decision's search time in milliseconds.
+        #                      It is the budget evidence: the planner is given
+        #                      `--mpc-budget-ms` and returns the shifted
+        #                      incumbent when it expires, so a column that
+        #                      crowds the budget says the search is too deep for
+        #                      the horizon, not that the command is wrong.
+        #   mpc_share_pred_err |predicted - delivered| stage share, measured one
+        #                      decision AFTER the prediction and held until the
+        #                      next.  ⚠️ THIS IS THE CLAIM THE STRATEGY MAKES:
+        #                      it plans delivered splits, so this column is the
+        #                      governor-aware model's own score.  Blank until a
+        #                      first prediction has been scored, and NOT updated
+        #                      inside a charge window or below the governor's
+        #                      minimum load, where the delivered split does not
+        #                      identify the applied ratio.
+        #   mpc_budget_hit     0/1, the LAST decision's budget flag, held
+        #                      between decisions.  Blank before the first
+        #                      decision — never 0, which would read as "the
+        #                      budget was met" on a run that had not solved.
+        header_row += ["mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]
         writer.writerow(header_row)
 
     # M3: open the electrical-events sidecar UP FRONT and stream into it as events
@@ -9795,6 +10336,19 @@ def main(argv=None):
                 **({"dp_table": dp_table_src.provenance}
                    if (dp_table_src is not None and dp_table_src.provenance)
                    else {}),
+                # THE MPC's CONFIGURATION (2026-09-02), written the way the two
+                # blocks above are: present ONLY for an MPC run, keyed off the
+                # STRATEGY TYPE so a rename cannot silently drop it. It carries
+                # the RESOLVED value of every `--mpc-*` flag plus the derived
+                # quantities a reader cannot recompute (the ladder, the terminal
+                # price in g/SoC, the proxy over-read constant, the four modelled
+                # levers, and — for `mpc-sto` — the TPM path and bin count), so a
+                # trace can be re-read years later without this checkout. The
+                # DECISION-TIMING statistics are merged into the SAME block at
+                # finalize; see finalize_meta().
+                **({"mpc": mpc_src.provenance}
+                   if (mpc_src is not None and mpc_src.provenance)
+                   else {}),
             },
             "constants_hash": constants_hash(meta_const),
             "constants": meta_const,
@@ -9854,6 +10408,21 @@ def main(argv=None):
             "soc_final": None if replay else round(plant.battery.soc, 6),
             "replay_last_record": replay.i if replay else None,
         }
+        # MPC decision timing, merged into `config.mpc` at finalize (design
+        # document section 8, item 6). It belongs beside the configuration
+        # rather than in `results` because the two are read together: a median
+        # solve time is only interpretable against the budget that bounded it.
+        # NEVER RAISES — finalize_meta()'s contract — so a strategy that was
+        # never built, or a run that ended before its first decision, simply
+        # contributes nothing.
+        try:
+            if mpc_src is not None:
+                _tm = mpc_src.timing()
+                if _tm:
+                    meta_doc["config"].setdefault("mpc", {})
+                    meta_doc["config"]["mpc"]["timing"] = _tm
+        except Exception:                       # pragma: no cover - defensive
+            pass
         write_meta_sidecar(args.csv, meta_doc)
 
     # ── Optional live dashboard ──────────────────────────────────────────────
@@ -10153,6 +10722,24 @@ def main(argv=None):
                             "aux": obs["aux"] if obs else None,
                             "current": obs["current"] if obs else None,
                             "fault_flags": obs["fault_flags"] if obs else None,
+                            # ── observation frame, MDAC words (2026-09-02) ──
+                            # The two 12-bit droop codes the board actually
+                            # applied. They are NOT in the v4 telemetry packet
+                            # and so are NOT portable to a real Pi; a strategy
+                            # that reads them must degrade without them.
+                            # ⚠️ WHY THEY ARE HERE. `mpc-det`/`mpc-sto` carry a
+                            # SHADOW copy of the firmware's share governor and
+                            # correct it from feedback each tick. Without these
+                            # two words the only correction available is the
+                            # measured current split, which identifies the
+                            # applied ratio ONLY where both channels conduct
+                            # above the 0.60 A closed-loop gate — i.e. not in
+                            # the open-loop hold, which is where a shadow model
+                            # drifts. r_from_codes() reads the ratio directly
+                            # and is valid in every mode. Additive: every other
+                            # strategy ignores the keys.
+                            "mdac_fc": obs["mdac_fc"] if obs else None,
+                            "mdac_bt": obs["mdac_bt"] if obs else None,
                             # F11: age of the last DECODED observation frame, in
                             # sim-clock seconds; None if none has ever arrived.
                             # obs itself is NOT bounded by freshness (behavior-
@@ -10272,6 +10859,21 @@ def main(argv=None):
                             "p_chg_loss_w"):
                     _pv = sensors.get(_pk)
                     row.append("" if _pv is None else f"{_pv:.6f}")
+                # MPC diagnostics (2026-09-02) — appended in BOTH schemas, see
+                # the header comment.  `mpc_src` is None for every non-MPC run
+                # AND on a replay run, so all three columns are blank there.
+                if mpc_src is None:
+                    row += ["", "", ""]
+                else:
+                    # One cheap call per tick; it derives the held budget flag
+                    # from the strategy's own decision/budget counters.
+                    mpc_src.observe_decision()
+                    _sms = mpc_src.solve_ms_last
+                    _spe = mpc_src.share_pred_err
+                    _bh = mpc_src.budget_hit_last
+                    row.append("" if _sms is None else f"{_sms:.3f}")
+                    row.append("" if _spe is None else f"{_spe:.5f}")
+                    row.append("" if _bh is None else int(_bh))
                 writer.writerow(row)
 
             ticks += 1

@@ -335,8 +335,13 @@ SETTLE_MIN_RECOVER_S = 1.5
 # argument, and it is the drive-cycle frontier's BOUND leg — gating it
 # differently from the legs it bounds would produce a frontier that can never
 # assemble.
+# `ems-ftp75-mpc` joined 2026-09-02: same 350 s cycle, same cost argument, and
+# it is the `ftp75-mpc` frontier's CANDIDATE leg — gating it differently from
+# the reference and bound it is ranked against would produce a frontier that can
+# never assemble, which is the argument that admitted `ems-ftp75-dp`.
 FTP75_SCENARIOS = frozenset({"ems-ftp75-5050", "ems-ftp75-socband",
-                             "ems-ftp75-sdp", "ems-ftp75-dp"})
+                             "ems-ftp75-sdp", "ems-ftp75-dp",
+                             "ems-ftp75-mpc"})
 
 # ── The three SDP alpha-sweep legs, opt-in behind --with-alpha ──────────────
 # Same MECHANISM as FTP75_SCENARIOS (a skip record with a reason, so the report
@@ -3597,6 +3602,324 @@ FAULT_EXPECTATIONS["ems-sdp-braking"] = {
                   "024231)"},
     ],
 }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# THE FOUR MPC LEGS (2026-09-02) — the governor-aware receding-horizon EMS
+#
+# Design: docs/modeling/mpc_design_20260901.md (section 7.3 for these checks);
+# adjudication: docs/modeling/mpc_design_20260901/adjudication.md section 2.6.
+#
+# ⚠️ EVERY BAND BELOW IS PROVISIONAL AND EVERY ONE IS FROM AN OFFLINE WALK, not
+# from a board.  The walk is `ems_walk.walk(..., governor=True, dv0_v=0.030223)`
+# at soc0 0.7 — the same method, the same plant-equivalent asymmetry offset and
+# the same +/-25 % band shape the FTP-75 sibling entries use.  Gate 2 of the
+# design's evaluation plan, run 2026-09-02:
+#
+#   leg                  strategy   h2 (g)     dSoC        eq-H2 (lambda 0.41)
+#   ems-soc-band         soc-band   0.012264   -0.002002   0.017146   (reference)
+#   ems-dp-replay        dp-replay  0.011900   -0.001936   0.016622   (bound)
+#   ems-sdp              sdp-v4     0.012729   -0.001600   0.016631
+#   ems-mpc              mpc-det    0.010429   -0.002537   0.016616
+#   ems-mpc-sto          mpc-sto    0.009313   -0.002998   0.016625
+#   ems-mpc-cross        mpc-det    0.014134   -0.006007   0.028786
+#   ems-ftp75-socband    soc-band   0.041873   -0.006306   0.057254   (reference)
+#   ems-ftp75-sdp        sdp-v4     0.019918   -0.014691   0.055750
+#   ems-ftp75-mpc        mpc-det    0.023771   -0.013112   0.055751
+#   ems-ftp75-dp         dp-replay  PENDING — the shipped table's stimulus
+#                                   fingerprint is stale and it must be
+#                                   regenerated before the bound leg walks.
+#
+# ⚠️ THE PAIR IS THE RESULT, NOT THE HYDROGEN, and on this controller that is
+# not a stylistic preference. Three repeats of each walk reproduce the totals
+# above to six decimals, but raising the search budget from the shipped 12 ms to
+# 1e5 ms moves `ems-mpc-cross`'s hydrogen by −21 % (0.014134 -> 0.011163) while
+# its EQUIVALENT hydrogen moves by 0.13 % (0.028786 -> 0.028750). A deeper
+# search buys hydrogen with state of charge. Every h2 band below is therefore a
+# SCALE AND ACCUMULATION tripwire and cannot discriminate a policy; the
+# equivalent-hydrogen total, which the frontier check computes across runs, is
+# the search-invariant quantity.
+#
+# ⚠️ THE WALK CANNOT SCORE THE MPC.  Its plant IS the controller's prediction
+# model, which is the inverse-crime condition (design section 7.1).  Every h2
+# band below therefore asserts that the ACCOUNTING RAN AND REPEATED at the right
+# scale — the same claim the FTP-75 h2 bands make — and NOT that the policy is
+# good.  The live campaign against the high-fidelity plant is the evaluation.
+#
+# ⚠️ AN MPC RUN IS NOT BIT-REPRODUCIBLE AND MUST NEVER ENTER A REPEATABILITY
+# LEDGER.  The planner's search is bounded by WALL CLOCK (`--mpc-budget-ms`,
+# `--mpc-roll-budget-ms`), so a loaded campaign host can return a different —
+# still feasible, still validated — command.  Each of the four legs declares
+# `mpc_max_candidates` = `hil_plant_sim.MPC_CAMPAIGN_MAX_CANDIDATES` (343, the
+# FULL enumeration at the shipped ladder, so the cap constrains nothing) to take
+# the clock out of the candidate COUNT; the roll-table slicing and the board's
+# own timing remain non-deterministic.  Compare an MPC leg against its own band
+# and against the frontier tuple; do NOT compare two MPC runs digit for digit
+# the way the `scp` i_cut and `ems-sdp` h2 records are compared.
+#
+# The degenerate-constant guard of section 7.3 (`column_range_at_least`) is on
+# ALL FOUR legs.  Every walk moves the commanded share — ranges 0.417, 0.333,
+# 0.250 and 0.333 — and each threshold below is set at roughly HALF its leg's
+# measured range, so a controller that emitted one constant cannot pass while
+# ordinary walk-versus-board disagreement can.
+
+# Shared qualifiers, so the claim cannot drift between the four entries.
+_MPC_PROVISIONAL = (
+    "PROVISIONAL, first registration (2026-09-02) — the band is from the "
+    "OFFLINE GOVERNOR WALK of Gate 2, not from a board, and the walk's plant is "
+    "the controller's own prediction model (the inverse-crime condition, design "
+    "section 7.1). It asserts scale and accumulation, never policy quality. "
+    "Re-derive from the first campaign that evaluates this leg")
+_MPC_TIMING_PROVISIONAL = (
+    "PROVISIONAL, first registration (2026-09-02) — the decision-timing and "
+    "budget-expiry bands are WALL-CLOCK quantities and are therefore a property "
+    "of the campaign host as much as of the controller. They are regression "
+    "tripwires on the search depth, NOT assertions about the command: on expiry "
+    "the planner returns the shifted incumbent, which is feasible and was "
+    "validated one second earlier. Never raise one to make a run go green; a "
+    "budget that outgrew its bound is the finding. Re-derive from the first "
+    "campaign, and re-derive again if a deterministic candidate cap is adopted")
+_MPC_PRED_PROVISIONAL = (
+    "PROVISIONAL, first registration (2026-09-02), and it is a band derived "
+    "from an OFFLINE MEASUREMENT rather than a widened pin. ⚠️ GATE 1 OF THE "
+    "DESIGN'S EVALUATION PLAN FAILS OFFLINE: with the governor roll table "
+    "actually consulted, the surrogate's delivered-share error on the "
+    "`ems-soc-band` stimulus is mean 0.0097 / max 0.25000 against the design's "
+    "5e-03 acceptance. The worst stages are `open_feedforward` — every 1 Hz "
+    "re-command that lands in an open-loop stage triggers a governor "
+    "feedforward slew that NEITHER model represents. The MPC ships with that "
+    "recorded: the first campaign IS the calibration reading for this column, "
+    "and the fallback of section 7.1 (rolling the full governor on open stages "
+    "with a reduced candidate set) is the decision that reading informs. The "
+    "0.30 ceiling clears the offline max with margin and still fails a "
+    "prediction that has stopped tracking. A mean-side bound would be the "
+    "better assertion — the mean is 26x under the max — but this file has no "
+    "column-mean check kind and a registration round is not where one is "
+    "added. Second-order and pointing the other way: the walk's feedback view "
+    "carries no MDAC words, so its shadow governor is corrected only from the "
+    "measured current split (valid only above the 0.60 A gate), while a "
+    "campaign feeds `mdac_fc`/`mdac_bt` and reads the applied ratio directly "
+    "in every mode")
+
+# The share ladder's structural bounds.  `mpc_ems.SHARE_BAND_DP` is (0.25,
+# 0.75) and the command is quantized ONTO that closed interval, so a sample
+# outside it is a plumbing defect (a clamp applied to the wrong quantity, a
+# ladder built from the wrong band) rather than a policy result.  The 0.01
+# margins absorb the 4-decimal CSV rendering.
+_MPC_SHARE_FLOOR = 0.24
+_MPC_SHARE_CEIL = 0.76
+# The overcurrent budget the planner itself enforces (mpc_ems.I_FC_MAX_A =
+# 0.85 * LIMIT_I_FC_MAX 1.4 A).  Asserted as a CEILING on the FC channel rather
+# than as a longest-run bound: the suite has no numeric-threshold run kind
+# (`max_continuous_ticks` needs a bit or a masked integer), and a peak ceiling
+# expresses the same budget claim without one.  Walk peaks are far under it —
+# 0.7310 A (ems-mpc / ems-mpc-sto), 0.3015 A (cross), 0.4801 A (ftp75) — so
+# this is a budget bound with wide slack, not a tripwire, and it says so.
+_MPC_I_FC_CEIL = 1.19
+
+
+def _mpc_expectation(*, scenario, walk_h2, duration_s, survive_t,
+                     run_window, share_range_min=None, pred_err_max,
+                     budget_hit_max_ticks, charge_edges, min_rows, extra_note):
+    """One MPC leg's expectation entry.  PURE.
+
+    ONE BUILDER for all four, for `_alpha_expectation()`'s reason: the four legs
+    assert the SAME properties and only their numbers differ, so a hand-written
+    fourth copy is a place for one of them to drift."""
+    lo, hi = round(walk_h2 * 0.75, 6), round(walk_h2 * 1.25, 6)
+    sigs = [
+        # 1. CADENCE — de-vacuates every window-scoped check below.  A run whose
+        #    CSV is short (a child that died early, a link that never came up)
+        #    would otherwise satisfy the ceilings with no rows at all.
+        {"name": "mpc_cadence", "min_rows": min_rows,
+         "t_window": run_window,
+         "label": "the Run window carries at least %d CSV rows, so the "
+                  "window-scoped bounds below are judged on a real run"
+                  % min_rows},
+        # 2-3. THE COMMANDED SHARE STAYED ON ITS OWN LADDER.  Two specs, floor
+        #    and ceiling, because a single spec carrying both bounds silently
+        #    drops one (see the min/max guard above).
+        {"name": "mpc_share_floor", "column": "cmd_share_sp",
+         "min_value": _MPC_SHARE_FLOOR, "t_window": run_window,
+         "provisional_note": _MPC_PROVISIONAL,
+         "label": "the commanded share reached the ladder's own interval "
+                  "[0.25, 0.75] — a sample below %.2f means the ladder was "
+                  "built from the wrong band" % _MPC_SHARE_FLOOR},
+        {"name": "mpc_share_ceiling", "column": "cmd_share_sp",
+         "max_value": _MPC_SHARE_CEIL, "t_window": run_window,
+         "provisional_note": _MPC_PROVISIONAL,
+         "label": "... and never left it upward (peak <= %.2f)"
+                  % _MPC_SHARE_CEIL},
+        # 4. THE OVERCURRENT BUDGET the planner enforces on its own plan.
+        {"name": "mpc_fc_peak_bounded", "column": "I_fc",
+         "max_value": _MPC_I_FC_CEIL, "t_window": run_window,
+         "provisional_note": _MPC_PROVISIONAL,
+         "label": "the fuel-cell channel stayed inside the planner's own "
+                  "overcurrent margin (%.2f A = 0.85 x LIMIT_I_FC_MAX 1.4 A). "
+                  "A BUDGET bound with wide slack against the walk's peak, not "
+                  "a tripwire" % _MPC_I_FC_CEIL},
+        # 5. THE CHARGE DECISION did not chatter.  An edge CENSUS with a floor
+        #    of 0 rather than a window: the MPC's charge intent is a genuine
+        #    decision variable, so its schedule is not knowable in advance, but
+        #    a controller cycling the Ag105 tens of times has stopped deciding
+        #    and started oscillating.  The walk opens ZERO windows on every one
+        #    of the four legs, so the floor is deliberately 0 — an absence here
+        #    is the PREDICTED outcome and must not fail.
+        {"name": "mpc_charge_edge_census", "switch_bit": SW_FC_CHARGE,
+         "edge_count_between": (0, charge_edges), "edge": "rise",
+         "t_window": run_window, "provisional_note": _MPC_PROVISIONAL,
+         "label": "FC_CHARGE opened at most %d times — the offline walk opens "
+                  "ZERO windows on this leg, so this is an ANTI-CHATTER "
+                  "ceiling, not an existence claim" % charge_edges},
+        # 6-7. THE HYDROGEN ACCOUNTING, the sibling entries' two-sided shape.
+        {"name": "mpc_h2_accounted", "column": "h2_cum_g",
+         "min_value": lo, "t_window": run_window,
+         "provisional_note": _MPC_PROVISIONAL,
+         "label": "the H2 consumption metric accumulated over the cycle "
+                  "(>= %.6f g = governor walk %.6f g -25 %%)" % (lo, walk_h2)},
+        {"name": "mpc_h2_bounded", "column": "h2_cum_g",
+         "max_value": hi, "t_window": run_window,
+         "provisional_note": _MPC_PROVISIONAL,
+         "label": "... and stayed under %.6f g (walk +25 %%), so a scale or "
+                  "accumulation error fails here instead of reading as a "
+                  "result" % hi},
+        # 8. THE DECISION ACTUALLY RAN, and inside its budget.  This is the one
+        #    check that distinguishes an MPC run from any other: `mpc_solve_ms`
+        #    is BLANK for every other strategy, so an unmeasured column here
+        #    means the strategy was not the MPC at all.
+        {"name": "mpc_solve_bounded", "column": "mpc_solve_ms",
+         "max_value": 20.0, "t_window": run_window,
+         "provisional_note": _MPC_TIMING_PROVISIONAL,
+         "label": "every decision returned within 20 ms — the 12 ms budget "
+                  "plus the slack a loaded campaign host needs. UNMEASURED "
+                  "fails, which is also the check that the MPC drove this run"},
+        # 9. THE SHADOW GOVERNOR'S OWN SCORE.  The strategy plans DELIVERED
+        #    splits, so this column is the claim it makes; see the qualifier.
+        {"name": "mpc_share_prediction", "column": "mpc_share_pred_err",
+         "max_value": pred_err_max, "t_window": run_window,
+         "provisional_note": _MPC_PRED_PROVISIONAL,
+         "label": "the governor-aware model predicted the DELIVERED stage "
+                  "share to within %.2f (walk peak, MDAC-blind)"
+                  % pred_err_max},
+        # 10. THE SEARCH DEPTH.  A ceiling on the ticks spent holding a
+        #    budget-expired decision, i.e. on the fraction of the run commanded
+        #    by a shifted incumbent rather than by a fresh plan.
+        {"name": "mpc_budget_expiry_bounded", "column": "mpc_budget_hit",
+         "value_mask": 0x1, "value_equals": 0x1,
+         "max_ticks": budget_hit_max_ticks, "t_window": run_window,
+         "provisional_note": _MPC_TIMING_PROVISIONAL,
+         "vacuity_note": (
+             "`mpc_budget_hit` is written on EVERY tick of an MPC run from the "
+             "first decision onward, and the `mpc_solve_bounded` check above "
+             "fails outright on an unmeasured MPC diagnostic column, so a "
+             "blank column cannot pass this entry silently."),
+         "label": "at most %d ticks were commanded by a BUDGET-EXPIRED "
+                  "decision (a shifted incumbent — feasible, and validated one "
+                  "second earlier)" % budget_hit_max_ticks},
+    ]
+    if share_range_min is not None:
+        # THE DEGENERATE-CONSTANT GUARD (design section 7.3).  Applied only
+        # where the walk predicts motion — see the block above for why the two
+        # 61 s legs do not carry it.
+        sigs.insert(3, {
+            "name": "mpc_share_moved", "column": "cmd_share_sp",
+            "column_range_at_least": share_range_min, "t_window": run_window,
+            "provisional_note": _MPC_PROVISIONAL,
+            "label": "the commanded share MOVED by at least %.2f across the "
+                     "run, so a controller emitting one constant cannot pass "
+                     "(roughly half the Gate-2 walk's own range)"
+                     % (share_range_min,)})
+    return {
+        "source": ("hil_plant_sim.py SCENARIOS[%r] + "
+                   "docs/modeling/mpc_design_20260901.md sections 7.1-7.3 "
+                   "(the evaluation plan and the phase-free check list) + the "
+                   "Gate-2 governor walk table in the block above. %s"
+                   % (scenario, extra_note)),
+        "allow_only": 0,
+        "survive_to": {"t": survive_t, "states": {2, 3}},
+        "signals_require": sigs,
+    }
+
+
+# ── ems-mpc: the frontier candidate ─────────────────────────────────────────
+FAULT_EXPECTATIONS["ems-mpc"] = _mpc_expectation(
+    scenario="ems-mpc", walk_h2=0.010429, duration_s=61.0, survive_t=50.0,
+    run_window=(5.0, 58.0), share_range_min=0.20,
+    pred_err_max=0.30, budget_hit_max_ticks=52000, charge_edges=4,
+    min_rows=40000,
+    extra_note=("The CANDIDATE leg of the `cycle61-mpc` frontier tuple. The "
+                "walk lands eq-H2 0.016616 against the `soc-band` reference's "
+                "0.017146 (0.969x) and the `dp-replay` bound's 0.016622 "
+                "(0.9996x) — and note that the vs-bound arm is STRUCTURALLY "
+                "near 1.0 for a charge-free candidate (design section 7.4.1), "
+                "so it detects lever-class deviations and does not measure "
+                "optimality. The delta-SoC-matched DP bound for the walk's own "
+                "terminal state is 0.010418 g (tools/dp_db, key "
+                "62151bd59b9cd787) against the walk's 0.010429 — 0.10 % above "
+                "the bound, which is a plan-consistency check and not a result."))
+
+# ── ems-mpc-sto: the stochastic variant, NOT a frontier leg ─────────────────
+FAULT_EXPECTATIONS["ems-mpc-sto"] = _mpc_expectation(
+    scenario="ems-mpc-sto", walk_h2=0.009313, duration_s=61.0, survive_t=50.0,
+    run_window=(5.0, 58.0), share_range_min=0.16,
+    pred_err_max=0.30, budget_hit_max_ticks=52000, charge_edges=4,
+    min_rows=40000,
+    extra_note=("NOT a frontier leg — EMS_STRATEGY_META's role note says why. "
+                "Its Gate-2 pair differs from `mpc-det`'s on the SAME stimulus "
+                "(h2 0.009313 / dSoC -0.002998 against 0.010429 / -0.002537) "
+                "while the two equivalent-hydrogen totals agree to 0.05 %: the "
+                "certainty-equivalent demand path and the 90 % overcurrent "
+                "quantile move the plan along the share lever without moving "
+                "its value, which is the expected outcome on a stimulus that "
+                "is not a draw from the matrix. Its open-loop hold fraction is "
+                "0.338 against `mpc-det`'s 0.223 on the identical cycle — the "
+                "two plans spend materially different fractions of the run "
+                "below the 0.55 A line — so the two runs are NOT "
+                "interchangeable evidence about the governor."))
+
+# ── ems-mpc-cross: the switching-surface stimulus ───────────────────────────
+FAULT_EXPECTATIONS["ems-mpc-cross"] = _mpc_expectation(
+    scenario="ems-mpc-cross", walk_h2=0.014134, duration_s=200.0,
+    survive_t=180.0, run_window=(5.0, 190.0), share_range_min=0.12,
+    pred_err_max=0.30, budget_hit_max_ticks=190000, charge_edges=6,
+    min_rows=150000,
+    extra_note=("The `ems-sdp-cross` stimulus with the MPC's own "
+                "`mpc_soc_ref_offset` at that scenario's +0.0025. PHASE-FREE "
+                "CHECKS ONLY: the 1 Hz decision clock is not locked to the "
+                "stimulus, and a phase-locked check has already failed a "
+                "correct board on this very scenario (campaign "
+                "20260901_024231). The walk's commanded share walks CONTINUOUSLY "
+                "over a 0.25 range, unlike the SDP's single sharp flip, so the "
+                "degenerate-constant guard is set at half of that. This leg is "
+                "also the round's SEARCH-DEPTH evidence: a 1e5 ms budget moves "
+                "its hydrogen -21 %% while its equivalent hydrogen moves 0.13 "
+                "%%, so its h2 band is the widest claim the quantity supports. "
+                "Note the walk's open-loop hold fraction here is 0.629, the "
+                "highest of the four legs: most of this run is share-blind by "
+                "construction (design section 7.4.3), so an improvement or a "
+                "regression confined to it is invisible. The delta-SoC-matched "
+                "DP bound at the walk's terminal state is stored in "
+                "tools/dp_db."))
+
+# ── ems-ftp75-mpc: the drive-cycle candidate, behind --with-ftp75 ───────────
+FAULT_EXPECTATIONS["ems-ftp75-mpc"] = _mpc_expectation(
+    scenario="ems-ftp75-mpc", walk_h2=0.023771, duration_s=350.0,
+    survive_t=330.0, run_window=(10.0, 340.0), share_range_min=0.16,
+    pred_err_max=0.30, budget_hit_max_ticks=245000, charge_edges=8,
+    min_rows=280000,
+    extra_note=("The CANDIDATE leg of the `ftp75-mpc` frontier tuple, gated "
+                "behind --with-ftp75. The walk lands eq-H2 0.055751 against "
+                "the `ems-ftp75-socband` reference's 0.057254 (0.974x) and "
+                "within 2e-6 g of `ems-ftp75-sdp`'s 0.055750 — the two "
+                "controllers reach the same value on this stimulus by "
+                "different pairs, which is what the eq-H2 metric is for. The "
+                "`ems-ftp75-dp` bound is PENDING a table regeneration (its "
+                "shipped table's stimulus fingerprint is stale), so the "
+                "vs-bound arm of this tuple has no offline prediction yet, and "
+                "no dp_db entry is prefilled for this leg. 64.5 %% of this "
+                "cycle's Run window sits below the 0.55 A open-loop line, "
+                "where the delivered split does not follow the command at "
+                "all."))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -7723,6 +8046,78 @@ EMS_FRONTIERS = [
         # the first one to do so should confirm the precondition passes and the
         # thresholds hold before a mismatch is made exit-affecting. Flip it to
         # True after that campaign, so a REGRESSION into a split does fail.
+        "stimulus_mismatch_exit_affecting": False,
+    },
+    # ── THE TWO MPC TUPLES (2026-09-02) ────────────────────────────────────
+    # Each REUSES the sibling tuple's reference and bound and its thresholds
+    # verbatim; only the CANDIDATE differs.  That is deliberate and is the whole
+    # value of the comparison: `cycle61-mpc` and `cycle61` share one stimulus
+    # object, one reference leg and one bound, so the difference between the two
+    # records is the difference between `sdp-v4` and `mpc-det` and nothing else.
+    #
+    # ⚠️ `stimulus_mismatch_exit_affecting` is False on BOTH for one campaign,
+    # exactly as `ftp75` carries it: the stimulus keys agree in the registry by
+    # construction (every one is the sibling's value, most of them the sibling's
+    # OBJECT), but no campaign has evaluated either tuple, so a genuine
+    # regression into a split should fail only once the tuple is known to score.
+    # Flip both to True after the first campaign that evaluates them.
+    #
+    # ⚠️ THE VS-BOUND ARM IS STRUCTURALLY NEAR 1.0 HERE, and more so than for
+    # the SDP tuples: `mpc-det` opens ZERO charge windows in every Gate-2 walk,
+    # so it and the bound differ only along the share lever — and the eq-H2
+    # exchange rate IS that lever's rate, which makes the two coincide by
+    # construction (campaign 20260901_080905; design section 7.4.1).  The walk
+    # reads 1.0007x on `cycle61-mpc`.  DO NOT TIGHTEN `vs_bound_max` on a
+    # charge-free reading: the arm detects lever-class deviations and does not
+    # measure optimality.
+    {
+        "id": "cycle61-mpc",
+        "label": "61 s synthetic cycle, MPC candidate",
+        "roles": {
+            "reference": "ems-soc-band",
+            "candidate": "ems-mpc",
+            "bound": "ems-dp-replay",
+        },
+        # The `cycle61` tuple's thresholds verbatim — see the note above.
+        "vs_reference_max": 0.98,
+        "vs_bound_max": 1.06,
+        "provisional_note": (
+            "PROVISIONAL — no campaign has evaluated this tuple. The Gate-2 "
+            "governor walk (2026-09-02, dv0 0.030223, soc0 0.7) gives "
+            "vs_reference 0.9701 and vs_bound 1.0007, so both thresholds are "
+            "cleared offline; BUT the walk's plant IS the MPC's own prediction "
+            "model (the inverse-crime condition, design section 7.1), so that "
+            "clearance is not evidence about the live plant. The thresholds "
+            "are the `cycle61` tuple's, taken unchanged so the two records are "
+            "read on one scale. Re-derive from the first campaign that "
+            "evaluates this tuple, and read the vs-bound arm under the "
+            "structural caveat above"),
+        "stimulus_mismatch_exit_affecting": False,
+    },
+    {
+        "id": "ftp75-mpc",
+        "label": "340 s EPA FTP-75 drive cycle, MPC candidate",
+        "roles": {
+            "reference": "ems-ftp75-socband",
+            "candidate": "ems-ftp75-mpc",
+            "bound": "ems-ftp75-dp",
+        },
+        # The `ftp75` tuple's thresholds verbatim — including its 1.02
+        # vs-reference ask, which deliberately does NOT assume a win at
+        # drive-cycle scale (the offline DP-vs-`soc-band` result on this
+        # stimulus is a tie).
+        "vs_reference_max": 1.02,
+        "vs_bound_max": 1.06,
+        "provisional_note": (
+            "PROVISIONAL — no campaign has evaluated this tuple, and its "
+            "OFFLINE prediction is INCOMPLETE. The Gate-2 governor walk gives "
+            "vs_reference 0.9748 (eq-H2 0.055810 against the reference's "
+            "0.057254); the vs-BOUND arm has no prediction at all, because the "
+            "shipped `dp_ems_table_ems-ftp75-dp.csv` carries a stale stimulus "
+            "fingerprint and refuses to walk until it is regenerated. The "
+            "thresholds are the `ftp75` tuple's, unchanged. Re-derive from the "
+            "first campaign, and note the walk's clearance is an inverse-crime "
+            "result (design section 7.1)"),
         "stimulus_mismatch_exit_affecting": False,
     },
 ]

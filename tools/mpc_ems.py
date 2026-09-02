@@ -1247,6 +1247,13 @@ class Planner:
             if oi == 0:
                 tabs0 = tabs
             for block_idx in order:
+                # The cap is judged BEFORE a candidate is evaluated, so a cap
+                # equal to the enumeration size flags nothing (nothing was cut);
+                # `cap_hit` means at least one candidate was left unevaluated.
+                if (self.max_candidates is not None
+                        and n_eval >= self.max_candidates):
+                    cap_hit = True
+                    break
                 cost, soc_n, d0 = self._rollout(soc0, soc_ref, pre, tabs, cs,
                                                 block_idx, best.cost)
                 n_eval += 1
@@ -1261,10 +1268,6 @@ class Planner:
                     best.plan_charge = list(cs)
                     self.incumbent = tuple(block_idx)
                     self.incumbent_charge = oi
-                if (self.max_candidates is not None
-                        and n_eval >= self.max_candidates):
-                    cap_hit = True
-                    break
                 if time.perf_counter() - t0 >= budget_s:
                     hit = True
                     break

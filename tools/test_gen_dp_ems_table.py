@@ -278,10 +278,18 @@ def test_generated_table_fingerprint_round_trips_through_load_dp_table(tmp_path)
 def test_generated_table_is_loadable_and_bindable_by_dp_replay_strategy(tmp_path):
     """The full consumer-side path: a table this generator writes must be
     something DpReplayStrategy.bind_scenario() actually accepts (same
-    scenario it was generated for)."""
+    scenario it was generated for).
+
+    The table is generated at the PLANT'S OWN charger era (`sim.ETA_CHG`), not
+    at _COARSE_ARGV's default: bind_scenario() refuses an era mismatch before
+    it even checks the fingerprint, and an old-era table against the eta-era
+    plant is exactly the mismatch that guard exists for (the guard itself is
+    pinned consumer-side, in test_hil_plant_sim.py)."""
     out_dir = str(tmp_path)
-    assert gen.main(_COARSE_ARGV + ["--out",
-                                    os.path.join(out_dir, "dp_ems_table_ems-soc-band.csv")]) == 0
+    assert gen.main(_COARSE_ARGV
+                    + ["--eta-chg", repr(float(hil.ETA_CHG)),
+                       "--out",
+                       os.path.join(out_dir, "dp_ems_table_ems-soc-band.csv")]) == 0
     strategy = hil.DpReplayStrategy(table_dir=out_dir)
     strategy.bind_scenario("ems-soc-band", hil.SCENARIOS["ems-soc-band"])
     assert strategy.times
@@ -540,15 +548,36 @@ def test_soc_band_drain_scenarios_matches_apply_scenario_source():
     src_path = os.path.join(os.path.dirname(hil.__file__), "hil_plant_sim.py")
     with open(src_path, encoding="utf-8") as fh:
         src = fh.read()
-    m = re.search(
-        r'elif scenario in \(("ems-soc-band", "ems-dp-replay", "ems-sdp")\):',
-        src)
-    assert m is not None, \
+    # The branch was hoisted onto a NAMED tuple (SOC_BAND_DRAIN_SCENARIO_NAMES)
+    # when the alpha legs were added, so the assertion follows it there: the
+    # branch must READ that name, and this generator's three scenarios must
+    # still stand at the HEAD of that tuple, in order.
+    #
+    # SUBSET, NOT EQUALITY, and deliberately: the simulator's tuple has grown
+    # members this generator does not mirror (`+ SDP_ALPHA_SCENARIOS`, and the
+    # MPC legs) and hil_plant_sim.py documents why at the definition - no DP
+    # table is solved for them.  The invariant that matters to THIS file is the
+    # one-directional one: every scenario the generator models with the drain
+    # load must be one the simulator actually applies it to.
+    assert re.search(r'elif scenario in SOC_BAND_DRAIN_SCENARIO_NAMES:',
+                     src) is not None, \
         "apply_scenario()'s SOC_BAND_DRAIN_SCENARIOS branch text has moved " \
         "or been retuned -- update gen_dp_ems_table.SOC_BAND_DRAIN_SCENARIOS " \
         "in lockstep"
-    assert gen.SOC_BAND_DRAIN_SCENARIOS == ("ems-soc-band", "ems-dp-replay",
-                                            "ems-sdp")
+    # The membership half is taken against the imported tuple rather than a
+    # second source regex: the literal has grown twice (the alpha legs, then
+    # the MPC legs) and a regex pinned to its exact shape fails on additions
+    # that do not touch this invariant at all.
+    missing = [s for s in gen.SOC_BAND_DRAIN_SCENARIOS
+               if s not in hil.SOC_BAND_DRAIN_SCENARIO_NAMES]
+    assert not missing, \
+        "gen_dp_ems_table.SOC_BAND_DRAIN_SCENARIOS models the drain load for " \
+        "%s, which apply_scenario() does NOT apply it to -- the DP would " \
+        "solve against a demand the run never sees" % missing
+    # The three the generator has always carried are still there, so this is
+    # not vacuous if the generator's own list is ever emptied.
+    for name in ("ems-soc-band", "ems-dp-replay", "ems-sdp"):
+        assert name in gen.SOC_BAND_DRAIN_SCENARIOS
 
 
 def test_scenario_drain_a_aux_preload_override_matches_y_registry_value():
@@ -833,3 +862,67 @@ def test_committed_tables_are_eta_era_and_record_it_in_the_header():
             "t,power_share_setpoint,charge_goal", 1)[0]
         assert ("# eta_chg: %r" % float(sim.ETA_CHG)) in header, name
         assert "--eta-chg %r" % float(sim.ETA_CHG) in header, name
+
+
+def test_plant_eta_chg_equals_the_shared_charger_default():
+    """(L4) The generator's --eta-chg default help text, its startup
+    cross-check and every committed table's header quote
+    `charger_power.ETA_CHG_DEFAULT` and `hil_electrical.ETA_CHG` as if they
+    were one number. They are pinned equal consumer-side
+    (test_hil_electrical.py); mirrored here because it is THIS file's
+    committed-table assertions that silently become vacuous if the two drift."""
+    import charger_power as chg
+    import hil_plant_sim as sim
+    assert float(sim.ETA_CHG) == float(chg.ETA_CHG_DEFAULT)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# H1 (2026-09-02 review): the BACKWARD PASS must price the charger in the
+# same era the forward pass reports.  solve_dp() billed `P + V_bus*chg_a`
+# unconditionally, so an eta-era solve CHOSE its policy under the old era's
+# 1.764x over-billing and then scored it under the new one.
+# ─────────────────────────────────────────────────────────────────────────
+
+def _dp_replay_problem(eta_chg):
+    return gen.prepare_problem(
+        "ems-dp-replay", hil.SCENARIOS["ems-dp-replay"], soc0=0.7,
+        capacity_ah=5.0, stage_dt=0.1, n_share=41, soc_step=5e-6,
+        run_exit=58.0, charger_accounting="physical", eta_chg=eta_chg)
+
+
+def test_backward_pass_prices_the_charger_in_the_solved_era_at_lambda_3_5():
+    """At LAMBDA_TERM 3.5 the two eras' policies DIFFER, which is what makes
+    this a real regression rather than a restatement.
+
+    Measured (2026-09-02, and these are the review's own figures): the old era
+    admits 0 charge stages and burns 0.012521819 g; the eta era admits 157 --
+    every stage its mask allows -- and burns 0.015344009 g while ending
+    0.000889 SoC higher.  Before the fix the eta-era solve returned the OLD
+    era's 0 charge stages, i.e. exactly the old-era policy under a new-era
+    score, so `charge_eta > 0` is the assertion that would have failed."""
+    import numpy as np
+    old = gen.solve_unmatched(_dp_replay_problem(None), lambda_term=3.5)
+    new = gen.solve_unmatched(_dp_replay_problem(0.88), lambda_term=3.5)
+    charge_old = int(np.sum(old.charge))
+    charge_new = int(np.sum(new.charge))
+    assert charge_old == 0
+    assert charge_new > 0, \
+        "the eta-era backward pass is still billing the charger at V_bus"
+    # It charges on EVERY admitted stage: at eta 0.88 the charger's bus draw
+    # is small enough that the terminal-SoC weight dominates.
+    assert charge_new == int(np.sum(_dp_replay_problem(0.88).chg_ok))
+    assert new.soc_final > old.soc_final
+    assert new.h2_g > old.h2_g
+    # Pinned to 9 dp: these two numbers are the whole finding.
+    assert round(old.h2_g, 9) == 0.012521819
+    assert round(new.h2_g, 9) == 0.015344009
+
+
+def test_old_era_backward_pass_charge_cost_is_exactly_the_bus_expression():
+    """The fix must be a NO-OP in the old era, which is what keeps the three
+    committed old-era fixtures byte-identical: charger_bus_power_w() returns
+    `V_bus * chg_a` exactly (not a rounded reconstruction of it) when the era
+    resolves to None."""
+    import charger_power as chg
+    v_bus, chg_a, v_pack = 15.93741, 0.8, 7.9241
+    assert chg.charger_bus_power_w(chg_a, v_bus, v_pack, None) == v_bus * chg_a

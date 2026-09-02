@@ -1064,6 +1064,48 @@ run would not start at the requested offset at all.
 > `max_continuous_ticks` and `edge_count_between` — which bound the same
 > property without claiming to know when the transitions happen.
 
+### 3.2.3c The MPC strategies — `mpc-det` and `mpc-sto`
+
+Two strategies added 2026-09-02 run a governor-aware receding-horizon plan over
+the pack state of charge: 20 stages at 1 Hz, a prediction model that carries the
+firmware's own share governor, and a control that is exactly the two energy
+fields of the 22-byte command packet. The full design, its adjudication and its
+evaluation plan are `docs/modeling/mpc_design_20260901.md` and
+`docs/modeling/mpc_design_20260901/adjudication.md`; the four scenarios that
+drive them are `ems-mpc`, `ems-mpc-sto`, `ems-mpc-cross` and `ems-ftp75-mpc`
+(§6.1 of `docs/HIL_SCENARIOS.md`). Three points matter at the console.
+
+1. **`mpc-det` reads the scenario's speed profile as PREVIEW.** No Raspberry Pi
+   has that, so a result from it must never be reported as causal. `mpc-sto`
+   replaces the preview with the demand transition matrix's conditional mean and
+   is causal, but no stimulus in this suite is a draw from that matrix, so it is
+   registered `frontier_eligible: False`.
+2. **An MPC run is not bit-reproducible.** The planner's search is wall-clock
+   bounded, so a loaded host explores fewer candidates. Never put an MPC run in
+   a repeatability ledger. Each registered leg declares
+   `mpc_max_candidates` = 343 — the full enumeration at the shipped ladder, so
+   the cap removes the clock from the candidate count without removing a
+   candidate — and `--mpc-max-candidates N` overrides it. The roll-table
+   slicing and the board itself remain non-deterministic.
+3. **`--mpc-horizon`, `--mpc-share-band`, `--mpc-share-levels`,
+   `--mpc-budget-ms`, `--mpc-roll-budget-ms`, `--mpc-terminal-price` and
+   `--mpc-h2-map`** override the controller. Every one defaults to the shipped
+   design, so a scenario's `ems` key alone reproduces it, and every resolved
+   value lands in the sidecar's `config.mpc` block whether it came from a flag or
+   from the default.
+
+⚠️ Gate 1 of the design's offline evaluation FAILS as shipped: the prediction
+surrogate's delivered-share error on the `ems-soc-band` stimulus is mean
+0.0097 / max 0.25000 against a 5e-03 acceptance, worst on `open_feedforward`
+stages. The strategy ships with that recorded; the first campaign is the
+calibration reading for `mpc_share_pred_err`, whose suite band is 0.30.
+
+Watch three CSV columns, blank on every non-MPC run: `mpc_solve_ms`,
+`mpc_share_pred_err` and `mpc_budget_hit`. The last is the one to read first — a
+run whose budget expires often is commanded by a shifted incumbent rather than
+by a fresh plan. That command is still feasible and was validated one second
+earlier, so an expiry is a warning about search depth and not about the command.
+
 ### 3.2.4 Comparing EMS strategies
 
 Run `ems-soc-band` (causal heuristic), `ems-sdp` (causal, optimal by

@@ -200,7 +200,8 @@ class WalkResult:
 # The reconciliation is never silent: when it fires, ``walk()`` records which
 # scenarios it substituted for in ``WalkResult.notes``.
 # ─────────────────────────────────────────────────────────────────────────────
-_SIM_SOC_BAND_DRAIN_SCENARIOS = ("ems-soc-band", "ems-dp-replay", "ems-sdp")
+_SIM_SOC_BAND_DRAIN_SCENARIOS = ("ems-soc-band", "ems-dp-replay", "ems-sdp",
+                                 "ems-mpc", "ems-mpc-sto")
 _GEN_DRAIN_FALLBACK = ("ems-soc-band", "ems-dp-replay")
 
 
@@ -292,6 +293,43 @@ def _instantiate(sim, strategy_name: str, scenario: str, meta,
         kwargs = {}
     elif isinstance(registered, sim.DpReplayStrategy):
         policy = sim.DpReplayStrategy(**kwargs)
+        kwargs = {}
+    elif isinstance(registered, sim._MpcProxy):
+        # THE MPC (2026-09-02).  Re-instantiated for the reason every branch
+        # above is: the registry holds ONE lazy proxy per name, and a walk that
+        # bound the shared one would leave a built planner, a preview and a
+        # shadow-governor state behind for the next caller — including, in a
+        # test session, for `hil_plant_sim.main()`.  Constructed through the
+        # module's own factory so the variant follows the NAME, exactly as the
+        # simulator's proxy does.
+        #
+        # ⚠️ THE WALK CANNOT SCORE THIS STRATEGY.  The controller's prediction
+        # model is this walk's own plant, which is the inverse-crime condition
+        # (design document section 7.1).  A walk shows that the plumbing works
+        # and that the plan is self-consistent; the live campaign evaluates it.
+        #
+        # ⚠️ THE SEARCH IS WALL-CLOCK BUDGETED.  `budget_ms` / `roll_budget_ms`
+        # bound the planner by real time, so a loaded host explores fewer
+        # candidates and a walk is NOT bit-reproducible across machines unless
+        # the caller raises both.  The module offers no inline/no-slicing mode
+        # to select instead, so the lever is the budget itself: pass
+        # `strategy_kwargs={"budget_ms": ..., "roll_budget_ms": ...}` (the Gate-2
+        # comparison does).  Left at the defaults, the walk reproduces the
+        # SHIPPED controller and its host-dependence is the shipped
+        # controller's own.
+        #
+        # THE SCENARIO'S DETERMINISTIC CANDIDATE CAP is applied here for the
+        # same reason `hil_plant_sim.mpc_configure_kwargs()` applies it: a walk
+        # run under a different search bound than the campaign leg is a walk of
+        # a different controller, and the Gate-2 bands are read against the
+        # campaign. An explicit `strategy_kwargs["max_candidates"]` wins, and a
+        # scenario that declares none (an ad-hoc walk) keeps the constructor's
+        # own default.
+        import mpc_ems
+        cap = (meta or {}).get("mpc_max_candidates")
+        if cap is not None and "max_candidates" not in kwargs:
+            kwargs["max_candidates"] = int(cap)
+        policy = mpc_ems.make_mpc(strategy_name, **kwargs)
         kwargs = {}
     else:
         # A plain callable (hold-5050, the y-* replays, the harvest stimuli):
@@ -551,8 +589,16 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
             # ADDITIVE signal trace. Inside a charge window chargingControl()
             # holds BT_BUS LOW, so the fuel cell is the single source and also
             # feeds the charger; outside one the stage split applies.
+            # D12: the charger's BUS-side current is the era-dependent
+            # quantity - the pack still receives `chg_a`, but in the eta era
+            # the bus supplies only V_pack*chg_a/(eta*V_bus) of it (a 0.8 A
+            # charge into a 7.9 V pack at eta 0.88 draws 0.45 A from a 15.9 V
+            # bus).  Adding `chg_a` here would over-state the traced I_fc by
+            # the difference.
             if charge_now:
-                trace_i_fc = float(i_total[k]) + chg_a
+                trace_i_fc = float(i_total[k]) + chg_mod.charger_bus_current_a(
+                    chg_a, float(v_bus[k]),
+                    gen.pack_charge_voltage(soc_stage_start, chg_a), eta_chg)
                 trace_i_batt = 0.0
             else:
                 trace_i_fc = stage_share * float(i_total[k])

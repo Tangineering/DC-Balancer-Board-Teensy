@@ -30,9 +30,18 @@ round. It names the model a solve billed the Ag105 under:
 
 - **absent, or null — the 1:1 current-transfer era.** A delivered amp cost a bus
   amp, i.e. `V_bus·i_chg` watts. Every record stored before 2026-09-01 is this
-  era, and every one of them is still reachable: an absent optional field is
-  OMITTED from the canonical key form, so an old-era key is byte-identical to
-  the one the pre-change code computed.
+  era. An absent optional field is OMITTED from the canonical key form, so the
+  `eta_chg` KEY FIELD itself leaves an old-era key byte-identical to the one the
+  pre-change code computed.
+
+  That was not the whole key, and the first version of this round briefly broke
+  it. `eta_chg` also joined `hil_plant_sim.DP_FINGERPRINT_META_KEYS`, and the
+  profile fingerprint IS a key field, so hashing `eta_chg=None` as a LINE moved
+  every pre-existing fingerprint and orphaned all 16 stored records. The
+  fingerprint now applies the SAME omission convention (orchestrator ruling,
+  2026-09-02): a key in `DP_FINGERPRINT_OPTIONAL_KEYS` that resolves to None
+  contributes no line at all. Old-era digests are therefore back where they
+  were and the stored records are reachable again.
 - **a float — the energy-conserving converter.** A delivered amp costs
   `V_pack·i_chg/eta` watts. A new-era record keys differently, which is the
   point: a baseline solved against a different charger is not a baseline for
@@ -40,9 +49,17 @@ round. It names the model a solve billed the Ag105 under:
 
 A run's own value comes off its sidecar meta (`charger_power.resolve_eta_chg`,
 where a missing key is the old era). `prefill --eta-chg` sets it explicitly, and
-`--eta-chg-none` forces the old era; the value also travels inside a
-`--key-fields` object and inside `era_overrides`, which accepts `eta_chg` like
-any other fingerprint key.
+`--eta-chg-none` forces the old era (the two are mutually exclusive and a
+prefill passing both is refused); the value also travels inside a `--key-fields`
+object and inside `era_overrides`, which accepts `eta_chg` like any other
+fingerprint key.
+
+A post-η run keys and FINGERPRINTS separately from a pre-η one: its sidecar
+carries `eta_chg`, so the term is present in its canonical string. `prefill
+--scenario --eta-chg` therefore resolves the era into the fingerprint meta as
+well as into the key field — a live scenario declares no `eta_chg` of its own,
+and fingerprinting the live meta while keying an explicit era would seed a
+record no post-η lookup could ever hit.
 
 ## Provenance
 

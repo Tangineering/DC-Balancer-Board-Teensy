@@ -457,3 +457,148 @@ def test_walk_rejects_an_impossible_efficiency():
 def test_walk_records_the_charger_era_in_its_notes():
     r = ew.walk("soc-band", "ems-soc-band", governor=False, eta_chg=0.88)
     assert any("charger era" in n and "0.88" in n for n in r.notes)
+
+
+def test_traced_i_fc_in_a_charge_window_is_the_era_s_bus_current(capsys):
+    """M1 (2026-09-02 review): the ADDITIVE i_fc trace inside a charge window
+    added `chg_a` itself, which is the OLD era's bus draw. In the eta era the
+    charger draws V_pack*chg_a/(eta*V_bus) from the bus - measurably less - so
+    an eta-era synthesized CSV was over-stating I_fc by the difference.
+
+    Measured on `ems-soc-band` (chg_a 0.8 A, pack ~7.9 V, bus ~15.9 V): the old
+    era adds 0.8 A, the eta era ~0.453 A."""
+    old = ew.walk("soc-band", "ems-soc-band", governor=False, eta_chg=None,
+                  trace=True)
+    new = ew.walk("soc-band", "ems-soc-band", governor=False, eta_chg=0.88,
+                  trace=True)
+    t0, t1 = old.charge_windows[0]
+    idx = [k for k, t in enumerate(old.t) if t0 <= t < t1]
+    assert idx, "the walk opened no charge window to inspect"
+    # The charge current DELIVERED is era-invariant; only the bus draw moves.
+    assert all(old.i_charge[k] == new.i_charge[k] for k in idx)
+    for k in idx:
+        assert new.i_fc[k] < old.i_fc[k]
+        # The old era's addition is exactly the charge current (0.8 A), so
+        # subtracting it recovers the stage's own load current...
+        assert old.i_charge[k] == 0.8
+        i_load = old.i_fc[k] - 0.8
+        # ...and the eta era adds the BUS-side current instead, ~57 % of it.
+        added = new.i_fc[k] - i_load
+        assert 0.40 < added < 0.50
+    # Outside the window the two traces are identical: the era must not leak
+    # into the discharge path.
+    outside = [k for k, t in enumerate(old.t) if not (t0 <= t < t1)]
+    assert all(new.i_fc[k] == old.i_fc[k] for k in outside)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# The MPC branch of _instantiate() (2026-09-02)
+# docs/modeling/mpc_design_20260901.md §8 item 8
+# ─────────────────────────────────────────────────────────────────────────
+def test_mpc_instantiate_returns_a_fresh_strategy_not_the_registry_proxy():
+    """The registry holds ONE lazy proxy per name. A walk that bound it would
+    leave a built planner, a preview and a shadow-governor state behind for the
+    next caller — including for hil_plant_sim.main() in the same session."""
+    import mpc_ems
+    meta = sim.SCENARIOS["ems-mpc"]
+    p = ew._instantiate(sim, "mpc-det", "ems-mpc", meta, None, None)
+    assert isinstance(p, mpc_ems.MpcStrategy)
+    assert p is not sim.EMS_STRATEGIES["mpc-det"]
+    # ...and the registry's proxy is untouched: still unbuilt.
+    assert sim.EMS_STRATEGIES["mpc-det"].impl is None
+    # The variant follows the NAME, exactly as the simulator's proxy does.
+    assert p.variant == "det"
+    q = ew._instantiate(sim, "mpc-sto", "ems-mpc-sto",
+                              sim.SCENARIOS["ems-mpc-sto"], None, None)
+    assert q.variant == "sto"
+
+
+def test_mpc_instantiate_forwards_strategy_kwargs():
+    """The budgets are the only lever a caller has over the search depth (the
+    module offers no inline/no-slicing mode), so they must reach the
+    constructor."""
+    p = ew._instantiate(sim, "mpc-det", "ems-mpc",
+                        sim.SCENARIOS["ems-mpc"], None,
+                        {"horizon": 8, "blocks": (2, 6),
+                         "budget_ms": 50.0, "roll_budget_ms": 5.0})
+    assert p.horizon == 8
+    assert p.blocks == (2, 6)
+    assert p.budget_ms == 50.0
+    assert p.roll_budget_ms == 5.0
+
+
+def test_mpc_instantiate_binds_the_scenario():
+    """`_instantiate()` calls the binder when the strategy has one, so the walk
+    gets a strategy with its preview built — an unbound MpcStrategy raises on
+    its first call rather than inventing a demand model."""
+    p = ew._instantiate(sim, "mpc-det", "ems-mpc",
+                              sim.SCENARIOS["ems-mpc"], None, None)
+    assert p.preview is not None
+    assert p.provenance is not None
+    assert p.provenance["scenario"] == "ems-mpc"
+
+
+def test_mpc_instantiate_applies_the_scenarios_soc_ref_offset():
+    """`mpc_soc_ref_offset` is a BINDING read off `meta` by bind_scenario(), not
+    a constructor kwarg — one quantity, one owner."""
+    p = ew._instantiate(sim, "mpc-det", "ems-mpc-cross",
+                              sim.SCENARIOS["ems-mpc-cross"], None, None)
+    assert p.soc_ref_offset == sim.SDP_CROSS_SOC_REF_OFFSET
+    q = ew._instantiate(sim, "mpc-det", "ems-mpc",
+                              sim.SCENARIOS["ems-mpc"], None, None)
+    assert q.soc_ref_offset == 0.0
+
+
+def test_mpc_instantiate_refuses_a_policy_file():
+    """`mpc-det` bakes no artifact, so a policy file has nowhere to go and must
+    not be silently dropped."""
+    with pytest.raises(TypeError):
+        ew._instantiate(sim, "mpc-det", "ems-mpc",
+                              sim.SCENARIOS["ems-mpc"], None,
+                              {"not_a_constructor_argument": 1})
+
+
+def test_mpc_walk_runs_and_reports_a_pair():
+    """Gate 2's plumbing check. ⚠️ THE WALK CANNOT SCORE THE MPC — its plant IS
+    the controller's prediction model (the inverse-crime condition, design
+    §7.1) — so this asserts only that the walk completes, burns hydrogen and
+    discharges the pack.
+
+    ⚠️ NO TIGHT BAND HERE, and the reason is the round's own measurement: the
+    search is WALL-CLOCK bounded, and raising the budgets from the shipped 12 ms
+    to 1e5 ms moved this walk's h2 total from 0.008517 g to 0.004932 g — a 42 %
+    swing from search depth alone, at a nearly unchanged equivalent-hydrogen
+    total (the deeper plan buys the hydrogen with state of charge). That is why
+    an MPC run is not bit-reproducible and must never enter a repeatability
+    ledger, and why this test brackets an order of magnitude rather than a
+    band. The suite's own +/-25 % band is asserted against the shipped budgets
+    in tools/test_run_hil_suite.py, where it belongs."""
+    r = ew.walk("mpc-det", "ems-mpc", soc0=0.7, governor=True,
+                dv0_v=0.030223)
+    assert r.h2_g > 0.0
+    assert r.delta_soc < 0.0
+    assert 0.002 < r.h2_g < 0.030
+    # Gate 3: the open-loop hold fraction is reported, because a walk whose
+    # commands were not acted on is a property of the hold, not of the policy.
+    assert r.mode_fractions.get("open_hold", 0.0) > 0.0
+
+
+def test_mpc_walk_drain_is_the_soc_band_stimulus_drain():
+    """The B2 defect's regression: `ems-mpc` shares `ems-soc-band`'s stimulus,
+    so its walk must model the SAME demand — a walk missing the 1.0 A drain
+    reports roughly half the hydrogen.
+
+    Asserted on the DEMAND rather than on the hydrogen totals, because the two
+    policies command different splits and the MPC's own total is search-depth
+    dependent (see the test above). The demand is a property of the stimulus
+    alone, so a missing drain shows there and nowhere else."""
+    import gen_dp_ems_table as gen
+    t = 0.5 * (sim.SOC_BAND_DRAIN_START_S + sim.SOC_BAND_DRAIN_END_S)
+    assert (gen.scenario_drain_a("ems-mpc", t)
+            == gen.scenario_drain_a("ems-soc-band", t))
+    assert (gen.scenario_drain_a("ems-mpc-sto", t)
+            == gen.scenario_drain_a("ems-soc-band", t))
+    assert gen.scenario_drain_a("ems-mpc", t) > sim.I_AUX_A
+    # ...and the walk reports no drain-coverage gap for the new names.
+    a = ew.walk("mpc-det", "ems-mpc", soc0=0.7, governor=True)
+    assert not any("AUX LOAD RECONCILED" in n for n in a.notes)

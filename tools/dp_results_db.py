@@ -233,8 +233,19 @@ def fingerprint_parts(scenario, meta):
     _eta = getattr(sim, "dp_eta_chg", None)
     if callable(_eta):
         resolvers["eta_chg"] = _eta
+    # H3 (orchestrator ruling, 2026-09-02): an OPTIONAL key whose resolver
+    # returns None contributes NO LINE at all - the old era is the ABSENCE of
+    # the term, which is what keeps every pre-2026-09-01 digest (and the 16
+    # stored records keyed on one) exactly where it was.  Mirrored from
+    # dp_profile_fingerprint(); `_self_check` in fingerprint_diff() is what
+    # catches a future divergence.
+    optional = frozenset(getattr(sim, "DP_FINGERPRINT_OPTIONAL_KEYS", ()))
+    _resolve = getattr(sim, "_dp_fp_resolve", None)
     for key in sim.DP_FINGERPRINT_META_KEYS:
         val = meta.get(key)
+        if key in optional and callable(_resolve) \
+                and _resolve(key, meta) is None:
+            continue
         if key in resolvers:
             val = resolvers[key](meta)
         if key == "ems_v_profile" and val:
@@ -839,6 +850,15 @@ def load_key_fields(text):
 def _cmd_prefill(args):
     import hil_plant_sim as sim
 
+    # M4(a): the two era flags contradict each other.  `--eta-chg-none` wins
+    # silently in `problem_fields()` below, so a caller who passed both would
+    # get an OLD-era solve while believing they had asked for an eta-era one.
+    if args.eta_chg_none and args.eta_chg is not None:
+        print("[dp_db] --eta-chg and --eta-chg-none are mutually exclusive: "
+              "--eta-chg-none forces the 1:1 current-transfer era, so an "
+              "efficiency alongside it has no meaning", file=sys.stderr)
+        return 2
+
     # EXACT-REPRODUCTION BRANCH: solve exactly the problem the analysis tool
     # reported as uncached, with no reconstruction.
     if args.key_fields:
@@ -879,13 +899,27 @@ def _cmd_prefill(args):
              else args.chg_a)
     targets = [args.soc0 + d for d in _parse_span(args.dsoc_span)]
 
+    # M4(b): the era must reach the FINGERPRINT too, not only the key field.
+    # A live scenario declares no `eta_chg`, so fingerprinting `meta` as-is
+    # always yields the OLD-era digest; a post-2026-09-01 run carries
+    # `eta_chg` on its own sidecar meta and therefore fingerprints
+    # differently. Keying an explicit era while fingerprinting the live meta
+    # produced a record no post-era lookup could ever hit. Resolving the era
+    # INTO the fingerprint meta closes that: an old-era prefill is unchanged
+    # (dp_profile_fingerprint omits the term when it resolves to None).
+    eta_resolved = None if args.eta_chg_none else args.eta_chg
+    fp_meta = dict(meta)
+    if eta_resolved is not None:
+        fp_meta["eta_chg"] = float(eta_resolved)
+    fingerprint = sim.dp_profile_fingerprint(args.scenario, fp_meta)
+
     print("[dp_db] scenario %s, soc0 %.4f, accounting %s, %d target(s)"
           % (args.scenario, args.soc0, args.accounting, len(targets)))
     solved_n = skipped_n = 0
     for target in targets:
         fields = problem_fields(
             args.scenario,
-            profile_fingerprint=sim.dp_profile_fingerprint(args.scenario, meta),
+            profile_fingerprint=fingerprint,
             soc0=args.soc0, capacity_ah=args.capacity_ah,
             charger_accounting=args.accounting, stage_dt=args.stage_dt,
             n_share=args.n_share, soc_step=args.soc_step,
@@ -955,96 +989,6 @@ def main(argv=None):
                    help="auxiliary preload in A (default: the scenario's own)")
     p.add_argument("--chg-a", type=float, default=None,
                    help="Ag105 charge ceiling in A (default: the scenario's)")
-    p.add_argument("--eta-chg", type=float, default=None,
-                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
-                        "Omitted = the 1:1 current-transfer era every "
-                        "pre-2026-09-01 record was solved in; a value keys "
-                        "and solves the energy-conserving converter instead. "
-                        "A run's own value comes off its sidecar meta "
-                        "(charger_power.resolve_eta_chg)")
-    p.add_argument("--eta-chg-none", action="store_true",
-                   help="force the 1:1 current-transfer era even when a "
-                        "scenario or default would supply an efficiency")
-    p.add_argument("--eta-chg", type=float, default=None,
-                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
-                        "Omitted = the 1:1 current-transfer era every "
-                        "pre-2026-09-01 record was solved in; a value keys "
-                        "and solves the energy-conserving converter instead. "
-                        "A run's own value comes off its sidecar meta "
-                        "(charger_power.resolve_eta_chg)")
-    p.add_argument("--eta-chg-none", action="store_true",
-                   help="force the 1:1 current-transfer era even when a "
-                        "scenario or default would supply an efficiency")
-    p.add_argument("--eta-chg", type=float, default=None,
-                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
-                        "Omitted = the 1:1 current-transfer era every "
-                        "pre-2026-09-01 record was solved in; a value keys "
-                        "and solves the energy-conserving converter instead. "
-                        "A run's own value comes off its sidecar meta "
-                        "(charger_power.resolve_eta_chg)")
-    p.add_argument("--eta-chg-none", action="store_true",
-                   help="force the 1:1 current-transfer era even when a "
-                        "scenario or default would supply an efficiency")
-    p.add_argument("--eta-chg", type=float, default=None,
-                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
-                        "Omitted = the 1:1 current-transfer era every "
-                        "pre-2026-09-01 record was solved in; a value keys "
-                        "and solves the energy-conserving converter instead. "
-                        "A run's own value comes off its sidecar meta "
-                        "(charger_power.resolve_eta_chg)")
-    p.add_argument("--eta-chg-none", action="store_true",
-                   help="force the 1:1 current-transfer era even when a "
-                        "scenario or default would supply an efficiency")
-    p.add_argument("--eta-chg", type=float, default=None,
-                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
-                        "Omitted = the 1:1 current-transfer era every "
-                        "pre-2026-09-01 record was solved in; a value keys "
-                        "and solves the energy-conserving converter instead. "
-                        "A run's own value comes off its sidecar meta "
-                        "(charger_power.resolve_eta_chg)")
-    p.add_argument("--eta-chg-none", action="store_true",
-                   help="force the 1:1 current-transfer era even when a "
-                        "scenario or default would supply an efficiency")
-    p.add_argument("--eta-chg", type=float, default=None,
-                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
-                        "Omitted = the 1:1 current-transfer era every "
-                        "pre-2026-09-01 record was solved in; a value keys "
-                        "and solves the energy-conserving converter instead. "
-                        "A run's own value comes off its sidecar meta "
-                        "(charger_power.resolve_eta_chg)")
-    p.add_argument("--eta-chg-none", action="store_true",
-                   help="force the 1:1 current-transfer era even when a "
-                        "scenario or default would supply an efficiency")
-    p.add_argument("--eta-chg", type=float, default=None,
-                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
-                        "Omitted = the 1:1 current-transfer era every "
-                        "pre-2026-09-01 record was solved in; a value keys "
-                        "and solves the energy-conserving converter instead. "
-                        "A run's own value comes off its sidecar meta "
-                        "(charger_power.resolve_eta_chg)")
-    p.add_argument("--eta-chg-none", action="store_true",
-                   help="force the 1:1 current-transfer era even when a "
-                        "scenario or default would supply an efficiency")
-    p.add_argument("--eta-chg", type=float, default=None,
-                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
-                        "Omitted = the 1:1 current-transfer era every "
-                        "pre-2026-09-01 record was solved in; a value keys "
-                        "and solves the energy-conserving converter instead. "
-                        "A run's own value comes off its sidecar meta "
-                        "(charger_power.resolve_eta_chg)")
-    p.add_argument("--eta-chg-none", action="store_true",
-                   help="force the 1:1 current-transfer era even when a "
-                        "scenario or default would supply an efficiency")
-    p.add_argument("--eta-chg", type=float, default=None,
-                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
-                        "Omitted = the 1:1 current-transfer era every "
-                        "pre-2026-09-01 record was solved in; a value keys "
-                        "and solves the energy-conserving converter instead. "
-                        "A run's own value comes off its sidecar meta "
-                        "(charger_power.resolve_eta_chg)")
-    p.add_argument("--eta-chg-none", action="store_true",
-                   help="force the 1:1 current-transfer era even when a "
-                        "scenario or default would supply an efficiency")
     p.add_argument("--eta-chg", type=float, default=None,
                    help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
                         "Omitted = the 1:1 current-transfer era every "

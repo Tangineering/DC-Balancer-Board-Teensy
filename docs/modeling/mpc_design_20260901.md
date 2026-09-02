@@ -721,7 +721,30 @@ names beside them are the anchor.
    0.60 A closed-loop gate; a campaign feeds `mdac_fc`/`mdac_bt` (item 4) and
    should read lower. One uniform ceiling on the conservative side, tightened
    onto the first measurement.
-5. **No `dp_db` entry is prefilled for `ems-ftp75-mpc`.** Its matched solve is a
+5. **Gate 1 FAILS offline, and the round shipped with that recorded.** With
+   the governor roll table actually consulted, the surrogate's
+   delivered-share error on the `ems-soc-band` stimulus is mean 0.0097 and
+   max 0.25000, against section 7.1's 5e-03 acceptance. The worst stages are
+   `open_feedforward`: every 1 Hz re-command that lands in an open-loop stage
+   triggers a governor feedforward slew that neither model represents. The
+   suite's `mpc_share_pred_err` ceiling is 0.30, a first-registration band
+   derived from that offline measurement rather than a widened pin, and the
+   first campaign is its calibration reading. Section 7.1's stated fallback —
+   rolling the full governor on open stages with a reduced candidate set — is
+   the decision that reading informs. A mean-side bound would be the better
+   assertion (the mean is 26x under the max) but `run_hil_suite.py` has no
+   column-mean check kind, and a registration round is not where one is added.
+6. **The four legs declare a deterministic candidate cap.** Each carries
+   `mpc_max_candidates` = `hil_plant_sim.MPC_CAMPAIGN_MAX_CANDIDATES` = 343,
+   which is 7**3 — the FULL enumeration at the shipped ladder and move-block
+   structure, so the cap removes the wall clock's influence on the candidate
+   count without removing a single candidate. `ems_walk._instantiate()`
+   applies the same scenario key, so the Gate-2 table above is walked under
+   the campaign's own search bound. It does NOT make an MPC run
+   bit-reproducible: the roll-table slicing is still wall-clock bounded (that
+   is what the `ems-mpc-cross` −21 % figure above measures) and so is the
+   board.
+7. **No `dp_db` entry is prefilled for `ems-ftp75-mpc`.** Its matched solve is a
    job of tens of minutes and the FTP-75 bound leg's own table is stale, so the
    entry is deferred rather than stored against a stimulus that is about to be
    regenerated.
@@ -737,15 +760,15 @@ works and the plan is self-consistent; they do not score the controller
 | `ems-soc-band` | `soc-band` | 0.012264 | −0.002002 | 0.017146 | 0.118 | 0.250 |
 | `ems-dp-replay` | `dp-replay` | 0.011900 | −0.001936 | 0.016622 | 0.000 | 0.500 |
 | `ems-sdp` | `sdp-v4` | 0.012729 | −0.001600 | 0.016631 | 0.338 | 0.000 |
-| `ems-mpc` | `mpc-det` | 0.005095 | −0.004760 | 0.016705 | 0.338 | 0.250 |
-| `ems-mpc-sto` | `mpc-sto` | 0.008501 | −0.003334 | 0.016633 | 0.010 | 0.167 |
+| `ems-mpc` | `mpc-det` | 0.010429 | −0.002537 | 0.016616 | 0.223 | 0.417 |
+| `ems-mpc-sto` | `mpc-sto` | 0.009313 | −0.002998 | 0.016625 | 0.338 | 0.333 |
 | `ems-mpc-cross` | `mpc-det` | 0.014134 | −0.006007 | 0.028786 | 0.629 | 0.250 |
 | `ems-ftp75-socband` | `soc-band` | 0.041873 | −0.006306 | 0.057254 | 0.097 | 0.250 |
 | `ems-ftp75-sdp` | `sdp-v4` | 0.019918 | −0.014691 | 0.055750 | 0.097 | 0.700 |
 | `ems-ftp75-mpc` | `mpc-det` | 0.023771 | −0.013112 | 0.055751 | 0.020 | 0.333 |
 | `ems-ftp75-dp` | `dp-replay` | — | — | — | — | — |
 
-`cycle61-mpc` reads vs_reference **0.9743** and vs_bound **1.0050**; `ftp75-mpc`
+`cycle61-mpc` reads vs_reference **0.9691** and vs_bound **0.9996**; `ftp75-mpc`
 reads vs_reference **0.9738** and has no vs_bound prediction, because the shipped
 `dp_ems_table_ems-ftp75-dp.csv` carries a stale stimulus fingerprint and refuses
 to walk until it is regenerated. The prediction of section 7.1 held: the
@@ -762,15 +785,15 @@ equivalent-hydrogen total is the search-invariant quantity, and the frontier
 check computes it across runs rather than per run.
 
 The same effect separates the two variants on one stimulus. `mpc-sto`'s pair on
-`ems-mpc-sto` differs from `mpc-det`'s on `ems-mpc` — 0.008501 / −0.003334
-against 0.005095 / −0.004760 — while the two equivalent totals agree to 0.4 %.
+`ems-mpc-sto` differs from `mpc-det`'s on `ems-mpc` — 0.009313 / −0.002998
+against 0.010429 / −0.002537 — while the two equivalent totals agree to 0.05 %.
 The certainty-equivalent demand path and the 90 % overcurrent quantile move the
 plan along the share lever without moving its value, which is the expected
 outcome on a stimulus that is not a draw from the matrix.
 
 The ΔSoC-matched dynamic-programming bound for `ems-mpc` at the walk's own
-terminal state is **0.005060 g** (`tools/dp_db`, key `da5d76a7f0779364`) against
-the walk's 0.005095 g — 0.69 % above the bound, which is the consistency check a
+terminal state is **0.010418 g** (`tools/dp_db`, key `62151bd59b9cd787`) against
+the walk's 0.010429 g — 0.10 % above the bound, which is the consistency check a
 plan is allowed to pass, and not a result about the controller. The
 `ems-mpc-cross` entry is stored at key `e9d9c021b52e763a`.
 
@@ -779,9 +802,9 @@ of each walk spent below the firmware's 0.55 A open-loop drop-out, where the
 commanded share is not acted on. Read it as a caveat on each leg, not as a
 score: `ems-mpc-cross` at **0.629** is two thirds share-blind, so an improvement
 or a regression confined to that region is invisible to any metric
-(section 7.4.3). ⚠️ The two 61 s legs sit on OPPOSITE sides of that line — 0.338
-for `mpc-det` against 0.010 for `mpc-sto` on the identical cycle — because the
-two plans command different splits at the same demand. The two runs are
+(section 7.4.3). ⚠️ The two 61 s legs differ materially on that line — 0.223 for
+`mpc-det` against 0.338 for `mpc-sto` on the identical cycle — because the two
+plans command different splits at the same demand. The two runs are
 therefore not interchangeable evidence about the governor, and a comparison of
 their share-tracking quality is not a comparison of the same experiment.
 

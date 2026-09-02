@@ -59,9 +59,9 @@ def test_build_plan_full_count_40_runs():
     # a skip record still occupies a plan slot, which is what this counts.
     plan = rhs.build_plan(_args())
     # WP-B: +v-bus-sense-offset (the UV-dwell objective's own home)
-    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 62
+    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 66
     kinds = [p["kind"] for p in plan]
-    assert kinds.count("scenario") == 35
+    assert kinds.count("scenario") == 39
     assert kinds.count("replay") == 27
 
 
@@ -73,7 +73,8 @@ def test_build_plan_replay_only():
 
 def test_build_plan_scenarios_only():
     plan = rhs.build_plan(_args(scenarios_only=True))
-    assert len(plan) == 35      # WP-C: +regen-harvest-true; WP-E: +ems-ftp75-dp;
+    assert len(plan) == 39      # WP-C: +regen-harvest-true; WP-E: +ems-ftp75-dp;
+                            # 2026-09-02: +the four MPC legs;
                                 # WP-B: +v-bus-sense-offset;
                                 # WP-1C: +the ems-sdp-alpha-* trio
     assert all(p["kind"] == "scenario" for p in plan)
@@ -5019,6 +5020,11 @@ PI_LIVE_SKIP_SCENARIOS = {
     # the --pi-live gate is ordered FIRST, so under --pi-live they are
     # skip-recorded for the pi-live reason regardless of --with-alpha.
     "ems-sdp-alpha-greedy", "ems-sdp-alpha-cal", "ems-sdp-alpha-charge",
+    # 2026-09-02 (MPC registration): the four MPC legs join via the same
+    # "ems" key ("mpc-det"/"mpc-sto") -- no new code path.
+    # `ems-ftp75-mpc` is in FTP75_SCENARIOS as well and is listed here for
+    # its siblings' reason: the --pi-live gate is ordered FIRST.
+    "ems-mpc", "ems-mpc-sto", "ems-mpc-cross", "ems-ftp75-mpc",
 }
 
 
@@ -5082,8 +5088,9 @@ def test_build_plan_pi_live_total_count_still_40():
     is unchanged under --pi-live, only their kind (executed vs skipped)
     differs."""
     plan = rhs.build_plan(_args(pi_live=True))
-    assert len(plan) == 62      # WP-C: +regen-harvest-true; WP-B: +v-bus-sense-offset;
-                                # WP-1C: +the ems-sdp-alpha-* trio
+    assert len(plan) == 66      # WP-C: +regen-harvest-true; WP-B: +v-bus-sense-offset;
+                                # WP-1C: +the ems-sdp-alpha-* trio;
+                                # 2026-09-02: +the four MPC legs
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -7605,7 +7612,7 @@ def test_ems_ftp75_sdp_joined_the_with_ftp75_gate():
     assert "ems-ftp75-sdp" in rhs.FTP75_SCENARIOS
     # WP-E: `ems-ftp75-dp` (the drive-cycle frontier BOUND) joined 2026-09-01.
     assert "ems-ftp75-dp" in rhs.FTP75_SCENARIOS
-    assert len(rhs.FTP75_SCENARIOS) == 4
+    assert len(rhs.FTP75_SCENARIOS) == 5
     plan = {p["name"]: p for p in rhs.build_plan(_args()) if p["kind"] == "scenario"}
     assert "LONG-CYCLE" in plan["ems-ftp75-sdp"]["skip_reason"]
     plan_on = {p["name"]: p for p in rhs.build_plan(_args(with_ftp75=True))
@@ -8177,7 +8184,8 @@ def test_frontier_registry_shape_and_thresholds():
     point: the 61 s cycle's optimum beats its reference by 14 %, while the
     OFFLINE drive-cycle solve measured the DP at -0.01 % -- a TIE. Applying
     0.98 at drive-cycle scale would fail a correct candidate."""
-    assert [f["id"] for f in rhs.EMS_FRONTIERS] == ["cycle61", "ftp75"]
+    assert [f["id"] for f in rhs.EMS_FRONTIERS] == [
+        "cycle61", "ftp75", "cycle61-mpc", "ftp75-mpc"]
     assert CYCLE61_SPEC["vs_reference_max"] == 0.98
     assert FTP75_SPEC["vs_reference_max"] == 1.02      # does NOT assume a win
     assert FTP75_SPEC["vs_bound_max"] == CYCLE61_SPEC["vs_bound_max"] == 1.06
@@ -8452,7 +8460,7 @@ def test_frontier_ftp75_absent_from_a_plan_contributes_no_record():
                 "metrics": {"final_h2_cum_g": h, "delta_soc": d}}
                for n, h, d in legs.values()]
     recs = rhs.evaluate_ems_frontiers(results)
-    assert [r["id"] for r in recs] == ["cycle61"]
+    assert [r["id"] for r in recs] == ["cycle61", "cycle61-mpc"]
 
 
 def test_frontier_both_tuples_render_when_both_are_present():
@@ -8467,7 +8475,8 @@ def test_frontier_both_tuples_render_when_both_are_present():
                              "candidate": (0.0900, -0.0020),
                              "bound": (0.0899, -0.0020)})
     recs = rhs.evaluate_ems_frontiers(results)
-    assert [r["id"] for r in recs] == ["cycle61", "ftp75"]
+    assert [r["id"] for r in recs] == [
+        "cycle61", "ftp75", "cycle61-mpc", "ftp75-mpc"]
     for r in results:
         r.setdefault("mode", "hifi")
         r.setdefault("electrical_required", "any")
@@ -9521,3 +9530,192 @@ def test_render_report_omits_runtime_row_without_timing():
     omitted rather than rendered with a placeholder runtime."""
     text = rhs.render_report({"settle_s": 1.0}, [])
     assert "Campaign runtime" not in text
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# MPC registration (2026-09-02) — docs/modeling/mpc_design_20260901.md §8
+# ─────────────────────────────────────────────────────────────────────────
+MPC_EXPECTATION_NAMES = ("ems-mpc", "ems-mpc-sto", "ems-mpc-cross",
+                         "ems-ftp75-mpc")
+
+
+def test_mpc_scenarios_have_expectations():
+    """§8 item 9. An EMS scenario with no entry is scored only as `fault-free`,
+    which advertises coverage the run does not have."""
+    for name in MPC_EXPECTATION_NAMES:
+        assert name in rhs.FAULT_EXPECTATIONS, name
+        e = rhs.FAULT_EXPECTATIONS[name]
+        assert e["allow_only"] == 0, "every MPC leg is expected fault-free"
+        assert e["survive_to"]["states"] == {2, 3}
+        assert e["signals_require"]
+
+
+def test_mpc_expectation_bands_are_all_provisional():
+    """§7.3 of the design: EVERY band is provisional on first registration and
+    carries a note, so a reader cannot mistake a walk-derived number for a
+    measurement."""
+    for name in MPC_EXPECTATION_NAMES:
+        for spec in rhs.FAULT_EXPECTATIONS[name]["signals_require"]:
+            if spec.get("name") == "mpc_cadence":
+                continue          # a row census asserts no band
+            assert spec.get("provisional_note"), (name, spec.get("name"))
+
+
+def test_mpc_expectations_are_phase_free():
+    """§7.3, and it is the lesson of the one FAIL of campaign 20260901_024231:
+    the MPC's 1 Hz decision clock is not locked to the stimulus, so no check may
+    assert what happens at a modelled INSTANT.
+
+    Operationally: no MPC spec may carry `not_before_s`, `after_t` or a
+    `max_ticks` ABSENCE bound over a narrow interior window."""
+    for name in MPC_EXPECTATION_NAMES:
+        entry = rhs.FAULT_EXPECTATIONS[name]
+        assert entry.get("not_before_s") is None, name
+        for spec in entry["signals_require"]:
+            assert spec.get("after_t") is None, (name, spec.get("name"))
+            assert "fault_latch_bit" not in spec, (name, spec.get("name"))
+
+
+def test_mpc_expectations_use_the_documented_kinds():
+    """The shapes §7.3 names: value bounds on the commanded share and on
+    hydrogen, an edge census on the charge switch, `min_rows` to de-vacuate, and
+    `column_range_at_least` where the walk predicts motion."""
+    kinds = {}
+    for name in MPC_EXPECTATION_NAMES:
+        kinds[name] = {s.get("name") for s in
+                       rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
+    for name, ks in kinds.items():
+        assert {"mpc_cadence", "mpc_share_floor", "mpc_share_ceiling",
+                "mpc_fc_peak_bounded", "mpc_charge_edge_census",
+                "mpc_h2_accounted", "mpc_h2_bounded", "mpc_solve_bounded",
+                "mpc_share_prediction",
+                "mpc_budget_expiry_bounded"} <= ks, name
+    # THE DEGENERATE-CONSTANT GUARD is on all four legs: every Gate-2 walk moves
+    # the commanded share, so a controller emitting one constant must not pass
+    # any of them.
+    for name, ks in kinds.items():
+        assert "mpc_share_moved" in ks, name
+        spec = [s for s in rhs.FAULT_EXPECTATIONS[name]["signals_require"]
+                if s.get("name") == "mpc_share_moved"][0]
+        assert spec["column"] == "cmd_share_sp"
+        assert spec["column_range_at_least"] > 0.0
+
+
+def test_mpc_h2_bands_bracket_the_gate2_walk():
+    """The band is the walk +/-25 %, the same shape the FTP-75 siblings use, so
+    the walk value must sit strictly inside it."""
+    walks = {"ems-mpc": 0.010429, "ems-mpc-sto": 0.009313,
+             "ems-mpc-cross": 0.014134, "ems-ftp75-mpc": 0.023771}
+    for name, walk in walks.items():
+        specs = {s["name"]: s for s in
+                 rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
+        lo = specs["mpc_h2_accounted"]["min_value"]
+        hi = specs["mpc_h2_bounded"]["max_value"]
+        assert lo < walk < hi, name
+        assert lo == pytest.approx(walk * 0.75, rel=1e-3)
+        assert hi == pytest.approx(walk * 1.25, rel=1e-3)
+        assert specs["mpc_h2_accounted"]["column"] == "h2_cum_g"
+
+
+def test_mpc_diagnostic_columns_are_asserted():
+    """The three CSV columns exist to be READ. `mpc_solve_ms` is the check that
+    the MPC actually drove the run — it is blank for every other strategy, and
+    an unmeasured column fails a `max_value`."""
+    for name in MPC_EXPECTATION_NAMES:
+        specs = {s["name"]: s for s in
+                 rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
+        assert specs["mpc_solve_bounded"]["column"] == "mpc_solve_ms"
+        assert specs["mpc_solve_bounded"]["max_value"] == 20.0
+        assert specs["mpc_share_prediction"]["column"] == "mpc_share_pred_err"
+        b = specs["mpc_budget_expiry_bounded"]
+        assert b["column"] == "mpc_budget_hit"
+        # A masked-integer count, not a float bound: the column is 0/1.
+        assert b["value_mask"] == 0x1 and b["value_equals"] == 0x1
+        # `max_ticks` alone is vacuity-prone, so the entry must justify itself.
+        assert b.get("vacuity_note")
+
+
+def test_mpc_fc_ceiling_is_the_planners_own_margin():
+    """The planner enforces 0.85 x LIMIT_I_FC_MAX on its own plan, so the suite
+    asserts the SAME number — two different values would be two budgets."""
+    assert rhs._MPC_I_FC_CEIL == pytest.approx(0.85 * 1.4, rel=1e-3)
+    for name in MPC_EXPECTATION_NAMES:
+        specs = {s["name"]: s for s in
+                 rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
+        assert specs["mpc_fc_peak_bounded"]["column"] == "I_fc"
+        assert specs["mpc_fc_peak_bounded"]["max_value"] == rhs._MPC_I_FC_CEIL
+
+
+def test_mpc_frontier_tuples_registered():
+    """§8 item 9's second half. Each tuple reuses its sibling's reference, bound
+    and thresholds verbatim; only the CANDIDATE differs."""
+    by_id = {f["id"]: f for f in rhs.EMS_FRONTIERS}
+    assert {"cycle61-mpc", "ftp75-mpc"} <= set(by_id)
+    c61, c61m = by_id["cycle61"], by_id["cycle61-mpc"]
+    assert c61m["roles"]["reference"] == c61["roles"]["reference"]
+    assert c61m["roles"]["bound"] == c61["roles"]["bound"]
+    assert c61m["roles"]["candidate"] == "ems-mpc"
+    assert c61m["vs_reference_max"] == c61["vs_reference_max"] == 0.98
+    assert c61m["vs_bound_max"] == c61["vs_bound_max"] == 1.06
+    f75, f75m = by_id["ftp75"], by_id["ftp75-mpc"]
+    assert f75m["roles"]["reference"] == f75["roles"]["reference"]
+    assert f75m["roles"]["bound"] == f75["roles"]["bound"]
+    assert f75m["roles"]["candidate"] == "ems-ftp75-mpc"
+    assert f75m["vs_reference_max"] == f75["vs_reference_max"] == 1.02
+    for spec in (c61m, f75m):
+        assert spec["provisional_note"]
+        # False for ONE campaign, exactly as `ftp75` carries it: a regression
+        # into a stimulus split should fail only once the tuple is known to
+        # score.
+        assert spec["stimulus_mismatch_exit_affecting"] is False
+
+
+def test_mpc_frontier_candidates_are_frontier_eligible():
+    """A candidate whose strategy is `frontier_eligible: False` would be
+    excluded from its own tuple by construction — the tuple would never
+    assemble."""
+    import hil_plant_sim as sim
+    for fid in ("cycle61-mpc", "ftp75-mpc"):
+        spec = [f for f in rhs.EMS_FRONTIERS if f["id"] == fid][0]
+        for role, scen in spec["roles"].items():
+            assert scen in sim.SCENARIOS, (fid, role, scen)
+            assert sim.ems_frontier_eligible(sim.SCENARIOS[scen]["ems"]), \
+                (fid, role, scen)
+
+
+def test_mpc_frontier_legs_share_one_stimulus():
+    """The precondition the frontier check enforces at run time, asserted here
+    at import: two legs that disagree on a stimulus key measure the stimulus
+    rather than the policy."""
+    for fid in ("cycle61-mpc", "ftp75-mpc"):
+        spec = [f for f in rhs.EMS_FRONTIERS if f["id"] == fid][0]
+        assert rhs.ems_frontier_stimulus_mismatches(spec["roles"]) == [], fid
+
+
+def test_mpc_ftp75_leg_is_behind_the_ftp75_gate():
+    """It is a 350 s cycle, so it pays the same cost gate its siblings do — and
+    it MUST be gated with them, or the `ftp75-mpc` tuple can never assemble."""
+    assert "ems-ftp75-mpc" in rhs.FTP75_SCENARIOS
+    for name in ("ems-mpc", "ems-mpc-sto", "ems-mpc-cross"):
+        assert name not in rhs.FTP75_SCENARIOS
+        assert name not in rhs.ALPHA_SCENARIOS
+
+
+def test_mpc_legs_are_ordinary_runs_in_the_default_plan(tmp_path):
+    """§8: the three short legs run as ORDINARY runs — no new gate — and the
+    FTP-75 one is skipped with a reason until --with-ftp75."""
+    rc = rhs.main(["--out", str(tmp_path), "--list"])
+    assert rc == 0
+    plan = {p["name"]: p for p in rhs.build_plan(
+        _args(out=str(tmp_path)))}
+    for name in ("ems-mpc", "ems-mpc-sto", "ems-mpc-cross"):
+        assert name in plan, name
+        assert not plan[name].get("skip_reason"), name
+    assert "--with-ftp75" in (plan["ems-ftp75-mpc"].get("skip_reason") or "")
+
+
+def test_mpc_ftp75_leg_planned_with_the_gate(tmp_path):
+    plan = {p["name"]: p for p in rhs.build_plan(
+        _args(out=str(tmp_path), with_ftp75=True))}
+    assert not plan["ems-ftp75-mpc"].get("skip_reason")
+    assert plan["ems-ftp75-mpc"]["duration_s"] == 350.0

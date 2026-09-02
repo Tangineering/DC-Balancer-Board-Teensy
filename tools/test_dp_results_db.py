@@ -1204,3 +1204,91 @@ def test_fields_from_problem_carries_the_problems_era():
     p_new = gen.prepare_problem("ems-soc-band", meta, eta_chg=0.88, **kw)
     assert db.fields_from_problem(p_old, 0.698)["eta_chg"] is None
     assert db.fields_from_problem(p_new, 0.698)["eta_chg"] == 0.88
+
+
+# ==========================================================================
+# 2026-09-02 review: H2 (the duplicated --eta-chg registrations) and M4
+# (the two era flags, and the era reaching the FINGERPRINT).
+# ==========================================================================
+
+def test_every_subcommand_parses_h2_the_duplicate_registrations_are_gone():
+    """H2: `--eta-chg` / `--eta-chg-none` were registered ten times on the
+    prefill parser, which raises argparse.ArgumentError at parser BUILD time -
+    i.e. every subcommand of this tool, including `list`, died before doing
+    anything. A parse of each subcommand is the regression."""
+    with pytest.raises(SystemExit) as exc:
+        db.main(["list", "--help"])
+    assert exc.value.code == 0
+    for cmd in ("show", "rebuild-index", "rekey", "prefill"):
+        with pytest.raises(SystemExit) as exc:
+            db.main([cmd, "--help"])
+        assert exc.value.code == 0
+
+
+def test_prefill_refuses_both_era_flags_together(tmp_path, capsys):
+    """M4(a): `--eta-chg-none` wins silently inside problem_fields(), so a
+    caller passing both would get an OLD-era solve while believing they asked
+    for the eta era. It must be a refusal, not a precedence rule."""
+    rc = db.main(["--db-dir", str(tmp_path / "db"), "prefill",
+                  "--scenario", "ems-soc-band", "--soc0", "0.7",
+                  "--dsoc-span=-0.0010:-0.0010:1",
+                  "--eta-chg", "0.88", "--eta-chg-none", "--dry-run"])
+    assert rc == 2
+    assert "mutually exclusive" in capsys.readouterr().err
+
+
+def test_prefill_era_reaches_the_profile_fingerprint(tmp_path, monkeypatch):
+    """M4(b): keying an explicit era while fingerprinting the LIVE scenario
+    meta produced a record no post-eta run could ever hit - a post-eta run's
+    sidecar carries `eta_chg`, so it fingerprints differently. The eta-era
+    prefill must therefore fingerprint over the era-resolved meta, and the
+    old-era one must be unchanged (the term is omitted when it resolves to
+    None)."""
+    pytest.importorskip("numpy")
+    import hil_plant_sim as sim
+    calls = []
+    real = db.problem_fields
+
+    def _spy(*a, **kw):
+        calls.append(kw)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(db, "problem_fields", _spy)
+    base = ["--db-dir", str(tmp_path / "db"), "prefill",
+            "--scenario", "ems-soc-band", "--soc0", "0.7",
+            "--dsoc-span=-0.0010:-0.0010:1",
+            "--stage-dt", "1.0", "--soc-step", "5e-5", "--n-share", "5",
+            "--dry-run"]
+    assert db.main(base) == 0
+    assert db.main(base + ["--eta-chg", "0.88"]) == 0
+    meta = sim.SCENARIOS["ems-soc-band"]
+    old_fp = calls[0]["profile_fingerprint"]
+    new_fp = calls[1]["profile_fingerprint"]
+    assert old_fp == sim.dp_profile_fingerprint("ems-soc-band", meta)
+    assert new_fp == sim.dp_profile_fingerprint(
+        "ems-soc-band", dict(meta, eta_chg=0.88))
+    assert new_fp != old_fp
+
+
+def test_prefill_eta_chg_none_fingerprints_exactly_as_the_bare_default(
+        tmp_path, monkeypatch):
+    """The explicit old-era flag must key and fingerprint identically to the
+    bare default - the old era IS the absence of the term."""
+    pytest.importorskip("numpy")
+    calls = []
+    real = db.problem_fields
+
+    def _spy(*a, **kw):
+        calls.append(kw)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(db, "problem_fields", _spy)
+    base = ["--db-dir", str(tmp_path / "db"), "prefill",
+            "--scenario", "ems-soc-band", "--soc0", "0.7",
+            "--dsoc-span=-0.0010:-0.0010:1",
+            "--stage-dt", "1.0", "--soc-step", "5e-5", "--n-share", "5",
+            "--dry-run"]
+    assert db.main(base) == 0
+    assert db.main(base + ["--eta-chg-none"]) == 0
+    assert calls[0]["profile_fingerprint"] == calls[1]["profile_fingerprint"]
+    assert calls[0]["eta_chg"] is None and calls[1]["eta_chg"] is None

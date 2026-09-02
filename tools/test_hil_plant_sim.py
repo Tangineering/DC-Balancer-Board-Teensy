@@ -1285,6 +1285,11 @@ EXPECTED_SCENARIO_NAMES = {
     "ems-ftp75-sdp", "ems-ftp75-dp", "ems-sdp-cross", "ems-sdp-braking",
     # WP-C (2026-09-01): the regen-fidelity energy-capture scenario.
     "regen-harvest-true",
+    # 2026-09-02 (MPC registration, docs/modeling/mpc_design_20260901.md §8):
+    # the governor-aware receding-horizon controller's four legs. Three are
+    # ORDINARY runs; `ems-ftp75-mpc` is gated behind --with-ftp75 with its
+    # siblings.
+    "ems-mpc", "ems-mpc-sto", "ems-mpc-cross", "ems-ftp75-mpc",
 }
 
 
@@ -1379,6 +1384,13 @@ EXPECTED_SCENARIO_DURATIONS_S = {
     "ems-sdp-braking": 134.0,
     # WP-C.
     "regen-harvest-true": 46.0,
+    # 2026-09-02 (MPC registration): each duration is its shared stimulus's,
+    # by reference -- the two 61 s legs off `ems-soc-band`, the cross leg off
+    # SDP_CROSS_DURATION_S, the FTP-75 leg off FTP75_DURATION_S.
+    "ems-mpc": 61.0,
+    "ems-mpc-sto": 61.0,
+    "ems-mpc-cross": 200.0,
+    "ems-ftp75-mpc": 350.0,
 }
 
 
@@ -1525,6 +1537,16 @@ def test_scenarios_chg_i_ceiling_a_only_on_charge_regen_and_charge_fault():
                       # ceiling off `ems-sdp`'s entry, which reads it off
                       # ems-soc-band's -- the same 0.8 A object.
                       *hil.SDP_ALPHA_SCENARIOS,
+                      # 2026-09-02 (MPC registration): all four MPC legs read
+                      # the ceiling off the same 0.8 A object -- 'ems-mpc' and
+                      # 'ems-mpc-sto' off 'ems-soc-band', 'ems-mpc-cross' off
+                      # 'ems-sdp-cross', 'ems-ftp75-mpc' off
+                      # 'ems-ftp75-socband'. DECLARED and not inert: the MPC
+                      # decides charging for itself, so an undeclared ceiling
+                      # would hand it a 2.5 A lever the legs it is ranked
+                      # against never had.
+                      "ems-mpc", "ems-mpc-sto", "ems-mpc-cross",
+                      "ems-ftp75-mpc",
                       "ems-sdp-cross", "ems-ftp75-sdp", "ems-ftp75-socband"):
             assert meta["chg_i_ceiling_a"] == pytest.approx(0.8)
         elif name == "regen-harvest-true":
@@ -1936,10 +1958,11 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
     # seventh-from-last.
     # mppt_thresh_cnt (fw v24) is appended AFTER the per-mode blocks, in BOTH
     # schemas — it is an observed BOARD field, not a plant quantity.
-    assert header[-9:] == ["mppt_thresh_cnt", "error_code",
+    assert header[-12:] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
-                           "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w"]
-    assert header[-16:-9] == ["soc", "cmd_v_sp", "cmd_share_sp",
+                           "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
+                           "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]
+    assert header[-19:-12] == ["soc", "cmd_v_sp", "cmd_share_sp",
                               "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
                               "cmd_share_sp_raw"]
     assert "elec_substep_hz" not in header
@@ -1950,10 +1973,11 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
 def test_csv_schema_hifi_mode_appends_elec_columns(tmp_path):
     header, _rows = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "hifi", "--duration", "0.02"])
-    assert header[-9:] == ["mppt_thresh_cnt", "error_code",
+    assert header[-12:] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
-                           "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w"]  # fw v24/v25 tail
-    assert header[-18:-9] == ["soc", "elec_substep_hz", "elec_events",
+                           "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
+                           "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]  # fw v24/v25 tail
+    assert header[-21:-12] == ["soc", "elec_substep_hz", "elec_events",
                               "cmd_v_sp", "cmd_share_sp",
                               "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
                               "cmd_share_sp_raw"]
@@ -1987,12 +2011,14 @@ def test_csv_schema_replay_mode_appends_cmd_columns_after_replay_rec(tmp_path):
     # are BLANK on every replay row -- no plant integrator ran -- which the
     # blanking test below pins; here only their POSITION is pinned.
     POWER_TAIL = ["p_mot_w", "p_fc_w", "p_batt_w",
-                  "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w"]
+                  "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
+                  "mpc_solve_ms", "mpc_share_pred_err",
+                  "mpc_budget_hit"]
     assert header == (REPLAY_CSV_HEADER_PIN
                       + ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt",
                          "error_code"] + POWER_TAIL)
     assert header.index("replay_rec") == REPLAY_CSV_HEADER_PIN.index("replay_rec")
-    assert header[-11:] == ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt",
+    assert header[-14:] == ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt",
                             "error_code"] + POWER_TAIL
 
 
@@ -2252,7 +2278,8 @@ def test_replay_commands_csv_header_cmd_columns_after_replay_rec(tmp_path):
                       + ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt",
                          "error_code", "p_mot_w", "p_fc_w", "p_batt_w",
                          "p_chop_w", "p_aux_w", "p_bal_w",
-                         "p_chg_loss_w"])
+                         "p_chg_loss_w", "mpc_solve_ms",
+                         "mpc_share_pred_err", "mpc_budget_hit"])
     assert header.index("replay_rec") == REPLAY_CSV_HEADER_PIN.index("replay_rec")
 
 
@@ -2268,7 +2295,8 @@ def test_replay_plain_csv_header_unchanged_cmd_columns_blank(tmp_path):
                       + ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt",
                          "error_code", "p_mot_w", "p_fc_w", "p_batt_w",
                          "p_chop_w", "p_aux_w", "p_bal_w",
-                         "p_chg_loss_w"])
+                         "p_chg_loss_w", "mpc_solve_ms",
+                         "mpc_share_pred_err", "mpc_budget_hit"])
     v_sp_idx = header.index("cmd_v_sp")
     share_sp_idx = header.index("cmd_share_sp")
     assert rows, "sanity"
@@ -2577,10 +2605,11 @@ def test_m3_hifi_with_csv_creates_events_sidecar(tmp_path):
     # SDP round) is appended after THAT, and cmd_share_sp_raw (2026-08-31
     # ledger fix queue) is appended after THAT -- so elec_events is now
     # seventh-from-last, not third-from-last.
-    assert header[-9:] == ["mppt_thresh_cnt", "error_code",
+    assert header[-12:] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
-                           "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w"]  # fw v24/v25 tail
-    assert header[-15:-9] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
+                           "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
+                           "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]  # fw v24/v25 tail
+    assert header[-18:-12] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
                              "h2_cum_g", "h2_sdp_cum_g", "cmd_share_sp_raw"]
     # Resolved BY NAME rather than by a negative index: the fw v24 column
     # shifted every from-the-end offset by one, which is exactly the breakage
@@ -3153,10 +3182,11 @@ def test_pi_live_csv_cmd_columns_blank(tmp_path):
     # cmd_share_sp, and cmd_share_sp_raw (2026-08-31 ledger fix queue) is now
     # the last column in simulated-plant mode -- blank here too, since no SDP
     # policy drives a --pi-live run (no commander is even constructed).
-    assert header[-9:] == ["mppt_thresh_cnt", "error_code",
+    assert header[-12:] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
-                           "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w"]  # fw v24/v25 tail
-    assert header[-15:-9] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
+                           "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
+                           "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]  # fw v24/v25 tail
+    assert header[-18:-12] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
                              "h2_cum_g", "h2_sdp_cum_g", "cmd_share_sp_raw"]
     v_idx, share_idx = header.index("cmd_v_sp"), header.index("cmd_share_sp")
     raw_idx = header.index("cmd_share_sp_raw")
@@ -7028,7 +7058,7 @@ def test_frontier_roles_are_the_ruled_ones():
     registered for COMPARABILITY, off the frontier; `sdp-sweep` plays alpha
     sweep points that sit outside the admission windows by design."""
     eligible = {n for n in hil.EMS_STRATEGIES if hil.ems_frontier_eligible(n)}
-    assert eligible == {"soc-band", "dp-replay", "sdp-v4"}
+    assert eligible == {"soc-band", "dp-replay", "sdp-v4", "mpc-det"}
     for demoted in ("sdp-v2", "sdp-v3", "sdp-sweep"):
         assert hil.ems_frontier_eligible(demoted) is False, demoted
         # A non-frontier role must SAY WHICH KIND it is -- the three are
@@ -7887,11 +7917,12 @@ def test_csv_header_carries_h2_sdp_cum_g_at_expected_position(tmp_path):
         tmp_path, ["--scenario", "steady", "--electrical", "simple", "--duration", "0.02"])
     # cmd_share_sp_raw (2026-08-31 ledger fix queue) is now appended after
     # h2_sdp_cum_g, so h2_sdp_cum_g is no longer the last column.
-    assert header[-9:] == ["mppt_thresh_cnt", "error_code",
+    assert header[-12:] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
-                           "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w"]  # fw v24/v25 tail
-    assert header[-10] == "cmd_share_sp_raw"
-    assert header[-13:-9] == ["h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
+                           "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
+                           "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]  # fw v24/v25 tail
+    assert header[-13] == "cmd_share_sp_raw"
+    assert header[-16:-12] == ["h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
                               "cmd_share_sp_raw"]
 
 
@@ -8179,7 +8210,7 @@ def test_csv_mppt_thresh_cnt_blank_before_the_first_frame_then_populated(
     header, rows = _run_scripted_csv(tmp_path, monkeypatch, frames,
                                      duration=0.1, port=58961)
     idx = header.index("mppt_thresh_cnt")
-    assert idx == len(header) - 9      # appended; error_code + 7 power cols after
+    assert idx == len(header) - 12     # appended; error_code + 7 power + 3 mpc cols after
     assert rows[0][idx] == ""                          # no frame yet
     assert rows[-1][idx] == "19"
     # 255 is written as 255, not blanked: "external-resistor mode / never
@@ -8218,7 +8249,7 @@ def test_csv_error_code_blank_before_the_first_frame_then_populated(
     header, rows = _run_scripted_csv(tmp_path, monkeypatch, frames,
                                      duration=0.1, port=58971)
     idx = header.index("error_code")
-    assert idx == len(header) - 8      # appended; 7 power columns after
+    assert idx == len(header) - 11     # appended; 7 power + 3 mpc columns after
     assert rows[0][idx] == ""                           # no frame yet
     assert rows[-1][idx] == "16"                        # 0x10 ERR_HIL_STALE
 
@@ -9022,7 +9053,12 @@ def test_preload_tripwire_ftp75_legs_are_exactly_the_non_exempt_set():
     declaring = {name for name, meta in hil.SCENARIOS.items()
                 if meta.get("aux_preload_a") is not None}
     assert declaring == _Y_B30_EXEMPT_NAMES | {
-        "ems-ftp75-5050", "ems-ftp75-socband", "ems-ftp75-sdp", "ems-ftp75-dp"}
+        "ems-ftp75-5050", "ems-ftp75-socband", "ems-ftp75-sdp", "ems-ftp75-dp",
+        # 2026-09-02: the fifth FTP-75 leg. It declares the key at
+        # FTP75_PRELOAD_A (0.0) exactly as its four siblings do, which is what
+        # keeps the drive-cycle frontier's stimulus-coherence precondition
+        # satisfied by construction rather than by whitelist.
+        "ems-ftp75-mpc"}
 
 
 # ── Requirement 2: sidecar aux_preload_a correctness ────────────────────────
@@ -9265,19 +9301,19 @@ def test_power_balance_csv_header_tail_both_schemas(tmp_path):
     sim_header, _ = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "simple",
                    "--duration", "0.02"], name="sim.csv")
-    assert sim_header[-7:] == ["p_mot_w", "p_fc_w", "p_batt_w",
+    assert sim_header[-10:] == ["p_mot_w", "p_fc_w", "p_batt_w",
                                "p_chop_w", "p_aux_w", "p_bal_w",
-                               "p_chg_loss_w"]
-    assert sim_header[-9:-7] == ["mppt_thresh_cnt", "error_code"]
+                               "p_chg_loss_w", "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]
+    assert sim_header[-12:-10] == ["mppt_thresh_cnt", "error_code"]
 
     blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
     replay_header, _ = _run_main_csv(
         tmp_path, ["--replay", blg_path, "--duration", "0.02"],
         name="replay.csv")
-    assert replay_header[-7:] == ["p_mot_w", "p_fc_w", "p_batt_w",
+    assert replay_header[-10:] == ["p_mot_w", "p_fc_w", "p_batt_w",
                                   "p_chop_w", "p_aux_w", "p_bal_w",
-                                  "p_chg_loss_w"]
-    assert replay_header[-9:-7] == ["mppt_thresh_cnt", "error_code"]
+                                  "p_chg_loss_w", "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]
+    assert replay_header[-12:-10] == ["mppt_thresh_cnt", "error_code"]
     # Every established replay-schema index is unchanged: replay_rec keeps
     # its documented position, and the pinned prefix matches byte-for-byte.
     assert replay_header[:len(REPLAY_CSV_HEADER_PIN)] == REPLAY_CSV_HEADER_PIN
@@ -9745,3 +9781,320 @@ def test_regen_harvest_is_not_sourced_from_the_bus():
     leak = on_h["bus"] - off_h["bus"]
     assert 0.0 <= leak <= 0.15, leak
     assert leak < 0.12 * on_h["chg_in"], "bus-sourced fraction of the harvest"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# MPC registration (2026-09-02) — docs/modeling/mpc_design_20260901.md §8
+# ─────────────────────────────────────────────────────────────────────────
+MPC_SCENARIOS = ("ems-mpc", "ems-mpc-sto", "ems-mpc-cross", "ems-ftp75-mpc")
+
+
+def test_mpc_strategies_registered_in_both_registries():
+    """§8 item 1. The two names exist, in BOTH registries, with the roles the
+    adjudication fixed: `mpc-det` frontier-eligible, `mpc-sto` not and carrying
+    a role note that says why."""
+    for name in ("mpc-det", "mpc-sto"):
+        assert name in hil.EMS_STRATEGIES
+        assert name in hil.EMS_STRATEGY_META
+        assert hil.EMS_STRATEGY_META[name]["policy_file"] is None
+    assert hil.EMS_STRATEGY_META["mpc-det"]["frontier_eligible"] is True
+    assert hil.EMS_STRATEGY_META["mpc-sto"]["frontier_eligible"] is False
+    # A non-frontier strategy must SAY what role it plays instead; the import
+    # guard checks the flag's type, not that an ineligible name explains itself.
+    assert "ROLE:" in hil.EMS_STRATEGY_META["mpc-sto"]["role_note"]
+    assert hil.MPC_STRATEGY_NAMES == frozenset({"mpc-det", "mpc-sto"})
+
+
+def test_mpc_registration_is_lazy():
+    """§8 item 1's WHOLE POINT: importing this module must not import mpc_ems
+    (which imports THIS module back) and must not touch the disk.
+
+    Asserted on the registry's stored objects rather than on sys.modules, which
+    another test in the session may already have populated: an `_MpcProxy` with
+    `impl is None` has provably done neither."""
+    for name in ("mpc-det", "mpc-sto"):
+        proxy = hil.EMS_STRATEGIES[name]
+        assert isinstance(proxy, hil._MpcProxy)
+        assert proxy.name == name
+        # `impl` is set only by _build(), which is where the import happens.
+        assert proxy.impl is None, (
+            "the registry's %r proxy was BUILT at import time; the lazy "
+            "registration exists so `import hil_plant_sim` costs no mpc_ems "
+            "import and no TPM read" % name)
+        assert proxy.provenance is None
+
+
+def test_mpc_proxy_bind_signature_matches_the_startup_hook():
+    """main() calls the generic binder BY NAME with `electrical_mode` and
+    `args`. A proxy that did not accept both would be a TypeError at campaign
+    time, i.e. after the operator has committed the board."""
+    import inspect
+    sig = inspect.signature(hil._MpcProxy.bind_scenario)
+    assert {"scenario", "meta", "electrical_mode", "args"} <= set(sig.parameters)
+
+
+def test_mpc_scenarios_registered_and_share_their_stimulus_objects():
+    """§8 item 2. Every leg reuses an EXISTING stimulus object, so no new
+    stimulus is validated in the same campaign as a new controller."""
+    for name in MPC_SCENARIOS:
+        assert name in hil.SCENARIOS, name
+        assert hil.SCENARIOS[name]["ems"] in hil.MPC_STRATEGY_NAMES
+        assert hil.SCENARIOS[name]["electrical"] == "any"
+    band = hil.SCENARIOS["ems-soc-band"]
+    for name in ("ems-mpc", "ems-mpc-sto"):
+        s = hil.SCENARIOS[name]
+        # THE SAME LIST OBJECT, not an equal copy — the frontier's
+        # stimulus-coherence precondition is written against these three legs.
+        assert s["ems_v_profile"] is band["ems_v_profile"]
+        assert s["duration_s"] == band["duration_s"]
+        assert s["chg_i_ceiling_a"] == band["chg_i_ceiling_a"] == 0.8
+    cross = hil.SCENARIOS["ems-mpc-cross"]
+    assert cross["ems_v_profile"] is hil.SCENARIOS["ems-sdp-cross"]["ems_v_profile"]
+    assert cross["mpc_soc_ref_offset"] == hil.SDP_CROSS_SOC_REF_OFFSET
+    ftp = hil.SCENARIOS["ems-ftp75-mpc"]
+    assert ftp["ems_v_profile"] is hil.FTP75_PROFILE
+    assert ftp["aux_preload_a"] == hil.FTP75_PRELOAD_A == 0.0
+    assert ftp["ems_run_exit_s"] == hil.FTP75_RUN_EXIT_S
+    assert ftp["chg_i_ceiling_a"] == 0.8
+
+
+def test_mpc_drain_whitelist_covers_the_shared_stimulus_legs_only():
+    """§8 item 3, and the B2 defect of 2026-09-01 that item exists to prevent.
+
+    The two legs that share `ems-soc-band`'s stimulus MUST carry its drain or
+    their modelled demand is halved; `ems-mpc-cross` must NOT, exactly as its
+    `ems-sdp-cross` twin does not — its two cruise levels ARE the stimulus."""
+    names = hil.SOC_BAND_DRAIN_SCENARIO_NAMES
+    assert "ems-mpc" in names and "ems-mpc-sto" in names
+    assert "ems-mpc-cross" not in names
+    assert "ems-sdp-cross" not in names, "the twin's treatment is the reference"
+    assert "ems-ftp75-mpc" not in names
+    # Behavioural, not just declarative: apply_scenario() must actually apply
+    # the 1.0 A drain to `ems-mpc` and not to `ems-mpc-cross`.
+    t = 0.5 * (hil.SOC_BAND_DRAIN_START_S + hil.SOC_BAND_DRAIN_END_S)
+    p_band = hil.Plant()
+    hil.apply_scenario(p_band, "ems-soc-band", t)
+    p_mpc = hil.Plant()
+    hil.apply_scenario(p_mpc, "ems-mpc", t)
+    p_cross = hil.Plant()
+    hil.apply_scenario(p_cross, "ems-mpc-cross", t)
+    assert p_mpc.i_aux == p_band.i_aux > p_cross.i_aux
+
+
+def test_mpc_offline_drain_mirrors_agree_with_the_simulator():
+    """The two mirrors named in the SOC_BAND_DRAIN_SCENARIO_NAMES banner must
+    carry the two MPC legs, or an offline DP baseline for one of them is solved
+    against half its demand.
+
+    NOTE `mpc_ems.SOC_BAND_DRAIN_SCENARIOS` is the THIRD mirror and is asserted
+    by tools/test_mpc_ems.py, not here."""
+    # gen_dp_ems_table imports numpy at module scope; `.venv_hil` has none, so
+    # this one test skips there and runs under miniforge, exactly as
+    # tools/test_gen_dp_ems_table.py does.
+    pytest.importorskip("numpy")
+    import gen_dp_ems_table as gen
+    import ems_walk
+    for name in ("ems-mpc", "ems-mpc-sto"):
+        assert name in gen.SOC_BAND_DRAIN_SCENARIOS
+        assert name in ems_walk._SIM_SOC_BAND_DRAIN_SCENARIOS
+    assert "ems-mpc-cross" not in gen.SOC_BAND_DRAIN_SCENARIOS
+
+
+def test_mpc_soc_ref_offset_key_is_live_only_on_an_mpc_scenario():
+    """The import guard that makes `mpc_soc_ref_offset` a live key rather than a
+    silently-dead one. Its predicate is re-checked here against a synthetic
+    entry, because the shipped registry (correctly) contains no violation."""
+    assert hil.SCENARIOS["ems-sdp-cross"].get("mpc_soc_ref_offset") is None
+    assert hil.SCENARIOS["ems-mpc-cross"]["ems"] in hil.MPC_STRATEGY_NAMES
+    assert "soc-band" not in hil.MPC_STRATEGY_NAMES, (
+        "the guard's predicate must reject a non-MPC strategy carrying the key")
+
+
+# ── §8 item 5: the three CSV columns ────────────────────────────────────────
+def test_mpc_csv_columns_follow_p_chg_loss_w():
+    """APPEND-ONLY, after the seven power columns, so no existing tail offset
+    moves.  Asserted on the writer's own header construction."""
+    src = open(os.path.join(HERE, "hil_plant_sim.py"), encoding="utf-8").read()
+    i = src.index('"p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w"')
+    j = src.index('"mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"')
+    assert i < j, ("the MPC columns must be appended AFTER p_chg_loss_w, or an "
+                   "existing tail offset moves")
+    # ...and they are the LAST append, so nothing sits between the two blocks.
+    assert src.rindex("header_row += [") < j
+    # The row site mirrors the header: three values, blank when no MPC ran.
+    assert 'if mpc_src is None:\n                    row += ["", "", ""]' in src
+
+
+def test_mpc_proxy_diagnostics_are_none_before_a_build():
+    """The three CSV values are read through the proxy, and a proxy that has
+    never been built must yield None for all three — the row then writes BLANK,
+    which is the honest reading of `no MPC drove this run`."""
+    proxy = hil._MpcProxy("mpc-det")
+    assert proxy.solve_ms_last is None
+    assert proxy.share_pred_err is None
+    assert proxy.budget_hit_last is None
+    assert proxy.timing() is None
+    assert proxy.summary_line() is None
+
+
+# ── §8 items 6-7: the sidecar block and the flags ──────────────────────────
+def _mpc_ns(**over):
+    import argparse
+    base = dict(mpc_horizon=None, mpc_share_band=None, mpc_share_levels=None,
+                mpc_budget_ms=None, mpc_roll_budget_ms=None,
+                mpc_terminal_price=None, mpc_h2_map=None,
+                mpc_max_candidates=None)
+    base.update(over)
+    return argparse.Namespace(**base)
+
+
+def test_mpc_configure_kwargs_defaults_to_the_shipped_design():
+    """Every `--mpc-*` flag defaults to None and every None is DROPPED, so an
+    untouched command line reproduces the shipped controller exactly. That is
+    the property that makes a scenario's `ems` key alone reproducible."""
+    # `{}` on a scenario that declares no MPC key at all...
+    assert hil.mpc_configure_kwargs(_mpc_ns(), {}) == {}
+    # ...and on a registered leg, ONLY the deterministic candidate cap, which is
+    # a scenario declaration rather than a controller default.
+    assert hil.mpc_configure_kwargs(_mpc_ns(), hil.SCENARIOS["ems-mpc"]) == {
+        "max_candidates": hil.MPC_CAMPAIGN_MAX_CANDIDATES}
+    # The scenario's own SoC placement is NOT smuggled in here: the strategy's
+    # bind_scenario() reads it off `meta`, so passing it as a constructor kwarg
+    # too would give one quantity two owners.
+    assert "soc_ref_offset" not in hil.mpc_configure_kwargs(
+        _mpc_ns(), hil.SCENARIOS["ems-mpc-cross"])
+
+
+def test_mpc_campaign_legs_all_declare_the_deterministic_cap():
+    """An MPC leg without `mpc_max_candidates` is wall-clock bounded, so two
+    runs of it explore different candidate sets and the leg is not even
+    self-comparable. The import guard refuses that; this pins the VALUE and the
+    reason 343 is the number."""
+    for name in MPC_SCENARIOS:
+        assert (hil.SCENARIOS[name]["mpc_max_candidates"]
+                == hil.MPC_CAMPAIGN_MAX_CANDIDATES == 343)
+    # 343 = 7**3: the FULL enumeration at the shipped 7-level ladder over three
+    # move blocks, so the cap removes the clock's influence without removing a
+    # single candidate. A `--mpc-share-levels` override breaks that identity and
+    # the constant does not follow it.
+    import mpc_ems
+    assert mpc_ems.SHARE_LEVELS ** len(mpc_ems.MOVE_BLOCKS) == 343
+    # A command-line cap OVERRIDES the scenario's.
+    assert hil.mpc_configure_kwargs(
+        _mpc_ns(mpc_max_candidates=17),
+        hil.SCENARIOS["ems-mpc"])["max_candidates"] == 17
+
+
+def test_mpc_flags_reach_the_constructor_kwargs():
+    kw = hil.mpc_configure_kwargs(
+        _mpc_ns(mpc_horizon=8, mpc_share_band="0.30,0.70", mpc_share_levels=5,
+                mpc_budget_ms=3.0, mpc_roll_budget_ms=0.5,
+                mpc_terminal_price="metric", mpc_h2_map="proxy"), {})
+    assert kw == {"horizon": 8, "share_band": (0.30, 0.70), "share_levels": 5,
+                  "budget_ms": 3.0, "roll_budget_ms": 0.5,
+                  "terminal_price_mode": "metric", "h2_map": "proxy"}
+
+
+def test_mpc_flags_exist_on_the_command_line():
+    """Every flag §8 item 7 names, plus the determinism cap. A flag that is
+    documented and absent is a campaign that cannot be configured."""
+    # The parser is built inside main(), which cannot be called without a
+    # board, so the declaration is asserted on the source.
+    src = open(os.path.join(HERE, "hil_plant_sim.py"), encoding="utf-8").read()
+    for flag in ("--mpc-horizon", "--mpc-share-band", "--mpc-share-levels",
+                 "--mpc-budget-ms", "--mpc-roll-budget-ms",
+                 "--mpc-terminal-price", "--mpc-h2-map",
+                 "--mpc-max-candidates"):
+        assert '"%s"' % flag in src, flag
+
+
+@pytest.mark.parametrize("text", ["0.5", "0.8,0.2", "-0.1,0.5", "0.2,1.5",
+                                  "0.4,0.4", "a,b"])
+def test_parse_share_band_refuses_what_a_ladder_cannot_be_built_on(text):
+    """It RAISES rather than falling back: a silently-defaulted band would run a
+    campaign under the shipped controller while the command line said
+    otherwise."""
+    with pytest.raises(ValueError):
+        hil.parse_share_band(text)
+
+
+def test_parse_share_band_accepts_the_shipped_band():
+    assert hil.parse_share_band("0.25,0.75") == (0.25, 0.75)
+    assert hil.parse_share_band(" 0.15 , 0.85 ") == (0.15, 0.85)
+
+
+def test_mpc_max_candidates_is_refused_when_the_strategy_has_none():
+    """Asking for determinism and not getting it must be LOUD: the run would be
+    wall-clock bounded while the operator believed it reproducible."""
+    ns = _mpc_ns(mpc_max_candidates=64)
+    if hil.mpc_supports_kwarg("max_candidates"):
+        assert hil.mpc_configure_kwargs(ns, {})["max_candidates"] == 64
+    else:
+        with pytest.raises(ValueError, match="max_candidates"):
+            hil.mpc_configure_kwargs(ns, {})
+
+
+def test_mpc_proxy_configure_refuses_after_the_build():
+    proxy = hil._MpcProxy("mpc-det")
+    proxy.impl = object()                 # stand in for a built strategy
+    with pytest.raises(RuntimeError):
+        proxy.configure(horizon=4)
+
+
+def test_mpc_proxy_budget_flag_is_derived_from_the_decision_counters():
+    """The held per-decision flag: BLANK before the first decision, 1 on a
+    decision whose budget expired, 0 on one that did not, and standing between
+    decisions."""
+    class _Impl:
+        decisions = 0
+        budget_hits = 0
+        solve_ms_last = 0.0
+        share_pred_err = None
+
+    proxy = hil._MpcProxy("mpc-det")
+    proxy.impl = imp = _Impl()
+    proxy.observe_decision()
+    assert proxy.budget_hit_last is None          # nothing decided yet
+    imp.decisions = 1                             # a decision, inside budget
+    proxy.observe_decision()
+    assert proxy.budget_hit_last == 0
+    proxy.observe_decision()                      # a tick with no decision
+    assert proxy.budget_hit_last == 0             # ...the flag stands
+    imp.decisions, imp.budget_hits = 2, 1         # a decision that expired
+    proxy.observe_decision()
+    assert proxy.budget_hit_last == 1
+    imp.decisions = 3                             # ...and the next one did not
+    proxy.observe_decision()
+    assert proxy.budget_hit_last == 0
+    imp.decisions, imp.budget_hits = 0, 0         # reset(): a new run
+    proxy.observe_decision()
+    assert proxy.budget_hit_last is None
+
+
+def test_mpc_feedback_view_carries_the_mdac_words():
+    """§8 item 4. Without them the shadow governor's only correction is the
+    measured current split, which identifies the applied ratio ONLY above the
+    0.60 A closed-loop gate — i.e. not in the open-loop hold, which is exactly
+    where a shadow model drifts.
+
+    Asserted on the builder's source: `_fb()` is a closure inside main()'s hot
+    loop and is not reachable without a board."""
+    src = open(os.path.join(HERE, "hil_plant_sim.py"), encoding="utf-8").read()
+    i = src.index("def _fb():")
+    body = src[i:i + 4000]
+    assert '"mdac_fc": obs["mdac_fc"] if obs else None' in body
+    assert '"mdac_bt": obs["mdac_bt"] if obs else None' in body
+    # ADDITIVE: the two are deliberately OUTSIDE the telemetry-equivalent set —
+    # they are not in the v4 packet and are not portable to a real Pi.
+    assert "mdac_fc" not in hil.FB_TELEMETRY_EQUIV_KEYS
+    assert "mdac_bt" not in hil.FB_TELEMETRY_EQUIV_KEYS
+
+
+def test_mpc_sidecar_block_is_written_from_the_provenance():
+    """§8 item 6: `config.mpc` mirrors `config.sdp_policy`'s shape — present
+    only for an MPC run, keyed off the STRATEGY TYPE so a rename cannot silently
+    drop it — and `timing()` is merged into the SAME block at finalize."""
+    src = open(os.path.join(HERE, "hil_plant_sim.py"), encoding="utf-8").read()
+    assert 'mpc_src = ems_policy if isinstance(ems_policy, _MpcProxy) else None' in src
+    assert '**({"mpc": mpc_src.provenance}' in src
+    assert 'meta_doc["config"]["mpc"]["timing"] = _tm' in src

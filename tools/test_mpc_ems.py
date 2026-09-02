@@ -1253,6 +1253,14 @@ def test_the_deterministic_candidate_cap_is_reproducible():
     dec = full.solve(0.60, 0.60, pre, {}, 0.5, [[False] * 20])
     assert dec.candidates == M.SHARE_LEVELS ** len(M.MOVE_BLOCKS)
     assert not dec.cap_hit
+    # A cap EQUAL to the enumeration size cuts nothing and must not flag: the
+    # campaign legs set exactly this value (MPC_CAMPAIGN_MAX_CANDIDATES) so a
+    # run is reproducible without reading as "capped" on every decision.
+    exact = M.Planner(max_candidates=M.SHARE_LEVELS ** len(M.MOVE_BLOCKS),
+                      budget_ms=1e6)
+    dec = exact.solve(0.60, 0.60, pre, {}, 0.5, [[False] * 20])
+    assert dec.candidates == M.SHARE_LEVELS ** len(M.MOVE_BLOCKS)
+    assert not dec.cap_hit
     with pytest.raises(ValueError):
         M.Planner(max_candidates=0)
 

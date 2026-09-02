@@ -1889,7 +1889,11 @@ def test_ems_strategy_role_reads_the_sim_registry():
     """The role is LOOKED UP, never copied -- a second table here could let a
     demonstration run be labelled a frontier one after somebody moved the role
     in hil_plant_sim and not here."""
-    assert hra.ems_strategy_role("sdp-v3") == "frontier"
+    # sdp-v4 is the eta-era frontier law (2026-09-02); sdp-v3 was demoted to
+    # the old-era demonstration role and is retained for comparability.
+    assert hra.ems_strategy_role("sdp-v4") == "frontier"
+    assert hra.ems_strategy_role("sdp-v3") == "demonstration"
+    assert hra.ems_strategy_role("mpc-det") == "frontier"
     assert hra.ems_strategy_role("soc-band") == "frontier"
     assert hra.ems_strategy_role("dp-replay") == "frontier"
     assert hra.ems_strategy_role("sdp-v2") == "demonstration"

@@ -209,6 +209,13 @@ D12. ALPHA IS CALIBRATED AGAINST BOTH LEVERS, NOT ONE  (2026-09-01,
     *This is what separates sdp_policy_v3.json from v2, and it is the only
     decision in this file that was shipped WRONG and then corrected.*
 
+    ERA QUALIFIER (read D13 first if the artifact in hand carries an
+    `eta_chg`): EVERY lever number in this decision - 0.2089864, the 0.1946
+    bound, the 0.1629624 alpha, the (0.1110, 0.2393) window and the
+    "rejected by 47 %" margin - is an OLD-ERA (1:1 current-transfer) figure.
+    D13 restates each of them for the energy-conserving era; the ARGUMENT
+    below is era-independent, the NUMBERS are not.
+
     THE DEFECT.  v1/v2 shipped alpha = 0.2569444 from D2's marginal-rate
     derivation.  That derivation preserves a SHARE-AXIS invariant carried over
     from SDP_EnergyManagement2.m - and the MATLAB source HAS NO CHARGE
@@ -298,7 +305,7 @@ D13. THE CHARGER HAS TWO ERAS, AND EVERY LEVER NUMBER ABOVE BELONGS TO ONE
         new:  L_chg = 1/(k * V_pack/eta  * C_As) = eta * L_share
                                                  = 0.3963964 SoC/g at eta 0.88
 
-    The new form is exact and pleasing: the charge lever is the share lever
+    The new form is exact: the charge lever is the share lever
     times the converter efficiency, whatever the pack, the bus or the capacity
     do, because BOTH levers now bill at the pack voltage and differ only by
     the conversion loss.  The two levers are 1/eta = 13.64 % apart where they
@@ -312,7 +319,12 @@ D13. THE CHARGER HAS TWO ERAS, AND EVERY LEVER NUMBER ABOVE BELONGS TO ONE
         weaker one - now STRUCTURALLY, because the mean of two levers that
         differ only by eta always lands between them.  At eta 0.88 that is
         alpha = 0.1183264, an admission bound of 0.422560 SoC/g, and charging
-        is rejected by 6.2 % of lever rather than by 47 %.
+        is rejected by 6.2 % of lever rather than by 47 %.  That 6.2 % is
+        CONVENTION-FREE: under this mode the charge lever clears its bound by
+        exactly sqrt(eta_chg) = 0.93808, in which V_pack, V_bus and the
+        capacity all cancel, so the flat-nominal/OCV pack-voltage gap (M3 at
+        V_PACK_NOMINAL_V) moves the alpha LEVEL by 7.08 % but leaves this
+        margin untouched.
       * `charge-edge` (new) places alpha just inside the WORSE lever's
         admission window - alpha = (1-gamma)/L_chg * (1 + 1e-3) = 0.1262625 -
         so BOTH levers clear and charging is admitted ENDOGENOUSLY.  The
@@ -467,6 +479,20 @@ BATT_CAPACITY_AH = 5.0
 # 2S nominal terminal voltage.  D6 of gen_dp_ems_table.py models the full
 # 9-point LIPO_OCV curve; this solver uses the flat nominal because the policy
 # is solved over a 0.55-0.65 SoC window across which that curve moves ~2 %.
+#
+# M3 - THE CONVENTION GAP WITH THE DP GENERATOR, and why it does not move the
+# eta-era charge VERDICT.  gen_dp_ems_table.pack_charge_voltage() bills the
+# charger at the pack's TERMINAL voltage while charging, OCV(soc) + chg_a*rs,
+# which at soc 0.7 / 0.8 A is 7.924 V - 7.08 % above this flat nominal.  In
+# the OLD era the gap reached the levers only through V_pack in L_share
+# (0.39 %); in the eta era BOTH levers bill at the pack, so it moves the alpha
+# LEVEL by the same 7.08 % (alpha = 0.126706 under the generator's convention
+# against 0.118326 here).  It does NOT move ADMISSION: under --alpha-mode
+# lever the charge lever clears its bound by exactly sqrt(eta_chg) - the pack
+# voltage, the bus voltage and the capacity all cancel - so "charging is
+# rejected by 6.2 % of lever" at eta 0.88 is CONVENTION-FREE and holds under
+# either pack model.  TODO(calibrate): adopt the generator's OCV+i*rs
+# convention here if an alpha LEVEL comparison is ever needed.
 V_PACK_NOMINAL_V = 7.4
 
 # Measured no-load bus intercept, hil_plant_sim.py:249 (V_BUS_DROOP_V0 15.95).
@@ -566,6 +592,9 @@ EMS_LEVER_SHARE_SOC_PER_G = 0.412
 # and 20260901_000816 (the offline figure was 0.169; 0.2364 is the marginal
 # rate the two campaigns bracket).  The Ag105 is the ~1.74x WORSE lever, which
 # is the whole finding.
+# OLD-ERA MEASUREMENT: both campaigns ran the 1:1 current-transfer plant, so
+# this number is billed at V_bus.  measured_levers() projects it onto whatever
+# era is asked for; never use it unprojected in an eta-era comparison (D13).
 EMS_LEVER_CHARGE_SOC_PER_G = 0.2364
 
 # Full-size reference numbers, used ONLY by the alpha derivation below.
@@ -586,7 +615,14 @@ mean of the two control levers' admission thresholds,
 with both levers computed from THIS SCRIPT'S OWN constants as SoC per gram:
 
     L_share = 1 / (k * V_pack * C_As)      k = 1/(eta_fc * Q_LHV)  [g/J]
-    L_chg   = 1 / (k * V_bus  * C_As)      C_As = capacity_Ah * 3600
+    L_chg   = 1 / (k * V_bill * C_As)      C_As = capacity_Ah * 3600
+
+where V_bill is the CHARGER ERA's billing voltage (D13) and is the only
+era-dependent term: V_bus in the OLD 1:1 current-transfer era, V_pack/eta_chg
+in the energy-conserving one.  The two eras therefore give
+L_chg = 0.2089864 SoC/g (old) and L_chg = eta_chg * L_share (new).  An
+artifact's own era is recorded under `charger`, and the mode line printed
+above this note carries that era's two lever values.
 
 An action is taken exactly when its lever exceeds (1 - gamma)/alpha, so this
 placement leaves BOTH levers checked against the shadow price instead of one.
@@ -710,8 +746,15 @@ def model_levers(v_pack=V_PACK_NOMINAL_V, v_bus=V_BUS_NOMINAL_V,
             L_chg = 1/(k * V_bus * C_As) = 0.2089864 at the shipped constants.
         NEW (eta_chg a float): V_pack/eta_chg.  An energy-conserving converter
             costs V_pack/eta watts per delivered amp, so
-            L_chg = eta_chg * L_share  EXACTLY - the two levers are then
-            1/eta_chg apart whatever the pack, the bus or the capacity do.
+            L_chg = eta_chg * L_share within THIS FILE'S flat-V_pack
+            convention - the two levers are then 1/eta_chg apart whatever the
+            pack, the bus or the capacity do.  The identity is exact only
+            because both levers use the SAME V_pack here; the DP generator
+            bills the charger at OCV+i*rs and this file at the flat nominal
+            (M3 at V_PACK_NOMINAL_V), so the two tools' alpha LEVELS differ by
+            7.08 %.  The ADMISSION margin does not: the charge lever clears
+            (1-gamma)/alpha by sqrt(eta_chg) under --alpha-mode lever, in
+            which every voltage cancels.
             At eta_chg 0.88: L_chg = 0.3963964, i.e. 13.64 % under L_share.
 
     The hydrogen basis k CANCELS from their ratio, which is why no efficiency
@@ -1341,7 +1384,16 @@ def main(argv=None):
     else:
         alpha = alpha_two_sided
         alpha_mode_used = "lever"
-        alpha_rationale = ALPHA_DERIVATION
+        # M2: the note below states the derivation in era-neutral form; this
+        # line pins the era THIS artifact was solved in and the lever values
+        # that era produced, so a reader of an eta-era artifact is never left
+        # to assume the old-era L_chg numbers quoted in D12.
+        alpha_rationale = ("--alpha-mode lever (D12): levers share %.6f, "
+                           "charge %.6f, admission bound %.6f SoC/g "
+                           "(era: %s).\n\n%s"
+                           % (l_share, l_chg, one_minus_gamma / alpha
+                              if alpha == alpha else float("nan"),
+                              era_label(args.eta_chg), ALPHA_DERIVATION))
         if not (alpha == alpha):        # NaN: the levers do not order
             print("[sdp] REFUSING to solve: --alpha-mode lever needs the "
                   "share lever to BEAT the charge lever, and at this era "

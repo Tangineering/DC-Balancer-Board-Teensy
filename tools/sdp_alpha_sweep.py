@@ -1181,6 +1181,12 @@ HIL_CSV_COLUMNS = [
     # old 1:1 current-transfer model destroyed silently.  Blank here for the
     # same reason as the rest of the tail.
     "p_chg_loss_w",
+    # MPC diagnostics, appended to BOTH schemas 2026-09-02 by the
+    # governor-aware MPC round (hil_plant_sim.py's header block, after
+    # `p_chg_loss_w`).  They are strategy-instance attributes read through
+    # getattr, so a non-MPC run - which is every walk this module synthesizes -
+    # writes them blank rather than a fabricated 0.
+    "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit",
 ]
 
 # Documented constants for the columns the reduced model does not produce.
@@ -1264,6 +1270,7 @@ def synthesize_hil_csv(path, result, sim, scenario_meta, dt_s):
                 WALK_CSV_ERROR_CODE,                          # error_code
                 "", "", "", "", "", "",                       # power balance
                 "",                                           # p_chg_loss_w
+                "", "", "",                                   # mpc diagnostics
             ])
     return len(result.t)
 
@@ -1453,13 +1460,22 @@ def _walk_kwargs(args):
 
 
 def _era_from_args(args):
-    """The charger era a solving subcommand was asked for, validated."""
+    """The charger era a solving subcommand was asked for, validated.
+
+    L5: the range check is `charger_power.check_eta_chg()`'s, imported rather
+    than re-written, so this script cannot drift from the one module that owns
+    the era convention.  Only the exit style is local: a CLI reports a bad
+    flag as a SystemExit, not a traceback."""
+    if _HERE not in sys.path:
+        sys.path.insert(0, _HERE)
+    from charger_power import check_eta_chg
     eta = getattr(args, "eta_chg", None)
     if eta is None:
         return SWEEP_ETA_CHG_DEFAULT
-    if not 0.0 < float(eta) <= 1.0:
-        raise SystemExit("--eta-chg must lie in (0, 1], got %r" % (eta,))
-    return float(eta)
+    try:
+        return check_eta_chg(eta)
+    except (TypeError, ValueError) as exc:
+        raise SystemExit("--eta-chg: %s" % exc)
 
 
 def main(argv=None):
