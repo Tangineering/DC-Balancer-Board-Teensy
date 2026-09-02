@@ -3343,10 +3343,32 @@ DP_TABLE_NAME = "dp_ems_table_%s.csv"
 # demand model now has to
 # bill the charger's INPUT power, which is the output power divided by exactly
 # this number — a table solved at one efficiency is not a table for another.
-# ⚠️ Adding it MOVES the fingerprint of every scenario, so every table in
-# tools/dp_tables/ must be regenerated in the same change.
+# ⚠️ CORRECTED 2026-09-02: adding it does NOT move any existing fingerprint.
+# The key is OPTIONAL (DP_FINGERPRINT_OPTIONAL_KEYS below) — its old-era
+# sentinel is written as an omitted line, not as `eta_chg=None` — so a live
+# scenario, which declares nothing, hashes exactly as it did before the key
+# existed. The first version of this key wrote the line unconditionally and
+# did move every digest; that is what the note above used to record.
 DP_FINGERPRINT_META_KEYS = ("ems_v_profile", "duration_s", "chg_i_ceiling_a",
                             "aux_preload_a", "eta_chg")
+
+# Keys whose SENTINEL VALUE is written into the digest as an OMITTED LINE
+# rather than as `key=None` (orchestrator ruling, 2026-09-02; the convention
+# `tools/dp_results_db.py`'s OPTIONAL_KEY_FIELDS already uses).  `eta_chg` is
+# the case: its sentinel names the ERA THAT PREDATES THE KEY, so writing a line
+# for it would have moved every fingerprint computed before the key existed —
+# every committed table and every stored DP result — while changing nothing
+# about the problem any of them solved.  With the line omitted an old-era
+# digest is bit-identical to its pre-key value, and only a run or sidecar that
+# DECLARES an efficiency hashes differently.
+DP_FINGERPRINT_OPTIONAL_KEYS = frozenset({"eta_chg"})
+
+
+def _dp_fp_resolve(key, meta):
+    """The fingerprint's own resolution of one key, for the sentinel test."""
+    if key == "eta_chg":
+        return dp_eta_chg(meta)
+    return meta.get(key)
 
 
 def dp_eta_chg(meta):
@@ -3379,6 +3401,29 @@ def dp_eta_chg(meta):
         apart instead of colliding on one digest."""
     v = meta.get("eta_chg")
     return None if v is None else float(v)
+
+
+def plant_eta_chg():
+    """THE ERA THIS PROCESS'S PLANT RUNS IN, in `dp_eta_chg()`'s vocabulary.
+
+    The simulator bills every charge stage at `hil_electrical.ETA_CHG`, so the
+    plant's era is that constant — a float for the energy-conserving buck/boost
+    era, and `None` for the 1:1 current-transfer era that preceded it.  There is
+    no scenario key that overrides it today; when one is added, this is the ONE
+    function that has to learn about it, and every consumer below follows.
+
+    Read through the MODULE GLOBAL rather than captured at import so a test can
+    place the process in either era (`monkeypatch.setattr(hil, "ETA_CHG", None)`)
+    without a second copy of the convention."""
+    return None if ETA_CHG is None else float(ETA_CHG)
+
+
+def eta_chg_era_label(eta):
+    """A short printable era name.  ONE text for every refusal and warning."""
+    if eta is None:
+        return "the 1:1 CURRENT-TRANSFER charger (bus power = V_bus*i_chg)"
+    return ("an energy-conserving charger at eta_chg = %g "
+            "(bus power = V_pack*i_chg/eta_chg)" % eta)
 
 
 def dp_chg_ceiling_a(meta):
@@ -3420,6 +3465,18 @@ def dp_profile_fingerprint(scenario, meta):
     parts = ["scenario=%s" % scenario]
     for key in DP_FINGERPRINT_META_KEYS:
         val = meta.get(key)
+        if key in DP_FINGERPRINT_OPTIONAL_KEYS and _dp_fp_resolve(key, meta) is None:
+            # THE OLD ERA IS THE ABSENCE OF THE TERM (orchestrator ruling,
+            # 2026-09-02), the same convention `dp_results_db`'s
+            # OPTIONAL_KEY_FIELDS already uses. Hashing `eta_chg=None` as a
+            # LINE would have moved every pre-existing fingerprint — every
+            # committed table, and all 16 stored dp_db records — for a key
+            # whose value had not changed. Omitting it instead leaves an
+            # old-era digest exactly where it was, while a post-era run (whose
+            # SIDECAR carries eta_chg = 0.88) still fingerprints differently
+            # from a pre-era one, which is the separation the key was added
+            # for.
+            continue
         if key == "eta_chg":
             # ERA SENTINEL, resolved through the one function that owns the
             # convention (see dp_eta_chg): an ABSENT key hashes as `None`, the
@@ -3646,6 +3703,53 @@ class DpReplayStrategy:
                 % (scenario, path, scenario))
         table_meta, times, shares, goals = load_dp_table(path)
 
+        # The regeneration recipe, hoisted above the first check that quotes it
+        # (the charger-era check, block (0) below).
+        regen = ("      C:/Users/ricky/miniforge3/python.exe "
+                 "tools/gen_dp_ems_table.py --scenario %s --force" % scenario)
+
+        # ── (0) THE CHARGER ERA (2026-09-02) ────────────────────────────────
+        # FIRST, BEFORE THE FINGERPRINT, deliberately.  A live scenario declares
+        # no `eta_chg` (see dp_eta_chg()), so `dp_profile_fingerprint()` hashes
+        # the sentinel None for BOTH eras and cannot separate them: an old-era
+        # table and a new-era one for the same scenario carry the SAME
+        # fingerprint whenever nothing else moved.  The table's own
+        # `# eta_chg:` header line is the only record of which charger it was
+        # solved against, and a DP bound solved against a charger the run does
+        # not have is not a bound on this run at all — under the old model the
+        # Ag105's bus draw is billed ~1.9x too dearly, so the table's charge
+        # stages are the optimum of a different problem.
+        # An ABSENT header line means the OLD era (the operator's 2026-09-01
+        # sentinel ruling), which is why this cannot be a soft check: "the table
+        # does not say" and "the table says 1:1" are the same statement.
+        want_eta = plant_eta_chg()
+        got_eta = dp_eta_chg(table_meta)
+        eta_same = (want_eta is None and got_eta is None) or (
+            want_eta is not None and got_eta is not None
+            and abs(want_eta - got_eta) <= 1e-12 * max(1.0, abs(want_eta)))
+        if not eta_same:
+            raise ValueError(
+                "DP table %s was solved against %s, but this run's plant bills "
+                "the charger as %s.\n"
+                "  table  eta_chg=%s%s\n"
+                "  plant  eta_chg=%s   [hil_electrical.ETA_CHG]\n"
+                "  The two charger models are not related by any efficiency "
+                "value (one bills the BUS voltage, the other the PACK voltage "
+                "over eta), so the table's charge stages minimise a DIFFERENT "
+                "demand than this run will log and replaying it bounds "
+                "nothing. NOTE the profile fingerprint CANNOT catch this: a "
+                "live scenario declares no `eta_chg`, so both eras hash the "
+                "same sentinel.\n"
+                "  Regenerate for this era:\n%s%s"
+                % (path, eta_chg_era_label(got_eta),
+                   eta_chg_era_label(want_eta), got_eta,
+                   "" if "eta_chg" in table_meta
+                   else " (no `# eta_chg:` header line — a table that predates "
+                        "the charger-efficiency model)",
+                   want_eta, regen,
+                   "" if want_eta is None
+                   else " --eta-chg %g" % want_eta))
+
         want = dp_profile_fingerprint(scenario, meta)
         got = table_meta.get("profile_fingerprint")
         if got != want:
@@ -3661,9 +3765,6 @@ class DpReplayStrategy:
                 "tools/gen_dp_ems_table.py --scenario %s --force"
                 % (path, table_meta.get("scenario"), got, scenario, want,
                    scenario))
-
-        regen = ("      C:/Users/ricky/miniforge3/python.exe "
-                 "tools/gen_dp_ems_table.py --scenario %s --force" % scenario)
 
         # ── (a) M1: accounting vs the RESOLVED electrical engine ─────────────
         if electrical_mode is not None:
@@ -3815,6 +3916,12 @@ class DpReplayStrategy:
             "scenario": table_meta.get("scenario"),
             "profile_fingerprint": table_meta.get("profile_fingerprint"),
             "charger_accounting": table_meta.get("charger_accounting"),
+            # THE CHARGER ERA the table was solved in (2026-09-02). Recorded
+            # because the profile fingerprint cannot carry it (block (0)
+            # above): without this field a report reader comparing two
+            # campaigns' DP bounds has no way to tell that one of them priced
+            # the Ag105 under the 1:1 model.
+            "eta_chg": dp_eta_chg(table_meta),
             "command": table_meta.get("command"),
             "n_rows": len(times),
             "stage_dt_s": table_meta.get("stage_dt_s"),
@@ -4091,9 +4198,62 @@ SDP_POLICY_DIR = os.path.join(REPO_ROOT, "tools", "sdp_policies")
 #     does NOT rank as an energy-management result, which is exactly what
 #     `frontier_eligible: False` says and what run_hil_suite.py's demonstration
 #     banner repeats to the reader.
+#
+#   sdp_policy_v4.json  THE SHIPPED CALIBRATED BENCHMARK from 2026-09-02,
+#     `sdp-v4`, frontier_eligible — and the reason v3 is no longer it.  v3 was
+#     solved against the 1:1 CURRENT-TRANSFER charger (bus power = V_bus*i_chg);
+#     the plant is now an energy-conserving buck/boost at
+#     `hil_electrical.ETA_CHG` = 0.88, under which the charge lever moves
+#     0.2090 -> 0.3964 SoC/g (exactly eta * L_share) and the two-sided lever
+#     calibration re-lands alpha at 0.118326398, mode `lever`, still 0 charge
+#     cells — charging is STILL declined endogenously, but by a policy that was
+#     priced against the charger the run actually has.  Operator rule
+#     (2026-09-01): alpha follows the eta-era matched DP, and the eta-era DP
+#     charges on ZERO stages on both `ems-sdp` and `ems-ftp75-dp`.
+#     ⚠️ v3 vs v4, MEASURED (not assumed): the two charge maps are IDENTICAL
+#     (both all-zero, 0 differing cells) and the share maps differ on exactly
+#     FOUR SoC rows — 2, 3, 4, 5 (SoC 0.552-0.555), 76 cells — i.e. 45-48 grid
+#     nodes BELOW the target node 0.600.  No shipped scenario's trajectory
+#     reaches within 0.03 SoC of them (the largest |soc_ref_offset| is 0.013 and
+#     the largest run |delta_soc| is ~0.016), so every v3-era offline walk and
+#     every walk-derived expectation transfers to a v4 leg VERBATIM.  The
+#     row-diff is pinned by test_sdp_v3_v4_share_maps_agree_on_traversed_rows().
+#
+#   sdp_policy_v3.json is KEPT REGISTERED but is now `frontier_eligible: False`:
+#     it is the OLD-ERA (1:1 charger) calibration, retained for comparability
+#     with campaigns <= 20260901_151156, not a candidate to be scored beside a
+#     run whose charger is a different device.
 SDP_POLICY_FILE_V2 = "sdp_policy_v2.json"
 SDP_POLICY_FILE_V3 = "sdp_policy_v3.json"
+SDP_POLICY_FILE_V4 = "sdp_policy_v4.json"
 SDP_POLICY_SCHEMA = "sdp-policy-v1"
+
+# ── THE SCENARIO-SUPPLIED ARTIFACT (2026-09-02) ─────────────────────────────
+# A sentinel `policy_file`, NOT a path: the `sdp-sweep` strategy plays whatever
+# artifact its SCENARIO names in `sdp_policy_file`, and has no default of its
+# own.  Written as a bracketed phrase rather than None so it reads correctly
+# everywhere a file name is printed (the startup banner, EMS_STRATEGY_META, a
+# refusal message) and so `os.path.join` can never turn it into a plausible
+# path that silently loads the wrong policy.  SdpStrategy.load() refuses it.
+SDP_POLICY_FROM_SCENARIO = "<supplied by the scenario's sdp_policy_file>"
+
+# ── THE ALPHA-SWEEP LIVE PICKS (2026-09-02) ─────────────────────────────────
+# The alpha sweep (tools/sdp_alpha_sweep.py, WP-1B2a) bakes 41 artifacts and
+# records THREE of them — one per behaviour leg — in this manifest.  A scenario
+# names a pick with `sdp_policy_file: "live-picks:<key>"` and the path is
+# resolved AT BIND TIME, for two reasons:
+#   * the manifest is generated alongside the artifacts, so a hard-coded path
+#     here would go stale the moment the sweep is re-run with a different
+#     leg midpoint — and would go stale SILENTLY, playing an artifact nobody
+#     selected under a scenario name that claims a leg;
+#   * the manifest carries the SELECTED artifact's `policy_sha`, so the bind can
+#     verify that the file on disk is still the decision law the offline walk
+#     was run against.  A path alone cannot be checked against anything.
+# Absent at run time = a startup refusal naming the generator, exactly as a
+# missing policy artifact is.
+SDP_LIVE_PICKS_PATH = os.path.join(
+    SDP_POLICY_DIR, "sweep_20260902_eta088", "live_picks.json")
+SDP_LIVE_PICK_PREFIX = "live-picks:"
 # Hand the firmware back MODE_SAFE at the same time `soc-band` does.  DERIVED,
 # not a literal: `ems-sdp` shares `ems-soc-band`'s profile object, so its
 # standstill is at the same instant and a different exit time would make the two
@@ -4537,8 +4697,95 @@ def load_sdp_policy(path, name="sdp-v2"):
     }
 
 
+def _sdp_doc_alpha(pol):
+    """The artifact's shipped alpha, or None.  CARRIED, not consumed."""
+    val = ((pol.get("raw") or {}).get("alpha") or {}).get("value")
+    return None if val is None else float(val)
+
+
+def _sdp_doc_eta_chg(pol):
+    """The CHARGER ERA an SDP artifact was solved in, or None for the old one.
+
+    Same sentinel convention as `dp_eta_chg()` and tools/charger_power.py: an
+    artifact with no `charger.eta_chg` block was solved against the 1:1
+    current-transfer charger, and that is a statement, not a gap."""
+    chg = (pol.get("raw") or {}).get("charger")
+    if not isinstance(chg, dict):
+        return None
+    val = chg.get("eta_chg")
+    return None if val is None else float(val)
+
+
+def resolve_sdp_policy_file(value, scenario=None, picks_path=None):
+    """Resolve a scenario's `sdp_policy_file` to (repo-relative path, source).
+
+    TWO FORMS, and the second exists because a hard-coded sweep path cannot be
+    checked against anything (see SDP_LIVE_PICKS_PATH):
+
+      "tools/sdp_policies/…json"   a path, used as written.
+      "live-picks:<key>"           the artifact `<key>` names in the alpha
+                                   sweep's live-picks manifest.  Resolved at
+                                   BIND TIME, and the manifest's recorded
+                                   `policy_sha` is returned with it so the
+                                   caller can verify that the file on disk is
+                                   still the decision law the offline walk was
+                                   run against.
+
+    `source` is a dict recorded in the run's provenance: it is the answer to
+    "why is this run playing THIS artifact", which a bare path cannot give.
+    Raises ValueError — every failure here is a startup refusal."""
+    text = str(value)
+    if not text.startswith(SDP_LIVE_PICK_PREFIX):
+        return text, {"kind": "scenario_path", "declared": text}
+    key = text[len(SDP_LIVE_PICK_PREFIX):].strip() or (scenario or "")
+    path = picks_path or SDP_LIVE_PICKS_PATH
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except OSError as exc:
+        raise ValueError(
+            "scenario %r names the alpha-sweep pick %r, and the live-picks "
+            "manifest it is recorded in could not be read at %s (%s).\n"
+            "  It is written by the sweep that bakes the artifacts:\n"
+            "      C:/Users/ricky/miniforge3/python.exe "
+            "tools/sdp_alpha_sweep.py\n"
+            "  Refusing rather than falling back to a default artifact: a run "
+            "labelled %r that played the shipped benchmark instead of its "
+            "sweep point would be a leg of an alpha sweep with no alpha in it."
+            % (scenario, key, path, exc, scenario))
+    except ValueError as exc:
+        raise ValueError("the live-picks manifest %s is not valid JSON: %s"
+                         % (path, exc))
+    picks = (doc.get("picks") or {}) if isinstance(doc, dict) else {}
+    pick = picks.get(key)
+    if not isinstance(pick, dict) or not pick.get("policy_file"):
+        raise ValueError(
+            "the live-picks manifest %s has no `policy_file` for the pick %r "
+            "(it records %s). A scenario cannot name a pick the sweep did not "
+            "select." % (path, key, sorted(picks) or "no picks at all"))
+    source = {
+        "kind": "live_picks",
+        "manifest": os.path.relpath(path, REPO_ROOT).replace(os.sep, "/"),
+        "pick": key,
+        "leg": pick.get("leg"),
+        "alpha": pick.get("alpha"),
+        "index": pick.get("index"),
+        # The sha the SWEEP recorded for the artifact it selected. Checked
+        # against the loaded file in bind_scenario(): if the artifact was
+        # regenerated after the pick was made, the run would be playing a law
+        # the offline walk never saw.
+        "expect_policy_sha256": pick.get("policy_sha"),
+        "expect_file_sha256": pick.get("file_sha256"),
+    }
+    return str(pick["policy_file"]), source
+
+
 def sdp_assert_calibrated_benchmark(pol, name):
     """Refuse an artifact that is not THE CALIBRATED BENCHMARK.  Raises.
+
+    Returns the list of certificate clauses that were WAIVED under an
+    era-scoped allowance (empty for an artifact that meets every clause
+    outright).  The caller prints them; see the allowance block below.
 
     THE CERTIFICATE, and it is a QUADRUPLE because no single field carries the
     claim (2026-09-01 ruling, OVERNIGHT_LOG.md "SDP charge-economics
@@ -4573,14 +4820,87 @@ def sdp_assert_calibrated_benchmark(pol, name):
     admission = alpha.get("admission") or {}
     actions = doc.get("actions") or {}
     problems = []
+    # Certificate clauses that were WAIVED rather than met.  Returned (not
+    # swallowed) so the caller can print them: an allowance that nobody sees is
+    # indistinguishable from a clause that passed.
+    allowances = []
     if alpha.get("mode") != "lever":
         problems.append("alpha.mode is %r, not 'lever'" % (alpha.get("mode"),))
     if admission.get("in_window_model") is not True:
         problems.append("alpha.admission.in_window_model is %r, not True"
                         % (admission.get("in_window_model"),))
-    if admission.get("in_window_measured") is not True:
-        problems.append("alpha.admission.in_window_measured is %r, not True"
-                        % (admission.get("in_window_measured"),))
+    # ── THE MEASURED-WINDOW ALLOWANCE (2026-09-02, ERA-SCOPED) ──────────────
+    # `in_window_measured` is null on sdp_policy_v4.json, and NOT because the
+    # calibration is weaker: the eta era made the measured pair UNDECIDABLE.
+    # The only measured charge lever this rig has (0.2364 SoC/g, campaigns
+    # 20260831_222036 / 20260901_000816) was measured under the 1:1 charger;
+    # projected onto the new billing it becomes 0.4484 SoC/g, which is ABOVE
+    # the measured share lever 0.412 — the OPPOSITE of the model's ordering
+    # (the model says charging is worse than sharing by exactly 1/eta). Two
+    # contradicting orderings do not make a window, so the solver records the
+    # measured window as null rather than asserting one it cannot defend. No
+    # alpha decision rests on it: `alpha.value` comes from the MODEL levers.
+    # TODO(verify): the first eta-era campaign re-measures the charge lever;
+    # when it does, this artifact must be regenerated with a real measured
+    # window and the allowance stops applying to it.
+    #
+    # WHAT THE ALLOWANCE COSTS, and why it is not a hole: a null is accepted
+    # ONLY when the artifact also states an INTENT (`alpha.window_intent`) and
+    # a REASON (`alpha.admission.measured_window_undecidable`). A bare null —
+    # the shape an OLD artifact or a truncated solve produces — still fails,
+    # so "the field is missing" and "the field is deliberately undecidable"
+    # cannot be confused.
+    # THE THREE FIELDS THE ALLOWANCE READS, named here so a future artifact
+    # cannot satisfy it by accident:
+    #   alpha.admission.window_intent                 the INTENT — what the
+    #       shipped alpha is supposed to admit and reject ("admit share, reject
+    #       charge"). Absent on every pre-2026-09-02 artifact.
+    #   alpha.levers_soc_per_g.charge_measured_is_projection  the REASON — the
+    #       measured charge lever in this document is a PROJECTION of an
+    #       old-era measurement onto the new billing, not a measurement, so
+    #       there is no measured pair from which a window could be formed.
+    #   charger.eta_chg                               the ERA SCOPE — the
+    #       allowance exists because the charger model changed; an artifact
+    #       that does not say which charger it was solved against is not
+    #       inside the era the allowance is scoped to.
+    measured = admission.get("in_window_measured")
+    intent = admission.get("window_intent")
+    projected = (alpha.get("levers_soc_per_g") or {}).get(
+        "charge_measured_is_projection")
+    era = (doc.get("charger") or {}).get("eta_chg")
+    if measured is not True:
+        if (measured is None and admission.get("window_measured") is None
+                and isinstance(intent, str) and intent.strip()
+                and projected is True and era is not None):
+            allowances.append(
+                "alpha.admission.in_window_measured is null — ACCEPTED under "
+                "the ERA-SCOPED allowance (2026-09-02). Intent: %s. Reason: "
+                "the measured charge lever in this artifact is a PROJECTION "
+                "of an old-era measurement (%r SoC/g measured -> %r projected) "
+                "onto the eta_chg = %g billing, and it lands ABOVE the "
+                "measured share lever, i.e. the OPPOSITE of the model's "
+                "ordering — so the measured pair is UNDECIDABLE and no window "
+                "is asserted. `alpha.value` rests on the MODEL levers, which "
+                "are checked (in_window_model True). "
+                "TODO(verify): re-measure the charge lever in the first "
+                "eta-era campaign and regenerate this artifact; the allowance "
+                "then stops applying to it."
+                % (intent,
+                   (alpha.get("levers_soc_per_g") or {}).get(
+                       "charge_measured_as_measured"),
+                   (alpha.get("levers_soc_per_g") or {}).get(
+                       "charge_measured"),
+                   float(era)))
+        else:
+            problems.append(
+                "alpha.admission.in_window_measured is %r, not True%s"
+                % (measured,
+                   "" if measured is not None else
+                   " — a null is accepted ONLY by the era-scoped allowance, "
+                   "which needs alpha.admission.window_intent (got %r), "
+                   "alpha.levers_soc_per_g.charge_measured_is_projection "
+                   "(got %r) and charger.eta_chg (got %r) all present"
+                   % (intent, projected, era)))
     if actions.get("forbid_charge_all"):
         problems.append("actions.forbid_charge_all is %r — the charge map was "
                         "MASKED, not declined by the optimizer"
@@ -4591,13 +4911,25 @@ def sdp_assert_calibrated_benchmark(pol, name):
             "scores on the EMS FRONTIER and therefore requires THE CALIBRATED "
             "BENCHMARK certificate — and this artifact does not carry it:\n"
             "    %s\n"
-            "Regenerate with the calibrated alpha:\n"
+            "Regenerate with the calibrated alpha — and, in the eta era, with "
+            "the era the plant runs in (an artifact solved without --eta-chg "
+            "is priced against the retired 1:1 charger):\n"
             "    C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py "
-            "--alpha-mode lever --out %s --force\n"
+            "--alpha-mode lever --eta-chg 0.88 --out %s --force\n"
+            "NOTE an eta-era `lever` artifact carries "
+            "`alpha.admission.in_window_measured` NULL, not True: the measured "
+            "charge lever was measured under the old charger and its "
+            "projection contradicts the model's ordering, so the measured "
+            "window is UNDECIDABLE. That null IS the certificate in this era "
+            "and is accepted by the era-scoped allowance above — it needs "
+            "`alpha.admission.window_intent`, "
+            "`alpha.levers_soc_per_g.charge_measured_is_projection` and "
+            "`charger.eta_chg` present, which the solver writes.\n"
             "or bind this strategy to a NON-frontier role in "
             "EMS_STRATEGY_META (see `sdp-v2`, the dynamics demonstration)."
             % (pol.get("path"), name, "\n    ".join(problems),
                pol.get("path")))
+    return allowances
 
 
 def sdp_bin_index(x, edges):
@@ -4675,9 +5007,21 @@ class SdpStrategy:
         # trace can never be labelled with a strategy it did not run.
         self.name = name
         self.policy_file = policy_file or SDP_POLICY_FILE_V2
+        # THE ARTIFACT THIS INSTANCE WAS REGISTERED WITH, kept so a scenario's
+        # `sdp_policy_file` override (2026-09-02) can be UNDONE: EMS_STRATEGIES
+        # holds ONE instance per name and a process runs one scenario, but a
+        # test binds many, and an override that leaked from one bind into the
+        # next would play an artifact the second scenario never named.
+        self.default_policy_file = self.policy_file
         self.require_calibrated_benchmark = bool(require_calibrated_benchmark)
         self.policy_dir = policy_dir or SDP_POLICY_DIR
         self.policy = None
+        # The scenario's resolved override, for the provenance record: None
+        # when the instance is playing its registered artifact.
+        self.policy_file_source = None
+        # Certificate clauses waived under an era-scoped allowance (see
+        # sdp_assert_calibrated_benchmark()); [] until the artifact is loaded.
+        self.certificate_allowances = []
         # Filled by bind_scenario(); None for a strategy that was only ever
         # called directly (a test, a probe), which is also how main() decides
         # whether there is anything to write into the meta sidecar.
@@ -4692,7 +5036,33 @@ class SdpStrategy:
 
     @property
     def path(self):
-        return os.path.join(self.policy_dir, self.policy_file)
+        """The artifact's absolute path.
+
+        A BARE FILE NAME (the registered case) resolves inside `policy_dir`,
+        which is what keeps `policy_dir=tmp_path` working for every test that
+        writes a synthetic artifact.  A name carrying a separator — which is
+        what a scenario's `sdp_policy_file` gives, since a sweep artifact lives
+        in a SUBDIRECTORY — resolves against REPO_ROOT (or is used as-is when
+        already absolute), so a scenario can name any artifact in the tree
+        without the strategy having to guess a directory."""
+        name = self.policy_file
+        if os.path.isabs(name):
+            return name
+        if os.sep in name or "/" in name:
+            return os.path.normpath(os.path.join(REPO_ROOT, name))
+        return os.path.join(self.policy_dir, name)
+
+    def set_policy_file(self, name, source=None):
+        """Play `name` instead of the registered artifact.  Idempotent.
+
+        Clears the cached policy whenever the file actually changes, so a
+        re-bind cannot serve the previous scenario's decision law.  `name` None
+        restores the registered artifact — the state every bind starts from."""
+        new = self.default_policy_file if name is None else str(name)
+        if new != self.policy_file:
+            self.policy = None
+        self.policy_file = new
+        self.policy_file_source = None if name is None else source
 
     def set_soc_ref_offset(self, delta):
         """Place the run's STARTING SoC `delta` ABOVE the policy's target node.
@@ -4798,6 +5168,15 @@ class SdpStrategy:
     # ── loading / startup refusal ───────────────────────────────────────────
     def load(self):
         """Load the artifact ONCE.  Raises ValueError to refuse."""
+        if self.policy_file == SDP_POLICY_FROM_SCENARIO:
+            raise ValueError(
+                "the `%s` strategy has NO artifact of its own: it plays the "
+                "one its SCENARIO names in `sdp_policy_file`, and nothing has "
+                "named one for this run.\n"
+                "  Either run it under a scenario that declares "
+                "`sdp_policy_file` (see SCENARIOS['ems-sdp-alpha-cal']), or "
+                "use a strategy with a registered artifact (`sdp-v4` is the "
+                "shipped calibrated benchmark)." % self.name)
         if self.policy is None:
             pol = load_sdp_policy(self.path, self.name)
             # The certificate is checked ON THE LOAD, not in bind_scenario():
@@ -4805,9 +5184,42 @@ class SdpStrategy:
             # able to drive an uncertified artifact through a frontier-scored
             # strategy either.
             if self.require_calibrated_benchmark:
-                sdp_assert_calibrated_benchmark(pol, self.name)
+                self.certificate_allowances = sdp_assert_calibrated_benchmark(
+                    pol, self.name)
             self.policy = pol
         return self.policy
+
+    def _verify_pick(self, pol, source):
+        """A sweep pick must still BE the artifact the sweep selected.
+
+        REFUSES on a policy-sha mismatch: the offline walk that chose this
+        point, and every expectation derived from it, describe THAT decision
+        law. An artifact regenerated after the pick was made is a different
+        law under a scenario name that claims the pick's leg — a substitution
+        with no symptom in the trace. The FILE sha is only warned about: it
+        moves on any --force regeneration that changed nothing but the
+        timestamp, which is not a change of law."""
+        want = source.get("expect_policy_sha256")
+        if want and want != pol["policy_sha256"]:
+            raise ValueError(
+                "the alpha-sweep pick %r in %s selected the policy law "
+                "%s, but %s now carries %s.\n"
+                "  The artifact was regenerated after the pick was made, so "
+                "this run would play a DIFFERENT decision law under a "
+                "scenario name that claims the pick's leg — and every "
+                "expectation derived from the pick's offline walk would be "
+                "measuring the wrong policy.\n"
+                "  Re-run the sweep (which rewrites the manifest), or point "
+                "the scenario at the artifact directly."
+                % (source.get("pick"), source.get("manifest"), want,
+                   pol["path"], pol["policy_sha256"]))
+        want_file = source.get("expect_file_sha256")
+        if want_file and want_file != pol["file_sha256"]:
+            print("[hil]   NOTE: the live-picks manifest recorded file sha "
+                  "%s… for this pick and the file on disk is %s… — the "
+                  "DECISION LAW is unchanged (policy sha matches), so this is "
+                  "a regeneration that moved only provenance."
+                  % (want_file[:16], pol["file_sha256"][:16]))
 
     def bind_scenario(self, scenario, meta, electrical_mode=None, args=None):
         """Generic startup hook (see main()).  Loads and validates the policy.
@@ -4822,7 +5234,22 @@ class SdpStrategy:
         and ignored deliberately: `--electrical` and `--soc0` do not change
         which policy is correct (the SoC0-relative mapping is what makes the
         second one true — see the banner)."""
+        # ── THE SCENARIO-SUPPLIED ARTIFACT (2026-09-02) ─────────────────────
+        # `sdp_policy_file` lets a scenario play a DIFFERENT artifact through
+        # the same decision code — the mechanism the three alpha-sweep
+        # scenarios use. It is restricted at IMPORT to strategies that are NOT
+        # frontier-eligible (see the guard below SCENARIOS), so it can never
+        # swap the artifact under a leg the frontier scores.
+        # Reset FIRST and unconditionally: a scenario that names nothing must
+        # get the registered artifact even if a previous bind overrode it.
+        self.set_policy_file(None)
+        declared = meta.get("sdp_policy_file")
+        if declared:
+            name, source = resolve_sdp_policy_file(declared, scenario=scenario)
+            self.set_policy_file(name, source)
         pol = self.load()
+        if self.policy_file_source:
+            self._verify_pick(pol, self.policy_file_source)
         self.reset()
         # The scenario's SoC-axis placement (2026-08-31).  Read AFTER reset()
         # because the offset is a BINDING, not run state — reset() must not
@@ -4862,7 +5289,43 @@ class SdpStrategy:
             # traces of the same artifact at different offsets are two
             # different experiments — and the CSV carries no other trace of it.
             "soc_ref_offset": self.soc_ref_offset,
+            # ── WP-1B2b (2026-09-02): THE ARTIFACT'S OWN ECONOMICS ──────────
+            # A policy sha identifies the decision law but says nothing about
+            # WHY it decides that way. These four fields are what a report
+            # reader needs to compare two SDP legs without opening either
+            # artifact: which alpha priced SoC, how that alpha was derived,
+            # and which CHARGER the solve was billed against. `eta_chg` is
+            # None for an artifact solved in the 1:1 current-transfer era.
+            "alpha": _sdp_doc_alpha(pol),
+            "alpha_mode": ((pol.get("raw") or {}).get("alpha") or {}).get("mode"),
+            "eta_chg": _sdp_doc_eta_chg(pol),
+            "charge_cells": sum(1 for row in pol["charge_goal"]
+                                for v in row if v > 0.0),
+            # WHICH FILE, and why this one. `policy_file` is the artifact the
+            # run played (a scenario override shows up here, not only in the
+            # path); `policy_file_source` says whether it came from the
+            # strategy's registration, a scenario path, or an alpha-sweep pick.
+            "policy_file": self.policy_file,
+            "policy_file_source": self.policy_file_source,
+            # Certificate clauses waived under an era-scoped allowance. [] on
+            # an artifact that met every clause outright, and absent-as-empty
+            # is the honest reading for a strategy that demands no certificate.
+            "certificate_allowances": list(self.certificate_allowances),
         }
+        # ── THE ARTIFACT'S ERA vs THE PLANT'S (2026-09-02) ──────────────────
+        # A WARNING, not a refusal, and the asymmetry with the DP table's era
+        # check is deliberate. A DP table is the OPTIMUM OF a demand model, so
+        # a table from the wrong era bounds nothing and must be refused. An SDP
+        # artifact is a CONTROL LAW: it is defined on any plant, it will command
+        # a legal share on any plant, and running an old-era law against the new
+        # charger is a legitimate — and, for the retained `sdp-v3`, an
+        # intended — comparability experiment. What must never happen is that
+        # the mismatch goes unrecorded, so it is printed at bind and carried in
+        # the sidecar.
+        art_eta = _sdp_doc_eta_chg(pol)
+        plant_eta = plant_eta_chg()
+        self.provenance["plant_eta_chg"] = plant_eta
+        self.provenance["era_match"] = (art_eta == plant_eta)
         print("[hil] SDP policy: %s (%d SoC nodes x %d demand bins, target "
               "SoC %.3f on [%.3f, %.3f], demand %.3f..%.3f W, decisions every "
               "%.3g s)"
@@ -4885,10 +5348,40 @@ class SdpStrategy:
                   "declined ENDOGENOUSLY, forbid_charge_all False)."
                   % sum(1 for row in pol["charge_goal"] for v in row if v > 0.0))
         else:
-            print("[hil]   role: DYNAMICS DEMONSTRATION — NOT frontier_eligible. "
-                  "This artifact's alpha admits the Ag105 charge lever, which "
-                  "the campaign-measured exchange rate prices as loss-making, "
-                  "so its h2/delta_soc pair is NOT an energy-management result.")
+            # READ FROM THE REGISTRY (2026-09-02), not written out: there are
+            # three non-frontier SDP roles now and they are different claims —
+            # a loss-making demonstration (`sdp-v2`), an old-era calibration
+            # kept for comparability (`sdp-v3`) and a policy-parameter sweep
+            # point (`sdp-sweep`). One hard-coded sentence described the first
+            # and was WRONG about the other two, which is exactly the drift
+            # EMS_STRATEGY_META's `role_note` exists to prevent.
+            note = (EMS_STRATEGY_META.get(self.name) or {}).get("role_note")
+            print("[hil]   role: NOT frontier_eligible — this run's "
+                  "h2/delta_soc pair is not scored on the EMS frontier.%s"
+                  % ("" if not note else "\n[hil]     %s" % note))
+        for waived in self.certificate_allowances:
+            print("[hil]   CERTIFICATE ALLOWANCE: %s" % waived)
+        if self.policy_file_source:
+            src = self.policy_file_source
+            if src.get("kind") == "live_picks":
+                print("[hil]   artifact SUPPLIED BY THE SCENARIO from the "
+                      "alpha-sweep live picks: pick %r (leg %s, index %s, "
+                      "alpha %s) via %s"
+                      % (src.get("pick"), src.get("leg"), src.get("index"),
+                         src.get("alpha"), src.get("manifest")))
+            else:
+                print("[hil]   artifact SUPPLIED BY THE SCENARIO: %s"
+                      % src.get("declared"))
+        if not self.provenance["era_match"]:
+            print("[hil]   ⚠️ CHARGER-ERA MISMATCH: this artifact was solved "
+                  "against %s, and this run's plant bills %s. The policy is "
+                  "still a valid control law and the run proceeds — an SDP "
+                  "artifact is defined on any plant — but its alpha was "
+                  "calibrated against a charger this run does not have, so its "
+                  "h2/delta_soc pair is a COMPARABILITY measurement, not a "
+                  "result about this plant's economics."
+                  % (eta_chg_era_label(self.provenance["eta_chg"]),
+                     eta_chg_era_label(self.provenance["plant_eta_chg"])))
         if self.soc_ref_offset:
             print("[hil]   soc_ref_offset %+.4f — the run STARTS %.4f %s the "
                   "policy's target node, so its first decisions are on the "
@@ -5210,8 +5703,22 @@ class SdpStrategy:
 # first time it is actually bound or called.  They share every line of logic;
 # what differs is the artifact and the ROLE (EMS_STRATEGY_META).
 ems_sdp_v2 = SdpStrategy("sdp-v2", SDP_POLICY_FILE_V2)
-ems_sdp_v3 = SdpStrategy("sdp-v3", SDP_POLICY_FILE_V3,
+# DEMOTED 2026-09-02 (the eta era): `sdp-v3` keeps its artifact and its code
+# path but is no longer the frontier leg, so it no longer DEMANDS the
+# calibrated-benchmark certificate — the certificate is the frontier's
+# admission ticket (see sdp_assert_calibrated_benchmark()'s "WHY AT LOAD"), and
+# demanding it of a comparability leg would claim a role the leg does not have.
+# v3 does still carry the certificate; nothing about the artifact changed.
+ems_sdp_v3 = SdpStrategy("sdp-v3", SDP_POLICY_FILE_V3)
+# THE SHIPPED CALIBRATED BENCHMARK from 2026-09-02 — see SDP_POLICY_FILE_V4.
+ems_sdp_v4 = SdpStrategy("sdp-v4", SDP_POLICY_FILE_V4,
                          require_calibrated_benchmark=True)
+# THE SCENARIO-SUPPLIED ROLE: one strategy, no artifact of its own, playing
+# whatever its scenario names in `sdp_policy_file`. It exists so an artifact
+# that is deliberately OUTSIDE the lever windows (an alpha-sweep point) has a
+# registered NON-frontier home, instead of being smuggled through a
+# frontier-eligible name whose certificate it could not pass.
+ems_sdp_sweep = SdpStrategy("sdp-sweep", SDP_POLICY_FROM_SCENARIO)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -5515,8 +6022,18 @@ EMS_STRATEGIES = {
     # by ENDOGENOUS rejection) and `sdp-v2` is the byte-frozen DYNAMICS
     # DEMONSTRATION whose charge cells the `ems-sdp-cross`/`ems-sdp-braking`
     # scenarios exist to actuate.  EMS_STRATEGY_META below carries the roles.
+    # ⚠️ FOUR SDP NAMES since 2026-09-02, and they are not interchangeable:
+    # `sdp-v4` is THE CALIBRATED BENCHMARK for the eta_chg = 0.88 charger
+    # (frontier-scored), `sdp-v3` the SAME calibration for the retired 1:1
+    # charger (kept for comparability, off the frontier), `sdp-v2` the
+    # byte-frozen DYNAMICS DEMONSTRATION whose charge cells the
+    # `ems-sdp-cross`/`ems-sdp-braking` scenarios exist to actuate, and
+    # `sdp-sweep` the artifact-less role that plays whatever its scenario
+    # names.  EMS_STRATEGY_META below carries the roles.
     "sdp-v2": ems_sdp_v2,
     "sdp-v3": ems_sdp_v3,
+    "sdp-v4": ems_sdp_v4,
+    "sdp-sweep": ems_sdp_sweep,
     # The firmware's own 'Y' combined drive-cycle + power-share table (16
     # regions, 40 s), commanded from the EMS layer instead of the USB console.
     # All four read ONLY fb["t"] and the scenario's ems_run_exit_s, so all four
@@ -5617,9 +6134,37 @@ EMS_STRATEGY_META = {
                                    "policy that was NOT calibrated for this "
                                    "rig — not a competitive score, and not an "
                                    "artefact either."},
-    # THE CALIBRATED BENCHMARK.
+    # THE OLD-ERA CALIBRATION, demoted 2026-09-02 — see SDP_POLICY_FILE_V4.
     "sdp-v3":        {"policy_file": SDP_POLICY_FILE_V3,
+                      "frontier_eligible": False,
+                      "role_note":
+                          "ROLE: an OLD-ERA CALIBRATION retained for "
+                          "COMPARABILITY — this artifact's alpha "
+                          "(0.1629624) was calibrated against the 1:1 "
+                          "current-transfer charger the plant no longer "
+                          "models. It is a real, correctly calibrated "
+                          "policy for a charger this run does not have, "
+                          "so its h2/delta_soc pair belongs beside a "
+                          "campaign of the same era (<= 20260901_151156), "
+                          "not beside an eta_chg = 0.88 run. `sdp-v4` is "
+                          "the same calibration re-solved for the current "
+                          "charger and is the frontier leg."},
+    # THE CALIBRATED BENCHMARK for the eta_chg = 0.88 charger.
+    "sdp-v4":        {"policy_file": SDP_POLICY_FILE_V4,
                       "frontier_eligible": True},
+    # THE SCENARIO-SUPPLIED ROLE — the alpha-sweep legs' home.
+    "sdp-sweep":     {"policy_file": SDP_POLICY_FROM_SCENARIO,
+                      "frontier_eligible": False,
+                      "role_note":
+                          "ROLE: a POLICY-PARAMETER SWEEP POINT — the run "
+                          "plays an artifact its SCENARIO names, taken from "
+                          "the alpha sweep, and the sweep's points sit "
+                          "OUTSIDE the two admission windows by design. Like "
+                          "`sdp-v2` it optimizes a real objective and its "
+                          "h2/delta_soc pair is a real measurement OF THAT "
+                          "OBJECTIVE — it is the alpha sweep's live evidence, "
+                          "not a competitive score, and it must not be ranked "
+                          "against the calibrated leg."},
     # The firmware's 'Y' table replayed from the EMS layer: a STIMULUS, not an
     # energy-management law — it commands a fixed profile and has no objective.
     "y-b30-v1":      {"policy_file": None, "frontier_eligible": False,
@@ -5730,6 +6275,14 @@ def ems_frontier_eligible(strategy_name):
 #                IMPORT on a scenario whose strategy is not an SdpStrategy
 #                (where it would be read by nobody).  See
 #                SdpStrategy.set_soc_ref_offset().
+#   sdp_policy_file : optional str — SDP strategies ONLY, and only ones that
+#                are NOT `frontier_eligible` (both refused at import). The
+#                baked artifact this scenario plays INSTEAD of the strategy's
+#                registered one, as either a repo-relative path or
+#                "live-picks:<key>", which resolves through the alpha sweep's
+#                live-picks manifest at bind time. ABSENT means the strategy
+#                plays what EMS_STRATEGY_META says it plays. See
+#                resolve_sdp_policy_file() and the `ems-sdp-alpha-*` block.
 #   pi_mute_after_s : optional float — the emulated Pi commander goes
 #                PERMANENTLY SILENT at this time while the injection stream keeps
 #                running at full rate, isolating the firmware's Pi watchdog from
@@ -6377,6 +6930,24 @@ SCENARIOS["ems-dp-replay"] = {
 # ⚠️ SIM-ONLY strategy (plant-truth SoC) and its demand axis clamps to the end
 # bins for much of this cycle — both are the SdpStrategy banner's business, and
 # the exit summary's clamp counters are how a run reports it.
+# ── REBOUND TO `sdp-v4` 2026-09-02 (the eta era) ────────────────────────────
+# The block below records the 2026-09-01 move from v2 to v3, which is still the
+# reason every expectation on this leg reads the way it does.  What the eta era
+# changed is WHICH calibrated artifact plays it: `sdp_policy_v4.json` is the
+# same two-sided lever calibration re-solved against the energy-conserving
+# charger the plant now models (hil_electrical.ETA_CHG = 0.88), and v3 is the
+# same calibration for a charger this run no longer has.
+#   * WHAT CHANGED: nothing this scenario observes.  v3 and v4 carry the SAME
+#     all-zero charge map (0 differing cells), so `charge_path_never_opens`
+#     stands unchanged, and their share maps differ on FOUR rows only — 2, 3, 4
+#     and 5, i.e. SoC 0.552-0.555, which is 45-48 grid nodes BELOW the target
+#     node this scenario starts on and falls ~0.0017 from.  Pinned by
+#     test_sdp_v3_v4_share_maps_agree_on_traversed_rows().
+#   * WHAT DID CHANGE: the economics the leg REPORTS.  v4's alpha (0.118326)
+#     was priced against the charger the run bills, so its h2/delta_soc pair is
+#     a result about this plant; v3's was not.  That is the whole reason for
+#     the rebinding, and it is why v3 is now `frontier_eligible: False`.
+#
 # ── BOUND TO `sdp-v3` SINCE 2026-09-01 (the charge-economics ruling) ────────
 # This is THE BENCHMARK LEG of the three-way comparison, so it must play the
 # CALIBRATED artifact.  What changed and what did not:
@@ -6395,7 +6966,7 @@ SCENARIOS["ems-dp-replay"] = {
 #     come near.  Every share threshold in the suite entry is unmoved.
 SCENARIOS["ems-sdp"] = {
     "description": "The `ems-soc-band` drive cycle and drain load, driven by "
-                   "the CAUSAL `sdp-v3` policy: a state-indexed setpoint table "
+                   "the CAUSAL `sdp-v4` policy: a state-indexed setpoint table "
                    "computed offline by stochastic dynamic programming and "
                    "looked up at run time on (SoC, demand bin). The causal "
                    "optimal-by-construction leg between the `soc-band` "
@@ -6405,9 +6976,108 @@ SCENARIOS["ems-sdp"] = {
     "chg_i_ceiling_a": SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"],
     # THE SAME LIST OBJECT — see the note above.
     "ems_v_profile": SCENARIOS["ems-soc-band"]["ems_v_profile"],
-    # THE CALIBRATED BENCHMARK artifact — see the block above this entry.
-    "ems": "sdp-v3",
+    # THE CALIBRATED BENCHMARK artifact for the eta_chg = 0.88 charger — see
+    # the two blocks above this entry.  Rebound from `sdp-v3` 2026-09-02.
+    "ems": "sdp-v4",
 }
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ── ems-sdp-alpha-*: THE ALPHA SWEEP'S THREE LIVE POINTS (2026-09-02) ───────
+#
+# WHAT THESE ARE.  The `ems-sdp` stimulus — the SAME profile object, the SAME
+# drain, the SAME charge ceiling, the SAME Run exit — driven by three DIFFERENT
+# SDP artifacts taken from the eta-era alpha sweep, one per behaviour leg:
+#
+#   ems-sdp-alpha-greedy   a point on the GREEDY leg (alpha below the share
+#                          lever's admission threshold): the SoC axis is priced
+#                          so low that the policy takes hydrogen greedily.
+#   ems-sdp-alpha-cal      the CALIBRATED point — the sweep's anchor, whose
+#                          policy block is the shipped `sdp_policy_v4.json`.
+#                          It exists so the sweep has an in-family control
+#                          measured under the same scenario name as its
+#                          neighbours, not because the law differs from
+#                          `ems-sdp`'s.
+#   ems-sdp-alpha-charge   a point on the CHARGE-ADMITTING leg (alpha above the
+#                          charge lever's threshold): the policy opens the
+#                          Ag105, which the eta-era model prices as the worse
+#                          lever by exactly 1/eta.
+#
+# WHY ONE STIMULUS.  The sweep varies ONE quantity — alpha — and three runs on
+# three different cycles would vary two.  Sharing `ems-sdp`'s objects (not
+# copies of them) is the same discipline the frontier legs follow, and for the
+# same reason: a comparison across them is only about the policy.
+#
+# WHY NOT ON THE FRONTIER.  Two of the three artifacts sit OUTSIDE the two
+# admission windows BY DESIGN — that is what makes them sweep points — so none
+# of them can carry the calibrated-benchmark certificate and none of their
+# h2/delta_soc pairs is a competitive score.  They run under `sdp-sweep`, whose
+# EMS_STRATEGY_META entry is `frontier_eligible: False` with a role note, so a
+# report renders them under the demonstration banner rather than ranking them.
+# The alternative — binding them to `sdp-v4` and overriding its artifact —
+# would make the ROLE a property of the scenario while the registry still said
+# "frontier leg", which is exactly the confusion EMS_STRATEGY_META exists to
+# prevent.  The import guard below refuses that arrangement outright.
+#
+# WHICH ARTIFACT.  Not a hard-coded path: each names its sweep PICK, and
+# `resolve_sdp_policy_file()` reads the path AND the selected policy sha out of
+# the sweep's own live-picks manifest at bind time (see SDP_LIVE_PICKS_PATH).
+# A sweep re-run that moves a leg midpoint moves these scenarios with it; a
+# regenerated artifact that changes the decision law is REFUSED rather than
+# played under a name that claims the pick.
+#
+# CAMPAIGN COST.  Three more 61 s runs (~3 min).  `run_hil_suite.py` builds its
+# plan from every entry in SCENARIOS, so these are ORDINARY runs unless gated
+# there — see SDP_ALPHA_SCENARIOS below.
+for _leg, _why in (
+        ("greedy", "the GREEDY leg — alpha below the share lever's admission "
+                   "threshold, so the SoC axis is priced too low to defend and "
+                   "the policy runs the fuel cell"),
+        ("cal", "the CALIBRATED point — the sweep anchor, whose policy block "
+                "IS the shipped sdp_policy_v4.json; the sweep's in-family "
+                "control"),
+        ("charge", "the CHARGE-ADMITTING leg — alpha above the charge lever's "
+                   "threshold, so the policy opens the Ag105 that the eta-era "
+                   "model prices as the worse lever by 1/eta")):
+    _name = "ems-sdp-alpha-" + _leg
+    SCENARIOS[_name] = {
+        "description": ("The `ems-sdp` stimulus (same profile object, drain "
+                        "and charge ceiling) driven by the alpha sweep's %s "
+                        "point: %s. A POLICY-PARAMETER SWEEP LEG, not a "
+                        "frontier candidate." % (_leg, _why)),
+        "electrical": "any",
+        # THE SAME OBJECTS as `ems-sdp` — see the block above.
+        "duration_s": SCENARIOS["ems-sdp"]["duration_s"],
+        "chg_i_ceiling_a": SCENARIOS["ems-sdp"]["chg_i_ceiling_a"],
+        "ems_v_profile": SCENARIOS["ems-sdp"]["ems_v_profile"],
+        "ems": "sdp-sweep",
+        "sdp_policy_file": SDP_LIVE_PICK_PREFIX + _name,
+    }
+del _leg, _why, _name
+
+# The alpha-sweep legs, as a set, for a caller that wants to gate them.
+# DERIVED from the registry rather than written out, so a fourth sweep point
+# cannot be added to SCENARIOS and left out of a gate.  run_hil_suite.py has no
+# opt-in flag for them today (its only cost gates are `--with-ftp75` /
+# FTP75_SCENARIOS and `operator_required`), so as registered here they are
+# ORDINARY runs and every campaign pays their ~3 min.  Gating them belongs in
+# run_hil_suite.py's build_plan(), against this name.
+SDP_ALPHA_SCENARIOS = tuple(sorted(
+    n for n in SCENARIOS if n.startswith("ems-sdp-alpha-")))
+
+# ── THE SHARED SOC-BAND DRAIN STIMULUS, as ONE list ─────────────────────────
+# apply_scenario() used to spell these names inline.  They are a set now
+# because the alpha-sweep legs must carry the SAME drain as `ems-sdp` (they are
+# the same stimulus by construction) and a second inline tuple would be a
+# second place for the list to go stale.
+# ⚠️ TWO OFFLINE MIRRORS of this list exist and are NOT updated by this file:
+#   tools/gen_dp_ems_table.py  SOC_BAND_DRAIN_SCENARIOS
+#   tools/ems_walk.py          _SIM_SOC_BAND_DRAIN_SCENARIOS
+# Neither needs the alpha legs today — no DP table is solved for them and no
+# walk is run on them — but an offline walk of an `ems-sdp-alpha-*` scenario
+# would model HALF its demand until they are extended.  ems_walk.py already
+# reports the coverage gap rather than assuming it away.
+SOC_BAND_DRAIN_SCENARIO_NAMES = ("ems-soc-band", "ems-dp-replay",
+                                 "ems-sdp") + SDP_ALPHA_SCENARIOS
 
 # ── ems-y-*: the firmware's 'Y' combined profile, four variants ─────────────
 #
@@ -6793,7 +7463,7 @@ FTP75_SDP_PRELOAD_A = 0.0
 SCENARIOS["ems-ftp75-sdp"] = {
     "description": ("%.0f s EPA FTP-75 study segment (the SAME profile object "
                     "as the other two FTP-75 scenarios) driven by the causal "
-                    "`sdp-v3` policy started %+.3f SoC ABOVE its target node: "
+                    "`sdp-v4` policy started %+.3f SoC ABOVE its target node: "
                     "the table begins on its battery-heavy branch (commanded "
                     "share 0.15), the cycle's own drain walks the state across "
                     "the switching boundary, and `cmd_share_sp` steps ONCE to "
@@ -6806,10 +7476,11 @@ SCENARIOS["ems-ftp75-sdp"] = {
     # under either engine is a free cross-check, as on `ems-sdp`.
     "electrical": "any",
     "duration_s": FTP75_DURATION_S,
-    # THE CALIBRATED BENCHMARK artifact.  The v2-derived offline walk above
+    # THE CALIBRATED BENCHMARK artifact for the eta_chg = 0.88 charger
+    # (rebound from `sdp-v3` 2026-09-02).  The v2-derived offline walk above
     # transfers VERBATIM — see the row-diff verification at
-    # FTP75_SDP_SOC_REF_OFFSET.
-    "ems": "sdp-v3",
+    # FTP75_SDP_SOC_REF_OFFSET, extended to v4 there.
+    "ems": "sdp-v4",
     # THE SAME LIST OBJECT as the other two FTP-75 scenarios: the three differ
     # only in the strategy driving them, and a comparison between them is
     # meaningless on different stimuli.
@@ -7519,6 +8190,32 @@ for _sn, _sm in SCENARIOS.items():
         "and the trace would carry no sign of the difference." % (_sn, _sm.get("ems")))
 del _sn, _sm
 
+# `sdp_policy_file` (2026-09-02) is read by the same binder, and carries a
+# SECOND restriction the offset does not: it may not override the artifact of a
+# FRONTIER-ELIGIBLE strategy.  The frontier's admission ticket is the
+# calibrated-benchmark certificate, which is checked against the artifact a
+# strategy PLAYS; a scenario that swapped that artifact would be scored as the
+# calibrated leg while running a policy nobody calibrated, and the run's own
+# summary line would still say `sdp-v4`.  Non-frontier strategies (`sdp-sweep`,
+# `sdp-v2`, `sdp-v3`) may be overridden freely — that is the mechanism's point.
+for _pn, _pm in SCENARIOS.items():
+    if "sdp_policy_file" not in _pm:
+        continue
+    assert _pm.get("ems") in SDP_STRATEGY_NAMES, (
+        "SCENARIOS[%r] declares `sdp_policy_file` but its `ems` is %r. The key "
+        "is read only by SdpStrategy.bind_scenario(), so the named artifact "
+        "would never be loaded and the run would silently play whatever the "
+        "strategy computes for itself." % (_pn, _pm.get("ems")))
+    assert not EMS_STRATEGY_META[_pm["ems"]]["frontier_eligible"], (
+        "SCENARIOS[%r] overrides the artifact of `%s`, which is "
+        "`frontier_eligible: True`. A frontier leg is scored on the strength "
+        "of the CALIBRATED artifact its registry entry names; swapping that "
+        "artifact per scenario would rank a policy nobody calibrated under a "
+        "name that claims the calibration. Bind it to a non-frontier SDP "
+        "strategy instead (`sdp-sweep` exists for exactly this)."
+        % (_pn, _pm["ems"]))
+del _pn, _pm
+
 # `droop_mode` (WP-E) is read only when a HI-FI engine is constructed, so on a
 # scenario that declares `electrical: "simple"` it would be silently ignored —
 # a stimulus that is not what the registry says it is, with no symptom
@@ -7554,7 +8251,9 @@ _AUX_PRELOAD_BESPOKE = frozenset({
     # 2026-08-31: `ems-sdp` shares the SOC_BAND_DRAIN_* bespoke branch with the
     # two entries above (identical stimulus is the whole point), so a preload
     # declared on it would be silently ignored — it belongs in this list.
-    "ems-sdp",
+    # 2026-09-02: and so do the three `ems-sdp-alpha-*` sweep legs, folded in
+    # from SOC_BAND_DRAIN_SCENARIO_NAMES rather than listed by hand.
+    *SOC_BAND_DRAIN_SCENARIO_NAMES,
     "charge-fault", "soc-depletion", "handoff-sag", "bringup", "scp-inrush",
     # 2026-08-31 wave 2: `mppt-tracking` and `charge-to-full` carry the plain
     # I_AUX_A load and take the GENERIC branch, so they are NOT listed.
@@ -7948,12 +8647,15 @@ def apply_scenario(plant, scenario, t):
         # Plant carries the ordinary aux load; the whole stimulus is the EMS
         # layer's 50 Hz command stream (see EMS_STRATEGIES / ems_v_profile).
         plant.i_aux = I_AUX_A
-    elif scenario in ("ems-soc-band", "ems-dp-replay", "ems-sdp"):
+    elif scenario in SOC_BAND_DRAIN_SCENARIO_NAMES:
         # ALL THREE names, deliberately: `ems-dp-replay` is the same cycle and
         # the same drain driven by the offline-optimal table instead of the
         # causal policy, and `ems-sdp` (2026-08-31) is the same again driven by
         # the causal state-indexed SDP policy.  The three-way comparison is only
-        # meaningful if the load is bit-identical.  See the
+        # meaningful if the load is bit-identical.  The three
+        # `ems-sdp-alpha-*` sweep legs joined the set 2026-09-02 for the same
+        # reason: they ARE the `ems-sdp` stimulus, driven by a different
+        # artifact.  See the
         # SCENARIOS["ems-dp-replay"] and SCENARIOS["ems-sdp"] notes.
         # The stimulus is TWO things: the EMS layer's 50 Hz command stream (the
         # `soc-band` strategy) and this drain load, whose only job is to move the

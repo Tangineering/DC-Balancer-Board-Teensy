@@ -137,6 +137,14 @@ Electrical engine: `"any"` scenarios run under the campaign's `--electrical-pref
   alive in Run at t = 8.0. Operator ruling (b): FC-path charging plus cruise is
   infeasible by design (single-source operation against `LIMIT_I_FC_MAX` 1.4 A), so
   the OC latch validates the design boundary rather than failing the run.
+- ⚠️ **Charger era (WP-1C, 2026-09-02):** the LATCH TIME is now provisional.
+  With `ETA_CHG` = 0.88 the charger's bus draw falls to `V_pack/(eta*V_bus)`
+  ~ 0.56 of its pack current, so `I_fc` climbs the same ramp more slowly and
+  crosses `LIMIT_I_FC_MAX` later — predicted ~9.1 s against the 1:1-era
+  measurement of 8.7221 s. Nothing numeric in the entry moves (`not_before_s`
+  and `survive_to` are both the t = 8.0 charge_goal step). If an eta-era run
+  shows `I_fc` peaking under 1.4 A the latch becomes unreachable, and the fix is
+  a ceiling or a load on the scenario, NOT a relaxed expectation.
 - **Why useful:** it asserts a known hardware incompatibility positively, so a
   future change that silently relaxes the limit or the single-source behaviour
   becomes a visible diff.
@@ -149,7 +157,12 @@ Electrical engine: `"any"` scenarios run under the campaign's `--electrical-pref
   `MPPT_DISABLE` held low.
 - **Pass/fail:** completely fault-free; must survive to the first braking window
   (t = 14.0) in Run; `REGEN_ENABLE` must be set for ≥ 0.5 s inside braking window 1;
-  and `I_charge` must exceed 0.5 A through that path. Charge ceiling is de-rated to
+  and `I_charge` must exceed **0.03 A** through that path (lowered from 0.5 A by
+  WP-C when the current stopped being bus-sourced; **re-derived unchanged** by
+  WP-1C, because the eta-era cap is OUTPUT-referred and the same 0.32 W of
+  harvest now delivers `ETA_CHG*p_regen/V_pack` = 0.036 A instead of the
+  input-referred 0.018 A — the floor is more conservative than when it was
+  written, not less). Charge ceiling is de-rated to
   1.6 A so the shared draw keeps a 37 % per-channel margin.
 - **Why useful:** the regen PATH coverage — the firmware's branch selection
   (REGEN high with FC_CHARGE low, `MPPT_DISABLE` low) under a stimulus that
@@ -178,16 +191,29 @@ Electrical engine: `"any"` scenarios run under the campaign's `--electrical-pref
   Simple mode models the same clamp (`Plant.step()`'s lumped V-MOT node) but has
   nowhere to report an episode.
 - **Pass/fail:** fault-free; in Run at t = 14.0; `REGEN_ENABLE` set for ≥ 0.5 s
-  inside braking window 1; `I_charge` ≥ 0.04 A through that path (harvested, not
-  bus-sourced); `V_rgn` ≥ 17.0 V inside the window (the bench signature — V-MOT
-  lifting toward the 18.1 V clamp with V_bus unmoved); and at least one
-  `chopper_clamp` event carrying ≥ 0.3 J.
-- ⚠️ **Bands are `provisional`** — derived from the WP-C offline walk
-  (2026-09-01), not from a campaign. Re-derive them after the first live run.
-  The walk measured one coalesced clamp episode of 1.298 J per window, peak V-MOT
-  18.15 V, and `I_charge` ~0.08 A once the Ag105 settles; the bands sit at
-  roughly half those values so a degraded path fails while walk-vs-board
-  modelling error does not.
+  inside braking window 1; `I_charge` ≥ 0.045 A through that path (harvested, not
+  bus-sourced); `V_rgn` ≥ 17.9 V inside the window and held there for ≥ 800 ms
+  (the bench signature — V-MOT lifting onto the 18.1 V clamp with V_bus unmoved);
+  every coalesced `chopper_clamp` episode ≥ 0.01 J; at least one episode
+  ≥ **0.65 J**; and ≥ **1.9 J** of clamp energy over the run.
+- ⚠️ **Charger era (WP-1C, 2026-09-02) — the two chopper-energy bounds were
+  re-derived and the three signal bounds were not.** With the regen cap
+  OUTPUT-referred the Ag105 takes about twice the pack current out of the same
+  window and the chopper, a residual absorber, burns what is left. Measured on a
+  plant probe reproducing this scenario's window (hi-fi, 1.5 s, v0 3.0 m/s,
+  i_cmd −12 A, ceiling 1.6 A): chopper **1.3043 J** per window with the charger
+  against 2.1741 J with the ceiling at zero, `I_charge` peak **0.1469 A**, clamp
+  dwell **1026 ms**. Against the 1:1-era campaign measurement (2.3–2.9 J per
+  window, 0.0677 A, 1148 ms) that is a halving of the energy, a doubling of the
+  pack current and an 11 % shortening of the dwell — which is why energy and
+  dwell had to be re-derived separately: the clamp is a VOLTAGE clamp, so the
+  charger lowers the chopper's residual current, not the node voltage. The
+  energy floors follow the measurement (3.0 → 1.9 J total, 1.0 → 0.65 J per
+  episode); the `I_charge`, `V_rgn` and dwell floors are unchanged and are now
+  further under their expectations than when they were written.
+- ⚠️ **All five bands remain `provisional`** — the two energy floors come from
+  an offline plant probe and the other three are 1:1-era campaign measurements
+  re-checked against it. Re-derive them from the first eta-era campaign.
 - ⚠️ **Do not read SoC direction here.** The harvest is single-digit joules
   against a pack simultaneously carrying the bus, so pack SoC still falls across
   the run. Read `I_charge`, the clamp event's `energy_j`, and the plant's
@@ -370,6 +396,34 @@ or failed its own checks, or when the legs' `delta_soc` differ by more than 0.01
 Anything but PASS counts as a failing suite run and is NAMED in REPORT.md — a
 silently dropped leg is exactly how the regression above went unnoticed.
 
+⚠️ **Charger era (WP-1C, 2026-09-02) — both tuples' THRESHOLDS are held and
+both are now marked `provisional`.** In each tuple the reference leg is the only
+charging leg, so `ETA_CHG` = 0.88 changes the reference's hydrogen while the
+charge-free candidate and bound do not move at all. Governor walk, 1:1 era →
+0.88 era:
+
+| tuple | vs_reference | vs_bound | threshold |
+|---|---|---|---|
+| `cycle61` | 0.859 → **0.958** | 1.001 → 1.001 | ≤ 0.98 / ≤ 1.06 |
+| `ftp75` | 0.984 → **0.964** | 0.998 → 0.998 | ≤ 1.02 / ≤ 1.06 |
+
+The 0.98 ask survives with 2.3 % of headroom where it had 14 %. It is kept
+because 2 % is still an order of magnitude above the ~0.05 % run-to-run h2
+spread and the offline eta-era result is a 4.2 % candidate win — an ask the
+policy clears rather than scrapes. It is now a TIGHT ask, and a first eta-era
+reading just over 0.98 is a calibration event, not a policy failure. The 1.02
+drive-cycle ask moves the other way: it was derived from an OLD-era −0.01 %
+DP-vs-`soc-band` tie, and at eta 0.88 the DP's eq-H2 margin over `soc-band` on
+that stimulus is −3.4 %, so 1.02 is now conservative rather than knife-edge.
+
+⚠️ **A leg's charger era is now part of the stimulus-coherence precondition.**
+`eta_chg` joined `EMS_FRONTIER_STIMULUS_KEYS`, read from each run's own
+`.meta.json` sidecar rather than from the scenario registry (no scenario
+declares it — it is a plant constant). An ABSENT value is the 1:1-era sentinel,
+not "unknown", so a pre-eta CSV mixed into an eta-era campaign fires the
+mismatch; a leg that has not run yet is simply not compared, so a partial
+campaign does not.
+
 **A second frontier, at drive-cycle scale (2026-09-01).** The check is now a
 registry (`run_hil_suite.EMS_FRONTIERS`) rather than one tuple, and the second
 entry runs the same three roles over the 340 s FTP-75 segment:
@@ -476,7 +530,16 @@ every frontier number is a RANKING on one rig and not an absolute mass.
   (−14.33 % offline, −9.4 % live) is the thesis-level EMS result; the startup
   fingerprint refusals guarantee the table and the stimulus cannot drift apart.
 
-### ems-sdp (61 s, any engine, EMS `sdp-v3` — THE BENCHMARK LEG)
+### ems-sdp (61 s, any engine, EMS `sdp-v4` — THE BENCHMARK LEG)
+
+**Rebound to `sdp-v4` (η era) 2026-09-02.** `sdp_policy_v4.json` is the same
+two-sided lever calibration re-solved against the energy-conserving charger the
+plant now models (`hil_electrical.ETA_CHG` = 0.88, α = 0.118326, still zero
+charge cells by endogenous rejection). Nothing this scenario observes moves:
+the v3 and v4 charge maps are identical (both all-zero, so
+`charge_path_never_opens` stands) and their share maps differ on SoC rows 2–5
+only — 45–48 grid nodes below the target node this run starts on. `sdp-v3`
+stays registered as the old-era artifact, `frontier_eligible: False`.
 
 - **Tests:** the identical cycle and drain again (the same profile list object as
   `ems-soc-band` and `ems-dp-replay`), driven by the causal stochastic-DP policy —
@@ -509,7 +572,60 @@ every frontier number is a RANKING on one rig and not an absolute mass.
   CALIBRATED on v2 campaigns and the first v3 campaign is expected to repeat
   them.
 
-### ems-ftp75-sdp (350 s, any engine, EMS `sdp-v3`, gated behind `--with-ftp75`)
+### ems-sdp-alpha-greedy / -cal / -charge (61 s each, any engine, EMS `sdp-sweep`, gated behind `--with-alpha`)
+
+*(Registration and stimulus: see the scenario rows. This entry is the
+EXPECTATIONS half, written by WP-1C, 2026-09-02.)*
+
+- **Tests:** one run per BEHAVIOUR LEG of the eta-era alpha sweep
+  (`tools/sdp_policies/sweep_20260902_eta088/`, picks in its `live_picks.json`),
+  all three on the `ems-sdp` stimulus so the trio's only controlled variable is
+  the artifact's alpha:
+
+  | leg | idx | alpha | charge cells | what it shows |
+  |---|---|---|---|---|
+  | greedy | 3 | 0.073936 | 0 | alpha under the share lever's admission threshold (0.111000013), so the share map is DEGENERATE — the policy asks for the battery rail everywhere |
+  | cal | 7 | 0.118326 | 0 | the sweep anchor; its policy block IS `sdp_policy_v4.json`'s, so this is a same-stimulus repeat of `ems-sdp` |
+  | charge | 14 | 0.248413 | 591 | alpha past the charge lever's admission threshold (0.239249990) — the only leg that opens the charger path |
+
+- **Pass/fail:** fault-free; in Run at t = 50; ≥ 1000 observation rows across
+  (10, 50) s; the shared `ems-sdp` drive cycle commanded (`cmd_v_sp` ≥ 1.45 over
+  (12, 30) s — the assertion that the trio really is one experiment); `I_fc`
+  ≤ **1.28 A** (inherited verbatim from `ems-sdp-cross`'s measured single-source
+  charge budget on the same stimulus and the same 0.8 A ceiling); a per-leg share
+  signature — `cmd_share_sp` ≤ 0.16 over (10, 54) s for **greedy**, ≥ 0.84 over
+  (5, 54) s for the other two; an FC_CHARGE rising-edge CENSUS of **[0, 0]** for
+  greedy and cal and **[1, 4]** for charge; and a two-sided `h2_cum_g` band at
+  the sweep's own governor-walk total ± 25 %:
+
+  | leg | walk h2 [g] | band [g] |
+  |---|---|---|
+  | greedy | 0.004093 | [0.003070, 0.005116] |
+  | cal | 0.012603 | [0.009452, 0.015753] |
+  | charge | 0.015065 | [0.011299, 0.018831] |
+
+- ⚠️ **Every bound is PROVISIONAL and OFFLINE.** No campaign has run any of the
+  three. The h2 bands are walk predictions; every other bound is inherited from
+  `ems-sdp`, which shares this stimulus and its charge ceiling.
+- **Why the checks are shaped this way:** the campaign-`024231` S2 FAIL is the
+  precedent — a position or absence assertion at a model-predicted INSTANT fails
+  on model error while the mechanism works. So the discriminating checks here are
+  phase-free: a level band on the commanded share over a wide window, an edge
+  COUNT band on the charge path, and a two-sided total. None names an instant.
+  The `ems-sdp` open-loop-hold caveat applies unchanged — below the firmware's
+  0.55 A drop-out the delivered split is whatever stood — so nothing here asserts
+  a DELIVERED share.
+- **Why gated:** they answer a question only the alpha round asks, so they belong
+  to that campaign rather than to the regression campaign. `--with-alpha`, the
+  same skip-record mechanism as `--with-ftp75` and a different reason: an
+  experiment, not run time.
+
+### ems-ftp75-sdp (350 s, any engine, EMS `sdp-v4`, gated behind `--with-ftp75`)
+
+**Rebound to `sdp-v4` (η era) 2026-09-02**, with `ems-sdp` and for the same
+reason. The v2→v3 walk-transfer argument below extends unchanged: v3 and v4
+differ in `policy.share` on rows 2–5 only (76 cells of 2525) and carry an
+identical all-zero charge map, while this scenario spans rows ~44–63.
 
 - **Tests:** the SDP policy's **bang-bang share law**, on the same FTP-75 profile
   object as the other two FTP-75 scenarios. The scenario key
@@ -728,8 +844,14 @@ above, with the EMS scenarios it belongs to.)*
   `socband_ftp_charge_opened`.
 - **Pass/fail:** *5050:* fault-free; in Run at t = 300; the 3.0 m/s peak commanded
   at t ≈ 245; `I_fc` ≥ **0.40 A** at the peak; `h2_cum_g` in the PROVISIONAL
-  band **[0.021, 0.035] g** (governor walk 2.809 × 10⁻² at preload 0; the
-  6.47 × 10⁻² that stood here is the retired 0.65 A era's measurement).
+  band **[0.022, 0.037] g** (M2-equivalent governor walk 2.9888 × 10⁻² at
+  preload 0; the 6.47 × 10⁻² that stood here is the retired 0.65 A era's
+  measurement). ⚠️ **Charger era (WP-1C, 2026-09-02): this band does not move.**
+  The `hold-5050` walk opens ZERO charge windows, so no term in its hydrogen
+  passes through the charger and the 1:1 and `ETA_CHG` = 0.88 eras give
+  bit-identical totals. The same holds for `ems-ftp75-sdp`, `ems-ftp75-dp`,
+  `ems-dp-replay` and `ems-sdp`; `ems-ftp75-socband` is the only FTP-75 leg
+  whose band moved.
   *socband:* **fault-free** — the
   `FAULT_OC_FC` allowance was RETIRED 2026-09-01 by operator ruling. It had covered the
   0.75 share ceiling leaving only **11.3 %** of peak margin against the measured
@@ -745,12 +867,25 @@ above, with the EMS scenarios it belongs to.)*
   any floor at or below that discriminates nothing; 0.95 A sits 15 % above it and
   23 % below the measured socband peak 1.2414 A. The earlier 0.70 A and 0.55 A
   figures were derived against instants rather than window peaks);
-  `h2_cum_g` in a **two-sided [0.070, 0.115] g band** around the measured
-  9.159 × 10⁻² (−24 % / +26 %). The old vacuous 5 × 10⁻³ floor existed only because a
+  `h2_cum_g` in a **two-sided PROVISIONAL band [0.031, 0.052] g** — the
+  governor walk +/- 25 %. The old vacuous 5 × 10⁻³ floor existed only because a
   truncated run was an allowed outcome; retiring the OC_FC allowance removes that
   outcome, so the run now always reaches t = 345 and the floor can finally bracket the
-  measurement. The 9.159 × 10⁻² figure is **bit-identical across all six campaigns**
-  that have run this scenario.
+  prediction. The 9.159 × 10⁻² figure quoted in earlier revisions is the retired
+  0.65 A preload era's measurement (bit-identical across all six campaigns that
+  ran it in that era) and is not comparable with either the zero-preload or the
+  eta-era band.
+  ⚠️ **Charger era (WP-1C, 2026-09-02), and the round found two things.**
+  (1) `ems-ftp75-socband` is the only FTP-75 leg the charger change moves, and it
+  moves it UP, not down: cheaper charging lets `soc-band` open a THIRD charge
+  window, so the walk goes 3.7526 × 10⁻² → **4.1873 × 10⁻²** g and the terminal
+  SoC improves by 0.0014. (2) The band is now taken against `ems_walk.py`'s
+  `h2 (Gfc, physical)` total rather than its `h2 (Gfc, plant)` total. The live
+  `h2_cum_g` column integrates Gfc over the FC power the board draws and the
+  charger's draw is ON that bus, so `physical` is its analogue; `plant` omits the
+  charger by construction. The evidence is the 61 s frontier: its MEASURED
+  vs-reference ratio (0.9003 x, campaign `20260901_151156`) sits beside the
+  physical-walk prediction (0.859) and nowhere near the plant-walk one (1.127).
   ⚠️ `soc-band` **saturates its bias at 0.75 by t = 46.8 s and holds it for the
   remaining 298 s** — past that point the run tests the firmware's share loop under
   one fixed setpoint, not the policy's law.

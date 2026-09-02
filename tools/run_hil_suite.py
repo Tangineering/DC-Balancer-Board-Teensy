@@ -338,6 +338,43 @@ SETTLE_MIN_RECOVER_S = 1.5
 FTP75_SCENARIOS = frozenset({"ems-ftp75-5050", "ems-ftp75-socband",
                              "ems-ftp75-sdp", "ems-ftp75-dp"})
 
+# ── The three SDP alpha-sweep legs, opt-in behind --with-alpha ──────────────
+# Same MECHANISM as FTP75_SCENARIOS (a skip record with a reason, so the report
+# shows the gap) and a DIFFERENT reason: these three are not long, they are a
+# one-off EXPERIMENT.  They replay three points of the eta-era alpha sweep
+# (tools/sdp_policies/sweep_20260902_eta088/, one per behaviour leg) on the
+# `ems-sdp` stimulus, so a default campaign would spend their runtime measuring
+# a question only the alpha round asks.  They belong to campaign D, not to the
+# regression campaign.
+#
+# A SET, not a name prefix, for the reason spelled out above FTP75_SCENARIOS.
+ALPHA_SCENARIOS = frozenset({"ems-sdp-alpha-greedy", "ems-sdp-alpha-cal",
+                             "ems-sdp-alpha-charge"})
+
+# ── The charger-era provisional qualifier ───────────────────────────────────
+# WP-1C (2026-09-02).  Every band below that depends on the charger's BUS DRAW,
+# on hydrogen burnt during a charge window, or on the split of braking power
+# between the chopper and the Ag105 was re-derived for the ETA_CHG = 0.88
+# energy-conserving charger (docs/HIL_PLANT.md §4.6.1-4.6.2, commit 390f554).
+# The mechanism, once, so the per-check comments can cite it:
+#   * FC-fed charging.  The charger's bus current was `i_charge`; it is now
+#     `i_charge * V_pack / (ETA_CHG * V_bus)` = 0.5565 x i_charge at the probe
+#     point.  Every I_fc figure measured INSIDE a charge window falls, and the
+#     hydrogen billed for that window falls with it.
+#   * Regen-fed charging.  The cap is now OUTPUT-referred, so the pack current
+#     rises (x ~2.05 at V_chg 18.1 V / V_pack 7.77 V) and the chopper, which is
+#     a residual absorber, burns correspondingly less.
+#   * Pack current on an FC-fed path is UNCHANGED: eta moves what the charger
+#     COSTS, never what the pack RECEIVES at a given ceiling.
+# NONE of these bands has been measured on the board under the new plant. The
+# first eta-era campaign is the calibration source; delete the note when pinning.
+_ETA_ERA_PROVISIONAL = (
+    "post-eta charger era (ETA_CHG 0.88, docs/HIL_PLANT.md §4.6.1): this bound "
+    "was re-derived offline (governor walk / plant probe / stated arithmetic), "
+    "not measured on the board. Campaigns <= 20260901_151156 ran the 1:1 "
+    "charger and their numbers are NOT comparable. Re-derive from the first "
+    "eta-era campaign that runs this scenario")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Which scenarios EXPECT the board to latch a fault.
 #
@@ -620,9 +657,28 @@ FAULT_EXPECTATIONS = {
         # latch is therefore the CORRECT validation of that incompatibility, not a
         # failure — and requiring it makes the scenario assert the design boundary
         # instead of merely surviving.
+        # ⚠️ CHARGER ERA (WP-1C, 2026-09-02). The LATCH SURVIVES the ETA_CHG
+        # change but its TIMING does not, and the source string below is the
+        # 1:1-era measurement. Arithmetic: the charger's bus draw falls to
+        # 0.5565 x its pack current, so I_fc climbs the same ramp more slowly
+        # and crosses LIMIT_I_FC_MAX 1.4 A LATER — the WP-1A physics review put
+        # the crossing at ~9.1 s against the measured 8.7221 s (+0.40 s).
+        # Nothing numeric in this entry moves: `not_before_s` 8.0 is the
+        # charge_goal step and `survive_to` 8.0 is the same instant, so both
+        # bracket the later crossing with more margin than before, and the
+        # scenario's 15 s duration leaves ~5.9 s past it. What IS at stake is
+        # the WHOLE latch: if the eta-era campaign shows I_fc peaking under
+        # 1.4 A, this entry's `require` becomes unreachable and the scenario
+        # needs a ceiling or a load, not a relaxed expectation. That is the
+        # finding to open, not to absorb.
+        "provisional_note": _ETA_ERA_PROVISIONAL + " (the LATCH TIME, and "
+                            "whether the latch happens at all: predicted "
+                            "~9.1 s vs the 1:1-era 8.7221 s)",
         "source": "operator ruling (b) 2026-08-30 + HIL_FINDINGS 'charge-cruise': "
                   "measured OC_FC at t = 8.7221 s, I_fc 1.4065 A on a smooth "
-                  "190 ms charger ramp, bus bookkeeping closing to 9 mA",
+                  "190 ms charger ramp, bus bookkeeping closing to 9 mA — "
+                  "1:1-CHARGER ERA; under ETA_CHG 0.88 the predicted crossing "
+                  "is ~9.1 s (WP-1A physics review item 7a)",
         "require": FAULT_OC_FC,
         "allow_only": FAULT_OC_FC | FAULT_UV_BUS | FAULT_ERROR,
         # The charge_goal step is at t = 8.0 (SCENARIOS['charge-cruise']). An OC_FC
@@ -639,7 +695,7 @@ FAULT_EXPECTATIONS = {
         # 20260831_080905, and one signal floor was re-derived (below).
         "provisional_note": "the WP-C-re-derived charge_current floor is from an "
                             "offline walk, not a campaign; re-derive after the "
-                            "first post-WP-C live run",
+                            "first post-WP-C live run. " + _ETA_ERA_PROVISIONAL,
         "source": "hil_plant_sim.py SCENARIOS['charge-regen'] (redesigned "
                   "2026-08-30): charge_goal is asserted ONLY inside a braking "
                   "window, so the charger is fed through REGEN + MOT_PWR and the "
@@ -671,7 +727,16 @@ FAULT_EXPECTATIONS = {
             # capped by the power actually available at VCHG-IN.  This scenario's
             # 1.000 m/s^2 command is only 5 % over the coast rate, so the captured
             # force is m*(a_cmd - a_coast) = 3.5*0.047 = 0.16 N and the harvest is
-            # ~0.16 * 2.5 * 0.80 = 0.32 W -> ~0.02 A at VCHG-IN.  0.03 A is a
+            # ~0.16 * 2.5 * 0.80 = 0.32 W -> ~0.02 A at VCHG-IN.
+            # ⚠️ RE-DERIVED FOR THE CHARGER ERA (WP-1C, 2026-09-02) — the FLOOR
+            # DOES NOT MOVE, and the reason is that the expectation moved AWAY
+            # from it. The cap is now OUTPUT-referred: the column measures pack
+            # current, so the same 0.32 W of harvest delivers
+            # ETA_CHG * p_regen / V_pack = 0.88 * 0.32 / 7.77 = 0.036 A instead
+            # of the input-referred 0.32/18.1 = 0.018 A. The floor is therefore
+            # ~83 % of the new expectation where it was ~1.7x it, so it is
+            # STRICTLY MORE conservative than when it was written and raising it
+            # would be pinning an unmeasured figure. 0.03 A is a
             # PROVISIONAL floor: it still distinguishes "the path carried current"
             # from an unpowered charger's exact 0, which is what this check is
             # for, but it is NOT a harvest figure -- `regen-harvest-true` is the
@@ -776,19 +841,58 @@ FAULT_EXPECTATIONS = {
             # ⚠️ The retired 0.3 J figure was NOT a whole-episode number: it was
             # the offline walk's 1.298 J/window scaled down against energies the
             # truncated stream reported, so it was never comparable with either.
-            {"max_of": "chopper_clamp", "field": "energy_j", "min_value": 1.0},
+            # ⚠️ RE-DERIVED FOR THE CHARGER ERA 1.0 -> 0.65 J (WP-1C,
+            # 2026-09-02), and this is the one band on this entry that the
+            # ETA_CHG change moves by construction. The regen cap is now
+            # OUTPUT-referred, so the Ag105 takes ~2x the pack current out of
+            # the same braking window and the chopper — a RESIDUAL absorber —
+            # burns what is left. MEASURED on the plant probe that reproduces
+            # this scenario's window (hi-fi, 1.5 s, v0 3.0 m/s, i_cmd -12 A,
+            # chg_i_ceiling_a 1.6): chopper 1.3043 J per window WITH the
+            # charger against 2.1741 J with the ceiling at zero, and
+            # docs/HIL_PLANT.md §4.6.2's own before/after probe gives the same
+            # halving (2.4293 -> 1.2973 J). 0.65 J is 50 % under the 1.3043 J
+            # probe, the same margin class the 1:1-era 1.0 J carried against
+            # its 2.3 J measurement. LOWERED ON A MEASUREMENT, not to absorb a
+            # run: a window that reaches only 0.65 J is still a real braking
+            # window and an accumulation of flickers still cannot get there.
+            {"max_of": "chopper_clamp", "field": "energy_j", "min_value": 0.65},
             # SUM: the run's whole harvest. Measured 6.9 - 8.6 J; floor 3.0 J,
             # 57 % under the low end for the same reason. F4: also a
             # whole-episode figure, and it replaces a 0.3 J total that a single
             # truncated episode could satisfy.
-            {"total_of": "chopper_clamp", "field": "energy_j", "min_value": 3.0},
+            # ⚠️ RE-DERIVED FOR THE CHARGER ERA 3.0 -> 1.9 J (WP-1C,
+            # 2026-09-02), from the same probe and the same halving as the
+            # `max_of` bound above: 1.3043 J x 3 braking windows = ~3.9 J per
+            # run against the 1:1 era's 6.9-8.6 J. 1.9 J is 49 % under that,
+            # the margin class the retired 3.0 J carried against 6.9 J.
+            {"total_of": "chopper_clamp", "field": "energy_j", "min_value": 1.9},
         ],
+        # ⚠️ CHARGER ERA (WP-1C): the two chopper-energy bounds above are
+        # re-derived from an offline plant probe, not from a board run, and
+        # the three signal bounds below are 1:1-era MEASUREMENTS re-checked
+        # against that probe rather than re-derived (each says how). The first
+        # eta-era campaign is the calibration source for all five.
+        "provisional_note": _ETA_ERA_PROVISIONAL + " (the two chopper-energy "
+                            "bounds are re-derived; the I_charge, V_rgn and "
+                            "clamp-dwell bounds are unchanged 1:1-era "
+                            "measurements that the probe confirms are still "
+                            "cleared)",
         "signals_require": [
             {"name": "regen_switch", "switch_bit": SW_REGEN, "min_ticks": 500,
              "t_window": (14.0, 15.5),
              "label": "REGEN_ENABLE asserted during braking window 1"},
             # PART B2: MEASURED (campaign 20260901_151156) at a 0.0677 A peak.
             # Floor 0.045 A is 34 % under it.
+            # ⚠️ CHARGER ERA (WP-1C, 2026-09-02) — UNCHANGED, AND MORE
+            # CONSERVATIVE THAN WHEN WRITTEN. The regen cap became
+            # output-referred, so the SAME braking window now delivers roughly
+            # twice the pack current: the plant probe measures a 0.1469 A peak
+            # against the 1:1 era's 0.0677 A (x2.17, close to the
+            # ETA_CHG*V_chg/V_pack = 0.88*18.1/7.77 = 2.05 arithmetic). The
+            # floor is therefore 69 % under the new expectation where it was
+            # 34 % under the old one. Raising it would pin an unmeasured
+            # figure; the first eta-era campaign is where it gets re-pinned.
             {"name": "regen_harvest", "column": "I_charge", "min_value": 0.045,
              "t_window": (14.0, 15.5),
              "label": "harvested current delivered through REGEN + MOT_PWR "
@@ -807,6 +911,14 @@ FAULT_EXPECTATIONS = {
             # is a 1 kHz row count, so 800 ticks is 800 ms -- 30 % under the
             # measurement. This is the check that distinguishes a window that
             # HELD the clamp from one that merely touched it.
+            # ⚠️ CHARGER ERA (WP-1C, 2026-09-02) — UNCHANGED, and this is the
+            # band that shows why DWELL and ENERGY had to be re-derived
+            # SEPARATELY. The clamp is a VOLTAGE clamp: the charger taking
+            # twice the current lowers the chopper's residual current, not the
+            # node voltage, so the energy halves while the dwell barely moves.
+            # The plant probe measures 1026 ms of clamp in a 1500 ms window
+            # against the 1:1 era's 1148 ms (-11 %), leaving the 800-tick floor
+            # 22 % under the new expectation.
             {"name": "regen_clamp_dwell", "column": "V_rgn", "min_value": 17.9,
              "min_ticks": 800, "t_window": (14.0, 15.5),
              "label": "V-MOT held on the chopper clamp for at least 800 ms of "
@@ -1027,6 +1139,19 @@ FAULT_EXPECTATIONS = {
             #    charger's 0 A. Window starts at 44.0 — charge_goal is asserted
             #    at ~42.0, then AG105_SETTLE_S 0.5 s + ~0.38 s of the
             #    AG105_TAU_S ramp puts I_charge over 0.5 A by ~42.9.
+            #    ⚠️ CHARGER ERA (WP-1C, 2026-09-02) — CONFIRMED UNAFFECTED, and
+            #    the confirmation is structural rather than empirical: this
+            #    column is the PACK current, and ETA_CHG moves only what the
+            #    charger COSTS the bus, never what the pack receives at a given
+            #    ceiling. The de-rated 0.8 A ceiling and the AG105_TAU_S ramp
+            #    that set this window are both untouched. What DID move on this
+            #    scenario is the hydrogen: the governor walk falls 0.013677 ->
+            #    0.012264 g (-10.3 %) because the FC channel no longer pays
+            #    V_bus x i_charge for the window. `h2_accounted`'s 1e-3 floor
+            #    keeps a ~12x margin on that, so it does not move either. The
+            #    same argument covers `fc_current_biased`: its window
+            #    (13.0-38.0) closes 4 s before charge_goal is asserted, so no
+            #    charger current is inside it at all.
             {"name": "charge_window", "column": "I_charge", "min_value": 0.5,
              "t_window": (44.0, 54.0),
              "label": "opportunistic FC-path charging established in the low "
@@ -1477,11 +1602,22 @@ FAULT_EXPECTATIONS = {
                  "'the column was never written'. There is deliberately no "
                  "companion positive bound on SW_FC_CHARGE — a positive bound "
                  "is exactly what this artifact must NOT produce.",
+             # ⚠️ THE PREMISE WAS RE-DERIVED FOR THE CHARGER ERA (WP-1C,
+             # 2026-09-02) AND THE CHECK IS UNCHANGED. The retired sentence
+             # named the 1:1-era measured lever (0.2364 SoC/g) against
+             # sdp_policy_v3's admission threshold. Under ETA_CHG 0.88 the
+             # modelled charge lever RISES to eta x L_share = 0.3964 SoC/g
+             # (WP-1B1), which is exactly why alpha had to be re-calibrated:
+             # sdp_policy_v4 solves at alpha 0.118326 and STILL reports zero
+             # charge cells, so the endogenous rejection — and this check's
+             # `max_ticks: 0` — survive the era change on a re-derived premise
+             # rather than on the old arithmetic. Verified offline: the
+             # governor walk on this scenario opens zero charge windows under
+             # the v4 artifact in BOTH eras.
              "label": "the CALIBRATED policy never opened the charger path — "
-                      "the Ag105 charge lever (0.2364 SoC/g) is below the "
-                      "artifact's own 0.30682 SoC/g admission threshold, so "
-                      "the action is declined ENDOGENOUSLY (zero charge cells, "
-                      "forbid_charge_all False)"},
+                      "the charge action is declined ENDOGENOUSLY by the "
+                      "artifact (zero charge cells, forbid_charge_all False), "
+                      "at the eta-era alpha the solver re-calibrated to"},
             # 6. ... AND THE FIRMWARE ACTED ON THE SHARE — the "cmd_share_sp is
             #    only what the host asked for" half both sibling entries carry.
             #    Derivation, and it is the GOVERNED value rather than the
@@ -2240,6 +2376,12 @@ _FTP_SURVIVE_T = 300.0
 # of the mismatch in the droop ratio, which is the weaker hydrogen lever.
 #
 # hold-5050: M2-equivalent walk 0.029888 g / dSoC -0.010629 -> [0.022, 0.037].
+# ⚠️ CHARGER ERA (WP-1C, 2026-09-02) — UNCHANGED, by construction rather than
+# by tolerance: the governor walk on this scenario opens ZERO charge windows,
+# so no term in its hydrogen total passes through the charger and the 1:1 and
+# 0.88 eras give bit-identical totals (verified: 0.028089711 g symmetric,
+# both eras). The same holds for `ems-ftp75-sdp`, `ems-ftp75-dp`,
+# `ems-dp-replay` and `ems-sdp`.
 _FTP_H2_BAND_5050 = (0.022, 0.037)
 # soc-band: a TWO-SIDED band, [0.070, 0.115] around the measured 9.159e-2
 # (-24 % / +26 %, the same shape as the 5050 band above).
@@ -2260,8 +2402,11 @@ _FTP_H2_BAND_5050 = (0.022, 0.037)
 # scale/accumulation tripwire on the metric, not a tolerance on the model.
 _FTP_H2_PROVISIONAL = (
     "first zero-preload campaign (aux_preload_a 0.65/0.45 -> 0.0, operator "
-    "ruling 2026-09-01); the band is a governor-walk prediction +/-25 %, not a "
-    "measurement — re-derive it from the first campaign that runs it")
+    "ruling 2026-09-01) AND first ETA_CHG 0.88 charger era (WP-1C, "
+    "2026-09-02); the band is a governor-walk prediction +/-25 %, not a "
+    "measurement — re-derive it from the first campaign that runs it. Only "
+    "the `socband` leg's band actually moved: every other FTP-75 leg walks "
+    "zero charge windows and is eta-invariant by construction")
 _FTP_H2_FLOOR = 5.0e-3          # the 5050 variant's own conservative floor
 # soc-band: PART C (C1 round, 2026-09-01) — THE WALK FIGURES HERE WERE STALE.
 # The 0.035456 g / dSoC -0.008358 pair this block used to quote predates the
@@ -2296,8 +2441,39 @@ _FTP_H2_FLOOR = 5.0e-3          # the 5050 variant's own conservative floor
 # The retired pair was 0.026/0.045 against a 0.035456 walk, i.e. -26.7 %/
 # +26.9 % — the numbers and the description had drifted apart. Both bounds
 # below are computed from the walk rather than rounded to a nicer figure.
-_FTP_H2_FLOOR_SOCBAND = 0.028
-_FTP_H2_CEILING_SOCBAND = 0.046
+# ⚠️ RE-DERIVED FOR THE CHARGER ERA (WP-1C, 2026-09-02) — 0.028/0.046 ->
+# 0.031/0.052, and the round found a SECOND defect in the retired pair while
+# re-deriving it.
+#
+# 1. WHICH WALK FIGURE THE BAND IS AGAINST. `ems_walk.py` prints two totals:
+#    `h2 (Gfc, physical)`, which bills the fuel cell for the charger's own bus
+#    draw, and `h2 (Gfc, plant)`, which omits it (the dataclass field says so:
+#    "the same, omitting the charger's own draw"). The live `h2_cum_g` column
+#    integrates Gfc over the FC power the board actually draws, and the
+#    charger's draw is ON that bus — so `physical` is the live column's
+#    analogue and `plant` is a diagnostic. The retired pair was computed from
+#    `plant` (0.046 = 1.25 x 0.036706). EVIDENCE, not preference: on the 61 s
+#    cycle the frontier's measured vs-reference ratio was 0.9003 x (campaign
+#    20260901_151156); the physical-walk prediction is 0.859 x and the
+#    plant-walk prediction 1.127 x. Only one of those is in the same country as
+#    the measurement.
+# 2. WHAT ETA_CHG DID. Governor walk on `ems-ftp75-socband` at the
+#    M2-equivalent dv0 0.030223, 1:1 era vs 0.88 era:
+#      physical  0.037526 -> 0.041873 g  (+11.6 %)   <- the live analogue
+#      plant     0.036706 -> 0.036807 g  (+0.28 %)   <- the diagnostic
+#      dSoC     -0.007716 -> -0.006306
+#      charge windows  2 -> 3
+#    The total RISES on this leg, which is the opposite of the direction the
+#    WP-1A review predicted for a charging leg, and the mechanism is that the
+#    strategy CHARGES MORE: cheaper charging opens a third window and buys
+#    0.0014 more SoC for the extra hydrogen. A leg whose charge SCHEDULE is
+#    fixed (`ems-ftp75-5050`, both DP legs, both SDP legs — all zero-window)
+#    does not move at all.
+# 3. THE BAND. Walk +/-25 % on the physical figure: [0.0314, 0.0523] ->
+#    [0.031, 0.052]. Both bounds are computed, not rounded to a nicer number,
+#    and the +25 % contract stated in the CONTRACT-LOW note above still holds.
+_FTP_H2_FLOOR_SOCBAND = 0.031
+_FTP_H2_CEILING_SOCBAND = 0.052
 
 FAULT_EXPECTATIONS["ems-ftp75-5050"] = {
     "source": ("hil_plant_sim.py SCENARIOS['ems-ftp75-5050'] + the generated "
@@ -2704,7 +2880,11 @@ FAULT_EXPECTATIONS["ems-ftp75-socband"] = {
 _SDPFTP_PROVISIONAL = (
     "first zero-preload campaign (aux_preload_a 0.45 -> 0.0, operator "
     "ruling 2026-09-01); the bound is a governor-walk prediction, not a "
-    "measurement — re-derive it from the first campaign that runs it")
+    "measurement — re-derive it from the first campaign that runs it. "
+    "ETA_CHG 0.88 (WP-1C, 2026-09-02) does NOT move any bound on this entry: "
+    "the artifact declines charging endogenously, so the walk opens zero "
+    "charge windows and its totals are bit-identical across the two charger "
+    "eras (verified for the sdp_policy_v4 artifact this scenario rebinds to)")
 _SDP_LOW_RAIL_CEIL = 0.16       # "the battery-heavy branch, sustained"
 _SDP_HIGH_RAIL_FLOOR = 0.84     # "the fuel-cell branch was reached"
 # The RAW (pre-clamp) table request on each branch.  0.00 above the node;
@@ -3233,6 +3413,17 @@ FAULT_EXPECTATIONS["ems-sdp-cross"] = {
         #    own validated 1.1920 A at the same operating point. The ceiling
         #    1.28 A is 7.4 % above the measurement and 8.6 % under the limit, so
         #    it trips BEFORE an OC_FC latch would and names the cause.
+        # ⚠️ CHARGER ERA (WP-1C, 2026-09-02) — THE CEILING IS HELD AT 1.28 AND
+        # THE MEASUREMENT UNDER IT IS NOW STALE. The charger's bus draw falls
+        # to V_pack/(ETA_CHG*V_bus) ~ 0.56 of its pack current, so a 0.8 A
+        # charge window costs the FC channel ~0.355 A less and the peak is
+        # PREDICTED at ~0.84 A against the measured 1.1920 A. Two reasons the
+        # ceiling does not follow it down: it is an OC BUDGET bound against
+        # LIMIT_I_FC_MAX 1.4 A, which has not moved; and tightening it to an
+        # offline prediction would fail a correct board if the prediction is
+        # wrong in the safe direction. The cost is honest and stated — until
+        # the first eta-era campaign re-pins it, this check has ~0.44 A of
+        # slack and is a budget bound rather than a tripwire.
         {"name": "sdpx_fc_peak_bounded", "column": "I_fc",
          "max_value": 1.28, "t_window": (5.0, 190.0),
          "label": "the single-source FC channel stayed inside its charge-window "
@@ -3369,6 +3560,15 @@ FAULT_EXPECTATIONS["ems-sdp-braking"] = {
         #    ⚠️ NEVER raise it to make a run green: the margin outgrowing this
         #    bound IS the finding, and the two knobs that move it are named
         #    above.
+        # ⚠️ CHARGER ERA (WP-1C, 2026-09-02) — CEILING HELD AT 1.32, AND THE
+        # 9.9 % MARGIN THE COMMENT ABOVE CALLS "the smallest in this suite" IS
+        # NO LONGER THE 1:1-era number. The charge overhang costs the FC
+        # channel ~0.56 of what it did (see the `sdpx_fc_peak_bounded` note),
+        # so at SDP_BRAKE_CHG_CEILING_A 0.7 A the peak is PREDICTED at ~0.95 A
+        # against the measured 1.2617 A, i.e. a ~32 % margin rather than 9.9 %.
+        # The suite's tightest-margin claim moves with it and must be
+        # re-measured before being quoted again. The bound is NOT lowered onto
+        # the prediction, for the reason given at `sdpx_fc_peak_bounded`.
         {"name": "sdpb_fc_peak_bounded", "column": "I_fc",
          "max_value": 1.32, "t_window": (5.0, 130.0),
          "label": "the single-source FC channel stayed inside the charge "
@@ -3397,6 +3597,186 @@ FAULT_EXPECTATIONS["ems-sdp-braking"] = {
                   "024231)"},
     ],
 }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# THE THREE ALPHA-SWEEP LEGS (WP-1C, 2026-09-02) — opt-in behind --with-alpha
+#
+# One run per BEHAVIOUR LEG of the eta-era alpha sweep
+# (tools/sdp_policies/sweep_20260902_eta088/, picks in its live_picks.json),
+# all three on the `ems-sdp` stimulus so the only difference between them — and
+# between them and `ems-sdp` itself — is the artifact's alpha:
+#
+#   greedy  idx 3,  alpha 0.073936  0 charge cells, share map DEGENERATE
+#                   (alpha under the share lever's admission threshold
+#                   0.111000013, so the policy asks for the battery rail
+#                   everywhere and the SoC axis carries no information)
+#   cal     idx 7,  alpha 0.118326  0 charge cells; its POLICY BLOCK IS
+#                   sdp_policy_v4's, so this leg is a same-stimulus repeat of
+#                   `ems-sdp` and its value is exactly that: a second reading
+#                   of one law, which is what the other two are measured against
+#   charge  idx 14, alpha 0.248413  591 charge cells (alpha past the charge
+#                   lever's admission threshold 0.239249990), so this is the
+#                   only leg of the three that opens the charger path
+#
+# ⚠️ EVERY BOUND HERE IS PROVISIONAL AND OFFLINE. No campaign has run any of
+# the three. The h2 bands are the sweep's own governor-walk totals +/- 25 %
+# (live_picks.json `walk_h2_g["ems-sdp"]`, walked with the governor at the
+# symmetric dv0); every other bound is inherited from `ems-sdp`, which shares
+# the stimulus and the charge ceiling, with its derivation cited.
+#
+# WHY THE CHECKS ARE SHAPED THIS WAY. The campaign-024231 S2 FAIL is the
+# precedent: a position/absence assertion at a model-predicted instant fails on
+# MODEL error while the mechanism works. So the discriminating checks here are
+# phase-free — a level band on the commanded share over a wide window, an edge
+# COUNT band on the charge path, and a two-sided total — and none of them names
+# an instant. The `ems-sdp` open-loop-hold caveat applies unchanged: below the
+# firmware's 0.55 A drop-out the delivered split is whatever stood, so nothing
+# below asserts a DELIVERED share.
+_ALPHA_PROVISIONAL = (
+    "no campaign has run this scenario. The h2 band is the alpha sweep's own "
+    "governor-walk total +/- 25 % (tools/sdp_policies/sweep_20260902_eta088/"
+    "live_picks.json, eta 0.88 era); every other bound is inherited from "
+    "`ems-sdp`, which shares this stimulus and its 0.8 A charge ceiling. "
+    "Re-derive all of them from the first campaign that runs the alpha legs")
+
+# The shared OC budget. `ems-sdp-cross` MEASURED 1.1920 A at this stimulus's
+# single-source charge operating point and bounds it at 1.28 A (7.4 % over the
+# measurement, 8.6 % under LIMIT_I_FC_MAX 1.4 A). Two of these three legs never
+# open the charger at all and the third opens it at the same 0.8 A ceiling, so
+# 1.28 A is an upper bound for all three. See `sdpx_fc_peak_bounded` for the
+# charger-era note: post-eta the expected peak is ~0.84 A, so this is a budget
+# bound with slack, not a tripwire.
+_ALPHA_FC_CEIL = 1.28
+
+
+def _alpha_expectation(walk_h2_g, share_spec, charge_edges, note):
+    """One alpha-leg entry.  PURE.
+
+    Built from a helper rather than written out three times so the three legs
+    cannot drift apart on the bounds they are supposed to SHARE — the whole
+    point of the trio is that only alpha differs. `share_spec` and
+    `charge_edges` are the two per-leg discriminators; `walk_h2_g` sets the
+    +/- 25 % band."""
+    lo, hi = 0.75 * walk_h2_g, 1.25 * walk_h2_g
+    return {
+        "source": ("hil_plant_sim.py SCENARIOS[...] (the `ems-sdp` stimulus "
+                   "object, drain and 0.8 A charge ceiling) + the `sdp-sweep` "
+                   "strategy playing one alpha point of "
+                   "tools/sdp_policies/sweep_20260902_eta088/; bands from that "
+                   "sweep's governor walk (docs/modeling/"
+                   "sdp_alpha_sweep_eta088_20260902.md). " + note),
+        "provisional_note": _ALPHA_PROVISIONAL,
+        "allow_only": 0,              # expected completely fault-free
+        # Same gate as `ems-sdp`: the run must still be in Run/Finish at t = 50,
+        # past the drain plateau and into the low cruise, or the totals below
+        # measure a truncated cycle.
+        "survive_to": {"t": 50.0, "states": {2, 3}},
+        "signals_require": [
+            # 0. THE CADENCE CENSUS, so nothing below can pass on a run whose
+            #    observation stream stalled. Its own spec: `min_rows` returns
+            #    before every value and tick bound.
+            {"name": "alpha_cadence", "min_rows": 1000,
+             "t_window": (10.0, 50.0),
+             "label": "the run streamed at full cadence across the drain and "
+                      "cruise segments (>= 1000 rows in a 40 s window)"},
+            # 1. THE STIMULUS WAS DELIVERED — inherited verbatim from
+            #    `ems-sdp`'s `sdp_drive_commanded`. It asserts the SHARED half
+            #    of the trio, so a leg that differs here differs in something
+            #    other than alpha and none of the comparisons are valid.
+            {"name": "alpha_drive_commanded", "column": "cmd_v_sp",
+             "min_value": 1.45, "t_window": (12.0, 30.0),
+             "label": "the shared `ems-sdp` drive cycle was commanded (the "
+                      "trio's controlled variable is alpha and nothing else)"},
+            # 2. THE PER-LEG SHARE SIGNATURE (see each call site).
+            share_spec,
+            # 3. THE OC BUDGET, as a named bound rather than an OC_FC latch.
+            {"name": "alpha_fc_peak_bounded", "column": "I_fc",
+             "max_value": _ALPHA_FC_CEIL, "t_window": (5.0, 54.0),
+             "label": "the FC channel stayed inside the single-source charge "
+                      "budget (<= %.2f A; `ems-sdp-cross` measured 1.1920 A at "
+                      "this operating point, LIMIT_I_FC_MAX is 1.4 A)"
+                      % _ALPHA_FC_CEIL},
+            # 4. THE CHARGE-PATH CENSUS — the trio's headline discriminator,
+            #    and a COUNT rather than a window so a model error in WHEN the
+            #    window opens cannot fail a run in which the mechanism worked.
+            {"name": "alpha_charge_edge_census", "switch_bit": SW_FC_CHARGE,
+             "edge_count_between": charge_edges, "edge": "rise",
+             "t_window": (2.5, 54.0),
+             "label": "FC_CHARGE opened %d-%d times — the artifact's own charge "
+                      "map, observed on the board" % charge_edges},
+            # 5-6. THE HYDROGEN TOTAL, two-sided. Two specs, because one spec
+            #    cannot carry both bounds (`_judge_signal_leaf` returns on the
+            #    first it matches and the import guard refuses the pairing).
+            #    h2_cum_g is monotone, so the peak IS the final value.
+            {"name": "alpha_h2_accounted", "column": "h2_cum_g",
+             "min_value": lo,
+             "label": "the H2 total accumulated to the walk's band "
+                      "(>= %.5f g; governor walk %.5f g)" % (lo, walk_h2_g)},
+            {"name": "alpha_h2_bounded", "column": "h2_cum_g",
+             "max_value": hi,
+             "label": "... and stayed under %.5f g, so a scale or accumulation "
+                      "error fails here instead of reading as an alpha result"
+                      % hi},
+        ],
+    }
+
+
+FAULT_EXPECTATIONS["ems-sdp-alpha-greedy"] = _alpha_expectation(
+    walk_h2_g=0.004093022760826734,
+    # THE DEGENERACY, asserted as a CEILING over the whole post-command span.
+    # At alpha 0.073936 the sweep's share map is 0 in every cell, so the policy
+    # requests the battery rail everywhere and `cmd_share_sp` must never reach
+    # the FC branch. 0.16 is `_SDP_LOW_RAIL_CEIL`, the same "battery-heavy
+    # branch, sustained" figure the ftp75-sdp entry uses.
+    # ⚠️ THE WINDOW STARTS AT 10.0, NOT AT 0. Before the first policy command
+    # lands the board holds the firmware default 0.50, which a ceiling would
+    # read as a violation. 10 s is ~100 decision stages in.
+    share_spec={"name": "alpha_share_degenerate", "column": "cmd_share_sp",
+                "max_value": _SDP_LOW_RAIL_CEIL, "t_window": (10.0, 54.0),
+                "label": "the commanded share never left the battery rail — "
+                         "the share map is degenerate at alpha 0.073936 (below "
+                         "the 0.111000013 admission threshold), which is what "
+                         "this leg exists to show"},
+    charge_edges=(0, 0),
+    note=("GREEDY leg, sweep index 3, alpha 0.073936, 0 charge cells."))
+
+FAULT_EXPECTATIONS["ems-sdp-alpha-cal"] = _alpha_expectation(
+    walk_h2_g=0.012602735460289607,
+    # The FC rail IS reached: same 0.84 floor and same window as `ems-sdp`'s
+    # `sdp_clamped_rail_commanded`, because this leg's policy block IS
+    # sdp_policy_v4's. A disagreement between this check and `ems-sdp`'s is
+    # therefore a finding about the RUN, not about the artifact.
+    share_spec={"name": "alpha_share_high_rail", "column": "cmd_share_sp",
+                "min_value": _SDP_HIGH_RAIL_FLOOR, "t_window": (5.0, 54.0),
+                "label": "the commanded share reached the fuel-cell rail — the "
+                         "calibrated point's law, identical to `ems-sdp`'s"},
+    charge_edges=(0, 0),
+    note=("CALIBRATED leg, sweep index 7, alpha 0.118326, 0 charge cells; its "
+          "policy block is byte-identical to tools/sdp_policies/"
+          "sdp_policy_v4.json's, so this is a same-stimulus repeat of "
+          "`ems-sdp` and the two runs' h2 totals should agree."))
+
+FAULT_EXPECTATIONS["ems-sdp-alpha-charge"] = _alpha_expectation(
+    walk_h2_g=0.015064731516112779,
+    # A HIGHER alpha prices SoC more dearly, so this leg asks for at least as
+    # much fuel cell as the calibrated one: the same rail floor holds.
+    share_spec={"name": "alpha_share_high_rail", "column": "cmd_share_sp",
+                "min_value": _SDP_HIGH_RAIL_FLOOR, "t_window": (5.0, 54.0),
+                "label": "the commanded share reached the fuel-cell rail (a "
+                         "larger alpha prices SoC more dearly, so this leg "
+                         "cannot ask for LESS fuel cell than the calibrated "
+                         "one)"},
+    # THE ONE LEG THAT CHARGES. The governor walk opens exactly ONE window on
+    # this stimulus. The band is [1, 4], not [1, 1]: the firmware's cruise-guard
+    # early-drop branch adds admit-then-drop blips that a rising-edge census
+    # cannot tell from a sustained window — `ems-sdp-braking` measured five of
+    # them on a four-window run — so the FLOOR is the assertion ("the charge
+    # action reached the board at all") and the ceiling is a sanity bound.
+    charge_edges=(1, 4),
+    note=("CHARGE-ADMITTING leg, sweep index 14, alpha 0.248413, 591 charge "
+          "cells; the only leg of the three whose artifact admits charging, "
+          "and the governor walk opens one window on this stimulus."))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3580,11 +3960,43 @@ FAULT_EXPECTATIONS["mppt-tracking"] = {
     # (`provisional_note` is an ENTRY-level key — it qualifies every check in the
     # entry — so it says which one it is about rather than re-provisionalising
     # the nine that are now measured).
+    # ⚠️ CHARGER ERA (WP-1C, 2026-09-02) — THE FIVE mppt_thresh_cnt PINS ARE
+    # RE-PROVISIONALIZED AND DELIBERATELY NOT PRE-WIDENED.
+    # Mechanism: the charger draws ~0.56 of its pack current from the bus now,
+    # so V_chg sags LESS under charge — the WP-1A probe measures +0.312 V at
+    # 1.4 A, i.e. ~+0.22 V ~ +2.5 counts at this scenario's 1.0 A ceiling. The
+    # manager writes (windowed-minimum V_chg - 3.0 V) quantized DOWN in 0.088 V
+    # counts, so the whole observed band shifts UP by roughly two counts:
+    # campaign 080905's [15, 19] becomes a predicted [15, 21-22].
+    # WHAT THAT DOES TO EACH PIN:
+    #   `mppt_threshold_floor` (15)   — SAFE. 15 is the firmware's own clamp
+    #        floor and the floor still binds: V_chg sags to ~14.76 V post-eta,
+    #        so the target is ~11.76 V, still under the 12.320 V floor.
+    #   `mppt_threshold_ceiling` (27) — SAFE and NEVER MOVES: it is the .ino's
+    #        static_asserted clamp, a safety bound, not an operating point.
+    #   `mppt_threshold_written`      — SAFE (a level/sentinel test).
+    #   `mppt_threshold_moved` (>= 2) — SAFE or better: a larger sag range can
+    #        only widen the ratchet span.
+    #   `mppt_threshold_peak_tripwire` (<= 21) — AT REAL RISK. The prediction
+    #        sits at 21-22, i.e. on or one count past the bound. It is NOT
+    #        pre-widened: it is an operating-point tripwire whose whole value is
+    #        that a V_chg change has to be looked at, and the eta change IS such
+    #        a change. A FAIL here on the first eta-era campaign is a
+    #        CALIBRATION EVENT, not a board defect — re-pin it to the measured
+    #        peak plus two counts and delete this paragraph.
+    # Also stale by +0.31 V: campaign 080905's "effective margin 2.13 V"
+    # statement (HIL_FINDINGS), quoted in the banner above this entry.
     "provisional_note": ("mppt_threshold_moved's range bound (2) is derived "
                          "from ONE hifi campaign (measured 4); the ratchet span "
                          "depends on how far V_chg sags under charge and the "
-                         "simple engine's sag is unmeasured. Every OTHER bound "
-                         "in this entry is measured from campaign 080905"),
+                         "simple engine's sag is unmeasured. The five "
+                         "mppt_thresh_cnt pins are ALSO re-provisionalized for "
+                         "the ETA_CHG 0.88 era (WP-1C, 2026-09-02): V_chg sags "
+                         "~0.22 V less at this scenario's 1.0 A ceiling, so the "
+                         "080905 band [15, 19] is predicted to become [15, "
+                         "21-22] and `mppt_threshold_peak_tripwire` (<= 21) is "
+                         "expected to be the calibration point. Every other "
+                         "bound in this entry is measured from campaign 080905"),
     "signals_require": [
         # 1. MPPT_DISABLE ASSERTED (pin LOW) throughout a braking window.  Two
         #    firmware paths hold it low there and they agree: charge_goal is 0 at
@@ -3643,6 +4055,14 @@ FAULT_EXPECTATIONS["mppt-tracking"] = {
         #     now, unasserted until a latch. 1.30 sits between the measurement
         #     (+11.7 %) and the limit (−7.1 %), so a budget drift is caught as a
         #     named check rather than as an OC_FC teardown.
+        #     ⚠️ CHARGER ERA (WP-1C, 2026-09-02) — CEILING HELD AT 1.30. This
+        #     scenario runs the LARGEST charge ceiling in the suite
+        #     (chg_i_ceiling_a 1.0 A), so it sheds the most: the charger's bus
+        #     draw falls to ~0.56 of its pack current, i.e. ~0.44 A off the FC
+        #     channel, and the peak is PREDICTED at ~0.72 A against the
+        #     measured 1.1638 A. The 16.9 % margin quoted above is a 1:1-era
+        #     figure. Not lowered onto the prediction — see
+        #     `sdpx_fc_peak_bounded`.
         {"name": "mppt_fc_headroom", "column": "I_fc", "max_value": 1.30,
          "t_window": _MPPT_ALL_CRUISE_W,
          "label": "I_fc stayed under 1.30 A across the cruise-charge span "
@@ -4752,6 +5172,35 @@ def build_plan(args):
                         ("--pi-live: this scenario's whole stimulus IS the emulated "
                          "EMS layer (strategy '%s'); with a real Pi commanding there "
                          "is nothing left for it to drive" % meta["ems"])),
+                })
+                continue
+            if name in ALPHA_SCENARIOS and not getattr(args, "with_alpha",
+                                                       False):
+                # SKIPPED, not scored, for an EXPERIMENT reason rather than a
+                # cost or coverage one — see the ALPHA_SCENARIOS banner. Same
+                # skip-record mechanism as the gates around it, so the report
+                # shows the gap instead of quietly shortening the plan.
+                #
+                # ORDERED AFTER the --pi-live gate for the same reason
+                # --with-ftp75 is: all three are EMS-driven, so under --pi-live
+                # they are skipped whatever this flag says and the honest
+                # reason is the pi-live one.
+                plan.append({
+                    "kind": "scenario", "name": name,
+                    "mode": need if need in ("simple", "hifi") else args.electrical_pref,
+                    "electrical_required": need,
+                    "description": meta.get("description", ""),
+                    "duration_s": 0.0, "csv": None, "events": None, "log": None,
+                    "argv": None, "timeout_s": 0.0,
+                    "skip_reason": (
+                        "ALPHA SWEEP: this leg replays one point of the "
+                        "eta-era SDP alpha sweep and answers a question only "
+                        "the alpha round asks, so it is not part of the "
+                        "regression campaign. The set adds ~%.1f min. Nothing "
+                        "about the board or the link blocks it — pass "
+                        "--with-alpha to run them."
+                        % (sum(float((SCENARIOS.get(n) or {}).get("duration_s", 0.0))
+                               for n in ALPHA_SCENARIOS) / 60.0)),
                 })
                 continue
             if name in FTP75_SCENARIOS and not with_ftp75:
@@ -6069,6 +6518,28 @@ def run_ems_strategy(csv_path, child):
     return name if isinstance(name, str) and name else None
 
 
+def run_eta_chg(csv_path, child):
+    """The CHARGER ERA this run's plant ran in, read from its own sidecar.
+
+    Returns the float `scenario.eta_chg` the child recorded, or None.
+
+    ⚠️ `None` IS A VALUE, NOT A FAILURE, and it means the 1:1 current-transfer
+    era (every campaign up to and including 20260901_151156).  It is the same
+    sentinel convention `hil_plant_sim.dp_eta_chg()` uses, and for the same
+    reason: that era billed the charger at the BUS voltage where this model
+    bills it at the PACK voltage, so no efficiency number reproduces it.  A
+    sidecar that is absent or stale also reads None, which is honest for the
+    frontier's purposes — a run whose era cannot be established must not be
+    silently ranked against one whose era can.
+    """
+    meta = read_run_meta(csv_path, child_launched_at(child))
+    scen = meta.get("scenario")
+    if not isinstance(scen, dict):
+        return None
+    val = scen.get("eta_chg")
+    return float(val) if isinstance(val, (int, float)) else None
+
+
 def warm_reset_count(csv_path, child):
     """Mid-run warm resets for one run: (dict, source).
 
@@ -7192,7 +7663,35 @@ EMS_FRONTIERS = [
         "roles": EMS_FRONTIER,
         "vs_reference_max": 0.98,
         "vs_bound_max": 1.06,
-        "provisional_note": None,
+        # ⚠️ RE-PROVISIONALIZED FOR THE CHARGER ERA (WP-1C, 2026-09-02). Both
+        # THRESHOLDS ARE HELD; what changed is the MARGIN behind the 0.98 ask,
+        # and it changed a lot.
+        # The reference leg (`ems-soc-band`) is the only one of the three that
+        # charges, so ETA_CHG 0.88 makes ITS hydrogen cheaper while the
+        # charge-free candidate and bound do not move at all. Governor walk,
+        # 1:1 era -> 0.88 era:
+        #     reference h2   0.013677 -> 0.012264 g  (-10.3 %), dSoC unmoved
+        #     candidate/bound          unchanged (zero charge windows)
+        #     vs_reference   0.8588   -> 0.9578
+        #     vs_bound       1.0009   -> 1.0009
+        # So the ask survives, with 2.3 % of headroom where it used to have
+        # 14 %. IS 0.98 STILL HONEST? Yes, and deliberately so: 2 % is still
+        # outside the ~0.05 % run-to-run repeat spread of the h2 totals, and
+        # the offline eta-era result is a 4.2 % candidate win — an ask the
+        # policy clears, not one it scrapes. But it is now a TIGHT ask, and the
+        # measured campaign ratio (0.9003 x, campaign 20260901_151156) sat
+        # 4.8 % below the contemporaneous walk prediction, so a first eta-era
+        # reading anywhere in 0.93-0.98 is the expected outcome and a reading
+        # just over 0.98 is a calibration question, not a policy failure.
+        "provisional_note": (
+            "PROVISIONAL for the ETA_CHG 0.88 charger era (WP-1C, 2026-09-02) "
+            "— the THRESHOLDS are unchanged but the margin behind 0.98 is not. "
+            "The reference leg is the tuple's only charging leg, so its "
+            "hydrogen falls ~10 % while the charge-free candidate and bound do "
+            "not move: the governor-walk vs_reference goes 0.859 -> 0.958. "
+            "Re-derive both thresholds from the first eta-era campaign that "
+            "evaluates this tuple; a reading just over 0.98 is a calibration "
+            "event, not a policy failure"),
         # A stimulus mismatch here would be a defect worth failing the run for:
         # the three legs are documented to share one stimulus object.
         "stimulus_mismatch_exit_affecting": True,
@@ -7209,7 +7708,15 @@ EMS_FRONTIERS = [
             "DP-vs-`soc-band` tie at matched terminal SoC plus the ~0.05 % "
             "run-to-run h2 spread; it is NOT measured, and it deliberately does "
             "NOT assume the DP wins at drive-cycle scale. Re-derive it from the "
-            "first campaign that evaluates this frontier."),
+            "first campaign that evaluates this frontier. CHARGER ERA (WP-1C, "
+            "2026-09-02): the reference leg is the tuple's only charging leg, "
+            "so the governor-walk vs_reference moves 0.984 -> 0.964 and "
+            "vs_bound 0.9975 -> 0.9977 — both thresholds are cleared with MORE "
+            "room than before and neither is changed. Note the -0.01 % offline "
+            "DP-vs-`soc-band` tie that 1.02 was derived from is itself an "
+            "old-era number: at eta 0.88 the DP's eq-H2 margin over `soc-band` "
+            "on this stimulus is -3.4 %, so 1.02 is now conservative rather "
+            "than knife-edge"),
         # The preload split IS resolved (2026-09-01) — see the block above —
         # so the precondition is expected to PASS from here on. The flag stays
         # False for ONE campaign more: no campaign has evaluated this tuple, so
@@ -7231,11 +7738,25 @@ assert all(set(f["roles"]) == {"reference", "candidate", "bound"}
 # VALUE, not identity: the shipped scenarios deliberately share one list
 # object, but a future leg built from an equal copy is still the same
 # stimulus and must not be refused for it.
+# `eta_chg` (WP-1C, 2026-09-02) is the CHARGER ERA, and it belongs here for
+# exactly the reason `chg_i_ceiling_a` does: it sets what a coulomb of charge
+# COSTS the fuel cell, so two legs run under different eras are ranked on the
+# plant rather than on the policy. The 1:1 era over-drew the bus by ~1.8x while
+# charging, which is a larger effect than any of the policy differences this
+# frontier is trying to measure.
+#
+# ⚠️ IT IS NOT A REGISTRY KEY. No scenario declares `eta_chg` — it is a plant
+# constant the child stamps into its own sidecar — so the registry lookup below
+# yields None for every leg and the key can only fire through the RESOLVED
+# override (`etas`), the same way `electrical_resolved` does. It is listed here
+# rather than appended after the loop because, unlike the mode, it is a
+# property of the STIMULUS in the same sense the preload is, and a reader
+# looking for "what makes two legs comparable" should find it in this tuple.
 EMS_FRONTIER_STIMULUS_KEYS = ("ems_v_profile", "duration_s", "ems_run_exit_s",
-                              "aux_preload_a", "chg_i_ceiling_a")
+                              "aux_preload_a", "chg_i_ceiling_a", "eta_chg")
 
 
-def ems_frontier_stimulus_mismatches(roles, modes=None):
+def ems_frontier_stimulus_mismatches(roles, modes=None, etas=None):
     """Keys on which the legs of one frontier disagree.  PURE.
 
     Returns a list of (key, {leg_name: value}) for every stimulus key the legs
@@ -7266,6 +7787,21 @@ def ems_frontier_stimulus_mismatches(roles, modes=None):
     out = []
     for key in EMS_FRONTIER_STIMULUS_KEYS:
         vals = {n: SCENARIOS[n].get(key) for n in names}
+        if key == "eta_chg":
+            # RESOLVED-ONLY, and it REPLACES the registry value rather than
+            # being compared beside it: no scenario declares this key, so the
+            # registry side is None for every leg and comparing it would be
+            # vacuous.
+            # ⚠️ ONLY LEGS THAT PRODUCED A RUN. `None` is the 1:1-era sentinel
+            # here, so a leg that has not run yet cannot be given None — that
+            # would read as "this leg ran under the old charger" and fire a
+            # mismatch on every PARTIAL campaign, which for the cycle61 tuple
+            # is exit-affecting. `etas` therefore carries an entry per leg WITH
+            # a record, value possibly None, and legs absent from it are simply
+            # not compared (`missing` already reports them).
+            if not etas:
+                continue
+            vals = {n: etas[n] for n in names if n in etas}
         first = next(iter(vals.values()), None) if vals else None
         if any(v != first for v in vals.values()):
             out.append((key, vals))
@@ -7463,11 +7999,19 @@ def evaluate_ems_frontier(results, planned_names=None, spec=None):
     # scenario declared — see the function's docstring for why the declared
     # field cannot serve.
     _modes = {}
+    _etas = {}
     for _name in roles.values():
         _r = _ems_frontier_leg(results, _name)
-        if _r is not None and _r.get("mode"):
+        if _r is None:
+            continue
+        if _r.get("mode"):
             _modes[_name] = _r["mode"]
-    stim = ems_frontier_stimulus_mismatches(roles, modes=_modes)
+        # WP-1C: recorded for EVERY leg that produced a run, INCLUDING the ones
+        # whose era is None — None is the 1:1-charger sentinel, not "unknown",
+        # so it must be able to disagree with a 0.88 sibling. Legs with no
+        # record at all are left out; see the mismatch function.
+        _etas[_name] = _r.get("eta_chg")
+    stim = ems_frontier_stimulus_mismatches(roles, modes=_modes, etas=_etas)
     if stim:
         rec["stimulus_mismatch"] = [
             {"key": k, "values": {n: (list(v) if isinstance(v, list) else v)
@@ -7812,6 +8356,26 @@ def render_report(meta, results):
                            "with a pre-2026-09-01 campaign"
                            if _asym == "measured" else
                            "  — symmetric plant (the pre-C1 baseline)")]))
+    # WP-1C: the CHARGER ERA, beside the electrical mode and for the same
+    # reason — it qualifies every hydrogen and charge-window number in the
+    # report. Read from the FIRST scenario run that recorded one, because it is
+    # a property of the plant the child ran, not of this checkout. `None` is
+    # the 1:1 current-transfer sentinel, not "unknown": no efficiency value
+    # reproduces that era, because it billed the charger at the BUS voltage
+    # where the model bills it at the PACK voltage (docs/HIL_PLANT.md §4.6.1).
+    _eta = None
+    _eta_seen = False
+    for _r in results or ():
+        if _r.get("kind") == "scenario" and "eta_chg" in _r:
+            _eta, _eta_seen = _r.get("eta_chg"), True
+            break
+    A(_row(["Charger era",
+            "not recorded (no scenario run reported one)" if not _eta_seen
+            else ("**1:1 current transfer** — the pre-2026-09-01 plant; "
+                  "charging legs comparable with campaigns <= 20260901_151156"
+                  if _eta is None else
+                  "**energy-conserving, eta_chg = %g** — charging legs are NOT "
+                  "comparable with campaigns <= 20260901_151156" % _eta)]))
     A(_row(["Settle pause between runs", "%s s" % meta.get("settle_s")]))
     # Campaign wall-clock. Present only on the FINAL rewrite (the intermediate
     # per-run rewrites have no finish time yet), so a partial REPORT.md simply
@@ -8489,6 +9053,13 @@ def main(argv=None):
                          "that is otherwise ~34 min. Nothing about the board or "
                          "the link blocks them."
                          % ", ".join(sorted(FTP75_SCENARIOS)))
+    ap.add_argument("--with-alpha", action="store_true",
+                    help="also run the three SDP alpha-sweep legs (%s). They "
+                         "are SKIPPED by default because they are an "
+                         "EXPERIMENT, not a regression: each replays one point "
+                         "of the eta-era alpha sweep on the `ems-sdp` "
+                         "stimulus. 61 s each."
+                         % ", ".join(sorted(ALPHA_SCENARIOS)))
     ap.add_argument("--list", action="store_true", help="print the run plan and exit")
     ap.add_argument("--dry-run", action="store_true",
                     help="build every argv and write plan.json into the report dir; run nothing")
@@ -8806,6 +9377,13 @@ def _run_plan(plan, args, problems, results, write_outputs):
                    # L7: the strategy the CHILD recorded, so the demonstration
                    # banner describes what ran rather than the registry default.
                    "ems_strategy": run_ems_strategy(item["csv"], child),
+                   # WP-1C: the CHARGER ERA this run's plant ran in. Read from
+                   # the run's own sidecar for the same reason `ems_strategy`
+                   # is — the era is a property of the process that produced
+                   # the CSV, not of this checkout's constants. Feeds the
+                   # frontier's stimulus-coherence check and the REPORT.md
+                   # era banner.
+                   "eta_chg": run_eta_chg(item["csv"], child),
                    "csv": item["csv"], "events_path": item["events"],
                    "log_path": item["log"], "key_metrics": key}
             no_obs = metrics["n_obs"] == 0

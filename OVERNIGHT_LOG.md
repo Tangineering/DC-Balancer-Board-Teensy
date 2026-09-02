@@ -514,3 +514,17 @@ fixes → campaign → MPC (deterministic, then stochastic) → campaign → α 
   regenerated so fingerprints return to their pre-round values. Verified by the reviewer: the
   ems-ftp75-5050 h2 move (0.0949 -> 0.0397) is ENTIRELY the pre-existing chg_ceiling 0.0
   staleness (old-era regeneration byte-identical on all 3501 rows). Fix agent dispatched.
+- WP-1C landed (566 suite tests): every item-7 band re-derived by plant probe or eta-era walk; OC
+  ceilings HELD (predicted peaks: sdpx 1.19 -> ~0.84 A, sdpb 1.26 -> ~0.95 A, mppt 1.16 -> ~0.72 A;
+  re-pin from the first eta campaign); regen-harvest-true chopper floors LOWERED on measurement
+  (max_of 1.0 -> 0.65 J, total_of 3.0 -> 1.9 J; probe 1.3043 J/window vs 2.1741 charger-off) -
+  the one previously-measured bound that went down, flagged for operator review; socband FTP-75
+  h2 band 0.028/0.046 -> 0.031/0.052 (era + corrected to the PHYSICAL walk figure); mppt
+  tripwires re-provisionalized, peak <= 21 NOT pre-widened (predicted [15, 21-22]: a FAIL there
+  is a calibration event); frontier asks held (cycle61 vs_reference predicted 0.859 -> 0.958 vs
+  0.98 - headroom 14 % -> 2.3 %); eta_chg on the frontier coherence (resolved from sidecars);
+  three alpha legs behind new `--with-alpha`; REPORT.md "Charger era" row; conventions section.
+- PLAN CHANGE: campaign B will carry the eta-era validation AND the first MPC legs AND the alpha
+  legs in one run (`--with-ftp75 --with-alpha`), because tools/ is edit-frozen during a campaign
+  and a separate MPC campaign would cost the night an hour; every new leg is provisional-banded
+  and scenario-isolated, so attribution stays per-leg.

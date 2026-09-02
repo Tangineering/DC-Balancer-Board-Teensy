@@ -54,11 +54,14 @@ def test_build_plan_full_count_40_runs():
     # (operator-required / --pi-live / --with-ftp75), so this count is a
     # plan-slot count, not a will-actually-run count.
     # WP-C (2026-09-01): +1 scenario, `regen-harvest-true` -> 30 scenarios, 57 slots.
+    # WP-1C (2026-09-02): +3 scenarios, the `ems-sdp-alpha-*` trio -> 35
+    # scenarios, 62 slots. They are SKIP records by default (--with-alpha), and
+    # a skip record still occupies a plan slot, which is what this counts.
     plan = rhs.build_plan(_args())
     # WP-B: +v-bus-sense-offset (the UV-dwell objective's own home)
-    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 59
+    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 62
     kinds = [p["kind"] for p in plan]
-    assert kinds.count("scenario") == 32
+    assert kinds.count("scenario") == 35
     assert kinds.count("replay") == 27
 
 
@@ -70,8 +73,9 @@ def test_build_plan_replay_only():
 
 def test_build_plan_scenarios_only():
     plan = rhs.build_plan(_args(scenarios_only=True))
-    assert len(plan) == 32      # WP-C: +regen-harvest-true; WP-E: +ems-ftp75-dp;
-                                # WP-B: +v-bus-sense-offset
+    assert len(plan) == 35      # WP-C: +regen-harvest-true; WP-E: +ems-ftp75-dp;
+                                # WP-B: +v-bus-sense-offset;
+                                # WP-1C: +the ems-sdp-alpha-* trio
     assert all(p["kind"] == "scenario" for p in plan)
 
 
@@ -203,12 +207,15 @@ def test_build_plan_with_operator_does_not_affect_other_scenarios():
     plan_default = {p["name"]: p for p in rhs.build_plan(_args()) if p["kind"] == "scenario"}
     plan_operator = {p["name"]: p for p in rhs.build_plan(_args(with_operator=True))
                      if p["kind"] == "scenario"}
-    ftp75 = rhs.FTP75_SCENARIOS
+    # WP-1C: the ems-sdp-alpha-* trio is excluded for exactly the reason the
+    # FTP-75 set is -- they carry a skip_reason on BOTH sides of this
+    # comparison (the --with-alpha gate, unrelated to --with-operator).
+    gated = rhs.FTP75_SCENARIOS | rhs.ALPHA_SCENARIOS
     for name in plan_default:
         if name == "drive":
             continue
         assert plan_default[name]["argv"] == plan_operator[name]["argv"], name
-        if name in ftp75:
+        if name in gated:
             continue
         assert not plan_default[name].get("skip_reason")
         assert not plan_operator[name].get("skip_reason")
@@ -1292,12 +1299,18 @@ def test_regen_harvest_true_events_require_uses_total_of_not_per_episode_all():
     # against the TRUNCATED chopper events (each episode serialized carrying
     # only its first 0.25-0.9 ms tick); against whole episodes the campaign
     # measures 6.9-8.6 J per run.
-    assert totals[0]["min_value"] == 3.0
+    # WP-1C (2026-09-02): 3.0 -> 1.9 J for the ETA_CHG 0.88 charger. The
+    # output-referred regen cap lets the Ag105 take ~2x the pack current out of
+    # the same window, and the chopper -- a residual absorber -- burns what is
+    # left: the plant probe measures 1.3043 J per window against the 1:1 era's
+    # 2.3-2.9, i.e. ~3.9 J per 3-window run, and 1.9 J is 49 % under that (the
+    # margin class the retired 3.0 carried against 6.9 J).
+    assert totals[0]["min_value"] == 1.9
     # And the per-episode floor left behind is deliberately much looser than
     # 0.3 J -- it exists only to catch a fully-missing/degenerate episode.
     per_episode = [r for r in reqs if isinstance(r, dict) and r.get("kind")
                   == "chopper_clamp" and "field" in r]
-    assert per_episode and per_episode[0]["min_value"] < 3.0
+    assert per_episode and per_episode[0]["min_value"] < 1.9
     assert per_episode[0]["min_value"] == 0.01
 
 
@@ -3737,6 +3750,243 @@ def test_build_plan_pi_live_skips_ftp75_regardless_of_with_ftp75():
         assert "LONG-CYCLE" not in item["skip_reason"]
 
 
+# -------------------------------------------------------------------------
+# 4b. --with-alpha: the three SDP alpha-sweep legs (WP-1C, 2026-09-02)
+# -------------------------------------------------------------------------
+
+def test_alpha_scenarios_are_registered_and_share_the_ems_sdp_stimulus():
+    """The trio's controlled variable is alpha and NOTHING else. If a leg's
+    stimulus drifts from `ems-sdp`'s, the three runs stop being one experiment
+    and every comparison the round is for becomes a comparison of loads."""
+    base = SCENARIOS["ems-sdp"]
+    for name in rhs.ALPHA_SCENARIOS:
+        meta = SCENARIOS[name]
+        assert meta["duration_s"] == base["duration_s"]
+        assert meta["chg_i_ceiling_a"] == base["chg_i_ceiling_a"]
+        assert meta.get("ems_v_profile") == base.get("ems_v_profile")
+
+
+def test_build_plan_skips_alpha_by_default_with_a_named_reason():
+    plan = rhs.build_plan(_args())
+    for name in rhs.ALPHA_SCENARIOS:
+        item = next(p for p in plan if p["name"] == name)
+        assert item["kind"] == "scenario"
+        assert item["argv"] is None
+        assert "ALPHA SWEEP" in item["skip_reason"]
+        assert "--with-alpha" in item["skip_reason"]
+
+
+def test_build_plan_with_alpha_flag_runs_them():
+    plan = rhs.build_plan(_args(with_alpha=True))
+    for name in rhs.ALPHA_SCENARIOS:
+        item = next(p for p in plan if p["name"] == name)
+        assert item["argv"] is not None
+        assert not item.get("skip_reason")
+
+
+def test_build_plan_with_alpha_does_not_affect_other_scenarios():
+    plan_default = {p["name"]: p for p in rhs.build_plan(_args())
+                    if p["kind"] == "scenario"}
+    plan_alpha = {p["name"]: p for p in rhs.build_plan(_args(with_alpha=True))
+                  if p["kind"] == "scenario"}
+    for name in plan_default:
+        if name in rhs.ALPHA_SCENARIOS:
+            continue
+        assert plan_default[name]["argv"] == plan_alpha[name]["argv"], name
+
+
+def test_build_plan_pi_live_skips_alpha_regardless_of_with_alpha():
+    """Gate ORDER, pinned: --pi-live is checked BEFORE --with-alpha, so under
+    both flags the alpha legs are skip-recorded for the pi-live reason. The
+    alternative would name a flag that could not make the run happen."""
+    plan = rhs.build_plan(_args(pi_live=True, with_alpha=True))
+    for name in rhs.ALPHA_SCENARIOS:
+        item = next(p for p in plan if p["name"] == name)
+        assert item["argv"] is None
+        assert "pi-live" in item["skip_reason"].lower()
+        assert "ALPHA SWEEP" not in item["skip_reason"]
+
+
+def test_full_argv_with_alpha_flag_not_passed_through_to_child():
+    plan = rhs.build_plan(_args(with_alpha=True))
+    item = next(p for p in plan if p["name"] == "ems-sdp-alpha-cal")
+    argv = rhs.full_argv(item, _args(with_alpha=True))
+    assert "--with-alpha" not in argv
+
+
+def test_alpha_expectations_are_provisional_and_two_sided():
+    """Every alpha bound is an OFFLINE prediction, so every one of the three
+    entries must carry a provisional note, and the h2 band must be two-sided
+    (one spec cannot carry both bounds - `_judge_signal_leaf` returns on the
+    first it matches)."""
+    for name in rhs.ALPHA_SCENARIOS:
+        e = rhs.FAULT_EXPECTATIONS[name]
+        assert e["allow_only"] == 0
+        assert e["provisional_note"] and "no campaign" in e["provisional_note"]
+        sig = e["signals_require"]
+        h2 = [x for x in sig if x.get("column") == "h2_cum_g"]
+        assert len(h2) == 2
+        for x in h2:
+            assert not ("min_value" in x and "max_value" in x)
+
+
+def test_alpha_h2_bands_are_the_walk_plus_minus_25_percent():
+    """The bands come from the sweep's own live_picks walk totals. Pinned so a
+    band cannot be quietly widened to absorb a run: +/-25 % is the contract."""
+    walks = {"ems-sdp-alpha-greedy": 0.004093022760826734,
+             "ems-sdp-alpha-cal": 0.012602735460289607,
+             "ems-sdp-alpha-charge": 0.015064731516112779}
+    for name, walk in walks.items():
+        by = {c["name"]: c for c in
+              rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
+        assert by["alpha_h2_accounted"]["min_value"] == pytest.approx(0.75 * walk)
+        assert by["alpha_h2_bounded"]["max_value"] == pytest.approx(1.25 * walk)
+        assert (by["alpha_h2_accounted"]["min_value"] < walk
+                < by["alpha_h2_bounded"]["max_value"])
+
+
+def test_alpha_charge_census_matches_each_artifacts_charge_map():
+    """THE TRIO'S HEADLINE DISCRIMINATOR. Two of the three artifacts carry zero
+    charge cells and must never open FC_CHARGE; the third carries 591 and opens
+    one window in the walk. A COUNT band, not a window, so a model error in
+    WHEN the window opens cannot fail a run whose mechanism worked (the
+    campaign-024231 S2 precedent)."""
+    def census(name):
+        return next(c for c in rhs.FAULT_EXPECTATIONS[name]["signals_require"]
+                    if c["name"] == "alpha_charge_edge_census")
+    for name in ("ems-sdp-alpha-greedy", "ems-sdp-alpha-cal"):
+        c = census(name)
+        assert c["edge_count_between"] == (0, 0)
+        assert c["switch_bit"] == rhs.SW_FC_CHARGE and c["edge"] == "rise"
+    c = census("ems-sdp-alpha-charge")
+    assert c["edge_count_between"][0] == 1        # it MUST charge
+    assert c["edge_count_between"][1] >= 1
+
+
+def test_alpha_share_signatures_separate_the_degenerate_leg():
+    """The greedy leg's alpha sits under the share lever's admission threshold,
+    so its share map is 0 everywhere: a CEILING at the battery rail. The other
+    two reach the FC rail: a FLOOR. Getting these the same way round would make
+    all three legs assert the same thing."""
+    by = {n: {c["name"]: c for c in
+              rhs.FAULT_EXPECTATIONS[n]["signals_require"]}
+          for n in rhs.ALPHA_SCENARIOS}
+    greedy = by["ems-sdp-alpha-greedy"]["alpha_share_degenerate"]
+    assert greedy["max_value"] == rhs._SDP_LOW_RAIL_CEIL
+    # The window must start AFTER the first policy command - before it the
+    # board holds the firmware default 0.50, which a ceiling would read as a
+    # violation.
+    assert greedy["t_window"][0] >= 5.0
+    for n in ("ems-sdp-alpha-cal", "ems-sdp-alpha-charge"):
+        assert (by[n]["alpha_share_high_rail"]["min_value"]
+                == rhs._SDP_HIGH_RAIL_FLOOR)
+
+
+def test_alpha_fc_ceiling_is_the_ems_sdp_cross_budget():
+    """Inherited, not invented: the same 1.28 A single-source charge budget
+    `ems-sdp-cross` measured 1.1920 A against, on the same stimulus and the
+    same 0.8 A ceiling."""
+    cross = next(c for c in
+                 rhs.FAULT_EXPECTATIONS["ems-sdp-cross"]["signals_require"]
+                 if c["name"] == "sdpx_fc_peak_bounded")
+    for name in rhs.ALPHA_SCENARIOS:
+        c = next(x for x in rhs.FAULT_EXPECTATIONS[name]["signals_require"]
+                 if x["name"] == "alpha_fc_peak_bounded")
+        assert c["max_value"] == cross["max_value"] == rhs._ALPHA_FC_CEIL
+
+
+# -------------------------------------------------------------------------
+# 4c. The charger era: eta_chg on the frontier and in the report header
+# -------------------------------------------------------------------------
+
+def test_eta_chg_is_a_frontier_stimulus_key():
+    assert "eta_chg" in rhs.EMS_FRONTIER_STIMULUS_KEYS
+
+
+def test_frontier_eta_mismatch_needs_resolved_values_not_the_registry():
+    """`eta_chg` is a PLANT constant, not a scenario field, so the registry
+    lookup is None for every leg and the key can only fire through the
+    resolved override. Without one it must be silent - otherwise every
+    campaign would report a mismatch on a key no scenario declares."""
+    roles = rhs.EMS_FRONTIER
+    keys = [k for k, _ in rhs.ems_frontier_stimulus_mismatches(roles)]
+    assert "eta_chg" not in keys
+
+
+def test_frontier_eta_mismatch_fires_on_a_mixed_era_campaign():
+    """The case the key exists for: a pre-eta CSV ranked against a post-eta
+    one. `None` is the 1:1-era sentinel and must be able to disagree with
+    0.88."""
+    roles = rhs.EMS_FRONTIER
+    etas = {roles["reference"]: 0.88, roles["candidate"]: 0.88,
+            roles["bound"]: None}
+    got = dict(rhs.ems_frontier_stimulus_mismatches(roles, etas=etas))
+    assert "eta_chg" in got
+    assert got["eta_chg"][roles["bound"]] is None
+    # ... and a campaign whose legs all ran the same era is silent.
+    same = {n: 0.88 for n in roles.values()}
+    assert "eta_chg" not in dict(
+        rhs.ems_frontier_stimulus_mismatches(roles, etas=same))
+
+
+def test_frontier_eta_mismatch_does_not_fire_on_a_partial_campaign():
+    """A leg with no record yet must NOT be given the None sentinel: that would
+    read as "this leg ran the old charger" and fire on every partial campaign,
+    which for the cycle61 tuple is exit-affecting."""
+    roles = rhs.EMS_FRONTIER
+    etas = {roles["reference"]: 0.88}          # the other two have not run
+    assert "eta_chg" not in dict(
+        rhs.ems_frontier_stimulus_mismatches(roles, etas=etas))
+
+
+def test_run_eta_chg_reads_the_scenario_block_of_the_sidecar(tmp_path):
+    csv = tmp_path / "run.csv"
+    doc = {"csv": str(csv), "results": {},
+           "created": "2026-09-02T00:00:00+00:00",
+           "scenario": {"name": "ems-sdp", "eta_chg": 0.88}}
+    (tmp_path / "run.csv.meta.json").write_text(json.dumps(doc),
+                                                encoding="utf-8")
+    assert rhs.run_eta_chg(str(csv), _fake_child()) == pytest.approx(0.88)
+
+
+def test_run_eta_chg_returns_none_for_a_pre_eta_or_missing_sidecar(tmp_path):
+    """None is a VALUE (the 1:1 era), not an error - a sidecar written before
+    the key existed and one that is missing entirely both read as the old
+    era."""
+    csv = tmp_path / "old.csv"
+    doc = {"csv": str(csv), "results": {},
+           "created": "2026-08-01T00:00:00+00:00",
+           "scenario": {"name": "ems-sdp"}}
+    (tmp_path / "old.csv.meta.json").write_text(json.dumps(doc),
+                                                encoding="utf-8")
+    assert rhs.run_eta_chg(str(csv), _fake_child()) is None
+    assert rhs.run_eta_chg(str(tmp_path / "absent.csv"), _fake_child()) is None
+
+
+def test_report_header_names_the_charger_era_and_the_comparability_boundary():
+    r = _fake_scenario_result()
+    r["eta_chg"] = 0.88
+    report = rhs.render_report(_fake_meta(), [r])
+    assert "Charger era" in report
+    assert "0.88" in report
+    assert "20260901_151156" in report
+
+
+def test_report_header_names_the_1_to_1_era_when_the_run_recorded_none():
+    r = _fake_scenario_result()
+    r["eta_chg"] = None
+    report = rhs.render_report(_fake_meta(), [r])
+    assert "1:1 current transfer" in report
+
+
+def test_report_header_says_not_recorded_when_no_run_carries_the_key():
+    """An OLD results list (no `eta_chg` key at all) must not be reported as
+    the 1:1 era - "the key is absent" and "the run recorded the old era" are
+    different statements."""
+    report = rhs.render_report(_fake_meta(), [_fake_scenario_result()])
+    assert "not recorded" in report
+
+
 def test_full_argv_with_ftp75_flag_not_passed_through_to_child():
     """--with-ftp75 is a run_hil_suite.py PLANNING flag (which scenarios enter
     the plan at all) -- it must not leak into the child simulator's argv,
@@ -4763,6 +5013,12 @@ PI_LIVE_SKIP_SCENARIOS = {
     # WP-C (2026-09-01): joins via the SAME "ems" metadata key
     # ("ems": "regen-harvest-hard") -- no new code path.
     "regen-harvest-true",
+    # WP-1C (2026-09-02): the alpha trio joins via the same "ems" key
+    # ("ems": "sdp-sweep") -- no new code path.  They are in ALPHA_SCENARIOS
+    # as well, and are listed here for the same reason the FTP-75 legs are:
+    # the --pi-live gate is ordered FIRST, so under --pi-live they are
+    # skip-recorded for the pi-live reason regardless of --with-alpha.
+    "ems-sdp-alpha-greedy", "ems-sdp-alpha-cal", "ems-sdp-alpha-charge",
 }
 
 
@@ -4826,7 +5082,8 @@ def test_build_plan_pi_live_total_count_still_40():
     is unchanged under --pi-live, only their kind (executed vs skipped)
     differs."""
     plan = rhs.build_plan(_args(pi_live=True))
-    assert len(plan) == 59      # WP-C: +regen-harvest-true; WP-B: +v-bus-sense-offset
+    assert len(plan) == 62      # WP-C: +regen-harvest-true; WP-B: +v-bus-sense-offset;
+                                # WP-1C: +the ems-sdp-alpha-* trio
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -6819,9 +7076,19 @@ def test_ftp75_socband_h2_band_is_now_two_sided():
     # 0.65 A era's measurement.
     # RE-WALKED at the M2 consistent pair (fix round F1, 2026-09-01): 3.6706e-2
     # g plant accounting, against the retired M1-era 3.7208e-2.
-    _WALK = 3.6706e-2
-    assert floor["min_value"] == pytest.approx(rhs._FTP_H2_FLOOR_SOCBAND) == pytest.approx(0.028)
-    assert ceiling["max_value"] == pytest.approx(0.046)
+    # RE-DERIVED A THIRD TIME (WP-1C, 2026-09-02), and the round corrected
+    # WHICH walk figure the band is against as well as its value:
+    #   * the live `h2_cum_g` column integrates Gfc over the FC power the board
+    #     draws, and the charger's draw is ON that bus, so `h2 (Gfc, physical)`
+    #     is its analogue -- `h2 (Gfc, plant)` deliberately omits the charger.
+    #     Evidence: the frontier's MEASURED vs-reference ratio (0.9003 x,
+    #     campaign 20260901_151156) sits beside the physical-walk prediction
+    #     (0.859) and nowhere near the plant-walk one (1.127).
+    #   * under ETA_CHG 0.88 the socband walk RISES, because cheaper charging
+    #     opens a third window: physical 3.7526e-2 -> 4.1873e-2 g.
+    _WALK = 4.1873e-2
+    assert floor["min_value"] == pytest.approx(rhs._FTP_H2_FLOOR_SOCBAND) == pytest.approx(0.031)
+    assert ceiling["max_value"] == pytest.approx(0.052)
     # The band must BRACKET the prediction with real margin on both sides --
     # a floor above it, or a ceiling below it, would fail a correct board.
     assert floor["min_value"] < _WALK < ceiling["max_value"]
@@ -7776,7 +8043,10 @@ def test_demonstration_banner_prefers_the_runs_recorded_strategy():
     assert "sdp-v2" in banner
     # ... and the converse: a demonstration scenario re-bound to an eligible
     # strategy carries no banner.
-    assert rhs.ems_demonstration_banner("ems-sdp-cross", "sdp-v3") is None
+    # WP-1C (2026-09-02): the ELIGIBLE artifact is now `sdp-v4` -- `sdp-v3` was
+    # re-classified as a demonstration when the eta-era alpha recalibration
+    # shipped, so it is no longer the right name for this half of the test.
+    assert rhs.ems_demonstration_banner("ems-sdp-cross", "sdp-v4") is None
     # No recorded strategy -> the registry default, unchanged behaviour.
     assert "sdp-v2" in rhs.ems_demonstration_banner("ems-sdp-cross")
 
@@ -7913,7 +8183,12 @@ def test_frontier_registry_shape_and_thresholds():
     assert FTP75_SPEC["vs_bound_max"] == CYCLE61_SPEC["vs_bound_max"] == 1.06
     assert FTP75_SPEC["provisional_note"] and "PROVISIONAL" in \
         FTP75_SPEC["provisional_note"]
-    assert CYCLE61_SPEC["provisional_note"] is None
+    # WP-1C (2026-09-02): the 61 s tuple is now PROVISIONAL too. Its
+    # thresholds are unchanged, but its reference leg is the tuple's only
+    # charging leg, so ETA_CHG 0.88 cuts the reference's hydrogen ~10 % while
+    # the charge-free candidate and bound do not move: the governor-walk
+    # vs_reference goes 0.859 -> 0.958 against a 0.98 ask.
+    assert CYCLE61_SPEC["provisional_note"] and         "PROVISIONAL" in CYCLE61_SPEC["provisional_note"]
     assert FTP75_SPEC["roles"] == {"reference": "ems-ftp75-socband",
                                    "candidate": "ems-ftp75-sdp",
                                    "bound": "ems-ftp75-dp"}
@@ -8472,7 +8747,10 @@ def test_ems_ftp75_dp_h2_band_is_the_union_of_its_siblings_bands():
           for c in rhs.FAULT_EXPECTATIONS["ems-ftp75-dp"]["signals_require"]}
     lo = by["ftpdp_h2_accounted"]["min_value"]
     hi = by["ftpdp_h2_bounded"]["max_value"]
-    assert (lo, hi) == (0.022, 0.046)
+    # WP-1C (2026-09-02): the socband ceiling moved 0.046 -> 0.052 for the
+    # ETA_CHG 0.88 charger, so the union moves with it. The 5050 floor does
+    # not: that leg walks zero charge windows and is eta-invariant.
+    assert (lo, hi) == (0.022, 0.052)
     # The solver's own matched-SoC optimum must land inside the live band, or
     # the two accountings have diverged by more than the band admits.
     assert lo < 0.0396922 < hi
@@ -8857,7 +9135,9 @@ def test_regen_harvest_true_max_of_spec_is_registered():
     assert len(maxes) == 1
     assert maxes[0]["max_of"] == "chopper_clamp"
     assert maxes[0]["field"] == "energy_j"
-    assert maxes[0]["min_value"] == pytest.approx(1.0)
+    # WP-1C (2026-09-02): 1.0 -> 0.65 J, from the same measured halving as the
+    # `total_of` bound (50 % under the 1.3043 J probe).
+    assert maxes[0]["min_value"] == pytest.approx(0.65)
 
 
 # The strict xfail the test-writer put here (charge-regen defined twice) is

@@ -197,6 +197,49 @@ hash-different does not strictly imply model-different; check the commit.
 - The Ag105 charger input-draw stamping and MPPT input-power limiting have known gaps —
   check HIL_PLANT.md's current state before treating FC-draw magnitudes as physical.
 
+## The charger era, and why h2 does not compare across it (2026-09-02)
+
+- **THE ONE MECHANISM.** The simulated Ag105 was a 1:1 CURRENT-transfer element; since
+  2026-09-01 (commit 390f554) it is an energy converter at `ETA_CHG` = 0.88. One rule,
+  both engines: `i_in = i_charge·V_pack/(ETA_CHG·V_input)`, `i_out = i_charge` unchanged,
+  `p_chg_loss = i_charge·V_pack·(1/ETA_CHG − 1)`.
+- **What that does to a charge window,** which is the thing to have in hand before
+  reading any charging run:
+  - FC-fed (`FC_CHARGE_ENABLE` closed, input = VBUS): the charger's BUS current is now
+    ≈ **0.56 × i_charge**, not `i_charge`. So `I_fc` inside a charge window falls by
+    ≈ 0.44 × the charge ceiling — ~0.35 A at a 0.8 A ceiling, ~0.44 A at 1.0 A — and the
+    hydrogen billed for that window falls with it. Every OC/`I_fc` margin measured inside
+    a charge window before 2026-09-02 is stale in the SAFE direction.
+  - Regen-fed (`REGEN_ENABLE` + `MOT_PWR_ENABLE`, input = V-MOT): the cap is now
+    OUTPUT-referred, so the PACK current roughly DOUBLES (×`ETA_CHG·V_chg/V_pack` ≈ 2.05)
+    and the chopper — a residual absorber, not a prior claimant — burns about half as
+    much. Measured on the plant probe: chopper 1.3043 J/window vs the 1:1 era's 2.3–2.9,
+    `I_charge` peak 0.1469 A vs 0.0677, clamp dwell 1026 ms vs 1148. Energy and dwell
+    move by DIFFERENT factors because the clamp is a VOLTAGE clamp: the charger takes
+    current, not volts.
+  - `V_chg` rises ≈ +0.31 V at 1.4 A (≈ +0.22 V, ~2.5 reg-0x02 counts, at a 1.0 A
+    ceiling), so the `mppt_thresh_cnt` band shifts UP by about two counts.
+  - PACK current on an FC-fed path is UNCHANGED. Eta moves what the charger COSTS, never
+    what the pack RECEIVES at a given ceiling — so no `I_charge` band on an FC-fed
+    scenario moved.
+- **THE COMPARISON RULE.** Every campaign up to and including `20260901_151156` ran the
+  1:1 charger. Do NOT compare `h2_cum_g`, eq-H2, a charge-window `I_fc`, a chopper
+  energy or a `mppt_thresh_cnt` band across that boundary. A run's own era is on its
+  `.meta.json` sidecar as `scenario.eta_chg`; REPORT.md's header table carries it as
+  **Charger era**, and an ABSENT value is the 1:1 sentinel, not "unknown" (no efficiency
+  number reproduces that era — it billed the BUS voltage where the model bills the PACK
+  voltage). `eta_chg` is also a frontier stimulus key, so a mixed-era frontier is refused
+  rather than ranked.
+- **A leg that never charges is era-invariant** and IS comparable across the boundary —
+  bit-identically, not approximately. That covers `ems-sdp`, `ems-dp-replay`,
+  `ems-ftp75-5050`, `ems-ftp75-sdp`, `ems-ftp75-dp` and all 27 replays. The 8 ppm
+  `ems-sdp` h2 record survives for exactly this reason, and saying so is part of citing
+  it.
+- **A charging leg can move UP.** `ems-ftp75-socband`'s walk h2 RISES 3.7526e-2 →
+  4.1873e-2 g, because cheaper charging lets the heuristic open a third charge window and
+  buy more SoC. "Charging got cheaper so hydrogen fell" is not a safe prior on a leg whose
+  SCHEDULE is free to change.
+
 ## Live-suite discipline
 
 - While the suite runs in the operator's terminal: the report folder is READ-ONLY (no
@@ -228,15 +271,31 @@ for f in *.meta.json; do grep -q '"results"' "$f" && ! grep -q '"results": *null
   verbatim in the brief; drift > ~20% in any repeated metric is a finding; sub-1% repeats
   are ALSO a finding (repeatability is evidence).
 
-## Power-balance columns and figure (2026-09-01f)
+## Power-balance columns and figure (2026-09-01f; seventh column 2026-09-02)
 
-- Simulated CSVs written after 2026-09-01f carry six append-only tail columns after `error_code`:
+- Simulated CSVs written after 2026-09-01f carry append-only tail columns after `error_code`:
   `p_mot_w` (V-MOT node; + drawn, − regen), `p_fc_w` (V_bus·I_fc, bus side — NOT the stack power
   Gfc uses), `p_batt_w` (V_bus·I_batt − V_batt·i_charge; + sourcing, − charging), `p_chop_w`,
-  `p_aux_w`, `p_bal_w` (= p_mot − (p_fc + p_batt + p_chop)). Blank on replay rows. The identity
-  is exact in simple-mode motoring (aux is the whole residual); in hi-fi the residual after aux
-  is ≤ ~0.4 W mean while motoring and ≈ −i_charge·(V_chg − V_batt) while charging, because the
-  simulated Ag105 is a 1:1 CURRENT-transfer element (no efficiency model — WORK_QUEUE §5).
+  `p_aux_w`, `p_bal_w`. Blank on replay rows.
+- **A SEVENTH column, `p_chg_loss_w`, was appended 2026-09-02** with the charger-efficiency
+  change: the Ag105 module's own dissipation, `i_charge·V_pack·(1/ETA_CHG − 1)`. It is a
+  LOAD-SIDE term, so the residual identity is now
+
+  ```
+  p_mot + p_chg_loss = p_fc + p_batt + p_chop + p_bal
+  ```
+
+  i.e. `p_bal_w` = p_mot + p_chg_loss − (p_fc + p_batt + p_chop). A CSV with only six power
+  columns and no `p_chg_loss_w` is a 1:1-charger-era file, and its `p_bal_w` still has the
+  charger term buried in it — the figure detects the absence and annotates the residual panel.
+- The identity is exact in simple-mode motoring (aux is the whole residual); in hi-fi the
+  residual after aux is ≈ −0.4 W mean while motoring, and the ~11 W charge-window residual the
+  1:1 element used to produce is GONE (it was the charger term, to two decimals). Two known
+  residual components remain and are documented in HIL_PLANT.md §4.6.2: `p_chop` sits on the
+  SOURCE side although it is a dissipation, so a braking residual is dominated by −2·p_chop
+  (pre-existing, deliberately deferred); and `p_chg_loss_w` uses this tick's `i_charge` while
+  the billing sites use last tick's, so the identity is off by Δi·V_batt·(1/η−1) during the
+  0.4 s charger ramp.
 - `hil_power_balance.png` renders those; on legacy CSVs (every campaign ≤ 151156) it shows source
   powers only — the `current` column is the VESC PHASE-current command, not bus current, so no
   motor proxy is drawn. Do not read a legacy figure as a balance.

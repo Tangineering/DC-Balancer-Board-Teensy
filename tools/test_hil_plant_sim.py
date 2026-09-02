@@ -1275,6 +1275,12 @@ EXPECTED_SCENARIO_NAMES = {
     "mppt-tracking", "charge-to-full", "pi-silence", "share-staircase",
     # 2026-08-31 SDP round: the online stochastic-DP policy scenario.
     "ems-sdp",
+    # 2026-09-02 (WP-1B2b): the alpha sweep's three live points, all on the
+    # `ems-sdp` stimulus. Registered as ORDINARY runs -- run_hil_suite.py has
+    # no opt-in gate for them today (see SDP_ALPHA_SCENARIOS).
+    "ems-sdp-alpha-greedy",
+    "ems-sdp-alpha-cal",
+    "ems-sdp-alpha-charge",
     # 2026-08-31 SDP-interior round: the three `sdp_soc_ref_offset` scenarios.
     "ems-ftp75-sdp", "ems-ftp75-dp", "ems-sdp-cross", "ems-sdp-braking",
     # WP-C (2026-09-01): the regen-fidelity energy-capture scenario.
@@ -1360,6 +1366,10 @@ EXPECTED_SCENARIO_DURATIONS_S = {
     # duration_s (SCENARIOS["ems-sdp"]["duration_s"] = SCENARIOS["ems-soc-band"]
     # ["duration_s"]).
     "ems-sdp": 61.0,
+    # DERIVED BY REFERENCE from `ems-sdp` (the same stimulus objects).
+    "ems-sdp-alpha-greedy": 61.0,
+    "ems-sdp-alpha-cal": 61.0,
+    "ems-sdp-alpha-charge": 61.0,
     # 2026-08-31 SDP-interior round.  `ems-ftp75-sdp` shares FTP75_DURATION_S
     # with the other two FTP-75 scenarios; the other two carry their own
     # SDP_CROSS_DURATION_S / SDP_BRAKE_DURATION_S.
@@ -1511,6 +1521,10 @@ def test_scenarios_chg_i_ceiling_a_only_on_charge_regen_and_charge_fault():
                       # the FTP-75 cycle, so the ceiling is live rather than
                       # inert, and it also resolves EMS_FRONTIER_FTP75's
                       # stimulus split 2 (run_hil_suite.py).
+                      # 2026-09-02: the three alpha-sweep legs read the
+                      # ceiling off `ems-sdp`'s entry, which reads it off
+                      # ems-soc-band's -- the same 0.8 A object.
+                      *hil.SDP_ALPHA_SCENARIOS,
                       "ems-sdp-cross", "ems-ftp75-sdp", "ems-ftp75-socband"):
             assert meta["chg_i_ceiling_a"] == pytest.approx(0.8)
         elif name == "regen-harvest-true":
@@ -4513,7 +4527,27 @@ def test_ems_soc_band_scenario_registered_with_soc_band_strategy():
 # 15. dp-replay: load_dp_table(), fingerprint, ZOH lookup, refusal paths
 # ─────────────────────────────────────────────────────────────────────────
 
-def _write_dp_table(path, meta_lines, rows):
+# The "caller said nothing" sentinel for the eta_chg header line, so that
+# "omit the line" (an OLD-ERA table -- a deliberate perturbation) stays
+# distinguishable from "give me the default".
+_ETA_UNSET = object()
+
+
+def _write_dp_table(path, meta_lines, rows, eta_chg=_ETA_UNSET):
+    """Write a DP table.
+
+    The `eta_chg` header line is ADDED AT THE PLANT'S OWN ERA unless the caller
+    already wrote one or passes an explicit value: DpReplayStrategy refuses a
+    table whose charger era disagrees with hil_electrical.ETA_CHG (block (0),
+    2026-09-02), so an era-silent baseline would make every unrelated test in
+    this file a test of the era check.  Pass `eta_chg=None` for an OLD-ERA
+    table."""
+    if eta_chg is _ETA_UNSET:
+        eta_chg = (_ETA_UNSET if any(str(l).strip().startswith("eta_chg")
+                                     for l in meta_lines)
+                   else hil.plant_eta_chg())
+    if eta_chg is not _ETA_UNSET and eta_chg is not None:
+        meta_lines = ["eta_chg: %r" % float(eta_chg)] + list(meta_lines)
     lines = ["# %s" % line for line in meta_lines]
     lines.append("t,power_share_setpoint,charge_goal")
     for t, s, g in rows:
@@ -4681,12 +4715,19 @@ def test_dp_replay_bind_scenario_success_loads_table_and_call_works(tmp_path):
 
 def _live_table_meta_lines(scenario, fp, charger_accounting="physical",
                            run_exit_s=None, soc0=0.7, capacity_ah=5.0,
-                           chg_ceiling_a=0.8):
+                           chg_ceiling_a=0.8, eta_chg=_ETA_UNSET):
     """A full set of header lines that agree with the CURRENTLY IMPORTED
     module constants and the given args -- used as the "everything matches"
-    baseline that individual tests then perturb exactly one field of."""
+    baseline that individual tests then perturb exactly one field of.
+
+    `eta_chg` defaults to the PLANT'S OWN ERA (hil_electrical.ETA_CHG), so the
+    baseline agrees with bind_scenario()'s charger-era check (block (0),
+    2026-09-02) the same way it already agrees with every other constant.
+    Pass None to omit the header line entirely -- that is what an OLD-ERA table
+    looks like, and it is a deliberate perturbation, not a default."""
     run_exit_s = hil.SOC_BAND_RUN_EXIT_S if run_exit_s is None else run_exit_s
-    return [
+    eta = hil.plant_eta_chg() if eta_chg is _ETA_UNSET else eta_chg
+    return ([] if eta is None else ["eta_chg: %r" % float(eta)]) + [
         "scenario: %s" % scenario,
         "profile_fingerprint: %s" % fp,
         "run_exit_s: %r" % float(run_exit_s),
@@ -6303,14 +6344,31 @@ def test_main_ems_sdp_run_records_sdp_policy_block_in_meta_config(tmp_path):
         meta = json.load(fh)
     block = meta["config"].get("sdp_policy")
     assert block is not None
-    # `ems-sdp` is the BENCHMARK leg and plays the CALIBRATED v3 artifact
-    # (2026-09-01 charge-economics ruling); the sidecar must name that file, not
-    # the frozen v2 demonstration artifact.
-    assert block["path"] == os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V3)
+    # `ems-sdp` is the BENCHMARK leg and plays the CALIBRATED artifact
+    # (2026-09-01 charge-economics ruling), re-solved for the eta era and
+    # rebound to v4 on 2026-09-02; the sidecar must name THAT file, not the
+    # frozen v2 demonstration artifact and not the old-era v3.
+    assert block["path"] == os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V4)
     assert len(block["file_sha256"]) == 64
     assert len(block["policy_sha256"]) == 64
     assert block["n_soc"] > 0 and block["n_bins"] > 0
     assert block["decision_dt_s"] == pytest.approx(1.0)
+    # WP-1B2b: the artifact's own ECONOMICS and ERA, recorded so a report
+    # reader can compare two SDP legs without opening either artifact.
+    assert block["alpha"] == pytest.approx(0.11832639757736393)
+    assert block["alpha_mode"] == "lever"
+    assert block["eta_chg"] == pytest.approx(0.88)
+    assert block["eta_chg"] == pytest.approx(hil.plant_eta_chg())
+    assert block["era_match"] is True
+    assert block["charge_cells"] == 0
+    assert block["policy_file"] == hil.SDP_POLICY_FILE_V4
+    # No scenario override on this leg -- `sdp_policy_file` is refused on a
+    # frontier-eligible strategy at import.
+    assert block["policy_file_source"] is None
+    # The eta-era certificate: the measured window is UNDECIDABLE, waived by
+    # the era-scoped allowance and RECORDED rather than swallowed.
+    assert len(block["certificate_allowances"]) == 1
+    assert "UNDECIDABLE" in block["certificate_allowances"][0]
 
 
 def test_main_non_sdp_run_has_no_sdp_policy_block_in_meta_config(tmp_path):
@@ -6962,10 +7020,21 @@ def test_ems_strategy_meta_covers_every_registered_strategy():
 
 def test_frontier_roles_are_the_ruled_ones():
     """The ruling (OVERNIGHT_LOG.md, SDP charge-economics adjudication): the
-    frontier is soc-band / dp-replay / sdp-v3, and sdp-v2 is a DEMONSTRATION."""
+    frontier is soc-band / dp-replay / the calibrated SDP leg, and every other
+    SDP name is a DEMONSTRATION.
+
+    RE-PINNED 2026-09-02 (the eta era): the calibrated leg is `sdp-v4`.
+    `sdp-v3` is the SAME calibration for the retired 1:1 charger and is kept
+    registered for COMPARABILITY, off the frontier; `sdp-sweep` plays alpha
+    sweep points that sit outside the admission windows by design."""
     eligible = {n for n in hil.EMS_STRATEGIES if hil.ems_frontier_eligible(n)}
-    assert eligible == {"soc-band", "dp-replay", "sdp-v3"}
-    assert hil.ems_frontier_eligible("sdp-v2") is False
+    assert eligible == {"soc-band", "dp-replay", "sdp-v4"}
+    for demoted in ("sdp-v2", "sdp-v3", "sdp-sweep"):
+        assert hil.ems_frontier_eligible(demoted) is False, demoted
+        # A non-frontier role must SAY WHICH KIND it is -- the three are
+        # different claims and a reader who cannot tell them apart mis-reads
+        # all three.
+        assert hil.EMS_STRATEGY_META[demoted].get("role_note"), demoted
     # An unregistered name is NOT eligible — admitting an unknown strategy to a
     # ranking by default is the failure the table exists to prevent.
     assert hil.ems_frontier_eligible("no-such-strategy") is False
@@ -6973,13 +7042,22 @@ def test_frontier_roles_are_the_ruled_ones():
 
 def test_sdp_instances_bind_their_own_artifacts_and_certificate_flags():
     v2, v3 = hil.EMS_STRATEGIES["sdp-v2"], hil.EMS_STRATEGIES["sdp-v3"]
+    v4, sweep = hil.EMS_STRATEGIES["sdp-v4"], hil.EMS_STRATEGIES["sdp-sweep"]
     assert (v2.name, v2.policy_file) == ("sdp-v2", hil.SDP_POLICY_FILE_V2)
     assert (v3.name, v3.policy_file) == ("sdp-v3", hil.SDP_POLICY_FILE_V3)
-    # The frontier-scored leg demands the certificate; the demonstration leg
-    # must not claim it.
-    assert v3.require_calibrated_benchmark is True
-    assert v2.require_calibrated_benchmark is False
-    assert hil.SDP_STRATEGY_NAMES == frozenset({"sdp-v2", "sdp-v3"})
+    assert (v4.name, v4.policy_file) == ("sdp-v4", hil.SDP_POLICY_FILE_V4)
+    # The scenario-supplied role has NO artifact of its own -- a sentinel, not
+    # a path, so it can never silently load a default.
+    assert (sweep.name, sweep.policy_file) == ("sdp-sweep",
+                                               hil.SDP_POLICY_FROM_SCENARIO)
+    # The frontier-scored leg demands the certificate; every demonstration or
+    # comparability leg must not claim it (the import assert ties the flag to
+    # `frontier_eligible`, and this is the same property re-derived).
+    assert v4.require_calibrated_benchmark is True
+    for demoted in (v2, v3, sweep):
+        assert demoted.require_calibrated_benchmark is False, demoted.name
+    assert hil.SDP_STRATEGY_NAMES == frozenset({"sdp-v2", "sdp-v3", "sdp-v4",
+                                                "sdp-sweep"})
 
 
 def test_shipped_v3_artifact_carries_the_calibrated_benchmark_certificate():
@@ -7076,12 +7154,411 @@ def test_v2_and_v3_share_maps_are_identical_over_the_S1_soc_rows():
     assert not any(v > 0.0 for row in v3["charge_goal"] for v in row)
 
 
+# =========================================================================
+# WP-1B2b (2026-09-02) -- the eta era: sdp-v4, the certificate allowance, the
+# DP table's charger era, and the three alpha-sweep legs.
+# =========================================================================
+
+def test_sdp_v3_v4_share_maps_agree_on_traversed_rows():
+    """THE REBINDING'S LOAD-BEARING CLAIM, measured rather than assumed.
+
+    Every expectation on `ems-sdp` and `ems-ftp75-sdp` was derived from an
+    offline walk of an EARLIER artifact and was NOT re-run for v4.  That is
+    only legitimate if the two artifacts command the same thing everywhere the
+    trajectories go.  MEASURED here:
+
+      CHARGE MAP  identical -- both all-zero, 0 differing cells.  So
+                  `charge_path_never_opens` stands unchanged on both legs.
+      SHARE MAP   differs on exactly FOUR rows: 2, 3, 4, 5 (SoC 0.552-0.555),
+                  76 cells of 2525.  Those rows sit 45-48 grid nodes BELOW the
+                  target node, and the widest trajectory in the suite spans
+                  target + 0.013 down to target - 0.019.
+
+    A failure here means the walk-derived expectations for BOTH scenarios must
+    be re-derived before the next campaign -- it is not a cosmetic pin."""
+    v3 = hil.load_sdp_policy(
+        os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V3), "sdp-v3")
+    v4 = hil.load_sdp_policy(
+        os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V4), "sdp-v4")
+    assert (v3["n_soc"], v3["n_bins"]) == (v4["n_soc"], v4["n_bins"])
+    assert v3["soc_grid"] == v4["soc_grid"]
+    # CHARGE: identical, and both empty (v4 declines the action endogenously
+    # for the SAME reason v3 did, at a lever the eta era moved).
+    assert v3["charge_goal"] == v4["charge_goal"]
+    assert not any(v > 0.0 for row in v4["charge_goal"] for v in row)
+    # SHARE: the differing rows, and their cell count.
+    differing = [i for i in range(v3["n_soc"])
+                 if v3["share"][i] != v4["share"][i]]
+    assert differing == [2, 3, 4, 5], differing
+    n_cells = sum(1 for i in differing for j in range(v3["n_bins"])
+                  if v3["share"][i][j] != v4["share"][i][j])
+    assert n_cells == 76, n_cells
+    # THE REACHABLE BAND, derived from the scenarios' own constants: the widest
+    # excursion is FTP75's +0.013 start offset and its ~0.019 SoC fall. A
+    # generous +-0.040 band around the target is asserted clean, so the claim
+    # is "nowhere near", not "just misses": the worst case is FTP75's +0.013
+    # start plus its 0.019 fall = 0.032, and the band covers it with margin.
+    BAND = 0.040
+    grid = v4["soc_grid"]
+    reachable = [i for i in range(len(grid))
+                 if abs(grid[i] - v4["soc_target"]) <= BAND]
+    assert len(reachable) >= 40                       # not a vacuous window
+    assert max(abs(hil.FTP75_SDP_SOC_REF_OFFSET),
+               abs(hil.SDP_CROSS_SOC_REF_OFFSET),
+               abs(hil.SDP_BRAKE_SOC_REF_OFFSET)) + 0.019 < BAND
+    assert all(i not in differing for i in reachable)
+    for i in reachable:
+        assert v3["share"][i] == v4["share"][i], i
+
+
+def test_shipped_v4_artifact_carries_the_certificate_under_the_era_allowance():
+    """v4 is the FRONTIER leg, so it must pass the certificate -- and it does
+    so with `in_window_measured` NULL, waived by the era-scoped allowance.  The
+    waiver is RETURNED, not swallowed: a run prints it and the sidecar keeps
+    it, which is what makes an accepted null different from a met clause."""
+    pol = hil.load_sdp_policy(
+        os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V4), "sdp-v4")
+    waived = hil.sdp_assert_calibrated_benchmark(pol, "sdp-v4")  # must not raise
+    raw = pol["raw"]
+    assert raw["alpha"]["mode"] == "lever"
+    assert raw["alpha"]["admission"]["in_window_model"] is True
+    assert raw["alpha"]["admission"]["in_window_measured"] is None
+    assert raw["actions"]["forbid_charge_all"] is False
+    assert raw["charger"]["eta_chg"] == pytest.approx(0.88)
+    assert len(waived) == 1
+    assert "UNDECIDABLE" in waived[0] and "TODO(verify)" in waived[0]
+    # ENDOGENOUS rejection, in the new era too.
+    assert sum(1 for row in pol["charge_goal"] for v in row if v > 0.0) == 0
+
+
+_DROP = object()
+
+
+def _certificate_raw(**over):
+    """An artifact skeleton that PASSES, for a test to break one clause of."""
+    raw = {
+        "alpha": {"mode": "lever",
+                  "levers_soc_per_g": {"charge_measured_is_projection": True,
+                                       "charge_measured": 0.4484,
+                                       "charge_measured_as_measured": 0.2364},
+                  "admission": {"in_window_model": True,
+                                "in_window_measured": None,
+                                "window_measured": None,
+                                "window_intent": "admit share, reject charge"}},
+        "actions": {"forbid_charge_all": False},
+        "charger": {"eta_chg": 0.88},
+    }
+    for path, val in over.items():
+        node = raw
+        keys = path.split("__")
+        for k in keys[:-1]:
+            node = node[k]
+        if val is _DROP:
+            node.pop(keys[-1], None)
+        else:
+            node[keys[-1]] = val
+    return {"path": "synthetic.json", "raw": raw}
+
+
+def test_certificate_allowance_accepts_a_null_with_intent_reason_and_era():
+    waived = hil.sdp_assert_calibrated_benchmark(_certificate_raw(), "sdp-v4")
+    assert len(waived) == 1
+
+
+@pytest.mark.parametrize("missing", [
+    # The three fields the allowance reads. Drop ANY one and the null is a
+    # bare null again -- the shape an OLD artifact or a truncated solve has.
+    "alpha__admission__window_intent",
+    "alpha__levers_soc_per_g__charge_measured_is_projection",
+    "charger__eta_chg",
+])
+def test_certificate_allowance_refuses_a_bare_null(missing):
+    """A null WITHOUT the reason must still FAIL. This is the whole point of
+    scoping the allowance: "the field is missing" and "the field is
+    deliberately undecidable" must not be confusable."""
+    pol = _certificate_raw(**{missing: _DROP})
+    with pytest.raises(ValueError, match="CALIBRATED BENCHMARK"):
+        hil.sdp_assert_calibrated_benchmark(pol, "sdp-v4")
+
+
+def test_certificate_allowance_does_not_excuse_a_false_measured_window():
+    """FALSE is a decision, not an absence: an artifact that says its alpha is
+    OUTSIDE the measured window is refused whatever else it carries."""
+    pol = _certificate_raw(**{"alpha__admission__in_window_measured": False})
+    with pytest.raises(ValueError, match="CALIBRATED BENCHMARK"):
+        hil.sdp_assert_calibrated_benchmark(pol, "sdp-v4")
+
+
+def test_certificate_refusal_names_the_eta_era_regeneration_recipe():
+    """The refusal must not send a reader to a command that reproduces the
+    problem: an artifact solved WITHOUT --eta-chg is priced against the
+    retired charger, and a `lever` solve in this era carries the null."""
+    pol = _certificate_raw(**{"alpha__mode": "marginal"})
+    with pytest.raises(ValueError) as exc:
+        hil.sdp_assert_calibrated_benchmark(pol, "sdp-v4")
+    assert "--eta-chg 0.88" in str(exc.value)
+    assert "UNDECIDABLE" in str(exc.value)
+
+
+# -- DpReplayStrategy: the charger-era header check --------------------------
+
+_OLD_ERA_FIXTURE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "test_fixtures",
+    "dp_ems_table_ems-dp-replay_old_era.csv")
+
+
+def test_dp_table_old_era_fixture_is_refused_under_the_eta_plant(tmp_path):
+    """THE COMMITTED OLD-ERA TABLE, under the plant as it runs today.
+
+    The fixture is a real generated table from before the charger-efficiency
+    model: it has no `# eta_chg:` header line at all. Under the eta plant it
+    must be REFUSED, and the refusal must say WHY -- the profile fingerprint
+    cannot catch this (a live scenario declares no efficiency, so both eras
+    hash the same sentinel), which is exactly why the era check exists."""
+    import shutil
+    dst = os.path.join(str(tmp_path), hil.DP_TABLE_NAME % "ems-dp-replay")
+    shutil.copyfile(_OLD_ERA_FIXTURE, dst)
+    meta, _t, _s, _g = hil.load_dp_table(dst)
+    assert "eta_chg" not in meta                      # the fixture's premise
+    s = hil.DpReplayStrategy(table_dir=str(tmp_path))
+    assert hil.plant_eta_chg() == pytest.approx(0.88)
+    with pytest.raises(ValueError) as exc:
+        s.bind_scenario("ems-dp-replay", hil.SCENARIOS["ems-dp-replay"])
+    text = str(exc.value)
+    assert "1:1 CURRENT-TRANSFER" in text
+    assert "plant  eta_chg=0.88" in text
+    assert "no `# eta_chg:` header line" in text
+    assert "--eta-chg 0.88" in text
+
+
+def test_dp_table_eta_era_table_is_refused_under_the_old_era_plant(tmp_path,
+                                                                   monkeypatch):
+    """THE OTHER DIRECTION, and it must be symmetric: an eta-era table replayed
+    on a plant billing the 1:1 charger is the same category error.  The plant's
+    era is read through `plant_eta_chg()` at call time, so placing this process
+    in the old era is one monkeypatch and needs no second copy of the rule."""
+    s, meta, args = _bindable(tmp_path, eta_chg=0.88)
+    monkeypatch.setattr(hil, "ETA_CHG", None)
+    assert hil.plant_eta_chg() is None
+    with pytest.raises(ValueError) as exc:
+        s.bind_scenario("myscen", meta, electrical_mode="hifi", args=args)
+    text = str(exc.value)
+    assert "energy-conserving charger at eta_chg = 0.88" in text
+    assert "1:1 CURRENT-TRANSFER" in text
+    # No `--eta-chg` on the old-era regeneration recipe: the old era is the
+    # ABSENCE of the flag, not a value of it.
+    assert "--eta-chg" not in text.split("Regenerate for this era:")[1]
+
+
+def test_dp_table_matching_era_binds_and_is_recorded_in_provenance(tmp_path):
+    s, meta, args = _bindable(tmp_path)             # defaults to the plant's era
+    s.bind_scenario("myscen", meta, electrical_mode="hifi", args=args)
+    assert s.provenance["eta_chg"] == pytest.approx(0.88)
+
+
+def test_dp_table_era_check_runs_before_the_fingerprint_check(tmp_path):
+    """ORDERING, and it is deliberate: an old-era table whose fingerprint ALSO
+    fails must report the ERA, which explains the mismatch, rather than the
+    digest, which does not."""
+    meta_a = {"ems_v_profile": [(0.0, 0.0), (10.0, 1.0)], "duration_s": 10.0}
+    fp_a = hil.dp_profile_fingerprint("myscen", meta_a)
+    path = os.path.join(str(tmp_path), hil.DP_TABLE_NAME % "myscen")
+    _write_dp_table(path, ["scenario: myscen", "run_exit_s: 8.0",
+                           "profile_fingerprint: %s" % fp_a],
+                    [(0.0, 0.5, 0.0)], eta_chg=None)
+    s = hil.DpReplayStrategy(table_dir=str(tmp_path))
+    meta_b = {"ems_v_profile": [(0.0, 0.0), (10.0, 2.0)], "duration_s": 10.0}
+    with pytest.raises(ValueError, match="1:1 CURRENT-TRANSFER"):
+        s.bind_scenario("myscen", meta_b)
+
+
+def test_dp_fingerprint_omits_the_old_era_sentinel():
+    """The orchestrator's 2026-09-02 ruling: the old era is the ABSENCE of the
+    term, so a scenario that declares no efficiency hashes exactly as it did
+    before `eta_chg` joined the key list -- while a SIDECAR that declares one
+    still hashes differently."""
+    meta = {"ems_v_profile": [(0.0, 0.0), (10.0, 1.0)], "duration_s": 10.0}
+    base = hil.dp_profile_fingerprint("myscen", meta)
+    # An explicit None is the same statement as an absent key.
+    assert hil.dp_profile_fingerprint("myscen", dict(meta, eta_chg=None)) == base
+    # A declared efficiency is a DIFFERENT problem and must not collide.
+    assert hil.dp_profile_fingerprint("myscen", dict(meta, eta_chg=0.88)) != base
+    # The live scenarios' digests are the pre-round ones again.
+    assert hil.dp_profile_fingerprint(
+        "ems-dp-replay", hil.SCENARIOS["ems-dp-replay"]).startswith("02683031")
+    assert hil.dp_profile_fingerprint(
+        "ems-ftp75-dp", hil.SCENARIOS["ems-ftp75-dp"]).startswith("403c5e71")
+
+
+# -- The three alpha-sweep legs ----------------------------------------------
+
+def test_alpha_scenarios_share_the_ems_sdp_stimulus_by_reference():
+    """ONE stimulus, three artifacts: the sweep varies alpha and nothing else,
+    so the three legs must hold the SAME objects `ems-sdp` holds -- not merely
+    equal ones, or a retune of the cycle would move some of them."""
+    sdp = hil.SCENARIOS["ems-sdp"]
+    assert hil.SDP_ALPHA_SCENARIOS == ("ems-sdp-alpha-cal",
+                                       "ems-sdp-alpha-charge",
+                                       "ems-sdp-alpha-greedy")
+    for name in hil.SDP_ALPHA_SCENARIOS:
+        meta = hil.SCENARIOS[name]
+        assert meta["ems_v_profile"] is sdp["ems_v_profile"], name
+        assert meta["duration_s"] == pytest.approx(sdp["duration_s"]), name
+        assert meta["chg_i_ceiling_a"] == pytest.approx(
+            sdp["chg_i_ceiling_a"]), name
+        assert meta["electrical"] == "any", name
+        # The run-exit is `ems-sdp`'s: neither declares an override, so both
+        # fall through to SOC_BAND_RUN_EXIT_S.
+        assert ("ems_run_exit_s" in meta) == ("ems_run_exit_s" in sdp), name
+        assert "pi_timeline" not in meta, name
+
+
+def test_alpha_scenarios_are_not_frontier_candidates():
+    """They play artifacts that sit OUTSIDE the admission windows by design,
+    so none of them may be scored -- and the mechanism is the STRATEGY's role,
+    not a per-scenario exception."""
+    for name in hil.SDP_ALPHA_SCENARIOS:
+        assert hil.SCENARIOS[name]["ems"] == "sdp-sweep"
+    assert hil.ems_frontier_eligible("sdp-sweep") is False
+    assert hil.EMS_STRATEGIES["sdp-sweep"].require_calibrated_benchmark is False
+
+
+def test_alpha_scenarios_take_the_shared_soc_band_drain_branch():
+    """They ARE the `ems-sdp` stimulus, so the drain must be bit-identical --
+    the same property `ems-dp-replay` and `ems-soc-band` are pinned for."""
+    t = hil.SOC_BAND_DRAIN_START_S + hil.SOC_LOAD_RAMP_S / 2.0
+    ref = hil.Plant()
+    hil.apply_scenario(ref, "ems-sdp", t)
+    assert ref.i_aux > hil.I_AUX_A               # not vacuously equal
+    for name in hil.SDP_ALPHA_SCENARIOS:
+        p = hil.Plant()
+        hil.apply_scenario(p, name, t)
+        assert p.i_aux == pytest.approx(ref.i_aux), name
+        # And therefore they belong in the bespoke-preload list, or a preload
+        # declared on one would be silently ignored.
+        assert name in hil._AUX_PRELOAD_BESPOKE, name
+        assert "aux_preload_a" not in hil.SCENARIOS[name], name
+
+
+def test_alpha_scenarios_resolve_their_artifact_from_the_live_picks_manifest():
+    """Each leg names a PICK, not a path, and the bind resolves it through the
+    sweep's own manifest -- carrying the pick's alpha and leg into the run's
+    provenance, which is what makes a sweep leg self-describing."""
+    with open(hil.SDP_LIVE_PICKS_PATH, encoding="utf-8") as fh:
+        picks = json.load(fh)["picks"]
+    sweep = hil.EMS_STRATEGIES["sdp-sweep"]
+    seen = {}
+    for name in hil.SDP_ALPHA_SCENARIOS:
+        meta = hil.SCENARIOS[name]
+        assert meta["sdp_policy_file"] == hil.SDP_LIVE_PICK_PREFIX + name
+        sweep.bind_scenario(name, meta)
+        prov = sweep.provenance
+        assert prov["policy_sha256"] == picks[name]["policy_sha"], name
+        assert prov["alpha"] == pytest.approx(picks[name]["alpha"]), name
+        assert prov["charge_cells"] == picks[name]["charge_cells"], name
+        assert prov["policy_file_source"]["kind"] == "live_picks"
+        assert prov["policy_file_source"]["pick"] == name
+        assert prov["eta_chg"] == pytest.approx(0.88), name
+        assert prov["era_match"] is True, name
+        seen[name] = prov["policy_sha256"]
+    # THREE DIFFERENT LAWS -- if two legs resolved to one artifact the sweep
+    # would be measuring one point three times.
+    assert len(set(seen.values())) == 3
+    # The charge-admitting leg is the one with charge cells; the other two
+    # decline (that is what makes them different legs).
+    assert picks["ems-sdp-alpha-charge"]["charge_cells"] > 0
+    assert picks["ems-sdp-alpha-greedy"]["charge_cells"] == 0
+
+
+def test_sdp_policy_file_override_is_undone_on_the_next_bind():
+    """EMS_STRATEGIES holds ONE instance per name. An override that leaked into
+    the next bind would play an artifact the second scenario never named."""
+    sweep = hil.EMS_STRATEGIES["sdp-sweep"]
+    sweep.bind_scenario("ems-sdp-alpha-charge",
+                        hil.SCENARIOS["ems-sdp-alpha-charge"])
+    charge_sha = sweep.provenance["policy_sha256"]
+    sweep.bind_scenario("ems-sdp-alpha-greedy",
+                        hil.SCENARIOS["ems-sdp-alpha-greedy"])
+    assert sweep.provenance["policy_sha256"] != charge_sha
+    # And a strategy WITH a registered artifact returns to it when the next
+    # scenario names nothing.
+    v4 = hil.EMS_STRATEGIES["sdp-v4"]
+    v4.bind_scenario("ems-sdp", hil.SCENARIOS["ems-sdp"])
+    assert v4.policy_file == hil.SDP_POLICY_FILE_V4
+    assert v4.provenance["policy_file_source"] is None
+
+
+def test_sdp_sweep_without_a_scenario_artifact_refuses_loudly():
+    """The sentinel is not a path: a `sdp-sweep` run under a scenario that
+    names no artifact must REFUSE, not fall back to a default policy."""
+    sweep = hil.SdpStrategy("sdp-sweep", hil.SDP_POLICY_FROM_SCENARIO)
+    with pytest.raises(ValueError, match="NO artifact of its own"):
+        sweep.bind_scenario("bogus", {})
+
+
+def test_live_picks_missing_manifest_refuses_at_bind(tmp_path):
+    with pytest.raises(ValueError, match="live-picks|manifest|could not be read"):
+        hil.resolve_sdp_policy_file(
+            "live-picks:ems-sdp-alpha-cal", scenario="ems-sdp-alpha-cal",
+            picks_path=str(tmp_path / "nope.json"))
+
+
+def test_live_picks_unknown_pick_refuses_at_bind(tmp_path):
+    path = tmp_path / "picks.json"
+    path.write_text(json.dumps({"picks": {"other": {"policy_file": "x.json"}}}),
+                    encoding="utf-8")
+    with pytest.raises(ValueError, match="no .policy_file. for the pick"):
+        hil.resolve_sdp_policy_file("live-picks:ems-sdp-alpha-cal",
+                                    scenario="ems-sdp-alpha-cal",
+                                    picks_path=str(path))
+
+
+def test_live_pick_policy_sha_drift_refuses():
+    """A regenerated artifact under an unchanged pick is a SUBSTITUTION with no
+    symptom in the trace: the run would claim the pick's leg while playing a
+    law the offline walk never saw."""
+    sweep = hil.EMS_STRATEGIES["sdp-sweep"]
+    pol = hil.load_sdp_policy(
+        os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V4), "sdp-v4")
+    with pytest.raises(ValueError, match="regenerated after the pick"):
+        sweep._verify_pick(pol, {"pick": "ems-sdp-alpha-cal",
+                                 "manifest": "picks.json",
+                                 "expect_policy_sha256": "0" * 64})
+
+
+def test_sdp_policy_file_is_refused_on_a_frontier_eligible_strategy():
+    """The import-time guard, re-derived: overriding a frontier leg's artifact
+    would score a policy nobody calibrated under a name that claims the
+    calibration.  Every shipped scenario that declares the key must therefore
+    name a NON-frontier SDP strategy."""
+    for name, meta in hil.SCENARIOS.items():
+        if "sdp_policy_file" not in meta:
+            continue
+        assert meta.get("ems") in hil.SDP_STRATEGY_NAMES, name
+        assert not hil.EMS_STRATEGY_META[meta["ems"]]["frontier_eligible"], name
+
+
+def test_sdp_artifact_era_mismatch_is_a_warning_not_a_refusal(capsys):
+    """ASYMMETRY WITH THE DP TABLE, and it is deliberate: an SDP artifact is a
+    CONTROL LAW defined on any plant, so an old-era one (the retained `sdp-v3`)
+    still runs -- it is the comparability leg.  What must not happen is that
+    the mismatch goes unrecorded."""
+    v3 = hil.EMS_STRATEGIES["sdp-v3"]
+    v3.bind_scenario("ems-sdp", hil.SCENARIOS["ems-sdp"])
+    assert v3.provenance["eta_chg"] is None            # solved in the old era
+    assert v3.provenance["plant_eta_chg"] == pytest.approx(0.88)
+    assert v3.provenance["era_match"] is False
+    assert "CHARGER-ERA MISMATCH" in capsys.readouterr().out
+
+
 def test_ems_ftp75_sdp_registry_shape():
     meta = hil.SCENARIOS["ems-ftp75-sdp"]
-    # Rebound to the CALIBRATED artifact 2026-09-01. The v2-derived offline walk
-    # transfers verbatim: the two share maps are identical at every SoC row from
-    # 3 up, and this scenario spans rows ~44-63 (see the row-diff test below).
-    assert meta["ems"] == "sdp-v3"
+    # Rebound to the CALIBRATED artifact 2026-09-01, and to its eta-era
+    # re-solve `sdp-v4` on 2026-09-02. The v2-derived offline walk transfers
+    # verbatim through both: v2/v3 differ only on SoC rows 1-2 and v3/v4 only
+    # on rows 2-5, while this scenario spans rows ~44-63 (see the two row-diff
+    # tests below).
+    assert meta["ems"] == "sdp-v4"
     assert meta["sdp_soc_ref_offset"] == pytest.approx(0.013)
     assert hil.FTP75_SDP_SOC_REF_OFFSET == pytest.approx(0.013)
     # SHARED STIMULUS: the same profile LIST OBJECT as the other two FTP-75
@@ -7283,15 +7760,22 @@ def test_sdp_interior_scenarios_are_sdp_driven_and_ems_gated():
     through the existing "ems" metadata rule -- no new code path.
 
     ROLES SPLIT 2026-09-01: S1 (ems-ftp75-sdp) is a pure SHARE-axis test and
-    moved to the calibrated `sdp-v3`; S2/S3 exist to actuate the policy's
+    moved to the calibrated artifact; S2/S3 exist to actuate the policy's
     CHARGE threshold and must stay on `sdp-v2`, whose artifact still HAS charge
-    cells -- on v3 they would be testing a mechanism the policy declined."""
+    cells -- on a calibrated artifact they would be testing a mechanism the
+    policy declined.
+
+    RE-PINNED 2026-09-02 (the eta era): S1's calibrated artifact is `sdp-v4`.
+    S2/S3 did NOT move with it, and deliberately: v4 has the same all-zero
+    charge map v3 has, so rebinding them would delete the charge-threshold
+    mechanism they exist to measure. The eta-era home for that mechanism is
+    the `ems-sdp-alpha-charge` sweep leg."""
     for name in ("ems-ftp75-sdp", "ems-sdp-cross", "ems-sdp-braking"):
         meta = hil.SCENARIOS[name]
         assert meta["ems"] in hil.SDP_STRATEGY_NAMES
         assert meta["electrical"] == "any"
         assert "pi_timeline" not in meta
-    assert hil.SCENARIOS["ems-ftp75-sdp"]["ems"] == "sdp-v3"
+    assert hil.SCENARIOS["ems-ftp75-sdp"]["ems"] == "sdp-v4"
     assert hil.SCENARIOS["ems-sdp-cross"]["ems"] == "sdp-v2"
     assert hil.SCENARIOS["ems-sdp-braking"]["ems"] == "sdp-v2"
 
@@ -7431,8 +7915,9 @@ def test_ems_sdp_scenario_shares_ems_soc_band_stimulus_by_reference():
     assert sdp["ems_v_profile"] is soc_band["ems_v_profile"]
     assert sdp["duration_s"] == pytest.approx(soc_band["duration_s"])
     assert sdp["chg_i_ceiling_a"] == pytest.approx(soc_band["chg_i_ceiling_a"])
-    # THE BENCHMARK LEG -> the CALIBRATED artifact (2026-09-01).
-    assert sdp["ems"] == "sdp-v3"
+    # THE BENCHMARK LEG -> the CALIBRATED artifact for the CURRENT charger
+    # (rebound v3 -> v4 2026-09-02, the eta era).
+    assert sdp["ems"] == "sdp-v4"
     assert sdp["electrical"] == "any"
 
 
@@ -8596,21 +9081,28 @@ def test_sidecar_aux_preload_a_absent_specifically_on_replay_runs(tmp_path):
 
 # ── Requirement 7 (hil_plant_sim.py half): DP table fingerprint pins ────────
 
-def test_ftp75_dp_table_fingerprint_starts_with_d07b37a4_and_zero_preload():
+def test_ftp75_dp_table_fingerprint_starts_with_403c5e71_and_zero_preload():
     """Pins the shipped table's header against the zero-preload re-solve
     (2026-09-01): the fingerprint moved when FTP75_PRELOAD_A moved, because
     `aux_preload_a` is in DP_FINGERPRINT_META_KEYS. A stale checked-in table
     would silently replay against the wrong demand if this pin ever regressed.
 
     RE-PINNED 2026-09-01 (charger-efficiency round): 403c5e71... -> d07b37a4...
-    `eta_chg` joined DP_FINGERPRINT_META_KEYS, which moves the digest of every
-    scenario whatever era it is solved in, and the shipped tables were
-    regenerated at the plant's own efficiency in the same change."""
+    `eta_chg` joined DP_FINGERPRINT_META_KEYS, which moved the digest of every
+    scenario whatever era it was solved in, and the shipped tables were
+    regenerated at the plant's own efficiency in the same change.
+
+    RE-PINNED BACK 2026-09-02 (orchestrator ruling): d07b37a4... -> 403c5e71...
+    `eta_chg` is now an OPTIONAL fingerprint key (DP_FINGERPRINT_OPTIONAL_KEYS)
+    whose old-era sentinel is an OMITTED line, so a live scenario -- which
+    declares no efficiency -- hashes exactly as it did before the key existed.
+    The digest is therefore the pre-round one again, and only a SIDECAR that
+    declares an efficiency (an archived post-era run) hashes differently."""
     path = os.path.join(os.path.dirname(hil.__file__), "dp_tables",
                         hil.DP_TABLE_NAME % "ems-ftp75-dp")
     meta, _times, _shares, _goals = hil.load_dp_table(path)
     fp = meta.get("profile_fingerprint", "")
-    assert fp.startswith("d07b37a4"), fp
+    assert fp.startswith("403c5e71"), fp
     # The header has no literal "aux_preload_a" field of its own -- the
     # constant's contribution is folded into profile_fingerprint (it is a
     # DP_FINGERPRINT_META_KEYS member). So "the header declares aux_preload_a
