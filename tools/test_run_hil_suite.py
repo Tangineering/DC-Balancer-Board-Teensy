@@ -9335,11 +9335,17 @@ def _mppt_brake_specs():
     return ceiling, floor
 
 
-def _mppt_brake_rows(count):
+def _mppt_brake_rows(count, n=700):
+    """`n` in-window ticks at 1 kHz, all carrying `count`.
+
+    A single row no longer suffices: the reaching arm carries `min_ticks` 600
+    (review L1, 2026-09-02), so the fixture has to hold the value for a
+    plateau's worth of ticks rather than touch it once. 700 ticks fits inside
+    the 797 ms window."""
     lo, hi = rhs._MPPT_THRESH_BRAKE_W
-    mid = (lo + hi) / 2.0
-    return [{"t": "%.3f" % mid, "mppt_thresh_cnt": str(count),
-            "fault_flags": "0"}]
+    start = lo + ((hi - lo) - n * 1e-3) / 2.0
+    return [{"t": "%.4f" % (start + i * 1e-3), "mppt_thresh_cnt": str(count),
+             "fault_flags": "0"} for i in range(n)]
 
 
 def test_mppt_brake_window_pin_specs_use_ag105_mppt_n_ceil():
@@ -9352,6 +9358,9 @@ def test_mppt_brake_window_pin_specs_use_ag105_mppt_n_ceil():
     # reaching arm and trips the ceiling).
     assert floor["min_value"] == hil.AG105_MPPT_N_CEIL == 27
     assert "floor_min_value" not in floor
+    # L1 (2026-09-02): the reaching arm also carries a DWELL, so one spurious
+    # sample at 27 no longer satisfies it (measured plateaus 735/730/701).
+    assert floor["min_ticks"] == 600
     assert ceiling["t_window"] == rhs._MPPT_THRESH_BRAKE_W
     assert floor["t_window"] == rhs._MPPT_THRESH_BRAKE_W
 
@@ -9378,6 +9387,20 @@ def test_mppt_brake_window_count_27_passes_both(tmp_path):
     by_name = {c["name"]: c["passed"] for c in checks}
     assert by_name["signal_mppt_threshold_braking_mirror_artifact_ceiling"] is True
     assert by_name["signal_mppt_threshold_braking_mirror_artifact"] is True
+
+
+def test_mppt_brake_window_short_plateau_fails_the_dwell(tmp_path):
+    """L1: reaching 27 for a handful of ticks is not the artifact — the mirror
+    holds the clamp for ~0.7 s. 599 ticks is one under the floor."""
+    ceiling, floor = _mppt_brake_specs()
+    path = tmp_path / "short.csv"
+    _write_scenario_csv(path, _mppt_brake_rows(27, n=599),
+                        extra_cols=("mppt_thresh_cnt",))
+    measured = rhs.scan_signals(str(path), [ceiling, floor], grace_s=0.0)
+    checks = rhs.judge_signals([ceiling, floor], measured, "why")
+    by_name = {c["name"]: c["passed"] for c in checks}
+    assert by_name["signal_mppt_threshold_braking_mirror_artifact_ceiling"] is True
+    assert by_name["signal_mppt_threshold_braking_mirror_artifact"] is False
 
 
 def test_mppt_brake_window_count_28_fails(tmp_path):
@@ -9992,23 +10015,92 @@ def test_socband_fc_carried_is_measured_on_charge_free_ticks():
     assert spec["exclude_when_switch_bit"] == rhs.SW_FC_CHARGE
 
 
-def test_socband_split_scores_the_measured_campaign_peak(tmp_path):
-    """End to end on the campaign's own numbers: a 1.1370 A charge-window peak
-    with a 0.6929 A charge-free peak must pass BOTH arms and the floor — the
-    combination that failed before the split."""
+def test_socband_split_scores_the_measured_campaign_decay(tmp_path):
+    """End to end on the campaign's own numbers, INCLUDING the post-close decay.
+
+    Campaign 20260902_041414's charge windows close with the FC current still
+    carrying the charger's bus draw: the last in-window sample is 1.0736 A at
+    switch 0x35, and the first charge-free samples read 0.8628, 0.7341 and
+    0.55 A over the following ~10 ms.  Without the settling hold the 0.85 A
+    tripwire false-fails on the 0.8628 A decay sample and the 0.56 A floor
+    passes on it — both verdicts read off a contaminated tick.  With
+    `exclude_hold_ms` 10 the charge-free peak is the 0.6929 A the bounds were
+    calibrated against."""
+    charge = str(rhs.SW_FC_CHARGE | 0x25)           # 0x35: FC_CHARGE + BT_BUS low
+    free = "0x27"
     rows = [
-        {"t": "117.013", "I_fc": "1.1370", "switch": str(rhs.SW_FC_CHARGE),
-         "fault_flags": "0"},
-        {"t": "244.003", "I_fc": "0.6929", "switch": "0", "fault_flags": "0"},
+        {"t": "88.505", "I_fc": "1.0736", "switch": charge, "fault_flags": "0"},
+        {"t": "88.506", "I_fc": "0.8628", "switch": free, "fault_flags": "0"},
+        {"t": "88.507", "I_fc": "0.7341", "switch": free, "fault_flags": "0"},
+        {"t": "88.520", "I_fc": "0.5500", "switch": free, "fault_flags": "0"},
+        {"t": "117.013", "I_fc": "1.1370", "switch": charge,
+         "fault_flags": "0"},                       # charge-window peak
+        {"t": "244.003", "I_fc": "0.6929", "switch": free, "fault_flags": "0"},
     ]
     path = tmp_path / "socband.csv"
     _write_scenario_csv(path, rows)
-    specs = [_socband_spec(n) for n in ("socband_fc_peak_bounded",
-                                        "socband_fc_peak_charging",
-                                        "socband_fc_carried")]
-    checks = rhs.judge_signals(
-        specs, rhs.scan_signals(str(path), specs, grace_s=0.0), "why")
+    names = ("socband_fc_peak_bounded", "socband_fc_peak_charging",
+             "socband_fc_carried")
+    specs = [_socband_spec(n) for n in names]
+    meas = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    # The two masked arms see the calibration peak, not the decay tail.
+    assert meas[0]["peak"] == pytest.approx(0.6929)
+    assert meas[2]["peak"] == pytest.approx(0.6929)
+    assert meas[1]["peak"] == pytest.approx(1.1370)      # unmasked arm
+    checks = rhs.judge_signals(specs, meas, "why")
     assert all(c["passed"] for c in checks), [c["detail"] for c in checks]
+    # And the hold is load-bearing: drop it and the tripwire false-fails on the
+    # 0.8628 A decay sample while the floor passes on that same sample.
+    no_hold = [dict(s) for s in specs]
+    for s in no_hold:
+        s.pop("exclude_hold_ms", None)
+    meas2 = rhs.scan_signals(str(path), no_hold, grace_s=0.0)
+    assert meas2[0]["peak"] == pytest.approx(0.8628)
+    assert rhs.judge_signals(no_hold, meas2, "why")[0]["passed"] is False
+
+
+def test_exclude_hold_ms_is_measured_from_the_last_set_row(tmp_path):
+    """A chattering branch must not leak a partially-decayed sample: the hold
+    restarts on every row the bit is set on, not on the first one."""
+    spec = {"name": "held", "column": "I_fc", "max_value": 0.6,
+            "exclude_when_switch_bit": rhs.SW_FC_CHARGE,
+            "exclude_hold_ms": 10.0}
+    rows = [
+        {"t": "31.000", "I_fc": "1.0", "switch": str(rhs.SW_FC_CHARGE),
+         "fault_flags": "0"},
+        {"t": "31.005", "I_fc": "0.9", "switch": "0", "fault_flags": "0"},
+        {"t": "31.008", "I_fc": "1.0", "switch": str(rhs.SW_FC_CHARGE),
+         "fault_flags": "0"},                       # re-arms the hold at 31.008
+        {"t": "31.015", "I_fc": "0.8", "switch": "0", "fault_flags": "0"},
+        {"t": "31.020", "I_fc": "0.5", "switch": "0", "fault_flags": "0"},
+    ]
+    path = tmp_path / "chatter.csv"
+    _write_scenario_csv(path, rows)
+    m = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    assert m[0]["peak"] == pytest.approx(0.5)
+    assert rhs.judge_signals([spec], m, "why")[0]["passed"] is True
+
+
+def test_signal_spec_guard_refuses_a_hold_without_its_mask():
+    entry = {"signals_require": [
+        {"name": "bad", "column": "I_fc", "max_value": 0.5,
+         "exclude_hold_ms": 10.0}]}
+    with pytest.raises(AssertionError) as exc:
+        rhs._assert_signal_spec_shapes("synthetic", entry)
+    assert "no meaning without it" in str(exc.value)
+
+    entry2 = {"signals_require": [
+        {"name": "bad2", "column": "I_fc", "max_value": 0.5,
+         "exclude_when_switch_bit": rhs.SW_FC_CHARGE,
+         "exclude_hold_ms": -1.0}]}
+    with pytest.raises(AssertionError) as exc2:
+        rhs._assert_signal_spec_shapes("synthetic", entry2)
+    assert "UN-exclude" in str(exc2.value)
+
+
+def test_socband_arms_carry_the_settling_hold():
+    for name in ("socband_fc_peak_bounded", "socband_fc_carried"):
+        assert _socband_spec(name)["exclude_hold_ms"] == 10.0
 
 
 def test_socband_h2_band_is_the_measured_one():
@@ -10055,6 +10147,7 @@ def test_analyze_scenario_csv_reads_the_substep_count(tmp_path):
     assert m["substep_n_min"] == 6
     assert m["substep_n_mean"] == pytest.approx((100 + 100 + 6 + 100) / 4.0)
     assert m["substep_n_below_gate"] == 1
+    assert m["substep_n_rows"] == 4
 
 
 def _substep_check(**over):
@@ -10066,17 +10159,41 @@ def _substep_check(**over):
 
 def test_substep_resolution_check_passes_a_well_resolved_run():
     check = _substep_check(substep_n_min=100, substep_n_mean=100.0,
-                           substep_n_below_gate=0)
+                           substep_n_below_gate=0, substep_n_rows=10000)
     assert check["passed"] is True
     assert "minimum 100 substep(s)/tick" in check["detail"]
+    assert "0 of 10000" in check["detail"]
 
 
-def test_substep_resolution_check_fails_a_host_limited_run():
-    check = _substep_check(substep_n_min=4, substep_n_mean=60.0,
-                           substep_n_below_gate=37)
+def test_substep_resolution_warns_but_passes_on_an_isolated_coarse_tick():
+    """M1 (2026-09-02): the quantity is WALL-CLOCK adaptive, so one coarse
+    tick in 310 000 is the host's scheduler, not a verdict about the run. It
+    is still reported — as a WARNING, in the detail line."""
+    check = _substep_check(substep_n_min=4, substep_n_mean=99.0,
+                           substep_n_below_gate=2, substep_n_rows=310000)
+    assert check["passed"] is True
+    assert "WARNING (not a failure)" in check["detail"]
+    assert "2 of 310000" in check["detail"]
+
+
+def test_substep_resolution_check_fails_a_sustained_collapse():
+    """Past SUBSTEP_COLLAPSE_FRACTION the reading is about the run: every
+    sub-millisecond number in it was integrated coarsely."""
+    check = _substep_check(substep_n_min=4, substep_n_mean=6.0,
+                           substep_n_below_gate=3700, substep_n_rows=310000)
     assert check["passed"] is False
     assert "host-limited" in check["detail"]
     assert rhs.SUBSTEP_N_MIN_GATE == 8
+    assert rhs.SUBSTEP_COLLAPSE_FRACTION == 0.001
+
+
+def test_substep_collapse_threshold_is_the_boundary_it_says_it_is():
+    """Exactly at the fraction passes; one tick past it fails."""
+    at = _substep_check(substep_n_min=4, substep_n_mean=90.0,
+                        substep_n_below_gate=310, substep_n_rows=310000)
+    past = _substep_check(substep_n_min=4, substep_n_mean=90.0,
+                          substep_n_below_gate=311, substep_n_rows=310000)
+    assert at["passed"] is True and past["passed"] is False
 
 
 def test_substep_resolution_check_is_skipped_without_the_column():
@@ -10092,3 +10209,72 @@ def test_substep_resolution_check_is_skipped_without_the_column():
     _, checks = rhs.judge_scenario("steady", m, _events(), _child())
     assert [c for c in checks
             if c["name"] == "substep_resolution"][0]["passed"] is True
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# L4 (2026-09-02): results.json carries the share-cut census as SCALARS.
+# The per-cut list is up to 50 dicts per entry over 27 entries, duplicating
+# per-tick data into a file nothing reads it from; the replay half's own
+# per-entry output still carries it whole.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_census_scalars_drops_the_per_cut_list():
+    census = {"n_cuts": 163, "n_over_own_row": 8, "n_over_prev_row": 4,
+              "i_own_row_peak_a": 0.6608, "i_prev_row_peak_a": 0.5722,
+              "limit_a": 0.5,
+              "cuts": [{"t": 1.0, "switch": "FC_BUS"} for _ in range(50)]}
+    out = rhs._census_scalars(census)
+    assert "cuts" not in out
+    assert out["n_cuts"] == 163 and out["i_own_row_peak_a"] == 0.6608
+    assert "cuts" in census, "the caller's dict must not be mutated"
+
+
+def test_census_scalars_passes_absence_through():
+    assert rhs._census_scalars(None) is None
+    assert rhs._census_scalars({}) == {}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Campaign-C items 1 and 3 (2026-09-02): the informational verdict kind, the
+# ems-mpc-cross h2 floor, and the trimmed mppt braking window.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_informational_spec_reports_but_never_fails(tmp_path):
+    spec = {"name": "info", "column": "I_fc", "min_value": 5.0,
+            "informational": True, "label": "an informational floor"}
+    rows = [{"t": "1.0", "I_fc": "0.5", "fault_flags": "0"}]
+    path = tmp_path / "info.csv"
+    _write_scenario_csv(path, rows)
+    check = rhs.judge_signals(
+        [spec], rhs.scan_signals(str(path), [spec], grace_s=0.0), "why")[0]
+    assert check["passed"] is True
+    assert "INFORMATIONAL (reports, never fails)" in check["detail"]
+    assert "WARNING: the bound was NOT met" in check["detail"]
+    # ...and a met bound reports without the warning.
+    rows2 = [{"t": "1.0", "I_fc": "6.0", "fault_flags": "0"}]
+    path2 = tmp_path / "info_ok.csv"
+    _write_scenario_csv(path2, rows2)
+    ok = rhs.judge_signals(
+        [spec], rhs.scan_signals(str(path2), [spec], grace_s=0.0), "why")[0]
+    assert ok["passed"] is True
+    assert "WARNING" not in ok["detail"]
+
+
+def test_mpc_cross_h2_floor_is_informational_and_only_that_leg():
+    def _h2(scn, name):
+        return next(s for s in rhs.FAULT_EXPECTATIONS[scn]["signals_require"]
+                    if s.get("name") == name)
+    cross = _h2("ems-mpc-cross", "mpc_h2_accounted")
+    assert cross["informational"] is True
+    # The CEILING is untouched — only the floor sits inside the spread.
+    assert not _h2("ems-mpc-cross", "mpc_h2_bounded").get("informational")
+    for leg in ("ems-mpc", "ems-mpc-sto", "ems-ftp75-mpc"):
+        assert not _h2(leg, "mpc_h2_accounted").get("informational")
+
+
+def test_mppt_brake_window_is_the_trimmed_one():
+    assert rhs._MPPT_THRESH_BRAKE_W == (37.75, 38.44)
+    lo, hi = rhs._MPPT_THRESH_BRAKE_W
+    # It must still be wide enough for the dwell it carries.
+    floor = _mppt_brake_specs()[1]
+    assert (hi - lo) * 1000.0 > floor["min_ticks"]

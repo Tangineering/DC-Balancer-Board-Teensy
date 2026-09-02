@@ -3052,9 +3052,15 @@ def check_latch_precedes_uv(data, spec):
 # verdict needs a refused-cut counter on the observation frame, which does not
 # exist yet.
 #
-# BASELINE (campaign 20260902_011926, whole replay half): 163 cuts, 8 with the
-# cut's own row over 0.5 A (max 0.6608 A) and 4 more on the preceding row (max
-# 0.5722 A).
+# BASELINE (campaign 20260902_041414, whole replay half, scored by THIS
+# FUNCTION): 118 cuts, 6 with the cut's own row over 0.5 A, 2 more on the
+# preceding row, peak 0.5722 A.
+# ⚠️ THE 163 / 8 / 4 / 0.6608 A FIGURES QUOTED FOR CAMPAIGN 20260902_011926 ARE
+# NOT THIS TOOL'S NUMBERS. They were derived by hand under a different
+# definition (before the in-Run/state gating and the teardown exclusion this
+# function applies), so the two counts are not a trend and the drop from 163 to
+# 118 is not a change in board behaviour. Compare a future campaign against the
+# 118 / 6 / 2 baseline only.
 INFORMATIONAL_PREFIX = "**INFORMATIONAL (reports, never fails)**"
 
 

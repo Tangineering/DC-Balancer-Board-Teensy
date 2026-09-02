@@ -1268,6 +1268,11 @@ def test_prefill_era_reaches_the_profile_fingerprint(tmp_path, monkeypatch):
     assert new_fp == sim.dp_profile_fingerprint(
         "ems-soc-band", dict(meta, eta_chg=0.88))
     assert new_fp != old_fp
+    # L8 (review 2026-09-02): the era must reach the KEY FIELDS too, not only
+    # the fingerprint — a record fingerprinted for the eta era but keyed at the
+    # old one is unreachable from the era it was solved for.
+    assert calls[0]["eta_chg"] is None
+    assert calls[1]["eta_chg"] == 0.88
 
 
 def test_prefill_eta_chg_none_fingerprints_exactly_as_the_bare_default(

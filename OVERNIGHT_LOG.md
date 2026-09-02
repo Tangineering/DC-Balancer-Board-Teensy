@@ -728,3 +728,24 @@ These are the measurements no amount of analysis can supply. Full context in WOR
    both of which carry `TODO(verify)`.
 7. **An open-loop share sweep ('O' command) above 0.60 A.** The asymmetry fit has no open-loop
    feedforward window in the corpus, so the fit rests on closed-loop windows alone.
+- Fix-round review (6c28dd2): 2 HIGH (the socband charge-window mask lacks a post-close settling
+  hold -> ems-ftp75-socband WILL false-FAIL campaign C at 0.8628 A, the charger decay tail; the
+  finalize-in-finally has zero test coverage) + 3 MED (substep gate should be a label; the binder's
+  "bind SUCCEEDED" claim; unguarded teardown before the finalize) + 9 LOW. All accepted; applied
+  after campaign C (tools/ frozen). Campaign C exposure: the socband FAIL is KNOWN-tooling; nothing
+  else moves; no abort.
+- **Campaign C done: hil_report_20260902_041414 — 65/66, 1:22:26, 65 executed + drive SKIP.** The
+  single FAIL is the PREDICTED socband false FAIL (settling hold). Validated: regen-harvest-true +
+  mppt-tracking now PASS under the fixed scoring; ems-sdp-cross/-braking + the three MPC legs ran
+  and PASSED (cp1252 fix); cycle61 frontier 0.9615x/1.0016x (sdp-v4) and cycle61-mpc 0.9606x/1.0007x
+  (cap 1029, first certified MPC frontier reading); ftp75 tuples UNVERIFIED only via the socband
+  reference. Tool pass + consolidated validation analysis next; then the fix round from the review.
+- Campaign C analysis (consolidated): 65/65 correct, 0 board-real. Every fix validated; first
+  eta-era readings of the SDP charge-admission limit cycle (period 16.08-16.12 s, era-invariant
+  < 0.3 %) and of the share-cut guard at its designed operating point (r pinned at DROOP_R_MIN,
+  refuse -> slew, peak I_batt 0.43-0.48 A); lever STABLE to a second reading (L_chg 0.3318 /
+  L_share 0.4169; alpha re-solve supported by two campaigns - operator decision); asymmetry-era
+  anchors RE-PINNED (scp i_cut bit-exact 16 digits); repeatability floor corrected to ~50 ppm
+  (the 8 ppm / 0.79 ppm records retired); NEW MED: MPC budget expiry after the cap lift (cross
+  57.4 %); the cross h2 floor sits inside the MPC's own spread. Campaign B's power-on INIT_FAIL did
+  not recur (re-flash path). Routed to the running fix agent.

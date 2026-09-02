@@ -146,9 +146,11 @@ from measured wall-clock cost (§8.1), so the simulated step is `1 ms / n`. Back
 is L-stable at any `n`, so a coarse tick cannot destabilise the solve; what it can degrade
 is the accuracy of the repaired RT1987 soft-start current, which the engine's own comment
 bounds at a substep of about **125 µs** (`n ≥ 8`). Measured across campaign
-`hil_report_20260902_011926` (3.55 M ticks, `n` reconstructed from `elec_substep_hz`):
-**99.98 % of ticks ran at `n` = 20, i.e. h = 50 µs**, two ticks reached h = 142.9 µs (14 %
-over the caveat, both event-free), and every run whose verdict rests on sub-millisecond
+`hil_report_20260902_011926` (3.55 M ticks, `n` reconstructed from `elec_substep_hz`, a
+wall-clock rate): **99.98 % of ticks ran at `n` = 20, i.e. h = 50 µs**; the reconstruction
+placed two ticks at h = 142.9 µs, but the direct `elec_substep_n` column added afterwards
+(campaign `hil_report_20260902_041414`, 38 runs) shows a minimum of `n` = 11 (h = 91 µs) and
+zero sub-gate ticks — the reconstruction over-stated the excursion. Every run whose verdict rests on sub-millisecond
 behaviour — `scp-inrush`, `sag`, `handoff-sag`, `comm-loss` — carried **zero** coarse
 ticks. The hazard if `n` ever fell to 1 is quantified: 4.27 A of soft-start current against
 the converged 0.22 A, i.e. a spurious `OC_FC`. Incidence to date is zero, and the

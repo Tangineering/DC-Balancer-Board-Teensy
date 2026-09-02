@@ -6210,6 +6210,18 @@ def mpc_configure_kwargs(args, meta):
         v = getattr(args, flag, None)
         if v is not None:
             out[kw] = v
+    # SCENARIO-LEVEL SOLVE BUDGET (2026-09-02, campaign C).  The command line
+    # still wins; a scenario key is the fallback, and its absence leaves
+    # `BUDGET_MS_DEFAULT` exactly as the design ships it.  It exists because
+    # the budget is a per-STIMULUS quantity: the same search on a stimulus with
+    # more reachable states spends longer, and `ems-mpc-cross` expired on
+    # 57.4 % of its decisions after the candidate cap was lifted while
+    # `ems-mpc` expired on 6.6 %. Raising the budget for that leg is the only
+    # response that does not change the SEARCH itself.
+    if out.get("budget_ms") is None:
+        _sb = (meta or {}).get("mpc_budget_ms")
+        if _sb is not None:
+            out["budget_ms"] = float(_sb)
     band = getattr(args, "mpc_share_band", None)
     if band is not None:
         out["share_band"] = parse_share_band(band)
@@ -8338,6 +8350,22 @@ SCENARIOS["ems-mpc-cross"] = {
     "ems_v_profile": SCENARIOS["ems-sdp-cross"]["ems_v_profile"],
     # DETERMINISTIC CANDIDATE CAP — see MPC_CAMPAIGN_MAX_CANDIDATES.
     "mpc_max_candidates": MPC_CAMPAIGN_MAX_CANDIDATES,
+    # SOLVE BUDGET 10 -> 15 ms, THIS LEG ONLY (2026-09-02, campaign
+    # hil_report_20260902_041414). MEASURED after the candidate cap was lifted
+    # to 1029: this leg's MEDIAN solve reaches the 10 ms budget and 57.4 % of
+    # its decisions expire, against 6.6 % on `ems-mpc` and 10.3 % on
+    # `ems-ftp75-mpc` — i.e. most of this run is commanded by a shifted
+    # incumbent rather than by a fresh plan. The SEARCH is deliberately
+    # unchanged; only the time it is given moves.
+    # THE CALLBACK ARITHMETIC, in the terms of mpc_ems.BUDGET_MS_DEFAULT's own
+    # note: a decision callback costs at most the budget (15.0) + one candidate
+    # rollout of overshoot (0.012) + a roll slice (ROLL_BUDGET_MS_DEFAULT 2.0)
+    # + one chunk of overshoot (0.296, measured) + the 50 Hz surface's own work
+    # (0.17, measured) = 17.478 ms, against the 20 ms command period and the
+    # 18 ms working bound. It fits with 2.5 ms of margin on the period; at
+    # 16 ms it would not clear the 18 ms bound, which is why the step stops
+    # here.
+    "mpc_budget_ms": 15.0,
 }
 
 # ── mppt-tracking: the Ag105 MPPT input-voltage threshold, closed-loop ──────
@@ -8659,7 +8687,7 @@ del _sn, _sm
 MPC_STRATEGY_NAMES = frozenset(
     n for n, f in EMS_STRATEGIES.items() if isinstance(f, _MpcProxy))
 for _sn, _sm in SCENARIOS.items():
-    for _mk in ("mpc_soc_ref_offset", "mpc_max_candidates"):
+    for _mk in ("mpc_soc_ref_offset", "mpc_max_candidates", "mpc_budget_ms"):
         assert ((_mk not in _sm) or _sm.get("ems") in MPC_STRATEGY_NAMES), (
             "SCENARIOS[%r] declares `%s` but its `ems` is %r. The key is read "
             "only on an MPC strategy, so it would be silently ignored."
@@ -9897,12 +9925,20 @@ def main(argv=None):
                     # _make_console_lossless() in place this is unreachable in
                     # normal operation; if it fires anyway (a stream that
                     # refused reconfiguration), say so honestly and let the run
-                    # proceed, because nothing about the BINDING failed.
-                    print("[hil] WARNING: a bind-time banner could not be "
-                          "encoded for this console (%s). The binding itself "
-                          "SUCCEEDED and the run continues; some banner text "
-                          "was not printed." % sys.stdout.encoding,
-                          file=sys.stderr)
+                    # proceed, because the strategy did not REFUSE the
+                    # scenario — a console encoding is not a bind verdict.
+                    # M2 (2026-09-02): the message DELIBERATELY does not claim
+                    # the binding succeeded. It is true for the strategies that
+                    # print their banner last, but a binder that prints midway
+                    # through its checks is abandoned AT the failing print, so
+                    # the steps after it never ran. What is known is where it
+                    # stopped and that it was not a refusal.
+                    print("[hil] WARNING: a bind-time print could not be "
+                          "encoded for this console (%s). This is NOT a bind "
+                          "refusal and the run continues, but the binder was "
+                          "interrupted AT the failing print — check the bind "
+                          "order before trusting any check that follows it."
+                          % sys.stdout.encoding, file=sys.stderr)
                 except (ValueError, OSError) as exc:
                     ap.error("--ems %s cannot run scenario '%s':\n%s"
                              % (ems_name, scenario, exc))
@@ -10909,7 +10945,10 @@ def main(argv=None):
                         # counter, not len(electrical.events) (which is ~0 most
                         # ticks).
                         row.append(elec_events_total)
-                        row.append(electrical._n_sub)
+                        # L2 (2026-09-02): the count THIS tick ran, not
+                        # `_n_sub`, which step() has already re-derived for the
+                        # NEXT tick from the measured cost.
+                        row.append(electrical.n_sub_last)
                     # Commanded setpoints as this process last sent them. Blank
                     # under --pi-live (no commander): the real Pi's commands never
                     # pass through here, so a number would be a fabrication.
@@ -11039,7 +11078,7 @@ def main(argv=None):
                           f"I_chg={sensors['I_charge']:4.2f} chg=0x{sensors['ag105_status']:02X}"
                           + (f" soc={sensors['soc'] * 100:4.1f}%" if not replay else "")
                           + (f" | elec {electrical.achieved_substep_hz / 1e3:5.1f} kHz "
-                             f"({electrical._n_sub} sub/tick) ev={elec_events_total}"
+                             f"({electrical.n_sub_last} sub/tick) ev={elec_events_total}"
                              if electrical is not None else ""))
                 else:
                     print(f"[hil] t={t:6.2f}s  no observation frames yet "
@@ -11076,12 +11115,42 @@ def main(argv=None):
         run_status = "error"
         pending_error = "%s: %s" % (type(exc).__name__, exc)
         raise
-    finally:
+    except BaseException:
+        # SystemExit / GeneratorExit / anything else that is NOT an Exception
+        # (2026-09-02, review M3).  Without this clause `run_status` would
+        # still read "running" when the `finally` finalizes, so a sidecar
+        # written for a run that was killed mid-flight would be indistinguishable
+        # from one still in progress.  The cause is not recorded as an `error`
+        # — a SystemExit is a deliberate stop, not a failure — but the run is
+        # not "completed" either.
         if dash is not None:
-            dash.stop()                 # idempotent
+            dash.stop()
             dash_on = False
-        for note in deferred_notes:
-            print(note)
+        run_status = "aborted"
+        raise
+    finally:
+        # EVERY teardown step below is individually guarded (2026-09-02, review
+        # M3).  The whole point of the `finally` is that the sidecar gets
+        # finalized; a step that raises on its way there — a dashboard restore,
+        # a deferred note with a glyph this console cannot encode, an electrical
+        # drain — would skip the finalize and reintroduce exactly the defect
+        # fix-queue item 1 closed.  A warning on stderr is the right trade: the
+        # operator learns the teardown was partial, and the provenance survives.
+        def _teardown_step(what, fn):
+            try:
+                fn()
+            except BaseException as _exc:      # noqa: BLE001 - see above
+                try:
+                    print("[hil] WARNING: teardown step %s failed (%s: %s); "
+                          "continuing to the sidecar finalize."
+                          % (what, type(_exc).__name__, _exc), file=sys.stderr)
+                except BaseException:
+                    pass
+        if dash is not None:
+            _teardown_step("dashboard stop", dash.stop)   # idempotent
+            dash_on = False
+        for _note in deferred_notes:
+            _teardown_step("deferred note", (lambda n=_note: print(n)))
         # M3: final drain so a break/exception on the last tick cannot lose the
         # handful of events accumulated since the previous drain.
         #
@@ -11091,8 +11160,9 @@ def main(argv=None):
         # ElectricalSim.close_chopper_episode), so a run whose last braking
         # window is still open at the final tick would otherwise never emit it.
         if electrical is not None:
-            electrical.close_chopper_episode()
-        _drain_electrical_events()
+            _teardown_step("chopper-episode close",
+                           electrical.close_chopper_episode)
+        _teardown_step("electrical event drain", _drain_electrical_events)
         if events_file is not None:
             try:
                 events_file.close()

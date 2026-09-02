@@ -1556,6 +1556,11 @@ class MpcStrategy:
         self.roll_dropped_transitions = 0
         self.candidates_last = None
         self.candidates_min = None
+        # `candidates_max` (2026-09-02, campaign C): enumeration GROWTH is what
+        # the deterministic cap and the solve budget are both spent on, and the
+        # last/fewest pair could not show it -- a run whose search doubled
+        # between decisions reports the same two numbers as one that did not.
+        self.candidates_max = None
         self.infeasible_decisions = 0
         self.clamped_bin_high = 0
         self.clamped_bin_low = 0
@@ -1924,6 +1929,8 @@ class MpcStrategy:
         self.candidates_last = dec.candidates
         self.candidates_min = (dec.candidates if self.candidates_min is None
                                else min(self.candidates_min, dec.candidates))
+        self.candidates_max = (dec.candidates if self.candidates_max is None
+                               else max(self.candidates_max, dec.candidates))
         self.solve_ms_last = dec.solve_ms
         self.solve_ms_all.append(dec.solve_ms)
         self.solve_ms_max = max(self.solve_ms_max, dec.solve_ms)
@@ -2035,6 +2042,7 @@ class MpcStrategy:
             return {"solve_ms_median": None, "solve_ms_max": None,
                     "decisions": 0, "budget_hits": 0, "cap_hits": 0,
                     "candidates_last": None, "candidates_min": None,
+                    "candidates_max": None,
                     "rolls_published": 0, "rolls_empty": 0,
                     "roll_dropped_transitions": 0,
                     "share_pred_err_mean": None, "share_pred_err_max": 0.0}
@@ -2050,6 +2058,7 @@ class MpcStrategy:
                 "cap_hits": self.cap_hits,
                 "candidates_last": self.candidates_last,
                 "candidates_min": self.candidates_min,
+                "candidates_max": self.candidates_max,
                 "rolls_published": self.rolls_published,
                 "rolls_empty": self.rolls_empty,
                 "roll_dropped_transitions": self.roll_dropped_transitions,
@@ -2064,7 +2073,8 @@ class MpcStrategy:
         tm = self.timing()
         return ("[hil] " + self.name + ": %d decisions, solve %.2f ms median / "
                 "%.2f ms max, %s candidates on the last decision (fewest %s, "
-                "deterministic cap %s, cut by it on %d), budget expired on "
+                "most %s, deterministic cap %s, cut by it on %d), budget "
+                "expired on "
                 "%d (%.1f %%) — an expiry returns "
                 "the shifted incumbent, which is feasible and was validated one "
                 "second earlier, so a nonzero count is a WARNING about the "
@@ -2081,6 +2091,7 @@ class MpcStrategy:
                 "preview %s%s"
                 % (self.decisions, tm["solve_ms_median"], tm["solve_ms_max"],
                    tm["candidates_last"], tm["candidates_min"],
+                   tm["candidates_max"],
                    ("none" if self.max_candidates is None
                     else "%d" % self.max_candidates), self.cap_hits,
                    self.budget_hits,

@@ -423,6 +423,24 @@ def test_pinned_substep_count_gives_reproducible_trajectory():
     assert a == b
 
 
+def test_n_sub_last_is_the_count_that_actually_ran(monkeypatch):
+    """L2 (2026-09-02): `_n_sub` is re-derived at the END of step() from the
+    measured cost, so it is the NEXT tick's count — logging it beside a row
+    records a resolution that row was never integrated at.  `n_sub_last` is
+    the one that ran."""
+    e = he.ElectricalSim(trace_config="short")
+    assert e.n_sub_last == e._n_sub                 # before any step
+    e._n_sub = 3
+    e.step(1e-3, _actuators(sw=SW_FC_BUS, aux=AUX_FC_REG))
+    assert e.n_sub_last == 3, "the count the tick ran with"
+    # The adaptive budgeter has already moved `_n_sub` on for the next tick on
+    # any host fast enough to afford more than 3 substeps; whether it did or
+    # not, `n_sub_last` must not follow it.
+    e._n_sub = 17
+    e.step(1e-3, _actuators(sw=SW_FC_BUS, aux=AUX_FC_REG))
+    assert e.n_sub_last == 17
+
+
 def test_determinism_finding_unpinned_substep_count_is_host_timing_dependent():
     """FINDING (not a defect): without pinning `_n_sub`, the substep count
     self-adapts from a real time.perf_counter() measurement each call, so

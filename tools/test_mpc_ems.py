@@ -813,6 +813,29 @@ def test_decision_timing_over_a_61s_loop(variant):
     assert tm["solve_ms_max"] <= s.budget_ms * 3.0, tm
 
 
+def test_timing_reports_the_candidate_maximum():
+    """Campaign C item 1: enumeration GROWTH is what the cap and the budget are
+    spent on, and last/fewest could not show it. `candidates_max` is reported
+    beside them, in timing() (hence in the sidecar's config.mpc) and in the
+    summary line."""
+    s = _bound()
+    assert s.timing()["candidates_max"] is None       # before any decision
+    prev = s.preview
+    soc, t = 0.70, 0.0
+    while t < 20.0:
+        k = prev.index(t)
+        s(t, {"t": t, "soc": soc, "V_bus": prev.v_bus[k],
+              "I_fc": 0.5 * prev.i_total[k], "I_batt": 0.5 * prev.i_total[k],
+              "v_profile": sim.piecewise(_meta()["ems_v_profile"], t)})
+        soc -= 1e-5
+        t += 0.02
+    tm = s.timing()
+    assert tm["candidates_max"] is not None
+    assert tm["candidates_max"] >= tm["candidates_last"]
+    assert tm["candidates_max"] >= tm["candidates_min"]
+    assert "most %d" % tm["candidates_max"] in s.summary_line()
+
+
 def test_summary_line_reports_the_diagnostics():
     s = _bound()
     prev = s.preview

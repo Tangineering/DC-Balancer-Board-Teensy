@@ -634,6 +634,16 @@ FULL_SIZE_P_DEM_MAX_W = 60000.0
 FULL_SIZE_P_DEM_MIN_W = -50000.0
 
 
+# ⚠️ ARTIFACT PROSE DRIFT, RECORDED NOT FIXED (L9, review 2026-09-02).
+# `sdp_policy_v4` no longer regenerates byte-identically from this script: its
+# `alpha.rationale` string was written before commit 887933f reworded the
+# derivation below in terms of V_bill (the charger era's billing voltage). The
+# difference is PROSE ONLY — the numbers in the rationale, the alpha, the
+# policy block and its sha are identical — verified by the review that found
+# this. The artifact is therefore LEFT AS SHIPPED: rewriting it to
+# recover byte-identity would move a file every campaign's provenance points
+# at, in exchange for a paragraph's wording. Expect the mismatch when
+# regenerating v4 for comparison; do not treat it as a solver change.
 ALPHA_DERIVATION = """\
 THE SHIPPED DERIVATION IS `lever` (D12).  alpha is placed at the geometric
 mean of the two control levers' admission thresholds,

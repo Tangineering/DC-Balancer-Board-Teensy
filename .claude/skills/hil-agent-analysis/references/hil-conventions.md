@@ -63,6 +63,15 @@ share that is bit-identical over 61 000 rows.
 - Switch/aux bit definitions: read the SW_*/AUX_* constants from the tools — never guess.
   Reference values seen in campaigns: 0x27 = FC_BUS|BT_BUS|MOT_PWR|BT_SEQ (normal Idle/Run),
   0x2F adds REGEN, 0x35/0x39 during bring-up phases, 0x20/0x28/0x34 teardown phases.
+- Masked signal specs (`exclude_when_switch_bit`, + `exclude_hold_ms`, 2026-09-02) drop
+  rows on which a named switch bit is set, and for `exclude_hold_ms` milliseconds after
+  it last was — the gated current decays after the command edge (~10 ms on the FC charge
+  path), so the first charge-free samples are contaminated. **A row whose `switch` cell
+  is BLANK or unparseable is dropped too**: the mask cannot be evaluated there, and
+  keeping the row would assert the bit was clear. So a masked check reads NOTHING over a
+  pre-observation stretch, and a run with no observation frames measures nothing and
+  fails as "unmeasured" rather than passing vacuously. When you reproduce a masked
+  check's number by hand, apply the same two drops or you will not get the suite's value.
 - `elec_substep_hz` is the hifi solver rate (healthy ≈ 55–80 kHz; single-tick dips to
   ~2–10 kHz on host descheduling are normal; the convergence bound is ~8 kHz).
 - Replay CSVs: `replay_rec` is -1 during the synthetic preamble (2.5 s,

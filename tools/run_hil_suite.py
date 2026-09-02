@@ -223,6 +223,25 @@ SHARE_CUT_SURVIVOR_BLANK_MS = 30
 # unloaded host, measured 100 on this rig).
 SUBSTEP_N_MIN_GATE = 8
 
+# What makes a sub-gate reading a VERDICT rather than a note (2026-09-02,
+# review M1).  The first version of the check failed a whole run on its single
+# coarsest tick, which is a verdict about the host's scheduler and not about the
+# board: the quantity is wall-clock adaptive, so an OS scheduling hiccup on one
+# tick of 310 000 is expected behaviour, and the review that ASKED for the check
+# refuted that consequence itself.  A sustained collapse is different — it means
+# every sub-millisecond number in the run was integrated coarsely — so the check
+# now WARNS on isolated ticks and FAILS only when the sub-gate ticks exceed this
+# fraction of the run.  0.1 % is 310 ticks on a 350 s FTP-75 leg and 15 ticks on
+# a 15 s scenario; campaign 20260902_041414 measured ZERO sub-gate ticks across
+# 20 hi-fi runs (minimum n = 11 against the gate of 8), so the threshold is
+# above every observed value rather than fitted to one.
+# ⚠️ The only sub-gate reading ever cited — "two ticks at h = 142.9 us" over
+# campaign 20260902_011926 (docs/HIL_PLANT.md §2) — was RECONSTRUCTED from
+# `elec_substep_hz`, a wall-clock RATE, not read off the count. The direct
+# `elec_substep_n` column now contradicts it, so that figure should not be used
+# to size this threshold or to argue the gate has ever been approached.
+SUBSTEP_COLLAPSE_FRACTION = 0.001
+
 # Teardown-discrimination lead window for the same tripwire.  A State-99
 # teardown (safeAllSwitches()) opens a LOADED bus switch and emits the same
 # sw_ring shape as a share-path hazard, so the two are separated TEMPORALLY: a
@@ -231,14 +250,19 @@ SUBSTEP_N_MIN_GATE = 8
 # POST-GRACE fault sighting.
 #
 # DERIVATION, from campaign 20260901_080905's measured events:
-#   * teardown cuts lead their own OBSERVED latch by 0.095-0.117 ms only.  The
+#   * teardown cuts lead their own OBSERVED latch by 0.04-0.55 ms only.  The
 #     lead is not physical — it is the solver clock reading the switch open
 #     before the board's latch comes back over the ~1.9 ms observation
 #     round-trip (L), and the CSV timestamps the latch at the tick the
 #     observation arrived.  So the lead is bounded by L plus scheduling jitter.
+#     BAND WIDENED 2026-09-02 (campaign C item 5): 080905 measured
+#     0.095-0.117 ms and a later reading reached 0.541 ms; campaign
+#     20260902_041414's four teardown cuts over 0.5 A measured 0.044-0.086 ms.
+#     0.04-0.55 ms is the envelope of everything measured to date.
 #   * genuine share-path hazards lead their (caused) latch by >= 13.8 ms.
-# 5.0 ms sits ~2.6x above the measured round-trip floor and ~2.8x below the
-# smallest genuine hazard lead — comfortable on both sides.
+# 5.0 ms sits ~9x above the largest measured teardown lead and ~2.8x below the
+# smallest genuine hazard lead — comfortable on both sides, and TEARDOWN_LEAD_MS
+# does NOT move on the widened band.
 #
 # WHY THE ANCHOR EXCLUDES CARRIED-IN LATCHES: every real run carries a latch in
 # from its predecessor at ~1.3 ms, so an unfiltered whole-run cutoff excludes
@@ -258,7 +282,8 @@ TEARDOWN_LEAD_MS = 5.0
 # cutoff past its own teardown cuts and false-FAIL them.  Anchoring on the
 # whole-run map minus the carried-in window reproduces the measured teardown
 # leads exactly (0.095 / 0.105 / 0.117 ms across campaign 20260901_080905's
-# four teardowns) where the post-grace anchor does not.
+# four teardowns, and 0.044-0.086 ms across campaign 20260902_041414's) where
+# the post-grace anchor does not.
 CARRIED_IN_LATCH_MAX_S = 0.10
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -405,6 +430,37 @@ _ETA_ERA_PROVISIONAL = (
     "not measured on the board. Campaigns <= 20260901_151156 ran the 1:1 "
     "charger and their numbers are NOT comparable. Re-derive from the first "
     "eta-era campaign that runs this scenario")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ASYMMETRY-ERA REPEATABILITY ANCHORS (2026-09-02, campaign C item 4)
+#
+# The suite's repeatability record is kept in the campaign ledgers, but the
+# numbers a future round compares against are read HERE, next to the bounds they
+# justify. Every figure below is from the FIRST campaigns of the converter-
+# asymmetry era (default-on, docs/modeling/converter_asymmetry_20260901.md):
+# hil_report_20260902_011926 and hil_report_20260902_041414.
+#
+#   scp-inrush      i_cut 6.362274641096594 A, BIT-EXACT across both campaigns
+#                   (the pre-asymmetry record was 6.3797373 A; the band
+#                   [6.15, 6.55] contains both and does not move).
+#   comm-loss       re-close I_fc 0.3801 A / I_batt 0.3379 A, mean 0.3590 A.
+#                   ⚠️ THE CHANNELS ARE NO LONGER EQUAL: the old 0.3591 /
+#                   0.3696 A/ch figures are PRE-ASYMMETRY symmetric readings, so
+#                   a per-channel comparison against them compares across eras.
+#                   Compare per channel, or compare the mean.
+#   soc-depletion   UV_BATT latch at 270.976 s (the entry's own comment records
+#                   the pre-asymmetry 270.704 s).
+#   handoff-sag     0.37793 A.
+#   share-staircase 0.28276 A / 0.30183 A (the two phases).
+#   h2 totals       ems-sdp 0.012619 g +-40 ppm, ems-dp-replay 0.0117951 g,
+#                   ems-soc-band 0.012084 g (-286 ppm spread).
+#
+# ⚠️ THE SAME-CONFIG h2 REPEATABILITY FLOOR IS ~50 ppm, NOT 8 ppm. The 8 ppm
+# figure quoted in the ledgers is a bit-exactness record between two runs of ONE
+# artifact, not a noise floor: the spreads above (40 ppm on ems-sdp, 286 ppm on
+# ems-soc-band) are what the same configuration actually reproduces to. Do not
+# open a finding on an h2 difference under ~50 ppm, and do not size a band on
+# the 8 ppm figure.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Which scenarios EXPECT the board to latch a fault.
@@ -885,7 +941,7 @@ FAULT_EXPECTATIONS = {
             # THE BOARD (campaign hil_report_20260902_011926, the first eta-era
             # run of this scenario). THE PROBE UNDER-PREDICTED BY ~1.6x: it
             # measured 1.3043 J per window against the run's MEASURED
-            # 1.5810 J max / 2.109-2.133 J per window, so the halving it
+            # 1.5810 J max episode / 2.109-2.133 J per window, so the halving it
             # predicted did not materialise on the scenario's own geometry
             # (probe: hi-fi, 1.5 s, v0 3.0 m/s, i_cmd -12 A, chg_i_ceiling_a
             # 1.6; the scenario's braking window is longer and its charger
@@ -894,6 +950,17 @@ FAULT_EXPECTATIONS = {
             # suggested). 1.0 J is 37 % under the measured max_of and, as
             # before, unreachable by an accumulation of flickers. Do not lower
             # it again on a probe alone.
+            # ⚠️ WHAT THIS BOUND ACTUALLY BOUNDS (L6, review 2026-09-02): the
+            # LARGEST SINGLE COALESCED EPISODE, not the per-window sum. A
+            # braking window is not one episode — the clamp stops and restarts
+            # within it, so 20260902_011926's 2.109 J window is 1.5738 +
+            # 0.5354 J and its largest episode is 1.5810 J; campaign
+            # 20260902_041414 measures 1.5938 J max episode against 6.3578 J
+            # total. The per-window figures quoted above are the physics being
+            # described; the 1.0 J number is compared against the max EPISODE,
+            # which is what `max_of` measures, and its 37 % margin is stated on
+            # that basis. Bounding the per-window sum would need an episode
+            # grouper the event stream does not carry.
             {"max_of": "chopper_clamp", "field": "energy_j", "min_value": 1.0},
             # SUM: the run's whole harvest. Measured 6.9 - 8.6 J; floor 3.0 J,
             # 57 % under the low end for the same reason. F4: also a
@@ -906,6 +973,9 @@ FAULT_EXPECTATIONS = {
             # (2.109 + 2.110 + 2.133 J per window) against the probe's ~3.9 J
             # prediction — the same ~1.6x under-prediction. 3.0 J is 53 % under
             # the measurement, the margin class this bound has always carried.
+            # Unlike the `max_of` arm this one IS a per-window quantity summed:
+            # it totals every episode in the run, so the window split above does
+            # not affect it (campaign 20260902_041414: 6.3578 J).
             {"total_of": "chopper_clamp", "field": "energy_j", "min_value": 3.0},
         ],
         # ⚠️ CHARGER ERA (WP-1C): the two chopper-energy bounds above are
@@ -1060,7 +1130,8 @@ FAULT_EXPECTATIONS = {
         # At the corrected --soc0 0.20 (see the plan builder) the ceiling is
         # 0.20 - 0.113 = 0.087, i.e. 1.74x the 0.05 threshold, and the latch is
         # expected at ~13 + 0.087*18000/6.03 ~= 273 s on the measured mean pack
-        # current.  MEASURED 270.704 s (round-1 campaign 20260831_000518) — 0.8 %
+        # current.  MEASURED 270.704 s (round-1 campaign 20260831_000518; the
+        # ASYMMETRY-ERA reading is 270.976 s, +0.10 %) — 0.8 %
         # under the mean-based estimate, and 1.7 % over the older 6.19 A point
         # estimate's ~266 s.  Both estimates are close enough that the 400 s
         # duration is comfortable either way.
@@ -1912,6 +1983,11 @@ FAULT_EXPECTATIONS = {
         # i_cut BAND [6.15, 6.55] A — DERIVED FROM LIVE RUNS, 2026-08-31.
         # Three live board runs under this stimulus (fw v23, HIL build,
         # HIL Results/HIL Results/scp_band_rederive_{1,2,3}.csv.events.jsonl)
+        # ⚠️ RE-ANCHORED FOR THE ASYMMETRY ERA (2026-09-02): the two
+        # 2026-09-02 campaigns measure i_cut = 6.362274641096594 A, again
+        # BIT-EXACT across both. The band is unchanged — it contains both era
+        # values with margin — and the 6.3797373 A below is the PRE-ASYMMETRY
+        # record, kept for the provenance of the band's derivation.
         # measured i_cut = 6.3797373 A BIT-IDENTICAL across all three — the cut
         # value is set by the deterministic substep sequence and does not jitter
         # with host phase, which is itself a validation of the redesign. The band
@@ -2753,9 +2829,15 @@ FAULT_EXPECTATIONS["ems-ftp75-socband"] = {
         #    0.4967 A, a clean margin of 0.13 A over the control rather than the
         #    0.58 A the contaminated reading suggested. The FLOOR stays at 0.56
         #    (measured 0.6929, control 0.4967: it still sits between them).
+        #    ⚠️ SETTLING HOLD ADDED (2026-09-02, review H1). The 0.6929 A
+        #    calibration figure was computed WITH a post-close guard; the spec
+        #    first shipped without one, so this floor was passing on a
+        #    still-decaying 0.8628 A sample rather than on a charge-free one.
+        #    `exclude_hold_ms` 10 restores the number the floor was derived
+        #    against (a >= 5 ms guard already recovers 0.6929 A exactly).
         {"name": "socband_fc_carried", "column": "I_fc", "min_value": 0.56,
          "t_window": (30.0, 340.0),
-         "exclude_when_switch_bit": SW_FC_CHARGE,
+         "exclude_when_switch_bit": SW_FC_CHARGE, "exclude_hold_ms": 10.0,
          "provisional_note": "the floor is a governor-walk prediction the "
                              "first zero-preload campaign then confirmed on "
                              "charge-free ticks (0.6929 A vs the 0.4967 A "
@@ -2766,9 +2848,11 @@ FAULT_EXPECTATIONS["ems-ftp75-socband"] = {
                   "nominal split (charge-free window PEAK >= 0.56 A; measured "
                   "0.6929 A, and the constant-0.50 ems-ftp75-5050 control peaks "
                   "at 0.4967 A over the same window at preload 0, so nothing "
-                  "below that discriminates). Charge-window ticks are excluded: "
-                  "the charger's own bus draw clears this floor without the "
-                  "share loop moving at all"},
+                  "below that discriminates). Charge-window ticks are excluded, "
+                  "plus a 10 ms settling hold after each close: the charger's "
+                  "own bus draw clears this floor without the share loop "
+                  "moving at all, and the FC current needs ~10 ms to decay "
+                  "once the branch closes"},
         # 2a. THE CEILING THE PRELOAD REMOVAL LEFT MISSING (PART C, C1 round,
         #    2026-09-01). At preload 0 NO upper bound on I_fc survives on this
         #    entry: the OC_FC allowance was retired and LIMIT_I_FC_MAX is a
@@ -2805,15 +2889,24 @@ FAULT_EXPECTATIONS["ems-ftp75-socband"] = {
         #    dv0 = 0.0 and dv0 = 0.0444): the asymmetry raises the FC share in
         #    the mid-load segments, while the peak lands where the commanded
         #    share is already at its own ceiling.
+        #    ⚠️ SETTLING HOLD (2026-09-02, review H1). Without it this arm
+        #    FALSE-FAILS a correct board: the FC current decays over ~10 ms
+        #    after FC_CHARGE_ENABLE clears, and campaign 20260902_041414's
+        #    first charge-free samples after 3 of 5 closes read 0.8628 A
+        #    (t = 88.506), 0.8417 A (185.566) and 0.8258 A (323.899) — all above
+        #    0.85 or within a percent of it, none of them a share-loop
+        #    excursion. `exclude_hold_ms` 10 masks the decay tail; the resulting
+        #    charge-free peak is the 0.6929 A the ceiling was sized against.
         {"name": "socband_fc_peak_bounded", "column": "I_fc",
          "max_value": 0.85, "t_window": (30.0, 340.0),
-         "exclude_when_switch_bit": SW_FC_CHARGE,
+         "exclude_when_switch_bit": SW_FC_CHARGE, "exclude_hold_ms": 10.0,
          "label": "the FC channel stayed bounded across the cycle OUTSIDE the "
                   "charge windows (<= 0.85 A, ~1.3x the walk's 0.6602 A peak "
                   "and 39 %% under LIMIT_I_FC_MAX 1.4 A; measured charge-free "
                   "peak 0.6929 A) — a share-loop regression tripwire, not a "
-                  "limit claim. Ticks with FC_CHARGE_ENABLE set are excluded "
-                  "and are judged by `socband_fc_peak_charging` instead"},
+                  "limit claim. Ticks with FC_CHARGE_ENABLE set are "
+                  "excluded, plus the 10 ms decay tail after each close, and "
+                  "are judged by `socband_fc_peak_charging` instead"},
         #    ARM 2 — the CHARGE-WINDOW ceiling, whole-window (the charge peak IS
         #    the window peak, so no mask is needed and none is used: a mask
         #    keeping ONLY charge ticks would make the arm vacuous on a run whose
@@ -3831,7 +3924,8 @@ _MPC_I_FC_CEIL = 1.19
 
 def _mpc_expectation(*, scenario, walk_h2, duration_s, survive_t,
                      run_window, share_range_min=None, pred_err_max,
-                     budget_hit_max_ticks, charge_edges, min_rows, extra_note):
+                     budget_hit_max_ticks, charge_edges, min_rows, extra_note,
+                     h2_floor_informational=False):
     """One MPC leg's expectation entry.  PURE.
 
     ONE BUILDER for all four, for `_alpha_expectation()`'s reason: the four legs
@@ -3883,11 +3977,24 @@ def _mpc_expectation(*, scenario, walk_h2, duration_s, survive_t,
                   "ZERO windows on this leg, so this is an ANTI-CHATTER "
                   "ceiling, not an existence claim" % charge_edges},
         # 6-7. THE HYDROGEN ACCOUNTING, the sibling entries' two-sided shape.
+        # `h2_floor_informational` (2026-09-02, campaign C): the floor is
+        # EVALUATED and REPORTED but never fails the run on a leg where the
+        # band edge has been shown to sit inside the quantity's own
+        # run-to-run spread. See the leg's own note for the two readings.
         {"name": "mpc_h2_accounted", "column": "h2_cum_g",
          "min_value": lo, "t_window": run_window,
          "provisional_note": _MPC_PROVISIONAL,
+         "informational": bool(h2_floor_informational),
          "label": "the H2 consumption metric accumulated over the cycle "
-                  "(>= %.6f g = governor walk %.6f g -25 %%)" % (lo, walk_h2)},
+                  "(>= %.6f g = governor walk %.6f g -25 %%)%s"
+                  % (lo, walk_h2,
+                     "" if not h2_floor_informational else
+                     " — INFORMATIONAL: this floor sits INSIDE the leg's "
+                     "measured run-to-run spread (campaign 20260902_011926 "
+                     "-0.13 %% of the band edge, campaign 20260902_041414 "
+                     "+0.10 %%), so a verdict here would score noise. It is "
+                     "reported, with a WARNING when the bound is missed, until "
+                     "the cap-lifted walk re-band lands")},
         {"name": "mpc_h2_bounded", "column": "h2_cum_g",
          "max_value": hi, "t_window": run_window,
          "provisional_note": _MPC_PROVISIONAL,
@@ -4004,7 +4111,7 @@ FAULT_EXPECTATIONS["ems-mpc-cross"] = _mpc_expectation(
     scenario="ems-mpc-cross", walk_h2=0.014134, duration_s=200.0,
     survive_t=180.0, run_window=(5.0, 190.0), share_range_min=0.12,
     pred_err_max=0.30, budget_hit_max_ticks=190000, charge_edges=6,
-    min_rows=150000,
+    min_rows=150000, h2_floor_informational=True,
     extra_note=("The `ems-sdp-cross` stimulus with the MPC's own "
                 "`mpc_soc_ref_offset` at that scenario's +0.0025. PHASE-FREE "
                 "CHECKS ONLY: the 1 Hz decision clock is not locked to the "
@@ -4038,7 +4145,15 @@ FAULT_EXPECTATIONS["ems-mpc-cross"] = _mpc_expectation(
                 "2026-09-02; RE-RUN THIS LEG CAP-LIFTED and re-derive the walk "
                 "before touching the band. `ems-mpc-sto` carries the twin "
                 "reading (-13.2 %% of its walk, inside the band and therefore "
-                "never surfaced) — the two together point at the WALK."))
+                "never surfaced) — the two together point at the WALK. "
+                "SECOND LIVE RESULT (campaign hil_report_20260902_041414, "
+                "cap-lifted): the same floor was cleared by +0.10 %% of the "
+                "band edge. The two campaigns therefore straddle the edge by "
+                "~0.1 %% in each direction, i.e. THE BAND EDGE SITS INSIDE THIS "
+                "LEG'S RUN-TO-RUN SPREAD and a verdict on it scores noise. The "
+                "floor is INFORMATIONAL from 2026-09-02 (evaluated, reported, "
+                "WARNING on a miss, never a failure) until the cap-lifted walk "
+                "re-band lands; the CEILING is untouched and still fails."))
 
 # ── ems-ftp75-mpc: the drive-cycle candidate, behind --with-ftp75 ───────────
 FAULT_EXPECTATIONS["ems-ftp75-mpc"] = _mpc_expectation(
@@ -4337,7 +4452,14 @@ _MPPT_THRESH_W = (EMS_MPPT_CRUISE_WINDOWS[1][0], _MPPT_ALL_CRUISE_W[1])   # 28.1
 # taught the regen exclusion, this entry fails and gets rewritten rather than
 # the change landing unobserved.
 _MPPT_THRESH_CRUISE_W = (EMS_MPPT_CRUISE_WINDOWS[1][0], 37.0)     # 28.1-37.0
-_MPPT_THRESH_BRAKE_W = (37.732, 38.529)
+# TRIMMED TO THE MEASURED PLATEAU (2026-09-02, campaign C item 3): the old
+# right edge 38.529 overhung the clamp by ~62 ms, which is what made a per-tick
+# floor unsatisfiable in the first place. Measured plateaus: 37.719-38.432
+# (campaign 20260902_041414) and 37.729-38.463 (20260902_011926); (37.75,
+# 38.44) sits inside BOTH with ~20 ms of lead-in margin and still contains
+# 690 (011926) / 683 (041414) in-window ticks against the `min_ticks` 600
+# dwell, both scored offline through scan_signals on the campaigns' own CSVs.
+_MPPT_THRESH_BRAKE_W = (37.75, 38.44)
 # ~12.9 s of rows at the CSV's 1 kHz rate; 9000 is 70 % of them, leaving room for
 # dropped observation frames while still FAILING LOUDLY on a run whose column is
 # entirely blank — which is exactly what a campaign against a fw v21-v23 flash
@@ -4717,18 +4839,34 @@ FAULT_EXPECTATIONS["mppt-tracking"] = {
         # inside the braking window; the `_ceiling` arm above still bounds it
         # from the other side, so the pair remains "reached 27 and never
         # exceeded it" without asserting a phase the window edges cannot know.
+        # STRENGTHENED 2026-09-02 (review L1): `min_ticks` 600 alongside the
+        #     peak. The numeric tick counter added this round counts samples on
+        #     the right side of the spec's own `min_value`, so the pair now
+        #     reads "reached 27 and HELD it for >= 600 ticks" — strictly
+        #     stronger than the bare peak, which one spurious sample would
+        #     satisfy, and still free of the phase claim the window edges cannot
+        #     support. 600 ticks is 0.6 s against measured plateaus of 735
+        #     ticks (20260902_011926), 730 (080905) and 701 (20260902_041414):
+        #     14 % of margin under the shortest of the three. Under the TRIMMED
+        #     window (item 3, same round) the two 2026-09-02 campaigns score
+        #     690 and 683 IN-WINDOW ticks when scanned offline, so the dwell
+        #     keeps 12 % of margin there too.
         {"name": "mppt_threshold_braking_mirror_artifact",
          "column": "mppt_thresh_cnt",
          "min_value": AG105_MPPT_N_CEIL,
+         "min_ticks": 600,
          "t_window": _MPPT_THRESH_BRAKE_W,
          "label": "reg-0x02 count REACHED AG105_MPPT_N_CEIL %d inside the "
-                  "braking window %.3f-%.3f s — a HIL MIRROR ARTIFACT "
+                  "braking window %.3f-%.3f s and HELD it for >= 600 ticks "
+                  "(measured plateau 735 / 730 / 701 ticks over three "
+                  "campaigns) "
+                  "— a HIL MIRROR ARTIFACT "
                   "(regen lifts V_chg onto the 18.1 V chopper clamp and the "
                   "mirror clamps; the real manager excludes regen from its "
                   "V_chg sampling, .ino:11090-11095), asserted so it cannot "
-                  "change unnoticed. Peak-reaching, not a dwell: the plateau "
-                  "measured 37.729-38.463 s, so the window's right edge "
-                  "overhangs it by ~62 ms and a per-tick floor is "
+                  "change unnoticed. A dwell COUNT, not a per-tick floor: the "
+                  "plateau measured 37.729-38.463 s, so the window's right "
+                  "edge overhangs it by ~62 ms and `floor_min_value` is "
                   "unsatisfiable on correct data"
                   % (AG105_MPPT_N_CEIL, _MPPT_THRESH_BRAKE_W[0],
                      _MPPT_THRESH_BRAKE_W[1])},
@@ -5532,6 +5670,15 @@ def _assert_signal_spec_shapes(_n, _e):
                     "FAULT_EXPECTATIONS[%r].signals_require[%r]: an empty "
                     "`exclude_when_switch_bit` mask excludes nothing."
                     % (_n, _tag))
+                assert float(_sub.get("exclude_hold_ms", 0.0)) >= 0.0, (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: a negative "
+                    "`exclude_hold_ms` would UN-exclude rows." % (_n, _tag))
+            # A settling hold is meaningless without the mask it holds open —
+            # written alone it would be read as an exclusion and enforce none.
+            assert "exclude_hold_ms" not in _sub or "exclude_when_switch_bit" in _sub, (
+                "FAULT_EXPECTATIONS[%r].signals_require[%r]: `exclude_hold_ms` "
+                "extends `exclude_when_switch_bit` past the bit's fall and has "
+                "no meaning without it." % (_n, _tag))
             assert_derived_source_shape(_n, _tag, _sub)
             if "max_ms" in _sub:
                 # L5: the latency kind is SELECTED by `max_ms` and ignores tick
@@ -6275,7 +6422,7 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
          # Hi-fi substep resolution (2026-09-02). None on a simple-engine run
          # and on every CSV that predates the `elec_substep_n` column.
          "substep_n_min": None, "substep_n_mean": None,
-         "substep_n_below_gate": None,
+         "substep_n_below_gate": None, "substep_n_rows": None,
          "soc_first": None, "soc_last": None,
          "delta_soc": None,
          # ── LATCHED FIRST CAUSE, off the wire (fw v25, 2026-09-01) ──────────
@@ -6457,6 +6604,11 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
         # differently from a host that was loaded throughout.
         m["substep_n_below_gate"] = sum(1 for n in sub_n
                                         if n < SUBSTEP_N_MIN_GATE)
+        # The denominator the SUSTAINED-collapse test needs (2026-09-02, review
+        # M1): "below the gate on 2 of 310 000 ticks" and "below the gate
+        # throughout" are different findings, and only the second one is a
+        # verdict about the run.
+        m["substep_n_rows"] = len(sub_n)
     return m
 
 
@@ -6647,7 +6799,14 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
                 # `edge_count_between` state: how many qualifying transitions the
                 # window contained.  Counted against `prev_bit`, exactly as the
                 # latency kind does, so a blank row cannot forge an edge.
-                "edges": 0}
+                "edges": 0,
+                # `exclude_hold_ms` state (2026-09-02, review H1): the sim time
+                # of the LAST row on which the `exclude_when_switch_bit` mask
+                # was set.  The settling hold is measured from it, so the mask
+                # keeps excluding rows for `exclude_hold_ms` after the bit
+                # clears.  None until the bit has been seen set at all — a run
+                # whose masked branch never opened gets no exclusion.
+                "mask_last_set_t": None}
 
     _thr_cache = {}
 
@@ -6805,6 +6964,18 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
                     # A row whose switch cell is BLANK or unparseable is dropped
                     # too: the mask cannot be evaluated there, and counting the
                     # row would be asserting the bit was clear.
+                    # ── SETTLING HOLD (2026-09-02, review H1) ────────────────
+                    # `exclude_hold_ms` (default 0) keeps excluding rows until
+                    # the masked bit has been clear for that long.  The bit is a
+                    # COMMAND edge, the current it gates is a PHYSICAL decay: on
+                    # the FTP-75 `soc-band` leg the FC channel is still carrying
+                    # the charger's bus draw ~10 ms after FC_CHARGE_ENABLE
+                    # clears, so the first charge-free sample after a close is
+                    # 0.83-0.86 A on 3 of 5 closes — contaminated in exactly the
+                    # way the mask exists to prevent, and enough to false-fail
+                    # the 0.85 A tripwire on a correct board.  The hold is
+                    # measured from the LAST row the bit was set on, so a
+                    # chattering branch never leaks a partially-decayed sample.
                     if "exclude_when_switch_bit" in spec:
                         _sw_cell = (row.get("switch") or "").strip()
                         if not _sw_cell:
@@ -6814,6 +6985,11 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
                         except ValueError:
                             continue
                         if _sw & int(spec["exclude_when_switch_bit"]):
+                            m["mask_last_set_t"] = t
+                            continue
+                        _hold = float(spec.get("exclude_hold_ms", 0.0))
+                        if (_hold > 0.0 and m["mask_last_set_t"] is not None
+                                and (t - m["mask_last_set_t"]) <= _hold / 1000.0):
                             continue
                     # ── DERIVED SCALARS (2026-08-31): `sum_of` / `ratio_of` ──
                     # Some quantities the campaign reasons in are not CSV
@@ -7089,6 +7265,20 @@ def judge_signals(specs, measured, why):
                               "; ".join(parts), why))})
             continue
         ok, text = _judge_signal_leaf(spec, m)
+        if spec.get("informational"):
+            # INFORMATIONAL SPECS (2026-09-02): the measurement is reported and
+            # the bound is EVALUATED, but the verdict is never a failure.  It
+            # exists for a band that is known to sit inside the quantity's own
+            # run-to-run spread: failing a run on it would be scoring noise,
+            # and deleting the spec would lose the reading. A missed bound is
+            # said out loud as a WARNING so it cannot pass unnoticed.
+            checks.append({
+                "name": name, "passed": True,
+                "detail": "INFORMATIONAL (reports, never fails)%s — %s: %s (%s)"
+                          % ("" if ok else
+                             " ** WARNING: the bound was NOT met **",
+                             label, text, why)})
+            continue
         checks.append({"name": name, "passed": ok,
                        "detail": "%s: %s (%s)" % (label, text, why)})
     return checks
@@ -8013,7 +8203,7 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
     # this harness and are excluded; events before it are share-path cuts by
     # elimination — no other code path opens a bus switch under load while the
     # board is running.  See TEARDOWN_LEAD_MS and CARRIED_IN_LATCH_MAX_S above
-    # for the 0.095-0.117 ms (teardown) vs >= 13.8 ms (hazard) measurement the
+    # for the 0.04-0.55 ms (teardown) vs >= 13.8 ms (hazard) measurement the
     # 5.0 ms window sits between, and for why the post-grace map is the wrong
     # anchor even though it is the right judging scope.
     #
@@ -8091,22 +8281,42 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
                        "run has no substeps; a hi-fi CSV from before "
                        "2026-09-02 predates the column)")})
     else:
-        _ok = _sub_n >= SUBSTEP_N_MIN_GATE
-        _verdict = (
-            "The host sustained the electrical resolution this run's "
-            "sub-millisecond verdicts are read at." if _ok else
-            "The host ran the node ODE coarser than %d us on at least one "
-            "tick: treat this run's switching-transient numbers (ring peaks, "
-            "inrush, cut currents) as host-limited, not as measurements."
-            % (1000 // SUBSTEP_N_MIN_GATE))
+        # M1 (2026-09-02): the verdict is on a SUSTAINED collapse, not on the
+        # single coarsest tick — see SUBSTEP_COLLAPSE_FRACTION for why.  An
+        # isolated sub-gate tick still gets said out loud, as a WARNING, because
+        # it is exactly the provenance the column was added to carry.
+        _below = metrics.get("substep_n_below_gate") or 0
+        _rows = metrics.get("substep_n_rows") or 0
+        _frac = (_below / float(_rows)) if _rows else 0.0
+        _ok = _frac <= SUBSTEP_COLLAPSE_FRACTION
+        if _ok and _below == 0:
+            _verdict = ("The host sustained the electrical resolution this "
+                        "run's sub-millisecond verdicts are read at.")
+        elif _ok:
+            _verdict = ("WARNING (not a failure): the host ran the node ODE "
+                        "coarser than %d us on %.3f %% of ticks, under the "
+                        "%.1f %% sustained-collapse threshold. The substep "
+                        "count is WALL-CLOCK adaptive, so isolated coarse "
+                        "ticks are the host's scheduler, not the board — but "
+                        "a sub-millisecond number read at one of them is "
+                        "host-limited."
+                        % (1000 // SUBSTEP_N_MIN_GATE, 100.0 * _frac,
+                           100.0 * SUBSTEP_COLLAPSE_FRACTION))
+        else:
+            _verdict = ("The host ran the node ODE coarser than %d us on "
+                        "%.3f %% of ticks, past the %.1f %% "
+                        "sustained-collapse threshold: treat this run's "
+                        "switching-transient numbers (ring peaks, inrush, cut "
+                        "currents) as host-limited, not as measurements."
+                        % (1000 // SUBSTEP_N_MIN_GATE, 100.0 * _frac,
+                           100.0 * SUBSTEP_COLLAPSE_FRACTION))
         checks.append({
             "name": "substep_resolution",
             "passed": _ok,
-            "detail": "minimum %d substep(s)/tick (mean %.1f, %d tick(s) under "
-                      "the gate), gate >= %d. %s"
+            "detail": "minimum %d substep(s)/tick (mean %.1f, %d of %d tick(s) "
+                      "under the gate >= %d). %s"
                       % (_sub_n, metrics.get("substep_n_mean") or 0.0,
-                         metrics.get("substep_n_below_gate") or 0,
-                         SUBSTEP_N_MIN_GATE, _verdict)})
+                         _below, _rows, SUBSTEP_N_MIN_GATE, _verdict)})
 
     n_chop = events["kinds"].get("chopper_over_power", 0)
     if n_chop:
@@ -10044,6 +10254,16 @@ def main(argv=None):
     return 0 if npass == len(results) and results else 1
 
 
+def _census_scalars(census):
+    """The share-cut census WITHOUT its per-cut list (L4, 2026-09-02).
+
+    None passes through as None (an entry that produced no census at all is not
+    the same as one that produced an empty one)."""
+    if not census:
+        return census
+    return {k: v for k, v in census.items() if k != "cuts"}
+
+
 def _run_plan(plan, args, problems, results, write_outputs):
     """The per-run loop, factored out of main() so M4's try/except/finally around
     it can rewrite results.json/REPORT.md after every run without duplicating the
@@ -10191,7 +10411,14 @@ def _run_plan(plan, args, problems, results, write_outputs):
                    # never scored -- carried into results.json so a campaign can
                    # total it across entries instead of re-deriving it from 27
                    # CSVs, which is how the 163-cut finding was made.
-                   "share_cut_census": ev.get("share_cut_census"),
+                   # SCALARS ONLY (L4, 2026-09-02): the census also carries a
+                   # per-cut list (up to 50 dicts per entry), which is ~27x50
+                   # rows of duplicated per-tick data in a file nothing reads it
+                   # from -- the totals are what a campaign sums. The full list
+                   # stays in the replay half's own per-entry output, where the
+                   # cut times are still available for a follow-up.
+                   "share_cut_census": _census_scalars(
+                       ev.get("share_cut_census")),
                    "replay_commands": ev.get("replay_commands"),
                    # Item 5: "%d/%d checks passed" counts vacuous checks alongside
                    # real ones. Say how many carried evidence, so a green replay

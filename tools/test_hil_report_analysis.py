@@ -2977,17 +2977,38 @@ def test_icmd_deviation_is_tagged_when_no_commands_were_replayed():
     """ML0144's 8.635 — the largest number in the campaign's summary — is a
     board that commanded nothing."""
     hil, blg, hi, bi = _replay_pair()
-    m = hra.compute_replay_metrics(hil, blg, hi, bi)
+    m = hra.compute_replay_metrics(hil, blg, hi, bi, replay_commands=False)
     tag = m["response"]["I_cmd"].get("not_exercised")
     assert tag and "NOT EXERCISED (no command replay)" in tag
     # The numbers are still there — they are the evidence for the tag.
+    assert m["response"]["I_cmd"]["max_abs"] > 8.0
+    # An older sidecar with no such key falls back to the series alone, which
+    # is the behaviour this tag shipped with.
+    m2 = hra.compute_replay_metrics(hil, blg, hi, bi)
+    assert m2["response"]["I_cmd"].get("not_exercised")
+
+
+def test_icmd_zero_on_a_commanded_run_is_not_tagged_not_exercised():
+    """L3 (2026-09-02): TP0178/TP0201 replay a v_setpoint == 0 profile, so the
+    board IS commanded and its motor command is still identically zero. The
+    flat-zero series cannot tell that from an uncommanded board, so the tag is
+    decided from `replay_commands` and the series is corroboration only."""
+    hil, blg, hi, bi = _replay_pair()
+    m = hra.compute_replay_metrics(hil, blg, hi, bi, replay_commands=True)
+    assert "not_exercised" not in m["response"]["I_cmd"]
+    assert "commanded_but_zero" in m["response"]["I_cmd"]
     assert m["response"]["I_cmd"]["max_abs"] > 8.0
 
 
 def test_icmd_deviation_is_untagged_when_the_board_actually_commanded():
     hil, blg, hi, bi = _replay_pair(hil_current=np.linspace(0.0, 8.0, 50))
-    m = hra.compute_replay_metrics(hil, blg, hi, bi)
+    m = hra.compute_replay_metrics(hil, blg, hi, bi, replay_commands=True)
     assert "not_exercised" not in m["response"]["I_cmd"]
+    assert "commanded_but_zero" not in m["response"]["I_cmd"]
+    # A run that declared NO command replay and moved its motor command anyway
+    # is a finding, not a caveat: the tag is withheld there too.
+    m2 = hra.compute_replay_metrics(hil, blg, hi, bi, replay_commands=False)
+    assert "not_exercised" not in m2["response"]["I_cmd"]
 
 
 def test_gfc_deviation_is_tagged_when_the_source_has_no_mdac_channel():

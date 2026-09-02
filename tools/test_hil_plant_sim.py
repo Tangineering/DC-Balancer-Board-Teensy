@@ -10020,6 +10020,32 @@ def test_mpc_configure_kwargs_defaults_to_the_shipped_design():
         _mpc_ns(), hil.SCENARIOS["ems-mpc-cross"])
 
 
+def test_mpc_budget_ms_scenario_key_is_the_fallback_not_an_override():
+    """Campaign C item 2: `ems-mpc-cross` expired on 57.4 % of its decisions at
+    the 10 ms default after the cap lift, so that leg alone carries 15 ms. The
+    key is a FALLBACK — a command-line budget still wins — and every other leg
+    keeps mpc_ems.BUDGET_MS_DEFAULT untouched."""
+    import mpc_ems
+    assert hil.SCENARIOS["ems-mpc-cross"]["mpc_budget_ms"] == 15.0
+    kw = hil.mpc_configure_kwargs(_mpc_ns(), hil.SCENARIOS["ems-mpc-cross"])
+    assert kw["budget_ms"] == 15.0
+    for leg in ("ems-mpc", "ems-mpc-sto", "ems-ftp75-mpc"):
+        assert "mpc_budget_ms" not in hil.SCENARIOS[leg]
+        assert "budget_ms" not in hil.mpc_configure_kwargs(
+            _mpc_ns(), hil.SCENARIOS[leg])
+    # The flag wins over the scenario key.
+    assert hil.mpc_configure_kwargs(
+        _mpc_ns(mpc_budget_ms=4.0),
+        hil.SCENARIOS["ems-mpc-cross"])["budget_ms"] == 4.0
+    # THE CALLBACK BOUND, recomputed here so a future budget change cannot
+    # quietly outgrow the 20 ms command period: budget + one candidate rollout
+    # of overshoot (0.012 ms) + the roll slice + one chunk of overshoot
+    # (0.296 ms) + the 50 Hz surface's own work (0.17 ms).
+    worst = (15.0 + 0.012 + mpc_ems.ROLL_BUDGET_MS_DEFAULT + 0.296 + 0.17)
+    assert worst < 18.0 < 20.0
+    assert mpc_ems.BUDGET_MS_DEFAULT == 10.0        # the default is untouched
+
+
 def test_mpc_campaign_legs_all_declare_the_deterministic_cap():
     """An MPC leg without `mpc_max_candidates` is wall-clock bounded, so two
     runs of it explore different candidate sets and the leg is not even
@@ -10233,6 +10259,40 @@ def test_run_with_an_unencodable_summary_line_still_finalizes_the_sidecar(
     assert meta["ems_strategy"] == "hold-5050"
     # And the line itself was printed, escaped rather than dropped.
     assert "probe:" in stream.text()
+
+
+def test_sidecar_is_finalized_in_the_finally_even_when_the_summary_raises(
+        tmp_path, monkeypatch):
+    """THE OTHER HALF of fix-queue item 1, and the half that had no coverage.
+
+    The test above passes with the `finally`-block finalize DELETED, because
+    _make_console_lossless() prevents the print from raising at all — so it
+    covers the console fix and nothing else.  Here the console fix is STUBBED
+    OUT, which is the situation it was written for (a stream that refuses
+    reconfiguration): the summary print really does raise UnicodeEncodeError
+    out of main(), AFTER the teardown.  The sidecar must already say
+    `completed` with a tick count, because the run itself did complete and its
+    CSV is intact on disk.  Deleting the `else: finalize_meta(run_status)`
+    branch leaves this test failing on status == 'running'."""
+    monkeypatch.setattr(hil, "_make_console_lossless", lambda streams=None: [])
+    probe = hil.EMS_STRATEGIES["hold-5050"]
+    monkeypatch.setattr(probe, "summary_line",
+                        lambda: "[hil] probe: ⚠️ unencodable",
+                        raising=False)
+    stream = _Cp1252Stdout()
+    monkeypatch.setattr(sys, "stdout", stream)
+    csv_path = str(tmp_path / "finally.csv")
+    with pytest.raises(UnicodeEncodeError):
+        hil.main(["--teensy-ip", "127.0.0.1", "--port", "58996",
+                  "--bind-port", "0", "--rate", "200", "--scenario", "steady",
+                  "--electrical", "simple", "--duration", "0.05",
+                  "--ems", "hold-5050", "--csv", csv_path])
+    with open(hil.meta_path_for(csv_path)) as fh:
+        meta = json.load(fh)
+    assert meta["status"] == "completed"
+    assert meta["results"] is not None
+    assert meta["results"]["ticks"] > 0
+    assert meta["ems_strategy"] == "hold-5050"
 
 
 def test_binder_encoding_failure_is_not_a_bind_refusal(tmp_path, monkeypatch):

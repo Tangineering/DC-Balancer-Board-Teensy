@@ -57,6 +57,12 @@ except ImportError as exc:  # pragma: no cover - environment guard
         "that has numpy and matplotlib -- .venv_hil is stdlib-only; the "
         "benchlog venv (.venv_benchlog) carries both." % exc) from exc
 
+# `np.trapezoid` is numpy >= 2 (L7, review 2026-09-02); `np.trapz` is the
+# numpy 1.x spelling and is REMOVED in 2.x, so neither name alone is portable
+# across the interpreters this repo uses. Resolve once, here, rather than at
+# each call site.
+_trapezoid = getattr(np, "trapezoid", None) or np.trapz
+
 # tools/hil_report_analysis.py -> tools -> repo root
 TOOLS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = TOOLS_DIR.parent
@@ -636,7 +642,7 @@ INJECTED_PAIRS = [("V_fc", "V_fc"), ("V_batt", "V_batt"), ("V_bus", "V_bus"),
 RESPONSE_PAIRS = [("current", "I_cmd"), ("gFC", "gFC"), ("gBT", "gBT")]
 
 
-def compute_replay_metrics(hil, blg, hil_idx, blg_idx):
+def compute_replay_metrics(hil, blg, hil_idx, blg_idx, replay_commands=None):
     """Injection-fidelity + response-deviation metrics for one replay run.
 
     hil must already carry the adapter's derived gFC/gBT columns (see
@@ -673,16 +679,39 @@ def compute_replay_metrics(hil, blg, hil_idx, blg_idx):
     #   * NO MDAC CHANNEL IN THE SOURCE (10 entries).  A BLG without gFC/gBT
     #     decodes them as identically zero, so the row is the HIL value
     #     verbatim.  ML0151's gFC 0.8599 is not a divergence.
-    # Both are decided from the ALIGNED stats above, so a row is tagged only
-    # when the data says so, never from an entry flag this module cannot see.
+    # THE I_cmd TAG IS DECIDED FROM `replay_commands`, NOT FROM THE SERIES
+    # (2026-09-02, review L3).  The flat-zero series cannot tell the two cases
+    # apart: a board that was never commanded and a board that was commanded a
+    # v_setpoint of identically zero produce the SAME identically-zero motor
+    # command, and TP0178/TP0201 are exactly the second case (v_sp == 0
+    # profiles).  Tagging those "no command replay" would be false, and it
+    # would hide the one reading that IS a comparison there — a commanded board
+    # that answered zero.  `replay_commands` comes off the run's own sidecar
+    # (config.replay_commands / replay_source.replay_commands), so it is the
+    # run's declared intent; the flat-zero series is kept as CORROBORATION and
+    # the tag is withheld when the two disagree, because a run that replayed no
+    # commands and still moved its motor command is a finding, not a caveat.
+    # `replay_commands=None` (an older sidecar, or a caller that does not know)
+    # falls back to the series alone, i.e. to the previous behaviour.
     for key, m in out["response"].items():
         flat_hil = _is_identically_zero(out["hil_stats"].get(key))
         flat_src = _is_identically_zero(out["source_stats"].get(key))
-        if key == "I_cmd" and flat_hil:
+        if key == "I_cmd" and flat_hil and replay_commands is not True:
             m["not_exercised"] = (
-                "NOT EXERCISED (no command replay): the HIL board's motor "
-                "command is identically 0 A over the aligned window, so this "
-                "residual is the SOURCE LOG's own trajectory, not a deviation")
+                "NOT EXERCISED (%s): the HIL board's motor command is "
+                "identically 0 A over the aligned window, so this residual is "
+                "the SOURCE LOG's own trajectory, not a deviation"
+                % ("no command replay" if replay_commands is False else
+                   "no command replay recorded in the sidecar"))
+        elif key == "I_cmd" and flat_hil:
+            # Commanded AND identically zero: a real reading, kept untagged so
+            # it is read as the comparison it is (a v_sp == 0 profile answered
+            # correctly, or a board that failed to act on a command).
+            m["commanded_but_zero"] = (
+                "the run REPLAYED COMMANDS and the board's motor command is "
+                "still identically 0 A over the aligned window — a real "
+                "comparison (a v_setpoint == 0 profile answers this way), not "
+                "a not-exercised row")
         elif key in ("gFC", "gBT") and flat_src:
             m["not_exercised"] = (
                 "NOT COMPARABLE (source has no MDAC channel): the source "
@@ -1765,7 +1794,7 @@ def _matched_dp_regen_bound(hil, fields, h2_run):
     # Trapezoid over the NEGATIVE part only: `p_mot_w` is signed at the motor
     # node (+ draw, - regen) and its two branches are exclusive by
     # construction, so clipping is a selection, not an approximation.
-    regen_j = float(np.trapezoid(np.minimum(p, 0.0), t))
+    regen_j = float(_trapezoid(np.minimum(p, 0.0), t))
     if not np.isfinite(regen_j) or regen_j >= 0.0:
         return None
     gain = fields.get("gfc_dc_gain")
@@ -2213,7 +2242,12 @@ def _analyze_replay(hil, meta, cfg, dest, blg_fw, csv_path, force=False):
                         "without an observation frame) -- figures skipped")
         return info
 
-    metrics = compute_replay_metrics(hil, blg, hil_idx, blg_idx)
+    # L3: the run's own declared command-replay intent, from the sidecar.
+    _rc = (meta.get("replay_source") or {}).get("replay_commands")
+    if _rc is None:
+        _rc = (meta.get("config") or {}).get("replay_commands")
+    metrics = compute_replay_metrics(hil, blg, hil_idx, blg_idx,
+                                     replay_commands=_rc)
     info["metrics"] = metrics
 
     rendered = []
@@ -2271,6 +2305,10 @@ def _metrics_table(title, table):
         tag = m.get("not_exercised")
         if tag:
             notes.append("- `%s`: %s." % (key, tag))
+        elif m.get("commanded_but_zero"):
+            # L3: a REAL comparison that looks like a not-exercised row. Said
+            # in the notes so the reader is not left to infer which it is.
+            notes.append("- `%s`: %s." % (key, m["commanded_but_zero"]))
         lines.append("| %s | %d | %s | %s | %s | %s |"
                      % (key, m.get("n", 0), _fmt(m.get("rms")),
                         _fmt(m.get("max_abs")), _fmt(m.get("mean")),

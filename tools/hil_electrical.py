@@ -1819,6 +1819,14 @@ class ElectricalSim:
         self.t = 0.0
         self.achieved_substep_hz = 0.0
         self._n_sub = 8
+        # `n_sub_last` (2026-09-02, review L2): the substep count the LAST
+        # completed step() actually ran with.  `_n_sub` is re-derived at the END
+        # of step() from the measured cost, so it is the count the NEXT tick
+        # will use — reading it after step() (as the CSV column and the status
+        # line did) logs a resolution that was never applied to the row beside
+        # it.  Initialized to the same starting value, so a reader before the
+        # first step() sees the count that step would use.
+        self.n_sub_last = self._n_sub
         self._cost_ewma = 0.0
         self._cost_init = False     # L4: separate init flag -- see step()
         self.i_fc = 0.0
@@ -1838,6 +1846,7 @@ class ElectricalSim:
         self.p_regen_w = max(0.0, float(actuators.get("p_regen_w", 0.0)))
 
         n = self._n_sub
+        self.n_sub_last = n         # L2: what THIS tick ran (see __init__)
         h = dt / n
         t0 = time.perf_counter()
         for _ in range(n):
