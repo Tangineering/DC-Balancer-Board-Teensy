@@ -128,11 +128,11 @@ the tick:
 | Drive-loop crossover | ≈ 17.25 rad/s (≈ 2.7 Hz) | fw v18 re-synthesis, CLAUDE.md fw v18 addendum |
 | Drive controller update | 500 Hz (`DRIVE_CTRL_TS_US`) | `drive_controller.h` |
 | Mechanical pole | −0.1526 rad/s (`−b_eff/m_eff`) | fw v14 addendum |
-| Bus decay when dark | τ = `R_BUS_BLEED·C_BUS_F` = 0.94 s | §4 |
+| Bus decay when dark | τ = `R_BUS_BLEED·C_BUS_F` = 14.1 s | §4, §4.8 |
 | Injection tick | 1 ms | this loop |
 
-Within that scope the fastest modelled pole is the 0.94 s bus decay; the fastest
-*consumer* is the 500 Hz controller. A 1 ms explicit-Euler step is one to three decades
+Within that scope the *slowest* modelled pole is the 14.1 s bus decay and the fastest
+*consumer* is the 500 Hz controller. A 1 ms explicit-Euler step is one to four decades
 inside both, so the integration error is negligible compared with the model's structural
 simplifications (§4). What 1 kHz does **not** cover is anything the model omits —
 converter switching, RT1987 turn-on, encoder edges — and those are omitted by design, not
@@ -482,13 +482,16 @@ With **no** live source the node is not forced to zero — it decays as an RC th
 bulk capacitance:
 
 ```
-    tau = R_BUS_BLEED · C_BUS_F = 2000 Ω · 470 µF = 0.94 s
+    tau = R_BUS_BLEED · C_BUS_F = 30 kΩ · 470 µF = 14.1 s
     V_bus += (−V_bus / tau) · dt
 ```
 
 `C_BUS_F` = 470 µF matches the board's bulk capacitance as referenced throughout the
-bring-up record. `R_BUS_BLEED` = 2 kΩ is described as an *effective* bleed —
-**`TODO(verify)`**, no schematic reference is cited for it. The decay matters mostly for
+bring-up record. `R_BUS_BLEED` = 30 kΩ is an *effective* bleed and is
+**`TODO(calibrate)`**: it was 2 kΩ (τ = 0.94 s) from this engine's first commit until
+2026-09-02, when the operator ruled the physical bus decays full-to-near-zero in 30 to
+60 s and the constant moved to match `hil_electrical.R_NODE_BLEED_BUS` — see §4.8 for
+the change record, the reversal path and the bench decay capture that settles it. The decay matters mostly for
 teardown/State-99 traces, where it keeps `V_bus` falling smoothly instead of stepping,
 and it interacts with the 5 V `bus_up` threshold in §3.3. `V_bus` is finally clamped at
 `max(0.0, ·)`.
@@ -1059,7 +1062,15 @@ one-for-one chopper displacement, and those two assertions.
 | `ElectricalSim` design-mode bus anchor | 15.624602041790853 | 15.624602041790853 (unmoved) |
 
 The engine anchor is pinned at `i_charge = 0`, where the new stamp reduces to the old one
-term for term, so it does not move. The `--asymmetry off` byte-identity claim is therefore
+term for term, so it does not move.
+
+⚠️ **SUPERSEDED BY THE BLEED ERA (2026-09-02, §4.8), and only in its "after" column.** The
+`eta_chg` round left the design-mode bus anchor at 15.624602041790853, and the sentence
+above is the correct account of why. The per-node bleed then moved it to
+**15.633912867500921**, because a 15× weaker `N_BUS` bleed draws 9.3 mV less droop across
+the source resistance. That is a change of PLANT, not of accounting, and it is the value
+`tools/test_hil_electrical.py` now pins. `constants_hash` moved again in the same change,
+`6a88d04ba8a36e61…` → **`07530e9466a00c2a…`**. The `--asymmetry off` byte-identity claim is therefore
 also intact for every charge-free trace. A trace **with** charging is not byte-identical
 and is not intended to be.
 
@@ -1135,6 +1146,73 @@ runs neither the old conclusion nor this reversal should be quoted as a result.
 | **Charger status-level only; MPPT modelled at the THRESHOLD, not the tracking.** `I_charge` and `ag105_status` are injected (§4.6), so `chargingControl()`'s readiness gating and the GENSTAT fault check are live and testable. SoC and the CV/Fully-Charged branch are modelled (§4.2). **MPPT (2026-08-31, scoped; dynamic from fw v24):** with `mppt_emulation` the part's real mechanism — the **input-voltage threshold** (datasheet p.10; **not** perturb-and-observe) — IS modelled at the value carried on observation-frame byte 15 — a **fiat HIL mirror**, not a board register witness (§4.6: the fw v24 manager is never called under `HIL_SIM`, and the mirror bypasses its window, ratchet, deadband, EPROM budget and regen exclusion) — and `MPPT_DISABLE` becomes causal. The **tracking dynamics** (how the module walks its operating point once above the threshold) are **not** modelled, and neither is the I2C transport or config handshake. Off by default. | Sequencing and status-decode logic around the charger are meaningful HIL results, and so is the *threshold gate*'s interaction with the firmware's readiness-gated MPPT release (`mppt-tracking`). Charger **tuning** results are still not available. Charge **efficiency** is modelled from 2026-09-01 (§4.6.1) at a static `ETA_CHG` 0.88 whose datasheet point is not this rig's, so a harvest-efficiency figure from a HIL run is the model's constant played back, not a measurement. ⚠️ The `mppt-tracking` **hunt is fw v23 history and is now the FAILURE signature** — fw v24 lowers the threshold under the bus, so the scenario asserts harvest holding, not hunting. |
 | **Single lumped bus node.** No wiring impedance, no per-source bus segment, no capacitance between nodes. | Handoff-gap phenomena of the TP0178 class (a source dropping out and the other ideal diode picking up only reactively) are not reproduced faithfully; the split here is instantaneous. |
 | **No sensor noise, no quantization, no ADC path.** | Steady-state error in a HIL drive run validates the loop's *structure*, not its noise rejection. There is no encoder jitter, so the current-side chatter seen on the bench cannot appear. |
+
+### 4.8 Physics change record — per-node bleed (2026-09-02)
+
+*Written in the §4.6.2 pattern.*
+
+**What changed.** `tools/hil_electrical.py` stamped one constant `R_NODE_BLEED` = 2000.0 Ω
+on every node of the six-node network. It is replaced by two: `R_NODE_BLEED_BUS` = 30 kΩ on
+`N_BUS`, and `R_NODE_BLEED_OTHER` = 60 kΩ on every other node. A new module function
+`node_bleed_conductances()` returns the per-node conductance list, `ElectricalSim.__init__`
+resolves it into `self.g_bleed` at construction, and `_substep` stamps `self.g_bleed[i]`.
+Resolution at construction is the useful property: a monkeypatch of either constant places
+a subsequently-constructed simulator in that bleed era.
+
+`tools/hil_plant_sim.py`'s `R_BUS_BLEED`, the simple engine's dark-bus decay used only in
+the no-source-closed branch, moves 2000.0 → 30 kΩ to match. The simple engine's LIVE bus
+law (`K_DROOP_BUS_SHARED`, `V_BUS_DROOP_V0`) is deliberately unchanged.
+
+**Why (operator ruling, 2026-09-02).** The physical bus decays from full to near zero in 30
+to 60 s, and the 2 kΩ value was never calibrated against that. Most nodes bleed forward into
+the bus rather than to ground, which is why the non-bus nodes take the larger resistance.
+
+**Both values are `TODO(calibrate)`.** The bench procedure recorded at the definition site
+is a **dark-node decay capture**: bring up in State 98 and close `FC_BUS` so VBUS reaches
+nominal; command the boosts off and open every path switch; log `V_bus` at 1 kHz to SD until
+it falls below 1 V; fit τ on ln(`V_bus`) over the linear region and take R = τ / C_node;
+repeat with `MOT_PWR` closed and difference the two conductances for the `N_MOT` value.
+
+**What it does to the DP.** The bleed the sources carry was never billed in the offline
+demand model, which is one of the two defects the static-loss map corrects. The
+decomposition, the map and the re-priced deviations are
+`docs/modeling/dp_loss_map_20260902.md`; §9.4.1 states the result.
+
+**REVERSAL PATH — six edits, not one.** A revert to the uniform 2 kΩ bleed must touch every
+item below, because the shipped DP coefficients are fitted against the new bleed and the
+stored baselines are keyed on the demand model those coefficients produce.
+
+1. `tools/hil_electrical.py` — collapse `R_NODE_BLEED_BUS` and `R_NODE_BLEED_OTHER` back to
+   one `R_NODE_BLEED` = 2000.0 constant, and with them `node_bleed_conductances()`, the
+   `self.g_bleed` resolution in `ElectricalSim.__init__` and the per-node `_substep` stamp.
+2. `tools/hil_plant_sim.py` — `R_BUS_BLEED` back to 2000.0.
+3. `tools/hil_plant_sim.py` — the shipped `DP_BUS_V0_EFF`, `DP_BUS_R_FIX`, `DP_BUS_K_G` and
+   `DP_DROOP_G_PAR` coefficients are **bleed-specific**. They cannot be reverted by
+   arithmetic; the probe of `dp_loss_map_20260902.md` §3 must be re-run against the reverted
+   bleed, or the map dropped entirely.
+4. `tools/dp_tables/` — all three committed tables must be regenerated.
+5. `tools/dp_db` — the prefilled records must be re-prefilled against the regenerated tables.
+6. `tools/run_hil_suite.py` — the bands re-derived for this change must be re-derived again.
+
+Reverting a subset leaves a demand model fitted against one bleed and a plant running
+another, which is the state this round removed.
+
+**Downstream comparability.** Every campaign up to and including `20260902_041414` ran the
+uniform 2 kΩ bleed. The split removes a static load the sources carried on every tick, so no
+energy total, settled operating point or cut-current anchor compares across the boundary,
+whether or not the scenario charges. The predicted move is about −1.7 % `h2` on the 61 s
+cycle and −2.9 % on FTP-75, with the `soc-depletion` latch about 1.5 s later. The
+`scp-inrush`, `handoff-sag`, `comm-loss` and `share-staircase` anchors must be re-measured
+rather than predicted, and their bit-exactness records are expected to break. Because both
+values are `TODO(calibrate)`, a second move is expected after the bench decay capture.
+
+**The unbilled `FC_BUS`/`BT_BUS` diode-drop artefact.** The two boost-link switches drop
+`rt_v_fwd + i·(rt_r_on + R_SHUNT)`, and that drop **is** burnt in the plant. It is
+nevertheless referred at `v[N_BUS]` by `ElectricalSim._source_current`, so it is billed to
+the sources implicitly, through the bus law's `r_fix` term, rather than as a separate loss.
+It therefore has no separate term in the static-loss map, and a reader looking for one in
+`dp_loss_map_20260902.md` §2 will not find it. Recorded so the absence reads as a modelling
+decision rather than an omission.
 
 ---
 
@@ -2240,6 +2318,56 @@ optimism there is bounded at **≤ 0.9 % of `h2`** (measured on `charge-regen`).
 `∫min(p_mot, 0) dt` is negative is labelled **regen-bearing** in the matched-DP block so
 the boundary travels with the number.
 
+#### 9.4.1 The demand model, and the static-loss map (2026-09-02)
+
+**The bound is only as good as its demand model, and that model was wrong in two ways.**
+The DP did not bill the node bleed the sources carry on `N_BUS` and `N_MOT`, and it solved
+the `--droop measured` bus law (15.95 − 0.074 I) while every campaign runs `--droop design`
+(realized 15.8652 − 0.3015 I). The two errors carry opposite signs and partially cancelled,
+so the 61 s leg read −0.198 % and looked healthy with both present. The full decomposition,
+the probe that fitted the correction and the fit residuals are
+`docs/modeling/dp_loss_map_20260902.md`; this section states only what the map is and
+what it corrects.
+
+The map replaces the single-term bus law with a five-constant static model of the boost pair
+plus the node bleed, iterated to a fixed point inside `gen_dp_ems_table.build_demand()`. Its
+constants live in `tools/hil_plant_sim.py` under the block titled "THE DP DEMAND MODEL'S
+STATIC-LOSS MAP". It is applied only for the configuration it was fitted at, resolved by
+`hil_plant_sim.loss_map_for_config()`: hi-fi engine, `--droop design`, `--asymmetry
+measured`. Any other configuration, `--electrical simple` included, resolves to `None`.
+
+**The map does not depend on the control.** `p_dem` must be control-independent or the DP's
+stage cost is not separable. The map depends on the codes only through the parallel droop
+code `g_par`, which the firmware holds constant while it trades the split, measured to
+better than 1e-04 over four scenarios and half a million rows
+(`dp_loss_map_20260902.md` §4). A tripwire test pins that constancy.
+
+Table 9.4.1 gives the re-priced table-versus-run deviations. The board side is campaign
+`20260902_041414` with the bleed energy the new per-node conductances no longer burn removed
+and share-weighted onto the two sources (§4.8); the DP side is the demand rebuilt with the
+map.
+
+| Leg | Configuration | E_dem (J) | h2_dp (g) | h2_run (g) | Deviation |
+|---|---|---|---|---|---|
+| `ems-ftp75-dp` | today (no map, 2 kΩ bleed) | 2707.43 | 0.0364618 | 0.0380466 | +4.3463 % |
+| `ems-ftp75-dp` | no map, new bleed | 2707.43 | 0.0370397 | 0.0369286 | −0.2999 % |
+| `ems-ftp75-dp` | **shipped map, new bleed** | 2701.55 | 0.0369177 | 0.0369286 | **+0.0294 %** |
+| `ems-dp-replay` | today (no map, 2 kΩ bleed) | 804.61 | 0.0118184 | 0.0117951 | −0.1979 % |
+| `ems-dp-replay` | no map, new bleed | 804.61 | 0.0119031 | 0.0115904 | −2.6273 % |
+| `ems-dp-replay` | **shipped map, new bleed** | 791.24 | 0.0116256 | 0.0115904 | **−0.3031 %** |
+
+Table 9.4.1 shows both legs landing inside ±0.31 % with the map applied, against +4.35 % and
+−0.20 % before. However, the middle row of each pair is the reason the two defects are fixed
+together: the bleed change alone moves the 61 s cycle from −0.198 % to −2.627 %, because it
+removes the cancellation without correcting the droop-mode term.
+
+⚠️ **A matched-DP baseline now carries a demand-model era.** `loss_map` joins the DP
+fingerprint keys and `dp_results_db.KEY_FIELDS` as an **optional** key, so an absent
+`loss_map` names the pre-2026-09-02 model and every stored record keeps its meaning and its
+key. A baseline solved in one era is not comparable with one solved in the other.
+`hil_report_analysis.matched_dp_for_run()` resolves the era from the run's own
+`config.electrical` / `config.droop_mode` / `config.asymmetry`, exactly as it resolves
+`accounting` and `eta_chg`, and names the demand era in every run's `notes`.
 
 ---
 

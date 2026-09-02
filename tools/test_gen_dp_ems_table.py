@@ -280,21 +280,43 @@ def test_generated_table_is_loadable_and_bindable_by_dp_replay_strategy(tmp_path
     something DpReplayStrategy.bind_scenario() actually accepts (same
     scenario it was generated for).
 
-    The table is generated at the PLANT'S OWN charger era (`sim.ETA_CHG`), not
-    at _COARSE_ARGV's default: bind_scenario() refuses an era mismatch before
-    it even checks the fingerprint, and an old-era table against the eta-era
-    plant is exactly the mismatch that guard exists for (the guard itself is
-    pinned consumer-side, in test_hil_plant_sim.py)."""
+    The table is generated at BOTH of the plant's own eras, not at
+    _COARSE_ARGV's defaults: `bind_scenario()` refuses an era mismatch before
+    it even checks the fingerprint, and an old-era table against the current
+    plant is exactly the mismatch those guards exist for (they are pinned
+    consumer-side, in test_hil_plant_sim.py).
+
+      * `--eta-chg` at `sim.ETA_CHG`  -> block (0), the charger era
+      * `--loss-map plant`            -> block (0b), the demand-model era
+
+    ⚠️ NEITHER FLAG DEFAULTS TO THE PLANT'S ERA, and that asymmetry is the
+    point of the second half of this test: a plain `gen.main(_COARSE_ARGV)`
+    produces a table this consumer REFUSES. That is deliberate (an old-era
+    regeneration must not bind silently) and it is the generator-side view of
+    the guard."""
     out_dir = str(tmp_path)
+    name = "dp_ems_table_ems-soc-band.csv"
     assert gen.main(_COARSE_ARGV
                     + ["--eta-chg", repr(float(hil.ETA_CHG)),
-                       "--out",
-                       os.path.join(out_dir, "dp_ems_table_ems-soc-band.csv")]) == 0
+                       "--loss-map", "plant",
+                       "--out", os.path.join(out_dir, name)]) == 0
     strategy = hil.DpReplayStrategy(table_dir=out_dir)
     strategy.bind_scenario("ems-soc-band", hil.SCENARIOS["ems-soc-band"])
     assert strategy.times
     out = strategy(30.0, {"t": 30.0, "v_profile": 1.5})
     assert 0.0 <= out["power_share_setpoint"] <= 1.0
+
+    # THE OTHER HALF: the DEFAULT flags produce a table the consumer refuses,
+    # naming the demand-model era and the flag that fixes it.
+    stale_dir = os.path.join(out_dir, "stale")
+    os.makedirs(stale_dir, exist_ok=True)
+    assert gen.main(_COARSE_ARGV
+                    + ["--eta-chg", repr(float(hil.ETA_CHG)),
+                       "--out", os.path.join(stale_dir, name)]) == 0
+    stale = hil.DpReplayStrategy(table_dir=stale_dir)
+    with pytest.raises(ValueError) as exc:
+        stale.bind_scenario("ems-soc-band", hil.SCENARIOS["ems-soc-band"])
+    assert "--loss-map plant" in str(exc.value)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -656,11 +678,21 @@ def test_committed_dp_replay_table_h2_matches_solve_unmatched_at_recorded_lambda
     soc_step = _num(r"soc_grid: [0-9]+ points, [0-9.eE+-]+ \.\. [0-9.eE+-]+, "
                     r"step ([0-9.eE+-]+)")
 
+    # THE ERA LINES ARE PART OF THE PROBLEM (2026-09-02). A table records its
+    # charger era and its demand-model era in the header, and reproducing its
+    # h2 total means solving in BOTH of them. Absent lines mean the old eras,
+    # which is what makes this parse the right shape.
+    m = re.search(r"# eta_chg: ([0-9.eE+-]+)", text)
+    eta_chg = float(m.group(1)) if m else None
+    m = re.search(r"# loss_map: (\S+)", text)
+    loss_map = hil.loss_map_from_canonical(m.group(1)) if m else None
+
     meta = hil.SCENARIOS["ems-dp-replay"]
     problem = gen.prepare_problem(
         "ems-dp-replay", meta, soc0=soc0, capacity_ah=capacity_ah,
         stage_dt=stage_dt, n_share=n_share, soc_step=soc_step,
-        run_exit=run_exit, charger_accounting="physical")
+        run_exit=run_exit, charger_accounting="physical",
+        eta_chg=eta_chg, loss_map=loss_map)
     solved = gen.solve_unmatched(problem, lam_term)
     assert solved.h2_g == pytest.approx(h2_expected, rel=1e-6)
 
@@ -926,3 +958,233 @@ def test_old_era_backward_pass_charge_cost_is_exactly_the_bus_expression():
     import charger_power as chg
     v_bus, chg_a, v_pack = 15.93741, 0.8, 7.9241
     assert chg.charger_bus_power_w(chg_a, v_bus, v_pack, None) == v_bus * chg_a
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# THE STATIC-LOSS MAP IN build_demand() (2026-09-02, the DP-bound round)
+# ═════════════════════════════════════════════════════════════════════════
+_LM_SCEN = "ems-dp-replay"
+
+
+def _demand(loss_map, scenario=_LM_SCEN, dt=0.1):
+    meta = hil.SCENARIOS[scenario]
+    n = int(round(float(meta["duration_s"]) / dt))
+    times = np.arange(n + 1) * dt
+    return gen.build_demand(scenario, meta, times, dt, 0.0,
+                            loss_map=loss_map) + (n,)
+
+
+def test_loss_map_free_demand_is_byte_identical_to_the_pre_round_model():
+    """THE OLD-ERA FIXTURE.  `loss_map=None` must reproduce the two-term model
+    EXACTLY, including its four Picard iterations, or every band, table and
+    stored solve taken before 2026-09-02 silently moves."""
+    v, a, p_dem, v_bus, i_total, cruise, n = _demand(None)
+    meta = hil.SCENARIOS[_LM_SCEN]
+    times = np.arange(n + 1) * 0.1
+    i_aux = np.array([gen.scenario_drain_a(_LM_SCEN, t, 0.0) for t in times])
+    f_coul = np.where(v > hil.V_STICTION, hil.F_COULOMB,
+                      np.where(v < -hil.V_STICTION, -hil.F_COULOMB, 0.0))
+    p_mech = np.maximum(0.0, (hil.M_EFF * a + f_coul + hil.B_EFF * v) * v)
+    vb = np.full(len(times), hil.V_BUS_DROOP_V0)
+    for _ in range(4):
+        it = p_mech / (hil.ETA_BOOST * vb) + i_aux
+        vb = hil.V_BUS_DROOP_V0 - hil.K_DROOP_BUS_SHARED * it
+    it = p_mech / (hil.ETA_BOOST * vb) + i_aux
+    assert np.array_equal(v_bus, vb)
+    assert np.array_equal(i_total, it)
+    assert np.array_equal(p_dem, vb * it)
+
+
+def test_the_loss_map_demand_satisfies_its_own_fixed_point_at_every_stage():
+    """The map is a FIXED POINT, not a formula evaluated once.  Re-substituting
+    the returned arrays into the five defining equations must reproduce them,
+    which is what makes DP_LOSS_MAP_PICARD_ITERS an implementation detail
+    rather than a tuning parameter."""
+    lm = hil.plant_loss_map()
+    v, a, p_dem, v_bus, i_total, cruise, n = _demand(lm)
+    times = np.arange(n + 1) * 0.1
+    i_aux = np.array([gen.scenario_drain_a(_LM_SCEN, t, 0.0) for t in times])
+    f_coul = np.where(v > hil.V_STICTION, hil.F_COULOMB,
+                      np.where(v < -hil.V_STICTION, -hil.F_COULOMB, 0.0))
+    p_mech = np.maximum(0.0, (hil.M_EFF * a + f_coul + hil.B_EFF * v) * v)
+    g_oth = lm["g_node_other"]
+    i_motor = p_mech / (hil.ETA_BOOST * v_bus)
+    v_mot = ((v_bus - lm["rt_v_fwd"] - lm["rt_r_on"] * i_motor)
+             / (1.0 + lm["rt_r_on"] * g_oth))
+    i_par = v_bus * lm["g_node_bus"] + v_mot * g_oth
+    k_eff = lm["r_fix"] + lm["k_g"] * lm["g_par"]
+    assert np.allclose(i_total, i_motor + i_aux + i_par, atol=1e-12)
+    assert np.allclose(v_bus, lm["v0_eff"] - k_eff * i_total, atol=1e-9)
+    assert np.allclose(p_dem, v_bus * i_total, atol=1e-12)
+    # The parallel term is REAL and is what the pre-round model omitted: it is
+    # never zero and never negative on an energized bus.
+    assert (i_par > 0).all()
+
+
+def test_the_loss_map_lowers_the_bus_and_raises_the_source_current():
+    """The two defects have OPPOSITE signs on p_dem, and the direction of each
+    is the claim.  The realized `--droop design` slope sags the bus about four
+    times as far as the old law, and the bleed adds source current the old
+    model did not bill."""
+    lm = hil.plant_loss_map()
+    _, _, p_old, vb_old, it_old, _, n = _demand(None)
+    _, _, p_map, vb_map, it_map, _, _ = _demand(lm)
+    assert vb_map.mean() < vb_old.mean()
+    assert it_map.mean() > it_old.mean()
+    # At standstill the whole difference IS the bleed: a 15.9 V bus at
+    # 1/30 kOhm plus V-MOT one RT1987 forward drop behind it at 1/60 kOhm is
+    # 0.791 mA, and nothing else moves. Under load the map's steeper bus law
+    # sags the rail further and the constant-power motor draw rises with it,
+    # so the difference GROWS; the ceiling below is that combined term.
+    d = it_map - it_old
+    assert d.min() == pytest.approx(7.907e-4, abs=2e-6)
+    assert d.max() < 1.5e-2
+    # On this scenario the two defects nearly cancel in the TOTAL, which is
+    # why either fix alone made the measured deviation worse.
+    assert abs(p_map[:n].sum() / p_old[:n].sum() - 1.0) < 0.05
+
+
+def test_the_charge_mask_fc_budget_sees_the_parallel_current():
+    """`charge_mask` bills the single-source FC budget `p_dem/v_bus`, which IS
+    `i_total` and therefore carries `i_par` once the map is on.  The budget is
+    consequently STRICTER in the loss-map era, and this test is what stops a
+    later refactor from splitting the two apart."""
+    lm = hil.plant_loss_map()
+    for loss_map in (None, lm):
+        v, a, p_dem, v_bus, i_total, cruise, n = _demand(loss_map)
+        assert np.allclose(p_dem / v_bus, i_total, atol=1e-12)
+
+
+def test_the_firmware_holds_the_parallel_droop_code_constant():
+    """THE SEPARABILITY TRIPWIRE, and it is the load-bearing test of this round.
+
+    `p_dem` may not depend on the control or the DP's stage cost is not
+    separable and the solve is invalid.  It does not, because the firmware
+    trades the SPLIT while holding the PARALLEL droop code fixed:
+    `g_par = g_fc*g_bt/(g_fc+g_bt)` reads 0.148922 with sigma 2.79e-05 over
+    343 001 Run-state rows of `ems-ftp75-dp` whose individual codes range over
+    0.198-0.518 and 0.209-0.598 (campaign 20260902_041414).
+
+    THE MECHANISM, so the assertion below is a statement about the firmware
+    and not a coincidence of the trace.  The droop gain map the firmware
+    writes is `g_FC = K_DROOP/(RE_MAX*r)` and `g_BT = K_DROOP/(RE_MAX*(1-r))`
+    (.ino:10534-10535, mirrored in governor_model._out).  Their parallel
+    combination is then
+
+        g_par = g_FC*g_BT/(g_FC+g_BT) = K_DROOP/RE_MAX
+
+    with `r` cancelling EXACTLY.  The parallel code is therefore constant by
+    construction, not by tuning, and the only departures are the 12-bit MDAC
+    quantization and the [0, 1] clamp at the extreme ratios, which is why the
+    trace reads a sigma of 2.79e-05 rather than zero.
+
+    This test asserts the property on the governor's own model rather than on
+    an archived CSV, so it runs without the campaign folder.  If a firmware or
+    governor change ever lets `g_par` move with the share, the map's
+    control-independence is gone and the DP must be RE-DERIVED, not re-fitted.
+    """
+    gm = pytest.importorskip("governor_model")
+    seen = []
+    for r in (0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80):
+        g_fc = min(1.0, gm.GOV_CONST["K_DROOP"] / (gm._RE_MAX * r))
+        g_bt = min(1.0, gm.GOV_CONST["K_DROOP"] / (gm._RE_MAX * (1.0 - r)))
+        assert 0.0 < g_fc < 1.0 and 0.0 < g_bt < 1.0, r
+        # Through the MDAC words the firmware actually writes, so the 12-bit
+        # quantization is inside the number being asserted.
+        c_fc = gm.mdac_fraction(gm._mdac_code(g_fc))
+        c_bt = gm.mdac_fraction(gm._mdac_code(g_bt))
+        seen.append(c_fc * c_bt / (c_fc + c_bt))
+    spread = max(seen) - min(seen)
+    assert spread < 1e-4, (
+        "the parallel droop code moved by %.3e across the share range; the "
+        "DP's demand model is no longer control-independent and the loss map "
+        "must be re-derived, not re-fitted" % spread)
+    # The analytic value K_DROOP/RE_MAX, and the shipped coefficient measured
+    # off campaign 20260902_041414, must agree to the quantization.
+    analytic = gm.GOV_CONST["K_DROOP"] / gm._RE_MAX
+    assert analytic == pytest.approx(hil.DP_DROOP_G_PAR, abs=1e-4)
+    assert sum(seen) / len(seen) == pytest.approx(hil.DP_DROOP_G_PAR,
+                                                  abs=1e-4)
+
+
+def test_resolve_loss_map_arg_is_the_one_resolution_of_the_flag():
+    assert gen.resolve_loss_map_arg("none") is None
+    assert gen.resolve_loss_map_arg(None) is None
+    assert gen.resolve_loss_map_arg("plant") == hil.plant_loss_map()
+    with pytest.raises(ValueError):
+        gen.resolve_loss_map_arg("hifi")
+
+
+def test_prepare_problem_carries_the_map_and_defaults_to_the_old_era():
+    meta = hil.SCENARIOS["ems-soc-band"]
+    kw = dict(soc0=0.7, capacity_ah=5.0, stage_dt=1.0, n_share=5,
+              soc_step=5e-5, run_exit=58.0, charger_accounting="physical")
+    p_old = gen.prepare_problem("ems-soc-band", meta, **kw)
+    assert p_old.loss_map is None
+    p_map = gen.prepare_problem("ems-soc-band", meta,
+                                loss_map=hil.plant_loss_map(), **kw)
+    assert p_map.loss_map == hil.plant_loss_map()
+    assert p_map.v_bus.mean() < p_old.v_bus.mean()
+    # The fingerprint is taken over the LIVE scenario meta in both cases (the
+    # `eta_chg` precedent), so the generator and the `dp-replay` consumer
+    # agree by construction and the committed tables stay loadable.
+    assert p_map.fingerprint == p_old.fingerprint
+    with pytest.raises(ValueError):
+        gen.prepare_problem("ems-soc-band", meta, loss_map={"v0_eff": 1.0},
+                            **kw)
+
+
+def test_the_committed_tables_record_their_demand_era_in_the_header():
+    """A loss-map table must SAY so, and a loss-map-free one must say nothing,
+    so the absence of the line is the old era's record."""
+    for scen in ("ems-dp-replay", "ems-ftp75-dp", "ems-ftp75-5050"):
+        path = os.path.join(HERE, "dp_tables",
+                            "dp_ems_table_%s.csv" % scen)
+        if not os.path.exists(path):
+            pytest.skip("table %s not present in this checkout" % scen)
+        head = open(path, encoding="utf-8").read(8000)
+        assert "# loss_map: v0_eff=" in head, scen
+        assert "--loss-map plant" in head, scen
+        assert hil.loss_map_canonical(hil.plant_loss_map()) in head, scen
+
+
+def test_the_default_flag_regenerates_an_old_era_table_byte_identically(tmp_path):
+    """THE OLD-ERA FIXTURE, at file level.
+
+    A table generated with NO `--loss-map` flag and one generated with
+    `--loss-map none` must be byte-identical, and NEITHER may carry the
+    `# loss_map:` header line or the flag in its reconstructed command: the
+    ABSENCE of the line is the pre-2026-09-02 era's record, and emitting it
+    unconditionally would have moved the bytes of all three committed tables
+    without changing a number in any of them.
+
+    The full-resolution claim was verified once by hand on the shipped
+    `ems-dp-replay` table (regenerated with no flag against the pre-round
+    committed file: sha256 f7ae4eb2707d4493..., 17 131 bytes, IDENTICAL); this
+    coarse version is the one that runs every time."""
+    a_path = str(tmp_path / "implicit.csv")
+    b_path = str(tmp_path / "explicit.csv")
+    assert gen.main(_COARSE_ARGV + ["--out", a_path]) == 0
+    assert gen.main(_COARSE_ARGV + ["--loss-map", "none", "--out", b_path]) == 0
+    a = open(a_path, "rb").read()
+    assert a == open(b_path, "rb").read()
+    text = a.decode("utf-8")
+    assert "# loss_map:" not in text
+    assert "--loss-map" not in text
+
+
+def test_the_loss_map_flag_changes_the_table_and_says_so(tmp_path):
+    old_path = str(tmp_path / "old.csv")
+    map_path = str(tmp_path / "map.csv")
+    assert gen.main(_COARSE_ARGV + ["--out", old_path]) == 0
+    assert gen.main(_COARSE_ARGV + ["--loss-map", "plant", "--out", map_path]) == 0
+    old = open(old_path, "rb").read()
+    new = open(map_path, "rb").read()
+    assert old != new
+    text = new.decode("utf-8")
+    assert "# loss_map: " + hil.loss_map_canonical(hil.plant_loss_map()) in text
+    assert "--loss-map plant" in text
+    # ... and the header line round-trips back to the map it was solved with.
+    import re as _re
+    m = _re.search(r"# loss_map: (\S+)", text)
+    assert hil.loss_map_from_canonical(m.group(1)) == hil.plant_loss_map()

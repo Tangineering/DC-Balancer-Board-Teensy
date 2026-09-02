@@ -1289,7 +1289,7 @@ EXPECTED_SCENARIO_NAMES = {
     # the governor-aware receding-horizon controller's four legs. Three are
     # ORDINARY runs; `ems-ftp75-mpc` is gated behind --with-ftp75 with its
     # siblings.
-    "ems-mpc", "ems-mpc-sto", "ems-mpc-cross", "ems-ftp75-mpc",
+    "ems-mpc", "ems-mpc-det", "ems-mpc-cross", "ems-ftp75-mpc",
 }
 
 
@@ -1388,7 +1388,7 @@ EXPECTED_SCENARIO_DURATIONS_S = {
     # by reference -- the two 61 s legs off `ems-soc-band`, the cross leg off
     # SDP_CROSS_DURATION_S, the FTP-75 leg off FTP75_DURATION_S.
     "ems-mpc": 61.0,
-    "ems-mpc-sto": 61.0,
+    "ems-mpc-det": 61.0,
     "ems-mpc-cross": 200.0,
     "ems-ftp75-mpc": 350.0,
 }
@@ -1539,13 +1539,13 @@ def test_scenarios_chg_i_ceiling_a_only_on_charge_regen_and_charge_fault():
                       *hil.SDP_ALPHA_SCENARIOS,
                       # 2026-09-02 (MPC registration): all four MPC legs read
                       # the ceiling off the same 0.8 A object -- 'ems-mpc' and
-                      # 'ems-mpc-sto' off 'ems-soc-band', 'ems-mpc-cross' off
+                      # 'ems-mpc-det' off 'ems-soc-band', 'ems-mpc-cross' off
                       # 'ems-sdp-cross', 'ems-ftp75-mpc' off
                       # 'ems-ftp75-socband'. DECLARED and not inert: the MPC
                       # decides charging for itself, so an undeclared ceiling
                       # would hand it a 2.5 A lever the legs it is ranked
                       # against never had.
-                      "ems-mpc", "ems-mpc-sto", "ems-mpc-cross",
+                      "ems-mpc", "ems-mpc-det", "ems-mpc-cross",
                       "ems-ftp75-mpc",
                       "ems-sdp-cross", "ems-ftp75-sdp", "ems-ftp75-socband"):
             assert meta["chg_i_ceiling_a"] == pytest.approx(0.8)
@@ -4566,7 +4566,8 @@ def test_ems_soc_band_scenario_registered_with_soc_band_strategy():
 _ETA_UNSET = object()
 
 
-def _write_dp_table(path, meta_lines, rows, eta_chg=_ETA_UNSET):
+def _write_dp_table(path, meta_lines, rows, eta_chg=_ETA_UNSET,
+                    loss_map=_ETA_UNSET):
     """Write a DP table.
 
     The `eta_chg` header line is ADDED AT THE PLANT'S OWN ERA unless the caller
@@ -4574,13 +4575,27 @@ def _write_dp_table(path, meta_lines, rows, eta_chg=_ETA_UNSET):
     table whose charger era disagrees with hil_electrical.ETA_CHG (block (0),
     2026-09-02), so an era-silent baseline would make every unrelated test in
     this file a test of the era check.  Pass `eta_chg=None` for an OLD-ERA
-    table."""
+    table.
+
+    `loss_map` works the same way for the DEMAND-MODEL era and was added for
+    the same reason (block (0b), the fix round of 2026-09-02).  The default
+    writes the SHIPPED map, because every caller here binds with
+    `electrical_mode="hifi"` and would otherwise be refused for an era it is
+    not testing.  Pass `loss_map=None` for a table that predates the map -- a
+    deliberate perturbation, which is what the guard's own test does."""
     if eta_chg is _ETA_UNSET:
         eta_chg = (_ETA_UNSET if any(str(l).strip().startswith("eta_chg")
                                      for l in meta_lines)
                    else hil.plant_eta_chg())
     if eta_chg is not _ETA_UNSET and eta_chg is not None:
         meta_lines = ["eta_chg: %r" % float(eta_chg)] + list(meta_lines)
+    if loss_map is _ETA_UNSET:
+        loss_map = (_ETA_UNSET if any(str(l).strip().startswith("loss_map")
+                                      for l in meta_lines)
+                    else hil.plant_loss_map())
+    if loss_map is not _ETA_UNSET and loss_map is not None:
+        meta_lines = ["loss_map: %s"
+                      % hil.loss_map_canonical(loss_map)] + list(meta_lines)
     lines = ["# %s" % line for line in meta_lines]
     lines.append("t,power_share_setpoint,charge_goal")
     for t, s, g in rows:
@@ -4778,17 +4793,25 @@ def _live_table_meta_lines(scenario, fp, charger_accounting="physical",
     ]
 
 
-def _bindable(tmp_path, scenario="myscen", **kw):
+def _bindable(tmp_path, scenario="myscen", loss_map=_ETA_UNSET, **kw):
     """Write a fully-agreeing table for `scenario` and return
     (strategy, meta, args) ready to bind -- kw forwards to
     _live_table_meta_lines() so a test can perturb exactly one field."""
     import types
+    if loss_map is not _ETA_UNSET:
+        kw["loss_map"] = loss_map
     meta = {"ems_v_profile": [(0.0, 0.0), (10.0, 1.0)], "duration_s": 10.0,
             "chg_i_ceiling_a": kw.get("chg_ceiling_a", 0.8)}
     fp = hil.dp_profile_fingerprint(scenario, meta)
     path = os.path.join(str(tmp_path), hil.DP_TABLE_NAME % scenario)
+    # `loss_map` is popped rather than forwarded: it is a HEADER-line era, not
+    # a `_live_table_meta_lines()` field, and a test that binds under the
+    # simple engine needs a map-FREE table or block (0b) refuses before the
+    # check it is actually exercising (fix round, 2026-09-02).
+    _lm = kw.pop("loss_map", _ETA_UNSET)
     _write_dp_table(path, _live_table_meta_lines(scenario, fp, **kw),
-                    [(0.0, 0.5, 0.0), (5.0, 0.6, 1.0)])
+                    [(0.0, 0.5, 0.0), (5.0, 0.6, 1.0)],
+                    **({} if _lm is _ETA_UNSET else {"loss_map": _lm}))
     s = hil.DpReplayStrategy(table_dir=str(tmp_path))
     args = types.SimpleNamespace(soc0=kw.get("soc0", 0.7),
                                  capacity_ah=kw.get("capacity_ah", 5.0))
@@ -4811,7 +4834,11 @@ def test_dp_replay_bind_scenario_accounting_match_passes_with_electrical_mode(tm
 
 
 def test_dp_replay_bind_scenario_accounting_mismatch_physical_table_under_simple_engine(tmp_path):
-    s, meta, _args = _bindable(tmp_path, charger_accounting="physical")
+    # `loss_map=None` so the table's DEMAND era agrees with a simple-mode run
+    # (which resolves to no map) and block (0b) does not refuse first. Without
+    # it this test would pass for the wrong reason.
+    s, meta, _args = _bindable(tmp_path, charger_accounting="physical",
+                               loss_map=None)
     with pytest.raises(ValueError, match="charger-accounting"):
         s.bind_scenario("myscen", meta, electrical_mode="simple")
 
@@ -5081,8 +5108,15 @@ def test_shipped_dp_table_sha_is_unchanged_by_the_header_exclusion_refactor():
     the shipped table's recorded law digest is pinned literally here."""
     path = os.path.join(hil.DP_TABLE_DIR, "dp_ems_table_ems-dp-replay.csv")
     _file_sha, table_sha = hil.dp_table_digests(path)
+    # RE-PINNED 2026-09-02: the table was regenerated as a LOSS-MAP-ERA
+    # solve (`--loss-map plant`), so its decision law genuinely changed.
+    # The pre-round digest was
+    # 5ad85569d9572fac4a5c44cb5ee2633f743b5cd3c41d24a2a01984973bf830b2.
+    # The CLAIM this test makes is unchanged: the header exclusion covers
+    # exactly the metadata lines, so a table whose LAW is identical keeps
+    # this digest across a header edit.
     assert table_sha == (
-        "5ad85569d9572fac4a5c44cb5ee2633f743b5cd3c41d24a2a01984973bf830b2")
+        "4175fb27b42d86e1f49ab7bd69e817300a60e0c3cd9f523b07af66f8d344a750")
 
 
 def test_dp_table_digests_raises_oserror_on_missing_file(tmp_path):
@@ -7061,7 +7095,9 @@ def test_frontier_roles_are_the_ruled_ones():
     registered for COMPARABILITY, off the frontier; `sdp-sweep` plays alpha
     sweep points that sit outside the admission windows by design."""
     eligible = {n for n in hil.EMS_STRATEGIES if hil.ems_frontier_eligible(n)}
-    assert eligible == {"soc-band", "dp-replay", "sdp-v4", "mpc-det"}
+    # `mpc-sto` replaced `mpc-det` here 2026-09-02 (operator ruling): the
+    # stochastic law is THE MPC and `mpc-det` is its ablation.
+    assert eligible == {"soc-band", "dp-replay", "sdp-v4", "mpc-sto"}
     for demoted in ("sdp-v2", "sdp-v3", "sdp-sweep"):
         assert hil.ems_frontier_eligible(demoted) is False, demoted
         # A non-frontier role must SAY WHICH KIND it is -- the three are
@@ -8837,12 +8873,25 @@ def test_ems_ftp75_dp_table_is_rejected_when_the_preload_moves():
 
 
 def test_ems_ftp75_dp_table_is_rejected_under_the_simple_engine():
-    """The accounting rule, unchanged from `ems-dp-replay`: the shipped table
-    minimises the PHYSICAL hydrogen total, which only a hi-fi run logs."""
+    """The shipped table minimises the PHYSICAL hydrogen total, which only a
+    hi-fi run logs, so a simple-mode run must be refused.
+
+    ⚠️ THE REASON GIVEN CHANGED 2026-09-02 (fix round), and the refusal did
+    not. The table is now also a LOSS-MAP-era solve, and the static-loss map
+    is a hi-fi artifact by construction -- it describes a node network the
+    simple engine does not have -- so the demand-model guard (block 0b) fires
+    before the accounting guard (block a) and names the demand model instead.
+    Both statements are true of this pairing and the era one is the more
+    fundamental: an accounting mismatch is a choice about what to bill, an era
+    mismatch is a different plant. This test asserts the REFUSAL and accepts
+    either reason, because pinning the message order would make it a test of
+    the guards' sequence rather than of the rule."""
     strat = hil.DpReplayStrategy()
-    with pytest.raises(ValueError, match="charger-accounting"):
+    with pytest.raises(ValueError) as exc:
         strat.bind_scenario("ems-ftp75-dp", hil.SCENARIOS["ems-ftp75-dp"],
                             electrical_mode="simple")
+    msg = str(exc.value)
+    assert ("charger-accounting" in msg) or ("demand model" in msg), msg
 
 
 def test_gen_dp_table_header_chg_ceiling_default_matches_the_solver_default():
@@ -9670,7 +9719,12 @@ def test_eta_chg_is_inert_on_a_charge_free_trace(monkeypatch):
     `--asymmetry off` byte-identity claim intact for every charge-free
     campaign in the archive."""
     import hil_electrical as he
-    plant = hil.Plant(electrical=he.ElectricalSim(asymmetry_mode="off"))
+    # `substep_pin` (2026-09-02): both engines must run the SAME substep count
+    # on every tick or the two traces are not comparable. `step()` re-derives
+    # the count from a wall-clock EWMA, so without the pin this test's
+    # bit-identity claim depended on machine load, and it flaked.
+    plant = hil.Plant(electrical=he.ElectricalSim(asymmetry_mode="off",
+                                                  substep_pin=8))
     plant.v_bus = hil.V_BUS_NOMINAL
     plant.i_mot_extra = 2.0
     obs = _obs(switch=_PBAL_SW_LIVE, aux=_PBAL_AUX, current=0.0)
@@ -9680,7 +9734,8 @@ def test_eta_chg_is_inert_on_a_charge_free_trace(monkeypatch):
 
     monkeypatch.setattr(he, "ETA_CHG", 0.5)
     monkeypatch.setattr(hil, "ETA_CHG", 0.5)
-    plant2 = hil.Plant(electrical=he.ElectricalSim(asymmetry_mode="off"))
+    plant2 = hil.Plant(electrical=he.ElectricalSim(asymmetry_mode="off",
+                                                   substep_pin=8))
     plant2.v_bus = hil.V_BUS_NOMINAL
     plant2.i_mot_extra = 2.0
     got = [dict(plant2.step(1e-3, obs)) for _ in range(200)]
@@ -9841,22 +9896,23 @@ def test_regen_harvest_is_not_sourced_from_the_bus():
 # ─────────────────────────────────────────────────────────────────────────
 # MPC registration (2026-09-02) — docs/modeling/mpc_design_20260901.md §8
 # ─────────────────────────────────────────────────────────────────────────
-MPC_SCENARIOS = ("ems-mpc", "ems-mpc-sto", "ems-mpc-cross", "ems-ftp75-mpc")
+MPC_SCENARIOS = ("ems-mpc", "ems-mpc-det", "ems-mpc-cross", "ems-ftp75-mpc")
 
 
 def test_mpc_strategies_registered_in_both_registries():
     """§8 item 1. The two names exist, in BOTH registries, with the roles the
-    adjudication fixed: `mpc-det` frontier-eligible, `mpc-sto` not and carrying
-    a role note that says why."""
+    adjudication fixed the roles the other way round; the OPERATOR RULING of
+    2026-09-02 swapped them, so `mpc-sto` is frontier-eligible and `mpc-det`
+    is the ablation, carrying a role note that says why."""
     for name in ("mpc-det", "mpc-sto"):
         assert name in hil.EMS_STRATEGIES
         assert name in hil.EMS_STRATEGY_META
         assert hil.EMS_STRATEGY_META[name]["policy_file"] is None
-    assert hil.EMS_STRATEGY_META["mpc-det"]["frontier_eligible"] is True
-    assert hil.EMS_STRATEGY_META["mpc-sto"]["frontier_eligible"] is False
+    assert hil.EMS_STRATEGY_META["mpc-sto"]["frontier_eligible"] is True
+    assert hil.EMS_STRATEGY_META["mpc-det"]["frontier_eligible"] is False
     # A non-frontier strategy must SAY what role it plays instead; the import
     # guard checks the flag's type, not that an ineligible name explains itself.
-    assert "ROLE:" in hil.EMS_STRATEGY_META["mpc-sto"]["role_note"]
+    assert "ROLE:" in hil.EMS_STRATEGY_META["mpc-det"]["role_note"]
     assert hil.MPC_STRATEGY_NAMES == frozenset({"mpc-det", "mpc-sto"})
 
 
@@ -9896,7 +9952,7 @@ def test_mpc_scenarios_registered_and_share_their_stimulus_objects():
         assert hil.SCENARIOS[name]["ems"] in hil.MPC_STRATEGY_NAMES
         assert hil.SCENARIOS[name]["electrical"] == "any"
     band = hil.SCENARIOS["ems-soc-band"]
-    for name in ("ems-mpc", "ems-mpc-sto"):
+    for name in ("ems-mpc", "ems-mpc-det"):
         s = hil.SCENARIOS[name]
         # THE SAME LIST OBJECT, not an equal copy — the frontier's
         # stimulus-coherence precondition is written against these three legs.
@@ -9920,7 +9976,7 @@ def test_mpc_drain_whitelist_covers_the_shared_stimulus_legs_only():
     their modelled demand is halved; `ems-mpc-cross` must NOT, exactly as its
     `ems-sdp-cross` twin does not — its two cruise levels ARE the stimulus."""
     names = hil.SOC_BAND_DRAIN_SCENARIO_NAMES
-    assert "ems-mpc" in names and "ems-mpc-sto" in names
+    assert "ems-mpc" in names and "ems-mpc-det" in names
     assert "ems-mpc-cross" not in names
     assert "ems-sdp-cross" not in names, "the twin's treatment is the reference"
     assert "ems-ftp75-mpc" not in names
@@ -9949,7 +10005,7 @@ def test_mpc_offline_drain_mirrors_agree_with_the_simulator():
     pytest.importorskip("numpy")
     import gen_dp_ems_table as gen
     import ems_walk
-    for name in ("ems-mpc", "ems-mpc-sto"):
+    for name in ("ems-mpc", "ems-mpc-det"):
         assert name in gen.SOC_BAND_DRAIN_SCENARIOS
         assert name in ems_walk._SIM_SOC_BAND_DRAIN_SCENARIOS
     assert "ems-mpc-cross" not in gen.SOC_BAND_DRAIN_SCENARIOS
@@ -10400,7 +10456,12 @@ def test_binder_encoding_failure_is_not_a_bind_refusal(tmp_path, monkeypatch):
     the exact path that stopped ems-sdp-cross and ems-sdp-braking launching."""
     probe = hil.EMS_STRATEGIES["hold-5050"]
 
-    def _bind(scenario, meta, electrical_mode=None, args=None):
+    # **kw, not the four names: the hook contract grew `droop_mode` and
+    # `asymmetry_mode` in the 2026-09-02 fix round, and a stub that pins the
+    # signature turns a contract change into a failure of THIS test, which is
+    # about encoding and not about the signature. The uniformity of the real
+    # implementations is asserted separately.
+    def _bind(scenario, meta, **_kw):
         raise UnicodeEncodeError("charmap", "\u26a0", 0, 1, "unmapped")
 
     monkeypatch.setattr(probe, "bind_scenario", _bind, raising=False)
@@ -10414,7 +10475,7 @@ def test_binder_encoding_failure_is_not_a_bind_refusal(tmp_path, monkeypatch):
         assert json.load(fh)["status"] == "completed"
 
     # A REAL bind refusal still refuses (the narrowing must not swallow those).
-    def _bind_real(scenario, meta, electrical_mode=None, args=None):
+    def _bind_real(scenario, meta, **_kw):        # see _bind above
         raise ValueError("the table is for a different profile")
 
     monkeypatch.setattr(probe, "bind_scenario", _bind_real, raising=False)
@@ -10473,3 +10534,333 @@ def test_mpc_provenance_records_the_enumeration_size():
     assert prov["enumeration_size"] == mpc_ems.enumeration_size()
     assert prov["max_charge_options"] == mpc_ems.MAX_CHARGE_OPTIONS
     assert prov["max_candidates"] >= prov["enumeration_size"]
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# THE DP DEMAND MODEL'S STATIC-LOSS MAP (2026-09-02, the DP-bound round)
+# ═════════════════════════════════════════════════════════════════════════
+def test_simple_engine_bus_bleed_is_pinned_to_the_hi_fi_bus_node():
+    """The simple engine's dark-bus decay and the hi-fi engine's N_BUS bleed
+    are ONE physical quantity, so they must carry ONE value.  They are two
+    constants because the two engines do not share a network, and this test is
+    what keeps the duplication from becoming a divergence."""
+    import hil_electrical as he
+    assert hil.R_BUS_BLEED == he.R_NODE_BLEED_BUS == 30e3
+
+
+def test_loss_map_coefficients_are_the_probes_shipped_fit():
+    """The four fitted coefficients, pinned as literals.
+
+    They are a 105-point fit of the hi-fi engine at `--droop design
+    --asymmetry measured` (docs/modeling/dp_loss_map_20260902.md).  Moving one
+    of them without re-probing is the mistake this test exists to make loud."""
+    assert hil.DP_BUS_V0_EFF == 15.871722
+    assert hil.DP_BUS_R_FIX == 0.017986
+    assert hil.DP_BUS_K_G == 1.95079
+    assert hil.DP_DROOP_G_PAR == 0.148922
+    # K_EFF at the firmware-held parallel code, against the board's regressed
+    # 0.3015-0.3057 V/A over 343 001 Run-state rows of `ems-ftp75-dp`.
+    k_eff = hil.DP_BUS_R_FIX + hil.DP_BUS_K_G * hil.DP_DROOP_G_PAR
+    assert k_eff == pytest.approx(0.308502, abs=1e-6)
+    assert 0.29 < k_eff < 0.33
+    # ... and it is FOUR TIMES the two-term model's slope, which is the whole
+    # of defect 2: the old bus law was the `--droop measured` realization.
+    assert k_eff > 3.5 * hil.K_DROOP_BUS_SHARED
+
+
+def test_loss_map_for_config_answers_only_for_its_fitted_configuration():
+    assert hil.loss_map_for_config("hifi", "design", "measured") is not None
+    # A simple-mode run has no node network to bill and its bus law is
+    # deliberately unmoved, so it is the LOSS-MAP-FREE era by construction.
+    assert hil.loss_map_for_config("simple", "design", "measured") is None
+    assert hil.loss_map_for_config("hifi", "measured", "measured") is None
+    assert hil.loss_map_for_config("hifi", "design", "off") is None
+    assert hil.loss_map_for_config(None, None, None) is None
+
+
+def test_loss_map_node_conductances_come_from_the_engine(monkeypatch):
+    """The map's two node conductances must be the ENGINE's, resolved at call
+    time, or a bleed retune moves the plant and leaves the bound behind, which
+    is exactly the defect this round was opened to fix."""
+    import hil_electrical as he
+    lm = hil.plant_loss_map()
+    assert lm["g_node_bus"] == pytest.approx(1.0 / he.R_NODE_BLEED_BUS)
+    assert lm["g_node_other"] == pytest.approx(1.0 / he.R_NODE_BLEED_OTHER)
+    assert lm["rt_v_fwd"] == he.RT_V_FWD
+    assert lm["rt_r_on"] == he.RT_R_ON
+    monkeypatch.setattr(he, "R_NODE_BLEED_BUS", 15e3)
+    assert hil.plant_loss_map()["g_node_bus"] == pytest.approx(1.0 / 15e3)
+
+
+def test_dp_loss_map_absent_key_is_the_pre_round_era():
+    """THE ERA SENTINEL, in `dp_eta_chg()`'s shape: an ABSENT `loss_map` names
+    the demand model that PREDATES the map and is not reproducible by any set
+    of coefficients."""
+    assert hil.dp_loss_map({}) is None
+    assert hil.dp_loss_map({"loss_map": None}) is None
+    lm = hil.plant_loss_map()
+    assert hil.dp_loss_map({"loss_map": lm}) == lm
+    # A live SCENARIO declares nothing, so the generator and the `dp-replay`
+    # consumer agree on the sentinel by construction.
+    assert hil.dp_loss_map(hil.SCENARIOS["ems-dp-replay"]) is None
+
+
+def test_check_loss_map_refuses_a_partial_or_a_foreign_map():
+    lm = hil.plant_loss_map()
+    assert hil.check_loss_map(None) is None
+    assert hil.check_loss_map(lm) == lm
+    with pytest.raises(TypeError):
+        hil.check_loss_map(0.148922)
+    short = dict(lm)
+    short.pop("g_par")
+    with pytest.raises(ValueError):
+        hil.check_loss_map(short)
+    extra = dict(lm)
+    extra["g_node_chg"] = 1e-5
+    with pytest.raises(ValueError):
+        hil.check_loss_map(extra)
+    bad = dict(lm)
+    bad["v0_eff"] = 0.0
+    with pytest.raises(ValueError):
+        hil.check_loss_map(bad)
+    nan = dict(lm)
+    nan["r_fix"] = float("nan")
+    with pytest.raises(ValueError):
+        hil.check_loss_map(nan)
+
+
+def test_loss_map_canonical_is_fixed_order_and_separates_the_two_eras():
+    lm = hil.plant_loss_map()
+    text = hil.loss_map_canonical(lm)
+    assert hil.loss_map_canonical(None) == "none"
+    assert text.startswith("v0_eff=")
+    assert [p.split("=")[0] for p in text.split(",")] == \
+        list(hil.DP_LOSS_MAP_KEYS)
+    # Rendering is order-invariant in the INPUT dict: the canonical form is
+    # the map's own key order, not Python's insertion order.
+    assert hil.loss_map_canonical(dict(reversed(list(lm.items())))) == text
+
+
+def test_loss_map_is_an_optional_fingerprint_key_so_the_old_era_is_unmoved():
+    """THE OMISSION ARGUMENT, executable.  `loss_map` is in the fingerprint's
+    key tuple, but its sentinel is written as an OMITTED LINE, so every
+    committed table and every stored dp_db record keeps the digest it had."""
+    assert "loss_map" in hil.DP_FINGERPRINT_META_KEYS
+    assert "loss_map" in hil.DP_FINGERPRINT_OPTIONAL_KEYS
+    assert hil._dp_fp_resolve("loss_map", {}) is None
+    # The two committed DP scenarios' PRE-ROUND digests, as literals.
+    for scen, want in (("ems-dp-replay", "02683031"),
+                       ("ems-ftp75-dp", "403c5e71")):
+        meta = hil.SCENARIOS[scen]
+        assert hil.dp_profile_fingerprint(scen, meta).startswith(want)
+        with_map = dict(meta, loss_map=hil.plant_loss_map())
+        assert not hil.dp_profile_fingerprint(scen, with_map).startswith(want)
+
+
+def test_loss_map_era_label_names_both_eras_distinctly():
+    a = hil.loss_map_era_label(None)
+    b = hil.loss_map_era_label(hil.plant_loss_map())
+    assert "LOSS-MAP-FREE" in a
+    assert a != b
+    assert "15.87" in b
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# mpc-sto PROMOTION (2026-09-02, operator ruling)
+# ═════════════════════════════════════════════════════════════════════════
+def test_mpc_sto_is_the_frontier_mpc_and_mpc_det_is_the_ablation():
+    assert hil.EMS_STRATEGY_META["mpc-sto"]["frontier_eligible"] is True
+    assert hil.EMS_STRATEGY_META["mpc-det"]["frontier_eligible"] is False
+    # An ineligible strategy MUST carry a role note (the registry's own rule),
+    # and `mpc-sto`'s must record the Gate-1 limit it ships with.
+    assert hil.EMS_STRATEGY_META["mpc-det"].get("role_note")
+    note = hil.EMS_STRATEGY_META["mpc-sto"].get("role_note") or ""
+    assert "Gate 1" in note and "0.25000" in note and "5e-03" in note
+
+
+def test_the_three_frontier_candidate_legs_bind_mpc_sto():
+    for scen in ("ems-mpc", "ems-mpc-cross", "ems-ftp75-mpc"):
+        assert hil.SCENARIOS[scen]["ems"] == "mpc-sto", scen
+    # ... and the ablation leg is the renamed one, on `ems-mpc`'s stimulus.
+    assert hil.SCENARIOS["ems-mpc-det"]["ems"] == "mpc-det"
+    assert "ems-mpc-sto" not in hil.SCENARIOS
+    assert (hil.SCENARIOS["ems-mpc-det"]["ems_v_profile"]
+            is hil.SCENARIOS["ems-mpc"]["ems_v_profile"])
+    assert (hil.SCENARIOS["ems-mpc-det"]["duration_s"]
+            == hil.SCENARIOS["ems-mpc"]["duration_s"])
+
+
+def test_loss_map_from_canonical_round_trips_and_refuses_a_hand_edit():
+    """A table records its demand era as a header STRING, and reproducing that
+    table's solve needs the map back as a dict.  The two directions live next
+    to each other so they cannot drift, and this pins the round trip."""
+    lm = hil.plant_loss_map()
+    assert hil.loss_map_from_canonical(hil.loss_map_canonical(lm)) == lm
+    assert hil.loss_map_from_canonical("none") is None
+    assert hil.loss_map_from_canonical(None) is None
+    assert hil.loss_map_from_canonical("") is None
+    with pytest.raises(ValueError):
+        hil.loss_map_from_canonical("v0_eff=15.871722")      # incomplete
+    with pytest.raises(ValueError):
+        hil.loss_map_from_canonical(
+            hil.loss_map_canonical(lm) + ",g_node_chg=1e-05")
+
+
+def test_the_four_mpc_scenarios_bind_the_demand_model_era():
+    """The planner must predict on the SAME demand model the bound it is
+    scored against was solved in, or the frontier compares a plan built on one
+    model with a bound built on another.  `ems-dp-replay`'s and
+    `ems-ftp75-dp`'s tables are loss-map-era solves, so all four MPC legs bind
+    the map through `mpc_loss_map`."""
+    for scen in ("ems-mpc", "ems-mpc-det", "ems-mpc-cross", "ems-ftp75-mpc"):
+        assert hil.SCENARIOS[scen]["mpc_loss_map"] == hil.plant_loss_map(), scen
+    # The key is NOT a fingerprint key and NOT a frontier stimulus key: it
+    # names the CONTROLLER's model, not the stimulus, so it must not
+    # invalidate a table or refuse a frontier comparison.
+    assert "mpc_loss_map" not in hil.DP_FINGERPRINT_META_KEYS
+
+
+def test_loss_map_recorded_in_the_run_sidecar(tmp_path):
+    """A run's sidecar carries the DEMAND-MODEL ERA next to the charger era,
+    and it is resolved from the RUN's own configuration.  A simple-mode run
+    records `None`, because there is no hi-fi node network for a hi-fi map to
+    describe and pricing it against one would bound it with losses its plant
+    never took."""
+    import json
+    csv_path = str(tmp_path / "lm.csv")
+    _run_main_csv(tmp_path, ["--scenario", "steady", "--electrical", "simple",
+                             "--duration", "0.02"], name="lm.csv")
+    with open(csv_path + ".meta.json", encoding="utf-8") as fh:
+        doc = json.load(fh)
+    assert "loss_map" in doc["scenario"]
+    assert doc["scenario"]["loss_map"] is None
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# H1 - THE DEMAND-MODEL ERA GUARD ON THE dp-replay BINDER (fix round)
+# ═════════════════════════════════════════════════════════════════════════
+def _write_table_without_loss_map(tmp_path):
+    """A copy of the shipped `ems-dp-replay` table with its era line removed.
+
+    That is exactly what `gen_dp_ems_table.py --scenario ems-dp-replay
+    --force` produces today, because `--loss-map` defaults to `none`. The
+    header comment lines are documentation, so stripping them leaves a table
+    that parses, fingerprints IDENTICALLY (a live scenario declares no
+    `loss_map`, so both eras hash the same sentinel) and binds clean unless
+    something checks the era."""
+    src = os.path.join(hil.DP_TABLE_DIR, "dp_ems_table_ems-dp-replay.csv")
+    if not os.path.exists(src):
+        pytest.skip("committed table not present in this checkout")
+    out = tmp_path / "dp_ems_table_ems-dp-replay.csv"
+    kept = [ln for ln in open(src, encoding="utf-8").read().splitlines(True)
+            if not ln.startswith("# loss_map")
+            and not ln.lstrip().startswith("#   2026-09-02 - the demand")]
+    out.write_text("".join(kept), encoding="utf-8")
+    return str(out)
+
+
+def test_dp_replay_refuses_a_loss_map_free_table_against_a_loss_map_run(
+        tmp_path):
+    """THE REGRESSION THE GUARD EXISTS FOR.
+
+    `--loss-map` defaults to `none`, so a regeneration for ANY unrelated
+    reason yields a map-free table. Without block (0b) it binds silently and
+    the run-versus-table deviation on `ems-ftp75-dp` returns to +4.35 %,
+    invisibly, because the fingerprint cannot see the era."""
+    path = _write_table_without_loss_map(tmp_path)
+    strat = hil.DpReplayStrategy(table_dir=str(tmp_path))
+    # PRECONDITION: the fingerprint still MATCHES, so this test is about the
+    # era guard and not about a stale profile.
+    meta, _t, _s, _g = hil.load_dp_table(path)
+    assert meta["profile_fingerprint"] == hil.dp_profile_fingerprint(
+        "ems-dp-replay", hil.SCENARIOS["ems-dp-replay"])
+    assert "loss_map" not in meta
+    with pytest.raises(ValueError) as exc:
+        strat.bind_scenario("ems-dp-replay", hil.SCENARIOS["ems-dp-replay"],
+                            electrical_mode="hifi", droop_mode="design",
+                            asymmetry_mode="measured")
+    msg = str(exc.value)
+    assert "demand model" in msg
+    assert "no `# loss_map:` header line" in msg
+    assert "--loss-map plant" in msg
+    # The refusal must NOT be the fingerprint's, or the message sends the
+    # reader to regenerate for the wrong reason.
+    assert "DIFFERENT profile" not in msg
+
+
+def test_dp_replay_accepts_the_matching_loss_map_table():
+    strat = hil.DpReplayStrategy()
+    strat.bind_scenario("ems-dp-replay", hil.SCENARIOS["ems-dp-replay"],
+                        electrical_mode="hifi", droop_mode="design",
+                        asymmetry_mode="measured")
+    assert strat.provenance is not None
+
+
+def test_dp_replay_era_guard_treats_omitted_modes_as_the_shipped_config():
+    """Missing information must not read as agreement: a caller that passes
+    no modes is asking about the SHIPPED configuration, so the shipped
+    loss-map table binds."""
+    strat = hil.DpReplayStrategy()
+    strat.bind_scenario("ems-dp-replay", hil.SCENARIOS["ems-dp-replay"])
+
+
+def test_dp_replay_era_guard_fires_before_the_fingerprint_check():
+    """Block (0b) sits ABOVE the fingerprint deliberately. A table wrong on
+    BOTH counts must report the ERA, because that is the one the fingerprint
+    structurally cannot report."""
+    src = os.path.join(hil.DP_TABLE_DIR, "dp_ems_table_ems-dp-replay.csv")
+    if not os.path.exists(src):
+        pytest.skip("committed table not present in this checkout")
+    order = open(src, encoding="utf-8").read()
+    assert order.index("# eta_chg:") < order.index("# loss_map:")
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# M1 - THE MPC's DEMAND-MODEL ERA IS RESOLVED AT BIND TIME
+# ═════════════════════════════════════════════════════════════════════════
+def test_mpc_bind_resolves_the_demand_era_from_the_run_not_the_scenario_key():
+    """The four MPC scenarios are `electrical: any` and each declares
+    `mpc_loss_map`, resolved at IMPORT. Applying that key unconditionally
+    would make the planner predict on the hi-fi map during an `--electrical
+    simple` or `--droop measured` run, while the sidecar and
+    `matched_dp_for_run()` both resolve None from the run's own config."""
+    mpc = pytest.importorskip("mpc_ems")
+    meta = hil.SCENARIOS["ems-mpc"]
+    assert meta["mpc_loss_map"] is not None      # precondition: key present
+    cases = [("hifi", "design", "measured", True),
+             ("simple", "design", "measured", False),
+             ("hifi", "measured", "measured", False),
+             ("hifi", "design", "off", False)]
+    for elec, droop, asym, want_map in cases:
+        s = mpc.MpcStrategy(name="mpc-det", variant="det")
+        s.bind_scenario("ems-mpc", meta, electrical_mode=elec,
+                        droop_mode=droop, asymmetry_mode=asym)
+        assert (s.loss_map is not None) is want_map, (elec, droop, asym)
+        # ... and it agrees with what the report analyzer will resolve for the
+        # same run, which is the whole point of the reconciliation.
+        assert s.loss_map == hil.loss_map_for_config(elec, droop, asym)
+
+
+def test_mpc_bind_without_run_info_still_takes_the_scenario_key():
+    """A walk or a test that passes no modes is not asking for the era to be
+    dropped; the scenario's declaration stands."""
+    mpc = pytest.importorskip("mpc_ems")
+    s = mpc.MpcStrategy(name="mpc-det", variant="det")
+    s.bind_scenario("ems-mpc", hil.SCENARIOS["ems-mpc"])
+    assert s.loss_map == hil.plant_loss_map()
+
+
+def test_the_bind_scenario_hook_contract_is_uniform_across_strategies():
+    """`main()` passes all four arguments BY NAME, so every implementation
+    must accept them or a campaign dies at bind time with a TypeError."""
+    import inspect
+    seen = 0
+    for name, strat in hil.EMS_STRATEGIES.items():
+        binder = getattr(strat, "bind_scenario", None)
+        if binder is None:
+            continue
+        seen += 1
+        params = inspect.signature(binder).parameters
+        for kw in ("electrical_mode", "args", "droop_mode", "asymmetry_mode"):
+            assert kw in params, (name, kw)
+    assert seen >= 3

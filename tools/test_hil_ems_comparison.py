@@ -579,12 +579,12 @@ def _group_with_three_missing_bounds():
          "matched_dp_status": "no_cached_solve",
          "matched_dp_notes": [physics, _prefill_note("ems-mpc")],
          "color": "#eb6834"},
-        {"run": "ems-mpc-sto", "strategy": "mpc-sto", "role": "demonstration",
+        {"run": "ems-mpc-det", "strategy": "mpc-sto", "role": "demonstration",
          "h2_run_g": 0.0093, "delta_soc_run": -0.00300, "h2_dp_g": None,
          "pct_deviation": None, "lambda_term": None, "residual_soc": None,
          "converged": None, "delta_soc_dp": None,
          "matched_dp_status": "no_cached_solve",
-         "matched_dp_notes": [physics, _prefill_note("ems-mpc-sto")],
+         "matched_dp_notes": [physics, _prefill_note("ems-mpc-det")],
          "color": "#1baf7a"},
         {"run": "ems-soc-band", "strategy": "soc-band", "role": "frontier",
          "h2_run_g": 0.0121, "delta_soc_run": -0.00205, "h2_dp_g": None,
@@ -609,7 +609,7 @@ def test_missing_bounds_collapse_to_one_line_naming_every_leg():
     text = "\n".join(ec.render_group_markdown(g, 2))
     line = ec.bound_gap_line(g)
     assert line == ("No matched-DP bound is stored for: ems-mpc, "
-                    "ems-mpc-sto, ems-soc-band (solve with "
+                    "ems-mpc-det, ems-soc-band (solve with "
                     "`hil_ems_comparison.py --matched-dp solve "
                     "--matched-dp-allow-long`).")
     assert text.count(line) == 1

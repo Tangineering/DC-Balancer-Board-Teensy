@@ -1870,6 +1870,14 @@ def matched_dp_for_run(analysis, meta, hil, mode="lookup",
     if soc0 is None or target is None:
         return None
     accounting = "physical" if cfg.get("electrical") == "hifi" else "simple"
+    # THE DEMAND-MODEL ERA (2026-09-02), resolved from the RUN's own config the
+    # way `accounting` above is and the way `eta_chg` is below.  The map is a
+    # `--droop design --asymmetry measured` hi-fi number; a run in any other
+    # configuration -- and every `--electrical simple` run -- resolves to None,
+    # the loss-map-free model, because pricing a simple-mode run against a
+    # hi-fi map would bound it with losses its plant never took.
+    run_loss_map = sim.loss_map_for_config(
+        cfg.get("electrical"), cfg.get("droop_mode"), cfg.get("asymmetry"))
     capacity_ah = float(cfg.get("capacity_ah") or 5.0)
     # Resolved against the run's own config first: `chg_i_ceiling_a` there is
     # the ceiling the run APPLIED, which is what its demand carried, whatever
@@ -1923,9 +1931,30 @@ def matched_dp_for_run(analysis, meta, hil, mode="lookup",
     if aux is not None:
         fp_meta["aux_preload_a"] = float(aux)
         era_overrides.setdefault("aux_preload_a", float(aux))
+    if run_loss_map is not None:
+        # The map has to reach the FINGERPRINT, not only the key field, or the
+        # record a prefill stores is unreachable by this lookup -- the M4(b)
+        # argument dp_results_db makes for `eta_chg`, verbatim.
+        fp_meta["loss_map"] = run_loss_map
+        era_overrides.setdefault("loss_map", dict(run_loss_map))
     if isinstance(stimulus_era, dict):
         stimulus_era["overrides"] = dict(era_overrides)
         stimulus_era["fingerprint_keys"] = list(sim.DP_FINGERPRINT_META_KEYS)
+        # THE PLANT-ERA FIELDS AN ANALYST MUST READ before comparing this run
+        # with one from another campaign, recorded HERE so the comparison does
+        # not depend on anybody opening the sidecar. `droop_mode` joined the
+        # list 2026-09-02: it is not merely descriptive any more, because the
+        # DP's static-loss map is a `--droop design` fit and resolves to NO MAP
+        # in any other mode, so a `--droop measured` run is priced against a
+        # different demand model without saying so anywhere else.
+        stimulus_era["plant_era"] = {
+            "electrical": cfg.get("electrical"),
+            "droop_mode": cfg.get("droop_mode"),
+            "asymmetry": cfg.get("asymmetry"),
+            "eta_chg": cfg.get("eta_chg"),
+            "loss_map": (None if run_loss_map is None
+                         else sim.loss_map_canonical(run_loss_map)),
+        }
     fields = dpdb.problem_fields(
         scenario,
         profile_fingerprint=sim.dp_profile_fingerprint(scenario, fp_meta),
@@ -1941,11 +1970,29 @@ def matched_dp_for_run(analysis, meta, hil, mode="lookup",
         # made every post-efficiency run key against a 1:1-era baseline. The
         # lookup then missed silently, and a `--matched-dp solve` produced a
         # baseline for a plant the run was never executed against.
-        eta_chg=sim.dp_eta_chg(fp_meta))
+        eta_chg=sim.dp_eta_chg(fp_meta),
+        # THE DEMAND-MODEL ERA, on the identical argument: `problem_fields`
+        # defaults it to None (the loss-map-free era), and leaving the default
+        # in place on a loss-map-era run would key the run against a baseline
+        # solved on a different demand model.
+        loss_map=run_loss_map)
     key = dpdb.make_key(fields)
 
     h2_run = _last_finite(hil["h2_cum_g"]) if "h2_cum_g" in hil else None
     notes.append(MATCHED_DP_GFC_NOTE)
+    # The demand-model era, stated on EVERY run: which of the two models the
+    # baseline was priced with is the single largest source of deviation the
+    # 2026-09-02 decomposition found, and a reader comparing two runs across
+    # the boundary must see it without opening the key fields.
+    notes.append(
+        "DEMAND MODEL: the baseline is priced against %s. The loss-map era "
+        "carries the plant's static losses (the per-node bleed on N_BUS and "
+        "N_MOT) and the realized `--droop design` bus law, which makes the "
+        "bound TIGHTER and BLEED-INVARIANT: the run and its bound then move "
+        "together when the bleed is retuned. A baseline in one era is NOT "
+        "comparable with one in the other -- the two differed by 4.35 %% on "
+        "`ems-ftp75-dp` and -0.20 %% on `ems-dp-replay` when the map landed."
+        % sim.loss_map_era_label(run_loss_map))
     # ── QUANTIFY THE REGEN BOUNDARY FOR *THIS* RUN (2026-09-02) ─────────────
     # MATCHED_DP_REGEN_NOTE states the boundary qualitatively on every run.
     # A run that actually brakes deserves the MAGNITUDE, because the direction
@@ -2007,11 +2054,15 @@ def matched_dp_for_run(analysis, meta, hil, mode="lookup",
             "what rebuilds the run-era scenario metadata and so avoids a "
             "fingerprint-drift refusal -- or approximately with `--scenario %s "
             "--soc0 %r --accounting %s --capacity-ah %r --chg-a %r "
-            "--aux-preload %r --run-exit %r --dsoc-span=%.5f:%.5f:1`"
+            "--aux-preload %r --run-exit %r%s --dsoc-span=%.5f:%.5f:1`"
             % (tol_soc,
                " (strict provenance matching is ON)" if strict else "",
                scenario, float(soc0), accounting, capacity_ah, chg_a,
                fields["aux_preload_a"], run_exit,
+               # The DEMAND-MODEL ERA has to be on the approximate command
+               # too, or the prefill it suggests solves the wrong problem and
+               # this lookup misses again on the next pass.
+               "" if run_loss_map is None else " --loss-map plant",
                target - soc0, target - soc0))
         return out
 

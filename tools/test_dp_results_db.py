@@ -52,6 +52,13 @@ def _fields(**over):
         # shipped store was solved against, and it is OMITTED from the
         # canonical form so those records keep their pre-change keys.
         eta_chg=None,
+        # loss_map (2026-09-02): the second OPTIONAL key field, on
+        # identical terms. None is the loss-map-free demand model, which
+        # is what every record in the shipped store was solved against,
+        # and it is OMITTED from the canonical form so those records keep
+        # their pre-change keys. It is carried as the CANONICAL STRING
+        # (hil_plant_sim.loss_map_canonical), never as a dict.
+        loss_map=None,
         gfc_dc_gain=1.7637602179836514e-05, eta_boost=0.85,
         limit_i_fc_max_a=1.4, charge_share_value=0.75, share_span=0.25,
         cruise_slope_max=0.05, cruise_min_mps=0.5, run_entry_s=3.0,
@@ -69,6 +76,10 @@ def _fields(**over):
     # (the era), not a missing number.
     eta = base.pop("eta_chg")
     base["eta_chg"] = None if eta is None else float(eta)
+    # loss_map is not floated either, and for the same reason: None is
+    # the era and a present value is a string.
+    lm = base.pop("loss_map")
+    base["loss_map"] = None if lm is None else str(lm)
     for name in ("soc0", "capacity_ah", "stage_dt", "n_share", "soc_step",
                 "chg_a", "lambda_dev", "gfc_dc_gain", "eta_boost",
                 "limit_i_fc_max_a", "charge_share_value", "share_span",
@@ -1352,3 +1363,119 @@ def test_explicit_era_overrides_still_win_over_the_eta_field(
                          era_overrides={"eta_chg": 0.5})
     rec = db.solve_and_store(fields, 0.698, db_dir=str(tmp_path), log=None)
     assert rec["key_fields"]["profile_fingerprint"] == fp
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# `loss_map` AS AN OPTIONAL KEY FIELD (2026-09-02, the DP-bound round)
+# ═════════════════════════════════════════════════════════════════════════
+_LM_TEXT = ("v0_eff=15.871722,r_fix=0.017986,k_g=1.95079,g_par=0.148922,"
+            "g_node_bus=3.3333333333333335e-05,"
+            "g_node_other=1.6666666666666667e-05,rt_v_fwd=0.035,rt_r_on=0.021")
+
+
+def test_loss_map_is_a_key_field_and_an_optional_one():
+    assert "loss_map" in db.KEY_FIELDS
+    assert "loss_map" in db.OPTIONAL_KEY_FIELDS
+
+
+def test_an_absent_loss_map_keys_exactly_as_the_pre_round_code_did():
+    """THE OMISSION ARGUMENT, executable.  An ABSENT map names the demand
+    model every record in the shipped store was solved against, so its
+    canonical form must be byte-identical to the pre-2026-09-02 one and all
+    30 stored records must stay reachable."""
+    f_absent = _fields()
+    del f_absent["loss_map"]
+    f_none = _fields(loss_map=None)
+    assert db._canonical(f_absent) == db._canonical(f_none)
+    assert "loss_map" not in db._canonical(f_absent)
+    assert db.make_key(f_absent) == db.make_key(f_none)
+
+
+def test_the_two_demand_eras_key_apart():
+    """A baseline solved on a different demand model is not a baseline for
+    this one, which is the whole reason the key carries the map."""
+    old = db.make_key(_fields(loss_map=None))
+    new = db.make_key(_fields(loss_map=_LM_TEXT))
+    assert old != new
+    # ... and a map with a DIFFERENT coefficient keys apart again, so a
+    # re-probe cannot silently reuse the previous fit's records.
+    other = db.make_key(_fields(loss_map=_LM_TEXT.replace("15.871722",
+                                                          "15.9")))
+    assert other not in (old, new)
+
+
+def test_the_loss_map_is_carried_as_a_string_not_a_dict():
+    """`_canonical` renders a str verbatim and everything else through
+    `repr(float(...))`, so a dict would raise.  The key field is therefore the
+    CANONICAL STRING, and this test pins that contract."""
+    text = db._canonical(_fields(loss_map=_LM_TEXT))
+    assert '"loss_map":"%s"' % _LM_TEXT in text
+    bad = _fields()
+    bad["loss_map"] = {"v0_eff": 15.871722}      # a dict, bypassing _fields()
+    with pytest.raises((TypeError, ValueError)):
+        db._canonical(bad)
+
+
+def test_the_non_target_hash_also_omits_an_absent_map():
+    f_absent = _fields()
+    del f_absent["loss_map"]
+    assert db.non_target_hash(f_absent) == \
+        db.non_target_hash(_fields(loss_map=None))
+    assert db.non_target_hash(f_absent) != \
+        db.non_target_hash(_fields(loss_map=_LM_TEXT))
+
+
+def test_apply_era_overrides_carries_a_map_and_deletes_it_on_none():
+    lm = {"v0_eff": 15.871722}
+    meta = db.apply_era_overrides({"duration_s": 61.0}, {"loss_map": lm})
+    assert meta["loss_map"] == lm
+    assert db.apply_era_overrides(meta, {"loss_map": None}) == \
+        {"duration_s": 61.0}
+
+
+def test_every_stored_record_is_still_reachable_by_its_own_key():
+    """THE REGRESSION THE OMISSION EXISTS FOR.  Adding a key field must not
+    orphan a single archived solve."""
+    import glob
+    root = os.path.join(HERE, "dp_db")
+    if not os.path.isdir(root):
+        pytest.skip("dp_db store not present in this checkout")
+    seen = 0
+    for path in glob.glob(os.path.join(root, "**", "*.json"), recursive=True):
+        if os.path.basename(path) == "index.json":
+            continue
+        rec = json.load(open(path, encoding="utf-8"))
+        kf = rec.get("key_fields")
+        if not kf:
+            continue
+        seen += 1
+        assert db.make_key(kf) == rec["key"], path
+    assert seen >= 16, "expected the archived solves to be present"
+
+
+def test_solve_and_store_recovers_the_map_from_a_stored_records_own_fields():
+    """`store()` persists only KEY_FIELDS, so a record read back off disk
+    carries the CANONICAL STRING and not the dict the caller built.  A prefill
+    fed those bytes must still reconstruct the same problem, or the store's
+    own records become unusable as prefill inputs one era after they were
+    written."""
+    import glob
+    sim = pytest.importorskip("hil_plant_sim")
+    root = os.path.join(HERE, "dp_db")
+    if not os.path.isdir(root):
+        pytest.skip("dp_db store not present in this checkout")
+    seen = 0
+    for path in glob.glob(os.path.join(root, "**", "*.json"), recursive=True):
+        if os.path.basename(path) == "index.json":
+            continue
+        kf = json.load(open(path, encoding="utf-8")).get("key_fields") or {}
+        assert "loss_map_dict" not in kf, path      # never persisted
+        text = kf.get("loss_map")
+        if text is None:
+            continue
+        seen += 1
+        # The string parses back to a VALID map, and to the one this checkout
+        # ships (every loss-map record in the store was solved against it).
+        assert sim.loss_map_from_canonical(text) == sim.plant_loss_map(), path
+    assert seen >= 1, ("no loss-map-era record in the store; the seven "
+                       "loss-map-era EMS prefills are part of this round")

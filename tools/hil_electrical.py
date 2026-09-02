@@ -413,7 +413,40 @@ C_VESC_DEFAULT = 0.5e-3     # F  VESC input, 0.2-0.9 mF envelope
 C_CHG_NODE = 10e-6          # F  TODO(verify): no separate charger-input cap identified
 C_RGN_NODE = 10e-6          # F  TODO(verify): likewise
 
-R_NODE_BLEED = 2000.0       # ohm  effective bleed on every node (dark-node decay)
+# ── Node bleed (dark-node decay), PER NODE since 2026-09-02 ─────────────────
+# The bleed is a lumped stand-in for every static load referred to a node: the
+# resistive dividers the Teensy reads the rail through, the RT1987 quiescent
+# current of each switch tied to that node, and the leakage of the bulk
+# capacitance itself.  It was ONE 2 kOhm value on every node from the engine's
+# first commit, and that value was NEVER calibrated: it was chosen to give a
+# visibly decaying dark node and never checked against the board.
+#
+# OPERATOR RULING 2026-09-02 (the DP-bound round).  The physical bus decays
+# from full to near zero in 30-60 s.  With C_VBUS + C_MOT_LOCAL + C_VESC on the
+# energized path, a 2 kOhm bleed empties the node in well under a second, which
+# is off by roughly an order of magnitude in the loss it bills the sources.
+# The split values below carry that recollection:
+#   * N_BUS gets 30 kOhm, the FASTER bleed, because the bus is where the two
+#     source dividers, the VBUS divider and the majority of the quiescent
+#     loads are referred.
+#   * every other node gets 60 kOhm, because most of them bleed FORWARD into
+#     the bus through their own switch rather than to ground on their own.
+# TODO(calibrate): both numbers are the operator's 30-60 s recollection
+# expressed as a two-value split, NOT a measurement.  The bench procedure that
+# settles them is a DARK-NODE DECAY CAPTURE:
+#   1. Bring the board up in State 98 and close FC_BUS so VBUS reaches nominal.
+#   2. Command the boosts off and open every path switch, leaving the bus
+#      floating on its own capacitance.
+#   3. Log V_bus at 1 kHz to the SD card until it falls below 1 V.
+#   4. Fit tau on ln(V_bus) over the linear region; R = tau / C_node, with
+#      C_node the sum of the capacitances still tied to the node at step 2.
+#   5. Repeat with MOT_PWR closed to get the N_MOT-inclusive time constant, and
+#      difference the two conductances for the N_MOT value.
+# Until that capture exists, treat both values as a physically-plausible band
+# rather than as board constants, and read `docs/HIL_PLANT.md` section 4.8 for
+# the reversal path.
+R_NODE_BLEED_BUS = 30e3     # ohm  effective bleed on N_BUS
+R_NODE_BLEED_OTHER = 60e3   # ohm  effective bleed on every other node
 V_MOT_LOAD_FLOOR = 1.0      # V    floor for the H1 motor-draw/regen Norton
                             #      conductance (i_motor / max(v_node, this)) so the
                             #      element cannot divide by (or explode near) zero
@@ -927,6 +960,20 @@ def _solve(A, b):
 N_OFC, N_OBT, N_BUS, N_MOT, N_CHG, N_RGN = range(6)
 N_NODES = 6
 _NODE_NAMES = ["OFC", "OBT", "BUS", "MOT", "CHG", "RGN"]
+
+
+def node_bleed_conductances():
+    """Per-node bleed conductance [S], in node-index order.
+
+    ONE resolution of the two bleed constants, so the engine, the DP loss map
+    and every probe read the same split.  N_BUS takes R_NODE_BLEED_BUS; every
+    other node takes R_NODE_BLEED_OTHER.  Read through the MODULE GLOBALS at
+    call time rather than captured at import, so a monkeypatch of either
+    constant places a subsequently-constructed simulator in that bleed era."""
+    g_other = 1.0 / R_NODE_BLEED_OTHER
+    g = [g_other] * N_NODES
+    g[N_BUS] = 1.0 / R_NODE_BLEED_BUS
+    return g
 
 
 class Rt1987:
@@ -1689,7 +1736,7 @@ class ElectricalSim:
 
     def __init__(self, trace_config="short", noise=None, c_vesc_f=C_VESC_DEFAULT,
                  fuel_cell=None, battery=None, droop_mode="design",
-                 asymmetry_mode=ASYMMETRY_MODE_DEFAULT):
+                 asymmetry_mode=ASYMMETRY_MODE_DEFAULT, substep_pin=None):
         if trace_config not in TRACE_L_NH:
             raise ValueError(f"trace_config must be one of {sorted(TRACE_L_NH)}")
         if droop_mode not in DROOP_SCALE:
@@ -1716,6 +1763,11 @@ class ElectricalSim:
             # has no links; the capacitance value is inert.
             C_MOT_LOCAL + c_vesc_f, C_CHG_NODE, C_RGN_NODE,
         ]
+        # Per-node bleed conductance, resolved from the module globals AT
+        # CONSTRUCTION so a probe or a test can place the process in another
+        # bleed era with a monkeypatch of the two constants and then build a
+        # simulator, exactly as the ETA_CHG era switch works.
+        self.g_bleed = node_bleed_conductances()
 
         # ── PART A: converter asymmetry ──────────────────────────────────────
         # Resolved HERE, after `self.noise` is assigned, because the DeltaV0 to
@@ -1818,7 +1870,20 @@ class ElectricalSim:
 
         self.t = 0.0
         self.achieved_substep_hz = 0.0
-        self._n_sub = 8
+        # `substep_pin` (2026-09-02): DISABLE the adaptive re-derivation and run
+        # exactly this many substeps every tick.  The campaign path never sets
+        # it and stays adaptive.  It exists because `step()` re-derives
+        # `_n_sub` from a wall-clock EWMA at the END of every tick, so a test
+        # that assigned `sim._n_sub` after each step was still running the
+        # FIRST substep of the next tick at whatever count the host load had
+        # produced.  Two byte-identity tests flaked on exactly that
+        # (`test_asymmetry_off_is_byte_identical_to_a_symmetric_baseline` and
+        # `test_eta_chg_is_inert_on_a_charge_free_trace`): the resolution, and
+        # therefore the trace, depended on machine load.  With the pin set the
+        # engine is deterministic in the substep count and those comparisons
+        # are exact.
+        self.substep_pin = None if substep_pin is None else max(1, int(substep_pin))
+        self._n_sub = 8 if self.substep_pin is None else self.substep_pin
         # `n_sub_last` (2026-09-02, review L2): the substep count the LAST
         # completed step() actually ran with.  `_n_sub` is re-derived at the END
         # of step() from the measured cost, so it is the count the NEXT tick
@@ -1876,7 +1941,13 @@ class ElectricalSim:
         n_pref = max(1, int(math.ceil(dt / self.DT_SUB_MAX)))
         # Budget WINS over the accuracy preference: a host that cannot afford the
         # 50 us ceiling runs coarser and says so, rather than overrunning the tick.
-        self._n_sub = max(1, min(self.N_SUB_MAX, n_pref if n_budget >= n_pref else n_budget))
+        # ... unless `substep_pin` is set, in which case the resolution is the
+        # operator's and the wall clock does not get a vote (see __init__).
+        if self.substep_pin is not None:
+            self._n_sub = self.substep_pin
+        else:
+            self._n_sub = max(1, min(self.N_SUB_MAX,
+                                     n_pref if n_budget >= n_pref else n_budget))
         # L4 (cont.): hold the last non-zero achieved rate on a zero-elapsed tick
         # (coarse perf_counter) instead of reporting a misleading 0.0 Hz.
         if elapsed > 0:
@@ -1926,7 +1997,7 @@ class ElectricalSim:
         G = [[0.0] * N_NODES for _ in range(N_NODES)]
         J = [0.0] * N_NODES
         for i in range(N_NODES):
-            G[i][i] += 1.0 / R_NODE_BLEED + self.c_node[i] / h
+            G[i][i] += self.g_bleed[i] + self.c_node[i] / h
             J[i] += self.c_node[i] / h * v[i]
 
         # Regulated boost sources onto their own output nodes.
@@ -1959,8 +2030,10 @@ class ElectricalSim:
         # Motor draw/regen sits on the V-MOT node, behind MOT_PWR, through the 470 uF
         # ESR.  H1 FIX: this was previously stamped as an IDEAL current source
         # (J[N_MOT] -= i_motor) -- fine for a positive (motoring) draw, but for a
-        # NEGATIVE (regen) current with MOT_PWR open, the node has only the 2 kOhm
-        # bleed for company and an ideal source into that is unbounded: reproduced,
+        # NEGATIVE (regen) current with MOT_PWR open, the node has only its own
+        # bleed for company (2 kOhm when this fix was written; 60 kOhm since the
+        # 2026-09-02 per-node ruling, which makes the runaway 30x FASTER, not
+        # slower) and an ideal source into that is unbounded: reproduced,
         # it ran the node to ~10 kV within seconds, and the resulting kV-scale
         # sw_ring events fired the over_absmax Death-5 signature -- a numerical
         # solver runaway rendered as a hardware conclusion.  Stamped instead as a

@@ -455,9 +455,17 @@ entry runs the same three roles over the 340 s FTP-75 segment:
 The two MPC tuples (2026-09-02) reuse their sibling's reference, bound and
 thresholds verbatim; only the CANDIDATE differs, so the difference between the
 `cycle61` and `cycle61-mpc` records is the difference between `sdp-v4` and
-`mpc-det` and nothing else. Both carry
+`mpc-sto` and nothing else. Both carry
 `stimulus_mismatch_exit_affecting: False` for one campaign, exactly as `ftp75`
-does. ⚠️ Their vs-bound arm is **structurally near 1.0**: `mpc-det` opens zero
+does.
+
+**The MPC and SDP candidates are tied, and must not be ranked against each
+other.** On the loss-map-era walk `cycle61-mpc` reads vs_reference **0.9691** and
+vs_bound **1.0001**, against `cycle61`'s 0.9696 / 1.0006; `ftp75-mpc` reads
+0.9735 / 0.9978 against `ftp75`'s 0.9737 / 0.9979. Both separations are inside
+the repeatability floor.
+
+⚠️ Their vs-bound arm is **structurally near 1.0**: the MPC opens zero
 charge windows in every Gate-2 walk, so it and the bound differ only along the
 share lever — and the eq-H2 exchange rate IS that lever's rate. Do not tighten
 `vs_bound_max` on a charge-free reading; see §6.1.
@@ -993,12 +1001,31 @@ registration step list these four implement. Every leg REUSES an existing
 stimulus object, so no new stimulus is validated in the same campaign as a new
 controller.
 
+**The stochastic planner is the default MPC (operator ruling, 2026-09-02).**
+`ems-mpc`, `ems-mpc-cross` and `ems-ftp75-mpc` bind **`mpc-sto`**, and they are
+the candidate legs of the `cycle61-mpc` and `ftp75-mpc` frontier tuples. The
+scenario formerly named `ems-mpc-sto` is **renamed `ems-mpc-det`** and binds
+`mpc-det`; it is the ablation leg on the same stimulus as `ems-mpc`, and what it
+measures is the value of preview. The scenario count is unchanged at four.
+`EMS_STRATEGY_META` follows: `mpc-sto` becomes `frontier_eligible: True` and
+`mpc-det` becomes `frontier_eligible: False` with a role note.
+⚠️ **The campaign `20260902_011926` and `20260902_041414` ledgers name
+`ems-mpc-sto`,** which was then the leg carrying `mpc-sto`; those records are not
+rewritten, and the old name reads as today's `ems-mpc` role, not as
+`ems-mpc-det`. **All four walk pairs below were re-walked under the shipped
+bindings AND the loss-map demand era** (`docs/HIL_PLANT.md` §9.4.1); no
+pre-round MPC walk figure transfers across either change, so none is quoted.
+
 Three facts apply to all four and are not repeated per entry.
 
-- **`mpc-det` is a PREVIEW strategy, not a causal one.** It reconstructs the
-  demand from the scenario's own `ems_v_profile`, which no Raspberry Pi has. The
-  CONTROL it emits is portable — the two energy fields of the 22-byte packet —
-  but the preview is not, and a result must never be reported as causal.
+- **`mpc-det` is not causal in its demand; `mpc-sto` is.** `mpc-det` reads its
+  demand off the scenario's own `ems_v_profile`, which no Raspberry Pi has,
+  which is why it is the ablation and not a frontier candidate. `mpc-sto` builds
+  its demand from the transition matrix's conditional mean and is causal in that
+  sense, while remaining a preview strategy in the weaker sense that it still
+  plans over a horizon. The CONTROL both emit is portable — the two energy
+  fields of the 22-byte packet — but a `mpc-det` result must never be reported
+  as causal.
 - **An MPC run is NOT bit-reproducible.** The planner's search is bounded by
   wall clock (`--mpc-budget-ms`, `--mpc-roll-budget-ms`), so a loaded campaign
   host explores fewer candidates and can return a different — still feasible,
@@ -1016,7 +1043,12 @@ Three facts apply to all four and are not repeated per entry.
   landing in an open-loop stage triggers a governor feedforward slew neither
   model represents. `mpc_share_pred_err` is therefore banded at 0.30 from that
   offline measurement, and the first campaign is its calibration reading.
-- **Each leg declares `mpc_max_candidates` = 343**
+  **The stage model's known gap is a FEEDFORWARD gap specifically, not a hold
+  gap** — the mode table below puts `open_hold` near zero on every leg, so
+  `open_feedforward` carries the whole open-loop share. On the 61 s cycle that
+  open-loop share is **50.98 %**, which is the figure quoted as ~51 % in the
+  `mpc-sto` role note.
+- **Each leg declares `mpc_max_candidates` = 1029**
   (`hil_plant_sim.MPC_CAMPAIGN_MAX_CANDIDATES`), the full enumeration at the
   shipped ladder, so the wall clock cannot change the candidate count. It does
   not make the run bit-reproducible: the roll-table slicing and the board are
@@ -1029,71 +1061,128 @@ other: `mpc_solve_ms` (the last decision's search time), `mpc_share_pred_err`
 incumbent). The sidecar carries `config.mpc`, the resolved configuration plus
 the decision-timing statistics merged in at finalize.
 
-#### ems-mpc (61 s, any engine, EMS `mpc-det` — FRONTIER CANDIDATE)
+The table below gives each leg's governor mode fractions on the loss-map-era
+walk, as `open_hold` / `open_feedforward` / `closed`.
+
+| Leg | Strategy | open_hold | open_feedforward | closed |
+|---|---|---|---|---|
+| `ems-mpc` | `mpc-sto` | 0.0098 | 0.5000 | 0.4902 |
+| `ems-mpc-det` | `mpc-det` | 0.0098 | 0.5000 | 0.4902 |
+| `ems-mpc-cross` | `mpc-sto` | 0.0044 | 0.6761 | 0.3195 |
+| `ems-ftp75-mpc` | `mpc-sto` | 0.0025 | 0.6650 | 0.3325 |
+
+⚠️ **These fractions are a property of the STIMULUS, not of the strategy, so
+they attach to LEGS.** The governor's mode is decided by the source-total
+threshold, which the stimulus sets, which is why `ems-mpc` and `ems-mpc-det`
+coincide exactly although they run different laws. Any earlier reading of a mode
+fraction as a `mpc-det`-versus-`mpc-sto` difference was wrong.
+
+#### ems-mpc (61 s, any engine, EMS `mpc-sto` — FRONTIER CANDIDATE)
 
 - **Tests:** the `ems-soc-band` cycle and drain, planned rather than
-  band-switched. The candidate leg of the `cycle61-mpc` frontier tuple, ranked
-  against the same reference and bound `ems-sdp` is.
+  band-switched, with the scenario preview replaced by the demand transition
+  matrix's conditional mean and the overcurrent bound tightened to that
+  distribution's 90 % quantile. The candidate leg of the `cycle61-mpc` frontier
+  tuple, ranked against the same reference and bound `ems-sdp` is.
 - **Pass/fail:** fault-free; in Run at t = 50; `cmd_share_sp` inside the ladder's
-  own [0.25, 0.75]; `I_fc` under the planner's 1.19 A margin; at most 4
-  `FC_CHARGE` openings; `h2_cum_g` inside the Gate-2 walk's ±25 % band
-  (walk 0.010429 g at ΔSoC −0.002537); `cmd_share_sp` must MOVE by ≥ 0.20, so a
-  constant-command controller cannot pass; every decision under 20 ms.
+  own [0.25, 0.75]; `I_fc` under the planner's 1.19 A margin (walk peak
+  0.7357 A); at most 4 `FC_CHARGE` openings; `h2_cum_g` inside the Gate-2 walk's
+  ±25 % band (walk 0.007588 g at ΔSoC −0.003591, eq-H2 0.016347 at λ = 0.41);
+  `cmd_share_sp` must MOVE by ≥ 0.15, so a constant-command controller cannot
+  pass; every decision under 20 ms.
 - **Why useful:** it is the only leg on which the MPC, the SDP and the DP are
-  ranked on one stimulus. The ΔSoC-matched DP bound at the walk's own terminal
-  state is 0.010418 g (`tools/dp_db`), 0.10 % below the walk.
+  ranked on one stimulus. Against the same walk, the `ems-soc-band` reference
+  reads eq-H2 0.016868 and the `ems-dp-replay` bound 0.016346.
+- ⚠️ Its ΔSoC-matched DP bound needs a **loss-map-era** prefill at the `mpc-sto`
+  walk's terminal state. The pre-round `tools/dp_db` value, 0.010418 g, was
+  matched to the `mpc-det` walk in the loss-map-free era and applies to neither
+  leg as it stands.
 
-#### ems-mpc-sto (61 s, any engine, EMS `mpc-sto` — DEMONSTRATION)
+#### ems-mpc-det (61 s, any engine, EMS `mpc-det` — ABLATION)
 
-- **Tests:** the same 61 s stimulus with the scenario preview replaced by the
-  demand transition matrix's conditional mean and the overcurrent bound
-  tightened to that distribution's 90 % quantile.
-- **Pass/fail:** the `ems-mpc` list, with its own walk pair (0.009313 g at
-  ΔSoC −0.002998) and a ≥ 0.16 share-motion floor.
-- ⚠️ **NOT a frontier leg,** and it carries a demonstration banner. No stimulus
-  in this suite is a draw from that matrix — it is a road vehicle's, and its
-  0.762 diagonal makes short-horizon prediction near-persistence — so a ranking
-  against `soc-band` would measure the mismatch between the stimulus and the
-  matrix rather than the policy.
-- **Why useful:** its Gate-2 pair differs from `mpc-det`'s on the identical
-  stimulus (0.009313 / −0.002998 against 0.010429 / −0.002537) while the two
-  equivalent-hydrogen totals agree to 0.05 %: the certainty-equivalent demand
+- **Tests:** the same 61 s stimulus with the full scenario preview restored, so
+  the pair against `ems-mpc` isolates one variable and measures **the value of
+  preview**.
+- **Pass/fail:** the `ems-mpc` list, with its own walk pair (0.009728 g at
+  ΔSoC −0.002708, eq-H2 0.016333) and a ≥ 0.25 share-motion floor. Its walk
+  `I_fc` peak is **0.9809 A**, the widest of the four because `mpc-det` commands
+  a wider share band on this stimulus, and it still sits 18 % under the 1.19 A
+  planner budget.
+- ⚠️ **NOT a frontier leg,** and it carries an ablation banner: `mpc-det`
+  reads its demand off the scenario's own `ems_v_profile`, which no
+  Raspberry Pi has, so its result must never be reported as causal.
+- ⚠️ Its ΔSoC-matched DP bound needs a **loss-map-era** prefill as well; see the
+  `ems-mpc` entry for the pre-round value and why it does not transfer.
+- **Why useful:** its Gate-2 pair differs from `mpc-sto`'s on the identical
+  stimulus (0.009728 / −0.002708 against 0.007588 / −0.003591) while the two
+  equivalent-hydrogen totals agree to 0.09 %: the certainty-equivalent demand
   path and the 90 % overcurrent quantile move the plan along the share lever
-  without moving its value. ⚠️ Its open-loop hold fraction is **0.338** against
-  `mpc-det`'s **0.223** on the same cycle, so the two runs are NOT
-  interchangeable evidence about the governor.
+  without moving its value. ⚠️ Its governor mode fractions are **bit-identical**
+  to `ems-mpc`'s, because the two legs share one stimulus; see the mode table in
+  §6.1 before reading either run as evidence about the governor.
 
-#### ems-mpc-cross (200 s, any engine, EMS `mpc-det`)
+#### ems-mpc-cross (200 s, any engine, EMS `mpc-sto`)
 
 - **Tests:** the `ems-sdp-cross` two-level cruise with `mpc_soc_ref_offset` at
   that scenario's +0.0025. Where the SDP's table FLIPS across its switching
   surface, the MPC's terminal price BIASES a plan, so the observable is a
-  continuous walk of the commanded share, over a 0.25 range, rather than one
-  sharp transition.
+  continuous walk of the commanded share rather than one sharp transition.
+  ⚠️ **That walk is NARROW, and narrower than this scenario was built for: it
+  spans 0.0833, over [0.2500, 0.3333].** Both laws walk exactly that — the
+  figure is not a consequence of the `mpc-sto` promotion and not a consequence
+  of the static-loss map, and it reproduces on the pre-round tree at commit
+  `8dc180d`. The wide walk across the switching region that the cross stimulus
+  was built to show is **not available from any registered leg**; recovering it
+  is a question about the MPC's candidate ladder and its terminal economics on
+  a two-level cruise, not about scenario registration. See
+  `docs/modeling/dp_loss_map_20260902.md` §8 and the pin in
+  `tools/test_run_hil_suite.py`.
 - **Pass/fail:** fault-free; in Run at t = 180; the `ems-mpc` bands over
-  (5, 190) s with `h2_cum_g` around the walk's 0.014134 g and `cmd_share_sp`
-  moving by ≥ 0.12.
+  (5, 190) s with `h2_cum_g` around the walk's 0.010835 g (ΔSoC −0.007318,
+  eq-H2 0.028684, walk `I_fc` peak 0.3016 A) and `cmd_share_sp` moving by
+  ≥ 0.05.
+- ⚠️ **The share-motion floor was LOWERED 0.12 → 0.05 here, and that is a
+  finding rather than a re-pin.** `mpc-sto` walks a share range of only 0.0833 on
+  this stimulus, so the pre-swap 0.12 floor would have FAILED a correct run. The
+  mechanism is the demand model and not the plant: `mpc-sto` plans against the
+  demand transition matrix's conditional mean, which smooths the two cruise
+  levels this scenario exists to separate, so it commands a narrower walk across
+  the same operating region than `mpc-det` did.
 - ⚠️ **Phase-free checks only.** The 1 Hz decision clock is not locked to the
   stimulus, and a phase-locked check has already failed a correct board on this
   very stimulus (campaign `20260901_024231`).
-- ⚠️ The walk's open-loop hold fraction here is **0.629**, the highest of the
-  four: most of this run is share-blind by construction, so an improvement or a
-  regression confined to it is unmeasurable. This leg is also the round's
+- ⚠️ The walk's open-loop fraction here is **0.6805**, the highest of the four
+  (§6.1): most of this run is outside the closed loop by construction, so an
+  improvement or a regression confined to it is unmeasurable. This leg is also
+  the round's
   search-depth evidence: a 1e5 ms budget moves its hydrogen −21 % while its
   equivalent hydrogen moves 0.13 %, which is why every `h2_cum_g` band is a
   scale tripwire and the eq-H2 total is the search-invariant quantity.
 
-#### ems-ftp75-mpc (350 s, any engine, EMS `mpc-det`, gated behind `--with-ftp75`)
+#### ems-ftp75-mpc (350 s, any engine, EMS `mpc-sto`, gated behind `--with-ftp75`)
 
 - **Tests:** the FTP-75 study segment, planned. The candidate leg of the
   `ftp75-mpc` frontier tuple; every stimulus key is the sibling FTP-75 legs' by
   reference — the same profile object, Run exit, zero preload and 0.8 A ceiling.
 - **Pass/fail:** the `ems-mpc` list over (10, 340) s, `h2_cum_g` around the
-  walk's 0.023771 g, share motion ≥ 0.16, prediction error ≤ 0.30.
-- ⚠️ Its walk eq-H2 (0.055751) lands within 2e-6 g of `ems-ftp75-sdp`'s: two
+  walk's 0.021983 g (ΔSoC −0.013792, walk `I_fc` peak 0.4886 A), share motion
+  ≥ 0.15, prediction error ≤ 0.30.
+- ⚠️ Its walk eq-H2 (0.055622) lands within 6e-6 g of `ems-ftp75-sdp`'s: two
   controllers reach the same value by different pairs, which is what the eq-H2
-  metric is for. 64.5 % of this cycle's Run window sits below the 0.55 A
-  open-loop line, where the delivered split does not follow the command.
+  metric is for.
+- ⚠️ **Two open-loop figures apply to this cycle and they are different
+  quantities.** 64.5 % is a property of the STIMULUS alone: the fraction of the
+  FTP-75 Run window whose modelled source total sits below the 0.55 A open-loop
+  line (`2 × SHARE_MINORITY_I_MIN_A − SHARE_GOV_OL_HYST_A`), derived by
+  `run_hil_suite.py` for **`ems-ftp75-5050`**, whose fixed 0.50 split is what
+  makes a source total predictable enough to compute that way. 66.75 % is a
+  property of THIS LEG: the fraction of governor ticks the `ems-ftp75-mpc` walk
+  spends in an open mode (§6.1), with the MPC's own commanded share deciding the
+  source totals. A share-shifting controller loads one channel harder than the
+  other, so its minority channel crosses the line at different times than
+  `hold-5050`'s does. The two differ because the commanded split differs, and
+  neither is stale. In both regimes the delivered split does not follow the
+  command.
 - ⚠️ No `dp_db` entry is prefilled for this leg: its matched solve is a job of
   tens of minutes and the FTP-75 bound leg's own table is stale.
 

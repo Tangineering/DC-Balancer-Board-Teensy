@@ -508,8 +508,8 @@ def test_mpc_instantiate_returns_a_fresh_strategy_not_the_registry_proxy():
     assert sim.EMS_STRATEGIES["mpc-det"].impl is None
     # The variant follows the NAME, exactly as the simulator's proxy does.
     assert p.variant == "det"
-    q = ew._instantiate(sim, "mpc-sto", "ems-mpc-sto",
-                              sim.SCENARIOS["ems-mpc-sto"], None, None)
+    q = ew._instantiate(sim, "mpc-sto", "ems-mpc-det",
+                              sim.SCENARIOS["ems-mpc-det"], None, None)
     assert q.variant == "sto"
 
 
@@ -596,9 +596,81 @@ def test_mpc_walk_drain_is_the_soc_band_stimulus_drain():
     t = 0.5 * (sim.SOC_BAND_DRAIN_START_S + sim.SOC_BAND_DRAIN_END_S)
     assert (gen.scenario_drain_a("ems-mpc", t)
             == gen.scenario_drain_a("ems-soc-band", t))
-    assert (gen.scenario_drain_a("ems-mpc-sto", t)
+    assert (gen.scenario_drain_a("ems-mpc-det", t)
             == gen.scenario_drain_a("ems-soc-band", t))
     assert gen.scenario_drain_a("ems-mpc", t) > sim.I_AUX_A
     # ...and the walk reports no drain-coverage gap for the new names.
     a = ew.walk("mpc-det", "ems-mpc", soc0=0.7, governor=True)
     assert not any("AUX LOAD RECONCILED" in n for n in a.notes)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# THE STATIC-LOSS MAP THREADED IN LOCKSTEP (2026-09-02, the DP-bound round)
+# ═════════════════════════════════════════════════════════════════════════
+def test_walk_defaults_to_the_loss_map_free_era():
+    """THE DEFAULT IS THE OLD ERA, deliberately, and unlike `eta_chg`'s.
+
+    Every regression anchor in this file (and `heuristic_walk()` equivalence)
+    is a loss-map-free walk, so defaulting to the map would silently move all
+    of them.  A campaign-facing caller passes the map EXPLICITLY."""
+    import inspect
+    assert inspect.signature(ew.walk).parameters["loss_map"].default is None
+
+
+def test_the_walk_reports_its_demand_era_in_the_notes():
+    for lm, want in ((None, "LOSS-MAP-FREE"), (sim.plant_loss_map(), "V0_EFF")):
+        r = ew.walk("hold-5050", "ems-dp-replay", soc0=0.7, governor=False,
+                    loss_map=lm, trace=False)
+        assert any("demand era" in n for n in r.notes)
+        assert any(want in n for n in r.notes)
+
+
+def test_the_loss_map_lowers_the_walk_bus_and_moves_its_hydrogen():
+    """The map is not inert on a walk: it is the whole point that a walk used
+    to predict a board carries the same static losses the board takes."""
+    old = ew.walk("hold-5050", "ems-dp-replay", soc0=0.7, governor=False,
+                  loss_map=None, trace=True)
+    new = ew.walk("hold-5050", "ems-dp-replay", soc0=0.7, governor=False,
+                  loss_map=sim.plant_loss_map(), trace=True)
+    assert sum(new.v_bus) / len(new.v_bus) < sum(old.v_bus) / len(old.v_bus)
+    assert new.h2_g != old.h2_g
+
+
+def test_the_three_demand_models_agree_stage_for_stage_in_both_eras():
+    """THE LOCKSTEP ASSERTION.
+
+    ⚠️ THERE ARE TWO IMPLEMENTATIONS, NOT THREE, and the name of this test used
+    to imply otherwise.  `gen_dp_ems_table.build_demand()` is the numpy
+    original and `mpc_ems.build_demand()` is an independent scalar port;
+    `ems_walk` has no copy at all and DELEGATES to the generator's, so a walk
+    agrees with the generator by construction and only the port can drift.
+    This test is therefore a check on the PORT, and the walk is included as the
+    delegation's own regression: if `ems_walk` ever grows a third copy, the
+    grid below starts covering it without an edit.
+
+    The planner's prediction and the bound it is scored against are on one
+    model only as long as the port agrees.  Asserted on a RANDOM preview grid
+    in BOTH demand eras, so a divergence that only shows up off the 0.1 s stage
+    grid is caught too."""
+    import random
+    import mpc_ems as M
+    rng = random.Random(20260902)
+    scen = "ems-soc-band"
+    meta = sim.SCENARIOS[scen]
+    dur = float(meta["duration_s"])
+    for loss_map in (None, sim.plant_loss_map()):
+        for _ in range(3):
+            dt = rng.choice([0.1, 0.25, 0.5, 1.0])
+            n = int(dur / dt)
+            times = [k * dt for k in range(n + 1)]
+            import numpy as _np
+            g_out = gen.build_demand(scen, meta, _np.asarray(times), dt,
+                                     loss_map=loss_map)
+            m_out = M.build_demand(scen, meta, times, dt, loss_map=loss_map)
+            for gi, mi, name in zip(g_out, m_out,
+                                    ("v", "a", "p_dem", "v_bus", "i_total",
+                                     "cruise")):
+                for k in range(0, n + 1, max(1, n // 37)):
+                    assert float(gi[k]) == pytest.approx(float(mi[k]),
+                                                         rel=1e-12, abs=1e-12), \
+                        (name, dt, k, loss_map is not None)

@@ -431,6 +431,43 @@ _ETA_ERA_PROVISIONAL = (
     "charger and their numbers are NOT comparable. Re-derive from the first "
     "eta-era campaign that runs this scenario")
 
+# ── The bleed-era provisional qualifier ─────────────────────────────────────
+# The DP-bound round (2026-09-02).  `hil_electrical.R_NODE_BLEED` (one 2 kOhm
+# value on every node) split into `R_NODE_BLEED_BUS` 30 kOhm and
+# `R_NODE_BLEED_OTHER` 60 kOhm, and `hil_plant_sim.R_BUS_BLEED` followed.  That
+# is a STATIC LOAD the sources carried on every tick of every run, so unlike
+# the charger era it moves EVERY band, on charging and non-charging scenarios
+# alike.  See docs/HIL_PLANT.md section 4.8 for the physics and the reversal
+# path, and the BLEED-ERA note in the anchors block below for the per-anchor
+# predictions.
+_BLEED_ERA_PROVISIONAL = (
+    "post-bleed era (R_NODE_BLEED_BUS 30 kOhm / R_NODE_BLEED_OTHER 60 kOhm, "
+    "docs/HIL_PLANT.md section 4.8): this bound was re-derived offline, not "
+    "measured on the board. Campaigns <= 20260902_041414 ran the uniform "
+    "2 kOhm bleed and their numbers are NOT comparable. The bleed values are "
+    "themselves TODO(calibrate) - the operator's 30-60 s dark-bus decay "
+    "recollection - so expect a SECOND move after the bench decay capture; do "
+    "not spend a tightening pass here before it")
+
+# ── RUN-ERA FIELDS, the list an analyst reads before any cross-campaign
+#    comparison.  FIVE, not four, since 2026-09-02.  Kept HERE as well as in
+#    .claude/skills/hil-agent-analysis/references/hil-conventions.md because
+#    this is the file whose bands the eras invalidate.
+#      1. `scenario.eta_chg`          the charger era; ABSENT is the 1:1
+#                                     sentinel, not "unknown"
+#      2. `config.droop_mode`         `design` or `measured`; every campaign
+#                                     since the flag existed has run `design`,
+#                                     and the DP's static-loss map is a
+#                                     `design` fit that resolves to NO MAP in
+#                                     any other mode
+#      3. `constants.*_PRELOAD_A`     the auxiliary preload era
+#      4. `config.asymmetry` + its    the converter-asymmetry era
+#         `_dv0_v` / `_droop_scale_fc`
+#      5. `config` bleed constants    the node-bleed era (2026-09-02); a
+#                                     sidecar from the uniform-2 kOhm era
+#                                     carries the old values in its
+#                                     `constants` block
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ASYMMETRY-ERA REPEATABILITY ANCHORS (2026-09-02, campaign C item 4)
 #
@@ -461,6 +498,39 @@ _ETA_ERA_PROVISIONAL = (
 # ems-soc-band) are what the same configuration actually reproduces to. Do not
 # open a finding on an h2 difference under ~50 ppm, and do not size a band on
 # the 8 ppm figure.
+#
+# ⚠️⚠️ BLEED ERA (2026-09-02, the DP-bound round): EVERY ANCHOR ABOVE IS TO BE
+# RE-PINNED ON THE NEXT CAMPAIGN, and none of them may be quoted across the
+# boundary. `hil_electrical.R_NODE_BLEED` (one 2 kOhm value on every node) split
+# into `R_NODE_BLEED_BUS` 30 kOhm and `R_NODE_BLEED_OTHER` 60 kOhm on the
+# operator's 30-60 s dark-bus decay recollection, and
+# `hil_plant_sim.R_BUS_BLEED` followed to 30 kOhm. That removes a static load
+# the sources were carrying on EVERY tick of EVERY run, so it moves every
+# energy total and every settled operating point, whether or not the scenario
+# charges. The predicted moves, from the campaign 20260902_041414 traces and
+# the offline walks:
+#
+#   anchor              predicted move            confidence
+#   ------------------  ------------------------  ---------------------------
+#   h2 on a cycle       -1.7 % (61 s cycle)       computed from the trace's
+#                       -2.9 % (FTP-75)           own bleed integral; every
+#                                                 leg on a stimulus moves by
+#                                                 the SAME percentage
+#   soc-depletion latch +1.5 s later              the pack carries less static
+#                                                 load, so it walks down more
+#                                                 slowly
+#   scp-inrush i_cut    RE-MEASURE, do not        the cut is a foldback
+#   handoff-sag cut     predict                   trajectory through a node
+#                                                 whose bleed moved; the
+#                                                 BIT-EXACTNESS records above
+#                                                 are EXPECTED TO BREAK
+#   comm-loss re-close  RE-MEASURE                same argument
+#   share-staircase     RE-MEASURE                same argument
+#
+# The bleed values are `TODO(calibrate)` -- the operator's recollection, not a
+# measurement -- so the first campaign after the bench decay capture
+# (`hil_electrical.R_NODE_BLEED_BUS`) will move them AGAIN. Do not spend a
+# tightening pass on these bands until that capture exists.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Which scenarios EXPECT the board to latch a fault.
@@ -2503,6 +2573,18 @@ _FTP_SURVIVE_T = 300.0
 # 0.88 eras give bit-identical totals (verified: 0.028089711 g symmetric,
 # both eras). The same holds for `ems-ftp75-sdp`, `ems-ftp75-dp`,
 # `ems-dp-replay` and `ems-sdp`.
+# ⚠️ RE-WALKED FOR THE LOSS-MAP AND BLEED ERA (2026-09-02) AND HELD. The
+# same M2-equivalent walk with `loss_map=hil_plant_sim.plant_loss_map()` reads
+# 0.029807 g / dSoC -0.010612, i.e. -0.27 % on the hydrogen, and +/-25 % of
+# that is [0.022355, 0.037259] -> [0.022, 0.037] at this rounding. The band is
+# therefore UNCHANGED, and it is unchanged because the walk moved by a quarter
+# of a percent against a band that is 50 % wide, not because it was not
+# re-derived.
+# ⚠️ THE BOARD IS PREDICTED TO MOVE FURTHER THAN THE WALK DID, and in the
+# other direction: the per-node bleed removes a static load the sources were
+# carrying on every tick, worth about -2.9 % of h2 on a 340 s cycle (computed
+# from campaign 20260902_041414's own bleed integral). That is still well
+# inside the band. Re-derive both from the first bleed-era campaign.
 _FTP_H2_BAND_5050 = (0.022, 0.037)
 # soc-band: a TWO-SIDED band, [0.070, 0.115] around the measured 9.159e-2
 # (-24 % / +26 %, the same shape as the 5050 band above).
@@ -2521,7 +2603,7 @@ _FTP_H2_BAND_5050 = (0.022, 0.037)
 # A quantity that repeats to five significant figures over six runs supports a
 # +/-25 % band comfortably; the band is deliberately no tighter, because it is a
 # scale/accumulation tripwire on the metric, not a tolerance on the model.
-_FTP_H2_PROVISIONAL = (
+_FTP_H2_PROVISIONAL = _BLEED_ERA_PROVISIONAL + ". " + (
     "first zero-preload campaign (aux_preload_a 0.65/0.45 -> 0.0, operator "
     "ruling 2026-09-01) AND first ETA_CHG 0.88 charger era (WP-1C, "
     "2026-09-02); the band is a governor-walk prediction +/-25 %, not a "
@@ -2601,6 +2683,22 @@ _FTP_H2_FLOOR = 5.0e-3          # the 5050 variant's own conservative floor
 #    MEASUREMENT: [0.033942, 0.050913] -> [0.034, 0.051]. Five charge windows,
 #    42.726 s, 30.608 C (+0.00170 SoC) are inside that number, so a campaign
 #    whose charge schedule collapses now fails the floor instead of passing it.
+# 5. ⚠️ BLEED ERA (2026-09-02, the DP-bound round) — THE BAND IS HELD AND IS
+#    THE LEAST TRUSTWORTHY IN THIS FILE UNTIL THE NEXT CAMPAIGN. It is +/-20 %
+#    around a MEASUREMENT (0.042427 g) taken at the uniform 2 kOhm node bleed.
+#    Two things move it, in opposite directions and by different amounts:
+#      * the loss-map re-walk reads 0.041936 g against the pre-round 0.041873,
+#        i.e. +0.15 %, which is a change of DEMAND MODEL and not a prediction
+#        of the board;
+#      * the per-node bleed removes a static load the sources carried on every
+#        tick, worth about -2.9 % of h2 on this cycle.
+#    Applying the second alone would recentre the band on ~0.041197 g and give
+#    [0.033, 0.049]. It is NOT applied, deliberately: shifting a band that is
+#    anchored on a measurement onto a prediction of that measurement trades a
+#    known basis for an unknown one, and -2.9 % is a seventh of the band's own
+#    half-width. The first bleed-era campaign that runs this leg RE-PINS it
+#    from its own h2_cum_g, and until then a reading in the lower half of the
+#    band is expected rather than a finding.
 _FTP_H2_FLOOR_SOCBAND = 0.034
 _FTP_H2_CEILING_SOCBAND = 0.051
 
@@ -3817,19 +3915,38 @@ FAULT_EXPECTATIONS["ems-sdp-braking"] = {
 # the same +/-25 % band shape the FTP-75 sibling entries use.  Gate 2 of the
 # design's evaluation plan, run 2026-09-02:
 #
+# ⚠️ RE-DERIVED 2026-09-02 (the DP-bound round), and TWO things moved at once.
+# First, the DEMAND MODEL: every walk below carries the static-loss map
+# (`hil_plant_sim.plant_loss_map()`, passed as `ems_walk.walk(loss_map=...)`)
+# and the per-node bleed, so the walks predict the board's NEW plant. Second,
+# the STRATEGY BINDINGS: `mpc-sto` is now the default MPC and `ems-mpc`,
+# `ems-mpc-cross` and `ems-ftp75-mpc` bind it, while the scenario formerly
+# named `ems-mpc-sto` is `ems-mpc-det` and binds `mpc-det` as the ablation.
+# A row below is therefore NOT comparable with the pre-round row of the same
+# scenario name on either axis.
+#
 #   leg                  strategy   h2 (g)     dSoC        eq-H2 (lambda 0.41)
-#   ems-soc-band         soc-band   0.012264   -0.002002   0.017146   (reference)
-#   ems-dp-replay        dp-replay  0.011900   -0.001936   0.016622   (bound)
-#   ems-sdp              sdp-v4     0.012729   -0.001600   0.016631
-#   ems-mpc              mpc-det    0.010429   -0.002537   0.016616
-#   ems-mpc-sto          mpc-sto    0.009313   -0.002998   0.016625
-#   ems-mpc-cross        mpc-det    0.014134   -0.006007   0.028786
-#   ems-ftp75-socband    soc-band   0.041873   -0.006306   0.057254   (reference)
-#   ems-ftp75-sdp        sdp-v4     0.019918   -0.014691   0.055750
-#   ems-ftp75-mpc        mpc-det    0.023771   -0.013112   0.055751
-#   ems-ftp75-dp         dp-replay  PENDING — the shipped table's stimulus
-#                                   fingerprint is stale and it must be
-#                                   regenerated before the bound leg walks.
+#   ems-soc-band         soc-band   0.012051   -0.001975   0.016868   (reference)
+#   ems-dp-replay        dp-replay  0.011680   -0.001913   0.016346   (bound)
+#   ems-sdp              sdp-v4     0.012522   -0.001571   0.016354
+#   ems-mpc              mpc-sto    0.007588   -0.003591   0.016347
+#   ems-mpc-det          mpc-det    0.009728   -0.002708   0.016333
+#   ems-mpc-cross        mpc-sto    0.010835   -0.007318   0.028684
+#   ems-ftp75-socband    soc-band   0.041936   -0.006231   0.057134   (reference)
+#   ems-ftp75-sdp        sdp-v4     0.019813   -0.014684   0.055628
+#   ems-ftp75-mpc        mpc-sto    0.021983   -0.013792   0.055622
+#   ems-ftp75-dp         dp-replay  0.037504   -0.007479   0.055746   (bound)
+#   ems-ftp75-5050       hold-5050  0.029807   -0.010612   0.055690
+#
+# The PRE-ROUND table, kept because every band shipped before this round was
+# sized on it:
+#   ems-soc-band   0.012264 / -0.002002 / 0.017146 ; ems-dp-replay 0.011900 /
+#   -0.001936 / 0.016622 ; ems-sdp 0.012729 / -0.001600 / 0.016631 ;
+#   ems-mpc (then mpc-det) 0.010429 / -0.002537 / 0.016616 ; ems-mpc-sto (then
+#   mpc-sto) 0.009313 / -0.002998 / 0.016625 ; ems-mpc-cross (then mpc-det)
+#   0.014134 / -0.006007 / 0.028786 ; ems-ftp75-socband 0.041873 / -0.006306 /
+#   0.057254 ; ems-ftp75-sdp 0.019918 / -0.014691 / 0.055750 ; ems-ftp75-mpc
+#   (then mpc-det) 0.023771 / -0.013112 / 0.055751.
 #
 # ⚠️ THE PAIR IS THE RESULT, NOT THE HYDROGEN, and on this controller that is
 # not a stylistic preference. Three repeats of each walk reproduce the totals
@@ -3917,8 +4034,14 @@ _MPC_SHARE_CEIL = 0.76
 # than as a longest-run bound: the suite has no numeric-threshold run kind
 # (`max_continuous_ticks` needs a bit or a masked integer), and a peak ceiling
 # expresses the same budget claim without one.  Walk peaks are far under it —
-# 0.7310 A (ems-mpc / ems-mpc-sto), 0.3015 A (cross), 0.4801 A (ftp75) — so
-# this is a budget bound with wide slack, not a tripwire, and it says so.
+# RE-MEASURED 2026-09-02 on the shipped bindings and the loss-map demand
+# era: 0.7357 A (ems-mpc, mpc-sto), 0.9809 A (ems-mpc-det, mpc-det),
+# 0.3016 A (cross), 0.4886 A (ftp75). The ablation leg is the one that
+# moved, and it moved because `mpc-det` commands a wider share band on
+# this stimulus than `mpc-sto` does; at 0.9809 A it still sits 18 % under
+# the ceiling. So this remains a budget bound with slack, not a tripwire,
+# and it says so. The pre-swap figures were 0.7310 A (ems-mpc /
+# ems-mpc-sto), 0.3015 A (cross), 0.4801 A (ftp75).
 _MPC_I_FC_CEIL = 1.19
 
 
@@ -4061,25 +4184,36 @@ def _mpc_expectation(*, scenario, walk_h2, duration_s, survive_t,
 
 # ── ems-mpc: the frontier candidate ─────────────────────────────────────────
 FAULT_EXPECTATIONS["ems-mpc"] = _mpc_expectation(
-    scenario="ems-mpc", walk_h2=0.010429, duration_s=61.0, survive_t=50.0,
-    run_window=(5.0, 58.0), share_range_min=0.20,
+    scenario="ems-mpc", walk_h2=0.007588, duration_s=61.0, survive_t=50.0,
+    # RE-DERIVED 2026-09-02: the leg binds `mpc-sto`, whose walk commands a
+    # 0.2500 share range on this stimulus (the pre-swap `mpc-det` walk was
+    # wider). The floor is ~0.6x that, which is a degenerate-constant guard
+    # with room, not a tolerance on the plan.
+    run_window=(5.0, 58.0), share_range_min=0.15,
     pred_err_max=0.30, budget_hit_max_ticks=52000, charge_edges=4,
     min_rows=40000,
-    extra_note=("The CANDIDATE leg of the `cycle61-mpc` frontier tuple. The "
-                "walk lands eq-H2 0.016616 against the `soc-band` reference's "
-                "0.017146 (0.969x) and the `dp-replay` bound's 0.016622 "
-                "(0.9996x) — and note that the vs-bound arm is STRUCTURALLY "
-                "near 1.0 for a charge-free candidate (design section 7.4.1), "
-                "so it detects lever-class deviations and does not measure "
-                "optimality. The delta-SoC-matched DP bound for the walk's own "
-                "terminal state is 0.010418 g (tools/dp_db, key "
-                "62151bd59b9cd787) against the walk's 0.010429 — 0.10 % above "
-                "the bound, which is a plan-consistency check and not a result."))
+    extra_note=("The CANDIDATE leg of the `cycle61-mpc` frontier tuple, and "
+                "since 2026-09-02 it runs `mpc-sto` — the stochastic law is "
+                "THE MPC and `mpc-det` is the ablation on `ems-mpc-det`. The "
+                "loss-map-era walk lands eq-H2 0.016347 against the "
+                "`soc-band` reference's 0.016868 (0.9691x) and the "
+                "`dp-replay` bound's 0.016346 (1.0001x) — and note that the "
+                "vs-bound arm is STRUCTURALLY near 1.0 for a charge-free "
+                "candidate (design section 7.4.1), so it detects lever-class "
+                "deviations and does not measure optimality. ⚠️ The "
+                "delta-SoC-matched DP bound for this walk's terminal state "
+                "is NOT YET PREFILLED: the stored 0.010418 g (tools/dp_db, "
+                "key 62151bd59b9cd787) was matched to the `mpc-det` walk in "
+                "the loss-map-free era and applies to neither leg as it "
+                "stands."))
 
-# ── ems-mpc-sto: the stochastic variant, NOT a frontier leg ─────────────────
-FAULT_EXPECTATIONS["ems-mpc-sto"] = _mpc_expectation(
-    scenario="ems-mpc-sto", walk_h2=0.009313, duration_s=61.0, survive_t=50.0,
-    run_window=(5.0, 58.0), share_range_min=0.16,
+# ── ems-mpc-det: the stochastic variant, NOT a frontier leg ─────────────────
+FAULT_EXPECTATIONS["ems-mpc-det"] = _mpc_expectation(
+    scenario="ems-mpc-det", walk_h2=0.009728, duration_s=61.0, survive_t=50.0,
+    # RE-DERIVED 2026-09-02: the leg binds `mpc-det`, whose walk commands a
+    # 0.4167 share range here — the widest of the four legs, because the
+    # deterministic law reads the stimulus it is driving. Floor ~0.6x.
+    run_window=(5.0, 58.0), share_range_min=0.25,
     pred_err_max=0.30, budget_hit_max_ticks=52000, charge_edges=4,
     min_rows=40000,
     extra_note=("NOT a frontier leg — EMS_STRATEGY_META's role note says why. "
@@ -4108,8 +4242,16 @@ FAULT_EXPECTATIONS["ems-mpc-sto"] = _mpc_expectation(
 
 # ── ems-mpc-cross: the switching-surface stimulus ───────────────────────────
 FAULT_EXPECTATIONS["ems-mpc-cross"] = _mpc_expectation(
-    scenario="ems-mpc-cross", walk_h2=0.014134, duration_s=200.0,
-    survive_t=180.0, run_window=(5.0, 190.0), share_range_min=0.12,
+    scenario="ems-mpc-cross", walk_h2=0.010835, duration_s=200.0,
+    # ⚠️ RE-DERIVED 2026-09-02 AND LOWERED, 0.12 -> 0.05. The leg binds
+    # `mpc-sto` now, and the stochastic law walks a share range of only
+    # 0.0833 on this two-level cruise — BELOW the pre-swap 0.12 floor, which
+    # would have failed a correct run. The mechanism is the demand model,
+    # not the plant: `mpc-sto` plans against the TPM's conditional mean,
+    # which smooths the two cruise levels this stimulus exists to separate,
+    # so it commands a narrower walk across the same operating region.
+    # 0.05 is ~0.6x the walk and still refuses a constant command.
+    survive_t=180.0, run_window=(5.0, 190.0), share_range_min=0.05,
     pred_err_max=0.30, budget_hit_max_ticks=190000, charge_edges=6,
     min_rows=150000, h2_floor_informational=True,
     extra_note=("The `ems-sdp-cross` stimulus with the MPC's own "
@@ -4143,7 +4285,7 @@ FAULT_EXPECTATIONS["ems-mpc-cross"] = _mpc_expectation(
                 "charge option's enumeration) and every capped decision was "
                 "truncated BEFORE the charge axis. The cap is 1029 from "
                 "2026-09-02; RE-RUN THIS LEG CAP-LIFTED and re-derive the walk "
-                "before touching the band. `ems-mpc-sto` carries the twin "
+                "before touching the band. `ems-mpc-det` carries the twin "
                 "reading (-13.2 %% of its walk, inside the band and therefore "
                 "never surfaced) — the two together point at the WALK. "
                 "SECOND LIVE RESULT (campaign hil_report_20260902_041414, "
@@ -4157,8 +4299,10 @@ FAULT_EXPECTATIONS["ems-mpc-cross"] = _mpc_expectation(
 
 # ── ems-ftp75-mpc: the drive-cycle candidate, behind --with-ftp75 ───────────
 FAULT_EXPECTATIONS["ems-ftp75-mpc"] = _mpc_expectation(
-    scenario="ems-ftp75-mpc", walk_h2=0.023771, duration_s=350.0,
-    survive_t=330.0, run_window=(10.0, 340.0), share_range_min=0.16,
+    scenario="ems-ftp75-mpc", walk_h2=0.021983, duration_s=350.0,
+    # RE-DERIVED 2026-09-02 for the `mpc-sto` binding: walk range 0.2500,
+    # floor ~0.6x.
+    survive_t=330.0, run_window=(10.0, 340.0), share_range_min=0.15,
     pred_err_max=0.30, budget_hit_max_ticks=245000, charge_edges=8,
     min_rows=280000,
     extra_note=("The CANDIDATE leg of the `ftp75-mpc` frontier tuple, gated "
@@ -8584,7 +8728,11 @@ EMS_FRONTIERS = [
             "not move: the governor-walk vs_reference goes 0.859 -> 0.958. "
             "Re-derive both thresholds from the first eta-era campaign that "
             "evaluates this tuple; a reading just over 0.98 is a calibration "
-            "event, not a policy failure"),
+            "event, not a policy failure. BLEED AND LOSS-MAP ERA "
+            "(2026-09-02): re-walked with the static-loss map and the "
+            "per-node bleed, this tuple reads vs_reference 0.9696 (candidate "
+            "eq-H2 0.016354 g against the reference's 0.016868) and vs_bound "
+            "1.0006 (bound 0.016346). Both thresholds HELD"),
         # A stimulus mismatch here would be a defect worth failing the run for:
         # the three legs are documented to share one stimulus object.
         "stimulus_mismatch_exit_affecting": True,
@@ -8609,7 +8757,12 @@ EMS_FRONTIERS = [
             "DP-vs-`soc-band` tie that 1.02 was derived from is itself an "
             "old-era number: at eta 0.88 the DP's eq-H2 margin over `soc-band` "
             "on this stimulus is -3.4 %, so 1.02 is now conservative rather "
-            "than knife-edge"),
+            "than knife-edge. BLEED AND LOSS-MAP ERA (2026-09-02): re-walked "
+            "with the static-loss map and the per-node bleed, this tuple reads "
+            "vs_reference 0.9737 (candidate eq-H2 0.055628 g against the "
+            "reference's 0.057134) and vs_bound 0.9979 (bound 0.055746). Both "
+            "thresholds HELD, again with more room; the bound leg's own table "
+            "was regenerated as a loss-map-era solve in the same change"),
         # The preload split IS resolved (2026-09-01) — see the block above —
         # so the precondition is expected to PASS from here on. The flag stays
         # False for ONE campaign more: no campaign has evaluated this tuple, so
@@ -8623,7 +8776,16 @@ EMS_FRONTIERS = [
     # verbatim; only the CANDIDATE differs.  That is deliberate and is the whole
     # value of the comparison: `cycle61-mpc` and `cycle61` share one stimulus
     # object, one reference leg and one bound, so the difference between the two
-    # records is the difference between `sdp-v4` and `mpc-det` and nothing else.
+    # records is the difference between `sdp-v4` and `mpc-sto` and nothing else.
+    #
+    # ⚠️ THE CANDIDATE STRATEGY CHANGED 2026-09-02 (operator ruling): both MPC
+    # tuples' candidate legs now bind `mpc-sto`, the stochastic law, and
+    # `mpc-det` is the ablation on `ems-mpc-det`. The OFFLINE figures in the
+    # notes below were RE-WALKED under the new bindings and the loss-map demand
+    # era in the same change, so they are post-swap. What is still PRE-SWAP is
+    # every LIVE figure: campaigns 20260902_011926 and _041414 ran `mpc-det` on
+    # these legs, so a measured number attributed to a campaign is a reading of
+    # the deterministic law on a leg the stochastic one now drives.
     #
     # ⚠️ `stimulus_mismatch_exit_affecting` is False on BOTH for one campaign,
     # exactly as `ftp75` carries it: the stimulus keys agree in the registry by
@@ -8634,7 +8796,8 @@ EMS_FRONTIERS = [
     #
     # ⚠️ THE VS-BOUND ARM IS STRUCTURALLY NEAR 1.0 HERE, and more so than for
     # the SDP tuples: `mpc-det` opens ZERO charge windows in every Gate-2 walk,
-    # so it and the bound differ only along the share lever — and the eq-H2
+    # so it and the bound differ only along the share lever (`mpc-sto` opens
+    # zero charge windows in the post-swap Gate-2 walk too) — and the eq-H2
     # exchange rate IS that lever's rate, which makes the two coincide by
     # construction (campaign 20260901_080905; design section 7.4.1).  The walk
     # reads 1.0007x on `cycle61-mpc`.  DO NOT TIGHTEN `vs_bound_max` on a
@@ -8652,16 +8815,21 @@ EMS_FRONTIERS = [
         "vs_reference_max": 0.98,
         "vs_bound_max": 1.06,
         "provisional_note": (
-            "PROVISIONAL — no campaign has evaluated this tuple. The Gate-2 "
-            "governor walk (2026-09-02, dv0 0.030223, soc0 0.7) gives "
-            "vs_reference 0.9701 and vs_bound 1.0007, so both thresholds are "
-            "cleared offline; BUT the walk's plant IS the MPC's own prediction "
-            "model (the inverse-crime condition, design section 7.1), so that "
-            "clearance is not evidence about the live plant. The thresholds "
-            "are the `cycle61` tuple's, taken unchanged so the two records are "
-            "read on one scale. Re-derive from the first campaign that "
-            "evaluates this tuple, and read the vs-bound arm under the "
-            "structural caveat above"),
+            "⚠️ THE CANDIDATE FAILS THE OFFLINE GATE 1. `mpc-sto`'s governor-aware stage model predicts the DELIVERED share on `ems-soc-band` to a mean of 0.00971 and a max of 0.25000 against a 5e-03 acceptance; `mpc-det` on the same gate reads 0.000323. The mechanism is known and is the same one EMS_STRATEGY_META's role note records: a 1 Hz re-command landing in an `open_feedforward` stage drops the governor into a feedforward slew the stage model does not represent. The leg ships because the LIVE prediction error is inside its 0.30 band (campaigns 20260902_011926 and _041414: closed-loop median 1e-5, open-loop max 0.219), but a frontier reading here carries that failing gate inside it. "
+            "PROVISIONAL, AND RE-DERIVED 2026-09-02 FOR TWO SIMULTANEOUS "
+            "CHANGES: the candidate now binds `mpc-sto`, not `mpc-det`, and "
+            "every walk carries the static-loss map and the per-node bleed. "
+            "The Gate-2 governor walk (dv0 0.030223, soc0 0.7, loss map on) "
+            "gives eq-H2 0.016347 g against the reference's 0.016868 and the "
+            "bound's 0.016346, i.e. vs_reference 0.9691 and vs_bound 1.0001, "
+            "so both thresholds are cleared offline; BUT the walk's plant IS "
+            "the MPC's own prediction model (the inverse-crime condition, "
+            "design section 7.1), so that clearance is not evidence about the "
+            "live plant. The pre-round `mpc-det` walk read 0.9701 / 1.0007. "
+            "The thresholds are the `cycle61` tuple's, taken unchanged so the "
+            "two records are read on one scale. Re-derive from the first "
+            "campaign that evaluates this tuple, and read the vs-bound arm "
+            "under the structural caveat above"),
         "stimulus_mismatch_exit_affecting": False,
     },
     {
@@ -8679,15 +8847,20 @@ EMS_FRONTIERS = [
         "vs_reference_max": 1.02,
         "vs_bound_max": 1.06,
         "provisional_note": (
-            "PROVISIONAL — no campaign has evaluated this tuple, and its "
-            "OFFLINE prediction is INCOMPLETE. The Gate-2 governor walk gives "
-            "vs_reference 0.9748 (eq-H2 0.055810 against the reference's "
-            "0.057254); the vs-BOUND arm has no prediction at all, because the "
-            "shipped `dp_ems_table_ems-ftp75-dp.csv` carries a stale stimulus "
-            "fingerprint and refuses to walk until it is regenerated. The "
-            "thresholds are the `ftp75` tuple's, unchanged. Re-derive from the "
-            "first campaign, and note the walk's clearance is an inverse-crime "
-            "result (design section 7.1)"),
+            "⚠️ THE CANDIDATE FAILS THE OFFLINE GATE 1. `mpc-sto`'s governor-aware stage model predicts the DELIVERED share on `ems-soc-band` to a mean of 0.00971 and a max of 0.25000 against a 5e-03 acceptance; `mpc-det` on the same gate reads 0.000323. The mechanism is known and is the same one EMS_STRATEGY_META's role note records: a 1 Hz re-command landing in an `open_feedforward` stage drops the governor into a feedforward slew the stage model does not represent. The leg ships because the LIVE prediction error is inside its 0.30 band (campaigns 20260902_011926 and _041414: closed-loop median 1e-5, open-loop max 0.219), but a frontier reading here carries that failing gate inside it. "
+            "PROVISIONAL, AND RE-DERIVED 2026-09-02 for the same two "
+            "simultaneous changes as `cycle61-mpc`: the candidate binds "
+            "`mpc-sto`, and every walk carries the static-loss map and the "
+            "per-node bleed. The Gate-2 governor walk gives eq-H2 0.055622 g "
+            "against the reference's 0.057134 and the bound's 0.055746, "
+            "i.e. vs_reference 0.9735 and vs_bound 0.9978; the pre-round "
+            "`mpc-det` reading was vs_reference 0.9748 with no vs-bound "
+            "arm at all, because the shipped FTP-75 table then carried a "
+            "stale stimulus fingerprint. It has been regenerated as a "
+            "loss-map-era solve, so BOTH arms now have a prediction. "
+            "The thresholds are the `ftp75` tuple's, unchanged. Re-derive from "
+            "the first campaign, and note the walk's clearance is an "
+            "inverse-crime result (design section 7.1)"),
         "stimulus_mismatch_exit_affecting": False,
     },
 ]

@@ -112,7 +112,7 @@ DP_DB_TRAJ_STRIDE = 10
 KEY_FIELDS = (
     "scenario", "profile_fingerprint", "soc0", "capacity_ah",
     "charger_accounting", "stage_dt", "n_share", "soc_step", "chg_a",
-    "lambda_dev", "aux_preload_a", "eta_chg",
+    "lambda_dev", "aux_preload_a", "eta_chg", "loss_map",
     "gfc_dc_gain", "eta_boost", "limit_i_fc_max_a", "charge_share_value",
     "share_span", "cruise_slope_max", "cruise_min_mps", "run_entry_s",
     "run_exit_s",
@@ -134,7 +134,14 @@ KEY_FIELDS = (
 # are one thing, and a NEW-era record (eta_chg 0.88) keys differently, which
 # is the whole point: a baseline solved against a different charger model is
 # not a baseline for this one.
-OPTIONAL_KEY_FIELDS = ("eta_chg",)
+# `loss_map` JOINED 2026-09-02 (the DP-bound round), on exactly these terms
+# and for the same reason: an ABSENT map names the LOSS-MAP-FREE demand model
+# every record in this store was solved against, so omitting it keeps all 30
+# stored records reachable by the old-era lookup that is asking for the problem
+# they answer.  It is carried as the CANONICAL STRING
+# (`hil_plant_sim.loss_map_canonical`), not as a dict: `_canonical()` renders a
+# str verbatim and a float through repr(), and a dict is neither.
+OPTIONAL_KEY_FIELDS = ("eta_chg", "loss_map")
 
 _NON_TARGET_FIELDS = tuple(f for f in KEY_FIELDS if f != "target_soc_q")
 
@@ -248,7 +255,15 @@ def fingerprint_parts(scenario, meta):
             continue
         if key in resolvers:
             val = resolvers[key](meta)
-        if key == "ems_v_profile" and val:
+        if key == "loss_map":
+            # Mirrors dp_profile_fingerprint(): the digest carries the map's
+            # CANONICAL STRING, not a dict repr.  Resolved through the
+            # simulator's own renderer so the two cannot drift.
+            _canon = getattr(sim, "loss_map_canonical", None)
+            _dpl = getattr(sim, "dp_loss_map", None)
+            if callable(_canon) and callable(_dpl):
+                val = _canon(_dpl(meta))
+        elif key == "ems_v_profile" and val:
             val = [(float(a), float(b)) for a, b in val]
         elif val is not None:
             val = float(val)
@@ -316,7 +331,7 @@ def model_fields():
 def problem_fields(scenario, *, profile_fingerprint, soc0, capacity_ah,
                    charger_accounting, stage_dt, n_share, soc_step, chg_a,
                    lambda_dev, aux_preload_a, run_exit_s, target_soc,
-                   era_overrides=None, eta_chg=None):
+                   era_overrides=None, eta_chg=None, loss_map=None):
     """A complete key-field dict.
 
     `aux_preload_a=None` means "whatever the scenario declares", which is what
@@ -335,7 +350,11 @@ def problem_fields(scenario, *, profile_fingerprint, soc0, capacity_ah,
     2026-09-01 (a 1:1 current-transfer charger), and it is the default for the
     same stimulus-era reason `aux_preload_a` has one: an archived run must be
     keyed by the accounting it actually ran under.  It is an OPTIONAL key
-    field, so None keys exactly as the pre-change code did."""
+    field, so None keys exactly as the pre-change code did.
+
+    `loss_map=None` is the DEMAND-MODEL ERA of every record solved before
+    2026-09-02 (motor draw plus drain, on V_BUS_DROOP_V0 -
+    K_DROOP_BUS_SHARED*I), and it is optional on the same terms."""
     import hil_plant_sim as sim
     if aux_preload_a is None:
         aux_preload_a = ((sim.SCENARIOS.get(scenario) or {})
@@ -354,7 +373,13 @@ def problem_fields(scenario, *, profile_fingerprint, soc0, capacity_ah,
         "lambda_dev": float(lambda_dev),
         "aux_preload_a": float(aux_preload_a),
         "eta_chg": (None if eta_chg is None else float(eta_chg)),
+        "loss_map": (None if loss_map is None
+                     else sim.loss_map_canonical(sim.check_loss_map(loss_map))),
         "run_exit_s": float(run_exit_s),
+        # Not a key field: the map DICT, carried so `solve_and_store()` can
+        # rebuild the problem without re-parsing the canonical string.
+        "loss_map_dict": (None if loss_map is None
+                          else dict(sim.check_loss_map(loss_map))),
         "target_soc_q": quantize_target(target_soc),
         # Not a key field (see KEY_FIELDS); carried for lookup()'s raw compare.
         "target_soc": float(target_soc),
@@ -377,6 +402,7 @@ def fields_from_problem(problem, target_soc):
         soc_step=problem.soc_step, chg_a=problem.chg_a,
         lambda_dev=problem.lambda_dev, aux_preload_a=problem.aux_preload_a,
         eta_chg=getattr(problem, "eta_chg", None),
+        loss_map=getattr(problem, "loss_map", None),
         run_exit_s=problem.run_exit, target_soc=target_soc)
 
 
@@ -633,6 +659,16 @@ def solve_and_store(fields, target_soc, *, match_tol=2.0e-6, db_dir=DP_DB_DIR,
     _eta = fields.get("eta_chg")
     if _eta is not None and "eta_chg" not in era_overrides:
         meta["eta_chg"] = float(_eta)
+    # The same argument for the demand-model era (2026-09-02).  `store()`
+    # persists only KEY_FIELDS, so a record read back off disk carries the
+    # CANONICAL STRING and not the dict the caller built; parsing the string
+    # back is what lets a prefill fed a stored record reconstruct the same
+    # problem instead of refusing it for fingerprint drift.
+    _lm = fields.get("loss_map_dict")
+    if _lm is None:
+        _lm = sim.loss_map_from_canonical(fields.get("loss_map"))
+    if _lm is not None and "loss_map" not in era_overrides:
+        meta["loss_map"] = sim.check_loss_map(_lm)
     aux = fields.get("aux_preload_a")
     problem = gen.prepare_problem(
         scenario, meta, soc0=fields["soc0"],
@@ -642,7 +678,8 @@ def solve_and_store(fields, target_soc, *, match_tol=2.0e-6, db_dir=DP_DB_DIR,
         charger_accounting=fields["charger_accounting"],
         lambda_dev=fields["lambda_dev"],
         aux_preload_a=(None if aux is None else float(aux)),
-        eta_chg=fields.get("eta_chg"))
+        eta_chg=fields.get("eta_chg"),
+        loss_map=_lm)
     if problem.fingerprint != fields["profile_fingerprint"]:
         # The era overrides could not put the run's stimulus back.  Name what
         # they DID reconcile and what they could not, so the reader sees which
@@ -921,9 +958,14 @@ def _cmd_prefill(args):
     # INTO the fingerprint meta closes that: an old-era prefill is unchanged
     # (dp_profile_fingerprint omits the term when it resolves to None).
     eta_resolved = None if args.eta_chg_none else args.eta_chg
+    lm_resolved = gen.resolve_loss_map_arg(getattr(args, "loss_map", "none"))
     fp_meta = dict(meta)
     if eta_resolved is not None:
         fp_meta["eta_chg"] = float(eta_resolved)
+    # The same M4(b) argument for the demand-model era: the map has to reach
+    # the FINGERPRINT, not only the key field, or the record is unreachable.
+    if lm_resolved is not None:
+        fp_meta["loss_map"] = lm_resolved
     fingerprint = sim.dp_profile_fingerprint(args.scenario, fp_meta)
 
     print("[dp_db] scenario %s, soc0 %.4f, accounting %s, %d target(s)"
@@ -939,7 +981,8 @@ def _cmd_prefill(args):
             chg_a=chg_a,
             lambda_dev=gen.DP_LAMBDA_DEV_G_PER_SOC_S,
             aux_preload_a=aux, run_exit_s=run_exit, target_soc=target,
-            eta_chg=(None if args.eta_chg_none else args.eta_chg))
+            eta_chg=(None if args.eta_chg_none else args.eta_chg),
+            loss_map=lm_resolved)
         hit = lookup(fields, tol_soc=args.tol, db_dir=args.db_dir)
         if hit is not None:
             skipped_n += 1
@@ -1012,6 +1055,11 @@ def main(argv=None):
     p.add_argument("--eta-chg-none", action="store_true",
                    help="force the 1:1 current-transfer era even when a "
                         "scenario or default would supply an efficiency")
+    p.add_argument("--loss-map", choices=("none", "plant"), default="none",
+                   help="DEMAND-MODEL ERA. 'none' (the default) is the "
+                        "loss-map-free model every record solved before "
+                        "2026-09-02 used; 'plant' carries the plant's static "
+                        "losses and the realized `--droop design` bus law.")
     p.add_argument("--run-exit", type=float, default=None,
                    help="strategy run-exit time in s (default: the "
                         "scenario's ems_run_exit_s, else SOC_BAND_RUN_EXIT_S)")

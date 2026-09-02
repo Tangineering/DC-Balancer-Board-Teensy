@@ -493,12 +493,12 @@ def pack_current_from_bus_power(p_bt_bus_w, soc):
 # `ems-dp-replay` table is unaffected — that scenario was already in the list —
 # and is byte-identical across the fix.
 # EXTENDED 2026-09-02 with the two MPC legs that share `ems-soc-band`'s stimulus
-# OBJECT (`ems-mpc`, `ems-mpc-sto`).  Same argument as the B2 fix above: a DP
+# OBJECT (`ems-mpc`, `ems-mpc-det`).  Same argument as the B2 fix above: a DP
 # baseline solved for one of them against HALF the demand would be a bound the
 # run cannot honestly be scored against.  `ems-mpc-cross` is absent, exactly as
 # `ems-sdp-cross` is — it carries no SoC-band drain.
 SOC_BAND_DRAIN_SCENARIOS = ("ems-soc-band", "ems-dp-replay", "ems-sdp",
-                            "ems-mpc", "ems-mpc-sto")
+                            "ems-mpc", "ems-mpc-det")
 
 
 def scenario_drain_a(scenario, t, aux_preload_a=None):
@@ -535,8 +535,31 @@ def scenario_drain_a(scenario, t, aux_preload_a=None):
     return sim.I_AUX_A + sim.SOC_BAND_DRAIN_LOAD_A * (ramp_in - ramp_out)
 
 
-def build_demand(scenario, meta, times, dt, aux_preload_a=None):
+def build_demand(scenario, meta, times, dt, aux_preload_a=None, loss_map=None):
     """Per-stage (v, a, P_dem_bus, V_bus, I_total, cruise) arrays.
+
+    `loss_map` (2026-09-02) selects the DEMAND-MODEL ERA, in the shape
+    `eta_chg` established for the charger.  `None` is the pre-2026-09-02 model
+    documented under ELECTRICS below.  A dict (see
+    `hil_plant_sim.loss_map_for_config`) prices the plant's static losses and
+    the realized `--droop design` bus law instead, which is what makes the
+    delta-SoC-matched bound TIGHTER and BLEED-INVARIANT: the run and the bound
+    then carry the same node bleeds, so a bleed retune moves both together.
+    The full derivation, the fit and its residuals are in that module's
+    "DP DEMAND MODEL'S STATIC-LOSS MAP" block; the mechanism is
+
+        i_motor = p_mech / (ETA_BOOST * V_bus)
+        V_MOT   = (V_bus - rt_v_fwd - rt_r_on*i_motor)/(1 + rt_r_on*g_node_other)
+        i_par   = V_bus*g_node_bus + V_MOT*g_node_other
+        I_total = i_motor + i_aux + i_par
+        V_bus   = v0_eff - (r_fix + k_g*g_par) * I_total
+
+    solved by DP_LOSS_MAP_PICARD_ITERS iterations of the same Picard loop the
+    two-term model uses.  `V_MOT` carries no switch indicator because MOT_PWR
+    is closed for the whole DP horizon: the bus is pre-charged during the
+    low-voltage bring-up and kept energized through Idle and Run (CLAUDE.md
+    section 2, Death 5).  The charger arm of `i_par` is deliberately absent —
+    see the SCOPE note in the loss-map block.
 
     MECHANICS (Plant.step's model, without the stiction deadband — the profile
     never dwells inside V_STICTION while commanding force):
@@ -598,13 +621,32 @@ def build_demand(scenario, meta, times, dt, aux_preload_a=None):
     force = sim.M_EFF * a + f_coul + sim.B_EFF * v
     p_mech = np.maximum(0.0, force * v)
 
-    v_bus = np.full(n, sim.V_BUS_DROOP_V0)
-    for _ in range(4):
+    if loss_map is None:
+        # THE PRE-2026-09-02 MODEL, kept verbatim so an old-era table
+        # regenerates byte-identically.
+        v_bus = np.full(n, sim.V_BUS_DROOP_V0)
+        for _ in range(4):
+            i_motor = p_mech / (sim.ETA_BOOST * v_bus)
+            i_total = i_motor + i_aux
+            v_bus = sim.V_BUS_DROOP_V0 - sim.K_DROOP_BUS_SHARED * i_total
         i_motor = p_mech / (sim.ETA_BOOST * v_bus)
         i_total = i_motor + i_aux
-        v_bus = sim.V_BUS_DROOP_V0 - sim.K_DROOP_BUS_SHARED * i_total
-    i_motor = p_mech / (sim.ETA_BOOST * v_bus)
-    i_total = i_motor + i_aux
+    else:
+        lm = sim.check_loss_map(loss_map)
+        k_eff = lm["r_fix"] + lm["k_g"] * lm["g_par"]
+        g_bus, g_oth = lm["g_node_bus"], lm["g_node_other"]
+        v_fwd, r_on = lm["rt_v_fwd"], lm["rt_r_on"]
+        v_bus = np.full(n, lm["v0_eff"])
+        for _ in range(sim.DP_LOSS_MAP_PICARD_ITERS):
+            i_motor = p_mech / (sim.ETA_BOOST * v_bus)
+            v_mot = (v_bus - v_fwd - r_on * i_motor) / (1.0 + r_on * g_oth)
+            i_par = v_bus * g_bus + v_mot * g_oth
+            i_total = i_motor + i_aux + i_par
+            v_bus = lm["v0_eff"] - k_eff * i_total
+        i_motor = p_mech / (sim.ETA_BOOST * v_bus)
+        v_mot = (v_bus - v_fwd - r_on * i_motor) / (1.0 + r_on * g_oth)
+        i_par = v_bus * g_bus + v_mot * g_oth
+        i_total = i_motor + i_aux + i_par
     p_dem = v_bus * i_total
 
     # Cruise mask (D10): the same test the causal `soc-band` policy applies,
@@ -625,7 +667,17 @@ def charge_mask(times, p_dem, v_bus, cruise, chg_ceiling_a, run_exit_s,
     V_pack*i/(eta*V_bus), which is SMALLER, so the budget binds later; the
     reference pack voltage is a single scalar (the solve's initial SoC) rather
     than the trajectory's, because this mask must stay state-INDEPENDENT for
-    the stage cost to remain separable."""
+    the stage cost to remain separable.
+
+    THE DEMAND-MODEL ERA REACHES THIS MASK THROUGH `p_dem` AND `v_bus`, and it
+    needs no argument of its own.  The single-source FC budget below is
+    `p_dem/v_bus`, which is exactly `i_total`, so once `build_demand()` carries
+    a loss map that budget includes the parallel bleed current `i_par` and the
+    mask is correspondingly STRICTER: a stage the loss-map-free model admitted
+    can be refused here because the bleed pushes the FC channel over
+    `DP_CHARGE_FC_MARGIN * LIMIT_I_FC_MAX_A`.  That is the intended behaviour,
+    and `test_gen_dp_ems_table.py` pins the `p_dem/v_bus == i_total` identity
+    in both eras so a refactor cannot separate the two."""
     eta_chg = check_eta_chg(eta_chg)     # L8: validate AND normalise
     if eta_chg is not None and v_pack_ref is None:
         raise ValueError("charge_mask needs v_pack_ref when eta_chg is set "
@@ -679,6 +731,13 @@ def step_charge(soc, p_dem, v_bus, chg_a, dt, cap_as, eta_chg=None):
 def reachable_soc_window(soc0, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
                          share_lo, share_hi, eta_chg=None):
     """[lo, hi] SoC bounds over the two extreme admissible policies.
+
+    THE DEMAND-MODEL ERA is likewise transparent here: it enters only through
+    the `p_dem` and `v_bus` arrays the caller passes, so this function needs no
+    `loss_map` argument and must not grow one.  What it MUST NOT do is mix
+    eras: sizing an SoC grid with a loss-map-free demand and then solving on a
+    loss-map demand gives a grid too narrow at one end.  `prepare_problem()`
+    is the single caller and passes one demand to both.
 
     `eta_chg` (D12) reaches only the hydrogen totals inside step_charge, not
     the SoC transition, so GIVEN THE SAME MASK the window is era-invariant; it
@@ -930,6 +989,7 @@ class Problem:
     lambda_dev: float
     aux_preload_a: object          # None = the live registry value
     eta_chg: object                # None = the 1:1 current-transfer era (D12)
+    loss_map: object               # None = the loss-map-free demand model
     fingerprint: str
     chg_a: float
     cap_as: float
@@ -971,7 +1031,7 @@ class MatchedSolve:
 def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
                     soc_step, run_exit, charger_accounting,
                     lambda_dev=DP_LAMBDA_DEV_G_PER_SOC_S,
-                    aux_preload_a=None, eta_chg=None):
+                    aux_preload_a=None, eta_chg=None, loss_map=None):
     """Resolve the demand, the control grid and the SoC grid for one scenario.
 
     Raises ValueError on an argument the solve cannot honour, so a library
@@ -992,6 +1052,10 @@ def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
         eta_chg = check_eta_chg(eta_chg)
     except ValueError as exc:
         raise ValueError(str(exc))
+    # The demand-model era (2026-09-02).  None is the LOSS-MAP-FREE model and
+    # is the DEFAULT, for the same reason `eta_chg`'s default is None: a caller
+    # that predates the map solves exactly the problem it used to.
+    loss_map = sim.check_loss_map(loss_map)
 
     duration = float(meta["duration_s"])
     dt = float(stage_dt)
@@ -1001,7 +1065,7 @@ def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
     chg_a = sim.dp_chg_ceiling_a(meta)
 
     v, a, p_dem, v_bus, i_total, cruise = build_demand(
-        scenario, meta, times, dt, aux_preload_a)
+        scenario, meta, times, dt, aux_preload_a, loss_map=loss_map)
     # The FC-budget term of the mask needs ONE representative pack voltage in
     # the new era (D12); the initial SoC's is used, so the mask stays
     # state-independent and the stage cost stays separable.
@@ -1034,7 +1098,7 @@ def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
         capacity_ah=float(capacity_ah), stage_dt=dt, n_share=int(n_share),
         soc_step=float(soc_step), run_exit=float(run_exit),
         charger_accounting=charger_accounting, lambda_dev=float(lambda_dev),
-        aux_preload_a=aux_preload_a, eta_chg=eta_chg,
+        aux_preload_a=aux_preload_a, eta_chg=eta_chg, loss_map=loss_map,
         fingerprint=sim.dp_profile_fingerprint(scenario, meta),
         chg_a=float(chg_a), cap_as=float(cap_as), n_stages=n_stages,
         times=times, v=v, a=a, p_dem=p_dem, v_bus=v_bus, i_total=i_total,
@@ -1130,6 +1194,18 @@ def heuristic_reference(problem):
 # ─────────────────────────────────────────────────────────────────────────────
 # Table emission
 # ─────────────────────────────────────────────────────────────────────────────
+def resolve_loss_map_arg(loss_map_arg):
+    """`--loss-map` -> the map dict, or None.  ONE resolution of the choice, so
+    `main()`, `render_table()` and every test read the same era from the same
+    string."""
+    if loss_map_arg in (None, "none"):
+        return None
+    if loss_map_arg == "plant":
+        return sim.plant_loss_map()
+    raise ValueError("unknown --loss-map %r (choices: none, plant)"
+                     % (loss_map_arg,))
+
+
 def default_table_path(scenario):
     return os.path.join(DP_TABLE_DIR, DP_TABLE_NAME % scenario)
 
@@ -1159,6 +1235,12 @@ def render_table(scenario, meta, args, fingerprint, times, share, charge,
     # reproduces it.
     if args.eta_chg is not None:
         cmd += " --eta-chg %r" % float(args.eta_chg)
+    loss_map = resolve_loss_map_arg(getattr(args, "loss_map", "none"))
+    # The loss-map era appends its own flag, on exactly the same terms: the
+    # LOSS-MAP-FREE era appends NOTHING, so a pre-2026-09-02 table regenerates
+    # byte-identically and the ABSENCE of the flag is the record of its era.
+    if loss_map is not None:
+        cmd += " --loss-map plant"
     L = []
     A = L.append
     A("# ══════════════════════════════════════════════════════════════════════")
@@ -1213,6 +1295,18 @@ def render_table(scenario, meta, args, fingerprint, times, share, charge,
         A("#   efficiency: a charge stage costs the bus V_pack*i/eta_chg W.")
         A("#   A table with NO eta_chg line was solved against the 1:1")
         A("#   current-transfer charger (V_bus*i) and is not comparable.")
+    # The loss map, on the `eta_chg` terms above: EMITTED ONLY when there is
+    # one, so a loss-map-free table keeps its exact bytes and the absence of
+    # the line is that era's record.
+    if loss_map is not None:
+        A("# loss_map: %s" % sim.loss_map_canonical(loss_map))
+        A("#   2026-09-02 - the demand model carries the plant's STATIC")
+        A("#   LOSSES (the per-node bleed on N_BUS and N_MOT) and the")
+        A("#   realized `--droop design` bus law, so the delta-SoC-matched")
+        A("#   bound is priced against the demand the board actually saw.")
+        A("#   A table with NO loss_map line was solved against the")
+        A("#   motor-plus-drain model on V_BUS_DROOP_V0 - K_DROOP_BUS_SHARED*I")
+        A("#   and is not comparable. See hil_plant_sim's loss-map block.")
     A("# gfc_dc_gain_gps_per_w: %r" % sim.H2_GFC_DC_GAIN_GPS_PER_W)
     A("# eta_boost: %r" % sim.ETA_BOOST)
     A("# limit_i_fc_max_a: %r" % LIMIT_I_FC_MAX_A)
@@ -1393,6 +1487,18 @@ def main(argv=None):
                          "V_pack*i_chg/eta instead. A scenario meta key "
                          "`eta_chg` supplies it when this is omitted."
                          % ETA_CHG_DEFAULT)
+    ap.add_argument("--loss-map", choices=("none", "plant"), default="none",
+                    help="DEMAND-MODEL ERA (2026-09-02). 'none' (the default) "
+                         "is the loss-map-free model - motor draw plus "
+                         "housekeeping drain, priced on V_BUS_DROOP_V0 - "
+                         "K_DROOP_BUS_SHARED*I - and regenerates every "
+                         "pre-2026-09-02 table byte-identically. 'plant' "
+                         "carries the plant's static losses (the per-node "
+                         "bleed on N_BUS and N_MOT) and the realized "
+                         "`--droop design` bus law, which is what makes the "
+                         "delta-SoC-matched bound tighter and "
+                         "bleed-invariant. See hil_plant_sim's loss-map "
+                         "block for the fit and its residuals.")
     ap.add_argument("--no-compare-heuristic", dest="compare_heuristic",
                     action="store_false",
                     help="skip the matched-model `soc-band` reference walk")
@@ -1459,7 +1565,8 @@ def main(argv=None):
             n_share=args.n_share, soc_step=args.soc_step,
             run_exit=args.run_exit,
             charger_accounting=args.charger_accounting,
-            lambda_dev=args.lambda_dev, eta_chg=args.eta_chg)
+            lambda_dev=args.lambda_dev, eta_chg=args.eta_chg,
+            loss_map=resolve_loss_map_arg(args.loss_map))
     except ValueError as exc:
         # GUARD ORDER, deliberately changed (LOW-4, 2026-09-01): the scalar
         # argument checks and the share-cut-band check moved INTO

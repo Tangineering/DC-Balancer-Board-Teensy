@@ -201,7 +201,7 @@ class WalkResult:
 # scenarios it substituted for in ``WalkResult.notes``.
 # ─────────────────────────────────────────────────────────────────────────────
 _SIM_SOC_BAND_DRAIN_SCENARIOS = ("ems-soc-band", "ems-dp-replay", "ems-sdp",
-                                 "ems-mpc", "ems-mpc-sto")
+                                 "ems-mpc", "ems-mpc-det")
 _GEN_DRAIN_FALLBACK = ("ems-soc-band", "ems-dp-replay")
 
 
@@ -357,6 +357,7 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
          eta_fc_proxy: float = H2_PROXY_ETA_FC,
          charge_admission: Optional[str] = None,
          eta_chg: Optional[float] = chg_mod.ETA_CHG_DEFAULT,
+         loss_map: Optional[dict] = None,
          gov_dt_s: float = 1e-3,
          conv_tau_s: float = 0.0,
          trace: bool = True) -> WalkResult:
@@ -418,6 +419,16 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
     if charge_admission not in ("mask", "run_window"):
         raise ValueError("charge_admission must be 'mask' or 'run_window'")
     eta_chg = chg_mod.check_eta_chg(eta_chg)
+    # THE DEMAND-MODEL ERA (2026-09-02), threaded to `build_demand()` in
+    # LOCKSTEP with the DP generator and `mpc_ems`.  The DEFAULT IS `None`,
+    # the loss-map-free model, and DELIBERATELY SO even though `eta_chg`'s
+    # default is the live plant's: every regression anchor in this file's
+    # docstring (and `heuristic_walk()` equivalence) is a loss-map-free walk,
+    # so defaulting to the map would silently move all of them.  A
+    # campaign-facing caller passes `hil_plant_sim.plant_loss_map()`
+    # EXPLICITLY, and a walk used to predict a table's bound MUST pass the
+    # same map that table was solved with or the two are not comparable.
+    loss_map = sim.check_loss_map(loss_map)
     meta = sim.SCENARIOS[scenario_name]
 
     import numpy as np
@@ -438,7 +449,7 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
     _ov = _drain_override(gen, sim, scenario_name)
     with _ov:
         v, a, p_dem, v_bus, i_total, cruise = gen.build_demand(
-            scenario_name, meta, times, dt)
+            scenario_name, meta, times, dt, loss_map=loss_map)
     # The mask's single-source FC budget counts the charger's INPUT current,
     # which is era-dependent; the reference pack voltage is the walk's initial
     # SoC, matching prepare_problem().
@@ -642,6 +653,7 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
             "regression anchor, NOT a prediction of board behaviour.")
     res.notes.append("charge admission: %s" % charge_admission)
     res.notes.append("charger era: %s" % chg_mod.era_label(eta_chg))
+    res.notes.append("demand era: %s" % sim.loss_map_era_label(loss_map))
     return res
 
 
@@ -668,6 +680,13 @@ def main(argv=None):      # pragma: no cover - operator convenience
     ap.add_argument("--eta-chg-none", action="store_true",
                     help="bill the charger at the BUS voltage - the 1:1 "
                          "current-transfer era of every pre-2026-09-01 run")
+    ap.add_argument("--loss-map", choices=("none", "plant"), default="none",
+                    help="DEMAND-MODEL ERA (2026-09-02). 'none' (the default) "
+                         "is the loss-map-free model every regression anchor "
+                         "in this file was taken on; 'plant' carries the "
+                         "plant's static losses and the realized `--droop "
+                         "design` bus law. Must MATCH the --loss-map a DP "
+                         "table being compared against was solved with.")
     ap.add_argument("--csv", default=None, help="write the per-stage trace here")
     a = ap.parse_args(argv)
 
@@ -675,7 +694,8 @@ def main(argv=None):      # pragma: no cover - operator convenience
              governor=not a.no_governor, dv0_v=a.dv0,
              policy_file=a.policy_file, dt_decision=a.dt,
              eta_fc_proxy=a.eta_fc, charge_admission=a.charge_admission,
-             eta_chg=(None if a.eta_chg_none else a.eta_chg))
+             eta_chg=(None if a.eta_chg_none else a.eta_chg),
+             loss_map=gen.resolve_loss_map_arg(a.loss_map))
     print("strategy %s on scenario %s" % (a.strategy, a.scenario))
     print(r.summary())
     if a.csv:

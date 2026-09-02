@@ -108,7 +108,9 @@ PREDICTION MODEL (adjudication section 2.1, the hybrid ruling)
    still and is therefore biased, while a coarse search is merely coarse.
    Measured on the offline stimuli: budget expiry falls from 88.5 % to 0.0 % of
    decisions on ``ems-mpc-cross``, from 21.3 % to 0.0 % on ``ems-mpc`` and from
-   4.9 % to 0.0 % on ``ems-mpc-sto``, at a BIT-IDENTICAL committed trajectory on
+   4.9 % to 0.0 % on the stochastic leg (the scenario that carried `mpc-sto`
+   at the time; the two names swapped in the 2026-09-02 promotion), at a
+   BIT-IDENTICAL committed trajectory on
    every leg - so what the change buys is an uncut search and 27 % less median
    wall clock, not a better plan.  An explicit ``budget_ms`` -
    which is what the ``mpc_budget_ms`` scenario key supplies - disables the
@@ -545,14 +547,23 @@ def scenario_drain_a(scenario, t, aux_preload_a=None):
 # gen_dp_ems_table.SOC_BAND_DRAIN_SCENARIOS at registration - the B2 defect of
 # 2026-09-01 was exactly that omission.
 SOC_BAND_DRAIN_SCENARIOS = ("ems-soc-band", "ems-dp-replay", "ems-sdp",
-                            "ems-mpc", "ems-mpc-sto")
+                            "ems-mpc", "ems-mpc-det")
 
 
-def build_demand(scenario, meta, times, dt, aux_preload_a=None):
+def build_demand(scenario, meta, times, dt, aux_preload_a=None,
+                 loss_map=None):
     """Per-stage ``(v, a, p_dem, v_bus, i_total, cruise)`` lists - D7, scalar.
 
-    A term-for-term port of gen_dp_ems_table.build_demand(), including the four
+    A term-for-term port of gen_dp_ems_table.build_demand(), including the
     Picard iterations on the droop node and the central-difference acceleration.
+
+    ``loss_map`` (2026-09-02) selects the DEMAND-MODEL ERA and is threaded in
+    LOCKSTEP with the generator and ``ems_walk``: ``None`` is the loss-map-free
+    model, a dict prices the plant's static losses and the realized
+    ``--droop design`` bus law.  ``test_mpc_ems.py`` asserts the three demand
+    models agree stage for stage on a random preview in BOTH eras; that
+    equality is the only thing keeping the planner's prediction and the bound
+    it is scored against on one model.
 
     ⚠️ NO REGEN TERM (``p_mech = max(0, F*v)``), inherited deliberately: this is
     the model the DP bound is computed against, and a controller predicting on a
@@ -586,18 +597,41 @@ def build_demand(scenario, meta, times, dt, aux_preload_a=None):
         force = sim.M_EFF * a[k] + f_coul + sim.B_EFF * v[k]
         p_mech[k] = max(0.0, force * v[k])
 
-    v_bus = [sim.V_BUS_DROOP_V0] * n
+    lm = sim.check_loss_map(loss_map)
     i_total = [0.0] * n
-    for _ in range(4):
+    p_dem = [0.0] * n
+    if lm is None:
+        v_bus = [sim.V_BUS_DROOP_V0] * n
+        for _ in range(4):
+            for k in range(n):
+                i_motor = p_mech[k] / (sim.ETA_BOOST * v_bus[k])
+                i_total[k] = i_motor + i_aux[k]
+                v_bus[k] = (sim.V_BUS_DROOP_V0
+                            - sim.K_DROOP_BUS_SHARED * i_total[k])
         for k in range(n):
             i_motor = p_mech[k] / (sim.ETA_BOOST * v_bus[k])
             i_total[k] = i_motor + i_aux[k]
-            v_bus[k] = sim.V_BUS_DROOP_V0 - sim.K_DROOP_BUS_SHARED * i_total[k]
-    p_dem = [0.0] * n
-    for k in range(n):
-        i_motor = p_mech[k] / (sim.ETA_BOOST * v_bus[k])
-        i_total[k] = i_motor + i_aux[k]
-        p_dem[k] = v_bus[k] * i_total[k]
+            p_dem[k] = v_bus[k] * i_total[k]
+    else:
+        v0 = lm["v0_eff"]
+        k_eff = lm["r_fix"] + lm["k_g"] * lm["g_par"]
+        g_bus, g_oth = lm["g_node_bus"], lm["g_node_other"]
+        v_fwd, r_on = lm["rt_v_fwd"], lm["rt_r_on"]
+        v_bus = [v0] * n
+        for _ in range(sim.DP_LOSS_MAP_PICARD_ITERS):
+            for k in range(n):
+                i_motor = p_mech[k] / (sim.ETA_BOOST * v_bus[k])
+                v_mot = ((v_bus[k] - v_fwd - r_on * i_motor)
+                         / (1.0 + r_on * g_oth))
+                i_par = v_bus[k] * g_bus + v_mot * g_oth
+                i_total[k] = i_motor + i_aux[k] + i_par
+                v_bus[k] = v0 - k_eff * i_total[k]
+        for k in range(n):
+            i_motor = p_mech[k] / (sim.ETA_BOOST * v_bus[k])
+            v_mot = (v_bus[k] - v_fwd - r_on * i_motor) / (1.0 + r_on * g_oth)
+            i_par = v_bus[k] * g_bus + v_mot * g_oth
+            i_total[k] = i_motor + i_aux[k] + i_par
+            p_dem[k] = v_bus[k] * i_total[k]
 
     cruise = [(abs(a[k]) <= sim.SOC_BAND_CRUISE_SLOPE_MAX
                and v[k] >= sim.SOC_BAND_CRUISE_MIN_MPS) for k in range(n)]
@@ -1961,7 +1995,8 @@ class ShadowGovernor:
        design's ``mdac_corrections`` counter DOES NOT read zero — the additive
        registration step landed with the MPC round, so ``_fb()`` carries
        ``mdac_fc``/``mdac_bt`` and the first live campaign measured **2968 MDAC
-       corrections** on ``ems-mpc-sto``.  The two words are outside
+       corrections** on the stochastic leg (then named ``ems-mpc-sto``; the
+       names swapped in the 2026-09-02 promotion).  The two words are outside
        ``FB_TELEMETRY_EQUIV_KEYS`` deliberately (they are not in the v4 packet
        and are not portable to a real Pi), so the current-derived path remains
        the fallback and ``current_corrections`` is what a Mode B run would use.
@@ -2073,7 +2108,7 @@ class MpcStrategy:
                  h2_map="proxy", h2_convex=None, dv0_v=0.0,
                  soc_ref_offset=0.0, eta_chg=chg_mod.ETA_CHG_DEFAULT,
                  tpm_path=None, preview_dt_s=PREVIEW_DT_S,
-                 ff_dark_model=False):
+                 ff_dark_model=False, loss_map=None):
         if variant not in ("det", "sto"):
             raise ValueError("variant must be 'det' or 'sto'")
         self.name = name
@@ -2114,6 +2149,13 @@ class MpcStrategy:
         self.ff_dark_model = bool(ff_dark_model)
         self.soc_ref_offset = float(soc_ref_offset)
         self.eta_chg = chg_mod.check_eta_chg(eta_chg)
+        # THE DEMAND-MODEL ERA (2026-09-02).  `None` (the default) is the
+        # loss-map-free model, which is what every Gate-1 and Gate-2 record
+        # before this round was measured on.  A campaign binds the plant's map
+        # explicitly through `bind_scenario()`'s `mpc_loss_map` key, so the
+        # planner predicts on the SAME demand the DP bound it is scored
+        # against was solved with.
+        self.loss_map = _load_sim().check_loss_map(loss_map)
         self.preview_dt_s = float(preview_dt_s)
         self.tpm_path = tpm_path
         self.tpm = None
@@ -2195,14 +2237,28 @@ class MpcStrategy:
         if self.planner is not None:
             self.planner.incumbent = None
 
-    def bind_scenario(self, scenario, meta, electrical_mode=None, args=None):
+    def bind_scenario(self, scenario, meta, electrical_mode=None,
+                      args=None, droop_mode=None, asymmetry_mode=None):
         """Build the preview and the planner for one scenario.
 
-        The two trailing arguments are the generic startup hook's contract
+        The four trailing arguments are the generic startup hook's contract
         (``main()`` passes them BY NAME, so a signature without them is a
-        TypeError at campaign time).  ``electrical_mode`` is accepted and
-        recorded but not consumed: the prediction model is the scenario's
-        demand preview, which the bus engine does not change.  ``args`` IS
+        TypeError at campaign time).  ``electrical_mode``, ``droop_mode`` and
+        ``asymmetry_mode`` ARE consumed since 2026-09-02 (fix M1): together
+        they resolve the DEMAND-MODEL ERA the planner predicts on.
+
+        ⚠️ CORRECTED CLAIM.  This docstring used to say ``electrical_mode`` is
+        "accepted and recorded but not consumed: the prediction model is the
+        scenario's demand preview, which the bus engine does not change".  That
+        stopped being true when the preview gained a static-loss map.  The four
+        MPC scenarios are ``electrical: "any"`` and each declares
+        ``mpc_loss_map``, so applying that key unconditionally would have made
+        the planner predict on the hi-fi map during an ``--electrical simple``
+        or ``--droop measured`` run, while the run sidecar and
+        ``hil_report_analysis.matched_dp_for_run()`` both resolve the era from
+        the run's own configuration and record ``None``.  Plan and bound would
+        then sit on two different demand models, which is the defect the
+        2026-09-02 round removed.  ``args`` IS
         consumed - its ``capacity_ah`` is the pack the run actually integrates,
         and a planner sized on the module default while the plant runs another
         capacity would mis-price every SoC term (the M2 check SdpStrategy makes
@@ -2226,6 +2282,50 @@ class MpcStrategy:
         offset = meta.get("mpc_soc_ref_offset")
         if offset is not None:
             self.soc_ref_offset = float(offset)
+        # ── THE DEMAND-MODEL ERA, RECONCILED (2026-09-02, fix M1) ──────────
+        # A scenario may bind the era, exactly as it binds the SoC reference
+        # offset -- but the scenario key is a STATIC declaration resolved at
+        # import, and the RUN decides which plant actually executes.  So the
+        # key is an INTENT and the run's configuration is the fact, and the two
+        # are reconciled here rather than the key winning blind.
+        #
+        #   both absent            -> keep the constructor's value (an ad-hoc
+        #                             `--ems mpc-det` on some other scenario is
+        #                             unaffected, which is the pre-fix
+        #                             behaviour for every unregistered leg)
+        #   key only, no run info  -> take the key (a walk, a test, any caller
+        #                             that does not pass the modes)
+        #   both, and they AGREE   -> take it
+        #   both, and they DIFFER  -> take the RUN's, and SAY SO. Not a refusal:
+        #                             a `--electrical simple` run of an
+        #                             `electrical: "any"` scenario is a
+        #                             legitimate thing to ask for, and the
+        #                             correct answer is to plan on the demand
+        #                             model that run will actually draw, which
+        #                             is the same one its bound is priced with.
+        want_lm = meta.get("mpc_loss_map")
+        if want_lm is not None:
+            want_lm = sim.check_loss_map(want_lm)
+        if electrical_mode is not None:
+            run_lm = sim.loss_map_for_config(
+                electrical_mode,
+                droop_mode if droop_mode is not None
+                else sim.DP_LOSS_MAP_DROOP_MODE,
+                asymmetry_mode if asymmetry_mode is not None
+                else sim.DP_LOSS_MAP_ASYMMETRY_MODE)
+            if want_lm is not None and run_lm != want_lm:
+                print("[mpc] scenario %r declares a demand-model era this run "
+                      "does not have (electrical=%s droop=%s asymmetry=%s); "
+                      "planning on the RUN's era instead, so the plan and the "
+                      "DP bound stay on one demand model.\n"
+                      "[mpc]   scenario: %s\n"
+                      "[mpc]   run:      %s"
+                      % (scenario, electrical_mode, droop_mode,
+                         asymmetry_mode, sim.loss_map_era_label(want_lm),
+                         sim.loss_map_era_label(run_lm)), file=sys.stderr)
+            self.loss_map = run_lm
+        elif want_lm is not None:
+            self.loss_map = want_lm
         chg_a = sim.dp_chg_ceiling_a(meta)
         run_exit_s = float(sim.SOC_BAND_RUN_EXIT_S
                            if meta.get("ems_run_exit_s") is None
@@ -2234,8 +2334,8 @@ class MpcStrategy:
         dt = self.preview_dt_s
         n = int(round(duration / dt)) + 1
         times = [k * dt for k in range(n)]
-        v, a, p_dem, v_bus, i_total, cruise = build_demand(scenario, meta,
-                                                           times, dt)
+        v, a, p_dem, v_bus, i_total, cruise = build_demand(
+            scenario, meta, times, dt, loss_map=self.loss_map)
         v_pack_ref = (None if self.eta_chg is None
                       else pack_charge_voltage(0.7, chg_a))
         chg_ok = charge_mask(times, p_dem, v_bus, cruise, chg_a, run_exit_s,
@@ -2354,6 +2454,8 @@ class MpcStrategy:
             "h2_model": self.h2_map,
             "eta_fc_proxy": ETA_FC_PROXY,
             "eta_chg": self.eta_chg,
+            "loss_map": (None if self.loss_map is None
+                         else dict(self.loss_map)),
             # None means ADAPTIVE: the per-decision budget is derived by
             # `derive_budget_ms()` and reported in `timing()` as the
             # budget_ms_min/median/max triple, because it is no longer a

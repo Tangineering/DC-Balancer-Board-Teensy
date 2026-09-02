@@ -5028,7 +5028,7 @@ PI_LIVE_SKIP_SCENARIOS = {
     # "ems" key ("mpc-det"/"mpc-sto") -- no new code path.
     # `ems-ftp75-mpc` is in FTP75_SCENARIOS as well and is listed here for
     # its siblings' reason: the --pi-live gate is ordered FIRST.
-    "ems-mpc", "ems-mpc-sto", "ems-mpc-cross", "ems-ftp75-mpc",
+    "ems-mpc", "ems-mpc-det", "ems-mpc-cross", "ems-ftp75-mpc",
 }
 
 
@@ -9589,7 +9589,7 @@ def test_render_report_omits_runtime_row_without_timing():
 # ─────────────────────────────────────────────────────────────────────────
 # MPC registration (2026-09-02) — docs/modeling/mpc_design_20260901.md §8
 # ─────────────────────────────────────────────────────────────────────────
-MPC_EXPECTATION_NAMES = ("ems-mpc", "ems-mpc-sto", "ems-mpc-cross",
+MPC_EXPECTATION_NAMES = ("ems-mpc", "ems-mpc-det", "ems-mpc-cross",
                          "ems-ftp75-mpc")
 
 
@@ -9658,8 +9658,14 @@ def test_mpc_expectations_use_the_documented_kinds():
 def test_mpc_h2_bands_bracket_the_gate2_walk():
     """The band is the walk +/-25 %, the same shape the FTP-75 siblings use, so
     the walk value must sit strictly inside it."""
-    walks = {"ems-mpc": 0.010429, "ems-mpc-sto": 0.009313,
-             "ems-mpc-cross": 0.014134, "ems-ftp75-mpc": 0.023771}
+    # RE-WALKED 2026-09-02 for the two simultaneous changes of the
+    # DP-bound round: the three candidate legs bind `mpc-sto` in place of
+    # `mpc-det`, and every walk now carries the static-loss map and the
+    # per-node bleed. The pre-round set was ems-mpc 0.010429,
+    # ems-mpc-sto 0.009313, ems-mpc-cross 0.014134, ems-ftp75-mpc
+    # 0.023771, and none of those values applies to any leg as it stands.
+    walks = {"ems-mpc": 0.007588, "ems-mpc-det": 0.009728,
+             "ems-mpc-cross": 0.010835, "ems-ftp75-mpc": 0.021983}
     for name, walk in walks.items():
         specs = {s["name"]: s for s in
                  rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
@@ -9750,7 +9756,7 @@ def test_mpc_ftp75_leg_is_behind_the_ftp75_gate():
     """It is a 350 s cycle, so it pays the same cost gate its siblings do — and
     it MUST be gated with them, or the `ftp75-mpc` tuple can never assemble."""
     assert "ems-ftp75-mpc" in rhs.FTP75_SCENARIOS
-    for name in ("ems-mpc", "ems-mpc-sto", "ems-mpc-cross"):
+    for name in ("ems-mpc", "ems-mpc-det", "ems-mpc-cross"):
         assert name not in rhs.FTP75_SCENARIOS
         assert name not in rhs.ALPHA_SCENARIOS
 
@@ -9762,7 +9768,7 @@ def test_mpc_legs_are_ordinary_runs_in_the_default_plan(tmp_path):
     assert rc == 0
     plan = {p["name"]: p for p in rhs.build_plan(
         _args(out=str(tmp_path)))}
-    for name in ("ems-mpc", "ems-mpc-sto", "ems-mpc-cross"):
+    for name in ("ems-mpc", "ems-mpc-det", "ems-mpc-cross"):
         assert name in plan, name
         assert not plan[name].get("skip_reason"), name
     assert "--with-ftp75" in (plan["ems-ftp75-mpc"].get("skip_reason") or "")
@@ -10268,7 +10274,7 @@ def test_mpc_cross_h2_floor_is_informational_and_only_that_leg():
     assert cross["informational"] is True
     # The CEILING is untouched — only the floor sits inside the spread.
     assert not _h2("ems-mpc-cross", "mpc_h2_bounded").get("informational")
-    for leg in ("ems-mpc", "ems-mpc-sto", "ems-ftp75-mpc"):
+    for leg in ("ems-mpc", "ems-mpc-det", "ems-ftp75-mpc"):
         assert not _h2(leg, "mpc_h2_accounted").get("informational")
 
 
@@ -10278,3 +10284,95 @@ def test_mppt_brake_window_is_the_trimmed_one():
     # It must still be wide enough for the dwell it carries.
     floor = _mppt_brake_specs()[1]
     assert (hi - lo) * 1000.0 > floor["min_ticks"]
+
+
+def test_mpc_share_motion_floors_sit_under_their_own_walk_range():
+    """A degenerate-constant guard must be BELOW the motion the shipped walk
+    actually commands, or it fails a correct run.
+
+    The pre-swap `ems-mpc-cross` floor of 0.12 did exactly that once
+    `mpc-sto` took the leg: the stochastic law plans against the demand TPM's
+    conditional mean, which smooths the two cruise levels that stimulus exists
+    to separate, and it walks a share range of only 0.0833. The four ranges
+    below are the shipped bindings' loss-map-era walks, and each floor is
+    ~0.6x its own."""
+    walk_range = {"ems-mpc": 0.2500, "ems-mpc-det": 0.4167,
+                  "ems-mpc-cross": 0.0833, "ems-ftp75-mpc": 0.2500}
+    for name, rng in walk_range.items():
+        specs = {s["name"]: s for s in
+                 rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
+        floor = specs["mpc_share_moved"]["column_range_at_least"]
+        assert 0.0 < floor < rng, (name, floor, rng)
+        assert floor <= 0.7 * rng, (name, floor, rng)
+
+
+def test_mpc_i_fc_ceiling_still_clears_every_legs_walk_peak():
+    """The overcurrent bound is a BUDGET claim with slack, and the swap moved
+    the widest peak: `mpc-det` on `ems-mpc-det` walks 0.9809 A where the
+    pre-swap set topped out at 0.7310 A. It still clears the 1.19 A ceiling."""
+    peaks = {"ems-mpc": 0.7357, "ems-mpc-det": 0.9809,
+             "ems-mpc-cross": 0.3016, "ems-ftp75-mpc": 0.4886}
+    for name, peak in peaks.items():
+        specs = {s["name"]: s for s in
+                 rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
+        assert peak < specs["mpc_fc_peak_bounded"]["max_value"], name
+    assert max(peaks.values()) < rhs._MPC_I_FC_CEIL
+
+
+def test_the_cross_stimulus_wide_share_walk_is_not_available_from_either_law():
+    """A PIN ON A KNOWN GAP, so a fix to it is visible rather than silent.
+
+    The `ems-sdp-cross` two-level cruise was built so a share-shifting law
+    would walk WIDE across the switching region, and `ems-mpc-cross`'s registry
+    entry still describes that walk as its observable. It is not available:
+    measured in the 2026-09-02 fix round, BOTH `mpc-det` and `mpc-sto` command
+    a share range of exactly 0.0833 over [0.2500, 0.3333] on that stimulus, in
+    BOTH demand eras, with bit-identical hydrogen. It reproduces on the
+    PRE-ROUND tree at commit 8dc180d, so it is neither a consequence of the
+    `mpc-sto` promotion nor of the static-loss map.
+
+    Two shipped numbers were already wrong at 8dc180d because of it: the
+    `share_range_min` 0.12 was UNSATISFIABLE against a 0.0833 walk, and the
+    `walk_h2` 0.014134 was stale by +29 % against a true 0.010942.
+
+    An `ems-mpc-det-cross` leg was built to keep the wide walk and WITHDRAWN:
+    `mpc-det` reproduces `ems-mpc-cross`'s trace bit for bit, so the leg would
+    have spent campaign time restating a known-null comparison. The wide walk
+    is a question about the MPC's candidate ladder and its terminal economics
+    on a two-level cruise, not about scenario registration.
+
+    THIS TEST FAILS WHEN THE GAP CLOSES, which is the point: a ladder or
+    economics change that widens the walk should force a decision about the
+    floor and the band rather than passing unnoticed."""
+    pytest.importorskip("numpy")        # ems_walk -> gen_dp_ems_table -> numpy
+    ew = pytest.importorskip("ems_walk")
+    sim = pytest.importorskip("hil_plant_sim")
+    seen = {}
+    for strat in ("mpc-det", "mpc-sto"):
+        r = ew.walk(strat, "ems-mpc-cross", soc0=0.7, governor=True,
+                    dv0_v=0.030223, loss_map=sim.plant_loss_map(), trace=True)
+        sc = [float(x) for x in r.share_cmd]
+        seen[strat] = (min(sc), max(sc), float(r.h2_g))
+    for strat, (lo, hi, h2) in seen.items():
+        assert hi - lo == pytest.approx(0.0833, abs=1e-3), (strat, lo, hi)
+        assert lo == pytest.approx(0.2500, abs=1e-4), strat
+        assert hi == pytest.approx(0.3333, abs=1e-4), strat
+    # The two laws COINCIDE on this stimulus, which is why the withdrawn
+    # ablation leg would have measured nothing.
+    assert seen["mpc-det"] == seen["mpc-sto"]
+    # ... and the shipped floor is satisfiable against that walk, unlike the
+    # 0.12 it replaced.
+    specs = {s["name"]: s for s in
+             rhs.FAULT_EXPECTATIONS["ems-mpc-cross"]["signals_require"]}
+    assert specs["mpc_share_moved"]["column_range_at_least"] < 0.0833
+
+
+def test_no_ems_mpc_det_cross_leg_is_registered():
+    """The withdrawn leg stays withdrawn until the wide walk actually exists.
+
+    Registering it again without first fixing the ladder would add a run whose
+    trace is bit-identical to `ems-mpc-cross`'s, under a description promising
+    an observable neither law produces. See the test above."""
+    sim = pytest.importorskip("hil_plant_sim")
+    assert "ems-mpc-det-cross" not in sim.SCENARIOS
+    assert "ems-mpc-det-cross" not in rhs.FAULT_EXPECTATIONS

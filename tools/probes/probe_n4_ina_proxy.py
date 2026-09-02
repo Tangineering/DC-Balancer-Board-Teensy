@@ -88,7 +88,7 @@ class Recorder(object):
             "i_c_bus": he.C_VBUS * (v[he.N_BUS] - v_prev[he.N_BUS]) / h,
             "i_c_ofc": he.C_BOOST_OUT_FC * (v[he.N_OFC] - v_prev[he.N_OFC]) / h,
             "i_c_obt": he.C_BOOST_OUT_BT * (v[he.N_OBT] - v_prev[he.N_OBT]) / h,
-            "i_bleed_bus": v[he.N_BUS] / he.R_NODE_BLEED,
+            "i_bleed_bus": v[he.N_BUS] * he.node_bleed_conductances()[he.N_BUS],
             "v_ofc": v[he.N_OFC],
             "v_obt": v[he.N_OBT],
             "v_bus": v[he.N_BUS],
@@ -183,7 +183,7 @@ def analyse(rows, n_pre, label):
     idx = rows.index(worst)
     w = rows[idx]
     out["ofc_resid_a"] = (w["i_out_fc"] - w["i_ina_fc"] - w["i_c_ofc"]
-                          - w["v_ofc"] / he.R_NODE_BLEED)
+                          - w["v_ofc"] * he.node_bleed_conductances()[he.N_OFC])
     # Time for the reported value to reach 90 % of its settled step.
     target = 0.9 * out["d_rep_set"]
     t0 = rows[n_pre]["t"]

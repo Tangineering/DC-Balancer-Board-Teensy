@@ -292,7 +292,7 @@ This is the same referral the Python plant uses (`_source_current()`, `hil_plant
 | `I_OUT_MAX` | 6.0 A | Per-channel boost output current limit | `hil_electrical.py`, **`TODO(verify)`** |
 | `ETA_BOOST` | 0.85 | Boost efficiency for input-current referral | `hil_electrical.py:209`, **`TODO(verify)`** — simulator-only tuning value; numerically coincides with the unrelated drivetrain `η_dt`, which is a coincidence, not a shared measurement. **It does double duty**: this referral *and* the bus→motor power mapping (§4.7). A sensitivity sweep on it moves two physically unrelated things at once — sweep them as separate parameters if the result matters |
 | `V_f` (Tier-1 ORing element) | `0.035 V + 0.021 Ω * I` | RT1987 forward servo offset **plus** conduction drop | RT1987 DS §17.6 `V_FWD` 35 mV typ and `R_ON` 21 mΩ (`hil_electrical.py` `RT_V_FWD` / `RT_R_ON`). A real silicon diode's 0.7 V would move `V0` visibly and is wrong here; dropping `R_ON` costs +14 % of the droop slope (§3.1) |
-| `R_BUS_BLEED` | 2000 Ω | Bus bleed path; sets the dark-bus decay `τ = R*C_BUS = 0.07 s` at Tier-1's 35 µF (0.94 s at the HIL model's `C_BUS_F`) | `hil_electrical.py`, **`TODO(verify)`** — simulator-only. Include it, or a no-load bus never discharges and the T1-E1 snapshot/teardown behaviour is unphysical |
+| `R_BUS_BLEED` | 30 kΩ | Bus bleed path; sets the dark-bus decay `τ = R*C_BUS = 1.05 s` at Tier-1's 35 µF (14.1 s at the HIL model's `C_BUS_F`) | `hil_electrical.py`, **`TODO(calibrate)`** — simulator-only. **Was 2 kΩ (0.07 s / 0.94 s) until 2026-09-02**, when the operator ruled the physical bus decays full-to-near-zero in 30 to 60 s; the HIL engine now splits it per node (30 kΩ on `N_BUS`, 60 kΩ elsewhere) and `docs/HIL_PLANT.md` §4.8 carries the change record and the bench decay capture that settles it. Include it, or a no-load bus never discharges and the T1-E1 snapshot/teardown behaviour is unphysical |
 | `R_s` "stiff" preset | 0.05 Ω | Series source resistance, stiff supply | `R_BT_INT` legacy scalar, `hil_electrical.py:206–207`, **`TODO(verify)`** — an assumption, **not** a measured supply impedance |
 | `R_s` "loose" preset | 0.45 Ω | Series source resistance, loose supply | `R_FC_INT` legacy scalar, **`TODO(calibrate)`** — the "0.447 Ω effective at 2 A" FC fit target; likewise not a supply-impedance measurement |
 
@@ -1285,7 +1285,7 @@ The observed clamp behaviour during the sustained regen rail in logs 153–180:
 | `N_MOT` | 470 µF (ESR 80 mΩ) **+ VESC input 0.5 mF** (0.2–0.9 mF envelope) | BOM line 30 (CAL 470 µF 35 V Al-el, 80 mΩ) — labelled "Charging path capacitor" in the BOM but it is the **V-MOT bulk cap**, explicitly *not* on VBUS. VESC input capacitance is `--vesc-cap-uf`, **`TODO(verify)`** (OQ-11) |
 | `N_CHG` | 10 µF | **`TODO(verify)`** — no separate cap identified on the schematic |
 | `N_RGN` | — | **RETIRED** as a physical node (2026-08-30 topology fix): the regen node *is* `N_MOT`. The 10 µF `C_RGN_NODE` entry survives in `tools/hil_electrical.py` only to pad the retired index and keep the matrix dimensions stable; do not instantiate a separate capacitor in PSCAD |
-| `R_BUS_BLEED` (not a capacitance — the discharge path across `N_BUS`) | 2000 Ω → `τ = 0.07 s` at 35 µF | `hil_electrical.py`, **`TODO(verify)`**, simulator-only. Without it a dark bus never discharges and both the snapshot state and the State-99 teardown are unphysical |
+| `R_BUS_BLEED` (not a capacitance — the discharge path across `N_BUS`) | 30 kΩ → `τ = 1.05 s` at 35 µF (was 2 kΩ / 0.07 s until 2026-09-02, see `docs/HIL_PLANT.md` §4.8) | `hil_electrical.py`, **`TODO(calibrate)`**, simulator-only. Without it a dark bus never discharges and both the snapshot state and the State-99 teardown are unphysical |
 
 Other BOM capacitance not broken out as separate nodes, but present on the board and worth
 having in T2-FAST: boost input 10 µF + 0.1 µF + 2.2 µF per channel (BOM 3–5); the RT1987 set
@@ -2030,7 +2030,7 @@ Grouped by where it bites. This is the list to shorten.
 
 **Simulator-only tuning values inherited from `hil_electrical.py` (never launder):**
 
-`V_STICTION` 0.02 m/s · `R_BUS_BLEED` 2000 Ω · `ETA_BOOST` 0.85 · `I_AUX_A` 0.15 A ·
+`V_STICTION` 0.02 m/s · `R_BUS_BLEED` 30 kΩ · `ETA_BOOST` 0.85 · `I_AUX_A` 0.15 A ·
 `R_FC_INT` 0.45 Ω / `R_BT_INT` 0.05 Ω · `AG105_TAU_S` 0.4 s · `AG105_V_IN_MIN` 8.0 V ·
 `C_CHG_NODE` 10 µF (`C_RGN_NODE` retired — §4.9).
 

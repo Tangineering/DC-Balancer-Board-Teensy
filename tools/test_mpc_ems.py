@@ -889,15 +889,22 @@ class _Args:
 
 
 def test_bind_scenario_signature_matches_the_hook_contract():
-    """H3: `main()` calls the binder BY NAME with two trailing arguments."""
+    """H3: `main()` calls the binder BY NAME with its trailing arguments.
+
+    ⚠️ FOUR, not two, since the 2026-09-02 fix round: `droop_mode` and
+    `asymmetry_mode` joined the contract so the demand-model era can be
+    resolved from the RUN rather than taken blind from the scenario key (fix
+    M1). Every implementation must accept all four or a campaign dies at bind
+    time with a TypeError."""
     import inspect
     ours = list(inspect.signature(M.MpcStrategy.bind_scenario).parameters)
     theirs = list(inspect.signature(sim.SdpStrategy.bind_scenario).parameters)
     assert ours == theirs == ["self", "scenario", "meta", "electrical_mode",
-                              "args"]
+                              "args", "droop_mode", "asymmetry_mode"]
     # And the call `main()` actually makes must not raise.
     s = M.MpcStrategy("mpc-det")
-    s.bind_scenario(SCEN, _meta(), electrical_mode="hifi", args=_Args())
+    s.bind_scenario(SCEN, _meta(), electrical_mode="hifi", args=_Args(),
+                    droop_mode="design", asymmetry_mode="measured")
     assert s.electrical_mode == "hifi"
 
 
@@ -2090,3 +2097,63 @@ def test_the_committed_plan_is_insensitive_to_the_projection():
 
 if __name__ == "__main__":       # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# THE STATIC-LOSS MAP IN THE PLANNER'S DEMAND PORT (2026-09-02)
+# ═════════════════════════════════════════════════════════════════════════
+def test_mpc_build_demand_defaults_to_the_loss_map_free_era():
+    import inspect
+    assert inspect.signature(M.build_demand).parameters["loss_map"].default \
+        is None
+
+
+def test_mpc_build_demand_reproduces_the_generators_map_solve():
+    """The scalar port must reproduce the numpy original in the loss-map era
+    too, or the planner predicts on a demand the bound was not solved for."""
+    gen = pytest.importorskip("gen_dp_ems_table")
+    np = pytest.importorskip("numpy")
+    meta = sim.SCENARIOS[SCEN]
+    dt = 0.5
+    n = int(round(float(meta["duration_s"]) / dt))
+    times = [k * dt for k in range(n + 1)]
+    lm = sim.plant_loss_map()
+    g_out = gen.build_demand(SCEN, meta, np.asarray(times), dt, loss_map=lm)
+    m_out = M.build_demand(SCEN, meta, times, dt, loss_map=lm)
+    for k in range(n + 1):
+        assert float(g_out[2][k]) == pytest.approx(float(m_out[2][k]),
+                                                   rel=1e-12, abs=1e-15)
+        assert float(g_out[3][k]) == pytest.approx(float(m_out[3][k]),
+                                                   rel=1e-12, abs=1e-15)
+
+
+def test_mpc_strategy_carries_the_map_into_its_preview_and_its_provenance():
+    s = M.MpcStrategy(name="mpc-det", variant="det",
+                      loss_map=sim.plant_loss_map())
+    assert s.loss_map == sim.plant_loss_map()
+    s.bind_scenario(SCEN, sim.SCENARIOS[SCEN])
+    base = M.MpcStrategy(name="mpc-det", variant="det")
+    base.bind_scenario(SCEN, sim.SCENARIOS[SCEN])
+    assert base.loss_map is None
+    mean_map = sum(s.preview.v_bus) / len(s.preview.v_bus)
+    mean_old = sum(base.preview.v_bus) / len(base.preview.v_bus)
+    assert mean_map < mean_old
+    # The map is recorded in the strategy's provenance block, so a sidecar
+    # names the demand era the planner actually predicted on.
+    assert s.provenance["loss_map"] == sim.plant_loss_map()
+    assert base.provenance["loss_map"] is None
+
+
+def test_a_scenario_may_bind_the_demand_era(monkeypatch):
+    """`mpc_loss_map` binds the era the way `mpc_soc_ref_offset` binds the
+    reference, and an ABSENT key must leave an ad-hoc run's constructor value
+    alone."""
+    lm = sim.plant_loss_map()
+    meta = dict(sim.SCENARIOS[SCEN])
+    meta["mpc_loss_map"] = lm
+    s = M.MpcStrategy(name="mpc-det", variant="det")
+    s.bind_scenario(SCEN, meta)
+    assert s.loss_map == lm
+    s2 = M.MpcStrategy(name="mpc-det", variant="det", loss_map=lm)
+    s2.bind_scenario(SCEN, sim.SCENARIOS[SCEN])
+    assert s2.loss_map == lm

@@ -26,6 +26,13 @@ authority over this file if they disagree — update this file when they diverge
   number in the MD comes from `ems_comparison.json`; the **Commentary section is written
   by a human** and is the only hand-written part of the file. A regenerate reads that
   section back and carries it forward, so re-running the stage never loses it.
+  ⚠️ **A matched-DP baseline carries a DEMAND-MODEL ERA (`loss_map`, 2026-09-02)** and it
+  must match the run's. An ABSENT `loss_map` names the pre-2026-09-02 demand model, which
+  billed no node bleed and solved the `--droop measured` bus law; the era key is resolved
+  from the run's own `config.electrical` / `config.droop_mode` / `config.asymmetry` and is
+  named in every run's `notes`. **A baseline in one era is not comparable with one in the
+  other** — the map moves the FTP-75 table-versus-run deviation from +4.35 % to +0.03 %.
+  Derivation: `docs/modeling/dp_loss_map_20260902.md`; result: `docs/HIL_PLANT.md` §9.4.1.
 
 ## Sidecar (`<csv>.meta.json`)
 
@@ -38,11 +45,25 @@ warm_reset_times_s, tx/rx frames, send_errors, achieved_hz, final_state,
 final_fault_flags). The constants fingerprint moves whenever stimulus constants change —
 hash-different does not strictly imply model-different; check the commit.
 
-**RUN-ERA FIELDS AN ANALYST MUST READ BEFORE ANY CROSS-CAMPAIGN COMPARISON.** Four, not
-three. `scenario.eta_chg` (charger era, absent = the 1:1 sentinel), the droop mode from
-argv, `constants.*_PRELOAD_A` (the auxiliary preload era) — **and `config.asymmetry`,
+**RUN-ERA FIELDS AN ANALYST MUST READ BEFORE ANY CROSS-CAMPAIGN COMPARISON.** Five, not
+three. `scenario.eta_chg` (charger era, absent = the 1:1 sentinel), **`config.droop_mode`**
+(`design` on every campaign; `measured` is opt-in and its sag depths are a different
+population), `constants.*_PRELOAD_A` (the auxiliary preload era), **`config.asymmetry`,
 `config.asymmetry_dv0_v`, `config.asymmetry_droop_scale_fc`** (converter asymmetry;
-`measured`, ΔV₀ 0.013522 V, `droop_scale_fc` 0.9434 since the C1 default).
+`measured`, ΔV₀ 0.013522 V, `droop_scale_fc` 0.9434 since the C1 default) — **and the BLEED
+ERA** (below).
+
+⚠️ **THE BLEED ERA (2026-09-02).** Every campaign up to and including
+`hil_report_20260902_041414` ran the **uniform 2 kΩ** node bleed; the split to **30 kΩ on
+`N_BUS` and 60 kΩ on every other node** removes a static load the sources carried on EVERY
+tick. So **no energy total, settled operating point or cut-current anchor compares across
+that boundary, whether or not the scenario charges** — this boundary is not charger-gated
+the way `eta_chg` is. Predicted move: about **−1.7 % h2 on the 61 s cycle** and **−2.9 % on
+FTP-75**, with the `soc-depletion` latch about **1.5 s later**. The `scp-inrush`,
+`handoff-sag`, `comm-loss` and `share-staircase` anchors must be **RE-MEASURED, not
+predicted**, and their bit-exactness records are expected to break. Both bleed values are
+`TODO(calibrate)` (the bench dark-node decay capture is the calibration), so **a second move
+is expected** and this boundary will recur. Record: `docs/HIL_PLANT.md` §4.8.
 ⚠️ **Campaign `20260901_151156` predates the asymmetry default and its sidecars carry
 no `asymmetry` key at all**, so it is on the far side of TWO plant boundaries at once
 (charger and asymmetry). **No comparison spanning 151156 is bit-identical, including a

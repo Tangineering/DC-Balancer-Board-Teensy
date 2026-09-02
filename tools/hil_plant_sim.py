@@ -406,7 +406,16 @@ K_DROOP_BUS = K_DROOP_BUS_SHARED
 ETA_BOOST = 0.85         # boost-stage efficiency, motor draw -> bus current
 I_AUX_A = 0.15           # A     fixed housekeeping load on the bus
 C_BUS_F = 470e-6         # F     bus bulk capacitance (decay when no source is closed)
-R_BUS_BLEED = 2000.0     # ohm   effective bleed across that capacitance
+# ohm   effective bleed across that capacitance.  2000 -> 30e3 on 2026-09-02
+# (operator ruling, the DP-bound round): the physical bus decays full-to-near-
+# zero in 30-60 s, and 2 kOhm against C_BUS_F emptied it in ~1 s.  Pinned to
+# `hil_electrical.R_NODE_BLEED_BUS` by test so the simple engine's dark-bus
+# decay and the hi-fi engine's N_BUS bleed cannot drift apart.  This constant
+# reaches ONLY the no-source-closed decay branch below; the simple engine's
+# LIVE bus law is K_DROOP_BUS_* / V_BUS_DROOP_V0 and is deliberately untouched.
+# TODO(calibrate): see the bench decay-capture procedure at
+# `hil_electrical.R_NODE_BLEED_BUS`.
+R_BUS_BLEED = 30e3
 
 # ── Source models ───────────────────────────────────────────────────────────
 # The fuel-cell polarization model and the battery SOC/OCV model live in
@@ -431,6 +440,13 @@ from hil_electrical import (                                   # noqa: E402
     # so the two engines cannot bill the charger differently; see the
     # "CHARGER BILLING" block in Plant.step().
     ETA_CHG, V_CHG_LOAD_FLOOR,
+    # Per-node bleed (2026-09-02) and the RT1987 forward-conduction constants.
+    # The DP's static-loss map is written in terms of exactly these, so the
+    # bound and the plant it bounds cannot carry two different bleeds; see
+    # `loss_map_for_config()` below.
+    R_NODE_BLEED_BUS, R_NODE_BLEED_OTHER, node_bleed_conductances,
+    N_BUS as _N_BUS, N_MOT as _N_MOT,
+    RT_V_FWD, RT_R_ON,
     # WP-E droop realization mode.  DROOP_SCALE is the mode -> scale map and
     # DROOP_MODES its key tuple (the `--droop` choices); both live in
     # hil_electrical because that is where the droop chain is realized.
@@ -3360,8 +3376,13 @@ DP_TABLE_NAME = "dp_ems_table_%s.csv"
 # scenario, which declares nothing, hashes exactly as it did before the key
 # existed. The first version of this key wrote the line unconditionally and
 # did move every digest; that is what the note above used to record.
+# `loss_map` JOINED THIS TUPLE 2026-09-02 (the DP-bound round), on the same
+# terms as `eta_chg` and for the same reason: the DP's demand model now carries
+# the plant's static losses, and a table solved with a map is not a table for a
+# solve without one. It is OPTIONAL, so an old-era digest is bit-identical to
+# its pre-key value; see DP_FINGERPRINT_OPTIONAL_KEYS.
 DP_FINGERPRINT_META_KEYS = ("ems_v_profile", "duration_s", "chg_i_ceiling_a",
-                            "aux_preload_a", "eta_chg")
+                            "aux_preload_a", "eta_chg", "loss_map")
 
 # Keys whose SENTINEL VALUE is written into the digest as an OMITTED LINE
 # rather than as `key=None` (orchestrator ruling, 2026-09-02; the convention
@@ -3372,13 +3393,15 @@ DP_FINGERPRINT_META_KEYS = ("ems_v_profile", "duration_s", "chg_i_ceiling_a",
 # about the problem any of them solved.  With the line omitted an old-era
 # digest is bit-identical to its pre-key value, and only a run or sidecar that
 # DECLARES an efficiency hashes differently.
-DP_FINGERPRINT_OPTIONAL_KEYS = frozenset({"eta_chg"})
+DP_FINGERPRINT_OPTIONAL_KEYS = frozenset({"eta_chg", "loss_map"})
 
 
 def _dp_fp_resolve(key, meta):
     """The fingerprint's own resolution of one key, for the sentinel test."""
     if key == "eta_chg":
         return dp_eta_chg(meta)
+    if key == "loss_map":
+        return dp_loss_map(meta)
     return meta.get(key)
 
 
@@ -3437,6 +3460,285 @@ def eta_chg_era_label(eta):
             "(bus power = V_pack*i_chg/eta_chg)" % eta)
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# THE DP DEMAND MODEL'S STATIC-LOSS MAP (2026-09-02, the DP-bound round)
+#
+# WHY IT EXISTS.  The delta-SoC-matched DP is a LOWER BOUND on hydrogen: it is
+# the best any causal policy could have done on the same demand.  A bound is
+# only useful if it is priced against the SAME demand the board actually saw.
+# Until this round the DP's demand model carried the motor draw and the
+# housekeeping drain and NOTHING ELSE, while the hi-fi plant additionally bills
+# the sources for every static loss on the energized path.  A decomposition of
+# the two `dp-replay` legs (campaign 20260902_041414) attributed the residual
+# term by term:
+#
+#   term                                     FTP-75      61 s cycle
+#   node bleed on N_BUS and N_MOT            +4.90 %     +2.58 %
+#   droop-mode mismatch in the bus law       -0.67 %     -2.73 %
+#   ------------------------------------------------------------------
+#   measured deviation of the run vs the DP  +4.346 %    -0.198 %
+#
+# BOTH DEFECTS ARE FIXED TOGETHER, and that is not a stylistic choice: they
+# have OPPOSITE SIGNS and partially cancelled, so fixing one alone makes the
+# deviation worse ON AT LEAST ONE LEG.  The three partials, measured:
+#
+#   configuration                          ems-dp-replay   ems-ftp75-dp
+#   today (no map, 2 kOhm bleed)             -0.1979 %       +4.3463 %
+#   bleed only (no map, per-node bleed)      -2.6273 %       -0.2999 %
+#   bus law only (no bleed term, per-node)   -0.1723 %       +0.2722 %
+#   BOTH (the shipped map and bleed)         -0.3031 %       +0.0294 %
+#
+# The bleed-only row is the one that makes the case: it is worse than today on
+# `ems-dp-replay` by an order of magnitude.  The bus-law-only row is NOT worse
+# on that leg (-0.1723 % against -0.1979 %, and it is the best of the four
+# there), so "either alone is worse" is not literally true and is not the
+# argument.  It IS worse than the full map on `ems-ftp75-dp` (+0.2722 %
+# against +0.0294 %), so no single partial wins on both legs.  THE ARGUMENT IS BLEED-INVARIANCE:
+# with only the bus law fixed, the bound still bills no node bleed, so every
+# future bleed retune moves the run without moving its bound and the deviation
+# is a function of a `TODO(calibrate)` constant.  With both fixed the two move
+# together, which is the property the round exists to buy.
+#
+# DEFECT 1 — the bleed was not billed.  `hil_electrical` stamps a bleed
+# conductance on every node.  N_BUS's and N_MOT's are billed to the sources
+# (N_MOT sits behind a closed MOT_PWR for the whole run); N_OFC's and N_OBT's
+# are NOT, because the stack current is referred at v[N_BUS] by
+# `ElectricalSim._source_current`; N_CHG's contributes only while FC_CHARGE or
+# REGEN is closed.
+#
+# DEFECT 2 — the bus law was the WRONG DROOP REALIZATION.  `V_BUS_DROOP_V0 -
+# K_DROOP_BUS_SHARED*I` is 15.95 - 0.074 I, which is the `--droop measured`
+# realization.  Every campaign runs `--droop design`, whose realized bus law
+# regresses at 15.865 - 0.3015 I over 345 000 rows of `ems-ftp75-dp`.  A 0.074
+# V/A slope against a realized 0.30 V/A under-states the bus sag and therefore
+# mis-prices every stage.
+#
+# THE MAP.  Fitted on a 120-point static probe of the hi-fi engine at
+# `--droop design --asymmetry measured`, c_vesc 0.5 mF, substep count PINNED at
+# 20, 1500-tick warm-up and 400-tick averaging (the probe procedure is recorded
+# in docs/modeling/dp_loss_map_20260902.md).  Solved by Picard iteration inside
+# `gen_dp_ems_table.build_demand()`:
+#
+#   i_motor = p_mech / (ETA_BOOST * V_bus)
+#   V_MOT   = (V_bus - RT_V_FWD - RT_R_ON*i_motor) / (1 + RT_R_ON*g_node_other)
+#   i_par   = V_bus*g_node_bus + V_MOT*g_node_other
+#   I_total = i_motor + i_aux + i_par
+#   V_bus   = V0_EFF - (R_FIX + K_G*g_par) * I_total
+#   p_dem   = V_bus * I_total
+#
+# Each coefficient has a MECHANISM, which is why this is a map and not a curve
+# fit: V0_EFF is the boost pair's no-load intercept, R_FIX the share-independent
+# series resistance of the two switch links and their INA shunts, K_G the
+# conversion from the firmware's PARALLEL droop code to ohms, and g_par that
+# code.  The two node conductances are `hil_electrical`'s own, imported rather
+# than restated.
+#
+# THE SEPARABILITY ARGUMENT, and it is load-bearing.  `p_dem` must not depend
+# on the control, or the DP's stage cost is not separable and the whole solve
+# is invalid.  It does not, because THE FIRMWARE HOLDS THE PARALLEL DROOP CODE
+# CONSTANT while it trades the split: measured over campaign 20260902_041414,
+# g_par = g_fc*g_bt/(g_fc+g_bt) has mean 0.148922 and sigma 2.79e-05 across
+# 343 001 Run-state rows of `ems-ftp75-dp` whose individual codes range over
+# 0.198-0.518 and 0.209-0.598.  `test_gen_dp_ems_table.py` carries that
+# constancy as a TRIPWIRE: if a firmware or governor change ever lets g_par
+# move with the share, the map's control-independence is gone and the DP must
+# be re-derived, not re-fitted.
+#
+# ⚠️ STATED APPROXIMATION.  Under `--asymmetry measured` the realized slope is
+# not a pure function of g_par: the two mirror-image code pairs 0.22/0.46 and
+# 0.46/0.22 share g_par = 0.148824 but realize K = 0.30673 and 0.31215, a
+# +/-0.9 % share dependence the map does not represent.  The fit's residual
+# over the whole 120-point grid is 3.48 mV rms and 10.3 mV max, which is
+# 0.067 % of V_bus.  K_EFF at the firmware-held g_par is 0.308502 V/A against
+# the board's regressed 0.3015-0.3057 V/A.
+#
+# ⚠️ SCOPE.  The map is a STATIC map.  It carries no regen term (the DP's
+# demand is still `max(0, F*v)`; see `build_demand`'s regen note) and no
+# charger-node arm.  The charger arm was PROBED and its coefficients hold to
+# 2.3e-04 A -- the N_CHG bleed adds `V_CHG*g_node_other` and V_CHG follows
+# `V_bus - RT_V_FWD - RT_R_ON*i_chg_in` to 4.8e-06 V -- but it is deliberately
+# NOT applied to the charge stage cost in this round.
+# THE REASON IS ROUND SCOPE, NOT SEPARABILITY, and the distinction matters
+# because the separability argument is the load-bearing one above.  A
+# charge-gated term is NOT a separability blocker: the charge control is
+# already a column of the DP's control set, so a cost that depends on it is
+# priced inside `step_charge()` exactly as the charger's own bus draw already
+# is, and the stage cost stays separable.  What defers it is that the term
+# belongs with the REGEN term, which is the next round's work, and that
+# landing half of a two-term correction is how the two defects above came to
+# cancel in the first place.  Its omission understates the cost of a charge
+# stage by ~0.26 mA of bus current, which is 0.02 % of a charging stage's
+# demand.
+DP_BUS_V0_EFF = 15.871722    # V         no-load bus intercept of the boost pair
+DP_BUS_R_FIX = 0.017986      # ohm       share-independent series resistance
+DP_BUS_K_G = 1.95079         # ohm/unit  parallel droop code -> source resistance
+DP_DROOP_G_PAR = 0.148922    # -         the firmware-held parallel droop code
+# Picard iterations for the demand solve.  The old two-term model contracted at
+# ~0.7 %/step and used 4; the loss map adds two coupled unknowns (V_MOT and
+# i_par) and a ~4x steeper bus slope, so it is iterated to convergence instead
+# of to a contraction argument.  30 is ~1e-12 on every stage of both tables.
+DP_LOSS_MAP_PICARD_ITERS = 30
+
+# The ONE plant configuration the map above was fitted at.  A run in any other
+# configuration resolves to `None` = NO MAP, which is the pre-round era.
+DP_LOSS_MAP_ELECTRICAL = "hifi"
+DP_LOSS_MAP_DROOP_MODE = "design"
+DP_LOSS_MAP_ASYMMETRY_MODE = "measured"
+
+#: The map's field names, in the FIXED order the fingerprint serializes them.
+DP_LOSS_MAP_KEYS = ("v0_eff", "r_fix", "k_g", "g_par",
+                    "g_node_bus", "g_node_other", "rt_v_fwd", "rt_r_on")
+
+
+def loss_map_for_config(electrical, droop_mode, asymmetry_mode):
+    """The DP static-loss map for one plant configuration, or None.
+
+    `None` means NO MAP, and it names the pre-2026-09-02 demand model (motor
+    draw plus housekeeping drain, priced on `V_BUS_DROOP_V0 -
+    K_DROOP_BUS_SHARED*I`).  It is the answer for:
+
+      * `electrical == "simple"`.  The simple engine has no node network and no
+        bleed to bill; its bus law IS `K_DROOP_BUS_*` / `V_BUS_DROOP_V0`, which
+        this round deliberately does NOT move.  Pricing a simple-mode run
+        against a hi-fi map would bound it with losses its plant never took.
+      * any droop or asymmetry mode other than the one the map was fitted at.
+        The map's K_EFF is a `--droop design` number; applying it to a
+        `--droop measured` run would repeat DEFECT 2 with the sign reversed.
+
+    Returns a plain dict of floats over DP_LOSS_MAP_KEYS.  The two node
+    conductances come from `hil_electrical.node_bleed_conductances()` at call
+    time, so a monkeypatched bleed era reaches the DP and the plant together."""
+    if electrical != DP_LOSS_MAP_ELECTRICAL:
+        return None
+    if droop_mode != DP_LOSS_MAP_DROOP_MODE:
+        return None
+    if asymmetry_mode != DP_LOSS_MAP_ASYMMETRY_MODE:
+        return None
+    g = node_bleed_conductances()
+    return {
+        "v0_eff": float(DP_BUS_V0_EFF),
+        "r_fix": float(DP_BUS_R_FIX),
+        "k_g": float(DP_BUS_K_G),
+        "g_par": float(DP_DROOP_G_PAR),
+        "g_node_bus": float(g[_N_BUS]),
+        "g_node_other": float(g[_N_MOT]),
+        "rt_v_fwd": float(RT_V_FWD),
+        "rt_r_on": float(RT_R_ON),
+    }
+
+
+def plant_loss_map():
+    """THE MAP THIS PROCESS'S PLANT RUNS AT, in `dp_loss_map()`'s vocabulary.
+
+    The mirror of `plant_eta_chg()`: it answers for the DEFAULT configuration
+    the tools solve against, which is the hi-fi engine at `--droop design
+    --asymmetry measured` — the configuration every campaign since 2026-09-01
+    has run.  A tool that knows the actual configuration (the suite, the
+    report analyzer) must call `loss_map_for_config()` with it instead."""
+    return loss_map_for_config(DP_LOSS_MAP_ELECTRICAL, DP_LOSS_MAP_DROOP_MODE,
+                               DP_LOSS_MAP_ASYMMETRY_MODE)
+
+
+def dp_loss_map(meta):
+    """The static-loss map a DP table is solved / replayed against.
+
+    THE ERA SENTINEL, in the shape `dp_eta_chg()` established.  An ABSENT
+    `loss_map` key means the run, sidecar or table PREDATES the loss map: its
+    demand was the two-term model, which is NOT reproducible by any set of
+    coefficients.  That era is named `None`.
+
+    Consequences, in the same order `dp_eta_chg()` states them:
+      * This is NOT the plant's runtime accounting.  The plant bills its own
+        losses through the node network; the map is the DP's REDUCED model of
+        that billing.
+      * A live SCENARIO declares nothing, so `dp_profile_fingerprint()` hashes
+        the sentinel for it, and a generated table agrees with its `dp-replay`
+        consumer by construction.  The table's own map is recorded in its
+        `# loss_map:` header line, as documentation.
+      * Where the sentinel DOES separate two problems is the archived-run path
+        in `dp_results_db`, whose era overrides carry the map explicitly."""
+    lm = meta.get("loss_map")
+    if lm is None:
+        return None
+    return {k: float(lm[k]) for k in DP_LOSS_MAP_KEYS}
+
+
+def check_loss_map(loss_map):
+    """Validate a loss map and return it NORMALIZED to plain floats, or None.
+
+    The mirror of `charger_power.check_eta_chg()`: every consumer of the map
+    validates through ONE function, so a partially-populated dict fails LOUDLY
+    at the top of a solve rather than raising a KeyError 300 stages in, or
+    worse, silently pricing a stage with a numpy scalar of the wrong dtype."""
+    if loss_map is None:
+        return None
+    if not isinstance(loss_map, dict):
+        raise TypeError("loss_map must be a dict over %s or None, got %r"
+                        % (list(DP_LOSS_MAP_KEYS), type(loss_map).__name__))
+    missing = [k for k in DP_LOSS_MAP_KEYS if k not in loss_map]
+    if missing:
+        raise ValueError("loss_map is missing %s - build it with "
+                         "hil_plant_sim.loss_map_for_config()" % (missing,))
+    extra = [k for k in loss_map if k not in DP_LOSS_MAP_KEYS]
+    if extra:
+        raise ValueError("loss_map carries unknown keys %s; the map's fields "
+                         "are exactly %s" % (extra, list(DP_LOSS_MAP_KEYS)))
+    out = {}
+    for k in DP_LOSS_MAP_KEYS:
+        v = float(loss_map[k])
+        if not math.isfinite(v):
+            raise ValueError("loss_map[%r] is not finite (%r)" % (k, v))
+        out[k] = v
+    if out["g_node_bus"] < 0.0 or out["g_node_other"] < 0.0:
+        raise ValueError("loss_map node conductances must be >= 0, got "
+                         "bus %r other %r"
+                         % (out["g_node_bus"], out["g_node_other"]))
+    if out["v0_eff"] <= 0.0:
+        raise ValueError("loss_map v0_eff must be > 0, got %r" % out["v0_eff"])
+    return out
+
+
+def loss_map_canonical(loss_map):
+    """The map as ONE canonical string, for fingerprints and table headers.
+
+    Fixed key order, `repr()` of plain floats — the convention
+    `dp_profile_fingerprint()` already uses for every other value."""
+    if loss_map is None:
+        return "none"
+    return ",".join("%s=%r" % (k, float(loss_map[k])) for k in DP_LOSS_MAP_KEYS)
+
+
+def loss_map_from_canonical(text):
+    """The inverse of `loss_map_canonical()`: a map dict, or None.
+
+    A generated table records its demand era as a `# loss_map:` header line,
+    and a reader that wants to REPRODUCE that table's solve needs the map back
+    as a dict.  Kept next to the renderer so the two cannot drift, and routed
+    through `check_loss_map()` so a hand-edited header fails loudly."""
+    if text is None:
+        return None
+    text = str(text).strip()
+    if text in ("", "none", "None"):
+        return None
+    out = {}
+    for part in text.split(","):
+        key, _, val = part.partition("=")
+        out[key.strip()] = float(val)
+    return check_loss_map(out)
+
+
+def loss_map_era_label(loss_map):
+    """A short printable era name.  ONE text for every refusal and warning."""
+    if loss_map is None:
+        return ("the LOSS-MAP-FREE demand model (motor draw + drain only, "
+                "priced on V_BUS_DROOP_V0 - K_DROOP_BUS_SHARED*I)")
+    return ("a static-loss-map demand model (V0_EFF = %g V, K_EFF = %g V/A, "
+            "bus bleed %g S, other-node bleed %g S)"
+            % (loss_map["v0_eff"],
+               loss_map["r_fix"] + loss_map["k_g"] * loss_map["g_par"],
+               loss_map["g_node_bus"], loss_map["g_node_other"]))
+
+
 def dp_chg_ceiling_a(meta):
     """The Ag105 charge-current ceiling a DP table is solved / replayed against.
 
@@ -3488,6 +3790,11 @@ def dp_profile_fingerprint(scenario, meta):
             # from a pre-era one, which is the separation the key was added
             # for.
             continue
+        if key == "loss_map":
+            # ERA SENTINEL, resolved through `dp_loss_map()` and rendered by
+            # `loss_map_canonical()` so the digest carries the COEFFICIENTS and
+            # not a dict's repr (whose key order is an implementation detail).
+            val = loss_map_canonical(dp_loss_map(meta))
         if key == "eta_chg":
             # ERA SENTINEL, resolved through the one function that owns the
             # convention (see dp_eta_chg): an ABSENT key hashes as `None`, the
@@ -3499,6 +3806,8 @@ def dp_profile_fingerprint(scenario, meta):
             val = dp_eta_chg(meta)
         if key == "ems_v_profile" and val:
             val = [(float(a), float(b)) for a, b in val]
+        elif key == "loss_map":
+            pass                 # already the canonical string, not a scalar
         elif val is not None:
             val = float(val)
         parts.append("%s=%r" % (key, val))
@@ -3691,7 +4000,9 @@ class DpReplayStrategy:
     # All of them REFUSE rather than warn, and every message names WHICH value
     # drifted and the exact regeneration command — the failure mode being
     # avoided is a run that looks fine and means nothing.
-    def bind_scenario(self, scenario, meta, electrical_mode=None, args=None):
+    def bind_scenario(self, scenario, meta, electrical_mode=None,
+                      args=None, droop_mode=None,
+                      asymmetry_mode=None):
         """Load and validate this scenario's table.  Raises ValueError to refuse.
 
         main() calls this before the run starts (the generic `bind_scenario`
@@ -3699,9 +4010,17 @@ class DpReplayStrategy:
         mid-run crash or, worse, a silently wrong trace.
 
         `electrical_mode` is the RESOLVED engine ("simple" / "hifi"), not the
-        requested one, and `args` the parsed CLI namespace.  Both are optional
-        so a caller that only wants the profile check (a test, a future tool)
-        keeps working; main() passes both."""
+        requested one, `droop_mode` and `asymmetry_mode` the RESOLVED plant
+        modes (a scenario may override the CLI default for either), and `args`
+        the parsed CLI namespace.  All four are optional so a caller that only
+        wants the profile check (a test, a future tool) keeps working; main()
+        passes all four.
+
+        A caller that omits the two mode arguments is treated as asking about
+        THE SHIPPED CONFIGURATION (`plant_loss_map()`), not as asking for the
+        check to be skipped: an omitted mode is missing information, and the
+        era guard's whole purpose is that missing information must not read as
+        agreement.  See block (0b)."""
         path = os.path.join(self.table_dir, DP_TABLE_NAME % scenario)
         if not os.path.isfile(path):
             raise ValueError(
@@ -3760,6 +4079,59 @@ class DpReplayStrategy:
                    want_eta, regen,
                    "" if want_eta is None
                    else " --eta-chg %g" % want_eta))
+
+        # ── (0b) THE DEMAND-MODEL ERA (2026-09-02, the DP-bound round) ─────
+        # SECOND, AND STILL BEFORE THE FINGERPRINT, for exactly the reason
+        # block (0) is: a live scenario declares no `loss_map` either, so
+        # `dp_profile_fingerprint()` hashes the sentinel None for BOTH eras and
+        # the shipped loss-map tables therefore still carry their PRE-round
+        # digests (`ems-dp-replay` 02683031..., `ems-ftp75-dp` 403c5e71...).
+        # The fingerprint cannot see this and is not intended to.
+        #
+        # WHAT GOES WRONG WITHOUT THE GUARD, concretely.  `--loss-map` defaults
+        # to `none`, so a regeneration for ANY unrelated reason -- a retuned
+        # drain, a moved run-exit, a fresh checkout -- silently produces a
+        # loss-map-FREE table that binds clean against a loss-map-era plant.
+        # The bound is then priced on a demand model that bills no node bleed
+        # and solves the `--droop measured` bus law, which is the exact defect
+        # this round removed: the run-versus-table deviation on `ems-ftp75-dp`
+        # returns to +4.35 %, and it returns INVISIBLY, because every other
+        # check passes.
+        # An ABSENT `# loss_map:` header line means the pre-round era, so this
+        # cannot be a soft check either: "the table does not say" and "the
+        # table says loss-map-free" are the same statement.
+        want_lm = (plant_loss_map() if electrical_mode is None
+                   else loss_map_for_config(
+                       electrical_mode,
+                       droop_mode if droop_mode is not None
+                       else DP_LOSS_MAP_DROOP_MODE,
+                       asymmetry_mode if asymmetry_mode is not None
+                       else DP_LOSS_MAP_ASYMMETRY_MODE))
+        got_lm = loss_map_from_canonical(table_meta.get("loss_map"))
+        if want_lm != got_lm:
+            raise ValueError(
+                "DP table %s was solved against %s, but this run's demand "
+                "model is %s.\n"
+                "  table  loss_map=%s%s\n"
+                "  run    loss_map=%s\n"
+                "  The two demand models differ by the plant's STATIC LOSSES "
+                "(the per-node bleed on N_BUS and N_MOT) and by which droop "
+                "realization the bus law carries, so the table's stage costs "
+                "minimise a DIFFERENT demand than this run will draw and "
+                "replaying it bounds nothing. Measured when the map landed: "
+                "+4.35 %% on `ems-ftp75-dp` and -0.20 %% on `ems-dp-replay`. "
+                "NOTE the profile fingerprint CANNOT catch this: a live "
+                "scenario declares no `loss_map`, so both eras hash the same "
+                "sentinel.\n"
+                "  Regenerate for this era:\n%s%s"
+                % (path, loss_map_era_label(got_lm),
+                   loss_map_era_label(want_lm),
+                   loss_map_canonical(got_lm),
+                   "" if "loss_map" in table_meta
+                   else " (no `# loss_map:` header line - a table that "
+                        "predates the static-loss map)",
+                   loss_map_canonical(want_lm), regen,
+                   "" if want_lm is None else " --loss-map plant"))
 
         want = dp_profile_fingerprint(scenario, meta)
         got = table_meta.get("profile_fingerprint")
@@ -5232,7 +5604,9 @@ class SdpStrategy:
                   "a regeneration that moved only provenance."
                   % (want_file[:16], pol["file_sha256"][:16]))
 
-    def bind_scenario(self, scenario, meta, electrical_mode=None, args=None):
+    def bind_scenario(self, scenario, meta, electrical_mode=None,
+                      args=None, droop_mode=None,
+                      asymmetry_mode=None):
         """Generic startup hook (see main()).  Loads and validates the policy.
 
         Unlike DpReplayStrategy's binder this does NOT check the scenario: an
@@ -6067,14 +6441,27 @@ class _MpcProxy:
         return self.kwargs
 
     # -- the strategy surface ----------------------------------------------
-    def bind_scenario(self, scenario, meta, electrical_mode=None, args=None):
-        """The generic startup hook.  `electrical_mode` / `args` are part of the
-        hook contract and are ACCEPTED AND DROPPED: the MPC's prediction model
-        is the scenario's demand preview, which neither argument changes.  A
-        signature that omitted them would make `main()`'s keyword call a
-        TypeError at campaign time."""
+    def bind_scenario(self, scenario, meta, electrical_mode=None,
+                      args=None, droop_mode=None,
+                      asymmetry_mode=None):
+        """The generic startup hook, FORWARDED (2026-09-02, fix M1).
+
+        `electrical_mode`, `droop_mode` and `asymmetry_mode` used to be dropped
+        here on the argument that the MPC's prediction model is the scenario's
+        demand preview and no plant mode changes it.  That stopped being true
+        when the preview gained a demand-model era: the four MPC scenarios are
+        `electrical: "any"`, so the same scenario key would have made the
+        planner predict on the hi-fi static-loss map during a `--electrical
+        simple` or `--droop measured` run, while the sidecar and
+        `hil_report_analysis.matched_dp_for_run()` both resolve the era from
+        the run's own configuration and would record `None`. Plan and bound on
+        two different demand models is precisely what this round removed, so
+        the modes are forwarded and MpcStrategy.bind_scenario() reconciles
+        them. `args` is still dropped."""
         impl = self._build()
-        self.provenance = impl.bind_scenario(scenario, meta)
+        self.provenance = impl.bind_scenario(
+            scenario, meta, electrical_mode=electrical_mode,
+            droop_mode=droop_mode, asymmetry_mode=asymmetry_mode)
         return self.provenance
 
     def reset(self):
@@ -6159,7 +6546,7 @@ ems_mpc_sto = _MpcProxy("mpc-sto")
 # 343 is ONE charge option's worth of candidates, and the planner enumerates the
 # share ladder once per charge plan with the no-charge plan FIRST — so every
 # capped decision was truncated BEFORE the charge axis was reached (13 of 61
-# decisions on `ems-mpc-sto`).  "The MPC chose not to charge" was not a
+# decisions on `ems-mpc-det`).  "The MPC chose not to charge" was not a
 # supported reading of any leg of campaign 20260902_011926.  Any future change
 # to the ladder, the move blocks or the charge-option count must move this
 # constant with it; `test_mpc_campaign_cap_is_the_full_enumeration` pins it
@@ -6537,27 +6924,55 @@ EMS_STRATEGY_META = {
     # strategy plays, and a transition-probability matrix is a model input, not
     # a decision law.  Its path is recorded in the sidecar's `config.mpc`
     # (`tpm_path`), which is where a reader of a `mpc-sto` run looks.
-    "mpc-det":       {"policy_file": None, "frontier_eligible": True},
-    "mpc-sto":       {"policy_file": None,
+    # ⚠️ THE ROLES SWAPPED 2026-09-02 (operator ruling). `mpc-sto` is now THE
+    # MPC: it is the frontier candidate of the `cycle61-mpc` and `ftp75-mpc`
+    # tuples, and `ems-mpc`, `ems-mpc-cross` and `ems-ftp75-mpc` bind it.
+    # `mpc-det` is the ABLATION, run on `ems-mpc-det` (the scenario formerly
+    # named `ems-mpc-sto`) against `ems-mpc`'s identical stimulus, so the pair
+    # measures THE VALUE OF PREVIEW and nothing else.
+    "mpc-det":       {"policy_file": None,
                       "frontier_eligible": False,
                       "role_note":
-                          "ROLE: THE STOCHASTIC VARIANT, NOT YET A FRONTIER "
-                          "CANDIDATE — it optimizes the same objective as "
-                          "`mpc-det` but replaces the scenario preview with the "
-                          "demand TPM's conditional mean and tightens the "
-                          "overcurrent bound to that distribution's 90 % "
-                          "quantile (adjudication section 2.5). It has no "
-                          "registered frontier tuple because no stimulus in "
-                          "this suite is a draw from that TPM — the matrix is a "
-                          "road vehicle's and its 0.762 diagonal makes "
-                          "short-horizon prediction near-persistence — so a "
-                          "ranking against `soc-band` would measure the "
-                          "mismatch between the stimulus and the matrix, not "
-                          "the policy. Its h2/delta_soc pair is a real "
-                          "measurement OF THE STOCHASTIC LAW on a deterministic "
-                          "stimulus. Promote it to frontier_eligible when it "
-                          "has a stimulus it is a candidate on, and not "
-                          "before."},
+                          "ROLE: THE DETERMINISTIC ABLATION, NOT A FRONTIER "
+                          "CANDIDATE. It optimizes the same objective as "
+                          "`mpc-sto` but reads its demand off the scenario's "
+                          "own speed profile instead of the demand TPM's "
+                          "conditional mean, and leaves the overcurrent bound "
+                          "at its nominal value. That preview is the stimulus "
+                          "it is scored on, so a frontier ranking would credit "
+                          "the policy for foreknowledge no causal controller "
+                          "has. Its value is the DIFFERENCE against `mpc-sto` "
+                          "on the same stimulus (`ems-mpc-det` against "
+                          "`ems-mpc`), which is the value of preview: campaign "
+                          "20260902_011926 measured it at -22.5 % hydrogen for "
+                          "+38.7 % drain, i.e. 0.36 % of equivalent hydrogen. "
+                          "Do not register a frontier tuple on it."},
+    "mpc-sto":       {"policy_file": None,
+                      "frontier_eligible": True,
+                      "role_note":
+                          "ROLE: THE FRONTIER MPC since 2026-09-02. It "
+                          "replaces the scenario preview with the demand TPM's "
+                          "conditional mean and tightens the overcurrent bound "
+                          "to that distribution's 90 % quantile (adjudication "
+                          "section 2.5), so it is causal in its demand where "
+                          "`mpc-det` is not. ⚠️ STATED LIMIT, and it is a "
+                          "FAILING GATE, not a caveat: offline Gate 1 fails on "
+                          "`ems-soc-band` with a share-prediction error of "
+                          "mean 0.00971 and max 0.25000 against a 5e-03 "
+                          "acceptance. The mechanism is known — a 1 Hz "
+                          "re-command landing in an `open_feedforward` stage "
+                          "drops the governor into a feedforward slew the "
+                          "stage model does not represent, and 50.6 % of that "
+                          "stimulus is open-loop. Campaigns 20260902_011926 "
+                          "and _041414 measured the board-side error at "
+                          "closed-loop median 1e-5 and open-loop max 0.219, "
+                          "inside the 0.30 provisional band, which is why the "
+                          "leg ships. ⚠️ ALSO STATED: the demand TPM is a road "
+                          "vehicle's and its 0.762 diagonal makes "
+                          "short-horizon prediction near-persistence, so no "
+                          "stimulus in this suite is a draw from that matrix "
+                          "and a frontier reading here carries the "
+                          "stimulus-matrix mismatch inside it."},
 }
 
 # The property a single registry would have given for free.  A strategy added
@@ -7459,7 +7874,7 @@ SDP_ALPHA_SCENARIOS = tuple(sorted(
 # walk is run on them — but an offline walk of an `ems-sdp-alpha-*` scenario
 # would model HALF its demand until they are extended.  ems_walk.py already
 # reports the coverage gap rather than assuming it away.
-# `ems-mpc` / `ems-mpc-sto` (2026-09-02) share `ems-soc-band`'s stimulus OBJECT
+# `ems-mpc` / `ems-mpc-det` (2026-09-02) share `ems-soc-band`'s stimulus OBJECT
 # and are ranked against `ems-soc-band` and `ems-dp-replay` on the `cycle61-mpc`
 # frontier tuple, so they MUST carry the identical load — the B2 defect of
 # 2026-09-01 was this omission for `ems-sdp`, and it halved that scenario's
@@ -7468,7 +7883,7 @@ SDP_ALPHA_SCENARIOS = tuple(sorted(
 # mirrors named above carry these two names as well.
 SOC_BAND_DRAIN_SCENARIO_NAMES = ("ems-soc-band", "ems-dp-replay",
                                  "ems-sdp", "ems-mpc",
-                                 "ems-mpc-sto") + SDP_ALPHA_SCENARIOS
+                                 "ems-mpc-det") + SDP_ALPHA_SCENARIOS
 
 # ── ems-y-*: the firmware's 'Y' combined profile, four variants ─────────────
 #
@@ -7722,16 +8137,16 @@ SCENARIOS["ems-ftp75-socband"]["chg_i_ceiling_a"] = (
 SCENARIOS["ems-ftp75-mpc"] = {
     "description": ("%.0f s EPA FTP-75 study segment (raw t = 0..340 s "
                     "inclusive, 341 samples at 1 Hz; scaled to a 3.0 m/s peak) "
-                    "driven by the governor-aware `mpc-det` receding-horizon "
+                    "driven by the governor-aware `mpc-sto` receding-horizon "
                     "controller: a 20-stage, 1 Hz plan over the pack SoC whose "
                     "prediction model carries the firmware's share governor. "
-                    "⚠️ PREVIEW, NOT CAUSAL — the demand is reconstructed from "
-                    "this profile. The candidate leg of the `ftp75-mpc` "
+                    "Its demand comes from the TPM's conditional mean, not "
+                    "from this profile. The candidate leg of the `ftp75-mpc` "
                     "frontier tuple. Gated behind run_hil_suite.py "
                     "--with-ftp75." % FTP75_DURATION_S),
     "electrical": "any",
     "duration_s": FTP75_DURATION_S,
-    "ems": "mpc-det",
+    "ems": "mpc-sto",
     # THE SAME LIST OBJECT as the three sibling legs.
     "ems_v_profile": FTP75_PROFILE,
     "ems_run_exit_s": FTP75_RUN_EXIT_S,
@@ -7743,6 +8158,8 @@ SCENARIOS["ems-ftp75-mpc"] = {
     "chg_i_ceiling_a": SCENARIOS["ems-ftp75-socband"]["chg_i_ceiling_a"],
     # DETERMINISTIC CANDIDATE CAP — see MPC_CAMPAIGN_MAX_CANDIDATES.
     "mpc_max_candidates": MPC_CAMPAIGN_MAX_CANDIDATES,
+    # THE DEMAND-MODEL ERA THE PLANNER PREDICTS ON — see `ems-mpc`.
+    "mpc_loss_map": plant_loss_map(),
 }
 
 # ── ems-ftp75-sdp: the FTP-75 segment with the SDP policy STARTED ABOVE ITS
@@ -8305,7 +8722,7 @@ SCENARIOS["ems-sdp-braking"] = {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
-# ── ems-mpc / ems-mpc-sto / ems-mpc-cross: THE MPC's LIVE SCENARIOS ─────────
+# ── ems-mpc / ems-mpc-det / ems-mpc-cross: THE MPC's LIVE SCENARIOS ─────────
 #    (2026-09-02; `ems-ftp75-mpc` is registered with the FTP-75 family above)
 #
 # ONE RULE GOVERNS ALL FOUR, and it is the reason none of them declares a
@@ -8313,26 +8730,70 @@ SCENARIOS["ems-sdp-braking"] = {
 # stimulus is validated in the same campaign as a new controller.  Design
 # document section 7.2, adjudication section 2.6.
 #
-#   ems-mpc        the `ems-soc-band` 61 s cycle and drain, driven by `mpc-det`.
-#                  This is the FRONTIER CANDIDATE: the `cycle61-mpc` tuple ranks
-#                  it against `ems-soc-band` (reference) and `ems-dp-replay`
-#                  (bound), which are the SAME three objects `ems-sdp` is
-#                  ranked on.
-#   ems-mpc-sto    the same 61 s stimulus driven by `mpc-sto`.  NOT a frontier
-#                  leg — see EMS_STRATEGY_META's role note: no stimulus here is
-#                  a draw from the TPM, so the run measures the stochastic law
-#                  on a deterministic cycle and nothing more.
-#   ems-mpc-cross  the `ems-sdp-cross` two-level cruise, driven by `mpc-det`.
-#                  It reuses that scenario's `soc_ref_offset` MECHANISM: the MPC
-#                  has its own `soc_ref_offset` constructor argument with the
-#                  same meaning (where the run starts relative to the SoC
-#                  reference the controller regulates to), so the same +0.0025
-#                  places the run on the same side of the same surface.  What
-#                  the two scenarios do with that placement is NOT the same: the
-#                  SDP's is a table lookup that flips, the MPC's is a terminal
-#                  price that biases a plan, so the observable here is a
-#                  CONTINUOUS walk of the commanded share rather than a single
-#                  sharp flip.  That is the point of running it.
+# ⚠️ THE BINDINGS BELOW WERE STATED BACKWARDS between the 2026-09-02 operator
+# ruling and this correction, and so was the off-frontier ARGUMENT: the text
+# gave `mpc-sto`'s "no stimulus here is a draw from the TPM" as the reason the
+# ablation leg is not ranked, which was the PRE-swap reason and is not the
+# post-swap one.  `mpc-sto` is now THE MPC and is ranked; `mpc-det` is the
+# ablation, and it is off-frontier because it reads its demand off the very
+# stimulus it is scored on.
+#
+#   ems-mpc          the `ems-soc-band` 61 s cycle and drain, driven by
+#                    `mpc-sto`.  This is the FRONTIER CANDIDATE: the
+#                    `cycle61-mpc` tuple ranks it against `ems-soc-band`
+#                    (reference) and `ems-dp-replay` (bound), which are the
+#                    SAME three objects `ems-sdp` is ranked on.
+#   ems-mpc-det      the same 61 s stimulus driven by `mpc-det`.  NOT a
+#                    frontier leg — see EMS_STRATEGY_META's role note: it plans
+#                    against this scenario's own speed profile, so ranking it
+#                    would credit the policy for foreknowledge no causal
+#                    controller has.  Its value is the DIFFERENCE against
+#                    `ems-mpc` on one stimulus, which is the value of preview.
+#   ems-mpc-cross    the `ems-sdp-cross` two-level cruise, driven by `mpc-sto`.
+#                    It reuses that scenario's `soc_ref_offset` MECHANISM: the
+#                    MPC has its own `soc_ref_offset` constructor argument with
+#                    the same meaning (where the run starts relative to the SoC
+#                    reference the controller regulates to), so the same
+#                    +0.0025 places the run on the same side of the same
+#                    surface.  What the two scenarios do with that placement is
+#                    NOT the same: the SDP's is a table lookup that flips, the
+#                    MPC's is a terminal price that biases a plan, so the
+#                    observable here is a CONTINUOUS walk of the commanded
+#                    share rather than a single sharp flip.
+#
+# ⚠️⚠️ THE WIDE WALK ACROSS THE SWITCHING REGION IS NOT AVAILABLE FROM ANY
+# REGISTERED LEG, and it was already unavailable BEFORE the 2026-09-02
+# promotion.  This is recorded here because the cross stimulus was built to
+# show that walk and its registry entry still says so.
+#
+# MEASURED (fix round, 2026-09-02).  On the cross stimulus BOTH laws command a
+# share range of exactly 0.0833, over [0.2500, 0.3333], and their traces are
+# bit-identical in hydrogen as well (h2 0.010942 loss-map-free, 0.010835 under
+# the static-loss map).  That holds in BOTH demand eras and for BOTH
+# strategies, so it is not a consequence of the promotion and not a
+# consequence of the loss map.  It reproduces on the PRE-ROUND TREE at commit
+# 8dc180d, where `ems-mpc-cross` still bound `mpc-det`: 0.0833 there too.
+#
+# Two shipped numbers were therefore ALREADY WRONG at 8dc180d, independently of
+# this round:
+#   * `share_range_min` 0.12 on `ems-mpc-cross` is UNSATISFIABLE — the plan's
+#     own span is 0.0833 — so the check could only ever have failed a correct
+#     run.  It is 0.05 now (~0.6x the measured walk).
+#   * `walk_h2` 0.014134 for that leg is stale by +29 %; the true pre-round
+#     walk is 0.010942.  It is 0.010835 now, re-measured under the shipped
+#     bindings and the loss-map era.
+#
+# WHY THERE IS NO `ems-mpc-det-cross`.  The fix round proposed one, to keep the
+# wide-walk observable alive under `mpc-det`.  It was BUILT, MEASURED AND
+# WITHDRAWN: `mpc-det` walks the same 0.0833 on this stimulus, so the leg
+# reproduced `ems-mpc-cross`'s trace bit for bit and would have spent ~200 s of
+# every campaign restating a known-null comparison under a note claiming an
+# observable it does not have.  The wide walk is a question about the MPC's
+# candidate ladder and its terminal economics on a two-level cruise — the
+# 8dc180d ladder coarsening is the first thing to look at — and it is not
+# recoverable by registering a scenario.  `test_run_hil_suite.py` pins the
+# 0.0833 coincidence so a ladder change that restores the wide walk is
+# VISIBLE rather than silent.
 #
 # ⚠️ WHY NO BRAKING LEG.  `governor_model` does not license its fidelity claim
 # over `ems-sdp-braking`'s post-window transients, and the MPC's plan is only as
@@ -8347,7 +8808,7 @@ SCENARIOS["ems-sdp-braking"] = {
 # so a frontier comparison must resolve to the SAME engine on all three legs
 # (`ems_frontier_stimulus_mismatches`'s `electrical_resolved` key).
 #
-# ⚠️ THE DRAIN.  `ems-mpc` and `ems-mpc-sto` share `ems-soc-band`'s stimulus,
+# ⚠️ THE DRAIN.  `ems-mpc` and `ems-mpc-det` share `ems-soc-band`'s stimulus,
 # which INCLUDES the SoC-band drain — so both are in SOC_BAND_DRAIN_SCENARIO_
 # NAMES above and in the two offline mirrors named there.  `ems-mpc-cross` is
 # NOT, for exactly the reason `ems-sdp-cross` is not: its two cruise levels are
@@ -8355,13 +8816,17 @@ SCENARIOS["ems-sdp-braking"] = {
 # charge-admissible demand bin the scenario exists to sit in.
 SCENARIOS["ems-mpc"] = {
     "description": "The `ems-soc-band` drive cycle and drain load, driven by "
-                   "the governor-aware `mpc-det` receding-horizon controller: "
+                   "the governor-aware `mpc-sto` receding-horizon controller: "
                    "a 20-stage, 1 Hz plan over the pack SoC whose prediction "
                    "model carries the firmware's own share governor, so it "
                    "plans DELIVERED splits rather than commanded ones. "
-                   "⚠️ PREVIEW, NOT CAUSAL: the demand is reconstructed from "
-                   "the scenario's own speed profile. The frontier candidate "
-                   "of the `cycle61-mpc` tuple.",
+                   "THE DEFAULT MPC since 2026-09-02 (operator ruling): the "
+                   "stochastic law is the frontier candidate of the "
+                   "`cycle61-mpc` tuple and `mpc-det` is its ablation, run on "
+                   "the same stimulus as `ems-mpc-det`. "
+                   "⚠️ CAUSAL IN ITS DEMAND, unlike `mpc-det`: the plan is "
+                   "built from the demand TPM's conditional mean rather than "
+                   "from this scenario's own speed profile.",
     "electrical": "any",
     "duration_s": SCENARIOS["ems-soc-band"]["duration_s"],
     "chg_i_ceiling_a": SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"],
@@ -8369,38 +8834,64 @@ SCENARIOS["ems-mpc"] = {
     "ems_v_profile": SCENARIOS["ems-soc-band"]["ems_v_profile"],
     # DETERMINISTIC CANDIDATE CAP — see MPC_CAMPAIGN_MAX_CANDIDATES.
     "mpc_max_candidates": MPC_CAMPAIGN_MAX_CANDIDATES,
-    "ems": "mpc-det",
+    # THE DEMAND-MODEL ERA THE PLANNER PREDICTS ON (2026-09-02).  It must be
+    # the era the bound this leg is scored against was solved in, or the
+    # frontier compares a plan built on one demand model with a bound built on
+    # another.  `ems-dp-replay`'s table is a loss-map-era solve, so this is
+    # the map.  Read by MpcStrategy.bind_scenario(), like `mpc_soc_ref_offset`.
+    # ⚠️ RESOLVED AT IMPORT, so it does NOT follow a later monkeypatch of the
+    # bleed constants: a test that rebinds `R_NODE_BLEED_BUS` and then reads
+    # this key gets the value the module was imported with. That is deliberate
+    # (a scenario key is a static declaration, and pinning it makes a campaign
+    # reproducible), and it is also why `bind_scenario()` treats the key as an
+    # INTENT and reconciles it against the run's resolved configuration rather
+    # than applying it blind - see the M1 block in mpc_ems.py.
+    "mpc_loss_map": plant_loss_map(),
+    "ems": "mpc-sto",
 }
 
-SCENARIOS["ems-mpc-sto"] = {
+SCENARIOS["ems-mpc-det"] = {
     "description": "The `ems-soc-band` drive cycle and drain load, driven by "
-                   "the STOCHASTIC `mpc-sto` variant: the same horizon "
-                   "objective with the scenario preview replaced by the demand "
-                   "transition matrix's conditional mean, and the overcurrent "
-                   "bound tightened to that distribution's 90 % quantile. "
-                   "NOT a frontier leg — no stimulus in this suite is a draw "
-                   "from that matrix.",
+                   "the DETERMINISTIC `mpc-det` variant: the same horizon "
+                   "objective with the demand TPM's conditional mean replaced "
+                   "by this scenario's own speed profile, and the overcurrent "
+                   "bound left at its nominal value. THE ABLATION LEG since "
+                   "2026-09-02 — it measures the VALUE OF PREVIEW against "
+                   "`ems-mpc`, and it is NOT a frontier leg, because its "
+                   "demand is read off the stimulus it is scored on.",
     "electrical": "any",
     "duration_s": SCENARIOS["ems-soc-band"]["duration_s"],
     "chg_i_ceiling_a": SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"],
     "ems_v_profile": SCENARIOS["ems-soc-band"]["ems_v_profile"],
     # DETERMINISTIC CANDIDATE CAP — see MPC_CAMPAIGN_MAX_CANDIDATES.
     "mpc_max_candidates": MPC_CAMPAIGN_MAX_CANDIDATES,
-    "ems": "mpc-sto",
+    # THE DEMAND-MODEL ERA THE PLANNER PREDICTS ON — see `ems-mpc`.
+    "mpc_loss_map": plant_loss_map(),
+    "ems": "mpc-det",
 }
 
 SCENARIOS["ems-mpc-cross"] = {
     "description": ("%.0f s two-level cruise — the `ems-sdp-cross` stimulus — "
-                    "driven by `mpc-det` started %+.4f SoC above the reference "
+                    "driven by `mpc-sto` started %+.4f SoC above the reference "
                     "it regulates to. The SDP's table flips sharply across its "
                     "switching surface; the MPC's terminal price biases a plan, "
                     "so the observable is a CONTINUOUS walk of the commanded "
                     "share across the same operating region. Phase-free checks "
-                    "only: the decision clock is not locked to the stimulus."
+                    "only: the decision clock is not locked to the stimulus. "
+                    "⚠️ NARROWER SINCE THE 2026-09-02 PROMOTION, and "
+                    "deliberately reported rather than hidden: on `mpc-sto` "
+                    "the walk spans only 0.0833 of share against `mpc-det`'s "
+                    "wider band, because the stochastic law plans against the "
+                    "demand TPM's conditional mean and that mean smooths the "
+                    "two cruise levels this stimulus exists to separate. The "
+                    "share-motion floor was lowered from 0.12 to 0.05 for that "
+                    "reason (run_hil_suite.py); if a campaign wants the WIDE "
+                    "walk back, the leg to read is `ems-mpc-det`'s law, not "
+                    "this scenario."
                     % (SDP_CROSS_DURATION_S, SDP_CROSS_SOC_REF_OFFSET)),
     "electrical": "any",
     "duration_s": SDP_CROSS_DURATION_S,
-    "ems": "mpc-det",
+    "ems": "mpc-sto",
     # ⚠️ A DIFFERENT KEY FROM `ems-sdp-cross`'s `sdp_soc_ref_offset`, and
     # deliberately so: that key is read ONLY by SdpStrategy.bind_scenario()
     # (there is an import-time assert to that effect), so declaring it here
@@ -8411,6 +8902,8 @@ SCENARIOS["ems-mpc-cross"] = {
     # because the two scenarios place the run at the same point of the same
     # axis.
     "mpc_soc_ref_offset": SDP_CROSS_SOC_REF_OFFSET,
+    # THE DEMAND-MODEL ERA THE PLANNER PREDICTS ON — see `ems-mpc`.
+    "mpc_loss_map": plant_loss_map(),
     "chg_i_ceiling_a": SCENARIOS["ems-sdp-cross"]["chg_i_ceiling_a"],
     "ems_run_exit_s": SDP_CROSS_RUN_EXIT_S,
     # No `aux_preload_a` and NOT in the SoC-band drain list — see the block
@@ -9978,7 +10471,15 @@ def main(argv=None):
                     binder(scenario, meta,
                            electrical_mode=("hifi" if electrical is not None
                                             else "simple"),
-                           args=args)
+                           args=args,
+                           # The RESOLVED modes, not `args.droop` /
+                           # `args.asymmetry`: a scenario may override either,
+                           # and the DEMAND-MODEL ERA guard (block 0b of
+                           # DpReplayStrategy.bind_scenario, and M1's
+                           # reconciliation in MpcStrategy's) is a claim about
+                           # the plant that will actually run.
+                           droop_mode=droop_mode,
+                           asymmetry_mode=asymmetry_mode)
                 except UnicodeEncodeError:
                     # NOT a bind refusal (2026-09-02).  UnicodeEncodeError is a
                     # ValueError subclass, so the clause below used to convert a
@@ -10427,6 +10928,16 @@ def main(argv=None):
             # the PACK voltage, which is exactly why it is named by a sentinel
             # and not by a number.
             "eta_chg": ETA_CHG,
+            # THE DEMAND-MODEL ERA of the DP bound this run may be
+            # priced against (2026-09-02), on identical terms: a
+            # sidecar that PREDATES the key carries no `loss_map` and
+            # that absence is the sentinel for the loss-map-free demand
+            # model (see `dp_loss_map()`). It is resolved from the RUN's
+            # own configuration rather than from the module default, so
+            # a `--electrical simple` or `--droop measured` run records
+            # `None` and is never priced against a hi-fi map.
+            "loss_map": loss_map_for_config(
+                args.electrical, droop_mode, asymmetry_mode),
         }
         meta_doc = {
             "format_version": META_FORMAT_VERSION,

@@ -1211,7 +1211,12 @@ def test_soft_start_cold_start_bringup_peaks_preserved():
     for _ in range(50):        # P0: bus switches only, boosts off
         rails = _pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux))
         p0_peak_fc = max(p0_peak_fc, abs(rails["I_fc"]))
-    assert p0_peak_fc == pytest.approx(0.2224, abs=2e-3)
+    # RE-PINNED 2026-09-02 (the per-node bleed ruling): 0.2224 -> 0.211185.
+    # The P0 bus switches charge C_VBUS through the RT1987 soft-start ramp
+    # against the node's own bleed, so a 15x weaker bleed on N_BUS leaves
+    # 11.3 mA less to supply at the peak.  The MOVE IS THE PLANT'S, not a
+    # tolerance drift: the pre-round value was 0.2224 at the uniform 2 kOhm.
+    assert p0_peak_fc == pytest.approx(0.2112, abs=2e-3)
 
     aux = AUX_FC_REG | AUX_BT_REG
     for _ in range(400):       # P1: boosts enabled
@@ -1223,8 +1228,12 @@ def test_soft_start_cold_start_bringup_peaks_preserved():
         rails = _pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux))
         full_peak_fc = max(full_peak_fc, abs(rails["I_fc"]))
         full_peak_bt = max(full_peak_bt, abs(rails["I_batt"]))
-    assert full_peak_fc == pytest.approx(0.4739, abs=2e-3)
-    assert full_peak_bt == pytest.approx(0.4739, abs=2e-3)
+    # RE-PINNED 2026-09-02, same cause: 0.4739 -> 0.466706 once N_MOT's own
+    # bleed drops from 1/2 kOhm to 1/60 kOhm.  Symmetry between the channels
+    # is preserved exactly, which is the property this pair actually guards.
+    assert full_peak_fc == pytest.approx(0.4667, abs=2e-3)
+    assert full_peak_bt == pytest.approx(0.4667, abs=2e-3)
+    assert full_peak_fc == pytest.approx(full_peak_bt, abs=1e-6)
 
     # Cold-start invariant this fix must not disturb: v_ss_start stays ~0 at
     # every SOFT entry in this scenario (nothing here is pre-charged), so the
@@ -1728,7 +1737,15 @@ def test_droop_default_mode_is_design_and_solved_point_is_bit_identical():
     # i_motor 0.6 A, both droop codes at _DROOP_G_NOMINAL, 300 x 1 ms) and
     # written here as a repr() literal, so the guard survives across processes
     # and across changes that would move both construction paths together.
-    assert repr(r_old["V_bus"]) == "15.624602041790853"
+    # RE-PINNED 2026-09-02 (the per-node bleed ruling).  The anchor is a
+    # SOLVED NODE VOLTAGE, so it moves with the bleed by construction: a
+    # 15x weaker N_BUS bleed draws 9.3 mV less droop across the source
+    # resistance.  15.624602041790853 was the value at the uniform 2 kOhm
+    # and is the number every pre-2026-09-02 record quotes.  The claim this
+    # line makes is UNCHANGED: the design-mode solved point is bit-stable
+    # across the droop-mode refactor, which the two `==` comparisons above
+    # assert directly and this literal only records.
+    assert repr(r_old["V_bus"]) == "15.633912867500921"
 
 
 def test_droop_measured_mode_actually_moves_the_solution():
@@ -1918,16 +1935,22 @@ def test_asymmetry_off_is_byte_identical_to_a_symmetric_baseline():
     with the two Boost offsets/scales forced to the identity by hand (rather
     than trusting `asymmetry_params` itself, which is under test elsewhere)
     and confirm every rail agrees over a short headless run."""
-    e_off = he.ElectricalSim(trace_config="short", asymmetry_mode="off")
-    e_base = he.ElectricalSim(trace_config="short", asymmetry_mode="off")
+    # `substep_pin` (2026-09-02), and it is load-bearing here: `step()`
+    # re-derives `_n_sub` from a wall-clock EWMA at the END of every tick, so
+    # assigning `_n_sub` once before the loop left both engines free to change
+    # resolution mid-run at whatever the host load dictated. They did not
+    # always change TOGETHER, and this test flaked. Pinning the count makes the
+    # comparison a statement about the asymmetry mode and not about the host.
+    e_off = he.ElectricalSim(trace_config="short", asymmetry_mode="off",
+                             substep_pin=8)
+    e_base = he.ElectricalSim(trace_config="short", asymmetry_mode="off",
+                              substep_pin=8)
     # Hand-zero the baseline's offsets/scales too, so this test does not just
     # compare `off` against itself under a different name.
     assert e_base.boost_fc.v0_offset_v == 0.0
     assert e_base.boost_bt.v0_offset_v == 0.0
     assert e_base.boost_fc.droop_scale == e_base.boost_bt.droop_scale
 
-    e_off._n_sub = 8
-    e_base._n_sub = 8
     sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ
     for i in range(300):
         act = _actuators(sw=sw, aux=AUX_FC_REG | AUX_BT_REG, i_motor_a=0.0)
@@ -2240,7 +2263,7 @@ def test_plant_r1_n4_bus_and_boost_node_charge_balance_closes(n4_probe):
         bus = (r["i_ina_fc"] + r["i_ina_bt"] - r["i_mot_pwr"] - r["i_aux"]
                - r["i_c_bus"] - r["i_bleed_bus"])
         ofc = (r["i_out_fc"] - r["i_ina_fc"] - r["i_c_ofc"]
-               - r["v_ofc"] / he.R_NODE_BLEED)
+               - r["v_ofc"] * he.node_bleed_conductances()[he.N_OFC])
         assert abs(bus) < 1e-9, "VBUS node residual %.3e A" % bus
         assert abs(ofc) < 1e-9, "boost-output node residual %.3e A" % ofc
 
@@ -2273,3 +2296,102 @@ def test_plant_r1_n4_half_step_is_the_share_split_not_a_sense_defect(n4_probe):
     s_fc, s_bt = p.share_of_bus_step(rows2, n_pre2, 0.5)
     assert s_fc >= 0.97, "single-source FC step fraction %.4f" % s_fc
     assert s_bt == 0.0
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# PER-NODE BLEED and the SUBSTEP PIN (2026-09-02, the DP-bound round)
+# ═════════════════════════════════════════════════════════════════════════
+def test_node_bleed_is_per_node_at_the_ruled_values():
+    """The 2026-09-02 operator ruling, pinned as literals.
+
+    The single `R_NODE_BLEED = 2000.0` constant is GONE and must stay gone: a
+    reader who finds it again is looking at a reverted tree, not at a rename.
+    The two replacements are 30 kOhm on N_BUS and 60 kOhm everywhere else, and
+    the split direction is the physics (most nodes bleed FORWARD into the bus
+    through their own switch rather than to ground), so an accidental swap of
+    the two values is a different plant and is caught here."""
+    assert not hasattr(he, "R_NODE_BLEED")
+    assert he.R_NODE_BLEED_BUS == 30e3
+    assert he.R_NODE_BLEED_OTHER == 60e3
+    assert he.R_NODE_BLEED_BUS < he.R_NODE_BLEED_OTHER
+
+
+def test_node_bleed_conductances_maps_bus_apart_from_every_other_node():
+    g = he.node_bleed_conductances()
+    assert len(g) == he.N_NODES
+    assert g[he.N_BUS] == pytest.approx(1.0 / he.R_NODE_BLEED_BUS, rel=1e-15)
+    for idx in (he.N_OFC, he.N_OBT, he.N_MOT, he.N_CHG, he.N_RGN):
+        assert g[idx] == pytest.approx(1.0 / he.R_NODE_BLEED_OTHER, rel=1e-15)
+
+
+def test_node_bleed_is_resolved_at_construction_so_a_monkeypatch_reaches_it(
+        monkeypatch):
+    """The era switch has to work the way ETA_CHG's does, or the DP loss map
+    and the engine cannot be probed in the same bleed era."""
+    monkeypatch.setattr(he, "R_NODE_BLEED_BUS", 1000.0)
+    monkeypatch.setattr(he, "R_NODE_BLEED_OTHER", 2000.0)
+    e = he.ElectricalSim(trace_config="short")
+    assert e.g_bleed[he.N_BUS] == pytest.approx(1e-3)
+    assert e.g_bleed[he.N_MOT] == pytest.approx(5e-4)
+
+
+def test_substep_pin_holds_the_resolution_against_the_wall_clock():
+    """`step()` re-derives `_n_sub` from a wall-clock EWMA at the end of every
+    tick, so a test that pins `_n_sub` by assignment still drifts under host
+    load.  With `substep_pin` set the count must be the operator's on EVERY
+    tick, and `n_sub_last` (what the tick actually ran) must agree."""
+    e = he.ElectricalSim(trace_config="short", substep_pin=3)
+    assert e.substep_pin == 3
+    sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ
+    for _ in range(50):
+        e.step(1e-3, _actuators(sw=sw, aux=AUX_FC_REG | AUX_BT_REG,
+                                i_motor_a=0.0))
+        assert e._n_sub == 3
+        assert e.n_sub_last == 3
+
+
+def test_substep_pin_absent_leaves_the_campaign_path_adaptive():
+    """The pin is a TEST facility.  A simulator built without it must keep the
+    adaptive budgeting, or a campaign silently loses its resolution headroom."""
+    e = he.ElectricalSim(trace_config="short")
+    assert e.substep_pin is None
+    sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ
+    for _ in range(20):
+        e.step(1e-3, _actuators(sw=sw, aux=AUX_FC_REG | AUX_BT_REG,
+                                i_motor_a=0.0))
+    assert 1 <= e._n_sub <= e.N_SUB_MAX
+
+
+def test_the_bleed_current_a_settled_bus_carries_matches_the_loss_map():
+    """THE IDENTITY THE DP's STATIC-LOSS MAP IS WRITTEN ON.
+
+    At a settled operating point the excess of source current over the loads,
+    `dI = i_fc + i_bt - i_motor - i_aux`, is exactly the bleed the two
+    energized nodes draw:  `V_bus*g_bus + V_MOT*g_other`.  The probe that
+    fitted the map measured this to 4.09e-13 A over 105 points; one point is
+    enough to keep the two definitions from drifting apart, and it is the
+    reason the map's node conductances are IMPORTED from this module rather
+    than restated in hil_plant_sim."""
+    g = he.node_bleed_conductances()
+    e = he.ElectricalSim(trace_config="short", droop_mode="design",
+                         asymmetry_mode="measured", c_vesc_f=0.5e-3,
+                         substep_pin=20)
+    e.battery.soc = 0.7
+    e.i_aux = 0.15
+    sw = SW_FC_BUS | SW_BT_BUS | SW_MOT_PWR | SW_BT_SEQ
+    act = _actuators(sw=sw, aux=AUX_FC_REG | AUX_BT_REG, i_motor_a=0.0,
+                     code_fc=0.34, code_bt=0.34)
+    for _ in range(1200):
+        e.step(1e-3, act)
+    act = _actuators(sw=sw, aux=AUX_FC_REG | AUX_BT_REG, i_motor_a=0.35,
+                     code_fc=0.34, code_bt=0.34)
+    for _ in range(1500):
+        r = e.step(1e-3, act)
+    d_i = r["I_fc"] + r["I_batt"] - 0.35 - 0.15
+    pred = (r["V_bus"] * g[he.N_BUS] + e.v[he.N_MOT] * g[he.N_MOT])
+    assert d_i == pytest.approx(pred, abs=1e-9)
+    # ... and V-MOT sits at the RT1987 forward drop behind the bus, which is
+    # the second line of the map's demand solve.
+    v_mot_pred = ((r["V_bus"] - he.RT_V_FWD - he.RT_R_ON * 0.35)
+                  / (1.0 + he.RT_R_ON * g[he.N_MOT]))
+    assert e.v[he.N_MOT] == pytest.approx(v_mot_pred, abs=1e-9)

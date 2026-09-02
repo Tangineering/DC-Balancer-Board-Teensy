@@ -1893,7 +1893,10 @@ def test_ems_strategy_role_reads_the_sim_registry():
     # the old-era demonstration role and is retained for comparability.
     assert hra.ems_strategy_role("sdp-v4") == "frontier"
     assert hra.ems_strategy_role("sdp-v3") == "demonstration"
-    assert hra.ems_strategy_role("mpc-det") == "frontier"
+    # SWAPPED 2026-09-02 (operator ruling): `mpc-sto` is the frontier MPC
+    # and `mpc-det` is its ablation, which this reader must follow.
+    assert hra.ems_strategy_role("mpc-sto") == "frontier"
+    assert hra.ems_strategy_role("mpc-det") == "demonstration"
     assert hra.ems_strategy_role("soc-band") == "frontier"
     assert hra.ems_strategy_role("dp-replay") == "frontier"
     assert hra.ems_strategy_role("sdp-v2") == "demonstration"
@@ -3043,3 +3046,78 @@ def test_metrics_table_renders_the_not_exercised_column():
     # The untagged row must NOT be marked.
     gbt = [ln for ln in lines if ln.startswith("| gBT ")][0]
     assert gbt.rstrip().endswith("|  |")
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# THE DEMAND-MODEL ERA RESOLVED FROM THE RUN (2026-09-02, the DP-bound round)
+# ═════════════════════════════════════════════════════════════════════════
+def _mdp_cfg(**over):
+    cfg = {"soc0": 0.7, "electrical": "hifi", "droop_mode": "design",
+           "asymmetry": "measured", "eta_chg": 0.88}
+    cfg.update(over)
+    return {"config": cfg}
+
+
+def _mdp_call(cfg):
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    hil = _mdp_hil([0.70, 0.699, 0.698], h2_cum_g=[0.0, 0.006, 0.0118])
+    return hra.matched_dp_for_run(analysis, cfg, hil, mode="lookup")
+
+
+def test_matched_dp_resolves_the_loss_map_from_the_runs_own_config():
+    """The map is a `--droop design --asymmetry measured` hi-fi number, so the
+    baseline's era must be read off the RUN's config, exactly as `accounting`
+    and `eta_chg` are, and never defaulted."""
+    out = _mdp_call(_mdp_cfg())
+    assert out is not None
+    assert out["key_fields"]["loss_map"] == \
+        _sim.loss_map_canonical(_sim.plant_loss_map())
+    assert out["key_fields"]["loss_map_dict"] == _sim.plant_loss_map()
+
+
+def test_matched_dp_falls_back_to_the_loss_map_free_era_off_configuration():
+    """A simple-mode run has no node network to bill, and a run in any other
+    droop or asymmetry mode was not the configuration the map was fitted at.
+    Both resolve to the pre-round demand model rather than to a wrong map."""
+    for over in ({"electrical": "simple"}, {"droop_mode": "measured"},
+                 {"asymmetry": "off"}, {"electrical": None}):
+        out = _mdp_call(_mdp_cfg(**over))
+        assert out is not None, over
+        assert out["key_fields"]["loss_map"] is None, over
+
+
+def test_matched_dp_keys_the_two_demand_eras_apart():
+    a = _mdp_call(_mdp_cfg())
+    b = _mdp_call(_mdp_cfg(electrical="simple"))
+    assert a["key"] != b["key"]
+    # ... and the era reaches the FINGERPRINT, not only the key field, or the
+    # record a prefill stores would be unreachable by this lookup.
+    assert a["key_fields"]["profile_fingerprint"] != \
+        b["key_fields"]["profile_fingerprint"]
+    assert "loss_map" in (a["stimulus_era"] or {}).get("overrides", {})
+
+
+def test_matched_dp_states_the_demand_era_in_its_notes_on_every_run():
+    for over, want in (({}, "static-loss-map"), ({"electrical": "simple"},
+                                                 "LOSS-MAP-FREE")):
+        out = _mdp_call(_mdp_cfg(**over))
+        notes = " ".join(out["notes"])
+        assert "DEMAND MODEL:" in notes, over
+        assert want in notes, over
+
+
+def test_matched_dp_records_the_plant_era_fields_for_the_analyst():
+    """The five run-era fields must be readable off the matched-DP block, not
+    only off the sidecar: `droop_mode` in particular is load-bearing now, since
+    the loss map is a `--droop design` fit that resolves to NO MAP in any other
+    mode."""
+    out = _mdp_call(_mdp_cfg())
+    era = out["stimulus_era"]["plant_era"]
+    assert era["electrical"] == "hifi"
+    assert era["droop_mode"] == "design"
+    assert era["asymmetry"] == "measured"
+    assert era["eta_chg"] == 0.88
+    assert era["loss_map"].startswith("v0_eff=")
+    other = _mdp_call(_mdp_cfg(droop_mode="measured"))["stimulus_era"]
+    assert other["plant_era"]["droop_mode"] == "measured"
+    assert other["plant_era"]["loss_map"] is None
