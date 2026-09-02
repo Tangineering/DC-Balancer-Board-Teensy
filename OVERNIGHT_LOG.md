@@ -623,3 +623,108 @@ fixes → campaign → MPC (deterministic, then stochastic) → campaign → α 
   (the MPC Gate-1 mechanism, confirmed in the firmware source and on the board); (F1) byte 15 is
   a fiat mirror under HIL_SIM. Fix rounds dispatched: tooling (campaign fix queue + review code
   items) and docs (HIL_PLANT.md + manual + conventions), disjoint files.
+- Fix rounds landed: docs (7026e3b) + tooling (6c28dd2; 1795 stdlib / 1997 numpy green; matched-DP
+  prefilled for the 7 eta-era EMS keys: dp-replay -0.20 %, sdp -0.35 %, soc-band +3.87 %,
+  ftp75-5050 +5.73 %, -dp +4.35 %, -sdp +8.53 %, -socband +7.45 %). **Campaign C launched**
+  (commit 6c28dd2, `--with-ftp75 --with-alpha`): validates the cp1252/finalize fix (5 legs re-run),
+  numeric min_ticks, the mppt peak-form pin, the socband split, the substep gate, the MPC cap 1029
+  (charge axis reachable), and re-pins the asymmetry-era baselines (scp i_cut, comm-loss both
+  channels, soc-depletion latch) with a second reading of the eta-era levers. Fix-round review
+  running in parallel (read-only); its findings apply after the campaign.
+
+## MORNING DIGEST (draft — campaign C pending)
+
+This digest is a draft. Campaign C (`HIL Results/hil_report_20260902_041414`) was still running when
+it was written. Every claim below carries a pointer. No number appears here that is not in a ledger,
+a report folder, or a committed document.
+
+### What you asked for, and what was delivered
+
+Your brief carried eight verbatim rulings (this log, §2026-09-01/02 header). Status of each:
+
+1. Ag105 charge efficiency 0.88 static — DELIVERED. `ETA_CHG` = 0.88 in `tools/hil_electrical.py`;
+   the physics record is `docs/HIL_PLANT.md` §4.6.1.
+2. η applied to the simple engine too — DELIVERED. Both engines bill the charger through one rule
+   (CLAUDE.md addendum 2026-09-02, first bullet).
+3. Efficiency change before the next campaign — DELIVERED. Commits `390f554` and `e653e90` precede
+   campaign B's launch commit `887933f`.
+4. α follows the η-era matched DP — DELIVERED. The DP charges on zero stages, so `--alpha-mode lever`
+   shipped as `sdp_policy_v4.json` (CLAUDE.md addendum, the RULING bullet).
+5. Live α points at each leg midpoint — DELIVERED. Picks idx 3 / 7 / 14 in
+   `tools/sdp_policies/sweep_20260902_eta088/live_picks.json`; all three ran and all three passed.
+6. MPC deterministic first, stochastic second, live against SDP and DP — DELIVERED. Four scenarios
+   registered; `ems-mpc` and `ems-mpc-sto` both ran in campaign B.
+7. Physics review after at least one η campaign — DELIVERED. Record
+   `docs/reviews/hil-plant/run-001-2026-09-02.md`; ledger `docs/reviews/hil-plant/ledger.md`.
+8. Campaign wall-clock as report metadata — DELIVERED. `campaign_meta.json` in every report folder.
+
+Two campaigns were run against a budget of five. Campaign B is analysed and its fix round is
+committed. Campaign C is running and is unanalysed.
+
+### Headline findings
+
+Pointers: `HIL Results/hil_report_20260902_011926/HIL_SUMMARY.md` for the digest form, the same
+folder's `HIL_FINDINGS.md` for per-batch evidence, and the CLAUDE.md addendum 2026-09-02 for the
+committed record.
+
+1. **Zero board defects.** The suite scored 58 of 66. Analysis corrected the reading to 65 of 65
+   executed runs behaving correctly (`HIL_FINDINGS.md` §FINAL SUMMARY). Five of the eight FAILs are
+   one console-encoding defect. Two are suite scoring defects present in both eras. One is a
+   walk-fidelity gap. One, `ems-mpc-cross`, is a genuine divergence and must not be widened.
+2. **The η = 0.88 charger model is validated on every independently measurable axis**
+   (`HIL_FINDINGS.md` §A1 batch verdict), including the charger bus draw on hardware within 0.5 % of
+   the model at a sagged bus (§A3, `ems-sdp-alpha-charge` against `-cal` at the same instant).
+3. **First live η-era lever measurement** (§A3, "THE η-ERA LEVER MEASUREMENT"). The model's ordering
+   is confirmed and the projected inversion is refuted. Two consequences reach your desk: the
+   end-to-end charge round-trip on the board is not η, because bus sag is billed to the charge leg;
+   and `sdp_policy_v4`'s α sits just below the measured admission window. See the bench list.
+4. **First live governor-aware MPC** (§A3). The deterministic variant ties `sdp-v4` on the 61 s
+   cycle. The prediction error has exactly the designed structure: exact where the stage is
+   closed-loop, and carrying all of its error in the open-loop stages. That is the same mechanism the
+   physics review confirmed independently (`run-001-2026-09-02.md` §Adjudication, PLANT-R1-F4).
+   ⚠️ The candidate cap truncated before the charge axis, so no charge-behaviour conclusion is
+   supported yet.
+5. **A double era boundary against campaign 151156** (§A2 era warning, §A4 headline). That campaign
+   predates both the charger change and the converter-asymmetry default. Three repeatability records
+   break, and all three break in the plant, not in the strategy.
+6. **The physics review found three major items** (`run-001-2026-09-02.md` §Adjudication). The
+   "regen leak" was misattributed; the open-loop mode writes the MDACs after all; observation-frame
+   byte 15 is a fiat mirror under `HIL_SIM`. One item, `PLANT-R1-N4`, remains open-unverified.
+7. **Coverage cost.** The encoding defect cost the η era its charge-admission limit-cycle run and its
+   only designed challenge to the fw v25 share-cut guard (`HIL_SUMMARY.md` §Coverage cost). Campaign
+   C re-runs both legs.
+
+### Reversible decisions
+
+Each decision below was taken without you and each has a one-commit undo.
+
+| Decision | Where it is recorded | One-commit undo |
+|---|---|---|
+| α follows the DP: `sdp_policy_v4` ships and `ems-sdp*` is rebound to it | this log, "RULING (operator rule 4…)" | Rebind the `ems-sdp*` scenarios to `sdp-v3`, which stays registered as an old-era policy |
+| MPC shipped live with Gate 1 recorded as failing | this log, "FINDING + DECISION: Gate 1 FAILS…" | Drop the four `ems-mpc*` scenarios from the plan |
+| Physics M3: the regen cap stays output-referred and is NOT netted against the chopper | this log, "WP-1A fix round applied", M3 ruling | Adopt the netted form (it destroys 0.64 J hi-fi / 1.43 J simple of genuine harvest, and a pre-existing WP-C test fails under it) |
+| Fingerprint reachability: `dp_profile_fingerprint()` omits `eta_chg` when it is None | this log, WP-1B1 review rulings, H3 | Include the key, and accept that all 16 database records are orphaned |
+| The three DP tables regenerated as η-era solves | this log, WP-1B1 landing note | Restore the old-era fixture, whose regeneration is byte-identical |
+| `regen-harvest-true` chopper floors restored downward on measurement | this log, WP-1C landing note | Return the floors to 0.65 J and 1.9 J |
+| The replay share-cut census ships as a NOTE, not a scored check | WORK_QUEUE.md §0a, shipped list | Promote it to a check row with a threshold |
+
+### Operator bench list for today
+
+These are the measurements no amount of analysis can supply. Full context in WORK_QUEUE.md §3.
+
+1. **Ag105 charge efficiency at our operating point.** The datasheet's 88 % typ is stated at 25 °C,
+   12 Vin and 3S. The rig runs 15–16 Vin into a 2S pack. Measure input and output power there.
+2. **The measured charge round-trip against η.** Campaign B measured 0.797 end to end where the
+   model uses 0.88 (`HIL_FINDINGS.md` §A3). The shortfall is attributed to bus sag billed to the
+   charge leg. A bench reading separates that attribution from a genuine converter-efficiency error.
+3. **The power-on INIT_FAIL.** Campaign B's first run opened with a latch already set after your
+   evening re-flash, and it self-cleared in grace (`HIL_SUMMARY.md` §Worth reviewing manually;
+   `HIL_FINDINGS.md` §A5 operator note). Look at the power-on path.
+4. **MPPTD-disabled-charge semantics.** Still unverified on hardware. Two designers read the
+   datasheet oppositely, and the firmware carries a holdoff instead of a semantic change.
+5. **The 30 ms survivor blanking against a real RT1987 turn-on.** HIL validated the logic against
+   the modelled `t_D_ON` only. The failure direction is asymmetric. Never shorten it on the model.
+6. **VESC regen commanded-versus-delivered mapping.** It sets `VESC_REGEN_I_MAX_A` and `ETA_REGEN`,
+   both of which carry `TODO(verify)`.
+7. **An open-loop share sweep ('O' command) above 0.60 A.** The asymmetry fit has no open-loop
+   feedforward window in the corpus, so the fit rests on closed-loop windows alone.
