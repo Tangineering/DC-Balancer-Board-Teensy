@@ -53,6 +53,26 @@
    "target_soc_q": 0.68522
   },
   {
+   "converged": true,
+   "created_utc": "2026-09-02T01:00:31Z",
+   "h2_dp_g": 0.061685812781303244,
+   "key": "17bac84aab15d98e1624dfd5298d9b361abe6a877cfd1073ca9346bb9201478e",
+   "non_target_hash": "dc72593560da3c815450689e13cfabf867b8125f477d2f0ef2e5d09ad7f65ad2",
+   "scenario": "ems-ftp75-sdp",
+   "target_soc": 0.68155,
+   "target_soc_q": 0.68155
+  },
+  {
+   "converged": true,
+   "created_utc": "2026-09-02T01:24:33Z",
+   "h2_dp_g": 0.09193592505982805,
+   "key": "180a2187b48d4f733fe4436b7003d7964c3af35f209adc297bab10d2c744758d",
+   "non_target_hash": "fef3e72d5e8ffc849d41e5b94605929ae0711f668ecd40b286ba96655d0d8566",
+   "scenario": "ems-ftp75-socband",
+   "target_soc": 0.68467,
+   "target_soc_q": 0.68467
+  },
+  {
    "converged": false,
    "created_utc": "2026-09-01T22:29:04Z",
    "h2_dp_g": 0.012667925668876574,
