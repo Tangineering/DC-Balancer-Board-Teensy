@@ -506,3 +506,11 @@ fixes → campaign → MPC (deterministic, then stochastic) → campaign → α 
   (live_picks.json): greedy idx 3 alpha 0.07394; cal idx 7 = the anchor (leg midpoint coincides
   structurally); charge idx 14 alpha 0.24841 (591 cells). Doc: docs/modeling/
   sdp_alpha_sweep_eta088_20260902.md. Four additive sweep-script fixes (era-aware bisection etc.).
+- WP-1B1 review: 3 HIGH (H1 solve_dp backward pass still billed V_bus*chg - the policy was CHOSEN
+  old-era while REPORTED new-era; latent for the 3 committed tables (0 charge stages both ways)
+  but live at lambda_term 3.5-6 and for 3 of 16 db records; H2 ten duplicate --eta-chg
+  registrations killed the db CLI; H3 fingerprint move orphaned all 16 db records) + 4 MED + 9 LOW.
+  RULINGS: all accepted; H3 -> dp_profile_fingerprint OMITS eta_chg when None (B2b), tables
+  regenerated so fingerprints return to their pre-round values. Verified by the reviewer: the
+  ems-ftp75-5050 h2 move (0.0949 -> 0.0397) is ENTIRELY the pre-existing chg_ceiling 0.0
+  staleness (old-era regeneration byte-identical on all 3501 rows). Fix agent dispatched.
