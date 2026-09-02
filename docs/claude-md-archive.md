@@ -2796,3 +2796,101 @@ files, Sonnet test-writers, Opus physics/data-integrity reviews, fix rounds). Py
   live α points (one per leg — ems-sdp discriminates, the drive cycle does not).
 
 ---
+
+# Rotated 2026-09-02c — addenda 2026-08-16c (fw v14 K_F force-axis correction) and 2026-08-25 (fw v18 90-slot wheel + general-Hanus anti-windup)
+
+Moved verbatim from CLAUDE.md on 2026-09-02 to reduce always-loaded context. Both are
+superseded by fw v25; load-bearing facts survive in docs/firmware-versions.md.
+## Status & session addendum (2026-08-16c, fw v14: K_F force-axis correction — cross-session)
+
+The K_F investigation (separate session) closed and shipped **fw v14**; verified here
+(FW_VERSION 14, ledger row 14, coefficients regenerated, **2861 production + 175 bench
+rebuilt-from-source green**). In brief: the force chain carried the wrong ratio AND radius —
+PHI 9.49 (stock gearing) -> **6.86** (fitted 29T/70T, triple-confirmed) and force radius
+0.0762 (flywheel) -> **0.033 m** (tire; torque acts on the tire, the encoder/inertia belong
+to the flywheel — the two were conflated). **K_F 0.4516 -> 0.7538 N/A (x1.669)**; the drag
+law rescales in lockstep (b_eff 0.534 N s/m, F_c 2.00 +/- 0.42 N; i_m0 = 4.07 A invariant);
+**m_eff = 3.5 kg CONFIRMED** (all three contradicting inferences close; the fw v13 freeze
+ruling was correct — the deficit was entirely the force axis). The VESC Tool RPM display
+reads 2x true mechanical speed (display artifact; k_t unaffected). K_v recentred 1.00,
+corners {0.75, 1.00, 1.35}. Re-synthesis on the same weight rung: crossover 17.5 rad/s,
+PM 50.8°, PM 41.8° at the 0.5 m/s floor. Coefficients + FW_VERSION only — no logic change;
+a v14 'V' trace is a DIFFERENT control law than v13 (x1.34 stiffer DC plant gain); v_act
+traces remain comparable (velocity chain untouched). **Do not re-fit any pre-v14 force-axis
+numbers.** Still open: eta_dt 0.85 (largest surviving unknown), tire/roller no-slip (now an
+explicit assumption), ML0141 gain excess (reduced to ~1.8-2.7x, boxcar-confounded —
+re-evaluate on fw v14 runs), VESC Tool Gear Ratio setting still 9.49 (cosmetic). Full
+record: motor_id_20260815.md §"K_F force-axis correction (2026-08-16c)". Bench order
+unchanged from fw v13: Schmitt bodge -> edge-counter check -> 'A' ladder -> flash (first
+flash carries v10-v14) -> 'V' at 1-2 m/s scope-armed.
+
+---
+
+## Status & session addendum (2026-08-25, fw v18: 90-slot wheel + general-Hanus anti-windup fix)
+
+Two hardware rounds since fw v17. First, logs ML0182/183 (fw v17, the thin-tooth 120-slot
+painted PETG-CF wheel) showed the decoder producing counts over only a ~30 deg sector of each
+revolution (~20 of 240 counts/rev; revolution-locked bursts, ~92 % blind) — sensor alignment,
+not firmware. The operator then swapped in a **90-tooth wheel** and hand-confirmed **180
+encoderPos counts per rotation**. Orchestrated round (Opus implementer, Sonnet test-writer,
+Opus safety + Sonnet correctness reviews) shipped **fw v18 (pending flash; carries v18 alone
+— fw v17 was flashed for ML0182/183)**. Ledger row 18 has full detail.
+
+- **Wheel reconciliation:** `ENCODER_SLOTS_PER_REV` 120 -> **90** (counts/rev 180,
+  `ENC_SLOT_PITCH_M` 3.990 -> **5.3198 mm**). Re-derived: `ENC_ADAPT_MAX_REF_US` 13000 ->
+  **15000 us** (arms 0.3547 m/s = 1.064x v_arm), `ENC_VEL_CORROB_MIN_MPS` 0.30 -> **0.35**,
+  zero-speed floor 0.0399 -> **0.0532 m/s**, and therefore `V_SP_ZERO_THRESH` 0.05 ->
+  **0.07 m/s** (ordering static_assert re-admitted; margin 24 %). NEW compile tripwires pin
+  the pitch coupling: gate-arming above v_arm (squared product form) and corroboration <=
+  arming speed — both verified to FIRE on the "wheel changed, constants stale" mistake.
+  `VELOCITY_CHAIN_CALIBRATED` stays 1 (operator hand count).
+- **Drive re-synthesis** (plant_mimo ENC_SLOTS 90; estimator delay x4/3): same weight rung
+  passes all gates — crossover 17.25 rad/s, PM 50.2 deg, 72 corners 0 unstable, PM at the
+  0.5 m/s floor 41.8 -> **38.4 deg** (gate > 30), worst-corner ||S||inf 2.867 cont /
+  3.017 disc (above the 2.5 target, under the 3.0 gate — accepted as the delay cost).
+  Synthesis env is **controller_design_MIMO/ctrl-venv** (.venv_benchlog has no scipy).
+- **STRUCTURAL ANTI-WINDUP DEFECT FOUND AND FIXED (shipped since fw v10).** The test round's
+  saturation probe exposed a +-12 A period-4 (125 Hz) rail-to-rail limit cycle under
+  sustained constant error. Root cause: Tustin discretization leaves an exact controller
+  transmission zero at z = -1 (the (z+1) factor is common to both parallel branches at ANY
+  weight rung), and the Hanus SELF-conditioned form's saturated-mode matrix AC = AD-BD*CD/DD
+  has the controller zeros as eigenvalues — marginally stable at Nyquist, always. **fw v17
+  fails the same dwell sweep at e >= 8.25 m/s (14/48); its e = 5.0 pass was stimulus luck.**
+  Hardware-reachable during VESC post-reversal dead windows (ML0151 class). Fix
+  (user-authorized, folded into v18): **general Hanus gain** — x_next = AD*x + BD*e +
+  L*(u - u_unsat), L pole-placed (dual place_poles) to move ONLY the z = -1 mode -> +0.5,
+  all other saturated-mode eigenvalues untouched; unsaturated behavior bit-identical
+  (conditioning term exactly zero off the clamp; linear gates byte-identical). Full-damped
+  placements measurably FAIL (integrator conditioning mode dragged off ~1 -> standing error
+  up to -1.13 m/s) — minimal perturbation is the design, recorded at the site. New
+  SYNTHESIS gates: oscillatory-eigenvalue margin (|eig| < 0.999 on non-positive-real modes;
+  a flat 1-1e-3 bound is unachievable — the exact integrator keeps a slow +0.9997 real
+  mode) and the LOAD-BEARING 48-case constant-error dwell sweep (tail p-p 0.000 A). New
+  `dwell` replay episode (600 ticks at e = 5, tol 0.10 mA) + firmware dwell-sweep test.
+  Side effect: the long-standing float32-STATE replay "expected failure" is GONE
+  (validate_drive_siso now **17/17**; regen divergence 1.6e-2 -> 1.1e-5 A — the conditioned
+  trajectory no longer rides the clamp boundary); state stays double.
+- **Tooling:** benchlog pitch is now per-log — fw_version >= 18 -> 5.3198 mm, with an
+  explicit `cfg["_encoder_pitch_m"]` override (fw is a PROXY for the disc; ML0183 is the
+  last 120-slot log) and a visible fallback provenance stamp on the encoder_diagnostics
+  panel. log-conventions.md carries the dual geometry + log-number boundary. Analyzer exe
+  NEEDS REBUILD (flagged, not done). make_test_blg stamps pitch by --fw-version.
+- **Review round:** safety — no HIGH; 3 MED (stale metrics record documenting the retired
+  recursion; fw-as-proxy override; pitch-coupling tripwires) + 5 LOW (V-command sub-cutoff
+  warning, stale 12 mm warm-up, stale 745.5/544.8 A/(m/s) LF-gain sweep -> **454.4** and
+  e_sat 26.4 mm/s, fallback annotation, compare_controllers pointer). Correctness — clean,
+  1 LOW (margin formula made explicit). All applied.
+- **Tests: 3043 production + 175 bench pass** (rebuilt from source, orchestrator-verified).
+  New: dwell sweep incl. the 8.25-11.75 defect band + both rails, dwell replay, DRIVE_CTRL_L
+  pin, 90/180 literal pins, the 0.06 m/s coast bracket. Test build needs
+  `-I../controller_design_MIMO`.
+- ⚠️ A v18 'V' trace is a different control law than v17 (new coefficients AND new
+  saturated-mode behavior), and pre-v18 v_act was computed on physically different wheels.
+- **Next bench:** flash fw v18; motor PI/`'V'` validation on the new wheel (small setpoints,
+  scope-armed, overlay vs regenerated figures/drive_siso_step.csv); a sustained-rail event
+  should now HOLD 12 A, not chatter — the BLG u_unsat trace is the verification signal.
+  Then: VESC regen-ceiling characterization -> matched-Itot share sweep -> F_c/b_eff refit.
+  Housekeeping: rebuild the benchlog analyzer exe; .venv_benchlog still lacks pandas/scipy.
+
+---
+
