@@ -1330,7 +1330,356 @@ def load_run_config(dest, report_dir):
     return bl_common.load_or_create_config(dest)
 
 
-def analyze_run(run, report_dir, results_json, no_move=False, force=False):
+# ==========================================================================
+# Delta-SoC-matched DP baseline (WORK_QUEUE section 1, 2026-09-01)
+# ==========================================================================
+
+# The module-level preload constant each EMS scenario's stimulus is built on.
+# A run's meta sidecar records the whole constant set it executed under, so a
+# run from an earlier era can be given the load the board ACTUALLY saw rather
+# than the load this checkout declares. A scenario absent from this map either
+# has no preload or carries it inside its own bespoke branch, and is solved on
+# the current metadata.
+SCENARIO_PRELOAD_CONSTANT = {
+    "ems-ftp75-5050": "FTP75_PRELOAD_A",
+    "ems-ftp75-socband": "FTP75_PRELOAD_A",
+    "ems-ftp75-dp": "FTP75_PRELOAD_A",
+    "ems-ftp75-sdp": "FTP75_SDP_PRELOAD_A",
+    "ems-y-b30-v1": "Y_AUX_LOAD_A",
+    "ems-y-b30-v3": "Y_AUX_LOAD_A",
+}
+
+# Standing boundaries on every matched-DP comparison this tool renders. Both
+# are properties of the DP's demand model, not of a particular run.
+MATCHED_DP_REGEN_NOTE = (
+    "DP demand model has no regen term (gen_dp_ems_table.build_demand); "
+    "regen-bearing scenarios compare against a regen-free bound")
+
+# The two hydrogen totals in the comparison are computed by DIFFERENT halves
+# of one model, and the difference is systematic rather than random: the run's
+# `h2_cum_g` is the DYNAMIC Gfc integrator (hil_plant_sim.H2Consumption, a ZOH
+# discretization of the transfer function), while the DP's stage cost is the
+# Gfc DC GAIN times stage energy. The two agree at steady state and differ
+# through every transient, always in one direction for a given transient
+# shape, so a deviation of a few tenths of a percent is inside this bias and
+# is not a policy result.
+MATCHED_DP_GFC_NOTE = (
+    "run hydrogen is the DYNAMIC Gfc integrator (H2Consumption, ZOH) while "
+    "the DP stage cost is the Gfc DC gain: a small, systematic, "
+    "one-directional bias between the two totals")
+
+def matched_dp_cost_estimate_s(duration_s):
+    """Rough wall time [s] of one matched DP baseline for a cycle of this
+    length.
+
+    The cost is SUPERLINEAR in duration: a matched baseline is 15 to 25 DP
+    solves, each of which sweeps the stage count AND an SoC grid whose span is
+    the cycle's own reachable window, so both dimensions grow together. The
+    estimate is a power law anchored on the only two figures on record — 13 s
+    measured for the 61 s EMS cycles, and the 20 to 30 min recorded for the
+    340 s FTP-75 cycle — which places the exponent near 2.7.
+
+    It is an ORDER-OF-MAGNITUDE figure for deciding whether to start a solve,
+    not a prediction. Two anchor points cannot separate the exponent from the
+    constant, and neither anchor was measured across a range of durations.
+    """
+    if not duration_s or duration_s <= 0.0:
+        return 13.0
+    return 13.0 * (duration_s / 61.0) ** 2.7
+
+
+# Scenario duration above which a --matched-dp solve is refused without
+# --matched-dp-allow-long. A matched baseline is a bisection over 15 to 25 DP
+# solves whose cost scales with the stage count, so the 61 s cycles cost
+# seconds and the 340 s FTP-75 cycle costs tens of minutes. An analysis pass
+# must not silently become a half-hour job.
+MATCHED_DP_LONG_DURATION_S = 100.0
+
+
+def _last_finite(arr):
+    """The last finite value of a float array, or None."""
+    finite = np.isfinite(arr)
+    if not finite.any():
+        return None
+    return float(arr[np.nonzero(finite)[0][-1]])
+
+
+def _first_finite(arr):
+    finite = np.isfinite(arr)
+    if not finite.any():
+        return None
+    return float(arr[np.nonzero(finite)[0][0]])
+
+
+def _run_era_preload(scenario, meta):
+    """(run_era_value, current_value, status) for a scenario's aux preload.
+
+    `status` is "known", "unknown" (the sidecar carries no constants block) or
+    "not_applicable" (the scenario has no mapped preload constant)."""
+    sim = _plant_sim_module()
+    name = SCENARIO_PRELOAD_CONSTANT.get(scenario)
+    if name is None:
+        return None, None, "not_applicable"
+    current = getattr(sim, name, None)
+    current = None if current is None else float(current)
+    consts = meta.get("constants")
+    if not consts:
+        return None, current, "unknown"
+    raw = consts.get("hil_plant_sim.%s" % name, consts.get(name))
+    if raw is None:
+        return None, current, "unknown"
+    try:
+        return float(raw), current, "known"
+    except (TypeError, ValueError):
+        return None, current, "unknown"
+
+
+def _era_overrides(scenario, meta, scen_meta, era_preload, era_status):
+    """Run-era values for every DP fingerprint key the sidecar can supply.
+
+    The profile fingerprint covers hil_plant_sim.DP_FINGERPRINT_META_KEYS, of
+    which the auxiliary preload is only one. Reconstructing the preload alone
+    left every other key at this checkout's value, so a scenario-metadata
+    change elsewhere in the set refused an archived run outright (MED,
+    2026-09-01: the FTP-75 preload moved and `ems-ftp75-socband` gained a
+    charge ceiling in a parallel round, and both archived FTP-75 runs then
+    failed the fingerprint check). Every key this function can source is
+    overridden; the ones it cannot are named in the refusal message.
+
+    Sources, in order of authority:
+      * the sidecar's own `scenario` block -- the run-era metadata verbatim.
+        It carries `duration_s` today and will carry more as the simulator
+        records more of the meta; whatever it holds is taken as-is.
+      * `config.chg_i_ceiling_a` -- the RESOLVED ceiling the run applied.
+        Deliberately the resolved value, not the run-era declaration: the
+        sidecar does not record whether the scenario declared a ceiling or
+        inherited AG105_I_MAX, and the resolved number is the one the demand
+        model consumes. The fingerprint's job here is to identify the problem
+        the baseline answers, and both sides of the comparison compute it the
+        same way, so the convention is self-consistent.
+      * the constants block, for the preload (already resolved by the caller).
+
+    A key the sidecar cannot source is simply absent from the returned dict,
+    which leaves the live value in place and makes it a named suspect if the
+    fingerprint then fails to reconcile."""
+    sim = _plant_sim_module()
+    cfg = meta.get("config") or {}
+    side_scen = meta.get("scenario") or {}
+    over = {}
+    for key in sim.DP_FINGERPRINT_META_KEYS:
+        if key in side_scen:
+            over[key] = side_scen[key]
+    if cfg.get("chg_i_ceiling_a") is not None:
+        over["chg_i_ceiling_a"] = float(cfg["chg_i_ceiling_a"])
+    if era_status == "known" and era_preload is not None:
+        over["aux_preload_a"] = float(era_preload)
+    # An override equal to the live value is noise in the record and in the
+    # refusal message; drop it, since applying it is a no-op by construction.
+    return {k: v for k, v in over.items()
+            if repr(scen_meta.get(k)) != repr(v)}
+
+
+def matched_dp_for_run(analysis, meta, hil, mode="lookup",
+                       tol_soc=None, log=print, strict=False,
+                       allow_long=False):
+    """The delta-SoC-matched DP hydrogen baseline for one scenario run.
+
+    Returns None for a run this comparison does not apply to (a replay, a
+    scenario with no drive profile, a CSV with no SoC column). Otherwise a
+    dict describing the baseline, INCLUDING the failure cases: a lookup miss
+    records `no_cached_solve` with the key the operator can prefill, and any
+    exception records `error` rather than failing the run's analysis.
+
+    In `lookup` mode this function NEVER solves. Solves are minutes of compute
+    for a drive cycle and belong in `tools/dp_results_db.py prefill`.
+
+    `strict` refuses a cached record whose simulator constant set differs from
+    this checkout's, turning provenance drift into a visible miss instead of a
+    footnote. `allow_long` lifts the MATCHED_DP_LONG_DURATION_S refusal that
+    keeps a `solve` pass from silently becoming a half-hour job."""
+    if mode == "off":
+        return None
+    scenario = analysis.get("name")
+    if analysis.get("kind") != "scenario" or not scenario:
+        return None
+    soc = hil.get("soc")
+    if soc is None or not np.isfinite(soc).any():
+        return None
+
+    import dp_results_db as dpdb
+    if tol_soc is None:
+        tol_soc = dpdb.DP_DB_LOOKUP_TOL
+    sim = _plant_sim_module()
+    scen_meta = (sim.SCENARIOS or {}).get(scenario)
+    if not scen_meta or not scen_meta.get("ems_v_profile"):
+        return None
+
+    cfg = meta.get("config") or {}
+    soc0 = cfg.get("soc0")
+    if soc0 is None:
+        soc0 = _first_finite(soc)
+    target = _last_finite(soc)
+    if soc0 is None or target is None:
+        return None
+    accounting = "physical" if cfg.get("electrical") == "hifi" else "simple"
+    capacity_ah = float(cfg.get("capacity_ah") or 5.0)
+    # Resolved against the run's own config first: `chg_i_ceiling_a` there is
+    # the ceiling the run APPLIED, which is what its demand carried, whatever
+    # the scenario declares today.
+    chg_a = cfg.get("chg_i_ceiling_a")
+    chg_a = (sim.dp_chg_ceiling_a(scen_meta) if chg_a is None
+             else float(chg_a))
+    era_run_exit = (meta.get("scenario") or {}).get("ems_run_exit_s")
+    run_exit = (float(sim.SOC_BAND_RUN_EXIT_S)
+                if (era_run_exit if era_run_exit is not None
+                    else scen_meta.get("ems_run_exit_s")) is None
+                else float(era_run_exit if era_run_exit is not None
+                           else scen_meta["ems_run_exit_s"]))
+
+    era_run, era_current, era_status = _run_era_preload(scenario, meta)
+    era_overrides = _era_overrides(scenario, meta, scen_meta, era_run,
+                                   era_status)
+    notes = [MATCHED_DP_REGEN_NOTE]
+    if era_status == "unknown":
+        stimulus_era = "unknown"
+        aux = scen_meta.get("aux_preload_a")
+        notes.append(
+            "meta sidecar carries no `constants` block: the run-era auxiliary "
+            "preload is UNKNOWN and the baseline is solved on the CURRENT "
+            "scenario metadata")
+    elif era_status == "known":
+        aux = era_run
+        overridden = (era_current is None
+                      or abs(era_run - era_current) > 1e-12)
+        stimulus_era = {"aux_preload_a_run": era_run,
+                        "aux_preload_a_current": era_current,
+                        "overridden": bool(overridden)}
+        if overridden:
+            notes.append(
+                "auxiliary preload differs between the run (%.4f A) and this "
+                "checkout (%s A): the baseline is solved on the RUN's value"
+                % (era_run, "unknown" if era_current is None
+                   else "%.4f" % era_current))
+    else:
+        aux = scen_meta.get("aux_preload_a")
+        stimulus_era = {"aux_preload_a_run": None,
+                        "aux_preload_a_current": (
+                            None if aux is None else float(aux)),
+                        "overridden": False}
+
+    # The fingerprint is taken over the RUN-ERA metadata, so an era override
+    # is visible in the key rather than hidden behind it -- and so a later
+    # `prefill --key-fields` reconstructs the same meta and reaches the same
+    # fingerprint instead of being refused for drift.
+    fp_meta = dpdb.apply_era_overrides(scen_meta, era_overrides)
+    if aux is not None:
+        fp_meta["aux_preload_a"] = float(aux)
+        era_overrides.setdefault("aux_preload_a", float(aux))
+    if isinstance(stimulus_era, dict):
+        stimulus_era["overrides"] = dict(era_overrides)
+        stimulus_era["fingerprint_keys"] = list(sim.DP_FINGERPRINT_META_KEYS)
+    fields = dpdb.problem_fields(
+        scenario,
+        profile_fingerprint=sim.dp_profile_fingerprint(scenario, fp_meta),
+        soc0=float(soc0), capacity_ah=capacity_ah,
+        charger_accounting=accounting, stage_dt=0.1, n_share=41,
+        soc_step=5.0e-6, chg_a=chg_a, lambda_dev=0.0,
+        aux_preload_a=aux, run_exit_s=run_exit, target_soc=float(target),
+        era_overrides=era_overrides)
+    key = dpdb.make_key(fields)
+
+    h2_run = _last_finite(hil["h2_cum_g"]) if "h2_cum_g" in hil else None
+    notes.append(MATCHED_DP_GFC_NOTE)
+    out = {"key": key, "key_fields": fields, "target_soc": float(target),
+           "soc0": float(soc0), "accounting": accounting,
+           "h2_run_g": h2_run,
+           "delta_soc_run": float(target) - float(soc0),
+           "stimulus_era": stimulus_era, "notes": notes}
+
+    duration_s = float(scen_meta.get("duration_s") or 0.0)
+    try:
+        rec = dpdb.lookup(fields, tol_soc=tol_soc, strict=strict)
+        source = "cache"
+        if rec is None and mode == "solve":
+            est_s = matched_dp_cost_estimate_s(duration_s)
+            if duration_s > MATCHED_DP_LONG_DURATION_S and not allow_long:
+                out.update({"status": "solve_refused_long", "source": None})
+                out["notes"].append(
+                    "scenario duration %.0f s exceeds the %.0f s solve "
+                    "gate; the baseline costs of the order of %.0f min. Pass "
+                    "--matched-dp-allow-long, or prefill it separately."
+                    % (duration_s, MATCHED_DP_LONG_DURATION_S, est_s / 60.0))
+                return out
+            log("[hil_report_analysis] solving DP baseline for %s "
+                "(target SoC %.6f, %.0f s cycle, order of %.0f s)"
+                % (scenario, target, duration_s, est_s))
+            rec = dpdb.solve_and_store(fields, float(target), log=log)
+            source = "solve"
+    except Exception as exc:                     # never fail a run's analysis
+        out.update({"status": "error",
+                    "error": "%s: %s" % (type(exc).__name__, exc)})
+        return out
+
+    if rec is None:
+        out.update({"status": "no_cached_solve", "source": None})
+        # The hint reproduces the KEY, not an approximation of it: a prefill
+        # rebuilt from a handful of flags can miss an input (the charge
+        # ceiling, the run-era preload, the run-exit time) and solve a
+        # different problem that then never satisfies this lookup (MED-5).
+        out["notes"].append(
+            "no stored solve within %g SoC of the target%s. Solve exactly "
+            "this problem with `python tools/dp_results_db.py prefill "
+            "--key-fields @<file>` where <file> holds this block's "
+            "`key_fields` object -- INCLUDING its `era_overrides`, which is "
+            "what rebuilds the run-era scenario metadata and so avoids a "
+            "fingerprint-drift refusal -- or approximately with `--scenario %s "
+            "--soc0 %r --accounting %s --capacity-ah %r --chg-a %r "
+            "--aux-preload %r --run-exit %r --dsoc-span=%.5f:%.5f:1`"
+            % (tol_soc,
+               " (strict provenance matching is ON)" if strict else "",
+               scenario, float(soc0), accounting, capacity_ah, chg_a,
+               fields["aux_preload_a"], run_exit,
+               target - soc0, target - soc0))
+        return out
+
+    h2_dp = rec["h2_g"] if accounting == "physical" else rec["h2_plant_g"]
+    out.update({
+        "status": "ok", "source": source,
+        "h2_dp_g": rec["h2_g"], "h2_dp_plant_g": rec["h2_plant_g"],
+        "h2_dp_compared_g": h2_dp,
+        "residual_soc": rec.get("residual_soc"),
+        "converged": rec.get("converged"),
+        "lambda_term": rec.get("lambda_term"),
+        "delta_soc_dp": rec.get("delta_soc"),
+        "stored_target_soc": rec.get("target_soc"),
+        "wall_s": rec.get("wall_s"),
+        "provenance_drift": bool(rec.get("provenance_drift")),
+        "pct_deviation": (None if (h2_run is None or not h2_dp)
+                          else 100.0 * (h2_run - h2_dp) / h2_dp),
+    })
+    if rec.get("provenance_drift"):
+        out["notes"].append(
+            "PROVENANCE DRIFT: this baseline was solved under a different "
+            "hil_plant_sim constant set than the current checkout. The hash "
+            "moves on any module-level constant, including ones this solve "
+            "never reads, so treat it as a warning; re-run with "
+            "--matched-dp-strict to refuse a drifted record outright")
+    if abs(float(rec.get("target_soc", target)) - target) > 1e-9:
+        out["notes"].append(
+            "baseline was solved at terminal SoC %.6f, the run ended at "
+            "%.6f (within the %g lookup tolerance)"
+            % (rec["target_soc"], target, tol_soc))
+    if not rec.get("converged"):
+        out["notes"].append(
+            "the DP's own terminal-SoC bisection did NOT converge (residual "
+            "%+.2e); quote the residual with the deviation"
+            % (rec.get("residual_soc") or 0.0))
+    return out
+
+
+def analyze_run(run, report_dir, results_json, no_move=False, force=False,
+                matched_dp="lookup", matched_dp_tol=None,
+                matched_dp_strict=False, matched_dp_allow_long=False):
     """Analyze one run end to end. Returns the per-run analysis dict."""
     warnings = []
     if no_move:
@@ -1391,6 +1740,13 @@ def analyze_run(run, report_dir, results_json, no_move=False, force=False):
     if run.kind == "replay":
         analysis["replay"] = _analyze_replay(hil, meta, cfg, dest, blg_fw,
                                              run.csv_path, force=force)
+
+    mdp = matched_dp_for_run(analysis, meta, hil, mode=matched_dp,
+                             tol_soc=matched_dp_tol,
+                             strict=matched_dp_strict,
+                             allow_long=matched_dp_allow_long)
+    if mdp is not None:
+        analysis["matched_dp"] = mdp
 
     write_json_atomic(dest / "analysis.json", analysis)
     write_text_atomic(dest / "ANALYSIS.md", render_run_markdown(analysis))
@@ -1581,6 +1937,53 @@ def _metrics_table(title, table):
     return lines
 
 
+def _render_matched_dp_block(a):
+    """The matched-DP section of one run's ANALYSIS.md.  [] when absent."""
+    m = a.get("matched_dp")
+    if not m:
+        return []
+    L = ["## Delta-SoC-matched DP baseline", ""]
+    status = m.get("status")
+    if status == "ok":
+        L += ["- run hydrogen: %s g" % _fmt(m.get("h2_run_g")),
+              "- DP baseline (%s accounting): %s g"
+              % (m.get("accounting"), _fmt(m.get("h2_dp_compared_g"))),
+              "- deviation from the DP bound: %s"
+              % ("—" if m.get("pct_deviation") is None
+                 else "%+.2f %%" % m["pct_deviation"]),
+              "- terminal SoC: run %.6f (delta %+.6f), DP baseline solved at "
+              "%.6f (delta %+.6f)"
+              % (m.get("target_soc", float("nan")),
+                 m.get("delta_soc_run") or 0.0,
+                 m.get("stored_target_soc", float("nan")),
+                 m.get("delta_soc_dp") or 0.0),
+              "- bisection residual: %s SoC (converged: %s)"
+              % ("—" if m.get("residual_soc") is None
+                 else "%+.2e" % m["residual_soc"],
+                 "yes" if m.get("converged") else "no"),
+              "- source: %s (key `%s`)%s"
+              % (m.get("source") or "—", (m.get("key") or "")[:16],
+                 "  **provenance drift**" if m.get("provenance_drift")
+                 else "")]
+    elif status == "solve_refused_long":
+        L += ["- solve REFUSED: this scenario is longer than the "
+              "%.0f s gate. Pass `--matched-dp-allow-long`, or prefill the "
+              "baseline separately." % MATCHED_DP_LONG_DURATION_S]
+    elif status == "no_cached_solve":
+        L += ["- NO CACHED SOLVE for this run's terminal SoC "
+              "(%.6f). The comparison is not made; prefill the results "
+              "database and re-run the analysis."
+              % m.get("target_soc", float("nan")),
+              "- key: `%s`" % (m.get("key") or "")]
+    else:
+        L += ["- baseline unavailable: %s" % m.get("error", status)]
+    L += [""]
+    for note in m.get("notes") or []:
+        L.append("> %s" % note)
+    L += [""]
+    return L
+
+
 def render_run_markdown(a):
     """ANALYSIS.md body for one run."""
     L = ["# %s" % a["folder"], "",
@@ -1614,6 +2017,8 @@ def render_run_markdown(a):
               "run is exercised for the MECHANISM it puts on the wire. Do NOT "
               "rank its `h2_cum_g` / `delta_soc` against the frontier legs."
               % a["ems_strategy"], ""]
+
+    L += _render_matched_dp_block(a)
 
     if a.get("suite_checks"):
         L += ["## Suite checks", "", "| check | result | detail |",
@@ -1682,6 +2087,53 @@ def render_run_markdown(a):
     return "\n".join(L) + "\n"
 
 
+def _render_matched_dp_summary(analyses):
+    """The campaign's cross-strategy matched-DP table.  [] when no run has one.
+
+    This is the per-campaign form of the WORK_QUEUE section 1 deliverable: one
+    row per drive-cycle run, each ranked against a DP bound solved to that
+    run's OWN terminal SoC, so the hydrogen figures in the `pct deviation`
+    column are comparable to each other."""
+    rows = [a for a in analyses if a.get("matched_dp")]
+    if not rows:
+        return []
+    rows.sort(key=lambda a: (a.get("name") or "",
+                             (a["matched_dp"].get("pct_deviation")
+                              if a["matched_dp"].get("pct_deviation")
+                              is not None else float("inf"))))
+    L = ["## Delta-SoC-matched DP comparison", "",
+         "| run | strategy | role | h2 run (g) | h2 DP (g) | pct deviation |"
+         " delta SoC (run) | residual | status |",
+         "|---|---|---|---|---|---|---|---|---|"]
+    for a in rows:
+        m = a["matched_dp"]
+        L.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s |"
+                 % (a["folder"],
+                    "`%s`" % a["ems_strategy"] if a.get("ems_strategy")
+                    else "—",
+                    a.get("ems_role") or "—",
+                    _fmt(m.get("h2_run_g")),
+                    _fmt(m.get("h2_dp_compared_g")),
+                    "—" if m.get("pct_deviation") is None
+                    else "%+.2f %%" % m["pct_deviation"],
+                    "—" if m.get("delta_soc_run") is None
+                    else "%+.6f" % m["delta_soc_run"],
+                    "—" if m.get("residual_soc") is None
+                    else "%+.1e" % m["residual_soc"],
+                    m.get("status") or "—"))
+    L += ["",
+          "Each row's DP baseline is solved to THAT run's terminal state of "
+          "charge, which is the only condition under which two strategies' "
+          "hydrogen totals rank anything. A `no_cached_solve` row has no "
+          "baseline in `tools/dp_db/`; its ANALYSIS.md carries the key to "
+          "prefill.",
+          "",
+          "> %s" % MATCHED_DP_REGEN_NOTE,
+          "",
+          "> %s" % MATCHED_DP_GFC_NOTE, ""]
+    return L
+
+
 def render_summary_markdown(meta, analyses, errors):
     """ANALYSIS_SUMMARY.md body for a whole report."""
     L = ["# HIL report analysis summary", "",
@@ -1737,6 +2189,8 @@ def render_summary_markdown(meta, analyses, errors):
           "Scenario runs are identified by name AND electrical mode "
           "(`scenario_<name>_<mode>`), so the two modes of one scenario are "
           "separate rows.", ""]
+
+    L += _render_matched_dp_summary(analyses)
 
     if errors:
         L += ["## Errors", ""]
@@ -1850,7 +2304,8 @@ class NotAReportError(ValueError):
 
 
 def analyze_report(report_dir, only=None, no_move=False, force=False,
-                   log=print):
+                   log=print, matched_dp="lookup", matched_dp_tol=None,
+                   matched_dp_strict=False, matched_dp_allow_long=False):
     """Analyze every run in report_dir. Returns (analyses, errors).
 
     Raises NotAReportError when the directory holds neither a run nor a
@@ -1877,7 +2332,10 @@ def analyze_report(report_dir, only=None, no_move=False, force=False,
     for run in runs:
         try:
             a = analyze_run(run, report_dir, results_json, no_move=no_move,
-                            force=force)
+                            force=force, matched_dp=matched_dp,
+                            matched_dp_tol=matched_dp_tol,
+                            matched_dp_strict=matched_dp_strict,
+                            matched_dp_allow_long=matched_dp_allow_long)
         except Exception as exc:
             errors.append((run.folder_name, "%s: %s" % (type(exc).__name__,
                                                         exc)))
@@ -1943,6 +2401,31 @@ def main(argv=None):
                     help="analyze in place; do not reorganize into subfolders")
     ap.add_argument("--force", action="store_true",
                     help="regenerate figures that already exist")
+    ap.add_argument("--matched-dp", default="lookup",
+                    choices=["off", "lookup", "solve"],
+                    help="delta-SoC-matched DP hydrogen baseline for every "
+                         "drive-cycle run. 'lookup' (default) reads "
+                         "tools/dp_db/ and NEVER solves - a miss is recorded "
+                         "with the key to prefill; 'solve' computes and stores "
+                         "a missing baseline, which costs seconds for a 61 s "
+                         "cycle and tens of minutes for FTP-75; 'off' skips "
+                         "the comparison entirely")
+    ap.add_argument("--matched-dp-tol", type=float, default=None,
+                    help="terminal-SoC tolerance a cached baseline may differ "
+                         "by (default dp_results_db.DP_DB_LOOKUP_TOL = 1e-5). "
+                         "Widening it trades a miss, which is visible, for a "
+                         "baseline solved at a different SoC outcome, which "
+                         "is not")
+    ap.add_argument("--matched-dp-strict", action="store_true",
+                    help="refuse a cached baseline whose hil_plant_sim "
+                         "constants_hash differs from this checkout's. "
+                         "Without it a drifted record is USED and annotated, "
+                         "because the hash also moves on constants the solve "
+                         "never reads")
+    ap.add_argument("--matched-dp-allow-long", action="store_true",
+                    help="permit `--matched-dp solve` on a scenario longer "
+                         "than %.0f s (FTP-75 costs tens of minutes)"
+                         % MATCHED_DP_LONG_DURATION_S)
     args = ap.parse_args(argv)
 
     try:
@@ -1954,7 +2437,11 @@ def main(argv=None):
     try:
         analyses, errors = analyze_report(report_dir, only=args.runs,
                                           no_move=args.no_move,
-                                          force=args.force)
+                                          force=args.force,
+                                          matched_dp=args.matched_dp,
+                                          matched_dp_tol=args.matched_dp_tol,
+                                          matched_dp_strict=args.matched_dp_strict,
+                                          matched_dp_allow_long=args.matched_dp_allow_long)
     except NotAReportError as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 2

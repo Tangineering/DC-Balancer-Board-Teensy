@@ -1100,7 +1100,9 @@ REPLAY_SUITE = [
         # "10 ms dwell" figure described a sub-threshold sag that does not exist
         # in this trace; do not reinstate it.
         "classification": "handoff bus sag to 12.1489 V — 0.1489 V (1.24 %) ABOVE "
-                          "LIMIT_V_BUS_MIN, so 0.0 ms of accumulated UV dwell",
+                          "LIMIT_V_BUS_MIN, so the LEAKY dwell accumulator "
+                          "(add below the limit, leak above it) never starts: "
+                          "0.0 ms accumulated, not merely a short dwell",
         "why": "The NEGATIVE UV case: the recorded dip must NOT latch UV_BUS. Pairs "
                "with the legacy UV pair, which must. ⚠️ The must-NOT-latch half is "
                "VACUOUS on this stimulus by construction (the floor stays above the "
@@ -1563,7 +1565,18 @@ def _assert_uv_not_latched_entries():
 
     Deliberately scoped to FAULT_UV_BUS: it is the only bit whose firmware test
     is a DWELL over a threshold on a rail this CSV carries, and therefore the
-    only one whose stimulus can be pinned this way from the trace alone."""
+    only one whose stimulus can be pinned this way from the trace alone.
+
+    PART B4 WORDING (C1 round, 2026-09-01) — WHAT "DWELL" MEANS HERE. It is a
+    LEAKY ACCUMULATOR, not a contiguous time below the limit: the firmware adds
+    the tick period while V_bus is under LIMIT_V_BUS_MIN and SUBTRACTS
+    UV_BUS_DWELL_LEAK (0.05) of a tick per tick while it is above
+    (UV_BUS_DWELL_LATCH_MS 20.0, .ino:1460-1461). Two consequences a reader
+    should not have to re-derive. A sag that is repeatedly interrupted still
+    latches, because 20 ms of net accumulation need not be consecutive. And a
+    trace whose floor never crosses the limit accumulates NOTHING at all, which
+    is the vacuity this guard exists to catch -- the accumulator is not merely
+    "short", it never starts."""
     for e in REPLAY_SUITE:
         checks = e.get("checks", [])
         if not any(c.get("kind") == "fault_not_latched"
@@ -2162,9 +2175,15 @@ def check_i_fc_max_in_band(data, spec):
         return False, (f"no I_fc samples at or after t={data.preamble_s:.1f}s — "
                        f"the recorded stimulus is absent, so its peak cannot be "
                        f"pinned")
-    where = (f"peak |I_fc| {i:.4f} A at t={t:.3f}s "
+    # PART B4 (C1 round, 2026-09-01): "INJECTED" is stated in the rendered
+    # detail, not merely implied. A replay entry drives this current INTO the
+    # board from the log; the board never produced it, and a ledger reading
+    # "peak I_fc 1.354 A" as a board measurement draws the wrong conclusion
+    # about the hardware's own margin.
+    where = (f"peak INJECTED |I_fc| {i:.4f} A at t={t:.3f}s "
              f"({i / LIMIT_I_FC_MAX_A * 100:.1f} % of LIMIT_I_FC_MAX "
-             f"{LIMIT_I_FC_MAX_A:.1f} A)")
+             f"{LIMIT_I_FC_MAX_A:.1f} A; replayed from the log, not measured "
+             f"on the board)")
     if i < lo_a:
         return False, (f"{where} is BELOW the {lo_a:.2f} A floor this entry pins: "
                        f"the recorded peak has drifted away from the limit, so "
@@ -2218,8 +2237,12 @@ def check_v_bus_min_in_band(data, spec):
         return False, (f"no V_bus samples at or after t={data.preamble_s:.1f}s — "
                        f"the recorded stimulus is absent, so its floor cannot be "
                        f"pinned")
-    where = (f"min V_bus {v:.4f} V at t={t:.3f}s ({v - LIMIT_V_BUS_MIN_V:+.4f} V "
-             f"vs LIMIT_V_BUS_MIN {LIMIT_V_BUS_MIN_V:.1f} V)")
+    # PART B4 (C1 round, 2026-09-01): as for the OC arm above -- this floor is
+    # INJECTED from the log, not a sag the board produced.
+    where = (f"min INJECTED V_bus {v:.4f} V at t={t:.3f}s "
+             f"({v - LIMIT_V_BUS_MIN_V:+.4f} V vs LIMIT_V_BUS_MIN "
+             f"{LIMIT_V_BUS_MIN_V:.1f} V; replayed from the log, not measured "
+             f"on the board)")
     if v <= lo_v:
         return False, (f"{where} is AT OR BELOW the {lo_v:.2f} V floor this entry "
                        f"pins: the recorded sag now crosses the UV limit, so this "

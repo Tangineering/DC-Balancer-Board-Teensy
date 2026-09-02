@@ -227,6 +227,149 @@ DROOP_MODES = tuple(DROOP_SCALE)
 DROOP_MODE_DEFAULT = "design"
 assert DROOP_MODE_DEFAULT in DROOP_SCALE
 
+# ═════════════════════════════════════════════════════════════════════════════
+# PART A (C1 round, 2026-09-01) — CONVERTER ASYMMETRY
+# Source: docs/modeling/converter_asymmetry_20260901.md §9 (reviewed fit round).
+# Everything between this banner and its closing banner is the asymmetry model.
+# ═════════════════════════════════════════════════════════════════════════════
+#: THE M2 CONSISTENT PAIR (fix round F1, 2026-09-01).  ASYM_DV0_V and
+#: ASYM_DROOP_SCALE_FC below are the TWO PARAMETERS OF ONE FIT and must move
+#: together; do not mix either with a value from another model.
+#:
+#: WHY M2 AND NOT M1.  The first implementation of this block took M1's
+#: DeltaV0 = +0.0444 V (a one-parameter fit that sets rho = 1 BY CONSTRUCTION)
+#: and combined it with a rho estimated SEPARATELY from the single-source
+#: regime.  That double-counts: M1's DeltaV0 has already absorbed whatever
+#: droop-ratio mismatch the corpus contains, because with rho pinned at 1 the
+#: voltage term is the only place for it to go.  Adding rho back on top applies
+#: the same physical asymmetry twice.
+#:
+#: THE THREE-WAY COMPARISON against CAL-1 (alpha 0.5354 / 0.5262 / 0.5327 at
+#: I_tot 0.452 / 0.935 / 1.346 A, commanded r = 0.5), RMS share error:
+#:
+#:     parameterization                          dV0        rho      RMS
+#:     ------------------------------------      -------    ------   ------
+#:     M1 dV0 + separately-fitted rho (SHIPPED)   0.0444     0.930    0.0402
+#:     M1 alone (rho = 1)                         0.0444     1.000    0.0253
+#:     M2 CONSISTENT PAIR (adopted)               0.013522   0.9434   0.0063
+#:
+#: The decisive evidence is the SHAPE, not only the RMS: CAL-1's deviation from
+#: r is FLAT IN I_tot, which is the rho signature.  A voltage mismatch produces
+#: a deviation going as 1/I_tot, so a fit that puts the whole effect in DeltaV0
+#: must over-predict at light load and under-predict at heavy load, and the
+#: shipped pair did both at once while also carrying rho.
+#:
+#: static no-load voltage mismatch between the two boost chains, V, as
+#: DeltaV0 = V0_FC - V0_BT, at s_B = 1.  A POSITIVE value means the FC chain
+#: regulates high and over-delivers current at every load (sign convention,
+#: doc 9.1).  M2 fit: CI95 [+0.00097, +0.02429] — the interval is wide and
+#: includes values near zero, which is the honest reading of a term the M2
+#: partition finds to be the SMALLER of the two mechanisms.
+#: Source: docs/modeling/asymmetry_fit_20260901/fit_summary.json,
+#: M2.params.dV0_V_if_sB_1.
+ASYM_DV0_V = 0.013522
+#: per-channel multiplier on the realized droop resistance, applied ON TOP of
+#: whatever DROOP_SCALE[droop_mode] already realizes.  BT is the reference
+#: channel at 1.000, which keeps the `--droop measured` anchor where it is.
+#: M2 fit rho = s_F/s_B: CI95 [0.9205, 0.9636] — and unlike the retired
+#: single-source estimate 0.930 [0.834, 1.079], this interval EXCLUDES 1.000.
+#: The mismatch is significant under the consistent pair.
+#: Source: fit_summary.json, M2.params.rho_sF_over_sB.
+#: ⚠️ It still must not be cited as evidence about the +8.1 % shared/single
+#: residual, which doc 8 shows the asymmetry does NOT explain.
+ASYM_DROOP_SCALE_FC = 0.9434
+ASYM_DROOP_SCALE_BT = 1.000
+#: the firmware's droop design constant k_d, ohm (`K_DROOP`, .ino:2166-2167),
+#: repeated here because the sense-arm equivalence below is written in it.
+#: A test pins it equal to hil_plant_sim.K_DROOP_FW_OHM.
+ASYM_K_DROOP_OHM = 0.30
+#: `--asymmetry` modes.  "off" restores the two identical Boost objects and is
+#: BYTE-IDENTICAL to every trace recorded before this mode existed (regression
+#: anchors: the scp i_cut 6.3797373196569644 A record and the hi-fi bring-up
+#: current pins).  "measured" is the DEFAULT per the operator ruling of
+#: 2026-09-01 — the next campaign opens a new baseline era.
+ASYMMETRY_MODES = ("measured", "off")
+ASYMMETRY_MODE_DEFAULT = "measured"
+assert ASYMMETRY_MODE_DEFAULT in ASYMMETRY_MODES
+
+
+def asymmetry_dv0_sense_v(ina_offset_fc, ina_offset_bt):
+    """The SENSE-ARM equivalent voltage of a pair of INA zero offsets, V.
+
+    Doc 7.1: a pair of zero offsets shifts the MEASURED share by
+        d_alpha = (delta_F - alpha*(delta_F + delta_B)) / I_tot
+    and at r = 0.5 the equivalent voltage mismatch is
+        dV0_sense = k_d * (delta_F - 0.5*(delta_F + delta_B)) / 0.25
+    which at the plant's own injected defaults {+0.020, 0.0} is +0.0120 V.
+
+    Evaluated at r = 0.5 because that is where the fit's own equivalence is
+    stated; the two terms' r dependence differs (doc 7.1) and no attempt is
+    made here to separate them away from that point.
+    """
+    d_f = float(ina_offset_fc)
+    d_b = float(ina_offset_bt)
+    return ASYM_K_DROOP_OHM * (d_f - 0.5 * (d_f + d_b)) / 0.25
+
+
+def asymmetry_dv0_v(ina_offset_fc=0.0, ina_offset_bt=0.0):
+    """Return the DeltaV0 to inject, given the INA offsets ACTUALLY injected.
+
+    F3 (fix round, 2026-09-01) — DISCRIMINATED ON THE EFFECTIVE OFFSETS, NOT ON
+    NoiseConfig PRESENCE.  The quantity that double-counts is the sense-arm
+    contribution the run actually injects, and that is a property of the
+    resolved `ina_zero_offset` values, not of whether a NoiseConfig object
+    exists.  `NoiseConfig(ina_zero_offset=0.0)` is a real and reachable
+    configuration, and under the previous "is a NoiseConfig present" test it
+    would have had 0.0120 V subtracted for offsets it never injects.  Simple
+    mode and replay mode construct no NoiseConfig at all
+    (hil_plant_sim.py:8087-8094 vs :8163) and must therefore pass zeros.
+
+    ⚠️ THE CONFRONTATION, RECORDED HONESTLY.  Under the M2 consistent pair the
+    sense arm (+0.0120 V at the injected defaults) is COMPARABLE TO THE WHOLE
+    voltage term (+0.013522 V), so a `--noise` run injects a residual near
+    zero.  That is not a defect in the arithmetic: the M2 partition says most
+    of the corpus deviation is DROOP RATIO, which `ASYM_DROOP_SCALE_FC` carries
+    and which the sense arm does not touch.  A `--noise` run therefore keeps
+    essentially all of the asymmetry and loses only the small voltage term the
+    INA offsets were already supplying.  The result is CLAMPED AT >= 0: a
+    negative injected DeltaV0 would invert the fitted sign on the strength of
+    two near-equal numbers with overlapping intervals, which the data does not
+    support in either direction.
+    """
+    return max(0.0, ASYM_DV0_V - asymmetry_dv0_sense_v(ina_offset_fc,
+                                                       ina_offset_bt))
+
+
+def asymmetry_params(mode, ina_offset_fc=0.0, ina_offset_bt=0.0,
+                     droop_scale=1.0):
+    """Resolve (v0_offset_fc, v0_offset_bt, droop_scale_fc, droop_scale_bt).
+
+    The voltage mismatch is applied ANTISYMMETRICALLY about V0_NOLOAD
+    (+DeltaV0/2 on FC, -DeltaV0/2 on BT) so the MEAN no-load voltage of the two
+    chains is unchanged and the bus-level baselines move as little as the
+    mismatch allows.  Mode "off" returns the symmetric identity.
+
+    F2 (fix round, 2026-09-01) — THE INJECTED VOLTAGE SCALES WITH `droop_scale`.
+    What the corpus measures is a SHARE deviation.  The fit converts it to a
+    voltage through the term A = DeltaV0/(k_d*s_B), i.e. the reported DeltaV0 is
+    a LUMPED A*k_d AT THE DESIGN DROOP, and the physical voltage it names is
+    only as certain as the droop realization assumed to derive it.  Injecting
+    the literal number under `--droop measured` (DROOP_SCALE 0.21171) drives the
+    share deviation up by 1/0.21171: the delivered alpha at r = 0.5 and 0.5 A
+    reached 0.80 with the M1 value.  Scaling the injected voltage by the mode's
+    own droop scale makes the SHARE deviation — the measured quantity — the
+    invariant across droop modes, which is the property the fit actually
+    supports.  A test pins alpha at r = 0.5 under both modes.
+    """
+    if mode not in ASYMMETRY_MODES:
+        raise ValueError("asymmetry mode must be one of %s" % (ASYMMETRY_MODES,))
+    if mode == "off":
+        return 0.0, 0.0, 1.0, 1.0
+    dv0 = asymmetry_dv0_v(ina_offset_fc, ina_offset_bt) * float(droop_scale)
+    return (+0.5 * dv0, -0.5 * dv0,
+            ASYM_DROOP_SCALE_FC, ASYM_DROOP_SCALE_BT)
+# ═════════════════════ end PART A constants ══════════════════════════════════
+
 # Soft-start capacitors per switch (schematic 20260622).
 CSS_NF = {
     "FC_BUS": 100.0, "BT_BUS": 100.0, "MOT_PWR": 100.0,
@@ -315,6 +458,26 @@ R_CHOPPER_REG = 0.5         # ohm   TL431/BSP170P linear-regulation output resis
 # phenomena: without coalescing a 2 s braking window emits tens of thousands of
 # identical dicts into events.jsonl.
 EVENT_COALESCE_S = 0.005    # s
+
+
+class _EventLog(list):
+    """A list that remembers what has passed through it (PART B2, 2026-09-01).
+
+    The consumer trims this list after every drain, so counts taken over the
+    live list under-report.  `total` and `kinds` are the durable figures.
+    Clearing the list (`del log[:]`) deliberately does NOT reset them.
+    """
+
+    def __init__(self, *a):
+        super().__init__(*a)
+        self.total = 0
+        self.kinds = {}
+
+    def append(self, ev):
+        self.total += 1
+        k = ev.get("kind")
+        self.kinds[k] = self.kinds.get(k, 0) + 1
+        super().append(ev)
 
 
 def chopper_dump_current(v_node):
@@ -1339,10 +1502,15 @@ class Boost:
     #: output.  TODO(verify): not extracted from the datasheet in this repo.
     I_OUT_MAX = 6.0
 
-    def __init__(self, name, node, c_out, droop_scale=1.0):
+    def __init__(self, name, node, c_out, droop_scale=1.0, v0_offset_v=0.0):
         self.name = name
         self.node = node
         self.c_out = c_out
+        # PART A (2026-09-01): this channel's static no-load voltage offset about
+        # V0_NOLOAD, in volts.  0.0 is the SYMMETRIC chain and reproduces every
+        # trace recorded before the asymmetry mode existed.  See the PART A
+        # constants banner for the fit and its sign convention.
+        self.v0_offset_v = float(v0_offset_v)
         #: THE ONE SCALING POINT of the droop realization (see DROOP_SCALE).
         #: 1.0 is the DESIGN chain and is the default everywhere; anything else
         #: is an empirical rescale of the realized droop resistance and does
@@ -1422,7 +1590,11 @@ class Boost:
             self.v_clip = None
         # No-load regulation target, reached through the validated first-order
         # voltage-loop lag tau_r.
-        target = max(V0_NOLOAD, v_in - V_BODY_DIODE)
+        # PART A: `v0_offset_v` shifts THIS channel's regulation target only.  It
+        # is inside the max() with the body-diode passthrough because a chain
+        # whose input already exceeds its own regulation point is passing, not
+        # regulating, and the offset is a property of the regulation point.
+        target = max(V0_NOLOAD + self.v0_offset_v, v_in - V_BODY_DIODE)
         self.v_src += (target - self.v_src) * min(1.0, dt / self.TAU_R)
         return True
 
@@ -1476,11 +1648,15 @@ class ElectricalSim:
     BUDGET_FRAC = 0.65
 
     def __init__(self, trace_config="short", noise=None, c_vesc_f=C_VESC_DEFAULT,
-                 fuel_cell=None, battery=None, droop_mode="design"):
+                 fuel_cell=None, battery=None, droop_mode="design",
+                 asymmetry_mode=ASYMMETRY_MODE_DEFAULT):
         if trace_config not in TRACE_L_NH:
             raise ValueError(f"trace_config must be one of {sorted(TRACE_L_NH)}")
         if droop_mode not in DROOP_SCALE:
             raise ValueError("droop_mode must be one of %s" % (DROOP_MODES,))
+        if asymmetry_mode not in ASYMMETRY_MODES:
+            raise ValueError("asymmetry_mode must be one of %s"
+                             % (ASYMMETRY_MODES,))
         # DEFAULT "design": every baseline recorded before this switch existed
         # is reproduced bit-for-bit, which is the load-bearing property (a
         # regression test pins it).  See the DROOP_SCALE banner.
@@ -1501,10 +1677,32 @@ class ElectricalSim:
             C_MOT_LOCAL + c_vesc_f, C_CHG_NODE, C_RGN_NODE,
         ]
 
+        # ── PART A: converter asymmetry ──────────────────────────────────────
+        # Resolved HERE, after `self.noise` is assigned, because the DeltaV0 to
+        # inject is a function of the INA zero offsets this run actually
+        # injects (F3) — which live on the NoiseConfig when there is one and
+        # are zero when there is not.  The two per-channel droop scales COMPOSE
+        # MULTIPLICATIVELY with the `--droop` mode scale: the mode sets the
+        # realization level, the asymmetry sets the FC/BT ratio about it, and
+        # BT = 1.000 keeps the measured anchor.  The VOLTAGE is scaled by the
+        # same mode scale (F2), so the SHARE deviation — the quantity the fit
+        # actually measured — is invariant across droop modes.
+        self.asymmetry_mode = asymmetry_mode
+        _off = getattr(self.noise, "ina_zero_offset", None) or {}
+        self.asym_ina_offset_fc = float(_off.get("I_fc", 0.0))
+        self.asym_ina_offset_bt = float(_off.get("I_batt", 0.0))
+        (self.asym_v0_offset_fc, self.asym_v0_offset_bt,
+         self.asym_droop_scale_fc, self.asym_droop_scale_bt) = asymmetry_params(
+            asymmetry_mode, self.asym_ina_offset_fc, self.asym_ina_offset_bt,
+            droop_scale=self.droop_scale)
+        self.asym_dv0_v = self.asym_v0_offset_fc - self.asym_v0_offset_bt
+
         self.boost_fc = Boost("FC", N_OFC, C_BOOST_OUT_FC,
-                              droop_scale=self.droop_scale)
+                              droop_scale=self.droop_scale * self.asym_droop_scale_fc,
+                              v0_offset_v=self.asym_v0_offset_fc)
         self.boost_bt = Boost("BT", N_OBT, C_BOOST_OUT_BT,
-                              droop_scale=self.droop_scale)
+                              droop_scale=self.droop_scale * self.asym_droop_scale_bt,
+                              v0_offset_v=self.asym_v0_offset_bt)
 
         self.switches = {
             "FC_BUS": Rt1987("FC_BUS", N_OFC, N_BUS, CSS_NF["FC_BUS"], C_VBUS,
@@ -1545,7 +1743,14 @@ class ElectricalSim:
         self.fuel_cell = fuel_cell if fuel_cell is not None else FuelCellSource()
         self.battery = battery if battery is not None else BatterySource()
 
-        self.events = []
+        # PART B2 (C1 round, 2026-09-01): a COUNTING list.  hil_plant_sim
+        # drains and TRIMS this list every tick (`del electrical.events[:]`),
+        # so `len(self.events)` and a kind census taken over it report only
+        # whatever accumulated since the last drain -- near-zero on a normal
+        # exit.  `_EventLog` keeps the durable totals at the one place every
+        # event passes through, so summary()'s `events` / `event_kinds` are the
+        # whole run's figures and not a trimmed-list artifact.
+        self.events = _EventLog()
         self.i_aux = I_AUX_A
         # M5 DEVIATION: renamed from v_bus_offset to v_bus_sense_offset.  Stamping
         # this as a real network disturbance (a Norton source on N_BUS) was tried
@@ -1850,9 +2055,11 @@ class ElectricalSim:
                 and (self.t - self._chop_end_t) <= EVENT_COALESCE_S):
             ev = self._chop_ev
         else:
+            # PART B2: a NEW episode. Close the previous one first, then start
+            # this one WITHOUT appending it yet — see close_chopper_episode().
+            self.close_chopper_episode()
             ev = {"t": self.t, "kind": "chopper_clamp", "node": "MOT",
                   "dur_s": 0.0, "energy_j": 0.0, "peak_w": 0.0, "peak_v": 0.0}
-            self.events.append(ev)
             self._chop_ev = ev
             self.chopper_episodes += 1
         ev["dur_s"] += h
@@ -1861,6 +2068,38 @@ class ElectricalSim:
         ev["peak_v"] = max(ev["peak_v"], v_node)
         ev["t_end"] = self.t
         self._chop_end_t = self.t
+
+    def close_chopper_episode(self):
+        """Append the in-flight `chopper_clamp` episode, now that it is whole.
+
+        PART B2 (C1 round, 2026-09-01) — THE DEFECT THIS FIXES. The episode dict
+        used to be appended to `self.events` on its FIRST conducting substep and
+        then mutated in place for the rest of the episode. The consumer
+        (hil_plant_sim's `_drain_electrical_events`) serializes and TRIMS the
+        list every 1 ms tick, so the dict was written out carrying only its
+        first partial tick — `dur_s` 0.25-0.9 ms and a correspondingly tiny
+        `energy_j` — and every later mutation landed on an object nothing would
+        ever read again. A 1148 ms clamp window therefore reported sub-millijoule
+        energy in a sidecar whose whole purpose is the energy accounting.
+
+        FIX CHOSEN: emit ONCE, at episode END. The alternative the spec allowed —
+        re-emitting an updated copy on every drain behind an `update: true` flag —
+        was rejected on two grounds. It multiplies a single 1148 ms episode into
+        ~1148 sidecar rows, and it makes every consumer responsible for
+        de-duplicating by taking the last row, which is a contract that fails
+        silently when a consumer forgets. Emitting once means an event in the
+        sidecar is, unconditionally, a whole episode.
+
+        COST, stated: an episode still open when the process is SIGKILLed is
+        never emitted, whereas the old code emitted a (wrong) partial record for
+        it. That is accepted — the run's durable energy accounting lives in
+        `chopper_energy_j` / `chopper_episodes` on the summary, neither of which
+        depends on the event stream, and a truncated record that under-reports
+        by three orders of magnitude is worse evidence than no record.
+        """
+        if self._chop_ev is not None:
+            self.events.append(self._chop_ev)
+            self._chop_ev = None
 
     # ── outputs ──────────────────────────────────────────────────────────────
     def _rails(self, sw):
@@ -1898,15 +2137,21 @@ class ElectricalSim:
         return self.switches[name].state
 
     def summary(self):
-        kinds = {}
-        for e in self.events:
-            kinds[e["kind"]] = kinds.get(e["kind"], 0) + 1
+        # PART B2: durable totals from the counting log, NOT a census over the
+        # live list (which the consumer trims every tick).
+        kinds = dict(getattr(self.events, "kinds", {}))
+        n_events = getattr(self.events, "total", len(self.events))
         return {
             "achieved_substep_hz": self.achieved_substep_hz,
             "substeps_per_tick": self._n_sub,
-            "events": len(self.events),
+            "events": n_events,
             "event_kinds": kinds,
             "trace_config": self.trace_config,
+            # PART A provenance: which asymmetry the two chains actually carried.
+            "asymmetry_mode": self.asymmetry_mode,
+            "asymmetry_dv0_v": self.asym_dv0_v,
+            "asymmetry_droop_scale_fc": self.asym_droop_scale_fc,
+            "asymmetry_droop_scale_bt": self.asym_droop_scale_bt,
             "numeric_fault": self.numeric_fault,          # M2: sticky
             "neg_clamp_count": self.neg_clamp_count,      # M2: diagnostic
             "chopper_peak_w": self.chopper_peak_w,        # worst V_rgn*i_dump while clamping

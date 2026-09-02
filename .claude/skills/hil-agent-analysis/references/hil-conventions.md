@@ -65,7 +65,12 @@ hash-different does not strictly imply model-different; check the commit.
   0x8010 union was wire-ambiguous on fw ≤ 24. **From fw v25, `error_code_final` is on
   the wire** (observation-frame offset 16 — see the observation-column list below) and
   is the authority: `ERR_PI_TIMEOUT` (0x05) vs `ERR_HIL_STALE` (0x10) settle it
-  directly. On a pre-v25 board (no such byte present), fall back to stream-health
+  directly. ⚠️ **`error_code` names the PREDECESSOR'S cause during the carried-in
+  window.** The board opens a run still latched from the previous run, and the latched
+  `error_code` it reports until the fw v22/v23 recovery clears it at t ≈ 0.500 s belongs
+  to that predecessor, not to this run's stimulus. Read `error_code` for attribution only
+  after the carried-in latch has cleared, exactly as fault bits are read post-grace.
+  On a pre-v25 board (no such byte present), fall back to stream-health
   *inference* (child tx continuity, send-error count) — the fallback the `--pi-live`
   excusal and `child_tx_healthy` check use.
 - **Carried-in signature (systematic):** every run after the first opens latched with
@@ -85,6 +90,14 @@ hash-different does not strictly imply model-different; check the commit.
 - Mid-run warm resets (mainState 99→non-99 after the 2.0 s grace) mark a run INCONCLUSIVE
   unless the scenario declares `warm_resets_expected` (comm-loss = 1). The sidecar's
   counts are the authority.
+- **comm-loss warm `MOT_PWR` re-close current — RE-BASELINED 0.3696 → 0.3591 A/ch**
+  (campaign 20260901_151156). The 0.3696 A/ch figure was bit-exact across eight campaigns
+  up to and including 20260901_080905; the WP-C regen-fidelity plant model (fw v25 round)
+  moved the V-MOT node's energy accounting, and 0.3591 A/ch is the first reading after it.
+  Treat 0.3591 as the current baseline and 0.3696 as the pre-WP-C one — quoting a run
+  against the wrong era reads as a −2.8 % board drift that is not there. ⚠️ ONE reading;
+  the second fw v25 campaign settles whether it is the new bit-exact value or a spread.
+  Not pinned by any check — this is a ledger convention, not a threshold.
 - FAULT_EXPECTATIONS (run_hil_suite.py) is declarative: require / allow_only /
   not_before_s / survive_to / events_require / signals_require, each entry with a source
   citation. Replay entries carry declarative checks in REPLAY_SUITE; `docs/HIL_REPLAY_LOGS.md`
@@ -159,9 +172,12 @@ hash-different does not strictly imply model-different; check the commit.
     at ~1.3 ms, which would put the cutoff before everything and exclude the whole run.
   - **Not an exact anchor.** The lead window exists because the solver timestamps a cut
     slightly before the latch it accompanies (the latch comes back over the ~1.9 ms
-    observation round-trip). MEASURED SEPARATION, campaign 20260901_080905: teardown cuts
-    lead their latch by **0.095–0.117 ms**; genuine share-path hazards lead by **≥ 13.8 ms**.
-    5.0 ms sits ~2.6× above the round-trip floor and ~2.8× below the smallest real hazard.
+    observation round-trip). MEASURED SEPARATION, campaigns 20260901_080905 and
+    20260901_151156: teardown cuts lead their latch by **0.095–0.541 ms** (the upper end is
+    the 151156 measurement, which widened the band from the 0.117 ms first recorded);
+    genuine share-path hazards lead by **≥ 13.8 ms**.
+    5.0 ms sits ~9× above the widest measured teardown lead and ~2.8× below the smallest
+    real hazard.
 
   A share cut that CAUSED a fault still lands well before its own latch and is caught.
   Residual: a share cut arriving after an UNRELATED fault is still missed.

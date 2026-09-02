@@ -1179,8 +1179,14 @@ def test_soft_start_cold_start_bringup_peaks_preserved():
 
     (Same scenario shape as test_precharge_current_is_physical_not_fictitious_
     amps / test_full_bringup_current_ceiling_stays_under_1p2a, which only
-    assert loose upper bounds; this pins the actual converged values.)"""
-    e = he.ElectricalSim(trace_config="short")
+    assert loose upper bounds; this pins the actual converged values.)
+
+    PART A (C1, 2026-09-01): these two numbers are SYMMETRIC-ERA anchors, so
+    the sim is constructed with `asymmetry_mode="off"`.  That is not a way
+    round the change -- it is the byte-identity arm of the change: `off` must
+    reproduce the pre-asymmetry engine exactly, and this test is one of the two
+    regression records that prove it does."""
+    e = he.ElectricalSim(trace_config="short", asymmetry_mode="off")
     sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ
     aux = 0
     p0_peak_fc = 0.0
@@ -1404,9 +1410,20 @@ def test_regen_lifts_v_mot_to_the_chopper_clamp_with_the_bus_unmoved():
 
 def test_regen_chopper_clamp_event_is_emitted_and_coalesced():
     """ONE event per episode, not one per substep -- and a DISTINCT kind from
-    chopper_over_power, which the suite scores as a FAILURE."""
+    chopper_over_power, which the suite scores as a FAILURE.
+
+    PART B2 (C1 round, 2026-09-01): the event is now appended when the episode
+    ENDS, not when it starts, so a still-conducting episode must be closed
+    before it can be read. That is the whole point of the change -- the
+    consumer serializes and trims the list every 1 ms tick, and the old
+    append-then-mutate form wrote out each episode carrying only its first
+    partial tick. The energy equality below is the regression assertion: the
+    emitted record must agree with the engine's own durable accumulator."""
     sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ | SW_MOT_PWR
     e, _ = _regen_rig(sw, p_regen_w=3.0, ticks=800)
+    # Nothing is emitted while the clamp is still conducting.
+    assert not [ev for ev in e.events if ev["kind"] == "chopper_clamp"]
+    e.close_chopper_episode()
     clamps = [ev for ev in e.events if ev["kind"] == "chopper_clamp"]
     assert len(clamps) == 1, "substep-rate event spam is not coalesced"
     ev = clamps[0]
@@ -1417,6 +1434,36 @@ def test_regen_chopper_clamp_event_is_emitted_and_coalesced():
         ev["peak_v"] * he.chopper_dump_current(ev["peak_v"]), rel=1e-6)
     assert not [x for x in e.events if x["kind"] == "chopper_over_power"]
     assert ev["peak_w"] < he.P_CHOPPER_MAX_W
+    # THE B2 REGRESSION ASSERTION: the serialized episode carries the WHOLE
+    # episode's energy, which is the engine's own durable accumulator. Under
+    # the old append-then-mutate form this was off by three orders of
+    # magnitude on any run whose consumer drained per tick.
+    assert ev["energy_j"] == pytest.approx(e.chopper_energy_j, rel=1e-9)
+    assert e.summary()["event_kinds"].get("chopper_clamp") == 1
+
+
+def test_chopper_episode_survives_a_per_tick_event_drain():
+    """PART B2 (C1 round, 2026-09-01) -- THE DEFECT, reproduced directly.
+
+    hil_plant_sim drains and TRIMS `electrical.events` every tick. The episode
+    record must still arrive whole, and the engine's durable event counters
+    must still report it, even though the list was emptied many times while
+    the episode was conducting."""
+    e = he.ElectricalSim(asymmetry_mode="off")
+    for i in range(1000):
+        e.t = i * 1e-4
+        e._chopper_episode(50.0, 18.1, 1e-4)
+        if i % 10 == 9:                 # the consumer's per-tick drain
+            del e.events[:]
+    e.close_chopper_episode()
+    clamps = [ev for ev in e.events if ev["kind"] == "chopper_clamp"]
+    assert len(clamps) == 1
+    assert clamps[0]["dur_s"] == pytest.approx(0.1, rel=1e-6)
+    assert clamps[0]["energy_j"] == pytest.approx(5.0, rel=1e-6)
+    # The durable counters survive the trimming; a census over the live list
+    # would report whatever happens to be in it right now.
+    assert e.summary()["events"] >= 1
+    assert e.summary()["event_kinds"]["chopper_clamp"] == 1
 
 
 def test_regen_stamp_is_bounded_into_an_isolated_node():
@@ -1534,7 +1581,11 @@ def _droop_dc_fit(mode, both_sources):
     aux = AUX_FC_REG | AUX_BT_REG
     pts = []
     for i_mot in _DROOP_I_MOTOR:
-        e = he.ElectricalSim(trace_config="short", droop_mode=mode)
+        # PART A (C1): the droop anchors below are DEFINED on the symmetric
+        # chain (the fit that produced DROOP_MEASURED_SINGLE_OHM is a pooled
+        # both-channel figure), so this helper pins `asymmetry_mode="off"`.
+        e = he.ElectricalSim(trace_config="short", droop_mode=mode,
+                             asymmetry_mode="off")
         rails = None
         for _ in range(_DROOP_SETTLE_TICKS):
             rails = _pin_and_step(e, 1e-3, _actuators(
@@ -1638,8 +1689,14 @@ def test_droop_default_mode_is_design_and_solved_point_is_bit_identical():
     aux = AUX_FC_REG | AUX_BT_REG
     act = _actuators(sw=sw, aux=aux, i_motor_a=0.6,
                      code_fc=_DROOP_G_NOMINAL, code_bt=_DROOP_G_NOMINAL)
-    old = he.ElectricalSim(trace_config="short")
-    new = he.ElectricalSim(trace_config="short", droop_mode="design")
+    # PART A (C1, 2026-09-01): both sims pin `asymmetry_mode="off"`. The
+    # repr() literal in part (2) is the SYMMETRIC-ERA solved bus node, and
+    # keeping it under `off` is exactly the byte-identity contract the new
+    # mode owes the archive: every campaign on record ran a symmetric plant,
+    # and `off` must still reproduce it to the last bit.
+    old = he.ElectricalSim(trace_config="short", asymmetry_mode="off")
+    new = he.ElectricalSim(trace_config="short", droop_mode="design",
+                           asymmetry_mode="off")
     assert old.droop_mode == "design" and old.droop_scale == 1.0
     r_old = r_new = None
     for _ in range(300):
@@ -1692,6 +1749,267 @@ def test_droop_mode_touches_nothing_but_the_droop():
 def test_invalid_droop_mode_rejected():
     with pytest.raises(ValueError):
         he.ElectricalSim(trace_config="short", droop_mode="bench")
+
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# C1 round (2026-09-01), PART A — converter asymmetry, independent test-writer
+# coverage. These target the resolver functions and ElectricalSim wiring
+# directly rather than re-deriving a hi-fi steady-state current split, which
+# the existing droop-mode tests already exercise the machinery for.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_asymmetry_dv0_sense_v_matches_the_documented_default_injection():
+    """The plant's own injected defaults {I_fc: +0.020, I_batt: 0.0} must
+    produce +0.0120 V, per the asymmetry_dv0_v docstring (doc 7.1)."""
+    got = he.asymmetry_dv0_sense_v(he.INA_ZERO_OFFSET_A, 0.0)
+    assert got == pytest.approx(0.0120, abs=1e-4)
+
+
+def test_asymmetry_dv0_v_zero_offsets_returns_the_bare_fit_value():
+    assert he.asymmetry_dv0_v(0.0, 0.0) == pytest.approx(he.ASYM_DV0_V)
+
+
+def test_asymmetry_dv0_v_subtracts_the_sense_arm_and_clamps_at_zero():
+    """F3: the sense-arm contribution the run actually injects is subtracted
+    from the bare fit value, and the result is clamped at >= 0 rather than
+    going negative on two near-equal, overlapping-interval numbers."""
+    sense = he.asymmetry_dv0_sense_v(he.INA_ZERO_OFFSET_A, 0.0)
+    got = he.asymmetry_dv0_v(he.INA_ZERO_OFFSET_A, 0.0)
+    assert got == pytest.approx(max(0.0, he.ASYM_DV0_V - sense), abs=1e-9)
+    # A large enough injected sense-arm term must clamp at exactly 0, not go
+    # negative.
+    assert he.asymmetry_dv0_v(10.0, 0.0) == 0.0
+
+
+def test_asymmetry_params_off_is_symmetric_identity():
+    v0_fc, v0_bt, ds_fc, ds_bt = he.asymmetry_params("off")
+    assert (v0_fc, v0_bt, ds_fc, ds_bt) == (0.0, 0.0, 1.0, 1.0)
+    v0_fc, v0_bt, ds_fc, ds_bt = he.asymmetry_params(
+        "off", ina_offset_fc=0.02, ina_offset_bt=0.0)
+    assert (v0_fc, v0_bt, ds_fc, ds_bt) == (0.0, 0.0, 1.0, 1.0)
+
+
+def test_asymmetry_params_measured_antisymmetric_about_v0_noload():
+    v0_fc, v0_bt, ds_fc, ds_bt = he.asymmetry_params(
+        "measured", ina_offset_fc=0.0, ina_offset_bt=0.0, droop_scale=1.0)
+    assert v0_fc == pytest.approx(-v0_bt)
+    assert v0_fc == pytest.approx(0.5 * he.ASYM_DV0_V)
+    assert (he.V0_NOLOAD + v0_fc + he.V0_NOLOAD + v0_bt) / 2.0 == pytest.approx(
+        he.V0_NOLOAD)
+    assert ds_fc == pytest.approx(he.ASYM_DROOP_SCALE_FC)
+    assert ds_bt == pytest.approx(he.ASYM_DROOP_SCALE_BT)
+
+
+def test_asymmetry_params_measured_with_injected_ina_offsets_uses_the_net_dv0():
+    v0_fc, v0_bt, _, _ = he.asymmetry_params(
+        "measured", ina_offset_fc=he.INA_ZERO_OFFSET_A, ina_offset_bt=0.0,
+        droop_scale=1.0)
+    dv0 = he.asymmetry_dv0_v(he.INA_ZERO_OFFSET_A, 0.0)
+    assert v0_fc == pytest.approx(0.5 * dv0)
+    assert v0_bt == pytest.approx(-0.5 * dv0)
+
+
+def test_asymmetry_params_voltage_scales_with_droop_scale():
+    """F2: the injected voltage is scaled by `droop_scale` so the SHARE
+    deviation, not the raw voltage, is invariant across `--droop` modes."""
+    v0_fc_design, _, _, _ = he.asymmetry_params("measured", droop_scale=1.0)
+    scale = 0.5
+    v0_fc_scaled, _, _, _ = he.asymmetry_params("measured", droop_scale=scale)
+    assert v0_fc_scaled == pytest.approx(v0_fc_design * scale)
+
+
+def test_asymmetry_params_rejects_unknown_mode():
+    with pytest.raises(ValueError):
+        he.asymmetry_params("bogus")
+
+
+def test_asym_k_droop_ohm_matches_the_firmware_droop_constant():
+    """Pinned equal to hil_plant_sim.K_DROOP_FW_OHM, per the module's own
+    banner comment; that module asserts the equality at import, but this test
+    pins the value ITSELF so a coordinated edit of both constants to the same
+    wrong number does not slip past either guard."""
+    assert he.ASYM_K_DROOP_OHM == pytest.approx(0.30)
+
+
+def test_electrical_sim_rejects_unknown_asymmetry_mode():
+    with pytest.raises(ValueError):
+        he.ElectricalSim(trace_config="short", asymmetry_mode="bogus")
+
+
+def test_electrical_sim_resolves_asymmetry_after_noise_is_set():
+    """PART A (F3): the DeltaV0 injected depends on the INA zero offsets a run
+    ACTUALLY injects, and the constructor must resolve it AFTER `self.noise`
+    is assigned -- a run with a default `NoiseConfig()` (which injects
+    {I_fc: +0.020, I_batt: 0.0}) gets the smaller, sense-arm-corrected
+    voltage; a quiet run (no NoiseConfig) gets the bare fit value."""
+    e_quiet = he.ElectricalSim(trace_config="short", asymmetry_mode="measured")
+    assert e_quiet.noise is None
+    assert e_quiet.asym_ina_offset_fc == 0.0
+    assert e_quiet.asym_dv0_v == pytest.approx(
+        he.asymmetry_dv0_v(0.0, 0.0), rel=1e-9)
+
+    e_noisy = he.ElectricalSim(trace_config="short", asymmetry_mode="measured",
+                               noise=he.NoiseConfig())
+    assert e_noisy.noise is not None
+    assert e_noisy.asym_ina_offset_fc == pytest.approx(he.INA_ZERO_OFFSET_A)
+    assert e_noisy.asym_dv0_v == pytest.approx(
+        he.asymmetry_dv0_v(he.INA_ZERO_OFFSET_A, 0.0), rel=1e-9)
+    assert e_noisy.asym_dv0_v != pytest.approx(e_quiet.asym_dv0_v)
+
+
+def test_electrical_sim_off_mode_gives_symmetric_boosts():
+    e = he.ElectricalSim(trace_config="short", asymmetry_mode="off")
+    assert e.boost_fc.v0_offset_v == 0.0
+    assert e.boost_bt.v0_offset_v == 0.0
+    assert e.asym_droop_scale_fc == 1.0
+    assert e.asym_droop_scale_bt == 1.0
+    assert e.asym_dv0_v == 0.0
+
+
+def test_electrical_sim_measured_mode_wires_antisymmetric_boost_offsets():
+    e = he.ElectricalSim(trace_config="short", asymmetry_mode="measured")
+    assert e.boost_fc.v0_offset_v == pytest.approx(-e.boost_bt.v0_offset_v)
+    assert e.boost_fc.v0_offset_v == pytest.approx(0.5 * he.ASYM_DV0_V)
+    assert e.asym_dv0_v == pytest.approx(he.ASYM_DV0_V)
+    assert e.asym_droop_scale_fc == pytest.approx(he.ASYM_DROOP_SCALE_FC)
+    assert e.asym_droop_scale_bt == pytest.approx(he.ASYM_DROOP_SCALE_BT)
+
+
+def test_droop_scale_composes_multiplicatively_with_asymmetry():
+    """The `--droop` mode sets the realization level; the asymmetry mode sets
+    the FC/BT ratio ON TOP of it (BT stays 1.000 so the measured anchor is
+    unmoved). Checked at both droop modes so the composition, not just the
+    off-mode identity, is pinned."""
+    for droop_mode in he.DROOP_MODES:
+        e_off = he.ElectricalSim(trace_config="short", droop_mode=droop_mode,
+                                 asymmetry_mode="off")
+        e_asym = he.ElectricalSim(trace_config="short", droop_mode=droop_mode,
+                                  asymmetry_mode="measured")
+        base = he.DROOP_SCALE[droop_mode]
+        assert e_off.boost_fc.droop_scale == pytest.approx(base)
+        assert e_off.boost_bt.droop_scale == pytest.approx(base)
+        assert e_asym.boost_fc.droop_scale == pytest.approx(
+            base * he.ASYM_DROOP_SCALE_FC)
+        assert e_asym.boost_bt.droop_scale == pytest.approx(
+            base * he.ASYM_DROOP_SCALE_BT)
+
+
+def test_asymmetry_off_is_byte_identical_to_a_symmetric_baseline():
+    """`off` must reproduce the pre-asymmetry engine exactly: build a baseline
+    with the two Boost offsets/scales forced to the identity by hand (rather
+    than trusting `asymmetry_params` itself, which is under test elsewhere)
+    and confirm every rail agrees over a short headless run."""
+    e_off = he.ElectricalSim(trace_config="short", asymmetry_mode="off")
+    e_base = he.ElectricalSim(trace_config="short", asymmetry_mode="off")
+    # Hand-zero the baseline's offsets/scales too, so this test does not just
+    # compare `off` against itself under a different name.
+    assert e_base.boost_fc.v0_offset_v == 0.0
+    assert e_base.boost_bt.v0_offset_v == 0.0
+    assert e_base.boost_fc.droop_scale == e_base.boost_bt.droop_scale
+
+    e_off._n_sub = 8
+    e_base._n_sub = 8
+    sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ
+    for i in range(300):
+        act = _actuators(sw=sw, aux=AUX_FC_REG | AUX_BT_REG, i_motor_a=0.0)
+        r1 = e_off.step(1e-3, act)
+        r2 = e_base.step(1e-3, act)
+        for k in ("V_fc", "V_batt", "V_bus", "I_fc", "I_batt"):
+            assert r1[k] == pytest.approx(r2[k], abs=1e-9), (i, k)
+
+
+def test_asymmetry_measured_mode_moves_a_run_away_from_the_off_baseline():
+    """The complement of the byte-identity test above: `measured` must
+    actually do something -- at minimum, the two chains' no-load regulation
+    targets must differ, so a run under load eventually shows FC and BT
+    voltages/currents that disagree even under otherwise-identical
+    stimulus."""
+    e_off = he.ElectricalSim(trace_config="short", asymmetry_mode="off")
+    e_asym = he.ElectricalSim(trace_config="short", asymmetry_mode="measured")
+    e_off._n_sub = 8
+    e_asym._n_sub = 8
+    sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ
+    r1 = r2 = None
+    for i in range(300):
+        act = _actuators(sw=sw, aux=AUX_FC_REG | AUX_BT_REG, i_motor_a=0.0)
+        r1 = e_off.step(1e-3, act)
+        r2 = e_asym.step(1e-3, act)
+    assert r1["V_fc"] != pytest.approx(r2["V_fc"], abs=1e-6)
+    assert r1["I_fc"] != pytest.approx(r2["I_fc"], abs=1e-6)
+
+
+def test_summary_reports_asymmetry_provenance():
+    e = he.ElectricalSim(trace_config="short", asymmetry_mode="measured")
+    s = e.summary()
+    assert s["asymmetry_mode"] == "measured"
+    assert s["asymmetry_dv0_v"] == pytest.approx(he.ASYM_DV0_V)
+    assert s["asymmetry_droop_scale_fc"] == pytest.approx(he.ASYM_DROOP_SCALE_FC)
+    assert s["asymmetry_droop_scale_bt"] == pytest.approx(he.ASYM_DROOP_SCALE_BT)
+
+    e_off = he.ElectricalSim(trace_config="short", asymmetry_mode="off")
+    s_off = e_off.summary()
+    assert s_off["asymmetry_mode"] == "off"
+    assert s_off["asymmetry_dv0_v"] == 0.0
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# PART B2 — _EventLog: durable totals independent of list trimming
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_event_log_total_and_kinds_survive_del_slice():
+    log = he._EventLog()
+    log.append({"kind": "a"})
+    log.append({"kind": "b"})
+    log.append({"kind": "a"})
+    assert log.total == 3
+    assert log.kinds == {"a": 2, "b": 1}
+    del log[:]
+    assert list(log) == []
+    assert log.total == 3
+    assert log.kinds == {"a": 2, "b": 1}
+    log.append({"kind": "a"})
+    assert log.total == 4
+    assert log.kinds["a"] == 3
+
+
+def test_close_chopper_episode_is_idempotent():
+    e = he.ElectricalSim(asymmetry_mode="off")
+    e.close_chopper_episode()   # nothing open: must not raise or append
+    assert len(e.events) == 0
+    e._chopper_episode(50.0, 18.1, 1e-4)
+    e.close_chopper_episode()
+    assert len(e.events) == 1
+    e.close_chopper_episode()   # already closed: no duplicate append
+    assert len(e.events) == 1
+
+
+def test_close_chopper_episode_two_episode_case():
+    """A second episode's start must close the first (via `_chopper_episode`'s
+    own call to `close_chopper_episode`), yielding two distinct events each
+    with its own whole-episode `dur_s`/`energy_j` -- not one merged episode
+    and not the first episode's dict silently mutated by the second."""
+    e = he.ElectricalSim(asymmetry_mode="off")
+    # Episode 1: 5 conducting substeps of 1e-4 s each.
+    for _ in range(5):
+        e.t += 1e-4
+        e._chopper_episode(50.0, 18.1, 1e-4)
+    # Gap long enough to exceed EVENT_COALESCE_S, so the next call starts a
+    # genuinely new episode rather than continuing this one.
+    e.t += he.EVENT_COALESCE_S + 1e-3
+    # Episode 2: 3 conducting substeps.
+    for _ in range(3):
+        e.t += 1e-4
+        e._chopper_episode(50.0, 18.1, 1e-4)
+    e.close_chopper_episode()
+    clamps = [ev for ev in e.events if ev["kind"] == "chopper_clamp"]
+    assert len(clamps) == 2
+    assert clamps[0]["dur_s"] == pytest.approx(5e-4, rel=1e-6)
+    assert clamps[1]["dur_s"] == pytest.approx(3e-4, rel=1e-6)
+    assert clamps[0]["energy_j"] != pytest.approx(clamps[1]["energy_j"])
+    # Durable totals count both.
+    assert e.summary()["events"] == 2
+    assert e.summary()["event_kinds"]["chopper_clamp"] == 2
 
 
 if __name__ == "__main__":

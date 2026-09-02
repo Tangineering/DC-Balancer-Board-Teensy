@@ -532,7 +532,8 @@ def _metrics(n_obs=10, rows=10, final_fault_flags=0, fault_bits_seen=0, final_st
              fault_bits_post_grace=None, fault_first_t=None, grace_s=None,
              survive_to_t=None, fault_bits_before_survive=0, state_at_survive=None,
              n_obs_post_grace=None, last_obs_t=None, error_code_post_grace=None,
-             error_code_final=None, fault_first_t_whole_run=None):
+             error_code_final=None, fault_first_t_whole_run=None,
+             fault_first_latch_t=None):
     """Build an analyze_scenario_csv()-shaped metrics dict.
 
     By default `fault_bits_post_grace` mirrors `fault_bits_seen` (no carried-in
@@ -555,6 +556,16 @@ def _metrics(n_obs=10, rows=10, final_fault_flags=0, fault_bits_seen=0, final_st
             "fault_bits_post_grace": (fault_bits_seen if fault_bits_post_grace is None
                                       else fault_bits_post_grace),
             "fault_first_t": fault_first_t or {},
+            # PART B1 (C1 round, 2026-09-01): the POST-GRACE LATCHED
+            # first-sighting map, which is what judge_scenario() now reads for
+            # `not_before_s`. It DEFAULTS TO `fault_first_t` so every existing
+            # caller keeps meaning what it meant: those callers describe traces
+            # in which the bit and the latch are the same event. A caller that
+            # wants them to differ -- a transient bare bit followed by a later
+            # latch -- passes both explicitly.
+            "fault_first_latch_t": (fault_first_t or {}
+                                    if fault_first_latch_t is None
+                                    else fault_first_latch_t),
             # B-L3: the WHOLE-RUN first-sighting map, which the
             # `share_cut_load_hazard` tripwire anchors its teardown cutoff on
             # (minus the carried-in window). Empty by default -> no anchor ->
@@ -1277,23 +1288,27 @@ def test_regen_harvest_true_events_require_uses_total_of_not_per_episode_all():
     assert len(totals) == 1
     assert totals[0]["total_of"] == "chopper_clamp"
     assert totals[0]["field"] == "energy_j"
-    assert totals[0]["min_value"] == 0.3
+    # F4 (fix round, 2026-09-01): 0.3 -> 3.0 J. The 0.3 J figure was calibrated
+    # against the TRUNCATED chopper events (each episode serialized carrying
+    # only its first 0.25-0.9 ms tick); against whole episodes the campaign
+    # measures 6.9-8.6 J per run.
+    assert totals[0]["min_value"] == 3.0
     # And the per-episode floor left behind is deliberately much looser than
     # 0.3 J -- it exists only to catch a fully-missing/degenerate episode.
     per_episode = [r for r in reqs if isinstance(r, dict) and r.get("kind")
                   == "chopper_clamp" and "field" in r]
-    assert per_episode and per_episode[0]["min_value"] < 0.3
+    assert per_episode and per_episode[0]["min_value"] < 3.0
+    assert per_episode[0]["min_value"] == 0.01
 
 
 def test_judge_scenario_regen_harvest_true_events_require_no_keyerror():
     """End-to-end: judge_scenario's events_require loop must not KeyError
     building a check name for a `total_of` spec (it has no `kind` key) --
-    exercised through the actual regen-harvest-true FAULT_EXPECTATIONS entry,
-    which carries one since the M3 fix."""
+    exercised through the actual regen-harvest-true FAULT_EXPECTATIONS entry."""
     child = _child()
     metrics = _metrics(fault_bits_seen=0, final_fault_flags=0, final_state=2)
     events = _events(kinds={"chopper_clamp": 2}, events_by_kind={
-        "chopper_clamp": [{"energy_j": 0.2}, {"energy_j": 0.2}],
+        "chopper_clamp": [{"energy_j": 2.0}, {"energy_j": 2.0}],
     })
     ok, checks = rhs.judge_scenario("regen-harvest-true", metrics, events,
                                     child, signals={})
@@ -6490,21 +6505,59 @@ def test_share_staircase_fc_bus_restored_min_ticks_is_900():
     assert spec["min_ticks"] / ((hi - lo) * 1000.0) == pytest.approx(0.60)
 
 
-def test_socband_fc_carried_threshold_is_095():
-    """0.70 -> 0.95 A (DI-MED-1).  `min_value` is a PEAK-over-window test, so
-    the floor must separate the socband run's window peak (measured 1.2414 A)
-    from the CONSTANT-0.50 ems-ftp75-5050 sibling's (0.8275 A) -- anything at or
-    below 0.8275 is satisfied by a run that ignored the share command entirely.
-    The sibling peak is pinned here too, because it is the number that makes
-    this floor a discriminator rather than a decoration."""
+def test_socband_fc_carried_threshold_is_056_at_preload_zero():
+    """RE-DERIVED for the zero-preload era (was 0.95 A against the 0.65 A
+    preload).  The derivation SHAPE is unchanged: `min_value` is a
+    PEAK-over-window test, so the floor must separate this run's window peak
+    from the CONSTANT-0.50 ems-ftp75-5050 sibling's -- anything at or below the
+    sibling's peak is satisfied by a run that ignored the share command
+    entirely.  Both peaks moved with the load, and both are pinned here,
+    because they are what make the floor a discriminator rather than a
+    decoration.
+
+    Governor-walk peaks over t = (30, 340) at aux_preload_a 0.0:
+        ems-ftp75-5050    0.4801 A   (was 0.8275 measured at 0.65 A)
+        ems-ftp75-socband 0.6602 A   (was 1.2414 measured at 0.65 A)
+    PROVISIONAL until a zero-preload campaign measures them."""
     spec = next(s for s in rhs.FAULT_EXPECTATIONS["ems-ftp75-socband"]["signals_require"]
                if s["name"] == "socband_fc_carried")
     assert spec["column"] == "I_fc"
-    assert spec["min_value"] == pytest.approx(0.95)
-    # 15 % over the measured control peak, 23 % under the measured socband peak.
-    assert spec["min_value"] > 0.8275
-    assert spec["min_value"] < 1.2414
+    assert spec["min_value"] == pytest.approx(0.56)
+    assert spec.get("provisional_note")
+    # 16.6 % over the control's predicted peak, 15.2 % under this scenario's.
+    assert spec["min_value"] > 0.4801
+    assert spec["min_value"] < 0.6602
     assert spec["t_window"] == (30.0, 340.0)
+
+
+def test_socband_ftp_charge_branch_is_asserted_after_the_preload_removal():
+    """The preload removal's OWN objective, made a check.  At 0.65 A the source
+    total never fell below 0.800 A, so `soc-band`'s charge branch
+    (SOC_BAND_CHARGE_ENTER_ITOT_A 0.60 A) was foreclosed BY CONSTRUCTION and
+    the entry said so.  At preload 0 the idle total is I_AUX_A = 0.15 A and the
+    branch is admissible over most of the cycle -- so it must be observed, or
+    the removal has bought coverage nobody checks.
+
+    The floor is EXISTENCE ONLY and the entry says why: ems_walk.py gates
+    charge admission on the DP's charge_mask(), not on SocBandStrategy's own
+    hysteresis, so the window schedule is unmodelled and cannot size a floor.
+
+    PART C (C1 round, 2026-09-01): the floor is 200 ticks, not 3000. 3000
+    ticks = 3.0 s was a 3.2 % margin under the walk's only model of the total
+    charging duration (3.1 s over two windows), which is not an existence
+    floor -- a correct board opening one 2 s window would have failed it.
+    200 ticks = ten PI_CMD_HZ command periods."""
+    spec = next(s for s in rhs.FAULT_EXPECTATIONS["ems-ftp75-socband"]["signals_require"]
+                if s["name"] == "socband_ftp_charge_opened")
+    assert spec["switch_bit"] == rhs.SW_FC_CHARGE
+    assert spec["min_ticks"] == 200
+    # The floor must be an EXISTENCE floor, not a duration claim: comfortably
+    # under the walk's 3.1 s and comfortably over one command period.
+    assert 50 <= spec["min_ticks"] <= 1000
+    assert spec["t_window"] == (30.0, 340.0)
+    assert spec.get("provisional_note")
+    # The scenario must actually declare the charger ceiling the check implies.
+    assert hil.SCENARIOS["ems-ftp75-socband"]["chg_i_ceiling_a"] == pytest.approx(0.8)
 
 
 def test_y_fc_floor_table_re_derived_from_measurement():
@@ -6732,8 +6785,17 @@ def test_ftp75_5050_h2_band_is_two_specs_045_to_085():
         assert not ("min_value" in s and "max_value" in s), s["name"]
     floor = next(s for s in h2_specs if "min_value" in s)
     ceiling = next(s for s in h2_specs if "max_value" in s)
-    assert floor["min_value"] == pytest.approx(0.045)
-    assert ceiling["max_value"] == pytest.approx(0.085)
+    # RE-DERIVED at aux_preload_a 0.0 AND at the plant's default converter
+    # asymmetry, then RE-WALKED at the M2 CONSISTENT PAIR (fix round F1,
+    # 2026-09-01): the plant no longer injects M1's dv0 0.0444, and the walk is
+    # driven at the dv0 that reproduces the plant's own alpha at r = 0.5,
+    # 1.0155 A (0.030223 V). Walk 2.9888e-2 g, band +/-25 %. Symmetric walk
+    # 2.809e-2; the retired M1-era walk 3.0729e-2.
+    assert floor["min_value"] == pytest.approx(0.022)
+    assert ceiling["max_value"] == pytest.approx(0.037)
+    assert floor["min_value"] < 2.9888e-2 < ceiling["max_value"]
+    for s in h2_specs:
+        assert s.get("provisional_note")
 
 
 def test_ftp75_socband_h2_band_is_now_two_sided():
@@ -6749,13 +6811,24 @@ def test_ftp75_socband_h2_band_is_now_two_sided():
         assert not ("min_value" in s and "max_value" in s), s["name"]
     floor = next(s for s in h2_specs if "min_value" in s)
     ceiling = next(s for s in h2_specs if "max_value" in s)
-    assert floor["min_value"] == pytest.approx(rhs._FTP_H2_FLOOR_SOCBAND) == pytest.approx(0.070)
-    assert ceiling["max_value"] == pytest.approx(0.115)
-    # The band must BRACKET the measurement with real margin on both sides --
+    # RE-DERIVED TWICE (PART C, C1 round, 2026-09-01). The 3.546e-2 figure
+    # that stood here predated the scenario's own chg_i_ceiling_a 0.8 key, and
+    # the walk was symmetric. Against the SHIPPED registry with the plant's
+    # default converter asymmetry (dv0 0.0444) the walk gives 3.7208e-2 g
+    # (plant accounting); band = that +/-25 %. The 9.159e-2 is the RETIRED
+    # 0.65 A era's measurement.
+    # RE-WALKED at the M2 consistent pair (fix round F1, 2026-09-01): 3.6706e-2
+    # g plant accounting, against the retired M1-era 3.7208e-2.
+    _WALK = 3.6706e-2
+    assert floor["min_value"] == pytest.approx(rhs._FTP_H2_FLOOR_SOCBAND) == pytest.approx(0.028)
+    assert ceiling["max_value"] == pytest.approx(0.046)
+    # The band must BRACKET the prediction with real margin on both sides --
     # a floor above it, or a ceiling below it, would fail a correct board.
-    assert floor["min_value"] < 9.159e-2 < ceiling["max_value"]
-    assert floor["min_value"] < 0.80 * 9.159e-2
-    assert ceiling["max_value"] > 1.20 * 9.159e-2
+    assert floor["min_value"] < _WALK < ceiling["max_value"]
+    assert floor["min_value"] < 0.80 * _WALK
+    assert ceiling["max_value"] > 1.20 * _WALK
+    for s in h2_specs:
+        assert s.get("provisional_note")
     # The vacuous floor must be GONE from this entry (it stays as the 5050
     # variant's own constant, which is a different question).
     assert floor["min_value"] != pytest.approx(rhs._FTP_H2_FLOOR)
@@ -6905,28 +6978,42 @@ def test_ems_ftp75_sdp_entry_pins_the_flip_inside_its_band():
     assert late["min_value"] == pytest.approx(rhs._SDP_HIGH_RAIL_FLOOR)
     # ... and the two windows must not overlap, or nothing is pinned.
     assert early["t_window"][1] <= late["t_window"][0]
-    # THE BAND, DE-PROVISIONALIZED (campaign 20260901_024231): the walk's
-    # +/-20 % (150, 250) became (185, 212) around the MEASURED 198.537 s flip.
-    assert (early["t_window"][1], late["t_window"][0]) == (185.0, 212.0)
-    assert early["t_window"][1] < 198.537 < late["t_window"][0]
+    # THE BAND, RE-PROVISIONALIZED at aux_preload_a 0.0.  The flip is an
+    # INTEGRAL of the pack drain, so removing 0.45 A of load moves it LATE:
+    # governor walk 272.0 s (was 195.9 s at 0.45 A), and scaling by the
+    # measured/walk ratio the 0.45 A era established (198.537/196.0) puts the
+    # expected board flip at 275.5 s.  The band brackets that, asymmetrically,
+    # because the high side must leave a usable post-flip window in 340 s.
+    assert (early["t_window"][1], late["t_window"][0]) == (240.0, 295.0)
+    assert early["t_window"][1] < 272.0 < late["t_window"][0]
+    assert early["t_window"][1] < 275.5 < late["t_window"][0]
+    for s in (early, late, by["sdpftp_raw_battery_branch"],
+              by["sdpftp_raw_fc_branch"]):
+        assert s.get("provisional_note")
     # The raw-column pair must ride the SAME band, or the two halves of the
     # entry pin different crossings.
     assert by["sdpftp_raw_battery_branch"]["t_window"] == early["t_window"]
     assert by["sdpftp_raw_fc_branch"]["t_window"] == late["t_window"]
 
 
-def test_ems_ftp75_sdp_h2_band_is_measured_not_a_two_x_walk_window():
-    """The walk-era band [0.020, 0.120] was 2.85x below / 2.1x above its own
-    prediction and could not fail a scale error. Campaign 20260901_024231
-    measured 0.0621749 g; the band is now -10 %/+13 % of that, which still
-    admits the flip time's own +/-7 % band and fails a 2x scale error."""
+def test_ems_ftp75_sdp_h2_band_tracks_the_zero_preload_walk():
+    """RE-PROVISIONALIZED at aux_preload_a 0.0.  The 0.45 A era's band was
+    [0.056, 0.070] around a MEASURED 0.0621749 g; the load removal takes the
+    prediction to 0.019347 g (governor walk), so the band is that +/-25 % --
+    the same shape the two sibling entries carry, and still tight enough that a
+    2x scale error fails."""
     by = {s["name"]: s
           for s in rhs.FAULT_EXPECTATIONS["ems-ftp75-sdp"]["signals_require"]}
     lo = by["sdpftp_h2_accounted"]["min_value"]
     hi = by["sdpftp_h2_bounded"]["max_value"]
-    measured = 0.0621749
-    assert (lo, hi) == (pytest.approx(0.056), pytest.approx(0.070))
+    # RE-WALKED at the M2 consistent pair (fix round F1, 2026-09-01): the plant
+    # injects dv0 0.013522 with rho 0.9434, and the walk (which has no rho) is
+    # driven at the equivalent 0.030223 V. The retired M1-era walk gave 0.019347.
+    measured = 0.019918            # the WALK's prediction, not a measurement
+    assert (lo, hi) == (pytest.approx(0.0149), pytest.approx(0.0249))
     assert lo < measured < hi
+    for n in ("sdpftp_h2_accounted", "sdpftp_h2_bounded"):
+        assert by[n].get("provisional_note")
     # A 2x scale error in either direction now fails.
     assert not (lo <= 2.0 * measured <= hi)
     assert not (lo <= 0.5 * measured <= hi)
@@ -7006,13 +7093,27 @@ def test_ems_ftp75_sdp_board_side_checks_bracket_the_governor_floor():
     early = by["sdpftp_fc_floored_early"]
     late = by["sdpftp_fc_carried_late"]
     assert early["column"] == late["column"] == "I_fc"
-    # DE-PROVISIONALIZED (campaign 20260901_024231): measured peaks 0.3039 A
-    # pre-flip and 1.1516 A at the cycle peak.
-    assert early["max_value"] == pytest.approx(0.35)
-    assert 0.3039 < early["max_value"] < 0.8275
-    assert late["min_value"] == pytest.approx(1.08)
-    assert late["min_value"] < 1.1516
+    # RE-PROVISIONALIZED at aux_preload_a 0.0, and the EARLY check's mechanism
+    # CHANGED with it: over t = (30, 150) the source total now peaks at
+    # 0.5253 A, BELOW the 0.55 A open-loop exit threshold, so the share loop is
+    # OPEN there and the minority governor is not clipping.  The delivered
+    # split is the commanded 0.15 itself -- walk peak I_fc 0.0788 A, against
+    # the constant-0.50 sibling's 0.2626 A over the same window.
+    # The LATE check's window moved to (295, 340): the old (235, 260) is now
+    # BEFORE the predicted flip and would have measured the wrong branch.
+    assert early["max_value"] == pytest.approx(0.18)
+    assert 0.0788 < early["max_value"] < 0.2626
+    assert early["t_window"] == (30.0, 150.0)
+    # PART C (C1 round, 2026-09-01): 0.42 -> 0.46. A board stuck at a constant
+    # 0.50 split delivers 0.4198 A over this window (0.4307 A with the
+    # documented +2.6 % FTP75 gain offset), so the old floor did not reject the
+    # very failure the check names.
+    assert late["min_value"] == pytest.approx(0.46)
+    assert late["min_value"] > 0.4307          # rejects a stuck-0.5 board
+    assert late["t_window"] == (295.0, 340.0)
+    assert late["min_value"] < 0.5402          # governor walk over that window
     assert late["min_value"] > early["max_value"]
+    assert early.get("provisional_note") and late.get("provisional_note")
     # ... and still clear of LIMIT_I_FC_MAX, so a pass cannot be confused
     # with an overcurrent. (The floor rose 1.00 -> 1.08 on measurement, so the
     # clearance narrowed from 28 % to 23 %; it is still a floor no overcurrent
@@ -7821,47 +7922,121 @@ def test_frontier_registry_shape_and_thresholds():
     assert CYCLE61_SPEC["roles"] is rhs.EMS_FRONTIER
 
 
-def test_frontier_ftp75_is_unverified_today_for_the_documented_stimulus_split():
-    """THE KNOWN DEFECT, asserted rather than left to be discovered mid-
-    campaign. `ems-ftp75-sdp` runs FTP75_SDP_PRELOAD_A (0.45 A) while the
-    other two legs run FTP75_PRELOAD_A (0.65 A), so the three are not one
-    experiment: eq-H2 corrects for SoC, not for demand, and the candidate
-    would win by ~0.2 A of avoided load. A second, INERT split rides along
-    (the reference leg declares no Ag105 cap while the two policy legs cap at
-    0.8 A) and is reported rather than whitelisted -- "inert" is a measurement
-    on one campaign's trace, not a property of the registry.
+def test_frontier_ftp75_stimulus_split_is_resolved_and_the_tuple_evaluates():
+    """THE SPLIT IS RESOLVED (operator ruling 2026-09-01), and this test is the
+    inversion of the one that stood here.
 
-    The check must refuse the comparison and NAME both keys -- and, because
-    both splits are documented and their resolutions are operator decisions,
-    must NOT fail the campaign for them."""
+    IT USED TO ASSERT THE DEFECT: `ems-ftp75-sdp` ran FTP75_SDP_PRELOAD_A
+    (0.45 A) while the other two legs ran FTP75_PRELOAD_A (0.65 A), so the
+    three were not one experiment -- eq-H2 corrects for SoC, not for demand,
+    and the candidate would have won by ~0.2 A of avoided load. A second,
+    then-inert split rode along: the reference leg declared no Ag105 cap while
+    the two policy legs capped at 0.8 A.
+
+    BOTH ARE GONE. `aux_preload_a` is 0.0 on all three legs (the ruling), and
+    `ems-ftp75-socband` now declares the siblings' 0.8 A ceiling -- which it
+    HAD to, because the preload removal re-opened its charge branch and turned
+    the inert split live. The tuple therefore evaluates for the first time.
+
+    The MECHANISM that refuses a split is not retired with the split: it is
+    covered against a synthetic tuple immediately below, so a REGRESSION into
+    a real split is still caught."""
+    assert rhs.ems_frontier_stimulus_mismatches(FTP75_SPEC["roles"]) == []
     rec = rhs.evaluate_ems_frontier(
         _ftp_results({"reference": (0.09, -0.002),
                       "candidate": (0.08, -0.002),
                       "bound": (0.089, -0.002)}), spec=FTP75_SPEC)
-    assert rec["verdict"] == "UNVERIFIED"
-    assert rec["passed"] is False
+    assert rec["verdict"] == "PASS"
+    assert rec["passed"] is True
     assert rec["exit_affecting"] is False
-    by_key = {m["key"]: m["values"] for m in rec["stimulus_mismatch"]}
-    assert set(by_key) == {"aux_preload_a", "chg_i_ceiling_a"}
-    assert by_key["aux_preload_a"]["ems-ftp75-sdp"] == pytest.approx(0.45)
-    assert by_key["aux_preload_a"]["ems-ftp75-socband"] == pytest.approx(0.65)
-    assert by_key["chg_i_ceiling_a"]["ems-ftp75-socband"] is None
-    assert by_key["chg_i_ceiling_a"]["ems-ftp75-dp"] == pytest.approx(0.8)
-    assert "same stimulus" in rec["reason"]
-    # No comparison was attempted: none of the eq-H2 machinery ran.
-    assert "per_lambda" not in rec and "eq_h2" not in rec
+    assert not rec.get("stimulus_mismatch")
+    # The comparison actually ran, which the UNVERIFIED path never let it do.
+    assert "per_lambda" in rec or "eq_h2" in rec
+    # ... and the registry keys the precondition reads all agree.
+    for key, want in (("aux_preload_a", 0.0), ("chg_i_ceiling_a", 0.8)):
+        vals = {n: SCENARIOS[n].get(key) for n in FTP75_SPEC["roles"].values()}
+        assert len(vals) == 3, (key, vals)
+        for n, v in vals.items():
+            assert v == pytest.approx(want), (key, n, v)
+
+
+def test_frontier_stimulus_split_is_still_refused_on_a_synthetic_tuple():
+    """THE MECHANISM, kept alive after the real split was resolved. A tuple
+    whose legs disagree on a fingerprinted stimulus key must still be REFUSED
+    with every disagreeing key named and both values shown -- otherwise
+    resolving one defect quietly deletes the guard against the next."""
+    roles = {"reference": "_split_a", "candidate": "_split_b",
+             "bound": "_split_c"}
+    prof = [(0.0, 0.0), (5.0, 1.0)]
+    base = {"ems_v_profile": prof, "duration_s": 61.0, "ems_run_exit_s": 55.0,
+            "aux_preload_a": 0.0, "chg_i_ceiling_a": 0.8}
+    saved = {n: SCENARIOS.get(n) for n in roles.values()}
+    spec = dict(FTP75_SPEC, roles=roles)
+    try:
+        for n in roles.values():
+            SCENARIOS[n] = dict(base)
+        # The SDP-shaped split that was real until 2026-09-01, plus the
+        # charger-ceiling one that rode along with it.
+        SCENARIOS["_split_b"] = dict(base, aux_preload_a=0.45)
+        SCENARIOS["_split_a"] = dict(base)
+        SCENARIOS["_split_a"].pop("chg_i_ceiling_a")
+        rec = rhs.evaluate_ems_frontier(
+            [{"kind": "scenario", "name": n, "passed": True,
+              "metrics": {"final_h2_cum_g": h, "delta_soc": -0.002}}
+             for n, h in (("_split_a", 0.09), ("_split_b", 0.08),
+                          ("_split_c", 0.089))], spec=spec)
+        assert rec["verdict"] == "UNVERIFIED"
+        assert rec["passed"] is False
+        by_key = {m["key"]: m["values"] for m in rec["stimulus_mismatch"]}
+        assert set(by_key) == {"aux_preload_a", "chg_i_ceiling_a"}
+        assert by_key["aux_preload_a"]["_split_b"] == pytest.approx(0.45)
+        assert by_key["aux_preload_a"]["_split_a"] == pytest.approx(0.0)
+        assert by_key["chg_i_ceiling_a"]["_split_a"] is None
+        assert by_key["chg_i_ceiling_a"]["_split_c"] == pytest.approx(0.8)
+        assert "same stimulus" in rec["reason"]
+        # No comparison was attempted: none of the eq-H2 machinery ran.
+        assert "per_lambda" not in rec and "eq_h2" not in rec
+    finally:
+        for n, v in saved.items():
+            if v is None:
+                SCENARIOS.pop(n, None)
+            else:
+                SCENARIOS[n] = v
 
 
 def test_frontier_stimulus_mismatch_helper_is_registry_derived():
     """Knowable BEFORE a run starts -- which is the point, a campaign should
     not spend 17 minutes producing numbers that were never comparable."""
     assert rhs.ems_frontier_stimulus_mismatches(CYCLE61_SPEC["roles"]) == []
-    mism = rhs.ems_frontier_stimulus_mismatches(FTP75_SPEC["roles"])
-    assert [k for k, _ in mism] == ["aux_preload_a", "chg_i_ceiling_a"]
-    # Reported in EMS_FRONTIER_STIMULUS_KEYS order, so the report reads the
-    # same way every campaign.
-    assert [k for k, _ in mism] == [k for k in rhs.EMS_FRONTIER_STIMULUS_KEYS
-                                    if k in dict(mism)]
+    # ⚠️ THE FTP-75 TUPLE IS COHERENT SINCE 2026-09-01 (the preload removal and
+    # the socband charger-ceiling declaration), so the helper must report
+    # NOTHING for it. The ORDERING property it used to demonstrate is
+    # demonstrated on a synthetic tuple instead, since a real split no longer
+    # exists to demonstrate it on.
+    assert rhs.ems_frontier_stimulus_mismatches(FTP75_SPEC["roles"]) == []
+    roles = {"reference": "_ord_a", "candidate": "_ord_b", "bound": "_ord_c"}
+    prof = [(0.0, 0.0), (5.0, 1.0)]
+    base = {"ems_v_profile": prof, "duration_s": 61.0, "ems_run_exit_s": 55.0,
+            "aux_preload_a": 0.0, "chg_i_ceiling_a": 0.8}
+    saved = {n: SCENARIOS.get(n) for n in roles.values()}
+    try:
+        for n in roles.values():
+            SCENARIOS[n] = dict(base)
+        SCENARIOS["_ord_b"] = dict(base, aux_preload_a=0.45)
+        SCENARIOS["_ord_a"] = dict(base)
+        SCENARIOS["_ord_a"].pop("chg_i_ceiling_a")
+        mism = rhs.ems_frontier_stimulus_mismatches(roles)
+        assert [k for k, _ in mism] == ["aux_preload_a", "chg_i_ceiling_a"]
+        # Reported in EMS_FRONTIER_STIMULUS_KEYS order, so the report reads the
+        # same way every campaign.
+        assert [k for k, _ in mism] == [k for k in rhs.EMS_FRONTIER_STIMULUS_KEYS
+                                        if k in dict(mism)]
+    finally:
+        for n, v in saved.items():
+            if v is None:
+                SCENARIOS.pop(n, None)
+            else:
+                SCENARIOS[n] = v
     # A role naming a scenario this checkout does not register is SKIPPED, not
     # reported as a mismatch (evaluate_ems_frontier already reports it missing,
     # and double-counting would say "stimulus split" when it is absence).
@@ -8032,9 +8207,13 @@ def test_frontier_both_tuples_render_when_both_are_present():
     md = rhs.render_report({"date": "x"}, results).replace("—", "-")
     assert "61 s synthetic cycle" in md
     assert "340 s EPA FTP-75 drive cycle" in md
+    # The FTP-75 tuple is still PROVISIONAL (no campaign has evaluated it), but
+    # it is no longer STIMULUS SPLIT: the preload removal made the three legs
+    # one experiment, so the record now carries a real verdict.
     assert "PROVISIONAL" in md
-    assert "STIMULUS SPLIT" in md
-    assert "aux_preload_a" in md
+    assert "STIMULUS SPLIT" not in md
+    recs = rhs.evaluate_ems_frontiers(results)
+    assert {r["id"]: r["verdict"] for r in recs}["ftp75"] != "UNVERIFIED"
 
 
 def test_frontier_results_json_keeps_the_singular_key_pointing_at_cycle61():
@@ -8108,28 +8287,56 @@ def test_droop_mode_note_covers_every_registered_mode():
 
 
 def test_frontier_stimulus_split_does_not_mask_a_genuinely_failed_leg():
-    """SELF-REVIEW FIX (WP-E). The stimulus precondition is evaluated before
-    the legs are compared, and its `exit_affecting` is FALSE on the FTP-75
-    tuple by design. It must therefore be OR'd with the leg-derived flag, or a
-    campaign in which a leg RAN AND FAILED ITS OWN CHECKS would be excused by
-    a documented stimulus split -- the exact class of silent pass this whole
-    check exists to prevent."""
-    results = _ftp_results({"reference": (0.09, -0.002),
-                            "candidate": (0.08, -0.002),
-                            "bound": (0.089, -0.002)},
-                           **{"ems-ftp75-dp": {"passed": False}})
-    rec = rhs.evaluate_ems_frontier(results, spec=FTP75_SPEC)
-    assert rec["verdict"] == "UNVERIFIED"
-    assert rec["exit_affecting"] is True
-    # The failed leg is still NAMED, not swallowed by the stimulus branch.
-    assert any("did NOT pass its own checks" in m for m in rec["missing"])
-    assert rec["stimulus_mismatch"]
-    # ... and with every leg healthy the same split is NOT exit-affecting.
-    clean = rhs.evaluate_ems_frontier(
+    """SELF-REVIEW FIX (WP-E), kept after the FTP-75 split was resolved. The
+    stimulus precondition is evaluated BEFORE the legs are compared, and its
+    `exit_affecting` is FALSE on the FTP-75 tuple by design. It must therefore
+    be OR'd with the leg-derived flag, or a campaign in which a leg RAN AND
+    FAILED ITS OWN CHECKS would be excused by a stimulus split -- the exact
+    class of silent pass this whole check exists to prevent.
+
+    ⚠️ The real FTP-75 split is gone (2026-09-01), so the split arm is now
+    exercised against a SYNTHETIC tuple. The failed-leg arm is exercised
+    against the real one, where it still applies."""
+    roles = {"reference": "_mask_a", "candidate": "_mask_b", "bound": "_mask_c"}
+    prof = [(0.0, 0.0), (5.0, 1.0)]
+    base = {"ems_v_profile": prof, "duration_s": 61.0, "ems_run_exit_s": 55.0,
+            "aux_preload_a": 0.0, "chg_i_ceiling_a": 0.8}
+    saved = {n: SCENARIOS.get(n) for n in roles.values()}
+    spec = dict(FTP75_SPEC, roles=roles)
+    try:
+        for n in roles.values():
+            SCENARIOS[n] = dict(base)
+        SCENARIOS["_mask_b"] = dict(base, aux_preload_a=0.45)
+        rows = [{"kind": "scenario", "name": n, "passed": p,
+                 "metrics": {"final_h2_cum_g": h, "delta_soc": -0.002}}
+                for n, h, p in (("_mask_a", 0.09, True), ("_mask_b", 0.08, True),
+                                ("_mask_c", 0.089, False))]
+        rec = rhs.evaluate_ems_frontier(rows, spec=spec)
+        assert rec["verdict"] == "UNVERIFIED"
+        assert rec["exit_affecting"] is True
+        # The failed leg is still NAMED, not swallowed by the stimulus branch.
+        assert any("did NOT pass its own checks" in m for m in rec["missing"])
+        assert rec["stimulus_mismatch"]
+        # ... and with every leg healthy the same split is NOT exit-affecting.
+        for r in rows:
+            r["passed"] = True
+        assert rhs.evaluate_ems_frontier(rows, spec=spec)["exit_affecting"] is False
+    finally:
+        for n, v in saved.items():
+            if v is None:
+                SCENARIOS.pop(n, None)
+            else:
+                SCENARIOS[n] = v
+    # THE REAL TUPLE: coherent now, so a failed leg must still be exit-affecting
+    # on its own account, with no stimulus branch to hide behind.
+    real = rhs.evaluate_ems_frontier(
         _ftp_results({"reference": (0.09, -0.002),
                       "candidate": (0.08, -0.002),
-                      "bound": (0.089, -0.002)}), spec=FTP75_SPEC)
-    assert clean["exit_affecting"] is False
+                      "bound": (0.089, -0.002)},
+                     **{"ems-ftp75-dp": {"passed": False}}), spec=FTP75_SPEC)
+    assert real["verdict"] == "UNVERIFIED"
+    assert real["exit_affecting"] is True
+    assert not real.get("stimulus_mismatch")
 
 
 def test_frontier_cycle61_stimulus_split_would_be_exit_affecting():
@@ -8171,7 +8378,10 @@ def test_ems_ftp75_dp_expectation_entry_shape():
     assert by["ftpdp_peak_commanded"]["t_window"] == rhs._FTP_PEAK_W
     # The ONE deliberate loosening: the sibling's split is pinned at 0.50, this
     # one's is chosen by the table and can floor at its own 0.25 rail.
-    assert by["ftpdp_fc_carried"]["min_value"] == 0.35
+    # RE-DERIVED at aux_preload_a 0.0 (was 0.35 against the 0.65 A preload):
+    # 0.25 x the governor-walk peak source total 0.9603 A = 0.240 A.
+    assert by["ftpdp_fc_carried"]["min_value"] == 0.20
+    assert by["ftpdp_fc_carried"]["min_value"] < 0.25 * 0.9603
     assert by["ftpdp_fc_carried"]["min_value"] < \
         {c["name"]: c for c in ref["signals_require"]}["ftp_fc_carried"]["min_value"]
 
@@ -8246,26 +8456,36 @@ def test_ems_ftp75_dp_rail_checks_pass_together_on_the_tables_own_trajectory():
     assert lo_n >= 20
 
 
-def test_ems_ftp75_dp_h2_band_is_the_union_of_the_measured_siblings():
-    """The band is NOT the DP's own reduced-model prediction (0.0949435 g at a
-    matched terminal SoC of 0.685895): that is an open-loop optimum of a
-    different accounting and would import the reduced model's whole error
-    budget into a live metric. It is the union of the two MEASURED siblings'
-    bands, on the structural argument that this leg runs their stimulus with a
-    split that lies between theirs by construction."""
+def test_ems_ftp75_dp_h2_band_is_the_union_of_its_siblings_bands():
+    """The band is NOT the DP's own reduced-model prediction (the re-solved
+    table reports 0.0396922 g at a matched terminal SoC): that is an open-loop
+    optimum of a different accounting and would import the reduced model's
+    whole error budget into a live metric. It is the union of the two
+    siblings' bands, on the structural argument that this leg runs their
+    stimulus with a split that lies between theirs by construction.
+
+    RE-DERIVED at aux_preload_a 0.0 AND at the plant's default converter
+    asymmetry, then RE-WALKED at the M2 consistent pair (fix round F1,
+    2026-09-01): union of [0.022, 0.037] (5050) and [0.028, 0.046] (socband),
+    both M2-equivalent governor-walk +/-25 % bands."""
     by = {c["name"]: c
           for c in rhs.FAULT_EXPECTATIONS["ems-ftp75-dp"]["signals_require"]}
     lo = by["ftpdp_h2_accounted"]["min_value"]
     hi = by["ftpdp_h2_bounded"]["max_value"]
-    assert (lo, hi) == (0.045, 0.115)
+    assert (lo, hi) == (0.022, 0.046)
+    # The solver's own matched-SoC optimum must land inside the live band, or
+    # the two accountings have diverged by more than the band admits.
+    assert lo < 0.0396922 < hi
     assert lo == rhs._FTP_H2_BAND_5050[0]
     assert hi == rhs._FTP_H2_CEILING_SOCBAND
     # Two SPECS, never one leaf carrying both bounds: `_judge_signal_leaf`
     # tests min before max and would silently drop the ceiling.
     assert "max_value" not in by["ftpdp_h2_accounted"]
     assert "min_value" not in by["ftpdp_h2_bounded"]
-    # PROVISIONAL, and it says so where a report reader will see it.
-    assert all("PROVISIONAL" in by[n]["label"]
+    # PROVISIONAL, and it says so through the `provisional_note` mechanism
+    # (which renders a [PROVISIONAL: ...] qualifier into the report) rather
+    # than by an inline literal in the label, as of 2026-09-01.
+    assert all(by[n].get("provisional_note")
                for n in ("ftpdp_h2_accounted", "ftpdp_h2_bounded"))
 
 
@@ -8274,3 +8494,579 @@ def test_every_ftp75_scenario_has_an_expectation_entry():
     which is not what any of these runs mean."""
     for name in rhs.FTP75_SCENARIOS:
         assert name in rhs.FAULT_EXPECTATIONS, name
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Independent test-writer round (2026-09-01): preload-removal coverage,
+# run_hil_suite.py half (requirements 3, 4, 5, 6, 8 of the round brief).
+# ═════════════════════════════════════════════════════════════════════════
+
+# ── Requirement 3: frontier coherence ───────────────────────────────────────
+
+def test_ems_frontier_ftp75_stimulus_mismatches_is_empty_now_preload_is_uniform():
+    """The three EMS_FRONTIER_FTP75 legs (socband/dp/sdp) all carry
+    aux_preload_a=0.0 and chg_i_ceiling_a=0.8 since the 2026-09-01 removal --
+    both splits documented in the registry comments are resolved, so the pure
+    stimulus-coherence function must return no mismatches for this tuple."""
+    roles = rhs.EMS_FRONTIER_FTP75
+    assert rhs.ems_frontier_stimulus_mismatches(roles) == []
+
+
+def test_ems_frontier_ftp75_stimulus_mismatch_reintroduced_by_mutation(monkeypatch):
+    """Negative control: mutate one leg's aux_preload_a back toward the
+    retired split and confirm the pure function FLAGS it -- proves the
+    positive result above is not vacuous (e.g. the function silently skipping
+    every key). Mutates the shared SCENARIOS dict rhs imported from
+    hil_plant_sim and restores it, since the two modules share one dict
+    object."""
+    roles = rhs.EMS_FRONTIER_FTP75
+    candidate = roles["candidate"]
+    orig = rhs.SCENARIOS[candidate]["aux_preload_a"]
+    try:
+        rhs.SCENARIOS[candidate]["aux_preload_a"] = 0.45  # the retired value
+        mismatches = rhs.ems_frontier_stimulus_mismatches(roles)
+        keys = [k for k, _vals in mismatches]
+        assert "aux_preload_a" in keys
+        entry = next(vals for k, vals in mismatches if k == "aux_preload_a")
+        assert entry[candidate] == pytest.approx(0.45)
+        assert entry[roles["reference"]] == pytest.approx(0.0)
+    finally:
+        rhs.SCENARIOS[candidate]["aux_preload_a"] = orig
+    # Restored: the positive test's condition holds again.
+    assert rhs.ems_frontier_stimulus_mismatches(roles) == []
+
+
+# ── Requirement 4: socband_ftp_charge_opened non-vacuity ───────────────────
+
+def _socband_ftp_charge_opened_spec():
+    return next(s for s in
+               rhs.FAULT_EXPECTATIONS["ems-ftp75-socband"]["signals_require"]
+               if s["name"] == "socband_ftp_charge_opened")
+
+
+def test_socband_ftp_charge_opened_fails_when_fc_charge_never_asserted(tmp_path):
+    spec = _socband_ftp_charge_opened_spec()
+    rows = [{"t": "%.3f" % t, "switch": "0", "fault_flags": "0"}
+           for t in (30.0, 100.0, 200.0, 300.0, 339.0)]
+    path = tmp_path / "no_charge.csv"
+    _write_scenario_csv(path, rows)
+    measured = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    checks = rhs.judge_signals([spec], measured, "why")
+    assert checks[0]["passed"] is False
+
+
+def test_socband_ftp_charge_opened_passes_when_held_for_3000_plus_ticks(tmp_path):
+    spec = _socband_ftp_charge_opened_spec()
+    lo, hi = spec["t_window"]
+    mid = (lo + hi) / 2.0
+    # 3000+ observed rows inside the window with FC_CHARGE set, one before and
+    # one after the window WITHOUT it (so the window boundary itself is
+    # exercised, not merely "the bit was set somewhere in the file").
+    rows = [{"t": "%.3f" % (lo - 1.0), "switch": "0", "fault_flags": "0"}]
+    rows += [{"t": "%.3f" % (mid + i * 0.001), "switch": str(rhs.SW_FC_CHARGE),
+             "fault_flags": "0"} for i in range(3001)]
+    rows += [{"t": "%.3f" % (hi + 1.0), "switch": "0", "fault_flags": "0"}]
+    path = tmp_path / "charge_held.csv"
+    _write_scenario_csv(path, rows)
+    measured = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    checks = rhs.judge_signals([spec], measured, "why")
+    assert checks[0]["passed"] is True
+
+
+# ── Requirement 5: anti-vacuity for every re-derived FTP-75 band ───────────
+#
+# Each entry is (scenario, spec_name, column) for a min_value/max_value
+# current-column spec.  The THRESHOLD is read from the live registry rather
+# than re-typed, so a future re-derivation of the number is exercised by this
+# same test instead of silently going stale.
+_ANTI_VACUITY_CURRENT_SPECS = [
+    ("ems-ftp75-5050", "ftp_fc_carried", "I_fc"),
+    ("ems-ftp75-socband", "socband_fc_carried", "I_fc"),
+    ("ems-ftp75-sdp", "sdpftp_fc_floored_early", "I_fc"),
+    ("ems-ftp75-sdp", "sdpftp_fc_carried_late", "I_fc"),
+    ("ems-ftp75-dp", "ftpdp_fc_carried", "I_fc"),
+]
+
+
+def _spec_window_midpoint(spec):
+    win = spec.get("t_window")
+    if not win:
+        return 100.0
+    lo, hi = win
+    return (lo + hi) / 2.0
+
+
+def test_anti_vacuity_current_column_specs_reject_and_admit_at_the_new_bound(tmp_path):
+    for scenario, spec_name, column in _ANTI_VACUITY_CURRENT_SPECS:
+        specs = rhs.FAULT_EXPECTATIONS[scenario]["signals_require"]
+        spec = _spec_by_name(specs, spec_name)
+        t = _spec_window_midpoint(spec)
+        eps = 1e-3
+        if "min_value" in spec:
+            bound = spec["min_value"]
+            fail_val, pass_val = bound - eps, bound + eps
+        else:
+            bound = spec["max_value"]
+            fail_val, pass_val = bound + eps, bound - eps
+        for val, want_pass, tag in ((fail_val, False, "fail"),
+                                    (pass_val, True, "pass")):
+            rows = [{"t": "%.3f" % t, column: "%.6f" % val,
+                    "switch": "0", "fault_flags": "0"}]
+            path = tmp_path / ("%s_%s_%s.csv" % (spec_name, tag, scenario))
+            _write_scenario_csv(path, rows)
+            measured = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+            checks = rhs.judge_signals([spec], measured, "why")
+            assert checks[0]["passed"] is want_pass, (
+                "%s/%s: value %.6f at bound %.6f expected passed=%s, got %s"
+                % (scenario, spec_name, val, bound, want_pass,
+                   checks[0]["passed"]))
+
+
+# H2 two-sided bands: (scenario, min_spec_name, max_spec_name).
+_ANTI_VACUITY_H2_SPECS = [
+    ("ems-ftp75-5050", "ftp_h2_accounted", "ftp_h2_bounded"),
+    ("ems-ftp75-socband", "ftp_h2_accounted", "ftp_h2_bounded"),
+    ("ems-ftp75-sdp", "sdpftp_h2_accounted", "sdpftp_h2_bounded"),
+    ("ems-ftp75-dp", "ftpdp_h2_accounted", "ftpdp_h2_bounded"),
+]
+
+
+def test_anti_vacuity_h2_bands_reject_just_outside_and_admit_just_inside(tmp_path):
+    for scenario, min_name, max_name in _ANTI_VACUITY_H2_SPECS:
+        specs = rhs.FAULT_EXPECTATIONS[scenario]["signals_require"]
+        min_spec = _spec_by_name(specs, min_name)
+        max_spec = _spec_by_name(specs, max_name)
+        lo = min_spec["min_value"]
+        hi = max_spec["max_value"]
+        assert lo < hi, (scenario, lo, hi)
+        eps = 1e-6
+        cases = [
+            # (h2_cum_g value, expect min-spec passed, expect max-spec passed)
+            (lo - eps, False, True),      # just under the floor
+            (lo + eps, True, True),       # just inside, near the floor
+            (hi - eps, True, True),       # just inside, near the ceiling
+            (hi + eps, True, False),      # just over the ceiling
+        ]
+        for val, want_min_pass, want_max_pass in cases:
+            rows = [{"t": "50.000", "h2_cum_g": "%.9f" % val,
+                    "switch": "0", "fault_flags": "0"}]
+            path = tmp_path / ("%s_%s_%.9f.csv" % (scenario, min_name, val))
+            _write_scenario_csv(path, rows, extra_cols=("h2_cum_g",))
+            measured = rhs.scan_signals(str(path), [min_spec, max_spec],
+                                        grace_s=0.0)
+            checks = rhs.judge_signals([min_spec, max_spec], measured, "why")
+            assert checks[0]["passed"] is want_min_pass, (scenario, val)
+            assert checks[1]["passed"] is want_max_pass, (scenario, val)
+
+
+# ── Requirement 6: provisional_note presence, loop-driven ──────────────────
+
+# The specs the 2026-09-01 preload-removal diff re-derived (identified by
+# name from the diff itself), grouped by scenario. A future
+# de-provisionalization must delete the NAME from this list in the same
+# change that drops the note, or this test catches the drift.
+_REDERIVED_FTP75_PROVISIONAL_SPECS = {
+    "ems-ftp75-5050": ["ftp_fc_carried", "ftp_h2_accounted", "ftp_h2_bounded"],
+    "ems-ftp75-socband": ["socband_share_biased", "socband_fc_carried",
+                          "socband_ftp_charge_opened", "ftp_h2_accounted",
+                          "ftp_h2_bounded"],
+    "ems-ftp75-sdp": ["sdpftp_low_rail_early", "sdpftp_high_rail_late",
+                      "sdpftp_raw_battery_branch", "sdpftp_raw_fc_branch",
+                      "sdpftp_fc_floored_early", "sdpftp_fc_carried_late",
+                      "sdpftp_bt_peak_bounded", "sdpftp_h2_accounted",
+                      "sdpftp_h2_bounded"],
+    "ems-ftp75-dp": ["ftpdp_fc_carried", "ftpdp_h2_accounted",
+                     "ftpdp_h2_bounded"],
+}
+
+
+def test_every_rederived_ftp75_spec_carries_a_provisional_note():
+    """Loop-driven (not one hardcoded assertion per spec) so a future
+    de-provisionalization that forgets to also shrink this list is caught
+    structurally rather than by a stale per-name assertion silently staying
+    green."""
+    for scenario, names in _REDERIVED_FTP75_PROVISIONAL_SPECS.items():
+        specs = rhs.FAULT_EXPECTATIONS[scenario]["signals_require"]
+        for name in names:
+            spec = _spec_by_name(specs, name)
+            assert spec.get("provisional_note"), (
+                "%s/%s was re-derived at aux_preload_a=0.0 and must carry a "
+                "provisional_note until the first zero-preload campaign "
+                "measures it" % (scenario, name))
+
+
+def test_rederived_ftp75_spec_names_all_exist_in_the_registry():
+    """Sanity on the list above itself: every named spec must actually be
+    present, or the loop test would vacuously pass by never finding it (
+    `_spec_by_name` raising StopIteration would surface as an error, not a
+    silent pass -- but pin the shape explicitly so a renamed spec is caught
+    with a clear message rather than a bare StopIteration)."""
+    for scenario, names in _REDERIVED_FTP75_PROVISIONAL_SPECS.items():
+        specs = rhs.FAULT_EXPECTATIONS[scenario]["signals_require"]
+        present = {s["name"] for s in specs}
+        for name in names:
+            assert name in present, (scenario, name)
+
+
+# ── Requirement 8: SDP flip-band / survive_to consistency ──────────────────
+
+def test_ems_ftp75_sdp_flip_band_consistent_with_survive_to_and_raw_windows():
+    """Asserts RELATIONSHIPS pulled from the live FAULT_EXPECTATIONS entry
+    itself (never re-typed magic numbers): the low-rail window must end
+    strictly before the high-rail window starts (a real gap, the flip band),
+    survive_to must reach at least the start of the post-flip observation
+    window (or the entry could pass without ever observing the post-flip
+    half), and the raw-column (pre-clamp) checks must use the EXACT same
+    windows as their emitted-column siblings -- a drift between them would
+    mean the two views of "before/after the flip" disagree with each other."""
+    entry = rhs.FAULT_EXPECTATIONS["ems-ftp75-sdp"]
+    specs = entry["signals_require"]
+    low = _spec_by_name(specs, "sdpftp_low_rail_early")
+    high = _spec_by_name(specs, "sdpftp_high_rail_late")
+    raw_low = _spec_by_name(specs, "sdpftp_raw_battery_branch")
+    raw_high = _spec_by_name(specs, "sdpftp_raw_fc_branch")
+    survive_t = entry["survive_to"]["t"]
+
+    lo_end = low["t_window"][1]
+    hi_start = high["t_window"][0]
+    assert lo_end < hi_start, "the flip band must be a real (non-empty) gap"
+    assert survive_t >= hi_start, (
+        "the run must be required to survive at least to the start of the "
+        "post-flip observation window, or a truncated run before the flip "
+        "could still satisfy survive_to")
+    # The raw (pre-clamp) column checks are asserting the same before/after
+    # split as the emitted-column checks -- they must share the windows.
+    assert raw_low["t_window"] == low["t_window"]
+    assert raw_high["t_window"] == high["t_window"]
+    # And the band documented in hil_plant_sim.py's re-derivation (governor
+    # walk 272.0 s, scaled to an expected board flip near 275.5 s) must fall
+    # strictly inside the gap the two windows leave open.
+    walk_predicted_flip = 275.5
+    assert lo_end < walk_predicted_flip < hi_start
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# C1 round (2026-09-01), PART B2 -- `max_of`: the ANY quantifier
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_judge_event_spec_max_of_picks_the_largest_matching_value():
+    events = {"kinds": {"chopper_clamp": 3}, "field_values": {},
+             "events_by_kind": {"chopper_clamp": [
+                 {"energy_j": 0.12}, {"energy_j": 2.5}, {"energy_j": 0.02},
+             ]}}
+    spec = {"max_of": "chopper_clamp", "field": "energy_j", "min_value": 1.0}
+    ok, observed, problems = rhs._judge_event_spec(spec, events)
+    assert ok is True
+    assert problems == []
+    assert "2.5000" in observed
+
+
+def test_judge_event_spec_max_of_below_min_value_fails_even_with_a_large_total():
+    """The discriminating property of `max_of` vs `total_of`: a long tail of
+    small flickers can clear a `total_of` floor while no single episode
+    clears a `max_of` floor -- `max_of` must fail here even though the SAME
+    events would pass a `total_of` spec with the same min_value."""
+    events = {"kinds": {"chopper_clamp": 5}, "field_values": {},
+             "events_by_kind": {"chopper_clamp": [
+                 {"energy_j": 0.25} for _ in range(5)
+             ]}}
+    max_spec = {"max_of": "chopper_clamp", "field": "energy_j", "min_value": 1.0}
+    total_spec = {"total_of": "chopper_clamp", "field": "energy_j",
+                 "min_value": 1.0}
+    ok_max, _, _ = rhs._judge_event_spec(max_spec, events)
+    ok_total, _, _ = rhs._judge_event_spec(total_spec, events)
+    assert ok_max is False
+    assert ok_total is True
+
+
+def test_judge_event_spec_max_of_one_matching_event():
+    events = {"kinds": {"chopper_clamp": 1}, "field_values": {},
+             "events_by_kind": {"chopper_clamp": [{"energy_j": 0.5}]}}
+    spec = {"max_of": "chopper_clamp", "field": "energy_j", "min_value": 0.4}
+    ok, observed, _ = rhs._judge_event_spec(spec, events)
+    assert ok is True
+    assert "0.5000" in observed
+
+
+def test_judge_event_spec_max_of_no_matching_events_is_undefined_not_zero():
+    """Unlike `total_of` (which sums to 0.0 over nothing and is judged against
+    the floor like any total), `max_of` over zero events has no value at all
+    and must FAIL with a distinct 'undefined' message, never silently read as
+    0.0."""
+    events = {"kinds": {}, "field_values": {}, "events_by_kind": {}}
+    spec = {"max_of": "chopper_clamp", "field": "energy_j", "min_value": 0.3}
+    ok, observed, problems = rhs._judge_event_spec(spec, events)
+    assert ok is False
+    assert "undefined" in observed
+    assert problems and "no" in problems[0]
+
+
+def test_judge_event_spec_max_of_respects_where_filter():
+    events = {"kinds": {"sw_ring": 2}, "field_values": {},
+             "events_by_kind": {"sw_ring": [
+                 {"switch": "MOT_PWR", "energy_j": 0.2},
+                 {"switch": "FC_BUS", "energy_j": 0.9},
+             ]}}
+    spec = {"max_of": "sw_ring", "where": {"switch": "MOT_PWR"},
+           "field": "energy_j", "min_value": 0.1}
+    ok, observed, _ = rhs._judge_event_spec(spec, events)
+    assert ok is True
+    assert "0.2000" in observed        # the FC_BUS 0.9 must be excluded
+
+
+def test_judge_event_spec_max_of_respects_max_value_ceiling():
+    events = {"kinds": {"chopper_clamp": 2}, "field_values": {},
+             "events_by_kind": {"chopper_clamp": [
+                 {"energy_j": 0.5}, {"energy_j": 5.0},
+             ]}}
+    spec = {"max_of": "chopper_clamp", "field": "energy_j", "max_value": 4.0}
+    ok, observed, problems = rhs._judge_event_spec(spec, events)
+    assert ok is False
+    assert "above max_value" in problems[0]
+
+
+def test_max_of_spec_shape_guards_fire_on_synthetic_mutations():
+    """Reproduces the module's own four import-time shape guards for `max_of`
+    against synthetic specs, mirroring the guards asserted over
+    FAULT_EXPECTATIONS at import (which by definition never see a spec that
+    fails them -- the module would refuse to import)."""
+    bad_specs = [
+        {"kind": "chopper_clamp", "max_of": "chopper_clamp",
+         "field": "energy_j", "min_value": 1.0},                # kind + max_of
+        {"total_of": "chopper_clamp", "max_of": "chopper_clamp",
+         "field": "energy_j", "min_value": 1.0},                # both aggregators
+        {"max_of": "chopper_clamp", "min_value": 1.0},          # no field
+        {"max_of": "chopper_clamp", "field": "energy_j"},       # no bound
+    ]
+    for spec in bad_specs:
+        with pytest.raises(AssertionError):
+            for _agg_key in ("total_of", "max_of"):
+                if _agg_key not in spec:
+                    continue
+                assert "kind" not in spec, "kind+aggregator"
+                assert not ("total_of" in spec and "max_of" in spec), \
+                    "both aggregators"
+                assert spec.get("field"), "no field"
+                assert (spec.get("min_value") is not None
+                       or spec.get("max_value") is not None), "no bound"
+
+
+def test_regen_harvest_true_max_of_spec_is_registered():
+    reqs = rhs.FAULT_EXPECTATIONS["regen-harvest-true"]["events_require"]
+    maxes = [r for r in reqs if isinstance(r, dict) and "max_of" in r]
+    assert len(maxes) == 1
+    assert maxes[0]["max_of"] == "chopper_clamp"
+    assert maxes[0]["field"] == "energy_j"
+    assert maxes[0]["min_value"] == pytest.approx(1.0)
+
+
+# The strict xfail the test-writer put here (charge-regen defined twice) is
+# REMOVED: the same fix round repaired both duplicates in tools/run_hil_suite.py
+# -- the 'regen-harvest-true' one it had already flagged, and the 'charge-regen'
+# one this test found, which was collateral from the first repair's own
+# re-insertion.  The test now guards the whole table unconditionally.
+def test_fault_expectations_has_no_duplicate_scenario_keys_in_source():
+    """Regression guard: a dict literal with a repeated key compiles cleanly
+    and silently drops everything the earlier occurrence carried, so this
+    cannot be caught by importing the module -- it has to be caught by
+    scanning the source text for the literal `"<name>": {` key-opening
+    pattern FAULT_EXPECTATIONS entries use."""
+    src = open(rhs.__file__, encoding="utf-8").read()
+    for name in rhs.FAULT_EXPECTATIONS:
+        pat = '"%s": {' % name
+        count = src.count(pat)
+        assert count <= 1, (
+            "FAULT_EXPECTATIONS[%r] dict literal ('%s') appears %d times in "
+            "%s -- the later one silently shadows the earlier one's checks"
+            % (name, pat, count, rhs.__file__))
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# PART B1 -- fault_first_latch_t: the LATCHED first sighting
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_fault_first_latch_t_is_empty_when_bit_never_latches(tmp_path):
+    """A bare (non-latched) bit sighting must NOT populate
+    fault_first_latch_t, even though it populates fault_first_t."""
+    rows = [{"t": "3.000", "fault_flags": hex(rhs.FAULT_UV_BATT)}]  # bare only
+    path = tmp_path / "bare_only.csv"
+    _write_scenario_csv(path, rows)
+    m = rhs.analyze_scenario_csv(str(path), grace_s=0.0)
+    name = rhs.fault_names(rhs.FAULT_UV_BATT)
+    assert name in m["fault_first_t"]
+    assert m["fault_first_latch_t"] == {}
+
+
+def test_fault_first_latch_t_records_the_later_latch_not_the_bare_sighting(tmp_path):
+    """The load-bearing case: a transient bare bit at t=3.0, then the same bit
+    latched (with FAULT_ERROR) at t=9.0. fault_first_t must read 3.0 (first
+    BARE sighting); fault_first_latch_t must read 9.0 (first LATCH)."""
+    rows = [
+        {"t": "3.000", "fault_flags": hex(rhs.FAULT_UV_BATT)},                 # transient
+        {"t": "6.000", "fault_flags": "0"},                                    # cleared
+        {"t": "9.000", "fault_flags": hex(rhs.FAULT_UV_BATT | rhs.FAULT_ERROR)},  # latch
+    ]
+    path = tmp_path / "transient_then_latch.csv"
+    _write_scenario_csv(path, rows)
+    m = rhs.analyze_scenario_csv(str(path), grace_s=0.0)
+    name = rhs.fault_names(rhs.FAULT_UV_BATT)
+    assert m["fault_first_t"][name] == pytest.approx(3.0)
+    assert m["fault_first_latch_t"][name] == pytest.approx(9.0)
+
+
+def test_fault_first_latch_t_latch_only_no_bare_predecessor(tmp_path):
+    rows = [{"t": "9.000", "fault_flags": hex(rhs.FAULT_UV_BATT | rhs.FAULT_ERROR)}]
+    path = tmp_path / "latch_only.csv"
+    _write_scenario_csv(path, rows)
+    m = rhs.analyze_scenario_csv(str(path), grace_s=0.0)
+    name = rhs.fault_names(rhs.FAULT_UV_BATT)
+    assert m["fault_first_t"][name] == pytest.approx(9.0)
+    assert m["fault_first_latch_t"][name] == pytest.approx(9.0)
+
+
+def test_not_before_s_passes_on_the_transient_then_latch_trace():
+    """The trace from the fault_first_latch_t test above, driven through the
+    real 'charge-cruise' entry (OC_FC, not_before_s=8.0): a transient bare
+    bit BEFORE not_before_s, followed by the real latch AFTER it.
+    not_before_s must PASS because the LATCH -- not the bare transient -- is
+    what it judges."""
+    expect = rhs.FAULT_EXPECTATIONS["charge-cruise"]
+    want = expect["require"]
+    not_before = expect["not_before_s"]
+    name = rhs.fault_names(want)
+    m = _metrics(fault_bits_seen=want, final_fault_flags=want,
+                 fault_first_t={name: not_before - 5.0},          # bare, early
+                 fault_first_latch_t={name: not_before + 1.0},    # latch, on time
+                 fault_bits_before_survive=0, state_at_survive=2)
+    passed, checks = rhs.judge_scenario("charge-cruise", m, _events(), _child())
+    ef = [c for c in checks if c["name"] == "expected_fault"][0]
+    assert ef["passed"] is True
+    assert passed is True
+
+
+def test_not_before_s_fails_when_the_latch_itself_is_early():
+    """A latch before not_before_s must FAIL -- the latch, not merely a bare
+    sighting, happened before the stimulus."""
+    expect = rhs.FAULT_EXPECTATIONS["charge-cruise"]
+    want = expect["require"]
+    not_before = expect["not_before_s"]
+    name = rhs.fault_names(want)
+    m = _metrics(fault_bits_seen=want, final_fault_flags=want,
+                 fault_first_t={name: not_before - 5.0},
+                 fault_first_latch_t={name: not_before - 1.0},    # latch, early
+                 fault_bits_before_survive=0, state_at_survive=2)
+    passed, checks = rhs.judge_scenario("charge-cruise", m, _events(), _child())
+    ef = [c for c in checks if c["name"] == "expected_fault"][0]
+    assert ef["passed"] is False
+    assert "BEFORE" in ef["detail"]
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# PART B1 -- v-bus-sense-offset: the two-sided latch window on the
+# excursion-2 check, measured 19.90 ms +/- 6 ms after the excursion opens
+# ─────────────────────────────────────────────────────────────────────────
+
+def _uv_excursion2_spec():
+    reqs = rhs.FAULT_EXPECTATIONS["v-bus-sense-offset"]["signals_require"]
+    return [s for s in reqs if s.get("name") == "uv_latched_on_excursion_2"][0]
+
+
+def test_uv_excursion2_window_matches_the_documented_19_90ms_measurement():
+    spec = _uv_excursion2_spec()
+    lo, hi = spec["t_window"]
+    opens_at = hil.V_BUS_UV_PROBE_2[0]
+    assert lo == pytest.approx(opens_at + 0.0139, abs=1e-6)
+    assert hi == pytest.approx(opens_at + 0.0259, abs=1e-6)
+    assert lo <= opens_at + 0.01990 <= hi
+
+
+def test_uv_excursion2_latch_at_measured_instant_passes(tmp_path):
+    spec = _uv_excursion2_spec()
+    opens_at = hil.V_BUS_UV_PROBE_2[0]
+    t_latch = opens_at + 0.01990
+    rows = [{"t": "%.5f" % t_latch,
+            "fault_flags": hex(rhs.FAULT_UV_BUS | rhs.FAULT_ERROR)}]
+    path = tmp_path / "latch_at_measured.csv"
+    _write_scenario_csv(path, rows)
+    measured = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    checks = rhs.judge_signals([spec], measured, "why")
+    assert checks[0]["passed"] is True
+
+
+@pytest.mark.parametrize("offset_ms", [12.0, 27.0])
+def test_uv_excursion2_latch_outside_window_fails(tmp_path, offset_ms):
+    spec = _uv_excursion2_spec()
+    opens_at = hil.V_BUS_UV_PROBE_2[0]
+    t_latch = opens_at + offset_ms / 1000.0
+    rows = [{"t": "%.5f" % t_latch,
+            "fault_flags": hex(rhs.FAULT_UV_BUS | rhs.FAULT_ERROR)}]
+    path = tmp_path / ("latch_%dms.csv" % int(offset_ms))
+    _write_scenario_csv(path, rows)
+    measured = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    checks = rhs.judge_signals([spec], measured, "why")
+    assert checks[0]["passed"] is False
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# PART B3 -- mppt-tracking braking-window mirror-artifact pin: the count must
+# sit at EXACTLY AG105_MPPT_N_CEIL (27) through the whole braking window
+# ─────────────────────────────────────────────────────────────────────────
+
+def _mppt_brake_specs():
+    reqs = rhs.FAULT_EXPECTATIONS["mppt-tracking"]["signals_require"]
+    ceiling = [s for s in reqs
+              if s.get("name") == "mppt_threshold_braking_mirror_artifact_ceiling"][0]
+    floor = [s for s in reqs
+            if s.get("name") == "mppt_threshold_braking_mirror_artifact"][0]
+    return ceiling, floor
+
+
+def _mppt_brake_rows(count):
+    lo, hi = rhs._MPPT_THRESH_BRAKE_W
+    mid = (lo + hi) / 2.0
+    return [{"t": "%.3f" % mid, "mppt_thresh_cnt": str(count),
+            "fault_flags": "0"}]
+
+
+def test_mppt_brake_window_pin_specs_use_ag105_mppt_n_ceil():
+    ceiling, floor = _mppt_brake_specs()
+    assert ceiling["max_value"] == hil.AG105_MPPT_N_CEIL == 27
+    assert floor["floor_min_value"] == hil.AG105_MPPT_N_CEIL == 27
+    assert ceiling["t_window"] == rhs._MPPT_THRESH_BRAKE_W
+    assert floor["t_window"] == rhs._MPPT_THRESH_BRAKE_W
+
+
+def test_mppt_brake_window_count_26_fails(tmp_path):
+    ceiling, floor = _mppt_brake_specs()
+    path = tmp_path / "cnt26.csv"
+    _write_scenario_csv(path, _mppt_brake_rows(26), extra_cols=("mppt_thresh_cnt",))
+    measured = rhs.scan_signals(str(path), [ceiling, floor], grace_s=0.0)
+    checks = rhs.judge_signals([ceiling, floor], measured, "why")
+    by_name = {c["name"]: c["passed"] for c in checks}
+    # 26 clears the ceiling (<= 27) but not the floor (must be >= 27
+    # everywhere in-window).
+    assert by_name["signal_mppt_threshold_braking_mirror_artifact_ceiling"] is True
+    assert by_name["signal_mppt_threshold_braking_mirror_artifact"] is False
+
+
+def test_mppt_brake_window_count_27_passes_both(tmp_path):
+    ceiling, floor = _mppt_brake_specs()
+    path = tmp_path / "cnt27.csv"
+    _write_scenario_csv(path, _mppt_brake_rows(27), extra_cols=("mppt_thresh_cnt",))
+    measured = rhs.scan_signals(str(path), [ceiling, floor], grace_s=0.0)
+    checks = rhs.judge_signals([ceiling, floor], measured, "why")
+    by_name = {c["name"]: c["passed"] for c in checks}
+    assert by_name["signal_mppt_threshold_braking_mirror_artifact_ceiling"] is True
+    assert by_name["signal_mppt_threshold_braking_mirror_artifact"] is True
+
+
+def test_mppt_brake_window_count_28_fails(tmp_path):
+    ceiling, floor = _mppt_brake_specs()
+    path = tmp_path / "cnt28.csv"
+    _write_scenario_csv(path, _mppt_brake_rows(28), extra_cols=("mppt_thresh_cnt",))
+    measured = rhs.scan_signals(str(path), [ceiling, floor], grace_s=0.0)
+    checks = rhs.judge_signals([ceiling, floor], measured, "why")
+    by_name = {c["name"]: c["passed"] for c in checks}
+    # 28 clears the floor (>= 27) but exceeds the ceiling (<= 27).
+    assert by_name["signal_mppt_threshold_braking_mirror_artifact_ceiling"] is False
+    assert by_name["signal_mppt_threshold_braking_mirror_artifact"] is True

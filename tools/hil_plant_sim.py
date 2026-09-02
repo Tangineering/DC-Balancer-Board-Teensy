@@ -430,7 +430,31 @@ from hil_electrical import (                                   # noqa: E402
     # DROOP_MODE_DEFAULT is the `--droop` default, single-sourced there so the
     # flag's default and the "was --droop passed explicitly" test cannot drift.
     DROOP_SCALE, DROOP_MODES, DROOP_MODE_DEFAULT,
+    # PART A (C1) converter asymmetry.  The constants live in hil_electrical
+    # because that is where the two boost chains are realized; simple mode
+    # consumes only the resolved DeltaV0 through asymmetry_dv0_v().
+    ASYMMETRY_MODES, ASYMMETRY_MODE_DEFAULT, asymmetry_dv0_v,
+    asymmetry_dv0_sense_v, ASYM_DV0_V, ASYM_K_DROOP_OHM, INA_ZERO_OFFSET_A,
+    ASYM_DROOP_SCALE_FC, ASYM_DROOP_SCALE_BT,
 )
+
+# ── PART A: simple-mode share-law constants ─────────────────────────────────
+#: the firmware's droop design constant k_d, ohm (`K_DROOP`, .ino:2166-2167).
+#: Simple mode needs it because the static asymmetry law is written in terms of
+#: the COMMANDED droop resistance, not of any resistance this model realizes.
+#: ⚠️ It is PINNED EQUAL to hil_electrical.ASYM_K_DROOP_OHM by the assert below
+#: and by test: the fitted DeltaV0 is a lumped A*k_d at the DESIGN droop, so the
+#: k_d used to convert it back to a share deviation must be the same k_d on both
+#: sides of the plant or the two engines model different asymmetries.
+K_DROOP_FW_OHM = 0.30
+assert K_DROOP_FW_OHM == ASYM_K_DROOP_OHM
+#: total bus current below which the static asymmetry correction is not applied.
+#: The r(1-r)/I_tot term diverges at zero load, and below this current the share
+#: is not a controlled quantity on the real board either (the firmware's own
+#: closed-loop entry sits at 0.60 A).  The clip to [0, 1] still bounds the
+#: result; this floor keeps the model from spending its whole authority on a
+#: current that no observer cares about.
+ASYM_SIMPLE_I_MIN_A = 0.10
 # GENERATED module — tools/gen_ftp75_profile.py, from the committed EPA raw
 # file references/drive_cycles/ftpcol.txt (sha256 verified at generation).
 # Never hand-edited; regenerate instead.  See the `ems-ftp75-*` scenarios.
@@ -1177,9 +1201,15 @@ class Plant:
         a converter simulator.
       * The FC/BT current split follows the ratio of the two droop MDAC codes.  The
         real split is set by the analog droop network's equivalent resistances, which
-        the codes only parametrize; proportional-to-code is a SIMPLIFICATION that
-        preserves the sign and monotonicity of the share loop's authority (raise the
-        FC code, get more FC current) without claiming the true gain.
+        the codes only parametrize; proportional-to-RECIPROCAL-code is a
+        SIMPLIFICATION that preserves the sign and monotonicity of the share loop's
+        authority without claiming the true gain.  SIGN, stated correctly (the
+        C1 round, 2026-09-01, corrected the opposite claim here and the code
+        under it): each channel's droop gain command is g = k_d/(RE_MAX * share),
+        so RAISING THE FC CODE RAISES ITS DROOP RESISTANCE AND LOWERS ITS
+        CURRENT.  On top of that ratio sits the static converter-asymmetry law
+        of docs/modeling/converter_asymmetry_20260901.md §2 (voltage mismatch
+        only, rho = 1), disabled by `--asymmetry off`.
       * The Ag105 charger is modelled at the STATUS level only: input power in ->
         settle delay -> "Charging" with a first-order current ramp toward the 2.5 A
         configured ceiling.  CV taper exists only as the SoC-triggered Fully-Charged
@@ -1200,7 +1230,44 @@ class Plant:
     """
 
     def __init__(self, electrical=None, soc0=0.7, capacity_ah=BATT_CAPACITY_AH,
-                 ag105_i_max=AG105_I_MAX, mppt_emulation=False):
+                 ag105_i_max=AG105_I_MAX, mppt_emulation=False,
+                 asymmetry_mode=ASYMMETRY_MODE_DEFAULT,
+                 ina_offset_fc=0.0, ina_offset_bt=0.0, noise_active=None):
+        # ── PART A (C1, 2026-09-01): converter asymmetry, SIMPLE MODE ────────
+        # In hi-fi mode the asymmetry lives in the two Boost objects and this
+        # plant never applies it.  Simple mode has no converter models at all,
+        # so the same physics enters as the STATIC share law of
+        # docs/modeling/converter_asymmetry_20260901.md §2 with rho = 1
+        # (per-channel droop scales are a hi-fi concept: simple mode realizes no
+        # per-channel droop resistance to scale).  Mode "off" is inert.
+        if asymmetry_mode not in ASYMMETRY_MODES:
+            raise ValueError("asymmetry_mode must be one of %s"
+                             % (ASYMMETRY_MODES,))
+        # F3 (fix round, 2026-09-01): discriminated on the INA offsets this run
+        # actually injects, not on whether a NoiseConfig object exists.  Simple
+        # mode NEVER constructs one (hil_plant_sim.py:8087-8094 vs :8163), so
+        # these default to zero and a simple-mode run keeps the full voltage
+        # term -- which is correct, because it injects no sense-arm offset to
+        # double-count against.
+        # NOT SCALED BY A DROOP MODE (unlike the hi-fi engine's, F2): `--droop`
+        # has no effect under `--electrical simple`, which already uses the
+        # bench-measured K_DROOP_BUS_* constants, and the static law below is
+        # written in the COMMANDED k_d the fit itself uses.
+        # `noise_active` is a CONVENIENCE ALIAS retained from the first cut of
+        # this constructor, not a second mechanism: True resolves to the INA
+        # offsets a default NoiseConfig would inject and False to zeros, which
+        # is exactly what a caller meant by it.  The OFFSETS ARE AUTHORITATIVE
+        # (F3) -- pass them directly whenever they are not the defaults, e.g.
+        # NoiseConfig(ina_zero_offset=0.0), which `noise_active=True` cannot
+        # express.  Explicit offsets win if both are given.
+        if noise_active is not None and not (ina_offset_fc or ina_offset_bt):
+            ina_offset_fc = INA_ZERO_OFFSET_A if noise_active else 0.0
+            ina_offset_bt = 0.0
+        self.asymmetry_mode = asymmetry_mode
+        self.asym_ina_offset_fc = float(ina_offset_fc)
+        self.asym_ina_offset_bt = float(ina_offset_bt)
+        self.asym_dv0_v = (0.0 if asymmetry_mode == "off"
+                           else asymmetry_dv0_v(ina_offset_fc, ina_offset_bt))
         # `ag105_i_max` is a SCENARIO PARAMETER (SCENARIOS[...]["chg_i_ceiling_a"]),
         # in the same class as `vesc_cap_f`: it does not model the firmware, it
         # sizes the stimulus.  The firmware always configures the 2.5 A profile
@@ -1280,6 +1347,22 @@ class Plant:
         self.scp_fired = False     # ...and has since been withdrawn (latched)
         self.scp_fired_t = None    # sim time at which the pulse was withdrawn
         self.ag105_status = AG105_ST_DISCONNECT
+
+    def _apply_simple_asymmetry(self, frac_fc, i_total):
+        """Static converter-asymmetry law on the simple-mode FC share.
+
+        alpha = r + DeltaV0 * r(1-r) / (k_d * I_tot), with r the commanded share
+        recovered from the MDAC codes and k_d = K_DROOP_FW_OHM.  This is the M1
+        model of the fit document (§2 with rho = 1), i.e. voltage mismatch only.
+        The correction diverges as I_tot -> 0, so it is skipped below
+        ASYM_SIMPLE_I_MIN_A, where no meaningful share exists anyway, and the
+        result is clipped to [0, 1].
+        """
+        if self.asym_dv0_v == 0.0 or i_total < ASYM_SIMPLE_I_MIN_A:
+            return frac_fc
+        alpha = frac_fc + (self.asym_dv0_v * frac_fc * (1.0 - frac_fc)
+                           / (K_DROOP_FW_OHM * i_total))
+        return min(1.0, max(0.0, alpha))
 
     def step(self, dt, obs):
         """Advance one tick against the last observation frame (None = actuators unknown)."""
@@ -1403,10 +1486,25 @@ class Plant:
                 # 0.35 V/A placeholder is retired.
                 k = K_DROOP_BUS_SHARED if (fc_live and bt_live) else K_DROOP_BUS_SINGLE
                 self.v_bus = V_BUS_DROOP_V0 - k * i_total + self.v_bus_offset
-                # Share split by droop code ratio (see class docstring for the caveat).
+                # ── PART A (C1, 2026-09-01): split by droop code ratio ───────
+                # SIGN FIX.  The firmware commands
+                #     g_FC = K_DROOP/(RE_MAX * r),  g_BT = K_DROOP/(RE_MAX*(1-r))
+                # (teensy_controller.ino:10534-10535), so each channel's droop
+                # RESISTANCE is proportional to its code and its current is
+                # proportional to the RECIPROCAL of that code.  The FC share is
+                # therefore
+                #     frac_fc = (1/code_fc)/((1/code_fc)+(1/code_bt))
+                #             =  code_bt/(code_fc + code_bt)
+                # The previous form used code_fc/(code_fc+code_bt), which has the
+                # authority of the share loop INVERTED: raising the FC code
+                # raises the FC droop resistance and LOWERS its current.  The
+                # error was invisible to the suite because simple mode's split
+                # is only ever read alongside a commanded ratio that the firmware
+                # itself computes, so both ends moved together.
                 if fc_live and bt_live:
                     denom = code_fc + code_bt
-                    frac_fc = (code_fc / denom) if denom > 1e-9 else 0.5
+                    frac_fc = (code_bt / denom) if denom > 1e-9 else 0.5
+                    frac_fc = self._apply_simple_asymmetry(frac_fc, i_total)
                 elif fc_live:
                     frac_fc = 1.0
                 else:
@@ -6044,49 +6142,80 @@ del _vmax, _b, _tag
 # that is otherwise ~34 min. That is why run_hil_suite.py gates them behind
 # --with-ftp75 and renders them SKIPPED by default.
 #
-# THE PRELOAD, and the trade-off it forces.  FTP75_PRELOAD_A is 0.65 A:
-#   * WHY IT IS THERE. Measured against the Plant/droop model over the whole
-#     segment, the cycle's own load leaves the source total below the 0.60 A
-#     governor gate through every idle segment, and the FTP is roughly a third
-#     idle. With +0.65 A the total is 0.800 A at standstill — 33 % above the
-#     gate — and 100.00 % of the post-ramp run (t >= 7.5 s) is above it, so the
-#     share loop is genuinely CLOSED for the whole cycle.
-#   * HEADROOM. Peak source total is 1.613 A at t = 245 s (the cycle peak);
-#     at hold-5050's 0.50 split that is 0.807 A per channel, 42 % under
-#     LIMIT_I_FC_MAX 1.4 A. Under `soc-band`, whose share ceiling is 0.75, the
-#     same peak is 1.210 A — 14 % of margin left, which is why that scenario's
-#     suite entry ALLOWS OC_FC (see run_hil_suite.py FAULT_EXPECTATIONS).
-#     ⚠️ MEASURED, and the budget UNDER-PREDICTS by a SYSTEMATIC +2.6 %
-#     (campaign 20260831_191509, ledger fix queue). The three numbers above
-#     came back as:
-#         peak source total   1.6551 A   (budget 1.613,  +2.61 %)
-#         hold-5050 channel   0.8275 A   (budget 0.807,  +2.54 %)
-#         soc-band channel    1.2414 A   (budget 1.210,  +2.60 %)
-#     (DI-LOW-5: the per-peak percentages were recomputed from the measured
-#     and budget pairs above — they read +2.58 / +2.57 / +2.60 before, which
-#     did not follow from their own two columns.  The spread across the three,
-#     0.07 pp, is if anything TIGHTER than the old figures implied, so the
-#     one-gain-offset conclusion below is unchanged.)
-#     One ratio, three places: it is a GAIN offset in the demand model (the
-#     closed-loop tracker's own transient content over a cycle this sharp is not
-#     in the steady-state walk the budget uses), not three independent errors,
-#     so it scales every current here and none of the RELATIVE margins move.
-#     The absolute one does: the soc-band OC margin is 11.3 %, not 14 %. That is
-#     still margin, and the entry allows OC_FC anyway, so no threshold moved —
-#     but a future preload increase must be sized against the MEASURED 1.6551 A,
-#     not the modelled 1.613 A, or it will spend more headroom than it looks
-#     like it does.
-#   * ⚠️ WHAT IT COSTS. `soc-band` admits a charge window only below
-#     SOC_BAND_CHARGE_ENTER_ITOT_A = 0.60 A of source total, and the preload
-#     puts the FLOOR at 0.800 A. The preload therefore FORECLOSES the charge
-#     window on ems-ftp75-socband, by construction: that scenario exercises the
-#     policy's share-bias branch over a long cycle, NOT its charging branch
-#     (`ems-soc-band` remains the home of the charge-window assertion). Stated
-#     here rather than discovered from a trace with no charge in it.
-#   * These are the MODEL's currents (M_EFF/K_F/F_COULOMB/B_EFF and the droop
-#     bus), not measurements. A campaign that misses a share-tracking check
-#     should move THIS number, never the check.
-FTP75_PRELOAD_A = 0.65
+# THE AUXILIARY PRELOAD IS REMOVED — 0.65 A -> 0.0 A (operator ruling,
+# 2026-09-01).  The constant is KEPT, at zero, because it is inside
+# collect_model_constants() and inside DP_FINGERPRINT_META_KEYS: deleting the
+# key would silently un-cover the fingerprint, and zero is a legal value that
+# every truthiness guard below already accepts.
+#
+# WHY IT WAS THERE (history, so a reader does not reintroduce it by accident).
+# The preload existed to hold the source total above the firmware's
+# closed-loop share gate, 2*SHARE_MINORITY_I_MIN_A = 0.60 A, through the
+# cycle's idle segments.  The FTP-75 is roughly a third idle and its own load
+# leaves the total at I_AUX_A = 0.15 A there, so +0.65 A put the standstill
+# total at 0.800 A and made 100.00 % of the post-ramp run closed-loop.  The
+# cost was stated at the time and is what the ruling acts on:
+#   * it FORECLOSED `soc-band`'s charge branch on this cycle
+#     (SOC_BAND_CHARGE_ENTER_ITOT_A = 0.60 A against a 0.800 A floor), so the
+#     socband leg exercised the share-bias branch and nothing else;
+#   * it spent current margin at the cycle peak, which is why the sdp leg had
+#     to run a DIFFERENT preload (0.45 A) and why the drive-cycle EMS frontier
+#     could not evaluate — its three legs were not one experiment;
+#   * and it removed the open-loop-hold behaviour from the test set entirely.
+#
+# WHY ZERO IS THE RIGHT VALUE NOW.  The sub-0.55 A stretches are TEST CONTENT,
+# not a defect to be loaded away: the firmware runs OPEN-LOOP HOLD below
+# 2*SHARE_MINORITY_I_MIN_A - SHARE_GOV_OL_HYST_A = 0.55 A, and a drive-cycle
+# scenario that never enters that mode never exercises it.  The governor walk
+# (tools/ems_walk.py, governor=True) puts the FTP-75 at preload 0 in
+#     open_hold 9.71 %,  open_feedforward 57.12 %,  closed 33.17 %
+# of governor ticks, against open_hold 0.00 % / closed 98.25 % at 0.65 A.  Any
+# check on these scenarios whose derivation assumed "the loop is closed for the
+# whole cycle" is therefore FALSE from this commit and is re-derived in
+# run_hil_suite.py per segment, per the standing walk rule (:2179-2219).
+#
+# CURRENT BUDGET AT PRELOAD 0, from gen_dp_ems_table.build_demand():
+#     peak source total   0.9603 A at t = 243.9 s  (was 1.6128 A model /
+#                         1.6551 A measured at 0.65 A)
+#     idle source total   0.1500 A  (= I_AUX_A; was 0.800 A)
+# The measured GAIN OFFSET of +2.6 % (campaign 20260831_191509 — one offset,
+# not three independent errors) still applies, so the hardware peak is expected
+# near 0.9853 A.  Every channel margin therefore WIDENS: hold-5050's 0.50 split
+# is ~0.493 A and soc-band's 0.75 ceiling is ~0.739 A, both far under
+# LIMIT_I_FC_MAX 1.4 A, and the OC_FC exposure the sdp preload was sized
+# against is gone.
+#
+# ⚠️ TWO BASELINE-ERA BOUNDARIES, AND CAMPAIGN 20260901_151156 IS THE LAST
+# CAMPAIGN ON THE FAR SIDE OF BOTH.  Read them together — a total from that
+# campaign differs from a current one for two independent reasons:
+#   1. THE PRELOAD (this block): the FTP-75 legs ran at 0.65 A (0.45 A on the
+#      sdp leg) up to and including that campaign; they run at 0.0 after it.
+#   2. THE CONVERTER ASYMMETRY (the C1 round, 2026-09-01): the plant ran two
+#      IDENTICAL boost chains up to and including that campaign, and runs the
+#      fitted FC/BT mismatch (DeltaV0 +0.0444 V, droop_scale_fc 0.930) after
+#      it, by default.  The FC chain then carries more of every load, so every
+#      hydrogen total rises and every SoC fall shrinks.  MEASURED on the
+#      governor walk, symmetric -> asymmetric: 5050 +9.40 %, socband +4.53 %,
+#      sdp +4.40 %, dp +6.35 % of hydrogen.  `--asymmetry off` restores the
+#      symmetric plant for a deliberate comparison.
+# The 0.65 A-era totals, for the record, are NOT comparable with anything
+# after this commit:
+#     ems-ftp75-5050    0.0647   g / dSoC -0.02648
+#     ems-ftp75-socband 0.09159  g / dSoC -0.01533
+#     ems-ftp75-sdp     0.0622   g / dSoC -0.01845
+#     ems-ftp75-dp      0.09291  g / dSoC -0.01478
+# constants_hash moves with this commit, and so does the ems-ftp75-dp table's
+# profile_fingerprint (aux_preload_a is a fingerprinted key).
+#
+# ⚠️ `Y_AUX_LOAD_A` IS UNCHANGED at 0.85 A (operator ruling, 2026-09-01): on
+# the ems-y-b30-* scenarios the auxiliary load CONSTRUCTS the stimulus — it is
+# what makes those scenarios' share bounds deliverable at all — rather than
+# masking a mode the way it did here.
+#
+# ⚠️ These are the MODEL's currents (M_EFF/K_F/F_COULOMB/B_EFF + the droop
+# bus), not measurements.  A campaign that misses a share-tracking check should
+# re-derive the check, not reinstate this load.
+FTP75_PRELOAD_A = 0.0
 # MODE_SAFE 1 s after the table's last point (t = 345.0), then 4 s for
 # Run -> Finish -> Idle.  The table already ends at rest — raw t = 333 onward is
 # 0 mph, so the last 7 s of it are a native idle — which is why 1 s of margin
@@ -6100,23 +6229,50 @@ for _name, _ems, _what in (
     ("ems-ftp75-5050", "hold-5050",
      "constant 50/50 split, so any share deviation belongs to the firmware's "
      "share loop and the plant and never to the EMS"),
-    # ⚠️ WHAT THE socband VARIANT ACTUALLY EXERCISES, past t = 46.8 s (measured,
-    # campaign 20260831_191509).  The SoC deficit saturates the share bias at
-    # SOC_BAND_SHARE_NOMINAL + SOC_BAND_SHARE_SPAN = 0.75 at t = 46.8 and NEVER
-    # COMES BACK: with the charge branch foreclosed by the preload (below) there
-    # is no mechanism to refill the pack, so the deficit only grows.  The
-    # remaining 298 s therefore command a CONSTANT 0.75 — the policy has
-    # degenerated to a fixed bias, and the run is a long endurance test of the
-    # firmware's share loop under one setpoint, NOT of the `soc-band` law.  The
-    # policy's own decision logic is exercised in the first ~42 s and nowhere
-    # else here; `ems-soc-band` (61 s, with a charge window) is where the law is
-    # actually under test.  Stated so a reader does not infer policy behaviour
-    # from 5 minutes of a saturated integrator.
+    # ⚠️ WHAT THE socband VARIANT EXERCISES AT PRELOAD 0 — RE-DERIVED
+    # 2026-09-01, when the preload was removed.  The previous statement here
+    # ("saturates at 0.75 by t = 46.8 s and NEVER comes back, because the
+    # charge branch is foreclosed by the preload") was true of the 0.65 A era
+    # and is FALSE now, in both of its clauses:
+    #   * THE BIAS SATURATES LATER.  The governor walk at preload 0
+    #     (tools/ems_walk.py, soc-band, governor=True) puts the share command
+    #     at 0.50 until t = 78.4 s, ramping to the 0.75 ceiling at t = 111.5 s
+    #     and holding it for 68.1 % of the run — against t = 46.8 s measured at
+    #     0.65 A.  The pack is discharged more slowly because the load is
+    #     smaller, so the deficit takes longer to open.
+    #   * THE CHARGE BRANCH IS REACHABLE AGAIN.  `soc-band` admits a charge
+    #     window below SOC_BAND_CHARGE_ENTER_ITOT_A = 0.60 A of source total,
+    #     and the idle source total is now I_AUX_A = 0.15 A — a factor of four
+    #     under the gate, in every one of the cycle's idle segments.  The
+    #     scenario therefore exercises BOTH of the policy's branches for the
+    #     first time.
+    #   ⚠️ WHAT THE WALK CANNOT PREDICT, stated: ems_walk.py gates charge
+    #     admission on gen_dp_ems_table.charge_mask() (the DP's cruise +
+    #     FC-budget test), NOT on the firmware/strategy pair's own
+    #     enter/hold hysteresis, so whatever it reports is the MASK's
+    #     schedule and never the strategy's.  The window SCHEDULE on this
+    #     cycle is unmodelled and must come from the first zero-preload
+    #     campaign; the run_hil_suite.py entry asserts only that a window
+    #     opens, with a deliberately wide existence bound.
+    #     ⚠️ PART C (C1 round, 2026-09-01): the "0 charge windows" figure
+    #     this note used to quote was STALE — it predates the
+    #     `chg_i_ceiling_a` 0.8 key added to this scenario in the same
+    #     round.  Against the SHIPPED registry the walk reports TWO windows,
+    #     191.700-194.000 s and 329.200-330.000 s (3.1 s in total).  That
+    #     changes nothing structural: they are still the DP mask's windows,
+    #     not the strategy's, and 3.1 s at the 0.8 A ceiling is ~0.3 % of
+    #     the cycle's hydrogen total.
     ("ems-ftp75-socband", "soc-band",
      "the causal charge-sustaining policy over a long cycle: the SoC deficit "
-     "walks the split toward the fuel cell, SATURATING at 0.75 by t = 46.8 s "
-     "and holding it for the remaining 298 s. Its CHARGING branch is out of "
-     "reach here by construction — see FTP75_PRELOAD_A"),
+     "walks the split toward the fuel cell, reaching the 0.75 ceiling at "
+     "t = 111.5 s (governor walk, preload 0) and holding it for ~68 % of the "
+     "run, while the cycle's idle segments drop the source total to 0.15 A "
+     "and open its CHARGING branch"),
+    # Governor walk against the SHIPPED registry (PART C, 2026-09-01):
+    #   symmetric  plant 0.035562 g / physical 0.036381 / dSoC -0.008177
+    #   asymmetric plant 0.037208 g / physical 0.038028 / dSoC -0.007513
+    # The run_hil_suite.py bands are taken from the ASYMMETRIC pair, because
+    # the plant's converter asymmetry is default-on from the C1 round.
 ):
     SCENARIOS[_name] = {
         "description": ("%.0f s EPA FTP-75 study segment (raw t = 0..340 s "
@@ -6135,6 +6291,20 @@ for _name, _ems, _what in (
         "aux_preload_a": FTP75_PRELOAD_A,
     }
 del _name, _ems, _what
+
+# THE CHARGER CEILING ON THE socband LEG (added 2026-09-01 with the preload
+# removal).  Two reasons, and both are consequences of that removal:
+#   * The charge branch is REACHABLE now (see the block above), so an
+#     undeclared ceiling would no longer be inert — the leg would run the
+#     Ag105 at AG105_I_MAX 2.5 A while `ems-ftp75-sdp` and `ems-ftp75-dp` cap
+#     it at 0.8 A.
+#   * That 3x disagreement is EMS_FRONTIER_FTP75's stimulus-coherence split 2
+#     (run_hil_suite.py).  Declaring the siblings' value resolves it by
+#     construction rather than by whitelist.
+# `ems-ftp75-5050` deliberately does NOT get the key: `hold-5050` never
+# commands `charge_goal`, so the ceiling there would be dead declaration.
+SCENARIOS["ems-ftp75-socband"]["chg_i_ceiling_a"] = (
+    SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"])
 
 # ── ems-ftp75-sdp: the FTP-75 segment with the SDP policy STARTED ABOVE ITS
 #    TARGET, so the bang-bang share law switches once, mid-cycle ────────────
@@ -6163,18 +6333,27 @@ del _name, _ems, _what
 # offset of the FTP75_PRELOAD_A block, and nothing below depends on which of
 # the two is used except by that ratio.
 #
-#   FLIP TIME:            t = 195.9 s   (model).  Sensitivity is the whole
-#     answer here, because the flip time is an INTEGRAL of the drain: a +/-10 %
-#     error in the pack current moves it to 180 s / 205 s, and +/-20 % to
-#     158 s / 216 s.  The suite's transition band WAS (150, 250) accordingly.
-#     ⚠️ MEASURED t = 198.537 s (campaign 20260901_024231, +1.35 % on the
-#     walk), so the band was tightened to (185, 212) — see the de-provisionalized
-#     `sdpftp_low_rail_early` / `sdpftp_high_rail_late` derivations in
-#     run_hil_suite.py.  This is the walk's best result: an INTEGRAL quantity
-#     landing inside 1.4 %, on the one of the three SDP-interior scenarios whose
-#     drain is carried by a CLOSED share loop throughout (see the preload's
-#     "WHAT IT COSTS" note) — which is exactly the condition the `ems-sdp-cross`
-#     walk did not have and got 5.7x wrong for.
+#   FLIP TIME:            t = 195.9 s (model, 0.45 A preload); MEASURED
+#     t = 198.537 s (campaign 20260901_024231, +1.35 % on the walk).  The flip
+#     time is an INTEGRAL of the drain, so it moves with the load: a +/-10 %
+#     error in the pack current moved it to 180 s / 205 s and +/-20 % to
+#     158 s / 216 s, which is how the suite's original (150, 250) band was set
+#     and how the later (185, 212) band was tightened.
+#     ⚠️ RE-PREDICTED AT PRELOAD 0 (2026-09-01, the preload removal):
+#         C:/Users/ricky/miniforge3/python.exe -c "import sys; sys.path.insert(
+#             0,'tools'); import ems_walk as W;
+#             print(W.walk('sdp-v3','ems-ftp75-sdp',governor=True).summary())"
+#         (the scenario's `sdp_soc_ref_offset` is applied by bind_scenario(),
+#          so no strategy_kwargs are needed)
+#     gives ONE transition, 0.15 -> 0.85, at t = 272.0 s — the drain is
+#     smaller without the 0.45 A preload, so the state takes 39 % longer to
+#     reach the switching surface.  The SAME walk reproduces the 0.45 A era to
+#     within 1.8 % on every measured quantity (flip 196.0 s vs 198.537
+#     measured; h2 0.061096 g vs 0.0622 measured; dSoC -0.018712 vs -0.01845),
+#     which is the basis for trusting the 272.0 s figure at ~+/-2 %.  Scaling
+#     by the measured/walk flip ratio 198.537/196.0 gives an expected board
+#     flip near t = 275.5 s.  The suite band is re-opened PROVISIONALLY around
+#     it and must be re-derived from the first zero-preload campaign.
 #   RAW TABLE REQUESTS:   {0.00} before the flip, {1.00, 0.95} after (0.95 in
 #     bin 22, the cycle's own peak).  EMITTED: {0.15, 0.85}.
 #     ⚠️ MEASURED (campaign 20260901_024231): raw 0.00 flat pre-flip, 1.00 with
@@ -6185,25 +6364,36 @@ del _name, _ems, _what
 #     below bin 9 inside the Run window (P_dem 9.6..22.4 W) and the solver
 #     forbids charging above bin 5.  This scenario is a PURE share-axis test.
 #
-# ⚠️ CURRENT BUDGETS, both branches, at FTP75_SDP_PRELOAD_A (derivation there):
-#   * BATTERY-HEAVY branch (commanded 0.15).  The commanded value is ALWAYS
-#     below the governor's minority floor SHARE_MINORITY_I_MIN_A / I_tot at
-#     this cycle's currents (I_tot peaks at 1.41 A, so the floor is 0.213), so
-#     the DELIVERED split is the floor: I_fc is pinned at exactly 0.300 A and
-#     the battery carries the rest — peak I_bt 0.676 A, 77 % under
-#     LIMIT_I_BT_MAX 3.0 A.  The battery-heavy side is nowhere near a limit.
+# ⚠️ CURRENT BUDGETS, both branches, RE-DERIVED AT PRELOAD 0 (2026-09-01).
+# The source total is now I_AUX_A + the cycle's own draw, so the model peak is
+# 0.9603 A at t = 243.9 s and the measured-composition peak is 0.15 + 0.8546 =
+# 1.0046 A (the measured span of the cycle's own contribution is unchanged by
+# the preload; it is an ADDITIVE term).
+#   * BATTERY-HEAVY branch (commanded 0.15).  The commanded value is still
+#     ALWAYS below the governor's minority floor SHARE_MINORITY_I_MIN_A / I_tot
+#     — at the peak that floor is 0.300/1.0046 = 0.299, and the idle floor is
+#     larger still — so the DELIVERED split is the floor and I_fc is pinned at
+#     exactly 0.300 A wherever the loop is closed.  Peak I_bt is
+#     I_tot - 0.300 = 0.705 A, 77 % under LIMIT_I_BT_MAX 3.0 A.
 #   * FUEL-CELL branch (commanded 0.85).  Mirror image: the governor clips to
 #     1 - I_min/I_tot, so I_fc = I_tot - 0.300 and its peak is at the CYCLE
-#     PEAK — 1.4123 - 0.300 = 1.1123 A model.  MEASURED, and the composition
-#     matters: the measured source total is ADDITIVE (I_AUX_A 0.15 + preload
-#     0.45 + the cycle's own 0.8546 A peak = 1.4546 A), so the governed FC peak
-#     is 1.4546 - 0.300 = 1.1546 A, i.e. 17.5 % under LIMIT_I_FC_MAX 1.4 A.
-#     ⚠️ Do NOT scale the model's FC branch by the +2.6 % offset instead
-#     (1.1123 x 1.026 = 1.141 A -> 18.5 %): that applies the offset to the
-#     0.300 A governor floor as well, which is a firmware constant and does not
-#     move with the drive model, and it understates the peak by 14 mA.  This is
-#     the binding constraint of the whole scenario and it is what sized the
-#     preload.
+#     PEAK — 0.6603 A model, 0.7046 A on the measured composition, i.e. 50 %
+#     under LIMIT_I_FC_MAX 1.4 A (it was 17.5 % at the 0.45 A preload).
+#     ⚠️ Do NOT scale the model's FC branch by the +2.6 % gain offset instead:
+#     that would apply the offset to the 0.300 A governor floor, which is a
+#     firmware constant and does not move with the drive model.
+#   * ⚠️ THE OC_FC CONSTRAINT NO LONGER BINDS ANYTHING.  Half the FC limit is
+#     free at the cycle peak, so the reason this scenario once needed its OWN
+#     preload is gone.  Do not treat the 50 % margin as licence to reintroduce
+#     a load: the mode content (open-loop hold in the idle segments) is the
+#     test content now — see the FTP75_PRELOAD_A block.
+#   * ⚠️ THE LOOP IS NO LONGER CLOSED THROUGHOUT.  At 0.45 A the honest
+#     claim was "closed after the first acceleration"; at preload 0 the idle
+#     source total is 0.15 A, far below the 0.55 A open-loop exit threshold,
+#     so the share loop OPENS in every idle segment.  The governor walk puts
+#     the run at open_hold 9.71 % / open_feedforward 57.12 % / closed 33.17 %
+#     of ticks.  Any check that assumed a closed loop in an idle segment is
+#     false and is re-derived in run_hil_suite.py.
 # ── ARTIFACT: `sdp-v3`, AND THE WALK TRANSFERS VERBATIM (2026-09-01) ────────
 # The walk above was measured against `sdp_policy_v2.json`.  This entry was
 # rebound to the CALIBRATED BENCHMARK artifact in the charge-economics round,
@@ -6231,35 +6421,31 @@ del _name, _ems, _what
 # frontier CHECK scores only the three legs of the one shared stimulus
 # (`ems-sdp` / `ems-soc-band` / `ems-dp-replay`), not this cycle.
 FTP75_SDP_SOC_REF_OFFSET = 0.013
-# THE PRELOAD, RE-DERIVED FOR THIS SCENARIO — 0.45 A, not the 0.65 A the other
-# two FTP-75 runs use, and the reason is the fuel-cell branch above.
-#   * WHY IT CANNOT BE 0.65.  At that preload the model's peak source total is
-#     1.613 A (measured 1.6551 A) and the FC branch's governed peak is
-#     I_tot - 0.300 = 1.313 A model / 1.355 A measured — 3.2 % under
-#     LIMIT_I_FC_MAX.  A drive transient anywhere near t = 244 spends that, and
-#     an OC_FC latch TRUNCATES the run at exactly the point the scenario exists
-#     to observe.  `ems-ftp75-socband` accepts that risk (its entry allows
-#     OC_FC); this one must not, because a truncated run has no post-flip half.
-#   * WHY 0.45.  The cycle's own contribution is bounded: the measured trace's
-#     source total spans I_AUX_A + preload + [0.0156, 0.8546] A.  Solving the
-#     FC branch for a 15 % margin gives preload <= 0.485 A, and 0.45 A leaves
-#     17.5 % (the additive composition above: 0.15 + 0.45 + 0.8546 - 0.300 =
-#     1.1546 A against 1.4 A).
-#   * WHAT IT COSTS, stated.  The preload exists on the sibling scenarios to
-#     hold the source total above the share loop's 2*SHARE_MINORITY_I_MIN_A =
-#     0.60 A CLOSED-LOOP ENTRY gate through the cycle's idle segments.  At
-#     0.45 A the model's idle total is 0.600 A — ON the entry gate — and the
-#     measured one is 0.6156 A, 2.6 % over it.  That margin is thin, and the
-#     honest claim is the one the EXIT threshold supports rather than the entry
-#     one: the loop closes on the cycle's first acceleration (t ~ 25 s, total
-#     ~1.0 A) and only re-opens below 2*SHARE_MINORITY_I_MIN_A -
-#     SHARE_GOV_OL_HYST_A = 0.55 A, which the measured idle total clears by
-#     12 %.  So the loop is expected CLOSED for the whole cycle after its first
-#     acceleration; what is NOT claimed is a margin on the entry gate itself.
-#   * These are the MODEL's currents (M_EFF/K_F/F_COULOMB/B_EFF + the droop
-#     bus) scaled by one measured offset.  A campaign that misses a check
-#     should move THIS number, never the check.
-FTP75_SDP_PRELOAD_A = 0.45
+# THE PRELOAD IS REMOVED — 0.45 A -> 0.0 A (operator ruling, 2026-09-01), in
+# lockstep with FTP75_PRELOAD_A.  The constant is KEPT at zero for that block's
+# reasons (fingerprint coverage and the truthiness guards).
+#
+# WHY IT WAS 0.45 AND NOT 0.65 (history).  This leg commands the 0.85 share
+# rail, and at 0.65 A the governed FC peak was I_tot - 0.300 = 1.355 A on the
+# measured composition — 3.2 % under LIMIT_I_FC_MAX.  An OC_FC latch would have
+# truncated the run at exactly the point the scenario exists to observe (the
+# post-flip half), so the preload was solved DOWN to the value that left 17.5 %
+# of margin.  That derivation was sound and it is simply moot now: at preload 0
+# the same branch peaks at 0.7046 A, 50 % under the limit.
+#
+# WHAT REMOVING IT COSTS AND BUYS.  It moves the flip LATE — t = 272.0 s
+# (governor walk) against 198.537 s measured — because the flip is a drain
+# integral; the suite's transition band is re-opened provisionally around the
+# new prediction.  It also OPENS the share loop through the cycle's idle
+# segments, which is the point of the ruling: open-loop hold is test content.
+# And it makes this leg's stimulus identical to its two FTP-75 siblings' for
+# the first time, which is what resolves EMS_FRONTIER_FTP75's split 1 — the
+# drive-cycle EMS frontier can now evaluate.
+#
+# ⚠️ BASELINE-ERA BOUNDARY: this leg measured 0.0622 g / dSoC -0.01845 at the
+# 0.45 A preload (campaigns up to hil_report_20260901_151156).  Not comparable
+# with anything after this commit; the walk predicts 0.019347 g / -0.014922.
+FTP75_SDP_PRELOAD_A = 0.0
 SCENARIOS["ems-ftp75-sdp"] = {
     "description": ("%.0f s EPA FTP-75 study segment (the SAME profile object "
                     "as the other two FTP-75 scenarios) driven by the causal "
@@ -6304,22 +6490,26 @@ SCENARIOS["ems-ftp75-sdp"] = {
 #
 # THE STIMULUS IS `ems-ftp75-5050`/`-socband`'s, TERM FOR TERM — the same
 # FTP75_PROFILE list object, the same FTP75_RUN_EXIT_S, and the same
-# FTP75_PRELOAD_A (0.65 A), NOT `ems-ftp75-sdp`'s FTP75_SDP_PRELOAD_A (0.45 A).
-# A bound is only a bound over the demand it solved, so it takes the load of
-# the legs it bounds.  ⚠️ That is also the reason the drive-cycle EMS frontier
-# does NOT currently evaluate: its candidate leg `ems-ftp75-sdp` runs the
-# 0.45 A preload, so the three legs are not one experiment.  See
-# EMS_FRONTIER_FTP75 in run_hil_suite.py for the full statement and the two
-# operator resolutions.
+# FTP75_PRELOAD_A.
 #
+# ⚠️ AND AS OF 2026-09-01 IT IS ALSO `ems-ftp75-sdp`'s, term for term: the
+# preload removal set FTP75_PRELOAD_A and FTP75_SDP_PRELOAD_A both to 0.0, so
+# all four FTP-75 legs now carry one stimulus.  That is what resolves
+# EMS_FRONTIER_FTP75's split 1 (run_hil_suite.py); the previous statement here
+# — "the drive-cycle EMS frontier does NOT currently evaluate" — is retired.
+#
+# ⚠️ THE TABLE WAS RE-SOLVED for the zero-preload demand.  `aux_preload_a` is
+# in DP_FINGERPRINT_META_KEYS, so the shipped table's profile_fingerprint moves
+# with the constant and a stale table is REFUSED at load rather than played.
 # WHY `chg_i_ceiling_a` IS DECLARED HERE and not on the 5050/socband siblings:
-# on those two the charger is unreachable by construction (hold-5050 never
-# commands `charge_goal`; soc-band's charge branch is foreclosed by the
-# preload, measured campaign 20260831_191509), so the ceiling is inert and its
-# absence costs nothing.  A DP table is different — the solver decides charging
-# for itself, so an undeclared ceiling would hand the offline-optimal leg a
-# 2.5 A lever the causal legs never had.  0.8 A is `ems-dp-replay`'s and
-# `ems-ftp75-sdp`'s value; it is fingerprinted, so it cannot drift silently.
+# on `ems-ftp75-5050` the charger is unreachable by construction (hold-5050
+# never commands `charge_goal`), so the ceiling is inert there and its absence
+# costs nothing.  `ems-ftp75-socband` DOES declare it as of 2026-09-01: the
+# preload removal re-opened its charge branch, so an undeclared ceiling would
+# have handed the reference leg a 2.5 A lever the candidates never had.  A DP
+# table needs the declaration for the same reason from the other side — the
+# solver decides charging for itself.  0.8 A is the value all three carry, and
+# it is fingerprinted, so it cannot drift silently.
 #
 # THE TABLE: tools/dp_tables/dp_ems_table_ems-ftp75-dp.csv, ~21 min to solve
 # (stage-count-dominated; ~6x `ems-dp-replay`'s cycle).  Regenerate with
@@ -7601,6 +7791,16 @@ def main(argv=None):
                          "the ~4x gap between them — see the K_DROOP_BUS banner. "
                          "Ignored under --electrical simple, which already uses "
                          "the measured constants")
+    # ── PART A (C1, 2026-09-01) ─────────────────────────────────────────────
+    ap.add_argument("--asymmetry", default=ASYMMETRY_MODE_DEFAULT,
+                    choices=list(ASYMMETRY_MODES),
+                    help="converter asymmetry between the FC and BT chains: "
+                         "'measured' (DEFAULT) injects the fitted static "
+                         "mismatch (DeltaV0 +0.0444 V, or +0.0324 V under "
+                         "--noise, plus droop_scale_fc 0.930); 'off' runs two "
+                         "identical chains and is byte-identical to every "
+                         "campaign recorded before this flag existed. Applies "
+                         "to BOTH electrical engines")
     ap.add_argument("--trace-config", default="short", choices=["long", "short"],
                     help="hi-fi parasitic-inductance set: 'long' = as-manufactured "
                          "FastHenry extraction (FC 1.538 nH / BT 3.480 nH), 'short' = "
@@ -7903,6 +8103,13 @@ def main(argv=None):
                              "which is not one of %s"
                              % (scenario, droop_mode, list(DROOP_MODES)))
 
+    # ── PART A (C1, 2026-09-01): converter-asymmetry mode ────────────────────
+    # No scenario key and no default-vs-explicit interplay: unlike `--droop`,
+    # this is not an opt-in comparison switch but the plant's new baseline, so
+    # the CLI value is used as parsed.  A scenario that ever needs the symmetric
+    # plant asks for it on the command line, and the sidecar records which was
+    # used on EVERY run (see `config.asymmetry` below).
+    asymmetry_mode = args.asymmetry
     electrical = None
     if args.electrical == "hifi" and not args.replay:
         c_vesc = (args.vesc_cap_uf * 1e-6) if args.vesc_cap_uf is not None \
@@ -7911,7 +8118,8 @@ def main(argv=None):
             trace_config=args.trace_config,
             noise=NoiseConfig() if args.noise else None,
             c_vesc_f=c_vesc,
-            droop_mode=droop_mode)
+            droop_mode=droop_mode,
+            asymmetry_mode=asymmetry_mode)
         print(f"[hil] electrical=hifi trace={args.trace_config} "
               f"C_vesc={c_vesc * 1e6:.0f} uF noise={'on' if args.noise else 'off'} "
               f"droop={droop_mode} (x{DROOP_SCALE[droop_mode]:.5f}, "
@@ -7932,6 +8140,36 @@ def main(argv=None):
         print("[hil] NOTE: --droop %s has no effect under --electrical %s — "
               "the simple model already uses the BENCH-measured "
               "K_DROOP_BUS_* constants." % (droop_mode, args.electrical))
+    # PART A: one banner on EVERY run, both engines, so no trace is ambiguous.
+    # ASCII only: this stream is cp1252 on the bench PC's console.
+    if not args.replay:
+        # Resolved from the SAME inputs the engines use, and computed here
+        # rather than read off `plant` because the banner precedes its
+        # construction.  Hi-fi carries the F2 droop scaling; simple mode does
+        # not (see the Plant asymmetry block for why).
+        if electrical is not None:
+            _asym_dv0 = electrical.asym_dv0_v
+        elif asymmetry_mode == "off":
+            _asym_dv0 = 0.0
+        else:
+            _asym_dv0 = asymmetry_dv0_v(0.0, 0.0)
+        print("[hil] asymmetry=%s (injected dV0 %+.6f V, droop_scale_fc %.4f, "
+              "noise=%s)"
+              % (asymmetry_mode, _asym_dv0, ASYM_DROOP_SCALE_FC
+                 if asymmetry_mode == "measured" else 1.0,
+                 "on" if args.noise else "off"))
+        if asymmetry_mode == "measured":
+            print("[hil] NOTE: asymmetry=measured is the DEFAULT from the C1 "
+                  "round (2026-09-01) and opens a NEW BASELINE ERA. Shares, "
+                  "per-channel currents and every EMS total are NOT comparable "
+                  "with a campaign run before it; pass --asymmetry off to "
+                  "reproduce the symmetric plant. The droop_scale_fc 0.930 "
+                  "figure's CI includes 1.000 - it is a best estimate, not a "
+                  "significant one, and it explains neither the +8.1 percent "
+                  "shared/single residual nor the ~4x K_DROOP gap. The two "
+                  "parameters are the M2 CONSISTENT PAIR (dV0 0.013522 V at "
+                  "s_B=1, rho 0.9434) and must not be mixed with a value from "
+                  "another fit - see the constants banner in hil_electrical.py.")
     # Scenario-level Ag105 charge-current ceiling (SCENARIOS[...]["chg_i_ceiling_a"],
     # same class of knob as vesc_cap_f).  Absent -> the firmware's configured
     # AG105_I_MAX.  Replay mode has no scenario and no charger model at all.
@@ -7958,7 +8196,21 @@ def main(argv=None):
               f"or if the board reports external-resistor mode.")
     plant = Plant(electrical=electrical, soc0=args.soc0,
                   capacity_ah=args.capacity_ah, ag105_i_max=chg_ceiling,
-                  mppt_emulation=mppt_emu)
+                  mppt_emulation=mppt_emu,
+                  # PART A: the plant applies the asymmetry only in SIMPLE mode;
+                  # with a hi-fi engine present the two Boost objects already
+                  # carry it and this is inert.  Both are handed the SAME
+                  # resolved mode so a sidecar reader cannot be misled.
+                  asymmetry_mode=asymmetry_mode,
+                  # F3: the offsets a NoiseConfig would inject, or zeros.  The
+                  # plant applies the asymmetry only in SIMPLE mode, where no
+                  # NoiseConfig is ever constructed -- but the value is passed
+                  # from the same resolved source either way so the two engines
+                  # cannot silently disagree.
+                  ina_offset_fc=(electrical.asym_ina_offset_fc
+                                 if electrical is not None else 0.0),
+                  ina_offset_bt=(electrical.asym_ina_offset_bt
+                                 if electrical is not None else 0.0))
     # Scenario-level Pi-commander mute (SCENARIOS[...]["pi_mute_after_s"]).  Read
     # ONCE here and handed to whichever commander is constructed below; None (the
     # default, and every scenario but `pi-silence`) means "never mute".  Not
@@ -8293,7 +8545,24 @@ def main(argv=None):
 
         Called every tick.  electrical.events is TRIMMED after each drain (M3):
         the sidecar file is now the durable record, so there is no reason to also
-        keep an ever-growing in-memory copy for the life of a long run."""
+        keep an ever-growing in-memory copy for the life of a long run.
+
+        F5 (fix round, 2026-09-01) — THE events.jsonl ORDERING CONSEQUENCE, and
+        why there is no State-99 teardown hook.  A `chopper_clamp` event is
+        appended when its episode ENDS (PART B2), so it is written AFTER every
+        event that occurred during the episode, even though its own `t` field is
+        the episode's START.  Read `t` for onset and `t_end` for close; do NOT
+        infer ordering from line position for this kind alone.  Every other kind
+        is still emitted at its instant and is in file order.
+
+        THE ALTERNATIVE WAS CONSIDERED AND REJECTED: this module never observes
+        a State-99 teardown on the engine's behalf -- the engine has no state
+        machine and the plant's teardown is a switch-word change like any other
+        -- so a "State-99 hook" would have to be a new observation-frame test
+        wired in purely to close an episode.  The single close in the `finally`
+        block already covers every exit including a teardown that ends the run,
+        and a teardown MID-run legitimately ends the episode by ceasing to
+        conduct, which the coalescing gap closes on the next episode's start."""
         nonlocal events_written, elec_events_total
         if electrical is None:
             return
@@ -8339,6 +8608,12 @@ def main(argv=None):
             "electrical": meta.get("electrical"),
             "pi_timeline_entries": len(meta.get("pi_timeline") or []),
             "ems_default": meta.get("ems"),
+            # THE STIMULUS ERA, recorded explicitly rather than inferred.
+            # tools/hil_report_analysis.py's matched-DP post-pass reads this
+            # key to tell a zero-preload run from a pre-2026-09-01 one; the
+            # constants-derived fallback stays for sidecars written before the
+            # key existed.  `None` where the scenario declares no preload.
+            "aux_preload_a": meta.get("aux_preload_a"),
         }
         meta_doc = {
             "format_version": META_FORMAT_VERSION,
@@ -8392,6 +8667,20 @@ def main(argv=None):
                 "droop_mode": droop_mode,
                 "droop_scale": DROOP_SCALE[droop_mode],
                 "droop_applied": electrical is not None,
+                # PART A (C1, 2026-09-01) — WHICH CONVERTER ASYMMETRY THIS RUN
+                # CARRIED.  Recorded UNCONDITIONALLY, for the same reason as
+                # droop_mode: a key that is absent reads as "old tool", not as
+                # "symmetric".  `asymmetry_dv0_v` is the RESOLVED value (it
+                # depends on --noise), and the two droop scales are recorded
+                # only when a hi-fi engine realized them — simple mode has no
+                # per-channel droop resistance to scale.
+                "asymmetry": asymmetry_mode,
+                "asymmetry_dv0_v": plant.asym_dv0_v if electrical is None
+                                   else electrical.asym_dv0_v,
+                "asymmetry_droop_scale_fc": (electrical.asym_droop_scale_fc
+                                             if electrical is not None else None),
+                "asymmetry_droop_scale_bt": (electrical.asym_droop_scale_bt
+                                             if electrical is not None else None),
                 "vesc_cap_f": (getattr(electrical, "c_vesc", None)
                                if electrical is not None else None),
                 "noise": bool(args.noise),
@@ -9008,6 +9297,14 @@ def main(argv=None):
             print(note)
         # M3: final drain so a break/exception on the last tick cannot lose the
         # handful of events accumulated since the previous drain.
+        #
+        # PART B2 (C1 round, 2026-09-01): close any chopper episode that is
+        # still conducting FIRST. From this round a `chopper_clamp` event is
+        # appended only when its episode ends (see
+        # ElectricalSim.close_chopper_episode), so a run whose last braking
+        # window is still open at the final tick would otherwise never emit it.
+        if electrical is not None:
+            electrical.close_chopper_episode()
         _drain_electrical_events()
         if events_file is not None:
             try:

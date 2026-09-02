@@ -23,6 +23,7 @@ Nothing here asserts a specific hydrogen or SoC number from a coarse solve.
 """
 import hashlib
 import os
+import re
 import sys
 
 import pytest
@@ -379,3 +380,288 @@ def test_run_exit_explicit_flag_overrides_scenario_default(tmp_path):
                      "--out", out]) == 0
     text = open(out, encoding="utf-8").read()
     assert "# run_exit_s: 20.0" in text
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 2026-09-01 matched-DP round (Stage 2 test-writer): library-extraction
+# equivalence, prepare_problem argument validation, scenario_drain_a's
+# aux_preload_a override, and the committed table's byte/header fidelity.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_prepare_problem_and_solve_unmatched_reproduce_main_dry_run(capsys):
+    """Extraction equivalence (floor item 1): main()'s --dry-run path and a
+    direct prepare_problem()+solve_unmatched() call on the SAME arguments
+    must land on the same h2/soc totals -- main() now IS this library call
+    plus argparse/printing around it, so a divergence would mean the
+    extraction changed behaviour."""
+    rc = gen.main(list(_COARSE_ARGV) + ["--dry-run"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    m_h2 = re.search(r"h2 physical\s+([0-9.eE+-]+) g", out)
+    m_soc = re.search(r"SoC 0\.700000 -> ([0-9.eE+-]+)", out)
+    assert m_h2 and m_soc, out
+    h2_expected = float(m_h2.group(1))
+    soc_final_expected = float(m_soc.group(1))
+
+    meta = hil.SCENARIOS["ems-soc-band"]
+    problem = gen.prepare_problem(
+        "ems-soc-band", meta, soc0=0.7, capacity_ah=gen.BATT_CAPACITY_AH,
+        stage_dt=1.0, n_share=5, soc_step=5e-5,
+        run_exit=float(hil.SOC_BAND_RUN_EXIT_S), charger_accounting="physical")
+    solved = gen.solve_unmatched(problem, gen.DP_LAMBDA_TERM_G_PER_SOC)
+    assert solved.h2_g == pytest.approx(h2_expected, rel=1e-6)
+    assert solved.soc_final == pytest.approx(soc_final_expected, rel=1e-6)
+
+
+def test_solve_matched_reports_closest_visited_point_when_bracket_exits(tmp_path):
+    """(floor item 2) With an unreachable --match-tol, solve_matched() must
+    still exit cleanly on the bracket-collapse test, mark converged False,
+    and report a residual/soc_final PAIR that are mutually consistent -- the
+    returned trajectory is the closest point the bisection actually visited,
+    not a stale one."""
+    meta = hil.SCENARIOS["ems-soc-band"]
+    problem = gen.prepare_problem(
+        "ems-soc-band", meta, soc0=0.7, capacity_ah=gen.BATT_CAPACITY_AH,
+        stage_dt=1.0, n_share=5, soc_step=5e-5,
+        run_exit=float(hil.SOC_BAND_RUN_EXIT_S), charger_accounting="physical")
+    target = 0.7 - 0.01
+    solved = gen.solve_matched(problem, target_soc=target, match_tol=1e-15)
+    assert solved.converged is False
+    assert solved.residual_soc is not None
+    assert abs(solved.residual_soc) > 1e-15
+    # Consistency: the reported residual is exactly the chosen trajectory's
+    # terminal SoC minus the target -- i.e. the closest VISITED point, not an
+    # unrelated number.
+    assert solved.residual_soc == pytest.approx(solved.soc_final - target,
+                                                 abs=1e-12)
+    assert 1 <= solved.n_solves <= gen.DP_LAMBDA_TERM_BISECT_ITERS
+
+
+def test_solve_matched_converges_and_reports_true_within_tolerance():
+    """The positive case of item 2: a generous --match-tol converges, and
+    converged/residual agree (|residual| <= match_tol)."""
+    meta = hil.SCENARIOS["ems-soc-band"]
+    problem = gen.prepare_problem(
+        "ems-soc-band", meta, soc0=0.7, capacity_ah=gen.BATT_CAPACITY_AH,
+        stage_dt=1.0, n_share=11, soc_step=5e-5,
+        run_exit=float(hil.SOC_BAND_RUN_EXIT_S), charger_accounting="physical")
+    href = gen.heuristic_reference(problem)
+    solved = gen.solve_matched(problem, target_soc=href["soc_final"],
+                                match_tol=2e-6)
+    assert solved.converged is True
+    assert abs(solved.residual_soc) <= 2e-6
+
+
+# ── item 3: prepare_problem raises ValueError, main() reports argparse errors
+
+@pytest.mark.parametrize("kwargs,match", [
+    ({"n_share": 1}, "n_share"),
+    ({"soc_step": 0.0}, "soc_step"),
+    ({"soc_step": -1e-5}, "soc_step"),
+    ({"stage_dt": 0.0}, "stage_dt"),
+    ({"stage_dt": -1.0}, "stage_dt"),
+    ({"capacity_ah": 0.0}, "capacity_ah"),
+    ({"capacity_ah": -5.0}, "capacity_ah"),
+    ({"soc0": 0.0}, "soc0"),
+    ({"soc0": 1.0}, "soc0"),
+    ({"soc0": 1.5}, "soc0"),
+    ({"soc0": -0.1}, "soc0"),
+])
+def test_prepare_problem_raises_valueerror_not_systemexit(kwargs, match):
+    """(floor item 3) A library caller of prepare_problem() gets a plain
+    ValueError -- never argparse's SystemExit -- for every one of the
+    documented bad-argument cases."""
+    meta = hil.SCENARIOS["ems-soc-band"]
+    base = dict(soc0=0.7, capacity_ah=gen.BATT_CAPACITY_AH, stage_dt=1.0,
+                n_share=5, soc_step=5e-5,
+                run_exit=float(hil.SOC_BAND_RUN_EXIT_S),
+                charger_accounting="physical")
+    base.update(kwargs)
+    with pytest.raises(ValueError, match=match):
+        gen.prepare_problem("ems-soc-band", meta, **base)
+
+
+def test_prepare_problem_raises_valueerror_for_bad_charger_accounting():
+    meta = hil.SCENARIOS["ems-soc-band"]
+    with pytest.raises(ValueError, match="charger_accounting"):
+        gen.prepare_problem("ems-soc-band", meta, soc0=0.7,
+                            capacity_ah=gen.BATT_CAPACITY_AH, stage_dt=1.0,
+                            n_share=5, soc_step=5e-5,
+                            run_exit=float(hil.SOC_BAND_RUN_EXIT_S),
+                            charger_accounting="not-a-real-mode")
+
+
+def test_prepare_problem_raises_valueerror_when_share_grid_crosses_cut_band(
+        monkeypatch):
+    """The share control grid crossing/touching the firmware's share-cut band
+    [0.15, 0.85] must be refused -- exercised by monkeypatching the module's
+    own DP_SHARE_MIN/MAX constants outward past the band, since the real
+    constants are always safely inside it by construction."""
+    monkeypatch.setattr(gen, "DP_SHARE_MIN", 0.05)
+    monkeypatch.setattr(gen, "DP_SHARE_MAX", 0.95)
+    meta = hil.SCENARIOS["ems-soc-band"]
+    with pytest.raises(ValueError, match="share-cut band"):
+        gen.prepare_problem("ems-soc-band", meta, soc0=0.7,
+                            capacity_ah=gen.BATT_CAPACITY_AH, stage_dt=1.0,
+                            n_share=5, soc_step=5e-5,
+                            run_exit=float(hil.SOC_BAND_RUN_EXIT_S),
+                            charger_accounting="physical")
+
+
+def test_main_still_reports_bad_soc0_as_an_argparse_error(capsys):
+    """main() must convert prepare_problem()'s ValueError back into
+    ap.error() -- a clean argparse exit code 2, not an uncaught ValueError
+    traceback."""
+    with pytest.raises(SystemExit) as excinfo:
+        gen.main(list(_COARSE_ARGV) + ["--soc0", "1.5", "--dry-run"])
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "soc0" in err
+
+
+# ── items 4/5: scenario_drain_a's ems-sdp alias and aux_preload_a override
+
+def test_scenario_drain_a_ems_sdp_matches_ems_soc_band():
+    """(floor item 4) `ems-sdp` was the coordinator-routed defect: it must
+    drain EXACTLY like `ems-soc-band` at every t, both scenarios named in
+    SOC_BAND_DRAIN_SCENARIOS."""
+    for t in (0.0, hil.SOC_BAND_DRAIN_START_S, hil.SOC_BAND_DRAIN_START_S + 5.0,
+             hil.SOC_BAND_DRAIN_END_S + 5.0):
+        assert gen.scenario_drain_a("ems-sdp", t) == \
+            pytest.approx(gen.scenario_drain_a("ems-soc-band", t))
+
+
+def test_soc_band_drain_scenarios_matches_apply_scenario_source():
+    """The other half of item 4: gen_dp_ems_table.SOC_BAND_DRAIN_SCENARIOS
+    must be the exact tuple apply_scenario() branches on in hil_plant_sim.py
+    -- a source-text regex assertion, since the two are independently
+    maintained lists (by design: the generator cannot import the simulator's
+    branch condition, only mirror it)."""
+    src_path = os.path.join(os.path.dirname(hil.__file__), "hil_plant_sim.py")
+    with open(src_path, encoding="utf-8") as fh:
+        src = fh.read()
+    m = re.search(
+        r'elif scenario in \(("ems-soc-band", "ems-dp-replay", "ems-sdp")\):',
+        src)
+    assert m is not None, \
+        "apply_scenario()'s SOC_BAND_DRAIN_SCENARIOS branch text has moved " \
+        "or been retuned -- update gen_dp_ems_table.SOC_BAND_DRAIN_SCENARIOS " \
+        "in lockstep"
+    assert gen.SOC_BAND_DRAIN_SCENARIOS == ("ems-soc-band", "ems-dp-replay",
+                                            "ems-sdp")
+
+
+def test_scenario_drain_a_aux_preload_override_matches_y_registry_value():
+    """(floor item 5) An explicit aux_preload_a override must reproduce
+    EXACTLY what the registry path computes for a scenario that declares that
+    same value as its own `aux_preload_a` (the Y-scenario convention,
+    Y_AUX_LOAD_A) -- the override is a stand-in for "the load the board
+    actually saw", not a different formula."""
+    fake = "test-override-parity-scenario"
+    import hil_plant_sim as hilmod
+    hilmod.SCENARIOS[fake] = {"aux_preload_a": hilmod.Y_AUX_LOAD_A}
+    try:
+        for t in (0.0, hilmod.AUX_PRELOAD_START_S,
+                 hilmod.AUX_PRELOAD_START_S + hilmod.SOC_LOAD_RAMP_S / 2.0,
+                 hilmod.AUX_PRELOAD_START_S + hilmod.SOC_LOAD_RAMP_S + 10.0):
+            via_registry = gen.scenario_drain_a(fake, t)
+            via_override = gen.scenario_drain_a(fake, t, hilmod.Y_AUX_LOAD_A)
+            assert via_override == pytest.approx(via_registry), t
+    finally:
+        del hilmod.SCENARIOS[fake]
+
+
+def test_scenario_drain_a_aux_preload_override_none_is_bit_identical_to_prechange():
+    """None must be the EXACT pre-change path (registry lookup), not merely
+    close to it -- covered already by the existing generic-branch tests, but
+    pinned here explicitly at the call-site level: omitting the 4th argument
+    and passing aux_preload_a=None must be indistinguishable."""
+    for name in ("mppt-tracking", "charge-to-full"):
+        for t in (0.0, 10.0, 50.0):
+            assert gen.scenario_drain_a(name, t) == \
+                gen.scenario_drain_a(name, t, None)
+
+
+def test_scenario_drain_a_aux_preload_override_falsy_zero_disables_ramp():
+    """0.0 (falsy but not None) must take the explicit-zero branch, not the
+    registry lookup -- distinct from the None case above."""
+    fake = "test-override-falsy-zero-scenario"
+    import hil_plant_sim as hilmod
+    hilmod.SCENARIOS[fake] = {"aux_preload_a": 0.75}
+    try:
+        t = hilmod.AUX_PRELOAD_START_S + hilmod.SOC_LOAD_RAMP_S
+        # Registry path would ramp the full 0.75 A in by here.
+        assert gen.scenario_drain_a(fake, t) > gen.scenario_drain_a(fake, t, 0.0)
+        assert gen.scenario_drain_a(fake, t, 0.0) == pytest.approx(hilmod.I_AUX_A)
+    finally:
+        del hilmod.SCENARIOS[fake]
+
+
+# ── item 6: committed table fidelity
+
+def test_committed_dp_replay_table_h2_matches_solve_unmatched_at_recorded_lambda():
+    """(floor item 6, fallback form) Re-derive the solved lambda_term and h2
+    figure from the committed table's OWN header, then reproduce the h2 total
+    with a direct solve_unmatched() call at that lambda -- a full bisecting
+    regeneration of this 610-stage/41-share table is measured at tens of
+    seconds and is skipped here in favour of the header-fidelity check the
+    floor explicitly allows."""
+    table_path = os.path.join(gen.DP_TABLE_DIR, "dp_ems_table_ems-dp-replay.csv")
+    if not os.path.exists(table_path):
+        pytest.skip("committed table not present in this checkout")
+    with open(table_path, encoding="utf-8") as fh:
+        text = fh.read()
+
+    def _num(pattern):
+        m = re.search(pattern, text)
+        assert m, pattern
+        return float(m.group(1))
+
+    lam_term = _num(r"# lambda_term_g_per_soc: ([0-9.eE+-]+)")
+    h2_expected = _num(r"# h2_g_physical: ([0-9.eE+-]+)")
+    soc0 = _num(r"# soc0: ([0-9.eE+-]+)")
+    capacity_ah = _num(r"# capacity_ah: ([0-9.eE+-]+)")
+    stage_dt = _num(r"# stage_dt_s: ([0-9.eE+-]+)")
+    run_exit = _num(r"# run_exit_s: ([0-9.eE+-]+)")
+    n_share = int(_num(r"# n_share: ([0-9]+)"))
+    soc_step = _num(r"soc_grid: [0-9]+ points, [0-9.eE+-]+ \.\. [0-9.eE+-]+, "
+                    r"step ([0-9.eE+-]+)")
+
+    meta = hil.SCENARIOS["ems-dp-replay"]
+    problem = gen.prepare_problem(
+        "ems-dp-replay", meta, soc0=soc0, capacity_ah=capacity_ah,
+        stage_dt=stage_dt, n_share=n_share, soc_step=soc_step,
+        run_exit=run_exit, charger_accounting="physical")
+    solved = gen.solve_unmatched(problem, lam_term)
+    assert solved.h2_g == pytest.approx(h2_expected, rel=1e-6)
+
+
+# ==========================================================================
+# ADDED BY THE STAGE-1 IMPLEMENTER (2026-09-01), NOT THE TEST-WRITER.
+# Minimal pin for the aux_preload_a header line (MED-4, preload round).
+# ==========================================================================
+
+
+def test_render_table_records_the_aux_preload_a_header_for_every_committed_table():
+    """The stimulus era must be READABLE, not only hashed.
+
+    Before this line the auxiliary preload a table was solved against was
+    recoverable only by recomputing profile_fingerprint, so a preload retune
+    elsewhere left two tables distinguishable by a digest alone. The line is
+    documentation: it is inside the fingerprint already, so it guards nothing
+    and must not move a data row.
+    """
+    import hil_plant_sim as sim
+    for name in ("ems-dp-replay", "ems-ftp75-5050", "ems-ftp75-dp"):
+        path = gen.default_table_path(name)
+        text = open(path, encoding="utf-8").read()
+        header = text.split("t,power_share_setpoint,charge_goal", 1)[0]
+        want = (0.0 if name in gen.SOC_BAND_DRAIN_SCENARIOS
+                else float(sim.SCENARIOS[name].get("aux_preload_a") or 0.0))
+        assert ("# aux_preload_a: %r" % want) in header, name
+        # It sits in the tunables block, ahead of charger_accounting.
+        assert header.index("# aux_preload_a:") <             header.index("# charger_accounting:"), name
+        # And it is genuinely inside the fingerprint, which is what makes it
+        # documentation rather than an unguarded input.
+        assert "aux_preload_a" in sim.DP_FINGERPRINT_META_KEYS
+

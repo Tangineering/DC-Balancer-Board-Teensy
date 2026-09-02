@@ -477,7 +477,11 @@ def test_rc_decay_matches_tau_analytically():
 
 
 def test_mdac_split_both_live_even_codes():
-    plant = hil.Plant()
+    # PART A (C1, 2026-09-01): `asymmetry_mode="off"`. These three tests pin
+    # the CODE-RATIO law alone; the static converter-asymmetry law that now
+    # sits on top of it is exercised by its own tests, and at the 0.15 A
+    # housekeeping current used here it would dominate the ratio entirely.
+    plant = hil.Plant(asymmetry_mode="off")
     mdac_fc = hil.MDAC_CMD_LOAD_UPDATE | 2000
     mdac_bt = hil.MDAC_CMD_LOAD_UPDATE | 2000
     obs = _obs(switch=hil.SW_FC_BUS | hil.SW_BT_BUS,
@@ -488,7 +492,13 @@ def test_mdac_split_both_live_even_codes():
 
 
 def test_mdac_split_both_live_unequal_codes():
-    plant = hil.Plant()
+    """SIGN (corrected in the C1 round, 2026-09-01): the firmware commands
+    g = K_DROOP/(RE_MAX * share), so the code is proportional to the channel's
+    droop RESISTANCE and its current is proportional to the RECIPROCAL. The FC
+    code 3000 against the BT code 1000 therefore delivers a QUARTER of the
+    total to FC, not three quarters -- the figure this test carried until the
+    inverted split was found."""
+    plant = hil.Plant(asymmetry_mode="off")
     mdac_fc = hil.MDAC_CMD_LOAD_UPDATE | 3000
     mdac_bt = hil.MDAC_CMD_LOAD_UPDATE | 1000
     obs = _obs(switch=hil.SW_FC_BUS | hil.SW_BT_BUS,
@@ -497,8 +507,8 @@ def test_mdac_split_both_live_unequal_codes():
     out = plant.step(1e-3, obs)
     total = out["I_fc"] + out["I_batt"]
     assert total == pytest.approx(hil.I_AUX_A, abs=1e-6)
-    assert out["I_fc"] == pytest.approx(total * 0.75, rel=1e-6)
-    assert out["I_batt"] == pytest.approx(total * 0.25, rel=1e-6)
+    assert out["I_fc"] == pytest.approx(total * 0.25, rel=1e-6)
+    assert out["I_batt"] == pytest.approx(total * 0.75, rel=1e-6)
 
 
 def test_mdac_split_only_fc_live():
@@ -521,7 +531,7 @@ def test_mdac_split_degenerate_zero_codes_falls_back_to_half():
     """Both codes 0 (zero-scale, valid load-and-update word, fraction 0.0):
     the denominator is 0, and the code must fall back to a 50/50 split
     rather than raising or dividing by zero."""
-    plant = hil.Plant()
+    plant = hil.Plant(asymmetry_mode="off")
     mdac_fc = hil.MDAC_CMD_LOAD_UPDATE | 0
     mdac_bt = hil.MDAC_CMD_LOAD_UPDATE | 0
     obs = _obs(switch=hil.SW_FC_BUS | hil.SW_BT_BUS,
@@ -1496,7 +1506,12 @@ def test_scenarios_chg_i_ceiling_a_only_on_charge_regen_and_charge_fault():
                       # declared but INERT (no charge-admissible stage is
                       # reachable there) — carried so a future profile change
                       # cannot silently run the charger at AG105_I_MAX.
-                      "ems-sdp-cross", "ems-ftp75-sdp"):
+                      # `ems-ftp75-socband` DECLARES IT since 2026-09-01: the
+                      # preload removal re-opened `soc-band`'s charge branch on
+                      # the FTP-75 cycle, so the ceiling is live rather than
+                      # inert, and it also resolves EMS_FRONTIER_FTP75's
+                      # stimulus split 2 (run_hil_suite.py).
+                      "ems-sdp-cross", "ems-ftp75-sdp", "ems-ftp75-socband"):
             assert meta["chg_i_ceiling_a"] == pytest.approx(0.8)
         elif name == "regen-harvest-true":
             # WP-C: same 1.6 A de-rating as charge-regen (its sibling), and an
@@ -7054,20 +7069,35 @@ def test_ems_ftp75_sdp_registry_shape():
     assert meta["duration_s"] == pytest.approx(hil.FTP75_DURATION_S)
 
 
-def test_ems_ftp75_sdp_preload_is_de_rated_below_its_siblings():
-    """0.45 A, not 0.65 A, and the reason is the FUEL-CELL branch: at 0.65 the
-    governed peak I_fc = I_tot - SHARE_MINORITY_I_MIN_A is 1.313 A (model) /
-    1.355 A (measured), i.e. ~3 % under LIMIT_I_FC_MAX -- an OC_FC that would
-    truncate the run at exactly the post-flip half it exists to observe."""
-    assert hil.FTP75_SDP_PRELOAD_A == pytest.approx(0.45)
-    assert hil.FTP75_SDP_PRELOAD_A < hil.FTP75_PRELOAD_A
-    assert hil.SCENARIOS["ems-ftp75-sdp"]["aux_preload_a"] == pytest.approx(
-        hil.FTP75_SDP_PRELOAD_A)
-    # The walk's model peak source total at this preload, and the governed FC
-    # branch peak that follows from it, with double-digit margin on 1.4 A.
-    i_tot_peak_model = 1.4123
-    i_fc_peak = i_tot_peak_model - 0.30       # SHARE_MINORITY_I_MIN_A
-    assert i_fc_peak < 0.85 * 1.4
+def test_ems_ftp75_preloads_are_both_zero_and_the_legs_share_one_stimulus():
+    """OPERATOR RULING 2026-09-01: `aux_preload_a` -> 0.0 on every drive-cycle
+    scenario.  This replaces the de-rating pin that stood here, which asserted
+    FTP75_SDP_PRELOAD_A == 0.45 < FTP75_PRELOAD_A == 0.65.
+
+    The de-rating existed because this leg commands the 0.85 share rail and at
+    0.65 A the governed peak I_fc = I_tot - SHARE_MINORITY_I_MIN_A was 1.355 A
+    on the measured composition, ~3 % under LIMIT_I_FC_MAX -- an OC_FC that
+    would truncate the run at exactly the post-flip half it exists to observe.
+    At preload 0 that peak is 0.7046 A, 50 % under the limit, so the constants
+    no longer need to differ -- and their EQUALITY is what resolves
+    EMS_FRONTIER_FTP75's stimulus split 1.
+
+    BOTH CONSTANTS ARE KEPT (at zero) rather than deleted: they are inside
+    collect_model_constants() and DP_FINGERPRINT_META_KEYS."""
+    assert hil.FTP75_PRELOAD_A == pytest.approx(0.0)
+    assert hil.FTP75_SDP_PRELOAD_A == pytest.approx(0.0)
+    assert hil.FTP75_SDP_PRELOAD_A == hil.FTP75_PRELOAD_A
+    for name in ("ems-ftp75-5050", "ems-ftp75-socband", "ems-ftp75-sdp",
+                 "ems-ftp75-dp"):
+        meta = hil.SCENARIOS[name]
+        # The KEY stays present -- a deleted key silently un-covers the DP
+        # fingerprint, which is the failure mode the ruling explicitly avoided.
+        assert "aux_preload_a" in meta, name
+        assert meta["aux_preload_a"] == pytest.approx(0.0), name
+    # The governed FC peak on the 0.85 branch, at the measured additive
+    # composition (I_AUX_A 0.15 + the cycle's own measured 0.8546 A peak).
+    i_fc_peak = 0.15 + 0.8546 - 0.30          # SHARE_MINORITY_I_MIN_A
+    assert i_fc_peak < 0.55 * 1.4
 
 
 def test_ems_sdp_cross_registry_shape():
@@ -8186,10 +8216,12 @@ def test_ems_ftp75_dp_entry_shape():
     assert m["ems_v_profile"] is ref["ems_v_profile"]
     assert m["duration_s"] == ref["duration_s"] == hil.FTP75_DURATION_S
     assert m["ems_run_exit_s"] == ref["ems_run_exit_s"] == hil.FTP75_RUN_EXIT_S
-    # THE PRELOAD IS THE 0.65 A ONE, not ems-ftp75-sdp's 0.45 A: a bound is
-    # only a bound over the demand it solved.
+    # THE PRELOAD IS ITS SIBLINGS' -- a bound is only a bound over the demand
+    # it solved.  Since 2026-09-01 that is 0.0 on ALL FOUR legs, so the leg it
+    # once had to differ from (`ems-ftp75-sdp`, then 0.45 A) now matches too.
     assert m["aux_preload_a"] == ref["aux_preload_a"] == hil.FTP75_PRELOAD_A
-    assert m["aux_preload_a"] != hil.SCENARIOS["ems-ftp75-sdp"]["aux_preload_a"]
+    assert m["aux_preload_a"] == hil.SCENARIOS["ems-ftp75-sdp"]["aux_preload_a"]
+    assert m["aux_preload_a"] == pytest.approx(0.0)
     # Charging ceiling DECLARED (unlike the causal siblings, where it is
     # inert): a DP table decides charging for itself.
     assert m["chg_i_ceiling_a"] == pytest.approx(0.8)
@@ -8400,3 +8432,271 @@ def test_explicit_droop_flag_is_not_detected_by_sniffing_argv():
         "the default-comparison form of the explicit-flag test is gone from "
         "main(); if it was deliberately replaced, update this guard to pin "
         "whatever replaced it.")
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Independent test-writer round (2026-09-01): preload-removal coverage.
+#
+# Operator ruling under test: `aux_preload_a` is 0.0 on every DRIVE-CYCLE
+# scenario (any scenario carrying `aux_preload_a` whose stimulus is an FTP-75
+# leg). The `ems-y-b30-*` scenarios are the ONE exception, and they are
+# exempted BY NAME below (never by tolerance) because `Y_AUX_LOAD_A` builds
+# the Y-profile stimulus itself rather than masking an open-loop mode the way
+# the FTP preload did.
+# ═════════════════════════════════════════════════════════════════════════
+
+# BY-NAME exemption list, per the operator ruling: any scenario declaring
+# `aux_preload_a` and NOT in this set must be exactly 0.0.
+_Y_B30_EXEMPT_NAMES = frozenset({"ems-y-b30-v1", "ems-y-b30-v3"})
+
+
+def test_preload_tripwire_every_declared_aux_preload_is_zero_except_y_b30():
+    """Every scenario that declares `aux_preload_a` (the drive-cycle-role
+    marker this registry uses) must carry exactly 0.0 -- except the two
+    `ems-y-b30-*` scenarios, exempted BY NAME per the operator ruling
+    (2026-09-01): `Y_AUX_LOAD_A` constructs the Y-profile stimulus itself, it
+    does not mask an open-loop mode the way FTP75_PRELOAD_A did, so it is not
+    a case of the same rule and must never be swept in by a numeric
+    tolerance."""
+    declaring = {name: meta["aux_preload_a"]
+                for name, meta in hil.SCENARIOS.items()
+                if meta.get("aux_preload_a") is not None}
+    # Sanity: the exemption list must not go stale -- every name in it must
+    # actually be a scenario that declares aux_preload_a, or the exemption is
+    # dead and the test would pass for the wrong reason.
+    assert _Y_B30_EXEMPT_NAMES <= set(declaring), (
+        "the ems-y-b30-* exemption list no longer matches the registry -- "
+        "update _Y_B30_EXEMPT_NAMES")
+    for name, val in declaring.items():
+        if name in _Y_B30_EXEMPT_NAMES:
+            continue
+        assert val == pytest.approx(0.0), (
+            "%r declares aux_preload_a=%r, not 0.0 -- every drive-cycle "
+            "scenario must carry the removed preload (operator ruling "
+            "2026-09-01); if this is a genuinely new exception it must be "
+            "added to _Y_B30_EXEMPT_NAMES by name, never by loosening this "
+            "assertion" % (name, val))
+    # And the exempted ones must NOT be zero -- Y_AUX_LOAD_A is unchanged.
+    for name in _Y_B30_EXEMPT_NAMES:
+        assert declaring[name] == pytest.approx(hil.Y_AUX_LOAD_A)
+        assert declaring[name] != pytest.approx(0.0)
+
+
+def test_preload_tripwire_ftp75_legs_are_exactly_the_non_exempt_set():
+    """Names the FOUR FTP-75 legs explicitly, so a future scenario that adds
+    `aux_preload_a` silently (without being swept into the tripwire above)
+    cannot hide -- the tripwire test enumerates `hil.SCENARIOS` dynamically,
+    this one pins the SET so a reviewer sees the drive-cycle role list
+    directly."""
+    declaring = {name for name, meta in hil.SCENARIOS.items()
+                if meta.get("aux_preload_a") is not None}
+    assert declaring == _Y_B30_EXEMPT_NAMES | {
+        "ems-ftp75-5050", "ems-ftp75-socband", "ems-ftp75-sdp", "ems-ftp75-dp"}
+
+
+# ── Requirement 2: sidecar aux_preload_a correctness ────────────────────────
+
+def test_sidecar_aux_preload_a_matches_registry_for_representative_scenarios():
+    """scenario_meta["aux_preload_a"] (main()'s live-run sidecar dict, built
+    at .meta.json write time) must equal the registry value for the scenario
+    actually run -- an FTP leg gets 0.0, a b30 leg gets Y_AUX_LOAD_A, and a
+    scenario that declares none gets None. Exercised through main()'s real
+    CSV+sidecar write path rather than re-implemented, so a change to the
+    dict-construction code under test is what this test is pinned to."""
+    import tempfile
+    for scenario, want in (
+            ("ems-ftp75-5050", 0.0),
+            ("ems-y-b30-v1", hil.Y_AUX_LOAD_A),
+            ("steady", None),
+    ):
+        with tempfile.TemporaryDirectory() as d:
+            csv_path = os.path.join(d, "run.csv")
+            argv = ["--teensy-ip", "127.0.0.1", "--port", "58991",
+                    "--bind-port", "0", "--rate", "200", "--csv", csv_path,
+                    "--scenario", scenario, "--electrical", "simple",
+                    "--duration", "0.02"]
+            rc = hil.main(argv)
+            assert rc == 0
+            with open(hil.meta_path_for(csv_path), encoding="utf-8") as fh:
+                doc = json.load(fh)
+            got = doc["scenario"]["aux_preload_a"]
+            if want is None:
+                assert got is None, scenario
+            else:
+                assert got == pytest.approx(want), scenario
+
+
+def test_sidecar_aux_preload_a_absent_specifically_on_replay_runs(tmp_path):
+    """On a `--replay` run main() writes `scenario_meta = None` wholesale (the
+    plant/registry are bypassed entirely), so the sidecar's "scenario" key --
+    and with it aux_preload_a -- is None rather than reflecting whatever the
+    replayed BLG's fw scenario happened to be. This is the behaviour
+    tools/hil_report_analysis.py's matched-DP post-pass relies on to tell a
+    live run from a replay."""
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    csv_path = str(tmp_path / "replay.csv")
+    argv = ["--teensy-ip", "127.0.0.1", "--port", "58991", "--bind-port", "0",
+            "--rate", "200", "--csv", csv_path, "--replay", blg_path,
+            "--duration", "0.02"]
+    rc = hil.main(argv)
+    assert rc == 0
+    with open(hil.meta_path_for(csv_path), encoding="utf-8") as fh:
+        doc = json.load(fh)
+    assert doc["scenario"] is None
+    # replay_source is populated instead -- confirms this IS the replay path
+    # and the None above is not an unrelated failure.
+    assert doc["replay_source"] is not None
+
+
+# ── Requirement 7 (hil_plant_sim.py half): DP table fingerprint pins ────────
+
+def test_ftp75_dp_table_fingerprint_starts_with_403c5e71_and_zero_preload():
+    """Pins the shipped table's header against the zero-preload re-solve
+    (2026-09-01): the fingerprint moved when FTP75_PRELOAD_A moved, because
+    `aux_preload_a` is in DP_FINGERPRINT_META_KEYS. A stale checked-in table
+    (still carrying the pre-change 2ffba905... fingerprint) would silently
+    replay against the wrong demand if this pin ever regressed."""
+    path = os.path.join(os.path.dirname(hil.__file__), "dp_tables",
+                        hil.DP_TABLE_NAME % "ems-ftp75-dp")
+    meta, _times, _shares, _goals = hil.load_dp_table(path)
+    fp = meta.get("profile_fingerprint", "")
+    assert fp.startswith("403c5e71"), fp
+    # The header has no literal "aux_preload_a" field of its own -- the
+    # constant's contribution is folded into profile_fingerprint (it is a
+    # DP_FINGERPRINT_META_KEYS member). So "the header declares aux_preload_a
+    # 0.0" is verified INDIRECTLY: the live registry's aux_preload_a is 0.0
+    # AND the checked-in fingerprint matches what dp_profile_fingerprint()
+    # computes from that live (0.0-preload) metadata today -- so the shipped
+    # table can only be read as having been solved at aux_preload_a == 0.0.
+    live_meta = hil.SCENARIOS["ems-ftp75-dp"]
+    assert live_meta["aux_preload_a"] == pytest.approx(0.0)
+    assert fp == hil.dp_profile_fingerprint("ems-ftp75-dp", live_meta)
+
+
+def test_bind_scenario_refuses_the_stale_pre_removal_fingerprint(tmp_path):
+    """A table carrying the OLD (0.65 A preload era) fingerprint prefix
+    2ffba905... must be REFUSED at bind time, not silently played against the
+    new zero-preload demand -- that is exactly the "tampered/retuned profile"
+    hazard `bind_scenario` exists to catch. Built as a synthetic CSV in
+    tmp_path (a stale real fingerprint is not recoverable now that the
+    registry has moved on, so the refusal mechanism is what is under test,
+    not the literal old digest)."""
+    scenario = "ems-ftp75-dp"
+    live_meta = dict(hil.SCENARIOS[scenario])
+    stale_fp = "2ffba905" + "0" * 56          # syntactically valid, WRONG
+    path = os.path.join(str(tmp_path), hil.DP_TABLE_NAME % scenario)
+    _write_dp_table(
+        path,
+        ["scenario: %s" % scenario, "run_exit_s: %r" % hil.FTP75_RUN_EXIT_S,
+         "profile_fingerprint: %s" % stale_fp],
+        [(0.0, 0.5, 0.0)])
+    s = hil.DpReplayStrategy(table_dir=str(tmp_path))
+    with pytest.raises(ValueError, match="DIFFERENT profile"):
+        s.bind_scenario(scenario, live_meta)
+    # And the CURRENT fingerprint is provably not the stale one -- otherwise
+    # the refusal above could be passing for the wrong reason (the table
+    # accidentally matching despite the deliberately-wrong digest).
+    assert hil.dp_profile_fingerprint(scenario, live_meta) != stale_fp
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# C1 round (2026-09-01), PART A — simple-mode static converter-asymmetry law
+# ─────────────────────────────────────────────────────────────────────────
+
+def _static_law(r, i_total, dv0=None, k_d=hil.K_DROOP_FW_OHM):
+    if dv0 is None:
+        dv0 = hil.ASYM_DV0_V
+    alpha = r + (dv0 * r * (1.0 - r) / (k_d * i_total))
+    return min(1.0, max(0.0, alpha))
+
+
+def test_plant_asymmetry_mode_rejects_unknown_value():
+    with pytest.raises(ValueError):
+        hil.Plant(asymmetry_mode="bogus")
+
+
+def test_plant_asym_dv0_v_resolved_from_mode_and_ina_offsets():
+    assert hil.Plant(asymmetry_mode="off").asym_dv0_v == 0.0
+    assert hil.Plant(asymmetry_mode="measured").asym_dv0_v == pytest.approx(
+        hil.ASYM_DV0_V)
+    # F3: simple mode is NOT scaled by a droop mode, so passing the plant's
+    # own default injected INA offset gives exactly hil.asymmetry_dv0_v's
+    # resolved value -- distinct from the bare fit value when the offset is
+    # nonzero.
+    p = hil.Plant(asymmetry_mode="measured", ina_offset_fc=0.02,
+                 ina_offset_bt=0.0)
+    assert p.asym_dv0_v == pytest.approx(hil.asymmetry_dv0_v(0.02, 0.0))
+    assert p.asym_dv0_v != pytest.approx(hil.ASYM_DV0_V)
+
+
+def test_apply_simple_asymmetry_off_mode_is_inert():
+    plant = hil.Plant(asymmetry_mode="off")
+    for r, i_total in ((0.5, 1.0), (0.2, 0.5), (0.9, 2.0)):
+        assert plant._apply_simple_asymmetry(r, i_total) == r
+
+
+def test_apply_simple_asymmetry_matches_the_static_law_at_three_currents():
+    plant = hil.Plant(asymmetry_mode="measured")
+    r = 0.5
+    for i_total in (0.5, 1.0155, 2.0):
+        got = plant._apply_simple_asymmetry(r, i_total)
+        want = _static_law(r, i_total)
+        assert got == pytest.approx(want, abs=1e-9)
+
+
+def test_apply_simple_asymmetry_sign_higher_fc_code_means_less_fc_current():
+    """Higher FC code -> higher FC droop resistance -> less FC current (the
+    PART A sign fix). The static law's r is the code-ratio share BEFORE the
+    asymmetry correction, so a higher FC code lowers r, and the correction
+    must not flip that ordering at a representative current."""
+    plant = hil.Plant(asymmetry_mode="measured")
+    i_total = 1.0
+    r_lo_fc_share = 0.3   # FC code high relative to BT -> low FC share r
+    r_hi_fc_share = 0.7   # FC code low relative to BT -> high FC share r
+    alpha_lo = plant._apply_simple_asymmetry(r_lo_fc_share, i_total)
+    alpha_hi = plant._apply_simple_asymmetry(r_hi_fc_share, i_total)
+    assert alpha_lo < alpha_hi
+
+
+def test_apply_simple_asymmetry_skipped_below_i_min():
+    plant = hil.Plant(asymmetry_mode="measured")
+    r = 0.5
+    just_below = hil.ASYM_SIMPLE_I_MIN_A - 1e-6
+    assert plant._apply_simple_asymmetry(r, just_below) == r
+    just_at_or_above = hil.ASYM_SIMPLE_I_MIN_A + 1e-6
+    assert plant._apply_simple_asymmetry(r, just_at_or_above) != r
+
+
+def test_apply_simple_asymmetry_clips_to_unit_interval():
+    plant = hil.Plant(asymmetry_mode="measured")
+    # A tiny i_total (but still >= the skip floor) and an r near 0.5 pushes
+    # the uncorrected law's magnitude up; confirm the clip actually engages
+    # by constructing an extreme case with a huge dv0 via direct attribute
+    # override (still exercising the real clip code path).
+    plant.asym_dv0_v = 10.0
+    hi = plant._apply_simple_asymmetry(0.9, hil.ASYM_SIMPLE_I_MIN_A)
+    assert hi == 1.0
+    plant.asym_dv0_v = -10.0
+    lo = plant._apply_simple_asymmetry(0.1, hil.ASYM_SIMPLE_I_MIN_A)
+    assert lo == 0.0
+
+
+def test_apply_simple_asymmetry_off_restores_pure_code_ratio_in_step():
+    """Integration check through Plant.step(): with asymmetry off, the FC
+    share is exactly the code-ratio law (code_bt/(code_fc+code_bt)); with
+    asymmetry on (default), the same codes deliver a measurably different
+    split at a current above ASYM_SIMPLE_I_MIN_A."""
+    mdac_fc = hil.MDAC_CMD_LOAD_UPDATE | 3000
+    mdac_bt = hil.MDAC_CMD_LOAD_UPDATE | 1000
+    obs = _obs(switch=hil.SW_FC_BUS | hil.SW_BT_BUS,
+               aux=AUX_BOTH_REG, current=0.0,
+               mdac_fc=mdac_fc, mdac_bt=mdac_bt)
+
+    plant_off = hil.Plant(asymmetry_mode="off")
+    out_off = plant_off.step(1e-3, obs)
+    total = out_off["I_fc"] + out_off["I_batt"]
+    assert out_off["I_fc"] == pytest.approx(total * 0.25, rel=1e-6)
+
+    plant_on = hil.Plant(asymmetry_mode="measured")
+    out_on = plant_on.step(1e-3, obs)
+    assert out_on["I_fc"] != pytest.approx(out_off["I_fc"], rel=1e-6)

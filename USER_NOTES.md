@@ -22,3 +22,7 @@
     - Since the firmware may differ from what was used when the log was collected, reporting on the results of these logs should value conformance to the original log only when the firmware version matches or if there is no important difference in functionality between the used and  historical firmware versions. For logs with older firmware versions, you can decide whether to omit it from the scenario suite or to include it with a desired deviation from the log that the new firmware should achieve, such as avoiding a failure mode that was previously observed.
     - Write a document that goes over what logs were used and why. This should be upkept as new logs are added.
 - Add a wrapper script that runs all scenarios and collects the output data to package into the final HIL report.
+
+
+# HIL Updates 2026-08-31a
+- Are the boost converters symmetric? In hil_report_20260831_021553\scenario_ems-drive-cycle_hifi I see that the commanded share is exactly 0.50 which achieves a share ratio of 0.50, but the real system has open-loop deviations that require r_cmd to be offset from 0.50 when operating in closed-loop.

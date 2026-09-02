@@ -1921,3 +1921,722 @@ def test_render_run_markdown_omits_the_line_for_a_non_ems_run():
     md = hra.render_run_markdown(_analysis_stub(folder="scenario_steady_hifi"))
     assert "EMS strategy" not in md
     assert "DYNAMICS DEMONSTRATION" not in md
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 2026-09-01 matched-DP round (Stage 2 test-writer, items 12-15):
+# matched_dp_for_run(), the stimulus-era preload override, pct_deviation
+# accounting selection, and the ANALYSIS.md / ANALYSIS_SUMMARY.md renderers.
+# ─────────────────────────────────────────────────────────────────────────
+
+import dp_results_db as _dpdb  # noqa: E402
+
+
+def _mdp_hil(soc, h2_cum_g=None, n=None):
+    if n is None:
+        n = len(soc)
+    data = {"t_s": np.arange(n, dtype=np.float64),
+            "soc": np.asarray(soc, dtype=np.float64)}
+    if h2_cum_g is not None:
+        data["h2_cum_g"] = np.asarray(h2_cum_g, dtype=np.float64)
+    return data
+
+
+def _fake_dp_record(h2_g=0.0117564033, h2_plant_g=0.0120, soc_final=0.698,
+                    converged=True, residual_soc=1.5e-6, target_soc=0.698,
+                    lambda_term=2.475, wall_s=1.2):
+    return {"h2_g": h2_g, "h2_plant_g": h2_plant_g, "soc_final": soc_final,
+           "delta_soc": soc_final - 0.7, "converged": converged,
+           "residual_soc": residual_soc, "target_soc": target_soc,
+           "lambda_term": lambda_term, "wall_s": wall_s}
+
+
+# ── item 12: matched_dp_for_run() dispatch ─────────────────────────────────
+
+def test_matched_dp_for_run_none_for_a_replay():
+    analysis = {"kind": "replay", "name": "ML0146"}
+    meta = {}
+    hil = _mdp_hil([0.70, 0.69])
+    assert hra.matched_dp_for_run(analysis, meta, hil) is None
+
+
+def test_matched_dp_for_run_none_for_scenario_without_ems_v_profile():
+    """`steady` is a real registered scenario with no ems_v_profile -- the
+    comparison does not apply to it at all."""
+    analysis = {"kind": "scenario", "name": "steady"}
+    meta = {"config": {"soc0": 0.7}}
+    hil = _mdp_hil([0.70, 0.69])
+    assert "ems_v_profile" not in (_sim.SCENARIOS.get("steady") or {})
+    assert hra.matched_dp_for_run(analysis, meta, hil) is None
+
+
+def test_matched_dp_for_run_none_for_csv_without_soc_column():
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7}}
+    hil = {"t_s": np.arange(4, dtype=np.float64)}     # no "soc" key at all
+    assert hra.matched_dp_for_run(analysis, meta, hil) is None
+
+
+def test_matched_dp_for_run_none_for_soc_column_all_nan():
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7}}
+    hil = _mdp_hil([np.nan, np.nan, np.nan])
+    assert hra.matched_dp_for_run(analysis, meta, hil) is None
+
+
+def test_matched_dp_for_run_off_mode_returns_none_unconditionally():
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7}}
+    hil = _mdp_hil([0.70, 0.69, 0.698])
+    assert hra.matched_dp_for_run(analysis, meta, hil, mode="off") is None
+
+
+def test_matched_dp_for_run_lookup_mode_no_cache_records_key_and_never_solves(
+        monkeypatch):
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    hil = _mdp_hil([0.70, 0.699, 0.698])
+
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: None)
+
+    def _must_not_solve(*a, **kw):
+        raise AssertionError("lookup mode must never call solve_and_store")
+    monkeypatch.setattr(_dpdb, "solve_and_store", _must_not_solve)
+
+    out = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
+    assert out is not None
+    assert out["status"] == "no_cached_solve"
+    assert out.get("key")
+    assert len(out["key"]) == 64                  # sha256 hex
+
+
+def test_matched_dp_for_run_records_error_status_without_raising(monkeypatch):
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    hil = _mdp_hil([0.70, 0.699, 0.698])
+
+    def _boom(*a, **kw):
+        raise RuntimeError("simulated store I/O failure")
+    monkeypatch.setattr(_dpdb, "lookup", _boom)
+
+    out = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
+    assert out is not None
+    assert out["status"] == "error"
+    assert "RuntimeError" in out["error"]
+
+
+def test_matched_dp_for_run_solve_mode_calls_solve_and_store_exactly_once(
+        monkeypatch):
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    hil = _mdp_hil([0.70, 0.699, 0.698])
+
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: None)
+    calls = {"n": 0}
+
+    def _fake_solve(fields, target, **kw):
+        calls["n"] += 1
+        return _fake_dp_record(target_soc=target)
+    monkeypatch.setattr(_dpdb, "solve_and_store", _fake_solve)
+
+    out = hra.matched_dp_for_run(analysis, meta, hil, mode="solve")
+    assert calls["n"] == 1
+    assert out["status"] == "ok"
+    assert out["source"] == "solve"
+
+
+# ── item 13: stimulus-era preload override ─────────────────────────────────
+
+def test_run_era_preload_not_applicable_for_an_unmapped_scenario():
+    era_run, cur, status = hra._run_era_preload("steady", {})
+    assert status == "not_applicable"
+    assert era_run is None
+
+
+def test_run_era_preload_unknown_when_meta_carries_no_constants_block():
+    era_run, cur, status = hra._run_era_preload("ems-ftp75-5050", {})
+    assert status == "unknown"
+    assert era_run is None
+    assert cur == pytest.approx(_sim.FTP75_PRELOAD_A)
+
+
+def test_run_era_preload_known_and_reports_the_recorded_value():
+    meta = {"constants": {"hil_plant_sim.FTP75_PRELOAD_A": 0.50}}
+    era_run, cur, status = hra._run_era_preload("ems-ftp75-5050", meta)
+    assert status == "known"
+    assert era_run == pytest.approx(0.50)
+    assert cur == pytest.approx(_sim.FTP75_PRELOAD_A)
+
+
+def test_run_era_preload_y_scenario_map_resolves_y_aux_load_a():
+    meta = {"constants": {"hil_plant_sim.Y_AUX_LOAD_A": 0.60}}
+    era_run, cur, status = hra._run_era_preload("ems-y-b30-v1", meta)
+    assert status == "known"
+    assert era_run == pytest.approx(0.60)
+    assert cur == pytest.approx(_sim.Y_AUX_LOAD_A)
+
+
+def test_run_era_preload_sdp_scenario_map_resolves_ftp75_sdp_preload_a():
+    meta = {"constants": {"hil_plant_sim.FTP75_SDP_PRELOAD_A": 0.30}}
+    era_run, cur, status = hra._run_era_preload("ems-ftp75-sdp", meta)
+    assert status == "known"
+    assert era_run == pytest.approx(0.30)
+    assert cur == pytest.approx(_sim.FTP75_SDP_PRELOAD_A)
+
+
+def test_matched_dp_for_run_era_override_moves_the_key_vs_no_constants(
+        monkeypatch):
+    """A sidecar declaring a run-era preload DIFFERENT from the current
+    checkout's constant must move matched_dp_for_run()'s key relative to a
+    meta with no `constants` block at all (which solves on current
+    metadata) -- the two describe different demand and must not collide."""
+    calls = []
+    monkeypatch.setattr(_dpdb, "lookup", lambda fields, **kw: (
+        calls.append(dict(fields)) or None))
+
+    def _must_not_solve(*a, **kw):
+        raise AssertionError
+    monkeypatch.setattr(_dpdb, "solve_and_store", _must_not_solve)
+
+    analysis = {"kind": "scenario", "name": "ems-ftp75-5050"}
+    hil = _mdp_hil([0.70, 0.699, 0.698])
+
+    meta_no_constants = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    out_a = hra.matched_dp_for_run(analysis, meta_no_constants, hil,
+                                   mode="lookup")
+
+    meta_era = {"config": {"soc0": 0.7, "electrical": "hifi"},
+               "constants": {"hil_plant_sim.FTP75_PRELOAD_A": 0.50}}
+    out_b = hra.matched_dp_for_run(analysis, meta_era, hil, mode="lookup")
+
+    assert out_a["stimulus_era"] == "unknown"
+    assert out_b["stimulus_era"]["overridden"] is True
+    assert out_a["key"] != out_b["key"]
+    assert any("differs between the run" in n for n in out_b["notes"])
+    assert any("no `constants` block" in n for n in out_a["notes"])
+
+
+# ── item 14: pct_deviation sign and accounting selection ───────────────────
+
+def test_matched_dp_for_run_pct_deviation_positive_when_run_burns_more(
+        monkeypatch):
+    rec = _fake_dp_record(h2_g=0.010)
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: rec)
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    hil = _mdp_hil([0.70, 0.699, 0.698], h2_cum_g=[0.0, 0.005, 0.012])
+    out = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
+    assert out["status"] == "ok"
+    assert out["pct_deviation"] > 0.0
+    assert out["pct_deviation"] == pytest.approx(
+        100.0 * (0.012 - 0.010) / 0.010)
+
+
+def test_matched_dp_for_run_pct_deviation_negative_when_run_burns_less(
+        monkeypatch):
+    rec = _fake_dp_record(h2_g=0.010)
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: rec)
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    hil = _mdp_hil([0.70, 0.699, 0.698], h2_cum_g=[0.0, 0.004, 0.008])
+    out = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
+    assert out["pct_deviation"] < 0.0
+
+
+def test_matched_dp_for_run_hifi_electrical_selects_physical_accounting(
+        monkeypatch):
+    rec = _fake_dp_record(h2_g=0.0100, h2_plant_g=0.0200)
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: rec)
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    hil = _mdp_hil([0.70, 0.699, 0.698], h2_cum_g=[0.0, 0.005, 0.010])
+    out = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
+    assert out["accounting"] == "physical"
+    assert out["h2_dp_compared_g"] == pytest.approx(0.0100)
+
+
+def test_matched_dp_for_run_simple_electrical_selects_plant_accounting(
+        monkeypatch):
+    rec = _fake_dp_record(h2_g=0.0100, h2_plant_g=0.0200)
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: rec)
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "simple"}}
+    hil = _mdp_hil([0.70, 0.699, 0.698], h2_cum_g=[0.0, 0.005, 0.010])
+    out = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
+    assert out["accounting"] == "simple"
+    assert out["h2_dp_compared_g"] == pytest.approx(0.0200)
+
+
+# ── item 15: renderers ──────────────────────────────────────────────────────
+
+def _mdp_analysis(folder, pct_deviation, status="ok", strategy="soc-band",
+                  role="frontier", **over):
+    m = {"status": status, "h2_run_g": 0.012, "accounting": "physical",
+        "h2_dp_compared_g": 0.010, "pct_deviation": pct_deviation,
+        "target_soc": 0.698, "delta_soc_run": -0.002,
+        "stored_target_soc": 0.698, "delta_soc_dp": -0.002,
+        "residual_soc": 1.5e-6, "converged": True, "source": "cache",
+        "key": "a" * 64, "notes": [hra.MATCHED_DP_REGEN_NOTE]}
+    m.update(over)
+    return {"folder": folder, "name": folder, "ems_strategy": strategy,
+           "ems_role": role, "matched_dp": m}
+
+
+def test_render_matched_dp_summary_sorted_by_scenario_then_deviation():
+    rows = [
+        _mdp_analysis("scenario_ems-soc-band_hifi", pct_deviation=5.0,
+                     folder_override=None),
+        _mdp_analysis("scenario_ems-soc-band_hifi", pct_deviation=-3.0),
+        _mdp_analysis("scenario_ems-dp-replay_hifi", pct_deviation=10.0,
+                     strategy="dp-replay"),
+    ]
+    # normalize the accidental "folder_override" kwarg out (not a real field)
+    for r in rows:
+        r["matched_dp"].pop("folder_override", None)
+    md = "\n".join(hra._render_matched_dp_summary(rows))
+    idx_dp = md.index("scenario_ems-dp-replay_hifi")
+    idx_neg = md.index("| -3.00 %")
+    idx_pos = md.index("| +5.00 %")
+    # sort key is (name, pct_deviation) -- "ems-dp-replay" < "ems-soc-band"
+    # lexicographically, and within ems-soc-band -3.0 sorts before +5.0.
+    assert idx_dp < idx_neg < idx_pos
+
+
+def test_render_matched_dp_summary_empty_when_no_run_has_it():
+    analyses = [{"folder": "scenario_steady_hifi"}]
+    assert hra._render_matched_dp_summary(analyses) == []
+
+
+def test_render_matched_dp_block_no_cached_solve_renders_key_and_no_dash_crash():
+    a = {"matched_dp": {"status": "no_cached_solve", "target_soc": 0.698,
+                        "key": "b" * 64, "notes": []}}
+    lines = hra._render_matched_dp_block(a)
+    text = "\n".join(lines)
+    assert "NO CACHED SOLVE" in text
+    assert "b" * 16 in text or "b" * 64 in text
+
+
+def test_render_matched_dp_summary_no_cached_solve_row_renders_dashes():
+    a = _mdp_analysis("scenario_ems-soc-band_hifi", pct_deviation=None,
+                      status="no_cached_solve")
+    a["matched_dp"]["h2_dp_compared_g"] = None
+    a["matched_dp"]["delta_soc_run"] = None
+    a["matched_dp"]["residual_soc"] = None
+    md = "\n".join(hra._render_matched_dp_summary([a]))
+    assert "no_cached_solve" in md
+    assert "—" in md            # the em-dash placeholder, '—'
+
+
+def test_render_matched_dp_regen_note_present_in_block_and_summary():
+    a = _mdp_analysis("scenario_ems-soc-band_hifi", pct_deviation=1.0)
+    assert hra.MATCHED_DP_REGEN_NOTE in "\n".join(
+        hra._render_matched_dp_block(a))
+    assert hra.MATCHED_DP_REGEN_NOTE in "\n".join(
+        hra._render_matched_dp_summary([a]))
+
+
+def test_render_matched_dp_block_empty_when_absent():
+    assert hra._render_matched_dp_block({}) == []
+    assert hra._render_matched_dp_block({"matched_dp": None}) == []
+
+
+# ── item 15 (end-to-end): --matched-dp off leaves it out of analysis.json ──
+
+def _add_scenario_run_with_soc(report_dir, name, soc_values, mode="hifi"):
+    """Like add_scenario_run(), but with a genuinely time-varying `soc`
+    column -- add_scenario_run()'s own make_scenario_csv() hardcodes soc to
+    a flat 0.5, which can never exercise matched_dp_for_run()'s delta-SoC
+    path."""
+    csv_name = "hil_scenario_%s_%s.csv" % (name, mode)
+    csv_path = report_dir / csv_name
+    with open(csv_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(SCEN_HEADER)
+        for i, soc in enumerate(soc_values):
+            t = i * 0.05
+            row = {
+                "t": t, "seq": i, "V_fc": 13.0, "V_batt": 8.0, "V_bus": 16.0,
+                "V_chg": 13.0, "V_rgn": 16.0, "I_fc": 0.5, "I_batt": 0.5,
+                "v_actual": 1.0 + 0.01 * i, "I_charge": 0.1,
+                "ag105_status": "0x00", "state": 2, "switch": 0x3F,
+                "aux": 0x0F, "current": 1.2, "mdac_fc": _mdac_word(0.3),
+                "mdac_bt": _mdac_word(0.3), "fault_flags": 0, "soc": soc,
+                "elec_substep_hz": 30000.0, "elec_events": 0,
+                "cmd_v_sp": 1.0, "cmd_share_sp": 0.5,
+            }
+            w.writerow([row[c] for c in SCEN_HEADER])
+    meta = make_meta(mode="scenario_%s" % mode)
+    meta["config"] = {"soc0": soc_values[0], "electrical": mode}
+    with open(str(csv_path) + ".meta.json", "w") as f:
+        json.dump(meta, f)
+    return csv_path
+
+
+def test_analyze_run_matched_dp_off_omits_the_key_from_analysis_json(tmp_path):
+    d = build_report(tmp_path)
+    soc = [0.700, 0.699, 0.6985, 0.698]
+    _add_scenario_run_with_soc(d, "ems-soc-band", soc)
+    run = hra.discover_runs(d)[0]
+    a = hra.analyze_run(run, d, {}, no_move=True, matched_dp="off")
+    assert "matched_dp" not in a
+    on_disk = json.loads((d / "analysis.json").read_text()) \
+        if (d / "analysis.json").exists() else None
+    # analyze_run() itself only writes the per-run analysis.json, not the
+    # campaign-level one -- verify THAT file instead.
+    per_run = json.loads(
+        (Path(run.csv_path).parent / "analysis.json").read_text())
+    assert "matched_dp" not in per_run
+
+
+def test_analyze_run_matched_dp_lookup_records_no_cached_solve_end_to_end(
+        tmp_path, monkeypatch):
+    d = build_report(tmp_path)
+    soc = [0.700, 0.699, 0.6985, 0.698]
+    _add_scenario_run_with_soc(d, "ems-soc-band", soc)
+    run = hra.discover_runs(d)[0]
+
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: None)
+
+    def _must_not_solve(*a, **kw):
+        raise AssertionError
+    monkeypatch.setattr(_dpdb, "solve_and_store", _must_not_solve)
+
+    a = hra.analyze_run(run, d, {}, no_move=True, matched_dp="lookup")
+    assert a["matched_dp"]["status"] == "no_cached_solve"
+    per_run = json.loads(
+        (Path(run.csv_path).parent / "analysis.json").read_text())
+    assert per_run["matched_dp"]["status"] == "no_cached_solve"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# fix-round-2 (coordinator round 2): MATCHED_DP_GFC_NOTE, --matched-dp-strict
+# wiring, and the duration-gated solve refusal.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_matched_dp_gfc_note_present_in_notes_for_every_status(monkeypatch):
+    """MATCHED_DP_GFC_NOTE must be appended unconditionally -- it documents a
+    systematic bias between the run's dynamic Gfc integral and the DP's DC-
+    gain stage cost, which applies whether or not a cached solve was found."""
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    hil = _mdp_hil([0.70, 0.699, 0.698])
+
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: None)
+    out_miss = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
+    assert hra.MATCHED_DP_GFC_NOTE in out_miss["notes"]
+
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: _fake_dp_record())
+    out_ok = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
+    assert out_ok["status"] == "ok"
+    assert hra.MATCHED_DP_GFC_NOTE in out_ok["notes"]
+
+
+def test_render_matched_dp_block_and_summary_include_the_gfc_note():
+    a = _mdp_analysis("scenario_ems-soc-band_hifi", pct_deviation=1.0)
+    a["matched_dp"]["notes"] = [hra.MATCHED_DP_REGEN_NOTE,
+                                hra.MATCHED_DP_GFC_NOTE]
+    block = "\n".join(hra._render_matched_dp_block(a))
+    summary = "\n".join(hra._render_matched_dp_summary([a]))
+    assert hra.MATCHED_DP_GFC_NOTE in block
+    assert hra.MATCHED_DP_GFC_NOTE in summary
+
+
+def test_matched_dp_cost_estimate_s_anchors_and_grows_with_duration():
+    """A rough order-of-magnitude power-law estimate anchored on the two
+    measured figures the docstring cites (61 s -> ~13 s)."""
+    assert hra.matched_dp_cost_estimate_s(61.0) == pytest.approx(13.0, rel=0.05)
+    assert hra.matched_dp_cost_estimate_s(0.0) == pytest.approx(13.0)
+    assert hra.matched_dp_cost_estimate_s(None) == pytest.approx(13.0)
+    est_340 = hra.matched_dp_cost_estimate_s(340.0)
+    assert est_340 > hra.matched_dp_cost_estimate_s(61.0)
+    # Documented order: tens of minutes for the 340 s FTP-75 cycle.
+    assert 300.0 < est_340 < 3600.0 * 2
+
+
+def test_matched_dp_for_run_solve_refuses_a_long_scenario_without_allow_long(
+        monkeypatch):
+    """`ems-ftp75-5050` runs 340 s (> MATCHED_DP_LONG_DURATION_S = 100 s):
+    `solve` mode must refuse and print a duration-derived estimate rather
+    than silently starting a tens-of-minutes solve."""
+    import hil_plant_sim as sim
+    duration = float(sim.SCENARIOS["ems-ftp75-5050"]["duration_s"])
+    assert duration > hra.MATCHED_DP_LONG_DURATION_S
+
+    analysis = {"kind": "scenario", "name": "ems-ftp75-5050"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    hil = _mdp_hil([0.70, 0.699, 0.698])
+
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: None)
+
+    def _must_not_solve(*a, **kw):
+        raise AssertionError("a long scenario must not be solved without "
+                             "--matched-dp-allow-long")
+    monkeypatch.setattr(_dpdb, "solve_and_store", _must_not_solve)
+
+    out = hra.matched_dp_for_run(analysis, meta, hil, mode="solve",
+                                 allow_long=False)
+    assert out["status"] == "solve_refused_long"
+    est_min = hra.matched_dp_cost_estimate_s(duration) / 60.0
+    assert any("%.0f min" % est_min in n for n in out["notes"]), out["notes"]
+    assert any("--matched-dp-allow-long" in n for n in out["notes"])
+
+
+def test_matched_dp_for_run_solve_allow_long_permits_the_solve(monkeypatch):
+    analysis = {"kind": "scenario", "name": "ems-ftp75-5050"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    hil = _mdp_hil([0.70, 0.699, 0.698])
+
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: None)
+    calls = {"n": 0}
+
+    def _fake_solve(fields, target, **kw):
+        calls["n"] += 1
+        return _fake_dp_record(target_soc=target)
+    monkeypatch.setattr(_dpdb, "solve_and_store", _fake_solve)
+
+    out = hra.matched_dp_for_run(analysis, meta, hil, mode="solve",
+                                 allow_long=True)
+    assert calls["n"] == 1
+    assert out["status"] == "ok"
+
+
+def test_matched_dp_for_run_short_scenario_solve_never_refused(monkeypatch):
+    """The refusal is duration-gated, not solve-mode-gated: a <=100 s
+    scenario (ems-soc-band, 61 s) must solve without --matched-dp-allow-long."""
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    hil = _mdp_hil([0.70, 0.699, 0.698])
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: None)
+    monkeypatch.setattr(_dpdb, "solve_and_store",
+                        lambda fields, target, **kw: _fake_dp_record(
+                            target_soc=target))
+    out = hra.matched_dp_for_run(analysis, meta, hil, mode="solve",
+                                 allow_long=False)
+    assert out["status"] == "ok"
+
+
+def test_matched_dp_for_run_strict_passed_through_to_dpdb_lookup(monkeypatch):
+    """strict is forwarded to dp_results_db.lookup() verbatim -- captured via
+    a spy rather than re-testing lookup()'s own strict semantics (covered in
+    test_dp_results_db.py)."""
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    hil = _mdp_hil([0.70, 0.699, 0.698])
+    seen = {}
+
+    def _spy_lookup(fields, tol_soc=None, db_dir=None, strict=False):
+        seen["strict"] = strict
+        return None
+    monkeypatch.setattr(_dpdb, "lookup", _spy_lookup)
+
+    hra.matched_dp_for_run(analysis, meta, hil, mode="lookup", strict=True)
+    assert seen["strict"] is True
+    hra.matched_dp_for_run(analysis, meta, hil, mode="lookup", strict=False)
+    assert seen["strict"] is False
+
+
+def test_matched_dp_for_run_strict_no_cache_note_mentions_strict_mode(
+        monkeypatch):
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    hil = _mdp_hil([0.70, 0.699, 0.698])
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: None)
+
+    out_strict = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup",
+                                        strict=True)
+    assert any("strict provenance matching is ON" in n
+              for n in out_strict["notes"])
+    out_lenient = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup",
+                                         strict=False)
+    assert not any("strict provenance matching is ON" in n
+                  for n in out_lenient["notes"])
+
+
+def test_matched_dp_for_run_provenance_drift_ok_record_carries_flag_and_note(
+        monkeypatch):
+    rec = _fake_dp_record()
+    rec["provenance_drift"] = True
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: rec)
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    hil = _mdp_hil([0.70, 0.699, 0.698])
+    out = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
+    assert out["status"] == "ok"
+    assert out["provenance_drift"] is True
+    assert any("PROVENANCE DRIFT" in n for n in out["notes"])
+    assert any("--matched-dp-strict" in n for n in out["notes"])
+
+
+def test_matched_dp_for_run_provenance_drift_false_no_warning_note(
+        monkeypatch):
+    rec = _fake_dp_record()
+    rec["provenance_drift"] = False
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: rec)
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    hil = _mdp_hil([0.70, 0.699, 0.698])
+    out = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
+    assert out["provenance_drift"] is False
+    assert not any("PROVENANCE DRIFT" in n for n in out["notes"])
+
+
+# ── CLI wiring: --matched-dp-strict / --matched-dp-allow-long ──────────────
+
+def test_analyze_run_forwards_strict_and_allow_long_to_matched_dp_for_run(
+        tmp_path, monkeypatch):
+    d = build_report(tmp_path)
+    soc = [0.700, 0.699, 0.6985, 0.698]
+    _add_scenario_run_with_soc(d, "ems-soc-band", soc)
+    run = hra.discover_runs(d)[0]
+
+    seen = {}
+
+    def _spy(analysis, meta, hil, mode="lookup", tol_soc=None, log=print,
+             strict=False, allow_long=False):
+        seen["strict"] = strict
+        seen["allow_long"] = allow_long
+        return None
+    monkeypatch.setattr(hra, "matched_dp_for_run", _spy)
+
+    hra.analyze_run(run, d, {}, no_move=True, matched_dp="solve",
+                    matched_dp_strict=True, matched_dp_allow_long=True)
+    assert seen["strict"] is True
+    assert seen["allow_long"] is True
+
+    hra.analyze_run(run, d, {}, no_move=True, matched_dp="solve",
+                    matched_dp_strict=False, matched_dp_allow_long=False)
+    assert seen["strict"] is False
+    assert seen["allow_long"] is False
+
+
+def test_analyze_report_forwards_strict_and_allow_long_to_analyze_run(
+        tmp_path, monkeypatch):
+    d = build_report(tmp_path)
+    soc = [0.700, 0.699, 0.6985, 0.698]
+    _add_scenario_run_with_soc(d, "ems-soc-band", soc)
+
+    seen = []
+    real_analyze_run = hra.analyze_run
+
+    def _spy(run, report_dir, results_json, no_move=False, force=False,
+             matched_dp="lookup", matched_dp_tol=None,
+             matched_dp_strict=False, matched_dp_allow_long=False):
+        seen.append((matched_dp_strict, matched_dp_allow_long))
+        return real_analyze_run(run, report_dir, results_json,
+                                no_move=no_move, force=force,
+                                matched_dp="off")
+    monkeypatch.setattr(hra, "analyze_run", _spy)
+
+    hra.analyze_report(d, no_move=True, matched_dp="off",
+                       matched_dp_strict=True, matched_dp_allow_long=True)
+    assert seen == [(True, True)]
+
+
+def test_main_wires_matched_dp_strict_and_allow_long_cli_flags(
+        tmp_path, monkeypatch):
+    d = build_report(tmp_path)
+    (d / "results.json").write_text("{}")   # a real report marker
+
+    captured = {}
+
+    def _fake_analyze_report(report_dir, only=None, no_move=False,
+                             force=False, log=print, matched_dp="lookup",
+                             matched_dp_tol=None, matched_dp_strict=False,
+                             matched_dp_allow_long=False):
+        captured["strict"] = matched_dp_strict
+        captured["allow_long"] = matched_dp_allow_long
+        return [], []
+    monkeypatch.setattr(hra, "analyze_report", _fake_analyze_report)
+
+    rc = hra.main([str(d), "--matched-dp", "solve", "--matched-dp-strict",
+                  "--matched-dp-allow-long"])
+    assert rc == 0
+    assert captured["strict"] is True
+    assert captured["allow_long"] is True
+
+
+def test_main_matched_dp_strict_and_allow_long_default_false(tmp_path,
+                                                              monkeypatch):
+    d = build_report(tmp_path)
+    (d / "results.json").write_text("{}")
+    captured = {}
+
+    def _fake_analyze_report(report_dir, only=None, no_move=False,
+                             force=False, log=print, matched_dp="lookup",
+                             matched_dp_tol=None, matched_dp_strict=False,
+                             matched_dp_allow_long=False):
+        captured["strict"] = matched_dp_strict
+        captured["allow_long"] = matched_dp_allow_long
+        return [], []
+    monkeypatch.setattr(hra, "analyze_report", _fake_analyze_report)
+
+    rc = hra.main([str(d)])
+    assert rc == 0
+    assert captured["strict"] is False
+    assert captured["allow_long"] is False
+
+
+def test_render_matched_dp_block_solve_refused_long_status():
+    a = {"matched_dp": {"status": "solve_refused_long", "notes": []}}
+    text = "\n".join(hra._render_matched_dp_block(a))
+    assert "solve REFUSED" in text
+    assert "%.0f s" % hra.MATCHED_DP_LONG_DURATION_S in text
+    assert "--matched-dp-allow-long" in text
+
+
+# ==========================================================================
+# ADDED BY THE STAGE-1 IMPLEMENTER (2026-09-01), NOT THE TEST-WRITER.
+# The test-writer stage had closed when the stimulus-era generalization
+# (MED follow-up) landed; the coordinator authorized a minimal extension for
+# that item only. These cover _era_overrides() and nothing else.
+# ==========================================================================
+
+
+def _era_meta(**kw):
+    """A meta sidecar shaped like run_hil_suite's, with the blocks
+    _era_overrides() sources from."""
+    meta = {"config": {"soc0": 0.7, "capacity_ah": 5.0, "electrical": "hifi"},
+            "scenario": {"name": "ems-soc-band"},
+            "constants": {}}
+    for block, vals in kw.items():
+        meta.setdefault(block, {}).update(vals)
+    return meta
+
+
+def test_era_overrides_sources_every_fingerprint_key_it_can():
+    """The reported production failure was preload-only reconstruction: the
+    profile fingerprint also covers chg_i_ceiling_a and duration_s, and a
+    scenario-meta change in either refused an archived run."""
+    sim = hra._plant_sim_module()
+    scen_meta = sim.SCENARIOS["ems-soc-band"]
+    meta = _era_meta(config={"chg_i_ceiling_a": 0.123},
+                     scenario={"duration_s": 999.0})
+    over = hra._era_overrides("ems-soc-band", meta, scen_meta, 0.65, "known")
+    assert over["chg_i_ceiling_a"] == 0.123
+    assert over["duration_s"] == 999.0
+    assert over["aux_preload_a"] == 0.65
+    # Only DP fingerprint keys are sourced; the sidecar's own `name` is not.
+    assert set(over) <= set(sim.DP_FINGERPRINT_META_KEYS)
+
+
+def test_era_overrides_drops_values_equal_to_the_live_meta():
+    """An override that changes nothing is noise in the record and in the
+    fingerprint-drift message."""
+    sim = hra._plant_sim_module()
+    scen_meta = sim.SCENARIOS["ems-soc-band"]
+    meta = _era_meta(config={"chg_i_ceiling_a":
+                             float(scen_meta.get("chg_i_ceiling_a") or 0.0)},
+                     scenario={"duration_s": float(scen_meta["duration_s"])})
+    over = hra._era_overrides("ems-soc-band", meta, scen_meta, None,
+                              "not_applicable")
+    assert "duration_s" not in over
+    assert "chg_i_ceiling_a" not in over
+
+
+def test_era_overrides_omits_the_preload_when_the_run_era_is_unknown():
+    """A sidecar with no constants block cannot source the preload, so the
+    key must stay absent and become a named suspect rather than be guessed."""
+    over = hra._era_overrides("ems-soc-band", _era_meta(),
+                              hra._plant_sim_module().SCENARIOS["ems-soc-band"],
+                              None, "unknown")
+    assert "aux_preload_a" not in over

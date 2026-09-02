@@ -217,6 +217,8 @@ import argparse
 import hashlib
 import os
 import sys
+import time
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -423,25 +425,55 @@ def pack_current_from_bus_power(p_bt_bus_w, soc):
 # ─────────────────────────────────────────────────────────────────────────────
 # Demand model (D7)
 # ─────────────────────────────────────────────────────────────────────────────
-def scenario_drain_a(scenario, t):
+# The scenarios whose auxiliary load is the bespoke SoC-band drain rather than
+# the generic `aux_preload_a` term.  It MIRRORS hil_plant_sim.apply_scenario()'s
+# own branch (:7417) and must be updated with it: the simulator applies the
+# 1.0 A drain to all three names deliberately, because the three-way EMS
+# comparison is only meaningful if the load is bit-identical.
+#
+# DEFECT FIXED 2026-09-01 (B2): this list carried only the first two names, so
+# a DP baseline solved for an `ems-sdp` run saw roughly HALF the real demand
+# (measured 0.0034 g against the campaign's 0.0125 g).  The generated
+# `ems-dp-replay` table is unaffected — that scenario was already in the list —
+# and is byte-identical across the fix.
+SOC_BAND_DRAIN_SCENARIOS = ("ems-soc-band", "ems-dp-replay", "ems-sdp")
+
+
+def scenario_drain_a(scenario, t, aux_preload_a=None):
     """The scenario's bus-side auxiliary load [A] at time t.
 
-    Mirrors apply_scenario()'s `ems-soc-band` branch term for term, and its
+    Mirrors apply_scenario()'s SOC_BAND_DRAIN_SCENARIOS branch term for term,
+    and its
     GENERIC `aux_preload_a` branch by calling the same function the simulator
     does — so a DP table is always solved against the load the run will
     actually apply.  Returns I_AUX_A alone for a scenario with neither.
 
     The generic term was added 2026-08-31 with the `aux_preload_a` key.  It is
     0.0 for every scenario that predates the key, `ems-dp-replay` included, so
-    the shipped table's demand is unchanged."""
-    if scenario not in ("ems-soc-band", "ems-dp-replay"):
-        return sim.I_AUX_A + sim.scenario_aux_preload_a(scenario, t)
+    the shipped table's demand is unchanged.
+
+    STIMULUS ERA (2026-09-01).  `aux_preload_a`, when not None, OVERRIDES the
+    value `sim.scenario_aux_preload_a()` reads out of the live SCENARIOS
+    registry.  It exists because an ARCHIVED run executed under the preload
+    constant of its own era, and a DP baseline solved for that run must use the
+    load the board actually saw, not the load the current checkout declares.
+    The ramp is the simulator's own, term for term.  None keeps the live
+    lookup, so every existing caller is unchanged."""
+    if scenario not in SOC_BAND_DRAIN_SCENARIOS:
+        if aux_preload_a is None:
+            preload = sim.scenario_aux_preload_a(scenario, t)
+        elif not aux_preload_a:
+            preload = 0.0
+        else:
+            ramp = (t - sim.AUX_PRELOAD_START_S) / sim.SOC_LOAD_RAMP_S
+            preload = float(aux_preload_a) * max(0.0, min(1.0, ramp))
+        return sim.I_AUX_A + preload
     ramp_in = max(0.0, min(1.0, (t - sim.SOC_BAND_DRAIN_START_S) / sim.SOC_LOAD_RAMP_S))
     ramp_out = max(0.0, min(1.0, (t - sim.SOC_BAND_DRAIN_END_S) / sim.SOC_LOAD_RAMP_S))
     return sim.I_AUX_A + sim.SOC_BAND_DRAIN_LOAD_A * (ramp_in - ramp_out)
 
 
-def build_demand(scenario, meta, times, dt):
+def build_demand(scenario, meta, times, dt, aux_preload_a=None):
     """Per-stage (v, a, P_dem_bus, V_bus, I_total, cruise) arrays.
 
     MECHANICS (Plant.step's model, without the stiction deadband — the profile
@@ -488,7 +520,7 @@ def build_demand(scenario, meta, times, dt):
         v[k] = sim.piecewise(prof, t)
         a[k] = (sim.piecewise(prof, t + 0.5 * dt)
                 - sim.piecewise(prof, t - 0.5 * dt)) / dt
-        i_aux[k] = scenario_drain_a(scenario, t)
+        i_aux[k] = scenario_drain_a(scenario, t, aux_preload_a)
 
     f_coul = np.where(v > sim.V_STICTION, sim.F_COULOMB,
                       np.where(v < -sim.V_STICTION, -sim.F_COULOMB, 0.0))
@@ -760,6 +792,213 @@ def heuristic_walk(scenario, meta, soc0, times, p_dem, v_bus, i_total, dt,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Library layer — the solve, callable without argparse
+# ─────────────────────────────────────────────────────────────────────────────
+# RATIONALE (2026-09-01, WORK_QUEUE §1).  The analysis pipeline must produce a
+# delta-SoC-matched DP hydrogen baseline for every HIL run that executed a
+# drive cycle.  That is the same solve `main()` performs, at a target read off
+# the run rather than off a causal walk, and with no table written.  Everything
+# below is a factoring of what `main()` already did; `main()` now calls it, so
+# the generator and the analysis baseline cannot diverge.  The committed tables
+# are byte-identical across the change (verified by regeneration and cmp).
+@dataclass
+class Problem:
+    """Everything a DP solve needs, resolved once and reusable across lambdas."""
+    scenario: str
+    meta: dict
+    soc0: float
+    capacity_ah: float
+    stage_dt: float
+    n_share: int
+    soc_step: float
+    run_exit: float
+    charger_accounting: str
+    lambda_dev: float
+    aux_preload_a: object          # None = the live registry value
+    fingerprint: str
+    chg_a: float
+    cap_as: float
+    n_stages: int
+    times: object
+    v: object
+    a: object
+    p_dem: object
+    v_bus: object
+    i_total: object
+    cruise: object
+    chg_ok: object
+    shares: object
+    soc_grid: object
+    grid_info: dict
+    reach_lo: float
+    reach_hi: float
+    i0: int
+
+
+@dataclass
+class MatchedSolve:
+    """One solved DP trajectory, matched or not."""
+    h2_g: float
+    h2_plant_g: float
+    soc_final: float
+    delta_soc: float
+    residual_soc: object           # None when no target was requested
+    converged: object              # True / False / None ("n/a")
+    lambda_term: float
+    n_solves: int
+    j0: float
+    share: list
+    charge: list
+    soc: list
+    wall_s: float
+
+
+def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
+                    soc_step, run_exit, charger_accounting,
+                    lambda_dev=DP_LAMBDA_DEV_G_PER_SOC_S,
+                    aux_preload_a=None):
+    """Resolve the demand, the control grid and the SoC grid for one scenario.
+
+    Raises ValueError on an argument the solve cannot honour, so a library
+    caller gets an exception rather than argparse's exit; `main()` converts it
+    back into an `ap.error()`."""
+    if n_share < 2:
+        raise ValueError("n_share must be >= 2")
+    if soc_step <= 0 or stage_dt <= 0 or capacity_ah <= 0:
+        raise ValueError("soc_step, stage_dt and capacity_ah must all be > 0")
+    if not 0.0 < soc0 < 1.0:
+        raise ValueError("soc0 must be strictly inside (0, 1)")
+    if charger_accounting not in ("simple", "physical"):
+        raise ValueError("charger_accounting must be 'simple' or 'physical'")
+
+    duration = float(meta["duration_s"])
+    dt = float(stage_dt)
+    n_stages = int(round(duration / dt))
+    times = np.arange(n_stages + 1) * dt      # N+1 rows: ZOH defined at the end
+    cap_as = capacity_ah * 3600.0
+    chg_a = sim.dp_chg_ceiling_a(meta)
+
+    v, a, p_dem, v_bus, i_total, cruise = build_demand(
+        scenario, meta, times, dt, aux_preload_a)
+    chg_ok = charge_mask(times, p_dem, v_bus, cruise, chg_a, run_exit)
+
+    shares = np.linspace(DP_SHARE_MIN, DP_SHARE_MAX, n_share)
+    if not (sim.SOC_BAND_SHARE_MIN < shares[0]
+            and shares[-1] < sim.SOC_BAND_SHARE_MAX):
+        raise ValueError(
+            "share control grid [%.4f, %.4f] touches or crosses the "
+            "share-cut band [%.2f, %.2f] - commanding its edge risks "
+            "updateShareSetpointCutoff() opening a bus switch"
+            % (shares[0], shares[-1], sim.SOC_BAND_SHARE_MIN,
+               sim.SOC_BAND_SHARE_MAX))
+
+    lo, hi = reachable_soc_window(soc0, p_dem[:n_stages], v_bus[:n_stages],
+                                  chg_ok[:n_stages], dt, cap_as, chg_a,
+                                  shares[0], shares[-1])
+    span = max(hi - lo, DP_SOC_WINDOW_MIN_PAD)
+    pad = max(DP_SOC_WINDOW_PAD_FRAC * span, DP_SOC_WINDOW_MIN_PAD)
+    g_lo, g_hi = lo - pad, hi + pad
+    n_soc = int(round((g_hi - g_lo) / soc_step)) + 1
+    soc_grid = g_lo + np.arange(n_soc) * soc_step
+
+    return Problem(
+        scenario=scenario, meta=meta, soc0=float(soc0),
+        capacity_ah=float(capacity_ah), stage_dt=dt, n_share=int(n_share),
+        soc_step=float(soc_step), run_exit=float(run_exit),
+        charger_accounting=charger_accounting, lambda_dev=float(lambda_dev),
+        aux_preload_a=aux_preload_a,
+        fingerprint=sim.dp_profile_fingerprint(scenario, meta),
+        chg_a=float(chg_a), cap_as=float(cap_as), n_stages=n_stages,
+        times=times, v=v, a=a, p_dem=p_dem, v_bus=v_bus, i_total=i_total,
+        cruise=cruise, chg_ok=chg_ok, shares=shares, soc_grid=soc_grid,
+        grid_info={"n": n_soc, "lo": float(soc_grid[0]),
+                   "hi": float(soc_grid[-1])},
+        reach_lo=float(lo), reach_hi=float(hi),
+        i0=int(np.abs(soc_grid - soc0).argmin()))
+
+
+def _roll(problem, lam_term):
+    """One backward induction plus its forward rollout at `lam_term`."""
+    p = problem
+    n = p.n_stages
+    J0, Uopt = solve_dp(p.soc0, p.times[:n], p.p_dem[:n], p.v_bus[:n],
+                        p.chg_ok[:n], p.stage_dt, p.cap_as, p.chg_a, p.shares,
+                        p.soc_grid, p.lambda_dev, lam_term,
+                        p.charger_accounting)
+    if not np.isfinite(J0[p.i0]):
+        raise DpInfeasible(
+            "the initial state (SoC %.6f) has infinite cost-to-go: no "
+            "feasible trajectory exists under the current limits. Check "
+            "the FC current ceiling (%.2f A) against the demand peak "
+            "(%.3f A)." % (p.soc0, LIMIT_I_FC_MAX_A, p.i_total.max()))
+    out = forward_pass(p.soc0, p.times[:n], p.p_dem[:n], p.v_bus[:n],
+                       p.chg_ok[:n], p.stage_dt, p.cap_as, p.chg_a, p.shares,
+                       p.soc_grid, Uopt)
+    return (J0[p.i0],) + out
+
+
+def _to_solve(problem, res, lam_term, *, residual, converged, n_solves,
+              wall_s):
+    j0, share, charge, soc_traj, h2, h2_plant = res
+    return MatchedSolve(
+        h2_g=float(h2), h2_plant_g=float(h2_plant),
+        soc_final=float(soc_traj[-1]),
+        delta_soc=float(soc_traj[-1]) - problem.soc0,
+        residual_soc=residual, converged=converged,
+        lambda_term=float(lam_term), n_solves=int(n_solves), j0=float(j0),
+        share=[float(x) for x in share], charge=[float(x) for x in charge],
+        soc=[float(x) for x in soc_traj], wall_s=float(wall_s))
+
+
+def solve_unmatched(problem, lambda_term=DP_LAMBDA_TERM_G_PER_SOC):
+    """Solve at a GIVEN terminal weight.  `converged` is None (not a match)."""
+    t0 = time.time()
+    res = _roll(problem, lambda_term)
+    return _to_solve(problem, res, lambda_term, residual=None, converged=None,
+                     n_solves=1, wall_s=time.time() - t0)
+
+
+def solve_matched(problem, *, target_soc, match_tol=2.0e-6, lambda_term0=1.0):
+    """Bisect LAMBDA_TERM until the terminal SoC lands on `target_soc`.
+
+    LAMBDA_TERM -> terminal SoC is monotone non-decreasing but NOT continuous
+    (the control grid is discrete), so the loop exits on the SoC tolerance OR
+    on a narrow bracket and reports the residual either way.  The returned
+    solve is the CLOSEST point visited, not the last one."""
+    t0 = time.time()
+    lo_l, hi_l = DP_LAMBDA_TERM_BISECT_RANGE
+    best = None
+    n_solves = 0
+    for n_solves in range(1, DP_LAMBDA_TERM_BISECT_ITERS + 1):
+        lam_term = (lo_l * hi_l) ** 0.5              # geometric midpoint
+        res = _roll(problem, lam_term)
+        err = float(res[3][-1]) - target_soc
+        if best is None or abs(err) < abs(best[0]):
+            best = (err, lam_term, res)
+        if abs(err) <= match_tol:
+            break
+        if err < 0.0:
+            lo_l = lam_term                          # too much discharge
+        else:
+            hi_l = lam_term
+        if hi_l / lo_l < 1.0 + 1e-6:
+            break
+    err, lam_term, res = best
+    return _to_solve(problem, res, lam_term, residual=float(err),
+                     converged=bool(abs(err) <= match_tol),
+                     n_solves=n_solves, wall_s=time.time() - t0)
+
+
+def heuristic_reference(problem):
+    """The causal `soc-band` walk through this problem's reduced model."""
+    p = problem
+    n = p.n_stages
+    return heuristic_walk(p.scenario, p.meta, p.soc0, p.times[:n],
+                          p.p_dem[:n], p.v_bus[:n], p.i_total[:n],
+                          p.stage_dt, p.cap_as, p.chg_a, p.run_exit)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Table emission
 # ─────────────────────────────────────────────────────────────────────────────
 def default_table_path(scenario):
@@ -859,6 +1098,22 @@ def render_table(scenario, meta, args, fingerprint, times, share, charge,
     # regen term, BOTH must move into this header and into the guard.
     A("#")
     A("# ── tunables ─────────────────────────────────────────────────────────")
+    # DOCUMENTATION ONLY (MED-4, 2026-09-01). The auxiliary preload is
+    # already inside profile_fingerprint (it is one of
+    # hil_plant_sim.DP_FINGERPRINT_META_KEYS), so this line is not a drift
+    # guard and it moves no data row -- it makes the STIMULUS ERA READABLE.
+    # Without it a reader can only discover which preload a table was solved
+    # against by recomputing the digest, and a preload retune elsewhere
+    # leaves two tables that differ only in a hash. The value recorded is the
+    # RESOLVED preload: the bespoke SOC_BAND_DRAIN_SCENARIOS carry their
+    # drain inside scenario_drain_a() and never read the key, so they
+    # record 0.0. gen_dp_ems_table.py has no --aux-preload argument, so the
+    # reconstructed command line above needs no new term.
+    A("# aux_preload_a: %r"
+      % (0.0 if scenario in SOC_BAND_DRAIN_SCENARIOS
+         else float(meta.get("aux_preload_a") or 0.0)))
+    A("#   Documentation, not a drift guard: profile_fingerprint above")
+    A("#   already covers it.")
     A("# charger_accounting: %s" % args.charger_accounting)
     A("#   D11 — which of the two hydrogen totals the DP minimised.")
     A("#   'simple'   matches a --electrical simple run's logged h2_cum_g")
@@ -1001,26 +1256,38 @@ def main(argv=None):
         args.run_exit = float(sim.SOC_BAND_RUN_EXIT_S
                               if meta.get("ems_run_exit_s") is None
                               else meta["ems_run_exit_s"])
-    if args.n_share < 2:
-        ap.error("--n-share must be >= 2")
-    if args.soc_step <= 0 or args.stage_dt <= 0 or args.capacity_ah <= 0:
-        ap.error("--soc-step, --stage-dt and --capacity-ah must all be > 0")
-    if not 0.0 < args.soc0 < 1.0:
-        ap.error("--soc0 must be strictly inside (0, 1)")
     # Kept because --match-terminal-soc OVERWRITES args.lambda_term with the
     # solved weight, and the reproduction command must record the INPUT.
     args.lambda_term_input = args.lambda_term
 
     duration = float(meta["duration_s"])
     dt = float(args.stage_dt)
-    n_stages = int(round(duration / dt))
-    times = np.arange(n_stages + 1) * dt          # N+1 rows: ZOH defined at the end
-    cap_as = args.capacity_ah * 3600.0
-    chg_a = sim.dp_chg_ceiling_a(meta)      # E-L1: one shared resolution
-
-    v, a, p_dem, v_bus, i_total, cruise = build_demand(
-        args.scenario, meta, times, dt)
-    chg_ok = charge_mask(times, p_dem, v_bus, cruise, chg_a, args.run_exit)
+    try:
+        problem = prepare_problem(
+            args.scenario, meta, soc0=args.soc0,
+            capacity_ah=args.capacity_ah, stage_dt=args.stage_dt,
+            n_share=args.n_share, soc_step=args.soc_step,
+            run_exit=args.run_exit,
+            charger_accounting=args.charger_accounting,
+            lambda_dev=args.lambda_dev)
+    except ValueError as exc:
+        # GUARD ORDER, deliberately changed (LOW-4, 2026-09-01): the scalar
+        # argument checks and the share-cut-band check moved INTO
+        # prepare_problem() so a library caller cannot bypass them, and they
+        # now surface here as one ValueError.  The messages are unchanged
+        # except for the dropped "--" prefixes, and they are still reported
+        # through ap.error(), so the CLI's behaviour is the same.  The order
+        # in which two simultaneously-invalid arguments are reported can
+        # differ from the pre-2026-09-01 CLI.
+        ap.error(str(exc))
+    n_stages = problem.n_stages
+    times = problem.times
+    cap_as = problem.cap_as
+    chg_a = problem.chg_a
+    p_dem, v_bus, i_total = problem.p_dem, problem.v_bus, problem.i_total
+    cruise, chg_ok = problem.cruise, problem.chg_ok
+    shares, soc_grid = problem.shares, problem.soc_grid
+    n_soc = problem.grid_info["n"]
 
     print("[dp] scenario %s: %.1f s, %d stages of %g s, chg ceiling %.2f A"
           % (args.scenario, duration, n_stages, dt, chg_a))
@@ -1029,56 +1296,20 @@ def main(argv=None):
           % (p_dem.max(), i_total.max(), p_dem.mean(),
              int(chg_ok[:n_stages].sum()), n_stages))
 
-    shares = np.linspace(DP_SHARE_MIN, DP_SHARE_MAX, args.n_share)
-    # Belt and braces: the grid is inside the cut band by construction (see
-    # DP_SHARE_MIN/MAX), and this asserts it so a retune of the soc-band
-    # constants cannot silently walk the DP onto DROOP_R_MIN/MAX.
-    if not (sim.SOC_BAND_SHARE_MIN < shares[0]
-            and shares[-1] < sim.SOC_BAND_SHARE_MAX):
-        ap.error("share control grid [%.4f, %.4f] touches or crosses the "
-                 "share-cut band [%.2f, %.2f] - commanding its edge risks "
-                 "updateShareSetpointCutoff() opening a bus switch"
-                 % (shares[0], shares[-1], sim.SOC_BAND_SHARE_MIN,
-                    sim.SOC_BAND_SHARE_MAX))
-
-    # ── D8 reachability walk -> SoC window ──────────────────────────────────
-    lo, hi = reachable_soc_window(args.soc0, p_dem[:n_stages], v_bus[:n_stages],
-                                  chg_ok[:n_stages], dt, cap_as, chg_a,
-                                  shares[0], shares[-1])
-    span = max(hi - lo, DP_SOC_WINDOW_MIN_PAD)
-    pad = max(DP_SOC_WINDOW_PAD_FRAC * span, DP_SOC_WINDOW_MIN_PAD)
-    g_lo, g_hi = lo - pad, hi + pad
-    n_soc = int(round((g_hi - g_lo) / args.soc_step)) + 1
-    soc_grid = g_lo + np.arange(n_soc) * args.soc_step
+    # The control grid, the D8 reachability walk and the SoC grid are all
+    # resolved by prepare_problem(); the guard against the share-cut band lives
+    # there too and surfaces here through the ValueError above.
     print("[dp] reachable SoC [%.6f, %.6f]; grid [%.6f, %.6f], %d points, "
-          "step %g" % (lo, hi, soc_grid[0], soc_grid[-1], n_soc, args.soc_step))
+          "step %g" % (problem.reach_lo, problem.reach_hi, soc_grid[0],
+                       soc_grid[-1], n_soc, args.soc_step))
 
     # ── the causal reference walk runs FIRST: --match-terminal-soc heuristic
     #    needs its terminal SoC as the target.
     href = None
     if args.compare_heuristic or args.match_terminal_soc == "heuristic":
-        href = heuristic_walk(args.scenario, meta, args.soc0, times[:n_stages],
-                              p_dem[:n_stages], v_bus[:n_stages],
-                              i_total[:n_stages], dt, cap_as, chg_a,
-                              args.run_exit)
+        href = heuristic_reference(problem)
 
-    i0 = int(np.abs(soc_grid - args.soc0).argmin())
-
-    def _solve_and_roll(lam_term):
-        J0, Uopt = solve_dp(args.soc0, times[:n_stages], p_dem[:n_stages],
-                            v_bus[:n_stages], chg_ok[:n_stages], dt, cap_as,
-                            chg_a, shares, soc_grid, args.lambda_dev, lam_term,
-                            args.charger_accounting)
-        if not np.isfinite(J0[i0]):
-            raise DpInfeasible(
-                "the initial state (SoC %.6f) has infinite cost-to-go: no "
-                "feasible trajectory exists under the current limits. Check "
-                "the FC current ceiling (%.2f A) against the demand peak "
-                "(%.3f A)." % (args.soc0, LIMIT_I_FC_MAX_A, i_total.max()))
-        out = forward_pass(args.soc0, times[:n_stages], p_dem[:n_stages],
-                           v_bus[:n_stages], chg_ok[:n_stages], dt, cap_as,
-                           chg_a, shares, soc_grid, Uopt)
-        return (J0[i0],) + out
+    i0 = problem.i0
 
     # ── MATCHED-TERMINAL-SOC SOLVE ──────────────────────────────────────────
     # A hydrogen comparison between two energy-management strategies is only
@@ -1113,27 +1344,14 @@ def main(argv=None):
             except ValueError:
                 ap.error("--match-terminal-soc must be 'none', 'heuristic', or "
                          "an SoC value, got %r" % args.match_terminal_soc)
-        lo_l, hi_l = DP_LAMBDA_TERM_BISECT_RANGE
-        best = None
-        for match_iters in range(1, DP_LAMBDA_TERM_BISECT_ITERS + 1):
-            lam_term = (lo_l * hi_l) ** 0.5          # geometric midpoint
-            res = _solve_and_roll(lam_term)
-            soc_end = float(res[3][-1])
-            err = soc_end - match_target
-            if best is None or abs(err) < abs(best[0]):
-                best = (err, lam_term, res)
-            if abs(err) <= args.match_tol:
-                break
-            if err < 0.0:
-                lo_l = lam_term                      # too much discharge -> heavier
-            else:
-                hi_l = lam_term
-            if hi_l / lo_l < 1.0 + 1e-6:
-                break
-        err, lam_term, res = best
+        solved = solve_matched(problem, target_soc=match_target,
+                               match_tol=args.match_tol)
+        err = solved.residual_soc
+        lam_term = solved.lambda_term
+        match_iters = solved.n_solves
         args.match_target_soc = float(match_target)
         args.match_residual_soc = float(err)
-        args.match_converged = "yes" if abs(err) <= args.match_tol else "no"
+        args.match_converged = "yes" if solved.converged else "no"
         print("[dp] matched terminal SoC: target %.6f, solved lambda_term "
               "%.6g in %d solves, residual %+.2e SoC%s"
               % (match_target, lam_term, match_iters, err,
@@ -1142,9 +1360,13 @@ def main(argv=None):
                       "so this is the closest reachable point; report the "
                       "residual with any comparison)" % args.match_tol))
     else:
-        res = _solve_and_roll(lam_term)
+        solved = solve_unmatched(problem, lam_term)
 
-    j0, share, charge, soc_traj, h2, h2_plant = res
+    j0 = solved.j0
+    share = np.asarray(solved.share)
+    charge = np.asarray(solved.charge)
+    soc_traj = np.asarray(solved.soc)
+    h2, h2_plant = solved.h2_g, solved.h2_plant_g
     args.lambda_term = lam_term       # the SOLVED value is what the header records
 
     # Hold the last stage's command for the terminal row (ZOH, so the row at

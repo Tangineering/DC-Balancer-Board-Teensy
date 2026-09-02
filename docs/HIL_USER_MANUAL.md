@@ -295,6 +295,44 @@ It carries:
   boundaries compound — a **pre-Round-C** hash is not comparable with a later
   one, and neither is a pre-2026-08-31 one; compare the `constants` dict across
   either;
+  **Changelog — 2026-09-01 (the C1 round): the hash moves again, and this
+  time a MODEL DEFAULT moves with it.** The converter-asymmetry round added
+  the `ASYM_*` names and, unlike every previous move, it is **not purely
+  additive in behaviour**: `--asymmetry` defaults to `measured`, so the plant
+  now runs the fitted FC/BT mismatch instead of two identical boost chains:
+  the **M2 CONSISTENT PAIR**, ΔV₀ **+0.013522 V** at s_B = 1 with ρ →
+  `droop_scale_fc` **0.9434**. The two are one fit and move together; an
+  earlier cut of this round mixed M1's ΔV₀ 0.0444 with a separately fitted
+  ρ, which double-counts the same physical asymmetry (RMS against CAL-1
+  0.0402, versus **0.0063** for the adopted pair). The injected voltage is
+  scaled by the `--droop` mode's own scale so the **share** deviation is the
+  invariant, and the sense-arm correction is applied from the INA offsets a
+  run actually injects rather than from `--noise` being present. See
+  `docs/HIL_PLANT.md` §4.4a.
+  **What actually moves.** Shares and per-channel currents; α at r = 0.5 goes
+  0.5000 → **0.5248** (`--droop design`) / **0.5207** (`measured`) at ≈ 1 A.
+  **`V_bus` does NOT move** — the offsets are antisymmetric about `V0_NOLOAD`,
+  and a reviewer confirmed the solved bus node bit-identical at a pinned
+  actuator point, so every `V_bus`-referenced pin is mean-preserved. Light
+  load: a voltage mismatch starves the low channel below ~ΔV₀/R_B of total
+  current, which is **~21 mA** at the adopted value (against ~140 mA at the
+  retired M1 one) — below `I_AUX_A` 0.15 A, so no live scenario dwells there.
+  **⚠️ COMPARABILITY — TWO BOUNDARIES, ONE CAMPAIGN.** Campaign
+  `hil_report_20260901_151156` is the last campaign on the far side of BOTH
+  the drive-cycle preload removal AND the asymmetry default. A share, a
+  per-channel current or an EMS hydrogen total from it (or anything earlier)
+  is **not comparable** with a current run for two independent reasons.
+  Measured governor-walk hydrogen deltas, symmetric → asymmetric at the M2
+  pair: `ems-ftp75-5050` **+6.40 %**, `-socband` **+3.22 %**, `-sdp`
+  **+2.95 %**, `-dp` **+4.32 %**; every SoC fall shrinks correspondingly.
+  (~two thirds of the M1-era figures first recorded here.) Pass
+  **`--asymmetry off`** to reproduce the symmetric plant — it is byte-identical
+  to the pre-C1 engine — and read `config.asymmetry` in a run's meta sidecar
+  to place any trace on one side of the boundary. `run_hil_suite.py` carries
+  the same flag for the scenario half and renders the resolved mode in the
+  REPORT.md header table; the replay half realizes no asymmetry in either
+  mode, because a replay run drives its rails from a log and constructs no
+  hi-fi engine at all;
 * `git`: the HEAD revision and a `dirty` flag (nulls if git is unavailable —
   provenance never fails a bench run);
 * `results`: achieved rate, ticks, `csv_rows`, max overrun, frame counters
@@ -510,12 +548,29 @@ stimulus:
 
 Two things to know before reading an `ems-ftp75-socband` trace:
 
-* Both scenarios carry a **+0.65 A** bus preload, which holds the source total
-  above the firmware's 0.60 A closed-loop governor gate for the whole cycle.
-* That same preload puts the source-total floor at **0.800 A**, above
-  `soc-band`'s 0.60 A charge-admission threshold, so the policy's **charging
-  branch cannot open** on this scenario. It exercises the share-bias branch over
-  a long cycle; `ems-soc-band` remains the home of the charge-window assertion.
+* ⚠️ **The +0.65 A bus preload was REMOVED on 2026-09-01** (operator ruling;
+  `aux_preload_a` → 0.0 on every drive-cycle scenario). It used to hold the
+  source total above the firmware's 0.60 A closed-loop governor gate for the
+  whole cycle. It no longer does: the idle source total is `I_AUX_A` = 0.15 A,
+  so the share loop runs **open-loop hold** through every idle segment
+  (governor walk: 9.71 % hold / 57.12 % feedforward / 33.17 % closed). That
+  mode content is the point of the removal — read a share *amplitude* off the
+  cycle peak, where the loop is closed, and not off an idle segment.
+* Consequently `soc-band`'s **charging branch is now reachable** here (0.15 A
+  against its 0.60 A admission threshold) and is asserted by
+  `socband_ftp_charge_opened`. This scenario exercises both of the policy's
+  branches for the first time; `ems-soc-band` remains the calibrated home of
+  the charge-window assertion.
+* ⚠️ **CAMPAIGN COMPARABILITY.** Campaigns up to and including
+  `hil_report_20260901_151156` ran the FTP-75 legs at 0.65 A (0.45 A on the SDP
+  leg). Their hydrogen and SoC totals are a DIFFERENT experiment and must never
+  be quoted against a later run: 5050 0.0647 g / ΔSoC −0.02648; socband
+  0.09159 / −0.01533; sdp 0.0622 / −0.01845; dp 0.09291 / −0.01478.
+  `constants_hash` moved with the change, and so did the `ems-ftp75-dp` table's
+  `profile_fingerprint` — `aux_preload_a` is a fingerprinted key, so a table
+  solved against the old demand is refused at load rather than played.
+  Every FTP-75 threshold is PROVISIONAL again, sized from the governor walk
+  (`tools/ems_walk.py`) pending the first zero-preload campaign.
 * `ems-ftp75-socband` **allows `OC_FC`**. At the policy's 0.75 share ceiling the
   cycle peak puts 1.21 A on the FC channel — 14 % under `LIMIT_I_FC_MAX` — so a
   drive-controller transient near the peak can spend the rest. A single-channel
@@ -937,11 +992,15 @@ run would not start at the requested offset at all.
 
 * `ems-ftp75-sdp` — starts above the node on the 340 s FTP-75 cycle, so the
   wire carries 0.15 for ~200 s and then steps **once** to 0.85 as the drain
-  crosses the boundary. Its preload is **0.45 A**, not the other FTP-75
-  scenarios' 0.65 A, because the fuel-cell branch's governed peak
-  (`I_tot − 0.300 A`) would otherwise sit 3.2 % under `LIMIT_I_FC_MAX` at the
-  cycle peak and an `OC_FC` latch would truncate the run at exactly its
-  post-flip half. Opt-in with `--with-ftp75`, like its two siblings.
+  crosses the boundary. ⚠️ Its preload was **0.45 A** (against the other FTP-75
+  scenarios' 0.65 A) because the fuel-cell branch's governed peak
+  (`I_tot − 0.300 A`) would otherwise have sat 3.2 % under `LIMIT_I_FC_MAX` at
+  the cycle peak, and an `OC_FC` latch would have truncated the run at exactly
+  its post-flip half. **Both preloads are 0.0 A since 2026-09-01**, which makes
+  that peak 0.7046 A (50 % under the limit) and makes the three legs one
+  experiment — so the drive-cycle EMS frontier can evaluate. The flip moves
+  LATE with the load: expect it near **t = 272–276 s**, not ~200 s. Opt-in with
+  `--with-ftp75`, like its two siblings.
 * `ems-sdp-cross` — the same downward crossing at a low-demand operating point,
   followed by the **charge threshold's** own minimum-dwell limit cycle (three
   ~8 s windows, ~50–57 s apart). Expect one ~1 s admit-then-drop inside the
@@ -1518,6 +1577,96 @@ not a board failure. `comm-loss` is exempt: it requires exactly one.
 `--dashboard` hands children the real terminal for stdout, so per-run summary
 columns (and the achieved-rate gate) are unavailable and the report says so. It is
 refused on a non-tty stdout rather than silently degrading.
+
+### Delta-SoC-matched DP baselines
+
+A hydrogen total ranks nothing on its own. Any energy-management strategy burns less
+hydrogen by discharging the pack harder, so two strategies compare only at matched
+terminal state of charge. `tools/hil_report_analysis.py` therefore solves, for every
+run that executed a drive cycle, a dynamic-programming baseline whose terminal SoC is
+THAT run's own, and reports the run's percent deviation from it. The per-campaign
+table is `ANALYSIS_SUMMARY.md`'s "Delta-SoC-matched DP comparison"; each run's own
+`ANALYSIS.md` carries the full block, and `analysis.json` carries it as `matched_dp`.
+
+The solve is expensive, so solved baselines live in a results database at
+`tools/dp_db/` (one JSON per solve under `solves/`, plus a rebuildable `index.json`).
+A record is keyed on the problem it answers: the scenario, its profile fingerprint,
+the pack and grid parameters, the charger accounting, the auxiliary preload, and the
+model quantities the generated DP table header records. A lookup accepts a stored
+target within 1e-5 SoC of the requested one.
+
+Select the mode with `--matched-dp`:
+
+| Mode | Behaviour |
+|---|---|
+| `lookup` (default) | Read `tools/dp_db/` only. A miss is recorded as `no_cached_solve` together with the key, and costs no compute. |
+| `solve` | Compute and store a missing baseline. Refused for a scenario longer than 100 s unless `--matched-dp-allow-long` is passed, because FTP-75 costs tens of minutes. |
+| `off` | Skip the comparison. |
+
+`--matched-dp-tol` overrides the lookup tolerance. The default 1e-5 is 0.5 % of the
+61 s cycle's whole SoC swing (~2e-3), and it is deliberately tight: an earlier 5e-4
+default admitted a baseline whose own SoC excursion differed from the run's by a
+quarter of the swing, and campaign-080905's `soc-band` leg read +22.29 % against a
+true +10.79 %. Widen it only for a cycle whose SoC swing is far larger, and read a
+widened figure with the stored-target note the block prints.
+
+To populate the database ahead of an analysis pass:
+
+```
+python tools/dp_results_db.py prefill --scenario ems-soc-band     --soc0 0.7 --accounting physical --dsoc-span=-0.0030:-0.0010:5
+```
+
+Note the `=` in `--dsoc-span=`: argparse reads a leading-minus value as an option
+otherwise. `prefill` skips a target already cached within `--tol` (default 1e-5 SoC),
+so a span whose step is not larger than that solves its first target and reports the
+rest as cached — choose a step above the tolerance. Each record is written
+atomically, so an interrupted prefill leaves a consistent store. `list`, `show` and `rebuild-index` complete the
+command set; only `prefill` needs numpy.
+
+**Cost.** One matched baseline is a bisection over roughly 15 to 25 DP solves. On the
+61 s `ems-soc-band` / `ems-dp-replay` / `ems-sdp` cycle that is 5 to 15 s. On the
+340 s FTP-75 cycle it is 20 to 30 min, so prefill an FTP-75 scenario deliberately and
+never inside an interactive analysis pass.
+
+**Reproducing a miss.** A `no_cached_solve` block carries the complete `key_fields`
+object in `analysis.json`. Paste it into a file and solve exactly that problem:
+
+```
+python tools/dp_results_db.py prefill --key-fields @missing_key.json
+```
+
+Prefer this over rebuilding the problem from individual flags, which can miss an
+input — the charge ceiling, the run-era preload, the run-exit time — and solve a
+problem the lookup will then never match. The object's `era_overrides` sub-object
+is load-bearing: it holds the run-era value of every scenario-metadata key the
+profile fingerprint covers, and the solve rebuilds the run-era metadata from it.
+Without it a scenario-metadata change made since the run — a moved preload, a
+newly declared charge ceiling — refuses the solve for fingerprint drift. The
+refusal names the keys it reconciled and the keys it could not, and one of the
+latter is the unreproducible part of the stimulus.
+
+**Provenance drift.** Every record stores `hil_plant_sim`'s `constants_hash` at
+solve time. A lookup compares it and, on a mismatch, USES the record and annotates
+it `provenance_drift`, because the hash also moves when a constant the solve never
+reads moves. `--matched-dp-strict` turns drift into a miss instead, which is the
+setting for a figure that must not come from a differently-parameterised plant.
+
+**Three boundaries on every figure this produces.** First, the DP's demand model has
+no regen term (`gen_dp_ems_table.build_demand`), so a regen-bearing scenario is
+ranked against a regen-free bound and its deviation is optimistic by an unquantified
+margin. Second, the run's hydrogen total is the dynamic Gfc integrator
+(`H2Consumption`, a ZOH discretization) while the DP's stage cost is the Gfc DC
+gain; the two agree at steady state and differ through every transient, so a
+deviation of a few tenths of a percent lies inside a systematic, one-directional
+bias and is not a policy result. Third, the baseline is solved on the run-era
+stimulus: every fingerprint key the sidecar can source is put back (the auxiliary
+preload from its `constants` block, the charge ceiling from `config`, the rest from
+its `scenario` block), and the applied set is recorded in
+`matched_dp.stimulus_era.overrides`. A key the sidecar cannot source keeps this
+checkout's value; a sidecar with no `constants` block records
+`stimulus_era: unknown` and the baseline is solved on the current metadata
+entirely. All three are printed as notes
+under every block.
 
 ---
 

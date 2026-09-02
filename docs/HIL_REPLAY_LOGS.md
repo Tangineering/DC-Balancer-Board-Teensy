@@ -136,6 +136,11 @@ Replay is **open loop** (see `HIL_MODE.md` §"Fidelity caveat"). Concretely:
   path the board actually had open. Clean as of campaign `20260831_000518` —
   ML0203's `OC_FC` latch had `FC_BUS` closed — but check `switch_state` at the
   latch time before reading a replay OC result as a hardware statement.
+- **The replay half cannot exercise `share_cut_load_hazard`.** That tripwire scores
+  `sw_ring` events emitted by the hi-fi electrical engine, and a replay run drives the
+  rails from the log and constructs no engine at all — so the check is structurally
+  unreachable here and its absence from a replay verdict is not coverage. The share-cut
+  guards of fw v25 are exercised only by the scenario half.
 - **`no_sustained_rail` is deliberately not used in this half.** It asserts that
   no rail episode outlasts 1.0 s, which is a windup symptom *on a closed loop*.
   Open loop, a correct controller facing a standing error is supposed to stay on

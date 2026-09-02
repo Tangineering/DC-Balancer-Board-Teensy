@@ -38,6 +38,9 @@
 # cruise_min_mps: 0.5
 #
 # ── tunables ─────────────────────────────────────────────────────────
+# aux_preload_a: 0.0
+#   Documentation, not a drift guard: profile_fingerprint above
+#   already covers it.
 # charger_accounting: physical
 #   D11 — which of the two hydrogen totals the DP minimised.
 #   'simple'   matches a --electrical simple run's logged h2_cum_g

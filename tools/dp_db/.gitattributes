@@ -1,0 +1,11 @@
+# Solved DP baseline records are written LF-normalized by
+# tools/dp_results_db.py and are quoted by their own content; this
+# repository runs core.autocrlf=true, so autocrlf must not rewrite them
+# between checkouts (same rule as tools/dp_tables/ and
+# tools/sdp_policies/).
+#
+# SCOPED to the generated JSON only. README.md and this file are
+# ordinary hand-edited text and keep the repository's CRLF working-tree
+# convention.
+index.json -text
+solves/*.json -text

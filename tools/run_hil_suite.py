@@ -164,6 +164,10 @@ from hil_plant_sim import (                                        # noqa: E402
     # WP-E: the droop realization modes, so `--droop`'s choices cannot drift
     # from the engine's.
     DROOP_MODES, DROOP_SCALE, DROOP_MODE_DEFAULT,
+    # PART A (C1): the converter-asymmetry modes, imported for the same reason
+    # as the droop modes -- `--asymmetry`'s choices cannot drift from the
+    # engine's.
+    ASYMMETRY_MODES, ASYMMETRY_MODE_DEFAULT,
 )
 # One emulated-Pi command period.
 #
@@ -513,10 +517,13 @@ FAULT_EXPECTATIONS = {
         # leak-drain, comfortably before excursion 2 — so a board that latched
         # on 8 ms of dwell FAILS here rather than passing as "it latched".
         "not_before_s": 7.0,
-        "provisional_note": ("the latch-instant band is DERIVED from the "
-                             "excursion geometry and the 20 ms threshold, not "
-                             "yet measured on this board; calibrate from the "
-                             "first green run"),
+        # ── PART B1 (C1 round, 2026-09-01): DE-PROVISIONALIZED ──────────────
+        # Campaign 20260901_151156 measured both arms on this board: probe 1's
+        # realized dwell of 8.3 ms did NOT latch against the 20 ms threshold,
+        # and probe 2 latched 19.90 ms after its opening edge. The derived band
+        # is therefore replaced by the measured one at
+        # `uv_latched_on_excursion_2` below, and the `provisional_note` is
+        # removed rather than merely reworded.
         "signals_require": [
             # 1. The STIMULUS was actually applied. Without this the entry could
             #    pass on a run whose offset never reached the rail, and the
@@ -553,7 +560,9 @@ FAULT_EXPECTATIONS = {
             {"name": "uv_probe1_cadence", "min_rows": 7,
              "t_window": V_BUS_UV_PROBE_1,
              "label": "the sub-threshold probe was delivered at full 1 kHz "
-                      "cadence (no host stall inside its %d ms window), so "
+                      "cadence (no host stall inside its %d ms window; the "
+                      "realized dwell MEASURED 8.3 ms against the 20 ms "
+                      "threshold, campaign 20260901_151156), so "
                       "`not_before_s` is judging a probe that actually "
                       "happened"
                       % round((V_BUS_UV_PROBE_1[1] - V_BUS_UV_PROBE_1[0]) * 1000)},
@@ -570,11 +579,27 @@ FAULT_EXPECTATIONS = {
             # 3. The LATCH, timed. `fault_latch_bit` requires the bit AND
             #    FAULT_ERROR (a transient bare bit is not a latch), at or after
             #    excursion 2 opens.
+            #    PART B1 (2026-09-01): the check is now TWO-SIDED. `after_t`
+            #    keeps the lower edge at the opening of excursion 2; the
+            #    `t_window` adds the upper edge the measurement earned. MEASURED
+            #    19.90 ms after that edge (campaign 20260901_151156) against the
+            #    20.0 ms design threshold. The +/-6 ms band around the
+            #    measurement is stated, not tuned: it is about three times the
+            #    ~1.9 ms observation round-trip plus one 1 kHz tick of phase on
+            #    each of the injection and observation legs, which are the only
+            #    mechanisms that can move the instant on a correct board. A
+            #    board needing 30 ms of dwell, or latching on the first sagged
+            #    sample, now FAILS instead of passing.
             {"name": "uv_latched_on_excursion_2", "fault_latch_bit": FAULT_UV_BUS,
              "after_t": V_BUS_UV_PROBE_2[0],
-             "label": "FAULT_UV_BUS latched at or after excursion 2 opened "
-                      "(t = %.3f s) — 20 ms of dwell accrues by ~%.3f s"
-                      % (V_BUS_UV_PROBE_2[0], V_BUS_UV_PROBE_2[0] + 0.020)},
+             "t_window": (V_BUS_UV_PROBE_2[0] + 0.0139,
+                          V_BUS_UV_PROBE_2[0] + 0.0259),
+             "label": "FAULT_UV_BUS latched between %.4f and %.4f s: the "
+                      "MEASURED 19.90 ms of dwell after excursion 2 opened "
+                      "(t = %.3f s), plus or minus 6 ms of round-trip and tick "
+                      "phase"
+                      % (V_BUS_UV_PROBE_2[0] + 0.0139,
+                         V_BUS_UV_PROBE_2[0] + 0.0259, V_BUS_UV_PROBE_2[0])},
         ],
     },
     "comm-loss": {
@@ -684,6 +709,18 @@ FAULT_EXPECTATIONS = {
     # unchanged, pinned by test); see the M1 note further down (and in
     # HIL_PLANT.md) for the precise, bounded exceptions on the hifi ON-state
     # stamp (SOFT->ON handover transients and a State-99 bus-collapse regime).
+    # ⚠️ STRUCTURAL REPAIR (fix round, 2026-09-01). The C1 round's PART B2
+    # patch spliced on a `signals_require` anchor that matched `charge-regen`'s
+    # block first, which merged the two entries and left a SECOND, stale
+    # `regen-harvest-true` key further down. A dict literal keeps the LAST
+    # value for a repeated key, so the re-derived entry was dead and the suite
+    # would have run the retired WP-C offline-walk bands (0.01/0.3 J,
+    # I_charge 0.04, V_rgn 17.0) plus their provisional note. Both entries are
+    # restored to one apiece here: `charge-regen` verbatim as committed, and
+    # `regen-harvest-true` with the measured whole-episode bands. Python cannot
+    # guard a repeated key at import -- it is resolved before any assertion
+    # could see it -- so the defence is that ONE scenario owns ONE entry, and a
+    # test now asserts exactly that over the whole table.
     "regen-harvest-true": {
         "source": "hil_plant_sim.py SCENARIOS['regen-harvest-true'] + "
                   "ems_regen_harvest_hard(). WP-C regen-fidelity scenario: hard "
@@ -693,51 +730,87 @@ FAULT_EXPECTATIONS = {
         # The first braking window opens at t = 14.0; reaching it in Run is the
         # whole point (charge-regen's predecessor died 6.4 s before its own).
         "survive_to": {"t": 14.0, "states": {2, 3}},
-        # ── PROVISIONAL BANDS (first campaign calibrates them) ───────────────
-        # Derived from an offline walk of Plant + ElectricalSim at the stimulus
-        # this scenario produces: braking from 3.0 m/s with the drive controller
-        # on its negative rail, which the regen clip caps at 1.5 A / 1.13 N.
-        #   captured power at 3.0 m/s = 1.13 N * 3.0 m/s * ETA_REGEN 0.80 = 2.71 W
-        #   -> ~0.17 A at the ~16 V V-MOT node.
-        # For the first ~0.5 s (AG105_SETTLE_S) the charger is dark, so ALL of it
-        # charges V-MOT into the 18.1 V clamp: walk measured one coalesced
-        # chopper_clamp episode of 1.298 J per window, peak V-MOT 18.15 V.
-        # Afterwards the Ag105 takes it: walk measured I_charge ~0.08 A, capped by
-        # the harvest available at VCHG-IN rather than by the 1.6 A ceiling.
-        # Bands are set at roughly HALF the walked values so a degraded path fails
-        # while walk-vs-board modelling error does not.
-        "provisional_note": "bands from the WP-C offline walk (2026-09-01), not "
-                            "from a campaign; re-derive after the first live run",
-        # M3 (reviewer, 2026-09-01): the old single spec —
-        #   {"kind": "chopper_clamp", "field": "energy_j", "min_value": 0.3}
-        # — is judged by `_judge_event_spec` as an ALL quantifier over every
-        # individually coalesced episode (EVENT_COALESCE_S = 5 ms gaps), so a
-        # short tail episode under 0.3 J could fail a correctly-behaving board:
-        # not every episode needs to individually clear the walked "one window"
-        # figure. Split into two mechanisms that do not have that failure mode:
-        #   (1) at least one episode occurred, with a much looser per-episode
-        #       floor every episode should clear (0.01 J is a conservative
-        #       PLACEHOLDER pending measurement -- not the real 0.3 J figure);
-        #   (2) the real strength requirement — energy_j >= 0.3 J — carried as
-        #       a TOTAL across all coalesced episodes via `total_of`, which a
-        #       short tail episode cannot fail on its own.
+        # -- PART B2 (C1 round, 2026-09-01): MEASURED BANDS ------------------
+        # The provisional WP-C offline-walk bands are retired. Campaign
+        # 20260901_151156 ran this scenario on the board and, with the chopper
+        # event-coalescing defect fixed (the sidecar used to serialize each
+        # episode carrying only its first partial tick), the harvest path
+        # measures:
+        #   total chopper energy      6.9 - 8.6 J per run, 2.3 - 2.9 J per window
+        #   largest single episode    >= 2.3 J (one braking window)
+        #   I_charge peak             0.0677 A
+        #   charge delivered          33.2 mC per window
+        #   V_rgn at the clamp        18.1687 V
+        #   clamp dwell               1148 ms per window
+        # The walk's 1.298 J/window and ~0.08 A figures are superseded: they
+        # were computed against the partial-tick energy the old event stream
+        # reported, so they were never comparable with a whole episode.
+        #
+        # Every band below is the measurement with a stated margin. The floors
+        # sit ~30 % under the low end of the observed spread (wide enough that
+        # the run-to-run spread the campaign itself showed cannot fail a correct
+        # board, narrow enough that a halved harvest does), and the ceilings
+        # ~30 % over the high end.
         "events_require": [
             "chopper_clamp",  # at least one episode occurred (bare-kind form)
+            # ALL: every coalesced episode cleared a loose sanity floor.
+            # ⚠️ F4 (fix round, 2026-09-01) — WHY THIS ONE DOES NOT MOVE. Every
+            # other floor on this entry was calibrated against the TRUNCATED
+            # events the coalescing defect emitted (each episode carrying only
+            # its first 0.25-0.9 ms tick) and is re-derived below from
+            # whole-episode magnitudes. This floor is the exception: it is an
+            # ALL quantifier over every coalesced episode INCLUDING the short
+            # tail ones, and a genuine 5 ms tail episode at the measured
+            # ~2.4 W/ms clamp rate carries ~0.012 J. Raising it toward a
+            # window-sized figure would fail a correct board on its tail. It is
+            # a shape check ("no episode is empty"), not a harvest figure, and
+            # 0.01 J is the right order for that whether the stream is
+            # truncated or whole.
             {"kind": "chopper_clamp", "field": "energy_j", "min_value": 0.01},
-            {"total_of": "chopper_clamp", "field": "energy_j", "min_value": 0.3},
+            # ANY (the `max_of` quantifier): at least one episode was a REAL
+            # braking window. F4: re-derived from WHOLE-EPISODE magnitudes.
+            # Campaign 20260901_151156 measures 2.3 - 2.9 J per window; the
+            # 1.0 J floor is 57 % under the low end, so it cannot be cleared by
+            # an accumulation of flickers, which is precisely what the SUM form
+            # below cannot rule out on its own.
+            # ⚠️ The retired 0.3 J figure was NOT a whole-episode number: it was
+            # the offline walk's 1.298 J/window scaled down against energies the
+            # truncated stream reported, so it was never comparable with either.
+            {"max_of": "chopper_clamp", "field": "energy_j", "min_value": 1.0},
+            # SUM: the run's whole harvest. Measured 6.9 - 8.6 J; floor 3.0 J,
+            # 57 % under the low end for the same reason. F4: also a
+            # whole-episode figure, and it replaces a 0.3 J total that a single
+            # truncated episode could satisfy.
+            {"total_of": "chopper_clamp", "field": "energy_j", "min_value": 3.0},
         ],
         "signals_require": [
             {"name": "regen_switch", "switch_bit": SW_REGEN, "min_ticks": 500,
              "t_window": (14.0, 15.5),
              "label": "REGEN_ENABLE asserted during braking window 1"},
-            {"name": "regen_harvest", "column": "I_charge", "min_value": 0.04,
+            # PART B2: MEASURED (campaign 20260901_151156) at a 0.0677 A peak.
+            # Floor 0.045 A is 34 % under it.
+            {"name": "regen_harvest", "column": "I_charge", "min_value": 0.045,
              "t_window": (14.0, 15.5),
              "label": "harvested current delivered through REGEN + MOT_PWR "
-                      "(kinetic energy, not bus energy — the WP-C objective)"},
-            {"name": "regen_node_lift", "column": "V_rgn", "min_value": 17.0,
+                      "(kinetic energy, not bus energy: the WP-C objective); "
+                      "measured peak 0.0677 A"},
+            # PART B2: MEASURED 18.1687 V at the clamp. The floor is raised from
+            # 17.0 to 17.9 V -- still 0.27 V under the measurement, and now
+            # close enough to the 18.1 V clamp that a node merely drifting up
+            # cannot satisfy it.
+            {"name": "regen_node_lift", "column": "V_rgn", "min_value": 17.9,
              "t_window": (14.0, 15.5),
-             "label": "V-MOT lifted toward the 18.1 V chopper clamp — the bench "
-                      "signature (V_rgn 13.3 -> 18.1 V, V_bus unmoved)"},
+             "label": "V-MOT lifted onto the 18.1 V chopper clamp: the bench "
+                      "signature (V_rgn 13.3 -> 18.1 V, V_bus unmoved); "
+                      "measured 18.1687 V"},
+            # PART B2: the clamp DWELL, measured 1148 ms per window. min_ticks
+            # is a 1 kHz row count, so 800 ticks is 800 ms -- 30 % under the
+            # measurement. This is the check that distinguishes a window that
+            # HELD the clamp from one that merely touched it.
+            {"name": "regen_clamp_dwell", "column": "V_rgn", "min_value": 17.9,
+             "min_ticks": 800, "t_window": (14.0, 15.5),
+             "label": "V-MOT held on the chopper clamp for at least 800 ms of "
+                      "braking window 1 (measured 1148 ms)"},
         ],
     },
     "charge-fault": {
@@ -2102,10 +2175,72 @@ _FTP_SURVIVE_T = 300.0
 # that it landed where two campaigns of the same model say it should; it is not
 # a claim about grams of real hydrogen.
 #
-# hold-5050: [0.045, 0.085] around the measured 6.47e-2 — 30 % below, 31 % above.
-# Safe as a two-sided band because this scenario is expected FAULT-FREE, so the
-# run always reaches t = 345 and the total is always the whole cycle's.
-_FTP_H2_BAND_5050 = (0.045, 0.085)
+# ⚠️ RE-DERIVED 2026-09-01 FOR THE ZERO-PRELOAD ERA, AND PROVISIONAL.
+# Removing FTP75_PRELOAD_A takes ~0.65 A x ~16 V x ~340 s of bus energy out of
+# the cycle, roughly half of it off the fuel-cell channel at the 0.50 split, so
+# every h2 total on these scenarios falls by a factor of order two.  The bands
+# below come from tools/ems_walk.py, invoked as
+#     C:/Users/ricky/miniforge3/python.exe -c "import sys; sys.path.insert(
+#         0,'tools'); import ems_walk as W;
+#         print(W.walk('<strategy>','<scenario>',governor=True).summary())"
+# and the walk is TRUSTED HERE because it was validated against the era it
+# replaces: re-run at the OLD preloads it reproduces campaign 20260901_151156
+# to within 1.8 % on every leg (5050 0.064918 g vs 0.0647 measured; socband
+# 0.091559 vs 0.09159; sdp 0.061096 vs 0.0622; flip 196.0 s vs 198.537 s).
+# Each band is the walk's prediction +/-25 %, i.e. ~14x that demonstrated
+# disagreement — wide on purpose for a first campaign, and narrow enough that a
+# factor-of-two scale or accumulation error still fails.
+#
+# LAST PRELOADED-ERA VALUES, for the record (campaign hil_report_20260901_
+# 151156, the baseline-era boundary): 5050 0.0647 g / dSoC -0.02648; socband
+# 0.09159 / -0.01533; sdp 0.0622 / -0.01845; dp 0.09291 / -0.01478.  Do not
+# compare any of those with a post-2026-09-01 total.
+#
+# ── PART C (C1 round, 2026-09-01): TWO ERA BOUNDARIES, NOT ONE ────────────
+# Every band in this block now carries BOTH of the boundaries that separate
+# it from the campaign record, and campaign 20260901_151156 is the last
+# campaign on the far side of both:
+#   1. THE PRELOAD boundary (operator ruling 2026-09-01): aux_preload_a
+#      0.65/0.45 -> 0.0. This is the one the block already carried.
+#   2. THE ASYMMETRY boundary (the C1 round, PART A): the plant's converter
+#      asymmetry is DEFAULT-ON from this round, so the FC chain regulates
+#      DeltaV0 = +0.0444 V high and over-delivers current at every load. The
+#      bands below are therefore walked with `dv0_v=0.0444`, which is the
+#      walk's own static law for the same effect.
+# A run from either side of either boundary is not comparable with a band
+# here. Do NOT quote a pre-2026-09-01 total against one.
+#
+# ⚠️ RE-WALKED AT THE M2 CONSISTENT PAIR (fix round F1, 2026-09-01). The first
+# cut of these bands was walked at dv0 = 0.0444, the M1 value the plant no
+# longer injects.
+#
+# HOW THE WALK IS DRIVEN, stated because it is not exact. `ems_walk.py` takes a
+# `dv0_v` and has NO rho: its static law is M1's, so it cannot represent the
+# droop-ratio half of the M2 pair at all. The walks below therefore use the
+# dv0 that REPRODUCES THE PLANT'S OWN alpha at the calibration point --
+# r = 0.5, I_tot = 1.0155 A, where the hi-fi engine delivers alpha = 0.5248 --
+# which is dv0_eff = (alpha - 0.5)*k_d*I_tot/0.25 = 0.030223 V. RESIDUAL: the
+# two laws agree exactly at that point and diverge away from it, because M1's
+# term goes as 1/I_tot while the plant's rho contribution is flat in I_tot.
+# Over the FTP-75's 0.15-0.96 A span the walk therefore OVER-states the
+# asymmetry at light load and under-states it at heavy load. That error is
+# inside the +/-25 % band by a wide margin and is not worth a second walker;
+# it is recorded so nobody reads the walk as the plant.
+#
+# WALK DELTAS, symmetric -> M2-equivalent (Gfc plant accounting, governor=True,
+# the shipped registry):
+#   ems-ftp75-5050    0.028090 -> 0.029888 g  (+6.40 %), dSoC -0.011355 -> -0.010629
+#   ems-ftp75-socband 0.035562 -> 0.036706 g  (+3.22 %), dSoC -0.008177 -> -0.007716
+#   ems-ftp75-sdp     0.019347 -> 0.019918 g  (+2.95 %), dSoC -0.014922 -> -0.014691
+#   ems-ftp75-dp      0.035889 -> 0.037441 g  (+4.32 %), dSoC -0.008180 -> -0.007555
+# The direction is the one the asymmetry predicts: the FC chain carries more
+# of every load, so more hydrogen is burned and the pack is drained less. The
+# magnitudes are ROUGHLY TWO THIRDS of the M1-era figures this block first
+# carried (+9.40 / +4.53 / +4.40 / +6.35 %), because the M2 partition puts most
+# of the mismatch in the droop ratio, which is the weaker hydrogen lever.
+#
+# hold-5050: M2-equivalent walk 0.029888 g / dSoC -0.010629 -> [0.022, 0.037].
+_FTP_H2_BAND_5050 = (0.022, 0.037)
 # soc-band: a TWO-SIDED band, [0.070, 0.115] around the measured 9.159e-2
 # (-24 % / +26 %, the same shape as the 5050 band above).
 #
@@ -2123,25 +2258,75 @@ _FTP_H2_BAND_5050 = (0.045, 0.085)
 # A quantity that repeats to five significant figures over six runs supports a
 # +/-25 % band comfortably; the band is deliberately no tighter, because it is a
 # scale/accumulation tripwire on the metric, not a tolerance on the model.
+_FTP_H2_PROVISIONAL = (
+    "first zero-preload campaign (aux_preload_a 0.65/0.45 -> 0.0, operator "
+    "ruling 2026-09-01); the band is a governor-walk prediction +/-25 %, not a "
+    "measurement — re-derive it from the first campaign that runs it")
 _FTP_H2_FLOOR = 5.0e-3          # the 5050 variant's own conservative floor
-_FTP_H2_FLOOR_SOCBAND = 0.070
-_FTP_H2_CEILING_SOCBAND = 0.115
+# soc-band: PART C (C1 round, 2026-09-01) — THE WALK FIGURES HERE WERE STALE.
+# The 0.035456 g / dSoC -0.008358 pair this block used to quote predates the
+# `chg_i_ceiling_a` 0.8 key the same round added to this scenario, and the
+# "reported zero windows" claim went with it. Re-run against the SHIPPED
+# registry (miniforge, governor=True):
+#   symmetric   (dv0 0.0):      0.035562 g plant / 0.036381 physical, dSoC -0.008177
+#   M2-equivalent (dv0 0.030223): 0.036706 g plant / 0.037526 physical, dSoC -0.007716
+# (the retired M1-era walk at dv0 0.0444 gave 0.037208 plant / -0.007513)
+# and the walk now reports TWO CHARGE WINDOWS, not zero:
+#   191.700 .. 194.000 s  and  329.200 .. 330.000 s   (3.1 s in total)
+# ⚠️ THOSE WINDOWS ARE THE DP MASK'S SCHEDULE, NOT THE STRATEGY'S. ems_walk.py
+# gates charge admission on gen_dp_ems_table.charge_mask() (the DP's cruise +
+# FC-budget test), never on SocBandStrategy's own enter/hold hysteresis, so
+# the walk says WHETHER a window is admissible under the mask and says nothing
+# about when the strategy would open one. The band is unaffected either way —
+# 3.1 s of charging at the 0.8 A ceiling is ~0.3 % of the cycle's total — but
+# the schedule must not be quoted as a prediction of the board's.
+#
+# BAND: M2-equivalent walk 0.036706 g +/-25 % -> [0.028, 0.046], the same shape
+# as the 5050 band above.  PROVISIONAL.
+#
+# ⚠️ ONE EXTRA SOURCE OF SPREAD HERE, stated: the preload removal re-opens
+# `soc-band`'s CHARGE branch on this cycle (source total 0.15 A at idle against
+# SOC_BAND_CHARGE_ENTER_ITOT_A 0.60 A), and the walk's mask-driven schedule
+# above is not the strategy's own.  Charging raises the fuel-cell draw while it
+# runs, so the realized total may sit ABOVE the walk's figure.  The +25 %
+# ceiling is the allowance for that; if the first campaign lands over it, the
+# finding is the charge schedule and the fix is this band, not the scenario.
+#
+# CONTRACT-LOW (2026-09-01): the ceiling is stated as +25 % and IS +25 %.
+# The retired pair was 0.026/0.045 against a 0.035456 walk, i.e. -26.7 %/
+# +26.9 % — the numbers and the description had drifted apart. Both bounds
+# below are computed from the walk rather than rounded to a nicer figure.
+_FTP_H2_FLOOR_SOCBAND = 0.028
+_FTP_H2_CEILING_SOCBAND = 0.046
 
 FAULT_EXPECTATIONS["ems-ftp75-5050"] = {
     "source": ("hil_plant_sim.py SCENARIOS['ems-ftp75-5050'] + the generated "
                "tools/ftp75_profile.py (EPA ftpcol.txt, sha256-verified, first "
                "340 s per references/Systemic_Scaling_of_Powertrain_Models_"
                "with_Youla_Driver_Control.pdf) + the FTP75_PRELOAD_A budget."),
-    # FAULT-FREE IS THE EXPECTATION, and the budget says it should be: the peak
-    # source total is 1.613 A at t = 245, and hold-5050's fixed 0.50 split puts
-    # 0.807 A on a channel — 42 % under LIMIT_I_FC_MAX 1.4 A. The only way to
-    # spend that margin is a drive-controller rail (MOTOR_I_CMD_MAX 12 A) AT
-    # high speed, which maps to ~2.02 A of bus current at 3.0 m/s and would
-    # reach 1.41 A on the channel; this cycle's high-speed segment is a
-    # PLATEAU (56.6 -> 56.7 mph), so the loop does not rail there, and its
-    # sharp transitions are all at low speed where a rail costs little bus
-    # current. If a campaign latches OC_FC here, the finding is that
-    # coincidence, and the fix is FTP75_PRELOAD_A — not this field.
+    # FAULT-FREE IS THE EXPECTATION, and the budget says it should be with far
+    # more room than it used to: at FTP75_PRELOAD_A = 0.0 (2026-09-01) the
+    # model's peak source total is 0.9603 A at t = 243.9, so hold-5050's fixed
+    # 0.50 split puts 0.4801 A on a channel — 66 % under LIMIT_I_FC_MAX 1.4 A,
+    # against the 42 % the 0.65 A preload left. The only way to spend that
+    # margin is a drive-controller rail (MOTOR_I_CMD_MAX 12 A) AT high speed,
+    # which maps to ~2.02 A of bus current at 3.0 m/s; this cycle's high-speed
+    # segment is a PLATEAU (56.6 -> 56.7 mph), so the loop does not rail there,
+    # and its sharp transitions are all at low speed where a rail costs little
+    # bus current. If a campaign latches OC_FC here, the finding is that
+    # coincidence — and the fix is NOT to reinstate the preload.
+    #
+    # ⚠️ THE SHARE LOOP IS NO LONGER CLOSED FOR THE WHOLE CYCLE, and every
+    # check below is read in that light. The firmware runs OPEN-LOOP HOLD below
+    # 2*SHARE_MINORITY_I_MIN_A - SHARE_GOV_OL_HYST_A = 0.55 A of source total,
+    # and 64.5 % of this cycle's Run window sits under that line at preload 0.
+    # The governor walk (tools/ems_walk.py, governor=True) apportions the run
+    # open_hold 9.71 % / open_feedforward 57.12 % / closed 33.17 % of ticks,
+    # against open_hold 0.00 % / closed 98.25 % at 0.65 A. Per the standing
+    # walk rule, a check on this scenario must state the firmware mode of the
+    # segment it lands in; the checks below are all placed in the cycle's PEAK
+    # (t = 240..250 s, source total 0.9347..0.9603 A — closed loop) or are
+    # whole-run accumulations that do not depend on the mode.
     "allow_only": 0,
     "survive_to": {"t": _FTP_SURVIVE_T, "states": {2}},
     "signals_require": [
@@ -2152,27 +2337,41 @@ FAULT_EXPECTATIONS["ems-ftp75-5050"] = {
         {"name": "ftp_peak_commanded", "column": "cmd_v_sp", "min_value": 2.85,
          "t_window": _FTP_PEAK_W,
          "label": "the FTP-75 peak (3.0 m/s at t = 245 s) was commanded"},
-        # 2. ... and the BOARD carried the load at the commanded split. At the
-        #    peak the model's source total is 1.613 A, so a 0.50 split is
-        #    0.807 A; 0.70 is a floor under that and far above the ~0.40 A a
-        #    0.50 split of the 0.800 A standstill total would give, so it
-        #    cannot be satisfied by an idling run that merely reached t = 245.
-        {"name": "ftp_fc_carried", "column": "I_fc", "min_value": 0.70,
+        # 2. ... and the BOARD carried the load at the commanded split.
+        #    ⚠️ RE-DERIVED AT PRELOAD 0, PROVISIONAL. The model's peak source
+        #    total is 0.9603 A, so the 0.50 split delivers 0.4801 A; on the
+        #    measured ADDITIVE composition (I_AUX_A 0.15 + the cycle's own
+        #    measured 0.8546 A peak) it is 0.5023 A. A 0.40 A floor sits 20 %
+        #    under the modelled value and 6.7x above the ~0.06 A a 0.50 split
+        #    of the 0.15 A standstill total gives, so an idling run that merely
+        #    reached t = 245 still cannot satisfy it. The window is the cycle
+        #    peak, where the source total is 0.9347..0.9603 A and the share
+        #    loop is CLOSED — the one place on this cycle where a current floor
+        #    can be read as a share-tracking statement at all.
+        {"name": "ftp_fc_carried", "column": "I_fc", "min_value": 0.40,
+         "provisional_note": "first zero-preload campaign; the 0.40 A floor is "
+                             "a governor-walk prediction (0.4801 A model / "
+                             "0.5023 A on the measured composition) — re-derive "
+                             "it from the first campaign that runs it",
          "t_window": _FTP_PEAK_W,
-         "label": "the FC channel carried its half of the peak load"},
+         "label": "the FC channel carried its half of the peak load "
+                  "(>= 0.40 A; model 0.4801 A at preload 0)"},
         # 3-4. The H2 metric ran end to end over a 345 s cycle — the longest
         #    accounting run in the suite, and the reason these scenarios exist —
         #    AND landed in its measured band. Two specs, because one spec cannot
         #    carry both bounds (see _FTP_H2_BAND_5050).
         {"name": "ftp_h2_accounted", "column": "h2_cum_g",
          "min_value": _FTP_H2_BAND_5050[0],
+         "provisional_note": _FTP_H2_PROVISIONAL,
          "label": "the H2 consumption metric accumulated over the cycle "
-                  "(>= %.3f g; measured 6.47e-2)" % _FTP_H2_BAND_5050[0]},
+                  "(>= %.3f g; governor walk 2.809e-2 at preload 0, against "
+                  "6.47e-2 in the retired 0.65 A era)" % _FTP_H2_BAND_5050[0]},
         {"name": "ftp_h2_bounded", "column": "h2_cum_g",
          "max_value": _FTP_H2_BAND_5050[1],
-         "label": "... and stayed under %.3f g — a ceiling the measured "
-                  "6.47e-2 clears by 31 %%, so a scale or accumulation error "
-                  "in the metric fails here instead of being read as a result"
+         "provisional_note": _FTP_H2_PROVISIONAL,
+         "label": "... and stayed under %.3f g — a ceiling the walk's 2.809e-2 "
+                  "clears by 25 %%, so a scale or accumulation error in the "
+                  "metric fails here instead of being read as a result"
                   % _FTP_H2_BAND_5050[1]},
     ],
 }
@@ -2208,12 +2407,28 @@ FAULT_EXPECTATIONS["ems-ftp75-socband"] = {
     # here the finding is a budget one (FTP75_PRELOAD_A, or the peak margin
     # eroding) and deserves to be SEEN rather than absorbed.
     #
-    # ⚠️ THE CHARGE BRANCH IS OUT OF REACH HERE, BY CONSTRUCTION, and that is
-    # the second mechanism an OC_FC could have come from — so it is worth
-    # stating that it cannot: `soc-band` admits a charge window only below
-    # SOC_BAND_CHARGE_ENTER_ITOT_A = 0.60 A of source total, and
-    # FTP75_PRELOAD_A puts the FLOOR at 0.800 A. `ems-soc-band` remains the
-    # home of the charge-window assertion; nothing here asserts one.
+    # ⚠️ THE CHARGE BRANCH IS BACK IN REACH (2026-09-01, the preload removal),
+    # and the previous statement here — "out of reach by construction, nothing
+    # here asserts one" — is RETIRED. `soc-band` admits a charge window below
+    # SOC_BAND_CHARGE_ENTER_ITOT_A = 0.60 A of source total; FTP75_PRELOAD_A
+    # used to put the floor at 0.800 A, and now puts it at I_AUX_A = 0.15 A.
+    # 64.5 % of this cycle's Run window sits under the 0.55 A open-loop line,
+    # so the admission condition is met over most of the cycle and this
+    # scenario exercises BOTH of the policy's branches for the first time.
+    # A charge-window check is added below (`socband_ftp_charge_opened`).
+    #
+    # ⚠️ WHAT THIS DOES TO THE OC_FC ARGUMENT: nothing that widens it. Charging
+    # adds fuel-cell draw, but it is admitted only in the LOW-current segments
+    # (below 0.60 A of source total) and capped at `chg_i_ceiling_a` 0.8 A,
+    # which the entry now declares in lockstep with its siblings. The cycle
+    # PEAK — where the OC margin is decided — is far above the admission gate,
+    # so no charge window can be open there.
+    #
+    # ⚠️ THE SHARE LOOP IS NO LONGER CLOSED THROUGHOUT, per the standing walk
+    # rule: governor walk at preload 0 gives open_hold 9.71 % /
+    # open_feedforward 57.12 % / closed 33.17 % of ticks. Every current check
+    # below is placed where the loop is CLOSED (the cycle peak) or is a
+    # whole-window peak test that a closed segment supplies.
     #
     # B-L1 (2026-09-01): `allow_only` is 0, not FAULT_ERROR. The retirement
     # above removed the OC_FC bit but left the FAULT_ERROR umbrella behind,
@@ -2227,12 +2442,21 @@ FAULT_EXPECTATIONS["ems-ftp75-socband"] = {
         # 1. The policy ACTUALLY BIASED the split. Nominal is 0.50 and the
         #    ceiling is 0.75; 0.60 is unreachable without the SoC leaving the
         #    +/-SOC_BAND_HALF band, and unmistakable once it does. The window
-        #    opens at t = 30 (the pack has ~25 s of load by then, far more than
-        #    the ~15 s the 0.0015 band half needs at this cycle's pack current)
-        #    and runs to the end of the profile.
+        #    opens at t = 120. ⚠️ RE-DERIVED AT PRELOAD 0: the walk puts the command at a
+        #    flat 0.50 until t = 78.4 s and at the 0.75 ceiling from t = 111.5 s
+        #    (against t = 46.8 s measured at 0.65 A — the smaller load
+        #    discharges the pack more slowly, so the deficit opens later). The
+        #    window therefore OPENS AT t = 120, not 30: at 30 s the bias has
+        #    provably not started and the check would fail a correct board.
+        #    120 s is 7.6 % past the walk's saturation instant.
         {"name": "socband_share_biased", "column": "cmd_share_sp",
-         "min_value": 0.60, "t_window": (30.0, 340.0),
-         "label": "soc-band commanded a share bias toward the fuel cell"},
+         "min_value": 0.60, "t_window": (120.0, 340.0),
+         "provisional_note": "first zero-preload campaign; the window opening "
+                             "is the governor walk's 111.5 s saturation instant "
+                             "+7.6 % — re-derive it from the first campaign "
+                             "that runs it",
+         "label": "soc-band commanded a share bias toward the fuel cell "
+                  "(walk: ceiling reached at t = 111.5 s at preload 0)"},
         # 2. ... and the BOARD acted on it.
         #    ⚠️ RE-DERIVED 2026-08-31 (ledger, "check derivation"): 0.55 -> 0.70.
         #    THE OLD DERIVATION WAS WRONG, and its arithmetic ignored the
@@ -2279,12 +2503,87 @@ FAULT_EXPECTATIONS["ems-ftp75-socband"] = {
         #    GAIN validation: the amps here are the model's response to the
         #    codes, not the board's real droop chain (see also the
         #    K_DROOP_BUS design-vs-measured x4 finding).
-        {"name": "socband_fc_carried", "column": "I_fc", "min_value": 0.95,
+        #    ⚠️ RE-DERIVED AT PRELOAD 0 (2026-09-01), PROVISIONAL: 0.95 -> 0.56.
+        #    The derivation SHAPE is unchanged — the floor must sit between the
+        #    constant-0.50 sibling's window peak (the "ignored the command"
+        #    control) and this scenario's own — and both moved with the load.
+        #    Governor walk over t = (30, 340), model currents:
+        #      ems-ftp75-5050    peak I_fc = 0.4801 A  (was 0.8275 measured)
+        #      ems-ftp75-socband peak I_fc = 0.6602 A  (was 1.2414 measured)
+        #    Both peaks land at the cycle peak, where the loop is CLOSED.
+        #    0.56 A sits 16.6 % above the control and 15.2 % below this
+        #    scenario's own prediction — the most symmetric split the two
+        #    numbers allow, and still 2.3x wider than the walk's 1.8 %
+        #    demonstrated error.
+        {"name": "socband_fc_carried", "column": "I_fc", "min_value": 0.56,
          "t_window": (30.0, 340.0),
+         "provisional_note": "first zero-preload campaign; both the floor and "
+                             "the control peak it discriminates against are "
+                             "governor-walk predictions — re-derive from the "
+                             "first campaign that runs it",
          "label": "the board's share loop moved current onto FC beyond the "
-                  "nominal split (window PEAK >= 0.95 A; the constant-0.50 "
-                  "ems-ftp75-5050 control peaks at 0.8275 A over the same "
-                  "window, so nothing below that discriminates)"},
+                  "nominal split (window PEAK >= 0.56 A; the constant-0.50 "
+                  "ems-ftp75-5050 control peaks at 0.4801 A over the same "
+                  "window at preload 0, so nothing below that discriminates)"},
+        # 2a. THE CEILING THE PRELOAD REMOVAL LEFT MISSING (PART C, C1 round,
+        #    2026-09-01). At preload 0 NO upper bound on I_fc survives on this
+        #    entry: the OC_FC allowance was retired and LIMIT_I_FC_MAX is a
+        #    firmware limit rather than a check, so a share loop that ran the
+        #    FC channel far past its commanded split would pass every check
+        #    here. 0.85 A is ~1.3x the governor walk's 0.6602 A peak and 39 %
+        #    under LIMIT_I_FC_MAX 1.4 A, so it is a REGRESSION TRIPWIRE on the
+        #    operating point, not a limit claim.
+        #    ⚠️ The asymmetric walk does NOT move this peak (0.6602 A at both
+        #    dv0 = 0.0 and dv0 = 0.0444): the asymmetry raises the FC share in
+        #    the mid-load segments, while the peak lands where the commanded
+        #    share is already at its own ceiling.
+        {"name": "socband_fc_peak_bounded", "column": "I_fc",
+         "max_value": 0.85, "t_window": (30.0, 340.0),
+         "provisional_note": "first zero-preload campaign; the ceiling is "
+                             "1.3x a governor-walk peak — re-derive from the "
+                             "first campaign that runs it",
+         "label": "the FC channel stayed bounded across the cycle (<= 0.85 A, "
+                  "~1.3x the walk's 0.6602 A peak and 39 %% under "
+                  "LIMIT_I_FC_MAX 1.4 A) — a regression tripwire, not a limit "
+                  "claim"},
+        # 2b. THE RE-OPENED CHARGE BRANCH (new, 2026-09-01). The preload
+        #    removal is what makes this assertable: the source total falls to
+        #    I_AUX_A = 0.15 A in every idle segment, a factor of four under
+        #    SOC_BAND_CHARGE_ENTER_ITOT_A = 0.60 A, so `soc-band`'s charging
+        #    branch is admissible over most of the cycle for the first time.
+        #    Without this check the branch is exercised and unobserved, which
+        #    is the hole the preload removal exists to close.
+        #    ⚠️ THE FLOOR IS DELIBERATELY WEAK AND IT IS SAID SO. The window
+        #    SCHEDULE is UNMODELLED: ems_walk.py gates charge admission on
+        #    gen_dp_ems_table.charge_mask() (the DP's cruise + FC-budget test),
+        #    not on SocBandStrategy's own enter/hold hysteresis, so its two
+        #    reported windows (191.7-194.0 s and 329.2-330.0 s, 3.1 s total)
+        #    are the MASK's schedule and cannot be used to size a floor.
+        #    ⚠️ PART C (C1 round, 2026-09-01): 3000 -> 200 TICKS. 3000 ticks =
+        #    3.0 s is a 3.2 % margin under the walk's only model of the
+        #    duration (3.1 s), which is not a floor at all — a CORRECT board
+        #    opening ONE 2 s window would fail it, and the entry is not
+        #    entitled to a duration claim it has no model for. 200 ticks =
+        #    0.2 s = ten command periods at PI_CMD_HZ 50, which is long
+        #    enough that a single dropped frame cannot satisfy it and short
+        #    enough that any real window does.
+        #    WHAT THE CHECK ASSERTS IS EXISTENCE. Admission needs BOTH an SoC
+        #    deficit AND the strategy's trailing-window cruise test, and the
+        #    walk models NEITHER of those — so the schedule, the count and the
+        #    duration all stay unpredicted until a campaign measures them.
+        {"name": "socband_ftp_charge_opened", "switch_bit": SW_FC_CHARGE,
+         "min_ticks": 200, "t_window": (30.0, 340.0),
+         "provisional_note": "EXISTENCE ONLY, first zero-preload campaign; the "
+                             "charge-window schedule on this cycle is "
+                             "unmodelled (ems_walk.py gates admission on the "
+                             "DP mask, not on the strategy's hysteresis) — "
+                             "re-derive the floor from the first measurement",
+         "label": "the re-opened `soc-band` CHARGE branch reached the board — "
+                  "FC_CHARGE_ENABLE open for >= 0.2 s across the cycle "
+                  "(EXISTENCE only; admission needs an SoC deficit AND the "
+                  "strategy's trailing-window cruise test, neither of which "
+                  "the walk models. Unreachable before the 2026-09-01 "
+                  "preload removal)"},
         # 3-4. The H2 metric ran end to end, and landed in its measured band.
         #    TWO-SIDED from 2026-09-01: retiring the OC_FC allowance above makes
         #    a truncated run an expectation FAILURE rather than an allowed
@@ -2292,16 +2591,39 @@ FAULT_EXPECTATIONS["ems-ftp75-socband"] = {
         #    say what it means. Two specs, because one spec cannot carry both
         #    bounds (the import guard refuses that pairing — _judge_signal_leaf
         #    tests min before max and would drop the ceiling silently).
+        #    ⚠️ PART C (C1 round, 2026-09-01) — WHAT THESE TWO DO NOT DO.
+        #    They are SCALE / ACCUMULATION tripwires on the metric and nothing
+        #    more. They do not discriminate a degraded share loop: a board
+        #    stuck at a constant 0.50 split produces 0.028090 g, which sits
+        #    INSIDE this band and inside the 5050 band too. The share-loop
+        #    discriminators on this entry are `socband_fc_carried` (and its
+        #    new ceiling above); on the SDP sibling they are
+        #    `sdpftp_fc_floored_early` and `sdpftp_h2_bounded`. The names
+        #    DEVIATION from the review's literal fix (renaming the two checks
+        #    `h2_scale_*`): the NAMES ARE KEPT. This file's own standing rule is
+        #    that a check name is a cross-campaign identity -- see the
+        #    `child_tx_healthy` note, where a check's meaning was changed
+        #    outright and the name deliberately preserved "so campaign ledgers
+        #    stay comparable". Six campaigns' REPORT.md rows carry
+        #    `ftp_h2_accounted`/`ftp_h2_bounded`, and renaming them would break
+        #    that comparability to fix a labelling problem the labels below now
+        #    state outright.
         {"name": "ftp_h2_accounted", "column": "h2_cum_g",
          "min_value": _FTP_H2_FLOOR_SOCBAND,
+         "provisional_note": _FTP_H2_PROVISIONAL,
          "label": "the H2 consumption metric accumulated over the cycle "
-                  "(>= %.3f g; measured 9.159e-2 in all six campaigns)"
-                  % _FTP_H2_FLOOR_SOCBAND},
+                  "(>= %.3f g; M2-equivalent governor walk 3.671e-2 at preload "
+                  "0, against 9.159e-2 in the retired 0.65 A era). A SCALE/"
+                  "ACCUMULATION tripwire — it does not discriminate a "
+                  "degraded share loop" % _FTP_H2_FLOOR_SOCBAND},
         {"name": "ftp_h2_bounded", "column": "h2_cum_g",
          "max_value": _FTP_H2_CEILING_SOCBAND,
-         "label": "... and stayed under %.3f g — 26 %% above that same "
-                  "measurement, so a scale or accumulation error in the metric "
-                  "fails here instead of being read as a result"
+         "provisional_note": _FTP_H2_PROVISIONAL,
+         "label": "... and stayed under %.3f g — 25 %% above the asymmetric "
+                  "walk, so a scale or accumulation error in the metric "
+                  "fails here instead of being read as a result (a "
+                  "constant-0.50 board passes this band: see "
+                  "`socband_fc_carried`)"
                   % _FTP_H2_CEILING_SOCBAND},
     ],
 }
@@ -2376,6 +2698,13 @@ FAULT_EXPECTATIONS["ems-ftp75-socband"] = {
 # source for all three entries: the clamp is SOC_BAND_SHARE_MIN/MAX (0.15/0.85)
 # and both values are exactly representable through the float32 UDP round trip,
 # so +/-0.01 is pure margin rather than a rounding allowance.
+# Shared PROVISIONAL note for every `ems-ftp75-sdp` threshold re-derived at
+# aux_preload_a = 0.0 (operator ruling 2026-09-01).  Every one of them is a
+# governor-walk prediction; no campaign has run this scenario at preload 0.
+_SDPFTP_PROVISIONAL = (
+    "first zero-preload campaign (aux_preload_a 0.45 -> 0.0, operator "
+    "ruling 2026-09-01); the bound is a governor-walk prediction, not a "
+    "measurement — re-derive it from the first campaign that runs it")
 _SDP_LOW_RAIL_CEIL = 0.16       # "the battery-heavy branch, sustained"
 _SDP_HIGH_RAIL_FLOOR = 0.84     # "the fuel-cell branch was reached"
 # The RAW (pre-clamp) table request on each branch.  0.00 above the node;
@@ -2400,8 +2729,9 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
     "source": ("hil_plant_sim.py SCENARIOS['ems-ftp75-sdp'] and its offline "
                "walk (the FTP75_SDP_* constants carry the full derivation: "
                "flip time and its +/-10 %/+/-20 % drain sensitivity, both "
-               "branches' governed currents, and why the preload is 0.45 A "
-               "here and 0.65 A on the two sibling FTP-75 scenarios) + "
+               "branches' governed currents, and the 2026-09-01 removal of "
+               "the preload that once made this leg's stimulus differ from "
+               "its siblings') + "
                "SdpStrategy.set_soc_ref_offset() for what the offset does + "
                "the PLAYED artifact tools/sdp_policies/sdp_policy_v3.json "
                "(policy-block sha256 0443febf…, THE CALIBRATED BENCHMARK; the "
@@ -2412,20 +2742,25 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
                "branches' actions. Current budgets against LIMIT_I_FC_MAX 1.4 "
                "A / LIMIT_I_BT_MAX 3.0 A through the firmware's minority "
                "governor (.ino:9556-9568)."),
-    # FAULT-FREE, and this one is stricter than its FTP-75 siblings on purpose:
-    # `ems-ftp75-socband` ALLOWS OC_FC because its 0.75 share ceiling leaves
-    # only ~11 % of margin at the cycle peak. Here the preload was re-derived
-    # DOWN to 0.45 A precisely so the 0.85 branch keeps 17.5 % at that peak
-    # (the ADDITIVE composition of the measured span — see the FTP75_SDP
-    # preload derivation in hil_plant_sim.py; the 18.5 % this line used to
-    # quote scaled the model's FC branch instead, which understates the peak),
-    # because an OC_FC latch would truncate the run at the point the scenario
-    # exists to observe — the post-flip half. So an OC_FC here is a real
-    # finding, not a design boundary.
+    # FAULT-FREE. ⚠️ THE OC ARGUMENT THAT USED TO MAKE THIS ENTRY SPECIAL IS
+    # MOOT (2026-09-01, the preload removal). It read: this leg commands the
+    # 0.85 rail, so its preload had to be solved DOWN to 0.45 A to keep 17.5 %
+    # of margin at the cycle peak, because an OC_FC latch would truncate the
+    # run at the point the scenario exists to observe. At preload 0 the
+    # governed FC peak on that branch is I_tot - 0.300 = 0.6603 A model /
+    # 0.7046 A on the measured composition — 50 % under LIMIT_I_FC_MAX 1.4 A.
+    # The expectation stays fault-free and an OC_FC here is still a real
+    # finding; what is retired is the claim that this leg runs closer to the
+    # limit than its siblings. It no longer does, and it no longer runs a
+    # different stimulus from them either.
     "allow_only": 0,
     # Past the whole flip band, fault-free: the run must reach its own
     # post-flip half, not merely survive the low-rail phase.
-    "survive_to": {"t": 260.0, "states": {2, 3}},
+    # ⚠️ RAISED 260 -> 300 with the preload removal: the flip itself moved from
+    # a measured 198.5 s to a predicted 272.0 s (the flip is a drain integral
+    # and the drain shrank), so 260 s now lands BEFORE the transition and would
+    # have asserted nothing about the post-flip half.
+    "survive_to": {"t": 300.0, "states": {2, 3}},
     "signals_require": [
         # 1. THE EMS LAYER ACTUALLY COMMANDED THE CYCLE. The v_setpoint axis is
         #    scenario script, not policy output, so this is the same "did the
@@ -2439,27 +2774,40 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
         #    time anything in this suite has put 0.15 on the wire from the SDP
         #    policy, and it is only reachable by starting above the node.
         #    The window closes at 150 s, the bottom of the flip band.
-        #    ⚠️ MEASURED (campaign 20260901_024231): the flip landed at
-        #    t = 198.537 s (walk 195.9, +1.35 %) — ONE transition, both rails on
-        #    the wire. The band is DE-PROVISIONALIZED from the walk's +/-20 %
-        #    (150, 250) to (185, 212): 6.8 % of slack below the measurement and
-        #    6.8 % above it, i.e. five times the walk-vs-board disagreement the
-        #    campaign actually measured, and still far tighter than a band that
-        #    admits a flip anywhere in the middle third of the cycle.
+        #    ⚠️ RE-PROVISIONALIZED 2026-09-01, THE PRELOAD REMOVAL. The flip is
+        #    an INTEGRAL of the pack drain, so removing 0.45 A of housekeeping
+        #    load moves it LATE. Governor walk at preload 0:
+        #        C:/Users/ricky/miniforge3/python.exe -c "import sys;
+        #            sys.path.insert(0,'tools'); import ems_walk as W;
+        #            print(W.walk('sdp-v3','ems-ftp75-sdp',governor=True)
+        #                  .summary())"
+        #    (bind_scenario() applies the scenario's own sdp_soc_ref_offset, so
+        #    no strategy_kwargs are needed) gives ONE transition, 0.15 -> 0.85,
+        #    at t = 272.0 s — 39 % later than the 195.9 s the 0.45 A walk gave.
+        #    Scaling by the measured/walk ratio the last era established
+        #    (198.537/196.0 = 1.0129) puts the expected board flip at 275.5 s.
+        #    THE BAND IS (240, 295), i.e. -12.9 %/+7.1 % around that prediction
+        #    — deliberately asymmetric, because the low-rail side has the whole
+        #    early cycle to spare while the high-rail side must still leave a
+        #    usable post-flip window inside a 340 s profile. Both arms are
+        #    >= 5x the 1.35 % walk-vs-board disagreement the previous era
+        #    measured. Re-derive from the first zero-preload campaign.
         {"name": "sdpftp_low_rail_early", "column": "cmd_share_sp",
-         "max_value": _SDP_LOW_RAIL_CEIL, "t_window": (20.0, 185.0),
+         "max_value": _SDP_LOW_RAIL_CEIL, "t_window": (20.0, 240.0),
+         "provisional_note": _SDPFTP_PROVISIONAL,
          "label": "the SDP policy commanded its BATTERY-HEAVY branch for the "
-                  "whole pre-flip phase (no sample above the 0.15 clamp)"},
+                  "whole pre-flip phase (no sample above the 0.15 clamp; walk "
+                  "flip 272.0 s at preload 0)"},
         # 3. ... AND THE FUEL-CELL BRANCH AFTER THE BAND. With check 2 this
         #    pins the transition inside (150, 250) s without needing a
         #    transition-detecting check kind: the command is provably at one
         #    rail before the band and provably reaches the other after it.
         {"name": "sdpftp_high_rail_late", "column": "cmd_share_sp",
-         "min_value": _SDP_HIGH_RAIL_FLOOR, "t_window": (212.0, 340.0),
+         "min_value": _SDP_HIGH_RAIL_FLOOR, "t_window": (295.0, 340.0),
+         "provisional_note": _SDPFTP_PROVISIONAL,
          "label": "... and switched to the FUEL-CELL branch (0.85) after the "
-                  "flip band — with the check above, a measured crossing "
-                  "inside t = 185..212 s (measured 198.537 s, campaign "
-                  "024231)"},
+                  "flip band — with the check above, a crossing inside "
+                  "t = 240..295 s (governor walk 272.0 s at preload 0)"},
         # 4-5. THE SAME SPAN ON THE PRE-CLAMP COLUMN, which is where the
         #    TABLE's own request is visible. 0.00 is a value the clamp hides
         #    entirely from `cmd_share_sp` (it emits 0.15 either way if the
@@ -2467,7 +2815,8 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
         #    checks that identify the ARTIFACT's branch rather than the
         #    emitted level.
         {"name": "sdpftp_raw_battery_branch", "column": "cmd_share_sp_raw",
-         "max_value": _SDP_RAW_LOW_CEIL, "t_window": (20.0, 185.0),
+         "max_value": _SDP_RAW_LOW_CEIL, "t_window": (20.0, 240.0),
+         "provisional_note": _SDPFTP_PROVISIONAL,
          "label": "the table's PRE-CLAMP request was its 0.00 battery rail — "
                   "a value no other scenario in this suite can produce"},
         # ⚠️ THE 0.89 FLOOR IS KEPT AT ITS BOUNDARY-CASE VALUE, deliberately,
@@ -2479,7 +2828,8 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
         # bin whose request IS 0.90. Tightening to the measured 0.95 would fail
         # a correct board the first time that happens. See _SDP_RAW_HIGH_FLOOR.
         {"name": "sdpftp_raw_fc_branch", "column": "cmd_share_sp_raw",
-         "min_value": _SDP_RAW_HIGH_FLOOR, "t_window": (212.0, 340.0),
+         "min_value": _SDP_RAW_HIGH_FLOOR, "t_window": (295.0, 340.0),
+         "provisional_note": _SDPFTP_PROVISIONAL,
          "label": "... and returned to its fuel-cell rail (1.00/0.95, or 0.90 "
                   "in demand bin 24) after the flip (measured post-flip "
                   "minimum 0.95, campaign 024231)"},
@@ -2488,41 +2838,64 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
         #    commanded 0.15 is always below SHARE_MINORITY_I_MIN_A / I_tot at
         #    this cycle's currents (I_tot peaks at 1.41 A -> floor 0.213), so
         #    the DELIVERED FC current is pinned at the 0.300 A minority floor
-        #    for the whole pre-flip phase. The constant-0.50 `ems-ftp75-5050`
-        #    control peaks at 0.8275 A over a comparable window and the 0.85
-        #    branch reaches 1.11 A, so a 0.45 A ceiling separates the
-        #    battery-heavy branch from anything else this cycle can do.
+        #    for the whole pre-flip phase.
+        #    (PART C, 2026-09-01: the 0.65 A-era arithmetic that used to close
+        #    this paragraph — a 0.8275 A control peak, a 1.11 A branch and a
+        #    0.45 A ceiling — is DELETED rather than corrected. It described a
+        #    stimulus this entry no longer runs and it contradicted the
+        #    replacement derivation immediately below, which is the one in
+        #    force.)
         #    ⚠️ WHAT A PASS PROVES (inherited from every sibling entry): the
         #    plant splits bus current in proportion to the MDAC CODE RATIO
         #    (HIL_PLANT.md 4.7 — sign- and monotonicity-preserving, WRONG
         #    GAIN), so this asserts the firmware->MDAC arithmetic, not
         #    share-loop gain.
-        #    ⚠️ MEASURED (campaign 20260901_024231): peak I_fc 0.3039 A over
-        #    this window — 1.3 % above the 0.300 A governor floor, i.e. the
-        #    floor exactly. The walk-era 0.45 A ceiling had 48 % of unused
-        #    headroom; 0.35 A is 15 % above the measurement and still 2.4x under
-        #    the 0.8275 A the constant-0.50 sibling reaches, so it keeps its
-        #    discriminating power and now also fails a run in which the governor
-        #    floor itself moved.
+        #    ⚠️ THE GOVERNOR-FLOOR DERIVATION ABOVE NO LONGER APPLIES IN THIS
+        #    WINDOW, and the replacement is stated rather than the number
+        #    quietly moved. At preload 0 the source total over t = (30, 150)
+        #    peaks at 0.5253 A — BELOW the 0.55 A open-loop exit threshold —
+        #    so the share loop is OPEN through the whole window and the
+        #    minority governor is not clipping anything. The delivered split is
+        #    the commanded 0.15 itself, and the governor walk gives a window
+        #    peak I_fc of 0.0788 A (against the constant-0.50 sibling's
+        #    0.2626 A over the same window).
+        #    A 0.18 A ceiling is 2.3x the prediction and 31 % under the
+        #    sibling's control peak, so it still separates the battery-heavy
+        #    branch from a run that ignored the command — but it is now a
+        #    statement about the OPEN-LOOP delivered ratio, not about the
+        #    0.300 A floor. PROVISIONAL: re-derive from the first campaign.
         {"name": "sdpftp_fc_floored_early", "column": "I_fc",
-         "max_value": 0.35, "t_window": (30.0, 150.0),
-         "label": "the board delivered the battery-heavy split — I_fc held at "
-                  "the 0.300 A minority-governor floor, never near the "
-                  "0.8275 A the constant-0.50 sibling reaches (measured peak "
-                  "0.3039 A, campaign 024231)"},
-        # 7. ... AND ON THE FUEL-CELL BRANCH. The mirror image at the cycle
-        #    peak: I_fc = I_tot - 0.300 = 1.112 A (model) / 1.141 A (at the
-        #    measured +2.6 % offset).
-        #    ⚠️ MEASURED (campaign 20260901_024231): peak 1.1516 A over this
-        #    window (0.9 % above the offset-corrected model). Floor raised from
-        #    1.00 to 1.08 A = 6.2 % under the measurement, still 3.6x what the
-        #    battery-heavy branch can reach, and 23 % under LIMIT_I_FC_MAX so a
-        #    pass can never be confused with an overcurrent.
+         "max_value": 0.18, "t_window": (30.0, 150.0),
+         "provisional_note": _SDPFTP_PROVISIONAL,
+         "label": "the board delivered the battery-heavy split — I_fc under "
+                  "0.18 A through an OPEN-LOOP window whose source total never "
+                  "reaches 0.55 A (walk peak 0.0788 A; the constant-0.50 "
+                  "sibling reaches 0.2626 A there)"},
+        # 7. ... AND ON THE FUEL-CELL BRANCH.
+        #    ⚠️ THE WINDOW MOVED, AND IT HAD TO. This check used to sit on the
+        #    cycle peak, t = (235, 260) — which at preload 0 is BEFORE the
+        #    predicted 272.0 s flip, so it would have measured the
+        #    battery-heavy branch and failed a correct board. It is moved to
+        #    (295, 340), the same post-flip window the rail checks use.
+        #    The cost is stated: the cycle peak is not in that window, so the
+        #    governed FC current there is smaller. Governor walk over
+        #    (295, 340): peak I_fc 0.5402 A (the loop is CLOSED at that peak —
+        #    source total ~0.84 A).
+        #    ⚠️ PART C (C1 round, 2026-09-01): 0.42 -> 0.46 A. THE OLD FLOOR
+        #    DID NOT REJECT A STUCK-0.5 BOARD, which is the failure this check
+        #    exists to catch. A board ignoring the command and holding a
+        #    constant 0.50 split delivers 0.4198 A over this window (0.4307 A
+        #    with the documented +2.6 % FTP75 gain offset) — both ABOVE 0.42.
+        #    0.46 A is 15 % under the 0.5402 A walk prediction and 6.8 % above
+        #    the worst-case stuck-0.5 figure, so the check now separates the
+        #    fuel-cell branch from the control it names.
         {"name": "sdpftp_fc_carried_late", "column": "I_fc",
-         "min_value": 1.08, "t_window": (235.0, 260.0),
-         "label": "the board delivered the fuel-cell split at the cycle peak "
-                  "(governed I_tot - 0.300 A; measured peak 1.1516 A, campaign "
-                  "024231)"},
+         "min_value": 0.46, "t_window": (295.0, 340.0),
+         "provisional_note": _SDPFTP_PROVISIONAL,
+         "label": "the board delivered the fuel-cell split after the flip "
+                  "(>= 0.46 A; governor walk peak 0.5402 A over "
+                  "t = 295..340 s at preload 0, against 0.4198-0.4307 A for "
+                  "a board stuck at a constant 0.50 split)"},
         # 7b. THE BATTERY CHANNEL'S OWN CEILING (new, campaign 024231). The
         #    scenario's whole-run peak I_batt is 0.7117 A and it lands AT THE
         #    FLIP (t = 198.53), where the branch hands over: 76 % under
@@ -2531,11 +2904,19 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
         #    transient rather than a limit claim — the BT channel has never been
         #    bounded on this entry at all, and a share-loop or governor change
         #    that pushed current onto it would previously have gone unseen.
+        #    ⚠️ RE-DERIVED AT PRELOAD 0: the governor walk's whole-run peak
+        #    I_batt is 0.6602 A (at the cycle peak, on the pre-flip
+        #    battery-heavy branch, where the loop is closed and the minority
+        #    governor puts I_tot - 0.300 on the battery). 0.90 A is 36 % above
+        #    that and 3.3x under LIMIT_I_BT_MAX 3.0 A, so the ceiling is KEPT
+        #    at its value — it was already a regression tripwire rather than a
+        #    limit claim, and it retains that role with more margin.
         {"name": "sdpftp_bt_peak_bounded", "column": "I_batt",
          "max_value": 0.90, "t_window": (5.0, 340.0),
+         "provisional_note": _SDPFTP_PROVISIONAL,
          "label": "the battery channel stayed bounded through the branch "
-                  "handover (measured whole-run peak 0.7117 A at the flip, "
-                  "vs LIMIT_I_BT_MAX 3.0 A, campaign 024231)"},
+                  "handover (governor walk whole-run peak 0.6602 A at "
+                  "preload 0, vs LIMIT_I_BT_MAX 3.0 A)"},
         # 8-9. THE H2 ACCOUNTING RAN, AND STAYED BOUNDED. Budget from the walk:
         #    ~0.30 A on FC for the ~190 s pre-flip phase (4.7 W bus, 5.5 W
         #    stack) and ~0.8 A for the ~150 s after it (12.5 W bus, 14.7 W
@@ -2551,11 +2932,20 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
         #    ⚠️ Gfc is scale-portable by design but not identified against this
         #    stack (TODO(calibrate), H2Consumption banner), so this asserts the
         #    accounting RAN and REPEATED, not an absolute mass.
-        {"name": "sdpftp_h2_accounted", "column": "h2_cum_g", "min_value": 5.6e-2,
+        #    ⚠️ RE-PROVISIONALIZED AT PRELOAD 0: the governor walk gives
+        #    0.019918 g / dSoC -0.014691 at the plant-equivalent dv0 0.030223
+        #    (F1, 2026-09-01 — RE-WALKED at the M2 consistent pair; the retired
+        #    M1-era walk gave 0.019347 / -0.014922), against the 0.0621749 g
+        #    measured in the 0.45 A era (campaign 024231). Band = walk +/-25 %,
+        #    the same shape as the two sibling entries' — [0.0149, 0.0249].
+        {"name": "sdpftp_h2_accounted", "column": "h2_cum_g",
+         "min_value": 1.49e-2, "provisional_note": _FTP_H2_PROVISIONAL,
          "label": "the H2 consumption metric accumulated over the cycle "
-                  "(measured 0.0621749 g, campaign 024231)"},
-        {"name": "sdpftp_h2_bounded", "column": "h2_cum_g", "max_value": 7.0e-2,
-         "label": "... and stayed under 0.070 g, so a scale or accumulation "
+                  "(M2-equivalent governor walk 0.019918 g at preload 0; "
+                  "0.0621749 g in the retired 0.45 A era)"},
+        {"name": "sdpftp_h2_bounded", "column": "h2_cum_g",
+         "max_value": 2.49e-2, "provisional_note": _FTP_H2_PROVISIONAL,
+         "label": "... and stayed under 0.0249 g, so a scale or accumulation "
                   "error in the metric fails here instead of reading as a "
                   "result"},
     ],
@@ -2566,45 +2956,57 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
 #
 # Shape mirrors `ems-ftp75-5050`'s, because the STIMULUS is that scenario's
 # term for term (the same FTP75_PROFILE list object, the same
-# FTP75_RUN_EXIT_S, the same 0.65 A FTP75_PRELOAD_A). What differs is the
-# commanding: an offline DP table rather than a constant 0.50 split.
+# FTP75_RUN_EXIT_S, the same FTP75_PRELOAD_A — 0.0 A since 2026-09-01, and now
+# also the same as `ems-ftp75-sdp`'s). What differs is the commanding: an
+# offline DP table rather than a constant 0.50 split.
 #
-# FAULT-FREE IS THE EXPECTATION, and the table's own control grid says it
-# should be. Its share span is [0.25, 0.75] (n_share 41, recorded in the
-# header and drift-checked at load), so the worst single-channel loading it
-# can command is 0.75 of the source total. At the cycle peak (model 1.613 A,
-# and the `ems-ftp75-5050` trace runs +2.6 % hot against that) 0.75 is
-# ~1.24 A — the same operating point `ems-ftp75-socband` reaches at ITS 0.75
-# ceiling, where OC_FC is ALLOWED because the margin is only 11.3 %.
+# ⚠️ THE TABLE WAS RE-SOLVED for the zero-preload demand (2026-09-01).
+# `aux_preload_a` is in DP_FINGERPRINT_META_KEYS, so a table solved against the
+# 0.65 A demand is REFUSED at load rather than played — the era boundary is
+# enforced by the fingerprint, not by this comment.
 #
-# ⚠️ THIS ENTRY DOES NOT ALLOW OC_FC, and the difference from that sibling is
-# stated rather than assumed: the table SITS AT 0.75 for 2058 of its 3501
-# stages, which is not obviously safer than soc-band's saturation. What makes
-# it different is WHERE: the DP has full foreknowledge of the cycle, and its
-# own solve places the peak-power stages inside the 0.25-biased region. If a
-# campaign latches OC_FC here, the finding is that the table chose 0.75 AT the
-# peak on hardware that runs hot against the model — read the trace against
-# the table, do not widen this field. This is the least-supported expectation
-# in the entry and the first one a first campaign should re-derive.
+# FAULT-FREE IS THE EXPECTATION, and at preload 0 the table's own control grid
+# says so with room to spare. Its share span is [0.25, 0.75] (n_share 41,
+# recorded in the header and drift-checked at load), so the worst
+# single-channel loading it can command is 0.75 of the source total. At the
+# cycle peak (model 0.9603 A, and the `ems-ftp75-5050` trace runs +2.6 % hot
+# against that) 0.75 is ~0.739 A — 47 % under LIMIT_I_FC_MAX 1.4 A, against
+# the ~1.24 A / 11.3 % margin the 0.65 A preload left. The OC_FC concern that
+# made this the entry's least-supported expectation is therefore RETIRED; if a
+# campaign latches OC_FC here it is a real finding and the trace should be read
+# against the table.
 #
 # ⚠️ EVERY THRESHOLD BELOW IS PROVISIONAL — no campaign has run this scenario.
-_FTP75_DP_H2_BAND = (0.045, 0.115)
+# PART C (C1 round, 2026-09-01): the union MOVES WITH ITS TWO SOURCES, and
+# it is now DERIVED from them rather than transcribed -- a hand-copied union
+# is exactly the kind of constant that goes stale the next time one of the
+# siblings' bands is re-walked, which is what happened this round.
+# Today: [0.023, 0.038] (5050) union [0.028, 0.047] (socband).
+# The DP's own re-solved optimum, 0.0396922 g at a matched terminal SoC,
+# lands inside it -- asserted by test, not assumed.
+_FTP75_DP_H2_BAND = (min(_FTP_H2_BAND_5050[0], _FTP_H2_FLOOR_SOCBAND),
+                     max(_FTP_H2_BAND_5050[1], _FTP_H2_CEILING_SOCBAND))
 # WHY THIS BAND, and why it is NOT the DP's own predicted total. The solver
-# reports h2_g_physical = 0.0949435 g for this table, but that number is the
-# REDUCED MODEL's open-loop optimum at a matched terminal SoC of 0.685895
-# (delta_soc -0.0141) and is not the quantity a live run's `h2_cum_g` column
+# reports an h2_g_physical for the re-solved table (see the regenerated
+# header), but that number is the REDUCED MODEL's open-loop optimum at a
+# matched terminal SoC and is not the quantity a live run's `h2_cum_g` column
 # measures. Banding a live metric on it would import the whole reduced model's
 # error budget.
 #
-# The band is taken from the two MEASURED siblings instead, on a structural
-# argument: this leg runs their stimulus, and its realized split lies BETWEEN
-# theirs by construction — `ems-ftp75-5050` holds 0.50 for the whole cycle and
-# `ems-ftp75-socband` saturates at 0.75, while the table moves inside
-# [0.25, 0.75]. Hydrogen tracks the FC channel's share of one fixed demand, so
-# this leg's total must land inside the union of the two measured bands:
-# [0.045, 0.085] (5050, measured 6.47e-2) and [5e-3, 0.115] (socband, measured
-# 9.16e-2). Union floor 0.045, union ceiling 0.115. Expect the realized value
-# near the socband end — the table sits at 0.75 for 59 % of its stages.
+# The band is taken from the two SIBLING legs instead, on a structural
+# argument that the preload removal does not disturb: this leg runs their
+# stimulus, and its realized split lies BETWEEN theirs by construction —
+# `ems-ftp75-5050` holds 0.50 for the whole cycle and `ems-ftp75-socband`
+# saturates at 0.75, while the table moves inside [0.25, 0.75]. Hydrogen
+# tracks the FC channel's share of one fixed demand, so this leg's total must
+# land inside the union of the two siblings' bands.
+#
+# ⚠️ RE-DERIVED AT PRELOAD 0 (2026-09-01) — union of the two governor-walk
+# bands: [0.021, 0.035] (5050, walk 2.809e-2) and [0.026, 0.045] (socband,
+# walk 3.546e-2). Union floor 0.021, union ceiling 0.045. Expect the realized
+# value near the socband end, since the table sits at its 0.75 rail for most
+# of its stages. LAST PRELOADED-ERA MEASUREMENT, not comparable: 0.09291 g /
+# dSoC -0.01478 (campaign hil_report_20260901_151156).
 FAULT_EXPECTATIONS["ems-ftp75-dp"] = {
     "source": ("hil_plant_sim.py SCENARIOS['ems-ftp75-dp'] + the generated "
                "tools/dp_tables/dp_ems_table_ems-ftp75-dp.csv (its header "
@@ -2622,15 +3024,21 @@ FAULT_EXPECTATIONS["ems-ftp75-dp"] = {
          "label": "the FTP-75 peak (3.0 m/s at t = 245 s) was commanded"},
         # 2. ... and the BOARD carried the load. The table's grid floors the FC
         #    share at 0.25, so the weakest peak loading it can command is
-        #    0.25 x 1.613 = 0.40 A. 0.35 A sits under that and far above the
-        #    ~0.20 A a 0.25 split of the 0.800 A standstill total would give,
-        #    so an idling run that merely reached t = 245 cannot satisfy it.
-        #    Deliberately LOOSER than the sibling's 0.70 A: that leg's split is
-        #    pinned at 0.50, this one's is chosen by the table.
-        {"name": "ftpdp_fc_carried", "column": "I_fc", "min_value": 0.35,
+        #    0.25 x 0.9603 = 0.240 A at preload 0. 0.20 A sits under that and
+        #    16x above the ~0.0375 A a 0.25 split of the 0.15 A standstill
+        #    total would give, so an idling run that merely reached t = 245
+        #    cannot satisfy it. Deliberately LOOSER than the sibling's 0.40 A:
+        #    that leg's split is pinned at 0.50, this one's is chosen by the
+        #    table. The window is the cycle peak, where the share loop is
+        #    CLOSED (source total 0.9347..0.9603 A).
+        {"name": "ftpdp_fc_carried", "column": "I_fc", "min_value": 0.20,
          "t_window": _FTP_PEAK_W,
+         "provisional_note": "first zero-preload campaign; the floor is the "
+                             "table's own 0.25 share rail applied to the "
+                             "governor-walk peak source total 0.9603 A — "
+                             "re-derive from the first campaign that runs it",
          "label": "the FC channel carried its DP-commanded share of the peak "
-                  "(floor = the table's own 0.25 share rail; PROVISIONAL)"},
+                  "(floor = the table's own 0.25 share rail at preload 0)"},
         # 3. THE DP ACTUALLY DROVE THE RUN. Without this the scenario passes
         #    identically whether the table reached the wire or a constant 0.50
         #    split did — and a bound leg that was silently un-driven makes the
@@ -2665,26 +3073,41 @@ FAULT_EXPECTATIONS["ems-ftp75-dp"] = {
         #    asserts reached it. scan_signals() already floors every window at
         #    WARM_RESET_GRACE_S = 2.0 s, so the effective window is (2.0, 5.0]
         #    — ~31 of the 51 rail stages, ample margin.
+        #    ⚠️ PART C (C1 round, 2026-09-01): 0.30 -> 0.32. The table's own
+        #    minimum share on this cycle is 0.2875, so a 0.30 ceiling left
+        #    4.2 % of margin on a DETERMINISTIC checked-in file — tight
+        #    enough that a float32 wire round trip plus one re-solve of the
+        #    table could fail a correct run, and the quantity has no physical
+        #    spread to justify a knife edge. 0.32 is 11 % above the table
+        #    value and still far below the 0.70 the upper-rail check requires,
+        #    so the two remain mutually exclusive by a wide margin.
         {"name": "ftpdp_table_low_rail", "column": "cmd_share_sp",
-         "max_value": 0.30, "t_window": (0.0, 5.0),
-         "label": "... and the table's OPENING 0.25 rail reached the wire "
-                  "(t <= 5 s, where every one of its 51 low-rail stages "
-                  "lives), so the run replayed the table from its start and "
-                  "not just its upper half (PROVISIONAL)"},
+         "max_value": 0.32, "t_window": (0.0, 5.0),
+         "provisional_note": "first zero-preload campaign; the ceiling is the "
+                             "re-solved table's own 0.2875 minimum plus 11 %, "
+                             "not a measurement — re-derive it from the first "
+                             "campaign that runs it",
+         "label": "... and the table's OPENING low rail reached the wire "
+                  "(<= 0.32 against the table's own 0.2875 minimum; t <= 5 s, "
+                  "where every one of its 51 low-rail stages lives), so the "
+                  "run replayed the table from its start and not just its "
+                  "upper half"},
         # 5-6. The H2 metric ran end to end and landed in the siblings' union
         #    band. Two specs, because one spec cannot carry both bounds (the
         #    import guard refuses min_value+max_value on a single leaf —
         #    `_judge_signal_leaf` tests min before max and drops the ceiling).
         {"name": "ftpdp_h2_accounted", "column": "h2_cum_g",
          "min_value": _FTP75_DP_H2_BAND[0],
+         "provisional_note": _FTP_H2_PROVISIONAL,
          "label": "the H2 consumption metric accumulated over the cycle "
-                  "(>= %.3f g, the `ems-ftp75-5050` floor) (PROVISIONAL)"
+                  "(>= %.3f g, the `ems-ftp75-5050` floor at preload 0)"
                   % _FTP75_DP_H2_BAND[0]},
         {"name": "ftpdp_h2_bounded", "column": "h2_cum_g",
          "max_value": _FTP75_DP_H2_BAND[1],
+         "provisional_note": _FTP_H2_PROVISIONAL,
          "label": "... and stayed under %.3f g (the `ems-ftp75-socband` "
-                  "ceiling), so a scale or accumulation error fails here "
-                  "instead of reading as a result (PROVISIONAL)"
+                  "ceiling at preload 0), so a scale or accumulation error "
+                  "fails here instead of reading as a result"
                   % _FTP75_DP_H2_BAND[1]},
     ],
 }
@@ -3038,6 +3461,30 @@ _MPPT_ALL_CRUISE_W = (EMS_MPPT_CRUISE_WINDOWS[0][0],
 # session but deliberately KEEPS ag105MpptRegCnt, .ino:10769-10775), so the whole
 # span carries a value, not just the charge windows.
 _MPPT_THRESH_W = (EMS_MPPT_CRUISE_WINDOWS[1][0], _MPPT_ALL_CRUISE_W[1])   # 28.1-41.0
+# ── PART B3 (C1 round, 2026-09-01) ──────────────────────────────────────────
+# CRUISE-ONLY window for the OPERATING-POINT tripwire, and the braking window
+# it deliberately excludes.
+#
+# WHY THE SPLIT.  `_MPPT_THRESH_W` runs to 41.0 s and therefore spans the
+# 37.732-38.529 s BRAKING window.  Since the WP-C regen model landed, braking
+# lifts V-MOT (and with it V_chg) onto the 18.1 V chopper clamp, so the HIL
+# mirror's threshold count clamps to AG105_MPPT_N_CEIL 27 for the whole of it.
+# That is 27 > 21 and it fails the tripwire on a CORRECT board.
+#
+# THE 27 IS A MIRROR ARTIFACT, NOT A BOARD READING.  Under HIL_SIM the .ino
+# short-circuits the reg-0x02 write path and mirrors the count onto the
+# observation frame directly (.ino:11185-11201).  The real manager EXCLUDES
+# regen from its V_chg window sampling (.ino:11090-11095 — the window minimum
+# is sampled only while FC_CHARGE powers the charger), so a real board would
+# never track the braking node's lift into its threshold at all. The mirror has
+# no such exclusion, which is why the artifact exists only in emulation.
+#
+# The tripwire is therefore scoped to cruise, and the braking window gets its
+# own pin ASSERTING the artifact at exactly 27 — so the day the mirror is
+# taught the regen exclusion, this entry fails and gets rewritten rather than
+# the change landing unobserved.
+_MPPT_THRESH_CRUISE_W = (EMS_MPPT_CRUISE_WINDOWS[1][0], 37.0)     # 28.1-37.0
+_MPPT_THRESH_BRAKE_W = (37.732, 38.529)
 # ~12.9 s of rows at the CSV's 1 kHz rate; 9000 is 70 % of them, leaving room for
 # dropped observation frames while still FAILING LOUDLY on a run whose column is
 # entirely blank — which is exactly what a campaign against a fw v21-v23 flash
@@ -3329,12 +3776,51 @@ FAULT_EXPECTATIONS["mppt-tracking"] = {
         #     ⚠️ RAISE THIS ONLY WITH A MEASUREMENT.  It is NOT the safety
         #     bound; the safety bound is `mppt_threshold_ceiling` and that one
         #     never moves.
+        #     PART B3 (2026-09-01): the WINDOW is now cruise-only. The band
+        #     (<= 21) is UNCHANGED. See the _MPPT_THRESH_CRUISE_W banner for
+        #     why the braking window had to come out, and for the pin that
+        #     replaces it.
         {"name": "mppt_threshold_peak_tripwire", "column": "mppt_thresh_cnt",
-         "max_value": 21, "t_window": _MPPT_THRESH_W,
-         "label": "reg-0x02 count stayed at or under 21 (%.3f V) — the "
-                  "OPERATING-POINT tripwire (measured peak 19), distinct from "
-                  "the firmware clamp at %d which is the invariant"
-                  % (ag105_mppt_volts(21), AG105_MPPT_N_CEIL)},
+         "max_value": 21, "t_window": _MPPT_THRESH_CRUISE_W,
+         "label": "reg-0x02 count stayed at or under 21 (%.3f V) through the "
+                  "CRUISE window %.1f-%.1f s — the OPERATING-POINT tripwire "
+                  "(measured peak 19), distinct from the firmware clamp at %d "
+                  "which is the invariant"
+                  % (ag105_mppt_volts(21), _MPPT_THRESH_CRUISE_W[0],
+                     _MPPT_THRESH_CRUISE_W[1], AG105_MPPT_N_CEIL)},
+        # 11. THE BRAKING WINDOW, pinned as a MIRROR ARTIFACT (PART B3).
+        #     Both bounds are AG105_MPPT_N_CEIL, i.e. the count is asserted to
+        #     sit at exactly 27 for the whole window. They are TWO SPECS, not
+        #     one: `_judge_signal_leaf()` returns on the first bound it matches
+        #     and tests `floor_min_value` first, so a spec carrying both would
+        #     silently drop the ceiling (the import guard refuses it).
+        #     ⚠️ THIS IS NOT A BOARD BEHAVIOUR. It records that the HIL mirror
+        #     tracks the regen-lifted V_chg into the threshold, which the real
+        #     manager cannot do (.ino:11090-11095 excludes regen from the V_chg
+        #     window sampling). If the mirror is ever taught that exclusion this
+        #     check FAILS, which is the intent: the artifact should not be able
+        #     to disappear silently.
+        {"name": "mppt_threshold_braking_mirror_artifact_ceiling",
+         "column": "mppt_thresh_cnt",
+         "max_value": AG105_MPPT_N_CEIL,
+         "t_window": _MPPT_THRESH_BRAKE_W,
+         "label": "reg-0x02 count never exceeded AG105_MPPT_N_CEIL %d through "
+                  "the braking window %.3f-%.3f s (the mirror-artifact pin's "
+                  "ceiling arm)"
+                  % (AG105_MPPT_N_CEIL, _MPPT_THRESH_BRAKE_W[0],
+                     _MPPT_THRESH_BRAKE_W[1])},
+        {"name": "mppt_threshold_braking_mirror_artifact",
+         "column": "mppt_thresh_cnt",
+         "floor_min_value": AG105_MPPT_N_CEIL,
+         "t_window": _MPPT_THRESH_BRAKE_W,
+         "label": "reg-0x02 count pinned at AG105_MPPT_N_CEIL %d through the "
+                  "braking window %.3f-%.3f s — a HIL MIRROR ARTIFACT "
+                  "(regen lifts V_chg onto the 18.1 V chopper clamp and the "
+                  "mirror clamps; the real manager excludes regen from its "
+                  "V_chg sampling, .ino:11090-11095), asserted so it cannot "
+                  "change unnoticed"
+                  % (AG105_MPPT_N_CEIL, _MPPT_THRESH_BRAKE_W[0],
+                     _MPPT_THRESH_BRAKE_W[1])},
     ],
 }
 
@@ -3797,29 +4283,59 @@ for _n, _e in FAULT_EXPECTATIONS.items():
                 "`name` (it is reported as the winning outcome) and a non-empty "
                 "`events` list." % (_n, _g.get("name")))
             for _s in _b["events"]:
-                assert isinstance(_s, str) or "kind" in _s or "total_of" in _s, (
+                assert (isinstance(_s, str) or "kind" in _s
+                        or "total_of" in _s or "max_of" in _s), (
                     "FAULT_EXPECTATIONS[%r].events_any_of[%r].%s: every event "
-                    "spec needs a `kind` or `total_of`."
+                    "spec needs a `kind`, `total_of` or `max_of`."
                     % (_n, _g.get("name"), _b["name"]))
 
-# `total_of` shape (M3, 2026-09-01): needs a `field` to sum and at least one of
-# `min_value`/`max_value` to compare it against, or the spec silently sums
-# nothing meaningful and always passes -- the same failure-shape the other
-# guards in this section exist to catch at import instead of mid-campaign.
+# ── DUPLICATE-KEY TRIPWIRE (fix round, 2026-09-01) ──────────────────────────
+# A repeated key in the FAULT_EXPECTATIONS literal is resolved by Python before
+# any assertion here could see it, so this cannot detect the duplicate itself.
+# It detects the DAMAGE the one that occurred left behind: a `regen-harvest-true`
+# entry that carries `charge-regen`'s signals, or vice versa. Each entry's
+# signal names must belong to its own scenario, which is cheap to state and is
+# exactly what a mis-anchored splice breaks.
+for _n, _names in (("regen-harvest-true",
+                    {"regen_switch", "regen_harvest", "regen_node_lift",
+                     "regen_clamp_dwell"}),
+                   ("charge-regen", {"regen_switch", "charge_current"})):
+    _got = {_s["name"] for _s in FAULT_EXPECTATIONS[_n].get("signals_require", ())
+            if "name" in _s}
+    assert _got == _names, (
+        "FAULT_EXPECTATIONS[%r].signals_require carries %s, expected %s. A "
+        "scenario wearing another scenario's checks is the signature of a "
+        "mis-anchored edit or a duplicated dict key -- see the structural-repair "
+        "note above the two entries." % (_n, sorted(_got), sorted(_names)))
+del _n, _names, _got
+
+# `total_of` / `max_of` shape (M3 2026-09-01; `max_of` added by PART B2 of the
+# C1 round, 2026-09-01): each needs a `field` to aggregate and at least one of
+# `min_value`/`max_value` to compare it against, or the spec aggregates nothing
+# meaningful and always passes -- the same failure-shape the other guards in
+# this section exist to catch at import instead of mid-campaign.
 for _n, _e in FAULT_EXPECTATIONS.items():
     for _s in _e.get("events_require", ()):
-        if isinstance(_s, dict) and "total_of" in _s:
+        if not isinstance(_s, dict):
+            continue
+        for _agg_key in ("total_of", "max_of"):
+            if _agg_key not in _s:
+                continue
             assert "kind" not in _s, (
                 "FAULT_EXPECTATIONS[%r]: an events_require spec must not mix "
-                "`kind` and `total_of` -- they are two different judging paths."
-                % _n)
+                "`kind` and `%s` -- they are two different judging paths."
+                % (_n, _agg_key))
+            assert not ("total_of" in _s and "max_of" in _s), (
+                "FAULT_EXPECTATIONS[%r]: an events_require spec must not carry "
+                "both `total_of` and `max_of` -- they are two aggregators and "
+                "only one verdict is rendered." % _n)
             assert _s.get("field"), (
-                "FAULT_EXPECTATIONS[%r]: a `total_of` spec needs a `field` to "
-                "sum." % _n)
+                "FAULT_EXPECTATIONS[%r]: a `%s` spec needs a `field` to "
+                "aggregate." % (_n, _agg_key))
             assert _s.get("min_value") is not None or _s.get("max_value") is not None, (
-                "FAULT_EXPECTATIONS[%r]: a `total_of` spec with neither "
+                "FAULT_EXPECTATIONS[%r]: a `%s` spec with neither "
                 "`min_value` nor `max_value` compares nothing and always "
-                "passes." % _n)
+                "passes." % (_n, _agg_key))
 
 # Shape of the 2026-08-31 signal kinds, asserted at import for the same reason
 # every bound here is: each of them fails SILENTLY when malformed.  A `value_mask`
@@ -4387,6 +4903,22 @@ def build_plan(args):
             # side effect of a scenario-side flag.
             if getattr(args, "droop", "design") != "design":
                 argv += ["--droop", getattr(args, "droop", "design")]
+            # -- PART A (C1, 2026-09-01): converter-asymmetry mode ------------
+            # Appended here for the same reason as `--droop` (two branches
+            # above rebuild `argv` wholesale).  Passed only when NON-DEFAULT,
+            # again for the same reason: the child's own default is
+            # ASYMMETRY_MODE_DEFAULT and provenance rides `config.asymmetry`
+            # in every CSV meta sidecar, so an explicit flag on every command
+            # line would buy nothing.
+            #
+            # THE REPLAY HALF IS NOT PASSED THIS FLAG EITHER -- and it does not
+            # need to be: a replay run drives the rails from a log and
+            # constructs no hi-fi engine, so no asymmetry is realized on that
+            # half in either mode.
+            if getattr(args, "asymmetry",
+                       ASYMMETRY_MODE_DEFAULT) != ASYMMETRY_MODE_DEFAULT:
+                argv += ["--asymmetry", getattr(args, "asymmetry",
+                                                ASYMMETRY_MODE_DEFAULT)]
             plan.append({
                 "kind": "scenario", "name": name, "mode": mode,
                 "electrical_required": need,
@@ -4676,6 +5208,16 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
     m = {"csv": csv_path, "rows": 0, "n_obs": 0, "final_fault_flags": None,
          "fault_bits_seen": 0, "fault_bits_post_grace": 0,
          "fault_first_t": {}, "fault_first_t_whole_run": {},
+         # ── PART B1 (C1 round, 2026-09-01) ──────────────────────────────────
+         # POST-GRACE first sighting of each bit ON A LATCHED ROW, i.e. with
+         # FAULT_ERROR also set. This is the map `not_before_s` is judged
+         # against. `fault_first_t` records the first BARE bit, which a
+         # single-tick indication can set without any fault being declared, so
+         # judging an absence assertion on it charges a stimulus with a
+         # transient that triggerFault() never latched. The predicate here is
+         # the same one the `fault_latch_bit` signal uses (`bits & FAULT_ERROR`
+         # on the same row), so the two cannot drift.
+         "fault_first_latch_t": {},
          "n_obs_post_grace": 0, "last_obs_t": None,
          "grace_s": grace_s, "survive_to_t": survive_to_t,
          "fault_bits_before_survive": 0, "state_at_survive": None,
@@ -4805,6 +5347,15 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
                             # stringify an int key to "1"/"256" — unreadable, and
                             # not round-trippable by a consumer that expects ints.
                             m["fault_first_t"].setdefault(fault_names(b), t)
+                        # PART B1: the LATCHED first sighting. Populated only on
+                        # a row that also carries FAULT_ERROR, and iterated over
+                        # `bits` rather than `new` — a bit whose first BARE
+                        # sighting was a transient must still be able to record
+                        # its later latch.
+                        if bits & FAULT_ERROR:
+                            for b in _split_bits(bits & ~FAULT_ERROR):
+                                m["fault_first_latch_t"].setdefault(
+                                    fault_names(b), t)
                         if survive_to_t is not None:
                             if t < survive_to_t:
                                 m["fault_bits_before_survive"] |= bits
@@ -5716,6 +6267,16 @@ def _judge_event_spec(req, events):
                                               restrict to events matching ALL of
                                               those exact field values first
       {"total_of": k, "field": f,
+      {"max_of": k, "field": f,
+       "min_value": lo, "max_value": hi}      the ANY quantifier (PART B2,
+                                              2026-09-01): the LARGEST f over
+                                              every matching event of kind k.
+                                              Asserts that at least ONE event
+                                              cleared the floor, which neither
+                                              the ALL form (a short tail episode
+                                              fails it) nor `total_of` (a long
+                                              tail of flickers passes it) can say.
+      {"total_of": k, "field": f,
        "min_value": lo, "max_value": hi}      SUM of f over every matching
                                               event of kind k, compared once —
                                               M3 (2026-09-01): a per-episode ALL
@@ -5737,8 +6298,18 @@ def _judge_event_spec(req, events):
     2026-08-31 for the two-outcome form of that entry; the entry is single-outcome
     again since the stimulus redesign, and still pins `where` on its scp_cut.)"""
     spec = {"kind": req} if isinstance(req, str) else dict(req)
-    if "total_of" in spec:
-        kind = spec["total_of"]
+    # PART B2 (C1 round, 2026-09-01): `max_of` is the ANY quantifier, and it is
+    # the third of the three the coalesced `chopper_clamp` stream needs. The
+    # bare-field form is ALL ("every episode cleared this"), `total_of` is SUM
+    # ("the run harvested this much altogether"), and `max_of` is ANY ("at least
+    # one episode was a real braking window, not a 5 ms flicker"). Only the last
+    # can say that a run's energy came from a genuine window rather than from a
+    # long tail of tiny ones, which is exactly what regen-harvest-true asserts.
+    # It shares `total_of`'s code path because the two differ only in the
+    # aggregator.
+    if "total_of" in spec or "max_of" in spec:
+        _agg = "total" if "total_of" in spec else "max"
+        kind = spec.get("total_of", spec.get("max_of"))
         field = spec["field"]
         where = spec.get("where") or {}
         matching = [e for e in events.get("events_by_kind", {}).get(kind, [])
@@ -5746,17 +6317,29 @@ def _judge_event_spec(req, events):
         vals = [float(e[field]) for e in matching
                 if isinstance(e.get(field), (int, float))
                 and not isinstance(e.get(field), bool)]
-        total = sum(vals)
-        lo, hi = spec.get("min_value"), spec.get("max_value")
+        # An empty `vals` is handled DIFFERENTLY by the two aggregators, and the
+        # difference is arithmetic rather than a policy choice: a SUM over
+        # nothing is 0.0 and is judged against the floor like any other total
+        # (the long-standing `total_of` behaviour, pinned by test), while a MAX
+        # over nothing has no value at all and is reported as such.
         problems = []
+        lo, hi = spec.get("min_value"), spec.get("max_value")
+        if not vals and _agg == "max":
+            problems.append("no '%s' event carrying a numeric '%s' field to "
+                            "aggregate" % (kind, field))
+            return False, ("%s %s over 0 '%s' event(s): undefined"
+                           % (_agg, field, kind)), problems
+        total = sum(vals) if _agg == "total" else max(vals)  # max: vals non-empty
         if lo is not None and total < lo:
-            problems.append("total %s = %.4f, below min_value %g (over %d "
-                            "'%s' event(s))" % (field, total, lo, len(vals), kind))
+            problems.append("%s %s = %.4f, below min_value %g (over %d "
+                            "'%s' event(s))" % (_agg, field, total, lo,
+                                                len(vals), kind))
         if hi is not None and total > hi:
-            problems.append("total %s = %.4f, above max_value %g (over %d "
-                            "'%s' event(s))" % (field, total, hi, len(vals), kind))
-        observed = "total %s over %d '%s' event(s) = %.4f" % (
-            field, len(vals), kind, total)
+            problems.append("%s %s = %.4f, above max_value %g (over %d "
+                            "'%s' event(s))" % (_agg, field, total, hi,
+                                                len(vals), kind))
+        observed = "%s %s over %d '%s' event(s) = %.4f" % (
+            _agg, field, len(vals), kind, total)
         return (not problems), observed, problems
     kind = spec["kind"]
     where = spec.get("where") or {}
@@ -5943,6 +6526,20 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
                     "NOT implied, see judge_scenario)"
                     % (fault_names(carried), grace_s))
     first_t = metrics.get("fault_first_t") or {}
+    # PART B1 (2026-09-01): `not_before_s` is judged against the LATCH map, not
+    # against `first_t`. See the fault_first_latch_t comment in the metrics
+    # builder for why. `first_t` is retained unchanged for REPORTING (it is
+    # rendered in the detail strings and serialized into results.json), so no
+    # consumer of the old field loses anything.
+    #
+    # This does NOT disturb the scp-inrush reasoning at FAULT_EXPECTATIONS
+    # ["scp-inrush"]: that entry deliberately carries NEITHER `not_before_s`
+    # NOR `survive_to`, precisely because its OC_FC latch lands INSIDE the
+    # grace window and both maps here are post-grace-scoped. The change below
+    # narrows which post-grace sightings count; it does not widen the window,
+    # so an in-grace latch remains invisible to both and the entry's derivation
+    # stands as written.
+    first_latch_t = metrics.get("fault_first_latch_t") or {}
     expect = FAULT_EXPECTATIONS.get(name)
 
     if expect is not None:
@@ -5971,22 +6568,22 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
                 # L4: first_t is keyed by fault NAME (json-friendly), so look each
                 # required bit up by its own rendered name.
                 early = sorted(b for b in _split_bits(require)
-                               if first_t.get(fault_names(b)) is not None
-                               and first_t[fault_names(b)] < not_before)
+                               if first_latch_t.get(fault_names(b)) is not None
+                               and first_latch_t[fault_names(b)] < not_before)
                 if early:
                     got = False
-                    detail += ("; but %s first appeared at t=%.3fs, BEFORE the "
+                    detail += ("; but %s first LATCHED at t=%.3fs, BEFORE the "
                                "stimulus at t=%.1fs — it did not come from the "
                                "stimulus this check is about"
                                % (fault_names(sum(early)),
-                                  first_t[fault_names(early[0])], not_before))
+                                  first_latch_t[fault_names(early[0])], not_before))
                 else:
-                    detail += ("; first seen at t=%s s, at or after the t=%.1fs "
-                               "stimulus"
-                               % (", ".join("%.3f" % first_t[fault_names(b)]
+                    detail += ("; first LATCHED at t=%s s, at or after the "
+                               "t=%.1fs stimulus"
+                               % (", ".join("%.3f" % first_latch_t[fault_names(b)]
                                             for b in _split_bits(require)
-                                            if fault_names(b) in first_t) or "?",
-                                  not_before))
+                                            if fault_names(b) in first_latch_t)
+                                  or "?", not_before))
             checks.append({"name": "expected_fault", "passed": got, "detail": detail})
 
         extra = post & ~allow_only
@@ -6085,6 +6682,10 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
                 kind = req
             elif "total_of" in req:
                 kind = "total_%s" % req["total_of"]
+            elif "max_of" in req:
+                # PART B2: distinct check NAME, so a ledger reading two specs on
+                # the same event kind can tell the SUM assertion from the ANY one.
+                kind = "max_%s" % req["max_of"]
             else:
                 kind = req["kind"]
             checks.append({
@@ -6539,40 +7140,41 @@ EMS_FRONTIER = {
 # first campaign that evaluates it should re-derive it from the observed
 # spread. Rendered with the qualifier so nobody quotes it as calibrated.
 #
-# ⚠️⚠️ IT CANNOT EVALUATE TODAY, AND THE REASON IS A REAL STIMULUS DEFECT, not
-# a plumbing gap. The three legs are NOT one experiment:
+# ⚠️⚠️ BOTH STIMULUS SPLITS ARE RESOLVED (operator ruling, 2026-09-01), and
+# the previous statement here — "IT CANNOT EVALUATE TODAY" — is RETIRED. The
+# three legs are one experiment for the first time:
 #
 #                       aux_preload_a               chg_i_ceiling_a
-#   ems-ftp75-socband   FTP75_PRELOAD_A     0.65 A  (undeclared -> 2.5 A)
-#   ems-ftp75-dp        FTP75_PRELOAD_A     0.65 A  0.8 A
-#   ems-ftp75-sdp       FTP75_SDP_PRELOAD_A 0.45 A  0.8 A
+#   ems-ftp75-socband   FTP75_PRELOAD_A     0.0 A   0.8 A
+#   ems-ftp75-dp        FTP75_PRELOAD_A     0.0 A   0.8 A
+#   ems-ftp75-sdp       FTP75_SDP_PRELOAD_A 0.0 A   0.8 A
 #
-# SPLIT 1, the load-bearing one: the candidate leg carries 0.20 A less
-# housekeeping load for the whole 340 s. That is ~1.1 kJ of bus energy it never
-# has to supply, and eq-H2 corrects for SoC, not for demand — so the candidate
-# would win by ~0.2 A of avoided load and the verdict would measure the
-# preload, not the policy. THE TWO RESOLUTIONS, both operator decisions:
-#   (a) run `ems-ftp75-sdp` at FTP75_PRELOAD_A — but 0.45 A was derived from a
-#       measured current budget (see FTP75_SDP_PRELOAD_A) and raising it risks
-#       the OC_FC margin that number exists to protect; or
-#   (b) add a fourth leg: an SDP FTP-75 scenario at 0.65 A, leaving the
-#       existing one as the dynamics demonstration it is.
+# SPLIT 1 — the candidate leg used to carry 0.20 A less housekeeping load for
+# the whole 340 s (~1.1 kJ of bus energy), and eq-H2 corrects for SoC, not for
+# demand, so the verdict would have measured the preload rather than the
+# policy. RESOLVED BY REMOVAL rather than by either of the two resolutions
+# recorded here before: the operator's ruling took `aux_preload_a` to 0.0 on
+# every drive-cycle scenario, so the two constants now hold the same value and
+# the OC_FC margin that once forced them apart is no longer binding (the
+# governed FC peak on the 0.85 branch is 0.7046 A against LIMIT_I_FC_MAX 1.4 A
+# — see the FTP75_SDP_PRELOAD_A block in hil_plant_sim.py).
 #
-# SPLIT 2, found by the same precondition and reported alongside: the two
-# policy legs cap the Ag105 at 0.8 A while the reference leg declares no cap
-# and would run at AG105_I_MAX 2.5 A. It is INERT in practice — the preload
-# forecloses `soc-band`'s charge branch on this cycle (measured, campaign
-# 20260831_191509), so `ems-ftp75-socband` never opens the charger and the cap
-# it would have used is never exercised. It is reported anyway rather than
-# whitelisted: "inert" is a measurement on one campaign's trace, not a
-# property of the registry, and a profile change that admits a charge window
-# would make the reference leg's charge lever 3x the candidates'. Resolving it
-# is one line — declare the 0.8 A cap on the two causal FTP-75 legs — but that
-# edits the stimulus of two scenarios with calibrated expectation bands, so it
-# is an operator decision too and is deliberately NOT taken here.
+# SPLIT 2 — the reference leg declared no `chg_i_ceiling_a` and would have run
+# at AG105_I_MAX 2.5 A while the two policy legs capped at 0.8 A. It was INERT
+# only because the preload foreclosed `soc-band`'s charge branch, and the
+# preload removal REOPENS that branch, so the split would have become live.
+# RESOLVED by declaring the siblings' 0.8 A on `ems-ftp75-socband`
+# (hil_plant_sim.py, immediately after the FTP-75 scenario loop).
+# `ems-ftp75-5050` still declares nothing, and correctly: `hold-5050` never
+# commands `charge_goal`, so it is not one of this tuple's legs.
 #
-# The stimulus-coherence precondition below refuses the comparison and names
-# every disagreeing key with both values.
+# ⚠️ `stimulus_mismatch_exit_affecting` is DELIBERATELY still False below. The
+# splits are resolved in the registry, but no campaign has yet evaluated this
+# tuple; flipping the flag is the first zero-preload campaign's business, so a
+# genuine REGRESSION into a split fails only once the tuple is known to score.
+#
+# The stimulus-coherence precondition below still refuses the comparison and
+# names every disagreeing key with both values if one reappears.
 EMS_FRONTIER_FTP75 = {
     "reference": "ems-ftp75-socband",
     "candidate": "ems-ftp75-sdp",
@@ -6608,10 +7210,12 @@ EMS_FRONTIERS = [
             "run-to-run h2 spread; it is NOT measured, and it deliberately does "
             "NOT assume the DP wins at drive-cycle scale. Re-derive it from the "
             "first campaign that evaluates this frontier."),
-        # KNOWN AND DOCUMENTED (the preload split above), so a campaign is not
-        # FAILED for it — it is rendered UNVERIFIED, by name, with both
-        # numbers and both resolutions. Flip this to True the moment the split
-        # is resolved, so a REGRESSION into it does fail.
+        # The preload split IS resolved (2026-09-01) — see the block above —
+        # so the precondition is expected to PASS from here on. The flag stays
+        # False for ONE campaign more: no campaign has evaluated this tuple, so
+        # the first one to do so should confirm the precondition passes and the
+        # thresholds hold before a mismatch is made exit-affecting. Flip it to
+        # True after that campaign, so a REGRESSION into a split does fail.
         "stimulus_mismatch_exit_affecting": False,
     },
 ]
@@ -7087,6 +7691,17 @@ def render_report(meta, results):
             "%s%s" % (meta.get("droop_mode", "design"),
                       "" if meta.get("droop_mode", "design") == "design"
                       else "  — ⚠️ sags NOT comparable with other campaigns")]))
+    # PART A (C1): in the header table, because it qualifies every SHARE and
+    # per-channel current figure in the report the way droop_mode qualifies
+    # every V_bus figure.
+    _asym = meta.get("asymmetry")
+    A(_row(["Converter asymmetry (scenario half)",
+            "not recorded (campaign predates the C1 round)" if _asym is None
+            else "%s%s" % (_asym,
+                           "  — FC/BT mismatch injected; shares NOT comparable "
+                           "with a pre-2026-09-01 campaign"
+                           if _asym == "measured" else
+                           "  — symmetric plant (the pre-C1 baseline)")]))
     A(_row(["Settle pause between runs", "%s s" % meta.get("settle_s")]))
     if meta.get("dashboard"):
         # F3: --dashboard hands children the real terminal for stdout, so the
@@ -7693,6 +8308,13 @@ def main(argv=None):
     g.add_argument("--scenarios-only", action="store_true", help="skip the replay half")
     ap.add_argument("--electrical-pref", default="hifi", choices=["hifi", "simple"],
                     help="engine for scenarios whose requirement is 'any' (default hifi)")
+    ap.add_argument("--asymmetry", default=ASYMMETRY_MODE_DEFAULT,
+                    choices=list(ASYMMETRY_MODES),
+                    help="converter asymmetry for the SCENARIO half: 'measured' "
+                         "(default, from the C1 round 2026-09-01) injects the "
+                         "fitted FC/BT mismatch; 'off' restores the symmetric "
+                         "plant every campaign before this flag ran. The replay "
+                         "half realizes no asymmetry in either mode.")
     ap.add_argument("--droop", default=DROOP_MODE_DEFAULT, choices=list(DROOP_MODES),
                     help="hi-fi droop realization for the SCENARIO half "
                          "(default 'design' — the chain as designed, and what "
@@ -7820,6 +8442,10 @@ def main(argv=None):
             # can place every sag figure on one side of the K_DROOP finding.
             "droop_mode": getattr(args, "droop", "design"),
             "droop_scale": DROOP_SCALE[getattr(args, "droop", "design")],
+            # PART A (C1): the SCENARIO half's converter asymmetry.  Recorded
+            # unconditionally so a report reader can place every share figure
+            # on one side of the 2026-09-01 baseline boundary.
+            "asymmetry": getattr(args, "asymmetry", ASYMMETRY_MODE_DEFAULT),
             "settle_s": args.settle_s,
             "out": args.out,
             "aborted": aborted_now,
@@ -7969,6 +8595,7 @@ def _run_plan(plan, args, problems, results, write_outputs):
                  "python": platform.python_version(),
                  "electrical_pref": args.electrical_pref, "settle_s": args.settle_s,
                  "droop_mode": getattr(args, "droop", "design"),
+                 "asymmetry": getattr(args, "asymmetry", ASYMMETRY_MODE_DEFAULT),
                  "out": args.out, "aborted": aborted,
                  "partial": (i + 1) < len(plan),
                  "suite_log_problems": problems,
@@ -8150,6 +8777,10 @@ def _run_plan(plan, args, problems, results, write_outputs):
              "python": platform.python_version(),
              "electrical_pref": args.electrical_pref, "settle_s": args.settle_s,
              "droop_mode": getattr(args, "droop", "design"),
+             # Beside droop_mode on EVERY meta write, including this in-flight
+             # one: a live-mode reader must not see "not recorded" for the
+             # whole campaign and conclude the tool predates the C1 round.
+             "asymmetry": getattr(args, "asymmetry", ASYMMETRY_MODE_DEFAULT),
              "out": args.out, "aborted": aborted,
              "partial": (i + 1) < len(plan),
              "suite_log_problems": problems,

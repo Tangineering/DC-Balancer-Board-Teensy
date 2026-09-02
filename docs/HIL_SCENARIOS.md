@@ -315,6 +315,22 @@ the fw v24 expectation; the fw v23 record it replaces is kept at the end.
 
 ### 6.0 Strategy roles, and the cross-run EMS frontier check
 
+Alongside the frontier check, every scenario in this section is also ranked
+INDIVIDUALLY against a dynamic-programming baseline solved to that run's own
+terminal state of charge. The post-analysis pass
+(`tools/hil_report_analysis.py --matched-dp`) reads solved baselines out of the
+results database at `tools/dp_db/` and renders a per-campaign
+"Delta-SoC-matched DP comparison" table. A cached baseline is accepted only
+within 1e-5 SoC of the run's own terminal state of charge, which is 0.5 % of
+these cycles' whole swing; a wider match reports a deviation that is not the
+run's. It never solves by default, because a matched baseline costs seconds on
+the 61 s cycles here and tens of minutes on FTP-75; baselines are populated
+ahead of time with `tools/dp_results_db.py prefill`. The procedure, the two boundaries on the
+comparison (no regen term in the DP demand model; the dynamic-versus-DC-gain
+Gfc bias; the run-era auxiliary preload) and the prefill cost per cycle are in
+`docs/HIL_USER_MANUAL.md` section 5.
+
+
 Every EMS strategy carries a **role** in `hil_plant_sim.EMS_STRATEGY_META`
 (`policy_file` + `frontier_eligible`), and the role decides how a run's energy
 numbers may be read.
@@ -375,33 +391,47 @@ is **PROVISIONAL** (derived from the offline tie plus the ~0.05 % run-to-run h2
 spread, not measured) and is rendered with that qualifier; re-derive it from the
 first campaign that evaluates the tuple.
 
-**Stimulus coherence, and why the drive-cycle frontier does not evaluate
-today.** eq-H2 corrects for SoC, not for demand, so legs that ran different
-stimuli are ranked on the stimulus difference. A precondition now checks the
-legs' `ems_v_profile` / `duration_s` / `ems_run_exit_s` / `aux_preload_a` /
-`chg_i_ceiling_a` against the registry BEFORE any comparison — knowable before
-a run starts, which matters when the alternative is 17 minutes of
-incomparable numbers. It finds two splits in the FTP-75 tuple:
+**Stimulus coherence: both FTP-75 splits are RESOLVED (2026-09-01).** eq-H2
+corrects for SoC, not for demand, so legs that ran different stimuli are ranked
+on the stimulus difference. A precondition checks the legs' `ems_v_profile` /
+`duration_s` / `ems_run_exit_s` / `aux_preload_a` / `chg_i_ceiling_a` against
+the registry BEFORE any comparison — knowable before a run starts, which
+matters when the alternative is 17 minutes of incomparable numbers. It used to
+find two splits in the FTP-75 tuple, and finds none today:
 
-1. **The load-bearing one.** `ems-ftp75-sdp` runs `FTP75_SDP_PRELOAD_A` =
-   0.45 A while the reference and bound run `FTP75_PRELOAD_A` = 0.65 A. The
-   candidate carries 0.20 A less housekeeping load for 340 s — roughly 1.1 kJ
-   of bus energy it never supplies — so it would "win" on avoided load.
-   Resolutions, both operator decisions: run the SDP leg at 0.65 A (but 0.45 A
-   was derived from a measured current budget protecting the OC_FC margin), or
-   add a fourth SDP FTP-75 leg at 0.65 A and leave the existing one as the
-   dynamics demonstration it is.
-2. **An inert one, reported rather than whitelisted.** The two policy legs cap
-   the Ag105 at 0.8 A; the reference leg declares no cap and would run at
-   2.5 A. It never bites today — the preload forecloses `soc-band`'s charge
-   branch on this cycle — but "inert" is a measurement on one campaign's trace,
-   not a property of the registry.
+1. **The load-bearing one, resolved by removal.** `ems-ftp75-sdp` ran
+   `FTP75_SDP_PRELOAD_A` = 0.45 A while the reference and bound ran
+   `FTP75_PRELOAD_A` = 0.65 A, so the candidate carried 0.20 A less
+   housekeeping load for 340 s — roughly 1.1 kJ of bus energy it never
+   supplied — and would have "won" on avoided load. The operator ruling took
+   `aux_preload_a` to **0.0 on every drive-cycle scenario**, so both constants
+   now hold the same value. Neither of the two resolutions recorded here
+   before was taken; the current budget that forced the split apart is no
+   longer binding (the governed FC peak on the 0.85 branch is 0.7046 A against
+   `LIMIT_I_FC_MAX` 1.4 A).
+2. **The second one, resolved by declaration — and it had to be.** The two
+   policy legs capped the Ag105 at 0.8 A while the reference leg declared no
+   cap and would have run at 2.5 A. It was inert only because the preload
+   foreclosed `soc-band`'s charge branch, and the preload removal REOPENS that
+   branch, so the split would have become live. `ems-ftp75-socband` now
+   declares the siblings' **0.8 A**. `ems-ftp75-5050` still declares nothing,
+   correctly: `hold-5050` never commands `charge_goal` and is not a leg of
+   this tuple.
 
-So the `ftp75` frontier renders **UNVERIFIED, naming both keys and both
-values**, and — because both splits are documented and their resolutions are
-operator decisions — it does **not** fail the campaign. The `cycle61` tuple's
-own coherence IS exit-affecting: its three legs are documented to share one
-stimulus object, so a split there would be a regression.
+So the `ftp75` frontier is expected to render a real verdict from here on.
+`stimulus_mismatch_exit_affecting` stays **False for one more campaign** — no
+campaign has yet evaluated this tuple, so the first one to do so should confirm
+the precondition passes before a mismatch is made exit-affecting. The `cycle61`
+tuple's own coherence IS exit-affecting already: its three legs are documented
+to share one stimulus object, so a split there would be a regression.
+
+⚠️ **Baseline-era boundary.** Campaigns up to and including
+`hil_report_20260901_151156` ran the FTP-75 legs at 0.65 A (0.45 A on the SDP
+leg). Their hydrogen and SoC totals are NOT comparable with anything after
+2026-09-01: 5050 0.0647 g / ΔSoC −0.02648; socband 0.09159 / −0.01533; sdp
+0.0622 / −0.01845; dp 0.09291 / −0.01478. `constants_hash` moved, and so did
+the `ems-ftp75-dp` table's `profile_fingerprint` (`aux_preload_a` is a
+fingerprinted key, so a stale table is refused at load).
 
 ⚠️ `h2_cum_g` is the Gfc **model's estimate**. The map is scale-portable, but the
 coefficients are not identified against this rig's stack (`TODO(calibrate)`), so
@@ -489,9 +519,16 @@ every frontier number is a RANKING on one rig and not an absolute mass.
   switching boundary and the command steps ONCE to 0.85. Every `ems-sdp`-family
   run before this round started exactly on the node and could only discharge, so
   the wire carried one constant 0.8500 for the whole run.
-  The preload is **0.45 A**, not the siblings' 0.65 A: at 0.65 the fuel-cell
-  branch's governed peak is 1.355 A, 3.2 % under `LIMIT_I_FC_MAX`, and an OC_FC
-  latch would truncate the run at exactly its post-flip half.
+  The preload is **0.0 A** since 2026-09-01, as on every sibling. It was 0.45 A
+  (not the siblings' then-0.65 A) because at 0.65 the fuel-cell branch's
+  governed peak was 1.355 A, 3.2 % under `LIMIT_I_FC_MAX`, and an OC_FC latch
+  would have truncated the run at exactly its post-flip half. At preload 0 that
+  peak is **0.7046 A**, 50 % under the limit, so the de-rating is moot — and
+  the constants' equality is what resolves the drive-cycle frontier's stimulus
+  split. ⚠️ The flip moves LATE with the load: governor walk **t = 272.0 s** at
+  preload 0 (against 195.9 s walk / 198.537 s measured at 0.45 A), so the
+  transition band is re-opened to **(240, 295) s** and every threshold on this
+  entry is PROVISIONAL again.
 - **Pass/fail:** fault-free (`allow_only: 0`, stricter than the socband sibling
   deliberately); in Run at t = 260; the 3.0 m/s peak commanded; `cmd_share_sp`
   never above 0.16 over (20, 185) s and reaching 0.84 over (212, 340) s — together
@@ -680,12 +717,20 @@ above, with the EMS scenarios it belongs to.)*
 - **Tests:** the first 340 s of the EPA FTP-75 cycle, scaled to a 3.0 m/s peak,
   driven by `hold-5050` and `soc-band` respectively — an endurance test of the EMS
   layer (~30 accelerate/cruise/decelerate/idle cycles, 345 s of continuous 50 Hz
-  commanding) rather than a transient one. A 0.65 A preload keeps the share loop
-  closed through the cycle's idle segments; it also forecloses the `soc-band`
-  charge window by construction.
+  commanding) rather than a transient one. ⚠️ **The 0.65 A preload was removed
+  2026-09-01** (operator ruling). It used to keep the share loop closed through
+  the cycle's idle segments and to foreclose the `soc-band` charge window by
+  construction; both were costs, not features. At preload 0 the idle source
+  total is `I_AUX_A` = 0.15 A, so the firmware runs **OPEN-LOOP HOLD** through
+  every idle segment (governor walk: open_hold 9.71 % / open_feedforward
+  57.12 % / closed 33.17 % of ticks) — that mode content is now test content —
+  and `soc-band`'s **charge branch is reachable again**, newly asserted by
+  `socband_ftp_charge_opened`.
 - **Pass/fail:** *5050:* fault-free; in Run at t = 300; the 3.0 m/s peak commanded
-  at t ≈ 245; `I_fc` ≥ 0.70 A at the peak; `h2_cum_g` in the measured band
-  **[0.045, 0.085] g** (measured 6.47 × 10⁻²). *socband:* **fault-free** — the
+  at t ≈ 245; `I_fc` ≥ **0.40 A** at the peak; `h2_cum_g` in the PROVISIONAL
+  band **[0.021, 0.035] g** (governor walk 2.809 × 10⁻² at preload 0; the
+  6.47 × 10⁻² that stood here is the retired 0.65 A era's measurement).
+  *socband:* **fault-free** — the
   `FAULT_OC_FC` allowance was RETIRED 2026-09-01 by operator ruling. It had covered the
   0.75 share ceiling leaving only **11.3 %** of peak margin against the measured
   1.2414 A, and an OC there would indeed be the correct hardware response under ruling
@@ -721,12 +766,16 @@ above, with the EMS scenarios it belongs to.)*
   and of the auxiliary load. It is the **non-causal lower bound** leg of the
   `ftp75` EMS frontier, not a controller.
 - **Stimulus:** the same `FTP75_PROFILE` list object, the same
-  `FTP75_RUN_EXIT_S`, and the same `FTP75_PRELOAD_A` = 0.65 A as
-  `ems-ftp75-5050`/`-socband` — **not** `ems-ftp75-sdp`'s 0.45 A. A bound is
-  only a bound over the demand it solved. `chg_i_ceiling_a` is declared at 0.8 A
-  here (unlike the causal siblings, where the cap is unreachable): a DP table
-  decides charging for itself, so an undeclared ceiling would hand the
-  offline-optimal leg a 2.5 A lever the legs it bounds never had.
+  `FTP75_RUN_EXIT_S`, and the same `FTP75_PRELOAD_A` — **0.0 A** since
+  2026-09-01, which is now also `ems-ftp75-sdp`'s value. A bound is only a
+  bound over the demand it solved, so the table was **re-solved** for the
+  zero-preload demand; its `profile_fingerprint` moved with the constant and a
+  stale table is refused at load rather than played. `chg_i_ceiling_a` is
+  declared at 0.8 A here for the solver's sake — a DP table decides charging
+  for itself, so an undeclared ceiling would hand the offline-optimal leg a
+  2.5 A lever the legs it bounds never had; `ems-ftp75-socband` now declares it
+  too, and `ems-ftp75-5050` still does not (`hold-5050` never commands
+  `charge_goal`).
 - **hifi only,** for `ems-dp-replay`'s reason exactly: the shipped table is
   solved `--charger-accounting physical`, which only a hi-fi run's `h2_cum_g`
   matches, and `bind_scenario()` refuses the mismatch at startup.
