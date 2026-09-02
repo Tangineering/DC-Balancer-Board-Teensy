@@ -2751,7 +2751,8 @@ def _write_pbal_scenario_csv(path, n=10, dt=0.05):
     file shaped exactly like the writer in tools/hil_plant_sim.py now
     produces."""
     header = SCEN_HEADER + ["p_mot_w", "p_fc_w", "p_batt_w",
-                            "p_chop_w", "p_aux_w", "p_bal_w"]
+                            "p_chop_w", "p_aux_w", "p_bal_w",
+                            "p_chg_loss_w"]
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(header)
@@ -2761,7 +2762,8 @@ def _write_pbal_scenario_csv(path, n=10, dt=0.05):
                    1.0 + 0.01 * i, 0.1, "0x00", 2, 0x3F, 0x0F, 1.2,
                    _mdac_word(0.3), _mdac_word(0.3), 0, 0.5, 30000.0, 0,
                    1.0 + 0.01 * i, 0.5,
-                   8.0, 4.0, 4.0, 0.0, 2.4, -0.4]
+                   # p_mot, p_fc, p_batt, p_chop, p_aux, p_bal, p_chg_loss
+                   8.0, 4.0, 4.0, 0.0, 2.4, -0.4, 0.15]
             assert len(row) == len(header)
             w.writerow(row)
     return path
@@ -2782,3 +2784,105 @@ def test_hil_power_balance_end_to_end_writes_png(tmp_path):
     assert "hil_power_balance" in saved, (
         "hil_power_balance missing from saved; skipped=%r" % skipped)
     assert (dest / "hil_power_balance.png").exists()
+
+
+# --------------------------------------------------------------------------
+# hil_power_balance -- the charger-loss component (2026-09-01)
+# --------------------------------------------------------------------------
+
+def _pbal_with_chg_loss(n=6, loss=1.4832):
+    d = _pbal_native_data(n=n)
+    d["p_chg_loss_w"] = np.full(n, loss, dtype=np.float64)
+    return d
+
+
+def test_hil_power_balance_draws_the_charger_loss_as_a_named_component():
+    """The whole point of the seventh column: on a post-eta CSV the Ag105's
+    dissipation is a NAMED, PLOTTED term, and the residual panel's own label
+    no longer claims the charger lives inside it."""
+    fig = hra.hil_power_balance(_pbal_with_chg_loss(), {})
+    assert fig is not None
+    labels = [ln.get_label() for ax in fig.axes for ln in ax.get_lines()]
+    assert any("p_chg_loss_w" in (lb or "") for lb in labels)
+    joined = " ".join(lb or "" for lb in labels)
+    assert "p_mot + p_chg_loss - (p_fc + p_batt + p_chop)" in joined
+    # ...and the residual label names what is LEFT, not the charger.
+    assert "storage, motor stamp, RT1987 drops" in joined
+    all_text = " ".join(t.get_text() for ax in fig.axes for t in ax.texts)
+    assert "PRE-ETA" not in all_text
+
+
+def test_hil_power_balance_pre_eta_csv_still_renders_and_says_so():
+    """LEGACY TOLERANCE, and the honest annotation with it. A CSV written
+    before 2026-09-01 has the six power columns and no `p_chg_loss_w`; the
+    figure must still render (those are the whole recorded archive) and must
+    state that the charger term is INSIDE the residual it is plotting."""
+    fig = hra.hil_power_balance(_pbal_native_data(), {})
+    assert fig is not None
+    labels = [ln.get_label() for ax in fig.axes for ln in ax.get_lines()]
+    assert not any("p_chg_loss_w" in (lb or "") for lb in labels)
+    joined = " ".join(lb or "" for lb in labels)
+    assert "p_bal_w = p_mot - (p_fc + p_batt + p_chop)" in joined
+    assert "CHARGER, storage, RT1987 drops" in joined
+    all_text = " ".join(t.get_text() for ax in fig.axes for t in ax.texts)
+    assert "PRE-ETA CSV" in all_text
+
+
+def test_hil_power_balance_recompute_fallback_includes_the_loss_term():
+    """The defensive recomputation path (a truncated CSV that lost `p_bal_w`)
+    must use the SAME identity the plant does, charger loss included -- or a
+    hand-edited file would render a residual that silently disagrees with
+    every other run's."""
+    d = _pbal_with_chg_loss(n=4)
+    d.pop("p_bal_w")
+    fig = hra.hil_power_balance(d, {})
+    assert fig is not None
+    ax1 = fig.axes[-1]
+    line = next(ln for ln in ax1.get_lines()
+                if "p_bal_w" in (ln.get_label() or ""))
+    got = line.get_ydata()
+    expect = (d["p_mot_w"] + d["p_chg_loss_w"]
+              - (d["p_fc_w"] + d["p_batt_w"] + d["p_chop_w"]))
+    assert np.allclose(got, expect)
+
+
+# --------------------------------------------------------------------------
+# matched_dp_for_run() -- the charger era reaches the key (fix, 2026-09-01)
+# --------------------------------------------------------------------------
+
+def _mdp_eta_key_fields(meta, monkeypatch):
+    """Run matched_dp_for_run() in lookup mode and return the key fields."""
+    calls = []
+    monkeypatch.setattr(_dpdb, "lookup", lambda fields, **kw: (
+        calls.append(dict(fields)) or None))
+
+    def _must_not_solve(*a, **kw):
+        raise AssertionError("lookup mode must never solve")
+    monkeypatch.setattr(_dpdb, "solve_and_store", _must_not_solve)
+
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    hil = _mdp_hil([0.70, 0.699, 0.698])
+    out = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
+    assert out is not None
+    return out
+
+
+def test_matched_dp_key_carries_the_runs_charger_era(monkeypatch):
+    """THE KEY MUST BE TAKEN AT THE RUN'S OWN EFFICIENCY.
+
+    `problem_fields()` defaults `eta_chg` to None, the PRE-efficiency era.
+    Leaving that default in place while the run's fingerprint was computed
+    over a sidecar carrying `eta_chg` 0.88 made every post-efficiency run key
+    against a 1:1-era baseline: the lookup missed silently and a
+    `--matched-dp solve` produced a baseline for a plant the run was never
+    executed against. The two eras must key APART, and a post-era run must
+    carry its own number."""
+    post = {"config": {"soc0": 0.7, "electrical": "hifi"},
+            "scenario": {"eta_chg": 0.88}}
+    pre = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    out_post = _mdp_eta_key_fields(post, monkeypatch)
+    out_pre = _mdp_eta_key_fields(pre, monkeypatch)
+    assert out_post["key_fields"]["eta_chg"] == 0.88
+    # An absent sidecar key is the ERA SENTINEL, not a number.
+    assert out_pre["key_fields"].get("eta_chg") is None
+    assert out_post["key"] != out_pre["key"]

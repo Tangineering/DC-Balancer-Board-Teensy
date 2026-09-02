@@ -16,10 +16,10 @@
 # TODO(calibrate). Strategy RANKINGS on the same rig are robust either
 # way; quote an absolute gram figure with the calibration caveat.
 # ══════════════════════════════════════════════════════════════════════
-# command: python tools/gen_dp_ems_table.py --scenario ems-dp-replay --soc0 0.7 --capacity-ah 5.0 --stage-dt 0.1 --lambda-dev 0.0 --lambda-term 1.0 --n-share 41 --soc-step 5e-06 --charger-accounting physical --run-exit 58.0 --match-terminal-soc heuristic --match-tol 2e-06 --eta-chg 0.88
+# command: python tools/gen_dp_ems_table.py --scenario ems-dp-replay --soc0 0.7 --capacity-ah 5.0 --stage-dt 0.1 --lambda-dev 0.0 --lambda-term 1.0 --n-share 41 --soc-step 5e-06 --charger-accounting physical --run-exit 58.0 --match-terminal-soc heuristic --match-tol 2e-06
 # generator: tools/gen_dp_ems_table.py
 # scenario: ems-dp-replay
-# profile_fingerprint: 55dab672b17ff0c9b829347829800c5752a562da93b989bb26df54f8c1e16cfa
+# profile_fingerprint: 02683031af95f0775489ca40ff5dc32a3b57a39e9786650150a2077168050d18
 # duration_s: 61.0
 # stage_dt_s: 0.1
 # run_entry_s: 3.0
@@ -29,11 +29,6 @@
 # soc0: 0.7
 # capacity_ah: 5.0
 # chg_ceiling_a: 0.8
-# eta_chg: 0.88
-#   D12 - the charger is an energy-conserving converter at this
-#   efficiency: a charge stage costs the bus V_pack*i/eta_chg W.
-#   A table with NO eta_chg line was solved against the 1:1
-#   current-transfer charger (V_bus*i) and is not comparable.
 # gfc_dc_gain_gps_per_w: 1.7637602179836514e-05
 # eta_boost: 0.85
 # limit_i_fc_max_a: 1.4
@@ -67,7 +62,7 @@
 #          comparison. --allow-unmatched was required to write this.
 #   'n/a'  --match-terminal-soc none: NOT a matched comparison at all.
 # n_share: 41  (control span 0.25 .. 0.75, inside the share-cut band 0.15 .. 0.85)
-# soc_grid: 1764 points, 0.6930519786093889 .. 0.701866978609389, step 5e-06
+# soc_grid: 1746 points, 0.6930697130261355 .. 0.7017947130261355, step 5e-06
 #
 # ── DP-PREDICTED TOTALS (this model, open loop) ───────────────────────
 # h2_g_physical: 0.0117564033
@@ -80,7 +75,7 @@
 #
 # ── CAUSAL REFERENCE `soc-band`, walked through the SAME reduced ──
 # ── model (NOT a simulator run) — the comparison anchor ───────────
-# ref_h2_g_physical: 0.0122860913
+# ref_h2_g_physical: 0.0137227442
 # ref_h2_g_simple_plant_equiv: 0.0104182653
 # ref_soc_final: 0.698004703
 # ══════════════════════════════════════════════════════════════════════

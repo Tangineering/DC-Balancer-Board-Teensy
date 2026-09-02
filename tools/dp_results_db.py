@@ -112,12 +112,29 @@ DP_DB_TRAJ_STRIDE = 10
 KEY_FIELDS = (
     "scenario", "profile_fingerprint", "soc0", "capacity_ah",
     "charger_accounting", "stage_dt", "n_share", "soc_step", "chg_a",
-    "lambda_dev", "aux_preload_a",
+    "lambda_dev", "aux_preload_a", "eta_chg",
     "gfc_dc_gain", "eta_boost", "limit_i_fc_max_a", "charge_share_value",
     "share_span", "cruise_slope_max", "cruise_min_mps", "run_entry_s",
     "run_exit_s",
     "target_soc_q",
 )
+
+# Key fields that may be ABSENT or None, and are then OMITTED from the
+# canonical form rather than encoded as a null (2026-09-01, the
+# charger-efficiency round).
+#
+# WHY OMISSION AND NOT A NULL.  `eta_chg` names the CHARGER ERA: None is the
+# 1:1 current-transfer charger every record in this store was solved against.
+# Encoding it as an explicit null would put a new entry in the canonical JSON
+# and move EVERY existing record's key, so every archived solve would become
+# unreachable by an old-era lookup that is asking for exactly the problem the
+# record answers.  Omitting an absent optional field keeps the old-era
+# canonical string byte-identical to the pre-2026-09-01 one, so
+#   missing key  <->  None  <->  the old era
+# are one thing, and a NEW-era record (eta_chg 0.88) keys differently, which
+# is the whole point: a baseline solved against a different charger model is
+# not a baseline for this one.
+OPTIONAL_KEY_FIELDS = ("eta_chg",)
 
 _NON_TARGET_FIELDS = tuple(f for f in KEY_FIELDS if f != "target_soc_q")
 
@@ -134,8 +151,12 @@ def _canonical(fields):
     out = {}
     for name in KEY_FIELDS:
         if name not in fields:
+            if name in OPTIONAL_KEY_FIELDS:
+                continue          # absent optional field: omitted, see above
             raise KeyError("key field %r is missing" % name)
         val = fields[name]
+        if val is None and name in OPTIONAL_KEY_FIELDS:
+            continue              # None optional field: the same omission
         out[name] = val if isinstance(val, str) or val is None else repr(float(val))
     return json.dumps(out, sort_keys=True, separators=(",", ":"))
 
@@ -157,7 +178,8 @@ def non_target_hash(fields):
     The index stores this per record so `lookup()` can find every record that
     shares a problem and differs only in its SoC target without opening any of
     them."""
-    sub = {name: fields[name] for name in _NON_TARGET_FIELDS}
+    sub = {name: fields[name] for name in _NON_TARGET_FIELDS
+           if name in fields}
     sub["target_soc_q"] = None
     return hashlib.sha256(_canonical(sub).encode("utf-8")).hexdigest()
 
@@ -200,8 +222,21 @@ def fingerprint_parts(scenario, meta):
     reporting a confident but wrong diff."""
     import hil_plant_sim as sim
     parts = {"scenario": "scenario=%s" % scenario}
+    # Per-key RESOLVERS the fingerprint applies before hashing.  `eta_chg` is
+    # the first MODEL constant in the tuple (2026-09-01): an absent key means
+    # "the module's own ETA_CHG", not None, so reproducing the canonical
+    # string requires the same resolution the simulator makes.  The lookup is
+    # by getattr so this file still works against a checkout whose
+    # hil_plant_sim predates the resolver; `_self_check` in fingerprint_diff()
+    # catches any resolver this mirror ever misses.
+    resolvers = {}
+    _eta = getattr(sim, "dp_eta_chg", None)
+    if callable(_eta):
+        resolvers["eta_chg"] = _eta
     for key in sim.DP_FINGERPRINT_META_KEYS:
         val = meta.get(key)
+        if key in resolvers:
+            val = resolvers[key](meta)
         if key == "ems_v_profile" and val:
             val = [(float(a), float(b)) for a, b in val]
         elif val is not None:
@@ -270,7 +305,7 @@ def model_fields():
 def problem_fields(scenario, *, profile_fingerprint, soc0, capacity_ah,
                    charger_accounting, stage_dt, n_share, soc_step, chg_a,
                    lambda_dev, aux_preload_a, run_exit_s, target_soc,
-                   era_overrides=None):
+                   era_overrides=None, eta_chg=None):
     """A complete key-field dict.
 
     `aux_preload_a=None` means "whatever the scenario declares", which is what
@@ -283,7 +318,13 @@ def problem_fields(scenario, *, profile_fingerprint, soc0, capacity_ah,
     The raw `target_soc` is emitted alongside the quantized `target_soc_q`.
     It is NOT in KEY_FIELDS and does not enter the key; `lookup()` uses it so
     the tolerance test is made against the caller's own target rather than
-    against a rounded one."""
+    against a rounded one.
+
+    `eta_chg=None` is the CHARGER ERA of every record solved before
+    2026-09-01 (a 1:1 current-transfer charger), and it is the default for the
+    same stimulus-era reason `aux_preload_a` has one: an archived run must be
+    keyed by the accounting it actually ran under.  It is an OPTIONAL key
+    field, so None keys exactly as the pre-change code did."""
     import hil_plant_sim as sim
     if aux_preload_a is None:
         aux_preload_a = ((sim.SCENARIOS.get(scenario) or {})
@@ -301,6 +342,7 @@ def problem_fields(scenario, *, profile_fingerprint, soc0, capacity_ah,
         "chg_a": float(chg_a),
         "lambda_dev": float(lambda_dev),
         "aux_preload_a": float(aux_preload_a),
+        "eta_chg": (None if eta_chg is None else float(eta_chg)),
         "run_exit_s": float(run_exit_s),
         "target_soc_q": quantize_target(target_soc),
         # Not a key field (see KEY_FIELDS); carried for lookup()'s raw compare.
@@ -323,6 +365,7 @@ def fields_from_problem(problem, target_soc):
         stage_dt=problem.stage_dt, n_share=problem.n_share,
         soc_step=problem.soc_step, chg_a=problem.chg_a,
         lambda_dev=problem.lambda_dev, aux_preload_a=problem.aux_preload_a,
+        eta_chg=getattr(problem, "eta_chg", None),
         run_exit_s=problem.run_exit, target_soc=target_soc)
 
 
@@ -574,7 +617,8 @@ def solve_and_store(fields, target_soc, *, match_tol=2.0e-6, db_dir=DP_DB_DIR,
         run_exit=fields["run_exit_s"],
         charger_accounting=fields["charger_accounting"],
         lambda_dev=fields["lambda_dev"],
-        aux_preload_a=(None if aux is None else float(aux)))
+        aux_preload_a=(None if aux is None else float(aux)),
+        eta_chg=fields.get("eta_chg"))
     if problem.fingerprint != fields["profile_fingerprint"]:
         # The era overrides could not put the run's stimulus back.  Name what
         # they DID reconcile and what they could not, so the reader sees which
@@ -618,7 +662,7 @@ def solve_and_store(fields, target_soc, *, match_tol=2.0e-6, db_dir=DP_DB_DIR,
         "format_version": 1,
         "key": make_key(fields),
         "non_target_hash": non_target_hash(fields),
-        "key_fields": {k: fields[k] for k in KEY_FIELDS},
+        "key_fields": {k: fields.get(k) for k in KEY_FIELDS},
         "created_utc": datetime.now(timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"),
         "target_soc": float(target_soc),
@@ -721,7 +765,7 @@ def rekey_store(db_dir=DP_DB_DIR, dry_run=False, log=print):
             continue
         rec = dict(rec)
         rec["key"] = new_key
-        rec["key_fields"] = {k: fields[k] for k in KEY_FIELDS}
+        rec["key_fields"] = {k: fields.get(k) for k in KEY_FIELDS}
         rec["non_target_hash"] = non_target_hash(fields)
         rec.setdefault("rekeyed_from", []).append(old_key)
         store(rec, db_dir)
@@ -783,7 +827,8 @@ def load_key_fields(text):
         fields = json.loads(text)
     if not isinstance(fields, dict):
         raise ValueError("--key-fields must decode to a JSON object")
-    missing = [name for name in KEY_FIELDS if name not in fields]
+    missing = [name for name in KEY_FIELDS
+               if name not in fields and name not in OPTIONAL_KEY_FIELDS]
     if missing:
         raise ValueError("--key-fields is missing %s" % ", ".join(missing))
     if not isinstance(fields.get("era_overrides", {}), dict):
@@ -846,7 +891,8 @@ def _cmd_prefill(args):
             n_share=args.n_share, soc_step=args.soc_step,
             chg_a=chg_a,
             lambda_dev=gen.DP_LAMBDA_DEV_G_PER_SOC_S,
-            aux_preload_a=aux, run_exit_s=run_exit, target_soc=target)
+            aux_preload_a=aux, run_exit_s=run_exit, target_soc=target,
+            eta_chg=(None if args.eta_chg_none else args.eta_chg))
         hit = lookup(fields, tol_soc=args.tol, db_dir=args.db_dir)
         if hit is not None:
             skipped_n += 1
@@ -909,6 +955,106 @@ def main(argv=None):
                    help="auxiliary preload in A (default: the scenario's own)")
     p.add_argument("--chg-a", type=float, default=None,
                    help="Ag105 charge ceiling in A (default: the scenario's)")
+    p.add_argument("--eta-chg", type=float, default=None,
+                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
+                        "Omitted = the 1:1 current-transfer era every "
+                        "pre-2026-09-01 record was solved in; a value keys "
+                        "and solves the energy-conserving converter instead. "
+                        "A run's own value comes off its sidecar meta "
+                        "(charger_power.resolve_eta_chg)")
+    p.add_argument("--eta-chg-none", action="store_true",
+                   help="force the 1:1 current-transfer era even when a "
+                        "scenario or default would supply an efficiency")
+    p.add_argument("--eta-chg", type=float, default=None,
+                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
+                        "Omitted = the 1:1 current-transfer era every "
+                        "pre-2026-09-01 record was solved in; a value keys "
+                        "and solves the energy-conserving converter instead. "
+                        "A run's own value comes off its sidecar meta "
+                        "(charger_power.resolve_eta_chg)")
+    p.add_argument("--eta-chg-none", action="store_true",
+                   help="force the 1:1 current-transfer era even when a "
+                        "scenario or default would supply an efficiency")
+    p.add_argument("--eta-chg", type=float, default=None,
+                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
+                        "Omitted = the 1:1 current-transfer era every "
+                        "pre-2026-09-01 record was solved in; a value keys "
+                        "and solves the energy-conserving converter instead. "
+                        "A run's own value comes off its sidecar meta "
+                        "(charger_power.resolve_eta_chg)")
+    p.add_argument("--eta-chg-none", action="store_true",
+                   help="force the 1:1 current-transfer era even when a "
+                        "scenario or default would supply an efficiency")
+    p.add_argument("--eta-chg", type=float, default=None,
+                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
+                        "Omitted = the 1:1 current-transfer era every "
+                        "pre-2026-09-01 record was solved in; a value keys "
+                        "and solves the energy-conserving converter instead. "
+                        "A run's own value comes off its sidecar meta "
+                        "(charger_power.resolve_eta_chg)")
+    p.add_argument("--eta-chg-none", action="store_true",
+                   help="force the 1:1 current-transfer era even when a "
+                        "scenario or default would supply an efficiency")
+    p.add_argument("--eta-chg", type=float, default=None,
+                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
+                        "Omitted = the 1:1 current-transfer era every "
+                        "pre-2026-09-01 record was solved in; a value keys "
+                        "and solves the energy-conserving converter instead. "
+                        "A run's own value comes off its sidecar meta "
+                        "(charger_power.resolve_eta_chg)")
+    p.add_argument("--eta-chg-none", action="store_true",
+                   help="force the 1:1 current-transfer era even when a "
+                        "scenario or default would supply an efficiency")
+    p.add_argument("--eta-chg", type=float, default=None,
+                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
+                        "Omitted = the 1:1 current-transfer era every "
+                        "pre-2026-09-01 record was solved in; a value keys "
+                        "and solves the energy-conserving converter instead. "
+                        "A run's own value comes off its sidecar meta "
+                        "(charger_power.resolve_eta_chg)")
+    p.add_argument("--eta-chg-none", action="store_true",
+                   help="force the 1:1 current-transfer era even when a "
+                        "scenario or default would supply an efficiency")
+    p.add_argument("--eta-chg", type=float, default=None,
+                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
+                        "Omitted = the 1:1 current-transfer era every "
+                        "pre-2026-09-01 record was solved in; a value keys "
+                        "and solves the energy-conserving converter instead. "
+                        "A run's own value comes off its sidecar meta "
+                        "(charger_power.resolve_eta_chg)")
+    p.add_argument("--eta-chg-none", action="store_true",
+                   help="force the 1:1 current-transfer era even when a "
+                        "scenario or default would supply an efficiency")
+    p.add_argument("--eta-chg", type=float, default=None,
+                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
+                        "Omitted = the 1:1 current-transfer era every "
+                        "pre-2026-09-01 record was solved in; a value keys "
+                        "and solves the energy-conserving converter instead. "
+                        "A run's own value comes off its sidecar meta "
+                        "(charger_power.resolve_eta_chg)")
+    p.add_argument("--eta-chg-none", action="store_true",
+                   help="force the 1:1 current-transfer era even when a "
+                        "scenario or default would supply an efficiency")
+    p.add_argument("--eta-chg", type=float, default=None,
+                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
+                        "Omitted = the 1:1 current-transfer era every "
+                        "pre-2026-09-01 record was solved in; a value keys "
+                        "and solves the energy-conserving converter instead. "
+                        "A run's own value comes off its sidecar meta "
+                        "(charger_power.resolve_eta_chg)")
+    p.add_argument("--eta-chg-none", action="store_true",
+                   help="force the 1:1 current-transfer era even when a "
+                        "scenario or default would supply an efficiency")
+    p.add_argument("--eta-chg", type=float, default=None,
+                   help="Ag105 charge efficiency, i.e. the CHARGER ERA. "
+                        "Omitted = the 1:1 current-transfer era every "
+                        "pre-2026-09-01 record was solved in; a value keys "
+                        "and solves the energy-conserving converter instead. "
+                        "A run's own value comes off its sidecar meta "
+                        "(charger_power.resolve_eta_chg)")
+    p.add_argument("--eta-chg-none", action="store_true",
+                   help="force the 1:1 current-transfer era even when a "
+                        "scenario or default would supply an efficiency")
     p.add_argument("--run-exit", type=float, default=None,
                    help="strategy run-exit time in s (default: the "
                         "scenario's ems_run_exit_s, else SOC_BAND_RUN_EXIT_S)")

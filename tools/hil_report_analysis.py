@@ -995,23 +995,38 @@ def hil_h2_and_soc(data, cfg):
 def hil_power_balance(data, cfg):
     """Per-tick power balance: motor, sources, chopper, and the residual.
 
-    Two panels on a shared time axis.  The top panel carries the four power
-    terms and, dashed, their sum `p_fc + p_batt + p_chop`; the bottom panel
-    carries the residual `p_bal = p_mot - (p_fc + p_batt + p_chop)` with the
-    auxiliary load overlaid and `p_bal - p_aux` beside it.
+    Two panels on a shared time axis.  The top panel carries the power terms
+    and, dashed, their sum `p_fc + p_batt + p_chop`; the bottom panel carries
+    the residual `p_bal = p_mot + p_chg_loss - (p_fc + p_batt + p_chop)` with
+    the auxiliary load overlaid and `p_bal + p_aux` beside it.
 
-    THE IDENTITY IS NOT EXACT, AND THE FIGURE SAYS SO.  The residual's named
-    components, in descending magnitude, are the auxiliary housekeeping load
-    (`I_AUX_A` plus any scenario preload or drain, on VBUS -- plotted, so it
-    can be subtracted by eye), the charger-path efficiency terms (`p_batt`
-    subtracts the power delivered INTO the pack while the power the charger
-    DRAWS sits on the bus side), bulk-capacitor storage, and the RT1987
-    ideal-diode drops between VBUS and the V-MOT node.
+    THE CHARGER LOSS IS A NAMED COMPONENT (2026-09-01).  Before that date the
+    plant's Ag105 was a 1:1 current transfer element, so the whole
+    `i_charge * (V_chg - V_batt)` -- about 11 W on a 1.4 A charge window --
+    fell into the residual unnamed.  The plant now bills the charger through
+    a static efficiency and writes its dissipation out as a seventh column,
+    `p_chg_loss_w`.  This figure plots that column on the top panel and names
+    it in the residual panel's caption, so a charge window no longer reads as
+    an unexplained imbalance.
 
-    TWO DATA PATHS, and the annotation states which one rendered:
+    THE IDENTITY IS STILL NOT EXACT, AND THE FIGURE SAYS SO.  The residual's
+    remaining named components, in descending magnitude, are the auxiliary
+    housekeeping load (`I_AUX_A` plus any scenario preload or drain, on VBUS
+    -- plotted, so it can be subtracted by eye), bulk-capacitor storage, the
+    hi-fi motor stamp's transient term, and the RT1987 ideal-diode drops
+    between VBUS and the V-MOT node.
 
-    1. NEW SCHEMA (a simulator CSV from 2026-09-01f onward) carries the six
-       `p_*_w` columns and every term above is the plant's own arithmetic.
+    THREE DATA PATHS, and the annotation states which one rendered:
+
+    1. NEW SCHEMA (a simulator CSV written AFTER the charger-efficiency round
+       of 2026-09-01) carries all seven `p_*_w` columns and every term above is
+       the plant's own arithmetic.
+    1b. PRE-ETA NEW SCHEMA (2026-09-01f up to and including campaign
+       `20260901_151156`) carries the first six but NOT `p_chg_loss_w`, because
+       the charger had no efficiency then.  The charger trace is omitted and
+       the residual panel says so: on those runs the charge term is inside
+       `p_bal_w`, which is what makes their charge windows read as ~11 W of
+       imbalance.
     2. BACKFILL, for every campaign up to and including `20260901_151156` and
        for every replay CSV.  ONLY the two source powers are derivable:
            p_fc  = V_bus * I_fc          (exact, same definition)
@@ -1044,6 +1059,10 @@ def hil_power_balance(data, cfg):
     p_chop = _col("p_chop_w")
     p_aux = _col("p_aux_w")
     p_bal = _col("p_bal_w")
+    # APPENDED 2026-09-01, so it is absent from every CSV written before the
+    # charger-efficiency round.  `None` here means "pre-eta era", NOT "zero
+    # loss": those runs put the charger term inside `p_bal_w` instead.
+    p_chg_loss = _col("p_chg_loss_w")
     native = p_mot is not None and p_fc is not None and p_batt is not None
 
     if not native:
@@ -1100,16 +1119,21 @@ def hil_power_balance(data, cfg):
         return fig
 
     # ── NEW SCHEMA ──────────────────────────────────────────────────────────
-    # The six columns are written as one block, so `native` above establishes
-    # the whole set.  The defensive fallbacks below cost nothing and close a
+    # The seven columns are written as one block (six of them before the
+    # charger-efficiency round), so `native` above establishes the whole set of
+    # whichever era the CSV came from.  The defensive fallbacks below cost
+    # nothing and close a
     # real inconsistency: if a hand-edited or truncated CSV lost `p_chop_w` or
     # `p_bal_w` alone, the logged residual would no longer be the residual of
     # the plotted sum.  Recompute it whenever any term is missing.
     zeros = np.zeros(t.shape, dtype=np.float64)
     p_chop_arr = p_chop if p_chop is not None else zeros
+    # A pre-eta CSV has no charger-loss column; on those runs the term is
+    # inside `p_bal_w`, so the recomputation fallback must add nothing.
+    p_chg_arr = p_chg_loss if p_chg_loss is not None else zeros
     p_sum = p_fc + p_batt + p_chop_arr
     if p_bal is None or p_chop is None:
-        p_bal = p_mot - p_sum
+        p_bal = p_mot + p_chg_arr - p_sum
 
     fig, (ax0, ax1) = plt.subplots(2, 1, figsize=bl_figures.FIGSIZE_STACK2,
                                    sharex=True)
@@ -1124,6 +1148,13 @@ def hil_power_balance(data, cfg):
     if p_chop is not None:
         ax0.plot(t, p_chop, color=COLORS["V_rgn"], linewidth=bl_figures.LW_RAW,
                  label="p_chop_w (braking shunt)")
+    if p_chg_loss is not None:
+        # COLORS has no charger-loss role; "I_total" is the one entry unused
+        # by either panel of this figure, so it cannot collide with a trace a
+        # reader is comparing against.
+        ax0.plot(t, p_chg_loss, color=COLORS["I_total"],
+                 linewidth=bl_figures.LW_RAW,
+                 label="p_chg_loss_w (Ag105 dissipation)")
     ax0.plot(t, p_sum, color=COLORS["u_unsat"], linewidth=bl_figures.LW_RAW,
              linestyle="--", label="p_fc + p_batt + p_chop")
     bl_figures._style_axes(ax0, ylabel="Power [W]")
@@ -1131,13 +1162,20 @@ def hil_power_balance(data, cfg):
 
     ax1.axhline(0.0, color=TEXT_COLOR, alpha=0.35, linewidth=0.8)
     ax1.plot(t, p_bal, color=COLORS["V_bus"], linewidth=bl_figures.LW_FILT,
-             label="p_bal_w = p_mot - (p_fc + p_batt + p_chop)")
+             label=("p_bal_w = p_mot + p_chg_loss - (p_fc + p_batt + p_chop)"
+                    if p_chg_loss is not None else
+                    "p_bal_w = p_mot - (p_fc + p_batt + p_chop)"))
     if p_aux is not None:
         ax1.plot(t, -p_aux, color=COLORS["edge_expected"],
                  linewidth=bl_figures.LW_RAW, label="-p_aux_w (V_bus * i_aux)")
+        # The named-component list on this label is the honest one for the
+        # era the CSV came from: the charger loss is a plotted term on a
+        # post-eta run and an unnamed resident of the residual before that.
         ax1.plot(t, p_bal + p_aux, color=COLORS["V_chg"],
                  linewidth=bl_figures.LW_RAW, linestyle="--",
-                 label="p_bal_w + p_aux_w (charger, storage, RT1987 drops)")
+                 label=("p_bal_w + p_aux_w (storage, motor stamp, RT1987 drops)"
+                        if p_chg_loss is not None else
+                        "p_bal_w + p_aux_w (CHARGER, storage, RT1987 drops)"))
     finite = np.isfinite(p_bal)
     if np.any(finite):
         mean_bal = float(np.mean(p_bal[finite]))
@@ -1147,9 +1185,13 @@ def hil_power_balance(data, cfg):
                     if np.any(mot_finite) else 0.0)
         pct = ("%.1f %% of mean |p_mot|" % (100.0 * max_bal / mean_mot)
                if mean_mot > 1e-9 else "mean |p_mot| is zero")
+        era = ("" if p_chg_loss is not None else
+               "  [PRE-ETA CSV: the Ag105 was a 1:1 current transfer element, "
+               "so its ~i_charge*(V_chg - V_batt) dissipation is INSIDE this "
+               "residual]")
         ax1.text(0.01, 0.06,
-                 "residual: mean %+.4f W, max |.| %.4f W (%s)"
-                 % (mean_bal, max_bal, pct),
+                 "residual: mean %+.4f W, max |.| %.4f W (%s)%s"
+                 % (mean_bal, max_bal, pct, era),
                  transform=ax1.transAxes, color=TEXT_COLOR, fontsize=9,
                  va="bottom")
     bl_figures._style_axes(ax1, ylabel="Residual power [W]")
@@ -1755,7 +1797,15 @@ def matched_dp_for_run(analysis, meta, hil, mode="lookup",
         charger_accounting=accounting, stage_dt=0.1, n_share=41,
         soc_step=5.0e-6, chg_a=chg_a, lambda_dev=0.0,
         aux_preload_a=aux, run_exit_s=run_exit, target_soc=float(target),
-        era_overrides=era_overrides)
+        era_overrides=era_overrides,
+        # THE CHARGER ERA, resolved from the SAME run-era metadata the
+        # fingerprint is taken over (fix, 2026-09-01).  `problem_fields`
+        # defaults this to None, which is the PRE-efficiency era; leaving the
+        # default in place while `fp_meta` carried the sidecar's `eta_chg` 0.88
+        # made every post-efficiency run key against a 1:1-era baseline. The
+        # lookup then missed silently, and a `--matched-dp solve` produced a
+        # baseline for a plant the run was never executed against.
+        eta_chg=sim.dp_eta_chg(fp_meta))
     key = dpdb.make_key(fields)
 
     h2_run = _last_finite(hil["h2_cum_g"]) if "h2_cum_g" in hil else None

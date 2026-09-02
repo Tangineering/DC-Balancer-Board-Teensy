@@ -145,6 +145,46 @@ D10. CHARGING IS A DISCRETE SECOND CONTROL, MASKED BY THE PROFILE.
     in hil_plant_sim.py asserts charge_goal only inside EMS_REGEN_BRAKE_WINDOWS,
     which are likewise read off the scenario's own ems_v_profile.
 
+D12. THE CHARGER'S BUS DRAW HAS TWO ERAS, AND THE ERA IS AN INPUT.
+    Until 2026-09-01 the simulator's hi-fi Ag105 was a 1:1 CURRENT-TRANSFER
+    element (hil_electrical.py, `J[N_CHG] -= i_charge`): the pack received
+    exactly the current the bus supplied, so a charge stage cost the bus
+    V_bus*i_chg watts and the model destroyed i_chg*(V_chg - V_batt).  The
+    plant is now an energy-conserving converter at a static charge efficiency,
+    so the same charge current costs
+
+        P_in = V_pack * i_chg / eta_chg
+
+    which is NOT the old expression at eta = 1 - the old one billed at the BUS
+    voltage and the new one bills at the PACK voltage.  Both eras are
+    reachable and the era is selected EXPLICITLY, never by an efficiency
+    value: `eta_chg = None` is the old era, a float is the new one.  Every
+    site that prices the charger - the stage cost, the FC-budget charge mask
+    and the reachability walk - goes through tools/charger_power.py so the
+    three cannot disagree.  --eta-chg selects the era on the command line and
+    the header records it as `eta_chg`; a scenario meta that declares the key
+    supplies it otherwise.  DEFAULT: absent -> the OLD era, so a table
+    generated before this change regenerates byte-identically (pinned by
+    test_old_era_regeneration_reproduces_the_pre_change_table_byte_for_byte
+    against a stored fixture).
+
+    ⚠️ THE COMMITTED TABLES IN tools/dp_tables/ ARE ETA-ERA TABLES: they were
+    regenerated with `--eta-chg 0.88` in this round, because the plant they
+    are replayed against bills the charger that way, and a table solved in one
+    era is not a bound on a run measured in the other.  NOTHING REFUSES A
+    MISMATCH: a live scenario declares no `eta_chg`, so `dp_profile_
+    fingerprint()` hashes the same sentinel in both eras (hil_plant_sim.
+    dp_eta_chg) and the drift guard cannot separate them.  The `# eta_chg:`
+    header line, this generator's startup WARNING, and the test that pins the
+    line in every committed table are the whole record.
+
+    V_pack HERE IS THE PACK TERMINAL VOLTAGE AT THE CHARGE CURRENT,
+    OCV(SoC) + i_chg*rs(SoC), not a flat nominal: D6 already models the full
+    OCV curve and the series resistance, and the charger sees the terminal.
+    The rs term is 0.064 V at 0.8 A on a ~7.86 V pack (0.8 %); the OCV term is
+    the one that matters (7.86 V at SoC 0.7 against a 7.4 V 2S nominal, 6 %).
+    ⚠️ TODO(verify): the plant's own charge model must bill at the same node.
+
 D11. THE CHARGER'S ENERGY IS ACCOUNTED TWO WAYS, AND THE OBJECTIVE PICKS ONE.
     In the simulator's SIMPLE electrical mode the Ag105's input draw is NOT
     stamped on the bus (Plant.step's `i_total = i_motor + i_aux`), so a charge
@@ -230,6 +270,9 @@ REPO_ROOT = os.path.dirname(_HERE)
 import hil_plant_sim as sim                                        # noqa: E402
 from hil_electrical import (                                       # noqa: E402
     LIPO_OCV_SOC, LIPO_OCV_V, BATT_CELLS, BATT_RS_NOM, BATT_CAPACITY_AH)
+from charger_power import (                                        # noqa: E402
+    ETA_CHG_DEFAULT, charger_bus_current_a, charger_bus_power_w,
+    check_eta_chg, era_label, resolve_eta_chg)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -407,6 +450,16 @@ def pack_rs(soc):
     return BATT_CELLS * BATT_RS_NOM * k
 
 
+def pack_charge_voltage(soc, chg_a):
+    """Pack TERMINAL voltage [V] while CHARGING at `chg_a` (D12).
+
+    OCV(SoC) + i*rs(SoC): the charge current is a fixed input, so unlike the
+    discharge referral (D6(a)) this needs no iteration.  It is the voltage the
+    Ag105 delivers into, and therefore the voltage the new-era bus draw
+    V_pack*i/eta is billed at."""
+    return pack_ocv(soc) + chg_a * pack_rs(soc)
+
+
 def pack_current_from_bus_power(p_bt_bus_w, soc):
     """Pack-side current [A] for a BUS-SIDE battery power, D6(a).
 
@@ -544,13 +597,28 @@ def build_demand(scenario, meta, times, dt, aux_preload_a=None):
     return v, a, p_dem, v_bus, i_total, cruise
 
 
-def charge_mask(times, p_dem, v_bus, cruise, chg_ceiling_a, run_exit_s):
-    """Per-stage boolean: may the DP open the charger path at this stage? (D10)"""
+def charge_mask(times, p_dem, v_bus, cruise, chg_ceiling_a, run_exit_s,
+                eta_chg=None, v_pack_ref=None):
+    """Per-stage boolean: may the DP open the charger path at this stage? (D10)
+
+    `eta_chg` / `v_pack_ref` select the charger era (D12).  The OLD era needs
+    neither: a 1:1 current-transfer charger draws exactly `chg_ceiling_a` from
+    the bus, which is the term this test has always added.  The NEW era draws
+    V_pack*i/(eta*V_bus), which is SMALLER, so the budget binds later; the
+    reference pack voltage is a single scalar (the solve's initial SoC) rather
+    than the trajectory's, because this mask must stay state-INDEPENDENT for
+    the stage cost to remain separable."""
+    check_eta_chg(eta_chg)
+    if eta_chg is not None and v_pack_ref is None:
+        raise ValueError("charge_mask needs v_pack_ref when eta_chg is set "
+                         "(the new era bills the charger at the PACK voltage)")
     in_run = (times >= sim.EMS_RUN_ENTRY_S) & (times < run_exit_s)
     # Single-source FC budget: with BT dropped off the bus the FC channel
     # carries the whole load PLUS the charger's stamped draw, against
     # LIMIT_I_FC_MAX with DP_CHARGE_FC_MARGIN of headroom.
-    budget_ok = ((p_dem / v_bus + chg_ceiling_a)
+    i_chg_bus = charger_bus_current_a(chg_ceiling_a, v_bus, v_pack_ref,
+                                      eta_chg)
+    budget_ok = ((p_dem / v_bus + i_chg_bus)
                  <= DP_CHARGE_FC_MARGIN * LIMIT_I_FC_MAX_A)
     return in_run & cruise & budget_ok
 
@@ -569,14 +637,19 @@ def step_discharge(soc, share, p_dem, v_bus, dt, cap_as):
     return soc_next, h2, h2
 
 
-def step_charge(soc, p_dem, v_bus, chg_a, dt, cap_as):
+def step_charge(soc, p_dem, v_bus, chg_a, dt, cap_as, eta_chg=None):
     """One stage on the charge control.  Returns (soc_next, h2_g, h2_plant_g).
 
     D11: `h2_g` charges the fuel cell for the charger energy (the physical
     answer, and what the objective minimises); `h2_plant_g` omits it, which is
-    what a SIMPLE-mode simulator run's `h2_cum_g` column will actually show."""
+    what a SIMPLE-mode simulator run's `h2_cum_g` column will actually show.
+
+    D12: `eta_chg` selects the charger era.  The pack receives `chg_a` in BOTH
+    eras - the efficiency is on the INPUT side - so `soc_next` never moves
+    with it; only the bus power the fuel cell is billed for does."""
     soc_next = soc + chg_a * dt / cap_as
-    p_fc_bus_phys = p_dem + v_bus * chg_a
+    p_fc_bus_phys = p_dem + charger_bus_power_w(
+        chg_a, v_bus, pack_charge_voltage(soc, chg_a), eta_chg)
     h2 = sim.H2_GFC_DC_GAIN_GPS_PER_W * (p_fc_bus_phys / sim.ETA_BOOST) * dt
     h2_plant = sim.H2_GFC_DC_GAIN_GPS_PER_W * (p_dem / sim.ETA_BOOST) * dt
     return soc_next, h2, h2_plant
@@ -586,8 +659,13 @@ def step_charge(soc, p_dem, v_bus, chg_a, dt, cap_as):
 # Reachability walk (D8)
 # ─────────────────────────────────────────────────────────────────────────────
 def reachable_soc_window(soc0, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
-                         share_lo, share_hi):
-    """[lo, hi] SoC bounds over the two extreme admissible policies."""
+                         share_lo, share_hi, eta_chg=None):
+    """[lo, hi] SoC bounds over the two extreme admissible policies.
+
+    `eta_chg` (D12) reaches only the hydrogen totals inside step_charge, not
+    the SoC transition, so the window itself is era-invariant; it is threaded
+    through so a walk cannot be run against a different charger model than the
+    solve it sizes."""
     lo = hi = soc0
     s = soc0
     for k in range(len(p_dem)):        # all-battery: the deepest discharge
@@ -596,7 +674,8 @@ def reachable_soc_window(soc0, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
     s = soc0
     for k in range(len(p_dem)):        # all-FC + charge whenever admitted
         if chg_ok[k]:
-            s, _, _ = step_charge(s, p_dem[k], v_bus[k], chg_a, dt, cap_as)
+            s, _, _ = step_charge(s, p_dem[k], v_bus[k], chg_a, dt, cap_as,
+                                  eta_chg)
         else:
             s, _, _ = step_discharge(s, share_hi, p_dem[k], v_bus[k], dt, cap_as)
         hi = max(hi, s)
@@ -608,7 +687,8 @@ def reachable_soc_window(soc0, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
 # The DP itself
 # ─────────────────────────────────────────────────────────────────────────────
 def solve_dp(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
-             shares, soc_grid, lam_dev, lam_term, charger_accounting):
+             shares, soc_grid, lam_dev, lam_term, charger_accounting,
+             eta_chg=None):
     """Backward Bellman induction (D1-D3, D5).
 
     Controls are indexed 0..m-1 = the share grid, and index m = CHARGE (present
@@ -623,6 +703,9 @@ def solve_dp(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
 
     ocv = pack_ocv(soc_grid)
     rs = pack_rs(soc_grid)
+    # Pack terminal voltage while charging, per SoC row (D12).  Built once:
+    # the charge current is fixed, so it does not depend on the stage.
+    v_pack_chg = pack_charge_voltage(soc_grid, chg_a)
 
     J_next = lam_term * np.abs(soc_grid - soc0)
     Uopt = np.empty((n, n_stages), dtype=np.int16)
@@ -675,7 +758,7 @@ def solve_dp(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
 
 
 def forward_pass(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
-                 shares, soc_grid, Uopt):
+                 shares, soc_grid, Uopt, eta_chg=None):
     """Table-lookup rollout at the CONTINUOUS SoC (D2), raising on D3.
 
     The POLICY lookup is nearest-neighbour on the SoC grid — the control index
@@ -709,7 +792,8 @@ def forward_pass(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
                     "policy selected CHARGE at stage %d (t=%.3f s) where the "
                     "charge mask forbids it - the backward pass and the mask "
                     "disagree" % (k, times[k]))
-            soc, dh2, dh2p = step_charge(soc, p_dem[k], v_bus[k], chg_a, dt, cap_as)
+            soc, dh2, dh2p = step_charge(soc, p_dem[k], v_bus[k], chg_a, dt,
+                                         cap_as, eta_chg)
             share_out[k] = DP_CHARGE_SHARE
             charge_out[k] = 1.0
         else:
@@ -734,7 +818,7 @@ def forward_pass(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
 # Causal reference walk — the SAME reduced model, driven by `soc-band`
 # ─────────────────────────────────────────────────────────────────────────────
 def heuristic_walk(scenario, meta, soc0, times, p_dem, v_bus, i_total, dt,
-                   cap_as, chg_a, run_exit_s):
+                   cap_as, chg_a, run_exit_s, eta_chg=None):
     """Walk hil_plant_sim's SocBandStrategy through this script's model.
 
     The point is a MATCHED-MODEL comparison: the causal policy's hydrogen and
@@ -781,7 +865,8 @@ def heuristic_walk(scenario, meta, soc0, times, p_dem, v_bus, i_total, dt,
             if charging and charge_t is None:
                 charge_t = t
         if charging and sim.EMS_RUN_ENTRY_S <= t < run_exit_s:
-            soc, dh2, dh2p = step_charge(soc, p_dem[k], v_bus[k], chg_a, dt, cap_as)
+            soc, dh2, dh2p = step_charge(soc, p_dem[k], v_bus[k], chg_a, dt,
+                                         cap_as, eta_chg)
         else:
             soc, dh2, dh2p = step_discharge(soc, share, p_dem[k], v_bus[k],
                                             dt, cap_as)
@@ -815,6 +900,7 @@ class Problem:
     charger_accounting: str
     lambda_dev: float
     aux_preload_a: object          # None = the live registry value
+    eta_chg: object                # None = the 1:1 current-transfer era (D12)
     fingerprint: str
     chg_a: float
     cap_as: float
@@ -856,7 +942,7 @@ class MatchedSolve:
 def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
                     soc_step, run_exit, charger_accounting,
                     lambda_dev=DP_LAMBDA_DEV_G_PER_SOC_S,
-                    aux_preload_a=None):
+                    aux_preload_a=None, eta_chg=None):
     """Resolve the demand, the control grid and the SoC grid for one scenario.
 
     Raises ValueError on an argument the solve cannot honour, so a library
@@ -870,6 +956,13 @@ def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
         raise ValueError("soc0 must be strictly inside (0, 1)")
     if charger_accounting not in ("simple", "physical"):
         raise ValueError("charger_accounting must be 'simple' or 'physical'")
+    # D12.  None is the OLD 1:1 current-transfer era and is the DEFAULT, so a
+    # caller that predates the charger-efficiency model solves exactly the
+    # problem it used to.
+    try:
+        eta_chg = check_eta_chg(eta_chg)
+    except ValueError as exc:
+        raise ValueError(str(exc))
 
     duration = float(meta["duration_s"])
     dt = float(stage_dt)
@@ -880,7 +973,13 @@ def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
 
     v, a, p_dem, v_bus, i_total, cruise = build_demand(
         scenario, meta, times, dt, aux_preload_a)
-    chg_ok = charge_mask(times, p_dem, v_bus, cruise, chg_a, run_exit)
+    # The FC-budget term of the mask needs ONE representative pack voltage in
+    # the new era (D12); the initial SoC's is used, so the mask stays
+    # state-independent and the stage cost stays separable.
+    v_pack_ref = (None if eta_chg is None
+                  else float(pack_charge_voltage(float(soc0), chg_a)))
+    chg_ok = charge_mask(times, p_dem, v_bus, cruise, chg_a, run_exit,
+                         eta_chg, v_pack_ref)
 
     shares = np.linspace(DP_SHARE_MIN, DP_SHARE_MAX, n_share)
     if not (sim.SOC_BAND_SHARE_MIN < shares[0]
@@ -894,7 +993,7 @@ def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
 
     lo, hi = reachable_soc_window(soc0, p_dem[:n_stages], v_bus[:n_stages],
                                   chg_ok[:n_stages], dt, cap_as, chg_a,
-                                  shares[0], shares[-1])
+                                  shares[0], shares[-1], eta_chg)
     span = max(hi - lo, DP_SOC_WINDOW_MIN_PAD)
     pad = max(DP_SOC_WINDOW_PAD_FRAC * span, DP_SOC_WINDOW_MIN_PAD)
     g_lo, g_hi = lo - pad, hi + pad
@@ -906,7 +1005,7 @@ def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
         capacity_ah=float(capacity_ah), stage_dt=dt, n_share=int(n_share),
         soc_step=float(soc_step), run_exit=float(run_exit),
         charger_accounting=charger_accounting, lambda_dev=float(lambda_dev),
-        aux_preload_a=aux_preload_a,
+        aux_preload_a=aux_preload_a, eta_chg=eta_chg,
         fingerprint=sim.dp_profile_fingerprint(scenario, meta),
         chg_a=float(chg_a), cap_as=float(cap_as), n_stages=n_stages,
         times=times, v=v, a=a, p_dem=p_dem, v_bus=v_bus, i_total=i_total,
@@ -924,7 +1023,7 @@ def _roll(problem, lam_term):
     J0, Uopt = solve_dp(p.soc0, p.times[:n], p.p_dem[:n], p.v_bus[:n],
                         p.chg_ok[:n], p.stage_dt, p.cap_as, p.chg_a, p.shares,
                         p.soc_grid, p.lambda_dev, lam_term,
-                        p.charger_accounting)
+                        p.charger_accounting, p.eta_chg)
     if not np.isfinite(J0[p.i0]):
         raise DpInfeasible(
             "the initial state (SoC %.6f) has infinite cost-to-go: no "
@@ -933,7 +1032,7 @@ def _roll(problem, lam_term):
             "(%.3f A)." % (p.soc0, LIMIT_I_FC_MAX_A, p.i_total.max()))
     out = forward_pass(p.soc0, p.times[:n], p.p_dem[:n], p.v_bus[:n],
                        p.chg_ok[:n], p.stage_dt, p.cap_as, p.chg_a, p.shares,
-                       p.soc_grid, Uopt)
+                       p.soc_grid, Uopt, p.eta_chg)
     return (J0[p.i0],) + out
 
 
@@ -995,7 +1094,8 @@ def heuristic_reference(problem):
     n = p.n_stages
     return heuristic_walk(p.scenario, p.meta, p.soc0, p.times[:n],
                           p.p_dem[:n], p.v_bus[:n], p.i_total[:n],
-                          p.stage_dt, p.cap_as, p.chg_a, p.run_exit)
+                          p.stage_dt, p.cap_as, p.chg_a, p.run_exit,
+                          p.eta_chg)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1024,6 +1124,12 @@ def render_table(scenario, meta, args, fingerprint, times, share, charge,
               args.lambda_dev, args.lambda_term_input, args.n_share,
               args.soc_step, args.charger_accounting, args.run_exit,
               args.match_terminal_soc, args.match_tol))
+    # D12.  The OLD (1:1 current-transfer) era appends NOTHING, so a table
+    # solved before the charger-efficiency model regenerates byte-identically;
+    # its ABSENCE is the record of the era.  The new era appends the term that
+    # reproduces it.
+    if args.eta_chg is not None:
+        cmd += " --eta-chg %r" % float(args.eta_chg)
     L = []
     A = L.append
     A("# ══════════════════════════════════════════════════════════════════════")
@@ -1067,6 +1173,16 @@ def render_table(scenario, meta, args, fingerprint, times, share, charge,
     # would never have loaded).  E-L1 (2026-09-01) hoisted the resolution into
     # `sim.dp_chg_ceiling_a()`, which all three sites now call.
     A("# chg_ceiling_a: %r" % sim.dp_chg_ceiling_a(meta))
+    # D12, and it is EMITTED ONLY IN THE NEW ERA on purpose.  Adding an
+    # `eta_chg: none` line to every table would move the bytes of all eight
+    # committed tables without changing a single number in them; the absence
+    # of the line is the old era's record, and the docstring's D12 says so.
+    if args.eta_chg is not None:
+        A("# eta_chg: %r" % float(args.eta_chg))
+        A("#   D12 - the charger is an energy-conserving converter at this")
+        A("#   efficiency: a charge stage costs the bus V_pack*i/eta_chg W.")
+        A("#   A table with NO eta_chg line was solved against the 1:1")
+        A("#   current-transfer charger (V_bus*i) and is not comparable.")
     A("# gfc_dc_gain_gps_per_w: %r" % sim.H2_GFC_DC_GAIN_GPS_PER_W)
     A("# eta_boost: %r" % sim.ETA_BOOST)
     A("# limit_i_fc_max_a: %r" % LIMIT_I_FC_MAX_A)
@@ -1238,6 +1354,15 @@ def main(argv=None):
                     help="time the strategy hands back MODE_SAFE (default: the "
                          "scenario's `ems_run_exit_s` if it declares one, else "
                          "%g = SOC_BAND_RUN_EXIT_S)" % sim.SOC_BAND_RUN_EXIT_S)
+    ap.add_argument("--eta-chg", type=float, default=None,
+                    help="Ag105 charge efficiency, selecting the CHARGER ERA "
+                         "(D12). Omitted (the default) = the OLD 1:1 "
+                         "current-transfer charger, which bills the bus "
+                         "V_bus*i_chg and regenerates every committed table "
+                         "byte-identically. A value (the plant's is %g) bills "
+                         "V_pack*i_chg/eta instead. A scenario meta key "
+                         "`eta_chg` supplies it when this is omitted."
+                         % ETA_CHG_DEFAULT)
     ap.add_argument("--no-compare-heuristic", dest="compare_heuristic",
                     action="store_false",
                     help="skip the matched-model `soc-band` reference walk")
@@ -1259,6 +1384,39 @@ def main(argv=None):
     # Kept because --match-terminal-soc OVERWRITES args.lambda_term with the
     # solved weight, and the reproduction command must record the INPUT.
     args.lambda_term_input = args.lambda_term
+    # D12: the CLI wins over the scenario meta; absent from both = the OLD
+    # era.  The default is deliberately NOT the live plant's efficiency: an
+    # archived run executed under the accounting of ITS OWN era, and a table
+    # regenerated for one must reproduce it (the same discipline the
+    # `aux_preload_a` stimulus-era argument records).  A NEW-era table is an
+    # explicit act: --eta-chg, or a scenario that declares the key.
+    if args.eta_chg is None:
+        args.eta_chg = resolve_eta_chg(meta)
+    try:
+        args.eta_chg = check_eta_chg(args.eta_chg)
+    except ValueError as exc:
+        ap.error(str(exc))
+    # CROSS-CHECK against the plant this table will be replayed under.  The
+    # two can disagree silently: the generator's default is the OLD era (an
+    # archived run must be reproducible), while the simulator bills every new
+    # run at hil_electrical.ETA_CHG.  A table solved in one era and replayed
+    # in the other is not a bound on anything, and NOTHING refuses it - the
+    # profile fingerprint cannot separate the two, because a live scenario
+    # declares no `eta_chg` and both sides therefore hash the same sentinel
+    # (hil_plant_sim.dp_eta_chg).  The `# eta_chg:` header line and this
+    # warning are the whole record, so the warning is loud.
+    _live_eta = getattr(sim, "ETA_CHG", None)
+    if _live_eta is not None:
+        _live = float(_live_eta)
+        if args.eta_chg is None or abs(args.eta_chg - _live) > 1e-12:
+            print("[dp] WARNING: solving at charger era %s while the plant "
+                  "bills new runs at eta_chg = %r.\n"
+                  "[dp]          A table solved in one charger era is not a "
+                  "bound on a run measured in the other, and no drift guard "
+                  "catches it.\n"
+                  "[dp]          Pass --eta-chg %r to solve the era the plant "
+                  "will replay this table under."
+                  % (era_label(args.eta_chg), _live, _live), file=sys.stderr)
 
     duration = float(meta["duration_s"])
     dt = float(args.stage_dt)
@@ -1269,7 +1427,7 @@ def main(argv=None):
             n_share=args.n_share, soc_step=args.soc_step,
             run_exit=args.run_exit,
             charger_accounting=args.charger_accounting,
-            lambda_dev=args.lambda_dev)
+            lambda_dev=args.lambda_dev, eta_chg=args.eta_chg)
     except ValueError as exc:
         # GUARD ORDER, deliberately changed (LOW-4, 2026-09-01): the scalar
         # argument checks and the share-cut-band check moved INTO
@@ -1291,6 +1449,7 @@ def main(argv=None):
 
     print("[dp] scenario %s: %.1f s, %d stages of %g s, chg ceiling %.2f A"
           % (args.scenario, duration, n_stages, dt, chg_a))
+    print("[dp] charger era: %s" % era_label(args.eta_chg))
     print("[dp] demand: peak %.3f W (%.3f A bus), mean %.3f W; "
           "charge-admissible stages %d/%d"
           % (p_dem.max(), i_total.max(), p_dem.mean(),

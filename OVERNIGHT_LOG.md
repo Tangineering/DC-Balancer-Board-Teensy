@@ -461,3 +461,39 @@ fixes → campaign → MPC (deterministic, then stochastic) → campaign → α 
   for `mpc-sto`. Worker process REJECTED (a risk to the 1 kHz loop the budget arithmetic does
   not require). Reversal: one commit. Implementation starts after WP-1A/B1 land (it imports the
   charger-power helper).
+- WP-1A landed (uncommitted; physics + correctness reviews dispatched). Probe: simple residual
+  +11.00 W -> 0.000, hi-fi -10.65 -> -0.396 W; both engines agree on charge-window bus draw
+  (0.928 vs 0.980 A). ETA_CHG lives in hil_electrical.py (dependency direction), enters
+  constants_hash. Anchor 15.624602041790853 unmoved (charge-free). Handoffs to WP-1B1: absent
+  eta_chg = old era (ruling), table regeneration at 0.88, sweep column list.
+- WP-1A reviews in: physics 2 HIGH (H1 fingerprint/table collision -> RULING: regenerate both DP
+  tables as eta-era solves, B1; H2 doc must state the 000816 conclusion REVERSES: lever x1.797 ->
+  ~0.42 SoC/g > 0.31 trigger) + 6 MED (chord-conductance stamp, floor -> AG105_V_IN_MIN, regen cap
+  nets the chopper (6.7 % of "harvest" was bus-sourced), six-item reversal, mppt tripwires
+  provisional (C step), two stale docs) + 5 LOW; correctness 1 HIGH (matched_dp_for_run era mixing)
+  + 4 MED + 7 LOW. All accepted except physics L3 (record-only). Fix agent dispatched; scratchpad
+  review_wp1a_*.md hold the item-7 expectation list for the C step.
+- WP-1B1 landed. New tools/charger_power.py (era helper; absent eta_chg = old era = V_bus billing).
+  Tables regenerated at eta 0.88 (ems-dp-replay 55dab672, ems-ftp75-5050 f83226f4 - its old table
+  was ALREADY stale at chg_ceiling 0.0, ems-ftp75-dp d07b37a4); old-era byte identity kept as a
+  fixture test. Levers: L_chg 0.2090 -> 0.3964 = eta*L_share exactly. DP (eta era) charges on 0
+  stages on ems-sdp AND ems-ftp75-dp; soc-band's own h2 falls 10.5 % so the DP margin over soc-band
+  collapses -14.33 % -> -4.31 %.
+- **RULING (operator rule 4: alpha follows the DP): sdp_policy_v4 = `lever` mode at eta 0.88,
+  alpha 0.118326398, 0 charge cells, policy sha 6c4843bb...; the `charge-edge` candidate (alpha
+  0.1262625, 540 charge cells) is kept as a sweep point, not shipped.** Reversal: rebind the
+  ems-sdp* scenarios to sdp-v3 (kept registered, old era).
+- FINDING for the operator: the MEASURED levers INVERT in the eta era (old-era measured charge
+  lever 0.2364 projected -> 0.4484 > share 0.412) while the model says charge is the worse lever
+  by 1/eta; the measured window is recorded UNDECIDABLE (null) until the first eta-era campaign
+  re-measures it. No alpha decision rests on the projected measured pair.
+- Residual: live scenarios declare no eta_chg, so the DP fingerprint cannot separate eras; B2b
+  adds `# eta_chg` to DpReplayStrategy's header check (table era must equal the plant's).
+- WP-1A fix round applied (947/947 in the five plant/figure suites). RULING on physics M3: the
+  fix agent's deviation is ACCEPTED - netting the chopper out of the regen cap destroys 0.64 J
+  (hi-fi) / 1.43 J (simple) of genuine harvest because the chopper is a residual voltage clamp,
+  not a prior claimant (pre-existing WP-C test fails under netting). The un-netted output-
+  referred cap stays; the 6.5 % hi-fi bus-sourced leak (+0.0915 J of 1.4016 J) is documented
+  in HIL_PLANT.md 4.6.2 with TODO(verify), and a test caps it at 0.15 J / 12 %. Chord-conductance
+  stamp: identical settled numbers, neg_clamp 0. Floor 8 V (bound 2.983 A). constants_hash now
+  6a88d04ba8a36e61. Reversal: HIL_PLANT.md 4.6.2 six-item list.

@@ -40,6 +40,20 @@ REPO_ROOT = os.path.dirname(_HERE)
 
 SWEEP_SCHEMA = "sdp-alpha-sweep-v1"
 SWEEP_DIR = os.path.join(_HERE, "sdp_policies", "sweep_20260901")
+
+# ── THE CHARGER ERA OF A SWEEP (2026-09-01, the charger-efficiency round) ────
+# Every artifact in sweep_20260901/ was solved against the OLD 1:1
+# current-transfer charger, so that is what a bare `solve` still reproduces:
+# None here, not the solver's own default.  A new-era sweep is an explicit
+# act - `--eta-chg 0.88 --sweep-dir <new folder>` - and MUST go to a new
+# folder, because the two eras' artifacts share a filename convention
+# (alpha_NN_x.xxxxxx.json) and would otherwise overwrite each other while the
+# manifest recorded only the last era solved.
+SWEEP_ETA_CHG_DEFAULT = None
+# The SHIPPED artifact a sweep carries as its anchor point.  It is a module
+# global for the same reason SWEEP_DIR is: a dozen helpers read it.  An
+# eta-era sweep anchors on the era's own shipped artifact instead, through
+# `--anchor-artifact`, which rebinds this and ANCHOR_ALPHA together in main().
 ANCHOR_ARTIFACT = os.path.join(_HERE, "sdp_policies", "sdp_policy_v3.json")
 
 # The full-scale study's alpha range (SDP_EnergyManagement2.m).
@@ -103,6 +117,49 @@ REFINE_BRACKETS = {
 REFINE_ORDER = ("degeneracy", "charge")
 # Relative width at which the bisection stops, on the log-alpha axis.
 BISECT_REL_TOL = 1e-6
+
+# ── BRACKETS IN A CHARGER ERA OTHER THAN THE FIRST SWEEP'S ──────────────────
+# REFINE_BRACKETS above are the FIRST sweep's grid points, and they belong to
+# the 1:1 current-transfer era: the charge boundary moved from 0.239250 to
+# 0.126136 when the charge lever became eta*L_share (solver D13), so the old
+# charge bracket no longer straddles anything.  A non-None era therefore
+# derives its brackets from the era's OWN analytic thresholds - the same two
+# closed forms the boundaries are being measured against - widened by
+# BRACKET_REL_HALF_WIDTH on each side.  The bracket is a SEARCH INTERVAL, not
+# an answer: both ends are verified by a solve before the bisection starts
+# (bisect_boundary), so a wrong analytic prediction fails loudly rather than
+# steering the result.
+BRACKET_REL_HALF_WIDTH = 0.10
+
+
+def analytic_boundaries(eta_chg, solver=None):
+    """The two behaviour thresholds in closed form, for a charger era.
+
+    degeneracy = (1-gamma)/L_share  (the share lever's admission bound; below
+    it no share action is worth its SoC and the map is degenerate)
+    charge     = (1-gamma)/L_chg    (the charge lever's admission bound)
+
+    Both are the solver's own algebra, so the bisection MEASURES a quantity
+    this function PREDICTS and the two are compared in the doc.
+    """
+    solver = solver or _import_solver()
+    omg = 1.0 - solver.rescale_gamma(solver.GAMMA_BASE, solver.DECISION_DT_S,
+                                     1.0)
+    l_share, l_chg = solver.model_levers(eta_chg=eta_chg)
+    return {"degeneracy": omg / l_share, "charge": omg / l_chg}
+
+
+def refine_brackets_for_era(eta_chg, solver=None,
+                            half_width=BRACKET_REL_HALF_WIDTH):
+    """The bisection brackets for a charger era.
+
+    The OLD era returns REFINE_BRACKETS verbatim, so `refine` without
+    `--eta-chg` reproduces the first sweep's search exactly.
+    """
+    if eta_chg is None:
+        return dict(REFINE_BRACKETS)
+    return {name: (b * (1.0 - half_width), b * (1.0 + half_width))
+            for name, b in analytic_boundaries(eta_chg, solver).items()}
 
 
 # ---------------------------------------------------------------------------
@@ -190,13 +247,20 @@ def build_refined_grid(boundaries, idx_start=REFINE_IDX_START,
 
 
 def build_grid(alpha_lo=ALPHA_LO, alpha_hi=ALPHA_HI, n=N_LOG_POINTS,
-               anchor=ANCHOR_ALPHA):
+               anchor=-1.0):
     """The sweep grid, ascending in alpha, indices assigned after the sort.
 
     Returns a list of dicts with keys idx, alpha, is_anchor.  The anchor is an
     additional point, never a replacement for a log-spaced one, so removing it
     leaves the geomspace grid intact.
+
+    `anchor` defaults to the SENTINEL -1.0, which resolves to the module's
+    current ANCHOR_ALPHA at CALL time.  A plain `anchor=ANCHOR_ALPHA` default
+    would bind at def time and would silently ignore an `--anchor-artifact`
+    rebinding; None still means "no anchor point at all".
     """
+    if anchor == -1.0:
+        anchor = ANCHOR_ALPHA
     import numpy as np
     values = [(float(a), False)
               for a in np.geomspace(alpha_lo, alpha_hi, n)]
@@ -221,17 +285,63 @@ def window_flags(alpha, doc):
     from a second copy of the lever constants.
     """
     adm = doc["alpha"]["admission"]
-    wm = adm["window_model"]
-    ws = adm["window_measured"]
-    return (wm[0] < alpha < wm[1], ws[0] < alpha < ws[1])
+    # Either window can be RECORDED AS NULL from 2026-09-01: in the eta
+    # charger era the projected measured levers do not order, so the
+    # "admit share, reject charge" window does not exist and the solver writes
+    # null rather than a pair it cannot compute.  `_in_window` reads that as
+    # "not inside", which is the conservative reading for the only consumer
+    # (whether --allow-out-of-window has to be passed).
+    return (_in_window(adm["window_model"], alpha),
+            _in_window(adm["window_measured"], alpha))
 
 
 def _windows_from_anchor():
-    """The two admission windows, taken from the shipped v3 artifact."""
+    """The two admission windows, taken from the shipped v3 artifact.
+
+    v3 is an OLD-ERA artifact, so these are the old era's windows."""
     with open(ANCHOR_ARTIFACT, "r", encoding="utf-8") as f:
         doc = json.load(f)
     adm = doc["alpha"]["admission"]
-    return tuple(adm["window_model"]), tuple(adm["window_measured"])
+    # A window the artifact recorded as null (an era in which the levers do
+    # not order for the intent - solver D13) stays None here; `_in_window`
+    # reads that as "not checked", which is the conservative direction.
+    def _t(w):
+        return None if w is None else tuple(w)
+    return _t(adm["window_model"]), _t(adm["window_measured"])
+
+
+def windows_for_era(eta_chg, solver=None):
+    """The (model, measured) admission windows for a charger era.
+
+    The OLD era reads them off the shipped v3 anchor, which is the artifact
+    they were computed for - unchanged behaviour, and it keeps a bare `solve`
+    byte-reproducible.  Any other era RECOMPUTES them from the solver's own
+    lever algebra, because the anchor's recorded windows belong to a charger
+    the sweep is no longer solving against.  A window that the era's levers
+    cannot express is returned as None; `_in_window` then reads it as "not
+    checked", which is what makes the solver's --allow-out-of-window decision
+    below conservative rather than wrong.
+    """
+    if eta_chg is None:
+        return _windows_from_anchor()
+    solver = solver or _import_solver()
+    omg = 1.0 - solver.rescale_gamma(solver.GAMMA_BASE, solver.DECISION_DT_S,
+                                     1.0)
+    l_share, l_chg = solver.model_levers(eta_chg=eta_chg)
+    l_share_m, l_chg_m = solver.measured_levers(eta_chg)
+
+    def _win(hi, lo):
+        try:
+            return solver.admission_window(omg, hi, lo)
+        except ValueError:
+            return None
+
+    return _win(l_share, l_chg), _win(l_share_m, l_chg_m)
+
+
+def _in_window(win, alpha):
+    """True when `alpha` is inside `win`; False for an unexpressible window."""
+    return win is not None and win[0] < alpha < win[1]
 
 
 def point_filename(point):
@@ -289,7 +399,7 @@ def summarize_artifact(path, point, wall_s):
 
 
 def build_manifest(entries, tpm_path, tpm_sha, gamma, anchor_check,
-                   refinement=None):
+                   refinement=None, eta_chg=SWEEP_ETA_CHG_DEFAULT):
     """The sweep manifest.
 
     ``points`` is the ORIGINAL 21-point grid and stays 21 entries long.
@@ -317,6 +427,11 @@ def build_manifest(entries, tpm_path, tpm_sha, gamma, anchor_check,
         },
         "tpm": {"path": tpm_path, "sha256": tpm_sha},
         "demand_map_w": list(DEMAND_MAP_W),
+        # The CHARGER ERA every artifact in this manifest was solved against.
+        # null = the 1:1 current-transfer charger, which is what
+        # sweep_20260901/ holds; that manifest predates the field, and its
+        # ABSENCE reads the same way.
+        "eta_chg": (None if eta_chg is None else float(eta_chg)),
         "gamma": gamma,
         "anchor_check": anchor_check,
         "points": entries,
@@ -335,7 +450,7 @@ def _atomic_write_json(path, obj):
 
 
 # ---------------------------------------------------------------------------
-def solver_argv(point, out_path, force, in_model, in_meas):
+def solver_argv(point, out_path, force, in_model, in_meas, eta_chg=None):
     """The solver CLI arguments for one sweep point.
 
     An EXPLICIT --alpha sets alpha.value to the requested value exactly and
@@ -346,6 +461,11 @@ def solver_argv(point, out_path, force, in_model, in_meas):
     argv = ["--alpha", repr(float(point["alpha"])),
             "--demand-map", repr(DEMAND_MAP_W[0]), repr(DEMAND_MAP_W[1]),
             "--out", out_path]
+    # The CHARGER ERA is passed explicitly in both directions: the solver's own
+    # default is the plant's efficiency, and a sweep that inherited it would
+    # silently change era with a solver edit.
+    argv += (["--eta-chg-none"] if eta_chg is None
+             else ["--eta-chg", repr(float(eta_chg))])
     if not (in_model and in_meas):
         argv.append("--allow-out-of-window")
     if force:
@@ -355,7 +475,8 @@ def solver_argv(point, out_path, force, in_model, in_meas):
 
 def cmd_solve(args):
     solver = _import_solver()
-    win_model, win_meas = _windows_from_anchor()
+    eta_chg = _era_from_args(args)
+    win_model, win_meas = windows_for_era(eta_chg, solver)
     grid = build_grid()
     os.makedirs(SWEEP_DIR, exist_ok=True)
 
@@ -363,13 +484,14 @@ def cmd_solve(args):
     entries = []
     for point in grid:
         out_path = os.path.join(SWEEP_DIR, point_filename(point))
-        in_model = win_model[0] < point["alpha"] < win_model[1]
-        in_meas = win_meas[0] < point["alpha"] < win_meas[1]
+        in_model = _in_window(win_model, point["alpha"])
+        in_meas = _in_window(win_meas, point["alpha"])
         if only and point["idx"] not in only:
             if os.path.exists(out_path):
                 entries.append(summarize_artifact(out_path, point, None))
             continue
-        argv = solver_argv(point, out_path, args.force, in_model, in_meas)
+        argv = solver_argv(point, out_path, args.force, in_model, in_meas,
+                           eta_chg)
         buf = io.StringIO()
         t0 = time.time()
         with contextlib.redirect_stdout(buf):
@@ -398,7 +520,8 @@ def cmd_solve(args):
     tpm_sha = sha256_file(tpm_abs)
     refinement = _refinement_if_current(solver_identity(tpm_sha, gamma))
     manifest = build_manifest(entries, tpm_rel, tpm_sha, gamma,
-                              anchor_check, refinement=refinement)
+                              anchor_check, refinement=refinement,
+                              eta_chg=eta_chg)
     _atomic_write_json(os.path.join(SWEEP_DIR, "manifest.json"), manifest)
     print("[sweep] manifest: %s" % os.path.join(SWEEP_DIR, "manifest.json"))
     print("[sweep] anchor check: %s" % anchor_check["verdict"])
@@ -462,11 +585,19 @@ def all_points(include="all"):
     return build_grid() + refined_grid_from_manifest()
 
 
-def _probe_solve(solver, alpha, tmp_path):
-    """Solve one alpha into a scratch file and return the artifact document."""
+def _probe_solve(solver, alpha, tmp_path, eta_chg=None):
+    """Solve one alpha into a scratch file and return the artifact document.
+
+    The CHARGER ERA is passed explicitly in both directions, exactly as
+    `solver_argv` does: a probe that inherited the solver's default would
+    bisect a boundary belonging to a different charger than the points solved
+    around it.
+    """
     argv = ["--alpha", repr(float(alpha)),
             "--demand-map", repr(DEMAND_MAP_W[0]), repr(DEMAND_MAP_W[1]),
             "--out", tmp_path, "--allow-out-of-window", "--force"]
+    argv += (["--eta-chg-none"] if eta_chg is None
+             else ["--eta-chg", repr(float(eta_chg))])
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         rc = solver.main(argv)
@@ -478,7 +609,7 @@ def _probe_solve(solver, alpha, tmp_path):
 
 
 def bisect_boundary(solver, name, tmp_path, bracket=None,
-                    rel_tol=BISECT_REL_TOL, max_iter=64):
+                    rel_tol=BISECT_REL_TOL, max_iter=64, eta_chg=None):
     """Locate one behaviour boundary by bisection on the log-alpha axis.
 
     The predicate (``REFINE_PREDICATES[name]``) is FALSE below the boundary and
@@ -493,10 +624,13 @@ def bisect_boundary(solver, name, tmp_path, bracket=None,
     import math
 
     pred = REFINE_PREDICATES[name]
-    bracket_used = REFINE_BRACKETS[name] if bracket is None else bracket
+    if bracket is None:
+        bracket_used = refine_brackets_for_era(eta_chg, solver)[name]
+    else:
+        bracket_used = bracket
     lo, hi = float(bracket_used[0]), float(bracket_used[1])
-    doc_lo = _probe_solve(solver, lo, tmp_path)
-    doc_hi = _probe_solve(solver, hi, tmp_path)
+    doc_lo = _probe_solve(solver, lo, tmp_path, eta_chg)
+    doc_hi = _probe_solve(solver, hi, tmp_path, eta_chg)
     if pred(doc_lo) or not pred(doc_hi):
         raise RuntimeError(
             "bracket [%r, %r] does not straddle the %r boundary "
@@ -505,7 +639,7 @@ def bisect_boundary(solver, name, tmp_path, bracket=None,
     n = 2
     while (hi - lo) / (0.5 * (lo + hi)) > rel_tol and n < max_iter:
         mid = math.sqrt(lo * hi)
-        if pred(_probe_solve(solver, mid, tmp_path)):
+        if pred(_probe_solve(solver, mid, tmp_path, eta_chg)):
             hi = mid
         else:
             lo = mid
@@ -535,15 +669,20 @@ def _is_degenerate_entry(entry):
 
 def cmd_refine(args):
     solver = _import_solver()
+    eta_chg = _era_from_args(args)
     os.makedirs(SWEEP_DIR, exist_ok=True)
     tmp_path = os.path.join(SWEEP_DIR, "_bisect_probe.json")
-    win_model, win_meas = _windows_from_anchor()
+    win_model, win_meas = windows_for_era(eta_chg, solver)
 
     boundaries = {}
     try:
         for name in REFINE_ORDER:
             t0 = time.time()
-            b = bisect_boundary(solver, name, tmp_path, rel_tol=args.rel_tol)
+            b = bisect_boundary(solver, name, tmp_path, rel_tol=args.rel_tol,
+                                eta_chg=eta_chg)
+            b["analytic_alpha"] = analytic_boundaries(eta_chg, solver)[name]
+            b["analytic_rel_error"] = (b["alpha"] - b["analytic_alpha"]) \
+                / b["analytic_alpha"]
             b["wall_s"] = time.time() - t0
             boundaries[name] = b
             print("[refine] %-11s boundary alpha %.9f  (+/- %.2g, %d solves, "
@@ -558,12 +697,12 @@ def cmd_refine(args):
     entries = []
     for point in grid:
         out_path = os.path.join(SWEEP_DIR, point_filename(point))
-        in_model = win_model[0] < point["alpha"] < win_model[1]
-        in_meas = win_meas[0] < point["alpha"] < win_meas[1]
+        in_model = _in_window(win_model, point["alpha"])
+        in_meas = _in_window(win_meas, point["alpha"])
         if args.no_solve and os.path.exists(out_path):
             entries.append(summarize_artifact(out_path, point, None))
             continue
-        argv = solver_argv(point, out_path, True, in_model, in_meas)
+        argv = solver_argv(point, out_path, True, in_model, in_meas, eta_chg)
         buf = io.StringIO()
         t0 = time.time()
         with contextlib.redirect_stdout(buf):
@@ -596,6 +735,9 @@ def cmd_refine(args):
                    "bracketed, so both regimes are sampled five times within "
                    "8 % of the transition.",
         "order": list(REFINE_ORDER),
+        # The era the boundaries were bisected in.  Absent/null = the 1:1
+        # current-transfer charger, which is what sweep_20260901/ holds.
+        "eta_chg": (None if eta_chg is None else float(eta_chg)),
         "idx_start": REFINE_IDX_START,
         "spacing": {
             "rule": "alpha = boundary * (1 -/+ d)",
@@ -652,32 +794,40 @@ def check_anchor(entries):
     with open(ANCHOR_ARTIFACT, "r", encoding="utf-8") as f:
         ref_doc = json.load(f)
     ref = policy_sha256(ref_doc)
+    name = os.path.basename(ANCHOR_ARTIFACT)
     return {
         "anchor_idx": anchors[0]["idx"],
         "anchor_alpha": anchors[0]["alpha"],
         "sweep_policy_sha256": got,
+        # The key keeps its first-sweep name so a consumer pinned to
+        # sweep_20260901/manifest.json reads the same field; `anchor_artifact`
+        # beside it names WHICH artifact the digest belongs to.
         "sdp_policy_v3_policy_sha256": ref,
+        "anchor_artifact": os.path.relpath(ANCHOR_ARTIFACT,
+                                           REPO_ROOT).replace("\\", "/"),
+        "anchor_artifact_policy_sha256": ref,
         "match": got == ref,
-        "verdict": ("MATCH - the anchor reproduces sdp_policy_v3.json's policy "
-                    "block" if got == ref else
-                    "MISMATCH - the anchor differs from sdp_policy_v3.json; "
-                    "compare the TPM, demand map, and grid arguments"),
+        "verdict": ("MATCH - the anchor reproduces %s's policy block" % name
+                    if got == ref else
+                    "MISMATCH - the anchor differs from %s; compare the TPM, "
+                    "demand map, and grid arguments" % name),
     }
 
 
 # ---------------------------------------------------------------------------
 def cmd_grid(args):
-    win_model, win_meas = _windows_from_anchor()
+    win_model, win_meas = windows_for_era(_era_from_args(args))
     print("idx  alpha       in_model  in_meas  anchor")
     for p in build_grid():
         a = p["alpha"]
         print("%3d  %.9f  %-8s  %-7s  %s"
               % (p["idx"], a,
-                 win_model[0] < a < win_model[1],
-                 win_meas[0] < a < win_meas[1],
+                 _in_window(win_model, a), _in_window(win_meas, a),
                  "ANCHOR" if p["is_anchor"] else ""))
-    print("model window (%.6f, %.6f); measured window (%.6f, %.6f)"
-          % (win_model + win_meas))
+    for label, win in (("model", win_model), ("measured", win_meas)):
+        print("%s window %s" % (label, "UNDECIDABLE (the levers do not order "
+                                       "for this intent)" if win is None
+                                else "(%.6f, %.6f)" % tuple(win)))
     return 0
 
 
@@ -928,6 +1078,7 @@ def cmd_evaluate(args):
         print("[sweep] walk module not available yet (tools/ems_walk.py): %s"
               % exc, file=sys.stderr)
         return 3
+    wkw = _walk_kwargs(args)
     include = getattr(args, "include", "original")
     grid = all_points(include)
     if not grid:
@@ -944,7 +1095,7 @@ def cmd_evaluate(args):
                 print("[sweep] point %02d not solved (%s) - run `solve` first"
                       % (point["idx"], pf), file=sys.stderr)
                 return 1
-            r = walk(args.strategy, scenario, policy_file=pf)
+            r = walk(args.strategy, scenario, policy_file=pf, **wkw)
             results[point["idx"]] = (point, r)
             if point["is_anchor"]:
                 anchor_idx = point["idx"]
@@ -959,7 +1110,7 @@ def cmd_evaluate(args):
             anchor_point = _anchor_point()
             apf = os.path.join(SWEEP_DIR, point_filename(anchor_point))
             dsoc_ref = float(walk(args.strategy, scenario,
-                                  policy_file=apf).delta_soc)
+                                  policy_file=apf, **wkw).delta_soc)
             anchor_idx = min(results)
             print("[sweep] eq-H2 reference: anchor idx %d, dSoC %+.6f"
                   % (anchor_point["idx"], dsoc_ref))
@@ -1025,6 +1176,11 @@ HIL_CSV_COLUMNS = [
     # (tools/hil_plant_sim.py:8608).  Plant.step() quantities the reduced walk
     # does not compute, so they are written blank.
     "p_mot_w", "p_fc_w", "p_batt_w", "p_chop_w", "p_aux_w", "p_bal_w",
+    # The charger's conversion LOSS, appended last by the 2026-09-01
+    # charger-efficiency round: i_charge*V_batt*(1/ETA_CHG - 1), the power the
+    # old 1:1 current-transfer model destroyed silently.  Blank here for the
+    # same reason as the rest of the tail.
+    "p_chg_loss_w",
 ]
 
 # Documented constants for the columns the reduced model does not produce.
@@ -1107,6 +1263,7 @@ def synthesize_hil_csv(path, result, sim, scenario_meta, dt_s):
                 "",                                           # mppt_thresh_cnt
                 WALK_CSV_ERROR_CODE,                          # error_code
                 "", "", "", "", "", "",                       # power balance
+                "",                                           # p_chg_loss_w
             ])
     return len(result.t)
 
@@ -1175,6 +1332,7 @@ def cmd_plots(args):
         print("[plots] no points selected", file=sys.stderr)
         return 1
 
+    wkw = _walk_kwargs(args)
     dt_s = float(gen.DP_STAGE_DT_S)
     written = 0
     for scenario in args.scenario:
@@ -1188,7 +1346,7 @@ def cmd_plots(args):
             dest = os.path.join(out_root, scenario, plot_dir_name(point))
             os.makedirs(dest, exist_ok=True)
             r = ems_walk.walk(args.strategy, scenario, policy_file=pf,
-                              trace=True)
+                              trace=True, **wkw)
             csv_path = os.path.join(dest, "walk_trace.csv")
             n = synthesize_hil_csv(csv_path, r, sim, meta, dt_s)
             cfg = dict(hra.load_run_config(
@@ -1235,17 +1393,87 @@ def _self_test(out_dir):
 
 
 # ---------------------------------------------------------------------------
+def _add_era_args(sp):
+    """The charger-era and output-folder arguments a solving subcommand takes."""
+    sp.add_argument("--eta-chg", type=float, default=None,
+                    help="Ag105 charge efficiency for every point in the "
+                         "sweep. Omitted = the 1:1 current-transfer era, "
+                         "which is what sweep_20260901/ holds and what a "
+                         "bare `solve` reproduces.")
+    sp.add_argument("--sweep-dir", default=None,
+                    help="output folder (default %s). A NEW-ERA sweep must "
+                         "name a new one: the filename convention carries the "
+                         "alpha, not the era." % SWEEP_DIR)
+    sp.add_argument("--anchor-artifact", default=None,
+                    help="the SHIPPED policy artifact this sweep anchors on "
+                         "(default %s). An eta-era sweep anchors on the era's "
+                         "own shipped artifact; the anchor alpha is read from "
+                         "its alpha.value, so the two can never disagree."
+                         % os.path.relpath(ANCHOR_ARTIFACT, REPO_ROOT))
+
+
+def _add_walk_args(sp):
+    """The arguments the two WALKING subcommands take.
+
+    `evaluate` and `plots` do not solve, so they do not take a solver era -
+    but they DO need to be pointed at a sweep folder other than the default,
+    and they DO choose the era the offline WALK prices a charge window in.
+    The walk era is a SEPARATE decision from the solve era (a policy solved
+    in one era can be walked in another, and that is exactly what a
+    comparability question looks like), so it is a separate flag and it
+    defaults to `tools/ems_walk.py`'s own default rather than to None.
+    """
+    sp.add_argument("--sweep-dir", default=None,
+                    help="the sweep folder to read points from (default %s)"
+                         % SWEEP_DIR)
+    # The anchor is needed here too, and for two reasons: it is one of the
+    # grid's 21 points, and its SoC change is the reference every eq-H2
+    # column is priced against.
+    sp.add_argument("--anchor-artifact", default=None,
+                    help="the shipped policy artifact this sweep anchors on "
+                         "(default %s)"
+                         % os.path.relpath(ANCHOR_ARTIFACT, REPO_ROOT))
+    sp.add_argument("--walk-eta-chg", type=float, default=None,
+                    help="charger efficiency the WALK prices charge windows "
+                         "at; omitted = tools/ems_walk.py's own default")
+    sp.add_argument("--walk-eta-chg-none", action="store_true",
+                    help="walk in the 1:1 current-transfer era instead")
+
+
+def _walk_kwargs(args):
+    """The era keyword the walking subcommands pass to `ems_walk.walk`."""
+    if getattr(args, "walk_eta_chg_none", False):
+        if getattr(args, "walk_eta_chg", None) is not None:
+            raise SystemExit("--walk-eta-chg and --walk-eta-chg-none are "
+                             "mutually exclusive")
+        return {"eta_chg": None}
+    if getattr(args, "walk_eta_chg", None) is not None:
+        return {"eta_chg": float(args.walk_eta_chg)}
+    return {}
+
+
+def _era_from_args(args):
+    """The charger era a solving subcommand was asked for, validated."""
+    eta = getattr(args, "eta_chg", None)
+    if eta is None:
+        return SWEEP_ETA_CHG_DEFAULT
+    if not 0.0 < float(eta) <= 1.0:
+        raise SystemExit("--eta-chg must lie in (0, 1], got %r" % (eta,))
+    return float(eta)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("grid", help="print the sweep grid")
+    _add_era_args(sub.add_parser("grid", help="print the sweep grid"))
 
     ps = sub.add_parser("solve", help="solve every point")
     ps.add_argument("--force", action="store_true",
                     help="overwrite existing artifacts")
     ps.add_argument("--only", type=int, nargs="+", metavar="IDX",
                     help="solve only these grid indices")
+    _add_era_args(ps)
 
     pr = sub.add_parser("refine",
                         help="bisect the two behaviour boundaries and solve "
@@ -1256,6 +1484,7 @@ def main(argv=None):
     pr.add_argument("--no-solve", action="store_true",
                     help="re-summarize already-solved refinement artifacts "
                          "instead of re-solving them")
+    _add_era_args(pr)
 
     pp = sub.add_parser("plots",
                         help="render the standard figures for every point "
@@ -1270,6 +1499,7 @@ def main(argv=None):
     pp.add_argument("--strategy", default=EVAL_STRATEGY,
                     help="strategy binding for the walk (default %s)"
                          % EVAL_STRATEGY)
+    _add_walk_args(pp)
 
     pe = sub.add_parser("evaluate", help="offline-walk every point")
     pe.add_argument("--include", choices=("original", "refined", "all"),
@@ -1285,8 +1515,24 @@ def main(argv=None):
                          "EVAL_STRATEGY)" % EVAL_STRATEGY)
     pe.add_argument("--self-test", action="store_true",
                     help="exercise the evaluation path on a fake walk result")
+    _add_walk_args(pe)
 
     args = ap.parse_args(argv)
+    # ONE assignment point for the output folder.  SWEEP_DIR and MANIFEST_PATH
+    # are module globals that a dozen helpers read; rebinding them here keeps
+    # every one of those helpers unchanged and keeps the two consistent, which
+    # setting only SWEEP_DIR would not.
+    global SWEEP_DIR, MANIFEST_PATH, ANCHOR_ARTIFACT, ANCHOR_ALPHA
+    if getattr(args, "sweep_dir", None):
+        SWEEP_DIR = os.path.abspath(args.sweep_dir)
+        MANIFEST_PATH = os.path.join(SWEEP_DIR, "manifest.json")
+    # Same pattern for the anchor: ANCHOR_ALPHA is READ OFF the artifact
+    # rather than passed beside it, so the grid's anchor point and the
+    # anchor check can never name different alphas.
+    if getattr(args, "anchor_artifact", None):
+        ANCHOR_ARTIFACT = os.path.abspath(args.anchor_artifact)
+        with open(ANCHOR_ARTIFACT, "r", encoding="utf-8") as f:
+            ANCHOR_ALPHA = float(json.load(f)["alpha"]["value"])
     if getattr(args, "scenario", None) is not None or args.cmd in ("evaluate",
                                                                    "plots"):
         if not getattr(args, "scenario", None):

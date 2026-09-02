@@ -1019,23 +1019,19 @@ def test_hil_csv_columns_omits_elec_columns_for_default_electrical_mode():
     assert "elec_events" in sweep.HIL_CSV_COLUMNS
 
 
-def test_hil_csv_columns_matches_hifi_simulated_header_or_xfails():
+def test_hil_csv_columns_matches_the_hifi_simulated_header_exactly():
     """HIL_CSV_COLUMNS carries elec_substep_hz/elec_events unconditionally,
     which matches the `--electrical hifi` header shape (not the default
     `simple` one -- see the test above), so that is the correct live header
-    to compare HIL_CSV_COLUMNS against."""
+    to compare HIL_CSV_COLUMNS against.
+
+    WAS AN XFAIL (2026-09-01f): the live header had grown a six-column
+    power-balance tail the list did not carry.  The list was brought current
+    with that tail and with `p_chg_loss_w`, appended by the charger-efficiency
+    round, so the comparison is now EXACT and a future append fails here
+    rather than being tolerated."""
     derived = _derive_simulated_header(electrical_hifi=True)
-    if derived != sweep.HIL_CSV_COLUMNS:
-        pytest.xfail(
-            "HIL_CSV_COLUMNS (tools/sdp_alpha_sweep.py) does not match the "
-            "live `--electrical hifi` simulated CSV header derived from "
-            "tools/hil_plant_sim.py's own `header_row` assembly. As of this "
-            "checkout the live header carries six additional trailing "
-            "columns (p_mot_w, p_fc_w, p_batt_w, p_chop_w, p_aux_w, p_bal_w) "
-            "added by a concurrent 2026-09-01f feature "
-            "('power balance -- APPENDED LAST, BOTH SCHEMAS') that "
-            "HIL_CSV_COLUMNS does not carry. derived=%r vs "
-            "HIL_CSV_COLUMNS=%r" % (derived, sweep.HIL_CSV_COLUMNS))
+    assert derived == sweep.HIL_CSV_COLUMNS
 
 
 def test_hil_csv_columns_prefix_matches_derived_hifi_header():
@@ -1265,3 +1261,56 @@ def test_doc_image_links_all_resolve():
         if not os.path.isfile(full):
             missing.append(link)
     assert not missing, "unresolved image links: %r" % missing
+
+
+# ==========================================================================
+# 2026-09-01 charger-efficiency round (WP-1B1): the sweep's charger era.
+# ==========================================================================
+
+def test_sweep_default_era_is_the_old_one_so_the_shipped_folder_reproduces():
+    assert sweep.SWEEP_ETA_CHG_DEFAULT is None
+    argv = sweep.solver_argv({"alpha": 0.2, "idx": 0, "is_anchor": False},
+                             "out.json", False, True, True, None)
+    assert "--eta-chg-none" in argv
+    assert "--eta-chg" not in argv
+
+
+def test_sweep_solver_argv_carries_an_explicit_era_in_both_directions():
+    """Neither direction may be left to the solver's own default: the solver
+    defaults to the plant's efficiency, and a sweep that inherited it would
+    change era with an edit to another file."""
+    argv = sweep.solver_argv({"alpha": 0.2, "idx": 0, "is_anchor": False},
+                             "out.json", True, False, False, 0.88)
+    assert "--eta-chg" in argv
+    assert argv[argv.index("--eta-chg") + 1] == repr(0.88)
+    assert "--eta-chg-none" not in argv
+    assert "--allow-out-of-window" in argv       # out of window, both
+
+
+def test_windows_for_era_old_matches_the_anchor_and_new_is_recomputed():
+    old = sweep.windows_for_era(None)
+    assert old == sweep._windows_from_anchor()
+    new_model, new_meas = sweep.windows_for_era(0.88)
+    assert new_model is not None and new_model[1] < old[0][1]
+    # The measured pair does not order in the eta era - reported as None, and
+    # `_in_window` reads that conservatively as "not inside".
+    assert new_meas is None
+    assert sweep._in_window(None, 0.12) is False
+
+
+def test_manifest_records_the_charger_era():
+    m = sweep.build_manifest([], "tpm.mat", "sha", {"effective": 0.95},
+                             {"verdict": "x"})
+    assert m["eta_chg"] is None
+    m88 = sweep.build_manifest([], "tpm.mat", "sha", {"effective": 0.95},
+                               {"verdict": "x"}, eta_chg=0.88)
+    assert m88["eta_chg"] == 0.88
+
+
+def test_shipped_sweep_manifest_is_old_era():
+    """sweep_20260901/ predates the field; its ABSENCE reads as the old era
+    and nothing regenerates it."""
+    if not os.path.isfile(sweep.MANIFEST_PATH):
+        pytest.skip("sweep folder not present in this checkout")
+    m = json.load(open(sweep.MANIFEST_PATH, encoding="utf-8"))
+    assert m.get("eta_chg") is None

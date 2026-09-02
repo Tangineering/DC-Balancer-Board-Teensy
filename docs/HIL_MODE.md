@@ -358,8 +358,12 @@ leaves a record. See `docs/HIL_USER_MANUAL.md` §2.5 for the full schema.
 The CSV column list itself is documented in `docs/HIL_PLANT.md` §7.1. Columns are
 only ever **appended**, never reordered, so an existing parser that reads by index
 keeps working. The most recent appendices are `mppt_thresh_cnt` (fw v24),
-`error_code` (fw v25) and, last, the six per-tick power columns `p_mot_w`,
-`p_fc_w`, `p_batt_w`, `p_chop_w`, `p_aux_w` and `p_bal_w` (2026-09-01f). All three
+`error_code` (fw v25) and, last, the seven per-tick power columns `p_mot_w`,
+`p_fc_w`, `p_batt_w`, `p_chop_w`, `p_aux_w` and `p_bal_w` (2026-09-01f) plus
+`p_chg_loss_w`, the Ag105's own dissipation, appended after them in the
+charger-efficiency round (2026-09-01). They carry the identity
+`p_mot + p_chg_loss = p_fc + p_batt + p_chop + p_bal`, with the charger loss on
+the **load** side. All three
 appendices are declared in **both** the simulated and replay schemas so their tail
 indices are fixed; the power columns are blank on every replay row, where no plant
 integrator ran.

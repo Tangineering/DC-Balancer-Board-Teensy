@@ -424,6 +424,13 @@ from hil_electrical import (                                   # noqa: E402
     # source's bounds, shared by both electrical modes so they cannot drift.
     V_CHOPPER_TRIP, R_CHOPPER, chopper_dump_current,
     V_REGEN_OC_MAX, REGEN_I_SRC_MAX_A,
+    # Ag105 charge efficiency (2026-09-01).  ONE literal, defined in
+    # hil_electrical because that is where the hi-fi charger stamp lives and
+    # because the dependency only ever runs electrical -> plant (hil_electrical
+    # must not import hil_plant_sim).  Simple mode consumes the same constant
+    # so the two engines cannot bill the charger differently; see the
+    # "CHARGER BILLING" block in Plant.step().
+    ETA_CHG, V_CHG_LOAD_FLOOR,
     # WP-E droop realization mode.  DROOP_SCALE is the mode -> scale map and
     # DROOP_MODES its key tuple (the `--droop` choices); both live in
     # hil_electrical because that is where the droop chain is realized.
@@ -997,7 +1004,7 @@ def mdac_fraction(word: int) -> float:
 #     3. DYNAMICS.  Its dominant time constant is 0.2212 s.  That is a
 #        CONSUMPTION-dynamics claim (fuel delivery / stack thermodynamics) and
 #        is a DIFFERENT quantity from the ELECTRICAL FC_TAU_S = 0.020 s
-#        double-layer lag modelled in hil_electrical.py:405.  The two are not
+#        double-layer lag modelled in hil_electrical.py (`FC_TAU_S`).  The two are not
 #        alternatives and must not be reconciled with each other.  Whether the
 #        full-size consumption lag transfers unchanged to a small stack is
 #        part of caveat 1.
@@ -1332,6 +1339,7 @@ class Plant:
         self.p_chop_w = 0.0
         self.p_aux_w = 0.0
         self.p_bal_w = 0.0
+        self.p_chg_loss_w = 0.0
         self.i_charge = 0.0           # A   measured charge current (reg 0x06 equivalent)
         self.chg_powered_s = 0.0      # s   time the charger input has been continuously live
         self.chg_fault = False        # scenario-driven charger-input collapse
@@ -1445,7 +1453,68 @@ class Plant:
         else:
             i_motor = 0.0
         i_motor += self.i_mot_extra if mot_live else 0.0
-        i_total = i_motor + self.i_aux
+
+        # ── CHARGER BILLING — ONE RULE, BOTH ENGINES (2026-09-01) ────────────
+        # The Ag105 is an energy converter at a static efficiency ETA_CHG (the
+        # constant carries the datasheet citation).  It is billed ON ITS INPUT
+        # NODE, and the input current is always the output current referred
+        # through the voltage ratio and the efficiency:
+        #     i_in = i_charge * V_pack / (ETA_CHG * V_input)
+        # The pack always receives exactly `i_charge`; efficiency never moves
+        # the pack current, only the input draw.
+        #
+        # WHICH NODE IS THE INPUT is a switch question, and it is the SAME
+        # question in both engines because both read chargerHasPower():
+        #   * FC_CHARGE closed          -> the input is VBUS, so the SOURCES pay
+        #                                  (hi-fi: the N_CHG stamp is fed from
+        #                                  N_BUS through the FC_CHARGE link;
+        #                                  simple: `i_chg_in` is added to
+        #                                  `i_total` here).
+        #   * REGEN + MOT_PWR only      -> the input is V-MOT, so the BRAKING
+        #                                  POWER pays and the bus is untouched
+        #                                  (hi-fi: the same stamp is fed from
+        #                                  N_MOT through the REGEN link; simple:
+        #                                  `i_sink` on the motor node, further
+        #                                  down in this method).
+        # The two sites below and hil_electrical.py's N_CHG stamp are the three
+        # places that implement this rule; they must not diverge.
+        #
+        # BEFORE THIS ROUND the two engines held OPPOSITE errors: hi-fi drew
+        # i_charge 1:1 from the input node (destroying i_charge*(V_chg-V_pack),
+        # ~11 W on a 1.4 A window, and over-drawing the bus ~1.8x), while simple
+        # mode never billed the sources for the charger at all and treated pack
+        # charge as free energy.  Both are now the one rule above.
+        #
+        # `self.i_charge` here is last TICK's Ag105 current — this tick's value
+        # is computed in the Ag105 state machine further down, after the
+        # electrical section.  That is the same deliberate one-tick lag hi-fi
+        # already accepts on `i_charge_into_pack` (L5), and it is negligible
+        # against the 0.4 s AG105_TAU_S ramp.  `self.battery.v_terminal` is read
+        # for the same reason: this tick's terminal voltage is not solved yet.
+        # SO IS `self.v_bus` in the denominator below — the simple engine writes
+        # the bus voltage from its own droop law further down in this method, so
+        # every one of the three factors in this expression is last tick's.  All
+        # three are slow against a 1 ms tick, so the lag is a consistent
+        # one-tick delay of the whole term rather than a mix of eras.
+        #
+        # ONE-TICK CROSS-PATH MIS-BILLING, stated because it is a real (bounded)
+        # artefact: the switch word `sw` is THIS tick's while `i_charge` is last
+        # tick's, so on the single tick where the firmware closes FC_CHARGE and
+        # opens REGEN (or the reverse) in one word, the charger's input draw is
+        # billed to the path that is live NOW against a current that was drawn
+        # from the OTHER path.  It is one tick of at most ~0.5 A on the wrong
+        # node, it self-corrects on the next tick, and the alternative (latching
+        # the path with the current) would misreport every genuine handover by
+        # the same tick in the other direction.
+        #
+        # `i_total` is consumed by the SIMPLE branch only (hi-fi is handed
+        # `i_motor` and `i_aux` separately and solves the charger draw inside
+        # its own network), so adding the term here cannot bill it twice.
+        i_chg_in = 0.0
+        if self.electrical is None and self.i_charge and (sw & SW_FC_CHARGE):
+            i_chg_in = (self.i_charge * self.battery.v_terminal
+                        / (ETA_CHG * max(self.v_bus, V_CHG_LOAD_FLOOR)))
+        i_total = i_motor + self.i_aux + i_chg_in
 
         if self.electrical is not None:
             # ── Hi-fi delegation ────────────────────────────────────────────
@@ -1574,8 +1643,17 @@ class Plant:
                     i_reg *= max(0.0, min(1.0, (V_REGEN_OC_MAX - v_node) / span))
                 # Sinks on the node: the charger (only when the REGEN path is the
                 # one feeding it) and the chopper.
-                i_sink = self.i_charge if (bool(sw & SW_REGEN) and
-                                           not (sw & SW_FC_CHARGE)) else 0.0
+                #
+                # The charger sink is INPUT-referred, per the CHARGER BILLING
+                # rule above: the motor node gives up
+                # i_charge*V_pack/(ETA_CHG*V_node), not `i_charge` itself.  Before
+                # this round it gave up `i_charge` and the pack received the same
+                # amperes at a third of the voltage, which manufactured energy on
+                # the regen path exactly as the bus path destroyed it.
+                i_sink = ((self.i_charge * self.battery.v_terminal
+                           / (ETA_CHG * max(v_node, V_CHG_LOAD_FLOOR)))
+                          if (bool(sw & SW_REGEN) and not (sw & SW_FC_CHARGE))
+                          else 0.0)
                 i_sink += chopper_dump_current(v_node)
                 v_node += ((i_reg - i_sink) / C_MOT_NODE_F) * dt
                 # The node cannot fall below the bus: MOT_PWR conducts FORWARD, so
@@ -1696,14 +1774,62 @@ class Plant:
             # currents, so that branch is verbatim pre-WP-C.  Fed through REGEN
             # alone, the input is the braking power and nothing else — a charger
             # that drew its 2.5 A profile from a 3 W brake would be manufacturing
-            # energy.  The cap is INPUT-referred (p/v_in) and compared against an
-            # OUTPUT-referred target, which understates the harvest by roughly
-            # v_in/v_pack; that is the CONSERVATIVE direction and is left in place
-            # rather than papered over with an unmeasured converter efficiency.
-            # TODO(verify): an Ag105 input->output efficiency would sharpen this.
+            # energy.
+            #
+            # THE CAP IS NOW OUTPUT-REFERRED AND EXACT (2026-09-01).  It used to
+            # be p_regen_w/v_in — an INPUT-referred current compared against an
+            # OUTPUT-referred target, which understated the harvest by roughly
+            # v_in/v_pack and was left standing only because no efficiency
+            # figure was in the model.  With ETA_CHG the conversion is defined:
+            # the braking power p_regen_w buys ETA_CHG*p_regen_w of pack power,
+            # i.e. ETA_CHG*p_regen_w/V_pack amperes into the pack.  The pack
+            # terminal voltage carries the same V_CHG_LOAD_FLOOR floor as every
+            # other charger expression here.
+            #
+            # THE CHOPPER IS DELIBERATELY *NOT* NETTED OUT OF THIS CAP, and the
+            # alternative was measured before that was decided (2026-09-01,
+            # review round).  The proposal was
+            # `p_avail = max(0, p_regen_w - regen_chopper_w)`, on the reading
+            # that the shunt takes its share first and the charger may only have
+            # the remainder.  MEASURED on a 2 s braking window (v0 = 3.0 m/s,
+            # i_cmd -12 A, `--electrical` both):
+            #
+            #   engine   cap        charger input   chopper burnt   bus-sourced
+            #   simple   as shipped   1.4388 J        1.7128 J       +0.0000 J
+            #   simple   netted       0.0045 J        3.1314 J       +0.0000 J
+            #   hi-fi    as shipped   1.4016 J        1.3046 J       +0.0915 J
+            #   hi-fi    netted       0.7632 J        1.7950 J       +0.0318 J
+            #
+            # The netted form removes 0.06 J of bus-sourced leak and destroys
+            # 0.64 J (hi-fi) to 1.43 J (simple) of genuine harvest.  The reason
+            # is a modelling fact about the shunt: THE CHOPPER IS A RESIDUAL
+            # ABSORBER, NOT A PRIOR CLAIMANT.  It is a voltage clamp, so a
+            # charger that sinks current pulls the node down and the clamp backs
+            # off — visible in the simple-mode row above, where the charger's
+            # 1.4388 J of input is matched by the chopper burning 1.4230 J LESS
+            # and the bus contributing exactly nothing.  Netting removes that
+            # displacement and latches the charger off: the chopper burns
+            # everything, so `p_avail` is ~0, so the hard clamp below slams
+            # `i_charge` to ~0, so the chopper keeps burning everything.  The
+            # pre-existing WP-C test
+            # `test_charger_takes_its_share_once_powered_through_the_regen_path`
+            # fails outright under the netted form (0.0015 A peak against its
+            # 0.02 A floor), which is the independent evidence.
+            #
+            # WHAT IS LEFT UNFIXED, stated rather than papered over: the hi-fi
+            # row still shows +0.0915 J of the 1.4016 J charger input arriving
+            # from the BUS through a closed MOT_PWR, 6.5 % of the window's
+            # harvest.  It is a TRANSIENT of the node solve, not a systematic
+            # double claim (simple mode, which has no such transient, leaks
+            # exactly zero), and closing it needs the charger and the clamp
+            # solved together at one node voltage rather than one capping the
+            # other.  `TODO(verify)`: bound it with a co-solved split.  §4.6.2
+            # carries the full record.
             i_target = self.ag105_i_max
             if (sw & SW_REGEN) and not (sw & SW_FC_CHARGE):
-                i_target = min(i_target, self.p_regen_w / max(v_chg_in, 1.0))
+                i_target = min(i_target,
+                               ETA_CHG * self.p_regen_w
+                               / max(self.battery.v_terminal, V_CHG_LOAD_FLOOR))
             self.i_charge += (i_target - self.i_charge) * (dt / AG105_TAU_S)
             if i_target < self.ag105_i_max:
                 # HARD clamp on top of the first-order ramp.  The ramp LAGS, so a
@@ -1742,46 +1868,65 @@ class Plant:
         # trace — the same contract the h2 and regen-energy counters hold.
         #
         # THE IDENTITY THE OPERATOR ASKED FOR, and the honest form of it:
-        #     p_mot = p_fc + p_batt + p_chop + p_bal
+        #     p_mot + p_chg_loss = p_fc + p_batt + p_chop + p_bal
         # `p_bal` is written out so a consumer can test the identity per tick
         # without recomputing it.  It is NOT zero, and the named terms it
         # contains are, in descending magnitude:
         #   1. the auxiliary housekeeping load, -p_aux (I_AUX_A plus any scenario
         #      preload/drain, on VBUS).  It is the dominant component and is
         #      written out as its own column so a reader can subtract it.
-        #   2. THE CHARGER, and it is NOT an efficiency term.  ⚠️ This model's
-        #      Ag105 is a 1:1 CURRENT transfer element: hil_electrical.py:1949
-        #      stamps `J[N_CHG] -= i_charge` and :1855 hands the pack THE SAME
-        #      `i_charge`, so the model destroys i_charge*(V_chg - V_batt) by
-        #      construction.  Measured on the 6 s probe: 1.4 A * 7.9 V =
-        #      11.06 W against a residual of 11.08 W — the whole charge-window
-        #      residual, to two decimals.  A real buck at eta ~ 0.9 would draw
-        #      ~0.79 A from a 15 V bus to deliver 1.4 A at 7.9 V, so THE PLANT
-        #      OVER-DRAWS THE BUS BY ROUGHLY 1.8x WHILE CHARGING.
-        #      TODO(verify: Ag105 eta).  Consequence, stated because it is
-        #      load-bearing elsewhere: this over-draw bills the sources for
-        #      hydrogen the real charger would not cost, so it bears directly on
-        #      campaign 20260901_000816's "Ag105 charging is loss-making at rig
-        #      scale" conclusion and on the measured charge lever L_chg =
-        #      0.2364 SoC/g behind sdp_policy_v3's alpha calibration.  ⚠️ SIMPLE
-        #      MODE IS THE OPPOSITE ERROR: Plant.step() computes
-        #      `i_total = i_motor + i_aux` (see the line above and the banner at
-        #      :2897) and never charges the sources for the charger at all, so
-        #      pack charge there is FREE energy and the residual flips sign.
-        #      Neither is corrected here — the plant is not changed by an
-        #      observer, and the choice is an operator decision.
-        #   3. bulk-capacitor storage, d/dt(0.5*C*V^2) on the VBUS 470 uF and, in
+        #   2. bulk-capacitor storage, d/dt(0.5*C*V^2) on the VBUS 470 uF and, in
         #      hi-fi, on the other node capacitances.
-        #   4. the hi-fi motor stamp's own transient term.  The load is stamped
-        #      as a conductance g_mot = i_motor/v_prev (hil_electrical.py:1925),
+        #   3. the hi-fi motor stamp's own transient term.  The load is stamped
+        #      as a conductance g_mot = i_motor/v_prev (hil_electrical.py, `g_mot`),
         #      so the solved tick actually draws i_motor*v_new^2/v_prev while
         #      p_mot books i_motor*v_new — a difference of
-        #      i_motor*v_new*(v_new - v_prev)/v_prev.  With (3) this is what
+        #      i_motor*v_new*(v_new - v_prev)/v_prev.  With (2) this is what
         #      makes the motoring residual peak near 13 W during bring-up while
         #      its steady-state mean is under 0.4 W.
-        #   5. RT1987 ideal-diode drops, i_motor*(V_bus - V_rgn): SMALL, <= 35 mW
+        #   4. RT1987 ideal-diode drops, i_motor*(V_bus - V_rgn): SMALL, <= 35 mW
         #      at 1 A (the servo holds ~35 mV, not a PN Vf).
+        #   5. the chopper's sign in this identity form.  `p_chop` is a
+        #      DISSIPATION but is grouped with the sources, so during a braking
+        #      window it enters the residual twice over.  Pre-existing, not
+        #      changed here, and stated so nobody reads the braking residual as
+        #      a charger or storage effect: it is dominated by -2*p_chop.
         # A reader who wants only 2-5 reads `p_bal_w - p_aux_w`.
+        #
+        # ── THE CHARGER TERM IS NOW NAMED (2026-09-01) ──────────────────────
+        # It used to be the largest unnamed component of this residual, and it
+        # was not an efficiency term at all.  The model's Ag105 was a 1:1
+        # CURRENT transfer element (hil_electrical.py stamped `J[N_CHG] -=
+        # i_charge` and handed the pack THE SAME `i_charge`), so it destroyed
+        # i_charge*(V_chg - V_batt) by construction — measured on the 6 s probe
+        # at 1.4 A * 7.9 V = 11.06 W against a residual of 11.08 W, i.e. the
+        # whole charge-window residual to two decimals.  Simple mode held the
+        # OPPOSITE error: `i_total = i_motor + i_aux` never billed the sources
+        # for the charger at all, so pack charge there was free energy.
+        #
+        # Both engines now run the CHARGER BILLING rule stated earlier in this
+        # method: input power = output power / ETA_CHG, at a static 0.88 with a
+        # datasheet anchor (see ETA_CHG in hil_electrical.py).  What is left is
+        # the module's own dissipation, and it is written out as its own column
+        # rather than left in the residual:
+        #     p_chg_loss = i_charge * V_batt * (1/ETA_CHG - 1)
+        # On the same 6 s probe that is 1.51 W where the unnamed term was
+        # 11.06 W.  CONSEQUENCE, stated because it is load-bearing elsewhere:
+        # the old over-draw billed the sources for hydrogen the real charger
+        # would not cost, so this change bears directly on campaign
+        # 20260901_000816's "Ag105 charging is loss-making at rig scale"
+        # conclusion and on the measured charge lever L_chg = 0.2364 SoC/g
+        # behind sdp_policy_v3's alpha calibration.  Both were measured under
+        # the 1:1 era and must be re-measured before being quoted again.
+        #
+        # ONE TICK OF THE LOSS COLUMN IS NOT THE ONE THAT WAS BILLED.
+        # `p_chg_loss_w` below is computed from THIS tick's `i_charge` (the Ag105
+        # state machine has already run by then), while the two billing sites
+        # draw last tick's.  The identity is therefore off by
+        # d(i_charge)*V_batt*(1/eta - 1) on any tick where the charge current is
+        # moving — bounded by the AG105_TAU_S ramp at ~0.004 A/tick, i.e. under
+        # 5 mW, and identically zero at the steady state where every number in
+        # this block was measured.
         #
         # WHY p_mot IS BOOKED AT V-MOT AND NOT AT VBUS: the REGEN SIGN, not the
         # diode drop.  Braking power enters the network at N_MOT and leaves
@@ -1816,7 +1961,19 @@ class Plant:
         # i_charge); hi-fi: ElectricalSim's identical line with
         # i_charge_into_pack) — so this column and the `soc` column tell one
         # story.  Charging therefore drives p_batt_w negative.
-        self.p_batt_w = self.v_bus * self.i_batt - v_batt * self.i_charge
+        #
+        # THE CHARGE TERM READS `battery.v_terminal`, NOT THE SENSED `v_batt`
+        # (review fix, 2026-09-01).  `v_batt` is the rail as the BOARD would
+        # measure it, and in hi-fi under `--noise` that is the plant truth plus
+        # a sense perturbation.  The charger stamp bills the CLEAN terminal
+        # voltage (hil_electrical.py's N_CHG stamp uses `v_bt_term`), so billing
+        # this column off the sensed value left the identity failing to close by
+        # the sense error alone.  The two V_bus*I terms deliberately stay on the
+        # sensed side: they are the bus powers a consumer reconstructs from the
+        # CSV's own rail and current columns, and moving them would break that
+        # correspondence.
+        v_bt_term = self.battery.v_terminal
+        self.p_batt_w = self.v_bus * self.i_batt - v_bt_term * self.i_charge
         # Braking-shunt dissipation.  Both engines populate regen_chopper_w: hi-fi
         # mirrors it from the engine's own clamp above, simple mode integrates it
         # on the motor node.
@@ -1824,7 +1981,19 @@ class Plant:
         # Auxiliary housekeeping load on VBUS, including any scenario preload or
         # drain.  The largest known residual component.
         self.p_aux_w = self.v_bus * self.i_aux
-        self.p_bal_w = self.p_mot_w - (self.p_fc_w + self.p_batt_w + self.p_chop_w)
+        # Ag105 dissipation, >= 0 by construction (i_charge is never negative;
+        # the pack current sign convention lives in BatterySource).  APPENDED as
+        # the seventh power column, 2026-09-01: the six columns above keep their
+        # meanings and their positions exactly.  It reads the CLEAN terminal
+        # voltage for the same reason the charge term above does.
+        self.p_chg_loss_w = (self.i_charge * v_bt_term * (1.0 / ETA_CHG - 1.0)
+                             if self.i_charge > 0.0 else 0.0)
+        # `p_chg_loss_w` joins the LOAD side of the identity (it is a
+        # dissipation, like the motor draw), so it leaves the residual.  The
+        # other five terms are untouched; only `p_bal_w`'s content changes, and
+        # it changes by exactly the named amount.
+        self.p_bal_w = (self.p_mot_w + self.p_chg_loss_w
+                        - (self.p_fc_w + self.p_batt_w + self.p_chop_w))
 
         return {
             "V_fc": v_fc,
@@ -1860,6 +2029,9 @@ class Plant:
             "p_chop_w": self.p_chop_w,
             "p_aux_w": self.p_aux_w,
             "p_bal_w": self.p_bal_w,
+            # Appended (never reordered), 2026-09-01 — the Ag105's own
+            # dissipation, the term the eta model took OUT of `p_bal_w`.
+            "p_chg_loss_w": self.p_chg_loss_w,
         }
 
 
@@ -2917,21 +3089,26 @@ SOC_BAND_CRUISE_MIN_MPS = 0.5
 #                  (i_aux 0.15 + i_motor 0.19), so the window opens; during the
 #                  drain phase it is ~1.45 A and stays shut.
 #   EXIT  1.30 A — hysteresis, and a guard.  Once FC_CHARGE opens, the measured
-#                  total JUMPS to the single-source value (~0.34 + the charger's
-#                  ~0.8 A stamped draw = ~1.14 A), which is above ENTER: without
+#                  total JUMPS to the single-source value (~0.34 plus the
+#                  charger's input draw), which is above ENTER: without
 #                  hysteresis the policy would immediately withdraw charge_goal
 #                  and chatter the path open/closed at 50 Hz.  1.30 A sits
 #                  above that steady value and below LIMIT_I_FC_MAX 1.4 A, so
 #                  the release doubles as an overcurrent backstop.
-#   ⚠️ L9 (review, 2026-08-31) — the "overcurrent backstop" reading holds under
-#   `--electrical hifi` ONLY.  It depends on the charger's draw APPEARING in
-#   `fb["I_fc"] + fb["I_batt"]`, and only the hi-fi engine stamps it on the bus
-#   (hil_electrical.py, `J[N_CHG] -= i_charge`); SIMPLE mode's Plant.step()
-#   computes `i_total = i_motor + i_aux` and never charges the sources for it.
-#   Under `--electrical simple` the measured total therefore does NOT jump when
-#   FC_CHARGE opens, this threshold is never approached, and the release is
-#   plain hysteresis with no current guard behind it.  The FIRMWARE's own
-#   LIMIT_I_FC_MAX check is unaffected either way — it reads the injected rails.
+#   ⚠️ THE CHARGER'S STAMPED DRAW MOVED (2026-09-01).  Both engines now bill the
+#   charger through ETA_CHG (see the CHARGER BILLING block in Plant.step()), so
+#   its input current is i_charge*V_batt/(ETA_CHG*V_bus), not `i_charge`.  At
+#   this scenario's 0.8 A ceiling that is ~0.46 A rather than 0.8 A, and the
+#   measured total after the path opens is ~0.80 A rather than ~1.14 A.  Still
+#   above ENTER (so the hysteresis is still required) and still below EXIT (so
+#   the release is still reached only by an anomaly), but with more headroom
+#   than the pre-eta figures showed.
+#   ⚠️ L9 (review, 2026-08-31) IS RETIRED.  It recorded that only the hi-fi
+#   engine stamped the charger on the bus, so the "overcurrent backstop"
+#   reading held under `--electrical hifi` only.  Simple mode now bills the
+#   charger too, and both engines use the one rule, so the reading holds in
+#   both.  The FIRMWARE's own LIMIT_I_FC_MAX check is unaffected either way —
+#   it reads the injected rails.
 SOC_BAND_CHARGE_ENTER_ITOT_A = 0.60
 SOC_BAND_CHARGE_EXIT_ITOT_A = 1.30
 # charge_goal is an INTENT, not a current: the firmware maps any value > 0 onto
@@ -3157,8 +3334,51 @@ DP_TABLE_NAME = "dp_ems_table_%s.csv"
 # detectable.  Adding a scenario key that changes the demand therefore means
 # adding it HERE (or to the header) in the same change — that is a rule about
 # the author's discipline, not a property the mechanism enforces.
+#
+# `eta_chg` JOINED THIS TUPLE 2026-09-01 (the charger-efficiency round).  It is
+# the first MODEL constant in the tuple rather than a scenario key: no scenario
+# declares it, so `dp_profile_fingerprint()` hashes the ERA SENTINEL `None` for
+# a live scenario — it does NOT substitute the module's current efficiency (see
+# `dp_eta_chg()`, which owns that convention).  It belongs here because the DP's
+# demand model now has to
+# bill the charger's INPUT power, which is the output power divided by exactly
+# this number — a table solved at one efficiency is not a table for another.
+# ⚠️ Adding it MOVES the fingerprint of every scenario, so every table in
+# tools/dp_tables/ must be regenerated in the same change.
 DP_FINGERPRINT_META_KEYS = ("ems_v_profile", "duration_s", "chg_i_ceiling_a",
-                            "aux_preload_a")
+                            "aux_preload_a", "eta_chg")
+
+
+def dp_eta_chg(meta):
+    """The Ag105 charge efficiency a DP table is solved / replayed against.
+
+    ONE resolution, in the same shape as `dp_chg_ceiling_a()` above — but with
+    the OPPOSITE default, and the difference is the point.
+
+    THE ERA SENTINEL (operator ruling, 2026-09-01).  An ABSENT `eta_chg` means
+    the run, sidecar or table it came from PREDATES the charger-efficiency
+    model: its charger was the 1:1 current-transfer element, which billed the
+    bus `V_bus*i_chg` and is NOT reproducible by any efficiency value (the new
+    model bills `V_pack*i_chg/eta`).  That era is named `None`, here and in
+    tools/charger_power.py's `resolve_eta_chg()`, so ONE convention crosses
+    both modules.  A present numeric value means the energy-conserving era.
+
+    Consequences, stated because they are easy to get backwards:
+      * This function is NOT the plant's runtime billing.  The simulator bills
+        every new run at `hil_electrical.ETA_CHG` (0.88) directly, and
+        `main()` writes that number into the run sidecar, so a NEW run's
+        metadata carries 0.88 explicitly and never relies on a default.
+      * A live SCENARIO declares nothing, so `dp_profile_fingerprint()` hashes
+        `eta_chg=None` for it.  A generated DP table and the `dp-replay`
+        consumer therefore agree by construction, and the table's own era is
+        recorded in its `# eta_chg:` header line (documentation, in the same
+        way `aux_preload_a` is).
+      * Where the sentinel DOES separate two problems is the archived-run
+        path: a pre-era sidecar carries no key and a post-era one carries
+        0.88, so `dp_results_db`'s era overrides key the two eras' baselines
+        apart instead of colliding on one digest."""
+    v = meta.get("eta_chg")
+    return None if v is None else float(v)
 
 
 def dp_chg_ceiling_a(meta):
@@ -3200,6 +3420,15 @@ def dp_profile_fingerprint(scenario, meta):
     parts = ["scenario=%s" % scenario]
     for key in DP_FINGERPRINT_META_KEYS:
         val = meta.get(key)
+        if key == "eta_chg":
+            # ERA SENTINEL, resolved through the one function that owns the
+            # convention (see dp_eta_chg): an ABSENT key hashes as `None`, the
+            # 1:1 current-transfer era, and a declared value hashes as itself.
+            # A live scenario declares nothing, so the generator and the
+            # `dp-replay` consumer agree on `None` by construction; what the
+            # key separates is an ARCHIVED run's era, which its sidecar
+            # carries explicitly.
+            val = dp_eta_chg(meta)
         if key == "ems_v_profile" and val:
             val = [(float(a), float(b)) for a, b in val]
         elif val is not None:
@@ -5767,14 +5996,19 @@ SCENARIOS = {
         #     motor: i_cmd = (F_c + b*v)/K_F = 3.36 A
         #            p_mech = K_F*i_cmd*v   = 2.53 W
         #            i_motor = p/(ETA_BOOST*V_bus 15.8) 0.189 A
-        #     charger ceiling                           0.800 A
-        #                                        total  1.139 A  -> 19 % margin
-        # The charger term is deliberately the SIM's stamped draw, which is the
-        # Ag105 OUTPUT current placed on the VCHG node (hil_electrical.py:1256) and
-        # therefore ~1.47x the physical input draw (HIL_FINDINGS "charge-cruise",
-        # sim defect 1 — OUT OF SCOPE here).  Budgeting against the overstated
-        # number is the conservative direction: fixing that defect can only lower
-        # the FC current, never raise it.
+        #     charger INPUT draw at the 0.800 A ceiling  0.452 A
+        #            = 0.800 * V_pack 7.86 / (ETA_CHG 0.88 * V_bus 15.8)
+        #                                        total  0.791 A  -> 44 % margin
+        # RE-DERIVED 2026-09-01 (charger-efficiency round).  The charger term
+        # used to be budgeted at the ceiling itself, 0.800 A, because the sim
+        # stamped the Ag105 OUTPUT current on the VCHG node — a 1:1 current
+        # repeater, ~1.77x the physical input draw at this operating point.  The
+        # model now bills the INPUT (see the CHARGER BILLING block in
+        # Plant.step()), so the budgeted total falls 1.139 -> 0.791 A and the
+        # margin against LIMIT_I_FC_MAX 1.4 A widens 19 % -> 44 %.  The de-rated
+        # ceiling is KEPT at 0.8 A: it was chosen to make the run survive to its
+        # t = 20 s stimulus, and widening it would only put the OC_FC latch back
+        # in play for no gain in what this scenario tests.
         "chg_i_ceiling_a": 0.8,
         "pi_timeline": [
             (0.5,  {"mode_cmd": MODE_SAFE, "charge_goal": 0.0}),
@@ -7480,7 +7714,7 @@ HANDOFF_STEP_A = 1.5        # at t = 20.0 — the perturbation, against BT's 3.0
 # step ordering is untouched, and no RT1987 constant moved.
 
 # Arming threshold for the fold pulse, in volts on V-MOT.
-# 20 % above V_MOT_LOAD_FLOOR (hil_electrical.py:197, 1.0 V) — high enough that
+# 20 % above V_MOT_LOAD_FLOOR (hil_electrical.py, 1.0 V) — high enough that
 # the bounded Norton stamp is in its linear region and the declared load is the
 # load that flows, low enough to land early in the ~19.8 ms CSS ramp while the
 # switch is still deep in SOFT.  The arming test is evaluated once per 1 kHz tick
@@ -8628,10 +8862,15 @@ def main(argv=None):
         # ERR_HIL_STALE 0x10) — see run_hil_suite.judge_scenario().
         header_row += ["error_code"]
         # ── power balance — APPENDED LAST, BOTH SCHEMAS (2026-09-01f) ────────
-        # Six watt columns computed by Plant.step() (see the block before its
+        # Seven watt columns computed by Plant.step() (see the block before its
         # return): the motor-node power, the two source powers, the chopper
-        # dissipation, the auxiliary load, and the residual of the identity
-        #     p_mot = p_fc + p_batt + p_chop + p_bal
+        # dissipation, the auxiliary load, the residual of the identity
+        #     p_mot + p_chg_loss = p_fc + p_batt + p_chop + p_bal
+        # and — APPENDED 2026-09-01, after the original six and therefore
+        # without moving any of them — the Ag105's own dissipation.  A CSV
+        # written before that date has six power columns and no
+        # `p_chg_loss_w`; it is a 1:1-charger-era file and its `p_bal_w`
+        # carries the charger term the seventh column now names.
         # They belong to the SIMULATED plant only, but they are appended after
         # the per-mode blocks and declared in BOTH schemas so the tail position
         # of every column is one fixed index, exactly as `mppt_thresh_cnt` and
@@ -8639,7 +8878,7 @@ def main(argv=None):
         # every row is BLANK — never 0, which would read as "this run moved no
         # power" when in truth the model was never asked.
         header_row += ["p_mot_w", "p_fc_w", "p_batt_w",
-                       "p_chop_w", "p_aux_w", "p_bal_w"]
+                       "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w"]
         writer.writerow(header_row)
 
     # M3: open the electrical-events sidecar UP FRONT and stream into it as events
@@ -8737,6 +8976,17 @@ def main(argv=None):
             # constants-derived fallback stays for sidecars written before the
             # key existed.  `None` where the scenario declares no preload.
             "aux_preload_a": meta.get("aux_preload_a"),
+            # THE CHARGER ERA, recorded explicitly for the same reason as the
+            # preload above.  This is a MODEL constant, not a scenario
+            # parameter, so it is written from the module rather than from
+            # `meta`.  A sidecar that PREDATES the key carries no `eta_chg` at
+            # all, and the absence is the era sentinel `None` (see
+            # `dp_eta_chg()`) — NOT 1.0.  The 1:1 current-transfer era those
+            # runs were produced under is not reproducible by any efficiency
+            # value, because it billed the BUS voltage where this model bills
+            # the PACK voltage, which is exactly why it is named by a sentinel
+            # and not by a number.
+            "eta_chg": ETA_CHG,
         }
         meta_doc = {
             "format_version": META_FORMAT_VERSION,
@@ -9316,7 +9566,8 @@ def main(argv=None):
                 # the columns span roughly 1e-2 to 1e2 W and the residual is
                 # read against the aux term, which is O(1 W).
                 for _pk in ("p_mot_w", "p_fc_w", "p_batt_w",
-                            "p_chop_w", "p_aux_w", "p_bal_w"):
+                            "p_chop_w", "p_aux_w", "p_bal_w",
+                            "p_chg_loss_w"):
                     _pv = sensors.get(_pk)
                     row.append("" if _pv is None else f"{_pv:.6f}")
                 writer.writerow(row)

@@ -1,0 +1,6 @@
+# The old-era DP table fixture is compared BYTE FOR BYTE against a freshly
+# generated table, for the same reason tools/dp_tables/.gitattributes gives:
+# this repository is developed with core.autocrlf=true, which would check the
+# file out with CRLF while the generator writes LF, and the comparison would
+# report a difference that is not one.
+*.csv -text

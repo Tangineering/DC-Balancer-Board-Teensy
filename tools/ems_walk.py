@@ -40,10 +40,25 @@ FIDELITY BOUNDARIES
   supplied are those ``gen_dp_ems_table.heuristic_walk()`` supplies plus
   ``V_bus``, ``I_charge`` and the scenario's ``ems_run_exit_s``.
 
+CHARGER ERA
+-----------
+A charge window's cost to the fuel cell is era-dependent (``charger_power.py``
+and ``gen_dp_ems_table``'s D12). ``eta_chg`` defaults to
+``charger_power.ETA_CHG_DEFAULT`` — the plant's own energy-conserving
+converter — because a walk is a PREDICTION of what the board will do, and the
+board now runs that plant. ``eta_chg=None`` selects the 1:1 current-transfer
+era and is what reproduces a walk against an archived run: resolve it from the
+run sidecar's ``meta`` with ``charger_power.resolve_eta_chg()``, where a
+MISSING key means the old era.
+
+The SoC integrator is untouched by the era: the pack receives ``i_chg`` in
+both, because the efficiency sits on the charger's INPUT side.
+
 REGRESSION ANCHOR
 -----------------
-``walk("soc-band", "ems-soc-band", governor=False)`` reproduces
-``gen_dp_ems_table.heuristic_walk()`` term for term.
+``walk("soc-band", "ems-soc-band", governor=False, eta_chg=None)`` reproduces
+``gen_dp_ems_table.heuristic_walk()`` term for term. The ``eta_chg=None`` is
+part of the anchor: ``heuristic_walk()``'s own default is the old era.
 """
 
 from __future__ import annotations
@@ -58,6 +73,7 @@ _TOOLS = os.path.dirname(os.path.abspath(__file__))
 if _TOOLS not in sys.path:
     sys.path.insert(0, _TOOLS)
 
+import charger_power as chg_mod        # stdlib only
 import governor_model as gov_mod        # stdlib only
 
 # NumPy-needing modules are imported lazily so that merely importing this file
@@ -302,6 +318,7 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
          dt_decision: Optional[float] = None,
          eta_fc_proxy: float = H2_PROXY_ETA_FC,
          charge_admission: Optional[str] = None,
+         eta_chg: Optional[float] = chg_mod.ETA_CHG_DEFAULT,
          gov_dt_s: float = 1e-3,
          conv_tau_s: float = 0.0,
          trace: bool = True) -> WalkResult:
@@ -316,6 +333,17 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
                     ``gen_dp_ems_table.DP_STAGE_DT_S`` (0.1 s) so a walk and a
                     DP table share one discretization. The governor runs at
                     ``gov_dt_s`` inside each stage.
+    ``eta_chg``     the CHARGER ERA. A float bills a charge window's bus draw
+                    at ``V_pack*i/eta`` (the plant's energy-conserving
+                    converter, the default); ``None`` bills it at
+                    ``V_bus*i``, the 1:1 current-transfer model every plant
+                    before 2026-09-01 stamped. It reaches BOTH hydrogen
+                    figures — the Gfc totals through
+                    ``gen_dp_ems_table.step_charge()`` and the abbreviated
+                    proxy through the same bus power — and neither SoC nor the
+                    governor. Resolve it from a run sidecar with
+                    ``charger_power.resolve_eta_chg()`` when walking an
+                    archived run.
     ``charge_admission``
                     which test admits a charge window.
 
@@ -351,6 +379,7 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
         charge_admission = "run_window" if not governor else "mask"
     if charge_admission not in ("mask", "run_window"):
         raise ValueError("charge_admission must be 'mask' or 'run_window'")
+    eta_chg = chg_mod.check_eta_chg(eta_chg)
     meta = sim.SCENARIOS[scenario_name]
 
     import numpy as np
@@ -372,7 +401,13 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
     with _ov:
         v, a, p_dem, v_bus, i_total, cruise = gen.build_demand(
             scenario_name, meta, times, dt)
-    chg_ok = gen.charge_mask(times, p_dem, v_bus, cruise, chg_a, run_exit_s)
+    # The mask's single-source FC budget counts the charger's INPUT current,
+    # which is era-dependent; the reference pack voltage is the walk's initial
+    # SoC, matching prepare_problem().
+    v_pack_ref = (None if eta_chg is None
+                  else float(gen.pack_charge_voltage(float(soc0), chg_a)))
+    chg_ok = gen.charge_mask(times, p_dem, v_bus, cruise, chg_a, run_exit_s,
+                             eta_chg, v_pack_ref)
 
     prof = meta.get("ems_v_profile")
     policy = _instantiate(sim, strategy_name, scenario_name, meta,
@@ -485,8 +520,15 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
             if not in_window:
                 in_window, window_t0 = True, t
             soc, dh2, dh2p = gen.step_charge(soc, float(p_dem[k]),
-                                             float(v_bus[k]), chg_a, dt, cap_as)
-            p_fc_bus = (float(p_dem[k]) + float(v_bus[k]) * chg_a
+                                             float(v_bus[k]), chg_a, dt,
+                                             cap_as, eta_chg)
+            # The proxy is billed for the SAME bus power step_charge() charges
+            # the Gfc total for - one era switch, one expression, so the two
+            # hydrogen figures cannot end up on different charger models.
+            p_fc_bus = (float(p_dem[k]) + chg_mod.charger_bus_power_w(
+                            chg_a, float(v_bus[k]),
+                            gen.pack_charge_voltage(soc_stage_start, chg_a),
+                            eta_chg)
                         if accounting == "physical" else float(p_dem[k]))
         else:
             if in_window:
@@ -553,6 +595,7 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
             "reproduces gen_dp_ems_table.heuristic_walk()'s model and is a "
             "regression anchor, NOT a prediction of board behaviour.")
     res.notes.append("charge admission: %s" % charge_admission)
+    res.notes.append("charger era: %s" % chg_mod.era_label(eta_chg))
     return res
 
 
@@ -573,13 +616,20 @@ def main(argv=None):      # pragma: no cover - operator convenience
     ap.add_argument("--eta-fc", type=float, default=H2_PROXY_ETA_FC)
     ap.add_argument("--charge-admission", choices=("mask", "run_window"),
                     default=None)
+    ap.add_argument("--eta-chg", type=float, default=chg_mod.ETA_CHG_DEFAULT,
+                    help="charger efficiency (default %g = the plant's "
+                         "converter)" % chg_mod.ETA_CHG_DEFAULT)
+    ap.add_argument("--eta-chg-none", action="store_true",
+                    help="bill the charger at the BUS voltage - the 1:1 "
+                         "current-transfer era of every pre-2026-09-01 run")
     ap.add_argument("--csv", default=None, help="write the per-stage trace here")
     a = ap.parse_args(argv)
 
     r = walk(a.strategy, a.scenario, soc0=a.soc0, accounting=a.accounting,
              governor=not a.no_governor, dv0_v=a.dv0,
              policy_file=a.policy_file, dt_decision=a.dt,
-             eta_fc_proxy=a.eta_fc, charge_admission=a.charge_admission)
+             eta_fc_proxy=a.eta_fc, charge_admission=a.charge_admission,
+             eta_chg=(None if a.eta_chg_none else a.eta_chg))
     print("strategy %s on scenario %s" % (a.strategy, a.scenario))
     print(r.summary())
     if a.csv:

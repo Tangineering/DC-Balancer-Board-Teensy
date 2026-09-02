@@ -33,6 +33,11 @@ import hil_plant_sim as sim              # noqa: E402
 # ─────────────────────────────────────────────────────────────────────────────
 # Regression anchor: governor=False must reproduce heuristic_walk() exactly
 # ─────────────────────────────────────────────────────────────────────────────
+# `eta_chg=None` below (2026-09-01, WP-1B1): heuristic_walk()'s own default is
+# the OLD 1:1 current-transfer charger, so the anchor is an old-era claim and
+# says so.  walk()'s default is the plant's converter (see CHARGER ERA in
+# ems_walk.py), which bills a charge window differently and would break the
+# anchor for a reason that is not a regression.
 def test_walk_soc_band_no_governor_matches_heuristic_walk_exactly():
     # CORRECTED (coordinator, post-review): gen_dp_ems_table.main() and the
     # newer heuristic_reference(problem) (gen_dp_ems_table.py:992-998) both
@@ -67,7 +72,8 @@ def test_walk_soc_band_no_governor_matches_heuristic_walk_exactly():
                                   i_total[:n_stages], dt, cap_as, chg_a,
                                   run_exit_s)
 
-    got = ew.walk("soc-band", scenario, soc0=soc0, governor=False)
+    got = ew.walk("soc-band", scenario, soc0=soc0, governor=False,
+                  eta_chg=None)
 
     assert got.h2_g == expected["h2_g"]
     assert got.h2_plant_g == expected["h2_plant_g"]
@@ -393,3 +399,61 @@ def test_trace_regression_anchor_governor_false_matches_heuristic_walk_exactly()
     assert got.h2_g == got_notrace.h2_g
     assert got.h2_plant_g == got_notrace.h2_plant_g
     assert got.soc_final == got_notrace.soc_final
+
+
+# ==========================================================================
+# 2026-09-01 charger-efficiency round (WP-1B1): the walk's charger era.
+# ==========================================================================
+
+def test_walk_charger_era_moves_hydrogen_but_never_soc():
+    """A charge window costs the fuel cell less in the eta era; the pack
+    receives the same current either way, so SoC cannot move with it.
+
+    `ems-soc-band` opens exactly one window under both eras, which is what
+    makes this a clean like-for-like comparison."""
+    old = ew.walk("soc-band", "ems-soc-band", governor=False, eta_chg=None)
+    new = ew.walk("soc-band", "ems-soc-band", governor=False, eta_chg=0.88)
+    assert len(old.charge_windows) == len(new.charge_windows) == 1
+    assert new.soc_final == pytest.approx(old.soc_final, abs=1e-12)
+    assert new.h2_g < old.h2_g
+    assert new.h2_proxy_g < old.h2_proxy_g
+    assert new.h2_plant_g == pytest.approx(old.h2_plant_g, rel=1e-12)
+
+
+def test_walk_charger_era_is_inert_for_a_strategy_that_never_charges():
+    """sdp-v3 declines the charge action endogenously, so its walk must be
+    bit-identical across the era - the era switch may not leak into the
+    discharge path."""
+    old = ew.walk("sdp-v3", "ems-sdp", eta_chg=None)
+    new = ew.walk("sdp-v3", "ems-sdp", eta_chg=0.88)
+    assert not old.charge_windows and not new.charge_windows
+    assert new.h2_g == old.h2_g
+    assert new.soc_final == old.soc_final
+
+
+def test_walk_regression_anchor_requires_the_old_era_explicitly():
+    """gen_dp_ems_table.heuristic_walk() defaults to the OLD era, so the
+    ungoverned anchor only reproduces it with eta_chg=None."""
+    sim_meta = sim.SCENARIOS["ems-soc-band"]
+    got = ew.walk("soc-band", "ems-soc-band", governor=False, eta_chg=None)
+    dt = gen.DP_STAGE_DT_S
+    n = int(round(float(sim_meta["duration_s"]) / dt))
+    times = np.arange(n + 1) * dt
+    v, a, p_dem, v_bus, i_total, cruise = gen.build_demand(
+        "ems-soc-band", sim_meta, times, dt)
+    want = gen.heuristic_walk(
+        "ems-soc-band", sim_meta, 0.7, times[:n], p_dem[:n], v_bus[:n],
+        i_total[:n], dt, sim.BATT_CAPACITY_AH * 3600.0,
+        sim.dp_chg_ceiling_a(sim_meta), float(sim.SOC_BAND_RUN_EXIT_S))
+    assert got.h2_g == pytest.approx(want["h2_g"], rel=1e-12)
+    assert got.soc_final == pytest.approx(want["soc_final"], rel=1e-12)
+
+
+def test_walk_rejects_an_impossible_efficiency():
+    with pytest.raises(ValueError):
+        ew.walk("soc-band", "ems-soc-band", governor=False, eta_chg=0.0)
+
+
+def test_walk_records_the_charger_era_in_its_notes():
+    r = ew.walk("soc-band", "ems-soc-band", governor=False, eta_chg=0.88)
+    assert any("charger era" in n and "0.88" in n for n in r.notes)

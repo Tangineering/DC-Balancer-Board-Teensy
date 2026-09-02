@@ -418,9 +418,49 @@ V_MOT_LOAD_FLOOR = 1.0      # V    floor for the H1 motor-draw/regen Norton
                             #      conductance (i_motor / max(v_node, this)) so the
                             #      element cannot divide by (or explode near) zero
                             #      when V-MOT is dark
+V_CHG_LOAD_FLOOR = 8.0      # V    floor for the Ag105 input-current stamp
+                            #      (i_charge*V_pack/(ETA_CHG*max(v_node, this))).
+                            #      THIS FLOOR IS PHYSICAL, WHERE V_MOT_LOAD_FLOOR
+                            #      IS NUMERICAL, and the difference is why the
+                            #      two values differ.  The motor floor guards a
+                            #      load that legitimately operates all the way
+                            #      down to a dark node, so its 1.0 V is an
+                            #      arbitrary small number chosen to bound a
+                            #      division.  The charger does not: the plant
+                            #      zeroes `i_charge` below AG105_V_IN_MIN (8.0 V,
+                            #      hil_plant_sim.py, `chg_powered`), so NO
+                            #      legitimate state evaluates this stamp between
+                            #      1 and 8 V and the floor can be set at the
+                            #      lowest input the module can charge from.
+                            #      Consequence: with V_pack <= 8.4 V and
+                            #      i_charge <= 2.5 A the input current is bounded
+                            #      at ~2.98 A instead of ~23.86 A.  The value is
+                            #      pinned equal to AG105_V_IN_MIN by test (it
+                            #      cannot be imported: the dependency runs
+                            #      hil_electrical -> hil_plant_sim, never back).
 V_NODE_RUNAWAY_MULT = 2.0   # x V_ABSMAX  hard backstop: a node past this after a
                             #      substep solve is a solver artefact, not a
                             #      plausible physical state on this rig (H1)
+
+# ── Ag105 charge efficiency (2026-09-01, operator ruling) ───────────────────
+# The charger is an ENERGY converter, not a current repeater.  It draws
+# i_charge*V_pack/(ETA_CHG*V_chg) at its input and delivers i_charge into the
+# pack; the difference is dissipated in the module.
+#
+# SOURCE: references/Datasheets/AG105_Silvertel.pdf, "DC Electrical
+# Characteristics" item 1, "Charge Efficiency EFF 88 % typ".  Note 2 of that
+# table qualifies it: "Typical figures are at 25 degC, 12 Vin, 3 series cell
+# configuration".
+#
+# THE DATASHEET POINT IS NOT OUR POINT.  This rig runs 15-16 V in and a 2S
+# (8.4 V) pack, so the conversion ratio is roughly 1.9:1 where the datasheet
+# measured roughly 1.0:1.  No efficiency data exist for our operating point,
+# and none can be derived from the datasheet.  The operator ruled a STATIC
+# 0.88 for both electrical engines rather than an unmeasured curve, so this
+# constant is a modelling decision with a datasheet anchor, not a measurement.
+#
+# TODO(verify): bench-measure input/output power at 15 V in, 2S.
+ETA_CHG = 0.88              # -    Ag105 input -> pack energy efficiency
 
 # Regen chopper — TL431 + BSP170P into 47 Ω / 20 W, autonomous (no firmware control).
 # Clamp level CALIBRATED from bench observation (operator, 2026-08-27): sustained regen
@@ -1946,7 +1986,47 @@ class ElectricalSim:
         if i_charge:
             # The charger input is the single shared VCHG-IN node — both the
             # FC-charge and regen paths land there (schematic sheet 4).
-            J[N_CHG] -= i_charge
+            #
+            # ── ENERGY-CONSERVING CHARGER (2026-09-01, operator ruling) ─────
+            # Until this round the stamp was `J[N_CHG] -= i_charge`, i.e. the
+            # module was a 1:1 CURRENT repeater: the node gave up exactly the
+            # current the pack received, so the model destroyed
+            # i_charge*(V_chg - V_pack) — about 11 W on a 1.4 A charge window —
+            # and over-drew the bus by roughly V_chg/V_pack.  The Ag105 is a
+            # switching converter, so the conserved quantity is POWER:
+            #     i_in = i_charge * V_pack / (ETA_CHG * V_chg)
+            # The pack still receives exactly `i_charge` (see the
+            # `i_charge_into_pack` line at the top of this method); only the
+            # INPUT current changes.  ETA_CHG carries the datasheet citation.
+            #
+            # STAMP FORM: a CHORD CONDUCTANCE, exactly like the motor draw
+            # above.  A true constant-power load has i(v) = P/v and therefore
+            # NEGATIVE incremental conductance -P/v^2.  Stamping that
+            # linearization would put a negative term on the diagonal of G — the
+            # one form that can make the solve indefinite, which is the opposite
+            # of what the H1 round was protecting against.  So the element is
+            # stamped as the CHORD through the operating point instead:
+            #     g_chg = i_in / v_prev,   i_in = i_charge*V_pack/(ETA_CHG*v_prev)
+            # At v == v_prev this delivers exactly `i_in` (self-consistent,
+            # g*v_prev == i_in), the diagonal term is POSITIVE (so the solve
+            # stays positive-definite and the H1 runaway class is closed), and
+            # the delivered current SHRINKS as the node sags instead of holding
+            # a fixed draw into a collapsing rail — self-limiting, which a
+            # current source is not.  It re-linearizes every substep, and at
+            # h <= 50 us against the 10 uF charger node the lag is negligible.
+            # (The retired current-source form was described here as "the same
+            # pattern as the regen Norton source": it was not.  The regen source
+            # is a two-element Norton pair with its own zero-crossing bound; the
+            # charger is a load and belongs with `g_mot`.)
+            #
+            # The V_CHG_LOAD_FLOOR floor bounds the division on a dark node.  It
+            # is the module's own minimum input voltage (see the constant), not
+            # an arbitrary numerical epsilon: below it the plant carries no
+            # charge current at all, so the stamp is bounded at ~2.98 A and the
+            # 1-to-8 V band is never an operating point.
+            v_chg_prev = max(v[N_CHG], V_CHG_LOAD_FLOOR)
+            i_in = i_charge * v_bt_term / (ETA_CHG * v_chg_prev)
+            G[N_CHG][N_CHG] += i_in / v_chg_prev
 
         # Regen chopper: autonomous TL431/BSP170P clamp into 47 ohm.  It sits
         # directly on V-MOT (the regen node IS the motor node; schematic sheet 4),

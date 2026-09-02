@@ -16,10 +16,10 @@
 # TODO(calibrate). Strategy RANKINGS on the same rig are robust either
 # way; quote an absolute gram figure with the calibration caveat.
 # ══════════════════════════════════════════════════════════════════════
-# command: python tools/gen_dp_ems_table.py --scenario ems-ftp75-dp --soc0 0.7 --capacity-ah 5.0 --stage-dt 0.1 --lambda-dev 0.0 --lambda-term 1.0 --n-share 41 --soc-step 5e-06 --charger-accounting physical --run-exit 346.0 --match-terminal-soc heuristic --match-tol 2e-06
+# command: python tools/gen_dp_ems_table.py --scenario ems-ftp75-dp --soc0 0.7 --capacity-ah 5.0 --stage-dt 0.1 --lambda-dev 0.0 --lambda-term 1.0 --n-share 41 --soc-step 5e-06 --charger-accounting physical --run-exit 346.0 --match-terminal-soc heuristic --match-tol 2e-06 --eta-chg 0.88
 # generator: tools/gen_dp_ems_table.py
 # scenario: ems-ftp75-dp
-# profile_fingerprint: 403c5e713c9fc42023d0918a10e25bc264da78177da51f96c7aa634f07b39e10
+# profile_fingerprint: d07b37a490ff4827454e3c1dd3d18ec802d1df4f7a2224c215cb2354580f096c
 # duration_s: 350.0
 # stage_dt_s: 0.1
 # run_entry_s: 3.0
@@ -29,6 +29,11 @@
 # soc0: 0.7
 # capacity_ah: 5.0
 # chg_ceiling_a: 0.8
+# eta_chg: 0.88
+#   D12 - the charger is an energy-conserving converter at this
+#   efficiency: a charge stage costs the bus V_pack*i/eta_chg W.
+#   A table with NO eta_chg line was solved against the 1:1
+#   current-transfer charger (V_bus*i) and is not comparable.
 # gfc_dc_gain_gps_per_w: 1.7637602179836514e-05
 # eta_boost: 0.85
 # limit_i_fc_max_a: 1.4
@@ -52,7 +57,7 @@
 #   the DP's terminal SoC on the target, so the hydrogen comparison
 #   against the causal strategy is made at matched SoC.
 # match_target_soc: 0.693363523
-# match_residual_soc: +2.929550e-07
+# match_residual_soc: +3.139885e-07
 # match_converged: yes
 #   'yes'  the solved terminal SoC is within --match-tol of the target,
 #          so the hydrogen difference against ref_* IS the answer to
@@ -62,13 +67,13 @@
 #          comparison. --allow-unmatched was required to write this.
 #   'n/a'  --match-terminal-soc none: NOT a matched comparison at all.
 # n_share: 41  (control span 0.25 .. 0.75, inside the share-cut band 0.15 .. 0.85)
-# soc_grid: 5962 points, 0.6767550002671265 .. 0.7065600002671265, step 5e-06
+# soc_grid: 6791 points, 0.6759018503706542 .. 0.7098518503706542, step 5e-06
 #
 # ── DP-PREDICTED TOTALS (this model, open loop) ───────────────────────
-# h2_g_physical: 0.0396922473
-# h2_g_simple_plant_equiv: 0.0396922473
-# soc_final: 0.693363816
-# delta_soc: -0.006636184
+# h2_g_physical: 0.0396922994
+# h2_g_simple_plant_equiv: 0.0396922994
+# soc_final: 0.693363837
+# delta_soc: -0.006636163
 # charge_stages: 0 of 3501
 # share_min: 0.287500
 # share_max: 0.750000
@@ -1374,7 +1379,7 @@ t,power_share_setpoint,charge_goal
 129.100,0.350000,0.0
 129.200,0.337500,0.0
 129.300,0.337500,0.0
-129.400,0.325000,0.0
+129.400,0.337500,0.0
 129.500,0.325000,0.0
 129.600,0.325000,0.0
 129.700,0.312500,0.0
@@ -1675,7 +1680,7 @@ t,power_share_setpoint,charge_goal
 159.200,0.300000,0.0
 159.300,0.300000,0.0
 159.400,0.300000,0.0
-159.500,0.287500,0.0
+159.500,0.300000,0.0
 159.600,0.300000,0.0
 159.700,0.300000,0.0
 159.800,0.300000,0.0
@@ -1688,7 +1693,7 @@ t,power_share_setpoint,charge_goal
 160.500,0.300000,0.0
 160.600,0.300000,0.0
 160.700,0.300000,0.0
-160.800,0.300000,0.0
+160.800,0.287500,0.0
 160.900,0.300000,0.0
 161.000,0.300000,0.0
 161.100,0.300000,0.0
@@ -1700,7 +1705,7 @@ t,power_share_setpoint,charge_goal
 161.700,0.300000,0.0
 161.800,0.300000,0.0
 161.900,0.300000,0.0
-162.000,0.287500,0.0
+162.000,0.300000,0.0
 162.100,0.300000,0.0
 162.200,0.300000,0.0
 162.300,0.300000,0.0
@@ -1713,7 +1718,7 @@ t,power_share_setpoint,charge_goal
 163.000,0.300000,0.0
 163.100,0.300000,0.0
 163.200,0.300000,0.0
-163.300,0.300000,0.0
+163.300,0.287500,0.0
 163.400,0.300000,0.0
 163.500,0.300000,0.0
 163.600,0.300000,0.0
@@ -1725,7 +1730,7 @@ t,power_share_setpoint,charge_goal
 164.200,0.300000,0.0
 164.300,0.300000,0.0
 164.400,0.300000,0.0
-164.500,0.287500,0.0
+164.500,0.300000,0.0
 164.600,0.300000,0.0
 164.700,0.300000,0.0
 164.800,0.300000,0.0
@@ -1738,25 +1743,25 @@ t,power_share_setpoint,charge_goal
 165.500,0.300000,0.0
 165.600,0.300000,0.0
 165.700,0.300000,0.0
-165.800,0.300000,0.0
+165.800,0.287500,0.0
 165.900,0.300000,0.0
 166.000,0.300000,0.0
 166.100,0.300000,0.0
 166.200,0.300000,0.0
-166.300,0.287500,0.0
+166.300,0.300000,0.0
 166.400,0.300000,0.0
 166.500,0.300000,0.0
 166.600,0.300000,0.0
 166.700,0.300000,0.0
 166.800,0.300000,0.0
 166.900,0.300000,0.0
-167.000,0.287500,0.0
+167.000,0.300000,0.0
 167.100,0.300000,0.0
 167.200,0.300000,0.0
 167.300,0.300000,0.0
 167.400,0.300000,0.0
 167.500,0.300000,0.0
-167.600,0.300000,0.0
+167.600,0.287500,0.0
 167.700,0.300000,0.0
 167.800,0.300000,0.0
 167.900,0.300000,0.0
@@ -3438,7 +3443,7 @@ t,power_share_setpoint,charge_goal
 335.500,0.437500,0.0
 335.600,0.437500,0.0
 335.700,0.425000,0.0
-335.800,0.425000,0.0
+335.800,0.412500,0.0
 335.900,0.412500,0.0
 336.000,0.400000,0.0
 336.100,0.400000,0.0

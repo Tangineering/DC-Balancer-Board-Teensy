@@ -665,3 +665,171 @@ def test_render_table_records_the_aux_preload_a_header_for_every_committed_table
         # documentation rather than an unguarded input.
         assert "aux_preload_a" in sim.DP_FINGERPRINT_META_KEYS
 
+
+# ==========================================================================
+# 2026-09-01 charger-efficiency round (WP-1B1).  The Ag105 stops being a 1:1
+# current-transfer element and becomes an energy-conserving converter, so a
+# charge stage's BUS cost changes model.  These tests pin the era switch, the
+# byte fidelity of the old era, and the header line.
+# ==========================================================================
+import charger_power as cp                                       # noqa: E402
+
+
+def test_charger_power_helper_era_switch_is_the_billing_voltage():
+    """The two eras differ in WHICH voltage the charge current is billed at -
+    NOT in an efficiency value.  eta None bills the BUS; a float bills the
+    PACK, divided by the efficiency.  eta=1.0 is therefore NOT the old era."""
+    i, v_bus, v_pack = 0.8, 15.9, 7.86
+    assert cp.charger_bus_power_w(i, v_bus, v_pack, None) == v_bus * i
+    assert cp.charger_bus_power_w(i, v_bus, v_pack, 0.88) == \
+        pytest.approx(v_pack * i / 0.88)
+    # eta 1.0 bills the pack voltage, which is a THIRD model - the guard
+    # against someone "simplifying" the era switch into a default of 1.0.
+    assert cp.charger_bus_power_w(i, v_bus, v_pack, 1.0) != \
+        cp.charger_bus_power_w(i, v_bus, v_pack, None)
+    # Old-era bus CURRENT is the charge current itself, EXACTLY (1:1
+    # transfer), not v_bus*i/v_bus - which can differ by an ulp and moves a
+    # committed table's charge mask.
+    assert cp.charger_bus_current_a(i, v_bus, v_pack, None) is i
+    assert cp.charger_bus_current_a(i, v_bus, v_pack, 0.88) == \
+        pytest.approx(v_pack * i / (0.88 * v_bus))
+    assert cp.charger_bus_current_a(i, v_bus, v_pack, 0.88) < i
+
+
+def test_charger_power_resolve_and_validate():
+    assert cp.resolve_eta_chg(None) is None
+    assert cp.resolve_eta_chg({}) is None                 # missing = old era
+    assert cp.resolve_eta_chg({"eta_chg": None}) is None  # explicit null too
+    assert cp.resolve_eta_chg({"eta_chg": 0.88}) == 0.88
+    assert cp.check_eta_chg(None) is None
+    for bad in (0.0, -0.1, 1.5):
+        with pytest.raises(ValueError):
+            cp.check_eta_chg(bad)
+
+
+def test_step_charge_soc_is_era_invariant_but_hydrogen_is_not():
+    """The efficiency sits on the charger's INPUT side, so the pack receives
+    the same current in both eras and only the fuel cell's bill moves."""
+    args = (0.7, 20.0, 15.9, 0.8, 0.1, 5.0 * 3600.0)
+    s_old, h_old, hp_old = gen.step_charge(*args)
+    s_new, h_new, hp_new = gen.step_charge(*args, eta_chg=0.88)
+    assert s_new == s_old
+    assert hp_new == hp_old              # the plant-equivalent omits the charger
+    assert h_new < h_old                 # ~7.9 V/0.88 vs 15.9 V per amp
+    v_pack = float(gen.pack_charge_voltage(0.7, 0.8))
+    want = hil.H2_GFC_DC_GAIN_GPS_PER_W * (
+        (20.0 + v_pack * 0.8 / 0.88) / hil.ETA_BOOST) * 0.1
+    assert h_new == pytest.approx(want, rel=1e-12)
+
+
+def test_charge_mask_new_era_admits_at_least_as_many_stages():
+    """The new era's charger draws LESS bus current, so the single-source FC
+    budget binds later and the mask can only grow."""
+    meta = hil.SCENARIOS["ems-dp-replay"]
+    common = dict(soc0=0.7, capacity_ah=gen.BATT_CAPACITY_AH, stage_dt=0.1,
+                  n_share=5, soc_step=5e-5,
+                  run_exit=float(hil.SOC_BAND_RUN_EXIT_S),
+                  charger_accounting="physical")
+    old = gen.prepare_problem("ems-dp-replay", meta, **common)
+    new = gen.prepare_problem("ems-dp-replay", meta, eta_chg=0.88, **common)
+    assert int(new.chg_ok.sum()) > int(old.chg_ok.sum())
+    # Every stage the old mask admits, the new one admits too.
+    assert bool((new.chg_ok | old.chg_ok == new.chg_ok).all())
+
+
+def test_charge_mask_requires_a_pack_voltage_in_the_new_era():
+    import numpy as _np
+    t = _np.array([30.0])
+    with pytest.raises(ValueError, match="v_pack_ref"):
+        gen.charge_mask(t, _np.array([20.0]), _np.array([15.9]),
+                        _np.array([True]), 0.8, 58.0, 0.88, None)
+
+
+def test_prepare_problem_rejects_an_impossible_efficiency():
+    meta = hil.SCENARIOS["ems-dp-replay"]
+    with pytest.raises(ValueError, match="eta_chg"):
+        gen.prepare_problem(
+            "ems-dp-replay", meta, soc0=0.7,
+            capacity_ah=gen.BATT_CAPACITY_AH, stage_dt=1.0, n_share=5,
+            soc_step=5e-5, run_exit=float(hil.SOC_BAND_RUN_EXIT_S),
+            charger_accounting="physical", eta_chg=1.4)
+
+
+def test_render_table_emits_the_eta_chg_header_only_in_the_new_era(tmp_path):
+    """The line is EMITTED ONLY when an efficiency is in force.  Adding
+    `eta_chg: none` to every table would move the bytes of all three committed
+    tables without changing a number in them; its ABSENCE is the old era."""
+    out_old = str(tmp_path / "old.csv")
+    out_new = str(tmp_path / "new.csv")
+    base = list(_COARSE_ARGV)
+    assert gen.main(base + ["--out", out_old]) == 0
+    assert gen.main(base + ["--out", out_new, "--eta-chg", "0.88"]) == 0
+    told = open(out_old, encoding="utf-8").read()
+    tnew = open(out_new, encoding="utf-8").read()
+    assert "# eta_chg:" not in told
+    assert "# eta_chg: 0.88" in tnew
+    # The reproduction command line carries the term too, and only there.
+    assert "--eta-chg 0.88" in tnew.split("t,power_share", 1)[0]
+    assert "--eta-chg" not in told.split("t,power_share", 1)[0]
+
+
+def test_old_era_regeneration_reproduces_the_pre_change_table_byte_for_byte(
+        tmp_path):
+    """THE INVARIANT of the charger-efficiency round: with no efficiency in
+    force, the generator must reproduce the table it produced BEFORE the
+    round, exactly.
+
+    The comparison is against a STORED FIXTURE rather than against
+    tools/dp_tables/dp_ems_table_ems-dp-replay.csv, because the committed
+    tables were regenerated as ETA-ERA tables in this same round (the plant
+    now bills the charger at V_pack*i/eta, and a table solved in one era is
+    not a bound on a run measured in the other).  The fixture is the
+    pre-change file, copied verbatim.
+
+    ONE LINE IS MASKED, and it is not this work package's doing: `eta_chg`
+    joined hil_plant_sim.DP_FINGERPRINT_META_KEYS in the same round, so
+    `profile_fingerprint` moved for every scenario whatever era it is solved
+    in.  Every other header value and every data row is compared byte for
+    byte.  Only `ems-dp-replay` is regenerated here: the two FTP-75 tables are
+    the same solve at 3500 stages and take tens of minutes each.
+    """
+    fixture = os.path.join(HERE, "test_fixtures",
+                           "dp_ems_table_ems-dp-replay_old_era.csv")
+    if not os.path.exists(fixture):
+        pytest.skip("old-era fixture not present in this checkout")
+    out = str(tmp_path / "regen.csv")
+    assert gen.main([
+        "--scenario", "ems-dp-replay", "--soc0", "0.7", "--capacity-ah", "5.0",
+        "--stage-dt", "0.1", "--lambda-dev", "0.0", "--lambda-term", "1.0",
+        "--n-share", "41", "--soc-step", "5e-06",
+        "--charger-accounting", "physical", "--run-exit", "58.0",
+        "--match-terminal-soc", "heuristic", "--match-tol", "2e-06",
+        "--out", out, "--force"]) == 0
+
+    def _mask(text):
+        return [ln for ln in text.split("\n")
+                if not ln.startswith("# profile_fingerprint:")]
+
+    got = _mask(open(out, encoding="utf-8", newline="").read())
+    want = _mask(open(fixture, encoding="utf-8", newline="").read())
+    assert got == want
+    # The fixture really is the OLD era: no header line, and the h2 total the
+    # eta-era table no longer carries for its causal reference.
+    assert "# eta_chg:" not in "\n".join(want)
+
+
+def test_committed_tables_are_eta_era_and_record_it_in_the_header():
+    """The committed tables were regenerated at the plant's own efficiency in
+    this round, and the header line is the ONLY record of that: a live
+    scenario declares no `eta_chg`, so the profile fingerprint hashes the same
+    sentinel in both eras and cannot separate them (hil_plant_sim.dp_eta_chg).
+    This test is therefore the drift guard the fingerprint is not."""
+    import hil_plant_sim as sim
+    for name in ("ems-dp-replay", "ems-ftp75-5050", "ems-ftp75-dp"):
+        path = gen.default_table_path(name)
+        if not os.path.exists(path):
+            pytest.skip("committed table %s not present" % name)
+        header = open(path, encoding="utf-8").read().split(
+            "t,power_share_setpoint,charge_goal", 1)[0]
+        assert ("# eta_chg: %r" % float(sim.ETA_CHG)) in header, name
+        assert "--eta-chg %r" % float(sim.ETA_CHG) in header, name

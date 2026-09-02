@@ -281,6 +281,62 @@ D12. ALPHA IS CALIBRATED AGAINST BOTH LEVERS, NOT ONE  (2026-09-01,
     happen; the measured lever simply has to move, and the artifact records
     the bound it must cross.
 
+D13. THE CHARGER HAS TWO ERAS, AND EVERY LEVER NUMBER ABOVE BELONGS TO ONE
+    (2026-09-01, the charger-efficiency round).
+    D12's whole argument is about an exchange rate; this decision changes one
+    of the two rates it balances, so read the two together.
+
+    Until 2026-09-01 the simulator's hi-fi Ag105 was a 1:1 CURRENT-TRANSFER
+    element: the pack received exactly the current the bus supplied, so a
+    delivered amp cost V_bus watts and the model destroyed i*(V_chg - V_batt).
+    The plant is now an energy-conserving converter at a static efficiency
+    (AG105_Silvertel.pdf DC Electrical Characteristics item 1, 88 % typ; the
+    operator ruled a static 0.88 at this rig's 15-16 V in / 2S point), so a
+    delivered amp costs V_pack/eta watts.  The charge lever moves with it:
+
+        old:  L_chg = 1/(k * V_bus       * C_As) = 0.2089864 SoC/g
+        new:  L_chg = 1/(k * V_pack/eta  * C_As) = eta * L_share
+                                                 = 0.3963964 SoC/g at eta 0.88
+
+    The new form is exact and pleasing: the charge lever is the share lever
+    times the converter efficiency, whatever the pack, the bus or the capacity
+    do, because BOTH levers now bill at the pack voltage and differ only by
+    the conversion loss.  The two levers are 1/eta = 13.64 % apart where they
+    used to be 2.16x apart, so D12's "knife-edge" is now a genuinely narrow
+    band and the alpha placement matters more, not less.
+
+    WHAT THIS DOES TO THE TWO ALPHA MODES, and it is the reason both exist:
+
+      * `lever` (D12's geometric mean of the admission thresholds) still
+        places alpha between the two levers and therefore still REJECTS the
+        weaker one - now STRUCTURALLY, because the mean of two levers that
+        differ only by eta always lands between them.  At eta 0.88 that is
+        alpha = 0.1183264, an admission bound of 0.422560 SoC/g, and charging
+        is rejected by 6.2 % of lever rather than by 47 %.
+      * `charge-edge` (new) places alpha just inside the WORSE lever's
+        admission window - alpha = (1-gamma)/L_chg * (1 + 1e-3) = 0.1262625 -
+        so BOTH levers clear and charging is admitted ENDOGENOUSLY.  The
+        epsilon is defined at alpha_charge_edge() and is three orders below
+        the lever separation it sits inside.
+
+    NEITHER IS SHIPPED BY THIS FILE'S AUTHOR.  The operator ruled that the
+    eta-era matched DP is solved first and the rule that AGREES WITH WHAT THE
+    DP DOES is the one that ships.  --alpha-mode selects; the artifact records
+    the era under `charger` and the mode under `alpha.mode`.
+
+    THE MEASURED LEVERS ARE OLD-ERA MEASUREMENTS.  EMS_LEVER_CHARGE_SOC_PER_G
+    was measured on campaigns whose plant billed at the bus, so measured_levers()
+    PROJECTS it onto the requested era by the billing-voltage ratio.  Under
+    that projection the measured charge lever (0.448393) OVERTAKES the measured
+    share lever (0.412), i.e. the measurement says charging is the BETTER lever
+    exactly where the model says it is the worse - the same ~19 % model/measured
+    disagreement D12 recorded, now large enough to change the ORDER.  The
+    consequence is explicit in the tripwire: the MEASURED "admit share, reject
+    charge" window is UNDECIDABLE in the eta era and is reported as such rather
+    than passed.  ⚠️ TODO(verify): re-measure the charge lever on the first
+    post-2026-09-01 campaign; until then no alpha decision may rest on the
+    projected measured pair alone.
+
 ============================================================================
 WHAT THIS MODEL DOES NOT CONTAIN
 ============================================================================
@@ -309,18 +365,28 @@ WHAT THIS MODEL DOES NOT CONTAIN
     RUNS measured on the same column, at matched terminal SoC.
 
 Usage:
-    # regenerate the SHIPPED artifact (tools/sdp_policies/sdp_policy_v3.json,
-    # demand map 0..25 W - D11; alpha two-sided-calibrated - D12):
-    C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py --force
+    # reproduce the SHIPPED artifact (tools/sdp_policies/sdp_policy_v3.json,
+    # demand map 0..25 W - D11; alpha two-sided-calibrated - D12).  --eta-chg-none
+    # is now REQUIRED: v3 was solved against the 1:1 current-transfer charger and
+    # the default is the plant's eta 0.88 (D13).  Verified bit-identical in the
+    # policy block.
+    C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
+        --eta-chg-none --alpha-mode lever --force
+    # the two ETA-ERA candidates (D13); neither is shipped by this file - the
+    # operator picks against the eta-era matched DP:
+    C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
+        --alpha-mode lever       --out <path> --force   # alpha 0.1183264, 0 charge cells
+    C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
+        --alpha-mode charge-edge --out <path> --force   # alpha 0.1262625, 540 charge cells
     # reproduce v2's economics (the shipped-and-corrected alpha, D12); the
     # window assert refuses it without the explicit override:
     C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
-        --alpha-mode marginal --allow-out-of-window \
+        --eta-chg-none --alpha-mode marginal --allow-out-of-window \
         --out tools/sdp_policies/sdp_policy_v2.json --force
     # reproduce the v1 mapping (ideal-scaling span from the TPM sidecar):
     C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
-        --demand-map-sidecar --alpha-mode marginal --allow-out-of-window \
-        --out tools/sdp_policies/sdp_policy_v1.json --force
+        --eta-chg-none --demand-map-sidecar --alpha-mode marginal \
+        --allow-out-of-window --out tools/sdp_policies/sdp_policy_v1.json --force
 
 ⚠️ `meta.argv` IN THE SHIPPED v3 ARTIFACT IS `[]`, not the command above.  It
 records `sys.argv[1:]` of the invocation that baked the file, and that
@@ -352,6 +418,9 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 REPO_ROOT = os.path.dirname(_HERE)
 
+from charger_power import (                                          # noqa: E402
+    ETA_CHG_DEFAULT, charger_billing_voltage_v, charger_bus_current_a,
+    charger_bus_power_w, check_eta_chg, era_label)
 from tpm_generator import rescale_gamma                              # noqa: E402
 
 
@@ -401,11 +470,25 @@ BATT_CAPACITY_AH = 5.0
 V_PACK_NOMINAL_V = 7.4
 
 # Measured no-load bus intercept, hil_plant_sim.py:249 (V_BUS_DROOP_V0 15.95).
-# Used ONLY to convert the Ag105's charge CURRENT into the bus POWER the fuel
-# cell must supply for it (the `physical` charger accounting, D11 of
-# gen_dp_ems_table.py).  The droop term is not modelled: at this demand scale
-# it moves the bus by under 0.2 V.
+# Used to convert the Ag105's charge CURRENT into the bus POWER the fuel cell
+# must supply for it (the `physical` charger accounting, D11 of
+# gen_dp_ems_table.py) - directly in the OLD charger era, and as the bus-side
+# reference for the FC-budget current in the new one (D13).  The droop term is
+# not modelled: at this demand scale it moves the bus by under 0.2 V.
 V_BUS_NOMINAL_V = 15.95
+
+# ── THE CHARGER ERA (D13) ────────────────────────────────────────────────────
+# None selects the OLD 1:1 current-transfer charger (a delivered amp costs a
+# bus amp, i.e. V_bus watts); a float selects the energy-conserving converter
+# the plant now models, where a delivered amp costs V_pack/eta watts.  The
+# DEFAULT IS THE PLANT'S 0.88 (charger_power.ETA_CHG_DEFAULT, AG105 datasheet)
+# because THIS artifact is a policy for the plant as it now is; the old era
+# stays reachable with --eta-chg-none so v1/v2/v3 can be reproduced exactly.
+ETA_CHG_MODEL = ETA_CHG_DEFAULT
+
+# --alpha-mode charge-edge places alpha this far above the worse lever's
+# admission bound.  See alpha_charge_edge().
+ALPHA_CHARGE_EDGE_EPS = 1.0e-3
 
 # .ino LIMIT_I_FC_MAX - the fuel-cell channel overcurrent limit the firmware
 # faults on.  Not exposed as a Python constant anywhere in tools/, so it is
@@ -607,7 +690,7 @@ ships a policy, not a gram figure."""
 # ---------------------------------------------------------------------------
 def model_levers(v_pack=V_PACK_NOMINAL_V, v_bus=V_BUS_NOMINAL_V,
                  capacity_ah=BATT_CAPACITY_AH, eta_fc=ETA_FC,
-                 q_lhv=Q_LHV_J_PER_G):
+                 q_lhv=Q_LHV_J_PER_G, eta_chg=None):
     """(L_share, L_chg) in SoC per gram of hydrogen, from MODEL constants.
 
     A lever is `SoC gained (or not spent) per gram of hydrogen burnt`:
@@ -616,17 +699,58 @@ def model_levers(v_pack=V_PACK_NOMINAL_V, v_bus=V_BUS_NOMINAL_V,
                 1/(eta*Q_LHV) g of hydrogen NOT burnt, and spends
                 1/(V_pack*C_As) of SoC  ->  L = 1/(k * V_pack * C_As)
         charge: one joule delivered to the charger costs the same k grams and
-                buys 1/(V_bus*C_As) of SoC, because the charge current is
-                billed at the BUS voltage while it lands in the pack at the
-                PACK voltage  ->  L = 1/(k * V_bus * C_As)
+                buys 1/(V_chg_bill*C_As) of SoC, where V_chg_bill is the BUS
+                WATTS THE CHARGER COSTS PER AMP IT DELIVERS  ->
+                L = 1/(k * V_chg_bill * C_As)
 
-    The hydrogen basis k CANCELS from their ratio (L_share/L_chg = V_bus/V_pack),
-    which is why no efficiency or accounting convention can explain the v2
-    over-charging - see D12.
+    V_chg_bill is the whole charger-era question (D13):
+
+        OLD (eta_chg None): V_bus.  The 1:1 current-transfer charger moved
+            current, not energy, so a delivered amp cost a bus amp.
+            L_chg = 1/(k * V_bus * C_As) = 0.2089864 at the shipped constants.
+        NEW (eta_chg a float): V_pack/eta_chg.  An energy-conserving converter
+            costs V_pack/eta watts per delivered amp, so
+            L_chg = eta_chg * L_share  EXACTLY - the two levers are then
+            1/eta_chg apart whatever the pack, the bus or the capacity do.
+            At eta_chg 0.88: L_chg = 0.3963964, i.e. 13.64 % under L_share.
+
+    The hydrogen basis k CANCELS from their ratio, which is why no efficiency
+    or accounting convention on the HYDROGEN side can explain the v2
+    over-charging - see D12.  The CHARGER-side convention is a different
+    matter and does move the ratio: that is D13.
     """
     k = 1.0 / (eta_fc * q_lhv)
     cap_as = capacity_ah * 3600.0
-    return (1.0 / (k * v_pack * cap_as), 1.0 / (k * v_bus * cap_as))
+    v_chg_bill = charger_billing_voltage_v(v_bus, v_pack, eta_chg)
+    return (1.0 / (k * v_pack * cap_as), 1.0 / (k * v_chg_bill * cap_as))
+
+
+def measured_levers(eta_chg=None,
+                    share=None, charge=None,
+                    v_pack=V_PACK_NOMINAL_V, v_bus=V_BUS_NOMINAL_V):
+    """(L_share, L_chg) as MEASURED, projected onto the requested era.
+
+    The share lever is era-INVARIANT: it never touches the charger.  The
+    charge lever is not.  EMS_LEVER_CHARGE_SOC_PER_G was measured on campaigns
+    whose plant billed the charger at the BUS voltage, so it is an OLD-ERA
+    number, and using it unchanged against a new-era policy would price the
+    charger against a plant that no longer exists.
+
+    The projection is the ratio of the two eras' billing voltages,
+
+        L_chg(eta) = L_chg(old) * V_bus / (V_pack/eta)
+
+    ⚠️ IT IS A PROJECTION, NOT A MEASUREMENT.  It assumes the campaign
+    accounting scales with the billing voltage and nothing else, which is
+    exactly the assumption the first new-era campaign will test.
+    TODO(verify): re-measure the charge lever on a post-2026-09-01 campaign
+    and replace this projection with the number.
+    """
+    l_share = EMS_LEVER_SHARE_SOC_PER_G if share is None else float(share)
+    l_chg = EMS_LEVER_CHARGE_SOC_PER_G if charge is None else float(charge)
+    if check_eta_chg(eta_chg) is not None:
+        l_chg *= v_bus / charger_billing_voltage_v(v_bus, v_pack, eta_chg)
+    return (l_share, l_chg)
 
 
 def admission_window(one_minus_gamma, lever_hi, lever_lo):
@@ -644,6 +768,37 @@ def admission_window(one_minus_gamma, lever_hi, lever_lo):
         raise ValueError("admission_window needs lever_hi > lever_lo > 0, got "
                          "%r, %r" % (lever_hi, lever_lo))
     return (one_minus_gamma / lever_hi, one_minus_gamma / lever_lo)
+
+
+def admit_both_window(one_minus_gamma, lever_hi, lever_lo):
+    """The interval of alpha that admits BOTH levers (D13, --alpha-mode charge-edge).
+
+    A lever L is taken iff L > (1-gamma)/alpha, so admitting both means
+    clearing the WORSE one: alpha > (1-gamma)/min(L).  There is no model-side
+    upper bound - a larger alpha only prices SoC higher - so the interval is
+    open above and is returned as (lo, inf).
+    """
+    lo = min(float(lever_hi), float(lever_lo))
+    if lo <= 0.0:
+        raise ValueError("admit_both_window needs positive levers, got %r, %r"
+                         % (lever_hi, lever_lo))
+    return (one_minus_gamma / lo, float("inf"))
+
+
+def alpha_charge_edge(one_minus_gamma, lever_hi, lever_lo,
+                      epsilon=ALPHA_CHARGE_EDGE_EPS):
+    """The smallest alpha that admits BOTH levers, plus a margin (D13).
+
+    "Just inside" is DEFINED here rather than left to a reader: alpha is the
+    admission bound of the WORSE lever scaled by (1 + epsilon), with epsilon
+    1e-3.  The margin exists because the admission test is a strict
+    inequality and the bound is reached exactly at equality; 1e-3 is four
+    orders above float64 round-off on these quantities and three orders below
+    the 13.6 % lever separation it sits inside, so it cannot move a decision
+    that the levers themselves do not already decide.
+    """
+    lo, _hi = admit_both_window(one_minus_gamma, lever_hi, lever_lo)
+    return lo * (1.0 + float(epsilon))
 
 
 def alpha_lever(one_minus_gamma, lever_hi, lever_lo):
@@ -711,7 +866,7 @@ def load_sidecar(tpm_path):
 # ---------------------------------------------------------------------------
 # Charge admission (D5, operator ruling (b))
 # ---------------------------------------------------------------------------
-def charge_forbidden_bins(side, p_centers, quantile, chg_a):
+def charge_forbidden_bins(side, p_centers, quantile, chg_a, eta_chg=None):
     """0-based bin indices in which the policy may NEVER assert charge_goal.
 
     TWO independent rules, unioned:
@@ -720,9 +875,12 @@ def charge_forbidden_bins(side, p_centers, quantile, chg_a):
           row occupancy are the acceleration transients; operator ruling (b)
           (2026-08-30) forbids FC-charge there by design.
       (b) FC CURRENT BUDGET.  With FC_CHARGE_ENABLE open the FC channel alone
-          carries the load plus the charger's draw.  Any bin where
-              P_dem/V_bus + chg_a > CHARGE_FC_MARGIN * LIMIT_I_FC_MAX_A
-          is forbidden regardless of dwell.
+          carries the load plus the charger's INPUT current.  Any bin where
+              P_dem/V_bus + i_chg_bus > CHARGE_FC_MARGIN * LIMIT_I_FC_MAX_A
+          is forbidden regardless of dwell.  `i_chg_bus` is `chg_a` itself in
+          the old charger era (1:1 current transfer) and the smaller
+          V_pack*chg_a/(eta*V_bus) in the new one (D13), so the new era's
+          budget binds later.
 
     Rule (b) is belt-and-braces at this demand scale (the whole span is under
     2 W, i.e. ~0.1 A of bus current) and is expected to select nothing; it is
@@ -748,7 +906,9 @@ def charge_forbidden_bins(side, p_centers, quantile, chg_a):
     forbid_dwell = np.zeros(n, dtype=bool)
     forbid_dwell[cut + 1:] = True
 
-    i_fc = np.maximum(p_centers, 0.0) / V_BUS_NOMINAL_V + chg_a
+    i_fc = (np.maximum(p_centers, 0.0) / V_BUS_NOMINAL_V
+            + charger_bus_current_a(chg_a, V_BUS_NOMINAL_V, V_PACK_NOMINAL_V,
+                                    eta_chg))
     forbid_budget = i_fc > CHARGE_FC_MARGIN * LIMIT_I_FC_MAX_A
 
     forbid = forbid_dwell | forbid_budget
@@ -763,7 +923,7 @@ def charge_forbidden_bins(side, p_centers, quantile, chg_a):
 # The solver
 # ---------------------------------------------------------------------------
 def build_stage(p_centers, shares, soc_grid, alpha, dt, cap_as, chg_a,
-                chg_allowed, soc_target, soc_lo, soc_hi):
+                chg_allowed, soc_target, soc_lo, soc_hi, eta_chg=None):
     """Per-bin (stage_cost, soc_next, feasible) arrays.
 
     Returned shapes are (n_bin, n_soc, n_ctrl) with n_ctrl = len(shares) + 1;
@@ -793,9 +953,14 @@ def build_stage(p_centers, shares, soc_grid, alpha, dt, cap_as, chg_a,
         # Charge control.  `physical` accounting (D11 of gen_dp_ems_table.py):
         # the fuel cell is billed for the charger's bus draw on top of the
         # traction demand, because that is what the hi-fi plant stamps on the
-        # bus node and what the hardware actually does.
+        # bus node and what the hardware actually does.  WHICH draw is the
+        # charger era (D13): V_bus*i in the old one, V_pack*i/eta in the new.
+        # V_PACK_NOMINAL_V is this solver's flat 2S nominal - it has no OCV
+        # curve at all (see WHAT THIS MODEL DOES NOT CONTAIN), so the new-era
+        # billing inherits that reduction and nothing more.
         soc_next[j, :, m] = soc_grid + chg_a * dt / cap_as
-        p_fc_chg = p_pos + V_BUS_NOMINAL_V * chg_a
+        p_fc_chg = p_pos + charger_bus_power_w(chg_a, V_BUS_NOMINAL_V,
+                                               V_PACK_NOMINAL_V, eta_chg)
         stage[j, :, m] = p_fc_chg / (ETA_FC * Q_LHV_J_PER_G) * dt
         feas[j, :, m] = bool(chg_allowed[j])
 
@@ -892,6 +1057,17 @@ def render_policy_json(args, meta):
                       "measured value; v_pack_nominal is a flat 2S nominal, "
                       "not the OCV(SoC) curve",
         },
+        "charger": {
+            "eta_chg": (None if args.eta_chg is None else float(args.eta_chg)),
+            "era": era_label(args.eta_chg),
+            "billing_rule": ("bus power = V_bus * i_chg (1:1 current transfer)"
+                             if args.eta_chg is None else
+                             "bus power = V_pack * i_chg / eta_chg"),
+            "v_bus_nominal_v": V_BUS_NOMINAL_V,
+            "note": "D13. An artifact with eta_chg null was solved against "
+                    "the pre-2026-09-01 charger model, which prices the "
+                    "Ag105 ~1.9x too dearly against the current plant.",
+        },
         "h2": {
             "eta_fc": ETA_FC,
             "q_lhv_j_per_g": Q_LHV_J_PER_G,
@@ -959,10 +1135,24 @@ def main(argv=None):
     ap.add_argument("--alpha", type=float, default=None,
                     help="explicit SoC-deviation weight, overriding "
                          "--alpha-mode (see the ALPHA_DERIVATION note)")
+    ap.add_argument("--eta-chg", type=float, default=ETA_CHG_MODEL,
+                    help="Ag105 charge efficiency, selecting the CHARGER ERA "
+                         "(D13). Default %g = the plant's energy-conserving "
+                         "converter, in which a delivered amp costs "
+                         "V_pack/eta watts. --eta-chg-none selects the OLD "
+                         "1:1 current-transfer charger and is what reproduces "
+                         "sdp_policy_v1/v2/v3." % ETA_CHG_MODEL)
+    ap.add_argument("--eta-chg-none", action="store_true",
+                    help="solve against the OLD 1:1 current-transfer charger "
+                         "(a delivered amp costs a BUS amp). Required to "
+                         "reproduce any artifact baked before 2026-09-01.")
     ap.add_argument("--alpha-mode", default="lever",
-                    choices=["lever", "marginal", "level"],
+                    choices=["lever", "charge-edge", "marginal", "level"],
                     help="how alpha is derived (default lever - D12's "
                          "two-sided lever calibration, the SHIPPED value). "
+                         "'charge-edge' (D13) places alpha just inside the "
+                         "WORSE lever's admission window, so BOTH levers "
+                         "clear and charging is admitted endogenously. "
                          "'marginal' is the share-axis-only derivation SHIPPED "
                          "IN v1/v2 AND FAILED (it admits the Ag105 charge "
                          "lever; needs --allow-out-of-window). 'level' "
@@ -1020,6 +1210,18 @@ def main(argv=None):
                  "(1-gamma)/alpha is undefined at 0)")
     if not 0.0 < args.charge_quantile <= 1.0:
         ap.error("--charge-quantile must be in (0, 1]")
+    # D13.  --eta-chg-none is not "--eta-chg 1.0": the old era bills at the
+    # BUS voltage and eta = 1.0 would bill at the PACK voltage, which is a
+    # third model neither plant ever implemented.  Hence a flag, not a value.
+    if args.eta_chg_none:
+        if args.eta_chg != ETA_CHG_MODEL:
+            ap.error("--eta-chg and --eta-chg-none are mutually exclusive - "
+                     "they are two ways of answering the same question")
+        args.eta_chg = None
+    try:
+        args.eta_chg = check_eta_chg(args.eta_chg)
+    except ValueError as exc:
+        ap.error(str(exc))
     if args.demand_map is not None and args.demand_map_sidecar:
         ap.error("--demand-map and --demand-map-sidecar are mutually exclusive "
                  "- they are two ways of answering the same question")
@@ -1080,15 +1282,29 @@ def main(argv=None):
 
     # ── alpha (D2) ───────────────────────────────────────────────────────────
     one_minus_gamma = 1.0 - gamma
-    l_share, l_chg = model_levers(capacity_ah=args.capacity_ah)
-    win_model = admission_window(one_minus_gamma, l_share, l_chg)
-    win_meas = admission_window(one_minus_gamma, EMS_LEVER_SHARE_SOC_PER_G,
-                                EMS_LEVER_CHARGE_SOC_PER_G)
+    l_share, l_chg = model_levers(capacity_ah=args.capacity_ah,
+                                  eta_chg=args.eta_chg)
+    l_share_meas, l_chg_meas = measured_levers(args.eta_chg)
+
+    # The REQUIRED window depends on what the alpha mode is trying to do
+    # (D13): `lever` admits the better lever and rejects the worse, so its
+    # window is bounded on both sides; `charge-edge` admits BOTH and its
+    # window is open above.  `_window_or_none` returns None when the lever
+    # pair cannot express the intent at all - a REAL case in the eta era,
+    # where the PROJECTED measured charge lever overtakes the share lever and
+    # no alpha admits share while rejecting charge.
+    def _window_or_none(fn, hi, lo):
+        try:
+            return fn(one_minus_gamma, hi, lo)
+        except ValueError:
+            return None
 
     alpha_marginal = FULL_SIZE_ALPHA * (V_PACK_NOMINAL_V * args.capacity_ah) \
         / (FULL_SIZE_EM_V * FULL_SIZE_Q_AH)
     alpha_level = FULL_SIZE_ALPHA * p_max / FULL_SIZE_P_DEM_MAX_W
-    alpha_two_sided = alpha_lever(one_minus_gamma, l_share, l_chg)
+    alpha_two_sided = (alpha_lever(one_minus_gamma, l_share, l_chg)
+                       if l_share > l_chg else float("nan"))
+    alpha_edge = alpha_charge_edge(one_minus_gamma, l_share, l_chg)
     if args.alpha is not None:
         alpha = float(args.alpha)
         alpha_mode_used = "explicit"
@@ -1111,10 +1327,29 @@ def main(argv=None):
                            % (alpha_marginal / one_minus_gamma,
                               one_minus_gamma / alpha_marginal, l_chg,
                               ALPHA_DERIVATION))
+    elif args.alpha_mode == "charge-edge":
+        alpha = alpha_edge
+        alpha_mode_used = "charge-edge"
+        alpha_rationale = ("--alpha-mode charge-edge (D13): alpha is placed "
+                           "at the WORSE lever's admission bound %.9g times "
+                           "(1 + %g), so BOTH levers clear and charging is "
+                           "admitted ENDOGENOUSLY. Levers: share %.6f, "
+                           "charge %.6f (era: %s).\n\n%s"
+                           % (one_minus_gamma / min(l_share, l_chg),
+                              ALPHA_CHARGE_EDGE_EPS, l_share, l_chg,
+                              era_label(args.eta_chg), ALPHA_DERIVATION))
     else:
         alpha = alpha_two_sided
         alpha_mode_used = "lever"
         alpha_rationale = ALPHA_DERIVATION
+        if not (alpha == alpha):        # NaN: the levers do not order
+            print("[sdp] REFUSING to solve: --alpha-mode lever needs the "
+                  "share lever to BEAT the charge lever, and at this era "
+                  "(%s) it does not (share %.6f, charge %.6f). Use "
+                  "--alpha-mode charge-edge, or an explicit --alpha."
+                  % (era_label(args.eta_chg), l_share, l_chg),
+                  file=sys.stderr)
+            return 2
 
     # ── the D12 tripwire, BEFORE any solve ──────────────────────────────────
     # The shipped alpha must lie STRICTLY inside both admission windows: the
@@ -1122,13 +1357,29 @@ def main(argv=None):
     # campaign levers).  Outside either, the policy prices at least one control
     # against a lever it was never calibrated on - which is exactly how v2's
     # 294 charge cells got shipped.
-    in_model = win_model[0] < alpha < win_model[1]
-    in_meas = win_meas[0] < alpha < win_meas[1]
-    if not (in_model and in_meas) and not args.allow_out_of_window:
+    # D13: the window the tripwire enforces is the one the MODE is asking
+    # for.  `lever` (and every historical mode) must admit share and reject
+    # charge; `charge-edge` must admit both.  An UNDECIDABLE window (None -
+    # a lever pair that cannot express the intent) is reported and skipped
+    # rather than counted as a pass or as a refusal, because there is no
+    # alpha it could refuse in favour of.
+    if alpha_mode_used == "charge-edge":
+        win_fn, win_intent = admit_both_window, "admit BOTH levers"
+    else:
+        win_fn, win_intent = admission_window, "admit share, reject charge"
+    win_model = _window_or_none(win_fn, l_share, l_chg)
+    win_meas = _window_or_none(win_fn, l_share_meas, l_chg_meas)
+    in_model = win_model is not None and win_model[0] < alpha < win_model[1]
+    in_meas = win_meas is not None and win_meas[0] < alpha < win_meas[1]
+    undecidable = [name for name, w in (("MODEL", win_model),
+                                        ("MEASURED", win_meas)) if w is None]
+    checked_ok = ((win_model is None or in_model)
+                  and (win_meas is None or in_meas))
+    if not checked_ok and not args.allow_out_of_window:
         which = []
-        if not in_model:
+        if win_model is not None and not in_model:
             which.append("MODEL (%.6f, %.6f)" % win_model)
-        if not in_meas:
+        if win_meas is not None and not in_meas:
             which.append("MEASURED (%.6f, %.6f)" % win_meas)
         print(
             "[sdp] REFUSING to solve: alpha = %.9g (mode %s) lies OUTSIDE the "
@@ -1141,8 +1392,7 @@ def main(argv=None):
             "--allow-out-of-window to reproduce a historical artifact."
             % (alpha, alpha_mode_used, " and ".join(which),
                "" if len(which) == 1 else "s", one_minus_gamma / alpha,
-               l_share, EMS_LEVER_SHARE_SOC_PER_G,
-               l_chg, EMS_LEVER_CHARGE_SOC_PER_G),
+               l_share, l_share_meas, l_chg, l_chg_meas),
             file=sys.stderr)
         return 2
 
@@ -1153,7 +1403,7 @@ def main(argv=None):
     chg_a = float(args.charge_i_ceiling)
 
     forbidden, chg_info = charge_forbidden_bins(
-        side, p_centers, args.charge_quantile, chg_a)
+        side, p_centers, args.charge_quantile, chg_a, args.eta_chg)
     # L6: the DERIVED count, kept before the blanket mask can overwrite it, so
     # the summary line below can report both numbers instead of printing
     # "%d by dwell, %d by budget -> %d forbidden" with a total that is neither
@@ -1187,30 +1437,43 @@ def main(argv=None):
           "[%.9g, %.9g] W" % (side_min, side_max))
     print("[sdp] gamma_base %g @ dt %g s -> gamma_eff %.12g"
           % (args.gamma_base, args.dt, gamma))
-    print("[sdp] alpha = %.12g  (mode %s; lever %.12g, marginal %.12g, "
-          "level %.12g)"
-          % (alpha, alpha_mode_used, alpha_two_sided, alpha_marginal,
-             alpha_level))
+    print("[sdp] charger era: %s" % era_label(args.eta_chg))
+    print("[sdp] alpha = %.12g  (mode %s; lever %.12g, charge-edge %.12g, "
+          "marginal %.12g, level %.12g)"
+          % (alpha, alpha_mode_used, alpha_two_sided, alpha_edge,
+             alpha_marginal, alpha_level))
     # ── D12 acceptance report: the lever economics this alpha implies ────────
     bound = one_minus_gamma / alpha
     print("[sdp] levers (SoC/g): share %.6f model / %.6f measured; "
-          "charge %.6f model / %.6f measured"
-          % (l_share, EMS_LEVER_SHARE_SOC_PER_G,
-             l_chg, EMS_LEVER_CHARGE_SOC_PER_G))
+          "charge %.6f model / %.6f measured%s"
+          % (l_share, l_share_meas, l_chg, l_chg_meas,
+             "" if args.eta_chg is None
+             else "  (the measured charge lever is an OLD-ERA measurement "
+                  "PROJECTED onto this era - see measured_levers())"))
     print("[sdp] shadow price alpha/(1-gamma) = %.6f g/SoC -> admission "
           "threshold (1-gamma)/alpha = %.6f SoC/g" % (alpha / one_minus_gamma,
                                                       bound))
     for name, lev_m, lev_meas in (
-            ("share ", l_share, EMS_LEVER_SHARE_SOC_PER_G),
-            ("charge", l_chg, EMS_LEVER_CHARGE_SOC_PER_G)):
+            ("share ", l_share, l_share_meas),
+            ("charge", l_chg, l_chg_meas)):
         print("[sdp]   %s: model %s (%.6f vs %.6f), measured %s (%.6f)"
               % (name, "ADMIT " if lev_m > bound else "REJECT", lev_m, bound,
                  "ADMIT " if lev_meas > bound else "REJECT", lev_meas))
-    print("[sdp] admission windows: model (%.6f, %.6f) %s; "
-          "measured (%.6f, %.6f) %s"
-          % (win_model[0], win_model[1], "IN" if in_model else "OUT",
-             win_meas[0], win_meas[1], "IN" if in_meas else "OUT"))
-    if not (in_model and in_meas):
+    def _fmt_win(w, flag):
+        if w is None:
+            return "UNDECIDABLE (the levers do not order for this intent)"
+        return "(%.6f, %.6f) %s" % (w[0], w[1], "IN" if flag else "OUT")
+
+    print("[sdp] admission windows (%s): model %s; measured %s"
+          % (win_intent, _fmt_win(win_model, in_model),
+             _fmt_win(win_meas, in_meas)))
+    if undecidable:
+        print("[sdp] NOTE: the %s lever pair cannot express %r, so that "
+              "window was NOT checked. In the eta era the projected measured "
+              "charge lever OVERTAKES the share lever, which is exactly the "
+              "reading the first new-era campaign has to settle."
+              % (" and ".join(undecidable), win_intent), file=sys.stderr)
+    if not checked_ok:
         print("[sdp] WARNING: alpha is OUT of a lever admission window and "
               "--allow-out-of-window was given - this artifact reproduces a "
               "historical economics, it is not the shipped calibration (D12).",
@@ -1233,7 +1496,8 @@ def main(argv=None):
     # ── solve ────────────────────────────────────────────────────────────────
     stage, soc_next, _feas = build_stage(
         p_centers, shares, soc_grid, alpha, args.dt, cap_as, chg_a,
-        chg_allowed, args.soc_target, soc_grid[0], soc_grid[-1])
+        chg_allowed, args.soc_target, soc_grid[0], soc_grid[-1],
+        args.eta_chg)
     J, iters, delta = value_iterate(stage, soc_next, soc_grid, tpm, gamma,
                                     args.tol, args.max_iter)
     converged = delta < args.tol
@@ -1332,15 +1596,19 @@ def main(argv=None):
             "value": float(alpha),
             "mode": alpha_mode_used,
             "candidates": {
-                "lever": float(alpha_two_sided),
+                "lever": (None if alpha_two_sided != alpha_two_sided
+                          else float(alpha_two_sided)),
+                "charge_edge": float(alpha_edge),
                 "marginal": float(alpha_marginal),
                 "level": float(alpha_level),
             },
             "levers_soc_per_g": {
                 "share_model": float(l_share),
                 "charge_model": float(l_chg),
-                "share_measured": EMS_LEVER_SHARE_SOC_PER_G,
-                "charge_measured": EMS_LEVER_CHARGE_SOC_PER_G,
+                "share_measured": float(l_share_meas),
+                "charge_measured": float(l_chg_meas),
+                "charge_measured_is_projection": bool(args.eta_chg is not None),
+                "charge_measured_as_measured": EMS_LEVER_CHARGE_SOC_PER_G,
                 "measured_source":
                     "share 0.409-0.415 on two stimuli, campaign "
                     "hil_report_20260831_191509; charge C1->C2 marginal "
@@ -1349,10 +1617,23 @@ def main(argv=None):
             "admission": {
                 "shadow_price_g_per_soc": float(alpha / one_minus_gamma),
                 "threshold_soc_per_g": float(one_minus_gamma / alpha),
-                "window_model": [float(win_model[0]), float(win_model[1])],
-                "window_measured": [float(win_meas[0]), float(win_meas[1])],
-                "in_window_model": bool(in_model),
-                "in_window_measured": bool(in_meas),
+                "window_intent": win_intent,
+                "window_model": (None if win_model is None
+                                 else [float(win_model[0]),
+                                       float(win_model[1])]),
+                "window_measured": (None if win_meas is None
+                                    else [float(win_meas[0]),
+                                          float(win_meas[1])]),
+                # None, not False, when the window itself does not exist for
+                # this era and intent (D13): the alpha was NOT CHECKED against
+                # that pair, which is a different statement from "checked and
+                # outside".  hil_plant_sim's calibrated-benchmark certificate
+                # tests `is not True`, so an undecidable window still REFUSES
+                # the frontier role - and now names the reason.
+                "in_window_model": (None if win_model is None
+                                    else bool(in_model)),
+                "in_window_measured": (None if win_meas is None
+                                       else bool(in_meas)),
                 "allow_out_of_window": bool(args.allow_out_of_window),
                 "rule": "a lever L is taken iff L > (1-gamma)/alpha; charging "
                         "returns to the policy endogenously if the charger's "

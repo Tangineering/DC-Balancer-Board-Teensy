@@ -37,7 +37,14 @@ import tpm_generator                    # noqa: E402
 
 SHIPPED_POLICY_PATH = os.path.join(HERE, "sdp_policies", "sdp_policy_v1.json")
 
-_REDUCED_ARGV = ["--soc-n", "11", "--share-n", "5"]
+# `--eta-chg-none` (2026-09-01, WP-1B1): every NUMBER this suite pins - the
+# shipped alpha 0.1629624, both admission windows, the 294-cell knife edge -
+# belongs to the OLD 1:1 current-transfer charger, which is what v1/v2/v3 were
+# solved against.  The solver's DEFAULT era is now the plant's converter
+# (D13), so the legacy expectations are pinned to their era explicitly rather
+# than being silently re-based onto a different charger.  The eta-era
+# behaviour has its own tests at the end of this file.
+_REDUCED_ARGV = ["--soc-n", "11", "--share-n", "5", "--eta-chg-none"]
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -783,7 +790,7 @@ def test_knife_edge_flip_bracket_at_the_full_default_grid(tmp_path):
     def _charge_cells(alpha):
         out = tmp_path / ("flip_%s.json" % alpha)
         rc = solver.main(["--alpha", repr(alpha), "--allow-out-of-window",
-                          "--out", str(out)])
+                          "--eta-chg-none", "--out", str(out)])
         assert rc == 0
         with open(out, encoding="utf-8") as fh:
             goal = json.load(fh)["policy"]["charge_goal"]
@@ -947,6 +954,162 @@ def test_rescale_gamma_effective_tracks_dt_scaling_directly():
     tpm_generator, not reimplemented here): gamma_eff = gamma_base**(dt/dt_base)."""
     assert tpm_generator.rescale_gamma(0.95, 1.0, 1.0) == pytest.approx(0.95)
     assert tpm_generator.rescale_gamma(0.95, 0.5, 1.0) == pytest.approx(0.95 ** 0.5)
+
+
+# ==========================================================================
+# 2026-09-01 charger-efficiency round (WP-1B1), D13.  The charge lever's
+# billing voltage moves from V_bus to V_pack/eta, which halves the distance
+# between the two levers and makes the alpha placement the live question.
+# ==========================================================================
+
+def test_model_levers_new_era_is_exactly_eta_times_the_share_lever():
+    """D13's identity: with both levers billing at the pack voltage, the
+    charge lever IS the share lever times the converter efficiency - whatever
+    the pack, the bus or the capacity do."""
+    for eta in (0.80, 0.88, 0.95):
+        for cap in (2.5, 5.0, 9.0):
+            l_share, l_chg = solver.model_levers(capacity_ah=cap, eta_chg=eta)
+            assert l_chg == pytest.approx(eta * l_share, rel=1e-12)
+
+
+def test_model_levers_old_era_is_unchanged_and_bills_the_bus():
+    l_share, l_chg = solver.model_levers()
+    assert l_share == pytest.approx(0.4504504504504504, rel=1e-12)
+    assert l_chg == pytest.approx(0.20898641588296765, rel=1e-12)
+    assert solver.model_levers(eta_chg=None) == (l_share, l_chg)
+
+
+def test_new_era_lever_numbers_are_the_documented_ones():
+    l_share, l_chg = solver.model_levers(eta_chg=0.88)
+    assert l_chg == pytest.approx(0.3963963963963964, rel=1e-12)
+    omg = 0.05
+    assert solver.alpha_lever(omg, l_share, l_chg) == \
+        pytest.approx(0.11832639757736382, rel=1e-9)
+    assert solver.alpha_charge_edge(omg, l_share, l_chg) == \
+        pytest.approx(0.1262625, rel=1e-9)
+
+
+def test_measured_levers_projection_and_era_invariance_of_the_share_lever():
+    """The share lever never touches the charger and must not move; the
+    charge lever is an OLD-ERA measurement and is projected."""
+    s_old, c_old = solver.measured_levers(None)
+    s_new, c_new = solver.measured_levers(0.88)
+    assert s_old == s_new == solver.EMS_LEVER_SHARE_SOC_PER_G
+    assert c_old == solver.EMS_LEVER_CHARGE_SOC_PER_G
+    ratio = solver.V_BUS_NOMINAL_V / (solver.V_PACK_NOMINAL_V / 0.88)
+    assert c_new == pytest.approx(c_old * ratio, rel=1e-12)
+    # And the consequence D13 records: the projected pair INVERTS.
+    assert c_new > s_new
+
+
+def test_admit_both_window_is_open_above_and_bounded_by_the_worse_lever():
+    lo, hi = solver.admit_both_window(0.05, 0.4504504504504504,
+                                      0.3963963963963964)
+    assert hi == float("inf")
+    assert lo == pytest.approx(0.05 / 0.3963963963963964, rel=1e-12)
+
+
+def test_alpha_charge_edge_admits_both_levers_and_lever_mode_rejects_charge():
+    """The two modes' whole difference, stated as the admission test itself:
+    a lever L is taken iff L > (1-gamma)/alpha."""
+    omg = 0.05
+    l_share, l_chg = solver.model_levers(eta_chg=0.88)
+    a_lever = solver.alpha_lever(omg, l_share, l_chg)
+    a_edge = solver.alpha_charge_edge(omg, l_share, l_chg)
+    assert l_share > omg / a_lever > l_chg          # share in, charge out
+    assert l_chg > omg / a_edge                     # both in
+    assert a_edge > a_lever
+
+
+def test_charge_forbidden_bins_new_era_forbids_no_more_than_the_old():
+    """Rule (b), the FC current budget, counts the charger's INPUT current,
+    which is smaller in the eta era - so the forbidden set can only shrink."""
+    _path, side = solver.load_sidecar(solver.DEFAULT_TPM)
+    p_centers = np.linspace(0.0, 25.0, 25)
+    old, info_old = solver.charge_forbidden_bins(side, p_centers, 0.90, 0.8)
+    new, info_new = solver.charge_forbidden_bins(side, p_centers, 0.90, 0.8,
+                                                 0.88)
+    assert set(new) <= set(old)
+    assert info_new["n_forbidden_by_fc_budget"] <= \
+        info_old["n_forbidden_by_fc_budget"]
+
+
+def test_solver_reproduces_the_shipped_v3_policy_in_the_old_era(tmp_path):
+    """--eta-chg-none is now REQUIRED to reproduce v3, and it must reproduce
+    it EXACTLY: the shipped artifact was solved against the 1:1 charger."""
+    out = str(tmp_path / "v3.json")
+    rc = solver.main(["--eta-chg-none", "--alpha-mode", "lever",
+                      "--out", out, "--force"])
+    assert rc == 0
+    got = json.load(open(out, encoding="utf-8"))
+    want = json.load(open(os.path.join(HERE, "sdp_policies",
+                                       "sdp_policy_v3.json"),
+                          encoding="utf-8"))
+    assert got["policy"] == want["policy"]
+    assert got["alpha"]["value"] == pytest.approx(want["alpha"]["value"],
+                                                  rel=1e-15)
+    assert got["charger"]["eta_chg"] is None
+
+
+def test_eta_chg_none_and_eta_chg_are_mutually_exclusive():
+    """The era switch must not be expressible as an efficiency: eta 1.0 bills
+    the PACK voltage where the old era bills the BUS, so the two arguments are
+    two answers to one question and the CLI refuses both at once."""
+    with pytest.raises(SystemExit):
+        solver.main(["--eta-chg-none", "--eta-chg", "1.0", "--dry-run"])
+    # And they really are different models, not the same one twice.
+    assert solver.model_levers(eta_chg=1.0) != solver.model_levers(eta_chg=None)
+
+
+def test_charge_edge_mode_admits_charge_cells_and_lever_mode_does_not(tmp_path):
+    """The two candidate artifacts of the eta era, solved end to end."""
+    outs = {}
+    for mode in ("lever", "charge-edge"):
+        out = str(tmp_path / ("%s.json" % mode))
+        assert solver.main(["--alpha-mode", mode, "--eta-chg", "0.88",
+                            "--out", out, "--force"]) == 0
+        outs[mode] = json.load(open(out, encoding="utf-8"))
+    n = {m: sum(1 for row in d["policy"]["charge_goal"] for v in row if v > 0.0)
+         for m, d in outs.items()}
+    assert n["lever"] == 0
+    assert n["charge-edge"] > 0
+    assert outs["charge-edge"]["alpha"]["value"] > outs["lever"]["alpha"]["value"]
+    for d in outs.values():
+        assert d["charger"]["eta_chg"] == 0.88
+        assert "V_pack" in d["charger"]["billing_rule"]
+    # And the window tripwire PASSED for both, each against its own intent.
+    assert outs["lever"]["alpha"]["admission"]["window_intent"] == \
+        "admit share, reject charge"
+    assert outs["charge-edge"]["alpha"]["admission"]["window_intent"] == \
+        "admit BOTH levers"
+    assert outs["charge-edge"]["alpha"]["admission"]["window_model"][1] == \
+        pytest.approx(float("inf")) or \
+        outs["charge-edge"]["alpha"]["admission"]["window_model"][1] is None
+
+
+def test_new_era_measured_window_is_recorded_as_undecidable_not_passed(tmp_path):
+    """The honest half of D13: the projected measured levers do not order, so
+    the `admit share, reject charge` measured window DOES NOT EXIST and is
+    written as null rather than as a pair the solver cannot compute."""
+    out = str(tmp_path / "lever.json")
+    assert solver.main(["--alpha-mode", "lever", "--eta-chg", "0.88",
+                        "--out", out, "--force"]) == 0
+    adm = json.load(open(out, encoding="utf-8"))["alpha"]["admission"]
+    assert adm["window_measured"] is None
+    assert adm["window_model"] is not None
+
+
+
+def test_undecidable_window_is_recorded_as_none_not_false(tmp_path):
+    """An unchecked window must not masquerade as a checked-and-failed one.
+    hil_plant_sim's calibrated-benchmark certificate tests `is not True`, so
+    None still refuses the frontier role - it just names the right reason."""
+    out = str(tmp_path / "lever_eta.json")
+    assert solver.main(["--alpha-mode", "lever", "--eta-chg", "0.88",
+                        "--out", out, "--force"]) == 0
+    adm = json.load(open(out, encoding="utf-8"))["alpha"]["admission"]
+    assert adm["in_window_measured"] is None
+    assert adm["in_window_model"] is True
 
 
 if __name__ == "__main__":

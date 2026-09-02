@@ -2014,3 +2014,155 @@ def test_close_chopper_episode_two_episode_case():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# =========================================================================
+# CHARGER EFFICIENCY -- the N_CHG stamp (2026-09-01)
+# =========================================================================
+#
+# The plant-level accounting is covered in test_hil_plant_sim.py; what is
+# engine-local, and covered here, is the STAMP itself: that it draws the
+# input-referred current from N_CHG, that the pack still receives i_charge,
+# and that the element is bounded on a dark node.
+
+_CHG_SW = (he.SW_FC_BUS | he.SW_BT_BUS | he.SW_BT_SEQ | he.SW_MOT_PWR
+           | he.SW_FC_CHARGE)
+_CHG_AUX = AUX_FC_REG | AUX_BT_REG
+
+
+def test_eta_chg_constant_matches_the_datasheet_typ_figure():
+    """AG105_Silvertel.pdf "DC Electrical Characteristics" item 1: "Charge
+    Efficiency EFF 88 % typ". The constant is a MODELLING DECISION anchored on
+    that number, not a measurement at this rig's operating point (Note 2 puts
+    the datasheet point at 12 Vin / 3 cells; this rig runs 15-16 V in, 2S), so
+    the pin here is on the number the operator ruled."""
+    assert he.ETA_CHG == 0.88
+    assert 0.0 < he.ETA_CHG <= 1.0
+
+
+def test_eta_chg_matches_the_charger_power_default():
+    """ONE efficiency, two modules. `tools/charger_power.py` carries its own
+    `ETA_CHG_DEFAULT` for the offline consumers (the DP generator and the EMS
+    walk), and the two literals are independent by construction -- neither
+    module imports the other. A divergence would put the offline baseline on a
+    different charger from the plant it is compared against, silently, so the
+    equality is pinned here.
+
+    Skipped rather than failed where charger_power is absent: this file must
+    stay runnable against an electrical-engine-only checkout."""
+    cp = pytest.importorskip("charger_power")
+    assert he.ETA_CHG == cp.ETA_CHG_DEFAULT
+
+
+def test_charger_load_floor_is_the_modules_own_minimum_input():
+    """THE TWO LOAD FLOORS ARE NOT THE SAME KIND OF NUMBER, so they are no
+    longer asserted equal (the first cut of this test coupled them).
+
+    `V_MOT_LOAD_FLOOR` is NUMERICAL: the motor load legitimately operates down
+    to a dark node, so its 1.0 V is an arbitrary small value chosen only to
+    bound a division. `V_CHG_LOAD_FLOOR` is PHYSICAL: the plant zeroes
+    `i_charge` below `AG105_V_IN_MIN`, so no legitimate state ever evaluates
+    the charger stamp between 1 and 8 V and the floor is set at the lowest
+    input the module can charge from. Consequence, and the reason it matters:
+    with V_pack <= 8.4 V and i_charge <= 2.5 A the stamped input current is
+    bounded at ~2.98 A instead of ~23.86 A.
+
+    The equality with AG105_V_IN_MIN is asserted here rather than expressed as
+    an import because the dependency runs hil_electrical -> hil_plant_sim and
+    must never run back."""
+    import hil_plant_sim as hps
+    assert he.V_CHG_LOAD_FLOOR == hps.AG105_V_IN_MIN == 8.0
+    assert he.V_CHG_LOAD_FLOOR != he.V_MOT_LOAD_FLOOR
+    v_pack_max, i_chg_max = 8.4, 2.5
+    bound = i_chg_max * v_pack_max / (he.ETA_CHG * he.V_CHG_LOAD_FLOOR)
+    assert bound == pytest.approx(2.9829545454545454, rel=1e-9)
+
+
+def _chg_settled(i_charge, ticks=400, warmup=400):
+    """Run a closed FC-charge path with a fixed pack-side charge current.
+
+    The warm-up at ZERO charge current is load-bearing, not padding: applying
+    the full current on the same tick the switch closes is an inrush into a
+    dark VCHG-IN node, and the RT1987's short-circuit protection cuts the
+    switch (`scp_cut`) before it ever reaches ON. The real charger cannot do
+    that -- the Ag105 is dark for AG105_SETTLE_S and then ramps on
+    AG105_TAU_S -- so the warm-up reproduces the plant's own ordering rather
+    than working around the model."""
+    e = he.ElectricalSim(trace_config="short", asymmetry_mode="off")
+    warm = _actuators(sw=_CHG_SW, aux=_CHG_AUX, i_motor_a=0.0,
+                      code_fc=_DROOP_G_NOMINAL, code_bt=_DROOP_G_NOMINAL,
+                      i_charge_a=0.0)
+    for _ in range(warmup):
+        _pin_and_step(e, 1e-3, warm)
+    assert e.switches["FC_CHARGE"].state == "ON", (
+        "precondition: the FC_CHARGE path must be up before current flows")
+    e.i_charge_into_pack = i_charge
+    act = _actuators(sw=_CHG_SW, aux=_CHG_AUX, i_motor_a=0.0,
+                     code_fc=_DROOP_G_NOMINAL, code_bt=_DROOP_G_NOMINAL,
+                     i_charge_a=i_charge)
+    r = None
+    for _ in range(ticks):
+        r = _pin_and_step(e, 1e-3, act)
+    return e, r
+
+
+def test_charger_input_current_is_output_referred_through_eta():
+    """THE STAMP. The bus-side current a charge window draws must be the pack
+    power divided by ETA_CHG and by the charger input voltage -- NOT the pack
+    current itself, which is what the retired 1:1 stamp drew.
+
+    Measured as the DIFFERENCE between an identical run with and without the
+    charge current, so the aux load and every network loss cancel out of the
+    comparison and only the charger term is left."""
+    _e0, r0 = _chg_settled(0.0)
+    e1, r1 = _chg_settled(1.4)
+    d_bus = (r1["I_fc"] + r1["I_batt"]) - (r0["I_fc"] + r0["I_batt"])
+    expect = 1.4 * e1.battery.v_terminal / (he.ETA_CHG * r1["V_chg"])
+    # 3 % against the ~0.75 A term: the bus sags under the extra draw, so the
+    # two runs' V_bus/V_chg differ slightly and the difference is not an exact
+    # single-point evaluation. The RETIRED 1:1 form would be 1.4 A here, 87 %
+    # above the expectation -- an order of magnitude outside this bound.
+    assert d_bus == pytest.approx(expect, rel=0.03)
+    assert d_bus < 1.4 * 0.75, "the 1:1 current-repeater stamp is back"
+
+
+def test_charger_pack_current_is_untouched_by_the_stamp():
+    """The efficiency is input-side only: the pack integrator is handed
+    `i_charge_into_pack` verbatim, so the pack's own current is the same
+    whatever ETA_CHG is."""
+    e, _r = _chg_settled(1.4)
+    assert e.i_charge_into_pack == 1.4
+
+
+def test_charger_stamp_is_inert_on_a_dark_node():
+    """THE CHORD-CONDUCTANCE STAMP CANNOT DRIVE A DARK NODE NEGATIVE.
+
+    RE-DERIVED 2026-09-01 (review). The first cut of this test credited
+    V_CHG_LOAD_FLOOR with keeping the solve finite; it did not. N_CHG sits at
+    exactly 0.0 V with no path switch closed, and under the retired
+    CURRENT-SOURCE form the stamp pulled it below zero on every substep and the
+    negative-node clamp caught it every time -- finite, but only because a
+    backstop kept catching it. The stamp is now the CHORD CONDUCTANCE
+    `i_in/v_prev`, a POSITIVE diagonal term, which cannot source a node
+    negative at all. The executable form of that claim is a comparison against
+    an otherwise identical CHARGE-FREE run: the charger must add no clamp
+    activity whatever, not merely a bounded amount."""
+    def _dark(i_chg):
+        e = he.ElectricalSim(trace_config="short", asymmetry_mode="off")
+        e.i_charge_into_pack = i_chg
+        act = _actuators(sw=he.SW_BT_SEQ, aux=_CHG_AUX, i_charge_a=i_chg)
+        r = None
+        for _ in range(200):
+            r = _pin_and_step(e, 1e-3, act)
+        return e, r
+
+    e, r = _dark(2.5)
+    e0, _r0 = _dark(0.0)
+    assert all(math.isfinite(x) for x in e.v)
+    assert abs(r["V_chg"]) < he.V_ABSMAX
+    # The dark node is at exactly zero, so the floor -- not the node -- is what
+    # the stamp divides by; the premise of the test is that this is reached.
+    assert r["V_chg"] == 0.0
+    # ...and the charger contributed NOTHING to the clamp count. The retired
+    # current-source form roughly DOUBLED it (one extra catch per substep).
+    assert e.neg_clamp_count == e0.neg_clamp_count

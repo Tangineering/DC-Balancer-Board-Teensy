@@ -485,13 +485,22 @@ Refused combinations (argparse-level, with the reason printed):
   model's estimate** of hydrogen mass: the map is scale-portable, but the stack
   is not identified against this rig (`TODO(calibrate)`). See the warning under
   §3.2.2.
-* CSV columns `p_mot_w`, `p_fc_w`, `p_batt_w`, `p_chop_w`, `p_aux_w` and
-  `p_bal_w` (appended last, 2026-09-01f) carry the per-tick power balance in
-  watts, and `tools/hil_report_analysis.py` renders them as the
-  `hil_power_balance` figure in every run folder. Read `p_bal_w` as the residual
-  of `p_mot = p_fc + p_batt + p_chop`, **not** as an error: its named components
-  are the auxiliary load (plotted separately as `p_aux_w`), the charger-path
-  efficiency terms, bulk-capacitor storage and the RT1987 drops. Full definitions
+* CSV columns `p_mot_w`, `p_fc_w`, `p_batt_w`, `p_chop_w`, `p_aux_w`, `p_bal_w`
+  (appended 2026-09-01f) and `p_chg_loss_w` (appended after them, 2026-09-01)
+  carry the per-tick power balance in watts, and
+  `tools/hil_report_analysis.py` renders them as the `hil_power_balance` figure
+  in every run folder. The identity is
+
+      p_mot + p_chg_loss = p_fc + p_batt + p_chop + p_bal
+
+  with the Ag105 dissipation on the **load** side, beside the motor draw, because
+  it is a dissipation. Read `p_bal_w` as the residual of that identity, **not**
+  as an error: its named components are the auxiliary load (plotted separately as
+  `p_aux_w`), bulk-capacitor storage, the hi-fi motor stamp's transient term and
+  the RT1987 drops. The charger is no longer among them — it is the
+  `p_chg_loss_w` column. A CSV written before that column existed carries the
+  charger term inside `p_bal_w`, and the figure annotates itself when it reads
+  one. Full definitions
   and the measured residual magnitudes are in `docs/HIL_PLANT.md` §7.1. On a
   replay CSV, and on any campaign up to `hil_report_20260901_151156`, the columns
   are absent and the figure falls back to a **legacy backfill** that carries an

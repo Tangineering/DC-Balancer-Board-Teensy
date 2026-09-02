@@ -47,6 +47,11 @@ def _fields(**over):
         soc0=0.7, capacity_ah=5.0, charger_accounting="physical",
         stage_dt=0.1, n_share=41, soc_step=5e-6, chg_a=0.8,
         lambda_dev=0.0, aux_preload_a=None,
+        # eta_chg (2026-09-01): an OPTIONAL key field. None is the 1:1
+        # current-transfer charger era, which is what every record in the
+        # shipped store was solved against, and it is OMITTED from the
+        # canonical form so those records keep their pre-change keys.
+        eta_chg=None,
         gfc_dc_gain=1.7637602179836514e-05, eta_boost=0.85,
         limit_i_fc_max_a=1.4, charge_share_value=0.75, share_span=0.25,
         cruise_slope_max=0.05, cruise_min_mps=0.5, run_entry_s=3.0,
@@ -60,6 +65,10 @@ def _fields(**over):
     # caller through problem_fields() would produce (pinned separately below).
     aux = base.pop("aux_preload_a")
     base["aux_preload_a"] = 0.0 if aux is None else float(aux)
+    # eta_chg is NOT floated by the loop below: None is a meaningful value
+    # (the era), not a missing number.
+    eta = base.pop("eta_chg")
+    base["eta_chg"] = None if eta is None else float(eta)
     for name in ("soc0", "capacity_ah", "stage_dt", "n_share", "soc_step",
                 "chg_a", "lambda_dev", "gfc_dc_gain", "eta_boost",
                 "limit_i_fc_max_a", "charge_share_value", "share_span",
@@ -1101,3 +1110,97 @@ def test_solve_and_store_rebuilds_the_run_era_meta(tmp_path, monkeypatch):
     assert "profile fingerprint drift" in msg
     assert "chg_i_ceiling_a" in msg
     assert "NOT overridable" in msg          # the constants are separated out
+
+
+# ==========================================================================
+# 2026-09-01 charger-efficiency round (WP-1B1): `eta_chg` as an OPTIONAL key
+# field.  The store holds only old-era records, and they must stay reachable.
+# ==========================================================================
+
+def test_eta_chg_is_a_key_field_and_none_omits_it_from_the_canonical_form():
+    assert "eta_chg" in db.KEY_FIELDS
+    assert "eta_chg" in db.OPTIONAL_KEY_FIELDS
+    old = _fields()
+    assert old["eta_chg"] is None
+    # A dict that predates the field keys IDENTICALLY to one that carries None,
+    # which is what keeps every archived record reachable.
+    legacy = {k: v for k, v in old.items() if k != "eta_chg"}
+    assert db.make_key(legacy) == db.make_key(old)
+    assert db.non_target_hash(legacy) == db.non_target_hash(old)
+
+
+def test_a_new_era_record_keys_differently_from_an_old_era_one():
+    old = _fields()
+    new = _fields(eta_chg=0.88)
+    assert db.make_key(new) != db.make_key(old)
+    assert db.non_target_hash(new) != db.non_target_hash(old)
+
+
+def test_old_era_lookup_still_finds_a_stored_old_era_record(tmp_path):
+    fields = _fields()
+    db.store(_record(fields), db_dir=str(tmp_path))
+    # Looked up BOTH ways: with the field present as None, and with a
+    # pre-change field dict that does not carry it at all.
+    assert db.lookup(fields, db_dir=str(tmp_path)) is not None
+    legacy = {k: v for k, v in fields.items() if k != "eta_chg"}
+    assert db.lookup(legacy, db_dir=str(tmp_path)) is not None
+    # A new-era lookup MISSES it, which is the point of keying the era.
+    assert db.lookup(_fields(eta_chg=0.88), db_dir=str(tmp_path)) is None
+
+
+def test_committed_store_records_key_unchanged_under_the_new_field():
+    """Every record actually in tools/dp_db/ must still hash to its own key."""
+    recs = list(db.iter_records())
+    if not recs:
+        pytest.skip("empty store in this checkout")
+    for rec in recs:
+        f = dict(rec["key_fields"])
+        f["target_soc"] = rec["target_soc"]
+        assert db.make_key(f) == rec["key"], rec["key"]
+
+
+def test_load_key_fields_accepts_an_object_without_the_optional_field(tmp_path):
+    obj = {k: v for k, v in _fields().items() if k != "eta_chg"}
+    p = tmp_path / "k.json"
+    p.write_text(json.dumps(obj), encoding="utf-8")
+    got = db.load_key_fields("@" + str(p))
+    assert "eta_chg" not in got
+    assert db.make_key(got) == db.make_key(_fields())
+
+
+def test_era_overrides_accept_eta_chg():
+    """`eta_chg` joined DP_FINGERPRINT_META_KEYS, so an archived run's era is
+    reconstructable through the same override mechanism as its preload."""
+    sim = pytest.importorskip("hil_plant_sim")
+    if "eta_chg" not in getattr(sim, "DP_FINGERPRINT_META_KEYS", ()):
+        pytest.skip("this checkout's hil_plant_sim does not carry eta_chg in "
+                    "DP_FINGERPRINT_META_KEYS yet (parallel work package)")
+    meta = dict(sim.SCENARIOS["ems-soc-band"])
+    a = db.apply_era_overrides(meta, {"eta_chg": None})
+    b = db.apply_era_overrides(meta, {"eta_chg": 0.5})
+    assert "eta_chg" not in a           # None DELETES, per apply_era_overrides
+    assert b["eta_chg"] == 0.5
+    # The DELETED key is NOT the old era here: hil_plant_sim.dp_eta_chg()
+    # resolves an absent key to the module's own ETA_CHG, so `a` fingerprints
+    # as the LIVE efficiency.  0.5 is used as the contrasting value precisely
+    # because it is not that default - overriding with the default would move
+    # nothing and the test would pass vacuously.
+    assert sim.dp_profile_fingerprint("ems-soc-band", a) != \
+        sim.dp_profile_fingerprint("ems-soc-band", b)
+    assert sim.dp_profile_fingerprint("ems-soc-band", a) == \
+        sim.dp_profile_fingerprint(
+            "ems-soc-band", dict(meta, eta_chg=sim.dp_eta_chg({})))
+
+
+def test_fields_from_problem_carries_the_problems_era():
+    pytest.importorskip("numpy")
+    import gen_dp_ems_table as gen
+    import hil_plant_sim as sim
+    meta = sim.SCENARIOS["ems-soc-band"]
+    kw = dict(soc0=0.7, capacity_ah=5.0, stage_dt=1.0, n_share=5,
+              soc_step=5e-5, run_exit=float(sim.SOC_BAND_RUN_EXIT_S),
+              charger_accounting="physical")
+    p_old = gen.prepare_problem("ems-soc-band", meta, **kw)
+    p_new = gen.prepare_problem("ems-soc-band", meta, eta_chg=0.88, **kw)
+    assert db.fields_from_problem(p_old, 0.698)["eta_chg"] is None
+    assert db.fields_from_problem(p_new, 0.698)["eta_chg"] == 0.88

@@ -19,9 +19,30 @@ and looked up afterwards.
   and it is never the authority.
 - `solves/<key>.json` — one solve. The key is a sha256 over the problem: the
   scenario, its profile fingerprint, the pack and grid parameters, the charger
-  accounting, the auxiliary preload, and the eight model quantities the
-  generated DP table header records. The terminal-SoC target is part of the key, quantized
-  to 1e-5 SoC.
+  accounting, the auxiliary preload, the charger efficiency, and the eight model
+  quantities the generated DP table header records. The terminal-SoC target is
+  part of the key, quantized to 1e-5 SoC.
+
+## Charger era (`eta_chg`)
+
+`eta_chg` is an OPTIONAL key field, added 2026-09-01 with the charger-efficiency
+round. It names the model a solve billed the Ag105 under:
+
+- **absent, or null — the 1:1 current-transfer era.** A delivered amp cost a bus
+  amp, i.e. `V_bus·i_chg` watts. Every record stored before 2026-09-01 is this
+  era, and every one of them is still reachable: an absent optional field is
+  OMITTED from the canonical key form, so an old-era key is byte-identical to
+  the one the pre-change code computed.
+- **a float — the energy-conserving converter.** A delivered amp costs
+  `V_pack·i_chg/eta` watts. A new-era record keys differently, which is the
+  point: a baseline solved against a different charger is not a baseline for
+  this one.
+
+A run's own value comes off its sidecar meta (`charger_power.resolve_eta_chg`,
+where a missing key is the old era). `prefill --eta-chg` sets it explicitly, and
+`--eta-chg-none` forces the old era; the value also travels inside a
+`--key-fields` object and inside `era_overrides`, which accepts `eta_chg` like
+any other fingerprint key.
 
 ## Provenance
 

@@ -252,13 +252,21 @@ harvest off `I_charge`, the `chopper_clamp` event's `energy_j`, and the plant's
 **Charger input-power cap.** On the REGEN-fed path the Ag105's ceiling is
 `min(configured profile, available input power)`; fed from the bus through `FC_CHARGE` it
 is the configured profile verbatim, exactly as before. Without the cap the charger would
-draw its 2.5 A profile out of a 3 W brake. The bias runs in **both directions, and they do
-not cancel**: `p_regen_w` is the power available **pre-chopper**, so the cap is
-**optimistic** by the chopper's own efficiency/share factor — some of that power is lost
-across the chopper before it ever reaches the Ag105 input — while separately the cap is
-input-referred and compared against an output-referred target, which **understates** the
-harvest by roughly `v_in/v_pack ≈ 2×` — the conservative direction. Left in place rather
-than papered over with an unmeasured converter efficiency (`TODO(verify)`).
+draw its 2.5 A profile out of a 3 W brake. The cap is **output-referred and exact** from
+2026-09-01:
+
+```
+    i_target = min(ag105_i_max, ETA_CHG * p_regen_w / V_pack)
+```
+
+The previous form was `p_regen_w / V_chg`, an input-referred current compared against an
+output-referred target. That form understated the harvest by roughly `V_chg/V_pack ≈ 2×`.
+It was retained only because the model carried no charger efficiency. `ETA_CHG` supplies
+one, so the conversion is now defined rather than approximated.
+
+One bias direction remains. `p_regen_w` is the power available **pre-chopper**, so the cap
+is **optimistic** by the chopper's own share factor — part of that power is burnt across
+the chopper before it reaches the Ag105 input.
 
 **Observability.** The hi-fi engine emits one coalesced **`chopper_clamp`** event per
 braking episode (`dur_s`, `energy_j`, `peak_w`, `peak_v`) and reports `regen_energy_j`,
@@ -726,6 +734,8 @@ instant power is lost:
 | `AG105_TAU_S` | 0.4 s | Simulator-local numerical parameter — **`TODO(verify)`**, no bench figure backs the ramp rate. |
 | `AG105_I_MAX` | 2.5 A | The firmware's own configured charge-current ceiling (reg `0x00` = `0x01`, `Ag105_Table4_Charge_Current_Select.json`). A scenario may **de-rate** it with the `chg_i_ceiling_a` field (same class of knob as `vesc_cap_f`: it sizes the stimulus, it does not model the firmware). `charge-fault` uses 0.8 A and `charge-regen` 1.6 A so their FC-path draw stays under `LIMIT_I_FC_MAX` 1.4 A; the sim prints a line whenever it is de-rated. |
 | `AG105_V_IN_MIN` | 8.0 V | Plant-only input-rail floor — see above. **`TODO(verify)`**. |
+| `ETA_CHG` | 0.88 | Ag105 input→pack energy efficiency, both engines. `AG105_Silvertel.pdf` "DC Electrical Characteristics" item 1 ("Charge Efficiency EFF 88 % typ"), whose Note 2 states the point as 25 °C, 12 Vin, 3 series cells. **Our point differs** (15–16 V in, 2S), no data exist for it, and the operator ruled a static 0.88. **`TODO(verify)`** — bench-measure input/output power at 15 V in, 2S. See §4.6.1. |
+| `V_CHG_LOAD_FLOOR` | 8.0 V | Floor on the charger input-current stamp's division, pinned equal to `AG105_V_IN_MIN`. PHYSICAL, not numerical: the plant carries no charge current below it, so no legitimate state evaluates the stamp between 1 and 8 V. Bounds the stamp at 2.98 A on a dark node. Deliberately NOT equal to `V_MOT_LOAD_FLOOR`, which guards a load that does operate down to a dark node. |
 
 **⚠️ DATASHEET CORRECTION (2026-08-31): the Ag105's MPPT is an INPUT-VOLTAGE
 THRESHOLD regulator, not a perturb-and-observe tracker.** `AG105_Silvertel.pdf`
@@ -776,6 +786,224 @@ it, starting from `--soc0 0.990`. There is still no I2C transport: the config
 handshake (reg `0x01`=0x08, reg `0x00`=0x01) is not modelled at all, because the
 firmware's HIL branch skips it entirely and just injects the resulting numbers.
 
+#### 4.6.1 Charge efficiency and the charger's input draw
+
+The Ag105 is modelled as an **energy converter at a static efficiency**, `ETA_CHG` =
+**0.88** (`tools/hil_electrical.py`). One rule governs both electrical engines:
+
+```
+    i_in = i_charge * V_pack / (ETA_CHG * V_input)      # input current
+    i_out = i_charge                                    # pack current, unchanged by eta
+    p_chg_loss = i_charge * V_pack * (1/ETA_CHG - 1)    # module dissipation
+```
+
+The input node is a switch question, and both engines answer it from
+`chargerHasPower()`. With `FC_CHARGE_ENABLE` closed the input is VBUS, so the **sources**
+pay. With `REGEN_ENABLE` and `MOT_PWR_ENABLE` closed alone the input is V-MOT, so the
+**braking power** pays and the bus is untouched. Three sites implement the rule: the
+hi-fi `N_CHG` stamp, the simple-mode bus draw, and the simple-mode motor-node sink.
+
+**Provenance, and its limits.** The figure is `AG105_Silvertel.pdf`, "DC Electrical
+Characteristics" item 1, "Charge Efficiency EFF 88 % typ". Note 2 of that table qualifies
+it: "Typical figures are at 25 °C, 12 Vin, 3 series cell configuration". This rig runs
+15–16 V in and a 2S (8.4 V) pack, so the conversion ratio is roughly 1.9:1 where the
+datasheet measured roughly 1.0:1. No efficiency data exist for our operating point. The
+operator ruled a static 0.88 for both engines rather than an unmeasured curve.
+`TODO(verify)`: bench-measure input and output power at 15 V in, 2S.
+
+**Stamp form in the hi-fi engine.** A true constant-power load has `i(v) = P/v` and
+therefore a negative incremental conductance `-P/v²`. Stamping that linearization would
+place a negative term on the diagonal of `G`, which is the one form that can make the
+solve indefinite. The element is stamped as a **chord conductance** through the operating
+point instead, referred to the **previous substep's** node voltage:
+
+```
+    v_prev = max(v[N_CHG], V_CHG_LOAD_FLOOR)
+    i_in   = i_charge * V_pack / (ETA_CHG * v_prev)
+    G[N_CHG][N_CHG] += i_in / v_prev
+```
+
+At `v == v_prev` this delivers exactly `i_in`. The diagonal term is positive, so the solve
+stays positive-definite, and the delivered current shrinks as the node sags instead of
+holding a fixed draw into a collapsing rail. This is the same form the motor draw `g_mot`
+uses. It is **not** the regen Norton pattern: that element is a two-element source pair
+with a zero-crossing bound, and the charger is a load.
+
+`V_CHG_LOAD_FLOOR` is **8.0 V**, pinned equal to `AG105_V_IN_MIN`, and the value is
+physical rather than numerical. The plant zeroes `i_charge` below `AG105_V_IN_MIN`, so no
+legitimate state evaluates the stamp between 1 and 8 V; the floor can therefore be the
+lowest input the module can charge from. With `V_pack ≤ 8.4 V` and `i_charge ≤ 2.5 A` the
+stamped input current is bounded at **2.98 A** on a dark node, where the 1.0 V floor of the
+first cut bounded it at 23.86 A. `V_MOT_LOAD_FLOOR` keeps its 1.0 V: the motor load does
+operate down to a dark node, so its floor is an arbitrary small number and the two are
+deliberately not coupled.
+
+**The seventh power column.** `p_chg_loss_w` is appended after the six power-balance
+columns and carries the module's dissipation. It is a **load-side** term, so the residual
+identity is now
+
+```
+    p_mot + p_chg_loss = p_fc + p_batt + p_chop + p_bal
+```
+
+A CSV written before 2026-09-01 has six power columns and no `p_chg_loss_w`. Such a file
+is a 1:1-charger-era file, and its `p_bal_w` still contains the charger term. The
+`hil_power_balance` figure detects the column's absence and annotates the residual panel
+accordingly.
+
+#### 4.6.2 Physics change record — charger efficiency (2026-09-01)
+
+**What changed.** The Ag105 was a **1:1 current transfer element** in both engines, in two
+opposite ways. The hi-fi engine stamped `J[N_CHG] -= i_charge` and handed the pack the same
+`i_charge`, so it destroyed `i_charge * (V_chg − V_pack)` by construction and over-drew the
+bus. The simple engine computed `i_total = i_motor + i_aux` and never billed the sources
+for the charger at all, so pack charge there was free energy. Both now run the one rule of
+§4.6.1.
+
+**Why.** The residual of the power-balance columns shipped 2026-09-01f made the defect
+visible and quantified: on a 6 s charge probe the whole 11 W charge-window residual was the
+charger term, to two decimals. A model that destroys 11 W while charging bills the fuel
+cell for hydrogen the real charger would not cost.
+
+**Measured before and after,** on a 6 s FC-fed charge probe at a 1.4 A ceiling
+(`plant.v_bus` 15.9 V, `soc0` 0.6, no motor load, aux 0.15 A, **both droop codes at
+mid-scale**, `MDAC_CMD_LOAD_UPDATE | MDAC_RES//2`). The droop codes are part of the recipe,
+not a detail: at code 0 the same probe reads 0.9600 A / 1.4911 W / −0.4171 W and the table
+below does not reproduce.
+
+| Quantity | Simple, before | Simple, after | Hi-fi, before | Hi-fi, after |
+|---|---|---|---|---|
+| Bus draw `I_fc + I_batt` [A] | 0.1500 | 0.9283 | 1.5726 | 0.9799 |
+| Residual after aux, `p_bal + p_aux` [W] | +11.0012 | 0.0000 | −10.6477 | −0.3957 |
+| `p_chg_loss_w` [W] | — | 1.4832 | — | 1.4832 |
+
+The two engines disagreed by 21.6 W on the same probe and now agree to 0.40 W. The
+remaining hi-fi residual is the documented motoring level: aux is subtracted, and what is
+left is bulk-capacitor storage plus the hi-fi motor/conductance stamp's transient term.
+
+**One pre-existing defect is NOT fixed here, and is now stated.** `p_chop` sits on the
+source side of the residual identity although it is a dissipation, so during a braking
+window it enters `p_bal` twice — the braking residual is dominated by `−2·p_chop`. That
+form predates this round and is unchanged by it. Moving it to the load side beside
+`p_mot` and `p_chg_loss` is the obvious correction and was **deliberately deferred**
+(review decision, 2026-09-01): it would change the meaning of `p_bal_w` in every CSV
+written since 2026-09-01f, and that column's era boundary is better moved once, together
+with any other identity change, than twice in one week. `TODO`: fold the chopper onto the
+load side in the next power-balance round.
+
+**The regen-path cap, and one alternative that was measured and rejected.** On the
+REGEN-only path the charger's ceiling is the braking power, converted at `ETA_CHG` and
+referred to the pack:
+
+```
+    i_target = min(ag105_i_max, ETA_CHG * p_regen_w / max(V_pack, V_CHG_LOAD_FLOOR))
+```
+
+The review proposed netting the chopper dissipation out of that first
+(`p_regen_w − regen_chopper_w`), on the reading that the shunt takes its share and the
+charger may only have the remainder. Measured on a 2 s braking window (`v0` 3.0 m/s,
+`i_cmd` −12 A):
+
+| Engine | Cap | Charger input | Chopper burnt | Bus-sourced |
+|---|---|---|---|---|
+| simple | as shipped | 1.4388 J | 1.7128 J | +0.0000 J |
+| simple | netted | 0.0045 J | 3.1314 J | +0.0000 J |
+| hi-fi | as shipped | 1.4016 J | 1.3046 J | +0.0915 J |
+| hi-fi | netted | 0.7632 J | 1.7950 J | +0.0318 J |
+
+The netted form removes 0.06 J of bus-sourced leak and destroys 0.64 J (hi-fi) to 1.43 J
+(simple) of genuine harvest, because **the chopper is a residual absorber, not a prior
+claimant**. It is a voltage clamp: a charger that sinks current pulls the node down and the
+clamp backs off. The simple-mode row shows the displacement exactly — the charger's
+1.4388 J of input is matched by the chopper burning 1.4230 J less, with the bus
+contributing nothing. Netting removes the displacement and latches the charger off, since
+`p_avail` then stays near zero and the hard clamp holds `i_charge` there. The pre-existing
+test `test_charger_takes_its_share_once_powered_through_the_regen_path` fails outright
+under the netted form (0.0015 A peak against its 0.02 A floor). The un-netted cap is
+therefore kept.
+
+**What that leaves open.** The hi-fi row still shows **+0.0915 J of the 1.4016 J charger
+input arriving from VBUS** through a closed `MOT_PWR`, 6.5 % of the window's harvest. It is
+a transient of the node solve rather than a systematic double claim: simple mode, which has
+no such transient, leaks exactly zero. Closing it requires the charger and the clamp to be
+solved together at one node voltage instead of one capping the other.
+`TODO(verify)`: bound the leak with a co-solved split.
+`tests: test_regen_harvest_is_not_sourced_from_the_bus` pins the simple-mode zero, the
+one-for-one chopper displacement, and a 0.15 J ceiling on the hi-fi leak.
+
+**Fingerprint and hash movement.**
+
+| Artefact | Before | After |
+|---|---|---|
+| `constants_hash` | `250683275d00874d…` | `6a88d04ba8a36e61…` |
+| `ElectricalSim` design-mode bus anchor | 15.624602041790853 | 15.624602041790853 (unmoved) |
+
+The engine anchor is pinned at `i_charge = 0`, where the new stamp reduces to the old one
+term for term, so it does not move. The `--asymmetry off` byte-identity claim is therefore
+also intact for every charge-free trace. A trace **with** charging is not byte-identical
+and is not intended to be.
+
+**Reversal path — six edits, not one.** Setting `ETA_CHG = 1.0` does **not** revert the
+round. It reproduces the old behaviour bit-for-bit only when `V_pack == V_chg`, which is
+never true on this rig: the stamp becomes `i_charge * V_pack / V_chg`, not `i_charge`. A
+true bit-for-bit revert is:
+
+1. `tools/hil_electrical.py`, the `if i_charge:` block in the substep stamp — replace the
+   chord conductance `G[N_CHG][N_CHG] += i_in / v_chg_prev` with `J[N_CHG] -= i_charge`,
+   and drop `ETA_CHG` and `V_CHG_LOAD_FLOOR` with it.
+2. `tools/hil_plant_sim.py`, `Plant.step()`, the CHARGER BILLING block — delete the
+   `i_chg_in` term and restore `i_total = i_motor + self.i_aux`.
+3. `tools/hil_plant_sim.py`, `Plant.step()`, the simple-mode motor-node integration —
+   restore the sink to `i_sink = self.i_charge`.
+4. `tools/hil_plant_sim.py`, `Plant.step()`, the Ag105 regen cap — restore the
+   INPUT-referred form `i_target = min(i_target, self.p_regen_w / max(v_chg_in, 1.0))`.
+5. `tools/hil_plant_sim.py` and `tools/hil_report_analysis.py` — drop `p_chg_loss_w`
+   everywhere: the `Plant` attribute, the returned rails key, both CSV header lists and the
+   row writer, the four-term `p_bal_w`, and the figure's trace, labels and annotation.
+6. `tools/hil_plant_sim.py` and `tools/hil_report_analysis.py` — drop the fingerprint
+   plumbing: `eta_chg` from `DP_FINGERPRINT_META_KEYS`, `dp_eta_chg()` and its call in
+   `dp_profile_fingerprint()`, the `eta_chg` sidecar field in `main()`, and the
+   `eta_chg=sim.dp_eta_chg(fp_meta)` argument in `matched_dp_for_run()`. Every table in
+   `tools/dp_tables/` must then be regenerated again.
+
+Items 1–4 are behavioural; 5 is the CSV schema; 6 is the baseline-keying. Reverting a
+subset produces a plant that bills the charger inconsistently between engines, which is the
+state this round removed.
+
+**Downstream comparability.** Every campaign up to and including `20260901_151156` ran the
+1:1 charger. Any figure that depends on the charger's bus draw or on hydrogen consumed
+during a charge window is **not comparable** across this change. Two conclusions rest
+directly on the old accounting and must be re-measured before being quoted again: campaign
+`20260901_000816`'s "Ag105 charging is loss-making at rig scale", and the measured charge
+lever `L_chg` = 0.2364 SoC/g behind `sdp_policy_v3`'s α calibration. Both were derived
+under a plant that over-drew the bus by roughly 1.8× while charging.
+
+**This change is expected to REVERSE the "charging is loss-making" conclusion.** The
+arithmetic is direct. The bus cost of a given pack current scaled by `V_bus` before and
+scales by `V_pack / ETA_CHG` now, so the ratio is
+
+```
+    V_pack / (ETA_CHG * V_bus) = 7.7689 / (0.88 * 15.3172) = 0.5764
+```
+
+at the settled operating point of the §4.6.2 probe (`V_batt` and `V_chg` read from the run
+itself, not from nominal values). Charging costs **0.5764×** what it cost, so the charge
+lever scales by **1.735×**: `L_chg` = 0.2364 → **0.4102 SoC/g**. Two consequences follow
+mechanically:
+
+* 0.4102 crosses the **0.31 SoC/g revisit trigger** written into the campaign-`000816`
+  ruling — the condition that ruling itself named for charging to return on its own.
+* 0.4102 lands inside the share lever's measured 0.409–0.415 band, i.e. the two levers
+  become comparable rather than the charge lever being the clearly worse one.
+
+`sdp_policy_v3`'s α follows `α = (1−γ)/√(L_share·L_chg)`, so α scales by `1/√1.735`:
+0.1629624 → **≈ 0.1237**, which sits below the 0.239249990 charge-admission threshold
+measured in the refined α-sweep and therefore does **not** by itself admit charging in the
+solver. ⚠️ None of this is a measurement of the new plant: it is the old measurements
+rescaled by the ratio above, and every number is sensitive to the operating point through
+`V_pack/V_bus`. The re-measurement is a campaign, not an arithmetic exercise, and until it
+runs neither the old conclusion nor this reversal should be quoted as a result.
+
 ### 4.7 Simplifications and their consequences
 
 | Simplification | Consequence |
@@ -784,7 +1012,7 @@ firmware's HIL branch skips it entirely and just injects the resulting numbers.
 | **No RT1987 turn-on transient.** A switch bit change takes effect within the same tick. | The *ordering* of switch operations is fully observable at 1 ms; the *hot-plug energy* that killed a boost (Death 5) is not modelled at all. A HIL pass says the sequencing logic is right, not that a real closure would be survivable. |
 | **Split proportional to MDAC code ratio.** Sign- and monotonicity-preserving, wrong gain. | Share-loop *logic* testable; share-loop *tuning* not. |
 | **Regen modelled end to end (§3.4, WP-C 2026-09-01) — but on THREE unmeasured constants.** The floor is gone: braking energy reaches the chopper and the Ag105. `VESC_REGEN_I_MAX_A`, `ETA_REGEN` and `R_CHOPPER_REG` are all `TODO(verify)`. | The regen PATH, the chopper clamp and the energy BALANCE are now genuine HIL results. The MAGNITUDES are not: a harvest figure from a HIL run inherits the 1.5 A clip's unmeasured commanded-vs-delivered mapping and the 0.80 efficiency guess. Quote the ratio (what fraction the chopper burnt vs the charger banked), not the absolute joules. Bus-side regen rise is still absent by construction, and correctly so — `MOT_PWR` is an ideal diode. |
-| **Charger status-level only; MPPT modelled at the THRESHOLD, not the tracking.** `I_charge` and `ag105_status` are injected (§4.6), so `chargingControl()`'s readiness gating and the GENSTAT fault check are live and testable. SoC and the CV/Fully-Charged branch are modelled (§4.2). **MPPT (2026-08-31, scoped; dynamic from fw v24):** with `mppt_emulation` the part's real mechanism — the **input-voltage threshold** (datasheet p.10; **not** perturb-and-observe) — IS modelled at the value the BOARD reports (observation-frame byte 15), and `MPPT_DISABLE` becomes causal. The **tracking dynamics** (how the module walks its operating point once above the threshold) are **not** modelled, and neither is the I2C transport or config handshake. Off by default. | Sequencing and status-decode logic around the charger are meaningful HIL results, and so is the *threshold gate*'s interaction with the firmware's readiness-gated MPPT release (`mppt-tracking`). Charger **tuning** and **harvest-efficiency** results are still not available. ⚠️ The `mppt-tracking` **hunt is fw v23 history and is now the FAILURE signature** — fw v24 lowers the threshold under the bus, so the scenario asserts harvest holding, not hunting. |
+| **Charger status-level only; MPPT modelled at the THRESHOLD, not the tracking.** `I_charge` and `ag105_status` are injected (§4.6), so `chargingControl()`'s readiness gating and the GENSTAT fault check are live and testable. SoC and the CV/Fully-Charged branch are modelled (§4.2). **MPPT (2026-08-31, scoped; dynamic from fw v24):** with `mppt_emulation` the part's real mechanism — the **input-voltage threshold** (datasheet p.10; **not** perturb-and-observe) — IS modelled at the value the BOARD reports (observation-frame byte 15), and `MPPT_DISABLE` becomes causal. The **tracking dynamics** (how the module walks its operating point once above the threshold) are **not** modelled, and neither is the I2C transport or config handshake. Off by default. | Sequencing and status-decode logic around the charger are meaningful HIL results, and so is the *threshold gate*'s interaction with the firmware's readiness-gated MPPT release (`mppt-tracking`). Charger **tuning** results are still not available. Charge **efficiency** is modelled from 2026-09-01 (§4.6.1) at a static `ETA_CHG` 0.88 whose datasheet point is not this rig's, so a harvest-efficiency figure from a HIL run is the model's constant played back, not a measurement. ⚠️ The `mppt-tracking` **hunt is fw v23 history and is now the FAILURE signature** — fw v24 lowers the threshold under the bus, so the scenario asserts harvest holding, not hunting. |
 | **Single lumped bus node.** No wiring impedance, no per-source bus segment, no capacitance between nodes. | Handoff-gap phenomena of the TP0178 class (a source dropping out and the other ideal diode picking up only reactively) are not reproduced faithfully; the split here is instantaneous. |
 | **No sensor noise, no quantization, no ADC path.** | Steady-state error in a HIL drive run validates the loop's *structure*, not its noise rejection. There is no encoder jitter, so the current-side chatter seen on the bench cannot appear. |
 
@@ -1009,7 +1237,8 @@ One row per tick. The base schema is **19 columns and is frozen**; everything si
   from the exit summary's counters. Read this column, not `cmd_share_sp`, to
   answer "did the policy interior actuate".
 - `p_mot_w`, `p_fc_w`, `p_batt_w`, `p_chop_w`, `p_aux_w`, `p_bal_w` (appended
-  **last, after `error_code`**, 2026-09-01f) — the per-tick power balance in
+  **last, after `error_code`**, 2026-09-01f) and `p_chg_loss_w` (appended after
+  those six, 2026-09-01) — the per-tick power balance in
   watts, 6 dp. Declared in **both schemas** so their tail indices are fixed, but
   populated on **simulated ticks only**: a replay bypasses the plant integrator,
   so every replay row is **blank**, never `0`. `p_mot_w` is the electrical power
@@ -1028,55 +1257,62 @@ One row per tick. The base schema is **19 columns and is frozen**; everything si
   `V_batt·i_charge` — power into the pack **terminals**, with the pack's own I²R
   inside that boundary; the current is the same one the SoC integrator is
   given in both engines, so this column and `soc` tell one story, and charging
-  drives it negative. `p_chop_w` is the braking-shunt dissipation. `p_aux_w` is
+  drives it negative. The charge term reads the **clean** pack terminal voltage,
+  not the sensed `V_batt` rail, so the identity still closes under `--noise`;
+  the two `V_bus·I` terms stay on the sensed side, since those are the powers a
+  consumer reconstructs from this CSV's own rail and current columns. `p_chop_w` is the braking-shunt dissipation. `p_aux_w` is
   the housekeeping load `V_bus·i_aux`, including any scenario preload or drain.
-  `p_bal_w` is the residual `p_mot − (p_fc + p_batt + p_chop)`, written out so a
-  consumer can test the identity per tick without recomputing it.
+  `p_chg_loss_w` is the Ag105's own dissipation,
+  `i_charge·V_batt·(1/ETA_CHG − 1)`, ≥ 0 by construction (§4.6.1). `p_bal_w` is
+  the residual `p_mot + p_chg_loss − (p_fc + p_batt + p_chop)`, written out so a
+  consumer can test the identity per tick without recomputing it. ⚠️ A CSV
+  written before 2026-09-01 has **six** power columns and no `p_chg_loss_w`; its
+  `p_bal_w` still contains the charger term, because the plant that wrote it had
+  a 1:1 charger.
 
   ⚠️ **The identity is not exact, and the residual's components are named.** In
   descending magnitude:
 
   1. **The auxiliary load** — hence `p_aux_w` as its own column; subtract it first.
-  2. **The charger, and it is NOT an efficiency term.** This model's Ag105 is a
-     **1:1 current transfer element**: `hil_electrical.py:1949` stamps
-     `J[N_CHG] -= i_charge` and `:1855` hands the pack **the same** `i_charge`,
-     so the model destroys `i_charge·(V_chg − V_batt)` by construction. Measured
-     on the probe below: `1.4 A × 7.9 V = 11.06 W` against a residual of
-     **11.08 W** — the whole charge-window residual, to two decimals. A real buck
-     at η ≈ 0.9 would draw ≈ 0.79 A from a 15 V bus to deliver 1.4 A at 7.9 V, so
-     **the plant over-draws the bus by roughly 1.8× while charging**.
-     `TODO(verify: Ag105 η)`. ⚠️ **Simple mode is the opposite error:**
-     `Plant.step()` computes `i_total = i_motor + i_aux`
-     (`hil_plant_sim.py:1448`, banner at `:2897`) and never charges the sources
-     for the charger at all, so pack charge there is **free energy** and the
-     charge-window residual **flips sign**. Neither is corrected — an observer
-     column does not change the plant, and which way to fix it is an operator
-     decision.
-  3. **Bulk-capacitor storage**, `d/dt(½CV²)` on the VBUS 470 µF and, in hi-fi,
+  2. **Bulk-capacitor storage**, `d/dt(½CV²)` on the VBUS 470 µF and, in hi-fi,
      the other node capacitances.
-  4. **The hi-fi motor stamp's transient term.** The load is a conductance
-     `g_mot = i_motor/v_prev` (`hil_electrical.py:1925`), so the solved tick
+  3. **The hi-fi motor stamp's transient term.** The load is a conductance
+     `g_mot = i_motor/v_prev` (`hil_electrical.py`), so the solved tick
      draws `i_motor·v_new²/v_prev` while `p_mot_w` books `i_motor·v_new` — a
-     difference of `i_motor·v_new·(v_new − v_prev)/v_prev`. With (3) this is what
+     difference of `i_motor·v_new·(v_new − v_prev)/v_prev`. With (2) this is what
      makes the motoring residual peak near 13 W during bring-up while its
      steady-state mean stays under 0.4 W.
-  5. **RT1987 ideal-diode drops**, `i_motor·(V_bus − V_rgn)` — small, ≤ 35 mW at
+  4. **RT1987 ideal-diode drops**, `i_motor·(V_bus − V_rgn)` — small, ≤ 35 mW at
      1 A (the servo holds ~35 mV, not a PN V_f).
+  5. **The chopper's sign in this identity form.** `p_chop` is a dissipation but
+     is grouped with the sources, so during a braking window it enters the
+     residual twice. This form predates the charger-efficiency round and is
+     unchanged by it; the braking residual is dominated by `−2·p_chop`.
 
-  Measured on a 6 s motoring → braking → charging probe: in simple mode the
-  motoring residual is `p_bal + p_aux = 0.0000 W` **exactly**, the braking mean is
-  −0.67 W, and the charge-window mean is +11.1 W; in hi-fi the same three are
-  −0.37 W, −0.73 W and −11.1 W.
+  ⚠️ **THE CHARGER LEFT THIS LIST ON 2026-09-01.** It used to be item 2 and the
+  largest term of all: the model's Ag105 was a **1:1 current transfer element**,
+  so it destroyed `i_charge·(V_chg − V_batt)` in hi-fi and gave the sources free
+  energy in simple mode. Both engines now bill it through `ETA_CHG` (§4.6.1) and
+  the module's dissipation is the `p_chg_loss_w` column. **Do not read a
+  pre-2026-09-01 CSV's residual against this list** — on those files the charger
+  is still inside `p_bal_w`, and the `hil_power_balance` figure says so on the
+  residual panel.
 
-  ⚠️ **This bears on a published EMS conclusion.** The over-draw in (2) bills the
-  sources for hydrogen a real charger would not cost, so campaign
+  Measured on a 6 s FC-fed charge probe (1.4 A ceiling, 15.9 V bus, aux 0.15 A),
+  `p_bal + p_aux`: simple mode **+11.0012 W before, 0.0000 W after**; hi-fi
+  **−10.6477 W before, −0.3957 W after**. `p_chg_loss_w` reads 1.4832 W in both.
+  The bus draw `I_fc + I_batt` moves 0.1500 → 0.9283 A in simple mode and
+  1.5726 → 0.9799 A in hi-fi; the two engines disagreed by 21.6 W on this probe
+  and now agree to 0.40 W. §4.6.2 is the full change record.
+
+  ⚠️ **This bears on a published EMS conclusion.** The retired over-draw billed
+  the sources for hydrogen a real charger would not cost, so campaign
   `20260901_000816`'s finding that **Ag105 charging is loss-making at rig scale**,
   and the measured charge lever **L_chg = 0.2364 SoC/g** behind `sdp_policy_v3`'s
-  two-sided α calibration, both rest on a charger model that is pessimistic by
-  roughly the factor above. The finding's *direction* is not in question — the
-  share lever is 0.409–0.415 SoC/g, well clear — but its *margin* is
-  model-dependent and must not be quoted as measured physics until the η term is
-  resolved.
+  two-sided α calibration, both rest on the pre-η charger. The finding's
+  *direction* is not in question — the share lever is 0.409–0.415 SoC/g, well
+  clear — but its *margin* was model-dependent and must be re-measured on a
+  post-η campaign before being quoted as measured physics.
 - `cmd_v_sp`, `cmd_share_sp` (appended, unconditional within each mode) — what the
   emulated Pi commander **intended to be commanding at this tick**, blank when no
   commander exists (`--pi-live`, or a plain `--replay`). ⚠️ **They move at the

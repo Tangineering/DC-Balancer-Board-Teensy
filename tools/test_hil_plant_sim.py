@@ -1922,10 +1922,10 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
     # seventh-from-last.
     # mppt_thresh_cnt (fw v24) is appended AFTER the per-mode blocks, in BOTH
     # schemas — it is an observed BOARD field, not a plant quantity.
-    assert header[-8:] == ["mppt_thresh_cnt", "error_code",
+    assert header[-9:] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
-                           "p_chop_w", "p_aux_w", "p_bal_w"]
-    assert header[-15:-8] == ["soc", "cmd_v_sp", "cmd_share_sp",
+                           "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w"]
+    assert header[-16:-9] == ["soc", "cmd_v_sp", "cmd_share_sp",
                               "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
                               "cmd_share_sp_raw"]
     assert "elec_substep_hz" not in header
@@ -1936,10 +1936,10 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
 def test_csv_schema_hifi_mode_appends_elec_columns(tmp_path):
     header, _rows = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "hifi", "--duration", "0.02"])
-    assert header[-8:] == ["mppt_thresh_cnt", "error_code",
+    assert header[-9:] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
-                           "p_chop_w", "p_aux_w", "p_bal_w"]  # fw v24/v25 tail
-    assert header[-17:-8] == ["soc", "elec_substep_hz", "elec_events",
+                           "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w"]  # fw v24/v25 tail
+    assert header[-18:-9] == ["soc", "elec_substep_hz", "elec_events",
                               "cmd_v_sp", "cmd_share_sp",
                               "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
                               "cmd_share_sp_raw"]
@@ -1973,12 +1973,12 @@ def test_csv_schema_replay_mode_appends_cmd_columns_after_replay_rec(tmp_path):
     # are BLANK on every replay row -- no plant integrator ran -- which the
     # blanking test below pins; here only their POSITION is pinned.
     POWER_TAIL = ["p_mot_w", "p_fc_w", "p_batt_w",
-                  "p_chop_w", "p_aux_w", "p_bal_w"]
+                  "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w"]
     assert header == (REPLAY_CSV_HEADER_PIN
                       + ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt",
                          "error_code"] + POWER_TAIL)
     assert header.index("replay_rec") == REPLAY_CSV_HEADER_PIN.index("replay_rec")
-    assert header[-10:] == ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt",
+    assert header[-11:] == ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt",
                             "error_code"] + POWER_TAIL
 
 
@@ -2237,7 +2237,8 @@ def test_replay_commands_csv_header_cmd_columns_after_replay_rec(tmp_path):
     assert header == (REPLAY_CSV_HEADER_PIN
                       + ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt",
                          "error_code", "p_mot_w", "p_fc_w", "p_batt_w",
-                         "p_chop_w", "p_aux_w", "p_bal_w"])
+                         "p_chop_w", "p_aux_w", "p_bal_w",
+                         "p_chg_loss_w"])
     assert header.index("replay_rec") == REPLAY_CSV_HEADER_PIN.index("replay_rec")
 
 
@@ -2252,7 +2253,8 @@ def test_replay_plain_csv_header_unchanged_cmd_columns_blank(tmp_path):
     assert header == (REPLAY_CSV_HEADER_PIN
                       + ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt",
                          "error_code", "p_mot_w", "p_fc_w", "p_batt_w",
-                         "p_chop_w", "p_aux_w", "p_bal_w"])
+                         "p_chop_w", "p_aux_w", "p_bal_w",
+                         "p_chg_loss_w"])
     v_sp_idx = header.index("cmd_v_sp")
     share_sp_idx = header.index("cmd_share_sp")
     assert rows, "sanity"
@@ -2561,10 +2563,10 @@ def test_m3_hifi_with_csv_creates_events_sidecar(tmp_path):
     # SDP round) is appended after THAT, and cmd_share_sp_raw (2026-08-31
     # ledger fix queue) is appended after THAT -- so elec_events is now
     # seventh-from-last, not third-from-last.
-    assert header[-8:] == ["mppt_thresh_cnt", "error_code",
+    assert header[-9:] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
-                           "p_chop_w", "p_aux_w", "p_bal_w"]  # fw v24/v25 tail
-    assert header[-14:-8] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
+                           "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w"]  # fw v24/v25 tail
+    assert header[-15:-9] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
                              "h2_cum_g", "h2_sdp_cum_g", "cmd_share_sp_raw"]
     # Resolved BY NAME rather than by a negative index: the fw v24 column
     # shifted every from-the-end offset by one, which is exactly the breakage
@@ -3137,10 +3139,10 @@ def test_pi_live_csv_cmd_columns_blank(tmp_path):
     # cmd_share_sp, and cmd_share_sp_raw (2026-08-31 ledger fix queue) is now
     # the last column in simulated-plant mode -- blank here too, since no SDP
     # policy drives a --pi-live run (no commander is even constructed).
-    assert header[-8:] == ["mppt_thresh_cnt", "error_code",
+    assert header[-9:] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
-                           "p_chop_w", "p_aux_w", "p_bal_w"]  # fw v24/v25 tail
-    assert header[-14:-8] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
+                           "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w"]  # fw v24/v25 tail
+    assert header[-15:-9] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
                              "h2_cum_g", "h2_sdp_cum_g", "cmd_share_sp_raw"]
     v_idx, share_idx = header.index("cmd_v_sp"), header.index("cmd_share_sp")
     raw_idx = header.index("cmd_share_sp_raw")
@@ -7401,11 +7403,11 @@ def test_csv_header_carries_h2_sdp_cum_g_at_expected_position(tmp_path):
         tmp_path, ["--scenario", "steady", "--electrical", "simple", "--duration", "0.02"])
     # cmd_share_sp_raw (2026-08-31 ledger fix queue) is now appended after
     # h2_sdp_cum_g, so h2_sdp_cum_g is no longer the last column.
-    assert header[-8:] == ["mppt_thresh_cnt", "error_code",
+    assert header[-9:] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
-                           "p_chop_w", "p_aux_w", "p_bal_w"]  # fw v24/v25 tail
-    assert header[-9] == "cmd_share_sp_raw"
-    assert header[-12:-8] == ["h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
+                           "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w"]  # fw v24/v25 tail
+    assert header[-10] == "cmd_share_sp_raw"
+    assert header[-13:-9] == ["h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
                               "cmd_share_sp_raw"]
 
 
@@ -7692,7 +7694,7 @@ def test_csv_mppt_thresh_cnt_blank_before_the_first_frame_then_populated(
     header, rows = _run_scripted_csv(tmp_path, monkeypatch, frames,
                                      duration=0.1, port=58961)
     idx = header.index("mppt_thresh_cnt")
-    assert idx == len(header) - 8      # appended; error_code + 6 power cols after
+    assert idx == len(header) - 9      # appended; error_code + 7 power cols after
     assert rows[0][idx] == ""                          # no frame yet
     assert rows[-1][idx] == "19"
     # 255 is written as 255, not blanked: "external-resistor mode / never
@@ -7731,7 +7733,7 @@ def test_csv_error_code_blank_before_the_first_frame_then_populated(
     header, rows = _run_scripted_csv(tmp_path, monkeypatch, frames,
                                      duration=0.1, port=58971)
     idx = header.index("error_code")
-    assert idx == len(header) - 7      # appended; 6 power columns after
+    assert idx == len(header) - 8      # appended; 7 power columns after
     assert rows[0][idx] == ""                           # no frame yet
     assert rows[-1][idx] == "16"                        # 0x10 ERR_HIL_STALE
 
@@ -8109,16 +8111,32 @@ def test_charger_takes_its_share_once_powered_through_the_regen_path(hifi):
 def test_regen_fed_charger_cannot_draw_more_than_the_harvest():
     """Energy honesty: on the REGEN-only path the Ag105 ceiling is the power
     available at VCHG-IN, not its configured 2.5 A profile. Without this the
-    charger manufactures energy out of a 3 W brake."""
+    charger manufactures energy out of a 3 W brake.
+
+    THE CAP IS OUTPUT-REFERRED FROM 2026-09-01. It used to be
+    p_regen_w/V_chg -- an input-referred current compared against an
+    output-referred target, understating the harvest by roughly V_chg/V_pack
+    and left standing only because the model had no efficiency figure. With
+    ETA_CHG the exact bound is ETA_CHG*p_regen_w/V_pack, which this test now
+    pins in BOTH directions: never above the new bound, and (the arm that
+    would catch a silent revert to the old form) strictly ABOVE the old one
+    at least once."""
     pl, _ = _wpc_plant()
     sw = _WPC_SW_RUN | hil.SW_REGEN
     obs = {"switch": sw, "aux": _WPC_AUX, "current": -12.0,
            "mdac_fc": 0, "mdac_bt": 0}
+    beat_old_bound = False
     for _ in range(2000):
         pl.step(1e-3, obs)
         if pl.i_charge > 0 and pl.v_chg > 1.0:
-            assert pl.i_charge <= pl.p_regen_w / pl.v_chg + 1e-9
+            v_pack = pl.battery.v_terminal
+            assert pl.i_charge <= hil.ETA_CHG * pl.p_regen_w / v_pack + 1e-9
+            if pl.i_charge > pl.p_regen_w / pl.v_chg + 1e-9:
+                beat_old_bound = True
     assert pl.i_charge < hil.AG105_I_MAX
+    assert beat_old_bound, (
+        "the output-referred cap must admit more harvest than the retired "
+        "input-referred p_regen_w/V_chg form")
 
 
 def test_fc_charge_path_is_not_capped_by_the_harvest():
@@ -8578,17 +8596,21 @@ def test_sidecar_aux_preload_a_absent_specifically_on_replay_runs(tmp_path):
 
 # ── Requirement 7 (hil_plant_sim.py half): DP table fingerprint pins ────────
 
-def test_ftp75_dp_table_fingerprint_starts_with_403c5e71_and_zero_preload():
+def test_ftp75_dp_table_fingerprint_starts_with_d07b37a4_and_zero_preload():
     """Pins the shipped table's header against the zero-preload re-solve
     (2026-09-01): the fingerprint moved when FTP75_PRELOAD_A moved, because
     `aux_preload_a` is in DP_FINGERPRINT_META_KEYS. A stale checked-in table
-    (still carrying the pre-change 2ffba905... fingerprint) would silently
-    replay against the wrong demand if this pin ever regressed."""
+    would silently replay against the wrong demand if this pin ever regressed.
+
+    RE-PINNED 2026-09-01 (charger-efficiency round): 403c5e71... -> d07b37a4...
+    `eta_chg` joined DP_FINGERPRINT_META_KEYS, which moves the digest of every
+    scenario whatever era it is solved in, and the shipped tables were
+    regenerated at the plant's own efficiency in the same change."""
     path = os.path.join(os.path.dirname(hil.__file__), "dp_tables",
                         hil.DP_TABLE_NAME % "ems-ftp75-dp")
     meta, _times, _shares, _goals = hil.load_dp_table(path)
     fp = meta.get("profile_fingerprint", "")
-    assert fp.startswith("403c5e71"), fp
+    assert fp.startswith("d07b37a4"), fp
     # The header has no literal "aux_preload_a" field of its own -- the
     # constant's contribution is folded into profile_fingerprint (it is a
     # DP_FINGERPRINT_META_KEYS member). So "the header declares aux_preload_a
@@ -8734,7 +8756,8 @@ def test_apply_simple_asymmetry_off_restores_pure_code_ratio_in_step():
 # Per-tick power balance (2026-09-01f, Stage-2 independent coverage)
 # ─────────────────────────────────────────────────────────────────────────
 #
-# Scope: Plant.step()'s six new p_*_w observers and the CSV writer's new tail
+# Scope: Plant.step()'s p_*_w observers (six from 2026-09-01f plus
+# p_chg_loss_w from the charger-efficiency round) and the CSV writer's tail
 # columns. Not touching hil_report_analysis.py's figure builder here -- that
 # is covered in test_hil_report_analysis.py.
 
@@ -8743,24 +8766,26 @@ _PBAL_AUX = hil.AUX_FC_REG | hil.AUX_BT_REG
 
 
 def test_power_balance_csv_header_tail_both_schemas(tmp_path):
-    """Item 1 (schema/offset stability): the header tail is EXACTLY the six
+    """Item 1 (schema/offset stability): the header tail is EXACTLY the seven
     p_*_w names, in the documented order, appended after error_code, in BOTH
     the simulated and the replay schema -- and every pre-existing column
     keeps its established index (replay_rec unmoved)."""
     sim_header, _ = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "simple",
                    "--duration", "0.02"], name="sim.csv")
-    assert sim_header[-6:] == ["p_mot_w", "p_fc_w", "p_batt_w",
-                               "p_chop_w", "p_aux_w", "p_bal_w"]
-    assert sim_header[-8:-6] == ["mppt_thresh_cnt", "error_code"]
+    assert sim_header[-7:] == ["p_mot_w", "p_fc_w", "p_batt_w",
+                               "p_chop_w", "p_aux_w", "p_bal_w",
+                               "p_chg_loss_w"]
+    assert sim_header[-9:-7] == ["mppt_thresh_cnt", "error_code"]
 
     blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
     replay_header, _ = _run_main_csv(
         tmp_path, ["--replay", blg_path, "--duration", "0.02"],
         name="replay.csv")
-    assert replay_header[-6:] == ["p_mot_w", "p_fc_w", "p_batt_w",
-                                  "p_chop_w", "p_aux_w", "p_bal_w"]
-    assert replay_header[-8:-6] == ["mppt_thresh_cnt", "error_code"]
+    assert replay_header[-7:] == ["p_mot_w", "p_fc_w", "p_batt_w",
+                                  "p_chop_w", "p_aux_w", "p_bal_w",
+                                  "p_chg_loss_w"]
+    assert replay_header[-9:-7] == ["mppt_thresh_cnt", "error_code"]
     # Every established replay-schema index is unchanged: replay_rec keeps
     # its documented position, and the pinned prefix matches byte-for-byte.
     assert replay_header[:len(REPLAY_CSV_HEADER_PIN)] == REPLAY_CSV_HEADER_PIN
@@ -8787,7 +8812,8 @@ def test_power_balance_replay_rows_are_blank_not_zero(tmp_path):
         tmp_path, ["--replay", blg_path, "--duration", "0.05"],
         name="replay_blank.csv")
     idxs = [header.index(c) for c in
-            ("p_mot_w", "p_fc_w", "p_batt_w", "p_chop_w", "p_aux_w", "p_bal_w")]
+            ("p_mot_w", "p_fc_w", "p_batt_w", "p_chop_w", "p_aux_w",
+             "p_bal_w", "p_chg_loss_w")]
     assert rows, "expected at least one row"
     for row in rows:
         for idx in idxs:
@@ -8915,3 +8941,315 @@ def test_power_balance_charge_sign_lowers_p_batt_w():
                                             abs=1e-9)
     assert out["p_batt_w"] < gross - 1e-6, (
         "charging current must measurably lower p_batt_w below the gross draw")
+
+
+# =========================================================================
+# CHARGER EFFICIENCY (ETA_CHG) -- 2026-09-01
+# =========================================================================
+#
+# Scope: the one CHARGER BILLING rule in both engines (input power = output
+# power / ETA_CHG), the pack current's independence from eta, the new
+# p_chg_loss_w column and its identity, the charge-window residual, the
+# engine anchor's immobility, and the sidecar / fingerprint plumbing. The
+# output-referred regen cap is pinned in
+# test_regen_fed_charger_cannot_draw_more_than_the_harvest above.
+
+_ETA_SW_CHG = (hil.SW_FC_BUS | hil.SW_BT_BUS | hil.SW_BT_SEQ | hil.SW_MOT_PWR
+               | hil.SW_FC_CHARGE)
+
+
+def _eta_charge_probe(hifi, ceiling=1.4, seconds=6.0, v_bus=15.9, soc0=0.6):
+    """Settle an FC-fed charge window and return (plant, last rails dict).
+
+    Six seconds clears AG105_SETTLE_S (0.5 s) and many AG105_TAU_S (0.4 s), so
+    i_charge is at its ceiling and every first-order transient has decayed --
+    which is what makes the power identities below steady-state statements
+    rather than transient snapshots."""
+    from hil_electrical import ElectricalSim
+    pl = hil.Plant(electrical=ElectricalSim() if hifi else None, soc0=soc0)
+    pl.v_bus = v_bus
+    pl.ag105_i_max = ceiling
+    obs = _obs(switch=_ETA_SW_CHG, aux=_PBAL_AUX, current=0.0)
+    out = None
+    for _ in range(int(seconds / 1e-3)):
+        out = pl.step(1e-3, obs)
+    return pl, out
+
+
+@pytest.mark.parametrize("hifi", [False, True])
+def test_eta_chg_charger_conserves_power_within_the_substep_tolerance(hifi):
+    """(a) POWER CONSERVATION THROUGH THE CHARGER, both engines.
+
+    The charger's INPUT power must equal its output power divided by ETA_CHG.
+    The input power is not a column, so it is recovered from the bus balance:
+    with no motor load and a settled window the sources supply exactly the aux
+    load plus the charger input, so
+
+        p_in = (p_fc + p_batt_gross) - p_aux
+
+    where p_batt_gross is V_bus*I_batt (p_batt_w has the charge term already
+    subtracted). The tolerance is loose in hi-fi (0.5 W against ~12.5 W, i.e.
+    4 %) because that engine's remaining residual -- bulk-capacitor storage,
+    the conductance stamp's transient term and the RT1987 servo drops, together
+    the measured -0.3957 W -- sits inside this same bus balance and is not
+    separable here; simple mode has none of them, so it is held tight. A
+    REGRESSION TO THE 1:1 CHARGER would put this quantity at p_out (11.06 W),
+    9 sigma outside even the loose bound."""
+    pl, out = _eta_charge_probe(hifi)
+    assert pl.i_charge == pytest.approx(1.4, rel=1e-3)
+    p_out = out["V_batt"] * pl.i_charge
+    p_batt_gross = out["V_bus"] * out["I_batt"]
+    p_in = (out["p_fc_w"] + p_batt_gross) - out["p_aux_w"]
+    assert p_in == pytest.approx(p_out / hil.ETA_CHG,
+                                 abs=0.5 if hifi else 1e-6)
+
+
+@pytest.mark.parametrize("hifi", [False, True])
+def test_eta_chg_does_not_change_the_pack_current(hifi, monkeypatch):
+    """(b) ETA NEVER MOVES THE PACK CURRENT.
+
+    The efficiency is an INPUT-side quantity by construction: the pack still
+    receives exactly `i_charge`. Running the same probe at eta 1.0 must
+    therefore leave i_charge untouched while the bus draw moves. NOTE the
+    NET pack current is NOT invariant and must not be asserted as such: the
+    pack also supplies part of the bus draw through its own boost, and that
+    draw is exactly what eta moves, so SoC legitimately differs (measured
+    3.2e-5 of SoC over 6 s). The invariant is the CHARGE current alone.
+    Monkeypatching BOTH modules' names is deliberate --
+    hil_plant_sim imports the constant, so patching only hil_electrical would
+    leave simple mode on the old value and the test would prove nothing."""
+    import hil_electrical as he
+    pl_a, out_a = _eta_charge_probe(hifi)
+    monkeypatch.setattr(he, "ETA_CHG", 1.0)
+    monkeypatch.setattr(hil, "ETA_CHG", 1.0)
+    pl_b, out_b = _eta_charge_probe(hifi)
+    assert pl_b.i_charge == pytest.approx(pl_a.i_charge, rel=1e-6)
+    # ...and the bus draw DID move, or the patch was inert and (b) is vacuous.
+    itot_a = out_a["I_fc"] + out_a["I_batt"]
+    itot_b = out_b["I_fc"] + out_b["I_batt"]
+    assert itot_b < itot_a - 0.05
+
+
+@pytest.mark.parametrize("hifi", [False, True])
+def test_eta_chg_loss_column_equals_the_identity(hifi):
+    """(c) THE LOSS COLUMN IS THE IDENTITY, and it is non-negative."""
+    pl, out = _eta_charge_probe(hifi)
+    expect = pl.i_charge * out["V_batt"] * (1.0 / hil.ETA_CHG - 1.0)
+    assert out["p_chg_loss_w"] == pytest.approx(expect, abs=1e-12)
+    assert out["p_chg_loss_w"] > 0.0
+    # ...and it leaves the residual: p_bal is the identity WITH the loss on the
+    # load side, exactly as Plant.step() documents.
+    assert out["p_bal_w"] == pytest.approx(
+        out["p_mot_w"] + out["p_chg_loss_w"]
+        - (out["p_fc_w"] + out["p_batt_w"] + out["p_chop_w"]), abs=0.0)
+
+
+def test_eta_chg_loss_column_is_zero_with_no_charging():
+    """(c, converse): no charge current, no loss -- so the column cannot be a
+    constant offset that happens to fit the charging case."""
+    plant = hil.Plant()
+    plant.v_bus = hil.V_BUS_NOMINAL
+    plant.i_mot_extra = 2.0
+    out = plant.step(1e-3, _obs(switch=_PBAL_SW_LIVE, aux=_PBAL_AUX))
+    assert out["I_charge"] == 0.0
+    assert out["p_chg_loss_w"] == 0.0
+    assert out["p_bal_w"] == pytest.approx(
+        out["p_mot_w"] - (out["p_fc_w"] + out["p_batt_w"] + out["p_chop_w"]),
+        abs=0.0)
+
+
+@pytest.mark.parametrize("hifi,bound", [(False, 1e-5), (True, 0.5)])
+def test_eta_chg_charge_window_residual_drops_to_the_aux_level(hifi, bound):
+    """(e) THE CHARGE-WINDOW RESIDUAL, the measurement that motivated the
+    round.
+
+    Under the 1:1 charger this probe's `p_bal_w + p_aux_w` was +11.0012 W in
+    simple mode and -10.6477 W in hi-fi -- the whole charge-window residual was
+    the charger. With the eta model it must fall to the aux-plus-storage
+    level: float-noise zero in simple mode (no storage, no motor stamp -- the
+    measured 8.4e-7 W is IEEE-754 associativity on the split-current products,
+    not physics) and the documented ~-0.40 W in hi-fi (bulk-capacitor storage
+    plus the conductance stamp's transient term). Both bounds sit orders of
+    magnitude below the retired 11 W, which is the regression this test exists
+    to catch."""
+    pl, out = _eta_charge_probe(hifi)
+    assert abs(out["p_bal_w"] + out["p_aux_w"]) <= bound
+
+
+def test_eta_chg_simple_and_hifi_bus_draw_now_agree():
+    """The two engines held OPPOSITE errors (simple billed nothing, hi-fi
+    billed 1:1) and disagreed by ~0.6 A of bus current on this probe. One
+    rule, so they must now agree in kind -- 10 % is generous against the ~6x
+    disagreement it replaces, and leaves room for the hi-fi droop difference
+    (which is ~4x deeper by construction, see the K_DROOP banner)."""
+    _pl_s, out_s = _eta_charge_probe(False)
+    _pl_h, out_h = _eta_charge_probe(True)
+    itot_s = out_s["I_fc"] + out_s["I_batt"]
+    itot_h = out_h["I_fc"] + out_h["I_batt"]
+    assert itot_s == pytest.approx(itot_h, rel=0.10)
+
+
+def test_eta_chg_regen_fed_path_does_not_bill_the_bus():
+    """The other half of the CHARGER BILLING rule: fed through REGEN alone the
+    charger's input is V-MOT, so the braking power pays and the BUS draw must
+    carry no charger term at all. With no motor draw while braking the bus
+    total is the aux load exactly -- if the regen-fed charger leaked into
+    `i_total` it would not be."""
+    pl, _ = _wpc_plant()
+    sw = _WPC_SW_RUN | hil.SW_REGEN
+    obs = {"switch": sw, "aux": _WPC_AUX, "current": -12.0,
+           "mdac_fc": 0, "mdac_bt": 0}
+    out = None
+    for _ in range(2000):
+        out = pl.step(1e-3, obs)
+    assert pl.i_charge > 0.0, "precondition: the regen-fed charger is running"
+    assert (out["I_fc"] + out["I_batt"]) == pytest.approx(pl.i_aux, abs=1e-9)
+    # ...and the sink is REACHING the motor node, not merely absent from the
+    # bus. Reverting the motor-node sink to the retired 1:1 `self.i_charge`
+    # leaves the bus assertion above untouched (the term is on the wrong node
+    # either way) but moves V_rgn measurably, because the node integrates the
+    # difference between the regen source and its sinks. Pinning the node --
+    # and the chopper state it straddles -- is what makes this test non-vacuous
+    # against that revert. MEASURED: 18.099 V with the input-referred sink,
+    # 15.939 V (the bus floor, chopper barely conducting) with the 1:1 sink --
+    # the two straddle the 18.1 V chopper trip, so the revert is not a rounding
+    # difference but a different clamp regime.
+    assert out["V_rgn"] == pytest.approx(18.099, abs=0.05)
+    assert pl.regen_chopper_energy_j > 0.0
+
+
+def test_eta_chg_constant_is_in_the_model_fingerprint():
+    """(f, part 1) ETA_CHG is a model constant, so `constants_hash` must see
+    it -- under its canonical hil_electrical name, since that is where the
+    single literal lives and hil_plant_sim only re-exports it."""
+    consts = hil.collect_model_constants()
+    assert consts["hil_electrical.ETA_CHG"] == repr(0.88)
+    assert "hil_plant_sim.ETA_CHG" not in consts     # re-export, not a second
+
+
+def test_eta_chg_is_inert_on_a_charge_free_trace(monkeypatch):
+    """(f, part 2) WHY THE ENGINE ANCHOR DID NOT MOVE, as an executable claim.
+
+    test_hil_electrical.py pins the design-mode solved bus node at
+    15.624602041790853, and that pin is UNMOVED by this round because it runs
+    with `i_charge` = 0, where the new stamp is not evaluated at all. Pinning
+    the literal again here would only duplicate that test; what is worth
+    asserting is the REASON. A charge-free trace must be BIT-IDENTICAL across
+    any value of ETA_CHG -- which is also exactly what keeps the
+    `--asymmetry off` byte-identity claim intact for every charge-free
+    campaign in the archive."""
+    import hil_electrical as he
+    plant = hil.Plant(electrical=he.ElectricalSim(asymmetry_mode="off"))
+    plant.v_bus = hil.V_BUS_NOMINAL
+    plant.i_mot_extra = 2.0
+    obs = _obs(switch=_PBAL_SW_LIVE, aux=_PBAL_AUX, current=0.0)
+    # THE WHOLE RAILS DICT, not V_bus alone: the stamp sits on N_CHG, and a
+    # V_bus-only comparison would pass even if the charger node itself moved.
+    ref = [dict(plant.step(1e-3, obs)) for _ in range(200)]
+
+    monkeypatch.setattr(he, "ETA_CHG", 0.5)
+    monkeypatch.setattr(hil, "ETA_CHG", 0.5)
+    plant2 = hil.Plant(electrical=he.ElectricalSim(asymmetry_mode="off"))
+    plant2.v_bus = hil.V_BUS_NOMINAL
+    plant2.i_mot_extra = 2.0
+    got = [dict(plant2.step(1e-3, obs)) for _ in range(200)]
+
+    assert plant.i_charge == 0.0                 # precondition: charge-free
+    assert got == ref                            # bit-identical, every tick
+
+
+def test_eta_chg_is_in_dp_fingerprint_keys_and_absent_means_the_old_era():
+    """(g, part 1, ERA SENTINEL — operator ruling 2026-09-01) The fingerprint
+    covers the charger efficiency, and an ABSENT key means the era that
+    PREDATES it: the 1:1 current-transfer charger, named `None` here and in
+    tools/charger_power.resolve_eta_chg() so ONE convention crosses both
+    modules.  The old era is not reproducible by any efficiency value (it
+    billed the BUS voltage, the new model bills the PACK voltage), which is
+    why the sentinel is a sentinel and not a number.
+
+    The plant's own RUNTIME default is untouched by this: every new run is
+    billed at hil_electrical.ETA_CHG and its sidecar records that number
+    explicitly (see the sidecar test below)."""
+    assert "eta_chg" in hil.DP_FINGERPRINT_META_KEYS
+    assert hil.dp_eta_chg({}) is None
+    assert hil.dp_eta_chg({"eta_chg": None}) is None
+    assert hil.dp_eta_chg({"eta_chg": 0.5}) == 0.5
+    assert hil.dp_eta_chg({"eta_chg": hil.ETA_CHG}) == hil.ETA_CHG
+    # The two eras hash apart, which is the whole point of the sentinel: an
+    # archived run's baseline cannot collide with a post-change one.
+    base = dict(hil.SCENARIOS["ems-dp-replay"])
+    assert hil.dp_profile_fingerprint("ems-dp-replay", base) != \
+        hil.dp_profile_fingerprint("ems-dp-replay",
+                                   dict(base, eta_chg=hil.ETA_CHG))
+    # ...and it is LOAD-BEARING in the digest: two efficiencies, two prints.
+    base = dict(hil.SCENARIOS["ems-dp-replay"])
+    a = hil.dp_profile_fingerprint("ems-dp-replay", base)
+    b = hil.dp_profile_fingerprint("ems-dp-replay", dict(base, eta_chg=0.5))
+    assert a != b
+
+
+def test_eta_chg_recorded_in_the_run_sidecar(tmp_path):
+    """(g, part 2) A simulated run's sidecar carries the charger era, next to
+    the preload era it mirrors."""
+    import json
+    csv_path = str(tmp_path / "eta.csv")
+    _run_main_csv(tmp_path, ["--scenario", "steady", "--electrical", "simple",
+                             "--duration", "0.02"], name="eta.csv")
+    with open(csv_path + ".meta.json", encoding="utf-8") as fh:
+        doc = json.load(fh)
+    assert doc["scenario"]["eta_chg"] == hil.ETA_CHG
+
+
+def _brake_window_energies(hifi, charger_on, seconds=2.0):
+    """A 2 s regen-fed braking window, returning the energy bookkeeping.
+
+    `charger_on=False` is the counterfactual the leak is measured against: the
+    ceiling is set to zero, so every other term (the brake, the node, the
+    chopper law) is identical and the DIFFERENCE isolates the charger."""
+    from hil_electrical import ElectricalSim
+    pl = hil.Plant(electrical=ElectricalSim() if hifi else None, soc0=0.7)
+    pl.v_bus = 15.9
+    pl.v = 3.0
+    if not charger_on:
+        pl.ag105_i_max = 0.0
+    obs = {"switch": _WPC_SW_RUN | hil.SW_REGEN, "aux": _WPC_AUX,
+           "current": -12.0, "mdac_fc": 0, "mdac_bt": 0}
+    e_bus = e_chop = e_chg_in = 0.0
+    for _ in range(int(seconds / 1e-3)):
+        out = pl.step(1e-3, obs)
+        e_bus += out["V_bus"] * (out["I_fc"] + out["I_batt"]) * 1e-3
+        e_chop += out["p_chop_w"] * 1e-3
+        e_chg_in += (pl.i_charge * pl.battery.v_terminal / hil.ETA_CHG) * 1e-3
+    return {"bus": e_bus, "chop": e_chop, "chg_in": e_chg_in}
+
+
+def test_regen_harvest_is_not_sourced_from_the_bus():
+    """ENERGY HONESTY ON THE REGEN PATH: the braking window's harvest must come
+    from the brake, not from VBUS through a closed MOT_PWR.
+
+    Measured as the bus-energy DIFFERENCE against an identical window with the
+    charger ceiling at zero, so the aux load and every network loss cancel.
+
+    THE SIMPLE ENGINE IS EXACT: its charger input (1.44 J) is matched, to
+    0.02 J, by the chopper burning less, and the bus contributes literally
+    nothing -- which is the model's statement that the shunt is a RESIDUAL
+    absorber the charger displaces, not a prior claimant. The hi-fi engine
+    leaks 0.09 J of a 1.40 J input (6.5 %) through the node solve's transient;
+    that is bounded here rather than claimed to be zero, and §4.6.2 of
+    docs/HIL_PLANT.md records why netting the chopper out of the cap was
+    measured and REJECTED as the fix (it destroys 0.6-1.4 J of genuine harvest
+    to remove 0.06 J of leak)."""
+    on_s = _brake_window_energies(False, True)
+    off_s = _brake_window_energies(False, False)
+    assert on_s["chg_in"] > 1.0, "precondition: the charger harvested"
+    assert on_s["bus"] - off_s["bus"] == pytest.approx(0.0, abs=1e-9)
+    # ...and the harvest came out of the chopper, one for one.
+    assert (off_s["chop"] - on_s["chop"]) == pytest.approx(on_s["chg_in"],
+                                                           abs=0.05)
+
+    on_h = _brake_window_energies(True, True)
+    off_h = _brake_window_energies(True, False)
+    assert on_h["chg_in"] > 1.0, "precondition: the charger harvested"
+    leak = on_h["bus"] - off_h["bus"]
+    assert 0.0 <= leak <= 0.15, leak
+    assert leak < 0.12 * on_h["chg_in"], "bus-sourced fraction of the harvest"

@@ -387,12 +387,13 @@ def test_without_dash_behavior_unchanged_csv_header_and_scenario_list(tmp_path, 
     # mppt_thresh_cnt appended after all of them by the fw v24 lockstep round
     # (observation-frame byte 15; appended in BOTH schemas, so it is last).
     # error_code appended after THAT by fw v25, and the six power columns
-    # after THAT by the 2026-09-01f power-balance round -- all three in BOTH
-    # schemas, so the eight of them are the tail in that order.
-    assert header[-8:] == ["mppt_thresh_cnt", "error_code",
+    # after THAT by the 2026-09-01f power-balance round, and `p_chg_loss_w`
+    # after THOSE by the 2026-09-01 charger-efficiency round -- all in BOTH
+    # schemas, so the nine of them are the tail in that order.
+    assert header[-9:] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
-                           "p_chop_w", "p_aux_w", "p_bal_w"]
-    assert header[-15:-8] == ["soc", "cmd_v_sp", "cmd_share_sp",
+                           "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w"]
+    assert header[-16:-9] == ["soc", "cmd_v_sp", "cmd_share_sp",
                               "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
                               "cmd_share_sp_raw"]
 
