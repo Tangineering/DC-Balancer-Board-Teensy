@@ -107,6 +107,36 @@ take in the morning).
   (the vs-bound arm is ~1.0 for any charge-free candidate) before anyone reads a
   1.0000 as optimality.
 
+## Failure modes added 2026-09-02 (second overnight session: 2 campaigns, 30+ agents)
+
+- **The bench console is cp1252.** Any non-cp1252 glyph in a simulator/suite/strategy print
+  kills the child (five of 66 runs). Subagent smoke runs never catch it (UTF-8 pipes). Tool-side
+  prints stay ASCII; `hil_plant_sim.main()` now reconfigures stdout lossless and finalizes the
+  sidecar in a `finally`, but a new print path needs the same care. Memory:
+  `windows-console-encoding-trap`.
+- **A campaign can cross TWO plant eras at once.** Every brief must state every run-era field
+  that moved since the baseline campaign (charger era, `asymmetry`, preload, droop mode), read
+  from the sidecars — "same as baseline" written from memory was wrong for 16 runs and would have
+  mis-attributed every drift to the charger change.
+- **A new scoring spec needs the judge to support it.** A `column` + `min_ticks` pairing was
+  structurally unimplemented and failed a correct board; the import guard now refuses any pairing
+  the judge cannot honour. Calibrate a pin against the campaign it cites (the mppt pin failed its
+  own calibration data). A mask on a switch bit needs a settling hold for currents that decay
+  after the bit clears.
+- **A fix round that changes scoring semantics gets its own review BEFORE the validating
+  campaign when board time allows, and always before the ledger reads its verdicts** — the
+  review here predicted campaign C's one false FAIL in advance, which turned it from a finding
+  into a known artefact.
+- **Long shell heredocs break the tool wrapper** (two launches lost). Write files with the Write
+  tool and keep Bash heredocs short and free of nested quoting.
+- **Decision pairs pay off on design, not only on rulings**: the MPC pair disagreed on the
+  prediction architecture and the real-time model, and the synthesis (plus its review) found the
+  adjudicated mechanism inert in the first implementation. Ship a failing gate with the number
+  recorded rather than a passing one measured on an inert path.
+- **Read a verifier's "consequence" separately from its "mechanism"**: three of eight
+  adversarial findings had a correct mechanism and a refuted consequence; severity follows the
+  measured consequence.
+
 ## Logging discipline
 
 OVERNIGHT_LOG.md gets, as they happen: decisions (with reversal paths), incidents
