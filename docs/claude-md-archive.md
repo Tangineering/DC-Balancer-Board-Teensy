@@ -2641,3 +2641,158 @@ the next flash carries v25 alone (edit HIL_SIM 0→1 as usual).**
 
 ---
 
+## Rotated 2026-09-02b (EMS test-program + power-balance rounds, 2026-09-01e–f: governor model, matched-DP db, α-sweep, asymmetry fit, preload removal, Pi-bridge audit, power-balance figure, refined sweep) — every load-bearing fact verified to survive in docs/HIL_USER_MANUAL.md §3.2.5, docs/modeling/, WORK_QUEUE.md, or the campaign-151156 ledger
+
+## Status & session addendum (2026-09-01e, fw v25 first campaign + EMS test-program round: governor model, matched-DP database, α-sweep, asymmetry fit, preload removal, Pi-bridge audit)
+
+Orchestrated tooling round (operator brief 2026-09-01: WORK_QUEUE §0–§2 + §1 items 1–4, 6;
+one supervised campaign; branch `round-20260901e` merged to main). Python tooling + docs +
+data; **FW stays v25; wire protocol frozen.** Investigation fan-out (5 agents) → Wave A/B
+implementers in parallel with the campaign → test-writers → two-lens reviews → fix rounds →
+campaign analysis under hil-agent-analysis → B1/C1 rounds. Operator rulings recorded in memory
+(campaign budget 1 ideal / 3 max per supervised round, 5 overnight; branch-then-merge; preload
+off DRIVE cycles only — Y_AUX_LOAD_A stays; asymmetry default-on; Pi files reference-only;
+online H2 proxy η 0.4; α-sweep all 21 then operator picks 3; DP results database).
+
+- **Campaign hil_report_20260901_151156 (FIRST fw v25, 59-run plan, --with-ftp75): 55/59 PASS +
+  3 FALSE FAIL + drive SKIP — zero board defects.** T1 share-cut guard VALIDATED (zero en_low bus
+  cuts > 0.5 A outside teardowns campaign-wide; ems-sdp-braking fault-free — at each heavy BT
+  restore the load guard refuses for +6…9 ms, blanking carries to +30 ms, cuts land at +35.9/+40.7 ms
+  under 0.34 A; the 0.02/tick refused-cut slew seen on hardware; V_bus RISES 13.34→15.74 V where
+  080905 collapsed; peak I_batt 0.52 A vs 4.64 A). T3 error_code VALIDATED (pi-silence 0x05
+  PI_TIMEOUT vs comm-loss 0x10 HIL_STALE on the wire; a carried-in latch reports the PREDECESSOR's
+  cause). T2 regen baselines RECORDED (charge-regen ~39 mC/window at the 1.5 A clip, −97 % vs the
+  bus-fed era; ems-y h2 moved ≤ 1.9 %). The three FAILs: v-bus-sense-offset = suite scoring defect
+  (`not_before_s` judged the 8 ms probe's TRANSIENT bit; the latch came at 19.90 ms dwell exactly as
+  designed) — FIXED (C1); regen-harvest-true = sim event-accounting defect (coalesced chopper_clamp
+  truncated by the per-tick drain: 0.0035 J reported vs ~7–9 J burned) — FIXED (C1); mppt-tracking =
+  tripwire window overlapping a regen-lifted braking window (count 27 = mirror clamp; cruise peak
+  still 19) — re-scoped (C1). Repeatability: scp i_cut 10-for-10 bit-exact; FTP-75 socband h2
+  bit-identical across seven campaigns; ems-sdp 8 ppm across the flash; comm-loss re-close peak
+  0.3696→0.3591 A/ch (WP-C-attributed; second campaign settles). Replay audit 27/27 real, 0
+  untagged-vacuous; the replay half cannot exercise the share guard (documented).
+- **tools/governor_model.py (stdlib) + tools/ems_walk.py:** a line-for-line port of the firmware
+  share-delivery governor (latch, min-load freeze, 0.60/0.55 A hysteresis, HOLD/feedforward,
+  minority clip, slew modes, both r-based cuts with the fw v25 load guard + blanking, refused-cut
+  clip, MDAC quantization; Youla NOT ported — slew-limited convergence surrogate, `conv_tau_s` hook
+  reported not adopted) validated by replay against campaign MDAC traces (ems-sdp RMS 0.0103 after
+  the states-2/98 gating fix; 17/28 runs scoreable, 11 UNSCORED by the new n_moving vacuity guard;
+  ems-sdp-braking outside the fidelity claim). The walk drives ANY registered strategy through the DP
+  demand/pack/H2 model with the governor at 1 kHz: soc-band governor=False reproduces
+  heuristic_walk EXACTLY; governed sdp-v3 on ems-sdp lands +0.48 % of the measured h2. It is the
+  offline-walk tool the standing "walks must model the open-loop hold AND the feedforward slew"
+  rule lacked (the rule named only the hold until 2026-09-02; open loop has two submodes and the
+  feedforward one writes the MDACs). Fixed en route: the
+  DP generator's drain whitelist omitted ems-sdp (half demand).
+- **ΔSoC-matched DP post-pass + results database (items 2 + 4):** gen_dp_ems_table.py refactored into
+  prepare_problem / solve_matched / solve_unmatched (committed tables byte-identical);
+  tools/dp_results_db.py (stdlib store tools/dp_db/, key = stimulus fingerprint + model quantities +
+  target quantized 1e-5, lookup tolerance **1e-5 SoC** — 5e-4 mis-read +22 % on a 2e-3 swing —
+  provenance-drift note/strict, rekey, unique temp names, `prefill --key-fields @file` with era
+  overrides); hil_report_analysis.py `--matched-dp {off,lookup,solve}` (default lookup; solve refuses
+  > 100 s scenarios without --matched-dp-allow-long) writes per-run pct deviation + the cross-strategy
+  table (item 4's per-campaign form). Campaign 151156: dp-replay −0.23 %, sdp-v3 −0.99 %, soc-band
+  +10.80 % — consistent with the frontier arithmetic. Stimulus-era overrides reconstruct a run-era
+  fingerprint from the sidecar (all DP_FINGERPRINT_META_KEYS), so old-era runs stay solvable after
+  a scenario change. Standing notes: DP has no regen term; run h2 is the dynamic Gfc vs the DC-gain
+  stage cost.
+- **α-sweep (item 3):** tools/sdp_alpha_sweep.py; 21 artifacts (20 geomspace over [0.0514, 0.514] +
+  the 0.16296 anchor, whose policy sha equals sdp_policy_v3's); charging enters the table at
+  α = 0.23925 (the modelled admission-window edge); α ≤ 0.106 is share-0-everywhere degenerate. Only
+  5 points sit inside the lever windows, so sweep artifacts bind through the non-frontier `sdp-v2`
+  role. Offline walk on ems-sdp: three legs — greedy (0–6), calibrated (7–13, h2 0.01260 g),
+  charge-admitting (14–20: one loss-making window, +16.1 % eq-H2); on ems-ftp75-sdp points 7–20 are
+  identical (no admitted bin). Operator picks three live points (ems-sdp is the discriminating
+  stimulus).
+- **Converter asymmetry (item 6):** tools/benchlog_analysis/asymmetry_fit.py + docs/modeling/
+  converter_asymmetry_20260901.md: ΔV0 = **+0.0444 V** [+0.0415, +0.0473] from 385 closed-loop
+  windows / 75 runs, stable fw 3–6, confirming CAL-1 (+0.05 V); r_cmd for a delivered 0.50 =
+  0.4632 at 1.0 A. M1 vs M2 near-collinear (I_tot lever 2.36×); INA-offset sense arm +0.0120 V →
+  inject +0.0444 V on default runs, +0.0324 V under --noise; droop_scale_fc 0.930 [0.834, 1.079]
+  (includes 1). **The +8.1 % shared/single residual is NOT explained** (pooled anchor: the identity is
+  stationary at equal channels; effect −0.078 %); the ~4× K_DROOP finding reproduces independently
+  (R_F 0.086 / R_B 0.110 Ω) and stays open. No open-loop feedforward windows exist in the corpus
+  (TODO(calibrate): an 'O' open-loop sweep above 0.60 A). C1 builds it into the plant DEFAULT-ON — with the **M2 consistent pair** (ΔV0 0.013522 V, ρ =
+  droop_scale_fc 0.9434): the physics review showed that injecting M1's 0.0444 V together with a
+  separately estimated ρ double-counts their collinear component (RMS vs CAL-1: shipped 0.040, M1 alone
+  0.025, M2 pair 0.006 — the engine reproduces CAL-1 at 0.0064). The injected ΔV0 scales with
+  DROOP_SCALE[droop_mode] (the SHARE deviation is the measured quantity) and the INA sense arm is
+  subtracted from the EFFECTIVE injected offsets (0.013522 → 0.001522 under a default NoiseConfig).
+  `--asymmetry off` is byte-identical (engine anchor 15.624602041790853). Light-load BT starvation
+  threshold ≈ ΔV0/R_B ≈ 21 mA (below I_AUX_A); V_bus is mean-preserved.
+- **Campaign fix queue (C1 PART B):** `not_before_s` now judges the LATCH (`fault_first_latch_t`);
+  v-bus-sense-offset de-provisionalized (19.90 ms ± 6 ms latch window; 8.3 ms probe); chopper_clamp
+  events now emitted whole at episode END (`close_chopper_episode()`, `_EventLog` durable counts) with
+  regen-harvest-true re-banded (max_of ≥ 1.0 J, total ≥ 3.0 J, new `max_of` check kind); mppt tripwire
+  re-scoped to the cruise window (28.1, 37.0) with a braking-window 27 pin labelled MIRROR ARTIFACT;
+  the test-writer caught duplicated FAULT_EXPECTATIONS keys (regen-harvest-true, charge-regen) that
+  silently shadowed bands — fixed + an import-time tripwire.
+- **Simple-mode split sign bug (found, fixed in C1):** frac_fc = code_fc/(code_fc+code_bt) delivered
+  1−r because the firmware gain is ∝ 1/r; hifi mode (every campaign since 2026-08-27) was correct.
+- **Preload removal (item 1, B1):** FTP75_PRELOAD_A / FTP75_SDP_PRELOAD_A → 0.0 (campaign 151156 is
+  the last preloaded era; constants_hash moves); socband leg gains chg_i_ceiling_a 0.8 (frontier
+  splits RESOLVED); sidecar scenario_meta.aux_preload_a; governor-walk re-derived provisional bands
+  (walk reproduces the old era to ≤ 1.8 %; preload-0 predictions 5050 0.0281 g, socband 0.0355 g,
+  sdp 0.0193 g with the flip at ~275 s; 64.5 % of the FTP-75 Run window is now below the 0.55 A
+  open-loop line); FTP-75 DP table regenerated (fingerprint 403c5e71…, h2 0.0397 g); new
+  socband_ftp_charge_opened check.
+- **Pi bridge audit (§2) — DONE:** docs/PI_BRIDGE_V4_AUDIT_20260901.md + a stand-alone change request
+  for the PhD student (docs/pi_bridge_change_request_20260901.md) + tools/test_pi_bridge_v4.py (24).
+  The 08-17A bridge is v4-conformant byte for byte; the Pi's sdp_ems_node still reads the 15-element
+  layout (switch_state as faults, faults as SoC — unsafe on the SoC branch) and the default launch
+  file starts it; both standalone SDP scripts assert the 54 B protocol; the stale-link handler
+  overwrites the fault word. Mode B is gated on the Pi running the 08-17A bridge with a fixed node.
+- **Tests at close (orchestrator-rerun):** `.venv_hil` tools/ (all stdlib suites, --ignore test_figures.py): **1575 passed + 49 skipped**; miniforge (numpy suites: gen_dp, report-analysis, sdp solver, tpm, alpha sweep, dp_db, ems_walk, governor, pi-bridge, asymmetry, figures): **613 passed + 1 skipped**. Firmware suites untouched this round (fw v25's 3842/175/4324 stand).
+- **Next:** operator review → campaign 2 (first zero-preload + asymmetry-era + fixed-tooling campaign;
+  calibrates the FTP-75 provisional bands; settles the comm-loss re-baseline); operator's three α
+  points; item 5 (governor-aware MPC — the governor model + walk are its prediction model; H2 proxy
+  η 0.4); item 7 physics review (seeded: the chopper accounting defect, the mppt mirror REGEN
+  exclusion, the comm-loss RT1987 ON-stamp shift, the ftp75-dp −2.15 % table-fidelity gap).
+
+---
+
+## Status & session addendum (2026-09-01f, power-balance figure + refined α-sweep)
+
+Two operator-requested tooling items, orchestrated (two parallel Opus implementers on disjoint
+files, Sonnet test-writers, Opus physics/data-integrity reviews, fix rounds). Python tooling + docs
++ data; **FW stays v25; wire protocol frozen**; branch `round-20260901f` merged to main.
+
+- **Power-balance figure `hil_power_balance` in every HIL report.** Six append-only CSV columns
+  computed in `Plant.step()` for BOTH engines (after `error_code`, so no older offset moves; blank on
+  replay rows): `p_mot_w` = i_motor·V_rgn − p_regen_w (motor node; + draw, − regen; the two branches
+  are exclusive by construction), `p_fc_w` = V_bus·I_fc (bus side — NOT the stack power Gfc uses),
+  `p_batt_w` = V_bus·I_batt − V_batt·i_charge (net; the charge term is the same current/voltage pair
+  the SoC integrator gets), `p_chop_w`, `p_aux_w` = V_bus·i_aux, `p_bal_w` (per-tick residual). The
+  figure plots the four terms + the sum, and a residual panel naming the known components. The
+  identity is EXACT in simple-mode motoring (aux is the whole residual); hi-fi motoring residual
+  −0.375 W mean after aux (RT1987 drops ≤ 35 mW, 470 µF storage, the conductance-stamp transient).
+  **Physics finding exposed by the column (HIGH, operator decision queued):** the hi-fi Ag105 is a
+  1:1 CURRENT-transfer element (J[N_CHG] −= i_charge; the pack receives the same current), so it
+  destroys i_charge·(V_chg − V_batt) — the −11 W charge-window residual (1.4 A × 7.9 V = 11.06 W) —
+  and over-draws the bus ~1.8× vs a real buck at η ≈ 0.9; this bears on the campaign-000816
+  "charging is loss-making" conclusion and on L_chg 0.2364 SoC/g behind sdp_policy_v3's α. The
+  simple engine treats charging as free energy (documented; hifi-only campaigns unaffected); the
+  frontier stimulus-coherence check now also compares the resolved electrical mode. Legacy CSVs
+  (every campaign ≤ 151156) get a source-powers-only rendering with an explicit annotation — the
+  VESC `current` column is a PHASE-current command, not bus current, so no motor proxy is drawn.
+  Backfilled across all 14 report folders.
+- **Refined α-sweep.** Both transition points bisected through the solver: share-map degeneracy at
+  **α = 0.111000013** (±5.1e-8) and charge admission at **0.239249990** (±1.1e-7) — exactly the two
+  ends of the modelled admission window ((1−γ)/L_share, (1−γ)/L_chg). That is the solver's own
+  closed form re-measured; what the bisection establishes is that the SoC grid, the J interpolation
+  and the forbidden-bin mask do not displace the analytic threshold (≤ 1.2e-7 relative). Twenty new
+  artifacts (indices 21–40; b × (1 ∓ {0.5, 1, 2, 4, 8} %)) with a stamped `refinement` manifest
+  block; 41 points evaluated on ems-sdp and ems-ftp75-sdp (zero-preload era). Within a leg the walk
+  totals coincide to 8 decimals although the policy tables differ (26 vs 30: 130 of 2525 cells) — the
+  walk trajectory never visits a differing cell, so a live run would not discriminate within a leg
+  either. Per-point `walk_currents_and_share.png` / `walk_hil_charger_and_soc.png` (122 files)
+  synthesized from the offline governor walk through the report figure builders (suptitle "OFFLINE
+  GOVERNOR WALK … not a board run"; `walk_` prefix so no campaign glob ingests them); the document
+  embeds one pair per leg and the immediate neighbours of each boundary, plus clustered h2-vs-ΔSoC
+  and h2-vs-α step figures. The refined table is priced against the anchor's ΔSoC (a first version
+  used idx 21 — fixed).
+- **Tests at close (orchestrator-rerun):** `.venv_hil` tools/ **1580 passed + 51 skipped**; miniforge (thirteen numpy suites incl. test_hil_plant_sim and test_figures) **1278 passed + 1 skipped**. One pre-existing WP-C assertion (engine vs plant regen energy ≤ +1 nJ) was relaxed to +1e-4 relative: the hi-fi substep rate is wall-clock adaptive, so a loaded host can exceed it by a few ppm (measured +8 ppm; exact in isolation). Firmware untouched.
+- **Next:** operator decision on the charger-efficiency model (WORK_QUEUE §5); campaign 2; the three
+  live α points (one per leg — ems-sdp discriminates, the drive cycle does not).
+
+---
