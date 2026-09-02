@@ -71,6 +71,7 @@ Stdlib only (argparse, csv, json, os).
 """
 
 import argparse
+import bisect
 import csv
 import json
 import os
@@ -87,7 +88,19 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hil_plant_sim import (                                        # noqa: E402
     REPLAY_PREAMBLE_S, WARM_RESET_GRACE_S,
+    # 2026-09-02: the share-cut census below reads the two BUS switch bits and
+    # the firmware's own handoff ceiling.  Imported from the simulator (which
+    # mirrors the .ino) rather than restated, so a bit or a limit cannot drift
+    # between the two halves of this campaign's tooling.
+    SW_FC_BUS, SW_BT_BUS,
 )
+
+# .ino:2237 — the doomed channel's current ceiling for a share cut, on BOTH cut
+# paths from fw v25.  TRANSCRIBED here rather than imported because
+# run_hil_suite.py (which owns the scenario-half copy) imports THIS module, not
+# the other way round; run_hil_suite asserts the two agree at import, so the
+# transcription cannot drift silently.
+SHARE_CUT_MAX_HANDOFF_A = 0.5
 
 # M7 — LOAD-BEARING ORDERING, asserted at import rather than trusted.
 # Fault checks exclude observations before WARM_RESET_GRACE_S (the previous run's
@@ -1106,7 +1119,12 @@ REPLAY_SUITE = [
         "why": "The NEGATIVE UV case: the recorded dip must NOT latch UV_BUS. Pairs "
                "with the legacy UV pair, which must. ⚠️ The must-NOT-latch half is "
                "VACUOUS on this stimulus by construction (the floor stays above the "
-               "limit, so no board could latch) — `v_bus_min_in_band` is what makes "
+               # NAME, not kind (2026-09-02, campaign 20260902_011926 A5): a
+               # report row shows the check NAME, and `v_bus_min_in_band` is
+               # the KIND — the cited name did not exist in any row a reader
+               # could look up.
+               "limit, so no board could latch) — `uv_margin_pinned` (kind "
+               "`v_bus_min_in_band`) is what makes "
                "the entry bite, by pinning the floor into the near-miss band.",
         "provisional": False,
         # RULE 1 (fault-path purity) AND rule 2: this entry's verdict is a
@@ -1348,7 +1366,8 @@ REPLAY_SUITE = [
                "that mitigates the gap acts on the plant, which replay bypasses — "
                "the mitigation is not exercisable open-loop, only the fault "
                "decision is. ⚠️ Like TP0178, the must-NOT-latch half is VACUOUS on "
-               "this stimulus; `v_bus_min_in_band` is what makes the entry bite.",
+               "this stimulus; `uv_margin_pinned` (kind `v_bus_min_in_band`) is what "
+               "makes the entry bite.",
         "provisional": False,
         # RULE 1 (fault-path purity) AND rule 2: a must-NOT-latch fault decision,
         # recorded by a 'T' profile whose v_sp is identically 0 (12961 rows).
@@ -1727,6 +1746,10 @@ class ReplayCsv:
         # Injected FC current — the stimulus side, never blank.  Used by
         # check_fault_latched's OC stimulus guard.
         self.i_fc = _series(rows, "t", "I_fc", float)
+        # Injected BT current, the FC channel's twin.  Added 2026-09-02 for the
+        # share-cut census, which has to read the current on WHICHEVER bus
+        # switch fell.
+        self.i_batt = _series(rows, "t", "I_batt", float)
         self.state = _series(rows, "t", "state", _int_any)
         # FU2: the switch bitmask, and the MDAC command words, over the RECORDED
         # window.  Both are observation-frame columns and are blank before the
@@ -2109,8 +2132,9 @@ def check_fault_not_latched(data, spec):
                       f"{LIMIT_V_BUS_MIN_V:.1f} V, peak accumulated dwell "
                       f"{peak:.1f} ms vs the {UV_BUS_DWELL_LATCH_MS:.0f} ms latch"
                       + (" — the recorded floor never crosses the limit, so this "
-                         "check is VACUOUS on this stimulus (see "
-                         "`v_bus_min_in_band`)" if lo >= LIMIT_V_BUS_MIN_V else ""))
+                         "check is VACUOUS on this stimulus (see the "
+                         "companion `uv_margin_pinned` check)"
+                         if lo >= LIMIT_V_BUS_MIN_V else ""))
     return True, (f"{_fault_names(bit)} never latched across {len(data.faults)} "
                   f"ticks at t >= {data.grace_s:.1f}s{note}{margin}"
                   f"{_carried_in_note(data)}")
@@ -2283,6 +2307,7 @@ def check_fault_latched(data, spec):
     if not data.faults:
         return False, (f"no observation frames at or after t={data.grace_s:.1f}s")
     stim_t = None
+    stim_note = ""
     if spec.get("require_stimulus", True):
         if bit == FAULT_UV_BUS:
             qualifies, when, peak = _uv_stimulus_qualifies(data)
@@ -2293,6 +2318,19 @@ def check_fault_latched(data, spec):
                     f"{LIMIT_V_BUS_MIN_V:.1f} V while armed (peak dwell {peak:.1f} ms) — "
                     f"this log is not a UV stimulus for the current filter")
             stim_t = when
+            # WORDING (2026-09-02, campaign 20260902_011926 A5): the UV filter
+            # is a LEAKY ACCUMULATOR, not a contiguous-dwell timer, and the
+            # difference is load-bearing on this very pair. TP0010's longest
+            # CONTIGUOUS sub-12 V run is ~8 ms against a 20 ms latch: it
+            # latches because the accumulator fills faster than it leaks across
+            # a repetitive collapse, not because the bus ever stayed low for
+            # 20 ms. A detail that says only "20 ms of dwell" invites the
+            # contiguous reading and has been misread that way before (both
+            # near-miss entries' classifications had to be corrected in
+            # 2026-08-31 for the same confusion).
+            stim_note = (
+                f", peak ACCUMULATED (net, leaky — not contiguous) dwell "
+                f"{peak:.1f} ms vs the {UV_BUS_DWELL_LATCH_MS:.0f} ms latch")
         elif bit == FAULT_OC_FC:
             qualifies, when, peak = _oc_fc_stimulus_qualifies(data)
             if not qualifies:
@@ -2442,7 +2480,8 @@ def check_fault_latched(data, spec):
     return True, (f"{_fault_names(bit)} LATCHED (bit + FAULT_ERROR); first "
                   f"POST-GRACE latched observation at t={hits[0]:.3f}s{lead}"
                   + _whole_run_first_note(data, bit)
-                  + (f", stimulus qualified from t={stim_t:.3f}s" if stim_t is not None else "")
+                  + (f", stimulus qualified from t={stim_t:.3f}s{stim_note}"
+                     if stim_t is not None else "")
                   + ("" if not_before is None else
                      f"; whole-run latch at t={latch_t:.4f}s, "
                      f"{latch_t - float(not_before):+.4f}s vs the "
@@ -2992,6 +3031,102 @@ def check_latch_precedes_uv(data, spec):
                   f"mechanism, not the bus collapse behind it")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# THE REPLAY HALF'S SHARE-CUT CENSUS (2026-09-02, campaign 20260902_011926 A5)
+#
+# THE CORRECTION IT RECORDS.  Campaign 20260901_151156's ledger states that no
+# replay can exercise the fw v25 share-cut guard.  That is half wrong: the suite
+# cannot SCORE it (a replay writes no events.jsonl, so the sw_ring records the
+# scenario half's `share_cut_load_hazard` tripwire reads do not exist), but the
+# FIRMWARE PATH IS EXERCISED — campaign 20260902_011926 measured 163 in-Run
+# FC_BUS/BT_BUS falling edges across six opt-in replays (ML0203 119, YP0196 23,
+# ML0151 13, YP0214 4, ML0165 3, ML0137 1), and nothing looked at any of them.
+#
+# WHY IT REPORTS AND NEVER FAILS.  The CSV is a 1 kHz sampling of a 1.9 ms
+# command round trip, the injected currents climb through the threshold with
+# ~0.08 A of tick noise, and the replay is open loop so no collapse can follow a
+# cut in any case.  A CSV-bounded reading above SHARE_CUT_MAX_HANDOFF_A is
+# therefore NOT evidence that the guard failed — it is the neighbourhood of the
+# exact decision the guard makes, sampled too coarsely to adjudicate.  The
+# census exists so the number is visible and tracked between campaigns; a real
+# verdict needs a refused-cut counter on the observation frame, which does not
+# exist yet.
+#
+# BASELINE (campaign 20260902_011926, whole replay half): 163 cuts, 8 with the
+# cut's own row over 0.5 A (max 0.6608 A) and 4 more on the preceding row (max
+# 0.5722 A).
+INFORMATIONAL_PREFIX = "**INFORMATIONAL (reports, never fails)**"
+
+
+def share_cut_census(data):
+    """Count in-Run FC_BUS/BT_BUS falling edges and how loaded they were.
+
+    Returns a dict (never raises on a CSV missing a column — an absent series
+    simply yields zero cuts and `unmeasured` currents).  Pure over `data`."""
+    def _sampler(series):
+        """`f(t)` -> the last sample at or before `t`, or None.
+
+        Bisect, not a scan: this runs on every falling edge of a 12 000-row
+        replay and a linear lookup would make the census quadratic."""
+        times = [t for t, _ in series]
+        vals = [v for _, v in series]
+
+        def _at(t):
+            i = bisect.bisect_right(times, t)
+            return vals[i - 1] if i else None
+        return _at
+
+    state_at = _sampler(data.state)
+    i_at = {"FC_BUS": _sampler(data.i_fc), "BT_BUS": _sampler(data.i_batt)}
+    cuts = []
+    for (t0, s0), (t1, s1) in zip(data.switch_recorded, data.switch_recorded[1:]):
+        fell = [(mask, name) for mask, name in ((SW_FC_BUS, "FC_BUS"),
+                                                (SW_BT_BUS, "BT_BUS"))
+                if (s0 & mask) and not (s1 & mask)]
+        if not fell:
+            continue
+        # IN RUN only: a State-99 teardown opens a loaded bus switch by design
+        # (safeAllSwitches()), and counting those would drown the census in the
+        # one case that is not a share decision.  The state at the edge is the
+        # last reported one at or before it.
+        if state_at(t1) != 2:
+            continue
+        for _mask, name in fell:
+            cuts.append({"t": t1, "switch": name,
+                         "i_own_row_a": i_at[name](t1),
+                         "i_prev_row_a": i_at[name](t0)})
+    def _peak(key):
+        vals = [abs(c[key]) for c in cuts if c[key] is not None]
+        return max(vals) if vals else None
+    own_peak, prev_peak = _peak("i_own_row_a"), _peak("i_prev_row_a")
+    lim = SHARE_CUT_MAX_HANDOFF_A
+    over_own = sum(1 for c in cuts if c["i_own_row_a"] is not None
+                   and abs(c["i_own_row_a"]) > lim)
+    over_prev = sum(1 for c in cuts if c["i_prev_row_a"] is not None
+                    and abs(c["i_prev_row_a"]) > lim)
+    detail = (
+        "%s %d in-Run bus-switch falling edge(s); %d with the cut row's own |I| "
+        "over SHARE_CUT_MAX_HANDOFF_A %.1f A (peak %s), %d on the preceding row "
+        "(peak %s). NOT a guard verdict: the CSV samples a 1.9 ms round trip at "
+        "1 kHz with ~0.08 A of tick noise and the replay is open loop, so no "
+        "collapse can follow a cut. Tracked between campaigns until a "
+        "refused-cut counter reaches the observation frame."
+        % (INFORMATIONAL_PREFIX, len(cuts), over_own, lim,
+           "unmeasured" if own_peak is None else "%.4f A" % own_peak,
+           over_prev,
+           "unmeasured" if prev_peak is None else "%.4f A" % prev_peak))
+    return {"n_cuts": len(cuts), "n_over_own_row": over_own,
+            "n_over_prev_row": over_prev,
+            "i_own_row_peak_a": own_peak, "i_prev_row_peak_a": prev_peak,
+            "limit_a": lim, "detail": detail,
+            "cuts": cuts[:50]}
+
+
+def check_share_cut_census(data, spec):
+    """CHECK_KINDS entry point.  Always passes; see share_cut_census()."""
+    return True, share_cut_census(data)["detail"]
+
+
 CHECK_KINDS = {
     "no_fault": check_no_fault,
     "latch_precedes_uv": check_latch_precedes_uv,
@@ -3007,6 +3142,7 @@ CHECK_KINDS = {
     "steps_onto_rail_within": check_steps_onto_rail_within,
     "v_bus_min_in_band": check_v_bus_min_in_band,
     "i_fc_max_in_band": check_i_fc_max_in_band,
+    "share_cut_census": check_share_cut_census,
 }
 
 # Deferred from the guard block above: this one needs CHECK_KINDS, which only
@@ -3213,6 +3349,27 @@ def evaluate_replay_csv(entry, csv_path):
             detail = NOT_EXERCISED_TAG + detail.replace(VACUOUS_TAG, "")
         result["checks"].append({"name": name, "passed": passed, "detail": detail})
 
+    # THE SHARE-CUT CENSUS, on EVERY entry (2026-09-02).  Appended here rather
+    # than declared per-entry for two reasons: it asserts nothing, so there is
+    # no spec an author could get wrong; and the finding it answers is a
+    # CAMPAIGN-WIDE count, which only exists if every entry contributes.  It is
+    # tagged INFORMATIONAL, passes unconditionally, and is excluded from the
+    # substantive count below — a row that reports is not evidence.
+    try:
+        census = share_cut_census(data)
+    except Exception as exc:                       # never let it kill a run
+        census = {"detail": "%s share-cut census unavailable: %s: %s"
+                            % (INFORMATIONAL_PREFIX, type(exc).__name__, exc)}
+    result["share_cut_census"] = {k: v for k, v in census.items()
+                                  if k != "detail"}
+    # REPORTED AS A NOTE, NOT AS A CHECK ROW.  It asserts nothing, so a row in
+    # `checks` would make it a passing check that is not evidence — inflating
+    # every campaign's check count and the substantive fraction that is computed
+    # from it.  The `share_cut_census` KIND is registered in CHECK_KINDS so an
+    # entry can carry it explicitly the day one wants it per-entry; until then
+    # the note and the structured `share_cut_census` field are where it lives.
+    result["notes"].append(census["detail"])
+
     # Item 5: substantive-vs-total counts, so a reader can see how much of a green
     # entry is actually evidence.  A check is "vacuous"/"not exercised" here only
     # in the precise, measured sense above: its detail carries the tag.
@@ -3228,10 +3385,17 @@ def evaluate_replay_csv(entry, csv_path):
                           if c["detail"].startswith(NOT_EXERCISED_PREFIX))
     n_vacuous = sum(1 for c in result["checks"]
                     if VACUOUS_TAG in c["detail"]) + n_not_exercised
+    # An INFORMATIONAL row (only present if an entry declares the
+    # `share_cut_census` kind explicitly) asserts nothing and must not inflate
+    # the substantive count or the vacuity fraction, which is a statement about
+    # CHECKS THAT WERE SUPPOSED TO BITE.  It is counted on its own axis.
+    n_informational = sum(1 for c in result["checks"]
+                          if c["detail"].startswith(INFORMATIONAL_PREFIX))
     result["n_checks"] = n_total
     result["n_checks_vacuous"] = n_vacuous
     result["n_checks_not_exercised"] = n_not_exercised
-    result["n_checks_substantive"] = n_total - n_vacuous
+    result["n_checks_informational"] = n_informational
+    result["n_checks_substantive"] = n_total - n_vacuous - n_informational
     if n_not_exercised:
         result["notes"].append(
             f"{n_not_exercised} of {n_total} checks were NOT EXERCISED: this entry "
@@ -3244,6 +3408,9 @@ def evaluate_replay_csv(entry, csv_path):
             f"{n_vacuous - n_not_exercised} of {n_total} checks are VACUOUS on this "
             f"run: the observed motor command is identically 0 A. SUBSTANTIVE "
             f"checks: {n_total - n_vacuous}.")
+    # `all_passed` is unaffected by the census (it never sets passed False), and
+    # `entry["checks"]` is still the emptiness test — an entry that declares no
+    # checks is not rescued into a PASS by an appended informational row.
     result["passed"] = all_passed and bool(entry.get("checks"))
     if not entry.get("checks"):
         result["checks"].append({"name": "checks", "passed": False,

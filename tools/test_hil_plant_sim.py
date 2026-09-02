@@ -1977,7 +1977,10 @@ def test_csv_schema_hifi_mode_appends_elec_columns(tmp_path):
                            "p_mot_w", "p_fc_w", "p_batt_w",
                            "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                            "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]  # fw v24/v25 tail
-    assert header[-21:-12] == ["soc", "elec_substep_hz", "elec_events",
+    # `elec_substep_n` (2026-09-02, review PLANT-R1-F6) is appended AFTER the
+    # two established elec columns, so nothing downstream of them moves.
+    assert header[-22:-12] == ["soc", "elec_substep_hz", "elec_events",
+                              "elec_substep_n",
                               "cmd_v_sp", "cmd_share_sp",
                               "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
                               "cmd_share_sp_raw"]
@@ -9743,12 +9746,23 @@ def _brake_window_energies(hifi, charger_on, seconds=2.0):
     obs = {"switch": _WPC_SW_RUN | hil.SW_REGEN, "aux": _WPC_AUX,
            "current": -12.0, "mdac_fc": 0, "mdac_bt": 0}
     e_bus = e_chop = e_chg_in = 0.0
+    # PER-TICK series, added 2026-09-02 for the mechanism assertions below: the
+    # bus-energy increment, whether the chopper was clamping on that tick, and
+    # the MOT_PWR drop that decides whether the bus can conduct INTO the motor
+    # node at all.
+    ticks = []
     for _ in range(int(seconds / 1e-3)):
         out = pl.step(1e-3, obs)
-        e_bus += out["V_bus"] * (out["I_fc"] + out["I_batt"]) * 1e-3
+        d_bus = out["V_bus"] * (out["I_fc"] + out["I_batt"]) * 1e-3
+        e_bus += d_bus
         e_chop += out["p_chop_w"] * 1e-3
         e_chg_in += (pl.i_charge * pl.battery.v_terminal / hil.ETA_CHG) * 1e-3
-    return {"bus": e_bus, "chop": e_chop, "chg_in": e_chg_in}
+        ticks.append({
+            "d_bus": d_bus,
+            "chopper": bool(getattr(pl.electrical, "chopper_active", False)),
+            "v_bus": out["V_bus"], "v_rgn": out["V_rgn"],
+        })
+    return {"bus": e_bus, "chop": e_chop, "chg_in": e_chg_in, "ticks": ticks}
 
 
 def test_regen_harvest_is_not_sourced_from_the_bus():
@@ -9761,12 +9775,22 @@ def test_regen_harvest_is_not_sourced_from_the_bus():
     THE SIMPLE ENGINE IS EXACT: its charger input (1.44 J) is matched, to
     0.02 J, by the chopper burning less, and the bus contributes literally
     nothing -- which is the model's statement that the shunt is a RESIDUAL
-    absorber the charger displaces, not a prior claimant. The hi-fi engine
-    leaks 0.09 J of a 1.40 J input (6.5 %) through the node solve's transient;
-    that is bounded here rather than claimed to be zero, and §4.6.2 of
-    docs/HIL_PLANT.md records why netting the chopper out of the cap was
-    measured and REJECTED as the fix (it destroys 0.6-1.4 J of genuine harvest
-    to remove 0.06 J of leak)."""
+    absorber the charger displaces, not a prior claimant.
+
+    THE HI-FI RESIDUAL IS A MECHANISM, NOT A TRANSIENT (review PLANT-R1-F2,
+    2026-09-02).  The 0.0880 J on a 1.40 J input (6.28 %) is POST-CLAMP-RELEASE
+    BUS-FED CHARGING: once braking ends the node falls off the 18.1 V clamp, the
+    charger is still ramping down through AG105_TAU_S, and MOT_PWR then conducts
+    FORWARD (V_bus above V_rgn by more than RT_V_FWD) into it.  The two
+    assertions below pin that mechanism instead of a magnitude ceiling, which is
+    what the retired `leak <= 0.15` bound did -- a ceiling passes for the wrong
+    reason the moment the mechanism changes, and it was read for a year as
+    evidence for a solver transient that the link-deletion counterfactual
+    refutes (deleting the BUS<->MOT link takes the leak to exactly 0 J).
+
+    §4.6.2 of docs/HIL_PLANT.md records why netting the chopper out of the cap
+    was measured and REJECTED as the fix (it destroys 0.6-1.4 J of genuine
+    harvest to remove 0.06 J of leak)."""
     on_s = _brake_window_energies(False, True)
     off_s = _brake_window_energies(False, False)
     assert on_s["chg_in"] > 1.0, "precondition: the charger harvested"
@@ -9778,9 +9802,40 @@ def test_regen_harvest_is_not_sourced_from_the_bus():
     on_h = _brake_window_energies(True, True)
     off_h = _brake_window_energies(True, False)
     assert on_h["chg_in"] > 1.0, "precondition: the charger harvested"
-    leak = on_h["bus"] - off_h["bus"]
-    assert 0.0 <= leak <= 0.15, leak
-    assert leak < 0.12 * on_h["chg_in"], "bus-sourced fraction of the harvest"
+
+    # MECHANISM 1 — NOTHING LEAKS WHILE THE CLAMP IS UP.  Over the ticks on
+    # which BOTH arms are clamping (the tick grids are identical, and the
+    # charger-on arm releases the clamp EARLIER — that displacement is the
+    # harvest, and comparing the two arms' own clamped sets would be comparing
+    # different windows), the charger draws NO bus energy: the two arms' bus
+    # totals over those ticks agree to within 1e-6 J.  This is the claim the
+    # retired magnitude ceiling was standing in for, and it is exact.
+    pairs = list(zip(on_h["ticks"], off_h["ticks"]))
+    both_clamped = [(a, b) for a, b in pairs if a["chopper"] and b["chopper"]]
+    assert len(both_clamped) > 100, "precondition: a clamped window exists"
+    clamped_on = sum(a["d_bus"] for a, _ in both_clamped)
+    clamped_off = sum(b["d_bus"] for _, b in both_clamped)
+    assert clamped_on == pytest.approx(clamped_off, abs=1e-6), (
+        "bus energy differs between the charger-on and charger-off arms while "
+        "the chopper is clamping: the harvest IS being sourced from the bus")
+
+    # MECHANISM 2 — WHERE IT DOES LEAK, MOT_PWR IS FORWARD-BIASED.  Every tick
+    # carrying a non-zero bus-energy difference must have V_bus above V_rgn by
+    # at least the RT1987 forward-regulation target, i.e. the link is
+    # conducting bus -> motor node.  A leak on a tick where it is not would be a
+    # solver artefact; this asserts there are none.
+    from hil_electrical import RT_V_FWD
+    offending = []
+    for a, b in zip(on_h["ticks"], off_h["ticks"]):
+        if abs(a["d_bus"] - b["d_bus"]) <= 1e-9:
+            continue
+        if (a["v_bus"] - a["v_rgn"]) < RT_V_FWD:
+            offending.append((a["v_bus"], a["v_rgn"]))
+    assert not offending, (
+        "%d tick(s) moved bus energy with MOT_PWR NOT forward-biased "
+        "(first: V_bus %.4f, V_rgn %.4f, need a drop >= %.3f V) — that would "
+        "be a solver artefact, not the documented conduction path"
+        % (len(offending), offending[0][0], offending[0][1], RT_V_FWD))
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -9969,14 +10024,15 @@ def test_mpc_campaign_legs_all_declare_the_deterministic_cap():
     """An MPC leg without `mpc_max_candidates` is wall-clock bounded, so two
     runs of it explore different candidate sets and the leg is not even
     self-comparable. The import guard refuses that; this pins the VALUE and the
-    reason 343 is the number."""
+    reason 1029 is the number."""
     for name in MPC_SCENARIOS:
         assert (hil.SCENARIOS[name]["mpc_max_candidates"]
-                == hil.MPC_CAMPAIGN_MAX_CANDIDATES == 343)
-    # 343 = 7**3: the FULL enumeration at the shipped 7-level ladder over three
-    # move blocks, so the cap removes the clock's influence without removing a
-    # single candidate. A `--mpc-share-levels` override breaks that identity and
-    # the constant does not follow it.
+                == hil.MPC_CAMPAIGN_MAX_CANDIDATES == 1029)
+    # 1029 = 7**3 x 3: the FULL enumeration at the shipped 7-level ladder over
+    # three move blocks, TIMES the three charge plans a decision offers, so the
+    # cap removes the clock's influence without removing a single candidate. A
+    # `--mpc-share-levels` override breaks that identity and the constant does
+    # not follow it.
     import mpc_ems
     assert mpc_ems.SHARE_LEVELS ** len(mpc_ems.MOVE_BLOCKS) == 343
     # A command-line cap OVERRIDES the scenario's.
@@ -10098,3 +10154,163 @@ def test_mpc_sidecar_block_is_written_from_the_provenance():
     assert 'mpc_src = ems_policy if isinstance(ems_policy, _MpcProxy) else None' in src
     assert '**({"mpc": mpc_src.provenance}' in src
     assert 'meta_doc["config"]["mpc"]["timing"] = _tm' in src
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 30. cp1252 console encoding (campaign 20260902_011926, fix-queue item 1)
+#
+# One un-encodable glyph printed to a Windows console cost five runs: two EMS
+# legs never launched (the bind-time charger-era warning raised
+# UnicodeEncodeError, which IS a ValueError, so main()'s binder guard turned it
+# into an argparse refusal) and three MPC legs completed their runs and then
+# died printing their summary line BEFORE the sidecar was finalized.
+# ─────────────────────────────────────────────────────────────────────────
+
+import io as _io  # noqa: E402
+
+
+class _Cp1252Stdout(_io.TextIOWrapper):
+    """A stdout whose encoding is cp1252 and whose default errors= is strict —
+    i.e. a Windows console, reproduced in-process."""
+
+    def __init__(self):
+        super().__init__(_io.BytesIO(), encoding="cp1252", errors="strict",
+                         newline="", write_through=True)
+
+    def text(self):
+        self.flush()
+        return self.buffer.getvalue().decode("cp1252", "replace")
+
+
+def test_make_console_lossless_survives_a_cp1252_console(monkeypatch):
+    stream = _Cp1252Stdout()
+    monkeypatch.setattr(sys, "stdout", stream)
+    with pytest.raises(UnicodeEncodeError):
+        stream.write("\u26a0\ufe0f")            # the console, unpatched
+    assert hil._make_console_lossless(["stdout"]) == ["stdout"]
+    stream.write("\u26a0\ufe0f")                # must not raise now
+    assert "\\u26a0" in stream.text()          # backslashreplace, not '?'
+
+
+def test_make_console_lossless_tolerates_a_stream_it_cannot_reconfigure(monkeypatch):
+    """A stand-in stream without reconfigure() (a StringIO under a test
+    harness, a detached pipe) must be skipped, never raise: a console fix that
+    kills the run is worse than the console problem."""
+    monkeypatch.setattr(sys, "stdout", _io.StringIO())
+    assert hil._make_console_lossless(["stdout"]) == []
+
+    class _Refuses(_io.StringIO):
+        def reconfigure(self, **kw):
+            raise ValueError("cannot reconfigure")
+
+    monkeypatch.setattr(sys, "stdout", _Refuses())
+    assert hil._make_console_lossless(["stdout"]) == []
+
+
+def test_run_with_an_unencodable_summary_line_still_finalizes_the_sidecar(
+        tmp_path, monkeypatch):
+    """THE REGRESSION: a strategy whose summary_line() carries a glyph the
+    console cannot encode must not cost the run its provenance.  Before the
+    fix the sidecar stayed at status='running' with results=None on a run whose
+    CSV was complete on disk."""
+    probe = hil.EMS_STRATEGIES["hold-5050"]
+    monkeypatch.setattr(probe, "summary_line",
+                        lambda: "[hil] probe: \u26a0\ufe0f unencodable",
+                        raising=False)
+    stream = _Cp1252Stdout()
+    monkeypatch.setattr(sys, "stdout", stream)
+    csv_path = str(tmp_path / "cp1252.csv")
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58997",
+                   "--bind-port", "0", "--rate", "200", "--scenario", "steady",
+                   "--electrical", "simple", "--duration", "0.05",
+                   "--ems", "hold-5050", "--csv", csv_path])
+    assert rc == 0
+    with open(hil.meta_path_for(csv_path)) as fh:
+        meta = json.load(fh)
+    assert meta["status"] == "completed"
+    assert meta["results"] is not None
+    assert meta["results"]["ticks"] > 0
+    assert meta["ems_strategy"] == "hold-5050"
+    # And the line itself was printed, escaped rather than dropped.
+    assert "probe:" in stream.text()
+
+
+def test_binder_encoding_failure_is_not_a_bind_refusal(tmp_path, monkeypatch):
+    """A console problem raised out of a binder's BANNER must not masquerade as
+    'this strategy cannot run this scenario' (rc=2, before a frame is sent) —
+    the exact path that stopped ems-sdp-cross and ems-sdp-braking launching."""
+    probe = hil.EMS_STRATEGIES["hold-5050"]
+
+    def _bind(scenario, meta, electrical_mode=None, args=None):
+        raise UnicodeEncodeError("charmap", "\u26a0", 0, 1, "unmapped")
+
+    monkeypatch.setattr(probe, "bind_scenario", _bind, raising=False)
+    csv_path = str(tmp_path / "bindfail.csv")
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58998",
+                   "--bind-port", "0", "--rate", "200", "--scenario", "steady",
+                   "--electrical", "simple", "--duration", "0.05",
+                   "--ems", "hold-5050", "--csv", csv_path])
+    assert rc == 0, "an encoding failure must not refuse the bind"
+    with open(hil.meta_path_for(csv_path)) as fh:
+        assert json.load(fh)["status"] == "completed"
+
+    # A REAL bind refusal still refuses (the narrowing must not swallow those).
+    def _bind_real(scenario, meta, electrical_mode=None, args=None):
+        raise ValueError("the table is for a different profile")
+
+    monkeypatch.setattr(probe, "bind_scenario", _bind_real, raising=False)
+    with pytest.raises(SystemExit):
+        hil.main(["--teensy-ip", "127.0.0.1", "--port", "58998",
+                  "--bind-port", "0", "--rate", "200", "--scenario", "steady",
+                  "--electrical", "simple", "--duration", "0.05",
+                  "--ems", "hold-5050", "--no-csv"])
+
+
+def test_operator_facing_labels_are_ascii():
+    """Both strings that actually crashed a run are pinned ASCII.  (The file
+    still contains non-ASCII COMMENTS — those are never printed.)"""
+    sim = open(os.path.join(HERE, "hil_plant_sim.py"), encoding="utf-8").read()
+    assert "(!) CHARGER-ERA MISMATCH" in sim
+    assert "\u26a0" not in sim[sim.index("CHARGER-ERA MISMATCH") - 400:
+                               sim.index("CHARGER-ERA MISMATCH") + 400]
+    mpc = open(os.path.join(HERE, "mpc_ems.py"), encoding="utf-8").read()
+    i = mpc.index("def summary_line(self):")
+    body = mpc[i:]
+    assert "the scenario profile - (!) PREVIEW, NOT CAUSAL" in body
+    assert "\u26a0" not in body[body.index("PREVIEW, NOT CAUSAL") - 200:
+                                body.index("PREVIEW, NOT CAUSAL") + 200]
+
+
+def test_mpc_campaign_cap_is_the_full_enumeration_including_the_charge_axis():
+    """Fix-queue item 3 (campaign 20260902_011926).  The cap was 343 — ONE
+    charge option's worth of candidates — and the planner enumerates the share
+    ladder once per charge plan with the no-charge plan FIRST, so every capped
+    decision was truncated BEFORE the charge axis (13 of 61 on mpc-sto) and no
+    "the MPC declined to charge" reading was supported.
+
+    The two modules cannot import each other (mpc_ems imports hil_plant_sim), so
+    the identity is pinned HERE rather than asserted at import."""
+    import mpc_ems
+    assert mpc_ems.MAX_CHARGE_OPTIONS == 3
+    assert mpc_ems.enumeration_size() == (
+        mpc_ems.SHARE_LEVELS ** len(mpc_ems.MOVE_BLOCKS)
+        * mpc_ems.MAX_CHARGE_OPTIONS)
+    assert hil.MPC_CAMPAIGN_MAX_CANDIDATES == mpc_ems.enumeration_size()
+    # The cap must never sit BELOW the enumeration on a campaign leg — that is
+    # the defect, restated as an inequality.
+    for name in MPC_SCENARIOS:
+        assert (hil.SCENARIOS[name]["mpc_max_candidates"]
+                >= mpc_ems.enumeration_size())
+
+
+def test_mpc_provenance_records_the_enumeration_size():
+    """The sidecar has to carry the number the cap is read AGAINST, or a report
+    must reconstruct it from the ladder and the move blocks."""
+    import mpc_ems
+    strat = mpc_ems.make_mpc("mpc-det",
+                             max_candidates=hil.MPC_CAMPAIGN_MAX_CANDIDATES)
+    prov = strat._provenance()
+    assert prov["max_candidates"] == hil.MPC_CAMPAIGN_MAX_CANDIDATES
+    assert prov["enumeration_size"] == mpc_ems.enumeration_size()
+    assert prov["max_charge_options"] == mpc_ems.MAX_CHARGE_OPTIONS
+    assert prov["max_candidates"] >= prov["enumeration_size"]

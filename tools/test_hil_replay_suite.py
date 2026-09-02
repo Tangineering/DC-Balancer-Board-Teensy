@@ -3153,3 +3153,102 @@ def test_sy0001_entry_fw_and_blg_version_match_the_committed_file():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# The replay half's share-cut census (campaign 20260902_011926, item 7)
+#
+# The 151156 ledger says no replay can exercise the fw v25 share-cut guard.
+# The suite cannot SCORE it (a replay writes no events.jsonl), but the firmware
+# path IS exercised: 163 in-Run bus-switch falling edges across six opt-in
+# replays, none of which anything looked at.
+# ─────────────────────────────────────────────────────────────────────────
+
+def _census_rows(seq):
+    """`seq`: list of (switch, I_fc, I_batt, state) at 1 ms spacing."""
+    rows = []
+    for i, (sw, i_fc, i_bt, st) in enumerate(seq):
+        rows.append({"t": i * 0.001, "switch": sw, "I_fc": i_fc,
+                     "I_batt": i_bt, "state": st, "fault_flags": 0})
+    return rows
+
+
+def _census(tmp_path, seq, name="census.csv"):
+    rows = _with_bringup(_shift_rows(_census_rows(seq), rs.REPLAY_PREAMBLE_S))
+    path = tmp_path / name
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    return rs.share_cut_census(data)
+
+
+def test_share_cut_census_counts_in_run_falling_edges(tmp_path):
+    both = rs.SW_FC_BUS | rs.SW_BT_BUS
+    out = _census(tmp_path, [
+        (both, 0.30, 0.30, 2),
+        (rs.SW_BT_BUS, 0.66, 0.30, 2),      # FC_BUS cut, own row 0.66 A
+        (rs.SW_BT_BUS, 0.30, 0.30, 2),
+        (0, 0.30, 0.20, 2),                 # BT_BUS cut, own row 0.20 A
+        (0, 0.30, 0.20, 2),
+    ])
+    assert out["n_cuts"] == 2
+    assert out["n_over_own_row"] == 1                 # only the 0.66 A one
+    assert out["i_own_row_peak_a"] == pytest.approx(0.66)
+    assert out["limit_a"] == rs.SHARE_CUT_MAX_HANDOFF_A == 0.5
+    assert {c["switch"] for c in out["cuts"]} == {"FC_BUS", "BT_BUS"}
+
+
+def test_share_cut_census_excludes_state_99_teardowns(tmp_path):
+    """A State-99 teardown opens a LOADED bus switch by design
+    (safeAllSwitches()); counting those would drown the census in the one case
+    that is not a share decision."""
+    both = rs.SW_FC_BUS | rs.SW_BT_BUS
+    out = _census(tmp_path, [
+        (both, 2.00, 2.00, 99),
+        (0, 2.00, 2.00, 99),                # teardown cut, heavily loaded
+        (0, 2.00, 2.00, 99),
+    ])
+    assert out["n_cuts"] == 0
+    assert out["i_own_row_peak_a"] is None
+
+
+def test_share_cut_census_reports_the_preceding_row_separately(tmp_path):
+    """The 1.9 ms command round trip means the load the guard SAW may be the
+    previous sample's, so both are reported and neither is a verdict."""
+    both = rs.SW_FC_BUS | rs.SW_BT_BUS
+    out = _census(tmp_path, [
+        (both, 0.57, 0.30, 2),              # the row the guard likely read
+        (rs.SW_BT_BUS, 0.40, 0.30, 2),      # the cut itself, now under 0.5 A
+        (rs.SW_BT_BUS, 0.40, 0.30, 2),
+    ])
+    assert out["n_cuts"] == 1
+    assert out["n_over_own_row"] == 0
+    assert out["n_over_prev_row"] == 1
+    assert out["i_prev_row_peak_a"] == pytest.approx(0.57)
+
+
+def test_share_cut_census_is_reported_on_every_entry_and_never_fails(tmp_path):
+    both = rs.SW_FC_BUS | rs.SW_BT_BUS
+    rows = _with_bringup(_shift_rows(_census_rows([
+        (both, 0.66, 0.30, 2),
+        (rs.SW_BT_BUS, 0.66, 0.30, 2),
+        (rs.SW_BT_BUS, 0.66, 0.30, 2),
+    ]), rs.REPLAY_PREAMBLE_S))
+    path = tmp_path / "entry.csv"
+    write_replay_csv(path, rows)
+    entry = _entry([{"kind": "no_fault", "name": "no_fault"}])
+    res = rs.evaluate_replay_csv(entry, str(path))
+    assert res["passed"] is True, res["checks"]
+    # Structured, so a campaign can total it without parsing prose...
+    assert res["share_cut_census"]["n_cuts"] == 1
+    assert res["share_cut_census"]["n_over_own_row"] == 1
+    # ...and visible in the report as a NOTE, not as a passing check row: it
+    # asserts nothing, and a row would inflate the substantive count.
+    assert any(n.startswith(rs.INFORMATIONAL_PREFIX) for n in res["notes"])
+    assert all(c["name"] != "share_cut_census" for c in res["checks"])
+    assert res["n_checks"] == 2          # bring-up gate + no_fault
+
+
+def test_share_cut_census_is_a_registered_check_kind_that_passes():
+    """Registered so an entry can carry it explicitly the day one wants a
+    per-entry row; it must never be able to fail."""
+    assert rs.CHECK_KINDS["share_cut_census"] is rs.check_share_cut_census

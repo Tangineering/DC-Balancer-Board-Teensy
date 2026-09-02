@@ -597,6 +597,34 @@ EMS_LEVER_SHARE_SOC_PER_G = 0.412
 # era is asked for; never use it unprojected in an eta-era comparison (D13).
 EMS_LEVER_CHARGE_SOC_PER_G = 0.2364
 
+# ── THE ETA-ERA LEVERS, MEASURED ON THE BOARD (2026-09-02) ──────────────────
+# Campaign hil_report_20260902_011926, from the three alpha-sweep legs: `cal`
+# and `charge` command an IDENTICAL constant share, so their difference is
+# purely the charge windows, and `cal` minus `greedy` is purely the share lever.
+#     L_chg   = 0.00084 / 0.0025290842 = 0.33214 SoC/g
+#     L_share = 0.00352 / 0.00844369   = 0.41688 SoC/g   (ratio 0.797)
+# WHAT THEY SETTLE.  measured_levers()'s PROJECTION of the old-era charge lever
+# gives 0.448393 against a share lever of 0.412, i.e. it predicts the charger
+# becomes the BETTER lever in the eta era.  The measurement REFUTES that
+# inversion: the charger is still the worse lever (0.332 < 0.417), so the
+# model's ordering stands and the projection's assumption (that the campaign
+# accounting scales with the billing voltage and nothing else) does not.  The
+# 9.5 % shortfall against the model's own 0.396 is bus sag billed to the charge
+# leg — the bus falls 15.76 -> 14.15 V during a window, which raises the FC cost
+# of every amp the vehicle also draws.  The end-to-end charge round trip on the
+# board is therefore 0.797, not ETA_CHG 0.88.
+# ⚠️ RECORDED, NOT ADOPTED.  Nothing selects these by default and NO alpha or
+# artifact moves: under them the shipped `sdp-v4` alpha 0.118326 sits 1.4 %
+# below the measured admission window (0.11994, 0.15055), and a measured-lever
+# re-solve would give alpha ~ 0.13434.  That is a ONE-CAMPAIGN reading of a
+# marginal rate the old-era number needed TWO campaigns to bracket; hold it for
+# a second reading before any re-solve (operator item (c), 2026-09-02).
+# Pass `use_measured_eta=True` to measured_levers() to price against them.
+EMS_LEVER_SHARE_ETA_SOC_PER_G = 0.41688
+EMS_LEVER_CHARGE_ETA_SOC_PER_G = 0.33214
+EMS_LEVERS_ETA_SOURCE = ("campaign hil_report_20260902_011926, alpha-sweep legs "
+                         "greedy/cal/charge (ETA_CHG 0.88, zero preload)")
+
 # Full-size reference numbers, used ONLY by the alpha derivation below.
 # SDP_EnergyManagement2.m:8-10, :16.
 FULL_SIZE_ALPHA = 500.0
@@ -770,7 +798,8 @@ def model_levers(v_pack=V_PACK_NOMINAL_V, v_bus=V_BUS_NOMINAL_V,
 
 def measured_levers(eta_chg=None,
                     share=None, charge=None,
-                    v_pack=V_PACK_NOMINAL_V, v_bus=V_BUS_NOMINAL_V):
+                    v_pack=V_PACK_NOMINAL_V, v_bus=V_BUS_NOMINAL_V,
+                    use_measured_eta=False):
     """(L_share, L_chg) as MEASURED, projected onto the requested era.
 
     The share lever is era-INVARIANT: it never touches the charger.  The
@@ -785,10 +814,25 @@ def measured_levers(eta_chg=None,
 
     ⚠️ IT IS A PROJECTION, NOT A MEASUREMENT.  It assumes the campaign
     accounting scales with the billing voltage and nothing else, which is
-    exactly the assumption the first new-era campaign will test.
-    TODO(verify): re-measure the charge lever on a post-2026-09-01 campaign
-    and replace this projection with the number.
+    exactly the assumption the first new-era campaign tested — AND REFUTED
+    (2026-09-02, see EMS_LEVER_*_ETA_SOC_PER_G): the projection predicts the
+    charger becomes the better lever (0.448 vs 0.412) and the board measured it
+    still worse (0.332 vs 0.417).  The default is UNCHANGED anyway, because
+    every shipped artifact and alpha was solved against it and moving it here
+    would silently re-price them; `use_measured_eta=True` selects the measured
+    pair instead, and explicit `share`/`charge` still override both.
     """
+    if use_measured_eta:
+        if check_eta_chg(eta_chg) is None:
+            raise ValueError(
+                "use_measured_eta needs an eta era: the measured pair was "
+                "taken on the ETA_CHG 0.88 plant (%s) and says nothing about "
+                "the 1:1 current-transfer era" % EMS_LEVERS_ETA_SOURCE)
+        l_share = (EMS_LEVER_SHARE_ETA_SOC_PER_G if share is None
+                   else float(share))
+        l_chg = (EMS_LEVER_CHARGE_ETA_SOC_PER_G if charge is None
+                 else float(charge))
+        return (l_share, l_chg)
     l_share = EMS_LEVER_SHARE_SOC_PER_G if share is None else float(share)
     l_chg = EMS_LEVER_CHARGE_SOC_PER_G if charge is None else float(charge)
     if check_eta_chg(eta_chg) is not None:

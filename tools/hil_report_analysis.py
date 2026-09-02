@@ -605,6 +605,16 @@ def _stats(x):
             "min": float(f.min()), "max": float(f.max())}
 
 
+def _is_identically_zero(stats):
+    """True when a `_stats()` block describes a series that is exactly zero
+    everywhere it was measured.  False for an empty/absent block: "no samples"
+    is not "all zero", and tagging a row on absent data would be a claim."""
+    if not stats or not stats.get("n"):
+        return False
+    lo, hi = stats.get("min"), stats.get("max")
+    return lo == 0.0 and hi == 0.0
+
+
 def deviation_metrics(hil_vals, blg_vals):
     """RMS, max |delta| and mean delta between two aligned traces."""
     d = np.asarray(hil_vals, dtype=np.float64) - np.asarray(blg_vals,
@@ -651,6 +661,33 @@ def compute_replay_metrics(hil, blg, hil_idx, blg_idx):
             out["source_stats"][blg_key] = _stats(blg[blg_key][blg_idx])
         if hil_key in hil:
             out["hil_stats"][blg_key] = _stats(hil[hil_key][hil_idx])
+
+    # ── WHICH RESPONSE ROWS ARE NOT A COMPARISON AT ALL (2026-09-02) ────────
+    # Campaign 20260902_011926's replay audit found the two cases, both of
+    # which read as ordinary deviations and are not:
+    #   * NO COMMAND REPLAY (12 of 27 entries).  Without `replay_commands` the
+    #     board never leaves Idle and its motor command is identically 0 A, so
+    #     the "deviation" IS the source log's own trajectory.  ML0144's 8.635 —
+    #     the largest number in the whole ANALYSIS_SUMMARY — is a board that
+    #     commanded nothing.
+    #   * NO MDAC CHANNEL IN THE SOURCE (10 entries).  A BLG without gFC/gBT
+    #     decodes them as identically zero, so the row is the HIL value
+    #     verbatim.  ML0151's gFC 0.8599 is not a divergence.
+    # Both are decided from the ALIGNED stats above, so a row is tagged only
+    # when the data says so, never from an entry flag this module cannot see.
+    for key, m in out["response"].items():
+        flat_hil = _is_identically_zero(out["hil_stats"].get(key))
+        flat_src = _is_identically_zero(out["source_stats"].get(key))
+        if key == "I_cmd" and flat_hil:
+            m["not_exercised"] = (
+                "NOT EXERCISED (no command replay): the HIL board's motor "
+                "command is identically 0 A over the aligned window, so this "
+                "residual is the SOURCE LOG's own trajectory, not a deviation")
+        elif key in ("gFC", "gBT") and flat_src:
+            m["not_exercised"] = (
+                "NOT COMPARABLE (source has no MDAC channel): the source "
+                "log's %s is identically 0 over the aligned window, so this "
+                "residual is the HIL value verbatim" % key)
 
     if "fault_flags" in hil and "fault_flags" in blg:
         h = hil["fault_flags"][hil_idx]
@@ -1171,11 +1208,19 @@ def hil_power_balance(data, cfg):
         # The named-component list on this label is the honest one for the
         # era the CSV came from: the charger loss is a plotted term on a
         # post-eta run and an unnamed resident of the residual before that.
+        # THE BRAKING TERM IS NAMED (2026-09-02, review PLANT-R1-F3).  The
+        # residual puts `p_chop` on the SOURCE side, and in braking `p_mot` is
+        # NEGATIVE while the chopper is dissipating — so the residual carries
+        # roughly -2*p_chop there and is a diagnostic, not an imbalance.  It was
+        # already an observer column; what was missing was the label saying so
+        # where the reader meets the trace.
         ax1.plot(t, p_bal + p_aux, color=COLORS["V_chg"],
                  linewidth=bl_figures.LW_RAW, linestyle="--",
-                 label=("p_bal_w + p_aux_w (storage, motor stamp, RT1987 drops)"
+                 label=("p_bal_w + p_aux_w (storage, motor stamp, RT1987 "
+                        "drops; in BRAKING also ~-2*p_chop_w)"
                         if p_chg_loss is not None else
-                        "p_bal_w + p_aux_w (CHARGER, storage, RT1987 drops)"))
+                        "p_bal_w + p_aux_w (CHARGER, storage, RT1987 drops; "
+                        "in BRAKING also ~-2*p_chop_w)"))
     finite = np.isfinite(p_bal)
     if np.any(finite):
         mean_bal = float(np.mean(p_bal[finite]))
@@ -1185,13 +1230,20 @@ def hil_power_balance(data, cfg):
                     if np.any(mot_finite) else 0.0)
         pct = ("%.1f %% of mean |p_mot|" % (100.0 * max_bal / mean_mot)
                if mean_mot > 1e-9 else "mean |p_mot| is zero")
+        # Same statement in the numeric annotation, because a reader who
+        # quotes the residual figure is usually quoting this line.
+        brake = ("" if not np.any(np.isfinite(p_chop_arr)
+                                  & (p_chop_arr > 1e-9)) else
+                 "  [BRAKING TICKS: p_chop sits on the SOURCE side while p_mot "
+                 "is negative, so the residual carries ~-2*p_chop there — a "
+                 "diagnostic, not an imbalance]")
         era = ("" if p_chg_loss is not None else
                "  [PRE-ETA CSV: the Ag105 was a 1:1 current transfer element, "
                "so its ~i_charge*(V_chg - V_batt) dissipation is INSIDE this "
                "residual]")
         ax1.text(0.01, 0.06,
-                 "residual: mean %+.4f W, max |.| %.4f W (%s)%s"
-                 % (mean_bal, max_bal, pct, era),
+                 "residual: mean %+.4f W, max |.| %.4f W (%s)%s%s"
+                 % (mean_bal, max_bal, pct, era, brake),
                  transform=ax1.transAxes, color=TEXT_COLOR, fontsize=9,
                  va="bottom")
     bl_figures._style_axes(ax1, ylabel="Residual power [W]")
@@ -1691,6 +1743,50 @@ def _era_overrides(scenario, meta, scen_meta, era_preload, era_status):
             if repr(scen_meta.get(k)) != repr(v)}
 
 
+def _matched_dp_regen_bound(hil, fields, h2_run):
+    """Regen energy this run returned, priced as an upper bound in grams.
+
+    Returns None when the run carries no `p_mot_w` column (every campaign
+    before 2026-09-01) or when the column never goes negative — i.e. when the
+    scenario is not regen-bearing and the boundary costs nothing.  Pure."""
+    # `t_s` is load_hil_csv()'s canonical seconds axis; `t` is the raw column.
+    t = hil.get("t_s")
+    if t is None:
+        t = hil.get("t")
+    p_mot = hil.get("p_mot_w")
+    if t is None or p_mot is None:
+        return None
+    t = np.asarray(t, dtype=float)
+    p = np.asarray(p_mot, dtype=float)
+    ok = np.isfinite(t) & np.isfinite(p)
+    if ok.sum() < 2:
+        return None
+    t, p = t[ok], p[ok]
+    # Trapezoid over the NEGATIVE part only: `p_mot_w` is signed at the motor
+    # node (+ draw, - regen) and its two branches are exclusive by
+    # construction, so clipping is a selection, not an approximation.
+    regen_j = float(np.trapezoid(np.minimum(p, 0.0), t))
+    if not np.isfinite(regen_j) or regen_j >= 0.0:
+        return None
+    gain = fields.get("gfc_dc_gain")
+    grams = None if not gain else abs(regen_j) * float(gain)
+    pct = (None if (grams is None or not h2_run)
+           else 100.0 * grams / float(h2_run))
+    note = ("regen-bearing: bound optimistic by <= %s (%.3f J returned at the "
+            "motor node). The DP's demand omits regen, so at a matched "
+            "terminal SoC it buys with hydrogen what this run got back from "
+            "braking — its total is inflated by at most that energy priced at "
+            "the Gfc DC gain, and the deviation below is biased in the run's "
+            "favour by the same amount. An UPPER bound: the motor-node-to-pack "
+            "path is lossy and the plant floors regen at VESC_REGEN_I_MAX_A"
+            % ("an unpriced amount" if grams is None
+               else "%.6g g%s" % (grams, "" if pct is None
+                                  else " (%.2f %% of the run's total)" % pct),
+               abs(regen_j)))
+    return {"regen_j": regen_j, "bound_optimistic_g": grams,
+            "bound_optimistic_pct_of_run": pct, "note": note}
+
+
 def matched_dp_for_run(analysis, meta, hil, mode="lookup",
                        tol_soc=None, log=print, strict=False,
                        allow_long=False):
@@ -1810,10 +1906,27 @@ def matched_dp_for_run(analysis, meta, hil, mode="lookup",
 
     h2_run = _last_finite(hil["h2_cum_g"]) if "h2_cum_g" in hil else None
     notes.append(MATCHED_DP_GFC_NOTE)
+    # ── QUANTIFY THE REGEN BOUNDARY FOR *THIS* RUN (2026-09-02) ─────────────
+    # MATCHED_DP_REGEN_NOTE states the boundary qualitatively on every run.
+    # A run that actually brakes deserves the MAGNITUDE, because the direction
+    # is knowable and it flatters the run: the DP's demand is
+    # `max(0, F*v)` (gen_dp_ems_table.build_demand), so the DP never receives
+    # the braking energy the live plant returns to the pack, and at a MATCHED
+    # terminal SoC it must therefore buy that SoC with hydrogen instead. Its
+    # total is inflated by at most the returned energy priced at the Gfc DC
+    # gain, and the run's `pct_deviation` is biased in the run's favour by the
+    # same amount. `regen_j` is the energy the plant actually returned
+    # (integral of min(p_mot_w, 0)); the gram figure is an UPPER bound because
+    # every conversion between the motor node and the pack is lossy and the
+    # plant floors regen at VESC_REGEN_I_MAX_A.
+    regen = _matched_dp_regen_bound(hil, fields, h2_run)
+    if regen is not None:
+        notes.append(regen["note"])
     out = {"key": key, "key_fields": fields, "target_soc": float(target),
            "soc0": float(soc0), "accounting": accounting,
            "h2_run_g": h2_run,
            "delta_soc_run": float(target) - float(soc0),
+           "regen_bound": regen,
            "stimulus_era": stimulus_era, "notes": notes}
 
     duration_s = float(scen_meta.get("duration_s") or 0.0)
@@ -2148,12 +2261,22 @@ def _fmt(v, spec="%.4g"):
 
 def _metrics_table(title, table):
     lines = ["", "**%s**" % title, "",
-             "| signal | n | RMS Δ | max abs Δ | mean Δ |",
-             "|---|---|---|---|---|"]
+             "| signal | n | RMS Δ | max abs Δ | mean Δ | note |",
+             "|---|---|---|---|---|---|"]
+    notes = []
     for key, m in sorted(table.items()):
-        lines.append("| %s | %d | %s | %s | %s |"
+        # A row that is not a comparison says so IN THE ROW (2026-09-02): the
+        # numbers are still printed, because suppressing them would hide the
+        # evidence for the tag, but they are no longer readable as deviations.
+        tag = m.get("not_exercised")
+        if tag:
+            notes.append("- `%s`: %s." % (key, tag))
+        lines.append("| %s | %d | %s | %s | %s | %s |"
                      % (key, m.get("n", 0), _fmt(m.get("rms")),
-                        _fmt(m.get("max_abs")), _fmt(m.get("mean"))))
+                        _fmt(m.get("max_abs")), _fmt(m.get("mean")),
+                        "NOT EXERCISED" if tag else ""))
+    if notes:
+        lines += [""] + notes
     return lines
 
 
@@ -2380,7 +2503,15 @@ def render_summary_markdown(meta, analyses, errors):
         # Markers qualify a NUMBER; appending one to the "no metric" dash
         # would read as a qualified value that does not exist.
         if resp and resp.get("rms") is not None:
-            if rep.get("different_control_law"):
+            # NOT EXERCISED first (2026-09-02): on an entry that replayed no
+            # commands these two columns are the SOURCE log's trajectory, not a
+            # deviation, and the largest number in the whole table (ML0144's
+            # 8.635) was one of them. The law markers qualify a comparison; this
+            # says there was none, so it replaces rather than joins them.
+            if resp.get("not_exercised"):
+                rms += " x"
+                mx += " x"
+            elif rep.get("different_control_law"):
                 rms += " *"
             elif not rep.get("control_law_known", True):
                 rms += " ?"
@@ -2399,6 +2530,9 @@ def render_summary_markdown(meta, analyses, errors):
           "excluded. Each run's ANALYSIS.md carries the whole-run union too."
           % DEFAULT_GRACE_S,
           "",
+          "`x` the entry replayed NO commands: the board's motor command is "
+          "identically 0 A, so the two I_cmd columns are the SOURCE log's own "
+          "trajectory and not a deviation of anything. "
           "`*` source log firmware < v%d — different wheel and control law; "
           "the response deviation is a character comparison, not a trace "
           "match. `?` source firmware version unknown — control-law "

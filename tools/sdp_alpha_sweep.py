@@ -1170,7 +1170,11 @@ HIL_CSV_COLUMNS = [
     "t", "seq", "V_fc", "V_batt", "V_bus", "V_chg", "V_rgn", "I_fc", "I_batt",
     "v_actual", "I_charge", "ag105_status", "state", "switch", "aux",
     "current", "mdac_fc", "mdac_bt", "fault_flags", "soc", "elec_substep_hz",
-    "elec_events", "cmd_v_sp", "cmd_share_sp", "h2_rate_gps", "h2_cum_g",
+    # `elec_substep_n` (2026-09-02, review PLANT-R1-F6): the per-tick substep
+    # COUNT, appended after the two established elec columns.  Blank here like
+    # the rest of the plant tail — the reduced walk runs no node ODE.
+    "elec_events", "elec_substep_n",
+    "cmd_v_sp", "cmd_share_sp", "h2_rate_gps", "h2_cum_g",
     "h2_sdp_cum_g", "cmd_share_sp_raw", "mppt_thresh_cnt", "error_code",
     # Power-balance tail, appended to BOTH schemas 2026-09-01f
     # (tools/hil_plant_sim.py:8608).  Plant.step() quantities the reduced walk
@@ -1259,7 +1263,9 @@ def synthesize_hil_csv(path, result, sim, scenario_meta, dt_s):
                 "" if result.mdac_bt[k] is None else result.mdac_bt[k],
                 WALK_CSV_FAULT_FLAGS,                         # fault_flags
                 "%.5f" % result.soc[k],                       # soc
-                "", "",                                       # elec_* columns
+                "", "", "",                                   # elec_* columns
+                                                              # (hz, events,
+                                                              #  substep_n)
                 "" if v_sp is None else "%.5f" % v_sp,        # cmd_v_sp
                 "%.5f" % result.share_cmd[k],                 # cmd_share_sp
                 "%.9g" % rate,                                # h2_rate_gps

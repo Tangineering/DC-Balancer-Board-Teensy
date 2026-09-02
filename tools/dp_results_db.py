@@ -620,6 +620,19 @@ def solve_and_store(fields, target_soc, *, match_tol=2.0e-6, db_dir=DP_DB_DIR,
         raise ValueError("unknown scenario %r" % scenario)
     era_overrides = fields.get("era_overrides") or {}
     meta = apply_era_overrides(live_meta, era_overrides)
+    # ── THE ERA MUST REACH THE FINGERPRINT HERE TOO (2026-09-02) ────────────
+    # `prepare_problem()` fingerprints the META it is given, and a LIVE
+    # scenario meta declares no `eta_chg` (dp_eta_chg() resolves the absent key
+    # to the module's own constant only for the RUN, not for the dict).  The
+    # prefill path already resolves the era into the meta it fingerprints
+    # (_cmd_prefill's M4(b)), so `prefill --scenario X --eta-chg 0.88` produced
+    # a key whose fingerprint carried the era and then came in HERE, where the
+    # meta did not — and every such solve died on "profile fingerprint drift"
+    # before it started.  `era_overrides` is still the caller's explicit
+    # channel and WINS: it is set only if the key fields named it.
+    _eta = fields.get("eta_chg")
+    if _eta is not None and "eta_chg" not in era_overrides:
+        meta["eta_chg"] = float(_eta)
     aux = fields.get("aux_preload_a")
     problem = gen.prepare_problem(
         scenario, meta, soc0=fields["soc0"],

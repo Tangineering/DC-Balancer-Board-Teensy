@@ -159,6 +159,28 @@ SHARE_BAND_DP = (0.25, 0.75)
 SHARE_BAND_SDP = (0.15, 0.85)
 SHARE_LEVELS = 7
 
+# ── THE CHARGE AXIS OF THE ENUMERATION (2026-09-02) ─────────────────────────
+# `MpcStrategy.__call__()` builds AT MOST three per-stage charge plans per
+# decision: the no-charge option (always index 0, so an expired budget has a
+# feasible incumbent), the 8 s minimum-dwell option, and — only when the
+# admissible run is longer than the dwell — the full segment.  A latched charge
+# window replaces the whole list with one option.  The planner enumerates the
+# share ladder ONCE PER OPTION, so the full search is `enumeration_size()`
+# candidates, not `share_levels ** len(blocks)`.
+#
+# It is a named constant because the campaign cap is derived from it: with the
+# cap set to ONE option's worth of candidates, and the no-charge option
+# enumerated FIRST, every capped decision was truncated BEFORE the charge axis
+# was reached — so "the MPC chose not to charge" was not a supported reading of
+# any leg (campaign 20260902_011926, 13 of 61 decisions capped on mpc-sto).
+MAX_CHARGE_OPTIONS = 3
+
+
+def enumeration_size(share_levels=SHARE_LEVELS, blocks=MOVE_BLOCKS,
+                     charge_options=MAX_CHARGE_OPTIONS):
+    """Full candidate count for one decision: ladder^blocks per charge plan."""
+    return int(share_levels) ** len(tuple(blocks)) * int(charge_options)
+
 # Overcurrent margins.  LIMIT_I_FC_MAX 1.4 A (.ino:1375) and LIMIT_I_BT_MAX
 # 3.0 A (.ino:1426), both with gen_dp_ems_table's DP_CHARGE_FC_MARGIN of 0.85
 # headroom (adjudication section 1; candidate_fable Table 1).
@@ -1356,10 +1378,17 @@ class ShadowGovernor:
        the two MDAC words, so this class uses them when a caller supplies
        ``mdac_fc``/``mdac_bt`` and otherwise corrects from the MEASURED delivered
        share ``|I_fc|/(|I_fc|+|I_batt|)``, which is telemetry-equivalent and
-       available.  Adding the two words to the feedback view is an additive
-       registration step (see the design document); until it lands, the
-       ``mdac_corrections`` counter reads zero and ``current_corrections`` carries
-       the load."""
+       available.
+       ⚠️ STALE CLAUSE CORRECTED 2026-09-02 (campaign 20260902_011926, F6): the
+       design's ``mdac_corrections`` counter DOES NOT read zero — the additive
+       registration step landed with the MPC round, so ``_fb()`` carries
+       ``mdac_fc``/``mdac_bt`` and the first live campaign measured **2968 MDAC
+       corrections** on ``ems-mpc-sto``.  The two words are outside
+       ``FB_TELEMETRY_EQUIV_KEYS`` deliberately (they are not in the v4 packet
+       and are not portable to a real Pi), so the current-derived path remains
+       the fallback and ``current_corrections`` is what a Mode B run would use.
+       docs/modeling/mpc_design_20260901.md §2.5 carries the same stale
+       sentence; it is the docs agent's to correct."""
 
     def __init__(self, dv0_v=0.0, seed_r=0.5, tick_s=GOV_TICK_S):
         self.tick_s = float(tick_s)
@@ -1693,6 +1722,14 @@ class MpcStrategy:
             "roll_tick_chunk": RollJob.TICK_CHUNK,
             "max_transitions": RollJob.MAX_TRANSITIONS,
             "max_candidates": self.max_candidates,
+            # The number the cap has to be read AGAINST (2026-09-02).  A cap
+            # BELOW this truncates the search, and — because the charge options
+            # are enumerated after the share ladder — it truncates the CHARGE
+            # AXIS first, which is exactly the reading an MPC leg is used to
+            # make.  Recorded per run so a report never has to reconstruct it
+            # from the ladder and the move blocks.
+            "enumeration_size": enumeration_size(self.share_levels, self.blocks),
+            "max_charge_options": MAX_CHARGE_OPTIONS,
             "soc_ref_offset": self.soc_ref_offset,
             "dv0_v": self.dv0_v,
             "governor_commit": True,
@@ -2061,7 +2098,15 @@ class MpcStrategy:
                     else " (last: %s)" % self.latch.drop_reason),
                    self.terminal_price_mode,
                    terminal_price(self.terminal_price_mode), ETA_FC_PROXY,
-                   ("the scenario profile — ⚠️ PREVIEW, NOT CAUSAL"
+                   # ASCII "(!)" deliberately (2026-09-02): the U+26A0 U+FE0F
+                   # pair that used to sit here could not be encoded to the
+                   # cp1252 console, so printing THIS LINE raised
+                   # UnicodeEncodeError and killed ems-mpc, ems-mpc-cross and
+                   # ems-ftp75-mpc after their runs were complete but before
+                   # their sidecars were finalized. `mpc-sto`'s variant of the
+                   # label had no such glyph and printed, which is why one of
+                   # the four MPC legs passed. Keep summary/banner text ASCII.
+                   ("the scenario profile - (!) PREVIEW, NOT CAUSAL"
                     if self.variant == "det" else "the demand TPM (causal)"),
                    ("" if self.variant != "sto" else
                     "; demand bin clamped HIGH on %d and LOW on %d"

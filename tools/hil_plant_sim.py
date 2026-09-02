@@ -1817,14 +1817,25 @@ class Plant:
             # 0.02 A floor), which is the independent evidence.
             #
             # WHAT IS LEFT UNFIXED, stated rather than papered over: the hi-fi
-            # row still shows +0.0915 J of the 1.4016 J charger input arriving
-            # from the BUS through a closed MOT_PWR, 6.5 % of the window's
-            # harvest.  It is a TRANSIENT of the node solve, not a systematic
-            # double claim (simple mode, which has no such transient, leaks
-            # exactly zero), and closing it needs the charger and the clamp
-            # solved together at one node voltage rather than one capping the
-            # other.  `TODO(verify)`: bound it with a co-solved split.  §4.6.2
-            # carries the full record.
+            # row shows 0.088059 J of the 1.4016 J charger input arriving from
+            # the BUS through a closed MOT_PWR — 6.28 % of the window's harvest.
+            # ⚠️ MECHANISM CORRECTED 2026-09-02 (review PLANT-R1-F2). This was
+            # recorded as a TRANSIENT of the node solve; it is not. It is
+            # POST-CLAMP-RELEASE BUS-FED CHARGING: while the chopper is clamping,
+            # V_MOT sits at 18.135 V, MOT_PWR is strict-forward and therefore not
+            # stamped at all, and the bus contributes EXACTLY zero (measured to
+            # 1e-6 J, and deleting the link changes the total by 0 J). Once
+            # braking ends the node falls, V_bus rises above it by more than
+            # RT_V_FWD, and the charger — still ramping down through AG105_TAU_S
+            # — is fed forward through the link at 0.118 W steady. Simple mode
+            # leaks zero because it has no such link, not because it has no
+            # transient.
+            # The co-solved-split `TODO(verify)` that stood here is RETIRED: a
+            # co-solve addresses a contention between the charger and the clamp
+            # at one node voltage, and the two are never both active on the
+            # leaking ticks. What would change the number is the AG105_TAU_S
+            # ramp-down or a reverse-blocking rule on the charger's input, not
+            # the solver. §4.6.2 carries the full record.
             i_target = self.ag105_i_max
             if (sw & SW_REGEN) and not (sw & SW_FC_CHARGE):
                 i_target = min(i_target,
@@ -5373,7 +5384,13 @@ class SdpStrategy:
                 print("[hil]   artifact SUPPLIED BY THE SCENARIO: %s"
                       % src.get("declared"))
         if not self.provenance["era_match"]:
-            print("[hil]   ⚠️ CHARGER-ERA MISMATCH: this artifact was solved "
+            # ASCII "(!)" deliberately (2026-09-02): this exact string, with a
+            # U+26A0 U+FE0F pair in it, raised UnicodeEncodeError on the cp1252
+            # console and — because UnicodeEncodeError subclasses ValueError —
+            # was caught by main()'s binder guard and reported as "cannot run
+            # scenario", so ems-sdp-cross and ems-sdp-braking never launched.
+            # Keep every operator-facing string in this file ASCII.
+            print("[hil]   (!) CHARGER-ERA MISMATCH: this artifact was solved "
                   "against %s, and this run's plant bills %s. The policy is "
                   "still a valid control law and the run proceeds — an SDP "
                   "artifact is defined on any plant — but its alpha was "
@@ -6130,21 +6147,36 @@ ems_mpc_sto = _MpcProxy("mpc-sto")
 # after this many evaluations whatever the clock says, so two runs of one leg
 # explore the same set.
 #
-# WHY 343 AND NOT A ROUND NUMBER.  It is the full enumeration at the shipped
-# ladder and move-block structure (7 share levels over 3 move blocks, 7**3), so
-# the cap is EXHAUSTIVE at the shipped configuration and constrains nothing —
-# it removes the clock's influence without removing any candidate.  ⚠️ A
-# `--mpc-share-levels` or `--mpc-horizon` override changes the enumeration size
-# and this constant does NOT follow it; a leg run with either flag is capped
-# below its own enumeration and is a different experiment. State that when you
-# use one.
+# WHY 1029 AND NOT A ROUND NUMBER.  It is the full enumeration at the shipped
+# ladder and move-block structure (7 share levels over 3 move blocks, 7**3 =
+# 343) TIMES the maximum number of charge plans a decision offers
+# (`mpc_ems.MAX_CHARGE_OPTIONS` = 3: no-charge, the 8 s minimum dwell, and the
+# full admissible segment).  The cap is therefore EXHAUSTIVE at the shipped
+# configuration and constrains nothing — it removes the clock's influence
+# without removing any candidate.
+#
+# ⚠️ IT WAS 343 UNTIL 2026-09-02, AND THAT COST A CAMPAIGN'S CHARGE READING.
+# 343 is ONE charge option's worth of candidates, and the planner enumerates the
+# share ladder once per charge plan with the no-charge plan FIRST — so every
+# capped decision was truncated BEFORE the charge axis was reached (13 of 61
+# decisions on `ems-mpc-sto`).  "The MPC chose not to charge" was not a
+# supported reading of any leg of campaign 20260902_011926.  Any future change
+# to the ladder, the move blocks or the charge-option count must move this
+# constant with it; `test_mpc_campaign_cap_is_the_full_enumeration` pins it
+# against `mpc_ems.enumeration_size()` (the modules cannot import each other —
+# mpc_ems imports THIS one — so the pin is a test, not an assert here).
+#
+# ⚠️ A `--mpc-share-levels` or `--mpc-horizon` override changes the enumeration
+# size and this constant does NOT follow it; a leg run with either flag is
+# capped below its own enumeration and is a different experiment. State that
+# when you use one.
 #
 # ⚠️ IT DOES NOT MAKE AN MPC RUN BIT-REPRODUCIBLE END TO END. The cap bounds the
 # candidate COUNT; the roll-table slicing (`roll_budget_ms`) is still wall-clock
 # bounded, and the board's own timing is not deterministic either. An MPC run
 # must never enter a repeatability ledger beside the `scp` i_cut or `ems-sdp` h2
 # records.
-MPC_CAMPAIGN_MAX_CANDIDATES = 343
+MPC_CAMPAIGN_MAX_CANDIDATES = 1029
 
 
 def parse_share_band(text):
@@ -9249,7 +9281,48 @@ def apply_scenario(plant, scenario, t):
     return tx_enabled
 
 
+def _make_console_lossless(streams=None):
+    """Make stdout/stderr never raise UnicodeEncodeError.  Returns the names
+    reconfigured (for tests).
+
+    THE DEFECT THIS CLOSES (campaign 20260902_011926, fix-queue item 1): the
+    Windows console encoding is cp1252, and a single un-encodable glyph in a
+    banner or a summary line raised UnicodeEncodeError out of `print()`.  Two
+    whole failure classes followed from it — two EMS legs never launched (the
+    bind-time warning below raised inside a binder whose `except ValueError`
+    turned it into an argparse error, because UnicodeEncodeError IS a
+    ValueError), and three MPC legs completed 61 000 ticks and then died
+    printing their summary BEFORE the sidecar was finalized, losing the
+    provenance of a complete run.
+
+    `errors="backslashreplace"` is chosen over `"replace"` so the escape names
+    the codepoint that could not be printed instead of hiding it behind '?'.
+    The offending TEXT is fixed at the source too (ASCII labels); this is the
+    belt-and-braces layer, because the next un-encodable glyph will be added by
+    someone who never saw this campaign.
+
+    Guarded: a stream may not be reconfigurable at all (a pipe replaced by a
+    test's StringIO, a stream detached by a harness), and a console fix must
+    never itself be the thing that kills the run."""
+    done = []
+    for name in ("stdout", "stderr") if streams is None else streams:
+        stream = getattr(sys, name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="backslashreplace")
+            done.append(name)
+        except (ValueError, OSError, AttributeError, TypeError):
+            # Not reconfigurable (detached, or a non-TextIOWrapper stand-in).
+            continue
+    return done
+
+
 def main(argv=None):
+    # cp1252 (2026-09-02): FIRST statement in main(), before any banner can be
+    # printed. See _make_console_lossless().
+    _make_console_lossless()
     # LOW-5 (fw v24 tooling-lockstep review): defence in depth for same-process
     # reuse (e.g. a test harness calling main() more than once) -- without this
     # a second run would inherit _OBS_LENGTHS_SEEN from the first and could
@@ -9815,6 +9888,21 @@ def main(argv=None):
                            electrical_mode=("hifi" if electrical is not None
                                             else "simple"),
                            args=args)
+                except UnicodeEncodeError:
+                    # NOT a bind refusal (2026-09-02).  UnicodeEncodeError is a
+                    # ValueError subclass, so the clause below used to convert a
+                    # CONSOLE problem into "this strategy cannot run this
+                    # scenario" and exit rc=2 before a frame was sent — the
+                    # campaign-20260902 defect that cost two legs.  With
+                    # _make_console_lossless() in place this is unreachable in
+                    # normal operation; if it fires anyway (a stream that
+                    # refused reconfiguration), say so honestly and let the run
+                    # proceed, because nothing about the BINDING failed.
+                    print("[hil] WARNING: a bind-time banner could not be "
+                          "encoded for this console (%s). The binding itself "
+                          "SUCCEEDED and the run continues; some banner text "
+                          "was not printed." % sys.stdout.encoding,
+                          file=sys.stderr)
                 except (ValueError, OSError) as exc:
                     ap.error("--ems %s cannot run scenario '%s':\n%s"
                              % (ems_name, scenario, exc))
@@ -9986,7 +10074,17 @@ def main(argv=None):
         else:
             header_row.append("soc")            # APPEND-only (scope extension)
             if electrical is not None:
-                header_row += ["elec_substep_hz", "elec_events"]
+                # `elec_substep_n` (2026-09-02, review PLANT-R1-F6) is the
+                # SUBSTEP COUNT this tick actually ran, appended after the
+                # two established columns so no offset moves. The rate
+                # column alone cannot answer "was this tick resolved finely
+                # enough": the substep count is wall-clock ADAPTIVE
+                # (ElectricalSim._n_sub follows an EWMA of the per-substep
+                # cost), so a loaded host silently runs coarser and the
+                # trace does not say so. `substep_resolution` in
+                # run_hil_suite.py judges this column.
+                header_row += ["elec_substep_hz", "elec_events",
+                               "elec_substep_n"]
             # APPEND-only, and UNCONDITIONAL in simulated-plant mode: the two
             # command columns are present for EVERY simulated run, not only under
             # --ems. Column presence must not vary with a flag inside one mode, or
@@ -10811,6 +10909,7 @@ def main(argv=None):
                         # counter, not len(electrical.events) (which is ~0 most
                         # ticks).
                         row.append(elec_events_total)
+                        row.append(electrical._n_sub)
                     # Commanded setpoints as this process last sent them. Blank
                     # under --pi-live (no commander): the real Pi's commands never
                     # pass through here, so a number would be a fabrication.
@@ -11017,6 +11116,22 @@ def main(argv=None):
             # propagating out of the `except` clause above.
             try:
                 finalize_meta("error", error=pending_error)
+            except Exception:
+                pass
+        else:
+            # PROVENANCE BEFORE PRESENTATION (2026-09-02, fix-queue item 1).
+            # The sidecar used to be written only at the very END of main(),
+            # AFTER every summary print — so an exception in a print (the
+            # cp1252 crash in MpcStrategy.summary_line()) discarded the
+            # provenance of a run that had already completed 61 000 ticks and
+            # written its full CSV: `eta_chg None`, `ems_strategy None`, and
+            # two frontier tuples UNVERIFIED on data that was intact on disk.
+            # The teardown above is complete at this point (events drained and
+            # closed, CSV closed), so the record is accurate here.
+            # finalize_meta() rewrites the file, so the tail call below is a
+            # harmless refresh with a slightly later `elapsed_s`.
+            try:
+                finalize_meta(run_status)
             except Exception:
                 pass
 

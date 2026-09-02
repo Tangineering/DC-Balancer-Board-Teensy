@@ -1306,7 +1306,11 @@ def test_regen_harvest_true_events_require_uses_total_of_not_per_episode_all():
     # left: the plant probe measures 1.3043 J per window against the 1:1 era's
     # 2.3-2.9, i.e. ~3.9 J per 3-window run, and 1.9 J is 49 % under that (the
     # margin class the retired 3.0 carried against 6.9 J).
-    assert totals[0]["min_value"] == 1.9
+    # RESTORED to 3.0 J from the BOARD (campaign hil_report_20260902_011926):
+    # the run measured 6.3525 J (2.109 + 2.110 + 2.133 per window) against the
+    # probe's ~3.9 J -- a ~1.6x under-prediction -- so the eta-era total is
+    # essentially the 1:1 era's and 3.0 J is 53 % under it.
+    assert totals[0]["min_value"] == 3.0
     # And the per-episode floor left behind is deliberately much looser than
     # 0.3 J -- it exists only to catch a fully-missing/degenerate episode.
     per_episode = [r for r in reqs if isinstance(r, dict) and r.get("kind")
@@ -7093,16 +7097,28 @@ def test_ftp75_socband_h2_band_is_now_two_sided():
     #     (0.859) and nowhere near the plant-walk one (1.127).
     #   * under ETA_CHG 0.88 the socband walk RISES, because cheaper charging
     #     opens a third window: physical 3.7526e-2 -> 4.1873e-2 g.
+    #   * MEASURED (2026-09-02, campaign hil_report_20260902_011926 -- the
+    #     first eta-era, zero-preload, actually-charging run of this leg):
+    #     0.042427323 g, i.e. the physical walk's 4.1873e-2 confirmed to
+    #     +1.3 %. The band is now +/-20 % on the MEASUREMENT, and the two specs
+    #     are no longer provisional.
     _WALK = 4.1873e-2
-    assert floor["min_value"] == pytest.approx(rhs._FTP_H2_FLOOR_SOCBAND) == pytest.approx(0.031)
-    assert ceiling["max_value"] == pytest.approx(0.052)
-    # The band must BRACKET the prediction with real margin on both sides --
-    # a floor above it, or a ceiling below it, would fail a correct board.
+    _MEASURED = 0.042427323
+    assert floor["min_value"] == pytest.approx(rhs._FTP_H2_FLOOR_SOCBAND) == pytest.approx(0.034)
+    assert ceiling["max_value"] == pytest.approx(0.051)
+    # The band must BRACKET both the prediction and the measurement with real
+    # margin on both sides -- a floor above either, or a ceiling below either,
+    # would fail a correct board.
     assert floor["min_value"] < _WALK < ceiling["max_value"]
-    assert floor["min_value"] < 0.80 * _WALK
-    assert ceiling["max_value"] > 1.20 * _WALK
+    assert floor["min_value"] < _MEASURED < ceiling["max_value"]
+    # +/-20 % on the measurement is [0.033942, 0.050913]; the shipped bounds are
+    # those rounded to three decimals ([0.034, 0.051]), so allow 1 % of rounding
+    # slack rather than pinning the unrounded edges.
+    assert floor["min_value"] == pytest.approx(0.80 * _MEASURED, rel=0.01)
+    assert ceiling["max_value"] == pytest.approx(1.20 * _MEASURED, rel=0.01)
     for s in h2_specs:
-        assert s.get("provisional_note")
+        assert not s.get("provisional_note"), (
+            "the band is measured now, not a walk prediction: " + s["name"])
     # The vacuous floor must be GONE from this entry (it stays as the 5050
     # variant's own constant, which is a different question).
     assert floor["min_value"] != pytest.approx(rhs._FTP_H2_FLOOR)
@@ -8759,7 +8775,10 @@ def test_ems_ftp75_dp_h2_band_is_the_union_of_its_siblings_bands():
     # WP-1C (2026-09-02): the socband ceiling moved 0.046 -> 0.052 for the
     # ETA_CHG 0.88 charger, so the union moves with it. The 5050 floor does
     # not: that leg walks zero charge windows and is eta-invariant.
-    assert (lo, hi) == (0.022, 0.052)
+    # Then the socband band was re-derived from the BOARD (campaign
+    # 20260902_011926, measured 0.042427 g +/-20 %), tightening the ceiling
+    # 0.052 -> 0.051; the union follows.
+    assert (lo, hi) == (0.022, 0.051)
     # The solver's own matched-SoC optimum must land inside the live band, or
     # the two accountings have diverged by more than the band admits.
     assert lo < 0.0396922 < hi
@@ -8954,9 +8973,13 @@ def test_anti_vacuity_h2_bands_reject_just_outside_and_admit_just_inside(tmp_pat
 # change that drops the note, or this test catches the drift.
 _REDERIVED_FTP75_PROVISIONAL_SPECS = {
     "ems-ftp75-5050": ["ftp_fc_carried", "ftp_h2_accounted", "ftp_h2_bounded"],
+    # `ftp_h2_accounted` / `ftp_h2_bounded` DE-PROVISIONALIZED 2026-09-02:
+    # campaign hil_report_20260902_011926 measured this leg at 0.042427 g in
+    # the eta era at preload 0, so the band is a measurement +/-20 %, not a
+    # walk +/-25 %. `socband_fc_carried` keeps its note (re-pointed at the
+    # charge-free peak, margin over the control only 0.13 A).
     "ems-ftp75-socband": ["socband_share_biased", "socband_fc_carried",
-                          "socband_ftp_charge_opened", "ftp_h2_accounted",
-                          "ftp_h2_bounded"],
+                          "socband_ftp_charge_opened"],
     "ems-ftp75-sdp": ["sdpftp_low_rail_early", "sdpftp_high_rail_late",
                       "sdpftp_raw_battery_branch", "sdpftp_raw_fc_branch",
                       "sdpftp_fc_floored_early", "sdpftp_fc_carried_late",
@@ -9144,9 +9167,11 @@ def test_regen_harvest_true_max_of_spec_is_registered():
     assert len(maxes) == 1
     assert maxes[0]["max_of"] == "chopper_clamp"
     assert maxes[0]["field"] == "energy_j"
-    # WP-1C (2026-09-02): 1.0 -> 0.65 J, from the same measured halving as the
-    # `total_of` bound (50 % under the 1.3043 J probe).
-    assert maxes[0]["min_value"] == pytest.approx(0.65)
+    # WP-1C (2026-09-02) lowered it 1.0 -> 0.65 J on an offline plant probe;
+    # the FIRST eta-era board run (campaign hil_report_20260902_011926) measured
+    # 1.5810 J max / 2.109-2.133 J per window, i.e. the probe UNDER-PREDICTED by
+    # ~1.6x, so the bound is RESTORED to 1.0 J -- 37 % under the measurement.
+    assert maxes[0]["min_value"] == pytest.approx(1.0)
 
 
 # The strict xfail the test-writer put here (charge-regen defined twice) is
@@ -9320,7 +9345,13 @@ def _mppt_brake_rows(count):
 def test_mppt_brake_window_pin_specs_use_ag105_mppt_n_ceil():
     ceiling, floor = _mppt_brake_specs()
     assert ceiling["max_value"] == hil.AG105_MPPT_N_CEIL == 27
-    assert floor["floor_min_value"] == hil.AG105_MPPT_N_CEIL == 27
+    # RE-SPECIFIED 2026-09-02: the second arm is PEAK-REACHING (`min_value`),
+    # not a per-tick floor — the window's right edge overhangs the plateau by
+    # ~62 ms, so `floor_min_value` was unsatisfiable on correct data. The
+    # single-row cases below are unaffected (26 fails, 27 passes, 28 clears the
+    # reaching arm and trips the ceiling).
+    assert floor["min_value"] == hil.AG105_MPPT_N_CEIL == 27
+    assert "floor_min_value" not in floor
     assert ceiling["t_window"] == rhs._MPPT_THRESH_BRAKE_W
     assert floor["t_window"] == rhs._MPPT_THRESH_BRAKE_W
 
@@ -9719,3 +9750,345 @@ def test_mpc_ftp75_leg_planned_with_the_gate(tmp_path):
         _args(out=str(tmp_path), with_ftp75=True))}
     assert not plan["ems-ftp75-mpc"].get("skip_reason")
     assert plan["ems-ftp75-mpc"]["duration_s"] == 350.0
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# NUMERIC THRESHOLD TICK COUNTER (campaign 20260902_011926, fix-queue item 2)
+#
+# `regen_clamp_dwell` pairs a numeric `min_value` with `min_ticks`.  Before this
+# round scan_signals() incremented `ticks` only on the bit/mask paths, so the
+# check read a structurally-zero counter and FAILED a run whose physics passed
+# with 1173 continuous ticks against a floor of 800 — in both charger eras.
+# ─────────────────────────────────────────────────────────────────────────
+
+def _threshold_rows(values, t0=3.0, dt=0.001, col="V_rgn"):
+    return [{"t": "%.3f" % (t0 + i * dt), col: "%.4f" % v, "fault_flags": "0"}
+            for i, v in enumerate(values)]
+
+
+def test_scan_signals_numeric_min_value_min_ticks_counts_the_threshold(tmp_path):
+    path = tmp_path / "thr.csv"
+    # four at/above 17.9, three below, interleaved so a run-length bug shows.
+    _write_scenario_csv(path, _threshold_rows(
+        [18.0, 18.1, 13.3, 17.9, 17.95, 13.0, 18.2]))
+    specs = [{"name": "dwell", "column": "V_rgn", "min_value": 17.9,
+              "min_ticks": 4, "label": "held on the clamp"}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    assert measured[0]["ticks"] == 5
+    assert measured[0]["max_run"] == 2
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+    # And it says the THRESHOLD, not "bit set" — the wording that made the
+    # campaign FAIL unreadable.
+    assert "value >= 17.9 on 5 tick(s)" in checks[0]["detail"]
+    assert "bit set" not in checks[0]["detail"]
+
+
+def test_scan_signals_numeric_min_ticks_fails_when_the_dwell_is_short(tmp_path):
+    path = tmp_path / "thr2.csv"
+    _write_scenario_csv(path, _threshold_rows([18.0, 13.3, 18.0]))
+    specs = [{"name": "dwell", "column": "V_rgn", "min_value": 17.9,
+              "min_ticks": 800}]
+    checks = rhs.judge_signals(
+        specs, rhs.scan_signals(str(path), specs, grace_s=0.0), "why")
+    assert checks[0]["passed"] is False
+    assert "need >= 800" in checks[0]["detail"]
+
+
+def test_scan_signals_numeric_max_value_counts_samples_under_the_bound(tmp_path):
+    path = tmp_path / "thr3.csv"
+    _write_scenario_csv(path, _threshold_rows([1.0, 2.0, 9.0], col="I_fc"))
+    specs = [{"name": "quiet", "column": "I_fc", "max_value": 2.5,
+              "min_ticks": 2}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    assert measured[0]["ticks"] == 2
+    checks = rhs.judge_signals(specs, measured, "why")
+    assert checks[0]["passed"] is True
+    assert "value <= 2.5 on 2 tick(s)" in checks[0]["detail"]
+
+
+def test_scan_signals_numeric_threshold_works_on_a_derived_source(tmp_path):
+    """The derived (`sum_of`) branch folds through the same recorder, so a tick
+    bound on I_tot counts the same way a bound on a plain column does."""
+    rows = [{"t": "3.000", "I_fc": "0.4", "I_batt": "0.4", "fault_flags": "0"},
+            {"t": "3.001", "I_fc": "0.1", "I_batt": "0.1", "fault_flags": "0"},
+            {"t": "3.002", "I_fc": "0.5", "I_batt": "0.5", "fault_flags": "0"}]
+    path = tmp_path / "thr4.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "itot", "sum_of": ["I_fc", "I_batt"], "min_value": 0.6,
+              "min_ticks": 2}]
+    measured = rhs.scan_signals(str(path), specs, grace_s=0.0)
+    assert measured[0]["ticks"] == 2
+    assert rhs.judge_signals(specs, measured, "why")[0]["passed"] is True
+
+
+def test_signal_spec_guard_refuses_a_tick_bound_with_no_predicate():
+    """The guard's job: a tick bound the scanner cannot honour must fail at
+    IMPORT, not measure zero mid-campaign."""
+    entry = {"signals_require": [
+        {"name": "orphan", "column": "V_rgn", "min_ticks": 800}]}
+    with pytest.raises(AssertionError) as exc:
+        rhs._assert_signal_spec_shapes("synthetic", entry)
+    assert "no predicate saying WHICH ticks count" in str(exc.value)
+
+
+def test_signal_spec_guard_accepts_the_shipped_regen_clamp_dwell():
+    """The 800-tick floor is NOT moved (measured 1173 continuous)."""
+    spec = next(s for s in
+                rhs.FAULT_EXPECTATIONS["regen-harvest-true"]["signals_require"]
+                if s.get("name") == "regen_clamp_dwell")
+    assert spec["min_ticks"] == 800
+    assert spec["min_value"] == 17.9
+    assert rhs._threshold_of(spec) == ("min_value", 17.9)
+
+
+def test_max_continuous_ticks_accepts_a_numeric_threshold_source():
+    """The counter now maintains `run`/`max_run` on the float path, so the
+    kind's source assertion admits a threshold spec too."""
+    entry = {"signals_require": [
+        {"name": "hold", "column": "V_rgn", "min_value": 17.9,
+         "max_continuous_ticks": 500, "vacuity_note": "synthetic"}]}
+    rhs._assert_signal_spec_shapes("synthetic", entry)     # must not raise
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# mppt mirror pin, re-specified (fix-queue item 4 / review PLANT-R1-F1)
+# ─────────────────────────────────────────────────────────────────────────
+
+def _mppt_spec(name):
+    return next(s for s in
+                rhs.FAULT_EXPECTATIONS["mppt-tracking"]["signals_require"]
+                if s.get("name") == name)
+
+
+def test_mppt_braking_mirror_pin_is_peak_reaching_not_a_dwell():
+    """The old `floor_min_value: 27` asserted the count sat at the clamp for
+    EVERY tick of a window whose right edge overhangs the plateau by ~62 ms, so
+    it was unsatisfiable on correct data in BOTH campaigns.  The pair is now
+    'reached 27' + 'never exceeded 27'."""
+    art = _mppt_spec("mppt_threshold_braking_mirror_artifact")
+    assert art["min_value"] == rhs.AG105_MPPT_N_CEIL
+    assert "floor_min_value" not in art
+    ceil = _mppt_spec("mppt_threshold_braking_mirror_artifact_ceiling")
+    assert ceil["max_value"] == rhs.AG105_MPPT_N_CEIL
+    assert art["t_window"] == ceil["t_window"] == rhs._MPPT_THRESH_BRAKE_W
+
+
+def test_mppt_braking_mirror_pin_passes_a_plateau_that_ends_early(tmp_path):
+    """The measured shape: 27 through the plateau, then the ratchet tail
+    descends before the window closes.  Peak-reaching passes it; the retired
+    per-tick floor did not."""
+    lo, hi = rhs._MPPT_THRESH_BRAKE_W
+    counts = [27] * 700 + [19] * 60           # plateau, then the tail
+    rows = [{"t": "%.4f" % (lo + i * (hi - lo) / len(counts)),
+             "mppt_thresh_cnt": str(c), "fault_flags": "0"}
+            for i, c in enumerate(counts)]
+    path = tmp_path / "mppt.csv"
+    _write_scenario_csv(path, rows, extra_cols=("mppt_thresh_cnt",))
+    specs = [_mppt_spec("mppt_threshold_braking_mirror_artifact"),
+             _mppt_spec("mppt_threshold_braking_mirror_artifact_ceiling")]
+    checks = rhs.judge_signals(
+        specs, rhs.scan_signals(str(path), specs, grace_s=0.0), "why")
+    assert all(c["passed"] for c in checks), [c["detail"] for c in checks]
+
+    # ...and a run in which the mirror never reaches the clamp still FAILS —
+    # the artifact must not be able to disappear silently.
+    rows2 = [dict(r, mppt_thresh_cnt="19") for r in rows]
+    path2 = tmp_path / "mppt2.csv"
+    _write_scenario_csv(path2, rows2, extra_cols=("mppt_thresh_cnt",))
+    checks2 = rhs.judge_signals(
+        specs, rhs.scan_signals(str(path2), specs, grace_s=0.0), "why")
+    assert checks2[0]["passed"] is False
+
+
+def test_mppt_manager_labels_say_mirror_not_manager():
+    """Under HIL_SIM the .ino short-circuits the write path and mirrors a count
+    from V_chg, so no mppt_thresh_cnt check witnesses the threshold manager."""
+    for name in ("mppt_threshold_written", "mppt_threshold_moved"):
+        label = _mppt_spec(name)["label"]
+        assert "mirror" in label.lower()
+        # No BARE claim that the manager ran.  (Both labels may — and do —
+        # mention the manager in order to DENY it; the retired wording asserted
+        # it.)
+        assert "— the threshold manager executed here" not in label
+        assert "the fw v24 threshold manager ran" not in label
+
+
+def test_mppt_provisional_note_records_the_measured_v_chg_shift():
+    note = rhs.FAULT_EXPECTATIONS["mppt-tracking"]["provisional_note"]
+    assert "+0.487 V" in note and "+0.774 V" in note
+    assert "floor" in note.lower()
+    # The retired prediction must be gone, not merely contradicted.
+    assert "21-22" not in note
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# socband FC-peak tripwire, split into a charge-free and a charge arm
+# (campaign 20260902_011926, fix-queue item 5)
+# ─────────────────────────────────────────────────────────────────────────
+
+def _socband_spec(name):
+    return next(s for s in
+                rhs.FAULT_EXPECTATIONS["ems-ftp75-socband"]["signals_require"]
+                if s.get("name") == name)
+
+
+def test_scan_signals_exclude_when_switch_bit_masks_rows_out(tmp_path):
+    rows = [
+        {"t": "31.0", "I_fc": "0.60", "switch": str(rhs.SW_FC_CHARGE),
+         "fault_flags": "0"},                       # charge tick, excluded
+        {"t": "31.1", "I_fc": "0.40", "switch": "0", "fault_flags": "0"},
+        {"t": "31.2", "I_fc": "0.50", "switch": "0", "fault_flags": "0"},
+    ]
+    path = tmp_path / "mask.csv"
+    _write_scenario_csv(path, rows)
+    spec = {"name": "masked", "column": "I_fc", "max_value": 0.55,
+            "exclude_when_switch_bit": rhs.SW_FC_CHARGE,
+            "t_window": (30.0, 340.0)}
+    m = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    assert m[0]["peak"] == pytest.approx(0.50)      # the 0.60 tick is gone
+    assert rhs.judge_signals([spec], m, "why")[0]["passed"] is True
+    # Without the mask the same data trips the ceiling.
+    bare = dict(spec)
+    bare.pop("exclude_when_switch_bit")
+    m2 = rhs.scan_signals(str(path), [bare], grace_s=0.0)
+    assert rhs.judge_signals([bare], m2, "why")[0]["passed"] is False
+
+
+def test_scan_signals_exclude_mask_drops_rows_with_no_switch_level(tmp_path):
+    """A blank switch cell cannot be masked, and counting it would assert the
+    bit was clear.  Such a run measures nothing and fails loudly."""
+    rows = [{"t": "31.0", "I_fc": "9.9", "switch": "", "fault_flags": ""}]
+    path = tmp_path / "blank.csv"
+    _write_scenario_csv(path, rows)
+    spec = {"name": "masked", "column": "I_fc", "max_value": 0.55,
+            "exclude_when_switch_bit": rhs.SW_FC_CHARGE}
+    m = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    assert m[0]["peak"] is None
+    check = rhs.judge_signals([spec], m, "why")[0]
+    assert check["passed"] is False
+    assert "unmeasured" in check["detail"]
+
+
+def test_socband_fc_peak_tripwire_is_split_into_two_arms():
+    free = _socband_spec("socband_fc_peak_bounded")
+    chg = _socband_spec("socband_fc_peak_charging")
+    assert free["max_value"] == 0.85
+    assert free["exclude_when_switch_bit"] == rhs.SW_FC_CHARGE
+    # The charge arm is whole-window (the charge peak IS the window peak) and
+    # is sized from the sourced decomposition, with headroom under the limit.
+    assert chg["max_value"] == 1.25
+    assert "exclude_when_switch_bit" not in chg
+    assert chg["max_value"] < 1.4                 # LIMIT_I_FC_MAX
+    assert chg["max_value"] > 1.1370              # the measured peak
+    assert free["t_window"] == chg["t_window"] == (30.0, 340.0)
+
+
+def test_socband_fc_carried_is_measured_on_charge_free_ticks():
+    """It passed campaign 20260902_011926 on a CONTAMINATED peak (1.1370 A
+    inside a charge window clears 0.56 A with the share loop doing nothing)."""
+    spec = _socband_spec("socband_fc_carried")
+    assert spec["min_value"] == 0.56
+    assert spec["exclude_when_switch_bit"] == rhs.SW_FC_CHARGE
+
+
+def test_socband_split_scores_the_measured_campaign_peak(tmp_path):
+    """End to end on the campaign's own numbers: a 1.1370 A charge-window peak
+    with a 0.6929 A charge-free peak must pass BOTH arms and the floor — the
+    combination that failed before the split."""
+    rows = [
+        {"t": "117.013", "I_fc": "1.1370", "switch": str(rhs.SW_FC_CHARGE),
+         "fault_flags": "0"},
+        {"t": "244.003", "I_fc": "0.6929", "switch": "0", "fault_flags": "0"},
+    ]
+    path = tmp_path / "socband.csv"
+    _write_scenario_csv(path, rows)
+    specs = [_socband_spec(n) for n in ("socband_fc_peak_bounded",
+                                        "socband_fc_peak_charging",
+                                        "socband_fc_carried")]
+    checks = rhs.judge_signals(
+        specs, rhs.scan_signals(str(path), specs, grace_s=0.0), "why")
+    assert all(c["passed"] for c in checks), [c["detail"] for c in checks]
+
+
+def test_socband_h2_band_is_the_measured_one():
+    assert (rhs._FTP_H2_FLOOR_SOCBAND, rhs._FTP_H2_CEILING_SOCBAND) == (
+        0.034, 0.051)
+    assert rhs._FTP_H2_FLOOR_SOCBAND < 0.042427323 < rhs._FTP_H2_CEILING_SOCBAND
+
+
+def test_signal_spec_guard_refuses_a_mask_on_a_bit_spec():
+    entry = {"signals_require": [
+        {"name": "bad", "column": "I_fc", "switch_bit": rhs.SW_FC_BUS,
+         "min_ticks": 5, "exclude_when_switch_bit": rhs.SW_FC_CHARGE}]}
+    with pytest.raises(AssertionError) as exc:
+        rhs._assert_signal_spec_shapes("synthetic", entry)
+    assert "cannot be combined with a bit spec" in str(exc.value)
+
+    # ...and a mask with no numeric source to mask is refused too.
+    entry2 = {"signals_require": [
+        {"name": "bad2", "switch_bit": rhs.SW_FC_BUS, "min_ticks": 5,
+         "exclude_when_switch_bit": rhs.SW_FC_CHARGE}]}
+    with pytest.raises(AssertionError) as exc2:
+        rhs._assert_signal_spec_shapes("synthetic", entry2)
+    assert "needs a `column` or a derived value source" in str(exc2.value)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Hi-fi substep resolution (review PLANT-R1-F6): the electrical engine's
+# substep count is WALL-CLOCK adaptive, so every sub-millisecond verdict is
+# read off a trace integrated at whatever step the host could afford — and
+# nothing recorded that step.
+# ─────────────────────────────────────────────────────────────────────────
+
+def _substep_rows(counts):
+    return [{"t": "%.3f" % (3.0 + i * 0.001), "fault_flags": "0", "state": "2",
+             "elec_substep_hz": "100000", "elec_substep_n": str(n)}
+            for i, n in enumerate(counts)]
+
+
+def test_analyze_scenario_csv_reads_the_substep_count(tmp_path):
+    path = tmp_path / "sub.csv"
+    _write_scenario_csv(path, _substep_rows([100, 100, 6, 100]),
+                        extra_cols=("elec_substep_hz", "elec_substep_n"))
+    m = rhs.analyze_scenario_csv(str(path))
+    assert m["substep_n_min"] == 6
+    assert m["substep_n_mean"] == pytest.approx((100 + 100 + 6 + 100) / 4.0)
+    assert m["substep_n_below_gate"] == 1
+
+
+def _substep_check(**over):
+    m = _metrics()
+    m.update(over)
+    _, checks = rhs.judge_scenario("steady", m, _events(), _child())
+    return [c for c in checks if c["name"] == "substep_resolution"][0]
+
+
+def test_substep_resolution_check_passes_a_well_resolved_run():
+    check = _substep_check(substep_n_min=100, substep_n_mean=100.0,
+                           substep_n_below_gate=0)
+    assert check["passed"] is True
+    assert "minimum 100 substep(s)/tick" in check["detail"]
+
+
+def test_substep_resolution_check_fails_a_host_limited_run():
+    check = _substep_check(substep_n_min=4, substep_n_mean=60.0,
+                           substep_n_below_gate=37)
+    assert check["passed"] is False
+    assert "host-limited" in check["detail"]
+    assert rhs.SUBSTEP_N_MIN_GATE == 8
+
+
+def test_substep_resolution_check_is_skipped_without_the_column():
+    """A simple-engine run has no substeps, and every hi-fi CSV before
+    2026-09-02 predates the column — neither is a failure."""
+    check = _substep_check(substep_n_min=None)
+    assert check["passed"] is True
+    assert "SKIPPED" in check["detail"]
+    # ...and a run missing the key entirely (a metrics dict from an older
+    # analyze_scenario_csv) behaves the same way.
+    m = _metrics()
+    m.pop("substep_n_min", None)
+    _, checks = rhs.judge_scenario("steady", m, _events(), _child())
+    assert [c for c in checks
+            if c["name"] == "substep_resolution"][0]["passed"] is True

@@ -2890,3 +2890,135 @@ def test_matched_dp_key_carries_the_runs_charger_era(monkeypatch):
     # An absent sidecar key is the ERA SENTINEL, not a number.
     assert out_pre["key_fields"].get("eta_chg") is None
     assert out_post["key"] != out_pre["key"]
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# The regen-bearing bound label (campaign 20260902_011926, fix-queue item 6)
+# ─────────────────────────────────────────────────────────────────────────
+
+def _mdp_hil_with_motor(soc, p_mot_w, h2_cum_g=None):
+    data = _mdp_hil(soc, h2_cum_g=h2_cum_g)
+    data["p_mot_w"] = np.asarray(p_mot_w, dtype=np.float64)
+    return data
+
+
+def test_matched_dp_regen_bound_is_absent_on_a_run_that_never_brakes(monkeypatch):
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    hil = _mdp_hil_with_motor([0.70, 0.699, 0.698], [5.0, 6.0, 5.5],
+                              h2_cum_g=[0.0, 0.005, 0.010])
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: None)
+    out = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
+    assert out["regen_bound"] is None
+    assert not [n for n in out["notes"] if "bound optimistic" in n]
+    # ...and the STANDING qualitative boundary is still on every run.
+    assert hra.MATCHED_DP_REGEN_NOTE in out["notes"]
+
+
+def test_matched_dp_regen_bound_prices_the_returned_energy(monkeypatch):
+    """A braking run gets the MAGNITUDE, not just the standing caveat: the DP's
+    demand omits regen, so at a matched terminal SoC its total is inflated and
+    the run's deviation is flattered by at most that energy at the Gfc DC
+    gain."""
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    # 1 s at -10 W, 1 s at -10 W, then +10 W: the trapezoid over the negative
+    # part is -10 J for the first interval and -5 J for the ramp back up.
+    hil = _mdp_hil_with_motor([0.70, 0.6995, 0.699],
+                              [-10.0, -10.0, 10.0],
+                              h2_cum_g=[0.0, 0.005, 0.010])
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: None)
+    out = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
+    rb = out["regen_bound"]
+    assert rb is not None
+    assert rb["regen_j"] == pytest.approx(-15.0)
+    gain = out["key_fields"]["gfc_dc_gain"]
+    assert rb["bound_optimistic_g"] == pytest.approx(15.0 * gain)
+    assert rb["bound_optimistic_pct_of_run"] == pytest.approx(
+        100.0 * 15.0 * gain / 0.010)
+    note = rb["note"]
+    assert "regen-bearing: bound optimistic by <=" in note
+    assert note in out["notes"]
+    # The direction is stated, so "optimistic" cannot be read backwards.
+    assert "biased in the run's favour" in note
+
+
+def test_matched_dp_regen_bound_is_none_without_the_power_column(monkeypatch):
+    """Every campaign before 2026-09-01 has no `p_mot_w`; the boundary is then
+    unquantifiable and must not be guessed."""
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: None)
+    out = hra.matched_dp_for_run(analysis, meta,
+                                 _mdp_hil([0.70, 0.699, 0.698]),
+                                 mode="lookup")
+    assert out["regen_bound"] is None
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# NOT-EXERCISED marking on the replay deviation rows (item 7, A5's
+# "untagged-vacuous METRICS": they are not checks, so nothing tagged them)
+# ─────────────────────────────────────────────────────────────────────────
+
+def _replay_pair(n=50, hil_current=None, blg_gfc=None):
+    idx = np.arange(n)
+    hil = {"current": np.zeros(n) if hil_current is None
+           else np.asarray(hil_current, dtype=float),
+           "gFC": np.full(n, 0.8599),
+           "fault_flags": np.zeros(n)}
+    blg = {"I_cmd": np.linspace(0.0, 8.635, n),
+           "gFC": np.zeros(n) if blg_gfc is None
+           else np.asarray(blg_gfc, dtype=float),
+           "fault_flags": np.zeros(n)}
+    return hil, blg, idx, idx
+
+
+def test_icmd_deviation_is_tagged_when_no_commands_were_replayed():
+    """ML0144's 8.635 — the largest number in the campaign's summary — is a
+    board that commanded nothing."""
+    hil, blg, hi, bi = _replay_pair()
+    m = hra.compute_replay_metrics(hil, blg, hi, bi)
+    tag = m["response"]["I_cmd"].get("not_exercised")
+    assert tag and "NOT EXERCISED (no command replay)" in tag
+    # The numbers are still there — they are the evidence for the tag.
+    assert m["response"]["I_cmd"]["max_abs"] > 8.0
+
+
+def test_icmd_deviation_is_untagged_when_the_board_actually_commanded():
+    hil, blg, hi, bi = _replay_pair(hil_current=np.linspace(0.0, 8.0, 50))
+    m = hra.compute_replay_metrics(hil, blg, hi, bi)
+    assert "not_exercised" not in m["response"]["I_cmd"]
+
+
+def test_gfc_deviation_is_tagged_when_the_source_has_no_mdac_channel():
+    hil, blg, hi, bi = _replay_pair()
+    m = hra.compute_replay_metrics(hil, blg, hi, bi)
+    tag = m["response"]["gFC"].get("not_exercised")
+    assert tag and "no MDAC channel" in tag
+    assert m["response"]["gFC"]["max_abs"] == pytest.approx(0.8599)
+    # ...and NOT tagged when the source really carries the channel.
+    hil2, blg2, hi2, bi2 = _replay_pair(blg_gfc=np.full(50, 0.5))
+    m2 = hra.compute_replay_metrics(hil2, blg2, hi2, bi2)
+    assert "not_exercised" not in m2["response"]["gFC"]
+
+
+def test_is_identically_zero_refuses_to_tag_on_absent_data():
+    """'no samples' is not 'all zero'; tagging on an empty block would be a
+    claim about data that was never read."""
+    assert hra._is_identically_zero({"n": 0, "min": None, "max": None}) is False
+    assert hra._is_identically_zero(None) is False
+    assert hra._is_identically_zero({"n": 5, "min": 0.0, "max": 0.0}) is True
+
+
+def test_metrics_table_renders_the_not_exercised_column():
+    lines = hra._metrics_table("Response deviation", {
+        "I_cmd": {"n": 10, "rms": 4.0, "max_abs": 8.635, "mean": 4.0,
+                  "not_exercised": "NOT EXERCISED (no command replay): ..."},
+        "gBT": {"n": 10, "rms": 0.1, "max_abs": 0.2, "mean": 0.0},
+    })
+    body = "\n".join(lines)
+    assert "| note |" in body
+    assert "| I_cmd | 10 |" in body and "NOT EXERCISED" in body
+    # The untagged row must NOT be marked.
+    gbt = [ln for ln in lines if ln.startswith("| gBT ")][0]
+    assert gbt.rstrip().endswith("|  |")

@@ -1292,3 +1292,58 @@ def test_prefill_eta_chg_none_fingerprints_exactly_as_the_bare_default(
     assert db.main(base + ["--eta-chg-none"]) == 0
     assert calls[0]["profile_fingerprint"] == calls[1]["profile_fingerprint"]
     assert calls[0]["eta_chg"] is None and calls[1]["eta_chg"] is None
+
+
+# ==========================================================================
+# `prefill --scenario ... --eta-chg X` (campaign 20260902_011926, item 6)
+#
+# _cmd_prefill() resolves the era INTO the meta it fingerprints, but
+# solve_and_store() then re-fingerprinted the LIVE meta (which declares no
+# `eta_chg`), so every such solve died on "profile fingerprint drift" before it
+# started -- the exact-reproduction `--key-fields` path was the only one that
+# worked, because a run's key_fields carry era_overrides.
+# ==========================================================================
+
+def test_solve_and_store_resolves_the_charger_era_into_the_fingerprint(
+        tmp_path, monkeypatch):
+    pytest.importorskip("numpy")
+    import hil_plant_sim as sim
+    import gen_dp_ems_table as gen
+
+    name = "ems-soc-band"
+    live = dict(sim.SCENARIOS[name])
+    # What `prefill --scenario ... --eta-chg 0.88` computes: the live meta with
+    # the era resolved in.
+    era_fp = sim.dp_profile_fingerprint(name, dict(live, eta_chg=0.88))
+    assert era_fp != sim.dp_profile_fingerprint(name, live)
+
+    monkeypatch.setattr(gen, "solve_matched", lambda p, **kw: gen.MatchedSolve(
+        1.0, 1.0, 0.698, -0.002, 0.0, True, 1.0, 1, 0.0, [0.5], [0.0],
+        [0.7, 0.698], 0.0))
+
+    # NOTE: no era_overrides — this is the `--scenario` path, not `--key-fields`.
+    fields = _era_fields(profile_fingerprint=era_fp, eta_chg=0.88)
+    assert not fields.get("era_overrides")
+    rec = db.solve_and_store(fields, 0.698, db_dir=str(tmp_path), log=None)
+    assert rec["key_fields"]["profile_fingerprint"] == era_fp
+    assert rec["key_fields"]["eta_chg"] == 0.88
+
+
+def test_explicit_era_overrides_still_win_over_the_eta_field(
+        tmp_path, monkeypatch):
+    """`era_overrides` is the caller's explicit channel and must not be
+    second-guessed: a key that names an era there decides it."""
+    pytest.importorskip("numpy")
+    import hil_plant_sim as sim
+    import gen_dp_ems_table as gen
+
+    name = "ems-soc-band"
+    live = dict(sim.SCENARIOS[name])
+    fp = sim.dp_profile_fingerprint(name, dict(live, eta_chg=0.5))
+    monkeypatch.setattr(gen, "solve_matched", lambda p, **kw: gen.MatchedSolve(
+        1.0, 1.0, 0.698, -0.002, 0.0, True, 1.0, 1, 0.0, [0.5], [0.0],
+        [0.7, 0.698], 0.0))
+    fields = _era_fields(profile_fingerprint=fp, eta_chg=0.88,
+                         era_overrides={"eta_chg": 0.5})
+    rec = db.solve_and_store(fields, 0.698, db_dir=str(tmp_path), log=None)
+    assert rec["key_fields"]["profile_fingerprint"] == fp

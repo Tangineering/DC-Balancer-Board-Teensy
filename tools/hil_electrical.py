@@ -2030,13 +2030,23 @@ class ElectricalSim:
 
         # Regen chopper: autonomous TL431/BSP170P clamp into 47 ohm.  It sits
         # directly on V-MOT (the regen node IS the motor node; schematic sheet 4),
-        # so it does NOT couple to V_bus through the REGEN switch — but it DOES
-        # couple through a CLOSED MOT_PWR, since that RT1987 conducts BUS <-> MOT.
-        # Expected bus effect while clamping: the 47 ohm shunt draws ~18.1/47 =
-        # ~0.385 A, which the droop law turns into ~0.385 * 0.074-0.16 =
-        # ~0.03-0.06 V of bus sag.  That is small enough to be consistent with the
-        # bench observation "V_rgn 13.3 -> 18.1 V held, V_bus unmoved"
-        # (CLAUDE.md 2026-08-17b) rather than contradicting it.
+        # so it does NOT couple to V_bus through the REGEN switch.
+        # ⚠️ CORRECTED 2026-09-02 (review PLANT-R1-F2).  This comment used to say
+        # it DOES couple through a closed MOT_PWR, and predicted ~0.03-0.06 V of
+        # bus sag from the shunt's ~0.385 A.  THAT IS UNREACHABLE IN THIS MODEL
+        # AND WAS NEVER MEASURED: MOT_PWR is instantiated `strict_forward=True`,
+        # so the link is stamped only while V_bus - V_MOT >= RT_V_FWD, and at the
+        # clamp V_MOT is 18.135 V — above V_bus, and above the 17.5 V
+        # LIMIT_V_BUS_MAX latch a bus that high would trip anyway.  The measured
+        # bus sag while clamping is < 1e-5 V, and deleting the BUS<->MOT link
+        # entirely changes it by 0 J.  The bench observation "V_rgn 13.3 ->
+        # 18.1 V held, V_bus unmoved" (CLAUDE.md 2026-08-17b) is reproduced
+        # because the two nodes are DECOUPLED at the clamp, not because a small
+        # coupling happens to be small.
+        # The forward direction is a different matter and is real: AFTER the
+        # clamp releases, V_bus rises back above V_MOT and MOT_PWR conducts
+        # bus -> motor node, which is the documented 0.088059 J / 6.28 % of a
+        # braking window's charger input (see hil_plant_sim.py's charger cap).
         # WP-C: linear-regulating clamp (see the R_CHOPPER_REG banner).  Stamped
         # from the previous substep's node voltage like every other mode decision
         # in this engine.  Below saturation it is a Norton clamp referenced to

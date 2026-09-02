@@ -545,13 +545,22 @@ def build_demand(scenario, meta, times, dt, aux_preload_a=None):
                                         (regen is a torque clip on this rig, not
                                         a dump path — CLAUDE.md 2026-08-17b)
 
-    ⚠️ REGEN DIVERGENCE, stated (E-M2, 2026-09-01): the DP's demand model has NO
-    regen term (p_mech = max(0, F*v)); the live plant now injects regen power —
-    divergence deliberate, magnitude unquantified; the live comparison inherits
-    it.  Directionally the DP therefore over-states demand on every decelerating
-    stage, so its hydrogen total is a bound computed against a slightly harder
-    cycle than the board actually sees.  Quantifying it needs a regen-fidelity
-    model that does not exist yet.
+    ⚠️ REGEN DIVERGENCE, stated (E-M2, 2026-09-01; DIRECTION CORRECTED
+    2026-09-02, review PLANT-R1-F5): the DP's demand model has NO regen term
+    (p_mech = max(0, F*v)); the live plant now returns braking energy to the
+    pack — divergence deliberate, magnitude unquantified for the live
+    comparison; the live comparison inherits it.
+    THE DECELERATION DEMAND IS IDENTICAL, NOT OVERSTATED.  `max(0, F*v)` and
+    the plant both bill ZERO motor demand while F*v < 0; what the DP omits is
+    the ENERGY THE PLANT GIVES BACK on those stages, which is a credit to the
+    battery, not a load.  The earlier "over-states demand on every decelerating
+    stage" reading had the sign of the omission backwards.  Consequence at a
+    MATCHED terminal SoC: the DP must buy with hydrogen the SoC the live run
+    got back from braking, so its total is INFLATED and a regen-bearing run's
+    deviation against it is flattered.  `hil_report_analysis.matched_dp_for_run`
+    prices that bound per run (`regen_bound`, the returned energy at the Gfc DC
+    gain).  Quantifying it inside the DP needs a regen term in `build_demand`,
+    which is deliberately absent.
     ELECTRICS:
         i_motor = p_mech/(ETA_BOOST*V_bus);  I_total = i_motor + i_aux(t)
         V_bus   = V_BUS_DROOP_V0 - K_DROOP_BUS_SHARED*I_total

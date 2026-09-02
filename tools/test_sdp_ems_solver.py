@@ -1114,3 +1114,44 @@ def test_undecidable_window_is_recorded_as_none_not_false(tmp_path):
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# The eta-era MEASURED levers (campaign 20260902_011926, fix-queue item 9)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_eta_era_measured_levers_are_recorded_with_their_source():
+    assert solver.EMS_LEVER_SHARE_ETA_SOC_PER_G == pytest.approx(0.41688)
+    assert solver.EMS_LEVER_CHARGE_ETA_SOC_PER_G == pytest.approx(0.33214)
+    assert "20260902_011926" in solver.EMS_LEVERS_ETA_SOURCE
+    # THE FINDING: the charger is STILL the worse lever, which is what the
+    # projection predicted it would stop being.
+    assert (solver.EMS_LEVER_CHARGE_ETA_SOC_PER_G
+            < solver.EMS_LEVER_SHARE_ETA_SOC_PER_G)
+
+
+def test_measured_levers_default_is_unchanged_by_the_new_measurement():
+    """Every shipped artifact and alpha was solved against the projection; a
+    silent re-pricing here would move all of them."""
+    l_share, l_chg = solver.measured_levers(eta_chg=0.88)
+    assert l_share == pytest.approx(solver.EMS_LEVER_SHARE_SOC_PER_G)
+    # ...and the projection still predicts the (refuted) inversion, which is
+    # why the pair is recorded rather than adopted.
+    assert l_chg > l_share
+
+
+def test_measured_levers_opt_in_returns_the_measured_pair():
+    l_share, l_chg = solver.measured_levers(eta_chg=0.88, use_measured_eta=True)
+    assert l_share == pytest.approx(solver.EMS_LEVER_SHARE_ETA_SOC_PER_G)
+    assert l_chg == pytest.approx(solver.EMS_LEVER_CHARGE_ETA_SOC_PER_G)
+    # The measured pair implies an admission window the shipped alpha sits
+    # just below — recorded, and deliberately NOT acted on until a second
+    # campaign reading.
+    lo, hi = solver.admission_window(1.0 - solver.GAMMA_BASE, l_share, l_chg)
+    assert lo == pytest.approx(0.11994, rel=1e-3)
+    assert hi == pytest.approx(0.15055, rel=1e-3)
+
+
+def test_measured_levers_opt_in_refuses_the_old_era():
+    with pytest.raises(ValueError):
+        solver.measured_levers(eta_chg=None, use_measured_eta=True)
